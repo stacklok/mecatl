@@ -77,7 +77,7 @@ const minThinkingBudget int64 = 1024
 //     fixed value, so a per-session route to a smaller-ceiling model never 400s.
 //   - thinking          -> model-CLASS config: adaptive / manual+budget / NONE.
 //
-// Conversation caching (ADR 0100, gated by p.conversationCaching, default on):
+// Conversation caching (gated by p.conversationCaching, default on):
 // on top of the unconditional StablePrefix breakpoint above, buildParams stamps
 // two conditional conversation anchors (the leading-turn-0-fragment boundary
 // and the previous-turn boundary) and sets the top-level automatic marker
@@ -113,7 +113,7 @@ func (p *Provider) buildParams(req port.LLMRequest) (sdk.MessageNewParams, error
 		marker.TTL = ttl
 		params.CacheControl = marker
 	}
-	// Reasoning effort (ADR 0055) rides output_config.effort, INDEPENDENT of the
+	// Reasoning effort rides output_config.effort, INDEPENDENT of the
 	// extended-thinking config above (both coexist on the request). Anthropic
 	// identity-maps the neutral vocabulary (low/medium/high/xhigh/max); "" / "auto"
 	// / an unrecognised token OMITS the field (the model default applies). The field
@@ -126,7 +126,7 @@ func (p *Provider) buildParams(req port.LLMRequest) (sdk.MessageNewParams, error
 }
 
 // applyConversationCacheBreakpoints stamps the two conditional conversation
-// breakpoints (slots 2 and 3 of the 4-slot budget, ADR 0100) onto the
+// breakpoints (slots 2 and 3 of the 4-slot budget) onto the
 // already-built message params, mutating messages in place. Slot 1 (the
 // StablePrefix marker) is buildSystem's job; slot 4 (the top-level automatic
 // marker) is the caller's. Both anchors are derived from msgs (the domain
@@ -188,7 +188,7 @@ func setCacheControl(blk *sdk.ContentBlockParamUnion, ttl sdk.CacheControlEpheme
 // open with one. The leading-run rule (stop at the first non-match) mirrors
 // compaction's preservedHead discipline: an old persisted session may carry a
 // fragment mid-history (a prior harness version, or a session resumed from
-// before ADR 0043), and only the CONTIGUOUS leading run is the byte-stable
+// before turn-0 instructions became ephemeral fragments), and only the CONTIGUOUS leading run is the byte-stable
 // [system][fragments] prefix worth a breakpoint.
 //
 // Duplicated (not exported from engine/prompt) in provider/openai's cache-key
@@ -256,7 +256,7 @@ func outputConfigEffortFor(token string) (sdk.OutputConfigEffort, bool) {
 
 // buildSystem renders the two-layer system prompt into Anthropic's system[]
 // param. The StablePrefix becomes the first text block carrying the SINGLE
-// ephemeral cache_control breakpoint (slot 1 of the 4-slot budget, ADR 0100;
+// ephemeral cache_control breakpoint (slot 1 of the 4-slot budget;
 // the prefix tools→system is cached up to and including it) — unconditional,
 // unaffected by WithConversationCaching, and carrying ttl so it stays uniform
 // with every OTHER breakpoint the adapter emits; the VolatileSuffix becomes a
@@ -575,16 +575,16 @@ func buildMessages(msgs []session.Message, caps port.ProviderCapabilities) ([]sd
 //
 // Otherwise (no Parts, or routing returns nil — every block filtered out by the
 // capability intersection) it falls back to the single-string
-// NewToolResultBlock(callID, Content, isError) — BYTE-IDENTICAL to the pre-T7
-// path, so the legacy/mock/mecademo path is unchanged.
+// NewToolResultBlock(callID, Content, false), so the legacy/mock/mecademo path
+// stays stable.
 func toolResultBlock(tr session.ToolResult, caps port.ProviderCapabilities) sdk.ContentBlockParamUnion {
 	blocks := port.RouteToolResultParts(tr, caps)
 	if len(blocks) == 0 {
-		// Legacy single-string form — byte-identical to the pre-T7 path, which
-		// hard-coded is_error=false (it did not project tr.IsError). Preserved
-		// verbatim so the legacy/mock/mecademo path is unchanged, EXCEPT an empty
-		// Content is substituted with a deterministic placeholder (see the const-block
-		// anchor comment for the empty-text-brick rationale).
+		// Legacy single-string form with is_error hard-coded to false (it does
+		// not project tr.IsError). Kept verbatim so the legacy/mock/mecademo
+		// path is stable, EXCEPT an empty Content is substituted with a
+		// deterministic placeholder (see the const-block anchor comment for the
+		// empty-text-brick rationale).
 		return sdk.NewToolResultBlock(string(tr.CallID), cmp.Or(tr.Content, emptyToolOutputPlaceholder), false)
 	}
 	content := make([]sdk.ToolResultBlockParamContentUnion, 0, len(blocks))

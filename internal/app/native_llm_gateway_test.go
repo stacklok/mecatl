@@ -175,8 +175,8 @@ func TestNativeLLMGatewayLogin_Scenario3_DeploymentWideInventoryConsistency(t *t
 	}
 	models := nativeModels(reg.discovery.CurrentModelSnapshot().Models)
 	inventory := newTestModelInventory(models)
-	result := newAgentModelDiscoveryTool(inventory)
-	if len(inventory.CurrentModelSnapshot().Models) != 1 || !modelDiscoveryAvailable(reg, inventory) {
+	result := newAgentModelDiscoveryTool(inventory, nil)
+	if len(inventory.CurrentModelSnapshot().Models) != 1 || !modelDiscoveryAvailable(reg, inventory, nil) {
 		t.Fatal("resolved inventory diverged")
 	}
 	if result.inventory != inventory {

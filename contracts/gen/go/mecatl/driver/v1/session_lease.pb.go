@@ -5,7 +5,7 @@
 //
 // SessionLeaseService is the wire seam behind the harness's `port.SessionLease`
 // (engine/port/lease.go): cross-process single-writer enforcement for the
-// cloud-native multi-replica posture (ADR 0027 Phase 4). An operator-run driver
+// cloud-native multi-replica posture. An operator-run driver
 // process (or a coordination backend a driver fronts) grants a per-session lease
 // to exactly one process at a time, so two replicas over one shared store never
 // both drive the same session id concurrently. The driver sits at the SAME

@@ -1,61 +1,96 @@
 # Developing the `mecatui` terminal UI
 
-**This page is for contributors designing and implementing `mecatui`.** It records
-shared UI conventions and the boundaries that keep new interactions consistent.
-It is not a command, keybinding, or feature reference for terminal users. The
+This page is for contributors changing `cmd/mecatui`: the boundaries and shared
+conventions that keep new interactions consistent. The
 [public `mecatui` guides](../user-docs/mecatui/index.md) own how to start, use,
-customize, and troubleshoot the client.
-
-When changing the TUI, update this page only for a reusable design rule or an
-architectural boundary. Put user instructions in the existing public guide that
-answers the user's task, but add them only when they help someone discover a
-non-obvious action, avoid a consequential mistake, or recover from a problem.
-Don't copy every overlay action or implementation detail into public docs. Keep
-feature-specific behavior in its owning code and tests; keep decision rationale
-in ADRs. Follow the documentation change review
-when deciding whether either page needs an update.
+customize, and troubleshoot the client. Update this page only for a reusable design
+rule or an architectural boundary.
 
 ## Client boundary
 
-`mecatui` is a gRPC client, whether it connects to a separate server or hosts
-one privately. The `client` package owns the transport and maps server events to
-Bubble Tea messages. `ui` renders those messages and handles input; `theme` owns
-semantic styling. Neither `ui` nor `theme` imports the engine, host application,
-or generated contracts. Embedded-server composition stays in `cmd/mecatui/embed`
-and the command entry point. Keep server decisions on the server and render its
-reported state rather than inferring authority, resolved models, or placement in
-the client.
+`mecatui` is always a gRPC client. By default it hosts its own server in-process:
+`cmd/mecatui/embed` assembles the harness through `internal/app`, the composition
+`mecated` uses, and serves it on a private UNIX socket. `mecatui connect ADDRESS`
+dials an external server instead. The client code path is the same either way, so
+nothing in the UI may assume the server is local.
 
-Precommit provider recovery belongs to the server's active run, not a client-side
-terminal retry loop. Keep failed-step retry an explicit `/retry` action; see
-[provider resilience](architecture/observability.md#reliability--provider-resilience)
-for the recovery policy and lifetime.
+`client` owns the transport and maps server events to Bubble Tea messages. `ui`
+renders those messages and handles input; `theme` owns semantic styling. Only
+`client`, `embed`, and the command entry point import generated contracts, gRPC, or
+host packages. `ui` and `theme` import none of them and no `engine/` package; this
+is a convention, not a lint rule, so check imports when you add a dependency.
 
-A new interaction should follow the same event and capability boundaries as an
-existing one: do not show an unavailable control as if it were actionable, and
-do not substitute a client guess for a server-confirmed result. See the
-[API architecture](architecture/api-surface.md) for the wire boundary and
-[permissions and posture](../user-docs/features/security-and-execution/permissions-and-posture.md)
-for the operator-facing meaning of safety controls.
+Render the server's reported state; never infer authority, resolved models,
+placement, or which actions are allowed:
+
+- Feature affordances come from the server's advertised `client.Capabilities`.
+  Hide or explain an unavailable feature instead of showing a dead control.
+- Session inventory rows carry server-authored action capabilities. Copy,
+  transcript view, fork, rename, and delete come from those bits, never from the
+  shape of a session ID. The server revalidates every action, and a failed action
+  must not rebind the prompt to another session.
+- Clear and fork create server-side successors. Rebind the prompt only after the
+  server confirms the successor.
+- `mecatui debug TARGET` may resolve a short handle against the caller's inventory,
+  but only the exact session ID crosses to the server, which decides access.
+- Provider retry during a live run belongs to the server. The client never starts a
+  second run after a terminal failure; `/retry` is the explicit action. See
+  [observability](architecture/observability.md) for the recovery policy.
+
+Some state is the client's own. Key events go through the client's action map
+first, and unclaimed keys reach the prompt textarea, which keeps `ctrl+a`, `ctrl+e`,
+and `ctrl+p` for line editing. Status-line customization is a client-side seam:
+`customization.Source` receives display-safe snapshots and publishes semantic
+spans, while the UI owns theme, clipping, and alignment. Its settings live only in
+the client's settings file, so a remote server or a project can never select a
+local executable.
 
 ## Layout and navigation
 
-The frame is a stack of header, conversation, optional transient regions,
-prompt, and footer. `cmd/mecatui/ui/layout.go` derives that stack for rendering,
-viewport sizing, and mouse hit testing. Add regions there so a transient shrinks
-the conversation instead of displacing the footer. Measure the rendered frame
-rather than maintaining a second set of row offsets.
+The frame is a stack of header, conversation, optional transient regions, prompt,
+and footer. `cmd/mecatui/ui/layout.go` derives that stack for rendering, viewport
+sizing, and mouse hit testing. Add regions there so a transient shrinks the
+conversation instead of displacing the footer, and measure the rendered frame
+rather than keeping a second set of row offsets.
 
 Overlays that take over the conversation region own their interaction state and
-size themselves from the geometry offered on each render. The parent owns their
-placement and maps pointer coordinates into the rendered surface. Follow the
-[`surface` contract](../cmd/mecatui/ui/surface.go) and its
-[migration guidance](design/surface-migration-plan.md) when adding or converting
-an overlay. A closed surface must not receive late results or leak keyboard and
-wheel events into the conversation.
+size themselves from the geometry offered on each render; the parent owns placement
+and pointer mapping. Before keys or wheel events on any open surface, the parent
+prepares its current Render offer; only View publishes pointer hits. Resize and
+undisplayed preparation invalidate both hits and placement metrics. A surface
+captures its presentation and operating dependencies when it opens. Introduce
+dynamic theme or keybinding updates only with a deliberate UI-wide design that
+covers every affected component.
+Follow the [`surface` contract](../cmd/mecatui/ui/surface.go) when adding or
+converting an overlay. A closed surface must not receive late results or leak
+keyboard and wheel events into the conversation.
+
+Keep surface-specific state, transitions, asynchronous result validation, and view
+caches on the surface. The parent owns modal lifetime, placement, frame-scoped
+pointer mapping, and effects that change root-owned state. A surface that needs a
+root-owned effect emits a narrow intent; it does not require the parent to inspect
+its concrete type. Correlate asynchronous results with the surface instance and
+its active request, then discard results the open surface does not own.
+
+The `ui` package is large, so keep its internal components narrow and their
+contracts explicit. Prefer a shared contract when all comparable components use
+the same behavior. Treat a concrete type assertion in generic UI flow as a smell:
+justify the component's genuinely unique lifecycle before adding one. Do not add
+an interface for a speculative future capability; introduce it when the shared
+behavior exists and the contract can make the code simpler.
 
 Selectable inventories use `presentListRow` for the cursor marker, status cells,
-and selected-row styling. Let the surface own item semantics and activation.
+and selected-row styling. Follow `/models`: use the `spinner` accent style for
+selected rows and `muted` for unselected rows. The `▶` cursor appears only on the
+first visible physical row of the selected item; selected styling covers all its
+wrapped rows. Optional current or default status cells remain distinct from the
+cursor. `presentListRow` owns the gutter and cursor/status markers; surfaces must
+not embed those markers or their padding in item text. Let the surface own item
+semantics and activation.
+Keep unavailable entries visible when that explains the available choices, but
+exclude them from selection and activation. Translate shared navigation keys to
+`bounded.Move` values in the `ui` package. Keep `internal/bounded` independent
+of UI key-event and keymap dependencies.
 Tool-call status uses `…` with `toolName`, `✓` with `toolOk`, and `✗` with
 `toolErr`. Pending and failed calls retain readable labels; settled successful
 single-line calls use the glyph and name without a redundant success label.
@@ -67,11 +102,9 @@ vocabulary: `ToolIntent(name, arguments)` derives a sanitized call-side intent,
 state-owned glyph, readable status label, and semantic style slot are exposed by
 methods. Use `ToolRunning`, `ToolAwaitingResult`, `ToolFinalizing`,
 `ToolFinalizingFailed`, `ToolDelegatedPending`, `ToolSucceeded`, or
-`ToolFailed` rather than selecting
-those components in a surface. Settled successful rows suppress redundant status
+`ToolFailed` rather than selecting those components in a surface. Settled successful rows suppress redundant status
 text; failed rows consistently say `failed`. Extend its presentation table when
-adding a tool;
-do not duplicate argument decoding or tool-specific summaries in a surface.
+adding a tool; do not duplicate argument decoding or tool-specific summaries in a surface.
 The conversation's settled rows, `/toolcalls` list and child inspector rows, and
 expanded Subagent/Parallel/Team traces (including F6 Agents) use this API.
 Surfaces own ANSI styles, clipping, wrapping, selection, and pointer geometry:
@@ -87,83 +120,127 @@ body (including numbered Read output). Child traces remain per-lane capped and
 cannot recover full arguments; parent inspector arguments and results remain
 independently inspectable.
 
-For list-and-detail browsers, use a bounded list for stable item selection and
-a separate bounded viewport for long detail. In wheel-enabled inventories,
-wheel scrolling moves the list window independently of selection. Keyboard
-navigation and clicking a row select and reveal it. Preserve the selected item
-and list window when returning from detail; size both controls against the
-current measured body instead of storing an independent row budget. Keep
-detail scrolling within that viewport: follow appended result lines only while
-its reader is at the bottom, and keep the reader's position when new content
-arrives off-tail.
-The saved-memory browser demonstrates list/detail ownership; Sessions demonstrates
-the conversation-region fill placement for content that needs more room. Fill
-surfaces use only the offered conversation region and keep the frame's header,
-prompt, and footer.
+List-and-detail browsers use a bounded list for selection and a separate bounded
+viewport for detail. Wheel scrolling moves the list window without changing
+selection. Keyboard navigation and clicking an enabled row select and reveal it;
+selection alone does not activate it. Returning from detail preserves the selected
+item and list window, and detail follows appended lines only while the reader is
+at the bottom. Consequential activation requires a separate explicit confirmation
+using keyboard, pointer, or both as appropriate to the widget. The saved-memory
+browser shows list/detail ownership; Sessions shows a surface that fills the
+conversation region while keeping the header, prompt, and footer.
 
-Normal list and inspector cards cap their outer width at 128 cells or the
-available width, whichever is smaller. Permission cards cap at 132 cells and
-inline tool cards at 100. Derive content width from the actual styled frame;
-check narrow terminals and wrapped rows, not just a wide golden. Budget
-wrapped chrome and any overflow indicator before allocating viewport rows;
-if no body row fits, use a close-only fallback.
+List and inspector cards cap their outer width at 128 cells, permission cards at
+132, and inline tool cards at 100, or the available width if smaller. These are
+ceilings, not target sizes. Small finite pickers should prefer a content-sized
+width measured from the complete inventory and fixed chrome, including gutters,
+frame, warnings, and captured key hints. Large inventories and text inspectors
+can use more of the available width when it improves readability.
 
-Keep keyboard ownership visible. An open modal or transient handles its keys
-before the prompt; a wheel event over a modal must not scroll the hidden
-conversation. Provide a discoverable way to close a surface and show only
-available actions in its hints. Keep common actions consistent with the
-[public keybindings](../user-docs/mecatui/keybindings.md), rather than assigning
-an existing chord a second meaning in the same focus context.
+Keep card dimensions stable while selection or the visible window changes at a
+fixed geometry offer. Measure all items when choosing a content-sized width,
+not just the visible rows. Recalculate for terminal resize; wrap or clip content
+when the offer is smaller than its preferred size. Budget wrapped chrome before
+allocating viewport rows, fall back to close-only when no body row fits, and
+check narrow terminals as well as a wide golden.
+
+An open modal or transient handles its keys before the prompt, and a wheel event
+over a modal must not scroll the hidden conversation. Every surface needs a
+discoverable way to close, and its hints show only available actions. Don't give an
+existing chord a second meaning in the same focus context; stay consistent with the
+[public keybindings](../user-docs/mecatui/keybindings.md).
 
 ## Conversation and feedback
 
-Preserve the reader's position while new output arrives. The conversation
-follows the tail while at the bottom; when the reader scrolls up, subsequent
-renders preserve a logical reading anchor until they return to the bottom. Use
-`conversationView` rather than setting viewport offsets independently. Speaker
-labels, hanging alignment, and spacing distinguish turns even without color.
+The conversation follows the tail while the reader is at the bottom; once they
+scroll up, renders keep a logical reading anchor until they return. Use
+`conversationView` rather than setting viewport offsets directly. Speaker labels,
+hanging alignment, and spacing distinguish turns without color. User prompts,
+model responses, and ordinary harness notices use accented, bold `▶ you`,
+`◀ mecatl`, and `◆ system` labels in both views; their bodies remain neutral.
+Recovery and tool or hook outcome markers retain their own warning or lifecycle
+meaning.
 
-Summarize large tool arguments and results in collapsed cards, and keep hidden
-content inspectable. A preview must not flood scrollback or expose more than
-the bounded, display-safe projection the client received. Keep safety and state
-cues distinguishable without color: the prompt rail identifies the confirmed
-session mode, while the server posture badge has separate prominence. The
-high-risk posture badge uses a fixed, contrast-checked danger style rather than
-a theme-controlled color.
+In the default view, render one aggregate for settled adjacent visible
+Tool, Subagent, and Team calls, followed by any active cards in their original
+relative order. Presentation adjacency, rather than dispatch or concurrency,
+defines the group. The detail view restores settled calls as one-line summaries
+in source order; keep arguments and results in the Toolcalls inspector. Preserve
+one blank row between response blocks or groups, with none between calls in a
+tool group.
 
-Choose the lifetime of a notice deliberately. Put durable conversation facts in
-scrollback; use the transient footer for advisories and activity whose outcome
-belongs elsewhere. An error or failed action needs visible feedback, not a
-silent reset or an optimistic success claim. Do not show raw transport or
-credential material in a notice.
+Snapshot transcript loads use the server's human-display projection, which omits
+known background-work and no-progress control continuations only with explicit
+stored harness provenance. Preserve user/legacy lookalikes, compaction summaries
+and scheduled deliveries; the stored model conversation and event replay remain
+unchanged.
+
+Collapse large tool arguments and results into cards and keep hidden content
+inspectable. A preview must not flood scrollback or show more than the bounded,
+display-safe projection the client received. The prompt rail shows the confirmed
+session mode; the server posture badge is separate, and its high-risk variant uses
+a fixed, contrast-checked danger style rather than a theme color.
+
+Durable facts go in scrollback; advisories and transient activity go in the footer.
+A failed action needs visible feedback, never a silent reset or an optimistic
+success claim, and a notice never shows raw transport or credential material.
 
 ## Styling and terminal behavior
 
-Use semantic slots from `theme.Palette` and derived styles so a surface works in
-both light and dark themes. The fixed danger badge and contrast-calculated
-selection foreground are intentional safety/legibility exceptions, not a model
-for widget-local color constants. Preserve non-color cues for selection, status,
-and warnings. Check ANSI-stripped rendering and compact geometry when a new
-visual cue carries meaning.
+Use theme-owned semantic styles so a surface works in light and dark themes.
+Transcript actor glyph constants are separate from
+`transcript{LLM,Tool,User,Harness}{Marker,Rail,Text}` styles. Marker styles own
+only the actor symbol; body and label text, reasoning, statistics, and outcome
+indicators have independent styles. User prompts and LLM responses use their
+actor's rail style beside the body; rails stay within each message block.
+`transcriptRunRail` remains separate. Markdown keeps its dedicated palette and
+syntax styles.
 
-Treat terminal features as capabilities, not assumptions. Provide a usable
-keyboard path when mouse input is disabled and an appropriate fallback when a
-terminal cannot report enhanced keys, color, or graphics. Terminal control
-sequences and display text must go through the renderer's output and sanitizing
-paths; never interpolate untrusted server text into terminal control sequences.
+Built-in Aztec and Solar have separate dark/light transcript recipes. Custom
+themes derive transcript defaults from existing palette slots, including when
+they override a built-in name. Startup background detection selects built-in
+Solar only when no explicit theme is supplied on a real TTY; `switchTheme`
+replaces the renderer and its caches so baked-in styles change together.
+
+The fixed danger badge and the contrast-calculated selection foreground are
+deliberate exceptions, not a model for widget-local colors. Check ANSI-stripped
+rendering when a visual cue carries meaning.
+
+Treat terminal features as capabilities: provide a keyboard path when mouse input
+is off and a fallback when a terminal lacks enhanced keys, color, or graphics.
+Display text goes through `cmd/mecatui/internal/terminaltext` sanitizing; never interpolate
+untrusted server text into terminal control sequences.
+
+Expand literal tabs to spaces before measuring, wrapping, or clipping display text.
+Sanitizing preserves tabs, and ANSI width and wrapping helpers do not account for
+Lip Gloss's later tab expansion (four spaces by default). Expanding tabs only in
+`Style.Render` can widen an already-wrapped line; a surrounding rail or card can
+then pad every row to that oversized width. Use `terminaltext.ExpandStyleTabs`
+for content that will receive a Lip Gloss style, or `terminaltext.ExpandTabs`
+with the owning renderer's explicit tab width. These helpers live in
+`cmd/mecatui/internal/terminaltext/tabs.go`, separate from sanitization and
+Markdown processing. The style helper resolves the implicit default as well as
+explicit tab settings; the raw `GetTabWidth()` getter does not distinguish an
+unset value from an explicit zero.
+
+Wrap against the content budget after subtracting outer indentation, rails,
+borders, and padding. Verify widths on the fully styled and framed rows passed to
+the viewport, including tabbed text and terminal resizes. Measuring only the raw
+text misses expansion and framing added later in the render path.
 
 ## Verification
 
-Keep client and rendering tests offline. Test event-to-message behavior at the
-client boundary, interaction and focus at the UI boundary, and layout at wide
-and narrow terminal sizes. Exercise at least one light and one dark theme for
-contrast-sensitive changes. For scrolling or overlays, test a live update while
-the reader is off the tail or a modal is open, respectively, so a happy-path
-snapshot cannot hide a navigation regression. Existing examples include
-`cmd/mecatui/ui/scroll_test.go`, `toolcard_width_test.go`, and
-`cmd/mecatui/theme/theme_test.go`.
+Keep tests offline. Test event-to-message mapping at the client boundary,
+interaction and focus in `ui`, layout at wide and narrow sizes, and one light and
+one dark theme for contrast-sensitive changes. For scrolling or overlays, test a
+live update while the reader is off the tail or a modal is open, so a happy-path
+snapshot cannot hide a navigation regression. Examples include
+`cmd/mecatui/ui/scroll_test.go` and `cmd/mecatui/theme/theme_test.go`. Refresh the
+`teatest` goldens with `task test:golden` only for intentional visual changes.
 
-For intentional visual changes, update the fixed-size `teatest` goldens with
-`task test:golden`. Run focused tests while iterating and `task docs` for this
-page. Follow the repository's full [verification gates](../AGENTS.md#build-and-test)
-before a PR is ready.
+## Related
+
+- [API surface](architecture/api-surface.md)
+- [Performance tracking](perf-tracking.md), for the render-path benchmarks
+- [`mecatui` user guides](../user-docs/mecatui/index.md)
+- [Status line customization](../user-docs/mecatui/status-line.md)

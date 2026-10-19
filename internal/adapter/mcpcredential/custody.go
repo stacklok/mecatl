@@ -21,6 +21,8 @@ import (
 	"github.com/godbus/dbus/v5"
 	keyringapi "github.com/zalando/go-keyring"
 	"golang.org/x/sys/unix"
+
+	"github.com/stacklok/mecatl/internal/adapter/credentialstore"
 )
 
 // BackendKeyring stores generated keys in the OS keyring; BackendFile uses a protected file.
@@ -37,6 +39,20 @@ const (
 	lockName        = ".mcp-credential-key.lock"
 	maxMarkerBytes  = 1024
 	maxKeyBytes     = 128
+)
+
+var (
+	errInvalidMarker = errors.New("invalid marker")
+	// ErrObsoleteMarker identifies the prototype marker format handled by reset.
+	ErrObsoleteMarker = errors.New("MCP credential marker uses an obsolete format")
+	// ErrPendingArtifactMismatch identifies an artifact that does not match its pending marker.
+	ErrPendingArtifactMismatch = errors.New("MCP credential artifact identity does not match pending marker")
+	// ErrArtifactMissing identifies a missing artifact pinned by custody metadata.
+	ErrArtifactMissing = errors.New("MCP credential artifact is missing")
+	// ErrArtifactMismatch identifies a valid artifact whose identity differs from its marker.
+	ErrArtifactMismatch = errors.New("MCP credential artifact identity does not match marker")
+	// ErrResetInProgress identifies custody that only Reset may resume.
+	ErrResetInProgress = errors.New("MCP credential custody reset is in progress")
 )
 
 // Keyring reads and writes the OS credential entry used by MCP custody.
@@ -91,7 +107,7 @@ func Resolve(ctx context.Context, root string, opts Options) (Selection, error) 
 		return resolveMarker(ctx, canonical, marker, opts, "", false)
 	}
 	if !errors.Is(err, os.ErrNotExist) {
-		return Selection{}, errors.New("MCP credential backend marker is invalid")
+		return Selection{}, invalidMarkerError(canonical)
 	}
 
 	// Do not hold the root lock while an attended confirmation waits for input.
@@ -114,9 +130,19 @@ func Resolve(ctx context.Context, root string, opts Options) (Selection, error) 
 		return resolveMarker(ctx, canonical, marker, opts, backend, true)
 	}
 	if !errors.Is(err, os.ErrNotExist) {
-		return Selection{}, errors.New("MCP credential backend marker is invalid")
+		return Selection{}, invalidMarkerError(canonical)
 	}
 	return createCredential(ctx, canonical, backend, opts)
+}
+
+// invalidMarkerError classifies a readMarker failure that is not a missing
+// marker, distinguishing an obsolete prototype-format marker (which points
+// the operator to `mcp reset-local-credentials`) from any other invalid state.
+func invalidMarkerError(root string) error {
+	if isPrototypeMarker(root) {
+		return ErrObsoleteMarker
+	}
+	return errors.New("MCP credential backend marker is invalid")
 }
 
 func prepareOptions(opts *Options) {
@@ -132,6 +158,9 @@ func prepareOptions(opts *Options) {
 }
 
 func resolveMarker(ctx context.Context, root string, marker backendMarker, opts Options, expectedBackend string, checkContext bool) (Selection, error) {
+	if marker.State == markerResetting {
+		return Selection{}, ErrResetInProgress
+	}
 	if expectedBackend != "" && marker.Backend != expectedBackend {
 		return Selection{}, errors.New("MCP credential-store conflicts with the pinned backend")
 	}
@@ -151,7 +180,7 @@ func resolveMarker(ctx context.Context, root string, marker backendMarker, opts 
 	}
 	if keyDigest(sel.Key) != marker.InitSHA256 {
 		clear(sel.Key)
-		return Selection{}, errors.New("MCP credential artifact identity does not match marker")
+		return Selection{}, ErrArtifactMismatch
 	}
 	return sel, nil
 }
@@ -189,7 +218,7 @@ func recoverPending(ctx context.Context, root string, marker backendMarker, opts
 		}
 	} else if keyDigest(key) != marker.InitSHA256 {
 		clear(key)
-		return Selection{}, errors.New("MCP credential artifact identity does not match pending marker")
+		return Selection{}, ErrPendingArtifactMismatch
 	}
 	if checkContext {
 		if err := ctx.Err(); err != nil {
@@ -269,7 +298,7 @@ func InspectMarker(root string) MarkerInspection {
 	}
 	marker, err := readMarker(canonical)
 	switch {
-	case err == nil && marker.State == markerPending:
+	case err == nil && (marker.State == markerPending || marker.State == markerResetting):
 		return MarkerRecovery
 	case err == nil:
 		return MarkerPresent
@@ -301,7 +330,13 @@ func Open(ctx context.Context, root, backend, filePath string, keyring Keyring) 
 		}
 	}()
 	marker, err := readMarker(canonical)
-	if err != nil || marker.Backend != backend || marker.StoreNamespace != NativeNamespace || marker.LocatorSHA256 == "" {
+	if err != nil {
+		return Selection{}, invalidMarkerError(canonical)
+	}
+	if marker.State == markerResetting {
+		return Selection{}, ErrResetInProgress
+	}
+	if marker.Backend != backend || marker.StoreNamespace != NativeNamespace || marker.LocatorSHA256 == "" {
 		return Selection{}, errors.New("MCP credential backend marker is invalid")
 	}
 	if marker.State == markerPending {
@@ -318,7 +353,7 @@ func Open(ctx context.Context, root, backend, filePath string, keyring Keyring) 
 	}
 	if keyDigest(sel.Key) != marker.InitSHA256 {
 		clear(sel.Key)
-		return Selection{}, errors.New("MCP credential artifact identity does not match marker")
+		return Selection{}, ErrArtifactMismatch
 	}
 	return sel, nil
 }
@@ -338,17 +373,24 @@ func lockRoot(ctx context.Context, root string) (func(), error) {
 }
 
 const (
-	markerPending = "pending"
-	markerReady   = "ready"
+	markerPending   = "pending"
+	markerReady     = "ready"
+	markerResetting = "resetting"
 )
 
+// backendMarker is durable custody state. InitSHA256 binds pending/ready
+// custody and remains in a resetting marker until deletion is durable; Retired
+// names the namespace directory being retired. KeepArtifact records that reset
+// must preserve a file artifact another root may own.
 type backendMarker struct {
 	Version        int    `json:"version"`
 	State          string `json:"state"`
 	StoreNamespace string `json:"store_namespace"`
 	Backend        string `json:"backend"`
 	LocatorSHA256  string `json:"locator_sha256"`
-	InitSHA256     string `json:"init_sha256"`
+	InitSHA256     string `json:"init_sha256,omitempty"`
+	Retired        string `json:"retired,omitempty"`
+	KeepArtifact   bool   `json:"keep_artifact,omitempty"`
 }
 
 func recoverPublishedMarkerTemp(root string) error {
@@ -433,22 +475,13 @@ func isMarkerTempName(name string) bool {
 }
 
 func readMarker(root string) (backendMarker, error) {
-	var marker backendMarker
 	b, err := readPrivateFile(filepath.Join(root, markerName), maxMarkerBytes)
 	if err != nil {
-		return marker, err
+		return backendMarker{}, err
 	}
-	dec := json.NewDecoder(bytes.NewReader(b))
-	dec.DisallowUnknownFields()
-	var extra any
-	if dec.Decode(&marker) != nil || dec.Decode(&extra) != io.EOF || marker.Version != 1 || (marker.State != markerPending && marker.State != markerReady) || marker.StoreNamespace != NativeNamespace || (marker.Backend != BackendKeyring && marker.Backend != BackendFile) || len(marker.LocatorSHA256) != sha256.Size*2 || len(marker.InitSHA256) != sha256.Size*2 {
-		return marker, errors.New("invalid marker")
-	}
-	if _, err := hex.DecodeString(marker.LocatorSHA256); err != nil {
-		return marker, errors.New("invalid marker")
-	}
-	if _, err := hex.DecodeString(marker.InitSHA256); err != nil {
-		return marker, errors.New("invalid marker")
+	marker, err := decodeMarker(b)
+	if err != nil {
+		return backendMarker{}, errInvalidMarker
 	}
 	return marker, nil
 }
@@ -648,6 +681,9 @@ func openPinned(backend, locator string, o Options) (Selection, error) {
 	if backend == BackendKeyring {
 		value, err := o.Keyring.Get(keyringService, locator)
 		if err != nil {
+			if errors.Is(err, keyringapi.ErrNotFound) {
+				return Selection{}, errors.Join(ErrArtifactMissing, err)
+			}
 			return Selection{}, errors.New("MCP keyring is unavailable")
 		}
 		key, err := base64.RawStdEncoding.DecodeString(value)
@@ -685,9 +721,18 @@ func fileLocator(_ string, path string) (string, error) {
 	return canonicalPath(abs)
 }
 
+// CanonicalFileKeyPath returns the physical path pinned by native file custody.
+// The host lifecycle command uses it to detect profiles that share a key.
+func CanonicalFileKeyPath(path string) (string, error) {
+	return fileLocator("", path)
+}
+
 func readFileKey(path string) ([]byte, error) {
 	b, err := readPrivateFile(path, maxKeyBytes)
 	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, errors.Join(ErrArtifactMissing, os.ErrNotExist)
+		}
 		return nil, errors.New("MCP file credential key cannot be read")
 	}
 	return decodeKey(b)
@@ -830,6 +875,420 @@ func secureMkdirAll(path string) error {
 		fd = next
 	}
 	return nil
+}
+
+// isPrototypeMarker reports whether root contains the exact pre-recovery
+// marker shape. It reads metadata only and never opens custody artifacts.
+func isPrototypeMarker(root string) bool {
+	_, legacy, _, err := readResetMarker(root)
+	return err == nil && legacy
+}
+
+// ResetResult reports custody that reset deliberately left untouched.
+type ResetResult struct {
+	ArtifactPreserved bool
+}
+
+// Reset retires native custody for root. Use ResetWithResult when the caller
+// needs to know whether a mismatched artifact was preserved.
+func Reset(ctx context.Context, root, backend, filePath string, keyring Keyring) error {
+	_, err := ResetWithResult(ctx, root, backend, filePath, keyring, false)
+	return err
+}
+
+type resetStage uint8
+
+const (
+	resetIntentRecorded resetStage = iota + 1
+	resetArtifactRemoved
+	resetNamespaceRetired
+)
+
+func runResetStage(afterStage func(resetStage) error, stage resetStage) error {
+	if afterStage == nil {
+		return nil
+	}
+	return afterStage(stage)
+}
+
+// ResetWithResult retires the native custody for root. preserveArtifact is set
+// when the host has found another configured root using the same file key path.
+// A mismatched artifact is never deleted; the resetting marker records that
+// decision so retries preserve it too.
+func ResetWithResult(ctx context.Context, root, backend, filePath string, keyring Keyring, preserveArtifact bool) (ResetResult, error) {
+	return resetWithResult(ctx, root, backend, filePath, keyring, preserveArtifact, nil)
+}
+
+func resetWithResult(ctx context.Context, root, backend, filePath string, keyring Keyring, preserveArtifact bool, afterStage func(resetStage) error) (ResetResult, error) {
+	if keyring == nil {
+		keyring = osKeyring{}
+	}
+	canonical, err := prepareExistingRoot(root)
+	if err != nil {
+		return ResetResult{}, err
+	}
+	unlock, err := lockRoot(ctx, canonical)
+	if err != nil {
+		return ResetResult{}, err
+	}
+	defer func() {
+		if unlock != nil {
+			unlock()
+		}
+	}()
+
+	marker, legacy, raw, err := readResetMarker(canonical)
+	if errors.Is(err, os.ErrNotExist) {
+		return ResetResult{}, errors.New("MCP custody reset found no native custody to reset")
+	}
+	if err != nil {
+		return ResetResult{}, errors.New("MCP custody reset requires an identifiable native marker")
+	}
+	if marker.Backend != backend {
+		return ResetResult{}, errors.New("MCP custody reset backend does not match the selected profile")
+	}
+	locator, err := pinnedLocator(canonical, backend, filePath)
+	if err != nil {
+		return ResetResult{}, err
+	}
+
+	if !resetMarkerMatchesLocator(marker, legacy, backend, locator) {
+		return ResetResult{}, errors.New("MCP custody reset refused an unproven artifact")
+	}
+	marker, err = ensureResetIntent(canonical, marker, legacy, raw, backend, locator, keyring, preserveArtifact)
+	if err != nil {
+		return ResetResult{}, err
+	}
+	if err := runResetStage(afterStage, resetIntentRecorded); err != nil {
+		return ResetResult{}, err
+	}
+	retired := filepath.Join(canonical, marker.Retired)
+	if !marker.KeepArtifact {
+		if err := deleteArtifact(backend, locator, keyring); err != nil {
+			return ResetResult{}, err
+		}
+	}
+	if err := runResetStage(afterStage, resetArtifactRemoved); err != nil {
+		return ResetResult{}, err
+	}
+	if err := retireNativeNamespace(canonical, retired); err != nil {
+		return ResetResult{}, err
+	}
+	if err := runResetStage(afterStage, resetNamespaceRetired); err != nil {
+		return ResetResult{}, err
+	}
+	if err := removeMarker(canonical); err != nil {
+		return ResetResult{}, errors.New("MCP custody reset could not retire its marker")
+	}
+	return ResetResult{ArtifactPreserved: marker.KeepArtifact}, nil
+}
+
+func resetMarkerMatchesLocator(marker backendMarker, legacy bool, backend, locator string) bool {
+	if legacy {
+		return legacyLocatorDigest(locator) == marker.LocatorSHA256
+	}
+	return locatorDigest(backend, locator) == marker.LocatorSHA256
+}
+
+func ensureResetIntent(root string, marker backendMarker, legacy bool, raw []byte, backend, locator string, keyring Keyring, preserveArtifact bool) (backendMarker, error) {
+	retiredName := marker.Retired
+	if marker.State != markerResetting {
+		retiredName = newRetiredNamespaceName(raw)
+	}
+	if err := validateNativeNamespace(root, filepath.Join(root, retiredName)); err != nil {
+		return backendMarker{}, err
+	}
+	identity := marker.InitSHA256
+	keepArtifact := marker.KeepArtifact || preserveArtifact
+	if !keepArtifact {
+		var artifactOwned bool
+		var err error
+		identity, artifactOwned, err = resetArtifactIdentity(backend, locator, marker.InitSHA256, keyring, legacy)
+		if err != nil {
+			return backendMarker{}, err
+		}
+		keepArtifact = !artifactOwned
+	}
+	if marker.State == markerResetting && marker.KeepArtifact == keepArtifact {
+		return marker, nil
+	}
+	intent := backendMarker{
+		Version:        1,
+		State:          markerResetting,
+		StoreNamespace: NativeNamespace,
+		Backend:        backend,
+		LocatorSHA256:  locatorDigest(backend, locator),
+		InitSHA256:     identity,
+		Retired:        retiredName,
+		KeepArtifact:   keepArtifact,
+	}
+	if err := publishMarker(root, intent, true); err != nil {
+		return backendMarker{}, errors.New("MCP custody reset could not record its intent")
+	}
+	return intent, nil
+}
+
+func resetArtifactIdentity(backend, locator, expected string, keyring Keyring, legacy bool) (string, bool, error) {
+	key, err := readArtifact(backend, locator, Options{Keyring: keyring})
+	if errors.Is(err, os.ErrNotExist) {
+		if expected != "" {
+			return expected, true, nil
+		}
+		if legacy {
+			return keyDigest(nil), true, nil
+		}
+		return "", false, errors.New("MCP custody reset refused an unproven artifact")
+	}
+	if err != nil {
+		return "", false, errors.New("MCP custody reset found an unsafe or unavailable artifact")
+	}
+	defer clear(key)
+	identity := keyDigest(key)
+	if expected != "" && identity != expected {
+		if backend == BackendKeyring {
+			return identity, true, nil
+		}
+		return expected, false, nil
+	}
+	return identity, true, nil
+}
+
+func validateNativeNamespace(root, retired string) error {
+	nativeInfo, nativeErr := os.Lstat(filepath.Join(root, credentialstore.NamespacePhysicalName(NativeNamespace)))
+	retiredInfo, retiredErr := os.Lstat(retired)
+	return validateRetiredNamespaceState(nativeInfo, nativeErr, retiredInfo, retiredErr)
+}
+
+// readResetMarker reads the raw marker file and classifies it as a current
+// marker (pending, ready, or resetting) or the exact legacy prototype shape.
+func readResetMarker(root string) (backendMarker, bool, []byte, error) {
+	raw, err := readPrivateFile(filepath.Join(root, markerName), maxMarkerBytes)
+	if err != nil {
+		return backendMarker{}, false, nil, err
+	}
+	if marker, err := decodeMarker(raw); err == nil {
+		return marker, false, raw, nil
+	}
+	if marker, err := decodeLegacyMarker(raw); err == nil {
+		return marker, true, raw, nil
+	}
+	return backendMarker{}, false, nil, errInvalidMarker
+}
+
+// decodeStrictJSON decodes raw into v, rejecting unknown fields and any
+// trailing content.
+func decodeStrictJSON(raw []byte, v any) bool {
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.DisallowUnknownFields()
+	var extra any
+	return dec.Decode(v) == nil && dec.Decode(&extra) == io.EOF
+}
+
+// isHexSHA256 reports whether s is exactly a lowercase- or uppercase-safe
+// hex-encoded SHA-256 digest.
+func isHexSHA256(s string) bool {
+	if len(s) != sha256.Size*2 {
+		return false
+	}
+	_, err := hex.DecodeString(s)
+	return err == nil
+}
+
+func decodeMarker(raw []byte) (backendMarker, error) {
+	var marker backendMarker
+	if !decodeStrictJSON(raw, &marker) {
+		return backendMarker{}, errInvalidMarker
+	}
+	if marker.Version != 1 || marker.StoreNamespace != NativeNamespace || (marker.Backend != BackendKeyring && marker.Backend != BackendFile) || !isHexSHA256(marker.LocatorSHA256) {
+		return backendMarker{}, errInvalidMarker
+	}
+	switch marker.State {
+	case markerPending, markerReady:
+		if marker.Retired != "" || marker.KeepArtifact || !isHexSHA256(marker.InitSHA256) {
+			return backendMarker{}, errInvalidMarker
+		}
+	case markerResetting:
+		if !isHexSHA256(marker.InitSHA256) || !isValidRetiredName(marker.Retired) {
+			return backendMarker{}, errInvalidMarker
+		}
+	default:
+		return backendMarker{}, errInvalidMarker
+	}
+	return marker, nil
+}
+
+// legacyMarker is the exact three-field prototype marker shape from before
+// namespace separation and pending/ready recovery existed.
+type legacyMarker struct {
+	Version int    `json:"version"`
+	Backend string `json:"backend"`
+	Locator string `json:"locator_sha256"`
+}
+
+func decodeLegacyMarker(raw []byte) (backendMarker, error) {
+	var old legacyMarker
+	if !decodeStrictJSON(raw, &old) {
+		return backendMarker{}, errInvalidMarker
+	}
+	if old.Version != 1 || (old.Backend != BackendKeyring && old.Backend != BackendFile) || !isHexSHA256(old.Locator) {
+		return backendMarker{}, errInvalidMarker
+	}
+	return backendMarker{Version: 1, Backend: old.Backend, LocatorSHA256: old.Locator}, nil
+}
+
+func legacyLocatorDigest(locator string) string {
+	digest := sha256.Sum256([]byte(locator))
+	return hex.EncodeToString(digest[:])
+}
+
+// retiredNamespacePrefix is the fixed, non-secret prefix every retired
+// native namespace directory name starts with.
+func retiredNamespacePrefix() string {
+	return credentialstore.NamespacePhysicalName(NativeNamespace) + ".reset-"
+}
+
+// newRetiredNamespaceName derives the retired directory name from the
+// marker bytes being retired, so concurrent or repeated resets of
+// differently-shaped markers cannot collide.
+func newRetiredNamespaceName(seed []byte) string {
+	digest := sha256.Sum256(seed)
+	return retiredNamespacePrefix() + hex.EncodeToString(digest[:8])
+}
+
+// isValidRetiredName reports whether name is exactly one retired-namespace
+// directory name: the fixed prefix plus a 16-hex-digit suffix, one path
+// component, so a marker can never point a mutating step outside the root.
+func isValidRetiredName(name string) bool {
+	suffix, ok := strings.CutPrefix(name, retiredNamespacePrefix())
+	if !ok || len(suffix) != 16 {
+		return false
+	}
+	for _, b := range []byte(suffix) {
+		if (b < '0' || b > '9') && (b < 'a' || b > 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+// isPrivateDir reports whether info describes an owner-only, non-symlink
+// directory. It is the single source of truth for the retired/native custody
+// safety check; callers must not re-derive it.
+func isPrivateDir(info os.FileInfo) bool {
+	return info != nil && info.Mode()&os.ModeSymlink == 0 && info.IsDir() && info.Mode().Perm() == 0o700
+}
+
+// retireNativeNamespace renames the native namespace directory to retired.
+// Both a fresh rename and a resumed reset are handled: a missing native
+// directory with an existing retired one is treated as already done.
+func retireNativeNamespace(root, retired string) error {
+	native := filepath.Join(root, credentialstore.NamespacePhysicalName(NativeNamespace))
+	nativeInfo, nativeErr := os.Lstat(native)
+	retiredInfo, retiredErr := os.Lstat(retired)
+	if err := validateRetiredNamespaceState(nativeInfo, nativeErr, retiredInfo, retiredErr); err != nil {
+		return err
+	}
+	dir, err := unix.Open(root, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return errors.New("MCP custody reset could not inspect the custody root")
+	}
+	defer func() { _ = unix.Close(dir) }()
+	if nativeErr == nil {
+		if err := unix.Renameat(dir, filepath.Base(native), dir, filepath.Base(retired)); err != nil {
+			return errors.New("MCP custody reset could not retire native custody")
+		}
+		return unix.Fsync(dir)
+	}
+	return ensureRetiredNamespace(dir, filepath.Base(retired), retiredInfo)
+}
+
+func validateRetiredNamespaceState(nativeInfo os.FileInfo, nativeErr error, retiredInfo os.FileInfo, retiredErr error) error {
+	if nativeErr == nil && retiredErr == nil {
+		return errors.New("MCP custody reset found conflicting retired custody")
+	}
+	if nativeErr != nil && !errors.Is(nativeErr, os.ErrNotExist) {
+		return errors.New("MCP custody reset could not inspect native custody")
+	}
+	if retiredErr != nil && !errors.Is(retiredErr, os.ErrNotExist) {
+		return errors.New("MCP custody reset could not inspect retired custody")
+	}
+	if nativeErr == nil && !isPrivateDir(nativeInfo) {
+		return errors.New("MCP custody reset found unsafe native custody")
+	}
+	if retiredErr == nil && !isPrivateDir(retiredInfo) {
+		return errors.New("MCP custody reset found unsafe retired custody")
+	}
+	return nil
+}
+
+// ensureRetiredNamespace records retired as existing under the already-open,
+// no-follow root directory fd, so the mutating step never re-resolves a bare
+// path an attacker could have swapped after the caller's safety check.
+func ensureRetiredNamespace(dir int, retired string, info os.FileInfo) error {
+	if info == nil {
+		if err := unix.Mkdirat(dir, retired, 0o700); err != nil && !errors.Is(err, unix.EEXIST) {
+			return errors.New("MCP custody reset could not record retired custody")
+		}
+	}
+	return unix.Fsync(dir)
+}
+
+func deleteArtifact(backend, locator string, keyring Keyring) error {
+	if backend == BackendKeyring {
+		err := keyring.Delete(keyringService, locator)
+		if err != nil && !errors.Is(err, keyringapi.ErrNotFound) {
+			return errors.New("MCP custody reset could not remove the keyring artifact")
+		}
+		return nil
+	}
+	dir, err := unix.Open(filepath.Dir(locator), unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	if errors.Is(err, unix.ENOENT) {
+		// A previous attempt may have retired a namespace that contained the key.
+		return nil
+	}
+	if err != nil {
+		return errors.New("MCP custody reset could not inspect the file artifact directory")
+	}
+	defer func() { _ = unix.Close(dir) }()
+	if err := unlinkPrivateFile(dir, filepath.Base(locator)); err != nil {
+		return errors.New("MCP custody reset could not remove the file artifact")
+	}
+	return nil
+}
+
+func removeMarker(root string) error {
+	dir, err := unix.Open(root, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = unix.Close(dir) }()
+	return unlinkPrivateFile(dir, markerName)
+}
+
+// unlinkPrivateFile removes name from the already-open, no-follow directory
+// dir after verifying it is a private (owner-only, single-link, regular)
+// file, then fsyncs the directory. A missing file counts as already
+// removed, so every caller is safe to repeat.
+func unlinkPrivateFile(dir int, name string) error {
+	return unlinkPrivateFileWithSync(dir, name, unix.Fsync)
+}
+
+func unlinkPrivateFileWithSync(dir int, name string, syncDir func(int) error) error {
+	fd, err := unix.Openat(dir, name, unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	if errors.Is(err, unix.ENOENT) {
+		return syncDir(dir)
+	}
+	if err != nil || verifyPrivateFD(fd) != nil {
+		if fd >= 0 {
+			_ = unix.Close(fd)
+		}
+		return errors.New("found an unsafe file")
+	}
+	_ = unix.Close(fd)
+	if err := unix.Unlinkat(dir, name, 0); err != nil && !errors.Is(err, unix.ENOENT) {
+		return errors.New("could not remove file")
+	}
+	return syncDir(dir)
 }
 
 type osKeyring struct{}

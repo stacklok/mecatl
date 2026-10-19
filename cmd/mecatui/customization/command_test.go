@@ -251,7 +251,7 @@ func TestStatusLineCommandDoesNotTrimNonASCIIOutputBoundary(t *testing.T) {
 	}
 }
 
-func TestADR_0296_StatusInputProtocolV4WorkspacePathNameAndContext(t *testing.T) {
+func TestStatusInputProtocolV5WorkspacePathNameAndContext(t *testing.T) {
 	input := Input{
 		Version: ProtocolVersion,
 		Context: Context{
@@ -261,6 +261,7 @@ func TestADR_0296_StatusInputProtocolV4WorkspacePathNameAndContext(t *testing.T)
 			Known:     true,
 			Estimated: true,
 		},
+		Model:     Model{ProviderID: "openai", ID: "gpt-5", ProviderLabel: "openai/gpt-5", FriendlyName: "GPT-5"},
 		Workspace: Workspace{Location: "local", Name: "provider label", Path: "/eligible/root"},
 		Terminal:  Terminal{FooterAvailCols: 80},
 	}
@@ -268,8 +269,8 @@ func TestADR_0296_StatusInputProtocolV4WorkspacePathNameAndContext(t *testing.T)
 	if err != nil {
 		t.Fatalf("marshal status input: %v", err)
 	}
-	if ProtocolVersion != 4 || !strings.Contains(string(wire), `"Name":"provider label"`) || !strings.Contains(string(wire), `"Path":"/eligible/root"`) || !strings.Contains(string(wire), `"Context":{"Used":{"Raw":75,"Human":"75"},"Window":{"Raw":100,"Human":"100"},"Percent":75,"Known":true,"Estimated":true}`) || strings.Contains(string(wire), "Basename") {
-		t.Fatalf("status input v4 workspace/context projection = %s", wire)
+	if ProtocolVersion != 5 || !strings.Contains(string(wire), `"Model":{"ProviderID":"openai","ID":"gpt-5","ProviderLabel":"openai/gpt-5","FriendlyName":"GPT-5","Route":""`) || strings.Contains(string(wire), "DisplayName") || !strings.Contains(string(wire), `"Name":"provider label"`) || !strings.Contains(string(wire), `"Path":"/eligible/root"`) || !strings.Contains(string(wire), `"Context":{"Used":{"Raw":75,"Human":"75"},"Window":{"Raw":100,"Human":"100"},"Percent":75,"Known":true,"Estimated":true}`) || strings.Contains(string(wire), "Basename") {
+		t.Fatalf("status input v5 workspace/context projection = %s", wire)
 	}
 	templates := NewTemplateSource(TemplateSet{Footer: SurfaceTemplates{Full: `<footer><text>[{{.Workspace.Path}}]</text></footer>`}}, 0)
 	t.Cleanup(func() { _ = templates.Close(context.Background()) })
@@ -287,7 +288,7 @@ func TestADR_0296_StatusInputProtocolV4WorkspacePathNameAndContext(t *testing.T)
 	}
 }
 
-func TestADR_0296_StatusCommandReceivesRootInInputAndCWD(t *testing.T) {
+func TestStatusCommandReceivesRootInInputAndCWD(t *testing.T) {
 	launch, workspace := t.TempDir(), t.TempDir()
 	physicalWorkspace := physicalPath(t, workspace)
 	expected := filepath.Join(launch, "expected-cwd")
@@ -324,7 +325,7 @@ func TestADR_0296_StatusCommandReceivesRootInInputAndCWD(t *testing.T) {
 	}
 }
 
-func TestADR_0296_StatusCommandUsesHelperParentWhenContextUnavailable(t *testing.T) {
+func TestStatusCommandUsesHelperParentWhenContextUnavailable(t *testing.T) {
 	command := Command{Path: "/opt/helpers/../bin/mecatui-status", LaunchDir: "/launch/fallback"}
 	if got, want := commandCWD(command, Input{}), "/opt/bin"; got != want {
 		t.Fatalf("command CWD = %q, want helper parent %q", got, want)

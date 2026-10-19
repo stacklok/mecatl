@@ -72,13 +72,13 @@ type scheduleFireRecord struct {
 
 // scheduleStore is a file-backed port.ScheduleStore sharing the parent *Store's
 // dir + single-process mutex. It is the single-host production schedule
-// backend (scheduled-tasks issue #189, Phase 1d): the SAME logic as
+// backend (scheduled-tasks issue #189): the SAME logic as
 // memschedulestore with file persistence. The mutex is the at-most-once fence
 // for the Claim race — this is SINGLE-HOST ONLY (the same scope as the flock
 // lease): two replicas pointing at the same dir have NO cross-process fence and
 // MUST instead run a leader lease (port.SessionLease on
 // port.SchedulerLeaderLeaseID) so at most one replica ticks. The redis backend
-// (a SEPARATE follow-up) is the multi-host fence.
+// (redisstore) is the multi-host fence.
 //
 // It is parser-free (Claim's nextFire is caller-computed) and misfire-free
 // (Due does not read ScheduleSpec.Misfire) — the same discipline as the
@@ -92,7 +92,7 @@ type scheduleStore struct {
 var _ port.ScheduleStore = (*scheduleStore)(nil)
 
 // compile-time assertion that scheduleStore satisfies the OPTIONAL
-// ScheduleOneShotReArmer seam (ADR 0059 Phase 2).
+// ScheduleOneShotReArmer seam.
 var _ port.ScheduleOneShotReArmer = (*scheduleStore)(nil)
 
 // compile-time assertion that scheduleStore satisfies the OPTIONAL
@@ -335,7 +335,7 @@ func (s *scheduleStore) Claim(_ context.Context, name string, now, nextFire time
 	st := rec.Schedule.State
 	spec := rec.Schedule.Spec
 	// Re-check the at-most-once fence: the slot must STILL be due at claim time.
-	if !st.Enabled || st.DeletionID != "" {
+	if !st.Enabled || st.DeletionID != "" || st.LastFireSessionID == port.PendingFireSessionID || !st.LastFireStartedAt.IsZero() {
 		return port.Schedule{}, ErrScheduleNotFound
 	}
 	if st.NextFireAt.IsZero() || st.NextFireAt.After(now) {
@@ -382,7 +382,7 @@ func (s *scheduleStore) ClaimNow(_ context.Context, name string, now, nextFire t
 	}
 	st := rec.Schedule.State
 	spec := rec.Schedule.Spec
-	if !st.Enabled || st.DeletionID != "" {
+	if !st.Enabled || st.DeletionID != "" || st.LastFireSessionID == port.PendingFireSessionID || !st.LastFireStartedAt.IsZero() {
 		return port.Schedule{}, ErrScheduleNotFound
 	}
 	if spec.MaxFires > 0 && st.FireCount >= spec.MaxFires {
@@ -532,13 +532,14 @@ func (s *scheduleStore) RecordFire(_ context.Context, f port.ScheduleFire) error
 	if err != nil {
 		return err
 	}
-	rec.Schedule.State.LastFireSessionID = f.SessionID
-	// Clear the in-flight fields: a terminal fire has no in-flight run.
-	rec.Schedule.State.LastFireStartedAt = time.Time{}
-	rec.Schedule.State.LastFireProgressAt = time.Time{}
-	rec.Schedule.State.FireDeadline = time.Time{}
-	if err := s.writeScheduleLocked(f.ScheduleName, rec); err != nil {
-		return err
+	if rec.Schedule.State.LastFireAt.IsZero() || rec.Schedule.State.LastFireAt.Equal(f.FiredAt) {
+		rec.Schedule.State.LastFireSessionID = f.SessionID
+		rec.Schedule.State.LastFireStartedAt = time.Time{}
+		rec.Schedule.State.LastFireProgressAt = time.Time{}
+		rec.Schedule.State.FireDeadline = time.Time{}
+		if err := s.writeScheduleLocked(f.ScheduleName, rec); err != nil {
+			return err
+		}
 	}
 	return s.writeFireLocked(f)
 }
@@ -560,6 +561,10 @@ func (s *scheduleStore) LoadFire(_ context.Context, fireID string) (port.Schedul
 func (s *scheduleStore) ListFires(_ context.Context, scheduleName string) ([]port.ScheduleFire, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.listFiresLocked(scheduleName)
+}
+
+func (s *scheduleStore) listFiresLocked(scheduleName string) ([]port.ScheduleFire, error) {
 	// The schedule must exist (the not-found-for-the-schedule contract).
 	if _, err := s.loadLocked(scheduleName); err != nil {
 		return nil, err
@@ -740,12 +745,39 @@ func cloneSpec(spec port.ScheduleSpec) port.ScheduleSpec {
 	return out
 }
 
-// ReArmOneShot is the at-least-once re-arm primitive for a one-shot schedule
-// (ADR 0059 Phase 2). It atomically (under the shared mutex): re-enables the
-// schedule (Enabled=true), sets NextFireAt to nextFire, and increments
-// OneShotRetryCount, then writes the record atomically (temp file + rename). The
-// not-found case wraps ErrScheduleNotFound. The retry-budget gate is the CALLER's
-// responsibility. One-shot-only.
+// loadOneShotRetryFireLocked reads retry history strictly: unlike ListFires, an
+// unreadable record must not make a one-shot failure look retryable.
+func (s *scheduleStore) loadOneShotRetryFireLocked(scheduleName string, sched port.Schedule) (port.ScheduleFire, error) {
+	entries, err := os.ReadDir(s.dir)
+	if err != nil {
+		return port.ScheduleFire{}, fmt.Errorf("jsonlstore: list fires dir: %w", err)
+	}
+	var failed port.ScheduleFire
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasPrefix(entry.Name(), scheduleFirePrefix) || !strings.HasSuffix(entry.Name(), scheduleSuffix) {
+			continue
+		}
+		rec, err := readScheduleFireFile(filepath.Join(s.dir, entry.Name()))
+		if err != nil {
+			return port.ScheduleFire{}, err
+		}
+		fire := rec.Fire
+		if fire.ScheduleName != scheduleName || !fire.FiredAt.Equal(sched.State.LastFireAt) || fire.SessionID != sched.State.LastFireSessionID {
+			continue
+		}
+		if fire.Stop != session.StopError {
+			return port.ScheduleFire{}, ErrScheduleNotFound
+		}
+		failed = fire
+	}
+	if failed.ID == "" {
+		return port.ScheduleFire{}, ErrScheduleNotFound
+	}
+	return failed, nil
+}
+
+// ReArmOneShot validates current retry eligibility under the shared mutex before
+// atomically writing the re-enabled schedule and incremented retry count.
 func (s *scheduleStore) ReArmOneShot(_ context.Context, name string, nextFire time.Time) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -755,6 +787,15 @@ func (s *scheduleStore) ReArmOneShot(_ context.Context, name string, nextFire ti
 	}
 	if rec.Schedule.State.DeletionID != "" {
 		return fmt.Errorf("jsonlstore: %w", port.ErrScheduleDeleting)
+	}
+	sched := rec.Schedule
+	if sched.Spec.Trigger.Kind() != port.TriggerOneShot || !sched.Spec.OneShotRetry ||
+		sched.State.Enabled || sched.State.OneShotRetryCount >= sched.Spec.OneShotMaxRetries ||
+		sched.State.LastFireAt.IsZero() || sched.State.LastFireSessionID == port.PendingFireSessionID || !sched.State.LastFireStartedAt.IsZero() {
+		return ErrScheduleNotFound
+	}
+	if _, err := s.loadOneShotRetryFireLocked(name, sched); err != nil {
+		return err
 	}
 	rec.Schedule.State.Enabled = true
 	rec.Schedule.State.NextFireAt = nextFire

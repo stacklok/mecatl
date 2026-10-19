@@ -169,7 +169,7 @@ func (g *startThenReleaseTool) Execute(ctx context.Context, in session.ToolCall,
 
 // shellCatalogFor builds the main-engine catalog for these tests: the agent
 // ShellTool + the ShellStatus companion. (The runner is bound to the Environment
-// at Execute time now — issue #462 — so the catalog no longer captures it.)
+// at Execute time — issue #462 — so the catalog does not capture it.)
 func shellCatalogFor(t *testing.T, extra ...tool.Tool) *tool.Catalog {
 	t.Helper()
 	tools := append([]tool.Tool{agent.NewShellTool(), agent.NewShellStatusTool()}, extra...)

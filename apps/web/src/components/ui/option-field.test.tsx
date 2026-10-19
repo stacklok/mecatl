@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 // @vitest-environment happy-dom
 
+import { getRuntimeOptions } from "@mecatl-studio/contracts/query";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { InterfaceSettings } from "../../features/settings/interface-settings";
@@ -22,6 +24,21 @@ function ThemePicker() {
       options={choices}
       value={theme.theme}
     />
+  );
+}
+
+function renderSettings(steer?: boolean) {
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false, staleTime: Infinity } },
+  });
+  queryClient.setQueryData(getRuntimeOptions().queryKey, {
+    capabilities: { image: false, posture: "managed", ...(steer === undefined ? {} : { steer }) },
+    connection: "online",
+  } as never);
+  return render(
+    <QueryClientProvider client={queryClient}>
+      <InterfaceSettings />
+    </QueryClientProvider>,
   );
 }
 
@@ -128,7 +145,7 @@ describe("OptionField", () => {
 
   it("keeps theme and palette selection independent in Appearance", async () => {
     setWidth(500);
-    render(<InterfaceSettings />);
+    renderSettings();
     fireEvent.keyDown(screen.getByRole("button", { name: "Theme: Light" }), { key: "ArrowDown" });
     fireEvent.click(await screen.findByRole("menuitemradio", { name: /Dark/ }));
     await waitFor(() => expect(screen.getByRole("button", { name: "Theme: Dark" })).toBeTruthy());
@@ -144,5 +161,25 @@ describe("OptionField", () => {
     expect(screen.getByRole("button", { name: "Theme: Dark" })).toBeTruthy();
     expect(appearanceStore.getSnapshot()).toMatchObject({ theme: "dark", palette: "solar" });
     expect(document.documentElement.dataset.palette).toBe("solar");
+  });
+  it("offers Steer agent unless the daemon cannot steer", async () => {
+    setWidth(500);
+    renderSettings(true);
+    fireEvent.keyDown(screen.getByRole("button", { name: /Messages while the agent works/ }), {
+      key: "ArrowDown",
+    });
+    expect(await screen.findByRole("menuitemradio", { name: /Steer agent/ })).toBeTruthy();
+  });
+
+  it("hides Steer agent and shows Queue for a stored steer, leaving storage alone", async () => {
+    setWidth(500);
+    window.localStorage.setItem("studio.chat.composer.enterToSend", "steer");
+    renderSettings(false);
+    const trigger = screen.getByRole("button", { name: /Messages while the agent works/ });
+    expect(trigger.textContent).toContain("Queue message");
+    fireEvent.keyDown(trigger, { key: "ArrowDown" });
+    expect(await screen.findByRole("menuitemradio", { name: /Queue message/ })).toBeTruthy();
+    expect(screen.queryByRole("menuitemradio", { name: /Steer agent/ })).toBeNull();
+    expect(window.localStorage.getItem("studio.chat.composer.enterToSend")).toBe("steer");
   });
 });

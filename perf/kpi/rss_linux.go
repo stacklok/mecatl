@@ -11,8 +11,7 @@ import (
 
 // readRSS returns the process resident set size in bytes by parsing the VmRSS
 // line of /proc/self/status (a "VmRSS:\t   12345 kB" line; kB → bytes). It is a
-// zero-dependency direct read — the perf-tracking.md "Open decisions" lean over
-// pulling in gopsutil. Any read/parse failure returns 0 (the sampler treats 0 as
+// zero-dependency direct read, chosen over pulling in gopsutil. Any read/parse failure returns 0 (the sampler treats 0 as
 // "no reading" — it never inflates the peak).
 func readRSS() uint64 {
 	f, err := os.Open("/proc/self/status")

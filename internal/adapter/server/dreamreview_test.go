@@ -196,7 +196,7 @@ func TestDreamGRPCWireAndStatusMapping(t *testing.T) {
 		{ErrDreamUnavailable, codes.Unimplemented}, {ErrDreamNotFound, codes.NotFound},
 		{ErrDreamInProgress, codes.Aborted}, {ErrDreamConflict, codes.FailedPrecondition},
 		{ErrDreamTerminalConflict, codes.AlreadyExists}, {ErrDreamCapacity, codes.ResourceExhausted},
-		{ErrDreamGenerateFailed, codes.Internal}, {context.DeadlineExceeded, codes.DeadlineExceeded},
+		{ErrDreamGenerateFailed, codes.Internal}, {ErrDreamDeadline, codes.DeadlineExceeded}, {context.DeadlineExceeded, codes.DeadlineExceeded},
 		{errors.New("raw model output: secret memory"), codes.Internal},
 	}
 	for _, tc := range statusCases {

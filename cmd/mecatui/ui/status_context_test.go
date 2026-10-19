@@ -12,7 +12,7 @@ import (
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
 )
 
-func TestADR_0296_StatusContextDiscardsStaleSessionResult(t *testing.T) {
+func TestStatusContextDiscardsStaleSessionResult(t *testing.T) {
 	launch, first, second := t.TempDir(), t.TempDir(), t.TempDir()
 	source := customization.NewCommandSource(customization.Command{
 		Path: "/bin/sh", Args: []string{"-c", `read input; printf '<status><footer><text>'; pwd -P; printf '</text></footer></status>'`}, LaunchDir: launch,
@@ -46,7 +46,7 @@ func TestADR_0296_StatusContextDiscardsStaleSessionResult(t *testing.T) {
 	}
 }
 
-func TestADR_0296_StatusTemplateReceivesEligibleLocalContext(t *testing.T) {
+func TestStatusTemplateReceivesEligibleLocalContext(t *testing.T) {
 	root := t.TempDir()
 	source := customization.NewTemplateSource(customization.TemplateSet{Footer: customization.SurfaceTemplates{
 		Full: `<footer><text>{{.Workspace.Path}}</text></footer>`,
@@ -70,7 +70,7 @@ func TestADR_0296_StatusTemplateReceivesEligibleLocalContext(t *testing.T) {
 	waitStatusContextSurfaceText(t, source, root)
 }
 
-func TestADR_0296_StartupResumeReceivesEligibleLocalContext(t *testing.T) {
+func TestStartupResumeReceivesEligibleLocalContext(t *testing.T) {
 	root := t.TempDir()
 	source := customization.NewTemplateSource(customization.TemplateSet{Footer: customization.SurfaceTemplates{
 		Full: `<footer><text>{{.Workspace.Path}}</text></footer>`,
@@ -96,7 +96,7 @@ func TestADR_0296_StartupResumeReceivesEligibleLocalContext(t *testing.T) {
 	}
 }
 
-func TestADR_0296_SessionsContinuationReceivesEligibleLocalContext(t *testing.T) {
+func TestSessionsContinuationReceivesEligibleLocalContext(t *testing.T) {
 	root := t.TempDir()
 	source := customization.NewTemplateSource(customization.TemplateSet{Footer: customization.SurfaceTemplates{
 		Full: `<footer><text>{{.Workspace.Path}}</text></footer>`,
@@ -133,7 +133,7 @@ func waitStatusContextSurfaceText(t *testing.T, source customization.Source, wan
 	}
 }
 
-func TestADR_0296_StatusContextUnavailableUsesHelperParentAndNoPath(t *testing.T) {
+func TestStatusContextUnavailableUsesHelperParentAndNoPath(t *testing.T) {
 	launch := t.TempDir()
 	source := customization.NewCommandSource(customization.Command{
 		Path: "/bin/sh", Args: []string{"-c", `read input; printf '<status><footer><text>'; pwd -P; printf '</text></footer></status>'`}, LaunchDir: launch,

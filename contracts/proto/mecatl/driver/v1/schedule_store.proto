@@ -148,9 +148,15 @@ service ScheduleStoreService {
 // port.ErrScheduleUnsupported (the sticky-disable sentinel).
 service ScheduleOneShotReArmerService {
   // ReArmOneShot re-enables the named one-shot schedule, sets its NextFireAt to
-  // next_fire, and increments OneShotRetryCount — atomically. It is the re-arm
-  // primitive the tick loop calls for a crashed one-shot retry. An unknown name
-  // returns NOT_FOUND.
+  // next_fire, and increments OneShotRetryCount — atomically with CURRENT
+  // eligibility validation: disabled one-shot, retry enabled, remaining budget,
+  // no pending/started execution, and a settled StopError matching LastFireAt
+  // and LastFireSessionID (including session-less failure). Missing history is
+  // not eligible. Concurrent calls have one winner; delayed calls must not
+  // re-enable successful/live successors. A newer eligible failure may retry.
+  // Missing or ineligible records return NOT_FOUND without mutation; deletion
+  // returns FAILED_PRECONDITION. Drivers must enforce this at the mutation,
+  // not rely on a caller check. Request/response fields are unchanged.
   rpc ReArmOneShot(ReArmOneShotRequest) returns (ReArmOneShotResponse);
 }
 

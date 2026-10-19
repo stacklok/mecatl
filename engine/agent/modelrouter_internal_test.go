@@ -34,8 +34,8 @@ func markerEngine(marker string) *Engine {
 // per-call factory returns an engine returning "ROUTED:<model>" for any model — so the
 // result text reveals whether the router's model override took effect.
 func routerTool() *SubagentTool {
-	factory := func(model string) (*Engine, bool) {
-		return markerEngine("ROUTED:" + model), true
+	factory := func(target ModelTarget) (*Engine, bool) {
+		return markerEngine("ROUTED:" + target.Model), true
 	}
 	return NewSubagentTool(markerEngine("DEFAULT"),
 		WithSubagentEngineFactory(factory),
@@ -117,7 +117,7 @@ func TestRunForkDoesNotRoute(t *testing.T) {
 func TestRunNamedAgentBeatsRouter(t *testing.T) {
 	specialist := markerEngine("SPECIALIST")
 	tl := NewSubagentTool(markerEngine("DEFAULT"),
-		WithSubagentEngineFactory(func(model string) (*Engine, bool) { return markerEngine("ROUTED:" + model), true }),
+		WithSubagentEngineFactory(func(target ModelTarget) (*Engine, bool) { return markerEngine("ROUTED:" + target.Model), true }),
 		WithAgentEngines(map[string]*Engine{"reviewer": specialist},
 			[]AgentMeta{{Name: "reviewer", Description: "a specialist"}}),
 		WithPinnedAgents([]string{"reviewer"}),
@@ -154,11 +154,11 @@ func routableAgentTool(factoryOK, wireFactory bool, defLimits session.Limits) *S
 		WithRoutableAgents([]string{"reviewer"}),
 	}
 	if wireFactory {
-		opts = append(opts, WithAgentModelEngineFactory(func(agentName, model string) (*Engine, bool) {
+		opts = append(opts, WithAgentModelEngineFactory(func(agentName string, target ModelTarget) (*Engine, bool) {
 			if !factoryOK {
 				return nil, false
 			}
-			return markerEngine("AGENTMODEL:" + agentName + ":" + model), true
+			return markerEngine("AGENTMODEL:" + agentName + ":" + target.Model), true
 		}))
 	}
 	return NewSubagentTool(markerEngine("DEFAULT"), opts...).(*SubagentTool)
@@ -413,9 +413,9 @@ func TestMaybeRouteModelGateAttribution(t *testing.T) {
 	}
 	// agentModelFactory wires the agent+model factory (issue #286) so a ROUTABLE def can be
 	// rebuilt on the routed model; routable marks the named def as expressing NO model intent.
-	agentModelFactory := func() func(agentName, model string) (*Engine, bool) {
-		return func(agentName, model string) (*Engine, bool) {
-			return markerEngine("AGENTMODEL:" + agentName + ":" + model), true
+	agentModelFactory := func() func(string, ModelTarget) (*Engine, bool) {
+		return func(agentName string, target ModelTarget) (*Engine, bool) {
+			return markerEngine("AGENTMODEL:" + agentName + ":" + target.Model), true
 		}
 	}
 	cases := []struct {
@@ -574,7 +574,7 @@ func TestRoutingReasonPayloadEventSafeAllowlist(t *testing.T) {
 	}
 }
 
-func TestADR_0352_Scenario4_CanonicalOutcomeProjection(t *testing.T) {
+func TestRouterCanonicalOutcomeProjection(t *testing.T) {
 	canonical := []string{
 		RouterMissDegenerateInput,
 		RouterMissClassifierError,
@@ -714,11 +714,11 @@ func TestRunNilRouteTaskNoRouting(t *testing.T) {
 // (found=true) — so a test can tell whether a routed writable pick took effect or the call
 // fell back to the default writable explorer. found=false makes every factory call a miss.
 func writableRouterTool(found bool) *SubagentTool {
-	wf := func(model string) (*Engine, bool) {
+	wf := func(target ModelTarget) (*Engine, bool) {
 		if !found {
 			return nil, false
 		}
-		return markerEngine("WRITABLE-ROUTED:" + model), true
+		return markerEngine("WRITABLE-ROUTED:" + target.Model), true
 	}
 	return NewSubagentTool(markerEngine("READ-ONLY"),
 		WithWritableChildEngine(markerEngine("WRITABLE-DEFAULT")),
@@ -794,11 +794,11 @@ func writableRoutableAgentTool(routeFound, wireRouteFactory bool, limits session
 		}),
 	}
 	if wireRouteFactory {
-		opts = append(opts, WithAgentWritableModelEngineFactory(func(agentName, model string) (*Engine, bool) {
+		opts = append(opts, WithAgentWritableModelEngineFactory(func(agentName string, target ModelTarget) (*Engine, bool) {
 			if !routeFound {
 				return nil, false
 			}
-			return markerEngine("WRITABLE-AGENTMODEL:" + agentName + ":" + model), true
+			return markerEngine("WRITABLE-AGENTMODEL:" + agentName + ":" + target.Model), true
 		}))
 	}
 	return NewSubagentTool(markerEngine("DEFAULT"), opts...).(*SubagentTool)
@@ -895,7 +895,7 @@ func TestWritableRoutableAgentRequiresBothFactories(t *testing.T) {
 		opt  SubagentOption
 	}{
 		{"missing routed factory", WithAgentWritableEngineFactory(func(string) (*Engine, bool) { return markerEngine("WRITABLE"), true })},
-		{"missing fallback factory", WithAgentWritableModelEngineFactory(func(string, string) (*Engine, bool) { return markerEngine("ROUTED"), true })},
+		{"missing fallback factory", WithAgentWritableModelEngineFactory(func(string, ModelTarget) (*Engine, bool) { return markerEngine("ROUTED"), true })},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -994,7 +994,7 @@ func TestWritableResumeUsesWritableChildEngine(t *testing.T) {
 		WithSubagentStore(memstore.New())).(*SubagentTool)
 
 	args := subagentArgs{Prompt: "continue", Resume: "subagent-abc"}
-	engine, _, _, routed, ok := tl.resolveEngineAndLimits("p1", args, true /*resuming*/, true /*writable*/, "")
+	engine, _, _, routed, ok := tl.resolveEngineAndLimits("p1", args, true /*resuming*/, true /*writable*/, "", nil)
 	if !ok {
 		t.Fatal("a writable resume with a wired store must resolve")
 	}
@@ -1150,7 +1150,7 @@ func TestRouterBreakerSerializesConcurrentCalls(t *testing.T) {
 	}
 }
 
-// TestRouterBreakerSharedAcrossFamilies (ADR 0034): all three delegation families
+// TestRouterBreakerSharedAcrossFamilies: all three delegation families
 // (Subagent / Parallel branches / team members) route through the ONE caps.routeDecision the
 // dispatcher binds per run, so a mixed turn shares a SINGLE breaker + miss counter. Here a
 // Parallel fan-out of N branches and one Subagent-shaped call all consult the same

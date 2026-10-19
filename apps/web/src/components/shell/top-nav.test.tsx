@@ -1,41 +1,19 @@
 // SPDX-License-Identifier: Apache-2.0
 
+import type { GetAuthSessionResponse } from "@mecatl-studio/contracts/generated";
+import { getAuthSessionOptions } from "@mecatl-studio/contracts/query";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import {
+  createMemoryHistory,
+  createRootRoute,
+  createRoute,
+  createRouter,
+  RouterProvider,
+} from "@tanstack/react-router";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
+import { TooltipProvider } from "../ui/tooltip";
 import { TopNav } from "./top-nav";
-
-const router = vi.hoisted(() => ({ pathname: "/workspace/chat" }));
-
-vi.mock("@tanstack/react-router", async () => {
-  const React = await import("react");
-  return {
-    Link: ({
-      children,
-      search,
-      to,
-      ...props
-    }: React.PropsWithChildren<{ search?: unknown; to: string }>) =>
-      React.createElement("a", { ...props, href: to }, children),
-    useRouterState: ({
-      select,
-    }: {
-      select: (state: { location: { pathname: string } }) => string;
-    }) => select({ location: { pathname: router.pathname } }),
-  };
-});
-
-vi.mock("../../features/search/global-search", async () => {
-  const React = await import("react");
-  return {
-    GlobalSearch: () => React.createElement("button", { "aria-label": "Search", type: "button" }),
-  };
-});
-
-vi.mock("../ui/tooltip", () => ({
-  Tooltip: ({ children }: { children: React.ReactNode }) => children,
-  TooltipContent: () => null,
-  TooltipTrigger: ({ children }: { children: React.ReactNode }) => children,
-}));
 
 const destinations = [
   ["Chats", "/workspace/chat"],
@@ -43,6 +21,31 @@ const destinations = [
   ["Skills", "/workspace/skills"],
   ["Settings", "/workspace/settings"],
 ] as const;
+
+// The real nav and search render in a memory router; the auth session search
+// needs to render its button is seeded, so a static render makes no requests.
+async function renderNav(
+  pathname: string,
+  session: GetAuthSessionResponse = { mode: "none", status: "disabled" },
+) {
+  const client = new QueryClient();
+  client.setQueryData(getAuthSessionOptions().queryKey, session);
+  const rootRoute = createRootRoute({ component: TopNav });
+  const router = createRouter({
+    history: createMemoryHistory({ initialEntries: [pathname] }),
+    routeTree: rootRoute.addChildren(
+      destinations.map(([, path]) => createRoute({ getParentRoute: () => rootRoute, path })),
+    ),
+  });
+  await router.load();
+  return renderToStaticMarkup(
+    <QueryClientProvider client={client}>
+      <TooltipProvider>
+        <RouterProvider router={router} />
+      </TooltipProvider>
+    </QueryClientProvider>,
+  );
+}
 
 function links(markup: string) {
   return [...markup.matchAll(/<a\b[^>]*>[\s\S]*?<\/a>/g)].map(([html]) => ({
@@ -53,10 +56,9 @@ function links(markup: string) {
 }
 
 describe("TopNav", () => {
-  it("keeps four destinations accessible at desktop and mobile widths", () => {
+  it("keeps four destinations accessible at desktop and mobile widths", async () => {
     for (const [, pathname] of destinations) {
-      router.pathname = pathname;
-      const markup = renderToStaticMarkup(<TopNav />);
+      const markup = await renderNav(pathname);
       const rendered = links(markup);
       expect(rendered[0]).toMatchObject({ href: "/workspace/chat" });
       expect(rendered[0]?.html).not.toContain("sessionId=");
@@ -76,5 +78,12 @@ describe("TopNav", () => {
       expect(markup).toContain("[&amp;&gt;button]:min-w-11");
       expect(markup).not.toContain("min-[500px]:w-[214px]");
     }
+  });
+
+  it("collapses the empty search slot when signed out so the nav stays flush right", async () => {
+    const markup = await renderNav("/workspace/chat", { mode: "oidc", status: "anonymous" });
+    expect(markup).not.toContain('aria-label="Search"');
+    // The slot is rendered with no children, so `empty:hidden` removes it from layout.
+    expect(markup).toMatch(/<div class="[^"]*\bempty:hidden\b[^"]*"><\/div>/);
   });
 });

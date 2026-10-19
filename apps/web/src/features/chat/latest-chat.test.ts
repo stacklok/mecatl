@@ -6,10 +6,26 @@ import { formatRelativeTime, pickLatestEligibleChat } from "./latest-chat";
 
 function row(id: string, over: Partial<SessionSummaryResponse> = {}): SessionSummaryResponse {
   return {
-    capabilities: { delete: true, deleteReason: "", rename: true, renameReason: "" },
+    capabilities: {
+      copyId: true,
+      copyIdReason: "",
+      delete: true,
+      deleteReason: "",
+      fork: true,
+      forkReason: "",
+      inspect: true,
+      inspectReason: "",
+      publicChat: true,
+      publicChatReason: "",
+      rename: true,
+      renameReason: "",
+      viewTranscript: true,
+      viewTranscriptReason: "",
+    },
     createdAt: "2026-01-01T00:00:00.000Z",
     debugTargetSessionId: "",
     id,
+    kind: "main",
     modelId: "test-model",
     state: "completed",
     title: `Chat ${id}`,
@@ -55,6 +71,25 @@ describe("pickLatestEligibleChat", () => {
         row("thread", { updatedAt: "2026-01-05T00:00:00.000Z" }),
       ],
       new Set(["thread"]),
+    );
+    expect(picked?.id).toBe("chat");
+  });
+
+  it("does not offer inspect-only sessions as chats to continue", () => {
+    const picked = pickLatestEligibleChat(
+      [
+        row("chat", { updatedAt: "2026-01-01T00:00:00.000Z" }),
+        row("inspect", {
+          capabilities: {
+            ...row("inspect").capabilities,
+            publicChat: false,
+            publicChatReason: "inspect_only_kind",
+          },
+          kind: "child",
+          updatedAt: "2026-01-05T00:00:00.000Z",
+        }),
+      ],
+      none,
     );
     expect(picked?.id).toBe("chat");
   });

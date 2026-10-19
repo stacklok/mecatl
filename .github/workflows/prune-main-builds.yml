@@ -1,0 +1,77 @@
+# Prunes old continuous main builds (continuous.yml) from GHCR. Only the four
+# main/ packages are touched; release images and charts are never named here.
+#
+# Retention per package: every build younger than 7 days, plus the newest
+# older ones (20 charts, 30 images). Only version tags (*-main.*) count toward
+# that number: ko also tags each platform image's SBOM (sha256-<digest>.sbom),
+# which would otherwise take two of every three mecak8s slots. Images keep more
+# than charts, so every kept chart resolves its digest-pinned images unless more
+# than 10 older runs failed between pushing an image and pushing the charts. A
+# follower that tracks the newest chart never runs a pruned build; one more than
+# 7 days and 20 builds behind loses its images.
+#
+# ghcr-cleanup-action deletes an image together with its platform manifests and
+# its signature, SBOM, and attestation artifacts, whether a sha256-<digest> tag
+# or an OCI referrer links them. A kept build's artifacts are never deletion
+# candidates. Untagged leftovers of failed runs are removed once they pass the
+# same age; orphaned artifacts, such as a deleted image's per-platform SBOMs,
+# are removed whenever a run finds them. A package that doesn't exist or that
+# this repository can't access fails its job. Deleting a version needs the Admin
+# role on the package, which the publishing repository holds for packages its
+# GITHUB_TOKEN created.
+name: Prune main builds
+
+on:
+  schedule:
+    # Daily, off-peak UTC; the action's manifest cache expires after 7 idle days.
+    - cron: '41 4 * * *'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Log what would be deleted without deleting it'
+        required: false
+        type: boolean
+        default: true
+
+permissions: {}
+
+# Never prune one package from two runs at once.
+concurrency:
+  group: prune-main-builds
+  cancel-in-progress: false
+
+jobs:
+  prune:
+    # Only main's copy prunes, so a dispatch from another branch can't delete
+    # with edited packages or keep counts.
+    if: github.repository == 'stacklok/mecatl' && github.ref == 'refs/heads/main'
+    name: Prune ${{ matrix.package }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      packages: write # list and delete package versions
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {package: mecatl/main/mecak8s, keep: 30}
+          - {package: mecatl/main/studio, keep: 30}
+          - {package: mecatl/main/charts/mecak8s, keep: 20}
+          - {package: mecatl/main/charts/mecatl-studio, keep: 20}
+    steps:
+      - name: Prune old versions
+        uses: dataaxiom/ghcr-cleanup-action@d52806a0dc70b430571a37da1fde39733ffd640f # v1.2.2
+        with:
+          token: ${{ github.token }}
+          owner: ${{ github.repository_owner }}
+          package: ${{ matrix.package }}
+          older-than: 7 days
+          # Images are tagged v<version> and charts <version>, both *-main.*.
+          delete-tags: '*-main.*'
+          keep-n-tagged: ${{ matrix.keep }}
+          delete-untagged: true
+          delete-orphaned-images: true
+          # Advisory only: rechecks the package after deleting and warns.
+          validate: true
+          # Scheduled runs delete; a manual run defaults to a dry run.
+          dry-run: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}

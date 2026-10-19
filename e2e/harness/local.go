@@ -61,7 +61,7 @@ type Local struct {
 	// stateRoot is the scratch root whose --store-dir / --memory-dir / --workspace
 	// this spawn uses. It is Root for an ordinary spawn, and the PRIOR Local's Root
 	// for a shared-store second spawn (NewLocalSharingStore): the restart leg of
-	// the cloud-native Phase 2 scenario needs a second mecated reading the first's
+	// the approve-after-kill scenario needs a second mecated reading the first's
 	// durable store. Home/XDG/artifacts always live under this spawn's own Root.
 	stateRoot string
 
@@ -94,13 +94,13 @@ func NewLocalWith(extraArgs ...string) (*Local, error) {
 // NewLocalSharingStore spawns a SECOND mecated whose --store-dir / --memory-dir /
 // --workspace point at an EXISTING (prior) Local's state tree, while keeping its
 // OWN home/XDG/artifacts under a fresh scratch root. It is the restart leg of the
-// cloud-native Phase 2 scenario: after prior.Kill() (a SIGKILL that leaves the
+// approve-after-kill scenario: after prior.Kill() (a SIGKILL that leaves the
 // store on disk), this spawn reads the prior's durable awaiting snapshot and can
 // resume it. Extra mecated flags append last, exactly like NewLocalWith.
 //
 // Normally the prior MUST already be dead (Kill) before this is called — two
 // live mecateds over the same JSONL store would race writes. The single
-// exception is a deployment that wires a session lease (cloud-native Phase 4):
+// exception is a deployment that wires a session lease:
 // then two live spawns over one store are SAFE precisely because the lease
 // enforces single-writer (the lease-exclusion spec relies on this). The caller
 // owns Close on the returned Local.
@@ -359,7 +359,7 @@ func (l *Local) waitReady(timeout time.Duration) error {
 // in CI, when ports are allocated one-at-a-time with a close between calls).
 // The bind→read→close→hand-to-daemon window is still racy in principle against
 // OTHER processes (loopback-private, and FlakeAttempts covers the rare case),
-// but it can no longer collide a single daemon's own ports against each other.
+// but it cannot collide a single daemon's own ports against each other.
 func freePorts(n int) ([]int, error) {
 	lns := make([]net.Listener, 0, n)
 	defer func() {
@@ -453,7 +453,7 @@ func (l *Local) LogTail(n int) string {
 
 // Kill SIGKILLs the daemon and reaps it (waits on the spawn-time exit channel),
 // WITHOUT tearing the state tree down — it is the "disposable process" death the
-// cloud-native Phase 2 restart leg needs: a SECOND mecated (NewLocalSharingStore)
+// approve-after-kill restart leg needs: a SECOND mecated (NewLocalSharingStore)
 // reads this one's durable store after it dies. Unlike Close it does NOT
 // SIGTERM-first (no graceful drain — a real abrupt death) and leaves the scratch
 // tree fully intact (the store + the awaiting snapshot must survive).

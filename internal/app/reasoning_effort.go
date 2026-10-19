@@ -7,7 +7,7 @@ import (
 	"github.com/stacklok/mecatl/engine/port"
 )
 
-// The NEUTRAL reasoning-effort vocabulary (ADR 0055). It is a COMPOSITION-level
+// The NEUTRAL reasoning-effort vocabulary. It is a COMPOSITION-level
 // string vocabulary, deliberately NOT a port enum: the loop never branches on it,
 // the engine/api surface stays clean, and the per-provider adapter maps the
 // neutral token to its own SDK enum. "auto" / "" mean UNSET — do not send a
@@ -33,7 +33,7 @@ var validReasoningEfforts = map[string]struct{}{
 }
 
 // NormalizeReasoningEffort validates and canonicalises a reasoning-effort token
-// against the neutral vocabulary (ADR 0055). It trims + lowercases, treats "auto"
+// against the neutral vocabulary. It trims + lowercases, treats "auto"
 // and "" as UNSET (returns "", true), and returns ("", false) for any token
 // outside the closed set — the caller treats false as "unset + WARN" (fail-soft:
 // an unknown token must never produce a 400-causing wire param). It is the SINGLE
@@ -80,7 +80,7 @@ func clampEffortForProvider(providerID, effort string) (string, bool) {
 }
 
 // operatorDefaultEffortFor normalises + per-provider-clamps the OPERATOR-DEFAULT
-// reasoning effort the registry bakes into a provider's shared adapter (ADR 0055),
+// reasoning effort the registry bakes into a provider's shared adapter,
 // and NARRATES a clamp via cfg.diag() naming BOTH the requested and clamped-to
 // values — so an operator who runs `--reasoning-effort max` against OpenAI sees the
 // promised "(with a WARN)" downgrade at startup, not only silently in the
@@ -95,6 +95,36 @@ func operatorDefaultEffortFor(cfg Config, providerID string) string {
 			"provider", providerID, "requested", norm, "clamped_to", clamped)
 	}
 	return clamped
+}
+
+// sessionProviderOptions applies the same effort/capability contract to ordinary
+// and agent-bound roots. Utility reviewers keep the original provider.
+func sessionProviderOptions(ctx context.Context, cfg Config, reg *providerRegistry, provider port.LLMProvider, providerID, model, requestedEffort string) (port.LLMProvider, string, port.ProviderCapabilities) {
+	effort := resolveSessionEffort(ctx, cfg, requestedEffort)
+	effort, clamped := clampEffortForProvider(providerID, effort)
+	if clamped {
+		cfg.diag().Log(ctx, port.LevelWarn,
+			"reasoning-effort: clamped for provider (this provider supports low/medium/high only)",
+			"provider", providerID, "effort", effort)
+	}
+	if effort != "" {
+		if supported, known := modelReasoningSupport(reg, providerID, model); known && !supported {
+			cfg.diag().Log(ctx, port.LevelWarn,
+				"reasoning-effort: model does not support reasoning effort; ignoring",
+				"provider", providerID, "model", model, "effort", effort)
+			effort = ""
+		}
+	}
+	caps := modelCapability(reg, providerID, model)
+	if entry, ok := reg.Lookup(providerID); ok && entry.remint != nil {
+		entryEffort, _ := NormalizeReasoningEffort(cfg.ReasoningEffort)
+		entryEffort, _ = clampEffortForProvider(providerID, entryEffort)
+		capsDiff := entry.defaultCaps != caps && entry.defaultCaps != (port.ProviderCapabilities{})
+		if effort != entryEffort || capsDiff {
+			provider = entry.remint(effort, caps)
+		}
+	}
+	return provider, effort, caps
 }
 
 // resolveSessionEffort resolves the EFFECTIVE reasoning effort for a session:

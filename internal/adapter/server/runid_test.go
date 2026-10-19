@@ -91,16 +91,16 @@ func TestSDKServerEnablers_Scenario4_EveryRunEventCarriesOneID(t *testing.T) {
 	}
 }
 
-// TestADR_0249_LoopStampsEveryEmittedEvent is AC4.3.
+// TestLoopStampsEveryEmittedEvent is AC4.3.
 //
 // The stamp lives at Run.emit/emitOrAbort, so it is structural: no relay,
 // transport, or persistence path can omit it, because there is no path that does
 // not go through those two functions.
 //
 // The negative half matters just as much — a run with no supplied id emits an
-// empty one, byte-identical to the behaviour before ADR 0249, so an in-memory
+// empty one, byte-identical to the behaviour before run ids, so an in-memory
 // embedder or a test that passes nothing is unaffected.
-func TestADR_0249_LoopStampsEveryEmittedEvent(t *testing.T) {
+func TestLoopStampsEveryEmittedEvent(t *testing.T) {
 	llm := mockllm.New(mockllm.TextTurn("hello"))
 	svc := newService(t, llm, allowRules())
 	client, cleanup := dialGRPC(t, svc)
@@ -124,13 +124,13 @@ func TestADR_0249_LoopStampsEveryEmittedEvent(t *testing.T) {
 	}
 }
 
-// TestADR_0249_AwaitingResumeKeepsRunID is AC4.4.
+// TestAwaitingResumeKeepsRunID is AC4.4.
 //
 // A session parked awaiting an approval, restored into a FRESH Service (the
 // cross-process restart), resumes as THE SAME run. This is the reason the id is
 // persisted at all: without it the resumed run would mint a second identity and
 // a client following the first would never see it finish.
-func TestADR_0249_AwaitingResumeKeepsRunID(t *testing.T) {
+func TestAwaitingResumeKeepsRunID(t *testing.T) {
 	sess := session.New("s-resume", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0))
 	const want = "run_persisted_identity"
 	sess.BeginRun(want)
@@ -153,7 +153,7 @@ func TestADR_0249_AwaitingResumeKeepsRunID(t *testing.T) {
 
 // TestSDKServerEnablers_Scenario4_LegacySnapshotRestoresEmpty is AC4.8.
 //
-// A snapshot written before ADR 0249 has no run_id key. It must restore with an
+// A snapshot written before run ids has no run_id key. It must restore with an
 // empty id and be stamped on its next run — additive, no migration sweep, the
 // Profile/ProviderID precedent.
 func TestSDKServerEnablers_Scenario4_LegacySnapshotRestoresEmpty(t *testing.T) {
@@ -178,12 +178,12 @@ func TestSDKServerEnablers_Scenario4_LegacySnapshotRestoresEmpty(t *testing.T) {
 	}
 }
 
-// TestADR_0249_FoldIgnoresRunID is AC4.7.
+// TestFoldIgnoresRunID is AC4.7.
 //
 // The event-sourced fold reconstructs a session from its durable log. RunID is
 // attribution, not reconstruction input — exactly like Actor — so a fold must
 // produce the same session whether or not the events carry one.
-func TestADR_0249_FoldIgnoresRunID(t *testing.T) {
+func TestFoldIgnoresRunID(t *testing.T) {
 	build := func(runID string) []session.Event {
 		return []session.Event{
 			{Type: session.EvUserPrompt, Seq: 1, RunID: runID, UserPrompt: &session.UserPromptPayload{Text: "hello"}},

@@ -158,8 +158,8 @@ func (e *Engine) fireStop(ctx context.Context, r *Run, sess *session.Session, re
 // ignored: the event being reported has already happened. Like fireStop, it
 // DETACHES from an already-cancelled ctx (with a short timeout) so a terminal
 // notification still reaches the runner even when the run was cancelled — this is
-// the single definition of that detach rule, which previously diverged across the
-// Subagent/Fork/team fire sites. A nil runner is a no-op.
+// the single definition of that detach rule, shared by the Subagent/Fork/team
+// fire sites. A nil runner is a no-op.
 func fireNotify(ctx context.Context, hooks port.HookRunner, ev governance.HookEvent) {
 	if hooks == nil {
 		return

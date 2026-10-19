@@ -374,7 +374,7 @@ func TestScheduleTool_NilManagerPanics(t *testing.T) {
 }
 
 // TestScheduleTool_MutatingCreateGatedByPlanMode pins the plan-mode gate the
-// Schedule tool carries (ADR 0073 decision 4, AC4.3): in a PLAN-MODE session a
+// Schedule tool carries (AC4.3): in a PLAN-MODE session a
 // mutating: true create is DENIED (the plan-mode hard-deny on mutations — the
 // plan-aware variant is what the plan-mode catalog advertises), while a
 // read-leaning (mutating: false) create is ALLOWED (a schedule CREATE does not
@@ -516,7 +516,7 @@ func TestScheduleTool_InspectRendersInFlightFire(t *testing.T) {
 	if res.IsError {
 		t.Fatalf("inspect = error %q", res.Content)
 	}
-	for _, want := range []string{"in-flight", "fire-inflight", "started", "last-progress", "deadline"} {
+	for _, want := range []string{"in-flight", "fire-inflight", "started", "last-progress", "deadline", "If this deadline has elapsed: overdue/degraded; termination unconfirmed"} {
 		if !strings.Contains(res.Content, want) {
 			t.Fatalf("in-flight inspect result = %q, want %q (an in-flight fire must render the in-flight marker + its instants, never an empty stop or \"fires: none\")", res.Content, want)
 		}
@@ -562,6 +562,20 @@ func TestScheduleTool_InspectRendersClaimedPending(t *testing.T) {
 	}
 	if strings.Contains(res.Content, "fires: none") {
 		t.Fatalf("claimed-pending inspect rendered \"fires: none\" = %q (a claimed fire must NOT render as none)", res.Content)
+	}
+	// Prior completed fires must not hide the new provisional claim.
+	s.State.LastFireAt = time.Unix(1_700_000_000, 0)
+	s.Spec.FireTimeout = time.Minute
+	mgr.scheds["nightly"] = s
+	mgr.fires["nightly"] = []port.ScheduleFire{{ID: "prior", ScheduleName: "nightly", FiredAt: s.State.LastFireAt.Add(-time.Hour), Stop: session.StopEndTurn}}
+	res, err = tl.Execute(context.Background(), scheduleCall(t, `{"verb":"inspect","name":"nightly"}`), agent.EnvForWS(ws, nil))
+	if err != nil || res.IsError {
+		t.Fatalf("pending with history: %+v %v", res, err)
+	}
+	for _, want := range []string{"claimed (session pending)", "ownership/termination unconfirmed", "claimed at 2023-11-14T22:13:20Z", "If 1m0s has elapsed since claim", "do not infer termination", "fire prior"} {
+		if !strings.Contains(res.Content, want) {
+			t.Fatalf("pending inspection missing %q: %s", want, res.Content)
+		}
 	}
 }
 

@@ -101,12 +101,33 @@ export const listSchedulesResponseSchema = z.object({
   supported: z.boolean(),
 });
 
+/**
+ * DECISION: The BFF maps the daemon's open `stop` reason (plus the error and
+ * in-flight facts) to one closed vocabulary, so every client reads the same
+ * outcome instead of re-deriving it. Values are machine identifiers; display
+ * labels belong to each client. `stop`, `error`, and `inFlight` stay for
+ * consumers that want the raw facts. The daemon's stop reasons are open
+ * strings and this enum may grow, so a consumer must treat an unknown value
+ * as `stopped`.
+ */
+export const scheduleFireOutcomeSchema = z.enum([
+  "claimed",
+  "in_flight",
+  "completed",
+  "failed",
+  "cancelled",
+  "timed_out",
+  "limit_reached",
+  "stopped",
+]);
+
 export const scheduleFireSchema = z.object({
   deadline: z.string().nullable(),
   error: z.string(),
   firedAt: z.string().nullable(),
   id: z.string(),
   inFlight: z.boolean(),
+  outcome: scheduleFireOutcomeSchema,
   progressAt: z.string().nullable(),
   scheduleName: z.string(),
   sessionId: z.string(),

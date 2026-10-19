@@ -18,7 +18,7 @@ import (
 )
 
 // TestPlanSlotDefaultTierIsReasoning pins the one DELIBERATE divergence in
-// slotDefaultTier (ADR 0030 Layer 3): the `plan` slot falls through to the `reasoning`
+// slotDefaultTier: the `plan` slot falls through to the `reasoning`
 // tier, NOT `cheap` like the three internal-call slots — a plan-mode model is a
 // strong-reasoning model. A regression that points plan at cheap would silently demote
 // planning turns to the cheapest model.
@@ -34,7 +34,7 @@ func TestPlanSlotDefaultTierIsReasoning(t *testing.T) {
 	}
 }
 
-// TestPlanSlotResolves pins the resolution paths for the `plan` slot (ADR 0030 Layer 3):
+// TestPlanSlotResolves pins the resolution paths for the `plan` slot:
 // an explicit binding, the reasoning-tier default fallthrough, and an alias. It reuses
 // resolveSlotModel UNCHANGED — the grammar is identical to the call-slots.
 func TestPlanSlotResolves(t *testing.T) {
@@ -110,7 +110,7 @@ func TestPlanSlotByteIdenticalWhenUnconfigured(t *testing.T) {
 }
 
 // TestModeNeedsEngine pins the composition predicate wired into
-// server.Config.ModeNeedsEngine (ADR 0030 Layer 3): true ONLY for ModePlan when the
+// server.Config.ModeNeedsEngine: true ONLY for ModePlan when the
 // plan slot resolves to a model DIFFERING from the shared engine model; nil otherwise.
 func TestModeNeedsEngine(t *testing.T) {
 	t.Run("active plan slot ⇒ true only for plan", func(t *testing.T) {
@@ -149,8 +149,8 @@ func planFactory(t *testing.T, sessionModel, planModel string) server.SessionEng
 	return sessionEngineFactory(cfg, reg, provider, store, policy, hookexec.New(nil), nil, prompt.RootAssembler{}, catalogAssets{}, nil)
 }
 
-// TestSessionEngineFactoryPlanVsExecute is the FACTORY-level Phase 3 guard (ADR 0030
-// Layer 3): the SAME factory, the SAME zero selector, called with mode=ModePlan vs
+// TestSessionEngineFactoryPlanVsExecute is the FACTORY-level plan-slot guard:
+// the SAME factory, the SAME zero selector, called with mode=ModePlan vs
 // mode=ModeDefault, resolves the engine to the PLAN model vs the SESSION model — and
 // stamps BuiltForMode from the one source. The provider is unchanged (fixed per
 // session); only the model differs.
@@ -251,7 +251,7 @@ func TestApplyPlanModePostureAppendsNote(t *testing.T) {
 }
 
 // TestPlanModeEngineSystemPromptContainsPlanApprovalContract is the
-// model-visible-discoverability gate for the plan-approval affordance (ADR 0070): a
+// model-visible-discoverability gate for the plan-approval affordance: a
 // gate whose correct operation depends on the model CALLING PresentPlan MUST ship with
 // a model-visible prompt instruction telling the model so, AND a test proving that
 // instruction lands in the built engine's system prompt via the REAL factory path — so
@@ -363,6 +363,84 @@ func TestDefaultModeEngineSystemPromptLacksPlanApprovalContract(t *testing.T) {
 	if strings.Contains(capturedSystem, "Plan mode is active") {
 		t.Error("default-mode system prompt must NOT contain the volatile plan reminder")
 	}
+}
+
+func TestADR_0369_Scenario1_ProviderBoundPlanFallback(t *testing.T) {
+	const (
+		persistedProvider = "persisted"
+		targetProvider    = "target"
+		ordinaryModel     = "ordinary-model"
+		planModel         = "plan-model"
+	)
+
+	newFactory := func(t *testing.T, aliasProvider string) (server.SessionEngineFactory, *capturingDiag, *int, *int) {
+		t.Helper()
+		persistedCalls, targetCalls := 0, 0
+		persisted := mockllm.NewWith([]mockllm.Option{mockllm.WithRequestObserver(func(port.LLMRequest) {
+			persistedCalls++
+		})}, mockllm.TextTurn("planned"))
+		target := mockllm.NewWith([]mockllm.Option{mockllm.WithRequestObserver(func(port.LLMRequest) {
+			targetCalls++
+		})}, mockllm.TextTurn("wrong provider"))
+		reg := twoProviderReg(persisted, persistedProvider, ordinaryModel, target, targetProvider)
+		diag := &capturingDiag{}
+		cfg := Config{
+			Model:      ordinaryModel,
+			ModelSlots: map[string]string{slotPlan: "planner"},
+			ModelAliasTargets: ModelAliases{"planner": {
+				ProviderID: aliasProvider,
+				Model:      planModel,
+			}},
+			Diagnostics: diag,
+		}
+		factory := sessionEngineFactory(cfg, reg, persisted, memstore.New(), permpolicy.NewPolicy(defaultRules(), nil), hookexec.New(nil), nil, prompt.RootAssembler{}, catalogAssets{}, nil)
+		return factory, diag, &persistedCalls, &targetCalls
+	}
+
+	t.Run("same provider uses plan model", func(t *testing.T) {
+		factory, _, persistedCalls, targetCalls := newFactory(t, persistedProvider)
+		result, err := factory(context.Background(), server.ProviderSelector{ProviderID: persistedProvider, ModelID: ordinaryModel}, nil, server.ProfileDefault, "/ws", session.ModePlan)
+		if err != nil {
+			t.Fatalf("factory: %v", err)
+		}
+		defer func() { _ = result.Close() }()
+		if result.ProviderID != persistedProvider || result.ModelID != planModel || result.BuiltForMode != session.ModePlan {
+			t.Fatalf("plan identity = %s/%s mode %s, want %s/%s mode %s", result.ProviderID, result.ModelID, result.BuiltForMode, persistedProvider, planModel, session.ModePlan)
+		}
+		sess := session.New("same-provider-plan", session.ModePlan, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{MaxTurns: 1}, time.Unix(1, 0))
+		for range result.Engine.Run(context.Background(), sess, memEnvironment("/ws"), agent.RunRequest{Text: "plan"}).Events() {
+		}
+		if *persistedCalls != 1 || *targetCalls != 0 {
+			t.Fatalf("provider calls = persisted:%d target:%d, want 1/0", *persistedCalls, *targetCalls)
+		}
+	})
+
+	t.Run("cross provider retains ordinary persisted pair", func(t *testing.T) {
+		factory, diag, persistedCalls, targetCalls := newFactory(t, targetProvider)
+		result, err := factory(context.Background(), server.ProviderSelector{ProviderID: persistedProvider, ModelID: ordinaryModel}, nil, server.ProfileDefault, "/ws", session.ModePlan)
+		if err != nil {
+			t.Fatalf("factory: %v", err)
+		}
+		defer func() { _ = result.Close() }()
+		if result.ProviderID != persistedProvider || result.ModelID != ordinaryModel || result.BuiltForMode != session.ModePlan {
+			t.Fatalf("fallback identity = %s/%s mode %s, want %s/%s mode %s", result.ProviderID, result.ModelID, result.BuiltForMode, persistedProvider, ordinaryModel, session.ModePlan)
+		}
+		if !diag.has("cross-provider plan model is incompatible with persisted session provider") {
+			t.Fatalf("missing bounded cross-provider fallback warning: %v", diag.lines)
+		}
+		sess := session.New("cross-provider-plan", session.ModePlan, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{MaxTurns: 1}, time.Unix(1, 0))
+		for range result.Engine.Run(context.Background(), sess, memEnvironment("/ws"), agent.RunRequest{Text: "plan"}).Events() {
+		}
+		if sess.Mode != session.ModePlan {
+			t.Fatalf("session mode = %s, want plan", sess.Mode)
+		}
+		if *persistedCalls != 1 {
+			t.Fatalf("persisted provider calls = %d, want 1", *persistedCalls)
+		}
+		if *targetCalls != 0 {
+			t.Fatalf("target provider calls = %d, want 0", *targetCalls)
+		}
+	})
 }
 
 func firstN(s string, n int) string {

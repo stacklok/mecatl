@@ -27,7 +27,7 @@ import (
 
 // newTestMetrics builds a Metrics adapter backed by a ManualReader so tests can
 // Collect() the recorded data points directly. It installs the same explicit-bucket
-// histogram views Setup uses for the latency instruments (ADR 0045), so the latency
+// histogram views Setup uses for the latency instruments, so the latency
 // series collect as classic Histogram[float64] here too.
 func newTestMetrics(t *testing.T) (*Metrics, *metric.ManualReader) {
 	t.Helper()
@@ -482,7 +482,7 @@ func TestMetricsToolCallExplicitBucketHistogram(t *testing.T) {
 	}
 
 	// The view must turn the tool-duration instrument into an explicit-bucket
-	// histogram (ADR 0045), with both observations on the single bash series.
+	// histogram, with both observations on the single bash series.
 	dp := classicHist(t, data, toolDurationInstrument)
 	if dp.Count != 2 {
 		t.Errorf("tool.duration count = %d, want 2", dp.Count)
@@ -493,7 +493,7 @@ func TestMetricsToolCallExplicitBucketHistogram(t *testing.T) {
 	if got := dp.Sum; got < 0.259 || got > 0.261 {
 		t.Errorf("tool.duration sum = %v, want ≈0.26", got)
 	}
-	// The explicit ladder must carry our boundaries (ADR 0045), so the classic
+	// The explicit ladder must carry our boundaries, so the classic
 	// le= exposition yields quantiles. Spot-check the low and high ends are present.
 	if len(dp.Bounds) != len(latencyBucketBoundaries) {
 		t.Errorf("tool.duration bounds = %d, want %d (latencyBucketBoundaries)", len(dp.Bounds), len(latencyBucketBoundaries))
@@ -505,7 +505,7 @@ func TestMetricsToolCallExplicitBucketHistogram(t *testing.T) {
 }
 
 // classicHist asserts the named instrument collected as a classic explicit-bucket
-// Histogram (ADR 0045) and returns its single data point, failing otherwise.
+// Histogram and returns its single data point, failing otherwise.
 func classicHist(t *testing.T, data map[string]metricdata.Aggregation, name string) metricdata.HistogramDataPoint[float64] {
 	t.Helper()
 	h, ok := data[name].(metricdata.Histogram[float64])
@@ -520,7 +520,7 @@ func classicHist(t *testing.T, data map[string]metricdata.Aggregation, name stri
 
 // TestMetricsLatencyInstruments asserts the five latency instruments — turn
 // duration, TTFT, inter-token (mean), inter-token (max), and tool queue — all
-// collect as classic explicit-bucket histograms (ADR 0045) with sane unit-converted
+// collect as classic explicit-bucket histograms with sane unit-converted
 // values, and that the "not measured" zero-guards hold (a turn with no content
 // records turn duration only; a zero queue time still records on the queue
 // histogram since 0 is a real, immediate-dispatch observation there).
@@ -734,8 +734,8 @@ func TestEmitSchedule(t *testing.T) {
 // providers.Meter, records events, then scrapes MetricsHandler(providers.Registry).
 // This proves (a) the Meter and the Registry returned by Setup are the SAME
 // pipeline — a mecatl_* domain series only appears if NewMetrics's meter feeds the
-// registry's exporter — and (b) Setup installs the explicit-bucket views (ADR
-// 0045), so the tool-duration series AND the newest latency series (inter_token.max)
+// registry's exporter — and (b) Setup installs the explicit-bucket views,
+// so the tool-duration series AND the newest latency series (inter_token.max)
 // both render as classic histograms with MULTIPLE finite le= buckets (the zero-config
 // quantile fix for issue #158) rather than collapsing to a single le="+Inf" bucket.
 // Proving inter_token.max here confirms the latencyInstruments-slice → LatencyViews()
@@ -779,7 +779,7 @@ func TestMetricsThroughRealSetup(t *testing.T) {
 		t.Errorf("/metrics missing mecatl_tool_duration_seconds_count")
 	}
 
-	// (b) The explicit-bucket view (ADR 0045) emits one le= bucket line per
+	// (b) The explicit-bucket view emits one le= bucket line per
 	// configured boundary PLUS the le="+Inf" overflow line — so a finite le=
 	// boundary (e.g. le="0.25") is present and the quantile-bearing classic ladder
 	// is exposed. The base-2 exponential view we superseded would instead collapse

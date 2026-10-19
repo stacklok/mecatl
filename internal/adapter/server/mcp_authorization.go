@@ -416,8 +416,20 @@ func (s *Service) continueGrantedAuthorizationLocked(ctx context.Context, sess *
 // rebuildGrantedAuthorizationEngine rebuilds the parked session from the exact
 // authenticated snapshot and compensates a failed handoff by restoring its claim.
 func (s *Service) rebuildGrantedAuthorizationEngine(ctx context.Context, sess *session.Session, claimed session.PendingAuthorization, exactTools []tool.Tool) error {
+	if sess.AgentDefinitionName != "" {
+		// ADR 0353 (AC3.6): an agent-bound session never attaches to
+		// Config.MCPBroker at all (AC1.10), so it should never legitimately reach
+		// a lazy broker-OAuth grant continuation in the first place — this is
+		// defense-in-depth against exactly that regression, failing closed rather
+		// than widening the session's catalog with a freshly authenticated broker
+		// tool the def's own Ceiling may not include.
+		if restoreErr := s.restoreAuthorizationClaimOrSettle(ctx, sess.ID, sess, claimed); restoreErr != nil {
+			return fmt.Errorf("%w: restore unregistered authorization claim: %v", ErrInternal, restoreErr)
+		}
+		return fmt.Errorf("%w: broker-OAuth grant continuation is not supported for an agent-bound session %q", ErrInvalidArgument, sess.ID)
+	}
 	sel := ProviderSelector{ProviderID: sess.ProviderID, ModelID: sess.ModelID, ReasoningEffort: sess.ReasoningEffort}
-	if _, err := s.buildAndRegisterSessionEngineWithBrokerTools(ctx, sess, sel, profileForSession(sess), sess.Mode, true, exactTools, true); err != nil {
+	if _, err := s.buildAndRegisterSessionEngineWithBrokerTools(ctx, sess, sel, profileForSession(sess), sess.Mode, true, exactTools, nil, true); err != nil {
 		if errors.Is(err, ErrInvalidArgument) {
 			// Some OTHER run raced onto this session's slot between the parked run's
 			// admission and this rebuild — the same race registerAndStartGrantedAuthorization
@@ -633,8 +645,8 @@ func (s *Service) resolveAuthorizationWithFailureLocked(ctx context.Context, ses
 	// ONLY because a real Engine.Run is either about to start (the continuation
 	// branch below) or the fallback branch is about to settle it itself. EVERY
 	// return between here and one of those two outcomes — including an append
-	// failure, a prepare failure, or a registration failure — previously
-	// stranded sess StateRunning forever. owned flips true only at the genuine
+	// failure, a prepare failure, or a registration failure — would otherwise
+	// strand sess StateRunning forever. owned flips true only at the genuine
 	// continuation handoff; the fallback branch never sets it, so this defer
 	// settles it there unconditionally too (success or failure), replacing the
 	// fallback's own narrower "only after a successful append" repair.
@@ -825,8 +837,8 @@ func (s *Service) appendAuthorizationResolution(ctx context.Context, id session.
 	appendCtx := context.WithoutCancel(ctx)
 	// A post-write append failure is ambiguous (port.EventLog.Append: the event
 	// may already be durably committed) — the caller must not retry THAT event.
-	// But aborting the whole sequence on the first failure, as this used to do,
-	// left every LATER event unattempted too: required + a partial result
+	// But aborting the whole sequence on the first failure would leave every
+	// LATER event unattempted too: required + a partial result
 	// prefix + no resolved is a permanently non-foldable log (eventsource.Fold
 	// requires the primary call answered before accepting resolved, and
 	// requires every open authorization closed). Attempting every remaining
@@ -937,9 +949,8 @@ func (s *Service) registerPrepared(id session.SessionID, run *agent.Run, sess *s
 
 // scheduleAuthorizationExpiry arms this session's TTL timer from pending — the
 // caller's own in-memory session state (FinishRun already holds it on
-// runState.sess), never a fresh Store.Load. A one-shot load here previously
-// meant a single transient store error permanently disabled the session's
-// expiry sweep, since nothing else ever re-scheduled it; reading pending from
+// runState.sess), never a fresh Store.Load. A one-shot load here would let a
+// single transient store error permanently disable the session's expiry sweep, since nothing else ever re-scheduled it; reading pending from
 // state the caller already has removes that failure mode outright rather than
 // retrying around it.
 func (s *Service) scheduleAuthorizationExpiry(id session.SessionID, pending session.PendingAuthorization, ok bool) {
@@ -1151,7 +1162,7 @@ func (s *Service) interruptRestoredAuthorizationLocked(ctx context.Context, sess
 	// returns (sess, true, nil) — the caller (StartRunContent) then owns
 	// settling it back down if the real Engine.Run it's about to start never
 	// materializes (its own deferred repair, registered on that signal).
-	// A FAILURE below must never surface as (nil, false, err): that used to
+	// A FAILURE below must never surface as (nil, false, err): that would
 	// return before the caller's guard could ever be registered, permanently
 	// stranding sess StateRunning with no owning run and no pending
 	// authorization left to retry. Settle it internally first — best-effort
@@ -1269,9 +1280,8 @@ func (s *Service) settleAuthorizationLocked(ctx context.Context, id session.Sess
 	// ordinary continuation path, which immediately starts a real Engine.Run.
 	// Shutdown settlement starts none, so from here sess is stranded
 	// StateRunning forever unless settled — REGARDLESS of what the append
-	// below does: a failed append used to return early and skip settlement
-	// entirely, leaving the exact same stranding this comment already existed
-	// to prevent. Unconditional defer covers both outcomes. Best-effort and
+	// below does: a failed append must not return early and skip settlement.
+	// Unconditional defer covers both outcomes. Best-effort and
 	// silent on failure, matching repairAuthorizationRegistration's
 	// established pattern — shutdown is one-shot with no later retry to
 	// preserve state for.

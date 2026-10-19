@@ -61,7 +61,7 @@ func TestMicroVMMVP_Scenario6_PermissiveIPv4WithOptionalFailClosedTightening(t *
 	})
 }
 
-func TestADR_0224_ExplicitNetworkProviderNeverDegrades(t *testing.T) {
+func TestExplicitNetworkProviderNeverDegrades(t *testing.T) {
 	t.Parallel()
 
 	startFailure := errors.New("hosted network unavailable")

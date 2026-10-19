@@ -454,7 +454,7 @@ func parseAgentDef(raw []byte, _ string) (AgentDef, string, []string) {
 
 	// `memory:` is a forgiving tier selector (mirrors the mcpServers skip-note
 	// posture): only "" / "user" / "project" are accepted. "local" is DELIBERATELY
-	// rejected (a scoped local-only memory is deferred). Any other value is a
+	// rejected (scoped local-only memory is not implemented). Any other value is a
 	// non-fatal note and falls back to "" (no memory), so a shared .claude/agents
 	// file naming a tier this harness doesn't support never fails the whole def.
 	mem := strings.ToLower(strings.TrimSpace(fm.Memory))

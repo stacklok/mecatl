@@ -12,7 +12,7 @@ import (
 )
 
 // TestResolveScheduleStore pins the --schedule-store-url override resolution
-// (cloud-native Phase 5, issue #257), mirroring the --event-log-url precedent.
+// (issue #257), mirroring the --event-log-url precedent.
 // The three precedence arms:
 //  1. an explicit ScheduleStoreURL wins — a *grpcdriver.ScheduleStore over its
 //     OWN lazy-dialled conn (offline-safe; grpc.NewClient never touches the

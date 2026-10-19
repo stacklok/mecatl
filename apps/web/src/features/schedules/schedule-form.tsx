@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { useState } from "react";
+import { toast } from "sonner";
+import { Alert, AlertDescription } from "../../components/ui/alert";
 import { Button } from "../../components/ui/button";
 import {
   Dialog,
@@ -11,24 +13,39 @@ import {
   DialogTitle,
 } from "../../components/ui/dialog";
 import { Input } from "../../components/ui/input";
+import { Label } from "../../components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "../../components/ui/select";
+import { Switch } from "../../components/ui/switch";
+import { Tabs, TabsList, TabsTrigger } from "../../components/ui/tabs";
 import { Textarea } from "../../components/ui/textarea";
+import { ordinal } from "../../lib/formatters";
+import { useShortcutSuppression } from "../shortcuts/shortcut-provider";
 import {
   builderToCron,
   type CronIntervalUnit,
   type CronRepeat,
   cronToBuilder,
-  describeCron,
-  ordinal,
 } from "./cron-builder";
+import { describeCron } from "./describe-cron";
 import {
   bodyFromValue,
   displayedValue,
   type FormValue,
   isTriggerEditable,
+  oneShotDatePatch,
+  oneShotInputs,
+  oneShotTimePatch,
   type PhraseOutcome,
   phraseTriggerPatch,
   type Schedule,
   type ScheduleBody,
+  scheduleFormProblem,
   type TriggerPatch,
   triggerFromValue,
   valueFromSchedule,
@@ -42,6 +59,31 @@ const NO_PHRASE: PhraseOutcome = { kind: "none" };
 
 const PHRASE_PLACEHOLDER = "every 30 minutes · daily at 9am · next monday 3pm · in 2 hours";
 const PHRASE_HINT = 'Not recognised — try "every weekday at 9am" or a cron expression';
+
+// SPEC: Editing excludes immutable name, trigger, and placement-bound tool
+// profile changes. Timezone, run limits, and retry policy remain wire state but
+// are not visible controls; edits round-trip their stored values unchanged.
+// Create and update bodies still pass through the authenticated BFF contract.
+
+/**
+ * The toast after a create or an edit is saved, as in the prototype's create
+ * and edit dialogs. The dialog has closed by then, so the toast is the
+ * confirmation.
+ */
+export function toastScheduleSaved(name: string, created: boolean) {
+  toast.success(`Scheduled task “${name}” ${created ? "created" : "updated"}`);
+}
+
+/**
+ * DECISION: A one-shot whose time has passed stays inspect-only, whatever its
+ * status, because the backend rejects any update that keeps a past trigger
+ * (#2146). Completed crons may still change prompt and permission posture, but
+ * reopening or rescheduling belongs to #2149.
+ */
+export function canEditSchedule(schedule: Pick<Schedule, "status" | "trigger">, now = Date.now()) {
+  if (schedule.trigger.kind !== "once") return true;
+  return schedule.status !== "completed" && !(Date.parse(schedule.trigger.at) <= now);
+}
 
 /** The plain-English preview of what a phrase compiled to. */
 function describePhraseOutcome(outcome: PhraseOutcome): string | null {
@@ -64,9 +106,15 @@ export function ScheduleForm({
   onCancel: () => void;
   onSubmit: (body: ScheduleBody) => Promise<void>;
 }) {
+  // The form is mounted only while open: global shortcuts such as `/` must not
+  // act on the page behind it when focus sits on a button, tab, or switch.
+  useShortcutSuppression(true);
   const [value, setValue] = useState<FormValue>(() => valueFromSchedule(schedule));
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string>();
+  // Whether the user has edited a field or tried to submit: only then does the
+  // reason Create is disabled appear, so a fresh dialog does not open on one.
+  const [touched, setTouched] = useState(false);
 
   // The phrase is an authoring aid: it compiles INTO value.cron/oneShotAt,
   // which stay the wire truth. Its text and preview are local; a successful
@@ -115,9 +163,15 @@ export function ScheduleForm({
   const phraseNote = phrasePreview ?? (phrase.trim() ? PHRASE_HINT : null);
   // Formatted from the very trigger that will be sent, never from the inputs.
   const savedOneShot = formatOneShot(triggerFromValue(shown, schedule));
+  // The submit button stays disabled until the form could be sent.
+  const problem = scheduleFormProblem(shown, schedule);
+  const problemShown = touched && problem !== null;
+  const runAt = oneShotInputs(shown);
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();
+    setTouched(true);
+    if (problem || submitting) return;
     setSubmitting(true);
     setError(undefined);
     try {
@@ -132,7 +186,8 @@ export function ScheduleForm({
   return (
     <Dialog onOpenChange={(open) => !open && onCancel()} open>
       <DialogContent className="max-h-[90dvh] overflow-y-auto">
-        <form onSubmit={submit}>
+        {/* Change events from every text, date and time field bubble here. */}
+        <form onChange={() => setTouched(true)} onSubmit={submit}>
           <DialogHeader>
             <DialogTitle>{schedule ? "Edit scheduled task" : "Schedule a task"}</DialogTitle>
             <DialogDescription>
@@ -141,8 +196,15 @@ export function ScheduleForm({
           </DialogHeader>
 
           <div className="mt-5 space-y-4">
-            <Field label="Name">
+            {/*
+             * DECISION: Name stays immutable in #1852. Atomic rename or a
+             * mutable displayName over a stable backend name belongs to #2145;
+             * create-then-delete is not presented as rename because it cannot
+             * preserve state, placement, ownership, and fire history.
+             */}
+            <Field htmlFor="schedule-name" label="Name">
               <Input
+                id="schedule-name"
                 disabled={Boolean(schedule)}
                 onChange={(event) => setValue({ ...value, name: event.target.value })}
                 placeholder="daily-summary"
@@ -150,8 +212,9 @@ export function ScheduleForm({
                 value={value.name}
               />
             </Field>
-            <Field label="Prompt">
+            <Field htmlFor="schedule-prompt" label="Prompt">
               <Textarea
+                id="schedule-prompt"
                 onChange={(event) => setValue({ ...value, prompt: event.target.value })}
                 placeholder="Summarize the latest project activity."
                 required
@@ -167,11 +230,12 @@ export function ScheduleForm({
                   {TRIGGER_LOCKED_NOTE}
                 </p>
               ) : (
-                <Field label="Describe the schedule">
+                <Field htmlFor="schedule-phrase" label="Describe the schedule">
                   <Input
                     aria-describedby={phraseNote ? "schedule-phrase-note" : undefined}
                     autoComplete="off"
                     className="font-normal"
+                    id="schedule-phrase"
                     onChange={(event) => handlePhrase(event.target.value)}
                     placeholder={PHRASE_PLACEHOLDER}
                     value={phrase}
@@ -186,144 +250,139 @@ export function ScheduleForm({
                   )}
                 </Field>
               )}
-              <div className="mt-3 grid grid-cols-2 rounded-lg bg-muted p-1">
-                {(["cron", "once"] as const).map((kind) => (
-                  <button
-                    className={`h-8 rounded-md text-sm disabled:cursor-not-allowed ${shown.triggerKind === kind ? "bg-background font-medium shadow-sm" : "text-muted-foreground"} ${triggerLocked && shown.triggerKind !== kind ? "opacity-50" : ""}`}
-                    disabled={triggerLocked}
-                    key={kind}
-                    onClick={() => changeTrigger({ triggerKind: kind })}
-                    type="button"
-                  >
-                    {kind === "cron" ? "Recurring" : "Run once"}
-                  </button>
-                ))}
-              </div>
+              <Tabs
+                className="mt-3"
+                onValueChange={(kind) => changeTrigger({ triggerKind: kind as "cron" | "once" })}
+                value={shown.triggerKind}
+              >
+                <TabsList className="grid w-full grid-cols-2">
+                  <TabsTrigger disabled={triggerLocked} value="cron">
+                    Recurring
+                  </TabsTrigger>
+                  <TabsTrigger disabled={triggerLocked} value="once">
+                    Run once
+                  </TabsTrigger>
+                </TabsList>
+              </Tabs>
             </fieldset>
 
             {shown.triggerKind === "cron" ? (
-              <div className="space-y-4">
-                <CronFields
-                  cron={shown.cron}
-                  disabled={triggerLocked}
-                  key={phraseVersion}
-                  onChange={(cron) => changeTrigger({ cron })}
-                />
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <Field label="Timezone">
-                    <Input
-                      disabled={triggerLocked}
-                      onChange={(event) => {
-                        const timezone = event.target.value;
-                        setValue((current) => withTriggerPatch(current, { timezone }, schedule));
-                      }}
-                      placeholder="UTC"
-                      value={shown.timezone}
-                    />
-                    <p className="text-xs font-normal text-muted-foreground">
-                      {shown.timezone.trim()
-                        ? "An IANA time zone, such as Europe/Rome."
-                        : "Empty runs the schedule in UTC."}
-                    </p>
-                  </Field>
-                  <Field label="Maximum runs (0 = unlimited)">
-                    <Input
-                      min="0"
-                      onChange={(event) => setValue({ ...value, maxFires: event.target.value })}
-                      type="number"
-                      value={value.maxFires}
-                    />
-                  </Field>
-                </div>
-              </div>
+              <CronFields
+                cron={shown.cron}
+                disabled={triggerLocked}
+                key={phraseVersion}
+                onChange={(cron) => changeTrigger({ cron })}
+              />
             ) : (
-              <div className="space-y-3">
-                <Field label="Run at">
+              <fieldset className="min-w-0 space-y-2">
+                {/* Separate date and time inputs, as in the prototype, instead of
+                    the native datetime-local widget. */}
+                <legend className="mb-2 text-sm font-medium">Run at</legend>
+                <div className="flex flex-wrap items-center gap-2">
                   <Input
+                    aria-label="Date"
+                    className="w-fit"
                     disabled={triggerLocked}
-                    onChange={(event) => changeTrigger({ oneShotAt: event.target.value })}
+                    id="schedule-run-at-date"
+                    // An empty value (cleared, or a segment mid-edit) leaves no
+                    // run time but keeps the time, as the Time input does.
+                    onChange={(event) => changeTrigger(oneShotDatePatch(shown, event.target.value))}
                     required
-                    type="datetime-local"
-                    value={shown.oneShotAt}
+                    type="date"
+                    value={runAt.date}
                   />
-                  {savedOneShot ? (
-                    <p className="mt-1 text-xs text-muted-foreground">Saves as {savedOneShot}</p>
-                  ) : null}
-                </Field>
-                <label className="flex items-center gap-2 text-sm">
-                  <input
-                    checked={value.oneShotRetry}
-                    onChange={(event) => setValue({ ...value, oneShotRetry: event.target.checked })}
-                    type="checkbox"
+                  <Input
+                    aria-label="Time"
+                    className="w-fit"
+                    disabled={triggerLocked}
+                    // Segment editing fires transient empty values; keep the last
+                    // time. A time chosen before the date is kept for it.
+                    onChange={(event) => changeTrigger(oneShotTimePatch(shown, event.target.value))}
+                    required
+                    type="time"
+                    value={runAt.time}
                   />
-                  Retry if the run fails
-                </label>
-                {value.oneShotRetry && (
-                  <Field label="Maximum retries">
-                    <Input
-                      min="0"
-                      onChange={(event) =>
-                        setValue({ ...value, oneShotMaxRetries: event.target.value })
-                      }
-                      type="number"
-                      value={value.oneShotMaxRetries}
-                    />
-                  </Field>
-                )}
-              </div>
+                </div>
+                {savedOneShot ? (
+                  <p className="mt-1 text-xs text-muted-foreground">Saves as {savedOneShot}</p>
+                ) : null}
+              </fieldset>
             )}
 
             <div className="rounded-lg border p-3">
-              <label className="flex items-center gap-2 text-sm font-medium">
-                <input
+              <div className="flex items-center gap-2">
+                <Switch
                   checked={value.allowWrites}
-                  onChange={(event) => setValue({ ...value, allowWrites: event.target.checked })}
-                  type="checkbox"
+                  id="schedule-allow-writes"
+                  onCheckedChange={(allowWrites) => setValue({ ...value, allowWrites })}
                 />
-                Allow this task to make changes
-              </label>
+                <Label htmlFor="schedule-allow-writes">Allow this task to make changes</Label>
+              </div>
               {value.allowWrites && (
-                <select
-                  className="mt-3 h-9 w-full rounded-md border bg-background px-3 text-sm"
-                  onChange={(event) =>
-                    setValue({ ...value, writeMode: event.target.value as FormValue["writeMode"] })
+                <SelectField
+                  ariaLabel="Write mode"
+                  className="mt-3"
+                  onValueChange={(writeMode) =>
+                    setValue({ ...value, writeMode: writeMode as FormValue["writeMode"] })
                   }
+                  options={[
+                    { label: "Accept edits automatically", value: "acceptEdits" },
+                    { label: "Ask when approval is needed", value: "default" },
+                    ...(offerPlanMode
+                      ? [{ label: "Plan only, changes are refused", value: "plan" }]
+                      : []),
+                  ]}
                   value={value.writeMode}
-                >
-                  <option value="acceptEdits">Accept edits automatically</option>
-                  <option value="default">Ask when approval is needed</option>
-                  {offerPlanMode && <option value="plan">Plan only, changes are refused</option>}
-                </select>
+                />
               )}
             </div>
 
-            <Field label="Tool profile">
-              <select
-                className="h-9 w-full rounded-md border bg-background px-3 text-sm"
-                onChange={(event) =>
-                  setValue({ ...value, profile: event.target.value as FormValue["profile"] })
+            <Field htmlFor="schedule-profile" label="Tool profile">
+              <SelectField
+                disabled={Boolean(schedule)}
+                id="schedule-profile"
+                onValueChange={(profile) =>
+                  setValue({ ...value, profile: profile as FormValue["profile"] })
                 }
+                options={[
+                  { label: "All", value: "all" },
+                  { label: "No filesystem", value: "noFilesystem" },
+                ]}
                 value={value.profile}
-              >
-                <option value="all">All</option>
-                <option value="noFilesystem">No filesystem</option>
-              </select>
+              />
               <p className="text-xs font-normal text-muted-foreground">
-                {value.profile === "noFilesystem"
-                  ? "No file or shell tools; other tools stay available."
-                  : "The agent can use every tool, including file and shell access."}
+                {schedule
+                  ? "The backend placement fixes the tool profile after creation."
+                  : value.profile === "noFilesystem"
+                    ? "No file or shell tools; other tools stay available."
+                    : "The agent can use every tool, including file and shell access."}
               </p>
             </Field>
           </div>
 
           {error && (
-            <p className="mt-4 rounded-lg bg-destructive/10 p-3 text-sm text-foreground">{error}</p>
+            <Alert className="mt-4" variant="destructive">
+              <AlertDescription>{error}</AlertDescription>
+            </Alert>
           )}
-          <DialogFooter className="mt-5">
+          {problemShown && (
+            <p
+              className="mt-4 text-xs text-muted-foreground sm:text-right"
+              id="schedule-form-problem"
+            >
+              {problem}
+            </p>
+          )}
+          <DialogFooter className={problemShown ? "mt-2" : "mt-5"}>
             <Button onClick={onCancel} type="button" variant="outline">
               Cancel
             </Button>
-            <Button disabled={submitting} type="submit" variant="action">
+            <Button
+              aria-describedby={problemShown ? "schedule-form-problem" : undefined}
+              disabled={submitting || problem !== null}
+              type="submit"
+              variant="action"
+            >
               {submitting ? "Saving…" : schedule ? "Save changes" : "Create schedule"}
             </Button>
           </DialogFooter>
@@ -333,12 +392,54 @@ export function ScheduleForm({
   );
 }
 
-function Field({ children, label }: { children: React.ReactNode; label: string }) {
+function Field({
+  children,
+  htmlFor,
+  label,
+}: {
+  children: React.ReactNode;
+  htmlFor: string;
+  label: string;
+}) {
   return (
-    <fieldset className="block space-y-2 text-sm font-medium">
-      <legend>{label}</legend>
+    <div className="space-y-2">
+      <Label htmlFor={htmlFor}>{label}</Label>
       {children}
-    </fieldset>
+    </div>
+  );
+}
+
+/** A labelled single choice; the visible `Label` (or `ariaLabel`) names the trigger. */
+function SelectField({
+  ariaLabel,
+  className,
+  disabled,
+  id,
+  onValueChange,
+  options,
+  value,
+}: {
+  ariaLabel?: string;
+  className?: string;
+  disabled?: boolean;
+  id?: string;
+  onValueChange: (value: string) => void;
+  options: ReadonlyArray<{ label: string; value: string }>;
+  value: string;
+}) {
+  return (
+    <Select disabled={disabled} onValueChange={onValueChange} value={value}>
+      <SelectTrigger aria-label={ariaLabel} className={`w-full ${className ?? ""}`} id={id}>
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent>
+        {options.map((option) => (
+          <SelectItem key={option.value} value={option.value}>
+            {option.label}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
   );
 }
 
@@ -370,8 +471,6 @@ const INTERVAL_UNIT_OPTIONS: Array<{ label: string; value: CronIntervalUnit }> =
 
 /** The daemon-independent step ceiling per unit (a cron field's own range). */
 const INTERVAL_MAX: Record<CronIntervalUnit, number> = { hours: 23, minutes: 59 };
-
-const selectClass = "h-9 w-full rounded-md border bg-background px-3 text-sm";
 
 /**
  * The structured cron editor: a "Repeat" picker plus the controls that shape
@@ -413,13 +512,12 @@ function CronFields({
   return (
     <fieldset className="min-w-0 space-y-3" disabled={disabled}>
       <div className="flex flex-wrap gap-3">
-        <div className="min-w-[130px] flex-1 space-y-2 text-sm font-medium">
-          <label htmlFor="schedule-repeat">Repeat</label>
-          <select
-            className={selectClass}
+        <div className="min-w-[130px] flex-1 space-y-2">
+          <Label htmlFor="schedule-repeat">Repeat</Label>
+          <SelectField
             id="schedule-repeat"
-            onChange={(event) => {
-              const next = event.target.value as CronRepeat;
+            onValueChange={(picked) => {
+              const next = picked as CronRepeat;
               if (next === "custom") {
                 setCustomPicked(true);
                 return;
@@ -427,56 +525,45 @@ function CronFields({
               setCustomPicked(false);
               rebuild({ repeat: next });
             }}
+            options={REPEAT_OPTIONS}
             value={repeat}
-          >
-            {REPEAT_OPTIONS.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </select>
+          />
         </div>
 
         {repeat === "weekly" && (
-          <div className="min-w-[130px] flex-1 space-y-2 text-sm font-medium">
-            <label htmlFor="schedule-weekday">On</label>
-            <select
-              className={selectClass}
+          <div className="min-w-[130px] flex-1 space-y-2">
+            <Label htmlFor="schedule-weekday">On</Label>
+            <SelectField
               id="schedule-weekday"
-              onChange={(event) => rebuild({ weekday: Number(event.target.value) })}
-              value={parsed.weekday}
-            >
-              {WEEKDAY_OPTIONS.map((day) => (
-                <option key={day.value} value={day.value}>
-                  {day.label}
-                </option>
-              ))}
-            </select>
+              onValueChange={(day) => rebuild({ weekday: Number(day) })}
+              options={WEEKDAY_OPTIONS.map((day) => ({
+                label: day.label,
+                value: String(day.value),
+              }))}
+              value={String(parsed.weekday)}
+            />
           </div>
         )}
 
         {repeat === "monthly" && (
-          <div className="min-w-[130px] flex-1 space-y-2 text-sm font-medium">
-            <label htmlFor="schedule-monthday">On the</label>
-            <select
-              className={selectClass}
+          <div className="min-w-[130px] flex-1 space-y-2">
+            <Label htmlFor="schedule-monthday">On the</Label>
+            <SelectField
               id="schedule-monthday"
-              onChange={(event) => rebuild({ monthday: Number(event.target.value) })}
-              value={parsed.monthday}
-            >
-              {MONTHDAY_OPTIONS.map((day) => (
-                <option key={day} value={day}>
-                  {ordinal(day)}
-                </option>
-              ))}
-            </select>
+              onValueChange={(day) => rebuild({ monthday: Number(day) })}
+              options={MONTHDAY_OPTIONS.map((day) => ({
+                label: ordinal(day),
+                value: String(day),
+              }))}
+              value={String(parsed.monthday)}
+            />
           </div>
         )}
 
         {repeat === "interval" && (
           <>
-            <div className="w-[90px] space-y-2 text-sm font-medium">
-              <label htmlFor="schedule-interval-every">Every</label>
+            <div className="w-[90px] space-y-2">
+              <Label htmlFor="schedule-interval-every">Every</Label>
               <Input
                 id="schedule-interval-every"
                 inputMode="numeric"
@@ -494,27 +581,21 @@ function CronFields({
                 value={everyDraft ?? String(parsed.every)}
               />
             </div>
-            <div className="min-w-[130px] flex-1 space-y-2 text-sm font-medium">
-              <label htmlFor="schedule-interval-unit">Unit</label>
-              <select
-                className={selectClass}
+            <div className="min-w-[130px] flex-1 space-y-2">
+              <Label htmlFor="schedule-interval-unit">Unit</Label>
+              <SelectField
                 id="schedule-interval-unit"
-                onChange={(event) => rebuild({ unit: event.target.value as CronIntervalUnit })}
+                onValueChange={(unit) => rebuild({ unit: unit as CronIntervalUnit })}
+                options={INTERVAL_UNIT_OPTIONS}
                 value={parsed.unit}
-              >
-                {INTERVAL_UNIT_OPTIONS.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
+              />
             </div>
           </>
         )}
 
         {repeat !== "custom" && repeat !== "interval" && (
-          <div className="w-[120px] space-y-2 text-sm font-medium">
-            <label htmlFor="schedule-time">At</label>
+          <div className="w-[148px] space-y-2">
+            <Label htmlFor="schedule-time">At</Label>
             <Input
               id="schedule-time"
               onChange={(event) => {
@@ -530,9 +611,10 @@ function CronFields({
       </div>
 
       {repeat === "custom" && (
-        <Field label="Cron expression">
+        <Field htmlFor="schedule-cron" label="Cron expression">
           <Input
             className="font-mono"
+            id="schedule-cron"
             onChange={(event) => onChange(event.target.value)}
             placeholder="0 9 * * *"
             required

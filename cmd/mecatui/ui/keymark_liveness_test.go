@@ -274,7 +274,7 @@ func TestPlanReviewActionBarModifiedChordDegrades(t *testing.T) {
 
 // TestPlanReviewActionBarDefaultBytesUnchanged is the byte-identical guard for
 // the DEFAULT approval chords: with no overrides the plan-review action bar
-// renders the historical word-embedded form ("[A]pprove & run" / "[W]
+// renders the default word-embedded form ("[A]pprove & run" / "[W]
 // auto-accept edits" / "[D] iterate") so the goldens and pre-#457 output stay
 // byte-for-byte.
 func TestPlanReviewActionBarDefaultBytesUnchanged(t *testing.T) {
@@ -297,7 +297,7 @@ func TestPlanReviewActionBarDefaultBytesUnchanged(t *testing.T) {
 // TestPermissionModalButtonsReflectKeyOverride proves the GENERIC permission
 // modal's button labels are honest about the LIVE approval chords (issue #457
 // SPEC/UX gap: they were hard-coded to the word-embedded form). With the DEFAULT
-// a/w/d chords the historical word-embedded form ("[A]llow"/"Al[w]ays"/
+// a/w/d chords the default word-embedded form ("[A]llow"/"Al[w]ays"/
 // "[D]eny" + the "al[w]ays allows …" footnote) renders byte-for-byte; under an
 // override the buttons degrade to an honest standalone form
 // ("[Y] allow"/"[Q] always allow"/"[N] deny") carrying the rebound chord and
@@ -327,7 +327,7 @@ func TestPermissionModalButtonsReflectKeyOverride(t *testing.T) {
 
 // TestPermissionModalButtonsDefaultBytesUnchanged is the byte-identical guard
 // for the DEFAULT approval chords: with no overrides the generic permission
-// modal renders the historical word-embedded form ("[A]llow"/"Al[w]ays"/
+// modal renders the default word-embedded form ("[A]llow"/"Al[w]ays"/
 // "[D]eny" + the "al[w]ays allows …" footnote) so the goldens and the pre-#457
 // output stay byte-for-byte.
 func TestPermissionModalButtonsDefaultBytesUnchanged(t *testing.T) {
@@ -364,7 +364,7 @@ func TestPermissionModalButtonsModifiedChordStandalone(t *testing.T) {
 }
 
 // TestApprovalMnemonic pins the footer approval-mnemonic helper: a bare lowercase
-// rune is upper-cased (the historical "A"/"W"/"D" from "a"/"w"/"d"), while a
+// rune is upper-cased (the "A"/"W"/"D" from "a"/"w"/"d"), while a
 // modified or multi-rune chord is returned verbatim (upper-casing only the first
 // letter of "ctrl+y" would mangle it).
 func TestApprovalMnemonic(t *testing.T) {
@@ -617,9 +617,10 @@ func TestMCPOverlayHintsReflectKeyOverride(t *testing.T) {
 // TestEffortOverlayHintsReflectKeyOverride proves the effort picker footer reads the
 // LIVE Up/Down/Choose/Close markings (issue #457).
 func TestEffortOverlayHintsReflectKeyOverride(t *testing.T) {
-	hk := liveHK()
-	th := theme.New("aztec", theme.AztecPalette())
-	got := stripANSIstr(renderEffortOverlay(th, effortState{view: effortPanel}, "auto", false, hk, 100, 30))
+	m := newModelsModel(t, sampleModels(), &fakeStore{}, modelsCaps(), client.ModelSelection{})
+	m.keys = applyKeyOverrides(defaultKeys(), overrideAll())
+	mm, _ := m.runEffort()
+	got := stripANSIstr(mm.(Model).View().Content)
 	if !strings.Contains(got, "ctrl+f26/ctrl+f27 move · ctrl+f17 apply · ctrl+f16 close") {
 		t.Errorf("effort hint should carry live move/apply/close: %q", got)
 	}
@@ -705,18 +706,29 @@ func TestScheduleOverlayHintsReflectKeyOverride(t *testing.T) {
 }
 
 // TestWorktreesOverlayHintsReflectKeyOverride proves the worktrees overlay panel/confirm
-// footers read the LIVE Choose/Close markings (issue #457).
+// footers use the Choose/Close markings captured when the surface opens.
 func TestWorktreesOverlayHintsReflectKeyOverride(t *testing.T) {
 	hk := liveHK()
 	th := theme.New("aztec", theme.AztecPalette())
 	t.Run("panel", func(t *testing.T) {
-		st := worktreesState{view: worktreesPanel, filtered: []client.Worktree{{Selector: testWorktreeSelector("opaque"), Label: "p", Branch: "b"}}}
-		got := stripANSIstr(renderWorktreesOverlay(th, st, client.Capabilities{}, hk, 100, 30))
+		st := worktreesState{deps: surfaceDeps{theme: th, keys: defaultKeys(), marks: hk}, identities: make(map[client.WorktreeSelector]string), worktrees: []client.Worktree{{Selector: testWorktreeSelector("opaque"), Label: "p", Branch: "b"}}}
+		st.syncFilter()
+		body, _ := st.Render(100, 30)
+		got := stripANSIstr(body)
 		if !strings.Contains(got, "ctrl+f17: select  ctrl+f16: close") {
 			t.Errorf("worktrees panel hint should carry live select/close: %q", got)
 		}
 		if strings.Contains(got, "enter: select  esc: close") {
 			t.Errorf("worktrees panel hint still shows defaults: %q", got)
+		}
+		st.confirm = &st.worktrees[0]
+		body, _ = st.Render(100, 30)
+		got = stripANSIstr(body)
+		if !strings.Contains(got, "ctrl+f17: start session  ctrl+f16: back") {
+			t.Errorf("worktrees confirmation did not use captured markings: %q", got)
+		}
+		if strings.Contains(got, "enter: start session  esc: back") {
+			t.Errorf("worktrees confirmation still shows defaults: %q", got)
 		}
 	})
 }

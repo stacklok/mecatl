@@ -233,7 +233,7 @@ func sessionOwner(ctx context.Context, addr, bearer, sessionID string) (subject,
 // were got wrong by an earlier draft, which could therefore only ever time out:
 //   - the record is an ENVELOPE, {"v":"redisstore-eventlog/1","ev":<event>}
 //   - session.Event carries NO json tags, so keys are GO-CASED ("Actor"/"Subject")
-//   - the log is a STREAM, not a LIST (ADR 0250), so the read is XRANGE and
+//   - the log is a STREAM, not a LIST, so the read is XRANGE and
 //     redis-cli's raw (non-TTY) output FLATTENS each entry to three lines:
 //     the entry id, the field name, then the value. LRANGE here returns
 //     WRONGTYPE, whose error text is not JSON.
@@ -268,7 +268,7 @@ func eventActors(sessionID string) []string {
 		gomega.ExpectWithOffset(1, json.Unmarshal([]byte(line), &rec)).To(gomega.Succeed(),
 			"event-log record is not the expected envelope: %.200s", line)
 		if rec.V == "redisstore-eventlog-gap/1" {
-			// A gap marker (ADR 0250) legitimately carries no event and so no
+			// A gap marker legitimately carries no event and so no
 			// actor. Nothing calls AppendGap in production yet, but skipping it
 			// here keeps this helper from turning the FIRST failed append on a
 			// healthy cluster into a confusing failure of an identity assertion.
@@ -530,7 +530,7 @@ var _ = ginkgo.Describe("caller identity, from the caller's and operator's view"
 		// attribution with no isolation, and this spec asserted exactly that
 		// (Bob's list containing Alice's session) so the absence of scoping could
 		// not be mistaken for a bug. #368 landed application-wide ownership
-		// enforcement (ADR-0212) — a caller's list now contains only that
+		// enforcement — a caller's list now contains only that
 		// caller's own rows (AC2.3). Do not delete this spec; it is the
 		// regression pin for that scoping.
 		ginkgo.It("shows the owner on the list row over plain HTTP, scoped to the caller's own sessions", func() {
@@ -565,7 +565,7 @@ var _ = ginkgo.Describe("caller identity, from the caller's and operator's view"
 		// session (recording him as actor, her as owner — attribution without
 		// isolation) and this spec asserted exactly that. #368 landed enforcement:
 		// a foreign prompt is now refused, absence-shaped (AC3.1). The
-		// actor-vs-owner distinction this spec also pins (ADR-0204 decision 7)
+		// actor-vs-owner distinction this spec also pins
 		// remains real and is now re-asserted on ALICE's own action instead, so
 		// this spec keeps covering both properties rather than losing one.
 		ginkgo.It("refuses a foreign caller and records the acting caller as the actor on the owner's own run", func() {
@@ -592,7 +592,7 @@ var _ = ginkgo.Describe("caller identity, from the caller's and operator's view"
 			gomega.Expect(ownerSub).To(gomega.Equal(aliceSubject))
 
 			// Alice's OWN prompt still succeeds and is attributed to her — the
-			// owner/actor distinction (ADR-0204 decision 7) still holds on the
+			// owner/actor distinction still holds on the
 			// path that's still allowed.
 			gomega.Expect(promptAs(ctx, addr, aliceSess, alice, "alice acting on her own session")).
 				To(gomega.Equal(http.StatusOK), "alice was refused on her own session")

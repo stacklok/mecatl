@@ -13,8 +13,7 @@ import (
 	"github.com/stacklok/mecatl/engine/session"
 )
 
-// pathescape_scenario5b_test.go pins AC5.1b/AC5.1c
-// (docs/acceptance/path-escape-posture.md Scenario 5): the base-SHARING
+// pathescape_scenario5b_test.go pins that the base-SHARING
 // (nil-forker) read-only Subagent child — wired whenever Shell is disabled
 // (--no-shell / an empty shell / the issue-#40 untrusted-workspace gate nils the
 // sandboxed runner) — must NOT inherit the main session's relaxed workspace.
@@ -96,7 +95,7 @@ func TestPathEscapePosture_Scenario5_SharedWorkspaceChildNotRelaxed(t *testing.T
 						parentReadOK = true
 					}
 					// The child's Read outcome rides the tool.RESULT projection
-					// (ADR 0079: the projection now also emits tool.call previews and
+					// (the projection now also emits tool.call previews and
 					// message/result text previews, so the ok/error outcome is
 					// attributed on the tool.result projection — a tool.call preview
 					// always reads IsError=false). Its IsError must be TRUE. If the
@@ -133,7 +132,7 @@ func TestPathEscapePosture_Scenario5_SharedWorkspaceChildNotRelaxed(t *testing.T
 }
 
 // TestPathEscapePosture_Scenario5_SharedWorkspaceChildWriteDenied pins the
-// WRITE half of AC5.1b: a writable (mode:"read-write", direct-write, ADR 0041)
+// WRITE half of AC5.1b: a writable (mode:"read-write", direct-write)
 // child — the OTHER base-sharing child path, which shares the parent content
 // backend through a confined child Workspace view — must NOT inherit the relaxed-WRITE reach
 // either. Its out-of-root Write is denied (the file never appears), while the
@@ -191,7 +190,7 @@ func TestPathEscapePosture_Scenario5_SharedWorkspaceChildWriteDenied(t *testing.
 		}
 		// The writable child's out-of-root Write must ERROR — the direct-write
 		// child shares the parent's base but must not inherit the relaxed write.
-		// (ADR 0079: the outcome is attributed on the tool.RESULT projection.)
+		// (The outcome is attributed on the tool.RESULT projection.)
 		if ev.Type == session.EvSubagentTool && ev.Subagent != nil &&
 			ev.Subagent.InnerKind == session.EvToolResult && ev.Subagent.ToolName == "Write" {
 			if !ev.Subagent.IsError {

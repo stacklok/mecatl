@@ -86,8 +86,9 @@ To change a supported payload, return valid JSON in `Mutated`:
 - `PreToolUse`: replacement tool arguments
 - `PostToolUse`: `{"content":"...","is_error":true}`
 
-The permission policy is not run again after a trusted hook changes `PreToolUse`
-arguments. Treat hook implementations as trusted code.
+When a hook changes `PreToolUse` arguments, Mecatl runs the permission policy
+again on the new arguments, so the changed call can be denied or need approval.
+Treat hook implementations as trusted code.
 
 Mecatl ignores malformed mutation JSON and emits a client-visible informational
 hook event.

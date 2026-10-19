@@ -15,7 +15,7 @@ import (
 	"github.com/stacklok/mecatl/engine/session"
 )
 
-func TestADR_0233_AuthorityEvaluator_Scenario2_SetRoundTripsThroughSnapshotAndFold(t *testing.T) {
+func TestAuthoritySetRoundTripsThroughSnapshotAndFold(t *testing.T) {
 	t.Parallel()
 	bound := authorityBinding(t)
 	s := session.New("authority-round-trip", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/workspace", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1, 0).UTC())
@@ -39,7 +39,7 @@ func TestADR_0233_AuthorityEvaluator_Scenario2_SetRoundTripsThroughSnapshotAndFo
 	assertAuthorityBinding(t, folded, bound)
 }
 
-func TestADR_0233_AuthorityEvaluator_Scenario2_PayloadExcludesSensitiveRuntimeData(t *testing.T) {
+func TestAuthorityPayloadExcludesSensitiveRuntimeData(t *testing.T) {
 	t.Parallel()
 	bound := authorityBinding(t)
 	s := session.New("authority-payload", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/workspace/secret", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1, 0).UTC())
@@ -63,7 +63,7 @@ func TestADR_0233_AuthorityEvaluator_Scenario2_PayloadExcludesSensitiveRuntimeDa
 	}
 }
 
-func TestADR_0233_AuthorityEvaluator_Scenario2_UndecodableSetFailsClosedLoudly(t *testing.T) {
+func TestAuthorityUndecodableSetFailsClosedLoudly(t *testing.T) {
 	t.Parallel()
 	line := []byte(`{"id":"malformed","state":"idle","mode":"default","limits":{},"counters":{},"token_usage":{},"environment_ref":{"Kind":"local","ID":"/workspace","Revision":"in-tree-v1"},"created_at":"1970-01-01T00:00:01Z","authority":{"capability_set":{"tools":"not-a-list"},"provenance":"derived","definition_identity":"explicit:reviewer"}}`)
 	if _, err := sessnap.Unmarshal(line); err == nil || !strings.Contains(err.Error(), "authority") {
@@ -80,7 +80,7 @@ func TestADR_0233_AuthorityEvaluator_Scenario2_UndecodableSetFailsClosedLoudly(t
 	}
 }
 
-func TestADR_0233_AuthorityEvaluator_Scenario2_NoSilentBoundButEmptyState(t *testing.T) {
+func TestAuthorityNoSilentBoundButEmptyState(t *testing.T) {
 	t.Parallel()
 	line := []byte(`{"id":"empty","state":"idle","mode":"default","limits":{},"counters":{},"token_usage":{},"environment_ref":{"Kind":"local","ID":"/workspace","Revision":"in-tree-v1"},"created_at":"1970-01-01T00:00:01Z","authority":{"capability_set":{"tools":"not-a-list"},"provenance":"derived","definition_identity":"explicit:reviewer"}}`)
 	restored, err := sessnap.Unmarshal(line)
@@ -92,7 +92,7 @@ func TestADR_0233_AuthorityEvaluator_Scenario2_NoSilentBoundButEmptyState(t *tes
 	}
 }
 
-func TestADR_0233_AuthorityEvaluator_Scenario2_RestoreRejectsIncompleteAuthorityClaims(t *testing.T) {
+func TestRestoreRejectsIncompleteAuthorityClaims(t *testing.T) {
 	t.Parallel()
 	const snapshotPrefix = `{"id":"incomplete","state":"idle","mode":"default","limits":{},"counters":{},"token_usage":{},"environment_ref":{"Kind":"local","ID":"/workspace","Revision":"in-tree-v1"},"created_at":"1970-01-01T00:00:01Z",`
 	for name, authority := range map[string]string{
@@ -122,7 +122,60 @@ func TestADR_0233_AuthorityEvaluator_Scenario2_RestoreRejectsIncompleteAuthority
 	}
 }
 
-func TestADR_0233_AuthorityEvaluator_Scenario2_TerminalRecoveryPreservesSet(t *testing.T) {
+// TestSessionScopedAgentIdentity_RestoreRejectsAgentBoundSnapshotWithoutCeiling
+// pins a hardening found by external review: a persisted snapshot claiming
+// agent_definition_name without a bound Ceiling would otherwise restore as
+// agent-bound-by-label yet fully widenable in practice (GrantToolAuthority /
+// CompleteWorkspaceEnrollment treat a nil Ceiling as unrestricted) — exactly
+// the non-widenable-ceiling guarantee ADR 0353 exists to provide. Restore must
+// reject this combination outright, not restore a silently-unsafe session.
+// Mutation-verified: this test failed (restored successfully) before
+// AgentDefinitionName was restored ahead of authority and BindAuthority's
+// agent-bound-requires-Ceiling check was added.
+func TestSessionScopedAgentIdentity_RestoreRejectsAgentBoundSnapshotWithoutCeiling(t *testing.T) {
+	t.Parallel()
+	const snapshotPrefix = `{"id":"agent-bound-no-ceiling","state":"idle","mode":"default","limits":{},"counters":{},"token_usage":{},"environment_ref":{"Kind":"local","ID":"/workspace","Revision":"in-tree-v1"},"created_at":"1970-01-01T00:00:01Z","agent_definition_name":"escalator",`
+
+	t.Run("absent authority is rejected", func(t *testing.T) {
+		for _, ending := range []string{`"profile":"default"}`, `"authority":null}`} {
+			if restored, err := sessnap.Unmarshal([]byte(snapshotPrefix + ending)); err == nil || restored != nil {
+				t.Fatalf("missing authority restored: %v, %v", restored, err)
+			}
+		}
+		snap := sessnap.Snapshot{ID: "agent", AgentDefinitionName: "escalator", EnvironmentRef: session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "v1"}}
+		if restored, err := snap.Restore(); err == nil || restored != nil {
+			t.Fatalf("nil authority restored: %v, %v", restored, err)
+		}
+	})
+
+	t.Run("agent-bound label with a Ceiling-less authority is rejected", func(t *testing.T) {
+		restored, err := sessnap.Unmarshal([]byte(snapshotPrefix +
+			`"authority":{"capability_set":{"tools":["Read"]},"provenance":"agent-def:test"}}`))
+		if err == nil {
+			t.Fatal("agent-bound snapshot without a Ceiling restored successfully")
+		}
+		if restored != nil {
+			t.Fatal("agent-bound snapshot without a Ceiling returned a session")
+		}
+	})
+
+	t.Run("agent-bound label WITH a matching Ceiling restores fine (positive control)", func(t *testing.T) {
+		restored, err := sessnap.Unmarshal([]byte(snapshotPrefix +
+			`"authority":{"capability_set":{"tools":["Read"]},"provenance":"agent-def:test","ceiling":{"tools":["Read"]}}}`))
+		if err != nil {
+			t.Fatalf("agent-bound snapshot with a consistent Ceiling: restore failed: %v", err)
+		}
+		if restored.AgentDefinitionName != "escalator" {
+			t.Fatalf("AgentDefinitionName = %q, want escalator", restored.AgentDefinitionName)
+		}
+		got, bound := restored.BoundAuthority()
+		if !bound || got.Ceiling == nil {
+			t.Fatalf("bound=%v Ceiling=%v, want a bound authority with a non-nil Ceiling", bound, got.Ceiling)
+		}
+	})
+}
+
+func TestAuthorityTerminalRecoveryPreservesSet(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
 		name     string

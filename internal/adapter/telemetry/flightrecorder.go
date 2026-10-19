@@ -26,7 +26,7 @@ const (
 // FlightRecorder wraps the stdlib runtime/trace.FlightRecorder (Go 1.26) with a
 // bounded in-memory window. It continuously records execution-trace events into
 // a ring buffer; Snapshot writes the current window out as a parseable trace
-// (the trigger Phase-2's perf-over-MCP server calls on a tail-latency turn).
+// (the trigger the perf MCP server, mcpperf, calls on a tail-latency turn).
 //
 // SECURITY: an execution trace can embed goroutine stacks and timing that
 // correlate to request data. Snapshots must only be served on the loopback
@@ -110,7 +110,7 @@ func (f *FlightRecorder) Snapshot(w io.Writer) (int64, error) {
 }
 
 // SnapshotBytes returns the current trace window as a byte slice. It is the
-// convenience the Phase-2 MCP tool and the Phase-1 /debug/flightrecorder
+// convenience the perf MCP tool and the /debug/flightrecorder
 // endpoint use; the returned buffer begins with the Go execution-trace magic
 // header and is parseable by golang.org/x/exp/trace.
 func (f *FlightRecorder) SnapshotBytes() ([]byte, error) {

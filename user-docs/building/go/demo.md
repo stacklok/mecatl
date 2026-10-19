@@ -15,7 +15,7 @@ network connection.
 
 ## Prerequisites
 
-You need **Go 1.27 or newer** and a local clone of the Mecatl repository:
+You need **Go 1.27.2 or newer** and a local clone of the Mecatl repository:
 
 ```sh
 git clone https://github.com/stacklok/mecatl

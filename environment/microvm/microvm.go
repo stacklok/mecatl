@@ -1,2 +1,4 @@
-// Package microvm reserves the opt-in module boundary for the future microVM environment runtime.
+// Package microvm is the opt-in microVM environment runtime: the libkrun-backed
+// repository VM backend and the local lifecycle daemon (mecatl-microvmd) that
+// creates, attaches, and executes in repository-scoped guest VMs.
 package microvm

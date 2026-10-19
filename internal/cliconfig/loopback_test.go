@@ -2,8 +2,8 @@ package cliconfig
 
 import "testing"
 
-// TestIsLoopbackAddr pins the fail-closed loopback gate shared by the four mains
-// (ADR 0018 decision 6): loopback hosts pass; non-loopback, wildcard, and empty
+// TestIsLoopbackAddr pins the fail-closed loopback gate shared by the four mains:
+// loopback hosts pass; non-loopback, wildcard, and empty
 // hosts do NOT, so a misconfigured bind of the unauthenticated admin surface is
 // refused.
 func TestIsLoopbackAddr(t *testing.T) {

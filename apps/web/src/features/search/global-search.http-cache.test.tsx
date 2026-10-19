@@ -10,8 +10,8 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, expect, it, vi } from "vitest";
 import { ShortcutProvider } from "../shortcuts/shortcut-provider";
 import { GlobalSearch } from "./global-search";
+import { renderInRouter } from "./test-support";
 
-vi.mock("@tanstack/react-router", () => ({ useNavigate: () => vi.fn() }));
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 
 const inventoryPaths = [
@@ -22,6 +22,7 @@ const inventoryPaths = [
   "/api/v1/user-memory",
 ];
 
+const initialApiConfig = client.getConfig();
 let root: Root | undefined;
 let container: HTMLDivElement | undefined;
 
@@ -32,6 +33,7 @@ afterEach(async () => {
   container = undefined;
   document.body.replaceChildren();
   vi.unstubAllGlobals();
+  client.setConfig({ baseUrl: initialApiConfig.baseUrl, fetch: initialApiConfig.fetch });
 });
 
 it("bypasses the browser HTTP cache for each authorized search inventory request", async () => {
@@ -74,15 +76,14 @@ it("bypasses the browser HTTP cache for each authorized search inventory request
   container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
-  await act(async () => {
-    root?.render(
-      <QueryClientProvider client={queryClient}>
-        <ShortcutProvider>
-          <GlobalSearch />
-        </ShortcutProvider>
-      </QueryClientProvider>,
-    );
-  });
+  await renderInRouter(
+    root,
+    <QueryClientProvider client={queryClient}>
+      <ShortcutProvider>
+        <GlobalSearch />
+      </ShortcutProvider>
+    </QueryClientProvider>,
+  );
   expect(requests).toHaveLength(0);
 
   await act(async () =>

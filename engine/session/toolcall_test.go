@@ -3,6 +3,7 @@ package session
 import (
 	"encoding/json"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -46,6 +47,25 @@ func TestParseArgs(t *testing.T) {
 		}
 		if msg == "" {
 			t.Fatal("malformed JSON produced no model-facing message")
+		}
+	})
+
+	t.Run("ambiguous objects are refused", func(t *testing.T) {
+		for _, args := range []string{
+			`{"key":"a","key":"b"}`,
+			`{"key":"a","Key":"b"}`,
+			`{"KEY":"b"}`,
+			`{"\u212aey":"b"}`,
+			`{"key":"a","nested":{"x":1,"x":2}}`,
+		} {
+			var p payload
+			msg, ok := ParseArgs(ToolCall{Args: json.RawMessage(args)}, &p)
+			if ok || !strings.Contains(msg, "ambiguous tool arguments") {
+				t.Errorf("ParseArgs(%s) ok=%v msg=%q, want an ambiguous-arguments refusal", args, ok, msg)
+			}
+			if p != (payload{}) {
+				t.Errorf("ParseArgs(%s) decoded %+v before refusing", args, p)
+			}
 		}
 	})
 }

@@ -63,7 +63,7 @@ func (*firstThenBlockingProvider) Capabilities() port.ProviderCapabilities {
 	return port.ProviderCapabilities{}
 }
 
-func TestADR_0294_AppAndMecak8sLeaseCompositionSharesMutationCapability(t *testing.T) {
+func TestAppAndMecak8sLeaseCompositionSharesMutationCapability(t *testing.T) {
 	ctx := context.Background()
 	storeDir, leaseDir, workspace, memoryDir := t.TempDir(), t.TempDir(), t.TempDir(), t.TempDir()
 	cfg1 := leaseBaseCfg(t, storeDir, leaseDir, workspace, memoryDir)
@@ -107,7 +107,7 @@ func TestADR_0294_AppAndMecak8sLeaseCompositionSharesMutationCapability(t *testi
 	}
 }
 
-// TestCrossProcessLeaseExclusion is the cloud-native Phase 4 falsifiable gate: a
+// TestCrossProcessLeaseExclusion is the cross-process lease falsifiable gate: a
 // session leased by one Build (replica) cannot be run by a second Build over the
 // SAME store + lease dir, until the first settles its local run and releases
 // ownership (EndSession) or its lease lapses (TTL).
@@ -176,7 +176,7 @@ func TestCrossProcessLeaseExclusion(t *testing.T) {
 
 	// Close is not cancel: settle and join built1's local awaiting run before
 	// EndSession releases ownership. A close while the run is parked must retain
-	// the lease and resources (ADR 0291).
+	// the lease and resources.
 	if err := built1.Service.Approve(ctx, sess.ID, askID, session.VerdictDeny); err != nil {
 		t.Fatalf("deny run #1: %v", err)
 	}

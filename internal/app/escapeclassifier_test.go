@@ -15,8 +15,8 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/osfs"
 )
 
-// escapeclassifier_test.go pins the path-escape-posture Scenario 1 acceptance
-// criteria (docs/acceptance/path-escape-posture.md): the composition-layer
+// escapeclassifier_test.go pins the path-escape classifier contract: the
+// composition-layer
 // escapeClassifier classifies an FS-tool path EXACTLY as the osfs tool body
 // treats it by reusing resolveInRoot's canonicalize-then-reject primitives, and
 // classifies pseudo-filesystem paths (/proc, /sys, /dev) as a distinct
@@ -190,7 +190,7 @@ func TestPathEscapePosture_Scenario1_SymlinkEscapeIsEscape(t *testing.T) {
 // category — distinct from a regular escape — because an in-process FS read of
 // e.g. /proc/self/environ would return the SERVER's raw, unscrubbed
 // environment, a secret-exfiltration channel the envscrub-scrubbed Shell parity
-// path does not provide (docs/acceptance/path-escape-posture.md scope cuts).
+// path does not provide.
 // The category must not collapse into escape and must not be reachable as
 // in-root, including when a symlink leads there.
 func TestPathEscapePosture_Scenario1_PseudoFsClassification(t *testing.T) {

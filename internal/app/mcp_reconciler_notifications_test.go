@@ -3,9 +3,13 @@ package app
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/stacklok/mecatl/internal/adapter/mcp"
 	mcpsource "github.com/stacklok/mecatl/internal/adapter/mcp/source"
@@ -79,6 +83,53 @@ func TestMCPReconcilerDirtyRetryAfterFailedCandidate(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestMCPReconcilerHTTPRecoveryFromEmptyCatalogRetainsLiveConnection(t *testing.T) {
+	remote := mcpsdk.NewServer(&mcpsdk.Implementation{Name: "recovered", Version: "v1"}, nil)
+	handler := mcpsdk.NewStreamableHTTPHandler(func(*http.Request) *mcpsdk.Server { return remote }, nil)
+	available := atomic.Bool{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !available.Load() {
+			http.Error(w, "unavailable", http.StatusBadGateway)
+			return
+		}
+		handler.ServeHTTP(w, r)
+	}))
+	t.Cleanup(server.Close)
+
+	r := newMCPSourceReconciler(mcpReconcilerOptions{
+		sources: []mcpsource.Source{&reconciliationSource{name: "static", cfgs: []mcp.ServerConfig{{Name: "recovered", URL: server.URL}}}},
+		build:   buildMCPReconcileCandidate(Config{}),
+		after:   elapsedMCPReconcileCooldown(t),
+	})
+	t.Cleanup(r.Close)
+
+	failed, err := r.Reconcile(t.Context())
+	if err != nil || !failed.changed || len(failed.candidate.manager.Servers()) != 0 {
+		t.Fatalf("failed empty-catalog candidate = (%+v, %v)", failed, err)
+	}
+	if diagnostics := r.statusSnapshot().Sources[0].Diagnostics; len(diagnostics) != 1 {
+		t.Fatalf("failed candidate diagnostics = %v", diagnostics)
+	}
+
+	available.Store(true)
+	recovered, err := r.Reconcile(t.Context())
+	if err != nil || !recovered.changed || recovered.candidate == failed.candidate || len(recovered.candidate.manager.Servers()) != 1 {
+		t.Fatalf("empty-catalog recovery = (%+v, %v)", recovered, err)
+	}
+	if diagnostics := r.statusSnapshot().Sources[0].Diagnostics; len(diagnostics) != 0 {
+		t.Fatalf("recovered candidate diagnostics = %v", diagnostics)
+	}
+
+	mcpsdk.AddTool(remote, &mcpsdk.Tool{Name: "added-after-recovery"}, func(context.Context, *mcpsdk.CallToolRequest, struct{}) (*mcpsdk.CallToolResult, any, error) {
+		return &mcpsdk.CallToolResult{}, nil, nil
+	})
+	eventuallyReconcile(t, func() bool {
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		return r.current != nil && r.current.generation != recovered.candidate.generation && len(r.current.manager.Servers()) == 1 && len(r.current.tools) == 1 && r.current.tools[0].Name == "mcp__recovered__added-after-recovery"
+	})
 }
 
 func TestMCPReconcilerNotificationStormCooldown(t *testing.T) {

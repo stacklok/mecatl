@@ -14,8 +14,8 @@ import (
 	"github.com/stacklok/mecatl/e2e/harness"
 )
 
-// teamRouterSpecs covers the semantic model router (ADR 0031; enable model ADR 0042;
-// extended to TEAM MEMBERS by issue #100) LIVE: a mecated whose operator settings.yaml
+// teamRouterSpecs covers the semantic model router (extended to TEAM MEMBERS by
+// issue #100) LIVE: a mecated whose operator settings.yaml
 // defines a models.router taxonomy (the taxonomy is the enable) must, on a real Team
 // delegation with PLAIN (undefined) members, classify each member's task and mint that
 // member on the chosen category's model.
@@ -26,7 +26,7 @@ import (
 //
 // HOW THE ASSERTION WORKS. The harness observes the routed model on the wire:
 // `RoutedCategory`/`RoutedModel` ride the team.start roster (`routed_category`/
-// `routed_model` proto fields on the `TeamMemberSpec` message, ADR 0034 / issue #100), so
+// `routed_model` proto fields on the `TeamMemberSpec` message, issue #100), so
 // the spec asserts the OBSERVABLE facts that together prove the team family's routing
 // FIRED and did not wedge:
 //
@@ -105,7 +105,7 @@ func teamRouterSpecs() {
 					"        model: large-cat\n"
 				gomega.Expect(os.WriteFile(settings, []byte(cfg), 0o600)).To(gomega.Succeed())
 
-				// ADR 0042: the taxonomy in settings.yaml enables the router — no flag.
+				// The taxonomy in settings.yaml enables the router — no flag.
 				spawn, err := harness.NewLocalWith(
 					"--permission-config", settings,
 				)
@@ -151,7 +151,7 @@ func teamRouterSpecs() {
 
 				// (C) The team.start roster carries each routed (undefined) member's routed
 				// model — the PER-MEMBER WIRE assertion (RoutedCategory/RoutedModel on the
-				// team.start TeamMemberSpec, ADR 0034). The alpha member's task is a trivial
+				// team.start TeamMemberSpec). The alpha member's task is a trivial
 				// single-step lookup → "small" (the cheap lane); the beta member's task is a
 				// deep multi-step analysis → "large". The fields are populated only on a
 				// successful classification, so this is the deterministic per-member proof

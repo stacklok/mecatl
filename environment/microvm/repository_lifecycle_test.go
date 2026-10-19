@@ -586,7 +586,7 @@ func repositoryIdentityFixture(t *testing.T, root string, components ...string) 
 		"GIT_AUTHOR_NAME=mecatl test", "GIT_AUTHOR_EMAIL=test@example.invalid", "GIT_AUTHOR_DATE=2000-01-01T00:00:00Z",
 		"GIT_COMMITTER_NAME=mecatl test", "GIT_COMMITTER_EMAIL=test@example.invalid", "GIT_COMMITTER_DATE=2000-01-01T00:00:00Z",
 	}
-	if _, err := gitexec.RunWithEnv(ctx, repository, nil, identityEnv, "commit", "-m", "fixture"); err != nil {
+	if _, err := gitexec.RunWithEnv(ctx, repository, nil, append(identityEnv, noAutoMaintenanceEnv...), "commit", "-m", "fixture"); err != nil {
 		t.Fatal(err)
 	}
 	return repository, "", ""

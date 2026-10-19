@@ -136,7 +136,7 @@ func TestGoccyYAMLMigration_SemanticMatrixConfigValidate(t *testing.T) {
 	}
 }
 
-func TestGoccyYAMLMigration_Scenario2_ConfigValidateADR0225Safety(t *testing.T) {
+func TestGoccyYAMLMigration_Scenario2_ConfigValidateFileSafety(t *testing.T) {
 	dir := t.TempDir()
 	basePath := filepath.Join(dir, "settings $draft; name.yaml")
 	patchPath := filepath.Join(dir, "learning patch.yaml")

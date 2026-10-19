@@ -41,7 +41,7 @@ func guardrailsSpecs() {
 				checker := envOrDefault("MECATL_E2E_GUARDRAIL_MODEL", "openai/gpt-4.1-mini")
 
 				// Slot-ONLY enable: NO --guardrails-model. Binding the slot alone enables
-				// the checker (issue #159, ADR 0046, the router-parity configure = enable).
+				// the checker (issue #159, the router-parity configure = enable).
 				spawn, err := harness.NewLocalWith(
 					"--model-alias", "cheap="+checker,
 					"--model-slot", "guardrail=cheap",

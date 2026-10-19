@@ -124,7 +124,7 @@ func TestRootSessionProviderCorrelation_Scenario1_IngressCannotChooseRootGRPC(t 
 	}
 }
 
-func TestADR_0360_RootHeaderIsCorrelationOnly(t *testing.T) {
+func TestRootHeaderIsCorrelationOnly(t *testing.T) {
 	svc, provider, sess := rootCorrelationService(t)
 	httpServer := httptest.NewServer(server.NewHTTPHandler(svc))
 	defer httpServer.Close()

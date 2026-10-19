@@ -173,15 +173,39 @@ func TestHTTPProviderRequiresBaseURL(t *testing.T) {
 // composition can route it to backend-down rather than silently building a provider
 // every Search would fail on.
 func TestHTTPProviderRejectsMalformedURL(t *testing.T) {
-	for _, bad := range []string{
-		"://missing-scheme",        // parse error
-		"ftp://example.com/search", // wrong scheme
-		"not-a-url",                // no scheme, no host
-		"https://",                 // no host
+	for _, tc := range []struct{ name, baseURL, reason string }{
+		{"query string", "https://search.example/search?api_key=secret-value", "query string"},
+		{"parse error with userinfo", "https://user:secret-value@search.example/%zz", "not a valid URL"},
+		{"bad scheme", "ftp://user:secret-value@search.example/search", "http(s)"},
+		{"relative", "not-a-url", "http(s)"},
+		{"missing host", "https://", "host"},
+		{"empty hostname", "https://:123/search", "host"},
+		{"userinfo", "https://user:secret-value@search.example/search", "userinfo"},
+		{"empty userinfo", "https://@search.example/search", "userinfo"},
+		{"fragment", "https://search.example/search#secret-value", "fragment"},
+		{"empty fragment", "https://search.example/search#", "fragment"},
+		{"malformed", "://secret-value", "not a valid URL"},
 	} {
-		if _, err := NewHTTPProvider(HTTPConfig{BaseURL: bad}); err == nil {
-			t.Fatalf("expected a construction error for malformed BaseURL %q", bad)
-		}
+		t.Run(tc.name, func(t *testing.T) {
+			p, err := NewHTTPProvider(HTTPConfig{BaseURL: tc.baseURL})
+			if p != nil || err == nil || !strings.Contains(err.Error(), tc.reason) {
+				t.Fatalf("provider = %v, error = %v; want %s", p, err, tc.reason)
+			}
+			if strings.Contains(err.Error(), "secret-value") || strings.Contains(err.Error(), "user:") {
+				t.Fatalf("rejected URL leaked in error: %v", err)
+			}
+		})
+	}
+}
+
+func TestHTTPProviderRejectsEndpointWithQuery(t *testing.T) {
+	const endpoint = "https://search.example/search?api_key=secret-value"
+	p, err := NewHTTPProvider(HTTPConfig{BaseURL: endpoint})
+	if p != nil || err == nil || !strings.Contains(err.Error(), "query string") {
+		t.Fatalf("provider = %v, error = %v", p, err)
+	}
+	if strings.Contains(err.Error(), "secret-value") {
+		t.Fatalf("rejected URL leaked in error: %v", err)
 	}
 }
 

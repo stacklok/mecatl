@@ -39,8 +39,8 @@
 //
 // RESIDUAL (documented, not silently assumed): absent the deferred OS-level
 // sandbox, the Shell tool can write to any absolute path, so the structural boundary
-// covers Write/Edit only; cmd/mecated warns when SkillDraft and Shell are enabled
-// together. This mirrors mecatl's existing posture that the OS sandbox is the
+// covers Write/Edit only; composition (warnSkillDraftResiduals) warns when SkillDraft
+// and Shell are enabled together. This mirrors mecatl's existing posture that the OS sandbox is the
 // deferred wrap point for the command-execution seam.
 package skillfs
 

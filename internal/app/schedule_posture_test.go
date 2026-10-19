@@ -22,8 +22,8 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/server"
 )
 
-// schedule_posture_test.go pins the ADR-0073 Schedule tool's posture surface:
-// the model-visible prompt affordance (ADR 0070, AC4.1), the floor-scoped
+// schedule_posture_test.go pins the Schedule tool's posture surface:
+// the model-visible prompt affordance (AC4.1), the floor-scoped
 // Allow across the posture tiers (AC4.2), the mutating-create plan-mode gate
 // end-to-end at the loop level (AC4.3), and the full in-chat create→list→fire
 // scenario (AC4.4). The TUI embedded-scheduler default (AC2.4) lives in
@@ -132,7 +132,7 @@ func TestApplySchedulePostureAppendsNote(t *testing.T) {
 }
 
 // TestScheduleTool_EngineSystemPromptContainsScheduleContract is the
-// model-visible-discoverability gate for the Schedule tool (ADR 0070, AC4.1): a
+// model-visible-discoverability gate for the Schedule tool (AC4.1): a
 // tool whose correct use depends on the model CALLING it (create a schedule
 // instead of promising to "remember", list before duplicating, fire to verify)
 // MUST ship a model-visible prompt instruction telling it so, AND a test
@@ -227,7 +227,7 @@ func TestScheduleTool_EngineSystemPromptContainsScheduleContract(t *testing.T) {
 	}
 }
 
-// TestFireDelivery_ScheduleToolNoteLands pins DoD #7 (ADR 0070, the
+// TestFireDelivery_ScheduleToolNoteLands pins DoD #7 (the
 // model-visible-affordance gate) for the fire-result-delivery capability: the
 // BUILT engine's system prompt (via the REAL sessionEngineFactory path, not the
 // helper in isolation) tells the model that a schedule it creates reports its
@@ -280,7 +280,7 @@ func TestFireDelivery_ScheduleToolNoteLands(t *testing.T) {
 	// The reports-back instruction (the Role-layer note) must land verbatim.
 	const reportsBack = "reports its fire's result back into THIS conversation"
 	if !strings.Contains(captured.StablePrefix, reportsBack) {
-		t.Errorf("StablePrefix missing the fire-result-delivery reports-back instruction (ADR 0070)\ngot StablePrefix (first 800):\n%s",
+		t.Errorf("StablePrefix missing the fire-result-delivery reports-back instruction\ngot StablePrefix (first 800):\n%s",
 			firstN(captured.StablePrefix, 800))
 	}
 }

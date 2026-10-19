@@ -1,0 +1,24 @@
+suite: service contracts
+templates:
+  - templates/service.yaml
+release:
+  name: mecatl-studio
+set:
+  mecatl.baseURL: https://mecak8s.example.com
+  publicURL: https://studio.example.com
+  session.secretName: studio-session
+tests:
+  - it: exposes Studio's named port to the selector labels only
+    asserts:
+      - equal:
+          path: spec
+          value:
+            type: ClusterIP
+            selector:
+              app.kubernetes.io/name: mecatl-studio
+              app.kubernetes.io/instance: mecatl-studio
+            ports:
+              - name: http
+                port: 3100
+                targetPort: http
+                protocol: TCP

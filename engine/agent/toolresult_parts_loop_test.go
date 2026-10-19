@@ -15,7 +15,7 @@ import (
 // TestLoopEmitsToolResultWithParts proves the agent loop wires a tool's typed
 // ToolResult.Parts (BlockResourceLink + BlockText) end-to-end onto the
 // EvToolResult event it emits — the loop→EvToolResult contract for typed
-// tool-result blocks (issue #223 Phase 1/2). The mcpperf round-trip test drives
+// tool-result blocks (issue #223). The mcpperf round-trip test drives
 // tool.Execute() directly, never through Engine.Run, so it does not exercise
 // this wiring; this test drives the full loop on mockllm + a fake tool whose
 // Execute returns NewToolResultWithParts, and asserts the emitted EvToolResult

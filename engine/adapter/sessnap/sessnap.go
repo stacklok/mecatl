@@ -19,7 +19,7 @@
 //     faithfully via Session.RecordedStopReason() (which performs no limit
 //     derivation) and restored via the matching terminal transition
 //     Complete/Stop/Cancel/Fail. Capturing the recorded value directly means the
-//     snapshot no longer has to infer the reason from the conflated
+//     snapshot does not have to infer the reason from the conflated
 //     Session.StopReason(), so terminal round-trips are exact.
 package sessnap
 
@@ -28,7 +28,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"time"
+	"unicode/utf8"
 
 	"github.com/stacklok/mecatl/engine/session"
 )
@@ -54,7 +56,7 @@ type Snapshot struct {
 	// endpoint, credential, callback, or discovered-service state is persisted.
 	PendingWorkspaceEnrollment *session.PendingWorkspaceEnrollment `json:"pending_workspace_enrollment,omitempty"`
 	StopReason                 session.StopReason                  `json:"stop_reason,omitempty"`
-	// Kind and Relationship are the validated producer taxonomy from ADR 0217.
+	// Kind and Relationship are the validated session producer taxonomy.
 	// A missing kind is legacy data and restores as unknown (fail-closed).
 	Kind         session.SessionKind         `json:"kind,omitempty"`
 	Relationship session.SessionRelationship `json:"relationship,omitzero"`
@@ -62,15 +64,26 @@ type Snapshot struct {
 	// v1 snapshot with no "profile" key decoding to "" (the default profile) —
 	// purely additive, no format-tag bump (the same precedent as ProviderPhase /
 	// Parts).
-	Profile string `json:"profile,omitempty"`
+	Profile                   string `json:"profile,omitempty"`
+	ExecutionTemplateID       string `json:"execution_template_id,omitempty"`
+	ExecutionTemplateRevision string `json:"execution_template_revision,omitempty"`
+	// AgentDefinitionName is the session's opaque write-once agent-definition
+	// binding label (ADR 0353). omitempty keeps a pre-0353 snapshot with no
+	// "agent_definition_name" key decoding to "" (an ordinary session) —
+	// additive, no format-tag bump, same round-trip discipline as
+	// Profile/ProviderID/ModelID.
+	AgentDefinitionName string `json:"agent_definition_name,omitempty"`
+	// AgentCreateIntent preserves original explicit-ID retry evidence. Absent
+	// legacy evidence remains empty; effective configuration cannot recover it.
+	AgentCreateIntent string `json:"agent_create_intent,omitempty"`
 	// ProviderID and ModelID are the session's opaque neutral provider+model
 	// selector pair. omitempty keeps a v1 snapshot with no key decoding to the empty
 	// pair ("server default") — additive, no version bump. Persisting them lets a
 	// restarted process re-derive the SAME per-session engine via the factory.
 	ProviderID string `json:"provider_id,omitempty"`
 	ModelID    string `json:"model_id,omitempty"`
-	// ReasoningEffort is the session's opaque neutral reasoning-effort token (ADR
-	// 0055). omitempty keeps a pre-0055 snapshot with no key decoding to "" (unset)
+	// ReasoningEffort is the session's opaque neutral reasoning-effort token.
+	// omitempty keeps an older snapshot with no key decoding to "" (unset)
 	// — additive, no version bump. Persisting it lets a restarted process re-mint the
 	// SAME per-session engine (the same-effort adapter) via the factory.
 	ReasoningEffort string `json:"reasoning_effort,omitempty"`
@@ -121,17 +134,17 @@ type Snapshot struct {
 	// carry the same persisted cause.
 	LastError string `json:"last_error,omitempty"`
 	// RunID is the opaque, host-minted identity of the run this session is
-	// currently driving or most recently drove (ADR 0249). Persisting it is what
+	// currently driving or most recently drove. Persisting it is what
 	// makes an awaiting-approval resume continue THE SAME run across a process
 	// restart: the resume path reads it back and reuses it instead of minting a
 	// new one.
 	//
-	// omitempty keeps a pre-0245 snapshot with no "run_id" key decoding to "" —
+	// omitempty keeps an older snapshot with no "run_id" key decoding to "" —
 	// purely additive, no format-tag bump (the Profile/ProviderID/Usage
 	// precedent). A legacy session restores with no run id and is stamped on its
 	// next run; there is no migration sweep.
 	RunID string `json:"run_id,omitempty"`
-	// Owner is the verified caller the session is attributed to (ADR 0204). A
+	// Owner is the verified caller the session is attributed to. A
 	// POINTER for true omitempty: an ownerless session emits no "owner" key, so a
 	// pre-ship snapshot decodes to a nil owner and an ownerless snapshot stays
 	// byte-identical to a pre-ship one — purely additive, no format-tag bump.
@@ -140,10 +153,15 @@ type Snapshot struct {
 	// entry under engine/COMPATIBILITY.md; a direct-assignment field is
 	// Added/minor).
 	Owner *session.Principal `json:"owner,omitempty"`
-	// Authority is the plain, derived capability payload. A nil pointer is a
-	// genuinely pre-feature legacy record; a present payload must decode to the
-	// one governance.CapabilitySet representation or restore fails closed.
-	Authority *session.Authority `json:"authority,omitempty"`
+	// Authority is the plain, derived capability payload. A nil pointer is
+	// allowed only for an ordinary legacy record. Agent-bound records require
+	// a valid authority and ceiling; present payloads always validate on restore.
+	Authority             *session.Authority             `json:"authority,omitempty"`
+	ExecutionCapabilities *session.ExecutionCapabilities `json:"execution_capabilities,omitempty"`
+	// WorkspaceEnrollmentBrokerKeys is the exact completed broker registration-key
+	// ledger. Presence distinguishes known empty provenance from legacy absence.
+	WorkspaceEnrollmentBrokerKeys        []string `json:"workspace_enrollment_broker_keys,omitempty"`
+	WorkspaceEnrollmentBrokerKeysPresent bool     `json:"workspace_enrollment_broker_keys_present,omitempty"`
 	// EnvironmentRef is the sole durable execution-environment identity. It is
 	// required and must contain the exact provider revision used for reattachment.
 	EnvironmentRef session.EnvironmentRef `json:"environment_ref"`
@@ -285,35 +303,43 @@ func Of(s *session.Session) (Snapshot, error) {
 		relationship.BranchIndex = &branchIndex
 	}
 	snap := Snapshot{
-		ID:                     s.ID,
-		State:                  s.State,
-		Mode:                   s.Mode,
-		Limits:                 s.Limits,
-		Counters:               s.Counters,
-		ExternalBinding:        s.ExternalBinding,
-		EnvironmentRef:         s.EnvironmentRef,
-		Placement:              s.Placement,
-		Profile:                s.Profile,
-		ProviderID:             s.ProviderID,
-		ModelID:                s.ModelID,
-		ReasoningEffort:        s.ReasoningEffort,
-		DebugMCPServers:        append([]string(nil), s.DebugMCPServers...),
-		DebugMCPTools:          append([]string(nil), s.DebugMCPTools...),
-		DebugTargetFingerprint: s.DebugTargetFingerprint,
-		Title:                  s.Title,
-		TitleProvenance:        s.TitleProvenance,
-		TitleRevision:          s.TitleRevision,
-		TitleGeneration:        s.TitleGeneration,
-		TitleSourcePrompts:     s.TitleSourcePrompts(),
-		TitleAttempts:          s.TitleAttempts(),
-		TokenUsage:             s.TokenUsageSnapshot(),
-		Kind:                   s.Kind,
-		Relationship:           relationship,
-		CreatedAt:              s.CreatedAt,
-		Incarnation:            s.Incarnation(),
+		ID:                        s.ID,
+		State:                     s.State,
+		Mode:                      s.Mode,
+		Limits:                    s.Limits,
+		Counters:                  s.Counters,
+		ExternalBinding:           s.ExternalBinding,
+		EnvironmentRef:            s.EnvironmentRef,
+		Placement:                 s.Placement,
+		Profile:                   s.Profile,
+		AgentDefinitionName:       s.AgentDefinitionName,
+		AgentCreateIntent:         s.AgentCreateIntent,
+		ExecutionTemplateID:       s.ExecutionTemplateID,
+		ExecutionTemplateRevision: s.ExecutionTemplateRevision,
+		ProviderID:                s.ProviderID,
+		ModelID:                   s.ModelID,
+		ReasoningEffort:           s.ReasoningEffort,
+		DebugMCPServers:           append([]string(nil), s.DebugMCPServers...),
+		DebugMCPTools:             append([]string(nil), s.DebugMCPTools...),
+		DebugTargetFingerprint:    s.DebugTargetFingerprint,
+		Title:                     s.Title,
+		TitleProvenance:           s.TitleProvenance,
+		TitleRevision:             s.TitleRevision,
+		TitleGeneration:           s.TitleGeneration,
+		TitleSourcePrompts:        s.TitleSourcePrompts(),
+		TitleAttempts:             s.TitleAttempts(),
+		TokenUsage:                s.TokenUsageSnapshot(),
+		Kind:                      s.Kind,
+		Relationship:              relationship,
+		CreatedAt:                 s.CreatedAt,
+		Incarnation:               s.Incarnation(),
 		// Owner is a pointer for true omitempty; Clone so the snapshot cannot
 		// alias (and later mutate) the aggregate's own principal.
 		Owner: s.Owner.Clone(),
+	}
+	if s.ExecutionCapabilities != nil {
+		facts := *s.ExecutionCapabilities
+		snap.ExecutionCapabilities = &facts
 	}
 	if authority, ok := s.BoundAuthority(); ok {
 		snap.Authority = &authority
@@ -321,6 +347,7 @@ func Of(s *session.Session) (Snapshot, error) {
 	if occupancy, ok := s.LatestContextOccupancy(); ok {
 		snap.LatestContextOccupancy = &occupancy
 	}
+	snap.WorkspaceEnrollmentBrokerKeys, snap.WorkspaceEnrollmentBrokerKeysPresent = s.WorkspaceEnrollmentBrokerKeys()
 	if s.Conversation != nil {
 		snap.Messages = make([]messageDTO, len(s.Conversation.Messages))
 		for i, m := range s.Conversation.Messages {
@@ -364,8 +391,19 @@ func (s Snapshot) Restore() (*session.Session, error) {
 		return nil, fmt.Errorf("sessnap: restore session metadata: %w", err)
 	}
 
+	// AgentDefinitionName restores BEFORE authority: BindAuthority (reached via
+	// restoreAuthority below) rejects a bind that claims this label without a
+	// Ceiling (ADR 0353) — it can only see the label if it is set first, exactly
+	// as the real create path already sequences it (newCreatedSession stamps the
+	// label before setSessionLabels/RestoreLabels ever binds authority).
+	restored.AgentDefinitionName = s.AgentDefinitionName
+	restored.AgentCreateIntent = s.AgentCreateIntent
+
 	if err := restoreAuthority(restored, s.Authority); err != nil {
 		return nil, err
+	}
+	if err := restored.RestoreWorkspaceEnrollmentBrokerKeys(s.WorkspaceEnrollmentBrokerKeys, s.WorkspaceEnrollmentBrokerKeysPresent); err != nil {
+		return nil, fmt.Errorf("sessnap: restore workspace enrollment broker keys: %w", err)
 	}
 
 	// Rebuild the conversation history verbatim.
@@ -375,10 +413,16 @@ func (s Snapshot) Restore() (*session.Session, error) {
 	// Restore opaque creation labels by direct assignment. Title-specific metadata
 	// restores atomically through RestoreTitleMetadata below.
 	restored.Profile = s.Profile
+	restored.ExecutionTemplateID = s.ExecutionTemplateID
+	restored.ExecutionTemplateRevision = s.ExecutionTemplateRevision
 	restored.ProviderID = s.ProviderID
 	restored.ModelID = s.ModelID
 	restored.ReasoningEffort = s.ReasoningEffort
 	restored.Placement = s.Placement
+	if s.ExecutionCapabilities != nil {
+		facts := *s.ExecutionCapabilities
+		restored.ExecutionCapabilities = &facts
+	}
 	restored.DebugMCPServers = append([]string(nil), s.DebugMCPServers...)
 	restored.DebugMCPTools = append([]string(nil), s.DebugMCPTools...)
 	restored.DebugTargetFingerprint = s.DebugTargetFingerprint
@@ -426,8 +470,8 @@ func (s Snapshot) Restore() (*session.Session, error) {
 }
 
 func restoreAuthority(s *session.Session, authority *session.Authority) error {
-	if authority == nil {
-		return nil // Pre-feature record: legacy, deliberately unbound.
+	if authority == nil && s.AgentDefinitionName == "" {
+		return nil // Pre-feature ordinary record: deliberately unbound.
 	}
 	if err := ValidatePersistedAuthority(authority); err != nil {
 		return fmt.Errorf("sessnap: restore authority: %w", err)
@@ -592,6 +636,13 @@ func Unmarshal(line []byte) (*session.Session, error) {
 	if err := validateAuthorityWireClaim(wire.Authority); err != nil {
 		return nil, fmt.Errorf("sessnap: decode authority: %w", err)
 	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(line, &fields); err != nil {
+		return nil, fmt.Errorf("sessnap: decode snapshot: %w", err)
+	}
+	if err := validateWorkspaceEnrollmentBrokerKeysWire(fields); err != nil {
+		return nil, fmt.Errorf("sessnap: decode workspace enrollment broker keys: %w", err)
+	}
 
 	var snap Snapshot
 	if err := json.Unmarshal(line, &snap); err != nil {
@@ -600,9 +651,79 @@ func Unmarshal(line []byte) (*session.Session, error) {
 	return snap.Restore()
 }
 
+func validWorkspaceEnrollmentKeyEscapes(raw []byte) bool {
+	for i := 0; i < len(raw); i++ {
+		if raw[i] != '\\' {
+			continue
+		}
+		if i+1 >= len(raw) {
+			return false
+		}
+		if raw[i+1] != 'u' {
+			i++
+			continue
+		}
+		if i+6 > len(raw) {
+			return false
+		}
+		code, ok := jsonEscapeCode(raw[i+2 : i+6])
+		if !ok {
+			return false
+		}
+		i += 5
+		if code < 0xd800 || code > 0xdfff {
+			continue
+		}
+		if code >= 0xdc00 || i+6 >= len(raw) || raw[i+1] != '\\' || raw[i+2] != 'u' {
+			return false
+		}
+		low, ok := jsonEscapeCode(raw[i+3 : i+7])
+		if !ok || low < 0xdc00 || low > 0xdfff {
+			return false
+		}
+		i += 6
+	}
+	return true
+}
+
+func jsonEscapeCode(raw []byte) (rune, bool) {
+	code, err := strconv.ParseUint(string(raw), 16, 16)
+	if err != nil {
+		return 0, false
+	}
+	return rune(code), true
+}
+
+func validateWorkspaceEnrollmentBrokerKeysWire(fields map[string]json.RawMessage) error {
+	keysRaw, keysSupplied := fields["workspace_enrollment_broker_keys"]
+	presentRaw, presentSupplied := fields["workspace_enrollment_broker_keys_present"]
+	present := false
+	if presentSupplied {
+		if bytes.Equal(bytes.TrimSpace(presentRaw), []byte("null")) {
+			return errors.New("null presence")
+		}
+		if err := json.Unmarshal(presentRaw, &present); err != nil {
+			return errors.New("presence must be a boolean")
+		}
+	}
+	var keys []string
+	if keysSupplied && !bytes.Equal(bytes.TrimSpace(keysRaw), []byte("null")) {
+		if !utf8.Valid(keysRaw) || !validWorkspaceEnrollmentKeyEscapes(keysRaw) {
+			return errors.New("keys contain invalid UTF-8")
+		}
+		if err := json.Unmarshal(keysRaw, &keys); err != nil {
+			return errors.New("keys must be an array of strings")
+		}
+	}
+	if (!present && len(keys) != 0) || !session.ValidWorkspaceEnrollmentToolNames(keys) {
+		return errors.New("invalid broker-key ledger")
+	}
+	return nil
+}
+
 func validateAuthorityWireClaim(raw json.RawMessage) error {
 	if len(raw) == 0 {
-		return nil // Genuinely pre-feature record: no authority field.
+		return nil // Genuine legacy record: no authority field.
 	}
 	if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
 		return errors.New("null authority claim")

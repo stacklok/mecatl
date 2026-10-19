@@ -268,7 +268,7 @@ func TestResolveToolhiveIntent_DirectWhenOIDCConfigured(t *testing.T) {
 }
 
 // TestResolveToolhiveIntent_ProxyFallbackWhenNoOIDC is AC #2: auto mode + NO
-// oidc block ⇒ proxy, baseURL = loopback (byte-identical to pre-#265).
+// oidc block ⇒ proxy, baseURL = loopback.
 func TestResolveToolhiveIntent_ProxyFallbackWhenNoOIDC(t *testing.T) {
 	cfgPath := writeToolhiveConfig(t, "https://gw.example.com") // no oidc
 	intent, ok := resolveToolhiveIntent(Config{

@@ -61,8 +61,8 @@ func modelCapability(reg *providerRegistry, providerID, modelID string) port.Pro
 }
 
 // modelReasoningSupport reports whether the (provider, model) is known to support
-// reasoning-effort, and whether that fact is known (ADR 0055's gate as narrowed
-// by ADR 0376). A live entry's Reasoning bit is authoritative only when its
+// reasoning-effort, and whether that fact is known (the reasoning-effort
+// capability gate). A live entry's Reasoning bit is authoritative only when its
 // support is known: Anthropic listings preserve omitted thinking as unknown
 // even when a model row exists. When no live row exists, the embedded catalog
 // supplies a floor; a model with no evidence also fails open, forwarding a configured effort so

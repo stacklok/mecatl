@@ -1,10 +1,11 @@
 # Agent identity, part 2: the outbound hop
 
-*Status: strawman / working draft. Speculative scoping, not a design record under
-ADR 0002. Companion to
-[`docs/agent-identity-model.md`](agent-identity-model.md), which this takes as its premise
-and does not restate. Same tier as
-[`docs/scoped-resource-grants.md`](scoped-resource-grants.md).*
+This historical proposal takes the former identity-model draft (available in Git
+history at `docs/drafts/agent-identity-model.md`) as its premise. It is related to
+[scoped resource grants](scoped-resource-grants.md). The current proposed
+[agent identity and authority design](agent-identity/README.md), especially
+[MCP authorization](agent-identity/mcp-authorization.md), supersedes that premise;
+it does not endorse the outbound mechanisms described here.
 
 ## What this decides
 

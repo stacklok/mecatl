@@ -220,7 +220,7 @@ func TestRedisWorkspaceScopesAndMissingNamespace(t *testing.T) {
 }
 
 // TestRedisWorkspaceAuthorityResourcePathRootDot pins that AuthorityResourcePath
-// maps "." (the documented ListDir/ReadDir root spelling, ADR-consistent with
+// maps "." (the documented ListDir/ReadDir root spelling, consistent with
 // cleanWorkspaceDir) to the workspace root instead of rejecting it as an
 // escape — the bug that denied a root ListDir authority check before
 // execution — while continuing to reject every other invalid spelling

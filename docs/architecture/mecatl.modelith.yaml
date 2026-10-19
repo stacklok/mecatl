@@ -27,13 +27,13 @@ glossary:
 entities:
   Session:
     definition: >
-      The central aggregate and unit of work: a stateful conversation between a
-      principal and a model, with an `Environment` binding, usage accounting, and
-      limits. A `Session` is a state machine (idle, running, awaiting, completed,
+      The central aggregate: a stateful conversation between a principal and a
+      model, with an `Environment` binding, usage accounting, and limits. A
+      `Session` is a state machine (idle, running, awaiting, completed,
       cancelled, failed) and is bound to one `Provider`. Its effective `Model`
       is fixed for each `Turn`; a `PermissionMode` change can re-resolve the model
       between turns within that provider. It survives process restarts when
-      backed by a store.
+      backed by a store, preserving its incarnation identity across restoration.
     relationships:
       - entity: Conversation
         cardinality: "1:1"
@@ -77,8 +77,8 @@ entities:
         ownership: owned
         role: posture is
         note: >
-          The `Session`'s `PermissionMode` governs its toolset and — via ADR 0030
-          Layer 3 — its effective `Model`: switching to plan mode re-resolves the
+          The `Session`'s `PermissionMode` governs its toolset and — through the
+          plan model slot — its effective `Model`: switching to plan mode re-resolves the
           plan slot to a strong-reasoning `Model` within the same `Provider`,
           between turns.
       - entity: Memory
@@ -110,6 +110,11 @@ entities:
         statement: >
           A `Session` in a terminal state (completed, cancelled, or failed) is
           returned to idle before any new `Run` reuses it.
+      - id: session-incarnation-persists
+        statement: >
+          A `Session` has one incarnation identity for the lifetime of its ID.
+          Restoration preserves it; a new `Session` reusing the ID gets a new
+          incarnation.
       - id: session-usage-survives-restart
         statement: >
           Cumulative token usage is preserved across reopen, interrupt, recover,
@@ -157,11 +162,11 @@ entities:
 
   Run:
     definition: >
-      A single drive of a `Session` from a starting state to a terminal one —
-      one invocation of the agent loop. A `Run` sequences `Turns`, emits a stream
-      of `Events`, and ends with a stop reason (end-of-turn, budget, no-progress,
-      cancelled, error). It is the execution, not the state: the `Session` it
-      drives outlives it.
+      One unit of work driven through a `Session` by the agent loop. It sequences
+      `Turns` and emits `Events`. It can pause awaiting approval or external
+      authorization and continue with the same logical run identity, even if a
+      new in-process loop handle drives the continuation. The `Session` outlives
+      the `Run` and can host later runs.
     relationships:
       - entity: Session
         cardinality: "n:1"
@@ -178,8 +183,8 @@ entities:
     invariants:
       - id: run-one-terminal-stop
         statement: >
-          A `Run` drives its `Session` to exactly one terminal state and reports
-          exactly one stop reason.
+          A paused `Run` has no terminal stop. Its continuation retains the same
+          run identity; on completion it reports one terminal stop reason.
       - id: run-no-replay-after-first-chunk
         statement: >
           Once a `Turn` has streamed its first chunk, the `Run` never retries or
@@ -491,7 +496,7 @@ entities:
       model. A `Session` runs against an effective `Model`; a `Subagent` or
       `TeamMember` may override it within the same `Provider`, and a
       `PermissionMode` change may re-resolve it within the same `Provider`
-      (plan mode → a strong-reasoning model, ADR 0030 Layer 3).
+      (plan mode → a strong-reasoning model via the plan slot).
     invariants:
       - id: model-override-stays-in-provider
         statement: >
@@ -571,14 +576,13 @@ entities:
   PermissionMode:
     definition: >
       A `Session`'s permission posture — default, plan, or acceptEdits — governing
-      which `Tools` may run and, via ADR 0030 Layer 3, the effective `Model`: in
+      which `Tools` may run and, through the plan model slot, the effective `Model`: in
       plan mode the `Session` re-resolves the plan slot to a strong-reasoning
       `Model` within the same `Provider`. Plan mode is enforced at two layers
       (catalog filter hides mutating `Tools`; evaluator gate hard-denies
-      mutations). `acceptEdits` is a declared-but-not-yet-implemented posture
-      (ADR 0022 Future work): it is carried as metadata and surfaced in mode
-      pickers, but the decision path treats it identically to `default`
-      (deny→ask→allow), so it auto-allows nothing today. It is a value object
+      mutations). `acceptEdits` auto-allows Edit and Write where only the
+      built-in approval floor would ask; configured asks and denies still win,
+      and Shell and every other `Tool` resolve as in `default`. It is a value object
       owned by exactly one `Session`; a control surface switches it out of band
       (e.g. ACP session/set_mode).
     relationships:
@@ -606,12 +610,12 @@ entities:
         statement: >
           The effective `Model` is fixed for the duration of a turn; a mode change
           re-resolves it only between turns, at the run-entry seam, never mid-stream.
-      - id: acceptedits-declared-not-implemented
+      - id: acceptedits-loosens-only-the-edit-floor
         statement: >
-          `acceptEdits` is carried as metadata and surfaced in mode pickers, but the
-          permission decision path never branches on it — it resolves identically to
-          `default` (deny→ask→allow). It auto-allows no `ToolCall` today; a real
-          auto-accept-edits tier is ADR 0022 Future work.
+          `acceptEdits` adds allow rules for Edit and Write above the built-in
+          floor, so it loosens only the built-in ask for those two `Tools`. It never
+          overrides a configured deny or ask, and every other `Tool`, including
+          Shell, resolves exactly as in `default`.
 
   PermissionRule:
     definition: >
@@ -834,7 +838,7 @@ entities:
       rehydration path), not only top up a snapshot (structural reconstruction; a
       pure fold is byte-identical-replay only for providers not using the opaque
       reasoning-replay fields — Reasoning/ProviderPhase/ToolCall.ItemID are not on
-      the event stream — see ADR 0038).
+      the event stream).
     relationships:
       - entity: Event
         cardinality: "1:n"
@@ -865,9 +869,10 @@ entities:
       `Session` from its snapshot plus the `EventLog`.
     relationships:
       - entity: Run
-        cardinality: "1:n"
+        cardinality: "n:n"
         ownership: referenced
         role: executes
+        note: A paused run can continue in another process with the same run identity.
       - entity: SessionLease
         cardinality: "1:n"
         ownership: referenced
@@ -1061,14 +1066,15 @@ scenarios:
     invariants_touched:
       [plan-mode-invisible-tools, plan-mode-denies-mutations, deny-dominant]
 
-  - name: acceptEdits is carried but not enforced
+  - name: acceptEdits auto-allows file edits only
     actors: [Principal, Client]
     steps:
       - "`Client` switches the `Session`'s `PermissionMode` to acceptEdits between turns; the mode picker advertises it."
-      - "On the next turn the `Catalog` advertises the full toolset (acceptEdits hides nothing) and the decision path resolves `ToolCalls` through the normal deny→ask→allow fold — identically to `default`."
-      - "A mutating `ToolCall` still surfaces a `PermissionAsk`; nothing is auto-allowed by the mode alone."
+      - "On the next turn the `Catalog` advertises the full toolset (acceptEdits hides nothing)."
+      - "An Edit or Write `ToolCall` that only the built-in floor would ask about is allowed without a `PermissionAsk`."
+      - "A configured ask or deny for Edit or Write, and any mutating Shell `ToolCall`, still resolve through the normal deny→ask→allow fold."
     invariants_touched:
-      [acceptedits-declared-not-implemented, deny-dominant, toolcall-authorized-before-execute]
+      [acceptedits-loosens-only-the-edit-floor, deny-dominant, toolcall-authorized-before-execute]
 
   - name: The conversation is compacted without losing the task
     actors: [Principal]
@@ -1110,10 +1116,10 @@ scenarios:
     actors: [Operator, Client]
     steps:
       - "A `Session` is parked on a `PermissionAsk` when the process dies; the `EventLog` holds every `Event` up to that point."
-      - "`Operator` restarts the harness; a new `Process` recovers the `Session` to idle before reuse, preserving cumulative usage."
-      - "`Client` approves the pending ask; the `Run` re-enters the loop at the ask and the pending `ToolCall` executes exactly once."
+      - "`Operator` restarts the harness; a new `Process` restores the awaiting `Session`, preserving its incarnation, run identity and cumulative usage."
+      - "`Client` approves the pending ask; the same logical `Run` continues at the ask and the pending `ToolCall` executes exactly once."
     invariants_touched:
-      [session-recover-before-reuse, event-log-records-terminal-tail, ask-suspends-run-until-resolved, session-usage-survives-restart, rehydrate-tool-exactly-once]
+      [session-incarnation-persists, run-one-terminal-stop, event-log-records-terminal-tail, ask-suspends-run-until-resolved, session-usage-survives-restart, rehydrate-tool-exactly-once]
 
   - name: A rehydrated session does not re-ask a previously granted tool
     actors: [Operator, Client]

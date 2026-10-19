@@ -24,7 +24,7 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/telemetry"
 )
 
-func TestADR_0212_SessionLoadObservability_Scenario1_NotFoundConcealsMissingForeignAndLoadFailure(t *testing.T) {
+func TestSessionLoadObservability_Scenario1_NotFoundConcealsMissingForeignAndLoadFailure(t *testing.T) {
 	const target = session.SessionID("private-target-session")
 	owner := &session.Principal{Issuer: "https://issuer.example", Subject: "owner", GrantType: session.GrantTypeUser}
 	foreign := &session.Principal{Issuer: "https://other.example", Subject: "foreign", GrantType: session.GrantTypeUser}
@@ -64,7 +64,7 @@ func TestADR_0212_SessionLoadObservability_Scenario1_NotFoundConcealsMissingFore
 	}
 }
 
-func TestADR_0212_SessionLoadObservability_Scenario1_BoundedWarningAndMetric(t *testing.T) {
+func TestSessionLoadObservability_Scenario1_BoundedWarningAndMetric(t *testing.T) {
 	const sensitive = "session=private principal=alice redis=mecatl:session:private path=/secret/store blob=TOPSECRET size=98765"
 	classes := []struct {
 		name string

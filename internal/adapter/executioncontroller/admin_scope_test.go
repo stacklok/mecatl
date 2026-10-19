@@ -2,12 +2,8 @@ package executioncontroller
 
 import (
 	"context"
-	"crypto/ed25519"
-	"crypto/rand"
-	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
-	"encoding/hex"
 	"net"
 	"os"
 	"path/filepath"
@@ -20,6 +16,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/status"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -51,10 +48,6 @@ func newAdminScopeFixture(t *testing.T, route, actor string) *adminScopeFixture 
 	if route == "data" {
 		env = runFixtureEnvironment(4, 4)
 	}
-	if route == "migrate" {
-		_ = unstructured.SetNestedField(env.Object, int64(1), "spec", "schemaVersion")
-		_ = unstructured.SetNestedField(env.Object, int64(1), "status", "schemaVersion")
-	}
 	if route == "recover" {
 		_ = unstructured.SetNestedField(env.Object, "FenceUnknown", "status", "fenceState")
 	}
@@ -70,22 +63,16 @@ func newAdminScopeFixture(t *testing.T, route, actor string) *adminScopeFixture 
 	}
 	_ = unstructured.SetNestedField(env.Object, int64(4), "status", "grantGeneration")
 	d := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), env)
-	k := kubefake.NewSimpleClientset(terminalExecutor(), retainedPVC())
+	k := kubefake.NewSimpleClientset(terminalExecutor(), retainedPVC(), &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: profileAllocationConfigMap("go"), Namespace: "ns"}, Data: map[string]string{profileAllocationKey("go"): "[]"}})
 	store := NewStore(d, "ns", testProfiles(), nil).WithKubeClient(k)
 	dir, now := t.TempDir(), time.Now().UTC()
 	ca, cert, key, clientCert := rpcSecurityPKI(t, now, actor)
-	pub, priv, err := ed25519.GenerateKey(rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-	writePKCS8(t, filepath.Join(dir, "grant.pem"), priv)
 	for name, data := range map[string][]byte{"server.crt": cert, "server.key": key, "clients.pem": ca} {
 		if err := os.WriteFile(filepath.Join(dir, name), data, 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
-	fp := sha256.Sum256(pub)
-	mf := securityManifest{Version: 1, Generation: 1, Issuer: "issuer", Audience: "audience", ActiveKeyID: "k1", GrantTTLText: "1m", ClockSkewText: "5s", Keys: []securityKeyManifest{{ID: "k1", Version: 1, File: "grant.pem", PublicSHA256: hex.EncodeToString(fp[:]), ActivateAt: now.Add(-time.Minute), VerifyUntil: now.Add(time.Hour), State: "active"}}, TLS: securityTLSManifest{CertificateFile: "server.crt", PrivateKeyFile: "server.key", ClientCAFile: "clients.pem"}, Clients: []securityClientManifest{{URI: actor}}}
+	mf := securityManifest{Version: 1, Generation: 1, TLS: securityTLSManifest{CertificateFile: "server.crt", PrivateKeyFile: "server.key", ClientCAFile: "clients.pem"}, Clients: []securityClientManifest{{URI: actor}}}
 	path := filepath.Join(dir, "manifest.json")
 	writeManifest(t, path, mf)
 	manager := NewSecurityManager(path, dir, "ns", "authority", k)
@@ -133,9 +120,6 @@ func callScopedAdmin(ctx context.Context, c executionv1.ExecutionProviderService
 		_, err = c.RecoverEnvironment(ctx, &executionv1.RecoverEnvironmentRequest{Environment: ref, Owner: o, ExpectedExecutionEpoch: q.ExpectedEpoch, ExpectedPodUid: q.ExpectedPodUID, ExpectedPvcUid: q.ExpectedPVCUID, OperationId: q.OperationID})
 	case "delete":
 		_, err = c.DeleteRetiredEnvironment(ctx, &executionv1.DeleteRetiredEnvironmentRequest{Environment: ref, Owner: o, ExpectedPvcUid: q.ExpectedPVCUID, OperationId: q.OperationID})
-	case "migrate":
-		schema := uint32(q.ExpectedSchema)
-		_, err = c.MigrateEnvironment(ctx, &executionv1.MigrateEnvironmentRequest{Environment: ref, Owner: o, ExpectedSchemaVersion: &schema, ExpectedPodUid: q.ExpectedPodUID, ExpectedPvcUid: q.ExpectedPVCUID, OperationId: q.OperationID})
 	case "revoke":
 		_, err = c.RevokeEnvironment(ctx, &executionv1.RevokeEnvironmentRequest{Environment: ref, Owner: o, ExpectedGrantGeneration: q.ExpectedEpoch, OperationId: q.OperationID})
 	default:
@@ -145,11 +129,10 @@ func callScopedAdmin(ctx context.Context, c executionv1.ExecutionProviderService
 }
 
 func TestScopedAdminAllRoutesOverMTLS(t *testing.T) {
-	for _, route := range []string{"retire", "replace", "recover", "delete", "migrate", "revoke"} {
+	for _, route := range []string{"retire", "replace", "recover", "delete", "revoke"} {
 		t.Run(route, func(t *testing.T) {
 			f := newAdminScopeFixture(t, route, scopeAdmin)
 			q := adminRequestFixture()
-			q.ExpectedSchema = 1
 			call := func(q adminLifecycleRequest, owner executionenv.Owner) error {
 				return callScopedAdmin(t.Context(), f.client, route, q, owner)
 			}
@@ -201,13 +184,6 @@ func TestScopedAdminAllRoutesOverMTLS(t *testing.T) {
 					t.Fatalf("stale Pod UID: %v", err)
 				}
 			}
-			if route == "migrate" {
-				stale = q
-				stale.ExpectedSchema = 0
-				if err := call(stale, scopeOwner); status.Code(err) != codes.Aborted {
-					t.Fatalf("wrong schema: %v", err)
-				}
-			}
 			before, err := f.dynamic.Resource(ExecutionEnvironmentGVR).Namespace("ns").Get(t.Context(), "env", metav1.GetOptions{})
 			if err != nil {
 				t.Fatal(err)
@@ -248,7 +224,6 @@ func TestScopedAdminAllRoutesOverMTLS(t *testing.T) {
 		t.Run(route+"/creator", func(t *testing.T) {
 			f := newAdminScopeFixture(t, route, scopeCreator)
 			q := adminRequestFixture()
-			q.ExpectedSchema = 1
 			if err := callScopedAdmin(t.Context(), f.client, route, q, scopeOwner); status.Code(err) != codes.PermissionDenied {
 				t.Fatalf("normal creator is admin: %v", err)
 			}
@@ -261,7 +236,7 @@ func TestScopedAdminAllRoutesOverMTLS(t *testing.T) {
 }
 
 func TestScopedAdminCASRetryRechecksSubject(t *testing.T) {
-	for _, route := range []string{"retire", "replace", "recover", "delete", "migrate", "revoke"} {
+	for _, route := range []string{"retire", "replace", "recover", "delete", "revoke"} {
 		t.Run(route, func(t *testing.T) {
 			f := newAdminScopeFixture(t, route, scopeAdmin)
 			f.policy(t, true, []string{scopeCreator})
@@ -282,7 +257,6 @@ func TestScopedAdminCASRetryRechecksSubject(t *testing.T) {
 				return true, nil, apierrors.NewConflict(ExecutionEnvironmentGVR.GroupResource(), "env", nil)
 			})
 			q := adminRequestFixture()
-			q.ExpectedSchema = 1
 			if err := callScopedAdmin(t.Context(), f.client, route, q, scopeOwner); status.Code(err) != codes.NotFound {
 				t.Fatalf("CAS retry escaped scope: %v", err)
 			}
@@ -350,69 +324,6 @@ func TestScopedAdminCompletedReplacementReceiptReauthorizes(t *testing.T) {
 	}
 }
 
-func TestScopedAdminMigrationReceiptRetainsUIDPreconditions(t *testing.T) {
-	f := newAdminScopeFixture(t, "migrate", scopeAdmin)
-	f.policy(t, true, []string{scopeCreator})
-	q := adminRequestFixture()
-	q.ExpectedSchema = 1
-	if err := callScopedAdmin(t.Context(), f.client, "migrate", q, scopeOwner); err != nil {
-		t.Fatal(err)
-	}
-	if err := callScopedAdmin(t.Context(), f.client, "migrate", q, scopeOwner); err != nil {
-		t.Fatalf("exact migration replay failed: %v", err)
-	}
-	q.ExpectedSchema = 0
-	if err := callScopedAdmin(t.Context(), f.client, "migrate", q, scopeOwner); status.Code(err) != codes.Aborted {
-		t.Fatalf("migration receipt bypassed source schema: %v", err)
-	}
-	q.ExpectedSchema = 1
-	q.ExpectedPVCUID = "stale"
-	if err := callScopedAdmin(t.Context(), f.client, "migrate", q, scopeOwner); status.Code(err) != codes.Aborted {
-		t.Fatalf("migration receipt bypassed UID: %v", err)
-	}
-}
-
-func TestMigrationCompletedCASReplayRequiresExactSourceSchema(t *testing.T) {
-	for _, receipt := range []string{"exact", "changed", "absent", "expired"} {
-		t.Run(receipt, func(t *testing.T) {
-			f := newAdminScopeFixture(t, "migrate", scopeAdmin)
-			f.policy(t, true, []string{scopeCreator})
-			var raced bool
-			f.dynamic.PrependReactor("update", "executionenvironments", func(action k8stesting.Action) (bool, runtime.Object, error) {
-				u := action.(k8stesting.UpdateAction).GetObject().(*unstructured.Unstructured)
-				if raced || textNested(u.Object, "status", "lastMigrationOperationID") == "" {
-					return false, nil, nil
-				}
-				raced = true
-				completed := u.DeepCopy()
-				switch receipt {
-				case "changed":
-					_ = unstructured.SetNestedField(completed.Object, int64(0), "status", "lastMigrationFromSchema")
-				case "absent":
-					unstructured.RemoveNestedField(completed.Object, "status", "lastMigrationFromSchema")
-				case "expired":
-					unstructured.RemoveNestedField(completed.Object, "status", "lastMigrationOperationID")
-					unstructured.RemoveNestedField(completed.Object, "status", "lastMigrationFromSchema")
-				}
-				if err := f.dynamic.Tracker().Update(ExecutionEnvironmentGVR, completed, "ns"); err != nil {
-					t.Fatal(err)
-				}
-				return true, nil, apierrors.NewConflict(ExecutionEnvironmentGVR.GroupResource(), "env", nil)
-			})
-			q := adminRequestFixture()
-			q.ExpectedSchema = 1
-			err := callScopedAdmin(t.Context(), f.client, "migrate", q, scopeOwner)
-			want := codes.Aborted
-			if receipt == "exact" {
-				want = codes.OK
-			}
-			if !raced || status.Code(err) != want {
-				t.Fatalf("CAS replay raced=%t code=%v, want %v", raced, status.Code(err), want)
-			}
-		})
-	}
-}
-
 func TestScopedAdminEqualGenerationDriftFailsClosed(t *testing.T) {
 	f := newAdminScopeFixture(t, "revoke", scopeAdmin)
 	f.policy(t, true, []string{scopeCreator})
@@ -435,6 +346,7 @@ func TestScopedAdminWithOwnerAttestationCannotUseAnotherCreatorsDataPlane(t *tes
 	f.policy(t, true, []string{scopeCreator})
 	f.manifest.Generation++
 	f.manifest.Clients[0].MayAttestOwner = true
+	f.manifest.Clients[0].ExecutionTemplates = []string{"go"}
 	writeManifest(t, f.path, f.manifest)
 	if err := f.manager.Reload(t.Context()); err != nil {
 		t.Fatal(err)
@@ -488,7 +400,7 @@ func TestScopedAdminWithOwnerAttestationCannotUseAnotherCreatorsDataPlane(t *tes
 	if err != nil || !reflect.DeepEqual(before.Object, after.Object) {
 		t.Fatal("creator-bound denials changed foreign environment")
 	}
-	own, err := f.client.EnsureEnvironment(t.Context(), &executionv1.EnsureEnvironmentRequest{BindingId: "own", Profile: "go", Owner: owner, OperationId: "own-create"})
+	own, err := f.client.EnsureTemplate(t.Context(), &executionv1.EnsureTemplateRequest{BindingId: "own", Template: &executionv1.TemplateSelector{Id: "go", Revision: testProfiles().defaultRevision["go"]}, Owner: owner, OperationId: "own-create"})
 	if err != nil || own.GetEnvironment().GetId() == "env" {
 		t.Fatalf("explicit owner attestation did not permit own allocation: %v", err)
 	}
@@ -504,17 +416,10 @@ func TestScopedAdminDoesNotGrantAttestationOrDataPlane(t *testing.T) {
 	ref := &executionv1.EnvironmentRef{Id: "env", Revision: "rev"}
 	owner := &executionv1.Owner{Issuer: scopeOwner.Issuer, Subject: scopeOwner.Subject}
 	request := &executionv1.RequestContext{Environment: ref, Owner: owner, BindingId: "binding", Epoch: 4, RunId: "run", ClaimId: "claim", GrantGeneration: 4}
-	// A correctly signed actor-bound grant still cannot cross creator ownership.
-	h := NewHandler(HandlerConfig{Security: f.manager}, nil)
-	claim := executionenv.RunClaim{Environment: executionenv.EnvironmentRef{ID: "env", Revision: "rev"}, BindingID: "binding", RunID: "run", ClaimID: "claim", Epoch: 4, GrantGeneration: 4}
-	grant, _, err := h.signClaim(t.Context(), claim, scopeAdmin, ownerHash(scopeOwner))
-	if err != nil {
-		t.Fatal(err)
-	}
-	request.Grant = grant
+	// A scoped administrator without owner-attestation authority cannot cross creator ownership.
 	calls := map[string]func() error{
 		"ensure attestation": func() error {
-			_, err := f.client.EnsureEnvironment(t.Context(), &executionv1.EnsureEnvironmentRequest{BindingId: "new", Profile: "go", Owner: owner, OperationId: "ensure"})
+			_, err := f.client.EnsureTemplate(t.Context(), &executionv1.EnsureTemplateRequest{BindingId: "new", Template: &executionv1.TemplateSelector{Id: "go", Revision: testProfiles().defaultRevision["go"]}, Owner: owner, OperationId: "ensure"})
 			return err
 		},
 		"attach": func() error {
@@ -551,7 +456,7 @@ func TestScopedAdminDoesNotGrantAttestationOrDataPlane(t *testing.T) {
 		switch name {
 		case "run", "reference", "reference discovery":
 			want = codes.InvalidArgument
-		case "files", "shell":
+		case "ensure attestation":
 			want = codes.NotFound
 		}
 		if err := call(); status.Code(err) != want {

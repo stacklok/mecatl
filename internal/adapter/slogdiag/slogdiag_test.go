@@ -12,8 +12,7 @@ import (
 )
 
 // TestToSlogLevelMapping pins the port.Level → slog.Level mapping, including the
-// LevelDebug arm and the out-of-range default→Info fallback (both previously
-// untested).
+// LevelDebug arm and the out-of-range default→Info fallback.
 func TestToSlogLevelMapping(t *testing.T) {
 	cases := []struct {
 		in   port.Level

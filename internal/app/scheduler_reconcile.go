@@ -24,7 +24,7 @@ const reconcileStaleFireMsgRun = "fire lost: process crashed during run"
 
 // makeReconcileStaleFire builds the composition-injected
 // scheduler.ReconcileStaleFire callback over the assembled *server.Service +
-// ScheduleStore (issue #386 Phase 4b, acceptance criterion #7). It is the
+// ScheduleStore (issue #386). It is the
 // SETTLE half of the stale-fire reconciler: the scheduler package does the
 // DETECTION (store + the leader-lease/isPriorFireLive seam it already has) and
 // hands a detected stale schedule to this callback, which settles the
@@ -60,17 +60,16 @@ const reconcileStaleFireMsgRun = "fire lost: process crashed during run"
 // byte-identical no-schedule path — is a no-op) and best-effort throughout: a
 // settle/RecordFire failure WARNs and never panics (the detector re-runs on
 // the next tick). It does NOT fail the tick.
-// NOTE (issue #475 Step 4): this reconciler is "sched--"-fire-specific and
+// NOTE (issue #475): this reconciler is "sched--"-fire-specific and
 // only ever inspects the MOST RECENT fire per schedule (sched.State), so it
 // is not the general mechanism for a crash-orphaned StateRunning session — a
 // future reader should not mistake it for one. The generic case (any other
 // id, including subagent-*/parallel-*/team-* children, and any "sched--" fire
 // session OLDER than the latest one) is handled by session_reconcile.go's
-// startStaleSessionReconcile sweep and by Step 3's run-entry funnel repair. An
+// startStaleSessionReconcile sweep and by the run-entry funnel repair. An
 // older orphaned "sched--" session beyond the latest fire is reconciled by
 // NEITHER mechanism — session_reconcile.go deliberately excludes the
-// "sched--" family (this reconciler owns it) — a known residual documented
-// more fully in Step 5's ADR update.
+// "sched--" family (this reconciler owns it) — a known residual.
 func makeReconcileStaleFire(svc *server.Service, store port.ScheduleStore, sessionStore port.SessionStore) func(ctx context.Context, sched port.Schedule) {
 	return func(ctx context.Context, sched port.Schedule) {
 		if store == nil {

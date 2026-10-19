@@ -5,7 +5,6 @@ import { describe, expect, it } from "vitest";
 import {
   applyRunDelivery,
   enqueueApproval,
-  errorMessage,
   failureFromResult,
   initialRunDeliveryState,
   messagesFromTranscript,
@@ -117,12 +116,6 @@ describe("payload parsing", () => {
     });
     expect(permissionAsk({ tool: "Shell" })).toBeUndefined();
   });
-
-  it("reads an RFC 9457 detail before falling back to Error#message", () => {
-    expect(errorMessage({ detail: "Session not found" })).toBe("Session not found");
-    expect(errorMessage(new Error("network down"))).toBe("network down");
-    expect(errorMessage("anything else")).toBe("The request could not be completed.");
-  });
 });
 
 describe("messagesFromTranscript", () => {
@@ -171,6 +164,7 @@ describe("messagesFromTranscript", () => {
           content: "Look",
           id: "transcript-0",
           images: [{ ...images[0], id: "transcript-0-image-0" }],
+          recordedOrdinal: 0,
           role: "user",
         },
       ],

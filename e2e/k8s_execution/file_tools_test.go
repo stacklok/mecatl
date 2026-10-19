@@ -18,7 +18,7 @@ import (
 
 func qualifyRemoteFileTools(t *testing.T, ctx context.Context, client *executionclient.Client, owner executionenv.Owner, binding string, ref executionenv.EnvironmentRef) {
 	t.Helper()
-	provider, err := executionclient.NewProvider(client, "go")
+	provider, err := executionclient.NewTemplateProvider(client, "go", kindTemplateRevision(t, ctx, client, "go"))
 	if err != nil {
 		t.Fatal(err)
 	}

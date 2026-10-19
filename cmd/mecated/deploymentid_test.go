@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// TestValidateDeploymentID pins the --deployment-id bound (ADR 0248).
+// TestValidateDeploymentID pins the --deployment-id bound.
 //
 // The label is echoed verbatim to every authenticated caller and rendered by
 // clients we do not control, so it is validated at STARTUP — where the operator

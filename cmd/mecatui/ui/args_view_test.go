@@ -491,8 +491,9 @@ func TestModalMiniViewportScrollKeys(t *testing.T) {
 	}
 	// Scrolling PAST the bound pins at maxOff (no overshoot, no blank rows);
 	// scrolling past the bottom then hammering pgup pins back at 0.
+	_ = (&m).renderModalSurface()
 	maxOff := approvalSurfaceOf(t, m).miniScrollRange()
-	for i := 0; i < 5; i++ {
+	for i := 0; i < maxOff+1; i++ {
 		m, _ = pressKey(m, tea.KeyPressMsg{Code: tea.KeyPgDown})
 	}
 	if approvalSurfaceOf(t, m).askVPOffset != maxOff {

@@ -42,8 +42,11 @@ const (
 	fieldDeletionID        = "deletion_id"
 	fieldLastFireSessionID = "last_fire_session_id"
 	fieldCreatedAt         = "created_at"
-	// fieldOneShotRetryCount is the durable counter of one-shot re-arms (ADR
-	// 0059 Phase 2). Absent on pre-Phase-2 records (treated as 0 by the script
+	// Changes with each matching settlement, including session-less outcomes.
+	// The retry CAS must detect history changes even when the session id is unchanged.
+	fieldLastFireOutcomeID = "last_fire_outcome_id"
+	// fieldOneShotRetryCount is the durable counter of one-shot re-arms.
+	// Absent on older records (treated as 0 by the script
 	// and scheduleFromHash).
 	fieldOneShotRetryCount = "one_shot_retry_count"
 	// The in-flight scheduled-fire state fields (issue #386). Absent on
@@ -110,6 +113,11 @@ local now = tonumber(ARGV[1])
 local nextFire = ARGV[2]
 local pending = ARGV[3]
 local maxFires = tonumber(ARGV[4])
+local prior = redis.call('HGET', KEYS[1], 'last_fire_session_id')
+local started = redis.call('HGET', KEYS[1], 'last_fire_started_at')
+if prior == pending or (started ~= false and started ~= '' and started ~= '0') then
+  return 'NOT_CLAIMABLE'
+end
 if enabled == false or enabled == '0' or (deleting ~= false and deleting ~= '') then
   return 'NOT_CLAIMABLE'
 end
@@ -161,6 +169,11 @@ local now = ARGV[1]
 local nextFire = ARGV[2]
 local pending = ARGV[3]
 local maxFires = tonumber(ARGV[4])
+local prior = redis.call('HGET', KEYS[1], 'last_fire_session_id')
+local started = redis.call('HGET', KEYS[1], 'last_fire_started_at')
+if prior == pending or (started ~= false and started ~= '' and started ~= '0') then
+  return 'NOT_CLAIMABLE'
+end
 if enabled == false or enabled == '0' or (deleting ~= false and deleting ~= '') then
   return 'NOT_CLAIMABLE'
 end
@@ -267,29 +280,22 @@ redis.call('HSET', KEYS[1], unpack(ARGV))
 return 'OK'
 `)
 
-// reArmOneShotScript is the at-least-once re-arm primitive for a one-shot
-// schedule (ADR 0059 Phase 2). Under Redis's single-threaded execution it
-// atomically: checks the key exists, re-enables the schedule (enabled=1), sets
-// next_fire_at to nextFire, and increments one_shot_retry_count. The atomicity
-// (the EVAL) is the re-arm fence: two concurrent re-arms cannot double-increment
-// the counter or double-enable. The retry-budget gate is the CALLER's
-// responsibility — the script does NOT enforce the budget. One-shot-only.
-//
-// KEYS[1] = mecatl:schedule:<name>
-// ARGV[1] = nextFire (unix nano, string; "0" means zero time = no further fire)
-// Returns "NOT_FOUND" if the key does not exist, "OK" on success.
+// reArmOneShotScript compares the eligibility snapshot and settled fire bytes
+// before advancing. Spec and history stay JSON-decoded in Go; the EVAL is the
+// cross-replica fence for policy, ownership, and retry budget.
+// KEYS are the schedule and failed fire; ARGV are nextFire, fire JSON, then
+// pairs of schedule hash field / expected value (absent fields compare as "").
 var reArmOneShotScript = redis.NewScript(`
-if redis.call('EXISTS', KEYS[1]) == 0 then
-  return 'NOT_FOUND'
-end
+if redis.call('EXISTS', KEYS[1]) == 0 then return 'NOT_FOUND' end
 local deleting = redis.call('HGET', KEYS[1], 'deletion_id')
 if deleting ~= false and deleting ~= '' then return 'DELETING' end
-local fc = redis.call('HGET', KEYS[1], 'one_shot_retry_count')
-if fc == false then fc = '0' end
-redis.call('HSET', KEYS[1],
-  'enabled', '1',
-  'next_fire_at', ARGV[1],
-  'one_shot_retry_count', tostring(tonumber(fc) + 1))
+for i = 3, #ARGV, 2 do
+  local current = redis.call('HGET', KEYS[1], ARGV[i]) or ''
+  if current ~= ARGV[i + 1] then return 'NOT_FOUND' end
+end
+if redis.call('GET', KEYS[2]) ~= ARGV[2] then return 'NOT_FOUND' end
+redis.call('HSET', KEYS[1], 'enabled', '1', 'next_fire_at', ARGV[1])
+redis.call('HINCRBY', KEYS[1], 'one_shot_retry_count', 1)
 return 'OK'
 `)
 
@@ -335,7 +341,7 @@ return 1
 
 // scheduleStore is a Redis-backed port.ScheduleStore sharing the parent Store's
 // replaceable client-generation manager. It is the MULTI-REPLICA production schedule backend
-// (scheduled-tasks issue #189, Phase 1d): the SAME logic as
+// (scheduled-tasks issue #189): the SAME logic as
 // memschedulestore/jsonlstore.scheduleStore with Redis persistence + a Lua-script
 // atomic Claim. No client-side mutex is needed — Redis serializes commands
 // single-threaded, and the Claim script is the cross-replica at-most-once fence
@@ -352,7 +358,7 @@ type scheduleStore struct {
 var _ port.ScheduleStore = (*scheduleStore)(nil)
 
 // compile-time assertion that scheduleStore satisfies the OPTIONAL
-// ScheduleOneShotReArmer seam (ADR 0059 Phase 2).
+// ScheduleOneShotReArmer seam.
 var _ port.ScheduleOneShotReArmer = (*scheduleStore)(nil)
 
 // compile-time assertion that scheduleStore satisfies the OPTIONAL
@@ -507,14 +513,7 @@ func (s *scheduleStore) SetEnabled(ctx context.Context, name string, enabled boo
 	return nil
 }
 
-// ReArmOneShot is the at-least-once re-arm primitive for a one-shot schedule
-// (ADR 0059 Phase 2). It EVALs reArmOneShotScript, which — under Redis's
-// single-threaded execution — atomically re-enables the schedule (enabled=1),
-// sets next_fire_at to nextFire, and increments one_shot_retry_count. The
-// atomicity (the EVAL) is the re-arm fence: two concurrent re-arms cannot
-// double-increment or double-enable (the concurrent-claim test proves it). The
-// not-found case (key missing → NOT_FOUND) wraps ErrScheduleNotFound. The
-// retry-budget gate is the CALLER's responsibility. One-shot-only.
+// ReArmOneShot validates a retry snapshot then atomically compares it at EVAL.
 func (s *scheduleStore) ReArmOneShot(ctx context.Context, name string, nextFire time.Time) error {
 	client, release, err := s.clients.acquire()
 	if err != nil {
@@ -522,7 +521,33 @@ func (s *scheduleStore) ReArmOneShot(ctx context.Context, name string, nextFire 
 	}
 	defer release()
 	key := scheduleKey(name)
-	res, err := reArmOneShotScript.Run(ctx, client, []string{key}, nanoStr(nextFire)).Result()
+	fields, err := client.HGetAll(ctx, key).Result()
+	if err != nil {
+		return fmt.Errorf("redisstore: re-arm snapshot %q: %w", name, err)
+	}
+	if len(fields) == 0 {
+		return ErrScheduleNotFound
+	}
+	sched, err := scheduleFromHash(fields)
+	if err != nil {
+		return err
+	}
+	if sched.State.DeletionID != "" {
+		return fmt.Errorf("redisstore: %w", port.ErrScheduleDeleting)
+	}
+	failed, err := loadOneShotRetryFire(ctx, client, sched, fields[fieldLastFireOutcomeID])
+	if err != nil {
+		return err
+	}
+	fireJSON, err := json.Marshal(scheduleFireRecord{V: scheduleFormat, Fire: failed})
+	if err != nil {
+		return fmt.Errorf("redisstore: marshal retry fire: %w", err)
+	}
+	args := []any{nanoStr(nextFire), string(fireJSON)}
+	for _, field := range []string{fieldSpec, fieldEnabled, fieldLastFireAt, fieldLastFireSessionID, fieldLastFireStartedAt, fieldOneShotRetryCount, fieldLastFireOutcomeID} {
+		args = append(args, field, fields[field])
+	}
+	res, err := reArmOneShotScript.Run(ctx, client, []string{key, scheduleFireKey(failed.ID)}, args...).Result()
 	if err != nil {
 		return fmt.Errorf("redisstore: re-arm one-shot %q: %w", name, err)
 	}
@@ -535,6 +560,33 @@ func (s *scheduleStore) ReArmOneShot(ctx context.Context, name string, nextFire 
 		}
 	}
 	return nil
+}
+
+func loadOneShotRetryFire(ctx context.Context, client redis.Cmdable, sched port.Schedule, outcomeID string) (port.ScheduleFire, error) {
+	if sched.Spec.Trigger.Kind() != port.TriggerOneShot || !sched.Spec.OneShotRetry ||
+		sched.State.Enabled || sched.State.OneShotRetryCount >= sched.Spec.OneShotMaxRetries ||
+		sched.State.LastFireAt.IsZero() || sched.State.LastFireSessionID == port.PendingFireSessionID || !sched.State.LastFireStartedAt.IsZero() || outcomeID == "" {
+		return port.ScheduleFire{}, ErrScheduleNotFound
+	}
+	raw, err := client.Get(ctx, scheduleFireKey(outcomeID)).Bytes()
+	if err != nil {
+		if errors.Is(err, redis.Nil) {
+			return port.ScheduleFire{}, ErrScheduleNotFound
+		}
+		return port.ScheduleFire{}, fmt.Errorf("redisstore: load retry fire %q: %w", outcomeID, err)
+	}
+	var rec scheduleFireRecord
+	if err := json.Unmarshal(raw, &rec); err != nil {
+		return port.ScheduleFire{}, fmt.Errorf("redisstore: decode retry fire %q: %w", outcomeID, err)
+	}
+	if rec.V != scheduleFormat {
+		return port.ScheduleFire{}, fmt.Errorf("redisstore: unknown retry fire format %q (want %q)", rec.V, scheduleFormat)
+	}
+	failed := rec.Fire
+	if failed.ID != outcomeID || failed.ScheduleName != sched.Spec.Name || !failed.FiredAt.Equal(sched.State.LastFireAt) || failed.SessionID != sched.State.LastFireSessionID || failed.Stop != session.StopError {
+		return port.ScheduleFire{}, ErrScheduleNotFound
+	}
+	return failed, nil
 }
 
 // Load returns the schedule stored under name. The not-found case (key missing,
@@ -1007,9 +1059,48 @@ func advanceInFlightFireProgress(ctx context.Context, client redis.UniversalClie
 //
 // It FLIPS the fire terminal and clears the in-flight ScheduleState fields
 // (LastFireStartedAt/LastFireProgressAt/FireDeadline) — a recorded (terminal)
-// fire has no in-flight run (issue #386). The semantics mirror
+// fire has no in-flight run (issue #386). When a non-error terminal outcome is
+// already current for this claim, a later error record remains in history but
+// cannot replace that outcome as the retry authority. The semantics mirror
 // memschedulestore.RecordFire byte-for-byte, adapted to Redis's single-threaded
 // execution.
+var recordFireScript = redis.NewScript(`
+local existing = redis.call('GET', KEYS[2])
+if existing then
+  local ok, record = pcall(cjson.decode, existing)
+  if ok and type(record) == 'table' and record.v == ARGV[4] and type(record.fire) == 'table' and record.fire.Stop ~= nil and record.fire.Stop ~= '' then
+    return 1
+  end
+end
+if redis.call('HEXISTS', KEYS[1], 'spec') == 0 then
+  return 0
+end
+redis.call('SET', KEYS[2], ARGV[1])
+local claimedAt = redis.call('HGET', KEYS[1], 'last_fire_at')
+if claimedAt == false or claimedAt == '0' or claimedAt == ARGV[2] then
+  local preserve = false
+  local outcomeID = redis.call('HGET', KEYS[1], 'last_fire_outcome_id')
+  if outcomeID ~= false and outcomeID ~= '' then
+    local prior = redis.call('GET', 'mecatl:schedulefire:' .. outcomeID)
+    local incomingOK, incoming = pcall(cjson.decode, ARGV[1])
+    local priorOK, priorRecord = pcall(cjson.decode, prior)
+    if not priorOK then
+      preserve = true
+    elseif incomingOK and type(priorRecord) == 'table' and priorRecord.v == ARGV[4] and type(priorRecord.fire) == 'table' and
+      priorRecord.fire.ScheduleName == incoming.fire.ScheduleName and priorRecord.fire.FiredAt == incoming.fire.FiredAt and priorRecord.fire.SessionID == incoming.fire.SessionID and
+      priorRecord.fire.Stop ~= nil and priorRecord.fire.Stop ~= '' and priorRecord.fire.Stop ~= ARGV[6] then
+      preserve = true
+    end
+  end
+  redis.call('HSET', KEYS[1], 'last_fire_session_id', ARGV[3])
+  if not preserve then
+    redis.call('HSET', KEYS[1], 'last_fire_outcome_id', ARGV[5])
+  end
+  redis.call('HDEL', KEYS[1], 'last_fire_started_at', 'last_fire_progress_at', 'fire_deadline')
+end
+return 1
+`)
+
 func (s *scheduleStore) RecordFire(ctx context.Context, f port.ScheduleFire) error {
 	client, release, err := s.clients.acquire()
 	if err != nil {
@@ -1020,52 +1111,14 @@ func (s *scheduleStore) RecordFire(ctx context.Context, f port.ScheduleFire) err
 	if err != nil {
 		return fmt.Errorf("redisstore: marshal schedule fire: %w", err)
 	}
-	fireKey := scheduleFireKey(f.ID)
-	// Idempotent per fire id: a re-record of an already-TERMINAL fire is a no-op.
-	// (An in-flight record under the same id is overwritten with the terminal one
-	// below — the fire transitions in-flight → terminal.)
-	if raw, err := client.Get(ctx, fireKey).Bytes(); err == nil {
-		var existing scheduleFireRecord
-		if json.Unmarshal(raw, &existing) == nil && existing.V == scheduleFormat && existing.Fire.Stop != "" {
-			return nil // already terminal — idempotent no-op
-		}
-	} else if !errors.Is(err, redis.Nil) {
-		return fmt.Errorf("redisstore: record fire %q (load existing): %w", f.ID, err)
+	result, err := recordFireScript.Run(ctx, client,
+		[]string{scheduleKey(f.ScheduleName), scheduleFireKey(f.ID)},
+		string(fireJSON), nanoStr(f.FiredAt), string(f.SessionID), scheduleFormat, f.ID, string(session.StopError)).Int()
+	if err != nil {
+		return fmt.Errorf("redisstore: record fire %q: %w", f.ID, err)
 	}
-	// The schedule must still exist (it may have been deleted between Claim and
-	// RecordFire). HGET the spec as a liveness probe.
-	if specRaw, err := client.HGet(ctx, scheduleKey(f.ScheduleName), fieldSpec).Result(); err != nil {
-		if errors.Is(err, redis.Nil) {
-			return fmt.Errorf("%w: %q", ErrScheduleNotFound, f.ScheduleName)
-		}
-		return fmt.Errorf("redisstore: record fire %q (schedule): %w", f.ID, err)
-	} else if specRaw == "" {
+	if result == 0 {
 		return fmt.Errorf("%w: %q", ErrScheduleNotFound, f.ScheduleName)
-	}
-	// Stamp the real session id over the port.PendingFireSessionID value Claim
-	// set AND clear the in-flight fields (a terminal fire has no in-flight run) —
-	// BEFORE latching the fire key. Ordering matters: the fire key (SET below) is
-	// the idempotency latch, so it MUST be the last write. If the stamp ran AFTER
-	// the latch and then failed transiently, a retry would short-circuit at the
-	// terminal-record check above (the latch is set with a terminal Stop) and
-	// never re-run the stamp — wedging LastFireSessionID at PendingFireSessionID
-	// permanently (review #189). With the stamp first, a failed stamp leaves the
-	// latch unset so a retry re-runs it; a failed latch after a successful stamp
-	// simply re-stamps the same value (idempotent) and re-latches.
-	if err := client.HSet(ctx, scheduleKey(f.ScheduleName), fieldLastFireSessionID, string(f.SessionID)).Err(); err != nil {
-		return fmt.Errorf("redisstore: record fire %q (update session): %w", f.ID, err)
-	}
-	if err := client.HDel(ctx, scheduleKey(f.ScheduleName),
-		fieldLastFireStartedAt, fieldLastFireProgressAt, fieldFireDeadline,
-	).Err(); err != nil {
-		return fmt.Errorf("redisstore: record fire %q (clear in-flight): %w", f.ID, err)
-	}
-	// Latch the terminal fire record (SET overwrites any prior in-flight record
-	// under the same id — the in-flight → terminal transition). Two concurrent
-	// RecordFire of the same fire race past the terminal-record check, but both
-	// write the identical terminal record, so the result is not consulted.
-	if err := client.Set(ctx, fireKey, fireJSON, 0).Err(); err != nil {
-		return fmt.Errorf("redisstore: record fire %q (set): %w", f.ID, err)
 	}
 	return nil
 }

@@ -125,7 +125,7 @@ func TestStartupRunEntryFailureRebuildsDocumentProjection(t *testing.T) {
 	m = m.failStartupRunEntry(nil)
 
 	content := stripANSIstr(m.vp.GetContent())
-	if !strings.Contains(content, "new request") || !strings.Contains(content, "✗ Bash · printf new") || strings.Contains(content, "old.go") {
+	if !strings.Contains(content, "new request") || !strings.Contains(content, "● 1 tool run · 1 failed") || strings.Contains(content, "old.go") {
 		t.Fatalf("replacement rendered stale document content:\n%s", content)
 	}
 	fresh := newRenderer(m.deps.Theme, m.rend.marks)
@@ -175,7 +175,7 @@ func TestStartupRunEntryFailureClassifiesSafeStatus(t *testing.T) {
 	}
 }
 
-func TestADR_0108_FirstPromptRevalidatesAtomically(t *testing.T) {
+func TestFirstPromptRevalidatesAtomically(t *testing.T) {
 	newFailedModel := func() (Model, *fakeConv, *fakeSender) {
 		sender := &fakeSender{}
 		conv := &fakeConv{recv: &fakeRecver{}, send: sender}

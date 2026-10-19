@@ -48,14 +48,12 @@ func twoProviderReg(aProvider port.LLMProvider, aID, aModel string, bProvider po
 
 // memberFactoryForTest is the OLD-arity buildMemberEngine wrapper for existing
 // tests: it builds a single-provider registry (id=providerMock, model=cfg.Model)
-// for `provider` and threads it as the parent. The per-sub-agent-provider feature
-// added (provReg, parentProviderID, parentModel) params; the historical
-// member-catalog/isolation tests don't exercise a provider switch, so they inherit
-// the single mock provider exactly as before.
+// for `provider` and threads it as the parent, filling buildMemberEngine's
+// (provReg, parentProviderID, parentModel) params; the member-catalog/isolation
+// tests don't exercise a provider switch, so they inherit the single mock provider.
 func memberFactoryForTest(cfg Config, provider port.LLMProvider, teamHooks port.HookRunner, reg *agents.Registry, skillIdx skillIndex, runner tool.CommandRunner, roIsolationAvailable bool, mainMgr *mcp.Manager) server.MemberEngineFactory {
 	// The single `runner` doubles as both the read-only (trust-gated) and the
-	// mutating (ungated) runner — the historical single-runner shape these tests were
-	// written against. The issue-#40 asymmetry (untrusted ⇒ read-only runner nil,
+	// mutating (ungated) runner — the single-runner shape these tests use. The issue-#40 asymmetry (untrusted ⇒ read-only runner nil,
 	// mutating runner live) is exercised through the REAL buildTeamWiring in
 	// trust_shell_gate_test.go.
 	return buildMemberEngine(cfg, regForTest(provider, providerMock, cfg.Model), provider, providerMock, cfg.Model,
@@ -64,7 +62,7 @@ func memberFactoryForTest(cfg Config, provider port.LLMProvider, teamHooks port.
 
 // agentSubagentEnginesForTest is the OLD-arity buildAgentSubagentEngines wrapper for
 // existing tests: it builds a single-provider registry (id=providerMock,
-// model=cfg.Model) for `provider` and threads it as the parent. The historical
+// model=cfg.Model) for `provider` and threads it as the parent. The
 // per-def engine tests don't exercise a provider switch.
 func agentSubagentEnginesForTest(ctx context.Context, cfg Config, provider port.LLMProvider, reg *agents.Registry, skillIdx skillIndex, defaultHooks port.HookRunner, runner tool.CommandRunner, mainMgr *mcp.Manager) (map[string]*agent.Engine, []agent.AgentMeta, func() error) {
 	return buildAgentSubagentEngines(ctx, cfg, provider, regForTest(provider, providerMock, cfg.Model), providerMock, cfg.Model,

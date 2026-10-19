@@ -101,7 +101,7 @@ When InspectSubagent returns, reply with the single word done.`)
 				"no successful InspectSubagent of a parallel- branch id observed (the branch transcript was not pulled)\n"+failureReport())
 		})
 
-		// ADR 0039 — the auto-merge fast path. A SINGLE-BRANCH join=first
+		// The auto-merge fast path. A SINGLE-BRANCH join=first
 		// Parallel run auto-merges the winner's diff back into the parent
 		// workspace (default-on, no flag), so a delegated implementer's edits land
 		// without a manual copy/merge step. The live proof: the branch writes a

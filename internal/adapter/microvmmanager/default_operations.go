@@ -270,6 +270,11 @@ func extractReleaseBundle(root, archivePath, destination string) error { //nolin
 		if count > 10000 {
 			return errors.New("release bundle has too many entries")
 		}
+		// Older release tarballs include a synthetic root directory. Ignore only
+		// its canonical, empty forms without touching destination metadata.
+		if (header.Name == "." || header.Name == "./") && header.Typeflag == tar.TypeDir && header.Size == 0 {
+			continue
+		}
 		name := filepath.Clean(filepath.FromSlash(header.Name))
 		if name == "." || filepath.IsAbs(name) || name == ".." || strings.HasPrefix(name, ".."+string(filepath.Separator)) {
 			return fmt.Errorf("unsafe release bundle path %q", header.Name)
@@ -716,6 +721,9 @@ func processStartIdentity(pid int) (string, error) {
 	if runtime.GOOS == "darwin" {
 		output, err := scrubbedCommand(exec.Command("ps", "-p", strconv.Itoa(pid), "-o", "lstart=")).Output()
 		if err != nil {
+			if probeErr := syscall.Kill(pid, 0); errors.Is(probeErr, syscall.ESRCH) {
+				return "", fs.ErrNotExist
+			}
 			return "", err
 		}
 		identity := strings.Join(strings.Fields(string(output)), " ")

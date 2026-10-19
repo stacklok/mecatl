@@ -71,7 +71,7 @@ inputs:
       OPTIONAL path (relative to the checkout) to a PR-body template with {{placeholder}}
       tokens. Empty uses .github/mecatequi/pr-body.md if present, else the built-in body.
       The trust caveat is ALWAYS force-prepended regardless of template. See
-      docs/adr/0028-mecatequi.md for the placeholder list.
+      .github/mecatequi/pr-body.md.example for the placeholder list.
     required: false
     default: ""
   pr-title-template:

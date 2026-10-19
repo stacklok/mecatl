@@ -57,10 +57,10 @@ func assertExactApprovalActor(t *testing.T, log *memstore.EventLog, id session.S
 	}
 }
 
-// TestADR_0204_ExactPlanApprovalUsesVerdictCaller proves an accepted exact
+// TestExactPlanApprovalUsesVerdictCaller proves an accepted exact
 // plan verdict is attributed to its own caller, while other run events retain
 // the caller who started the run. The direct case also pins absent identity.
-func TestADR_0204_ExactPlanApprovalUsesVerdictCaller(t *testing.T) {
+func TestExactPlanApprovalUsesVerdictCaller(t *testing.T) {
 	t.Run("verified gRPC verdict caller", func(t *testing.T) {
 		svc, log := exactPlanActorService(t)
 		sess, err := svc.CreateSession(session.WithPrincipal(t.Context(), alice), session.ModePlan, session.Limits{})

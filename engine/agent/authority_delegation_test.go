@@ -22,7 +22,7 @@ func authorityParent() session.Authority {
 	}, Provenance: "composed_root", DefinitionIdentity: "root"}
 }
 
-func TestADR_0233_AuthorityEvaluator_Scenario4_ChildGetsIntersectionOnEverySeam(t *testing.T) {
+func TestAuthorityEvaluator_ChildGetsIntersectionOnEverySeam(t *testing.T) {
 	parent := authorityParent()
 	env := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "parent", Revision: "test-v1"}, memfs.NewWorkspace("/ws"), memledger.New(), nil)
 	childEngine := NewEngine(Deps{LLM: mockllm.New(mockllm.TextTurn("done")), Catalog: tool.NewCatalog()})
@@ -158,7 +158,7 @@ func assertDerivedAuthority(t *testing.T, child *session.Session, parent session
 	}
 }
 
-func TestADR_0233_AuthorityEvaluator_Scenario4_RefusalAcquiresNoRuntimeResource(t *testing.T) {
+func TestAuthorityEvaluator_RefusalAcquiresNoRuntimeResource(t *testing.T) {
 	forker := &authorityCountingForker{}
 	childEngine := NewEngine(Deps{Catalog: tool.NewCatalog()})
 	subagent := NewSubagentTool(childEngine, WithChildForker(forker)).(*SubagentTool)
@@ -179,7 +179,7 @@ func (f *authorityCountingForker) Fork(_ context.Context, base tool.Environment,
 	return base, func() error { return nil }, "", nil
 }
 
-func TestADR_0233_AuthorityEvaluator_Scenario4_OnlyManagedTierSuppliesACeiling(t *testing.T) {
+func TestAuthorityEvaluator_OnlyManagedTierSuppliesACeiling(t *testing.T) {
 	child := NewEngine(Deps{Catalog: tool.NewCatalog()})
 	subagent := NewSubagentTool(child, WithAgentEngines(map[string]*Engine{"managed": child, "project": child}, []AgentMeta{
 		{Name: "managed", Managed: true,
@@ -204,7 +204,7 @@ func TestADR_0233_AuthorityEvaluator_Scenario4_OnlyManagedTierSuppliesACeiling(t
 	}
 }
 
-func TestADR_0233_AuthorityEvaluator_Scenario4_CallTighteningCannotWiden(t *testing.T) {
+func TestAuthorityEvaluator_CallTighteningCannotWiden(t *testing.T) {
 	parent := authorityParent()
 	tooDeep := 3
 	filesystem := true
@@ -223,7 +223,7 @@ func TestADR_0233_AuthorityEvaluator_Scenario4_CallTighteningCannotWiden(t *test
 	}
 }
 
-func TestADR_0233_AuthorityEvaluator_Scenario4_OwnerAndSetAreIndependentlyStamped(t *testing.T) {
+func TestAuthorityEvaluator_OwnerAndSetAreIndependentlyStamped(t *testing.T) {
 	owner := &session.Principal{Issuer: "issuer", Subject: "owner", GrantType: session.GrantTypeUser}
 	child := session.New("child", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0))
 	derived, err := deriveDelegatedAuthority(authorityParent(), governance.CapabilitySet{Tools: []string{"Read"}, RemainingDelegationDepth: 1, FileSystem: true}, nil, nil)
@@ -239,7 +239,7 @@ func TestADR_0233_AuthorityEvaluator_Scenario4_OwnerAndSetAreIndependentlyStampe
 	}
 }
 
-func TestADR_0233_AuthorityEvaluator_Scenario5_ResumedChildCannotExceedCurrentParent(t *testing.T) {
+func TestAuthorityEvaluator_ResumedChildCannotExceedCurrentParent(t *testing.T) {
 	persisted, err := deriveDelegatedAuthority(authorityParent(), governance.CapabilitySet{Tools: []string{"Read"}, RemainingDelegationDepth: 1, FileSystem: true}, nil, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -251,14 +251,14 @@ func TestADR_0233_AuthorityEvaluator_Scenario5_ResumedChildCannotExceedCurrentPa
 	}
 }
 
-func TestADR_0233_AuthorityEvaluator_Scenario5_ResumeSpendsNoAdditionalHop(t *testing.T) {
+func TestAuthorityEvaluator_ResumeSpendsNoAdditionalHop(t *testing.T) {
 	persisted := session.Authority{CapabilitySet: governance.CapabilitySet{Tools: []string{"Read"}, RemainingDelegationDepth: 0, FileSystem: true}, Provenance: "delegated", DefinitionIdentity: "root"}
 	if err := validateResumedAuthority(authorityParent(), persisted, true); err != nil {
 		t.Fatalf("resume spent another hop: %v", err)
 	}
 }
 
-func TestADR_0233_AuthorityEvaluator_Scenario5_NoWideningAcrossRestart(t *testing.T) {
+func TestAuthorityEvaluator_NoWideningAcrossRestart(t *testing.T) {
 	persisted := session.Authority{CapabilitySet: governance.CapabilitySet{Tools: []string{"Read"}, RemainingDelegationDepth: 0, FileSystem: true}, Provenance: "delegated", DefinitionIdentity: "root"}
 	if err := validateResumedAuthority(authorityParent(), persisted, true); err != nil {
 		t.Fatal(err)
@@ -268,7 +268,7 @@ func TestADR_0233_AuthorityEvaluator_Scenario5_NoWideningAcrossRestart(t *testin
 	}
 }
 
-func TestADR_0233_AuthorityEvaluator_Scenario6_ComposedRootCanDelegateOnEverySeam(t *testing.T) {
+func TestAuthorityEvaluator_ComposedRootCanDelegateOnEverySeam(t *testing.T) {
 	for _, seam := range []string{"subagent", "specialist", "parallel", "team"} {
 		t.Run(seam, func(t *testing.T) {
 			got, err := deriveDelegatedAuthority(authorityParent(), authorityParent().CapabilitySet, nil, nil)

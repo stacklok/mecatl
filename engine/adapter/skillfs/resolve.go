@@ -37,19 +37,19 @@ type ResolveOptions struct {
 	// conventional paths (<workspace>/.mecatl/skills, <workspace>/.claude/skills).
 	// Only consulted when Conventional is true and non-empty.
 	Workspace string
-	// IncludeProjectTier, when true (the default — see the negated zero-value note),
-	// admits the PROJECT-tier conventional locations (<workspace>/.mecatl/skills,
+	// IncludeProjectTier, when true (see the zero-value note), admits the
+	// PROJECT-tier conventional locations (<workspace>/.mecatl/skills,
 	// <workspace>/.claude/skills). The composition layer sets it false when the
-	// workspace is UNTRUSTED (Workspace-Trust feature, Phase 2a / R2.5) so a cloned
-	// repo's project skills cannot steer the model before the operator trusts it;
-	// the user-tier and explicit sources stay active regardless ("ask the human"
-	// mode, not "do nothing"). It gates ONLY the project tier — never the explicit
+	// workspace is UNTRUSTED (Workspace-Trust feature) so a cloned repo's project
+	// skills cannot steer the model before the operator trusts it; the user-tier
+	// and explicit sources stay active regardless ("ask the human" mode, not "do
+	// nothing"). It gates ONLY the project tier — never the explicit
 	// or user-tier sources.
 	//
 	// ZERO-VALUE NOTE: because the zero value of a bool is false, callers must set
-	// this explicitly. ResolveSources (the public entry) defaults it to true so the
-	// historical behaviour is preserved; resolveSourcesEnv honours the field as
-	// given. Only Conventional==true makes the project tier eligible at all.
+	// this explicitly to admit the project tier. ResolveSources and
+	// resolveSourcesEnv honour the field as given. Only Conventional==true makes
+	// the project tier eligible at all.
 	IncludeProjectTier bool
 }
 
@@ -70,8 +70,8 @@ type ResolveOptions struct {
 //
 // NOTE on IncludeProjectTier: callers control whether the project tier is admitted
 // via opts.IncludeProjectTier. Composition sets it from the workspace-trust decision
-// (true when trusted, false when untrusted — Phase 2a / R2.5); set it true to keep
-// the historical "project tier always admitted" behaviour.
+// (true when trusted, false when untrusted); set it true to always admit the
+// project tier.
 func ResolveSources(opts ResolveOptions) []Source {
 	return resolveSourcesEnv(opts, OSEnv)
 }
@@ -95,7 +95,7 @@ func resolveSourcesEnv(opts ResolveOptions, env ResolveEnv) []Source {
 	}
 
 	// Project-level (under the workspace), beats user-level. Withheld when the
-	// workspace is untrusted (IncludeProjectTier=false) — Phase 2a / R2.5. The
+	// workspace is untrusted (IncludeProjectTier=false). The
 	// user-tier sources below are NEVER gated.
 	if opts.Workspace != "" && opts.IncludeProjectTier {
 		sources = append(sources,

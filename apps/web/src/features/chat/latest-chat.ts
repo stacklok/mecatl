@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { SessionSummaryResponse } from "@mecatl-studio/contracts";
+import { isProvenChatSession } from "./session-inspection";
 
 export interface LatestChatSummary {
   id: string;
@@ -23,6 +24,7 @@ export function pickLatestEligibleChat(
   let best: SessionSummaryResponse | undefined;
   for (const session of sessions) {
     if (excludeIds.has(session.id)) continue;
+    if (!isProvenChatSession(session)) continue;
     if (session.state === "running" || session.state === "awaiting") continue;
     if (!best || session.updatedAt > best.updatedAt) best = session;
   }

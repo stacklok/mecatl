@@ -275,8 +275,8 @@ func (appFakeForker) Fork(_ context.Context, _ tool.Environment, label string) (
 // (engineDepsForProvider + attachAskAdjudicator), a Team supervisor member built
 // through the real child deps path (childEngineDepsForProvider, which clears the
 // nested adjudicator), and the REAL engineAskAdjudicator over a mockllm SCRIPTED
-// to allow — the member's substitution-floored Shell (`cat $(zap)`) executes,
-// where the pre-#31 posture blanket-denied it.
+// to allow — the member's substitution-floored Shell (`cat $(zap)`) executes
+// rather than being blanket-denied (issue #31).
 func TestAskReviewerE2EHeadlessTeamAllow(t *testing.T) {
 	bash := &appFakeShell{}
 	cfg := Config{

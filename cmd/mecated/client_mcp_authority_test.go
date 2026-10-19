@@ -3,28 +3,28 @@ package main
 import "testing"
 
 // TestSDKServerEnablers_Scenario9_ClientMCPPolicyFollowsListenerTopology pins the
-// DEPLOYMENT-SCOPED reading of AC9.2/AC9.3 (issue #821, ADR 0237) and the
+// DEPLOYMENT-SCOPED reading of AC9.2/AC9.3 (issue #821) and the
 // UDS-ONLY threshold within it.
 //
 // Two independent decisions are under test here, and both have a failure mode:
 //
 //  1. WHERE the decision is made. Accepting an MCP endpoint plus its auth headers
 //     from an API caller lends the daemon's outbound network authority to that
-//     caller, so it is decided ONCE from listener topology, per 0237: authority is
-//     a deployment policy, "not an inference made from a request or from the server
-//     package's socket state".
+//     caller, so it is decided ONCE from listener topology: authority is
+//     a deployment policy, not an inference made from a request or from the server
+//     package's socket state.
 //  2. WHAT counts as local enough. UNIX socket with HTTP disabled, and nothing
 //     else. Loopback TCP does NOT qualify, which is where this derivation parts
 //     company with workspaceAuthorityForListeners — the loopback rows below are the
 //     ones that pin the difference. Loopback is reachable by every local process
 //     and every local user on the host; a UNIX socket is guarded by filesystem
 //     permissions on an owner-only directory. AC9.2 says "over a TCP listener is
-//     refused" and ADR 0248 already publishes "only reachable on a UDS listener";
-//     a loopback TCP daemon is a TCP daemon.
+//     refused", and a feature only reachable on some listeners is advertised only
+//     there; a loopback TCP daemon is a TCP daemon.
 //
 // The mixed rows are the load-bearing ones for (1): one *Service backs BOTH
 // listeners, so a daemon serving a UNIX socket AND a TCP port refuses the field on
-// both. A per-connection answer would contradict 0237 as written.
+// both. A per-connection answer would contradict that policy.
 func TestSDKServerEnablers_Scenario9_ClientMCPPolicyFollowsListenerTopology(t *testing.T) {
 	cases := []struct {
 		name       string

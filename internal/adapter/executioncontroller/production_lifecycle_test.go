@@ -3,6 +3,7 @@ package executioncontroller
 import (
 	"context"
 	"errors"
+	"reflect"
 	"testing"
 	"time"
 
@@ -53,7 +54,7 @@ func lifecycleAdminEnvironment(schema int64, refs []any) *unstructured.Unstructu
 	return &unstructured.Unstructured{Object: map[string]any{
 		"apiVersion": "execution.mecatl.dev/v1alpha1", "kind": "ExecutionEnvironment",
 		"metadata": map[string]any{"name": "env", "namespace": "ns", "uid": "env-uid", "finalizers": []any{environmentFinalizer}},
-		"spec":     map[string]any{"schemaVersion": schema, "revision": "rev", "ownerHash": "owner", "clientHash": hashText("client"), "profile": "go", "profileDigest": "sha256:profile", "desired": "Active"},
+		"spec":     map[string]any{"schemaVersion": schema, "revision": "rev", "ownerHash": "owner", "clientHash": hashText("client"), "templateID": "go", "templateRevision": testProfiles().defaultRevision["go"], "templateDigest": testProfiles().byName["go"].Digest, "desired": "Active"},
 		"status": map[string]any{"schemaVersion": schema, "epoch": int64(4), "grantGeneration": int64(1), "fenceState": fenceHealthy, "references": refs,
 			"pvc": map[string]any{"name": "workspace", "uid": "pvc-uid"}, "pod": map[string]any{"name": "executor", "uid": "pod-uid"},
 			"conditions": []any{map[string]any{"type": "Ready", "status": "True"}}},
@@ -64,7 +65,7 @@ func terminalExecutor() *corev1.Pod {
 	profile, _ := testProfiles().get("go")
 	noPriv, nonroot, ro := false, true, true
 	uid := int64(65532)
-	return &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "executor", Namespace: "ns", UID: types.UID("pod-uid"), Finalizers: []string{executorFinalizer}, Labels: map[string]string{"execution.mecatl.dev/environment": "env", "execution.mecatl.dev/profile": hashText("go")[:16]}, OwnerReferences: []metav1.OwnerReference{{APIVersion: "execution.mecatl.dev/v1alpha1", Kind: "ExecutionEnvironment", Name: "env", UID: types.UID("env-uid"), Controller: &nonroot}}}, Spec: corev1.PodSpec{ServiceAccountName: "test-mecatl-execution-executor", AutomountServiceAccountToken: &noPriv, RuntimeClassName: &profile.Spec.RuntimeClassName, RestartPolicy: corev1.RestartPolicyNever, SecurityContext: &corev1.PodSecurityContext{RunAsNonRoot: &nonroot, RunAsUser: &uid, RunAsGroup: &uid, FSGroup: &uid, SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault}}, Containers: []corev1.Container{{Name: "executor", Image: profile.Spec.Image, Command: []string{"/bin/sh", "-c", "trap : TERM INT; sleep infinity & wait"}, SecurityContext: &corev1.SecurityContext{AllowPrivilegeEscalation: &noPriv, ReadOnlyRootFilesystem: &ro, RunAsNonRoot: &nonroot, RunAsUser: &uid, Capabilities: &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}}}, Resources: corev1.ResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceCPU: profile.CPURequest, corev1.ResourceMemory: profile.MemoryRequest, corev1.ResourceEphemeralStorage: profile.EphemeralStorageRequest}, Limits: corev1.ResourceList{corev1.ResourceCPU: profile.CPULimit, corev1.ResourceMemory: profile.MemoryLimit, corev1.ResourceEphemeralStorage: profile.EphemeralStorageLimit}}, VolumeMounts: []corev1.VolumeMount{{Name: "workspace", MountPath: "/workspace"}, {Name: "tmp", MountPath: "/tmp"}}}}, Volumes: []corev1.Volume{{Name: "workspace", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: "workspace"}}}, {Name: "tmp", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{SizeLimit: &profile.TmpSizeLimit}}}}}, Status: corev1.PodStatus{Phase: corev1.PodFailed, ContainerStatuses: []corev1.ContainerStatus{{Name: "executor", State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{ExitCode: 137}}}}}}
+	return &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "executor", Namespace: "ns", UID: types.UID("pod-uid"), Finalizers: []string{executorFinalizer}, Labels: map[string]string{"execution.mecatl.dev/environment": "env", "execution.mecatl.dev/template-id": hashText("go")[:16]}, OwnerReferences: []metav1.OwnerReference{{APIVersion: "execution.mecatl.dev/v1alpha1", Kind: "ExecutionEnvironment", Name: "env", UID: types.UID("env-uid"), Controller: &nonroot}}}, Spec: corev1.PodSpec{ServiceAccountName: "test-mecatl-execution-executor", AutomountServiceAccountToken: &noPriv, RuntimeClassName: &profile.Spec.RuntimeClassName, RestartPolicy: corev1.RestartPolicyNever, SecurityContext: &corev1.PodSecurityContext{RunAsNonRoot: &nonroot, RunAsUser: &uid, RunAsGroup: &uid, FSGroup: &uid, SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault}}, Containers: []corev1.Container{{Name: "executor", Image: profile.Spec.Image, Command: []string{"/bin/sh", "-c", "trap : TERM INT; sleep infinity & wait"}, SecurityContext: &corev1.SecurityContext{AllowPrivilegeEscalation: &noPriv, ReadOnlyRootFilesystem: &ro, RunAsNonRoot: &nonroot, RunAsUser: &uid, Capabilities: &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}}}, Resources: corev1.ResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceCPU: profile.CPURequest, corev1.ResourceMemory: profile.MemoryRequest, corev1.ResourceEphemeralStorage: profile.EphemeralStorageRequest}, Limits: corev1.ResourceList{corev1.ResourceCPU: profile.CPULimit, corev1.ResourceMemory: profile.MemoryLimit, corev1.ResourceEphemeralStorage: profile.EphemeralStorageLimit}}, VolumeMounts: []corev1.VolumeMount{{Name: "workspace", MountPath: "/workspace"}, {Name: "tmp", MountPath: "/tmp"}}}}, Volumes: []corev1.Volume{{Name: "workspace", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: "workspace"}}}, {Name: "tmp", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{SizeLimit: &profile.TmpSizeLimit}}}}}, Status: corev1.PodStatus{Phase: corev1.PodFailed, ContainerStatuses: []corev1.ContainerStatus{{Name: "executor", State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{ExitCode: 137}}}}}}
 }
 
 func retainedPVC() *corev1.PersistentVolumeClaim {
@@ -242,7 +243,7 @@ func TestCompletedReplacementReplayRemainsIdempotentAfterRetirement(t *testing.T
 }
 
 func TestAdmittedRetireAndDeleteIgnoreLaterProfileDrift(t *testing.T) {
-	for _, mode := range []string{"removed", "changed"} {
+	for _, mode := range []string{"removed", "revoked"} {
 		t.Run(mode, func(t *testing.T) {
 			env := lifecycleAdminEnvironment(2, []any{})
 			pod, pvc := terminalExecutor(), retainedPVC()
@@ -251,7 +252,7 @@ func TestAdmittedRetireAndDeleteIgnoreLaterProfileDrift(t *testing.T) {
 			_ = unstructured.SetNestedField(env.Object, pod.Name, "status", "pod", "name")
 			_ = unstructured.SetNestedField(env.Object, pvc.Name, "status", "pvc", "name")
 			dynamicClient := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), env)
-			allocations := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: profileAllocationConfigMap, Namespace: "ns"}, Data: map[string]string{profileAllocationKey("go"): `["env"]`}}
+			allocations := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: profileAllocationConfigMap("go"), Namespace: "ns"}, Data: map[string]string{profileAllocationKey("go"): `["env"]`}}
 			kube := kubefake.NewSimpleClientset(pod, pvc, allocations)
 			kube.PrependReactor("delete", "pods", func(action k8stesting.Action) (bool, runtime.Object, error) {
 				obj, err := kube.Tracker().Get(corev1.SchemeGroupVersion.WithResource("pods"), "ns", action.(k8stesting.DeleteAction).GetName())
@@ -265,11 +266,11 @@ func TestAdmittedRetireAndDeleteIgnoreLaterProfileDrift(t *testing.T) {
 			if err := store.RetireExact(t.Context(), q); err != nil {
 				t.Fatal(err)
 			}
-			drifted := &Profiles{byName: map[string]resolvedProfile{}}
-			if mode == "changed" {
-				profile, _ := testProfiles().get("go")
-				profile.Digest = "sha256:changed"
-				drifted.byName["go"] = profile
+			drifted := testProfiles()
+			if mode == "removed" {
+				delete(drifted.revisions, "go")
+			} else {
+				drifted.eligibility["go"][drifted.defaultRevision["go"]] = TemplatePolicy{Revoked: true}
 			}
 			r := NewReconciler(dynamicClient, kube, "ns", drifted)
 			t.Cleanup(r.queue.ShutDown)
@@ -319,7 +320,7 @@ func TestAdmittedRetireAndDeleteIgnoreLaterProfileDrift(t *testing.T) {
 }
 
 func TestProfileDriftBlocksEveryReplacementMutation(t *testing.T) {
-	for _, mode := range []string{"removed", "changed"} {
+	for _, mode := range []string{"removed", "revoked"} {
 		for _, phase := range []string{"Quiescing", "WaitingForTermination", "RemovingPodFinalizer", "WaitingForPodDeletion", "CreatingReplacement"} {
 			t.Run(mode+"/"+phase, func(t *testing.T) {
 				env := lifecycleAdminEnvironment(2, []any{})
@@ -337,11 +338,11 @@ func TestProfileDriftBlocksEveryReplacementMutation(t *testing.T) {
 				}
 				dynamicClient := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), env)
 				kube := kubefake.NewSimpleClientset(objects...)
-				profiles := &Profiles{byName: map[string]resolvedProfile{}}
-				if mode == "changed" {
-					profile, _ := testProfiles().get("go")
-					profile.Digest = "sha256:changed"
-					profiles.byName["go"] = profile
+				profiles := testProfiles()
+				if mode == "removed" {
+					delete(profiles.revisions, "go")
+				} else {
+					profiles.eligibility["go"][profiles.defaultRevision["go"]] = TemplatePolicy{Revoked: true}
 				}
 				r := NewReconciler(dynamicClient, kube, "ns", profiles)
 				t.Cleanup(r.queue.ShutDown)
@@ -403,152 +404,80 @@ func TestProfileDriftStillBlocksProvisioningAndReplacementCreation(t *testing.T)
 	}
 }
 
-func TestOldSchemaFailsClosedAndExplicitMigrationConvertsReferences(t *testing.T) {
-	env := lifecycleAdminEnvironment(0, []any{"session-a"})
-	dynamicClient := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), env)
-	kube := kubefake.NewSimpleClientset(terminalExecutor(), retainedPVC())
-	store := NewStore(dynamicClient, "ns", testProfiles(), nil).WithKubeClient(kube)
-	_, err := store.Attach(t.Context(), executionenv.EnvironmentRef{ID: "env", Revision: "rev"}, "client", "owner", "session-a")
-	var controlled *executionenv.Error
-	if !errors.As(err, &controlled) || controlled.Code != executionenv.CodeNotReady {
-		t.Fatalf("old schema attach error=%v", err)
-	}
-	q := adminRequestFixture()
-	q.ExpectedSchema = 0
-	if err := store.MigrateEnvironment(t.Context(), q); err != nil {
-		t.Fatal(err)
-	}
-	if err := store.MigrateEnvironment(t.Context(), q); err != nil {
-		t.Fatalf("migration retry was not idempotent: %v", err)
-	}
-	got, err := dynamicClient.Resource(ExecutionEnvironmentGVR).Namespace("ns").Get(t.Context(), "env", metav1.GetOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if intNested(got.Object, "spec", "schemaVersion") != 2 || intNested(got.Object, "status", "schemaVersion") != 2 || intNested(got.Object, "status", "epoch") != 5 {
-		t.Fatalf("migration did not advance schema and epoch: %v", got.Object)
-	}
-	refs, err := referenceRecords(got)
-	if err != nil || len(refs) != 1 || refs[0].BindingID != "session-a" || refs[0].State != executionenv.ReferencePublished {
-		t.Fatalf("migrated refs=%+v err=%v", refs, err)
-	}
-	fromSchema, found, err := unstructured.NestedInt64(got.Object, "status", "lastMigrationFromSchema")
-	if err != nil || !found || fromSchema != 0 {
-		t.Fatal("schema-zero migration lost exact receipt presence")
-	}
-	unstructured.RemoveNestedField(got.Object, "status", "lastMigrationFromSchema")
-	if _, err := dynamicClient.Resource(ExecutionEnvironmentGVR).Namespace("ns").UpdateStatus(t.Context(), got, metav1.UpdateOptions{}); err != nil {
-		t.Fatal(err)
-	}
-	if err := store.MigrateEnvironment(t.Context(), q); !errors.As(err, &controlled) || controlled.Code != executionenv.CodeConflict {
-		t.Fatalf("old receipt without source schema replayed: %v", err)
-	}
-}
-
-func TestMigrationReceiptExpiresAfterReconciledReplacement(t *testing.T) {
-	for name, schema := range map[string]int64{"legacy": 0, "prototype": 1} {
-		t.Run(name, func(t *testing.T) {
-			env := lifecycleAdminEnvironment(schema, []any{"session-a"})
-			pod, pvc := terminalExecutor(), retainedPVC()
-			pod.Name, pvc.Name = resourceName("executor", "env"), resourceName("workspace", "env")
-			pod.Spec.Volumes[0].PersistentVolumeClaim.ClaimName = pvc.Name
-			_ = unstructured.SetNestedField(env.Object, pod.Name, "status", "pod", "name")
-			_ = unstructured.SetNestedField(env.Object, pvc.Name, "status", "pvc", "name")
-			d := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), env)
-			k := kubefake.NewSimpleClientset(pod, pvc)
-			// The fake API must retain a finalizer-protected Pod until the real
-			// reconciler has recorded terminal proof and removed its finalizer.
-			k.PrependReactor("delete", "pods", func(action k8stesting.Action) (bool, runtime.Object, error) {
-				obj, err := k.Tracker().Get(corev1.SchemeGroupVersion.WithResource("pods"), "ns", action.(k8stesting.DeleteAction).GetName())
-				if err != nil {
-					return true, nil, err
-				}
-				return len(obj.(*corev1.Pod).Finalizers) != 0, nil, nil
-			})
-			k.PrependReactor("create", "pods", func(action k8stesting.Action) (bool, runtime.Object, error) {
-				created := action.(k8stesting.CreateAction).GetObject().(*corev1.Pod)
-				created.UID = "replacement-pod"
-				created.Status = replacementExecutor(true).Status
-				return false, nil, nil
-			})
-			store := NewStore(d, "ns", testProfiles(), nil).WithKubeClient(k)
-			q := adminRequestFixture()
-			q.ExpectedSchema = schema
-			if err := store.MigrateEnvironment(t.Context(), q); err != nil {
-				t.Fatal(err)
-			}
-			if err := store.MigrateEnvironment(t.Context(), q); err != nil {
-				t.Fatalf("exact receipt replay before replacement: %v", err)
-			}
-			replace := q
-			replace.OperationID = "replace-after-migration"
-			replace.ExpectedEpoch++
-			if err := store.ReplaceExecutor(t.Context(), replace); err != nil {
-				t.Fatal(err)
-			}
-			r := NewReconciler(d, k, "ns", testProfiles())
-			t.Cleanup(r.queue.ShutDown)
-			// Drive every replacement phase, then an ordinary ready reconcile.
-			for range 8 {
-				if err := r.Reconcile(t.Context(), "env"); err != nil {
+func TestUnsupportedSchemaFailsClosedWithoutMutation(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		spec, status any
+	}{
+		{"schema-zero", int64(0), int64(0)},
+		{"schema-one", int64(1), int64(1)},
+		{"missing", nil, nil},
+		{"missing-spec", nil, int64(2)},
+		{"missing-status", int64(2), nil},
+		{"unknown", int64(7), int64(7)},
+		{"mismatched-spec", int64(1), int64(2)},
+		{"mismatched-status", int64(2), int64(1)},
+		{"malformed-spec", "2", int64(2)},
+		{"malformed-status", int64(2), "2"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			env := lifecycleAdminEnvironment(2, []any{})
+			for field, value := range map[string]any{"spec": tc.spec, "status": tc.status} {
+				if value == nil {
+					unstructured.RemoveNestedField(env.Object, field, "schemaVersion")
+				} else if err := unstructured.SetNestedField(env.Object, value, field, "schemaVersion"); err != nil {
 					t.Fatal(err)
 				}
+			}
+			d := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), env)
+			k := kubefake.NewSimpleClientset(terminalExecutor(), retainedPVC())
+			store := NewStore(d, "ns", testProfiles(), nil).WithKubeClient(k)
+			_, err := store.Attach(t.Context(), executionenv.EnvironmentRef{ID: "env", Revision: "rev"}, "client", "owner", "session-a")
+			var controlled *executionenv.Error
+			if !errors.As(err, &controlled) || controlled.Code != executionenv.CodeNotReady {
+				t.Fatalf("unsupported schema attach error=%v", err)
+			}
+			if err := store.ReplaceExecutor(t.Context(), adminRequestFixture()); !errors.As(err, &controlled) || controlled.Code != executionenv.CodeNotReady {
+				t.Fatalf("unsupported schema replacement error=%v", err)
 			}
 			got, err := d.Resource(ExecutionEnvironmentGVR).Namespace("ns").Get(t.Context(), "env", metav1.GetOptions{})
 			if err != nil {
 				t.Fatal(err)
 			}
-			if !conditionTrue(got, "Ready") || textNested(got.Object, "status", "pod", "uid") != "replacement-pod" || textNested(got.Object, "status", "pvc", "uid") != q.ExpectedPVCUID || intNested(got.Object, "status", "epoch") != 6 {
-				t.Fatalf("replacement did not complete normally: %v", got.Object["status"])
+			if !reflect.DeepEqual(env.Object, got.Object) {
+				t.Fatal("unsupported environment was rewritten")
 			}
-			changed := q
-			changed.ExpectedPodUID = "replacement-pod"
-			for _, replay := range []adminLifecycleRequest{changed, q} {
-				var controlled *executionenv.Error
-				if err := store.MigrateEnvironment(t.Context(), replay); !errors.As(err, &controlled) || controlled.Code != executionenv.CodeConflict {
-					t.Fatalf("expired migration replay with Pod %q: %v", replay.ExpectedPodUID, err)
+			r := NewReconciler(d, k, "ns", testProfiles())
+			t.Cleanup(r.queue.ShutDown)
+			if err := r.Reconcile(t.Context(), "env"); err != nil {
+				t.Fatal(err)
+			}
+			got, err = d.Resource(ExecutionEnvironmentGVR).Namespace("ns").Get(t.Context(), "env", metav1.GetOptions{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			conds, found, err := unstructured.NestedSlice(got.Object, "status", "conditions")
+			if err != nil || !found {
+				t.Fatalf("unsupported environment has no Ready condition: %v", got.Object["status"])
+			}
+			ready := map[string]any(nil)
+			for _, raw := range conds {
+				condition, ok := raw.(map[string]any)
+				if ok && text(condition, "type") == "Ready" {
+					ready = condition
+					break
 				}
 			}
-			if textNested(got.Object, "status", "lastMigrationOperationID") != "" {
-				t.Fatal("replacement retained migration operation receipt")
+			if ready == nil || text(ready, "status") != "False" || text(ready, "reason") != "IncompatibleSchema" {
+				t.Fatalf("unsupported environment Ready condition=%v, want False/IncompatibleSchema", ready)
 			}
-			if _, found, err := unstructured.NestedInt64(got.Object, "status", "lastMigrationFromSchema"); err != nil || found {
-				t.Fatal("replacement retained migration source schema receipt")
+			// Reporting incompatibility must not reset persisted state or touch runtime resources.
+			unstructured.RemoveNestedField(env.Object, "status", "conditions")
+			unstructured.RemoveNestedField(got.Object, "status", "conditions")
+			if !reflect.DeepEqual(env.Object, got.Object) || len(k.Actions()) != 0 {
+				t.Fatal("reconciliation changed unsupported environment or runtime resources")
 			}
 		})
-	}
-}
-
-func TestInsecurePrototypeMigrationRejectedWithoutRewrite(t *testing.T) {
-	env := lifecycleAdminEnvironment(1, []any{"session-a"})
-	pod := terminalExecutor()
-	automount := true
-	pod.Spec.AutomountServiceAccountToken = &automount
-	dynamicClient := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), env)
-	store := NewStore(dynamicClient, "ns", testProfiles(), nil).WithKubeClient(kubefake.NewSimpleClientset(pod, retainedPVC()))
-	q := adminRequestFixture()
-	q.ExpectedSchema = 1
-	if err := store.MigrateEnvironment(t.Context(), q); err == nil {
-		t.Fatal("insecure prototype executor migrated")
-	}
-	got, _ := dynamicClient.Resource(ExecutionEnvironmentGVR).Namespace("ns").Get(t.Context(), "env", metav1.GetOptions{})
-	if intNested(got.Object, "spec", "schemaVersion") != 1 || intNested(got.Object, "status", "schemaVersion") != 1 || intNested(got.Object, "status", "epoch") != 4 {
-		t.Fatalf("insecure prototype was rewritten: %v", got.Object)
-	}
-}
-
-func TestUnknownSchemaMigrationRejectedWithoutRewrite(t *testing.T) {
-	env := lifecycleAdminEnvironment(7, []any{})
-	dynamicClient := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), env)
-	store := NewStore(dynamicClient, "ns", testProfiles(), nil).WithKubeClient(kubefake.NewSimpleClientset(terminalExecutor(), retainedPVC()))
-	q := adminRequestFixture()
-	q.ExpectedSchema = 7
-	if err := store.MigrateEnvironment(t.Context(), q); err == nil {
-		t.Fatal("unknown schema migrated")
-	}
-	got, _ := dynamicClient.Resource(ExecutionEnvironmentGVR).Namespace("ns").Get(t.Context(), "env", metav1.GetOptions{})
-	if intNested(got.Object, "spec", "schemaVersion") != 7 || intNested(got.Object, "status", "epoch") != 4 {
-		t.Fatalf("unknown schema was rewritten: %v", got.Object)
 	}
 }
 

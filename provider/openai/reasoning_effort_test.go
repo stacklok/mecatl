@@ -21,8 +21,7 @@ func effortReq() port.LLMRequest {
 }
 
 // TestReasoningEffortStamped pins that the Provider method buildParams stamps the
-// construction-configured effort onto reasoning.effort for the supported tokens
-// (ADR 0055).
+// construction-configured effort onto reasoning.effort for the supported tokens.
 func TestReasoningEffortStamped(t *testing.T) {
 	cases := []struct {
 		effort string

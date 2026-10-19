@@ -124,8 +124,8 @@ func ReplaySessionEventsOverHTTP(ctx context.Context, httpAddr, sessionID string
 }
 
 // PromptOverHTTP starts a run on a session via POST /v1/sessions/{id}/prompt and
-// returns the HTTP status code plus the response body. It is the cloud-native
-// Phase 4 lease probe: a run-start refused by the cross-process lease comes back
+// returns the HTTP status code plus the response body. It is the session-lease
+// probe: a run-start refused by the cross-process lease comes back
 // 409 Conflict (ErrSessionLeasedElsewhere → writeServiceError), which a streaming
 // SSE client would otherwise hide. The caller inspects the status; on a 2xx it
 // must drain+close the body itself (it is an SSE stream).

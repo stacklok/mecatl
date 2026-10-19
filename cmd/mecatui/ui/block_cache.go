@@ -43,11 +43,12 @@ type blockRenderOutput struct {
 // renderPass is the renderer-owned handoff from cache lookup to frame assembly.
 // It retains only cache identity, rendered output, and lockstep provenance.
 type renderPass struct {
-	id       uint64
-	revision int
-	kind     scrollback.Kind
-	text     string
-	rows     []renderedRow
+	id        uint64
+	revision  int
+	kind      scrollback.Kind
+	text      string
+	rows      []renderedRow
+	toolState toolcallProjectionState
 }
 
 // joinPrefixState is the validity key of the cached incremental-join prefix.

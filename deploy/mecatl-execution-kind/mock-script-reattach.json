@@ -2,6 +2,12 @@
   "turns": [
     {"tool_calls":[{"id":"reattach-read","name":"Read","args":{"path":"proof.txt"}}]},
     {"tool_calls":[{"id":"reattach-shell","name":"Shell","args":{"command":"go test ./...","timeout_ms":120000}}]},
+    {"text":"REMOTE_EXECUTION_REATTACH_COMPLETE"},
+    {"tool_calls":[{"id":"reattach-read-2","name":"Read","args":{"path":"proof.txt"}}]},
+    {"tool_calls":[{"id":"reattach-shell-2","name":"Shell","args":{"command":"go test ./...","timeout_ms":120000}}]},
+    {"text":"REMOTE_EXECUTION_REATTACH_COMPLETE"},
+    {"tool_calls":[{"id":"reattach-read-3","name":"Read","args":{"path":"proof.txt"}}]},
+    {"tool_calls":[{"id":"reattach-shell-3","name":"Shell","args":{"command":"go test ./...","timeout_ms":120000}}]},
     {"text":"REMOTE_EXECUTION_REATTACH_COMPLETE"}
   ]
 }

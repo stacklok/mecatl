@@ -6,7 +6,7 @@ import (
 
 // IsLoopbackAddr reports whether addr is a loopback bind: the host is the literal
 // "localhost" or a loopback IP (127.0.0.0/8, ::1). It is the single fail-closed
-// gate (ADR 0018 decision 6) the four mains share for binding the UNAUTHENTICATED
+// gate the four mains share for binding the UNAUTHENTICATED
 // admin/metrics surface — the admin mux output is secret-shaped (pprof/expvar/
 // metrics can embed prompt text, file paths, goroutine stacks), so a non-loopback
 // bind is rejected at parse time.

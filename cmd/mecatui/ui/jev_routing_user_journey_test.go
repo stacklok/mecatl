@@ -11,10 +11,10 @@ import (
 	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/scrollback"
 )
 
-// TestADR_0352_Scenario7_UserJourney pins AC7.1 from the Jev router plan: the
+// TestJevRoutingUserJourney pins AC7.1 from the Jev router plan: the
 // compact fallback cues and all three F6 family details preserve actual-model
 // authority and optional-number presence from real client events.
-func TestADR_0352_Scenario7_UserJourney(t *testing.T) {
+func TestJevRoutingUserJourney(t *testing.T) {
 	confidence, threshold := 0.42, 0.50
 	decision := &client.RoutingDecision{
 		Backend:           "jev",

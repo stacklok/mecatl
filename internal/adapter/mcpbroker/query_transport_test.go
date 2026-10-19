@@ -18,7 +18,6 @@ import (
 )
 
 func TestCallMcpWithQueryBrokerSupport_UnenrolledTargetDoesNotInvoke(t *testing.T) {
-	t.Setenv("MECATL_TEST_CLIENT_SECRET", "construction-only-secret")
 	profile := protectedToolHiveProfile("private")
 	process, err := NewToolHiveProcess(t.Context(), ToolHiveConfig{CallbackURL: "https://broker.example/callback", Profiles: []ToolHiveProfile{profile}})
 	if err != nil {

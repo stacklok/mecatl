@@ -41,7 +41,7 @@ func remoteExecutorEnvironment(t *testing.T) tool.Environment {
 		t.Fatal(err)
 	}
 	t.Cleanup(client.Close)
-	provider, err := NewProvider(client, "coding")
+	provider, err := NewTemplateProvider(client, "coding", codingRevision)
 	if err != nil {
 		t.Fatal(err)
 	}

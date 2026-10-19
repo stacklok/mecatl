@@ -17,7 +17,7 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/slogdiag"
 )
 
-// router_test.go covers the OPT-IN semantic Subagent model router (ADR 0031, Phase 5):
+// router_test.go covers the OPT-IN semantic Subagent model router:
 // the buildModelRouterTask closure (category→model mapping, precedence, fail-soft,
 // breaker) and the end-to-end proof through the REAL composition that a routed
 // delegation mints the child on the classifier-chosen model.
@@ -38,7 +38,7 @@ func routerTaxonomyCfg() Config {
 	}
 }
 
-// OFF (ADR 0042): the TAXONOMY is the enable, with a kill-switch override. A non-empty
+// OFF: the TAXONOMY is the enable, with a kill-switch override. A non-empty
 // taxonomy that is NOT disabled returns a non-nil closure; an empty taxonomy OR the
 // kill-switch (RouterDisabled) returns nil — the engine then carries no router and the
 // run() hook's routeTask is nil (byte-identical to no router).
@@ -266,7 +266,7 @@ models:
 }
 
 // foldOperatorModelRouter ORs the YAML `disabled:` kill-switch into cfg.RouterDisabled
-// (ADR 0042, mirroring foldOperatorGuardrails). A regression dropping the OR fails here.
+// (mirroring foldOperatorGuardrails). A regression dropping the OR fails here.
 func TestFoldOperatorModelRouterFoldsDisabled(t *testing.T) {
 	const yamlCfg = `
 models:
@@ -313,7 +313,7 @@ models:
 	}
 }
 
-// logModelRouterFacts (ADR 0042): no taxonomy → SILENT; taxonomy + disabled → a one-time
+// logModelRouterFacts: no taxonomy → SILENT; taxonomy + disabled → a one-time
 // DISABLED WARN; taxonomy + not disabled → the ACTIVE INFO (category count + classifier).
 func TestLogModelRouterFacts(t *testing.T) {
 	t.Run("no taxonomy → silent", func(t *testing.T) {
@@ -453,7 +453,7 @@ func TestRouterRoutesChildToClassifiedModelE2E(t *testing.T) {
 		Workspace: workspace,
 		NoSoul:    true,
 		Model:     "gpt-5",
-		// ADR 0042: the taxonomy is the enable — no flag needed to turn the router on.
+		// The taxonomy is the enable — no flag needed to turn the router on.
 		RouterCategories: []permconfig.RouterCategory{
 			{Name: "small", Description: "trivial tasks", Model: routerSmall},
 			{Name: "large", Description: "deep reasoning", Model: routerLarge},
@@ -506,7 +506,7 @@ func TestRouterRoutesChildToClassifiedModelE2E(t *testing.T) {
 	}
 }
 
-// END-TO-END byte-identical-when-OFF: with the router OFF (no taxonomy, ADR 0042), the
+// END-TO-END byte-identical-when-OFF: with the router OFF (no taxonomy), the
 // SAME script runs without a classifier turn — the child inherits the session model and
 // NO request carries a routed model. Proves OFF ⇒ no classifier call.
 func TestRouterOffIsByteIdenticalE2E(t *testing.T) {
@@ -520,7 +520,7 @@ func TestRouterOffIsByteIdenticalE2E(t *testing.T) {
 		Workspace: workspace,
 		NoSoul:    true,
 		Model:     "gpt-5",
-		// OFF (ADR 0042): no taxonomy ⇒ byte-identical to no router (no classifier call).
+		// OFF: no taxonomy ⇒ byte-identical to no router (no classifier call).
 		AllowAllTools:       true,
 		envDetector:         fakeEnv(map[string]string{"OPENAI_API_KEY": "sk-x"}),
 		liveModelHTTPClient: offlineHTTPClient(),
@@ -593,10 +593,10 @@ func drainRunWithSubagentStart(run interface {
 // category-selector-empty miss (issue #287) — a detailed reason like
 // "category-selector-empty (category=small)" — must be REDUCED to the bare static code
 // before it reaches the delegation-start event (routingReasonPayload's allowlist,
-// engine/agent/subagent.go). This closes the composition-to-wire seam that was previously
-// only indirectly verified: TestBuildModelRouterTaskFailSoftOnEmptySelector proves the
-// closure returns the detailed string, and the routingReasonPayload unit tests prove the
-// reduction in isolation, but nothing drove the two together through a real Build → Run.
+// engine/agent/subagent.go). This covers the composition-to-wire seam end to end:
+// TestBuildModelRouterTaskFailSoftOnEmptySelector proves the closure returns the detailed
+// string and the routingReasonPayload unit tests prove the reduction in isolation; this
+// test drives the two together through a real Build → Run.
 func TestRouterCategorySelectorEmptyReasonReducesOnWireE2E(t *testing.T) {
 	ctx := context.Background()
 	workspace := t.TempDir()

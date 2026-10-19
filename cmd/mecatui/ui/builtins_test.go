@@ -77,7 +77,7 @@ func builtinNames(caps client.Capabilities, w wiredCollaborators) []string {
 // caps.Soul && the soul collaborator wired; /memory needs caps.UserModel &&
 // the user-model collaborator wired; /models needs caps.ModelSelection && the model
 // lister wired; /worktrees needs caps.Worktrees && the worktree lister wired
-// (issue #102); /effort is gated identically to /models and follows it (ADR 0055).
+// (issue #102); /effort is gated identically to /models and follows it.
 // The fixed order is clear, help, quit, session, mcp, agents, team, skills, soul, memory,
 // models, effort, worktrees.
 func TestBuiltinCommandsCapsFilter(t *testing.T) {
@@ -137,7 +137,7 @@ func TestBuiltinCommandsCapsFilter(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			got := builtinNames(tc.caps, tc.w)
-			want := append([]string{"clear", "help", "quit", "title", "session", "retry", "toolcalls", "diagnostics"}, tc.want[2:]...)
+			want := append([]string{"clear", "help", "quit", "title", "queue", "steer", "session", "retry", "toolcalls", "diagnostics"}, tc.want[2:]...)
 			if strings.Join(got, ",") != strings.Join(want, ",") {
 				t.Fatalf("builtinCommands order/filter = %v, want %v", got, want)
 			}
@@ -729,7 +729,7 @@ func TestHelpBuiltinOpensOverlay(t *testing.T) {
 	m = typeText(t, m, "/help")
 	m, cmd := pressEnter(t, m)
 
-	if !m.showHelp {
+	if m.modal == nil {
 		t.Error("/help should open the help overlay (showHelp=true)")
 	}
 	if m.prompt.Focused() {
@@ -991,8 +991,8 @@ func TestDispatchBareBuiltinUnicodeWhitespaceThroughTextarea(t *testing.T) {
 // from the builtinCommands table AND that an unknown name is false.
 func TestIsKnownBuiltinName(t *testing.T) {
 	known := []string{
-		"clear", "help", "quit", "title", "session", "retry", "toolcalls", "diagnostics", "compact", "mcp", "agents", "team", "skills", "soul", "memory",
-		"models", "effort", "worktrees", "schedule", "sessions", "learning", "learning-sensitivity", "posture",
+		"clear", "help", "quit", "title", "queue", "steer", "session", "retry", "toolcalls", "diagnostics", "compact", "mcp", "agents", "team", "skills", "soul", "memory",
+		"execution", "models", "effort", "worktrees", "schedule", "sessions", "learning", "learning-sensitivity", "posture",
 		"debug-ask",
 	}
 	for _, name := range known {

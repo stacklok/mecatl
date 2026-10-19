@@ -15,7 +15,7 @@ func effortHandoffPick(t *testing.T, m Model) (Model, tea.Cmd) {
 	mm, _ := m.runEffort()
 	m = mm.(Model)
 	m = pressEffortKey(t, m, tea.KeyPressMsg{Code: tea.KeyDown})
-	mm, cmd, _ := m.onEffortKey(tea.KeyPressMsg{Code: tea.KeyEnter})
+	mm, cmd, _ := m.onOverlayKey(tea.KeyPressMsg{Code: tea.KeyEnter})
 	return mm.(Model), cmd
 }
 
@@ -89,13 +89,32 @@ func TestMecatuiEffortHandoffRecovery_Scenario1_AdoptsTargetBeforeClosingSource(
 	conv.resolvedModel = client.ResolvedModel{ProviderID: "openai", ModelID: "gpt-5", ReasoningEffort: "low"}
 	conv.getSessionCaps = client.Capabilities{ModelSelection: true, ManualCompaction: true}
 	conv.getSessionTitle = "successor"
+	m.conv.addUser("keep this source transcript")
+	m.conv.startAssistant()
+	m.conv.appendAssistant("preserved response")
 	m, cmd := effortHandoffPick(t, m)
 	beforeBlocks := len(m.conv.testBlocks())
-	m = feedCmd(t, m, cmd)
+	batch, ok := runCmd(cmd).(tea.BatchMsg)
+	if !ok || len(batch) != 3 {
+		t.Fatalf("handoff command = %#v, want three leaves", batch)
+	}
+	ready, ok := runCmd(batch[0]).(effortHandoffReadyMsg)
+	if !ok {
+		t.Fatal("fork/hydration leaf did not return ready")
+	}
+	if m.sessionID != "sess-test-0001" || m.phase != phaseConnecting || len(conv.closed()) != 0 {
+		t.Fatal("fork/hydration retired source before adoption")
+	}
+	mm, retirement := m.Update(ready)
+	m = mm.(Model)
 	if m.sessionID != "sess-fork-1" || len(m.conv.testBlocks()) != beforeBlocks || m.sessionTitle != "successor" || m.resolvedSessionModel.ReasoningEffort != "low" {
 		t.Fatalf("target was not adopted with local projection preserved: id=%q blocks=%d title=%q effort=%q", m.sessionID, len(m.conv.testBlocks()), m.sessionTitle, m.resolvedSessionModel.ReasoningEffort)
 	}
-	if m.caps.ManualCompaction != true || len(conv.closed()) != 1 || conv.closed()[0] != "sess-test-0001" {
+	if !m.caps.ManualCompaction || len(conv.closed()) != 0 || retirement == nil {
+		t.Fatalf("adoption must precede source close: caps=%+v closed=%v", m.caps, conv.closed())
+	}
+	m = feedCmd(t, m, retirement)
+	if m.sessionID != "sess-fork-1" || len(conv.closed()) != 1 || conv.closed()[0] != "sess-test-0001" {
 		t.Fatalf("target metadata/source retirement mismatch: caps=%+v closed=%v", m.caps, conv.closed())
 	}
 	conv.mu.Lock()

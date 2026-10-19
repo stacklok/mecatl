@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-func TestADR_0370_Scenario3_ClientConfirmationAndReplacement(t *testing.T) {
+func TestToolResultAvailabilityClientConfirmationAndReplacement(t *testing.T) {
 	var c Conversation
 	c.Tools().Add(ToolCall{ID: "one", Name: "Read"})
 	available := ToolResult{Body: "ready", Artifacts: []Artifact{{Kind: "resource_link", Name: "item"}}}

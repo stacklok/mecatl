@@ -46,7 +46,7 @@ type mcpSpecRecorder struct {
 	calls [][]mcp.ServerConfig
 	// closes counts SessionEngineResult.Close calls, so a test can prove a REFUSED
 	// create tore the freshly-built engine down instead of leaking its MCP
-	// connections for the process lifetime (ADR 0027 List 1 discipline).
+	// connections for the process lifetime.
 	closes int
 }
 
@@ -456,7 +456,7 @@ func TestSDKServerEnablers_Scenario9_ClientMCPRejectedWithDebugTarget(t *testing
 	defer cleanup()
 
 	_, err := client.CreateSession(context.Background(), &mecatlv1.CreateSessionRequest{
-		Profile:              "no-fs",
+		Execution:            &mecatlv1.ExecutionSelection{None: &mecatlv1.ExecutionNone{}},
 		DebugTargetSessionId: "some-target",
 		McpServers:           []*mecatlv1.McpServerSpec{protoMCPEntry()},
 	})
@@ -1348,16 +1348,14 @@ func TestSDKServerEnablers_Scenario9_URLCredentialsRejected(t *testing.T) {
 	})
 }
 
-// TestSDKServerEnablers_Scenario9_UnknownCreateFieldIsRejected closes the review
-// finding that the HTTP create body decoded leniently.
+// TestSDKServerEnablers_Scenario9_UnknownCreateFieldIsRejected pins that the HTTP
+// create body decodes strictly.
 //
 // A client coming from the gRPC surface — or using a generated client — naturally
-// writes the protojson spelling {"mcpServers": [...]}. A lenient decoder dropped
-// it and returned 201 with a session that had none of the servers requested: the
+// writes the protojson spelling {"mcpServers": [...]}. A lenient decoder would drop
+// it and return 201 with a session that had none of the servers requested: the
 // same silent-degradation class as a partial mount, on the transport where it is
 // easiest to hit, with no signal anywhere.
-//
-// This is a deliberate behaviour change — a stray field used to be accepted.
 func TestSDKServerEnablers_Scenario9_UnknownCreateFieldIsRejected(t *testing.T) {
 	svc := clientMCPService(t, true, nil, nil, mockllm.New(mockllm.TextTurn("ok")))
 	srv := httpFor(t, svc)

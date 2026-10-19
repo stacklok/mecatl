@@ -18,23 +18,25 @@ var errWorkspaceEnrollmentAlreadyCompleted = errors.New("mcpbroker: workspace en
 
 var _ contract.WorkspaceEnrollmentAttachment = (*Attachment)(nil)
 
-// bundleBackends returns the deterministic configured protected backends, the
-// shared bundle-wide authorization target, and the owning Process.
-func (a *Attachment) bundleBackends() ([]string, *oauthRoute, *Process) {
-	process := a.runtime.process
-	if process == nil {
-		return nil, nil, nil
+// bundleBackends returns copied enrollment inputs only while the owning
+// infrastructure admits work.
+func (a *Attachment) bundleBackends() ([]string, *oauthRoute) {
+	config := a.runtime.enrollment
+	if config == nil || a.runtime.discovery == nil || a.runtime.publication == nil || len(config.backends) == 0 || config.target == nil {
+		return nil, nil
 	}
-	process.lifecycleMu.Lock()
-	closed := process.closed
-	backends := append([]string(nil), process.construction.protectedBackends...)
-	target := process.protectedTarget
-	process.lifecycleMu.Unlock()
-	if closed || len(backends) == 0 || target == nil {
-		return nil, nil, nil
+	var backends []string
+	var target *oauthRoute
+	if err := a.runtime.publication.WhileOpen(func() error {
+		backends = append([]string(nil), config.backends...)
+		copyTarget := *config.target
+		copyTarget.scopes = append([]string(nil), config.target.scopes...)
+		target = &copyTarget
+		return nil
+	}); err != nil {
+		return nil, nil
 	}
-	copyTarget := *target
-	return backends, &copyTarget, process
+	return backends, target
 }
 
 // existingWorkspaceEnrollmentLocked is the idempotent fast path
@@ -105,11 +107,10 @@ func (a *Attachment) ResetWorkspaceEnrollment(ctx context.Context) error {
 	a.logical.completedEnrollment = nil
 	a.logical.mu.Unlock()
 
-	// Withdraws ADR 0310's static declared protected-tool wrappers entirely
+	// Withdraws the static declared protected-tool wrappers entirely
 	// (unlike a fresh AttachSession, which keeps them as protectedSessionTool
 	// placeholders): starting a refresh must leave no broker tool usable until
-	// replacement succeeds (ADR 0335, "Static declared-tool behavior during
-	// destructive replacement").
+	// replacement succeeds.
 	staticRoutes := make([]route, 0, len(a.runtime.catalogue.routes))
 	tools := make([]tool.Tool, 0, len(a.runtime.catalogue.routes))
 	for _, route := range a.runtime.catalogue.routes {
@@ -135,7 +136,7 @@ func (a *Attachment) BeginWorkspaceEnrollment(ctx context.Context) (contract.Wor
 		return contract.WorkspaceEnrollmentPresentation{}, err
 	}
 	defer done()
-	backends, target, _ := a.bundleBackends()
+	backends, target := a.bundleBackends()
 	if len(backends) == 0 {
 		return contract.WorkspaceEnrollmentPresentation{}, ErrWorkspaceEnrollmentUnsupported
 	}
@@ -163,8 +164,8 @@ func (a *Attachment) BeginWorkspaceEnrollment(ctx context.Context) (contract.Wor
 	// to the shared resolveClientSecret (rather than re-deriving it here) so the
 	// already-populated raw target.clientSecret (the confidential embedded
 	// broker's own client secret, set once at construction) is never bypassed
-	// in favor of a secretEnv lookup that a target like this one never has.
-	secret, err := target.resolveClientSecret(opCtx, a.runtime.oauth.resolveSecret)
+	// in favor of a secret-file or environment read that a target like this one never has.
+	secret, err := target.resolveClientSecret(opCtx, a.runtime.oauth)
 	if err != nil {
 		return contract.WorkspaceEnrollmentPresentation{}, err
 	}
@@ -298,12 +299,10 @@ func (a *Attachment) ObserveWorkspaceEnrollment(ctx context.Context, ref contrac
 		return contract.WorkspaceEnrollmentResult{}, contract.ErrStateUnavailable
 	}
 
-	process := a.runtime.process
-	if process == nil {
+	if a.runtime.enrollment == nil || a.runtime.discovery == nil || a.runtime.publication == nil {
 		return a.failWorkspaceTransaction(logical, transaction), nil
 	}
-	occupied := append([]string(nil), process.occupied...)
-	catalogue, candidate, err := a.freezeAuthenticatedCatalogue(opCtx, ref, process, &brokerTokenSource{runtime: a.runtime, logical: logical, ctx: opCtx}, occupied, false)
+	catalogue, candidate, err := a.freezeAuthenticatedCatalogue(opCtx, ref, &brokerTokenSource{runtime: a.runtime, logical: logical, ctx: opCtx}, false)
 	if err != nil {
 		if callerErr := ctx.Err(); callerErr != nil {
 			// Discovery was interrupted by this observer, not rejected by the
@@ -317,30 +316,40 @@ func (a *Attachment) ObserveWorkspaceEnrollment(ctx context.Context, ref contrac
 		return contract.WorkspaceEnrollmentResult{}, callerErr
 	}
 
-	a.mu.Lock()
-	if a.closed {
-		a.mu.Unlock()
-		return contract.WorkspaceEnrollmentResult{}, contract.ErrAttachmentClosed
-	}
-	logical.mu.Lock()
-	if logical.deleted || logical.authorizations[transaction.identity] != transaction || transaction.status != session.AuthorizationGranted || logical.brokerCredential != grant {
-		logical.mu.Unlock()
-		a.mu.Unlock()
-		return contract.WorkspaceEnrollmentResult{}, contract.ErrStateUnavailable
-	}
 	routes := make([]route, 0, len(candidate.routes))
 	for _, route := range candidate.routes {
 		routes = append(routes, route)
 	}
 	sortRoutes(routes)
 	routes = cloneRoutes(routes)
-	logical.completedEnrollment = &completedWorkspaceEnrollment{ref: ref, routes: routes}
-	a.catalogue = candidate
-	delete(logical.authorizations, transaction.identity)
-	state := transaction.state
-	transaction.clientSecret, transaction.verifier, transaction.state = "", "", ""
-	logical.mu.Unlock()
+	a.mu.Lock()
+	var state string
+	err = a.runtime.publication.WhileOpen(func() error {
+		a.runtime.mu.RLock()
+		defer a.runtime.mu.RUnlock()
+		logical.mu.Lock()
+		defer logical.mu.Unlock()
+		if a.closed {
+			return contract.ErrAttachmentClosed
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if a.runtime.closed || a.runtime.sessions[logical.ref.id] != logical || logical.deleted ||
+			logical.authorizations[transaction.identity] != transaction || transaction.status != session.AuthorizationGranted || logical.brokerCredential != grant {
+			return contract.ErrStateUnavailable
+		}
+		logical.completedEnrollment = &completedWorkspaceEnrollment{ref: ref, routes: routes}
+		a.catalogue = candidate
+		delete(logical.authorizations, transaction.identity)
+		state = transaction.state
+		transaction.clientSecret, transaction.verifier, transaction.state = "", "", ""
+		return nil
+	})
 	a.mu.Unlock()
+	if err != nil {
+		return contract.WorkspaceEnrollmentResult{}, err
+	}
 	a.runtime.removeCallbackState(state, transaction)
 
 	a.runtime.logWorkspaceEnrollment(ctx, port.LevelInfo, diagnosticEnrollmentOperationObserve, diagnosticEnrollmentReasonCompleted, "status", contract.WorkspaceEnrollmentConnected)

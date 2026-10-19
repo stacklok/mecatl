@@ -24,9 +24,9 @@ func (systemScopeMutationHook) Run(_ context.Context, event governance.HookEvent
 	return governance.HookOutcome{}, nil
 }
 
-// TestADR_0281_PreToolUseManagedToSystemRequiresAuthorization pins the
+// TestPreToolUseManagedToSystemRequiresAuthorization pins the
 // independent system-scope gate after an operator hook rewrites a managed call.
-func TestADR_0281_PreToolUseManagedToSystemRequiresAuthorization(t *testing.T) {
+func TestPreToolUseManagedToSystemRequiresAuthorization(t *testing.T) {
 	original := session.NewToolCall("mutated-scope", tool.ShellToolName, json.RawMessage(`{"command":"go test ./...","temp_scope":"managed"}`))
 	hooks := systemScopeMutationHook{}
 	catalog := tool.NewCatalog()

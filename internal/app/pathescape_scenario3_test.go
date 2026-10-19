@@ -23,8 +23,7 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/osfs"
 )
 
-// pathescape_scenario3_test.go pins the path-escape-posture Scenario 3
-// acceptance criteria (docs/acceptance/path-escape-posture.md): at yolo an
+// pathescape_scenario3_test.go pins relaxed out-of-root writes: at yolo an
 // out-of-root Write/Edit succeeds; at auto (no guardrail knob) a write escape
 // surfaces an EvPermissionAsk and executes only on an allow verdict; the Edit
 // read-ledger keys out-of-root paths canonically; write escapes stay

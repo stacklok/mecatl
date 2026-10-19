@@ -97,11 +97,11 @@ const (
 //   - skips: the aggregated cross-source diagnostics (each source's own skips,
 //     plus the shadow notices), in source order.
 //
-// It exists to kill a double walk: previously the composition root called both
-// InspectSources AND NewMultiSource(...).Servers, each of which consults every
-// source — for the live ToolHive source that is two ListWorkloads container
-// round-trips and, worse, two independent snapshots (so the reported inventory
-// could differ from the connected servers). Resolve consults each source once,
+// It exists to avoid a double walk: calling both InspectSources AND
+// NewMultiSource(...).Servers consults every source twice — for the live
+// ToolHive source that is two ListWorkloads container round-trips and, worse,
+// two independent snapshots (so the reported inventory could differ from the
+// connected servers). Resolve consults each source once,
 // so both views are derived from the same snapshot.
 //
 // Fail-soft contract is preserved: a source's fatal error is recorded as a

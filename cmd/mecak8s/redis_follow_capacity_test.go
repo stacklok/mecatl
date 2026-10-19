@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-func TestADR_0330_CLIConfigAndDefaults(t *testing.T) {
+func TestRedisFollowCapacityCLIConfigAndDefaults(t *testing.T) {
 	defaults, err := parseFlags(nil)
 	if err != nil {
 		t.Fatal(err)

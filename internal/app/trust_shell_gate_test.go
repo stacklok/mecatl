@@ -223,7 +223,7 @@ func TestUntrustedMutatingMemberKeepsShell(t *testing.T) {
 // TestUntrustedSubagentSpecCarriesNoShellNote proves the model-facing honesty fix:
 // the Subagent tool built over a shell-less workspace (no subagent-shell grant)
 // REPLACES the worktree-shell promise with the no-shell note (naming --posture
-// auto), while the shell-bearing build keeps the historical shell-bearing
+// auto), while the shell-bearing build keeps the default shell-bearing
 // description.
 func TestUntrustedSubagentSpecCarriesNoShellNote(t *testing.T) {
 	untrusted := untrustedTeamCfg(t)
@@ -257,8 +257,8 @@ func TestUntrustedSubagentSpecCarriesNoShellNote(t *testing.T) {
 
 // TestNoShellFlagNoteDistinctFromUntrusted pins the note's CAUSE attribution: a
 // shell-less deployment (--no-shell, or an empty shell) must NOT produce the
-// posture-below-auto no-shell note — those causes keep the historical description
-// unchanged (the pre-#40 behaviour), whether the workspace is trusted or not.
+// posture-below-auto no-shell note — those causes keep the default description
+// unchanged, whether the workspace is trusted or not.
 func TestNoShellFlagNoteDistinctFromUntrusted(t *testing.T) {
 	for name, mutate := range map[string]func(*Config){
 		"no-shell trusted":    func(c *Config) { c.NoShell = true },
@@ -291,7 +291,7 @@ func TestNoShellFlagNoteDistinctFromUntrusted(t *testing.T) {
 // so an untrusted workspace's base set excludes Shell and a def
 // allow-listing it draws the ACCURATE "shell unavailable … untrusted"
 // diagnostic — not the misleading generic unknown-tool one. A trusted
-// workspace keeps Shell in the base (the historical "mutating; dropped"
+// workspace keeps Shell in the base (the standard "mutating; dropped"
 // diagnostic path).
 func TestBaseSubagentToolsUntrustedExcludesShell(t *testing.T) {
 	untrusted := untrustedTeamCfg(t) // untrusted → no shell

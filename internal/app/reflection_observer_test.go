@@ -110,7 +110,7 @@ func TestScalableReflectionEvidence_Scenario1_AutomaticFullSourceAdmissionThenBo
 	}
 }
 
-func TestADR_0300_AdmissionPrecedesBoundedInputConstruction(t *testing.T) {
+func TestAdmissionPrecedesBoundedInputConstruction(t *testing.T) {
 	messages := make([]session.Message, learning.MaxInputMessages+40)
 	for i := range messages {
 		messages[i] = session.NewUserMessage(strings.Repeat("context ", 512))
@@ -138,7 +138,7 @@ func TestADR_0300_AdmissionPrecedesBoundedInputConstruction(t *testing.T) {
 	}
 }
 
-func TestADR_0300_AutomaticAdmissionIsContextCancellable(t *testing.T) {
+func TestAutomaticAdmissionIsContextCancellable(t *testing.T) {
 	started := make(chan struct{})
 	policy := admissionPolicyFunc(func(ctx context.Context, _ learning.AdmissionRequest) (learning.AdmissionDecision, error) {
 		close(started)
@@ -169,7 +169,7 @@ func TestADR_0300_AutomaticAdmissionIsContextCancellable(t *testing.T) {
 	}
 }
 
-func TestADR_0300_BuiltCloseCancelsAutomaticAdmission(t *testing.T) {
+func TestBuiltCloseCancelsAutomaticAdmission(t *testing.T) {
 	started := make(chan struct{})
 	policy := admissionPolicyFunc(func(ctx context.Context, _ learning.AdmissionRequest) (learning.AdmissionDecision, error) {
 		close(started)
@@ -251,7 +251,7 @@ func TestScalableReflectionEvidence_Scenario5_AutomaticSkipLeavesNoAdmissionStat
 	}
 }
 
-func TestADR_0300_NoAutomaticRawSizeRejectionCompatibility(t *testing.T) {
+func TestNoAutomaticRawSizeRejectionCompatibility(t *testing.T) {
 	large := session.NewUserMessageWithParts("", []session.Content{{Data: []byte(strings.Repeat("z", defaultReflectionJobBytes*2))}})
 	messages := []session.Message{large, session.NewUserMessage("remember that raw excluded bytes do not reject reflection")}
 	reflector := &automaticCaptureReflector{estimate: 8, called: make(chan learning.Input, 1)}
@@ -266,7 +266,7 @@ func TestADR_0300_NoAutomaticRawSizeRejectionCompatibility(t *testing.T) {
 	}
 }
 
-func TestADR_0300_AutomaticCancellationStopsPreAdmissionMaterialization(t *testing.T) {
+func TestAutomaticCancellationStopsPreAdmissionMaterialization(t *testing.T) {
 	reflector := &automaticCaptureReflector{estimate: 8, called: make(chan learning.Input, 1)}
 	observer, coordinator := automaticTestObserver(t, reflector, learning.AlwaysPolicy{})
 	ctx, cancel := context.WithCancel(context.Background())
@@ -283,7 +283,7 @@ func TestADR_0300_AutomaticCancellationStopsPreAdmissionMaterialization(t *testi
 	}
 }
 
-func TestADR_0300_AutomaticAdmissionCooldownBudgetReservationUnchanged(t *testing.T) {
+func TestAutomaticAdmissionCooldownBudgetReservationUnchanged(t *testing.T) {
 	order := []string{}
 	policy := admissionPolicyFunc(func(_ context.Context, _ learning.AdmissionRequest) (learning.AdmissionDecision, error) {
 		order = append(order, "policy")

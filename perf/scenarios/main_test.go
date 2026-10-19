@@ -1,7 +1,7 @@
 // Package scenarios_test holds the offline, deterministic performance SCENARIO
-// benchmarks (perf-tracking.md Phase 2): whole-loop runs through the real engine
+// benchmarks (perf-tracking.md "The benchmark harness"): whole-loop runs through the real engine
 // over mockllm + memfs/memstore that catch the failure modes the hot-path
-// microbenchmarks (Phase 1) miss — allocation budget over a long session,
+// microbenchmarks miss — allocation budget over a long session,
 // goroutine hygiene under delegation, token/cache regressions, compaction churn.
 //
 // It is an EXTERNAL test package (scenarios_test): it imports engine/... + the

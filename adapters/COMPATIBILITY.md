@@ -4,8 +4,7 @@ This policy covers `github.com/stacklok/mecatl/adapters`. For construction,
 capability checks, read semantics, and resource ownership, use the
 [SessionStore and EventLog guide](../user-docs/building/go/extension-points/session-store.md).
 The [driver architecture](../docs/architecture/observability.md#remote-store--source-drivers-adaptersgrpcdriver)
-owns protocol integration details. ADR 0372
-records the publication decision.
+owns protocol integration details.
 
 ## Public Go API
 
@@ -62,6 +61,15 @@ The adapter manifest requires the real engine baseline
 `v0.1.0` support and driver modules. Engine-only applications do not acquire
 Redis, gRPC, the root host, or adapters. Root `go.mod` replacements and
 `go.work` are checkout conveniences, not external installation requirements.
+
+### Redis one-shot retry records
+
+Redis schedules use `last_fire_outcome_id` to identify the terminal outcome
+that authorizes a one-shot retry. A record without this field remains disabled
+until a terminal outcome is recorded by a writer that supplies it, or an
+operator resolves the schedule. Do not use mixed old and new Redis writers to
+re-arm an existing one-shot schedule: the older writer cannot establish the
+required outcome authority.
 
 ## Release verification
 

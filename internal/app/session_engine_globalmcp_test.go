@@ -20,8 +20,8 @@ import (
 
 // globalMCPFactory builds a sessionEngineFactory over a two-provider registry
 // (openai default, openrouter selectable) and threads `globalMgr` as the SHARED
-// server-global MCP manager — the seam bug #3 fixed (a selector session used to get
-// a fresh core-only catalog and silently drop the server-global MCP tools).
+// server-global MCP manager, so a selector session keeps the server-global MCP tools
+// rather than getting a fresh core-only catalog (bug #3).
 func globalMCPFactory(t *testing.T, globalMgr *mcp.Manager) (server.SessionEngineFactory, *providerRegistry) {
 	t.Helper()
 	cfg := Config{Model: "default-model"}

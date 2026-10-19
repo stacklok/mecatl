@@ -21,10 +21,10 @@ export type SchedulePhraseResult =
   | { at: number; kind: "one-shot" };
 
 /**
- * Cron day-of-week numbers. Sunday is 0 here (not 7) so a compiled Sunday
- * schedule lands on the `cronToBuilder`/`describeCron` Weekly/Sunday shape
- * (`0 6 * * 0`) instead of falling through to Custom, which only accepts
- * `[0-6]`.
+ * Cron day-of-week numbers. Sunday is 0 here (not 7) because the daemon's cron
+ * parser only accepts 0–6, and so a compiled Sunday schedule lands on
+ * `cronToBuilder`'s Weekly shape (`0 6 * * 0`) instead of falling through to
+ * Custom.
  */
 const WEEKDAY_NUMBER: Record<string, number> = {
   friday: 5,

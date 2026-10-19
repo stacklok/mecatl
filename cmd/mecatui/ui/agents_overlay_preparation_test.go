@@ -10,7 +10,7 @@ import (
 
 // repeatedPreparationAgentsOverlay is the differential baseline: it re-prepares
 // the current renderers for each call. The comparison measures reuse versus
-// re-preparation, not independence from a historical full renderer.
+// re-preparation.
 func repeatedPreparationAgentsOverlay(th theme.Theme, tab agentsTab, sub subagentState, par parallelState, team teamState, b *teamOverlaySnapshot, fleet []subagentLane, groups []parallelGroup, hk helpKeys, width, height, terminal int) string {
 	if terminal > 0 && terminal < 24 {
 		return renderCompactAgentsOverlay(th, tab, sub, par, team, hk, width)

@@ -12,7 +12,7 @@ import (
 	"github.com/stacklok/mecatl/e2e/harness"
 )
 
-// snapshotFidelitySpecs is the cloud-native Phase 1 LIVE scenario: a session's
+// snapshotFidelitySpecs is the snapshot-fidelity LIVE scenario: a session's
 // persisted selector AND its cumulative token spend survive a REAL SIGKILL +
 // restart over a shared store, so the loop-level token budget continues across
 // the process death.

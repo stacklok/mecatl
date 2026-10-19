@@ -14,7 +14,7 @@ import (
 	"github.com/stacklok/mecatl/engine/tool"
 )
 
-func TestADR_0370_Scenario1_UniformAvailability(t *testing.T) {
+func TestToolResultAvailability_Uniform(t *testing.T) {
 	for _, tc := range []struct {
 		name       string
 		calls      []session.ToolCall

@@ -1,7 +1,7 @@
 # Taskfile for mecatl (https://taskfile.dev).
 #
 # Required tools (assumed on PATH; install commands below):
-#   - go            >= 1.27     (the toolchain)
+#   - go            >= 1.27.2   (the toolchain)
 #   - golangci-lint (version in scripts/install-golangci-lint.sh)
 #                               task tools:golangci-lint (installs the CI-matching
 #                               official release binary into .tools/bin)
@@ -39,6 +39,19 @@ includes:
     dir: .
 
 vars:
+  GO_MODULES:
+    - '.'
+    - engine
+    - internal/adaptersupport
+    - contracts/gen/go/mecatl/driver
+    - adapters
+    - authn/oidc
+    - environment/microvm
+    - integration/microvm
+    - provider/ssefilter
+    - provider/anthropic
+    - provider/openai
+    - provider/openaichat
   PKG: github.com/stacklok/mecatl
   # BUILD_ID is an optional explicit linker stamp. Otherwise, resolve the source
   # checkout identity at build time; direct Go/ko builds retain the runtime VCS fallback.
@@ -114,7 +127,7 @@ tasks:
   api:check:
     desc: |
       The api-compat gate — fail if the engine module's public API surface (the
-      seven core packages) drifts from the committed engine/api/*.txt snapshots.
+      eight core packages) drifts from the committed engine/api/*.txt snapshots.
       See engine/COMPATIBILITY.md. (Also runs under `task test` via ./...)
     cmds:
       - go test ./internal/apicheck
@@ -337,40 +350,27 @@ tasks:
       vars: [MODULE]
     vars:
       RACE: '{{default "" .RACE}}'
+      TEST_GOWORK: '{{default "off" .TEST_GOWORK}}'
+    preconditions:
+      - sh: '{{if has .MODULE .GO_MODULES}}true{{else}}false{{end}}'
+        msg: 'MODULE must be one of: {{join ", " .GO_MODULES}}'
     cmds:
-      - cd {{.MODULE}} && GOWORK=off go test -mod=readonly {{.RACE}} ./...
+      # Go's default 10m per-package budget is too tight for cmd/mecatui/ui under
+      # -race (about 400-600s on CI runners); the job-level timeout still bounds the run.
+      - cd {{.MODULE | shellQuote}} && GOWORK={{.TEST_GOWORK | shellQuote}} go test -mod=readonly -timeout=20m {{.RACE}} ./...
 
   test:_suite:
     internal: true
     requires:
       vars: [RACE]
+    vars:
+      TEST_GOWORK: '{{default "" .TEST_GOWORK}}'
     deps:
-      - task: test:_module
-        vars: {MODULE: '.', RACE: '{{.RACE}}'}
-      - task: test:_module
-        vars: {MODULE: engine, RACE: '{{.RACE}}'}
-      - task: test:_module
-        vars: {MODULE: internal/adaptersupport, RACE: '{{.RACE}}'}
-      - task: test:_module
-        vars: {MODULE: contracts/gen/go/mecatl/driver, RACE: '{{.RACE}}'}
-      - task: test:_module
-        vars: {MODULE: adapters, RACE: '{{.RACE}}'}
-      - task: test:_module
-        vars: {MODULE: authn/oidc, RACE: '{{.RACE}}'}
-      - task: test:_module
-        vars: {MODULE: environment/microvm, RACE: '{{.RACE}}'}
-      - task: test:_module
-        vars: {MODULE: integration/microvm, RACE: '{{.RACE}}'}
-      - task: test:_module
-        vars: {MODULE: provider/ssefilter, RACE: '{{.RACE}}'}
-      - task: test:_module
-        vars: {MODULE: provider/anthropic, RACE: '{{.RACE}}'}
-      - task: test:_module
-        vars: {MODULE: provider/openai, RACE: '{{.RACE}}'}
-      - task: test:_module
-        vars: {MODULE: provider/openaichat, RACE: '{{.RACE}}'}
+      - for: {var: GO_MODULES}
+        task: test:_module
+        vars: {MODULE: '{{.ITEM}}', RACE: '{{.RACE}}', TEST_GOWORK: '{{.TEST_GOWORK}}'}
       - task: test:microvm-dev-tag
-        vars: {RACE: '{{.RACE}}'}
+        vars: {RACE: '{{.RACE}}', TEST_GOWORK: '{{.TEST_GOWORK}}'}
 
   microvm:build:
     desc: Build the opt-in microvmd and Linux guest-agent artifacts without widening standard binaries.
@@ -504,13 +504,13 @@ tasks:
           # journey: exact reattach plus lazy/no-fs allocation, multi-session
           # isolation, harness restart continuity, fail-closed daemon-state loss,
           # and direct-write versus isolated-child routing.
-          go test -count=1 -run '^Test(MicroVMDefaultPlacementUsesNormalCreateSessionAndExactReattach|MicroVMOperatorJourneyIsLazyIsolatedAndRestartExact)$' ./internal/app
+          go test -count=1 -run '^Test(MicroVMDefaultPlacementRetainsOneExactAttachmentUntilCloseSession|MicroVMOperatorJourneyIsLazyIsolatedAndRestartExact)$' ./internal/app
 
   test:
     desc: Run the complete offline test suite without the race detector
     cmds:
       - task: test:_suite
-        vars: {RACE: ''}
+        vars: {RACE: '', TEST_GOWORK: ''}
 
   test:non-race:
     desc: Compatibility alias for the complete offline test suite
@@ -521,7 +521,55 @@ tasks:
     desc: Run the complete offline test suite with the race detector
     cmds:
       - task: test:_suite
-        vars: {RACE: '-race'}
+        vars: {RACE: '-race', TEST_GOWORK: ''}
+
+  test:workspace:
+    desc: Run the complete offline test suite against this checkout's workspace
+    # Resolve in Task's checkout directory; ROOT_DIR is CLI-overridable.
+    cmds:
+      - task: test:_suite
+        vars: {RACE: '', TEST_GOWORK: {sh: 'printf "%s/go.work" "$(pwd -P)"'}}
+
+  test:workspace:race:
+    desc: Run the complete offline workspace test suite with the race detector
+    cmds:
+      - task: test:_suite
+        vars: {RACE: '-race', TEST_GOWORK: {sh: 'printf "%s/go.work" "$(pwd -P)"'}}
+
+  test:module:
+    desc: Run one module's tests with GOWORK=off (MODULE=. for root)
+    cmds:
+      - task: test:_module
+        vars: {MODULE: '{{.MODULE}}', RACE: '', TEST_GOWORK: 'off'}
+
+  test:module:race:
+    desc: Run one module's tests with GOWORK=off and the race detector
+    cmds:
+      - task: test:_module
+        vars: {MODULE: '{{.MODULE}}', RACE: '-race', TEST_GOWORK: 'off'}
+
+  test:workspace:module:
+    desc: Run one module's tests against this checkout's workspace
+    cmds:
+      - task: test:_module
+        vars: {MODULE: '{{.MODULE}}', RACE: '', TEST_GOWORK: {sh: 'printf "%s/go.work" "$(pwd -P)"'}}
+
+  test:workspace:module:race:
+    desc: Run one module's tests against this checkout's workspace with the race detector
+    cmds:
+      - task: test:_module
+        vars: {MODULE: '{{.MODULE}}', RACE: '-race', TEST_GOWORK: {sh: 'printf "%s/go.work" "$(pwd -P)"'}}
+
+  test:module-metadata:
+    desc: Verify Go module metadata is tracked and clean without modifying the checkout
+    cmds:
+      - sh .github/scripts/module-metadata.sh
+
+  test:workspace-infrastructure:
+    desc: Run offline workspace and module-metadata task regression tests
+    cmds:
+      - python3 .github/scripts/module-metadata_test.py
+      - PATH="$(go env GOROOT)/bin:$PATH" python3 .github/scripts/workspace-tests_test.py
 
   test:module-publication:
     desc: Check releaseable module pins against main and compile the published adapters tag through the public Go proxy without workspace replacements.
@@ -543,8 +591,9 @@ tasks:
     desc: Compile and run the offline developer-only MicroVM activation gates.
     vars:
       RACE: '{{default "" .RACE}}'
+      TEST_GOWORK: '{{default "" .TEST_GOWORK}}'
     cmds:
-      - go test -mod=readonly {{.RACE}} -tags=microvm_dev ./internal/adapter/microvmmanager ./cmd/mecated ./cmd/mecatui
+      - '{{if .TEST_GOWORK}}GOWORK={{.TEST_GOWORK | shellQuote}} {{end}}go test -mod=readonly {{if .TEST_GOWORK}}-timeout=20m {{end}}{{.RACE}} -tags=microvm_dev ./internal/adapter/microvmmanager ./cmd/mecated ./cmd/mecatui'
 
   test:microvm-standalone:
     desc: Prove the opt-in microVM module builds and tests with GOWORK=off.
@@ -560,10 +609,9 @@ tasks:
   test:engine-standalone:
     desc: |
       Prove the engine module builds + tests with NO workspace and NO host-repo
-      deps (GOWORK=off): the importable core's tiny dependency closure
-      (doublestar + x/sync + goleak) is self-contained. This is the hygiene gate
-      that an external consumer's `go get github.com/stacklok/mecatl/engine`
-      experience depends on — see docs/adr/0036-engine-module.md.
+      deps (GOWORK=off): the importable core's small dependency closure is
+      self-contained. This is the hygiene gate that an external consumer's
+      `go get github.com/stacklok/mecatl/engine` experience depends on.
     cmds:
       - cd engine && GOWORK=off go build ./...
       - cd engine && GOWORK=off go test ./...
@@ -729,7 +777,7 @@ tasks:
       - CONTAINER_ENGINE=podman task e2e:k8s
 
   deploy:helm-unittest:
-    desc: Run the Helm-native mecak8s chart unit tests without a cluster
+    desc: Run the Helm-native mecak8s and mecatl-studio chart unit tests without a cluster
     vars:
       # Pinned version — bump deliberately. CI has no separate pin; the k8s-e2e
       # workflow runs this task directly. v1.1.x requires newer Helm plugin
@@ -754,14 +802,15 @@ tasks:
               $(helm plugin install --help | grep -qE '^[[:space:]]+--verify([=[:space:]]|$)' && echo --verify=false)
           fi
       - helm unittest --strict deploy/helm/mecak8s
+      - helm unittest --strict deploy/helm/mecatl-studio
 
   deploy:check:
     desc: |
-      Validate the deploy/helm/mecak8s chart WITHOUT a cluster: `helm lint`
-      every deploy/helm/mecak8s/ci/*-values.yaml fixture, schema-check the
-      rendered manifests (default + oidc.enabled=true), and assert the
-      caller-identity boundaries. Needs helm + kubeconform; needs NO
-      cluster, so it runs in CI and on a laptop.
+      Validate the deploy/helm/mecak8s and deploy/helm/mecatl-studio charts
+      WITHOUT a cluster: render every deploy/helm/{mecak8s,mecatl-studio}/ci/*-values.yaml fixture,
+      schema-check the rendered manifests (mecak8s default + oidc.enabled=true),
+      and assert the caller-identity boundaries. Needs helm + kubeconform; needs
+      NO cluster, so it runs in CI and on a laptop.
     vars:
       PROD_SET: redis.endpoint=redis.example.internal:6379,redis.credentialsSecret=redis-credentials,security.allowUnsafeRealProvider=true
       SAFE_SET: redis.endpoint=redis.example.internal:6379,redis.credentialsSecret=redis-credentials,tls.enabled=true,tls.secretName=mecak8s-tls,oidc.enabled=true,oidc.issuer=https://idp.example.com,oidc.audience=mecatl
@@ -788,6 +837,14 @@ tasks:
           set -eu -o pipefail
           for f in deploy/helm/mecak8s/ci/*-values.yaml; do
             helm template deploy/helm/mecak8s -f "$f" | kubeconform -strict -summary -
+          done
+        silent: true
+      # kubeconform ships no Gateway API schemas, so HTTPRoute is skipped here;
+      # the chart's helm-unittest suites assert its key fields.
+      - cmd: |
+          set -eu -o pipefail
+          for f in deploy/helm/mecatl-studio/ci/*-values.yaml; do
+            helm template mecatl-studio deploy/helm/mecatl-studio -f "$f" | kubeconform -strict -summary -skip HTTPRoute -
           done
         silent: true
       # Schema validation is kubeconform, NOT `kubectl apply --dry-run=client`:
@@ -833,15 +890,15 @@ tasks:
       # The governance fuzzers live in the engine MODULE, so they run from engine/.
       - cd engine && go test ./governance/ -run='^$' -fuzz='^FuzzSplitCommands$' -fuzztime={{.FUZZTIME}}
       - cd engine && go test ./governance/ -run='^$' -fuzz='^FuzzCanonicalize$' -fuzztime={{.FUZZTIME}}
-      - cd engine && go test ./governance/ -run='^$' -fuzz='^FuzzReadOnlyBash$' -fuzztime={{.FUZZTIME}}
+      - cd engine && go test ./governance/ -run='^$' -fuzz='^FuzzReadOnlyShell$' -fuzztime={{.FUZZTIME}}
       - cd engine && go test ./governance/ -run='^$' -fuzz='^FuzzAuthorityOperationsAreMonotone$' -fuzztime={{.FUZZTIME}}
       - cd provider/openai && go test ./ -run='^$' -fuzz='^FuzzDecodeSSE$' -fuzztime={{.FUZZTIME}}
 
   bench:
     desc: |
       Run the hot-path testing.B microbenchmarks on the engine packages
-      (manual / CI target — NOT part of `task test`). This is Phase 1 of the
-      perf-regression roadmap (docs/adr/0019-perf-tracking.md): it fills the
+      (manual / CI target — NOT part of `task test`). This is the microbenchmark
+      half of perf-regression tracking (docs/perf-tracking.md): it fills the
       allocs/op baseline and is the source a `benchstat` comparison runs over.
       Capture two runs and diff them with benchstat
       (go install golang.org/x/perf/cmd/benchstat@latest), e.g.:
@@ -866,9 +923,9 @@ tasks:
   perf:scenarios:
     desc: |
       Run the OFFLINE, deterministic scenario benchmarks (manual / CI target —
-      NOT part of `task test`). This is Phase 2 of the perf-regression roadmap
-      (docs/adr/0019-perf-tracking.md): whole-loop runs through the real engine over
-      mockllm + memfs/memstore that catch the failure modes the Phase 1
+      NOT part of `task test`). This is the scenario half of perf-regression
+      tracking (docs/perf-tracking.md): whole-loop runs through the real engine over
+      mockllm + memfs/memstore that catch the failure modes the
       microbenchmarks miss — long-session allocation budget, goroutine hygiene
       under delegation, token/cache regressions, compaction churn — PLUS the
       mecatui scrollback render path.
@@ -916,7 +973,7 @@ tasks:
   pgo:collect:
     desc: |
       Collect a PROVISIONAL OFFLINE CPU profile for Profile-Guided Optimization
-      (Phase 4 of the perf-regression roadmap, docs/adr/0019-perf-tracking.md).
+      (docs/perf-tracking.md, "Profile-guided optimization").
       Manual target — NOT part of `task build`/`task test`.
 
       It runs the offline scenario + engine-agent benchmarks under CPU profiling
@@ -932,7 +989,7 @@ tasks:
       no real provider, SSE, or network coverage in it. It is a MECHANISM check
       and a local experiment, NOT the profile to commit as cmd/mecated/default.pgo.
       The production refresh path (curl mecated's loopback pprof endpoint, merge,
-      drop in cmd/mecated/default.pgo) is documented in perf-tracking.md Phase 4.
+      drop in cmd/mecated/default.pgo) is documented in perf-tracking.md "Profile-guided optimization".
 
       The merge is SAMPLE-WEIGHTED: -benchtime=Nx fixes the ITERATION count, not
       wall-time, and the whole-loop scenarios run ~100x longer per op than the
@@ -940,7 +997,7 @@ tasks:
       That is fine here — the scenarios are the more production-representative
       workload, and this is a throwaway provisional artifact, so balance is a
       non-goal. (The PRODUCTION path is different: a fixed `?seconds=N` on every
-      capture DOES equalize wall-time there — see perf-tracking.md Phase 4.)
+      capture DOES equalize wall-time there — see perf-tracking.md "Profile-guided optimization".)
     vars:
       PGOITERS: '{{.PGOITERS | default "200x"}}'
     cmds:
@@ -965,7 +1022,7 @@ tasks:
           echo "  Trained on the mockllm path only: NO real provider / SSE /"
           echo "  network coverage. This is NOT the production profile."
           echo "  Do NOT commit it as cmd/mecated/default.pgo."
-          echo "  Production refresh path: docs/adr/0019-perf-tracking.md Phase 4."
+          echo "  Production refresh path: docs/perf-tracking.md, Profile-guided optimization."
           echo "============================================================"
         silent: true
 
@@ -1106,10 +1163,12 @@ tasks:
       # still fails the build.
       - go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7 -ignore 'specifying action "\$/.*" in invalid format'
       - task: lint:action-templates
+      - task: test:workspace-infrastructure
       - bash .github/scripts/ensure-perf-dashboard-noindex_test.sh
       - bash .github/scripts/deslop-workflow_test.sh
       - bash .github/scripts/microvm-ci-release_test.sh
       - sh .github/scripts/release-tag-guard_test.sh
+      - sh .github/scripts/resolve-main-build_test.sh
       - python3 .github/scripts/instruction-files_test.py
 
   lint:action-templates:
@@ -1135,6 +1194,16 @@ tasks:
     desc: Fail if any Go file is not gofmt-clean
     cmds:
       - cmd: test -z "$(gofmt -l .)" || { echo "gofmt needs to run on:"; gofmt -l .; exit 1; }
+
+  tidy:module:
+    desc: Tidy one module with GOWORK=off, without workspace synchronization
+    requires:
+      vars: [MODULE]
+    preconditions:
+      - sh: '{{if has .MODULE .GO_MODULES}}true{{else}}false{{end}}'
+        msg: 'MODULE must be one of: {{join ", " .GO_MODULES}}'
+    cmds:
+      - cd {{.MODULE | shellQuote}} && GOWORK=off go mod tidy
 
   tidy:
     desc: Tidy root and every nested module, including standalone adapters
@@ -1223,11 +1292,11 @@ tasks:
     desc: Re-render & validate the modelith domain model (edit the .yaml, never the .md)
     cmds:
       # modelith renders docs/architecture/mecatl.modelith.md from its .yaml source
-      # and lints the model. Pinned to the SAME revision as the CI domain-model gate
-      # (.github/workflows/ci.yml); --check / completeness=error mirror CI exactly.
-      # (A private-module fetch needs GOPRIVATE=github.com/stacklok/* set.)
-      - go run github.com/stacklok/modelith/cmd/modelith@73429dd46a22b3c3491c4654edca391fc9bd63f2 render docs/architecture/mecatl.modelith.yaml
-      - go run github.com/stacklok/modelith/cmd/modelith@73429dd46a22b3c3491c4654edca391fc9bd63f2 lint --completeness error docs/architecture/mecatl.modelith.yaml
+      # and lints the model. Pinned to the release the CI domain-model gate runs
+      # (the stacklok/modelith action's default `version` in
+      # .github/workflows/ci.yml); completeness=error mirrors CI exactly.
+      - go run github.com/stacklok/modelith/cmd/modelith@v0.4.0 render docs/architecture/mecatl.modelith.yaml
+      - go run github.com/stacklok/modelith/cmd/modelith@v0.4.0 lint --completeness error docs/architecture/mecatl.modelith.yaml
 
   docs:
     desc: Refresh generated references and gate doc links (matlatl) — run before committing doc changes

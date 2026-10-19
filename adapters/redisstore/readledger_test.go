@@ -39,7 +39,7 @@ func TestReadLedgerConformance(t *testing.T) {
 // recorded through one Redis ledger handle is returned after reopening
 // ANOTHER handle for the same session — including a handle built from a
 // SEPARATE *Store instance (simulating a separate process/replica), the
-// process/replica-independence the ADR calls out.
+// process/replica-independence the persistent ledger requires.
 func TestPersistentReadLedgers_Scenario2_RedisReopen(t *testing.T) {
 	mr, err := miniredis.Run()
 	if err != nil {

@@ -6,10 +6,10 @@ import {
   problemDetailsSchema,
   runtimeResponseSchema,
 } from "@mecatl-studio/contracts";
-import { MecatlError } from "@stacklok-oss/mecatl-sdk";
+import { MecatlError, ServerFeature } from "@stacklok-oss/mecatl-sdk";
 import { HTTPException } from "hono/http-exception";
 import type { AuthenticationService } from "./auth/service.js";
-import { studioBuildId } from "./build-info.js";
+import { studioBuildId as bakedStudioBuildId } from "./build-info.js";
 import type { ActivityLimits } from "./config.js";
 import { requestBodyLimit } from "./http/body-limit.js";
 import type { AppEnv } from "./http/env.js";
@@ -28,6 +28,7 @@ import {
 import { spaHandler } from "./http/static.js";
 import { type Logger, silentLogger } from "./log.js";
 import { type ChatService, createMecatlChatService } from "./mecatl/chat.js";
+import { createMecatlInspectionService } from "./mecatl/inspection.js";
 import {
   createMecatlKnowledgeService,
   type KnowledgeCapabilities,
@@ -39,12 +40,13 @@ import { createMecatlSettingsService, type SettingsService } from "./mecatl/sett
 import { createMecatlStorageService, type StorageService } from "./mecatl/storage.js";
 import { registerAuthRoutes } from "./routes/auth.js";
 import { registerChatRoutes } from "./routes/chat.js";
+import { registerInspectionRoutes } from "./routes/inspection.js";
 import { registerKnowledgeRoutes } from "./routes/knowledge.js";
 import { registerScheduleRoutes } from "./routes/schedules.js";
 import { registerSettingsRoutes } from "./routes/settings.js";
 import { registerStatusRoutes } from "./routes/status.js";
 import { registerStorageRoutes } from "./routes/storage.js";
-import { readInstalledSdkVersion } from "./sdk-version.js";
+import { readInstalledSdkVersion, reportedSdkVersion } from "./sdk-version.js";
 
 const sdkVersion = readInstalledSdkVersion();
 
@@ -96,6 +98,8 @@ export interface AppDependencies {
   readonly storage?: StorageService;
   readonly logger?: Logger;
   readonly runtime?: MecatlRuntime;
+  /** The release stamp reported by About; defaults to the one baked into the bundle. */
+  readonly studioBuildId?: string;
   /** How long a feature request waits for compatibility negotiation before `503`. */
   readonly readinessTimeoutMs?: number;
   readonly security?: SecurityOptions;
@@ -104,6 +108,8 @@ export interface AppDependencies {
 }
 
 export function createApp(dependencies: AppDependencies = {}) {
+  const studioBuildId = dependencies.studioBuildId ?? bakedStudioBuildId;
+  const reportedSdk = reportedSdkVersion(sdkVersion, studioBuildId);
   // Every route's request validation fails as RFC 9457 problem details, never
   // the validator's raw error object; a route may still install its own hook.
   const app = new OpenAPIHono<AppEnv>({
@@ -137,6 +143,17 @@ export function createApp(dependencies: AppDependencies = {}) {
     sameOriginPresentation(security),
   );
   app.use("/api/v1/*", requestBodyLimit());
+  // Inspection responses are private even when auth or readiness rejects the
+  // request before the route handler runs.
+  app.use("/api/v1/*", async (context, next) => {
+    if (
+      context.req.method === "GET" &&
+      (context.req.path === "/api/v1/soul" ||
+        /^\/api\/v1\/sessions\/[^/]+\/worktrees$/u.test(context.req.path))
+    )
+      context.header("Cache-Control", "private, no-store");
+    return next();
+  });
 
   registerAuthRoutes(app, authentication, runtime);
 
@@ -200,7 +217,7 @@ export function createApp(dependencies: AppDependencies = {}) {
       return context.json(
         {
           ...runtime.snapshot(),
-          ...(sdkVersion === undefined ? {} : { sdkVersion }),
+          ...(reportedSdk === undefined ? {} : { sdkVersion: reportedSdk }),
           ...(studioBuildId === undefined ? {} : { studioBuildId }),
         },
         200,
@@ -216,7 +233,9 @@ export function createApp(dependencies: AppDependencies = {}) {
 
   const chat =
     dependencies.chat ??
-    (runtime === undefined ? undefined : createMecatlChatService(runtime.client));
+    (runtime === undefined
+      ? undefined
+      : createMecatlChatService(runtime.client, () => runtime.compatibility()));
   registerChatRoutes(app, chat, dependencies.activity);
   // Capability read LIVE from the negotiated snapshot: false until negotiation
   // completes or when the deployment has scheduling off.
@@ -248,6 +267,20 @@ export function createApp(dependencies: AppDependencies = {}) {
       return undefined;
     }
   };
+  registerInspectionRoutes(
+    app,
+    runtime === undefined ? undefined : createMecatlInspectionService(runtime.client),
+    () => {
+      const snapshot = snapshotOrUndefined();
+      return snapshot === undefined
+        ? undefined
+        : {
+            connection: snapshot.connection,
+            soul: snapshot.capabilities.soul,
+            worktrees: snapshot.capabilities.worktrees,
+          };
+    },
+  );
   const settings =
     dependencies.settings ??
     (runtime === undefined
@@ -289,6 +322,39 @@ export function createApp(dependencies: AppDependencies = {}) {
           "Mecatl rejected the current session; sign in again.",
         );
       }
+      if (
+        context.req.path === "/api/v1/execution-templates" ||
+        (context.req.path === "/api/v1/sessions" && context.req.method === "POST")
+      ) {
+        if (
+          error.code === "execution_templates_disabled" ||
+          (context.req.path === "/api/v1/execution-templates" &&
+            error.code === "unsupported_feature")
+        )
+          return problem(
+            context,
+            501,
+            "execution_templates_disabled",
+            "Template catalog disabled",
+            "Use the deployment default or no execution, or ask an operator to enable template discovery.",
+          );
+        if (error.code === "placement_unavailable")
+          return problem(
+            context,
+            503,
+            error.code,
+            "Execution backend unavailable",
+            "Retry later or choose no execution.",
+          );
+        if (context.req.path === "/api/v1/execution-templates" && error.code === "not_found")
+          return problem(
+            context,
+            404,
+            "template_unavailable",
+            "Template unavailable",
+            "Refresh the catalog and select another template; no fallback was created.",
+          );
+      }
       return problem(
         context,
         errorStatus(error),
@@ -329,22 +395,31 @@ export function createApp(dependencies: AppDependencies = {}) {
  */
 export function knowledgeCapabilities(runtime: MecatlRuntime): KnowledgeCapabilities {
   let capabilities: ReturnType<MecatlRuntime["snapshot"]>["capabilities"] | undefined;
+  let features: readonly string[] = [];
   try {
-    capabilities = runtime.snapshot().capabilities;
+    const snapshot = runtime.snapshot();
+    capabilities = snapshot.capabilities;
+    features = snapshot.features;
   } catch {
     capabilities = undefined;
   }
-  const dream = capabilities?.manualDream?.userModel;
+  const consolidation = (
+    dream: { decide: boolean; generate: boolean; unavailableReason?: string } | undefined,
+  ) => ({
+    decide: dream?.decide ?? false,
+    generate: dream?.generate ?? false,
+    unavailableReason:
+      dream?.unavailableReason ?? "Memory consolidation is not enabled on this deployment.",
+  });
   return {
     learnedSkills: capabilities?.learnedSkills ?? false,
     learningProposals: capabilities?.learningProposals ?? false,
     memoryConsolidation: {
-      decide: dream?.decide ?? false,
-      generate: dream?.generate ?? false,
-      unavailableReason:
-        dream?.unavailableReason ?? "Memory consolidation is not enabled on this deployment.",
+      project_memory: consolidation(capabilities?.manualDream?.projectMemory),
+      user_model: consolidation(capabilities?.manualDream?.userModel),
     },
     reflection: capabilities?.reflection ?? false,
+    skillFiles: features.includes(ServerFeature.SkillFiles),
     skills: capabilities?.skills ?? false,
     userModel: capabilities?.userModel ?? false,
   };

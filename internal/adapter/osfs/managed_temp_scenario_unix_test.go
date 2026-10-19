@@ -23,10 +23,10 @@ import (
 // local Shell path: normal completion deletes its exact lease, while a simulated
 // crash residue remains until an eligible deterministic sweep owns its removal.
 
-// TestADR_0281_ForegroundLeaseOverlayAndMetadataPrivacy pins the foreground
+// TestManagedTemp_ForegroundLeaseOverlayAndMetadataPrivacy pins the foreground
 // managed-command overlay: it supplies one private lease tmp directory without
 // injecting that path into the shell text, and its manifest is lifecycle-only.
-func TestADR_0281_ForegroundLeaseOverlayAndMetadataPrivacy(t *testing.T) {
+func TestManagedTemp_ForegroundLeaseOverlayAndMetadataPrivacy(t *testing.T) {
 	ns, err := managedtemp.Open(filepath.Join(t.TempDir(), "managed"))
 	if err != nil {
 		t.Fatal(err)

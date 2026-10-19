@@ -22,6 +22,7 @@ type fakeModelsClient struct {
 
 	createResp *mecatlv1.CreateSessionResponse
 	caps       *mecatlv1.ServerCapabilities
+	features   []string
 	lastCreate *mecatlv1.CreateSessionRequest
 }
 
@@ -34,7 +35,7 @@ func (f *fakeModelsClient) ListModels(_ context.Context, in *mecatlv1.ListModels
 }
 
 func (f *fakeModelsClient) GetCompatibilityInfo(_ context.Context, _ *mecatlv1.GetCompatibilityInfoRequest, _ ...grpc.CallOption) (*mecatlv1.GetCompatibilityInfoResponse, error) {
-	return &mecatlv1.GetCompatibilityInfoResponse{ApiMajor: 1, Capabilities: f.caps}, nil
+	return &mecatlv1.GetCompatibilityInfoResponse{ApiMajor: 1, Capabilities: f.caps, Features: f.features}, nil
 }
 
 func (f *fakeModelsClient) CreateSession(_ context.Context, in *mecatlv1.CreateSessionRequest, _ ...grpc.CallOption) (*mecatlv1.CreateSessionResponse, error) {
@@ -170,7 +171,7 @@ func TestCreateSessionCarriesModelSelection(t *testing.T) {
 }
 
 // TestCreateSessionCarriesReasoningEffort asserts the proto-build point sets
-// reasoning_effort from the selection (ADR 0055), leaves it empty for an unset
+// reasoning_effort from the selection, leaves it empty for an unset
 // effort, and that the response's resolved_model.reasoning_effort flows back into
 // client.ResolvedModel.ReasoningEffort (the EFFECTIVE effort the server resolved).
 func TestCreateSessionCarriesReasoningEffort(t *testing.T) {

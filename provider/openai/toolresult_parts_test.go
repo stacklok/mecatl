@@ -33,7 +33,7 @@ func toolResultInputItems(t *testing.T, p *Provider, tr session.ToolResult) []ma
 }
 
 // TestToolResultStringOnlyUnchanged is the byte-identical-legacy guard: a tool
-// result with NO Parts (the pre-T7 shape) produces the EXACT single-string
+// result with NO Parts (the legacy shape) produces the EXACT single-string
 // function_call_output the adapter always produced — a string "output" field,
 // never a content list — regardless of caps.
 func TestToolResultStringOnlyUnchanged(t *testing.T) {

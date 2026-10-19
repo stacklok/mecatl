@@ -11,8 +11,7 @@ import (
 )
 
 // leaseExclusionSpecs is THE cloud-native PROOF: cross-replica single-writer
-// enforcement via the per-session coordination.k8s.io Lease (ADR 0048 §4h test
-// 1). Two storage-free agent replicas share one Redis store + one k8s lease
+// enforcement via the per-session coordination.k8s.io Lease. Two storage-free agent replicas share one Redis store + one k8s lease
 // namespace. Replica A acquires the session lease on run-entry and HOLDS it for
 // the session's life (the lease is session-scoped — released by CloseSession /
 // shutdown, never per-run; see internal/adapter/server/service.go acquireLease).

@@ -14,14 +14,13 @@ import (
 // earlier model ignores the field or rejects the request.
 //
 // This is the ONLY place a model id is consulted for breakpoints, and it is
-// scoped to one endpoint whose parameter strictness is documented (ADR 0100
-// records this repo being bitten by a strict upstream on an unrecognised cache
-// field). It is NOT a vendor-family gate: every other endpoint gets the
+// scoped to one endpoint whose parameter strictness is documented (this repo
+// has been bitten by a strict upstream on an unrecognised cache field). It is NOT a vendor-family gate: every other endpoint gets the
 // breakpoint without anyone asking who made the model.
 //
 // It reads the SAME explicitCacheModelPrefixes table retentionFor denies on,
 // because breakpoint support and retention deprecation are the same documented
-// cutover seen from two sides (ADR 0346 decision 2) — not two facts that happen
+// cutover seen from two sides — not two facts that happen
 // to share a boundary today. The match is on the lower-cased,
 // dated-suffix-stripped id, reusing normaliseModelID so a dated snapshot
 // classifies like its bare alias.
@@ -30,8 +29,7 @@ func supportsExplicitBreakpoint(model string) bool {
 }
 
 // breakpointIndex returns the index of the message that should carry the
-// explicit prompt-cache breakpoint, or -1 for none (ADR 0346 decisions 1, 2
-// and 4).
+// explicit prompt-cache breakpoint, or -1 for none.
 //
 // Placement is the LAST RoleUser message, and only once the history already
 // contains an assistant turn. Two reasons:
@@ -58,7 +56,7 @@ func (p *Provider) breakpointIndex(req port.LLMRequest) int {
 		// CacheDialectNone is precisely where the ask is needed.
 		return -1
 	}
-	// The ONE endpoint that gates on the model (ADR 0346 decision 2). The
+	// The ONE endpoint that gates on the model. The
 	// OpenAI dialect is only ever set for the canonical endpoint.
 	if p.cacheDialect == CacheDialectOpenAI && !supportsExplicitBreakpoint(req.Model) {
 		return -1

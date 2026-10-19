@@ -10,8 +10,8 @@ import (
 	"github.com/stacklok/mecatl/engine/tool"
 )
 
-// ledger_failure_test.go pins the Scenario 3 fail-closed acceptance criteria
-// (docs/adr/0290): a failed RecordRead, an unavailable/corrupt RecordedVersion
+// ledger_failure_test.go pins the ledger fail-closed acceptance criteria:
+// a failed RecordRead, an unavailable/corrupt RecordedVersion
 // lookup, and a post-mutation RecordRead failure must all fail closed without
 // ever weakening the final ReplaceFile/CreateFile CAS.
 

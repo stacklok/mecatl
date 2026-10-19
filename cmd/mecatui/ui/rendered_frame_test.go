@@ -13,10 +13,10 @@ import (
 	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/scrollback"
 )
 
-// TestADR_0301_RenderedFrameProvenanceMatchesLines pins ADR 0301's requirement
+// TestRenderedFrameProvenanceMatchesLines pins the requirement
 // that the actual incremental scrollback renderer returns one provenance row per
 // visible line without changing the viewport's existing bytes.
-func TestADR_0301_RenderedFrameProvenanceMatchesLines(t *testing.T) {
+func TestRenderedFrameProvenanceMatchesLines(t *testing.T) {
 	c := &conversation{}
 	c.addUser("hello")
 	c.startAssistant()
@@ -81,12 +81,16 @@ func TestEmptyAssistantTurnsDoNotSeparateSettledCalls(t *testing.T) {
 	for _, width := range []int{28, 100} {
 		r.setWidth(width)
 		frame := r.renderConversationFrame(&c.scrollback, false)
-		if got := strings.Count(stripANSIstr(strings.Join(frame.lines, "\n")), "● mecatl"); got != 0 {
+		if got := strings.Count(stripANSIstr(strings.Join(frame.lines, "\n")), "◀ mecatl"); got != 0 {
 			t.Fatalf("width %d rendered %d empty assistant labels: %q", width, got, frame.lines)
 		}
 		first := toolBlockID(t, c.scrollback, "one")
 		second := toolBlockID(t, c.scrollback, "two")
-		assertLongRunGap(t, frame, first, second, 0)
+		if !strings.Contains(stripANSIstr(strings.Join(frame.lines, "\n")), "● 2 tools run") || frame.toolSummaryRow(first) != frame.toolSummaryRow(second) || frame.toolSummaryRow(second) < 0 {
+			t.Fatal("empty turns must bridge a single comfort group")
+		}
+		detailed := r.renderConversationFrame(&c.scrollback, true)
+		assertLongRunGap(t, detailed, first, second, 0)
 		if len(frame.lines) != len(frame.provenance) {
 			t.Fatalf("width %d frame/provenance mismatch", width)
 		}
@@ -98,7 +102,7 @@ func TestEmptyAssistantTurnsDoNotSeparateSettledCalls(t *testing.T) {
 	}
 	// F9 must not resurrect whitespace-only messages as empty speaker turns.
 	expandedEmpty := r.renderConversationFrame(&c.scrollback, true)
-	if strings.Contains(stripANSIstr(strings.Join(expandedEmpty.lines, "\n")), "● mecatl") || expandedEmpty.hasRegion(secondEmpty, conversationRegionBody) {
+	if strings.Contains(stripANSIstr(strings.Join(expandedEmpty.lines, "\n")), "◀ mecatl") || expandedEmpty.hasRegion(secondEmpty, conversationRegionBody) {
 		t.Fatalf("whitespace-only assistant rendered in F9 detail: %q", expandedEmpty.lines)
 	}
 
@@ -107,14 +111,14 @@ func TestEmptyAssistantTurnsDoNotSeparateSettledCalls(t *testing.T) {
 	c.appendReasoning("a summary")
 	frame := r.renderConversationFrame(&c.scrollback, false)
 	plain := stripANSIstr(strings.Join(frame.lines, "\n"))
-	if got := strings.Count(plain, "● mecatl"); got != 0 {
+	if got := strings.Count(plain, "◀ mecatl"); got != 1 {
 		t.Fatalf("collapsed reasoning-only turn rendered %d speaker labels", got)
 	}
 	if !strings.Contains(plain, "reasoning…") || !frame.hasRegion(lastEmpty, conversationRegionReasoning) {
 		t.Fatalf("reasoning-only turn lost its collapsed summary or provenance: %q", plain)
 	}
 	expandedFrame := r.renderConversationFrame(&c.scrollback, true)
-	if expanded := stripANSIstr(strings.Join(expandedFrame.lines, "\n")); !strings.Contains(expanded, "a summary") || !strings.Contains(expanded, "● mecatl") || !expandedFrame.hasRegion(lastEmpty, conversationRegionReasoning) {
+	if expanded := stripANSIstr(strings.Join(expandedFrame.lines, "\n")); !strings.Contains(expanded, "a summary") || !strings.Contains(expanded, "◀ mecatl") || !expandedFrame.hasRegion(lastEmpty, conversationRegionReasoning) {
 		t.Fatalf("reasoning-only turn lost its expanded detail or provenance: %q", expanded)
 	}
 	c.appendAssistant("an answer")
@@ -136,6 +140,7 @@ func TestEmptyAssistantBecomesVisibleWithoutMovingReader(t *testing.T) {
 		m.conv.resolveTool(id, "result", false)
 	}
 	m.conv.startAssistant()
+	m.expandConversation = true // individual member anchors are visible in F9
 	m.refreshView()
 	m.vp.SetYOffset(5)
 	m.conversationView.mode = anchored
@@ -147,6 +152,92 @@ func TestEmptyAssistantBecomesVisibleWithoutMovingReader(t *testing.T) {
 	m.refreshView()
 	if got := m.conversationView.frame.provenance[m.vp.YOffset()].blockID; got != before || m.conversationView.mode != anchored {
 		t.Fatalf("empty-to-visible assistant displaced reader: block=%d want=%d mode=%v", got, before, m.conversationView.mode)
+	}
+}
+
+func TestAssistantRailLayoutAndSemanticText(t *testing.T) {
+	for _, expand := range []bool{false, true} {
+		for _, width := range []int{24, 100} {
+			for _, tc := range []struct {
+				name, reasoning, answer string
+				streaming               bool
+			}{
+				{name: "answer", answer: "Answer text that wraps across several lines at narrow widths."},
+				{name: "reasoning", reasoning: "Summary text that wraps across several lines at narrow widths."},
+				{name: "both", reasoning: "Summary text that wraps across several lines at narrow widths.", answer: "Answer text that wraps across several lines at narrow widths."},
+				{name: "streaming", reasoning: "Summary in progress", streaming: true},
+			} {
+				t.Run(tc.name+"/"+strconv.Itoa(width)+"/expanded="+strconv.FormatBool(expand), func(t *testing.T) {
+					r := newTestRenderer()
+					r.setWidth(width)
+					c := &conversation{}
+					c.startAssistant()
+					c.appendReasoning(tc.reasoning)
+					c.appendAssistant(tc.answer)
+					if !tc.streaming {
+						c.endReasoningStream()
+					}
+					frame := r.renderConversationFrame(&c.scrollback, expand)
+					blockID := uint64(c.testBlocks()[0].ID)
+					if got := stripANSIstr(frame.lines[0]); got != " ◀ mecatl" {
+						t.Fatalf("speaker = %q", got)
+					}
+					firstBody := frame.firstRegionRow(blockID, conversationRegionBody)
+					if tc.answer != "" {
+						wantStart := 1
+						if tc.reasoning != "" {
+							p := c.testBlocks()[0].Payload.(scrollback.AssistantCardSnapshot)
+							wantStart += lineCount(r.renderReasoningSnapshot(p, expand)) + 1
+						}
+						if firstBody != wantStart || frame.provenance[firstBody].sourceOffset != 0 {
+							t.Fatalf("first answer row = %d, want %d with offset zero", firstBody, wantStart)
+						}
+					} else if firstBody >= 0 {
+						t.Fatal("reasoning-only card acquired an answer region")
+					}
+					offsets := map[regionKind]int{}
+					for i, row := range frame.provenance {
+						if row.blockID != blockID || i == 0 {
+							continue
+						}
+						plain := stripANSIstr(frame.lines[i])
+						if !strings.HasPrefix(plain, " │ ") || maxLineWidth(frame.lines[i]) > width {
+							t.Fatalf("row %d has wrong rail or overflows: %q", i, plain)
+						}
+						text, leading := selectionRowText(frame, row, frame.lines[i])
+						if leading != r.indent+assistantBodyHang || strings.Contains(text, "│") {
+							t.Fatalf("canonical row %d = %q, leading %d", i, text, leading)
+						}
+						if text == "" && tc.reasoning != "" && tc.answer != "" && i == firstBody-1 {
+							if row.region != conversationRegionChrome || row.text {
+								t.Fatalf("blank separator is not chrome: %+v", row)
+							}
+						} else if text == "" {
+							t.Fatalf("unexpected blank row %d", i)
+						}
+						if !row.text {
+							continue
+						}
+						if row.sourceOffset != offsets[row.region] {
+							t.Fatalf("row %d offset = %d, want %d", i, row.sourceOffset, offsets[row.region])
+						}
+						offsets[row.region] += graphemeCount(text)
+						if _, ok := selectionPointFor(frame, i, r.indent); ok {
+							t.Fatalf("rail on row %d became a semantic endpoint", i)
+						}
+					}
+					if tc.reasoning != "" && frame.firstRegionRow(blockID, conversationRegionReasoning) != 1 {
+						t.Fatal("reasoning must immediately follow the speaker")
+					}
+					last := len(frame.lines) - 2 // conversation's trailing newline
+					sel := selection{active: true, anchorL: 1, anchorC: 0, headL: last, headC: graphemeCount(stripANSIstr(frame.lines[last]))}
+					copied := selectedConversationText(frame, strings.Join(frame.lines, "\n"), sel)
+					if strings.Contains(copied, "│") || strings.HasPrefix(copied, " ") {
+						t.Fatalf("copy contains rail chrome: %q", copied)
+					}
+				})
+			}
+		}
 	}
 }
 
@@ -180,7 +271,11 @@ func TestExpandedReasoningProvenanceUsesWrappedRows(t *testing.T) {
 			t.Fatalf("reasoning render row %d has region %v, want reasoning", i, got)
 		}
 	}
-	firstBody := firstReasoning + wantReasoningRows
+	separator := firstReasoning + wantReasoningRows
+	if row := frame.provenance[separator]; row.region != conversationRegionChrome || row.text {
+		t.Fatalf("reasoning/answer separator must be chrome: %+v", row)
+	}
+	firstBody := separator + 1
 	if got := frame.provenance[firstBody].region; got != conversationRegionBody {
 		t.Fatalf("row after all %d rendered reasoning rows has region %v, want body", wantReasoningRows, got)
 	}
@@ -194,7 +289,7 @@ func TestExpandedReasoningProvenanceUsesWrappedRows(t *testing.T) {
 func TestExpandedReasoningAnchorSurvivesReflow(t *testing.T) {
 	c := &conversation{}
 	c.startAssistant()
-	c.appendReasoning("first reasoning detail wraps before the REASONING-ANCHOR semantic text and continues after it")
+	c.appendReasoning("first reasoning detail wraps before the REASONINGANCHOR semantic text and continues after it")
 	c.appendAssistant("answer body keeps the viewport from following the tail")
 
 	r := newCacheRenderer()
@@ -204,7 +299,7 @@ func TestExpandedReasoningAnchorSurvivesReflow(t *testing.T) {
 	anchorRow := -1
 	for i, line := range narrow.lines {
 		row := narrow.provenance[i]
-		if row.blockID == uint64(assistant.ID) && row.region == conversationRegionReasoning && strings.Contains(stripANSIstr(line), "REASONING-ANCHOR") {
+		if row.blockID == uint64(assistant.ID) && row.region == conversationRegionReasoning && strings.Contains(stripANSIstr(line), "REASONINGANCHOR") {
 			if !row.text {
 				t.Fatal("expanded reasoning text row must be text-bearing")
 			}
@@ -233,7 +328,7 @@ func TestExpandedReasoningAnchorSurvivesReflow(t *testing.T) {
 	view.replace(&vp, wide)
 
 	row := wide.provenance[vp.YOffset()]
-	if row.region != conversationRegionReasoning || !row.text || !strings.Contains(stripANSIstr(wide.lines[vp.YOffset()]), "REASONING-ANCHOR") {
+	if row.region != conversationRegionReasoning || !row.text || !strings.Contains(stripANSIstr(wide.lines[vp.YOffset()]), "REASONINGANCHOR") {
 		t.Fatalf("restored row = %#v %q, want text-bearing reasoning row containing anchor", row, wide.lines[vp.YOffset()])
 	}
 }
@@ -385,10 +480,10 @@ func TestToolCardStructuralProvenanceSurvivesCacheReplacementAndReflow(t *testin
 	}
 }
 
-// TestADR_0301_ReflowRestoresCanonicalVisibleTextOffset pins canonical visible
+// TestReflowRestoresCanonicalVisibleTextOffset pins canonical visible
 // text offsets: a body anchor resolves to the same visible grapheme after a
 // terminal-width reflow, rather than retaining an unstable wrapped row number.
-func TestADR_0301_ReflowRestoresCanonicalVisibleTextOffset(t *testing.T) {
+func TestReflowRestoresCanonicalVisibleTextOffset(t *testing.T) {
 	c := &conversation{}
 	c.addUser("short")
 	c.startAssistant()
@@ -426,10 +521,10 @@ func TestADR_0301_ReflowRestoresCanonicalVisibleTextOffset(t *testing.T) {
 	}
 }
 
-// TestADR_0301_ScrollbackFrameRetainsLinearMetadataOnly pins the normal
+// TestScrollbackFrameRetainsLinearMetadataOnly pins the normal
 // collapsed streaming path: frame metadata tracks rows while cached rendered
 // strings remain the renderer's sole transcript representation.
-func TestADR_0301_ScrollbackFrameRetainsLinearMetadataOnly(t *testing.T) {
+func TestScrollbackFrameRetainsLinearMetadataOnly(t *testing.T) {
 	for _, depth := range []int{64, 256} {
 		t.Run("depth", func(t *testing.T) {
 			c := &conversation{}

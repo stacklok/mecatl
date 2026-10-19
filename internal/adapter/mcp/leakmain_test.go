@@ -6,8 +6,8 @@ import (
 	"go.uber.org/goleak"
 )
 
-// TestMain installs a goroutine-leak gate over the mcp package. As of ADR 0057
-// the client holds the standalone SSE GET stream open per connected server, so
+// TestMain installs a goroutine-leak gate over the mcp package. The
+// client holds the standalone SSE GET stream open per connected server, so
 // the SDK spawns goroutines that park on network reads (the handleSSE reader,
 // the jsonrpc2 connection read loop, and the stdlib http.persistConn
 // read/write loops). session.Close() cancels connCtx and closes the response

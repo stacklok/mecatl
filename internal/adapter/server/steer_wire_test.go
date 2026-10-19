@@ -1,6 +1,6 @@
 package server_test
 
-// Scenario 5 of docs/acceptance/steer-while-running.md: the WIRE surface — the
+// Steer while running: the WIRE surface — the
 // steer rides the existing bidi Converse stream as new ConverseRequest oneof
 // arms (steer / steer_cancel) alongside prompt / resume_approval / cancel /
 // cancel_child; the server advertises the feature via ServerCapabilities.steer

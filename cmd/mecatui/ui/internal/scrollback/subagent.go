@@ -35,9 +35,9 @@ const MaxTraceEntries = 128 + 12
 
 // SubagentStart describes a started delegated child.
 type SubagentStart struct {
-	ChildID, Goal, Model, RoutedCategory, RoutedModel, RoutingReason string
-	Background                                                       bool
-	Routing                                                          RoutingDecision
+	ChildID, Goal, Model, Provider, ExplicitRouterCategory, RoutedCategory, RoutedModel, RoutingReason string
+	Background                                                                                         bool
+	Routing                                                                                            RoutingDecision
 }
 
 // SubagentUpdate is the current or terminal state of a delegated child. Done

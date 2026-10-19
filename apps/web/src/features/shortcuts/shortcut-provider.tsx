@@ -66,17 +66,23 @@ export function ShortcutProvider({ children }: { children: ReactNode }) {
   return <ShortcutContext.Provider value={context}>{children}</ShortcutContext.Provider>;
 }
 
-export function useShortcut(id: ShortcutId, handler: () => void) {
+/**
+ * Registers `handler` for `id`. While `enabled` is false nothing is registered,
+ * so the key reaches the page untouched (the dispatcher calls `preventDefault`
+ * for every registered shortcut it matches, even when the handler has no
+ * target to act on).
+ */
+export function useShortcut(id: ShortcutId, handler: () => void, enabled = true) {
   const context = useContext(ShortcutContext);
   const latestHandler = useRef(handler);
   latestHandler.current = handler;
 
   useEffect(() => {
-    if (!context) return;
+    if (!context || !enabled) return;
     const stableHandler = () => latestHandler.current();
     context.register(id, stableHandler);
     return () => context.unregister(id);
-  }, [context, id]);
+  }, [context, enabled, id]);
 }
 
 /**

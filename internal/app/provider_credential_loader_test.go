@@ -31,7 +31,7 @@ func (c *countingProviderCredentialsCloser) Close() error {
 	return nil
 }
 
-func TestADR_0238_BuildLoadsProviderCredentialLoaderOnce(t *testing.T) {
+func TestBuildLoadsProviderCredentialLoaderOnce(t *testing.T) {
 	loader := &capturingProviderCredentialLoader{profile: ProviderCredentials{
 		CustomProviderAPIKeys: map[string]string{"gateway": "key"},
 	}}
@@ -101,7 +101,7 @@ func TestProviderUnification_Scenario4_CredentialStoreIsolation(t *testing.T) {
 	}
 }
 
-func TestADR_0238_BuildOwnsProviderCredentialLifecycle(t *testing.T) {
+func TestBuildOwnsProviderCredentialLifecycle(t *testing.T) {
 	t.Run("loader error aborts build", func(t *testing.T) {
 		loader := &capturingProviderCredentialLoader{err: errors.New("profile unavailable")}
 		if _, err := buildIsolated(t, context.Background(), Config{Workspace: t.TempDir(), Model: "mock", MockProvider: mockllm.New(), ProviderCredentialLoader: loader}); err == nil {

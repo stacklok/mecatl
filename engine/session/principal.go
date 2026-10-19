@@ -10,7 +10,7 @@ import (
 )
 
 // GrantType names how a Principal was authenticated. It is a closed enum of
-// exactly three values (ADR 0204 decision 1); the zero value is deliberately
+// exactly three values; the zero value is deliberately
 // NOT a member, so an unset grant type is never mistaken for a valid one.
 type GrantType string
 
@@ -36,9 +36,9 @@ func (g GrantType) Valid() bool {
 	}
 }
 
-// Principal is the verified caller a session or schedule is attributed to
-// (ADR 0204 decision 1). Identity is the (Issuer, Subject) PAIR, never Subject
-// alone — two IdPs or realms collide on `sub`.
+// Principal is the verified caller a session or schedule is attributed to.
+// Identity is the (Issuer, Subject) PAIR, never Subject alone — two IdPs or
+// realms collide on `sub`.
 //
 // It is a pure value object: comparable, stdlib-only, and deliberately narrow.
 // It carries NO scopes, NO authority, NO credentials, and NO claims map — those
@@ -46,7 +46,7 @@ func (g GrantType) Valid() bool {
 // ToolHive's PrincipalInfo; ToolHive is not imported.
 //
 // Absent identity is a nil *Principal, NEVER a fabricated anonymous one (the
-// ToolHive anonymous-middleware anti-pattern ADR 0204 rejects).
+// ToolHive anonymous-middleware anti-pattern this rejects).
 type Principal struct {
 	// Issuer is the IdP that minted the token (the canonical `iss` claim).
 	Issuer string
@@ -185,7 +185,7 @@ var invalidPrincipalScope = sha256.Sum256([]byte("mecatl:invalid-principal-scope
 // is enforced HERE rather than only at the construction seams
 // (PrincipalFromClaims, WithPrincipal, RestoreLabels), because a Principal built
 // directly from a struct literal — notably internal/adapter/grpcdriver's
-// wire-supplied owner, which ADR-0213/#452 still leaves unverified — reaches this
+// wire-supplied owner, which #452 still leaves unverified — reaches this
 // function without passing any of them. An identity whose framing is unsafe
 // returns invalidPrincipalScope, so it cannot alias a valid owner's scope.
 //
@@ -211,11 +211,24 @@ type Authority struct {
 	CapabilitySet      governance.CapabilitySet `json:"capability_set"`
 	Provenance         string                   `json:"provenance"`
 	DefinitionIdentity string                   `json:"definition_identity,omitempty"`
+	// Ceiling is a write-once, OPTIONAL capability-set upper bound set once
+	// alongside BindAuthority for an agent-bound session — the def's resolved
+	// tool/resource-capability set. A nil Ceiling (the zero value) is
+	// unrestricted: an ordinary, non-agent-bound session's Authority never
+	// carries one. It is never re-derived after bind; GrantToolAuthority and
+	// CompleteWorkspaceEnrollment enforce it as the session-aggregate
+	// invariant that keeps CapabilitySet.Tools from ever widening past it.
+	Ceiling *governance.CapabilitySet `json:"ceiling,omitempty"`
 }
 
 // Clone returns an independent copy of a.
 func (a Authority) Clone() Authority {
 	a.CapabilitySet.Tools = append([]string(nil), a.CapabilitySet.Tools...)
+	if a.Ceiling != nil {
+		ceiling := *a.Ceiling
+		ceiling.Tools = append([]string(nil), a.Ceiling.Tools...)
+		a.Ceiling = &ceiling
+	}
 	return a
 }
 
@@ -242,7 +255,7 @@ func (a Authority) Valid() bool {
 
 var (
 	// ErrOwnerAlreadySet is returned by RestoreLabels when the session already
-	// carries a DIFFERENT owner. The owner is write-once (ADR 0204 decision 4).
+	// carries a DIFFERENT owner. The owner is write-once.
 	ErrOwnerAlreadySet = errors.New("session: owner already set")
 
 	errInvalidPrincipalIdentity = errors.New("session: invalid principal identity")
@@ -278,14 +291,40 @@ func (s *Session) BindAuthority(authority Authority) error {
 	if !authority.Valid() {
 		return errors.New("session: invalid authority payload")
 	}
+	// A Ceiling bounds TOOL names only (AC3.1/AC3.2 — the same convention
+	// GrantToolAuthority and CompleteWorkspaceEnrollment already use via
+	// AllowsTool, never governance.CapabilitySet.Contains's fuller dimensional
+	// check): a payload whose CapabilitySet.Tools already exceeds its own
+	// Ceiling at bind time would leave the session outside its stated
+	// non-widenable ceiling from the moment it exists, and neither post-bind
+	// guard can repair that. Reject it here instead of trusting every caller to
+	// keep the two consistent by construction.
+	if authority.Ceiling != nil {
+		for _, name := range authority.CapabilitySet.Tools {
+			if !authority.Ceiling.AllowsTool(name) {
+				return errors.New("session: authority CapabilitySet exceeds its own Ceiling")
+			}
+		}
+	}
+	// An agent-bound session (ADR 0353) MUST carry a Ceiling — a label claiming
+	// the binding without one would be routed everywhere else (fail-closed
+	// guards, catalog construction) as agent-bound, yet GrantToolAuthority and
+	// CompleteWorkspaceEnrollment treat a nil Ceiling as UNRESTRICTED, silently
+	// defeating the whole non-widenable-ceiling guarantee. This only works
+	// because every caller (session creation, sessnap.Restore, eventsource.Fold)
+	// sets AgentDefinitionName on s BEFORE calling BindAuthority/RestoreLabels —
+	// do not reorder that without preserving this check's precondition.
+	if s.AgentDefinitionName != "" && authority.Ceiling == nil {
+		return errors.New("session: agent-bound session requires a bound Ceiling")
+	}
 	s.Authority = authority.Clone()
 	s.authorityBound = true
 	return nil
 }
 
 // BoundAuthority returns the copied durable authority payload and whether this
-// session was explicitly bound. An absent payload is a documented pre-feature
-// legacy session, never an empty bound set.
+// session was explicitly bound. An absent payload is a documented legacy
+// session written without authority, never an empty bound set.
 func (s *Session) BoundAuthority() (Authority, bool) {
 	if !s.authorityBound {
 		return Authority{}, false
@@ -317,6 +356,9 @@ func (s *Session) GrantToolAuthority(names []string) error {
 		}
 		if !validToolAuthorityName(name) {
 			return errors.New("session: invalid tool authority name")
+		}
+		if s.Authority.Ceiling != nil && !s.Authority.Ceiling.AllowsTool(name) {
+			return errors.New("session: tool authority name exceeds bound ceiling")
 		}
 		seen[name] = struct{}{}
 		additions = append(additions, name)

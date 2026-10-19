@@ -203,11 +203,11 @@ func TestCommandRunnerTimeout(t *testing.T) {
 	}
 }
 
-// TestCommandRunnerWaitDelayUnblocksGrandchildPipeWait pins the A7 hardening: a
-// GRANDCHILD that inherits the output pipes (`sleep 5 &`) used to park cmd.Wait
-// on the pipe-copy goroutines until the grandchild exited (~5s here; up to the
-// 30s default ctx timeout in general) even though the shell itself exited
-// immediately. With cmd.WaitDelay set, Run returns once the delay elapses after
+// TestCommandRunnerWaitDelayUnblocksGrandchildPipeWait pins the WaitDelay
+// hardening: without it, a GRANDCHILD that inherits the output pipes (`sleep 5 &`)
+// parks cmd.Wait on the pipe-copy goroutines until the grandchild exits (~5s
+// here; up to the 30s default ctx timeout in general) even though the shell
+// itself exited immediately. With cmd.WaitDelay set, Run returns once the delay elapses after
 // the shell's exit — as a SUCCESS carrying the output captured so far (the
 // exec.ErrWaitDelay sentinel is not a command failure).
 func TestCommandRunnerWaitDelayUnblocksGrandchildPipeWait(t *testing.T) {

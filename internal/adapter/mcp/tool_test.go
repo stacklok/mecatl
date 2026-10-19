@@ -259,8 +259,8 @@ func TestOutputSchemaAloneFailCloses(t *testing.T) {
 // TestEmbeddedResourceJSONMIMEFailCloses pins Signal 3's JSON-MIME arm of
 // isStructuredResult: a tool returning an EmbeddedResource whose
 // Resource.MIMEType is "application/json" over the cap fail-closes. This arm
-// (MIME-based, not content-parse-based) was previously unexercised — only the
-// TextContent content-parse arm was covered (TestJSONAsTextContentOverCapFailsClosed).
+// (MIME-based, not content-parse-based) is distinct from the TextContent
+// content-parse arm (TestJSONAsTextContentOverCapFailsClosed).
 func TestEmbeddedResourceJSONMIMEFailCloses(t *testing.T) {
 	// Over-cap JSON text carried as an EmbeddedResource with application/json
 	// MIME. The text is genuine JSON so the content-parse arm would ALSO fire,

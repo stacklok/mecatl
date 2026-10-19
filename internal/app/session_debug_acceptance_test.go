@@ -250,7 +250,7 @@ func TestSessionDebuggerCrossBoundaryAcceptance(t *testing.T) {
 	defer built2.Close()
 	client, closeGRPC := debugAcceptanceGRPC(t, built2.Service)
 	defer closeGRPC()
-	created, err := client.CreateSession(ctx, &mecatlv1.CreateSessionRequest{Profile: string(server.ProfileNoFS), DebugTargetSessionId: string(target.ID), DebugMcpServers: []string{"github"}})
+	created, err := client.CreateSession(ctx, &mecatlv1.CreateSessionRequest{Execution: &mecatlv1.ExecutionSelection{None: &mecatlv1.ExecutionNone{}}, DebugTargetSessionId: string(target.ID), DebugMcpServers: []string{"github"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -260,7 +260,7 @@ func TestSessionDebuggerCrossBoundaryAcceptance(t *testing.T) {
 		"status":  {`"latest_run_counters"`, `"lifetime_event_log"`},
 		"related": {`"subagent"`, `"parallel"`, `"team"`, `"schedule"`, `"pruned"`},
 		// delegation rows are proof-gated to currently-RETAINED direct lineage
-		// (ADR 0299): the pruned parallel branch and the schedule kind (not yet
+		// the pruned parallel branch and the schedule kind (not yet
 		// wired to a lineage-provable join) are correctly absent here, unlike
 		// "related" above, which reports every direct edge including pruned ones.
 		"delegation": {`"type":"subagent"`, `"type":"team"`},

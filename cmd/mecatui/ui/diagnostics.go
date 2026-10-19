@@ -264,7 +264,7 @@ func (m Model) startInitialPrompt() (tea.Model, tea.Cmd, bool) {
 
 func (m Model) submitDiagnosticsReport() (tea.Model, tea.Cmd) {
 	if m.phase == phaseRunning {
-		return m.enqueuePrompt()
+		return m.deliverDefaultPrompt()
 	}
 	return m.submitPrompt()
 }

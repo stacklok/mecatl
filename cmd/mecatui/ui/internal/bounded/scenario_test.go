@@ -243,7 +243,7 @@ func TestMecatuiBoundedScrollCursor_Scenario1_RefreshPreservesSemanticAnchors(t 
 		t.Fatalf("missing selected ID fallback = (%d,%q), want prior index replacement (1,d)", list.Cursor(), list.CursorID())
 	}
 	// Selection adopted d when b disappeared. A later b refresh must not resurrect
-	// the historical selection and snap the cursor back.
+	// the earlier selection and snap the cursor back.
 	list.SetItems([]ListItem{{ID: "b", Text: "b0"}, {ID: "d", Text: "d0"}, {ID: "a", Text: "a0"}, {ID: "c", Text: "c0"}})
 	if list.CursorID() != "d" || list.Cursor() != 1 {
 		t.Fatalf("restored former ID stole adopted selection = (%d,%q), want (1,d)", list.Cursor(), list.CursorID())

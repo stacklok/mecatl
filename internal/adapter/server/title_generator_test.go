@@ -11,7 +11,7 @@ import (
 	"github.com/stacklok/mecatl/engine/session"
 )
 
-func TestADR_0284_TitleGenerationServerOwnsInputAndModel(t *testing.T) {
+func TestTitleGenerationServerOwnsInputAndModel(t *testing.T) {
 	t.Parallel()
 
 	var request port.LLMRequest
@@ -69,7 +69,7 @@ func TestSessionTitleGeneratorIgnoresNonTextMetadataChunks(t *testing.T) {
 	}
 }
 
-func TestADR_0284_TitleGenerationInputOutputBoundary(t *testing.T) {
+func TestTitleGenerationInputOutputBoundary(t *testing.T) {
 	t.Parallel()
 
 	var request port.LLMRequest

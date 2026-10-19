@@ -9,8 +9,7 @@ import (
 
 // replayApprovals builds the composition closure that repopulates the in-memory
 // learned-rule store from a loaded session's durable EventLog allow-always
-// verdicts (cloud-native Phase 3b). It is the CONSUMER of 3a's EvApproval
-// AllowAlways flag, and it kills the Phase 2 re-ask wart: the permstore is
+// verdicts. It is the CONSUMER of the EvApproval AllowAlways flag: the permstore is
 // in-memory and lost on restart, so without this a tool the user allow-always'd
 // before a restart would re-ask on the first post-restart call.
 //
@@ -27,9 +26,9 @@ import (
 // boundary it already crossed), never from the durable log, so the log stays
 // metadata-only and there is no leak.
 //
-// It returns nil when there is no durable EventLog (the memstore/driver paths that
-// have no cross-restart log to replay), making the Service's hook a no-op and
-// preserving the in-memory-store behaviour byte-identical there.
+// It returns nil when there is no EventLog (a session-store driver without
+// --event-log-url), making the Service's hook a no-op there. The memstore path
+// supplies an in-memory EventLog, so its replay covers only the process lifetime.
 func replayApprovals(log port.EventLog, policy port.PermissionPolicy, diag port.Diagnostics) func(context.Context, *session.Session) {
 	if log == nil || policy == nil {
 		return nil

@@ -111,7 +111,7 @@ func driveServiceToAwaiting(t *testing.T, svc *server.Service, id session.Sessio
 	return askID
 }
 
-// TestApproveAfterRestartResumesAwaiting is the service-layer cloud-native Phase 2
+// TestApproveAfterRestartResumesAwaiting is the service-layer resume-after-restart
 // gate: an awaiting session whose process died is resumed by a DIFFERENT Service
 // (over the same store) via Approve → resumeFromAwaiting; the pending Write executes
 // EXACTLY ONCE and the resumed run reaches a clean StopEndTurn terminal.

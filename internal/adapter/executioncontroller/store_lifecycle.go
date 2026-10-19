@@ -30,7 +30,7 @@ func referenceRecords(o *unstructured.Unstructured) ([]referenceRecord, error) {
 	for _, item := range raw {
 		m, ok := item.(map[string]any)
 		if !ok {
-			return nil, &executionenv.Error{Code: executionenv.CodeConflict, Message: "legacy environment references require explicit migration"}
+			return nil, &executionenv.Error{Code: executionenv.CodeConflict, Message: "environment references are invalid"}
 		}
 		created, parseErr := time.Parse(time.RFC3339Nano, text(m, "createdAt"))
 		r := referenceRecord{BindingID: text(m, "bindingID"), State: executionenv.ReferenceState(text(m, "state")), OperationID: text(m, operationIDField), SourceBindingID: text(m, "sourceBindingID"), CreatedAt: created}
@@ -174,8 +174,15 @@ func (s *Store) ReserveSuccessor(ctx context.Context, ref executionenv.Environme
 		if !publishedReference(refs, source) {
 			return &executionenv.Error{Code: executionenv.CodeNotFound, Message: "source reference not found"}
 		}
-		if textNested(o.Object, "status", "activeOperation", "id") != "" || textNested(o.Object, "status", "activeRun", "claimID") != "" || textNested(o.Object, "status", "fenceState") != fenceHealthy {
+		if textNested(o.Object, "status", "activeOperation", "id") != "" || textNested(o.Object, "status", "fenceState") != fenceHealthy {
 			return &executionenv.Error{Code: executionenv.CodeConflict, Message: "environment is not quiescent"}
+		}
+		if textNested(o.Object, "status", "activeRun", "claimID") != "" {
+			_, _, expires, ok := activeRunFrom(o)
+			if !ok || s.now().Before(expires) {
+				return &executionenv.Error{Code: executionenv.CodeConflict, Message: "environment is not quiescent"}
+			}
+			unstructured.RemoveNestedField(o.Object, "status", "activeRun")
 		}
 		for _, r := range refs {
 			if r.BindingID == destination {

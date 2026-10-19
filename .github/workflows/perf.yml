@@ -1,5 +1,5 @@
-# Performance regression tracking for mecatl — the Phase 3 CI gate + trend store
-# of docs/adr/0019-perf-tracking.md.
+# Performance regression tracking for mecatl — the CI gate + trend store
+# described in docs/perf-tracking.md.
 #
 # WHY A DEDICATED WORKFLOW (not folded into ci.yml): the two jobs here need
 # DIFFERENT permission postures. The PR job is read-only (`contents: read`) and
@@ -11,20 +11,21 @@
 # THE PR-vs-MAIN SPLIT:
 #   - `perf-pr`   (pull_request): build the benchmarks, HARD-gate allocs/op against
 #                 the previous-main baseline with the tested allocsgate program,
-#                 then run the scenario suite through github-action-benchmark with
-#                 fail-on-alert but `auto-push: false` — it FAILS a regressing PR
-#                 but never writes the trend store.
+#                 then run three scenario suites through github-action-benchmark
+#                 with `auto-push: false`: a smaller-is-better gate (allocs/op,
+#                 tokens, goroutine delta; alert at 102%), a bigger-is-better gate on
+#                 the whitelisted scenarios' cache_hit_rate (alert at 105%), and an
+#                 ADVISORY render-allocs suite that never fails. It FAILS a
+#                 regressing PR but never writes the trend store.
 #   - `perf-main` (push to main): the same build, then github-action-benchmark with
 #                 `auto-push: true` to update the gh-pages trend dashboard, and a
 #                 re-run of the allocs gate against the just-superseded baseline so a
 #                 regression that slipped through still gets flagged. It also stores
 #                 `bench.txt` on gh-pages so the next PR's allocs gate has a baseline
 #                 to fetch (perf-tracking.md baseline-storage resolution).
-# perf-pr runs github-action-benchmark THREE times (a smaller-is-better gate, a
-# bigger-is-better gate, then a smaller-is-better ADVISORY render-allocs suite); the
-# second and third invocations set `skip-fetch-gh-pages` to reuse the first's
-# gh-pages fetch, because re-fetching is a non-fast-forward against the local ref the
-# first step already advanced — whereas perf-main's `auto-push` keeps local and
+# perf-pr runs the three suites in that order; the second and third invocations set
+# `skip-fetch-gh-pages` to reuse the first's gh-pages fetch, because re-fetching is a
+# non-fast-forward against the local ref the first step already advanced — whereas perf-main's `auto-push` keeps local and
 # remote in sync so each step's fetch stays a fast-forward.
 #
 # TREND RETENTION: keep one median point per benchmark metric per main commit.
@@ -92,7 +93,7 @@ env:
   GOTOOLCHAIN: local
   GOFLAGS: -mod=readonly
   # The previous-main baseline lives on gh-pages at this path (written by
-  # perf-main). The gate fetches it read-only via the raw URL.
+  # perf-main). The gate fetches it read-only with an authenticated `gh api` call.
   BENCH_BASELINE_PATH: dev/bench/bench.txt
 
 jobs:
@@ -268,7 +269,7 @@ jobs:
 
       - name: Upload perf artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: perf-pr-${{ github.run_id }}
           path: |
@@ -521,7 +522,7 @@ jobs:
 
       - name: Upload perf artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: perf-main-${{ github.run_id }}
           path: |

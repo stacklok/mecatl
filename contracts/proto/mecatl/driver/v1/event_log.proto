@@ -70,7 +70,7 @@ service EventLogService {
   // AppendGap durably records a gap marker — a position where an append is
   // KNOWN to have failed — and returns the cursor positioned after it.
   //
-  // It is the best-effort, cross-process tier of ADR 0250's append-gap
+  // It is the best-effort, cross-process tier of the event log's append-gap
   // guarantee: if the marker lands, every watcher everywhere learns of the gap
   // deterministically rather than silently skipping it. A driver that cannot
   // record it returns a non-OK status; the harness WARNs and continues the run.
@@ -184,7 +184,7 @@ message ReadAfterRequest {
 //
 // Unlike ReadResponse it carries a KIND, because a position may hold a gap
 // marker rather than an event. A gap is a delivery-envelope variant and never a
-// harness event (ADR 0250 decision 5), which is why it is a field here rather
+// harness event, which is why it is a field here rather
 // than a new event type inside the opaque payload.
 message ReadAfterResponse {
   // kind is the record kind: "event" or "gap". An open string, not an enum, so

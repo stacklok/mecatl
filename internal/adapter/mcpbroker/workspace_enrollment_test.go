@@ -49,20 +49,11 @@ func newWorkspaceEnrollmentRuntime(t *testing.T, tokenServer *httptest.Server, q
 	if err != nil {
 		t.Fatal(err)
 	}
-	process := &Process{
-		Runtime:            runtime,
-		construction:       toolHiveConstruction{protectedBackends: backends},
-		protectedTarget:    target,
-		queryAuthenticated: queries.query,
-		occupied:           []string{"Read"},
-		ctx:                context.Background(),
-		cancel:             func() {},
-	}
-	runtime.process = process
+	runtime.configureEnrollment(enrollmentConfig{backends: backends, target: target, occupied: []string{"Read"}}, queries, &testPublicationGate{})
 	return runtime
 }
 
-func TestADR_0298_OpaqueBrokerCredentialIsNotDecodedOrCopied(t *testing.T) {
+func TestOpaqueBrokerCredentialIsNotDecodedOrCopied(t *testing.T) {
 	tokenServer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"access_token":"opaque-broker-credential","token_type":"Bearer","expires_in":3600}`))
@@ -234,8 +225,7 @@ func TestWorkspaceEnrollmentCancelClearsBundleState(t *testing.T) {
 // TestResetWorkspaceEnrollmentWithdrawsCompletedCatalogue proves
 // ResetWorkspaceEnrollment against the REAL Attachment (not an interface
 // fake): it must clear the completed enrollment, withdraw the discovered
-// broker route AND the static declared protected route (ADR 0335's "Static
-// declared-tool behavior during destructive replacement"), and leave the
+// broker route AND the static declared protected route, and leave the
 // attachment able to mint a fresh enrollment afterward.
 func TestResetWorkspaceEnrollmentWithdrawsCompletedCatalogue(t *testing.T) {
 	tokenServer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -298,7 +288,7 @@ func TestResetWorkspaceEnrollmentWithdrawsCompletedCatalogue(t *testing.T) {
 }
 
 // TestResetWorkspaceEnrollmentLockOrderMatchesRefreshPath is a regression test
-// for a lock-order inversion: ResetWorkspaceEnrollment used to take
+// for a lock-order inversion: ResetWorkspaceEnrollment must not take
 // logical.mu before a.mu, the reverse of every other method that holds both
 // (Commit, Abort, beginOperation, freezeAuthenticatedCatalogue, and
 // RefreshGrantedAuthorizationCatalogue, which all take a.mu outer and
@@ -440,7 +430,7 @@ func TestWorkspaceEnrollmentDiscoveryCancellationIsRetryable(t *testing.T) {
 	entered := make(chan struct{})
 	var mu sync.Mutex
 	attempts := 0
-	runtime.process.queryAuthenticated = func(ctx context.Context, _ oauth2.TokenSource, backend string) (AuthenticatedCapabilities, error) {
+	runtime.discovery = authenticatedDiscoveryFunc(func(ctx context.Context, _ oauth2.TokenSource, backend string) (AuthenticatedCapabilities, error) {
 		mu.Lock()
 		attempts++
 		attempt := attempts
@@ -451,7 +441,7 @@ func TestWorkspaceEnrollmentDiscoveryCancellationIsRetryable(t *testing.T) {
 			return AuthenticatedCapabilities{}, ctx.Err()
 		}
 		return AuthenticatedCapabilities{Backend: backend, Tools: []ToolDefinition{{Backend: backend, Name: "mcp__github__list", Schema: json.RawMessage(`{"type":"object"}`)}}}, nil
-	}
+	})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	observed := make(chan error, 1)
@@ -508,7 +498,7 @@ func TestCancelledPeerCannotPublishUncommittedCatalogue(t *testing.T) {
 	release := make(chan struct{})
 	var mu sync.Mutex
 	attempts := 0
-	runtime.process.queryAuthenticated = func(_ context.Context, _ oauth2.TokenSource, backend string) (AuthenticatedCapabilities, error) {
+	runtime.discovery = authenticatedDiscoveryFunc(func(_ context.Context, _ oauth2.TokenSource, backend string) (AuthenticatedCapabilities, error) {
 		mu.Lock()
 		attempts++
 		attempt := attempts
@@ -518,7 +508,7 @@ func TestCancelledPeerCannotPublishUncommittedCatalogue(t *testing.T) {
 			<-release
 		}
 		return AuthenticatedCapabilities{Backend: backend, Tools: []ToolDefinition{{Backend: backend, Name: "mcp__github__list", Schema: json.RawMessage(`{"type":"object"}`)}}}, nil
-	}
+	})
 
 	observed := make(chan error, 1)
 	go func() {

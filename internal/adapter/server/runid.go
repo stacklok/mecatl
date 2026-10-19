@@ -11,7 +11,7 @@ import (
 
 // runIDBytes is the entropy behind a minted run id.
 //
-// 16 bytes = 128 bits. The uniqueness obligation a run id inherits from ADR 0044
+// 16 bytes = 128 bits. The uniqueness obligation a run id carries
 // is not merely "distinct within this process" — it backs the CWE-863 askID
 // replay guard, so a collision between two attempts (in ANY process, at ANY
 // time, since ids are persisted and compared across restarts) would let a stale
@@ -30,7 +30,7 @@ const runIDBytes = 16
 // echoed to clients and may end up in a URL or a filename.
 var runIDEncoding = base32.StdEncoding.WithPadding(base32.NoPadding)
 
-// newRunID mints an opaque run identity (ADR 0249).
+// newRunID mints an opaque run identity.
 //
 // OPAQUE means opaque: it encodes nothing — no session id, no timestamp, no
 // sequence — so no client can parse structure out of it and come to depend on
@@ -46,7 +46,7 @@ func newRunID() string {
 }
 
 // runlessEventTypes is the CLOSED set of event types permitted to carry an empty
-// Event.RunID (ADR 0249).
+// Event.RunID.
 //
 // An empty RunID means "session-scoped, not run-scoped" — a real meaning, not a
 // missing value. These three are emitted by the scheduler from composition,
@@ -72,7 +72,7 @@ func allowsEmptyRunID(t session.EventType) bool {
 	return ok
 }
 
-// checkExpectedRun enforces a control's expected_run_id (ADR 0249).
+// checkExpectedRun enforces a control's expected_run_id.
 //
 // expected == "" is the legacy path: the control applies to whatever run is
 // current, exactly as before run ids existed. A non-empty value that does not

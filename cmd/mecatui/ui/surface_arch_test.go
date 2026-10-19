@@ -34,11 +34,58 @@ var surfaceFileHomes = map[string]bool{
 	"models_catalog.go":   true,
 	"models_surface.go":   true,
 	"usermodel.go":        true,
+	"effort.go":           true,
+	"worktrees.go":        true,
+	"dream.go":            true,
 }
 
 // surfaceFileCount is the explicit homes the gate counts — another surface file
 // is an explicit decision here, not a silent drift.
-const surfaceFileCount = 10
+const surfaceFileCount = 13
+
+var worktreesSymbolHomes = map[string]string{
+	"worktreesState": "worktrees.go", "worktreesResultMsg": "worktrees.go",
+	"worktreeSelectIntent": "worktrees.go", "openWorktrees": "worktrees.go",
+	"filterWorktrees": "worktrees.go", "worktreeRowText": "worktrees.go",
+}
+
+func TestModelHasNoWorktreesStateField(t *testing.T) {
+	st := reflect.TypeOf(Model{})
+	for i := 0; i < st.NumField(); i++ {
+		f := st.Field(i)
+		typ := f.Type
+		for typ.Kind() == reflect.Pointer {
+			typ = typ.Elem()
+		}
+		if f.Name == "worktrees" || typ.Name() == "worktreesState" {
+			t.Errorf("Model.%s retains worktrees open-lifetime state", f.Name)
+		}
+	}
+}
+
+var effortSymbolHomes = map[string]string{
+	"effortState": "effort.go", "effortSelectIntent": "effort.go", "openEffort": "effort.go",
+	"effortSelection": "effort.go", "effortCursorFor": "effort.go", "effortRowText": "effort.go",
+}
+
+func TestModelHasNoEffortStateField(t *testing.T) {
+	st := reflect.TypeOf(Model{})
+	for i := 0; i < st.NumField(); i++ {
+		f := st.Field(i)
+		typ := f.Type
+		for typ.Kind() == reflect.Pointer {
+			typ = typ.Elem()
+		}
+		if f.Name == "effort" || typ.Name() == "effortState" {
+			t.Errorf("Model.%s retains effort open-lifetime state", f.Name)
+		}
+	}
+}
+
+var dreamSymbolHomes = map[string]string{
+	"dreamState": "dream.go", "dreamResultMsg": "dream.go", "dreamView": "dream.go",
+	"openDream": "dream.go", "dreamReaderLayout": "dream.go", "dreamPhysicalRows": "dream.go",
+}
 
 // surfaceToken identifies declarations governed by the surface placement gate.
 var surfaceToken = regexp.MustCompile(`^(?:surface|surfaceDeps|session[A-Za-z0-9]*|soulView|soulNone|soulPanel|soulBodyLines|soulState|soulMaxScroll|clampSoulScroll|soulContentLines|renderSoulPanel|renderSoulMeta|renderSoulBody|soulDisabledNote|soulTrustLabel|skillsView|skillsNone|skillsPanel|skillsDetail|skillsBodyLines|skillsState|filterSkills|cloneSkillGenerations|skillsDisabledNote|skillsEmptyCopy|skillsRowLines|renderLearnedSkillDetail|openSkills|closeSkills|onSkillsKey|updateSkillsMsg|skillsFilteredRowTotal|syncSkillsFilter|renderSkillsOverlay|mcpView|mcpNone|mcpPanel|mcpResources|mcpResourcePrev|mcpPrompts|mcpPromptArgs|mcpState|brokerMCPSetupState|canConnect|syncMCPSetup|renderBrokerMCPPanel|brokerEnrollmentLabel|brokerCatalogueLabel|argField|renderMCPOverlay|renderMCPPanel|renderMCPListHeader|renderResourceList|renderResourcePreview|renderPromptList|renderPromptArgs|mcpStatusLine|mcpPanelFooter|renderGroupsLine|renderRow|hasRequiredArgs|mcpEmptyCopy|mcpDisabledNote|runMCP|runMCPResources|runMCPPrompts|openMCP|closeMCP|onMCPKey|updateMCPMsg|insertIntoInput|joinContents|joinPromptMessages|handlePanelKey|handleResourceKey|handlePromptListKey|handlePromptArgsKey|focusArg|selectPrompt|submitPromptArgs|refreshPanel|modelsView|modelsNone|modelsPanel|modelsChrome|modelsState|modelsCatalogIntent|modelsSelectIntent|modelsGlobalDefaultIntent|filterModels|modelsDisabledNote|modelsErrorHint|modelsGatewayEmptyNote|modelsEmptyCopy|promotedStatus|providerStatusLine|renderProviderStatusLines|modelRowText|modelLabel|modelCapSegments|openModels|configProvenanceProviderSet|availableNotDefaultStatus)$`)
@@ -67,7 +114,7 @@ var modelsSymbolHomes = map[string]string{
 
 var userModelSymbolHomes = map[string]string{
 	"userModelView": "usermodel.go", "userModelPanel": "usermodel.go", "userModelDetail": "usermodel.go", "userModelState": "usermodel.go",
-	"openUserModel": "usermodel.go", "userModelMove": "usermodel.go", "userModelDisabledNote": "usermodel.go", "userModelEmptyCopy": "usermodel.go", "renderUserModelMeta": "usermodel.go",
+	"openUserModel": "usermodel.go", "userModelDisabledNote": "usermodel.go", "userModelEmptyCopy": "usermodel.go", "renderUserModelMeta": "usermodel.go",
 }
 
 // TestSurfaceSymbolsLiveInSurfaceFiles walks every non-test ui package file and
@@ -90,6 +137,22 @@ func TestSurfaceSymbolsLiveInSurfaceFiles(t *testing.T) {
 		f, err := parser.ParseFile(fset, file, nil, 0)
 		if err != nil {
 			t.Fatalf("parse %s: %v", file, err)
+		}
+		if file != "worktrees.go" {
+			ast.Inspect(f, func(node ast.Node) bool {
+				if id, ok := node.(*ast.Ident); ok && id.Name == "worktreesState" {
+					t.Errorf("concrete worktrees state referenced outside its surface: %s", fset.Position(id.Pos()))
+				}
+				return true
+			})
+		}
+		if file != "effort.go" {
+			ast.Inspect(f, func(node ast.Node) bool {
+				if id, ok := node.(*ast.Ident); ok && id.Name == "effortState" {
+					t.Errorf("concrete effort state referenced outside its surface: %s", fset.Position(id.Pos()))
+				}
+				return true
+			})
 		}
 		for _, decl := range f.Decls {
 			var names []string
@@ -114,7 +177,10 @@ func TestSurfaceSymbolsLiveInSurfaceFiles(t *testing.T) {
 				}
 				_, isModelsSymbol := modelsSymbolHomes[n]
 				_, isUserModelSymbol := userModelSymbolHomes[n]
-				if !surfaceToken.MatchString(n) && !isModelsSymbol && !isUserModelSymbol {
+				_, isDreamSymbol := dreamSymbolHomes[n]
+				_, isEffortSymbol := effortSymbolHomes[n]
+				_, isWorktreesSymbol := worktreesSymbolHomes[n]
+				if !surfaceToken.MatchString(n) && !isModelsSymbol && !isUserModelSymbol && !isDreamSymbol && !isEffortSymbol && !isWorktreesSymbol {
 					continue
 				}
 				if !surfaceFileHomes[file] {
@@ -125,6 +191,15 @@ func TestSurfaceSymbolsLiveInSurfaceFiles(t *testing.T) {
 				}
 				if want, ok := userModelSymbolHomes[n]; ok && file != want {
 					t.Errorf("/memory declaration %q lives in %s, want %s", n, file, want)
+				}
+				if want, ok := worktreesSymbolHomes[n]; ok && file != want {
+					t.Errorf("/worktrees declaration %q lives in %s, want %s", n, file, want)
+				}
+				if want, ok := effortSymbolHomes[n]; ok && file != want {
+					t.Errorf("/effort declaration %q lives in %s, want %s", n, file, want)
+				}
+				if want, ok := dreamSymbolHomes[n]; ok && file != want {
+					t.Errorf("/dream declaration %q lives in %s, want %s", n, file, want)
 				}
 			}
 		}
@@ -263,12 +338,26 @@ func TestModelKeepsUserModelRequestToken(t *testing.T) {
 	}
 }
 
+func TestModelHasNoDreamTombstones(t *testing.T) {
+	st := reflect.TypeOf(Model{})
+	for _, name := range []string{"dream", "dreamGen", "dreamRequest"} {
+		if _, ok := st.FieldByName(name); ok {
+			t.Errorf("Model retains /dream tombstone %q", name)
+		}
+	}
+	state := reflect.TypeFor[dreamState]()
+	for i := 0; i < st.NumField(); i++ {
+		if st.Field(i).Type == state || st.Field(i).Type == reflect.PointerTo(state) {
+			t.Errorf("Model field %q holds dreamState outside m.modal", st.Field(i).Name)
+		}
+	}
+}
+
 // TestSurfaceDepsIsAmbientOnly reflects over the SHARED surfaceDeps struct and
 // asserts it carries ONLY the ambient base fields (theme/keys/marks/caps/ctx)
 // plus the Model-owned reference hit allocator, and NONE of the archived deps-per-call wideners (width/lifecycle/nextEpoch/
 // focusInput — surface-SPECIFIC collaborators live as fields on the surface's
-// own state struct, set next to deps in the same Open literal, per
-// docs/design/surface-migration-plan.md §4 decision 8). ctx is ambient: any
+// own state struct, set next to deps in the same Open literal). ctx is ambient: any
 // modal that talks to the server needs the parent context, so it belongs in
 // the shared base, not on each surface. This is the anti-regression guard for
 // the deps-on-state redesign: a deps-per-call widening fails here the moment a

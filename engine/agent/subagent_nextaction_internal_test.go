@@ -149,7 +149,7 @@ func TestResumeSchemaDescriptionConditionsSurvivingEditsOnTheEarlierRun(t *testi
 func TestResumeNoteMatrixCoversBothAxes(t *testing.T) {
 	const (
 		freshWorkspace = "FRESH workspace checkout" // resumeStalenessNote — read-only, forked
-		realWorkspace  = "DIRECTLY in the"          // both writable notes — no fork (ADR 0041)
+		realWorkspace  = "DIRECTLY in the"          // both writable notes — no fork (direct-write)
 		editsAlive     = "STILL IN PLACE"           // resumeWritableNote
 		editsGone      = "GONE"                     // resumeStalenessNote + resumeWritableFreshNote
 	)
@@ -402,7 +402,7 @@ func TestWritableTerminalClassificationSelectsCleanNoteOnlyForEndTurn(t *testing
 // TestWritableStructuredOutputTerminalWarnsPartialEdits pins the direct-write note cell a
 // structured-output failure lands in. The child exhausted its correction budget without ever
 // producing a schema-valid payload while holding direct access to the operator's real tree
-// (ADR 0041). The renderer has no mutation evidence, so it must say any edits MAY be partial
+// (direct-write). The renderer has no mutation evidence, so it must say any edits MAY be partial
 // rather than claiming changes exist or presenting the benign clean-completion note.
 func TestWritableStructuredOutputTerminalWarnsPartialEdits(t *testing.T) {
 	t.Parallel()
@@ -424,7 +424,7 @@ func TestWritableStructuredOutputTerminalWarnsPartialEdits(t *testing.T) {
 // terminal that named a cause and no action. Every neighbouring terminal names one
 // (StopError's resume hint, the limit notes, StopNoProgress, the time-budget notes, even the
 // no-summary floor), so a bare one reads to the model as "this delegation is simply dead" —
-// ADR 0070's model-visible-affordance rule inverted.
+// the model-visible-affordance rule inverted.
 //
 // It pins BOTH cells of the gate, and the wording facts that make each honest: the
 // store-wired cell must name the affordance AND the argument the parent has to re-pass

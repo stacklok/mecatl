@@ -1,6 +1,6 @@
 // Package redisstore implements the Redis-backed port.SessionStore, port.EventLog,
 // port.PrunableStore, and port.ToolCallRecorder for the cloud-native posture
-// (ADR 0048, mecak8s). The agent pods are storage-free: session snapshots and
+// (mecak8s). The agent pods are storage-free: session snapshots and
 // the durable event log live in Redis as a managed service, and this adapter is
 // the single store the server relay binds when the operator selects a Redis
 // backend (a transport alternative to the local jsonlstore).
@@ -20,7 +20,7 @@
 // cursor table), exercised offline against an in-process miniredis so
 // `task test` needs no live broker.
 //
-// The event log is a STREAM, not a LIST (ADR 0250): XADD IDs are opaque,
+// The event log is a STREAM, not a LIST: XADD IDs are opaque,
 // monotonic and durable, so they serve as cursors directly, and XREAD BLOCK is a
 // cross-process blocking follow a LIST cannot express. Older Redis namespaces
 // are not inspected or migrated.
@@ -105,7 +105,7 @@ type eventLogRecord struct {
 	V  string          `json:"v"`
 	Ev json.RawMessage `json:"ev,omitempty"`
 	// R is a gap marker's reason, set only when V is EventLogGapFormat. A gap is
-	// an envelope variant rather than an event (ADR 0250 decision 5), so it
+	// an envelope variant rather than an event, so it
 	// shares this record shape instead of becoming a session.Event. Omitted on
 	// an ordinary event so the encoding of an event record is byte-unchanged
 	// from before cursors existed.
@@ -145,8 +145,8 @@ type Store struct {
 //
 // Client-certificate (mTLS) authentication is NOT supported. The shared
 // toolhive-core Redis layer this adapter delegates to exposes no
-// client-certificate field; see ADR 0233 for the decision and the upstream
-// tracking issue.
+// client-certificate field (upstream tracking issue:
+// stacklok/toolhive-core#240).
 type Config struct {
 	Addr         string
 	UsernameFile string
@@ -179,8 +179,8 @@ func New(addr string) (*Store, error) {
 // read only from their mounted files and are never included in returned errors.
 //
 // Client construction, TLS assembly, dial/read/write timeout defaults, and the
-// connectivity Ping are delegated to the shared toolhive-core Redis layer (ADR
-// 0233). What stays here is the half that layer deliberately leaves to its
+// connectivity Ping are delegated to the shared toolhive-core Redis layer.
+// What stays here is the half that layer deliberately leaves to its
 // callers: reading credentials from mounted files, and the policy that a
 // credential implies verified TLS.
 func NewWithConfig(cfg Config) (*Store, error) {
@@ -622,8 +622,8 @@ func (st *Store) Append(ctx context.Context, id session.SessionID, ev session.Ev
 // are rejected without mutation.
 //
 // GAP MARKERS ARE SKIPPED. This port's shipped contract is that it returns
-// EVENTS, and a gap is a delivery envelope (ADR 0250 decision 5) that the
-// event-sourced fold of ADR 0038 would choke on. Cursor readers see gaps via
+// EVENTS, and a gap is a delivery envelope that the event-sourced fold would
+// choke on. Cursor readers see gaps via
 // ReadAfter.
 func (st *Store) Read(ctx context.Context, id session.SessionID) iter.Seq2[session.Event, error] {
 	return func(yield func(session.Event, error) bool) {

@@ -48,7 +48,7 @@ func drainRun(run interface {
 //     re-persist regression, e.g. recordPrompt re-acquiring the fragments, would be
 //     caught here even though the Build mock provider is not request-observable).
 //
-// As of ADR 0043 the turn-0 instruction fragments are EPHEMERAL: they are prepended
+// The turn-0 instruction fragments are EPHEMERAL: they are prepended
 // to the LLMRequest per-run, NEVER persisted into Conversation.Messages. So the proof
 // is the fence on the REQUEST the provider received (observed via mockllm's request
 // observer), and the test ALSO asserts it never lands in the persisted conversation
@@ -126,7 +126,7 @@ func TestUserModelE2E(t *testing.T) {
 	// --- Session B: the SAME composition wiring (buildInstructionAssembler over a
 	// fresh store on the SAME dir) injected into a request-observing main engine. The
 	// turn-0 REQUEST must carry the <user-model> fence with the saved fact, and the
-	// fact must NOT be persisted into the conversation (ephemeral, ADR 0043).
+	// fact must NOT be persisted into the conversation (ephemeral).
 	storeB, err := memory.New(userModelDir)
 	if err != nil {
 		t.Fatalf("memory.New (session B store): %v", err)

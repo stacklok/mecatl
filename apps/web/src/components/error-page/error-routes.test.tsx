@@ -1,7 +1,8 @@
 // @vitest-environment happy-dom
 // SPDX-License-Identifier: Apache-2.0
 
-import { getAuthSessionOptions } from "@mecatl-studio/contracts/query";
+import { client as apiClient } from "@mecatl-studio/contracts/client";
+import { getAuthSessionOptions, getRuntimeSettingsOptions } from "@mecatl-studio/contracts/query";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   createMemoryHistory,
@@ -18,18 +19,12 @@ import { AuthRecoveryContext } from "../../features/auth/auth-recovery-context";
 import { routeTree } from "../../routeTree.gen";
 import { RootErrorBoundary, studioRouterOptions } from "./error-routes";
 
-const productionChat = vi.hoisted(() => ({ broken: false }));
-vi.mock("../../features/chat/chat-workspace", () => ({
-  ChatWorkspace: () => {
-    if (productionChat.broken) throw new Error(privateError);
-    return <h1>Chat ready</h1>;
-  },
-}));
-
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT =
   true;
 
 const privateError = "https://deployment.internal/run?token=SECRET_SENTINEL";
+const initialApiConfig = apiClient.getConfig();
+const chatApi = { broken: false };
 let container: HTMLDivElement;
 let reactRoot: Root;
 
@@ -43,11 +38,29 @@ async function mount(element: React.ReactNode) {
 afterEach(async () => {
   if (reactRoot) await act(async () => reactRoot.unmount());
   container?.remove();
-  productionChat.broken = false;
+  chatApi.broken = false;
   vi.restoreAllMocks();
+  apiClient.setConfig({ baseUrl: initialApiConfig.baseUrl, fetch: initialApiConfig.fetch });
 });
 
 async function mountProductionRoute(path: string) {
+  const fetch = vi.fn<typeof globalThis.fetch>(async (input) => {
+    const pathname = new URL(
+      input instanceof Request ? input.url : String(input),
+      window.location.href,
+    ).pathname;
+    if (pathname === "/api/v1/runtime")
+      return Response.json({
+        capabilities: { image: false, posture: "managed" },
+        connection: "online",
+      });
+    // A model list without `models` makes the real ChatWorkspace throw while
+    // rendering; the sentinel rides along in the payload the failure came from.
+    if (pathname === "/api/v1/settings/runtime")
+      return Response.json(chatApi.broken ? { detail: privateError } : { models: [] });
+    return Response.json({ items: [] });
+  });
+  apiClient.setConfig({ baseUrl: window.location.origin, fetch });
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false, staleTime: Infinity } },
   });
@@ -78,12 +91,12 @@ async function mountProductionRoute(path: string) {
       </AuthRecoveryContext.Provider>
     </QueryClientProvider>,
   );
-  return router;
+  return { client, router };
 }
 
 describe("production Studio routes", () => {
   it("opens a known route from the branded unknown URL using the real workspace shell", async () => {
-    const router = await mountProductionRoute("/workspace/missing");
+    const { router } = await mountProductionRoute("/workspace/missing");
     expect(container.querySelector("h1")?.textContent).toBe("Page not found");
     expect(container.querySelectorAll("h1")).toHaveLength(1);
     expect(container.textContent).toContain("Mecatl Studio");
@@ -94,15 +107,18 @@ describe("production Studio routes", () => {
 
     await act(async () => home?.click());
     expect(router.state.location.pathname).toBe("/workspace/chat");
-    expect(container.querySelector("h1")?.textContent).toBe("Chat ready");
+    expect(container.querySelector("h1")?.textContent).toBe("New chat");
     expect(container.querySelector("[data-shell-global-status]")).not.toBeNull();
     expect(container.querySelector('nav[aria-label="Main navigation"]')).not.toBeNull();
   });
 
   it("retries a real child route while keeping the workspace shell mounted", async () => {
     vi.spyOn(console, "error").mockImplementation(() => undefined);
-    productionChat.broken = true;
-    await mountProductionRoute("/workspace/chat");
+    chatApi.broken = true;
+    const { client } = await mountProductionRoute("/workspace/chat");
+    await vi.waitFor(() =>
+      expect(container.querySelector("h1")?.textContent).toBe("Something went wrong"),
+    );
 
     const shell = container.querySelector("[data-shell-global-status]")?.parentElement;
     const navigation = container.querySelector('nav[aria-label="Main navigation"]');
@@ -110,6 +126,7 @@ describe("production Studio routes", () => {
     expect(navigation).not.toBeNull();
     expect(container.querySelector("h1")?.textContent).toBe("Something went wrong");
     expect(container.textContent).not.toContain(privateError);
+    expect(container.textContent).not.toContain("Cannot read properties");
     expect(
       container.querySelector('a[aria-label="Stacklok — go to Chats"][href="/workspace/chat"]'),
     ).not.toBeNull();
@@ -119,13 +136,14 @@ describe("production Studio routes", () => {
       ),
     ).toBe(true);
 
-    productionChat.broken = false;
+    chatApi.broken = false;
+    client.resetQueries({ queryKey: getRuntimeSettingsOptions().queryKey });
     const retry = Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find(
       (button) => button.textContent?.trim() === "Try again",
     );
     expect(retry).toBeDefined();
     await act(async () => retry?.click());
-    expect(container.querySelector("h1")?.textContent).toBe("Chat ready");
+    await vi.waitFor(() => expect(container.querySelector("h1")?.textContent).toBe("New chat"));
     expect(shell?.isConnected).toBe(true);
     expect(container.querySelector('nav[aria-label="Main navigation"]')).toBe(navigation);
   });

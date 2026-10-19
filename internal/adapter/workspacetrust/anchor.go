@@ -21,8 +21,8 @@ import (
 // choice (mirroring soulguard's osWriteSidecar).
 const syscallNoFollow = syscall.O_NOFOLLOW
 
-// anchor.go computes the workspace IDENTITY-ANCHOR hash (Workspace-Trust feature,
-// Phase 2b; MUST-FIX 4 + 5.2). The anchor is the high-signal, rarely-edited subset
+// anchor.go computes the workspace IDENTITY-ANCHOR hash (Workspace-Trust
+// feature). The anchor is the high-signal, rarely-edited subset
 // of a project's authority set whose change should re-prompt for trust:
 //
 //   - the project SOUL          <ws>/.mecatl/soul.md

@@ -138,7 +138,7 @@ func capsFromCreate(t *testing.T, svc *server.Service) *mecatlv1.ServerCapabilit
 
 // TestCapabilitiesMediaFromProvider asserts the image/audio caps are driven by the
 // composition-supplied DefaultCapabilities (the catalog ∩ adapter intersection for
-// the default provider+model, multi-provider Phase 0 S5) — NOT the bare engine seam
+// the default provider+model) — NOT the bare engine seam
 // (which is adapter-only and would re-introduce the catalog gap): a default capability
 // of image-only surfaces over the gRPC CreateSession response as image=true,
 // audio=false. This is the gate the client's @-mention file-attach UX reads.

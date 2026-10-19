@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-func TestADR_0281_ManagedObjectsCreatedAtomicallyPrivate(t *testing.T) {
+func TestManagedObjectsCreatedAtomicallyPrivate(t *testing.T) {
 	oldUmask := syscall.Umask(0)
 	t.Cleanup(func() { syscall.Umask(oldUmask) })
 

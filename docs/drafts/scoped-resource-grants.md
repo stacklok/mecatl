@@ -1,13 +1,9 @@
 # Scoped resource grants: a filesystem and tool substrate
 
-*Status: strawman / working draft. Speculative scoping, not a design record under
-ADR 0002 (no frozen decision here). Same
-tier as [`docs/cloud-native-harness-kit.md`](cloud-native-harness-kit.md) and the
+Same tier as [`docs/cloud-native-harness-kit.md`](cloud-native-harness-kit.md) and the
 [session-state/read-ledger boundary proposal](session-state-and-read-ledger.md).
 It picks up the shared-handle problem (§1) from the companion
 ["Cloud-Native Harness Systems"](cloud-native-harness-systems.md) scoping doc.
-If this direction is ever committed, it becomes one or more ADRs and this doc
-gets superseded.*
 
 This doc describes a possible future for how mecatl's tools talk to filesystems
 and to each other. It is written to be concrete enough to argue with. Nothing

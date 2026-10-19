@@ -23,6 +23,12 @@ type Capabilities struct {
 	Agents        bool
 	// Shell reports availability of the canonical Shell tool.
 	Shell bool
+	// ExecutionTemplates advertises the enabled authenticated catalog.
+	ExecutionTemplates bool
+	// ExecutionFiles and BuiltInShell describe this bound session, not server-wide
+	// availability and not model media capability.
+	ExecutionFiles bool
+	BuiltInShell   bool
 	// Soul / UserModel report whether the server has a soul source / user-model store
 	// wired. They gate the /soul and /usermodel read-only inspection panels.
 	Soul      bool
@@ -52,7 +58,7 @@ type Capabilities struct {
 	// server (field absent → false) hides the overlay. Independent of the scheduler
 	// tick loop: the overlay can create/inspect/pause/resume/fire-now on any
 	// store-backed server; auto-firing on a cadence is the server's tick loop
-	// (ON by default on a store-backed server, ADR 0073 — `--no-scheduler` opts out).
+	// (ON by default on a store-backed server; `--no-scheduler` opts out).
 	Scheduling        bool
 	Reflection        bool
 	LearningProposals bool
@@ -94,6 +100,8 @@ func capabilitiesWithSessionMediaFrom(caps Capabilities, sessionCaps *mecatlv1.S
 	if sessionCaps != nil {
 		caps.Image = sessionCaps.GetImage()
 		caps.Audio = sessionCaps.GetAudio()
+		caps.ExecutionFiles = sessionCaps.GetExecutionFiles()
+		caps.BuiltInShell = sessionCaps.GetBuiltInShell()
 		caps.SessionMediaPresent = true
 	}
 	return caps
@@ -115,6 +123,7 @@ func capabilitiesFrom(c *mecatlv1.ServerCapabilities) Capabilities {
 		Teams:               c.GetTeams(),
 		Agents:              c.GetAgents(),
 		Shell:               c.GetShell(),
+		ExecutionTemplates:  c.GetExecutionTemplates(),
 		Soul:                c.GetSoul(),
 		UserModel:           c.GetUserModel(),
 		ModelSelection:      c.GetModelSelection(),
@@ -166,7 +175,7 @@ type ResolvedModel struct {
 	ModelID       string
 	ContextWindow int64
 	// ReasoningEffort is the EFFECTIVE reasoning-effort tier this session resolved
-	// to (ADR 0055), "" when unset (provider default). The ui shows it in the model
+	// to, "" when unset (provider default). The ui shows it in the model
 	// footer segment (only when non-empty). Server-owned + echoed verbatim — never
 	// recomputed by the client.
 	ReasoningEffort string

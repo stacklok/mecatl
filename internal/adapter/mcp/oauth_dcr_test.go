@@ -444,7 +444,7 @@ func TestNewOAuthControllerRejectsInvalidDCRLocalAuthorityBeforeDiscovery(t *tes
 	}
 }
 
-func TestADR_0325_DCRPersistedFormatsRejectMalformedRecords(t *testing.T) {
+func TestDCRPersistedFormatsRejectMalformedRecords(t *testing.T) {
 	generation := base64.RawURLEncoding.EncodeToString(make([]byte, 32))
 	path := oauthDCRCallbackPrefix + base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{1}, 32))
 	identity := oauthDCRIdentity{Profile: "connector", Principal: "local-user", Resource: "https://connector.example/gw/mcp", Issuer: "https://issuer.example"}
@@ -719,7 +719,7 @@ func (s *conflictAfterCommitStore) Put(ctx context.Context, key, value []byte, e
 	return record, err
 }
 
-func TestADR_0325_DirectDCRMetadataAndEgressPolicy(t *testing.T) {
+func TestDirectDCRMetadataAndEgressPolicy(t *testing.T) {
 	fixture := newDCRMetadataFixture(t)
 	resource := fixture.server.URL + "/gw/mcp"
 	store := newDCRMemoryStore(t)
@@ -776,7 +776,7 @@ func TestADR_0325_DirectDCRMetadataAndEgressPolicy(t *testing.T) {
 	}
 }
 
-func TestADR_0325_DirectDCRRegistrationIssuedAtIsNonnegativeAndPresencePreserved(t *testing.T) {
+func TestDirectDCRRegistrationIssuedAtIsNonnegativeAndPresencePreserved(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
 		issuedAt int64
@@ -824,7 +824,7 @@ func TestADR_0325_DirectDCRRegistrationIssuedAtIsNonnegativeAndPresencePreserved
 	}
 }
 
-func TestADR_0325_DirectDCRRegistrationPrecedesTokenIdentity(t *testing.T) {
+func TestDirectDCRRegistrationPrecedesTokenIdentity(t *testing.T) {
 	fixture := newDCRMetadataFixture(t)
 	resource := fixture.server.URL + "/gw/mcp"
 	opts := fixture.options(t, newDCRMemoryStore(t))
@@ -862,7 +862,7 @@ func TestADR_0325_DirectDCRRegistrationPrecedesTokenIdentity(t *testing.T) {
 	}
 }
 
-func TestADR_0325_DirectDCRResetRotatesLifecycleAndContinues(t *testing.T) {
+func TestDirectDCRResetRotatesLifecycleAndContinues(t *testing.T) {
 	fixture := newDCRMetadataFixture(t)
 	resource := fixture.server.URL + "/gw/mcp"
 	store := newDCRMemoryStore(t)
@@ -932,7 +932,7 @@ func TestADR_0325_DirectDCRResetRotatesLifecycleAndContinues(t *testing.T) {
 	}
 }
 
-func TestADR_0325_DirectDCRCorruptLifecycleOrGrantFailsClosed(t *testing.T) {
+func TestDirectDCRCorruptLifecycleOrGrantFailsClosed(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
 		mutate func([]byte) []byte
@@ -1050,7 +1050,7 @@ func TestOAuthDCRRegistrationResetAllowsValidOrMissingGrant(t *testing.T) {
 	}
 }
 
-func TestADR_0325_DirectDCRRegistrationCASWinnerAdoption(t *testing.T) {
+func TestDirectDCRRegistrationCASWinnerAdoption(t *testing.T) {
 	fixture := newDCRMetadataFixture(t)
 	resource := fixture.server.URL + "/gw/mcp"
 	store := &conflictAfterCommitStore{Store: newDCRMemoryStore(t), conflictOnPut: 2}
@@ -1083,7 +1083,7 @@ func TestADR_0325_DirectDCRRegistrationCASWinnerAdoption(t *testing.T) {
 	}
 }
 
-func TestADR_0325_PublicNoneWireQualification(t *testing.T) {
+func TestPublicNoneWireQualification(t *testing.T) {
 	fixture := newDCRMetadataFixture(t)
 	resource := fixture.server.URL + "/gw/mcp"
 	store := newDCRMemoryStore(t)
@@ -1173,7 +1173,7 @@ func TestOAuthDCRRestoresPersistedGrant(t *testing.T) {
 	}
 }
 
-func TestADR_0325_DirectDCRRejectsUnsolicitedRefreshToken(t *testing.T) {
+func TestDirectDCRRejectsUnsolicitedRefreshToken(t *testing.T) {
 	fixture := newDCRMetadataFixture(t)
 	fixture.unsolicitedRefresh = true
 	resource := fixture.server.URL + "/gw/mcp"
@@ -1205,7 +1205,7 @@ func TestADR_0325_DirectDCRRejectsUnsolicitedRefreshToken(t *testing.T) {
 	}
 }
 
-func TestADR_0325_DirectDCRExpiryRequiresLoginWithoutRefresh(t *testing.T) {
+func TestDirectDCRExpiryRequiresLoginWithoutRefresh(t *testing.T) {
 	fixture := newDCRMetadataFixture(t)
 	resource := fixture.server.URL + "/gw/mcp"
 	store := newDCRMemoryStore(t)
@@ -1253,7 +1253,7 @@ func TestADR_0325_DirectDCRExpiryRequiresLoginWithoutRefresh(t *testing.T) {
 	}
 }
 
-func TestADR_0325_DirectDCRGrantResetFencesStaleWriters(t *testing.T) {
+func TestDirectDCRGrantResetFencesStaleWriters(t *testing.T) {
 	fixture := newDCRMetadataFixture(t)
 	resource := fixture.server.URL + "/gw/mcp"
 	store := newDCRMemoryStore(t)
@@ -1287,7 +1287,7 @@ func TestADR_0325_DirectDCRGrantResetFencesStaleWriters(t *testing.T) {
 	}
 }
 
-func TestADR_0325_DirectDCRIdentityMismatchHasNoSideEffects(t *testing.T) {
+func TestDirectDCRIdentityMismatchHasNoSideEffects(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
 		change func(*dcrMetadataFixture, *OAuthOptions, *string)
@@ -1529,7 +1529,7 @@ func TestPrepareOAuthDCRLoginDoesNotBootstrapLifecycleDeletedDuringDiscovery(t *
 	}
 }
 
-func TestADR_0325_DirectDCRChallengeIssuerBinding(t *testing.T) {
+func TestDirectDCRChallengeIssuerBinding(t *testing.T) {
 	fixture := newDCRMetadataFixture(t)
 	resource, store := fixture.server.URL+"/gw/mcp", newDCRMemoryStore(t)
 	presented := 0
@@ -1693,7 +1693,7 @@ func TestOAuthDCRMalformedStoredIdentityIsCorruptWithoutMutation(t *testing.T) {
 	}
 }
 
-func TestADR_0325_DirectDCRLifecycleBindingAndCAS(t *testing.T) {
+func TestDirectDCRLifecycleBindingAndCAS(t *testing.T) {
 	fixture := newDCRMetadataFixture(t)
 	resource, store := fixture.server.URL+"/gw/mcp", newDCRMemoryStore(t)
 	opts := fixture.options(t, store)

@@ -15,7 +15,6 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
-	"google.golang.org/protobuf/encoding/protowire"
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
 	"github.com/stacklok/mecatl/contracts/sessionaffinity"
@@ -75,33 +74,37 @@ var _ mecatlv1.HarnessServiceServer = (*HarnessServer)(nil)
 
 // CreateSession allocates a new session and returns its id.
 func (h *HarnessServer) CreateSession(ctx context.Context, req *mecatlv1.CreateSessionRequest) (*mecatlv1.CreateSessionResponse, error) {
-	if hasLegacyCreateSessionField(req.ProtoReflect().GetUnknown()) {
-		return nil, status.Error(codes.InvalidArgument, "legacy workspace placement fields are unsupported")
+	if len(req.ProtoReflect().GetUnknown()) != 0 {
+		return nil, status.Error(codes.InvalidArgument, "unknown create session fields are unsupported")
 	}
 	if err := validateGRPCCreateSessionAffinity(ctx, req.GetDebugTargetSessionId()); err != nil {
 		return nil, err
 	}
-	// Session profile: "" binds the server-owned default placement and "no-fs"
-	// requests explicit filesystem attenuation; anything else is a loud
-	// InvalidArgument. Binding and exact EnvironmentRef validation happen in the
-	// service, so this transport never accepts or derives a workspace.
-	profile, err := ParseSessionProfile(req.GetProfile())
+	execution, err := executionFromProto(req.GetExecution())
 	if err != nil {
 		return nil, toStatus(err)
 	}
-	// Per-session provider/model selector (multi-provider Phase 0, S3): the two
+	profile := ProfileDefault
+	if execution.Kind == PlacementSelectorNoFS {
+		profile = ProfileNoFS
+	}
+	// Per-session provider/model selector: the two
 	// fields map to the neutral ProviderSelector; the zero selector keeps the
 	// shared-engine fast path. An unknown/unavailable provider, or model_id without
 	// provider_id, surfaces as InvalidArgument via toStatus.
 	sel := ProviderSelector{ProviderID: req.GetProviderId(), ModelID: req.GetModelId(), ReasoningEffort: req.GetReasoningEffort()}
 	var opts []CreateSessionOption
+	opts = append(opts, WithExecutionSelection(execution))
 	if target := req.GetDebugTargetSessionId(); target != "" {
 		opts = append(opts, WithDebugTarget(session.SessionID(target)))
 	}
 	if names := req.GetDebugMcpServers(); len(names) > 0 {
 		opts = append(opts, WithDebugMCP(names))
 	}
-	// Client-provided MCP servers (issue #821, ADR 0237). Both wire transports go
+	if name := req.GetAgentDefinitionName(); name != "" {
+		opts = append(opts, WithAgentDefinitionName(name))
+	}
+	// Client-provided MCP servers (issue #821). Both wire transports go
 	// through the ONE Service seam, which classifies through the same validator the
 	// ACP surface uses and then applies the deployment policy — so this handler
 	// neither classifies an entry nor decides whether the field is accepted here.
@@ -126,34 +129,21 @@ func (h *HarnessServer) CreateSession(ctx context.Context, req *mecatlv1.CreateS
 	// read from the composition single source (Service.ResolvedModel) — NEVER from
 	// req.GetModelId(), which is empty for a default session and ambiguous for a
 	// passthrough id. Same single-source discipline as session_capabilities.
+	files, shell := executionSessionCapabilities(sess)
 	return &mecatlv1.CreateSessionResponse{
 		SessionId: string(sess.ID),
 		SessionCapabilities: &mecatlv1.SessionCapabilities{
-			Image: scaps.Image,
-			Audio: scaps.Audio,
+			Image:          scaps.Image,
+			Audio:          scaps.Audio,
+			ExecutionFiles: files,
+			BuiltInShell:   shell,
 		},
 		ResolvedModel: resolvedModelToProto(h.svc.resolvedModelFor(sess)),
 		Placement:     placementMetadataToProto(sess.Placement),
+		// resolved_agent_definition_name echoes the bound name VERBATIM off the
+		// session aggregate, mirroring resolved_model's single-source discipline.
+		ResolvedAgentDefinitionName: sess.AgentDefinitionName,
 	}, nil
-}
-
-func hasLegacyCreateSessionField(raw []byte) bool {
-	for len(raw) > 0 {
-		number, wireType, n := protowire.ConsumeTag(raw)
-		if n < 0 {
-			return false
-		}
-		raw = raw[n:]
-		if number == 1 || number == 8 {
-			return true
-		}
-		n = protowire.ConsumeFieldValue(number, wireType, raw)
-		if n < 0 {
-			return false
-		}
-		raw = raw[n:]
-	}
-	return false
 }
 
 // clientMCPFromProto maps the wire McpServerSpec list onto the transport-neutral
@@ -186,6 +176,14 @@ func (h *HarnessServer) GetServerInfo(_ context.Context, req *mecatlv1.GetServer
 	return h.svc.serverInfoResponse(req.GetProviderId()), nil
 }
 
+func (h *HarnessServer) sessionSnapshot(ctx context.Context, sess *session.Session) *mecatlv1.Session {
+	files, shell := executionSessionCapabilities(sess)
+	proto := toProtoSession(sess, h.svc.resolvedModelFor(sess), h.svc.capabilitiesFor(ctx), h.svc.sessionCapabilitiesFor(sess))
+	proto.SessionCapabilities.ExecutionFiles = files
+	proto.SessionCapabilities.BuiltInShell = shell
+	return proto
+}
+
 // GetSession returns a snapshot of the requested session.
 func (h *HarnessServer) GetSession(ctx context.Context, req *mecatlv1.GetSessionRequest) (*mecatlv1.GetSessionResponse, error) {
 	if err := validateGRPCSessionAffinity(ctx, req.GetSessionId()); err != nil {
@@ -198,7 +196,7 @@ func (h *HarnessServer) GetSession(ctx context.Context, req *mecatlv1.GetSession
 	if err != nil {
 		return nil, toStatus(err)
 	}
-	proto := toProtoSession(sess, h.svc.resolvedModelFor(sess), h.svc.capabilitiesFor(ctx), h.svc.sessionCapabilitiesFor(sess))
+	proto := h.sessionSnapshot(ctx, sess)
 	// Lazy display-time fallback: a session whose snapshot Title was never seeded
 	// (or is empty) gets a derived label so GetSession shows one without a
 	// write-on-read — sess.Title is NOT mutated.
@@ -270,7 +268,8 @@ func (h *HarnessServer) SetMode(ctx context.Context, req *mecatlv1.SetModeReques
 	if err != nil {
 		return nil, toStatus(err)
 	}
-	return &mecatlv1.SetModeResponse{Session: toProtoSession(sess, h.svc.resolvedModelFor(sess), h.svc.capabilitiesFor(ctx), h.svc.sessionCapabilitiesFor(sess))}, nil
+	proto := h.sessionSnapshot(ctx, sess)
+	return &mecatlv1.SetModeResponse{Session: proto}, nil
 }
 
 // CloseSession ends a session and releases its server-side resources. It returns
@@ -428,7 +427,8 @@ func (h *HarnessServer) RenameSession(ctx context.Context, req *mecatlv1.RenameS
 	if err != nil {
 		return nil, toStatus(err)
 	}
-	return &mecatlv1.RenameSessionResponse{Session: toProtoSession(sess, h.svc.resolvedModelFor(sess), h.svc.capabilitiesFor(ctx), h.svc.sessionCapabilitiesFor(sess))}, nil
+	proto := h.sessionSnapshot(ctx, sess)
+	return &mecatlv1.RenameSessionResponse{Session: proto}, nil
 }
 
 // DeleteSession physically removes an idle main session and store-managed sidecars.
@@ -754,7 +754,7 @@ func (s *streamSender) Send(m *mecatlv1.ConverseResponse) error {
 // sends behind a dead relay. The error is sticky — no further Send happens
 // after it — and is returned once the run has fully drained.
 //
-// The durable event-log Append (cloud-native Phase 3a) is DECOUPLED from the
+// The durable event-log Append is DECOUPLED from the
 // client send: it runs for EVERY observed event, BEFORE and independent of the
 // drain-to-discard guard, so a disconnected client never stops the log (the
 // whole point of a server-side durable log is to survive the client — it must
@@ -1105,7 +1105,7 @@ func (h *HarnessServer) handleCancelFrame(ctx context.Context, id session.Sessio
 }
 
 // staleStreamControl reports a Converse control frame that names a run which is
-// no longer active (ADR 0249). Callers decide whether their control type has a
+// no longer active. Callers decide whether their control type has a
 // client-visible refusal lane; cancel remains fire-and-forget, while approval
 // emits control.refused correlated by ask id.
 func (h *HarnessServer) staleStreamControl(ctx context.Context, id session.SessionID, frame, expected string, run *agent.Run) error {
@@ -1305,11 +1305,10 @@ func (h *HarnessServer) GetMcpPrompt(ctx context.Context, req *mecatlv1.GetMcpPr
 	return &mecatlv1.GetMcpPromptResponse{Description: res.Description, Messages: msgs}, nil
 }
 
-// GetCompatibilityInfo returns the deployment's compatibility descriptor
-// (ADR 0248).
+// GetCompatibilityInfo returns the deployment's compatibility descriptor.
 //
 // Distinct from GetServerInfo above, which answers "which BUILD is this?" under
-// ADR 0245's privacy boundary. This answers "what may I do with this server?"
+// the server-info privacy boundary. This answers "what may I do with this server?"
 // and carries exactly the capabilities/configuration that boundary keeps out of
 // the identity response.
 //
@@ -1357,6 +1356,24 @@ func (h *HarnessServer) ListAgents(ctx context.Context, _ *mecatlv1.ListAgentsRe
 // ListSkills returns the resolved skills-inventory snapshot.
 func (h *HarnessServer) ListSkills(ctx context.Context, _ *mecatlv1.ListSkillsRequest) (*mecatlv1.ListSkillsResponse, error) {
 	return &mecatlv1.ListSkillsResponse{Skills: h.svc.ListSkills(ctx)}, nil
+}
+
+// ListSkillFiles lists the readable files of one skill in the caller's skill view.
+func (h *HarnessServer) ListSkillFiles(ctx context.Context, req *mecatlv1.ListSkillFilesRequest) (*mecatlv1.ListSkillFilesResponse, error) {
+	files, err := h.svc.ListSkillFiles(ctx, req.GetName())
+	if err != nil {
+		return nil, toStatus(err)
+	}
+	return &mecatlv1.ListSkillFilesResponse{Files: files}, nil
+}
+
+// ReadSkillFile returns the text of one file of a skill in the caller's skill view.
+func (h *HarnessServer) ReadSkillFile(ctx context.Context, req *mecatlv1.ReadSkillFileRequest) (*mecatlv1.ReadSkillFileResponse, error) {
+	content, err := h.svc.ReadSkillFile(ctx, req.GetName(), req.GetFile())
+	if err != nil {
+		return nil, toStatus(err)
+	}
+	return &mecatlv1.ReadSkillFileResponse{Content: content}, nil
 }
 
 // ListModels returns models and provider statuses from one completed publication.
@@ -1574,7 +1591,7 @@ func (h *HarnessServer) ListWorktrees(ctx context.Context, req *mecatlv1.ListWor
 }
 
 // StreamSessionEvents replays a session's durable event log as a server stream
-// of Event envelopes (issue #245 Phase 1; cloud-native Phase 3a read-back).
+// of Event envelopes (issue #245).
 func (h *HarnessServer) StreamSessionEvents(req *mecatlv1.StreamSessionEventsRequest, stream grpc.ServerStreamingServer[mecatlv1.Event]) error {
 	if err := validateGRPCSessionAffinity(stream.Context(), req.GetSessionId()); err != nil {
 		return err
@@ -1925,8 +1942,8 @@ func sameMCPAuthorizationControlEvent(first, next session.Event) bool {
 		first.Authorization.Status == next.Authorization.Status
 }
 
-// StreamSessionLive is the LIVE per-session event stream (ADR 0075
-// fire-result-delivery Scenario 6 / Wave 3): a thin transport over the in-process
+// StreamSessionLive is the LIVE per-session event stream
+// (fire-result delivery): a thin transport over the in-process
 // per-session subscription registry (Service.Subscribe / PublishSessionEvent). It
 // is the UNIFIED bridge serving BOTH the embedded mecatui (which dials its
 // in-process server over a real gRPC UNIX socket) AND a remote mecated — ONE
@@ -1990,8 +2007,8 @@ func (h *HarnessServer) StreamSessionLive(req *mecatlv1.StreamSessionLiveRequest
 	}
 }
 
-// WatchSessionEvents is the DURABLE replay-then-follow stream (issue #821, ADR
-// 0250): a thin transport over Service.WatchSessionEvents.
+// WatchSessionEvents is the DURABLE replay-then-follow stream (issue #821):
+// a thin transport over Service.WatchSessionEvents.
 //
 // The SSE route GET /v1/sessions/{id}/watch consumes the SAME service method, so
 // the two transports deliver identical envelope sequences by construction rather
@@ -2130,8 +2147,7 @@ func isDeliveryNoteText(text string) bool {
 }
 
 // ListSessions returns the stored-session inventory — the picker metadata a
-// client renders to let an operator open an EXISTING session by id (issue #245
-// Phase 1).
+// client renders to let an operator open an EXISTING session by id (issue #245).
 func (h *HarnessServer) ListSessions(ctx context.Context, req *mecatlv1.ListSessionsRequest) (*mecatlv1.ListSessionsResponse, error) {
 	page, err := h.svc.ListSessionPage(ctx, ListSessionsPageRequest{
 		PageSize: int(req.GetPageSize()), Cursor: req.GetCursor(),
@@ -2298,7 +2314,7 @@ func statusForEntry(entry errorCodeEntry, err error) error {
 		// AC2.2 requires the IDENTICAL string on both transports, and the HTTP
 		// problem body's `code`/`type` are lowercase to match RFC 9457 style.
 		// Upper-casing here would give one error identity two spellings, and
-		// every SDK a case conversion to know about. ADR 0248 decision 7 records
+		// every SDK a case conversion to know about. The contract accepts
 		// the trade; TestSDKServerEnablers_Scenario2_ErrorCodeTransportParity
 		// fails if the two ever diverge.
 		Reason: entry.Code,

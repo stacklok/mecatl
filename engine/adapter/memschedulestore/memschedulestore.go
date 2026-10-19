@@ -1,5 +1,5 @@
 // Package memschedulestore is the in-memory reference port.ScheduleStore
-// (scheduled-tasks issue #189, Phase 1b): the offline, clock-injected
+// (scheduled-tasks issue #189): the offline, clock-injected
 // single-process schedule registry the conformance suite validates and that
 // composition can wire as the default-store opt-in. It keeps per-schedule
 // Spec+State records and per-fire ScheduleFire records in mutex-guarded maps
@@ -68,7 +68,7 @@ type Store struct {
 var _ port.ScheduleStore = (*Store)(nil)
 
 // compile-time assertion that Store satisfies the OPTIONAL ScheduleOneShotReArmer
-// seam (ADR 0059 Phase 2 — the at-least-once one-shot re-arm). A store that does
+// seam (the at-least-once one-shot re-arm). A store that does
 // not implement it degrades to at-most-once (byte-identical pre-Phase-2).
 var _ port.ScheduleOneShotReArmer = (*Store)(nil)
 
@@ -259,7 +259,7 @@ func (s *Store) Claim(_ context.Context, name string, now, nextFire time.Time) (
 	// Re-check the at-most-once fence: the slot must STILL be due at claim time.
 	// A peer's Claim between this caller's Due and Claim advanced NextFireAt
 	// past `now`; the slot is gone.
-	if !rec.state.Enabled || rec.state.DeletionID != "" {
+	if !rec.state.Enabled || rec.state.DeletionID != "" || rec.state.LastFireSessionID == port.PendingFireSessionID || !rec.state.LastFireStartedAt.IsZero() {
 		return port.Schedule{}, ErrNotFound
 	}
 	if rec.state.NextFireAt.IsZero() || rec.state.NextFireAt.After(now) {
@@ -295,7 +295,8 @@ func (s *Store) Claim(_ context.Context, name string, now, nextFire time.Time) (
 // at-most-once). The Enabled + MaxFires checks STILL apply. The at-most-once
 // fence is LastFireAt == now: a second ClaimNow at the same now (or a ClaimNow
 // racing a tick-loop Claim at the same now) is rejected — the advance already
-// happened. See port.ScheduleStore.ClaimNow for the crash-recoverability rationale.
+// happened. It additionally rejects pending or started predecessors atomically,
+// different timestamps. See port.ScheduleStore.ClaimNow for settlement semantics.
 func (s *Store) ClaimNow(_ context.Context, name string, now, nextFire time.Time) (port.Schedule, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -303,7 +304,7 @@ func (s *Store) ClaimNow(_ context.Context, name string, now, nextFire time.Time
 	if !ok {
 		return port.Schedule{}, ErrNotFound
 	}
-	if !rec.state.Enabled || rec.state.DeletionID != "" {
+	if !rec.state.Enabled || rec.state.DeletionID != "" || rec.state.LastFireSessionID == port.PendingFireSessionID || !rec.state.LastFireStartedAt.IsZero() {
 		return port.Schedule{}, ErrNotFound
 	}
 	if rec.spec.MaxFires > 0 && rec.state.FireCount >= rec.spec.MaxFires {
@@ -375,12 +376,13 @@ func (s *Store) RecordFire(_ context.Context, f port.ScheduleFire) error {
 	if !ok {
 		return ErrNotFound
 	}
-	rec.state.LastFireSessionID = f.SessionID
-	// Clear the in-flight fields: a terminal fire has no in-flight run.
-	rec.state.LastFireStartedAt = time.Time{}
-	rec.state.LastFireProgressAt = time.Time{}
-	rec.state.FireDeadline = time.Time{}
-	s.scheds[f.ScheduleName] = rec
+	if rec.state.LastFireAt.IsZero() || rec.state.LastFireAt.Equal(f.FiredAt) {
+		rec.state.LastFireSessionID = f.SessionID
+		rec.state.LastFireStartedAt = time.Time{}
+		rec.state.LastFireProgressAt = time.Time{}
+		rec.state.FireDeadline = time.Time{}
+		s.scheds[f.ScheduleName] = rec
+	}
 	s.fires[f.ID] = cloneFire(f)
 	return nil
 }
@@ -493,15 +495,7 @@ func (s *Store) ListFires(_ context.Context, scheduleName string) ([]port.Schedu
 	return out, nil
 }
 
-// ReArmOneShot is the at-least-once re-arm primitive for a one-shot schedule
-// (ADR 0059 Phase 2). It atomically: re-enables the schedule (Enabled=true),
-// sets NextFireAt to nextFire, and increments OneShotRetryCount. The atomicity
-// (the single mutex) is the re-arm fence: two concurrent re-arms cannot
-// double-increment the counter or double-enable. The not-found case wraps
-// ErrScheduleNotFound. The retry-budget gate (OneShotRetryCount <
-// OneShotMaxRetries) is the CALLER's responsibility — the store does NOT enforce
-// the budget, it only atomically advances the counter. One-shot-only; the caller
-// never calls this on a cron schedule.
+// ReArmOneShot validates current retry eligibility and advances it under one lock.
 func (s *Store) ReArmOneShot(_ context.Context, name string, nextFire time.Time) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -511,6 +505,23 @@ func (s *Store) ReArmOneShot(_ context.Context, name string, nextFire time.Time)
 	}
 	if rec.state.DeletionID != "" {
 		return fmt.Errorf("memschedulestore: %w", port.ErrScheduleDeleting)
+	}
+	if rec.spec.Trigger.Kind() != port.TriggerOneShot || !rec.spec.OneShotRetry ||
+		rec.state.Enabled || rec.state.OneShotRetryCount >= rec.spec.OneShotMaxRetries ||
+		rec.state.LastFireAt.IsZero() || rec.state.LastFireSessionID == port.PendingFireSessionID || !rec.state.LastFireStartedAt.IsZero() {
+		return ErrNotFound
+	}
+	failed := false
+	for _, fire := range s.fires {
+		if fire.ScheduleName == name && fire.FiredAt.Equal(rec.state.LastFireAt) && fire.SessionID == rec.state.LastFireSessionID {
+			if fire.Stop != session.StopError {
+				return ErrNotFound
+			}
+			failed = true
+		}
+	}
+	if !failed {
+		return ErrNotFound
 	}
 	rec.state.Enabled = true
 	rec.state.NextFireAt = nextFire

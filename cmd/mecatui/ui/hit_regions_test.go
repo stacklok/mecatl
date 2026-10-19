@@ -22,15 +22,24 @@ type hitDispatchSurface struct {
 	hits     map[HitID]string
 	received []surfaceHitMsg
 	hitMsgs  int
+	renders  [][2]int
+	keys     int
+	wheels   int
 }
 
-func (s *hitDispatchSurface) Render(_, _ int) (string, []ClickableRegion) {
+func (s *hitDispatchSurface) Render(width, height int) (string, []ClickableRegion) {
+	s.renders = append(s.renders, [2]int{width, height})
+	s.hits = nil
+	if width <= 0 || height <= 0 {
+		return "", nil
+	}
 	id := s.deps.hits.allocate()
 	s.hits = map[HitID]string{id: "activate"}
 	return "hit target", []ClickableRegion{{rect: cellRect{x0: 2, x1: 5, y0: 1, y1: 2}, hit: id}}
 }
 
-func (*hitDispatchSurface) HandleKey(tea.KeyPressMsg) (tea.Cmd, bool, bool) {
+func (s *hitDispatchSurface) HandleKey(tea.KeyPressMsg) (tea.Cmd, bool, bool) {
+	s.keys++
 	return nil, true, false
 }
 
@@ -47,8 +56,11 @@ func (s *hitDispatchSurface) HandleMsg(msg tea.Msg) (tea.Cmd, bool, bool) {
 	return nil, true, false
 }
 
-func (*hitDispatchSurface) HandleWheel(tea.MouseWheelMsg) (tea.Cmd, bool) { return nil, true }
-func (*hitDispatchSurface) Close()                                        {}
+func (s *hitDispatchSurface) HandleWheel(tea.MouseWheelMsg) (tea.Cmd, bool) {
+	s.wheels++
+	return nil, true
+}
+func (*hitDispatchSurface) Close() {}
 
 func hitDispatchModel(t *testing.T) (Model, *hitDispatchSurface) {
 	t.Helper()

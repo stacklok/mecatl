@@ -34,7 +34,7 @@ const (
 	StateStore StateKind = "store"
 	// StateLease is the SHARED single-host flock session-lease dir
 	// (--session-lease-dir); two Locals sharing a store also share this so the
-	// cross-process lease is genuinely contended (cloud-native Phase 4).
+	// cross-process lease is genuinely contended.
 	StateLease StateKind = "lease"
 	// StateArtifacts is the harness-owned artifact dir for this suite run.
 	StateArtifacts StateKind = "artifacts"

@@ -1,5 +1,5 @@
 # Reusable mecatequi workflow. See user-docs/building/deployment/mecatequi.md for setup and
-# docs/adr/0028-mecatequi.md for the split-privilege design.
+# the split-privilege design.
 #
 # Sibling actions use the `$/` self-repository syntax: it resolves to THIS repository at
 # the exact ref this workflow is running from, with no checkout. That is why there is no
@@ -222,7 +222,7 @@ jobs:
     # on it wrongly SKIPS legitimate runs. For a PRIVATE repo the trigger IS the gate (label
     # application needs triage/write; comment access is team-only). For a PUBLIC repo, the
     # caller should use the escape-hatch template and add a dedicated permission-check gate
-    # job (see docs/adr/0028-mecatequi.md).
+    # job (see user-docs/building/deployment/mecatequi.md).
     needs: acknowledge
     if: >-
       needs.acknowledge.result == 'success' && (
@@ -288,7 +288,7 @@ jobs:
           setup-script: ${{ inputs.setup-script }}
 
       - name: Upload run artifacts
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: mecatequi-run
           # Read every path from the action's outputs (including events-path) so an
@@ -348,7 +348,7 @@ jobs:
       # PATCH_PATH/SUMMARY_PATH absent and an empty EXIT_CLASS, which the script reads as
       # setup-failure and comments.
       - name: Download run artifacts
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         continue-on-error: true
         with:
           name: mecatequi-run
@@ -394,7 +394,7 @@ jobs:
             echo "mecatequi-publish: using the pre-minted publish-token (form 2)."
           else
             gh_token="${STANDING_TOKEN}"
-            echo "::warning::mecatequi-publish: no publish-app-private-key and no publish-token were provided; falling back to the standing GITHUB_TOKEN grant (form 3). The stronger posture is a JIT GitHub App installation token (publish-app-id + publish-app-private-key) or a pre-minted publish-token — see docs/adr/0028-mecatequi.md."
+            echo "::warning::mecatequi-publish: no publish-app-private-key and no publish-token were provided; falling back to the standing GITHUB_TOKEN grant (form 3). The stronger posture is a JIT GitHub App installation token (publish-app-id + publish-app-private-key) or a pre-minted publish-token."
           fi
           # Write to $GITHUB_ENV so publish.sh reads GH_TOKEN from the process environment.
           # The value never appears in the log: it is piped to the file, not echoed.

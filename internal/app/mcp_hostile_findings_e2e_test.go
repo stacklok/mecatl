@@ -181,10 +181,9 @@ func TestMCPHostileFindingsE2E(t *testing.T) {
 	})
 
 	// F-RT — recovery fail-closes on an oversized filtered result: `.items` filters
-	// to a 25KB-100KB result, which the fix now fail-closes on (actionable error
+	// to a 25KB-100KB result, which fail-closes (actionable error
 	// pointing at narrowing the jq filter further) rather than Truncating it at
-	// 25KB into invalid JSON. (Guards the FIXED behavior; this subtest used to
-	// assert the pre-fix re-truncation bug.)
+	// 25KB into invalid JSON. (Guards the FIXED behavior.)
 	t.Run("F-RT_recovery_failcloses_oversized", func(t *testing.T) {
 		r := results["c3"]
 		if !r.IsError {

@@ -60,7 +60,7 @@ func foldOperatorGuardrails(cfg Config) Config {
 		cfg.GuardrailsTaskWindow = g.TaskWindow
 	}
 	cfg.GuardrailsTaskWindow = clampReviewTaskWindow(cfg.GuardrailsTaskWindow)
-	// Escape knob (ADR 0080): YAML-only (no flag); OR-folded like Disabled.
+	// Escape knob: YAML-only (no flag); OR-folded like Disabled.
 	if g.Escape {
 		cfg.GuardrailsEscape = true
 	}
@@ -431,11 +431,11 @@ var defaultGuardrailSpecs = []modelhook.RuleSpec{
 }
 
 // effectiveGuardrailSpecs returns the rule specs to compile: the operator's explicit
-// rules when any are configured, else the built-in default BLOCK set (ADR 0060).
+// rules when any are configured, else the built-in default BLOCK set.
 // usedDefaults reports which, so the posture line (logGuardrailsPosture) can annotate
 // "default set" only when the defaults are in force.
 //
-// Posture-coupling (ADR 0062, sub-decision B): under posture YOLO ONLY (the
+// Posture-coupling: under posture YOLO ONLY (the
 // truly-off, gate-free tier that maps to Claude Code's bypassPermissions) ALL
 // guardrail rule modes are DEMOTED to advisory (observe-only) by demoteForPosture —
 // it never blocks or asks, it only logs + emits an EvHook. strict/trusted/AUTO keep
@@ -478,7 +478,7 @@ func effectiveGuardrailSpecs(cfg Config) (specs []modelhook.RuleSpec, usedDefaul
 }
 
 // demoteForPosture demotes the enforcing guardrail block mode to advisory
-// under posture YOLO ONLY (ADR 0062, sub-decision B; CC bypassPermissions parity).
+// under posture YOLO ONLY (CC bypassPermissions parity).
 // strict/trusted/auto keep the configured mode — under auto the approve-once ask IS
 // the enforcement behaviour. It is the SINGLE posture→mode coupling point so the
 // default-set and operator-rule branches cannot drift.
@@ -490,10 +490,10 @@ func demoteForPosture(cfg Config, mode string) string {
 }
 
 // guardrailsConfigured reports whether guardrails are switched on: a checker model
-// is configured — via --guardrails-model OR a bound `guardrail` model slot (ADR 0046,
-// configure = enable, the router-parity model of ADR 0042) — AND the master kill-switch
+// is configured — via --guardrails-model OR a bound `guardrail` model slot (configure =
+// enable, the same model as the subagent router) — AND the master kill-switch
 // is not set. A model with NO explicit rules is still ON — it takes the default BLOCK
-// rule set (effectiveGuardrailSpecs, ADR 0060; the model being configured is the opt-in
+// rule set (effectiveGuardrailSpecs; the model being configured is the opt-in
 // to spend). The kill-switch (--guardrails=off → GuardrailsDisabled) wins over any
 // config. Resolution precedence is unchanged: a bound slot SUPERSEDES the gate value's
 // model (see resolveGuardrailsCheckerModel).
@@ -530,44 +530,52 @@ const (
 // resolveGuardrailsCheckerModel is the SINGLE source of truth for the resolved guardrail
 // checker model + its provenance. It is PURE (no diagnostics, no provider) so the
 // build-once posture line (logGuardrailsPosture) and the per-session checker builder
-// (buildGuardrailsChecker) read the SAME resolution and cannot drift. Precedence mirrors
-// the pre-#46 buildGuardrailsChecker exactly:
+// (buildGuardrailsChecker) read the SAME resolution and cannot drift. Precedence:
 //
 //  1. slot: resolveSlotModel(cfg, slotGuardrail, "") → if ok, model = that; src = srcSlot
 //     (or srcSlotSupersedingGate when cfg.GuardrailsModel != "" AND differs from the
 //     slot's resolved model — a same-id gate value stays srcSlot, no "superseding").
 //  2. else gate: sel := cfg.GuardrailsModel; resolved, _ := lookupModelAlias(cfg, sel);
 //     src = srcGate. Under UseMock an unresolved gate value passes through as the literal
-//     sel verbatim (matching the old buildGuardrailsChecker:245-251 fail-soft).
+//     sel verbatim (fail-soft).
 //  3. else nothing: model = "", src = srcNone.
 //
 // configured = src != srcNone. A slot that is bound but unresolvable falls through to the
-// gate value (today's fail-soft — a broken slot never wedges the checker).
+// gate value (fail-soft — a broken slot never wedges the checker).
 func resolveGuardrailBinding(cfg Config, reg *providerRegistry) (providerID, model string, src guardrailSource, configured bool, err error) {
 	if cfg.GuardrailsDisabled {
 		return "", "", srcNone, false, nil
 	}
-	var selector string
+	var selector, explicitProvider string
 	if cfg.GuardrailSlot != nil {
-		providerID = strings.TrimSpace(cfg.GuardrailSlot.ProviderID)
+		explicitProvider = strings.TrimSpace(cfg.GuardrailSlot.ProviderID)
 		selector = strings.TrimSpace(cfg.GuardrailSlot.Model)
 		src = srcSlot
 	} else if selector = selectorForSlot(cfg, slotGuardrail); selector != "" {
-		providerID = reg.Default()
 		src = srcSlot
 	} else if selector = strings.TrimSpace(cfg.GuardrailsModel); selector != "" {
-		providerID = reg.Default()
 		src = srcGate
 	} else {
 		return "", "", srcNone, false, nil
 	}
-	model, known := lookupModelAlias(cfg, selector)
-	if (!known || model == "") && cfg.UseMock {
-		model = selector
+	var target ModelTarget
+	var targetErr error
+	if src == srcSlot && explicitProvider == "" {
+		target, targetErr = resolveConfiguredModelTarget(cfg, reg.Default(), selector)
+	} else {
+		target, targetErr = resolveModelTarget(cfg, reg.Default(), explicitProvider, selector)
 	}
-	if !known && !cfg.UseMock {
+	if targetErr != nil && cfg.UseMock {
+		target = ModelTarget{ProviderID: explicitProvider, Model: selector}
+		if target.ProviderID == "" {
+			target.ProviderID = reg.Default()
+		}
+		targetErr = nil
+	}
+	if targetErr != nil {
 		return "", "", srcNone, false, fmt.Errorf("guardrail model selector %q is not resolvable", selector)
 	}
+	providerID, model = target.ProviderID, target.Model
 	if model == "" {
 		return "", "", srcNone, false, fmt.Errorf("guardrail model selector %q resolves to inherit", selector)
 	}
@@ -580,8 +588,9 @@ func resolveGuardrailBinding(cfg Config, reg *providerRegistry) (providerID, mod
 	if src == srcSlot {
 		gate := strings.TrimSpace(cfg.GuardrailsModel)
 		if gate != "" {
-			gateModel, _ := lookupModelAlias(cfg, gate)
-			if gateModel == "" && cfg.UseMock {
+			gateTarget, gateErr := resolveModelTarget(cfg, reg.Default(), "", gate)
+			gateModel := gateTarget.Model
+			if gateErr != nil && cfg.UseMock {
 				gateModel = gate
 			}
 			if gateModel != model {
@@ -675,7 +684,7 @@ func buildGuardrailsChecker(cfg Config, provReg *providerRegistry, provider port
 	return engineGuardrailsChecker{reviewer: reviewer}
 }
 
-// buildGuardrailsEscapeChecker builds the ADR-0080 permission escape check.
+// buildGuardrailsEscapeChecker builds the guardrail-routed permission escape check.
 // It is armed only on the main session at posture auto with the escape knob
 // and guardrails configured. Generic HookRunner requests carry no usage reporter.
 func buildGuardrailsEscapeChecker(cfg Config, provReg *providerRegistry, provider port.LLMProvider) modelhook.VerdictChecker {

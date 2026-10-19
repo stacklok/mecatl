@@ -8,7 +8,7 @@ import "github.com/stacklok/mecatl/engine/session"
 
 // WithSessionOrigin exposes withSessionOrigin so the external tests can build an
 // origin-bearing context directly, instead of only through Engine.Run. Kept
-// test-only on purpose — see the withSessionOrigin doc-comment (ADR 0209).
+// test-only on purpose — see the withSessionOrigin doc-comment.
 var WithSessionOrigin = withSessionOrigin
 
 // EnqueueSteerForTest exposes the canonical Run steer entry point to external

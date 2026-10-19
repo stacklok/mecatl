@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
+	"github.com/stacklok/mecatl/engine/governance"
 	"github.com/stacklok/mecatl/engine/learning"
 	"github.com/stacklok/mecatl/engine/session"
 )
@@ -19,7 +20,7 @@ func (r *countingCanonicalEvidenceReflector) ReflectProjection(context.Context, 
 	return learning.Outcome{Kind: learning.OutcomeProposed}, session.AuxiliaryUsage{}, nil
 }
 
-func TestADR_0259_WorkerSourceAuthorityFailsClosedWithoutIdentityOracle(t *testing.T) {
+func TestWorkerSourceAuthorityFailsClosedWithoutIdentityOracle(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	owner := &session.Principal{Issuer: "issuer", Subject: "alice", GrantType: session.GrantTypeUser}
@@ -118,6 +119,33 @@ func TestADR_0259_WorkerSourceAuthorityFailsClosedWithoutIdentityOracle(t *testi
 	if projection.Messages[1].Text != "done" || projection.Messages[1].Text == source.Conversation.Messages[3].Reasoning {
 		t.Fatalf("canonical projection leaked or lost fields: %+v", projection.Messages[1])
 	}
+
+	t.Run("agent-bound evidence carries source authority", func(t *testing.T) {
+		agentSource := session.New("agent-source", source.Mode, source.EnvironmentRef, source.Limits, source.CreatedAt)
+		agentSource.AgentDefinitionName = "reviewer"
+		if err := agentSource.RestoreLabels(owner, session.Authority{
+			Provenance:    "agent-def:reviewer",
+			CapabilitySet: governance.CapabilitySet{Tools: []string{"Read"}},
+			Ceiling:       &governance.CapabilitySet{Tools: []string{"Read"}},
+		}); err != nil {
+			t.Fatal(err)
+		}
+		// The exact run projection, not the advanced snapshot conversation, is
+		// the evidence source. Reuse its ID so the admission digest stays exact.
+		agentSource.ID = source.ID
+		agentStore := memstore.New()
+		if err := agentStore.Save(ctx, agentSource); err != nil {
+			t.Fatal(err)
+		}
+		got, failure := newLearningEvidenceLoader(agentStore, events).Load(ctx, partition, record, "/workspace")
+		if failure != learning.FailureNone || len(got.Messages) != len(projection.Messages) {
+			t.Fatalf("agent evidence: failure=%q, projection=%+v", failure, got)
+		}
+		bound, ok := agentSource.BoundAuthority()
+		if !ok || bound.Ceiling == nil || len(bound.CapabilitySet.Tools) != 1 {
+			t.Fatal("evidence loading changed source authority")
+		}
+	})
 
 	assertUnavailable := func(name string, loader *learningEvidenceLoader, p learning.AttemptPartition, attempt learning.AttemptRecord) {
 		t.Helper()

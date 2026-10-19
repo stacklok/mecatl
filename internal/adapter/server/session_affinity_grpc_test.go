@@ -33,7 +33,7 @@ func duplicateAffinityContext(first, second string) context.Context {
 	))
 }
 
-func TestADR_0294_CreateSessionDerivedAffinity(t *testing.T) {
+func TestCreateSessionDerivedAffinity(t *testing.T) {
 	svc := newService(t, mockllm.New(), allowRules())
 	client, cleanup := dialGRPC(t, svc)
 	defer cleanup()
@@ -44,11 +44,11 @@ func TestADR_0294_CreateSessionDerivedAffinity(t *testing.T) {
 		req  *mecatlv1.CreateSessionRequest
 		want codes.Code
 	}{
-		{name: "debug exact", ctx: affinityContext("target"), req: &mecatlv1.CreateSessionRequest{Profile: "no-fs", DebugTargetSessionId: "target"}, want: codes.NotFound},
-		{name: "debug missing header compatibility", ctx: context.Background(), req: &mecatlv1.CreateSessionRequest{Profile: "no-fs", DebugTargetSessionId: "target"}, want: codes.NotFound},
+		{name: "debug exact", ctx: affinityContext("target"), req: &mecatlv1.CreateSessionRequest{Execution: &mecatlv1.ExecutionSelection{None: &mecatlv1.ExecutionNone{}}, DebugTargetSessionId: "target"}, want: codes.NotFound},
+		{name: "debug missing header compatibility", ctx: context.Background(), req: &mecatlv1.CreateSessionRequest{Execution: &mecatlv1.ExecutionSelection{None: &mecatlv1.ExecutionNone{}}, DebugTargetSessionId: "target"}, want: codes.NotFound},
 		{name: "no derived reference rejects header", ctx: affinityContext("target"), req: &mecatlv1.CreateSessionRequest{}, want: codes.InvalidArgument},
-		{name: "debug mismatch", ctx: affinityContext("other"), req: &mecatlv1.CreateSessionRequest{Profile: "no-fs", DebugTargetSessionId: "target"}, want: codes.InvalidArgument},
-		{name: "debug duplicate", ctx: duplicateAffinityContext("target", "target"), req: &mecatlv1.CreateSessionRequest{Profile: "no-fs", DebugTargetSessionId: "target"}, want: codes.InvalidArgument},
+		{name: "debug mismatch", ctx: affinityContext("other"), req: &mecatlv1.CreateSessionRequest{Execution: &mecatlv1.ExecutionSelection{None: &mecatlv1.ExecutionNone{}}, DebugTargetSessionId: "target"}, want: codes.InvalidArgument},
+		{name: "debug duplicate", ctx: duplicateAffinityContext("target", "target"), req: &mecatlv1.CreateSessionRequest{Execution: &mecatlv1.ExecutionSelection{None: &mecatlv1.ExecutionNone{}}, DebugTargetSessionId: "target"}, want: codes.InvalidArgument},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -60,7 +60,7 @@ func TestADR_0294_CreateSessionDerivedAffinity(t *testing.T) {
 	}
 }
 
-func TestADR_0294_NewSessionBoundRPCsRequireAffinityClassification(t *testing.T) {
+func TestNewSessionBoundRPCsRequireAffinityClassification(t *testing.T) {
 	want := map[protoreflect.Name]bool{
 		"CreateSession": true, "GetSession": true, "GetSessionTranscript": true,
 		"SetMode": true, "CloseSession": true, "RenameSession": true,
@@ -367,7 +367,7 @@ func TestSessionAffinityAndHandoff_Scenario2_StreamSessionLiveRejectsInvalidAffi
 	}
 }
 
-func TestADR_0294_GRPCHeaderFailureIsNonDisclosing(t *testing.T) {
+func TestGRPCHeaderFailureIsNonDisclosing(t *testing.T) {
 	svc := newService(t, mockllm.New(), allowRules())
 	client, cleanup := dialGRPC(t, svc)
 	defer cleanup()
@@ -457,7 +457,7 @@ func TestSessionAffinityAndHandoff_Scenario2_ConversePreStreamAndFirstFrame(t *t
 	}
 }
 
-func TestADR_0294_ConverseControlsStaySessionBound(t *testing.T) {
+func TestConverseControlsStaySessionBound(t *testing.T) {
 	// Reuse the full live wire fixtures so this acceptance pin proves each
 	// control changes runtime state, rather than merely inspecting protobuf shape.
 	for name, fixture := range map[string]func(*testing.T){
@@ -547,7 +547,7 @@ func TestADR_0294_ConverseControlsStaySessionBound(t *testing.T) {
 	}
 }
 
-func TestADR_0294_ConverseIgnoresUnsetFramesAndDoesNotRestart(t *testing.T) {
+func TestConverseIgnoresUnsetFramesAndDoesNotRestart(t *testing.T) {
 	llm := mockllm.New(mockllm.ChunksTurn(blockingChunks()...))
 	svc := newService(t, llm, allowRules())
 	client, cleanup := dialGRPC(t, svc)
@@ -595,7 +595,7 @@ func TestADR_0294_ConverseIgnoresUnsetFramesAndDoesNotRestart(t *testing.T) {
 	}
 }
 
-func TestADR_0294_GRPCMissingHeaderCompatibility(t *testing.T) {
+func TestGRPCMissingHeaderCompatibility(t *testing.T) {
 	llm := mockllm.New(mockllm.TextTurn("done"))
 	svc := newService(t, llm, allowRules())
 	client, cleanup := dialGRPC(t, svc)

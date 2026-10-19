@@ -391,6 +391,15 @@ func (s *sessionsState) Render(width, height int) (string, []ClickableRegion) {
 }
 
 func (s *sessionsState) HandleKey(msg tea.KeyPressMsg) (tea.Cmd, bool, bool) {
+	if s.compact {
+		if key.Matches(msg, s.deps.keys.Close) {
+			if s.view == sessionsTranscript {
+				s.intent = sessionsPhaseIntent{phase: sessionsIntentPhaseIdle}
+			}
+			return nil, true, true
+		}
+		return nil, true, false
+	}
 	if s.view == sessionsTranscript {
 		if key.Matches(msg, s.deps.keys.ExpandConversation) {
 			s.transcriptExpand = !s.transcriptExpand
@@ -418,12 +427,6 @@ func (s *sessionsState) HandleKey(msg tea.KeyPressMsg) (tea.Cmd, bool, bool) {
 		}
 		s.transcriptStuck = s.transcriptVP.AtBottom()
 		return cmd, true, false
-	}
-	if s.compact {
-		if key.Matches(msg, s.deps.keys.Close) {
-			return nil, true, true
-		}
-		return nil, true, false
 	}
 	if cmd, handled := s.handleActionKey(msg); handled {
 		return cmd, true, false
@@ -693,22 +696,11 @@ func (s *sessionsState) handleNavigationKey(msg tea.KeyPressMsg) (handled bool, 
 		return false, false
 	}
 	list := s.syncList(s.activeSessionID)
-	switch {
-	case key.Matches(msg, s.deps.keys.Up):
-		list.Move(bounded.LineUp)
-	case key.Matches(msg, s.deps.keys.Down):
-		list.Move(bounded.LineDown)
-	case key.Matches(msg, s.deps.keys.ScrollU):
-		list.Move(bounded.PageUp)
-	case key.Matches(msg, s.deps.keys.ScrollD):
-		list.Move(bounded.PageDown)
-	case key.Matches(msg, s.deps.keys.ScrollTop):
-		list.Move(bounded.Top)
-	case key.Matches(msg, s.deps.keys.ScrollBottom):
-		list.Move(bounded.End)
-	default:
+	move, ok := boundedNavigationMove(msg, s.deps.keys)
+	if !ok {
 		return false, false
 	}
+	list.Move(move)
 	return true, false
 }
 

@@ -5,14 +5,13 @@
 //
 // WHY THIS EXISTS. mecatl persists a session via SNAPSHOTS (engine/adapter/sessnap,
 // the JSON DTO the store adapters round-trip), and its OWN resume always reloads
-// from that snapshot. But the durable EventLog (ADR 0027 Phase 3a) records the FULL
+// from that snapshot. But the durable EventLog records the FULL
 // chronological timeline — the same events a relay emits — and a host that already
 // keeps an append-only event log as its system of record (a downstream consumer) would rather
 // implement port.SessionStore.Load by folding its own event stream into a Session
-// than maintain a parallel snapshot. ADR 0027 shipped the durable RECORDING of that
-// stream (List-2 row 11) but left the RECONSTRUCTION direction as snapshot-only; this
-// package is the documented, reference-implemented shape that closes that deferral
-// (ADR 0038).
+// than maintain a parallel snapshot. The durable RECORDING of that stream shipped
+// first, with the RECONSTRUCTION direction left snapshot-only; this package is the
+// documented, reference-implemented shape that closes that gap.
 //
 // WHAT FOLD RECONSTRUCTS — AND WHAT IT CANNOT. A pure event fold rebuilds the
 // STRUCTURAL conversation faithfully: the assistant/tool message sequence, every
@@ -38,7 +37,7 @@
 // (which carries them) is the byte-identical path, which is why mecatl's own resume
 // uses the snapshot; the fold is for event-log-SoR hosts that accept (or themselves
 // carry, in a richer event schema) this contract boundary. This is a DOCUMENTED
-// CONTRACT LIMITATION (engine/COMPATIBILITY.md, ADR 0038), not a bug.
+// CONTRACT LIMITATION (engine/COMPATIBILITY.md), not a bug.
 //
 // CREATION METADATA is supplied via SessionMeta: id, mode, limits, exact
 // EnvironmentRef, display-only placement metadata, profile, provider/model selector,
@@ -46,8 +45,7 @@
 // are facts that NO event carries, so the caller
 // (who created or discovered the session and thus knows them) provides them alongside
 // the stream. A legacy empty title falls back to the first genuine EvUserPrompt.
-// There is deliberately no EvSessionCreated event (ADR 0038 records that as a
-// possible future).
+// There is deliberately no EvSessionCreated event.
 //
 // USER MESSAGES: the loop emits a log-only EvUserPrompt at every site it records a
 // user-role message — the genuine client prompt AND the harness-authored synthetic
@@ -90,13 +88,26 @@ type SessionMeta struct {
 	EnvironmentRef session.EnvironmentRef
 	// Placement is safe display-only metadata; it is never used for reattachment.
 	Placement session.PlacementMetadata
+	// ExecutionCapabilities is the host-observed, creation-time execution ceiling.
+	ExecutionCapabilities *session.ExecutionCapabilities
 	// Profile is the opaque tool-surface profile label ("" = default).
 	Profile string
+	// ExecutionTemplateID/Revision select an exact versioned recipe; neither
+	// value can be reconstructed from events or inferred from EnvironmentRef.
+	ExecutionTemplateID       string
+	ExecutionTemplateRevision string
+	// AgentDefinitionName optionally binds the session's root to a named
+	// AgentDef (ADR 0353); "" is an ordinary, non-agent-bound session. Write-once
+	// creation label, opaque to the fold — mirrors Profile's discipline exactly.
+	AgentDefinitionName string
+	// AgentCreateIntent is opaque original-create retry evidence, not event-carried.
+	// Missing legacy evidence must remain empty.
+	AgentCreateIntent string
 	// ProviderID and ModelID are the opaque neutral provider+model selector pair
 	// ("" / "" = server default).
 	ProviderID string
 	ModelID    string
-	// ReasoningEffort is the opaque neutral reasoning-effort token (ADR 0055), ""
+	// ReasoningEffort is the opaque neutral reasoning-effort token, ""
 	// when unset. Opaque to the domain; carried so the rehydrated session re-mints
 	// the same-effort per-session engine via the factory.
 	ReasoningEffort string
@@ -129,9 +140,14 @@ type SessionMeta struct {
 	Incarnation session.IncarnationID
 	Owner       *session.Principal
 	// Authority is the plain derived-capability payload supplied with creation
-	// metadata. Nil is a documented pre-feature legacy record; a present payload
-	// is validated and bound before reconstruction proceeds.
+	// metadata. Nil is allowed only for ordinary legacy sessions. Agent-bound
+	// metadata requires authority and a ceiling; present payloads always validate
+	// and bind before reconstruction proceeds.
 	Authority *session.Authority
+	// WorkspaceEnrollmentBrokerKeys and its presence bit must come from the same
+	// committed authority revision. They are not reconstructed from events.
+	WorkspaceEnrollmentBrokerKeys        []string
+	WorkspaceEnrollmentBrokerKeysPresent bool
 	// ExternalBinding is the opaque composition-issued process-external
 	// identity (e.g. an MCP broker attachment binding). Not event-carried:
 	// safe to omit for a pure fold UNLESS the host requires exact external-
@@ -192,8 +208,17 @@ func Fold(meta SessionMeta, events iter.Seq2[session.Event, error]) (*session.Se
 	if err := s.RestoreSessionMetadata(meta.Kind, meta.Relationship); err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrReconstruct, err)
 	}
+	// AgentDefinitionName restores BEFORE authority: BindAuthority (reached via
+	// restoreAuthority below) rejects a bind that claims this label without a
+	// Ceiling (ADR 0353) — it can only see the label if it is set first, exactly
+	// as the real create path already sequences it.
+	s.AgentDefinitionName = meta.AgentDefinitionName
+	s.AgentCreateIntent = meta.AgentCreateIntent
 	if err := restoreAuthority(s, meta.Authority); err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrReconstruct, err)
+	}
+	if err := s.RestoreWorkspaceEnrollmentBrokerKeys(meta.WorkspaceEnrollmentBrokerKeys, meta.WorkspaceEnrollmentBrokerKeysPresent); err != nil {
+		return nil, fmt.Errorf("%w: restore workspace enrollment broker keys: %w", ErrReconstruct, err)
 	}
 	if err := s.RestoreLabels(meta.Owner, session.Authority{}); err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrReconstruct, err)
@@ -205,7 +230,13 @@ func Fold(meta SessionMeta, events iter.Seq2[session.Event, error]) (*session.Se
 	// exactly as sessnap.Restore does. Title-specific metadata restores atomically
 	// through RestoreTitleMetadata below.
 	s.Placement = meta.Placement
+	if meta.ExecutionCapabilities != nil {
+		facts := *meta.ExecutionCapabilities
+		s.ExecutionCapabilities = &facts
+	}
 	s.Profile = meta.Profile
+	s.ExecutionTemplateID = meta.ExecutionTemplateID
+	s.ExecutionTemplateRevision = meta.ExecutionTemplateRevision
 	s.ProviderID = meta.ProviderID
 	s.ModelID = meta.ModelID
 	s.ReasoningEffort = meta.ReasoningEffort
@@ -285,7 +316,7 @@ func (f *folder) finalizeOpenTurn() {
 }
 
 func restoreAuthority(s *session.Session, authority *session.Authority) error {
-	if authority == nil {
+	if authority == nil && s.AgentDefinitionName == "" {
 		return nil
 	}
 	if err := sessnap.ValidatePersistedAuthority(authority); err != nil {

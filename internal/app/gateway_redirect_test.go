@@ -69,7 +69,7 @@ func driveStream(p port.LLMProvider) (chunks int, err error) {
 // The Responses adapter's terminal-event guard then fails the zero-event EOF
 // closed as a truncation. That is the correct, secure outcome: no data left
 // loopback, no attacker-controlled content was parsed as a completion, and the
-// non-response is no longer silently accepted as a clean turn.
+// non-response is not silently accepted as a clean turn.
 //
 // Bare-adapter control (mutation-test-the-drift-guards discipline, in the
 // SAME test): openai-go v3.54.0 added its OWN origin-matching guard

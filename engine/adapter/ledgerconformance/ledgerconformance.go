@@ -1,5 +1,5 @@
 // Package ledgerconformance provides a shared conformance test suite for the
-// tool.ReadLedger interface (ADR 0281). Adapters (the in-memory reference
+// tool.ReadLedger interface. Adapters (the in-memory reference
 // memledger, a durable Redis-backed implementation, ...) call Run with a
 // factory that constructs a fresh ledger, and the suite exercises only the
 // tool.ReadLedger interface.

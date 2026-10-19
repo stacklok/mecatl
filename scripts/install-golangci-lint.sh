@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-version=v2.13.1
+version=v2.14.0
 case "${1:-}" in
 	"") ;;
 	--version)
@@ -41,10 +41,10 @@ case "$(uname -m)" in
 esac
 
 case "$os/$arch" in
-	linux/amd64) checksum=b17bfbc9d4aaa48be7f4f1ce3240bc3d8200c870c072bacf15c26219e2cfb9cc ;;
-	linux/arm64) checksum=908317c23db18448f924e853b3d8a659fd919614cd438f224810a4053daa2607 ;;
-	darwin/amd64) checksum=2c373363953e4e0bee2a03b7fe864a5eb6a3822927cb077d9ca33f2ae3cb2da2 ;;
-	darwin/arm64) checksum=0c9818baf6fb8ad26c6d2ef51b68d5a1e260ef07727036b1431647cc44637c7c ;;
+	linux/amd64) checksum=ab90aeb7b066f92a33415b638a50fe5344bbb75a0d32ad30cc248d88f81032ab ;;
+	linux/arm64) checksum=ee7ec5f3453d15ddf106fae5a4d6c71737712348a979d1fe9cd52ec7ea299bae ;;
+	darwin/amd64) checksum=a5667c1c3536be1740133213e1e822bfb8f0d98ea12903174d6d5f635e4ed68d ;;
+	darwin/arm64) checksum=5ef5f36a7147e91dc58ef9ef4d11bb7bad5ead0c76eb6c01327a73c641d1dcc3 ;;
 esac
 
 archive="golangci-lint-${bare_version}-${os}-${arch}.tar.gz"

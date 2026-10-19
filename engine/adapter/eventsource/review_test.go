@@ -210,7 +210,7 @@ func TestFoldReasoningProviderDivergesOnSnapshotOnlyFields(t *testing.T) {
 	}
 	if foldReasoning != "" {
 		t.Fatalf("fold MUST NOT reconstruct Message.Reasoning (not event-carried), got %q "+
-			"— if reasoning is now evented, update the contract docs (COMPATIBILITY.md / ADR 0038)", foldReasoning)
+			"— if reasoning is now evented, update the contract docs (COMPATIBILITY.md)", foldReasoning)
 	}
 }
 
@@ -243,14 +243,15 @@ func TestFoldContractDocMatchesSessionFields(t *testing.T) {
 	//     SetTitle)
 	//   run-scoped (latest segment): Counters
 	//   supplied via SessionMeta (not event-carried): ID, Mode, Limits,
-	//     EnvironmentRef, Placement, Profile, ProviderID, ModelID, ReasoningEffort,
+	//     EnvironmentRef, ExecutionCapabilities, Placement, Profile, AgentDefinitionName, AgentCreateIntent, ExecutionTemplateID, ExecutionTemplateRevision,
+	//     ProviderID, ModelID, ReasoningEffort,
 	//     DebugMCPServers, DebugMCPTools, DebugTargetFingerprint, Title,
 	//     TitleProvenance, TitleGeneration, TitleRevision, Kind, Relationship, CreatedAt, ExternalBinding
 	//   not-event-carried identity labels (also supplied via SessionMeta, via a
 	//     validating helper rather than direct assignment): Owner, Authority
 	wantSessionFields := map[string]struct{}{
 		"ID": {}, "State": {}, "Mode": {}, "Conversation": {}, "Limits": {},
-		"Counters": {}, "Profile": {}, "EnvironmentRef": {}, "Placement": {},
+		"Counters": {}, "Profile": {}, "AgentDefinitionName": {}, "AgentCreateIntent": {}, "ExecutionTemplateID": {}, "ExecutionTemplateRevision": {}, "EnvironmentRef": {}, "ExecutionCapabilities": {}, "Placement": {},
 		"ProviderID": {}, "ModelID": {}, "ReasoningEffort": {}, "DebugMCPServers": {}, "DebugMCPTools": {}, "DebugTargetFingerprint": {}, "Kind": {},
 		"Relationship": {}, "CreatedAt": {},
 		"Title": {}, "TitleProvenance": {}, "TitleGeneration": {}, "TitleRevision": {}, "Owner": {}, "Authority": {},
@@ -341,7 +342,7 @@ func TestFoldMultiRunResetsConsecutiveFailures(t *testing.T) {
 // the archive of a SUBSEQUENT compaction would carry it). That is a separate,
 // pre-existing event-coverage edge (the compaction summary is synthetic compactor state,
 // not user input), orthogonal to #115's user-prompt closure. So this variant asserts the
-// archive HEAD is recovered (the property #115/ADR 0038 promises) rather than a full
+// archive HEAD is recovered (the property #115 promises) rather than a full
 // snapshot deep-equal; the hand-built TestFoldRecoversCompactionArchiveHead proves the
 // archive-folding mechanics deterministically.
 func TestFoldRecoversLiveCompactionArchiveHead(t *testing.T) {

@@ -13,11 +13,13 @@ import (
 	"github.com/stacklok/mecatl/adapters/jsonlstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
+	"github.com/stacklok/mecatl/engine/adapter/wallclock"
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/governance"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
+	"github.com/stacklok/mecatl/internal/adapter/scheduler"
 	"github.com/stacklok/mecatl/internal/adapter/server"
 	"github.com/stacklok/mecatl/internal/syscaller"
 )
@@ -636,19 +638,31 @@ func TestFireDelivery_Scenario3_DeliveryFailureNeverFailsFire(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
+	t.Cleanup(svc.Close)
+	ctx := context.Background()
+	now := time.Now()
+	schedStore := store.ScheduleStore()
 	sched := port.Schedule{Spec: port.ScheduleSpec{
-		Name: "test-sched", OriginSessionID: origin.ID,
-	}}
-	fire := fireRecord("sched--fire1", session.StopEndTurn)
-	deliverFireResult(svc, &errQueue{})(context.Background(), sched, fire)
+		Name: "test-sched", OriginSessionID: origin.ID, Prompt: "complete", Trigger: port.TriggerSpec{Cron: "* * * * *"},
+		EnvironmentRef: session.EnvironmentRef{Kind: session.EnvKindLocal, ID: t.TempDir(), Revision: "in-tree-v1"}, PlacementScope: "legacy-local",
+	}, State: port.ScheduleState{Enabled: true, NextFireAt: now}}
+	if err := schedStore.Save(ctx, sched); err != nil {
+		t.Fatal(err)
+	}
+	s := scheduler.New(scheduler.Config{Store: schedStore, Clock: wallclock.Clock{}, Fire: makeFireFunc(svc, schedStore, time.Second, nil), DeliverFireResult: deliverFireResult(svc, &errQueue{})})
+	t.Cleanup(func() { _ = s.Stop() })
+	fire, err := s.FireNow(ctx, sched.Spec.Name, now)
+	if err != nil || fire.Stop != session.StopEndTurn {
+		t.Fatalf("scheduler fire failed: %+v %v", fire, err)
+	}
 
 	// The queue failure remains visible.
 	if n := diag.warnCount("delivery"); n == 0 {
 		t.Fatalf("expected a delivery WARN, got 0 (the failure must be visible)")
 	}
-	// The fire record is untouched (delivery is decoupled).
-	if fire.Stop != session.StopEndTurn || fire.ID != "sched--fire1" {
-		t.Fatalf("fire record mutated by delivery: %+v", fire)
+	terminal, err := schedStore.LoadFire(ctx, fire.ID)
+	if err != nil || terminal.Stop != session.StopEndTurn || terminal.Err != "" || terminal.SessionID != fire.SessionID {
+		t.Fatalf("delivery failure changed durable terminal result: %+v %v", terminal, err)
 	}
 }
 
@@ -1083,7 +1097,7 @@ func (*errQueue) MarkDelivered(_ context.Context, _ session.SessionID, _ uint64)
 
 var _ port.DeliveryQueue = (*errQueue)(nil)
 
-// --- Phase 4a: started-notice delivery tests (deliverFireStarted) ---
+// --- started-notice delivery tests (deliverFireStarted) ---
 
 // TestFireStarted_StartedNoticeEnqueuedWithIDs verifies the started notice is
 // enqueued via deliverFireStarted carrying the schedule name + fire id.

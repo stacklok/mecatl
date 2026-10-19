@@ -21,7 +21,7 @@ func lifecycleEnvironment(now time.Time) *unstructured.Unstructured {
 	return &unstructured.Unstructured{Object: map[string]any{
 		"apiVersion": "execution.mecatl.dev/v1alpha1", "kind": "ExecutionEnvironment",
 		"metadata": map[string]any{"name": "env", "namespace": "ns"},
-		"spec":     map[string]any{"schemaVersion": int64(2), "revision": "rev", "ownerHash": "owner", "clientHash": hashText("client"), "profile": "go", "profileDigest": "sha256:profile", "desired": "Active"},
+		"spec":     map[string]any{"schemaVersion": int64(2), "revision": "rev", "ownerHash": "owner", "clientHash": hashText("client"), "templateID": "go", "templateRevision": testProfiles().defaultRevision["go"], "templateDigest": testProfiles().byName["go"].Digest, "desired": "Active"},
 		"status": map[string]any{"schemaVersion": int64(2), "epoch": int64(1), "grantGeneration": int64(1), "fenceState": "Healthy", "references": []any{
 			map[string]any{"bindingID": "source", "state": "Published", "operationID": "seed", "createdAt": now.Format(time.RFC3339Nano)},
 		}, "conditions": []any{map[string]any{"type": "Ready", "status": "True"}}},
@@ -32,7 +32,7 @@ func TestEnsurePendingOwnedPersistsOwnerAttestation(t *testing.T) {
 	client := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
 	store := NewStore(client, "ns", testProfiles(), nil)
 	owner := executionenv.Owner{Issuer: "https://issuer.example", Subject: "alice"}
-	allocation, err := store.EnsurePendingOwned(t.Context(), "client", ownerHash(owner), owner, "binding", "go", "fingerprint", "ensure-operation")
+	allocation, err := store.EnsurePendingOwnedRevision(t.Context(), "client", ownerHash(owner), owner, "binding", "go", testProfiles().defaultRevision["go"], "fingerprint", "ensure-operation")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -50,7 +50,7 @@ func TestPublishedBindingReattachesWithoutNewEnsureOperation(t *testing.T) {
 	client := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), map[schema.GroupVersionResource]string{ExecutionEnvironmentGVR: "ExecutionEnvironmentList"})
 	store := NewStore(client, "ns", testProfiles(), nil)
 	owner := executionenv.Owner{Issuer: "https://issuer.example", Subject: "alice"}
-	allocation, err := store.EnsurePendingOwned(ctx, "client", ownerHash(owner), owner, "binding", "go", "fingerprint", "create-operation")
+	allocation, err := store.EnsurePendingOwnedRevision(ctx, "client", ownerHash(owner), owner, "binding", "go", testProfiles().defaultRevision["go"], "fingerprint", "create-operation")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -69,7 +69,7 @@ func TestPublishedBindingReattachesWithoutNewEnsureOperation(t *testing.T) {
 	if err != nil || len(before.Items) != 1 {
 		t.Fatalf("allocation list: %v, err=%v", before, err)
 	}
-	_, err = store.EnsurePendingOwned(ctx, "client", ownerHash(owner), owner, "binding", "go", "fingerprint", "qualification-reattach")
+	_, err = store.EnsurePendingOwnedRevision(ctx, "client", ownerHash(owner), owner, "binding", "go", testProfiles().defaultRevision["go"], "fingerprint", "qualification-reattach")
 	var controlled *executionenv.Error
 	if !errors.As(err, &controlled) || controlled.Code != executionenv.CodeConflict {
 		t.Fatalf("changed Ensure operation used as lookup: err=%v", err)
@@ -259,6 +259,51 @@ func TestClientScopedIntentListReturnsAttestedOwnerOnlyToOwningClient(t *testing
 	other, err := store.ListReferenceIntentsForClient(t.Context(), "other-client", 64)
 	if err != nil || len(other) != 0 {
 		t.Fatalf("other-client intents=%+v err=%v", other, err)
+	}
+}
+
+func TestReserveSuccessorReclaimsOnlyExpiredUnfencedRun(t *testing.T) {
+	for _, tc := range []struct {
+		name            string
+		expires         string
+		activeOperation bool
+		wantSuccess     bool
+	}{
+		{"unexpired", time.Now().Add(time.Minute).UTC().Format(time.RFC3339Nano), false, false},
+		{"malformed expiry", "invalid", false, false},
+		{"expired with operation", time.Now().Add(-time.Minute).UTC().Format(time.RFC3339Nano), true, false},
+		{"expired and quiescent", time.Now().Add(-time.Minute).UTC().Format(time.RFC3339Nano), false, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			env := lifecycleEnvironment(time.Now().UTC())
+			status := env.Object["status"].(map[string]any)
+			status["activeRun"] = map[string]any{"bindingID": "source", "runID": "run", "claimID": "claim", "operationID": "acquire", "ownerHash": "owner", "clientHash": hashText("client"), "epoch": int64(1), "grantGeneration": int64(1), "expiresAt": tc.expires}
+			if tc.activeOperation {
+				status["activeOperation"] = map[string]any{"id": "running"}
+			}
+			before := env.DeepCopy()
+			client := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), env)
+			store := NewStore(client, "ns", testProfiles(), nil)
+			ref := executionenv.EnvironmentRef{ID: "env", Revision: "rev"}
+			err := store.ReserveSuccessor(t.Context(), ref, "client", "owner", "source", "successor", "reserve")
+			if (err == nil) != tc.wantSuccess {
+				t.Fatalf("reserve successor success=%t, want=%t: %v", err == nil, tc.wantSuccess, err)
+			}
+			after, err := client.Resource(ExecutionEnvironmentGVR).Namespace("ns").Get(t.Context(), "env", metav1.GetOptions{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !tc.wantSuccess {
+				if !reflect.DeepEqual(after.Object, before.Object) {
+					t.Fatal("denied successor changed durable run state")
+				}
+				return
+			}
+			refs, err := referenceRecords(after)
+			if err != nil || len(refs) != 2 || refs[0].BindingID != "source" || refs[0].State != executionenv.ReferencePublished || refs[1].BindingID != "successor" || refs[1].State != executionenv.ReferencePendingCreate || textNested(after.Object, "status", "activeRun", "claimID") != "" {
+				t.Fatal("expired run was not atomically replaced by successor intent")
+			}
+		})
 	}
 }
 

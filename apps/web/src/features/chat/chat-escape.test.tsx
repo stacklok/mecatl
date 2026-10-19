@@ -254,6 +254,67 @@ describe("chat Escape", () => {
     expect(screen.getByRole("status").textContent).toBe("panel,stop,clear");
   });
 
+  it("clears the draft only for a second press less than 500 ms after the first", () => {
+    for (const [elapsed, expected] of [
+      [499, "panel,stop,clear"],
+      [500, "panel,stop"],
+    ] as const) {
+      vi.useFakeTimers();
+      render(<Harness ask="none" />);
+      act(() => pressEscape());
+      act(() => {
+        releaseEscape();
+        pressEscape();
+      });
+      act(() => {
+        releaseEscape();
+        pressEscape();
+      });
+      // Move the clock without firing the expiry timer, so the comparison alone decides.
+      vi.setSystemTime(Date.now() + elapsed);
+      act(() => {
+        releaseEscape();
+        pressEscape();
+      });
+      expect(screen.getByRole("status").textContent).toBe(expected);
+      cleanup();
+      vi.useRealTimers();
+    }
+  });
+
+  it("ignores a held Escape at every layer", () => {
+    const held = () =>
+      act(() => {
+        releaseEscape();
+        pressEscape(document.body, true);
+      });
+    const actions = () => screen.getByRole("status").textContent;
+    render(<Harness />);
+    held();
+    expect(actions()).toBe("");
+    cleanup();
+
+    render(<Harness ask="plan" />);
+    held();
+    expect(actions()).toBe("");
+    act(() => pressEscape());
+    expect(actions()).toBe("iterate");
+    held();
+    expect(actions()).toBe("iterate");
+    act(() => {
+      releaseEscape();
+      pressEscape();
+    });
+    expect(actions()).toBe("iterate,panel");
+    held();
+    expect(actions()).toBe("iterate,panel");
+    act(() => {
+      releaseEscape();
+      pressEscape();
+    });
+    expect(actions()).toBe("iterate,panel,stop");
+  });
+
   it("expires the visible draft hint without another press", () => {
     vi.useFakeTimers();
     render(<Harness ask="none" />);

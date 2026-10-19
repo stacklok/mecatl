@@ -315,7 +315,7 @@ func pasteNeedsStaging(buffer, content string) bool {
 // stageLargePaste stages a large text paste under a fresh monotonic
 // "[Pasted text #N]" marker (inserted into the textarea in the payload's place),
 // mirroring the stagedMedia design: no-live-renumber + expand-at-submit. The full
-// text lives only in Model.stagedPastes until submitPrompt/enqueuePrompt expands
+// text lives only in Model.stagedPastes until submitPrompt/deliverDefaultPrompt expands
 // the surviving markers in place; a marker the user deletes while editing drops
 // its content silently at submit (the image-marker UX). N is its own counter
 // (separate numbering from "[Image #N]") and is never reused.

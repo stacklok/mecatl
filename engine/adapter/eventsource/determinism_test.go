@@ -40,7 +40,7 @@ func (readTool) Execute(_ context.Context, in session.ToolCall, _ tool.Environme
 // fields (Message.Reasoning / Message.ProviderPhase / ToolCall.ItemID are all empty),
 // which is exactly the provider class for which the fold is byte-identical-replay
 // faithful. A reasoning provider would diverge on those snapshot-only fields — the
-// documented limitation (see the package doc + ADR 0038). The CORE proof here is the
+// documented limitation (see the package doc). The CORE proof here is the
 // Conversation deep-equal: buildRequest sends the Conversation verbatim, so two
 // deep-equal conversations replay byte-identically given a stable System/Tools/Model.
 // (We assert the conversation + counters + usage + state directly rather than a

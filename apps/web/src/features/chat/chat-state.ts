@@ -24,6 +24,8 @@ export interface ChatMessage {
   failure?: { detail: string; message: string; permanent: boolean };
   id: string;
   images?: ChatImage[];
+  /** Zero-based index in an authoritative transcript, including non-rendered tool results. */
+  recordedOrdinal?: number;
   reasoning?: string;
   role: string;
   stopReason?: string;
@@ -89,6 +91,11 @@ export function unmatchedApprovals(
 
 export function approvalKey(target: { askId: string; runId: string; sessionId: string }): string {
   return JSON.stringify([target.sessionId, target.runId, target.askId]);
+}
+
+/** The key a run's settled ask is remembered under; a surface's settled keys are per session, so no session id. */
+export function settledAskKey(runId: string, askId: string): string {
+  return `${runId}\u0000${askId}`;
 }
 
 export function failureFromResult(payload: unknown, prompt: string): RunFailure | undefined {
@@ -174,6 +181,7 @@ export function messagesFromTranscript(
       content: entry.text,
       delivery: entry.delivery,
       id: `transcript-${index}`,
+      recordedOrdinal: index,
       images: entry.images?.length
         ? entry.images.map((image, imageIndex) => ({
             ...image,
@@ -261,13 +269,6 @@ export function permissionAsk(payload: unknown): ApprovalRequest | undefined {
     reason: typeof value.reason === "string" ? value.reason : "",
     tool: typeof value.tool === "string" ? value.tool : "Tool",
   };
-}
-
-export function errorMessage(error: unknown): string {
-  if (typeof error === "object" && error !== null && "detail" in error) {
-    return String(error.detail);
-  }
-  return error instanceof Error ? error.message : "The request could not be completed.";
 }
 
 /**
@@ -432,7 +433,7 @@ export function applyRunDelivery(
   }
   if (event.kind === "permission.ask") {
     const approval = permissionAsk(event.payload);
-    if (!approval || next.settledAskKeys.includes(`${event.runId}\u0000${approval.askId}`))
+    if (!approval || next.settledAskKeys.includes(settledAskKey(event.runId, approval.askId)))
       return next;
     const controlTarget =
       options.sessionId && event.runId
@@ -449,7 +450,7 @@ export function applyRunDelivery(
   if (event.kind === "permission.retract" || event.kind === "approval") {
     const askId = permissionAskId(event.payload);
     if (!askId) return next;
-    const key = `${event.runId}\u0000${askId}`;
+    const key = settledAskKey(event.runId, askId);
     return {
       ...next,
       approvals: retractApproval(next.approvals, askId, event.runId || undefined),

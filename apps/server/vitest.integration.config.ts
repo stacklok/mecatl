@@ -9,6 +9,9 @@ import { defineConfig } from "vitest/config";
  */
 export default defineConfig({
   test: {
+    // DECISION: no test isolation, in both apps. See the NO-ISOLATE RULES in
+    // ../web/src/test-setup.ts; biome bans the patterns that break under it.
+    isolate: false,
     include: ["test/integration/**/*.test.ts"],
     testTimeout: 60_000,
     hookTimeout: 60_000,

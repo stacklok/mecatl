@@ -14,7 +14,7 @@ func SetStopLeadershipJoinTimeoutForTest(d time.Duration) func() {
 }
 
 // SetStaleFireWindowForTest overrides the package-level staleFireWindow (the
-// stale-fire reconciler's staleness threshold, issue #386 Phase 4b) so an
+// stale-fire reconciler's staleness threshold, issue #386) so an
 // external-package test can shrink it to exercise the reconcile path without
 // waiting the full default window. Returns a restore func the caller defers.
 func SetStaleFireWindowForTest(d time.Duration) func() {

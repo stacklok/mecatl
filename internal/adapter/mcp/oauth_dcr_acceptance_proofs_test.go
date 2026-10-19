@@ -27,7 +27,7 @@ func dcrChallenge(t *testing.T, resource string) (*http.Request, *http.Response)
 	return req, resp
 }
 
-func TestADR_0325_DirectDCRStaleRegistrationLifecycle(t *testing.T) {
+func TestDirectDCRStaleRegistrationLifecycle(t *testing.T) {
 	t.Run("clean and registration only", func(t *testing.T) {
 		fixture := newDCRMetadataFixture(t)
 		resource, store := fixture.server.URL+"/gw/mcp", newDCRMemoryStore(t)
@@ -431,7 +431,7 @@ func (s *scriptedDCRStore) Put(ctx context.Context, key, value []byte, expected 
 	return s.Store.Put(ctx, key, value, expected)
 }
 
-func TestADR_0325_DirectDCRUnknownAttemptRecovery(t *testing.T) {
+func TestDirectDCRUnknownAttemptRecovery(t *testing.T) {
 	t.Run("pending contender stops while winner still owns preparation", func(t *testing.T) {
 		fixture := newDCRMetadataFixture(t)
 		resource, base := fixture.server.URL+"/gw/mcp", newDCRMemoryStore(t)

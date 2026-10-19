@@ -1,6 +1,6 @@
 module github.com/stacklok/mecatl/internal/adaptersupport
 
-go 1.27.0
+go 1.27.2
 
 require (
 	github.com/fsnotify/fsnotify v1.9.0

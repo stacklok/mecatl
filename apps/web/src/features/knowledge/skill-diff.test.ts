@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
+import { LINE_DIFF_MAX_LINES } from "../../lib/line-diff";
 import { hasSkillDiffChanges, skillDiffRows } from "./skill-diff";
 
 /** Builds a diff exactly as the daemon's DiffLearnedSkillVersions formats it. */
@@ -64,5 +65,20 @@ describe("learned-skill diff", () => {
 
     const same = skillDiffRows(daemonDiff(from, { ...from, version: "v2" }), from);
     expect(hasSkillDiffChanges(same)).toBe(false);
+  });
+
+  it("degrades a body above the line-diff bound to a removed block then an added block", () => {
+    const lines = (prefix: string) =>
+      Array.from({ length: LINE_DIFF_MAX_LINES / 2 + 1 }, (_, i) => `${prefix}${i}`).join("\n");
+    const from = { body: lines("old-"), description: "Review PRs", version: "v1" };
+    const to = { body: lines("new-"), description: "Review PRs", version: "v2" };
+    const rows = skillDiffRows(daemonDiff(from, to), to);
+    const body = rows.slice(rows.findIndex((row) => row.text === "@@ body @@") + 1);
+    const half = LINE_DIFF_MAX_LINES / 2 + 1;
+    expect(body).toHaveLength(half * 2);
+    expect(body.slice(0, half).every((row) => row.kind === "deletion")).toBe(true);
+    expect(body.slice(half).every((row) => row.kind === "addition")).toBe(true);
+    expect(body[0]).toEqual({ kind: "deletion", text: "old-0" });
+    expect(body[half]).toEqual({ kind: "addition", text: "new-0" });
   });
 });

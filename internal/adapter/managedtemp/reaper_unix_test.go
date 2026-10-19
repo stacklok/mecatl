@@ -13,9 +13,9 @@ import (
 	"time"
 )
 
-// TestADR_0281_IntervalGatedSweepCoordination pins the root-lock protocol: a
+// TestIntervalGatedSweepCoordination pins the root-lock protocol: a
 // completed sweep suppresses a later scan until the configured interval elapses.
-func TestADR_0281_IntervalGatedSweepCoordination(t *testing.T) {
+func TestIntervalGatedSweepCoordination(t *testing.T) {
 	ns, err := Open(filepath.Join(t.TempDir(), "managed"))
 	if err != nil {
 		t.Fatal(err)
@@ -38,7 +38,7 @@ func TestADR_0281_IntervalGatedSweepCoordination(t *testing.T) {
 	}
 }
 
-func TestADR_0281_ReaperDeletesOnlyValidatedEligibleLease(t *testing.T) {
+func TestReaperDeletesOnlyValidatedEligibleLease(t *testing.T) {
 	ns, err := Open(filepath.Join(t.TempDir(), "managed"))
 	if err != nil {
 		t.Fatal(err)
@@ -158,7 +158,7 @@ func TestADR_0281_ReaperDeletesOnlyValidatedEligibleLease(t *testing.T) {
 // A syntactically valid parent entry must still name the handle that was
 // validated. Otherwise a relative link can redirect recursive cleanup to a
 // sibling whose manifest has been forged to match the candidate.
-func TestADR_0281_ReaperDeletesOnlyValidatedEligibleLease_RetainsRelativeSymlinkedSibling(t *testing.T) {
+func TestReaperDeletesOnlyValidatedEligibleLease_RetainsRelativeSymlinkedSibling(t *testing.T) {
 	ns, err := Open(filepath.Join(t.TempDir(), "managed"))
 	if err != nil {
 		t.Fatal(err)
@@ -234,7 +234,7 @@ func TestADR_0281_ReaperDeletesOnlyValidatedEligibleLease_RetainsRelativeSymlink
 	}
 }
 
-func TestADR_0281_CrashRecoveryAndConcurrentReaping(t *testing.T) {
+func TestCrashRecoveryAndConcurrentReaping(t *testing.T) {
 	ns, err := Open(filepath.Join(t.TempDir(), "managed"))
 	if err != nil {
 		t.Fatal(err)

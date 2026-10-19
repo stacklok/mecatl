@@ -93,34 +93,54 @@ func resolveModel(cfg Config, def agents.AgentDef) string {
 // resolveModel chain (def.Model > SubagentModel > parentModel) applies unchanged —
 // full back-compat for every existing def.
 func resolveProviderModel(cfg Config, provReg *providerRegistry, def agents.AgentDef, parentProviderID, parentModel string) (providerID, model string) {
-	pid := parentProviderID
-	if p := strings.TrimSpace(def.Provider); p != "" {
-		if _, ok := provReg.Lookup(p); ok {
-			pid = p
+	explicitProvider := strings.TrimSpace(def.Provider)
+	resolvedProvider := parentProviderID
+	invalidExplicitProvider := false
+	if explicitProvider != "" {
+		if _, ok := provReg.Lookup(explicitProvider); ok {
+			resolvedProvider = explicitProvider
 		} else {
+			invalidExplicitProvider = true
 			cfg.diag().Log(context.Background(), port.LevelWarn, "agent def references an unknown/unavailable provider; inheriting parent provider",
-				"agent", def.Name, "provider", p, "origin", string(def.Origin))
-			// pid stays parentProviderID (fail-safe).
+				"agent", def.Name, "provider", explicitProvider, "origin", string(def.Origin))
 		}
 	}
-
-	if pid != parentProviderID {
-		// Provider SWITCHED: never inherit the parent model string (different endpoint).
-		if m := strings.TrimSpace(def.Model); m != "" && m != "inherit" {
-			if resolved := resolveAlias(cfg, def, m); resolved != "" {
-				return pid, resolved
-			}
+	fallback := func() (string, string) {
+		if resolvedProvider != parentProviderID {
+			return resolvedProvider, provReg.DefaultModelFor(resolvedProvider)
 		}
-		// No explicit def model (or an alias that resolves to inherit): rebase off the
-		// new provider's builtin default, NOT the parent model.
-		return pid, provReg.DefaultModelFor(pid)
+		return parentProviderID, parentModel
 	}
 
-	// Same provider as the parent: the existing chain is correct (full back-compat).
-	// Resolve the model against the parent model rather than cfg.Model, so a session
-	// that selected a non-default model on the SAME provider propagates it to a def
-	// that pins no model of its own.
-	return pid, resolveModelFor(cfg, def, parentModel)
+	selector := strings.TrimSpace(def.Model)
+	fromDefault := selector == "" || selector == "inherit"
+	if fromDefault {
+		selector = strings.TrimSpace(cfg.SubagentModel)
+	}
+	if selector == "" {
+		return fallback()
+	}
+
+	if raw, known := lookupModelAliasTarget(cfg, selector); invalidExplicitProvider && known && raw.ProviderID != "" {
+		cfg.diag().Log(context.Background(), port.LevelWarn, "agent def model target conflicts with its unavailable provider; inheriting fallback target",
+			"agent", def.Name, "origin", string(def.Origin))
+		return fallback()
+	}
+	providerConstraint := ""
+	if explicitProvider != "" && !invalidExplicitProvider {
+		providerConstraint = resolvedProvider
+	}
+	contextualProvider := parentProviderID
+	if fromDefault && cfg.modelBindingProvider != "" {
+		contextualProvider = cfg.modelBindingProvider
+	}
+	target, err := resolveModelTarget(cfg, contextualProvider, providerConstraint, selector)
+	if err != nil || target.Model == "" {
+		cfg.diag().Log(context.Background(), port.LevelWarn, "agent def model target is unavailable or conflicts with its provider; inheriting fallback target",
+			"agent", def.Name, "origin", string(def.Origin))
+		return fallback()
+	}
+	return target.ProviderID, target.Model
 }
 
 // resolveChildProvider resolves a def to the (childProvider, model, windowFn)
@@ -151,11 +171,9 @@ func resolveChildProvider(cfg Config, provReg *providerRegistry, def agents.Agen
 // re-derived LIVE-FIRST from the registry meta (live when present, catalog floor:
 // the SAME store the picker reads), so a child compacts on ITS model's window —
 // regardless of whether the child's model differs from the parent's. Issue #64:
-// a same-model child now resolves the parent's REAL window via the same resolver,
-// never the hardcoded 128k floor; before, an unchanged pair short-circuited to 0
-// and a same-model child of a 1M-context parent compacted at ~102k. (The
-// parent-pair is no longer an input — the rule keys solely on the child's resolved
-// pair.)
+// a same-model child resolves the parent's REAL window via the same resolver,
+// never the hardcoded 128k floor. (The parent-pair is not an input — the rule
+// keys solely on the child's resolved pair.)
 //
 // It returns a RESOLVE-AT-USE closure (reg.windowResolver), not an eager int, so a
 // child inherits the SAME live-first override→live→catalog→128k-floor resolution as
@@ -171,6 +189,109 @@ func childWindowFor(cfg Config, provReg *providerRegistry, providerID, model str
 		}
 	}
 	return provReg.windowResolver(cfg, providerID, model)
+}
+
+// resolveAgentDefRootTarget resolves only definition intent over the deployment
+// pair. Child defaults and automatic routing never participate in a root build.
+func resolveAgentDefRootTarget(cfg Config, reg *providerRegistry, def agents.AgentDef, parentProviderID string) (string, string) {
+	pinned := strings.TrimSpace(def.Provider)
+	fallbackPID, fallbackModel := parentProviderID, cfg.Model
+	if pinned != "" && pinned != parentProviderID {
+		fallbackPID, fallbackModel = pinned, reg.DefaultModelFor(pinned)
+	}
+	selector := strings.TrimSpace(def.Model)
+	if selector == "" || selector == "inherit" {
+		return fallbackPID, fallbackModel
+	}
+	target, err := resolveModelTarget(cfg, parentProviderID, pinned, selector)
+	if err == nil {
+		if _, available := reg.Lookup(target.ProviderID); available {
+			return target.ProviderID, target.Model
+		}
+	}
+	// A conflicting alias falls back as a whole, preserving an explicit pin.
+	// Missing explicit pins are rejected by the caller before this fallback.
+	cfg.diag().Log(context.Background(), port.LevelWarn, "agent def model target is unavailable or conflicts with its provider; inheriting fallback target",
+		"agent", def.Name, "origin", string(def.Origin))
+	return fallbackPID, fallbackModel
+}
+
+// resolveAgentDefRootProviderModel implements ADR 0353's 5-case provider/model
+// pair resolution for an agent-bound SESSION ROOT (AC1.14) — a DISTINCT
+// resolver from resolveChildProvider/resolveProviderModel (the Subagent-
+// delegate precedence: def-wins-over-parent, silent fallback on an unavailable
+// def-pinned provider), because case 5 below requires the opposite failure
+// mode. sel is the session-CREATE request's ProviderSelector; parentProvider/
+// parentProviderID are the deployment default (mirroring every other call
+// site's "parent" terminology, even though an agent-bound session has no
+// parent SESSION — it is the base this def's own pin resolves against).
+//
+// The 5 cases:
+//  1. sel has neither field set: resolve the BASE PAIR — def.Provider/def.Model
+//     over the deployment default (excluding child defaults and routing).
+//  2. sel.ModelID alone: applies to the BASE PAIR's provider (never switches
+//     provider) — the request model replaces the base pair's model verbatim.
+//  3. sel.ProviderID alone: switches provider and re-derives THAT provider's
+//     own default model (provReg.DefaultModelFor) — never carries over a model
+//     the def pinned for a different provider.
+//  4. both fields set: the explicit pair, verbatim.
+//  5. FAIL-CLOSED override on cases 1/2 (both key off the base pair's
+//     provider): when def.Provider names a provider that is set but UNKNOWN/
+//     unavailable, session creation fails outright (wrapping
+//     server.ErrInvalidArgument) instead of resolveProviderModel's ordinary
+//     forgiving fallback to the parent provider — an agent-bound session must
+//     never silently run the def on a provider its author never pinned.
+//
+// A request-supplied provider_id that is itself unknown (cases 3/4) is also a
+// loud server.ErrInvalidArgument, mirroring how an unknown provider_id is
+// handled everywhere else in session creation.
+func resolveAgentDefRootProviderModel(cfg Config, provReg *providerRegistry, def agents.AgentDef, parentProvider port.LLMProvider, parentProviderID string, sel server.ProviderSelector) (childProvider port.LLMProvider, providerID, model string, windowFn func() int, err error) {
+	reqProviderID := strings.TrimSpace(sel.ProviderID)
+	reqModelID := sel.ModelID
+	if cfg.Model == "" {
+		parentProvider, cfg.Model = adoptHealedDefault(provReg, parentProviderID, parentProvider)
+	}
+
+	switch {
+	case reqProviderID == "":
+		// Cases 1 and 2 both key off the BASE PAIR's provider. Case 5's
+		// fail-closed check applies to both: an unavailable def-pinned
+		// provider must fail here, before resolveProviderModel's ordinary
+		// (Subagent-delegate) forgiving fallback ever runs.
+		if pinned := strings.TrimSpace(def.Provider); pinned != "" {
+			if _, ok := provReg.Lookup(pinned); !ok {
+				return nil, "", "", nil, fmt.Errorf("%w: agent definition %q pins unavailable provider %q", server.ErrInvalidArgument, def.Name, pinned)
+			}
+		}
+		basePID, baseModel := resolveAgentDefRootTarget(cfg, provReg, def, parentProviderID)
+		providerID = basePID
+		model = baseModel
+		if reqModelID != "" {
+			model = reqModelID // case 2: request model_id overrides, provider stays the base pair's.
+		}
+	case reqModelID == "":
+		// Case 3: provider_id alone -> switch provider, re-derive ITS OWN
+		// default model.
+		if _, ok := provReg.Lookup(reqProviderID); !ok {
+			return nil, "", "", nil, fmt.Errorf("%w: unknown/unavailable provider_id %q", server.ErrInvalidArgument, reqProviderID)
+		}
+		providerID = reqProviderID
+		model = provReg.DefaultModelFor(reqProviderID)
+	default:
+		// Case 4: both fields set -> explicit pair, verbatim.
+		if _, ok := provReg.Lookup(reqProviderID); !ok {
+			return nil, "", "", nil, fmt.Errorf("%w: unknown/unavailable provider_id %q", server.ErrInvalidArgument, reqProviderID)
+		}
+		providerID = reqProviderID
+		model = reqModelID
+	}
+
+	childProvider = parentProvider
+	if entry, ok := provReg.Lookup(providerID); ok {
+		childProvider = entry.provider
+	}
+	windowFn = childWindowFor(cfg, provReg, providerID, model)
+	return childProvider, providerID, model, windowFn, nil
 }
 
 // resolveModelFor is resolveModel with the inherited parent model threaded in
@@ -191,28 +312,6 @@ func resolveModelFor(cfg Config, def agents.AgentDef, parentModel string) string
 	return pick(resolveAlias(cfg, def, sel))
 }
 
-// resolveDefaultChildModel resolves the model a DEF-LESS child engine — the
-// default Subagent explorer, an UNDEFINED team member, a Parallel BRANCH — runs
-// on (issue #35). It is NOT a parallel resolver: it delegates to the ONE chain
-// every def-resolved path already uses, resolveModelFor with the zero def, so the
-// precedence collapses to `SubagentModel (alias-resolved) > parentModel` (no def
-// tier to consult). The context window follows the shared childWindowFor rule:
-// the window is re-derived live-first on the PARENT provider for the resolved
-// model (a child compacts on ITS model's window, never the parent's) — an
-// unchanged model now resolves the parent's REAL window too (issue #64), flooring
-// to 128k only when the model is genuinely uncatalogued.
-//
-// SAME-PROVIDER POSTURE: the override never switches provider — the model id is
-// resolved against parentProviderID (the registry is keyed by provider, not
-// model). A def's `provider:` remains the only cross-provider seam. The Parallel
-// JUDGE deliberately does NOT route through this (it stays on the session model —
-// see registerParallelTool). provReg may be nil on direct-call test paths (the
-// window resolver falls back to the override-or-128k floor).
-func resolveDefaultChildModel(cfg Config, provReg *providerRegistry, parentProviderID, parentModel string) (model string, windowFn func() int) {
-	model = resolveModelFor(cfg, agents.AgentDef{}, parentModel)
-	return model, childWindowFor(cfg, provReg, parentProviderID, model)
-}
-
 // routableAgentNames computes the SET of agent-def names eligible for the OPT-IN model
 // router (issue #286), returned as a SORTED slice for determinism. A def is routable iff:
 //
@@ -227,7 +326,7 @@ func resolveDefaultChildModel(cfg Config, provReg *providerRegistry, parentProvi
 //
 // The set is consulted ONLY by the engine's router gate (agent.WithRoutableAgents →
 // maybeRouteModel). It is layering-clean: only def NAME strings cross into engine/agent. A nil
-// reg (no agent source) yields nil → no def routes (byte-identical to pre-#286). It is SILENT
+// reg (no agent source) yields nil → no def routes. It is SILENT
 // (no diagnostics): the per-def provider/MCP WARNs are emitted by the actual engine build
 // (buildAgentSubagentEngines), so re-logging here would double-emit (the build-once discipline).
 func routableAgentNames(provReg *providerRegistry, reg *agents.Registry, parentProviderID string) []string {
@@ -329,16 +428,11 @@ func lookupModelAlias(cfg Config, sel string) (id string, known bool) {
 	if sel == "" {
 		return "", true
 	}
-	if id, ok := cfg.ModelAliases[sel]; ok {
-		return strings.TrimSpace(id), true
+	target, known := lookupModelAliasTarget(cfg, sel)
+	if !known || target.ProviderID != "" {
+		return "", false
 	}
-	if id, ok := builtinModelAliases[sel]; ok {
-		return id, true // may be "" => inherit
-	}
-	if strings.ContainsAny(sel, "-./:") || strings.Contains(sel, " ") {
-		return sel, true
-	}
-	return "", false
+	return strings.TrimSpace(target.Model), true
 }
 
 // resolvePermissionMode maps a def's frontmatter permissionMode string to a
@@ -384,6 +478,86 @@ func defLimits(def agents.AgentDef, fallback session.Limits) session.Limits {
 	return out
 }
 
+// tightenLimits applies ADR 0353's tighten-only run-limit clamp for an
+// agent-bound SESSION ROOT (AC1.12): a request field may only LOWER the
+// corresponding field of defLimits (the def's own already-resolved ceiling —
+// see defLimits(def, fallback) above for how THAT ceiling itself folds in a
+// deployment fallback for any field the def leaves unset), never raise it. A
+// zero-valued request field means "not supplied, inherit the def's cap" (the
+// Human decision this task implements) — never "explicitly unlimited," even
+// though session.Limits treats 0 as unlimited everywhere else.
+//
+// This is a DISTINCT helper from defLimits (def-wins-over-fallback — the
+// opposite direction: the DEF's value wins when set) and from tightenLimit
+// (singular, engine/agent/subagent.go) — the per-call Subagent override, which
+// takes a *int override against an inherited int for a different call site.
+// MaxConsecutiveFailures is never influenced by either the def or the request
+// (mirroring defLimits' own note that a def never sets it): it is taken from
+// defLimits verbatim, i.e. whatever fallback defLimits itself already folded
+// in for that field.
+func tightenLimits(defLimits, requestLimits session.Limits) session.Limits {
+	return session.Limits{
+		MaxTurns:               tightenLimitField(defLimits.MaxTurns, requestLimits.MaxTurns),
+		MaxToolCalls:           tightenLimitField(defLimits.MaxToolCalls, requestLimits.MaxToolCalls),
+		MaxConsecutiveFailures: defLimits.MaxConsecutiveFailures,
+	}
+}
+
+// tightenLimitField applies tightenLimits' rule to ONE field: a non-positive
+// request value means "not supplied" and inherits defCap outright (which may
+// itself be 0 = unlimited); a positive request value is clamped down to defCap
+// when it exceeds it (never raised above it) and passes through unclamped when
+// defCap is 0 (unlimited — nothing to tighten against) or already the lower of
+// the two. It mirrors tightenLimit's (engine/agent/subagent.go) zero-is-
+// unlimited posture but takes a plain int request (0 meaning "no override")
+// rather than a *int override — the shape this session-root path needs.
+func tightenLimitField(defCap, request int) int {
+	if request <= 0 {
+		return defCap
+	}
+	if defCap <= 0 || request < defCap {
+		return request
+	}
+	return defCap
+}
+
+// permissionModeRank is ADR 0353's small LOCAL ordinal table for
+// PermissionMode's tighten-only ordering (plan < default < acceptEdits) —
+// Human decision (resolved): define this now rather than block on PR
+// #1730/ADR 0365's still-unmerged operator-tier permission-mode vocabulary;
+// reconcile later if that lands a different shape. It is used ONLY by
+// clampPermissionMode (the agent-bound session-root clamp, AC1.13); nothing
+// else in the composition layer needs a PermissionMode ordering today.
+func permissionModeRank(mode session.PermissionMode) int {
+	switch mode {
+	case session.ModePlan:
+		return 0
+	case session.ModeAccept:
+		return 2
+	default: // session.ModeDefault (and any unrecognised value) ranks as default.
+		return 1
+	}
+}
+
+// clampPermissionMode applies ADR 0353's tighten-only PermissionMode rule
+// (AC1.13): a request mode looser than the def's configured permissionMode is
+// silently clamped DOWN to the def's value — never rejected, never raised.
+// defMode is the def's OWN resolved mode from resolvePermissionMode: "" means
+// the def configured NO permissionMode restriction (the SAME "caller's
+// default" sentinel every other resolvePermissionMode call site already
+// honours), so an empty defMode is not itself a rank — it means "no ceiling,"
+// leaving requestMode untouched exactly as an ordinary (non-agent-bound) main
+// session behaves. A non-empty defMode IS a real ceiling.
+func clampPermissionMode(defMode, requestMode session.PermissionMode) session.PermissionMode {
+	if defMode == "" {
+		return requestMode
+	}
+	if permissionModeRank(requestMode) > permissionModeRank(defMode) {
+		return defMode
+	}
+	return requestMode
+}
+
 // scopeDiag is one resolution-time diagnostic about a def's catalog scoping. Kind
 // distinguishes the cases the critique (M5) requires be DISTINCT so an operator
 // can tell a typo from a forbidden tool.
@@ -426,6 +600,18 @@ func shellScopeMissReason(cfg Config) string {
 	}
 }
 
+// defDisallowsTool reports whether def explicitly excludes the named tool. It is
+// the one exclusion test shared by name scoping's callers for tools registered
+// after scoping (MCP tools and the automatic ShellStatus companion).
+func defDisallowsTool(def agents.AgentDef, name string) bool {
+	for _, d := range def.DisallowedTools {
+		if d == name {
+			return true
+		}
+	}
+	return false
+}
+
 // scopedToolNamesMode computes a def's effective tool NAME set as a pure set
 // operation over the AVAILABLE base tools:
 //
@@ -438,7 +624,7 @@ func shellScopeMissReason(cfg Config) string {
 //  5. when allowMutating is false, drop any mutating (non-read-only) tool with a
 //     DISTINCT diagnostic — EXCEPT that when allowShell is true the Shell tool alone
 //     survives. allowMutating == true (a Mutating team member, which runs in an
-//     isolated force-copy fork; AND a writable specialist Subagent (ADR 0058), which
+//     isolated force-copy fork; AND a writable specialist Subagent, which
 //     keeps Edit/Write/Shell over the real parent workspace via the MAIN runner) keeps
 //     every mutating tool (Edit/Write/Shell). allowMutating == false + allowShell == true
 //     (a read-only team member that the supervisor will isolate in a git worktree)
@@ -546,6 +732,26 @@ func baseSubagentTools(cfg Config) map[string]tool.Tool {
 	if runner := buildSandboxedCommandRunner(cfg); runner != nil {
 		bt := agent.NewShellTool()
 		out[bt.Spec().Name] = bt
+	}
+	return out
+}
+
+// baseSubagentToolsNoFS is baseSubagentTools' no-filesystem counterpart (ADR
+// 0353, AC1.15): the AVAILABLE base set an agent-bound session's catalog is
+// scoped over under `profile: "no-fs"` — WebFetch + FetchMcpResource only,
+// mirroring registerCoreTools' own tools.NoFS() selection for an ordinary no-fs
+// session. Every file-touching core tool AND Shell is absent from this base by
+// construction (never merely dropped by the read-only filter), so a def's
+// `tools:` naming Read/Edit/Write/Shell cannot resurrect them under no-fs — the
+// profile and the def's ceiling compose by intersection, and this is the
+// profile side of that intersection. defMCPTools registration is unaffected
+// (the def's own mcpServers: tools are not filesystem-shaped and register
+// regardless of profile, exactly like an ordinary no-fs session keeps its
+// global/client MCP tools).
+func baseSubagentToolsNoFS() map[string]tool.Tool {
+	out := map[string]tool.Tool{}
+	for _, t := range tools.NoFS() {
+		out[t.Spec().Name] = t
 	}
 	return out
 }
@@ -791,7 +997,7 @@ func buildAgentSubagentEngines(ctx context.Context, cfg Config, provider port.LL
 		// Resolve the def's (provider, model, window): a pinned-and-known provider
 		// switches the child engine (with its catalogued window); a def pinning no (or
 		// the same) provider inherits the parent's model AND its real resolved window
-		// (issue #64 — no longer the hardcoded 128k floor). The startup path threads the
+		// (issue #64 — not the hardcoded 128k floor). The startup path threads the
 		// startup-resolved (childProvider, model, windowFn) into buildAgentDefEngine; the
 		// per-call agent+model override path (buildAgentModelEngineFactory) resolves its OWN
 		// tuple to rebuild the SAME scoped engine on the override model.
@@ -815,6 +1021,7 @@ func buildAgentSubagentEngines(ctx context.Context, cfg Config, provider port.LL
 		meta = append(meta, agent.AgentMeta{
 			Name:                     def.Name,
 			Description:              def.Description,
+			Provider:                 pid,
 			Limits:                   defLimits(def, agent.DefaultChildLimits()),
 			AuthorityCeiling:         agentDefinitionAuthorityCeiling(def, names, resources, false),
 			WritableAuthorityCeiling: agentDefinitionAuthorityCeiling(def, writableNames, resources, true),
@@ -852,7 +1059,7 @@ func buildAgentSubagentEngines(ctx context.Context, cfg Config, provider port.LL
 // base is the AVAILABLE base toolset the def's catalog is scoped over
 // (baseSubagentTools(cfg)); allowMutating, when true, KEEPS workspace-mutating tools
 // (Edit/Write/Shell) over the real workspace instead of dropping them — a Mutating team
-// member (isolated force-copy fork) and a writable specialist Subagent (ADR 0058, direct-
+// member (isolated force-copy fork) and a writable specialist Subagent (direct-
 // write against the real parent workspace via the MAIN runner) both pass true, while a
 // read-only Subagent explorer and a read-only team member pass false (Edit/Write dropped;
 // Shell kept only when allowShell is true and the member is worktree-isolated). allowShell
@@ -871,14 +1078,50 @@ func buildAgentSubagentEngines(ctx context.Context, cfg Config, provider port.LL
 // carried (tools/preloaded_skills) — the extraction must not silently drop diagnostics.
 func buildAgentDefEngine(ctx context.Context, cfg Config, def agents.AgentDef, role, source string, childProvider port.LLMProvider, providerModel session.ProviderModelID, windowFn func() int, base map[string]tool.Tool, allowMutating, allowShell bool, skillIdx skillIndex, defaultHooks port.HookRunner, runner tool.CommandRunner, mainMgr *mcp.Manager) (*agent.Engine, func() error, []string, []string, int) {
 	model := providerModel.ModelID
-	names, diags := scopedToolNamesMode(def, base, allowMutating, allowShell, shellScopeMissReason(cfg))
+	// A Subagent-delegate child has no placement of its own distinct from its
+	// parent's, so "project" memory binds to cfg.Workspace — unchanged from
+	// pre-ADR-0353 behavior (see resolveAgentMemoryHead's sessionRoot docs).
+	cat, pc, hooks, mcpClose, names, resourceCapabilities, skillCount := resolvedAgentDefCatalog(ctx, cfg, def, source, model, base, allowMutating, allowShell, skillIdx, defaultHooks, runner, mainMgr, cfg.Workspace)
+	// ProgressiveTools deliberately OFF: child catalogs are tiny and a ToolSearch
+	// tool would not be in the def allowlist. newChildEngineForProvider leaves it at
+	// its zero value (off), matching the original explicit omission, AND routes the
+	// child's compactor/counter/window through the resolved provider+model
+	// (contamination fix).
+	eng := newChildEngineForProvider(cfg, role, childProvider, providerModel, windowFn, cat, pc, hooks)
+	return eng, mcpClose, names, resourceCapabilities, skillCount
+}
+
+// resolvedAgentDefCatalog is buildAgentDefEngine's construction CORE, extracted
+// (ADR 0353) so a session-ROOT call site (buildAgentDefRootEngine) can reuse the
+// EXACT same catalog/prompt/hooks/memory assembly a child-shaped def engine gets,
+// without inheriting buildAgentDefEngine's child-shaped bottom-out
+// (newChildEngineForProvider). The two callers cannot drift in tool scoping
+// (AC1.1/AC1.3/AC1.16), MCP registration, skill preloading, hook resolution, or
+// memory injection — they differ ONLY in what they do with the returned
+// (cat, pc, hooks) triple.
+//
+// See buildAgentDefEngine's docs for the shared parameter contract (base,
+// allowMutating, allowShell, skillIdx, defaultHooks, runner, mainMgr all mean
+// exactly what they mean there). Returns the assembled catalog, the def-composed
+// prompt.Config (Role carries the def body/skills/memory, Env.Model is the
+// caller's already-resolved model), the resolved HookRunner (defaultHooks when
+// the def scopes none), the def's inline-MCP close func (nil when none opened),
+// the scoped tool NAMES (core ∪ MCP), the resource-capability list, and the
+// preloaded-skill count (for the caller's own "agent def engine built" log).
+//
+// sessionRoot is threaded straight through to resolveAgentMemoryHead (see its
+// docs): a Subagent-delegate caller passes cfg.Workspace, a session-root
+// caller passes THIS session's own bound placement root.
+func resolvedAgentDefCatalog(ctx context.Context, cfg Config, def agents.AgentDef, source, model string, base map[string]tool.Tool, allowMutating, allowShell bool, skillIdx skillIndex, defaultHooks port.HookRunner, runner tool.CommandRunner, mainMgr *mcp.Manager, sessionRoot string) (cat *tool.Catalog, pc prompt.Config, hooks port.HookRunner, mcpClose func() error, names []string, resourceCapabilities []string, skillCount int) {
+	var diags []scopeDiag
+	names, diags = scopedToolNamesMode(def, base, allowMutating, allowShell, shellScopeMissReason(cfg))
 	for _, d := range diags {
 		cfg.diag().Log(ctx, port.LevelWarn, "agent def tool scoping",
 			"agent", def.Name, "tool", d.tool, "reason", d.reason, "source", source)
 	}
 
 	classified := newClassifiedCatalog()
-	cat := classified.catalog
+	cat = classified.catalog
 	for _, name := range names {
 		// Shell registers with the HARDENED runner (the base map's Shell is the
 		// unhardened one used only to compute the name set), since the Subagent child's
@@ -896,10 +1139,14 @@ func buildAgentDefEngine(ctx context.Context, cfg Config, def agents.AgentDef, r
 		}
 		classified.mustRegister(registered, &entry)
 	}
+	// ShellStatus rides along with Shell, but a def's explicit exclusion still
+	// applies to it: the final catalog, grant and ceiling must all honor
+	// DisallowedTools, including tools added after name scoping.
 	if _, ok := cat.Lookup(tool.ShellToolName); ok {
-		status := agent.NewShellStatusTool()
-		entry, _ := coreToolClassification(status)
-		classified.mustRegister(status, &entry)
+		if status := agent.NewShellStatusTool(); !defDisallowsTool(def, status.Spec().Name) {
+			entry, _ := coreToolClassification(status)
+			classified.mustRegister(status, &entry)
+		}
 	}
 
 	// Per-agent MCP: a def's mcpServers add the referenced/inline servers' tools to
@@ -907,10 +1154,14 @@ func buildAgentDefEngine(ctx context.Context, cfg Config, def agents.AgentDef, r
 	// aggregated into the returned closeFn → Built.Close (process-lifetime engines, torn
 	// down on shutdown). MCP tool names are NOT relevant to a Subagent def's read-only
 	// backstop (Subagent defs are not team members), so the names return is ignored here.
-	mcpTools, _, resourceCapabilities, mcpClose := defMCPTools(ctx, cfg.diag(), def, mainMgr)
+	var mcpTools []tool.Tool
+	mcpTools, _, resourceCapabilities, mcpClose = defMCPTools(ctx, cfg.diag(), def, mainMgr)
 	mcpEntry := classification(server.KindDerived,
 		"agent-definition MCP tools are scoped to this already authorized specialist child")
 	for _, mt := range mcpTools {
+		if defDisallowsTool(def, mt.Spec().Name) {
+			continue // explicit exclusion, silently honoured like core tools.
+		}
 		if err := classified.register(mt, mcpEntry); err != nil {
 			cfg.diag().Log(ctx, port.LevelWarn, "agent def MCP tool registration failed; skipped",
 				"agent", def.Name, "tool", mt.Spec().Name, "err", err)
@@ -925,18 +1176,12 @@ func buildAgentDefEngine(ctx context.Context, cfg Config, def agents.AgentDef, r
 		cfg.diag().Log(ctx, port.LevelWarn, "agent def references an unknown skill; not preloaded",
 			"agent", def.Name, "skill", name, "source", source)
 	}
-	hooks := defHookRunner(cfg, def, defaultHooks)
+	hooks = defHookRunner(cfg, def, defaultHooks)
 	// Persistent per-agent memory (issue #33): resolve the MEMORY.md head ONCE at
 	// build time (like skillBodies) so it rides the cache-stable StablePrefix.
-	memHead, _ := resolveAgentMemoryHead(cfg, def)
-
-	// ProgressiveTools deliberately OFF: child catalogs are tiny and a ToolSearch
-	// tool would not be in the def allowlist. newChildEngineForProvider leaves it at
-	// its zero value (off), matching the original explicit omission, AND routes the
-	// child's compactor/counter/window through the resolved provider+model
-	// (contamination fix).
-	eng := newChildEngineForProvider(cfg, role, childProvider, providerModel, windowFn, cat, agentPromptConfig(cfg, def, model, memHead, bodies...), hooks)
-	return eng, mcpClose, names, resourceCapabilities, len(bodies)
+	memHead, _ := resolveAgentMemoryHead(cfg, def, sessionRoot)
+	pc = agentPromptConfig(cfg, def, model, memHead, bodies...)
+	return cat, pc, hooks, mcpClose, names, resourceCapabilities, len(bodies)
 }
 
 // composeCloseErr chains two optional error-returning close funcs into one (first
@@ -986,8 +1231,8 @@ func composeClose(d port.Diagnostics, errClose func() error, plainClose func()) 
 // the cache-stable StablePrefix while the standard mecatl framing AND the agency
 // contract remain. The delta is keyed on resolvedModel, NOT cfg.Model, the same
 // discipline as Env.Model: the def must reflect the model it will actually run on.
-// (Since issue #49 the contract itself is uniform across families, so the keying
-// no longer changes the contract text, but the resolvedModel still governs
+// (The contract itself is uniform across families (issue #49), so the keying
+// does not change the contract text, but the resolvedModel still governs
 // Env.Model and keeps the keying honest for any future per-model wording.) The
 // Env model is set to the caller's ALREADY-RESOLVED model
 // id (threaded in, not re-resolved): resolving it a second time here would re-run
@@ -1060,22 +1305,36 @@ const agentMemoryDirName = "agents-memory"
 // root, a gated-out project tier, a missing file, or any read error yields
 // ("", false) and the def builds with no memory delta (byte-identical to today).
 //
+// sessionRoot is the CALLER's own resolved placement root (ADR 0291) to bind
+// "project" tier against — NOT necessarily cfg.Workspace. A Subagent-delegate
+// caller (buildAgentDefEngine, the team-member path) has no placement of its
+// own distinct from its parent's, so it passes cfg.Workspace verbatim
+// (byte-identical to pre-ADR-0353 behavior). An agent-bound SESSION-ROOT
+// caller (buildAgentDefRootEngine) passes THIS session's own bound
+// EnvironmentRef-derived root instead — cfg is a single deployment-wide value
+// shared by every session's engine build, so cfg.Workspace alone cannot tell
+// two agent-bound sessions on the same def but different placements apart
+// (ADR 0353 Scenario 2, AC2.5): using it unconditionally would leak one
+// session's project memory into another bound to a placement the operator
+// never specifically vetted.
+//
 // Tier → root dir:
 //   - "user"    => <UserConfigDir>/mecatl/agents-memory/ (the SAME XDG base
 //     buildUserModelStore uses; "" XDG base ⇒ fail-soft);
-//   - "project" => <cfg.Workspace>/.mecatl/agents-memory/ ONLY when the workspace
-//     is set AND ADMITTED (projectIngestionAdmitted — the SAME gate
-//     resolveAgentRegistry applies to project-tier defs; a project-tier memory
-//     points into the attacker-controllable workspace, so it is withheld on an
-//     untrusted workspace or when the ingestion grant is withheld, regardless of
-//     the def's own Origin);
+//   - "project" => <sessionRoot>/.mecatl/agents-memory/ ONLY when sessionRoot
+//     is set AND ADMITTED for THAT root (projectIngestionAdmittedForRoot — the
+//     ROOT-AWARE variant, never the bare global-flag projectIngestionAdmitted:
+//     a session bound to a placement other than cfg.Workspace must not read or
+//     write project memory there merely because the deployment's global trust
+//     flag happens to be true). An empty sessionRoot (no placement to bind to,
+//     e.g. profile: "no-fs") is simply inert, not an error.
 //   - anything else / gated-out => ("", false).
 //
 // The head is bounded to maxAgentMemoryBytes head-first (with a truncation marker)
 // and injection-scanned (skills.ScanForInjection, the user-model write-path
 // precedent) before it is returned for fenced-DATA injection by agentPromptConfig.
 // Exactly one INFO is logged on a hit; the CONTENT is NEVER logged.
-func resolveAgentMemoryHead(cfg Config, def agents.AgentDef) (string, bool) {
+func resolveAgentMemoryHead(cfg Config, def agents.AgentDef, sessionRoot string) (string, bool) {
 	tier := strings.ToLower(strings.TrimSpace(def.Memory))
 	var root, tierLabel string
 	switch tier {
@@ -1087,10 +1346,10 @@ func resolveAgentMemoryHead(cfg Config, def agents.AgentDef) (string, bool) {
 		root = filepath.Join(base, "mecatl", agentMemoryDirName)
 		tierLabel = "user"
 	case "project":
-		if cfg.Workspace == "" || !projectIngestionAdmitted(cfg) {
+		if sessionRoot == "" || !projectIngestionAdmittedForRoot(cfg, sessionRoot) {
 			return "", false
 		}
-		root = filepath.Join(cfg.Workspace, ".mecatl", agentMemoryDirName)
+		root = filepath.Join(sessionRoot, ".mecatl", agentMemoryDirName)
 		tierLabel = "project"
 	default:
 		return "", false
@@ -1282,8 +1541,8 @@ func resolveAgentRegistry(ctx context.Context, cfg Config) *agents.Registry {
 		}
 		return agents.NewRegistry(defs)
 	}
-	// Project-tier agent defs are withheld when the project tier is not admitted
-	// (Phase 2a): untrusted, or the ingestion grant withheld
+	// Project-tier agent defs are withheld when the project tier is not admitted:
+	// untrusted, or the ingestion grant withheld
 	// (projectIngestionAdmitted). The user-tier + explicit defs stay active
 	// regardless ("ask the human" mode, not "do nothing").
 	if cfg.AgentsConventional && cfg.Workspace != "" && !projectIngestionAdmitted(cfg) {
@@ -1305,7 +1564,7 @@ func resolveAgentRegistry(ctx context.Context, cfg Config) *agents.Registry {
 		// Word the log by the structural Fatal split, never the overloaded
 		// "skipped": a Fatal SkipError means the def was DROPPED (excluded); a
 		// non-fatal one means it was KEPT but ADJUSTED (e.g. truncated). Both
-		// stay at WARN — a truncation is a visible adjustment, just no longer
+		// stay at WARN — a truncation is a visible adjustment, not
 		// mislabelled as a drop.
 		if s.Fatal {
 			cfg.diag().Log(ctx, port.LevelWarn, "agent def dropped", "path", s.Path, "reason", s.Reason)

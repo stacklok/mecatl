@@ -212,7 +212,7 @@ func TestSubagentReturnsOnlyFinalString(t *testing.T) {
 	if starts != 1 || ends != 1 {
 		t.Fatalf("want exactly one subagent.start and one subagent.end; got %d/%d", starts, ends)
 	}
-	// ADR 0079: the projection now carries bounded previews — one tool.call preview +
+	// The projection carries bounded previews — one tool.call preview +
 	// one tool.result preview + message.delta texts + the terminal result text. The
 	// child's single Read yields exactly two tool-kind projections (call + result).
 	var callPreview, resultPreview *session.SubagentPayload
@@ -371,8 +371,8 @@ func TestSubagentGoalClampedSymmetrically(t *testing.T) {
 	}
 }
 
-// TestSubagentStartCarriesResolvedModel asserts the generic Model field (issue #112 /
-// ADR 0035) is populated on EvSubagentStart with the child engine's resolved model,
+// TestSubagentStartCarriesResolvedModel asserts the generic Model field (issue #112)
+// is populated on EvSubagentStart with the child engine's resolved model,
 // independent of the opt-in router. Covers the inherited/default case: no router is
 // wired, so RoutedCategory/RoutedModel are empty and Model carries the child engine's
 // own model id ("child-model"). The model id is bare metadata (gauntlet #7).
@@ -462,7 +462,7 @@ func TestSubagentConcurrentAttribution(t *testing.T) {
 		case session.EvSubagentStart:
 			starts[p]++
 		case session.EvSubagentTool:
-			// ADR 0079: the projection now also carries message.delta / result text
+			// The projection also carries message.delta / result text
 			// previews, which have no ToolName — only the tool.call / tool.result
 			// projections are tool-attributed.
 			if ev.Subagent.InnerKind != session.EvToolCall && ev.Subagent.InnerKind != session.EvToolResult {
@@ -915,9 +915,9 @@ func TestSubagentNoAdvisoryLeavesPromptUnchanged(t *testing.T) {
 	}
 }
 
-// TestSubagentNilForkerRunsAgainstParent asserts the unchanged legacy behaviour: with
-// NO child forker wired, the child runs against the parent workspace (its tools see
-// the parent root) — no fork, exactly as before Phase 2.
+// TestSubagentNilForkerRunsAgainstParent asserts that with NO child forker wired,
+// the child runs against the parent workspace (its tools see the parent root) — no
+// fork.
 func TestSubagentNilForkerRunsAgainstParent(t *testing.T) {
 	probe := &rootRecordingTool{}
 	childLLM := mockllm.New(

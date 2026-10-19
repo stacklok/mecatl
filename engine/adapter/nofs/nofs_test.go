@@ -58,7 +58,7 @@ func TestNoFSWorkspaceContract(t *testing.T) {
 		t.Errorf("ReplaceFile error = %v, want ErrNoFilesystem", err)
 	}
 
-	// ADR 0315: namespace operations are honest too — ReadDir reports an empty
+	// Namespace operations are honest too — ReadDir reports an empty
 	// listing (there is no directory tree to enumerate, consistent with Glob/
 	// Grep's empty-with-no-error contract above), while every namespace
 	// MUTATION (Remove/Rename/CopyFile) fails loudly with the SAME

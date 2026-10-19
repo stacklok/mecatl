@@ -12,6 +12,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stacklok/mecatl/adapters/jsonlstore"
@@ -305,7 +306,7 @@ func TestSessionStorageContinuity_Scenario5_AutomaticManualPlannerParity(t *test
 }
 
 // TestChildGCMainPassDisabledByDefault pins that with the main knobs at 0,
-// UNPREFIXED sessions are NEVER touched even when ancient — the historical
+// UNPREFIXED sessions are NEVER touched even when ancient — the
 // "main sessions are never deleted" guarantee holds for the zero-config default
 // (the mecated posture). It is the safety twin of TestChildGCMainSessionsNeverDeleted
 // but with the CHILD passes also off, so ONLY the main knobs could touch them.
@@ -973,20 +974,58 @@ func TestChildGCTickerStopsAfterUnsupportedRetention(t *testing.T) {
 }
 
 func TestChildGCMaintenanceExclusionUnavailableNeverStartsOrSchedules(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		store := &countingPrunable{Store: memstore.New(), listed: make(chan struct{}, 1)}
+		health := &storageMaintenanceState{}
+		var checks atomic.Int32
+		closeGC := startChildGC(context.Background(), Config{
+			ChildRetention: time.Hour, ChildGCInterval: time.Millisecond,
+			Diagnostics: port.NopDiagnostics{}, storageMaintenance: health,
+			maintenanceMutationAvailable: func() bool { checks.Add(1); return false },
+		}, store, func(session.SessionID) bool { return false })
+		defer closeGC()
+		synctest.Wait() // Let any incorrectly launched startup sweep run before cancellation.
+		if got := checks.Load(); got != 1 {
+			t.Fatalf("availability checks = %d, want only startup admission", got)
+		}
+		if got := store.lists.Load(); got != 0 {
+			t.Fatalf("unavailable GC consulted storage %d times, want zero", got)
+		}
+		if got := health.snapshot(); got.ActiveJob != "" || got.LastSweepAvailable || got.NextSweepAvailable || got.LastFailure != "retention sweep unavailable" {
+			t.Fatalf("unavailable GC health = %+v", got)
+		}
+	})
+}
+
+func TestChildGCLiveMaintenanceAvailabilityLossStopsBeforeNextScan(t *testing.T) {
 	store := &countingPrunable{Store: memstore.New(), listed: make(chan struct{}, 1)}
 	health := &storageMaintenanceState{}
+	unavailable := make(chan struct{})
+	var checks atomic.Int32
 	closeGC := startChildGC(context.Background(), Config{
 		ChildRetention: time.Hour, ChildGCInterval: time.Millisecond,
 		Diagnostics: port.NopDiagnostics{}, storageMaintenance: health,
-		maintenanceMutationAvailable: func() bool { return false },
+		maintenanceMutationAvailable: func() bool {
+			// Admission and the startup sweep succeed; exclusion is then lost.
+			if checks.Add(1) <= 2 {
+				return true
+			}
+			close(unavailable)
+			return false
+		},
 	}, store, func(session.SessionID) bool { return false })
-	waitChildGCClose(t, closeGC)
-	time.Sleep(5 * time.Millisecond)
-	if got := store.lists.Load(); got != 0 {
-		t.Fatalf("unavailable GC consulted storage %d times, want zero", got)
+	defer closeGC()
+	select {
+	case <-unavailable:
+	case <-time.After(time.Second):
+		t.Fatal("worker did not recheck live maintenance availability")
 	}
-	if got := health.snapshot(); got.ActiveJob != "" || got.LastSweepAvailable || got.NextSweepAvailable || got.LastFailure != "retention sweep unavailable" {
-		t.Fatalf("unavailable GC health = %+v", got)
+	waitChildGCClose(t, closeGC)
+	if got := store.lists.Load(); got != 1 {
+		t.Fatalf("storage scans = %d, want only the available startup scan", got)
+	}
+	if got := health.snapshot(); got.ActiveJob != "" || !got.LastSweepAvailable || got.NextSweepAvailable || got.LastFailure != "retention sweep unavailable" {
+		t.Fatalf("health after live availability loss = %+v", got)
 	}
 }
 
@@ -1455,7 +1494,7 @@ func TestBuildEnabledChildGCNarratesAndStops(t *testing.T) {
 	built.Close()
 }
 
-// --- Schedule-fire retention (ADR 0059 decision #7 Phase-2) -----------------
+// --- Schedule-fire retention -------------------------------------------------
 
 // TestScheduleFireGCAgePass pins the schedule-fire age pass: "sched--"-prefixed
 // sessions older than ScheduleFireRetention are deleted by the schedule-fire
@@ -1512,8 +1551,8 @@ func TestScheduleFireGCSkipsLive(t *testing.T) {
 	}
 }
 
-// TestScheduleFireGCCountCap pins the schedule-fire GLOBAL count cap (ADR 0059
-// Phase-2, the symmetric peer of the main cap): with more sched-- fire sessions than
+// TestScheduleFireGCCountCap pins the schedule-fire GLOBAL count cap (the
+// symmetric peer of the main cap): with more sched-- fire sessions than
 // scheduleFireMaxTotal, the OLDEST fire snapshots go first, the cap is store-wide,
 // and a LIVE fire is protected and excluded from the eligible cap slots.
 func TestScheduleFireGCCountCap(t *testing.T) {

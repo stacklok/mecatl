@@ -12,7 +12,7 @@ import (
 	"github.com/stacklok/mecatl/engine/session"
 )
 
-func TestADR_0363_ContextualGuardrails_Scenario1_ApprovalOriginReplay(t *testing.T) {
+func TestContextualGuardrails_ApprovalOriginReplay(t *testing.T) {
 	log := memstore.NewEventLog()
 	spy := &spyPolicy{}
 	replay := replayApprovals(log, spy, port.NopDiagnostics{})
@@ -68,7 +68,7 @@ func TestGuardrailsDisabledSuppressesCheckerBuildersWithConfiguredSlot(t *testin
 	}
 }
 
-func TestADR_0363_ContextualGuardrails_Scenario4_ExactRoute(t *testing.T) {
+func TestContextualGuardrails_ExactRoute(t *testing.T) {
 	reg := &providerRegistry{defaultID: "default", entries: map[string]providerEntry{"default": {}, "review": {}}}
 	cases := []struct {
 		name            string

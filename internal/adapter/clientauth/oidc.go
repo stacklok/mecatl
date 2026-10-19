@@ -425,9 +425,9 @@ func safeValidationError(err error) error {
 // oidcClient resolves the transport for one login/refresh. Exactly one of the
 // two sources must be present: a caller-supplied HTTPClient (test fixtures), or
 // a managed IssuerAddressPolicy (every production path). There is deliberately
-// NO fallback: an unset policy used to yield a bare http.Client with system
-// roots and no address screening, which is a silent downgrade rather than an
-// error, so it now fails closed.
+// NO fallback: an unset policy fails closed rather than yielding a bare
+// http.Client with system roots and no address screening, which would be a
+// silent downgrade.
 func oidcClient(ctx context.Context, id Identity, cfg LoginConfig) (*http.Client, error) {
 	if cfg.HTTPClient != nil {
 		if cfg.IssuerAddressPolicy.valid() {

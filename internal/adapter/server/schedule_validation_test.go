@@ -19,7 +19,7 @@ import (
 )
 
 // schedule_validation_test.go pins the two NEW create-seam validations the
-// on-by-default + in-chat-create posture needs (ADR 0073, schedule-tool task
+// on-by-default + in-chat-create posture needs (schedule-tool task
 // 03): the SchedulerMinInterval cadence floor (AC1.3) and the
 // provider+model selector rejection (AC1.2c). Both live in the SHARED seam
 // (validateScheduleSpec over the Service) so the Schedule tool's create AND
@@ -64,8 +64,7 @@ func newValidatedScheduleService(t *testing.T, now time.Time, minInterval time.D
 
 // TestCreateScheduleEnforcesMinIntervalSeam pins the SERVICE-side half of
 // AC1.3: a cadence tighter than the configured SchedulerMinInterval floor is
-// rejected fail-closed at the SHARED create-seam (the floor is no longer
-// inert), for BOTH the fixed-cron and the @every cadence forms; a cadence at
+// rejected fail-closed at the SHARED create-seam, for BOTH the fixed-cron and the @every cadence forms; a cadence at
 // or above the floor passes; a zero floor (0 = no floor) consults nothing;
 // and UpdateSchedule (the shared-seam sibling) enforces the same floor.
 func TestCreateScheduleEnforcesMinIntervalSeam(t *testing.T) {
@@ -122,7 +121,7 @@ func TestCreateScheduleEnforcesMinIntervalSeam(t *testing.T) {
 	}
 
 	// A zero floor (0 = no floor) consults nothing: the tightest cadence
-	// passes (the pre-feature posture).
+	// passes.
 	noFloor := newValidatedScheduleService(t, now, 0, nil)
 	if _, err := noFloor.CreateSchedule(ctx, port.ScheduleSpec{
 		Name: "tight-ok", Prompt: "p", Trigger: port.TriggerSpec{Cron: "* * * * *"},

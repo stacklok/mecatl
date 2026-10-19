@@ -2,6 +2,7 @@
 """Generate server flag reference from trusted CLI help in a clean environment."""
 import argparse
 import os
+import re
 from pathlib import Path
 import shutil
 import subprocess
@@ -9,6 +10,12 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 OUTPUT = ROOT / 'user-docs/reference/server-cli.md'
+
+def replace_path(text, path, placeholder):
+    # The CLI wraps its own help, so a long path can be split across lines at a
+    # hyphen or slash; match it with an optional line break between characters.
+    pattern = r'(?:\n[ \t]*)?'.join(re.escape(ch) for ch in path)
+    return re.sub(pattern, lambda _: placeholder, text)
 
 def render():
     # Help exits before composition. Strip all operator environment variables;
@@ -30,9 +37,10 @@ def render():
             raise RuntimeError(f'{title} help generation failed: {help_text}')
         if help_requested:
             help_text = help_text[:help_text.index('Version:')] + 'Version: mecak8s --version prints the build version and exits.\n'
-        help_text = help_text.replace(str(scratch), '<XDG_ROOT>').replace(str(ROOT), '<WORKSPACE>')
+        help_text = replace_path(help_text, str(scratch), '<XDG_ROOT>')
+        help_text = replace_path(help_text, str(ROOT), '<WORKSPACE>')
         if env.get('HOME'):
-            help_text = help_text.replace(env['HOME'], '<HOME>')
+            help_text = replace_path(help_text, env['HOME'], '<HOME>')
         parts.append(f'\n## {title}\n\n```text\n{help_text.rstrip()}\n```\n')
     return ''.join(parts)
 

@@ -115,8 +115,7 @@ order:
    spec at docs/specs/foo.md".
 3. **PRD / spec files** under conventional locations matching the
    branch name or feature: `docs/specs/<name>.md`,
-   `docs/prd/<name>.md`, `specs/<name>.md`, `.scratch/<name>.md`,
-   `docs/acceptance/<name>.md`.
+   `docs/prd/<name>.md`, `specs/<name>.md`, `.scratch/<name>.md`.
 4. **If nothing is found**, ask the user:
 
    > I don't see a spec or issue reference for this branch. Path
@@ -134,11 +133,11 @@ them):
 
 - `CLAUDE.md`, `AGENTS.md`, `CONTRIBUTING.md`
 - `CONTEXT.md`, `CONTEXT-MAP.md`, per-directory `CONTEXT.md` files
-- `docs/adr/*.md` (architectural decisions ARE standards)
+- `docs/architecture/*.md` chapters for the touched area (documented invariants ARE standards)
 - `STYLE.md`, `STANDARDS.md`, `STYLEGUIDE.md` at repo root or under
   `docs/`
 - `.claude/rules/*.md`
-- `docs/design/principles.md` if present
+- the "Platform principles" section of `docs/architecture.md` if present
 
 **Explicit skip rule** (inherited from Matt's design): tell the Standards
 subagent not to re-check anything enforced by detected formatter, linter,
@@ -226,7 +225,7 @@ Classification rules:
 Reviewing against <fp>: N files, M insertions, L deletions, K commits.
 
 Spec axis:       checking against #123 ("Add /preview endpoint")
-Standards axis:  reading CLAUDE.md, .claude/rules/, docs/adr/
+Standards axis:  reading CLAUDE.md, .claude/rules/, docs/architecture/
                  skipping tooling: golangci-lint, biome, prettier
 Test adequacy:   independently tracing requirements to assertions and seams
 Domain axis (running in parallel):

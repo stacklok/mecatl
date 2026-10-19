@@ -1,7 +1,7 @@
 {{/*
 Generates ONE stable install-id for this Helm release, shared by every replica
 and preserved across every `helm upgrade` — unlike a per-pod local file, which
-mecak8s cannot use at all: it runs storage-free, no PVC (ADR 0048), so every pod
+mecak8s cannot use at all: it runs storage-free, no PVC, so every pod
 restart would otherwise mint a fresh, never-reused id — the worst-case
 cardinality pattern for the product-metrics pipeline this feeds.
 

@@ -27,8 +27,8 @@ const installIDRelPath = "mecatl/telemetry-id"
 //
 // The returned id IS threaded into an exported resource attribute (see
 // provider.go) — this package makes no attempt to keep the id local-only;
-// that was a prior, now-reverted design (see git history / the ADR's
-// cost-analysis section for why it was reinstated).
+// that was a prior, now-reverted design (see git history
+// for why it was reinstated).
 func LoadOrCreateInstallID(
 	env xdgconfig.ResolveEnv,
 	readFile func(string) ([]byte, error),

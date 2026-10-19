@@ -25,7 +25,7 @@ type ModelInfo struct {
 	Reasoning    bool   // emits reasoning
 	ContextLimit int64  // total context window in tokens; 0 = unknown
 	// PromptCached is true when mecatl ASKS the upstream to cache this
-	// (provider, model) pair's conversation prefix (ADR 0346). The breakpoint is
+	// (provider, model) pair's conversation prefix. The breakpoint is
 	// armed on every Responses endpoint, so false means the server was started
 	// with --no-prompt-cache, not that this endpoint cannot cache. Decisive for
 	// an Anthropic model, which caches only on an explicit ask; for an implicit
@@ -40,7 +40,7 @@ type ModelInfo struct {
 type ModelSelection struct {
 	ProviderID string
 	ModelID    string
-	// ReasoningEffort is the chosen reasoning-effort tier (ADR 0055): "" / "auto"
+	// ReasoningEffort is the chosen reasoning-effort tier: "" / "auto"
 	// (unset — operator/provider default) or low/medium/high/xhigh/max. It is sent
 	// on CreateSession.reasoning_effort and is meaningful WITHOUT a provider/model
 	// (it rides the server-default provider), so an effort-only selection is NOT

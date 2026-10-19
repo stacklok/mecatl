@@ -6,7 +6,7 @@ Reference is a map. The reader is working and needs to look something up: a flag
 
 Reference material typically covers CLI commands, API and schema specs, configuration fields, and compatibility tables, either in a dedicated reference section or as reference pages inside product sections.
 
-**Check what's auto-generated first.** CLI reference pages, CRD reference pages, and API specs are often generated from upstream sources; check the project's conventions (Mecatl's [authoring contract](../../../../user-docs/_README.md) lists the generated pages, owning sources, and generators). Never hand-edit generated files: fixes go upstream, and hand-written framing usually has a designated home the generator preserves. This reference file applies to hand-written reference pages and to reference sections within other pages.
+**Check what's auto-generated first.** CLI reference pages, CRD reference pages, and API specs are often generated from upstream sources; check the project's conventions (Mecatl's [authoring contract](../../../../user-docs/AGENTS.md) lists the generated pages, owning sources, and generators). Never hand-edit generated files: fixes go upstream, and hand-written framing usually has a designated home the generator preserves. This reference file applies to hand-written reference pages and to reference sections within other pages.
 
 ## Principles
 

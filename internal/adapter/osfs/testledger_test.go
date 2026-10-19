@@ -13,7 +13,7 @@ var testReadLedgers sync.Map
 // testReadLedger returns a per-Workspace-instance ReadLedger for tests that
 // need to record/inspect ledger state directly against a real *osfs.Workspace
 // (the production Workspace type is content-only; the ledger lives beside it,
-// selected independently, per ADR 0281).
+// selected independently).
 func testReadLedger(w *Workspace) tool.ReadLedger {
 	ledger, _ := testReadLedgers.LoadOrStore(w, memledger.New())
 	return ledger.(tool.ReadLedger)

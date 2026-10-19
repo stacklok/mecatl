@@ -16,6 +16,7 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/mcp"
 	"github.com/stacklok/mecatl/internal/adapter/mcpauthority"
 	"github.com/stacklok/mecatl/internal/adapter/mcpcredential"
+	"github.com/stacklok/mecatl/internal/adapter/mcpsecretfile"
 	"github.com/stacklok/mecatl/internal/adapter/permconfig"
 )
 
@@ -31,19 +32,23 @@ var (
 )
 
 // MCPProfileError is a redacted profile-loading error. It retains only safe
-// metadata and a stable category; looked-up values and adapter causes are never
-// retained.
+// metadata and a stable category; looked-up secret values are never retained.
+// Only safe file-read diagnostics are included in Reason.
 type MCPProfileError struct {
 	Server   string
 	Field    string
 	Ref      string
 	Expected string
 	Remedy   string
+	Reason   string // Safe diagnostic for a referenced client-secret file, never its contents.
 	Kind     error
 }
 
 func (e *MCPProfileError) Error() string {
 	message := fmt.Sprintf("MCP server %q: %s: %s", e.Server, e.Field, e.Kind)
+	if e.Reason != "" {
+		message += "; " + e.Reason
+	}
 	if e.Expected != "" {
 		message += "; expected " + e.Expected
 	}
@@ -67,6 +72,9 @@ type MCPProfileLoadOptions struct {
 	// SelectedName is used by targeted lifecycle commands. An empty value keeps
 	// the daemon's all-profile composition unchanged.
 	SelectedName string
+	// InitializeNativeCustody lets explicit login create missing native custody;
+	// ordinary profile loading remains read-only.
+	InitializeNativeCustody bool
 }
 
 // MCPProfileResolver binds the legacy CLI metadata and environment lookup to the
@@ -399,14 +407,37 @@ func loadOAuthProfile(profile permconfig.MCPServerProfile, lookup func(string) (
 	return opts, nil
 }
 
+func nativeMCPCustodyRemedy(server string, err error) string {
+	command := fmt.Sprintf("`mecated mcp reset-local-credentials %s`", server)
+	switch {
+	case errors.Is(err, mcpcredential.ErrResetInProgress):
+		return "rerun " + command + " to finish custody reset"
+	case errors.Is(err, mcpcredential.ErrObsoleteMarker), errors.Is(err, mcpcredential.ErrPendingArtifactMismatch), errors.Is(err, mcpcredential.ErrArtifactMissing), errors.Is(err, mcpcredential.ErrArtifactMismatch):
+		return "run " + command + " to reset local custody, then log in again"
+	default:
+		return ""
+	}
+}
+
 func loadNativeOAuthProfile(server string, local *permconfig.MCPLocalCredentialProfile, loadOpts MCPProfileLoadOptions, cacheKey string, owner *MCPProfiles, stores map[string]credentialstore.Store, opts *mcp.OAuthOptions) (*mcp.OAuthOptions, error) {
 	filePath := ""
 	if local.Key.File != nil {
 		filePath = local.Key.File.Path
 	}
-	selected, err := mcpcredential.Open(context.Background(), local.Root, local.Key.Mode, filePath, loadOpts.Keyring)
+	var selected mcpcredential.Selection
+	var err error
+	if loadOpts.InitializeNativeCustody {
+		selected, err = mcpcredential.Resolve(context.Background(), local.Root, mcpcredential.Options{
+			Requested: local.Key.Mode, FilePath: filePath, Keyring: loadOpts.Keyring,
+		})
+	} else {
+		selected, err = mcpcredential.Open(context.Background(), local.Root, local.Key.Mode, filePath, loadOpts.Keyring)
+	}
 	if err != nil {
-		return nil, &MCPProfileError{Server: server, Field: "auth.oauth.credentials.local.key", Kind: ErrMCPProfileStore}
+		return nil, &MCPProfileError{
+			Server: server, Field: "auth.oauth.credentials.local.key", Kind: ErrMCPProfileStore,
+			Remedy: nativeMCPCustodyRemedy(server, err),
+		}
 	}
 	store, err := credentialstore.NewEncryptedFile(local.Root, mcpcredential.NativeNamespace, selected.Key)
 	clear(selected.Key)
@@ -422,9 +453,19 @@ func loadNativeOAuthProfile(server string, local *permconfig.MCPLocalCredentialP
 
 func loadOAuthClient(profile permconfig.MCPServerProfile, decl *permconfig.MCPOAuthProfile, lookup func(string) (string, bool), opts *mcp.OAuthOptions) error {
 	if client := decl.Client.Preregistered; client != nil {
-		secret, ok := lookupMCPEnv(lookup, client.SecretEnv)
-		if !ok || secret == "" {
-			return &MCPProfileError{Server: profile.Name, Field: "auth.oauth.client.preregistered.secret_env", Ref: client.SecretEnv, Kind: ErrMCPProfileSecret, Expected: "a non-empty client secret in the referenced MECATL_* environment variable", Remedy: "set the referenced environment variable before starting mecatl"}
+		var secret string
+		if client.SecretEnv != "" {
+			var ok bool
+			secret, ok = lookupMCPEnv(lookup, client.SecretEnv)
+			if !ok || secret == "" {
+				return &MCPProfileError{Server: profile.Name, Field: "auth.oauth.client.preregistered.secret_env", Ref: client.SecretEnv, Kind: ErrMCPProfileSecret, Expected: "a non-empty secret in the referenced MECATL_* environment variable", Remedy: "set the referenced environment variable before starting mecatl"}
+			}
+		} else {
+			var err error
+			secret, err = mcpsecretfile.Read(client.SecretFile)
+			if err != nil {
+				return &MCPProfileError{Server: profile.Name, Field: "auth.oauth.client.preregistered.secret_file", Ref: client.SecretFile, Kind: ErrMCPProfileSecret, Reason: err.Error(), Remedy: "mount a readable, non-empty regular client secret file before starting mecatl"}
+			}
 		}
 		opts.Client.Preregistered = &oauthex.ClientCredentials{ClientID: client.ID, ClientSecretAuth: &oauthex.ClientSecretAuth{ClientSecret: secret}, Issuer: decl.Issuer}
 		return nil

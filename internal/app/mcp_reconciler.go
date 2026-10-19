@@ -47,6 +47,7 @@ type mcpReconcileCandidate struct {
 	manager    *mcp.Manager
 	configs    []mcp.ServerConfig
 	inventory  []mcpsource.SourceInfo
+	failures   map[string]error
 	tools      []mcpToolMeta
 	resources  []mcp.Resource
 	prompts    []mcp.Prompt
@@ -323,7 +324,14 @@ func (r *mcpSourceReconciler) cycle() (mcpReconcileResult, error) {
 	}
 	candidate.generation = generation
 	candidate.configs = cloneMCPConfigs(configs)
+	result.inventory = mcpFailureInventory(inventory, candidate.failures)
 	candidate.inventory = cloneMCPInventory(inventory)
+	if len(candidate.failures) > 0 && len(candidate.manager.Servers()) == 0 && current != nil {
+		candidate.close()
+		result.candidate = current
+		result.stale = true
+		return result, nil
+	}
 	if err := validateMCPCandidate(candidate); err != nil {
 		candidate.close()
 		result.stale = true
@@ -331,14 +339,18 @@ func (r *mcpSourceReconciler) cycle() (mcpReconcileResult, error) {
 		return result, err
 	}
 
+	result, refreshed = r.acceptCandidate(candidate, result)
+	return result, nil
+}
+
+func (r *mcpSourceReconciler) acceptCandidate(candidate *mcpReconcileCandidate, result mcpReconcileResult) (mcpReconcileResult, bool) {
 	r.mu.Lock()
 	old := r.current
 	r.mu.Unlock()
 	if equalMCPCandidate(old, candidate) {
-		refreshed = true
 		candidate.close()
 		result.candidate = old
-		return result, nil
+		return result, len(candidate.failures) == 0
 	}
 	if r.publish != nil {
 		if !r.publish(old, candidate) {
@@ -346,7 +358,7 @@ func (r *mcpSourceReconciler) cycle() (mcpReconcileResult, error) {
 			result.candidate = old
 			result.stale = true
 			result.diagnostics = appendBoundedDiagnostic(result.diagnostics, "MCP runtime publication is pending integration")
-			return result, nil
+			return result, false
 		}
 		r.mu.Lock()
 		r.current = candidate
@@ -363,10 +375,9 @@ func (r *mcpSourceReconciler) cycle() (mcpReconcileResult, error) {
 			old.close()
 		}
 	}
-	refreshed = true
 	result.candidate = candidate
 	result.changed = true
-	return result, nil
+	return result, len(candidate.failures) == 0
 }
 
 func (r *mcpSourceReconciler) resolve(ctx context.Context) ([]mcp.ServerConfig, []mcpsource.SourceInfo, []string, bool, error) {
@@ -446,6 +457,24 @@ func (r *mcpSourceReconciler) Close() {
 	})
 }
 
+func mcpFailureInventory(inventory []mcpsource.SourceInfo, failures map[string]error) []mcpsource.SourceInfo {
+	observed := cloneMCPInventory(inventory)
+	seen := make(map[string]bool)
+	for i := range observed {
+		for _, server := range observed[i].Servers {
+			if seen[server.Name] {
+				continue
+			}
+			seen[server.Name] = true
+			if failure := failures[server.Name]; failure != nil {
+				observed[i].Diagnostics = appendBoundedDiagnostic(observed[i].Diagnostics,
+					fmt.Sprintf("MCP server %q unavailable: %v", server.Name, failure))
+			}
+		}
+	}
+	return observed
+}
+
 func sourceInfo(src mcpsource.Source) mcpsource.SourceInfo {
 	info := mcpsource.SourceInfo{Name: src.Name(), Enabled: true}
 	switch {
@@ -461,7 +490,7 @@ func sourceInfo(src mcpsource.Source) mcpsource.SourceInfo {
 func serverInfos(configs []mcp.ServerConfig, group string) []mcpsource.ServerInfo {
 	out := make([]mcpsource.ServerInfo, 0, len(configs))
 	for _, cfg := range configs {
-		out = append(out, mcpsource.ServerInfo{Name: cfg.Name, URL: cfg.URL, Transport: "streamable-http", Group: group})
+		out = append(out, mcpsource.ServerInfo{Name: cfg.Name, URL: mcp.RedactURL(cfg.URL), Transport: "streamable-http", Group: group})
 	}
 	return out
 }
@@ -559,7 +588,19 @@ func equalMCPCandidate(a, b *mcpReconcileCandidate) bool {
 	if a == nil || b == nil {
 		return a == b
 	}
-	return equalMCPConfigs(a.configs, b.configs) && reflect.DeepEqual(a.tools, b.tools) && reflect.DeepEqual(a.resources, b.resources) && reflect.DeepEqual(a.prompts, b.prompts) && reflect.DeepEqual(a.inventory, b.inventory)
+	return equalMCPConfigs(a.configs, b.configs) && equalMCPFailureNames(a.failures, b.failures) && reflect.DeepEqual(a.tools, b.tools) && reflect.DeepEqual(a.resources, b.resources) && reflect.DeepEqual(a.prompts, b.prompts) && reflect.DeepEqual(a.inventory, b.inventory)
+}
+
+func equalMCPFailureNames(a, b map[string]error) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for name := range a {
+		if _, ok := b[name]; !ok {
+			return false
+		}
+	}
+	return true
 }
 
 func toolMetadata(tools []tool.Tool) []mcpToolMeta {
@@ -581,12 +622,26 @@ func buildMCPReconcileCandidate(diagCfg Config) mcpCandidateBuilder {
 			bounded[i].ListChanged = changed
 			bounded[i].CandidateBudget = budget
 		}
-		mgr, err := mcp.NewCompleteManager(ctx, bounded, diagCfg.diag())
-		if err != nil {
+		mgr, failures := mcp.NewPartialCompleteManager(ctx, bounded, diagCfg.diag())
+		if err := ctx.Err(); err != nil {
+			_ = mgr.Close()
 			return nil, err
 		}
+		if budget.Exceeded() {
+			_ = mgr.Close()
+			return nil, errors.New("MCP candidate list budget exceeded")
+		}
 		candidate := &mcpReconcileCandidate{manager: mgr, configs: cloneMCPConfigs(configs)}
+		for i, failure := range failures {
+			if failure != nil {
+				if candidate.failures == nil {
+					candidate.failures = make(map[string]error)
+				}
+				candidate.failures[configs[i].Name] = failure
+			}
+		}
 		candidate.tools = toolMetadata(mgr.Tools())
+		var err error
 		candidate.resources, err = mgr.ListResources(ctx, "")
 		if err != nil {
 			candidate.close()

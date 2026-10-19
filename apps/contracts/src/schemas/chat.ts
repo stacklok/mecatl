@@ -8,16 +8,57 @@ export const sessionToolAccessSchema = z.enum(["all", "noFilesystem"]);
 
 export const reasoningEffortSchema = z.enum(["default", "low", "medium", "high", "xhigh", "max"]);
 
+export const executionSelectionSchema = z.union([
+  z.strictObject({ none: z.strictObject({}) }),
+  z.strictObject({
+    template: z.strictObject({
+      id: z
+        .string()
+        .min(1)
+        .max(63)
+        .regex(/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/),
+      revision: z.string().regex(/^v1-[0-9a-f]{64}$/),
+    }),
+  }),
+]);
+
+export const executionTemplateInventorySchema = z.object({
+  inventoryRevision: z.string(),
+  items: z
+    .array(
+      z.object({
+        template: z.object({ id: z.string(), revision: z.string() }),
+        name: z.string(),
+        description: z.string(),
+        displayToken: z.string(),
+        extensions: z.record(z.string(), z.string()),
+        declaredExecutionFiles: z.boolean(),
+        declaredBuiltInShell: z.boolean(),
+      }),
+    )
+    .max(64),
+});
+
 export const sessionModelSelectionSchema = z.object({
   id: z.string().trim().min(1).max(256),
   providerId: z.string().trim().min(1).max(128),
 });
 
 export const sessionActionCapabilitiesSchema = z.object({
+  copyId: z.boolean(),
+  copyIdReason: z.string(),
   delete: z.boolean(),
   deleteReason: z.string(),
+  fork: z.boolean(),
+  forkReason: z.string(),
+  inspect: z.boolean(),
+  inspectReason: z.string(),
+  publicChat: z.boolean(),
+  publicChatReason: z.string(),
   rename: z.boolean(),
   renameReason: z.string(),
+  viewTranscript: z.boolean(),
+  viewTranscriptReason: z.string(),
 });
 
 export const sessionSummarySchema = z.object({
@@ -26,6 +67,7 @@ export const sessionSummarySchema = z.object({
   /** Non-empty when this session is an AI-debug chat bound to that target. */
   debugTargetSessionId: z.string(),
   id: z.string(),
+  kind: z.string(),
   modelId: z.string(),
   state: z.string(),
   title: z.string(),
@@ -40,17 +82,23 @@ export const listSessionsResponseSchema = z.object({
   items: z.array(sessionSummarySchema),
 });
 
-export const createSessionRequestSchema = z.object({
-  /**
-   * Binds this session as an AI-debug chat over that target (ADR 0254): the
-   * daemon requires the no-fs profile and authorizes the target itself.
-   */
-  debugTargetSessionId: z.string().trim().min(1).max(256).optional(),
-  mode: sessionModeSchema.default("default"),
-  model: sessionModelSelectionSchema.optional(),
-  reasoningEffort: reasoningEffortSchema.default("default"),
-  toolAccess: sessionToolAccessSchema.default("all"),
-});
+export const createSessionRequestSchema = z
+  .object({
+    /**
+     * Binds this session as an AI-debug chat over that target: the
+     * daemon requires the no-fs profile and authorizes the target itself.
+     */
+    debugTargetSessionId: z.string().trim().min(1).max(256).optional(),
+    execution: executionSelectionSchema.optional(),
+    mode: sessionModeSchema.default("default"),
+    model: sessionModelSelectionSchema.optional(),
+    reasoningEffort: reasoningEffortSchema.default("default"),
+  })
+  .strict()
+  .refine(
+    (request) => !request.debugTargetSessionId || !request.execution || "none" in request.execution,
+    { message: "Debug chats require execution.none", path: ["execution"] },
+  );
 
 export const createSessionResponseSchema = z.object({
   id: z.string(),
@@ -67,15 +115,35 @@ export const sessionUsageSchema = z.object({
 export const sessionDetailResponseSchema = z.object({
   capabilities: z.object({
     image: z.boolean(),
+    audio: z.boolean(),
+    executionFiles: z.boolean(),
+    builtInShell: z.boolean(),
     manualCompaction: z.boolean(),
     modelSelection: z.boolean(),
   }),
   id: z.string(),
+  kind: z.string(),
   mode: sessionModeSchema,
   model: sessionModelSelectionSchema
     .extend({
       contextWindow: z.string(),
+      /** The provider's display name, as in the settings inventory. */
+      providerDisplayName: z.string(),
       reasoningEffort: reasoningEffortSchema,
+    })
+    .optional(),
+  placement: z
+    .object({
+      kind: z.string(),
+      label: z.string(),
+      branch: z.string(),
+      revision: z.string(),
+    })
+    .optional(),
+  relationship: z
+    .object({
+      debugTargetSessionId: z.string().optional(),
+      parentSessionId: z.string().optional(),
     })
     .optional(),
   state: z.string(),
@@ -93,6 +161,11 @@ export const setSessionModeResponseSchema = z.object({
 export const forkSessionRequestSchema = z.object({
   model: sessionModelSelectionSchema,
   reasoningEffort: reasoningEffortSchema,
+  worktreeSelector: z.string().min(1).optional(),
+});
+
+export const clearSessionRequestSchema = z.object({
+  worktreeSelector: z.string().min(1).optional(),
 });
 
 export const forkSessionResponseSchema = z.object({
@@ -290,7 +363,9 @@ export const runStreamEventSchema = z.discriminatedUnion("type", [
   }),
 ]);
 
+export type ExecutionTemplateInventory = z.infer<typeof executionTemplateInventorySchema>;
 export type CreateSessionRequest = z.infer<typeof createSessionRequestSchema>;
+export type ClearSessionRequest = z.infer<typeof clearSessionRequestSchema>;
 export type ForkSessionRequest = z.infer<typeof forkSessionRequestSchema>;
 export type ListSessionsResponse = z.infer<typeof listSessionsResponseSchema>;
 export type RunStreamEvent = z.infer<typeof runStreamEventSchema>;

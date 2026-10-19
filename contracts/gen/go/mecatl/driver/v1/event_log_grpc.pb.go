@@ -93,7 +93,7 @@ type EventLogServiceClient interface {
 	// AppendGap durably records a gap marker — a position where an append is
 	// KNOWN to have failed — and returns the cursor positioned after it.
 	//
-	// It is the best-effort, cross-process tier of ADR 0250's append-gap
+	// It is the best-effort, cross-process tier of the event log's append-gap
 	// guarantee: if the marker lands, every watcher everywhere learns of the gap
 	// deterministically rather than silently skipping it. A driver that cannot
 	// record it returns a non-OK status; the harness WARNs and continues the run.
@@ -202,7 +202,7 @@ type EventLogServiceServer interface {
 	// AppendGap durably records a gap marker — a position where an append is
 	// KNOWN to have failed — and returns the cursor positioned after it.
 	//
-	// It is the best-effort, cross-process tier of ADR 0250's append-gap
+	// It is the best-effort, cross-process tier of the event log's append-gap
 	// guarantee: if the marker lands, every watcher everywhere learns of the gap
 	// deterministically rather than silently skipping it. A driver that cannot
 	// record it returns a non-OK status; the harness WARNs and continues the run.

@@ -3,6 +3,7 @@ package executionclient
 import (
 	"context"
 	"testing"
+	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -38,6 +39,55 @@ func (r *droppedCommitRPC) ReserveSuccessor(_ context.Context, req *executionv1.
 }
 func (*droppedCommitRPC) AttachEnvironment(_ context.Context, req *executionv1.AttachEnvironmentRequest, _ ...grpc.CallOption) (*executionv1.AttachEnvironmentResponse, error) {
 	return &executionv1.AttachEnvironmentResponse{Environment: req.GetContext().GetEnvironment(), Epoch: 1, Ready: true, GrantGeneration: 1}, nil
+}
+
+type droppedReservationRPC struct {
+	executionv1.ExecutionProviderServiceClient
+	afterReserve func(*executionv1.ReserveSuccessorRequest)
+	lastAbort    *executionv1.ReferenceMutationRequest
+	abortErr     error
+	abortBounded bool
+	commits      int
+}
+
+func (r *droppedReservationRPC) ReserveSuccessor(ctx context.Context, req *executionv1.ReserveSuccessorRequest, opts ...grpc.CallOption) (*executionv1.ReferenceReservationResponse, error) {
+	if _, err := r.ExecutionProviderServiceClient.ReserveSuccessor(ctx, req, opts...); err != nil {
+		return nil, err
+	}
+	r.afterReserve(req)
+	return nil, status.Error(codes.Unavailable, "reservation response lost")
+}
+
+func (r *droppedReservationRPC) AbortReference(ctx context.Context, req *executionv1.ReferenceMutationRequest, opts ...grpc.CallOption) (*emptypb.Empty, error) {
+	r.lastAbort = req
+	r.abortErr = ctx.Err()
+	deadline, ok := ctx.Deadline()
+	r.abortBounded = ok && time.Until(deadline) > 0 && time.Until(deadline) <= 10*time.Second
+	return r.ExecutionProviderServiceClient.AbortReference(ctx, req, opts...)
+}
+
+func (r *droppedReservationRPC) CommitReference(ctx context.Context, req *executionv1.ReferenceMutationRequest, opts ...grpc.CallOption) (*emptypb.Empty, error) {
+	r.commits++
+	return r.ExecutionProviderServiceClient.CommitReference(ctx, req, opts...)
+}
+
+type attachFailedRPC struct{ droppedCommitRPC }
+
+func (*attachFailedRPC) AttachEnvironment(context.Context, *executionv1.AttachEnvironmentRequest, ...grpc.CallOption) (*executionv1.AttachEnvironmentResponse, error) {
+	return nil, status.Error(codes.Unavailable, "attach failed")
+}
+
+func TestExclusiveSuccessorAbortsWhenAttachFailsAfterReservation(t *testing.T) {
+	rpc := &attachFailedRPC{}
+	provider := &Provider{client: &Client{rpc: rpc}, profile: "coding"}
+	_, err := provider.ReserveSuccessor(t.Context(), server.PlacementSuccessorRequest{
+		Ref:             session.EnvironmentRef{Kind: session.EnvironmentKind("kubernetes"), ID: "env", Revision: "rev"},
+		Principal:       &session.Principal{Issuer: "issuer", Subject: "alice"},
+		SourceBindingID: "origin", DestinationBindingID: "fire",
+	})
+	if err == nil || rpc.aborts != 1 || rpc.lastAbort.GetBindingId() != "fire" || rpc.lastAbort.GetOperationId() != rpc.lastSuccessor.GetOperationId() {
+		t.Fatalf("attach error=%v, aborts=%d, aborted=%v", err, rpc.aborts, rpc.lastAbort)
+	}
 }
 
 func TestExclusiveSuccessorReservationAbortsOnPrepublicationFailure(t *testing.T) {
@@ -78,6 +128,30 @@ func TestSharedInitialReservationIsRetainedOnPrepublicationFailure(t *testing.T)
 	}
 	if rpc.commits != 0 || rpc.aborts != 0 {
 		t.Fatalf("commits=%d aborts=%d, shared initial reservation must remain pending", rpc.commits, rpc.aborts)
+	}
+}
+
+func TestAmbiguousSuccessorCommitIsNeverAbortedByCleanup(t *testing.T) {
+	rpc := &droppedCommitRPC{}
+	provider := &Provider{client: &Client{rpc: rpc}, profile: "coding"}
+	binding, err := provider.ReserveSuccessor(t.Context(), server.PlacementSuccessorRequest{
+		Ref:             session.EnvironmentRef{Kind: "kubernetes", ID: "env", Revision: "rev"},
+		Principal:       &session.Principal{Issuer: "issuer", Subject: "alice"},
+		SourceBindingID: "origin", DestinationBindingID: "fire",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := binding.Commit(t.Context()); err == nil {
+		t.Fatal("commit transport ambiguity was hidden")
+	}
+	for range 2 {
+		if err := binding.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if rpc.commits != 1 || rpc.aborts != 0 {
+		t.Fatalf("commits=%d aborts=%d", rpc.commits, rpc.aborts)
 	}
 }
 

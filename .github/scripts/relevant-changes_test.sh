@@ -34,7 +34,7 @@ run_raw() {
 
 # --- go category: the Go build/test matrix -------------------------------------
 # Provably irrelevant: docs, the site, user-docs, and the TS SDK frontend.
-run "go: docs-only skips" go false README.md docs/intro.md docs/adr/0093-provider-modules.md docs/design/notes.mdx
+run "go: docs-only skips" go false README.md docs/intro.md docs/architecture/providers.md docs/design/notes.mdx
 run "go: user-docs + website skip" go false user-docs/intro.md user-docs/building/_category_.json website/package.json website/src/pages/index.tsx
 run "go: SDK frontend skips (cannot affect a Go binary/test)" go false sdk/typescript/src/client.ts sdk/typescript/pnpm-lock.yaml
 run "go: mixed irrelevant skips" go false docs/x.md sdk/typescript/src/a.ts website/b.md
@@ -80,25 +80,25 @@ run "site: website runs" site true website/src/pages/index.tsx
 run "site: user-docs runs" site true user-docs/reference/configuration.md
 run "site: SDK declarations run (task sdk:docs:check)" site true sdk/typescript/src/client.ts
 run "site: Go engine change skips" site false engine/agent/loop.go
-run "site: internal docs (matlatl corpus) skip" site false docs/adr/0093-provider-modules.md
+run "site: internal docs (matlatl corpus) skip" site false docs/architecture/providers.md
 run "site: mixed site + Go runs" site true website/a.tsx internal/b.go
 # CI-control files that DEFINE the user-docs job / its task recipes must RUN it.
 run "site: ci.yml (job definition) runs" site true .github/workflows/ci.yml
 run "site: Taskfile (task recipes) runs" site true Taskfile.yml
 
 # --- studio category: the Mecatl Studio job (`studio`) ---------------------------
-# Relevant only to apps/ (a self-contained workspace on the PUBLISHED SDK) and the
-# CI-control files. A Go, in-tree-SDK, contracts, or site change cannot alter it.
+# Relevant to apps/, the SDK source built for Studio, and CI-control files.
+# A Go or site change alone cannot alter its frontend.
 run "studio: apps server runs" studio true apps/server/src/index.ts
 run "studio: apps web runs" studio true apps/web/src/main.tsx
 run "studio: apps lockfile runs" studio true apps/pnpm-lock.yaml
 run "studio: apps Dockerfile + compose run" studio true apps/Dockerfile apps/docker-compose.yml
 run "studio: apps Taskfile runs" studio true apps/Taskfile.yml
 run "studio: Go engine change skips" studio false engine/agent/loop.go
-run "studio: in-tree SDK change skips (Studio uses the published SDK)" studio false sdk/typescript/src/client.ts
+run "studio: checked-out SDK source change runs" studio true sdk/typescript/src/client.ts
 run "studio: contracts (proto) change skips (no in-tree codegen reaches apps/)" studio false contracts/proto/mecatl/v1/agent.proto
 run "studio: website + user-docs skip" studio false website/a.tsx user-docs/intro.md
-run "studio: docs skip" studio false docs/adr/0351-mecatl-studio-in-repo-web-ui.md
+run "studio: docs skip" studio false docs/architecture/api-surface.md
 run "studio: mixed apps + Go runs" studio true apps/server/src/app.ts engine/b.go
 # CI-control files that DEFINE the studio job / its task recipes must RUN it.
 run "studio: ci.yml (job definition) runs" studio true .github/workflows/ci.yml

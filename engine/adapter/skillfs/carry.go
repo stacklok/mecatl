@@ -1,5 +1,5 @@
-// Package skillfs carries small, tool-agnostic helpers this adapter needs that
-// previously lived in root-module adapters (internal/adapter/toolkit,
+// Package skillfs carries small, tool-agnostic helpers this adapter needs whose
+// originals live in root-module adapters (internal/adapter/toolkit,
 // internal/adapter/xdgconfig, internal/adapter/osfs). The engine module must not
 // import the root module (the fstools precedent, #269), so the EXACT bodies are
 // carried here and pinned byte-identical to their origins. Keep them in sync with

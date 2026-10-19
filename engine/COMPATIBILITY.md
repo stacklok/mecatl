@@ -1,9 +1,9 @@
 # Engine compatibility policy
 
-The `github.com/stacklok/mecatl/engine` module is the importable core of mecatl
-(ADR 0036). This document is its **public API stability contract**: what is
+The `github.com/stacklok/mecatl/engine` module is the importable core of mecatl.
+This document is its **public API stability contract**: what is
 covered, how changes are versioned, and how the contract is mechanically
-enforced (issue #114, ADR 0037).
+enforced (issue #114).
 
 ## The public surface
 
@@ -54,7 +54,7 @@ ignores internal churn:
   `skillfs` (the read-only `.claude/skills` discovery core + Skill tool body), and
   `search` (the WebSearch tool body + Exa/HTTP/SearXNG providers + offline fake),
   and `webfetch` (the bounded public HTTP(S) text fetch tool),
-  graduated into the importable module per #269 / #328 / #363 / ADR 0105, are reference bundles: a
+  graduated into the importable module per #269 / #328 / #363, are reference bundles: a
   consumer composes its own sources/catalog and may take, subset, swap-by-name,
   or ignore them (see the package docs), so their surface may change without a
   CHANGELOG note. **Note:** the conformance suites' real CONTRACT is the port
@@ -62,7 +62,7 @@ ignores internal churn:
   merely exercise it.
 - **`engine/arch`** — test-support (the layering/architecture proofs).
 - **The entire root module** — `internal/`, `cmd/`, `contracts/`, `perf/`. These
-  are outside the engine module boundary (ADR 0036) and carry no external
+  are outside the engine module boundary and carry no external
   compatibility promise.
 
 ## Versioning discipline
@@ -125,8 +125,8 @@ mecatl persists a session as a **snapshot** (`engine/adapter/sessnap`), and
 `port.SessionStore.Load` deserializes it. A host whose system of record is an
 **append-only event log** (e.g. a downstream consumer) may instead implement `Load` by **folding**
 its event stream into a `*session.Session`. The reference implementation is
-[`engine/adapter/eventsource`](./adapter/eventsource) (`Fold`); ADR 0038
-records the decision. This section is the field-by-field contract such a backend must
+[`engine/adapter/eventsource`](./adapter/eventsource) (`Fold`).
+This section is the field-by-field contract such a backend must
 honour.
 
 ### Load-failure classification
@@ -149,17 +149,16 @@ Unknown custom-store failures intentionally remain `port.SessionLoadFailureUnkno
 | pending ask (`PendingAsk`, when awaiting) | **MUST** | the trailing `EvPermissionAsk` with no following `EvApproval`/`EvResult` |
 | cumulative `Usage` | **MUST** | the **SUM** of every per-run `EvResult.Usage` (each `EvResult.Usage` is PER-RUN; the budget brake reads the cumulative aggregate) |
 | `Title`, `TitleProvenance`, `TitleGeneration`, and `TitleRevision` | **MUST** | authoritative values supplied out-of-band via `eventsource.SessionMeta`; for legacy metadata with an empty title, `Title` is seeded from the FIRST genuine `EvUserPrompt` via `session.SetTitle` (set-once + clamped), which also records `first-prompt` provenance. `TitleRevision` is a title-specific durable revision; a missing legacy value remains zero. The bounded title-source prompts, attempts, and auxiliary-usage ledger are likewise supplied via `SessionMeta`, never derived from history or normal `EvResult.Usage`. A synthesised-summary `EvUserPrompt` does not seed. For a compacted session the opener's `EvUserPrompt` was emitted before the compaction, so the fallback survives compaction. An operator-authored title cannot be reconstructed from events and therefore must be supplied. |
-| creation metadata: id, mode, limits, exact `EnvironmentRef`, safe placement metadata, profile, provider/model selector, reasoning-effort, debug selected-global-MCP names and exact direct-tool ceiling, **session kind and relationship**, createdAt | **MUST** (supplied out-of-band) | **NOT in any event** — provided by the caller via `eventsource.SessionMeta`; an absent legacy kind restores as fail-closed `unknown` |
+| creation metadata: id, mode, limits, exact `EnvironmentRef`, host-observed `ExecutionCapabilities`, safe placement metadata, profile, `AgentDefinitionName` (the session-scoped agent-identity binding), `AgentCreateIntent` (opaque original explicit-ID create fingerprint; missing legacy evidence stays empty, never inferred from effective values), exact `ExecutionTemplateID` and `ExecutionTemplateRevision`, provider/model selector, reasoning-effort, debug selected-global-MCP names and exact direct-tool ceiling, **session kind and relationship**, createdAt | **MUST** (supplied out-of-band) | **NOT in any event** — provided by the caller via `eventsource.SessionMeta`; absent execution facts do not inherit current deployment defaults; the exact template selection must not be inferred from environment identity; an absent legacy kind restores as fail-closed `unknown` |
 | identity labels: `Owner` (the verified caller) and `Authority` (Track C, inert) | **MUST** (supplied out-of-band) | provided by `eventsource.SessionMeta`; neither is inferred from event content |
 | identity label: `ExternalBinding` (opaque host runtime binding) | **MUST** (supplied out-of-band) when exact external-runtime reattachment is required; otherwise safe to omit on a pure fold | provided by `eventsource.SessionMeta.ExternalBinding`, restored by direct assignment exactly as `sessnap` does; the event annotation is log-only and the fold neither requires nor re-derives it, so an omitted field simply stays the zero value (**never** fabricated or backfilled) |
 | `Counters` (turns / tool calls / consecutive failures) | run-scoped — reflects the **latest run segment** (they reset on `Reopen`), derived from the latest run's events | `EvTurnStart` (turns), `EvToolResult` (tool calls / consecutive failures) |
 | run plumbing (diagnostics binding, askID serials, ctx) | safe to lose — rebuilt fresh | n/a |
 
 **Creation metadata is not in events.** No event carries the session id, mode, limits,
-exact environment identity, safe placement metadata, profile, provider/model selector, reasoning-effort, debug selected-global-MCP names and exact tool ceiling, authoritative title/provenance,
+exact environment identity, host-observed execution affordances, safe placement metadata, profile, provider/model selector, reasoning-effort, debug selected-global-MCP names and exact tool ceiling, authoritative title/provenance,
 session kind/relationship, owner/authority, or createdAt. The caller — who created or discovered the session —
-supplies them alongside the stream (there is deliberately no `EvSessionCreated`; ADR 0038
-notes it as a possible future). `eventsource.SessionMeta` is the reference shape.
+supplies them alongside the stream (there is deliberately no `EvSessionCreated`). `eventsource.SessionMeta` is the reference shape.
 Kind/relationship combinations are validated during folding; missing legacy kind metadata
 becomes `unknown`, never `main`. Legacy metadata may omit title/provenance; only that case
 falls back to the first genuine user-prompt event.
@@ -169,7 +168,7 @@ continuations — the no-progress nudge, the background-pending nudge, the
 background-completion notice) **are** event-carried, via the log-only `EvUserPrompt`
 event the loop emits at every user-message record site. So a fold reconstructs the
 **complete** conversation, in stream order — closing the "the log can't show what the
-user asked" gap (ADR 0027 row 11). (Turn-0 project-instruction messages discovered from
+user asked" gap. (Turn-0 project-instruction messages discovered from
 AGENTS.md/CLAUDE.md are not event-carried; they are derivable from the workspace and are
 outside the reconstructed conversation.)
 
@@ -198,7 +197,4 @@ contract limitation, not a bug.
 
 ## See also
 
-- ADR 0038 — event-sourced rehydration
-- ADR 0037 — engine stability contract
-- ADR 0036 — `engine/` is its own Go module
 - [Project README](../README.md)

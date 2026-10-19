@@ -15,7 +15,7 @@ import (
 // prompt relay uses runProjector to correlate transient availability with its
 // canonical result.
 //
-// PROJECTION TABLE (Phase 2):
+// PROJECTION TABLE:
 //
 //	EvMessageDelta   -> agent_message_chunk{ content: text }
 //	EvReasoningDelta -> agent_thought_chunk{ content: text }   (display summary
@@ -39,7 +39,7 @@ import (
 //	                    session/update; see permissionRequest below.
 //	EvResult         -> the prompt's terminal stopReason (see stopReasonFor).
 //
-//	DROPPED/FOLDED this phase (no clean ACP mapping yet, see the ADR):
+//	DROPPED/FOLDED this phase (no clean ACP mapping yet):
 //	  - turn.start / turn.end      -> dropped (lifecycle bookkeeping).
 //	  - compaction                 -> dropped.
 //	  - subagent.start / team.start -> dropped (the parent tool_call already names

@@ -82,7 +82,7 @@ func TestSessionContinuityUX_Scenario1_KindRelationshipRoundTrip(t *testing.T) {
 	}
 }
 
-func TestADR_0352_TeamMemberCallRelationshipRoundTrip(t *testing.T) {
+func TestTeamMemberCallRelationshipRoundTrip(t *testing.T) {
 	t.Parallel()
 	parentIncarnation := session.NewIncarnationID()
 	member, err := session.NewTeamMember("member", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "v1"}, session.Limits{}, time.Unix(1, 0), "team", "reviewer", "parent", parentIncarnation)
@@ -116,7 +116,7 @@ func TestADR_0352_TeamMemberCallRelationshipRoundTrip(t *testing.T) {
 	}
 }
 
-func TestADR_0108_PublicCreateCannotForgeKind(t *testing.T) {
+func TestPublicCreateCannotForgeKind(t *testing.T) {
 	t.Parallel()
 	s := session.New("public", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0))
 	if s.Kind != session.SessionKindMain {
@@ -127,7 +127,7 @@ func TestADR_0108_PublicCreateCannotForgeKind(t *testing.T) {
 	}
 }
 
-func TestADR_0108_InvalidRelationshipsFailClosed(t *testing.T) {
+func TestInvalidRelationshipsFailClosed(t *testing.T) {
 	t.Parallel()
 	created := time.Unix(0, 0)
 	invalid := []sessnap.Snapshot{

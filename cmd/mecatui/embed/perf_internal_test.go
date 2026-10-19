@@ -16,7 +16,7 @@ import (
 // #47): with PerfConfig.Enabled false, setupPerf must return a zero perfState
 // and mutate NOTHING on cfg — Sink, ToolCallRecorder, and MetricsRoleScoper all
 // stay nil, so the main engine is unmetered and every child engine keeps the
-// byte-identical pre-feature nil/nil telemetry shape.
+// unmetered nil/nil telemetry shape.
 func TestSetupPerfDisabledLeavesTelemetrySeamsNil(t *testing.T) {
 	cfg := app.Config{Workspace: t.TempDir(), Model: "mock"}
 

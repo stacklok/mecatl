@@ -12,9 +12,9 @@ const DOTS = [0, 1, 2];
  * elapsed-time counter measured from when this indicator mounted.
  *
  * Tailwind's built-in `animate-bounce` moves 25% of the element's own
- * height, which is invisible on a dot this small, so the bounce is a scoped
- * keyframe declared inline (no external animation dependency, no shared
- * stylesheet to keep in sync with this file).
+ * height, which is invisible on a dot this small, so the bounce uses the
+ * `thinking-bounce` keyframe declared in `styles.css` via the
+ * `animate-[thinking-bounce_0.9s_infinite]` arbitrary-value utility.
  */
 export function StreamingIndicator({ phaseLabel }: { phaseLabel?: string }) {
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
@@ -34,27 +34,12 @@ export function StreamingIndicator({ phaseLabel }: { phaseLabel?: string }) {
 
   return (
     <div className="flex items-center gap-2 py-2">
-      <style>{`
-        @keyframes streaming-indicator-bounce {
-          0%, 100% {
-            transform: translateY(0);
-            animation-timing-function: cubic-bezier(0.8, 0, 1, 1);
-          }
-          50% {
-            transform: translateY(-5px);
-            animation-timing-function: cubic-bezier(0, 0, 0.2, 1);
-          }
-        }
-      `}</style>
       <span aria-hidden="true" className="flex w-7 shrink-0 items-center justify-center gap-0.5">
         {DOTS.map((dot) => (
           <span
-            className="size-1 rounded-full bg-brand"
+            className="size-1 animate-[thinking-bounce_0.9s_infinite] rounded-full bg-brand"
             key={dot}
-            style={{
-              animation: "streaming-indicator-bounce 0.9s infinite",
-              animationDelay: `${dot * 160}ms`,
-            }}
+            style={{ animationDelay: `${dot * 160}ms` }}
           />
         ))}
       </span>

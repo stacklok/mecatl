@@ -96,7 +96,7 @@ type Config struct {
 	// events (retries, per-attempt timeouts, idle stalls, breaker transitions,
 	// exhaustion). nil selects port.NopDiagnostics. This is an ADAPTER seam — it is
 	// NOT the loop's run-scoped sink and so is NOT subject to the loop's three-line
-	// budget (see docs/adr/0020-diagnostics.md): the wrapper is per-provider and
+	// budget: the wrapper is per-provider and
 	// logs provider-level lifecycle. It sees only port.LLMRequest + errors, never
 	// prompt text, so every emitted record is metadata-only.
 	Diagnostics port.Diagnostics

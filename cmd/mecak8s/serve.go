@@ -77,7 +77,7 @@ func mountBrokerHandlers(mux *http.ServeMux, addr string, verifiedIdentity, owne
 // hook target), and a BOUNDED GracefulStop on SIGTERM that cancels in-flight
 // runs within the termination grace period.
 //
-// HONEST SHUTDOWN CONTRACT (ADR 0048 §4d): new runs are rejected (503 via the
+// HONEST SHUTDOWN CONTRACT: new runs are rejected (503 via the
 // drain gate) the moment SIGTERM (or the preStop httpGet /drain) fires.
 // In-flight runs are CANCELLED, not drained to completion — a multi-minute LLM
 // turn cannot survive a rolling update within terminationGracePeriodSeconds:
@@ -327,7 +327,7 @@ func newAuthenticator(ctx context.Context, cfg config) (*server.Authenticator, e
 	}), nil
 }
 
-// boundedShutdown is the ADR-0048/ADR-0291 shutdown sequence:
+// boundedShutdown runs the SIGTERM shutdown sequence:
 //  1. arm admission drain and cancel/join Service runs within the shutdown bound;
 //     joined runs get a terminal persistence attempt before lease release.
 //  2. on Service-drain timeout, retain unsettled leases for process-death/TTL takeover.
@@ -448,7 +448,7 @@ func warnIfNonLoopback(flagName, addr string, callerAuthenticated bool) {
 
 // warnDrainExposure logs the drain-listener trust assumption. Unlike
 // warnIfNonLoopback's other two callers, --drain-addr has NO authentication
-// option at all (ADR 0290: kubelet's preStop httpGet calls it directly with
+// option at all (kubelet's preStop httpGet calls it directly with
 // no credentials) — so the warning wording never suggests --auth-token/
 // --tls-cert, and a non-loopback bind is ALWAYS worth a WARNING, not merely
 // an info line, regardless of the deployment's auth posture elsewhere.

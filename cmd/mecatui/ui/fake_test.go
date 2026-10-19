@@ -109,6 +109,11 @@ func (f *fakeSender) frames() []*mecatlv1.ConverseRequest {
 	return out
 }
 
+type fakeClearRequest struct {
+	sourceID string
+	selector *client.WorktreeSelector
+}
+
 // fakeConv is the ui's Converser+SessionCreator backed by a fakeRecver/Sender. It
 // builds a real client.Stream so the test exercises the production ReadLoop,
 // EventToMsg, and send path — the only thing faked is the transport.
@@ -166,10 +171,13 @@ type fakeConv struct {
 	// goroutine + the test goroutine. closedIDs records CloseSession arguments.
 	echoSelAsResolved bool
 	createCount       int
-	closedIDs         []string
-	operations        []string
-	closeErr          error
-	mu                sync.Mutex
+	// clearRequests records each successor handoff's source binding and opaque
+	// authority. It is guarded by mu because commands run off the test goroutine.
+	clearRequests []fakeClearRequest
+	closedIDs     []string
+	operations    []string
+	closeErr      error
+	mu            sync.Mutex
 	// lastResolved records the resolved model the MOST RECENT CreateSession echoed
 	// back, so GetSession can return it (modelling a real server whose GetSession
 	// returns the same resolved model the create did). Without this, GetSession
@@ -228,7 +236,7 @@ type fakeConv struct {
 	getSessionCaps      client.Capabilities
 	getSessionSnapshots []client.SessionSnapshot
 
-	// ForkSession recorders (ADR 0068 effort fork-resume). forkedFrom/forkedEffort
+	// ForkSession recorders (effort fork-resume). forkedFrom/forkedEffort
 	// record the LAST fork's source id + effort override; forkCount counts calls.
 	// forkedID, when non-empty, is the id the fork returns (default "sess-fork-N");
 	// forkErr forces the recoverable-failure path (the source is NOT closed).
@@ -259,7 +267,7 @@ func flattenBatch(cmd tea.Cmd) []tea.Msg {
 	return []tea.Msg{msg}
 }
 
-// ForkSession implements the ui SessionCreator's fork seam (ADR 0068): it records
+// ForkSession implements the ui SessionCreator's fork seam: it records
 // the source id + effort override and returns a DISTINCT fork id so the /effort
 // fork-resume handoff can assert the rebind. forkErr drives the recoverable-failure
 // path. The fake carries NO history (the transcript-preservation guard asserts the
@@ -390,7 +398,7 @@ func (c *fakeConv) CreateSession(_ context.Context, sel client.ModelSelection, m
 	if n >= 2 && c.secondCreateErr != nil {
 		return "", client.Capabilities{}, client.ResolvedModel{}, c.secondCreateErr
 	}
-	// The first session keeps the historical id; a re-create (restart-now) gets a
+	// The first session gets the fixed id; a re-create (restart-now) gets a
 	// distinct id so the handoff e2e can prove the session was rebound.
 	id := "sess-test-0001"
 	if n > 1 {
@@ -425,7 +433,16 @@ func (c *fakeConv) CreateSessionWithCarryover(ctx context.Context, sourceSession
 	return c.CreateSession(ctx, sel, c.mode)
 }
 
-func (c *fakeConv) ClearSession(ctx context.Context, _ string, selector *client.WorktreeSelector) (string, client.SessionSnapshot, error) {
+func (c *fakeConv) ClearSession(ctx context.Context, sourceID string, selector *client.WorktreeSelector) (string, client.SessionSnapshot, error) {
+	var recordedSelector *client.WorktreeSelector
+	if selector != nil {
+		value := *selector
+		recordedSelector = &value
+	}
+	c.mu.Lock()
+	c.clearRequests = append(c.clearRequests, fakeClearRequest{sourceID: sourceID, selector: recordedSelector})
+	c.mu.Unlock()
+
 	id, caps, resolved, err := c.CreateSession(ctx, client.ModelSelection{}, c.mode)
 	c.mu.Lock()
 	if n := len(c.operations); n > 0 {
@@ -466,6 +483,21 @@ func (c *fakeConv) CloseSession(_ context.Context, id string) error {
 	c.closedIDs = append(c.closedIDs, id)
 	c.operations = append(c.operations, "close")
 	return c.closeErr
+}
+
+// clearCalls returns copies of the recorded successor handoff authorities.
+func (c *fakeConv) clearCalls() []fakeClearRequest {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	calls := make([]fakeClearRequest, len(c.clearRequests))
+	for i, call := range c.clearRequests {
+		calls[i].sourceID = call.sourceID
+		if call.selector != nil {
+			selector := *call.selector
+			calls[i].selector = &selector
+		}
+	}
+	return calls
 }
 
 // closed returns a copy of the recorded CloseSession ids (test-goroutine read).

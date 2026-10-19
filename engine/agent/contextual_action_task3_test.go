@@ -54,7 +54,7 @@ func (r *scenario1Reviewer) Review(_ context.Context, req agent.ToolReviewReques
 	return agent.ToolReviewResult{Assessment: agent.ReviewAcceptable}, session.AuxiliaryUsage{}, nil
 }
 
-func TestADR_0363_ContextualGuardrails_Scenario1_EffectiveCallOrder(t *testing.T) {
+func TestContextualGuardrails_EffectiveCallOrder(t *testing.T) {
 	var order []string
 	reviewer := &scenario1Reviewer{order: &order}
 	act := &genericAuthorizationTool{fakeTool: fakeTool{name: "Act", exec: func(_ context.Context, call session.ToolCall, _ tool.Workspace) (session.ToolResult, error) {
@@ -240,7 +240,7 @@ func TestActionApprovalWaitRevalidatesStaleDependency(t *testing.T) {
 	})
 }
 
-func TestADR_0363_ContextualGuardrails_Scenario1_ExactRepeatGrant(t *testing.T) {
+func TestContextualGuardrails_ExactRepeatGrant(t *testing.T) {
 	reviewer := &scenario1GrantReviewer{}
 	policy := &noLearnPolicy{}
 	executions := 0
@@ -274,7 +274,7 @@ func TestADR_0363_ContextualGuardrails_Scenario1_ExactRepeatGrant(t *testing.T) 
 	}
 }
 
-func TestADR_0363_ContextualGuardrails_Scenario1_ConcurrentActionReviews(t *testing.T) {
+func TestContextualGuardrails_ConcurrentActionReviews(t *testing.T) {
 	reviewEntered := make(chan session.ToolCallID, 2)
 	reviewRelease := make(chan struct{})
 	reviewer := toolReviewerFunc(func(_ context.Context, req agent.ToolReviewRequest, _ agent.ReviewEvidenceSource) (agent.ToolReviewResult, error) {
@@ -358,7 +358,7 @@ func (staticAllowPolicy) Evaluate(context.Context, session.SessionID, session.Pe
 }
 func (staticAllowPolicy) Learn(session.SessionID, session.ToolCall) {}
 
-func TestADR_0363_ContextualGuardrails_Scenario4_RootTrajectory(t *testing.T) {
+func TestContextualGuardrails_RootTrajectory(t *testing.T) {
 	var order []string
 	reviewer := &scenario1Reviewer{order: &order}
 	read := &fakeTool{name: "Read", readOnly: true, exec: func(_ context.Context, call session.ToolCall, _ tool.Workspace) (session.ToolResult, error) {

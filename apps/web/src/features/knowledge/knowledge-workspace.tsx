@@ -4,11 +4,14 @@ import { getRuntimeOptions, listConfiguredSkillsOptions } from "@mecatl-studio/c
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { useState } from "react";
+import { SortableHead, useTableSort } from "@/components/sortable-head";
+import { PageShell } from "../../components/shell/page-shell";
 import { Input } from "../../components/ui/input";
-import { SortableHead, type SortDirection } from "../../components/ui/sortable-head";
 import { Table, TableBody, TableCell, TableHeader, TableRow } from "../../components/ui/table";
+import { ToggleGroup, ToggleGroupItem } from "../../components/ui/toggle-group";
+import { errorMessage } from "../../lib/error-message";
 import { pageTitleClass } from "../../lib/typography";
-import { errorMessage, NO_DESCRIPTION } from "./format";
+import { NO_DESCRIPTION } from "./format";
 import { humanizeSkillName } from "./humanize-skill-name";
 import { LearnedSkills } from "./learned-skills";
 import { filterSkills, type SkillSortKey, sortSkills } from "./skill-inventory";
@@ -16,6 +19,10 @@ import { SkillToolDisabledBanner } from "./skill-tool-disabled-banner";
 import { StateCard } from "./state-card";
 
 export type KnowledgeView = "configured" | "learned";
+
+/** The prototype's pill switch, drawn over the shadcn toggle item's defaults. */
+const PILL_CLASS =
+  "h-7 min-w-0 rounded-full px-3.5 font-normal text-muted-foreground hover:bg-transparent hover:text-foreground data-[state=on]:bg-background data-[state=on]:font-medium data-[state=on]:text-foreground data-[state=on]:shadow-sm";
 
 export function KnowledgeWorkspace({
   item,
@@ -38,57 +45,49 @@ export function KnowledgeWorkspace({
   const learnedHidden = runtime.data?.capabilities.learnedSkills === false && view !== "learned";
   const activeView = view;
   return (
-    <div className="h-full overflow-y-auto">
-      <div className="mx-auto w-full max-w-6xl space-y-5 px-4 py-7 sm:px-8 sm:py-10">
-        <SkillToolDisabledBanner />
-        <h1 className={pageTitleClass()}>Skills</h1>
-        <div className="inline-flex max-w-full items-center gap-0.5 overflow-x-auto rounded-full bg-muted p-1">
-          {(
-            [
-              ["configured", "All"],
-              ...(learnedHidden ? [] : [["learned", "Learned"] as const]),
-            ] as const
-          ).map(([value, label]) => (
-            <button
-              aria-pressed={activeView === value}
-              className={`h-7 rounded-full px-3.5 text-sm transition-colors ${activeView === value ? "bg-background font-medium text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
-              key={value}
-              onClick={() => onViewChange(value)}
-              type="button"
-            >
-              {label}
-            </button>
-          ))}
-        </div>
-        {activeView === "configured" ? (
-          <ConfiguredSkills />
-        ) : (
-          <LearnedSkills onSelect={onItemChange} selectedId={item} />
-        )}
-      </div>
-    </div>
+    <PageShell className="space-y-5">
+      <SkillToolDisabledBanner />
+      <h1 className={pageTitleClass()}>Skills</h1>
+      <ToggleGroup
+        aria-label="Skills view"
+        className="inline-flex max-w-full items-center gap-0.5 overflow-x-auto rounded-full bg-muted p-1"
+        onValueChange={(next) => {
+          // Choosing the selected pill again clears a single toggle group; the view stays.
+          if (next) onViewChange(next as KnowledgeView);
+        }}
+        type="single"
+        value={activeView}
+      >
+        {(
+          [
+            ["configured", "All"],
+            ...(learnedHidden ? [] : [["learned", "Learned"] as const]),
+          ] as const
+        ).map(([value, label]) => (
+          <ToggleGroupItem className={PILL_CLASS} key={value} value={value}>
+            {label}
+          </ToggleGroupItem>
+        ))}
+      </ToggleGroup>
+      {activeView === "configured" ? (
+        <ConfiguredSkills />
+      ) : (
+        <LearnedSkills onSelect={onItemChange} selectedId={item} />
+      )}
+    </PageShell>
   );
 }
 
 function ConfiguredSkills() {
   const query = useQuery(listConfiguredSkillsOptions());
   const [filter, setFilter] = useState("");
-  const [sort, setSort] = useState<{ direction: SortDirection; key: SkillSortKey }>({
-    direction: "asc",
-    key: "name",
-  });
+  const sort = useTableSort<SkillSortKey>("name");
   if (query.isPending) return <StateCard text="Loading skills…" />;
   if (query.isError) return <StateCard error text={errorMessage(query.error)} />;
   if (!query.data.supported)
     return <StateCard text={query.data.reason} title="Skills are unavailable" />;
   if (query.data.items.length === 0) return <StateCard icon="skill" text="No skills here yet" />;
-  const rows = sortSkills(filterSkills(query.data.items, filter), sort.key, sort.direction);
-  const toggle = (key: SkillSortKey) =>
-    setSort((current) => ({
-      direction: current.key === key && current.direction === "asc" ? "desc" : "asc",
-      key,
-    }));
-  const direction = (key: SkillSortKey) => (sort.key === key ? sort.direction : undefined);
+  const rows = sortSkills(filterSkills(query.data.items, filter), sort.key, sort.dir);
   return (
     <div className="space-y-3">
       <Input
@@ -106,23 +105,18 @@ function ConfiguredSkills() {
               <TableHeader>
                 <TableRow className="hover:bg-transparent">
                   <SortableHead
-                    className="w-px whitespace-nowrap px-4"
-                    direction={direction("name")}
+                    className="w-px whitespace-nowrap"
                     label="Name"
-                    onSort={() => toggle("name")}
+                    sort={sort}
+                    sortKey="name"
                   />
-                  <SortableHead
-                    className="px-4"
-                    direction={direction("description")}
-                    label="Description"
-                    onSort={() => toggle("description")}
-                  />
+                  <SortableHead label="Description" sort={sort} sortKey="description" />
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {rows.map((skill) => (
                   <TableRow key={skill.name}>
-                    <TableCell className="w-px max-w-[360px] whitespace-nowrap px-4 py-3 pr-6">
+                    <TableCell className="w-px max-w-[360px] whitespace-nowrap pr-6">
                       <Link
                         className="block truncate text-sm font-medium hover:underline"
                         params={{ item: skill.name, view: "configured" }}
@@ -134,7 +128,7 @@ function ConfiguredSkills() {
                         {skill.name}
                       </p>
                     </TableCell>
-                    <TableCell className="w-full max-w-0 px-4 py-3">
+                    <TableCell className="w-full max-w-0">
                       <p className="line-clamp-1 whitespace-normal text-xs text-muted-foreground">
                         {skill.description || NO_DESCRIPTION}
                       </p>

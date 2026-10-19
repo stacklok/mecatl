@@ -562,6 +562,16 @@ func connectLogicalGuest(ctx context.Context, server *guestagent.RepositoryServe
 
 func shellQuote(value string) string { return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'" }
 
+// noAutoMaintenanceEnv keeps `git commit` from spawning a detached
+// `git maintenance run --auto`. That process holds objects/maintenance.lock, so a
+// snapshot that lists objects/ right after a fixture commit can see the lock and
+// then lose it before opening it.
+var noAutoMaintenanceEnv = []string{
+	"GIT_CONFIG_COUNT=2",
+	"GIT_CONFIG_KEY_0=gc.auto", "GIT_CONFIG_VALUE_0=0",
+	"GIT_CONFIG_KEY_1=maintenance.auto", "GIT_CONFIG_VALUE_1=false",
+}
+
 func gitexecForLogicalTest(ctx context.Context, root string, args ...string) ([]byte, error) {
-	return gitexec.RunWithEnv(ctx, root, nil, []string{"GIT_AUTHOR_NAME=Test", "GIT_AUTHOR_EMAIL=test@example.invalid", "GIT_COMMITTER_NAME=Test", "GIT_COMMITTER_EMAIL=test@example.invalid"}, args...)
+	return gitexec.RunWithEnv(ctx, root, nil, append([]string{"GIT_AUTHOR_NAME=Test", "GIT_AUTHOR_EMAIL=test@example.invalid", "GIT_COMMITTER_NAME=Test", "GIT_COMMITTER_EMAIL=test@example.invalid"}, noAutoMaintenanceEnv...), args...)
 }

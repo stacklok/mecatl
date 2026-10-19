@@ -23,12 +23,12 @@
         "noRestrictedImports": {
           "level": "error",
           "options": {
-            "paths": {
-              "../sdk": "Studio consumes only the published @stacklok-oss/mecatl-sdk.",
-              "../../sdk": "Studio consumes only the published @stacklok-oss/mecatl-sdk.",
-              "../../../sdk": "Studio consumes only the published @stacklok-oss/mecatl-sdk.",
-              "../../../../sdk/typescript": "Studio consumes only the published @stacklok-oss/mecatl-sdk."
-            }
+            "patterns": [
+              {
+                "group": ["**/sdk", "**/sdk/**"],
+                "message": "Import the SDK by package name (@stacklok-oss/mecatl-sdk), never by relative path."
+              }
+            ]
           }
         }
       }
@@ -66,5 +66,6 @@
     "parser": {
       "tailwindDirectives": true
     }
-  }
+  },
+  "plugins": ["./lint/no-isolation-hazards.grit", "./lint/no-storage-spy.grit"]
 }

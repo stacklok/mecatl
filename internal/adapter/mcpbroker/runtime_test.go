@@ -34,6 +34,50 @@ func discoveredTools() []ToolDefinition {
 	}
 }
 
+func TestRuntimeSessionIDBoundary(t *testing.T) {
+	runtime := testAnonymousRuntime(t)
+	for _, tc := range []struct {
+		name  string
+		id    session.SessionID
+		valid bool
+	}{
+		{name: "empty"},
+		{name: "ordinary", id: "ordinary-session", valid: true},
+		{name: "over byte limit", id: session.SessionID(strings.Repeat("a", contract.MaxLogicalSessionIDBytes+1))},
+		{name: "unicode", id: "é"},
+		{name: "boundary space", id: " session"},
+		{name: "control", id: "session\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			beforeCount, beforeGeneration := len(runtime.sessions), runtime.nextGeneration
+			attachment, outcome, err := runtime.AttachSession(t.Context(), tc.id)
+			if tc.valid {
+				if err != nil || attachment == nil || outcome != contract.AttachCreated {
+					t.Fatalf("valid session admission failed: %v", err)
+				}
+				if _, err := attachment.Close(t.Context()); err != nil {
+					t.Fatal(err)
+				}
+				return
+			}
+			if !errors.Is(err, ErrInvalidCatalogue) || attachment != nil || outcome != "" {
+				t.Fatalf("invalid session admission = %v, %v", outcome, err)
+			}
+			// Nothing can be registered under an inadmissible ID, so delete is a
+			// no-op rather than an error that follows an already-removed record.
+			if outcome, err := runtime.DeleteSession(t.Context(), tc.id); err != nil || outcome != contract.DeleteNotFound {
+				t.Fatalf("invalid session deletion = %v, %v", outcome, err)
+			}
+			if _, err := runtime.InspectConnectors(t.Context(), tc.id, "binding"); !errors.Is(err, ErrInvalidCatalogue) {
+				t.Fatalf("invalid session inspection = %v", err)
+			}
+			if len(runtime.sessions) != beforeCount || runtime.nextGeneration != beforeGeneration {
+				t.Fatal("invalid identifier changed registry state")
+			}
+		})
+	}
+}
+
 func TestCompileProducesStableNeutralCatalogue(t *testing.T) {
 	discovered := discoveredTools()
 	catalogue, err := Compile(anonymousConfig(), discovered, []string{"Read"})
@@ -56,7 +100,7 @@ func TestCompileProducesStableNeutralCatalogue(t *testing.T) {
 	}
 }
 
-func TestADR_0298_CompileAdmitsMultipleOAuthRoutes(t *testing.T) {
+func TestCompileAdmitsMultipleOAuthRoutes(t *testing.T) {
 	config := protectedConfig("https://accounts.example/token")
 	second := config.Routes[0]
 	second.Name = "calendar"
@@ -291,7 +335,7 @@ func TestCallMcpWithQueryBrokerSupport_Scenario1_AuthorizationDelegatesExactNati
 		return session.ToolResult{}, errors.New("must not execute before authorization")
 	}), WithAuthorizedCaller(func(context.Context, SessionRef, string, session.ToolCall, oauth2.TokenSource) (session.ToolResult, error) {
 		return session.ToolResult{}, errors.New("must not execute before authorization")
-	}), WithOAuthSecretResolver(func(context.Context, string) (string, error) { return "secret", nil }))
+	}), WithOAuthSecretFileReader(func(context.Context, string) (string, error) { return "secret", nil }))
 	if err != nil {
 		t.Fatal(err)
 	}

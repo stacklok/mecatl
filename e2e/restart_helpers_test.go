@@ -52,7 +52,7 @@ const haikuLane = "anthropic/claude-haiku-4.5"
 // local deadline are returned explicitly so admission failures cannot degrade
 // into misleading missing-event assertions.
 //
-// Shared by approve-after-kill (Phase 2) and verdict-replay (Phase 3): both must
+// Shared by approve-after-kill and verdict-replay: both must
 // drive a real model to a real Write ask before they diverge on the verdict.
 func driveToWriteAsk(ctx ginkgo.SpecContext, stream *client.Stream, deadline time.Duration) (runID, askID, writeCallID string, err error) {
 	ginkgo.GinkgoHelper()

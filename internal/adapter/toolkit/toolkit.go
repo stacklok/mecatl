@@ -4,8 +4,8 @@
 // cross-cutting mechanics every tool repeats — argument parsing, output
 // truncation, and the JSON-schema literal wrapper — so they cannot drift apart.
 //
-// In particular the output cap lives here as the single MaxOutputBytes constant:
-// previously each package carried its own 25_000 literal, a latent drift bug.
+// In particular the output cap lives here as the single MaxOutputBytes constant,
+// so packages do not carry their own literals that could drift.
 //
 // What deliberately does NOT belong here: per-tool argument validation and the
 // per-tool descriptions/schemas. Those are intentionally authored inline in each

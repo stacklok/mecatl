@@ -47,7 +47,7 @@ const (
 	//
 	// A sibling tag rather than a new event type, mirroring the jsonlstore
 	// envelope: a gap is a fact about DELIVERY, not something that happened in
-	// the run, so it never becomes a session.Event (ADR 0250 decision 5). The
+	// the run, so it never becomes a session.Event. The
 	// legacy Read skips it; cursor readers see it via ReadAfter.
 	EventLogGapFormat = "redisstore-eventlog-gap/1"
 
@@ -125,7 +125,7 @@ func (st *Store) AppendEvent(ctx context.Context, id session.SessionID, ev sessi
 // AppendGap durably records a gap marker at the next position. It satisfies
 // port.CursorEventLog.
 //
-// This is the best-effort, cross-process tier of ADR 0250's three-tier
+// This is the best-effort, cross-process tier of the three-tier
 // append-gap guarantee: when an append fails, one gap marker is attempted, and
 // if it lands then every watcher everywhere learns of the gap deterministically
 // rather than silently skipping it. It covers the LIKELY failure — one rejected

@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 	"unicode"
@@ -44,6 +45,14 @@ const (
 // fail-closed at the provider call — there is NO pre-flight ListModels check (a
 // live network call, deferred); an unknown model surfaces as StopError.
 func makeFireFunc(svc *server.Service, store port.ScheduleStore, defaultTimeout time.Duration, deliverStarted func(ctx context.Context, sched port.Schedule, fire port.ScheduleFire)) scheduler.FireFunc {
+	return makeFireFuncWithCancel(svc, store, defaultTimeout, deliverStarted, svc.Cancel)
+}
+
+// The cancellation seam lets composition tests model a blocked control operation
+// independently of the event producer, while retaining the real fire lifecycle.
+//
+//nolint:gocyclo // Fire lifecycle must keep each placement, claim, and terminal failure path explicit.
+func makeFireFuncWithCancel(svc *server.Service, store port.ScheduleStore, defaultTimeout time.Duration, deliverStarted func(ctx context.Context, sched port.Schedule, fire port.ScheduleFire), cancelRun func(context.Context, session.SessionID, string) error) scheduler.FireFunc {
 	return func(ctx context.Context, sched port.Schedule, now time.Time) (port.ScheduleFire, error) {
 		// The scheduler passes the physical store key so RecordFire* remains in the
 		// correct owner namespace. Presentation also receives the authoritative
@@ -62,8 +71,8 @@ func makeFireFunc(svc *server.Service, store port.ScheduleStore, defaultTimeout 
 		// mutating (Mutating=false) runs in plan mode (read-only toolset) — the
 		// conservative posture for unattended runs. A schedule that opts into
 		// mutating (Mutating=true) honors its explicit Mode (or default if unset).
-		// This is the fire-time enforcement; the create-seam (Phase 2) will
-		// additionally reject Mutating=false with a write-capable Mode at save time.
+		// This is the fire-time enforcement; the create seam (the schedule
+		// manager) additionally rejects Mutating=false with a non-plan Mode at save time.
 		mode := sched.Spec.Mode
 		if mode == "" {
 			mode = session.ModeDefault
@@ -83,23 +92,35 @@ func makeFireFunc(svc *server.Service, store port.ScheduleStore, defaultTimeout 
 		}
 
 		ownerCtx := schedulerOwnerContext(ctx, sched.Spec.Owner)
-		placement, err := svc.ReattachPlacementInScope(ownerCtx, sched.Spec.EnvironmentRef, sched.Spec.PlacementScope)
+		// A native borrowed schedule needs its own durable reference, not a
+		// binding-less reattachment of the origin's reference. Mint the ID first
+		// so reservation and session publication use the same identity.
+		fireID := newFireID(literalName, now)
+		placement, err := svc.ScheduleFirePlacement(ownerCtx, sched.Spec, session.SessionID(fireID))
 		if err != nil {
 			return fireFailed(sched, now, "", err), err
 		}
 
-		// Pre-mint the fire id (ADR 0059 decision #7 Phase-2): a "sched--"-prefixed
-		// id that serves as BOTH the fire id AND the session id. Minting it here
-		// (before CreateSessionWithProfile) and passing it as the WithSessionID
-		// override means the fire's persisted session carries the sched-- family
-		// prefix the GC retention sweep (ScheduleFireRetention) partitions on.
-		fireID := newFireID(literalName, now)
+		// The pre-minted ID is both the fire ID and session ID. WithSessionID
+		// also gives the persisted session the sched-- GC-retention prefix.
 		sess, err := svc.CreateSessionWithProfile(ownerCtx, mode, limits, sel, profile,
 			server.WithSessionID(session.SessionID(fireID)),
 			server.WithOwner(fireSessionOwner(sched.Spec.Owner)),
 			server.WithPlacementBinding(placement),
 			server.WithScheduledRelationship(literalName, sched.Spec.OriginSessionID))
 		if err != nil {
+			// A failure before CreateSession installs its placement rollback must
+			// also retire the unpublished reservation. Close is idempotent with
+			// the session transaction and never aborts an ambiguous Commit.
+			if placement.Close != nil {
+				_ = placement.Close()
+			}
+			if sess != nil {
+				// Publication can fail after installing the engine and attachment.
+				// Release local resources, retaining the snapshot and ambiguous ref.
+				svc.CloseSession(sess.ID)
+				return fireFailed(sched, now, string(sess.ID), err), err
+			}
 			return fireFailed(sched, now, "", err), err
 		}
 		// Release the fire session's process-scoped resources — its cross-process
@@ -115,7 +136,7 @@ func makeFireFunc(svc *server.Service, store port.ScheduleStore, defaultTimeout 
 		// would return ErrLeaseHeld and skip forever (review #189).
 		defer svc.CloseSession(sess.ID)
 
-		// Carried-context toggle (ADR 0059 Phase 2): when CarryContext is true,
+		// Carried-context toggle: when CarryContext is true,
 		// load the prior fire's session and render its conversation as a FENCED
 		// untrusted preamble prepended to the prompt — NOT as seeded history. The
 		// carried context is UNTRUSTED (model-authored + tool-result-laden; a prior
@@ -130,64 +151,38 @@ func makeFireFunc(svc *server.Service, store port.ScheduleStore, defaultTimeout 
 		// session id (not the pending sentinel, not empty).
 		prompt := carriedContextPrompt(ownerCtx, svc, sched)
 
-		// Issue #386 — the in-flight scheduled-fire state: RecordFireStart flips
-		// LastFireSessionID off the "pending" sentinel to the REAL session id and
-		// writes a discoverable in-flight fire record (Stop="", StartedAt set)
-		// BEFORE the run. A crash after this point leaves a real session id (not
-		// "pending"), so shouldReArmOneShot's crash case + the operator's
-		// ListFires can see it. Best-effort WARN on failure — the Claim already
-		// advanced, so the fire is NOT failed; the record is an enhancement.
 		startedAt := now
 		deadline := effectiveFireDeadline(sched.Spec.FireTimeout, defaultTimeout, now)
-		recordFireStart(ctx, svc.Diagnostics(), store, port.ScheduleFire{
-			ID:           fireID,
-			ScheduleName: sched.Spec.Name,
-			SessionID:    sess.ID,
-			FiredAt:      now,
-			StartedAt:    startedAt,
-			Deadline:     deadline,
-		})
-		// "Started" notice (issue #386, Phase 4a): route a fenced-untrusted
-		// harness note carrying ONLY the schedule name + fire/session id back
-		// into the fire's origin conversation, right AFTER RecordFireStart.
-		// A nil deliverStarted is the byte-identical no-start-notice path.
-		if deliverStarted != nil && sched.Spec.OriginSessionID != "" {
-			deliverStarted(ctx, sched, port.ScheduleFire{
-				ID:           fireID,
-				ScheduleName: sched.Spec.Name,
-				SessionID:    sess.ID,
-				FiredAt:      now,
-				StartedAt:    startedAt,
-				Deadline:     deadline,
-			})
-		}
 
-		// Arm the wall-clock watchdog (issue #386): a non-zero deadline bounds the
-		// fire's RUN. On lapse it cancels the in-flight run via the Service's
-		// run-registry cancel seam (Service.Cancel → run.Cancel(), the same path
-		// #388's Service.Close uses) — the loop yields StopCancelled, which the
-		// event loop below OVERRIDES to StopTimeout so a caller distinguishes
-		// "timed out" from a user cancel. The watchdog is a LIVENESS bound, NOT
-		// load-bearing for at-most-once (Claim already advanced). Stopped on the
-		// terminal EvResult (defer) so a clean completion does not double-fire.
-		var timedOut atomic.Bool
-		stopTimer := func() {}
+		// Cancellation is a request, not proof of termination. Keep the fire,
+		// session lease and capacity until both the event producer and watchdog
+		// return. The deadline context also covers provisional run admission.
+		runCtx := ownerCtx
 		if !deadline.IsZero() {
-			timer := time.AfterFunc(time.Until(deadline), func() {
-				timedOut.Store(true)
-				// Service.Cancel looks up the run by session id and calls
-				// run.Cancel(); a not-found/already-finished run is a nil-safe
-				// no-op (the watchdog only arms for a deadline, so a stale fire
-				// after a clean completion is harmless — Stop already ran).
-				_ = svc.Cancel(context.WithoutCancel(ownerCtx), sess.ID, "")
-			})
-			stopTimer = func() { timer.Stop() }
+			var cancel context.CancelFunc
+			runCtx, cancel = context.WithDeadline(ownerCtx, deadline)
+			defer cancel()
 		}
+		inflight := port.ScheduleFire{
+			ID: fireID, ScheduleName: sched.Spec.Name, SessionID: sess.ID,
+			FiredAt: now, StartedAt: startedAt, Deadline: deadline,
+		}
+		watchdogFire := inflight
+		watchdogFire.ScheduleName = literalName
+		timedOut, stopTimer := watchFireDeadline(ctx, svc.Diagnostics(), watchdogFire, func() error {
+			return cancelRun(context.WithoutCancel(ownerCtx), sess.ID, "")
+		})
 		defer stopTimer()
 
-		run, err := svc.StartScheduledRunContent(ownerCtx, sess.ID, prompt, sched.Spec.Parts)
+		run, err := svc.StartScheduledRunContent(runCtx, sess.ID, prompt, sched.Spec.Parts)
 		if err != nil {
 			return fireFailed(sched, now, string(sess.ID), err), err
+		}
+		// Publish the real session only after run admission holds its lease.
+		// A pending claim has no lease oracle and must remain fail-closed.
+		recordFireStart(context.WithoutCancel(ctx), svc.Diagnostics(), store, inflight)
+		if deliverStarted != nil && sched.Spec.OriginSessionID != "" {
+			deliverStarted(ctx, sched, inflight)
 		}
 
 		// Drive the run to its terminal EvResult. The agent loop persists the
@@ -223,6 +218,7 @@ func makeFireFunc(svc *server.Service, store port.ScheduleStore, defaultTimeout 
 			}
 		}
 		recorder.Close()
+		stopTimer()
 		// Settle the terminal session snapshot HERE, best-effort, so it is durable
 		// BEFORE the fire returns. A fire whose run was cancelled mid-flight
 		// (Service.Close → run.Cancel on shutdown, issue #388 Task #3, OR the
@@ -236,6 +232,7 @@ func makeFireFunc(svc *server.Service, store port.ScheduleStore, defaultTimeout 
 		// channel closed with no terminal EvResult — an abandoned run) is treated
 		// as StopCancelled. See settleFireTerminalSnapshot.
 		stop = settleFireTerminalSnapshot(ctx, svc, sess.ID, stop)
+		svc.FinishRun(sess.ID, run)
 		// The watchdog fired: the loop's StopCancelled is a watchdog cancel, not
 		// a user cancel. Override the recorded stop so a caller distinguishes
 		// "timed out" from an explicit cancel (the domain declares StopTimeout;
@@ -243,7 +240,7 @@ func makeFireFunc(svc *server.Service, store port.ScheduleStore, defaultTimeout 
 		// timeout duration so an operator reading the fire record sees why. The
 		// session snapshot stays the loop's persisted StateCancelled (terminal +
 		// Interrupt-recoverable, like a shutdown-cancelled fire).
-		if timedOut.Load() && stop == session.StopCancelled {
+		if fireTimedOut(runCtx, timedOut.Load(), stop) {
 			stop = session.StopTimeout
 			timeout := sched.Spec.FireTimeout
 			if timeout <= 0 {
@@ -277,6 +274,41 @@ func makeFireFunc(svc *server.Service, store port.ScheduleStore, defaultTimeout 
 	}
 }
 
+func fireTimedOut(ctx context.Context, observed bool, stop session.StopReason) bool {
+	return (observed || ctx.Err() == context.DeadlineExceeded) &&
+		(stop == session.StopCancelled || stop == session.StopTimeout)
+}
+
+// watchFireDeadline reports degradation before attempting cancellation. Its
+// idempotent stop joins the single cancellation worker, even if Cancel blocks.
+func watchFireDeadline(ctx context.Context, diag port.Diagnostics, fire port.ScheduleFire, cancel func() error) (*atomic.Bool, func()) {
+	timedOut := &atomic.Bool{}
+	if fire.Deadline.IsZero() {
+		return timedOut, func() {}
+	}
+	done := make(chan struct{})
+	timer := time.AfterFunc(time.Until(fire.Deadline), func() {
+		defer close(done)
+		timedOut.Store(true)
+		logCtx := context.WithoutCancel(ctx)
+		diag.Log(logCtx, port.LevelWarn,
+			"scheduled fire overdue/degraded; termination unconfirmed; capacity quarantined",
+			"schedule", fire.ScheduleName, "fire", fire.ID, "deadline", fire.Deadline)
+		if err := cancel(); err != nil {
+			diag.Log(logCtx, port.LevelWarn, "scheduled fire deadline cancellation failed",
+				"schedule", fire.ScheduleName, "fire", fire.ID, "err", err.Error())
+		}
+	})
+	var once sync.Once
+	return timedOut, func() {
+		once.Do(func() {
+			if !timer.Stop() {
+				<-done
+			}
+		})
+	}
+}
+
 // schedulerOwnerContext replaces the scheduler system identity only for operations
 // that act on a session owned by the schedule's captured caller. Scheduler store
 // bookkeeping, diagnostics, and event attribution retain the outer system context.
@@ -289,7 +321,7 @@ func schedulerOwnerContext(ctx context.Context, owner *session.Principal) contex
 	return session.WithPrincipal(ctx, owner)
 }
 
-// fireSessionOwner projects the SCHEDULE's captured owner (ADR 0204 decision 6)
+// fireSessionOwner projects the SCHEDULE's captured owner
 // onto the fire session's owner: the same (issuer, subject) identity, with
 // GrantType client_credentials — a fire is automated, not interactive, and the
 // grant type says so honestly while attribution still collapses to the
@@ -312,7 +344,7 @@ func fireSessionOwner(owner *session.Principal) *session.Principal {
 }
 
 // newFireID mints a per-fire identifier: "sched--<name>-<UTC compact>-<randhex>".
-// It is pre-minted on the fire path (ADR 0059 decision #7 Phase-2) and passed
+// It is pre-minted on the fire path and passed
 // as the WithSessionID override to CreateSessionWithProfile, so the fire's
 // persisted session carries the "sched--" prefix the GC retention sweep
 // (ScheduleFireRetention) partitions on — and the fire id IS the session id.
@@ -370,8 +402,8 @@ func fireFailed(sched port.Schedule, now time.Time, sessID string, err error) po
 
 // carriedContextPrompt resolves the fire's prompt, optionally prepending a
 // FENCED untrusted preamble rendered from the prior fire's conversation when
-// CarryContext is set and a real (non-pending) prior session id exists (ADR
-// 0059 Phase 2). It is extracted from makeFireFunc to keep that func's
+// CarryContext is set and a real (non-pending) prior session id exists.
+// It is extracted from makeFireFunc to keep that func's
 // cyclomatic complexity under the lint cap. On prior-session-load failure (not
 // found, decode error) the fire degrades to fresh-context (WARN, never fails the
 // fire — the carried context is an enhancement, not a requirement).
@@ -441,7 +473,7 @@ const carriedContextMaxTurns = 20
 const carriedContextMaxRunes = 10000
 
 // renderCarriedContext renders the prior fire's conversation as a FENCED untrusted
-// preamble (ADR 0059 Phase 2). It walks the prior session's Conversation.Messages,
+// preamble. It walks the prior session's Conversation.Messages,
 // renders assistant text + a summary of tool results (NOT the full tool-result
 // content — just "Tool <name>: <truncated result>"), wraps the whole thing in
 // governance.FenceUntrusted, which applies governance.NeutraliseFraming so any forged

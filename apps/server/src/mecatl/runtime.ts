@@ -32,6 +32,8 @@ export interface MecatlRuntime {
   authMode: AuthMode;
   readonly client: Client;
   close(): Promise<void>;
+  /** The cached negotiation, renegotiated on connection loss; throws until the first one completes. */
+  compatibility(): ServerCompatibility;
   ready(): Promise<void>;
   runWithCredential<T>(accessToken: string, operation: () => Promise<T>): Promise<T>;
   snapshot(): RuntimeResponse;
@@ -192,6 +194,10 @@ export async function startMecatlRuntime(
       unsubscribe();
       await client.close();
     },
+    compatibility: () => {
+      if (compatibility === undefined) throw new RuntimeNotReadyError();
+      return compatibility;
+    },
     ready,
     runWithCredential: (accessToken, operation) => credentialContext.run(accessToken, operation),
     snapshot: () => {
@@ -248,9 +254,13 @@ function runtimeSnapshot(
 }
 
 function copyCapabilities(capabilities: ServerCapabilities): RuntimeResponse["capabilities"] {
+  // `storageMigration` is a constant false kept for BFF response-shape stability:
+  // `storage_migration` is a reserved proto field, so the SDK type no longer has
+  // it. `bash` is a renamed alias derived from `shell`.
   return {
     ...structuredClone(capabilities),
     bash: capabilities.shell === true,
+    executionTemplates: capabilities.executionTemplates === true,
     storageMigration: false,
   };
 }

@@ -18,7 +18,7 @@ import (
 
 // selectorRecordingFactory returns a SessionEngineFactory that records the
 // provider selector it was called with and serves a fresh per-session engine
-// replying with reply. The cloud-native Phase 1 sibling of profileRecordingFactory.
+// replying with reply. The selector sibling of profileRecordingFactory.
 func selectorRecordingFactory(reply string, got *atomic.Value, calls *atomic.Int32) server.SessionEngineFactory {
 	return func(_ context.Context, sel server.ProviderSelector, _ []mcp.ServerConfig, _ server.SessionProfile, _ string, _ session.PermissionMode) (server.SessionEngineResult, error) {
 		calls.Add(1)
@@ -69,7 +69,7 @@ func selectorServiceOverStore(t *testing.T, store *memstore.Store, factory serve
 }
 
 // TestSelectorSessionRehydratesWithPersistedSelector is the selector-survival
-// guard (cloud-native Phase 1): a PERSISTED session bound to a NON-default
+// guard: a PERSISTED session bound to a NON-default
 // provider/model selector, whose per-session engine died with the process, must
 // be REHYDRATED at the run-entry seam by a second Service — rebuilt through the
 // factory with the SAME persisted selector (NOT the zero/default-provider floor),

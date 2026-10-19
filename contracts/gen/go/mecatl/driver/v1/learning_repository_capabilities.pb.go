@@ -35,7 +35,7 @@ type LearningRepositoryOwnershipMode int32
 const (
 	LearningRepositoryOwnershipMode_LEARNING_REPOSITORY_OWNERSHIP_MODE_UNSPECIFIED LearningRepositoryOwnershipMode = 0
 	LearningRepositoryOwnershipMode_LEARNING_REPOSITORY_OWNERSHIP_MODE_TRUSTED     LearningRepositoryOwnershipMode = 1
-	// ENFORCED is reserved for future ADR-0213 negotiation. The current raw
+	// ENFORCED is reserved for future authenticated-ownership negotiation. The current raw
 	// Attempt/Proposal/Skill RPCs do not authenticate workload claims or maintain
 	// private owner bindings, so advertising this value is not proof of enforcement
 	// and current composition treats it no stronger than TRUSTED.

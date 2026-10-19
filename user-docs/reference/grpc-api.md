@@ -56,6 +56,7 @@ semantic-version protocol.
 |RPC|Kind|Purpose|
 |-|-|-|
 |`CreateSession(CreateSessionRequest) → CreateSessionResponse`|unary|allocate a server-side session, return its id|
+|`ListExecutionTemplates(ListExecutionTemplatesRequest) → ListExecutionTemplatesResponse`|unary|list bounded eligible operator-template display rows for the verified owner, without allocation|
 |`GetSession(GetSessionRequest) → GetSessionResponse`|unary|snapshot of an existing session, including authoritative title/provenance, title-generation lifecycle, and canonical durable token usage when present|
 |`RenameSession(RenameSessionRequest) → RenameSessionResponse`|unary|replace an owned idle main session's title and mark its provenance operator-authored; this permanently disables automatic title generation; ownership, kind, state, liveness, and lease are revalidated at execution|
 |`DeleteSession(DeleteSessionRequest) → DeleteSessionResponse`|unary|permanently remove an owned idle main session snapshot and store-managed sidecars; the same execution-time gates apply|
@@ -120,15 +121,29 @@ drops events for a slow client. `WatchSessionEvents` provides durable replay and
 follow. Its guarantee covers durably appended events: a total backend outage
 followed by loss of the watcher process can leave an unreportable gap.
 
-### Server-owned placement
+### Server-owned execution
 
 `CreateSessionRequest` has no workspace, cwd, exact EnvironmentRef, placement
-ID, or worktree selector. Omitted `profile` binds the trusted deployment
-default; `profile:"no-fs"` explicitly attenuates filesystem access. The response
-and `GetSession` expose bounded `PlacementMetadata` only. Exact
-`EnvironmentRef{Kind, ID, Revision}` remains private in the session snapshot and
-trusted driver storage. Run entry reattaches that exact identity rather than
-inferring it from a current default.
+ID, or worktree selector. Omitted `execution` binds the deployment default;
+`execution.none` selects a file-less session and `execution.template` selects
+an operator-owned `{id,revision}`. Invalid selections never fall back to the
+default. The response and `GetSession` expose bounded `PlacementMetadata` and
+effective `session_capabilities.execution_files` and `built_in_shell`. The exact
+`EnvironmentRef{Kind, ID, Revision}` stays private and is reattached at run entry.
+
+`ListExecutionTemplates` is an authenticated, optional catalog. Check both
+`features` contains `execution_templates` and
+`capabilities.execution_templates` before listing. It returns at most 64 eligible
+inert display rows (`template`, `name`, `description`, `display_token`,
+`extensions`) plus a revision of the caller-filtered inventory. An empty list
+means enabled but nothing eligible; disabled returns `UNIMPLEMENTED`, unavailable
+returns `UNAVAILABLE`. A list is not a reservation. The host checks the verified
+owner principal under its operator policy; the private mTLS provider separately
+checks its template allowlist, namespace and owner at exact bind. Unknown and
+unauthorized selections both return `NOT_FOUND`. The selector is never an image,
+path, credential or private environment reference. Fork and clear inherit the
+source's exact allocation; a worktree selector is not a template selector.
+
 
 `ListCommandsRequest` and `ListWorktreesRequest` carry `session_id`, not a root.
 The server owner-authorizes and exactly reattaches that source before discovery;
@@ -137,9 +152,77 @@ display-safe metadata and an opaque caller/source-scoped selector accepted only
 by ClearSession or ForkSession. Local selectors expire on restart and must be
 relisted; they are neither paths nor durable bearer IDs.
 
+### Agent-bound session creation
+
+`CreateSessionRequest.agent_definition_name` optionally binds the session root
+to a configured agent definition. Empty or omitted preserves ordinary session
+creation. An unknown definition returns `INVALID_ARGUMENT`. The response echoes
+the exact name in `resolved_agent_definition_name` and the effective provider
+and model in `resolved_model`; an ordinary session has an empty binding echo.
+
+Clients **MUST** require `session_agent_definitions` in
+`GetCompatibilityInfo.features` before relying on binding and verify that the
+response echoes the requested name before sending a prompt. An older gRPC
+server can ignore the unknown request field and create an ordinary session.
+The feature reports build-level protocol support even when no definitions are
+configured; it grants neither access nor availability of a particular definition.
+
+The bound root uses the definition's prompt, skills, hooks, memory, and tool
+catalog, with ordinary main-session permission asks and guardrails. Only the
+MCP servers selected by the definition participate. Tools the definition
+excludes stay excluded from the catalog, granted authority, and ceiling,
+including MCP tools and the automatic `ShellStatus` companion. The ceiling
+cannot be widened by later tool grants or workspace enrollment. The
+definition's turn and tool-call limits and its permission mode are ceilings:
+create-time overrides can only tighten them, and other limit fields such as the
+consecutive-failure limit keep the inherited value. `execution.none` further
+removes filesystem and shell access; project memory is unavailable without a
+filesystem.
+
+Provider/model selection for a bound root follows these five cases:
+
+|Request selector|Result|
+|-|-|
+|Neither field|Definition's base provider/model pair over the deployment default.|
+|`model_id` only|Base provider with the request's literal model.|
+|`provider_id` only|Requested provider with that provider's default model.|
+|Both fields|Requested provider and literal model pair.|
+|Definition explicitly pins an unavailable provider, and no request provider overrides it|`INVALID_ARGUMENT`, including a model-only request.|
+
+An unknown or unavailable request provider also returns `INVALID_ARGUMENT`.
+Definition `model` selectors support configured scalar or provider/model aliases;
+root resolution excludes `SubagentModel` defaults and automatic child routing.
+An unknown or conflicting definition model alias warns and falls back as a whole
+provider/model pair, preserving an explicit provider pin. Raw wire `model_id`
+values are opaque literals, **not** alias selectors. Without a definition,
+model-only creation remains invalid.
+
+Binding cannot be combined with `debug_target_session_id`, `debug_mcp_servers`,
+or client-provided `mcp_servers`. These combinations return `INVALID_ARGUMENT`
+when the listener permits client MCP; a listener that disables client MCP can
+reject that field earlier with `client_mcp_unsupported`.
+
+The name, effective configuration, and authority ceiling persist with the
+session, including metadata used to reconstruct source evidence. Fork and clear
+preserve the binding and inherited authority ceiling, build the current definition's
+catalog, and tighten carried limits and mode against that definition. Tools must
+remain within the inherited authority as well as the current catalog.
+`SetMode` is refused for bound sessions. Stored metadata remains readable, but
+resuming execution after restart or resuming with client-supplied MCP is refused
+rather than rebuilding an unrestricted root. Bound records without valid
+authority and a ceiling are rejected on restore.
+
+`agent_definition_name` selects a definition by name. It is not an authenticated
+identity, and it does not record the definition's source or revision. Fork and
+clear create new sessions, and an existing bound session is never silently
+rebuilt from a different definition after restart. The authority ceiling bounds
+what a session can be granted; it is not an access-control or revocation
+mechanism. This feature adds no definition-specific access controls, no
+credentialed agent-instance registration, and no broker-side enforcement.
+
 ### Dedicated debugger creation
 
-Set `CreateSessionRequest.profile = "no-fs"` and set `debug_target_session_id`
+Set `CreateSessionRequest.execution.none = {}` and set `debug_target_session_id`
 to the exact authorized target. Optional repeated `debug_mcp_servers` names only
 already-configured server-global streaming-HTTP MCP servers. The response
 advertises `session_debug`/`debug_mcp` and persists the selected names plus
@@ -242,6 +325,8 @@ include mutations, as described below.
 |`ListCommands`|unary|slash commands for an owned source session; owner-authorizes and exactly reattaches first; no-FS returns empty|
 |`ListWorktrees`|unary|display-safe eligible worktrees plus opaque caller/source-scoped selectors for ClearSession/ForkSession; no paths or exact refs; relist after restart|
 |`ListSkills`|unary|the discovered skills inventory (name + one-line description)|
+|`ListSkillFiles`|unary|the readable files of one skill in the caller's own skill view (deployment skills plus the caller's learned skills): `SKILL.md`, the instruction body without frontmatter and marked `instructions`, first, then bundled files by name, each with its size. A learned skill lists only `SKILL.md`. A skill outside the caller's view is `NOT_FOUND`|
+|`ReadSkillFile`|unary|one skill file's text, at most 25,000 bytes of UTF-8 with no NUL byte. An invalid file name is `INVALID_ARGUMENT`, an unknown file `NOT_FOUND`, and an oversize or non-text file `FAILED_PRECONDITION`; none is truncated or repaired. The `skill_files` compatibility feature announces both RPCs|
 |`GetSoul`|unary|the resolved soul's build-time snapshot: content, size/hash, provenance, trust + drift state|
 |`GetUserModel`|unary|the **live**, bounded user-model index; optional `key` lazily returns exact read-only detail plus up to 16 revisions, including proposal linkage when present. Read-only; Forget remains a permission-gated tool|
 |`ReflectSession`|unary|synchronously reflect one caller-owned completed session through its persisted provider/model (the reflection slot may change only the model); remains available with automatic mode off through lazy Build-owned initialization|

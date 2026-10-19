@@ -1,0 +1,14 @@
+{{- if and .Values.podDisruptionBudget.enabled (gt (int .Values.replicaCount) 1) }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "mecatl-studio.fullname" . }}
+  labels: {{- include "mecatl-studio.labels" . | nindent 4 }}
+spec:
+  # Studio exits when Mecatl is unreachable; crash-looping pods must not block
+  # node drains.
+  unhealthyPodEvictionPolicy: AlwaysAllow
+  maxUnavailable: {{ .Values.podDisruptionBudget.maxUnavailable }}
+  selector:
+    matchLabels: {{- include "mecatl-studio.selectorLabels" . | nindent 6 }}
+{{- end }}

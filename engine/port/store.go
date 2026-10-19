@@ -58,7 +58,7 @@ var (
 // pure event fold is byte-identical-replay faithful ONLY for providers that leave them
 // empty (plain chat). A host that needs byte-identical replay for a reasoning provider
 // must carry those fields in its OWN richer event schema. See engine/COMPATIBILITY.md
-// ("Session reconstruction contract") and ADR 0038.
+// ("Session reconstruction contract").
 type SessionStore interface {
 	// Save persists the current state of s.
 	Save(ctx context.Context, s *session.Session) error
@@ -190,7 +190,7 @@ type SessionMeta struct {
 	// multimodal-only first prompt) carries "" here; the caller may fall back to
 	// the lazy deriveTitle walk via a full Load if it needs the derived value.
 	Title string
-	// Owner is the verified caller the session is attributed to (ADR 0204), or
+	// Owner is the verified caller the session is attributed to, or
 	// nil when the session is ownerless.
 	Owner *session.Principal
 }

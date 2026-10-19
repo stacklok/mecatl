@@ -42,10 +42,12 @@ spec:
               message: bindingID is immutable
             - rule: "!has(oldSelf.requestFingerprint) || self.requestFingerprint == oldSelf.requestFingerprint"
               message: requestFingerprint is immutable
-            - rule: "!has(oldSelf.profileDigest) || self.profileDigest == oldSelf.profileDigest"
-              message: profileDigest is immutable
-            - rule: "!has(oldSelf.profile) || self.profile == oldSelf.profile"
-              message: profile is immutable
+            - rule: "!has(oldSelf.templateRevision) || self.templateRevision == oldSelf.templateRevision"
+              message: templateRevision is immutable
+            - rule: "!has(oldSelf.templateDigest) || self.templateDigest == oldSelf.templateDigest"
+              message: templateDigest is immutable
+            - rule: "!has(oldSelf.templateID) || self.templateID == oldSelf.templateID"
+              message: templateID is immutable
             - rule: "!has(oldSelf.image) || self.image == oldSelf.image"
               message: image is immutable
             - rule: "!has(oldSelf.storageClass) || self.storageClass == oldSelf.storageClass"
@@ -54,9 +56,9 @@ spec:
               message: storageSize is immutable
             - rule: "!has(oldSelf.resources) || self.resources == oldSelf.resources"
               message: resources are immutable
-            required: [allocationID, revision, ownerHash, clientHash, bindingID, requestFingerprint, profile, profileDigest, image, storageClass, storageSize, resources, desired]
+            required: [schemaVersion, allocationID, revision, ownerHash, clientHash, bindingID, requestFingerprint, templateID, templateRevision, templateDigest, image, storageClass, storageSize, resources, desired]
             properties:
-              schemaVersion: {type: integer, format: int64, enum: [0, 1, 2]}
+              schemaVersion: {type: integer, format: int64, enum: [2]}
               allocationID: {type: string, minLength: 1, maxLength: 63}
               revision: {type: string, minLength: 1, maxLength: 64}
               ownerHash: {type: string, pattern: "^[0-9a-f]{64}$"}
@@ -65,8 +67,9 @@ spec:
               clientHash: {type: string, pattern: "^[0-9a-f]{64}$"}
               bindingID: {type: string, minLength: 1, maxLength: 253}
               requestFingerprint: {type: string, pattern: "^[0-9a-f]{64}$"}
-              profile: {type: string, minLength: 1, maxLength: 63}
-              profileDigest: {type: string, pattern: "^sha256:[0-9a-f]{64}$"}
+              templateID: {type: string, minLength: 1, maxLength: 63, pattern: "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"}
+              templateRevision: {type: string, pattern: "^v1-[0-9a-f]{64}$"}
+              templateDigest: {type: string, pattern: "^sha256:[0-9a-f]{64}$"}
               image: {type: string, pattern: "@sha256:[0-9a-fA-F]{64}$"}
               storageClass: {type: string, minLength: 1}
               storageSize: {type: string, minLength: 1}
@@ -82,7 +85,7 @@ spec:
           status:
             type: object
             properties:
-              schemaVersion: {type: integer, format: int64, enum: [0, 1, 2]}
+              schemaVersion: {type: integer, format: int64, enum: [2]}
               observedGeneration: {type: integer, format: int64}
               epoch: {type: integer, format: int64, minimum: 1}
               fenceState: {type: string, enum: [Healthy, FenceUnknown]}
@@ -189,16 +192,6 @@ spec:
                   pvcUID: {type: string, minLength: 1, maxLength: 128}
                   previousEpoch: {type: integer, format: int64, minimum: 1}
                   replacementEpoch: {type: integer, format: int64, minimum: 2}
-              migrationOperation:
-                type: object
-                required: [id, fromSchema, expectedPodUID, expectedPVCUID]
-                properties:
-                  id: {type: string, minLength: 1, maxLength: 1024}
-                  fromSchema: {type: integer, format: int64, enum: [0, 1]}
-                  expectedPodUID: {type: string, minLength: 1, maxLength: 128}
-                  expectedPVCUID: {type: string, minLength: 1, maxLength: 128}
-              lastMigrationOperationID: {type: string, maxLength: 1024}
-              lastMigrationFromSchema: {type: integer, format: int64, enum: [0, 1]}
               conditions:
                 type: array
                 items:

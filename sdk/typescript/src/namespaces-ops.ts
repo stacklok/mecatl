@@ -33,6 +33,8 @@ import type {
   ListSessionsResponse,
   ListSkillChangesRequest,
   ListSkillChangesResponse,
+  ListSkillFilesRequest,
+  ListSkillFilesResponse,
   ListSkillsRequest,
   ListSkillsResponse,
   MutateLearnedSkillRequest,
@@ -41,6 +43,8 @@ import type {
   MutateLearningAttemptResponse,
   PlanSessionCleanupRequest,
   PlanSessionCleanupResponse,
+  ReadSkillFileRequest,
+  ReadSkillFileResponse,
   ReflectSessionRequest,
   ReflectSessionResponse,
   RollbackLearnedSkillRequest,
@@ -77,6 +81,13 @@ import { RPC_CATALOG } from "./rpc-catalog.js";
 export interface Skills {
   /** Lists the configured skills visible to the server. */
   list(request: ListSkillsRequest, options?: RequestOptions): Promise<ListSkillsResponse>;
+  /** Lists the readable files of one skill: SKILL.md first, then its bundled assets. */
+  listFiles(
+    request: ListSkillFilesRequest,
+    options?: RequestOptions,
+  ): Promise<ListSkillFilesResponse>;
+  /** Reads one file of a skill as text, capped at the Skill tool's output size. */
+  readFile(request: ReadSkillFileRequest, options?: RequestOptions): Promise<ReadSkillFileResponse>;
 }
 
 /** Learned-skill inventory and server-owned lifecycle operations. @public */
@@ -466,6 +477,18 @@ export function createOperationalNamespaces(
       list: (request, options) =>
         operations.unary(
           RPC_CATALOG["HarnessService.ListSkills"].grpc.descriptor,
+          request,
+          options,
+        ),
+      listFiles: (request, options) =>
+        operations.unary(
+          RPC_CATALOG["HarnessService.ListSkillFiles"].grpc.descriptor,
+          request,
+          options,
+        ),
+      readFile: (request, options) =>
+        operations.unary(
+          RPC_CATALOG["HarnessService.ReadSkillFile"].grpc.descriptor,
           request,
           options,
         ),

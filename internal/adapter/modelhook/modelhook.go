@@ -1,7 +1,7 @@
 // Package modelhook contains the contextual guardrail rule matcher, exact-action
 // grant store, and the narrow verdict checker retained for path-escape policy.
 // Contextual action and inbound review run directly at engine choke points; this
-// package no longer decorates HookRunner or implements the removed legacy reviewer.
+// package does not decorate HookRunner.
 package modelhook
 
 import (

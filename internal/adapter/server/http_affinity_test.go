@@ -18,18 +18,18 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/server"
 )
 
-func TestADR_0294_HTTPCreateSessionDerivedAffinity(t *testing.T) {
+func TestHTTPCreateSessionDerivedAffinity(t *testing.T) {
 	h := server.NewHTTPHandler(newService(t, mockllm.New(), allowRules()))
 	for _, tc := range []struct {
 		name, body string
 		headers    []string
 		want       int
 	}{
-		{name: "debug exact", body: `{"profile":"no-fs","debug_target_session_id":"target"}`, headers: []string{"target"}, want: http.StatusNotFound},
-		{name: "debug headerless compatibility", body: `{"profile":"no-fs","debug_target_session_id":"target"}`, want: http.StatusNotFound},
+		{name: "debug exact", body: `{"execution":{"none":{}},"debug_target_session_id":"target"}`, headers: []string{"target"}, want: http.StatusNotFound},
+		{name: "debug headerless compatibility", body: `{"execution":{"none":{}},"debug_target_session_id":"target"}`, want: http.StatusNotFound},
 		{name: "no derived reference rejects header", body: `{}`, headers: []string{"target"}, want: http.StatusBadRequest},
-		{name: "mismatch", body: `{"profile":"no-fs","debug_target_session_id":"target"}`, headers: []string{"other"}, want: http.StatusBadRequest},
-		{name: "duplicate", body: `{"profile":"no-fs","debug_target_session_id":"target"}`, headers: []string{"target", "target"}, want: http.StatusBadRequest},
+		{name: "mismatch", body: `{"execution":{"none":{}},"debug_target_session_id":"target"}`, headers: []string{"other"}, want: http.StatusBadRequest},
+		{name: "duplicate", body: `{"execution":{"none":{}},"debug_target_session_id":"target"}`, headers: []string{"target", "target"}, want: http.StatusBadRequest},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			req := httptest.NewRequest(http.MethodPost, "/v1/sessions", strings.NewReader(tc.body))
@@ -121,7 +121,7 @@ func TestSessionAffinityAndHandoff_Scenario3_HTTPRouteInventory(t *testing.T) {
 	}
 }
 
-func TestADR_0294_HTTPHeaderFailureIsNonDisclosing(t *testing.T) {
+func TestHTTPHeaderFailureIsNonDisclosing(t *testing.T) {
 	h := server.NewHTTPHandler(newService(t, mockllm.New(), allowRules()))
 
 	for _, tc := range []struct {
@@ -163,7 +163,7 @@ func TestADR_0294_HTTPHeaderFailureIsNonDisclosing(t *testing.T) {
 	}
 }
 
-func TestADR_0294_HTTPDecodedPathEquality(t *testing.T) {
+func TestHTTPDecodedPathEquality(t *testing.T) {
 	h := server.NewHTTPHandler(newService(t, mockllm.New(), allowRules()))
 
 	for _, tc := range []struct {
@@ -185,7 +185,7 @@ func TestADR_0294_HTTPDecodedPathEquality(t *testing.T) {
 	}
 }
 
-func TestADR_0294_AffinityHeaderGrantsNoAuthority(t *testing.T) {
+func TestAffinityHeaderGrantsNoAuthority(t *testing.T) {
 	engine := agent.NewEngine(agent.Deps{LLM: mockllm.New(), Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(allowRules(), nil), Model: "test-model"})
 	svc, err := server.NewService(server.Config{
 		Engine: engine, Store: memstore.New(), PlacementProvider: testPlacementProvider{root: "/ws"}, PlacementScope: "test", SharedEngineRoot: "/ws", OwnershipEnforced: true,

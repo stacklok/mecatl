@@ -48,7 +48,9 @@ func TestMecatuiCardLayout_Scenario3_DynamicDetailsFitWidth(t *testing.T) {
 	})
 	t.Run("dream reflections soul and user model", func(t *testing.T) {
 		plan := &client.DreamPlan{Operations: []client.DreamOperation{{Kind: long, Survivor: client.DreamParticipant{Key: long, Value: long, Description: long}, Sources: []client.DreamParticipant{{Key: long, Value: long, Description: long}}, Replacement: client.DreamReplacement{Value: long, Description: long}, Reason: long}}}
-		assertFits(t, "dream", renderDreamOverlay(th, dreamState{view: dreamReview, plan: plan}, client.Capabilities{}, hk, width, 60))
+		stDream := &dreamState{view: dreamReview, plan: plan, deps: surfaceDeps{theme: th, marks: hk}}
+		dreamBody, _ := stDream.Render(width-th.Style("askCard").GetHorizontalFrameSize(), 60-th.Style("askCard").GetVerticalFrameSize())
+		assertFits(t, "dream", centerCard(th, dreamBody, width, 60))
 		proposal := &client.LearningProposal{ID: long, Status: long, Version: long, Kind: long, Key: long, Value: long, Description: long, Body: long, Triggers: []string{long}, Evidence: []client.LearningEvidence{{Locator: long, SessionID: long, Digest: long, Preview: long}}}
 		assertFits(t, "reflections", renderReflectionsOverlay(th, reflectionsState{view: reflectionsDetail, detail: proposal}, client.Capabilities{LearningProposals: true}, hk, width, 60))
 		st := &soulState{view: soulPanel, soul: client.Soul{Present: true, Content: long, SHA256: long}, deps: surfaceDeps{theme: th, caps: client.Capabilities{Soul: true}, marks: hk}}

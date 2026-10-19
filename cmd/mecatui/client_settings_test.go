@@ -430,7 +430,7 @@ func TestBuildStatusSourceConstructsValidatedTemplateSettings(t *testing.T) {
 	}
 }
 
-func TestADR_0344_Scenario2_InvalidConfigurationFailsActionably(t *testing.T) {
+func TestTerminalTitleInvalidConfigurationFailsActionably(t *testing.T) {
 	for _, tc := range []struct{ name, body, want string }{
 		{"unknown field", "terminal_title:\n  unexpected: true\n", "terminal_title"},
 		{"invalid YAML", "terminal_title: [\n", "terminal_title"},
@@ -447,7 +447,7 @@ func TestADR_0344_Scenario2_InvalidConfigurationFailsActionably(t *testing.T) {
 	}
 }
 
-func TestADR_0344_Scenario2_CommandStatusCannotControlTitle(t *testing.T) {
+func TestCommandStatusCannotControlTitle(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	writeSettings(t, "mecatui", "terminal_title:\n  template: '{{.Session.Title}} · mecatui'\nstatus_customization:\n  command:\n    executable: /bin/echo\n    args: ['<header><text>command title</text></header>']\n")
 

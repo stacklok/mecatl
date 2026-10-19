@@ -8,8 +8,7 @@ import (
 // RSSSampler polls the process resident-set size on a fixed interval and tracks
 // the peak and the most-recent (final) sample. It is platform-pluggable through
 // readRSS (a direct /proc/self/status read on linux, 0 elsewhere — see
-// rss_linux.go / rss_other.go), so the harness takes no new dependency: the
-// "Open decisions" lean in perf-tracking.md is the direct /proc read.
+// rss_linux.go / rss_other.go), so the harness takes no new dependency.
 //
 // Start launches a sampling goroutine; Stop signals it, waits for it to drain,
 // takes one final sample, and returns (peak, final). A sampler is single-use.

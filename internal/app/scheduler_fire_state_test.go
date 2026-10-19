@@ -20,7 +20,7 @@ import (
 )
 
 // progressFireProvider is the two-call mockllm for the progress test (issue #386
-// Phase 3 Task D gate c). The first Stream call emits a tool call to an UNKNOWN
+// gate c). The first Stream call emits a tool call to an UNKNOWN
 // tool (ChunkToolCall + ChunkDone StopEndTurn): the loop emits EvToolCall →
 // RecordFireProgress, then dispatches the unknown tool (an error result) and
 // continues to turn 2 — a benign text turn would TERMINATE the run (StopEndTurn
@@ -56,7 +56,7 @@ func (progressFireProvider) Capabilities() port.ProviderCapabilities {
 
 var _ port.LLMProvider = (*progressFireProvider)(nil)
 
-// TestFireStartPersistsInFlightRecord is the issue #386 Phase 3 Task D gate (a):
+// TestFireStartPersistsInFlightRecord is the issue #386 gate (a):
 // a fire that starts persists the session id EARLY via RecordFireStart — the
 // in-flight fire record (Stop="", StartedAt/Deadline set) is observable in the
 // store, and the schedule's LastFireSessionID flips off the "pending" sentinel
@@ -177,8 +177,8 @@ func TestFireStartPersistsInFlightRecord(t *testing.T) {
 	}
 }
 
-// TestFireWallClockDeadlineTerminatesWithStopTimeout is the issue #386 Phase 3
-// Task D gate (b): a fire whose LLM blocks past the per-fire wall-clock deadline
+// TestFireWallClockDeadlineTerminatesWithStopTimeout is the issue #386
+// gate (b): a fire whose LLM blocks past the per-fire wall-clock deadline
 // terminates with StopTimeout (NOT StopCancelled — a caller must distinguish
 // "timed out" from a user cancel) + an honest Err naming the timeout duration,
 // AND the session lands a recoverable terminal snapshot (cancelled, NOT running —
@@ -276,7 +276,7 @@ func TestFireWallClockDeadlineTerminatesWithStopTimeout(t *testing.T) {
 	}
 
 	// (b3) The session lands a recoverable terminal snapshot (cancelled, NOT
-	// running) — Interrupt-recoverable, the cloud-native Phase 1 guarantee.
+	// running) — Interrupt-recoverable.
 	sess, err := store.Load(ctx, fire.SessionID)
 	if err != nil {
 		t.Fatalf("Load fire session %q: %v", fire.SessionID, err)
@@ -290,7 +290,7 @@ func TestFireWallClockDeadlineTerminatesWithStopTimeout(t *testing.T) {
 	}
 }
 
-// TestFireProgressAdvancesOnTurnBoundaries is the issue #386 Phase 3 Task D gate
+// TestFireProgressAdvancesOnTurnBoundaries is the issue #386 gate
 // (c): RecordFireProgress advances the in-flight fire's last-observed-progress
 // instant on turn-boundary / activity events (NOT every chunk). A single-text-turn
 // fire emits an EvTurnEnd and an EvResult; both are progress markers, so the
@@ -431,7 +431,7 @@ func TestFireProgressAdvancesOnTurnBoundaries(t *testing.T) {
 	}
 }
 
-// TestFireCreateFailureRecordsTerminalFire is the issue #386 Phase 3 Task D gate
+// TestFireCreateFailureRecordsTerminalFire is the issue #386 gate
 // (d): a fire whose CreateSessionWithProfile FAILS after Claim still produces a
 // terminal StopError fire record via RecordFire (so it is not "fires: none" —
 // the at-most-once Claim already advanced, so the failed fire is recorded, never

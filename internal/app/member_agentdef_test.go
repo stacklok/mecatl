@@ -204,7 +204,7 @@ func sawToolCall(events []agent.TeamEvent, member, toolName string) bool {
 // unknown tool). It is the correct signal now that an UNKNOWN/dropped tool ALSO
 // emits an EvToolCall card (the card-before-result invariant): a dropped tool yields
 // an EvToolCall card AND an error tool.result whose content is "unknown tool ...",
-// so the presence of a card no longer distinguishes dispatch from rejection. We
+// so the presence of a card does not distinguish dispatch from rejection. We
 // match the result to its call by id (EvToolResult carries the call id, not the tool
 // name) and treat the unknown-tool sentinel content as "NOT dispatched"; any other
 // outcome (success OR a real tool error like a missing file) counts as dispatched.

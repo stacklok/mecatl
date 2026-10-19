@@ -56,10 +56,10 @@ func exactRunActorService(t *testing.T, scoped bool, turns ...mockllm.Turn) (*se
 	return svc, log
 }
 
-// TestADR_0204_ExactChildApprovalUsesVerdictCaller exercises the parent relay:
+// TestExactChildApprovalUsesVerdictCaller exercises the parent relay:
 // the child ask and its verdict are both recorded under the exact parent run,
 // with the verdict attributed to the caller who submitted it.
-func TestADR_0204_ExactChildApprovalUsesVerdictCaller(t *testing.T) {
+func TestExactChildApprovalUsesVerdictCaller(t *testing.T) {
 	store := memstore.New()
 	log := memstore.NewEventLog()
 	childCatalog := tool.NewCatalog()
@@ -128,10 +128,10 @@ func TestADR_0204_ExactChildApprovalUsesVerdictCaller(t *testing.T) {
 	}
 }
 
-// TestADR_0204_ExactRunApprovalUsesVerdictCaller pins actor attribution for
+// TestExactRunApprovalUsesVerdictCaller pins actor attribution for
 // live ordinary and guardrail-scoped controls through the real gRPC relay.
 // The direct case proves an absent verdict caller does not inherit the starter.
-func TestADR_0204_ExactRunApprovalUsesVerdictCaller(t *testing.T) {
+func TestExactRunApprovalUsesVerdictCaller(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
 		scoped bool

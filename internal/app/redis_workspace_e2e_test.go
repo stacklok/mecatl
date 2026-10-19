@@ -172,9 +172,9 @@ func TestRedisWorkspaceBuiltEngineExercisesAllFileToolsAcrossSamePrincipalSessio
 // TestRedisWorkspaceRootListDirIsNotDeniedByAuthority pins the fix for
 // authorityWorkspaceResource deriving an authority identity for ListDir's
 // documented root spelling ("."): the Redis-backed Workspace's
-// AuthorityResourcePath used to reject "." as a path escape, so a root
-// ListDir was denied by the authority evaluator before Execute ever ran, even
-// though ReadDir itself has always accepted "." as the workspace root.
+// AuthorityResourcePath must accept "." (as ReadDir does) rather than reject it
+// as a path escape, or a root ListDir is denied by the authority evaluator
+// before Execute runs.
 func TestRedisWorkspaceRootListDirIsNotDeniedByAuthority(t *testing.T) {
 	mr := miniredis.RunT(t)
 	provider := mockllm.New(

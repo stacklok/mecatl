@@ -77,7 +77,7 @@ func TestPlacementReadinessFailureIsBoundedAcrossPublicTransports(t *testing.T) 
 	}
 }
 
-func TestADR_0291_BindRejectsRebindBetweenAuthorizationAndResolution(t *testing.T) {
+func TestBindRejectsRebindBetweenAuthorizationAndResolution(t *testing.T) {
 	t.Parallel()
 
 	authorized := make(chan struct{})

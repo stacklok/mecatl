@@ -119,7 +119,7 @@ func awaitBatchEvent(t *testing.T, r *agent.Run, kind session.EventType, id sess
 	}
 }
 
-func TestADR_0370_Scenario1_FastSiblingAvailableBeforeSlowSibling(t *testing.T) {
+func TestToolResultAvailability_FastSiblingAvailableBeforeSlowSibling(t *testing.T) {
 	r, _, started, gates := availabilityBatch(t)
 	awaitAvailabilityBatchStart(t, started)
 	close(gates["fast"])
@@ -152,7 +152,7 @@ func TestADR_0370_Scenario1_FastSiblingAvailableBeforeSlowSibling(t *testing.T) 
 	}
 }
 
-func TestADR_0370_Scenario1_PresentationAndCanonicalOrdering(t *testing.T) {
+func TestToolResultAvailability_PresentationAndCanonicalOrdering(t *testing.T) {
 	r, sess, started, gates := availabilityBatch(t)
 	awaitAvailabilityBatchStart(t, started)
 	close(gates["fast"])
@@ -201,7 +201,7 @@ func TestADR_0370_Scenario1_PresentationAndCanonicalOrdering(t *testing.T) {
 	}
 }
 
-func TestADR_0370_Scenario1_SerializedAvailabilityPublication(t *testing.T) {
+func TestToolResultAvailability_SerializedPublication(t *testing.T) {
 	// A shared release makes both workers eligible to complete at once; the
 	// all-started handshake prevents the release from favoring launch order.
 	for iteration := range 20 {

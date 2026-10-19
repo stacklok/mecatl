@@ -105,8 +105,8 @@ func (a MemoryIndexAssembler) maxBytes() int {
 // instruction, so it is wrapped in explicit <memory-index>...</memory-index>
 // delimiters (matching the house style of the <env> block in env.go) and the
 // header tells the model to treat anything inside as data, never as instructions.
-// This is a cheap prompt-injection fence; see the Trust model note in
-// docs/adr/0009-tiered-memory.md for the single-user / single-trust-zone assumption.
+// This is a cheap prompt-injection fence that assumes a single user / single
+// trust zone.
 const (
 	memoryIndexOpen  = `<memory-index encoding="jsonl">`
 	memoryIndexClose = "</memory-index>"

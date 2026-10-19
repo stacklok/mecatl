@@ -711,6 +711,10 @@ func TestMaxConcurrentFiresBoundsFanout(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("RunOnceForTest did not complete after unblock")
 	}
+	// Capacity-deferred schedules stay due and are admitted on later polls.
+	for range 3 {
+		s.RunOnceForTest(context.Background())
+	}
 	if err := s.Stop(); err != nil {
 		t.Fatalf("Stop: %v", err)
 	}
@@ -1428,6 +1432,7 @@ func TestOneShotReArmOnPendingCrash(t *testing.T) {
 			Enabled:           false,
 			FireCount:         1,
 			LastFireSessionID: port.PendingFireSessionID,
+			LastFireAt:        clk.Now(),
 		},
 	}); err != nil {
 		t.Fatalf("Save: %v", err)
@@ -1489,6 +1494,7 @@ func TestOneShotReArmNoDueWork(t *testing.T) {
 			Enabled:           false,
 			FireCount:         1,
 			LastFireSessionID: port.PendingFireSessionID,
+			LastFireAt:        clk.Now(),
 		},
 	}); err != nil {
 		t.Fatalf("Save: %v", err)
@@ -1553,6 +1559,7 @@ func TestOneShotReArmOnStopError(t *testing.T) {
 			Enabled:           false,
 			FireCount:         1,
 			LastFireSessionID: session.SessionID(fireID),
+			LastFireAt:        clk.Now(),
 		},
 	}); err != nil {
 		t.Fatalf("Save: %v", err)
@@ -1590,7 +1597,7 @@ func TestOneShotReArmOnStopError(t *testing.T) {
 
 // TestOneShotNoRetryNotReArmed: a one-shot with OneShotRetry=false (the default,
 // at-most-once) is NOT re-armed, even if its prior fire crashed (pending). This
-// pins the pre-Phase-2 behavior is unchanged for a non-opted-in one-shot.
+// pins at-most-once behavior for a non-opted-in one-shot.
 func TestOneShotNoRetryNotReArmed(t *testing.T) {
 	defer goleak.VerifyNone(t)
 	clk := &fakeClock{t: time.Unix(1_700_000_000, 0)}
@@ -1618,7 +1625,8 @@ func TestOneShotNoRetryNotReArmed(t *testing.T) {
 			NextFireAt:        time.Time{},
 			Enabled:           false,
 			FireCount:         1,
-			LastFireSessionID: port.PendingFireSessionID, // crashed mid-fire
+			LastFireSessionID: port.PendingFireSessionID,
+			LastFireAt:        clk.Now(), // crashed mid-fire
 		},
 	}); err != nil {
 		t.Fatalf("Save: %v", err)
@@ -1675,6 +1683,7 @@ func TestOneShotReArmBudgetExhausted(t *testing.T) {
 			Enabled:           false,
 			FireCount:         1,
 			LastFireSessionID: port.PendingFireSessionID,
+			LastFireAt:        clk.Now(),
 			OneShotRetryCount: 3, // budget exhausted
 		},
 	}); err != nil {
@@ -1701,8 +1710,8 @@ func TestOneShotReArmBudgetExhausted(t *testing.T) {
 
 // TestOneShotReArmStoreWithoutInterface: a store that does NOT implement
 // ScheduleOneShotReArmer degrades gracefully — the re-arm scan is a nil-safe
-// type-assertion no-op (no panic, no re-arm). This pins the byte-identical
-// pre-Phase-2 fallback for a store that opted out of the re-arm seam.
+// type-assertion no-op (no panic, no re-arm). This pins the at-most-once
+// fallback for a store that opted out of the re-arm seam.
 func TestOneShotReArmStoreWithoutInterface(t *testing.T) {
 	defer goleak.VerifyNone(t)
 	clk := &fakeClock{t: time.Unix(1_700_000_000, 0)}
@@ -1739,6 +1748,7 @@ func TestOneShotReArmStoreWithoutInterface(t *testing.T) {
 			Enabled:           false,
 			FireCount:         1,
 			LastFireSessionID: port.PendingFireSessionID,
+			LastFireAt:        clk.Now(),
 		},
 	}); err != nil {
 		t.Fatalf("Save: %v", err)
@@ -2374,8 +2384,10 @@ func TestReleaseLeaderDemotesBeforeRelease(t *testing.T) {
 	store := memschedulestore.New()
 	fire := &fireStub{}
 	var s2 *scheduler.Scheduler
+	var released atomic.Bool
 	lease := &recordingLease{
 		onFirst: func() {
+			released.Store(true)
 			// Inside the Release call: the scheduler must ALREADY be demoted.
 			if _, leader := s2.LeaderOwner(); leader {
 				t.Errorf("releaseLeader released the lease while still leader (demote-before-release violated)")
@@ -2403,8 +2415,9 @@ func TestReleaseLeaderDemotesBeforeRelease(t *testing.T) {
 	if err := s2.Stop(); err != nil {
 		t.Fatalf("Stop: %v", err)
 	}
-	// The onFirst probe asserted the ordering synchronously; reaching here with
-	// no t.Errorf means demote preceded release.
+	if !released.Load() {
+		t.Fatal("Stop did not release the held leader lease")
+	}
 }
 
 // --- Fix 1 belt-and-braces: a demoted (standby) replica's tickOnce no-fires --

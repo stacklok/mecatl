@@ -75,7 +75,7 @@ func TestSessionMCPAuthorization_GrantRegressionParksAndResumes(t *testing.T) {
 					TokenEndpoint:         fixture.oauth.URL + "/token",
 				}},
 				Client: permconfig.MCPOAuthClientProfile{Mode: "preregistered", Preregistered: &permconfig.MCPPreregisteredClientProfile{
-					ID: "vertical-client", SecretEnv: "MECATL_VERTICAL_CLIENT_SECRET",
+					ID: "vertical-client", SecretFile: "testdata/client-secret",
 				}},
 				Scopes: []string{"read"}, RequestRefreshToken: true,
 			}},
@@ -101,7 +101,7 @@ func TestSessionMCPAuthorization_GrantRegressionParksAndResumes(t *testing.T) {
 		MCPBrokerOptions: []mcpbroker.Option{
 			mcpbroker.WithOAuthLoopbackForTest(t, roots),
 			mcpbroker.WithOAuthLimits(2*time.Minute, 3*time.Second),
-			mcpbroker.WithOAuthSecretResolver(func(context.Context, string) (string, error) { return "vertical-secret", nil }),
+			mcpbroker.WithOAuthSecretFileReader(func(context.Context, string) (string, error) { return "vertical-secret", nil }),
 		},
 	})
 	if err != nil {

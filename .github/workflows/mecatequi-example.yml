@@ -2,7 +2,8 @@
 # EXAMPLE / TEMPLATE — copy into your repo and review; this repo does not run it against
 # real issues. There is NO 'mecatequi' label and no secret configured in this repo, so
 # this file is inert here. It is the canonical SPLIT-PRIVILEGE two-job pattern for running
-# mecatequi from GitHub Actions safely. Read docs/adr/0028-mecatequi.md before enabling it.
+# mecatequi from GitHub Actions safely. Read user-docs/building/deployment/mecatequi.md
+# before enabling it.
 # ════════════════════════════════════════════════════════════════════════════════════
 #
 # THE TOKEN BOUNDARY INVARIANT (the whole point):
@@ -174,7 +175,7 @@ jobs:
           #   go install github.com/bufbuild/buf/cmd/buf@v1.45.0
 
       - name: Upload run artifacts
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: mecatequi-run
           # Read every path from the action's outputs (including events-path) so an
@@ -209,7 +210,6 @@ jobs:
     # STRONGER posture is to mint a short-lived GitHub App installation token (a JIT token
     # scoped to exactly this repo's contents + pull-requests + issues) and pass it as
     # GH_TOKEN instead, removing the standing grant. Decide this where you edit these perms.
-    # See docs/adr/0028-mecatequi.md.
     permissions:
       contents: write
       pull-requests: write
@@ -219,7 +219,7 @@ jobs:
     # a composite action's internal step whereas a step-level env: on the `uses:` step does
     # NOT. To remove the standing grant, swap this for a JIT GitHub App installation token
     # (mint it in a prior step and resolve it into $GITHUB_ENV; the reusable workflow does
-    # exactly this). See docs/adr/0028-mecatequi.md.
+    # exactly this).
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
@@ -239,7 +239,7 @@ jobs:
       # regardless: a missing artifact leaves PATCH_PATH/SUMMARY_PATH absent and EXIT_CLASS
       # empty, which the script reads as setup-failure and comments.
       - name: Download run artifacts
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         continue-on-error: true
         with:
           name: mecatequi-run
@@ -266,7 +266,7 @@ jobs:
           # pr-title-template inputs. Unset = the built-in rich body; publish.sh also auto-uses
           # .github/mecatequi/pr-body.md if present (rename the shipped
           # .github/mecatequi/pr-body.md.example to activate it). The trust caveat is ALWAYS
-          # force-prepended regardless of template. See docs/adr/0028-mecatequi.md.
+          # force-prepended regardless of template. See .github/mecatequi/pr-body.md.example.
           # base-branch: main
           # pr-body-template: .github/mecatequi/pr-body.md
           # pr-title-template: .github/mecatequi/pr-title.txt

@@ -71,6 +71,46 @@ func TestResolveDeploymentDefaultAgreesWithStartupResolver(t *testing.T) {
 	}
 }
 
+func TestApplyDeploymentDefaultTargetDoesNotResolveAliasedModelTwice(t *testing.T) {
+	cfg := Config{
+		DefaultProvider:       "openai",
+		DefaultModel:          "deep",
+		defaultModelFromAlias: true,
+		ModelAliasTargets: ModelAliases{
+			"deep": {ProviderID: "openrouter", Model: "other-model"},
+		},
+	}
+	got, err := applyDeploymentDefaultTarget(cfg)
+	if err != nil || got.DefaultProvider != "openai" || got.DefaultModel != "deep" {
+		t.Fatalf("pre-resolved alias changed: provider=%q model=%q err=%v", got.DefaultProvider, got.DefaultModel, err)
+	}
+}
+
+func TestResolveDeploymentDefaultPairAliasOverridesFallbackProvider(t *testing.T) {
+	cfg := Config{
+		DefaultProvider: "openai",
+		DefaultModel:    "strong",
+		ModelAliasTargets: ModelAliases{
+			"strong": {ProviderID: "openrouter", Model: "vendor/opaque:model.v1"},
+		},
+		OpenAIKey:     "test-key",
+		OpenRouterKey: "test-key",
+		ToolhiveLLM:   false,
+	}
+	provider, model, err := ResolveDeploymentDefault(t.Context(), cfg)
+	if err != nil {
+		t.Fatalf("resolve paired default: %v", err)
+	}
+	if provider != "openrouter" || model != "vendor/opaque:model.v1" {
+		t.Fatalf("resolved pair = (%q, %q)", provider, model)
+	}
+
+	cfg.ModelAliasTargets["strong"] = ModelTarget{ProviderID: "unavailable", Model: "opaque"}
+	if _, _, err := ResolveDeploymentDefault(t.Context(), cfg); err == nil {
+		t.Fatal("unavailable alias provider fell back to the configured provider")
+	}
+}
+
 func TestResolveDeploymentDefaultUsesProviderModelFallback(t *testing.T) {
 	provider, model, err := ResolveDeploymentDefault(context.Background(), Config{
 		DefaultProvider: "openrouter",

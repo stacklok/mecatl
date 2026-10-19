@@ -836,7 +836,7 @@ func assertNoAcceptanceSecrets(t *testing.T, surfaces []string, canaries map[str
 	}
 }
 
-func TestADR_0325_DirectDCRConfigurationReference(t *testing.T) {
+func TestDirectDCRConfigurationReference(t *testing.T) {
 	reference, err := os.ReadFile(filepath.Join("..", "..", "user-docs", "reference", "configuration.md"))
 	if err != nil {
 		t.Fatal(err)

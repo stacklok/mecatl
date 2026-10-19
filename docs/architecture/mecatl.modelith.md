@@ -81,7 +81,7 @@ A typed, ordered item on a `Run`'s output stream — the single observable curre
 
 ### `EventLog`
 
-The durable, append-only record of a `Session`'s `Events`, distinct from the transient stream the loop emits. It is the source of truth for replaying state the `Session` snapshot does not carry — learned `PermissionRules`, the pre-compaction `Conversation` archive, and the user-role turns (the log-only `EvUserPrompt`) — when a `Session` is rehydrated after a restart. Because it carries the user turns alongside the assistant/tool `Events`, a host whose system of record IS the log can reconstruct the whole `Session` by FOLDING the stream (the event-sourced rehydration path), not only top up a snapshot (structural reconstruction; a pure fold is byte-identical-replay only for providers not using the opaque reasoning-replay fields — Reasoning/ProviderPhase/ToolCall.ItemID are not on the event stream — see ADR 0038).
+The durable, append-only record of a `Session`'s `Events`, distinct from the transient stream the loop emits. It is the source of truth for replaying state the `Session` snapshot does not carry — learned `PermissionRules`, the pre-compaction `Conversation` archive, and the user-role turns (the log-only `EvUserPrompt`) — when a `Session` is rehydrated after a restart. Because it carries the user turns alongside the assistant/tool `Events`, a host whose system of record IS the log can reconstruct the whole `Session` by FOLDING the stream (the event-sourced rehydration path), not only top up a snapshot (structural reconstruction; a pure fold is byte-identical-replay only for providers not using the opaque reasoning-replay fields — Reasoning/ProviderPhase/ToolCall.ItemID are not on the event stream).
 
 **Relationships**
 
@@ -187,7 +187,7 @@ One entry in a `Conversation`, attributed to a role (user, assistant, or tool). 
 
 ### `Model`
 
-A specific model identified by the exact provider/model pair. Discovery changes knowledge about its properties, not its identity. Provider listings can be non-exhaustive; omission alone does not invalidate a passthrough model. A `Session` runs against an effective `Model`; a `Subagent` or `TeamMember` may override it within the same `Provider`, and a `PermissionMode` change may re-resolve it within the same `Provider` (plan mode → a strong-reasoning model, ADR 0030 Layer 3).
+A specific model identified by the exact provider/model pair. Discovery changes knowledge about its properties, not its identity. Provider listings can be non-exhaustive; omission alone does not invalidate a passthrough model. A `Session` runs against an effective `Model`; a `Subagent` or `TeamMember` may override it within the same `Provider`, and a `PermissionMode` change may re-resolve it within the same `Provider` (plan mode → a strong-reasoning model via the plan slot).
 
 **Invariants**
 
@@ -227,7 +227,7 @@ A suspension of a `Run` when a `ToolCall` resolves to "ask": the loop pauses and
 
 ### `PermissionMode`
 
-A `Session`'s permission posture — default, plan, or acceptEdits — governing which `Tools` may run and, via ADR 0030 Layer 3, the effective `Model`: in plan mode the `Session` re-resolves the plan slot to a strong-reasoning `Model` within the same `Provider`. Plan mode is enforced at two layers (catalog filter hides mutating `Tools`; evaluator gate hard-denies mutations). `acceptEdits` is a declared-but-not-yet-implemented posture (ADR 0022 Future work): it is carried as metadata and surfaced in mode pickers, but the decision path treats it identically to `default` (deny→ask→allow), so it auto-allows nothing today. It is a value object owned by exactly one `Session`; a control surface switches it out of band (e.g. ACP session/set_mode).
+A `Session`'s permission posture — default, plan, or acceptEdits — governing which `Tools` may run and, through the plan model slot, the effective `Model`: in plan mode the `Session` re-resolves the plan slot to a strong-reasoning `Model` within the same `Provider`. Plan mode is enforced at two layers (catalog filter hides mutating `Tools`; evaluator gate hard-denies mutations). `acceptEdits` auto-allows Edit and Write where only the built-in approval floor would ask; configured asks and denies still win, and Shell and every other `Tool` resolve as in `default`. It is a value object owned by exactly one `Session`; a control surface switches it out of band (e.g. ACP session/set_mode).
 
 **Relationships**
 
@@ -243,7 +243,7 @@ A `Session`'s permission posture — default, plan, or acceptEdits — governing
 
 - **mode-model-fixed-per-turn** — The effective `Model` is fixed for the duration of a turn; a mode change re-resolves it only between turns, at the run-entry seam, never mid-stream.
 
-- **acceptedits-declared-not-implemented** — `acceptEdits` is carried as metadata and surfaced in mode pickers, but the permission decision path never branches on it — it resolves identically to `default` (deny→ask→allow). It auto-allows no `ToolCall` today; a real auto-accept-edits tier is ADR 0022 Future work.
+- **acceptedits-loosens-only-the-edit-floor** — `acceptEdits` adds allow rules for Edit and Write above the built-in floor, so it loosens only the built-in ask for those two `Tools`. It never overrides a configured deny or ask, and every other `Tool`, including Shell, resolves exactly as in `default`.
 
 
 ### `PermissionRule`
@@ -270,7 +270,7 @@ A disposable harness instance — one running process — that loads `Sessions` 
 
 **Relationships**
 
-- `Run` — 1:n — referenced — executes
+- `Run` — n:n — referenced — executes — A paused run can continue in another process with the same run identity.
 - `SessionLease` — 1:n — referenced — holds
 
 **Invariants**
@@ -326,7 +326,7 @@ A session's evidence of the file versions it has read, stored independently of t
 
 ### `Run`
 
-A single drive of a `Session` from a starting state to a terminal one — one invocation of the agent loop. A `Run` sequences `Turns`, emits a stream of `Events`, and ends with a stop reason (end-of-turn, budget, no-progress, cancelled, error). It is the execution, not the state: the `Session` it drives outlives it.
+One unit of work driven through a `Session` by the agent loop. It sequences `Turns` and emits `Events`. It can pause awaiting approval or external authorization and continue with the same logical run identity, even if a new in-process loop handle drives the continuation. The `Session` outlives the `Run` and can host later runs.
 
 **Relationships**
 
@@ -336,14 +336,14 @@ A single drive of a `Session` from a starting state to a terminal one — one in
 
 **Invariants**
 
-- **run-one-terminal-stop** — A `Run` drives its `Session` to exactly one terminal state and reports exactly one stop reason.
+- **run-one-terminal-stop** — A paused `Run` has no terminal stop. Its continuation retains the same run identity; on completion it reports one terminal stop reason.
 
 - **run-no-replay-after-first-chunk** — Once a `Turn` has streamed its first chunk, the `Run` never retries or replays that `Turn`.
 
 
 ### `Session`
 
-The central aggregate and unit of work: a stateful conversation between a principal and a model, with an `Environment` binding, usage accounting, and limits. A `Session` is a state machine (idle, running, awaiting, completed, cancelled, failed) and is bound to one `Provider`. Its effective `Model` is fixed for each `Turn`; a `PermissionMode` change can re-resolve the model between turns within that provider. It survives process restarts when backed by a store.
+The central aggregate: a stateful conversation between a principal and a model, with an `Environment` binding, usage accounting, and limits. A `Session` is a state machine (idle, running, awaiting, completed, cancelled, failed) and is bound to one `Provider`. Its effective `Model` is fixed for each `Turn`; a `PermissionMode` change can re-resolve the model between turns within that provider. It survives process restarts when backed by a store, preserving its incarnation identity across restoration.
 
 **Relationships**
 
@@ -355,7 +355,7 @@ The central aggregate and unit of work: a stateful conversation between a princi
 - `Provider` — n:1 — referenced — bound to — The `Session`'s provider binding stays fixed across turns
 - `Model` — n:1 — referenced — runs against — The host resolves this effective binding from the requested session selection and `PermissionMode`; the aggregate stores selection labels without interpreting them. The relationship describes the effective target for a turn, not a lifetime model pin. Existing restart semantics remain unchanged: explicit selections are restored, while an empty selection follows the deployment default rather than persisting the previously effective target.
 
-- `PermissionMode` — 1:1 — owned — posture is — The `Session`'s `PermissionMode` governs its toolset and — via ADR 0030 Layer 3 — its effective `Model`: switching to plan mode re-resolves the plan slot to a strong-reasoning `Model` within the same `Provider`, between turns.
+- `PermissionMode` — 1:1 — owned — posture is — The `Session`'s `PermissionMode` governs its toolset and — through the plan model slot — its effective `Model`: switching to plan mode re-resolves the plan slot to a strong-reasoning `Model` within the same `Provider`, between turns.
 
 - `Memory` — n:n — referenced — remembers into
 - `Skill` — n:n — referenced — activates
@@ -367,6 +367,8 @@ The central aggregate and unit of work: a stateful conversation between a princi
 - **fixed-provider-per-session** — The host preserves a `Session`'s `Provider` binding across turns. Mode-driven `Model` re-resolution stays within that provider and takes effect between turns. Provider/model-dependent collaborators are derived coherently for the effective target, never cloned with only the LLM swapped. This does not pin a floating default selection across restart.
 
 - **session-recover-before-reuse** — A `Session` in a terminal state (completed, cancelled, or failed) is returned to idle before any new `Run` reuses it.
+
+- **session-incarnation-persists** — A `Session` has one incarnation identity for the lifetime of its ID. Restoration preserves it; a new `Session` reusing the ID gets a new incarnation.
 
 - **session-usage-survives-restart** — Cumulative token usage is preserved across reopen, interrupt, recover, and process restart.
 
@@ -576,7 +578,7 @@ erDiagram
     PermissionMode ||--|| Session : "posture of"
     PermissionMode }o--|| Model : "selects via slot"
     PermissionRule }o--o{ ToolCall : "authorizes"
-    Process ||--o{ Run : "executes"
+    Process }o--o{ Run : "executes"
     Process ||--o{ SessionLease : "holds"
     Provider ||--o{ Model : "offers"
     ProviderDiscovery }o--|| Provider : "discovers metadata for"
@@ -907,19 +909,20 @@ erDiagram
 - **deny-dominant** — A deny in any scope is absolute; among ask and allow the higher configured scope wins, and a configured ask is never suppressed by a higher-scope allow.
 
 
-### acceptEdits is carried but not enforced
+### acceptEdits auto-allows file edits only
 
 **Actors:** Principal, Client
 
 **Steps**
 
 1. `Client` switches the `Session`'s `PermissionMode` to acceptEdits between turns; the mode picker advertises it.
-2. On the next turn the `Catalog` advertises the full toolset (acceptEdits hides nothing) and the decision path resolves `ToolCalls` through the normal deny→ask→allow fold — identically to `default`.
-3. A mutating `ToolCall` still surfaces a `PermissionAsk`; nothing is auto-allowed by the mode alone.
+2. On the next turn the `Catalog` advertises the full toolset (acceptEdits hides nothing).
+3. An Edit or Write `ToolCall` that only the built-in floor would ask about is allowed without a `PermissionAsk`.
+4. A configured ask or deny for Edit or Write, and any mutating Shell `ToolCall`, still resolve through the normal deny→ask→allow fold.
 
 **Invariants touched**
 
-- **acceptedits-declared-not-implemented** — `acceptEdits` is carried as metadata and surfaced in mode pickers, but the permission decision path never branches on it — it resolves identically to `default` (deny→ask→allow). It auto-allows no `ToolCall` today; a real auto-accept-edits tier is ADR 0022 Future work.
+- **acceptedits-loosens-only-the-edit-floor** — `acceptEdits` adds allow rules for Edit and Write above the built-in floor, so it loosens only the built-in ask for those two `Tools`. It never overrides a configured deny or ask, and every other `Tool`, including Shell, resolves exactly as in `default`.
 
 - **deny-dominant** — A deny in any scope is absolute; among ask and allow the higher configured scope wins, and a configured ask is never suppressed by a higher-scope allow.
 
@@ -1004,7 +1007,7 @@ erDiagram
 
 - **run-no-replay-after-first-chunk** — Once a `Turn` has streamed its first chunk, the `Run` never retries or replays that `Turn`.
 
-- **run-one-terminal-stop** — A `Run` drives its `Session` to exactly one terminal state and reports exactly one stop reason.
+- **run-one-terminal-stop** — A paused `Run` has no terminal stop. Its continuation retains the same run identity; on completion it reports one terminal stop reason.
 
 
 ### A session resumes after a restart at a pending ask
@@ -1014,12 +1017,14 @@ erDiagram
 **Steps**
 
 1. A `Session` is parked on a `PermissionAsk` when the process dies; the `EventLog` holds every `Event` up to that point.
-2. `Operator` restarts the harness; a new `Process` recovers the `Session` to idle before reuse, preserving cumulative usage.
-3. `Client` approves the pending ask; the `Run` re-enters the loop at the ask and the pending `ToolCall` executes exactly once.
+2. `Operator` restarts the harness; a new `Process` restores the awaiting `Session`, preserving its incarnation, run identity and cumulative usage.
+3. `Client` approves the pending ask; the same logical `Run` continues at the ask and the pending `ToolCall` executes exactly once.
 
 **Invariants touched**
 
-- **session-recover-before-reuse** — A `Session` in a terminal state (completed, cancelled, or failed) is returned to idle before any new `Run` reuses it.
+- **session-incarnation-persists** — A `Session` has one incarnation identity for the lifetime of its ID. Restoration preserves it; a new `Session` reusing the ID gets a new incarnation.
+
+- **run-one-terminal-stop** — A paused `Run` has no terminal stop. Its continuation retains the same run identity; on completion it reports one terminal stop reason.
 
 - **event-log-records-terminal-tail** — The `EventLog` records every `Event` a `Run` emits, including the terminal result emitted after a `Client` disconnects.
 

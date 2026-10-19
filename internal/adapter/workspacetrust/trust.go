@@ -1,11 +1,11 @@
 // Package workspacetrust is the adapter-layer reader/writer for workspace trust
-// (Workspace-Trust feature, Phases 1 + 2b). It serves composition from two
+// (Workspace-Trust feature). It serves composition from two
 // user-global sources under the XDG config dir:
 //
-//   - Phase 1 (DECLARATIVE, this file): the operator-authored, read-only
+//   - DECLARATIVE (this file): the operator-authored, read-only
 //     `trustedWorkspaces:` list in <xdg>/mecatl/settings.yaml. IsDeclared answers
 //     "is this workspace declared-trusted?"
-//   - Phase 2b (REMEMBERED, registry.go): the machine-written <xdg>/mecatl/trust.yaml
+//   - REMEMBERED (registry.go): the machine-written <xdg>/mecatl/trust.yaml
 //     registry. Remembered answers "is this workspace remembered-trusted, and has
 //     its identity anchor DRIFTED?"; Remember persists an entry; the identity-anchor
 //     hash (anchor.go) is what drift is measured against. The registry is a SIBLING
@@ -21,10 +21,10 @@
 // MONOTONIC-POSITIVE: a declared entry can only GRANT trust; it can never
 // override a Deny or a configured Ask anywhere (those are honoured regardless).
 //
-// This is the Phase 1 declarative half of the trust feature. The machine-written
-// trust.yaml registry, the interactive prompt, and identity-anchor drift are
-// Phase 2 and live elsewhere; this leaf only READS the human-authored
-// settings.yaml.
+// This file is the declarative half of the trust feature. The machine-written
+// trust.yaml registry (registry.go), identity-anchor drift (anchor.go), and the
+// interactive prompt (mecatui) live elsewhere; this file only READS the
+// human-authored settings.yaml.
 //
 // # Path keying (security, MUST-FIX 5.1)
 //
@@ -80,8 +80,8 @@ type schema struct {
 }
 
 // Reader resolves workspace trust from the user-global config dir: the DECLARATIVE
-// `trustedWorkspaces:` list in settings.yaml (Phase 1, IsDeclared) AND the
-// MACHINE-WRITTEN trust.yaml registry (Phase 2b, Remembered/Remember).
+// `trustedWorkspaces:` list in settings.yaml (IsDeclared) AND the
+// MACHINE-WRITTEN trust.yaml registry (Remembered/Remember).
 //
 // Construct it with New (real env + real registry write seam) or NewWithEnv (faked
 // env + the real write seam) or NewWithEnvIO (faked env + an injected write seam, so

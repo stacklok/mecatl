@@ -186,8 +186,8 @@ func TestRedisCreateCollisionLeavesSnapshotAndSidecarsUntouched(t *testing.T) {
 	for _, field := range fields {
 		beforeFields[field] = mr.HGet(sessionKey, field)
 	}
-	// The events sidecar is a STREAM since the ADR 0250 LIST -> Stream
-	// migration; the tools sidecar below is still a LIST.
+	// The events sidecar is a STREAM since the LIST -> Stream migration; the
+	// tools sidecar below is still a LIST.
 	beforeEvents, err := mr.Stream("mecatl:events:" + string(id))
 	if err != nil {
 		t.Fatalf("Stream(events): %v", err)
@@ -315,8 +315,8 @@ func TestSessionIDWithColonRoundTrips(t *testing.T) {
 }
 
 // TestRedisStoreCursorEventLogConformance runs the shared CursorEventLog table
-// against the Redis-backed store — the Stream half of ADR 0250, where the XADD
-// ID IS the cursor.
+// against the Redis-backed store — the Stream half of event-log cursors, where the
+// XADD ID IS the cursor.
 //
 // NewPair returns two Stores over the SAME miniredis, which is what makes the
 // cross-reader subtest meaningful: the two share no Go state whatsoever, so the

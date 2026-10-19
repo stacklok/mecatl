@@ -1,451 +1,178 @@
-# The agent loop & permission pause/resume
+# The agent loop
 
-> Part of the [mecatl architecture guide](../architecture.md).
+The agent loop in `engine/agent` turns one prompt into a finished run: it calls the
+model, dispatches the tool calls the model asks for, records the results, and
+repeats. This page explains how the loop is ordered and why. For the behavior a
+library caller or client sees, read
+[the agent loop user guide](../../user-docs/features/sessions/agent-loop.md).
 
-**What this covers:** the `Engine.Run` drive algorithm, read-parallel / mutate-serial dispatch, permission pause/resume (`askRegistry`, `Run.Approve`), the plan-approval gate (`PresentPlan`), the token budget, bounded no-progress nudging, and steer-while-running (mid-run operator input).
+## Engine and run
 
-**Prerequisites:** [the ports](ports.md) — the seams the loop consumes.
+`agent.NewEngine` builds an `Engine` from `agent.Deps` and gives every optional seam a
+network-free default, so a bare engine works offline. `Engine.Run` returns a `*Run`
+handle at once and drives the loop on a background goroutine. The handle carries the
+event channel, which closes exactly once, and the live controls: resolve an ask,
+cancel the run or one child, and steer.
 
-**Follow-on:** [hooks & guardrails](hooks-and-guardrails.md), [subagents & teams](subagents-and-teams.md), [context & compaction](context-and-compaction.md), [memory](memory.md), [extensibility](extensibility.md), and [the API surface](api-surface.md) — subsystems that build on or drive the loop.
+Every run ends in exactly one terminal state and emits exactly one `result` event
+with cumulative usage. Clean early endings (budget, no progress, plan approved, plan
+iterate) are completed runs, not errors, so the next prompt can reopen the session.
 
-## The agent loop (`engine/agent`)
+## The drive algorithm
 
-`Engine` is built from `Deps` (all ports + the application seams + config) via
-`NewEngine`, which supplies network-free defaults for every optional seam:
-`Compactor`→`HeuristicCompactor{}`, `CompactionRatio`→`0.8`,
-`TokenCounter`→`HeuristicTokenCounter{}`, `Instructions`→`prompt.RootAssembler{}`,
-`CommandExpander`→`prompt.NoopExpander{}`.
-`Engine.Run(ctx, sess, ws, RunRequest{Text: userText})` returns a `*Run` handle
-immediately and drives the loop in a background goroutine; the `Run` exposes:
-- `Events() <-chan session.Event` — the primary surface, closed exactly once
-  when the run terminates.
-- `Approve(askID string, v session.ApprovalVerdict) error` — compatibility
-  resolution for ordinary permission and legacy action asks; unknown, stale, and
-  result-release asks return an actionable error.
-- `ResolveApproval(ApprovalResolution) error` — atomically validates the registered
-  ask's review ID, purpose, and verdict eligibility and submits the verdict. Contextual
-  result release must use this operation with the exact `result_release` acknowledgement.
-- `Cancel()` — cancels the run while preserving ordinary child join-and-drain behavior.
-  It is a no-op for an already durably parked authorization, whose resumable
-  handoff point remains intact.
-- `CancelChild(childID string) bool` — cancels ONE child run (subagent /
-  parallel branch / team member) without touching the run itself ([subagents & teams](subagents-and-teams.md)).
+`Engine.drive` opens the run and `Engine.runLoop` repeats the turn. Resuming a parked
+ask reuses the same `runLoop`, so a fresh prompt and a resumed approval cannot drift.
 
-`drive` (in `loop.go`) is the algorithm:
+1. **Open.** Emit `session.init` first. On a session's first turn, fire the blocking
+   `SessionStart` hook; a block ends the run before the prompt is recorded.
+2. **Record the prompt.** Expand slash commands, fire the blocking `UserPromptSubmit`
+   hook on the expanded text (it may block or rewrite it), and record the result
+   through the session aggregate. Media parts bypass both steps unchanged.
+3. **Boundary injections.** Record the notice for finished background children,
+   scheduled-task results queued for this session, and any pending steer. History
+   here never ends between a tool call and its result, so injected messages are
+   always provider-legal.
+4. **Stop checks.** End the run on a recorded stop reason, a tripped session limit
+   (turns, tool calls, consecutive failures), cancellation, or a spent token budget.
+5. **Build and compact.** Assemble the complete `port.LLMRequest`, then compact
+   history if it is near the context window; see
+   [context and compaction](context-and-compaction.md).
+6. **Stream the turn.** Relay text deltas and collect tool calls, reasoning, usage,
+   and the stop reason into one assistant message. Usage is recorded even when the
+   stream fails, so budgets reflect real spend.
+7. **No tool calls.** A turn with text ends the run. An empty turn on a benign stop
+   gets a bounded nudge (two by default) before the run ends with `no_progress`. A
+   non-benign provider stop, such as truncation or refusal, is reported as is.
+8. **Dispatch.** Run the tool calls, record their results, save, and loop to step 3.
 
-1. **Run-open + SessionStart gate**: emit `session.init` exactly once, before
-   anything else; then (first turn only) fire the blocking `SessionStart` hook
-   (`fireSessionStart`); a block (or hook error) aborts the run before the
-   prompt is even recorded.
-2. **Record the prompt** (`recordPrompt`): expand the raw input through
-   `CommandExpander.Expand` (slash commands; the `NoopExpander` default leaves it
-   unchanged), fire the blocking `UserPromptSubmit` hook **on the expanded text**
-   (a block ends the run; a `Mutated` payload replaces the effective prompt), and
-   on the first turn assemble project instructions via `Instructions.Assemble`
-   (the `RootAssembler` default reads AGENTS.md/CLAUDE.md), recording them + the
-   final user text through the aggregate root.
-3. **Pre-turn stop guard**: announce any newly-finished background children
-   (one harness-note user message, ids + stop labels only, family-aware across
-   the delegation families and background-Shell jobs; [subagents & teams](subagents-and-teams.md));
-   drain the fire-result delivery queue (ADR 0075) and the **steer inbox**
-   (below) — the Step 2a boundary injections,
-   `engine/agent/loop.go` (`runBoundaryInjections`); then, if
-   `sess.StopReason()` trips, `ctx` is cancelled, or the run **token budget**
-   is crossed (below), terminate.
-4. `BeginTurn`, emit `turn.start`.
-5. **Maybe compact** (`engine/agent/loop.go` (`maybeCompact`)): estimate the
-   already-built complete request, including rendered system text, ephemeral
-   fragments, messages, typed tool results, and advertised tool schemas. At the
-   default 0.8 ratio, compact only persisted conversation history and rebuild only
-   the request's message suffix. Fixed system, fragment, and tool-schema overhead
-   cannot be reduced. A client can request the separate threshold-independent
-   `Engine.CompactSession` operation only outside a run; see
-   [context & compaction](context-and-compaction.md).
-6. **Run the turn** (`runTurn`): send the already-built `LLMRequest`, call
-   `LLM.Stream`, consume chunks, emit `message.delta` for text, accumulate
-   reasoning, collect tool calls and usage, capture the stop reason; assemble one
-   assistant `Message`. While `buildRequest` assembles each request, an optional
-   `OperatorProfileSource` is re-read and its last-good active facts are placed only in the volatile system
-   suffix. A read fault warns once and reuses the run-local last-good snapshot;
-   profile bytes are never persisted as conversation messages. `ctx` cancellation
-   mid-stream surfaces as a cancellation.
-7. `RecordAssistant`. If there are **no tool calls**, the model is done →
-   complete the run.
-8. **Observe eligible completion**: after the aggregate reaches `completed`, an
-   optional non-`off` `learning.Observer` receives one owned `learning.Trajectory`
-   snapshot. Failed, cancelled, and awaiting runs are excluded; observer errors are
-   diagnostics only and cannot change the terminal result.
-9. **Dispatch** the tool calls, `RecordToolResults`, `save`, loop back to (3).
+The run token budget (`Deps.MaxRunTokens`, off by default) counts input plus output
+tokens of main and router usage. It is checked only at the turn boundary, so a turn
+in flight always finishes, and a per-run override can only tighten it. Each child
+engine applies the ceiling to its own session, so a delegation tree can spend more.
 
-The loop terminates the session in exactly one of `Complete`/`Stop`/`Cancel`/
-`Fail` and emits exactly one terminal `result` event carrying cumulative usage.
-The `result` payload includes typed retry disposition and stream-progress facts.
-A `permanent` disposition identifies a provider rejection for which replaying the
-same request cannot help (ADR 0239). A
-session recovered after such a failure emits a one-time `recover_notice` advisory
-before the first turn.
+## Tool dispatch
 
-A run-level **per-engine token budget** bounds that engine's loop: `Deps.MaxRunTokens`
-(`--max-run-tokens`; **default: unlimited**, `0` disables the brake) is a token
-ceiling, not a currency billing cap. It is checked at the turn boundary — never
-mid-stream, so an in-flight turn always completes — against
-`Session.UsageFor(UsageKindMain)` (input + output; cache tokens excluded). Crossing
-it ends the run cleanly with `StopBudget` (a NON-error terminal → `completed`,
-Reopen-recoverable, mirroring `StopNoProgress`). Every child engine — Subagent,
-Parallel branch, team member, and lead synthesis — inherits the configured value
-as its own ceiling; each engine checks only its own persisted session usage. Parent
-usage and `EvResult` do not include child spend, so a delegation tree can exceed
-`MaxRunTokens`; cross-tree aggregate observability and enforcement are deferred
-and out of scope. A per-call override
-(`RunRequest.MaxRunTokensOverride`, the Subagent `max_run_tokens` arg) may only
-**tighten** it. The team-aggregate counterpart is `--max-team-tokens` ([parallelism](parallelism.md)).
+`Engine.dispatch` walks the calls in the order the model emitted them. Each maximal
+run of consecutive read-only calls forms a batch that executes concurrently; any
+other call runs alone. Results are recorded in the original call order, whichever
+goroutine finishes first. Reads commute and writes do not: a `Read` racing an `Edit`
+of the same file can see a half-applied change, so mutations run serially, in model
+order, and each sees the state the model expected.
 
-```mermaid
-sequenceDiagram
-  participant C as Client
-  participant E as Engine.drive
-  participant L as LLMProvider
-  participant D as dispatch
-  participant T as Tool
-  C->>E: Run(ctx, sess, ws, "fix the bug")
-  E->>E: BeginTurn → emit turn.start
-  E->>L: Stream(LLMRequest)
-  L-->>E: ChunkText / ChunkReasoning ...
-  E-->>C: message.delta
-  L-->>E: ChunkToolCall (Read)
-  L-->>E: ChunkUsage, ChunkDone
-  E->>E: RecordAssistant
-  E->>D: dispatch([Read])
-  D->>D: Policy.Evaluate → Allow
-  D->>D: PreToolUse hook
-  D->>D: AuthorityEvaluator → Allow
-  D-->>C: tool.call
-  D->>T: Execute(call, ws)
-  T-->>D: ToolResult
-  D->>D: PostToolUse hook and inbound review
-  D-->>C: tool.result.available
-  D-->>C: tool.result
-  D->>E: results
-  E->>E: RecordToolResults → loop (next turn)
-  E-->>C: result (StopEndTurn)
-```
+A known `ReadOnly()` call still leaves the batch if its tool implements
+`tool.DispatchSerial`, if it can request external authorization (which can park the
+run), or if it reports that this specific call mutates the parent workspace through
+the unexported `parentMutatingCaller` interface.
 
-### Read-parallel / mutate-serial dispatch (`dispatch.go`)
+That last case is the barrier for direct-write children. `Subagent` and `Parallel`
+report `ReadOnly()` so read-only fan-out keeps batching. But a read-write `Subagent`
+call, or a single-branch `Parallel` call that auto-merges, changes the parent's real
+tree. Inside a read batch, a sibling `Read` or `Grep` could see the parent
+half-written, so that call runs alone like any mutating tool. The barrier orders
+sibling calls within one run only; state shared across runs needs its own locking.
 
-Enforced in `Engine.dispatch`:
-- Calls are processed **in original order**. Ordinary `Tool.ReadOnly()==true`
-  sibling calls form maximal concurrent batches.
-- A read-only tool implementing the static `tool.DispatchSerial` marker forms a
-  **run-local barrier**: the dispatcher flushes the preceding read batch, runs
-  the marked call alone, then starts the following batch. The marker changes
-  neither `ReadOnly` semantics nor tool advertisement.
-- A read-only batch (`runReadBatch`) authorizes + runs PreToolUse hooks for
-  every call first (permission **asks are sequenced one at a time**, never two
-  at once), then executes the cleared calls **concurrently**, one goroutine per
-  call. Each worker writes a private indexed record. The dispatcher publishes a
-  completed clean record as a safe `tool.result.available` event in completion
-  order; workers never publish events or touch the recorder, aggregate, or
-  release-ask state.
-- After every worker finishes, the dispatcher resolves held-result release
-  decisions serially, then drains canonical `tool.result` events in original
-  call order. Cancellation can replace an already available result with the
-  canonical synthetic error.
-- A mutating or **unknown** tool (`runOne`) runs **alone, serially**, never
-  overlapping a sibling call in that dispatch.
-- A read-only tool whose specific call implements the unexported
-  `parentMutatingCaller` predicate and returns true gets the same run-local
-  barrier, preserving writable Subagent and auto-merging Parallel behavior.
-- These barriers apply only among sibling calls within one run/dispatch.
-  Shared adapter state reached by concurrent runs still requires its own
-  synchronization.
-- Results are keyed by `CallID` and re-assembled in input order.
+Each call passes the permission policy, then the `PreToolUse` hook (a rewritten call
+is evaluated again), then the delegated-authority check at execution. A read batch
+clears every call's gates first, asking at most one permission at a time, and only
+then executes. `PostToolUse` hooks and the incoming-result review can rewrite a
+result; the event stream, audit log, and model all see the rewritten one. A tool
+error, unknown tool, or denied gate becomes an error result for the model and never
+aborts the run. [Governance](governance.md) explains how each gate decides.
 
-A `cancelled` flag propagates from `dispatch` so the loop terminates as
-`StopCancelled` if `ctx` was cancelled mid-await or mid-execution. A
-harness-level tool error becomes an error `ToolResult` (the loop never aborts on
-one tool failure); a genuinely unknown tool yields an error result too.
+## Permission pause and resume
 
-### Authority evaluation at execution
+On Ask, `Engine.surfaceAsk` registers a one-slot channel in the run's `askRegistry`
+before it moves the session to `awaiting` and emits `permission.ask`, so a verdict
+that arrives right after the event cannot be lost. The loop blocks until a verdict
+arrives or the run is cancelled.
 
-Permission policy, session ownership, and delegated authority are independent
-checks. Permission policy answers whether a call needs approval; ownership
-answers who may access a session; authority answers whether this particular run
-was delegated the capability at all. A bound root session starts with the tool
-capabilities assembled in its composed catalog. Its authority set also records
-whether it has a filesystem, whether it may write directly, and how many child
-delegations remain.
+- **Allow once** runs the call.
+- **Allow always** also asks the policy to learn a session rule for the same tool
+  and exact pattern. A learned rule never overrides a deny or plan mode.
+- **Deny** returns a `permission denied` error result so the model can adapt. Deny
+  is the zero value, so an abandoned ask fails safe.
+- **Cancel while waiting** ends the run as cancelled.
 
-Before creating a Subagent, Parallel branch, or Team member, the harness derives
-the child's set by intersecting the parent's set with the child's actual runtime
-posture, any eligible managed-specialist ceiling, and an optional per-call
-tightening. It then consumes one delegation hop. Derivation happens before the
-harness creates the child engine, workspace, runner, or worktree, so a refused
-request allocates no child runtime resource. The child persists its derived set;
-a later resume checks it is still contained by the current parent's set without
-spending another hop.
+The pause survives a restart. The server saves the awaiting session when it relays
+`permission.ask`, and shutdown keeps that snapshot awaiting. A verdict with no live
+run goes through `Engine.ResumeApproval`, which continues the same run ID, checks
+that the session still awaits the same ask, and resolves the pending call exactly
+once. Siblings from that turn that never ran get a synthetic error result, because
+their outcome was lost with the old process. Child asks surface through the parent
+and route back to the child; see [subagents and teams](subagents-and-teams.md).
 
-Tool disclosure is only guidance for the model. The security boundary is the
-execution path: after the ordinary permission and pre-tool-hook gates clear, the
-loop asks the configured authority evaluator about the actual capability being
-spent. A denied capability, an unavailable evaluator, or an ambiguous target
-returns an error ToolResult and does not invoke the tool body. For normal tools
-the capability is the tool name. `CallMcpWithQuery` is instead checked against
-its addressed `mcp__<server>__<tool>` capability, while MCP resource operations
-spend a per-server resource capability and retain their operation as the action.
-
-The evaluator receives the carried set, the selected capability, action,
-delegation depth, non-secret identity attribution, and—for recognized local-file
-calls—a normalized physical workspace target. It never receives raw tool
-arguments or credentials. Composition chooses one evaluator at startup:
-
-| Evaluator | What it decides |
-| --- | --- |
-| `local` (default) | Permits an exact capability only when it appears in the carried set. |
-| `noop` (explicit) | Disables authority enforcement for deployments that deliberately choose that posture; it is never the fallback for a missing evaluator. |
-| `cedar` (opt-in) | First requires the carried set to allow the capability, then applies one static operator-owned policy that can add denials such as a workspace path boundary. A missing or invalid policy prevents startup. |
-
-A Cedar policy cannot grant a capability absent from the carried set. An
-unavailable evaluator is a distinct fail-closed execution error, not an implicit
-switch to `noop`. See ADR 0234 for
-the decision; operator configuration is documented in the public permissions
-guide.
-
-## Permission pause / resume
-
-When `Policy.Evaluate` returns `Ask`, `dispatch.go`'s `authorize` pauses the
-loop. The handshake is brokered by `askRegistry` (`permission.go`): the loop
-**registers the resolution channel before** pausing and emitting, so an
-`Approve` that races in cannot be lost. `PauseForApproval` moves the session to
-`awaiting`; the loop emits `permission.ask`; `askRegistry.await` blocks on the
-buffered channel until `Run.Approve` resolves it or `ctx` is cancelled.
-
-```mermaid
-sequenceDiagram
-  participant Cl as Client
-  participant Sv as server (gRPC / HTTP)
-  participant R as Run
-  participant A as authorize (dispatch.go)
-  participant Reg as askRegistry
-  participant P as PermissionPolicy
-  A->>P: Evaluate(mode, call)
-  P-->>A: {Effect: Ask, Reason}
-  A->>Reg: register(askID)
-  A->>A: sess.PauseForApproval → state=awaiting
-  A-->>Sv: emit permission.ask {askID, tool, args, reason}
-  Sv-->>Cl: Event permission.ask
-  Note over A,Reg: loop blocked in askRegistry.await
-  Cl->>Sv: Converse ResumeApproval{ask_id, verdict}  /  POST /approve
-  Sv->>R: run.Approve(askID, verdict)
-  R->>Reg: resolve(askID, verdict)
-  Reg-->>A: verdict
-  A->>A: sess.ResumeWith → state=running
-  alt allow
-    A->>A: execute the tool
-  else deny
-    A->>A: denyResult → error ToolResult fed to model
-  end
-```
-
-- **Allow (once)** → the call executes normally.
-- **Allow always** → the call executes AND the policy **learns** a per-session
-  allow rule for the same tool + exact canonical pattern
-  (`PermissionPolicy.Learn`; never overrides a deny or plan mode).
-- **Deny** → `denyResult` synthesizes a `permission denied: <reason>` error
-  `ToolResult`, fed back so the model can adapt. Deny is the verdict's zero
-  value, so an abandoned ask fails safe.
-- **Cancel while awaiting** → `await` returns `ok=false`; the loop ends as
-  `StopCancelled`.
-
-On the wire, `ResumeApproval` carries the three-way `verdict` enum; the legacy
-`allow` bool is kept for back-compat (ignored when `verdict` is set; otherwise
-`true` maps to allow-once, `false` to deny).
-
-This ties directly to the API: the gRPC `Converse` stream carries the verdict in
-a `ResumeApproval` frame on the **same** stream emitting events (no out-of-band
-correlation), and the HTTP surface uses `POST /v1/sessions/{id}/controls/resolve-ask`
-addressed by `expected_run_id` (`Service.ResolveRunAsk`, which resolves a live run
-through `Run.ResolveOrdinaryAsk` or a persisted awaiting run from its snapshot).
-The `Service` keeps a registry of in-flight `*agent.Run` keyed by session id so the verdict reaches the right run
-(`server/service.go`: `LookupRun`).
+A tool that needs an external sign-in, such as MCP OAuth, parks the run on a pending
+authorization the same way. `Run.Cancel` leaves such a parked run untouched so its
+resumable handoff point stays intact.
 
 ## Plan-approval gate
 
-Plan mode (`session.ModePlan`) gains a structured approval gate
-(ADR 0069) that reuses the permission-ask
-machinery above. The shape is the same as the guardrail approve-once
-(ADR 0062): a tool call refined into an
-askable ask, a serialized provenance marker, and a verdict tail.
+In plan mode the model is read-only until an operator approves its plan.
+`PresentPlan` (`engine/agent/presentplan.go`) implements `tool.PlanOnly`, so the
+catalog advertises it only in plan mode. Its description, a plan-mode role suffix,
+and the plan-mode prompt reminder all tell the model to present the plan, call
+`PresentPlan` once, and stop. The dispatcher intercepts the call and raises a
+plan-origin ask on the same ask path as permissions.
 
-- **The PresentPlan signalling tool** (`engine/agent/presentplan.go`
-  (`NewPresentPlanTool`)) is read-only and signaling-only. Once the model has
-  presented a complete plan in its preceding assistant text it calls `PresentPlan`
-  to hand control to the operator. The tool implements `engine/tool/tool.go`
-  (`PlanOnly`), so the catalog's mode projection (`Available`) advertises
-  it ONLY in plan mode (registered everywhere so shared/per-session name-sets stay
-  equal; hidden outside plan mode). The model is told to use it — the gate is not
-  opt-in from the model's side: the tool description, the plan-mode Role suffix
-  (`internal/app/build.go` (`applyPlanModePosture`)), and the per-turn plan-mode
-  prompt reminder (`engine/prompt/builder.go`) all state the contract — present the
-  current plan, call `PresentPlan` once for that presentation, and STOP. If the
-  operator chooses iterate/deny or cancels the pending run, the model waits for new
-  user input; it then presents a revised or unchanged plan through a new
-  `PresentPlan` call and stops again. Later chat assent requests another gated
-  review and never authorizes execution.
-- **The dispatcher intercepts by name+mode.** `engine/agent/dispatch.go`
-  (`surfacePlanAsk`) — a sibling of `askHookApproval` over the shared `surfaceAsk`
-  spine — mints a `session.PendingAsk{PlanOriginated: true}`, parks the run
-  `StateAwaiting`, and emits `EvPermissionAsk`. A presentation remains pending until
-  a verdict resolves it or its run is cancelled; merely hiding or leaving a client
-  review view does not invalidate a server-side pending ask. It is sequenced
-  one-at-a-time in dispatch Phase 1 (never the parallel fan-out). The headless guard
-  (`!Interactive && !PlanModeAutoApprove`) synthesizes a deny result (fail-safe —
-  no silent mode flip); the opt-in `PlanModeAutoApprove` surfaces the ask even
-  headless so the composition observer can resolve it.
-- **Verdict → mode.** Allow-once → flip to `ModeDefault`; allow-always → flip to
-  `ModeAccept`; deny → terminate CLEANLY with `engine/session/session.go`
-  (`StopPlanIterate`) (the iterate pause — issue #206 UX fix: the run ENDS so the
-  operator's next typed prompt drives the revision; the model does NOT continue
-  iterating in-turn with no operator input). Cancellation is distinct from Deny:
-  it leaves the session cancelled in `ModePlan`, and the next prompt enters through
-  the service's normal `Interrupt` recovery, which pairs the interrupted tool call
-  without recording a deny verdict. Either path requires a new `PresentPlan` call
-  and fresh approval before execution. The session stays `ModePlan` on Deny
-  (no mode flip). On Allow the run
-  terminates with the clean `engine/session/session.go` (`StopPlanApproved`)
-  terminal; `engine/agent/loop.go` (`terminateComplete`) flips the mode AT the
-  terminal boundary (after `Stop` → `StateCompleted`, where `SetMode` is legal —
-  the `Running`/`Awaiting` rejection invariant is preserved). The plan→execute
-  model swap rides the existing ADR 0030 Layer 3 run-entry rebuild.
-- **Cross-process resume.** `PendingAsk.PlanOriginated` is serialized
-  (`json:"plan_originated,omitempty"`, sibling of `HookOriginated`); the
-  awaiting-resume path (`resolvePendingCall`) keys the plan-flip branch on it —
-  an Allow does NOT re-present the plan; a Deny sets `planIterateRequested` so the
-  resumed run terminates `StopPlanIterate` (the iterate pause, cross-process twin
-  of the live-path deny). The read-time
-  `engine/session/session.go` (`Origin`) accessor derives the single
-  provenance (`AskOriginPlan`/`AskOriginHook`/`AskOriginNone`) from the two
-  serialized bools.
-- **The atomic `ApprovePlan` RPC** (`internal/adapter/server/service.go`
-  (`ApprovePlan`), `POST /v1/sessions/{id}/plan:approve`,
-  `rpc ApprovePlan`) resolves a parked plan-ask and — on Allow — starts a FRESH
-  continuation run carrying `agent.PlanApprovedProceedText` + an optional note,
-  streaming BOTH runs' events. On Deny (`ModePlan`) NO continuation runs — the
-  resumed run terminates `StopPlanIterate` (the iterate pause), so the operator's
-  next typed prompt drives the revision. The opt-in `--plan-mode-auto-approve`
-  observer (`MaybeAutoApprovePlan`) auto-resolves a parked plan-ask headless
-  (DEFAULT OFF, OPERATOR-TIER ONLY, loud "NO HUMAN REVIEW" diagnostic).
+| Verdict | Run ends with | Mode afterward |
+| --- | --- | --- |
+| Allow once | `plan_approved` | default |
+| Allow always | `plan_approved` | accept edits |
+| Deny | `plan_iterate` | plan |
 
-## Steer-while-running
+Both outcomes end the run, so the model never continues without new operator input.
+The mode flips only once the session is terminal, because the aggregate rejects mode
+changes mid-run. The ask records its plan origin, so a cross-process resume applies
+the same mapping. The server's `ApprovePlan` operation resolves a parked plan ask
+and, on approval, starts a fresh run with `agent.PlanApprovedProceedText`. A
+headless engine denies the plan unless the operator opted into auto-approval.
 
-A **steer** is an operator-supplied message injected into an *in-flight* run
-(issue #512, ADR 0232): it takes effect at
-a turn boundary after the current streamed response and its tool batch settle —
-never mid-stream, never aborting an in-flight model call — and enters through
-gRPC `Converse` controls or unary HTTP controls. The pieces:
+## Steering a running run
 
-- **The run-scoped mutex inbox** (`engine/agent/steer.go` (`steerInbox`)). Each
-  `Run` carries a single-slot pending-steer box guarded by one mutex
-  (`{closed, pending, has}`); every transition is one critical section.
-  `engine/agent/steer.go` (`Run.EnqueueSteer`) parks text and/or validated
-  `session.Content` media when the slot is empty (`accepted`), and **appends** into
-  the pending bundle when one is already pending (`appended`): a blank-line
-  separator is added only when both text fragments are non-empty, while parts
-  append in fragment order. The combined media bundle is validated atomically.
-  Replacing a pending bundle is an explicit `Run.CancelSteer`-then-resend. The
-  inbox reports `too_late` once it closes at run terminal. Steer text is repaired
-  to valid UTF-8 at ingress (`session.ToValidUTF8`) so recorded history, the echo,
-  and the model view stay byte-identical. The outcome is the closed enum
-  `engine/agent/steer.go` (`SteerOutcome`): `accepted` / `appended` /
-  `retracted` / `none_pending` / `too_late`.
-- **The Step 2a drain** (`engine/agent/steer.go` (`drainPendingSteer`)) runs in
-  `runBoundaryInjections` (step 3 above), the same provider-legal seam as the
-  background-completion notice and the delivery drain — history there always
-  ends on a user prompt / tool result / nudge, never inside a `tool_use` pair.
-  The drained steer is recorded as an ordinary user continuation through
-  `RecordUserPromptWithParts` (plus the log-only `EvUserPrompt`), persisted, then
-  echoed to the client as `EvSteer` carrying the committed text and media parts —
-  the engine is the sole authority on what landed. This multimodal extension is
-  specified by ADR 0251.
-- **Capability gate.** `ServerCapabilities.steer` says the multimodal inbox is
-  enabled. Mecatui uses native steer when it is true and otherwise retains all
-  mid-run text and media in its local merge queue; this supports runtime feature
-  disabling without duplicating capability state.
-- **The clean-exit continue-run rule** (`engine/agent/loop.go`
-  (`finishTurnNoTools`)). A would-be clean end (meaningful text, benign stop)
-  while a steer is still parked does NOT terminate: the loop re-enters step 2
-  with no injected nudge so the very next Step 2a drains the steer and the turn
-  it feeds consumes it. The never-drop contract stays engine-internal; the run
-  simply extends (bounded by `Limits.MaxTurns` like any continuation).
-- **The terminal close-drain** (`engine/agent/steer.go` (`closeSteerDrained`)).
-  Both terminate paths drain-then-close: a steer still parked when the run ends
-  for another reason is recorded into durable history first (addressed by the
-  next run), then the inbox closes — it is never closed unconsumed.
-- **Lost terminal race → promote** (`internal/adapter/server/service.go`
-  (`Service.Steer`)). A steer arriving when no live run can take it (no live
-  run, or the inbox already closed) is promoted to a fresh follow-up run through
-  the same hardened run-entry funnel a prompt uses (`StartRunContent` →
-  `loadAndReopen` + lease + recover-if-terminal). Because the just-terminal
-  run's relay may still be draining — still registered, so the funnel's
-  liveness guard would refuse — the promote path alone awaits the original
-  run's deregistration, bounded by the promote-grace
-  (`internal/adapter/server/service.go` (`promotedSteerRun`),
-  `awaitRunDeregister`); a run still registered at the lapse is genuinely
-  in-flight and the promotion is refused. Only the promoted steer pays the
-  wait; a concurrent prompt on a live session is never delayed.
-- **The sequential active-run handoff** (`internal/adapter/server/grpc.go`
-  (`Converse`)). The bidi RPC relays the original run, then — while a promoted
-  steer is queued in the `steerHandoff` mailbox — relays each promoted run in
-  turn on the SAME stream before the RPC returns: one relay owner at a time, so
-  `runRelay.sendErr` keeps a single owner, every `Send` still crosses the one
-  mutex (`streamSender`), and the control target (`ResumeApproval` / `Cancel` /
-  `CancelChild`) swaps to the promoted run atomically before its relay starts.
-  The promoted run is `FinishRun`-deregistered before the RPC returns, and its
-  terminal outcome is reported inline as the `steer.outcome` ack
-  (`promoted=true`) — never an orphaned relay, never an ack after close.
-- **The unary HTTP control pair** (`internal/adapter/server/http.go`).
-  `POST /v1/sessions/{id}/controls/steer` and `POST
-  /v1/sessions/{id}/controls/cancel-steer` (`Service.SteerRun` /
-  `Service.CancelRunSteer`) address one exact `expected_run_id` run and never
-  promote: a steer that misses its run, including one that loses the terminal
-  race, returns `409 stale_run_control`. The `http_steer` and
-  `prompt_free_controls` compatibility features advertise these routes.
-- **The `message_id` watermark correlation.** Steer frames carry a
-  client-minted `message_id` (`contracts/proto/mecatl/v1/harness.proto`). The
-  engine inbox parks the id with the text and media in one mutex-guarded bundle.
-  Each append replaces the bundled id, making the latest contributing id the
-  **watermark** the client uses to split its ordered queue. The drain takes the
-  content and watermark atomically, and `EvSteer` carries both. An enqueue into
-  the newly empty inbox cannot change an already-drained bundle while its event
-  is waiting for relay projection. The ack lane echoes each frame's own id on
-  its outcome, and a retract removes the whole pending bundle atomically. IDs
-  longer than 64 Unicode code points are rejected before admission rather than
-  truncated. `TestSteerMessageIDIsAtomicWithDrainedBundle` pins the critical
-  drain, enqueue, and projection ordering.
-- **Fidelity.** The inbox is in-memory and best-effort: a pending (un-drained)
-  steer is lost with its run on a crash — reset-by-design, inventoried in
-  ADR 0027 (List 1 / List 2). Only a steer that
-  reached a boundary and was recorded survives, as ordinary conversation
-  history.
+A steer is operator input for a run that is still working. The run holds one pending
+steer in an in-memory inbox (`engine/agent/steer.go`); a second steer appends to it.
+The inbox drains only at step 3, so a steer never interrupts a model call or splits a
+tool call from its result. It is recorded as an ordinary user message and echoed as
+a `steer` event with exactly what the engine committed.
 
-Awaiting-ask runs hold the steer parked: the loop is suspended in
-`PauseForApproval`, and the resumed run's first Step 2a drains it (the steer is
-purely additive — the ask still requires an explicit verdict). Steer-to-child
-(subagent / team / parallel) and ACP steer are deferred (ADR 0232). HTTP steer
-is specified by ADR 0252.
+A steer is never silently dropped by the engine. A run that would end cleanly with a
+steer pending takes another turn to consume it. A run ending for any other reason
+records the pending steer into history before closing the inbox. Over gRPC, a steer
+that misses the live run starts a follow-up run on the same stream; the HTTP control
+targets one run ID and returns a conflict instead. An undrained steer is lost if the
+process crashes, since only recorded history persists.
 
-## Follow-on reading
+## System prompt assembly
 
-- [Hooks & guardrails — the loop's lifecycle gates](hooks-and-guardrails.md)
-- [Subagents & teams — delegation from the loop](subagents-and-teams.md)
-- [Context & compaction — the loop's token management](context-and-compaction.md)
-- [Memory — the index the loop injects each run](memory.md)
-- [Extensibility — the tools & MCP the loop runs](extensibility.md)
-- [The API surface that drives the loop](api-surface.md)
+`prompt.Build` returns a two-layer `prompt.Layered`. The provider adapter places a
+prompt-cache breakpoint between the layers, so per-turn values stay out of the first.
+
+- **Stable prefix:** safety rules first, ahead of any user-supplied text, then the
+  role, the default tone, commit attribution guidance, tool-usage hints derived from
+  the live tool set, and the tool inventory.
+- **Volatile suffix:** the `<env>` block (working directory, model, mode, date, Git
+  status), the operator profile, the project-instruction scope note, the plan-mode
+  reminder, and a no-shell note when the environment has no command runner.
+
+The default tone (`defaultTone` in `engine/prompt/builder.go`) asks for a concise
+final answer and states that brevity never means less reading or reasoning. The
+minimum-change ladder, read-before-edit, checks at trust boundaries, and confirming
+hard-to-reverse actions stay on regardless. Composition in `internal/app` appends a
+task-persistence clause to the role for every model, plus the plan-mode posture.
+
+The optional `prompt.OperatorProfileSource`, wired by composition to the user-model
+store, is reread before every request and rendered as a bounded JSONL block fenced as
+data. A failed read warns once and reuses the run's last good snapshot; profile text
+is never persisted into the conversation. Project instructions, rules, the soul file,
+and the memory index are user-role fragments placed ahead of the persisted
+conversation in each request, and are not written to session storage either. A host
+can supply `Deps.PromptBuilder` to own the system prompt; the loop then adds none of
+the default text.
 
 ## Related
 
-- [The ports the loop consumes](ports.md)
-
----
-
-[← Architecture guide](../architecture.md)
+- [The agent loop user guide](../../user-docs/features/sessions/agent-loop.md)
+- [Ports](ports.md)
+- [Context and compaction](context-and-compaction.md)
+- [Governance](governance.md)
+- [Subagents and teams](subagents-and-teams.md)

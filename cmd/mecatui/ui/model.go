@@ -56,7 +56,7 @@ type LifecycleNotifier interface {
 // the server's advertised capabilities. *client.Client satisfies it (via the
 // sessionAdapter); tests supply a fake. Keeping it an interface lets the ui be
 // driven entirely offline. Capabilities is the proto-free relayed truth the ui
-// stores for its honest discoverability affordances (Phase B); an older server
+// stores for its honest discoverability affordances; an older server
 // yields the all-false zero value. ResolvedModel is the EFFECTIVE provider+model
 // the server resolved the session to (echoed verbatim); the ui shows it in the
 // header from turn zero, and an older server yields the zero value (no model
@@ -89,7 +89,7 @@ type SessionCreator interface {
 	// defers and retries at the next prompt boundary.
 	SetMode(ctx context.Context, id, mode string) (string, error)
 	// ForkSession creates a peer session from srcID's conversation-history snapshot
-	// (ADR 0065) with an OPTIONAL reasoning-effort override (ADR 0068; empty
+	// with an OPTIONAL reasoning-effort override (empty
 	// inherits the source's) and returns the new session id. The /effort fork-resume
 	// handoff uses it: the transcript SURVIVES the effort switch because the fork
 	// carries it (title is omitted — the fork inherits the source's title; provider
@@ -144,24 +144,27 @@ type Deps struct {
 	ServerInfo ServerInfoGetter
 	// ServerImpl is the locally-known embedded server family. It is used without
 	// an RPC when Embedded is true.
-	ServerImpl  string
-	Skills      client.SkillLister      // skills-inventory discovery for the /skills panel; nil disables it
-	Agents      client.AgentLister      // agent-definition discovery for the /agents panel; nil disables it
-	Soul        client.SoulFetcher      // soul (persona) inspection for the /soul panel; nil disables it
-	UserModel   client.UserModelLister  // user-model inspection for the /memory panel; nil disables it
-	Reflections client.ReflectionClient // proposal review and explicit reflection; nil disables it
-	Dream       client.DreamClient      // manual memory consolidation review; nil disables /dream
-	Compactor   client.SessionCompactor // out-of-band session compaction; nil disables /compact
-	Models      client.ModelLister      // selectable-model discovery for the /models picker; nil disables it
-	Worktrees   client.WorktreeLister   // worktree discovery for the /worktrees overlay (issue #102); nil disables it
+	ServerImpl         string
+	Skills             client.SkillLister      // skills-inventory discovery for the /skills panel; nil disables it
+	Agents             client.AgentLister      // agent-definition discovery for the /agents panel; nil disables it
+	Soul               client.SoulFetcher      // soul (persona) inspection for the /soul panel; nil disables it
+	UserModel          client.UserModelLister  // user-model inspection for the /memory panel; nil disables it
+	Reflections        client.ReflectionClient // proposal review and explicit reflection; nil disables it
+	Dream              client.DreamClient      // manual memory consolidation review; nil disables /dream
+	Compactor          client.SessionCompactor // out-of-band session compaction; nil disables /compact
+	ExecutionTemplates interface {
+		ListExecutionTemplates(context.Context) (client.ExecutionTemplateInventory, error)
+	}
+	Models    client.ModelLister    // selectable-model discovery for the /models picker; nil disables it
+	Worktrees client.WorktreeLister // worktree discovery for the /worktrees overlay (issue #102); nil disables it
 	// Sched is the schedule discovery + management surface for the /schedule overlay
 	// (issue #234); nil disables it (the overlay is honestly absent). The overlay can
 	// create/inspect/pause/resume/fire-now on any store-backed server; auto-firing on
-	// a cadence is the server's tick loop (ON by default on a schedule-capable store,
-	// ADR 0073 — `mecated --no-scheduler` opts out).
+	// a cadence is the server's tick loop (ON by default on a schedule-capable store;
+	// `mecated --no-scheduler` opts out).
 	Sched client.ScheduleLister
 	// Sessions is the stored-session inventory surface for the /sessions picker
-	// (issue #245 Phase 2); nil disables it (the overlay is honestly absent). It is
+	// (issue #245); nil disables it (the overlay is honestly absent). It is
 	// the lister the picker calls to enumerate stored sessions. Unlike the
 	// caps-gated overlays it is NOT gated on a ServerCapabilities bit — the picker
 	// is available whenever a lister + authoritative transcript loader are wired
@@ -182,7 +185,7 @@ type Deps struct {
 	// Replayer is the optional durable-event-log activity surface used by live
 	// delivery catch-up. It never attests conversation completeness.
 	Replayer client.SessionReplayer
-	// LiveStream is the LIVE per-session event feed (ADR 0075 Scenario 5): the server
+	// LiveStream is the LIVE per-session event feed: the server
 	// pushes fire-result delivery notes for the active session as they occur. The ui
 	// holds the interface (not a *Client) so it is injectable with a fake for offline
 	// tests. nil disables the live bridge (the ui still renders deliveries via the
@@ -245,8 +248,8 @@ type Deps struct {
 	// homeDir is a package-private test seam for resolving the local process home
 	// used by @~/ attachments. Production leaves it nil and uses os.UserHomeDir.
 	homeDir func() (string, error)
-	// ThemeAutoDetect enables the terminal-background light/dark auto-detect
-	// (ADR 0280): composition sets it true only when no explicit --theme/
+	// ThemeAutoDetect enables the terminal-background light/dark auto-detect:
+	// composition sets it true only when no explicit --theme/
 	// MECATUI_THEME was supplied AND stdout is a real TTY (never on redirected
 	// output, which must never see the OSC background-colour query). When true,
 	// Init requests the terminal's background color (tea.RequestBackgroundColor)
@@ -270,7 +273,7 @@ type Deps struct {
 	// StatusSource is composed outside ui. The UI only submits display facts and
 	// consumes semantic snapshots through one Bubble Tea listener.
 	StatusSource customization.Source
-	// LocalSessionContext optionally resolves ADR 0296's privileged local root.
+	// LocalSessionContext optionally resolves the privileged local session root.
 	// The root is used only as a direct status-command CWD, never UI state.
 	LocalSessionContext client.LocalSessionContextGetter
 
@@ -301,7 +304,7 @@ type Deps struct {
 	BrowseSessions bool
 	// InitialPrompt is a CLI-supplied seed prompt auto-submitted once the first
 	// session is ready (the equivalent of typing the prompt and pressing enter).
-	// Empty = today's behavior (no seed). Cleared after the first use so a
+	// Empty = no seed. Cleared after the first use so a
 	// /models restart or /clear never re-submits it. Populated by main.go from
 	// -p/--prompt + --prompt-file.
 	InitialPrompt string
@@ -389,7 +392,7 @@ type Deps struct {
 	// sequence input on the program's ACTUAL reducer progress instead of on rendered
 	// output: under `task test`'s parallel `go test -race ./...` the Bubble Tea 60fps
 	// flush ticker is CPU-starved and the captured output stalls for seconds, so a
-	// WaitFor(tm.Output()) deadline fires before any frame is flushed (the historical
+	// WaitFor(tm.Output()) deadline fires before any frame is flushed (the
 	// "~1/3 -race flake", in truth far worse under load). The reducer goroutine keeps
 	// getting scheduled, so observing it directly is starvation-robust.
 	//
@@ -406,8 +409,7 @@ type Deps struct {
 	//     running→idle transition) — both reducer-side facts the fake cannot see
 	//     because the fake has no handle on the model. onPhase is the minimal seam
 	//     that surfaces exactly those reducer transitions.
-	// (An all-fake-side scheme that also signals run-completion would remove this
-	// field; that rework is deferred. For now: nil ⇒ zero cost, zero behaviour change.)
+	// (nil ⇒ zero cost, zero behaviour change.)
 	onPhase func(phase)
 }
 
@@ -452,12 +454,20 @@ const (
 // "still pending after it" on each drain echo, instead of collapsing everything
 // into one re-minted bundle (the duplication bug the append model exposed).
 type steerQueuedSend struct {
-	ID     string
+	ID           string
+	Text         string
+	Draft        string
+	Media        client.MediaResult
+	PendingMedia client.MediaResult
+	Staged       map[string]stagedAttachment
+	Pastes       map[string]string
+}
+
+type queuedPromptDraft struct {
 	Text   string
-	Draft  string
-	Media  client.MediaResult
 	Staged map[string]stagedAttachment
 	Pastes map[string]string
+	Media  client.MediaResult // already-prepared media inherited from an earlier pullback
 }
 
 // steerState is the ONE-ELEMENT steer-mode mid-run state: the pending bundle —
@@ -635,13 +645,15 @@ type Model struct {
 	// thus its known ~1/3 -race flake — no worse than before.
 	tickArmed bool
 
-	activeTool                   string             // tool name in flight, shown beside the spinner
-	toolProgress                 string             // transient progress line for the in-flight tool (cleared on result/turn boundary)
-	skillsEpoch                  uint64             // model-lifetime monotonic /skills request epoch; never reset on close (the surface mints via its nextEpoch closure)
-	skillChangeLast              string             // newest bounded lifecycle receipt already announced
-	palette                      paletteState       // slash-command palette (open when the input starts with "/")
-	mention                      mentionState       // @-file-mention completion menu (open when the trailing word is an "@token"); mutually exclusive with palette
-	queued                       []string           // follow-up prompts staged while a run streams; MERGED into one prompt and drained on a healthy stop (see drainQueue)
+	activeTool                   string // tool name in flight, shown beside the spinner
+	toolProgress                 string // transient progress line for the in-flight tool (cleared on result/turn boundary)
+	skillsEpoch                  uint64 // model-lifetime monotonic /skills request epoch; never reset on close (the surface mints via its nextEpoch closure)
+	skillChangeLast              string // newest bounded lifecycle receipt already announced
+	executionPicker              executionPickerState
+	palette                      paletteState // slash-command palette (open when the input starts with "/")
+	mention                      mentionState // @-file-mention completion menu (open when the trailing word is an "@token"); mutually exclusive with palette
+	queued                       []string     // follow-up prompts staged while a run streams; MERGED into one prompt and drained on a healthy stop (see drainQueue)
+	queuedDrafts                 []queuedPromptDraft
 	queuedMedia                  client.MediaResult // media owned by the local merge queue; sent with the merged follow-up
 	pendingPromptMedia           client.MediaResult // prepared queue media handed to submitPrompt without reconstructing markers
 	queuePaused                  string             // non-empty when a run ended on a non-clean stop with a non-empty queue: the stop reason holding the queue (see drainQueue/renderQueue)
@@ -655,9 +667,6 @@ type Model struct {
 	userModelRequestToken        uint64             // Model-lifetime fence for delayed saved-memory results
 	reflections                  reflectionsState
 	reflectionsGen               uint64
-	dream                        dreamState
-	dreamGen                     uint64
-	dreamRequest                 uint64
 	// steer is the steer-mode (Capabilities.Steer) mid-run state: ONE bundle (the
 	// merged operator steer text + its client-minted message_id) with its
 	// AUTHORITATIVE lifecycle — idle → pending (sent, un-acked) → sent (acked,
@@ -675,8 +684,6 @@ type Model struct {
 	// overwrite root state or a reopened picker.
 	modelCatalogRequestToken uint64
 	modelCatalog             modelCatalog          // root-owned inventory, statuses, defaults, and selection reconciliation
-	effort                   effortState           // /effort picker overlay state (view==effortNone when closed) — ADR 0055
-	worktrees                worktreesState        // /worktrees overlay state (view==worktreesNone when closed) — issue #102
 	schedule                 scheduleState         // /schedule overlay state (view==scheduleNone when closed) — issue #234
 	connect                  connectState          // /connect saved-target picker (tombstone overlay)
 	connectLoadGeneration    uint64                // monotonic across overlay close/reopen; stale async loads are ignored
@@ -716,8 +723,6 @@ type Model struct {
 	// lets the picker label the current model "picked this session" (vs a launch-time
 	// workspace/global default). Zero until a restart-now pick. Display-only.
 	pickedThisSession client.ModelSelection
-	showHelp          bool           // the "?" keys-&-features overlay is open (caps-driven; see help.go)
-	helpScroll        int            // first visible complete help-body line while the overlay is open
 	stream            *client.Stream // current run's stream
 	cancelRun         context.CancelFunc
 
@@ -796,8 +801,7 @@ type Model struct {
 	// SessionReadyMsg. It drives the honest discoverability affordances (which
 	// chords the help overlay annotates as available, and whether an empty
 	// MCP/commands box reads "not enabled" vs "none configured"). Zero value
-	// (all-false) until connect and for an older server. STORED, UNRENDERED in
-	// Phase A — Phase B consumes it.
+	// (all-false) until connect and for an older server.
 	caps client.Capabilities
 	// guardrailStatusRequest invalidates asynchronous /guardrails and /posture
 	// coverage responses when a newer request or session wins.
@@ -821,7 +825,7 @@ type Model struct {
 	fullColor bool
 
 	// themeAutoDetectArmed is true while a tea.BackgroundColorMsg response is
-	// still awaited for the auto-detect (ADR 0280): Init sets it when
+	// still awaited for the auto-detect: Init sets it when
 	// Deps.ThemeAutoDetect is true, and onBackgroundColor clears it on the FIRST
 	// response, before acting on it — so a duplicate or late response (a
 	// misbehaving terminal, or a race with a fast quit) is a structural no-op,
@@ -876,7 +880,7 @@ type Model struct {
 	// submit (defense-in-depth against re-fire), and the identical typed-prompt
 	// path runs. A /models restart or /clear funnels back through
 	// applySessionReady but the field is already empty, so the seed never
-	// re-fires. Empty = no seed (the default; today's behavior).
+	// re-fires. Empty = no seed (the default).
 	pendingInitialPrompt string
 
 	// promptRecovery retains a text-only prompt across a transport outcome. It is
@@ -996,7 +1000,7 @@ type Model struct {
 	// bracketed paste over the staging thresholds (pasteNeedsStaging) inserts only
 	// the marker, so the textarea buffer — which the bubbles textarea re-wraps per
 	// rendered frame — never holds the huge payload (issue #45). submitPrompt and
-	// enqueuePrompt expand surviving markers in place (expandPastePlaceholders);
+	// deliverDefaultPrompt expand surviving markers in place (expandPastePlaceholders);
 	// a deleted marker's content is silently dropped at submit. nextPasteN is its
 	// own monotonic counter (separate numbering from nextMediaN, never reused).
 	stagedPastes map[string]string
@@ -1275,6 +1279,7 @@ func (m Model) resetSessionDerived() Model {
 	// plan ask may have been open), as is the full-screen ask-args view.
 	m.closeModal()
 	m.queued = nil
+	m.queuedDrafts = nil
 	m.queuedMedia = client.MediaResult{}
 	m.pendingPromptMedia = client.MediaResult{}
 	m.queuePaused = ""
@@ -1343,7 +1348,7 @@ func (m Model) startupProgressCmd() tea.Cmd {
 // verbatim (the boot snapshot may be the embedded floor), the server validates it,
 // and a server rejection degrades to the default loudly via createSessionCmd's
 // fallback leg. With no lister wired (old server / persistence off) it fires
-// CreateSession directly (the historical path, with an empty selection).
+// CreateSession directly with an empty selection.
 func (m Model) Init() tea.Cmd {
 	startup := m.startupCmd()
 	// The keyboard-capability probe deadline wraps structurally around whatever
@@ -1358,7 +1363,7 @@ func (m Model) Init() tea.Cmd {
 	if m.deps.StartupProgress != nil {
 		startup = tea.Batch(startup, m.startupProgressCmd())
 	}
-	// The light/dark auto-detect (ADR 0280) wraps structurally around whatever
+	// The light/dark auto-detect wraps structurally around whatever
 	// startup fires, so every branch gets it without threading a themeDetectCmd
 	// through each one. Deps.ThemeAutoDetect is false unless composition armed it
 	// (no explicit --theme/MECATUI_THEME AND stdout is a real TTY).

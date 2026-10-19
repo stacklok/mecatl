@@ -1,0 +1,20 @@
+# Browser login against a mecak8s deployment that publishes an OIDC profile,
+# exposed through a Gateway API listener.
+mecatl:
+  baseURL: https://mecak8s.example.com
+publicURL: https://studio.example.com
+session:
+  secretName: mecatl-studio-session
+imagePullSecrets:
+  - name: ghcr-pull-secret
+networkPolicy:
+  ingressFrom:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: envoy-gateway-system
+httpRoute:
+  enabled: true
+  parentRefs:
+    - name: eg
+      namespace: envoy-gateway-system
+      sectionName: mecatl-studio-https

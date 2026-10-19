@@ -771,8 +771,8 @@ func sanitizeLabel(label string) string {
 // Merger is the tool.EnvironmentMerger implementation: it merges a preserved winning
 // fork's working-tree changes BACK into the parent workspace. It is the
 // composition-owned merge half of BOTH merge-back paths — a Parallel
-// single-branch winner (ADR 0039) AND a writable Subagent (mode:"read-write",
-// ADR 0040) — DEFAULT-ON with no flag, the capability that lets a delegated
+// single-branch winner AND a writable Subagent (mode:"read-write") —
+// DEFAULT-ON with no flag, the capability that lets a delegated
 // implementer's edits actually land without a manual copy/merge step. The
 // composition root wraps it in a SerializingMerger (one process-wide mutex) so
 // concurrent merges from different runs/sessions cannot interleave their writes.

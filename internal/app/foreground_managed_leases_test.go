@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/adrg/xdg"
+
 	"github.com/stacklok/mecatl/internal/adapter/managedtemp"
 	"github.com/stacklok/mecatl/internal/testutil/testhome"
 )
@@ -31,9 +33,9 @@ func managedLeaseConfig(t *testing.T, workspace, managedRoot string) Config {
 	}
 }
 
-// TestADR_0281_ForegroundLeaseOverlayAndMetadataPrivacy pins the foreground
+// TestForegroundLeaseOverlayAndMetadataPrivacy pins the foreground
 // managed lease contract at the real command runner boundary.
-func TestADR_0281_ForegroundLeaseOverlayAndMetadataPrivacy(t *testing.T) {
+func TestForegroundLeaseOverlayAndMetadataPrivacy(t *testing.T) {
 	workspace := t.TempDir()
 	managedRoot := filepath.Join(t.TempDir(), "managed")
 	t.Setenv("OPENROUTER_API_KEY", "must-not-leak")
@@ -70,9 +72,9 @@ func TestADR_0281_ForegroundLeaseOverlayAndMetadataPrivacy(t *testing.T) {
 	}
 }
 
-// TestADR_0281_LeaseCleanupPreservesCommandOutcome pins that cleanup happens
+// TestLeaseCleanupPreservesCommandOutcome pins that cleanup happens
 // after the command outcome is fixed, including cancellation and deadline.
-func TestADR_0281_LeaseCleanupPreservesCommandOutcome(t *testing.T) {
+func TestLeaseCleanupPreservesCommandOutcome(t *testing.T) {
 	workspace := t.TempDir()
 	managedRoot := filepath.Join(t.TempDir(), "managed")
 	runner := buildCommandRunnerForRoot(managedLeaseConfig(t, workspace, managedRoot), workspace)
@@ -113,10 +115,10 @@ func TestADR_0281_LeaseCleanupPreservesCommandOutcome(t *testing.T) {
 	}
 }
 
-// TestADR_0281_GroupLivenessControlsImmediateCleanup pins the documented group
+// TestGroupLivenessControlsImmediateCleanup pins the documented group
 // boundary: a live managed group retains its lease, while an escaped process
 // does not block cleanup after the managed group exits.
-func TestADR_0281_GroupLivenessControlsImmediateCleanup(t *testing.T) {
+func TestGroupLivenessControlsImmediateCleanup(t *testing.T) {
 	workspace := t.TempDir()
 	managedRoot := filepath.Join(t.TempDir(), "managed")
 	runner := buildCommandRunnerForRoot(managedLeaseConfig(t, workspace, managedRoot), workspace)
@@ -142,9 +144,9 @@ func TestADR_0281_GroupLivenessControlsImmediateCleanup(t *testing.T) {
 	}
 }
 
-// TestADR_0281_TestHomeUsesValidatedLeaseMarker pins that only a real lease
+// TestHomeUsesValidatedLeaseMarker pins that only a real lease
 // directs process-wide test-home state beneath a managed command allocation.
-func TestADR_0281_TestHomeUsesValidatedLeaseMarker(t *testing.T) {
+func TestHomeUsesValidatedLeaseMarker(t *testing.T) {
 	ns, err := managedtemp.Open(filepath.Join(t.TempDir(), "managed"))
 	if err != nil {
 		t.Fatal(err)
@@ -162,8 +164,42 @@ func TestADR_0281_TestHomeUsesValidatedLeaseMarker(t *testing.T) {
 	t.Cleanup(func() { _ = lease.Close() })
 	// testhome deliberately changes process-wide variables; keep this test's
 	// helper invocation from contaminating unrelated app tests in this package.
-	t.Setenv("HOME", os.Getenv("HOME"))
-	t.Setenv("XDG_CONFIG_HOME", os.Getenv("XDG_CONFIG_HOME"))
+	roots := []struct {
+		name string
+		leaf string
+	}{
+		{name: "HOME", leaf: "home"},
+		{name: "XDG_CONFIG_HOME", leaf: "config"},
+		{name: "XDG_DATA_HOME", leaf: "data"},
+		{name: "XDG_STATE_HOME", leaf: "state"},
+		{name: "XDG_CACHE_HOME", leaf: "cache"},
+		{name: "XDG_RUNTIME_DIR", leaf: "runtime"},
+	}
+	type environment struct {
+		value string
+		set   bool
+	}
+	previous := make(map[string]environment, len(roots))
+	ambient := make(map[string]string, len(roots))
+	t.Cleanup(func() {
+		for name, value := range previous {
+			if value.set {
+				_ = os.Setenv(name, value.value)
+			} else {
+				_ = os.Unsetenv(name)
+			}
+		}
+		xdg.Reload()
+	})
+	for _, root := range roots {
+		value, set := os.LookupEnv(root.name)
+		previous[root.name] = environment{value: value, set: set}
+		ambient[root.name] = filepath.Join(t.TempDir(), "ambient", root.leaf)
+		if err := os.Setenv(root.name, ambient[root.name]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	xdg.Reload()
 
 	for _, tc := range []struct {
 		name   string
@@ -176,20 +212,43 @@ func TestADR_0281_TestHomeUsesValidatedLeaseMarker(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv("MECATL_TEST_TEMP_LEASE", tc.marker)
-			var home string
-			if exit := testhome.Run("managed", func() int { home = os.Getenv("HOME"); return 0 }); exit != 0 {
+			gotRoots := make(map[string]string, len(roots))
+			if exit := testhome.Run("managed", func() int {
+				for _, root := range roots {
+					gotRoots[root.name] = os.Getenv(root.name)
+					info, err := os.Stat(gotRoots[root.name])
+					if err != nil || !info.IsDir() || info.Mode().Perm() != 0o700 {
+						t.Errorf("%s directory = %v, %v; want private directory", root.name, info, err)
+					}
+				}
+				return 0
+			}); exit != 0 {
 				t.Fatalf("testhome.Run exit = %d", exit)
 			}
-			if got := strings.HasPrefix(home, lease.Path()+string(filepath.Separator)); got != tc.inside {
-				t.Fatalf("HOME = %q, inside managed lease = %v; want %v", home, got, tc.inside)
+			for _, root := range roots {
+				got := gotRoots[root.name]
+				if tc.inside {
+					want := filepath.Join(lease.Path(), "test-home", root.leaf)
+					if root.name == "XDG_RUNTIME_DIR" {
+						want = filepath.Join(lease.Path(), "tmp")
+					}
+					if got != want {
+						t.Errorf("%s = %q, want %q", root.name, got, want)
+					}
+				} else if strings.HasPrefix(got, lease.Path()+string(filepath.Separator)) {
+					t.Errorf("%s = %q, unexpectedly inside managed lease", root.name, got)
+				}
+				if got := os.Getenv(root.name); got != ambient[root.name] {
+					t.Errorf("%s after Run = %q, want restored %q", root.name, got, ambient[root.name])
+				}
 			}
 		})
 	}
 }
 
-// TestADR_0281_ChildEnvironmentGetsDistinctAffinedLease pins that separate
+// TestChildEnvironmentGetsDistinctAffinedLease pins that separate
 // child namespace runners allocate separate managed workspace leases.
-func TestADR_0281_ChildEnvironmentGetsDistinctAffinedLease(t *testing.T) {
+func TestChildEnvironmentGetsDistinctAffinedLease(t *testing.T) {
 	managedRoot := filepath.Join(t.TempDir(), "managed")
 	parent := t.TempDir()
 	child := t.TempDir()

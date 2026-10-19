@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * AI session debugger (ADR 0254): a debug chat is a normal session created
+ * AI session debugger: a debug chat is a normal session created
  * with `debugTargetSessionId` set. The daemon requires no filesystem, binds
  * the target server-side, and never copies the target's conversation — the
  * new chat starts empty and reads the target only through its own tools.

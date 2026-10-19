@@ -2,9 +2,13 @@ package theme
 
 import (
 	"encoding/json"
+	"image/color"
+	"math"
 	"reflect"
 	"strings"
 	"testing"
+	"unicode"
+	"unicode/utf8"
 
 	"charm.land/lipgloss/v2"
 )
@@ -38,6 +42,11 @@ func TestStylesCompiled(t *testing.T) {
 		"assistantLabel", "toolCard", "toolName", "toolArgs", "toolOk",
 		"toolErr", "askCard", "askTitle", "askArgs", "askButton", "askButtonActive",
 		"spinner", "muted", "warning", "dangerPill", "errorText", "selection",
+		"transcriptLLMMarker", "transcriptLLMHeading", "transcriptLLMRail", "transcriptLLMText",
+		"transcriptToolMarker", "transcriptToolHeading", "transcriptToolRail", "transcriptToolText",
+		"transcriptUserMarker", "transcriptUserHeading", "transcriptUserRail", "transcriptUserText",
+		"transcriptHarnessMarker", "transcriptHarnessHeading", "transcriptHarnessRail", "transcriptHarnessText",
+		"transcriptRunRail", "transcriptReasoningText", "transcriptStatistics",
 	}
 	th := New("aztec", aztecPalette)
 	for _, slot := range want {
@@ -222,7 +231,7 @@ func TestRegistryCaseInsensitive(t *testing.T) {
 }
 
 // TestSolarReturnsBuiltinLightTheme asserts theme.Solar() (the light-theme
-// auto-detect fallback, ADR 0280) always returns the built-in "solar" theme —
+// auto-detect fallback) always returns the built-in "solar" theme —
 // byte-identical to resolving "solar" through a fresh registry — regardless of
 // any user override loaded under the same name.
 func TestSolarReturnsBuiltinLightTheme(t *testing.T) {
@@ -361,4 +370,177 @@ func TestSelectionFallbackToAccent(t *testing.T) {
 	if fg, want := st.GetForeground(), contrastingText(p.Accent); fg != want {
 		t.Errorf("fallback selection fg = %v, want luminance-of-accent %v", fg, want)
 	}
+}
+
+func TestTranscriptVocabularyBuiltins(t *testing.T) {
+	cases := []struct {
+		name string
+		th   Theme
+		want map[string]string
+	}{
+		{
+			name: "aztec",
+			th:   NewRegistry().Default(),
+			want: map[string]string{
+				"transcriptLLMMarker": "#c98f9d", "transcriptLLMHeading": "#c98f9d", "transcriptLLMRail": "#c98f9d", "transcriptLLMText": "#e7e2d3",
+				"transcriptToolMarker": "#57b8bf", "transcriptToolHeading": "#57b8bf", "transcriptToolRail": "#57b8bf", "transcriptToolText": "#e7e2d3",
+				"transcriptUserMarker": "#e9b949", "transcriptUserHeading": "#e9b949", "transcriptUserRail": "#e9b949", "transcriptUserText": "#e7e2d3",
+				"transcriptHarnessMarker": "#aaa0d4", "transcriptHarnessHeading": "#aaa0d4", "transcriptHarnessRail": "#aaa0d4", "transcriptHarnessText": "#bac8bf",
+				"transcriptRunRail": "#6b857a", "transcriptReasoningText": "#9aaba0", "transcriptStatistics": "#9aaba0",
+			},
+		},
+		{
+			name: "solar",
+			th:   Solar(),
+			want: map[string]string{
+				"transcriptLLMMarker": "#a13d62", "transcriptLLMHeading": "#a13d62", "transcriptLLMRail": "#a13d62", "transcriptLLMText": "#202d28",
+				"transcriptToolMarker": "#006f7a", "transcriptToolHeading": "#006f7a", "transcriptToolRail": "#006f7a", "transcriptToolText": "#202d28",
+				"transcriptUserMarker": "#955b00", "transcriptUserHeading": "#955b00", "transcriptUserRail": "#955b00", "transcriptUserText": "#202d28",
+				"transcriptHarnessMarker": "#713bb0", "transcriptHarnessHeading": "#713bb0", "transcriptHarnessRail": "#713bb0", "transcriptHarnessText": "#40554a",
+				"transcriptRunRail": "#687b70", "transcriptReasoningText": "#52665b", "transcriptStatistics": "#52665b",
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			for name, want := range tc.want {
+				if got := tc.th.Style(name).GetForeground(); got != col(want) {
+					t.Errorf("%s foreground = %v, want %v", name, got, col(want))
+				}
+			}
+			for _, name := range []string{"transcriptLLMText", "transcriptToolText", "transcriptUserText", "transcriptHarnessText", "transcriptStatistics"} {
+				if tc.th.Style(name).GetItalic() {
+					t.Errorf("%s must not be italic", name)
+				}
+			}
+			if !tc.th.Style("transcriptReasoningText").GetItalic() {
+				t.Error("transcriptReasoningText must be italic")
+			}
+		})
+	}
+}
+
+func TestTranscriptFallbacksAndIndependentStyles(t *testing.T) {
+	p := aztecPalette
+	p.User = "#112233"
+	p.Assistant = "#223344"
+	p.Tool = "#334455"
+	p.Info = "#445566"
+	p.Text = "#556677"
+	p.TextMuted = "#667788"
+	p.Border = "#778899"
+	th := New("aztec", p) // A user theme can share a built-in's name.
+	want := map[string]string{
+		"transcriptUserMarker": "#112233", "transcriptUserHeading": "#112233", "transcriptUserRail": "#112233",
+		"transcriptLLMMarker": "#223344", "transcriptLLMHeading": "#223344", "transcriptLLMRail": "#223344",
+		"transcriptToolMarker": "#334455", "transcriptToolHeading": "#334455", "transcriptToolRail": "#334455",
+		"transcriptHarnessMarker": "#445566", "transcriptHarnessHeading": "#445566", "transcriptHarnessRail": "#445566",
+		"transcriptUserText": "#556677", "transcriptLLMText": "#556677", "transcriptToolText": "#556677",
+		"transcriptHarnessText": "#667788", "transcriptReasoningText": "#667788", "transcriptStatistics": "#667788",
+		"transcriptRunRail": "#778899",
+	}
+	for name, want := range want {
+		if got := th.Style(name).GetForeground(); got != col(want) {
+			t.Errorf("%s foreground = %v, want %v", name, got, col(want))
+		}
+	}
+
+	marker := th.Style("transcriptUserMarker").Foreground(col("#abcdef"))
+	if got := marker.GetForeground(); got != col("#abcdef") {
+		t.Errorf("changed marker foreground = %v, want %v", got, col("#abcdef"))
+	}
+	if got := th.Style("transcriptUserRail").GetForeground(); got != col("#112233") {
+		t.Errorf("rail changed with marker = %v, want %v", got, col("#112233"))
+	}
+
+	parsed, err := ParseTheme([]byte(`{"name":"aztec","palette":{"user":"#010203"}}`))
+	if err != nil {
+		t.Fatalf("ParseTheme: %v", err)
+	}
+	if got := parsed.Style("transcriptUserMarker").GetForeground(); got != col("#010203") {
+		t.Errorf("partial custom user marker = %v, want %v", got, col("#010203"))
+	}
+	if got := parsed.Style("transcriptLLMMarker").GetForeground(); got != col(aztecPalette.Assistant) {
+		t.Errorf("partial custom LLM marker = %v, want palette assistant %v", got, col(aztecPalette.Assistant))
+	}
+
+	mono := New("mono", monoPalette)
+	if got := mono.Style("transcriptLLMMarker").GetForeground(); got != col(monoPalette.Assistant) {
+		t.Errorf("mono LLM marker = %v, want palette assistant %v", got, col(monoPalette.Assistant))
+	}
+}
+
+func TestTranscriptGlyphsAreSingleCellTerminalText(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		glyph string
+	}{
+		{"user", TranscriptUserGlyph},
+		{"LLM", TranscriptLLMGlyph},
+		{"tool", TranscriptToolGlyph},
+		{"harness", TranscriptHarnessGlyph},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.glyph == "" || !utf8.ValidString(tc.glyph) {
+				t.Errorf("glyph = %q, want valid non-empty UTF-8", tc.glyph)
+			}
+			if got := lipgloss.Width(tc.glyph); got != 1 {
+				t.Errorf("glyph width = %d, want 1", got)
+			}
+			for _, r := range tc.glyph {
+				if unicode.IsControl(r) {
+					t.Errorf("glyph contains control character %q", r)
+				}
+			}
+		})
+	}
+}
+
+func TestTranscriptContrast(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		th         Theme
+		background string
+	}{
+		{"aztec", NewRegistry().Default(), aztecPalette.Bg},
+		{"solar", Solar(), solarPalette.Bg},
+		{"solar on white", Solar(), "#ffffff"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, name := range []string{"transcriptLLMMarker", "transcriptToolMarker", "transcriptUserMarker", "transcriptHarnessMarker", "transcriptLLMText", "transcriptToolText", "transcriptUserText", "transcriptHarnessText", "transcriptReasoningText", "transcriptStatistics"} {
+				if got := styleContrast(tc.th.Style(name), tc.background); got < 4.5 {
+					t.Errorf("%s contrast = %.2f, want >= 4.5", name, got)
+				}
+			}
+			for _, name := range []string{"transcriptLLMRail", "transcriptToolRail", "transcriptUserRail", "transcriptHarnessRail", "transcriptRunRail"} {
+				if got := styleContrast(tc.th.Style(name), tc.background); got < 3 {
+					t.Errorf("%s contrast = %.2f, want >= 3", name, got)
+				}
+			}
+		})
+	}
+}
+
+func styleContrast(st lipgloss.Style, background string) float64 {
+	fg := colorLuminance(st.GetForeground())
+	bg, ok := relLuminance(background)
+	if !ok {
+		return 0
+	}
+	if fg < bg {
+		fg, bg = bg, fg
+	}
+	return (fg + 0.05) / (bg + 0.05)
+}
+
+func colorLuminance(c color.Color) float64 {
+	r, g, b, _ := c.RGBA()
+	linear := func(v uint32) float64 {
+		n := float64(v) / 65535
+		if n <= 0.04045 {
+			return n / 12.92
+		}
+		return math.Pow((n+0.055)/1.055, 2.4)
+	}
+	return 0.2126*linear(r) + 0.7152*linear(g) + 0.0722*linear(b)
 }

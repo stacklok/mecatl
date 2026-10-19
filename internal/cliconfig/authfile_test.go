@@ -52,6 +52,70 @@ func clearProviderEnv(t *testing.T) {
 	t.Setenv(envOpenRouterKey, "")
 	t.Setenv(envAnthropicKey, "")
 	t.Setenv(envOpenCodeKey, "")
+	t.Setenv(envExaKey, "")
+	t.Setenv(envBraveKey, "")
+	t.Setenv(envWebSearchKey, "")
+}
+
+func TestSearchCredentialLifecycle(t *testing.T) {
+	clearProviderEnv(t)
+	writeAuthFile(t, "providers:\n  exa:\n    api_key: file-exa-key\n  brave:\n    api_key: file-brave-key\n  websearch:\n    api_key: file-websearch-key\n")
+	pf := RegisterProviderFlags(flag.NewFlagSet("exa", flag.ContinueOnError), ProviderFlagHelp{})
+	keys := pf.Resolve()
+	if keys.Exa != "file-exa-key" || keys.Brave != "file-brave-key" || keys.WebSearch != "file-websearch-key" || keys.Any() || keys.AuthFileWarning != "" {
+		t.Fatalf("file-backed search credentials not resolved independently of LLMs: exa=%q brave=%q websearch=%q any=%v warning=%q", keys.Exa, keys.Brave, keys.WebSearch, keys.Any(), keys.AuthFileWarning)
+	}
+	var cfg app.Config
+	pf.ApplyResolved(&cfg, keys)
+	if cfg.ExaAPIKey != keys.Exa || cfg.BraveAPIKey != keys.Brave || cfg.WebSearchAPIKey != keys.WebSearch {
+		t.Fatal("search credentials missing from app config")
+	}
+	profile, _, err := NewProviderCredentialResolver(pf, keys).Load(nil)
+	if err != nil || profile.ExaAPIKey != keys.Exa || profile.BraveAPIKey != keys.Brave || profile.WebSearchAPIKey != keys.WebSearch {
+		t.Fatalf("credential loader search keys = exa=%q brave=%q websearch=%q err=%v", profile.ExaAPIKey, profile.BraveAPIKey, profile.WebSearchAPIKey, err)
+	}
+	t.Setenv(envExaKey, "env-exa-key")
+	t.Setenv(envBraveKey, "env-brave-key")
+	t.Setenv(envWebSearchKey, "env-websearch-key")
+	keys = pf.Resolve()
+	if keys.Exa != "env-exa-key" || keys.Brave != "env-brave-key" || keys.WebSearch != "env-websearch-key" {
+		t.Fatal("environment search keys did not override file")
+	}
+	clearProviderEnv(t)
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	keys = pf.Resolve()
+	if keys.Exa != "" || keys.Brave != "" || keys.WebSearch != "" || keys.Any() || keys.AuthFileWarning != "" {
+		t.Fatalf("missing search credentials should retain anonymous mode: exa=%q brave=%q websearch=%q any=%v warning=%q", keys.Exa, keys.Brave, keys.WebSearch, keys.Any(), keys.AuthFileWarning)
+	}
+}
+
+func TestSearchConfiguredCredentialStorePath(t *testing.T) {
+	clearProviderEnv(t)
+	xdgHome := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", xdgHome)
+	if err := os.MkdirAll(filepath.Join(xdgHome, "mecatl"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(xdgHome, "mecatl", "auth.yaml"), []byte("providers:\n  poisoned:\n    api_key: should-not-be-read\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "operator-auth.yaml")
+	if err := os.WriteFile(path, []byte("providers:\n  exa:\n    api_key: configured-exa-key\n  brave:\n    api_key: configured-brave-key\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	pf := RegisterProviderFlags(flag.NewFlagSet("exa", flag.ContinueOnError), ProviderFlagHelp{})
+	loader := NewProviderCredentialResolver(pf, pf.Resolve())
+	loader.SetAPIKeyFile(path)
+	profile, _, err := loader.Load(nil)
+	if err != nil || profile.ExaAPIKey != "configured-exa-key" || profile.BraveAPIKey != "configured-brave-key" {
+		t.Fatalf("credential_store.api_key.file search keys = exa=%q brave=%q err=%v", profile.ExaAPIKey, profile.BraveAPIKey, err)
+	}
+	t.Setenv(envExaKey, "env-exa-key")
+	t.Setenv(envBraveKey, "env-brave-key")
+	profile, _, err = loader.Load(nil)
+	if err != nil || profile.ExaAPIKey != "env-exa-key" || profile.BraveAPIKey != "env-brave-key" {
+		t.Fatalf("configured path env precedence: exa=%q brave=%q err=%v", profile.ExaAPIKey, profile.BraveAPIKey, err)
+	}
 }
 
 // TestRegisterProviderFlagsRegistersAuthFile proves --api-key-file is registered

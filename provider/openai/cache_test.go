@@ -82,7 +82,7 @@ func TestCacheDialectOpenRouterSendsCacheKeyOnly(t *testing.T) {
 	// CacheDialectOpenAI, to prove the OpenRouter arm never even consults
 	// retentionFor.
 	raw := marshalParams(t, p, cacheReq("gpt-5.2"))
-	// ADR 0346 decision 3: root cache_control is RETIRED. It was an
+	// Root cache_control is RETIRED. It was an
 	// OpenRouter-private extension, which is exactly why it had to be gated on
 	// endpoint identity — and that gate silently disabled caching on three
 	// other endpoint shapes. The protocol-native prompt_cache_breakpoint
@@ -132,7 +132,7 @@ func TestRetentionModelAllowlist(t *testing.T) {
 //
 // The assertion is deliberately PAIRED per model rather than two independent
 // tables: two separate lists would pass a test that checked each side alone, and
-// that is precisely the divergence ADR 0346 decision 2 says must not happen. The
+// that is precisely the divergence the shared table exists to prevent. The
 // wire-level halves live in TestCacheDialectOpenAIOmitsRetentionForUnknownModel
 // (retention) and the breakpoint marshalling tests (breakpoint); this is the
 // classifier-level invariant that keeps the two in lockstep.

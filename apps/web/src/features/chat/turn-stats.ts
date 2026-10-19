@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { SessionUsageResponse } from "@mecatl-studio/contracts";
+import { formatDurationMs, formatTokens as formatTokensNumber } from "../../lib/formatters";
 
 /** Per-direction token count at or under which a turn's cost is negligible. */
 export const TRIVIAL_TURN_TOKENS = 50;
@@ -10,21 +11,13 @@ export const TURN_STAT_CACHE_FLOOR = 0.1;
 
 /**
  * A model's token count as the compact live-usage label ("1.2k", "3.4M");
- * under 1,000 the exact integer.
+ * under 1,000 the exact integer. The daemon reports token counts as strings.
+ * `BigInt` rejects anything that is not an integer, so a malformed count
+ * fails loudly; counts beyond 2^53 lose precision in the `Number`, which a
+ * compact label does not need. The one token formatter for the chat UI.
  */
 export function formatTokens(value: string): string {
-  const n = Number(BigInt(value));
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
-  return String(n);
-}
-
-/** A duration in milliseconds as "480ms" or "4.1s", dropping a redundant ".0". */
-export function formatDurationMs(ms: number): string {
-  const clamped = Number.isFinite(ms) && ms > 0 ? ms : 0;
-  if (clamped < 1000) return `${Math.round(clamped)}ms`;
-  const seconds = (clamped / 1000).toFixed(1).replace(/\.0$/, "");
-  return `${seconds}s`;
+  return formatTokensNumber(Number(BigInt(value)));
 }
 
 /** cacheReadTokens / inputTokens, clamped to [0, 1]; 0 when there was no input. */

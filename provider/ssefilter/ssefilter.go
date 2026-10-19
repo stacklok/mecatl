@@ -111,11 +111,11 @@ type stripper struct {
 // maxSSEFrameBytes bounds a single buffered SSE frame. This filter must see a
 // frame's blank-line boundary before it can decide whether the frame survives,
 // so it holds one frame in memory — and because it sits IN FRONT of ssestream's
-// scanner, that scanner's own cap no longer engages first. Without this bound a
+// scanner, that scanner's own cap does not engage first. Without this bound a
 // newline-less stream grows the buffer without limit AND Read never returns
 // (measured: 1.1 GB buffered, 3.3 GB heap, 5 seconds), which is strictly worse
-// than the "bufio.Scanner: token too long" the SDK's scanner produced at 32 MB
-// before the filter existed. MIRRORS that cap (bufio.MaxScanTokenSize<<9) so the
+// than the "bufio.Scanner: token too long" the SDK's scanner produces at 32 MB
+// without the filter. MIRRORS that cap (bufio.MaxScanTokenSize<<9) so the
 // guard fails at the same order of magnitude, rather than shifting the limit.
 // Same posture as the openai/openaichat adapters' maxToolArgsBytes.
 const maxSSEFrameBytes = bufio.MaxScanTokenSize << 9

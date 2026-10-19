@@ -23,6 +23,7 @@ type leasePathWriter struct {
 	contents strings.Builder
 	ready    chan struct{}
 	once     sync.Once
+	lines    int
 }
 
 func newLeasePathWriter() *leasePathWriter { return &leasePathWriter{ready: make(chan struct{})} }
@@ -30,9 +31,33 @@ func newLeasePathWriter() *leasePathWriter { return &leasePathWriter{ready: make
 func (w *leasePathWriter) Write(p []byte) (int, error) {
 	w.mu.Lock()
 	_, err := w.contents.Write(p)
+	ready := strings.Count(w.contents.String(), "\n") >= max(1, w.lines)
 	w.mu.Unlock()
-	w.once.Do(func() { close(w.ready) })
+	if ready {
+		w.once.Do(func() { close(w.ready) })
+	}
 	return len(p), err
+}
+
+func TestLeasePathWriterWaitsForCompleteEnvironment(t *testing.T) {
+	w := newLeasePathWriter()
+	w.lines = 2
+	for _, chunk := range []string{"/managed/tmp", "\n", "/managed"} {
+		if _, err := w.Write([]byte(chunk)); err != nil {
+			t.Fatal(err)
+		}
+		select {
+		case <-w.ready:
+			t.Fatal("writer published partial environment")
+		default:
+		}
+	}
+	if _, err := w.Write([]byte("\n")); err != nil {
+		t.Fatal(err)
+	}
+	if got := w.path(t); got != "/managed/tmp\n/managed" {
+		t.Fatalf("environment = %q", got)
+	}
 }
 
 func (w *leasePathWriter) path(t *testing.T) string {
@@ -82,22 +107,30 @@ func assertLeaseLockHeld(t *testing.T, leasePath string) {
 	}
 }
 
-// TestADR_0281_BackgroundJobLeaseLifecycle pins that the streaming path used by
+// TestManagedTemp_BackgroundJobLeaseLifecycle pins that the streaming path used by
 // Shell background jobs allocates a job lease, retains it until its process group
 // has joined, and applies the foreground terminal cleanup rule.
-func TestADR_0281_BackgroundJobLeaseLifecycle(t *testing.T) {
+func TestManagedTemp_BackgroundJobLeaseLifecycle(t *testing.T) {
 	streamer := managedJobStreamer(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	out := newLeasePathWriter()
+	out.lines = 2
 	done := make(chan error, 1)
 	go func() {
-		_, err := streamer.RunStreamingWithTemporaryScope(ctx, "printf '%s\\n' \"$TMPDIR\"; exec sleep 30", tool.TemporaryScopeManaged, out)
+		_, err := streamer.RunStreamingWithTemporaryScope(ctx, "printf '%s\\n%s\\n' \"$TMPDIR\" \"$MECATL_TEST_TEMP_LEASE\"; exec sleep 30", tool.TemporaryScopeManaged, out)
 		done <- err
 	}()
 
-	tempPath := out.path(t)
+	lines := strings.Split(out.path(t), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("background managed environment = %q, want TMPDIR and lease marker", lines)
+	}
+	tempPath := lines[0]
 	leasePath := filepath.Dir(tempPath)
+	if lines[1] != leasePath {
+		t.Fatalf("MECATL_TEST_TEMP_LEASE = %q, want %q", lines[1], leasePath)
+	}
 	if base := filepath.Base(leasePath); !strings.HasPrefix(base, "job-") || len(strings.TrimPrefix(base, "job-")) != 16 || strings.ContainsAny(strings.TrimPrefix(base, "job-"), "+/=") || filepath.Base(tempPath) != "tmp" {
 		t.Fatalf("background temporary path = %q, want job-<16-char-raw-url-base64-id>/tmp", tempPath)
 	}
@@ -120,10 +153,10 @@ func TestADR_0281_BackgroundJobLeaseLifecycle(t *testing.T) {
 	}
 }
 
-// TestADR_0281_ActiveLeaseLockDefeatsReaper pins the per-job exclusion a
+// TestManagedTemp_ActiveLeaseLockDefeatsReaper pins the per-job exclusion a
 // deterministic reaper relies on: concurrent deadline-free managed jobs have
 // distinct allocations and its non-blocking lock attempt cannot select either.
-func TestADR_0281_ActiveLeaseLockDefeatsReaper(t *testing.T) {
+func TestManagedTemp_ActiveLeaseLockDefeatsReaper(t *testing.T) {
 	streamer := managedJobStreamer(t)
 	type job struct {
 		cancel context.CancelFunc

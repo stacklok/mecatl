@@ -10,7 +10,7 @@ import (
 )
 
 // posture.go is the COMPOSITION-LAYER operator-POSTURE resolver: the graduated
-// trust/automation ladder that subsumes the historical --yolo / --trust-project
+// trust/automation ladder that folds the --yolo / --trust-project
 // switches into ONE ordered tier (strict < trusted < auto < yolo). Like trust.go
 // it is a pure composition concern — engine/governance stays session-free and
 // posture-unaware; posture only COMPOSES the derived knobs (the allow-all rule,
@@ -33,7 +33,7 @@ import (
 // surface). The fail-safe headless default is achieved by making the posture
 // ladder root-aware: a HEADLESS root never raises TrustProject from posture, while
 // explicit/declarative/remembered trust can still make it true. An INTERACTIVE
-// root keeps the historical trusted/auto/yolo floor. Thus an untrusted headless
+// root keeps the trusted/auto/yolo floor shown in the table. Thus an untrusted headless
 // repo gets neither steering nor a read-only child shell, while every legitimate
 // trust source admits both.
 //

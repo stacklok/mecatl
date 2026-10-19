@@ -1,7 +1,9 @@
 // Package memfs implements an in-memory tool.FileSystem and tool.Workspace
 // (map-backed) for fast, offline FS-tool tests. It enforces the same path-escape
-// rejection and the same Edit read-ledger semantics as the osfs adapter, and
-// performs Grep over the in-memory contents.
+// rejection and file-version protocol (content-hash versions, create-only and
+// compare-and-swap writes) as the osfs adapter, and performs Grep over the
+// in-memory contents. It keeps no read-before-edit evidence: that is the
+// Environment's separately selected tool.ReadLedger (for example memledger).
 //
 // memfs has no shell, so its Workspace deliberately does NOT execute commands.
 // For deterministic Shell-tool stubbing it exposes a separate, programmable

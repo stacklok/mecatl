@@ -32,6 +32,7 @@ the bidi Converse stream that drives one agent run.
 | RPC details | Client streaming | Server streaming | Description |
 |---|---|---|---|
 | **RPC:** `GetCompatibilityInfo`<br />**Request:** `GetCompatibilityInfoRequest`<br />**Response:** `GetCompatibilityInfoResponse` | <span className="grpc-mobile-label">Client streaming</span>No | <span className="grpc-mobile-label">Server streaming</span>No | <span className="grpc-mobile-label">Description</span><GrpcDescription name="GetCompatibilityInfo">GetCompatibilityInfo returns the deployment&#39;s compatibility descriptor: the API major, the operator-enabled ServerCapabilities, the build&#39;s supported feature identifiers, and an optional operator-set deployment label. It is the FIRST call a client makes — it answers &#34;what may I do with this server?&#34; WITHOUT creating a probe session (the ServerCapabilities echo otherwise rides CreateSessionResponse only).  DISTINCT FROM GetServerInfo below, deliberately. That RPC answers &#34;which BUILD is this?&#34; and sits behind an explicit privacy boundary: its response must never carry capabilities, configuration, or auth details. This one is exactly those things — negotiation input, not identity — so folding the two would either breach that boundary or overload one message with two audiences. Build identity therefore lives ONLY on GetServerInfo, and a client that wants both makes both calls.  A server that does not implement this RPC (UNIMPLEMENTED) is below the SDK compatibility floor; a client fails loudly rather than inferring a legacy mode. Authenticated like every other RPC, so UNAUTHENTICATED and UNIMPLEMENTED stay distinguishable.</GrpcDescription> |
+| **RPC:** `ListExecutionTemplates`<br />**Request:** `ListExecutionTemplatesRequest`<br />**Response:** `ListExecutionTemplatesResponse` | <span className="grpc-mobile-label">Client streaming</span>No | <span className="grpc-mobile-label">Server streaming</span>No | <span className="grpc-mobile-label">Description</span><GrpcDescription name="ListExecutionTemplates">ListExecutionTemplates returns the authenticated caller&#39;s bounded eligible catalog. It allocates nothing; CreateSession rechecks exact eligibility.</GrpcDescription> |
 | **RPC:** `CreateSession`<br />**Request:** `CreateSessionRequest`<br />**Response:** `CreateSessionResponse` | <span className="grpc-mobile-label">Client streaming</span>No | <span className="grpc-mobile-label">Server streaming</span>No | <span className="grpc-mobile-label">Description</span><GrpcDescription name="CreateSession">CreateSession allocates a new server-side session and returns its id.</GrpcDescription> |
 | **RPC:** `GetServerInfo`<br />**Request:** `GetServerInfoRequest`<br />**Response:** `GetServerInfoResponse` | <span className="grpc-mobile-label">Client streaming</span>No | <span className="grpc-mobile-label">Server streaming</span>No | <span className="grpc-mobile-label">Description</span><GrpcDescription name="GetServerInfo">GetServerInfo returns only the composed server build identity. It is authenticated like every HarnessService operation and does not inspect configuration or state.</GrpcDescription> |
 | **RPC:** `GetSession`<br />**Request:** `GetSessionRequest`<br />**Response:** `GetSessionResponse` | <span className="grpc-mobile-label">Client streaming</span>No | <span className="grpc-mobile-label">Server streaming</span>No | <span className="grpc-mobile-label">Description</span><GrpcDescription name="GetSession">GetSession returns a snapshot of an existing session.</GrpcDescription> |
@@ -75,6 +76,8 @@ the bidi Converse stream that drives one agent run.
 | **RPC:** `CancelSessionCleanup`<br />**Request:** `CancelSessionCleanupRequest`<br />**Response:** `CleanupJob` | <span className="grpc-mobile-label">Client streaming</span>No | <span className="grpc-mobile-label">Server streaming</span>No |  |
 | **RPC:** `GetSessionCleanupJob`<br />**Request:** `GetSessionCleanupJobRequest`<br />**Response:** `CleanupJob` | <span className="grpc-mobile-label">Client streaming</span>No | <span className="grpc-mobile-label">Server streaming</span>No |  |
 | **RPC:** `ListSkills`<br />**Request:** `ListSkillsRequest`<br />**Response:** `ListSkillsResponse` | <span className="grpc-mobile-label">Client streaming</span>No | <span className="grpc-mobile-label">Server streaming</span>No | <span className="grpc-mobile-label">Description</span><GrpcDescription name="ListSkills">ListSkills returns the resolved skills inventory snapshot: each discovered skill&#39;s name + one-line description. Derived from the snapshot taken at startup (skills are discovered once at build time and immutable for the process lifetime); it performs no live discovery. Metadata only — activating a skill remains a run-path concern (the Skill tool reads the body).</GrpcDescription> |
+| **RPC:** `ListSkillFiles`<br />**Request:** `ListSkillFilesRequest`<br />**Response:** `ListSkillFilesResponse` | <span className="grpc-mobile-label">Client streaming</span>No | <span className="grpc-mobile-label">Server streaming</span>No | <span className="grpc-mobile-label">Description</span><GrpcDescription name="ListSkillFiles">ListSkillFiles lists the readable files of one skill in the caller&#39;s skill view: the instruction body as &#34;SKILL.md&#34; first, then the skill&#39;s bundled assets by logical name. A learned skill lists only &#34;SKILL.md&#34;. Read-only and bounded; an unknown skill is NOT_FOUND. Files are addressed by logical name, never by a filesystem path.</GrpcDescription> |
+| **RPC:** `ReadSkillFile`<br />**Request:** `ReadSkillFileRequest`<br />**Response:** `ReadSkillFileResponse` | <span className="grpc-mobile-label">Client streaming</span>No | <span className="grpc-mobile-label">Server streaming</span>No | <span className="grpc-mobile-label">Description</span><GrpcDescription name="ReadSkillFile">ReadSkillFile returns the text of one file of a skill in the caller&#39;s skill view, capped at the same size the Skill tool returns. An unknown skill or file is NOT_FOUND, an invalid logical name is INVALID_ARGUMENT, and a file that is not valid text or exceeds the cap is refused rather than returned truncated or repaired.</GrpcDescription> |
 | **RPC:** `GetSoul`<br />**Request:** `GetSoulRequest`<br />**Response:** `GetSoulResponse` | <span className="grpc-mobile-label">Client streaming</span>No | <span className="grpc-mobile-label">Server streaming</span>No | <span className="grpc-mobile-label">Description</span><GrpcDescription name="GetSoul">GetSoul returns the resolved soul (user-scoped persona) BUILD-TIME SNAPSHOT: the selected soul&#39;s content + size/hash + provenance (user/project) + trust and drift state. The soul is selected once at startup (USER-wins precedence, project trust gate, drift check — issue #14 Phase 3 Items 1+2), so this is a pure read of that snapshot, never a live re-read. Read-only inspection: it never mutates the soul (the agent-read-only invariant).</GrpcDescription> |
 | **RPC:** `GetUserModel`<br />**Request:** `GetUserModelRequest`<br />**Response:** `GetUserModelResponse` | <span className="grpc-mobile-label">Client streaming</span>No | <span className="grpc-mobile-label">Server streaming</span>No | <span className="grpc-mobile-label">Description</span><GrpcDescription name="GetUserModel">GetUserModel returns the CURRENT user-model entries (durable FACTS about the operator): each entry&#39;s key + one-line description, plus an aggregate size + hash. Unlike GetSoul (a startup snapshot) this is a LIVE read of the user-model store&#39;s index, so it reflects entries the agent has saved since startup. Metadata only — the per-entry values are omitted (Recall loads them).</GrpcDescription> |
 | **RPC:** `ReflectSession`<br />**Request:** `ReflectSessionRequest`<br />**Response:** `ReflectSessionResponse` | <span className="grpc-mobile-label">Client streaming</span>No | <span className="grpc-mobile-label">Server streaming</span>No | <span className="grpc-mobile-label">Description</span><GrpcDescription name="ReflectSession">ReflectSession explicitly reflects one completed, caller-owned session. It remains available when automatic learning is off if reflection is configured.</GrpcDescription> |
@@ -729,13 +732,14 @@ CreateSessionRequest opens a new session.
 |---|---|---|---|---|
 | `mode` | `PermissionMode` |  |  | mode is the permission posture; unspecified defaults to DEFAULT. |
 | `limits` | `Limits` |  |  | limits are the optional stop conditions. |
-| `provider_id` | `string` |  |  | provider_id selects which configured provider backs this session, by its stable registry id (&#34;openai&#34; / &#34;openrouter&#34;). Empty =&gt; the server default provider (today&#39;s behaviour). An unknown/unavailable id is a loud InvalidArgument, never a silent fallback. The provider is FIXED for the session lifetime (reasoning-replay + byte-stable prefix are provider-private); &#34;switch provider&#34; = new session. Keys are NEVER on the wire — only this id. (multi-provider Phase 0, S3.) |
-| `model_id` | `string` |  |  | model_id is the opaque model selector within provider_id. Empty =&gt; the provider&#39;s default model. An id ListModels did not advertise is passed through to the provider VERBATIM (a power-user escape hatch for a model the embedded catalog doesn&#39;t yet know). NOT slash-joined with provider_id — two distinct fields by design. Setting model_id WITHOUT provider_id is a loud InvalidArgument (a bare model on an env-derived default provider is ambiguous). |
-| `profile` | `string` |  |  | profile selects the session&#39;s TOOL-SURFACE profile. Empty binds the deployment default; &#34;no-fs&#34; explicitly attenuates filesystem access. |
-| `reasoning_effort` | `string` |  |  | reasoning_effort sets this session&#39;s reasoning-effort tier, enum-as-string (the profile / Result.stop idiom — NO proto enum, additive values):   - &#34;&#34; or &#34;auto&#34;: UNSET — do not send a reasoning-effort field; the operator default (and ultimately the provider default) applies. - &#34;low&#34; / &#34;medium&#34; / &#34;high&#34; / &#34;xhigh&#34; / &#34;max&#34;: the neutral effort tiers.  The server NORMALISES and per-provider CLAMPS the value (OpenAI supports low/medium/high only, so xhigh/max clamp DOWN to high; Anthropic maps all five) and CAPABILITY-GATES it (a model with no reasoning support drops it). An unknown value falls back to the operator default with a WARN (it never 400s the request). It OUT-RANKS the operator default; unlike model_id it is meaningful WITHOUT a provider_id (it rides the server-default provider). The EFFECTIVE resolved value is echoed back on resolved_model.reasoning_effort. |
+| `provider_id` | `string` |  |  | provider_id selects which configured provider backs this session, by its stable registry id (&#34;openai&#34; / &#34;openrouter&#34;). Empty =&gt; the agent definition&#39;s base provider when bound, otherwise the server default provider. An unknown/unavailable id is a loud InvalidArgument, never a silent fallback. The provider is FIXED for the session lifetime (reasoning-replay + byte-stable prefix are provider-private); &#34;switch provider&#34; = new session. Keys are NEVER on the wire — only this id. (multi-provider Phase 0, S3.) |
+| `model_id` | `string` |  |  | model_id is an opaque literal model selector, never expanded as an alias. With provider_id alone, the provider&#39;s default model applies. With neither field, an agent-bound session uses its definition&#39;s base provider/model pair; an ordinary session uses the deployment default. An id ListModels did not advertise is passed through VERBATIM. Provider and model are distinct fields, never slash-joined. model_id WITHOUT provider_id requires agent_definition_name to supply the base provider; otherwise it is InvalidArgument. |
+| `execution` | `ExecutionSelection` |  |  | execution selects the deployment default when omitted, explicit no-filesystem attenuation, or one exact operator-owned template revision. |
+| `reasoning_effort` | `string` |  |  | reasoning_effort sets this session&#39;s reasoning-effort tier, enum-as-string (the Result.stop string idiom — NO proto enum, additive values):   - &#34;&#34; or &#34;auto&#34;: UNSET — do not send a reasoning-effort field; the operator default (and ultimately the provider default) applies. - &#34;low&#34; / &#34;medium&#34; / &#34;high&#34; / &#34;xhigh&#34; / &#34;max&#34;: the neutral effort tiers.  The server NORMALISES and per-provider CLAMPS the value (OpenAI supports low/medium/high only, so xhigh/max clamp DOWN to high; Anthropic maps all five) and CAPABILITY-GATES it (a model with no reasoning support drops it). An unknown value falls back to the operator default with a WARN (it never 400s the request). It OUT-RANKS the operator default and is meaningful WITHOUT a provider_id (it rides the resolved provider). The EFFECTIVE resolved value is echoed back on resolved_model.reasoning_effort. |
 | `debug_target_session_id` | `string` |  |  | debug_target_session_id creates a separate diagnostic no-FS session. |
 | `debug_mcp_servers` | `string` | repeated |  | debug_mcp_servers explicitly selects already-configured server-global streaming-HTTP MCP servers for this debug session. Legal only with a debug target; names are bounded and unique. No URL, header, or inline MCP config is accepted, and selection never implies publication authority. |
 | `mcp_servers` | `McpServerSpec` | repeated |  | mcp_servers are CLIENT-PROVIDED streaming-HTTP MCP servers to mount for the lifetime of this session, via a per-session engine. Empty (the default) is byte-identical to today: the session takes the shared-engine path.  LISTENER-SCOPED: accepting an MCP endpoint plus its auth headers from an API caller combines a remote principal with the server&#39;s ambient outbound network authority, so it is a DEPLOYMENT policy, not an inference from the request. A deployment whose API listeners are all local (a UNIX socket, a disabled HTTP listener) permits this field; a deployment with any network-facing API listener refuses every non-empty value with the typed `client_mcp_unsupported` error (UNIMPLEMENTED / 501) rather than mounting it. The refusal is the SERVER&#39;s, so it holds against a client that never checked. A client discovers whether the field is usable from `mcp_servers_on_create` in GetCompatibilityInfo.features.  Transport is streaming-HTTP ONLY, on EVERY listener and regardless of that policy: a stdio entry and an sse entry are hard-rejected as such (AGENTS.md: &#34;No stdio MCP, ever&#34; — mecatl never spawns an MCP server process). |
+| `agent_definition_name` | `string` |  |  | agent_definition_name optionally binds this session&#39;s root to a named AgentDef (ADR 0353). Empty preserves ordinary session creation. Clients MUST require session_agent_definitions in GetCompatibilityInfo.features before relying on binding, then verify resolved_agent_definition_name echoes the requested name. Older gRPC servers can silently ignore this field. Unknown definitions and combinations with debug_target_session_id, debug_mcp_servers, or mcp_servers are rejected. The definition supplies the exclusive catalog and a nonwidenable authority ceiling. |
 
 
 
@@ -750,6 +754,7 @@ CreateSessionResponse carries the newly-allocated session id.
 | `session_capabilities` | `SessionCapabilities` |  |  | session_capabilities reports the multimodal input capability of the provider+model THIS session actually resolved to — the INTERSECTION of the catalog&#39;s per-model modalities and the wired adapter&#39;s transmit capability, computed once in composition (internal/app). Clients gate per-session @-attach UX on THIS value. |
 | `resolved_model` | `ResolvedModel` |  |  | resolved_model reports the EFFECTIVE provider+model THIS session actually resolved to, plus its context window — the single value computed once in composition (internal/app), the SAME composition-computed single-source discipline as session_capabilities (NEVER recomputed in a handler). It is echoed VERBATIM: the server owns the resolution (the empty-selector default, an env-derived provider, a passthrough model), so a client must read THIS rather than the model_id it sent (which is empty for a default session and ambiguous for passthrough). The model is FIXED per TURN; it is re-resolved BETWEEN turns when the session&#39;s permission mode changes the effective model (the plan-slot / opusplan pattern) — re-read it from GetSession after a mode change. Nil/absent from an older server → the client falls back to today&#39;s behavior (no model segment in the header). |
 | `placement` | `PlacementMetadata` |  |  | placement is bounded display-only metadata, never reusable authority. |
+| `resolved_agent_definition_name` | `string` |  |  | resolved_agent_definition_name echoes the bound agent_definition_name VERBATIM (mirroring resolved_model), the same server-owns-resolution discipline: empty when the request never set agent_definition_name. |
 
 
 
@@ -1000,6 +1005,67 @@ event kind; the structured submessages are populated per kind.
 | `authorization` | `Authorization` |  |  | authorization is set on authorization.required and authorization.resolved events. It is safe durable correlation only; the live presentation URL and private continuation state never enter this payload. |
 | `control_refused` | `ControlRefused` |  |  | control_refused is set on control.refused events. It identifies the exact approval ask whose submitted control was rejected and carries only a stable machine category; raw arguments and refusal rationale never enter it. |
 | `plan_continuation_failure` | `PlanContinuationFailure` |  |  | plan_continuation_failure is a session-scoped, content-safe indication that an accepted plan allow could not start its proceed run. |
+
+
+
+
+#### `mecatl.v1.ExecutionNone`
+
+
+
+This message has no fields.
+
+
+
+#### `mecatl.v1.ExecutionSelection`
+
+ExecutionSelection is an exclusive choice; absence means deployment default.
+
+| Field | Type | Label | Oneof | Description |
+|---|---|---|---|---|
+| `none` | `ExecutionNone` |  |  |  |
+| `template` | `ExecutionTemplate` |  |  |  |
+
+
+
+
+#### `mecatl.v1.ExecutionTemplate`
+
+
+
+| Field | Type | Label | Oneof | Description |
+|---|---|---|---|---|
+| `id` | `string` |  |  |  |
+| `revision` | `string` |  |  |  |
+
+
+
+
+#### `mecatl.v1.ExecutionTemplateInfo`
+
+
+
+| Field | Type | Label | Oneof | Description |
+|---|---|---|---|---|
+| `template` | `ExecutionTemplate` |  |  |  |
+| `name` | `string` |  |  |  |
+| `description` | `string` |  |  |  |
+| `display_token` | `string` |  |  |  |
+| `extensions` | `ExecutionTemplateInfo.ExtensionsEntry` | repeated |  |  |
+| `declared_execution_files` | `bool` |  |  | Declared provider affordances; effective session capabilities may be narrower. |
+| `declared_built_in_shell` | `bool` |  |  |  |
+
+
+
+
+#### `mecatl.v1.ExecutionTemplateInfo.ExtensionsEntry`
+
+
+
+| Field | Type | Label | Oneof | Description |
+|---|---|---|---|---|
+| `key` | `string` |  |  |  |
+| `value` | `string` |  |  |  |
 
 
 
@@ -1328,7 +1394,8 @@ conversation is requested.
 #### `mecatl.v1.GetSessionTranscriptResponse`
 
 GetSessionTranscriptResponse is one coherent SessionStore snapshot projection.
-messages are the loaded aggregate&#39;s current Conversation.Messages in order.
+messages are the ordered human-display projection; internal harness control
+continuations are omitted, while a successful empty projection is complete.
 
 | Field | Type | Label | Oneof | Description |
 |---|---|---|---|---|
@@ -1705,6 +1772,27 @@ ListCommandsResponse carries the discovered slash commands.
 
 
 
+#### `mecatl.v1.ListExecutionTemplatesRequest`
+
+ListExecutionTemplates is authenticated and returns only eligible, bounded
+display metadata. An empty list is distinct from an unavailable backend.
+
+This message has no fields.
+
+
+
+#### `mecatl.v1.ListExecutionTemplatesResponse`
+
+
+
+| Field | Type | Label | Oneof | Description |
+|---|---|---|---|---|
+| `items` | `ExecutionTemplateInfo` | repeated |  |  |
+| `inventory_revision` | `string` |  |  |  |
+
+
+
+
 #### `mecatl.v1.ListGuardrailCoverageRequest`
 
 
@@ -1978,6 +2066,28 @@ by modified_at descending then session_id ascending.
 | `next_cursor` | `string` |  |  |  |
 | `generation` | `uint64` |  |  |  |
 | `project` | `string` |  |  |  |
+
+
+
+
+#### `mecatl.v1.ListSkillFilesRequest`
+
+ListSkillFilesRequest names the skill whose files to list.
+
+| Field | Type | Label | Oneof | Description |
+|---|---|---|---|---|
+| `name` | `string` |  |  | name is the skill&#39;s activation name from ListSkills. |
+
+
+
+
+#### `mecatl.v1.ListSkillFilesResponse`
+
+ListSkillFilesResponse carries the skill&#39;s files.
+
+| Field | Type | Label | Oneof | Description |
+|---|---|---|---|---|
+| `files` | `SkillFileInfo` | repeated |  | files lists &#34;SKILL.md&#34; first, then the assets sorted by name. |
 
 
 
@@ -2370,6 +2480,8 @@ Which fields are set depends on the event kind:
 | `routing_reason` | `string` |  |  | routing_reason is a BOUNDED harness/composition reason string explaining WHY this branch was NOT routed by the semantic model router (branch_start only) — empty on a routed HIT (routed_category/routed_model carry the hit). A short label (e.g. &#34;router-disabled&#34;, &#34;route-target-unavailable&#34;, &#34;aborted&#34;, or a RouterMiss* classifier miss) — BARE METADATA, never the branch prompt or classifier reasoning — so it is context-isolation safe (gauntlet #7: no branch content crosses). Clamped at the emit site. Mirrors session.ParallelPayload.RoutingReason. |
 | `routing_decision` | `RoutingDecision` | optional |  | routing_decision is the optional bounded configured-router evidence captured on branch_start. Historical events and deployments without a router omit it. |
 | `child_tool_call_id` | `string` |  |  | Exact branch tool.call/tool.result ID, scoped by branch_index; empty otherwise. |
+| `provider` | `string` |  |  | provider is the concrete provider that actually ran the branch. |
+| `explicit_router_category` | `string` |  |  | explicit_router_category is the requested router category only for an explicit provider:&#34;model-router&#34; selection. Classifier-originated routing leaves it empty. |
 
 
 
@@ -2533,6 +2645,29 @@ ReadMcpResourceResponse carries the read resource&#39;s content chunks.
 | Field | Type | Label | Oneof | Description |
 |---|---|---|---|---|
 | `contents` | `McpResourceContents` | repeated |  | contents are the resource&#39;s content chunks. |
+
+
+
+
+#### `mecatl.v1.ReadSkillFileRequest`
+
+ReadSkillFileRequest names one file of one skill.
+
+| Field | Type | Label | Oneof | Description |
+|---|---|---|---|---|
+| `name` | `string` |  |  | name is the skill&#39;s activation name from ListSkills. |
+| `file` | `string` |  |  | file is a logical file name from ListSkillFiles. |
+
+
+
+
+#### `mecatl.v1.ReadSkillFileResponse`
+
+ReadSkillFileResponse carries one file&#39;s text.
+
+| Field | Type | Label | Oneof | Description |
+|---|---|---|---|---|
+| `content` | `string` |  |  | content is the file&#39;s text, valid UTF-8, at most the Skill tool&#39;s output cap. |
 
 
 
@@ -2927,6 +3062,7 @@ old clients ignore and new clients reading an old server see as false.
 | `workspace_enrollment` | `bool` |  |  | workspace_enrollment is true when protected workspace services must be admitted as one complete bundle before the first prompt. |
 | `mcp_connector_status` | `bool` |  |  | mcp_connector_status requires a wired broker inspector, enforced ownership and a verified caller. It does not enable direct MCP resources or prompts. |
 | `mcp_refresh` | `bool` |  |  | mcp_refresh is true when direct/global MCP source reconciliation is wired. It is mutually exclusive with workspace_enrollment in a valid deployment. |
+| `execution_templates` | `bool` |  |  | execution_templates is true only when an authenticated template catalog is wired; an eligible inventory may still be empty. |
 
 
 
@@ -2972,19 +3108,18 @@ Session is a snapshot of server-side session state.
 
 #### `mecatl.v1.SessionCapabilities`
 
-SessionCapabilities is the per-session resolved input capability: ONLY the
-model-varying input bits (image/audio). A dedicated message (not a reuse of
-ServerCapabilities) keeps the per-session surface MINIMAL — the other
-ServerCapabilities bits (mcp/skills/teams/...) are server-wide and would be
-misleading per session. Reasoning is intentionally EXCLUDED: it is discoverable
-via ListModels for the selected id and is not a per-session input-gating
-concern (no adapter &#34;can replay reasoning&#34; authority bit exists). The value is
-the catalog ∩ adapter intersection computed in composition. (Phase 0, S5.)
+SessionCapabilities is the per-session effective capability projection.
+Image/audio are the resolved model&#39;s media input support (catalog ∩ adapter);
+execution_files/built_in_shell report actual session environment, tool catalog
+and authority instead. Unlike ServerCapabilities these bits may differ for
+two sessions on the same deployment. Reasoning is discovered via ListModels.
 
 | Field | Type | Label | Oneof | Description |
 |---|---|---|---|---|
 | `image` | `bool` |  |  | image is true when the resolved provider+model can consume image prompt parts. |
 | `audio` | `bool` |  |  | audio is true when the resolved provider+model can consume audio prompt parts. |
+| `execution_files` | `bool` |  |  | execution_files and built_in_shell are effective session tool affordances, separate from the provider&#39;s image/audio input modalities. |
+| `built_in_shell` | `bool` |  |  |  |
 
 
 
@@ -3165,6 +3300,19 @@ SetModeResponse wraps the updated session snapshot returned by SetMode.
 | `treatment` | `string` |  |  |  |
 | `reason` | `string` |  |  |  |
 | `at` | `google.protobuf.Timestamp` |  |  |  |
+
+
+
+
+#### `mecatl.v1.SkillFileInfo`
+
+SkillFileInfo is one readable file of a skill.
+
+| Field | Type | Label | Oneof | Description |
+|---|---|---|---|---|
+| `name` | `string` |  |  | name is the file&#39;s logical name: &#34;SKILL.md&#34; for the instruction body, otherwise a slash-separated relative name such as &#34;references/api.md&#34;. Never a filesystem path. |
+| `size` | `int64` |  |  | size is the file&#39;s size in bytes. For the instruction body it is the size of the body text after the frontmatter, not of the file on disk. |
+| `instructions` | `bool` |  |  | instructions marks the skill&#39;s instruction body. Its content is the text after the frontmatter (name, description, license, allowed-tools), so it is NOT the raw SKILL.md file and is not a valid skill definition on its own. A client keys off this field, not off the name &#34;SKILL.md&#34;, to find the body. |
 
 
 
@@ -3389,6 +3537,8 @@ Which fields are set depends on the event kind:
 | `routing_reason` | `string` |  |  | routing_reason is a BOUNDED harness/composition reason string explaining WHY this delegation was NOT routed by the semantic model router (subagent.start only) — empty on a routed HIT (routed_category/routed_model carry the hit). A short label (e.g. &#34;pinned-model&#34;, &#34;agent-def-pinned-model&#34;, &#34;resume&#34;, &#34;fork&#34;, &#34;router-disabled&#34;, &#34;route-target-unavailable&#34;, &#34;breaker-open&#34;, &#34;aborted&#34;, &#34;empty-model&#34;, or a RouterMiss* classifier miss) — BARE METADATA, never the task prompt or classifier reasoning — so it is context-isolation safe (gauntlet #7). Clamped at the emit site. Mirrors session.SubagentPayload.RoutingReason. |
 | `routing_decision` | `RoutingDecision` | optional |  | routing_decision is the optional bounded configured-router evidence captured on subagent.start. Historical events and deployments without a router omit it. |
 | `child_tool_call_id` | `string` |  |  | Exact child tool.call/tool.result ID, scoped by child_id; empty otherwise. |
+| `provider` | `string` |  |  | provider is the concrete provider that actually ran the child. |
+| `explicit_router_category` | `string` |  |  | explicit_router_category is the requested router category only for an explicit provider:&#34;model-router&#34; selection. Classifier-originated routing leaves it empty. |
 
 
 
@@ -3511,6 +3661,8 @@ shape — never any member content (no prompt body, no transcript).
 | `model` | `string` |  |  | model is the concrete MODEL id this member&#39;s engine ACTUALLY runs on (team.start roster only), regardless of how it was chosen — inherited default member model, agent-def pin, or the opt-in router. BARE METADATA — a model id, never member content — so it is context-isolation safe (gauntlet #7: no member content crosses). When the router classified this member, model == routed_model. Mirrors session.TeamMemberSpec.Model. |
 | `routing_reason` | `string` |  |  | routing_reason is a BOUNDED harness/composition reason string explaining WHY this member was NOT routed by the semantic model router (team.start roster only) — empty on a routed HIT (routed_category/routed_model carry the hit). A short label (e.g. &#34;agent-def-pinned-model&#34;, &#34;router-disabled&#34;, or a RouterMiss* classifier miss) — BARE METADATA, never the member&#39;s role/prompt or classifier reasoning — so it is context-isolation safe (gauntlet #7: no member content crosses). Clamped at the emit site. Mirrors session.TeamMemberSpec.RoutingReason. |
 | `routing_decision` | `RoutingDecision` | optional |  | routing_decision is the optional bounded configured-router evidence captured for this member on team.start. Historical roster entries omit it. |
+| `provider` | `string` |  |  | provider is the concrete provider backing the retained member engine. |
+| `explicit_router_category` | `string` |  |  | explicit_router_category is the requested router category only for an explicit provider:&#34;model-router&#34; selection. Classifier-originated routing leaves it empty. |
 
 
 

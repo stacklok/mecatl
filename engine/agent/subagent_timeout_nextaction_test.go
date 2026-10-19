@@ -66,7 +66,7 @@ func TestSubagentTimeoutResultAdvertisesResume(t *testing.T) {
 // TestStorelessSubagentTimeoutDoesNotAdvertiseResume is the negative on the OTHER
 // precondition, matching the StopError path's policy exactly: validateResume's FIRST
 // check is a wired session store, so a SubagentTool built without WithSubagentStore
-// (a supported engine-module construction, ADR 0036) must not advertise a `resume` it
+// (a supported engine-module construction) must not advertise a `resume` it
 // will then refuse with "not supported in this deployment".
 func TestStorelessSubagentTimeoutDoesNotAdvertiseResume(t *testing.T) {
 	slow := &sleepThenLoopTool{sleep: 50 * time.Millisecond}
@@ -95,7 +95,7 @@ func TestStorelessSubagentTimeoutDoesNotAdvertiseResume(t *testing.T) {
 	}
 }
 
-// TestWritableSubagentTimeoutGivesOneCombinedNextAction is the direct-write (ADR 0041)
+// TestWritableSubagentTimeoutGivesOneCombinedNextAction is the direct-write
 // case, and the reason the timeout path needs its own gate rather than appending a hint.
 // A timed-out writable child's edits ARE in the real tree, so "resume to finish on top of
 // them" and "discard them with git" are both true — and a model handed them as two

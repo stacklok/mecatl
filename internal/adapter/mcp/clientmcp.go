@@ -95,7 +95,7 @@ func clientServerNameRune(r rune) bool {
 // field is gated to a UNIX-socket-only deployment where the caller is a local
 // process the operator already trusts. Closing it properly means prefixing
 // client servers into their own namespace, which changes every tool name a
-// client sees and is a wire-visible decision for its own ADR.
+// client sees and is a separate wire-visible decision.
 func validateClientServerName(name string, seen map[string]struct{}) error {
 	if name == "" {
 		return fmt.Errorf("%w: MCP server name is required", ErrClientServerRejected)

@@ -1035,8 +1035,8 @@ func TestNilContextWindowDisablesCompaction(t *testing.T) {
 	}
 }
 
-// TestCompactionEmitsNonDestructiveArchive is the cloud-native Phase 3b
-// compaction-archive sub-gate at the loop level: a genuine compaction must emit
+// TestCompactionEmitsNonDestructiveArchive is the compaction-archive sub-gate at
+// the loop level: a genuine compaction must emit
 // EvCompactionArchive AFTER EvCompaction carrying the PRE-compaction conversation
 // (the span ReplaceHistory dropped) — captured BEFORE the mutation. The archive
 // must contain a tool call that compaction dropped from the live history, proving

@@ -13,7 +13,7 @@ type principalKey struct{}
 // and PrincipalFromContext reports it as absent. Neither case can produce a
 // present-but-empty fabricated principal, and a NUL in either authority-bearing
 // component never reaches legacy owner-key framing. Absent identity is a nil
-// *Principal, never a fabricated one (ADR 0204 decision 2).
+// *Principal, never a fabricated one.
 //
 // The principal is stored as a COPY, so a later mutation through the caller's
 // pointer cannot change what the context reports.

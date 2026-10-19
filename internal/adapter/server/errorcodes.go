@@ -8,9 +8,10 @@ import (
 
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/port"
+	"github.com/stacklok/mecatl/engine/tool"
 )
 
-// An error code is a STABLE OPEN STRING, not an enum value (ADR 0248).
+// An error code is a STABLE OPEN STRING, not an enum value.
 //
 // A closed proto enum would make every added code a wire-compat event needing
 // codegen and a proto review, and would leave an older client decoding new
@@ -70,6 +71,8 @@ var genericErrorEntry = errorCodeEntry{
 // switch it replaces, preserving every existing classification exactly. A map
 // would randomise iteration and silently reclassify wrapped sentinels.
 var errorRegistry = []errorCodeEntry{
+	{Sentinel: ErrExecutionTemplatesDisabled, Code: "execution_templates_disabled", GRPC: codes.Unimplemented, HTTPStatus: http.StatusNotImplemented, Title: "Execution templates are disabled"},
+	{Sentinel: errExecutionUnauthenticated, Code: "unauthenticated", GRPC: codes.Unauthenticated, HTTPStatus: http.StatusUnauthorized, Title: "Authentication required"},
 	{Sentinel: errConnectorUnavailable, Code: "mcp_connector_unavailable", GRPC: codes.FailedPrecondition, HTTPStatus: http.StatusConflict, Title: "Failed precondition"},
 	{Sentinel: errConnectorUnauthenticated, Code: "unauthenticated", GRPC: codes.Unauthenticated, HTTPStatus: http.StatusUnauthorized, Title: "Authentication required"},
 	{Sentinel: ErrManagementUnauthorized, Code: "management_unauthorized", GRPC: codes.PermissionDenied, HTTPStatus: http.StatusForbidden, Title: "Management authorization required"},
@@ -90,6 +93,10 @@ var errorRegistry = []errorCodeEntry{
 	{Sentinel: ErrPlacementUnavailable, Code: "placement_unavailable", GRPC: codes.Unavailable, HTTPStatus: http.StatusServiceUnavailable, Title: "Placement is unavailable"},
 	{Sentinel: ErrPlacementChanged, Code: "placement_changed", GRPC: codes.Aborted, HTTPStatus: http.StatusConflict, Title: "Placement changed"},
 	{Sentinel: ErrInvalidPlacementBinding, Code: "placement_binding_invalid", GRPC: codes.FailedPrecondition, HTTPStatus: http.StatusPreconditionFailed, Title: "Placement binding is invalid"},
+	{Sentinel: tool.ErrSkillNotFound, Code: "skill_not_found", GRPC: codes.NotFound, HTTPStatus: http.StatusNotFound, Title: "Skill not found"},
+	{Sentinel: tool.ErrSkillAssetNotFound, Code: "skill_file_not_found", GRPC: codes.NotFound, HTTPStatus: http.StatusNotFound, Title: "Skill file not found"},
+	{Sentinel: ErrSkillFileTooLarge, Code: "skill_file_too_large", GRPC: codes.FailedPrecondition, HTTPStatus: http.StatusUnprocessableEntity, Title: "Skill file is too large to read"},
+	{Sentinel: ErrSkillFileNotText, Code: "skill_file_not_text", GRPC: codes.FailedPrecondition, HTTPStatus: http.StatusUnprocessableEntity, Title: "Skill file is not text"},
 	{Sentinel: ErrInvalidArgument, Code: "invalid_argument", GRPC: codes.InvalidArgument, HTTPStatus: http.StatusBadRequest, Title: "Invalid argument"},
 	{Sentinel: ErrNotFound, Code: "session_not_found", GRPC: codes.NotFound, HTTPStatus: http.StatusNotFound, Title: "Session not found"},
 	{Sentinel: ErrTeamNotFound, Code: "team_not_found", GRPC: codes.NotFound, HTTPStatus: http.StatusNotFound, Title: "Team not found"},
@@ -130,7 +137,7 @@ var errorRegistry = []errorCodeEntry{
 	{Sentinel: ErrTooManySessionEngines, Code: "too_many_session_engines", GRPC: codes.ResourceExhausted, HTTPStatus: http.StatusTooManyRequests, Title: "Too many live per-session engines"},
 	{Sentinel: ErrNoScheduleStore, Code: "no_schedule_store", GRPC: codes.Unimplemented, HTTPStatus: http.StatusNotImplemented, Title: "Scheduled tasks are not supported by the configured store"},
 	{Sentinel: ErrNoEventLog, Code: "no_event_log", GRPC: codes.Unimplemented, HTTPStatus: http.StatusNotImplemented, Title: "No durable event log configured"},
-	// The listener-scoped client-MCP refusal (ADR 0237, Scenario 9). It sits with
+	// The listener-scoped client-MCP refusal (Scenario 9). It sits with
 	// the two Unimplemented siblings above because it reports the same class of
 	// fact: the surface exists in this BUILD but this DEPLOYMENT does not offer it.
 	// It is deliberately NOT PermissionDenied — nothing about the CALLER is being
@@ -141,7 +148,7 @@ var errorRegistry = []errorCodeEntry{
 	// Distinct from client_mcp_unsupported above (permanent, stop asking) so an SDK
 	// can retry one and not the other.
 	{Sentinel: ErrClientMCPUnreachable, Code: "client_mcp_unreachable", GRPC: codes.Unavailable, HTTPStatus: http.StatusServiceUnavailable, Title: "A requested client-provided MCP server could not be connected"},
-	// The durable watch surface (ADR 0250). ErrWatchUnsupported sits beside
+	// The durable watch surface. ErrWatchUnsupported sits beside
 	// ErrNoEventLog because it is the same class of honest refusal one level in:
 	// a log exists, it just cannot serve positions.
 	{Sentinel: ErrWatchUnsupported, Code: "watch_unsupported", GRPC: codes.Unimplemented, HTTPStatus: http.StatusNotImplemented, Title: "Durable event watch is not supported by the configured event log"},

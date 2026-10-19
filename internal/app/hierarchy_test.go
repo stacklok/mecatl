@@ -24,7 +24,7 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/server"
 )
 
-func TestADR_0376_AgentsHierarchy_Scenario3_SourceMapping(t *testing.T) {
+func TestAgentsHierarchy_SourceMapping(t *testing.T) {
 	repository := t.TempDir()
 	website := filepath.Join(repository, "website")
 	if err := os.MkdirAll(website, 0o700); err != nil {

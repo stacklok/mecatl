@@ -6,7 +6,7 @@ import (
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 )
 
-// Scenario 6 of docs/acceptance/steer-while-running.md (the mecatui half) — the
+// Steer while running (the mecatui half) — the
 // queue-split contract live-tested in session 00a10fc8 previously failed: the
 // first ack was dropped because it did not match the live watermark id (the
 // newest send). applySteerOutcome must split the ordered queue on ANY queued
@@ -63,7 +63,7 @@ func TestSteer_WatermarkPrefixDrainPreservesSuffixMediaForEditBack(t *testing.T)
 	mm, cmd := m.editBackQueue()
 	m = mm.(Model)
 	runBatchLeaves(cmd)
-	if m.prompt.Value() != "second [Image #2]" || string(m.stagedMedia["[Image #2]"].data) != "suffix" {
+	if m.prompt.Value() != "/steer second [Image #2]" || string(m.stagedMedia["[Image #2]"].data) != "suffix" {
 		t.Fatalf("suffix media did not survive edit-back: draft=%q staged=%#v", m.prompt.Value(), m.stagedMedia)
 	}
 }

@@ -77,8 +77,8 @@ const (
 	ModeAccept PermissionMode = "acceptEdits"
 )
 
-// ApprovalVerdict is the client's resolution of a permission.ask. It widens the
-// historical allow/deny boolean into three outcomes so a client can ask the
+// ApprovalVerdict is the client's resolution of a permission.ask. It widens an
+// allow/deny boolean into three outcomes so a client can ask the
 // harness to LEARN an allow for the matching tool+pattern (allow_always) versus
 // permitting only the current call (allow_once).
 //
@@ -290,6 +290,14 @@ var (
 	ErrNoPendingAuthorization = errors.New("session: no pending external authorization")
 )
 
+// ExecutionCapabilities records only whether the bound execution environment
+// and engine offered these tools at creation. It contains no placement identity
+// or live authorization; readers must still intersect it with bound authority.
+type ExecutionCapabilities struct {
+	Files bool
+	Shell bool
+}
+
 // Session is the aggregate root of the Agent Session context. All mutation of
 // the conversation, counters, and lifecycle flows through its intention-revealing
 // methods so the state machine and stop conditions always hold. Outside code
@@ -324,6 +332,10 @@ type Session struct {
 	// It is minted by the placement provider and must be valid before persistence
 	// or execution. Resolution to live capabilities belongs to composition.
 	EnvironmentRef EnvironmentRef
+	// ExecutionCapabilities is the creation-time host-observed tool and placement
+	// ceiling. Nil means no trusted observation was persisted; it does not imply
+	// the current service's default tool surface. It is never execution authority.
+	ExecutionCapabilities *ExecutionCapabilities
 	// Placement is safe display-only metadata minted by the placement provider.
 	// It is persisted for public inventory projection but never used to bind or
 	// reattach an environment.
@@ -340,6 +352,23 @@ type Session struct {
 	// process rebuild the same tool surface. The exact EnvironmentRef remains the
 	// sole placement identity.
 	Profile string
+	// ExecutionTemplateID and ExecutionTemplateRevision are opaque, write-once
+	// provenance for retry matching. Reattachment uses EnvironmentRef, never these labels.
+	ExecutionTemplateID       string
+	ExecutionTemplateRevision string
+	// AgentDefinitionName optionally binds this session's root to a named
+	// AgentDef (ADR 0353). The aggregate STORES it but never interprets it: the
+	// meaning (catalog restriction, provider/model/limits/permission-mode
+	// resolution) lives entirely in composition, like Profile. It is a
+	// write-once creation label set by the composition root after New (no
+	// mutator); persisting it lets a restarted process re-identify the binding.
+	// Empty means an ordinary session (today's default-explorer behavior).
+	AgentDefinitionName string
+	// AgentCreateIntent is an opaque, versioned fingerprint of the original
+	// explicit-ID create request, distinct from effective mode, limits and model.
+	// Empty means no retry evidence; hosts must not infer it from effective values.
+	// Write-once at creation, never inherited by successors.
+	AgentCreateIntent string
 	// ProviderID and ModelID are the opaque neutral provider+model selector pair
 	// this session was bound to. The aggregate STORES them but never interprets
 	// them — the ProviderSelector type and all resolution stay in composition; only
@@ -350,7 +379,7 @@ type Session struct {
 	// means "server default".
 	ProviderID string
 	ModelID    string
-	// ReasoningEffort is the opaque neutral reasoning-effort token (ADR 0055) this
+	// ReasoningEffort is the opaque neutral reasoning-effort token this
 	// session was bound to ("" = unset, the provider default). The aggregate STORES
 	// it but never interprets it — the neutral vocabulary, normalisation, per-provider
 	// clamp, and adapter re-mint all live in composition; only this opaque string
@@ -396,13 +425,13 @@ type Session struct {
 	// Owner is the verified caller this session is attributed to, or nil when the
 	// session is ownerless (a pre-ship snapshot, or a deployment with no identity
 	// verifier wired). It is a WRITE-ONCE label stamped through RestoreLabels —
-	// never a public setter, and never fabricated when identity is absent
-	// (ADR 0204 decision 4). The aggregate STORES it and never interprets it: no
+	// never a public setter, and never fabricated when identity is absent.
+	// The aggregate STORES it and never interprets it: no
 	// enforcement, no filtering, display + audit only.
 	Owner *Principal
 	// Authority is the derived authority payload stamped through BindAuthority
 	// before the first runnable state. The private marker distinguishes a bound
-	// empty capability set from a genuinely pre-feature legacy session.
+	// empty capability set from a genuine legacy session written without authority.
 	Authority Authority
 	// Kind classifies the trusted producer and continuation posture. New creates
 	// main sessions; delegated/scheduled producers use the validated constructors.
@@ -421,6 +450,12 @@ type Session struct {
 	// A zero Authority with this marker is impossible: BindAuthority validates the
 	// payload before setting either field.
 	authorityBound bool
+	// workspaceEnrollmentBrokerKeys records exactly the broker registration keys
+	// installed by the last completed workspace enrollment. Presence distinguishes
+	// a fully restored empty ledger from unrepaired legacy state.
+	workspaceEnrollmentBrokerKeys         []string
+	workspaceEnrollmentBrokerKeysPresent  bool
+	workspaceEnrollmentBrokerKeysRestored bool
 	// pending is set iff State == StateAwaiting.
 	pending *PendingAsk
 	// pendingAuthorization is set iff State == StateAuthorizing.
@@ -449,11 +484,12 @@ type Session struct {
 	// session never keeps a stale cause.
 	lastError string
 	// runID is the opaque, host-minted identity of the run this session is
-	// CURRENTLY driving, or most recently drove (ADR 0249). It is persisted on the
+	// CURRENTLY driving, or most recently drove. It is persisted on the
 	// snapshot, which is what makes an awaiting-approval resume continue THE SAME
 	// run across a process restart: the resume path reads this value back and
-	// reuses it instead of minting a new one, discharging ADR 0044's "stable
-	// across processes for the same attempt" obligation mechanically.
+	// reuses it instead of minting a new one, discharging the ask-ID
+	// discriminator's "stable across processes for the same attempt" obligation
+	// mechanically.
 	//
 	// It is an inert stored label, like Profile: the aggregate never interprets
 	// it, never validates its shape beyond emptiness, and no transition depends on
@@ -892,7 +928,7 @@ func (s *Session) LastError() string {
 }
 
 // BeginRun stamps the opaque, host-minted identity of the run this session is
-// about to drive (ADR 0249).
+// about to drive.
 //
 // It is an UNGUARDED setter by design. Every other run-scoped mutator on this
 // aggregate guards on State because it changes lifecycle meaning; this one
@@ -902,7 +938,7 @@ func (s *Session) LastError() string {
 // state check it has already done, for no invariant.
 //
 // An EMPTY id is accepted and clears the stamp: a host that mints no run id (an
-// in-memory embedder, a test) is byte-identical to the behaviour before ADR 0249.
+// in-memory embedder, a test) is byte-identical to the behaviour before run ids existed.
 func (s *Session) BeginRun(runID string) {
 	s.runID = runID
 }
@@ -919,10 +955,9 @@ func (s *Session) RunID() string {
 // any non-terminal state except StateAuthorizing.
 //
 // A failed session recovers through Recover (failed→idle, history-repaired —
-// issue #51), so a transient provider failure no longer bricks the session
-// permanently. Historical note: the trigger that originally bricked sessions
-// here was compaction emitting unpaired history (an orphaned tool result →
-// provider HTTP 400 → Fail), which the compactors independently prevent by
+// issue #51), so a transient provider failure does not brick the session
+// permanently. One such failure is compaction emitting unpaired history (an
+// orphaned tool result → provider HTTP 400 → Fail), which the compactors independently prevent by
 // snapping the kept-tail boundary past leading tool results and self-validating
 // via ValidateToolPairing.
 func (s *Session) Fail() error {
@@ -1164,6 +1199,37 @@ func (s *Session) SetMode(mode PermissionMode) error {
 		return fmt.Errorf("%w: SetMode from %q", ErrIllegalTransition, s.State)
 	}
 	s.Mode = mode
+	return nil
+}
+
+// TightenConfiguration restricts an idle, not-yet-run session's initial posture
+// and budgets atomically. Hosts use it on an unpublished successor after factory
+// resolution, never to change an existing session's lifetime configuration.
+func (s *Session) TightenConfiguration(mode PermissionMode, limits Limits) error {
+	if s.State != StateIdle || s.Counters != (Counters{}) {
+		return fmt.Errorf("%w: TightenConfiguration requires an idle, not-yet-run session", ErrIllegalTransition)
+	}
+	rank := func(m PermissionMode) int {
+		switch m {
+		case ModePlan:
+			return 1
+		case ModeDefault:
+			return 2
+		case ModeAccept:
+			return 3
+		default:
+			return 0
+		}
+	}
+	if rank(mode) == 0 || rank(s.Mode) == 0 || rank(mode) > rank(s.Mode) {
+		return errors.New("session: configuration would widen or invalidate permission mode")
+	}
+	for _, pair := range [][2]int{{s.Limits.MaxTurns, limits.MaxTurns}, {s.Limits.MaxToolCalls, limits.MaxToolCalls}, {s.Limits.MaxConsecutiveFailures, limits.MaxConsecutiveFailures}} {
+		if pair[1] < 0 || pair[0] > 0 && (pair[1] == 0 || pair[1] > pair[0]) {
+			return errors.New("session: configuration would widen or invalidate limits")
+		}
+	}
+	s.Mode, s.Limits = mode, limits
 	return nil
 }
 

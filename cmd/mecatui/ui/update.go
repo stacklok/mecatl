@@ -183,8 +183,8 @@ func (m Model) disarmQuitGuards(pressedQuit, pressedQuitD bool) Model {
 
 // quitHintFor builds the footer quit hint LIVE from the model's current Quit
 // binding, so a rebound quit chord is advertised honestly. With the default
-// binding ("ctrl+c") it is byte-identical to the historical "press ctrl+c again
-// to quit". It doubles as the disarm/clear sentinel — the arm and the disarm
+// binding ("ctrl+c") it reads "press ctrl+c again to quit". It doubles as the
+// disarm/clear sentinel — the arm and the disarm
 // both re-derive it from the SAME binding, so a mid-arm remap (a live reload
 // path) cannot strand a stale hint.
 func quitHintFor(b key.Binding) string {
@@ -488,8 +488,8 @@ func (m Model) dispatchNonInputMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if mm, handled := m.updateSkillChangesMsg(msg); handled {
 		return mm, nil
 	}
-	// Inventory-overlay result/error msgs (agentsInv, usermodel, /worktrees,
-	// /schedule, /sessions) — grouped to keep update() flat as overlays accrue.
+	// Inventory-overlay result/error msgs (agentsInv, reflections, /schedule)
+	// remain grouped while surface-owned results route through the modal.
 	if mm, cmd, handled := m.updateInventoryMsgs(msg); handled {
 		return mm, cmd
 	}
@@ -508,11 +508,11 @@ func (m Model) dispatchNonInputMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 // updateInventoryMsgs is the fall-through chain for the unmigrated inventory
-// overlays (agentsInv, reflections, dream, worktrees, schedule):
+// overlays (agentsInv, reflections, execution, schedule):
 // each per-overlay helper returns handled=false for a non-matching msg, so at
 // most one consumes. Most carry no follow-up command; /schedule's
 // ScheduleActionMsg re-lists on success so the cmd is propagated. Surfaces
-// migrated onto the modal no longer ride this chain — HandleMsg owns their
+// hosted on the modal do not ride this chain — HandleMsg owns their
 // routing.
 func (m Model) updateInventoryMsgs(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 	if mm, handled := m.updateAgentsInvMsg(msg); handled {
@@ -521,11 +521,8 @@ func (m Model) updateInventoryMsgs(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 	if mm, handled := m.updateReflectionsMsg(msg); handled {
 		return mm, nil, true
 	}
-	if mm, handled := m.updateDreamMsg(msg); handled {
-		return mm, nil, true
-	}
-	if mm, handled := m.updateWorktreesMsg(msg); handled {
-		return mm, nil, true
+	if mm, cmd, handled := m.updateExecutionMsg(msg); handled {
+		return mm, cmd, true
 	}
 	if mm, cmd, handled := m.updateScheduleMsg(msg); handled {
 		return mm, cmd, true
@@ -594,7 +591,7 @@ func (m Model) applySessionReady(msg client.SessionReadyMsg) (tea.Model, tea.Cmd
 	m.browsingStartupSessions = false
 	m.closeModal()
 	m.statusContextRoot = ""
-	m.caps = msg.Capabilities // stored for Phase B; unrendered this phase
+	m.caps = msg.Capabilities
 	// The EFFECTIVE provider+model the server resolved this session to (echoed
 	// verbatim). The header shows it from turn zero. The model is FIXED per session,
 	// so this is set once here. An older server yields the zero value → no segment.
@@ -1592,11 +1589,16 @@ func orDash(s string) string {
 }
 
 func (m *Model) restoreSteerSend(send steerQueuedSend) {
+	m.pendingPromptMedia = appendMedia(m.pendingPromptMedia, send.PendingMedia)
 	draft := send.Draft
-	if current := m.prompt.Value(); strings.TrimSpace(current) != "" {
+	current := strings.TrimSpace(m.prompt.Value())
+	if _, payload, explicit := deliveryCommand(current); explicit {
+		current = payload
+	}
+	if current != "" {
 		draft = current + queueMergeSep + draft
 	}
-	m.prompt.Rewrite(draft)
+	m.prompt.Rewrite("/steer " + draft)
 	if len(send.Staged) > 0 {
 		if m.stagedMedia == nil {
 			m.stagedMedia = make(map[string]stagedAttachment)
@@ -1669,6 +1671,7 @@ func (m Model) applySteerOutcome(msg client.SteerOutcomeMsg) (tea.Model, tea.Cmd
 		m.steer.Phase = steerRetracted
 		for i := range m.steer.Sends {
 			m.steer.Sends[i].Media = client.MediaResult{}
+			m.steer.Sends[i].PendingMedia = client.MediaResult{}
 			m.steer.Sends[i].Staged = nil
 			m.steer.Sends[i].Pastes = nil
 		}
@@ -1933,7 +1936,10 @@ func applySubagentTo(c *conversation, msg client.SubagentMsg) {
 		c.applySubagentTyped(msg)
 		c.fleetStart(msg.ChildID, msg.Goal, msg.RoutedCategory, msg.RoutedModel, msg.RoutingReason, msg.Model, msg.Background)
 		if msg.ChildID != "" {
-			c.fleetLane(msg.ChildID).routingDecision = cloneRoutingDecision(msg.RoutingDecision)
+			lane := c.fleetLane(msg.ChildID)
+			lane.provider = msg.Provider
+			lane.explicitRouterCategory = msg.ExplicitRouterCategory
+			lane.routingDecision = cloneRoutingDecision(msg.RoutingDecision)
 		}
 	case client.SubagentTool:
 		c.applySubagentTyped(msg)
@@ -1965,6 +1971,11 @@ func applyParallelTo(c *conversation, msg client.ParallelMsg) {
 		c.parallelStart(msg.ParentCallID, msg.Join, msg.BranchCount)
 	case client.ParallelBranchStart:
 		c.parallelBranchStart(msg.ParentCallID, msg.BranchIndex, msg.ChildID, msg.BranchLabel, msg.Goal, msg.RoutedCategory, msg.RoutedModel, msg.RoutingReason, msg.Model)
+		if msg.ParentCallID != "" {
+			branch := c.parallelGroupFor(msg.ParentCallID).parallelBranchFor(msg.BranchIndex)
+			branch.provider = msg.Provider
+			branch.explicitRouterCategory = msg.ExplicitRouterCategory
+		}
 		c.setParallelRoutingDecision(msg.ParentCallID, msg.BranchIndex, msg.RoutingDecision)
 	case client.ParallelBranchTool:
 		c.parallelBranchTool(msg)
@@ -2033,19 +2044,18 @@ func (m Model) onResize(msg tea.WindowSizeMsg) (tea.Model, tea.Cmd) {
 	m.rend.setWidth(m.width)
 	// relayout sizes the viewport height from the measured layout (header + transients
 	// + input + footer) and, when the height changed, re-renders + re-derives
-	// auto-follow — the tail onResize used to do inline. A width-only resize leaves
-	// that layout unchanged, so re-render below to replace any stale wrapped lines.
-	// The magic taH=4/footerH=2 and
-	// the header arithmetic are GONE; the heights are measured via lipgloss.Height of
-	// the rendered regions in chrome().
+	// auto-follow. A width-only resize leaves that layout unchanged, so re-render
+	// below to replace any stale wrapped lines. The heights are measured via
+	// lipgloss.Height of the rendered regions in chrome().
 	m.relayout()
 	m.configureAgentsInvViewport()
-	m.clampHelpScroll()
 	m.clampAgentsDetailScroll()
 	if widthChanged && m.vp.Height() == viewportHeight {
 		m.refreshView()
 		m.conversationView.observe(m.vp)
 	}
+	m.hits.clear()
+	m.metrics.clear()
 	// Open modal surfaces derive geometry at Render time; no resize fan-out is needed.
 	return m, m.maybeKittyTransmit()
 }
@@ -2061,7 +2071,7 @@ func (m Model) onColorProfile(msg tea.ColorProfileMsg) Model {
 	return m
 }
 
-// onBackgroundColor is the light/dark auto-detect reducer (ADR 0280): it
+// onBackgroundColor is the light/dark auto-detect reducer: it
 // consumes the tea.BackgroundColorMsg Init requested via
 // tea.RequestBackgroundColor when Deps.ThemeAutoDetect was set. It disarms
 // themeAutoDetectArmed FIRST, so a duplicate or late response — a misbehaving
@@ -2082,7 +2092,7 @@ func (m Model) onBackgroundColor(msg tea.BackgroundColorMsg) Model {
 }
 
 // switchTheme installs th as the active theme and resets every baked-in
-// consumer so nothing keeps rendering the old palette (ADR 0280): the input
+// consumer so nothing keeps rendering the old palette: the input
 // textarea and every overlay read m.deps.Theme fresh on each render, but the
 // renderer's glamour/block/join caches and the spinner's style are captured at
 // construction time and must be rebuilt explicitly.
@@ -2247,12 +2257,6 @@ func (m Model) onKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return mm, cmd
 	}
 
-	// Help owns the remaining keys while open: its documented navigation and close
-	// controls act on the overlay and every ordinary key is swallowed.
-	if m.showHelp {
-		return m.onHelpKey(msg)
-	}
-
 	// Disarm whichever quit guards are armed: any non-ctrl+c key disarms the Quit
 	// guard and any non-ctrl+d key disarms the QuitD guard (each guard's window spans
 	// only its own consecutive presses). The two guards are INDEPENDENT — neither key
@@ -2357,54 +2361,11 @@ func (m Model) onPendingApprovalRecoveryKey(msg tea.KeyPressMsg) (tea.Model, tea
 	return m, tea.Quit, true
 }
 
-// onHelpKey handles the help overlay's complete keyboard contract. It runs before
-// phase routing, so navigation never reaches the conversation and every other key
-// remains swallowed.
-func (m Model) onHelpKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
-	m.clampHelpScroll()
-	total, window := m.helpScrollGeometry()
-	switch {
-	case key.Matches(msg, m.keys.Help), key.Matches(msg, m.keys.Close):
-		m.showHelp = false
-		m.helpScroll = 0
-		_ = m.prompt.Focus()
-	case key.Matches(msg, m.keys.ScrollD):
-		m.helpScroll = clampScroll(m.helpScroll+window, total, window)
-	case key.Matches(msg, m.keys.ScrollU):
-		m.helpScroll = clampScroll(m.helpScroll-window, total, window)
-	case key.Matches(msg, m.keys.Down):
-		m.helpScroll = clampScroll(m.helpScroll+1, total, window)
-	case key.Matches(msg, m.keys.Up):
-		m.helpScroll = clampScroll(m.helpScroll-1, total, window)
-	case key.Matches(msg, m.keys.ScrollBottom):
-		m.helpScroll = maxScrollOffset(total, window)
-	case key.Matches(msg, m.keys.ScrollTop):
-		m.helpScroll = 0
-	}
-	return m, nil
-}
-
-// helpScrollGeometry derives the same complete rendered lines and window used by
-// renderHelpOverlay, keeping key navigation and height-bounded rendering aligned.
-func (m Model) helpScrollGeometry() (total, window int) {
-	lines := helpRenderedLines(helpBody(m.deps.Theme, m.caps, m.helpKeyMarkings()))
-	return len(lines), helpWindowHeight(m.deps.Theme, m.vp.Height(), len(lines))
-}
-
-// clampHelpScroll keeps a retained offset valid after a relayout changes the
-// viewport geometry. It deliberately preserves a still-valid offset rather than
-// pinning an earlier End selection to the new bottom.
-func (m *Model) clampHelpScroll() {
-	total, window := m.helpScrollGeometry()
-	m.helpScroll = clampScroll(m.helpScroll, total, window)
-}
-
 // selection owner is active.
 func (m Model) clearAnySelection(msg tea.KeyPressMsg) (Model, bool) {
 	if !key.Matches(msg, m.keys.Cancel) || (!m.sel.active && !m.prompt.HasSelection()) ||
-		m.showHelp || m.modal != nil || m.team.view != teamNone || m.agentsInv.view != agentsInvNone ||
-		m.reflections.view != reflectionsNone ||
-		m.dream.view != dreamClosed || m.effort.view != effortNone || m.worktrees.view != worktreesNone {
+		m.modal != nil || m.team.view != teamNone || m.agentsInv.view != agentsInvNone ||
+		m.reflections.view != reflectionsNone || m.executionPicker.open {
 		return m, false
 	}
 	m = m.clearSelection()
@@ -2449,6 +2410,7 @@ func (m Model) dispatchPhaseKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 // / esc-only. Returns handled=false when no overlay is open so onKey falls through.
 func (m Model) onOverlayKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
 	if s, ok := m.modal.(*admissionRecoveryState); ok {
+		(&m).prepareSurfaceInput()
 		mm, cmd := m.onAdmissionKey(msg, s)
 		return mm, cmd, true
 	}
@@ -2464,10 +2426,8 @@ func (m Model) onOverlayKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
 		m.onAgentsKey,
 		m.onAgentsInvKey,
 		m.onReflectionsKey,
-		m.onDreamKey,
 		m.onConnectKey,
-		m.onEffortKey,
-		m.onWorktreesKey,
+		m.onExecutionKey,
 		m.onScheduleKey,
 	}
 	for _, route := range overlays {
@@ -2476,6 +2436,13 @@ func (m Model) onOverlayKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
 		}
 	}
 	return m, nil, false
+}
+
+// prepareSurfaceInput refreshes the offer without publishing its hit regions.
+func (m *Model) prepareSurfaceInput() {
+	_ = m.renderModalSurface()
+	m.hits.clear()
+	m.metrics.clear()
 }
 
 // dispatchSurfaceKey routes a KeyPressMsg through the open modal surface when
@@ -2487,6 +2454,7 @@ func (m Model) dispatchSurfaceKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool
 	if m.modal == nil {
 		return m, nil, false
 	}
+	(&m).prepareSurfaceInput()
 	cmd, handled, closed := m.modal.HandleKey(msg)
 	if !handled {
 		return m, nil, false
@@ -2632,6 +2600,21 @@ func (m Model) applyToolcallsSurfaceIntent(intent surfaceIntent) bool {
 // tells the caller to skip common dispatch post-processing after a root-owned
 // effect takes over; handled=false never carries meaningful work.
 func (m Model) applySurfaceIntent(intent surfaceIntent) (model tea.Model, cmd tea.Cmd, stopSurfaceDispatch bool) {
+	if intent, ok := intent.(worktreeSelectIntent); ok {
+		if intent.sourceID != m.sessionID || m.phase != phaseIdle {
+			m.closeModal()
+			m.statusMsg = "worktree choice is stale; relist and try again"
+			return m, m.prompt.Focus(), true
+		}
+		mm, cmd := m.switchToWorktree(intent.worktree)
+		return mm, cmd, true
+	}
+	if intent, ok := intent.(effortSelectIntent); ok {
+		sel := m.effortSelection(intent.effort)
+		m.closeModal()
+		mm, cmd, _ := m.switchEffort(sel)
+		return mm, cmd, true
+	}
 	if model, cmd, handled, stopSurfaceDispatch := m.applyApprovalSurfaceIntent(intent); handled {
 		return model, cmd, stopSurfaceDispatch
 	}
@@ -2958,8 +2941,8 @@ func normalizePastedNewlines(content string) string {
 // primary-selection paste trigger (onMousePress), so the two paths can never
 // drift apart.
 func (m Model) pasteGateOpen() bool {
-	if m.showHelp || m.phase == phaseAwaitingApproval ||
-		m.modal != nil || m.team.view != teamNone || m.agentsInv.view != agentsInvNone || m.dream.view != dreamClosed {
+	if m.phase == phaseAwaitingApproval ||
+		m.modal != nil || m.team.view != teamNone || m.agentsInv.view != agentsInvNone {
 		return false
 	}
 	return m.phase == phaseIdle || m.phase == phaseRunning
@@ -2979,7 +2962,7 @@ func (m Model) pasteGateOpen() bool {
 //	    and steer state intact;
 //	(3) any bound Newline chord (shift+enter, ctrl+j, ctrl+enter, alt+enter by
 //	    default) → insert a newline;
-//	(4) enter (Submit) → run a bare local built-in, or enqueuePrompt for model-facing
+//	(4) enter (Submit) → run a bare local built-in, or deliverDefaultPrompt for model-facing
 //	    input (which steers when supported);
 //	(5) pgup/pgdn → scroll the viewport;
 //	(6) anything else → feed the textarea (+ palette resync via afterInputEdit).
@@ -3007,6 +2990,8 @@ func (m Model) onRunningKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		// into the textarea for editing. It is distinct from Escape, which cancels
 		// the running turn without changing the queue.
 		return m.editBackQueue()
+	case key.Matches(msg, m.keys.Help) && strings.TrimSpace(m.prompt.Value()) == "":
+		return m.runHelp()
 	case key.Matches(msg, m.keys.Agents):
 		// f6 opens the unified agents overlay MID-RUN (Gap B): the deep view is
 		// most useful while agents stream. openAgents permits phaseRunning, reads the
@@ -3022,7 +3007,7 @@ func (m Model) onRunningKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		if mm, cmd, handled := m.dispatchBareBuiltin(m.prompt.Value()); handled {
 			return mm, cmd
 		}
-		return m.enqueuePrompt()
+		return m.deliverDefaultPrompt()
 	case key.Matches(msg, m.keys.ScrollU), key.Matches(msg, m.keys.ScrollD),
 		key.Matches(msg, m.keys.ScrollTop), key.Matches(msg, m.keys.ScrollBottom):
 		return m.onScrollKey(msg)
@@ -3051,30 +3036,21 @@ func (m Model) onRunningCancel() (tea.Model, tea.Cmd) {
 	}
 }
 
-// enqueuePrompt stages the current textarea text as a follow-up to drain when the
-// running turn ends (see drainQueue). It trims the input; an empty line is a no-op
-// (so enter on a blank prompt mid-run does nothing). At the cap it rejects with a
-// muted "queue full" status and KEEPS the input (the user can edit it down or wait
-// for a drain to free a slot). Otherwise it appends, resets the input, sets a
-// "queued (N)" status, and re-syncs the palette (afterInputEdit) so the dropdown
-// closes now that the "/" line is gone.
-//
-// Crucially it does NOT open a stream or send anything in local-queue mode — the
-// queued text becomes a real prompt only when drainQueue later hands it to
-// submitPrompt (the existing send path, which maps to the server-side
-// StartRunContent reopen). In steer mode it sends only model-facing input; callers
-// intercept bare local built-ins before reaching this path. There is no second send
-// path.
-func (m Model) enqueuePrompt() (tea.Model, tea.Cmd) {
+// deliverDefaultPrompt follows the pending delivery kind, or the capability default
+// when nothing is pending. Explicit delivery commands bypass this selection.
+func (m Model) deliverDefaultPrompt() (tea.Model, tea.Cmd) {
 	text := strings.TrimSpace(m.prompt.Value())
-	if text == "" && len(m.stagedMedia) == 0 && len(m.stagedPastes) == 0 {
+	if text == "" && len(m.stagedMedia) == 0 && len(m.stagedPastes) == 0 && len(m.pendingPromptMedia.Parts) == 0 {
 		return m, nil
 	}
-	// Native multimodal steer is enabled by the single steer capability. When it
-	// is runtime-disabled, the local queue owns all mid-run text and media.
-	if m.caps.Steer && m.stream != nil {
-		return m.sendSteer(text)
+	kind := "queue"
+	if m.hasPendingSteer() || (len(m.queued) == 0 && m.caps.Steer && m.stream != nil) {
+		kind = "steer"
 	}
+	return m.deliverPrompt(kind, text)
+}
+
+func (m Model) queuePrompt(text string) (tea.Model, tea.Cmd) {
 	if len(m.queued) >= maxQueued {
 		m.statusMsg = m.deps.Theme.Style("muted").Render(fmt.Sprintf("queue full (%d)", maxQueued))
 		return m, nil
@@ -3085,6 +3061,7 @@ func (m Model) enqueuePrompt() (tea.Model, tea.Cmd) {
 		m.refreshView()
 		return m, nil
 	}
+	media = appendMedia(m.pendingPromptMedia, media)
 	combined := appendMedia(m.queuedMedia, media)
 	if err := combined.CheckAggregateCaps(); err != nil {
 		m.conv.addError("attach: " + err.Error())
@@ -3092,17 +3069,19 @@ func (m Model) enqueuePrompt() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if prepared == "" && len(media.Parts) == 0 {
-		return m, nil
+		return m.emptyDelivery()
 	}
 	m.queued = append(m.queued, prepared)
+	m.queuedDrafts = append(m.queuedDrafts, queuedPromptDraft{
+		Text: text, Staged: filterStaged(text, m.stagedMedia), Pastes: filterPastes(text, m.stagedPastes), Media: m.pendingPromptMedia,
+	})
+	m.pendingPromptMedia = client.MediaResult{}
 	m.queuedMedia = combined
 	if hadStaged {
 		m.stagedMedia = nil
-		m.nextMediaN = 0
 	}
 	if hadPastes {
 		m.stagedPastes = nil
-		m.nextPasteN = 0
 	}
 	m.prompt.Reset()
 	m.statusMsg = m.deps.Theme.Style("muted").Render(fmt.Sprintf("queued (%d)", len(m.queued)))
@@ -3143,28 +3122,24 @@ func filterPastes(draft string, in map[string]string) map[string]string {
 	return out
 }
 
-// sendSteer collapses the textarea text into ONE steer bundle and sends it on
-// the live Converse stream with a FRESH client-minted message_id. A bundle is
-// always a complete replacement: an in-flight bundle is CANCELED first (the ↑
-// edit-back path, cancel-then-recompose), so the old text is never merged onto
-// the new frame — resend carries exactly what the user edited, with a new id.
-// The lifecycle then advances ONLY on the server's authoritative steer.outcome
-// ack / steer drain echo (updateStreamSecondary), correlated BY the minted id —
-// never assumed client-side. The textarea is reset and the card moves to the
-// pending state.
+// sendSteer sends one payload-only fragment on the live Converse stream with a
+// fresh client-minted message_id. Pullback requests cancellation before a
+// recomposed fragment is resent; acknowledgement and drain remain authoritative.
+// The textarea is reset and the fragment joins the pending bundle.
 func (m Model) sendSteer(text string) (tea.Model, tea.Cmd) {
-	draft := m.prompt.Value()
+	draft := text
 	prepared, media, hadPastes, hadStaged, err := m.preparePromptContent(text)
 	if err != nil {
 		m.conv.addError("attach: " + err.Error())
 		m.refreshView()
 		return m, nil
 	}
+	media = appendMedia(m.pendingPromptMedia, media)
 	if prepared == "" && len(media.Parts) == 0 {
-		return m, nil
+		return m.emptyDelivery()
 	}
 	combined := media
-	if m.steer != nil {
+	if m.hasPendingSteer() {
 		for _, send := range m.steer.Sends {
 			combined = appendMedia(send.Media, combined)
 		}
@@ -3188,10 +3163,11 @@ func (m Model) sendSteer(text string) (tea.Model, tea.Cmd) {
 	// bundle — re-sending the full merged text would re-append drained text, the
 	// duplication bug). The bundle's display Text re-joins from the whole queue.
 	id := m.mintSteerID()
-	if m.steer == nil {
+	if !m.hasPendingSteer() {
 		m.steer = &steerState{Phase: steerPending}
 	}
-	m.steer.Sends = append(m.steer.Sends, steerQueuedSend{ID: id, Text: text, Draft: draft, Media: media, Staged: staged, Pastes: pastes})
+	m.steer.Sends = append(m.steer.Sends, steerQueuedSend{ID: id, Text: text, Draft: draft, Media: media, PendingMedia: m.pendingPromptMedia, Staged: staged, Pastes: pastes})
+	m.pendingPromptMedia = client.MediaResult{}
 	m.steer.Text = joinSteerSends(m.steer.Sends)
 	stream := m.stream
 	sendMsg := func() tea.Msg {
@@ -3216,16 +3192,14 @@ func (m Model) wantsEditBack(msg tea.KeyPressMsg) bool {
 	if !key.Matches(msg, m.keys.EditBack) || strings.TrimSpace(m.prompt.Value()) != "" {
 		return false
 	}
-	// Steer mode: ↑ pulls the COMBINED in-flight steer back for editing (the
-	// merged message, not a queue). Steer state takes precedence — with steer
-	// armed mid-run the local queue is never populated (steer owns mid-run input).
-	if m.steer != nil && (m.steer.Phase == steerPending || m.steer.Phase == steerSent) {
+	// Only unconsumed steer state takes precedence over the local queue.
+	if m.hasPendingSteer() {
 		return true
 	}
 	return len(m.queued) > 0
 }
 
-// editBackQueue is the inverse of enqueuePrompt: it pulls the whole staged queue
+// editBackQueue is the inverse of queuePrompt: it pulls the whole staged queue
 // back into the textarea (merged by queueMergeSep) so the user can revise it, and
 // CLEARS the queue + any pause. It is non-destructive — bound to ↑ on an EMPTY input
 // line with a non-empty queue (see onRunningKey / onIdleKey), distinct from Escape:
@@ -3235,19 +3209,16 @@ func (m Model) wantsEditBack(msg tea.KeyPressMsg) bool {
 // Callers gate on the empty-input / non-empty-queue precondition, so this assumes
 // m.queued is non-empty.
 func (m Model) editBackQueue() (tea.Model, tea.Cmd) {
-	// Steer mode (task-10 queue model): ↑ CANCELS the outstanding bundle WITHOUT
-	// waiting for the ack and pulls the whole not-yet-drained text back into the
-	// textarea as ONE editable blob. The old frame is NEVER left live to be merged
-	// onto the resend (the edit-back duplication bug): the steer_cancel rides the
-	// stream first, the draft is immediately editable, and the resend collapses
-	// the edited blob into ONE new bundle with a NEW message_id. A drained id is
-	// burned — after the echo there is no bundle to edit (wantsEditBack gates).
-	if m.steer != nil && len(m.steer.Sends) > 0 {
+	// Pullback requests cancellation without waiting for the ack and restores one
+	// prefixed draft. An already-consumed steer cannot be recalled; late outcomes
+	// and drain echoes still follow the existing message-id reconciliation.
+	if m.hasPendingSteer() && len(m.steer.Sends) > 0 {
 		stream := m.stream
 		id := m.steer.watermarkID()
 		parts := make([]string, 0, len(m.steer.Sends))
 		for _, send := range m.steer.Sends {
 			parts = append(parts, send.Draft)
+			m.pendingPromptMedia = appendMedia(m.pendingPromptMedia, send.PendingMedia)
 			if m.stagedMedia == nil && len(send.Staged) > 0 {
 				m.stagedMedia = make(map[string]stagedAttachment)
 			}
@@ -3259,7 +3230,7 @@ func (m Model) editBackQueue() (tea.Model, tea.Cmd) {
 		}
 		draft := strings.Join(parts, queueMergeSep)
 		m.steer = nil
-		m.prompt.Rewrite(draft)
+		m.prompt.Rewrite("/steer " + draft)
 		m.statusMsg = m.deps.Theme.Style("muted").Render("steer pulled back for editing — resend to replace")
 		m.refreshView()
 		cancel := func() tea.Msg {
@@ -3270,9 +3241,28 @@ func (m Model) editBackQueue() (tea.Model, tea.Cmd) {
 		}
 		return m.afterInputEdit(cancel)
 	}
-	m.prompt.Rewrite(strings.Join(m.queued, queueMergeSep))
+	drafts := m.queued
+	media := m.queuedMedia
+	if len(m.queuedDrafts) == len(m.queued) {
+		drafts = make([]string, 0, len(m.queuedDrafts))
+		media = client.MediaResult{}
+		for _, draft := range m.queuedDrafts {
+			drafts = append(drafts, draft.Text)
+			media = appendMedia(media, draft.Media)
+			if m.stagedMedia == nil && len(draft.Staged) > 0 {
+				m.stagedMedia = make(map[string]stagedAttachment)
+			}
+			maps.Copy(m.stagedMedia, draft.Staged)
+			if m.stagedPastes == nil && len(draft.Pastes) > 0 {
+				m.stagedPastes = make(map[string]string)
+			}
+			maps.Copy(m.stagedPastes, draft.Pastes)
+		}
+	}
+	m.prompt.Rewrite("/queue " + strings.Join(drafts, queueMergeSep))
 	m.queued = nil
-	m.pendingPromptMedia = m.queuedMedia
+	m.queuedDrafts = nil
+	m.pendingPromptMedia = appendMedia(m.pendingPromptMedia, media)
 	m.queuedMedia = client.MediaResult{}
 	m.queuePaused = ""
 	m.statusMsg = m.deps.Theme.Style("muted").Render("queue pulled back for editing")
@@ -3314,12 +3304,9 @@ func (m Model) onIdleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m.editBackQueue()
 	case key.Matches(msg, m.keys.Help) && strings.TrimSpace(m.prompt.Value()) == "":
 		// "?" is printable: open help only on an empty prompt so "?" in prose still
-		// inserts literally. The overlay claims the keyboard via the m.showHelp gate
+		// inserts literally. The overlay claims the keyboard through modal routing
 		// in onKey; blur the input while it is up.
-		m.showHelp = true
-		m.helpScroll = 0
-		m.prompt.Blur()
-		return m, nil
+		return m.runHelp()
 	case key.Matches(msg, m.keys.MCPPanel):
 		return m.runMCP()
 	case key.Matches(msg, m.keys.Resources):
@@ -3338,6 +3325,7 @@ func (m Model) onIdleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		// A run ended on a non-clean stop with staged follow-ups still queued (the
 		// paused state). Escape drops that paused queue; it never clears a draft.
 		m.queued = nil
+		m.queuedDrafts = nil
 		m.queuedMedia = client.MediaResult{}
 		m.queuePaused = ""
 		m.statusMsg = m.deps.Theme.Style("muted").Render("queue cleared")
@@ -3608,16 +3596,15 @@ func (m *Model) recoverPrompt(authoritative bool) {
 // submitPrompt opens a fresh Converse run for the textarea text, sends the
 // mandatory prompt frame, starts the reader goroutine, and arms WaitForMsg.
 func (m Model) submitPrompt() (tea.Model, tea.Cmd) {
-	text := strings.TrimSpace(m.prompt.Value())
-	// A BARE built-in command line ("/clear", "/help", …) is dispatched here —
-	// before addUser / stream-open — and dispatched to its Model action, so the
-	// built-in text never reaches the model. A non-built-in "/…" falls through to
-	// the normal send (preserving bare workspace-command invocation), and a
-	// "/name arg" line has a space → commandPrefix is false → also falls through
-	// (workspace commands expand server-side from the full line).
+	// Builtins are editor syntax; payload submission must not dispatch them again.
 	if mm, cmd, handled := m.dispatchBareBuiltin(m.prompt.Value()); handled {
 		return mm, cmd
 	}
+	return m.submitPromptText(strings.TrimSpace(m.prompt.Value()))
+}
+
+// submitPromptText delivers a payload without interpreting it as a client command.
+func (m Model) submitPromptText(text string) (tea.Model, tea.Cmd) {
 	if m.sessionID == "" {
 		return m, nil
 	}
@@ -3635,24 +3622,23 @@ func (m Model) submitPrompt() (tea.Model, tea.Cmd) {
 		m.refreshView()
 		return m, nil
 	}
-	if text != "" || len(media.Parts) > 0 {
-		m.retainAdmission(text, media)
+	if text == "" && len(media.Parts) == 0 {
+		return m.emptyDelivery()
 	}
+	m.retainAdmission(text, media)
 	if hadStaged {
 		m.stagedMedia = nil
-		m.nextMediaN = 0
+		if len(m.queued) == 0 {
+			m.nextMediaN = 0
+		}
 	}
 	if hadPastes {
 		m.stagedPastes = nil
-		m.nextPasteN = 0
+		if len(m.queued) == 0 {
+			m.nextPasteN = 0
+		}
 	}
 	m.pendingPromptMedia = client.MediaResult{}
-	// A media-only prompt (empty text but at least one part) still sends — the proto
-	// allows text OR parts, and the server enforces "at least one non-empty". A
-	// truly empty submit (no text AND no parts) is the no-op early-return.
-	if text == "" && len(media.Parts) == 0 {
-		return m, nil
-	}
 	if m.startupAdopted {
 		m.startupRetryPrompt = m.prompt.Value()
 		m.startupFirstPromptPending = true
@@ -3661,7 +3647,11 @@ func (m Model) submitPrompt() (tea.Model, tea.Cmd) {
 	// Only a plain text prompt is recoverable. Attachments, media, and staged file
 	// parts have one-shot lifecycle and must never be replayed implicitly.
 	if text != "" && len(media.Parts) == 0 && !hadPastes && !hadStaged {
-		m.promptRecovery = &promptRecovery{text: text, sessionID: m.sessionID, streamGen: m.streamGen + 1}
+		recoveryText := text
+		if _, _, explicit := deliveryCommand(m.prompt.Value()); explicit {
+			recoveryText = m.prompt.Value()
+		}
+		m.promptRecovery = &promptRecovery{text: recoveryText, sessionID: m.sessionID, streamGen: m.streamGen + 1}
 	}
 	if len(media.Descriptors) > 0 {
 		m.admissionSubmission.blockID = m.conv.addUserWithMedia(text, media.Descriptors)
@@ -3683,8 +3673,7 @@ func (m Model) submitPrompt() (tea.Model, tea.Cmd) {
 	// chance to drain at this run's clean completion, so it is no longer "paused".
 	m.queuePaused = ""
 	// The textarea stays FOCUSED while running so the user can type a follow-up and
-	// enqueue it (see enqueuePrompt / onRunningKey). It used to Blur here to signal
-	// "input disabled while running"; type-while-running supersedes that.
+	// enqueue it (see deliverDefaultPrompt / onRunningKey).
 	m.phase = phaseRunning
 	m.statusMsg = "running…"
 	m.refreshView()
@@ -4238,6 +4227,7 @@ func (m Model) endRun(stop string) Model {
 // The conversation viewport receives wheel events only while no modal is open.
 func (m Model) onMouseWheel(msg tea.MouseWheelMsg) (tea.Model, tea.Cmd) {
 	if m.modal != nil {
+		(&m).prepareSurfaceInput()
 		if m.width <= 0 || m.vp.Height() <= 0 {
 			return m, nil
 		}
@@ -4256,11 +4246,22 @@ func (m Model) onMouseWheel(msg tea.MouseWheelMsg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-// onMouseMsg fans the four mouse message types out to their handlers. It is one
-// switch case in update() (keeping update()'s cyclomatic complexity bounded) that
-// re-discriminates the concrete mouse type here, where the dispatch logically
-// belongs.
+// onMouseMsg fans the four mouse message types out to their handlers. An open
+// modal owns left clicks, motion, release, and wheel input; right-click copy and
+// middle-click paste retain their root-owned behavior. It is one switch case in
+// update() (keeping update()'s cyclomatic complexity bounded) that re-discriminates
+// the concrete mouse type here, where the dispatch logically belongs.
 func (m Model) onMouseMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if m.modal != nil {
+		switch msg := msg.(type) {
+		case tea.MouseWheelMsg:
+			return m.onMouseWheel(msg)
+		case tea.MouseClickMsg:
+			return m.onMousePress(msg.Mouse())
+		case tea.MouseMotionMsg, tea.MouseReleaseMsg:
+			return m, nil
+		}
+	}
 	if m.agentsInv.view != agentsInvNone {
 		if wheel, ok := msg.(tea.MouseWheelMsg); ok {
 			return m.onAgentsInvWheel(wheel)
@@ -4692,9 +4693,9 @@ func (m Model) copySelection() (tea.Model, tea.Cmd) {
 
 // snapshotSelection records the selection's identity anchor and RE-SPLICES the
 // highlight over the unstyled base content in place — the per-gesture (press / drag /
-// edge-autoscroll) update. It REPLACES the old applySelectionHighlight: the highlight
-// is no longer the viewport's native SetHighlights (which mis-placed it on ANSI-styled
-// content — see styleSelection) but our own per-line splice. So there is no
+// edge-autoscroll) update. The highlight is not the viewport's native SetHighlights
+// (which mis-places it on ANSI-styled content — see styleSelection) but our own
+// per-line splice. So there is no
 // SetHighlights/ClearHighlights and no YOffset save/restore to neutralise an
 // EnsureVisible scroll-jump — re-splicing the SAME-length content never moves YOffset.
 //
@@ -4727,7 +4728,7 @@ func snapshotSelection(m *Model) {
 		// gesture behaviour; a later replacement will still clear them rather than
 		// claiming logical survival.
 		m.sel.anchorPoint, m.sel.headPoint = selectionPoint{}, selectionPoint{}
-		m.sel.snapshot = selectedText(base, m.sel)
+		m.sel.snapshot = selectedConversationText(frame, base, m.sel)
 		m.sel.copied = m.sel.snapshot
 	}
 	m.conversationView.replaceProjection(&m.vp, styleSelection(base, m.sel, m.deps.Theme.Style("selection")))
@@ -4891,7 +4892,7 @@ func (m *Model) refreshView() {
 	// A selection survives only when both logical endpoint contexts resolve and the
 	// resulting ANSI-free copied text remains byte-identical. Reading anchors may
 	// fall back; selections deliberately may not.
-	if m.sel.active && ((m.sel.anchorPoint.blockID == 0 && selectedText(content, m.sel) != m.sel.snapshot) ||
+	if m.sel.active && ((m.sel.anchorPoint.blockID == 0 && selectedConversationText(frame, content, m.sel) != m.sel.snapshot) ||
 		(m.sel.anchorPoint.blockID != 0 && !m.sel.resolveLogical(frame))) {
 		*m = m.clearSelection()
 	}
@@ -4941,9 +4942,10 @@ func (m Model) popAndSubmit() (tea.Model, tea.Cmd) {
 	m.queuePaused = ""
 	merged := strings.Join(m.queued, queueMergeSep)
 	m.queued = nil
+	m.queuedDrafts = nil
 	m.pendingPromptMedia = m.queuedMedia
 	m.queuedMedia = client.MediaResult{}
-	m.prompt.Rewrite(merged)
+	m.prompt.Rewrite("/queue " + merged)
 	if m.pendingMode != "" {
 		submit := firstKey(m.keys.Submit, "enter")
 		m.statusMsg = m.deps.Theme.Style("warning").Render("mode " + m.pendingMode + " will apply before the queued prompt — press " + submit + " to continue")

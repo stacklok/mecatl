@@ -142,8 +142,8 @@ func TestProviderModelDiscovery_Scenario1_PureReads(t *testing.T) {
 	var calls atomic.Int32
 	d := discoveryFixture(t, map[string]providerEntry{"native": {nativeEndpoint: true, lister: discoveryListerFunc(func(context.Context) ([]modelEntry, error) { calls.Add(1); return nil, nil })}})
 	before := d.snapshot()
-	discovery := newAgentModelDiscoveryTool(d)
-	if !modelDiscoveryAvailable(d.reg, d) {
+	discovery := newAgentModelDiscoveryTool(d, nil)
+	if !modelDiscoveryAvailable(d.reg, d, nil) {
 		t.Fatal("native demand-only lister unavailable to discovery")
 	}
 	_ = discovery.Spec()

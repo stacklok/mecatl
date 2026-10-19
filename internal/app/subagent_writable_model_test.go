@@ -19,8 +19,8 @@ import (
 // TestBuildSubagentToolWritableModelOverrideE2E drives the REAL buildSubagentTool with a
 // mode:"read-write"+model call (issue #285) and proves BOTH halves of the fix end-to-end:
 // (a) the writable child's provider request carries the OVERRIDE model (not the parent's),
-// and (b) its Write lands DIRECTLY in the REAL parent workspace (direct-write parity, ADR
-// 0041). Before #285 the writable clobber discarded the per-call model engine and ran the
+// and (b) its Write lands DIRECTLY in the REAL parent workspace (direct-write parity).
+// Before #285 the writable clobber discarded the per-call model engine and ran the
 // DEFAULT writable model, so the observer would never see the override.
 func TestBuildSubagentToolWritableModelOverrideE2E(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {

@@ -601,7 +601,7 @@ func TestRejectEmbeddedOnlyFlagsInConnect(t *testing.T) {
 		"openai-base-url", "openrouter-base-url", "anthropic-base-url", "opencode-base-url", "api-key-file",
 		"toolhive-llm", "toolhive-llm-base-url",
 		"model", "default-provider", "default-model", "subagent-model",
-		"model-alias", "model-slot", "subagent-model-router",
+		"model-alias", "model-alias-provider", "model-slot", "subagent-model-router",
 		"llm-per-attempt-timeout", "llm-stream-idle-timeout",
 		"no-prompt-cache", "anthropic-cache-ttl",
 		"memory-dir", "no-memory", "store-dir", "no-store",
@@ -694,7 +694,7 @@ func flagValueForTest(name string) string {
 	case "openai-base-url", "openrouter-base-url", "anthropic-base-url",
 		"opencode-base-url", "toolhive-llm-base-url":
 		return "http://x"
-	case "model-alias", "model-slot", "keymap":
+	case "model-alias", "model-alias-provider", "model-slot", "keymap":
 		return "k=v"
 	case "llm-per-attempt-timeout", "llm-stream-idle-timeout":
 		return "30s"
@@ -757,8 +757,8 @@ func TestNoSavedAuthFlagIsUnknownFlagError(t *testing.T) {
 }
 
 func TestOutputEconomyFlagIsUnknownFlagError(t *testing.T) {
-	// The --output-economy compatibility flag is DELETED (ADR 0089, the clean
-	// break superseding ADR 0086's parse-compat shim): it now fails at flag-parse
+	// The --output-economy compatibility flag is DELETED (a clean
+	// break that replaced the earlier parse-compat shim): it now fails at flag-parse
 	// time with the standard unknown-flag error instead of parsing as a no-op —
 	// in BOTH modes (unregistration is total).
 	for _, mode := range []transportMode{modeLocal, modeConnect} {

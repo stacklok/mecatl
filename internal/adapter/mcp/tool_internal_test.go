@@ -7,8 +7,8 @@ import (
 
 // TestIsTopLevelTypeMismatch is the direct table test for the pure helpers
 // behind validateStructuredContent's top-level type-mismatch suppression
-// (tool.go ~line 499 / 533). These were previously exercised only indirectly via
-// TestMapContentStructuredContentArrayAgainstObjectSchema; this pins every
+// (tool.go ~line 499 / 533). Beyond the indirect coverage in
+// TestMapContentStructuredContentArrayAgainstObjectSchema, this pins every
 // branch at the unit level: single-type schema, multi-type Types schema,
 // integer/number subsumption (both directions), null/boolean/primitive
 // mismatches, the empty-schema (no declared type) pass-through, and the

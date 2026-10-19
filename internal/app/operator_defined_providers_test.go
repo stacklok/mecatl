@@ -62,7 +62,7 @@ func sendProviderRequest(t *testing.T, provider port.LLMProvider, model string) 
 	}
 }
 
-func TestADR_0238_CustomProviderInferenceRefusesRedirects(t *testing.T) {
+func TestCustomProviderInferenceRefusesRedirects(t *testing.T) {
 	for _, tc := range []struct {
 		name, flavor, suffix string
 	}{
@@ -116,7 +116,7 @@ func TestADR_0238_CustomProviderInferenceRefusesRedirects(t *testing.T) {
 	}
 }
 
-func TestADR_0238_CustomProviderNoneDoesNotUseAmbientOpenAIKey(t *testing.T) {
+func TestCustomProviderNoneDoesNotUseAmbientOpenAIKey(t *testing.T) {
 	t.Setenv("OPENAI_API_KEY", "ambient-secret")
 	var authorization string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

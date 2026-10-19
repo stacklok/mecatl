@@ -23,7 +23,7 @@
 // surface is UNAUTHENTICATED by design: it is meant to be mounted on the same
 // loopback admin listener as the rest of the perf surface, never exposed
 // publicly. Its output can embed goroutine-derived function names and timing, so
-// loopback-only is a security requirement (see docs/adr/0018-perf-observability.md).
+// loopback-only is a security requirement.
 //
 // # Layering
 //

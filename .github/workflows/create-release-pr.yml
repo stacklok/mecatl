@@ -50,7 +50,7 @@ jobs:
           persist-credentials: false
           ref: refs/heads/main
       # Validate the tracked defaults on main before any release write authority.
-      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
         with:
           version: v0.38.0
       - name: Validate execution base images
@@ -147,9 +147,9 @@ jobs:
           permission-pull-requests: write
 
       # VERSION remains the source of truth. releaseo propagates its next value to the
-      # published chart metadata and the chart's default mecak8s image tag, matching the
-      # release flow used by ToolHive. No workflow file carries a version, so the App still
-      # needs no workflows:write permission.
+      # published chart metadata (mecak8s and mecatl-studio) and the mecak8s chart's
+      # default image tag, matching the release flow used by ToolHive. No workflow file
+      # carries a version, so the App still needs no workflows:write permission.
       - name: Create the release PR
         id: release
         uses: stacklok/releaseo@80e8d8131d41cf8763254d02360f2c5ce9b7c0df # v0.0.4
@@ -168,6 +168,11 @@ jobs:
             - file: deploy/helm/mecak8s/values.yaml
               path: image.tag
               prefix: v
+            - file: deploy/helm/mecatl-studio/Chart.yaml
+              path: version
+            - file: deploy/helm/mecatl-studio/Chart.yaml
+              path: appVersion
+              prefix: v
 
       # releaseo writes to disk before committing through the API, so the working tree still
       # holds exactly what the PR contains. Assert every propagated value so an incomplete
@@ -181,7 +186,9 @@ jobs:
           if [ "$(tr -d '[:space:]' < VERSION)" != "${NEW_VERSION}" ] \
             || ! grep -Fxq "version: ${NEW_VERSION}" deploy/helm/mecak8s/Chart.yaml \
             || ! grep -Fxq "appVersion: \"v${NEW_VERSION}\"" deploy/helm/mecak8s/Chart.yaml \
-            || ! grep -Fxq "  tag: \"v${NEW_VERSION}\"" deploy/helm/mecak8s/values.yaml; then
+            || ! grep -Fxq "  tag: \"v${NEW_VERSION}\"" deploy/helm/mecak8s/values.yaml \
+            || ! grep -Fxq "version: ${NEW_VERSION}" deploy/helm/mecatl-studio/Chart.yaml \
+            || ! grep -Fxq "appVersion: \"v${NEW_VERSION}\"" deploy/helm/mecatl-studio/Chart.yaml; then
             echo "::error::release metadata is not synchronized at ${NEW_VERSION}"
             exit 1
           fi

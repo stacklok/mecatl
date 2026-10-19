@@ -2,8 +2,8 @@
 #
 # Local dev/demo image for mecated, built for `docker compose up` in the Studio
 # workspace (apps/docker-compose.yml) only. NOT the project's official release
-# artifact — that's built via `ko` from ../../.ko.yaml (see docs/adr/ for the
-# release pipeline). This Dockerfile exists purely so Studio is runnable end to
+# artifact — that's built via `ko` from ../../.ko.yaml (see
+# .github/workflows/release.yml for the release pipeline). This Dockerfile exists purely so Studio is runnable end to
 # end against a real daemon without a separately-installed Go toolchain. It is a
 # Studio-owned copy of the Slack bot example's
 # sdk/typescript/examples/slack-bot/docker/mecated.Dockerfile, so the two demos
@@ -12,7 +12,7 @@
 # Build context is the repository root (see docker-compose.yml: `context: ..`)
 # since mecated needs the whole Go workspace (go.work references ./engine and the
 # other in-repo modules).
-FROM golang:1.27-bookworm@sha256:69a7b9788769bec032d238959b61854e9ae87f57be9029ec04e9885fabf99195 AS build
+FROM golang:1.27.2-bookworm@sha256:5cf287a799e6b94384bad13d16b14904c531f51ba65792237e122ce42b392f61 AS build
 WORKDIR /src
 COPY . .
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/mecated ./cmd/mecated

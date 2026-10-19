@@ -12,7 +12,7 @@ import (
 )
 
 // failoverSpecs proves graceful failover releases the session lease BEFORE the
-// TTL (ADR 0048 §4h test 2). The contrast is the control case:
+// TTL. The contrast is the control case:
 //
 //   - GRACEFUL: `kubectl delete pod` pod-A → preStop /drain + SIGTERM →
 //     boundedShutdown → Service.Close → releaseLease for every held lease. The

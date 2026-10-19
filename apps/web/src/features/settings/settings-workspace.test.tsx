@@ -12,7 +12,7 @@ import {
   getRuntimeQueryKey,
   getRuntimeSettingsQueryKey,
   getStorageHealthQueryKey,
-  listLearningProposalsQueryKey,
+  listLearningProposalsInfiniteQueryKey,
   listUserMemoryQueryKey,
 } from "@mecatl-studio/contracts/query";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -34,12 +34,14 @@ const model = {
   displayName: "Model One",
   id: "model-one",
   image: true,
+  providerDisplayName: "Team/openai",
   providerId,
   reasoning: true,
 };
 const provider = {
   availableNotDefault: true,
   defaultModelAutoSelected: false,
+  displayName: "Team/openai",
   hint: "Ready through the gateway",
   id: providerId,
   modelCount: 1,
@@ -73,11 +75,15 @@ function runtime(overrides: Partial<GetRuntimeResponse> = {}): GetRuntimeRespons
       audio: false,
       bash: true,
       debugMcp: false,
+      executionTemplates: false,
       image: true,
       learnedSkills: true,
       learningProposals: true,
       manualCompaction: true,
-      manualDream: { userModel: { decide: true, generate: true } },
+      manualDream: {
+        projectMemory: { decide: false, generate: false },
+        userModel: { decide: true, generate: true },
+      },
       mcp: true,
       mcpConnectorStatus: false,
       memory: true,
@@ -303,7 +309,8 @@ describe("settings facts", () => {
       status: "authenticated",
     });
     const profile = await renderSection("profile", client);
-    expect(profile).toContain("browser profile preferences");
+    expect(profile).toContain("These details appear beside your chat messages");
+    expect(profile).not.toContain("Source:");
     expect(profile).toContain("Your display name");
     expect(profile).toContain("Sign-in session");
     expect(profile).toContain("Signed in");
@@ -317,7 +324,9 @@ describe("settings facts", () => {
     expect(sharedIdentity).toContain("Shared static identity");
     expect(sharedIdentity).not.toContain("safe-opaque-account-key");
     const appearance = await renderSection("appearance", client);
-    expect(appearance).toContain("browser appearance");
+    expect(appearance).toContain("Appearance");
+    expect(appearance).toContain("Theme");
+    expect(appearance).not.toContain("Source:");
     const agent = await renderSection("agent", client);
     expect(agent).toContain("Agent name");
     expect(agent).toContain("Picture");
@@ -325,7 +334,8 @@ describe("settings facts", () => {
     expect(agent).toContain("deployment");
     expect(agent).not.toContain("Change agent behavior");
 
-    client.setQueryData(listLearningProposalsQueryKey({ query: { status: "staged" } }), {
+    // The queue pages through an infinite query; seed its first page.
+    const firstPage = {
       complete: true,
       items: [
         {
@@ -349,13 +359,65 @@ describe("settings facts", () => {
           version: "1",
         },
       ],
+      nextCursor: "",
       reason: "",
       supported: true,
-    });
+    };
+    client.setQueryData(
+      listLearningProposalsInfiniteQueryKey({ query: { limit: 50, status: "staged" } }),
+      { pageParams: [""], pages: [firstPage] },
+    );
     const learning = await renderSection("learning", client);
     expect(learning).toContain("Learning configuration is managed by this deployment");
-    expect(learning).toContain("Approve");
-    expect(learning).toContain("Reject");
+    // The filter pills read "Approved" and "Rejected", so match the row's buttons exactly.
+    const buttons = [
+      ...new DOMParser().parseFromString(learning, "text/html").querySelectorAll("button"),
+    ].map((button) => button.textContent);
+    expect(buttons).toContain("Approve");
+    expect(buttons).toContain("Reject");
+  });
+
+  it("titles every section with a plain card heading and no implementation line", async () => {
+    const client = seededClient();
+    client.setQueryData(getAuthSessionQueryKey(), { mode: "static", status: "disabled" });
+    client.setQueryData(getStorageHealthQueryKey(), {
+      activeJob: false,
+      available: true,
+      childCount: "0",
+      corruptCount: "0",
+      currentBytes: "2048",
+      lastFailure: false,
+      mainCount: "1",
+      reclaimableBytes: null,
+      scheduledCount: "0",
+      sessionCount: "1",
+      supported: true,
+      unknownCount: "0",
+    });
+    const titles = {
+      about: ["About Mecatl Studio", "About the agent"],
+      agent: ["Agent", "Agent behavior"],
+      appearance: ["Appearance", "Chat"],
+      diagnostics: ["Diagnostics"],
+      labs: ["Labs"],
+      learning: ["Learning", "Suggestions", "Learn from a chat"],
+      "mcp-tools": ["MCP tools"],
+      models: ["Models"],
+      permissions: ["Permissions"],
+      profile: ["You", "Sign-in session"],
+      providers: ["Providers"],
+      storage: ["Storage"],
+    } as const;
+    for (const [section, expected] of Object.entries(titles)) {
+      const page = await renderSection(section as keyof typeof titles, client);
+      const document = new DOMParser().parseFromString(page, "text/html");
+      const headings = [...document.querySelectorAll("section > h2")].map(
+        (heading) => heading.textContent,
+      );
+      expect(headings, section).toEqual(expected);
+      expect(page, section).not.toMatch(/Source:|Owner:/);
+      expect(document.querySelector(".bg-brand\\/10"), section).toBeNull();
+    }
   });
 
   it("keeps memory consolidation on the settings list", async () => {
@@ -369,9 +431,11 @@ describe("settings facts", () => {
     });
     const page = await renderSection("memory", client);
     expect(page).toContain("Consolidate memory");
-    expect(page).toContain("Generate plan");
+    expect(page).toContain("Memory to consolidate");
     expect(page).toContain('href="/workspace/memory?item=team%2Fvoice"');
-    expect(page).toContain("deployment");
+    expect(page).toContain("Memory is set where the agent runs");
+    expect(page).toContain('data-testid="memory-stores"');
+    expect(page).not.toContain("Source:");
   });
 
   it("explains managed sections without write controls", async () => {
@@ -391,17 +455,16 @@ describe("settings facts", () => {
       unknownCount: "0",
     });
     const expectations = [
-      ["permissions", "Ask", "deployment", "runtime"],
-      ["mcp-tools", "MCP", "deployment", "runtime"],
-      ["storage", "3", "deployment", "storage"],
-      ["diagnostics", "mecated", "deployment", "runtime"],
-      ["labs", "Labs", "deployment", "runtime"],
+      ["permissions", "Ask", "deployment"],
+      ["mcp-tools", "MCP", "deployment"],
+      ["storage", "3", "deployment"],
+      ["diagnostics", "mecated", "deployment"],
+      ["labs", "Labs", "No Labs features are available"],
     ] as const;
-    for (const [section, fact, owner, source] of expectations) {
+    for (const [section, fact, note] of expectations) {
       const page = await renderSection(section, client);
       expect(page).toContain(fact);
-      expect(page).toContain(owner);
-      expect(page).toContain(source);
+      expect(page).toContain(note);
       const document = new DOMParser().parseFromString(page, "text/html");
       const forbiddenControls = [
         ...document.querySelectorAll("input, select, textarea, button"),

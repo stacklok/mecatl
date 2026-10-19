@@ -234,7 +234,7 @@ func TestPerSessionAssemblerMatchesShared(t *testing.T) {
 	if rulesCount != 1 {
 		t.Fatalf("turn-0 request must carry the rules fragment exactly once; got %d (userMsgs=%v)", rulesCount, obs.userMsgs)
 	}
-	// Ephemeral (ADR 0043): the rules fragment must NOT be persisted into the
+	// Ephemeral: the rules fragment must NOT be persisted into the
 	// conversation — it is prepended per-run, never recorded.
 	for _, m := range sess.Conversation.Messages {
 		if m.Role == session.RoleUser && strings.Contains(m.Text, "RULES-ONCE-MARKER") {

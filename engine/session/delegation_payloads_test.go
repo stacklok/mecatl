@@ -5,9 +5,8 @@ import (
 	"testing"
 )
 
-// TestDelegationObservability_Scenario1_PayloadsCarryPreviewFields pins AC1.1 of the
-// delegation-observability-convergence plan (ADR 0079): SubagentPayload and
-// ParallelPayload each expose the same Text / Detail / InnerKind bounded-preview
+// TestDelegationObservability_Scenario1_PayloadsCarryPreviewFields pins that
+// SubagentPayload and ParallelPayload each expose the same Text / Detail / InnerKind bounded-preview
 // fields TeamPayload already carries, typed identically (Text/Detail string,
 // InnerKind EventType) so the chokepoint can populate them with clamped previews.
 func TestDelegationObservability_Scenario1_PayloadsCarryPreviewFields(t *testing.T) {
@@ -31,7 +30,7 @@ func TestDelegationObservability_Scenario1_PayloadsCarryPreviewFields(t *testing
 	assertPreviewFields(t, "ParallelPayload", par.Text, par.Detail, par.InnerKind)
 
 	// Parity with TeamPayload: the three families carry the same preview field
-	// types so drainChildObserved populates them identically (ADR 0079 tier 1).
+	// types so drainChildObserved populates them identically.
 	team := TeamPayload{Text: "t", Detail: "d", InnerKind: EvToolCall}
 	assertPreviewFields(t, "TeamPayload", team.Text, team.Detail, team.InnerKind)
 

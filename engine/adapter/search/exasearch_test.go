@@ -340,6 +340,22 @@ func TestExaProviderDegradation(t *testing.T) {
 	}
 }
 
+func TestParseJSONRPCErrorDoesNotExposeRemoteMessage(t *testing.T) {
+	const paidKey = "paid-key-sentinel"
+	requestURL := "https://mcp.exa.ai/mcp?exaApiKey=" + paidKey
+	body := []byte(`{"jsonrpc":"2.0","id":2,"error":{"code":-32000,"message":"proxy rejected ` + requestURL + `"}}`)
+
+	_, err := parseJSONRPC(body, "application/json")
+	if !errors.Is(err, tool.ErrSearchBackendDown) {
+		t.Fatalf("expected ErrSearchBackendDown, got %v", err)
+	}
+	for _, secret := range []string{paidKey, requestURL, "exaApiKey="} {
+		if strings.Contains(err.Error(), secret) {
+			t.Fatalf("JSON-RPC error leaked secret-bearing remote message: %q", err)
+		}
+	}
+}
+
 // TestExaProviderTransportErrorDegrades maps an unreachable endpoint (transport
 // error) to ErrSearchBackendDown.
 func TestExaProviderTransportErrorDegrades(t *testing.T) {
@@ -348,10 +364,13 @@ func TestExaProviderTransportErrorDegrades(t *testing.T) {
 	client := srv.Client()
 	url := srv.URL
 	srv.Close()
-	p := NewExaProvider(ExaConfig{Endpoint: url, HTTPClient: client})
+	p := NewExaProvider(ExaConfig{Endpoint: url, APIKey: "paid-secret-key", HTTPClient: client})
 	_, err := p.Search(context.Background(), tool.SearchQuery{Query: "x", Limit: 5})
 	if !errors.Is(err, tool.ErrSearchBackendDown) {
-		t.Fatalf("expected ErrSearchBackendDown on a transport error, got %v", err)
+		t.Fatal("expected ErrSearchBackendDown on a transport error")
+	}
+	if strings.Contains(err.Error(), "paid-secret-key") || strings.Contains(err.Error(), "exaApiKey=") {
+		t.Fatal("Exa transport error leaked the secret-bearing request URL")
 	}
 }
 

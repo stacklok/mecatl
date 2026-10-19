@@ -14,7 +14,7 @@ import (
 const fireDeliveryMaxRunes = 10000
 
 // renderFireStarted renders a fire's "started" notice as a FENCED-UNTRUSTED
-// harness note (issue #386, Phase 4a). It mirrors renderFireDelivery but carries
+// harness note (issue #386). It mirrors renderFireDelivery but carries
 // ONLY the schedule name + fire/session id — NO model-authored content (none
 // exists at start: the run has not produced any output yet). The note is framed
 // as data ("a scheduled task started"), never as a live instruction.

@@ -38,15 +38,27 @@ const chat = {
     createdSessionRequest = request;
     return { id: "session-2" };
   },
+  async executionTemplates() {
+    return { items: [], inventoryRevision: "rev" };
+  },
   async deleteSession() {},
   async detail(sessionId: string) {
     return {
-      capabilities: { image: true, manualCompaction: true, modelSelection: true },
+      capabilities: {
+        audio: false,
+        builtInShell: false,
+        executionFiles: false,
+        image: true,
+        manualCompaction: true,
+        modelSelection: true,
+      },
       id: sessionId,
+      kind: "main",
       mode: "plan" as const,
       model: {
         contextWindow: "200000",
         id: "test-model",
+        providerDisplayName: "Test",
         providerId: "test",
         reasoningEffort: "high" as const,
       },
@@ -68,10 +80,26 @@ const chat = {
       complete: true,
       items: [
         {
-          capabilities: { delete: true, deleteReason: "", rename: true, renameReason: "" },
+          capabilities: {
+            copyId: true,
+            copyIdReason: "",
+            delete: true,
+            deleteReason: "",
+            fork: true,
+            forkReason: "",
+            inspect: true,
+            inspectReason: "",
+            publicChat: true,
+            publicChatReason: "",
+            rename: true,
+            renameReason: "",
+            viewTranscript: true,
+            viewTranscriptReason: "",
+          },
           createdAt: "2026-09-16T12:00:00.000Z",
           debugTargetSessionId: "",
           id: "session-1",
+          kind: "main",
           modelId: "test-model",
           state: "idle",
           title: "First chat",
@@ -374,13 +402,97 @@ describe("chat routes", () => {
     });
   });
 
+  it("rejects the reserved profile wire and malformed execution variants", async () => {
+    for (const body of [
+      { profile: "no-fs" },
+      { execution: { none: {}, template: { id: "x", revision: `v1-${"a".repeat(64)}` } } },
+      { execution: { template: { id: "x" } } },
+      {
+        debugTargetSessionId: "debug",
+        execution: { template: { id: "x", revision: `v1-${"a".repeat(64)}` } },
+      },
+    ]) {
+      const response = await request("/api/v1/sessions", {
+        body: JSON.stringify(body),
+        headers: { "Content-Type": "application/json" },
+        method: "POST",
+      });
+      expect(response.status).toBe(400);
+    }
+  });
+
+  it("does not retry stale or full template selectors or leak upstream details", async () => {
+    const revision = `v1-${"a".repeat(64)}`;
+    for (const [code, expected] of [
+      ["placement_selector_stale", "template_unavailable"],
+      ["resource_exhausted", "template_capacity"],
+    ] as const) {
+      const create = vi
+        .fn()
+        .mockRejectedValue(
+          new MecatlError("private upstream address and subject", { code, transport: "grpc" }),
+        );
+      const failing = createApp({ chat: { ...chat, createSession: create } });
+      const response = await failing.request("/api/v1/sessions", {
+        body: JSON.stringify({ execution: { template: { id: "safe", revision } } }),
+        headers: { ...csrfHeaders(), "Content-Type": "application/json" },
+        method: "POST",
+      });
+      expect(response.status).toBe(409);
+      const body = await response.json();
+      expect(body.code).toBe(expected);
+      expect(JSON.stringify(body)).not.toContain("private upstream");
+      expect(create).toHaveBeenCalledTimes(1);
+    }
+  });
+
+  it("distinguishes disabled catalog from a temporarily unavailable backend", async () => {
+    for (const [code, status] of [
+      ["unsupported_feature", 501],
+      ["placement_unavailable", 503],
+    ] as const) {
+      const failing = createApp({
+        chat: {
+          ...chat,
+          executionTemplates: vi
+            .fn()
+            .mockRejectedValue(new MecatlError("private endpoint", { code, transport: "grpc" })),
+        },
+      });
+      const response = await failing.request("/api/v1/execution-templates");
+      expect(response.status).toBe(status);
+      const body = await response.json();
+      expect(body.code).toBe(
+        code === "unsupported_feature" ? "execution_templates_disabled" : code,
+      );
+      expect(JSON.stringify(body)).not.toContain("private endpoint");
+    }
+  });
+
+  it("serves a bounded caller-filtered template inventory", async () => {
+    const response = await request("/api/v1/execution-templates");
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ inventoryRevision: "rev", items: [] });
+  });
+
+  it("rejects the obsolete noFilesystem selector before calling the service", async () => {
+    createdSessionRequest = undefined;
+    const response = await request("/api/v1/sessions", {
+      body: JSON.stringify({ toolAccess: "noFilesystem" }),
+      headers: { "Content-Type": "application/json" },
+      method: "POST",
+    });
+    expect(response.status).toBe(400);
+    expect(createdSessionRequest).toBeUndefined();
+  });
+
   it("creates sessions", async () => {
     const response = await request("/api/v1/sessions", {
       body: JSON.stringify({
         mode: "plan",
         model: { id: "claude-sonnet", providerId: "anthropic" },
         reasoningEffort: "high",
-        toolAccess: "noFilesystem",
+        execution: { none: {} },
       }),
       headers: { "Content-Type": "application/json" },
       method: "POST",
@@ -392,7 +504,7 @@ describe("chat routes", () => {
       mode: "plan",
       model: { id: "claude-sonnet", providerId: "anthropic" },
       reasoningEffort: "high",
-      toolAccess: "noFilesystem",
+      execution: { none: {} },
     });
   });
 
@@ -428,6 +540,106 @@ describe("chat routes", () => {
     await expect(fork.json()).resolves.toEqual({ id: "session-fork" });
     expect(clear.status).toBe(201);
     await expect(clear.json()).resolves.toEqual({ id: "session-clear" });
+  });
+
+  it("passes opaque worktree selectors only in explicit successor requests", async () => {
+    const clearSession = vi.fn().mockResolvedValue({ id: "clear-successor" });
+    const forkSession = vi.fn().mockResolvedValue({ id: "fork-successor" });
+    const selected = createApp({ chat: { ...chat, clearSession, forkSession } });
+    const send = (path: string, body: unknown) =>
+      selected.request(path, {
+        body: JSON.stringify(body),
+        headers: { ...csrfHeaders(), "Content-Type": "application/json" },
+        method: "POST",
+      });
+
+    expect(
+      (await send("/api/v1/sessions/source/clear", { worktreeSelector: "opaque-choice" })).status,
+    ).toBe(201);
+    expect(clearSession).toHaveBeenCalledWith("source", { worktreeSelector: "opaque-choice" });
+    expect(
+      (
+        await send("/api/v1/sessions/source/fork", {
+          model: { id: "model", providerId: "provider" },
+          reasoningEffort: "default",
+          worktreeSelector: "opaque-choice",
+        })
+      ).status,
+    ).toBe(201);
+    expect(forkSession).toHaveBeenCalledWith("source", {
+      model: { id: "model", providerId: "provider" },
+      reasoningEffort: "default",
+      worktreeSelector: "opaque-choice",
+    });
+    expect((await send("/api/v1/sessions/source/clear", { worktreeSelector: "" })).status).toBe(
+      400,
+    );
+    expect(clearSession).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps failed successor selectors out of problem details", async () => {
+    const failure = new MecatlError("selector opaque-choice at /private/root is stale", {
+      code: "placement_selector_stale",
+      status: 9,
+      transport: "grpc",
+    });
+    const forkSession = vi.fn().mockRejectedValue(failure);
+    const clearSession = vi.fn().mockRejectedValue(failure);
+    const selected = createApp({ chat: { ...chat, clearSession, forkSession } });
+    const send = (path: string, body: unknown) =>
+      selected.request(path, {
+        body: JSON.stringify(body),
+        headers: { ...csrfHeaders(), "Content-Type": "application/json" },
+        method: "POST",
+      });
+
+    const clear = await send("/api/v1/sessions/source/clear", {
+      worktreeSelector: "opaque-choice",
+    });
+    const fork = await send("/api/v1/sessions/source/fork", {
+      model: { id: "model", providerId: "provider" },
+      reasoningEffort: "default",
+      worktreeSelector: "opaque-choice",
+    });
+    for (const response of [clear, fork]) {
+      expect(response.status).toBe(409);
+      expect(await response.text()).not.toContain("opaque-choice");
+    }
+    expect(clearSession).toHaveBeenCalledTimes(1);
+    expect(forkSession).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not blame the worktree selector for generic successor rejections", async () => {
+    const send = (code: "invalid_argument" | "failed_precondition") => {
+      const failure = new MecatlError("run owns control for opaque-choice", {
+        code,
+        status: 9,
+        transport: "grpc",
+      });
+      const selected = createApp({
+        chat: { ...chat, forkSession: vi.fn().mockRejectedValue(failure) },
+      });
+      return selected.request("/api/v1/sessions/source/fork", {
+        body: JSON.stringify({
+          model: { id: "model", providerId: "provider" },
+          reasoningEffort: "default",
+          worktreeSelector: "opaque-choice",
+        }),
+        headers: { ...csrfHeaders(), "Content-Type": "application/json" },
+        method: "POST",
+      });
+    };
+    for (const [code, status, problemCode] of [
+      ["invalid_argument", 400, "successor_rejected"],
+      ["failed_precondition", 409, "successor_unavailable"],
+    ] as const) {
+      const response = await send(code);
+      const text = await response.text();
+      expect(response.status).toBe(status);
+      expect(text).toContain(problemCode);
+      expect(text).not.toContain("placement_selector");
+      expect(text).not.toContain("opaque-choice");
+    }
   });
 
   it("streams durable session activity", async () => {
@@ -606,7 +818,15 @@ describe("chat routes", () => {
   it("rejects stale and duplicate plan verdicts across BFF routes", async () => {
     const resolved = new Set<string>();
     const resolvePlan = vi.fn();
+    let planControlSupported = true;
     const resolvePlanAsk = vi.fn(async (askId: string, _verdict: string) => {
+      if (!planControlSupported) {
+        throw new MecatlError("unsupported", {
+          code: "unsupported_feature",
+          status: 501,
+          transport: "http",
+        });
+      }
       if (askId === "ask-unopted") {
         throw new MecatlError("unopted", {
           code: "failed_precondition",
@@ -636,11 +856,7 @@ describe("chat routes", () => {
         return resolvePlanAsk(askId, verdict);
       },
     }));
-    const compatibility = vi.fn().mockResolvedValue({
-      features: new Set(["exact_plan_ask_control"]),
-    });
     const service = createMecatlChatService({
-      server: { compatibility },
       sessions: { get: vi.fn().mockResolvedValue({ controls, resolvePlan }) },
     } as unknown as Client);
     const firstBff = createApp({ chat: service });
@@ -659,7 +875,7 @@ describe("chat routes", () => {
       send(secondBff, "run-plan", "ask-unopted", "iterate"),
     ])) {
       expect(response.status).toBe(409);
-      await expect(response.json()).resolves.toMatchObject({ code: "stale_run_control" });
+      await expect(response.json()).resolves.toMatchObject({ code: "stale_plan_ask" });
     }
     expect((await send(secondBff, "run-plan", "ask-3", "accept_edits")).status).toBe(204);
     expect((await send(firstBff, "run-plan", "ask-4", "iterate")).status).toBe(204);
@@ -674,9 +890,9 @@ describe("chat routes", () => {
 
     expect((await send(firstBff, "run-plan", "ask-5", "allow_once")).status).toBe(400);
     expect(resolvePlanAsk).toHaveBeenCalledTimes(5);
-    compatibility.mockResolvedValue({ features: new Set() });
+    planControlSupported = false;
     expect((await send(firstBff, "run-plan", "ask-6", "approve")).status).toBe(503);
-    expect(resolvePlanAsk).toHaveBeenCalledTimes(5);
+    expect(resolvePlanAsk).toHaveBeenCalledTimes(6);
   });
 
   it("returns 409 stale_run_control when a control targets an ended run", async () => {

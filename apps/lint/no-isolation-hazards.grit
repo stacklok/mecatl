@@ -1,0 +1,9 @@
+// Banned under `isolate: false`. Why, and the idiomatic fix: apps/web/src/test-setup.ts.
+language js
+
+or {
+  `vi.mock($args)`,
+  `vi.doMock($args)`
+} as $call where {
+  register_diagnostic(span=$call, message="vi.mock() is banned: tests share one module cache (isolate: false), so a module mock is bypassed or leaks into other files. Render the real module with real providers and fake the network at the apiClient/fetch boundary. See the NO-ISOLATE RULES in apps/web/src/test-setup.ts.", severity="error")
+}

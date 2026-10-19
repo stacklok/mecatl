@@ -31,6 +31,19 @@ function hasOverlay(): boolean {
   return Boolean(document.querySelector(overlaySelector));
 }
 
+/**
+ * Whether a press comes from inside another ask's card. Each pending ask's
+ * card is marked `data-approval-scope`, and the active ask's card, the one
+ * Escape answers, is also marked `data-active-ask`. From any other card,
+ * Escape answers no ask: not the active one, which the reader isn't looking
+ * at, and not the card's own, which no key answers (a detail panel showing
+ * it closes instead).
+ */
+function inOtherAskCard(target: EventTarget | null): boolean {
+  const card = target instanceof Element ? target.closest("[data-approval-scope]") : null;
+  return card !== null && !card.hasAttribute("data-active-ask");
+}
+
 export function useChatEscape(options: ChatEscapeOptions): void {
   const latest = useRef(options);
   latest.current = options;
@@ -97,6 +110,7 @@ export function useChatEscape(options: ChatEscapeOptions): void {
       }
       if (state.pendingAsk !== "none") {
         disarm();
+        if (inOtherAskCard(event.target)) return;
         if (state.pendingAsk === "plan" && !state.planAvailable) state.onUnavailablePlan();
         else if (state.askAvailable !== false) {
           if (state.pendingAsk === "plan") state.onIteratePlan();
@@ -118,11 +132,7 @@ export function useChatEscape(options: ChatEscapeOptions): void {
         disarm();
         return;
       }
-      if (
-        armedAt.current !== undefined &&
-        released.current &&
-        Date.now() - armedAt.current <= 500
-      ) {
+      if (armedAt.current !== undefined && released.current && Date.now() - armedAt.current < 500) {
         disarm();
         state.onClearDraft();
       } else {
@@ -132,7 +142,6 @@ export function useChatEscape(options: ChatEscapeOptions): void {
         expiry.current = window.setTimeout(disarm, 500);
       }
     }
-    const changed = disarm;
     const observer = new MutationObserver(() => {
       if (hasOverlay()) disarm();
     });
@@ -145,24 +154,24 @@ export function useChatEscape(options: ChatEscapeOptions): void {
     document.addEventListener("keydown", capture, true);
     document.addEventListener("keydown", keydown);
     document.addEventListener("keyup", keyup);
-    document.addEventListener("input", changed);
-    document.addEventListener("change", changed);
-    document.addEventListener("focusin", changed);
-    document.addEventListener("compositionstart", changed);
-    window.addEventListener("popstate", changed);
-    window.addEventListener("hashchange", changed);
+    document.addEventListener("input", disarm);
+    document.addEventListener("change", disarm);
+    document.addEventListener("focusin", disarm);
+    document.addEventListener("compositionstart", disarm);
+    window.addEventListener("popstate", disarm);
+    window.addEventListener("hashchange", disarm);
     return () => {
       if (expiry.current !== undefined) window.clearTimeout(expiry.current);
       observer.disconnect();
       document.removeEventListener("keydown", capture, true);
       document.removeEventListener("keydown", keydown);
       document.removeEventListener("keyup", keyup);
-      document.removeEventListener("input", changed);
-      document.removeEventListener("change", changed);
-      document.removeEventListener("focusin", changed);
-      document.removeEventListener("compositionstart", changed);
-      window.removeEventListener("popstate", changed);
-      window.removeEventListener("hashchange", changed);
+      document.removeEventListener("input", disarm);
+      document.removeEventListener("change", disarm);
+      document.removeEventListener("focusin", disarm);
+      document.removeEventListener("compositionstart", disarm);
+      window.removeEventListener("popstate", disarm);
+      window.removeEventListener("hashchange", disarm);
     };
   }, [disarm]);
 

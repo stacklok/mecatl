@@ -2,9 +2,14 @@ package app
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
+	"net/http/httputil"
+	"net/url"
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
@@ -41,15 +46,31 @@ func TestMCPSourceReconciliation_Scenario4_RealBuildPublicationAndExplicitGrant(
 		mockllm.ToolCallTurn(session.NewToolCall("after-refresh", "mcp__live__echo", []byte(`{"text":"after"}`))),
 		mockllm.TextTurn("after complete"),
 	)
+	backend, err := url.Parse(newMCPTestServer(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	proxy := httputil.NewSingleHostReverseProxy(backend)
+	var available atomic.Bool
+	flaky := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !available.Load() {
+			http.Error(w, "unavailable", http.StatusBadGateway)
+			return
+		}
+		proxy.ServeHTTP(w, r)
+	}))
+	defer flaky.Close()
 	built, err := buildIsolated(t, ctx, Config{
 		Workspace: workspace, StoreDir: storeDir, MockProvider: provider, NoSoul: true,
-		AllowAllTools: true,
-		MCPServers:    []mcp.ServerConfig{{Name: "live", URL: newMCPTestServer(t)}},
+		MCPServers: []mcp.ServerConfig{{Name: "live", URL: newMCPTestServer(t)}, {Name: "flaky", URL: flaky.URL}},
 	})
 	if err != nil {
 		t.Fatalf("Build with published MCP runtime: %v", err)
 	}
 	defer built.Close()
+	if status := built.Service.ListMcpSources(ctx); len(status.Sources) != 1 || len(status.Sources[0].Diagnostics) != 1 {
+		t.Fatalf("partial Build status = %+v", status)
+	}
 
 	run, err := built.Service.StartRun(ctx, persisted.ID, "call newly published tool before grant")
 	if err != nil {
@@ -85,8 +106,21 @@ func TestMCPSourceReconciliation_Scenario4_RealBuildPublicationAndExplicitGrant(
 	if err != nil {
 		t.Fatalf("StartRun after refresh: %v", err)
 	}
-	if got := drainRun(run); got != "after complete" {
-		t.Fatalf("after-refresh final text = %q", got)
+	var asked bool
+	var final string
+	for ev := range run.Events() {
+		if ev.Type == session.EvPermissionAsk && ev.Ask != nil {
+			asked = true
+			if err := run.Approve(ev.Ask.AskID, session.VerdictAllowOnce); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if ev.Type == session.EvResult && ev.Result != nil {
+			final = ev.Result.Text
+		}
+	}
+	if !asked || final != "after complete" {
+		t.Fatalf("partial startup tool permission ask=%v final=%q", asked, final)
 	}
 	built.Service.FinishRun(persisted.ID, run)
 	afterRefresh, err := built.Service.GetSession(ctx, persisted.ID)
@@ -94,6 +128,24 @@ func TestMCPSourceReconciliation_Scenario4_RealBuildPublicationAndExplicitGrant(
 		t.Fatalf("GetSession after execution: %v", err)
 	}
 	assertMCPRefreshToolResult(t, afterRefresh, "after-refresh", "echo:after")
+
+	available.Store(true)
+	recovered, err := built.Service.RefreshMcpSources(ctx, persisted.ID)
+	if err != nil || !recovered.Changed || recovered.Revision == result.Revision {
+		t.Fatalf("recovery refresh = (%+v, %v)", recovered, err)
+	}
+	status := built.Service.ListMcpSources(ctx)
+	if len(status.Sources) != 1 || len(status.Sources[0].Diagnostics) != 0 {
+		t.Fatalf("recovered status = %+v", status)
+	}
+	updated, err := built.Service.GetSession(ctx, persisted.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	authority, bound = updated.BoundAuthority()
+	if !bound || !slices.Contains(authority.CapabilitySet.Tools, "mcp__flaky__echo") {
+		t.Fatalf("recovered peer missing from session authority: %+v", authority)
+	}
 }
 
 func assertMCPRefreshToolResult(t *testing.T, sess *session.Session, callID, contains string) {

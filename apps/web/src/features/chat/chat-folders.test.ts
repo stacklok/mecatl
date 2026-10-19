@@ -5,6 +5,7 @@ import type { SessionSummaryResponse } from "@mecatl-studio/contracts";
 import { act, cleanup, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { clearUserScopedStorage } from "../../lib/account-storage";
+import { spyOnLocalStorage } from "../../test-storage";
 import {
   assignChatFolder,
   deleteChatFolder,
@@ -22,7 +23,7 @@ afterEach(() => {
 
 describe("chat folders", () => {
   it("keeps folder edits available in memory when browser storage is full", () => {
-    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+    spyOnLocalStorage("setItem").mockImplementation(() => {
       throw new Error("Quota exceeded");
     });
     const { result, unmount } = renderHook(() => useChatFolders());
@@ -94,10 +95,26 @@ describe("chat folders", () => {
 
   it("keeps folder order and recency-buckets unfiled chats", () => {
     const session = (id: string, updatedAt: string): SessionSummaryResponse => ({
-      capabilities: { delete: true, deleteReason: "", rename: true, renameReason: "" },
+      capabilities: {
+        copyId: true,
+        copyIdReason: "",
+        delete: true,
+        deleteReason: "",
+        fork: true,
+        forkReason: "",
+        inspect: true,
+        inspectReason: "",
+        publicChat: true,
+        publicChatReason: "",
+        rename: true,
+        renameReason: "",
+        viewTranscript: true,
+        viewTranscriptReason: "",
+      },
       createdAt: updatedAt,
       debugTargetSessionId: "",
       id,
+      kind: "main",
       modelId: "",
       state: "idle",
       title: id,

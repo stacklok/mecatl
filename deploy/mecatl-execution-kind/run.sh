@@ -9,28 +9,63 @@ if [ "${MECATL_EXECUTION_QUAL_CLEAN_ENV:-}" != 1 ]; then
     DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-}" CONTAINER_HOST="${CONTAINER_HOST:-}" DOCKER_HOST="${DOCKER_HOST:-}" \
     CONTAINER_ENGINE="${CONTAINER_ENGINE:-}" MECATL_EXECUTION_QUAL_CI="${MECATL_EXECUTION_QUAL_CI:-}" MECATL_EXECUTION_QUAL_PROFILE="${MECATL_EXECUTION_QUAL_PROFILE:-}" \
     TOOLBOX_PATH="${TOOLBOX_PATH:-}" MECATL_EXECUTION_DEV_TOOLBOX="${MECATL_EXECUTION_DEV_TOOLBOX:-}" MECATL_EXECUTION_K8S_TOOLBOX="${MECATL_EXECUTION_K8S_TOOLBOX:-}" \
-    MECATL_EXECUTION_QUAL_OUTPUT="${MECATL_EXECUTION_QUAL_OUTPUT:-}" \
+    MECATL_EXECUTION_QUAL_OUTPUT="${MECATL_EXECUTION_QUAL_OUTPUT:-}" MECATL_EXECUTION_QUAL_RESUME_STATE="${MECATL_EXECUTION_QUAL_RESUME_STATE:-}" \
+    MECATL_EXECUTION_QUAL_NATURAL_EXPIRY="${MECATL_EXECUTION_QUAL_NATURAL_EXPIRY-0}" MECATL_EXECUTION_QUAL_HANDOFF="${MECATL_EXECUTION_QUAL_HANDOFF-0}" \
+    GITHUB_ACTIONS="${GITHUB_ACTIONS:-}" GITHUB_RUN_ID="${GITHUB_RUN_ID:-}" GITHUB_RUN_ATTEMPT="${GITHUB_RUN_ATTEMPT:-}" GITHUB_SHA="${GITHUB_SHA:-}" GITHUB_OUTPUT="${GITHUB_OUTPUT:-}" \
+    MECATL_EXECUTION_HANDOFF_SHA="${MECATL_EXECUTION_HANDOFF_SHA:-}" TMPDIR="${TMPDIR:-}" \
     MECATL_EXECUTION_QUAL_CLEAN_ENV=1 "$0" "$@"
 fi
 
 [ "$#" -eq 0 ] || { echo "usage: $0" >&2; exit 2; }
+natural_expiry=${MECATL_EXECUTION_QUAL_NATURAL_EXPIRY-0}
+case "$natural_expiry" in 0|1) ;; *) echo "MECATL_EXECUTION_QUAL_NATURAL_EXPIRY must be 0 or 1" >&2; exit 2 ;; esac
+if [ "$natural_expiry" = 1 ] && [ "${MECATL_EXECUTION_QUAL_PROFILE:-development}" != production ]; then
+  echo "natural expiry qualification requires the production profile" >&2
+  exit 2
+fi
 case "${MECATL_EXECUTION_DEV_TOOLBOX:-}" in ''|dev) ;; *) echo "MECATL_EXECUTION_DEV_TOOLBOX must be empty or dev" >&2; exit 2 ;; esac
 case "${MECATL_EXECUTION_K8S_TOOLBOX:-}" in ''|sre) ;; *) echo "MECATL_EXECUTION_K8S_TOOLBOX must be empty or sre" >&2; exit 2 ;; esac
 runtime=${CONTAINER_ENGINE:-docker}
 case "$runtime" in docker|podman) command -v "$runtime" >/dev/null 2>&1 ;; *) echo "CONTAINER_ENGINE must be docker or podman" >&2; exit 2 ;; esac
 root=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd -P)
 cd "$root"
+handoff=${MECATL_EXECUTION_QUAL_HANDOFF-0}
+case "$handoff" in 0|1) ;; *) echo "MECATL_EXECUTION_QUAL_HANDOFF must be 0 or 1" >&2; exit 2 ;; esac
+if [ "$handoff" = 1 ]; then
+  [ "${MECATL_EXECUTION_QUAL_PROFILE:-development}" = production ] &&
+  [ "${MECATL_EXECUTION_QUAL_CI:-}" = 0 ] && [ -z "${MECATL_EXECUTION_QUAL_RESUME_STATE:-}" ] &&
+  [ -n "${GITHUB_OUTPUT:-}" ] && [ "${MECATL_EXECUTION_QUAL_OUTPUT:-}" = "$GITHUB_OUTPUT" ] || { echo "handoff requires fresh retained production CI state and GitHub output" >&2; exit 2; }
+  . "$root/deploy/mecatl-execution-kind/handoff.sh"
+  handoff_ci_identity || { echo "handoff requires the exact reviewed same-run checkout" >&2; exit 2; }
+fi
 run_id=$(date -u +%Y%m%d%H%M%S)-$$
 cluster="mecatl-execution-qual-$run_id"
 context="kind-$cluster"
 state="$root/.scratch/k8s-execution/$run_id"
+resume=${MECATL_EXECUTION_QUAL_RESUME_STATE:-}
+if [ -n "$resume" ]; then
+  case "$resume" in "$root"/.scratch/k8s-execution/*) ;; *) echo "resume state outside owned fixture" >&2; exit 1 ;; esac
+  [ -f "$resume/ownership" ] && [ ! -L "$resume/ownership" ] && [ -f "$resume/kubeconfig" ] || { echo "resume fixture ownership unavailable" >&2; exit 1; }
+  state=$(CDPATH= cd -- "$resume" && pwd -P)
+  case "$state" in "$root"/.scratch/k8s-execution/*) ;; *) echo "resolved resume state outside owned fixture" >&2; exit 1 ;; esac
+  cluster=$(awk -F= '$1=="cluster" {print $2}' "$state/ownership")
+  case "$cluster" in mecatl-execution-qual-*) ;; *) echo "resume fixture cluster mismatch" >&2; exit 1 ;; esac
+  [ "$(awk -F= '$1=="runtime" {print $2}' "$state/ownership")" = "$runtime" ] &&
+  [ "$(awk -F= '$1=="profile" {print $2}' "$state/ownership")" = "${MECATL_EXECUTION_QUAL_PROFILE:-development}" ] &&
+  [ "$(awk -F= '$1=="kubeconfig" {print $2}' "$state/ownership")" = "$state/kubeconfig" ] &&
+  [ "$(awk -F= '$1=="context" {print $2}' "$state/ownership")" = "kind-$cluster" ] || { echo "resume fixture record mismatch" >&2; exit 1; }
+  [ "$(podman inspect "${cluster}-control-plane" --format '{{index .Config.Labels "io.x-k8s.kind.cluster"}}')" = "$cluster" ] || { echo "resume fixture container mismatch" >&2; exit 1; }
+  context="kind-$cluster"
+fi
 kubeconfig="$state/kubeconfig"
-mkdir -p "$root/.scratch/k8s-execution"
-umask 077
-mkdir "$state"
-mkdir "$state/pki" "$state/images"
-printf 'cluster=%s\ncontext=%s\nkubeconfig=%s\nnamespace=execution-qualification\nowner=%s\nruntime=%s\nprofile=%s\ncreated_at=%s\n' \
-  "$cluster" "$context" "$kubeconfig" "${USER:-user}" "$runtime" "${MECATL_EXECUTION_QUAL_PROFILE:-development}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >"$state/ownership"
+if [ -z "$resume" ]; then
+  mkdir -p "$root/.scratch/k8s-execution"
+  umask 077
+  mkdir "$state"
+  mkdir "$state/pki" "$state/images"
+  printf 'cluster=%s\ncontext=%s\nkubeconfig=%s\nnamespace=execution-qualification\nowner=%s\nruntime=%s\nprofile=%s\ncreated_at=%s\n' \
+    "$cluster" "$context" "$kubeconfig" "${USER:-user}" "$runtime" "${MECATL_EXECUTION_QUAL_PROFILE:-development}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >"$state/ownership"
+fi
 
 # Refuse collisions; never delete or reuse any cluster.
 if [ "$runtime" = podman ]; then
@@ -39,7 +74,7 @@ else
   unset KIND_EXPERIMENTAL_PROVIDER
 fi
 clusters=$(kind get clusters) || { echo "qualification cluster discovery failed" >&2; exit 1; }
-if printf '%s\n' "$clusters" | grep -Fx "$cluster" >/dev/null; then
+if [ -z "$resume" ] && printf '%s\n' "$clusters" | grep -Fx "$cluster" >/dev/null; then
   echo "qualification cluster already exists: $cluster" >&2
   exit 1
 fi
@@ -63,8 +98,11 @@ if [ "${MECATL_EXECUTION_QUAL_CI:-}" = 1 ]; then
     cleanup_test_build
     artifact="$state/production-failure-artifact.txt"
     if [ "$status" -ne 0 ]; then
-      timeout --kill-after=5s 60s sh "$root/deploy/mecatl-execution-kind/collect-failure.sh" \
-        "$kubeconfig" "$context" "$artifact" || printf 'qualification_diagnostics_incomplete\n' >&2
+      set -- sh "$root/deploy/mecatl-execution-kind/collect-failure.sh" "$kubeconfig" "$context" "$artifact"
+      if [ -n "${MECATL_EXECUTION_K8S_TOOLBOX:-}" ]; then
+        set -- toolbox run -c "$MECATL_EXECUTION_K8S_TOOLBOX" "$@"
+      fi
+      timeout --kill-after=5s 80s "$@" || printf 'qualification_diagnostics_incomplete\n' >&2
     fi
     kind delete cluster --name "$cluster"
     return "$status"
@@ -110,10 +148,12 @@ nodes:
         resource-quota-sync-period: "10s"
 EOF
 fi
-if [ -n "$kind_config" ]; then
-  kind create cluster --name "$cluster" --image kindest/node:v1.35.8@sha256:07b2536e30b803ed61d1677a79df6115f798ce64c80f9e22f6ed45afd09323c0 --config "$kind_config" --kubeconfig "$kubeconfig"
-else
-  kind create cluster --name "$cluster" --image kindest/node:v1.35.8@sha256:07b2536e30b803ed61d1677a79df6115f798ce64c80f9e22f6ed45afd09323c0 --kubeconfig "$kubeconfig"
+if [ -z "$resume" ]; then
+  if [ -n "$kind_config" ]; then
+    kind create cluster --name "$cluster" --image kindest/node:v1.35.8@sha256:07b2536e30b803ed61d1677a79df6115f798ce64c80f9e22f6ed45afd09323c0 --config "$kind_config" --kubeconfig "$kubeconfig"
+  else
+    kind create cluster --name "$cluster" --image kindest/node:v1.35.8@sha256:07b2536e30b803ed61d1677a79df6115f798ce64c80f9e22f6ed45afd09323c0 --kubeconfig "$kubeconfig"
+  fi
 fi
 phase_done cluster
 
@@ -140,6 +180,7 @@ helm_kube() {
 }
 
 if [ "${MECATL_EXECUTION_QUAL_PROFILE:-development}" = production ]; then
+  sh "$root/deploy/mecatl-execution-kind/install-cmctl.sh" "$state"
   cni_manifest="$state/calico-v3.32.2.yaml"
   curl --fail --location --proto '=https' --tlsv1.2 \
     https://raw.githubusercontent.com/projectcalico/calico/v3.32.2/manifests/calico.yaml \
@@ -189,11 +230,11 @@ image_step_done netprobe_build
 # Resolve the public Go base from the local OCI store, then feed its observed
 # digest to the production workload recipe without weakening its pin check.
 if [ "$runtime" = podman ]; then
-  podman image exists docker.io/library/golang:1.27 || podman pull docker.io/library/golang:1.27 >/dev/null
-  go_digest=$(podman image inspect docker.io/library/golang:1.27 --format '{{.Digest}}')
+  podman image exists docker.io/library/golang:1.27.2 || podman pull docker.io/library/golang:1.27.2 >/dev/null
+  go_digest=$(podman image inspect docker.io/library/golang:1.27.2 --format '{{.Digest}}')
 else
-  docker image inspect docker.io/library/golang:1.27 >/dev/null 2>&1 || docker pull docker.io/library/golang:1.27 >/dev/null
-  go_ref=$(docker image inspect docker.io/library/golang:1.27 --format '{{index .RepoDigests 0}}')
+  docker image inspect docker.io/library/golang:1.27.2 >/dev/null 2>&1 || docker pull docker.io/library/golang:1.27.2 >/dev/null
+  go_ref=$(docker image inspect docker.io/library/golang:1.27.2 --format '{{index .RepoDigests 0}}')
   go_digest=${go_ref#*@}
 fi
 go_image="docker.io/library/golang@${go_digest}"
@@ -201,9 +242,27 @@ image_step_done base_image
 workload_tag="localhost/mecatl-execution-workload:e2e"
 "$runtime" build --build-arg GO_IMAGE="$go_image" -f "$root/build/execution-workload/Dockerfile" -t "$workload_tag" "$root" >/dev/null
 image_step_done workload_build
+# Give BuildKit a resolvable, run-unique local name; verify it still names the
+# exact built image before using it as FROM (a raw config ID is not a FROM ref).
+executor_base="localhost/mecatl-execution-base:qual-$run_id"
+base_id=$("$runtime" image inspect "$workload_tag" --format '{{.Id}}')
+printf '%s\n' "$base_id" | grep -Eq '^(sha256:)?[0-9a-f]{64}$' || { echo "executor base image ID unavailable" >&2; exit 1; }
+"$runtime" tag "$workload_tag" "$executor_base"
+[ "$("$runtime" image inspect "$executor_base" --format '{{.Id}}')" = "$base_id" ] || { echo "executor base image identity changed" >&2; exit 1; }
+derivative_tag="localhost/mecatl-execution-operator-utility:e2e"
+if [ "$runtime" = podman ]; then
+  pull_policy=--pull=never
+else
+  pull_policy=--pull=false
+fi
+"$runtime" build "$pull_policy" --build-arg EXECUTOR_BASE="$executor_base" -f "$root/deploy/mecatl-execution-kind/fixture/derivative/Dockerfile" -t "$derivative_tag" "$root/deploy/mecatl-execution-kind/fixture/derivative" >/dev/null
+image_step_done derivative_build
+incompatible_tag="localhost/mecatl-execution-incompatible:e2e"
+"$runtime" build "$pull_policy" --target incompatible --build-arg EXECUTOR_BASE="$executor_base" -f "$root/deploy/mecatl-execution-kind/fixture/derivative/Dockerfile" -t "$incompatible_tag" "$root/deploy/mecatl-execution-kind/fixture/derivative" >/dev/null
+image_step_done incompatible_derivative_build
 
 load_index=0
-for item in "$provider_tag" "$agent_tag" "$oidc_tag" "$netprobe_tag" "$workload_tag"; do
+for item in "$provider_tag" "$agent_tag" "$oidc_tag" "$netprobe_tag" "$workload_tag" "$derivative_tag" "$incompatible_tag"; do
   archive="$state/images/$(printf '%s' "$item" | sha256sum | cut -c1-16).tar"
   "$runtime" save "$item" -o "$archive" >/dev/null
   kind load image-archive "$archive" --name "$cluster"
@@ -216,7 +275,9 @@ agent_image=$(pin_loaded "$agent_tag")
 oidc_image=$(pin_loaded "$oidc_tag")
 netprobe_image=$(pin_loaded "$netprobe_tag")
 workload_image=$(pin_loaded "$workload_tag")
-printf 'provider=%s\nagent=%s\noidc=%s\nnetprobe=%s\nworkload=%s\ngo_base=%s\n' "$provider_image" "$agent_image" "$oidc_image" "$netprobe_image" "$workload_image" "$go_image" >"$state/images/proof"
+derivative_image=$(pin_loaded "$derivative_tag")
+incompatible_image=$(pin_loaded "$incompatible_tag")
+printf 'provider=%s\nagent=%s\noidc=%s\nnetprobe=%s\nworkload=%s\nderivative=%s\nincompatible=%s\ngo_base=%s\n' "$provider_image" "$agent_image" "$oidc_image" "$netprobe_image" "$workload_image" "$derivative_image" "$incompatible_image" "$go_image" >"$state/images/proof"
 image_step_done pin_loaded
 phase_done images
 
@@ -292,38 +353,33 @@ EOF
   kube -n execution-qualification wait --for=condition=Ready pod/network-fixture pod/network-intruder --timeout=2m
 fi
 
-if [ "${MECATL_EXECUTION_QUAL_PROFILE:-development}" = production ]; then
-  legacy_profiles="$state/legacy-profiles.yaml"
-  cat >"$legacy_profiles" <<EOF
-profiles:
-  go:
-    image: $workload_image
-    storageClass: standard
-    storageSize: 1Gi
-    cpuRequest: 50m
-    memoryRequest: 64Mi
-    cpuLimit: "1"
-    memoryLimit: 512Mi
-    ephemeralStorageRequest: 64Mi
-    ephemeralStorageLimit: 1Gi
-    tmpSizeLimit: 256Mi
-    runtimeClassName: qualification-runc
-    maxFileBytes: 5242880
-    maxCommandBytes: 1048576
-    maxCommandDuration: 5m
-    maxEnvironments: 20
-EOF
-  kube apply -f "$root/e2e/k8s_execution/fixture/legacyfixture/crd.yaml"
-  kube wait --for=condition=Established crd/executionenvironments.execution.mecatl.dev --timeout=60s
-fi
+# Compile against the current CRD only. Older stored objects must be refused
+# without deleting any of their Pods or PVCs.
 
-kube -n execution-qualification create secret generic execution-security \
-  --from-file=grant-k1.pem="$state/pki/grant-key.pem" --from-file=tls.crt="$state/pki/provider.crt" \
-  --from-file=tls.key="$state/pki/provider.key" --from-file=clients.pem="$state/pki/ca.crt" --dry-run=client -o yaml | kube apply -f -
-kube -n execution-qualification create secret generic execution-client-tls \
-  --from-file=ca.crt="$state/pki/ca.crt" --from-file=tls.crt="$state/pki/mecak8s.crt" --from-file=tls.key="$state/pki/mecak8s.key" --dry-run=client -o yaml | kube apply -f -
-kube -n execution-qualification create secret generic execution-intruder-tls \
-  --from-file=ca.crt="$state/pki/ca.crt" --from-file=tls.crt="$state/pki/intruder.crt" --from-file=tls.key="$state/pki/intruder.key" --dry-run=client -o yaml | kube apply -f -
+# The issuer is scoped to this qualification namespace; no cluster-wide
+# certificate controller is part of the production execution chart.
+helm_kube upgrade --install cert-manager oci://quay.io/jetstack/charts/cert-manager \
+  --version=v1.17.2 --namespace=cert-manager --create-namespace \
+  --set crds.enabled=true --wait --timeout=4m
+kube -n execution-qualification create secret tls execution-fixture-ca \
+  --cert="$state/pki/ca.crt" --key="$state/pki/ca.key" --dry-run=client -o yaml | kube apply -f -
+kube apply -f "$root/deploy/mecatl-execution-kind/fixture-tls.yaml"
+kube -n execution-qualification wait --for=condition=Ready \
+  certificate/execution-provider-tls certificate/execution-client-tls \
+  certificate/execution-intruder-tls certificate/execution-operations-tls \
+  certificate/execution-wrong-scope-tls --timeout=3m
+# Host-side test clients need the actual initially issued leaf identities; this
+# snapshot is not used as a Kubernetes workload Secret or a renewal mechanism.
+for name in provider:execution-security intruder:execution-intruder-tls mecak8s:execution-client-tls operations:execution-operations-tls wrong-scope:execution-wrong-scope-tls; do
+  label=${name%%:*} secret=${name#*:}
+  kube -n execution-qualification get secret "$secret" -o 'jsonpath={.data.tls\.crt}' | base64 -d >"$state/pki/$label.crt"
+  kube -n execution-qualification get secret "$secret" -o 'jsonpath={.data.tls\.key}' | base64 -d >"$state/pki/$label.key"
+done
+kube -n execution-qualification create secret generic execution-trust \
+  --from-file=clients.pem="$state/pki/ca.crt" --dry-run=client -o yaml | kube apply -f -
+# cert-manager's client Secret includes ca.crt from this same issuer. The OIDC
+# issuer is separately signed by the task-owned CA, so it remains trusted.
+
 kube -n execution-qualification create secret generic oidc-fixture-identity \
   --from-file=tls.crt="$state/pki/oidc.crt" --from-file=tls.key="$state/pki/oidc.key" --from-file=jwt-key.pem="$state/pki/oidc-jwt-key.pem" --dry-run=client -o yaml | kube apply -f -
 
@@ -331,21 +387,26 @@ sed "s|OIDC_IMAGE|$oidc_image|g" "$root/deploy/mecatl-execution-kind/oidc.yaml" 
 kube -n execution-qualification rollout restart deployment/oidc-issuer
 kube -n execution-qualification rollout status deployment/oidc-issuer --timeout=180s
 
-runtime_values=
-if [ "${MECATL_EXECUTION_QUAL_PROFILE:-development}" = production ]; then
-  api_endpoint=$(kube -n default get endpoints kubernetes -o jsonpath='{.subsets[0].addresses[0].ip}')
-  api_endpoint_port=$(kube -n default get endpoints kubernetes -o jsonpath='{.subsets[0].ports[0].port}')
-  fixture_endpoint=$(kube -n execution-qualification get pod network-fixture -o jsonpath='{.status.podIP}')
-  case "$api_endpoint:$fixture_endpoint:$api_endpoint_port" in
-    *[!0-9.:]*) echo "invalid discovered network-policy endpoint" >&2; exit 1 ;;
-    :*|*:) echo "missing discovered network-policy endpoint" >&2; exit 1 ;;
-  esac
-  runtime_values="$state/production-runtime-values.yaml"
-  cat >"$runtime_values" <<EOF
+runtime_values="$state/network-runtime-values.yaml"
+# Kindnet enforces NetworkPolicy in both profiles, including API service DNAT.
+valid_ipv4() {
+  printf '%s\n' "$1" | awk -F. 'NR != 1 || NF != 4 {exit 1} {for (i = 1; i <= NF; i++) if ($i !~ /^[0-9]+$/ || length($i) > 3 || $i > 255) exit 1}'
+}
+api_service=$(kube -n default get service kubernetes -o jsonpath='{.spec.clusterIP}')
+api_endpoint=$(kube -n default get endpoints kubernetes -o jsonpath='{.subsets[0].addresses[0].ip}')
+api_endpoint_port=$(kube -n default get endpoints kubernetes -o jsonpath='{.subsets[0].ports[0].port}')
+for address in "$api_service" "$api_endpoint"; do
+  valid_ipv4 "$address" || { echo "invalid discovered IPv4 network-policy endpoint" >&2; exit 1; }
+done
+case "$api_endpoint_port" in
+  ''|*[!0-9]*) echo "invalid discovered network-policy port" >&2; exit 1 ;;
+esac
+[ "$api_endpoint_port" -ge 1 ] && [ "$api_endpoint_port" -le 65535 ] || { echo "invalid discovered network-policy port" >&2; exit 1; }
+cat >"$runtime_values" <<EOF
 provider:
   replicas: 2
   apiServerCIDRs:
-    - 10.96.0.1/32
+    - $api_service/32
     - $api_endpoint/32
   dnsCIDRs:
     - 10.96.0.10/32
@@ -353,6 +414,11 @@ networkPolicy:
   apiServerPorts:
     - 443
     - $api_endpoint_port
+EOF
+if [ "${MECATL_EXECUTION_QUAL_PROFILE:-development}" = production ]; then
+  fixture_endpoint=$(kube -n execution-qualification get pod network-fixture -o jsonpath='{.status.podIP}')
+  valid_ipv4 "$fixture_endpoint" || { echo "invalid discovered IPv4 network-policy fixture endpoint" >&2; exit 1; }
+  cat >>"$runtime_values" <<EOF
   workloadProfiles:
     go:
       egress:
@@ -363,51 +429,38 @@ networkPolicy:
 EOF
 fi
 
-# Keep the initial fixture install on Helm's default apply mode. On Helm 4 this
-# deliberately seeds server-side field ownership; the lifetime scenario then
-# proves the supported client-side upgrade can follow external hot rotation.
+# Render one operator-approved revision per fixture recipe using the provider's
+# canonical encoding and validate the result with its real loader before install.
+template_values="$state/templates-values-$run_id.yaml"
+go_revision=$(dev go run ./deploy/execution-templates \
+  "$root/deploy/mecatl-execution-kind/template-recipes.yaml" "$workload_image" "$derivative_image" "$incompatible_image" "$template_values")
+case "$go_revision" in v1-*) ;; *) echo "missing generated go template revision" >&2; exit 1 ;; esac
+printf '%s\n' "$go_revision" >"$state/go-template-revision"
+
+# The chart requires a quiesced provider for every upgrade. On explicit
+# task-owned resume, stop only this fixture's provider and retain Pods/PVCs
+# belonging to existing execution environments.
+if [ -n "$resume" ] && kube -n execution-qualification get deployment/mecatl-execution >/dev/null 2>&1; then
+  kube -n execution-qualification scale deployment/mecatl-execution --replicas=0
+  kube -n execution-qualification wait --for=delete pod -l app.kubernetes.io/name=mecatl-execution --timeout=4m
+  # A previous interrupted qualification may have published a policy with
+  # kubectl client-side apply. Return only this release-owned manifest's field
+  # ownership to Helm before upgrading; preserve its data until Helm writes the
+  # configured candidate and never touch the durable authority ConfigMap.
+  kube -n execution-qualification get configmap/mecatl-execution-security-manifest -o yaml |
+    kube -n execution-qualification apply --server-side --field-manager=helm --force-conflicts -f -
+fi
 set -- upgrade --install mecatl-execution "$root/deploy/helm/mecatl-execution" \
   --namespace execution-qualification \
-  -f "$root/deploy/mecatl-execution-kind/execution-values.yaml"
-if [ -n "$runtime_values" ]; then
-  set -- "$@" -f "$runtime_values"
-fi
-if [ "${MECATL_EXECUTION_QUAL_PROFILE:-development}" = production ]; then
-  # The production fixture deliberately installs the legacy CRD above and
-  # upgrades it explicitly after seeding the retained legacy allocations.
-  set -- "$@" --skip-crds
-fi
+  -f "$root/deploy/mecatl-execution-kind/execution-values.yaml" -f "$template_values" \
+  -f "$root/deploy/mecatl-execution-kind/fixture-security-values.yaml" -f "$runtime_values"
 helm_kube "$@" \
   --set fullnameOverride=mecatl-execution \
   --set-string provider.image="$provider_image" \
   --set provider.imagePullPolicy=IfNotPresent \
-  --set provider.securitySecretName=execution-security \
   --set-file provider.securityManifest="$state/pki/manifest.json" \
-  --set-string profiles.go.image="$workload_image" \
-  --set-string profiles.quota-cas.image="$workload_image" \
-  --set-string profiles.quota-kube.image="$workload_image" \
   --wait --timeout=4m
-
-if [ "${MECATL_EXECUTION_QUAL_PROFILE:-development}" = production ]; then
-  # Establish the chart-owned authority before creating retained allocations.
-  # Seed the prototype under the old CRD only while every provider is quiesced.
-  kube -n execution-qualification scale deployment/mecatl-execution --replicas=0
-  kube -n execution-qualification wait --for=delete pod -l app.kubernetes.io/name=mecatl-execution --timeout=2m
-  legacy_start=$(date +%s)
-  dev go build -tags kind_execution_e2e -o "$state/legacyfixture" ./e2e/k8s_execution/fixture/legacyfixture
-  legacy_built=$(date +%s)
-  printf 'qualification deployment_step=legacyfixture_build elapsed=%ss\n' "$((legacy_built - legacy_start))"
-  dev env KUBECONFIG="$kubeconfig" "$state/legacyfixture" execution-qualification "$legacy_profiles" "$state/legacy-migration.json"
-  legacy_seeded=$(date +%s)
-  printf 'qualification deployment_step=legacyfixture_seed elapsed=%ss\n' "$((legacy_seeded - legacy_built))"
-  kube -n execution-qualification wait --for=condition=Ready pod/executor-legacy-migration pod/executor-legacy-migration-malformed pod/executor-legacy-migration-insecure --timeout=3m
-  legacy_ready=$(date +%s)
-  printf 'qualification deployment_step=legacyfixture_pods_ready elapsed=%ss\n' "$((legacy_ready - legacy_seeded))"
-  kube -n execution-qualification exec pod/executor-legacy-migration -- /bin/sh -c 'printf "prototype-data\n" > /workspace/migration-sentinel'
-  # Helm does not upgrade existing CRDs. Preserve the stored legacy references
-  # until the explicit CRD upgrade; the first production test then migrates them.
-  kube apply -f "$root/deploy/helm/mecatl-execution/crds/executionenvironment.yaml"
-  kube wait --for=condition=Established crd/executionenvironments.execution.mecatl.dev --timeout=60s
+if [ -n "$resume" ]; then
   kube -n execution-qualification scale deployment/mecatl-execution --replicas=2
   kube -n execution-qualification rollout status deployment/mecatl-execution --timeout=4m
 fi
@@ -416,6 +469,7 @@ kube -n execution-qualification create configmap execution-mock --from-file=mock
 helm_kube upgrade --install mecak8s "$root/deploy/helm/mecak8s" \
   --namespace execution-qualification -f "$root/deploy/mecatl-execution-kind/mecak8s-values.yaml" \
   --set-string image.repository="${agent_image%@*}" --set-string image.digest="${agent_image#*@}" --set-string image.tag= \
+  --set-string execution.templateRevision="$go_revision" \
   --wait --timeout=5m
 kube -n execution-qualification rollout restart deployment/mecak8s
 kube -n execution-qualification rollout status deployment/mecak8s --timeout=240s
@@ -426,9 +480,44 @@ wait "$test_build_pid"
 test_build_pid=
 printf 'qualification test_build=wait elapsed=%ss\n' "$(( $(date +%s) - test_build_wait_start))"
 
-dev env -i HOME="$HOME" PATH="$PATH" KUBECONFIG="$kubeconfig" MECATL_KUBE_CONTEXT="$context" MECATL_EXECUTION_QUAL_STATE="$state" MECATL_EXECUTION_QUAL_PROFILE="${MECATL_EXECUTION_QUAL_PROFILE:-development}" \
-  sh -c 'cd e2e/k8s_execution && exec "$@"' sh "$state/qualification.test" -test.v -test.count=1 -test.timeout=45m
+set --
+if [ "${handoff:-0}" = 1 ]; then set -- -test.skip '^TestKindExecutionQualification$'; fi
+dev env -i HOME="$HOME" PATH="$PATH" TOOLBOX_PATH="${TOOLBOX_PATH:-}" XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-}" DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-}" \
+  KUBECONFIG="$kubeconfig" MECATL_KUBE_CONTEXT="$context" MECATL_EXECUTION_K8S_TOOLBOX="${MECATL_EXECUTION_K8S_TOOLBOX:-}" MECATL_EXECUTION_TEMPLATE_REVISION="$go_revision" MECATL_EXECUTION_QUAL_STATE="$state" MECATL_EXECUTION_QUAL_PROFILE="${MECATL_EXECUTION_QUAL_PROFILE:-development}" \
+  sh -c 'cd e2e/k8s_execution && exec "$@"' sh "$state/qualification.test" "$@" -test.v -test.count=1 -test.timeout=45m
 phase_done tests
+
+if [ "${MECATL_EXECUTION_QUAL_PROFILE:-development}" = production ]; then
+  if [ "$natural_expiry" = 1 ]; then
+    printf 'qualification phase=automatic_certificate_renewal starting (initial expiry plus two issuer renewals; ceiling=80m)\n'
+    dev env -i HOME="$HOME" PATH="$PATH" TOOLBOX_PATH="${TOOLBOX_PATH:-}" XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-}" DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-}" \
+      KUBECONFIG="$kubeconfig" MECATL_KUBE_CONTEXT="$context" MECATL_EXECUTION_K8S_TOOLBOX="${MECATL_EXECUTION_K8S_TOOLBOX:-}" MECATL_EXECUTION_TEMPLATE_REVISION="$go_revision" MECATL_EXECUTION_QUAL_STATE="$state" MECATL_EXECUTION_QUAL_PROFILE=production MECATL_EXECUTION_QUAL_RENEWAL=1 \
+      sh -c 'cd e2e/k8s_execution && exec "$@"' sh "$state/qualification.test" -test.v -test.count=1 -test.run '^TestKindExecutionAutomaticCertificateRenewal$' -test.timeout=80m
+    phase_done automatic_certificate_renewal
+  else
+    printf 'qualification phase=automatic_certificate_renewal skipped selector=0 elapsed=0s\n'
+  fi
+  printf 'qualification phase=inflight_controlled_renewal starting (test ceiling=8m; outer ceiling=10m)\n'
+  dev env -i HOME="$HOME" PATH="$PATH" TOOLBOX_PATH="${TOOLBOX_PATH:-}" XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-}" DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-}" \
+    KUBECONFIG="$kubeconfig" MECATL_KUBE_CONTEXT="$context" MECATL_EXECUTION_K8S_TOOLBOX="${MECATL_EXECUTION_K8S_TOOLBOX:-}" MECATL_EXECUTION_TEMPLATE_REVISION="$go_revision" MECATL_EXECUTION_QUAL_STATE="$state" MECATL_EXECUTION_QUAL_PROFILE=production MECATL_EXECUTION_QUAL_RENEWAL=1 \
+    timeout --kill-after=5s 10m sh -c 'cd e2e/k8s_execution && exec "$@"' sh "$state/qualification.test" -test.v -test.count=1 -test.run '^TestKindExecutionInFlightAutomaticRenewal$' -test.timeout=8m
+  phase_done inflight_controlled_renewal
+fi
+
+if [ "${handoff:-0}" = 1 ]; then
+  printf 'qualification phase=final_mock starting\n'
+  dev env -i HOME="$HOME" PATH="$PATH" TOOLBOX_PATH="${TOOLBOX_PATH:-}" XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-}" DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-}" \
+    KUBECONFIG="$kubeconfig" MECATL_KUBE_CONTEXT="$context" MECATL_EXECUTION_K8S_TOOLBOX="${MECATL_EXECUTION_K8S_TOOLBOX:-}" MECATL_EXECUTION_TEMPLATE_REVISION="$go_revision" MECATL_EXECUTION_QUAL_STATE="$state" MECATL_EXECUTION_QUAL_PROFILE=production MECATL_EXECUTION_LIVE_CLUSTER="$cluster" \
+    sh -c 'cd e2e/k8s_execution && exec "$@"' sh "$state/qualification.test" -test.v -test.count=1 -test.run '^TestKindExecutionQualification$' -test.timeout=15m
+  phase_done final_mock
+  # A successful binary exit includes its deferred cleanup. No later mutation
+  # precedes credential staging; ownership outputs above are only cleanup hints.
+  cleanup_test_build
+  handoff_ready
+  qualified_digest=$(handoff_digest)
+  printf 'handoff_digest=%s\nhandoff_sha=%s\nhandoff_run_id=%s\nhandoff_run_attempt=%s\nhandoff_complete=1\n' \
+    "$qualified_digest" "$GITHUB_SHA" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" >>"$GITHUB_OUTPUT"
+fi
 
 if [ "${MECATL_EXECUTION_QUAL_CI:-}" = 1 ]; then
   echo "qualification cluster is CI-owned and will be removed: $cluster"

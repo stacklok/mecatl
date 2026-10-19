@@ -74,6 +74,7 @@ func modelWithNotifier(t *testing.T) (Model, *fakeLifecycleNotifier) {
 	t.Helper()
 	fake := &fakeLifecycleNotifier{}
 	m, _, _ := newTestModel(t, theme.New("aztec", theme.AztecPalette()), func(d *Deps) { d.AgentHook = fake })
+	m = applyAll(m, tea.WindowSizeMsg{Width: 100, Height: 30})
 	m.sessionID = "sess-super-1"
 	return m, fake
 }

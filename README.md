@@ -46,6 +46,7 @@ Read the [Mecatl documentation](https://mecatl.dev/docs) to get started.
 | Run an agent service | [`mecated`](./cmd/mecated) and the [deployment guide](https://mecatl.dev/docs/operating/mecated) |
 | Run agents on Kubernetes | [`mecak8s`](./cmd/mecak8s) and the [Kubernetes deployment guide](https://mecatl.dev/docs/operating/mecak8s) |
 | Use an agent locally | [Install](#install), then use [`mecatui`](./cmd/mecatui) — or [run the offline demo](#try-it-locally) from a checkout |
+| Isolate local filesystem and Shell tools | [Local microVM execution](#local-microvm-execution) (qualified on Linux amd64) |
 | Connect an application | The [TypeScript SDK guides](https://mecatl.dev/docs/building/typescript-sdk/) or the [gRPC and HTTP/SSE integration guide](https://mecatl.dev/docs/building/grpc-http) |
 | Build unattended automation | [`mecatequi`](./cmd/mecatequi) for one prompt, a patch, and a machine-readable result |
 | Embed the runtime | [`engine`](./engine) and the [embedding guide](https://mecatl.dev/docs/building/embed-engine) |
@@ -109,7 +110,7 @@ Caller identity and audit records are useful building blocks, not a complete
 tenant-isolation boundary. Cross-process cryptographic proof and authority
 attenuation remain active design work. See the
 [agent identity tracker](https://github.com/stacklok/mecatl/issues/377) and the
-[working identity model](./docs/drafts/agent-identity-model.md).
+[agent identity and authority design](./docs/drafts/agent-identity/README.md).
 
 ## Try it locally
 

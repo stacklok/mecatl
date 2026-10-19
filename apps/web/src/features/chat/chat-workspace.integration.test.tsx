@@ -24,6 +24,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { clearUserScopedStorage } from "../../lib/account-storage";
 import { setRequestRecoveryState } from "../../lib/api-client";
+import { readDraft } from "../../lib/draft-store";
 import { AuthRecoveryContext, type AuthRecoveryContextValue } from "../auth/auth-recovery-context";
 import { ShortcutProvider } from "../shortcuts/shortcut-provider";
 import { ChatWorkspace } from "./chat-workspace";
@@ -57,8 +58,13 @@ function json(body: unknown, status = 200): Response {
 function runtimeResponse(
   connection: RuntimeResponse["connection"] = "online",
   features: string[] = [],
+  steer?: boolean,
 ): Response {
-  return json({ capabilities: { image: false, posture: "managed" }, connection, features });
+  return json({
+    capabilities: { image: false, posture: "managed", ...(steer === undefined ? {} : { steer }) },
+    connection,
+    features,
+  });
 }
 
 function detailResponse(
@@ -67,7 +73,14 @@ function detailResponse(
   overrides: Partial<SessionDetailResponse> = {},
 ): Response {
   return json({
-    capabilities: { image: false, manualCompaction: false, modelSelection: false },
+    capabilities: {
+      image: false,
+      audio: false,
+      executionFiles: false,
+      builtInShell: false,
+      manualCompaction: false,
+      modelSelection: false,
+    },
     id: sessionId,
     mode: "default",
     state,
@@ -139,10 +152,26 @@ function runEvent(
 
 function session(id: string, state = "idle") {
   return {
-    capabilities: { delete: true, deleteReason: "", rename: true, renameReason: "" },
+    capabilities: {
+      copyId: true,
+      copyIdReason: "",
+      delete: true,
+      deleteReason: "",
+      fork: true,
+      forkReason: "",
+      inspect: true,
+      inspectReason: "",
+      publicChat: true,
+      publicChatReason: "",
+      rename: true,
+      renameReason: "",
+      viewTranscript: true,
+      viewTranscriptReason: "",
+    },
     createdAt: "2026-09-24T12:00:00.000Z",
     debugTargetSessionId: "",
     id,
+    kind: "main",
     modelId: "test-model",
     state,
     title: `Chat ${id}`,
@@ -159,6 +188,7 @@ const inventoryModels = [
     displayName: "Current model",
     id: "current",
     image: false,
+    providerDisplayName: "Provider",
     providerId: "provider",
     reasoning: true,
   },
@@ -167,6 +197,7 @@ const inventoryModels = [
     displayName: "Allowed model",
     id: "allowed",
     image: true,
+    providerDisplayName: "Provider",
     providerId: "provider",
     reasoning: true,
   },
@@ -175,6 +206,7 @@ const inventoryModels = [
     displayName: "Hidden model",
     id: "hidden",
     image: false,
+    providerDisplayName: "Provider",
     providerId: "provider",
     reasoning: true,
   },
@@ -183,6 +215,7 @@ const inventoryModels = [
 const currentModel = {
   contextWindow: "128000",
   id: "current",
+  providerDisplayName: "Provider",
   providerId: "provider",
   reasoningEffort: "medium",
 } satisfies NonNullable<SessionDetailResponse["model"]>;
@@ -209,6 +242,7 @@ class BffFixture {
   readonly activityResponses = new Map<string, Response[]>();
   runtimeConnection: RuntimeResponse["connection"] = "online";
   runtimeFeatures: string[] = [];
+  runtimeSteer: boolean | undefined;
   retryResponse = completedStream(
     runStarted("chat-a", "run-retry"),
     runEvent("result", "9", "", "run-retry", { stop: "end_turn" }),
@@ -245,7 +279,7 @@ class BffFixture {
     const queuedReply = this.nextReplies.get(pathname)?.shift();
     if (queuedReply) return queuedReply;
     if (request.method === "GET" && pathname === "/api/v1/runtime") {
-      return runtimeResponse(this.runtimeConnection, this.runtimeFeatures);
+      return runtimeResponse(this.runtimeConnection, this.runtimeFeatures, this.runtimeSteer);
     }
     if (request.method === "GET" && pathname === "/api/v1/settings/runtime") {
       return json({ models: [], modelsSupported: true });
@@ -403,6 +437,13 @@ afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
+
+/** Escape is owned by the focused chat surface and re-arms only after the key is released. */
+function pressEscape() {
+  const target = document.activeElement ?? document.body;
+  fireEvent.keyDown(target, { key: "Escape" });
+  fireEvent.keyUp(target, { key: "Escape" });
+}
 
 describe("mounted chat workspace BFF boundary", () => {
   it("follows an acknowledged plan allow and reports uncertainty at the activity bound", async () => {
@@ -609,11 +650,155 @@ describe("mounted chat workspace BFF boundary", () => {
     });
     await waitFor(() => expect(bff.requestsAt("POST", planPath)).toHaveLength(1));
     await act(async () => {
-      acknowledgement.resolve(json({ code: "stale_run_control", detail: "stale" }, 409));
+      acknowledgement.resolve(json({ code: "stale_plan_ask", detail: "stale" }, 409));
     });
     expect(await screen.findByText(/outcome is uncertain/i)).toBeTruthy();
     fireEvent.click(button);
     expect(bff.requestsAt("POST", planPath)).toHaveLength(1);
+  });
+
+  it("consumes selection and a pending ask before closing the side panel", async () => {
+    const bff = new BffFixture(session("chat-a", "awaiting"));
+    const activity = heldStream();
+    bff.activityResponses.set("", [activity.response]);
+    const permissionPath = "/api/v1/sessions/chat-a/runs/run-a/permissions/ask-a";
+    bff.nextReplies.set(permissionPath, [Promise.resolve(new Response(null, { status: 204 }))]);
+    await mountConnectedWorkspace(bff, "chat-a");
+    fireEvent.click(screen.getByRole("button", { name: "Open local canvas" }));
+    const panel = screen.getByRole("complementary", { name: "Local canvas" });
+    await act(async () => {
+      activity.send(runStarted());
+      activity.send(runEvent("user_prompt", "1", "Selected prompt"));
+      activity.send(
+        runEvent("permission.ask", "2", "", "run-a", {
+          askId: "ask-a",
+          tool: "Shell",
+        }),
+      );
+    });
+    expect(await screen.findByText("Permission required")).toBeTruthy();
+    const selection = window.getSelection();
+    const prompt = screen.getByText("Selected prompt");
+    const range = document.createRange();
+    range.selectNodeContents(prompt);
+    selection?.addRange(range);
+    expect(selection?.toString()).toBe("Selected prompt");
+
+    pressEscape();
+    expect(selection?.toString()).toBe("");
+    expect(bff.requestsAt("POST", permissionPath)).toHaveLength(0);
+    expect(screen.getByRole("complementary", { name: "Local canvas" })).toBe(panel);
+
+    pressEscape();
+    await waitFor(() => expect(bff.requestsAt("POST", permissionPath)).toHaveLength(1));
+    expect(bff.requestsAt("POST", permissionPath)[0]?.body).toEqual({ verdict: "deny" });
+    await waitFor(() => expect(screen.queryByText("Permission required")).toBeNull());
+    expect(bff.requestsFor("POST", "/cancel")).toHaveLength(0);
+    expect(screen.getByRole("complementary", { name: "Local canvas" })).toBe(panel);
+
+    pressEscape();
+    expect(screen.queryByRole("complementary", { name: "Local canvas" })).toBeNull();
+    expect(bff.requestsFor("POST", "/cancel")).toHaveLength(0);
+  });
+
+  it("keeps activity open while Escape denies an ask, then restores its opener", async () => {
+    const bff = new BffFixture(session("chat-a", "awaiting"));
+    const activity = heldStream();
+    bff.activityResponses.set("", [activity.response]);
+    const permissionPath = "/api/v1/sessions/chat-a/runs/run-a/permissions/ask-a";
+    bff.nextReplies.set(permissionPath, [Promise.resolve(new Response(null, { status: 204 }))]);
+    await mountConnectedWorkspace(bff, "chat-a");
+    await act(async () => {
+      activity.send(runStarted());
+      activity.send(runEvent("user_prompt", "1", "Open delegated work"));
+      activity.send(
+        runEvent("tool.call", "2", "", "run-a", {
+          args: "{}",
+          id: "call-a",
+          name: "Subagent",
+        }),
+      );
+      activity.send(
+        runEvent("subagent.start", "3", "", "run-a", {
+          childId: "child-a",
+          goal: "Inspect",
+          parentCallId: "call-a",
+        }),
+      );
+      activity.send(
+        runEvent("permission.ask", "4", "", "run-a", { askId: "ask-a", tool: "Shell" }),
+      );
+    });
+    const opener = await screen.findByRole("button", { name: /Subagent child-a/u });
+    opener.focus();
+    fireEvent.click(opener);
+    const panel = await screen.findByRole("complementary", { name: "Session activity" });
+    expect(await within(panel).findByRole("heading", { name: "Subagent child-a" })).toBeTruthy();
+    expect(await screen.findByText("Permission required")).toBeTruthy();
+
+    pressEscape();
+    await waitFor(() => expect(bff.requestsAt("POST", permissionPath)).toHaveLength(1));
+    expect(bff.requestsAt("POST", permissionPath)[0]?.body).toEqual({ verdict: "deny" });
+    expect(screen.getByRole("complementary", { name: "Session activity" })).toBe(panel);
+    expect(bff.requestsFor("POST", "/cancel")).toHaveLength(0);
+
+    pressEscape();
+    expect(screen.queryByRole("complementary", { name: "Session activity" })).toBeNull();
+    expect(document.activeElement).toBe(opener);
+    expect(bff.requestsFor("POST", "/cancel")).toHaveLength(0);
+  });
+
+  it("keeps a pending ask and the run when Escape closes the session details dialog", async () => {
+    const bff = new BffFixture(session("chat-a", "awaiting"));
+    const activity = heldStream();
+    bff.activityResponses.set("", [activity.response]);
+    await mountConnectedWorkspace(bff, "chat-a");
+    await act(async () => {
+      activity.send(runStarted());
+      activity.send(
+        runEvent("permission.ask", "1", "", "run-a", { askId: "ask-a", tool: "Shell" }),
+      );
+    });
+    expect(await screen.findByText("Permission required")).toBeTruthy();
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Chat options" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Inspect session" }));
+    const details = await screen.findByRole("dialog", { name: "Session details" });
+
+    fireEvent.keyDown(details, { key: "Escape" });
+    fireEvent.keyUp(details, { key: "Escape" });
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "Session details" })).toBeNull(),
+    );
+    expect(screen.getByText("Permission required")).toBeTruthy();
+    expect(
+      bff.requests.filter(
+        (request) => request.method === "POST" && request.pathname.includes("/permissions/"),
+      ),
+    ).toHaveLength(0);
+    expect(bff.requestsFor("POST", "/cancel")).toHaveLength(0);
+  });
+
+  it("skips inspect-only rows in chat navigation", async () => {
+    const inspect = {
+      ...session("inspect"),
+      capabilities: {
+        ...session("inspect").capabilities,
+        publicChat: false,
+        publicChatReason: "inspect_only_kind",
+      },
+      kind: "child",
+      title: "Inspect-only child",
+    };
+    const bff = new BffFixture(session("chat-a"), inspect, session("chat-b"));
+    await mountWorkspace(bff, "chat-a");
+    expect(
+      screen.getByRole("heading", { name: "Inspect-only sessions", hidden: true }),
+    ).toBeTruthy();
+    screen.getByRole("button", { name: "Chat options" }).focus();
+    fireEvent.keyDown(document, { key: "ArrowDown" });
+    expect(await screen.findByRole("heading", { name: "Chat chat-b" })).toBeTruthy();
+    expect(bff.requestsAt("GET", "/api/v1/sessions/inspect/transcript")).toHaveLength(0);
   });
 
   it("does not treat a broken continuation as the earlier authorization park", async () => {
@@ -729,10 +914,46 @@ describe("mounted chat workspace BFF boundary", () => {
       recheck.send(runEvent("result", "6", "", "run-next", { stop: "end_turn" }));
       recheck.close();
     });
-    fireEvent.click(within(review).getByRole("button", { name: "Close preview" }));
+    fireEvent.click(within(review).getByRole("button", { name: "Close panel" }));
     expect(
       bff.requestsAt("POST", "/api/v1/sessions/chat-a/authorizations/auth-1/cancel"),
     ).toHaveLength(0);
+  });
+
+  it("updates an open tool panel when its call finishes", async () => {
+    window.localStorage.setItem("studio.profile.show-tool-calls", "visible");
+    window.localStorage.setItem("studio.profile.expand-details", "expanded");
+    const bff = new BffFixture(session("chat-a", "running"));
+    const activity = heldStream();
+    bff.activityResponses.set("", [activity.response]);
+    await mountConnectedWorkspace(bff, "chat-a");
+    await waitFor(() => expect(bff.requestsFor("GET", "/activity")).toHaveLength(1));
+    await act(async () => {
+      activity.send(runStarted());
+      activity.send(
+        runEvent("tool.call", "1", "", "run-a", {
+          args: '{"path":"go.mod"}',
+          id: "call-1",
+          name: "Read",
+        }),
+      );
+    });
+    fireEvent.click(await screen.findByRole("button", { name: "Open Read details, running" }));
+    const panel = screen.getByRole("complementary", { name: "Read result" });
+    expect(panel.textContent).toContain("(still running)");
+
+    await act(async () => {
+      activity.send(
+        runEvent("tool.result", "2", "", "run-a", {
+          callId: "call-1",
+          content: "module example.com/demo",
+          isError: false,
+        }),
+      );
+    });
+    await waitFor(() => expect(panel.textContent).toContain("module example.com/demo"));
+    expect(panel.textContent).not.toContain("(still running)");
+    expect(within(panel).getByText("completed")).toBeTruthy();
   });
 
   it("cancels a pending authorization from the mounted review without sending a permission verdict", async () => {
@@ -846,7 +1067,7 @@ describe("mounted chat workspace BFF boundary", () => {
       fireEvent.click(within(review).getByRole("button", { name: "Recheck" }));
       expect(bff.requestsAt("POST", cancelPath)).toHaveLength(0);
       expect(bff.requestsAt("POST", recheckPath)).toHaveLength(1);
-      fireEvent.click(within(review).getByRole("button", { name: "Close preview" }));
+      fireEvent.click(within(review).getByRole("button", { name: "Close panel" }));
       fireEvent.click(within(row).getByRole("button", { name: "Review authorization" }));
       const reopened = screen.getByRole("complementary", { name: "Authorization review" });
       expect(
@@ -1350,6 +1571,206 @@ describe("mounted chat workspace BFF boundary", () => {
     expect(screen.getAllByText("Tool: Calendar")).toHaveLength(1);
   });
 
+  it.each([409, 503])(
+    "keeps selected-template failures actionable without fallback (status %s)",
+    async (status) => {
+      const user = userEvent.setup();
+      const bff = new BffFixture();
+      const revision = `v1-${"a".repeat(64)}`;
+      bff.nextReplies.set("/api/v1/runtime", [
+        Promise.resolve(
+          json({
+            capabilities: { executionTemplates: true, image: false, posture: "managed" },
+            connection: "online",
+            features: ["execution_templates"],
+          }),
+        ),
+      ]);
+      bff.nextReplies.set("/api/v1/execution-templates", [
+        Promise.resolve(
+          json({
+            inventoryRevision: "1",
+            items: [
+              {
+                template: { id: "safe", revision },
+                name: "Managed workspace",
+                description: "",
+                displayToken: "a",
+                extensions: {},
+                declaredExecutionFiles: true,
+                declaredBuiltInShell: true,
+              },
+            ],
+          }),
+        ),
+      ]);
+      await mountWorkspace(bff);
+      bff.nextReplies.set("/api/v1/sessions", [
+        Promise.resolve(
+          json(
+            {
+              code: "template_unavailable",
+              detail: "Refresh the catalog",
+              status,
+              title: "Template unavailable",
+              type: "urn:mecatl-studio:problem:template_unavailable",
+              instance: "/api/v1/sessions",
+            },
+            status,
+          ),
+        ),
+      ]);
+      await waitFor(() =>
+        expect(bff.requestsAt("GET", "/api/v1/execution-templates")).toHaveLength(1),
+      );
+      await user.selectOptions(
+        screen.getByLabelText("Execution"),
+        JSON.stringify(["safe", revision]),
+      );
+      typePrompt("Use a pinned workspace");
+      fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+      await waitFor(() => expect(bff.requestsAt("POST", "/api/v1/sessions")).toHaveLength(1));
+      expect(bff.requestsAt("POST", "/api/v1/sessions")[0]?.body).toMatchObject({
+        execution: { template: { id: "safe", revision } },
+      });
+      expect(bff.requestsAt("POST", "/api/v1/sessions")).toHaveLength(1);
+      expect(bff.requestsAt("POST", "/api/v1/sessions/chat-a/runs")).toHaveLength(0);
+      expect(await screen.findByText(/capacity may be full/)).toBeTruthy();
+      expect(
+        (screen.getByRole("textbox", { name: "Message Mecatl" }) as HTMLTextAreaElement).value,
+      ).toBe("Use a pinned workspace");
+      await user.click(screen.getByRole("button", { name: "Refresh templates" }));
+      await waitFor(() =>
+        expect(bff.requestsAt("GET", "/api/v1/execution-templates")).toHaveLength(2),
+      );
+      expect((screen.getByLabelText("Execution") as HTMLSelectElement).value).toBe(
+        JSON.stringify(["safe", revision]),
+      );
+      expect(bff.requestsAt("POST", "/api/v1/sessions")).toHaveLength(1);
+    },
+  );
+
+  it("anchors two equal recorded replies while Fork receives the full source session", async () => {
+    const bff = new BffFixture(session("chat-a"));
+    bff.transcripts.set("chat-a", {
+      complete: true,
+      messages: [
+        { images: [], role: "user", text: "same", toolCalls: [] },
+        { images: [], role: "assistant", text: "first answer", toolCalls: [] },
+        { images: [], role: "user", text: "same", toolCalls: [] },
+        { images: [], role: "assistant", text: "later turn", toolCalls: [] },
+      ],
+      sessionId: "chat-a",
+    });
+    bff.nextReplies.set("/api/v1/sessions/chat-a", [
+      Promise.resolve(detailResponse("chat-a", "idle", { model: currentModel })),
+    ]);
+    bff.nextReplies.set("/api/v1/sessions/chat-a/fork", [
+      Promise.resolve(json({ id: "thread-a" }, 201)),
+      Promise.resolve(json({ id: "thread-b" }, 201)),
+    ]);
+    await mountConnectedWorkspace(bff, "chat-a");
+    const roots = screen.getAllByRole("article", { name: "You message" });
+    expect(roots).toHaveLength(2);
+    const firstReply = within(roots[0] as HTMLElement).getByRole("button", {
+      name: "Reply in side thread",
+    });
+    fireEvent.click(firstReply);
+    await waitFor(() =>
+      expect(bff.requestsAt("POST", "/api/v1/sessions/chat-a/fork")).toHaveLength(1),
+    );
+    expect(bff.requestsAt("POST", "/api/v1/sessions/chat-a/fork")[0]?.body).toEqual({
+      model: { id: "current", providerId: "provider" },
+      reasoningEffort: "medium",
+    });
+    expect(bff.requestsAt("GET", "/api/v1/sessions/chat-a/transcript").length).toBeGreaterThan(1);
+    fireEvent.click(
+      within(screen.getByRole("complementary", { name: "Thread" })).getByRole("button", {
+        name: "Close thread",
+      }),
+    );
+    fireEvent.click(
+      within(roots[1] as HTMLElement).getByRole("button", { name: "Reply in side thread" }),
+    );
+    await waitFor(() =>
+      expect(bff.requestsAt("POST", "/api/v1/sessions/chat-a/fork")).toHaveLength(2),
+    );
+    const stored = JSON.parse(window.localStorage.getItem("studio.chat.threads.chat-a") ?? "null");
+    expect(stored.version).toBe(2);
+    expect(
+      stored.entries.map((entry: { ordinal: number; sessionId: string }) => [
+        entry.ordinal,
+        entry.sessionId,
+      ]),
+    ).toEqual([
+      [0, "thread-a"],
+      [2, "thread-b"],
+    ]);
+    expect(screen.getByText("later turn")).toBeTruthy();
+    expect(bff.transcripts.get("chat-a")?.messages.map((message) => message.text)).toEqual([
+      "same",
+      "first answer",
+      "same",
+      "later turn",
+    ]);
+    fireEvent.click(
+      within(screen.getByRole("complementary", { name: "Thread" })).getByRole("button", {
+        name: "Close thread",
+      }),
+    );
+    fireEvent.click(
+      within(roots[0] as HTMLElement).getByRole("button", { name: "Open side thread" }),
+    );
+    const reopened = await screen.findByRole("complementary", { name: "Thread" });
+    expect(bff.requestsAt("POST", "/api/v1/sessions/chat-a/fork")).toHaveLength(2);
+    fireEvent.click(within(reopened).getByRole("button", { name: "Close thread" }));
+  });
+
+  it("does not fork from a cached transcript when its authoritative refresh fails", async () => {
+    const bff = new BffFixture(session("chat-a"));
+    bff.transcripts.set("chat-a", {
+      complete: true,
+      messages: [{ images: [], role: "user", text: "saved question", toolCalls: [] }],
+      sessionId: "chat-a",
+    });
+    bff.nextReplies.set("/api/v1/sessions/chat-a", [
+      Promise.resolve(detailResponse("chat-a", "idle", { model: currentModel })),
+    ]);
+    await mountConnectedWorkspace(bff, "chat-a");
+    bff.nextReplies.set("/api/v1/sessions/chat-a/transcript", [
+      Promise.resolve(json({ detail: "temporarily unavailable", status: 503 }, 503)),
+    ]);
+    fireEvent.click(screen.getByRole("button", { name: "Reply in side thread" }));
+    await waitFor(() =>
+      expect(bff.requestsAt("GET", "/api/v1/sessions/chat-a/transcript")).toHaveLength(2),
+    );
+    await screen.findByText("Could not refresh the saved transcript. Try again.");
+    expect(bff.requestsAt("POST", "/api/v1/sessions/chat-a/fork")).toHaveLength(0);
+  });
+
+  it("waits for a saved match when the selected row changed before Fork", async () => {
+    const bff = new BffFixture(session("chat-a"));
+    bff.transcripts.set("chat-a", {
+      complete: true,
+      messages: [{ images: [], role: "user", text: "original", toolCalls: [] }],
+      sessionId: "chat-a",
+    });
+    bff.nextReplies.set("/api/v1/sessions/chat-a", [
+      Promise.resolve(detailResponse("chat-a", "idle", { model: currentModel })),
+    ]);
+    await mountConnectedWorkspace(bff, "chat-a");
+    bff.transcripts.set("chat-a", {
+      complete: true,
+      messages: [{ images: [], role: "user", text: "changed", toolCalls: [] }],
+      sessionId: "chat-a",
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Reply in side thread" }));
+    expect(
+      await screen.findByText("Wait for this message to be saved before starting a side thread."),
+    ).toBeTruthy();
+    expect(bff.requestsAt("POST", "/api/v1/sessions/chat-a/fork")).toHaveLength(0);
+  });
+
   it("creates a draft with its selected controls and excludes a disabled model", async () => {
     const user = userEvent.setup();
     const bff = new BffFixture();
@@ -1360,14 +1781,28 @@ describe("mounted chat workspace BFF boundary", () => {
     );
     await mountWorkspace(bff);
 
-    await user.click(screen.getByRole("button", { name: "Chat options" }));
-    const options = screen.getByRole("dialog", { name: "Chat options" });
-    expect(within(options).queryByRole("option", { name: "Hidden model" })).toBeNull();
-    await user.selectOptions(within(options).getByLabelText("Model"), '["provider","allowed"]');
-    await user.selectOptions(within(options).getByLabelText("Effort"), "high");
-    await user.selectOptions(within(options).getByLabelText("Mode"), "plan");
-    await user.selectOptions(within(options).getByLabelText("Tools"), "noFilesystem");
-    await user.click(within(options).getByRole("button", { name: "Close chat options" }));
+    // The phone sheet drills into one view per setting, and each pick closes it.
+    const pick = async (row: RegExp, choice: string, check?: (sheet: HTMLElement) => void) => {
+      await user.click(screen.getByRole("button", { name: "Composer options" }));
+      const options = screen.getByRole("dialog", { name: "Composer options" });
+      await user.click(within(options).getByRole("button", { name: row }));
+      check?.(options);
+      await user.click(within(options).getByRole("button", { name: choice }));
+      await waitFor(() =>
+        expect(screen.queryByRole("dialog", { name: "Composer options" })).toBeNull(),
+      );
+    };
+    await pick(/^Model/, "Allowed model", (options) => {
+      expect(within(options).getByRole("button", { name: "Current model" })).toBeTruthy();
+      expect(within(options).queryByRole("button", { name: "Hidden model" })).toBeNull();
+    });
+    await pick(/^Model/, "High");
+    await pick(/^Mode\s/, "Plan Create a plan before making changes.");
+    // The Execution picker sits inline in the sheet's main view.
+    await user.click(screen.getByRole("button", { name: "Composer options" }));
+    const options = screen.getByRole("dialog", { name: "Composer options" });
+    await user.selectOptions(within(options).getByLabelText("Execution"), "none");
+    await user.click(within(options).getByRole("button", { name: "Close composer options" }));
 
     typePrompt("Create with these options");
     fireEvent.click(screen.getByRole("button", { name: "Send message" }));
@@ -1376,7 +1811,7 @@ describe("mounted chat workspace BFF boundary", () => {
       mode: "plan",
       model: { id: "allowed", providerId: "provider" },
       reasoningEffort: "high",
-      toolAccess: "noFilesystem",
+      execution: { none: {} },
     });
   });
 
@@ -1385,12 +1820,22 @@ describe("mounted chat workspace BFF boundary", () => {
     const bff = new BffFixture(session("chat-a"));
     hideModel();
     serveModelInventory(bff);
-    const capabilities = { image: false, manualCompaction: false, modelSelection: true };
+    const capabilities = {
+      image: false,
+      audio: false,
+      executionFiles: true,
+      builtInShell: false,
+      manualCompaction: false,
+      modelSelection: true,
+    };
     bff.nextReplies.set("/api/v1/sessions/chat-a", [
       Promise.resolve(detailResponse("chat-a", "idle", { capabilities, model: currentModel })),
     ]);
     const { router } = await mountConnectedWorkspace(bff, "chat-a");
     const controls = screen.getByRole("region", { name: "Chat configuration and usage" });
+    expect(
+      within(controls).getByRole("status", { name: "Session execution capabilities" }).textContent,
+    ).toContain("Files: available · Built-in Shell: unavailable");
 
     bff.nextReplies.set("/api/v1/sessions/chat-a/mode", [Promise.resolve(json({ mode: "plan" }))]);
     bff.nextReplies.set("/api/v1/sessions/chat-a", [
@@ -1443,6 +1888,110 @@ describe("mounted chat workspace BFF boundary", () => {
     );
   });
 
+  it("groups the desktop model menu under the inventory's provider names", async () => {
+    const user = userEvent.setup();
+    const bff = new BffFixture();
+    bff.nextReplies.set("/api/v1/settings/runtime", [
+      Promise.resolve(
+        json({
+          models: [
+            {
+              contextLimit: "400000",
+              displayName: "GPT-5",
+              id: "gpt-5",
+              image: true,
+              providerDisplayName: "OpenAI",
+              providerId: "openai",
+              reasoning: true,
+            },
+          ] satisfies RuntimeSettingsResponse["models"],
+          modelsSupported: true,
+        }),
+      ),
+    ]);
+    await mountWorkspace(bff);
+
+    await user.click(await screen.findByRole("button", { name: /^Model Default/ }));
+    await user.hover(screen.getByRole("menuitem", { name: /^Model/ }));
+    expect(await screen.findByRole("menuitem", { name: "GPT-5" })).toBeTruthy();
+    expect(screen.getByText("OpenAI")).toBeTruthy();
+    expect(screen.queryByText("openai")).toBeNull();
+  });
+
+  it("creates a draft with the model, effort, mode, and execution picked from the desktop pills", async () => {
+    const user = userEvent.setup();
+    const bff = new BffFixture();
+    serveModelInventory(bff);
+    bff.runResponses.push(
+      completedStream(runStarted(), runEvent("result", "1", "", "run-a", { stop: "end_turn" })),
+    );
+    await mountWorkspace(bff);
+
+    await user.click(await screen.findByRole("button", { name: /^Model Default/ }));
+    await user.hover(screen.getByRole("menuitem", { name: /^Model/ }));
+    const allowed = await screen.findByRole("menuitem", { name: "Allowed model" });
+    act(() => allowed.focus());
+    await user.keyboard("{Enter}");
+    await user.click(screen.getByRole("button", { name: /^Model Allowed model/ }));
+    await user.hover(screen.getByRole("menuitem", { name: /^Effort/ }));
+    const high = await screen.findByRole("menuitem", { name: "High" });
+    act(() => high.focus());
+    await user.keyboard("{Enter}");
+    expect(screen.getByRole("button", { name: /^Model Allowed model · High/ })).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Mode Manual" }));
+    await user.click(screen.getByRole("menuitem", { name: /^Plan/ }));
+    await user.selectOptions(screen.getByLabelText("Execution"), "none");
+
+    typePrompt("Create from the pills");
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+    await waitFor(() => expect(bff.requestsAt("POST", "/api/v1/sessions")).toHaveLength(1));
+    expect(bff.requestsAt("POST", "/api/v1/sessions")[0]?.body).toEqual({
+      mode: "plan",
+      model: { id: "allowed", providerId: "provider" },
+      reasoningEffort: "high",
+      execution: { none: {} },
+    });
+  });
+
+  it("forks with the current model when only the effort changes", async () => {
+    const user = userEvent.setup();
+    const bff = new BffFixture(session("chat-a"));
+    serveModelInventory(bff);
+    const capabilities = {
+      image: false,
+      audio: false,
+      executionFiles: false,
+      builtInShell: false,
+      manualCompaction: false,
+      modelSelection: true,
+    };
+    bff.nextReplies.set("/api/v1/sessions/chat-a", [
+      Promise.resolve(detailResponse("chat-a", "idle", { capabilities, model: currentModel })),
+    ]);
+    await mountConnectedWorkspace(bff, "chat-a");
+    const controls = screen.getByRole("region", { name: "Chat configuration and usage" });
+
+    bff.nextReplies.set("/api/v1/sessions/chat-a/fork", [
+      Promise.resolve(json({ id: "chat-b" }, 201)),
+    ]);
+    await user.click(
+      within(controls).getByRole("button", { name: /^Model Current model · Medium/ }),
+    );
+    expect(screen.queryByRole("menuitem", { name: "Reset to default" })).toBeNull();
+    await user.hover(screen.getByRole("menuitem", { name: /^Effort Medium/ }));
+    const high = await screen.findByRole("menuitem", { name: "High" });
+    act(() => high.focus());
+    await user.keyboard("{Enter}");
+    await waitFor(() =>
+      expect(bff.requestsAt("POST", "/api/v1/sessions/chat-a/fork")).toHaveLength(1),
+    );
+    expect(bff.requestsAt("POST", "/api/v1/sessions/chat-a/fork")[0]?.body).toMatchObject({
+      model: { id: "current", providerId: "provider" },
+      reasoningEffort: "high",
+    });
+    expect(bff.requestsAt("PUT", "/api/v1/sessions/chat-a/mode")).toHaveLength(0);
+  });
+
   it("creates one session and drains one queued prompt only after its run settles", async () => {
     const bff = new BffFixture();
     const first = heldStream();
@@ -1466,14 +2015,18 @@ describe("mounted chat workspace BFF boundary", () => {
       expect(window.localStorage.getItem("studio.chat.queue.chat-a")).toContain("queued prompt"),
     );
     expect(bff.requestsFor("POST", "/runs")).toHaveLength(1);
-    fireEvent.click(screen.getByRole("button", { name: "Edit queued message 1" }));
+    // Edit and Delete sit in each queued row's actions menu.
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Actions for queued message 1" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Edit" }));
     fireEvent.change(screen.getByRole("textbox", { name: "Edit queued message 1" }), {
       target: { value: "edited prompt" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Save queued message 1" }));
     typePrompt("discard this");
     fireEvent.click(screen.getByRole("button", { name: "Queue message" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Delete queued message 2" }));
+    await user.click(await screen.findByRole("button", { name: "Actions for queued message 2" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Delete" }));
     expect(
       JSON.parse(window.localStorage.getItem("studio.chat.queue.chat-a") ?? "[]"),
     ).toMatchObject([{ text: "edited prompt" }]);
@@ -1534,6 +2087,318 @@ describe("mounted chat workspace BFF boundary", () => {
     expect(bff.requestsFor("POST", "/cancel")[0]?.pathname).toBe(
       "/api/v1/sessions/chat-a/runs/run-a/cancel",
     );
+  });
+
+  it("queues instead of steering when the daemon cannot steer, whatever is stored", async () => {
+    window.localStorage.setItem("studio.chat.composer.enterToSend", "steer");
+    const bff = new BffFixture(session("chat-a", "running"));
+    bff.runtimeSteer = false;
+    const activity = heldStream();
+    bff.activityResponses.set("", [activity.response]);
+    window.localStorage.setItem(
+      "studio.chat.queue.chat-a",
+      JSON.stringify([{ createdAt: 1, id: "queued-1", text: "already waiting" }]),
+    );
+    await mountWorkspace(bff, "chat-a");
+    await waitFor(() => expect(bff.requestsFor("GET", "/activity")).toHaveLength(1));
+    await act(async () => activity.send(runStarted()));
+    await screen.findByRole("button", { name: "Stop" });
+
+    await waitFor(() => expect(screen.getByRole("button", { name: "Queue message" })).toBeTruthy());
+    typePrompt("keep going");
+    fireEvent.click(screen.getByRole("button", { name: "Queue message" }));
+    expect(await screen.findByText("Message queued for the next run.")).toBeTruthy();
+    expect(bff.requestsFor("POST", "/steer")).toHaveLength(0);
+    expect(window.localStorage.getItem("studio.chat.queue.chat-a")).toContain("keep going");
+    // The stored preference is left alone for a later daemon that can steer.
+    expect(window.localStorage.getItem("studio.chat.composer.enterToSend")).toBe("steer");
+
+    await userEvent
+      .setup()
+      .click(screen.getByRole("button", { name: "Actions for queued message 1" }));
+    expect(await screen.findByRole("menuitem", { name: "Edit" })).toBeTruthy();
+    expect(screen.queryByRole("menuitem", { name: "Steer" })).toBeNull();
+  });
+
+  it("steers a queued message into the live run and keeps it queued when the run has ended", async () => {
+    const user = userEvent.setup();
+    const bff = new BffFixture(session("chat-a", "running"));
+    const activity = heldStream();
+    bff.activityResponses.set("", [activity.response]);
+    window.localStorage.setItem(
+      "studio.chat.queue.chat-a",
+      JSON.stringify([
+        { createdAt: 1, id: "queued-1", text: "steer this one" },
+        { createdAt: 2, id: "queued-2", text: "too late" },
+      ]),
+    );
+    await mountWorkspace(bff, "chat-a");
+    await waitFor(() => expect(bff.requestsFor("GET", "/activity")).toHaveLength(1));
+    await act(async () => activity.send(runStarted()));
+    await screen.findByRole("button", { name: "Stop" });
+
+    await user.click(screen.getByRole("button", { name: "Actions for queued message 1" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Steer" }));
+    await waitFor(() => expect(bff.requestsFor("POST", "/steer")).toHaveLength(1));
+    expect(bff.requestsFor("POST", "/steer")[0]).toMatchObject({
+      body: { text: "steer this one" },
+      pathname: "/api/v1/sessions/chat-a/runs/run-a/steer",
+    });
+    await waitFor(() =>
+      expect(
+        JSON.parse(window.localStorage.getItem("studio.chat.queue.chat-a") ?? "[]"),
+      ).toMatchObject([{ text: "too late" }]),
+    );
+    expect(await screen.findByText("Sent — steering the active run.")).toBeTruthy();
+
+    bff.steerStatus = 409;
+    await user.click(screen.getByRole("button", { name: "Actions for queued message 1" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Steer" }));
+    await waitFor(() => expect(bff.requestsFor("POST", "/steer")).toHaveLength(2));
+    expect(
+      await screen.findByText("The run ended before steering. The message stays queued."),
+    ).toBeTruthy();
+    expect(
+      JSON.parse(window.localStorage.getItem("studio.chat.queue.chat-a") ?? "[]"),
+    ).toMatchObject([{ text: "too late" }]);
+    expect(bff.requestsFor("POST", "/runs")).toHaveLength(0);
+  });
+
+  it("offers no Steer for a queued message while no run is live", async () => {
+    const user = userEvent.setup();
+    const bff = new BffFixture(session("chat-a"));
+    window.localStorage.setItem(
+      "studio.chat.queue.chat-a",
+      JSON.stringify([{ createdAt: 1, id: "queued-1", text: "held" }]),
+    );
+    await mountConnectedWorkspace(bff, "chat-a");
+    await user.click(screen.getByRole("button", { name: "Actions for queued message 1" }));
+    expect(await screen.findByRole("menuitem", { name: "Edit" })).toBeTruthy();
+    expect(screen.queryByRole("menuitem", { name: "Steer" })).toBeNull();
+  });
+
+  it("shows a non-manual mode in the header and compacts from the pill row", async () => {
+    const user = userEvent.setup();
+    const bff = new BffFixture(session("chat-a"));
+    const capabilities = {
+      image: false,
+      audio: false,
+      executionFiles: false,
+      builtInShell: false,
+      manualCompaction: true,
+      modelSelection: false,
+    };
+    bff.nextReplies.set("/api/v1/sessions/chat-a", [
+      Promise.resolve(
+        detailResponse("chat-a", "idle", {
+          capabilities,
+          mode: "acceptEdits",
+          model: currentModel,
+          usage: {
+            cacheReadTokens: "0",
+            cacheWriteTokens: "0",
+            inputTokens: "32000",
+            outputTokens: "0",
+            reasoningTokens: "0",
+          },
+        }),
+      ),
+    ]);
+    await mountConnectedWorkspace(bff, "chat-a");
+    const header = screen.getByRole("heading", { name: "Chat chat-a" }).parentElement;
+    expect(await within(header as HTMLElement).findByText("Accept edits")).toBeTruthy();
+    const controls = screen.getByRole("region", { name: "Chat configuration and usage" });
+    expect(within(controls).getByRole("button", { name: "Mode Accept edits" })).toBeTruthy();
+    expect(within(controls).getByText("~25% of context")).toBeTruthy();
+
+    bff.nextReplies.set("/api/v1/sessions/chat-a/compaction", [
+      Promise.resolve(json({ compacted: true })),
+    ]);
+    await user.click(within(controls).getByRole("button", { name: "Compact" }));
+    await waitFor(() =>
+      expect(bff.requestsAt("POST", "/api/v1/sessions/chat-a/compaction")).toHaveLength(1),
+    );
+  });
+
+  it("keeps each chat's unsent draft when switching chats", async () => {
+    const bff = new BffFixture(session("chat-a"), session("chat-b"));
+    const { router } = await mountWorkspace(bff, "chat-a");
+    typePrompt("draft for chat-a");
+    await act(async () => {
+      await router.navigate({ search: { sessionId: "chat-b" }, to: "/workspace/chat" });
+    });
+    expect(await screen.findByRole("heading", { name: "Chat chat-b" })).toBeTruthy();
+    expect(
+      (screen.getByRole("textbox", { name: "Message Mecatl" }) as HTMLTextAreaElement).value,
+    ).toBe("");
+    await act(async () => {
+      await router.navigate({ search: { sessionId: "chat-a" }, to: "/workspace/chat" });
+    });
+    expect(await screen.findByRole("heading", { name: "Chat chat-a" })).toBeTruthy();
+    expect(
+      (screen.getByRole("textbox", { name: "Message Mecatl" }) as HTMLTextAreaElement).value,
+    ).toBe("draft for chat-a");
+    expect(window.sessionStorage.getItem("studio.chat.draft.chat-a")).toBe("draft for chat-a");
+    expect(window.localStorage.getItem("studio.chat.draft.chat-a")).toBeNull();
+  });
+
+  it("keeps the open chat's draft when the user switches chats during a send", async () => {
+    const bff = new BffFixture(session("chat-a"), session("chat-b"));
+    bff.runResponses.push(heldStream().response);
+    const { router } = await mountConnectedWorkspace(bff, "chat-b");
+    typePrompt("draft for chat-b");
+    await act(async () => {
+      await router.navigate({ search: { sessionId: "chat-a" }, to: "/workspace/chat" });
+    });
+    expect(await screen.findByRole("heading", { name: "Chat chat-a" })).toBeTruthy();
+    typePrompt("for chat-a");
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+    await waitFor(() => expect(bff.requestsFor("POST", "/runs")).toHaveLength(1));
+
+    // Leaving chat-a stops its stream before the first delivery, so the send is refused.
+    await act(async () => {
+      await router.navigate({ search: { sessionId: "chat-b" }, to: "/workspace/chat" });
+    });
+    expect(await screen.findByRole("heading", { name: "Chat chat-b" })).toBeTruthy();
+    const input = screen.getByRole<HTMLTextAreaElement>("textbox", { name: "Message Mecatl" });
+    await waitFor(() => expect(input.disabled).toBe(false));
+    expect(input.value).toBe("draft for chat-b");
+    expect(readDraft("chat-b")).toBe("draft for chat-b");
+    expect(readDraft("chat-a")).toBe("for chat-a");
+
+    await act(async () => {
+      await router.navigate({ search: { sessionId: "chat-a" }, to: "/workspace/chat" });
+    });
+    expect(await screen.findByRole("heading", { name: "Chat chat-a" })).toBeTruthy();
+    expect(screen.getByRole<HTMLTextAreaElement>("textbox", { name: "Message Mecatl" }).value).toBe(
+      "for chat-a",
+    );
+  });
+
+  it("carries a new chat's first prompt into the chat its send creates", async () => {
+    const bff = new BffFixture();
+    const run = heldStream();
+    let startRun!: (response: Response) => void;
+    bff.nextReplies.set("/api/v1/sessions/chat-a/runs", [
+      new Promise<Response>((resolve) => {
+        startRun = resolve;
+      }),
+    ]);
+    const { router } = await mountWorkspace(bff);
+    typePrompt("first prompt");
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+    await waitFor(() => expect(bff.requestsFor("POST", "/runs")).toHaveLength(1));
+    expect(router.state.location.search.sessionId).toBe("chat-a");
+    expect(screen.getByRole<HTMLTextAreaElement>("textbox", { name: "Message Mecatl" }).value).toBe(
+      "first prompt",
+    );
+    expect(readDraft("chat-a")).toBe("first prompt");
+    expect(readDraft("new")).toBe("");
+
+    await act(async () => {
+      startRun(run.response);
+      run.send(runStarted());
+    });
+    await waitFor(() =>
+      expect(
+        screen.getByRole<HTMLTextAreaElement>("textbox", { name: "Message Mecatl" }).value,
+      ).toBe(""),
+    );
+    expect(readDraft("chat-a")).toBe("");
+  });
+
+  it("never drains a queued message while it is being steered", async () => {
+    const bff = new BffFixture();
+    const first = heldStream();
+    bff.runResponses.push(first.response);
+    const { router } = await mountWorkspace(bff);
+    typePrompt("first prompt");
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+    await waitFor(() => expect(bff.requestsFor("POST", "/runs")).toHaveLength(1));
+    await act(async () => first.send(runStarted()));
+    await waitFor(() => expect(router.state.location.search.sessionId).toBe("chat-a"));
+    typePrompt("steer me");
+    fireEvent.click(screen.getByRole("button", { name: "Queue message" }));
+    await waitFor(() =>
+      expect(window.localStorage.getItem("studio.chat.queue.chat-a")).toContain("steer me"),
+    );
+
+    let acceptSteer!: (response: Response) => void;
+    bff.nextReplies.set("/api/v1/sessions/chat-a/runs/run-a/steer", [
+      new Promise<Response>((resolve) => {
+        acceptSteer = resolve;
+      }),
+    ]);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Actions for queued message 1" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Steer" }));
+    await waitFor(() => expect(bff.requestsFor("POST", "/steer")).toHaveLength(1));
+
+    // The run settles while the steer is still in flight.
+    await act(async () => {
+      first.send(runEvent("result", "2", "", "run-a", { stop: "end_turn" }));
+      first.close();
+    });
+    await screen.findByRole("button", { name: "Send message" });
+    await waitFor(() =>
+      expect(bff.requestsAt("GET", "/api/v1/sessions/chat-a").length).toBeGreaterThan(0),
+    );
+    await act(async () => acceptSteer(new Response(null, { status: 204 })));
+    await waitFor(() => expect(window.localStorage.getItem("studio.chat.queue.chat-a")).toBeNull());
+    expect(bff.requestsFor("POST", "/runs").map((request) => request.body)).toEqual([
+      { images: [], prompt: "first prompt" },
+    ]);
+  });
+
+  it("sends a queued message once its steer finds the run already ended", async () => {
+    const bff = new BffFixture();
+    const first = heldStream();
+    const second = heldStream();
+    bff.runResponses.push(first.response, second.response);
+    const { router } = await mountWorkspace(bff);
+    typePrompt("first prompt");
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+    await waitFor(() => expect(bff.requestsFor("POST", "/runs")).toHaveLength(1));
+    await act(async () => first.send(runStarted()));
+    await waitFor(() => expect(router.state.location.search.sessionId).toBe("chat-a"));
+    typePrompt("steer me");
+    fireEvent.click(screen.getByRole("button", { name: "Queue message" }));
+    await waitFor(() =>
+      expect(window.localStorage.getItem("studio.chat.queue.chat-a")).toContain("steer me"),
+    );
+
+    let answerSteer!: (response: Response) => void;
+    bff.nextReplies.set("/api/v1/sessions/chat-a/runs/run-a/steer", [
+      new Promise<Response>((resolve) => {
+        answerSteer = resolve;
+      }),
+    ]);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Actions for queued message 1" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Steer" }));
+    await waitFor(() => expect(bff.requestsFor("POST", "/steer")).toHaveLength(1));
+
+    // The run settles while the steer is in flight, so the drain skips the
+    // message; the steer then finds the run gone.
+    await act(async () => {
+      first.send(runEvent("result", "2", "", "run-a", { stop: "end_turn" }));
+      first.close();
+    });
+    await screen.findByRole("button", { name: "Send message" });
+    await waitFor(() =>
+      expect(bff.requestsAt("GET", "/api/v1/sessions/chat-a").length).toBeGreaterThan(0),
+    );
+    expect(bff.requestsFor("POST", "/runs")).toHaveLength(1);
+    await act(async () =>
+      answerSteer(json({ code: "stale_run_control", detail: "The run ended" }, 409)),
+    );
+    await waitFor(() =>
+      expect(bff.requestsFor("POST", "/runs").map((request) => request.body)).toEqual([
+        { images: [], prompt: "first prompt" },
+        { images: [], prompt: "steer me" },
+      ]),
+    );
+    expect(window.localStorage.getItem("studio.chat.queue.chat-a")).toBeNull();
   });
 
   it("retries a saved failed turn without starting a second run or resending its prompt", async () => {
@@ -1675,7 +2540,14 @@ describe("mounted chat workspace BFF boundary", () => {
     bff.nextReplies.set("/api/v1/sessions/chat-a", [
       Promise.resolve(
         detailResponse("chat-a", "idle", {
-          capabilities: { image: true, manualCompaction: false, modelSelection: false },
+          capabilities: {
+            image: true,
+            audio: false,
+            executionFiles: true,
+            builtInShell: true,
+            manualCompaction: false,
+            modelSelection: false,
+          },
         }),
       ),
     ]);
@@ -1684,7 +2556,7 @@ describe("mounted chat workspace BFF boundary", () => {
     startPollingClock();
     await mountConnectedWorkspace(bff, "chat-a");
     await user.upload(
-      await screen.findByLabelText("Choose images to attach"),
+      await screen.findByLabelText("Choose files to attach"),
       new File(["image data"], "picture.png", { type: "image/png" }),
     );
     await waitFor(() => expect(screen.getByText("picture.png")).toBeTruthy());

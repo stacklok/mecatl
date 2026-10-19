@@ -78,14 +78,14 @@ func TestCallMcpWithQueryBrokerSupport_Scenario1_AuthorizationContinuation(t *te
 						return session.ToolResult{}, err
 					}
 					return mcp.FilterCallResult(ctx, native.ID, "github", "list", filter, mcp.CallResult{StructuredContent: json.RawMessage(`{"keep":42,"raw_canary":"secret"}`)})
-				}), WithOAuthLoopbackForTest(t, roots), WithOAuthSecretResolver(func(context.Context, string) (string, error) { return "secret", nil }))
+				}), WithOAuthLoopbackForTest(t, roots), WithOAuthSecretFileReader(func(context.Context, string) (string, error) { return "secret", nil }))
 				if err != nil {
 					t.Fatal(err)
 				}
 				defer runtime.Close()
 				store := memstore.New()
 				buildHost := func(first bool) *server.Service {
-					factory := func(_ context.Context, _ server.ProviderSelector, _ []mcp.ServerConfig, _ server.SessionProfile, _ string, mode session.PermissionMode, tools []tool.Tool) (server.SessionEngineResult, error) {
+					factory := func(_ context.Context, _ server.ProviderSelector, _ []mcp.ServerConfig, _ server.SessionProfile, _ string, mode session.PermissionMode, tools []tool.Tool, toolKeys []string) (server.SessionEngineResult, error) {
 						cat := tool.NewCatalog()
 						for _, candidate := range tools {
 							cat.MustRegister(candidate)
@@ -94,10 +94,10 @@ func TestCallMcpWithQueryBrokerSupport_Scenario1_AuthorizationContinuation(t *te
 						if first {
 							turns = append([]mockllm.Turn{mockllm.ToolCallTurn(call)}, turns...)
 						}
-						return server.SessionEngineResult{Engine: agent.NewEngine(agent.Deps{LLM: mockllm.New(turns...), Catalog: cat, Policy: queryAllowPolicy{}, Store: store}), BuiltForMode: mode, Close: func() error { return nil }}, nil
+						return server.SessionEngineResult{Engine: agent.NewEngine(agent.Deps{LLM: mockllm.New(turns...), Catalog: cat, Policy: queryAllowPolicy{}, Store: store}), BuiltForMode: mode, BrokerRegistrationKeys: append([]string(nil), toolKeys...), Close: func() error { return nil }}, nil
 					}
 					svc, err := server.NewService(server.Config{Engine: agent.NewEngine(agent.Deps{LLM: mockllm.New(mockllm.TextTurn("done")), Catalog: tool.NewCatalog(), Policy: queryAllowPolicy{}}), Store: store, MCPBroker: runtime, SessionEngineWithTools: factory, SessionEngine: func(ctx context.Context, sel server.ProviderSelector, specs []mcp.ServerConfig, profile server.SessionProfile, workspace string, mode session.PermissionMode) (server.SessionEngineResult, error) {
-						return factory(ctx, sel, specs, profile, workspace, mode, nil)
+						return factory(ctx, sel, specs, profile, workspace, mode, nil, nil)
 					}, PlacementProvider: queryPlacement{}, PlacementScope: "test", NewID: func() session.SessionID { return "authorization-session" }})
 					if err != nil {
 						t.Fatal(err)

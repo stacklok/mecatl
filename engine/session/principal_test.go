@@ -14,8 +14,8 @@ func newLabelSession(t *testing.T) *session.Session {
 	return session.New("s1", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/w", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0).UTC())
 }
 
-// TestRestoreLabelsIsWriteOnce pins the write-once contract of the owner label
-// (ADR 0204 decision 4): a second RestoreLabels with a DIFFERENT owner is
+// TestRestoreLabelsIsWriteOnce pins the write-once contract of the owner label:
+// a second RestoreLabels with a DIFFERENT owner is
 // refused, so a restore path can never silently re-own a session.
 func TestRestoreLabelsIsWriteOnce(t *testing.T) {
 	t.Parallel()
@@ -57,7 +57,7 @@ func TestRestoreLabelsIdempotentForSameOwner(t *testing.T) {
 
 // TestRestoreLabelsNilOwnerLeavesOwnerUnset pins the ownerless path: restoring a
 // nil owner (a pre-ship / no-auth session) leaves the label unset and is never
-// an error — the byte-identical no-auth path of ADR 0204.
+// an error — the byte-identical no-auth path.
 func TestRestoreLabelsNilOwnerLeavesOwnerUnset(t *testing.T) {
 	t.Parallel()
 
@@ -133,7 +133,7 @@ func TestPrincipalScopeHashLegacyBytesUnchanged(t *testing.T) {
 // NUL reservation. The construction seams (PrincipalFromClaims, WithPrincipal,
 // RestoreLabels) all reject NUL-bearing identities, but a Principal built from a
 // struct literal reaches PrincipalScopeHash without passing any of them —
-// notably internal/adapter/grpcdriver's wire-supplied owner, which ADR-0213/#452
+// notably internal/adapter/grpcdriver's wire-supplied owner, which #452
 // still leaves unverified. Such an identity must land in a scope no admissible
 // principal can occupy.
 func TestPrincipalScopeHashQuarantinesUnsafeFraming(t *testing.T) {
@@ -211,7 +211,7 @@ func TestPrincipalClone(t *testing.T) {
 	}
 }
 
-// TestPrincipalGrantTypesAreTheThreeValues pins ADR 0204 decision 1: the grant
+// TestPrincipalGrantTypesAreTheThreeValues pins that the grant
 // type is a small closed enum of exactly user / client_credentials / system.
 func TestPrincipalGrantTypesAreTheThreeValues(t *testing.T) {
 	t.Parallel()
@@ -236,10 +236,9 @@ func TestPrincipalGrantTypesAreTheThreeValues(t *testing.T) {
 	}
 }
 
-// TestADR_0212_VerifiedIssuerSubjectPairIsOwnerIdentity pins ADR 0212 decision
-// 1: ownership is the exact verifier-emitted issuer/subject pair. Display and
+// TestVerifiedIssuerSubjectPairIsOwnerIdentity pins that ownership is the exact verifier-emitted issuer/subject pair. Display and
 // grant metadata do not select an owner, and issuer text is never normalized.
-func TestADR_0212_VerifiedIssuerSubjectPairIsOwnerIdentity(t *testing.T) {
+func TestVerifiedIssuerSubjectPairIsOwnerIdentity(t *testing.T) {
 	t.Parallel()
 
 	owner := &session.Principal{Issuer: "https://issuer.example/realm", Subject: "same", GrantType: session.GrantTypeUser, Name: "Alice"}

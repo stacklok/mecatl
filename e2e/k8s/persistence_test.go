@@ -11,8 +11,8 @@ import (
 	"github.com/onsi/gomega"
 )
 
-// persistenceSpecs proves session persistence across an agent pod restart
-// (ADR 0048 §4h test 3). The agent pods are STORAGE-FREE — every session
+// persistenceSpecs proves session persistence across an agent pod restart.
+// The agent pods are STORAGE-FREE — every session
 // snapshot + the durable event log lives in Redis (a managed service), not pod
 // memory or disk. So killing an agent pod loses ZERO session state: a successor
 // pod reloads the snapshot from Redis and continues.

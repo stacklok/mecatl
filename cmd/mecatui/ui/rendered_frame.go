@@ -5,6 +5,7 @@ import (
 
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/stacklok/mecatl/cmd/mecatui/internal/terminaltext"
 	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/scrollback"
 )
 
@@ -21,9 +22,10 @@ const (
 	conversationRegionArguments
 	conversationRegionResult
 	conversationRegionAppendix
+	conversationRegionToolSummary // derived display, never a member's source payload
 )
 
-// readingAnchor is the renderer-facing subset of ADR 0301's logical coordinate.
+// readingAnchor is the renderer-facing subset of the logical conversation coordinate.
 // Text rows use sourceOffset (a grapheme offset in ANSI-free visible text); chrome
 // and other derived rows retain their local row fallback.
 type readingAnchor struct {
@@ -77,7 +79,8 @@ type renderedFrame struct {
 	provenance []renderedRow
 	// Functional-card provenance is structural only; prepared semantic inputs are
 	// discarded at the cache boundary.
-	appendixID uint64
+	appendixID    uint64
+	toolSummaries map[uint64]uint64 // hidden member -> existing summary member ID
 }
 
 func (f renderedFrame) hasRegion(blockID uint64, region regionKind) bool {
@@ -93,7 +96,7 @@ func (f renderedFrame) firstRegionRow(blockID uint64, region regionKind) int {
 	return -1
 }
 
-// Phase 3 — anchor lookup/fallback: lookup starts from frame provenance;
+// Anchor lookup/fallback: lookup starts from frame provenance;
 // conversationView.restore owns the deterministic fallback policy.
 func (f renderedFrame) anchorForRow(row int) (readingAnchor, bool) {
 	if row < 0 || row >= len(f.provenance) {
@@ -149,14 +152,25 @@ func (f renderedFrame) rowForAnchor(anchor readingAnchor) (int, bool) {
 			best = i
 		}
 	}
+	if best < 0 {
+		best = f.toolSummaryRow(anchor.blockID)
+	}
 	return best, best >= 0
 }
 
-// Phase 1 — cache/render inputs: walk blocks once and pass its render-pass output
+func (f renderedFrame) toolSummaryRow(memberID uint64) int {
+	if summaryID, ok := f.toolSummaries[memberID]; ok {
+		return f.firstRegionRow(summaryID, conversationRegionToolSummary)
+	}
+	return -1
+}
+
+// Cache/render inputs: walk blocks once and pass its render-pass output
 // explicitly to frame assembly. renderConversationLines remains the byte-identical
 // viewport wrapper.
 func (r *renderer) renderConversationFrame(c *scrollback.Conversation, expand bool) renderedFrame {
 	passes, firstChanged := r.renderPasses(c, expand)
+	firstChanged, summaries := r.assembleToolGroups(passes, firstChanged, expand)
 	n := len(passes)
 	prefixN := min(firstChanged, n)
 	key := joinPrefixState{width: r.width, expand: expand}
@@ -167,8 +181,9 @@ func (r *renderer) renderConversationFrame(c *scrollback.Conversation, expand bo
 	}
 
 	frame := renderedFrame{
-		lines:      make([]string, 0, len(prefixLines)+(n-prefixN)*2+1),
-		provenance: r.frameProvenanceScratch[:0],
+		lines:         make([]string, 0, len(prefixLines)+(n-prefixN)*2+1),
+		provenance:    r.frameProvenanceScratch[:0],
+		toolSummaries: summaries,
 	}
 	if expand {
 		if appendix, ok := c.AppendixSnapshot(); ok && len(appendix.Files) > 0 {
@@ -219,12 +234,6 @@ func (*renderer) appendFrameSegment(frame *renderedFrame, passes []renderPass, i
 }
 
 func blockBlankLinesAfterPasses(passes []renderPass, previous, current int) int {
-	if passes[current].kind == scrollback.KindAssistant && len(passes[previous].rows) == 1 {
-		switch passes[previous].kind {
-		case scrollback.KindTool, scrollback.KindSubagent, scrollback.KindTeam:
-			return interBlockBlankLinesCompact
-		}
-	}
 	return blockBlankLinesBetween(passes[previous].kind, passes[current].kind)
 }
 
@@ -241,9 +250,7 @@ func (r *renderer) snapshotProvenanceRows(blockID uint64, kind scrollback.Kind, 
 	case scrollback.KindUser:
 		textStart, region = 1, conversationRegionBody
 	case scrollback.KindAssistant:
-		if expand {
-			textStart = 2 // expanded speaker label plus its blank row
-		}
+		textStart = 1 // speaker label; reasoning/body starts immediately below it
 		if strings.TrimSpace(assistant.Reasoning) != "" {
 			reasoning := r.renderReasoningSnapshot(assistant, expand)
 			reasoningRows := len(strings.Split(reasoning, "\n"))
@@ -251,12 +258,16 @@ func (r *renderer) snapshotProvenanceRows(blockID uint64, kind scrollback.Kind, 
 				rows[i] = renderedRow{blockID: blockID, region: conversationRegionReasoning, row: i - textStart}
 			}
 			if expand {
-				caveatRows := len(strings.Split(r.wrapStyled(reasoningCaveat, r.th.Style("reasoning")), "\n"))
-				for i := textStart + 1 + caveatRows; i < min(textStart+reasoningRows, len(rows)); i++ {
+				text := terminaltext.Sanitize(strings.TrimRight(assistant.Reasoning, "\n"))
+				textRows := len(strings.Split(r.wrapStyled(text, r.th.Style("transcriptReasoningText")), "\n"))
+				for i := textStart + reasoningRows - textRows; i < min(textStart+reasoningRows, len(rows)); i++ {
 					rows[i].text = true
 				}
 			}
 			textStart += reasoningRows
+			if strings.TrimSpace(assistant.Text) != "" {
+				textStart++ // reasoning/answer separator is chrome, not semantic text
+			}
 		}
 		region = conversationRegionBody
 	default:
@@ -301,7 +312,7 @@ func canonicalRowText(kind scrollback.Kind, line string, indent int) string {
 		line = strings.TrimPrefix(line, strings.Repeat(" ", indent))
 	}
 	if kind == scrollback.KindAssistant {
-		line = strings.TrimPrefix(line, strings.Repeat(" ", assistantBodyHang))
+		line = strings.TrimPrefix(line, "│ ")
 	}
 	return strings.TrimRight(line, " ")
 }

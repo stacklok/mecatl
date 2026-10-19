@@ -19,7 +19,7 @@ import (
 // subagentWritableSpecs is the live counterpart to the offline writable-Subagent
 // tests: a real model run that delegates a write task with mode:"read-write" and
 // asserts the child's nested, guided edit actually LANDS in the parent workspace.
-// With direct-write (ADR 0041) the child writes the REAL parent workspace IN PLACE —
+// With direct-write the child writes the REAL parent workspace IN PLACE —
 // no fork, no merge — exactly as the main agent does; the nested output file therefore
 // appears in the parent tree directly. The writable Subagent is the "delegate one task
 // and land its edits" path, so it earns the real-filesystem regression assertion.

@@ -46,7 +46,7 @@ func TestRetainedDeletePeerBetweenFinalizerUpdateAndDelete(t *testing.T) {
 				return true, next, d.Tracker().Update(ExecutionEnvironmentGVR, next, "ns")
 			}
 			d.PrependReactor("update", "executionenvironments", versionedUpdate)
-			k := kubefake.NewSimpleClientset(retainedPVC(), &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: profileAllocationConfigMap, Namespace: "ns"}, Data: map[string]string{profileAllocationKey("go"): `["env"]`}})
+			k := kubefake.NewSimpleClientset(retainedPVC(), &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: profileAllocationConfigMap("go"), Namespace: "ns"}, Data: map[string]string{profileAllocationKey("go"): `["env"]`}})
 			store := NewStore(d, "ns", testProfiles(), nil).WithKubeClient(k)
 			if err := store.DeleteRetiredEnvironment(t.Context(), adminRequestFixture()); err != nil {
 				t.Fatal(err)

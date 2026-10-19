@@ -14,7 +14,7 @@ import (
 	"github.com/stacklok/mecatl/cmd/mecatui/customization"
 )
 
-func TestADR_0344_Scenario1_ControllerOwnsSerializedOSC0(t *testing.T) {
+func TestTerminalTitleControllerOwnsSerializedOSC0(t *testing.T) {
 	var output lockedBuffer
 	controller := newTerminalTitleController(&output, true, mustTitleRenderer(t, "{{.Session.Title}} · {{.MainAgent.State}}"))
 
@@ -98,7 +98,7 @@ func TestTerminalTitleControllerPreservesTerminalFile(t *testing.T) {
 	}
 }
 
-func TestADR_0344_Scenario1_DeduplicatesConditionalCleanupAndDisables(t *testing.T) {
+func TestTerminalTitleDeduplicatesConditionalCleanupAndDisables(t *testing.T) {
 	t.Run("deduplicates and clears after a title", func(t *testing.T) {
 		var output bytes.Buffer
 		controller := newTerminalTitleController(&output, true, mustTitleRenderer(t, "{{.Session.Title}}"))
@@ -174,7 +174,7 @@ type failingTitleWriter struct{}
 
 func (failingTitleWriter) Write([]byte) (int, error) { return 0, errTitleWrite }
 
-func TestADR_0344_Scenario1_SanitizesRenderedTitle(t *testing.T) {
+func TestTerminalTitleSanitizesRenderedTitle(t *testing.T) {
 	if got := sanitizeTerminalTitle("one\u0085two"); got != "onetwo" {
 		t.Fatalf("terminal control must be stripped before whitespace collapse: %q", got)
 	}
@@ -196,7 +196,7 @@ func TestADR_0344_Scenario1_SanitizesRenderedTitle(t *testing.T) {
 	}
 }
 
-func TestADR_0344_Scenario2_ExplicitDisablementPrecedence(t *testing.T) {
+func TestTerminalTitleExplicitDisablementPrecedence(t *testing.T) {
 	for _, tc := range []struct {
 		name, flag             string
 		flagSet, setting, want bool
@@ -234,7 +234,7 @@ func TestADR_0344_Scenario2_ExplicitDisablementPrecedence(t *testing.T) {
 	}
 }
 
-func TestADR_0344_Scenario3_TitleAndCustomHandle(t *testing.T) {
+func TestTerminalTitleAndCustomHandle(t *testing.T) {
 	input := customization.Input{Session: customization.Session{Title: "Fix tests", Handle: "sess-123"}, MainAgent: customization.MainAgent{State: "running_tool", Activity: "go test"}}
 	if got := renderTitle(t, "{{.Session.Title}} · {{.MainAgent.Activity}} · mecatui", input); got != "Fix tests · go test · mecatui" {
 		t.Fatalf("default-style title = %q", got)
@@ -244,7 +244,7 @@ func TestADR_0344_Scenario3_TitleAndCustomHandle(t *testing.T) {
 	}
 }
 
-func TestADR_0344_Scenario3_DebugTitle(t *testing.T) {
+func TestTerminalTitleDebugTitle(t *testing.T) {
 	var output bytes.Buffer
 	controller := newTerminalTitleController(&output, true, mustTitleRenderer(t, "{{.Session.Title}} · {{.MainAgent.State}} · mecatui"))
 	controller.debug = true
@@ -255,7 +255,7 @@ func TestADR_0344_Scenario3_DebugTitle(t *testing.T) {
 	}
 }
 
-func TestADR_0344_Scenario3_LocalAndRemotePresentation(t *testing.T) {
+func TestTerminalTitleLocalAndRemotePresentation(t *testing.T) {
 	settings := defaultClientSettings()
 	settings.TerminalTitle.Template = "{{.Session.Title}} · {{.MainAgent.State}}"
 	input := customization.Input{Session: customization.Session{Title: "shared", Handle: "sess-123"}, MainAgent: customization.MainAgent{State: "idle"}, Workspace: customization.Workspace{Path: "/private/workspace"}}

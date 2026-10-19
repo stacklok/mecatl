@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// TestInvariant_owned_access_is_classified pins ADR 0212 decision 2 (AC5.1):
+// TestInvariant_owned_access_is_classified pins AC5.1:
 // the classification guard resolves EVERY current designated
 // application-facade (*Service), in-memory-registry/event-relay (also
 // *Service), cache/index (memory.CallerStore), and shared-system
@@ -123,7 +123,7 @@ func TestCallerSeparation_Scenario5_ExemptionsAreExplicitAndNarrow(t *testing.T)
 			t.Errorf("%s: %v", root, err)
 		}
 		if entry.Kind == KindCallerOwned {
-			t.Errorf("%s: a system-principal root must never be classified caller-owned (ADR 0212 decision 5: no universal bypass)", root)
+			t.Errorf("%s: a system-principal root must never be classified caller-owned (no universal bypass)", root)
 		}
 	}
 }

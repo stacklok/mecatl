@@ -8,6 +8,7 @@ import (
 	"iter"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"slices"
 	"strings"
 	"sync"
@@ -92,6 +93,22 @@ func (s *transcriptStore) counts() (loads, saves int) {
 	return s.loads, s.saves
 }
 
+type samePointerTranscriptStore struct {
+	session *session.Session
+}
+
+func (s *samePointerTranscriptStore) Save(_ context.Context, sess *session.Session) error {
+	s.session = sess
+	return nil
+}
+
+func (s *samePointerTranscriptStore) Load(_ context.Context, id session.SessionID) (*session.Session, error) {
+	if s.session == nil || s.session.ID != id {
+		return nil, fmt.Errorf("%w: %q", port.ErrSessionNotFound, id)
+	}
+	return s.session, nil
+}
+
 type countingLease struct {
 	inner port.SessionLease
 	calls atomic.Int32
@@ -162,7 +179,128 @@ func TestSessionContinuityUX_Scenario3_AuthoritativeTranscript(t *testing.T) {
 	}
 }
 
-func TestADR_0108_TranscriptBackendErrorsAreRedacted(t *testing.T) {
+func TestTranscriptProjectionHasIndependentMessageSlice(t *testing.T) {
+	ctx := context.Background()
+	sess := session.New("transcript-detachment", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/workspace", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1, 0))
+	messages := []session.Message{
+		session.NewUserMessage("retain this prompt"),
+		{Role: session.RoleUser, Text: session.NoProgressNudgeText, UserPromptProvenance: session.UserPromptProvenanceHarness},
+		session.NewAssistantMessage("retain this answer", "", nil),
+	}
+	if err := sess.SeedHistory(messages); err != nil {
+		t.Fatalf("SeedHistory: %v", err)
+	}
+	store := &samePointerTranscriptStore{session: sess}
+	got, err := newTranscriptService(t, store, nil, false, &atomic.Int32{}, nil).GetTranscript(ctx, sess.ID)
+	if err != nil {
+		t.Fatalf("GetTranscript: %v", err)
+	}
+	if len(got.Messages) != 2 {
+		t.Fatalf("display messages = %d, want 2", len(got.Messages))
+	}
+	got.Messages[0] = session.NewUserMessage("replace display message")
+	got.Messages = append(got.Messages, session.NewUserMessage("append display message"))
+	if !reflect.DeepEqual(sess.Conversation.Messages, messages) {
+		t.Fatalf("display slice mutation changed aggregate: %+v", sess.Conversation.Messages)
+	}
+}
+
+func TestTranscriptOmitsOnlyProvenHarnessControlContinuations(t *testing.T) {
+	ctx := context.Background()
+	base := memstore.New()
+	sess := session.New("harness-control", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/workspace", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1, 0))
+	call := session.NewToolCall("read-1", "Read", nil)
+	const canonicalBackgroundCompletion = "[harness note: 1 background subagent(s) finished: subagent-job-123 (end_turn). Collect each result with SubagentStatus before relying on it.]"
+	messages := []session.Message{
+		{Role: session.RoleUser, Text: "operator prompt", UserPromptProvenance: session.UserPromptProvenancePrincipal},
+		{Role: session.RoleUser, Text: session.NoProgressNudgeText, UserPromptProvenance: session.UserPromptProvenanceHarness},
+		{Role: session.RoleUser, Text: session.NoProgressExtractiveNudgeText, UserPromptProvenance: session.UserPromptProvenanceHarness},
+		{Role: session.RoleUser, Text: "[harness note: background subagent(s) finished: worker]", UserPromptProvenance: session.UserPromptProvenanceHarness},
+		{Role: session.RoleUser, Text: "[harness note: background command(s) finished: build]", UserPromptProvenance: session.UserPromptProvenanceHarness},
+		{Role: session.RoleUser, Text: "[harness note: background subagent(s) still running: worker]", UserPromptProvenance: session.UserPromptProvenanceHarness},
+		{Role: session.RoleUser, Text: "[harness note: background command(s) still running: build]", UserPromptProvenance: session.UserPromptProvenanceHarness},
+		{Role: session.RoleUser, Text: "[harness note: background subagent(s) finished: worker; background command(s) still running: build]", UserPromptProvenance: session.UserPromptProvenanceHarness},
+		{Role: session.RoleUser, Text: canonicalBackgroundCompletion, UserPromptProvenance: session.UserPromptProvenancePrincipal},
+		{Role: session.RoleUser, Text: canonicalBackgroundCompletion, UserPromptProvenance: session.UserPromptProvenanceUnknown},
+		{Role: session.RoleUser, Text: session.NoProgressNudgeText, UserPromptProvenance: session.UserPromptProvenancePrincipal},
+		{Role: session.RoleUser, Text: session.NoProgressNudgeText},
+		{Role: session.RoleUser, Text: session.NoProgressNudgeText, Parts: []session.Content{{Kind: session.MediaImage}}, UserPromptProvenance: session.UserPromptProvenanceHarness},
+		{Role: session.RoleUser, Text: session.CompactionSummaryMarker + " retained", UserPromptProvenance: session.UserPromptProvenanceHarness},
+		{Role: session.RoleUser, Text: "[harness note: background worker paused for an unrecognized reason]", UserPromptProvenance: session.UserPromptProvenanceHarness},
+		{Role: session.RoleUser, Text: "scheduled delivery result", UserPromptProvenance: session.UserPromptProvenanceHarness},
+		{Role: session.RoleUser, Text: "scheduled delivery content", Parts: []session.Content{{Kind: session.MediaImage}}, UserPromptProvenance: session.UserPromptProvenanceHarness},
+		{Role: session.RoleAssistant, Text: "calling tool", ToolCalls: []session.ToolCall{call}},
+		session.NewToolMessage(session.NewToolResult(call.ID, "tool result")),
+		{Role: session.RoleAssistant, Text: "final answer"},
+	}
+	if err := sess.SeedHistory(messages); err != nil {
+		t.Fatalf("SeedHistory: %v", err)
+	}
+	if err := base.Save(ctx, sess); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	svc := newTranscriptService(t, base, nil, false, &atomic.Int32{}, nil)
+	got, err := svc.GetTranscript(ctx, sess.ID)
+	if err != nil {
+		t.Fatalf("GetTranscript: %v", err)
+	}
+	if !got.Complete {
+		t.Fatal("successful all-filtered-capable transcript is not complete")
+	}
+	wantTexts := []string{
+		"operator prompt", canonicalBackgroundCompletion, canonicalBackgroundCompletion, session.NoProgressNudgeText,
+		session.NoProgressNudgeText, session.NoProgressNudgeText, session.CompactionSummaryMarker + " retained", "[harness note: background worker paused for an unrecognized reason]",
+		"scheduled delivery result", "scheduled delivery content", "calling tool", "", "final answer",
+	}
+	if len(got.Messages) != len(wantTexts) {
+		t.Fatalf("display messages = %d, want %d: %+v", len(got.Messages), len(wantTexts), got.Messages)
+	}
+	for i, want := range wantTexts {
+		if got.Messages[i].Text != want {
+			t.Fatalf("display message %d text = %q, want %q", i, got.Messages[i].Text, want)
+		}
+	}
+	if len(got.Messages[5].Parts) != 1 || len(got.Messages[9].Parts) != 1 {
+		t.Fatalf("media or scheduled delivery content was not retained: %+v", got.Messages)
+	}
+	if len(got.Messages[10].ToolCalls) != 1 || got.Messages[11].ToolResult == nil || got.Messages[11].ToolResult.CallID != call.ID {
+		t.Fatalf("tool pair was not retained in order: %+v", got.Messages[10:12])
+	}
+
+	stored, err := base.Load(ctx, sess.ID)
+	if err != nil {
+		t.Fatalf("Load after transcript: %v", err)
+	}
+	if len(stored.Conversation.Messages) != len(messages) {
+		t.Fatalf("stored history length = %d, want %d", len(stored.Conversation.Messages), len(messages))
+	}
+	if !reflect.DeepEqual(stored.Conversation.Messages, messages) {
+		t.Fatalf("stored model history changed:\n got: %+v\nwant: %+v", stored.Conversation.Messages, messages)
+	}
+}
+
+func TestTranscriptAllHarnessControlContinuationsIsCompleteAndEmpty(t *testing.T) {
+	ctx := context.Background()
+	base := memstore.New()
+	sess := session.New("only-harness-control", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/workspace", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1, 0))
+	if err := sess.SeedHistory([]session.Message{{Role: session.RoleUser, Text: session.NoProgressNudgeText, UserPromptProvenance: session.UserPromptProvenanceHarness}}); err != nil {
+		t.Fatalf("SeedHistory: %v", err)
+	}
+	if err := base.Save(ctx, sess); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	got, err := newTranscriptService(t, base, nil, false, &atomic.Int32{}, nil).GetTranscript(ctx, sess.ID)
+	if err != nil {
+		t.Fatalf("GetTranscript: %v", err)
+	}
+	if !got.Complete || len(got.Messages) != 0 {
+		t.Fatalf("all-filtered transcript = complete %v, %d messages; want true, 0", got.Complete, len(got.Messages))
+	}
+}
+
+func TestTranscriptBackendErrorsAreRedacted(t *testing.T) {
 	const raw = "snapshot decode failed at /secret/backend/session.jsonl"
 	diag := &recordingDiagnostics{}
 	svc, err := newPlacementTestService(server.Config{
@@ -187,7 +325,7 @@ func TestADR_0108_TranscriptBackendErrorsAreRedacted(t *testing.T) {
 	}
 }
 
-func TestADR_0108_TranscriptAbsenceIsNotEmptySuccess(t *testing.T) {
+func TestTranscriptAbsenceIsNotEmptySuccess(t *testing.T) {
 	ctx := context.Background()
 	boom := errors.New("snapshot decode failed")
 	for _, tc := range []struct {

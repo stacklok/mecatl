@@ -192,7 +192,7 @@ func TestBuildStoreDefaults(t *testing.T) {
 	})
 }
 
-// TestBuildStoreRedisURL pins the ADR-0048 Redis branch of buildSessionStore:
+// TestBuildStoreRedisURL pins the Redis branch of buildSessionStore:
 // a RedisURL yields the redisstore adapter, which doubles as its own EventLog
 // (the same Store instance, like jsonlstore). The test uses an in-process
 // miniredis so it is fully offline. A Save/Load round-trip proves the adapter
@@ -231,7 +231,7 @@ func TestBuildStoreRedisURL(t *testing.T) {
 	}
 }
 
-// TestBuildStoreEventLogURL pins the cloud-native 3c override: an
+// TestBuildStoreEventLogURL pins the event-log override: an
 // --event-log-url points the durable EventLog at a grpcdriver EventLogService
 // client, INDEPENDENT of where the session store lives. Offline-safe (lazy
 // grpc.NewClient). The two cases prove the override applies both when the

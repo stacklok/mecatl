@@ -19,6 +19,8 @@ func TestValidateProviderID(t *testing.T) {
 		{"uppercase rejected", "MYPROVIDER", "lowercase letter"},
 		{"mixed case rejected", "MyProvider", "lowercase letter"},
 		{"reserved rejected", "openai", "reserved"},
+		{"search credential namespace reserved", "websearch", "reserved"},
+		{"router namespace reserved", "model-router", "reserved"},
 		{"empty rejected", "", "lowercase letter"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -69,6 +71,8 @@ func TestOperatorDefinedLLMProviders_Scenario1_InvalidDefinitionsFailClosed(t *t
 		"providers:\n  custom:\n    base_url: https://x.example\n    default_model: m\n    api_flavor: invalid",
 		"providers:\n  custom:\n    base_url: https://x.example\n    api_flavor: openai-responses",
 		"providers:\n  mock:\n    base_url: https://x.example\n    default_model: m\n    api_flavor: openai-responses",
+		"providers:\n  websearch:\n    base_url: https://x.example\n    default_model: m\n    api_flavor: openai-responses",
+		"providers:\n  model-router:\n    base_url: https://x.example\n    default_model: m\n    api_flavor: openai-responses",
 		"providers:\n  toolhive-anthropic:\n    base_url: https://x.example\n    default_model: m\n    api_flavor: anthropic-messages",
 		"provider_overrides:\n  toolhive:\n    base_url: https://x.example",
 	}
@@ -128,7 +132,7 @@ provider_overrides:
 	}
 }
 
-func TestADR_0238_BuiltinOverrideAllowlist(t *testing.T) {
+func TestBuiltinOverrideAllowlist(t *testing.T) {
 	for _, id := range []string{"openai", "openrouter", "anthropic", "opencode"} {
 		if _, err := parseYAML([]byte("provider_overrides:\n  " + id + ":\n    base_url: https://proxy.example")); err != nil {
 			t.Fatalf("%s override rejected: %v", id, err)

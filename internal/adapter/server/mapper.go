@@ -295,31 +295,33 @@ func toProtoParallel(p session.ParallelPayload) *mecatlv1.Parallel {
 		p.InnerKind, p.ToolName, p.Detail = "", "", ""
 	}
 	return &mecatlv1.Parallel{
-		ParentCallId:    p.ParentCallID,
-		Kind:            string(p.Kind),
-		Join:            valid(p.Join), // model-authored arg, not a harness token: normalizeJoin passes unknown values through
-		BranchCount:     ClampInt32(p.BranchCount),
-		BranchIndex:     ClampInt32(p.BranchIndex),
-		ChildId:         p.ChildID,
-		BranchLabel:     valid(p.BranchLabel),
-		Goal:            valid(p.Goal),
-		RoutedCategory:  routingEvidenceString(p.RoutedCategory),
-		RoutedModel:     routingEvidenceString(p.RoutedModel),
-		RoutingReason:   routingEvidenceString(p.RoutingReason),
-		RoutingDecision: toProtoRoutingDecision(p.RoutingDecision),
-		Model:           routingEvidenceString(p.Model),
-		ToolName:        valid(p.ToolName),
-		ChildToolCallId: childPreviewID(p.ChildToolCallID),
-		IsError:         p.IsError,
-		ToolCount:       ClampInt32(p.ToolCount),
-		InnerKind:       string(p.InnerKind),
-		Text:            valid(p.Text),
-		Detail:          valid(p.Detail),
-		Failed:          p.Failed,
-		Stop:            string(p.Stop),
-		Usage:           toProtoUsage(p.Usage),
-		DurationMs:      p.DurationMs,
-		Winner:          ClampInt32(p.Winner),
+		ParentCallId:           p.ParentCallID,
+		Kind:                   string(p.Kind),
+		Join:                   valid(p.Join), // model-authored arg, not a harness token: normalizeJoin passes unknown values through
+		BranchCount:            ClampInt32(p.BranchCount),
+		BranchIndex:            ClampInt32(p.BranchIndex),
+		ChildId:                p.ChildID,
+		BranchLabel:            valid(p.BranchLabel),
+		Goal:                   valid(p.Goal),
+		RoutedCategory:         routingEvidenceString(p.RoutedCategory),
+		RoutedModel:            routingEvidenceString(p.RoutedModel),
+		RoutingReason:          routingEvidenceString(p.RoutingReason),
+		RoutingDecision:        toProtoRoutingDecision(p.RoutingDecision),
+		Model:                  routingEvidenceString(p.Model),
+		Provider:               routingEvidenceString(p.Provider),
+		ExplicitRouterCategory: routingEvidenceString(p.ExplicitRouterCategory),
+		ToolName:               valid(p.ToolName),
+		ChildToolCallId:        childPreviewID(p.ChildToolCallID),
+		IsError:                p.IsError,
+		ToolCount:              ClampInt32(p.ToolCount),
+		InnerKind:              string(p.InnerKind),
+		Text:                   valid(p.Text),
+		Detail:                 valid(p.Detail),
+		Failed:                 p.Failed,
+		Stop:                   string(p.Stop),
+		Usage:                  toProtoUsage(p.Usage),
+		DurationMs:             p.DurationMs,
+		Winner:                 ClampInt32(p.Winner),
 	}
 }
 
@@ -486,15 +488,17 @@ func toProtoTeam(p session.TeamPayload) *mecatlv1.Team {
 	roster := make([]*mecatlv1.TeamMemberSpec, 0, len(p.Roster))
 	for _, m := range p.Roster {
 		roster = append(roster, &mecatlv1.TeamMemberSpec{
-			Name:            valid(m.Name),
-			Role:            valid(m.Role),
-			Mutating:        m.Mutating,
-			Lead:            m.Lead,
-			RoutedCategory:  routingEvidenceString(m.RoutedCategory),
-			RoutedModel:     routingEvidenceString(m.RoutedModel),
-			RoutingReason:   routingEvidenceString(m.RoutingReason),
-			RoutingDecision: toProtoRoutingDecision(m.RoutingDecision),
-			Model:           routingEvidenceString(m.Model),
+			Name:                   valid(m.Name),
+			Role:                   valid(m.Role),
+			Mutating:               m.Mutating,
+			Lead:                   m.Lead,
+			RoutedCategory:         routingEvidenceString(m.RoutedCategory),
+			RoutedModel:            routingEvidenceString(m.RoutedModel),
+			RoutingReason:          routingEvidenceString(m.RoutingReason),
+			RoutingDecision:        toProtoRoutingDecision(m.RoutingDecision),
+			Model:                  routingEvidenceString(m.Model),
+			Provider:               routingEvidenceString(m.Provider),
+			ExplicitRouterCategory: routingEvidenceString(m.ExplicitRouterCategory),
 		})
 	}
 	tasks := make([]*mecatlv1.TeamTask, 0, len(p.Tasks))
@@ -616,26 +620,28 @@ func toProtoSubagent(p session.SubagentPayload) *mecatlv1.Subagent {
 		p.InnerKind, p.ToolName, p.Detail = "", "", ""
 	}
 	return &mecatlv1.Subagent{
-		ParentCallId:    p.ParentCallID,
-		ChildId:         p.ChildID,
-		Goal:            valid(p.Goal),
-		Background:      p.Background,
-		RoutedCategory:  routingEvidenceString(p.RoutedCategory),
-		RoutedModel:     routingEvidenceString(p.RoutedModel),
-		RoutingReason:   routingEvidenceString(p.RoutingReason),
-		RoutingDecision: toProtoRoutingDecision(p.RoutingDecision),
-		Model:           routingEvidenceString(p.Model),
-		ToolName:        valid(p.ToolName),
-		ChildToolCallId: childPreviewID(p.ChildToolCallID),
-		IsError:         p.IsError,
-		ToolCount:       ClampInt32(p.ToolCount),
-		InnerKind:       string(p.InnerKind),
-		Text:            valid(p.Text),
-		Detail:          valid(p.Detail),
-		Usage:           toProtoUsage(p.Usage),
-		Stop:            string(p.Stop),
-		Cause:           valid(p.Cause),
-		DurationMs:      p.DurationMs,
+		ParentCallId:           p.ParentCallID,
+		ChildId:                p.ChildID,
+		Goal:                   valid(p.Goal),
+		Background:             p.Background,
+		RoutedCategory:         routingEvidenceString(p.RoutedCategory),
+		RoutedModel:            routingEvidenceString(p.RoutedModel),
+		RoutingReason:          routingEvidenceString(p.RoutingReason),
+		RoutingDecision:        toProtoRoutingDecision(p.RoutingDecision),
+		Model:                  routingEvidenceString(p.Model),
+		Provider:               routingEvidenceString(p.Provider),
+		ExplicitRouterCategory: routingEvidenceString(p.ExplicitRouterCategory),
+		ToolName:               valid(p.ToolName),
+		ChildToolCallId:        childPreviewID(p.ChildToolCallID),
+		IsError:                p.IsError,
+		ToolCount:              ClampInt32(p.ToolCount),
+		InnerKind:              string(p.InnerKind),
+		Text:                   valid(p.Text),
+		Detail:                 valid(p.Detail),
+		Usage:                  toProtoUsage(p.Usage),
+		Stop:                   string(p.Stop),
+		Cause:                  valid(p.Cause),
+		DurationMs:             p.DurationMs,
 	}
 }
 
@@ -1257,7 +1263,7 @@ func toProtoScopedWorktrees(wts []ScopedWorktree) []*mecatlv1.Worktree {
 }
 
 // toProtoSessionSummary maps a Service SessionSummary (the surface-agnostic
-// picker row, issue #245 Phase 1) to its proto form. It projects ONLY the
+// picker row, issue #245) to its proto form. It projects ONLY the
 // picker metadata — no conversation content.
 func toProtoSessionSummary(s SessionSummary) *mecatlv1.SessionSummary {
 	metadata := s.TitleMetadata
@@ -1312,7 +1318,7 @@ func toProtoSessionRelationship(r session.SessionRelationship) *mecatlv1.Session
 	return out
 }
 
-// toProtoPrincipal maps the verified owner (ADR 0204) to its proto form. A nil
+// toProtoPrincipal maps the verified owner to its proto form. A nil
 // principal maps to a nil message — an ABSENT owner must stay absent on the wire,
 // never a present-but-empty "anonymous" one. Every string goes through valid()
 // (the UTF-8 scrubber every other wire string uses): the issuer/subject come from

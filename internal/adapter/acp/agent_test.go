@@ -336,7 +336,7 @@ func (e *editor) readLoop() {
 	}
 }
 
-// TestEndToEndPromptWithPermission drives the full Phase 1 loop over an in-memory
+// TestEndToEndPromptWithPermission drives the full prompt loop over an in-memory
 // stdio pipe: initialize -> session/new -> session/prompt; the agent streams a
 // message chunk, a tool_call, then issues a request_permission that the editor
 // answers allow_once; the tool runs; a tool_call_update follows; and the prompt
@@ -1002,7 +1002,7 @@ func TestInitializeAdvertisesHTTPMCP(t *testing.T) {
 	}
 }
 
-func TestADR_0291_ACPBindAndLoadAssertConfiguredPlacement(t *testing.T) {
+func TestACPBindAndLoadAssertConfiguredPlacement(t *testing.T) {
 	root := testCWD(t)
 	ref := session.EnvironmentRef{Kind: "remote", ID: "private-placement-id", Revision: "private-revision"}
 	var binds, reattaches atomic.Int32
@@ -1079,6 +1079,20 @@ func TestServerOwnedSessionPlacement_Scenario7_ACPProjectsNoPhysicalPaths(t *tes
 	for _, private := range []string{root, ref.ID, ref.Revision} {
 		if strings.Contains(projection, private) {
 			t.Fatalf("ACP projection exposed private placement data %q: %s", private, projection)
+		}
+	}
+}
+
+func TestACPRejectsUnsupportedExecutionSelectorAtIngress(t *testing.T) {
+	svc := newService(t, mockllm.New(), nil)
+	a := acp.NewAgent(svc, acp.WithResume(true))
+	for _, tc := range []struct{ method, params string }{
+		{"session/new", fmt.Sprintf(`{"cwd":%q,"mcpServers":[],"execution":{"none":{}}}`, testCWD(t))},
+		{"session/load", fmt.Sprintf(`{"sessionId":"unbound","cwd":%q,"mcpServers":[],"execution":{"template":{"id":"go","revision":"v1"}}}`, testCWD(t))},
+	} {
+		_, err := a.Handle(t.Context(), tc.method, json.RawMessage(tc.params), true)
+		if err == nil || !strings.Contains(err.Error(), "execution selection is unsupported") {
+			t.Fatalf("%s silently downgraded unsupported execution: %v", tc.method, err)
 		}
 	}
 }
@@ -1248,7 +1262,7 @@ func callP(id, name, args string) *session.ToolCall {
 
 // startAgent wires an Agent over a pipe pair, starts Serve on a goroutine, and
 // returns a connected editor plus a cleanup that closes the editor's writer and
-// waits for Serve. It centralizes the boilerplate the new Phase-3 tests share.
+// waits for Serve. It centralizes the boilerplate these tests share.
 func startAgent(t *testing.T, svc *server.Service, opts ...acp.AgentOption) (*editor, func()) {
 	t.Helper()
 	agentStdinR, editorToAgentW := io.Pipe()

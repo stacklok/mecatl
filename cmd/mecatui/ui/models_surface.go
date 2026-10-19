@@ -69,6 +69,11 @@ type modelsGlobalDefaultIntent struct {
 func (modelsGlobalDefaultIntent) isSurfaceIntent() {}
 
 func (s *modelsState) Render(width, height int) (string, []ClickableRegion) {
+	if width <= 0 || height <= 0 {
+		s.rowBudget = 0
+		s.hitItems = nil
+		return "", nil
+	}
 	prefix, suffix := modelsFixedLines(*s, s.provenance)
 	s.rowBudget = max(0, height-len(prefix)-len(suffix))
 	list := s.listControl()
@@ -80,7 +85,7 @@ func (s *modelsState) Render(width, height int) (string, []ClickableRegion) {
 	appendChrome := func(line string) {
 		if len(lines) < max(0, height) {
 			// Keep normal Models chrome intact so the surrounding card can retain its
-			// historical natural width. Compact geometry still needs a hard bound.
+			// natural width. Compact geometry still needs a hard bound.
 			if width < modelsNormalChromeWidth {
 				line = boundedDisplayLine(line, width)
 			}
@@ -124,7 +129,12 @@ func (s *modelsState) Render(width, height int) (string, []ClickableRegion) {
 }
 
 func (s *modelsState) HandleKey(msg tea.KeyPressMsg) (tea.Cmd, bool, bool) {
+	move, navigation := boundedFilterNavigationMove(msg, s.deps.keys)
 	switch {
+	case key.Matches(msg, s.deps.keys.Close) && s.rowBudget == 0:
+		return nil, true, true
+	case s.rowBudget == 0:
+		return nil, true, false
 	case key.Matches(msg, s.deps.keys.Close):
 		if s.filter.Value() != "" {
 			s.filter.SetValue("")
@@ -132,18 +142,8 @@ func (s *modelsState) HandleKey(msg tea.KeyPressMsg) (tea.Cmd, bool, bool) {
 			return nil, true, false
 		}
 		return nil, true, true
-	case msg.String() == keyMenuUp:
-		s.moveCursor(bounded.LineUp)
-	case msg.String() == keyMenuDown:
-		s.moveCursor(bounded.LineDown)
-	case key.Matches(msg, s.deps.keys.ScrollU):
-		s.moveCursor(bounded.PageUp)
-	case key.Matches(msg, s.deps.keys.ScrollD):
-		s.moveCursor(bounded.PageDown)
-	case key.Matches(msg, s.deps.keys.ScrollTop):
-		s.moveCursor(bounded.Top)
-	case key.Matches(msg, s.deps.keys.ScrollBottom):
-		s.moveCursor(bounded.End)
+	case navigation:
+		s.moveCursor(move)
 	case key.Matches(msg, s.deps.keys.SetGlobalDefault):
 		if chosen, ok := s.chosen(); ok {
 			s.intent = modelsGlobalDefaultIntent{client.ModelSelection{ProviderID: chosen.ProviderID, ModelID: chosen.ID}, modelLabel(chosen)}
@@ -473,9 +473,8 @@ func modelCapSegments(mi client.ModelInfo) []string {
 	if mi.ContextLimit > 0 {
 		segs = append(segs, renderfmt.HumanizeTokens(mi.ContextLimit))
 	}
-	// ADR 0346: mark a row mecatl sends no cache breakpoint for. The row stays
-	// SELECTABLE, and marking rather than hiding was the explicit decision
-	// recorded in the acceptance plan.
+	// Mark a row mecatl sends no cache breakpoint for. The row stays
+	// SELECTABLE; marking rather than hiding is deliberate.
 	//
 	// Since decision 1 arms the breakpoint on every Responses endpoint, the only
 	// way to see PromptCached=false is a server started with --no-prompt-cache.
@@ -497,7 +496,7 @@ func modelCapSegments(mi client.ModelInfo) []string {
 }
 
 // anyUncachedModel reports whether any row in the catalog would carry the
-// no-cache marker, gating its legend line (ADR 0346). It must apply the SAME
+// no-cache marker, gating its legend line. It must apply the SAME
 // predicate modelCapSegments does, or the legend and the markers disagree.
 func anyUncachedModel(models []client.ModelInfo) bool {
 	for _, mi := range models {

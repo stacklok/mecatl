@@ -5,6 +5,7 @@ import { getProviderSettingsOptions, getRuntimeOptions } from "@mecatl-studio/co
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import type { ReactNode } from "react";
+import { PageShell } from "../../components/shell/page-shell";
 import { Badge } from "../../components/ui/badge";
 import {
   connectionMessage,
@@ -60,7 +61,10 @@ export function ProviderDetail({ providerId }: { providerId: string }) {
     content = <State text={connection} />;
   } else if (runtime.isError) {
     content = (
-      <State text="Provider details could not be loaded. Check the connection and try again." />
+      <State
+        error
+        text="Provider details could not be loaded. Check the connection and try again."
+      />
     );
   } else if (detailValidating || detail.isFetching || detail.isPending) {
     content = <State text="Loading provider details…" />;
@@ -70,42 +74,46 @@ export function ProviderDetail({ providerId }: { providerId: string }) {
     ) : isModelsUnsupported(detail.error) ? (
       <State text="Model providers are not available on this deployment." />
     ) : (
-      <State text="Provider details could not be loaded. Check the connection and try again." />
+      <State
+        error
+        text="Provider details could not be loaded. Check the connection and try again."
+      />
     );
   } else {
     content = <ProviderFacts detail={detail.data} />;
   }
 
   return (
-    <div className="h-full overflow-y-auto">
-      <div className="mx-auto w-full max-w-4xl px-4 py-7 sm:px-8 sm:py-10">
-        <Link
-          className="inline-flex min-h-11 items-center rounded-lg text-sm text-muted-foreground underline-offset-4 hover:text-foreground hover:underline focus-visible:outline-2 focus-visible:outline-brand"
-          params={{ section: "providers" }}
-          search={{ item: undefined }}
-          to="/workspace/settings/$section"
-        >
-          ← Providers
-        </Link>
-        <h1 className="mt-5 break-all text-3xl font-semibold tracking-tight">{providerId}</h1>
-        <p className="mt-2 text-sm text-muted-foreground">
-          Source: authenticated BFF provider detail. Configuration is managed by the deployment.
-        </p>
-        <div className="mt-7">{content}</div>
-      </div>
-    </div>
+    <PageShell className="max-w-4xl">
+      <Link
+        className="inline-flex min-h-11 items-center rounded-lg text-sm text-muted-foreground underline-offset-4 hover:text-foreground hover:underline focus-visible:outline-2 focus-visible:outline-brand"
+        params={{ section: "providers" }}
+        search={{ item: undefined }}
+        to="/workspace/settings/$section"
+      >
+        <span aria-hidden="true">←&nbsp;</span>Providers
+      </Link>
+      {/* The BFF's name once this provider is described; the requested ID until then. */}
+      <h1 className="mt-5 break-words text-3xl font-semibold tracking-tight">
+        {detail.data?.provider.displayName ?? providerId}
+      </h1>
+      <p className="mt-2 text-sm text-muted-foreground">
+        Configuration is managed by the deployment.
+      </p>
+      <div className="mt-7">{content}</div>
+    </PageShell>
   );
 }
 
 function ProviderFacts({ detail }: { detail: GetProviderSettingsResponse }) {
   const { provider } = detail;
   return (
-    <section className="rounded-2xl border bg-card p-5 sm:p-6">
+    <section className="rounded-2xl border bg-card p-5 min-[500px]:p-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h2 className="text-lg font-semibold">Provider status</h2>
         <ProviderState state={provider.state} />
       </div>
-      <dl className="mt-5 grid gap-3 sm:grid-cols-2">
+      <dl className="mt-5 grid gap-3 min-[500px]:grid-cols-2">
         <Fact label="Provider ID">{provider.id}</Fact>
         <Fact label="Available models">{provider.modelCount} models</Fact>
         <Fact label="Status hint">{provider.hint || "Not available"}</Fact>
@@ -117,7 +125,7 @@ function ProviderFacts({ detail }: { detail: GetProviderSettingsResponse }) {
           No models are available from this provider.
         </p>
       ) : (
-        <ul className="mt-3 grid gap-3 sm:grid-cols-2">
+        <ul className="mt-3 grid gap-3 min-[500px]:grid-cols-2">
           {detail.models.map((model) => (
             <li className="rounded-lg border bg-background p-3" key={model.id}>
               <p className="font-medium">{model.displayName}</p>
@@ -151,9 +159,12 @@ function ProviderState({ state }: { state: string }) {
   return <Badge variant="muted">Not ready</Badge>;
 }
 
-function State({ text }: { text: string }) {
+function State({ error, text }: { error?: boolean; text: string }) {
   return (
-    <div className="rounded-2xl border border-dashed p-8 text-center text-sm text-muted-foreground">
+    <div
+      className="rounded-2xl border border-dashed p-8 text-center text-sm text-muted-foreground"
+      role={error ? "alert" : "status"}
+    >
       {text}
     </div>
   );

@@ -168,8 +168,8 @@ func TestChildEngineDepsRoleScopedTelemetryWhenScoperSet(t *testing.T) {
 }
 
 // TestChildEngineDepsNilTelemetryWhenNoScoper pins the no-perf path: with no
-// MetricsRoleScoper, both child deps builders leave Sink/ToolCallRecorder nil —
-// byte-identical to the pre-feature unmetered child shape — even when the MAIN
+// MetricsRoleScoper, both child deps builders leave Sink/ToolCallRecorder nil
+// (the unmetered child shape) even when the MAIN
 // pair is wired on cfg.
 func TestChildEngineDepsNilTelemetryWhenNoScoper(t *testing.T) {
 	cfg := Config{Workspace: t.TempDir(), Model: "mock"}

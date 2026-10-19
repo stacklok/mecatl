@@ -13,7 +13,7 @@ import (
 	"github.com/stacklok/mecatl/e2e/harness"
 )
 
-// modelSlotSpecs covers ADR 0030 (per-slot models, Phase 1+2) LIVE: a mecated
+// modelSlotSpecs covers per-slot models LIVE: a mecated
 // spawned with `--model-slot compaction=cheap --model-alias cheap=<cheap-model>`
 // and `--compaction cascade` must, on a real mid-run compaction, run the tier-4
 // SUMMARY call on the SLOT model — not the session model. The offline twin lives in

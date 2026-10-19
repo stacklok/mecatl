@@ -7,7 +7,7 @@ type SkillActivationPolicy string
 
 const (
 	// SkillActivationEvaluated requires a trusted evaluator PASS. It is the zero
-	// value to preserve the historical engine/embedder policy.
+	// value, so it is the default engine/embedder policy.
 	SkillActivationEvaluated SkillActivationPolicy = "evaluated"
 	// SkillActivationValidated permits structurally validated, evidence-backed
 	// ABSTAIN candidates to activate without granting any additional capability.

@@ -65,6 +65,93 @@ type embeddedExecutionReadyManager struct {
 	err   error
 }
 
+type embeddedTestStorage struct {
+	memoryDir, storeDir, userModelDir string
+}
+
+// isolatedEmbeddedTestStorage supplies real app.Build with distinct directories while
+// poisoning every conventional root. If an embedded config stops threading any one
+// of these explicit directories, Build creates its conventional leaf below the
+// corresponding poisoned root and the cleanup detects it.
+func isolatedEmbeddedTestStorage(t *testing.T) embeddedTestStorage {
+	t.Helper()
+	root := t.TempDir()
+	ambient := map[string]string{
+		"HOME":            filepath.Join(root, "home"),
+		"XDG_CONFIG_HOME": filepath.Join(root, "config"),
+		"XDG_DATA_HOME":   filepath.Join(root, "data"),
+		"XDG_STATE_HOME":  filepath.Join(root, "state"),
+		"XDG_CACHE_HOME":  filepath.Join(root, "cache"),
+		"XDG_RUNTIME_DIR": filepath.Join(root, "runtime"),
+	}
+	type environment struct {
+		value string
+		set   bool
+	}
+	previous := make(map[string]environment, len(ambient))
+	t.Cleanup(func() {
+		for name, value := range previous {
+			if value.set {
+				_ = os.Setenv(name, value.value)
+			} else {
+				_ = os.Unsetenv(name)
+			}
+		}
+		xdg.Reload()
+	})
+	for name, dir := range ambient {
+		value, set := os.LookupEnv(name)
+		previous[name] = environment{value: value, set: set}
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "ambient-poison"), []byte(name), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Setenv(name, dir); err != nil {
+			t.Fatal(err)
+		}
+	}
+	xdg.Reload()
+	t.Cleanup(func() {
+		for _, path := range []string{
+			filepath.Join(ambient["XDG_CONFIG_HOME"], "mecatl", "usermodel"),
+			filepath.Join(ambient["XDG_DATA_HOME"], "mecatui", "memory"),
+			filepath.Join(ambient["XDG_STATE_HOME"], "mecatui", "sessions"),
+		} {
+			if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+				t.Errorf("explicit embedded storage leaked into poisoned ambient XDG root %q: %v", path, err)
+			}
+		}
+		for name, dir := range ambient {
+			if got, err := os.ReadFile(filepath.Join(dir, "ambient-poison")); err != nil || string(got) != name {
+				t.Errorf("poisoned ambient XDG root %q changed: %q, %v", dir, got, err)
+			}
+		}
+	})
+	return embeddedTestStorage{
+		memoryDir:    filepath.Join(root, "memory"),
+		storeDir:     filepath.Join(root, "store"),
+		userModelDir: filepath.Join(root, "usermodel"),
+	}
+}
+
+func (s embeddedTestStorage) apply(cfg config) config {
+	cfg.memoryDir = s.memoryDir
+	cfg.storeDir = s.storeDir
+	cfg.userModelDir = s.userModelDir
+	return cfg
+}
+
+func (s embeddedTestStorage) assertBuilt(t *testing.T) {
+	t.Helper()
+	for _, dir := range []string{s.memoryDir, s.storeDir, s.userModelDir} {
+		if info, err := os.Stat(dir); err != nil || !info.IsDir() {
+			t.Errorf("app.Build did not use explicit embedded storage directory %q: %v", dir, err)
+		}
+	}
+}
+
 func (m *embeddedExecutionReadyManager) EnsureReady(ctx context.Context, _ microvmmanager.ReadyRequest) (string, error) {
 	m.calls++
 	microvmmanager.ReportReadinessStage(ctx, microvmmanager.StageDownload)
@@ -75,12 +162,13 @@ func (m *embeddedExecutionReadyManager) EnsureReady(ctx context.Context, _ micro
 }
 
 func TestBareEmbeddedConfigResolvesOperatorExecutionSettings(t *testing.T) {
+	storage := isolatedEmbeddedTestStorage(t)
 	settings := filepath.Join(t.TempDir(), "settings.yaml")
 	if err := os.WriteFile(settings, []byte("execution: {default_placement: microvm-local}\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	progress := make(chan string, 16)
-	cfg := embeddedConfig(config{workspace: t.TempDir(), model: "m", mock: true, microVMProgress: progress}, port.NopDiagnostics{})
+	cfg := embeddedConfig(storage.apply(config{workspace: t.TempDir(), model: "m", mock: true, microVMProgress: progress}), port.NopDiagnostics{})
 	cfg.PermissionConfigs = []string{settings}
 	cfg.MicroVMReadyRequest = func(microvmmanager.GuestEgressSelection) (microvmmanager.ReadyRequest, error) {
 		return microvmmanager.ReadyRequest{}, nil
@@ -99,6 +187,7 @@ func TestBareEmbeddedConfigResolvesOperatorExecutionSettings(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	storage.assertBuilt(t)
 	defer built.Close()
 	if !factoryCalled || manager.calls != 0 {
 		t.Fatalf("bare embedded construction did not select MicroVM lazily: factory=%v readiness=%d", factoryCalled, manager.calls)
@@ -134,7 +223,8 @@ func TestBareEmbeddedConfigResolvesOperatorExecutionSettings(t *testing.T) {
 }
 
 func TestBareEmbeddedHostLocalOmissionDoesNoMicroVMWork(t *testing.T) {
-	cfg := embeddedConfig(config{workspace: t.TempDir(), model: "m", mock: true}, port.NopDiagnostics{})
+	storage := isolatedEmbeddedTestStorage(t)
+	cfg := embeddedConfig(storage.apply(config{workspace: t.TempDir(), model: "m", mock: true}), port.NopDiagnostics{})
 	factoryCalled := false
 	cfg.MicroVMManagerFactory = func() (app.MicroVMReadyManager, string, error) {
 		factoryCalled = true
@@ -144,6 +234,7 @@ func TestBareEmbeddedHostLocalOmissionDoesNoMicroVMWork(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	storage.assertBuilt(t)
 	defer built.Close()
 	sess, err := built.Service.CreateSession(t.Context(), session.ModeDefault, session.Limits{})
 	if err != nil {
@@ -241,7 +332,7 @@ func TestEmbeddedConfigEnablesAgentDefs(t *testing.T) {
 
 // TestEmbeddedConfigPermissionPosture asserts the TUI discovers the conventional
 // per-project permission config and imports Claude-Code settings (issue #13), but
-// that project TRUST is DEFAULT FALSE (WORKSPACE-TRUST Phase 0): unified with
+// that project TRUST is DEFAULT FALSE: unified with
 // mecated, a project's ALLOW rules + project soul are gated behind --trust-project.
 func TestEmbeddedConfigPermissionPosture(t *testing.T) {
 	ac := embeddedConfig(config{workspace: "/ws", model: "m", mock: true}, port.NopDiagnostics{})
@@ -567,7 +658,7 @@ func TestParseFlagsNoMouse(t *testing.T) {
 }
 
 // TestParseFlagsThemeResolution asserts cfg.theme (the light-theme
-// auto-detect gate's input, ADR 0280 — resolveThemeAutoDetect treats an empty
+// auto-detect gate's input — resolveThemeAutoDetect treats an empty
 // cfg.theme as "no explicit theme") stays empty with none given, and picks up
 // a theme name from either --theme or the MECATUI_THEME fallback.
 func TestParseFlagsThemeResolution(t *testing.T) {
@@ -1417,7 +1508,7 @@ func TestEmbeddedConfigMapsPosture(t *testing.T) {
 }
 
 // TestParseFlagsSubagentModelRouter covers the --subagent-model-router kill-switch
-// (ADR 0042) end-to-end through mecatui's embeddedConfig: the router is enabled by the
+// end-to-end through mecatui's embeddedConfig: the router is enabled by the
 // models.router: taxonomy, so the bool flag only sets RouterDisabled when given as
 // =false. Unset → set==false → RouterDisabled==false (taxonomy governs); bare/=true →
 // set==true/value==true, RouterDisabled stays false (a harmless no-op, does NOT disable);
@@ -1465,7 +1556,7 @@ func TestParseFlagsSubagentModelRouter(t *testing.T) {
 // TestPostureRefusalReason proves the generalised root-refusal (the exported
 // app.PostureRefusalReason) gates auto AND yolo (both waive the mutate-ask floor) while
 // strict/trusted are NEVER refused (they suppress no prompt), and only when PRIVILEGED.
-// It would fail if the gate regressed to the historical yolo-only check.
+// It would fail if the gate regressed to a yolo-only check.
 func TestPostureRefusalReason(t *testing.T) {
 	tests := []struct {
 		name       string

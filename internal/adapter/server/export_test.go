@@ -11,8 +11,7 @@ import (
 // TrackedClientKeysForTest returns the post-validation rate-limiter's per-client
 // bucket keys (empty when rate limiting is disabled). It lets an external test
 // assert WHAT the limiter keys on — the verified (iss, sub) rather than the raw
-// token — and that a rejected token creates no post-validation bucket (ADR 0204
-// decision 3).
+// token — and that a rejected token creates no post-validation bucket.
 func (a *Authenticator) TrackedClientKeysForTest() []string {
 	if a.limiters == nil {
 		return nil
@@ -114,7 +113,7 @@ func SteerOutcomeToProtoForTest(o agent.SteerOutcome) mecatlv1.SteerOutcome {
 	return steerOutcomeToProto(o)
 }
 
-// ShrinkWatchDeliveryForTest narrows the bounded watch delivery state (ADR 0250)
+// ShrinkWatchDeliveryForTest narrows the bounded watch delivery state
 // for one test and returns the restore func.
 //
 // The bounds are deliberately NOT configuration: an operator has no reason to

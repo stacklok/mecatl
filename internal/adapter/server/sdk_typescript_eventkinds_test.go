@@ -43,7 +43,7 @@ func TestSDKTypescriptCore_Scenario6_EventKindParity(t *testing.T) {
 	}
 }
 
-func TestADR_0370_Scenario3_SDKCompatibility(t *testing.T) {
+func TestSDKEventKindCompatibility(t *testing.T) {
 	t.Parallel()
 
 	paths := sdkTypescriptEventParityPaths(t)

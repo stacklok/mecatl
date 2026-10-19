@@ -1,18 +1,20 @@
 package ui
 
 import (
+	"fmt"
 	"strings"
 
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
-	"github.com/stacklok/mecatl/cmd/mecatui/theme"
+	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/bounded"
 )
 
 // effort.go is the /effort picker — a tiny SELECTING overlay (cursor + enter) for
-// the reasoning-effort tier (ADR 0055). Enter on a tier applies DIRECTLY via a
-// FORK-RESUME (ADR 0068): the server forks the session's conversation onto a peer
+// the reasoning-effort tier. Enter on a tier applies DIRECTLY via a
+// FORK-RESUME: the server forks the session's conversation onto a peer
 // session at the new effort, so the transcript SURVIVES — no confirm step (the
 // switch is non-destructive, so it is never a teardown warning), no wipe. It is
 // much simpler than /models: a FIXED enum, no filter; the only RPC is the fork
@@ -31,18 +33,16 @@ import (
 // and the LIVE display reads m.resolvedSessionModel.ReasoningEffort (the resolved value),
 // so the picker only ever needs to send the operator's REQUEST.
 
-// effortView is the active /effort overlay (none = closed). Idle-only, esc-dismissed.
-type effortView int
-
-const (
-	effortNone  effortView = iota // overlay closed
-	effortPanel                   // the enum picker
-)
-
 // effortAuto is the picker label for the UNSET tier; it maps to the empty string on
 // the wire and in persisted state (see the package header). Named once so the label
 // list, effortValue, and effortLabel share one spelling.
 const effortAuto = "auto"
+
+const (
+	effortMaxOuterWidth  = 128
+	effortRowGutterWidth = 3
+	effortWarning        = "this model has no reasoning support — a tier will be ignored"
+)
 
 // effortTiers is the neutral reasoning-effort vocabulary in picker order. "auto" is
 // the unset sentinel (⇒ ""); the rest are the real tiers the server understands.
@@ -56,11 +56,66 @@ const effortAuto = "auto"
 // but keep the two aligned.
 var effortTiers = []string{effortAuto, "low", "medium", "high", "xhigh", "max"}
 
-// effortState holds the /effort overlay state on the Model. Value-embedded so the
-// Model stays a plain struct Update copies.
+// effortState owns the picker for one open lifetime; session effects stay on Model.
 type effortState struct {
-	view   effortView
-	cursor int // index into effortTiers (clamped to its bounds)
+	deps        surfaceDeps
+	list        bounded.List
+	noReasoning bool
+	intent      surfaceIntent
+	compact     bool   // view cache: refreshed from every Render offer
+	offer       [2]int // view cache: last Render geometry, for selection reveal on resize
+}
+
+type effortSelectIntent struct{ effort string }
+
+func (effortSelectIntent) isSurfaceIntent() {}
+
+func (s *effortState) takeSurfaceIntent() surfaceIntent {
+	intent := s.intent
+	s.intent = nil
+	return intent
+}
+
+func (s *effortState) modalMaxOuterWidth() int {
+	frame := s.deps.theme.Style("askCard").GetHorizontalFrameSize()
+	width := ansi.StringWidth("Reasoning effort")
+	for _, tier := range effortTiers {
+		width = max(width, effortRowGutterWidth+ansi.StringWidth(effortRowText(tier)))
+	}
+	for _, line := range s.footerLines(effortMaxOuterWidth - frame) {
+		width = max(width, ansi.StringWidth(line))
+	}
+	if s.noReasoning {
+		width = max(width, ansi.StringWidth(effortWarning))
+	}
+	return min(effortMaxOuterWidth, width+frame)
+}
+func (s *effortState) modalFrame() bool                      { return !s.compact }
+func (s *effortState) Close()                                { s.intent = nil }
+func (*effortState) HandleMsg(tea.Msg) (tea.Cmd, bool, bool) { return nil, false, false }
+
+func (s *effortState) HandleKey(msg tea.KeyPressMsg) (tea.Cmd, bool, bool) {
+	if key.Matches(msg, s.deps.keys.Close) {
+		return nil, true, true
+	}
+	if s.compact || !s.list.Valid() {
+		return nil, true, false
+	}
+	if move, ok := boundedNavigationMove(msg, s.deps.keys); ok {
+		s.list.Move(move)
+	} else if key.Matches(msg, s.deps.keys.Choose) {
+		s.intent = effortSelectIntent{effort: effortValue(s.list.CursorID())}
+	}
+	return nil, true, false
+}
+
+func (s *effortState) HandleWheel(msg tea.MouseWheelMsg) (tea.Cmd, bool) {
+	if !s.compact && s.list.Valid() {
+		if move, ok := boundedWheelMove(msg); ok {
+			s.list.Scroll(move)
+		}
+	}
+	return nil, true
 }
 
 // effortValue maps a picker label to the wire/state value: the auto sentinel becomes
@@ -93,9 +148,18 @@ func (m Model) openEffort() (tea.Model, tea.Cmd) {
 	if m.phase != phaseIdle || !m.caps.ModelSelection {
 		return m, nil
 	}
-	m.prompt.Blur() // overlay owns the keyboard while open
-	m.effort.view = effortPanel
-	m.effort.cursor = effortCursorFor(m.resolvedSessionModel.ReasoningEffort)
+	s := &effortState{deps: (&m).surfaceDeps(), noReasoning: m.currentModelNoReasoning(), compact: true}
+	items := make([]bounded.ListItem, len(effortTiers))
+	for i, tier := range effortTiers {
+		items[i] = bounded.ListItem{ID: tier, Text: effortRowText(tier)}
+		if tier == effortLabel(m.resolvedSessionModel.ReasoningEffort) {
+			items[i].StatusCells[0] = "●"
+		}
+	}
+	s.list.SetItems(items)
+	s.list.SetCursor(effortCursorFor(m.resolvedSessionModel.ReasoningEffort))
+	m.modal = s
+	m.prompt.Blur()
 	return m, nil
 }
 
@@ -114,7 +178,7 @@ func effortCursorFor(current string) int {
 
 // currentModelNoReasoning reports whether the CURRENT effective model is KNOWN (from
 // the loaded /models inventory) to NOT support reasoning — so a picked effort tier
-// would be DROPPED by the server's capability gate (ADR 0055). It is the TUI half of
+// would be DROPPED by the server's capability gate. It is the TUI half of
 // that gate's acknowledgement (UX): the picker warns up front so a user who restarts
 // the session for an effort they can't get is not left guessing (the server-side
 // degrade only logs). It is CONSERVATIVE — true ONLY when the model is found in the
@@ -133,67 +197,12 @@ func (m Model) currentModelNoReasoning() bool {
 	return false // not in the inventory → unknown → fail-open (no warning)
 }
 
-// closeEffort dismisses the overlay and returns focus to the prompt input.
-func (m Model) closeEffort() (tea.Model, tea.Cmd) {
-	m.effort.view = effortNone
-	cmd := m.prompt.Focus()
-	return m, cmd
-}
-
-// onEffortKey routes key presses while the picker is open. The enum is short, so the
-// routing is the simple cursor model (no filter input to feed): arrows/j/k move,
-// enter selects, esc closes. Every key is handled=true (the open picker swallows
-// keys). Returns handled=false only when the overlay is closed (so onOverlayKey
-// falls through to the next handler).
-func (m Model) onEffortKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
-	if m.effort.view == effortNone {
-		return m, nil, false
-	}
-	switch {
-	case key.Matches(msg, m.keys.Close):
-		mm, cmd := m.closeEffort()
-		return mm, cmd, true
-	case key.Matches(msg, m.keys.Up):
-		if m.effort.cursor > 0 {
-			m.effort.cursor--
-		}
-		return m, nil, true
-	case key.Matches(msg, m.keys.Down):
-		if m.effort.cursor < len(effortTiers)-1 {
-			m.effort.cursor++
-		}
-		return m, nil, true
-	case key.Matches(msg, m.keys.Choose):
-		return m.chooseEffort()
-	}
-	// Any other key is swallowed (handled=true) so stray input can't leak to the
-	// prompt while the overlay owns the keyboard.
-	return m, nil, true
-}
-
-// chooseEffort handles enter on the cursor row: it builds a selection carrying the
-// CURRENT provider/model (so the model is PRESERVED — only the effort changes) plus
-// the picked effort, then fires the switchEffort FORK-RESUME handoff DIRECTLY (ADR
-// 0068) — no confirm step: the fork is non-destructive (the transcript survives on
-// the peer session), so there is nothing to warn about. A cursor past the enum end
-// is a no-op (defensive).
-func (m Model) chooseEffort() (tea.Model, tea.Cmd, bool) {
-	if m.effort.cursor < 0 || m.effort.cursor >= len(effortTiers) {
-		return m, nil, true
-	}
-	sel := m.effortSelection(effortValue(effortTiers[m.effort.cursor]))
-	// Dismiss the effort overlay BEFORE the handoff (it drives phaseConnecting) so a
-	// stale overlay flag can't survive the transition; focus returns to the prompt.
-	m.effort.view = effortNone
-	return m.switchEffort(sel)
-}
-
 // effortSelection builds the ModelSelection for a restart that changes ONLY the
 // reasoning effort: it carries the CURRENT session's provider/model (the effective
 // model the server resolved, falling back to the pending createModelSelection) so the model
 // is preserved across the restart, with the new effort applied. When no model is
 // known yet (older server / mid-connect) it carries the bare effort over the
-// server-default provider — meaningful on its own (ADR 0055: effort rides the
+// server-default provider — meaningful on its own (effort rides the
 // server-default provider), so this is not a zero selection.
 func (m Model) effortSelection(effort string) client.ModelSelection {
 	sel := client.ModelSelection{
@@ -210,43 +219,90 @@ func (m Model) effortSelection(effort string) client.ModelSelection {
 	return sel
 }
 
-// renderEffortOverlay draws the picker centred over the conversation region via
-// centerCard. current is the effective effort the server resolved (the ● marker
-// target). Returns "" when the overlay is closed.
-func renderEffortOverlay(th theme.Theme, st effortState, current string, noReasoning bool, hk helpKeys, width, height int) string {
-	if st.view == effortPanel {
-		return centerCard(th, renderEffortPanel(th, st, current, noReasoning, hk), width, height)
+func (s *effortState) footerLines(width int) []string {
+	th, hk := s.deps.theme, s.deps.marks
+	var actions, navigation []string
+	for i, pair := range []struct {
+		up, down      key.Binding
+		marks, action string
+	}{
+		{s.deps.keys.Up, s.deps.keys.Down, hk.navUp + "/" + hk.navDown, "move"},
+		{s.deps.keys.ScrollU, s.deps.keys.ScrollD, hk.scroll, "page"},
+		{s.deps.keys.ScrollTop, s.deps.keys.ScrollBottom, hk.jump, "first/last"},
+	} {
+		marks := pair.marks
+		if !pair.up.Enabled() && !pair.down.Enabled() {
+			continue
+		}
+		if !pair.up.Enabled() {
+			marks = firstKey(pair.down, "")
+			if i == 2 {
+				pair.action = "last"
+			}
+		}
+		if !pair.down.Enabled() {
+			marks = firstKey(pair.up, "")
+			if i == 2 {
+				pair.action = "first"
+			}
+		}
+		if i == 0 {
+			actions = append(actions, marks+" "+pair.action)
+		} else {
+			navigation = append(navigation, marks+" "+pair.action)
+		}
 	}
-	return ""
+	if s.deps.keys.Choose.Enabled() {
+		actions = append(actions, hk.choose+" apply")
+	}
+	actions = append(actions, hk.closeOnly+" close")
+	footer := skillsTextLines(th.Style("muted"), strings.Join(actions, " · "), width)
+	if len(navigation) > 0 {
+		footer = append(footer, skillsTextLines(th.Style("muted"), strings.Join(navigation, " · "), width)...)
+	}
+	return append(footer, skillsTextLines(th.Style("muted"), "● current  ·  auto = provider default", width)...)
 }
 
-// renderEffortPanel renders the fixed enum: a title, one row per tier with the cursor
-// row highlighted and a ● marker on the CURRENT (effective) tier, then a one-line
-// footer hint. The enum is short + ASCII-safe, so no windowing/sanitization is
-// needed (every string is an internal const). current is the effective effort
-// (server-resolved); the ● tracks effortLabel(current).
-func renderEffortPanel(th theme.Theme, st effortState, current string, noReasoning bool, hk helpKeys) string {
-	var b strings.Builder
-	b.WriteString(th.Style("askTitle").Render("Reasoning effort") + "\n\n")
-	currentLabel := effortLabel(current)
-	for i, tier := range effortTiers {
-		marker := "  "
-		if tier == currentLabel {
-			marker = "● "
-		}
-		b.WriteString(renderRow(th, marker+effortRowText(tier), i == st.cursor) + "\n")
+func (s *effortState) Render(width, height int) (string, []ClickableRegion) {
+	offer := [2]int{width, height}
+	reveal := offer != s.offer || s.list.RevealPending()
+	s.offer = offer
+	s.compact = true
+	if width <= 0 || height <= 0 {
+		s.list.SetGeometry(0, 0, 2, bounded.Clip)
+		return "", nil
 	}
-	// UX (ADR 0055): when the current model is KNOWN to lack reasoning support, warn
-	// that a chosen tier will be ignored — so a switch for an unattainable effort is
-	// acknowledged in the picker, not only in the (invisible) server log.
-	if noReasoning {
-		b.WriteString("\n" + th.Style("warning").Render("this model has no reasoning support — a tier will be ignored"))
+	th, hk := s.deps.theme, s.deps.marks
+	title := skillsTextLines(th.Style("askTitle"), "Reasoning effort", width)
+	footer := s.footerLines(width)
+	var warning []string
+	if s.noReasoning {
+		warning = skillsTextLines(th.Style("warning"), effortWarning, width)
 	}
-	// The nav/select/close chords read the LIVE Up/Down/Choose/Close markings
-	// (issue #457); with defaults the hint is byte-identical to the historical literal.
-	b.WriteString("\n" + th.Style("muted").Render(hk.navUp+"/"+hk.navDown+" move · "+hk.choose+" apply · "+hk.closeOnly+" close"))
-	b.WriteString("\n" + th.Style("muted").Render("● current  ·  auto = provider default"))
-	return b.String()
+	rows := height - len(title) - len(warning) - len(footer)
+	s.list.SetGeometry(width, rows, 2, bounded.Clip)
+	if !s.list.Valid() {
+		return renderSkillsCompact(th, hk, width), nil
+	}
+	s.compact = false
+	view := s.list.ViewWithIndicators(rows, reveal)
+	result := title
+	if rows == 1 && (view.Above > 0 || view.Below > 0) {
+		// Capacity-one overflow has no reserved indicator rows. Reuse the header.
+		result[len(result)-1] = ansi.Cut(th.Style("askTitle").Render(fmt.Sprintf("↑ %d ↓ %d more · Reasoning effort", view.Above, view.Below)), 0, width)
+	} else if view.Above > 0 {
+		result = append(result, ansi.Cut(th.Style("muted").Render(fmt.Sprintf("↑ %d more", view.Above)), 0, width))
+	}
+	for _, row := range view.Rows {
+		p := presentListRow(row, th.Style("spinner"), th.Style("muted"))
+		result = append(result, ansi.Cut(p.Style.Render(p.Text), 0, width))
+	}
+	if rows > 1 && view.Below > 0 {
+		result = append(result, ansi.Cut(th.Style("muted").Render(fmt.Sprintf("↓ %d more", view.Below)), 0, width))
+	}
+	result = append(result, warning...)
+	result = append(result, footer...)
+	return strings.Join(result, "\n"), nil
 }
 
 // effortRowText is the per-tier row label: the tier name plus a short hint for the

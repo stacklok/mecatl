@@ -653,7 +653,7 @@ func TestParseMemoryFieldRejectsUnknown(t *testing.T) {
 }
 
 // TestParseMemoryFieldAbsentIsUnset asserts a def with no memory: field carries the
-// empty tier (no read, no prompt delta — byte-identical to today's behaviour).
+// empty tier (no read, no prompt delta).
 func TestParseMemoryFieldAbsentIsUnset(t *testing.T) {
 	def, perr, notes := parseAgentDef([]byte("---\nname: n\ndescription: d\n---\nbody"), "n.md")
 	if perr != "" {

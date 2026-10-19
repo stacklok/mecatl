@@ -9,7 +9,7 @@ import (
 // StartGoroutineWatchdog launches a background ticker that samples the live
 // goroutine count (via the injected count func, normally runtime.NumGoroutine)
 // every interval and logs a slog.Warn when it exceeds threshold — the live leak
-// ALARM of decision 10 in docs/adr/0018-perf-observability.md, complementing the
+// ALARM, complementing the
 // test-time goleak gate and the runtime collector's goroutine-count /metrics
 // series.
 //

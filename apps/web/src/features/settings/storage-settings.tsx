@@ -4,9 +4,10 @@ import type { GetStorageHealthResponse } from "@mecatl-studio/contracts/generate
 import { getStorageHealthOptions } from "@mecatl-studio/contracts/query";
 import { useQuery } from "@tanstack/react-query";
 import { RefreshCw } from "lucide-react";
+import type { ReactNode } from "react";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
-import { StateCard } from "../knowledge/state-card";
+import { Note, RuntimeStatusLine, SettingsCard } from "./settings-card";
 
 /**
  * Settings → Storage: a plain-words summary of what the agent has saved —
@@ -16,45 +17,57 @@ import { StateCard } from "../knowledge/state-card";
 export function StorageSettings() {
   const query = useQuery(getStorageHealthOptions());
 
-  if (query.isPending) return <StateCard text="Loading storage details…" />;
-  if (query.isError) return <StateCard error text={errorMessage(query.error)} />;
-  if (!query.data.supported) {
-    return <StateCard text="This agent cannot report on its storage." title="Storage" />;
-  }
+  const refreshButton = (
+    <Button
+      className="min-h-11 rounded-full"
+      onClick={() => void query.refetch()}
+      size="sm"
+      variant="outline"
+    >
+      <RefreshCw aria-hidden="true" className="size-3.5" />
+      Refresh
+    </Button>
+  );
 
   return (
-    <section className="rounded-2xl border bg-card p-5 sm:p-6">
-      <div className="flex items-center justify-between gap-3">
-        <h2 className="text-lg font-semibold">Storage</h2>
-        <Button
-          className="min-h-11"
-          onClick={() => void query.refetch()}
-          size="sm"
-          variant="outline"
-        >
-          <RefreshCw aria-hidden="true" className="size-3.5" />
-          Refresh
-        </Button>
-      </div>
-      <p className="mt-2 text-xs text-muted-foreground">
-        Storage cleanup is managed by this deployment.
-      </p>
-      <div className="mt-4">
-        <StorageHealthSummary health={query.data} />
-      </div>
-    </section>
+    <SettingsCard title="Storage">
+      {query.isPending ? (
+        <RuntimeStatusLine state={{ kind: "loading", text: "Loading storage details…" }} />
+      ) : query.isError ? (
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <RuntimeStatusLine state={{ kind: "error", text: errorMessage(query.error) }} />
+          {refreshButton}
+        </div>
+      ) : !query.data.supported ? (
+        <Note role="status">This agent cannot report on its storage.</Note>
+      ) : (
+        <div className="flex flex-col gap-4">
+          <StorageHealthSummary action={refreshButton} health={query.data} />
+          <Note>Storage cleanup is managed by this deployment.</Note>
+        </div>
+      )}
+    </SettingsCard>
   );
 }
 
-function StorageHealthSummary({ health }: { health: GetStorageHealthResponse }) {
+function StorageHealthSummary({
+  action,
+  health,
+}: {
+  action: ReactNode;
+  health: GetStorageHealthResponse;
+}) {
   const status = storageHealthStatus(health);
   const mix = describeSessionMix(health);
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex flex-wrap items-center gap-2">
-        <Badge variant={status.label === "Healthy" ? "success" : "warning"}>{status.label}</Badge>
-        {status.detail && <span className="text-sm text-muted-foreground">{status.detail}</span>}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
+          <Badge variant={status.label === "Healthy" ? "success" : "warning"}>{status.label}</Badge>
+          {status.detail && <span className="text-sm text-muted-foreground">{status.detail}</span>}
+        </div>
+        {action}
       </div>
       {health.available && (
         <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm">

@@ -24,7 +24,7 @@ func TestMemstoreConformance(t *testing.T) {
 }
 
 // TestResumableSessionStatusMetrics_Scenario1_StoreRoundTripAndFailure names the
-// shared conformance proof required by the acceptance plan. The reference in-memory
+// shared conformance proof every session store must pass. The reference in-memory
 // store exercises populated and absent occupancy round trips; every durable adapter
 // runs the same shared suite through its own conformance entry point.
 func TestResumableSessionStatusMetrics_Scenario1_StoreRoundTripAndFailure(t *testing.T) {

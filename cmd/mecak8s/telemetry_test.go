@@ -254,7 +254,7 @@ func TestTelemetryMetricsAddrServesPrometheus(t *testing.T) {
 	defer built.Close()
 
 	// Drive a run so the instruments record data before scraping. mecak8s is a
-	// file-less deployment (ADR 0237), so the session carries no workspace.
+	// file-less deployment, so the session carries no workspace.
 	sess, err := built.Service.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
@@ -311,7 +311,7 @@ func TestTelemetryMetricsAddrServesPrometheus(t *testing.T) {
 }
 
 // TestTelemetryMetricsAddrRejectsNonLoopback asserts a non-loopback
-// --metrics-addr is REJECTED at parse time (fail-closed, ADR 0018 decision 6).
+// --metrics-addr is REJECTED at parse time (fail-closed).
 func TestTelemetryMetricsAddrRejectsNonLoopback(t *testing.T) {
 	_, err := parseFlags([]string{"--metrics-addr", "0.0.0.0:9090"})
 	if err == nil {
@@ -369,7 +369,7 @@ func TestTelemetryPushesRunMetricsOnExit(t *testing.T) {
 	defer built.Close()
 
 	// Drive a run so the instruments record data before the SIGTERM flush. mecak8s
-	// is a file-less deployment (ADR 0237), so the session carries no workspace.
+	// is a file-less deployment, so the session carries no workspace.
 	sess, err := built.Service.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)

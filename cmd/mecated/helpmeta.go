@@ -85,7 +85,7 @@ var flagMetaByFlag = map[string]flagMeta{
 	"client-ca":  {group: groupSecurity, common: false, acp: acpExclude},
 	"rate-limit": {group: groupSecurity, common: false, acp: acpExclude},
 	"rate-burst": {group: groupSecurity, common: false, acp: acpExclude},
-	// Caller identity (ADR 0204): advanced, server-boundary — an ACP client
+	// Caller identity: advanced, server-boundary — an ACP client
 	// speaks over stdio and has no authenticated edge.
 	"oidc-issuer":             {group: groupSecurity, common: false, acp: acpExclude},
 	"oidc-jwks-uri":           {group: groupSecurity, common: false, acp: acpExclude},
@@ -235,6 +235,7 @@ var flagMetaByFlag = map[string]flagMeta{
 	// ── Agent teams & delegation (both) ──────────────────────────────────
 	"subagent-model":                   {group: groupAgentTeams, common: false, acp: acpInclude},
 	"model-alias":                      {group: groupAgentTeams, common: false, acp: acpInclude},
+	"model-alias-provider":             {group: groupAgentTeams, common: false, acp: acpInclude},
 	"model-slot":                       {group: groupAgentTeams, common: false, acp: acpInclude},
 	"subagent-ask-reviewer":            {group: groupAgentTeams, common: false, acp: acpInclude},
 	"subagent-ask-reviewer-max-denies": {group: groupAgentTeams, common: false, acp: acpInclude},

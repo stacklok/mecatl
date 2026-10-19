@@ -8,7 +8,7 @@ import (
 )
 
 // DeliveryQueue is the DURABLE per-session pending-delivery queue for
-// scheduled-task fire results (ADR 0075, fire-result-delivery Scenario 4). It is
+// scheduled-task fire results. It is
 // keyed on the ORIGIN session id — the session that created the schedule — NOT
 // on a per-Run registry (which dies with its run). A note queued during one run
 // is drained on the origin's NEXT run-entry if the current run ends first: the

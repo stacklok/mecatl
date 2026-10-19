@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"io"
 	"os"
 	"strings"
 	"testing"
@@ -13,8 +12,9 @@ import (
 func TestServerProviderRecovery_Scenario7_HostLogDeliveryPolicy(t *testing.T) {
 	if args, child := recoveryhost.ChildArgs(t); child {
 		// realMain chooses its diagnostics sink; injected human trace is separate.
-		if code := realMain(args, os.Stdout, io.Discard); code != 0 {
-			t.Fatalf("realMain exit=%d", code)
+		var human bytes.Buffer
+		if code := realMain(args, os.Stdout, &human); code != 0 {
+			t.Fatalf("realMain exit=%d stderr=%s", code, human.String())
 		}
 		return
 	}

@@ -379,8 +379,7 @@ func TestCallMcpWithQueryContextCancelled(t *testing.T) {
 // always JSON-shaped (jq.Run json-encodes every value), so Truncate()-ing it
 // at 25 KiB would hand the model an unparseable fragment — the exact hazard
 // the primary path (tool.go's structuredTooLargeError) already fails closed
-// on. This used to assert the opposite (truncate rather than error); it now
-// guards the fix that closes that gap on the recovery path.
+// on. It guards that the recovery path fails closed too.
 func TestCallMcpWithQueryOutputFailClosedOversized(t *testing.T) {
 	// A filter that produces ~30 KiB of JSON (over the 25 KiB output cap, well
 	// under jq's 100 KiB output cap): `[range(0;3000) | {id:.}]` yields a 3000

@@ -3,7 +3,6 @@
 import type { RunStreamEvent } from "@mecatl-studio/contracts";
 import {
   cancelRun,
-  resolvePlanAsk,
   resolveRunPermission,
   startRun,
   watchSessionActivity,
@@ -25,20 +24,14 @@ import {
   Copy,
   LoaderCircle,
   Maximize2,
+  MessageSquareText,
   Mic,
   MicOff,
   MoreHorizontal,
-  PanelRightClose,
   Square,
 } from "lucide-react";
-import {
-  type CSSProperties,
-  type PointerEvent as ReactPointerEvent,
-  useEffect,
-  useRef,
-  useState,
-} from "react";
-import { Button } from "../../components/ui/button";
+import { useEffect, useRef, useState } from "react";
+import { Button, buttonVariants } from "../../components/ui/button";
 import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
@@ -48,9 +41,11 @@ import {
   DropdownMenuTrigger,
 } from "../../components/ui/dropdown-menu";
 import { Textarea } from "../../components/ui/textarea";
+import { Toggle } from "../../components/ui/toggle";
 import { captureSseFailure, protectedRequestsPaused } from "../../lib/api-client";
+import { copyToClipboard } from "../../lib/clipboard";
+import { errorMessage } from "../../lib/error-message";
 import { modelPreferenceId, useDisabledModels } from "../../lib/model-preferences";
-import { maxPanelWidth, minPanelWidth, usePanelWidth } from "../../lib/panel-width";
 import {
   defaultAgentName,
   useAgentAvatar,
@@ -58,25 +53,24 @@ import {
   useUserAvatar,
   useUserDisplayName,
 } from "../../lib/profile-preferences";
+import { cn } from "../../lib/utils";
 import { useAuthRecovery } from "../auth/auth-recovery-context";
-import { ApprovalPanel, type ApprovalRequest, type ApprovalVerdict } from "./approval-panel";
+import type { ApprovalRequest, ApprovalVerdict } from "./approval-panel";
 import type { ComposerModelOption } from "./chat-composer";
 import { useChatEscape } from "./chat-escape";
 import {
   applyRunDelivery,
   type ChatMessage,
-  errorMessage,
   initialRunDeliveryState,
   messageOwnsApproval,
   messagesFromTranscript,
   retractApproval,
   unmatchedApprovals,
 } from "./chat-state";
-import { Message } from "./chat-workspace";
 import { EscapeHintContext } from "./escape-hint-context";
+import { Message } from "./message";
 import { groupModels, ModelEffortMenu } from "./model-effort-menu";
-import { exactPlanControlAvailability, followPlanContinuationFromBff } from "./plan-continuation";
-import { PlanReviewCard, type PlanVerdict } from "./plan-review-card";
+import { PendingAskCard, pendingAskKey } from "./pending-ask-card";
 import {
   CATCHING_UP_NOTICE,
   decideTruncation,
@@ -84,7 +78,9 @@ import {
   type RunStreamEnd,
   runStreamEnd,
 } from "./run-stream";
+import { SidePanelShell } from "./side-panel-shell";
 import { registerThreadSession } from "./thread-map";
+import { usePlanVerdictControl } from "./use-plan-verdict-control";
 import { useVoiceInput } from "./use-voice-input";
 import { VerdictLedger } from "./verdict-ledger";
 
@@ -115,9 +111,7 @@ export function SideThreadPanel({
   const recovery = useAuthRecovery();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const width = usePanelWidth("contentPreview");
   const [activeSessionId, setActiveSessionId] = useState(sessionId);
-  const [maximized, setMaximized] = useState(false);
   const [showTools, setShowTools] = useState(true);
   const [prompt, setPrompt] = useState("");
   const [escapeClearHint, setEscapeClearHint] = useState(false);
@@ -143,6 +137,7 @@ export function SideThreadPanel({
         image: candidate.image,
         label: candidate.displayName,
         providerId: candidate.providerId,
+        providerLabel: candidate.providerDisplayName,
       })) ?? [];
   const busy = run.isRunning || forkSession.isPending;
   const escapeAsk =
@@ -180,21 +175,6 @@ export function SideThreadPanel({
     runActive: run.isRunning && Boolean(run.runId),
   });
 
-  function startResize(event: ReactPointerEvent<HTMLButtonElement>) {
-    event.currentTarget.focus();
-    event.preventDefault();
-    const startX = event.clientX;
-    const startWidth = width.value;
-    const resize = (moveEvent: PointerEvent) =>
-      width.setValue(startWidth - moveEvent.clientX + startX);
-    const finish = () => {
-      window.removeEventListener("pointermove", resize);
-      window.removeEventListener("pointerup", finish);
-    };
-    window.addEventListener("pointermove", resize);
-    window.addEventListener("pointerup", finish);
-  }
-
   async function forkToModel(
     nextModel: { id: string; providerId: string },
     reasoningEffort: string,
@@ -217,11 +197,7 @@ export function SideThreadPanel({
       .filter((message) => message.content)
       .map((message) => `${message.role === "user" ? userName : agentName}: ${message.content}`)
       .join("\n\n");
-    try {
-      await navigator.clipboard.writeText(text);
-    } catch {
-      // Clipboard access is an optional convenience.
-    }
+    await copyToClipboard(text, "Thread");
   }
 
   async function openAsFullChat() {
@@ -242,46 +218,17 @@ export function SideThreadPanel({
 
   return (
     <EscapeHintContext.Provider value={escapeAsk}>
-      <button
-        aria-label="Close thread"
-        className="absolute inset-0 z-30 bg-black/35 min-[760px]:hidden"
-        onClick={onClose}
-        type="button"
-      />
-      <aside
-        aria-label="Thread"
-        data-chat-surface="thread"
-        className={
-          maximized
-            ? "fixed inset-0 z-50 flex flex-col bg-background"
-            : "absolute inset-x-0 bottom-0 z-40 flex h-[94dvh] flex-col rounded-t-2xl border bg-background shadow-2xl min-[760px]:relative min-[760px]:inset-auto min-[760px]:order-3 min-[760px]:h-full min-[760px]:w-[var(--content-panel-width)] min-[760px]:shrink-0 min-[760px]:rounded-none min-[760px]:border-y-0 min-[760px]:border-r-0"
-        }
-        style={
-          maximized ? undefined : ({ "--content-panel-width": `${width.value}px` } as CSSProperties)
-        }
-        ref={threadRoot}
-      >
-        {!maximized && (
-          <button
-            aria-label="Resize thread panel"
-            className="absolute inset-y-0 -left-1 z-10 hidden w-2 cursor-col-resize touch-none border-0 bg-transparent p-0 hover:bg-brand/20 min-[760px]:block"
-            onKeyDown={(event) => {
-              if (event.key === "ArrowLeft") width.setValue(width.value + 12);
-              else if (event.key === "ArrowRight") width.setValue(width.value - 12);
-              else return;
-              event.preventDefault();
-            }}
-            onPointerDown={startResize}
-            title={`Resize thread panel (${minPanelWidth}–${maxPanelWidth}px)`}
-            type="button"
-          />
-        )}
-        <header className="flex h-14 shrink-0 items-center gap-2 border-b px-4">
-          <h2 className="min-w-0 flex-1 truncate text-sm font-semibold">Thread</h2>
+      <SidePanelShell
+        actions={
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button aria-label="Thread options" size="icon" variant="ghost">
-                <MoreHorizontal aria-hidden="true" />
+              <Button
+                aria-label="Thread options"
+                className="size-8 text-muted-foreground"
+                size="icon"
+                variant="ghost"
+              >
+                <MoreHorizontal aria-hidden="true" className="size-4" />
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
@@ -289,6 +236,7 @@ export function SideThreadPanel({
                 Show Tools
               </DropdownMenuCheckboxItem>
               <DropdownMenuItem onSelect={() => void openAsFullChat()}>
+                <Maximize2 aria-hidden="true" />
                 Open as full chat
               </DropdownMenuItem>
               <DropdownMenuSeparator />
@@ -298,26 +246,27 @@ export function SideThreadPanel({
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
-          <Button
-            aria-label={maximized ? "Restore thread panel" : "Maximize thread panel"}
-            onClick={() => setMaximized((current) => !current)}
-            size="icon"
-            variant="ghost"
-          >
-            <Maximize2 aria-hidden="true" className={maximized ? "rotate-180" : undefined} />
-          </Button>
-          <Button aria-label="Close thread" onClick={onClose} size="icon" variant="ghost">
-            <PanelRightClose aria-hidden="true" />
-          </Button>
-          {!escapeAsk && <span className="text-xs text-muted-foreground">Esc to Close</span>}
-        </header>
-
+        }
+        bodyClassName="flex flex-col overflow-hidden"
+        closeLabel="Close thread"
+        escapeHint={!escapeAsk}
+        icon={
+          <MessageSquareText aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
+        }
+        maximizable
+        onClose={onClose}
+        rootRef={threadRoot}
+        surface="thread"
+        title="Thread"
+      >
         <div className="min-h-0 flex-1 overflow-y-auto">
-          <div className="flex min-h-full flex-col px-4 py-6">
+          <div className="flex min-h-full flex-col px-3 pt-3 pb-6 lg:px-4">
             {run.messages.length === 0 ? (
-              <p className="m-auto text-sm text-muted-foreground">Loading thread…</p>
+              <p className="m-auto text-sm text-muted-foreground" role="status">
+                Loading thread…
+              </p>
             ) : (
-              <div className="space-y-6">
+              <div className="space-y-4">
                 {run.messages.map((message, index) => (
                   <Message
                     agentAvatar={agentAvatar}
@@ -341,26 +290,20 @@ export function SideThreadPanel({
                 ))}
               </div>
             )}
-            {unmatchedApprovals(run.approvals, run.messages).map((approval) =>
-              approval.tool === "PresentPlan" ? (
-                <PlanReviewCard
-                  approval={approval}
-                  disabled={run.approvalDisabled(approval)}
-                  key={`${approval.controlTarget?.runId ?? ""}:${approval.askId}`}
-                  onRespond={(verdict) => void run.respondToPlan(approval, verdict)}
-                  uncertain={run.approvalUncertain(approval)}
-                  unavailableReason={run.planUnavailableReason(approval)}
-                />
-              ) : (
-                <ApprovalPanel
-                  approval={approval}
-                  disabled={run.approvalDisabled(approval)}
-                  key={`${approval.controlTarget?.runId ?? ""}:${approval.askId}`}
-                  onRespond={(verdict) => void run.respondToApproval(approval, verdict)}
-                  uncertain={run.approvalUncertain(approval)}
-                />
-              ),
-            )}
+            {unmatchedApprovals(run.approvals, run.messages).map((approval) => (
+              <PendingAskCard
+                approval={approval}
+                controls={{
+                  approvalDisabled: run.approvalDisabled,
+                  approvalUncertain: run.approvalUncertain,
+                  onRespondToApproval: (target, verdict) =>
+                    void run.respondToApproval(target, verdict),
+                  onRespondToPlan: (target, verdict) => void run.respondToPlan(target, verdict),
+                  planUnavailableReason: run.planUnavailableReason,
+                }}
+                key={pendingAskKey(approval)}
+              />
+            ))}
           </div>
         </div>
 
@@ -395,59 +338,87 @@ export function SideThreadPanel({
         )}
 
         <form
-          className="px-4 pb-4"
+          className="px-3 pb-3 lg:px-4"
           onSubmit={(event) => {
             event.preventDefault();
             void submit();
           }}
         >
-          <div className="rounded-2xl border bg-card p-2 shadow-[0_8px_30px_rgb(0_0_0/0.06)] focus-within:ring-2 focus-within:ring-ring/40">
-            <Textarea
-              aria-label="Reply in thread"
-              className="max-h-40 min-h-14 resize-none border-0 bg-transparent px-2 py-2 shadow-none focus-visible:ring-0 dark:bg-transparent"
-              disabled={busy}
-              onChange={(event) => setPrompt(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter" && !event.shiftKey) {
-                  event.preventDefault();
-                  void submit();
-                }
-              }}
-              placeholder={busy ? "Mecatl is working…" : "Reply in thread…"}
-              ref={textarea}
-              value={prompt}
-            />
-            <div className="flex items-center justify-between gap-2 px-1 pb-1 pt-2">
-              <div className="flex items-center gap-1.5">
-                {voice.isSupported && (
-                  <Button
-                    aria-label={voice.isListening ? "Stop dictation" : "Start dictation"}
-                    aria-pressed={voice.isListening}
-                    className="size-8 shrink-0 rounded-full"
-                    disabled={busy}
-                    onClick={voice.toggle}
-                    size="icon"
-                    type="button"
-                    variant={voice.isListening ? "secondary" : "ghost"}
-                  >
-                    {voice.isListening ? <MicOff aria-hidden="true" /> : <Mic aria-hidden="true" />}
-                  </Button>
-                )}
+          <div className="relative rounded-2xl bg-zinc-50 dark:bg-zinc-900">
+            <div className="relative rounded-2xl border bg-background transition-colors focus-within:border-zinc-400 dark:focus-within:border-zinc-600">
+              <div className="px-4 pt-4 pb-2">
+                <Textarea
+                  aria-label="Reply in thread"
+                  className="field-sizing-content max-h-40 min-h-[4.5rem] resize-none rounded-none border-0 bg-transparent px-0 py-0 text-sm shadow-none placeholder:opacity-60 focus-visible:ring-0 dark:bg-transparent"
+                  disabled={busy}
+                  onChange={(event) => setPrompt(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" && !event.shiftKey) {
+                      event.preventDefault();
+                      void submit();
+                    }
+                  }}
+                  placeholder={busy ? "Mecatl is working…" : "Reply in thread…"}
+                  ref={textarea}
+                  value={prompt}
+                />
               </div>
-              <Button
-                aria-label={busy ? "Mecatl is working" : "Send reply"}
-                className="size-8 shrink-0 rounded-full"
-                disabled={busy || recovery.phase !== "ready" || !prompt.trim()}
-                size="icon"
-                type="submit"
-              >
-                {busy ? (
-                  <LoaderCircle aria-hidden="true" className="animate-spin" />
-                ) : (
-                  <ArrowUp aria-hidden="true" />
+              <div className="flex items-center gap-1 px-2 pb-2">
+                {voice.isSupported && (
+                  <Toggle
+                    aria-label={voice.isListening ? "Stop dictation" : "Start dictation"}
+                    // The ghost icon button's look: brand tint while listening,
+                    // the ghost's hover ink in both states.
+                    className={cn(
+                      buttonVariants({ size: "icon", variant: "ghost" }),
+                      "size-8 min-w-0 shrink-0 rounded-full px-0 text-muted-foreground hover:bg-muted/60 data-[state=on]:bg-brand/10 data-[state=on]:text-brand data-[state=on]:hover:bg-brand/20 data-[state=on]:hover:text-accent-foreground",
+                    )}
+                    disabled={busy}
+                    onPressedChange={voice.toggle}
+                    pressed={voice.isListening}
+                    size="sm"
+                  >
+                    {/* Sized here: the phone's 20px glyph rule covers size-4 icons
+                        and Button's bare ones, not a Toggle's. */}
+                    {voice.isListening ? (
+                      <MicOff aria-hidden="true" className="size-4" />
+                    ) : (
+                      <Mic aria-hidden="true" className="size-4" />
+                    )}
+                  </Toggle>
                 )}
-              </Button>
+                <Button
+                  aria-label={busy ? "Mecatl is working" : "Send reply"}
+                  className="ml-auto size-8 shrink-0 rounded-full bg-brand text-brand-foreground hover:bg-brand/90"
+                  disabled={busy || recovery.phase !== "ready" || !prompt.trim()}
+                  size="icon"
+                  type="submit"
+                >
+                  {busy ? (
+                    <LoaderCircle aria-hidden="true" className="animate-spin" />
+                  ) : (
+                    <ArrowUp aria-hidden="true" />
+                  )}
+                </Button>
+              </div>
             </div>
+            {/* Hidden without a deployment model inventory: see the note in
+                chat-composer.tsx. */}
+            {models.length > 0 ? (
+              <div className="-mt-4 flex min-w-0 items-center gap-1 rounded-b-2xl border border-t-0 border-zinc-300 bg-zinc-50 px-2 pt-5 pb-1.5 dark:border-zinc-700 dark:bg-zinc-900">
+                <ModelEffortMenu
+                  className="min-w-0 shrink"
+                  disabled={busy || !sessionDetail.data?.capabilities.modelSelection}
+                  effort={model?.reasoningEffort ?? "default"}
+                  groupedModels={groupModels(models)}
+                  model={model}
+                  onEffortChange={(effort) => model && void forkToModel(model, effort)}
+                  onModelChange={(nextModel) =>
+                    nextModel && void forkToModel(nextModel, model?.reasoningEffort ?? "default")
+                  }
+                />
+              </div>
+            ) : null}
           </div>
         </form>
         {!escapeAsk && !run.isRunning && prompt && !escapeClearHint && (
@@ -458,23 +429,7 @@ export function SideThreadPanel({
             Press Escape again to clear the unsent draft.
           </p>
         )}
-        {/* Hidden without a deployment model inventory: see the note in
-            chat-composer.tsx. */}
-        {models.length > 0 ? (
-          <div className="px-4 pb-4">
-            <ModelEffortMenu
-              disabled={busy || !sessionDetail.data?.capabilities.modelSelection}
-              effort={model?.reasoningEffort ?? "default"}
-              groupedModels={groupModels(models)}
-              model={model}
-              onEffortChange={(effort) => model && void forkToModel(model, effort)}
-              onModelChange={(nextModel) =>
-                nextModel && void forkToModel(nextModel, model?.reasoningEffort ?? "default")
-              }
-            />
-          </div>
-        ) : null}
-      </aside>
+      </SidePanelShell>
     </EscapeHintContext.Provider>
   );
 }
@@ -502,12 +457,7 @@ function useSideThreadRun(sessionId: string) {
   const [notice, setNotice] = useState<string>();
   const [controlPending, setControlPending] = useState(false);
   const runAbort = useRef<AbortController | undefined>(undefined);
-  const planFollowAbort = useRef<AbortController | undefined>(undefined);
-  const planReattach = useRef<{ cursor?: string; runId: string; sessionId: string } | undefined>(
-    undefined,
-  );
   const [reattachEpoch, setReattachEpoch] = useState(0);
-  const [planContinuationActive, setPlanContinuationActive] = useState(false);
   const runIdRef = useRef<string | undefined>(undefined);
   // A side thread can move to a successor session without remounting, so a
   // verdict that lands late must not write into the session now on screen.
@@ -515,8 +465,30 @@ function useSideThreadRun(sessionId: string) {
   viewedSessionId.current = sessionId;
   const verdicts = useRef(new VerdictLedger());
   const [verdictEpoch, setVerdictEpoch] = useState(0);
+  const plan = usePlanVerdictControl({
+    activeTarget: () => (runIdRef.current ? { runId: runIdRef.current, sessionId } : undefined),
+    controlPending,
+    features: runtime.data?.features,
+    isViewed: (id) => id === viewedSessionId.current,
+    ledger: verdicts.current,
+    onStarted: ({ runId: startedRunId }) => {
+      runAbort.current?.abort();
+      runAbort.current = undefined;
+      runIdRef.current = startedRunId;
+      setRunId(startedRunId);
+      setReattachEpoch((current) => current + 1);
+    },
+    onUncertain: () => setVerdictEpoch((value) => value + 1),
+    retract: (target) => {
+      if (viewedSessionId.current === target.sessionId)
+        setApprovals((current) => retractApproval(current, target.askId, target.runId));
+    },
+    setControlPending,
+    setError,
+    setNotice,
+  });
 
-  useEffect(() => () => planFollowAbort.current?.abort(), []);
+  useEffect(() => () => plan.abort(), [plan.abort]);
 
   useEffect(() => {
     if (!isRunning && transcript.data)
@@ -526,9 +498,7 @@ function useSideThreadRun(sessionId: string) {
   // biome-ignore lint/correctness/useExhaustiveDependencies: intentionally resets on session identity alone, not on any value read inside
   useEffect(() => {
     runAbort.current?.abort();
-    planFollowAbort.current?.abort();
-    planReattach.current = undefined;
-    setPlanContinuationActive(false);
+    plan.reset();
     runAbort.current = undefined;
     setError(undefined);
     setNotice(undefined);
@@ -543,12 +513,12 @@ function useSideThreadRun(sessionId: string) {
 
   const selected = sessions.data?.items.find((session) => session.id === sessionId);
   const watchable = isActiveSessionState(selected?.state);
-  const shouldWatch = watchable || planContinuationActive;
+  const shouldWatch = watchable || plan.continuationActive;
 
   // A proven plan continuation can reattach before the inventory catches up.
   // biome-ignore lint/correctness/useExhaustiveDependencies: consume/refresh are stable for this lifetime
   useEffect(() => {
-    const planRefresh = planReattach.current;
+    const planRefresh = plan.reattachRef.current;
     if (
       !sessionId ||
       (!shouldWatch && planRefresh?.sessionId !== sessionId) ||
@@ -556,7 +526,7 @@ function useSideThreadRun(sessionId: string) {
       protectedRequestsPaused()
     )
       return;
-    planReattach.current = undefined;
+    plan.reattachRef.current = undefined;
     const controller = new AbortController();
     runAbort.current = controller;
     setIsRunning(true);
@@ -588,7 +558,7 @@ function useSideThreadRun(sessionId: string) {
       } finally {
         if (runAbort.current === controller) {
           runAbort.current = undefined;
-          if (planRefresh?.sessionId === sessionId) setPlanContinuationActive(false);
+          if (planRefresh?.sessionId === sessionId) plan.endContinuation();
           setRunId(undefined);
           runIdRef.current = undefined;
           setApprovals((current) => retainUncertainApprovals(current));
@@ -815,83 +785,6 @@ function useSideThreadRun(sessionId: string) {
     );
   }
 
-  function planUnavailableReason(approval: ApprovalRequest): string | undefined {
-    const featureReason = exactPlanControlAvailability(runtime.data?.features).reason;
-    if (featureReason) return featureReason;
-    const target = approval.controlTarget;
-    return !target ||
-      target.askId !== approval.askId ||
-      target.sessionId !== sessionId ||
-      target.runId !== runIdRef.current
-      ? "This plan ask is stale or its exact run is unavailable. Refresh activity."
-      : undefined;
-  }
-
-  async function respondToPlan(approval: ApprovalRequest, verdict: PlanVerdict) {
-    if (
-      approval.tool !== "PresentPlan" ||
-      planUnavailableReason(approval) ||
-      approvalDisabled(approval)
-    )
-      return;
-    const target = approval.controlTarget;
-    if (!target) return;
-    if (!verdicts.current.begin(target)) return;
-    setControlPending(true);
-    try {
-      await resolvePlanAsk({
-        body: { verdict },
-        path: { askId: target.askId, runId: target.runId, sessionId: target.sessionId },
-        throwOnError: true,
-      });
-      verdicts.current.acknowledge(target);
-      if (viewedSessionId.current !== target.sessionId) return;
-      setApprovals((current) => retractApproval(current, target.askId, target.runId));
-      if (verdict === "iterate") {
-        setNotice("Plan iteration requested.");
-      } else {
-        setNotice("Plan approval accepted; checking whether execution started.");
-        const controller = new AbortController();
-        planFollowAbort.current = controller;
-        const evidence = await followPlanContinuationFromBff(
-          { askId: target.askId, planRunId: target.runId, sessionId: target.sessionId },
-          controller.signal,
-        );
-        if (!controller.signal.aborted && viewedSessionId.current === target.sessionId) {
-          if (evidence.kind === "started") {
-            planReattach.current = {
-              cursor: evidence.resumeFrom,
-              runId: evidence.runId,
-              sessionId: target.sessionId,
-            };
-            setPlanContinuationActive(true);
-            runAbort.current?.abort();
-            runAbort.current = undefined;
-            runIdRef.current = evidence.runId;
-            setRunId(evidence.runId);
-            setReattachEpoch((current) => current + 1);
-          } else if (evidence.kind === "failed") {
-            setNotice(undefined);
-            setError("Plan approval was recorded, but execution could not start.");
-          } else {
-            setNotice(undefined);
-            setError(
-              "Plan approval was recorded, but could not confirm whether execution started. Refresh activity to check.",
-            );
-          }
-        }
-      }
-    } catch (caught) {
-      verdicts.current.markUncertain(target);
-      setVerdictEpoch((value) => value + 1);
-      if (viewedSessionId.current === target.sessionId)
-        setError(`Could not confirm this verdict: ${errorMessage(caught)}`);
-    } finally {
-      planFollowAbort.current = undefined;
-      if (viewedSessionId.current === target.sessionId) setControlPending(false);
-    }
-  }
-
   async function respondToApproval(approval: ApprovalRequest, verdict: ApprovalVerdict) {
     if (
       approval.tool === "PresentPlan" ||
@@ -933,8 +826,8 @@ function useSideThreadRun(sessionId: string) {
     messages,
     notice,
     respondToApproval,
-    respondToPlan,
-    planUnavailableReason,
+    respondToPlan: plan.respondToPlan,
+    planUnavailableReason: plan.planUnavailableReason,
     runId,
     sendPrompt,
     setError,

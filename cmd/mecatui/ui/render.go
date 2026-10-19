@@ -235,18 +235,15 @@ type inputRenderKey struct {
 // exactly. The width-0 team/fleet focus renderers (bare &renderer{}) keep indent 0.
 const defaultBlockIndent = 1
 
-// assistantBodyHang is the extra left indent (cells) for assistant text and
-// reasoning. In the F9 detail view it aligns the body under the "● mecatl"
-// label; in the normal view it keeps prose inset from tool lines. It equals the
-// label marker width lipgloss.Width("● ") = 2. Applied on top of the base block
-// indent; the markdown wrap budget subtracts it so wrapped text fits r.width.
+// assistantBodyHang is the assistant rail plus its one-cell padding. Applied on
+// top of the base block indent, it aligns prose under the speaker label. Markdown
+// and reasoning wrap budgets subtract it so framed text still fits r.width.
 const assistantBodyHang = 2
 
 // newRenderer builds a renderer for a theme, seeded with the LIVE chord
 // markings (hk) so inline-card affordances that reference rebindable actions
 // (Toolcalls/Agents) reflect any override (issue #457). With default keys hk
-// resolves to exactly the literals the affordances used to hardcode, so the
-// goldens stay byte-identical.
+// resolves to the default chord literals the goldens pin.
 func newRenderer(th theme.Theme, hk helpKeys) *renderer {
 	return &renderer{
 		th:     th,
@@ -281,11 +278,9 @@ func (r *renderer) indentLines(s string) string {
 	return padLines(s, r.indent)
 }
 
-// padLines prefixes every line of s (including blank lines, so a multi-row block's left
-// edge stays straight) with n spaces. n <= 0 returns s unchanged with no allocation. It
-// is the shared core of the base indent (indentLines) and the assistant body hang (the
-// assistantBodyHang applied in the blockAssistant arm). The prefixed spaces are real
-// content cells, so the selection x-mapping stays identity.
+// padLines prefixes every line of s (including blank lines) with n spaces for
+// the base block indent. n <= 0 returns s unchanged with no allocation. The
+// prefixed spaces are real content cells, so selection x-mapping stays identity.
 func padLines(s string, n int) string {
 	if n <= 0 {
 		return s
@@ -632,6 +627,8 @@ func (r *renderer) renderPasses(c *scrollback.Conversation, expand bool) ([]rend
 		switch meta.Kind {
 		case scrollback.KindTool, scrollback.KindSubagent, scrollback.KindTeam:
 			effectiveExpand = false
+			metadata, _ := c.ToolCallMetadataAt(i)
+			pass.toolState = toolCallState(metadata)
 		}
 		key := blockRenderKey{revision: pass.revision, context: r.renderContext(effectiveExpand)}
 		if entry, ok := r.blocks.renderedBlock(i, key); ok {
@@ -698,39 +695,30 @@ func (r *renderer) renderAssistantSnapshot(idx int, s scrollback.BlockSnapshot, 
 func (r *renderer) renderAssistantSnapshotFresh(idx int, p scrollback.AssistantCardSnapshot, expand bool) string {
 	var body string
 	if strings.TrimSpace(p.Text) != "" {
-		body = padLines(r.markdownAt(idx, p.Text), assistantBodyHang)
+		body = r.markdownAt(idx, p.Text)
 	}
 	if reasoning := r.renderReasoningSnapshot(p, expand); reasoning != "" {
 		if body != "" {
-			body = "\n" + body
+			body = "\n\n" + body
 		}
-		body = padLines(reasoning, assistantBodyHang) + body
+		body = reasoning + body
 	}
-	if !expand {
-		return body
-	}
-	return r.th.Style("assistantLabel").Render("● mecatl") + "\n\n" + body
+	label := r.th.Style("transcriptLLMMarker").Render(theme.TranscriptLLMGlyph) + r.th.Style("transcriptLLMHeading").Render(" mecatl")
+	rail := lipgloss.NewStyle().
+		BorderStyle(lipgloss.NormalBorder()).
+		BorderLeft(true).
+		BorderForeground(r.th.Style("transcriptLLMRail").GetForeground()).
+		PaddingLeft(1)
+	return label + "\n" + rail.Render(body)
 }
 
 func (r *renderer) renderConversationLines(c *scrollback.Conversation, expand bool) []string {
 	return r.renderConversationFrame(c, expand).lines
 }
 
-// The inter-block separator is written BEFORE every block after the first by the
-// string-path join (renderConversation); each block already ends with a trailing "\n",
-// so the on-screen gap between two blocks is (trailing "\n") + separator. The lines-path
-// (appendSegmentLines) MUST mirror this exactly (the matching blank-"" count before each
-// block i>0) or the cache-equivalence oracle (render_cache_test.go) trips.
-//
-// The production frame path uses blockBlankLinesAfterPasses; the string-path
-// oracle mirrors it, including the settled-tool → assistant exception below.
-//
-// Spacing policy (compact throughout):
-//   - settled tool → assistant         : 1 blank line  — separate prose from the call run
-//   - other tool → any                 : 0 blank lines — tool boxes cluster tight
-//   - blockAssistant → blockTurnStat   : 0 blank lines — empty turns need no gap before stats
-//   - blockTurnStat → any              : 1 blank line  — compact stat annotation
-//   - everything else                  : 1 blank line  — user↔assistant, assistant→tool, etc.
+// Frame assembly and the string oracle share the spacing policy: one blank row
+// between visible response blocks/groups, none inside a tool group or between
+// an assistant and its attached turn statistics. Internal card spacing is retained.
 const (
 	interBlockSepCompact        = "\n"
 	interBlockBlankLinesCompact = 1 // == strings.Count(trailing-"\n" + interBlockSepCompact, "\n") - 1
@@ -740,28 +728,17 @@ const (
 )
 
 func blockBlankLinesBetween(previous, current scrollback.Kind) int {
-	switch previous {
-	case scrollback.KindTool, scrollback.KindSubagent, scrollback.KindTeam:
+	if toolFamily(previous) && toolFamily(current) {
 		return interBlockBlankLinesNone
-	case scrollback.KindAssistant:
-		if current == scrollback.KindTurnStat {
-			return interBlockBlankLinesNone
-		}
+	}
+	if previous == scrollback.KindAssistant && current == scrollback.KindTurnStat {
+		return interBlockBlankLinesNone
 	}
 	return interBlockBlankLinesCompact
 }
 
-// blockSepAfter returns the inter-block separator to write AFTER block i (i.e.
-// before block i+1).
-func blockSepAfter(kinds []scrollback.Kind, i int) string {
-	if blockBlankLinesBetween(kinds[i], kinds[i+1]) == 0 {
-		return interBlockSepNone
-	}
-	return interBlockSepCompact
-}
-
-// blockBlankLinesAfter is the lines-path mirror of blockSepAfter: it returns the
-// number of blank "" lines to insert before block i (i.e. after block i-1).
+// blockBlankLinesAfter returns the number of blank "" lines to insert before
+// block i (i.e. after block i-1).
 func blockBlankLinesAfter(kinds []scrollback.Kind, i int) int {
 	return blockBlankLinesBetween(kinds[i-1], kinds[i])
 }
@@ -785,31 +762,27 @@ func (r *renderer) renderReasoningSnapshot(p scrollback.AssistantCardSnapshot, e
 	if strings.TrimSpace(p.Reasoning) == "" {
 		return ""
 	}
-	style := r.th.Style("reasoning")
+	style := r.th.Style("transcriptReasoningText")
 	text := terminaltext.Sanitize(strings.TrimRight(p.Reasoning, "\n"))
 	n := lineCount(text)
 	expandMark := r.marks.expandConversation
 	if !expand {
 		if p.ReasoningStreaming {
-			return style.Render("reasoning… · " + expandMark + " expand")
+			return r.wrapStyled("reasoning… · "+expandMark+" expand", style)
 		}
-		return style.Render("reasoning summary · " + plural(n, "line") + " · " + expandMark + " expand")
+		return r.wrapStyled("reasoning summary · "+plural(n, "line")+" · "+expandMark+" expand", style)
 	}
-	header := style.Render("reasoning summary · " + plural(n, "line") + " · " + expandMark + " collapse")
+	header := r.wrapStyled("reasoning summary · "+plural(n, "line")+" · "+expandMark+" collapse", style)
 	return header + "\n" + r.wrapStyled(reasoningCaveat, style) + "\n" + r.wrapStyled(text, style)
 }
 
-// wrapStyled word-wraps s to the CONTENT width (viewport minus the left indent)
-// MINUS the style's own horizontal frame (border+padding+margin, via
-// GetHorizontalFrameSize — the single source of truth, so the wrap budget tracks
-// theme.go edits automatically and never drifts behind a hardcoded inset) and renders
-// it through st. A content width at or below the frame (e.g. the width-0 team focus
-// renderer, team.go) means "unknown/tiny: do not wrap" and the body renders unwrapped.
-// Wrapping against contentWidth (not r.width) keeps the body within budget once
-// Whole-card rendering prefixes each line with `indent` spaces.
+// wrapStyled wraps assistant reasoning within the body budget, subtracting both
+// the rail/padding and the text style's own horizontal frame. Unknown/tiny widths
+// render unwrapped, matching the markdown path.
 func (r *renderer) wrapStyled(s string, st lipgloss.Style) string {
+	s = terminaltext.ExpandStyleTabs(s, st)
 	frame := st.GetHorizontalFrameSize()
-	cw := r.contentWidth()
+	cw := r.contentWidth() - assistantBodyHang
 	if cw <= frame+1 {
 		return st.Render(s)
 	}
@@ -893,13 +866,9 @@ func renderDelegationToolCardText(style lipgloss.Style, text string, bodyWidth i
 // literal tabs before wrapping so ansi.Hardwrap and Lip Gloss measure identical text.
 const toolCardTabWidth = 4
 
-func normalizeToolCardTabs(text string) string {
-	return strings.ReplaceAll(text, "\t", strings.Repeat(" ", toolCardTabWidth))
-}
-
 // wrapToolCardText constrains raw card text before it is styled or framed.
 func wrapToolCardText(text string, bodyWidth int) string {
-	text = normalizeToolCardTabs(text)
+	text = terminaltext.ExpandTabs(text, toolCardTabWidth)
 	if text == "" || bodyWidth <= 0 {
 		return text
 	}
@@ -968,7 +937,7 @@ func renderDynamicCardChromeLine(style lipgloss.Style, prefix, raw string, width
 // prefix's alignment without letting either the prefix or style padding consume a
 // second layout pass.
 func wrapDelegationRow(prefix, text string, bodyWidth int) []string {
-	text = strings.TrimRightFunc(terminaltext.Sanitize(normalizeToolCardTabs(text)), unicode.IsSpace)
+	text = strings.TrimRightFunc(terminaltext.Sanitize(terminaltext.ExpandTabs(text, toolCardTabWidth)), unicode.IsSpace)
 	if bodyWidth <= 0 {
 		return []string{prefix + text}
 	}
@@ -1002,7 +971,7 @@ func renderDelegationRows(style lipgloss.Style, prefix, text string, bodyWidth i
 // joins the card. It deliberately operates per region, never on the assembled card:
 // card.Render must only frame already fitting rows.
 func wrapToolCardRegion(region string, bodyWidth int) string {
-	region = normalizeToolCardTabs(region)
+	region = terminaltext.ExpandTabs(region, toolCardTabWidth)
 	if region == "" || bodyWidth <= 0 {
 		return region
 	}
@@ -1108,7 +1077,7 @@ func renderResultBlockLine(blk client.ContentBlock) (string, bool) {
 	}
 }
 
-// renderSubagent renders a Subagent card's BOUNDED subagent region (ADR 0079 — the
+// renderSubagent renders a Subagent card's BOUNDED subagent region (the
 // previews are bounded, scrubbed, client-only; they never enter the parent
 // conversation). It has three states, per the agreed UX:
 //
@@ -1128,11 +1097,11 @@ func renderResultBlockLine(blk client.ContentBlock) (string, bool) {
 
 // subagentModelLabel renders the model surface for a delegation as a muted one-line
 // cue. It shows the OPT-IN router's bare metadata as "routed: <category> → <model>"
-// when the router classified the delegation (ADR 0031); otherwise it shows the
-// concrete model the child ACTUALLY ran on as "model: <model>" (issue #112 / ADR 0035)
+// when the router classified the delegation; otherwise it shows the
+// concrete model the child ACTUALLY ran on as "model: <model>" (issue #112)
 // — inherited default, agent-def pin, or per-call override — annotated with WHY the
 // router did not classify as " · not routed: <reason>" when the server supplied a
-// reason (issue #397 / ADR 0083). It returns "" when no model is known and the router
+// reason (issue #397). It returns "" when no model is known and the router
 // did not fire. The category/model/reason are server-derived bare metadata (sanitized)
 // — never child content — so gauntlet #7 holds. When routed, model == routedModel and
 // the reason is empty, so the routed cue is shown (not duplicated as a model: line).
@@ -1163,7 +1132,31 @@ func subagentModelLabel(category, routedModel, routingReason, model string) stri
 	return ""
 }
 
-// delegationModelLabel preserves the historical model line when decision is nil.
+// qualifiedModelLabel displays the exact provider/model identity when both are
+// available; older servers without a provider retain their model-only label.
+func qualifiedModelLabel(provider, model string) string {
+	model = terminaltext.Sanitize(model)
+	if model == "" {
+		return ""
+	}
+	provider = terminaltext.Sanitize(provider)
+	if provider == "" {
+		return model
+	}
+	return provider + "/" + model
+}
+
+// delegationModelLabelWithSelection renders the actual provider/model identity
+// for live and restored delegation cards. Candidate evidence remains unqualified.
+func delegationModelLabelWithSelection(category, routedModel, routingReason, model, provider, explicitRouterCategory string, decision *client.RoutingDecision) string {
+	explicitRouterCategory = terminaltext.Sanitize(explicitRouterCategory)
+	if explicitRouterCategory != "" {
+		return "selected: model-router/" + explicitRouterCategory + " → " + qualifiedModelLabel(provider, model)
+	}
+	return delegationModelLabel(category, qualifiedModelLabel(provider, routedModel), routingReason, qualifiedModelLabel(provider, model), decision)
+}
+
+// delegationModelLabel renders the plain model line when decision is nil.
 // A fallback may add one candidate line, but the actual model always comes from
 // the existing authoritative model field rather than the rejected candidate.
 func delegationModelLabel(category, routedModel, routingReason, model string, decision *client.RoutingDecision) string {
@@ -1294,8 +1287,8 @@ func wrapChips(chips []string, width int) string {
 }
 
 // maxTraceMessageLen caps how many runes of a forwarded child message line show in
-// a delegation lane's expanded trace (Subagent / Team / Parallel — shared per ADR
-// 0079); the server already bounds previews, this is a belt-and-braces clamp so one
+// a delegation lane's expanded trace (Subagent / Team / Parallel — they share it);
+// the server already bounds previews, this is a belt-and-braces clamp so one
 // verbose child can't dominate the card.
 const maxTraceMessageLen = 200
 
@@ -1306,14 +1299,14 @@ const maxTraceToolNameLen = 20
 // maxTraceDetailLen caps how many runes of a tool chip's arg/result preview show
 // next to it in the expanded trace. Server-bounded already (≤200 runes); this keeps
 // a single chip line scannable. Shared by the Subagent/Team/Parallel trace
-// renderers per ADR 0079 — the engine cap + this cap is the intentional
+// renderers — the engine cap + this cap is the intentional
 // double-truncation defense-in-depth.
 const maxTraceDetailLen = 80
 
 // boundedPreviewsSubNote / boundedPreviewsParNote are the honesty notes every
-// Subagent / Parallel trace surface carries (ADR 0079): the previews are BOUNDED —
+// Subagent / Parallel trace surface carries: the previews are BOUNDED —
 // clamped + scrubbed server-side, capped again on render, client-only — so the
-// note states the accurate posture instead of the pre-ADR-0079 "content hidden"
+// note states the accurate posture instead of the older "content hidden"
 // claim. The parent conversation stays clean (gauntlet #7 is about the
 // conversation, not what a client may observe).
 const (
@@ -1338,7 +1331,7 @@ const maxTeamNameWidth = 16
 // a "✓" for a clean TERMINAL member (the team has ended — b.teamDone), a hollow "○" for
 // an IDLE member (finished its current round, awaiting the next round or synthesis),
 // and a filled "◆" for one actively working. The stopped state is checked first so the
-// overlay no longer flips a stopped member to "✓ done" and contradicts the supervisor.
+// overlay never flips a stopped member to "✓ done" and contradicts the supervisor.
 func teamGlyph(ln *teamLane, teamDone bool) string {
 	switch {
 	case teamDone && ln.stopped:
@@ -1658,7 +1651,7 @@ func (r *renderer) truncateResultDisplayLines(lines []toolResultLine, bodyWidth,
 func wrapResultDisplayLines(lines []toolResultLine, bodyWidth int) []toolResultLine {
 	wrapped := make([]toolResultLine, 0, len(lines))
 	for _, line := range lines {
-		text := normalizeToolCardTabs(line.text)
+		text := terminaltext.ExpandTabs(line.text, toolCardTabWidth)
 		if strings.TrimSpace(text) == "" {
 			// Preserve an intentional blank source line as one display row, without
 			// retaining width-exceeding padding that could wrap into more rows.
@@ -1940,7 +1933,7 @@ func (r *renderer) summarizeArgs(rawArgs string) (string, bool) {
 }
 
 // argRollupMarker formats the collapsed-args footer. Full arguments are available
-// from the Toolcalls inspector; tool cards no longer expand in place.
+// from the Toolcalls inspector; tool cards do not expand in place.
 func (r *renderer) argRollupMarker(n int) string {
 	if n <= 0 {
 		return "  … " + r.marks.toolcalls + " inspect"
@@ -2268,7 +2261,7 @@ func (*renderer) summarizeResult(body string) (string, bool) {
 // line-capped/full body path (Read and prose results unchanged).
 
 // collapseMarker formats the line-cap footer for a tool card. Complete details
-// remain in the Toolcalls inspector; tool cards no longer expand in place.
+// remain in the Toolcalls inspector; tool cards do not expand in place.
 func (r *renderer) collapseMarker(n int) string {
 	return collapseMarkerMark(n, r.marks.toolcalls)
 }

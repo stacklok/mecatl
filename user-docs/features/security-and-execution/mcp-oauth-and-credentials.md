@@ -125,6 +125,43 @@ Removal deletes the current local grant and records a durable removal state
 before removing the settings profile. It does not revoke an upstream OAuth
 client or remove a shared wrapping key.
 
+## Reset local MCP credentials
+
+If `mcp add` or `mcp login` reports incompatible native credential state, use
+this command to clear saved sign-in data for the selected profile's local
+credential root. It leaves the settings file unchanged. Do not move the
+credential directory or edit OS keyring entries to recover:
+
+```sh
+mecated mcp reset-local-credentials connector
+mecated mcp login connector
+```
+
+The command requires an attended terminal and exact confirmation. It discards
+saved local MCP sign-in credentials for every native profile listed in the
+confirmation, but keeps their settings. Run `mecated mcp login` separately for
+each listed profile. If you selected another settings file, pass the same
+`--file` value to every login:
+
+```sh
+mecated mcp reset-local-credentials connector --file /etc/mecatl/settings.yaml
+mecated mcp login connector --file /etc/mecatl/settings.yaml
+# Repeat the login command for each other profile listed by reset.
+```
+
+If reset reports that another root uses the same file key, it leaves that key
+in place. Change the selected profile's
+`auth.oauth.credentials.local.key.file.path` to a path used by no other root
+before logging in. The other root continues to use the shared key.
+
+Legacy `key_env` profiles sharing the same root, provider credentials, and
+upstream registrations are unchanged. Stop affected daemons before resetting.
+A daemon that is already running may retain the old namespace until it exits.
+
+Reset resumes if interrupted. Re-run the same
+`mecated mcp reset-local-credentials` command to finish, then log in again for
+each affected profile.
+
 ## Configure a profile manually
 
 Hand-authored profiles use the sequence-based `mcp.servers` schema, with OAuth
@@ -307,6 +344,20 @@ needed, is still a Kubernetes Secret. Agent-facing shells receive a scrubbed
 environment so MCP/provider credentials are not exposed through Shell. See the
 [Kubernetes deployment guide](/operating/mecak8s.md) for the Secret wiring.
 
+## Preregistered client secrets
+
+A preregistered client takes its secret from exactly one of two sources, in
+both global and broker mode:
+
+- `secret_env`: the name of a `MECATL_*` environment variable.
+- `secret_file`: an absolute path to a regular file of at most 64 KiB.
+  Surrounding whitespace is trimmed.
+
+Setting both is an error, as is setting neither. Never put the secret value in
+settings YAML. Keep a secret file outside the workspace with restrictive
+permissions (mode `0400`): agent shell commands run as the same user, so they
+can read any file whose path they know.
+
 ## ToolHive broker OAuth
 
 In `mecak8s` broker mode, each session starts one opaque enrollment, and
@@ -385,6 +436,12 @@ short-lived tokens make cleartext transport acceptable.
 - OAuth credentials authenticate the MCP connection. They do not grant the model
   permission to call a tool: every namespaced MCP tool still passes through the
   ordinary permission policy and audit path.
+- Register `http://127.0.0.1/oauth/callback` as the redirect_uri for a
+  preregistered client or a published CIMD document. `mecated mcp login` binds
+  this exact path on a fresh ephemeral port for every run; RFC 8252 loopback
+  matching ignores the port component, so the authorization server accepts the
+  registered value regardless of which port a given login receives. Direct DCR
+  registers its own redirect_uri automatically and needs no manual entry.
 - OAuth supports RFC 9728 metadata with one exact resource and authorization
   server, and S256. Preregistered confidential clients remain
   Basic-authenticated; direct DCR clients use the public `none` method with no

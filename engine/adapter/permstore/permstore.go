@@ -8,20 +8,21 @@
 // Records it here, keyed by session. On every subsequent evaluation the policy
 // reads this session's rules back and merges them in at the LOWEST scope.
 //
-// Scope of the store (by design, conservative slice):
+// Scope of the store (by design, conservative):
 //
 //   - PER-SESSION: a rule learned in session A is invisible to session B.
 //   - IN-MEMORY / NON-DURABLE: rules are lost on process restart and on
-//     Forget(sessionID) (wired into Service.CloseSession). Durable cross-restart
-//     persistence is a tracked follow-up, not this slice.
+//     Forget(sessionID) (wired into Service.CloseSession). The store itself is
+//     not durable; on resume the server replays logged allow-always verdicts
+//     into it (Service.maybeReplayApprovals).
 //   - EVICTION runs from Service.CloseSession, reachable over all three surfaces:
-//     the ACP adapter (on editor disconnect) and now the gRPC CloseSession RPC /
+//     the ACP adapter (on editor disconnect) and the gRPC CloseSession RPC /
 //     HTTP DELETE /v1/sessions/{id} session-end entries (issue #10). A well-behaved
 //     client therefore reclaims a session's rules at session end. As a
 //     client-independent backstop, the per-session learned-rule slice is also CAPPED
 //     (maxRulesPerSession) so a pathological long-lived session that never signals
 //     end cannot grow it without bound; each rule still requires a human
-//     allow-always approval. TTL/idle eviction remains a tracked follow-up.
+//     allow-always approval. There is no TTL/idle eviction.
 //
 // It implements port.PermissionStore and is safe for concurrent use.
 package permstore

@@ -96,9 +96,9 @@ func TestProjectUpdateToolResult(t *testing.T) {
 	}
 }
 
-// TestADR_0370_Scenario3_ClientConfirmationAndReplacement pins ACP's single
-// call-ID-correlated card/update lifecycle alongside Mecatui's named proof.
-func TestADR_0370_Scenario3_ClientConfirmationAndReplacement(t *testing.T) {
+// TestToolCallConfirmationAndReplacement pins ACP's single
+// call-ID-correlated card/update lifecycle alongside Mecatui's matching test.
+func TestToolCallConfirmationAndReplacement(t *testing.T) {
 	projector := newRunProjector()
 	call := session.NewToolCall("call-availability", "Read", json.RawMessage(`{}`))
 	opened, ok := projector.project(session.Event{Type: session.EvToolCall, ToolCall: &call})

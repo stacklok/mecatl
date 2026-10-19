@@ -10,7 +10,7 @@ import (
 
 // TestOutputConfigEffortStamped pins that the construction-configured effort is
 // stamped onto output_config.effort for ALL FIVE neutral tiers (Anthropic
-// identity-maps them — ADR 0055).
+// identity-maps them).
 func TestOutputConfigEffortStamped(t *testing.T) {
 	cases := []struct {
 		effort string
@@ -55,7 +55,7 @@ func TestOutputConfigEffortOmittedWhenUnset(t *testing.T) {
 
 // TestEffortAndThinkingCoexist pins that reasoning effort is INDEPENDENT of the
 // extended-thinking config — setting effort must NOT clear the thinking config and
-// vice versa (ADR 0055: both ride the same request). claude-sonnet-4-6 is an
+// vice versa (both ride the same request). claude-sonnet-4-6 is an
 // adaptive-thinking model, so the Thinking union carries an adaptive variant.
 func TestEffortAndThinkingCoexist(t *testing.T) {
 	p := New(WithAPIKey("sk-test"), WithMaxTokens(16000), WithReasoningEffort("high"))

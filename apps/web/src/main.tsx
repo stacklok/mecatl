@@ -5,6 +5,7 @@ import { createRouter, RouterProvider } from "@tanstack/react-router";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { RootErrorBoundary, studioRouterOptions } from "./components/error-page/error-routes";
+import { Toaster } from "./components/ui/sonner";
 import { AuthGate } from "./features/auth/auth-gate";
 import { installCsrfInterceptor, installRecoveryInterceptor } from "./lib/api-client";
 import { stringSearchParams } from "./lib/search-params";
@@ -51,6 +52,7 @@ createRoot(rootElement).render(
           <RouterProvider router={router} />
         </AuthGate>
       </QueryClientProvider>
+      <Toaster />
     </RootErrorBoundary>
   </StrictMode>,
 );

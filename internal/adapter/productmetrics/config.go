@@ -91,6 +91,6 @@ type Config struct {
 	// mecak8s — see Task 7) anonymous install identifier. Reinstated as a
 	// resource attribute after being sized and accepted: ~$1,930/month at
 	// 100K installs under worst-case 24/7 uptime on the actual AMP pricing
-	// model (see the ADR's updated cost-analysis section, Task 8).
+	// model.
 	InstallID string
 }

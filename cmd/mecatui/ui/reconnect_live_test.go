@@ -486,7 +486,7 @@ func triggerReconnect(t *testing.T, m Model) Model {
 // the session switches: a stale reconnect msg (gen mismatch) is dropped WITHOUT
 // triggering a reconnect for the old session, and disarmReconnect clears the
 // reconnect state.
-func TestADR_0096_StaleReconnectAfterSessionSwitchCannotRearmOldSession(t *testing.T) {
+func TestStaleReconnectAfterSessionSwitchCannotRearmOldSession(t *testing.T) {
 	defer restoreBackoffClient(t)()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -670,7 +670,7 @@ func (s *reconnectProbeAuthRejectedStreamer) StreamSessionLive(context.Context, 
 
 func (*reconnectProbeAuthRejectedStreamer) BearerBackedStream() bool { return true }
 
-func TestADR_0096_BearerLiveReaderAuthRejectedPreservesHandoffAndStopsRetry(t *testing.T) {
+func TestBearerLiveReaderAuthRejectedPreservesHandoffAndStopsRetry(t *testing.T) {
 	live := &rearmedReaderAuthRejectedStreamer{}
 	m := New(Deps{
 		Connect:     fakeConnect{targets: []ConnectTarget{{Target: "remote.example:443"}}},
@@ -790,7 +790,7 @@ func (s *reconnectSequenceStreamer) StreamSessionLive(context.Context, string) (
 	}
 }
 
-func TestADR_0096_ImmediateRearmedCloseUsesAttemptTwoBackoff(t *testing.T) {
+func TestImmediateRearmedCloseUsesAttemptTwoBackoff(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	live := &reconnectSequenceStreamer{}
@@ -880,7 +880,7 @@ func (s *continuityResetStreamer) StreamSessionLive(context.Context, string) (*c
 	}
 }
 
-func TestADR_0096_OnlyCurrentLiveEventResetsContinuity(t *testing.T) {
+func TestOnlyCurrentLiveEventResetsContinuity(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	live := &continuityResetStreamer{}
@@ -989,7 +989,7 @@ func (s *readerAuthRejectedLiveStreamer) StreamSessionLive(context.Context, stri
 
 func (*readerAuthRejectedLiveStreamer) BearerBackedStream() bool { return true }
 
-func TestADR_0096_BearerLiveReaderRecvAuthRejectedRoutesToConnectRecovery(t *testing.T) {
+func TestBearerLiveReaderRecvAuthRejectedRoutesToConnectRecovery(t *testing.T) {
 	live := &readerAuthRejectedLiveStreamer{}
 	m := New(Deps{
 		Connect:     fakeConnect{targets: []ConnectTarget{{Target: "remote.example:443"}}},

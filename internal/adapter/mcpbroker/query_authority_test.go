@@ -18,7 +18,7 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/server"
 )
 
-func TestADR_0234_CallMcpWithQueryBrokerSupport_AuthorityUnchanged(t *testing.T) {
+func TestCallMcpWithQueryBrokerSupport_AuthorityUnchanged(t *testing.T) {
 	for _, capability := range []string{"mcp__search__query", "mcp__calendar__create"} {
 		t.Run(capability, func(t *testing.T) {
 			catalogue, err := Compile(anonymousConfig(), discoveredTools(), nil)

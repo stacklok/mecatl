@@ -2,21 +2,138 @@ package openai
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
 	oai "github.com/openai/openai-go/v3"
+	"github.com/openai/openai-go/v3/packages/ssestream"
 
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 )
 
 // All canaries are synthetic; no recorded operator requests or credentials.
+func TestSDKStreamErrorProjection(t *testing.T) {
+	const canary = "Bearer synthetic-envelope-canary"
+	for _, tc := range []struct {
+		name, payload, code, display string
+		status                       int
+		disposition                  session.RetryDisposition
+	}{
+		{"transient", `{"error":{"code":"server_error","message":"` + canary + `"}}`, "server_error", "503 Service Unavailable", 503, session.RetryDispositionRetryable},
+		{"rate limit", `{"error":{"code":"rate_limit_exceeded"}}`, "rate_limit_exceeded", "429 Too Many Requests", 429, session.RetryDispositionRetryable},
+		{"overflow message", `{"error":{"code":"server_error","message":"context length exceeded ` + canary + `"}}`, "server_error", "context window exceeded", 0, session.RetryDispositionPermanent},
+		{"overflow param", `{"error":{"code":"server_error","param":"context length exceeded ` + canary + `"}}`, "server_error", "context window exceeded", 503, session.RetryDispositionPermanent},
+		{"overflow code", `{"error":{"code":"context length exceeded ` + canary + `"}}`, "context length exceeded " + canary, "context window exceeded", 0, session.RetryDispositionPermanent},
+		{"invalid request overflow message", `{"error":{"code":"invalid_request_error","message":"context length exceeded ` + canary + `"}}`, "invalid_request_error", "context window exceeded", 0, session.RetryDispositionPermanent},
+		{"invalid request overflow param", `{"error":{"code":"invalid_request_error","param":"context length exceeded ` + canary + `"}}`, "invalid_request_error", "context window exceeded", 0, session.RetryDispositionPermanent},
+		{"encrypted", `{"error":{"code":"invalid_encrypted_content"}}`, "invalid_encrypted_content", "invalid encrypted content", 0, session.RetryDispositionUnknown},
+		{"invalid request", `{"error":{"code":"invalid_request_error"}}`, "invalid_request_error", "invalid request", 0, session.RetryDispositionUnknown},
+		{"model", `{"error":{"code":"model_not_found"}}`, "model_not_found", "model not found", 0, session.RetryDispositionUnknown},
+		{"quota", `{"error":{"code":"insufficient_quota"}}`, "insufficient_quota", "insufficient quota", 0, session.RetryDispositionUnknown},
+		{"access denied", `{"error":{"code":"access_denied","message":"` + canary + `"}}`, "access_denied", "access denied", 0, session.RetryDispositionUnknown},
+		{"unknown", `{"error":{"code":"` + canary + `","message":"` + canary + `"}}`, canary, "provider stream error event", 0, session.RetryDispositionUnknown},
+		{"misleading text", `{"error":{"code":"opaque","message":"server_error timeout access_denied ` + canary + `"}}`, "opaque", "provider stream error event", 0, session.RetryDispositionUnknown},
+		{"no code", `{"error":{"message":"` + canary + `"}}`, "", "provider stream error event", 0, session.RetryDispositionUnknown},
+		{"string", `{"error":"` + canary + `"}`, "", "provider stream error event", 0, session.RetryDispositionUnknown},
+		{"empty", `{"error":{}}`, "", "provider stream error event", 0, session.RetryDispositionUnknown},
+		{"schema", `{"error":{"code":"server_error","message":[]}}`, "", "provider stream error event", 0, session.RetryDispositionUnknown},
+		{"malformed", `{"error":{"code":"server_error"},`, "", "provider stream error event", 0, session.RetryDispositionUnknown},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "text/event-stream")
+				fmt.Fprint(w, "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_fixture\"}}\n\n")
+				fmt.Fprintf(w, "event: %s\ndata: %s\n\n", canary, tc.payload)
+			}))
+			defer srv.Close()
+			err := collectStreamError(t, New(WithAPIKey("synthetic"), WithBaseURL(srv.URL)), port.LLMRequest{Model: "test", Messages: []session.Message{session.NewUserMessage("hi")}})
+			var sdkErr *ssestream.StreamError
+			var classified *responseStreamError
+			if !errors.As(err, &sdkErr) || !errors.Is(err, sdkErr) {
+				t.Fatalf("SDK event cause lost: %v", err)
+			}
+			if strings.TrimSpace(string(sdkErr.Event.Data)) != tc.payload {
+				t.Fatalf("SDK event data = %q, want %q", sdkErr.Event.Data, tc.payload)
+			}
+			status := tc.status
+			if tc.disposition == session.RetryDispositionPermanent {
+				status = 0
+			}
+			if !errors.As(err, &classified) || classified.ProviderHTTPStatus() != 0 || classified.ProviderInBandStatus() != tc.status || classified.StatusCode() != status || classified.ProviderErrorCode() != tc.code || classified.RetryDisposition() != tc.disposition {
+				t.Fatalf("classification lost: %v", err)
+			}
+			if classified.ProviderErrorCorrelationKind() != "response" || classified.ProviderErrorCorrelationID() != "resp_fixture" {
+				t.Fatal("typed response correlation lost")
+			}
+			if !strings.Contains(err.Error(), tc.display) || strings.Contains(fmt.Sprintf("%+v", fmt.Errorf("terminal: %w", err)), canary) {
+				t.Fatalf("unsafe or unhelpful display: %v", err)
+			}
+			if isInvalidEncryptedContent(err) {
+				t.Fatal("HTTP 200 in-band error must not unlock encrypted repair")
+			}
+		})
+	}
+}
+
+func TestSDKJSONFailureDisplay(t *testing.T) {
+	for _, tc := range []struct {
+		name, payload, display string
+	}{
+		{"syntax", `{"type": "synthetic-json-canary",`, "invalid JSON response"},
+		{"schema", `[]`, "unexpected JSON response schema"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "text/event-stream")
+				fmt.Fprintf(w, "data: %s\n\n", tc.payload)
+			}))
+			defer srv.Close()
+			err := collectStreamError(t, New(WithAPIKey("synthetic"), WithBaseURL(srv.URL)), port.LLMRequest{Model: "test", Messages: []session.Message{session.NewUserMessage("hi")}})
+			if !strings.Contains(err.Error(), tc.display) || strings.Contains(err.Error(), "synthetic-json-canary") {
+				t.Fatalf("decode display = %v", err)
+			}
+			var syntaxErr *json.SyntaxError
+			var schemaErr *json.UnmarshalTypeError
+			if !errors.As(err, &syntaxErr) && !errors.As(err, &schemaErr) {
+				t.Fatalf("decode cause lost: %v", err)
+			}
+		})
+	}
+}
+
+func TestTypedFailureDisplay(t *testing.T) {
+	for _, tc := range []struct {
+		cause error
+		want  string
+	}{
+		{io.EOF, "response ended unexpectedly"},
+		{io.ErrUnexpectedEOF, "response ended unexpectedly"},
+		{context.DeadlineExceeded, "deadline exceeded"},
+		{context.Canceled, "request canceled"},
+		{&net.DNSError{Err: "synthetic-network-canary", Name: "synthetic-network-canary", IsTimeout: true}, "network timeout"},
+		{&net.DNSError{Err: "synthetic-network-canary", Name: "synthetic-network-canary"}, "network error"},
+		{&json.UnmarshalTypeError{Value: "synthetic-schema-canary", Field: "synthetic-schema-canary"}, "unexpected JSON response schema"},
+		{&displayVetoError{}, "provider request failed"},
+		{errors.New("server_error timeout access_denied context length exceeded synthetic-opaque-canary"), "provider request failed"},
+	} {
+		err := withHTTPErrorMetadata(fmt.Errorf("synthetic-wrapper-canary: %w", tc.cause), "")
+		if !errors.Is(err, tc.cause) || !strings.Contains(err.Error(), tc.want) || strings.Contains(err.Error(), "canary") {
+			t.Fatalf("typed failure display = %v", err)
+		}
+		if tc.want == "provider request failed" && err.Error() != tc.want {
+			t.Fatalf("opaque cause assigned a guessed category: %v", err)
+		}
+	}
+}
+
 func TestProviderErrorDisplayIsClosed(t *testing.T) {
 	const canary = "Bearer synthetic-display-canary"
 	for _, mode := range []string{"http", "error", "response.failed", "response.incomplete"} {
@@ -44,6 +161,9 @@ func TestProviderErrorDisplayIsClosed(t *testing.T) {
 				if strings.Contains(text, canary) {
 					t.Errorf("unsafe display: %s", text)
 				}
+			}
+			if (mode == "error" || mode == "response.failed") && err.Error() != "provider request failed: provider stream error event" {
+				t.Fatalf("stream origin lost: %v", err)
 			}
 			if mode == "http" {
 				var sdkErr *oai.Error
@@ -88,7 +208,7 @@ func TestInBandErrorDisplayPreservesRawClassification(t *testing.T) {
 			{"Bearer synthetic-classification-canary", "server_error", "", session.RetryDispositionRetryable, 503},
 			{"input exceeds the context length: Bearer synthetic-classification-canary", "server_error", "", session.RetryDispositionPermanent, 0},
 			{"Bearer synthetic-classification-canary", "context length exceeded: synthetic-classification-canary", "", session.RetryDispositionPermanent, 0},
-			{"Bearer synthetic-classification-canary", "server_error", "context length exceeded: synthetic-classification-canary", session.RetryDispositionPermanent, 503},
+			{"Bearer synthetic-classification-canary", "server_error", "context length exceeded: synthetic-classification-canary", session.RetryDispositionPermanent, 0},
 		} {
 			if mode == "response.failed" && tc.param != "" {
 				continue // only top-level errors carry param
@@ -105,7 +225,7 @@ func TestInBandErrorDisplayPreservesRawClassification(t *testing.T) {
 				defer srv.Close()
 				err := collectStreamError(t, New(WithAPIKey("synthetic"), WithBaseURL(srv.URL)), port.LLMRequest{Model: "test", Messages: []session.Message{session.NewUserMessage("hi")}})
 				var classified *responseStreamError
-				if !errors.As(err, &classified) || classified.RetryDisposition() != tc.want || classified.StatusCode() != tc.status {
+				if !errors.As(err, &classified) || classified.RetryDisposition() != tc.want || classified.StatusCode() != tc.status || classified.ProviderHTTPStatus() != 0 || classified.ProviderInBandStatus() != providerErrorStatus(tc.code, tc.message) {
 					t.Fatalf("classification lost: %v", err)
 				}
 				if strings.Contains(err.Error(), "synthetic-classification-canary") {

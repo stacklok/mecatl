@@ -9,10 +9,10 @@ import (
 	"testing"
 )
 
-// TestADR_0224_MicroVMDependenciesStayOutOfEngineAndRoot keeps the libkrun-backed
+// TestMicroVMDependenciesStayOutOfEngineAndRoot keeps the libkrun-backed
 // runtime in its opt-in nested module. The production engine and default binaries
 // must remain usable without resolving or linking the microVM runtime.
-func TestADR_0224_MicroVMDependenciesStayOutOfEngineAndRoot(t *testing.T) {
+func TestMicroVMDependenciesStayOutOfEngineAndRoot(t *testing.T) {
 	repo := repoRoot(t)
 	microvmMod := filepath.Join(repo, "environment", "microvm", "go.mod")
 	mustContain(t, microvmMod, "module github.com/stacklok/mecatl/environment/microvm")

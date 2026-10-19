@@ -34,7 +34,7 @@ run_raw() {
 
 # --- go category: native Go macOS smokes ---------------------------------------
 # Provably irrelevant paths skip: docs, the site, user-docs, and the TS SDK.
-run "go: docs-only skips" go false README.md docs/intro.md docs/adr/0093-provider-modules.md docs/design/notes.mdx
+run "go: docs-only skips" go false README.md docs/intro.md docs/architecture/providers.md docs/design/notes.mdx
 run "go: user-docs + website skip" go false user-docs/intro.md user-docs/building/_category_.json website/package.json website/src/pages/index.tsx
 run "go: SDK frontend skips (cannot affect a Go binary)" go false sdk/typescript/src/client.ts sdk/typescript/pnpm-lock.yaml
 # Go code under docs/ is no terminal dir; it fails closed to RUN.

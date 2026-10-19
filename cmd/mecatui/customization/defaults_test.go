@@ -215,8 +215,8 @@ func TestDefaultStatusHeadersElideSessionTitleByVariant(t *testing.T) {
 		name, suffix      string
 		width, titleWidth int
 	}{
-		{name: "full", width: 80, titleWidth: 32, suffix: " · openai/GPT-5"},
-		{name: "compact", width: 45, titleWidth: 24, suffix: " · GPT-5"},
+		{name: "full", width: 80, titleWidth: 32, suffix: " · openai/gpt-5"},
+		{name: "compact", width: 55, titleWidth: 24, suffix: " · openai/gpt-5"},
 		{name: "minimal", width: 24, titleWidth: 12},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -224,7 +224,7 @@ func TestDefaultStatusHeadersElideSessionTitleByVariant(t *testing.T) {
 			t.Cleanup(func() { _ = source.Close(context.Background()) })
 			source.Submit(Input{
 				Session:  Session{Title: title},
-				Model:    Model{ProviderID: "openai", DisplayName: "GPT-5"},
+				Model:    Model{ProviderID: "openai", ProviderLabel: "openai/gpt-5", FriendlyName: "GPT-5"},
 				Terminal: Terminal{HeaderAvailCols: tc.width},
 			})
 			select {

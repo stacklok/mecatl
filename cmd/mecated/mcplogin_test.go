@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -18,6 +19,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/auth"
 	"github.com/modelcontextprotocol/go-sdk/oauthex"
@@ -25,6 +27,7 @@ import (
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/internal/adapter/credentialstore"
 	"github.com/stacklok/mecatl/internal/adapter/mcp"
+	"github.com/stacklok/mecatl/internal/adapter/mcpcredential"
 	"github.com/stacklok/mecatl/internal/app"
 	"github.com/stacklok/mecatl/internal/cliconfig"
 	"github.com/stacklok/mecatl/mcp/oauthlogin"
@@ -261,7 +264,7 @@ func TestMCPLoginUsesExplicitOperatorPrecedence(t *testing.T) {
 	}
 }
 
-func TestRunMCPLoginExecutionPathUsesRandomCallback(t *testing.T) {
+func TestRunMCPLoginExecutionPathUsesFixedCallback(t *testing.T) {
 	key := base64.StdEncoding.EncodeToString(make([]byte, 32))
 	t.Setenv("MECATL_LOGIN_KEY", key)
 	t.Setenv("MECATL_LOGIN_CREDENTIAL", base64.StdEncoding.EncodeToString([]byte("opaque")))
@@ -278,8 +281,8 @@ func TestRunMCPLoginExecutionPathUsesRandomCallback(t *testing.T) {
 		if server.Name != "GitHub" || server.OAuth == nil || server.OAuth.CredentialStore == nil || server.OAuth.CredentialReader != nil {
 			t.Fatalf("selected server = %#v", server)
 		}
-		if !opts.NoBrowser || opts.URLWriter == nil || opts.RedirectURL != "" {
-			t.Fatalf("runtime options = %#v; no-browser or random-path default was not forwarded", opts)
+		if !opts.NoBrowser || opts.URLWriter == nil || !opts.PinCallbackPath || opts.RedirectURL != "" {
+			t.Fatalf("runtime options = %#v; no-browser or pinned-callback-path was not forwarded", opts)
 		}
 		if loginOpts.DCRAction != mcp.OAuthDCRLoginRetryRegistration {
 			t.Fatalf("login options = %#v", loginOpts)
@@ -314,6 +317,300 @@ func TestRunMCPLoginExecutionPathUsesRandomCallback(t *testing.T) {
 	}
 	if calls != 1 {
 		t.Fatalf("login seam called for rejected profile: %d", calls)
+	}
+}
+
+func TestMCPResetThenLoginCreatesFreshNativeCustody(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	root := filepath.Join(t.TempDir(), "credentials")
+	keyPath := filepath.Join(t.TempDir(), "key")
+	first, err := mcpcredential.Resolve(context.Background(), root, mcpcredential.Options{Requested: mcpcredential.BackendFile, FilePath: keyPath})
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstKey := string(first.Key)
+	oldStore, err := credentialstore.NewEncryptedFile(root, mcpcredential.NativeNamespace, first.Key)
+	clear(first.Key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldKey := []byte("before-reset")
+	if _, err := oldStore.Put(context.Background(), oldKey, []byte("old"), nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := oldStore.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := mcpcredential.Reset(context.Background(), root, mcpcredential.BackendFile, keyPath, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := mcpcredential.Open(context.Background(), root, mcpcredential.BackendFile, keyPath, nil); err == nil {
+		t.Fatal("Open accepted missing custody before explicit login")
+	}
+
+	settings := filepath.Join(t.TempDir(), "settings.yaml")
+	if err := os.WriteFile(settings, []byte(mcpResetSettingsYAML("connector", root, keyPath)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := loadMCPLoginProfilesSelected([]string{settings}, "connector"); err == nil {
+		t.Fatal("ordinary profile loading initialized missing native custody")
+	}
+	if _, err := os.Stat(filepath.Join(root, "mcp-credential-backend.json")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("ordinary profile loading changed custody marker: %v", err)
+	}
+
+	loginKey := []byte("after-login")
+	original := executeMCPLogin
+	t.Cleanup(func() { executeMCPLogin = original })
+	called := false
+	executeMCPLogin = func(ctx context.Context, server mcp.ServerConfig, _ oauthlogin.Options, _ app.MCPLoginOptions) error {
+		called = true
+		if server.OAuth == nil || server.OAuth.CredentialStore == nil {
+			return errors.New("selected native profile has no mutable credential store")
+		}
+		_, err := server.OAuth.CredentialStore.Put(ctx, loginKey, []byte("new"), nil)
+		return err
+	}
+	resolution := resolveCommand([]string{"mecated", "mcp", "login", "connector", "--file", settings})
+	if !resolution.handled || resolution.err != nil || resolution.run == nil {
+		t.Fatalf("login command resolution = %#v", resolution)
+	}
+	var output strings.Builder
+	if err := resolution.run(strings.NewReader(""), &output, io.Discard); err != nil {
+		t.Fatalf("login after reset: %v", err)
+	}
+	if !called || !strings.Contains(output.String(), "succeeded for connector") {
+		t.Fatalf("login called=%v output=%q", called, output.String())
+	}
+
+	fresh, err := mcpcredential.Open(context.Background(), root, mcpcredential.BackendFile, keyPath, nil)
+	if err != nil {
+		t.Fatalf("fresh login custody cannot be reopened: %v", err)
+	}
+	defer clear(fresh.Key)
+	if string(fresh.Key) == firstKey {
+		t.Fatal("login retained the pre-reset wrapping key")
+	}
+	newStore, err := credentialstore.NewEncryptedFile(root, mcpcredential.NativeNamespace, fresh.Key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := newStore.Close(); err != nil {
+			t.Errorf("close fresh credential store: %v", err)
+		}
+	}()
+	if record, err := newStore.Get(context.Background(), loginKey); err != nil || string(record.Value) != "new" {
+		t.Fatalf("login credential record = %q, %v", record.Value, err)
+	}
+	if _, err := newStore.Get(context.Background(), oldKey); !errors.Is(err, credentialstore.ErrNotFound) {
+		t.Fatalf("pre-reset record survived fresh custody: %v", err)
+	}
+}
+
+func TestMCPLoginShowsSafeCustodyResetRemedy(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		seed func(t *testing.T, root, keyPath string)
+	}{
+		{
+			name: "obsolete marker",
+			seed: func(t *testing.T, root, keyPath string) {
+				t.Helper()
+				if err := os.MkdirAll(root, 0o700); err != nil {
+					t.Fatal(err)
+				}
+				locator, err := mcpcredential.CanonicalFileKeyPath(keyPath)
+				if err != nil {
+					t.Fatal(err)
+				}
+				legacyDigest := sha256.Sum256([]byte(locator))
+				marker := fmt.Sprintf(`{"version":1,"backend":"file","locator_sha256":%q}`, hex.EncodeToString(legacyDigest[:]))
+				if err := os.WriteFile(filepath.Join(root, "mcp-credential-backend.json"), []byte(marker), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			},
+		},
+		{
+			name: "missing ready artifact",
+			seed: func(t *testing.T, root, keyPath string) {
+				t.Helper()
+				selection, err := mcpcredential.Resolve(context.Background(), root, mcpcredential.Options{Requested: mcpcredential.BackendFile, FilePath: keyPath})
+				if err != nil {
+					t.Fatal(err)
+				}
+				clear(selection.Key)
+				if err := os.Remove(keyPath); err != nil {
+					t.Fatal(err)
+				}
+			},
+		},
+		{
+			name: "mismatched ready artifact",
+			seed: func(t *testing.T, root, keyPath string) {
+				t.Helper()
+				selection, err := mcpcredential.Resolve(context.Background(), root, mcpcredential.Options{Requested: mcpcredential.BackendFile, FilePath: keyPath})
+				if err != nil {
+					t.Fatal(err)
+				}
+				clear(selection.Key)
+				replacement := base64.StdEncoding.EncodeToString(make([]byte, 32))
+				if err := os.WriteFile(keyPath, []byte(replacement), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+			root := filepath.Join(t.TempDir(), "credentials")
+			keyPath := filepath.Join(t.TempDir(), "key")
+			tc.seed(t, root, keyPath)
+			settings := filepath.Join(t.TempDir(), "settings.yaml")
+			if err := os.WriteFile(settings, []byte(mcpResetSettingsYAML("connector", root, keyPath)), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			err := runMCPLogin([]string{"connector", "--file", settings}, io.Discard)
+			if err == nil || !strings.Contains(err.Error(), "mecated mcp reset-local-credentials connector") || !strings.Contains(err.Error(), "then log in again") {
+				t.Fatalf("login error = %v, want a safe reset remedy", err)
+			}
+		})
+	}
+}
+
+func TestMCPLoginCustodyRemedyPreservesExplicitSettingsSource(t *testing.T) {
+	configHome := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", configHome)
+	defaultPath := filepath.Join(configHome, "mecatl", "settings.yaml")
+	if err := os.MkdirAll(filepath.Dir(defaultPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(defaultPath, []byte("mcp: {mode: global, servers: []}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	root := filepath.Join(t.TempDir(), "credentials")
+	keyPath := filepath.Join(t.TempDir(), "key")
+	selection, err := mcpcredential.Resolve(context.Background(), root, mcpcredential.Options{Requested: mcpcredential.BackendFile, FilePath: keyPath})
+	if err != nil {
+		t.Fatal(err)
+	}
+	clear(selection.Key)
+	if err := os.Remove(keyPath); err != nil {
+		t.Fatal(err)
+	}
+	settings := filepath.Join(t.TempDir(), "settings $(echo unsafe).yaml")
+	if err := os.WriteFile(settings, []byte(mcpResetSettingsYAML("Connector", root, keyPath)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	err = runMCPLogin([]string{"connector", "--permission-config", settings}, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "resolve the overlapping `mcp:` settings sources first") || !strings.Contains(err.Error(), "mecated mcp reset-local-credentials Connector --file PATH") || strings.Contains(err.Error(), settings) {
+		t.Fatalf("login error = %v, want safe source-aware reset guidance", err)
+	}
+}
+
+// noopLauncher discards the authorization URL: the tests using it complete the
+// loopback callback directly over HTTP instead of going through a real browser.
+type noopLauncher struct{}
+
+func (noopLauncher) Open(context.Context, string) error { return nil }
+
+// writerFunc adapts a function to io.Writer.
+type writerFunc func([]byte) (int, error)
+
+func (f writerFunc) Write(p []byte) (int, error) { return f(p) }
+
+// TestRunMCPLoginProductionOptionsKeepDCRPriorityThroughRealRuntime proves the
+// app-wiring layer, not just the isolated mcp/oauthlogin package: it captures the
+// EXACT oauthlogin.Options runMCPLoginContext builds in production (PinCallbackPath
+// always true, per TestRunMCPLoginExecutionPathUsesFixedCallback above), obtains a
+// GENUINE registration-bound callback path from mcp.PrepareOAuthDCRLogin against a
+// real DCR fixture (the same call app.LoginMCPWithOptions makes for a
+// DCR-configured server), then feeds both into a REAL oauthlogin.Runtime driven
+// through AuthorizeWithCallbackPath. If a future refactor of how PinCallbackPath is
+// threaded through cmd/mecated/internal/app ever let it win over an explicit DCR
+// callback path, this test would fail even though
+// TestPinCallbackPathDoesNotOverrideRegistrationBoundPath (mcp/oauthlogin package)
+// only pins the invariant in isolation.
+func TestRunMCPLoginProductionOptionsKeepDCRPriorityThroughRealRuntime(t *testing.T) {
+	key := base64.StdEncoding.EncodeToString(make([]byte, 32))
+	t.Setenv("MECATL_LOGIN_KEY", key)
+	t.Setenv("MECATL_LOGIN_CREDENTIAL", base64.StdEncoding.EncodeToString([]byte("opaque")))
+
+	local := filepath.Join(t.TempDir(), "local.yaml")
+	if err := os.WriteFile(local, []byte(mcpLoginOAuthYAML("GitHub", "local", filepath.Join(t.TempDir(), "credentials"))), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	original := executeMCPLogin
+	t.Cleanup(func() { executeMCPLogin = original })
+	var captured oauthlogin.Options
+	executeMCPLogin = func(_ context.Context, _ mcp.ServerConfig, opts oauthlogin.Options, _ app.MCPLoginOptions) error {
+		captured = opts
+		return nil
+	}
+	var out strings.Builder
+	if err := runMCPLogin([]string{"github", "--permission-config", local, "--no-browser"}, &out); err != nil {
+		t.Fatal(err)
+	}
+	if !captured.PinCallbackPath || captured.RedirectURL != "" {
+		t.Fatalf("captured production options = %#v", captured)
+	}
+
+	fixture := newMCPLoginDCRFixture(t)
+	dcrSettings := filepath.Join(t.TempDir(), "dcr-settings.yaml")
+	if err := os.WriteFile(dcrSettings, []byte(mcpLoginDCRYAML(fixture, filepath.Join(t.TempDir(), "dcr-credentials"))), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	profiles, err := loadMCPLoginProfiles([]string{dcrSettings})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = profiles.Close() }()
+	server, ok := profiles.OAuthServer("connector")
+	if !ok {
+		t.Fatal("connector DCR profile missing")
+	}
+	mcp.AllowOAuthLoopbackForTest(t, server.OAuth)
+	mcp.TrustOAuthCertificateForTest(t, server.OAuth, fixture.server.Certificate())
+	prepared, dcrPath, err := mcp.PrepareOAuthDCRLogin(context.Background(), server.URL, *server.OAuth, mcp.OAuthDCRLoginReuse)
+	if err != nil {
+		t.Fatalf("prepare real DCR registration: %v", err)
+	}
+
+	var redirect string
+	// Production options run NoBrowser, so present writes the URL to URLWriter
+	// after it has recorded the expected state. Fire the callback from there so it
+	// cannot beat the state, as a real browser cannot.
+	urlWriter := captured.URLWriter
+	captured.Launcher = noopLauncher{}
+	captured.URLWriter = writerFunc(func(p []byte) (int, error) {
+		go func() {
+			req, _ := http.NewRequest(http.MethodGet, redirect+"?code=code&state=s&iss="+url.QueryEscape(prepared.Issuer), nil)
+			resp, doErr := (&http.Client{}).Do(req)
+			if doErr == nil {
+				resp.Body.Close()
+			}
+		}()
+		return urlWriter.Write(p)
+	})
+	runtime, err := oauthlogin.New(captured)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	err = runtime.AuthorizeWithCallbackPath(ctx, prepared.Issuer, dcrPath, func(ctx context.Context, got string, present func(context.Context, string) (oauthlogin.Result, error)) error {
+		redirect = got
+		_, presentErr := present(ctx, "https://as.example.test/authorize?state=s")
+		return presentErr
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, parseErr := url.Parse(redirect)
+	if parseErr != nil || parsed.Path != dcrPath {
+		t.Fatalf("redirect = %q, want the real DCR registration-bound path %q despite production PinCallbackPath: true", redirect, dcrPath)
 	}
 }
 
@@ -450,7 +747,7 @@ func TestMCPLoginArgsAcceptServerInteractionAndConfigSelectionOnly(t *testing.T)
 	}
 }
 
-func TestADR_0325_DCRResetAndRetryCLI(t *testing.T) {
+func TestDCRResetAndRetryCLI(t *testing.T) {
 	fixture := newMCPLoginDCRFixture(t)
 	root := filepath.Join(t.TempDir(), "credentials")
 	settings := filepath.Join(t.TempDir(), "settings.yaml")

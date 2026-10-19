@@ -11,11 +11,10 @@ import (
 	"github.com/stacklok/mecatl/adapters/grpcdriver"
 )
 
-// Remote store drivers (Phase B): the composition seam that swaps the local
+// Remote store drivers: the composition seam that swaps the local
 // session/memory stores for gRPC driver clients (internal/adapter/grpcdriver)
 // when the operator points a *StoreURL at a driver process. All-empty URLs
-// keep today's behaviour byte-identical (validateDriverConfig + the untouched
-// default branches in buildStore/buildCatalog guarantee it).
+// use the local stores (the default branches in buildStore/buildCatalog).
 
 // validateDriverConfig rejects a config that sets BOTH a local store
 // directory and a remote driver URL for the same store — the two are
@@ -33,7 +32,7 @@ func validateDriverConfig(cfg Config) error {
 	if cfg.RedisURL == "" && (cfg.RedisUsernameFile != "" || cfg.RedisPasswordFile != "" || cfg.RedisTLSCAFile != "" || cfg.RedisTLS) {
 		return fmt.Errorf("--redis-username-file/--redis-password-file/--redis-tls-ca/--redis-tls require --redis-url: Redis connection material must not be silently ignored")
 	}
-	// Redis (ADR 0048, mecak8s) is a third store option, mutually exclusive with
+	// Redis (mecak8s) is a third store option, mutually exclusive with
 	// BOTH the local dir and the gRPC driver (one store per seam — a silent
 	// precedence would hide an operator mistake).
 	if cfg.RedisURL != "" && cfg.StoreDir != "" {

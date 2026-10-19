@@ -127,7 +127,7 @@ func harnessRequestText(request port.LLMRequest) string {
 	return out.String()
 }
 
-func TestADR_0359_HarnessContext_Scenario5_HelpdeskDeploymentAndServiceSources(t *testing.T) {
+func TestHarnessContext_HelpdeskDeploymentAndServiceSources(t *testing.T) {
 	var contexts [][]session.Message
 	for _, transport := range []string{"file", "service"} {
 		t.Run(transport, func(t *testing.T) {
@@ -185,7 +185,7 @@ func TestADR_0359_HarnessContext_Scenario5_HelpdeskDeploymentAndServiceSources(t
 	}
 }
 
-func TestADR_0359_HarnessContext_Scenario5_HybridCodingContext(t *testing.T) {
+func TestHarnessContext_HybridCodingContext(t *testing.T) {
 	cfg, _ := harnessHybridConfig(t, true, "combine")
 	cfg.Shell = "/bin/sh"
 	var requests []port.LLMRequest
@@ -227,7 +227,7 @@ func TestADR_0359_HarnessContext_Scenario5_HybridCodingContext(t *testing.T) {
 	}
 }
 
-func TestADR_0359_HarnessContext_Scenario5_CombineExcludeAndDisableRepositoryContext(t *testing.T) {
+func TestHarnessContext_CombineExcludeAndDisableRepositoryContext(t *testing.T) {
 	for _, tc := range []struct {
 		name, mode                 string
 		repository                 bool

@@ -86,6 +86,7 @@ func TestStartupSessionsWaitsForModelsThenCreatesOnlyOnNew(t *testing.T) {
 		Models: &fakeModels{}, BrowseSessions: true,
 		Theme: testTheme(), Workspace: "/workspace", Mode: "plan", Ctx: context.Background(), NoAltScreen: true,
 	})
+	m = applyAll(m, tea.WindowSizeMsg{Width: 100, Height: 40})
 	if ensureActiveSessions(&m).view != sessionsPanel || m.sessionID != "" {
 		t.Fatalf("startup = view %v session %q, want sessions panel with no session", ensureActiveSessions(&m).view, m.sessionID)
 	}
@@ -127,6 +128,7 @@ func TestStartupSessionsContinueInspectBackAndCancel(t *testing.T) {
 		Session: conv, Conv: conv, Sessions: &fakeSessionLister{}, Transcript: loader,
 		BrowseSessions: true, Theme: testTheme(), Workspace: "/workspace", Mode: "default", Ctx: context.Background(), NoAltScreen: true,
 	})
+	m = applyAll(m, tea.WindowSizeMsg{Width: 100, Height: 40})
 	m.modelsReconciled = true // no model lister: startup is immediately safe to create
 
 	inspect := client.SessionListItem{ID: "sched-1", Title: "scheduled", Kind: client.SessionKindScheduled, Capabilities: client.SessionInventoryCapabilities{Inspect: true}}
@@ -158,6 +160,7 @@ func TestStartupSessionsContinueInspectBackAndCancel(t *testing.T) {
 	}
 
 	cancel := newTestModelFromDeps(Deps{BrowseSessions: true, Sessions: &fakeSessionLister{}, Theme: testTheme(), Ctx: context.Background(), NoAltScreen: true})
+	cancel = applyAll(cancel, tea.WindowSizeMsg{Width: 100, Height: 40})
 	mm, quit, handled := cancel.onOverlayKey(tea.KeyPressMsg{Code: tea.KeyEscape})
 	cancel = mm.(Model)
 	if !handled || quit == nil {

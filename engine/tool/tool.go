@@ -257,7 +257,7 @@ type FileSystem interface {
 }
 
 // FileVersion is the opaque, comparable content version a Workspace attaches to a
-// version-bearing read (ADR 0208). It is an adapter-minted token (a content hash,
+// version-bearing read. It is an adapter-minted token (a content hash,
 // an inode+mtime pair, a remote ETag, …) the caller compares for equality with
 // another FileVersion from the SAME adapter and passes back to a conditional
 // mutation. It carries NO meaning outside equality and is NEVER used as a
@@ -322,7 +322,7 @@ func DecodeFileVersion(encoded string) FileVersion {
 // It carries the PLAIN (non-versioned) Read/Stat: non-agent consumers that only
 // inspect the tree (permission config, prompt discovery, the agent-def/skill
 // sources) never participate in the read-ledger / conditional-mutation protocol
-// (ADR 0208) and do not need a FileVersion. The agent-facing built-in
+// and do not need a FileVersion. The agent-facing built-in
 // Read/Edit/Write tools use the version-bearing ReadVersion + CreateFile/
 // ReplaceFile on the full Workspace, NOT this plain Read.
 //
@@ -429,19 +429,19 @@ type AuthorityResourceResolver interface {
 // require composition-level authorization. It exposes
 // the read/search operations the core file tools need, and carries the explicit,
 // unambiguous versioned mutation operations the built-in Edit/Write tools use
-// with the Environment's independently selected ReadLedger (ADR 0208, ADR 0281).
+// with the Environment's independently selected ReadLedger.
 //
 // Paths are normally relative to the session root. Adapters must reject
 // out-of-root paths unless explicitly paired with an authorizing policy.
 //
-// VERSION PROTOCOL (ADR 0208). The Workspace capability exposes only the
+// VERSION PROTOCOL. The Workspace capability exposes only the
 // explicit create-only / conditional-replace-by-version pair, so a tool mutation
 // can never silently clobber a concurrent change:
 //
 //   - ReadVersion returns the content AND the authoritative FileVersion the
 //     adapter currently holds for path. The built-in Read tool records that
 //     version in the Environment's ReadLedger under LedgerKey(ws.Root(), path)
-//     (ADR 0281: fresh in-memory by default, or explicitly injected durable
+//     (fresh in-memory by default, or explicitly injected durable
 //     storage; the ledger performs NO file-content I/O), so a
 //     later Edit/Write can assert read-before-mutate-and-unchanged.
 //   - Existing-file Write and Edit: require a recorded version, ReadVersion
@@ -461,8 +461,7 @@ type AuthorityResourceResolver interface {
 // instances unless their backend contract says so. A NON-COOPERATING POSIX writer
 // (a shell command, an external editor) that bypasses the Workspace seam can still
 // race a conditional replace — this is honest best-effort same-process CAS, NOT
-// kernel-level locking; a future remote transport will provide true backend CAS
-// (ADR 0208, remote transport deferred).
+// kernel-level locking; a future remote transport will provide true backend CAS.
 type Workspace interface {
 	// WorkspaceReader is the read-only subset (Root + plain Read + Stat);
 	// embedding it keeps the read methods defined once and lets a *Workspace

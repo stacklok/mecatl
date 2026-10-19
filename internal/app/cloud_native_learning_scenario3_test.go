@@ -229,7 +229,7 @@ func driveLearningConverse(t *testing.T, client mecatlv1.HarnessServiceClient, s
 	}
 }
 
-func TestADR_0259_WorkerSourceAuthorityFailsClosedWhenSourceDeletedAcrossBuild(t *testing.T) {
+func TestWorkerSourceAuthorityFailsClosedWhenSourceDeletedAcrossBuild(t *testing.T) {
 	ctx := context.Background()
 	workspace := t.TempDir()
 	storeDir := t.TempDir()

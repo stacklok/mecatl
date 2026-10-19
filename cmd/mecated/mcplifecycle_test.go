@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -16,11 +17,415 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/auth"
 
+	"github.com/stacklok/mecatl/internal/adapter/credentialstore"
 	"github.com/stacklok/mecatl/internal/adapter/mcp"
+	"github.com/stacklok/mecatl/internal/adapter/mcpcredential"
 	"github.com/stacklok/mecatl/internal/adapter/permconfig"
 	"github.com/stacklok/mecatl/internal/app"
 	"github.com/stacklok/mecatl/mcp/oauthlogin"
 )
+
+func TestDirectMCPOnboarding_Scenario7_ResetRequiresAttendedTerminal(t *testing.T) {
+	previous := mcpResetIsTerminal
+	mcpResetIsTerminal = func() bool { return false }
+	t.Cleanup(func() { mcpResetIsTerminal = previous })
+	if err := runMCPResetCustody([]string{"server", "--file", filepath.Join(t.TempDir(), "settings.yaml")}, strings.NewReader("server\n"), io.Discard, io.Discard); err == nil || !strings.Contains(err.Error(), "attended terminal") {
+		t.Fatalf("reset error = %v", err)
+	}
+}
+
+// mcpResetSettingsYAML builds a strictly valid settings document with a
+// single native local-key MCP profile rooted at root, so runMCPResetCustody
+// can be exercised end to end through real settings parsing.
+type mcpResetProfileConfig struct {
+	name, root string
+}
+
+func mcpResetSettingsYAML(name, root, keyPath string) string {
+	return mcpResetSettingsYAMLProfiles([]mcpResetProfileConfig{{name: name, root: root}}, keyPath)
+}
+
+func mcpResetSettingsYAMLProfiles(profiles []mcpResetProfileConfig, keyPath string) string {
+	var servers strings.Builder
+	for _, profile := range profiles {
+		_, _ = fmt.Fprintf(&servers, `    - name: %s
+      url: "https://mcp.example/mcp"
+      auth:
+        mode: oauth
+        oauth:
+          profile: work
+          principal: operator
+          issuer: "https://mcp.example"
+          client: {mode: dcr, dcr: {}}
+          scopes: [openid]
+          request_refresh_token: false
+          credentials:
+            mode: local
+            local: {root: %q, key: {mode: file, file: {path: %q}}}
+          network: {additional_origins: [], private_origins: ["https://mcp.example"], max_redirects: 0}
+`, profile.name, profile.root, keyPath)
+	}
+	return "mcp:\n  mode: global\n  servers:\n" + servers.String()
+}
+
+type mcpResetConfirmationReader func([]byte) (int, error)
+
+func (r mcpResetConfirmationReader) Read(p []byte) (int, error) { return r(p) }
+
+func TestDirectMCPOnboarding_Scenario7_ResetCustodyConfirmationFlow(t *testing.T) {
+	previous := mcpResetIsTerminal
+	mcpResetIsTerminal = func() bool { return true }
+	t.Cleanup(func() { mcpResetIsTerminal = previous })
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+
+	root := filepath.Join(t.TempDir(), "credentials")
+	keyPath := filepath.Join(t.TempDir(), "key")
+	first, err := mcpcredential.Resolve(context.Background(), root, mcpcredential.Options{Requested: mcpcredential.BackendFile, FilePath: keyPath})
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstKey := string(first.Key)
+
+	path := filepath.Join(t.TempDir(), "settings.yaml")
+	original := []byte(mcpResetSettingsYAMLProfiles([]mcpResetProfileConfig{{name: "server", root: root}, {name: "backup", root: root}}, keyPath))
+	if err := os.WriteFile(path, original, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Run("wrong answer cancels and leaves custody and settings untouched", func(t *testing.T) {
+		var output bytes.Buffer
+		err := runMCPResetCustody([]string{"server", "--file", path}, strings.NewReader("not-server\n"), &output, io.Discard)
+		if err == nil || !strings.Contains(err.Error(), "cancelled") {
+			t.Fatalf("declined reset error = %v", err)
+		}
+		got, readErr := os.ReadFile(path)
+		if readErr != nil {
+			t.Fatal(readErr)
+		}
+		if string(got) != string(original) {
+			t.Fatalf("declined reset mutated settings:\n%s", got)
+		}
+		second, openErr := mcpcredential.Open(context.Background(), root, mcpcredential.BackendFile, keyPath, nil)
+		if openErr != nil {
+			t.Fatalf("declined reset broke existing custody: %v", openErr)
+		}
+		if string(second.Key) != firstKey {
+			t.Fatal("declined reset rotated the custody key")
+		}
+	})
+
+	var output bytes.Buffer
+	resolution := resolveCommand([]string{"mecated", "mcp", "reset-local-credentials", "server", "--file", path})
+	if !resolution.handled || resolution.err != nil || resolution.run == nil {
+		t.Fatalf("reset command resolution = %#v", resolution)
+	}
+	if err := resolution.run(strings.NewReader("server\n"), &output, io.Discard); err != nil {
+		t.Fatalf("confirmed reset error = %v", err)
+	}
+	if !strings.Contains(output.String(), "MCP custody reset complete") || !strings.Contains(output.String(), "server, backup") || !strings.Contains(output.String(), "Log in again for each profile") {
+		t.Fatalf("confirmed reset output omitted its effect or profile scope: %q", output.String())
+	}
+	got, readErr := os.ReadFile(path)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if string(got) != string(original) {
+		t.Fatalf("confirmed reset unexpectedly mutated settings:\n%s", got)
+	}
+	second, resolveErr := mcpcredential.Resolve(context.Background(), root, mcpcredential.Options{Requested: mcpcredential.BackendFile, FilePath: keyPath})
+	if resolveErr != nil {
+		t.Fatalf("confirmed reset did not leave usable custody: %v", resolveErr)
+	}
+	defer clear(second.Key)
+	if string(second.Key) == firstKey {
+		t.Fatal("confirmed reset retained the old wrapping key")
+	}
+}
+
+func TestMCPResetPreservesFileKeySharedAcrossRoots(t *testing.T) {
+	previous := mcpResetIsTerminal
+	mcpResetIsTerminal = func() bool { return true }
+	t.Cleanup(func() { mcpResetIsTerminal = previous })
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	rootA := filepath.Join(t.TempDir(), "credentials-a")
+	rootB := filepath.Join(t.TempDir(), "credentials-b")
+	sharedKeyPath := filepath.Join(t.TempDir(), "shared-key")
+	owner, err := mcpcredential.Resolve(context.Background(), rootA, mcpcredential.Options{Requested: mcpcredential.BackendFile, FilePath: sharedKeyPath})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ownerKey := string(owner.Key)
+	clear(owner.Key)
+	if _, err := mcpcredential.Resolve(context.Background(), rootB, mcpcredential.Options{Requested: mcpcredential.BackendFile, FilePath: sharedKeyPath}); err == nil {
+		t.Fatal("second root unexpectedly adopted the shared file key")
+	}
+
+	path := filepath.Join(t.TempDir(), "settings.yaml")
+	settings := mcpResetSettingsYAMLProfiles([]mcpResetProfileConfig{
+		{name: "owner", root: rootA}, {name: "other", root: rootB},
+	}, sharedKeyPath)
+	if err := os.WriteFile(path, []byte(settings), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	if err := runMCPResetCustody([]string{"other", "--file", path}, strings.NewReader("other\n"), &output, io.Discard); err != nil {
+		t.Fatalf("reset second root: %v", err)
+	}
+	if !strings.Contains(output.String(), "file key is also configured under another root for profiles: owner") || !strings.Contains(output.String(), "distinct local key path") {
+		t.Fatalf("reset did not explain the preserved shared key: %q", output.String())
+	}
+	if _, err := os.Stat(sharedKeyPath); err != nil {
+		t.Fatalf("reset deleted the first root's file key: %v", err)
+	}
+	stillOwned, err := mcpcredential.Open(context.Background(), rootA, mcpcredential.BackendFile, sharedKeyPath, nil)
+	if err != nil {
+		t.Fatalf("first root custody was damaged: %v", err)
+	}
+	defer clear(stillOwned.Key)
+	if string(stillOwned.Key) != ownerKey {
+		t.Fatal("first root key changed after resetting the other root")
+	}
+}
+
+func TestMCPResetFailsClosedForUnavailableRootSharingFileKey(t *testing.T) {
+	previous := mcpResetIsTerminal
+	mcpResetIsTerminal = func() bool { return true }
+	t.Cleanup(func() { mcpResetIsTerminal = previous })
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+
+	root := filepath.Join(t.TempDir(), "credentials")
+	keyPath := filepath.Join(t.TempDir(), "shared-key")
+	owner, err := mcpcredential.Resolve(context.Background(), root, mcpcredential.Options{Requested: mcpcredential.BackendFile, FilePath: keyPath})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ownerKey := string(owner.Key)
+	store, err := credentialstore.NewEncryptedFile(root, mcpcredential.NativeNamespace, owner.Key)
+	clear(owner.Key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	markerPath := filepath.Join(root, "mcp-credential-backend.json")
+	beforeMarker, err := os.ReadFile(markerPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	nativePath := filepath.Join(root, credentialstore.NamespacePhysicalName(mcpcredential.NativeNamespace))
+	brokenRoot := filepath.Join(t.TempDir(), "broken-root")
+	if err := os.Symlink(filepath.Join(t.TempDir(), "missing-root"), brokenRoot); err != nil {
+		t.Fatal(err)
+	}
+	settings := filepath.Join(t.TempDir(), "settings.yaml")
+	body := mcpResetSettingsYAMLProfiles([]mcpResetProfileConfig{
+		{name: "owner", root: root}, {name: "unavailable", root: brokenRoot},
+	}, keyPath)
+	if err := os.WriteFile(settings, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var output bytes.Buffer
+	err = runMCPResetCustody([]string{"owner", "--file", settings}, strings.NewReader("owner\n"), &output, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "cannot verify another profile's root") || output.Len() != 0 {
+		t.Fatalf("reset with unresolved shared-key root error=%v output=%q", err, output.String())
+	}
+	afterMarker, err := os.ReadFile(markerPath)
+	if err != nil || string(afterMarker) != string(beforeMarker) {
+		t.Fatalf("refused reset changed marker: %q, err=%v", afterMarker, err)
+	}
+	if _, err := os.Stat(nativePath); err != nil {
+		t.Fatalf("refused reset changed native namespace: %v", err)
+	}
+	stillOwned, err := mcpcredential.Open(context.Background(), root, mcpcredential.BackendFile, keyPath, nil)
+	if err != nil {
+		t.Fatalf("refused reset damaged the selected key: %v", err)
+	}
+	defer clear(stillOwned.Key)
+	if string(stillOwned.Key) != ownerKey {
+		t.Fatal("refused reset changed the selected root's key")
+	}
+}
+
+func TestMCPResetRevalidatesConfirmedSettingsAndRoot(t *testing.T) {
+	previous := mcpResetIsTerminal
+	mcpResetIsTerminal = func() bool { return true }
+	t.Cleanup(func() { mcpResetIsTerminal = previous })
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+
+	t.Run("settings changed while awaiting confirmation", func(t *testing.T) {
+		root := filepath.Join(t.TempDir(), "credentials")
+		keyPath := filepath.Join(t.TempDir(), "key")
+		first, err := mcpcredential.Resolve(context.Background(), root, mcpcredential.Options{Requested: mcpcredential.BackendFile, FilePath: keyPath})
+		if err != nil {
+			t.Fatal(err)
+		}
+		firstKey := string(first.Key)
+		clear(first.Key)
+		otherRoot := filepath.Join(t.TempDir(), "other-credentials")
+		otherKey := filepath.Join(t.TempDir(), "other-key")
+		if err := os.MkdirAll(otherRoot, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		path := filepath.Join(t.TempDir(), "settings.yaml")
+		before := []byte(mcpResetSettingsYAML("server", root, keyPath))
+		after := []byte(mcpResetSettingsYAML("server", otherRoot, otherKey))
+		if err := os.WriteFile(path, before, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		input := mcpResetConfirmationReader(func(p []byte) (int, error) {
+			if err := os.WriteFile(path, after, 0o600); err != nil {
+				return 0, err
+			}
+			return copy(p, []byte("server\n")), nil
+		})
+		var output bytes.Buffer
+		err = runMCPResetCustody([]string{"server", "--file", path}, input, &output, io.Discard)
+		if err == nil || !strings.Contains(err.Error(), "scope changed during confirmation") {
+			t.Fatalf("changed-settings reset error = %v", err)
+		}
+		stillOwned, err := mcpcredential.Open(context.Background(), root, mcpcredential.BackendFile, keyPath, nil)
+		if err != nil {
+			t.Fatalf("settings change damaged original custody: %v", err)
+		}
+		defer clear(stillOwned.Key)
+		if string(stillOwned.Key) != firstKey {
+			t.Fatal("settings change rotated the original custody key")
+		}
+	})
+
+	t.Run("root ancestor symlink changed while awaiting confirmation", func(t *testing.T) {
+		base := t.TempDir()
+		root := filepath.Join(base, "credentials")
+		otherRoot := filepath.Join(base, "other-credentials")
+		keyPath := filepath.Join(t.TempDir(), "key")
+		if err := os.MkdirAll(otherRoot, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		first, err := mcpcredential.Resolve(context.Background(), root, mcpcredential.Options{Requested: mcpcredential.BackendFile, FilePath: keyPath})
+		if err != nil {
+			t.Fatal(err)
+		}
+		firstKey := string(first.Key)
+		clear(first.Key)
+		alias := filepath.Join(base, "selected-root")
+		if err := os.Symlink(root, alias); err != nil {
+			t.Fatal(err)
+		}
+		path := filepath.Join(t.TempDir(), "settings.yaml")
+		if err := os.WriteFile(path, []byte(mcpResetSettingsYAML("server", alias, keyPath)), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		input := mcpResetConfirmationReader(func(p []byte) (int, error) {
+			if err := os.Remove(alias); err != nil {
+				return 0, err
+			}
+			if err := os.Symlink(otherRoot, alias); err != nil {
+				return 0, err
+			}
+			return copy(p, []byte("server\n")), nil
+		})
+		if err := runMCPResetCustody([]string{"server", "--file", path}, input, io.Discard, io.Discard); err == nil || !strings.Contains(err.Error(), "scope changed during confirmation") {
+			t.Fatalf("changed-root reset error = %v", err)
+		}
+		stillOwned, err := mcpcredential.Open(context.Background(), root, mcpcredential.BackendFile, keyPath, nil)
+		if err != nil {
+			t.Fatalf("symlink change damaged original custody: %v", err)
+		}
+		defer clear(stillOwned.Key)
+		if string(stillOwned.Key) != firstKey {
+			t.Fatal("symlink change rotated the original custody key")
+		}
+	})
+}
+
+func TestMCPResetHelpDescribesRemovalAndListsTopLevel(t *testing.T) {
+	var topLevel, group strings.Builder
+	writeTopLevelCommands(&topLevel)
+	writeMCPHelp(&group)
+	if !strings.Contains(topLevel.String(), "mcp login SERVER") || !strings.Contains(topLevel.String(), "mcp reset-local-credentials NAME") {
+		t.Fatalf("top-level commands omit MCP login or reset: %q", topLevel.String())
+	}
+	if !strings.Contains(group.String(), "reset-local-credentials NAME [--file PATH]") || !strings.Contains(group.String(), "discard saved local MCP sign-in credentials") || !strings.Contains(group.String(), "Log in again for every affected profile") || strings.Contains(group.String(), "recreate") || strings.Contains(group.String(), "reset-custody") {
+		t.Fatalf("MCP help misstates reset behavior: %q", group.String())
+	}
+}
+
+func TestFindMCPResetTarget_SharedProfilesAndKeyEnvSharing(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "credentials")
+	nativeKey := &permconfig.MCPNativeCredentialKey{Mode: "file", File: &permconfig.MCPFileCredentialKey{Path: filepath.Join(t.TempDir(), "key")}}
+	target := permconfig.MCPServerProfile{Name: "primary", Auth: permconfig.MCPAuthProfile{Mode: "oauth", OAuth: &permconfig.MCPOAuthProfile{Credentials: permconfig.MCPOAuthCredentialProfile{Mode: "local", Local: &permconfig.MCPLocalCredentialProfile{Root: root, Key: nativeKey}}}}}
+	shared := permconfig.MCPServerProfile{Name: "secondary", Auth: permconfig.MCPAuthProfile{Mode: "oauth", OAuth: &permconfig.MCPOAuthProfile{Credentials: permconfig.MCPOAuthCredentialProfile{Mode: "local", Local: &permconfig.MCPLocalCredentialProfile{Root: root, Key: nativeKey}}}}}
+
+	t.Run("shared profiles sharing the same root are reported", func(t *testing.T) {
+		if err := os.MkdirAll(root, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		cfg := permconfig.Config{MCP: &permconfig.MCPSection{Servers: []permconfig.MCPServerProfile{target, shared}}}
+		got, err := findMCPResetTarget(cfg, "primary")
+		if err != nil {
+			t.Fatal(err)
+		}
+		// The target profile itself is reported alongside other native
+		// profiles that share its root.
+		if len(got.shared) != 2 || got.shared[0] != "primary" || got.shared[1] != "secondary" {
+			t.Fatalf("shared profiles = %#v, want [primary secondary]", got.shared)
+		}
+	})
+
+	t.Run("different roots cannot share a file key", func(t *testing.T) {
+		if err := os.MkdirAll(root, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		otherRoot := filepath.Join(t.TempDir(), "other-credentials")
+		if err := os.MkdirAll(otherRoot, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		other := permconfig.MCPServerProfile{Name: "other-root", Auth: permconfig.MCPAuthProfile{Mode: "oauth", OAuth: &permconfig.MCPOAuthProfile{Credentials: permconfig.MCPOAuthCredentialProfile{Mode: "local", Local: &permconfig.MCPLocalCredentialProfile{Root: otherRoot, Key: nativeKey}}}}}
+		cfg := permconfig.Config{MCP: &permconfig.MCPSection{Servers: []permconfig.MCPServerProfile{target, other}}}
+		got, err := findMCPResetTarget(cfg, "primary")
+		if err != nil || !got.sharedFileKey || len(got.externalFileProfiles) != 1 || got.externalFileProfiles[0] != "other-root" {
+			t.Fatalf("cross-root shared key target = %#v, error = %v, want preserved artifact and profile list", got, err)
+		}
+	})
+
+	t.Run("unavailable root with the same file key blocks reset", func(t *testing.T) {
+		if err := os.MkdirAll(root, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		brokenRoot := filepath.Join(t.TempDir(), "broken-root")
+		if err := os.Symlink(filepath.Join(t.TempDir(), "missing-root"), brokenRoot); err != nil {
+			t.Fatal(err)
+		}
+		other := permconfig.MCPServerProfile{Name: "unavailable-root", Auth: permconfig.MCPAuthProfile{Mode: "oauth", OAuth: &permconfig.MCPOAuthProfile{Credentials: permconfig.MCPOAuthCredentialProfile{Mode: "local", Local: &permconfig.MCPLocalCredentialProfile{Root: brokenRoot, Key: nativeKey}}}}}
+		cfg := permconfig.Config{MCP: &permconfig.MCPSection{Servers: []permconfig.MCPServerProfile{target, other}}}
+		if _, err := findMCPResetTarget(cfg, "primary"); err == nil || !strings.Contains(err.Error(), "cannot verify another profile's root") {
+			t.Fatalf("reset with an unavailable profile sharing its key = %v, want fail-closed error", err)
+		}
+	})
+
+	t.Run("legacy key_env profile sharing a prototype-marker root is simply skipped, not ambiguous", func(t *testing.T) {
+		if err := os.MkdirAll(root, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(root, "mcp-credential-backend.json"), []byte(`{"version":1,"backend":"file","locator_sha256":"`+strings.Repeat("a", 64)+`"}`), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		legacy := permconfig.MCPServerProfile{Name: "legacy", Auth: permconfig.MCPAuthProfile{Mode: "oauth", OAuth: &permconfig.MCPOAuthProfile{Credentials: permconfig.MCPOAuthCredentialProfile{Mode: "local", Local: &permconfig.MCPLocalCredentialProfile{Root: root, KeyEnv: "MECATL_LEGACY_KEY"}}}}}
+		cfg := permconfig.Config{MCP: &permconfig.MCPSection{Servers: []permconfig.MCPServerProfile{target, legacy}}}
+		got, err := findMCPResetTarget(cfg, "primary")
+		if err != nil {
+			t.Fatalf("reset target with a shared key_env profile refused: %v", err)
+		}
+		// The key_env profile uses the legacy namespace with its own
+		// independently supplied key, which reset never touches, so it is
+		// omitted from the shared list rather than blocking the reset.
+		if len(got.shared) != 1 || got.shared[0] != "primary" {
+			t.Fatalf("shared profiles = %#v, want [primary]", got.shared)
+		}
+	})
+}
 
 func TestDirectMCPOnboarding_Scenario3_AddOrderingAndResiduals(t *testing.T) {
 	config := t.TempDir()
@@ -208,7 +613,7 @@ func TestDirectMCPOnboarding_Scenario3_ReadOriginsAndWriteTarget(t *testing.T) {
 	if err := os.WriteFile(target, []byte("permissions: {}\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	_, err := mcpMutationTarget(target)
+	_, _, err := mcpMutationTarget(target)
 	if err == nil || !strings.Contains(err.Error(), defaultPath) || !strings.Contains(err.Error(), target) {
 		t.Fatalf("mcpMutationTarget error = %v", err)
 	}

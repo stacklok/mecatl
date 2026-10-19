@@ -143,7 +143,7 @@ The mechanism is already wired:
   `mecated` under load.
 
 Full rationale, the per-binary decision, and the production refresh + staleness
-process live in [`perf-tracking.md` Phase 4](../../../docs/perf-tracking.md) —
+process live in [`perf-tracking.md` "Profile-guided optimization"](../../../docs/perf-tracking.md#profile-guided-optimization) —
 read it before touching PGO.
 
 ## See Also
@@ -151,6 +151,6 @@ read it before touching PGO.
 - [`references/playbook.md`](references/playbook.md) — pprof flag cookbook + two
   worked examples (a real win and a real NO-GO) showing the discipline end to end.
 - [`docs/perf-tracking.md`](../../../docs/perf-tracking.md) — the KPI
-  design, gating posture, baselines, and the full roadmap.
+  design, gating posture, and baselines.
 - `perf-mcp-interpretation` skill — the **live** counterpart (running-harness
   diagnosis via the perf MCP server).

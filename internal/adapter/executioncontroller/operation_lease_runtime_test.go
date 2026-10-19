@@ -2,17 +2,25 @@ package executioncontroller
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
+	"encoding/json"
 	"errors"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/peer"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
+	kubeFake "k8s.io/client-go/kubernetes/fake"
 	k8stesting "k8s.io/client-go/testing"
 
 	"github.com/stacklok/mecatl/internal/executionenv"
@@ -29,12 +37,15 @@ func newLeaseBlockingExecutor() *leaseBlockingExecutor {
 	return &leaseBlockingExecutor{started: make(chan struct{}), cancelled: make(chan struct{}), release: make(chan struct{})}
 }
 
-func (e *leaseBlockingExecutor) Execute(ctx context.Context, _ string, _ executionenv.ExecutorRequest) (executionenv.ExecutorResponse, error) {
+func (e *leaseBlockingExecutor) Execute(ctx context.Context, _ string, req executionenv.ExecutorRequest) (executionenv.ExecutorResponse, error) {
 	close(e.started)
 	select {
 	case <-ctx.Done():
 		close(e.cancelled)
 	case <-e.release:
+		if req.Operation == executionenv.OpCommandStart {
+			return executionenv.ExecutorResponse{Command: &executionenv.CommandStatusResponse{TerminalReceipt: "confirmed", State: executionenv.CommandSucceeded}}, nil
+		}
 		return executionenv.ExecutorResponse{FileResponse: executionenv.FileResponse{Data: []byte("ok"), Version: "v1"}}, nil
 	}
 	<-e.release
@@ -42,6 +53,69 @@ func (e *leaseBlockingExecutor) Execute(ctx context.Context, _ string, _ executi
 }
 
 func (e *leaseBlockingExecutor) unblock() { e.once.Do(func() { close(e.release) }) }
+
+func TestActiveOperationCancelsWhenPolicyAuthorityChanges(t *testing.T) {
+	env := runFixtureEnvironment(1, 1)
+	_ = unstructured.SetNestedField(env.Object, hashText("spiffe://example/client"), "spec", "clientHash")
+	_ = unstructured.SetNestedField(env.Object, hashText("spiffe://example/client"), "status", "activeRun", "clientHash")
+	client := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), env)
+	exec := newLeaseBlockingExecutor()
+	defer exec.unblock()
+	ledger, err := json.Marshal(securityLedger{Generation: 1, Digest: "policy-v1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	kube := kubeFake.NewSimpleClientset(&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "authority", Namespace: "ns"}, Data: map[string]string{securityStateDataKey: string(ledger)}})
+	security := NewSecurityManager("", "", "ns", "authority", kube)
+	caPEM, _, _, issued := rpcSecurityPKI(t, time.Now(), "spiffe://example/client")
+	leaf, err := x509.ParseCertificate(issued.Certificate[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	roots := x509.NewCertPool()
+	if !roots.AppendCertsFromPEM(caPEM) {
+		t.Fatal("invalid test CA")
+	}
+	security.state.Store(&securityState{snapshot: &securitySnapshot{generation: 1, digest: "policy-v1", validUntil: time.Now().Add(time.Hour), clientCAs: roots, clients: map[string]ClientPolicy{"spiffe://example/client": {MayAttestOwner: true, ExecutionTemplates: []string{"go"}}}}})
+	requestCtx := peer.NewContext(t.Context(), &peer.Peer{AuthInfo: credentials.TLSInfo{State: tls.ConnectionState{PeerCertificates: []*x509.Certificate{leaf}}}})
+	store := NewStore(client, "ns", testProfiles(), exec).WithSecurityManager(security)
+	store.opTTL = 60 * time.Millisecond
+	done := make(chan error, 1)
+	go func() {
+		_, runErr := store.File(requestCtx, "spiffe://example/client", "owner", executionenv.FileRequest{Context: operationRequestContext(), Operation: executionenv.OpFileRead, Path: "sentinel"})
+		done <- runErr
+	}()
+	select {
+	case <-exec.started:
+	case err := <-done:
+		t.Fatalf("executor not dispatched: %v", err)
+	case <-time.After(time.Second):
+		t.Fatal("executor did not start")
+	}
+	cm, err := kube.CoreV1().ConfigMaps("ns").Get(t.Context(), "authority", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cm.Data[securityStateDataKey] = `{"generation":2,"digest":"policy-v2"}`
+	if _, err := kube.CoreV1().ConfigMaps("ns").Update(t.Context(), cm, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-exec.cancelled:
+	case <-time.After(time.Second):
+		t.Fatal("active executor continued after policy authority changed")
+	}
+	exec.unblock()
+	var controlled *executionenv.Error
+	select {
+	case err := <-done:
+		if !errors.As(err, &controlled) || controlled.Code != executionenv.CodeFenceUnknown {
+			t.Fatalf("operation error=%v, want FenceUnknown", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("operation did not return after cancellation")
+	}
+}
 
 func TestActiveOperationCancelsWhenExecutionAuthorityIsLost(t *testing.T) {
 	for _, tc := range []struct {
@@ -53,6 +127,9 @@ func TestActiveOperationCancelsWhenExecutionAuthorityIsLost(t *testing.T) {
 		}},
 		{name: "operation expiry", plant: func(o *unstructured.Unstructured) {
 			_ = unstructured.SetNestedField(o.Object, time.Now().Add(-time.Second).UTC().Format(time.RFC3339Nano), "status", "activeOperation", "expiresAt")
+		}},
+		{name: "template revocation", plant: func(o *unstructured.Unstructured) {
+			_ = unstructured.SetNestedField(o.Object, "sha256:"+strings.Repeat("0", 64), "spec", "templateDigest")
 		}},
 		{name: "grant revocation", plant: func(o *unstructured.Unstructured) {
 			_ = unstructured.SetNestedField(o.Object, int64(2), "status", "grantGeneration")
@@ -147,6 +224,9 @@ func TestActiveOperationCleanCompletionRechecksRunAuthority(t *testing.T) {
 		}},
 		{name: "malformed operation expiry", plant: func(o *unstructured.Unstructured) {
 			_ = unstructured.SetNestedField(o.Object, "not-a-time", "status", "activeOperation", "expiresAt")
+		}},
+		{name: "template revocation", plant: func(o *unstructured.Unstructured) {
+			_ = unstructured.SetNestedField(o.Object, "sha256:"+strings.Repeat("0", 64), "spec", "templateDigest")
 		}},
 		{name: "grant revocation", plant: func(o *unstructured.Unstructured) {
 			_ = unstructured.SetNestedField(o.Object, int64(2), "status", "grantGeneration")

@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"fmt"
 	"reflect"
 	"regexp"
 	"strings"
@@ -280,6 +281,88 @@ func TestDreamReviewGenerationFailureStoresNothingAndSanitizesError(t *testing.T
 	defer coordinator.mu.Unlock()
 	if len(coordinator.records) != 0 {
 		t.Fatalf("generation failure retained records: %#v", coordinator.records)
+	}
+}
+
+func TestDreamReviewGenerationDeadlineUsesSafeSentinel(t *testing.T) {
+	const canary = "private planner deadline https://example.invalid/?token=secret"
+	store := dreamStore(t)
+	diag := &attrCapturingDiag{}
+	coordinator := newDreamReviewCoordinator(dreamReviewConfig{
+		targets: map[server.DreamTarget]*dream.Consolidator{
+			server.DreamTargetProjectMemory: dream.New(store, mockllm.New(mockllm.ErrorTurn(fmt.Errorf("%s: %w", canary, context.DeadlineExceeded))), dream.Config{Model: "test"}),
+		},
+		diag: diag,
+	})
+
+	_, err := coordinator.Generate(context.Background(), server.DreamTargetProjectMemory)
+	if !errors.Is(err, server.ErrDreamDeadline) || strings.Contains(err.Error(), canary) {
+		t.Fatalf("generation deadline = %v", err)
+	}
+	logs := diag.dump()
+	if !strings.Contains(logs, "stage deadline") || strings.Contains(logs, canary) || strings.Contains(logs, "token=secret") {
+		t.Fatalf("unsafe or unclassified deadline diagnostic: %s", logs)
+	}
+}
+
+func TestDreamReviewGenerationDiagnosticStages(t *testing.T) {
+	store := dreamStore(t)
+	for _, tc := range []struct {
+		name, stage  string
+		consolidator *dream.Consolidator
+		id           func() (string, error)
+	}{
+		{"synthesis", "synthesis", dream.New(store, mockllm.New(mockllm.TextTurn("secret memory or malformed model output")), dream.Config{Model: "test"}), nil},
+		{"id", "id_generation", dreamConsolidator(store), func() (string, error) { return "", errors.New("Bearer id-secret") }},
+		{"read", "read_store", dream.New(&failingDreamListStore{MemoryStore: store}, mockllm.New(), dream.Config{Model: "test"}), nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			diag := &attrCapturingDiag{}
+			coordinator := newDreamReviewCoordinator(dreamReviewConfig{
+				targets: map[server.DreamTarget]*dream.Consolidator{server.DreamTargetProjectMemory: tc.consolidator},
+				diag:    diag, newID: tc.id,
+			})
+			_, err := coordinator.Generate(context.Background(), server.DreamTargetProjectMemory)
+			if !errors.Is(err, server.ErrDreamGenerateFailed) {
+				t.Fatalf("generation = %v", err)
+			}
+			logs := diag.dump()
+			if !strings.Contains(logs, tc.stage) || strings.Contains(logs, "secret") || strings.Contains(logs, "memory or malformed") {
+				t.Fatalf("unsafe or missing stage: %s", logs)
+			}
+		})
+	}
+}
+
+type failingDreamListStore struct{ tool.MemoryStore }
+
+func (*failingDreamListStore) List(context.Context, string) ([]tool.MemoryEntry, error) {
+	return nil, errors.New("private memory or URL https://example.invalid/?token=secret")
+}
+
+type dreamProviderMetadataError struct{}
+
+func (dreamProviderMetadataError) Error() string                        { return "Bearer provider-secret token=secret" }
+func (dreamProviderMetadataError) ProviderHTTPStatus() int              { return 503 }
+func (dreamProviderMetadataError) ProviderInBandStatus() int            { return 0 }
+func (dreamProviderMetadataError) ProviderErrorCode() string            { return "private-code" }
+func (dreamProviderMetadataError) ProviderErrorCorrelationKind() string { return "request" }
+func (dreamProviderMetadataError) ProviderErrorCorrelationID() string   { return "private-request-id" }
+
+func TestDreamReviewProviderStatusOnlyDiagnostic(t *testing.T) {
+	store := dreamStore(t)
+	diag := &attrCapturingDiag{}
+	coordinator := newDreamReviewCoordinator(dreamReviewConfig{
+		targets: map[server.DreamTarget]*dream.Consolidator{server.DreamTargetProjectMemory: dream.New(store, mockllm.New(mockllm.ErrorTurn(dreamProviderMetadataError{})), dream.Config{Model: "test"})},
+		diag:    diag,
+	})
+	_, err := coordinator.Generate(context.Background(), server.DreamTargetProjectMemory)
+	if !errors.Is(err, server.ErrDreamGenerateFailed) {
+		t.Fatalf("generation = %v", err)
+	}
+	logs := diag.dump()
+	if !strings.Contains(logs, "planner") || !strings.Contains(logs, "http_status 503") || strings.Contains(logs, "private") || strings.Contains(logs, "token=secret") {
+		t.Fatalf("unsafe or missing provider status: %s", logs)
 	}
 }
 

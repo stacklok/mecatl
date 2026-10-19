@@ -157,7 +157,7 @@ func tokenRefUpdater(configPath string, diag port.Diagnostics) llm.TokenRefUpdat
 // mode — the same llm.Config.IsConfigured() the `thv` CLI gates on. It is the
 // composition gate resolveToolhiveIntent calls to discriminate direct vs proxy
 // under mode=auto. A config read failure fails CLOSED (returns false): a
-// missing/malformed config falls back to proxy mode (today's behaviour), never
+// missing/malformed config falls back to proxy mode, never
 // silently routes to a gateway with no credential.
 func OIDCConfigured(configPath string) bool {
 	path, err := resolveConfigPath(configPath)

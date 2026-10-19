@@ -71,7 +71,7 @@ func TestSelectionStoreRoundTrip(t *testing.T) {
 }
 
 // TestSelectionStoreReasoningEffortRoundTrip covers save→load of the reasoningEffort
-// field (ADR 0055) for BOTH the per-workspace entry and the global default, plus the
+// field for BOTH the per-workspace entry and the global default, plus the
 // LoadWorkspace path — and that an effort-only selection (no provider/model) survives.
 func TestSelectionStoreReasoningEffortRoundTrip(t *testing.T) {
 	stateHome := t.TempDir()

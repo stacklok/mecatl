@@ -429,8 +429,8 @@ func TestListSessionsGRPC(t *testing.T) {
 	sB := session.New("ls-b", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1700000100, 0).UTC())
 	// sB used a non-default model at create time; its OWN persisted ModelID must
 	// surface here, never the service's DefaultResolvedModel ("test-model") — the
-	// M1 regression this test guards (a non-live row previously reported the
-	// default engine's model for every session, regardless of what it actually ran on).
+	// regression this test guards (a non-live row reporting the default engine's
+	// model for every session, regardless of what it actually ran on).
 	sB.ModelID = "model-b"
 	if err := st.Save(ctx, sB); err != nil {
 		t.Fatalf("Save: %v", err)

@@ -15,8 +15,8 @@ import (
 // card style is applied. Diff continuation rows retain the meaningful source
 // prefix and indentation rather than being reconstructed from a styled card.
 
-// TestMecatuiCardLayout_Scenario1_ExpandedToolCardWidthInvariant retains the
-// historical AC1.4 width guard for the now-unexpandable pending tool card.
+// TestMecatuiCardLayout_Scenario1_ExpandedToolCardWidthInvariant keeps the
+// AC1.4 width guard for the pending tool card, which does not expand in place.
 
 // TestMecatuiCardLayout_Scenario1_NoStyledBodyWrap verifies AC1.5: renderTool
 // frames the already-width-bounded regions directly, rather than wrapping a
@@ -62,8 +62,10 @@ func TestMecatuiCardLayout_Scenario3_InventoryAndMCPFitWidth(t *testing.T) {
 	t.Run("sessions and worktrees", func(t *testing.T) {
 		st := sessionsState{filtered: []client.SessionListItem{{ID: "s", Title: long, State: long, ModelID: long, Relationship: client.SessionRelationship{MemberName: long}}}, handles: map[string]string{"s": long}}
 		assertFits(t, "sessions", renderSessionsPanel(th, st, client.Capabilities{}, hk, width, 20))
-		wt := worktreesState{view: worktreesPanel, filtered: []client.Worktree{{Label: long, Branch: long}}}
-		assertFits(t, "worktrees", renderWorktreesPanel(th, wt, client.Capabilities{}, hk, width, 20))
+		wt := worktreesState{deps: surfaceDeps{theme: th, keys: defaultKeys(), marks: hk}, identities: make(map[client.WorktreeSelector]string), worktrees: []client.Worktree{{Selector: testWorktreeSelector("long"), Label: long, Branch: long}}}
+		wt.syncFilter()
+		out, _ := wt.Render(width, 20)
+		assertFits(t, "worktrees", out)
 	})
 
 	t.Run("agents team and parallel", func(t *testing.T) {

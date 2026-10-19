@@ -133,7 +133,9 @@ spec:
             {{- if .Values.execution.enabled }}
             - --execution-enabled
             - {{ printf "--execution-endpoint=%s" .Values.execution.endpoint | quote }}
-            - {{ printf "--execution-profile=%s" .Values.execution.profile | quote }}
+            - {{ printf "--execution-template-id=%s" .Values.execution.templateID | quote }}
+            - {{ printf "--execution-template-revision=%s" .Values.execution.templateRevision | quote }}
+            - {{ printf "--execution-allowed-subjects=%s" (join "," .Values.execution.allowedSubjects) | quote }}
             - {{ printf "--execution-tls-ca=/var/run/secrets/execution/%s" .Values.execution.caKey | quote }}
             - {{ printf "--execution-tls-cert=/var/run/secrets/execution/%s" .Values.execution.certKey | quote }}
             - {{ printf "--execution-tls-key=/var/run/secrets/execution/%s" .Values.execution.keyKey | quote }}
@@ -213,8 +215,8 @@ spec:
             {{- end }}
           env:
             {{- /* The chart-provisioned, stable-per-release product-metrics
-                   install id. Always present: mecak8s is storage-free (ADR
-                   0048), so the local-file mechanism the other binaries use
+                   install id. Always present: mecak8s is storage-free,
+                   so the local-file mechanism the other binaries use
                    would mint a fresh id on every pod restart. See
                    install-id-configmap.yaml. */}}
             - name: MECATL_PRODUCT_METRICS_INSTALL_ID

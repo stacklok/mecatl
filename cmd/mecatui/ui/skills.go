@@ -127,6 +127,7 @@ func (s *skillsState) Render(width, height int) (string, []ClickableRegion) {
 	s.normal, s.compact = false, false
 	s.bodyWidth, s.bodyRows, s.externalRows, s.learnedRows, s.learnedStart = 0, 0, 0, 0, 0
 	if s.view == skillsNone || width <= 0 || height <= 0 {
+		s.compact = s.view != skillsNone
 		s.viewport = nil
 		s.filter.Blur()
 		return "", nil
@@ -243,6 +244,7 @@ func skillsTextLines(style lipgloss.Style, text string, width int) []string {
 	if width <= 0 {
 		return nil
 	}
+	text = terminaltext.ExpandStyleTabs(text, style)
 	parts := strings.Split(ansi.Hardwrap(text, width, true), "\n")
 	for i := range parts {
 		parts[i] = style.Render(parts[i])
@@ -380,22 +382,7 @@ func (s *skillsState) HandleKey(msg tea.KeyPressMsg) (cmd tea.Cmd, handled bool,
 }
 
 func (s *skillsState) navigationMove(msg tea.KeyPressMsg) (bounded.Move, bool) {
-	switch {
-	case key.Matches(msg, s.deps.keys.Down):
-		return bounded.LineDown, true
-	case key.Matches(msg, s.deps.keys.Up):
-		return bounded.LineUp, true
-	case key.Matches(msg, s.deps.keys.ScrollD):
-		return bounded.PageDown, true
-	case key.Matches(msg, s.deps.keys.ScrollU):
-		return bounded.PageUp, true
-	case key.Matches(msg, s.deps.keys.ScrollBottom):
-		return bounded.End, true
-	case key.Matches(msg, s.deps.keys.ScrollTop):
-		return bounded.Top, true
-	default:
-		return 0, false
-	}
+	return boundedNavigationMove(msg, s.deps.keys, bounded.LineDown, bounded.LineUp, bounded.PageDown, bounded.PageUp, bounded.End, bounded.Top)
 }
 
 func (s *skillsState) moveLearned(msg tea.KeyPressMsg) {
@@ -700,7 +687,7 @@ func cardTextWidth(width int) int {
 // the offered card-body budget. Callers apply styles only after this step;
 // assistant Markdown remains on its separate glamour rendering path.
 func wrapCardText(text string, budget int) string {
-	text = terminaltext.Sanitize(text)
+	text = terminaltext.ExpandTabs(terminaltext.Sanitize(text), terminaltext.DefaultTabWidth)
 	if budget > 0 {
 		return ansi.Wrap(text, budget, "")
 	}
@@ -721,6 +708,7 @@ func focusCardTextWidth(width int) int {
 // wrapFocusMetadataAtWidth wraps a complete focus-card row to its supplied body budget.
 // A zero budget remains deliberately unbounded, matching the other overlays.
 func wrapFocusMetadataAtWidth(s string, budget int) string {
+	s = terminaltext.ExpandTabs(s, terminaltext.DefaultTabWidth)
 	if budget > 0 {
 		return ansi.Wrap(s, budget, "")
 	}
@@ -731,6 +719,7 @@ func wrapFocusMetadataAtWidth(s string, budget int) string {
 // rows deeper than its parent lane. It applies the continuation's narrower width to every
 // line, which guarantees both indentation forms fit the card without dropping content.
 func hangingIndentWrap(s, firstIndent string, budget int) string {
+	s = terminaltext.ExpandTabs(s, terminaltext.DefaultTabWidth)
 	const continuationIndent = "    "
 	if budget <= 0 {
 		return firstIndent + s
@@ -756,6 +745,7 @@ func hangingIndentWrap(s, firstIndent string, budget int) string {
 // size). ansi.Wrap breaks over-long tokens too, so a space-free string can't
 // overflow the card.
 func indentWrap(s string, budget int) string {
+	s = terminaltext.ExpandTabs(s, terminaltext.DefaultTabWidth)
 	const indent = "  "
 	if budget <= 0 {
 		return indent + s

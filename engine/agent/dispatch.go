@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -20,19 +21,20 @@ import (
 )
 
 // parentMutatingCaller is an OPTIONAL interface a ReadOnly() tool may implement to
-// declare that a SPECIFIC call will mutate the PARENT workspace at run end (FIX C).
-// A tool stays ReadOnly()==true so its read-only fan-out keeps batching in parallel,
-// but a call for which MutatesParent reports true is excluded from the concurrent
-// read batch (dispatch-serial, flushed alone via runOne) so its post-run merge into
-// the parent can never overlap a sibling parent Read/Grep/Glob — a torn read. A tool
-// that does NOT implement this interface is wholly unaffected.
+// declare that a SPECIFIC call will mutate the PARENT workspace (FIX C). A tool
+// stays ReadOnly()==true so its read-only fan-out keeps batching in parallel, but a
+// call for which MutatesParent reports true is excluded from the concurrent read
+// batch (dispatch-serial, flushed alone via runOne) so its writes to the parent can
+// never overlap a sibling parent Read/Grep/Glob — a torn read. A tool that does NOT
+// implement this interface is wholly unaffected.
 //
-// Both implementers (SubagentTool, ParallelTool) return true ONLY for a call that
-// will ACTUALLY merge (mode:"read-write" with the writable engine + merger wired;
-// single-branch first/judge Parallel with the merger wired). This is the PER-RUN
-// dispatch-serial half; the SerializingMerger mutex is the COMPLEMENTARY cross-run
-// half (it serializes merge-vs-merge across concurrent sessions/runs targeting the
-// same workspace — dispatch-serial only orders calls within one run).
+// SubagentTool returns true for a mode:"read-write" call when a writable engine or
+// writable agent factory is wired: the child edits the parent tree in place during
+// its run (no fork, no merge). ParallelTool returns true for a single-task
+// first/judge call with the auto-merger wired, which merges the winning branch's
+// fork diff into the parent at run end. This orders calls within one run only;
+// the SerializingMerger mutex serializes merge-vs-merge across concurrent
+// sessions/runs targeting the same workspace.
 type parentMutatingCaller interface {
 	MutatesParent(call session.ToolCall) bool
 }
@@ -597,11 +599,10 @@ const resumeAbortedSiblingMessage = "tool call aborted: the run was resumed at a
 // loop calls PauseForApproval, while the parent stays StateRunning inside the
 // delegation tool call. The server persists (and resumes via Approve) only top-level
 // registered runs, so a restored StateAwaiting session ALWAYS holds a parent-OWN ask.
-// The honest close-out the plan describes for a surfaced-child resume is therefore
+// The honest close-out for a surfaced-child resume is therefore
 // structurally unreachable through this seam; if a future change ever persisted a
 // surfaced-child ask onto a parent, it would close out here as an ordinary unanswered
-// sibling (resumeAbortedSiblingMessage). No surfaced-marker field was added (see the
-// Phase 2 report + CLOUD-NATIVE.md ledger row 6).
+// sibling (resumeAbortedSiblingMessage). There is no surfaced-marker field.
 
 // driveFromAwaiting is the body of the awaiting-only run-entry seam (ResumeApproval).
 // It re-enters the loop AT the parked ask: it applies verdict to the pending tool
@@ -846,10 +847,10 @@ func (e *Engine) rejectUnresumableApproval(r *Run, turnIdx int, call session.Too
 // synthesizes a deny result (the tool is NOT run); AllowOnce/AllowAlways run the call
 // through the SAME post-authorize tail runOne uses (preHook + execute, so PostToolUse
 // hooks + the audit recorder + EvToolResult fire identically); AllowAlways also
-// Learns a per-session rule for FUTURE calls (the rehydrated permstore is in-memory —
-// the accepted Phase 2 wart; the rule covers later calls in THIS resumed run, Phase
-// 3b makes it durable). The card is opened before the gate/result (the "ToolCall card
-// before the gate" invariant) on every branch.
+// Learns a per-session rule for FUTURE calls (the permstore is in-memory; the rule
+// covers later calls in THIS resumed run, and the logged allow-always verdict is
+// replayed into a fresh permstore on a later resume). The card is opened before
+// the gate/result (the "ToolCall card before the gate" invariant) on every branch.
 //
 //nolint:gocyclo // Resume keeps origin validation, reauthorization, review, and exact-once execution in one auditable path.
 func (e *Engine) resolvePendingCall(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, turnIdx int, pendingCall session.ToolCall, ask session.PendingAsk, verdict session.ApprovalVerdict) (session.ToolResult, *dispatchPark, bool) {
@@ -897,7 +898,7 @@ func (e *Engine) resolvePendingCall(ctx context.Context, r *Run, sess *session.S
 		e.publishToolResult(r, session.Event{Type: session.EvToolResult, Turn: turnIdx, ToolResult: ptr(res)})
 		return res, nil, false
 	}
-	// HOOK-ORIGINATED resume (ADR 0062): a hook-blocked call that the human authorized
+	// HOOK-ORIGINATED resume: a hook-blocked call that the human authorized
 	// while parked AWAITING must EXECUTE WITHOUT re-running the PreToolUse hook —
 	// re-running it would re-block (re-ask), and a fresh process has no in-memory
 	// waiver to short-circuit it. The serialized HookOriginated marker is the only
@@ -1016,7 +1017,7 @@ func (e *Engine) runOne(ctx context.Context, r *Run, sess *session.Session, env 
 	// seen.
 	e.openCard(r, turnIdx, c)
 
-	// Plan-approval gate (issue #206, Wave 2): in plan mode a PresentPlan call is
+	// Plan-approval gate (issue #206): in plan mode a PresentPlan call is
 	// intercepted by name BEFORE the permission/hook gate and surfaced as a
 	// plan-approval ask. PresentPlan is read-only so it normally batches in
 	// runReadBatch Phase 1; this runOne branch is the defensive mirror so a
@@ -1205,7 +1206,16 @@ func recordValidatedApproval(r *Run, sessionID session.SessionID, ask session.Pe
 // permissionDecision evaluates normal Shell authority and, only for the declared
 // system temporary scope, the independent tool-wide escape capability. The
 // synthetic capability is never dispatched or registered as a tool.
+//
+// It is the single entry to permission evaluation for every dispatched call
+// (fresh, hook-mutated, or resumed after approval), so it first refuses an
+// argument object that is not in the canonical form governance.CheckToolArgs
+// requires. No policy, guardrail, approval surface, hook or tool then sees
+// arguments whose fields different decoders would read differently.
 func (e *Engine) permissionDecision(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, c session.ToolCall) governance.PermissionDecision {
+	if err := governance.CheckToolArgs(c.Args); err != nil {
+		return governance.PermissionDecision{Effect: governance.Deny, Reason: governance.AmbiguousArgsReason(err)}
+	}
 	evaluate := func(c session.ToolCall) governance.PermissionDecision {
 		result := e.deps.Policy.Evaluate(ctx, sess.ID, sess.Mode, c, env.Workspace())
 		if r != nil {
@@ -1235,28 +1245,39 @@ func shellSystemScope(c session.ToolCall) bool {
 	return ok && shellScope(args) == tool.TemporaryScopeSystem
 }
 
-// systemScopeApprovalArgs projects only the requested scope and a command verb.
-// It must never include a runner-owned temporary path or environment value.
+// systemScopeApproval is the approval projection of a system-scope Shell call:
+// the shellArgs fields that change what runs, each as parseShellArgs decoded it.
+type systemScopeApproval struct {
+	Command    string `json:"command"`
+	TimeoutMS  int    `json:"timeout_ms,omitempty"`
+	Background bool   `json:"background,omitempty"`
+	TempScope  string `json:"temp_scope"`
+}
+
+// systemScopeApprovalArgs projects the system-scope Shell call the engine will
+// execute: the full command, a non-zero timeout, the background flag, and the
+// requested scope, re-encoded from the decoded shellArgs (permissionDecision has
+// already refused ambiguous argument objects, so this is the decode the Shell
+// tool executes). Runner-owned temporary paths and environment values are
+// chosen when the command runs and never enter the call, so the projection
+// cannot carry them.
 func systemScopeApprovalArgs(c session.ToolCall) []byte {
 	args, _, ok := parseShellArgs(c)
 	if !ok {
-		return []byte(`{"temp_scope":"system","command_summary":"Shell command"}`)
+		// Unreachable: shellSystemScope already required a valid call.
+		return []byte(`{"temp_scope":"system"}`)
 	}
-	summary := "Shell command"
-	if fields := strings.Fields(args.Command); len(fields) > 0 {
-		summary = fields[0]
-		if len(fields) > 1 {
-			summary += " " + fields[1]
-		}
+	var b bytes.Buffer
+	enc := json.NewEncoder(&b)
+	// Shell commands are full of & < >; keep them literal for raw-args views.
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(systemScopeApproval{
+		Command: args.Command, TimeoutMS: args.TimeoutMS, Background: args.Background,
+		TempScope: string(tool.TemporaryScopeSystem),
+	}); err != nil {
+		return []byte(`{"temp_scope":"system"}`)
 	}
-	out, err := json.Marshal(struct {
-		TempScope string `json:"temp_scope"`
-		Summary   string `json:"command_summary"`
-	}{TempScope: "system", Summary: summary})
-	if err != nil {
-		return []byte(`{"temp_scope":"system","command_summary":"Shell command"}`)
-	}
-	return out
+	return bytes.TrimSuffix(b.Bytes(), []byte("\n"))
 }
 
 func (e *Engine) reauthorizeApprovedCall(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, turnIdx int, call session.ToolCall, acceptAsk bool) (permissionAuthorization, session.ToolResult, bool) {
@@ -1405,7 +1426,7 @@ type preHookResult struct {
 // approval (HookOutcome.AskApproval) AND a human approver is attached
 // (e.deps.Interactive) — a HEADLESS engine DEGRADES an askable block to a terminal
 // block here, INSIDE preHook, so every caller inherits the fail-safe automatically
-// (ADR 0062) — and otherwise a PLAIN allow carrying the EFFECTIVE call to execute:
+// — and otherwise a PLAIN allow carrying the EFFECTIVE call to execute:
 // identical to the input call unless the hook returned a non-empty
 // HookOutcome.Mutated payload, in which case the call's Args are rewritten (see the
 // mutation note below).
@@ -1418,11 +1439,10 @@ type preHookResult struct {
 //
 // TRUST / ORDERING (security-relevant): the permission policy (authorize →
 // Policy.Evaluate) has ALREADY run on the ORIGINAL, pre-mutation args by the time
-// preHook is called. The mutated args are NOT re-permission-checked. This is
-// deliberate and matches the trust model: a PreToolUse hook is operator-deployed
-// and strictly more trusted than the model, so a hook is allowed to rewrite a
-// call past the policy that gated the model's original request (mirroring Claude
-// Code semantics). Callers MUST execute the returned call, not the input call.
+// preHook is called. When the hook changes the args, every caller re-authorizes
+// the byte-exact effective call (authorizeBound / reauthorizeApprovedCall), so a
+// rewrite cannot carry a call past a deny or a configured ask. Unchanged args are
+// not re-evaluated. Callers MUST execute the returned call, not the input call.
 func (e *Engine) preHook(ctx context.Context, r *Run, sess *session.Session, turnIdx int, c session.ToolCall) (preHookResult, error) {
 	if e.deps.Hooks == nil {
 		return preHookResult{effective: c}, nil
@@ -1485,8 +1505,8 @@ func (e *Engine) preHook(ctx context.Context, r *Run, sess *session.Session, tur
 	}
 	if len(outcome.Mutated) > 0 {
 		// Apply the mutation: the payload is the rewritten args JSON. Validate it as
-		// JSON before adopting it; a malformed payload is ignored. The permission
-		// decision is NOT re-evaluated on these args — see the trust note above.
+		// JSON before adopting it; a malformed payload is ignored. Callers
+		// re-authorize these args before execution — see the trust note above.
 		if json.Valid(outcome.Mutated) {
 			e.emit(r, session.Event{Type: session.EvHook, Turn: turnIdx, Text: "PreToolUse hook rewrote tool arguments for " + c.Name,
 				Hook: &session.HookPayload{Phase: string(governance.PhasePreToolUse), Tool: c.Name, Decision: session.HookModified, CallID: c.ID}})
@@ -1589,7 +1609,15 @@ func (e *Engine) askHookApproval(ctx context.Context, r *Run, sess *session.Sess
 // askHookApproval relies on its caller's openCard. It emits NO diagnostics line
 // (the loop's "exactly THREE lines" invariant holds).
 func (e *Engine) surfacePlanAsk(ctx context.Context, r *Run, sess *session.Session, turnIdx int, c session.ToolCall, resultEvent session.EventType) (session.ToolResult, bool) {
-	// Headless degrade (mirrors preHook's askable-block degrade, ADR 0062): a
+	// PresentPlan is intercepted before permissionDecision, so it applies the
+	// same argument check here: an approver must never see a plan whose fields
+	// different readers would decode differently.
+	if err := governance.CheckToolArgs(c.Args); err != nil {
+		res := denyResult(c, governance.AmbiguousArgsReason(err))
+		e.publishToolResult(r, session.Event{Type: resultEvent, Turn: turnIdx, ToolResult: ptr(res)})
+		return res, false
+	}
+	// Headless degrade (mirrors preHook's askable-block degrade): a
 	// non-interactive engine has NO human to approve a plan, so it must NOT surface
 	// an ask (a headless run never emits EvPermissionAsk). Fail safe: synthesize a
 	// deny result teaching the model the plan was not approved, and do NOT flip the
@@ -1856,7 +1884,7 @@ func authorityTarget(call session.ToolCall, _ governance.CapabilitySet) (string,
 			Server string `json:"server"`
 			Tool   string `json:"tool"`
 		}
-		if err := json.Unmarshal(call.Args, &args); err != nil || strings.TrimSpace(args.Server) == "" || strings.TrimSpace(args.Tool) == "" {
+		if _, ok := session.ParseArgs(call, &args); !ok || strings.TrimSpace(args.Server) == "" || strings.TrimSpace(args.Tool) == "" {
 			return "", errors.New("CallMcpWithQuery target is invalid")
 		}
 		return "mcp__" + strings.TrimSpace(args.Server) + "__" + strings.TrimSpace(args.Tool), nil
@@ -1864,7 +1892,7 @@ func authorityTarget(call session.ToolCall, _ governance.CapabilitySet) (string,
 		var args struct {
 			Server string `json:"server"`
 		}
-		if err := json.Unmarshal(call.Args, &args); err != nil || strings.TrimSpace(args.Server) == "" {
+		if _, ok := session.ParseArgs(call, &args); !ok || strings.TrimSpace(args.Server) == "" {
 			return "", errors.New("MCP resource target is invalid")
 		}
 		return governance.MCPResourceCapability(strings.TrimSpace(args.Server)), nil
@@ -2101,7 +2129,7 @@ func (e *Engine) parentCaps(r *Run, sess *session.Session, turnIdx int, reporter
 			return session.ForkSnapshot(sess.Conversation)
 		}
 		caps.forkSession = sess
-		// The parent session's owner (ADR 0204 decision 4) rides down so every
+		// The parent session's owner rides down so every
 		// child session it spawns is attributed to the SAME principal. Read off
 		// the aggregate, never off the ambient context — see parentCaps.owner.
 		caps.owner = sess.Owner
@@ -2164,7 +2192,7 @@ func (e *Engine) parentCaps(r *Run, sess *session.Session, turnIdx int, reporter
 			}
 		}
 	}
-	// The OPT-IN semantic model router (ADR 0031): bind the engine's router closure +
+	// The OPT-IN semantic model router: bind the engine's router closure +
 	// THIS run's router breaker into a routeTask the Subagent run() hook consults for a
 	// plain default delegation. The breaker mutex is held across the whole
 	// classification, SERIALIZING classifications within the run (deterministic
@@ -2339,7 +2367,7 @@ func routeTaskBody(
 	if diag != nil {
 		diag.Log(ctx, port.LevelInfo, "subagent routed", routingDiagnosticAttrs(decision)...)
 	}
-	return modelRoutingResult{category: result.Category, model: result.Model, ok: true, decision: decision}
+	return modelRoutingResult{category: result.Category, provider: result.Provider, model: result.Model, ok: true, decision: decision}
 }
 
 // logRouterMissReason emits the per-miss model-router INFO (issue #287) naming WHY a plain
@@ -2386,14 +2414,24 @@ func routingDiagnosticAttrs(decision *session.RoutingDecision) []any {
 // surfacedCommandPreview returns the human-facing preview of a surfaced child ask: for
 // a Shell ask, the command string; otherwise the ask reason (already policy-authored, not
 // peer content). It is the single text that rides the surfaced EvPermissionAsk and is
-// always clampPreview'd by the caller before emission.
+// always clampPreview'd by the caller before emission. A system temp-scope Shell ask
+// also names its scope, since the surfaced ask carries no args.
 func surfacedCommandPreview(ask session.PendingAsk) string {
 	if ask.Tool == "Shell" {
 		if cmd := shellCmdFromArgs(ask.Args); cmd != "" {
+			if systemScopeAsk(ask) {
+				return cmd + " [temp_scope: system]"
+			}
 			return cmd
 		}
 	}
 	return ask.Reason
+}
+
+// systemScopeAsk reports whether a pending ask gates a system temp-scope Shell
+// call, decoding its args exactly as Shell does.
+func systemScopeAsk(ask session.PendingAsk) bool {
+	return shellSystemScope(session.NewToolCall(ask.Call, ask.Tool, ask.Args))
 }
 
 // resultPayload is the JSON shape of the PostToolUse hook's view of a tool
@@ -2593,7 +2631,7 @@ func (r *Run) issueAskID(id session.SessionID, n int, callID session.ToolCallID)
 //
 // The trailing discriminator component is a SUFFIX (so the consumed prefix
 // contract is untouched): it is the host-supplied RunRequest.AskIDDiscriminator
-// when set (a durable, cross-process-reconstructable value — ADR-0044), else the
+// when set (a durable, cross-process-reconstructable value), else the
 // process-global "r<serial>" fallback resolved in startRun. Either way it makes
 // two RUNS of the same session mint disjoint askIDs: without it, cancel a parked
 // ask, `resume` the same child id in the same parent run (Counters reset on

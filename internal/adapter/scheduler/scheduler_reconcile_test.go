@@ -13,8 +13,8 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/scheduler"
 )
 
-// TestReconcileStaleFireAfterClaim detects crash sub-case 1 (issue #386 Phase
-// 4b): a schedule whose Claim stamped the pending sentinel but whose
+// TestReconcileStaleFireAfterClaim detects crash sub-case 1 (issue #386): a
+// schedule whose Claim stamped the pending sentinel but whose
 // RecordFireStart never ran (LastFireSessionID == "pending", LastFireStartedAt
 // zero, LastFireAt older than the stale window) is flagged for reconciliation
 // and handed to the composition callback, which records a terminal StopError
@@ -93,8 +93,8 @@ func TestReconcileStaleFireAfterClaim(t *testing.T) {
 	}
 }
 
-// TestReconcileStaleFireAfterSession detects crash sub-case 2 (issue #386
-// Phase 4b): a schedule whose RecordFireStart ran (LastFireSessionID is a real
+// TestReconcileStaleFireAfterSession detects crash sub-case 2 (issue #386):
+// a schedule whose RecordFireStart ran (LastFireSessionID is a real
 // "sched--" id, LastFireStartedAt set) but whose RecordFire never ran, the
 // session's lease is NOT live (the trial-lease acquired freely), and
 // LastFireStartedAt is older than the stale window → flagged for
@@ -200,8 +200,7 @@ func TestReconcileStaleFireAfterSession(t *testing.T) {
 }
 
 // TestReconcileStaleFireNilCallbackNoop asserts the reconcile scan is a
-// nil-safe no-op when the ReconcileStaleFire callback is unwired (the
-// byte-identical pre-Phase-4b posture): a stale fire is detected but NOT
+// nil-safe no-op when the ReconcileStaleFire callback is unwired: a stale fire is detected but NOT
 // settled, and the tick proceeds without panic.
 func TestReconcileStaleFireNilCallbackNoop(t *testing.T) {
 	defer goleak.VerifyNone(t)

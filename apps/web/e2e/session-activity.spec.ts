@@ -161,13 +161,31 @@ function arrangeChat(offlineBff: OfflineBff) {
       complete: true,
       items: [
         {
-          capabilities: { delete: false, deleteReason: "", rename: false, renameReason: "" },
+          capabilities: {
+            copyId: true,
+            copyIdReason: "",
+            delete: false,
+            deleteReason: "",
+            fork: true,
+            forkReason: "",
+            inspect: true,
+            inspectReason: "",
+            publicChat: true,
+            publicChatReason: "",
+            rename: false,
+            renameReason: "",
+            viewTranscript: true,
+            viewTranscriptReason: "",
+          },
           createdAt: "2026-09-24T00:00:00Z",
           debugTargetSessionId: "",
           id: "s1",
+          kind: "main",
           modelId: "offline",
           state: running ? "running" : "idle",
           title: "Delegation journey",
+          titleProvenance: "",
+          titleRevision: "0",
           turns: 1,
           updatedAt: "2026-09-24T00:00:00Z",
         },
@@ -178,6 +196,7 @@ function arrangeChat(offlineBff: OfflineBff) {
   offlineBff.json("GET", "/api/v1/sessions/s1", {
     capabilities: { image: false, manualCompaction: false, modelSelection: false },
     id: "s1",
+    kind: "main",
     mode: "default",
     state: "running",
     usage: {
@@ -314,6 +333,43 @@ test("session activity remains reachable at mobile and desktop widths", async ({
   await page.keyboard.press("Enter");
   const panel = page.getByRole("complementary", { name: "Session activity" });
   await expect(panel.getByRole("heading", { name: "Session activity" })).toBeFocused();
-  await panel.getByRole("button", { name: "Close preview" }).click();
+  await panel.getByRole("button", { name: "Close panel" }).click();
   await expect(sessionControl).toBeFocused();
+});
+
+test("session activity families move with the arrow keys and leave for the roster", async ({
+  offlineBff,
+  page,
+}) => {
+  arrangeChat(offlineBff);
+  await page.goto("/workspace/chat?sessionId=s1", { waitUntil: "domcontentloaded" });
+  const card = page.locator('button[data-delegation-focus*="subagent"]');
+  await card.focus();
+  await page.keyboard.press("Enter");
+  const panel = page.getByRole("complementary", { name: "Session activity" });
+  const tab = (name: RegExp) => panel.getByRole("tab", { name });
+  const expectSelected = async (name: RegExp) => {
+    await expect(tab(name)).toBeFocused();
+    await expect(tab(name)).toHaveAttribute("aria-selected", "true");
+    await expect(panel.getByRole("tabpanel", { name })).toBeVisible();
+  };
+  await expect(tab(/^Subagents/)).toHaveAttribute("aria-selected", "true");
+  await tab(/^Subagents/).focus();
+
+  await page.keyboard.press("ArrowRight");
+  await expectSelected(/^Parallel/);
+  await expect(panel.getByRole("heading", { name: "Subagent child-s" })).toHaveCount(0);
+  await page.keyboard.press("End");
+  await expectSelected(/^Teams/);
+  await page.keyboard.press("ArrowRight");
+  await expectSelected(/^Subagents/);
+  await page.keyboard.press("ArrowLeft");
+  await expectSelected(/^Teams/);
+  await page.keyboard.press("Home");
+  await expectSelected(/^Subagents/);
+
+  await page.keyboard.press("Tab");
+  await expect(panel.getByRole("button", { name: /^Subagent child-s/ })).toBeFocused();
+  await page.keyboard.press("Shift+Tab");
+  await expect(tab(/^Subagents/)).toBeFocused();
 });

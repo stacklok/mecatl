@@ -49,7 +49,7 @@ func liveWindowReg(provider *mockllm.Provider, id, model string) *providerRegist
 // reg.windowResolver, NOT a frozen scalar — the unification), whose SessionEngine is
 // the REAL composition sessionEngineFactory, and whose ResolveContextWindow is the
 // SAME live-first resolver Build wires. DefaultResolvedModel carries the baked
-// identity; its window is no longer load-bearing (ResolvedModel resolves live-first).
+// identity; its window is not load-bearing (ResolvedModel resolves live-first).
 func defaultLiveWindowService(t *testing.T, reg *providerRegistry, provider *mockllm.Provider, model string) (*server.Service, *int) {
 	return defaultLiveWindowServiceCfg(t, reg, provider, Config{Model: model})
 }
@@ -92,7 +92,7 @@ func defaultLiveWindowServiceCfg(t *testing.T, reg *providerRegistry, provider *
 // TestDefaultLiveOnlyModelSelfCorrectsAtUse is THE BUG (issue #66 engine-window fix),
 // re-expressed for the resolve-at-use UNIFICATION: a DEFAULT-model session whose model
 // is live-only (catalog floor 0) must, AFTER the live model-catalog swap, compact at
-// the LIVE window — WITHOUT any rehydration. The shared engine no longer freezes a
+// the LIVE window — WITHOUT any rehydration. The shared engine does not freeze a
 // window at construction; it reads reg.windowResolver live on the next turn, so the
 // echo heals AND the engine self-corrects with the per-session factory NEVER consulted.
 //

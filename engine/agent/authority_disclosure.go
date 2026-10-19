@@ -85,10 +85,8 @@ func authorityToolSearch(call session.ToolCall, cat *tool.Catalog, set governanc
 	var args struct {
 		Query string `json:"query"`
 	}
-	if len(call.Args) > 0 {
-		if err := json.Unmarshal(call.Args, &args); err != nil {
-			return session.NewToolError(call.ID, fmt.Sprintf("ToolSearch: invalid args: %v", err))
-		}
+	if msg, ok := session.ParseArgs(call, &args); !ok {
+		return session.NewToolError(call.ID, "ToolSearch: "+msg)
 	}
 	query := strings.ToLower(strings.TrimSpace(args.Query))
 	matches := make([]authorityMatchedSpec, 0)
