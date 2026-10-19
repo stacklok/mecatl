@@ -81,7 +81,8 @@ re-checks a persisted session's mode at run, approval resume, fork, and clear, s
 mode admitted under a looser deployment fails with `FailedPrecondition` until the owner
 switches it; history is untouched. A session parked awaiting an approval in such a mode
 recovers through `SetMode` to an admitted, lower mode, which cancels the pending turn
-without running it (`cancelRefusedAwaiting`). A project file's `permissionMode:` is ignored with a
+without running it (`cancelRefusedAwaiting`). A session parked on an MCP authorization
+settles the parked call without a continuation, so it ends idle and can switch. A project file's `permissionMode:` is ignored with a
 warning, and `auto` or `yolo` are refused as root without a declared sandbox.
 
 Delegated children receive the parent session's mode through `parentCaps.parentMode`:

@@ -2338,3 +2338,72 @@ func TestStartRunRepairsUnavailableRestoredAuthorizationBeforeFailingReattach(t 
 		t.Fatalf("protected executions = %d", got)
 	}
 }
+
+// TestRefusedStoredModeAuthorizationSettlesWithoutContinuation pins that a
+// session parked on an MCP authorization in a mode the server no longer admits
+// (stored in yolo, server relaunched with an accept-edits ceiling) never runs the
+// parked call or resumes its turn: a grant settles the call unrun and reports the
+// refusal, a cancel settles it without a continuation, and either way the
+// session ends idle so its owner can switch it to an admitted mode.
+func TestRefusedStoredModeAuthorizationSettlesWithoutContinuation(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		status  session.AuthorizationStatus
+		resolve func(*Service, MCPAuthorizationControl) (MCPAuthorizationResult, error)
+		wantErr error
+	}{
+		{"granted", session.AuthorizationGranted, func(s *Service, c MCPAuthorizationControl) (MCPAuthorizationResult, error) {
+			return s.RecheckMCPAuthorization(t.Context(), c.SessionID, c)
+		}, ErrFailedPrecondition},
+		{"cancelled", session.AuthorizationPending, func(s *Service, c MCPAuthorizationControl) (MCPAuthorizationResult, error) {
+			return s.CancelMCPAuthorization(t.Context(), c.SessionID, c)
+		}, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newLifecycleFixtureWithMode(t, tc.status, nil, time.Now, nil, session.ModeYolo, mockllm.TextTurn("continued"))
+			f.svc.cfg.MaxAllowedMode = session.ModeAccept // the tighter relaunch
+			control := MCPAuthorizationControl{SessionID: "authorization-session", AuthorizationID: f.pending.Authorization.ID}
+
+			result, err := tc.resolve(f.svc, control)
+			if tc.wantErr == nil && err != nil || tc.wantErr != nil && !errors.Is(err, tc.wantErr) {
+				t.Fatalf("resolve err = %v, want %v", err, tc.wantErr)
+			}
+			if result.Run != nil {
+				t.Fatal("a refused stored mode started a continuation run")
+			}
+			if calls := f.attach.tool.calls.Load(); calls != 0 {
+				t.Fatalf("parked call executed %d time(s), want 0", calls)
+			}
+			f.providerContext.mu.Lock()
+			providerCalls := len(f.providerContext.pairs)
+			f.providerContext.mu.Unlock()
+			if providerCalls != 0 {
+				t.Fatalf("provider called %d time(s), want 0", providerCalls)
+			}
+
+			kept, err := f.store.Load(t.Context(), control.SessionID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, pending := kept.PendingAuthorization(); pending || kept.State != session.StateIdle || kept.Mode != session.ModeYolo {
+				t.Fatalf("settled session: state %q mode %q pending %v, want idle yolo with no pending authorization", kept.State, kept.Mode, pending)
+			}
+			var parked *session.ToolResult
+			for _, m := range kept.Conversation.Messages {
+				if m.ToolResult != nil && m.ToolResult.CallID == "protected-call" {
+					parked = m.ToolResult
+				}
+			}
+			if parked == nil || !parked.IsError {
+				t.Fatalf("parked call result = %+v, want an error result", parked)
+			}
+			if tc.status == session.AuthorizationGranted && parked.Content != refusedModeAuthorizationResult {
+				t.Fatalf("granted parked call result = %q, want the refused-mode explanation", parked.Content)
+			}
+
+			if _, err := f.svc.SetMode(t.Context(), control.SessionID, session.ModeDefault); err != nil {
+				t.Fatalf("SetMode(default) after settlement: %v", err)
+			}
+		})
+	}
+}

@@ -4895,6 +4895,9 @@ func (s *Service) admitStoredMode(sess *session.Session) error {
 		if sess.State == session.StateAwaiting {
 			return fmt.Errorf("%w: session %q is in permission mode %q, which this server does not admit (%v), and its pending approval cannot resume in that mode; SetMode to an admitted lower mode cancels the pending turn without running it and lets the session continue", ErrFailedPrecondition, sess.ID, sess.Mode, err)
 		}
+		if sess.State == session.StateAuthorizing {
+			return fmt.Errorf("%w: session %q is in permission mode %q, which this server does not admit (%v), and its pending MCP authorization cannot resume in that mode; completing or cancelling the authorization settles the parked call without running the turn, after which SetMode can switch it to an admitted mode", ErrFailedPrecondition, sess.ID, sess.Mode, err)
+		}
 		return fmt.Errorf("%w: session %q is in permission mode %q, which this server does not admit (%v); switch it to an admitted mode with SetMode to continue", ErrFailedPrecondition, sess.ID, sess.Mode, err)
 	}
 	return nil

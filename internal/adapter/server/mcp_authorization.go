@@ -333,6 +333,25 @@ func (s *Service) authorizationAttachment(ctx context.Context, sess *session.Ses
 	return local.attachment, unlock, nil
 }
 
+// refusedModeAuthorizationResult is the parked call's result when a granted
+// authorization settles without running it because the session's stored mode is
+// one this server does not admit.
+const refusedModeAuthorizationResult = "authorization granted, but the call was not run: the session's permission mode is not admitted by this server; switch the session to an admitted mode and retry"
+
+// settleRefusedModeGrantLocked handles a grant for a session whose stored mode
+// this server refuses. The grant must not run the parked call, or resume its
+// turn, in that mode. Refusing while leaving the authorization pending would
+// strand the session (SetMode is illegal while authorizing, and a cancel of a
+// granted authorization can reconcile back to granted), so it settles the parked
+// call unrun and returns the refusal: the session is idle afterwards and its
+// owner can switch it to an admitted mode.
+func (s *Service) settleRefusedModeGrantLocked(ctx context.Context, sess *session.Session, pending session.PendingAuthorization) error {
+	if _, err := s.resolveAuthorizationWithFailureLocked(ctx, sess, pending, session.AuthorizationInterrupted, refusedModeAuthorizationResult, false); err != nil {
+		return err
+	}
+	return s.admitStoredMode(sess)
+}
+
 func (s *Service) continueGrantedAuthorizationLocked(ctx context.Context, sess *session.Session) (MCPAuthorizationResult, error) {
 	s.cfg.Diagnostics.Log(ctx, port.LevelDebug, "MCP authorization: granted, starting continuation", "session", string(sess.ID), "state", string(sess.State))
 	resolution, err := session.NewAuthorizationResolution(session.AuthorizationGranted)
@@ -344,6 +363,9 @@ func (s *Service) continueGrantedAuthorizationLocked(ctx context.Context, sess *
 	pending, ok := sess.PendingAuthorization()
 	if !ok {
 		return MCPAuthorizationResult{}, errAuthorizationNoPending
+	}
+	if s.admitStoredMode(sess) != nil {
+		return MCPAuthorizationResult{}, s.settleRefusedModeGrantLocked(ctx, sess, pending)
 	}
 	if err := s.ensureAuthorizationRequiredLogged(ctx, sess.ID, pending); err != nil {
 		return MCPAuthorizationResult{}, err
@@ -612,6 +634,12 @@ func (s *Service) resolveAuthorizationWithoutContinuationLocked(ctx context.Cont
 func (s *Service) resolveAuthorizationWithFailureLocked(ctx context.Context, sess *session.Session, pending session.PendingAuthorization, status session.AuthorizationStatus, primaryFailure string, allowContinuation bool) (MCPAuthorizationResult, error) {
 	s.cfg.Diagnostics.Log(ctx, port.LevelDebug, "MCP authorization: resolving to terminal status",
 		"session", string(sess.ID), "authorization", pending.Authorization.ID, "status", string(status), "state", string(sess.State))
+	if allowContinuation && s.admitStoredMode(sess) != nil {
+		// The continuation would resume the parked turn in a mode this server
+		// refuses. Settle without it, like every other restored execution
+		// refuses a stored mode; the session ends idle so its owner can SetMode.
+		allowContinuation = false
+	}
 	reason := string(status)
 	if status == session.AuthorizationClosed {
 		reason = string(session.AuthorizationInterrupted)
