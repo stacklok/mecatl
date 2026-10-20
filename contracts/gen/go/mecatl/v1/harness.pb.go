@@ -53,7 +53,11 @@ const (
 type PermissionMode int32
 
 const (
-	// PERMISSION_MODE_UNSPECIFIED defaults to DEFAULT at the server boundary.
+	// PERMISSION_MODE_UNSPECIFIED means different things per field.
+	// CreateSessionRequest.mode and ScheduleSpec.mode resolve it to the server's
+	// configured default mode, which can be AUTO or YOLO; send an explicit mode to
+	// pin one. SetModeRequest.mode treats it as DEFAULT. ApprovePlanRequest
+	// documents its own target_mode mapping.
 	PermissionMode_PERMISSION_MODE_UNSPECIFIED PermissionMode = 0
 	// PERMISSION_MODE_DEFAULT is the standard deny -> ask -> allow posture.
 	PermissionMode_PERMISSION_MODE_DEFAULT PermissionMode = 1

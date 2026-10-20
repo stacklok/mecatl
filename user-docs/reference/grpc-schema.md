@@ -4111,7 +4111,7 @@ checker; yolo runs gate-free with no enforcing checker.
 
 | Name | Number | Description |
 |---|---|---|
-| `PERMISSION_MODE_UNSPECIFIED` | `0` | PERMISSION_MODE_UNSPECIFIED defaults to DEFAULT at the server boundary. |
+| `PERMISSION_MODE_UNSPECIFIED` | `0` | PERMISSION_MODE_UNSPECIFIED means different things per field. CreateSessionRequest.mode and ScheduleSpec.mode resolve it to the server&#39;s configured default mode, which can be AUTO or YOLO; send an explicit mode to pin one. SetModeRequest.mode treats it as DEFAULT. ApprovePlanRequest documents its own target_mode mapping. |
 | `PERMISSION_MODE_DEFAULT` | `1` | PERMISSION_MODE_DEFAULT is the standard deny -&gt; ask -&gt; allow posture. |
 | `PERMISSION_MODE_PLAN` | `2` | PERMISSION_MODE_PLAN enforces a read-only toolset. |
 | `PERMISSION_MODE_ACCEPT_EDITS` | `3` | PERMISSION_MODE_ACCEPT_EDITS auto-accepts edits. |

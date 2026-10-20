@@ -10492,7 +10492,11 @@ export const WorkspaceEnrollmentSchema: GenMessage<WorkspaceEnrollment> = /*@__P
  */
 export enum PermissionMode {
   /**
-   * PERMISSION_MODE_UNSPECIFIED defaults to DEFAULT at the server boundary.
+   * PERMISSION_MODE_UNSPECIFIED means different things per field.
+   * CreateSessionRequest.mode and ScheduleSpec.mode resolve it to the server's
+   * configured default mode, which can be AUTO or YOLO; send an explicit mode to
+   * pin one. SetModeRequest.mode treats it as DEFAULT. ApprovePlanRequest
+   * documents its own target_mode mapping.
    *
    * @generated from enum value: PERMISSION_MODE_UNSPECIFIED = 0;
    */
