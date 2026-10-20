@@ -36,6 +36,7 @@ func helmTemplate(t *testing.T, extraSet ...string) []byte {
 		"--set", "redis.endpoint=redis.example.internal:6380",
 		"--set", "redis.credentialsSecret=redis-credentials",
 		"--set", "security.allowUnsafeRealProvider=true",
+		"--set", "guardrails.fromSettings=true",
 	}
 	args = append(args, extraSet...)
 	out, err := exec.Command("helm", args...).CombinedOutput()
