@@ -727,6 +727,34 @@ linters:
           deny:
             - pkg: os
               desc: 'credentialstore conformance drives the abstract Store contract without host I/O'
+        # The agent identity broker core receives configuration, signing
+        # capability, and loaded definitions explicitly. File, environment,
+        # process, network, and logging access belong in startup, source, and
+        # transport adapters that call it; Mecatl packages stay out entirely.
+        # Deny only parent packages: depguard checks an import against the
+        # nearest deny entry that sorts before it, so a child entry such as
+        # os/exec would let siblings such as os/user through. Each parent entry
+        # covers all of its subpackages, including net/url.
+        internal-identitybroker:
+          list-mode: strict
+          files:
+            - '**/internal/identitybroker/**.go'
+            - '!$test'
+          allow:
+            - $gostd
+          deny:
+            - pkg: crypto/tls
+              desc: 'the identity broker core is in-process; TLS connections belong in transport adapters'
+            - pkg: log
+              desc: 'the identity broker core returns errors and has no logging surface'
+            - pkg: net
+              desc: 'the identity broker core is in-process; network access belongs in adapters'
+            - pkg: os
+              desc: 'the identity broker core receives explicit inputs; file, environment, and process access belong in startup adapters'
+            - pkg: plugin
+              desc: 'the identity broker core never loads code at runtime'
+            - pkg: syscall
+              desc: 'the identity broker core receives explicit inputs; system calls belong in adapters'
         # learning: reflection domain; reuses governance's canonical untrusted
         # framing and tool's canonical memory security helpers.
         core-learning:
