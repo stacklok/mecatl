@@ -2,7 +2,9 @@ package agent_test
 
 import (
 	"context"
+	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -40,13 +42,14 @@ func TestEffectiveChildMode(t *testing.T) {
 
 // TestSubagentInheritsYoloParentMode drives a real parent run: a child tool
 // that asks under the default mode (no rules, headless → denied) runs when the
-// parent session is in yolo, because the child inherits the parent's mode.
+// parent session is in auto or yolo, because the child inherits the parent's mode.
 func TestSubagentInheritsYoloParentMode(t *testing.T) {
 	for _, tc := range []struct {
 		parent session.PermissionMode
 		want   bool
 	}{
 		{session.ModeDefault, false},
+		{session.ModeAuto, true},
 		{session.ModeYolo, true},
 	} {
 		var executed atomic.Bool
@@ -252,6 +255,72 @@ func TestResumedChildMode(t *testing.T) {
 		if got := agent.ResumedChildModeForTest(tc.stored, tc.configured, tc.parent); got != tc.want {
 			t.Errorf("resumedChildMode(stored %q, configured %q, parent %q) = %q, want %q", tc.stored, tc.configured, tc.parent, got, tc.want)
 		}
+	}
+}
+
+// countingActionReviewer reviews actions, enforces its finding, and records
+// every reviewed tool name. It returns assessment for Mutate and accepts every
+// other tool, so the parent's own Subagent call is never the one blocked.
+type countingActionReviewer struct {
+	assessment agent.ReviewAssessment
+	mu         sync.Mutex
+	reviewed   []string
+}
+
+func (r *countingActionReviewer) Review(_ context.Context, req agent.ToolReviewRequest, _ agent.ReviewEvidenceSource) (agent.ToolReviewResult, session.AuxiliaryUsage, error) {
+	r.mu.Lock()
+	r.reviewed = append(r.reviewed, req.EffectiveCall.Name)
+	r.mu.Unlock()
+	if req.EffectiveCall.Name != "Mutate" {
+		return agent.ToolReviewResult{Assessment: agent.ReviewAcceptable}, session.AuxiliaryUsage{}, nil
+	}
+	return agent.ToolReviewResult{Assessment: r.assessment}, session.AuxiliaryUsage{}, nil
+}
+
+func (*countingActionReviewer) GuardrailReviewPolicy(_ string, job agent.ReviewJob, _ bool) (bool, bool) {
+	return job == agent.ReviewJobAction, true
+}
+
+func (r *countingActionReviewer) reviewedTools() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]string(nil), r.reviewed...)
+}
+
+// TestInheritingChildOfAutoParentConsultsChecker proves an unconfigured
+// Subagent child of an auto parent runs under the parent's enforcing checker,
+// not as plain allow-all: the child's mutating call is reviewed, runs when the
+// checker accepts it, and is blocked when the checker prohibits it.
+func TestInheritingChildOfAutoParentConsultsChecker(t *testing.T) {
+	for _, tc := range []struct {
+		assessment agent.ReviewAssessment
+		want       int32
+	}{
+		{agent.ReviewAcceptable, 1},
+		{agent.ReviewProhibited, 0},
+	} {
+		t.Run(string(tc.assessment), func(t *testing.T) {
+			var executed atomic.Int32
+			reviewer := &countingActionReviewer{assessment: tc.assessment}
+			task := agent.NewSubagentTool(mutatingChildEngine(t, &executed,
+				mockllm.ToolCallTurn(toolCall("k1", "Mutate", `{}`)), mockllm.TextTurn("child done")))
+			sess := newSession(t, session.Limits{})
+			if err := sess.SetMode(session.ModeAuto); err != nil {
+				t.Fatal(err)
+			}
+			e := newEngine(agent.Deps{
+				LLM:          mockllm.New(mockllm.ToolCallTurn(toolCall("p1", "Subagent", `{"prompt":"go"}`)), mockllm.TextTurn("ok")),
+				Catalog:      catalogWith(t, task),
+				ToolReviewer: reviewer,
+			})
+			drainObserving(t, e.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "go"}), nil)
+			if got := executed.Load(); got != tc.want {
+				t.Errorf("child Mutate executed %d times under an auto parent with a %s checker, want %d", got, tc.assessment, tc.want)
+			}
+			if !slices.Contains(reviewer.reviewedTools(), "Mutate") {
+				t.Errorf("checker never reviewed the child's Mutate call; reviewed %v", reviewer.reviewedTools())
+			}
+		})
 	}
 }
 
