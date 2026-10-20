@@ -572,7 +572,12 @@ func (h *HTTPHandler) createSession(w http.ResponseWriter, r *http.Request) {
 	if !grant.IsEmpty() {
 		opts = append(opts, WithClientMCP(grant))
 	}
-	sess, err := h.svc.CreateSessionWithProfile(r.Context(), modeFromString(body.Mode), limits, sel, profile, opts...)
+	mode, ok := modeFromString(body.Mode)
+	if !ok {
+		writeServiceError(w, fmt.Errorf("%w: unrecognised permission mode %q", ErrInvalidArgument, body.Mode))
+		return
+	}
+	sess, err := h.svc.CreateSessionWithProfile(r.Context(), mode, limits, sel, profile, opts...)
 	if err != nil {
 		writeServiceError(w, err)
 		return
@@ -619,7 +624,12 @@ func (h *HTTPHandler) setMode(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid JSON body")
 		return
 	}
-	sess, err := h.svc.SetMode(r.Context(), id, modeFromString(body.Mode))
+	mode, ok := modeFromString(body.Mode)
+	if !ok {
+		writeServiceError(w, fmt.Errorf("%w: unrecognised permission mode %q", ErrInvalidArgument, body.Mode))
+		return
+	}
+	sess, err := h.svc.SetMode(r.Context(), id, mode)
 	if err != nil {
 		writeServiceError(w, err)
 		return
@@ -1234,15 +1244,21 @@ func (h *HTTPHandler) relayEventsSSE(w http.ResponseWriter, r *http.Request, id 
 // planModeFromString maps the HTTP plan:approve body's target_mode string to a
 // session.PermissionMode. It accepts the proto enum names (case-insensitive,
 // with or without the PERMISSION_MODE_ prefix) and the bare mode names
-// ("default"/"plan"/"accept_edits"); an empty or unrecognized value defaults to
-// ModePlan (deny / iterate) — the fail-safe posture that does NOT flip the mode
-// or start a continuation run, mirroring verdictFromHTTP's fail-safe-to-deny.
+// ("default"/"plan"/"accept_edits"/"auto"/"yolo"); an empty or unrecognized
+// value defaults to ModePlan (deny / iterate) — the fail-safe posture that does
+// NOT flip the mode or start a continuation run, mirroring verdictFromHTTP's
+// fail-safe-to-deny. auto and yolo map to their real modes so the Service
+// refuses them with InvalidArgument, the same answer gRPC gives.
 func planModeFromString(s string) session.PermissionMode {
 	switch strings.TrimPrefix(strings.ToLower(s), "permission_mode_") {
 	case "default":
 		return session.ModeDefault
 	case "accept_edits", "accept", "acceptedits":
 		return session.ModeAccept
+	case "auto":
+		return session.ModeAuto
+	case "yolo":
+		return session.ModeYolo
 	default:
 		// "plan", "", or unrecognized → deny / iterate (no flip, no continuation).
 		return session.ModePlan
@@ -2759,22 +2775,29 @@ func writeSSEError(w http.ResponseWriter, flusher http.Flusher, payload any) {
 	flusher.Flush()
 }
 
-// modeFromString maps a JSON mode string to a session.PermissionMode. Unknown
-// or empty values fall through to the empty mode (Service applies its default).
-func modeFromString(s string) session.PermissionMode {
-	switch strings.ToLower(s) {
+// modeFromString maps a JSON mode string to a session.PermissionMode. It accepts
+// the bare mode names and the proto enum names (case-insensitive, with or
+// without the PERMISSION_MODE_ prefix). An empty or UNSPECIFIED value returns
+// the empty mode with ok=true: the client did not choose, so the Service
+// applies its default (and SetMode refuses it as missing). Any other value
+// returns ok=false so the caller rejects it, rather than letting a typo or an
+// unknown spelling fall back to the server default, which can be auto or yolo.
+func modeFromString(s string) (session.PermissionMode, bool) {
+	switch strings.TrimPrefix(strings.ToLower(s), "permission_mode_") {
+	case "", "unspecified":
+		return "", true
 	case "plan":
-		return session.ModePlan
+		return session.ModePlan, true
 	case "acceptedits", "accept-edits", "accept_edits", "accept":
-		return session.ModeAccept
+		return session.ModeAccept, true
 	case "default":
-		return session.ModeDefault
+		return session.ModeDefault, true
 	case "auto":
-		return session.ModeAuto
+		return session.ModeAuto, true
 	case "yolo":
-		return session.ModeYolo
+		return session.ModeYolo, true
 	default:
-		return ""
+		return "", false
 	}
 }
 
