@@ -51,9 +51,9 @@ on:
         description: >-
           Passed to the action's `permission-mode` input: plan, default, accept-edits, auto,
           or yolo. Empty (default) lets the action resolve it to "auto" (allow-all, child
-          injection-defence ON), which refuses to start without an ENFORCING guardrails
-          checker, from operator settings or `guardrails-model`; use "yolo" to run
-          allow-all with no checker. Setting both this and `posture` fails the run.
+          injection-defence ON), which needs an ENFORCING guardrails checker, from
+          `guardrails-model` or operator settings; the step fails early without one. Use
+          "yolo" to run allow-all with no checker. Setting both this and `posture` fails the run.
         type: string
         required: false
         default: ""

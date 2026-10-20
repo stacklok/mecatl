@@ -170,9 +170,10 @@ jobs and their separate permissions. Its composite action builds `mecatequi`
 from the tagged Mecatl source.
 
 The workflow's `permission-mode` input is empty by default, so the action runs
-`auto`, which refuses to start without an enforcing guardrails checker. Set
-`guardrails-model` to a checker model, or set `permission-mode: yolo` with
-`guardrails-model: "off"` to run without one. The `posture` input is a
+`auto`, which needs an enforcing guardrails checker. If `guardrails-model` is
+empty and the runner has no operator settings file, or it is `off`, the step
+fails before the agent runs. Set `guardrails-model` to a checker model, or set
+`permission-mode: yolo` with `guardrails-model: "off"` to run without one. The `posture` input is a
 deprecated alias for `permission-mode`. Callers that relied on earlier releases
 running `auto` unchecked must make one of these choices when they move to a
 newer tag.
@@ -337,9 +338,11 @@ The GitHub Action passes `--permission-mode auto` unless you set its
 `guardrails-model` input has three choices:
 
 - Empty, the default: the action passes no guardrails flag, and the run uses
-  the checker configured in operator settings, if any.
+  the checker configured in operator settings, if any. Under `auto`, the step
+  fails early when the runner has no operator settings file.
 - `off`: the action passes the `--guardrails off` kill-switch, which also
-  disables a checker in settings. Pair it with `permission-mode: yolo`.
+  disables a checker in settings. Pair it with `permission-mode: yolo`; under
+  `auto` the step fails early.
 - Any other value: the action passes `--guardrails-model <VALUE>`.
 
 For shared posture behavior, project trust, and permission-rule precedence, see

@@ -129,8 +129,9 @@ inputs:
       Permission mode → --permission-mode: one of plan, default, accept-edits, auto,
       yolo. Empty (the input default) resolves to "auto", the documented CI mode
       (allow-all, child injection-defence ON), unless the deprecated `posture` input is
-      set. auto refuses to start without an ENFORCING guardrails checker, inherited from
-      operator settings or named with `guardrails-model`. yolo is the explicit choice to
+      set. auto needs an ENFORCING guardrails checker, named with `guardrails-model` or
+      inherited from operator settings; the step fails before running the binary when
+      `guardrails-model` is empty and no operator settings file exists, or is "off". yolo is the explicit choice to
       run allow-all with no checker. "default" would CANCEL the run on the first mutate
       because a headless run has no approver. Setting both this and `posture` fails the
       step.
@@ -440,6 +441,16 @@ runs:
           permission_args=( --posture "${MQ_POSTURE}" )
         else
           permission_args=( --permission-mode "${MQ_PERMISSION_MODE:-auto}" )
+          # auto needs an enforcing checker. Fail here with the fix instead of letting
+          # the binary refuse later: a named model, or operator settings that may bind
+          # one (the binary still refuses if they don't).
+          if [ "${MQ_PERMISSION_MODE:-auto}" = "auto" ]; then
+            settings_file="${XDG_CONFIG_HOME:-${HOME}/.config}/mecatl/settings.yaml"
+            if [ "${MQ_GUARDRAILS_MODEL}" = "off" ] || { [ -z "${MQ_GUARDRAILS_MODEL}" ] && [ ! -f "${settings_file}" ]; }; then
+              echo "::error::permission-mode auto needs an enforcing guardrails checker: set guardrails-model to a checker model, bind one in operator settings (${settings_file}), or set permission-mode: yolo with guardrails-model: off to run without one."
+              exit 1
+            fi
+          fi
         fi
 
         args=(

@@ -110,7 +110,7 @@ var inputRef = regexp.MustCompile(`^\$\{\{\s*inputs\.([a-z0-9-]+)\s*\}\}$`)
 // runActionScript executes the action's real "Run mecatequi" bash body with
 // the given inputs (defaults fill the rest) against a fake binary that records
 // its argv, and returns that argv plus the script's combined output.
-func runActionScript(t *testing.T, action actionFile, with map[string]string) ([]string, string, error) {
+func runActionScript(t *testing.T, action actionFile, with map[string]string, env ...string) ([]string, string, error) {
 	t.Helper()
 	idx := slices.IndexFunc(action.Runs.Steps, func(s struct {
 		Name string            `json:"name"`
@@ -144,13 +144,13 @@ func runActionScript(t *testing.T, action actionFile, with map[string]string) ([
 	for k, v := range with {
 		overrides[k] = v
 	}
-	env := []string{
+	env = append([]string{
 		"PATH=" + os.Getenv("PATH"),
 		"HOME=" + dir,
 		"RUNNER_TEMP=" + dir,
 		"GITHUB_OUTPUT=" + filepath.Join(dir, "github_output"),
 		"ARGS_OUT=" + argsOut,
-	}
+	}, env...)
 	for name, expr := range step.Env {
 		m := inputRef.FindStringSubmatch(expr)
 		if m == nil {
@@ -216,7 +216,7 @@ func loadAction(t *testing.T) actionFile {
 // binary, then feeds the argv it produced (plus extra flags, for example a
 // mounted operator settings file) through the real CLI composition with the
 // mock provider. The workspace input is pointed at a hermetic git repo.
-func buildFromActionArgv(t *testing.T, action actionFile, with map[string]string, extra ...string) (*app.Built, error) {
+func buildFromActionArgv(t *testing.T, action actionFile, with map[string]string, env []string, extra ...string) (*app.Built, error) {
 	t.Helper()
 	repo := t.TempDir()
 	initTestRepo(t, repo)
@@ -224,7 +224,7 @@ func buildFromActionArgv(t *testing.T, action actionFile, with map[string]string
 	for k, v := range with {
 		inputs[k] = v
 	}
-	argv, out, err := runActionScript(t, action, inputs)
+	argv, out, err := runActionScript(t, action, inputs, env...)
 	if err != nil {
 		t.Fatalf("action body failed: %v\n%s", err, out)
 	}
@@ -237,6 +237,21 @@ func buildFromActionArgv(t *testing.T, action actionFile, with map[string]string
 	return buildIsolated(t, context.Background(), cfg)
 }
 
+// operatorSettings writes settings to where the action and binary look for the
+// operator settings file, returning that path and the env that points there.
+func operatorSettings(t *testing.T, settings string) (string, []string) {
+	t.Helper()
+	config := t.TempDir()
+	path := filepath.Join(config, "mecatl", "settings.yaml")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(settings), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path, []string{"XDG_CONFIG_HOME=" + config}
+}
+
 // TestOmittedGuardrailsInputInheritsSettingsChecker covers the default action
 // input (no guardrails flag) composed with operator settings: a checker
 // configured there lets auto start enforcing, and with none auto refuses.
@@ -247,11 +262,8 @@ func TestOmittedGuardrailsInputInheritsSettingsChecker(t *testing.T) {
 		"guardrail slot":   "models:\n  slots:\n    guardrail: mock-checker\n",
 	} {
 		t.Run(name, func(t *testing.T) {
-			path := filepath.Join(t.TempDir(), "settings.yaml")
-			if err := os.WriteFile(path, []byte(settings), 0o600); err != nil {
-				t.Fatal(err)
-			}
-			built, err := buildFromActionArgv(t, action, nil, "--permission-config", path)
+			path, env := operatorSettings(t, settings)
+			built, err := buildFromActionArgv(t, action, nil, env, "--permission-config", path)
 			if err != nil {
 				t.Fatalf("auto with an inherited %s checker must start: %v", name, err)
 			}
@@ -270,8 +282,9 @@ func TestOmittedGuardrailsInputInheritsSettingsChecker(t *testing.T) {
 			}
 		})
 	}
-	t.Run("no inherited checker refuses", func(t *testing.T) {
-		built, err := buildFromActionArgv(t, action, nil)
+	t.Run("settings without a checker refuses", func(t *testing.T) {
+		path, env := operatorSettings(t, "permissions:\n  allow: []\n")
+		built, err := buildFromActionArgv(t, action, nil, env, "--permission-config", path)
 		if err == nil {
 			built.Close()
 			t.Fatal("auto with no inherited checker must refuse to start")
@@ -280,18 +293,39 @@ func TestOmittedGuardrailsInputInheritsSettingsChecker(t *testing.T) {
 			t.Fatalf("refusal = %v, want the enforcing-checker error", err)
 		}
 	})
-	t.Run("explicit off overrides the settings checker", func(t *testing.T) {
-		path := filepath.Join(t.TempDir(), "settings.yaml")
-		if err := os.WriteFile(path, []byte("guardrails:\n  model: mock-checker\n"), 0o600); err != nil {
-			t.Fatal(err)
-		}
-		built, err := buildFromActionArgv(t, action, map[string]string{"guardrails-model": "off"}, "--permission-config", path)
-		if err == nil {
-			built.Close()
-			t.Fatal("auto with the explicit kill-switch must refuse to start")
-		}
-		if !strings.Contains(err.Error(), "requires an enforcing guardrails checker") {
-			t.Fatalf("refusal = %v, want the enforcing-checker error", err)
+}
+
+// TestActionAutoWithoutCheckerFailsTheStep pins the action's early refusal:
+// auto with no named checker and no operator settings file, or with the
+// explicit kill-switch, fails before the binary runs and names the fixes.
+func TestActionAutoWithoutCheckerFailsTheStep(t *testing.T) {
+	action := loadAction(t)
+	_, env := operatorSettings(t, "guardrails:\n  model: mock-checker\n")
+	for name, tc := range map[string]struct {
+		with map[string]string
+		env  []string
+	}{
+		"defaults with no settings file":      {nil, nil},
+		"explicit auto with no settings file": {map[string]string{"permission-mode": "auto"}, nil},
+		"off with no settings file":           {map[string]string{"guardrails-model": "off"}, nil},
+		"off despite a settings checker":      {map[string]string{"guardrails-model": "off"}, env},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, out, err := runActionScript(t, action, tc.with, tc.env...)
+			if err == nil {
+				t.Fatalf("auto without a checker must fail the step: %s", out)
+			}
+			for _, want := range []string{"::error::", "guardrails-model", "permission-mode: yolo"} {
+				if !strings.Contains(out, want) {
+					t.Fatalf("step output = %q, want it to contain %q", out, want)
+				}
+			}
+		})
+	}
+	t.Run("yolo with off starts", func(t *testing.T) {
+		argv, out, err := runActionScript(t, action, map[string]string{"permission-mode": "yolo", "guardrails-model": "off"})
+		if err != nil || !hasPair(argv, "--permission-mode", "yolo") {
+			t.Fatalf("yolo with off: err=%v argv=%q\n%s", err, argv, out)
 		}
 	})
 }
@@ -305,8 +339,9 @@ func TestOmittedGuardrailsInputInheritsSettingsChecker(t *testing.T) {
 func TestShippedAllowAllDefaultsDeclareCheckerChoice(t *testing.T) {
 	action := loadAction(t)
 
+	_, settingsEnv := operatorSettings(t, "guardrails:\n  model: mock-checker\n")
 	t.Run("action defaults inherit the checker", func(t *testing.T) {
-		argv, out, err := runActionScript(t, action, nil)
+		argv, out, err := runActionScript(t, action, nil, settingsEnv...)
 		if err != nil {
 			t.Fatalf("action body failed: %v\n%s", err, out)
 		}
@@ -324,7 +359,7 @@ func TestShippedAllowAllDefaultsDeclareCheckerChoice(t *testing.T) {
 		}
 	})
 	t.Run("explicit off", func(t *testing.T) {
-		argv, out, err := runActionScript(t, action, map[string]string{"guardrails-model": "off"})
+		argv, out, err := runActionScript(t, action, map[string]string{"permission-mode": "yolo", "guardrails-model": "off"})
 		if err != nil {
 			t.Fatalf("action body failed: %v\n%s", err, out)
 		}
@@ -378,7 +413,7 @@ func TestShippedAllowAllDefaultsDeclareCheckerChoice(t *testing.T) {
 				}
 				// The live workflow mounts no operator settings, so its argv alone must
 				// start: the real composition, not a flag-shape check, decides.
-				if built, err := buildFromActionArgv(t, action, with); err != nil {
+				if built, err := buildFromActionArgv(t, action, with, nil); err != nil {
 					t.Fatalf("workflow inputs do not start mecatequi: %v", err)
 				} else {
 					built.Close()
