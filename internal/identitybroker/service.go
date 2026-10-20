@@ -1,0 +1,232 @@
+package identitybroker
+
+import (
+	"context"
+	"fmt"
+)
+
+// Service is the contract between Mecatl and the identity broker: every call
+// Mecatl makes goes through it, whether the broker runs in process or as its
+// own service. Requests and results are plain values owned by this package,
+// and every error is an *Error carrying a Code and, where the design defines
+// one, a Reason.
+//
+// Behavior every implementation provides:
+//
+//   - OpenSession for a host session that already has an open broker session
+//     returns that session when the incarnation and owner match. A different
+//     owner fails with CodePermissionDenied and ReasonSessionOwned; a different
+//     incarnation fails with CodeAlreadyExists.
+//   - FindSession finds the open broker session from its root host session.
+//   - A closed broker session is never reopened. It refuses registration and
+//     calls with its closing reason, such as ReasonSessionClosed with
+//     CodeFailedPrecondition, and a later OpenSession for the same host
+//     session opens a new broker session with a new ID.
+//   - A broker session ID the broker never issued is refused with
+//     CodePermissionDenied.
+//   - Invalid requests fail with CodeInvalidArgument.
+//
+// The caller travels with the context; see WithCaller.
+type Service interface {
+	// OpenSession opens the broker session for a root host session, or returns
+	// the one already open for it.
+	OpenSession(ctx context.Context, req OpenSessionRequest) (Session, error)
+	// FindSession returns the open broker session for rootHostSessionID, and
+	// whether one is open.
+	FindSession(ctx context.Context, rootHostSessionID string) (Session, bool, error)
+	// CloseSession closes a broker session with a closing reason. Closing an
+	// already closed session succeeds and keeps its first reason.
+	CloseSession(ctx context.Context, req CloseSessionRequest) error
+	// RegisterAgent registers an agent instance in an open broker session and
+	// returns its reference and credential.
+	RegisterAgent(ctx context.Context, req RegisterAgentRequest) (Registration, error)
+	// AuthorizeCall decides whether the agent presenting the credential may
+	// make an MCP call, and returns the gateway token when it may. A denial is
+	// an error, so a caller that ignores the result cannot dispatch.
+	AuthorizeCall(ctx context.Context, req AuthorizeCallRequest) (Authorization, error)
+}
+
+// Owner is a session owner: the user's company identity, such as issuer
+// "https://login.example.com" and subject "alice-204".
+type Owner struct {
+	Issuer  string
+	Subject string
+}
+
+func (o Owner) validate() error {
+	if !isToken(o.Issuer) || !isToken(o.Subject) {
+		return invalid("owner issuer and subject must be non-empty printable text without spaces")
+	}
+	return nil
+}
+
+// Session is a broker session.
+type Session struct {
+	// ID is the broker session ID. The broker allocates it and never reuses it.
+	ID            string
+	HostSessionID string
+	Incarnation   string
+	Owner         Owner
+}
+
+// OpenSessionRequest opens the broker session for a root host session.
+type OpenSessionRequest struct {
+	HostSessionID string
+	// Incarnation is the host session's incarnation.
+	Incarnation string
+	Owner       Owner
+	// AccessToken is the user's AS-1 access token, when the request has one.
+	AccessToken Token
+}
+
+// Validate reports whether r is well formed. The error is an *Error with
+// CodeInvalidArgument.
+func (r OpenSessionRequest) Validate() error {
+	if err := requireIDs("host session", r.HostSessionID, "incarnation", r.Incarnation); err != nil {
+		return err
+	}
+	return r.Owner.validate()
+}
+
+// CloseSessionRequest closes a broker session.
+type CloseSessionRequest struct {
+	SessionID string
+	// Reason is the closing reason later calls on the session fail with.
+	// ReasonSessionClosed is the only closing reason Mecatl supplies today.
+	Reason Reason
+}
+
+// Validate reports whether r is well formed. The error is an *Error with
+// CodeInvalidArgument.
+func (r CloseSessionRequest) Validate() error {
+	if err := requireIDs("broker session", r.SessionID); err != nil {
+		return err
+	}
+	if r.Reason != ReasonSessionClosed {
+		return invalid(fmt.Sprintf("closing reason %q is not supported", r.Reason))
+	}
+	return nil
+}
+
+// AgentRef refers to a registered agent instance by its canonical subject,
+// which the caller checks matches the instance it registered. The zero value
+// refers to no agent.
+type AgentRef struct {
+	Subject string
+}
+
+// IsZero reports whether a refers to no agent.
+func (a AgentRef) IsZero() bool { return a == AgentRef{} }
+
+// RegisterAgentRequest registers an agent instance in a broker session.
+type RegisterAgentRequest struct {
+	SessionID     string
+	HostSessionID string
+	Owner         Owner
+	// Incarnation is the agent instance's incarnation, which the harness
+	// allocates and persists.
+	Incarnation string
+	// Definition is the definition the instance runs.
+	Definition DefinitionRef
+	// Parent is the registered instance that created this one; zero for a
+	// session's main agent.
+	Parent AgentRef
+}
+
+// Validate reports whether r is well formed. The error is an *Error with
+// CodeInvalidArgument.
+func (r RegisterAgentRequest) Validate() error {
+	if err := requireIDs("broker session", r.SessionID, "host session", r.HostSessionID, "incarnation", r.Incarnation); err != nil {
+		return err
+	}
+	if err := r.Owner.validate(); err != nil {
+		return err
+	}
+	if err := r.Definition.validate(); err != nil {
+		return invalid("definition: " + err.Error())
+	}
+	if !r.Parent.IsZero() && !isToken(r.Parent.Subject) {
+		return invalid("parent subject must be non-empty printable text without spaces")
+	}
+	return nil
+}
+
+// Registration is a registered agent instance and its credential. Mecatl's
+// trusted harness code holds the credential and presents it on each call;
+// it never reaches the engine or the model.
+type Registration struct {
+	Agent      AgentRef
+	Credential Token
+}
+
+// AuthorizeCallRequest asks whether an agent may make one MCP call.
+type AuthorizeCallRequest struct {
+	SessionID string
+	// Credential is the acting agent's credential from RegisterAgent. The
+	// broker identifies the acting agent from it.
+	Credential Token
+	// OperationID identifies this call.
+	OperationID string
+	// Target is the gateway or backend the call is routed to.
+	Target string
+	Tool   string
+	// GatewayRejectedToken reports that the gateway rejected the token
+	// returned for this operation, so the broker obtains a fresh one. A caller
+	// sets it on at most one retry.
+	GatewayRejectedToken bool
+}
+
+// Validate reports whether r is well formed. The error is an *Error with
+// CodeInvalidArgument.
+func (r AuthorizeCallRequest) Validate() error {
+	if err := requireIDs("broker session", r.SessionID, "operation", r.OperationID, "target", r.Target, "tool", r.Tool); err != nil {
+		return err
+	}
+	if r.Credential.IsZero() {
+		return invalid("credential is required")
+	}
+	return nil
+}
+
+// Authorization is an allowed MCP call.
+type Authorization struct {
+	// GatewayToken is the token the call is dispatched with.
+	GatewayToken Token
+}
+
+// requireIDs checks name/value pairs of identifiers.
+func requireIDs(pairs ...string) error {
+	for i := 0; i+1 < len(pairs); i += 2 {
+		if !isToken(pairs[i+1]) {
+			return invalid(pairs[i] + " ID must be non-empty printable text without spaces")
+		}
+	}
+	return nil
+}
+
+func invalid(detail string) error {
+	return NewError(CodeInvalidArgument, "", detail)
+}
+
+// Caller is the authenticated workload making a call, such as mecak8s's
+// Kubernetes ServiceAccount. The transport or in-process adapter attaches it
+// to the call's context after authenticating the workload; it is never a
+// request field.
+//
+// Phase 1 attaches and records the caller without checking it.
+type Caller struct {
+	Workload string
+}
+
+type callerKey struct{}
+
+// WithCaller returns a context carrying caller.
+func WithCaller(ctx context.Context, caller Caller) context.Context {
+	return context.WithValue(ctx, callerKey{}, caller)
+}
+
+// CallerFrom returns the caller attached to ctx, and whether one is attached.
+func CallerFrom(ctx context.Context) (Caller, bool) {
+	caller, ok := ctx.Value(callerKey{}).(Caller)
+	return caller, ok
+}
