@@ -4741,7 +4741,7 @@ func resolveRulesSeam(ctx context.Context, cfg Config) prompt.RulesSource {
 	// same gate as agents/skills): untrusted, or the ingestion grant withheld. The
 	// user-tier lanes stay active regardless.
 	if cfg.Workspace != "" && !projectIngestionAdmitted(cfg) {
-		cfg.diag().Log(ctx, port.LevelWarn, "rules: project-tier rules WITHHELD (untrusted workspace or project ingestion not granted); user-tier rules stay active. Pass --trust-project (on a headless root) or run --permission-mode auto on an interactive root to admit its project rules",
+		cfg.diag().Log(ctx, port.LevelWarn, "rules: project-tier rules WITHHELD (untrusted workspace or project ingestion not granted); user-tier rules stay active. Pass --trust-project, add the workspace to trustedWorkspaces, or remember trust for it to admit its project rules",
 			"workspace", cfg.Workspace, "dirs", ".mecatl/rules,.claude/rules")
 	}
 	sources := rules.ResolveSources(rules.ResolveOptions{
@@ -5123,7 +5123,7 @@ func slashCommandDecision(cfg Config) diagFact {
 	if cfg.Workspace != "" && !projectIngestionAdmitted(cfg) {
 		return diagFact{
 			level: port.LevelWarn,
-			msg:   "slash commands: project-tier command dirs WITHHELD (untrusted workspace or project ingestion not granted); raw text passes through. Pass --trust-project (on a headless root) or run --permission-mode auto on an interactive root, or pass --commands-dir to enable project slash commands",
+			msg:   "slash commands: project-tier command dirs WITHHELD (untrusted workspace or project ingestion not granted); raw text passes through. Pass --trust-project, add the workspace to trustedWorkspaces, or remember trust for it; or pass --commands-dir to enable project slash commands",
 			args:  []any{"dirs", ".mecatl/commands,.claude/commands"},
 		}
 	}
