@@ -373,20 +373,30 @@ func TestClampPermissionMode(t *testing.T) {
 		{"", session.ModePlan, session.ModePlan},
 		{"", session.ModeDefault, session.ModeDefault},
 		{"", session.ModeAccept, session.ModeAccept},
+		{"", session.ModeAuto, session.ModeAuto},
+		{"", session.ModeYolo, session.ModeYolo},
 		// Ceiling = plan (the tightest): every request clamps down to plan.
 		{session.ModePlan, session.ModePlan, session.ModePlan},
 		{session.ModePlan, session.ModeDefault, session.ModePlan},
 		{session.ModePlan, session.ModeAccept, session.ModePlan},
+		{session.ModePlan, session.ModeAuto, session.ModePlan},
+		{session.ModePlan, session.ModeYolo, session.ModePlan},
 		// Ceiling = default: plan (tighter) passes through; default unchanged;
 		// acceptEdits (looser) clamps down to default.
 		{session.ModeDefault, session.ModePlan, session.ModePlan},
 		{session.ModeDefault, session.ModeDefault, session.ModeDefault},
 		{session.ModeDefault, session.ModeAccept, session.ModeDefault},
-		// Ceiling = acceptEdits (the loosest): every request passes through
-		// unclamped — nothing is ever looser than acceptEdits.
+		{session.ModeDefault, session.ModeAuto, session.ModeDefault},
+		{session.ModeDefault, session.ModeYolo, session.ModeDefault},
+		// Ceiling = acceptEdits (the loosest a def can configure): tighter
+		// requests pass through; auto and yolo clamp down to acceptEdits.
 		{session.ModeAccept, session.ModePlan, session.ModePlan},
 		{session.ModeAccept, session.ModeDefault, session.ModeDefault},
 		{session.ModeAccept, session.ModeAccept, session.ModeAccept},
+		{session.ModeAccept, session.ModeAuto, session.ModeAccept},
+		{session.ModeAccept, session.ModeYolo, session.ModeAccept},
+		// An unrecognised request mode never passes a real ceiling.
+		{session.ModeAccept, session.PermissionMode("bogus"), session.ModeAccept},
 	}
 	for _, tc := range cases {
 		t.Run(string(tc.defMode)+"/"+string(tc.requestMode), func(t *testing.T) {

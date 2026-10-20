@@ -21,14 +21,20 @@ import (
 // the successor's registered per-session engine must be the one
 // AgentDefSessionEngine built for the def, never one built by the ordinary
 // SessionEngine factory (which would mean the deployment's default catalog
-// leaked in).
+// leaked in). It runs in every mode, so the successor's tighten-only
+// configuration accepts an auto or yolo source that keeps its own mode.
 func TestSessionScopedAgentIdentity_Scenario2_ForkClearPreserveBindingAndCatalog(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
 		clear bool
+		mode  session.PermissionMode
 	}{
-		{name: "fork"},
-		{name: "clear", clear: true},
+		{name: "fork", mode: session.ModeDefault},
+		{name: "clear", clear: true, mode: session.ModeDefault},
+		{name: "fork auto", mode: session.ModeAuto},
+		{name: "clear auto", clear: true, mode: session.ModeAuto},
+		{name: "fork yolo", mode: session.ModeYolo},
+		{name: "clear yolo", clear: true, mode: session.ModeYolo},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			store := memstore.New()
@@ -42,13 +48,17 @@ func TestSessionScopedAgentIdentity_Scenario2_ForkClearPreserveBindingAndCatalog
 				Engine:            brokerEngineResult().Engine,
 				Store:             store,
 				PlacementProvider: brokerPlacementProvider{}, PlacementScope: "test",
-				AgentDefSessionEngine: func(_ context.Context, _ ProviderSelector, _ SessionProfile, _ session.PermissionMode, _ session.Limits, defName string) (SessionEngineResult, error) {
+				MaxAllowedMode:             session.ModeYolo,
+				EnforcingCheckerConfigured: true,
+				AgentDefSessionEngine: func(_ context.Context, _ ProviderSelector, _ SessionProfile, mode session.PermissionMode, _ session.Limits, defName string) (SessionEngineResult, error) {
 					atomic.AddInt32(&agentDefCalls, 1)
 					if defName != "release-reviewer" {
 						t.Errorf("AgentDefSessionEngine called with defName=%q, want %q", defName, "release-reviewer")
 					}
 					res := agentDefinitionEngineResult("release-reviewer")
 					res.Engine = restrictedEngine
+					// A definition with no permissionMode ceiling keeps the requested mode.
+					res.BuiltForMode = mode
 					return res, nil
 				},
 				// Wired so that IF the successor rebuild ever regressed into the
@@ -65,10 +75,13 @@ func TestSessionScopedAgentIdentity_Scenario2_ForkClearPreserveBindingAndCatalog
 			}
 			defer svc.Close()
 
-			source, err := svc.CreateSessionWithProfile(context.Background(), session.ModeDefault, session.Limits{},
+			source, err := svc.CreateSessionWithProfile(context.Background(), tc.mode, session.Limits{},
 				ProviderSelector{}, ProfileDefault, WithAgentDefinitionName("release-reviewer"))
 			if err != nil {
 				t.Fatalf("CreateSession: %v", err)
+			}
+			if source.Mode != tc.mode {
+				t.Fatalf("source.Mode = %q, want %q", source.Mode, tc.mode)
 			}
 
 			var successorID session.SessionID
@@ -84,6 +97,9 @@ func TestSessionScopedAgentIdentity_Scenario2_ForkClearPreserveBindingAndCatalog
 			successor, err := store.Load(context.Background(), successorID)
 			if err != nil {
 				t.Fatalf("load successor: %v", err)
+			}
+			if successor.Mode != tc.mode {
+				t.Fatalf("successor.Mode = %q, want %q", successor.Mode, tc.mode)
 			}
 			if successor.AgentDefinitionName != "release-reviewer" {
 				t.Fatalf("successor.AgentDefinitionName = %q, want %q (AC2.3: Fork/Clear must inherit it unconditionally)",

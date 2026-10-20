@@ -92,6 +92,7 @@
     method func (InstructionSnapshot).MetadataBytes() int
     method func (Limits).WithDefaults(d Limits) Limits
     method func (PendingAuthorization).Clone() PendingAuthorization
+    method func (PermissionMode).Rank() int
     method func (RetryDisposition).Valid() bool
     method func (RetryMetadata).Valid() bool
     method func (State).IsTerminal() bool

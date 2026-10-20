@@ -75,17 +75,38 @@ const (
 	ModePlan PermissionMode = "plan"
 	// ModeAccept auto-accepts edits (acceptEdits).
 	ModeAccept PermissionMode = "acceptEdits"
-	// ModeAuto runs autonomously using an enforcing guardrails checker in place of
-	// human approval: every tool call is approved by the checker instead of asking.
-	// A configured Deny in any scope and deliberately configured human-required asks
-	// still apply. Requires an enforcing checker; switching to this mode without one
-	// is refused by the server.
+	// ModeAuto is allow-all in the engine: routine asks are not raised, while a
+	// configured Deny in any scope and deliberately configured human-required asks
+	// still apply. The engine does not require a ToolReviewer for this mode; the
+	// host must admit auto only when an enforcing reviewer is configured, which then
+	// reviews the phases and tools it is configured for.
 	ModeAuto PermissionMode = "auto"
 	// ModeYolo runs gate-free: no routine prompts and no enforcing checker. Advisory
 	// monitoring may remain. Configured deny rules and deliberately required human
 	// asks still apply.
 	ModeYolo PermissionMode = "yolo"
 )
+
+// Rank orders permission modes by authority: plan (1) < default (2) <
+// acceptEdits (3) < auto (4) < yolo (5). An unknown mode ranks 0, below plan,
+// so a caller comparing ranks never treats it as wider than a known mode; a
+// caller that must reject unknown modes checks for 0 explicitly.
+func (m PermissionMode) Rank() int {
+	switch m {
+	case ModePlan:
+		return 1
+	case ModeDefault:
+		return 2
+	case ModeAccept:
+		return 3
+	case ModeAuto:
+		return 4
+	case ModeYolo:
+		return 5
+	default:
+		return 0
+	}
+}
 
 // ApprovalVerdict is the client's resolution of a permission.ask. It widens an
 // allow/deny boolean into three outcomes so a client can ask the
@@ -1219,19 +1240,7 @@ func (s *Session) TightenConfiguration(mode PermissionMode, limits Limits) error
 	if s.State != StateIdle || s.Counters != (Counters{}) {
 		return fmt.Errorf("%w: TightenConfiguration requires an idle, not-yet-run session", ErrIllegalTransition)
 	}
-	rank := func(m PermissionMode) int {
-		switch m {
-		case ModePlan:
-			return 1
-		case ModeDefault:
-			return 2
-		case ModeAccept:
-			return 3
-		default:
-			return 0
-		}
-	}
-	if rank(mode) == 0 || rank(s.Mode) == 0 || rank(mode) > rank(s.Mode) {
+	if mode.Rank() == 0 || s.Mode.Rank() == 0 || mode.Rank() > s.Mode.Rank() {
 		return errors.New("session: configuration would widen or invalidate permission mode")
 	}
 	for _, pair := range [][2]int{{s.Limits.MaxTurns, limits.MaxTurns}, {s.Limits.MaxToolCalls, limits.MaxToolCalls}, {s.Limits.MaxConsecutiveFailures, limits.MaxConsecutiveFailures}} {

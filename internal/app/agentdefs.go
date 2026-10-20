@@ -525,24 +525,6 @@ func tightenLimitField(defCap, request int) int {
 	return defCap
 }
 
-// permissionModeRank is ADR 0353's small LOCAL ordinal table for
-// PermissionMode's tighten-only ordering (plan < default < acceptEdits) —
-// Human decision (resolved): define this now rather than block on PR
-// #1730/ADR 0365's still-unmerged operator-tier permission-mode vocabulary;
-// reconcile later if that lands a different shape. It is used ONLY by
-// clampPermissionMode (the agent-bound session-root clamp, AC1.13); nothing
-// else in the composition layer needs a PermissionMode ordering today.
-func permissionModeRank(mode session.PermissionMode) int {
-	switch mode {
-	case session.ModePlan:
-		return 0
-	case session.ModeAccept:
-		return 2
-	default: // session.ModeDefault (and any unrecognised value) ranks as default.
-		return 1
-	}
-}
-
 // clampPermissionMode applies ADR 0353's tighten-only PermissionMode rule
 // (AC1.13): a request mode looser than the def's configured permissionMode is
 // silently clamped DOWN to the def's value — never rejected, never raised.
@@ -551,12 +533,14 @@ func permissionModeRank(mode session.PermissionMode) int {
 // default" sentinel every other resolvePermissionMode call site already
 // honours), so an empty defMode is not itself a rank — it means "no ceiling,"
 // leaving requestMode untouched exactly as an ordinary (non-agent-bound) main
-// session behaves. A non-empty defMode IS a real ceiling.
+// session behaves. A non-empty defMode IS a real ceiling, compared with
+// session.PermissionMode.Rank across all five modes; an unrecognised request
+// mode is clamped to defMode rather than passed through.
 func clampPermissionMode(defMode, requestMode session.PermissionMode) session.PermissionMode {
 	if defMode == "" {
 		return requestMode
 	}
-	if permissionModeRank(requestMode) > permissionModeRank(defMode) {
+	if requestMode.Rank() == 0 || requestMode.Rank() > defMode.Rank() {
 		return defMode
 	}
 	return requestMode

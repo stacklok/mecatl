@@ -51,3 +51,45 @@ func TestTightenConfigurationIsAtomicAndNeverWidens(t *testing.T) {
 		t.Fatal("tightened an already-run session")
 	}
 }
+
+func TestTightenConfigurationRanksAutoAndYolo(t *testing.T) {
+	cases := []struct {
+		name   string
+		stored PermissionMode
+		mode   PermissionMode
+		ok     bool
+	}{
+		{"yolo to yolo", ModeYolo, ModeYolo, true},
+		{"auto to auto", ModeAuto, ModeAuto, true},
+		{"yolo to auto", ModeYolo, ModeAuto, true},
+		{"yolo to plan", ModeYolo, ModePlan, true},
+		{"auto to acceptEdits", ModeAuto, ModeAccept, true},
+		{"auto to yolo", ModeAuto, ModeYolo, false},
+		{"acceptEdits to auto", ModeAccept, ModeAuto, false},
+		{"default to yolo", ModeDefault, ModeYolo, false},
+		{"unknown target", ModeYolo, PermissionMode("bogus"), false},
+		{"unknown stored", PermissionMode("bogus"), ModePlan, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := New("successor", tc.stored, EnvironmentRef{Kind: EnvKindLocal, ID: "/workspace", Revision: "v1"}, Limits{10, 20, 3}, time.Unix(1, 0))
+			if err := s.TightenConfiguration(tc.mode, s.Limits); (err == nil) != tc.ok {
+				t.Fatalf("TightenConfiguration(%q -> %q) = %v, want success=%v", tc.stored, tc.mode, err, tc.ok)
+			}
+		})
+	}
+}
+
+func TestPermissionModeRank(t *testing.T) {
+	order := []PermissionMode{ModePlan, ModeDefault, ModeAccept, ModeAuto, ModeYolo}
+	for i, m := range order {
+		if got := m.Rank(); got != i+1 {
+			t.Fatalf("%q.Rank() = %d, want %d", m, got, i+1)
+		}
+	}
+	for _, m := range []PermissionMode{"", "bogus", "trusted"} {
+		if got := m.Rank(); got != 0 {
+			t.Fatalf("%q.Rank() = %d, want 0", m, got)
+		}
+	}
+}

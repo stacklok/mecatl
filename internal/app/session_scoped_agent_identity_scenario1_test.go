@@ -444,6 +444,50 @@ func TestSessionScopedAgentIdentity_Scenario1_PermissionModeClampedNotRaised(t *
 	}
 }
 
+// A definition's permissionMode ceiling holds against yolo, whether the request
+// names it or the session inherits it as the server default.
+func TestSessionScopedAgentIdentity_Scenario1_PermissionModeClampsYolo(t *testing.T) {
+	ctx := context.Background()
+	ws := t.TempDir()
+	agentsDir := t.TempDir()
+	writeAgentDefFrontmatterFile(t, agentsDir, "editor", "tools: [Read]\npermissionMode: acceptEdits\n", "You edit.")
+	writeAgentDefFrontmatterFile(t, agentsDir, "asker", "tools: [Read]\npermissionMode: default\n", "You ask.")
+
+	llm := mockllm.New(mockllm.TextTurn("done"))
+	built, err := buildIsolated(t, ctx, Config{
+		Workspace: ws, NoSoul: true, Model: "gpt-5", AgentsDirs: []string{agentsDir}, MockProvider: llm,
+		PermissionMode: "yolo", PermissionModeFlagSet: true,
+	})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	defer built.Close()
+
+	cases := []struct {
+		name     string
+		defName  string
+		reqMode  session.PermissionMode
+		wantMode session.PermissionMode
+	}{
+		{"explicit yolo clamps to acceptEdits", "editor", session.ModeYolo, session.ModeAccept},
+		{"server-default yolo clamps to acceptEdits", "editor", "", session.ModeAccept},
+		{"explicit yolo clamps to default", "asker", session.ModeYolo, session.ModeDefault},
+		{"server-default yolo clamps to default", "asker", "", session.ModeDefault},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			sess, err := built.Service.CreateSessionWithProfile(ctx, tc.reqMode, session.Limits{},
+				server.ProviderSelector{}, server.ProfileDefault, server.WithAgentDefinitionName(tc.defName))
+			if err != nil {
+				t.Fatalf("CreateSession: %v", err)
+			}
+			if sess.Mode != tc.wantMode {
+				t.Fatalf("Mode = %q, want %q (request was %q)", sess.Mode, tc.wantMode, tc.reqMode)
+			}
+		})
+	}
+}
+
 // TestSessionScopedAgentIdentity_Scenario1_ProviderModelPairResolution pins
 // AC1.14, directly against resolveAgentDefRootProviderModel (the unit-level
 // seam agentDefSessionEngineFactory calls): all 5 cases of ADR 0353's

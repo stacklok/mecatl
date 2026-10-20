@@ -1049,29 +1049,10 @@ func effectiveChildMode(configured, parent session.PermissionMode) session.Permi
 // that is already narrower is preserved.
 func resumedChildMode(stored, configured, parent session.PermissionMode) session.PermissionMode {
 	admitted := effectiveChildMode(configured, parent)
-	if childModeRank(stored) <= childModeRank(admitted) {
+	if stored.Rank() <= admitted.Rank() {
 		return stored
 	}
 	return admitted
-}
-
-// childModeRank orders permission modes by authority. An unknown mode ranks
-// below plan, so it is never replaced by a wider one.
-func childModeRank(mode session.PermissionMode) int {
-	switch mode {
-	case session.ModePlan:
-		return 1
-	case session.ModeDefault:
-		return 2
-	case session.ModeAccept:
-		return 3
-	case session.ModeAuto:
-		return 4
-	case session.ModeYolo:
-		return 5
-	default:
-		return 0
-	}
 }
 
 // WithSubagentStopHook injects the HookRunner that fires the SubagentStop hook

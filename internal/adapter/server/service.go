@@ -4842,7 +4842,7 @@ func (s *Service) admitMode(mode session.PermissionMode) error {
 }
 
 func admitModeFor(cfg *Config, mode session.PermissionMode) error {
-	if modeRank(mode) == 0 {
+	if mode.Rank() == 0 {
 		return fmt.Errorf("%w: unknown permission mode %q", ErrInvalidArgument, mode)
 	}
 	if cfg.MaxAllowedMode != "" && !modeWithinCeiling(mode, cfg.MaxAllowedMode) {
@@ -4859,7 +4859,7 @@ func admitModeFor(cfg *Config, mode session.PermissionMode) error {
 // could never be created (unknown mode, above the ceiling, or auto without an
 // enforcing checker) fails construction instead of every default CreateSession.
 func normalizeDefaultMode(cfg *Config) error {
-	if cfg.MaxAllowedMode != "" && modeRank(cfg.MaxAllowedMode) == 0 {
+	if cfg.MaxAllowedMode != "" && cfg.MaxAllowedMode.Rank() == 0 {
 		return fmt.Errorf("%w: unknown permission-mode ceiling %q", ErrConfig, cfg.MaxAllowedMode)
 	}
 	if cfg.DefaultMode == "" {
@@ -4913,7 +4913,7 @@ func (s *Service) admitStoredMode(sess *session.Session) error {
 // aggregate's mid-turn refusal. The caller holds runEntryMu and the mutation
 // lease, found no live run, and passes the snapshot loaded under that lease.
 func (s *Service) cancelRefusedAwaiting(sess *session.Session, mode session.PermissionMode) error {
-	if sess.State != session.StateAwaiting || s.admitMode(sess.Mode) == nil || modeRank(mode) >= modeRank(sess.Mode) {
+	if sess.State != session.StateAwaiting || s.admitMode(sess.Mode) == nil || mode.Rank() >= sess.Mode.Rank() {
 		return nil
 	}
 	if err := sess.Cancel(); err != nil {
@@ -4963,26 +4963,7 @@ func (s *Service) adoptLeasedSession(ctx context.Context, id session.SessionID, 
 // modeWithinCeiling reports whether mode is at or below ceiling in the
 // permission-mode ordering: plan < default < accept-edits < auto < yolo.
 func modeWithinCeiling(mode, ceiling session.PermissionMode) bool {
-	return modeRank(mode) <= modeRank(ceiling)
-}
-
-// modeRank assigns an integer rank to session.PermissionMode for ceiling
-// comparison. Unknown modes get rank 0 (treated as most restrictive).
-func modeRank(mode session.PermissionMode) int {
-	switch mode {
-	case session.ModePlan:
-		return 1
-	case session.ModeDefault:
-		return 2
-	case session.ModeAccept:
-		return 3
-	case session.ModeAuto:
-		return 4
-	case session.ModeYolo:
-		return 5
-	default:
-		return 0
-	}
+	return mode.Rank() <= ceiling.Rank()
 }
 
 // LoadSession resumes a previously-persisted session so a subsequent StartRun

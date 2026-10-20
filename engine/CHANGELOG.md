@@ -26,7 +26,14 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   five-mode vocabulary (`plan`, `default`, `acceptEdits`, `auto`, `yolo`) that the
   unified permission-mode architecture requires; `Policy.Evaluate` now injects
   allow-all and loose-substitution at evaluation time based on the session's current
-  mode, so mode switches are fully effective at runtime. Added (minor).
+  mode, so mode switches are fully effective at runtime. `ModeAuto` is allow-all in
+  the engine whether or not a `ToolReviewer` is configured; the host must admit
+  auto only with an enforcing reviewer. Added (minor).
+
+- **`PermissionMode.Rank`** — orders the five modes by authority (plan 1 through
+  yolo 5; unknown 0). `Session.TightenConfiguration` now ranks auto and yolo, so an
+  auto or yolo successor can keep or narrow its source's mode instead of being
+  rejected. Added (minor).
 
 - **Schedule-store claim and retry conformance** — adds
   `scheduleconformance.RunClaimAndRetryConformance` with the complete shared
