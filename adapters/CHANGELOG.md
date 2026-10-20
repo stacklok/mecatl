@@ -18,6 +18,21 @@ Changes to the public adapter API follow [COMPATIBILITY.md](COMPATIBILITY.md).
   existing `/v1` package import path, and private shared support module at
   `github.com/stacklok/mecatl/internal/adaptersupport`.
 
-This is an extraction without runtime, storage-format, or wire-behavior changes.
-The initial `v0.1.0` tags are pending human release; support and driver must be
-published before adapters. Engine source and dependency graph are unchanged.
+### Changed
+
+- **Breaking minor (`v0.Y+1.0`)**: `grpcdriver.SnapshotFormat` and
+  `grpcdriver.EventLogFormat` now write the identity-aware `/2` envelopes
+  (`sessnap-json/2` and `eventlog-json/2`). Decoding wrappers read shipped `/1`
+  and `/2` data but write `/2`; opaque drivers preserve each tag and payload
+  byte-for-byte. Drain and stop old harness readers and writers, then upgrade
+  both independently configured snapshot and event decoding drivers; upgrade the
+  harness and clients together, then resume writers. See the [storage upgrade
+  runbook](../user-docs/operating/session-storage-operations.md#upgrade-to-api-major-2).
+  Old readers reject `/2`; mixed writers and rollback after `/2` writes are
+  unsupported. The `mecatl.driver.v1` protobuf and `session-store/1` opaque
+  driver contracts are unchanged.
+
+The initial module extraction otherwise has no runtime or protobuf wire-contract
+change. The initial `v0.1.0` tags are pending human release; support and driver
+must be published before adapters. Engine source and dependency graph are
+unchanged.

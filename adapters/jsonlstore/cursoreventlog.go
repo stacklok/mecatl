@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/stacklok/mecatl/engine/adapter/eventcodec"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 )
@@ -61,7 +62,7 @@ var _ port.CursorEventLog = (*Store)(nil)
 
 // AppendEvent durably records ev and returns the cursor positioned after it.
 func (st *Store) AppendEvent(ctx context.Context, id session.SessionID, ev session.Event) (port.Cursor, error) {
-	evJSON, err := json.Marshal(ev)
+	evJSON, err := eventcodec.Marshal(ev)
 	if err != nil {
 		return "", fmt.Errorf("jsonlstore: marshal event: %w", err)
 	}
@@ -310,11 +311,12 @@ func decodeEventPage(ctx context.Context, id session.SessionID, f *os.File, basi
 				GapReason: rec.R,
 				Cursor:    cursor,
 			})
-		case eventLogFormat:
-			var ev session.Event
-			if err := json.Unmarshal(rec.Ev, &ev); err != nil {
+		case eventLogFormat, "eventlog-json/1":
+			ev, err := eventcodec.UnmarshalFormat(rec.Ev, rec.V)
+			if err != nil {
 				return nil, 0, fmt.Errorf("jsonlstore: decode event: %w", err)
 			}
+			ev = ev.WithLegacySource("jsonlstore/"+basis.generation, string(cursor))
 			out = append(out, port.LogRecord{
 				Kind:   port.LogRecordEvent,
 				Event:  ev,

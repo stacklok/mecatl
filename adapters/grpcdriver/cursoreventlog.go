@@ -2,7 +2,6 @@ package grpcdriver
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -14,6 +13,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	driverv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/driver/v1"
+	"github.com/stacklok/mecatl/engine/adapter/eventcodec"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 )
@@ -65,7 +65,7 @@ var _ port.CursorEventLog = (*EventLog)(nil)
 // generation basis lives in another process, and the harness has no basis of its
 // own to put in it.
 func (l *EventLog) AppendEvent(ctx context.Context, id session.SessionID, ev session.Event) (port.Cursor, error) {
-	payload, err := json.Marshal(ev)
+	payload, err := eventcodec.Marshal(ev)
 	if err != nil {
 		return "", fmt.Errorf("grpcdriver: marshal event: %w", err)
 	}
@@ -154,12 +154,12 @@ func logRecordFromProto(id session.SessionID, resp *driverv1.ReadAfterResponse) 
 		return rec, nil
 	case port.LogRecordEvent:
 		env := resp.GetEvent()
-		if got := env.GetFormat(); got != EventLogFormat {
-			return port.LogRecord{}, fmt.Errorf("grpcdriver: read events %q: unknown event format %q (this client speaks %q)", id, got, EventLogFormat)
-		}
-		if err := json.Unmarshal(env.GetPayload(), &rec.Event); err != nil {
+		var err error
+		rec.Event, err = eventcodec.UnmarshalFormat(env.GetPayload(), env.GetFormat())
+		if err != nil {
 			return port.LogRecord{}, fmt.Errorf("grpcdriver: read events %q: decode event: %w", id, err)
 		}
+		rec.Event = rec.Event.WithLegacySource("grpcdriver/eventlog", string(rec.Cursor))
 		return rec, nil
 	default:
 		// An unknown kind is NOT treated as an event. `kind` is an open string so
@@ -301,7 +301,7 @@ func logRecordToProto(rec port.LogRecord) (*driverv1.ReadAfterResponse, error) {
 	if rec.Kind == port.LogRecordGap {
 		return out, nil
 	}
-	payload, err := json.Marshal(rec.Event)
+	payload, err := eventcodec.Marshal(rec.Event)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "encode event: %v", err)
 	}
