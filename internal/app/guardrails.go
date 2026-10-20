@@ -492,14 +492,15 @@ func configuredGuardrailSpecs(cfg Config) (specs []modelhook.RuleSpec, usedDefau
 }
 
 // demoteForPosture demotes the enforcing guardrail block mode to advisory for
-// the gate-free yolo tier ONLY (CC bypassPermissions parity). A per-session
-// engine (cfg.guardrailSessionMode set) is demoted only when its session is in
-// yolo mode, so an auto session on a yolo server keeps an enforcing checker;
-// the shared engine follows the process posture, and sessions whose mode
-// disagrees with it are promoted to a per-session engine (modeNeedsEngine).
-// strict/trusted/auto keep the configured mode — under auto the approve-once ask IS
-// the enforcement behaviour. It is the SINGLE posture→mode coupling point so the
-// default-set and operator-rule branches cannot drift.
+// yolo-mode sessions ONLY (CC bypassPermissions parity). A per-session engine
+// (cfg.guardrailSessionMode set) is demoted only when its session is in yolo
+// mode, so an auto session on a yolo server keeps an
+// enforcing checker; the shared engine is compiled for the server's default
+// session mode, and sessions whose mode disagrees with it are promoted to a
+// per-session engine (modeNeedsEngine). plan/default/acceptEdits/auto keep the
+// configured mode — under auto the approve-once ask IS the enforcement
+// behaviour. It is the SINGLE mode coupling point so the default-set and
+// operator-rule branches cannot drift.
 func demoteForPosture(cfg Config, mode string) string {
 	if !guardrailsDemoted(cfg) {
 		return mode
@@ -508,12 +509,14 @@ func demoteForPosture(cfg Config, mode string) string {
 }
 
 // guardrailsDemoted reports whether the engine cfg describes runs its
-// guardrail rules advisory-only.
+// guardrail rules advisory-only: only for yolo, keyed on the engine's session
+// mode, or for the shared engine on the server's default session mode. An
+// unresolved mode stays enforcing.
 func guardrailsDemoted(cfg Config) bool {
 	if cfg.guardrailSessionMode != "" {
 		return cfg.guardrailSessionMode == session.ModeYolo
 	}
-	return cfg.Posture >= PostureYolo
+	return cfg.DefaultSessionMode == session.ModeYolo
 }
 
 // guardrailsConfigured reports whether guardrails are switched on: a checker model

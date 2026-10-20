@@ -843,8 +843,8 @@ func boundedRouterFact(value string) string {
 // otherwise ride the shared engine.
 //
 // It is also true for a mode whose guardrail enforcement differs from the shared
-// engine's: the shared engine demotes the checker to advisory only at yolo
-// posture, so on a yolo server a non-yolo session (notably auto, which requires
+// engine's: the shared engine demotes the checker to advisory only when the
+// server's default session mode is yolo, so there a non-yolo session (notably auto, which requires
 // an enforcing checker) is promoted to a per-session engine compiled for its own
 // mode (guardrailsDemoted).
 func modeNeedsEngine(cfg Config) func(mode session.PermissionMode) bool {

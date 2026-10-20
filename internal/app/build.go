@@ -881,8 +881,8 @@ type Config struct {
 	guardrailDetails    *server.ReviewDetailRegistry
 	guardrailHealth     *guardrailRouteHealth
 	// guardrailSessionMode is the session mode an engine's guardrail rules are
-	// compiled for (set per session by the session-engine factory). Empty means
-	// the shared engine, whose rules follow the process posture.
+	// compiled for (set per session by the session-engine factories). Empty means
+	// the shared engine, whose rules follow the server's default session mode.
 	guardrailSessionMode session.PermissionMode
 	planApprovals        *planApprovalReceipts
 
@@ -1531,8 +1531,10 @@ type Built struct {
 	MCPBroker             *mcpbroker.Runtime
 	MCPBrokerHandlers     mcpbroker.HandlerBundle
 	MCPBrokerCallbackPath string
-	GuardrailsAdvisory    bool
-	Close                 func()
+	// GuardrailsAdvisory reports a configured checker demoted to advisory for
+	// sessions in the server's default mode (yolo); other modes keep it enforcing.
+	GuardrailsAdvisory bool
+	Close              func()
 }
 
 // MountMCPBrokerHandlers mounts the complete fixed broker bundle on a
@@ -2591,8 +2593,9 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		ResolveSessionModel: func(sel server.ProviderSelector, mode session.PermissionMode) server.ResolvedModel {
 			return resolvedSessionProjection(cfg, reg, sel, mode)
 		},
-		// Posture: the resolved server-wide posture tier as a string, projected into the
-		// ServerCapabilities echo as CHROME (a client renders a "⚠ auto"/"⚠ yolo" badge).
+		// Posture: the resolved server-wide tier as a string, projected into the
+		// ServerCapabilities echo. It tracks the server ceiling (strict/trusted =
+		// accept-edits, auto, yolo), which bounds the modes a client may cycle to.
 		// NOT session state — see server.Config.Posture.
 		Posture: cfg.Posture.String(),
 		// ProjectTrusted: the effective trust fold for the launch workspace (flag,
@@ -3082,7 +3085,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		diag.Log(ctx, port.LevelWarn, "durable automatic reservation reconciliation unavailable")
 	})
 	attempts = startAttemptRecovery(ctx, cfg, reg, store, eventLog, assets.attemptRepository, assets.reflectionRepository, assets, placementProvider, placementScope)
-	return &Built{Service: svc, MCPBroker: brokerRuntime, MCPBrokerHandlers: brokerHandlers, MCPBrokerCallbackPath: brokerCallbackPath, GuardrailsAdvisory: guardrailConfigured && cfg.Posture >= PostureYolo, Close: closeAll}, nil
+	return &Built{Service: svc, MCPBroker: brokerRuntime, MCPBrokerHandlers: brokerHandlers, MCPBrokerCallbackPath: brokerCallbackPath, GuardrailsAdvisory: guardrailConfigured && guardrailsDemoted(cfg), Close: closeAll}, nil
 }
 
 // resolveAgentSeam resolves the agent-definition registry from cfg: the
@@ -5387,11 +5390,7 @@ func normalizeGuardrailsModel(cfg Config) (string, error) {
 func logGuardrailsPosture(cfg Config) {
 	ctx := context.Background()
 	if cfg.GuardrailsDisabled {
-		message := "guardrails: OFF (kill-switch active via --guardrails=off); the LLM content checker is forced off regardless of --guardrails-model / the `guardrail` model slot"
-		if cfg.Posture == PostureAuto {
-			message += " — UNSUPERVISED: posture auto changes permission defaults but does not enable the independent guardrail checker"
-		}
-		cfg.diag().Log(ctx, port.LevelInfo, message)
+		cfg.diag().Log(ctx, port.LevelInfo, "guardrails: OFF (kill-switch active via --guardrails=off); the LLM content checker is forced off regardless of --guardrails-model / the `guardrail` model slot")
 		return
 	}
 	model, src, configured := cfg.guardrailModel, cfg.guardrailSource, cfg.guardrailConfigured
@@ -5399,11 +5398,7 @@ func logGuardrailsPosture(cfg Config) {
 		model, src, configured = resolveGuardrailsCheckerModel(cfg)
 	}
 	if !configured {
-		message := "guardrails: OFF (no checker model configured; bind the `guardrail` model slot or set --guardrails-model to enable)"
-		if cfg.Posture == PostureAuto {
-			message += " — UNSUPERVISED: posture auto changes permission defaults but does not enable the independent guardrail checker"
-		}
-		cfg.diag().Log(ctx, port.LevelInfo, message)
+		cfg.diag().Log(ctx, port.LevelInfo, "guardrails: OFF (no checker model configured; bind the `guardrail` model slot or set --guardrails-model to enable)")
 		return
 	}
 	specs, usedDefaults := effectiveGuardrailSpecs(cfg)
@@ -5442,11 +5437,11 @@ func guardrailsPostureLine(cfg Config, model string, src guardrailSource, specs 
 	if usedDefaults {
 		out += " (default set: WebSearch, WebFetch, FetchMcpResource, CallMcpWithQuery, mcp__*)"
 	}
-	// Posture coupling: under yolo every rule was demoted to advisory at
-	// compile time (demoteForPosture). Surface that SECURITY DOWNGRADE at startup so an
-	// operator sees it in the log, not only in the docs — `mode=` already reflects the
-	// demoted specs for explicit rules; the note states WHY it is advisory.
-	if cfg.Posture >= PostureYolo {
+	// Mode coupling: when sessions start in yolo every rule was demoted to
+	// advisory at compile time (demoteForPosture). Surface that SECURITY DOWNGRADE at
+	// startup so an operator sees it in the log, not only in the docs — `mode=` already
+	// reflects the demoted specs for explicit rules; the note states WHY it is advisory.
+	if guardrailsDemoted(cfg) {
 		out += " — YOLO: AI safety checks are advisory only."
 	}
 	return out

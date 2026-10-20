@@ -327,6 +327,45 @@ func TestGuardrailE2EYoloServerAutoSessionEnforces(t *testing.T) {
 	}
 }
 
+// The yolo demotion follows the executing session's mode on the agent-bound root
+// path too: an auto agent-bound session on a yolo server keeps an enforcing checker.
+func TestGuardrailE2EYoloServerAutoAgentBoundSessionEnforces(t *testing.T) {
+	ctx := context.Background()
+	cfg := guardrailE2ECfg(t, false, PostureYolo, "touch "+guardrailMarker)
+	agentsDir := t.TempDir()
+	writeAgentDefFrontmatterFile(t, agentsDir, "operator", "tools: [Shell]\n", "You run commands.")
+	cfg.AgentsDirs = []string{agentsDir}
+	built, err := buildIsolated(t, ctx, cfg)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	defer built.Close()
+	sess, err := built.Service.CreateSessionWithProfile(ctx, session.ModeAuto, session.Limits{},
+		server.ProviderSelector{}, server.ProfileDefault, server.WithAgentDefinitionName("operator"))
+	if err != nil {
+		t.Fatalf("CreateSession(auto, agent-bound) on a yolo server with a checker: %v", err)
+	}
+	if sess.Mode != session.ModeAuto {
+		t.Fatalf("Mode = %q, want auto", sess.Mode)
+	}
+	srv := httptest.NewServer(server.NewHTTPHandler(built.Service))
+	defer srv.Close()
+
+	evs := driveGuardrailPrompt(t, srv.URL, string(sess.ID), "merge it", nil)
+	var blocked bool
+	for _, ev := range evs {
+		if ev.Type == "tool.result" && ev.ToolResult.IsError && strings.Contains(ev.ToolResult.Content, "guardrail") {
+			blocked = true
+		}
+	}
+	if !blocked {
+		t.Fatal("an auto agent-bound session on a yolo server must keep an enforcing checker — no guardrail block surfaced")
+	}
+	if markerExists(t, cfg.Workspace) {
+		t.Fatal("the enforcing auto-session block must NOT execute the Shell command — but the marker file exists")
+	}
+}
+
 // modeRoutedProvider sends guardrail-reviewer requests (the GuardrailsModel) to
 // reviewer and every other request to agent, so one session's agent script
 // stays in order whether or not a mode consults the checker.

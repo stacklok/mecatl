@@ -386,11 +386,11 @@ func narratePermissionMode(cfg Config, checkerConfigured bool) {
 	if checkerReason != "" {
 		attrs = append(attrs, "guardrails_checker_reason", checkerReason)
 	}
-	if checker == checkerAdvisory && cfg.Posture >= PostureYolo {
+	if checker == checkerAdvisory && cfg.MaxAllowedMode == session.ModeYolo {
 		attrs = append(attrs, "guardrails_checker_note", yoloCheckerAdvisoryNote)
 	}
 	cfg.diag().Log(context.Background(), port.LevelInfo, "permission mode", attrs...)
-	if cfg.Posture == PostureAuto {
+	if cfg.MaxAllowedMode == session.ModeAuto {
 		cfg.diag().Log(context.Background(), port.LevelInfo,
 			"permission mode auto: the main agent and subagents KEEP the command-substitution guard, so a $(...), backtick, or subshell command that cannot be proved read-only is not auto-run; it asks. Headless, the subagent ask reviewer adjudicates a subagent's ask instead of denying it (--subagent-ask-reviewer); only yolo lifts the guard")
 	}

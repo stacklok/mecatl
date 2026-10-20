@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/internal/adapter/modelhook"
 )
 
@@ -79,16 +80,17 @@ func TestLogGuardrailsPostureBranches(t *testing.T) {
 		{
 			name: "ON yolo safety checks are advisory",
 			cfg: Config{
-				UseMock:         true,
-				Posture:         PostureYolo,
-				GuardrailsModel: "gpt-5-mini",
+				UseMock:            true,
+				DefaultSessionMode: session.ModeYolo,
+				MaxAllowedMode:     session.ModeYolo,
+				GuardrailsModel:    "gpt-5-mini",
 			},
 			wantCount: 1,
 			wantSubs:  []string{"guardrails: ON", "AI safety checks are advisory only."},
 		},
 		{
 			name:      "OFF yolo has no advisory safety notice",
-			cfg:       Config{Posture: PostureYolo, GuardrailsDisabled: true},
+			cfg:       Config{DefaultSessionMode: session.ModeYolo, MaxAllowedMode: session.ModeYolo, GuardrailsDisabled: true},
 			wantCount: 1,
 			wantSubs:  []string{"guardrails: OFF", "kill-switch"},
 			notSubs:   []string{"AI safety checks are advisory only."},
@@ -291,17 +293,42 @@ func TestGuardrailsPostureLine(t *testing.T) {
 
 // TestGuardrailsPostureLineStatesYoloDemotion: the startup posture
 // line must SURFACE the yolo advisory demotion so an operator sees the security
-// downgrade in the log, not only in docs. Non-yolo tiers must NOT carry the note.
+// downgrade in the log, not only in docs. It keys on the default session mode,
+// never the posture tier: other default modes must NOT carry the note.
 func TestGuardrailsPostureLineStatesYoloDemotion(t *testing.T) {
 	specs := []modelhook.RuleSpec{{Match: "Shell", Phases: []string{"pre"}, Mode: string(modelhook.ModeAdvisory)}}
-	yolo := guardrailsPostureLine(Config{Posture: PostureYolo}, "m", srcGate, specs, false)
+	yolo := guardrailsPostureLine(Config{DefaultSessionMode: session.ModeYolo}, "m", srcGate, specs, false)
 	if !strings.Contains(yolo, "YOLO: AI safety checks are advisory only.") {
 		t.Fatalf("the yolo posture line must state the advisory demotion; line=%q", yolo)
 	}
-	for _, p := range []Posture{PostureStrict, PostureTrusted, PostureAuto} {
-		line := guardrailsPostureLine(Config{Posture: p}, "m", srcGate, specs, false)
+	for _, mode := range []session.PermissionMode{"", session.ModePlan, session.ModeDefault, session.ModeAccept, session.ModeAuto} {
+		line := guardrailsPostureLine(Config{DefaultSessionMode: mode, Posture: PostureYolo}, "m", srcGate, specs, false)
 		if strings.Contains(line, "AI safety checks are advisory only.") {
-			t.Fatalf("posture %s must NOT carry the yolo demotion note; line=%q", p, line)
+			t.Fatalf("default mode %q must NOT carry the yolo demotion note; line=%q", mode, line)
 		}
+	}
+}
+
+// TestGuardrailsDemotedKeysOnSessionMode pins that the advisory demotion follows
+// the engine's session mode, or the server default for the shared engine, and
+// never the posture tier: an unresolved mode stays enforcing.
+func TestGuardrailsDemotedKeysOnSessionMode(t *testing.T) {
+	cases := []struct {
+		name string
+		cfg  Config
+		want bool
+	}{
+		{"shared engine, default yolo", Config{DefaultSessionMode: session.ModeYolo}, true},
+		{"shared engine, default auto on a yolo tier", Config{DefaultSessionMode: session.ModeAuto, Posture: PostureYolo}, false},
+		{"shared engine, unresolved mode on a yolo tier", Config{Posture: PostureYolo}, false},
+		{"auto session on a yolo default", Config{DefaultSessionMode: session.ModeYolo, guardrailSessionMode: session.ModeAuto}, false},
+		{"yolo session on an auto default", Config{DefaultSessionMode: session.ModeAuto, guardrailSessionMode: session.ModeYolo}, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := guardrailsDemoted(tc.cfg); got != tc.want {
+				t.Fatalf("guardrailsDemoted = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }
