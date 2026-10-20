@@ -18,7 +18,8 @@ sessions cannot change it.
 With no `status_customization:` entry, `mecatui` uses its shipped templates.
 The header includes the session title at every width and the connected remote
 target in its full variant. Customization cannot remove keyboard help, the
-posture, scroll, and changed-file indicators, or the activity cue. In a debug
+`auto` or `yolo` indicator, the project trust, scroll, and changed-file
+indicators, or the activity cue. In a debug
 session, it cannot remove the `⚠ DEBUG target` cue or privacy disclosure, even
 if the custom header is empty.
 
@@ -183,7 +184,7 @@ these semantic tokens:
 `error`, `info`, and `danger`.
 
 `danger` fills its text with a fixed red background that doesn't change with the
-theme. It is the pill the default header uses for `yolo` mode. The fill covers
+theme. It matches the pill `mecatui` shows for `yolo` mode. The fill covers
 exactly the wrapped text, so include any padding spaces inside the element, for
 example `<danger>  YOLO  </danger>`.
 

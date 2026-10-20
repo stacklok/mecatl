@@ -44,11 +44,12 @@ func TestStatusLine_Scenario2_DefaultTemplatesPreserveChrome(t *testing.T) {
 	}
 }
 
-// TestStatusLine_YoloModeRendersAlarmPill pins that the shipped header marks
-// the yolo mode with the filled alarm pill (the theme-independent dangerPill
-// colours around "YOLO"), and every other mode — including a pending yolo — as
-// plain "mode <name>" text with no pill. On an emoji-capable terminal a ⚡️
-// bolt (VS16 intact) precedes the pill, outside its fill; otherwise no bolt.
+// TestStatusLine_YoloModeRendersAlarmPill pins that the shipped header shows
+// the mode segment as plain "mode <name>" text and marks a confirmed yolo
+// session with exactly one filled alarm pill (the theme-independent dangerPill
+// colours around "YOLO"), owned by the renderer rather than the template. On an
+// emoji-capable terminal a ⚡️ bolt (VS16 intact) precedes the pill, outside its
+// fill; otherwise no bolt. auto and default carry no pill.
 func TestStatusLine_YoloModeRendersAlarmPill(t *testing.T) {
 	th := theme.New("aztec", theme.AztecPalette())
 	renderWith := func(mode string, emoji bool) string {
@@ -70,26 +71,20 @@ func TestStatusLine_YoloModeRendersAlarmPill(t *testing.T) {
 		return updated.(Model).renderHeader()
 	}
 	render := func(mode string) string { return renderWith(mode, false) }
-	pill := th.Style("dangerPill").UnsetPadding().Render("  YOLO  ")
-	if want := th.Style("dangerPill").Render(" YOLO "); stripANSIstr(pill) != stripANSIstr(want) || lipgloss.Width(pill) != lipgloss.Width(want) {
-		t.Fatalf("mode pill %q must match the posture pill %q cell for cell", pill, want)
-	}
+	pill := th.Style("dangerPill").Render(yoloPillText)
 	for _, sgr := range []string{"224;49;49", "245;245;245"} { // #E03131 / #F5F5F5
 		if !strings.Contains(pill, sgr) {
-			t.Fatalf("mode pill missing the fixed alarm colour %q: %q", sgr, pill)
+			t.Fatalf("pill missing the fixed alarm colour %q: %q", sgr, pill)
 		}
 	}
 	raw := render("yolo")
-	if !strings.Contains(raw, pill) || !strings.Contains(stripANSIstr(raw), "mode   YOLO") || strings.Contains(raw, "⚡") {
-		t.Fatalf("no-emoji yolo header must carry the bare alarm pill %q: %q", pill, raw)
+	if strings.Count(raw, pill) != 1 || !strings.Contains(stripANSIstr(raw), "mode yolo") || strings.Contains(raw, "⚡") {
+		t.Fatalf("no-emoji yolo header must carry plain mode text and one bare alarm pill %q: %q", pill, raw)
 	}
 	emoji := renderWith("yolo", true)
 	bolt := strings.Index(emoji, "⚡️ ")
-	if bolt < 0 || !strings.Contains(emoji, pill) || bolt > strings.Index(emoji, pill) || strings.Contains(pill, "⚡") {
+	if bolt < 0 || strings.Count(emoji, pill) != 1 || bolt > strings.Index(emoji, pill) || strings.Contains(pill, "⚡") {
 		t.Fatalf("emoji yolo header must put the ⚡️ bolt (with VS16) before the pill, outside its fill: %q", emoji)
-	}
-	if !strings.Contains(stripANSIstr(emoji), "mode ⚡️   YOLO") {
-		t.Fatalf("emoji yolo header text = %q", stripANSIstr(emoji))
 	}
 	for _, mode := range []string{"auto", "default"} {
 		raw := render(mode)

@@ -13,8 +13,9 @@ import (
 
 // TestTrustBadgeShowsProjectTrust asserts the header's right-aligned badge shows
 // the server-reported project trust, independent of posture and permission mode:
-// "trusted" in the warning style, "untrusted" muted, and no badge from an older
-// server that does not report trust. No posture tier renders a badge of its own.
+// "trusted" in the warning style, "untrusted" muted, and no badge from a server
+// that does not report trust. On a server with session_permission_modes a
+// posture tier renders no badge of its own for a default session.
 func TestTrustBadgeShowsProjectTrust(t *testing.T) {
 	th := theme.New("aztec", theme.AztecPalette())
 	cases := []struct {
@@ -31,7 +32,7 @@ func TestTrustBadgeShowsProjectTrust(t *testing.T) {
 	for _, tc := range cases {
 		m, _, _ := newTestModel(t, th)
 		m = applyAll(m, tea.WindowSizeMsg{Width: 100, Height: 30},
-			client.SessionReadyMsg{SessionID: "sess-test-0001", Capabilities: client.Capabilities{Posture: tc.posture, ProjectTrust: tc.trust}})
+			client.SessionReadyMsg{SessionID: "sess-test-0001", Capabilities: client.Capabilities{Posture: tc.posture, ProjectTrust: tc.trust, SessionPermissionModes: true}})
 		raw := m.renderHeader()
 		header := stripANSIstr(raw)
 		for _, gone := range []string{"YOLO", "⚠ auto", "⚡"} {
