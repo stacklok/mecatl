@@ -69,15 +69,15 @@ const (
 	// PostureTrusted raises the project-trust floor (honour a discovered project's
 	// ALLOW rules) but loosens NOTHING else — it is the alias --trust-project maps to.
 	PostureTrusted
-	// PostureAuto is the recommended UNATTENDED default: allow-all (main + children),
-	// main substitution loosened, project trust raised — but the child
-	// prompt-injection defense stays ON (a child's $()/backtick/heredoc still resolves
-	// through the child-ask model, never auto-run).
+	// PostureAuto is the tier of the auto ceiling: sessions may enter auto, and the
+	// deprecated --posture auto raises the interactive project-trust floor. It grants
+	// nothing by itself; allow-all follows each session's mode (Policy.Evaluate), and
+	// the substitution floor stays on for the main agent and children under auto.
 	PostureAuto
-	// PostureYolo is truly-off, GATE-FREE: everything PostureAuto does, PLUS the child
-	// substitution floor is loosened (LooseChildSubstitution) — child prompt-injection
-	// defense OFF, $()/backtick/heredoc auto-run in subagents/branches. Isolated,
-	// ephemeral, single-tenant deployments only.
+	// PostureYolo is the tier of the yolo ceiling: sessions may enter yolo, where
+	// Policy.Evaluate injects allow-all and loose substitution for the main agent and
+	// children. Like PostureAuto it grants nothing by itself. Isolated, ephemeral,
+	// single-tenant deployments only.
 	PostureYolo
 )
 

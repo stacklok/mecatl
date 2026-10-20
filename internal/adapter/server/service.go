@@ -654,9 +654,11 @@ type Config struct {
 	ResolveSessionModel func(ProviderSelector, session.PermissionMode) ResolvedModel
 
 	// Posture is the SERVER-WIDE operator posture-ladder tier as a string
-	// ("strict"/"trusted"/"auto"/"yolo"), projected into the ServerCapabilities echo
-	// as CHROME ONLY (a client renders a "⚠ auto"/"⚠ yolo" badge). It is NOT session
-	// state — it never changes per session; the per-session knob is permission MODE.
+	// ("strict"/"trusted"/"auto"/"yolo"), projected into the ServerCapabilities echo.
+	// It tracks the server ceiling (strict and trusted share the accept-edits
+	// ceiling), so a client uses it to bound which modes it may cycle to. It does
+	// not grant allow-all: that follows each session's permission MODE. It never
+	// changes per session.
 	// Empty (the zero value / an unconfigured child service) yields no badge. String
 	// passthrough — no enum on the wire (the EvNoProgress/StopBudget discipline).
 	Posture string
