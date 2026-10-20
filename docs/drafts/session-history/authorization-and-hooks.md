@@ -4,6 +4,38 @@
 This draft covers action binding, approval continuation, and hook evidence.
 It introduces no policy decisions or release authority.
 
+## Primer: from a tool request to the next model turn
+
+A run normally alternates between requests to the LLM and execution of the tool calls it requests.
+A hook is a configured processing step that the harness invokes at a particular stage, such as before or after tool execution.
+The broad path below provides context for this design; the durability and cancellation requirements that follow are proposed contracts, not claims that every part is already implemented.
+
+1. **The LLM requests a tool call.** Within a run, an LLM response names a tool and supplies arguments.
+   One response can request several tool calls.
+   Asking for a tool does not itself authorize execution.
+2. **The harness checks whether the tool call may execute.** It validates the arguments, applies permissions and applicable safety checks, and runs configured pre-execution hooks.
+   These checks can allow, deny, or require human-in-the-loop approval.
+   If a trusted hook rewrites the arguments, the changed action must be checked too.
+   Approval does not override cancellation or the final eligibility checks immediately before execution.
+3. **The tool executes through its own adapter.** Shell tools use their configured execution environment to run a command.
+   Filesystem tools operate through the session's workspace adapter; MCP tools call a remote MCP service.
+   These are different execution paths, not commands all routed through Shell.
+   Once executed, a tool may have changed the outside world even if later result processing fails.
+4. **The harness processes and checks the returned output.** Post-execution hooks and applicable disclosure checks run before the effective result is published or passed to the LLM.
+   Preventing secret disclosure is an important concern; checks can also address other disallowed or untrusted content.
+   Hooks and reviews run automatically, but their effects and failure handling depend on the stage and configuration.
+   A post-execution hook cannot undo the tool's effects; an enforcing inbound review can withhold output and, where interactive review is available, ask a human whether to release it.
+   A failed check does not universally mean "ask the human".
+   In this design, unreleased output stays only in process memory, outside history and client publication.
+5. **The permitted result becomes input to a later model request.** Normally, the next LLM request in the same run includes the accepted tool result so the agent can continue.
+   Cancellation prevents another model request in that run, but an already-produced result still receives bounded processing and disclosure checks.
+   A permitted accepted result can then be used by a later explicitly started run; cancellation does not automatically start one.
+   Withheld or unavailable output gets an explicit safe result rather than being silently passed through or recreated by rerunning the tool.
+
+Execution permission, established tool effects, and permission to disclose output are separate decisions.
+The history must preserve those distinctions without turning a restart into another execution attempt.
+See [cancellation and results](cancellation-and-results.md) for the independent lifetimes of run execution and result release.
+
 ## Imported assumptions
 
 [Execution gates](execution-and-recovery.md) distinguish a model-requested tool call, the effective authorized action retained as intent, and the final eligibility check before dispatch.

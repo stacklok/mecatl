@@ -26,6 +26,7 @@ Unsent drafts and presentation state remain local to each client.
 ## What the history makes possible
 
 History retains accepted decisions, effective model inputs, requested tool calls, authorized tool intents, and permitted outcomes.
+The [tool-call primer](authorization-and-hooks.md#primer-from-a-tool-request-to-the-next-model-turn) explains the path from an LLM's request through execution checks, tool execution, output checks, and the next model turn.
 Required facts must commit **before** dependent model requests, tool dispatch, applicable hooks, or actionable publication.
 This is durable orchestration inside Mecatl, not adoption or recreation of a general-purpose workflow platform.
 It does not make external execution atomic with a storage append.
