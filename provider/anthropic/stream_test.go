@@ -430,6 +430,9 @@ func TestTranslateMaxTokensStop(t *testing.T) {
 	if last.Kind != port.ChunkDone || last.Stop != session.StopError {
 		t.Fatalf("terminal chunk = %+v, want ChunkDone StopError (max_tokens)", last)
 	}
+	if last.StopDetail != "max_tokens" {
+		t.Fatalf("StopDetail = %q, want %q", last.StopDetail, "max_tokens")
+	}
 }
 
 // TestTranslateToolArgsSplitAcrossDeltas guards the accumulator's one corruption

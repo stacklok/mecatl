@@ -441,3 +441,21 @@ func TestResolversOverrideWinsBothPrePost(t *testing.T) {
 		t.Fatalf("post-completion engine with override = %d, want %d", got, override)
 	}
 }
+
+// TestOutputLimitForGatewayFallsBackToAnthropicCatalog pins that a custom or
+// gateway anthropic-messages provider whose listing omits output limits still
+// resolves a catalogued Claude model's real ceiling, instead of leaving the
+// adapter on its 4096 default (which extended thinking can exhaust before any
+// visible output, ending the run with a stop-only "error").
+func TestOutputLimitForGatewayFallsBackToAnthropicCatalog(t *testing.T) {
+	s := newMetadataFixture()
+	const customGateway = "sprout"
+	s.setEligibilityFixture([]string{customGateway})
+
+	if got := s.outputLimitFor(customGateway, catAnthropicModel); got != catAnthropicOutput {
+		t.Fatalf("outputLimitFor(%q, %q) = %d, want Anthropic catalog %d", customGateway, catAnthropicModel, got, catAnthropicOutput)
+	}
+	if got := s.outputLimitFor(customGateway, "not-a-catalogued-model"); got != 0 {
+		t.Fatalf("uncatalogued model = %d, want 0 (adapter default applies)", got)
+	}
+}

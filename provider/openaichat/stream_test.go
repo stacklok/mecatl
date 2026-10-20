@@ -407,3 +407,22 @@ func TestOpenAIChatStreamErrorUnwrap(t *testing.T) {
 		t.Error("Unwrap should reach the inner error")
 	}
 }
+
+// TestStopDetailNamesCollapsedFinishReason pins that every finish_reason mapStop
+// collapses into StopError is named on the done chunk, and benign ends are not.
+func TestStopDetailNamesCollapsedFinishReason(t *testing.T) {
+	for reason, want := range map[string]string{
+		"length":         "length",
+		"content_filter": "content_filter",
+		"stop":           "",
+		"tool_calls":     "",
+		"surprise":       "",
+	} {
+		if got := stopDetail(reason); got != want {
+			t.Errorf("stopDetail(%q) = %q, want %q", reason, got, want)
+		}
+		if (mapStop(reason) == session.StopError) != (want != "") {
+			t.Errorf("finish_reason %q: mapStop=%q but stopDetail=%q; a StopError must carry a detail", reason, mapStop(reason), want)
+		}
+	}
+}

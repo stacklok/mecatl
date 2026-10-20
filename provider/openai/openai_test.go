@@ -2067,3 +2067,28 @@ func TestStreamStampsProviderBodyAndHeader(t *testing.T) {
 		}
 	})
 }
+
+// TestStopDetailNamesCollapsedStatus pins that every terminal status mapStop
+// collapses into StopError is named, refined by a known incomplete reason.
+func TestStopDetailNamesCollapsedStatus(t *testing.T) {
+	cases := []struct {
+		status responses.ResponseStatus
+		reason string
+		want   string
+	}{
+		{responses.ResponseStatusIncomplete, "max_output_tokens", "incomplete:max_output_tokens"},
+		{responses.ResponseStatusIncomplete, "content_filter", "incomplete:content_filter"},
+		{responses.ResponseStatusIncomplete, "Something Unexpected", "incomplete"},
+		{responses.ResponseStatusFailed, "", "failed"},
+		{responses.ResponseStatusCompleted, "", ""},
+		{responses.ResponseStatusCancelled, "", ""},
+	}
+	for _, tc := range cases {
+		if got := stopDetail(tc.status, tc.reason); got != tc.want {
+			t.Errorf("stopDetail(%q, %q) = %q, want %q", tc.status, tc.reason, got, tc.want)
+		}
+		if (mapStop(tc.status) == session.StopError) != (tc.want != "") {
+			t.Errorf("status %q: mapStop=%q but stopDetail=%q; a StopError must carry a detail", tc.status, mapStop(tc.status), tc.want)
+		}
+	}
+}

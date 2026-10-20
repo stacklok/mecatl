@@ -42,6 +42,7 @@ type streamState struct {
 	hasUsage     bool
 	finished     bool               // finish_reason seen; content/tool deltas stop
 	stop         session.StopReason // the mapped terminal, emitted by finalize
+	stopDetail   string             // the finish_reason a StopError collapsed, emitted by finalize
 	completionID string             // typed chat.completion.chunk ID; stream-error correlation fallback
 }
 
@@ -109,6 +110,7 @@ func translate(chunk oai.ChatCompletionChunk, st *streamState) ([]port.Chunk, er
 	if choice.FinishReason != "" && !st.finished {
 		st.finished = true
 		st.stop = mapStop(choice.FinishReason)
+		st.stopDetail = stopDetail(choice.FinishReason)
 	}
 	return out, nil
 }
@@ -130,7 +132,7 @@ func finalize(st *streamState) []port.Chunk {
 		u := st.usage
 		out = append(out, port.Chunk{Kind: port.ChunkUsage, Usage: &u})
 	}
-	out = append(out, port.Chunk{Kind: port.ChunkDone, Stop: st.stop})
+	out = append(out, port.Chunk{Kind: port.ChunkDone, Stop: st.stop, StopDetail: st.stopDetail})
 	return out
 }
 
@@ -200,6 +202,17 @@ func mapUsage(u oai.CompletionUsage) session.Usage {
 		OutputTokens:    int(u.CompletionTokens),
 		CacheReadTokens: int(u.PromptTokensDetails.CachedTokens),
 		ReasoningTokens: int(u.CompletionTokensDetails.ReasoningTokens),
+	}
+}
+
+// stopDetail names the finish_reason that mapStop collapsed into StopError. It is
+// "" for every reason mapStop treats as a benign end.
+func stopDetail(reason string) string {
+	switch reason {
+	case "length", "content_filter":
+		return reason
+	default:
+		return ""
 	}
 }
 

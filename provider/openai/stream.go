@@ -281,7 +281,8 @@ func translateCompleted(event responses.ResponseStreamEventUnion, st *streamStat
 	}
 	return append(chunks,
 		port.Chunk{Kind: port.ChunkUsage, Usage: &usage},
-		port.Chunk{Kind: port.ChunkDone, Stop: mapStop(event.Response.Status)},
+		port.Chunk{Kind: port.ChunkDone, Stop: mapStop(event.Response.Status),
+			StopDetail: stopDetail(event.Response.Status, event.Response.IncompleteDetails.Reason)},
 	), nil
 }
 
@@ -691,6 +692,25 @@ func cacheWriteTokensFrom(details responses.ResponseUsageInputTokensDetails, inp
 		return inputTokens
 	default:
 		return write
+	}
+}
+
+// stopDetail names the terminal Responses status that mapStop collapsed into
+// StopError, refined by incomplete_details.reason when it is one of the known
+// values (for example "incomplete:max_output_tokens"). It is "" for every status
+// mapStop does not treat as an error.
+func stopDetail(status responses.ResponseStatus, incompleteReason string) string {
+	switch status {
+	case responses.ResponseStatusIncomplete:
+		switch incompleteReason {
+		case "max_output_tokens", "max_messages", "content_filter", "steered":
+			return "incomplete:" + incompleteReason
+		}
+		return "incomplete"
+	case responses.ResponseStatusFailed:
+		return "failed"
+	default:
+		return ""
 	}
 }
 

@@ -26,14 +26,18 @@ const (
 
 func clampLive(v, limit int) int { return min(v, limit) }
 
+// outputLimitFor resolves the max_tokens ceiling for an Anthropic Messages
+// request: the live observation, else the Anthropic catalog by model id for ANY
+// provider id. The catalog step is not limited to the first-party ids because
+// custom anthropic-messages providers and gateways often list models without an
+// output limit; a catalogued Claude model behind them would otherwise fall back
+// to the adapter's 4096 default, which extended thinking can exhaust before any
+// visible output.
 func (s *liveMetaStore) outputLimitFor(pid, model string) int {
 	if m, ok := s.lookup(pid, model); ok && m.OutputLimit > 0 {
 		return clampLive(m.OutputLimit, maxLiveOutputLimit)
 	}
-	if pid == providerAnthropic || pid == providerToolhiveAnthropic {
-		return anthropicOutputLimit(model)
-	}
-	return 0
+	return anthropicOutputLimit(model)
 }
 
 func (s *liveMetaStore) contextWindowFor(pid, model string) int {

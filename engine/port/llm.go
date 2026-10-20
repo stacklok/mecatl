@@ -127,6 +127,14 @@ type Chunk struct {
 	Usage *session.Usage
 	// Stop is set on ChunkDone.
 	Stop session.StopReason
+	// StopDetail is optionally set on ChunkDone alongside a non-benign Stop. It
+	// names the provider's own terminal label that Stop collapsed (for example
+	// "max_tokens", "refusal", "length", "content_filter", "incomplete"), so a
+	// StopError run can say WHICH condition ended it. Adapters set it only from
+	// their fixed provider vocabulary, never from model or free-form provider
+	// text. The loop treats it as a display label: it never branches on it and
+	// drops a value that is not a short lowercase token.
+	StopDetail string
 }
 
 // ProviderCapabilities declares which non-text prompt input a provider can

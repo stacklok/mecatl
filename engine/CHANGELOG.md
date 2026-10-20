@@ -13,6 +13,14 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 
 ### Added
 
+- **Provider stop detail** — adds `port.Chunk.StopDetail`, the provider's own
+  terminal label (for example `max_tokens`, `refusal`, `length`) that an adapter
+  collapsed into `StopError` on `ChunkDone`. A stop-only `StopError` run now names
+  it in the terminal cause, for example `terminal stop reason "error" (provider
+  stop reason "max_tokens")`. The loop keeps only short lowercase tokens and never
+  branches on the value. Adapters that leave it empty keep the previous text.
+  Added (minor).
+
 - **Agent-bound lifecycle persistence** — adds `Session.AgentCreateIntent`, an
   opaque original explicit-ID create fingerprint, and `Session.TightenConfiguration`
   for atomic, tighten-only configuration of an unpublished successor. Snapshot and

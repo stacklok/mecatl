@@ -342,7 +342,7 @@ func translateMessageStop(st *streamState) ([]port.Chunk, error) {
 	}
 	chunks = append(chunks,
 		port.Chunk{Kind: port.ChunkUsage, Usage: &usage},
-		port.Chunk{Kind: port.ChunkDone, Stop: mapStop(st.stopReason)},
+		port.Chunk{Kind: port.ChunkDone, Stop: mapStop(st.stopReason), StopDetail: stopDetail(st.stopReason)},
 	)
 	return chunks, nil
 }
@@ -361,6 +361,18 @@ func mapStop(reason sdk.StopReason) session.StopReason {
 		return session.StopError
 	default:
 		return session.StopEndTurn
+	}
+}
+
+// stopDetail names the stop_reason that mapStop collapsed into StopError, so the
+// loop can say which terminal condition ended the turn. It is "" for every
+// reason mapStop treats as a benign end.
+func stopDetail(reason sdk.StopReason) string {
+	switch reason {
+	case sdk.StopReasonMaxTokens, sdk.StopReasonRefusal:
+		return string(reason)
+	default:
+		return ""
 	}
 }
 
