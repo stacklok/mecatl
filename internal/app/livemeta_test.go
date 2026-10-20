@@ -449,7 +449,7 @@ func TestResolversOverrideWinsBothPrePost(t *testing.T) {
 // visible output, ending the run with a stop-only "error").
 func TestOutputLimitForGatewayFallsBackToAnthropicCatalog(t *testing.T) {
 	s := newMetadataFixture()
-	const customGateway = "sprout"
+	const customGateway = "custom-gateway"
 	s.setEligibilityFixture([]string{customGateway})
 
 	if got := s.outputLimitFor(customGateway, catAnthropicModel); got != catAnthropicOutput {
