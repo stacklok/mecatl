@@ -1094,11 +1094,26 @@ jobs:
       - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
         if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.go_relevant == 'true'
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        id: setup-go
         if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.go_relevant == 'true'
         with:
           go-version-file: go.mod
-          cache: true
-          cache-dependency-path: '**/go.sum'
+          cache: false
+      # The race suite takes about 6 minutes with a warm build and test cache and
+      # about 17-23 minutes cold. setup-go's own cache restores only an exact
+      # go.sum-hash match, so any dependency bump or evicted entry made the run
+      # cold. Go's caches are content-addressed, so a newer-or-older entry is
+      # still mostly valid: restore the latest main entry by prefix, and save
+      # only from main so PR runs don't evict it under the repository cache quota.
+      - name: Restore Go race cache
+        if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.go_relevant == 'true'
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-race-${{ runner.os }}-${{ runner.arch }}-go${{ steps.setup-go.outputs.go-version }}-${{ github.sha }}
+          restore-keys: go-race-${{ runner.os }}-${{ runner.arch }}-go${{ steps.setup-go.outputs.go-version }}-
       - name: Test workspace task infrastructure
         if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.go_relevant == 'true'
         run: task test:workspace-infrastructure
@@ -1111,6 +1126,14 @@ jobs:
       - name: Verify Go module metadata freshness
         if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.go_relevant == 'true'
         run: task test:module-metadata
+      - name: Save Go race cache
+        if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.go_relevant == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-race-${{ runner.os }}-${{ runner.arch }}-go${{ steps.setup-go.outputs.go-version }}-${{ github.sha }}
 
   analysis:
     name: Analysis
