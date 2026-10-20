@@ -46,45 +46,22 @@ type Message struct {
 	ToolCalls []ToolCall
 	// ToolResult holds the result carried by a tool-role message; nil otherwise.
 	ToolResult *ToolResult
-	// Reasoning is the provider's opaque reasoning REPLAY blob (e.g. OpenAI's
-	// reasoning-item encrypted_content, or Anthropic's (thinking,signature) pair),
-	// replayed back verbatim on subsequent calls and never interpreted or displayed
-	// by the harness. The STRUCTURE is provider-neutral (one opaque blob per
-	// message); the CONTENTS are provider-private — each adapter packs/unpacks its
-	// own wire shape, so the domain value object stays a bare string (do NOT widen
-	// it). It is distinct from the human-readable reasoning SUMMARY surfaced via
-	// reasoning.delta events for display: that prose is never stored here.
-	Reasoning string
-	// ProviderPhase is the OpenAI Responses API's opaque phase marker on an
-	// assistant message ("commentary" for intermediate output, "final_answer" for
-	// the final answer), replayed back verbatim on subsequent calls and never
-	// interpreted or displayed by the harness. For store:false manual-replay apps
-	// OpenAI requires preserving and resending it, or GPT-5.x models treat preambles
-	// as final answers / stop early. The STRUCTURE is provider-neutral (one opaque
-	// phase string per message); the CONTENTS are provider-private (the harness
-	// never branches on or validates the value — do NOT widen it). Empty string
-	// means "no phase". Same discipline as Reasoning. (Named ProviderPhase, not
-	// Phase, to disambiguate from the governance/hook-lifecycle Phase concept, which
-	// is interpreted — the opposite contract.)
+	// ProviderPhase is public display metadata; exact replay belongs to Replay.
 	ProviderPhase string
-	// ReasoningItemID is the OpenAI Responses API's opaque reasoning-item id
-	// (the "rs_…" id on the item whose encrypted_content rides Message.Reasoning),
-	// replayed back verbatim on subsequent stateless (store:false) calls and never
-	// interpreted or displayed by the harness. For store:false manual-replay apps
-	// the SDK serialises the assistant reasoning item with its id, and a strict
-	// gateway rejects an empty-string id ("id":""), so the id must be preserved
-	// alongside the blob or the replay 400s. The STRUCTURE is provider-neutral (one
-	// opaque id per message); the CONTENTS are provider-private (the harness never
-	// branches on or validates the value — do NOT widen it). Empty string means
-	// "no id captured" (e.g. Anthropic, or a pre-fix session). Same discipline as
-	// Reasoning/ProviderPhase.
-	ReasoningItemID string
 	// Parts carries non-text media (image/audio) on a USER message; it is nil for
 	// assistant/tool/system messages. Text remains the flattened text body
 	// (embedded-text resources collapse into it); Parts carries only the binary or
 	// URL-referenced media that rides alongside the text. Do not mutate Parts (or a
 	// Part's Data) after construction.
 	Parts []Content
+	// Historical preserves unattached display content across snapshot saves.
+	Historical *HistoricalRecord `json:"Historical,omitempty"`
+	// Legacy is private source-local verification provenance, not model history
+	// or executable identity lookup. Public projections must not copy it.
+	Legacy *LegacyMessageIdentity `json:"Legacy,omitempty"`
+	// Replay owns occurrence-specific bindings and opaque provider replay state.
+	// It is accepted atomically with this message, never as a separate sidecar.
+	Replay *MessageReplay `json:"Replay,omitempty"`
 	// UserPromptProvenance is explicit positive/non-principal provenance for a
 	// user-role message. Unknown is deliberately not treated as principal authority.
 	UserPromptProvenance UserPromptProvenance
@@ -109,12 +86,11 @@ func NewSystemMessage(text string) Message {
 }
 
 // NewAssistantMessage constructs an assistant-role message carrying optional
-// text, reasoning, and tool calls.
-func NewAssistantMessage(text, reasoning string, calls []ToolCall) Message {
+// text and canonical tool calls.
+func NewAssistantMessage(text string, calls []ToolCall) Message {
 	return Message{
 		Role:      RoleAssistant,
 		Text:      text,
-		Reasoning: reasoning,
 		ToolCalls: calls,
 	}
 }
@@ -136,9 +112,9 @@ type Conversation struct {
 	Messages []Message
 }
 
-// Append adds a message to the conversation history.
+// Append adds an independently owned message to the conversation history.
 func (c *Conversation) Append(m Message) {
-	c.Messages = append(c.Messages, m)
+	c.Messages = append(c.Messages, cloneMessage(m))
 }
 
 // Len reports the number of messages in the conversation.
@@ -153,29 +129,15 @@ func (c *Conversation) Len() int {
 // shapes — an orphaned tool result (no matching tool_use/function_call above it)
 // AND a dangling tool call (no result below it) draw an HTTP 400. It is pure (no
 // I/O, no new deps): used by compaction to refuse emitting a history that would
-// brick the session, and by ReplaceHistory as the aggregate-level guard.
+// brick the session, and by ReplaceHistory as the aggregate-level guard. Canonical
+// call IDs must be nonempty and unique across the entire retained history, even
+// after a call has been answered; each call has exactly one final result.
 //
 // An empty or nil slice is trivially valid.
 func ValidateToolPairing(msgs []Message) error {
-	// Track which call IDs have been opened by an assistant message and not yet
-	// answered. Order matters: a result must follow its call, not precede it.
-	open := make(map[ToolCallID]struct{})
-	for i, m := range msgs {
-		switch m.Role {
-		case RoleAssistant:
-			for _, c := range m.ToolCalls {
-				open[c.ID] = struct{}{}
-			}
-		case RoleTool:
-			if m.ToolResult == nil {
-				return fmt.Errorf("message %d: tool-role message carries no result", i)
-			}
-			id := m.ToolResult.CallID
-			if _, ok := open[id]; !ok {
-				return fmt.Errorf("message %d: orphaned tool result for call %q (no preceding assistant tool call)", i, id)
-			}
-			delete(open, id)
-		}
+	open, err := validateToolHistory(msgs)
+	if err != nil {
+		return err
 	}
 	if len(open) > 0 {
 		// Surface one dangling id deterministically for a stable error message.
@@ -189,24 +151,107 @@ func ValidateToolPairing(msgs []Message) error {
 	return nil
 }
 
-// CloneMessages returns a copy of msgs with a FRESH backing array, so the
-// returned slice and the original never alias: an Append to one cannot grow into
-// the other's storage. The COPY IS SHALLOW per element, which is sound because a
-// Message is an IMMUTABLE value object — its slice/pointer fields (ToolCalls,
-// ToolResult, Parts) are never mutated in place after construction (the
-// constructors build them once; the only mutation of a Conversation is Append,
-// which adds whole new Messages, never edits an existing one's fields). A fork
-// child therefore shares the parent's per-message tool-call / part data safely:
-// it only appends new Messages, it never rewrites a copied one. A nil input
-// returns nil.
-func CloneMessages(msgs []Message) []Message {
-	return slices.Clone(msgs)
+// validateToolHistory checks the canonical history prefix before aggregate mutation.
+// It permits outstanding calls while a turn is being dispatched, returning those
+// calls so strict completed-history validation can reject any that remain unanswered.
+func validateToolHistory(msgs []Message) (map[ToolCallID]struct{}, error) {
+	open := make(map[ToolCallID]struct{})
+	seen := make(map[ToolCallID]struct{})
+	for i, m := range msgs {
+		if err := ValidateMessageReplay(m); err != nil {
+			return nil, fmt.Errorf("message %d: %w", i, err)
+		}
+		if len(m.ToolCalls) > 0 && m.Role != RoleAssistant {
+			return nil, fmt.Errorf("message %d: tool calls require assistant role", i)
+		}
+		if m.ToolResult != nil && m.Role != RoleTool {
+			return nil, fmt.Errorf("message %d: tool result requires tool role", i)
+		}
+		switch m.Role {
+		case RoleAssistant:
+			for _, c := range m.ToolCalls {
+				if c.ID == "" {
+					return nil, fmt.Errorf("message %d: empty tool call ID", i)
+				}
+				if _, ok := seen[c.ID]; ok {
+					return nil, fmt.Errorf("message %d: repeated canonical tool call ID", i)
+				}
+				seen[c.ID] = struct{}{}
+				open[c.ID] = struct{}{}
+			}
+		case RoleTool:
+			if m.ToolResult == nil {
+				return nil, fmt.Errorf("message %d: tool-role message carries no result", i)
+			}
+			id := m.ToolResult.CallID
+			if id == "" {
+				return nil, fmt.Errorf("message %d: empty tool result call ID", i)
+			}
+			if _, ok := open[id]; !ok {
+				return nil, fmt.Errorf("message %d: orphaned tool result (no outstanding assistant tool call)", i)
+			}
+			delete(open, id)
+		case RoleSystem, RoleUser:
+		default:
+			return nil, fmt.Errorf("message %d: invalid message role", i)
+		}
+	}
+	return open, nil
 }
 
-// ForkSnapshot returns a deep-enough copy (CloneMessages — fresh backing array,
-// immutable-Message elements) of c's history with any TRAILING UNANSWERED tool
-// calls stripped, so the result is always tool-pairing-valid (ValidateToolPairing
-// passes). It is the seam a fork:true Subagent child seeds from: at dispatch time
+// CloneMessages returns an independently owned copy of all message storage,
+// including arguments, results, media, audiences, and opaque replay bytes.
+// A nil input returns nil.
+func CloneMessages(msgs []Message) []Message {
+	out := slices.Clone(msgs)
+	for i := range out {
+		out[i] = cloneMessage(out[i])
+	}
+	return out
+}
+
+func cloneMessage(m Message) Message {
+	m.Legacy = m.Legacy.clone()
+	if m.Historical != nil {
+		h := *m.Historical
+		h.Parts = cloneContents(h.Parts)
+		m.Historical = &h
+	}
+	m.ToolCalls = slices.Clone(m.ToolCalls)
+	for i := range m.ToolCalls {
+		m.ToolCalls[i].Args = slices.Clone(m.ToolCalls[i].Args)
+	}
+	m.Parts = cloneContents(m.Parts)
+	if m.ToolResult != nil {
+		result := *m.ToolResult
+		result.Parts = cloneContents(result.Parts)
+		m.ToolResult = &result
+	}
+	if m.Replay != nil {
+		replay := *m.Replay
+		replay.Bindings = slices.Clone(replay.Bindings)
+		if replay.Provider != nil {
+			provider := *replay.Provider
+			provider.Data = slices.Clone(provider.Data)
+			replay.Provider = &provider
+		}
+		m.Replay = &replay
+	}
+	return m
+}
+
+func cloneContents(parts []Content) []Content {
+	out := slices.Clone(parts)
+	for i := range out {
+		out[i].Data = slices.Clone(out[i].Data)
+		out[i].Audience = slices.Clone(out[i].Audience)
+	}
+	return out
+}
+
+// ForkSnapshot returns an independently owned copy of c's history with any
+// TRAILING UNANSWERED tool calls stripped, so it is tool-pairing-valid
+// (ValidateToolPairing passes). It is the seam a fork:true Subagent child seeds from: at dispatch time
 // the parent's trailing assistant message carries the Subagent{fork:true} call
 // itself, whose tool result is recorded only AFTER dispatch returns — so a naive
 // copy would end on a dangling tool_use and draw a provider HTTP 400 on the
@@ -258,44 +303,14 @@ func ForkSnapshot(c *Conversation) []Message {
 	return msgs[:lastAssistant]
 }
 
-// StripProviderState returns a copy of messages with every provider-private
-// replay blob cleared (Message.Reasoning, Message.ReasoningItemID,
-// Message.ProviderPhase, and each ToolCall.ItemID), yielding a
-// provider-neutral history: the roles, text,
-// tool calls (ID/Name/Args), tool results, and media parts are preserved
-// verbatim. Both the OpenAI and Anthropic adapters treat an EMPTY blob as
-// "no blob" and omit it on the wire, so a stripped history replays safely
-// to ANY provider — the new request's thinking/reasoning config is derived
-// from the NEW model, not the stripped history. Used for CROSS-provider
-// model-switch carryover, where a verbatim replay would hand one provider's
-// encrypted blob to another (HTTP 400). Same-provider carryover does NOT
-// strip (blobs replay, cache stays warm).
-//
-// The input slice is not mutated; a fresh backing array is returned (each
-// Message is a value, but a Message with tool calls shares the ToolCalls
-// backing array with the input unless copied — copy it before clearing
-// ItemID so the caller's messages are never mutated). A nil or empty input
-// is returned as-is.
+// StripProviderState returns independently owned canonical history without active
+// provider replay or phase. Legacy source coordinates remain verification metadata.
+// Pairing tokens and target item IDs are reconstructed at the LLM/adapter seam.
 func StripProviderState(messages []Message) []Message {
-	if len(messages) == 0 {
-		return messages
-	}
-	out := make([]Message, len(messages))
-	for i, m := range messages {
-		m.Reasoning = ""
-		m.ReasoningItemID = ""
-		m.ProviderPhase = ""
-		if len(m.ToolCalls) > 0 {
-			// Copy the ToolCalls backing array BEFORE zeroing ItemID: the
-			// shallow per-element copy above aliases the input's slice, so a
-			// naive in-place clear would mutate the caller's history.
-			calls := slices.Clone(m.ToolCalls)
-			for j := range calls {
-				calls[j].ItemID = ""
-			}
-			m.ToolCalls = calls
-		}
-		out[i] = m
+	out := CloneMessages(messages)
+	for i := range out {
+		out[i].ProviderPhase = ""
+		out[i].Replay = nil
 	}
 	return out
 }

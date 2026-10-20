@@ -2628,7 +2628,7 @@ func (t *SubagentTool) run(ctx context.Context, call session.ToolCall, env tool.
 	// UI). No child content.
 	if emit != nil {
 		emit(session.Event{Type: session.EvSubagentStart, Subagent: &session.SubagentPayload{
-			ParentCallID:           string(call.ID),
+			ParentCallID:           call.ID,
 			ChildID:                string(childID),
 			ChildIncarnation:       child.Incarnation(),
 			Goal:                   subagentGoal(args),
@@ -2893,7 +2893,7 @@ func (t *SubagentTool) startBackground(ctx context.Context, b backgroundChild) s
 	// subagent.start always precedes the started-result on the stream.
 	if b.emit != nil {
 		b.emit(session.Event{Type: session.EvSubagentStart, Subagent: &session.SubagentPayload{
-			ParentCallID:           string(b.call.ID),
+			ParentCallID:           b.call.ID,
 			ChildID:                string(b.childID),
 			Goal:                   subagentGoal(b.args),
 			Background:             true,
@@ -3223,7 +3223,7 @@ type subagentEndMetrics struct {
 // status line with no test firing.
 func subagentEndEvent(parentCallID session.ToolCallID, childID session.SessionID, stop session.StopReason, cause string, m subagentEndMetrics) session.Event {
 	return session.Event{Type: session.EvSubagentEnd, Subagent: &session.SubagentPayload{
-		ParentCallID:     string(parentCallID),
+		ParentCallID:     parentCallID,
 		ChildID:          string(childID),
 		ChildIncarnation: m.incarnation,
 		ToolCount:        m.toolCount,
@@ -3758,7 +3758,7 @@ func driveChild(ctx context.Context, engine *Engine, child *session.Session, run
 		driveReq := runReq
 		driveReq.Text = drivePrompt
 		run := engine.Run(ctx, child, runEnv, driveReq)
-		text, st, c, u, tc := drainChildObserved(run, emit, string(call.ID), string(childID), posture)
+		text, st, c, u, tc := drainChildObserved(run, emit, call.ID, string(childID), posture)
 		finalText, stop, cause = text, st, c
 		usage = usage.Add(u)
 		toolCount += tc
@@ -3928,7 +3928,7 @@ func salvageEmptyStop(ctx context.Context, engine *Engine, child *session.Sessio
 	} else {
 		run = engine.Run(ctx, child, runEnv, salvageReq)
 	}
-	text, _, _, u, _ := drainChildObserved(run, emit, string(call.ID), string(childID), posture)
+	text, _, _, u, _ := drainChildObserved(run, emit, call.ID, string(childID), posture)
 	// Sum the salvage turn's usage (mirror the structured-output usage accumulation);
 	// the caller's usage already excludes this drive, so there is no double-count.
 	usage = usage.Add(u)
@@ -4277,7 +4277,7 @@ func truncateGoal(s string) string {
 // client-only and nothing enters the parent's Conversation. With a nil emit
 // it discards every intermediate event exactly as the original drainChild
 // did.
-func drainChildObserved(run *Run, emit func(session.Event), parentCallID, childID string, posture childPosture) (finalText string, stop session.StopReason, cause string, usage session.Usage, toolCount int) {
+func drainChildObserved(run *Run, emit func(session.Event), parentCallID session.ToolCallID, childID string, posture childPosture) (finalText string, stop session.StopReason, cause string, usage session.Usage, toolCount int) {
 	// Track child callID → tool name so a tool.result can be attributed to its
 	// tool.call name without re-deriving it from the (clamped) args preview.
 	names := map[session.ToolCallID]string{}
@@ -4327,7 +4327,7 @@ func isInstructionWarning(text string) bool {
 // 0-after-positive). toolCount is tools-STARTED (a call, not a result: a result may
 // never arrive on a cancel); turnUsage is provider-reported usage (the issue-#82
 // display-only estimate is never folded in).
-func projectChildEvent(emit func(session.Event), ev session.Event, names map[session.ToolCallID]string, parentCallID, childID string, toolCount int, turnUsage session.Usage) (int, session.Usage) {
+func projectChildEvent(emit func(session.Event), ev session.Event, names map[session.ToolCallID]string, parentCallID session.ToolCallID, childID string, toolCount int, turnUsage session.Usage) (int, session.Usage) {
 	if !projectableChildEvent(emit, ev) {
 		return toolCount, turnUsage
 	}

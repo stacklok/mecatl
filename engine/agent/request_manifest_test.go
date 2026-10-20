@@ -108,7 +108,8 @@ func TestRequestManifestDescribesFinalRequestWithoutContent(t *testing.T) {
 	}
 	sess.ProviderID = "safe-provider"
 	sess.ReasoningEffort = "high"
-	prior := session.NewAssistantMessage("https://credentials.example/"+secret, "reasoning-provider-blob "+secret, nil)
+	prior := session.NewAssistantMessage("https://credentials.example/"+secret, nil)
+	prior.Replay = &session.MessageReplay{Provider: &session.ProviderReplay{Format: "test", Version: 1, Data: []byte("reasoning-provider-blob " + secret)}}
 	prior.ProviderPhase = "provider-phase-" + secret
 	if err := sess.SeedHistory([]session.Message{prior}); err != nil {
 		t.Fatal(err)

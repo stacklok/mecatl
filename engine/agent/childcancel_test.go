@@ -136,7 +136,7 @@ func TestCancelChildMidDrive(t *testing.T) {
 	if !strings.Contains(res.Content, "partial findings so far") {
 		t.Fatalf("result must carry the child's partial text, got %q", res.Content)
 	}
-	if !strings.Contains(res.Content, "agentId: subagent-s1-p1") {
+	if !strings.Contains(res.Content, "agentId: "+eventSubagentID(t, evs, 0)) {
 		t.Fatalf("result must keep the resumable agentId trailer, got %q", res.Content)
 	}
 	if got := lastResult(t, evs); got.Stop == session.StopError || got.Stop == session.StopCancelled {
@@ -273,7 +273,7 @@ func TestChildTimeoutRetractsSurfacedAskMidRun(t *testing.T) {
 		switch {
 		case ev.Type == session.EvPermissionRetract:
 			retractIdx = i
-		case ev.Type == session.EvToolResult && ev.ToolResult != nil && ev.ToolResult.CallID == "p1":
+		case ev.Type == session.EvToolResult && ev.ToolResult != nil && ev.ToolResult.CallID == eventCallID(t, evs, "Subagent", 0):
 			callResIdx = i
 		case ev.Type == session.EvResult:
 			resultIdx = i
@@ -318,7 +318,7 @@ func TestCancelChildAfterDoneAndUnknownNoOp(t *testing.T) {
 	if got := lastResult(t, evs); got.Stop == session.StopError {
 		t.Fatalf("setup run failed: %q", got.Error)
 	}
-	if r.CancelChild("subagent-s1-p1") {
+	if r.CancelChild(eventSubagentID(t, evs, 0)) {
 		t.Fatalf("CancelChild on an already-done child must return false")
 	}
 	if r.CancelChild("subagent-nonexistent") {
@@ -371,7 +371,7 @@ func TestCancelChildPersistResumeRoundTrip(t *testing.T) {
 	}
 
 	// Persisted after the cancel, in the cancelled state.
-	loaded, err := store.Load(context.Background(), "subagent-s1-p1")
+	loaded, err := store.Load(context.Background(), session.SessionID(eventSubagentID(t, evs, 0)))
 	if err != nil || loaded == nil {
 		t.Fatalf("client-cancelled child must be persisted: %v", err)
 	}
@@ -380,14 +380,14 @@ func TestCancelChildPersistResumeRoundTrip(t *testing.T) {
 	}
 
 	// Resume the cancelled child (cancelled→Interrupt recovery) on a direct call.
-	resumed := runOneSubagent(t, task, "p2", resumeArgs("subagent-s1-p1", "pick up where you left off"))
+	resumed := runOneSubagent(t, task, "p2", resumeArgs(eventSubagentID(t, evs, 0), "pick up where you left off"))
 	if resumed.IsError {
 		t.Fatalf("resume after client-cancel errored: %q", resumed.Content)
 	}
 	if !strings.Contains(resumed.Content, "RESUMED_ANSWER") {
 		t.Fatalf("resumed child must continue the conversation, got %q", resumed.Content)
 	}
-	if got := extractAgentID(t, resumed.Content); got != "subagent-s1-p1" {
+	if got := extractAgentID(t, resumed.Content); got != eventSubagentID(t, evs, 0) {
 		t.Fatalf("resumed agentId = %q, want subagent-s1-p1 (same handle)", got)
 	}
 }
@@ -409,26 +409,28 @@ func TestCancelChildNaturalCompletionRace(t *testing.T) {
 			mockllm.TextTurn("parent: done"),
 		)
 		e := newEngine(agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, task)})
-		r := e.Run(context.Background(), newSession(t, session.Limits{}), agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
+		sess := newSession(t, session.Limits{})
+		r := e.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
 
-		started := make(chan struct{}, 1)
+		started := make(chan string, 1)
 		done := make(chan struct{})
 		syncOnStart := i%2 == 1
 		go func() {
 			defer close(done)
-			if syncOnStart {
-				// Wait until the child is REGISTERED (EvSubagentStart is emitted after
-				// registration), so the cancel lands inside the live window.
-				<-started
-			}
-			// Both outcomes are legal (true = caught it live, false = not yet
-			// registered / already done).
-			_ = r.CancelChild("subagent-s1-p1")
+			// Even iterations learn the accepted handle from the call event and
+			// race registration; odd iterations wait until registration is proven.
+			_ = r.CancelChild(<-started)
 		}()
 		evs := drainObserving(t, r, func(ev session.Event) {
-			if ev.Type == session.EvSubagentStart && ev.Subagent != nil {
+			var childID string
+			if syncOnStart && ev.Type == session.EvSubagentStart && ev.Subagent != nil {
+				childID = ev.Subagent.ChildID
+			} else if !syncOnStart && ev.Type == session.EvToolCall && ev.ToolCall != nil && ev.ToolCall.Name == "Subagent" {
+				childID = "subagent-" + string(sess.ID) + "-" + string(ev.ToolCall.ID)
+			}
+			if childID != "" {
 				select {
-				case started <- struct{}{}:
+				case started <- childID:
 				default:
 				}
 			}
@@ -448,7 +450,7 @@ func TestCancelChildNaturalCompletionRace(t *testing.T) {
 			t.Fatalf("iteration %d: unexpected Subagent tool error under the race: %q", i, res.Content)
 		}
 		// Started children have exactly two legal renderings, both with the trailer.
-		if !strings.Contains(res.Content, "agentId: subagent-s1-p1") {
+		if !strings.Contains(res.Content, "agentId: "+eventSubagentID(t, evs, 0)) {
 			t.Fatalf("iteration %d: result must carry the resumable trailer, got %q", i, res.Content)
 		}
 		noted := strings.Contains(res.Content, "[subagent cancelled by user]")
@@ -524,23 +526,32 @@ func TestResumeWithinRunReRegistersAndIsCancellable(t *testing.T) {
 	)
 	task := agent.NewSubagentTool(childEngineWith(childLLM, catalogWith(t, park)),
 		agent.WithSubagentStore(store))
-	parentLLM := mockllm.New(
+	parentLLM := newScriptedLLM(
 		mockllm.ToolCallTurn(toolCall("p1", "Subagent", `{"prompt":"first task"}`)),
-		mockllm.ToolCallTurn(toolCall("p2", "Subagent", resumeArgs("subagent-s1-p1", "continue, but deeper"))),
+		handleTurn(t, "p1", toolCall("p2", "Subagent", `{"prompt":"continue, but deeper"}`), "resume"),
 		mockllm.TextTurn("parent: done"),
 	)
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, task)})
 	r := e.Run(context.Background(), newSession(t, session.Limits{}), agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
 
+	gotChild := make(chan string, 1)
 	var cancelOK bool
 	var cancelDone sync.WaitGroup
 	cancelDone.Add(1)
 	go func() {
 		defer cancelDone.Done()
+		childID := <-gotChild
 		<-park.started // only the RESUMED drive parks, so this is run #2 for the id
-		cancelOK = r.CancelChild("subagent-s1-p1")
+		cancelOK = r.CancelChild(childID)
 	}()
-	evs := drainWithTimeout(t, r)
+	evs := drainObserving(t, r, func(ev session.Event) {
+		if ev.Type == session.EvSubagentStart && ev.Subagent != nil {
+			select {
+			case gotChild <- ev.Subagent.ChildID:
+			default:
+			}
+		}
+	})
 	cancelDone.Wait()
 
 	if !cancelOK {
@@ -550,10 +561,10 @@ func TestResumeWithinRunReRegistersAndIsCancellable(t *testing.T) {
 	for _, ev := range evs {
 		if ev.Type == session.EvToolResult && ev.ToolResult != nil {
 			switch ev.ToolResult.CallID {
-			case "p1":
+			case eventCallID(t, evs, "Subagent", 0):
 				v := *ev.ToolResult
 				first = &v
-			case "p2":
+			case eventCallID(t, evs, "Subagent", 1):
 				v := *ev.ToolResult
 				second = &v
 			}
@@ -566,7 +577,7 @@ func TestResumeWithinRunReRegistersAndIsCancellable(t *testing.T) {
 		t.Fatalf("resumed run must fold back a success-with-note, got %+v", second)
 	}
 	if !strings.Contains(second.Content, "[subagent cancelled by user]") ||
-		!strings.Contains(second.Content, "agentId: subagent-s1-p1") {
+		!strings.Contains(second.Content, "agentId: "+eventSubagentID(t, evs, 0)) {
 		t.Fatalf("resumed+cancelled run must carry the note + the SAME resumable trailer, got %q", second.Content)
 	}
 	if got := lastResult(t, evs); got.Stop == session.StopError || got.Stop == session.StopCancelled {
@@ -594,17 +605,20 @@ func TestStaleVerdictAfterCancelResumeDoesNotResolveNewAsk(t *testing.T) {
 	childEngine := shellChildEngine(childLLM, bash)
 	task := agent.NewSubagentTool(childEngine, agent.WithSubagentStore(store))
 
-	parentLLM := mockllm.New(
+	parentLLM := newScriptedLLM(
 		mockllm.ToolCallTurn(toolCall("p1", "Subagent", `{"prompt":"run it"}`)),
-		mockllm.ToolCallTurn(toolCall("p2", "Subagent", resumeArgs("subagent-s1-p1", "try again"))),
+		handleTurn(t, "p1", toolCall("p2", "Subagent", `{"prompt":"try again"}`), "resume"),
 		mockllm.TextTurn("parent: done"),
 	)
 	e := interactiveEngine(t, agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, task)})
 	r := e.Run(context.Background(), newSession(t, session.Limits{}), agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
 
-	var oldAskID, newAskID string
+	var oldAskID, newAskID, childID string
 	asks := 0
 	evs := drainObserving(t, r, func(ev session.Event) {
+		if ev.Type == session.EvSubagentStart && ev.Subagent != nil {
+			childID = ev.Subagent.ChildID
+		}
 		if ev.Type != session.EvPermissionAsk || ev.Ask == nil {
 			return
 		}
@@ -613,7 +627,7 @@ func TestStaleVerdictAfterCancelResumeDoesNotResolveNewAsk(t *testing.T) {
 		case 1:
 			// Park #1: capture the askID, then cancel the child (retracts the ask).
 			oldAskID = ev.Ask.AskID
-			if !r.CancelChild("subagent-s1-p1") {
+			if !r.CancelChild(childID) {
 				t.Errorf("CancelChild must succeed for the parked child")
 			}
 		case 2:

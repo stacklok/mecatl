@@ -134,7 +134,7 @@ func TestMalformedPendingWorkspaceEnrollmentSnapshotFailsClosed(t *testing.T) {
 		}},
 		{"authorization pending", func(s *Snapshot) {
 			s.State = session.StateAuthorizing
-			s.Messages = []messageDTO{toDTO(session.NewAssistantMessage("", "", []session.ToolCall{call}))}
+			s.Messages = []messageDTO{toDTO(session.NewAssistantMessage("", []session.ToolCall{call}))}
 			s.PendingAuthorization = toPendingAuthorizationDTO(authorization)
 		}},
 		{"terminal state", func(s *Snapshot) {

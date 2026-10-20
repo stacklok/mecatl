@@ -183,14 +183,13 @@ func (r *childAskRouter) registerChild(askID string, child *Run) {
 	r.mu.Unlock()
 }
 
-// registerSurfaced retains only the metadata the parent may safely record on
-// verdict acceptance. The child call ID is deliberately omitted: it can collide
-// with a call in the parent conversation and must never drive parent rule replay.
+// registerSurfaced retains safe verdict metadata and the canonical child call ID.
+// Parent rule replay still requires an exact retained parent occurrence.
 func (r *childAskRouter) registerSurfaced(ask session.PendingAsk, child *Run, turn int) {
 	r.mu.Lock()
 	if !r.closed {
 		r.byAskID[ask.AskID] = childAskRoute{child: child, turn: turn, surfaced: true,
-			approval: session.ApprovalPayload{AskID: ask.AskID, Tool: ask.Tool, Origin: ask.Origin}}
+			approval: session.ApprovalPayload{AskID: ask.AskID, Call: ask.Call, Tool: ask.Tool, Origin: ask.Origin}}
 	}
 	r.mu.Unlock()
 }

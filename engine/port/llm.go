@@ -29,7 +29,7 @@ type LLMRequest struct {
 	// System is the layered system prompt.
 	System prompt.Layered
 	// Messages is the conversation history to send.
-	Messages []session.Message
+	Messages []LLMMessage
 	// Tools are the tool schemas the model may call.
 	Tools []tool.ToolSpec
 	// Model is the provider model identifier (an opaque string; the adapter maps it
@@ -44,43 +44,16 @@ const (
 	// ChunkText is an assistant text delta.
 	ChunkText ChunkKind = iota
 	// ChunkReasoning is a human-readable reasoning summary delta. It is
-	// DISPLAY-ONLY: clients render it for visibility into the model's thinking;
-	// it is NOT the blob replayed to the provider. (See ChunkReasoningItem.)
-	//
-	// DTO-neutrality note (multi-provider Finding C): the ChunkReasoning (display
-	// summary) vs ChunkReasoningItem (replay blob) split is the PROVIDER-NEUTRAL
-	// seam P1 (the native Anthropic adapter) validates — Anthropic's thinking delta
-	// maps to ChunkReasoning, its (thinking,signature) replay token to
-	// ChunkReasoningItem. Keep the split; do not collapse the two.
+	// display-only; private replay travels separately in ChunkReplay.
 	ChunkReasoning
-	// ChunkReasoningItem carries the provider's opaque reasoning REPLAY blob
-	// (e.g. OpenAI's reasoning-item encrypted_content, or Anthropic's
-	// (thinking,signature) pair), emitted once the reasoning output item is
-	// assembled. The Text field holds the opaque blob, which the loop stores on
-	// Message.Reasoning and the adapter sends back verbatim on subsequent stateless
-	// calls. It is never displayed or interpreted — the contents are provider-
-	// private; only the STRUCTURE (one opaque blob per message) is neutral. The
-	// item's provider id rides ReasoningItemID alongside it (stored on
-	// Message.ReasoningItemID); a provider with no per-item id (Anthropic) leaves
-	// it empty.
-	ChunkReasoningItem
 	// ChunkToolCall is a fully-assembled tool call, emitted once complete.
 	ChunkToolCall
 	// ChunkUsage is the terminal usage/cache accounting.
 	ChunkUsage
 	// ChunkDone is the end of stream; it carries the StopReason.
 	ChunkDone
-	// ChunkPhase carries the provider's opaque PHASE marker on Text (mirrors
-	// ChunkReasoningItem). The OpenAI Responses API tags an assistant output
-	// message as intermediate commentary or the final answer; for store:false
-	// manual-replay apps the phase must be preserved and resent on the assistant
-	// message item, or GPT-5.x models treat preambles as final answers / stop
-	// early. The loop stores it on Message.ProviderPhase and the adapter sends it back
-	// verbatim on subsequent stateless calls. Like ChunkReasoningItem it is never
-	// displayed or interpreted — the STRUCTURE is neutral (one opaque phase string
-	// per message), the CONTENTS are provider-private (the harness never branches
-	// on or validates the value). Placed LAST in the block — chunks are in-process
-	// only, never serialized as ints, so ordinal stability is not a concern.
+	// ChunkPhase carries ProviderPhase public display metadata on Text.
+	// Exact private phase replay belongs in ChunkReplay.
 	ChunkPhase
 	// ChunkProviderRoute carries the opaque DOWNSTREAM provider display label that
 	// actually served a routed request on Text (issue #480). It is emitted by the
@@ -95,6 +68,8 @@ const (
 	// OpenRouter routed to. The label is human-readable and is not a routing slug or
 	// round-trippable identifier. Same discipline as ChunkPhase.
 	ChunkProviderRoute
+	// ChunkReplay carries one complete adapter-owned envelope in Replay.
+	ChunkReplay
 )
 
 // Chunk is a single provider-neutral unit of a model stream. The loop assembles
@@ -104,25 +79,15 @@ const (
 type Chunk struct {
 	// Kind discriminates the payload.
 	Kind ChunkKind
-	// Text carries the assistant text on ChunkText, the human-readable reasoning
-	// summary on ChunkReasoning (display-only), the provider's opaque reasoning
-	// replay blob on ChunkReasoningItem (e.g. OpenAI encrypted_content or Anthropic
-	// (thinking,signature); never displayed), and the provider's opaque phase
-	// marker on ChunkPhase (stored on Message.Phase, replayed verbatim).
+	// Text carries assistant text, display-only reasoning, or display phase.
 	Text string
-	// ReasoningItemID is set on ChunkReasoningItem. It carries the provider's
-	// opaque reasoning ITEM id (e.g. OpenAI's "rs_…" id on a reasoning output
-	// item), which the loop stores on Message.ReasoningItemID and the adapter
-	// stamps back verbatim on subsequent stateless calls: the OpenAI Responses
-	// reasoning item's id field is api:"required" with no omitzero, so a replay
-	// without the captured id serialises "id":"" and strict OpenAI-compatible
-	// gateways reject it (HTTP 400). Like the Text blob it accompanies, it is
-	// never displayed, interpreted, or validated — the STRUCTURE is neutral
-	// (one opaque id per reasoning item), the CONTENTS are provider-private.
-	// Same discipline as ToolCall.ItemID and the ChunkPhase carrier.
-	ReasoningItemID string
 	// ToolCall is set on ChunkToolCall.
-	ToolCall *session.ToolCall
+	ToolCall *LLMToolCall
+	// Replay is adapter-owned opaque metadata on ChunkReplay. It stays tentative
+	// until the entire successful turn is accepted.
+	Replay *session.ProviderReplay
+	// ReplayIsOutput makes replay output anchor TTFT without counting a text delta.
+	ReplayIsOutput bool
 	// Usage is set on ChunkUsage.
 	Usage *session.Usage
 	// Stop is set on ChunkDone.

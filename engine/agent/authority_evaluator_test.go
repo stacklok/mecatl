@@ -131,7 +131,7 @@ func TestAuthorityEvaluator_BoundSessionWithoutEvaluatorFailsClosed(t *testing.T
 			t.Fatalf("omitted tool executions = %d, want 0 when a bound session has no evaluator", got)
 		}
 		for _, event := range events {
-			if event.ToolResult != nil && event.ToolResult.CallID == "write" {
+			if event.ToolResult != nil && event.ToolResult.CallID == eventCallID(t, events, "Write", 0) {
 				if !strings.Contains(event.ToolResult.Content, "authority evaluator is not configured") {
 					t.Fatalf("missing evaluator result = %q, want a fail-closed configuration error", event.ToolResult.Content)
 				}
@@ -208,7 +208,7 @@ func TestAuthorityEvaluator_UnavailableEvaluatorIsDistinctFromDenial(t *testing.
 		t.Fatal("unavailable evaluator did not produce an operator diagnostic")
 	}
 	for _, event := range events {
-		if event.ToolResult != nil && event.ToolResult.CallID == "unavailable" {
+		if event.ToolResult != nil && event.ToolResult.CallID == eventCallID(t, events, "Read", 0) {
 			if !strings.Contains(event.ToolResult.Content, "authority evaluator unavailable") || strings.Contains(event.ToolResult.Content, "denied by authority") {
 				t.Fatalf("unavailable evaluator result = %q, want a distinct fail-closed message", event.ToolResult.Content)
 			}
@@ -270,7 +270,7 @@ func TestAuthorityEvaluator_MetaToolIsAuthorizedAgainstItsTarget(t *testing.T) {
 			t.Fatalf("denied target executed through the meta-tool %d times", meta.ran.Load())
 		}
 		for _, event := range events {
-			if event.ToolResult != nil && event.ToolResult.CallID == "meta" {
+			if event.ToolResult != nil && event.ToolResult.CallID == eventCallID(t, events, metaTool, 0) {
 				if !strings.Contains(event.ToolResult.Content, deniedTarget) {
 					t.Fatalf("target denial did not name reconstructed target: %q", event.ToolResult.Content)
 				}
@@ -421,7 +421,7 @@ func TestAuthorityEvaluator_ResourceAttributeIsDerivedWithoutRawArguments(t *tes
 			t.Fatalf("copy executions = %d, want 0 (destination denial must block execution)", got)
 		}
 		for _, event := range events {
-			if event.ToolResult != nil && event.ToolResult.CallID == "copy" {
+			if event.ToolResult != nil && event.ToolResult.CallID == eventCallID(t, events, "Copy", 0) {
 				if !event.ToolResult.IsError || !strings.Contains(event.ToolResult.Content, "dest denied") {
 					t.Fatalf("copy result = %+v, want a denial naming the destination reason", event.ToolResult)
 				}
@@ -468,7 +468,7 @@ func TestAuthorityResourceResolutionFailureDeniesBeforeEvaluator(t *testing.T) {
 				t.Fatalf("tool executions=%d evaluator calls=%d, want 0/0", read.ran.Load(), evaluator.calls())
 			}
 			for _, event := range events {
-				if event.ToolResult != nil && event.ToolResult.CallID == "read" {
+				if event.ToolResult != nil && event.ToolResult.CallID == eventCallID(t, events, "Read", 0) {
 					if !event.ToolResult.IsError || !strings.Contains(event.ToolResult.Content, "authority resource") {
 						t.Fatalf("tool result=%+v, want fail-closed authority resolution error", event.ToolResult)
 					}
@@ -547,7 +547,7 @@ func TestAuthorityEvaluator_DisclosureIsNotLoadBearing(t *testing.T) {
 			t.Fatal("required ToolSearch control tool is missing from the request")
 		}
 		for _, event := range events {
-			if event.ToolResult == nil || event.ToolResult.CallID != "search" {
+			if event.ToolResult == nil || event.ToolResult.CallID != eventCallID(t, events, tool.ToolSearchName, 0) {
 				continue
 			}
 			if strings.Contains(event.ToolResult.Content, `"name":"Write"`) {
@@ -578,7 +578,7 @@ func TestAuthorityEvaluator_DisclosureIsNotLoadBearing(t *testing.T) {
 			t.Fatalf("evaluator calls = %d, want 1", got)
 		}
 		for _, event := range events {
-			if event.ToolResult != nil && event.ToolResult.CallID == "call-1" {
+			if event.ToolResult != nil && event.ToolResult.CallID == eventCallID(t, events, "Write", 0) {
 				if !event.ToolResult.IsError || !strings.Contains(event.ToolResult.Content, "denied by authority") {
 					t.Fatalf("authority result = %+v, want distinct authority denial", event.ToolResult)
 				}
@@ -652,7 +652,7 @@ func TestAuthorityEvaluator_ResourceReachDerivesFromToolNames(t *testing.T) {
 			t.Fatalf("aggregate resource call ran=%d evaluations=%d, want 0/0", resourceTool.ran.Load(), evaluator.calls())
 		}
 		for _, event := range events {
-			if event.ToolResult != nil && event.ToolResult.CallID == "aggregate" {
+			if event.ToolResult != nil && event.ToolResult.CallID == eventCallID(t, events, "ListMcpResources", 0) {
 				if !strings.Contains(event.ToolResult.Content, "target is invalid") {
 					t.Fatalf("aggregate result = %q, want concrete-server failure", event.ToolResult.Content)
 				}

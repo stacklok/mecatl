@@ -1,0 +1,19 @@
+{
+  "id": "legacy-auth-session",
+  "state": "authorizing",
+  "mode": "default",
+  "limits": {"MaxTurns": 8, "MaxToolCalls": 16, "MaxConsecutiveFailures": 3},
+  "counters": {"Turns": 2, "ToolCalls": 1},
+  "created_at": "2025-01-02T03:04:05Z",
+  "messages": [
+    {"role": "assistant", "text": "first legacy call", "reasoning": "encrypted-replay-v0", "phase": "commentary", "reasoning_item_id": "rs_legacy_1", "tool_calls": [{"ID": "provider-call-reused", "Name": "Read", "Args": {"path":"first.txt"}, "item_id": "fc_item_legacy_1"}]},
+    {"role": "tool", "tool_result": {"CallID": "provider-call-reused", "Content": "first result"}},
+    {"role": "assistant", "text": "second legacy call", "phase": "final_answer", "tool_calls": [{"ID": "provider-auth-call", "Name": "Shell", "Args": {"command":  "echo auth"}, "item_id": "fc_item_auth"}, {"ID": "provider-call-reused", "Name": "Shell", "Args": {"command":"echo second"}, "item_id": "fc_item_legacy_2"}]}
+  ],
+  "pending_authorization": {
+    "authorization": {"id": "auth-legacy-1", "display_name": "Legacy OAuth", "binding": "private-binding", "expires_at": "2025-01-03T03:04:05Z"},
+    "call": {"id": "provider-auth-call", "name": "Shell", "args": "eyJjb21tYW5kIjogICJlY2hvIGF1dGgifQ==", "item_id": "fc_item_auth"},
+    "deferred": [{"id": "provider-call-reused", "name": "Shell", "args": "eyJjb21tYW5kIjoiZWNobyBzZWNvbmQifQ==", "item_id": "fc_item_legacy_2"}]
+  },
+  "environment_ref": {"Kind": "mem", "ID": "legacy-workspace", "Revision": "v1"}
+}

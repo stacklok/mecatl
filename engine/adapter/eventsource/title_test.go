@@ -82,7 +82,7 @@ func TestFoldNoTitleWhenNoGenuinePrompt(t *testing.T) {
 func TestFoldTitleSurvivesCompaction(t *testing.T) {
 	head := []session.Message{
 		session.NewUserMessage("the original goal that was compacted away"),
-		session.NewAssistantMessage("old turn", "", nil),
+		session.NewAssistantMessage("old turn", nil),
 	}
 	evs := []session.Event{
 		// The genuine opener is evented BEFORE the compaction.
@@ -149,7 +149,7 @@ func TestFoldTitleClampsLongPrompt(t *testing.T) {
 // reconstruction (the reconstructAwaiting path calls SetTitle too).
 func TestFoldTitleAwaiting(t *testing.T) {
 	call := toolCall("c1", "Shell", `{"command":"ls"}`)
-	ask := session.PendingAsk{AskID: "s1:0:c1:r0", Tool: "Shell"}
+	ask := session.PendingAsk{AskID: "s1:0:c1:r0", Tool: "Shell", Call: call.ID}
 	evs := []session.Event{
 		{Type: session.EvUserPrompt, Turn: 0, UserPrompt: &session.UserPromptPayload{Text: "run ls please"}},
 		{Type: session.EvTurnStart, Turn: 0},

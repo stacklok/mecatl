@@ -21,6 +21,46 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   fingerprint is inferred from effective values or inherited by successors.
   Added (minor).
 
+- **Canonical invocation and replay APIs (issue #2117)** — adds
+  `session.NewToolCallID`, distinct `ProviderCallID`/`ProviderItemID` types,
+  `ProviderReplay`, `ToolCallBinding`, `MessageReplay`, and
+  `ValidateMessageReplay`. Adds provider-facing `port.LLMMessage`,
+  `LLMToolCall`, `LLMToolResult`, `ProjectMessages`, and `ChunkReplay`.
+  Opaque payload contents are adapter-owned; occurrence bindings and copied
+  replay storage belong to the Session. Added (minor).
+
+- **Historical identity projections (issue #2117)** — adds
+  `HistoricalRecord`, `EvHistorical`, historical projection/identity helpers,
+  private legacy provenance carrier types and event accessors,
+  `ValidateIdentityPersistence`, and `CloneSessionRelationship`/`CloneEventIdentity`.
+  These APIs preserve data and verification provenance without granting execution
+  authority. Added (minor).
+
+- **Legacy continuation abandonment (issue #2117)** — removes draft
+  `IdentityMigrationHold`, `ErrMigrationHeld`, `CheckIdentityReady`,
+  `IdentityHoldSummary`, `IdentityHoldSnapshot`, and `RestoreIdentityMigrationHold`.
+  Snapshot and complete-event codecs preserve provable continuations and abandon
+  unprovable ones during load, returning ordinary promptable history with an
+  upgrade notice that prior tool effects and completion may be unknown. Readers
+  accept legacy `/1` and candidate hold-bearing `/2` snapshots; normalized writes
+  retain `/2` without held authority. Removed/Changed (breaking, pre-v1 minor).
+
+- **Canonical evidence protocol and source verification (issue #2117)** — adds
+  `learning.ReflectionEvidenceV2`, `EvidenceCitation`, protocol/coordinate
+  helpers, `RematerializeEvidence`, `VerifyEvidenceSource`,
+  `CanonicalEvidenceCitation`, `LegacyVerificationInput`, and
+  `ProjectVerifiedInput` and `Projection.ReflectionInput`. Private verified
+  bindings survive sanitized reflection without recomputing frozen identities;
+  legacy reasoning-item redaction provenance survives replay pruning. Public
+  citations separate verified availability from optional canonical invocation
+  attachment. Added (minor).
+
+- **Claimed authorization continuation validation** — adds
+  `Session.ValidateAuthorizationContinuation` to check exact outstanding canonical
+  identity and the ordered deferred suffix before execution preparation. Effective
+  arguments remain the retained private bytes, not the approval projection.
+  Added (minor).
+
 - **Schedule-store claim and retry conformance** — adds
   `scheduleconformance.RunClaimAndRetryConformance` with the complete shared
   suite plus unresolved prior-claim rejection, late-result isolation, and
@@ -442,6 +482,54 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   before persisting them. Changed (breaking pre-v1 minor); existing ordinary-session
   wire clients are unaffected.
 
+- **Canonical invocation acceptance (issue #2117)** — `session.ToolCallID`
+  denotes globally unique engine identity instead of a provider pairing key.
+  `NewAssistantMessage` takes `(text string, calls []ToolCall)`.
+  `RecordAssistant`, `RecordToolResults`, history replacement/seeding, and
+  `ValidateToolPairing` reject empty/repeated canonical occurrences and duplicate
+  final results before mutation. Pending approval/authorization resumes require
+  the exact outstanding canonical occurrence; rejected or ambiguous legacy
+  continuations preserve their pending state. `CloneMessages`, history acceptance,
+  and `Conversation.Append` now own nested storage, including replay. Historical
+  copies retain identity, so client delivery must still be idempotent.
+  Changed (breaking behavioral/source contract, pre-v1 minor).
+
+- **Provider DTO boundary (issue #2117)** — `port.LLMRequest.Messages` becomes
+  `[]LLMMessage`, and `Chunk.ToolCall` becomes `*LLMToolCall`. `Chunk` gains
+  `Replay`/`ReplayIsOutput`; existing chunk-kind numeric values change after
+  removal of `ChunkReasoningItem` (chunks are in-process, not persisted enums).
+  `RouteToolResultParts` accepts `[]session.Content` instead of a domain result.
+  `Message` gains `Replay`, `Historical`, and private `Legacy` provenance;
+  `ProviderPhase` is display metadata, with exact replay phase in the opaque
+  payload. `Event` gains `Historical`, `SessionRelationship` gains `Legacy`,
+  and delegation payload `ParentCallID` fields become `ToolCallID`.
+  Changed (breaking signatures, field types, and struct additions, pre-v1 minor).
+
+- **Versioned evidence input (issue #2117)** — `learning.Input` gains `Protocol`;
+  `NewInput`, new materializations, and admission signals use
+  `reflection-evidence/v2`. Legacy-v0/v1 representations, digest inputs,
+  coordinates, and stored attempt/proposal identities remain frozen and verify
+  while the source exists. Public previews omit provider-era identity and replay;
+  missing source is unavailable, not recovered from a digest alone.
+  Changed (breaking struct/behavioral contract, pre-v1 minor).
+
+- **Wire and storage compatibility assessment (issue #2117)** — separate from
+  engine Go versioning, the approved Harness API major is 2. Server, `mecatui`,
+  SDK, and Studio upgrade together; discovery/routes and `mecatl.v1` remain
+  reachable, with no public v1 identity alias. Software SDK versioning remains
+  independent. Snapshot/event writers use `sessnap-json/2`/`eventlog-json/2`;
+  new readers accept consistent `/1` and `/2` encodings. Drain active writers,
+  upgrade both decoding drivers, then harness/clients. Upgraded wrappers can
+  emit `/2` to old readers; rejection is per operation, not startup negotiation.
+  Local JSONL snapshot envelopes and Redis's unchanged outer event tag do not
+  protect old local readers. No mixed writers or rollback after new-format
+  writes; opaque drivers preserve tag/bytes and `session-store/1` is unchanged.
+  Valid old sessions/continuations/evidence remain readable; unproven
+  continuations are inspection-only and unsupported historical associations
+  retain standalone content. This does not redesign save timing or promise
+  durable-save-before-effects. See the
+  [upgrade procedure](../user-docs/operating/session-storage-operations.md#upgrade-to-api-major-2).
+
 - **Atomic one-shot retry eligibility (issue #2273)** —
   `port.ScheduleOneShotReArmer.ReArmOneShot` now requires store-side atomic
   validation of current disabled/settled-failure state, one-shot retry policy,
@@ -679,6 +767,17 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   breaking under `COMPATIBILITY.md` (pre-v1 a minor bump).
 
 ### Removed
+
+- **Domain/provider replay fields (issue #2117)** — removes
+  `session.Message.Reasoning`, `Message.ReasoningItemID`, `ToolCall.ItemID`,
+  `port.Chunk.ReasoningItemID`, and `ChunkReasoningItem`. Use Session-owned
+  `Message.Replay` and provider-facing DTOs/`ChunkReplay`; no deprecated
+  competing identity fields or `InvocationID` alias remain. Public
+  `ConversationMessage.reasoning` (5) and `reasoning_item_id` (8) are removed
+  and reserved under wire major 2. Readable reasoning, text/media, and
+  `provider_phase` remain public; internal archives retain private replay.
+  Removed (breaking Go source contract, pre-v1 minor); wire major assessed
+  separately above.
 
 - **Redundant delegation selector APIs** — removes `WithParallelTargetEngineFactory`,
   `WithSubagentTargetEngineFactory`, `WithWritableTargetEngineFactory`,

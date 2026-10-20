@@ -34,7 +34,7 @@ import (
 // 1 and the final message is the user prompt, not the assistant turn).
 func TestFoldAwaitingPreservesTrailingAssistantTurn(t *testing.T) {
 	call := toolCall("c1", "Shell", `{"command":"ls"}`)
-	ask := session.PendingAsk{AskID: "s1:0:c1:r0", Tool: "Shell", Reason: "needs approval"}
+	ask := session.PendingAsk{AskID: "s1:0:c1:r0", Tool: "Shell", Call: call.ID, Reason: "needs approval"}
 	evs := []session.Event{
 		{Type: session.EvUserPrompt, Turn: 0, UserPrompt: &session.UserPromptPayload{Text: "run ls"}},
 		{Type: session.EvTurnStart, Turn: 0},
@@ -92,7 +92,7 @@ func TestFoldedAwaitingSessionIsDrivable(t *testing.T) {
 	// fallback when the askID grammar does not match a real run serial).
 	const askID = "det-1:0:c1:r0"
 	call := toolCall("c1", "Read", `{"path":"a.go"}`)
-	ask := session.PendingAsk{AskID: askID, Tool: "Read", Reason: "approve read"}
+	ask := session.PendingAsk{AskID: askID, Tool: "Read", Call: call.ID, Reason: "approve read"}
 	evs := []session.Event{
 		{Type: session.EvUserPrompt, Turn: 0, UserPrompt: &session.UserPromptPayload{Text: "read a.go"}},
 		{Type: session.EvTurnStart, Turn: 0},
@@ -150,17 +150,17 @@ func TestFoldedAwaitingSessionIsDrivable(t *testing.T) {
 // reasoning replay blob, so no tool is needed.
 
 // TestFoldReasoningProviderDivergesOnSnapshotOnlyFields pins the documented contract
-// boundary: a reasoning-carrying run records Message.Reasoning (the opaque replay
-// blob), which the SNAPSHOT preserves but the event stream does NOT carry — so a fold
-// reconstructs an empty Reasoning. If a future change starts eventing the reasoning
-// blob, this test's divergence assertion fails, flagging the contract shift.
+// boundary: a reasoning-carrying run records Message.Replay (the opaque replay
+// carrier), which the SNAPSHOT preserves but the event stream does NOT carry — so a fold
+// reconstructs no replay. If a future change starts eventing the private replay
+// payload, this test's divergence assertion fails, flagging the contract shift.
 func TestFoldReasoningProviderDivergesOnSnapshotOnlyFields(t *testing.T) {
 	const sessID session.SessionID = "reason-1"
 
-	// A turn carrying BOTH a reasoning REPLAY blob (ChunkReasoningItem → Message.Reasoning)
+	// A turn carrying BOTH private replay (ChunkReplay → Message.Replay)
 	// and final text (so the turn terminates cleanly, not as a no-progress stall).
 	llm := mockllm.New(mockllm.ChunksTurn(
-		mockllm.ReasoningItemChunk("OPAQUE-REPLAY-BLOB"),
+		mockllm.ReplayChunk("OPAQUE-REPLAY-BLOB"),
 		mockllm.TextChunk("the answer"),
 		mockllm.UsageChunk(session.Usage{InputTokens: 4, OutputTokens: 2}),
 		mockllm.DoneChunk(session.StopEndTurn),
@@ -218,7 +218,10 @@ func assistantReasoning(t *testing.T, msgs []session.Message) string {
 	t.Helper()
 	for _, m := range msgs {
 		if m.Role == session.RoleAssistant {
-			return m.Reasoning
+			if m.Replay != nil && m.Replay.Provider != nil {
+				return string(m.Replay.Provider.Data)
+			}
+			return ""
 		}
 	}
 	t.Fatalf("no assistant message in %+v", msgs)
@@ -262,19 +265,20 @@ func TestFoldContractDocMatchesSessionFields(t *testing.T) {
 
 	// Every EXPORTED field of session.Message the fold reconstructs or documents as a
 	// limitation:
-	//   reconstructed: Role, Text, ToolCalls, ToolResult, Parts
-	//   documented limitation (NOT event-carried): Reasoning, ProviderPhase, ReasoningItemID
-	//   (ToolCall.ItemID is on ToolCall, asserted separately below)
+	//   reconstructed: Role, Text, ToolCalls, ToolResult, Parts, UserPromptProvenance
+	//   historical/private provenance: Historical, Legacy
+	//   not reconstructed from ordinary execution events: Replay, ProviderPhase
 	wantMessageFields := map[string]struct{}{
 		"Role": {}, "Text": {}, "ToolCalls": {}, "ToolResult": {},
-		"Reasoning": {}, "ProviderPhase": {}, "ReasoningItemID": {}, "Parts": {}, "UserPromptProvenance": {},
+		"Historical": {}, "Legacy": {}, "Replay": {},
+		"ProviderPhase": {}, "Parts": {}, "UserPromptProvenance": {},
 	}
 	assertExportedFields(t, reflect.TypeOf(session.Message{}), wantMessageFields,
 		"session.Message — classify the new field in COMPATIBILITY.md's reconstruction contract")
 
-	// ToolCall.ItemID is the third documented replay-only limitation.
+	// Executable calls carry canonical identity, name, and arguments only.
 	wantToolCallFields := map[string]struct{}{
-		"ID": {}, "Name": {}, "Args": {}, "ItemID": {},
+		"ID": {}, "Name": {}, "Args": {},
 	}
 	assertExportedFields(t, reflect.TypeOf(session.ToolCall{}), wantToolCallFields,
 		"session.ToolCall — classify the new field in COMPATIBILITY.md's reconstruction contract")

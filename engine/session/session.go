@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -566,23 +567,39 @@ func (s *Session) BeginTurn() error {
 	return nil
 }
 
-// RecordAssistant appends the assistant message produced by a model call to the
-// conversation. It is legal only while running.
+// RecordAssistant is the aggregate acceptance seam between a completed model turn
+// and the session's in-memory canonical history. It appends independently owned
+// message and carrier storage only after validating canonical history and replay
+// bindings; it is legal only while running and does not itself persist the session.
 func (s *Session) RecordAssistant(m Message) error {
 	if s.State != StateRunning {
 		return fmt.Errorf("%w: RecordAssistant from %q", ErrIllegalTransition, s.State)
+	}
+	if m.Role != RoleAssistant {
+		return fmt.Errorf("RecordAssistant: assistant role required")
+	}
+	if _, err := validateToolHistory(slices.Concat(s.Conversation.Messages, []Message{m})); err != nil {
+		return fmt.Errorf("RecordAssistant: %w", err)
 	}
 	s.Conversation.Append(m)
 	return nil
 }
 
-// RecordToolResults appends tool-result messages to the conversation and updates
-// the tool-call and consecutive-failure counters. It is legal only while
-// running. Any successful result resets the consecutive-failure run; each error
-// result extends it.
+// RecordToolResults appends a validated result batch and then updates the
+// tool-call and consecutive-failure counters. It is legal only while running.
+// The entire batch must answer distinct outstanding canonical calls before history
+// or counters change; unanswered siblings may remain pending.
+// Any successful result resets the consecutive-failure run; each error extends it.
 func (s *Session) RecordToolResults(results []ToolResult) error {
 	if s.State != StateRunning {
 		return fmt.Errorf("%w: RecordToolResults from %q", ErrIllegalTransition, s.State)
+	}
+	messages := make([]Message, len(results))
+	for i, result := range results {
+		messages[i] = NewToolMessage(result)
+	}
+	if _, err := validateToolHistory(slices.Concat(s.Conversation.Messages, messages)); err != nil {
+		return fmt.Errorf("RecordToolResults: %w", err)
 	}
 	for _, r := range results {
 		s.Conversation.Append(NewToolMessage(r))
@@ -692,7 +709,7 @@ func (s *Session) ReplaceHistory(messages []Message) error {
 	if err := ValidateToolPairing(messages); err != nil {
 		return fmt.Errorf("ReplaceHistory: %w", err)
 	}
-	s.Conversation.Messages = messages
+	s.Conversation.Messages = CloneMessages(messages)
 	return nil
 }
 
@@ -715,7 +732,7 @@ func (s *Session) ReplaceHistoryAtBoundary(messages []Message) error {
 	if err := ValidateToolPairing(messages); err != nil {
 		return fmt.Errorf("ReplaceHistoryAtBoundary: %w", err)
 	}
-	s.Conversation.Messages = messages
+	s.Conversation.Messages = CloneMessages(messages)
 	return nil
 }
 
@@ -744,7 +761,7 @@ func (s *Session) SeedHistory(messages []Message) error {
 	if err := ValidateToolPairing(messages); err != nil {
 		return fmt.Errorf("SeedHistory: %w", err)
 	}
-	s.Conversation.Messages = messages
+	s.Conversation.Messages = CloneMessages(messages)
 	return nil
 }
 
@@ -779,6 +796,9 @@ func (s *Session) PendingAsk() (PendingAsk, bool) {
 func (s *Session) ResumeWith() (PendingAsk, error) {
 	if s.State != StateAwaiting || s.pending == nil {
 		return PendingAsk{}, ErrNoPendingAsk
+	}
+	if err := validatePendingApproval(s.Conversation.Messages, *s.pending); err != nil {
+		return PendingAsk{}, err
 	}
 	ask := *s.pending
 	s.pending = nil

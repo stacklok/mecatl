@@ -2,6 +2,7 @@ package agent_test
 
 import (
 	"context"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -20,10 +21,10 @@ type cancelReadPreparationPolicy struct {
 }
 
 func (p cancelReadPreparationPolicy) Evaluate(_ context.Context, _ session.SessionID, _ session.PermissionMode, c session.ToolCall, _ tool.WorkspaceReader) port.PermissionResult {
-	if c.ID == p.at {
+	if string(c.Args) == fmt.Sprintf(`{"position":%q}`, p.at) {
 		p.cancel()
 	}
-	if c.ID == "denied" {
+	if string(c.Args) == `{"position":"denied"}` {
 		return port.PermissionResult{Decision: governance.PermissionDecision{Effect: governance.Deny, Reason: "denied by policy"}}
 	}
 	return port.PermissionResult{Decision: governance.PermissionDecision{Effect: governance.Allow}}
@@ -46,7 +47,7 @@ func TestCancelledReadPreparationPairsEveryCall(t *testing.T) {
 				return session.NewToolResult(c.ID, "executed"), nil
 			}}
 			calls := []session.ToolCall{
-				toolCall("denied", "Read", `{}`), toolCall("middle", "Read", `{}`), toolCall("last", "Read", `{}`),
+				toolCall("denied", "Read", `{"position":"denied"}`), toolCall("middle", "Read", `{"position":"middle"}`), toolCall("last", "Read", `{"position":"last"}`),
 				toolCall("serial", "Write", `{}`), toolCall("later", "Read", `{}`),
 			}
 			sess := newSession(t, session.Limits{})
@@ -62,7 +63,7 @@ func TestCancelledReadPreparationPairsEveryCall(t *testing.T) {
 					opened = append(opened, ev.ToolCall.ID)
 				case session.EvToolResult:
 					canonical = append(canonical, ev.ToolResult.CallID)
-					if ev.ToolResult.CallID == "denied" {
+					if ev.ToolResult.CallID == boundCallID(t, sess, "denied") {
 						if !strings.Contains(ev.ToolResult.Content, "denied by policy") {
 							t.Fatalf("denial replaced: %+v", ev.ToolResult)
 						}
@@ -75,7 +76,7 @@ func TestCancelledReadPreparationPairsEveryCall(t *testing.T) {
 			}
 			var want []session.ToolCallID
 			for _, c := range calls {
-				want = append(want, c.ID)
+				want = append(want, boundCallID(t, sess, session.ProviderCallID(c.ID)))
 			}
 			if !reflect.DeepEqual(opened, want) || !reflect.DeepEqual(canonical, want) || !reflect.DeepEqual(available, want) || sess.Counters.ToolCalls != len(calls) {
 				t.Fatalf("opened=%v canonical=%v available=%v count=%d, want %v", opened, canonical, available, sess.Counters.ToolCalls, want)

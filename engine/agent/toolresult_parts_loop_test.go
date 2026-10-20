@@ -67,7 +67,7 @@ func TestLoopEmitsToolResultWithParts(t *testing.T) {
 	var got *session.ToolResult
 	for i := range evs {
 		if evs[i].Type == session.EvToolResult && evs[i].ToolResult != nil &&
-			evs[i].ToolResult.CallID == "c1" {
+			evs[i].ToolResult.CallID == boundCallID(t, sess, "c1") {
 			got = evs[i].ToolResult
 			break
 		}

@@ -1,0 +1,13 @@
+{
+  "id": "legacy-retry-session",
+  "state": "failed",
+  "mode": "default",
+  "limits": {},
+  "counters": {"Turns": 2},
+  "created_at": "2025-01-02T03:04:05Z",
+  "messages": [],
+  "environment_ref": {"Kind": "mem", "ID": "legacy-workspace", "Revision": "v1"},
+  "retry_disposition": 1,
+  "stream_progress": 2,
+  "last_error": "legacy retryable stream failure"
+}

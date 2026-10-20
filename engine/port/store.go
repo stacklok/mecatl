@@ -53,7 +53,8 @@ var (
 //     the run plumbing (diagnostics binding, askID serials) is rebuilt fresh.
 //
 // REPLAY-FIDELITY LIMITATION (the one residual gap): the opaque assistant-message replay
-// fields — Message.Reasoning, Message.ProviderPhase, ToolCall.ItemID — are NOT carried on
+// fields — Message.Replay (including occurrence bindings) and Message.ProviderPhase —
+// are NOT carried on
 // the event stream (they reach the conversation only via Session.RecordAssistant), so a
 // pure event fold is byte-identical-replay faithful ONLY for providers that leave them
 // empty (plain chat). A host that needs byte-identical replay for a reasoning provider

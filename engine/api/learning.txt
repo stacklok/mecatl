@@ -76,6 +76,7 @@
     method func (Mode).String() string
     method func (NeverPolicy).Decide(ctx context.Context, _ AdmissionRequest) (AdmissionDecision, error)
     method func (OutcomeKind).Valid() bool
+    method func (Projection).ReflectionInput() (Input, error)
     method func (PromptOrigin).Valid() bool
     method func (ProposalStatus).Valid() bool
     method func (Sensitivity).Next() Sensitivity
@@ -251,6 +252,7 @@ const ReasonWeightedThreshold AdmissionReason = "weighted"
 const ReflectionEvidenceLegacyV0 EvidenceProtocol = "reflection-evidence/legacy-v0"
 const ReflectionEvidenceSourceV1 untyped string = "mecatl/reflection-evidence/source/v1"
 const ReflectionEvidenceV1 EvidenceProtocol = "reflection-evidence/v1"
+const ReflectionEvidenceV2 EvidenceProtocol = "reflection-evidence/v2"
 const Review Mode = 1
 const SensitivityUnset Sensitivity = 0
 const SignalContradiction SignalKind = "contradiction"
@@ -275,6 +277,7 @@ const ValidationExactDuplicate ValidationDisposition = "exact_duplicate"
 const ValidationSimilarStageHint ValidationDisposition = "similar_stage_hint"
 func AutomaticAdmissionPolicyRevisionFor(p AutomaticAdmissionPolicy) (AutomaticAdmissionPolicyRevision, error)
 func AutomaticReservationIDForAttempt(attemptID AttemptID) (AutomaticReservationID, error)
+func CanonicalEvidenceCitation(in Input, ref EvidenceRef) (EvidenceCitation, error)
 func DeriveAttemptPartition(identity string) (AttemptPartition, error)
 func DetectSignals(in Input) []Signal
 func DetectSignalsScoped(in Input, scope DetectionScope) []Signal
@@ -283,6 +286,8 @@ func DeterministicProposalID(p ProposalPartition, input string, c Candidate) (Pr
 func EventEvidenceRef(in Input, ordinal int, callID session.ToolCallID) (EvidenceRef, error)
 func EvidenceHandle(ref EvidenceRef) string
 func EvidencePreview(in Input, ref EvidenceRef) (string, error)
+func LegacyVerificationInput(trajectory Trajectory, events []session.Event) (Input, error)
+func ManifestProtocolSupported(protocol EvidenceProtocol, domain string) bool
 func MaterializeEvidence(ctx context.Context, req MaterializationRequest) (Materialization, error)
 func MessageEvidenceRef(in Input, ordinal int, callID session.ToolCallID) (EvidenceRef, error)
 func NewAdmissionProvenance(class AdmissionClass, source AttemptSource, prompt CurrentPromptBinding) (AdmissionProvenance, error)
@@ -294,9 +299,13 @@ func ParseSensitivity(value string) (Sensitivity, error)
 func ParseSkillActivationPolicy(value string) (SkillActivationPolicy, error)
 func ProjectAttempt(record AttemptRecord) (AttemptProjection, error)
 func ProjectInput(in Input) (Projection, error)
+func ProjectVerifiedInput(in Input) (Projection, error)
+func RematerializeEvidence(trajectory Trajectory, events []session.Event, incarnation session.IncarnationID, manifest MaterializationManifest, eventOrdinals ...[]int) (Input, error)
 func ResolveEvidence(in Input, ref EvidenceRef) error
 func ResolveEvidenceHandle(in Input, handle string) (EvidenceRef, error)
 func SkillVersionID(bundle SkillBundle) (VersionID, error)
+func SourceEventOrdinal(event session.Event, incarnation session.IncarnationID, ordinal int) (int, error)
+func SourceMessageIndex(messages []session.Message, incarnation session.IncarnationID, ordinal int, protocol EvidenceProtocol) (int, error)
 func ValidAttemptTransition(from AttemptState, to AttemptState) bool
 func ValidLearnedSkillName(name string) bool
 func ValidSHA256(value string) bool
@@ -311,6 +320,7 @@ func ValidateSkillCandidate(in Input, candidate Candidate) error
 func ValidateSkillEvaluation(e SkillEvaluation) error
 func ValidateSkillPartition(partition SkillPartition, ownerAgent string) error
 func ValidateSkillProvenance(p SkillProvenance) error
+func VerifyEvidenceSource(trajectory Trajectory, events []session.Event, incarnation session.IncarnationID, ref EvidenceRef, eventOrdinals ...[]int) (EvidenceCitation, error)
 type Activity struct{Kind ActivityKind; Reason AdmissionReason; Sensitivity Sensitivity; Count int64}
 type ActivityKind string
 type AdmissionClass string
@@ -363,13 +373,14 @@ type DetectionScope struct{Current MessageSpan}
 type DurableRunID string
 type EvaluationVerdict string
 type EventProjection struct{Evidence *EvidenceProjection "json:\"evidence,omitempty\""; Type session.EventType "json:\"type\""; Seq int64 "json:\"seq\""; Turn int "json:\"turn\""; Text string "json:\"text,omitempty\""; ToolCall *ToolProjection "json:\"tool_call,omitempty\""; ToolResult *ResultProjection "json:\"tool_result,omitempty\""; Stop session.StopReason "json:\"stop,omitempty\""}
+type EvidenceCitation struct{Protocol EvidenceProtocol "json:\"protocol\""; ToolCallID session.ToolCallID "json:\"tool_call_id,omitempty\""; Preview string "json:\"preview\""}
 type EvidenceEventData struct{Type session.EventType; Seq int64; Turn int; Text string; ToolCall *ToolProjection; ToolResult *ResultProjection; Stop session.StopReason}
 type EvidenceLocator string
 type EvidenceProjection struct{Handle string "json:\"handle\""; Digest string "json:\"digest\""; EventSeq *int64 "json:\"event_seq,omitempty\""; ToolCallID session.ToolCallID "json:\"tool_call_id,omitempty\""}
 type EvidenceProtocol string
 type EvidenceRef struct{Protocol EvidenceProtocol "json:\"protocol,omitempty\""; SessionID session.SessionID "json:\"session_id\""; Locator EvidenceLocator "json:\"locator\""; Ordinal int "json:\"ordinal\""; ManifestIndex int "json:\"manifest_index,omitempty\""; OriginalMessage *int "json:\"original_message,omitempty\""; EventSeq *int64 "json:\"event_seq,omitempty\""; ToolCallID session.ToolCallID "json:\"tool_call_id,omitempty\""; Digest string "json:\"digest\""; AggregateDigest string "json:\"aggregate_digest,omitempty\""}
 type ExistingFact struct{Kind CandidateKind "json:\"kind\""; Key string "json:\"key\""; Value string "json:\"value\""; Description string "json:\"description,omitempty\""}
-type Input struct{Trajectory Trajectory "json:\"trajectory\""; Events []EvidenceEventData "json:\"events,omitempty\""; Signals []Signal "json:\"signals,omitempty\""; Existing []ExistingFact "json:\"existing,omitempty\""; Manifest *MaterializationManifest "json:\"manifest,omitempty\""}
+type Input struct{Protocol EvidenceProtocol "json:\"protocol,omitempty\""; Trajectory Trajectory "json:\"trajectory\""; Events []EvidenceEventData "json:\"events,omitempty\""; Signals []Signal "json:\"signals,omitempty\""; Existing []ExistingFact "json:\"existing,omitempty\""; Manifest *MaterializationManifest "json:\"manifest,omitempty\""}
 type ManifestEntry struct{Handle string "json:\"handle\""; Locator EvidenceLocator "json:\"locator\""; OriginalMessage *int "json:\"original_message,omitempty\""; EventSequence *int64 "json:\"event_sequence,omitempty\""; Digest string "json:\"digest\""; Component string "json:\"component,omitempty\""; ToolCallIDs []session.ToolCallID "json:\"tool_call_ids,omitempty\""}
 type Materialization struct{Disposition MaterializationDisposition "json:\"disposition\""; Reason MaterializationReason "json:\"reason\""; Input Input "json:\"input\""; Manifest MaterializationManifest "json:\"manifest\""; Canonical []byte "json:\"canonical,omitempty\""}
 type MaterializationDisposition string

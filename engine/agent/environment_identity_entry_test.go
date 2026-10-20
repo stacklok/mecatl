@@ -43,6 +43,29 @@ func TestInvariant_session_environment_identity_required(t *testing.T) {
 			eng := agent.NewEngine(agent.Deps{LLM: llm, Catalog: tool.NewCatalog()})
 			ref := session.EnvironmentRef{Kind: session.EnvKindMem, ID: "placement", Revision: "v1"}
 			sess := session.New("environment-entry-all", session.ModeDefault, ref, session.Limits{}, time.Unix(0, 0))
+			if entry.name == "retry failed step" {
+				if err := sess.Fail(); err != nil {
+					t.Fatal(err)
+				}
+				if err := sess.RecordFailureMetadata(session.RetryMetadata{Disposition: session.RetryDispositionRetryable, Progress: session.StreamProgressPrecommit}); err != nil {
+					t.Fatal(err)
+				}
+				if err := sess.PrepareFailedStepRetry(); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if entry.name == "resume approval" {
+				call := session.NewToolCall("call", "Read", []byte(`{}`))
+				if err := sess.BeginTurn(); err != nil {
+					t.Fatal(err)
+				}
+				if err := sess.RecordAssistant(session.NewAssistantMessage("", []session.ToolCall{call})); err != nil {
+					t.Fatal(err)
+				}
+				if err := sess.PauseForApproval(session.PendingAsk{AskID: "ask", Call: call.ID, Tool: call.Name}); err != nil {
+					t.Fatal(err)
+				}
+			}
 			env := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindMem, ID: "other", Revision: "v1"}, memfs.NewWorkspace("/private/other"), memledger.New(), nil)
 
 			var cause string

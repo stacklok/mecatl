@@ -127,6 +127,16 @@ func (s *Session) ClaimAuthorization() (PendingAuthorization, error) {
 	return pending, nil
 }
 
+// ValidateAuthorizationContinuation checks a claimed continuation before any
+// execution preparation. Effective arguments remain the claimant's exact retained
+// bytes; only its canonical identity and deferred suffix are matched to history.
+func (s *Session) ValidateAuthorizationContinuation(pending PendingAuthorization) error {
+	if s.State != StateRunning || s.pending != nil || s.pendingAuthorization != nil {
+		return fmt.Errorf("%w: authorization continuation from %q", ErrIllegalTransition, s.State)
+	}
+	return validatePendingAuthorization(s.Conversation.Messages, pending)
+}
+
 // RestoreAuthorizationClaim compensates a claimed continuation that could not be
 // handed to a run. It restores the exact durable authorizing state so a later
 // controller may retry the claim.
@@ -216,10 +226,17 @@ func (s *Session) ValidateAuthorizationState() error {
 		if s.State != StateAwaiting && s.pending != nil {
 			return fmt.Errorf("session: permission ask pending outside awaiting state")
 		}
+		if s.State == StateAwaiting && s.pending != nil {
+			return validatePendingApproval(s.Conversation.Messages, *s.pending)
+		}
 		return nil
 	}
 }
 
+// validatePendingAuthorization proves that the protected call and deferred siblings
+// describe the unanswered suffix of the trailing assistant turn. Earlier siblings
+// must already have results, so resumption cannot skip or repeat accepted work.
+//
 //nolint:gocyclo // Validation intentionally follows the history pairing state machine.
 func validatePendingAuthorization(messages []Message, pending PendingAuthorization) error {
 	if !validAuthorizationID(pending.Authorization.ID) {
@@ -272,6 +289,13 @@ func validatePendingAuthorization(messages []Message, pending PendingAuthorizati
 		}
 		callIDs[call.ID] = struct{}{}
 	}
+	for _, message := range messages[:lastAssistant] {
+		for _, call := range message.ToolCalls {
+			if _, reused := callIDs[call.ID]; reused {
+				return fmt.Errorf("canonical authorization occurrence is ambiguous")
+			}
+		}
+	}
 	pendingAt := -1
 	for i, call := range calls {
 		if call.ID == pending.Call.ID {
@@ -320,10 +344,15 @@ func validatePendingAuthorization(messages []Message, pending PendingAuthorizati
 	return nil
 }
 
+// sameAuthorizationCallIdentity intentionally compares only the canonical occurrence
+// and tool name. Earlier gates may have replaced the retained effective arguments.
 func sameAuthorizationCallIdentity(original, effective ToolCall) bool {
-	return original.ID == effective.ID && original.Name == effective.Name && original.ItemID == effective.ItemID
+	return original.ID == effective.ID && original.Name == effective.Name
 }
 
+// sameDeferredAuthorizationCall compares a parked sibling's identity and arguments;
+// the caller also checks its position in the trailing suffix. Unlike the protected
+// call, a deferred sibling has not passed gates that may change its arguments.
 func sameDeferredAuthorizationCall(original, pending ToolCall) bool {
 	return sameAuthorizationCallIdentity(original, pending) && equivalentAuthorizationArgs(original.Args, pending.Args)
 }

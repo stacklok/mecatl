@@ -90,14 +90,14 @@
     method func (TriggerSpec).Kind() TriggerKind
     method func (TriggerSpec).Validate() error
 const AuthorityResourceWorkspaceFile AuthorityResourceKind = "workspace_file"
-const ChunkDone ChunkKind = 5
-const ChunkPhase ChunkKind = 6
-const ChunkProviderRoute ChunkKind = 7
+const ChunkDone ChunkKind = 4
+const ChunkPhase ChunkKind = 5
+const ChunkProviderRoute ChunkKind = 6
 const ChunkReasoning ChunkKind = 1
-const ChunkReasoningItem ChunkKind = 2
+const ChunkReplay ChunkKind = 7
 const ChunkText ChunkKind = 0
-const ChunkToolCall ChunkKind = 3
-const ChunkUsage ChunkKind = 4
+const ChunkToolCall ChunkKind = 2
+const ChunkUsage ChunkKind = 3
 const LevelDebug Level = 0
 const LevelError Level = 3
 const LevelInfo Level = 1
@@ -126,8 +126,9 @@ func NewSessionLoadFailure(class SessionLoadFailureClass, cause error) error
 func ObserveAttempt(ctx context.Context, observation session.NetworkAttemptPayload)
 func PaginateSessionMetadata(rows []SessionDiscoveryMeta, request SessionMetadataPageRequest) SessionMetadataPage
 func PaginateSessionMetadataBound(rows []SessionDiscoveryMeta, request SessionMetadataPageRequest, generation string) (SessionMetadataPage, error)
+func ProjectMessages(messages []session.Message) ([]LLMMessage, error)
 func RootSessionIDFromContext(ctx context.Context) (session.SessionID, bool)
-func RouteToolResultParts(tr session.ToolResult, caps ProviderCapabilities) []session.Content
+func RouteToolResultParts(parts []session.Content, caps ProviderCapabilities) []session.Content
 func RunSerialFromContext(ctx context.Context) (int64, bool)
 func SessionDiscoveryMetaEqual(a SessionDiscoveryMeta, b SessionDiscoveryMeta) bool
 func SessionIDFromContext(ctx context.Context) (session.SessionID, bool)
@@ -152,7 +153,7 @@ type AuthorityPrincipal struct{Definition string; Instance string; OwnerIssuer s
 type AuthorityRequest struct{CapabilitySet governance.CapabilitySet; ToolName string; Action string; DelegationDepth int; Principal AuthorityPrincipal; Resource *AuthorityResource}
 type AuthorityResource struct{Kind AuthorityResourceKind; Path string; Workspace string}
 type AuthorityResourceKind string
-type Chunk struct{Kind ChunkKind; Text string; ReasoningItemID string; ToolCall *session.ToolCall; Usage *session.Usage; Stop session.StopReason}
+type Chunk struct{Kind ChunkKind; Text string; ToolCall *LLMToolCall; Replay *session.ProviderReplay; ReplayIsOutput bool; Usage *session.Usage; Stop session.StopReason}
 type ChunkKind int
 type Clock interface{Now() time.Time}
 type ConditionalPrunableStore interface{DeleteSessionIfUnchanged(ctx context.Context, expected SessionDiscoveryMeta) (bool, error)}
@@ -165,8 +166,11 @@ type EventLog interface{Append(ctx context.Context, id session.SessionID, ev ses
 type EventSink interface{Emit(ctx context.Context, ev session.Event)}
 type HookApprovalLearner interface{LearnHookApproval(ctx context.Context, ev governance.HookEvent)}
 type HookRunner interface{Run(ctx context.Context, ev governance.HookEvent) (governance.HookOutcome, error)}
+type LLMMessage struct{Role session.Role; Text string; ToolCalls []LLMToolCall; ToolResult *LLMToolResult; Parts []session.Content; ProviderPhase string; UserPromptProvenance session.UserPromptProvenance; Replay *session.ProviderReplay}
 type LLMProvider interface{Capabilities() ProviderCapabilities; Stream(ctx context.Context, req LLMRequest) (iter.Seq2[Chunk, error], error)}
-type LLMRequest struct{System prompt.Layered; Messages []session.Message; Tools []tool.ToolSpec; Model string}
+type LLMRequest struct{System prompt.Layered; Messages []LLMMessage; Tools []tool.ToolSpec; Model string}
+type LLMToolCall struct{ID session.ProviderCallID; Name string; Args json.RawMessage; ItemID session.ProviderItemID}
+type LLMToolResult struct{CallID session.ProviderCallID; Content string; IsError bool; Parts []session.Content}
 type Lease struct{SessionID session.SessionID; Owner string; Token uint64; Expiry time.Time}
 type Level int
 type LogRecord struct{Kind LogRecordKind; Event session.Event; GapReason string; Cursor Cursor; Live bool}

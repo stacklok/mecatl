@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stacklok/mecatl/engine/adapter/eventcodec"
 	"github.com/stacklok/mecatl/engine/adapter/eventsource"
 	"github.com/stacklok/mecatl/engine/session"
 )
@@ -45,6 +46,34 @@ func requireFoldError(t *testing.T, events []session.Event, target error) {
 	if !errors.Is(err, target) {
 		t.Fatalf("Fold error = %v, want %v", err, target)
 	}
+}
+
+func TestFoldCanonicalAuthorizationCodecRoundTrip(t *testing.T) {
+	events := authorizationCall("auth-current", "call-current")
+	for i, event := range events {
+		data, err := eventcodec.Marshal(event)
+		if err != nil {
+			t.Fatal(err)
+		}
+		events[i], err = eventcodec.UnmarshalFormat(data, eventcodec.Format)
+		if err != nil {
+			t.Fatal(err)
+		}
+		projected, err := eventcodec.ProjectRecord(events[i], session.LegacyIncarnationID("s1", 0, nil), -1)
+		if err != nil || projected.Type != event.Type || projected.Historical != nil {
+			t.Fatal("canonical sparse record changed", err)
+		}
+	}
+	folded, err := eventsource.Fold(meta(), seq(events))
+	if err != nil {
+		t.Fatal(err)
+	}
+	messages := folded.Conversation.Messages
+	if len(messages) != 2 || messages[1].ToolResult == nil || messages[1].ToolResult.Content != "authorized" || messages[1].ToolResult.CallID != "call-current" {
+		t.Fatal("canonical completed result changed")
+	}
+	requireFoldError(t, events[:3], eventsource.ErrPrivateStateRequired)
+	requireFoldError(t, append(events[:3:3], events[4]), eventsource.ErrReconstruct)
 }
 
 func TestFoldAuthorizationUnresolvedRequiresPrivateState(t *testing.T) {

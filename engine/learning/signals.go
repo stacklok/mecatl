@@ -45,15 +45,15 @@ func DetectSignalsScoped(in Input, scope DetectionScope) []Signal {
 	if err := ValidateInput(in); err != nil || !scope.Current.Valid(len(in.Trajectory.Messages)) {
 		return nil
 	}
-	return detectSignalsScoped(in.Trajectory, in.Existing, in.Signals, in.Manifest, scope)
+	return detectSignalsScoped(in.Protocol, in.Trajectory, in.Existing, in.Signals, in.Manifest, scope)
 }
 
-func detectSignalsScoped(trajectory Trajectory, existing []ExistingFact, hostSignals []Signal, manifest *MaterializationManifest, scope DetectionScope) []Signal {
+func detectSignalsScoped(protocol EvidenceProtocol, trajectory Trajectory, existing []ExistingFact, hostSignals []Signal, manifest *MaterializationManifest, scope DetectionScope) []Signal {
 	current := trajectory.Messages[scope.Current.Start:scope.Current.End]
 	currentTrajectory := trajectory
 	currentTrajectory.Messages = current
 	currentTrajectory.Current = MessageSpan{Start: 0, End: len(current)}
-	currentInput := Input{Trajectory: currentTrajectory, Existing: existing}
+	currentInput := Input{Protocol: protocol, Trajectory: currentTrajectory, Existing: existing}
 	detected := DetectSignals(currentInput)
 	detected = append(nonExplicitSignals(detected), explicitCurrentPromptSignals(currentInput)...)
 	for i := range detected {
@@ -63,7 +63,7 @@ func detectSignalsScoped(trajectory Trajectory, existing []ExistingFact, hostSig
 			if manifest == nil {
 				continue
 			}
-			sourceInput := Input{Trajectory: trajectory, Manifest: manifest}
+			sourceInput := Input{Protocol: protocol, Trajectory: trajectory, Manifest: manifest}
 			var resolved EvidenceRef
 			var err error
 			if ref.Locator == EvidenceEvent {

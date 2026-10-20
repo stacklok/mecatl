@@ -2,6 +2,7 @@ package session
 
 import (
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -13,14 +14,14 @@ import (
 // fails; an empty history is trivially valid.
 func TestValidateToolPairing(t *testing.T) {
 	call := func(id ToolCallID) Message {
-		return NewAssistantMessage("", "", []ToolCall{NewToolCall(id, "Read", json.RawMessage(`{}`))})
+		return NewAssistantMessage("", []ToolCall{NewToolCall(id, "Read", json.RawMessage(`{}`))})
 	}
 	multiCall := func(ids ...ToolCallID) Message {
 		calls := make([]ToolCall, 0, len(ids))
 		for _, id := range ids {
 			calls = append(calls, NewToolCall(id, "Read", json.RawMessage(`{}`)))
 		}
-		return NewAssistantMessage("", "", calls)
+		return NewAssistantMessage("", calls)
 	}
 	result := func(id ToolCallID) Message { return NewToolMessage(NewToolResult(id, "ok")) }
 
@@ -41,7 +42,7 @@ func TestValidateToolPairing(t *testing.T) {
 				NewUserMessage("goal"),
 				call("c1"),
 				result("c1"),
-				NewAssistantMessage("done", "", nil),
+				NewAssistantMessage("done", nil),
 			},
 			wantErr: false,
 		},
@@ -123,7 +124,7 @@ func TestValidateToolPairing(t *testing.T) {
 // forkCall builds an assistant message carrying a single (unanswered) tool call —
 // the shape of a parent's trailing message at fork-dispatch time.
 func forkCall(id ToolCallID) Message {
-	return NewAssistantMessage("", "", []ToolCall{NewToolCall(id, "Subagent", json.RawMessage(`{}`))})
+	return NewAssistantMessage("", []ToolCall{NewToolCall(id, "Subagent", json.RawMessage(`{}`))})
 }
 
 // TestForkSnapshotStripsTrailingForkCall proves ForkSnapshot drops the trailing
@@ -135,9 +136,9 @@ func TestForkSnapshotStripsTrailingForkCall(t *testing.T) {
 
 	conv := &Conversation{Messages: []Message{
 		NewUserMessage("investigate the SENTINEL"),
-		NewAssistantMessage("looking", "", []ToolCall{NewToolCall("c1", "Read", json.RawMessage(`{}`))}),
+		NewAssistantMessage("looking", []ToolCall{NewToolCall("c1", "Read", json.RawMessage(`{}`))}),
 		result("c1"),
-		NewAssistantMessage("here is what I found", "", nil),
+		NewAssistantMessage("here is what I found", nil),
 		forkCall("fork1"), // trailing unanswered fork call — must be stripped
 	}}
 
@@ -173,7 +174,7 @@ func TestForkSnapshotStripsTrailingForkCall(t *testing.T) {
 	// No trailing orphan: a clean conversation is returned cloned-but-unchanged.
 	clean := &Conversation{Messages: []Message{
 		NewUserMessage("goal"),
-		NewAssistantMessage("done", "", nil),
+		NewAssistantMessage("done", nil),
 	}}
 	cleanSnap := ForkSnapshot(clean)
 	if len(cleanSnap) != 2 {
@@ -200,14 +201,14 @@ func TestForkSnapshotStripsTrailingForkCall(t *testing.T) {
 func TestForkDeepCopyIsIndependent(t *testing.T) {
 	parent := &Conversation{Messages: []Message{
 		NewUserMessage("parent turn one"),
-		NewAssistantMessage("parent answer one", "", nil),
+		NewAssistantMessage("parent answer one", nil),
 	}}
 	parentLenBefore := len(parent.Messages)
 
 	child := CloneMessages(parent.Messages)
 	// Append several messages to the child copy.
 	child = append(child, NewUserMessage("child only one"))
-	child = append(child, NewAssistantMessage("child only two", "", nil))
+	child = append(child, NewAssistantMessage("child only two", nil))
 
 	if len(parent.Messages) != parentLenBefore {
 		t.Fatalf("parent length grew to %d (was %d) — copy aliased the backing array",
@@ -236,7 +237,7 @@ func TestForkDeepCopyIsIndependent(t *testing.T) {
 func TestForkSnapshotIsSliceNotClosure(t *testing.T) {
 	parent := &Conversation{Messages: []Message{
 		NewUserMessage("investigate the SENTINEL"),
-		NewAssistantMessage("here is what I found", "", nil),
+		NewAssistantMessage("here is what I found", nil),
 	}}
 
 	snap := ForkSnapshot(parent)
@@ -245,7 +246,7 @@ func TestForkSnapshotIsSliceNotClosure(t *testing.T) {
 	// The parent KEEPS GOING after the snapshot was taken (exactly what a detached
 	// background fork's parent does): several new turns are appended.
 	parent.Append(NewUserMessage("LATE_APPEND_after_fork one"))
-	parent.Append(NewAssistantMessage("LATE_APPEND_after_fork two", "", nil))
+	parent.Append(NewAssistantMessage("LATE_APPEND_after_fork two", nil))
 
 	if len(snap) != snapLen {
 		t.Fatalf("snapshot length changed from %d to %d after a parent append — it is a live view, not a slice", snapLen, len(snap))
@@ -281,7 +282,7 @@ func TestForkMidToolCallRepairedNotOrphaned(t *testing.T) {
 		// fork call. The strip is WHOLE-TRAILING-TURN (msgs[:lastAssistant]), so it
 		// drops the entire assistant message — both the fork call AND the answered
 		// sibling's call — plus the trailing tool results that belong to that turn.
-		NewAssistantMessage("delegating", "", []ToolCall{
+		NewAssistantMessage("delegating", []ToolCall{
 			NewToolCall("other", "Read", json.RawMessage(`{}`)),
 			NewToolCall("fork1", "Subagent", json.RawMessage(`{}`)),
 		}),
@@ -316,224 +317,43 @@ func TestForkMidToolCallRepairedNotOrphaned(t *testing.T) {
 	}
 }
 
-// TestStripProviderState pins the CROSS-provider carryover contract: the four
-// provider-private replay blobs (Message.Reasoning, Message.ReasoningItemID,
-// Message.ProviderPhase, ToolCall.ItemID) are cleared, every provider-neutral
-// field (Role, Text, ToolCall ID/Name/Args, ToolResult incl. its Parts,
-// Message.Parts) survives verbatim, and the input — including the shared
-// ToolCalls backing arrays — is NEVER mutated.
+// TestStripProviderState pins provider-neutral carryover and independent ownership.
 func TestStripProviderState(t *testing.T) {
 	media, err := NewImageContent("image/png", []byte{0x89, 0x50})
 	if err != nil {
-		t.Fatalf("NewImageContent: %v", err)
+		t.Fatal(err)
 	}
-
-	tests := []struct {
-		name string
-		msgs []Message
-	}{
-		{
-			name: "nil input passes through",
-			msgs: nil,
-		},
-		{
-			name: "empty input passes through",
-			msgs: []Message{},
-		},
-		{
-			name: "assistant blobs cleared, text/role/calls preserved",
-			msgs: []Message{
-				NewUserMessage("goal"),
-				{
-					Role:            RoleAssistant,
-					Text:            "working on it",
-					Reasoning:       "openai-encrypted-blob",
-					ReasoningItemID: "rs_item_1",
-					ProviderPhase:   "commentary",
-					ToolCalls: []ToolCall{
-						{ID: "c1", Name: "Read", Args: json.RawMessage(`{"path":"a.go"}`), ItemID: "fc_item_1"},
-					},
-				},
-			},
-		},
-		{
-			name: "every ToolCall ItemID cleared, ID/Name/Args preserved",
-			msgs: []Message{
-				{
-					Role: RoleAssistant,
-					ToolCalls: []ToolCall{
-						{ID: "c1", Name: "Read", Args: json.RawMessage(`{"path":"a.go"}`), ItemID: "fc_item_1"},
-						{ID: "c2", Name: "Grep", Args: json.RawMessage(`{"pattern":"foo"}`), ItemID: "fc_item_2"},
-					},
-				},
-				NewToolMessage(NewToolResult("c1", "file body")),
-				NewToolMessage(NewToolResult("c2", "3 matches")),
-			},
-		},
-		{
-			name: "tool results and parts untouched",
-			msgs: []Message{
-				NewUserMessageWithParts("look at this", []Content{media}),
-				{
-					Role:      RoleAssistant,
-					Reasoning: "anthropic-thinking-signature",
-					ToolCalls: []ToolCall{
-						{ID: "c1", Name: "Read", Args: json.RawMessage(`{}`), ItemID: "fc_item_1"},
-					},
-				},
-				NewToolMessage(NewToolResultWithParts("c1", "summary", []Content{NewTextBlock("block text")})),
-			},
-		},
-		{
-			name: "message with no blobs passes through",
-			msgs: []Message{
-				NewSystemMessage("sys"),
-				NewUserMessage("plain question"),
-				NewAssistantMessage("plain answer", "", nil),
-			},
-		},
-		{
-			name: "mixed blob-bearing and blob-free messages",
-			msgs: []Message{
-				NewUserMessage("goal"),
-				{
-					Role:          RoleAssistant,
-					Text:          "blob turn",
-					Reasoning:     "blob",
-					ProviderPhase: "final_answer",
-					ToolCalls: []ToolCall{
-						{ID: "c1", Name: "Read", Args: json.RawMessage(`{}`), ItemID: "fc_item_1"},
-					},
-				},
-				NewToolMessage(NewToolResult("c1", "ok")),
-				NewAssistantMessage("blob-free turn", "", nil),
-			},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// Snapshot the input's pre-strip blob state for the mutate-verify.
-			type blobState struct {
-				reasoning       string
-				reasoningItemID string
-				phase           string
-				itemIDs         []string
+	assistant := replayMessage()
+	assistant.ProviderPhase = "commentary"
+	assistant.Legacy = &LegacyMessageIdentity{Namespace: "source", Ordinal: 7, Unsupported: []byte(`{"original":true}`)}
+	for _, input := range [][]Message{
+		nil, {},
+		{NewSystemMessage("sys"), NewUserMessageWithParts("goal", []Content{media}), assistant,
+			NewToolMessage(NewToolResultWithParts("engine-1", "summary", []Content{NewTextBlock("block text")})),
+			NewAssistantMessage("answer", nil)},
+	} {
+		before := CloneMessages(input)
+		stripped := StripProviderState(input)
+		want := CloneMessages(input)
+		for i := range want {
+			want[i].Replay = nil
+			want[i].ProviderPhase = ""
+		}
+		if !reflect.DeepEqual(stripped, want) || !reflect.DeepEqual(input, before) {
+			t.Fatal("stripping changed canonical history/provenance or its input")
+		}
+		if err := ValidateToolPairing(stripped); err != nil {
+			t.Fatal(err)
+		}
+		if len(stripped) > 0 {
+			stripped[1].Parts[0].Data[0] = 0
+			stripped[2].ToolCalls[0].Args[0] = '!'
+			stripped[2].Legacy.Unsupported[0] = '!'
+			stripped[3].ToolResult.Parts[0].Text = "changed"
+			if !reflect.DeepEqual(input, before) {
+				t.Fatal("stripped history aliases source storage")
 			}
-			before := make([]blobState, len(tt.msgs))
-			for i, m := range tt.msgs {
-				before[i].reasoning = m.Reasoning
-				before[i].reasoningItemID = m.ReasoningItemID
-				before[i].phase = m.ProviderPhase
-				before[i].itemIDs = make([]string, len(m.ToolCalls))
-				for j, c := range m.ToolCalls {
-					before[i].itemIDs[j] = c.ItemID
-				}
-			}
-
-			stripped := StripProviderState(tt.msgs)
-
-			if len(stripped) != len(tt.msgs) {
-				t.Fatalf("stripped len = %d, want %d", len(stripped), len(tt.msgs))
-			}
-			if tt.msgs == nil && stripped != nil {
-				t.Fatalf("StripProviderState(nil) = %v, want nil", stripped)
-			}
-
-			for i, m := range stripped {
-				if m.Reasoning != "" {
-					t.Fatalf("msg %d: Reasoning = %q, want cleared", i, m.Reasoning)
-				}
-				if m.ReasoningItemID != "" {
-					t.Fatalf("msg %d: ReasoningItemID = %q, want cleared", i, m.ReasoningItemID)
-				}
-				if m.ProviderPhase != "" {
-					t.Fatalf("msg %d: ProviderPhase = %q, want cleared", i, m.ProviderPhase)
-				}
-				for j, c := range m.ToolCalls {
-					if c.ItemID != "" {
-						t.Fatalf("msg %d call %d: ItemID = %q, want cleared", i, j, c.ItemID)
-					}
-				}
-
-				// Provider-neutral fields preserved verbatim.
-				orig := tt.msgs[i]
-				if m.Role != orig.Role || m.Text != orig.Text {
-					t.Fatalf("msg %d: Role/Text drifted: got (%q,%q), want (%q,%q)",
-						i, m.Role, m.Text, orig.Role, orig.Text)
-				}
-				if len(m.ToolCalls) != len(orig.ToolCalls) {
-					t.Fatalf("msg %d: ToolCalls len = %d, want %d", i, len(m.ToolCalls), len(orig.ToolCalls))
-				}
-				for j, c := range m.ToolCalls {
-					o := orig.ToolCalls[j]
-					if c.ID != o.ID || c.Name != o.Name || string(c.Args) != string(o.Args) {
-						t.Fatalf("msg %d call %d: neutral fields drifted: got (%q,%q,%s), want (%q,%q,%s)",
-							i, j, c.ID, c.Name, c.Args, o.ID, o.Name, o.Args)
-					}
-				}
-				// ToolResult is carried by pointer and StripProviderState never
-				// rewrites it, so the SAME immutable pointer must survive.
-				if m.ToolResult != orig.ToolResult {
-					t.Fatalf("msg %d: ToolResult pointer drifted: got %+v, want %+v", i, m.ToolResult, orig.ToolResult)
-				}
-				if len(m.Parts) != len(orig.Parts) {
-					t.Fatalf("msg %d: Parts len = %d, want %d", i, len(m.Parts), len(orig.Parts))
-				}
-			}
-
-			// Stripping orphans nothing: a history that was pairing-valid on input
-			// stays pairing-valid (call IDs are untouched). Rows that are
-			// deliberately mid-conversation (a dangling trailing call) are excluded.
-			if err := ValidateToolPairing(tt.msgs); err == nil {
-				if err := ValidateToolPairing(stripped); err != nil {
-					t.Fatalf("stripped history not pairing-valid (input was): %v", err)
-				}
-			}
-
-			// MUTATE-VERIFY: the input slice AND its ToolCalls backing arrays are
-			// untouched — every blob/ItemID the input carried is still there.
-			for i, m := range tt.msgs {
-				if m.Reasoning != before[i].reasoning || m.ProviderPhase != before[i].phase || m.ReasoningItemID != before[i].reasoningItemID {
-					t.Fatalf("msg %d: input mutated: Reasoning/ReasoningItemID/ProviderPhase now (%q,%q,%q), were (%q,%q,%q)",
-						i, m.Reasoning, m.ReasoningItemID, m.ProviderPhase, before[i].reasoning, before[i].reasoningItemID, before[i].phase)
-				}
-				for j, c := range m.ToolCalls {
-					if c.ItemID != before[i].itemIDs[j] {
-						t.Fatalf("msg %d call %d: input ToolCalls backing array mutated: ItemID now %q, was %q",
-							i, j, c.ItemID, before[i].itemIDs[j])
-					}
-				}
-			}
-		})
-	}
-}
-
-// TestStripProviderStateToolCallsBackingArrayNotAliased pins the load-bearing
-// half of the no-mutation contract: when the input carries tool calls, the
-// result's ToolCalls slice must be a COPY — zeroing ItemID on the result must
-// never write through a shared backing array into the caller's history.
-func TestStripProviderStateToolCallsBackingArrayNotAliased(t *testing.T) {
-	orig := []Message{
-		{
-			Role: RoleAssistant,
-			ToolCalls: []ToolCall{
-				{ID: "c1", Name: "Read", Args: json.RawMessage(`{}`), ItemID: "fc_item_1"},
-			},
-		},
-	}
-	stripped := StripProviderState(orig)
-	if stripped[0].ToolCalls[0].ItemID != "" {
-		t.Fatalf("stripped ItemID = %q, want cleared", stripped[0].ToolCalls[0].ItemID)
-	}
-	if orig[0].ToolCalls[0].ItemID != "fc_item_1" {
-		t.Fatalf("input ToolCalls backing array was mutated: ItemID = %q, want fc_item_1",
-			orig[0].ToolCalls[0].ItemID)
-	}
-	// And the arrays really are distinct storage, not two headers on one array.
-	stripped[0].ToolCalls[0].ItemID = "rewritten"
-	if orig[0].ToolCalls[0].ItemID != "fc_item_1" {
-		t.Fatalf("result aliases the input backing array: a write to the copy reached the original")
+		}
 	}
 }
 
@@ -544,7 +364,7 @@ func TestStripProviderStateToolCallsBackingArrayNotAliased(t *testing.T) {
 func TestForkEmptyParentConversation(t *testing.T) {
 	// A conversation consisting ONLY of the trailing (unanswered) fork call.
 	conv := &Conversation{Messages: []Message{
-		NewAssistantMessage("", "", []ToolCall{NewToolCall("fork1", "Subagent", json.RawMessage(`{}`))}),
+		NewAssistantMessage("", []ToolCall{NewToolCall("fork1", "Subagent", json.RawMessage(`{}`))}),
 	}}
 	snap := ForkSnapshot(conv)
 	if len(snap) != 0 {

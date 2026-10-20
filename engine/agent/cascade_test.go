@@ -24,7 +24,7 @@ func overBudgetConversation() *session.Conversation {
 	conv.Append(session.NewUserMessage("fix the bug in handler.go and util.go"))
 	for i, path := range []string{"handler.go", "util.go", "main.go", "server.go"} {
 		id := session.ToolCallID(string(rune('a' + i)))
-		conv.Append(session.NewAssistantMessage("", "", []session.ToolCall{
+		conv.Append(session.NewAssistantMessage("", []session.ToolCall{
 			session.NewToolCall(id, "Read", json.RawMessage(`{"path":"`+path+`"}`)),
 		}))
 		conv.Append(session.NewToolMessage(session.NewToolResult(id, strings.Repeat("X", 4000))))
@@ -173,7 +173,7 @@ func TestCascadeImplementsCompactor(t *testing.T) {
 // test can assert the tier-4 summary call carries no media bytes, then replies
 // with a fixed summary.
 type capturingSummaryProvider struct {
-	gotMessages []session.Message
+	gotMessages []port.LLMMessage
 }
 
 func (*capturingSummaryProvider) Capabilities() port.ProviderCapabilities {
@@ -181,7 +181,7 @@ func (*capturingSummaryProvider) Capabilities() port.ProviderCapabilities {
 }
 
 func (p *capturingSummaryProvider) Stream(_ context.Context, req port.LLMRequest) (iter.Seq2[port.Chunk, error], error) {
-	p.gotMessages = append([]session.Message(nil), req.Messages...)
+	p.gotMessages = append([]port.LLMMessage(nil), req.Messages...)
 	return func(yield func(port.Chunk, error) bool) {
 		yield(port.Chunk{Kind: port.ChunkText, Text: "SUMMARY of earlier turns"}, nil)
 		yield(port.Chunk{Kind: port.ChunkDone, Stop: session.StopEndTurn}, nil)
@@ -392,7 +392,7 @@ func TestCascadeTier4ConditionalInstructionInMiddleReachesSummariser(t *testing.
 	paths := []string{"handler.go", "util.go", "main.go", "server.go"}
 	for i, path := range paths {
 		id := session.ToolCallID(string(rune('a' + i)))
-		conv.Append(session.NewAssistantMessage("", "", []session.ToolCall{
+		conv.Append(session.NewAssistantMessage("", []session.ToolCall{
 			session.NewToolCall(id, "Read", json.RawMessage(`{"path":"`+path+`"}`)),
 		}))
 		conv.Append(session.NewToolMessage(session.NewToolResult(id, strings.Repeat("X", 4000))))
@@ -537,7 +537,7 @@ func TestCascadeTier4PreservesPairingWithStructuredSummary(t *testing.T) {
 	// Middle tool pairs (summarised away by tier 4).
 	for i, path := range []string{"handler.go", "util.go", "main.go", "server.go"} {
 		id := session.ToolCallID(string(rune('a' + i)))
-		conv.Append(session.NewAssistantMessage("", "", []session.ToolCall{
+		conv.Append(session.NewAssistantMessage("", []session.ToolCall{
 			session.NewToolCall(id, "Read", json.RawMessage(`{"path":"`+path+`"}`)),
 		}))
 		conv.Append(session.NewToolMessage(session.NewToolResult(id, strings.Repeat("X", 4000))))
@@ -545,12 +545,12 @@ func TestCascadeTier4PreservesPairingWithStructuredSummary(t *testing.T) {
 	// A complete tool pair inside the preserved tail (KeepLastTurns=6 below keeps
 	// these four messages plus the pair intact).
 	tailID := session.ToolCallID("tail-call")
-	conv.Append(session.NewAssistantMessage("", "", []session.ToolCall{
+	conv.Append(session.NewAssistantMessage("", []session.ToolCall{
 		session.NewToolCall(tailID, "Read", json.RawMessage(`{"path":"tail.go"}`)),
 	}))
 	conv.Append(session.NewToolMessage(session.NewToolResult(tailID, "tail body")))
 	conv.Append(session.NewUserMessage("recent chatter"))
-	conv.Append(session.NewAssistantMessage("done looking", "", nil))
+	conv.Append(session.NewAssistantMessage("done looking", nil))
 
 	llm := mockllm.New(mockllm.TextTurn("## Goal\nfix the bug\n\n## Next steps\nNone."))
 	cc := forceTier4(llm)
@@ -602,7 +602,7 @@ func TestCascadeTier4TopLevelCutSnapsPastToolResult(t *testing.T) {
 	// Middle tool pairs (bulk for the deterministic tiers to chew on).
 	for i, path := range []string{"handler.go", "util.go", "main.go", "server.go"} {
 		id := session.ToolCallID(string(rune('a' + i)))
-		conv.Append(session.NewAssistantMessage("", "", []session.ToolCall{
+		conv.Append(session.NewAssistantMessage("", []session.ToolCall{
 			session.NewToolCall(id, "Read", json.RawMessage(`{"path":"`+path+`"}`)),
 		}))
 		conv.Append(session.NewToolMessage(session.NewToolResult(id, strings.Repeat("X", 4000))))
@@ -610,12 +610,12 @@ func TestCascadeTier4TopLevelCutSnapsPastToolResult(t *testing.T) {
 	// The pair the cut splits: with 14 messages and KeepLastTurns=3 the raw cut
 	// index is 11 — exactly this pair's RoleTool result.
 	snapID := session.ToolCallID("snap-call")
-	conv.Append(session.NewAssistantMessage("", "", []session.ToolCall{
+	conv.Append(session.NewAssistantMessage("", []session.ToolCall{
 		session.NewToolCall(snapID, "Read", json.RawMessage(`{"path":"snap.go"}`)),
 	}))
 	conv.Append(session.NewToolMessage(session.NewToolResult(snapID, "snap body")))
 	conv.Append(session.NewUserMessage("recent chatter"))
-	conv.Append(session.NewAssistantMessage("done looking", "", nil))
+	conv.Append(session.NewAssistantMessage("done looking", nil))
 
 	llm := mockllm.New(mockllm.TextTurn("## Goal\nfix the bug\n\n## Next steps\nNone."))
 	cc := forceTier4(llm)
@@ -673,7 +673,7 @@ func recentTaskTier4Conversation() *session.Conversation {
 	conv.Append(session.NewUserMessage("original setup"))
 	for i := 0; i < 3; i++ {
 		id := session.ToolCallID(string(rune('a' + i)))
-		conv.Append(session.NewAssistantMessage("", "", []session.ToolCall{
+		conv.Append(session.NewAssistantMessage("", []session.ToolCall{
 			session.NewToolCall(id, "Read", json.RawMessage(`{"path":"f.go"}`)),
 		}))
 		conv.Append(session.NewToolMessage(session.NewToolResult(id, strings.Repeat("X", 2000))))
@@ -681,7 +681,7 @@ func recentTaskTier4Conversation() *session.Conversation {
 	conv.Append(session.NewUserMessage("ACTUAL TASK: rename Foo to Bar"))
 	for i := 0; i < 4; i++ {
 		id := session.ToolCallID("t" + string(rune('0'+i)))
-		conv.Append(session.NewAssistantMessage("", "", []session.ToolCall{
+		conv.Append(session.NewAssistantMessage("", []session.ToolCall{
 			session.NewToolCall(id, "Read", json.RawMessage(`{"path":"g.go"}`)),
 		}))
 		conv.Append(session.NewToolMessage(session.NewToolResult(id, strings.Repeat("X", 2000))))

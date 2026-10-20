@@ -29,13 +29,13 @@ func (*runawayProvider) Capabilities() port.ProviderCapabilities { return port.P
 
 func (p *runawayProvider) Stream(ctx context.Context, _ port.LLMRequest) (iter.Seq2[port.Chunk, error], error) {
 	n := p.calls.Add(1)
-	id := session.ToolCallID("c" + string(rune('A'+(n%26))))
+	id := session.ProviderCallID("c" + string(rune('A'+(n%26))))
 	usage := p.perTurn
 	return func(yield func(port.Chunk, error) bool) {
 		if ctx.Err() != nil {
 			return
 		}
-		tc := session.NewToolCall(id, "Loop", []byte(`{}`))
+		tc := port.LLMToolCall{ID: id, Name: "Loop", Args: []byte(`{}`)}
 		if !yield(port.Chunk{Kind: port.ChunkToolCall, ToolCall: &tc}, nil) {
 			return
 		}
@@ -191,12 +191,12 @@ func (*subagentSpammerProvider) Capabilities() port.ProviderCapabilities {
 
 func (p *subagentSpammerProvider) Stream(ctx context.Context, _ port.LLMRequest) (iter.Seq2[port.Chunk, error], error) {
 	n := p.calls.Add(1)
-	id := session.ToolCallID("sub" + string(rune('A'+(n%26))))
+	id := session.ProviderCallID("sub" + string(rune('A'+(n%26))))
 	return func(yield func(port.Chunk, error) bool) {
 		if ctx.Err() != nil {
 			return
 		}
-		tc := session.NewToolCall(id, "Subagent", []byte(`{"prompt":"explore something"}`))
+		tc := port.LLMToolCall{ID: id, Name: "Subagent", Args: []byte(`{"prompt":"explore something"}`)}
 		if !yield(port.Chunk{Kind: port.ChunkToolCall, ToolCall: &tc}, nil) {
 			return
 		}

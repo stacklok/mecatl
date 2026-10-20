@@ -535,7 +535,7 @@ func (t *ParallelTool) ExecuteWithParent(ctx context.Context, call session.ToolC
 // no observer behaves exactly as before.
 type branchEmitter struct {
 	emit         func(session.Event)
-	parentCallID string
+	parentCallID session.ToolCallID
 	// childID derives branch i's child SESSION id ("parallel-<callID>-<i>") for the
 	// branch_start/branch_end events, so a client can ADDRESS a branch (CancelChild)
 	// without deriving the id grammar (D16). It is deterministic (childSessionID), so
@@ -754,7 +754,7 @@ func (t *ParallelTool) run(ctx context.Context, call session.ToolCall, env tool.
 		return *selectorErr, nil
 	}
 
-	be := branchEmitter{emit: emit, parentCallID: string(call.ID), skipRoute: caps.skipRoute,
+	be := branchEmitter{emit: emit, parentCallID: call.ID, skipRoute: caps.skipRoute,
 		childID: func(i int) string { return string(t.childSessionID(caps.parentSessionID, call.ID, i)) }}
 	be.start(join, len(tasks))
 
@@ -1234,7 +1234,7 @@ func (t *ParallelTool) runBranch(ctx context.Context, callID session.ToolCallID,
 	// makes drainChildObserved discard intermediate events exactly as drainChild did.
 	final, stop, cause, usage, toolCount := drainChildObserved(
 		run, be.branchTool(i),
-		string(callID), string(childSess.ID),
+		callID, string(childSess.ID),
 		childPosture{isolated: true, caps: caps, role: label,
 			// childID is the branch SESSION id ("parallel-<callID>-<i>" — NOT the branch
 			// label role carries), the uniform ask-ownership/cancel handle (A6): a
