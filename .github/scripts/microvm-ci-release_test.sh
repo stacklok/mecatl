@@ -265,6 +265,9 @@ CGO_ENABLED=0 GOWORK=off go -C "$repo_root/environment/microvm" build -trimpath 
 # Functional host-stamp/entrypoint contract: both real binaries consume their
 # package-specific microVM stamps and expose the canonical BuildID. Mecated additionally
 # exercises its offline administration entrypoint.
+# Every build and the go test below use the release job's CGO_ENABLED=0,
+# -trimpath, and -s -w, so they share one compile in the build cache and
+# each later -X variant only relinks.
 host_scratch="$test_tmp/host-entrypoint"
 mkdir -p "$host_scratch/home" "$host_scratch/config" "$host_scratch/data" "$host_scratch/state" "$host_scratch/runtime"
 host_version=v0.0.0-host-contract
@@ -274,13 +277,13 @@ host_defaults=$(printf '{"%s":{"version":"%s","platform":"%s","url":"https://exa
 binary=mecated
 version_symbol=main.microVMReleaseVersion
 wrong_version_symbol=main.version
-go build -trimpath -buildvcs=false \
-  -ldflags="-X ${version_symbol}=${host_version} -X github.com/stacklok/mecatl/internal/buildinfo.BuildID=${host_version} -X main.microVMReleaseDefaultsB64=${host_defaults} -X main.microVMReleaseStampRequired=release" \
+CGO_ENABLED=0 go build -trimpath -buildvcs=false \
+  -ldflags="-s -w -X ${version_symbol}=${host_version} -X github.com/stacklok/mecatl/internal/buildinfo.BuildID=${host_version} -X main.microVMReleaseDefaultsB64=${host_defaults} -X main.microVMReleaseStampRequired=release" \
   -o "$host_scratch/$binary" "./cmd/$binary"
 test "$("$host_scratch/$binary" --version)" = "$binary $host_version"
 
-go build -trimpath -buildvcs=false \
-  -ldflags="-X ${version_symbol}=${host_version} -X main.microVMReleaseDefaultsB64=${host_defaults} -X main.microVMReleaseStampRequired=release" \
+CGO_ENABLED=0 go build -trimpath -buildvcs=false \
+  -ldflags="-s -w -X ${version_symbol}=${host_version} -X main.microVMReleaseDefaultsB64=${host_defaults} -X main.microVMReleaseStampRequired=release" \
   -o "$host_scratch/$binary-missing-build-id" "./cmd/$binary"
 if test "$("$host_scratch/$binary-missing-build-id" --version)" = "$binary $host_version"; then
   echo "$binary accepted a missing build ID stamp" >&2
@@ -291,8 +294,8 @@ HOME="$host_scratch/home" XDG_CONFIG_HOME="$host_scratch/config" XDG_DATA_HOME="
   XDG_STATE_HOME="$host_scratch/state" XDG_RUNTIME_DIR="$host_scratch/runtime" \
   "$host_scratch/$binary" microvm status --output json >"$host_scratch/$binary.json"
 
-go build -trimpath -buildvcs=false \
-  -ldflags="-X ${wrong_version_symbol}=${host_version} -X main.microVMReleaseDefaultsB64=${host_defaults} -X main.microVMReleaseStampRequired=release" \
+CGO_ENABLED=0 go build -trimpath -buildvcs=false \
+  -ldflags="-s -w -X ${wrong_version_symbol}=${host_version} -X main.microVMReleaseDefaultsB64=${host_defaults} -X main.microVMReleaseStampRequired=release" \
   -o "$host_scratch/$binary-wrong-version" "./cmd/$binary"
 if HOME="$host_scratch/home" XDG_CONFIG_HOME="$host_scratch/config" XDG_DATA_HOME="$host_scratch/data" \
   XDG_STATE_HOME="$host_scratch/state" XDG_RUNTIME_DIR="$host_scratch/runtime" \
@@ -301,8 +304,8 @@ if HOME="$host_scratch/home" XDG_CONFIG_HOME="$host_scratch/config" XDG_DATA_HOM
   exit 1
 fi
 
-go build -trimpath -buildvcs=false \
-  -ldflags="-X ${version_symbol}=${host_version} -X main.missingMicroVMReleaseDefaults=${host_defaults} -X main.microVMReleaseStampRequired=release" \
+CGO_ENABLED=0 go build -trimpath -buildvcs=false \
+  -ldflags="-s -w -X ${version_symbol}=${host_version} -X main.missingMicroVMReleaseDefaults=${host_defaults} -X main.microVMReleaseStampRequired=release" \
   -o "$host_scratch/$binary-missing-defaults" "./cmd/$binary"
 if HOME="$host_scratch/home" XDG_CONFIG_HOME="$host_scratch/config" XDG_DATA_HOME="$host_scratch/data" \
   XDG_STATE_HOME="$host_scratch/state" XDG_RUNTIME_DIR="$host_scratch/runtime" \
@@ -313,15 +316,15 @@ fi
 
 # mecatui has no administration frontend. Verify its package-specific linker
 # symbols feed embedded app composition without starting KVM or an interactive TUI.
-go test -run '^TestMecatuiReleaseStampFeedsEmbeddedReadinessDefaults$' \
-  -ldflags="-X main.version=${host_version} -X github.com/stacklok/mecatl/internal/buildinfo.BuildID=${host_version} -X main.microVMReleaseDefaultsB64=${host_defaults} -X main.microVMReleaseStampRequired=release" \
+CGO_ENABLED=0 go test -trimpath -run '^TestMecatuiReleaseStampFeedsEmbeddedReadinessDefaults$' \
+  -ldflags="-s -w -X main.version=${host_version} -X github.com/stacklok/mecatl/internal/buildinfo.BuildID=${host_version} -X main.microVMReleaseDefaultsB64=${host_defaults} -X main.microVMReleaseStampRequired=release" \
   ./cmd/mecatui
 
 # The release binary must also expose the canonical BuildID.
 binary=mecatui
 version_symbol=main.version
-go build -trimpath -buildvcs=false \
-  -ldflags="-X ${version_symbol}=${host_version} -X github.com/stacklok/mecatl/internal/buildinfo.BuildID=${host_version} -X main.microVMReleaseDefaultsB64=${host_defaults} -X main.microVMReleaseStampRequired=release" \
+CGO_ENABLED=0 go build -trimpath -buildvcs=false \
+  -ldflags="-s -w -X ${version_symbol}=${host_version} -X github.com/stacklok/mecatl/internal/buildinfo.BuildID=${host_version} -X main.microVMReleaseDefaultsB64=${host_defaults} -X main.microVMReleaseStampRequired=release" \
   -o "$host_scratch/$binary" "./cmd/$binary"
 test "$("$host_scratch/$binary" --version)" = "$binary $host_version"
 
