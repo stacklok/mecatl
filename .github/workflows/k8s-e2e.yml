@@ -138,15 +138,11 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-          cache: true
-          # engine/ is its own module (go.work monorepo); its go.sum is part of
-          # the build cache key alongside the root's.
-          cache-dependency-path: |
-            go.sum
-            engine/go.sum
-            adapters/go.sum
-            internal/adaptersupport/go.sum
-            contracts/gen/go/mecatl/driver/go.sum
+          cache: false
+      - id: go-cache
+        uses: ./.github/actions/go-cache-restore
+        with:
+          family: go-k8s-e2e
 
       - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
         with:
@@ -216,6 +212,13 @@ jobs:
           retention-days: 7
           if-no-files-found: warn
 
+      - name: Save Go caches
+        uses: ./.github/actions/go-cache-save
+        with:
+          key: ${{ steps.go-cache.outputs.key }}
+          path: ${{ steps.go-cache.outputs.path }}
+          cache-hit: ${{ steps.go-cache.outputs.cache-hit }}
+
   # Sharded across independent Kind clusters; deploy/mecatl-execution-kind/shards.txt
   # assigns every cluster test to one shard, and shards_test.go keeps that table,
   # the test functions, and this matrix in agreement.
@@ -236,9 +239,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      # The shared setup-go entry (same key as ci.yml and the job above) holds
-      # non-trimpath compiles and is saved by whichever job wins the race, so
-      # it never warms ko's -trimpath builds. This job owns its own entry:
+      # The job above caches non-trimpath compiles under its own family, which
+      # never warms ko's -trimpath builds. This job owns its own entry:
       # restored everywhere, saved once per go.sum by shard 1 outside PRs.
       - id: setup-go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0

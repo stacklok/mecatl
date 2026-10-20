@@ -81,10 +81,11 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: environment/microvm/go.mod
-          cache: true
-          cache-dependency-path: |
-            engine/go.sum
-            environment/microvm/go.sum
+          cache: false
+      - id: go-cache
+        uses: ./.github/actions/go-cache-restore
+        with:
+          family: go-microvm-e2e
 
       - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
       - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
@@ -159,6 +160,13 @@ jobs:
           export MECATL_MICROVM_E2E_KVM_GID
           sg kvm -c "echo \"E2E host identity: uid=\$(id -u) euid=\$(id -u) gid=\$(id -g) expected_kvm_gid=${MECATL_MICROVM_E2E_KVM_GID}\"; test \"\$(id -g)\" = \"${MECATL_MICROVM_E2E_KVM_GID}\"; task e2e:microvm"
 
+      - name: Save Go caches
+        uses: ./.github/actions/go-cache-save
+        with:
+          key: ${{ steps.go-cache.outputs.key }}
+          path: ${{ steps.go-cache.outputs.path }}
+          cache-hit: ${{ steps.go-cache.outputs.cache-hit }}
+
   linux-arm64-compile-static:
     name: Linux arm64 compile/static coverage
     runs-on: ubuntu-24.04-arm
@@ -170,16 +178,24 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: environment/microvm/go.mod
-          cache: true
-          cache-dependency-path: |
-            engine/go.sum
-            environment/microvm/go.sum
+          cache: false
+      - id: go-cache
+        uses: ./.github/actions/go-cache-restore
+        with:
+          family: go-microvm-e2e
       - name: Compile runtime, production daemon, and tagged E2E
         run: |
           cd environment/microvm
           GOWORK=off go test ./...
           cd ../..
           go test -tags=microvm_e2e ./internal/adapter/microvm -run '^$'
+
+      - name: Save Go caches
+        uses: ./.github/actions/go-cache-save
+        with:
+          key: ${{ steps.go-cache.outputs.key }}
+          path: ${{ steps.go-cache.outputs.path }}
+          cache-hit: ${{ steps.go-cache.outputs.cache-hit }}
 
   macos-compile-static:
     name: macOS 15 arm64 compile/static coverage
@@ -192,10 +208,11 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: environment/microvm/go.mod
-          cache: true
-          cache-dependency-path: |
-            engine/go.sum
-            environment/microvm/go.sum
+          cache: false
+      - id: go-cache
+        uses: ./.github/actions/go-cache-restore
+        with:
+          family: go-microvm-e2e
       - name: Run nested module unit/race coverage and compile tagged E2E
         run: |
           cd environment/microvm
@@ -204,3 +221,10 @@ jobs:
           cd ../..
           go test -race ./internal/adapter/microvm ./internal/adapter/microvmmanager
           go test -tags=microvm_e2e ./internal/adapter/microvm -run '^$'
+
+      - name: Save Go caches
+        uses: ./.github/actions/go-cache-save
+        with:
+          key: ${{ steps.go-cache.outputs.key }}
+          path: ${{ steps.go-cache.outputs.path }}
+          cache-hit: ${{ steps.go-cache.outputs.cache-hit }}

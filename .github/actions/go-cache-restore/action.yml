@@ -1,0 +1,52 @@
+# go-cache-restore: restore the Go module and build caches for one cache family.
+#
+# Pair with ./.github/actions/go-cache-save as the job's last step. Use it after
+# actions/setup-go with `cache: false`; the pinned setup-go cannot restore without
+# also saving, so every PR whose go.sum hash was absent on main saved its own
+# 1-2 GB entry that no other PR can read and that evicted main's shared entries
+# under the repository's 10 GB cache quota.
+#
+# The key is <family>-<os>-<arch>-<go version>-<hash of every tracked go.sum>.
+# An exact miss falls back to the newest entry with the same family prefix: Go's
+# caches are content-addressed, so an entry from an older go.sum is still mostly
+# valid. Give jobs that compile with different flags (-race, -trimpath) or for
+# different modules distinct families so one job never seeds another's cache.
+name: Restore Go caches
+description: Restore Go module and build caches by family, with a prefix fallback.
+
+inputs:
+  family:
+    description: Cache family name; jobs sharing build flags and modules share one.
+    required: true
+
+outputs:
+  key:
+    description: Exact cache key for this go.sum state; pass it to go-cache-save.
+    value: ${{ steps.restore.outputs.cache-primary-key }}
+  cache-hit:
+    description: '"true" when the exact key was restored.'
+    value: ${{ steps.restore.outputs.cache-hit }}
+  path:
+    description: Newline-separated GOMODCACHE and GOCACHE; pass it to go-cache-save.
+    value: ${{ steps.env.outputs.path }}
+
+runs:
+  using: composite
+  steps:
+    - id: env
+      shell: bash
+      run: |
+        set -euo pipefail
+        {
+          echo "go-version=$(go env GOVERSION)"
+          echo "path<<GO_CACHE_PATHS"
+          go env GOMODCACHE
+          go env GOCACHE
+          echo GO_CACHE_PATHS
+        } >> "$GITHUB_OUTPUT"
+    - id: restore
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ steps.env.outputs.path }}
+        key: ${{ inputs.family }}-${{ runner.os }}-${{ runner.arch }}-${{ steps.env.outputs.go-version }}-${{ hashFiles('**/go.sum', '!**/node_modules/**') }}
+        restore-keys: ${{ inputs.family }}-${{ runner.os }}-${{ runner.arch }}-${{ steps.env.outputs.go-version }}-

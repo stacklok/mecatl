@@ -1,0 +1,29 @@
+# go-cache-save: save the Go caches restored by go-cache-restore, from main only.
+#
+# Run it as the job's last step, passing the restore step's outputs. It saves
+# only outside pull requests on refs/heads/main, and only when the exact key
+# missed. PR-scoped entries are readable by that PR alone, so saving them spends
+# the repository's 10 GB cache quota and evicts the main entries every PR reads.
+name: Save Go caches
+description: Save Go module and build caches on main when the exact key missed.
+
+inputs:
+  key:
+    description: The go-cache-restore `key` output.
+    required: true
+  path:
+    description: The go-cache-restore `path` output.
+    required: true
+  cache-hit:
+    description: The go-cache-restore `cache-hit` output.
+    required: false
+    default: 'false'
+
+runs:
+  using: composite
+  steps:
+    - if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && inputs.cache-hit != 'true'
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ inputs.path }}
+        key: ${{ inputs.key }}

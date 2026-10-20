@@ -120,16 +120,11 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-          cache: true
-          # engine/ is its own module (go.work monorepo); its go.sum is part of
-          # the build cache key alongside the root's.
-          cache-dependency-path: |
-            go.sum
-            engine/go.sum
-            provider/ssefilter/go.sum
-            provider/anthropic/go.sum
-            provider/openai/go.sum
-            provider/openaichat/go.sum
+          cache: false
+      - id: go-cache
+        uses: ./.github/actions/go-cache-restore
+        with:
+          family: go-perf
 
       - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
         with:
@@ -282,6 +277,13 @@ jobs:
           retention-days: 14
           if-no-files-found: ignore
 
+      - name: Save Go caches
+        uses: ./.github/actions/go-cache-save
+        with:
+          key: ${{ steps.go-cache.outputs.key }}
+          path: ${{ steps.go-cache.outputs.path }}
+          cache-hit: ${{ steps.go-cache.outputs.cache-hit }}
+
   perf-main:
     name: Perf trend (main)
     if: github.event_name == 'push'
@@ -305,16 +307,11 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-          cache: true
-          # engine/ is its own module (go.work monorepo); its go.sum is part of
-          # the build cache key alongside the root's.
-          cache-dependency-path: |
-            go.sum
-            engine/go.sum
-            provider/ssefilter/go.sum
-            provider/anthropic/go.sum
-            provider/openai/go.sum
-            provider/openaichat/go.sum
+          cache: false
+      - id: go-cache
+        uses: ./.github/actions/go-cache-restore
+        with:
+          family: go-perf
 
       - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
         with:
@@ -535,3 +532,10 @@ jobs:
             allocsgate.txt
           retention-days: 14
           if-no-files-found: ignore
+
+      - name: Save Go caches
+        uses: ./.github/actions/go-cache-save
+        with:
+          key: ${{ steps.go-cache.outputs.key }}
+          path: ${{ steps.go-cache.outputs.path }}
+          cache-hit: ${{ steps.go-cache.outputs.cache-hit }}

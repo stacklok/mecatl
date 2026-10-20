@@ -276,13 +276,11 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-          cache: true
-          cache-dependency-path: |
-            go.sum
-            engine/go.sum
-            internal/adaptersupport/go.sum
-            contracts/gen/go/mecatl/driver/go.sum
-            adapters/go.sum
+          cache: false
+      - id: go-cache
+        uses: ./.github/actions/go-cache-restore
+        with:
+          family: go-sdk
 
       - uses: bufbuild/buf-setup-action@a47c93e0b1648d5651a065437926377d060baa99 # v1.50.0
         with:
@@ -301,6 +299,13 @@ jobs:
 
       - name: Run offline SDK e2e against same-checkout mecated
         run: task sdk:e2e
+
+      - name: Save Go caches
+        uses: ./.github/actions/go-cache-save
+        with:
+          key: ${{ steps.go-cache.outputs.key }}
+          path: ${{ steps.go-cache.outputs.path }}
+          cache-hit: ${{ steps.go-cache.outputs.cache-hit }}
 
   sdk-deno:
     name: TypeScript SDK (Deno ${{ matrix.deno-version }})
@@ -336,13 +341,11 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-          cache: true
-          cache-dependency-path: |
-            go.sum
-            engine/go.sum
-            internal/adaptersupport/go.sum
-            contracts/gen/go/mecatl/driver/go.sum
-            adapters/go.sum
+          cache: false
+      - id: go-cache
+        uses: ./.github/actions/go-cache-restore
+        with:
+          family: go-sdk
 
       - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
 
@@ -351,6 +354,13 @@ jobs:
 
       - name: Type-check and run the Deno.Command local integration
         run: task sdk:deno
+
+      - name: Save Go caches
+        uses: ./.github/actions/go-cache-save
+        with:
+          key: ${{ steps.go-cache.outputs.key }}
+          path: ${{ steps.go-cache.outputs.path }}
+          cache-hit: ${{ steps.go-cache.outputs.cache-hit }}
 
   sdk-browser:
     name: TypeScript SDK browser (${{ matrix.label }})
@@ -395,13 +405,11 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-          cache: true
-          cache-dependency-path: |
-            go.sum
-            engine/go.sum
-            internal/adaptersupport/go.sum
-            contracts/gen/go/mecatl/driver/go.sum
-            adapters/go.sum
+          cache: false
+      - id: go-cache
+        uses: ./.github/actions/go-cache-restore
+        with:
+          family: go-sdk
 
       - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
 
@@ -426,6 +434,13 @@ jobs:
 
       - name: Run browser project
         run: task sdk:browser:project PROJECT="${{ matrix.project }}"
+
+      - name: Save Go caches
+        uses: ./.github/actions/go-cache-save
+        with:
+          key: ${{ steps.go-cache.outputs.key }}
+          path: ${{ steps.go-cache.outputs.path }}
+          cache-hit: ${{ steps.go-cache.outputs.cache-hit }}
 
   sdk-macos-spawn:
     name: TypeScript SDK macOS spawn (macos-14, Node 22)
@@ -460,13 +475,11 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-          cache: true
-          cache-dependency-path: |
-            go.sum
-            engine/go.sum
-            internal/adaptersupport/go.sum
-            contracts/gen/go/mecatl/driver/go.sum
-            adapters/go.sum
+          cache: false
+      - id: go-cache
+        uses: ./.github/actions/go-cache-restore
+        with:
+          family: go-sdk
 
       - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
 
@@ -475,6 +488,13 @@ jobs:
 
       - name: Run the focused macOS Node spawn smoke
         run: task sdk:macos-spawn
+
+      - name: Save Go caches
+        uses: ./.github/actions/go-cache-save
+        with:
+          key: ${{ steps.go-cache.outputs.key }}
+          path: ${{ steps.go-cache.outputs.path }}
+          cache-hit: ${{ steps.go-cache.outputs.cache-hit }}
 
   slack-bot-example:
     name: Slack bot example
@@ -512,13 +532,11 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-          cache: true
-          cache-dependency-path: |
-            go.sum
-            engine/go.sum
-            internal/adaptersupport/go.sum
-            contracts/gen/go/mecatl/driver/go.sum
-            adapters/go.sum
+          cache: false
+      - id: go-cache
+        uses: ./.github/actions/go-cache-restore
+        with:
+          family: go-sdk
 
       - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
 
@@ -615,6 +633,13 @@ jobs:
             if (process.getuid() === 0 || forbidden.some(existsSync)) process.exit(1);
           '
 
+      - name: Save Go caches
+        uses: ./.github/actions/go-cache-save
+        with:
+          key: ${{ steps.go-cache.outputs.key }}
+          path: ${{ steps.go-cache.outputs.path }}
+          cache-hit: ${{ steps.go-cache.outputs.cache-hit }}
+
   studio:
     name: Mecatl Studio (apps/)
     needs: changes
@@ -676,13 +701,11 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-          cache: true
-          cache-dependency-path: |
-            go.sum
-            engine/go.sum
-            internal/adaptersupport/go.sum
-            contracts/gen/go/mecatl/driver/go.sum
-            adapters/go.sum
+          cache: false
+      - id: go-cache
+        uses: ./.github/actions/go-cache-restore
+        with:
+          family: go-sdk
 
       - name: Integration-test Studio against a spawned mecated --mock
         run: task studio:test:integration
@@ -787,6 +810,13 @@ jobs:
           severity-cutoff: critical
           output-format: table
 
+      - name: Save Go caches
+        uses: ./.github/actions/go-cache-save
+        with:
+          key: ${{ steps.go-cache.outputs.key }}
+          path: ${{ steps.go-cache.outputs.path }}
+          cache-hit: ${{ steps.go-cache.outputs.cache-hit }}
+
   # Playwright runs its suite on one worker, so shard by project across runners.
   studio-browser:
     name: Mecatl Studio browser journeys (${{ matrix.project }})
@@ -835,13 +865,11 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-          cache: true
-          cache-dependency-path: |
-            go.sum
-            engine/go.sum
-            internal/adaptersupport/go.sum
-            contracts/gen/go/mecatl/driver/go.sum
-            adapters/go.sum
+          cache: false
+      - id: go-cache
+        uses: ./.github/actions/go-cache-restore
+        with:
+          family: go-sdk
 
       # Only bin/mecated is needed, so skip the full `task build`.
       - name: Build mecated
@@ -849,6 +877,13 @@ jobs:
 
       - name: Test Studio browser journeys (Playwright, offline)
         run: task studio:browser -- --project=${{ matrix.project }}
+
+      - name: Save Go caches
+        uses: ./.github/actions/go-cache-save
+        with:
+          key: ${{ steps.go-cache.outputs.key }}
+          path: ${{ steps.go-cache.outputs.path }}
+          cache-hit: ${{ steps.go-cache.outputs.cache-hit }}
 
   studio-gate:
     name: Mecatl Studio (gate)
@@ -912,22 +947,11 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-          cache: true
-          # engine/ is its own module (consumed via the committed go.work), so its
-          # go.sum participates in the build cache key alongside the root's.
-          cache-dependency-path: |
-            go.sum
-            engine/go.sum
-            internal/adaptersupport/go.sum
-            contracts/gen/go/mecatl/driver/go.sum
-            adapters/go.sum
-            authn/oidc/go.sum
-            environment/microvm/go.sum
-            integration/microvm/go.sum
-            provider/ssefilter/go.sum
-            provider/anthropic/go.sum
-            provider/openai/go.sum
-            provider/openaichat/go.sum
+          cache: false
+      - id: go-cache
+        uses: ./.github/actions/go-cache-restore
+        with:
+          family: go-build
 
       - name: go build
         run: go build ./...
@@ -977,6 +1001,13 @@ jobs:
       - name: Verify macOS-job closure allowlist
         run: bash .github/scripts/macos-closure-guard.sh
 
+      - name: Save Go caches
+        uses: ./.github/actions/go-cache-save
+        with:
+          key: ${{ steps.go-cache.outputs.key }}
+          path: ${{ steps.go-cache.outputs.path }}
+          cache-hit: ${{ steps.go-cache.outputs.cache-hit }}
+
   # Release archives are cross-compiled for darwin on an ubuntu runner, which
   # cannot execute them, so nothing else in CI ever RUNS a darwin binary. This
   # job is the native Apple Silicon smoke test: it proves the two executables the
@@ -1007,13 +1038,11 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-          cache: true
-          cache-dependency-path: |
-            go.sum
-            engine/go.sum
-            internal/adaptersupport/go.sum
-            contracts/gen/go/mecatl/driver/go.sum
-            adapters/go.sum
+          cache: false
+      - id: go-cache
+        uses: ./.github/actions/go-cache-restore
+        with:
+          family: go-sdk
       - name: Build and run the cask's executables
         env:
           # A recognisable stand-in for a release tag. The release build stamps
@@ -1040,6 +1069,13 @@ jobs:
           go test ./internal/adapter/privatefile ./internal/adapter/authfile ./internal/adapter/permconfig ./internal/adapter/credentialstore -count=1
           go test ./cmd/mecatui -run '^(TestProviderCommandsOIDCLoginPreparesAbsentPrivateRoot|TestInvariant_ProviderSetupFollowup_SecretSafety|TestProviderReview.*)$' -count=1
 
+      - name: Save Go caches
+        uses: ./.github/actions/go-cache-save
+        with:
+          key: ${{ steps.go-cache.outputs.key }}
+          path: ${{ steps.go-cache.outputs.path }}
+          cache-hit: ${{ steps.go-cache.outputs.cache-hit }}
+
   managed-temp-macos:
     name: Managed temporary storage (macOS)
     needs: changes
@@ -1060,13 +1096,11 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-          cache: true
-          cache-dependency-path: |
-            go.sum
-            engine/go.sum
-            internal/adaptersupport/go.sum
-            contracts/gen/go/mecatl/driver/go.sum
-            adapters/go.sum
+          cache: false
+      - id: go-cache
+        uses: ./.github/actions/go-cache-restore
+        with:
+          family: go-sdk
       - name: Run managed temporary storage tests
         run: |
           go test ./internal/adapter/managedtemp -count=1
@@ -1076,10 +1110,20 @@ jobs:
           # Linux/macOS, and ToolHive's 1Password SDK cannot compile on FreeBSD.
           GOOS=freebsd GOARCH=amd64 go test -c -o "$RUNNER_TEMP/osfs-freebsd.test" ./internal/adapter/osfs
 
+      - name: Save Go caches
+        uses: ./.github/actions/go-cache-save
+        with:
+          key: ${{ steps.go-cache.outputs.key }}
+          path: ${{ steps.go-cache.outputs.path }}
+          cache-hit: ${{ steps.go-cache.outputs.cache-hit }}
+
   test:
     name: ${{ needs.changes.outputs.docs_only == 'true' && 'Test (docs-only)' || github.event_name == 'pull_request' && github.event.pull_request.draft && 'Test (non-race draft)' || 'Test (race)' }}
     needs: changes
-    if: always()
+    # !cancelled() still runs when `changes` fails, so the required context
+    # reports and the first step fails it. Unlike always(), a cancelled
+    # (superseded) run stops here instead of holding the concurrency group.
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
@@ -1149,20 +1193,11 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-          cache: true
-          cache-dependency-path: |
-            go.sum
-            engine/go.sum
-            internal/adaptersupport/go.sum
-            contracts/gen/go/mecatl/driver/go.sum
-            adapters/go.sum
-            authn/oidc/go.sum
-            environment/microvm/go.sum
-            integration/microvm/go.sum
-            provider/ssefilter/go.sum
-            provider/anthropic/go.sum
-            provider/openai/go.sum
-            provider/openaichat/go.sum
+          cache: false
+      - id: go-cache
+        uses: ./.github/actions/go-cache-restore
+        with:
+          family: go-analysis
 
       - id: golangci-version
         run: echo "version=$(sh scripts/install-golangci-lint.sh --version)" >> "$GITHUB_OUTPUT"
@@ -1241,6 +1276,13 @@ jobs:
             *) exit "$status" ;;
           esac
 
+      - name: Save Go caches
+        uses: ./.github/actions/go-cache-save
+        with:
+          key: ${{ steps.go-cache.outputs.key }}
+          path: ${{ steps.go-cache.outputs.path }}
+          cache-hit: ${{ steps.go-cache.outputs.cache-hit }}
+
   # The nested-module golangci-lint passes run beside the root lint instead of
   # after it. One job, not a per-module matrix: each pass takes well under a
   # minute, so a matrix would mostly add runner setup.
@@ -1258,20 +1300,11 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-          cache: true
-          cache-dependency-path: |
-            go.sum
-            engine/go.sum
-            internal/adaptersupport/go.sum
-            contracts/gen/go/mecatl/driver/go.sum
-            adapters/go.sum
-            authn/oidc/go.sum
-            environment/microvm/go.sum
-            integration/microvm/go.sum
-            provider/ssefilter/go.sum
-            provider/anthropic/go.sum
-            provider/openai/go.sum
-            provider/openaichat/go.sum
+          cache: false
+      - id: go-cache
+        uses: ./.github/actions/go-cache-restore
+        with:
+          family: go-analysis
 
       - id: golangci-version
         run: echo "version=$(sh scripts/install-golangci-lint.sh --version)" >> "$GITHUB_OUTPUT"
@@ -1314,6 +1347,13 @@ jobs:
           (cd provider/openai && golangci-lint run --config ../../.golangci.yml --allow-parallel-runners --timeout=10m ./...)
           (cd provider/openaichat && golangci-lint run --config ../../.golangci.yml --allow-parallel-runners --timeout=10m ./...)
 
+      - name: Save Go caches
+        uses: ./.github/actions/go-cache-save
+        with:
+          key: ${{ steps.go-cache.outputs.key }}
+          path: ${{ steps.go-cache.outputs.path }}
+          cache-hit: ${{ steps.go-cache.outputs.cache-hit }}
+
   # Offline shell tests for the composite-action and release glue scripts. They
   # run beside Analysis rather than inside it: microvm-ci-release_test.sh builds
   # mecated and mecatui several times with release linker stamps, which takes
@@ -1332,20 +1372,11 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-          cache: true
-          cache-dependency-path: |
-            go.sum
-            engine/go.sum
-            internal/adaptersupport/go.sum
-            contracts/gen/go/mecatl/driver/go.sum
-            adapters/go.sum
-            authn/oidc/go.sum
-            environment/microvm/go.sum
-            integration/microvm/go.sum
-            provider/ssefilter/go.sum
-            provider/anthropic/go.sum
-            provider/openai/go.sum
-            provider/openaichat/go.sum
+          cache: false
+      - id: go-cache
+        uses: ./.github/actions/go-cache-restore
+        with:
+          family: go-analysis
 
       # The mecatequi composite-action glue scripts (extract-prompt.sh, publish.sh) have
       # offline bash tests with fake gh/git stubs that assert their SECURITY logic (no
@@ -1366,6 +1397,13 @@ jobs:
       # bundles strict admission consumes and rejects statement tampering.
       - name: Test microVM release scripts
         run: bash .github/scripts/microvm-ci-release_test.sh
+
+      - name: Save Go caches
+        uses: ./.github/actions/go-cache-save
+        with:
+          key: ${{ steps.go-cache.outputs.key }}
+          path: ${{ steps.go-cache.outputs.path }}
+          cache-hit: ${{ steps.go-cache.outputs.cache-hit }}
 
   # Preserve one stable required context while the analysis jobs run.
   # The aggregate validates the classifier and every applicable analysis job, so
@@ -1434,20 +1472,11 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-          cache: true
-          cache-dependency-path: |
-            go.sum
-            engine/go.sum
-            internal/adaptersupport/go.sum
-            contracts/gen/go/mecatl/driver/go.sum
-            adapters/go.sum
-            authn/oidc/go.sum
-            environment/microvm/go.sum
-            integration/microvm/go.sum
-            provider/ssefilter/go.sum
-            provider/anthropic/go.sum
-            provider/openai/go.sum
-            provider/openaichat/go.sum
+          cache: false
+      - id: go-cache
+        uses: ./.github/actions/go-cache-restore
+        with:
+          family: go-analysis
 
       - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
         with:
@@ -1475,6 +1504,13 @@ jobs:
       - name: task fuzz (short)
         run: task fuzz FUZZTIME=300000x
 
+      - name: Save Go caches
+        uses: ./.github/actions/go-cache-save
+        with:
+          key: ${{ steps.go-cache.outputs.key }}
+          path: ${{ steps.go-cache.outputs.path }}
+          cache-hit: ${{ steps.go-cache.outputs.cache-hit }}
+
   engine-standalone:
     name: Engine module (standalone, GOWORK=off)
     needs: changes
@@ -1493,8 +1529,11 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: engine/go.mod
-          cache: true
-          cache-dependency-path: engine/go.sum
+          cache: false
+      - id: go-cache
+        uses: ./.github/actions/go-cache-restore
+        with:
+          family: go-engine-standalone
 
       # GOWORK=off ignores the committed go.work, so the engine module resolves
       # against its OWN go.mod/go.sum alone — exactly an external consumer's view.
@@ -1507,6 +1546,13 @@ jobs:
         env:
           GOWORK: off
         run: cd engine && go test ./...
+
+      - name: Save Go caches
+        uses: ./.github/actions/go-cache-save
+        with:
+          key: ${{ steps.go-cache.outputs.key }}
+          path: ${{ steps.go-cache.outputs.path }}
+          cache-hit: ${{ steps.go-cache.outputs.cache-hit }}
 
   microvm-standalone:
     name: MicroVM module (standalone, GOWORK=off)
@@ -1522,11 +1568,11 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: environment/microvm/go.mod
-          cache: true
-          cache-dependency-path: |
-            engine/go.sum
-            environment/microvm/go.sum
-            integration/microvm/go.sum
+          cache: false
+      - id: go-cache
+        uses: ./.github/actions/go-cache-restore
+        with:
+          family: go-microvm-standalone
 
       - name: go build (microVM standalone)
         env:
@@ -1542,6 +1588,13 @@ jobs:
         env:
           GOWORK: off
         run: cd integration/microvm && go test ./...
+
+      - name: Save Go caches
+        uses: ./.github/actions/go-cache-save
+        with:
+          key: ${{ steps.go-cache.outputs.key }}
+          path: ${{ steps.go-cache.outputs.path }}
+          cache-hit: ${{ steps.go-cache.outputs.cache-hit }}
 
   provider-standalone:
     name: Provider modules (standalone, GOWORK=off)
@@ -1573,10 +1626,11 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-          cache: true
-          cache-dependency-path: |
-            provider/ssefilter/go.sum
-            provider/anthropic/go.sum
+          cache: false
+      - id: go-cache
+        uses: ./.github/actions/go-cache-restore
+        with:
+          family: go-provider-standalone
 
       # Warm the module cache. The build/test resolve the FULL (incl. test-only)
       # dependency graph into the cache. engine v0.8.0 (and provider/ssefilter for
@@ -1618,6 +1672,13 @@ jobs:
           (cd provider/ssefilter && go test ./...)
           (cd provider/anthropic && go test ./...)
 
+      - name: Save Go caches
+        uses: ./.github/actions/go-cache-save
+        with:
+          key: ${{ steps.go-cache.outputs.key }}
+          path: ${{ steps.go-cache.outputs.path }}
+          cache-hit: ${{ steps.go-cache.outputs.cache-hit }}
+
   api-compat:
     name: API compat (engine public surface)
     needs: changes
@@ -1640,23 +1701,21 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-          cache: true
-          cache-dependency-path: |
-            go.sum
-            engine/go.sum
-            internal/adaptersupport/go.sum
-            contracts/gen/go/mecatl/driver/go.sum
-            adapters/go.sum
-            authn/oidc/go.sum
-            environment/microvm/go.sum
-            integration/microvm/go.sum
-            provider/ssefilter/go.sum
-            provider/anthropic/go.sum
-            provider/openai/go.sum
-            provider/openaichat/go.sum
+          cache: false
+      - id: go-cache
+        uses: ./.github/actions/go-cache-restore
+        with:
+          family: go-analysis
 
       - name: go test ./internal/apicheck
         run: go test ./internal/apicheck
+
+      - name: Save Go caches
+        uses: ./.github/actions/go-cache-save
+        with:
+          key: ${{ steps.go-cache.outputs.key }}
+          path: ${{ steps.go-cache.outputs.path }}
+          cache-hit: ${{ steps.go-cache.outputs.cache-hit }}
 
   vuln:
     name: Vulnerabilities (govulncheck)
@@ -1691,20 +1750,11 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-          cache: true
-          cache-dependency-path: |
-            go.sum
-            engine/go.sum
-            internal/adaptersupport/go.sum
-            contracts/gen/go/mecatl/driver/go.sum
-            adapters/go.sum
-            authn/oidc/go.sum
-            environment/microvm/go.sum
-            integration/microvm/go.sum
-            provider/ssefilter/go.sum
-            provider/anthropic/go.sum
-            provider/openai/go.sum
-            provider/openaichat/go.sum
+          cache: false
+      - id: go-cache
+        uses: ./.github/actions/go-cache-restore
+        with:
+          family: go-analysis
 
       # Self-test the gate filter on synthetic JSON first (offline) so a broken
       # gate is caught here rather than silently mis-judging the real scan below.
@@ -1761,6 +1811,13 @@ jobs:
           (cd provider/openaichat && govulncheck -format json ./... \
             | go run ../../.github/scripts/govulncheck-gate.go) # v1.8.0
 
+      - name: Save Go caches
+        uses: ./.github/actions/go-cache-save
+        with:
+          key: ${{ steps.go-cache.outputs.key }}
+          path: ${{ steps.go-cache.outputs.path }}
+          cache-hit: ${{ steps.go-cache.outputs.cache-hit }}
+
   docs:
     name: Doc validation
     needs: changes
@@ -1778,21 +1835,11 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-          cache: true
-          cache-dependency-path: |
-            go.sum
-            engine/go.sum
-            internal/adaptersupport/go.sum
-            contracts/gen/go/mecatl/driver/go.sum
-            adapters/go.sum
-            authn/oidc/go.sum
-            environment/microvm/go.sum
-            integration/microvm/go.sum
-            provider/ssefilter/go.sum
-            provider/anthropic/go.sum
-            provider/openai/go.sum
-            provider/openaichat/go.sum
-            Taskfile.yml
+          cache: false
+      - id: go-cache
+        uses: ./.github/actions/go-cache-restore
+        with:
+          family: go-docs
 
       - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
 
@@ -1861,6 +1908,13 @@ jobs:
         uses: stacklok/matlatl@0b3087139018a4aa49ec6889ede1c17263e5d93c # v0.0.11
         with:
           strict: "true"
+
+      - name: Save Go caches
+        uses: ./.github/actions/go-cache-save
+        with:
+          key: ${{ steps.go-cache.outputs.key }}
+          path: ${{ steps.go-cache.outputs.path }}
+          cache-hit: ${{ steps.go-cache.outputs.cache-hit }}
 
   user-docs:
     name: User docs (Docusaurus build)

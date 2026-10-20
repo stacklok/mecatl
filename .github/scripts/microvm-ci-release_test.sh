@@ -53,7 +53,7 @@ require 'onerror=traversal_error' "$package"
 require 'onerror=traversal_error' "$prepare_dev"
 
 # Ordinary PR CI must cross the nested-module boundary at every relevant gate.
-require 'environment/microvm/go.sum' "$ci"
+require 'go-version-file: environment/microvm/go.mod' "$ci"
 require 'cd environment/microvm && go build ./...' "$ci"
 require 'cd environment/microvm && golangci-lint run --config ../../.golangci.yml' "$ci"
 require 'name: MicroVM module (standalone, GOWORK=off)' "$ci"
