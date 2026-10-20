@@ -12,11 +12,10 @@
 # Trigger model:
 #   - push to main, pull_request — both gated by a `paths:` filter so an unrelated
 #     doc-only or engine-only PR never pays the kind spin-up cost.
-#   - pull_request omits Taskfile.yml (most edits touch unrelated tasks) and the
-#     untracked go.work.sum; push to main still covers both. go.mod/go.sum stay:
-#     dependency bumps can change in-cluster behaviour.
-#   - Release PRs (head branch release/*) skip both jobs: they only bump version
-#     strings on a commit main has already qualified.
+#   - pull_request omits the untracked go.work.sum; push to main still covers it.
+#     Taskfile.yml stays: it defines the qualification entry points.
+#   - Only same-repository release/* PRs authored by toolhive-release-app[bot]
+#     skip both jobs; a contributor-controlled branch name alone cannot skip CI.
 #
 # Deliberately uses `pull_request` (NOT `pull_request_target`): this job checks out
 # and executes untrusted PR code, so it must run WITHOUT access to repo secrets —
@@ -104,6 +103,7 @@ on:
       - go.mod
       - go.sum
       - .ko.yaml
+      - Taskfile.yml
       - .github/workflows/k8s-e2e.yml
 
 # Least-privilege: the job only reads source. The suite is fully offline; no
@@ -124,7 +124,7 @@ env:
 jobs:
   k8s-e2e:
     name: k8s e2e (kind)
-    if: ${{ !startsWith(github.head_ref, 'release/') }}
+    if: ${{ !(github.event_name == 'pull_request' && github.event.pull_request.user.login == 'toolhive-release-app[bot]' && github.event.pull_request.head.repo.full_name == github.repository && startsWith(github.head_ref, 'release/')) }}
     runs-on: ubuntu-24.04
     # `task e2e:k8s` has a 30m `go test -timeout`; setup and build consume this
     # job budget too. Leave the suite enough outer-deadline margin to emit its
@@ -221,7 +221,7 @@ jobs:
   # the test functions, and this matrix in agreement.
   execution-production-e2e:
     name: execution provider production profile (kind, shard ${{ matrix.shard }})
-    if: ${{ !startsWith(github.head_ref, 'release/') }}
+    if: ${{ !(github.event_name == 'pull_request' && github.event.pull_request.user.login == 'toolhive-release-app[bot]' && github.event.pull_request.head.repo.full_name == github.repository && startsWith(github.head_ref, 'release/')) }}
     runs-on: ubuntu-24.04
     strategy:
       # Every shard's result is independent evidence; don't cancel siblings.
