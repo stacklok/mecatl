@@ -99,6 +99,17 @@ func runClosedSessions(t *testing.T, factory Factory) {
 		wantError(t, "AuthorizeCall in a closed session", err, identitybroker.CodeFailedPrecondition, identitybroker.ReasonSessionClosed)
 	})
 
+	t.Run("a registration naming its definition only by name passes validation", func(t *testing.T) {
+		// Reaching the closed-session refusal shows validation accepted it.
+		svc := factory(t)
+		s := mustOpen(t, svc, openRequest("hostS42", alice))
+		mustClose(t, svc, s.ID)
+		req := registerRequest(s)
+		req.Definition = identitybroker.DefinitionRef{Name: "code-reviewer"}
+		_, err := svc.RegisterAgent(ctx, req)
+		wantError(t, "RegisterAgent naming only a definition name", err, identitybroker.CodeFailedPrecondition, identitybroker.ReasonSessionClosed)
+	})
+
 	t.Run("closing again succeeds", func(t *testing.T) {
 		svc := factory(t)
 		s := mustOpen(t, svc, openRequest("hostS42", alice))
@@ -167,6 +178,8 @@ func runInvalidRequests(t *testing.T, factory Factory) {
 		"no incarnation":  func(r *identitybroker.RegisterAgentRequest) { r.Incarnation = "" },
 		"no definition":   func(r *identitybroker.RegisterAgentRequest) { r.Definition = identitybroker.DefinitionRef{} },
 		"bad definition":  func(r *identitybroker.RegisterAgentRequest) { r.Definition.Name = "../main" },
+		"bad source":      func(r *identitybroker.RegisterAgentRequest) { r.Definition.Source = "../system" },
+		"bad revision":    func(r *identitybroker.RegisterAgentRequest) { r.Definition.Revision = "v 1" },
 		"bad parent":      func(r *identitybroker.RegisterAgentRequest) { r.Parent.Subject = "spiffe://x/ y" },
 	}
 	for name, mutate := range registers {

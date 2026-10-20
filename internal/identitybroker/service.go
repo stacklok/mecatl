@@ -137,7 +137,10 @@ type RegisterAgentRequest struct {
 	// Incarnation is the agent instance's incarnation, which the harness
 	// allocates and persists.
 	Incarnation string
-	// Definition is the definition the instance runs.
+	// Definition is the definition the instance runs. Name is required. Source
+	// and Revision are checked when set but may be empty for now, because
+	// Mecatl sessions know their definition only by name; requiring them will
+	// be addressed later.
 	Definition DefinitionRef
 	// Parent is the registered instance that created this one; zero for a
 	// session's main agent.
@@ -153,11 +156,27 @@ func (r RegisterAgentRequest) Validate() error {
 	if err := r.Owner.validate(); err != nil {
 		return err
 	}
-	if err := r.Definition.validate(); err != nil {
-		return invalid("definition: " + err.Error())
+	if err := r.validateDefinition(); err != nil {
+		return err
 	}
 	if !r.Parent.IsZero() && !isToken(r.Parent.Subject) {
 		return invalid("parent subject must be non-empty printable text without spaces")
+	}
+	return nil
+}
+
+// validateDefinition applies DefinitionRef's rules to the fields that are set,
+// and requires Name.
+func (r RegisterAgentRequest) validateDefinition() error {
+	d := r.Definition
+	if !isSegment(d.Name) {
+		return invalid(fmt.Sprintf("definition name %q must match [A-Za-z0-9._-]+, be at most %d bytes, and not be '.' or '..'", d.Name, MaxSegmentBytes))
+	}
+	if d.Source != "" && !isSegment(d.Source) {
+		return invalid(fmt.Sprintf("definition source %q must match [A-Za-z0-9._-]+, be at most %d bytes, and not be '.' or '..'", d.Source, MaxSegmentBytes))
+	}
+	if d.Revision != "" && !isToken(d.Revision) {
+		return invalid(fmt.Sprintf("definition revision %q must be printable text without spaces", d.Revision))
 	}
 	return nil
 }
@@ -224,7 +243,8 @@ func invalid(detail string) error {
 // to the call's context after authenticating the workload; it is never a
 // request field.
 //
-// Phase 1 attaches and records the caller without checking it.
+// Implementations do not check the caller yet; checking it will be addressed
+// later.
 type Caller struct {
 	Workload string
 }
