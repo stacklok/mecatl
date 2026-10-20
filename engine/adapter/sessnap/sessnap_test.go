@@ -2,7 +2,6 @@ package sessnap_test
 
 import (
 	"encoding/json"
-	"errors"
 	"os"
 	"reflect"
 	"strings"
@@ -828,11 +827,11 @@ func TestLegacySnapshotFixturesDecode(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Unmarshal ambiguous legacy fixture: %v", err)
 	}
-	if _, ok := ambiguous.PendingAsk(); ok || !errors.Is(ambiguous.CheckIdentityReady(), session.ErrMigrationHeld) || len(ambiguous.Conversation.Messages[0].ToolCalls) != 0 {
+	if _, ok := ambiguous.PendingAsk(); ok || ambiguous.State != session.StateIdle || len(ambiguous.Conversation.Messages[0].ToolCalls) != 0 {
 		t.Fatal("ambiguous fixture gained runnable authority")
 	}
-	if hold := ambiguous.IdentityHoldSnapshot(); hold == nil || len(hold.Payload) == 0 || len(ambiguous.Conversation.Messages[0].Legacy.Unsupported) == 0 {
-		t.Fatal("ambiguous continuation/history was discarded")
+	if len(ambiguous.Conversation.Messages[0].Legacy.Unsupported) == 0 || !strings.Contains(ambiguous.Conversation.Messages[len(ambiguous.Conversation.Messages)-1].Text, "abandoned during upgrade") {
+		t.Fatal("ambiguous history or durable upgrade notice was discarded")
 	}
 }
 

@@ -255,9 +255,6 @@ func estimateSnapshotBytes(snap sessnap.Snapshot) int64 {
 		size += int64(96 * len(snap.TokenUsage))
 	}
 
-	if snap.IdentityHold != nil {
-		size += int64(64 + len(snap.IdentityHold.Reason) + encodedBytesLen(len(snap.IdentityHold.Payload)))
-	}
 	size += estimateMessagesBytes(snap)
 	return size
 }

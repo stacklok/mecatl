@@ -130,6 +130,10 @@ func decodeLegacy(data []byte) (legacyEvent, error) {
 	return old, err
 }
 func (e legacyEvent) hasAttachment() bool {
+	switch e.Type {
+	case session.EvPermissionAsk, session.EvAuthorizationRequired, session.EvAuthorizationResolved:
+		return true
+	}
 	return e.ToolCall != nil || e.ToolResult != nil || e.Ask != nil || e.Hook != nil || e.Approval != nil || e.Authorization != nil || e.Subagent != nil || e.Team != nil || e.Parallel != nil
 }
 func (e legacyEvent) historical() *session.HistoricalRecord {

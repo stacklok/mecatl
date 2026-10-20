@@ -176,7 +176,7 @@ func TestSourceIsolationAndUnsupportedContent(t *testing.T) {
 	}
 }
 
-func TestLegacyAwaitingAndAmbiguousHold(t *testing.T) {
+func TestLegacyAwaitingAndAmbiguousAbandonment(t *testing.T) {
 	ask := decode(t, `{"Type":"permission.ask","Ask":{"AskID":"ask","Tool":"Read","Call":"provider-secret","Args":{"path":"x"},"Reason":"approve"}}`)
 	for _, ambiguous := range []bool{false, true} {
 		es := []session.Event{decode(t, oldCall)}
@@ -188,19 +188,16 @@ func TestLegacyAwaitingAndAmbiguousHold(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if s.State != session.StateAwaiting {
-			t.Fatal(s.State)
-		}
 		if ambiguous {
-			if !errors.Is(s.CheckIdentityReady(), session.ErrMigrationHeld) {
-				t.Fatal("ambiguous ask executable")
+			if s.State != session.StateIdle {
+				t.Fatal("ambiguous ask not abandoned", s.State)
 			}
 			if _, ok := s.PendingAsk(); ok {
 				t.Fatal("ambiguous pending authority")
 			}
 		} else {
 			pending, ok := s.PendingAsk()
-			if !ok || pending.Call == "provider-secret" || pending.Call != s.Conversation.Messages[0].ToolCalls[0].ID {
+			if !ok || s.State != session.StateAwaiting || pending.Call == "provider-secret" || pending.Call != s.Conversation.Messages[0].ToolCalls[0].ID || !bytes.Equal(pending.Args, []byte(`{"path":"x"}`)) {
 				t.Fatal("pending identity not proven")
 			}
 		}
@@ -212,20 +209,23 @@ func TestLegacyAwaitingAndAmbiguousHold(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if ambiguous && !errors.Is(saved.CheckIdentityReady(), session.ErrMigrationHeld) {
-			t.Fatal("hold lost at restart")
+		if ambiguous && (saved.State != session.StateIdle) {
+			t.Fatal("abandonment lost at restart")
 		}
 	}
 }
 
-func TestLegacyExternalAuthorizationStillRequiresPrivateState(t *testing.T) {
+func TestLegacyExternalAuthorizationAbandoned(t *testing.T) {
 	es := []session.Event{decode(t, oldCall), decode(t, `{"Type":"authorization.required","Authorization":{"AuthorizationID":"auth","Call":"provider-secret","DisplayName":"broker","Status":"pending"}}`)}
-	if _, err := fold(es); !errors.Is(err, eventsource.ErrPrivateStateRequired) {
-		t.Fatal(err)
-	}
-	es = append(es, decode(t, `{"Type":"authorization.resolved","Authorization":{"AuthorizationID":"auth","Call":"WRONG","Status":"closed"}}`))
-	if _, err := fold(es); !errors.Is(err, eventsource.ErrPrivateStateRequired) {
-		t.Fatal("wrong legacy auth resolution cleared open private state", err)
+	for range 2 {
+		s, err := fold(es)
+		if err != nil || s.State != session.StateIdle {
+			t.Fatal("legacy public authorization not abandoned", s, err)
+		}
+		if err := s.BeginTurn(); err != nil {
+			t.Fatal(err)
+		}
+		es = append(es, decode(t, `{"Type":"authorization.resolved","Authorization":{"AuthorizationID":"auth","Call":"WRONG","Status":"closed"}}`))
 	}
 }
 

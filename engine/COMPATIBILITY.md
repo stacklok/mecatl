@@ -188,8 +188,17 @@ from later execution events. Public archive projections omit private replay.
 
 Mecatl's own resume loads the coherent private snapshot. A custom event-sourced host
 must accept this replay boundary or retain equivalent private state in its own
-storage. An open external-authorization continuation likewise requires private
-snapshot state; public events do not confer continuation authority.
+storage. A current-format open external-authorization continuation likewise requires
+private snapshot state; public events do not confer continuation authority.
+
+Legacy codecs preserve provable pending continuations. When proof is unavailable,
+they abandon the continuation at load time, clear its runnable controls, and return
+ordinary promptable history with a durable notice that prior tool effects and
+completion may be unknown. Only proven outstanding calls receive interruption
+results; ambiguous rows retain historical content and source provenance without
+guessed invocation links. Candidate `/2` snapshots carrying `identity_hold` are
+accepted as migration input; normalized writes omit that field. Loading performs
+no tool execution or external authorization action.
 
 ## See also
 

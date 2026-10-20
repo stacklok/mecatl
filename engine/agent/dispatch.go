@@ -634,10 +634,6 @@ const resumeAbortedSiblingMessage = "tool call aborted: the run was resumed at a
 // dispatched (their verdicts were lost with the dead process) — they are closed out,
 // not re-run. No call on the trailing assistant message is dispatched twice.
 func (e *Engine) driveFromAwaiting(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, askID string, verdict session.ApprovalVerdict) {
-	if err := sess.CheckIdentityReady(); err != nil {
-		e.rejectRunEntry(r, sess, err)
-		return
-	}
 	// Step 0: the run-open signal, exactly like drive's Step 0a, so telemetry
 	// adapters open a span/counter for the resumed run.
 	e.emit(r, session.Event{Type: session.EvSessionInit})

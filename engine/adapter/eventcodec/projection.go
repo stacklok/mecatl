@@ -12,12 +12,20 @@ import (
 // LegacyNamespace identifies the source namespace for legacy event-log records.
 const LegacyNamespace = "eventlog/legacy-v1"
 
-// Projection contains a safe event stream and private reconstruction facts.
-// PendingHold is opaque legacy continuation data, never public or executable.
+// Projection contains source records and codec-private reconstruction facts.
+// Events preserves the count, order, and coordinates of actual durable records.
 type Projection struct {
-	Events            []session.Event
-	PendingHold       []byte
-	OpenAuthorization bool
+	Events      []session.Event
+	abandoned   bool
+	interrupted []session.ToolCallID
+	segments    []Projection
+}
+
+// Segments returns reconstruction spans separated by legacy abandonment. Only
+// intermediate spans with an abandoned continuation create a boundary; Events
+// itself remains the unchanged sequence of actual durable source records.
+func (p Projection) Segments() []Projection {
+	return slices.Clone(p.segments)
 }
 
 type occurrence struct {
@@ -62,7 +70,11 @@ func ProjectRecord(e session.Event, inc session.IncarnationID, ordinal int) (ses
 		}
 		coordinate = fmt.Sprintf("event:%d", ordinal)
 	}
-	e = e.WithLegacyIdentity(*p)
+	base, err := Unmarshal(p.Payload)
+	if err != nil {
+		return session.Event{}, err
+	}
+	e = base.WithLegacyIdentity(*p)
 	h, err := session.HistoricalEvent(e, inc, ordinal)
 	if err != nil {
 		return session.Event{}, err
@@ -93,30 +105,25 @@ func Project(events []session.Event, inc session.IncarnationID) (Projection, err
 		return Projection{}, fmt.Errorf("eventcodec: missing stable source incarnation")
 	}
 	index := projectionIndex{
-		olds:       make([]*legacyEvent, len(events)),
-		identities: make([]*session.LegacyEventIdentity, len(events)),
-		calls:      make(map[int]*occurrence), results: make(map[int]*occurrence), asks: make(map[int]*occurrence),
+		olds:  make([]*legacyEvent, len(events)),
+		calls: make(map[int]*occurrence), results: make(map[int]*occurrence), asks: make(map[int]*occurrence),
 		open: make(map[string][]*occurrence), auth: make(map[string]string), pendingIndex: -1,
 	}
 	out := Projection{Events: slices.Clone(events)}
 	if err := index.collect(&out, events, inc); err != nil {
 		return Projection{}, err
 	}
-	if err := index.provePending(&out); err != nil {
-		return Projection{}, err
-	}
-	out.OpenAuthorization = len(index.auth) != 0
-	index.projectEvents(&out)
+	index.finishSegment(&out, len(events), true)
 	return out, nil
 }
 
 type projectionIndex struct {
 	olds                 []*legacyEvent
-	identities           []*session.LegacyEventIdentity
 	calls, results, asks map[int]*occurrence
 	open                 map[string][]*occurrence
 	auth                 map[string]string
 	pendingIndex         int
+	segmentStart         int
 }
 
 func keyFor(p *session.LegacyEventIdentity, id string) string {
@@ -128,6 +135,12 @@ func (x *projectionIndex) collect(out *Projection, events []session.Event, inc s
 	for i, e := range events {
 		p := e.LegacyIdentity()
 		if p == nil {
+			switch e.Type {
+			case session.EvUserPrompt, session.EvTurnStart:
+				// Prove the legacy prefix before a separately admitted current run
+				// can overwrite its pending controls or supply unrelated results.
+				x.finishSegment(out, i, false)
+			}
 			switch e.Type {
 			case session.EvPermissionAsk, session.EvApproval, session.EvPermissionRetract, session.EvResult:
 				x.pendingIndex = -1
@@ -174,7 +187,7 @@ func (x *projectionIndex) indexRecord(out *Projection, i int, e session.Event, p
 	if err != nil {
 		return fmt.Errorf("eventcodec: legacy record %d: %w", i, err)
 	}
-	x.olds[i], x.identities[i] = &old, p
+	x.olds[i] = &old
 	base, err := Unmarshal(p.Payload)
 	if err != nil {
 		return err
@@ -235,6 +248,8 @@ func (x *projectionIndex) indexLifecycle(i int, old *legacyEvent, p *session.Leg
 	case session.EvAuthorizationRequired:
 		if old.Authorization != nil {
 			x.auth[keyFor(p, old.Authorization.AuthorizationID)] = old.Authorization.Call
+		} else {
+			x.auth[keyFor(p, "")] = ""
 		}
 	case session.EvAuthorizationResolved:
 		if old.Authorization != nil && old.Authorization.Status != session.AuthorizationPending {
@@ -246,7 +261,9 @@ func (x *projectionIndex) indexLifecycle(i int, old *legacyEvent, p *session.Leg
 	}
 }
 
-func (x *projectionIndex) provePending(out *Projection) error {
+func (x *projectionIndex) provePending(out *Projection) {
+	// Public legacy authorization records cannot prove a private continuation.
+	out.abandoned = len(x.auth) != 0
 	pendingIndex := x.pendingIndex
 	if pendingIndex >= 0 {
 		if occ := x.asks[pendingIndex]; occ != nil && !occ.unsafe && !occ.answered {
@@ -256,7 +273,7 @@ func (x *projectionIndex) provePending(out *Projection) error {
 			for _, list := range x.open {
 				total += len(list)
 			}
-			if total == 1 {
+			if total == 1 && !out.abandoned {
 				occ.pending = true
 			} else {
 				delete(x.asks, pendingIndex)
@@ -265,26 +282,38 @@ func (x *projectionIndex) provePending(out *Projection) error {
 			delete(x.asks, pendingIndex)
 		}
 		if x.asks[pendingIndex] == nil {
-			pending, err := json.Marshal(x.olds[pendingIndex].Ask)
-			if err != nil {
-				return err
-			}
-			out.PendingHold, err = json.Marshal(struct {
-				Version int           `json:"version"`
-				State   session.State `json:"state"`
-				Pending []byte        `json:"pending"`
-				Event   []byte        `json:"event"`
-			}{1, session.StateAwaiting, pending, x.identities[pendingIndex].Payload})
-			if err != nil {
-				return err
+			out.abandoned = true
+		}
+	}
+}
+
+// finishSegment records only codec-private migration boundaries. Pairing proof is
+// reset there: later legacy or canonical rows cannot answer abandoned occurrences.
+func (x *projectionIndex) finishSegment(out *Projection, end int, final bool) {
+	part := Projection{Events: out.Events[x.segmentStart:end]}
+	x.provePending(&part)
+	if !final && !part.abandoned {
+		return
+	}
+	if part.abandoned {
+		for i := x.segmentStart; i < end; i++ {
+			if occ := x.calls[i]; occ != nil && !occ.unsafe && !occ.answered {
+				occ.pending = true
+				part.interrupted = append(part.interrupted, occ.id)
 			}
 		}
 	}
-	return nil
+	x.projectEvents(out, x.segmentStart, end, part.abandoned)
+	out.segments = append(out.segments, part)
+	x.segmentStart = end
+	x.open = make(map[string][]*occurrence)
+	x.auth = make(map[string]string)
+	x.pendingIndex = -1
 }
 
-func (x *projectionIndex) projectEvents(out *Projection) {
-	for i, old := range x.olds {
+func (x *projectionIndex) projectEvents(out *Projection, start, end int, abandoned bool) {
+	for i := start; i < end; i++ {
+		old := x.olds[i]
 		if old == nil {
 			continue
 		}
@@ -298,7 +327,7 @@ func (x *projectionIndex) projectEvents(out *Projection) {
 			e.Type, e.Historical = session.EvToolResult, nil
 			e.ToolResult = &session.ToolResult{CallID: occ.id, Content: old.ToolResult.Content, IsError: old.ToolResult.IsError, Parts: old.ToolResult.Parts}
 		}
-		if occ := x.asks[i]; occ != nil && !occ.unsafe && (occ.answered || occ.pending) {
+		if occ := x.asks[i]; occ != nil && !abandoned && !occ.unsafe && (occ.answered || occ.pending) {
 			e.Type, e.Historical = session.EvPermissionAsk, nil
 			a := old.Ask
 			e.Ask = &session.PendingAsk{AskID: a.AskID, Tool: a.Tool, Args: slices.Clone(a.Args), Reason: a.Reason, Call: occ.id, Guardrail: a.Guardrail, Origin: a.Origin}

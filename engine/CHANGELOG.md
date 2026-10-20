@@ -62,13 +62,21 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   Opaque payload contents are adapter-owned; occurrence bindings and copied
   replay storage belong to the Session. Added (minor).
 
-- **Inspection-only identity migration and historical projections (issue #2117)** —
-  adds `session.IdentityMigrationHold`, `ErrMigrationHeld`, identity-readiness,
-  hold snapshot/restore, and persistence-validation methods. Adds
+- **Historical identity projections (issue #2117)** — adds
   `HistoricalRecord`, `EvHistorical`, historical projection/identity helpers,
-  private legacy provenance carrier types and event accessors, and
-  `CloneSessionRelationship`/`CloneEventIdentity`. These APIs preserve data and
-  verification provenance without granting execution authority. Added (minor).
+  private legacy provenance carrier types and event accessors,
+  `ValidateIdentityPersistence`, and `CloneSessionRelationship`/`CloneEventIdentity`.
+  These APIs preserve data and verification provenance without granting execution
+  authority. Added (minor).
+
+- **Legacy continuation abandonment (issue #2117)** — removes draft
+  `IdentityMigrationHold`, `ErrMigrationHeld`, `CheckIdentityReady`,
+  `IdentityHoldSummary`, `IdentityHoldSnapshot`, and `RestoreIdentityMigrationHold`.
+  Snapshot and complete-event codecs preserve provable continuations and abandon
+  unprovable ones during load, returning ordinary promptable history with an
+  upgrade notice that prior tool effects and completion may be unknown. Readers
+  accept legacy `/1` and candidate hold-bearing `/2` snapshots; normalized writes
+  retain `/2` without held authority. Removed/Changed (breaking, pre-v1 minor).
 
 - **Canonical evidence protocol and source verification (issue #2117)** — adds
   `learning.ReflectionEvidenceV2`, `EvidenceCitation`, protocol/coordinate

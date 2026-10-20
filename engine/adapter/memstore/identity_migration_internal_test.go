@@ -3,7 +3,6 @@ package memstore
 import (
 	"bytes"
 	"context"
-	"errors"
 	"os"
 	"reflect"
 	"testing"
@@ -68,50 +67,67 @@ func TestCarrierDirectMemstoreOwnershipAndAccounting(t *testing.T) {
 	}
 }
 
-func TestHeldLegacyDirectMemstoreOwnershipAndAccounting(t *testing.T) {
-	data, err := os.ReadFile("../sessnap/testdata/legacy-ambiguous-pending.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	s, err := sessnap.Unmarshal(data)
-	if err != nil {
-		t.Fatal(err)
-	}
-	ctx := context.Background()
-	store := New()
-	wantHold := s.IdentityHoldSnapshot()
-	wantHistory := session.CloneMessages(s.Conversation.Messages)
-	if err := store.Save(ctx, s); err != nil {
-		t.Fatal(err)
-	}
-	s.Conversation.Messages[0].Legacy.Unsupported[0] = '!'
-	for range 2 {
-		loaded, err := store.Load(ctx, s.ID)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !errors.Is(loaded.CheckIdentityReady(), session.ErrMigrationHeld) || !reflect.DeepEqual(loaded.IdentityHoldSnapshot(), wantHold) || !reflect.DeepEqual(loaded.Conversation.Messages, wantHistory) {
-			t.Fatal("direct memstore lost held continuation/history")
-		}
-		loaded.IdentityHoldSnapshot().Payload[0] = '!'
-		loaded.Conversation.Messages[0].Legacy.Unsupported[0] = '!'
-	}
-	snap := store.sessions[s.ID]
-	without := snap
-	without.IdentityHold = nil
-	if delta := estimateSnapshotBytes(snap) - estimateSnapshotBytes(without); delta < int64(encodedBytesLen(len(wantHold.Payload))) {
-		t.Fatal("hold bytes missing from size accounting")
-	}
-	withoutSession, err := snap.Restore()
-	if err != nil {
-		t.Fatal(err)
-	}
-	withoutSession.Conversation.Messages[0].Legacy.Unsupported = nil
-	withoutMetadata, err := sessnap.Of(withoutSession)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if delta := estimateSnapshotBytes(snap) - estimateSnapshotBytes(withoutMetadata); delta < int64(encodedBytesLen(len(wantHistory[0].Legacy.Unsupported))) {
-		t.Fatal("unsupported historical bytes missing from size accounting")
+func TestAbandonedLegacyDirectMemstoreOwnershipAndAccounting(t *testing.T) {
+	for _, name := range []string{"legacy-ambiguous-pending", "legacy-authorizing"} {
+		t.Run(name, func(t *testing.T) {
+			data, err := os.ReadFile("../sessnap/testdata/" + name + ".json")
+			ordinal := 0
+			if name == "legacy-authorizing" {
+				data = bytes.Replace(data, []byte(`"ID": "provider-auth-call"`), []byte(`"ID": ""`), 1)
+				ordinal = 2
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			s, err := sessnap.Unmarshal(data)
+			if err != nil {
+				t.Fatal(err)
+			}
+			ctx := context.Background()
+			store := New()
+			wantHistory := session.CloneMessages(s.Conversation.Messages)
+			if !bytes.Contains([]byte(wantHistory[len(wantHistory)-1].Text), []byte("abandoned during upgrade")) {
+				t.Fatal("missing durable upgrade notice")
+			}
+			if err := store.Save(ctx, s); err != nil {
+				t.Fatal(err)
+			}
+			s.Conversation.Messages[ordinal].Legacy.Unsupported[0] = '!'
+			for range 2 {
+				loaded, err := store.Load(ctx, s.ID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if loaded.State != session.StateIdle || !reflect.DeepEqual(loaded.Conversation.Messages, wantHistory) {
+					t.Fatal("direct memstore lost promptable abandoned history")
+				}
+				if _, ok := loaded.PendingAsk(); ok {
+					t.Fatal("obsolete approval resurrected")
+				}
+				if _, ok := loaded.PendingAuthorization(); ok {
+					t.Fatal("obsolete authorization resurrected")
+				}
+				if err := store.Save(ctx, loaded); err != nil {
+					t.Fatal(err)
+				}
+				if err := loaded.BeginTurn(); err != nil {
+					t.Fatal(err)
+				}
+				loaded.Conversation.Messages[ordinal].Legacy.Unsupported[0] = '!'
+			}
+			snap := store.sessions[s.ID]
+			withoutSession, err := snap.Restore()
+			if err != nil {
+				t.Fatal(err)
+			}
+			withoutSession.Conversation.Messages[ordinal].Legacy.Unsupported = nil
+			withoutMetadata, err := sessnap.Of(withoutSession)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if delta := estimateSnapshotBytes(snap) - estimateSnapshotBytes(withoutMetadata); delta < int64(encodedBytesLen(len(wantHistory[ordinal].Legacy.Unsupported))) {
+				t.Fatal("unsupported historical bytes missing from size accounting")
+			}
+		})
 	}
 }

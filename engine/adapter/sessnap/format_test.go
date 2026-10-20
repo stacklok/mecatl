@@ -29,8 +29,8 @@ func TestFormatIdentityConsistency(t *testing.T) {
 			}
 			pending, pendingOK := s.PendingAuthorization()
 			restoredPending, restoredPendingOK := restored.PendingAuthorization()
-			if !sameStoredHistory(t, s.Conversation.Messages, restored.Conversation.Messages) || !reflect.DeepEqual(s.IdentityHoldSnapshot(), restored.IdentityHoldSnapshot()) || pendingOK != restoredPendingOK || !reflect.DeepEqual(pending, restoredPending) {
-				t.Fatal("migration lost history, hold or pending authorization")
+			if !sameStoredHistory(t, s.Conversation.Messages, restored.Conversation.Messages) || s.State != restored.State || pendingOK != restoredPendingOK || !reflect.DeepEqual(pending, restoredPending) {
+				t.Fatal("migration lost history, lifecycle or pending authorization")
 			}
 			for _, tc := range []struct {
 				format string

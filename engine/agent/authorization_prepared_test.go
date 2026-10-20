@@ -151,6 +151,63 @@ func TestPreparedAuthorizationContinuationAbortWinsWithoutExecution(t *testing.T
 	}
 }
 
+func TestPreparedAfterAuthorizationRejectsStaleOrUnrecordedResults(t *testing.T) {
+	for _, defect := range []string{"idle", "empty", "wrong-target", "modified", "reordered", "unpaired"} {
+		t.Run(defect, func(t *testing.T) {
+			provider := mockllm.New(mockllm.TextTurn("unreachable"))
+			store := &saveCountingStore{inner: memstore.New()}
+			instructions := &countingAssembler{msg: "unreachable"}
+			engine := newEngine(agent.Deps{LLM: provider, Catalog: catalogWith(t), Store: store, Instructions: instructions})
+			sess := newSession(t, session.Limits{})
+			if err := sess.BeginTurn(); err != nil {
+				t.Fatal(err)
+			}
+			call := session.NewToolCall("first", "protected", nil)
+			sibling := session.NewToolCall("second", "protected", nil)
+			if err := sess.RecordAssistant(session.NewAssistantMessage("", []session.ToolCall{call, sibling})); err != nil {
+				t.Fatal(err)
+			}
+			authorization := session.ExternalAuthorization{ID: "authorization", Binding: "binding", ExpiresAt: time.Unix(100, 0)}
+			if err := sess.PauseForAuthorization(session.PendingAuthorization{Authorization: authorization, Call: call, Deferred: []session.ToolCall{sibling}}); err != nil {
+				t.Fatal(err)
+			}
+			results, err := sess.AbortAuthorization("cancelled")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if defect != "unpaired" {
+				if err := sess.RecordToolResults(results); err != nil {
+					t.Fatal(err)
+				}
+			}
+			callID := call.ID
+			switch defect {
+			case "idle":
+				if err := sess.Abandon(); err != nil {
+					t.Fatal(err)
+				}
+			case "empty":
+				results = nil
+			case "wrong-target":
+				callID = "other"
+			case "modified":
+				results[0].Content = "not the recorded result"
+			case "reordered":
+				results[0], results[1] = results[1], results[0]
+				callID = sibling.ID
+			}
+			resolution, _ := session.NewAuthorizationResolution(session.AuthorizationCancelled)
+			prepared, err := engine.PrepareAfterAuthorization(t.Context(), sess, tool.Environment{}, authorization, callID, results, resolution)
+			if prepared != nil {
+				prepared.Abort()
+			}
+			if prepared != nil || err == nil || provider.Calls() != 0 || store.saves.Load() != 0 || instructions.called != 0 {
+				t.Fatalf("invalid resolution prepared work: prepared=%v err=%v", prepared != nil, err)
+			}
+		})
+	}
+}
+
 func TestPreparedAfterAuthorizationGatesLoop(t *testing.T) {
 	engine := newEngine(agent.Deps{LLM: mockllm.New(mockllm.TextTurn("continued")), Catalog: catalogWith(t)})
 	sess := newSession(t, session.Limits{})

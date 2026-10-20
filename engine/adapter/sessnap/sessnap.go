@@ -39,8 +39,7 @@ import (
 // struct with JSON tags so it serializes deterministically regardless of the
 // (untagged) layout of the domain types.
 type Snapshot struct {
-	IdentitySchema           int                            `json:"identity_schema,omitempty"`
-	IdentityHold             *session.IdentityMigrationHold `json:"identity_hold,omitempty"`
+	IdentitySchema           int `json:"identity_schema,omitempty"`
 	legacyMessages           []legacyMessageDTO
 	legacyPending            *legacyPendingAskDTO
 	legacyAuthorization      *legacyPendingAuthorizationDTO
@@ -300,7 +299,6 @@ func Of(s *session.Session) (Snapshot, error) {
 	relationship := session.CloneSessionRelationship(s.Relationship)
 	snap := Snapshot{
 		IdentitySchema:            2,
-		IdentityHold:              s.IdentityHoldSnapshot(),
 		ID:                        s.ID,
 		State:                     s.State,
 		Mode:                      s.Mode,
@@ -374,13 +372,8 @@ func Of(s *session.Session) (Snapshot, error) {
 	snap.RetryPendingDisposition, snap.RetryPendingProgress, snap.RetryPending = pendingRetry.Disposition, pendingRetry.Progress, pending
 	snap.LastError = s.LastError()
 	snap.RunID = s.RunID()
-	if snap.IdentityHold != nil {
-		if err := validateHoldPayload(snap.State, snap.IdentityHold.Payload); err != nil {
-			return Snapshot{}, err
-		}
-		if err := validateHeldHistory(snap.Messages); err != nil {
-			return Snapshot{}, err
-		}
+	if err := validateRestorePendingState(s, snap.State, snap.Pending, fromPendingAuthorizationDTO(snap.PendingAuthorization)); err != nil {
+		return Snapshot{}, err
 	}
 	return snap, nil
 }
@@ -470,6 +463,9 @@ func (s Snapshot) Restore() (*session.Session, error) {
 			return nil, fmt.Errorf("sessnap: restore workspace enrollment: %w", err)
 		}
 	}
+	if err := restored.ValidateIdentityPersistence(); err != nil {
+		return nil, fmt.Errorf("sessnap: invalid restored identity: %w", err)
+	}
 	return restored, nil
 }
 
@@ -487,25 +483,7 @@ func (s Snapshot) restoreLifecycle(restored *session.Session) error {
 		Retry:                session.RetryMetadata{Disposition: s.RetryPendingDisposition, Progress: s.RetryPendingProgress},
 		LastError:            s.LastError,
 	}
-	if s.IdentityHold != nil {
-		if s.Pending != nil || s.PendingAuthorization != nil || s.PendingWorkspaceEnrollment != nil {
-			return errors.New("sessnap: migration hold has runnable continuation")
-		}
-		if err := validateHoldPayload(s.State, s.IdentityHold.Payload); err != nil {
-			return err
-		}
-		if err := validateHeldHistory(s.Messages); err != nil {
-			return err
-		}
-		restored.Counters = s.Counters
-		restored.RestoreTokenUsage(s.TokenUsage)
-		if err := restored.RestoreIdentityMigrationHold(s.State, *s.IdentityHold); err != nil {
-			return err
-		}
-	} else if err := RestoreState(restored, data); err != nil {
-		return err
-	}
-	return nil
+	return RestoreState(restored, data)
 }
 
 func restoreAuthority(s *session.Session, authority *session.Authority) error {

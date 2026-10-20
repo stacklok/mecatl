@@ -55,7 +55,7 @@ func TestFoldRestoresExecutionCapabilityFacts(t *testing.T) {
 	}
 }
 
-func TestFoldLegacyUnprovenApprovalHoldsMetadataAcrossSnapshot(t *testing.T) {
+func TestFoldLegacyUnprovenApprovalPreservesMetadataAcrossSnapshot(t *testing.T) {
 	m := meta()
 	m.Incarnation = session.LegacyIncarnationID(m.ID, m.CreatedAt.UnixNano(), m.Owner)
 	m.AgentDefinitionName = "reviewer"
@@ -84,21 +84,18 @@ func TestFoldLegacyUnprovenApprovalHoldsMetadataAcrossSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(projection.PendingHold) == 0 {
-		t.Fatal("ambiguous legacy approval did not produce a hold")
+	if len(projection.Events) != len(events) {
+		t.Fatal("migration changed durable record count")
 	}
 
 	folded, err := eventsource.Fold(m, seq(events))
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertHeldMetadata := func(s *session.Session) {
+	assertAbandonedMetadata := func(s *session.Session) {
 		t.Helper()
-		if s.State != session.StateAwaiting {
-			t.Fatalf("State = %v, want awaiting", s.State)
-		}
-		if !errors.Is(s.CheckIdentityReady(), session.ErrMigrationHeld) {
-			t.Fatal("unproven legacy approval is executable")
+		if s.State != session.StateIdle {
+			t.Fatalf("unproven legacy approval not abandoned: %v", s.State)
 		}
 		if _, ok := s.PendingAsk(); ok {
 			t.Fatal("held legacy approval restored as executable")
@@ -115,8 +112,8 @@ func TestFoldLegacyUnprovenApprovalHoldsMetadataAcrossSnapshot(t *testing.T) {
 			t.Fatalf("broker keys = %q, present = %v", keys, present)
 		}
 	}
-	assertHeldMetadata(folded)
-	wantHold := folded.IdentityHoldSnapshot()
+	assertAbandonedMetadata(folded)
+	wantHistory := session.CloneMessages(folded.Conversation.Messages)
 
 	raw, err := sessnap.Marshal(folded)
 	if err != nil {
@@ -126,9 +123,9 @@ func TestFoldLegacyUnprovenApprovalHoldsMetadataAcrossSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertHeldMetadata(restored)
-	if !reflect.DeepEqual(restored.IdentityHoldSnapshot(), wantHold) {
-		t.Fatalf("identity hold = %+v, want %+v", restored.IdentityHoldSnapshot(), wantHold)
+	assertAbandonedMetadata(restored)
+	if !reflect.DeepEqual(restored.Conversation.Messages, wantHistory) {
+		t.Fatal("normalized history changed at restart")
 	}
 }
 

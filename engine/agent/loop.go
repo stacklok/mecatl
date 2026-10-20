@@ -1307,7 +1307,7 @@ func validateRunEnvironment(sess *session.Session, env tool.Environment) error {
 }
 
 // rejectRunEntry reports a rejected continuation without terminalizing or saving
-// the persisted session; in particular, private migration holds stay inspectable.
+// the persisted session.
 func (e *Engine) rejectRunEntry(r *Run, sess *session.Session, err error) {
 	e.emit(r, session.Event{Type: session.EvSessionInit})
 	r.setOutcome(RunOutcomeCompleted)
@@ -1315,10 +1315,6 @@ func (e *Engine) rejectRunEntry(r *Run, sess *session.Session, err error) {
 }
 
 func (e *Engine) prepareRunEnvironment(ctx context.Context, r *Run, sess *session.Session, env tool.Environment) bool {
-	if err := sess.CheckIdentityReady(); err != nil {
-		e.rejectRunEntry(r, sess, err)
-		return false
-	}
 	if err := validateRunEnvironment(sess, env); err != nil {
 		e.emit(r, session.Event{Type: session.EvSessionInit})
 		e.terminate(ctx, r, sess, session.StopError, "", session.Usage{}, err, false)
@@ -1359,15 +1355,15 @@ func (e *Engine) runWithCurrentMainUsageBaseline(ctx context.Context, sess *sess
 // sess must carry durable failed-step retry intent prepared by the host.
 func (e *Engine) RetryFailedStep(ctx context.Context, sess *session.Session, env tool.Environment) *Run {
 	return e.startRun(ctx, sess, RunRequest{}, session.Usage{}, func(ctx context.Context, r *Run) {
+		metadata, pending := sess.FailedStepRetryPending()
+		if !pending {
+			e.rejectRunEntry(r, sess, errors.New("agent: failed-step retry intent is not prepared"))
+			return
+		}
 		if !e.prepareRunEnvironment(ctx, r, sess, env) {
 			return
 		}
 		e.emit(r, session.Event{Type: session.EvSessionInit})
-		metadata, pending := sess.FailedStepRetryPending()
-		if !pending {
-			e.terminate(ctx, r, sess, session.StopError, "", session.Usage{}, errors.New("agent: failed-step retry intent is not prepared"), false)
-			return
-		}
 		retryText := "The failed model step is being retried without adding another user prompt."
 		if metadata.Progress == session.StreamProgressVisible {
 			retryText = "The prior partial model output failed and is superseded; the failed model step is being retried."
@@ -1401,8 +1397,8 @@ func (e *Engine) RetryFailedStep(ctx context.Context, sess *session.Session, env
 // only ever returns a live *Run): if sess is not in StateAwaiting, or its pending ask
 // does not match askID, or the trailing assistant message carries no matching tool
 // call, the returned run reports session.StopError with ErrNotAwaiting. Rejected
-// pending references leave the persisted ask and lifecycle intact. Migration holds
-// similarly report ErrMigrationHeld without environment preparation or saves.
+// pending references leave the persisted ask and lifecycle intact without
+// environment preparation or saves.
 // A consumer reads the failure off the run's terminal EvResult (the Error field).
 // The pending tool executes EXACTLY ONCE on the allow path and NOT AT ALL on a
 // precondition failure or a deny.
@@ -1430,19 +1426,9 @@ func (e *Engine) ResumeApprovalWith(ctx context.Context, sess *session.Session, 
 	// the run that just ended, and inheriting it would silently attribute a brand
 	// new run's events to the previous one.
 	return e.startRun(ctx, sess, RunRequest{RunID: sess.RunID(), CanPresentAuthorization: opts.CanPresentAuthorization}, session.Usage{}, func(ctx context.Context, r *Run) {
-		if err := sess.CheckIdentityReady(); err != nil {
+		if _, _, _, err := pendingApprovalTarget(sess, askID); err != nil {
 			e.rejectRunEntry(r, sess, err)
 			return
-		}
-		if ask, ok := sess.PendingAsk(); ok {
-			if ask.AskID != askID {
-				e.rejectRunEntry(r, sess, fmt.Errorf("%w: pending ask does not match requested ask", ErrNotAwaiting))
-				return
-			}
-			if _, _, found := locatePendingCall(sess.Conversation.Messages, ask); !found {
-				e.rejectRunEntry(r, sess, fmt.Errorf("%w: pending canonical call is not outstanding", ErrNotAwaiting))
-				return
-			}
 		}
 		// Reject malformed internal callers before inspecting the environment or
 		// clearing the pending ask. Wire mappers already fail unknown enum values to
@@ -1660,8 +1646,24 @@ func (e *Engine) PrepareAfterAuthorization(ctx context.Context, sess *session.Se
 	if !resolution.Valid() {
 		return nil, errors.New("agent: authorization continuation requires a terminal resolution")
 	}
-	if err := sess.CheckIdentityReady(); err != nil {
+	if sess.State != session.StateRunning {
+		return nil, fmt.Errorf("%w: authorization resolution from %q", session.ErrIllegalTransition, sess.State)
+	}
+	if err := sess.ValidateAuthorizationState(); err != nil {
 		return nil, err
+	}
+	messages := sess.Conversation.Messages
+	if err := session.ValidateToolPairing(messages); err != nil {
+		return nil, err
+	}
+	if len(results) == 0 || results[0].CallID != callID || len(results) >= len(messages) {
+		return nil, errors.New("agent: authorization resolution requires recorded results")
+	}
+	for i, result := range results {
+		message := messages[len(messages)-len(results)+i]
+		if message.Role != session.RoleTool || message.ToolResult == nil || !reflect.DeepEqual(*message.ToolResult, result) {
+			return nil, errors.New("agent: authorization resolution does not match recorded results")
+		}
 	}
 	status := resolution.Status()
 	return e.prepareRun(ctx, sess, RunRequest{RunID: sess.RunID(), CanPresentAuthorization: true}, session.Usage{}, func(ctx context.Context, r *Run) {

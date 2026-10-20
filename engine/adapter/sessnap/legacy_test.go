@@ -3,13 +3,13 @@ package sessnap
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
 	"os"
 	"reflect"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 )
 
@@ -93,9 +93,6 @@ func TestLegacyIdentityStableAcrossReadsAndSaves(t *testing.T) {
 			if first.Incarnation() != second.Incarnation() || !reflect.DeepEqual(first.Conversation.Messages, second.Conversation.Messages) {
 				t.Fatal("reads before save disagree")
 			}
-			if err := first.CheckIdentityReady(); err != nil {
-				t.Fatal(err)
-			}
 			var old Snapshot
 			if err := json.Unmarshal(data, &old); err != nil {
 				t.Fatal(err)
@@ -150,7 +147,7 @@ func TestLegacyAuthorizationExactEffectiveBytesAndDeferredOrder(t *testing.T) {
 	s := restoreFixture(t, data)
 	want, ok := s.PendingAuthorization()
 	if !ok {
-		t.Fatal("valid authorization held")
+		t.Fatal("valid authorization was not retained")
 	}
 	if string(want.Call.Args) != `{"command":  "effective"}` {
 		t.Fatal("effective bytes replaced with visible args")
@@ -265,53 +262,56 @@ func TestLegacyGenericReplayDoesNotInterpretProviderPayload(t *testing.T) {
 	}
 }
 
-func assertHeld(t *testing.T, s *session.Session) {
+func assertAbandoned(t *testing.T, s *session.Session) {
 	t.Helper()
-	if !errors.Is(s.CheckIdentityReady(), session.ErrMigrationHeld) {
-		t.Fatal("ambiguous continuation is executable")
+	if s.State != session.StateIdle {
+		t.Fatal("abandoned continuation is not ordinary idle history")
 	}
 	if _, ok := s.PendingAsk(); ok {
-		t.Fatal("held ask gained authority")
+		t.Fatal("abandoned ask retained authority")
 	}
 	if _, ok := s.PendingAuthorization(); ok {
-		t.Fatal("held authorization gained authority")
+		t.Fatal("abandoned authorization retained authority")
 	}
-	if summary, ok := s.IdentityHoldSummary(); !ok || summary != "legacy-continuation-unproven" {
-		t.Fatal("unsafe/missing summary")
+	if _, ok := s.PendingWorkspaceEnrollment(); ok {
+		t.Fatal("abandoned enrollment retained authority")
 	}
-	before := s.IdentityHoldSnapshot()
-	state := s.State
-	operations := []func() error{s.Complete, s.Cancel, s.Fail, s.Recover, s.Abandon, s.BeginTurn, s.Reopen, s.Interrupt, s.PrepareFailedStepRetry,
-		func() error { return s.Stop(session.StopBudget) },
-		func() error { _, err := s.ResumeWith(); return err },
-		func() error { _, err := s.ClaimAuthorization(); return err },
-		func() error { _, err := s.InterruptAuthorization(); return err },
-		func() error { _, err := s.AbortAuthorization("denied"); return err },
-		s.ValidateAuthorizationState}
-	for _, operation := range operations {
-		if err := operation(); !errors.Is(err, session.ErrMigrationHeld) {
-			t.Fatalf("hold guard returned %v", err)
-		}
-		if s.State != state || !reflect.DeepEqual(s.IdentityHoldSnapshot(), before) {
-			t.Fatal("rejected operation mutated hold")
-		}
+	if _, ok := s.FailedStepRetryPending(); ok || s.LastError() != "" || s.FailureMetadata() != (session.RetryMetadata{}) {
+		t.Fatal("abandoned retry retained authority")
+	}
+	if _, err := s.ResumeWith(); err == nil {
+		t.Fatal("stale approval resumed")
+	}
+	if _, err := s.ClaimAuthorization(); err == nil {
+		t.Fatal("stale authorization claimed")
+	}
+	messages := s.Conversation.Messages
+	if len(messages) == 0 || messages[len(messages)-1].Role != session.RoleAssistant || messages[len(messages)-1].Text != upgradeAbandonmentNotice {
+		t.Fatal("missing durable upgrade/unknown-effects notice")
+	}
+	if err := session.ValidateToolPairing(messages); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := port.ProjectMessages(messages); err != nil {
+		t.Fatal(err)
 	}
 	if err := s.ValidateIdentityPersistence(); err != nil {
 		t.Fatal(err)
 	}
-	for _, m := range s.Conversation.Messages {
-		for _, c := range m.ToolCalls {
-			if c.ID == "" {
-				t.Fatal("empty canonical call")
-			}
-		}
-		if m.ToolResult != nil && m.ToolResult.CallID == "" {
-			t.Fatal("empty canonical result")
-		}
+	probe, err := Of(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	promptable, err := probe.Restore()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := promptable.BeginTurn(); err != nil {
+		t.Fatalf("ordinary new turn: %v", err)
 	}
 }
 
-func TestLegacyHoldExactPrivateContinuationSurvivesDirectAndJSON(t *testing.T) {
+func TestLegacyAbandonmentSurvivesDirectAndJSON(t *testing.T) {
 	for _, name := range []string{"legacy-ambiguous-pending", "legacy-authorizing"} {
 		t.Run(name, func(t *testing.T) {
 			data := legacyFixture(t, name)
@@ -319,21 +319,10 @@ func TestLegacyHoldExactPrivateContinuationSurvivesDirectAndJSON(t *testing.T) {
 				data = bytes.Replace(data, []byte(`"id": "provider-auth-call"`), []byte(`"id": "missing-provider-reference"`), 1)
 			}
 			s := restoreFixture(t, data)
-			assertHeld(t, s)
-			want := s.IdentityHoldSnapshot()
-			var hold legacyHoldPayload
-			if err := json.Unmarshal(want.Payload, &hold); err != nil {
-				t.Fatal(err)
-			}
-			var original struct {
-				Pending       json.RawMessage `json:"pending"`
-				Authorization json.RawMessage `json:"pending_authorization"`
-			}
-			if err := json.Unmarshal(data, &original); err != nil {
-				t.Fatal(err)
-			}
-			if !bytes.Equal(hold.Pending, original.Pending) || !bytes.Equal(hold.Authorization, original.Authorization) {
-				t.Fatal("original pending bytes changed")
+			assertAbandoned(t, s)
+			want := restoreFixture(t, data)
+			if !reflect.DeepEqual(s.Conversation.Messages, want.Conversation.Messages) {
+				t.Fatal("independent legacy reads disagree")
 			}
 			wantHistory := session.CloneMessages(s.Conversation.Messages)
 			for range 2 {
@@ -345,23 +334,21 @@ func TestLegacyHoldExactPrivateContinuationSurvivesDirectAndJSON(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				direct.IdentityHoldSnapshot().Payload[0] = '!'
-				if !reflect.DeepEqual(snap.IdentityHold, want) {
-					t.Fatal("hold getter aliases bytes")
+				assertAbandoned(t, direct)
+				if !sameStoredHistory(t, direct.Conversation.Messages, wantHistory) {
+					t.Fatal("direct history changed")
 				}
-				snap.IdentityHold.Payload[0] = '!'
-				if !reflect.DeepEqual(direct.IdentityHoldSnapshot(), want) || !reflect.DeepEqual(s.IdentityHoldSnapshot(), want) {
-					t.Fatal("direct Of/Restore aliases hold payload")
-				}
-				snap.IdentityHold.Payload[0] = want.Payload[0]
 				wire, err := json.Marshal(snap)
 				if err != nil {
 					t.Fatal(err)
 				}
+				if bytes.Contains(wire, []byte(`identity_hold`)) || bytes.Contains(wire, []byte(`private-binding`)) || bytes.Contains(wire, []byte(`ask-ambiguous`)) {
+					t.Fatal("abandoned private continuation persisted")
+				}
 				s = restoreFixture(t, wire)
-				assertHeld(t, s)
-				if !reflect.DeepEqual(s.IdentityHoldSnapshot(), want) || !sameStoredHistory(t, s.Conversation.Messages, wantHistory) {
-					t.Fatal("held private data/history changed on save/reload")
+				assertAbandoned(t, s)
+				if !sameStoredHistory(t, s.Conversation.Messages, wantHistory) {
+					t.Fatal("abandoned history changed on save/reload")
 				}
 			}
 		})
@@ -373,7 +360,7 @@ func TestLegacyNeverRepairsContinuationByNameArgsOrFirstMatch(t *testing.T) {
 	for _, replacement := range []string{`"call":"missing"`, `"call":""`, `"unrelated":"plan-call"`} {
 		t.Run(replacement, func(t *testing.T) {
 			data := bytes.Replace(plan, []byte(`"call":"plan-call"`), []byte(replacement), 1)
-			assertHeld(t, restoreFixture(t, data))
+			assertAbandoned(t, restoreFixture(t, data))
 		})
 	}
 	auth := legacyFixture(t, "legacy-authorizing")
@@ -388,7 +375,7 @@ func TestLegacyNeverRepairsContinuationByNameArgsOrFirstMatch(t *testing.T) {
 		if bytes.Equal(data, auth) {
 			t.Fatal("test replacement did not apply")
 		}
-		assertHeld(t, restoreFixture(t, data))
+		assertAbandoned(t, restoreFixture(t, data))
 	}
 }
 
@@ -496,41 +483,22 @@ func TestLegacyAuthorizationDeferredOrderIsStructural(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertHeld(t, s)
-	var payload legacyHoldPayload
-	if err := json.Unmarshal(s.IdentityHoldSnapshot().Payload, &payload); err != nil {
-		t.Fatal(err)
-	}
-	if !bytes.Equal(payload.Authorization, old.legacyAuthorizationBytes) {
-		t.Fatal("invalid original deferred order discarded")
-	}
+	assertAbandoned(t, s)
 }
 
-func TestHeldCodecRejectsCorruptPrivatePayloadAndOrphanCanonicalResults(t *testing.T) {
+func TestNormalizedCodecRejectsOrphanCanonicalResults(t *testing.T) {
 	s := restoreFixture(t, legacyFixture(t, "legacy-ambiguous-pending"))
 	snap, err := Of(s)
 	if err != nil {
 		t.Fatal(err)
 	}
-	snap.IdentityHold.Payload = []byte(`{"version":99,"state":"awaiting"}`)
-	if _, err := snap.Restore(); err == nil {
-		t.Fatal("accepted unknown hold version")
-	}
-	fresh := session.New("bad-hold", session.ModeDefault, s.EnvironmentRef, session.Limits{}, time.Now())
-	if err := fresh.RestoreIdentityMigrationHold(session.StateAwaiting, session.IdentityMigrationHold{Reason: "legacy-continuation-unproven", Payload: bytes.Repeat([]byte("x"), (16<<20)+1)}); err == nil || fresh.State != session.StateIdle {
-		t.Fatal("hold bounds were not atomic")
-	}
-	snap, err = Of(s)
-	if err != nil {
-		t.Fatal(err)
-	}
 	snap.Messages = append(snap.Messages, messageDTO{Role: session.RoleTool, ToolResult: &session.ToolResult{CallID: "unpaired", Content: "orphan"}})
 	if _, err := snap.Restore(); err == nil {
-		t.Fatal("accepted orphan canonical result in held history")
+		t.Fatal("accepted orphan canonical result in normalized history")
 	}
 	s.Conversation.Append(session.NewToolMessage(session.ToolResult{CallID: "unpaired", Content: "orphan"}))
 	if _, err := Of(s); err == nil {
-		t.Fatal("saved unsafe held history")
+		t.Fatal("saved unsafe normalized history")
 	}
 }
 

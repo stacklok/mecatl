@@ -13,7 +13,6 @@
     method func (*Session).BindAuthority(authority Authority) error
     method func (*Session).BoundAuthority() (Authority, bool)
     method func (*Session).Cancel() error
-    method func (*Session).CheckIdentityReady() error
     method func (*Session).ClaimAuthorization() (PendingAuthorization, error)
     method func (*Session).Complete() error
     method func (*Session).CompleteWorkspaceEnrollment(pending PendingWorkspaceEnrollment, exactTools []string) error
@@ -21,8 +20,6 @@
     method func (*Session).FailedStepRetryPending() (RetryMetadata, bool)
     method func (*Session).FailureMetadata() RetryMetadata
     method func (*Session).GrantToolAuthority(names []string) error
-    method func (*Session).IdentityHoldSnapshot() *IdentityMigrationHold
-    method func (*Session).IdentityHoldSummary() (string, bool)
     method func (*Session).Incarnation() IncarnationID
     method func (*Session).InstructionSnapshot() InstructionSnapshot
     method func (*Session).Interrupt() error
@@ -60,7 +57,6 @@
     method func (*Session).ReplaceInstructionSnapshot(snapshot InstructionSnapshot)
     method func (*Session).RestoreAuthorizationClaim(pending PendingAuthorization) error
     method func (*Session).RestoreFailedStepRetryPending(metadata RetryMetadata) error
-    method func (*Session).RestoreIdentityMigrationHold(state State, hold IdentityMigrationHold) error
     method func (*Session).RestoreIncarnation(inc IncarnationID) error
     method func (*Session).RestoreLabels(owner *Principal, authority Authority) error
     method func (*Session).RestoreSessionMetadata(kind SessionKind, rel SessionRelationship) error
@@ -399,7 +395,6 @@ type GuardrailReviewPayload struct{ReviewID string; Job string; Assessment strin
 type HistoricalRecord struct{RecordID string; Kind string; Text string; Parts []Content; AttachmentUnavailable bool}
 type HookDecision string
 type HookPayload struct{Phase string; Tool string; Decision HookDecision; CallID ToolCallID; Guardrail *GuardrailReviewPayload}
-type IdentityMigrationHold struct{Reason string; Payload []byte}
 type IncarnationID string
 type InstructionScope struct{SourceID string; Directory string; File string; Text string; Partial bool; Omitted bool; Examined bool; Unavailable bool}
 type InstructionSnapshot struct{Directories []string; Scopes []InstructionScope; DiscoveryExhausted bool}
@@ -470,7 +465,6 @@ var ErrIllegalTransition error
 var ErrInvalidContent error
 var ErrInvalidMediaURL error
 var ErrInvalidSessionMetadata error
-var ErrMigrationHeld error
 var ErrNoPendingAsk error
 var ErrNoPendingAuthorization error
 var ErrOwnerAlreadySet error

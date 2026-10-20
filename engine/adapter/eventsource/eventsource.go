@@ -156,7 +156,7 @@ var (
 	// ErrReconstruct is returned when the folded events cannot be reconstructed into
 	// a valid Session (an unpairable conversation, an inconsistent terminal state).
 	ErrReconstruct = errors.New("eventsource: cannot reconstruct session")
-	// ErrPrivateStateRequired is returned when an otherwise well-formed external
+	// ErrPrivateStateRequired is returned when an otherwise well-formed current-format
 	// authorization lifecycle remains open. Safe events deliberately omit the
 	// private continuation state required to resume it.
 	ErrPrivateStateRequired = errors.New("eventsource: private state required")
@@ -173,8 +173,9 @@ var (
 //
 // It returns ErrStream (wrapping the per-item error) if the iterator yields an
 // error, ErrReconstruct if the reconstructed history or authorization lifecycle is
-// inconsistent, and ErrPrivateStateRequired if a well-formed authorization lifecycle
-// remains open after the final event. It never panics.
+// inconsistent, and ErrPrivateStateRequired if a well-formed current-format
+// authorization lifecycle remains open after the final event. Unprovable legacy
+// continuations become ordinary idle history with an upgrade notice. It never panics.
 func Fold(meta SessionMeta, events iter.Seq2[session.Event, error]) (*session.Session, error) {
 	var collected []session.Event
 	for ev, err := range events {
@@ -190,37 +191,50 @@ func Fold(meta SessionMeta, events iter.Seq2[session.Event, error]) (*session.Se
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrReconstruct, err)
 	}
-	if projection.OpenAuthorization {
-		return nil, ErrPrivateStateRequired
-	}
 	f := &folder{}
-	for _, ev := range projection.Events {
-		f.consume(ev)
-		if f.reconstructErr != nil {
-			return nil, fmt.Errorf("%w: %v", ErrReconstruct, f.reconstructErr)
+	var data sessnap.RestoreData
+	for i, segment := range projection.Segments() {
+		if i > 0 {
+			// The prior span is now ordinary paired history. A new run starts with
+			// fresh lifecycle/counters, but cumulative history, usage, and canonical
+			// authorization uniqueness/completeness evidence remain intact.
+			f = &folder{
+				messages: f.messages, usage: f.usage, firstGenuineText: f.firstGenuineText,
+				authorizations: f.authorizations, openAuthorizationCalls: f.openAuthorizationCalls,
+				seenAuthorizationIDs: f.seenAuthorizationIDs, seenAuthorizationCalls: f.seenAuthorizationCalls,
+				toolResultCalls: f.toolResultCalls,
+			}
+		}
+		for _, ev := range segment.Events {
+			f.consume(ev)
+			if f.reconstructErr != nil {
+				return nil, fmt.Errorf("%w: %v", ErrReconstruct, f.reconstructErr)
+			}
+		}
+		if len(f.authorizations) != 0 {
+			return nil, ErrPrivateStateRequired
+		}
+		f.finalizeOpenTurn()
+		data = sessnap.RestoreData{
+			State: f.restoreState(), Stop: f.stop, Pending: f.pending, Counters: f.finalCounters(),
+			TokenUsage: foldedTokenUsage(meta.TokenUsage, f.usage),
+			Failure:    session.RetryMetadata{Disposition: f.disposition, Progress: f.progress},
+			LastError:  f.lastError,
+		}
+		if f.retryPending {
+			data.RetryPending = true
+			data.Retry = session.RetryMetadata{Disposition: f.retryDisposition, Progress: f.retryProgress}
+		}
+		f.messages, data, err = segment.NormalizeHistory(f.messages, data)
+		if err != nil {
+			return nil, fmt.Errorf("%w: %w", ErrReconstruct, err)
 		}
 	}
-	if len(f.authorizations) != 0 {
-		return nil, ErrPrivateStateRequired
-	}
-	f.finalizeOpenTurn()
-
 	s, err := restoreMetadata(meta)
 	if err != nil {
 		return nil, err
 	}
-	if len(projection.PendingHold) != 0 {
-		if err := s.SeedHistory(f.messages); err != nil {
-			return nil, fmt.Errorf("%w: %w", ErrReconstruct, err)
-		}
-		if err := s.RestoreIdentityMigrationHold(session.StateAwaiting, session.IdentityMigrationHold{Reason: "legacy-continuation-unproven", Payload: projection.PendingHold}); err != nil {
-			return nil, fmt.Errorf("%w: %w", ErrReconstruct, err)
-		}
-		s.Counters = f.finalCounters()
-		s.RestoreTokenUsage(foldedTokenUsage(meta.TokenUsage, f.usage))
-		return s, nil
-	}
-	if f.pending != nil {
+	if data.Pending != nil {
 		// AWAITING: the live session at pause time holds the assistant message WITH its
 		// not-yet-answered tool call (RecordAssistant runs before dispatch; the ask
 		// pauses dispatch). That history legitimately ends on a dangling tool_use, which
@@ -237,17 +251,6 @@ func Fold(meta SessionMeta, events iter.Seq2[session.Event, error]) (*session.Se
 	// Drive the lifecycle (idle / terminal) and seed the cumulative usage + counters
 	// through the SAME state-driving logic sessnap.Restore uses (sessnap.RestoreState),
 	// so the terminal-transition vocabulary lives in exactly one place.
-	usage := foldedTokenUsage(meta.TokenUsage, f.usage)
-	data := sessnap.RestoreData{
-		State: f.restoreState(), Stop: f.stop, Counters: f.finalCounters(),
-		TokenUsage: usage,
-		Failure:    session.RetryMetadata{Disposition: f.disposition, Progress: f.progress},
-		LastError:  f.lastError,
-	}
-	if f.retryPending {
-		data.RetryPending = true
-		data.Retry = session.RetryMetadata{Disposition: f.retryDisposition, Progress: f.retryProgress}
-	}
 	if err := sessnap.RestoreState(s, data); err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrReconstruct, err)
 	}

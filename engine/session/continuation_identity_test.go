@@ -1,57 +1,6 @@
 package session
 
-import (
-	"bytes"
-	"errors"
-	"reflect"
-	"testing"
-)
-
-func TestMigrationHoldRejectsLifecycleAndPromptMutations(t *testing.T) {
-	for _, state := range []State{StateAwaiting, StateAuthorizing} {
-		t.Run(string(state), func(t *testing.T) {
-			s := newTestSession(Limits{})
-			s.Conversation.Append(NewUserMessage("inspectable"))
-			payload := []byte("private legacy continuation bytes")
-			mustOK(t, s.RestoreIdentityMigrationHold(state, IdentityMigrationHold{Reason: "legacy-continuation-unproven", Payload: payload}))
-			before := CloneMessages(s.Conversation.Messages)
-			for name, mutate := range map[string]func() error{
-				"begin":                   s.BeginTurn,
-				"resume":                  func() error { _, err := s.ResumeWith(); return err },
-				"claim":                   func() error { _, err := s.ClaimAuthorization(); return err },
-				"interrupt authorization": func() error { _, err := s.InterruptAuthorization(); return err },
-				"abort authorization":     func() error { _, err := s.AbortAuthorization("failed"); return err },
-				"prompt":                  func() error { return s.RecordUserPrompt("must not append", nil) },
-				"complete":                s.Complete,
-				"stop":                    func() error { return s.Stop(StopError) },
-				"cancel":                  s.Cancel,
-				"fail":                    s.Fail,
-				"reopen":                  s.Reopen,
-				"recover":                 s.Recover,
-				"interrupt":               s.Interrupt,
-				"abandon":                 s.Abandon,
-				"retry":                   s.PrepareFailedStepRetry,
-				"mode":                    func() error { return s.SetMode(ModeAccept) },
-			} {
-				t.Run(name, func(t *testing.T) {
-					if err := mutate(); !errors.Is(err, ErrMigrationHeld) {
-						t.Fatalf("mutation = %v", err)
-					}
-					if s.State != state || !reflect.DeepEqual(before, s.Conversation.Messages) || !bytes.Equal(s.IdentityHoldSnapshot().Payload, payload) {
-						t.Fatal("hold changed")
-					}
-				})
-			}
-			if _, ok := s.PendingAsk(); ok {
-				t.Fatal("held ask became runnable")
-			}
-			if _, ok := s.PendingAuthorization(); ok {
-				t.Fatal("held authorization became runnable")
-			}
-			mustOK(t, s.ValidateIdentityPersistence())
-		})
-	}
-}
+import "testing"
 
 func TestResumeWithRequiresExactOutstandingCanonicalCall(t *testing.T) {
 	for _, name := range []string{"valid", "missing", "empty", "duplicate", "answered", "wrong-tool"} {

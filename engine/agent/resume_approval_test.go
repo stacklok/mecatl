@@ -200,8 +200,8 @@ func TestResumeApprovalNotAwaiting(t *testing.T) {
 	if rp.Stop != session.StopError {
 		t.Fatalf("resume of a non-awaiting session: stop = %q, want %q", rp.Stop, session.StopError)
 	}
-	if sess.State != session.StateFailed {
-		t.Fatalf("non-awaiting resume left session in %q, want failed", sess.State)
+	if sess.State != session.StateIdle {
+		t.Fatalf("non-awaiting resume left session in %q, want unchanged idle", sess.State)
 	}
 }
 
