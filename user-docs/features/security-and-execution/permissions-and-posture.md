@@ -85,8 +85,7 @@ permissionMode: accept-edits
 An explicit `--permission-mode` flag outranks the key. Mecatl ignores a
 `permissionMode:` key in a project's `.mecatl/settings.yaml` and logs a warning,
 so a repository cannot choose its own permission mode. `--trust-project`
-combines with any mode: it supplies project trust, and at `plan`, `default`, or
-`accept-edits` it also raises the posture to `trusted`.
+combines with any mode and grants project trust without changing the mode.
 
 ### What a mode sets
 
@@ -259,7 +258,10 @@ and deployments can observe:
 - **Sessions created without a mode** start in the server's default mode, which
   is `auto` or `yolo` on a server started that way. Previously, a gRPC session
   created without a mode started in `default`. A client that cannot handle the
-  `auto` or `yolo` mode value in a session must pass an explicit mode.
+  `auto` or `yolo` mode value in a session must pass an explicit mode. A
+  TypeScript SDK release from before this change sends `default` over HTTP
+  when you give no mode, so its sessions start in `default` until you upgrade
+  the SDK.
 - **An explicit `default` session gets ordinary approvals** even on a server
   started with `auto` or `yolo`. Previously, such a session inherited the
   process-wide allow-all. Request `auto` or `yolo` for autonomous sessions.

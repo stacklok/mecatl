@@ -81,8 +81,9 @@ be physical directories, not symlinks. On macOS, use `/private/...` instead of a
 path through the `/var` symlink. `--auth-token` requires the token on every
 request and can also read `MECATL_AUTH_TOKEN`. `--permission-mode auto` permits
 unattended calls within configured permission rules while retaining child
-prompt-injection protections. It refuses to start without a guardrails checker
-unless you pass `--guardrails off`. Configured Ask and Deny rules still apply;
+prompt-injection protections. It refuses to start without an enforcing guardrails
+checker, and `--guardrails off` is refused too; use `--permission-mode yolo` for
+unchecked autonomy. Configured Ask and Deny rules still apply;
 project trust is a separate grant.
 
 Before binding a non-loopback address, add TLS and caller authentication. See
