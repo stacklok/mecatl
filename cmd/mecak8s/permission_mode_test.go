@@ -92,6 +92,38 @@ func TestDeprecatedAliasesStillResolve(t *testing.T) {
 	}
 }
 
+// TestDeprecatedPostureWarnsOnceThroughStartup runs the startup warning and
+// app.Build with the same diagnostics, as main does, so a second deprecation
+// WARN from the composition layer would fail the test.
+func TestDeprecatedPostureWarnsOnceThroughStartup(t *testing.T) {
+	cfg, err := parseFlags([]string{"--mock", "--headless=true", "--posture=yolo"})
+	if err != nil {
+		t.Fatalf("parseFlags: %v", err)
+	}
+	var buf bytes.Buffer
+	diag := slogdiag.NewFromLogger(slog.New(slog.NewTextHandler(&buf, nil)))
+	warnDeprecatedPermissionFlags(diag, cfg)
+	ac := appConfig(cfg, diag, observability{})
+	ac.RedisURL = ""
+	ac.SchedulerEnabled = false
+	ac.SessionLeaseK8sNamespace = ""
+	ac.Workspace = t.TempDir()
+	built, err := buildIsolated(t, context.Background(), ac)
+	if err != nil {
+		t.Fatalf("build with --posture=yolo: %v", err)
+	}
+	built.Close()
+	var warns []string
+	for _, line := range strings.Split(buf.String(), "\n") {
+		if strings.Contains(line, "level=WARN") && strings.Contains(line, "DEPRECATED") {
+			warns = append(warns, line)
+		}
+	}
+	if len(warns) != 1 || !strings.Contains(warns[0], "--permission-mode yolo") {
+		t.Fatalf("startup deprecation WARNs = %q, want exactly one naming --permission-mode yolo", warns)
+	}
+}
+
 func TestAliasCombinationsStillResolve(t *testing.T) {
 	// Headless root: no token grants project trust, so strict plus explicit trust
 	// (today: trusted posture, TrustProject) must keep resolving as it does today.
