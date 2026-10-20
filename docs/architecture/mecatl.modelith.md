@@ -227,7 +227,7 @@ A suspension of a `Run` when a `ToolCall` resolves to "ask": the loop pauses and
 
 ### `PermissionMode`
 
-A `Session`'s permission posture — default, plan, or acceptEdits — governing which `Tools` may run and, through the plan model slot, the effective `Model`: in plan mode the `Session` re-resolves the plan slot to a strong-reasoning `Model` within the same `Provider`. Plan mode is enforced at two layers (catalog filter hides mutating `Tools`; evaluator gate hard-denies mutations). `acceptEdits` auto-allows Edit and Write where only the built-in approval floor would ask; configured asks and denies still win, and Shell and every other `Tool` resolve as in `default`. It is a value object owned by exactly one `Session`; a control surface switches it out of band (e.g. ACP session/set_mode).
+A `Session`'s permission posture — plan, default, acceptEdits, auto, or yolo — governing which `Tools` may run and, through the plan model slot, the effective `Model`: in plan mode the `Session` re-resolves the plan slot to a strong-reasoning `Model` within the same `Provider`. Plan mode is enforced at two layers (catalog filter hides mutating `Tools`; evaluator gate hard-denies mutations). `acceptEdits` auto-allows Edit and Write where only the built-in approval floor would ask; configured asks and denies still win, and Shell and every other `Tool` resolve as in `default`. `auto` and `yolo` allow calls without asking: `auto` replaces human approval with an enforcing guardrails checker, `yolo` runs with no enforcing checker. It is a value object owned by exactly one `Session`; a control surface switches it out of band (e.g. ACP session/set_mode), up to the deployment's mode ceiling.
 
 **Relationships**
 
@@ -244,6 +244,10 @@ A `Session`'s permission posture — default, plan, or acceptEdits — governing
 - **mode-model-fixed-per-turn** — The effective `Model` is fixed for the duration of a turn; a mode change re-resolves it only between turns, at the run-entry seam, never mid-stream.
 
 - **acceptedits-loosens-only-the-edit-floor** — `acceptEdits` adds allow rules for Edit and Write above the built-in floor, so it loosens only the built-in ask for those two `Tools`. It never overrides a configured deny or ask, and every other `Tool`, including Shell, resolves exactly as in `default`.
+
+- **autonomous-modes-keep-configured-rules** — `auto` and `yolo` loosen only the built-in approval floor. A configured deny or ask still wins, and `auto` is admitted only when an enforcing guardrails checker is configured.
+
+- **mode-admitted-against-deployment** — A `Session` runs only in a `PermissionMode` the current deployment admits. A stored `Session` whose mode exceeds the ceiling, or is `auto` without an enforcing checker, is refused before any provider or `Tool` work until its mode is switched to an admitted one.
 
 
 ### `PermissionRule`
