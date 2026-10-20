@@ -63,11 +63,11 @@ func runSessions(t *testing.T, factory Factory) {
 	t.Run("find returns the open session for its root host session", func(t *testing.T) {
 		svc := factory(t)
 		s := mustOpen(t, svc, openRequest("hostS42", alice))
-		got, ok, err := svc.FindSession(ctx, "hostS42")
+		got, ok, err := svc.FindSession(ctx, findRequest("hostS42"))
 		if err != nil || !ok || got != s {
 			t.Fatalf("FindSession = %+v, %v, %v; want %+v, true, nil", got, ok, err, s)
 		}
-		if _, ok, err := svc.FindSession(ctx, "hostS99"); err != nil || ok {
+		if _, ok, err := svc.FindSession(ctx, findRequest("hostS99")); err != nil || ok {
 			t.Fatalf("FindSession(unknown) = %v, %v; want false, nil", ok, err)
 		}
 	})
@@ -110,7 +110,7 @@ func runClosedSessions(t *testing.T, factory Factory) {
 		svc := factory(t)
 		s := mustOpen(t, svc, openRequest("hostS42", alice))
 		mustClose(t, svc, s.ID)
-		if _, ok, err := svc.FindSession(ctx, "hostS42"); err != nil || ok {
+		if _, ok, err := svc.FindSession(ctx, findRequest("hostS42")); err != nil || ok {
 			t.Fatalf("FindSession after close = %v, %v; want false, nil", ok, err)
 		}
 	})
@@ -146,8 +146,10 @@ func runInvalidRequests(t *testing.T, factory Factory) {
 		wantError(t, "OpenSession with "+name, err, identitybroker.CodeInvalidArgument, "")
 	}
 
-	_, _, err := svc.FindSession(ctx, "")
-	wantError(t, "FindSession with no host session", err, identitybroker.CodeInvalidArgument, "")
+	for name, host := range map[string]string{"no host session": "", "spaced host": "host S42", "control character": "host\x00S42"} {
+		_, _, err := svc.FindSession(ctx, findRequest(host))
+		wantError(t, "FindSession with "+name, err, identitybroker.CodeInvalidArgument, "")
+	}
 
 	closes := map[string]identitybroker.CloseSessionRequest{
 		"no session":     {Reason: identitybroker.ReasonSessionClosed},

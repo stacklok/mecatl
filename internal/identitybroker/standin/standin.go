@@ -7,7 +7,7 @@ package standin
 
 import (
 	"context"
-	"strconv"
+	"crypto/rand"
 	"sync"
 
 	"github.com/stacklok/mecatl/internal/identitybroker"
@@ -21,11 +21,15 @@ var (
 )
 
 // Broker is the stand-in identity broker. It is safe for concurrent use.
-// Closed sessions are kept, so they keep refusing calls and their IDs are
-// never reused.
+//
+// State lives in one process. Session IDs are random, so they are not
+// guessable and do not repeat after a restart, but a closed session is
+// refused only by the process that closed it, and nothing is shared between
+// replicas. Closed sessions are kept for the life of the process so they keep
+// refusing calls; nothing evicts them. The real implementation replaces the
+// stand-in before any of this matters beyond a single replica.
 type Broker struct {
 	mu       sync.Mutex
-	nextID   uint64
 	open     map[string]string // root host session ID -> broker session ID
 	sessions map[string]*session
 }
@@ -59,9 +63,8 @@ func (b *Broker) OpenSession(_ context.Context, req identitybroker.OpenSessionRe
 		}
 		return s, nil
 	}
-	b.nextID++
 	s := identitybroker.Session{
-		ID:            "standin-" + strconv.FormatUint(b.nextID, 10),
+		ID:            "standin-" + rand.Text(),
 		HostSessionID: req.HostSessionID,
 		Incarnation:   req.Incarnation,
 		Owner:         req.Owner,
@@ -72,13 +75,13 @@ func (b *Broker) OpenSession(_ context.Context, req identitybroker.OpenSessionRe
 }
 
 // FindSession implements identitybroker.Service.
-func (b *Broker) FindSession(_ context.Context, rootHostSessionID string) (identitybroker.Session, bool, error) {
-	if rootHostSessionID == "" {
-		return identitybroker.Session{}, false, identitybroker.NewError(identitybroker.CodeInvalidArgument, "", "root host session ID is required")
+func (b *Broker) FindSession(_ context.Context, req identitybroker.FindSessionRequest) (identitybroker.Session, bool, error) {
+	if err := req.Validate(); err != nil {
+		return identitybroker.Session{}, false, err
 	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	id, ok := b.open[rootHostSessionID]
+	id, ok := b.open[req.RootHostSessionID]
 	if !ok {
 		return identitybroker.Session{}, false, nil
 	}

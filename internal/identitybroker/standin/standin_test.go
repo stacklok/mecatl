@@ -13,6 +13,19 @@ func TestStandinPassesContract(t *testing.T) {
 	conformance.Run(t, func(*testing.T) identitybroker.Service { return New() })
 }
 
+func TestSessionIDsDoNotRepeatAcrossRestarts(t *testing.T) {
+	// A fresh Broker stands in for a restarted process with no memory of
+	// earlier IDs; sequential IDs would repeat here.
+	seen := map[string]bool{}
+	for range 3 {
+		id := openSession(t, New()).ID
+		if seen[id] {
+			t.Fatalf("a restarted stand-in reissued broker session ID %q", id)
+		}
+		seen[id] = true
+	}
+}
+
 func openSession(t *testing.T, b *Broker) identitybroker.Session {
 	t.Helper()
 	s, err := b.OpenSession(context.Background(), identitybroker.OpenSessionRequest{

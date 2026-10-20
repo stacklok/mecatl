@@ -35,6 +35,10 @@ func openRequest(host string, owner identitybroker.Owner) identitybroker.OpenSes
 	return identitybroker.OpenSessionRequest{HostSessionID: host, Incarnation: "inc_" + host, Owner: owner}
 }
 
+func findRequest(host string) identitybroker.FindSessionRequest {
+	return identitybroker.FindSessionRequest{RootHostSessionID: host}
+}
+
 func registerRequest(s identitybroker.Session) identitybroker.RegisterAgentRequest {
 	return identitybroker.RegisterAgentRequest{
 		SessionID:     s.ID,

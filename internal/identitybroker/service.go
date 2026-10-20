@@ -31,9 +31,9 @@ type Service interface {
 	// OpenSession opens the broker session for a root host session, or returns
 	// the one already open for it.
 	OpenSession(ctx context.Context, req OpenSessionRequest) (Session, error)
-	// FindSession returns the open broker session for rootHostSessionID, and
+	// FindSession returns the open broker session for a root host session, and
 	// whether one is open.
-	FindSession(ctx context.Context, rootHostSessionID string) (Session, bool, error)
+	FindSession(ctx context.Context, req FindSessionRequest) (Session, bool, error)
 	// CloseSession closes a broker session with a closing reason. Closing an
 	// already closed session succeeds and keeps its first reason.
 	CloseSession(ctx context.Context, req CloseSessionRequest) error
@@ -86,6 +86,17 @@ func (r OpenSessionRequest) Validate() error {
 		return err
 	}
 	return r.Owner.validate()
+}
+
+// FindSessionRequest finds the open broker session for a root host session.
+type FindSessionRequest struct {
+	RootHostSessionID string
+}
+
+// Validate reports whether r is well formed. The error is an *Error with
+// CodeInvalidArgument.
+func (r FindSessionRequest) Validate() error {
+	return requireIDs("root host session", r.RootHostSessionID)
 }
 
 // CloseSessionRequest closes a broker session.
