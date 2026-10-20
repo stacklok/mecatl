@@ -64,9 +64,12 @@ tasks:
 
   browser:
     desc: Run offline Vite browser journeys at desktop and mobile widths
+    summary: |
+      Arguments after `--` go to Playwright; CI runs one project per job with
+      `task studio:browser -- --project=chromium-desktop`.
     deps: [install]
     cmds:
-      - pnpm run test:browser
+      - pnpm run test:browser {{.CLI_ARGS}}
 
   test:integration:
     desc: |

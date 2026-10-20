@@ -620,8 +620,8 @@ jobs:
     needs: changes
     # Studio builds the checked-out SDK (one commit for Studio, SDK, and daemon)
     # and drives its integration suite against the daemon; run for apps/, SDK, or
-    # Go changes.
-    # The image build is push: false.
+    # Go changes. The browser journeys and the image run in sibling jobs with the
+    # same gate, so the three run in parallel; studio-gate checks all of them.
     if: needs.changes.outputs.docs_only != 'true' && (needs.changes.outputs.studio_relevant == 'true' || needs.changes.outputs.go_relevant == 'true')
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -666,9 +666,6 @@ jobs:
       - name: Test Studio (Vitest, offline)
         run: task studio:test
 
-      - name: Install Chromium for Studio browser journeys
-        run: task studio:browser:install
-
       - name: Verify committed contracts artifacts are fresh
         run: task studio:generated-check
 
@@ -690,10 +687,103 @@ jobs:
       - name: Integration-test Studio against a spawned mecated --mock
         run: task studio:test:integration
 
-      # The approval journey uses the binary built by the integration task
-      # through the checked-out SDK and a loopback-only browser fixture.
+  # Playwright runs its suite on one worker, so shard by project across runners.
+  studio-browser:
+    name: Mecatl Studio browser journeys (${{ matrix.project }})
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true' && (needs.changes.outputs.studio_relevant == 'true' || needs.changes.outputs.go_relevant == 'true')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read # checkout
+    strategy:
+      fail-fast: false
+      matrix:
+        project: [chromium-desktop, chromium-mobile]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Install the packageManager pin explicitly (read from apps/package.json —
+      # pnpm 12.x, deliberately NOT the SDK's pnpm 11 pin: the workspace is
+      # self-contained). Do not rely on corepack being present or enabled on the
+      # runner.
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          package_json_file: apps/package.json
+          run_install: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: apps/.node-version
+          cache: pnpm
+          cache-dependency-path: |
+            apps/pnpm-lock.yaml
+            sdk/typescript/pnpm-lock.yaml
+
+      - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
+
+      - name: Install Studio dependencies (frozen)
+        run: task studio:install
+
+      - name: Install Chromium for Studio browser journeys
+        run: task studio:browser:install
+
+      # The approval journey spawns `mecated --mock` through the checked-out SDK
+      # and a loopback-only browser fixture.
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: |
+            go.sum
+            engine/go.sum
+            internal/adaptersupport/go.sum
+            contracts/gen/go/mecatl/driver/go.sum
+            adapters/go.sum
+
+      # Only bin/mecated is needed, so skip the full `task build`.
+      - name: Build mecated
+        run: go build -o bin/mecated ./cmd/mecated
+
       - name: Test Studio browser journeys (Playwright, offline)
-        run: task studio:browser
+        run: task studio:browser -- --project=${{ matrix.project }}
+
+  # The same apps/Dockerfile the release job publishes. Its runtime check boots
+  # the image against an offline mecated, so this job builds the daemon too.
+  studio-image:
+    name: Mecatl Studio image
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true' && (needs.changes.outputs.studio_relevant == 'true' || needs.changes.outputs.go_relevant == 'true')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read # checkout
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # The runtime check reads the Node engines range from apps/package.json.
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: apps/.node-version
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: |
+            go.sum
+            engine/go.sum
+            internal/adaptersupport/go.sum
+            contracts/gen/go/mecatl/driver/go.sum
+            adapters/go.sum
+
+      # Only bin/mecated is needed, so skip the full `task build`.
+      - name: Build mecated
+        run: go build -o bin/mecated ./cmd/mecated
 
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
@@ -734,7 +824,7 @@ jobs:
           '
 
           # Boot the image with its real entrypoint against the offline daemon the
-          # integration step built. It needs both listeners: gRPC for the SDK and
+          # build step produced. It needs both listeners: gRPC for the SDK and
           # HTTP for the RFC 9728 protected-resource document (a 404 there means
           # no browser login, so the unauthenticated opt-in is required).
           mkdir -p .scratch/studio-image-workspace .scratch/studio-image-home
@@ -794,6 +884,52 @@ jobs:
           only-fixed: true
           severity-cutoff: critical
           output-format: table
+
+  studio-gate:
+    name: Mecatl Studio (gate)
+    needs: [changes, studio, studio-browser, studio-image]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    # Aggregates the split Studio jobs, mirroring `lint` and `user-docs-gate`: a
+    # job skipped via `if:` reports as success, so this validates each Studio
+    # job's result exactly against the classifier outputs.
+    steps:
+      - name: Require applicable Studio coverage
+        shell: bash
+        env:
+          CHANGES_RESULT: ${{ needs.changes.result }}
+          DOCS_ONLY: ${{ needs.changes.outputs.docs_only }}
+          STUDIO_RELEVANT: ${{ needs.changes.outputs.studio_relevant }}
+          GO_RELEVANT: ${{ needs.changes.outputs.go_relevant }}
+          STUDIO_RESULT: ${{ needs.studio.result }}
+          STUDIO_BROWSER_RESULT: ${{ needs.studio-browser.result }}
+          STUDIO_IMAGE_RESULT: ${{ needs.studio-image.result }}
+        run: |
+          set -euo pipefail
+          if [[ "$CHANGES_RESULT" != success ]]; then
+            echo "changes job did not succeed: $CHANGES_RESULT" >&2
+            exit 1
+          fi
+          results=(
+            "studio=$STUDIO_RESULT"
+            "studio-browser=$STUDIO_BROWSER_RESULT"
+            "studio-image=$STUDIO_IMAGE_RESULT"
+          )
+          # The same expression gates every Studio job.
+          if [[ "$DOCS_ONLY" != true ]] && [[ "$STUDIO_RELEVANT" == true || "$GO_RELEVANT" == true ]]; then
+            expected=success
+          else
+            expected=skipped
+          fi
+          failed=0
+          for entry in "${results[@]}"; do
+            if [[ "${entry#*=}" != "$expected" ]]; then
+              echo "Studio coverage expected $expected: $entry" >&2
+              failed=1
+            fi
+          done
+          exit "$failed"
 
   build:
     name: Build
@@ -1018,7 +1154,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.go_relevant == 'true'
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -1057,43 +1193,10 @@ jobs:
           # 10m, not 5m: the repo outgrew the old budget on the 2-core runners —
           # at 5m the run died with exit code 4 ("Timeout exceeded") and the
           # interrupted staticcheck pass reported spurious SA5011s (partial
-          # no-return facts), failing every push since. The module lint steps run
-          # sequentially, so the 30-minute job budget leaves room after a worst-case
-          # root lint for the remaining module lint and workflow checks; this
-          # lets golangci-lint, not the job, report a timeout.
+          # no-return facts), failing every push since. The 20-minute job budget
+          # leaves room after a worst-case root lint for the workflow checks
+          # below, so golangci-lint, not the job, reports a timeout.
           args: --timeout=10m
-
-      # engine/ is its own module — lint it with the SHARED root config (no
-      # engine-local .golangci.yml) so the depguard layering allowlists stay the
-      # single source of truth across the module boundary. Uses the binary the
-      # action above installed onto PATH.
-      - name: golangci-lint (engine module)
-        run: cd engine && golangci-lint run --config ../.golangci.yml --allow-parallel-runners --timeout=10m ./...
-
-      - name: golangci-lint (public persistence modules)
-        run: |
-          (cd internal/adaptersupport && golangci-lint run --config ../../.golangci.yml --allow-parallel-runners --timeout=10m ./...)
-          (cd contracts/gen/go/mecatl/driver && golangci-lint run --config ../../../../../.golangci.yml --allow-parallel-runners --timeout=10m ./...)
-          (cd adapters && golangci-lint run --config ../.golangci.yml --allow-parallel-runners --timeout=10m ./...)
-
-      - name: golangci-lint (OIDC authn module)
-        run: cd authn/oidc && golangci-lint run --config ../../.golangci.yml --allow-parallel-runners --timeout=10m ./...
-
-      - name: golangci-lint (microVM module)
-        if: needs.changes.outputs.microvm_relevant == 'true'
-        run: cd environment/microvm && golangci-lint run --config ../../.golangci.yml --allow-parallel-runners --timeout=10m ./...
-
-      - name: golangci-lint (microVM integration module)
-        run: cd integration/microvm && golangci-lint run --config ../../.golangci.yml --allow-parallel-runners --timeout=10m ./...
-
-      # provider/ submodules — each its own module, sharing the ROOT
-      # golangci config so the depguard allowlists stay the single source of truth.
-      - name: golangci-lint (provider modules)
-        run: |
-          (cd provider/ssefilter && golangci-lint run --config ../../.golangci.yml --allow-parallel-runners --timeout=10m ./...)
-          (cd provider/anthropic && golangci-lint run --config ../../.golangci.yml --allow-parallel-runners --timeout=10m ./...)
-          (cd provider/openai && golangci-lint run --config ../../.golangci.yml --allow-parallel-runners --timeout=10m ./...)
-          (cd provider/openaichat && golangci-lint run --config ../../.golangci.yml --allow-parallel-runners --timeout=10m ./...)
 
       # Lint the GitHub Actions workflows. actionlint is pinned via `go run` so no extra
       # binary install is needed; it embeds shellcheck for `run:` blocks when available.
@@ -1152,30 +1255,139 @@ jobs:
             *) exit "$status" ;;
           esac
 
+  # The nested-module golangci-lint passes run beside the root lint instead of
+  # after it. One job, not a per-module matrix: each pass takes well under a
+  # minute, so a matrix would mostly add runner setup.
+  module-lint:
+    name: Analysis (module lint)
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.go_relevant == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: |
+            go.sum
+            engine/go.sum
+            internal/adaptersupport/go.sum
+            contracts/gen/go/mecatl/driver/go.sum
+            adapters/go.sum
+            authn/oidc/go.sum
+            environment/microvm/go.sum
+            integration/microvm/go.sum
+            provider/ssefilter/go.sum
+            provider/anthropic/go.sum
+            provider/openai/go.sum
+            provider/openaichat/go.sum
+
+      - id: golangci-version
+        run: echo "version=$(sh scripts/install-golangci-lint.sh --version)" >> "$GITHUB_OUTPUT"
+
+      # Install the same pinned release the Analysis job runs onto PATH.
+      - uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
+        with:
+          version: ${{ steps.golangci-version.outputs.version }}
+          install-only: true
+
+      # engine/ is its own module — lint it with the SHARED root config (no
+      # engine-local .golangci.yml) so the depguard layering allowlists stay the
+      # single source of truth across the module boundary. Uses the binary the
+      # action above installed onto PATH.
+      - name: golangci-lint (engine module)
+        run: cd engine && golangci-lint run --config ../.golangci.yml --allow-parallel-runners --timeout=10m ./...
+
+      - name: golangci-lint (public persistence modules)
+        run: |
+          (cd internal/adaptersupport && golangci-lint run --config ../../.golangci.yml --allow-parallel-runners --timeout=10m ./...)
+          (cd contracts/gen/go/mecatl/driver && golangci-lint run --config ../../../../../.golangci.yml --allow-parallel-runners --timeout=10m ./...)
+          (cd adapters && golangci-lint run --config ../.golangci.yml --allow-parallel-runners --timeout=10m ./...)
+
+      - name: golangci-lint (OIDC authn module)
+        run: cd authn/oidc && golangci-lint run --config ../../.golangci.yml --allow-parallel-runners --timeout=10m ./...
+
+      - name: golangci-lint (microVM module)
+        if: needs.changes.outputs.microvm_relevant == 'true'
+        run: cd environment/microvm && golangci-lint run --config ../../.golangci.yml --allow-parallel-runners --timeout=10m ./...
+
+      - name: golangci-lint (microVM integration module)
+        run: cd integration/microvm && golangci-lint run --config ../../.golangci.yml --allow-parallel-runners --timeout=10m ./...
+
+      # provider/ submodules — each its own module, sharing the ROOT
+      # golangci config so the depguard allowlists stay the single source of truth.
+      - name: golangci-lint (provider modules)
+        run: |
+          (cd provider/ssefilter && golangci-lint run --config ../../.golangci.yml --allow-parallel-runners --timeout=10m ./...)
+          (cd provider/anthropic && golangci-lint run --config ../../.golangci.yml --allow-parallel-runners --timeout=10m ./...)
+          (cd provider/openai && golangci-lint run --config ../../.golangci.yml --allow-parallel-runners --timeout=10m ./...)
+          (cd provider/openaichat && golangci-lint run --config ../../.golangci.yml --allow-parallel-runners --timeout=10m ./...)
+
+  # Offline shell tests for the composite-action and release glue scripts. They
+  # run beside Analysis rather than inside it: microvm-ci-release_test.sh builds
+  # mecated and mecatui several times with release linker stamps, which takes
+  # minutes on a cold -trimpath build cache, so it needs Go but not golangci-lint.
+  action-scripts:
+    name: Test GitHub Actions scripts
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.go_relevant == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: |
+            go.sum
+            engine/go.sum
+            internal/adaptersupport/go.sum
+            contracts/gen/go/mecatl/driver/go.sum
+            adapters/go.sum
+            authn/oidc/go.sum
+            environment/microvm/go.sum
+            integration/microvm/go.sum
+            provider/ssefilter/go.sum
+            provider/anthropic/go.sum
+            provider/openai/go.sum
+            provider/openaichat/go.sum
+
       # The mecatequi composite-action glue scripts (extract-prompt.sh, publish.sh) have
       # offline bash tests with fake gh/git stubs that assert their SECURITY logic (no
       # untrusted-body interpolation; protected-paths gate incl. the -z path-quoting bypass;
       # template-confinement; literal+single-pass PR-body render; the comment-without-PR
       # branches). The action-wrappers test pins the composite action.yml env-mapping contract
-      # (actionlint cannot lint a composite action). They are shell, not Go, so they ride here
-      # rather than in `go test`.
-      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
-
-      # The publisher-format release fixture signs once, then verifies the exact
-      # bundles strict admission consumes and rejects statement tampering.
-      - name: Test GitHub Actions scripts
+      # (actionlint cannot lint a composite action). They are shell, not Go, so they run
+      # here rather than in `go test`.
+      - name: Test composite-action scripts
         run: |
           bash .github/actions/mecatequi-extract-prompt/extract-prompt_test.sh
           bash .github/actions/mecatequi-publish/publish_test.sh
           bash .github/actions/action-wrappers_test.sh
-          bash .github/scripts/microvm-ci-release_test.sh
 
-  # Preserve one stable required context while golangci-lint runs.
-  # The aggregate validates the classifier and applicable analysis job, so failures
-  # and cancellations cannot be hidden by dependency skipping.
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+
+      # The publisher-format release fixture signs once, then verifies the exact
+      # bundles strict admission consumes and rejects statement tampering.
+      - name: Test microVM release scripts
+        run: bash .github/scripts/microvm-ci-release_test.sh
+
+  # Preserve one stable required context while the analysis jobs run.
+  # The aggregate validates the classifier and every applicable analysis job, so
+  # failures and cancellations cannot be hidden by dependency skipping. A job added
+  # here must also be added to `needs` and the checked list below.
   lint:
     name: Lint
-    needs: [changes, analysis]
+    needs: [changes, analysis, module-lint, action-scripts]
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -1187,32 +1399,40 @@ jobs:
           DOCS_ONLY: ${{ needs.changes.outputs.docs_only }}
           GO_RELEVANT: ${{ needs.changes.outputs.go_relevant }}
           ANALYSIS_RESULT: ${{ needs.analysis.result }}
+          MODULE_LINT_RESULT: ${{ needs.module-lint.result }}
+          ACTION_SCRIPTS_RESULT: ${{ needs.action-scripts.result }}
         run: |
           set -euo pipefail
           if [[ "$CHANGES_RESULT" != success ]]; then
             echo "changes job did not succeed: $CHANGES_RESULT" >&2
             exit 1
           fi
+          results=(
+            "analysis=$ANALYSIS_RESULT"
+            "module-lint=$MODULE_LINT_RESULT"
+            "action-scripts=$ACTION_SCRIPTS_RESULT"
+          )
+          # Every job shares the analysis gate. A docs-only or non-Go change (e.g.
+          # website- or SDK-frontend-only) legitimately skips all of them; require
+          # each skip exactly, and require success otherwise.
           if [[ "$DOCS_ONLY" == true ]]; then
-            if [[ "$ANALYSIS_RESULT" != skipped ]]; then
-              echo "docs-only analysis job was not skipped: analysis=$ANALYSIS_RESULT" >&2
-              exit 1
+            expected=skipped
+            reason=docs-only
+          elif [[ "$GO_RELEVANT" != true ]]; then
+            expected=skipped
+            reason=non-go-relevant
+          else
+            expected=success
+            reason=go-relevant
+          fi
+          failed=0
+          for entry in "${results[@]}"; do
+            if [[ "${entry#*=}" != "$expected" ]]; then
+              echo "$reason lint coverage expected $expected: $entry" >&2
+              failed=1
             fi
-            exit 0
-          fi
-          # A non-Go change (e.g. website- or SDK-frontend-only) legitimately skips
-          # the analysis job; require the skip exactly as the docs-only branch does.
-          if [[ "$GO_RELEVANT" != true ]]; then
-            if [[ "$ANALYSIS_RESULT" != skipped ]]; then
-              echo "non-go-relevant analysis job was not skipped: analysis=$ANALYSIS_RESULT" >&2
-              exit 1
-            fi
-            exit 0
-          fi
-          if [[ "$ANALYSIS_RESULT" != success ]]; then
-            echo "lint coverage failed: analysis=$ANALYSIS_RESULT" >&2
-            exit 1
-          fi
+          done
+          exit "$failed"
 
   fuzz-smoke:
     name: Fuzz smoke

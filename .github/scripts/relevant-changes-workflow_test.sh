@@ -112,7 +112,7 @@ fi
 # --- per-job gating ------------------------------------------------------------
 # The remaining Go build/analysis jobs gate on go_relevant; the required test
 # context checks changes.result itself, even when no Go tests need running.
-for job in build analysis fuzz-smoke engine-standalone provider-standalone api-compat vuln; do
+for job in build analysis module-lint action-scripts fuzz-smoke engine-standalone provider-standalone api-compat vuln; do
   assert_if "$job" has "needs.changes.outputs.go_relevant == 'true'"
 done
 
@@ -147,18 +147,43 @@ assert_if user-docs hasnot "docs_only"
 # so a daemon change can break it. Studio builds the checked-out SDK, but
 # studio_relevant already covers sdk/typescript/*, so the job needs no separate
 # sdk_relevant term.
-assert_if studio has "needs.changes.outputs.studio_relevant == 'true' || needs.changes.outputs.go_relevant == 'true'"
-assert_if studio has "needs.changes.outputs.docs_only != 'true'"
-assert_if studio hasnot "sdk_relevant"
+# The browser journeys and the image are split into sibling jobs on the same gate.
+for job in studio studio-browser studio-image; do
+  assert_if "$job" has "needs.changes.outputs.studio_relevant == 'true' || needs.changes.outputs.go_relevant == 'true'"
+  assert_if "$job" has "needs.changes.outputs.docs_only != 'true'"
+  assert_if "$job" hasnot "sdk_relevant"
+done
+
+# The Studio jobs are aggregated so a wrongly skipped or failed one turns the
+# gate red, the same way lint and user-docs-gate guard their jobs.
+sg="$(job_block studio-gate)"
+if [[ -z "$sg" ]]; then
+  fail 'a studio-gate aggregator must exist for the split Studio jobs'
+else
+  grep -Fq 'if: always()' <<<"$sg" || fail 'studio-gate must run with if: always()'
+  grep -Fq 'needs: [changes, studio, studio-browser, studio-image]' <<<"$sg" \
+    || fail 'studio-gate must need every Studio job'
+  sg_results="$(sed -n '/results=(/,/)/p' <<<"$sg")"
+  for result in STUDIO_RESULT STUDIO_BROWSER_RESULT STUDIO_IMAGE_RESULT; do
+    grep -Fq "$result" <<<"$sg_results" \
+      || fail "studio-gate must check $result"
+  done
+fi
 
 # The opt-in MicroVM standalone job still uses the dedicated relevance output.
 assert_if microvm-standalone has "needs.changes.outputs.microvm_relevant == 'true'"
 
 # --- lint aggregator tolerates non-Go skips ------------------------------------
-if ! grep -Fq 'if [[ "$GO_RELEVANT" != true ]]; then' <<<"$(job_block lint)"; then
+lint_block="$(job_block lint)"
+if ! grep -Fq 'if [[ "$GO_RELEVANT" != true ]]; then' <<<"$lint_block"; then
   fail 'the lint aggregator must branch on go_relevant for a non-Go change'
 fi
-require 'non-go-relevant analysis job was not skipped' 'the lint aggregator must require analysis skipped for a non-Go change'
+grep -Fq 'needs: [changes, analysis, module-lint, action-scripts]' <<<"$lint_block" \
+  || fail 'the lint aggregator must need every analysis job'
+lint_results="$(sed -n '/results=(/,/)/p' <<<"$lint_block")"
+for result in ANALYSIS_RESULT MODULE_LINT_RESULT ACTION_SCRIPTS_RESULT; do
+  grep -Fq "$result" <<<"$lint_results" || fail "the lint aggregator must check $result"
+done
 
 # The Docusaurus build is a required check gated directly on site_relevant, and a
 # job skipped via `if:` reports as success for branch protection. It therefore
