@@ -10,7 +10,6 @@ import (
 	"testing"
 
 	"github.com/stacklok/mecatl/engine/port"
-	"github.com/stacklok/mecatl/engine/session"
 )
 
 func TestVisibleReasoning_Scenario3_SummaryRequestAndReplayFields(t *testing.T) {
@@ -87,7 +86,7 @@ func TestVisibleReasoning_Scenario3_UnsupportedSummaryCompatibility(t *testing.T
 			}))
 			defer srv.Close()
 			p := New(WithAPIKey("test-key"), WithBaseURL(srv.URL+"/v1"))
-			seq, err := p.Stream(context.Background(), port.LLMRequest{Model: "gpt-test", Messages: []session.Message{session.NewUserMessage("hello")}})
+			seq, err := p.Stream(context.Background(), port.LLMRequest{Model: "gpt-test", Messages: []port.LLMMessage{userMessage("hello")}})
 			if err != nil {
 				t.Fatalf("Stream: %v", err)
 			}

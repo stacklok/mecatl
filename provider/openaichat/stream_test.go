@@ -133,7 +133,7 @@ func TestTranslateTextStream(t *testing.T) {
 func TestTranslateToolCallStream(t *testing.T) {
 	chunks := decodeFixture(t, "stream_toolcall.sse")
 
-	var calls []*session.ToolCall
+	var calls []*port.LLMToolCall
 	for _, c := range chunks {
 		if c.Kind == port.ChunkToolCall {
 			calls = append(calls, c.ToolCall)
@@ -340,7 +340,7 @@ data: [DONE]
 	if err != nil {
 		t.Fatalf("decodeSSE error = %v", err)
 	}
-	var call *session.ToolCall
+	var call *port.LLMToolCall
 	for _, c := range chunks {
 		if c.Kind == port.ChunkToolCall {
 			call = c.ToolCall

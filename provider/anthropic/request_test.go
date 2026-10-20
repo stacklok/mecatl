@@ -394,16 +394,19 @@ func TestBuildToolsSchemaFidelity(t *testing.T) {
 // text, then tool_use LAST (issue #1465: tool_use replayed anywhere but last
 // 400s with "assistant message prefill" once extended thinking is active).
 func TestAssistantThinkingBeforeToolUse(t *testing.T) {
-	packed := packReasoning([]reasoningBlock{
+	packed := packReplay([]reasoningBlock{
 		{Kind: reasoningKindThinking, Thinking: "ponder", Signature: "SIG=="},
 	})
-	msg := session.Message{
+	msg := port.LLMMessage{
 		Role:      session.RoleAssistant,
-		Reasoning: packed,
+		Replay:    packed,
 		Text:      "I'll check the file.",
-		ToolCalls: []session.ToolCall{{ID: "toolu_1", Name: "read_file", Args: json.RawMessage(`{"path":"x"}`)}},
+		ToolCalls: []port.LLMToolCall{{ID: "toolu_1", Name: "read_file", Args: json.RawMessage(`{"path":"x"}`)}},
 	}
-	blocks := assistantBlocks(msg)
+	blocks, err := assistantBlocks(msg)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(blocks) != 3 {
 		t.Fatalf("assistant blocks = %d, want 3 (thinking, text, tool_use)", len(blocks))
 	}
@@ -428,9 +431,12 @@ func TestAssistantThinkingBeforeToolUse(t *testing.T) {
 }
 
 func TestAssistantRedactedThinkingReconstructed(t *testing.T) {
-	packed := packReasoning([]reasoningBlock{{Kind: reasoningKindRedacted, Data: "RD=="}})
-	msg := session.Message{Role: session.RoleAssistant, Reasoning: packed, Text: "hi"}
-	blocks := assistantBlocks(msg)
+	packed := packReplay([]reasoningBlock{{Kind: reasoningKindRedacted, Data: "RD=="}})
+	msg := port.LLMMessage{Role: session.RoleAssistant, Replay: packed, Text: "hi"}
+	blocks, err := assistantBlocks(msg)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if blocks[0].OfRedactedThinking == nil {
 		t.Fatal("first block must be a redacted_thinking block")
 	}
@@ -443,8 +449,8 @@ func TestBuildMessagesToolResultIsUserRole(t *testing.T) {
 	p := testProvider()
 	req := port.LLMRequest{
 		Model: "claude-sonnet-4-6",
-		Messages: []session.Message{
-			session.NewToolMessage(session.ToolResult{CallID: "toolu_1", Content: "42"}),
+		Messages: []port.LLMMessage{
+			toolMessage(port.LLMToolResult{CallID: "toolu_1", Content: "42"}),
 		},
 	}
 	params, err := p.buildParams(req)
@@ -470,7 +476,7 @@ func TestBuildMessagesUserTextFastPath(t *testing.T) {
 	p := testProvider()
 	params, err := p.buildParams(port.LLMRequest{
 		Model:    "claude-sonnet-4-6",
-		Messages: []session.Message{session.NewUserMessage("hello")},
+		Messages: []port.LLMMessage{userMessage("hello")},
 	})
 	if err != nil {
 		t.Fatalf("buildParams: %v", err)
@@ -493,8 +499,8 @@ func TestRequestNoOrphanedToolUseAfterInterrupt(t *testing.T) {
 	if err := sess.BeginTurn(); err != nil {
 		t.Fatalf("BeginTurn: %v", err)
 	}
-	calls := []session.ToolCall{session.NewToolCall("toolu_1", "read_file", json.RawMessage(`{"path":"x"}`))}
-	if err := sess.RecordAssistant(session.NewAssistantMessage("", "", calls)); err != nil {
+	calls := []session.ToolCall{session.NewToolCall("canonical_1", "read_file", json.RawMessage(`{"path":"x"}`))}
+	if err := sess.RecordAssistant(session.NewAssistantMessage("", calls)); err != nil {
 		t.Fatalf("RecordAssistant: %v", err)
 	}
 	if err := sess.Cancel(); err != nil {
@@ -504,10 +510,14 @@ func TestRequestNoOrphanedToolUseAfterInterrupt(t *testing.T) {
 		t.Fatalf("Interrupt: %v", err)
 	}
 
+	messages, err := port.ProjectMessages(sess.Conversation.Messages)
+	if err != nil {
+		t.Fatalf("ProjectMessages: %v", err)
+	}
 	p := testProvider()
 	params, err := p.buildParams(port.LLMRequest{
 		Model:    "claude-sonnet-4-6",
-		Messages: sess.Conversation.Messages,
+		Messages: messages,
 	})
 	if err != nil {
 		t.Fatalf("buildParams: %v", err)
@@ -541,8 +551,8 @@ func TestRequestNoOrphanedToolUseAfterInterrupt(t *testing.T) {
 // instructionFiles renders for AGENTS.md — IsInjectedTurn0Fragment matches on
 // that broader prefix (not the exact header string), so this stays robust to a
 // reword of the marker's trailing text.
-func turn0Fragment(body string) session.Message {
-	return session.NewUserMessage("Project instructions (AGENTS.md):\n" + body)
+func turn0Fragment(body string) port.LLMMessage {
+	return userMessage("Project instructions (AGENTS.md):\n" + body)
 }
 
 // cacheProvider builds a Provider for the conversation-cache test suite, always
@@ -605,24 +615,24 @@ func explicitCacheMarkerCount(t *testing.T, params sdk.MessageNewParams) int {
 // adds 1 thinking + K tool_use + 1 text + K tool_result blocks, which for
 // K >= 9 pushes the previous turn's automatic-marker entry outside Anthropic's
 // 20-block backward lookback).
-func wideFanOutConversation(k int) []session.Message {
-	msgs := []session.Message{
+func wideFanOutConversation(k int) []port.LLMMessage {
+	msgs := []port.LLMMessage{
 		turn0Fragment("first fragment"),
 		turn0Fragment("last fragment"),
-		session.NewUserMessage("Please read these files in parallel."),
+		userMessage("Please read these files in parallel."),
 	}
-	calls := make([]session.ToolCall, 0, k)
+	calls := make([]port.LLMToolCall, 0, k)
 	for i := 0; i < k; i++ {
-		calls = append(calls, session.NewToolCall(
-			session.ToolCallID(fmt.Sprintf("call_%d", i)), "Read",
+		calls = append(calls, toolCall(
+			session.ProviderCallID(fmt.Sprintf("call_%d", i)), "Read",
 			json.RawMessage(fmt.Sprintf(`{"path":"f%d.go"}`, i))))
 	}
-	msgs = append(msgs, session.NewAssistantMessage("", "", calls))
+	msgs = append(msgs, assistantMessage("", nil, calls))
 	for i := 0; i < k; i++ {
-		msgs = append(msgs, session.NewToolMessage(
-			session.NewToolResult(session.ToolCallID(fmt.Sprintf("call_%d", i)), "file body")))
+		msgs = append(msgs, toolMessage(
+			toolResult(session.ProviderCallID(fmt.Sprintf("call_%d", i)), "file body")))
 	}
-	msgs = append(msgs, session.NewAssistantMessage("Read all files.", "", nil))
+	msgs = append(msgs, assistantMessage("Read all files.", nil, nil))
 	return msgs
 }
 
@@ -686,10 +696,10 @@ func TestBuildParamsCacheTTLUniformAcrossMarkers(t *testing.T) {
 
 func TestBuildParamsTurn0FragmentAnchor(t *testing.T) {
 	p := cacheProvider()
-	msgs := []session.Message{
+	msgs := []port.LLMMessage{
 		turn0Fragment("first fragment"),
 		turn0Fragment("last fragment"),
-		session.NewUserMessage("Please summarise the architecture."),
+		userMessage("Please summarise the architecture."),
 	}
 	params, err := p.buildParams(port.LLMRequest{Model: "claude-sonnet-4-6", Messages: msgs})
 	if err != nil {
@@ -713,7 +723,7 @@ func TestBuildParamsNoFragmentsNoAnchor(t *testing.T) {
 	p := cacheProvider()
 	params, err := p.buildParams(port.LLMRequest{
 		Model:    "claude-sonnet-4-6",
-		Messages: []session.Message{session.NewUserMessage("Please summarise the architecture.")},
+		Messages: []port.LLMMessage{userMessage("Please summarise the architecture.")},
 	})
 	if err != nil {
 		t.Fatalf("buildParams: %v", err)
@@ -728,32 +738,32 @@ func TestBuildParamsPreviousTurnBoundaryAnchor(t *testing.T) {
 	p := cacheProvider()
 	tests := []struct {
 		name    string
-		msgs    []session.Message
+		msgs    []port.LLMMessage
 		markIdx int // -1 = no marker expected anywhere
 	}{
 		{
 			name: "tool-result tail",
-			msgs: []session.Message{
-				session.NewUserMessage("read a file"),
-				session.NewAssistantMessage("", "", []session.ToolCall{
-					session.NewToolCall("call_1", "Read", json.RawMessage(`{"path":"a.go"}`)),
+			msgs: []port.LLMMessage{
+				userMessage("read a file"),
+				assistantMessage("", nil, []port.LLMToolCall{
+					toolCall("call_1", "Read", json.RawMessage(`{"path":"a.go"}`)),
 				}),
-				session.NewToolMessage(session.NewToolResult("call_1", "package a")),
+				toolMessage(toolResult("call_1", "package a")),
 			},
 			markIdx: 0,
 		},
 		{
 			name: "nudge tail",
-			msgs: []session.Message{
-				session.NewUserMessage("do something"),
-				session.NewAssistantMessage("", "", nil), // degenerate empty turn (no-progress nudge)
-				session.NewUserMessage("Please continue."),
+			msgs: []port.LLMMessage{
+				userMessage("do something"),
+				assistantMessage("", nil, nil), // degenerate empty turn (no-progress nudge)
+				userMessage("Please continue."),
 			},
 			markIdx: 0,
 		},
 		{
 			name:    "turn 0 (absent)",
-			msgs:    []session.Message{session.NewUserMessage("first prompt")},
+			msgs:    []port.LLMMessage{userMessage("first prompt")},
 			markIdx: -1,
 		},
 	}
@@ -777,10 +787,10 @@ func TestBuildParamsPreviousTurnBoundaryAnchor(t *testing.T) {
 
 func TestBuildParamsAnchorDedupe(t *testing.T) {
 	p := cacheProvider()
-	msgs := []session.Message{
+	msgs := []port.LLMMessage{
 		turn0Fragment("only fragment"),
-		session.NewAssistantMessage("", "", []session.ToolCall{
-			session.NewToolCall("call_1", "Read", json.RawMessage(`{"path":"a.go"}`)),
+		assistantMessage("", nil, []port.LLMToolCall{
+			toolCall("call_1", "Read", json.RawMessage(`{"path":"a.go"}`)),
 		}),
 	}
 	params, err := p.buildParams(port.LLMRequest{Model: "claude-sonnet-4-6", Messages: msgs})
@@ -799,43 +809,43 @@ func TestBuildParamsAnchorDedupe(t *testing.T) {
 func TestBuildParamsBreakpointBudget(t *testing.T) {
 	tests := []struct {
 		name string
-		msgs []session.Message
+		msgs []port.LLMMessage
 	}{
 		{
 			name: "turn0",
-			msgs: []session.Message{
+			msgs: []port.LLMMessage{
 				turn0Fragment("first fragment"),
 				turn0Fragment("last fragment"),
-				session.NewUserMessage("Please start."),
+				userMessage("Please start."),
 			},
 		},
 		{name: "wide fan-out K=32", msgs: wideFanOutConversation(32)},
 		{
 			name: "post-compaction",
-			msgs: []session.Message{
+			msgs: []port.LLMMessage{
 				turn0Fragment("first fragment"),
 				turn0Fragment("last fragment"),
-				session.NewUserMessage("original genuine instruction, pinned by compaction"),
-				session.NewUserMessage("## Compaction summary\nEarlier turns summarised here."),
-				session.NewAssistantMessage("Continuing from the summary.", "", nil),
+				userMessage("original genuine instruction, pinned by compaction"),
+				userMessage("## Compaction summary\nEarlier turns summarised here."),
+				assistantMessage("Continuing from the summary.", nil, nil),
 			},
 		},
 		{
 			name: "fork-seeded",
-			msgs: []session.Message{
-				session.NewUserMessage("forked from parent, no leading fragment"),
-				session.NewAssistantMessage("", "", []session.ToolCall{
-					session.NewToolCall("call_1", "Read", json.RawMessage(`{"path":"a.go"}`)),
+			msgs: []port.LLMMessage{
+				userMessage("forked from parent, no leading fragment"),
+				assistantMessage("", nil, []port.LLMToolCall{
+					toolCall("call_1", "Read", json.RawMessage(`{"path":"a.go"}`)),
 				}),
-				session.NewToolMessage(session.NewToolResult("call_1", "package a")),
-				session.NewAssistantMessage("Done.", "", nil),
+				toolMessage(toolResult("call_1", "package a")),
+				assistantMessage("Done.", nil, nil),
 			},
 		},
 		{
 			name: "zero-fragment",
-			msgs: []session.Message{
-				session.NewUserMessage("no fragments in this session at all"),
-				session.NewAssistantMessage("Understood.", "", nil),
+			msgs: []port.LLMMessage{
+				userMessage("no fragments in this session at all"),
+				assistantMessage("Understood.", nil, nil),
 			},
 		},
 	}
@@ -898,15 +908,15 @@ func TestBuildParamsConversationCachingDisabled(t *testing.T) {
 
 func TestBuildParamsMarkerOnUnmarkableBlockIsSkipped(t *testing.T) {
 	p := cacheProvider()
-	thinkingOnly := session.Message{
+	thinkingOnly := port.LLMMessage{
 		Role: session.RoleAssistant,
-		Reasoning: packReasoning([]reasoningBlock{{
+		Replay: packReplay([]reasoningBlock{{
 			Kind:      reasoningKindThinking,
 			Thinking:  "considering the request",
 			Signature: "c2ln",
 		}}),
 	}
-	msgs := []session.Message{thinkingOnly, session.NewAssistantMessage("final answer", "", nil)}
+	msgs := []port.LLMMessage{thinkingOnly, assistantMessage("final answer", nil, nil)}
 	params, err := p.buildParams(port.LLMRequest{Model: "claude-sonnet-4-6", Messages: msgs})
 	if err != nil {
 		t.Fatalf("buildParams must not error when the anchor target block cannot carry cache_control: %v", err)

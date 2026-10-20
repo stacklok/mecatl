@@ -71,7 +71,7 @@ const minThinkingBudget int64 = 1024
 //   - Tools             -> tools[] with input_schema (the JSON schema).
 //   - Messages          -> messages[]: user/assistant/tool turns; an assistant
 //     turn reconstructs its thinking/redacted_thinking blocks (unpacked from
-//     Message.Reasoning) BEFORE its tool_use blocks (the sequence rule).
+//     Replay) BEFORE its tool_use blocks (the sequence rule).
 //   - Model             -> model (bare opaque string; passthrough verbatim).
 //   - max_tokens        -> resolved per req.Model (the per-model ceiling), NOT a
 //     fixed value, so a per-session route to a smaller-ceiling model never 400s.
@@ -135,7 +135,7 @@ func (p *Provider) buildParams(req port.LLMRequest) (sdk.MessageNewParams, error
 // are not guaranteed 1:1. Deduped when they resolve to the same message index:
 // a redundant second marker on the SAME block changes neither the highest-hit
 // prefix nor the write span, so it is dropped rather than wasted.
-func applyConversationCacheBreakpoints(messages []sdk.MessageParam, builtIdx []int, msgs []session.Message, ttl sdk.CacheControlEphemeralTTL) {
+func applyConversationCacheBreakpoints(messages []sdk.MessageParam, builtIdx []int, msgs []port.LLMMessage, ttl sdk.CacheControlEphemeralTTL) {
 	fragEnd := leadingFragmentEnd(msgs)
 	prevTurn := previousTurnBoundary(msgs)
 	if prevTurn == fragEnd {
@@ -194,7 +194,7 @@ func setCacheControl(blk *sdk.ContentBlockParamUnion, ttl sdk.CacheControlEpheme
 // Duplicated (not exported from engine/prompt) in provider/openai's cache-key
 // anchor derivation — separate Go modules, same discipline as
 // isContextOverflowMessage; keep the two in lockstep by hand.
-func leadingFragmentEnd(msgs []session.Message) int {
+func leadingFragmentEnd(msgs []port.LLMMessage) int {
 	end := -1
 	for i := range msgs {
 		m := msgs[i]
@@ -208,7 +208,7 @@ func leadingFragmentEnd(msgs []session.Message) int {
 
 // lastAssistantIndex returns the index, within msgs, of the LAST RoleAssistant
 // message, or -1 if there is none.
-func lastAssistantIndex(msgs []session.Message) int {
+func lastAssistantIndex(msgs []port.LLMMessage) int {
 	for i := len(msgs) - 1; i >= 0; i-- {
 		if msgs[i].Role == session.RoleAssistant {
 			return i
@@ -224,7 +224,7 @@ func lastAssistantIndex(msgs []session.Message) int {
 // Two adjacent RoleAssistant messages are unreachable (finishTurnNoTools
 // records an empty assistant turn then a USER nudge), so lastAssistantIndex's
 // scan is unambiguous.
-func previousTurnBoundary(msgs []session.Message) int {
+func previousTurnBoundary(msgs []port.LLMMessage) int {
 	i := lastAssistantIndex(msgs)
 	if i <= 0 {
 		return -1
@@ -529,7 +529,7 @@ func toStringSlice(v any) []string {
 // conversation-cache anchors (leadingFragmentEnd / previousTurnBoundary, both
 // derived from msgs) use to locate their target block in the built slice, since
 // the two index spaces are not otherwise guaranteed 1:1.
-func buildMessages(msgs []session.Message, caps port.ProviderCapabilities) ([]sdk.MessageParam, []int, error) {
+func buildMessages(msgs []port.LLMMessage, caps port.ProviderCapabilities) ([]sdk.MessageParam, []int, error) {
 	out := make([]sdk.MessageParam, 0, len(msgs))
 	builtIdx := make([]int, len(msgs))
 	for i, m := range msgs {
@@ -547,7 +547,11 @@ func buildMessages(msgs []session.Message, caps port.ProviderCapabilities) ([]sd
 			}
 			out = append(out, sdk.NewUserMessage(blocks...))
 		case session.RoleAssistant:
-			out = append(out, sdk.NewAssistantMessage(assistantBlocks(m)...))
+			blocks, err := assistantBlocks(m)
+			if err != nil {
+				return nil, nil, err
+			}
+			out = append(out, sdk.NewAssistantMessage(blocks...))
 		case session.RoleTool:
 			if m.ToolResult == nil {
 				continue
@@ -577,8 +581,8 @@ func buildMessages(msgs []session.Message, caps port.ProviderCapabilities) ([]sd
 // capability intersection) it falls back to the single-string
 // NewToolResultBlock(callID, Content, false), so the legacy/mock/mecademo path
 // stays stable.
-func toolResultBlock(tr session.ToolResult, caps port.ProviderCapabilities) sdk.ContentBlockParamUnion {
-	blocks := port.RouteToolResultParts(tr, caps)
+func toolResultBlock(tr port.LLMToolResult, caps port.ProviderCapabilities) sdk.ContentBlockParamUnion {
+	blocks := port.RouteToolResultParts(tr.Parts, caps)
 	if len(blocks) == 0 {
 		// Legacy single-string form with is_error hard-coded to false (it does
 		// not project tr.IsError). Kept verbatim so the legacy/mock/mecademo
@@ -646,7 +650,7 @@ func toolResultBlock(tr session.ToolResult, caps port.ProviderCapabilities) sdk.
 // inline as base64 only when bytes are present — Parts carrying a remote URL with
 // no bytes are not supported here (the harness flattens inline media). An audio
 // Part is an honest hard error (Audio:false gates it upstream).
-func userBlocks(m session.Message) ([]sdk.ContentBlockParamUnion, error) {
+func userBlocks(m port.LLMMessage) ([]sdk.ContentBlockParamUnion, error) {
 	var blocks []sdk.ContentBlockParamUnion
 	if m.Text != "" {
 		blocks = append(blocks, sdk.NewTextBlock(m.Text))
@@ -681,7 +685,7 @@ func userBlocks(m session.Message) ([]sdk.ContentBlockParamUnion, error) {
 
 // assistantBlocks expands an assistant message into its ordered content blocks,
 // reconstructing the model's OWN generation order: the reconstructed
-// thinking/redacted_thinking blocks (unpacked from Message.Reasoning) FIRST,
+// thinking/redacted_thinking blocks (unpacked from Replay) FIRST,
 // then a text block when the assistant produced visible text, then a tool_use
 // block per requested tool call LAST. tool_use must trail — Anthropic requires
 // it as the terminal content block of a tool-bearing assistant turn, especially
@@ -690,8 +694,11 @@ func userBlocks(m session.Message) ([]sdk.ContentBlockParamUnion, error) {
 // "assistant message prefill" error (issue #1465). Thinking-before-tool_use is
 // the §extended-thinking sequence rule: omitting or misordering the thinking
 // blocks on a tool-bearing assistant turn 400s too.
-func assistantBlocks(m session.Message) []sdk.ContentBlockParamUnion {
-	reasoning := unpackReasoning(m.Reasoning)
+func assistantBlocks(m port.LLMMessage) ([]sdk.ContentBlockParamUnion, error) {
+	reasoning, err := unpackReplay(m.Replay)
+	if err != nil {
+		return nil, err
+	}
 	out := make([]sdk.ContentBlockParamUnion, 0, len(reasoning)+len(m.ToolCalls)+1)
 	for _, blk := range reasoning {
 		switch blk.Kind {
@@ -715,5 +722,5 @@ func assistantBlocks(m session.Message) []sdk.ContentBlockParamUnion {
 		// permanent — an empty sdk.NewTextBlock("") here is a latent 400.
 		out = append(out, sdk.NewTextBlock(emptyMessagePlaceholder))
 	}
-	return out
+	return out, nil
 }

@@ -2,6 +2,7 @@ package openai
 
 import (
 	"cmp"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -33,7 +34,7 @@ const emptyToolOutputPlaceholder = "(tool returned no output)"
 // Mapping:
 //   - System (Layered) -> Instructions (StablePrefix + VolatileSuffix rendered).
 //   - Tools ([]tool.ToolSpec) -> function tools carrying their JSON schemas.
-//   - Messages ([]session.Message) -> the input item array (message,
+//   - Messages ([]port.LLMMessage) -> the input item array (message,
 //     reasoning, function_call, function_call_output items).
 //   - Model -> Model (a plain string for compatible-endpoint friendliness).
 //   - Store:false + Include reasoning.encrypted_content so reasoning survives
@@ -230,7 +231,7 @@ func buildTools(specs []tool.ToolSpec) ([]responses.ToolUnionParam, error) {
 // call_id.
 // breakpointIdx names the message that carries the explicit prompt-cache
 // breakpoint, or -1 for none. See breakpointIndex.
-func buildInput(msgs []session.Message, caps port.ProviderCapabilities, breakpointIdx int) (responses.ResponseInputParam, error) {
+func buildInput(msgs []port.LLMMessage, caps port.ProviderCapabilities, breakpointIdx int) (responses.ResponseInputParam, error) {
 	items := make(responses.ResponseInputParam, 0, len(msgs))
 	for i, m := range msgs {
 		switch m.Role {
@@ -261,6 +262,19 @@ func buildInput(msgs []session.Message, caps port.ProviderCapabilities, breakpoi
 			items = append(items, responses.ResponseInputItemParamOfMessage(
 				content, responses.EasyInputMessageRoleUser))
 		case session.RoleAssistant:
+			if _, err := unpackReplay(m.Replay); err != nil {
+				return nil, err
+			}
+			if len(m.ToolCalls) > 0 {
+				m.ToolCalls = append([]port.LLMToolCall(nil), m.ToolCalls...)
+				for j := range m.ToolCalls {
+					call := &m.ToolCalls[j]
+					if call.ItemID == "" || (m.Replay != nil && !compatibleReplay(m.Replay)) {
+						sum := sha256.Sum256(fmt.Appendf(nil, "%d:%d:%s", i, j, call.ID))
+						call.ItemID = session.ProviderItemID(fmt.Sprintf("fc_mecatl_%x", sum[:20]))
+					}
+				}
+			}
 			items = append(items, assistantItems(m)...)
 		case session.RoleTool:
 			if m.ToolResult != nil {
@@ -291,8 +305,8 @@ func buildInput(msgs []session.Message, caps port.ProviderCapabilities, breakpoi
 // capability intersection) it falls back to the single-string
 // function_call_output(callID, Content), so the legacy/mock/mecademo path stays
 // stable.
-func toolOutputItem(tr session.ToolResult, caps port.ProviderCapabilities) responses.ResponseInputItemUnionParam {
-	blocks := port.RouteToolResultParts(tr, caps)
+func toolOutputItem(tr port.LLMToolResult, caps port.ProviderCapabilities) responses.ResponseInputItemUnionParam {
+	blocks := port.RouteToolResultParts(tr.Parts, caps)
 	if len(blocks) == 0 {
 		// Single-string fallback. Substitute a deterministic placeholder for an
 		// EMPTY Content (see emptyToolOutputPlaceholder's doc for the
@@ -338,7 +352,7 @@ func toolOutputItem(tr session.ToolResult, caps port.ProviderCapabilities) respo
 // (openai-go v3.37.0), and the provider declares Audio:false, so a surface
 // adapter rejects audio upstream — this is the belt-and-suspenders guard for a
 // part that slips through.
-func userContentList(m session.Message) (responses.ResponseInputMessageContentListParam, error) {
+func userContentList(m port.LLMMessage) (responses.ResponseInputMessageContentListParam, error) {
 	content := responses.ResponseInputMessageContentListParam{}
 	if m.Text != "" {
 		content = append(content, responses.ResponseInputContentUnionParam{
@@ -371,46 +385,15 @@ func dataURL(mime string, data []byte) string {
 	return "data:" + mime + ";base64," + base64.StdEncoding.EncodeToString(data)
 }
 
-// assistantItems expands an assistant message into its ordered input items: the
-// reasoning items (carrying encrypted_content verbatim) INTERLEAVED with the
-// function_call items in the order the model originally emitted them, then a text
-// message item if the assistant produced visible text.
-//
-// The interleaving is the point. A reasoning turn that calls tools emits
-// rs_a, fc_1, rs_b, fc_2, rs_c — and the stateless-replay rule is to pass those
-// prior output items back untouched, so hoisting every reasoning item to the
-// front (the shape this used to emit, when a turn only ever had one) rewrites the
-// model's own trajectory. session.Message keeps reasoning and tool calls in two
-// separate fields with no relative order between them, so the adapter records
-// each reasoning item's slot in its own envelope (reasoningItem.After) and
-// rebuilds the sequence here. A single-item turn and any pre-packing blob both
-// carry After 0 and replay reasoning-then-calls exactly as before.
-//
-// The opaque PHASE marker (m.ProviderPhase, "commentary"/"final_answer") rides ONLY the
-// emitted message item — phase is a message-item property, and a tool-call-only
-// turn has no message item, so phase is correctly N/A there (not a dropped
-// field). For store:false manual-replay apps OpenAI requires preserving and
-// resending phase on the assistant message item, or GPT-5.x models treat
-// preambles as final answers / stop early. An empty phase is wire-omitted (the
-// SDK tags it json:"phase,omitzero"), so the byte-stable prompt prefix is
-// unchanged for non-tagging models. The value is passed through verbatim — never
-// validated against the enum (forward-compat).
-func assistantItems(m session.Message) []responses.ResponseInputItemUnionParam {
+// assistantItems weaves the compatible replay envelope's reasoning items among
+// DTO function calls, then appends the existing flattened text/last-phase item.
+// ProviderPhase is display-only and is never a source of exact private replay.
+func assistantItems(m port.LLMMessage) []responses.ResponseInputItemUnionParam {
 	out := make([]responses.ResponseInputItemUnionParam, 0, len(m.ToolCalls)+2)
-	// One input item per captured reasoning item, in emission order, each under
-	// the id ITS blob is bound to. Sending several blobs under one id is what the
-	// provider rejects as invalid_encrypted_content, so the pairing is preserved
-	// end to end (see reasoning.go). Only a complete current envelope is
-	// replayable; legacy bare ciphertext and malformed/unsupported envelopes
-	// are omitted rather than reinterpreted.
-	//
-	// The SDK's ResponseReasoningItemParam.ID is a PLAIN string tagged
-	// `json:"id" api:"required"` with NO omitzero, so an unset id serialises
-	// unconditionally as `"id":""`, which strict OpenAI-compatible gateways (Azure
-	// GPT-5.x) reject with HTTP 400 on turn 2+ during store:false stateless
-	// replay. unpackReasoningItems validates the complete envelope, so every item
-	// reaching this loop carries both its opaque id and encrypted content.
-	items := unpackReasoningItems(m.Reasoning)
+	// Reasoning IDs are required by the SDK and cryptographically bind each
+	// ciphertext. Only complete, validated envelopes may reach this projection.
+	env, _ := unpackReplay(m.Replay) // buildInput validates compatible envelopes.
+	items := env.Reasoning
 	next := 0
 	emitReasoning := func(it reasoningItem) {
 		reasoning := responses.ResponseReasoningItemParam{
@@ -436,15 +419,10 @@ func assistantItems(m session.Message) []responses.ResponseInputItemUnionParam {
 			CallID:    string(call.ID),
 			Name:      call.Name,
 		}
-		// Replay the provider-assigned item ID (e.g. "fc_1" from the OpenAI
-		// Responses API) so the provider can de-duplicate items across turns in
-		// store:false stateless replay. Without this, each turn's function_call
-		// items have no "id" field and the provider auto-assigns sequential fc_N
-		// values — which can collide with items from the current response and
-		// produce "Duplicate item found with id fc_N" (Azure GPT-5.x). An empty
-		// ItemID (non-OpenAI or pre-fix captures) is wire-omitted via omitzero.
+		// Captured IDs are replayed verbatim. buildInput supplies valid target IDs
+		// only when absent or when the replay belongs to another namespace/version.
 		if call.ItemID != "" {
-			fc.ID = oai.String(call.ItemID)
+			fc.ID = oai.String(string(call.ItemID))
 		}
 		out = append(out, responses.ResponseInputItemUnionParam{OfFunctionCall: &fc})
 	}
@@ -461,8 +439,8 @@ func assistantItems(m session.Message) []responses.ResponseInputItemUnionParam {
 	if m.Text != "" {
 		item := responses.ResponseInputItemParamOfMessage(
 			m.Text, responses.EasyInputMessageRoleAssistant)
-		if m.ProviderPhase != "" {
-			item.OfMessage.Phase = responses.EasyInputMessagePhase(m.ProviderPhase)
+		if env.Phase != "" {
+			item.OfMessage.Phase = responses.EasyInputMessagePhase(env.Phase)
 		}
 		out = append(out, item)
 	}

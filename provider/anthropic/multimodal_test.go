@@ -13,7 +13,7 @@ func TestUserImageBase64Block(t *testing.T) {
 	img := session.Content{Kind: session.MediaImage, MIMEType: "image/png", Data: []byte{0x89, 0x50, 0x4e, 0x47}}
 	req := port.LLMRequest{
 		Model:    "claude-sonnet-4-6",
-		Messages: []session.Message{session.NewUserMessageWithParts("look", []session.Content{img})},
+		Messages: []port.LLMMessage{userMessageWithParts("look", []session.Content{img})},
 	}
 	params, err := p.buildParams(req)
 	if err != nil {
@@ -45,7 +45,7 @@ func TestUserImageURLBlock(t *testing.T) {
 	img := session.Content{Kind: session.MediaImage, MIMEType: "image/png", URL: "https://example.com/x.png"}
 	params, err := p.buildParams(port.LLMRequest{
 		Model:    "claude-sonnet-4-6",
-		Messages: []session.Message{session.NewUserMessageWithParts("", []session.Content{img})},
+		Messages: []port.LLMMessage{userMessageWithParts("", []session.Content{img})},
 	})
 	if err != nil {
 		t.Fatalf("buildParams: %v", err)
@@ -64,7 +64,7 @@ func TestUserAudioIsLoudError(t *testing.T) {
 	audio := session.Content{Kind: session.MediaAudio, MIMEType: "audio/wav", Data: []byte{1, 2, 3}}
 	_, err := p.buildParams(port.LLMRequest{
 		Model:    "claude-sonnet-4-6",
-		Messages: []session.Message{session.NewUserMessageWithParts("", []session.Content{audio})},
+		Messages: []port.LLMMessage{userMessageWithParts("", []session.Content{audio})},
 	})
 	if err == nil || !strings.Contains(err.Error(), "audio") {
 		t.Fatalf("audio part should be a loud error, got %v", err)
