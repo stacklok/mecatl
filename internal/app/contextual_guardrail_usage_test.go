@@ -164,15 +164,19 @@ func TestContextualGuardrailUsage_Scenario1_ComposedWorkerRecordsOwnUsage(t *tes
 		t.Fatal(err)
 	}
 	var childID session.SessionID
+	var delegateID session.ToolCallID
 	var childReadOK, delegated bool
 	for ev := range run.Events() {
+		if ev.ToolCall != nil && ev.ToolCall.Name == "Subagent" {
+			delegateID = ev.ToolCall.ID
+		}
 		if ev.Type == session.EvSubagentStart && ev.Subagent != nil {
 			childID = session.SessionID(ev.Subagent.ChildID)
 		}
 		if ev.Type == session.EvSubagentTool && ev.Subagent != nil && ev.Subagent.ToolName == "Read" && ev.Subagent.InnerKind == session.EvToolResult && !ev.Subagent.IsError {
 			childReadOK = true
 		}
-		if ev.Type == session.EvToolResult && ev.ToolResult != nil && ev.ToolResult.CallID == delegate.ID && !ev.ToolResult.IsError {
+		if ev.Type == session.EvToolResult && ev.ToolResult != nil && ev.ToolResult.CallID == delegateID && !ev.ToolResult.IsError {
 			delegated = true
 		}
 	}
@@ -290,8 +294,12 @@ func TestContextualGuardrailUsage_Scenario2_PathEscapeRetryAndRepeatedChecksPers
 		t.Fatal(err)
 	}
 	var completed int
+	reads := map[session.ToolCallID]bool{}
 	for ev := range run.Events() {
-		if ev.Type == session.EvToolResult && ev.ToolResult != nil && (ev.ToolResult.CallID == "first" || ev.ToolResult.CallID == "second") && !ev.ToolResult.IsError {
+		if ev.ToolCall != nil && ev.ToolCall.Name == "Read" {
+			reads[ev.ToolCall.ID] = true
+		}
+		if ev.Type == session.EvToolResult && ev.ToolResult != nil && reads[ev.ToolResult.CallID] && !ev.ToolResult.IsError {
 			completed++
 		}
 	}
@@ -339,14 +347,18 @@ func TestContextualGuardrailUsage_Scenario2_PathEscapeTerminalFailurePersistsPar
 	if err != nil {
 		t.Fatal(err)
 	}
+	var readID session.ToolCallID
 	var denied bool
 	for ev := range run.Events() {
+		if ev.ToolCall != nil && ev.ToolCall.Name == "Read" {
+			readID = ev.ToolCall.ID
+		}
 		if ev.Type == session.EvPermissionAsk && ev.Ask != nil {
 			if err := run.Approve(ev.Ask.AskID, session.VerdictDeny); err != nil {
 				t.Fatal(err)
 			}
 		}
-		if ev.Type == session.EvToolResult && ev.ToolResult != nil && ev.ToolResult.CallID == "failed" {
+		if ev.Type == session.EvToolResult && ev.ToolResult != nil && ev.ToolResult.CallID == readID {
 			denied = ev.ToolResult.IsError
 		}
 	}
@@ -402,9 +414,11 @@ func TestContextualGuardrailUsage_Scenario2_PathEscapeReevaluationAfterAwaiting(
 		t.Fatal(err)
 	}
 	var askID string
+	var writeID session.ToolCallID
 	for ev := range run1.Events() {
 		if ev.Type == session.EvPermissionAsk && ev.Ask != nil {
 			askID = ev.Ask.AskID
+			writeID = ev.Ask.Call
 			built1.Service.Persist(t.Context(), sess.ID)
 			break
 		}
@@ -434,7 +448,7 @@ func TestContextualGuardrailUsage_Scenario2_PathEscapeReevaluationAfterAwaiting(
 	}
 	var executed bool
 	for ev := range run2.Events() {
-		if ev.Type == session.EvToolResult && ev.ToolResult != nil && ev.ToolResult.CallID == "write" && !ev.ToolResult.IsError {
+		if ev.Type == session.EvToolResult && ev.ToolResult != nil && ev.ToolResult.CallID == writeID && !ev.ToolResult.IsError {
 			executed = true
 		}
 	}
@@ -492,10 +506,14 @@ func TestContextualGuardrailUsage_Scenario2_ComposedChildNeverArmsPathEscape(t *
 		t.Fatal(err)
 	}
 	var parentReads int
+	reads := map[session.ToolCallID]bool{}
 	var childReadDenied bool
 	var childID session.SessionID
 	for ev := range run.Events() {
-		if ev.Type == session.EvToolResult && ev.ToolResult != nil && (ev.ToolResult.CallID == "parent-first" || ev.ToolResult.CallID == "parent-second") && !ev.ToolResult.IsError {
+		if ev.ToolCall != nil && ev.ToolCall.Name == "Read" {
+			reads[ev.ToolCall.ID] = true
+		}
+		if ev.Type == session.EvToolResult && ev.ToolResult != nil && reads[ev.ToolResult.CallID] && !ev.ToolResult.IsError {
 			parentReads++
 		}
 		if ev.Type == session.EvSubagentTool && ev.Subagent != nil && ev.Subagent.ToolName == "Read" && ev.Subagent.InnerKind == session.EvToolResult && ev.Subagent.IsError {

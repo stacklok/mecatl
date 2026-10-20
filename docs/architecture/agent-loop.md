@@ -34,12 +34,17 @@ ask reuses the same `runLoop`, so a fresh prompt and a resumed approval cannot d
    always provider-legal.
 4. **Stop checks.** End the run on a recorded stop reason, a tripped session limit
    (turns, tool calls, consecutive failures), cancellation, or a spent token budget.
-5. **Build and compact.** Assemble the complete `port.LLMRequest`, then compact
-   history if it is near the context window; see
-   [context and compaction](context-and-compaction.md).
-6. **Stream the turn.** Relay text deltas and collect tool calls, reasoning, usage,
-   and the stop reason into one assistant message. Usage is recorded even when the
-   stream fails, so budgets reflect real spend.
+5. **Build and compact.** Project canonical history into provider-facing LLM DTOs
+   and assemble the complete `port.LLMRequest`, then compact history if it is near
+   the context window; see [context and compaction](context-and-compaction.md).
+6. **Stream and accept the turn.** Relay readable text/reasoning deltas while
+   collecting tentative provider calls and opaque replay. After successful stream
+   completion, reject the whole call batch if any pairing token is empty or repeats
+   within that batch, before asks, hooks, effects, or accepted history. Allocate fresh
+   canonical engine IDs, then record the assistant message and replay bindings in
+   one aggregate operation before dispatch. Completed provider-token reuse on a
+   later turn gets a fresh engine ID. Usage is recorded even when the stream fails,
+   so budgets reflect real spend.
 7. **No tool calls.** A turn with text ends the run. An empty turn on a benign stop
    gets a bounded nudge (two by default) before the run ends with `no_progress`. A
    non-benign provider stop, such as truncation or refusal, is reported as is.
@@ -97,13 +102,29 @@ The pause survives a restart. The server saves the awaiting session when it rela
 `permission.ask`, and shutdown keeps that snapshot awaiting. A verdict with no live
 run goes through `Engine.ResumeApproval`, which continues the same run ID, checks
 that the session still awaits the same ask, and resolves the pending call exactly
-once. Siblings from that turn that never ran get a synthetic error result, because
+once by its canonical `ToolCallID`. Same-named calls are distinct: a missing,
+answered, mismatched, or ambiguous target is rejected before consuming the ask or
+preparing execution. Execution uses the retained call arguments, not the approval
+surface's projection (including older `command_summary` projections). Siblings
+from that turn that never ran get a synthetic error result, because
 their outcome was lost with the old process. Child asks surface through the parent
 and route back to the child; see [subagents and teams](subagents-and-teams.md).
 
 A tool that needs an external sign-in, such as MCP OAuth, parks the run on a pending
 authorization the same way. `Run.Cancel` leaves such a parked run untouched so its
-resumable handoff point stays intact.
+resumable handoff point stays intact. External continuation validates the exact
+canonical occurrence and ordered deferred suffix; provider item IDs are replay
+metadata, not execution identity. The authorization owner retains the effective
+argument bytes, token, binding, expiry, and existing claim/save/compensation order.
+
+Legacy snapshot and complete-event codecs preserve provable continuations and
+abandon unprovable ones during load. They clear the old runnable controls and
+return ordinary promptable history with a durable upgrade notice: prior tool
+effects and completion may be unknown. Only proven outstanding calls receive
+interruption results; ambiguous records retain historical content and provenance
+without guessed invocation links. Loading executes no continuation or external
+authorization action. Current-format event folds still require private state to
+resume an open external authorization.
 
 ## Plan-approval gate
 

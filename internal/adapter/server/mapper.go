@@ -140,6 +140,11 @@ func toProto(ev session.Event) *mecatlv1.Event {
 		Turn:  ClampInt32(ev.Turn),
 		Text:  valid(ev.Text),
 	}
+	if ev.Historical != nil {
+		out.Type = string(session.EvHistorical)
+		out.Historical = toProtoHistorical(ev.Historical)
+		return out
+	}
 	if ev.Title != nil {
 		out.Title = toProtoSessionTitle(*ev.Title)
 	}
@@ -295,7 +300,7 @@ func toProtoParallel(p session.ParallelPayload) *mecatlv1.Parallel {
 		p.InnerKind, p.ToolName, p.Detail = "", "", ""
 	}
 	return &mecatlv1.Parallel{
-		ParentCallId:           p.ParentCallID,
+		ParentCallId:           string(p.ParentCallID),
 		Kind:                   string(p.Kind),
 		Join:                   valid(p.Join), // model-authored arg, not a harness token: normalizeJoin passes unknown values through
 		BranchCount:            ClampInt32(p.BranchCount),
@@ -420,55 +425,35 @@ func toProtoTranscript(t *SessionTranscript) *mecatlv1.GetSessionTranscriptRespo
 	}
 }
 
-// toProtoTranscriptMessage deliberately excludes provider-private replay state.
-// The transcript is for human display; provider replay continues to use the
-// aggregate's session.Message values directly.
+// toProtoTranscriptMessage and archives share the same public-safe projection.
 func toProtoTranscriptMessage(m session.Message) *mecatlv1.ConversationMessage {
-	out := &mecatlv1.ConversationMessage{
-		Role:  valid(string(m.Role)),
-		Text:  valid(m.Text),
-		Parts: contentToProto(m.Parts),
-	}
-	if len(m.ToolCalls) > 0 {
-		out.ToolCalls = make([]*mecatlv1.ToolCall, 0, len(m.ToolCalls))
-		for _, c := range m.ToolCalls {
-			out.ToolCalls = append(out.ToolCalls, toProtoToolCall(c))
-		}
-	}
-	if m.ToolResult != nil {
-		out.ToolResult = toProtoToolResult(*m.ToolResult)
-	}
-	return out
+	return toProtoConversationMessage(m)
 }
 
-// toProtoConversationMessage maps one session.Message (an immutable conversation
-// history entry) to its proto ConversationMessage form. It mirrors the Message
-// value object: Role + Text + the assistant's ToolCalls + an optional tool-role
-// ToolResult + the opaque provider replay blobs (Reasoning / ProviderPhase /
-// ReasoningItemID) + the user-role media Parts. It reuses the existing
-// toProtoToolCall / toProtoToolResult / contentToProto mappers so there is no
-// second projection path. This type exists for the CompactionArchive replay
-// surface — the live Converse wire streams events, not history, so it has no
-// message-slice mapper of its own.
+// toProtoHistorical maps only the safe display record, never private provenance.
+func toProtoHistorical(h *session.HistoricalRecord) *mecatlv1.HistoricalRecord {
+	if h == nil {
+		return nil
+	}
+	return &mecatlv1.HistoricalRecord{
+		RecordId: valid(h.RecordID), Kind: valid(h.Kind), Text: valid(h.Text),
+		Parts: contentToProto(h.Parts), AttachmentUnavailable: h.AttachmentUnavailable,
+	}
+}
+
+// toProtoConversationMessage preserves readable content and presentation phase;
+// opaque replay and unsupported provider-era invocation references stay private.
 func toProtoConversationMessage(m session.Message) *mecatlv1.ConversationMessage {
 	out := &mecatlv1.ConversationMessage{
-		Role: string(m.Role),
-		Text: valid(m.Text),
-		// Reasoning / ProviderPhase / ReasoningItemId are opaque provider-minted
-		// blobs, but this is the CLIENT-facing projection only — the provider
-		// replay reads the DOMAIN Message, never this proto — so repairing here
-		// cannot corrupt the byte-exact round-trip those values rely on.
-		Reasoning:       valid(m.Reasoning),
-		ProviderPhase:   valid(m.ProviderPhase),
-		ReasoningItemId: valid(m.ReasoningItemID),
-		Parts:           contentToProto(m.Parts),
+		Role: valid(string(m.Role)), Text: valid(m.Text),
+		ProviderPhase: valid(m.ProviderPhase), Parts: contentToProto(m.Parts),
+		Historical: toProtoHistorical(session.HistoricalMessage(m)),
 	}
-	if len(m.ToolCalls) > 0 {
-		calls := make([]*mecatlv1.ToolCall, 0, len(m.ToolCalls))
-		for _, c := range m.ToolCalls {
-			calls = append(calls, toProtoToolCall(c))
-		}
-		out.ToolCalls = calls
+	if out.Historical != nil {
+		return out
+	}
+	for _, c := range m.ToolCalls {
+		out.ToolCalls = append(out.ToolCalls, toProtoToolCall(c))
 	}
 	if m.ToolResult != nil {
 		out.ToolResult = toProtoToolResult(*m.ToolResult)
@@ -519,7 +504,7 @@ func toProtoTeam(p session.TeamPayload) *mecatlv1.Team {
 		})
 	}
 	return &mecatlv1.Team{
-		ParentCallId:    p.ParentCallID,
+		ParentCallId:    string(p.ParentCallID),
 		TeamId:          p.TeamID,
 		Roster:          roster,
 		Member:          valid(p.Member),
@@ -620,7 +605,7 @@ func toProtoSubagent(p session.SubagentPayload) *mecatlv1.Subagent {
 		p.InnerKind, p.ToolName, p.Detail = "", "", ""
 	}
 	return &mecatlv1.Subagent{
-		ParentCallId:           p.ParentCallID,
+		ParentCallId:           string(p.ParentCallID),
 		ChildId:                p.ChildID,
 		Goal:                   valid(p.Goal),
 		Background:             p.Background,
@@ -1306,6 +1291,10 @@ func toProtoSessionSummary(s SessionSummary) *mecatlv1.SessionSummary {
 }
 
 func toProtoSessionRelationship(r session.SessionRelationship) *mecatlv1.SessionRelationship {
+	if r.Legacy != nil {
+		return nil
+	}
+	r = session.HistoricalRelationship(r)
 	out := &mecatlv1.SessionRelationship{
 		ParentSessionId: string(r.ParentSessionID), CallId: string(r.CallID),
 		ScheduleName: r.ScheduleName, OriginSessionId: string(r.OriginSessionID),

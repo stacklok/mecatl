@@ -171,9 +171,7 @@ export function ToolCallList({
   const [expanded, toggleExpanded] = useDetailsOpen();
   const rows = tools.map((tool) => ({
     approvals: approvals.filter((approval) => approvalMatchesToolCall(approval, tool)),
-    authorizations: authorizations.filter(
-      (authorization) => authorization.callId === tool.id && authorization.runId === tool.runId,
-    ),
+    authorizations: authorizations.filter((authorization) => authorization.callId === tool.id),
     tool,
   }));
   const held = rows.some((row) => row.approvals.length > 0 || row.authorizations.length > 0);

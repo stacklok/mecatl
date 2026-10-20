@@ -28,12 +28,23 @@ check, so persistence uses `RecordedStopReason` instead.
 
 ## Conversation and messages
 
-`Conversation` is the ordered, model-visible `[]Message`. A `Message` is an immutable
-value object built through constructors such as `NewAssistantMessage` and
-`NewToolMessage`. Some fields are opaque provider replay data: `Reasoning`,
-`ProviderPhase`, `ReasoningItemID`, and `ToolCall.ItemID`. Providers are called
-statelessly with the full history and can reject or misbehave on a replay that drops
-them, so the harness stores them verbatim and never branches on their contents.
+`Conversation` is the ordered domain `[]Message`. Constructors such as
+`NewAssistantMessage(text, calls)` and `NewToolMessage` build value objects;
+aggregate methods accept independently owned copies. `Message.Replay` carries
+occurrence-specific call bindings and adapter-owned opaque bytes (`Format`,
+`Version`, `Data`). The Session accepts and snapshots history and replay together,
+without interpreting signed or encrypted provider data. This aggregate atomicity
+does not promise a successful durable save before tool effects or exactly-once
+effects after a crash. `ProviderPhase` remains public display metadata; exact phase
+replay belongs in the private payload.
+
+`ToolCallID` identifies one globally unique engine invocation. Provider pairing and
+item tokens have distinct defined types (`ProviderCallID`, `ProviderItemID`) and
+stay in replay bindings or provider-facing LLM DTOs, never executable calls/results.
+`port.ProjectMessages` resolves each canonical result to its accepted occurrence's
+pairing token. Copying history into a fork or child retains the invocation identity:
+a historical copy is not another execution. Repeated client delivery still requires
+idempotent processing.
 
 A user-role message records its `UserPromptProvenance`: `principal` for authenticated
 operator input, `harness` for loop-authored continuations, or unknown. Unknown is never

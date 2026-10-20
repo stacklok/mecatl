@@ -92,6 +92,23 @@ reachable across the transition so old clients receive an actionable refusal.
 Add mismatch and transport-parity tests, and describe the upgrade in release notes.
 Changing only the version constant is insufficient.
 
+A major-2 server guarantees canonical, globally unique engine tool-call references.
+Provider pairing keys and item identifiers remain private; completed provider-key
+reuse does not reuse an invocation identity. `ConversationMessage` no longer exposes
+opaque `reasoning` or `reasoning_item_id` (their names and tags are reserved).
+Readable reasoning events, text/media, and `provider_phase` remain public.
+
+Upgrade server, mecatui, and SDK/Studio together. Discovery remains on the existing
+`mecatl.v1` RPC and `/v1/compatibility` routes so major-1 clients can refuse with an
+update-client diagnostic, rather than failing to find discovery. Major-2 clients
+must likewise refuse major-1 servers with an update-server diagnostic. The wire
+major does not require deleting stored sessions or resetting watch cursors; storage
+codec rollout and no-downgrade constraints are separate. Rebuild identity-dependent
+major-1 client views from current projections; there is no public v1 identity alias.
+The SDK's software version (including the 0.5.0 baseline) remains independent of
+wire major 2. The coordinated procedure is in
+[session storage operations](../../user-docs/operating/session-storage-operations.md#upgrade-to-api-major-2).
+
 Every PR affecting the wire contract must include an **API compatibility** statement:
 the assessment and rationale, major or feature changes, operator approval for any
 break, and upgrade implications. Record the same decision in a plan when one is
@@ -117,6 +134,30 @@ its events, and `Run.Cancel` arms a short grace after which every guarded send i
 loop gives up. A busy run therefore never blocks behind a dead consumer, while a slow one
 still receives the terminal result. Cancel leaves a run durably parked on an
 authorization handoff untouched, so its resume point survives.
+
+## Historical display and evidence
+
+`GetSessionTranscript` projects one ownership-checked snapshot, never a snapshot/log
+join. Archives use the same public-safe message mapper while internal archives keep
+private replay. Bounded, complete-source inspection can prove legacy call/result
+pairs within that one event source. `StreamSessionEvents` and cursor watches instead
+project each record conservatively, without collecting the log before delivery:
+streaming prefixes cannot prove a pair. Neither path injects synthetic events or
+changes log positions, run sequences, or delivery order. Inspection rejects incomplete
+or oversized history scans rather than treating a retained prefix as a complete source.
+
+Unsupported associations use the standalone `HistoricalRecord` on `Event.historical`
+or `ConversationMessage.historical`: source-local record identity, kind, readable
+text/media, and `attachment_unavailable`. They are not ordinary tool results, hooks,
+approvals, or delegation edges with blank or guessed invocation keys. Legacy parent
+relationships without a proven canonical call are omitted, not joined by provider key.
+Current canonical events retain their usual payloads.
+
+Learning citations report their evidence protocol and invocation-attachment status
+separately from source availability. A verified old citation can remain available
+without `tool_call_id`; previews are sanitized readable projections, not serialized
+provider-era verification views. Frozen evidence digests and source coordinates
+continue to verify the original source without becoming executable lookup keys.
 
 ## Durable watch
 

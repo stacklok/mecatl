@@ -456,14 +456,18 @@ func TestBuildAgentSubagentEnginesResolvedModelOnRequest(t *testing.T) {
 	r := e.Run(port.WithRootSessionID(context.Background(), "main"),
 		session.New("s1", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0)),
 		memEnvironment("/ws"), agent.RunRequest{Text: "go"})
-	for range r.Events() {
+	var childID session.SessionID
+	for ev := range r.Events() {
+		if ev.Type == session.EvSubagentStart && ev.Subagent != nil {
+			childID = session.SessionID(ev.Subagent.ChildID)
+		}
 	}
 	model, active, root := rec.lastObservation()
 	if model != "cheap-id" {
 		t.Fatalf("recorded request model = %q, want the resolved per-def alias 'cheap-id'", model)
 	}
-	if active != "subagent-s1-p1" || root != "main" {
-		t.Fatalf("named Subagent provider correlation = active %q root %q, want active %q root main", active, root, "subagent-s1-p1")
+	if active != childID || childID == "" || root != "main" {
+		t.Fatalf("named Subagent provider correlation = active %q root %q, want active %q root main", active, root, childID)
 	}
 }
 

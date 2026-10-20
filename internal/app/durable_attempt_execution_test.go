@@ -52,7 +52,7 @@ func TestDurableExecutionReloadsPersistedRunEvidence(t *testing.T) {
 	if err := source.BeginTurn(); err != nil {
 		t.Fatal(err)
 	}
-	if err := source.RecordAssistant(session.NewAssistantMessage("persisted result", "private reasoning", nil)); err != nil {
+	if err := source.RecordAssistant(assistantWithReplay("persisted result", "private reasoning", nil)); err != nil {
 		t.Fatal(err)
 	}
 	if err := source.Complete(); err != nil {

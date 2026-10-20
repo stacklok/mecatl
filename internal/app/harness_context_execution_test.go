@@ -143,7 +143,7 @@ func TestHarnessContext_ExplicitExecutionFileSource(t *testing.T) {
 	events := harnessRun(t, b, t.Context(), id, "/review")
 	var read bool
 	for _, ev := range events {
-		if ev.ToolResult != nil && ev.ToolResult.CallID == "read" {
+		if ev.ToolResult != nil && ev.ToolResult.CallID == eventCallID(t, events, "Read", 0) {
 			read = !ev.ToolResult.IsError && strings.Contains(ev.ToolResult.Content, "ACTUAL-EXECUTION-DATA")
 		}
 	}
@@ -218,12 +218,12 @@ func TestHarnessContext_SourceReadsDoNotAuthorizeEdits(t *testing.T) {
 			seen[ev.ToolResult.CallID] = ev.ToolResult.IsError
 		}
 	}
-	for _, id := range []session.ToolCallID{"source-only", "other-session"} {
+	for _, id := range []session.ToolCallID{eventCallID(t, events, "Edit", 0), eventCallID(t, events, "Edit", 2)} {
 		if failed, ok := seen[id]; !ok || !failed {
 			t.Fatalf("%s mutation was authorized by source/other-session evidence: %v", id, seen)
 		}
 	}
-	if failed, ok := seen["read-authorized"]; !ok || failed {
+	if failed, ok := seen[eventCallID(t, events, "Edit", 1)]; !ok || failed {
 		t.Fatalf("real execution Read did not authorize its Edit: %v", seen)
 	}
 	data, err := ws.Read(t.Context(), "AGENTS.md")

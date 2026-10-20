@@ -35,7 +35,7 @@ func crashOrphanedSessionFixture(t *testing.T, id session.SessionID, createdAt t
 		t.Fatalf("BeginTurn: %v", err)
 	}
 	calls := []session.ToolCall{session.NewToolCall("call-a", "read_file", nil)}
-	if err := sess.RecordAssistant(session.NewAssistantMessage("", "", calls)); err != nil {
+	if err := sess.RecordAssistant(session.NewAssistantMessage("", calls)); err != nil {
 		t.Fatalf("RecordAssistant: %v", err)
 	}
 	if sess.State != session.StateRunning {
@@ -55,7 +55,11 @@ func awaitingSessionFixture(t *testing.T, id session.SessionID, createdAt time.T
 	if err := sess.BeginTurn(); err != nil {
 		t.Fatalf("BeginTurn: %v", err)
 	}
-	if err := sess.PauseForApproval(session.PendingAsk{AskID: "ask-1", Tool: "bash", Call: "call-a"}); err != nil {
+	call := session.NewToolCall("call-a", "bash", nil)
+	if err := sess.RecordAssistant(session.NewAssistantMessage("", []session.ToolCall{call})); err != nil {
+		t.Fatal(err)
+	}
+	if err := sess.PauseForApproval(session.PendingAsk{AskID: "ask-1", Tool: call.Name, Call: call.ID}); err != nil {
 		t.Fatalf("PauseForApproval: %v", err)
 	}
 	if sess.State != session.StateAwaiting {

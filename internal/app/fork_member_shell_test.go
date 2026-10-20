@@ -47,12 +47,15 @@ func shellThenEdit() *mockllm.Provider {
 }
 
 // unknownToolResult reports whether the event stream contains a tool.result for
-// callID that is an error reading "unknown tool" (the loop's signal that the tool
-// is NOT in the engine's catalog).
-func unknownToolResult(events []session.Event, callID session.ToolCallID) bool {
+// the named tool that is an error reading "unknown tool".
+func unknownToolResult(events []session.Event, toolName string) bool {
+	calls := map[session.ToolCallID]bool{}
 	for _, ev := range events {
+		if ev.ToolCall != nil && ev.ToolCall.Name == toolName {
+			calls[ev.ToolCall.ID] = true
+		}
 		if ev.Type == session.EvToolResult && ev.ToolResult != nil &&
-			ev.ToolResult.CallID == callID && ev.ToolResult.IsError &&
+			calls[ev.ToolResult.CallID] && ev.ToolResult.IsError &&
 			strings.Contains(ev.ToolResult.Content, "unknown tool") {
 			return true
 		}
@@ -63,14 +66,14 @@ func unknownToolResult(events []session.Event, callID session.ToolCallID) bool {
 // sawCatalogToolCall reports whether the stream dispatched a (known) tool.call for
 // the named tool — i.e. a tool.call event for it that was NOT answered by an
 // "unknown tool" error.
-func sawDispatchedTool(events []session.Event, callID session.ToolCallID) bool {
+func sawDispatchedTool(events []session.Event, toolName string) bool {
 	var called bool
 	for _, ev := range events {
-		if ev.Type == session.EvToolCall && ev.ToolCall != nil && ev.ToolCall.ID == callID {
+		if ev.Type == session.EvToolCall && ev.ToolCall != nil && ev.ToolCall.Name == toolName {
 			called = true
 		}
 	}
-	return called && !unknownToolResult(events, callID)
+	return called && !unknownToolResult(events, toolName)
 }
 
 // drainEngine runs an engine over a fresh session and returns the full event stream.
@@ -112,13 +115,13 @@ func TestForkChildEngineHasShellAndEdit(t *testing.T) {
 
 	events := drainEngine(t, eng)
 
-	if unknownToolResult(events, "b1") {
+	if unknownToolResult(events, "Shell") {
 		t.Error("Fork child did NOT have Shell; workspace-aware Shell must be re-enabled for a forked child")
 	}
-	if !sawDispatchedTool(events, "b1") {
+	if !sawDispatchedTool(events, "Shell") {
 		t.Error("Fork child did not dispatch Shell; it must be present in the catalog")
 	}
-	if !sawDispatchedTool(events, "e1") {
+	if !sawDispatchedTool(events, "Edit") {
 		t.Error("Fork child did not dispatch Edit; a fork child must keep Edit/Write to implement in its fork")
 	}
 }
@@ -133,10 +136,10 @@ func TestForkChildEngineNoRunnerHasNoShell(t *testing.T) {
 
 	events := drainEngine(t, eng)
 
-	if !unknownToolResult(events, "b1") {
+	if !unknownToolResult(events, "Shell") {
 		t.Error("Fork child with a nil runner dispatched Shell; without a runner there must be no Shell")
 	}
-	if !sawDispatchedTool(events, "e1") {
+	if !sawDispatchedTool(events, "Edit") {
 		t.Error("Fork child did not dispatch Edit; Edit must be present regardless of the runner")
 	}
 }
@@ -160,13 +163,13 @@ func TestMutatingMemberHasShellAndEdit(t *testing.T) {
 
 	events := drainEngine(t, build.Engine)
 
-	if unknownToolResult(events, "b1") {
+	if unknownToolResult(events, "Shell") {
 		t.Error("Mutating member did NOT have Shell; workspace-aware Shell must be re-enabled for a Mutating (forked) member")
 	}
-	if !sawDispatchedTool(events, "b1") {
+	if !sawDispatchedTool(events, "Shell") {
 		t.Error("Mutating member did not dispatch Shell; it must be present in the catalog")
 	}
-	if !sawDispatchedTool(events, "e1") {
+	if !sawDispatchedTool(events, "Edit") {
 		t.Error("Mutating member did not dispatch Edit; a Mutating member must keep Edit/Write to implement in its fork")
 	}
 }
@@ -187,10 +190,10 @@ func TestReadOnlyMemberHasNoShellOrEdit(t *testing.T) {
 
 	events := drainEngine(t, build.Engine)
 
-	if !unknownToolResult(events, "b1") {
+	if !unknownToolResult(events, "Shell") {
 		t.Error("read-only member dispatched Shell; a base-sharing member must NOT get Shell")
 	}
-	if !unknownToolResult(events, "e1") {
+	if !unknownToolResult(events, "Edit") {
 		t.Error("read-only member dispatched Edit; a base-sharing member must NOT get Edit")
 	}
 }
@@ -218,13 +221,13 @@ func TestReadOnlyIsolatedMemberHasShellNotEdit(t *testing.T) {
 
 	events := drainEngine(t, build.Engine)
 
-	if unknownToolResult(events, "b1") {
+	if unknownToolResult(events, "Shell") {
 		t.Error("read-only-isolated member did NOT get Shell; it must get a shell for inspection in its worktree")
 	}
-	if !sawDispatchedTool(events, "b1") {
+	if !sawDispatchedTool(events, "Shell") {
 		t.Error("read-only-isolated member did not dispatch Shell; it must be present in the catalog")
 	}
-	if !unknownToolResult(events, "e1") {
+	if !unknownToolResult(events, "Edit") {
 		t.Error("read-only-isolated member dispatched Edit; an inspect-only member must NOT get Edit/Write")
 	}
 }
@@ -248,7 +251,7 @@ func TestReadOnlyMemberNoRunnerNoShellNotIsolated(t *testing.T) {
 	assertCanonicalShellCatalog(t, build.Engine, false)
 
 	events := drainEngine(t, build.Engine)
-	if !unknownToolResult(events, "b1") {
+	if !unknownToolResult(events, "Shell") {
 		t.Error("read-only member with no runner dispatched Shell; without a runner there must be no shell")
 	}
 }
@@ -272,10 +275,10 @@ func TestReadOnlyIsolatedMemberDefKeepsShellDropsEdit(t *testing.T) {
 	assertCanonicalShellCatalog(t, build.Engine, true)
 
 	events := drainEngine(t, build.Engine)
-	if unknownToolResult(events, "b1") {
+	if unknownToolResult(events, "Shell") {
 		t.Error("read-only-isolated def-member allowlisting Shell did NOT get Shell; it must keep it for inspection")
 	}
-	if !unknownToolResult(events, "e1") {
+	if !unknownToolResult(events, "Edit") {
 		t.Error("read-only-isolated def-member got Edit; Edit/Write must still be dropped for an inspect-only member")
 	}
 }
@@ -297,13 +300,13 @@ func TestMutatingMemberDefCanScopeInShell(t *testing.T) {
 
 	events := drainEngine(t, build.Engine)
 
-	if unknownToolResult(events, "b1") {
+	if unknownToolResult(events, "Shell") {
 		t.Error("Mutating member def allowlisting Shell did NOT get Shell; it must be scopable for forked members now")
 	}
-	if !sawDispatchedTool(events, "b1") {
+	if !sawDispatchedTool(events, "Shell") {
 		t.Error("Mutating member did not dispatch Shell; a def listing Shell must yield it")
 	}
-	if !sawDispatchedTool(events, "e1") {
+	if !sawDispatchedTool(events, "Edit") {
 		t.Error("Mutating member def listing Edit did not dispatch Edit; Edit must survive scoping")
 	}
 }
@@ -325,10 +328,10 @@ func TestReadOnlyMemberDefCannotScopeInShell(t *testing.T) {
 
 	events := drainEngine(t, build.Engine)
 
-	if !unknownToolResult(events, "b1") {
+	if !unknownToolResult(events, "Shell") {
 		t.Error("read-only member def allowlisting Shell got Shell; a base-sharing member must drop mutating tools")
 	}
-	if !unknownToolResult(events, "e1") {
+	if !unknownToolResult(events, "Edit") {
 		t.Error("read-only member def allowlisting Edit got Edit; a base-sharing member must drop mutating tools")
 	}
 }

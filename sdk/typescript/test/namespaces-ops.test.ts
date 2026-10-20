@@ -188,7 +188,7 @@ class OperationalTransport implements Transport {
     let init = responseInit({});
     switch (method.name) {
       case "GetCompatibilityInfo":
-        init = responseInit({ apiMajor: 1, capabilities: {}, features: ["server_info"] });
+        init = responseInit({ apiMajor: 2, capabilities: {}, features: ["server_info"] });
         break;
       case "GetSchedule":
         init = responseInit({

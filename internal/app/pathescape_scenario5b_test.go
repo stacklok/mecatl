@@ -83,6 +83,12 @@ func TestPathEscapePosture_Scenario5_SharedWorkspaceChildNotRelaxed(t *testing.T
 					t.Fatalf("StartRun: %v", err)
 				}
 				for ev := range run.Events() {
+					if ev.ToolCall != nil && ev.ToolCall.Name == parentRead.Name {
+						parentRead.ID = ev.ToolCall.ID
+					}
+					if ev.ToolCall != nil && ev.ToolCall.Name == delegate.Name {
+						delegate.ID = ev.ToolCall.ID
+					}
 					// The parent's own out-of-root Read (call p1) must SUCCEED —
 					// this proves the MAIN session genuinely runs relaxed, so the
 					// child denial below is a real propagation boundary, not a
@@ -180,6 +186,9 @@ func TestPathEscapePosture_Scenario5_SharedWorkspaceChildWriteDenied(t *testing.
 		t.Fatalf("StartRun: %v", err)
 	}
 	for ev := range run.Events() {
+		if ev.ToolCall != nil && ev.ToolCall.Name == parentWrite.Name {
+			parentWrite.ID = ev.ToolCall.ID
+		}
 		// The parent's own out-of-root Write (call p1) must SUCCEED at yolo —
 		// the main session's relaxed-write behaviour is unchanged.
 		if ev.Type == session.EvToolResult && ev.ToolResult != nil && ev.ToolResult.CallID == parentWrite.ID {

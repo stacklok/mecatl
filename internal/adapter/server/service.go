@@ -21,6 +21,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
+	"github.com/stacklok/mecatl/engine/adapter/eventcodec"
 	"github.com/stacklok/mecatl/engine/adapter/memledger"
 	"github.com/stacklok/mecatl/engine/adapter/nofs"
 	"github.com/stacklok/mecatl/engine/agent"
@@ -4307,10 +4308,10 @@ func (s *Service) CompactSession(ctx context.Context, id session.SessionID, call
 	result, compactErr := eng.CompactSession(compactCtx, sess)
 	usageChanged := sess.UsageFor(session.UsageKindCompaction) != beforeUsage
 	if compactErr != nil || !result.Changed {
+		if !leaseHeld() {
+			return agent.ManualCompactionResult{}, fmt.Errorf("%w: session lease was lost during compaction", ErrSessionLeasedElsewhere)
+		}
 		if usageChanged {
-			if !leaseHeld() {
-				return agent.ManualCompactionResult{}, fmt.Errorf("%w: session lease was lost during compaction", ErrSessionLeasedElsewhere)
-			}
 			if saveErr := s.saveSession(compactCtx, sess); saveErr != nil {
 				return agent.ManualCompactionResult{}, fmt.Errorf("%w: persist compaction usage: %v", ErrInternal, saveErr)
 			}
@@ -4782,12 +4783,8 @@ func (s *Service) SetMode(ctx context.Context, id session.SessionID, mode sessio
 	}
 
 	if sess.AgentDefinitionName != "" {
-		// ADR 0353 (AC3.3): an agent-bound session's mode is fixed for its entire
-		// lifetime (the bound def's own permissionMode ceiling was already resolved
-		// and clamped at create time) — rejected outright, never merely clamped,
-		// so the session's mode can never diverge from what its engine was built
-		// for. Runtime publication can still trigger a rebuild; that path must
-		// refuse a result contradicting the session's fixed configuration.
+		// An agent-bound session's mode is fixed for its entire lifetime: the bound
+		// definition's permission-mode ceiling was resolved and clamped at creation.
 		return nil, fmt.Errorf("%w: mode is fixed for an agent-bound session %q", ErrInvalidArgument, id)
 	}
 	if err := sess.SetMode(mode); err != nil {
@@ -4815,7 +4812,7 @@ func (s *Service) SetMode(ctx context.Context, id session.SessionID, mode sessio
 // in-memory store after a process restart, or when no store-dir is configured
 // and the id was never created in this process).
 func (s *Service) LoadSession(ctx context.Context, id session.SessionID) (*session.Session, error) {
-	return s.loadSessionContext(ctx, id, true)
+	return s.loadSessionContext(ctx, id, true, false)
 }
 
 // validateCarryover loads a source session (issue #20: model-switch context
@@ -4837,13 +4834,14 @@ func (s *Service) LoadSession(ctx context.Context, id session.SessionID) (*sessi
 //
 //   - SAME provider → the snapshot is returned VERBATIM
 //     (session.ForkSnapshot(src.Conversation)). The provider-private replay
-//     blobs (Message.Reasoning, Message.ProviderPhase, each ToolCall.ItemID)
-//     replay intact, so the prompt-cache prefix stays warm.
+//     carrier (Message.Replay) and public phase replay intact, so the
+//     prompt-cache prefix stays warm.
 //   - DIFFERENT provider → the snapshot is STRIPPED to a provider-neutral copy
 //     via session.StripProviderState(session.ForkSnapshot(src.Conversation)),
-//     clearing Reasoning/ProviderPhase/ItemID while preserving text/roles/
-//     tool-call IDs/Args/tool results. Both the OpenAI and Anthropic adapters
-//     treat an EMPTY blob as "no blob" and omit it on the wire, so a stripped
+//     clearing Replay/ProviderPhase while preserving canonical invocation IDs,
+//     original Legacy verification coordinates, text/roles/Args/tool results.
+//     Target pairing and item identity are reconstructed at the LLM/adapter seam,
+//     so a stripped
 //     history replays safely to ANY provider; the new session's
 //     thinking/reasoning config is derived from the NEW model, not the history.
 //
@@ -4893,59 +4891,7 @@ func (s *Service) providerCarryoverSnapshot(src *session.Session, newProviderID 
 	if srcProv == newProv {
 		return snap
 	}
-	stripped := session.StripProviderState(snap)
-	if usesResponsesReplayIDs(newProv) {
-		return synthesizeOpenAIItemIDs(stripped)
-	}
-	return stripped
-}
-
-// usesResponsesReplayIDs reports whether a resolved provider replays through
-// the stateless OpenAI Responses adapter and therefore requires stable item IDs
-// on cross-provider carryover. Keep this classification in one server-layer
-// seam: provider IDs are composition-owned strings here, while the server has
-// no adapter type to inspect.
-func usesResponsesReplayIDs(providerID string) bool {
-	switch providerID {
-	case "openai", "openrouter", "openai-codex", "toolhive":
-		return true
-	default:
-		return false
-	}
-}
-
-// synthesizeOpenAIItemIDs synthesises a stable, unique ItemID for every ToolCall
-// in the carried history whose ItemID is empty after cross-provider stripping.
-// The OpenAI adapter uses ItemID (the provider's "id", e.g. "fc_1") to
-// de-duplicate replayed function_call items in store:false stateless replay
-// (request.go:353-359). After StripProviderState clears every ItemID, the provider
-// auto-assigns sequential fc_N values — which on the second post-carryover turn
-// collide with the current response's items → "Duplicate item found with id fc_N"
-// HTTP 400. Stable positional ids ("carryover_item_N") keep a retried/re-created
-// session deterministic and cannot collide with the provider's fc_ prefix.
-//
-// A history with no tool calls is returned unchanged. The input slice is
-// shallow-copied (the backing array is fresh) so the caller's messages are never
-// mutated.
-func synthesizeOpenAIItemIDs(messages []session.Message) []session.Message {
-	if len(messages) == 0 {
-		return messages
-	}
-	out := make([]session.Message, len(messages))
-	n := 0
-	for i, m := range messages {
-		if len(m.ToolCalls) > 0 {
-			calls := make([]session.ToolCall, len(m.ToolCalls))
-			for j, c := range m.ToolCalls {
-				c.ItemID = fmt.Sprintf("carryover_item_%d", n)
-				n++
-				calls[j] = c
-			}
-			m.ToolCalls = calls
-		}
-		out[i] = m
-	}
-	return out
+	return session.StripProviderState(snap)
 }
 
 // maybeReplayApprovals repopulates the learned-rule store from the durable
@@ -5024,15 +4970,15 @@ func (s *Service) publishLiveInstructionsLocked(sess *session.Session) {
 // recovers it via Recover (both repair the history), then re-persists. ErrNotFound
 // propagates from GetSession.
 func (s *Service) loadAndReopen(ctx context.Context, id session.SessionID) (*session.Session, error) {
-	return s.loadSessionContext(ctx, id, false)
+	return s.loadSessionContext(ctx, id, false, false)
 }
 
-func (s *Service) loadSessionContext(ctx context.Context, id session.SessionID, activate bool) (*session.Session, error) {
-	// Ownership is checked before caller-selected coordination, then revalidated
-	// under runEntryMu before and after acquiring the mutation lease.
+func (s *Service) loadSessionContext(ctx context.Context, id session.SessionID, resumeCommands, activate bool) (*session.Session, error) {
 	if _, err := s.GetSession(ctx, id); err != nil {
 		return nil, err
 	}
+	// Ownership is checked before caller-selected coordination, then revalidated
+	// under runEntryMu before and after acquiring the mutation lease.
 	unlock := s.runEntryMu.lock(id)
 	defer unlock()
 	if _, err := s.GetSession(ctx, id); err != nil {
@@ -5055,19 +5001,41 @@ func (s *Service) loadSessionContext(ctx context.Context, id session.SessionID, 
 	if err := s.attachLiveInstructions(sess, false); err != nil {
 		return nil, err
 	}
-	if activate && s.cfg.Commands != nil {
-		var activateErr error
-		if resolver, ok := s.cfg.Commands.(executionWorkspaceCommandSourceResolver); ok {
-			activateErr = resolver.ActivateWithExecutionWorkspace(ctx, sess.ID, sess.Owner.Clone(), sess.Profile, s.executionWorkspaceAcquirer(sess.Owner, sess.EnvironmentRef))
-		} else {
-			activateErr = s.cfg.Commands.Activate(ctx, sess.ID, sess.Owner.Clone(), sess.Profile)
+	// Explicit load may lift retirement, but source binding waits for discovery
+	// or an admitted engine's ordinary borrow.
+	if resumeCommands {
+		if resolver, ok := s.cfg.Commands.(interface {
+			Resume(context.Context, session.SessionID, *session.Principal, string) error
+		}); ok {
+			if err := resolver.Resume(ctx, sess.ID, sess.Owner.Clone(), sess.Profile); err != nil {
+				s.logDiscoveryError(ctx, "resume command sources", err)
+				return nil, fmt.Errorf("%w: command source resume failed", ErrInternal)
+			}
 		}
-		if activateErr != nil {
-			s.logDiscoveryError(ctx, "activate command sources", activateErr)
-			return nil, fmt.Errorf("%w: command source activation failed", ErrInternal)
+	}
+	if activate {
+		if err := s.activateSessionCommands(ctx, sess); err != nil {
+			return nil, err
 		}
 	}
 	return sess, nil
+}
+
+func (s *Service) activateSessionCommands(ctx context.Context, sess *session.Session) error {
+	if s.cfg.Commands == nil {
+		return nil
+	}
+	var err error
+	if resolver, ok := s.cfg.Commands.(executionWorkspaceCommandSourceResolver); ok {
+		err = resolver.ActivateWithExecutionWorkspace(ctx, sess.ID, sess.Owner.Clone(), sess.Profile, s.executionWorkspaceAcquirer(sess.Owner, sess.EnvironmentRef))
+	} else {
+		err = s.cfg.Commands.Activate(ctx, sess.ID, sess.Owner.Clone(), sess.Profile)
+	}
+	if err != nil {
+		s.logDiscoveryError(ctx, "activate command sources", err)
+		return fmt.Errorf("%w: command source activation failed", ErrInternal)
+	}
+	return nil
 }
 
 // validatePersistedWorkspace keeps the run-entry call sites explicit while
@@ -5127,13 +5095,6 @@ func (s *Service) reopenLoadedSession(ctx context.Context, sess *session.Session
 		return nil, err
 	}
 	id := sess.ID
-	// Repopulate the in-memory learned-rule store from the durable EventLog's
-	// allow-always verdicts BEFORE the run starts, so a
-	// session that allow-always'd a tool before a restart does not re-ask. Done at
-	// most once per id per process (a live session learns as it runs; a re-run only
-	// re-derives idempotent rules). It reads the LOADED conversation to correlate the
-	// verdicts, so it must run after GetSession and before the engine runs.
-	s.maybeReplayApprovals(ctx, sess)
 	if sess.State == session.StateFailed && sess.FailureMetadata().Disposition == session.RetryDispositionPermanent {
 		// Capture the typed disposition BEFORE Recover() clears it. Store the pre-flight advisory so the relay can emit
 		// an EvRecoverNotice before the next turn burns a provider call on the
@@ -5230,7 +5191,7 @@ func (s *Service) LoadSessionWithMCP(ctx context.Context, id session.SessionID, 
 	// Load + reopen-if-completed BEFORE building the engine, so an unknown id fails
 	// fast (ErrNotFound) without a wasted MCP connect. The reopen's Store.Save runs
 	// here too.
-	sess, err := s.loadSessionContext(ctx, id, true)
+	sess, err := s.loadSessionContext(ctx, id, false, true)
 	if err != nil {
 		return nil, err
 	}
@@ -5900,6 +5861,9 @@ func validRunAskVerdict(verdict session.ApprovalVerdict) bool {
 // the first rejects cheap mismatches, while the second is the authoritative
 // decision after distributed ownership has been acquired.
 func (s *Service) validatePersistedRunAsk(sess *session.Session, expectedRunID string, resolution agent.ApprovalResolution, scoped bool) error {
+	if err := sess.ValidateAuthorizationState(); err != nil {
+		return fmt.Errorf("%w: invalid pending continuation", ErrFailedPrecondition)
+	}
 	if err := checkExpectedRun(expectedRunID, sess.RunID()); err != nil {
 		return err
 	}
@@ -6602,6 +6566,7 @@ func (s *Service) engineAndEnvironmentFor(ctx context.Context, sess *session.Ses
 			return nil, tool.Environment{}, "", fmt.Errorf("%w: bind session read ledger: %v", ErrConfig, err)
 		}
 	}
+	s.maybeReplayApprovals(ctx, sess)
 	verifiedPlacement := &verified
 	governanceRoot, err := PlacementGovernanceRoot(verified)
 	if err != nil {
@@ -7519,6 +7484,9 @@ func (s *Service) resumeFromAwaiting(ctx context.Context, id session.SessionID, 
 	pending, ok := sess.PendingAsk()
 	if !ok || pending.AskID != resolution.AskID {
 		return nil, fmt.Errorf("%w: ask is unknown, stale, or already resolved", agent.ErrApprovalNotPending)
+	}
+	if err := sess.ValidateAuthorizationState(); err != nil {
+		return nil, fmt.Errorf("%w: invalid pending continuation", ErrFailedPrecondition)
 	}
 	if err := agent.ValidateApprovalResolution(pending, resolution); err != nil {
 		return nil, err
@@ -10356,7 +10324,43 @@ func (s *Service) StreamSessionEvents(ctx context.Context, id session.SessionID)
 			return nil, err
 		}
 	}
-	return s.cfg.EventLog.Read(ctx, id), nil
+	return func(yield func(session.Event, error) bool) {
+		if err := ctx.Err(); err != nil {
+			yield(session.Event{}, err)
+			return
+		}
+		var inc session.IncarnationID
+		ordinal := 0
+		for ev, err := range s.cfg.EventLog.Read(ctx, id) {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				yield(session.Event{}, ctxErr)
+				return
+			}
+			if err != nil {
+				yield(session.Event{}, err)
+				return
+			}
+			if ev.LegacyIdentity() != nil {
+				if inc == "" {
+					inc, err = s.eventSourceIncarnation(ctx, id, []session.Event{ev})
+					if err != nil {
+						yield(session.Event{}, err)
+						return
+					}
+				}
+				// Streaming prefixes cannot prove legacy invocation attachments.
+				ev, err = eventcodec.ProjectRecord(ev, inc, ordinal)
+				if err != nil {
+					yield(session.Event{}, fmt.Errorf("%w: historical activity unavailable", ErrInternal))
+					return
+				}
+			}
+			ordinal++
+			if !yield(ev, nil) {
+				return
+			}
+		}
+	}, nil
 }
 
 // ListSessions returns the stored-session inventory — the picker metadata a

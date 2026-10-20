@@ -143,9 +143,11 @@ entities:
   Message:
     definition: >
       One entry in a `Conversation`, attributed to a role (user, assistant, or
-      tool). An assistant `Message` may carry text, an opaque reasoning blob, and
-      one or more `ToolCalls`; a tool `Message` carries a `ToolResult`. `Messages`
-      are immutable once recorded.
+      tool). An assistant `Message` may carry text and one or more `ToolCalls`;
+      a tool `Message` carries a `ToolResult`. The `Session` owns opaque,
+      provider-specific replay data and occurrence-specific provider pairing
+      bindings alongside each assistant `Message`. `Messages` are immutable once
+      recorded.
     relationships:
       - entity: ToolCall
         cardinality: "1:n"
@@ -244,8 +246,10 @@ entities:
   ToolCall:
     definition: >
       A single request by the model to invoke a `Tool` with concrete arguments,
-      issued within a `Turn`. It must be authorized by the permission model
-      before it executes, and it produces exactly one `ToolResult`.
+      issued within a `Turn`. Its globally unique engine identity is distinct
+      from the `Provider`'s call/result pairing token. It must be authorized by
+      the permission model before it executes, and it produces exactly one
+      `ToolResult`. Copies of the same historical invocation retain its identity.
     relationships:
       - entity: Tool
         cardinality: "n:1"
@@ -830,10 +834,9 @@ entities:
       rehydrated after a restart. Because it carries the user turns alongside the
       assistant/tool `Events`, a host whose system of record IS the log can
       reconstruct the whole `Session` by FOLDING the stream (the event-sourced
-      rehydration path), not only top up a snapshot (structural reconstruction; a
-      pure fold is byte-identical-replay only for providers not using the opaque
-      reasoning-replay fields — Reasoning/ProviderPhase/ToolCall.ItemID are not on
-      the event stream).
+      rehydration path), not only top up a snapshot. A pure fold reconstructs
+      structural history; exact provider replay requires the private replay data
+      and pairing bindings owned by the `Session` snapshot.
     relationships:
       - entity: Event
         cardinality: "1:n"

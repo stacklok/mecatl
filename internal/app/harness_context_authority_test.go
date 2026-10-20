@@ -261,7 +261,7 @@ func TestHarnessContext_ContextOverridesCannotGrantAuthority(t *testing.T) {
 			events := harnessRun(t, b, t.Context(), id, "attempt write")
 			denied := false
 			for _, ev := range events {
-				if ev.ToolResult != nil && ev.ToolResult.CallID == "denied" {
+				if ev.ToolResult != nil && ev.ToolResult.CallID == eventCallID(t, events, "Write", 0) {
 					denied = ev.ToolResult.IsError
 				}
 			}

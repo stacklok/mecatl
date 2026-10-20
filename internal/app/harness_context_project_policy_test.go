@@ -40,7 +40,7 @@ func TestHarnessProjectPolicyIgnoredValueFreeWithoutDroppingDeny(t *testing.T) {
 	events := harnessRun(t, b, t.Context(), id, "attempt write")
 	denied := false
 	for _, event := range events {
-		if event.ToolResult != nil && event.ToolResult.CallID == "denied" {
+		if event.ToolResult != nil && event.ToolResult.CallID == eventCallID(t, events, "Write", 0) {
 			denied = event.ToolResult.IsError
 		}
 	}

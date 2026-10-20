@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import { sessionDetailResponseSchema } from "@mecatl-studio/contracts";
+import {
+  sessionDetailResponseSchema,
+  sessionTranscriptResponseSchema,
+} from "@mecatl-studio/contracts";
 import {
   type Client,
   type Event,
@@ -40,6 +43,58 @@ describe("Mecatl chat event serialization", () => {
 });
 
 describe("Mecatl chat sessions", () => {
+  it("preserves standalone historical output/media and phase, without replay serializer aliases", async () => {
+    const historical = {
+      recordId: "source-local-3",
+      kind: "tool.result",
+      text: "Old output",
+      attachmentUnavailable: true,
+      parts: [
+        { kind: 1, mimeType: "image/png", data: new Uint8Array([1, 2, 3]), text: "", url: "" },
+      ],
+    };
+    const message = {
+      historical,
+      role: "notice",
+      text: "Old output",
+      providerPhase: "commentary",
+      parts: [],
+      toolCalls: [],
+      reasoning: "PRIVATE",
+      reasoningItemId: "provider-private",
+      replay: "PRIVATE",
+    };
+    const service = createMecatlChatService({
+      sessions: {
+        get: async () => ({
+          transcript: async () => ({ complete: true, sessionId: "s", messages: [message] }),
+        }),
+      },
+    } as unknown as Client);
+    const projected = sessionTranscriptResponseSchema.parse(await service.transcript("s"));
+    expect(projected.messages[0]).toMatchObject({
+      providerPhase: "commentary",
+      historical: {
+        ...historical,
+        parts: [{ ...historical.parts[0], data: { encoding: "base64", data: "AQID" } }],
+      },
+      toolCalls: [],
+    });
+    expect(JSON.stringify(projected)).not.toMatch(/PRIVATE|reasoningItemId|replay/);
+    const event = serializeEvent({
+      kind: "historical",
+      payload: historical,
+      runId: "r",
+      seq: 3n,
+      text: historical.text,
+      turn: 1,
+    } as Event);
+    expect(event).toMatchObject({
+      kind: "historical",
+      seq: "3",
+      payload: projected.messages[0]?.historical,
+    });
+  });
   it("projects inspect only sessions without chat controls", async () => {
     const row = (
       id: string,

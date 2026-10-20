@@ -132,7 +132,7 @@ func TestWritableRoutableDefFullBuildE2E(t *testing.T) {
 	} else if string(got) != "bash in parent\n" {
 		t.Fatalf("bash-routed.txt = %q", got)
 	}
-	child, err := built.Service.GetSession(ctx, session.SessionID("subagent-"+string(sess.ID)+"-c1"))
+	child, err := built.Service.GetSession(ctx, session.SessionID(start.ChildID))
 	if err != nil {
 		t.Fatalf("GetSession(routed child): %v", err)
 	}

@@ -58,6 +58,9 @@ func TestStatusOmitsPendingArgsAndDoesNotMutateTarget(t *testing.T) {
 	if err := target.BeginTurn(); err != nil {
 		t.Fatal(err)
 	}
+	if err := target.RecordAssistant(session.NewAssistantMessage("", []session.ToolCall{session.NewToolCall("tc", "Shell", []byte(`{"secret":"DO-NOT-LEAK"}`))})); err != nil {
+		t.Fatal(err)
+	}
 	if err := target.PauseForApproval(session.PendingAsk{AskID: "ask", Tool: "Shell", Call: "tc", Args: []byte(`{"secret":"DO-NOT-LEAK"}`), Reason: "private"}); err != nil {
 		t.Fatal(err)
 	}
@@ -111,7 +114,7 @@ func TestTranscriptOversizedFirstRowAdvances(t *testing.T) {
 		args := `{"value":"` + strings.Repeat("x", maxProjectedText-len(`{"value":""}`)) + `"}`
 		calls[i] = session.NewToolCall(session.ToolCallID(string(rune('a'+i))), "Tool", []byte(args))
 	}
-	messages = append(messages, session.NewAssistantMessage("", "", calls))
+	messages = append(messages, session.NewAssistantMessage("", calls))
 	for _, call := range calls {
 		messages = append(messages, session.NewToolMessage(session.NewToolResult(call.ID, "ok")))
 	}
@@ -160,7 +163,7 @@ func TestTranscriptDisclosesInvalidUTF8Repair(t *testing.T) {
 func TestTranscriptDisclosesInvalidUTF8ToolIdentifiers(t *testing.T) {
 	id := session.ToolCallID("call-\xff")
 	messages := []session.Message{
-		session.NewAssistantMessage("", "", []session.ToolCall{session.NewToolCall(id, "Tool", []byte(`{}`))}),
+		session.NewAssistantMessage("", []session.ToolCall{session.NewToolCall(id, "Tool", []byte(`{}`))}),
 		session.NewToolMessage(session.NewToolResult(id, "ok")),
 	}
 	store, target := seededTarget(t, messages)
@@ -208,11 +211,14 @@ func TestTranscriptProjectsPartsAndPreservesJSONNumbers(t *testing.T) {
 	})
 	messages := []session.Message{
 		session.NewUserMessageWithParts("look", []session.Content{image}),
-		session.NewAssistantMessage("", "private", []session.ToolCall{call}),
+		session.NewAssistantMessage("", []session.ToolCall{call}),
 		session.NewToolMessage(result),
 	}
 	messages[1].ProviderPhase = "secret-phase"
-	messages[1].ReasoningItemID = "secret-item"
+	messages[1].Replay = &session.MessageReplay{
+		Bindings: []session.ToolCallBinding{{CallID: call.ID, PairingID: "secret-pairing", ItemID: "secret-item"}},
+		Provider: &session.ProviderReplay{Format: "private", Version: 1, Data: []byte("private")},
+	}
 	store, target := seededTarget(t, messages)
 	got := execute(t, New(target.ID, store, nil), `{"view":"transcript"}`)
 	for _, want := range []string{
@@ -235,7 +241,7 @@ func TestTranscriptRepresentsInvalidAndMalformedArgumentsSafely(t *testing.T) {
 	invalidUTF8 := session.NewToolCall("bad-utf8", "Tool", []byte("{\"value\":\"\xff\"}"))
 	invalidJSON := session.NewToolCall("bad-json", "Tool", []byte(`{"value":`))
 	for _, call := range []session.ToolCall{invalidUTF8, invalidJSON} {
-		row, complete := projectMessage(0, session.NewAssistantMessage("", "", []session.ToolCall{call}))
+		row, complete := projectMessage(0, session.NewAssistantMessage("", []session.ToolCall{call}))
 		if complete || len(row.ToolCalls) != 1 || !row.ToolCalls[0].ArgsOmitted || row.ToolCalls[0].ArgsReason == "" || row.ToolCalls[0].Args != nil {
 			t.Fatalf("malformed args projection = %+v complete=%v", row, complete)
 		}

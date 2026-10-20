@@ -37,7 +37,7 @@ func (p *progressFireProvider) Stream(ctx context.Context, _ port.LLMRequest) (i
 	if p.calls == 1 {
 		// An unknown tool call: EvToolCall fires (RecordFireProgress stamps),
 		// the loop dispatches → error result, then continues to turn 2.
-		call := session.NewToolCall("c1", "Nonexistent", nil)
+		call := port.LLMToolCall{ID: "c1", Name: "Nonexistent", Args: []byte(`{}`)}
 		return func(yield func(port.Chunk, error) bool) {
 			yield(port.Chunk{Kind: port.ChunkToolCall, ToolCall: &call}, nil)
 			yield(port.Chunk{Kind: port.ChunkUsage, Usage: &session.Usage{}}, nil)

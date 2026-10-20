@@ -140,7 +140,7 @@ func TestMCPHostileFindingsE2E(t *testing.T) {
 		}
 	}
 	for _, id := range []string{"c1", "c2", "c3", "c4", "c5", "c6"} {
-		if _, ok := results[id]; !ok {
+		if _, ok := results[string(boundCallID(t, sess, session.ProviderCallID(id)))]; !ok {
 			t.Fatalf("missing EvToolResult for %s; got %v", id, keysOfResults(results))
 		}
 	}
@@ -149,7 +149,7 @@ func TestMCPHostileFindingsE2E(t *testing.T) {
 	// and is model-facing, but never enters the .Content string the guardrail hook
 	// inspects. (Documents the current, unfixed behavior.)
 	t.Run("F-INJ_title_bypasses_content", func(t *testing.T) {
-		r := results["c1"]
+		r := results[string(boundCallID(t, sess, "c1"))]
 		if strings.Contains(r.Content, hostileTitleInjection) {
 			t.Fatalf("injection unexpectedly present in .Content (guardrail would catch it): %q", r.Content)
 		}
@@ -168,7 +168,7 @@ func TestMCPHostileFindingsE2E(t *testing.T) {
 	// Fail-closed (correct behavior, must not regress): the over-cap structured
 	// direct call surfaces the actionable error, not a truncated JSON blob.
 	t.Run("failclosed_direct_bigjson", func(t *testing.T) {
-		r := results["c2"]
+		r := results[string(boundCallID(t, sess, "c2"))]
 		if !r.IsError {
 			t.Fatalf("bigjson direct call must fail-closed; got non-error: %q", r.Content)
 		}
@@ -185,7 +185,7 @@ func TestMCPHostileFindingsE2E(t *testing.T) {
 	// pointing at narrowing the jq filter further) rather than Truncating it at
 	// 25KB into invalid JSON. (Guards the FIXED behavior.)
 	t.Run("F-RT_recovery_failcloses_oversized", func(t *testing.T) {
-		r := results["c3"]
+		r := results[string(boundCallID(t, sess, "c3"))]
 		if !r.IsError {
 			t.Fatalf("CallMcpWithQuery(.items) should fail-closed on an oversized filtered result, got non-error: %q", r.Content)
 		}
@@ -201,7 +201,7 @@ func TestMCPHostileFindingsE2E(t *testing.T) {
 	// Recovery control (correct behavior): a narrowing filter returns a small,
 	// parseable subset.
 	t.Run("recovery_length_filter_ok", func(t *testing.T) {
-		r := results["c4"]
+		r := results[string(boundCallID(t, sess, "c4"))]
 		if r.IsError {
 			t.Fatalf("CallMcpWithQuery(.items | length) must not error: %q", r.Content)
 		}
@@ -214,7 +214,7 @@ func TestMCPHostileFindingsE2E(t *testing.T) {
 	// but returns over-cap NON-JSON, so the direct call fail-closes and points at
 	// CallMcpWithQuery, which then cannot help (next subtest) — the bounce.
 	t.Run("F-FC_schema_liar_failcloses", func(t *testing.T) {
-		r := results["c5"]
+		r := results[string(boundCallID(t, sess, "c5"))]
 		if !r.IsError {
 			t.Fatalf("schema_liar direct call fail-closes on the declared schema; got non-error: %q", r.Content)
 		}
@@ -226,7 +226,7 @@ func TestMCPHostileFindingsE2E(t *testing.T) {
 	// F-FC bounce: the recovery tool on the non-JSON result reports "not JSON" — the
 	// dead-end the direct fail-closed sent the model toward (bounded by MaxToolCalls).
 	t.Run("F-FC_recovery_reports_not_json", func(t *testing.T) {
-		r := results["c6"]
+		r := results[string(boundCallID(t, sess, "c6"))]
 		if !r.IsError {
 			t.Fatalf("CallMcpWithQuery on non-JSON should error: %q", r.Content)
 		}

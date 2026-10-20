@@ -575,6 +575,23 @@ export type GetSessionTranscriptResponses = {
     200: {
         complete: boolean;
         messages: Array<{
+            historical?: {
+                recordId: string;
+                kind: string;
+                text: string;
+                attachmentUnavailable: boolean;
+                parts: Array<{
+                    kind: number;
+                    text: string;
+                    mimeType: string;
+                    data: {
+                        encoding: 'base64';
+                        data: string;
+                    };
+                    url: string;
+                }>;
+            };
+            providerPhase?: string;
             delivery?: {
                 fireId: string;
                 kind: 'started' | 'completed';
@@ -3153,6 +3170,7 @@ export type GetLearningProposalResponses = {
         value: string;
         version: string;
         evidence: Array<{
+            attachmentUnavailable: boolean;
             availability: string;
             available: boolean;
             digest: string;
@@ -3160,8 +3178,9 @@ export type GetLearningProposalResponses = {
             locator: string;
             ordinal: number;
             preview: string;
+            protocol: string;
             sessionId: string;
-            toolCallId: string;
+            toolCallId?: string;
         }>;
     };
 };

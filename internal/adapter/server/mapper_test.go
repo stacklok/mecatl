@@ -1245,10 +1245,14 @@ func TestToProtoLogOnlyPayloads(t *testing.T) {
 	// CompactionArchive with a full message slice (assistant w/ tool calls, tool-role
 	// w/ result, user w/ media).
 	tr := session.NewToolResult("c1", "ok")
-	assistantMsg := session.NewAssistantMessage("calling", "reason", []session.ToolCall{
+	assistantMsg := session.NewAssistantMessage("calling", []session.ToolCall{
 		session.NewToolCall("c1", "Shell", json.RawMessage(`{"cmd":"ls"}`)),
 	})
-	assistantMsg.ReasoningItemID = "rs_1"
+	assistantMsg.ProviderPhase = "commentary"
+	assistantMsg.Replay = &session.MessageReplay{
+		Bindings: []session.ToolCallBinding{{CallID: "c1", PairingID: "private-provider-pairing", ItemID: "private-provider-item"}},
+		Provider: &session.ProviderReplay{Format: "private-format", Version: 1, Data: []byte("private-opaque-replay")},
+	}
 	arch := toProto(session.Event{
 		Type: session.EvCompactionArchive,
 		CompactionArchive: &session.CompactionArchivePayload{
@@ -1271,11 +1275,25 @@ func TestToProtoLogOnlyPayloads(t *testing.T) {
 	if len(arch.GetReplaced()[0].GetParts()) != 1 {
 		t.Errorf("replaced[0].Parts = %d, want 1", len(arch.GetReplaced()[0].GetParts()))
 	}
-	if arch.GetReplaced()[1].GetRole() != "assistant" || arch.GetReplaced()[1].GetReasoning() != "reason" {
+	if arch.GetReplaced()[1].GetRole() != "assistant" || arch.GetReplaced()[1].GetText() != "calling" {
 		t.Errorf("replaced[1] wrong: %+v", arch.GetReplaced()[1])
 	}
-	if arch.GetReplaced()[1].GetReasoningItemId() != "rs_1" {
-		t.Errorf("replaced[1].ReasoningItemId = %q, want rs_1 (the reasoning-item id must project alongside Reasoning/ProviderPhase)", arch.GetReplaced()[1].GetReasoningItemId())
+	if arch.GetReplaced()[1].ProtoReflect().Descriptor().Fields().ByName("reasoning") != nil ||
+		arch.GetReplaced()[1].ProtoReflect().Descriptor().Fields().ByName("reasoning_item_id") != nil {
+		t.Fatal("archive exposes provider-private replay fields")
+	}
+	if arch.GetReplaced()[1].GetProviderPhase() != "commentary" {
+		t.Fatal("archive lost presentation phase")
+	}
+	encoded, err := json.Marshal(arch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(encoded), "private-") || strings.Contains(string(encoded), "rs_1") {
+		t.Fatalf("archive leaked private replay: %s", encoded)
+	}
+	if assistantMsg.Replay.Bindings[0].PairingID != "private-provider-pairing" || string(assistantMsg.Replay.Provider.Data) != "private-opaque-replay" {
+		t.Fatal("public mapping changed internal replay")
 	}
 	if len(arch.GetReplaced()[1].GetToolCalls()) != 1 ||
 		arch.GetReplaced()[1].GetToolCalls()[0].GetName() != "Shell" {
@@ -1720,7 +1738,7 @@ func TestToProtoNeverFailsMarshalOnInvalidUTF8(t *testing.T) {
 	msg := session.Message{
 		Role:          session.RoleAssistant,
 		Text:          "txt " + badUTF8,
-		Reasoning:     "reason " + badUTF8,
+		Replay:        &session.MessageReplay{Bindings: []session.ToolCallBinding{{CallID: "c1", PairingID: "pair"}}, Provider: &session.ProviderReplay{Format: "private", Version: 1, Data: []byte("reason " + badUTF8)}},
 		ProviderPhase: "phase " + badUTF8,
 		ToolCalls:     []session.ToolCall{session.NewToolCall("c1", "Shell", json.RawMessage(`{"cmd":"`+badUTF8+`"}`))},
 	}

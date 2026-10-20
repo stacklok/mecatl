@@ -99,7 +99,7 @@ func (p *mediaRepairProvider) Stream(_ context.Context, req port.LLMRequest) (it
 		chunks = []port.Chunk{{Kind: port.ChunkText, Text: `{"assessment":"acceptable","concerns":[],"evidence":[],"missing_evidence":[]}`}, {Kind: port.ChunkDone, Stop: session.StopEndTurn}}
 	} else if p.mainCalls == 0 {
 		p.mainCalls++
-		chunks = toolCallChunks(session.NewToolCall("image-call", "mcp__typed__good_image", json.RawMessage(`{}`)))
+		chunks = toolCallChunks(port.LLMToolCall{ID: "image-call", Name: "mcp__typed__good_image", Args: json.RawMessage(`{}`)})
 	} else {
 		p.mainCalls++
 		chunks = []port.Chunk{{Kind: port.ChunkText, Text: "done"}, {Kind: port.ChunkDone, Stop: session.StopEndTurn}}
@@ -133,8 +133,12 @@ func TestBuildInboundImageCannotBeBlindlyReleasedByTextOnlyChecker(t *testing.T)
 		t.Fatal(err)
 	}
 	asks := 0
+	var callID session.ToolCallID
 	var released *session.ToolResult
 	for event := range run.Events() {
+		if event.ToolCall != nil {
+			callID = event.ToolCall.ID
+		}
 		if event.Ask != nil && event.Ask.Guardrail != nil {
 			asks++
 			if event.Ask.Guardrail.Kind != session.GuardrailApprovalResultRelease {
@@ -144,7 +148,7 @@ func TestBuildInboundImageCannotBeBlindlyReleasedByTextOnlyChecker(t *testing.T)
 				t.Fatal(err)
 			}
 		}
-		if event.ToolResult != nil && event.ToolResult.CallID == "image-call" {
+		if event.ToolResult != nil && event.ToolResult.CallID == callID {
 			result := *event.ToolResult
 			released = &result
 		}

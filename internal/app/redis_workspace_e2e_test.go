@@ -138,8 +138,12 @@ func TestRedisWorkspaceBuiltEngineExercisesAllFileToolsAcrossSamePrincipalSessio
 	}
 
 	firstResults := runRedisWorkspaceE2E(ctx, t, built.Service, first.ID, "exercise every file tool")
-	for _, id := range []session.ToolCallID{"write-1", "read-1", "edit-1", "grep-1", "glob-1"} {
-		result, ok := firstResults[id]
+	first, err = built.Service.GetSession(ctx, first.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []session.ProviderCallID{"write-1", "read-1", "edit-1", "grep-1", "glob-1"} {
+		result, ok := firstResults[boundCallID(t, first, id)]
 		if !ok {
 			t.Fatalf("missing ToolResult for %s", id)
 		}
@@ -147,18 +151,22 @@ func TestRedisWorkspaceBuiltEngineExercisesAllFileToolsAcrossSamePrincipalSessio
 			t.Fatalf("%s failed: %s", id, result.Content)
 		}
 	}
-	if !strings.Contains(firstResults["read-1"].Content, "alpha") {
-		t.Fatalf("Read result = %q, want alpha", firstResults["read-1"].Content)
+	if !strings.Contains(firstResults[boundCallID(t, first, "read-1")].Content, "alpha") {
+		t.Fatalf("Read result = %q, want alpha", firstResults[boundCallID(t, first, "read-1")].Content)
 	}
-	if !strings.Contains(firstResults["grep-1"].Content, "docs/note.txt") || !strings.Contains(firstResults["grep-1"].Content, "beta") {
-		t.Fatalf("Grep result = %q", firstResults["grep-1"].Content)
+	if !strings.Contains(firstResults[boundCallID(t, first, "grep-1")].Content, "docs/note.txt") || !strings.Contains(firstResults[boundCallID(t, first, "grep-1")].Content, "beta") {
+		t.Fatalf("Grep result = %q", firstResults[boundCallID(t, first, "grep-1")].Content)
 	}
-	if !strings.Contains(firstResults["glob-1"].Content, "docs/note.txt") {
-		t.Fatalf("Glob result = %q", firstResults["glob-1"].Content)
+	if !strings.Contains(firstResults[boundCallID(t, first, "glob-1")].Content, "docs/note.txt") {
+		t.Fatalf("Glob result = %q", firstResults[boundCallID(t, first, "glob-1")].Content)
 	}
 
 	secondResults := runRedisWorkspaceE2E(ctx, t, built.Service, second.ID, "read the other session's file")
-	if result, ok := secondResults["read-2"]; !ok || result.IsError || !strings.Contains(result.Content, "beta") {
+	second, err = built.Service.GetSession(ctx, second.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result, ok := secondResults[boundCallID(t, second, "read-2")]; !ok || result.IsError || !strings.Contains(result.Content, "beta") {
 		t.Fatalf("same-principal cross-session Read = %+v, present=%v", result, ok)
 	}
 
@@ -202,7 +210,11 @@ func TestRedisWorkspaceRootListDirIsNotDeniedByAuthority(t *testing.T) {
 	}
 
 	results := runRedisWorkspaceE2E(ctx, t, built.Service, sess.ID, "list the workspace root")
-	result, ok := results["list-root"]
+	sess, err = built.Service.GetSession(ctx, sess.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, ok := results[boundCallID(t, sess, "list-root")]
 	if !ok {
 		t.Fatal("missing ToolResult for list-root")
 	}
@@ -248,7 +260,11 @@ func TestRedisWorkspaceExternalLookingListDirNeverFallsBackToHost(t *testing.T) 
 		t.Fatal(err)
 	}
 	results := runRedisWorkspaceE2E(ctx, t, built.Service, sess.ID, "list an external-looking directory")
-	result, ok := results["list-external"]
+	sess, err = built.Service.GetSession(ctx, sess.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, ok := results[boundCallID(t, sess, "list-external")]
 	if !ok {
 		t.Fatal("missing ToolResult for list-external")
 	}

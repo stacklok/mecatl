@@ -119,28 +119,28 @@ func TestDelegationAvailableResultAcrossUISurfaces(t *testing.T) {
 func TestDelegationAvailableResultPairing(t *testing.T) {
 	trace := traceAppendTool(nil, "same", "Read", "first", "a")
 	trace = traceAppendTool(trace, "same", "Read", "second", "b")
-	trace = traceSetToolResult(trace, "same", "Read", "available", true, true, "a")
-	trace = traceSetToolResult(trace, "same", "Read", "wrong lane", false, false, "c")
-	trace = traceSetToolResult(trace, "same", "Read", "canonical", false, false, "a")
+	trace = traceSetToolResult(trace, "same", "available", true, true, "a")
+	trace = traceSetToolResult(trace, "same", "wrong lane", false, false, "c")
+	trace = traceSetToolResult(trace, "same", "canonical", false, false, "a")
 	if !trace[0].resolved || trace[0].provisional || trace[0].isError || trace[0].detail != "canonical" || trace[1].resolved {
 		t.Fatalf("lane correlation: %+v", trace)
 	}
 	legacy := traceAppendTool(nil, "", "Read", "args")
 	ambiguous := traceAppendTool(traceAppendTool(nil, "", "Read", "first"), "", "Read", "second")
-	ambiguous = traceSetToolResult(ambiguous, "", "Read", "unmatched", true, true)
+	ambiguous = traceSetToolResult(ambiguous, "", "unmatched", true, true)
 	if ambiguous[0].resolved || ambiguous[1].resolved {
 		t.Fatalf("availability guessed repeated name: %+v", ambiguous)
 	}
-	legacy = traceSetToolResult(legacy, "", "Read", "available", true, true)
-	legacy = traceSetToolResult(legacy, "", "Read", "canonical", false, false)
-	if !legacy[0].provisional || !legacy[0].isError || legacy[0].detail != "available" {
-		t.Fatalf("ID-less canonical guessed a provisional match: %+v", legacy)
+	legacy = traceSetToolResult(legacy, "", "available", true, true)
+	legacy = traceSetToolResult(legacy, "", "canonical", false, false)
+	if legacy[0].resolved || legacy[0].provisional || legacy[0].isError || legacy[0].detail != "args" {
+		t.Fatalf("ID-less result guessed a name match: %+v", legacy)
 	}
 	for i := 0; i <= maxTraceEntries; i++ {
 		trace = traceAppendTool(trace, string(rune('a'+i)), "Read", "next", "a")
 	}
-	trace = traceSetToolResult(trace, "same", "Read", "evicted", true, true, "a")
-	trace = traceSetToolResult(trace, "same", "Read", "evicted canonical", true, false, "a")
+	trace = traceSetToolResult(trace, "same", "evicted", true, true, "a")
+	trace = traceSetToolResult(trace, "same", "evicted canonical", true, false, "a")
 	retained := false
 	for _, row := range trace {
 		if row.lane == "b" && row.id == "same" {

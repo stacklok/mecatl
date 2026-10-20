@@ -110,15 +110,17 @@ func newColdGatewayCapture() *coldGatewayCapture {
 
 func (c *coldGatewayCapture) observe(req port.LLMRequest) {
 	bytes := 0
-	for _, m := range req.Messages {
-		bytes += len(m.Text) + len(m.Reasoning)
+	display := make([]session.Message, len(req.Messages))
+	for i, m := range req.Messages {
+		bytes += len(m.Text)
+		display[i] = session.Message{Role: m.Role, Text: m.Text, Parts: m.Parts, ProviderPhase: m.ProviderPhase}
 	}
 	c.mu.Lock()
 	c.requests = append(c.requests, coldGatewayRequest{
 		model:         req.Model,
 		messages:      len(req.Messages),
 		messageBytes:  bytes,
-		historyTokens: agent.HeuristicTokenCounter{}.CountMessages(req.Messages),
+		historyTokens: agent.HeuristicTokenCounter{}.CountMessages(display),
 	})
 	c.mu.Unlock()
 	select {

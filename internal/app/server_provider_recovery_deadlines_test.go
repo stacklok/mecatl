@@ -252,7 +252,11 @@ func TestServerProviderRecovery_Scenario4_CheckerDownPolicyAtToolDispatch(t *tes
 			ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
 			defer cancel()
 			seen, timeoutEvidence, warnings := false, 0, 0
+			var acceptedID session.ToolCallID
 			for ev := range agent.NewEngine(deps).Run(ctx, sess, memEnvironment("/ws"), agent.RunRequest{Text: "go"}).Events() {
+				if ev.ToolCall != nil && ev.ToolCall.Name == "Grep" {
+					acceptedID = ev.ToolCall.ID
+				}
 				if ev.Hook != nil && ev.Hook.Guardrail != nil {
 					if ev.Hook.Guardrail.ReasonCode == string(agent.ReviewFailureTimeout) {
 						timeoutEvidence++
@@ -261,7 +265,7 @@ func TestServerProviderRecovery_Scenario4_CheckerDownPolicyAtToolDispatch(t *tes
 						warnings++
 					}
 				}
-				if ev.Type == session.EvToolResult && ev.ToolResult != nil && ev.ToolResult.CallID == "checked" {
+				if ev.Type == session.EvToolResult && ev.ToolResult != nil && acceptedID != "" && ev.ToolResult.CallID == acceptedID {
 					seen = true
 					if ev.ToolResult.IsError != (policy == "fail") {
 						t.Fatalf("checker-down policy %s dispatched result=%+v", policy, ev.ToolResult)

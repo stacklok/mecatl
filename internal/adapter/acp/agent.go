@@ -539,7 +539,7 @@ func (a *Agent) handleSessionPrompt(ctx context.Context, params json.RawMessage)
 			}
 		case session.EvAuthorizationRequired:
 			authorizationIneligible = true
-			if update, ok := projector.project(ev); ok {
+			for _, update := range projector.projectAll(ev) {
 				a.notifyUpdate(ctx, req.SessionID, update)
 			}
 		case session.EvResult:
@@ -547,7 +547,7 @@ func (a *Agent) handleSessionPrompt(ctx context.Context, params json.RawMessage)
 				stop = stopReasonFor(ev.Result.Stop)
 			}
 		default:
-			if update, ok := projector.project(ev); ok {
+			for _, update := range projector.projectAll(ev) {
 				a.notifyUpdate(ctx, req.SessionID, update)
 			}
 		}

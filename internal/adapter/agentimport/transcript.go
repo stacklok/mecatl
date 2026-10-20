@@ -227,7 +227,7 @@ func appendTextMessage(dst *[]session.Message, role, text string) {
 	case "user":
 		message = session.NewUserMessage(text)
 	case "assistant":
-		message = session.NewAssistantMessage(text, "", nil)
+		message = session.NewAssistantMessage(text, nil)
 	default:
 		return
 	}

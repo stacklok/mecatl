@@ -99,6 +99,12 @@ func TestPathEscapePosture_Scenario5_ChildReadEscapeDenied(t *testing.T) {
 				t.Fatalf("StartRun: %v", err)
 			}
 			for ev := range run.Events() {
+				if ev.ToolCall != nil && ev.ToolCall.Name == parentRead.Name {
+					parentRead.ID = ev.ToolCall.ID
+				}
+				if ev.ToolCall != nil && ev.ToolCall.Name == delegate.Name {
+					delegate.ID = ev.ToolCall.ID
+				}
 				// The parent's own out-of-root Read (call p1) must SUCCEED —
 				// this proves the MAIN session genuinely runs relaxed, so the
 				// child denial below is a real propagation boundary, not a

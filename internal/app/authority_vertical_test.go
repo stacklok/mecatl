@@ -74,12 +74,21 @@ func TestAuthorityEvaluator_VerticalSlice(t *testing.T) {
 		built.Close()
 		t.Fatalf("StartRun: %v", err)
 	}
-	if got := drainRun(run); got != "parent complete" {
+	childID := session.SessionID("")
+	var terminal string
+	for ev := range run.Events() {
+		if ev.Type == session.EvSubagentStart && ev.Subagent != nil {
+			childID = session.SessionID(ev.Subagent.ChildID)
+		}
+		if ev.Result != nil {
+			terminal = ev.Result.Text
+		}
+	}
+	if terminal != "parent complete" {
 		built.Close()
-		t.Fatalf("terminal text = %q, want parent complete", got)
+		t.Fatalf("terminal text = %q, want parent complete", terminal)
 	}
 
-	childID := session.SessionID("subagent-" + string(parent.ID) + "-delegate")
 	child, err := built.Service.GetSession(ctx, childID)
 	if err != nil {
 		built.Close()
@@ -213,16 +222,26 @@ forbid(principal, action, resource) when { resource.path like "` + filepath.ToSl
 	if err != nil {
 		t.Fatalf("StartRun: %v", err)
 	}
-	if got := drainRun(run); got != "parent complete" {
-		t.Fatalf("terminal text = %q, want parent complete", got)
+	var childID session.SessionID
+	var terminal string
+	for ev := range run.Events() {
+		if ev.Type == session.EvSubagentStart && ev.Subagent != nil {
+			childID = session.SessionID(ev.Subagent.ChildID)
+		}
+		if ev.Result != nil {
+			terminal = ev.Result.Text
+		}
+	}
+	if terminal != "parent complete" {
+		t.Fatalf("terminal text = %q, want parent complete", terminal)
 	}
 
-	child, err := built.Service.GetSession(ctx, session.SessionID("subagent-"+string(parent.ID)+"-delegate"))
+	child, err := built.Service.GetSession(ctx, childID)
 	if err != nil {
 		t.Fatalf("GetSession(child): %v", err)
 	}
 	for _, message := range child.Conversation.Messages {
-		if message.Role != session.RoleTool || message.ToolResult == nil || message.ToolResult.CallID != "read" {
+		if message.Role != session.RoleTool || message.ToolResult == nil || message.ToolResult.CallID != boundCallID(t, child, "read") {
 			continue
 		}
 		result := *message.ToolResult
@@ -288,7 +307,7 @@ forbid(principal, action, resource) when { resource.path like "` + filepath.ToSl
 		t.Fatalf("GetSession: %v", err)
 	}
 	for _, message := range stored.Conversation.Messages {
-		if message.Role != session.RoleTool || message.ToolResult == nil || message.ToolResult.CallID != "read" {
+		if message.Role != session.RoleTool || message.ToolResult == nil || message.ToolResult.CallID != boundCallID(t, stored, "read") {
 			continue
 		}
 		if !message.ToolResult.IsError || !strings.Contains(message.ToolResult.Content, "denied by authority") || !strings.Contains(message.ToolResult.Content, "Cedar") {
@@ -335,7 +354,7 @@ func TestAuthorityEvaluator_OwnerlessCompositionUsesLocalEvaluator(t *testing.T)
 		t.Fatalf("GetSession: %v", err)
 	}
 	for _, message := range stored.Conversation.Messages {
-		if message.Role == session.RoleTool && message.ToolResult != nil && message.ToolResult.CallID == "read" {
+		if message.Role == session.RoleTool && message.ToolResult != nil && message.ToolResult.CallID == boundCallID(t, stored, "read") {
 			if message.ToolResult.IsError || !strings.Contains(message.ToolResult.Content, "ownerless readable") {
 				t.Fatalf("ownerless local authority result = %+v, want successful Read", message.ToolResult)
 			}
@@ -382,7 +401,7 @@ func TestAuthorityEvaluator_OwnerlessCedarSessionFailsClosed(t *testing.T) {
 		t.Fatalf("GetSession: %v", err)
 	}
 	for _, message := range stored.Conversation.Messages {
-		if message.Role == session.RoleTool && message.ToolResult != nil && message.ToolResult.CallID == "read" {
+		if message.Role == session.RoleTool && message.ToolResult != nil && message.ToolResult.CallID == boundCallID(t, stored, "read") {
 			if !message.ToolResult.IsError || !strings.Contains(message.ToolResult.Content, "owner identity is unavailable") {
 				t.Fatalf("ownerless Cedar authority result = %+v, want fail-closed identity error", message.ToolResult)
 			}
@@ -468,7 +487,7 @@ func assertAuthorityVerticalMetaTarget(ctx context.Context, t *testing.T, worksp
 		t.Fatalf("GetSession meta parent: %v", err)
 	}
 	for _, message := range resultParent.Conversation.Messages {
-		if message.Role != session.RoleTool || message.ToolResult == nil || message.ToolResult.CallID != "meta" {
+		if message.Role != session.RoleTool || message.ToolResult == nil || message.ToolResult.CallID != boundCallID(t, resultParent, "meta") {
 			continue
 		}
 		if !message.ToolResult.IsError || !strings.Contains(message.ToolResult.Content, target) || !strings.Contains(message.ToolResult.Content, "denied by authority") {
@@ -516,11 +535,11 @@ func assertAuthorityVerticalResults(t *testing.T, child *session.Session, remote
 			results[message.ToolResult.CallID] = *message.ToolResult
 		}
 	}
-	stale, ok := results["stale"]
+	stale, ok := results[boundCallID(t, child, "stale")]
 	if !ok || !stale.IsError || !strings.Contains(stale.Content, "denied by authority") || strings.Contains(stale.Content, "unknown tool") {
 		t.Fatalf("stale disclosure result = %+v, want execute-time authority refusal rather than unknown tool", stale)
 	}
-	read, ok := results["read"]
+	read, ok := results[boundCallID(t, child, "read")]
 	if !ok || read.IsError || !strings.Contains(read.Content, "readable") {
 		t.Fatalf("Read result = %+v, want the allowed workspace read", read)
 	}
@@ -533,7 +552,7 @@ func assertAuthorityVerticalResumeRefusal(t *testing.T, parent *session.Session)
 	t.Helper()
 
 	for _, message := range parent.Conversation.Messages {
-		if message.Role != session.RoleTool || message.ToolResult == nil || message.ToolResult.CallID != "resume" {
+		if message.Role != session.RoleTool || message.ToolResult == nil || message.ToolResult.CallID != boundCallID(t, parent, "resume") {
 			continue
 		}
 		if !message.ToolResult.IsError || !strings.Contains(message.ToolResult.Content, "resumed child authority exceeds current parent authority") {

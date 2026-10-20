@@ -68,8 +68,15 @@ func TestRemoteScheduleCatalogAndPromptThroughFactory(t *testing.T) {
 		t.Fatal(err)
 	}
 	created := false
+	var scheduleCallID session.ToolCallID
 	for ev := range run.Events() {
-		if ev.ToolResult != nil && ev.ToolResult.CallID == "create" {
+		if ev.ToolCall != nil && ev.ToolCall.Name == "Schedule" {
+			scheduleCallID = ev.ToolCall.ID
+			if scheduleCallID == "" || scheduleCallID == "create" {
+				t.Fatal("Schedule event did not carry an accepted canonical call ID")
+			}
+		}
+		if ev.ToolResult != nil && scheduleCallID != "" && ev.ToolResult.CallID == scheduleCallID {
 			if ev.ToolResult.IsError {
 				t.Fatalf("in-chat schedule create failed: %s", ev.ToolResult.Content)
 			}
@@ -256,10 +263,14 @@ func TestRemoteExecutionPreservesOperatorPermissionsUnderAuto(t *testing.T) {
 			}
 			asks := 0
 			results := map[session.ToolCallID]session.ToolResult{}
+			var askedID session.ToolCallID
 			for ev := range run.Events() {
+				if ev.ToolCall != nil && string(ev.ToolCall.Args) == `{"command":"echo asked"}` {
+					askedID = ev.ToolCall.ID
+				}
 				if ev.Ask != nil {
 					asks++
-					if ev.Ask.Call != "asked" || ev.Ask.AskProvenance != governance.AskProvenanceConfigured {
+					if ev.Ask.Call != askedID || ev.Ask.AskProvenance != governance.AskProvenanceConfigured {
 						t.Errorf("unexpected permission ask: %+v", ev.Ask)
 					}
 					if _, err := built.Service.ApproveRun(ctx, sess.ID, ev.Ask.AskID, session.VerdictDeny, ""); err != nil {
@@ -274,8 +285,12 @@ func TestRemoteExecutionPreservesOperatorPermissionsUnderAuto(t *testing.T) {
 			if asks != 1 {
 				t.Errorf("configured asks = %d, want 1", asks)
 			}
-			for _, id := range []session.ToolCallID{"denied", "asked", "allowed", "project-ask"} {
-				result, ok := results[id]
+			loaded, err := built.Service.GetSession(ctx, sess.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, id := range []session.ProviderCallID{"denied", "asked", "allowed", "project-ask"} {
+				result, ok := results[boundCallID(t, loaded, id)]
 				blocked := id == "denied" || id == "asked"
 				if !ok || result.IsError != blocked || strings.Contains(result.Content, "EXECUTED") == blocked {
 					t.Errorf("%s result = %+v, present=%t, want blocked=%t", id, result, ok, blocked)

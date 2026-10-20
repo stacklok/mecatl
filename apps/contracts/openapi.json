@@ -1543,6 +1543,79 @@
                       "items": {
                         "type": "object",
                         "properties": {
+                          "historical": {
+                            "type": "object",
+                            "properties": {
+                              "recordId": {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              "kind": {
+                                "type": "string"
+                              },
+                              "text": {
+                                "type": "string"
+                              },
+                              "attachmentUnavailable": {
+                                "type": "boolean"
+                              },
+                              "parts": {
+                                "type": "array",
+                                "items": {
+                                  "type": "object",
+                                  "properties": {
+                                    "kind": {
+                                      "type": "integer"
+                                    },
+                                    "text": {
+                                      "type": "string"
+                                    },
+                                    "mimeType": {
+                                      "type": "string"
+                                    },
+                                    "data": {
+                                      "type": "object",
+                                      "properties": {
+                                        "encoding": {
+                                          "type": "string",
+                                          "enum": [
+                                            "base64"
+                                          ]
+                                        },
+                                        "data": {
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": [
+                                        "encoding",
+                                        "data"
+                                      ]
+                                    },
+                                    "url": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "kind",
+                                    "text",
+                                    "mimeType",
+                                    "data",
+                                    "url"
+                                  ]
+                                }
+                              }
+                            },
+                            "required": [
+                              "recordId",
+                              "kind",
+                              "text",
+                              "attachmentUnavailable",
+                              "parts"
+                            ]
+                          },
+                          "providerPhase": {
+                            "type": "string"
+                          },
                           "delivery": {
                             "type": "object",
                             "properties": {
@@ -1617,7 +1690,8 @@
                                   "type": "string"
                                 },
                                 "id": {
-                                  "type": "string"
+                                  "type": "string",
+                                  "minLength": 1
                                 },
                                 "name": {
                                   "type": "string"
@@ -1634,7 +1708,8 @@
                             "type": "object",
                             "properties": {
                               "callId": {
-                                "type": "string"
+                                "type": "string",
+                                "minLength": 1
                               },
                               "content": {
                                 "type": "string"
@@ -9521,6 +9596,9 @@
                       "items": {
                         "type": "object",
                         "properties": {
+                          "attachmentUnavailable": {
+                            "type": "boolean"
+                          },
                           "availability": {
                             "type": "string"
                           },
@@ -9542,14 +9620,19 @@
                           "preview": {
                             "type": "string"
                           },
+                          "protocol": {
+                            "type": "string"
+                          },
                           "sessionId": {
                             "type": "string"
                           },
                           "toolCallId": {
-                            "type": "string"
+                            "type": "string",
+                            "minLength": 1
                           }
                         },
                         "required": [
+                          "attachmentUnavailable",
                           "availability",
                           "available",
                           "digest",
@@ -9557,8 +9640,8 @@
                           "locator",
                           "ordinal",
                           "preview",
-                          "sessionId",
-                          "toolCallId"
+                          "protocol",
+                          "sessionId"
                         ]
                       }
                     }

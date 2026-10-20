@@ -156,7 +156,7 @@ func startStartupCompatibilityServer(t *testing.T, service *startupCompatibility
 
 func TestStartupCompatibilityFreshAccepted(t *testing.T) {
 	isolatedEmbeddedTestStorage(t)
-	service := &startupCompatibilityServer{major: 1}
+	service := &startupCompatibilityServer{major: 2}
 	target := startStartupCompatibilityServer(t, service)
 	ran := false
 	err := runWithOptions([]string{"mecatui", "connect", target, "--anonymous"}, runOptions{
@@ -198,7 +198,7 @@ func TestStartupCompatibilityResumeAccepted(t *testing.T) {
 	for _, candidate := range []string{"explicit", "automatic", "auth-recovery"} {
 		t.Run(candidate, func(t *testing.T) {
 			isolatedEmbeddedTestStorage(t)
-			service := &startupCompatibilityServer{major: 1, liveOpened: make(chan struct{})}
+			service := &startupCompatibilityServer{major: 2, liveOpened: make(chan struct{})}
 			target := startStartupCompatibilityServer(t, service)
 			argv := []string{"mecatui", "connect", target, "--anonymous", "--theme=aztec"}
 			wantCalls := []string{"GetCompatibilityInfo", "GetSession", "GetCompatibilityInfo", "GetSessionTranscript"}
@@ -258,7 +258,8 @@ func TestStartupCompatibilityRejectedBeforeFreshOrExplicitResume(t *testing.T) {
 				message string
 				auth    bool
 			}{
-				{name: "newer", major: 2, message: "update mecatui"},
+				{name: "newer", major: 3, message: "update mecatui"},
+				{name: "older", major: 1, message: "update server"},
 				{name: "invalid-zero", message: "invalid compatibility information"},
 				{name: "invalid-negative", major: -1, message: "invalid compatibility information"},
 				{name: "missing", err: status.Error(codes.Unimplemented, "remote-private-detail"), message: "update server"},
@@ -352,7 +353,7 @@ func TestStartupCompatibilityFailedReconnectClosesSourceBeforeRecovery(t *testin
 	if err := os.WriteFile(serverCA, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certificateServer.Certificate().Raw}), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	service := &startupCompatibilityServer{major: 2}
+	service := &startupCompatibilityServer{major: 3}
 	target := startStartupCompatibilityServer(t, service, grpc.Creds(credentials.NewTLS(&tls.Config{
 		Certificates: certificateServer.TLS.Certificates, MinVersion: tls.VersionTLS12,
 	})))
@@ -469,7 +470,7 @@ func TestStartupCompatibilityRejectedBeforeAutomaticOrAuthRecoveryResume(t *test
 	for _, candidate := range []string{"automatic", "auth-recovery"} {
 		t.Run(candidate, func(t *testing.T) {
 			isolatedEmbeddedTestStorage(t)
-			service := &startupCompatibilityServer{major: 2}
+			service := &startupCompatibilityServer{major: 3}
 			target := startStartupCompatibilityServer(t, service)
 			argv := []string{"mecatui", "connect", target, "--anonymous"}
 			options := runOptions{runProgram: func(_ context.Context, model ui.Model) (tea.Model, error) {
@@ -697,13 +698,13 @@ func TestStartupCompatibilitySignalLifecycle(t *testing.T) {
 
 func runStartupCompatibilitySignalChild(t *testing.T, mode string) {
 	isolatedEmbeddedTestStorage(t)
-	service := &startupCompatibilityServer{major: 2, closed: make(chan struct{}, 4)}
+	service := &startupCompatibilityServer{major: 3, closed: make(chan struct{}, 4)}
 	if mode == "preflight" {
 		service.stall = true
 		service.entered = func() { fmt.Println("startup-lifecycle-ready") }
 	}
 	if mode == "reconnect" || mode == "keymap-cleanup" || mode == "normal-cleanup" {
-		service.major = 1
+		service.major = 2
 	}
 	target := startStartupCompatibilityServer(t, service)
 	argv := []string{"mecatui", "connect", target, "--anonymous"}
@@ -788,7 +789,7 @@ func runStartupCompatibilitySignalChild(t *testing.T, mode string) {
 			t.Fatal(err)
 		}
 		// Use a separate server so no fixture state changes beneath an old RPC.
-		success := &startupCompatibilityServer{major: 1}
+		success := &startupCompatibilityServer{major: 2}
 		successTarget := startStartupCompatibilityServer(t, success)
 		runSuccess := func(_ []string, _ runOptions) error {
 			return runWithOptions([]string{"mecatui", "connect", successTarget, "--anonymous"}, runOptions{

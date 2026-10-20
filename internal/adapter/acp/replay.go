@@ -29,11 +29,10 @@ import (
 //     turns locally, and the live prompt path never emits a session/update for the
 //     user's prompt either (see handleSessionPrompt — only the run's Events are
 //     projected, and the prompt text is not one of them).
-//   - Message.Reasoning: this is the OPAQUE provider replay blob (OpenAI's
-//     encrypted_content), NOT human-readable display text. Emitting it would dump
-//     ciphertext into the transcript. The display reasoning SUMMARY (surfaced live
-//     via reasoning.delta) is never stored on the Message, so there is nothing
-//     display-worthy to replay (see Message.Reasoning's doc comment).
+//   - Message.Replay: the OPAQUE provider replay carrier, NOT human-readable
+//     display text. The display reasoning SUMMARY (surfaced live via
+//     reasoning.delta) is never stored on the Message, so there is nothing
+//     display-worthy to replay.
 //   - permission.ask: an out-of-band request_permission, not a session/update; a
 //     resolved historical ask leaves only its tool_call/result in history, which
 //     replay does cover. We never re-prompt the editor on load.
@@ -73,6 +72,10 @@ func historyEvents(c *session.Conversation) []session.Event {
 	}
 	var events []session.Event
 	for _, m := range c.Messages {
+		if historical := session.HistoricalMessage(m); historical != nil {
+			events = append(events, session.Event{Type: session.EvHistorical, Historical: historical})
+			continue
+		}
 		switch m.Role {
 		case session.RoleSystem, session.RoleUser:
 			// Nothing: system prompt is not a transcript entry; the editor renders
@@ -106,7 +109,7 @@ func (a *Agent) replayHistory(ctx context.Context, sessionID string, c *session.
 		return
 	}
 	for _, ev := range historyEvents(c) {
-		if update, ok := projectUpdate(ev); ok {
+		for _, update := range projectUpdates(ev) {
 			a.notifyUpdate(ctx, sessionID, update)
 		}
 	}

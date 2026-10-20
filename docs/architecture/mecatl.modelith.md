@@ -81,7 +81,7 @@ A typed, ordered item on a `Run`'s output stream — the single observable curre
 
 ### `EventLog`
 
-The durable, append-only record of a `Session`'s `Events`, distinct from the transient stream the loop emits. It is the source of truth for replaying state the `Session` snapshot does not carry — learned `PermissionRules`, the pre-compaction `Conversation` archive, and the user-role turns (the log-only `EvUserPrompt`) — when a `Session` is rehydrated after a restart. Because it carries the user turns alongside the assistant/tool `Events`, a host whose system of record IS the log can reconstruct the whole `Session` by FOLDING the stream (the event-sourced rehydration path), not only top up a snapshot (structural reconstruction; a pure fold is byte-identical-replay only for providers not using the opaque reasoning-replay fields — Reasoning/ProviderPhase/ToolCall.ItemID are not on the event stream).
+The durable, append-only record of a `Session`'s `Events`, distinct from the transient stream the loop emits. It is the source of truth for replaying state the `Session` snapshot does not carry — learned `PermissionRules`, the pre-compaction `Conversation` archive, and the user-role turns (the log-only `EvUserPrompt`) — when a `Session` is rehydrated after a restart. Because it carries the user turns alongside the assistant/tool `Events`, a host whose system of record IS the log can reconstruct the whole `Session` by FOLDING the stream (the event-sourced rehydration path), not only top up a snapshot. A pure fold reconstructs structural history; exact provider replay requires the private replay data and pairing bindings owned by the `Session` snapshot.
 
 **Relationships**
 
@@ -175,7 +175,7 @@ Durable, tiered knowledge a `Session` can write (Remember) and read back (Recall
 
 ### `Message`
 
-One entry in a `Conversation`, attributed to a role (user, assistant, or tool). An assistant `Message` may carry text, an opaque reasoning blob, and one or more `ToolCalls`; a tool `Message` carries a `ToolResult`. `Messages` are immutable once recorded.
+One entry in a `Conversation`, attributed to a role (user, assistant, or tool). An assistant `Message` may carry text and one or more `ToolCalls`; a tool `Message` carries a `ToolResult`. The `Session` owns opaque, provider-specific replay data and occurrence-specific provider pairing bindings alongside each assistant `Message`. `Messages` are immutable once recorded.
 
 **Relationships**
 
@@ -470,7 +470,7 @@ A capability the model can invoke by name — Read, ListDir, Edit, Write, Copy, 
 
 ### `ToolCall`
 
-A single request by the model to invoke a `Tool` with concrete arguments, issued within a `Turn`. It must be authorized by the permission model before it executes, and it produces exactly one `ToolResult`.
+A single request by the model to invoke a `Tool` with concrete arguments, issued within a `Turn`. Its globally unique engine identity is distinct from the `Provider`'s call/result pairing token. It must be authorized by the permission model before it executes, and it produces exactly one `ToolResult`. Copies of the same historical invocation retain its identity.
 
 **Relationships**
 

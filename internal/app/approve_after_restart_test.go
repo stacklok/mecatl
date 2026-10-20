@@ -86,9 +86,11 @@ func TestApproveAfterRestartE2E(t *testing.T) {
 		t.Fatalf("StartRun (pre-restart): %v", err)
 	}
 	var askID, runID string
+	var callID session.ToolCallID
 	for ev := range run1.Events() {
 		if ev.Type == session.EvPermissionAsk && ev.Ask != nil && askID == "" {
 			askID = ev.Ask.AskID
+			callID = ev.Ask.Call
 			runID = ev.RunID
 			// Model the relay's Persist-on-ask: a durable StateAwaiting snapshot.
 			built1.Service.Persist(ctx, sess.ID)
@@ -172,7 +174,7 @@ func TestApproveAfterRestartE2E(t *testing.T) {
 			if ev.RunID != runID {
 				continue
 			}
-			if ev.Type == "tool.result" && ev.ToolResult != nil && ev.ToolResult.CallID == "w1" {
+			if ev.Type == "tool.result" && ev.ToolResult != nil && ev.ToolResult.CallID == string(callID) {
 				totalResults++
 				if !ev.ToolResult.IsError {
 					nonErrorResults++

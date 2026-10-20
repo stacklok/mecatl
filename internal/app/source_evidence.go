@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 
+	"github.com/stacklok/mecatl/engine/adapter/eventcodec"
 	"github.com/stacklok/mecatl/engine/adapter/eventsource"
 	"github.com/stacklok/mecatl/engine/learning"
 	"github.com/stacklok/mecatl/engine/port"
@@ -82,7 +83,7 @@ func (l *learningEvidenceLoader) loadForExecution(ctx context.Context, partition
 		return unavailable()
 	}
 
-	runEvents, terminal, _, readState := l.readExactRun(ctx, provenance.Source)
+	runEvents, terminal, _, readState := l.readExactRun(ctx, provenance.Source, sess.Incarnation())
 	if readState == evidenceReadIncomplete {
 		return learning.Input{}, learning.Projection{}, learning.FailureNone, errLearningEvidenceNotReady
 	}
@@ -93,7 +94,13 @@ func (l *learningEvidenceLoader) loadForExecution(ctx context.Context, partition
 	if bound, ok := sess.BoundAuthority(); ok {
 		authority = &bound
 	}
+	projectedEvents, err := eventcodec.Project(runEvents, sess.Incarnation())
+	if err != nil {
+		return unavailable()
+	}
+	runEvents = projectedEvents.Events
 	reconstructed, err := eventsource.Fold(eventsource.SessionMeta{
+		Incarnation:         sess.Incarnation(),
 		Owner:               sess.Owner.Clone(),
 		Authority:           authority,
 		ID:                  sess.ID,
@@ -151,14 +158,21 @@ func (l *learningEvidenceLoader) loadForExecution(ctx context.Context, partition
 	input = learning.NewInput(trajectory, runEvents, nil, nil)
 	digest, err := automaticTrajectoryDigest(input)
 	if err != nil || learning.CanonicalDigest(digest) != provenance.Source.CanonicalDigest {
-		return unavailable()
+		input, err = learning.LegacyVerificationInput(trajectory, runEvents)
+		if err != nil {
+			return unavailable()
+		}
+		digest, err = automaticTrajectoryDigest(input)
+		if err != nil || learning.CanonicalDigest(digest) != provenance.Source.CanonicalDigest {
+			return unavailable()
+		}
 	}
 	signals := learning.DetectSignals(input)
 	if provenance.Class == learning.AdmissionHostRequested {
 		signals = append(signals, learning.Signal{Kind: learning.SignalHostRequested})
 	}
-	input = learning.NewInput(trajectory, runEvents, signals, nil)
-	projection, err := learning.ProjectInput(input)
+	input.Signals = signals
+	projection, err := learning.ProjectVerifiedInput(input)
 	if err != nil {
 		return unavailable()
 	}
@@ -166,15 +180,30 @@ func (l *learningEvidenceLoader) loadForExecution(ctx context.Context, partition
 }
 
 //nolint:gocyclo // exact-run ordering and compaction form a deliberately closed event state machine
-func (l *learningEvidenceLoader) readExactRun(ctx context.Context, source learning.AttemptSource) ([]session.Event, session.ResultPayload, bool, evidenceReadState) {
+func (l *learningEvidenceLoader) readExactRun(ctx context.Context, source learning.AttemptSource, incarnation session.IncarnationID) ([]session.Event, session.ResultPayload, bool, evidenceReadState) {
 	events := make([]session.Event, 0, 16)
 	var terminal session.ResultPayload
 	var previous int64
 	seenRun, leftRun, seenTerminal := false, false, false
 	compactionPending, archiveOK := false, false
 	read := 0
+	ordinal := 0
 
 	consume := func(event session.Event) (done, valid bool) {
+		originalOrdinal := ordinal
+		ordinal++
+		if p := event.LegacyIdentity(); p != nil && p.Incarnation != "" && p.Incarnation != incarnation {
+			return false, false
+		}
+		projected, err := eventcodec.ProjectRecord(event, incarnation, originalOrdinal)
+		if err != nil {
+			return false, false
+		}
+		// Sparse display projection must not erase persisted occurrence bindings
+		// before the complete run is projected below.
+		if projected.CompactionArchive != nil {
+			event.CompactionArchive = projected.CompactionArchive
+		}
 		if event.RunID != string(source.RunID) {
 			if seenRun && event.RunID != "" {
 				leftRun = true

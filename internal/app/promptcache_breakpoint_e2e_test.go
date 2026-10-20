@@ -399,13 +399,13 @@ func driveCacheRichStream(p port.LLMProvider) error {
 			StablePrefix:   "You are a coding agent.",
 			VolatileSuffix: "Current directory: /tmp",
 		},
-		Messages: []session.Message{
-			session.NewUserMessage("summarise the architecture"),
-			session.NewAssistantMessage("Reading now.", "", []session.ToolCall{
+		Messages: []port.LLMMessage{
+			{Role: session.RoleUser, Text: "summarise the architecture"},
+			{Role: session.RoleAssistant, Text: "Reading now.", ToolCalls: []port.LLMToolCall{
 				{ID: "call_1", Name: "Read", Args: json.RawMessage(`{"file_path":"/a"}`)},
-			}),
-			session.NewToolMessage(session.NewToolResult("call_1", "package a")),
-			session.NewUserMessage("now the tests"),
+			}},
+			{Role: session.RoleTool, ToolResult: &port.LLMToolResult{CallID: "call_1", Content: "package a"}},
+			{Role: session.RoleUser, Text: "now the tests"},
 		},
 	})
 	if err != nil {

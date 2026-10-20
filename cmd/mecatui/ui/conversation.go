@@ -147,15 +147,13 @@ func traceAppendTool(trace []teamTrace, id, name, detail string, lane ...string)
 	})
 }
 
-// A result can resolve only an exact retained pending ID, or an unambiguous
-// ID-less legacy call of the same name. An ID-less match stays conservative
-// after eviction or ambiguity; a canonical result may replace a provisional
-// result only for an exact ID in the same lane.
-func traceMarkToolResult(trace []teamTrace, id, name, detail string, isError bool, lane ...string) []teamTrace {
-	return traceSetToolResult(trace, id, name, detail, isError, false, lane...)
+// A result can resolve only an exact retained ID in the same lane.
+// Canonical confirmation may replace a provisional result.
+func traceMarkToolResult(trace []teamTrace, id, detail string, isError bool, lane ...string) []teamTrace {
+	return traceSetToolResult(trace, id, detail, isError, false, lane...)
 }
 
-func traceSetToolResult(trace []teamTrace, id, name, detail string, isError, available bool, lane ...string) []teamTrace {
+func traceSetToolResult(trace []teamTrace, id, detail string, isError, available bool, lane ...string) []teamTrace {
 	if id != "" && !admitTraceID(id) {
 		return trace
 	}
@@ -163,7 +161,7 @@ func traceSetToolResult(trace []teamTrace, id, name, detail string, isError, ava
 	if len(lane) != 0 {
 		child = lane[0]
 	}
-	match := traceResultMatch(trace, id, name, child, !available)
+	match := traceResultMatch(trace, id, child, !available)
 	if match >= 0 {
 		trace[match].resolved, trace[match].isError, trace[match].provisional = true, isError, available
 		if detail != "" {
@@ -173,7 +171,7 @@ func traceSetToolResult(trace []teamTrace, id, name, detail string, isError, ava
 	return trace
 }
 
-func traceResultMatch(trace []teamTrace, id, name, child string, canonical bool) int {
+func traceResultMatch(trace []teamTrace, id, child string, canonical bool) int {
 	if id != "" {
 		match := -1
 		for i, t := range trace {
@@ -186,33 +184,7 @@ func traceResultMatch(trace []teamTrace, id, name, child string, canonical bool)
 		}
 		return match
 	}
-	return traceLegacyResultMatch(trace, name, child)
-}
-
-func traceLegacyResultMatch(trace []teamTrace, name, child string) int {
-	if name == "" {
-		return -1
-	}
-	blocked := false
-	for i := len(trace) - 1; i >= 0; i-- {
-		if trace[i].lane == child {
-			blocked = trace[i].blocked
-			break
-		}
-	}
-	if blocked {
-		return -1
-	}
-	match := -1
-	for i, t := range trace {
-		if t.lane == child && t.kind == teamTraceTool && t.name == name {
-			if match >= 0 || t.resolved || t.id != "" {
-				return -1
-			}
-			match = i
-		}
-	}
-	return match
+	return -1
 }
 
 // teamLane is the live projection of one team member's activity, accumulated from
@@ -487,13 +459,33 @@ func (c *conversation) addTurnStat(text string) {
 	c.scrollback.Notices().AddTurnStat(text)
 }
 
+func (c *conversation) addHistorical(record client.HistoricalRecord) {
+	text := "historical " + record.Kind
+	if record.AttachmentUnavailable {
+		text += " — invocation association unavailable"
+	}
+	if record.Text != "" {
+		text += "\n" + record.Text
+	}
+	for _, part := range record.Parts {
+		if part.Text != "" {
+			text += "\n" + part.Text
+		}
+		if line, ok := renderResultBlockLine(part); ok {
+			text += "\n" + line
+		} else if part.Kind == client.ContentBlockAudio {
+			text += "\n[audio: " + part.MimeType + "]"
+		}
+	}
+	c.scrollback.Notices().AddNoticeWithArtifacts(text, artifacts(record.Parts))
+}
+
 func (c *conversation) addTool(id, name, args string) {
 	c.scrollback.Tools().Add(scrollback.ToolCall{ID: id, Name: name, Arguments: args})
 }
 
-// reconcileUnresolvedTool updates the snapshot card for a replayed call. Recovery
-// scopes callers to unresolved calls from the adopted transcript, so reused IDs in
-// later turns still append normally.
+// reconcileUnresolvedTool updates the exact canonical snapshot card for a replayed
+// call during pending-approval recovery.
 func (c *conversation) reconcileUnresolvedTool(id, name, args string) bool {
 	return c.scrollback.Tools().ReconcileUnresolved(scrollback.ToolCall{ID: id, Name: name, Arguments: args})
 }
@@ -543,9 +535,9 @@ func routeTraceEvent(trace []teamTrace, current, innerKind, id, toolName, detail
 	case "message.delta", "result":
 		trace = traceAppendMessage(trace, text, lane...)
 	case "tool.result":
-		trace = traceMarkToolResult(trace, id, toolName, detail, isError, lane...)
+		trace = traceMarkToolResult(trace, id, detail, isError, lane...)
 	case "tool.result.available":
-		trace = traceSetToolResult(trace, id, toolName, detail, isError, true, lane...)
+		trace = traceSetToolResult(trace, id, detail, isError, true, lane...)
 	default: // "tool.call" — or an older server's kind-less subagent.tool/branch_tool
 		if toolName != "" {
 			current = toolName

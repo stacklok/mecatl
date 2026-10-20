@@ -11,6 +11,15 @@ import (
 	"github.com/stacklok/mecatl/engine/session"
 )
 
+func assistantWithReplay(text, private string, calls []session.ToolCall) session.Message {
+	m := session.NewAssistantMessage(text, calls)
+	m.Replay = &session.MessageReplay{Provider: &session.ProviderReplay{Format: "test-private", Version: 1, Data: []byte(private)}}
+	for _, call := range calls {
+		m.Replay.Bindings = append(m.Replay.Bindings, session.ToolCallBinding{CallID: call.ID, PairingID: session.ProviderCallID(call.ID)})
+	}
+	return m
+}
+
 type countingCanonicalEvidenceReflector struct {
 	calls int
 }
@@ -33,7 +42,7 @@ func TestWorkerSourceAuthorityFailsClosedWithoutIdentityOracle(t *testing.T) {
 	}
 	if err := source.SeedHistory([]session.Message{
 		session.NewUserMessage("historical request"),
-		session.NewAssistantMessage("historical answer", "", nil),
+		session.NewAssistantMessage("historical answer", nil),
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -44,7 +53,7 @@ func TestWorkerSourceAuthorityFailsClosedWithoutIdentityOracle(t *testing.T) {
 	if err := source.BeginTurn(); err != nil {
 		t.Fatal(err)
 	}
-	if err := source.RecordAssistant(session.NewAssistantMessage("done", "private reasoning", nil)); err != nil {
+	if err := source.RecordAssistant(assistantWithReplay("done", "private reasoning", nil)); err != nil {
 		t.Fatal(err)
 	}
 	usage := session.Usage{InputTokens: 10, OutputTokens: 2}
@@ -116,7 +125,7 @@ func TestWorkerSourceAuthorityFailsClosedWithoutIdentityOracle(t *testing.T) {
 	if len(projection.Messages) != 2 || len(projection.Events) != 8 {
 		t.Fatalf("coalesced projection shape = %d messages, %d events", len(projection.Messages), len(projection.Events))
 	}
-	if projection.Messages[1].Text != "done" || projection.Messages[1].Text == source.Conversation.Messages[3].Reasoning {
+	if projection.Messages[1].Text != "done" || projection.Messages[1].Text == string(source.Conversation.Messages[3].Replay.Provider.Data) {
 		t.Fatalf("canonical projection leaked or lost fields: %+v", projection.Messages[1])
 	}
 
@@ -258,7 +267,7 @@ func TestWorkerSourceAuthorityFailsClosedWithoutIdentityOracle(t *testing.T) {
 	if err := compacted.BeginTurn(); err != nil {
 		t.Fatal(err)
 	}
-	if err := compacted.RecordAssistant(session.NewAssistantMessage("done", "", nil)); err != nil {
+	if err := compacted.RecordAssistant(session.NewAssistantMessage("done", nil)); err != nil {
 		t.Fatal(err)
 	}
 	if err := compacted.Complete(); err != nil {
@@ -302,7 +311,7 @@ func TestWorkerSourceAuthorityFailsClosedWithoutIdentityOracle(t *testing.T) {
 	archiveEvents := memstore.NewEventLog()
 	archiveHistory := []session.Message{
 		session.NewUserMessage("archived private request"),
-		session.NewAssistantMessage("archived private answer", "", nil),
+		session.NewAssistantMessage("archived private answer", nil),
 		session.NewUserMessage("Create a skill from this workflow"),
 	}
 	for _, event := range []session.Event{
@@ -348,7 +357,7 @@ func TestLearningEvidenceLoader_LoadsSourceRunAfterSnapshotAdvances(t *testing.T
 	if err := source.BeginTurn(); err != nil {
 		t.Fatal(err)
 	}
-	if err := source.RecordAssistant(session.NewAssistantMessage("run A digest", "private A reasoning", nil)); err != nil {
+	if err := source.RecordAssistant(assistantWithReplay("run A digest", "private A reasoning", nil)); err != nil {
 		t.Fatal(err)
 	}
 	usageA := session.Usage{InputTokens: 7, OutputTokens: 3}
@@ -404,7 +413,7 @@ func TestLearningEvidenceLoader_LoadsSourceRunAfterSnapshotAdvances(t *testing.T
 	if err := source.BeginTurn(); err != nil {
 		t.Fatal(err)
 	}
-	if err := source.RecordAssistant(session.NewAssistantMessage("run B contamination", "", nil)); err != nil {
+	if err := source.RecordAssistant(session.NewAssistantMessage("run B contamination", nil)); err != nil {
 		t.Fatal(err)
 	}
 	if err := source.Stop(session.StopBudget); err != nil {

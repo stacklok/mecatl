@@ -52,7 +52,7 @@ func (p *evidenceBuildProvider) Stream(ctx context.Context, req port.LLMRequest)
 	var chunks []port.Chunk
 	switch p.call {
 	case 0:
-		chunks = toolCallChunks(session.NewToolCall("shell-call", "Shell", json.RawMessage(`{"command":"./review-script.sh"}`)))
+		chunks = toolCallChunks(port.LLMToolCall{ID: "shell-call", Name: "Shell", Args: json.RawMessage(`{"command":"./review-script.sh"}`)})
 	case 1:
 		for _, message := range req.Messages {
 			p.prompt += message.Text
@@ -71,7 +71,7 @@ func (p *evidenceBuildProvider) Stream(ctx context.Context, req port.LLMRequest)
 		}
 		p.handle = p.handles[0]
 		args, _ := json.Marshal(map[string]string{"review_id": p.reviewID, "handle": p.handle, "version": p.version})
-		chunks = toolCallChunks(session.NewToolCall("read-evidence", readReviewEvidenceToolName, args))
+		chunks = toolCallChunks(port.LLMToolCall{ID: "read-evidence", Name: readReviewEvidenceToolName, Args: args})
 	case 2:
 		for _, message := range req.Messages {
 			if message.ToolResult != nil && strings.Contains(message.ToolResult.Content, "SCRIPT_EVIDENCE_MARKER") {
@@ -80,7 +80,7 @@ func (p *evidenceBuildProvider) Stream(ctx context.Context, req port.LLMRequest)
 		}
 		if len(p.handles) > 1 {
 			args, _ := json.Marshal(map[string]string{"review_id": p.reviewID, "handle": p.handles[1], "version": p.version})
-			chunks = toolCallChunks(session.NewToolCall("read-evidence-2", readReviewEvidenceToolName, args))
+			chunks = toolCallChunks(port.LLMToolCall{ID: "read-evidence-2", Name: readReviewEvidenceToolName, Args: args})
 			break
 		}
 		chunks = p.submitChunks()
@@ -106,7 +106,7 @@ func (p *evidenceBuildProvider) Stream(ctx context.Context, req port.LLMRequest)
 
 func (p *evidenceBuildProvider) submitChunks() []port.Chunk {
 	if !p.sawContents {
-		call := session.NewToolCall("submit-missing", submitReviewAssessmentToolName, json.RawMessage(`{"assessment":"unresolved","concerns":[],"evidence":[],"missing_evidence":[{"ref":"script","kind":"content","handle":"","reason":"script contents missing"}]}`))
+		call := port.LLMToolCall{ID: "submit-missing", Name: submitReviewAssessmentToolName, Args: json.RawMessage(`{"assessment":"unresolved","concerns":[],"evidence":[],"missing_evidence":[{"ref":"script","kind":"content","handle":"","reason":"script contents missing"}]}`)}
 		return toolCallChunks(call)
 	}
 	uses := make([]any, 0, len(p.handles))
@@ -114,7 +114,7 @@ func (p *evidenceBuildProvider) submitChunks() []port.Chunk {
 		uses = append(uses, map[string]any{"handle": handle, "version": p.version, "supports": []string{"call"}})
 	}
 	args, _ := json.Marshal(map[string]any{"assessment": "acceptable", "concerns": []any{}, "evidence": uses, "missing_evidence": []any{}})
-	return toolCallChunks(session.NewToolCall("submit-review", submitReviewAssessmentToolName, args))
+	return toolCallChunks(port.LLMToolCall{ID: "submit-review", Name: submitReviewAssessmentToolName, Args: args})
 }
 
 type deniedEvidenceBuildProvider struct {
@@ -137,7 +137,7 @@ func (p *deniedEvidenceBuildProvider) Stream(_ context.Context, req port.LLMRequ
 		chunks = []port.Chunk{{Kind: port.ChunkText, Text: `{"assessment":"acceptable","concerns":[],"evidence":[],"missing_evidence":[]}`}, {Kind: port.ChunkDone, Stop: session.StopEndTurn}}
 	} else if p.mainCalls == 0 {
 		p.mainCalls++
-		chunks = toolCallChunks(session.NewToolCall("shell-call", tool.ShellToolName, json.RawMessage(`{"command":"./secret-script.sh"}`)))
+		chunks = toolCallChunks(port.LLMToolCall{ID: "shell-call", Name: tool.ShellToolName, Args: json.RawMessage(`{"command":"./secret-script.sh"}`)})
 	} else {
 		p.mainCalls++
 		chunks = []port.Chunk{{Kind: port.ChunkText, Text: "done"}, {Kind: port.ChunkDone, Stop: session.StopEndTurn}}
@@ -151,7 +151,7 @@ func (p *deniedEvidenceBuildProvider) Stream(_ context.Context, req port.LLMRequ
 	}, nil
 }
 
-func toolCallChunks(call session.ToolCall) []port.Chunk {
+func toolCallChunks(call port.LLMToolCall) []port.Chunk {
 	return []port.Chunk{{Kind: port.ChunkToolCall, ToolCall: &call}, {Kind: port.ChunkUsage, Usage: &session.Usage{}}, {Kind: port.ChunkDone, Stop: session.StopEndTurn}}
 }
 
@@ -327,7 +327,7 @@ func (p *authorityBeforeReviewProvider) Stream(_ context.Context, req port.LLMRe
 		chunks = []port.Chunk{{Kind: port.ChunkDone, Stop: session.StopEndTurn}}
 	} else if p.mainCalls == 0 {
 		p.mainCalls++
-		chunks = toolCallChunks(session.NewToolCall("grep-denied", "Grep", json.RawMessage(`{"path":"b","pattern":"x"}`)))
+		chunks = toolCallChunks(port.LLMToolCall{ID: "grep-denied", Name: "Grep", Args: json.RawMessage(`{"path":"b","pattern":"x"}`)})
 	} else {
 		p.mainCalls++
 		chunks = []port.Chunk{{Kind: port.ChunkText, Text: "done"}, {Kind: port.ChunkDone, Stop: session.StopEndTurn}}
@@ -500,7 +500,7 @@ func (p *listDirReviewProvider) Stream(_ context.Context, req port.LLMRequest) (
 		}
 	} else if p.mainCalls == 0 {
 		p.mainCalls++
-		chunks = toolCallChunks(session.NewToolCall("list-workspace", "ListDir", json.RawMessage(`{"path":"."}`)))
+		chunks = toolCallChunks(port.LLMToolCall{ID: "list-workspace", Name: "ListDir", Args: json.RawMessage(`{"path":"."}`)})
 	} else {
 		p.mainCalls++
 		for _, message := range req.Messages {
@@ -594,7 +594,7 @@ func TestReviewEvidencePathsSkipsListDirDirectoryOperand(t *testing.T) {
 type conflictingReadEvidenceProvider struct {
 	readArgs                  json.RawMessage
 	mu                        sync.Mutex
-	readResult                *session.ToolResult
+	readResult                *port.LLMToolResult
 	mainCalls, reviewCalls    int
 	handle, version, reviewID string
 	evidence                  string
@@ -625,14 +625,14 @@ func (p *conflictingReadEvidenceProvider) Stream(_ context.Context, req port.LLM
 		}
 		if p.handle != "" && p.evidence == "" {
 			args, _ := json.Marshal(map[string]string{"review_id": p.reviewID, "handle": p.handle, "version": p.version})
-			chunks = toolCallChunks(session.NewToolCall("read-evidence", readReviewEvidenceToolName, args))
+			chunks = toolCallChunks(port.LLMToolCall{ID: "read-evidence", Name: readReviewEvidenceToolName, Args: args})
 		} else {
 			args, _ := json.Marshal(map[string]any{"assessment": "acceptable", "concerns": []any{}, "evidence": []any{map[string]any{"handle": p.handle, "version": p.version, "supports": []string{"call"}}}, "missing_evidence": []any{}})
-			chunks = toolCallChunks(session.NewToolCall("submit-review", submitReviewAssessmentToolName, args))
+			chunks = toolCallChunks(port.LLMToolCall{ID: "submit-review", Name: submitReviewAssessmentToolName, Args: args})
 		}
 	} else if p.mainCalls == 0 {
 		p.mainCalls++
-		chunks = toolCallChunks(session.NewToolCall("read-conflict", "Read", p.readArgs))
+		chunks = toolCallChunks(port.LLMToolCall{ID: "read-conflict", Name: "Read", Args: p.readArgs})
 	} else {
 		p.mainCalls++
 		for _, message := range req.Messages {

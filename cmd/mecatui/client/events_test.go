@@ -80,7 +80,7 @@ func logOnlyScript() []*mecatlv1.Event {
 		{Type: "compaction.archive", CompactionArchive: &mecatlv1.CompactionArchive{
 			Replaced: []*mecatlv1.ConversationMessage{
 				{Role: "user", Text: "old task"},
-				{Role: "assistant", Text: "old answer", Reasoning: "thought", ProviderPhase: "commentary", ReasoningItemId: "rs_old",
+				{Role: "assistant", Text: "old answer", ProviderPhase: "commentary",
 					ToolCalls:  []*mecatlv1.ToolCall{{Id: "call-old", Name: "Read", Args: `{"path":"x"}`}},
 					ToolResult: &mecatlv1.ToolResult{CallId: "call-old", Content: "ok", IsError: false, StructuredContent: `{"k":1}`}},
 			},
@@ -208,7 +208,7 @@ func TestReplayReadLoopLogOnlyKinds(t *testing.T) {
 	if ca.Replaced[0].Role != "user" || ca.Replaced[0].Text != "old task" {
 		t.Errorf("replaced[0] = %#v", ca.Replaced[0])
 	}
-	if ca.Replaced[1].Role != "assistant" || ca.Replaced[1].Text != "old answer" || ca.Replaced[1].Reasoning != "thought" || ca.Replaced[1].ProviderPhase != "commentary" || ca.Replaced[1].ReasoningItemID != "rs_old" {
+	if ca.Replaced[1].Role != "assistant" || ca.Replaced[1].Text != "old answer" || ca.Replaced[1].ProviderPhase != "commentary" {
 		t.Errorf("replaced[1] = %#v", ca.Replaced[1])
 	}
 	if len(ca.Replaced[1].ToolCalls) != 1 || ca.Replaced[1].ToolCalls[0].ID != "call-old" || ca.Replaced[1].ToolCalls[0].Name != "Read" {

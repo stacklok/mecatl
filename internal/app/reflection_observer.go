@@ -711,7 +711,7 @@ func processReflectionOutcome(
 		}
 		var records []learning.ProposalRecord
 		var err error
-		if input.Manifest != nil && input.Manifest.Protocol == learning.ReflectionEvidenceV1 {
+		if input.Manifest != nil && learning.ManifestProtocolSupported(input.Manifest.Protocol, input.Manifest.Source.Domain) {
 			manifestRepo, ok := repository.(proposalManifestRepository)
 			if !ok {
 				return receipt, learning.ErrInvalidProposal

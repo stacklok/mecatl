@@ -162,9 +162,7 @@ describe("session projections", () => {
       messages: [
         {
           parts: [{ data: new Uint8Array([1, 2]), kind: 1, mimeType: "image/png" }],
-          providerPhase: "private-phase",
-          reasoning: "private-reasoning",
-          reasoningItemId: "private-id",
+          providerPhase: "commentary",
           role: "assistant",
           text: "hello",
           toolCalls: [{ args: "{}", id: "call", name: "Read" }],
@@ -193,6 +191,7 @@ describe("session projections", () => {
       messages: [
         {
           parts: [{ data: new Uint8Array([1, 2]), kind: 1, mimeType: "image/png", url: "" }],
+          providerPhase: "commentary",
           role: "assistant",
           text: "hello",
           toolCalls: [{ args: "{}", id: "call", name: "Read" }],
@@ -209,7 +208,7 @@ describe("session projections", () => {
       sessionId: "session",
     });
     expect(transcript?.messages[0]).not.toHaveProperty("reasoning");
-    expect(transcript?.messages[0]).not.toHaveProperty("providerPhase");
+    expect(transcript?.messages[0]?.providerPhase).toBe("commentary");
     expect(transcript?.messages[0]).not.toHaveProperty("reasoningItemId");
 
     const protoMessage = proto.messages[0];
@@ -235,7 +234,7 @@ describe("session projections", () => {
         router.service(HarnessService, {
           createSession: () => ({ sessionId: "session" }),
           getCompatibilityInfo: () => ({
-            apiMajor: 1,
+            apiMajor: 2,
             capabilities: {},
             features: ["server_info"],
           }),
@@ -337,16 +336,7 @@ describe("session projections", () => {
       "unavailableReason",
     ]);
     expect(fields(ConversationMessageSchema)).toEqual(
-      [
-        "parts",
-        "providerPhase",
-        "reasoning",
-        "reasoningItemId",
-        "role",
-        "text",
-        "toolCalls",
-        "toolResult",
-      ].sort(),
+      ["parts", "providerPhase", "historical", "role", "text", "toolCalls", "toolResult"].sort(),
     );
   });
 });

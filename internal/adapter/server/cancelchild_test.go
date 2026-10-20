@@ -404,7 +404,7 @@ func TestGRPCConverseCancelTeamMember(t *testing.T) {
 	// The published team id is namespaced under the parent session id (review
 	// finding 2, issue #368): the server-generated session id + the Team call
 	// id "p1".
-	if want := "team-" + cs.GetSessionId() + "-p1-worker"; gotID != want {
+	if want := "team-" + cs.GetSessionId() + "-" + teamEnd.GetParentCallId() + "-worker"; teamEnd == nil || teamEnd.GetParentCallId() == "" || gotID != want {
 		t.Fatalf("member_session_id = %q, want %q (MemberSessionID of the published team id)", gotID, want)
 	}
 	if teamEnd == nil {

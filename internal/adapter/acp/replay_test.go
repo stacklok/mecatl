@@ -13,11 +13,11 @@ import (
 func TestHistoryEventsOrder(t *testing.T) {
 	c := &session.Conversation{Messages: []session.Message{
 		session.NewUserMessage("please read"),
-		session.NewAssistantMessage("looking", "", []session.ToolCall{
+		session.NewAssistantMessage("looking", []session.ToolCall{
 			session.NewToolCall("c1", "Read", json.RawMessage(`{"path":"/x"}`)),
 		}),
 		session.NewToolMessage(session.NewToolResult("c1", "ok")),
-		session.NewAssistantMessage("all done", "", nil),
+		session.NewAssistantMessage("all done", nil),
 	}}
 
 	evs := historyEvents(c)
@@ -71,11 +71,11 @@ func TestHistoryEventsSystemAndUserDropped(t *testing.T) {
 }
 
 // TestHistoryEventsReasoningNotReplayed asserts an assistant message that carries
-// only the opaque Reasoning replay blob (no text, no tool calls) yields no events
+// only opaque replay (no text, no tool calls) yields no events
 // — the encrypted blob must never be surfaced as a thought chunk.
 func TestHistoryEventsReasoningNotReplayed(t *testing.T) {
 	c := &session.Conversation{Messages: []session.Message{
-		session.NewAssistantMessage("", "OPAQUE-ENCRYPTED-REASONING-BLOB", nil),
+		{Role: session.RoleAssistant, Replay: &session.MessageReplay{Provider: &session.ProviderReplay{Format: "private", Version: 1, Data: []byte("OPAQUE-ENCRYPTED-REASONING-BLOB")}}},
 	}}
 	if evs := historyEvents(c); len(evs) != 0 {
 		t.Fatalf("got %d events, want 0 (reasoning blob not replayed): %+v", len(evs), evs)
@@ -87,7 +87,7 @@ func TestHistoryEventsReasoningNotReplayed(t *testing.T) {
 // tool_call_update.
 func TestHistoryEventsErrorResultPreserved(t *testing.T) {
 	c := &session.Conversation{Messages: []session.Message{
-		session.NewAssistantMessage("", "", []session.ToolCall{
+		session.NewAssistantMessage("", []session.ToolCall{
 			session.NewToolCall("c1", "Read", json.RawMessage(`{"path":"/x"}`)),
 		}),
 		session.NewToolMessage(session.NewToolError("c1", "boom")),
@@ -108,7 +108,7 @@ func TestHistoryEventsErrorResultPreserved(t *testing.T) {
 // tool-role messages), so no card is ever updated before it is opened.
 func TestHistoryEventsMultiCallOrdering(t *testing.T) {
 	c := &session.Conversation{Messages: []session.Message{
-		session.NewAssistantMessage("reading two files", "", []session.ToolCall{
+		session.NewAssistantMessage("reading two files", []session.ToolCall{
 			session.NewToolCall("c1", "Read", json.RawMessage(`{"path":"/a"}`)),
 			session.NewToolCall("c2", "Read", json.RawMessage(`{"path":"/b"}`)),
 		}),

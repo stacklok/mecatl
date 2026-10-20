@@ -668,13 +668,10 @@ approval control. Message text remains a sanitized human diagnostic on Event.tex
 
 #### `mecatl.v1.ConversationMessage`
 
-ConversationMessage is the proto projection of one session.Message (an immutable
-entry in the model-visible conversation history). It exists so the
-CompactionArchive payload can carry a message slice — the live Converse wire has
-no message-slice surface (the relay streams events, not history), so this type is
-introduced here for the replay path. It mirrors the Message value object: Role +
-Text + the assistant&#39;s ToolCalls + an optional tool-role ToolResult + the opaque
-provider replay blobs (Reasoning / ProviderPhase) + the user-role media Parts.
+ConversationMessage is the public display projection of one session.Message,
+shared by snapshot transcripts and compaction archives. It preserves readable
+text/media, canonical calls/results, and presentation phase, never private
+provider replay. Unsupported associations are standalone historical records.
 
 | Field | Type | Label | Oneof | Description |
 |---|---|---|---|---|
@@ -682,10 +679,9 @@ provider replay blobs (Reasoning / ProviderPhase) + the user-role media Parts.
 | `text` | `string` |  |  | text is the message body (assistant text, user prompt, etc.). |
 | `tool_calls` | `ToolCall` | repeated |  | tool_calls holds the tool invocations requested by an assistant message. |
 | `tool_result` | `ToolResult` |  |  | tool_result holds the result carried by a tool-role message; nil otherwise. |
-| `reasoning` | `string` |  |  | reasoning is the provider&#39;s opaque reasoning REPLAY blob, replayed back verbatim and never interpreted/displayed by the harness. |
-| `provider_phase` | `string` |  |  | provider_phase is the OpenAI Responses opaque phase marker on an assistant message, replayed verbatim and never interpreted/displayed. |
-| `parts` | `Content` | repeated |  | parts carries non-text media (image/audio) on a USER message; nil otherwise. |
-| `reasoning_item_id` | `string` |  |  | reasoning_item_id is the OpenAI Responses reasoning-item id carrier (session.Message.ReasoningItemID), replayed verbatim and never interpreted/displayed by the harness. Opaque, provider-private. |
+| `provider_phase` | `string` |  |  | provider_phase is the provider&#39;s presentation phase marker (for example, commentary). Exact provider replay remains private to the session. |
+| `parts` | `Content` | repeated |  | parts carries readable non-text media. |
+| `historical` | `HistoricalRecord` |  |  | historical preserves content whose invocation attachment is unavailable. |
 
 
 
@@ -1005,6 +1001,7 @@ event kind; the structured submessages are populated per kind.
 | `authorization` | `Authorization` |  |  | authorization is set on authorization.required and authorization.resolved events. It is safe durable correlation only; the live presentation URL and private continuation state never enter this payload. |
 | `control_refused` | `ControlRefused` |  |  | control_refused is set on control.refused events. It identifies the exact approval ask whose submitted control was rejected and carries only a stable machine category; raw arguments and refusal rationale never enter it. |
 | `plan_continuation_failure` | `PlanContinuationFailure` |  |  | plan_continuation_failure is a session-scoped, content-safe indication that an accepted plan allow could not start its proceed run. |
+| `historical` | `HistoricalRecord` |  |  | historical is standalone readable history with no invocation attachment. |
 
 
 
@@ -1572,6 +1569,22 @@ metadata. The entries reflect the LIVE store index at request time.
 
 
 
+#### `mecatl.v1.HistoricalRecord`
+
+HistoricalRecord is a source-local display record, never an executable call,
+permission control, or inferred delegation edge. It contains no private replay.
+
+| Field | Type | Label | Oneof | Description |
+|---|---|---|---|---|
+| `record_id` | `string` |  |  |  |
+| `kind` | `string` |  |  |  |
+| `text` | `string` |  |  |  |
+| `parts` | `Content` | repeated |  |  |
+| `attachment_unavailable` | `bool` |  |  |  |
+
+
+
+
 #### `mecatl.v1.Hook`
 
 Hook is the structured payload carried by a hook event, in addition to the
@@ -1669,7 +1682,9 @@ authorized proposal/skill links from the caller&#39;s private attempt partition.
 | `digest` | `string` |  |  |  |
 | `available` | `bool` |  |  | available is true only when the authorized source still resolves to this digest. |
 | `availability` | `string` |  |  |  |
-| `preview` | `string` |  |  | preview is the bounded canonical content re-read after ownership and digest checks. |
+| `preview` | `string` |  |  | preview is bounded, verified readable content, never a legacy verification view. |
+| `protocol` | `string` |  |  | protocol identifies the frozen evidence version used to verify the citation. |
+| `attachment_unavailable` | `bool` |  |  | attachment_unavailable is independent of citation/source availability. tool_call_id is optional and is set only for a proven canonical occurrence. |
 
 
 
@@ -3765,7 +3780,7 @@ session.ToolCall.
 
 | Field | Type | Label | Oneof | Description |
 |---|---|---|---|---|
-| `id` | `string` |  |  | id pairs this call with its tool_result. |
+| `id` | `string` |  |  | id is the canonical, globally unique engine invocation identity. It pairs this call with its result and is never a provider pairing key or item ID. |
 | `name` | `string` |  |  | name is the tool name as registered in the catalog. |
 | `args` | `string` |  |  | args is the raw, tool-specific JSON argument payload. |
 

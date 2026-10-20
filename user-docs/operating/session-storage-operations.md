@@ -11,7 +11,9 @@ Use Mecatl's management API to inspect and clean up a local JSONL session store.
 Do not edit or delete store files directly.
 
 This guide covers a single-user `mecated` daemon with stable configuration and
-state paths. For the API, see the [gRPC reference](/reference/grpc-api.md). For
+state paths. The [API-major-2 upgrade procedure](#upgrade-to-api-major-2) also
+covers shared stores and remote drivers. For the API, see the
+[gRPC reference](/reference/grpc-api.md). For
 the terminal workflow, see
 [mecatui session maintenance](/mecatui/sessions.md#privacy-and-maintenance).
 
@@ -243,6 +245,72 @@ artifact or delete the damaged namespace as the default recovery action.
 
 If validation fails, keep the service stopped. Preserve the failed namespace and
 the last known-good backup for diagnosis; do not merge partial state trees.
+
+## Upgrade to API major 2
+
+Coordinate the server, `mecatui`, TypeScript SDK applications, and Studio with
+both snapshot and event storage drivers. API major 2 identifies tool invocations
+with globally unique engine IDs and keeps provider replay private. Software
+package versions are independent: the SDK's `0.5.0` version is not a wire-major
+number. Check `GetCompatibilityInfo` or `GET /v1/compatibility` for the wire major;
+the existing `mecatl.v1` package and `/v1` routes remain in use.
+
+1. **Drain active writers.** Stop admitting work, let active runs settle, and stop
+   all harness processes, replicas, and maintenance writers using the namespace.
+   For local JSONL storage, take and validate a complete backup using the
+   [quiesced runbook](#quiesced-backup-and-restore-runbook). For remote backends,
+   use the operator's backup procedure for the complete snapshot/event namespace.
+1. **Upgrade both decoding drivers.** Upgrade the snapshot driver and the event
+   driver, even if configured independently. Current writers use
+   `sessnap-json/2` and `eventlog-json/2`; readers accept `/1` and `/2` with
+   matching inner identity schemas. A decoding wrapper can return `/2` even
+   when reading old backend data, so keep old harness readers stopped. Raw
+   opaque drivers must preserve the exact format tag and payload bytes.
+1. **Upgrade the harness and clients together.** Deploy API-major-2 server and
+   client builds before reopening access. There is no public major-1
+   identity-alias mode. Rebuild client-maintained views keyed by old invocation
+   IDs from current transcripts or event replay. Retain sessions and logs;
+   watch cursors are log positions and do not need resetting for this upgrade.
+1. **Verify before admitting work.** Check compatibility discovery, representative
+   old transcripts, valid pending approvals/authorization, event reads, and
+   learning citations against the upgraded deployment. Resume writers only with
+   the coordinated versions.
+
+Keep old binaries away from the migrated namespace. Mixed-version writers and
+rollback after new-format writes are unsupported. Old decoding wrappers reject
+`/2` per operation before backend mutation; format rejection is not a startup
+negotiation guarantee. The unchanged `session-store/1` capability marker does
+not negotiate formats, and event drivers have no format handshake. Local JSONL
+snapshots retain their private outer envelope, and Redis events retain
+`redisstore-eventlog/1`. Old local readers can ignore the inner schema and
+misinterpret identity, so these tags do not make old readers safe.
+
+### Retained sessions and historical records
+
+Valid old sessions and provable pending continuations remain readable and
+resumable. When a continuation cannot be uniquely associated with its invocation,
+Mecatl abandons it during decoding and clears its runnable controls. The session
+accepts a separate new prompt, and its history includes an upgrade notice that
+prior tool effects and completion may be unknown. Check any external effects
+before asking the agent to repeat interrupted work. Abandonment does not roll
+back tool effects or revoke an external authorization.
+
+History with a proven call/result association renders normally. Unsupported
+associations render as standalone historical text/media with an unavailable
+attachment indication. Mecatl does not guess tool-card or parent-delegation
+links from provider IDs. Copied history retains an invocation's identity, and
+clients must still handle repeated delivery idempotently.
+
+Public `ConversationMessage` omits the opaque `reasoning` and
+`reasoning_item_id` fields (reserved tags 5 and 8). Readable reasoning events,
+text/media, and `provider_phase` remain available; exact provider replay is
+retained privately in snapshots and internal archives.
+
+New learning evidence uses `reflection-evidence/v2`. Legacy-v0/v1 evidence keeps
+its original digests, coordinates, and stored attempts and remains verifiable
+while its source exists. An available citation can lack a canonical tool-call
+attachment. Pruned source remains unavailable; this upgrade does not promise
+indefinite archival or recovery of missing evidence.
 
 ## Next steps
 

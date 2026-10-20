@@ -192,13 +192,14 @@ function usage(overrides: Partial<SessionUsageResponse> = {}): SessionUsageRespo
   };
 }
 
+let deliverySequence = 0;
 function delivered(kind: string, extra: Record<string, unknown> = {}): RunStreamEvent {
   return {
     event: {
       kind,
       payload: undefined,
       runId: "run-1",
-      seq: "1",
+      seq: String(++deliverySequence),
       text: "",
       turn: 0,
       unknown: false,

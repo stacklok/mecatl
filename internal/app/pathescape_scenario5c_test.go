@@ -79,6 +79,9 @@ func TestPathEscapePosture_Scenario5_BaseSharingMemberNotRelaxed(t *testing.T) {
 			var memberReadErr, memberReadOK bool
 			sink := func(te agent.TeamEvent) {
 				ev := te.Event
+				if ev.ToolCall != nil && ev.ToolCall.Name == memberRead.Name {
+					memberRead.ID = ev.ToolCall.ID
+				}
 				if ev.Type == session.EvToolResult && ev.ToolResult != nil && ev.ToolResult.CallID == memberRead.ID {
 					mu.Lock()
 					if ev.ToolResult.IsError {
@@ -179,6 +182,9 @@ func TestPathEscapePosture_Scenario5_IsolatedMembersUnchanged(t *testing.T) {
 			var roReadErr, roReadOK bool
 			roSink := func(te agent.TeamEvent) {
 				ev := te.Event
+				if ev.ToolCall != nil && ev.ToolCall.Name == roRead.Name {
+					roRead.ID = ev.ToolCall.ID
+				}
 				if ev.Type == session.EvToolResult && ev.ToolResult != nil && ev.ToolResult.CallID == roRead.ID {
 					mu.Lock()
 					if ev.ToolResult.IsError {
@@ -213,6 +219,9 @@ func TestPathEscapePosture_Scenario5_IsolatedMembersUnchanged(t *testing.T) {
 			var mutReadErr, mutReadOK bool
 			mutSink := func(te agent.TeamEvent) {
 				ev := te.Event
+				if ev.ToolCall != nil && ev.ToolCall.Name == mutRead.Name {
+					mutRead.ID = ev.ToolCall.ID
+				}
 				if ev.Type == session.EvToolResult && ev.ToolResult != nil && ev.ToolResult.CallID == mutRead.ID {
 					mu.Lock()
 					if ev.ToolResult.IsError {

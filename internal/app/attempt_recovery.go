@@ -95,6 +95,23 @@ func (r *attemptRecovery) Close() {
 
 //nolint:gocyclo // exact-source reconstruction and claim-fenced publication stay visibly ordered
 func recoverAttempt(ctx context.Context, cfg Config, reg *providerRegistry, sessions port.SessionStore, events port.EventLog, repository learning.AttemptRepository, proposals learning.ProposalRepository, assets catalogAssets, placements server.PlacementProvider, placementScope server.PlacementScope, item learning.AttemptWork) error {
+	// Verify source evidence before acquiring an execution environment.
+	checkTimeout := cfg.LearningAttemptTimeout
+	if checkTimeout <= 0 {
+		checkTimeout = defaultAttemptCallbackTimeout
+	}
+	checkCtx, cancelCheck := context.WithTimeout(ctx, checkTimeout)
+	sourceSnapshot, sourceErr := sessions.Load(checkCtx, item.Record.Provenance.Source.SessionID)
+	if sourceErr == nil {
+		sourceErr = checkCtx.Err()
+	}
+	cancelCheck()
+	if sourceErr != nil && !errors.Is(sourceErr, port.ErrSessionNotFound) {
+		return errors.Join(errAttemptSetupTransient, sourceErr)
+	}
+	if sourceErr == nil && sourceSnapshot == nil {
+		return errAttemptSetupTransient
+	}
 	loader := newLearningEvidenceLoader(sessions, events)
 	var source *session.Session
 	var workspace string
@@ -147,11 +164,14 @@ func recoverAttempt(ctx context.Context, cfg Config, reg *providerRegistry, sess
 		id:              item.Record.ID,
 		callbackTimeout: cfg.LearningAttemptTimeout,
 		prepare: func(prepareCtx context.Context, record learning.AttemptRecord) (learning.AttemptFailureCode, error) {
-			loaded, err := sessions.Load(prepareCtx, record.Provenance.Source.SessionID)
-			if err != nil || loaded == nil {
+			loaded, err := sourceSnapshot, sourceErr
+			if loaded == nil || err != nil {
 				return learning.FailureEvidenceUnavailable, nil
 			}
 			source = loaded
+			if _, _, failure, err := loader.loadForExecution(prepareCtx, item.Partition, record, ""); failure != learning.FailureNone || err != nil {
+				return failure, err
+			}
 			reattacher, ok := placements.(server.PlacementReattacher)
 			if !ok {
 				return learning.FailureNone, errAttemptSetupTransient

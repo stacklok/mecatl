@@ -111,6 +111,9 @@ var oracleSteps = []struct {
 	{"reconcileUnresolvedTool", func(c *conversation) {
 		c.reconcileUnresolvedTool("call-1", "Read", `{"path":"actual.go"}`)
 	}},
+	{"addHistorical", func(c *conversation) {
+		c.addHistorical(client.HistoricalRecord{Kind: "tool.result", Text: "unattached output", AttachmentUnavailable: true, Parts: []client.ContentBlock{{Kind: client.ContentBlockImage, MimeType: "image/png", Data: []byte{1}}}})
+	}},
 	{"addNotice", func(c *conversation) { c.addNotice("context compacted") }},
 	{"retractLatestNotice", func(c *conversation) {
 		c.addNotice("provisional approval")
