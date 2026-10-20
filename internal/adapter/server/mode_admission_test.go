@@ -300,6 +300,76 @@ func TestStoredModeReadmittedAfterTighterRestart(t *testing.T) {
 	}
 }
 
+// TestRetryFailedRunReadmitsStoredModeAfterTighterRestart is the retry row of
+// the refused-mode matrix: a retry-eligible failed session persisted in a
+// permissive mode is refused at RetryFailedRun under a tighter deployment
+// BEFORE any provider work, keeping its failure and retry eligibility; a
+// SetMode to an admitted mode then lets the same retry run.
+func TestRetryFailedRunReadmitsStoredModeAfterTighterRestart(t *testing.T) {
+	ctx := context.Background()
+	for _, tc := range []struct {
+		name    string
+		stored  session.PermissionMode
+		ceiling session.PermissionMode
+		checker bool
+	}{
+		{"yolo above default ceiling", session.ModeYolo, session.ModeAccept, true},
+		{"auto after checker removed", session.ModeAuto, session.ModeYolo, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := memstore.New()
+			loose := modeAdmissionServiceOn(t, store, mockllm.New(
+				mockllm.ErrorTurn(&retryFailure{session.RetryDispositionRetryable, session.StreamProgressPrecommit}),
+			), session.ModeYolo, session.ModeDefault, true)
+			sess, err := loose.CreateSession(ctx, tc.stored, session.Limits{})
+			if err != nil {
+				t.Fatalf("CreateSession(%s) on loose deployment: %v", tc.stored, err)
+			}
+			failed, err := loose.StartRun(ctx, sess.ID, "go")
+			if err != nil {
+				t.Fatalf("StartRun on loose deployment: %v", err)
+			}
+			for range failed.Events() {
+			}
+			loose.Persist(ctx, sess.ID)
+			loose.FinishRun(sess.ID, failed)
+			if stored, err := store.Load(ctx, sess.ID); err != nil || stored.State != session.StateFailed {
+				t.Fatalf("setup: stored session = %v, %v; want a failed session", stored, err)
+			}
+
+			llm := mockllm.New(mockllm.TextTurn("ran"))
+			tight := modeAdmissionServiceOn(t, store, llm, tc.ceiling, session.ModeDefault, tc.checker)
+			if run, err := tight.RetryFailedRun(ctx, sess.ID); !errors.Is(err, server.ErrFailedPrecondition) || run != nil {
+				t.Fatalf("RetryFailedRun = run %v, err %v; want ErrFailedPrecondition", run, err)
+			}
+			if llm.Calls() != 0 {
+				t.Fatalf("provider called %d time(s) before refusal, want 0", llm.Calls())
+			}
+			kept, err := store.Load(ctx, sess.ID)
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+			if metadata := kept.FailureMetadata(); kept.Mode != tc.stored || kept.State != session.StateFailed || metadata.Disposition != session.RetryDispositionRetryable {
+				t.Fatalf("refusal mutated the session: mode %q state %q metadata %+v", kept.Mode, kept.State, metadata)
+			}
+
+			if _, err := tight.SetMode(ctx, sess.ID, session.ModeDefault); err != nil {
+				t.Fatalf("SetMode(default): %v", err)
+			}
+			run, err := tight.RetryFailedRun(ctx, sess.ID)
+			if err != nil {
+				t.Fatalf("RetryFailedRun after SetMode(default): %v", err)
+			}
+			for range run.Events() {
+			}
+			tight.FinishRun(sess.ID, run)
+			if llm.Calls() != 1 {
+				t.Fatalf("provider calls after re-admission = %d, want 1", llm.Calls())
+			}
+		})
+	}
+}
+
 // gatedLease parks the named owner's first Acquire until release closes, so
 // a test can let a peer mutate the session while that owner waits for the
 // lease after its pre-lease admission.

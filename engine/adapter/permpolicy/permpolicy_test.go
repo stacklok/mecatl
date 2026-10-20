@@ -275,6 +275,24 @@ func TestPolicyAllowAllDefersToConfiguredAsk(t *testing.T) {
 	}
 }
 
+// TestPolicyModeAllowAllDefersToConfiguredAsk: the allow-all that auto and yolo
+// inject at evaluation time also defers to a user-scope configured Ask, while
+// still loosening the built-in floor for other commands.
+func TestPolicyModeAllowAllDefersToConfiguredAsk(t *testing.T) {
+	p := permpolicy.NewPolicy([]governance.Rule{
+		{Scope: governance.ScopeBuiltinDefault, Tool: "Shell", Effect: governance.Ask},
+		{Scope: governance.ScopeUser, Tool: "Shell", Pattern: "git push*", Effect: governance.Ask},
+	}, nil)
+	for _, mode := range []session.PermissionMode{session.ModeAuto, session.ModeYolo} {
+		if got := p.Evaluate(context.Background(), sid, mode, shellCall("git push origin"), nil); got.Decision.Effect != governance.Ask {
+			t.Errorf("%s: allow-all must defer to a configured Ask, got %v", mode, got.Decision.Effect)
+		}
+		if got := p.Evaluate(context.Background(), sid, mode, shellCall("git status"), nil); got.Decision.Effect != governance.Allow {
+			t.Errorf("%s: allow-all must loosen the built-in floor, got %v", mode, got.Decision.Effect)
+		}
+	}
+}
+
 // TestPolicyAllowAllCompoundShellDenyWins: the substitution/newline-aware bash gate
 // still wins under allow-all — a configured Deny matching one segment of a compound
 // command denies the whole command.
