@@ -212,6 +212,23 @@ type jwksFixture struct {
 
 	mu   sync.Mutex
 	auth map[string]string // request path -> last Authorization header
+	// keysBearer, when set, is the only Authorization header /keys accepts.
+	// Background JWKS fetches race the test, so asserting on a request's
+	// result is deterministic where the last header seen is not.
+	keysBearer string
+}
+
+// requireKeysBearer makes /keys answer 401 to any other Authorization header.
+func (f *jwksFixture) requireKeysBearer(bearer string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.keysBearer = bearer
+}
+
+func (f *jwksFixture) keysAuthorized(r *http.Request) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.keysBearer == "" || r.Header.Get("Authorization") == f.keysBearer
 }
 
 func (f *jwksFixture) record(r *http.Request) {
@@ -241,6 +258,10 @@ func newJWKSFixture(t *testing.T) *jwksFixture {
 	})
 	mux.HandleFunc("/keys", func(w http.ResponseWriter, r *http.Request) {
 		fixture.record(r)
+		if !fixture.keysAuthorized(r) {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{"keys": []map[string]string{{
 			"kty": "RSA", "use": "sig", "alg": "RS256", "kid": testKID,
@@ -628,7 +649,9 @@ func kubernetesTestConfig(t *testing.T, srv *httptest.Server, token string) (Con
 
 // The bootstrap derives the issuer from the projected token, sends that token to
 // both endpoints, and then accepts only tokens from that issuer. Ready sends a
-// rotated token.
+// rotated token: once /keys accepts only the rotated token, Ready succeeds only
+// if it re-read the token file. Core's background JWKS fetches may still land
+// with the old token, so the test does not assert on the last header seen.
 func TestKubernetesValidatorDerivesIssuerAndAuthenticatesEndpoints(t *testing.T) {
 	fixture := newJWKSFixture(t)
 	projected := fixture.tokenWithIssuer(t, fixture.srv.URL, testAudience)
@@ -651,14 +674,15 @@ func TestKubernetesValidatorDerivesIssuerAndAuthenticatesEndpoints(t *testing.T)
 		}
 	}
 
+	fixture.requireKeysBearer("Bearer rotated")
+	if err := validator.Ready(t.Context()); err == nil {
+		t.Fatal("Ready succeeded with the pre-rotation token, want the endpoint's rejection")
+	}
 	if err := os.WriteFile(bootstrap.TokenFile, []byte("rotated"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := validator.Ready(t.Context()); err != nil {
-		t.Fatalf("Ready: %v", err)
-	}
-	if got := fixture.authorization("/keys"); got != "Bearer rotated" {
-		t.Fatalf("Ready sent %q after rotation, want the rotated token", got)
+		t.Fatalf("Ready after rotation: %v (the rotated token was not sent)", err)
 	}
 }
 
