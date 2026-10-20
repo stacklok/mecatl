@@ -15,7 +15,8 @@ The boundaries are review topics, not code packages or implementation phases.
 | [Commands and lifecycle](commands-and-lifecycle.md) | How do shared controls, bounded retries, and catalog decisions remain unambiguous? |
 | [Storage and observation](storage-and-observation.md) | What does durable acceptance mean, and how does a client load a complete view and follow it? |
 
-Each packet states its imported assumptions, summarizes settled behavior, works through examples, and separates open decisions.
+Each packet begins with a narrative and concrete examples, followed by its imported assumptions, detailed constraints, and open questions.
+The detailed sections retain the precise limits, exceptions, and interface decisions; you can read them after understanding the story.
 Follow its detail links only when reviewing that contract; reading the full references first is unnecessary.
 
 ## Detailed lookup, not a second reading path
