@@ -248,7 +248,7 @@ func TestPermissionModeFlagConflictsAndUnknownTokens(t *testing.T) {
 			t.Fatalf("unknown-token error %q does not name %q", err, name)
 		}
 	}
-	for _, want := range append(app.PermissionModeNames(), "process-wide", "new sessions") {
+	for _, want := range append(app.PermissionModeNames(), "process-wide", "new sessions", "MECATL_SANDBOX", "Default: auto.") {
 		if !strings.Contains(permissionModeHelp, want) {
 			t.Fatalf("--permission-mode help lacks %q", want)
 		}

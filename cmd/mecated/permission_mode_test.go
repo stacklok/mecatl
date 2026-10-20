@@ -317,7 +317,7 @@ func TestPermissionModeHitsRootRefusalFastPath(t *testing.T) {
 }
 
 func TestPermissionModeHelpNamesBothHalvesAndEveryToken(t *testing.T) {
-	for _, want := range append(app.PermissionModeNames(), "process-wide", "new sessions") {
+	for _, want := range append(app.PermissionModeNames(), "process-wide", "new sessions", "MECATL_SANDBOX", "--yolo") {
 		if !strings.Contains(permissionModeHelp, want) {
 			t.Fatalf("--permission-mode help lacks %q: %s", want, permissionModeHelp)
 		}

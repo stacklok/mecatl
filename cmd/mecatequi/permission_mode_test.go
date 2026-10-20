@@ -74,8 +74,11 @@ func TestPermissionModeFlagConflictsAndUnknownTokens(t *testing.T) {
 			t.Fatalf("unknown-token error %q or help does not name %q", err, name)
 		}
 	}
-	if !strings.Contains(permissionModeHelp, "process-wide") {
-		t.Fatal("--permission-mode help does not say which half is process-wide")
+	if !strings.Contains(permissionModeHelp, "process-wide") || !strings.Contains(permissionModeHelp, "ceiling") {
+		t.Fatal("--permission-mode help does not say which half is the process-wide ceiling")
+	}
+	if strings.Contains(permissionModeHelp, "MECATL_SANDBOX") {
+		t.Fatal("--permission-mode help claims a root refusal mecatequi does not enforce")
 	}
 }
 
