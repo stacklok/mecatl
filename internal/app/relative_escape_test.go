@@ -12,6 +12,7 @@ import (
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
+	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/adapter/osfs"
 )
 
@@ -95,8 +96,11 @@ func TestYoloRelativeEscapeTools(t *testing.T) {
 	}
 }
 
-func TestRelativeEscapeOtherPosturesStayConfined(t *testing.T) {
-	for _, posture := range []Posture{PostureAuto, PostureTrusted, PostureStrict} {
+// TestRelativeEscapeNonYoloSessionsStayConfined pins that serving follows the
+// session mode, not the server posture: a default session keeps an approved
+// relative escape inside the workspace on every server, yolo included.
+func TestRelativeEscapeNonYoloSessionsStayConfined(t *testing.T) {
+	for _, posture := range []Posture{PostureYolo, PostureAuto, PostureTrusted, PostureStrict} {
 		t.Run(posture.String(), func(t *testing.T) {
 			f := setupEscapeFS(t)
 			built, err := buildIsolated(t, context.Background(), escapeCfg(t, f, posture, readEscapeTurns("../outside/secret.txt")...))
@@ -126,6 +130,55 @@ func TestRelativeEscapeOtherPosturesStayConfined(t *testing.T) {
 				t.Fatalf("relative escape = %+v", result)
 			}
 		})
+	}
+}
+
+// TestRelativeEscapeFollowsModeSwitch pins that each run binds the workspace
+// view for the session's current mode: on one yolo server the same session is
+// served the relative escape while in yolo and refused it after switching to
+// default, even with the escape ask approved.
+func TestRelativeEscapeFollowsModeSwitch(t *testing.T) {
+	f := setupEscapeFS(t)
+	turns := append(readEscapeTurns("../outside/secret.txt"), readEscapeTurns("../outside/secret.txt")...)
+	built, err := buildIsolated(t, context.Background(), escapeCfg(t, f, PostureYolo, turns...))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer built.Close()
+	sess, err := built.Service.CreateSession(context.Background(), session.ModeYolo, session.Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	readOnce := func() (*session.ToolResult, bool) {
+		t.Helper()
+		run, err := built.Service.StartRun(context.Background(), sess.ID, "read relative escape")
+		if err != nil {
+			t.Fatal(err)
+		}
+		var result *session.ToolResult
+		asked := false
+		for ev := range run.Events() {
+			if ev.Type == session.EvPermissionAsk && ev.Ask != nil {
+				asked = true
+				run.Approve(ev.Ask.AskID, session.VerdictAllowOnce)
+			}
+			if ev.Type == session.EvToolResult {
+				result = ev.ToolResult
+			}
+		}
+		built.Service.FinishRun(sess.ID, run)
+		return result, asked
+	}
+	result, asked := readOnce()
+	if asked || result == nil || result.IsError || !strings.Contains(result.Content, f.content) {
+		t.Fatalf("yolo relative read: asked=%v result=%+v", asked, result)
+	}
+	if _, err := built.Service.SetMode(context.Background(), sess.ID, session.ModeDefault); err != nil {
+		t.Fatal(err)
+	}
+	result, asked = readOnce()
+	if !asked || result == nil || !result.IsError || !strings.Contains(result.Content, "escape") {
+		t.Fatalf("default relative read after switch: asked=%v result=%+v", asked, result)
 	}
 }
 
@@ -243,13 +296,22 @@ func TestYoloRelativeEscapeServiceRefusals(t *testing.T) {
 
 func TestYoloRelativeEscapeBoundaries(t *testing.T) {
 	f := setupEscapeFS(t)
-	ws := osfsWorkspaceFactory(port.NopDiagnostics{}, PostureYolo)(f.workspace)
-	if ws == nil {
-		t.Fatal("missing workspace")
+	base, ok := osfsWorkspaceFactory(port.NopDiagnostics{})(f.workspace).(*escapeWorkspace)
+	if !ok {
+		t.Fatal("missing escape workspace")
 	}
+	ws := base.ForPermissionMode(session.ModeYolo)
 	child := childWorkspaceView(ws)
 	if err := os.WriteFile(filepath.Join(f.workspace, "inside.txt"), []byte("inside"), 0o600); err != nil {
 		t.Fatal(err)
+	}
+	for _, view := range []tool.Workspace{base, base.ForPermissionMode(session.ModeAuto), base.ForPermissionMode(session.ModeDefault), base.ForPermissionMode("")} {
+		if _, err := view.Read(t.Context(), "../outside/secret.txt"); !errors.Is(err, osfs.ErrPathEscape) {
+			t.Fatalf("non-yolo relative read: %v", err)
+		}
+	}
+	if _, err := childWorkspaceView(ws).(*escapeWorkspace).ForPermissionMode(session.ModeYolo).Read(t.Context(), "../outside/secret.txt"); !errors.Is(err, osfs.ErrPathEscape) {
+		t.Fatalf("child yolo relative read: %v", err)
 	}
 	if data, err := ws.Read(t.Context(), "../workspace/inside.txt"); err != nil || string(data) != "inside" {
 		t.Fatalf("relative re-entry: %q, %v", data, err)

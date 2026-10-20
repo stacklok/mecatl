@@ -380,13 +380,14 @@ func (p *escapePolicy) isEscapeCall(c session.ToolCall) bool {
 // mutations (`ReadVersion`/`CreateFile`/`ReplaceFile`) are overridden with the
 // same guard so the inner relaxed osfs operations cannot bypass it (AC-W2-F1).
 // A confined child view uses these same choke points to reject every escape.
-// Only the main yolo view normalizes lexical relative escapes after vetting the
-// original components, then delegates to the existing osfs absolute paths.
+// Only the main session's yolo view (ForPermissionMode) normalizes lexical
+// relative escapes after vetting the original components, then delegates to the
+// existing osfs absolute paths.
 type escapeWorkspace struct {
 	tool.Workspace                   // the relaxed *osfs.Workspace (WithRelaxedReads/Writes)
 	classifier     *escapeClassifier // the SAME classification the policy wrapper uses
 	confined       bool              // child view: deny every escape while retaining the same content backend
-	relativeYolo   bool              // main-session yolo may normalize lexical relative escapes
+	relativeYolo   bool              // a main-session yolo run may normalize lexical relative escapes
 }
 
 // newEscapeWorkspace wraps a relaxed ws with the escape classifier. It is
@@ -395,9 +396,22 @@ type escapeWorkspace struct {
 // authorized, which at strict/trusted is an APPROVED escape ask), ONLY for the
 // main session's workspace factory. childWorkspaceView derives the only child
 // form by retaining this wrapper's exact content backend and classifier while
-// enabling its confined mode; it never reconstructs storage from Root.
-func newEscapeWorkspace(ws tool.Workspace, classifier *escapeClassifier, relativeYolo bool) tool.Workspace {
-	return &escapeWorkspace{Workspace: ws, classifier: classifier, relativeYolo: relativeYolo}
+// enabling its confined mode; it never reconstructs storage from Root. The
+// factory form never serves a relative escape; the run-entry funnel binds the
+// per-run view through ForPermissionMode.
+func newEscapeWorkspace(ws tool.Workspace, classifier *escapeClassifier) tool.Workspace {
+	return &escapeWorkspace{Workspace: ws, classifier: classifier}
+}
+
+// ForPermissionMode returns the view for one run of the main session. Only a yolo
+// session may have an approved lexical relative escape served; every other or
+// unknown mode keeps relative operands inside the workspace even after approval.
+// A confined child view stays confined in every mode.
+func (w *escapeWorkspace) ForPermissionMode(mode session.PermissionMode) tool.Workspace {
+	if w.confined {
+		return w
+	}
+	return &escapeWorkspace{Workspace: w.Workspace, classifier: w.classifier, relativeYolo: mode == session.ModeYolo}
 }
 
 // childWorkspaceView removes the main session's relaxed path reach without
@@ -577,7 +591,7 @@ func (w *escapeWorkspace) refuseNamespacePath(path string) error {
 }
 
 // servePath preserves the verbatim classifier decision, then converts only a
-// main-session yolo lexical escape to the existing absolute osfs serving seam.
+// main-session yolo-run lexical escape to the existing absolute osfs serving seam.
 func (w *escapeWorkspace) servePath(path string) (string, error) {
 	args, _ := json.Marshal(map[string]string{"path": path})
 	kind := w.classifier.classify("Read", args)
@@ -594,7 +608,7 @@ func (w *escapeWorkspace) servePath(path string) (string, error) {
 		return path, nil
 	}
 	if w.confined || !w.relativeYolo {
-		return "", fmt.Errorf("%w: relative escape requires main-session yolo", osfs.ErrPathEscape)
+		return "", fmt.Errorf("%w: relative escape requires a main-session yolo run", osfs.ErrPathEscape)
 	}
 	// Walk the original components before joining: Clean would erase a
 	// symlink/.. pair and launder the path into an unrelated absolute target.

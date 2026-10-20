@@ -522,7 +522,7 @@ func TestPathEscapePosture_Scenario3_EditLedgerOutOfRoot(t *testing.T) {
 		t.Fatalf("NewWorkspace: %v", err)
 	}
 	gate := &readGateWorkspace{
-		Workspace: newEscapeWorkspace(base, clf, false),
+		Workspace: newEscapeWorkspace(base, clf),
 		gatePath:  canonical,
 		entered:   make(chan struct{}),
 		release:   make(chan struct{}),
@@ -649,7 +649,7 @@ func newSerialProbeWorkspace(t *testing.T, root string, inflight, maxSeen *atomi
 		t.Fatalf("NewWorkspace(%q): %v", root, err)
 	}
 	return &serialProbeWorkspace{
-		Workspace: newEscapeWorkspace(ws, clf, false),
+		Workspace: newEscapeWorkspace(ws, clf),
 		inflight:  inflight,
 		maxSeen:   maxSeen,
 		pause:     pause,

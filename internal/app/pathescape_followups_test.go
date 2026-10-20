@@ -44,7 +44,7 @@ func TestPathEscapePosture_EditLedgerPseudoFSGuarded(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewWorkspace: %v", err)
 	}
-	ws := newEscapeWorkspace(base, clf, false)
+	ws := newEscapeWorkspace(base, clf)
 
 	ledger := memledger.New()
 	env := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindLocal, ID: root}, ws, ledger, nil)

@@ -2389,7 +2389,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	}()
 	cfg.storageMaintenance = &storageMaintenanceState{}
 	dreamReviewer, dreamCapabilities := buildDreamReview(cfg, assets, provider != nil)
-	workspaceFactory := osfsWorkspaceFactory(cfg.diag(), cfg.Posture)
+	workspaceFactory := osfsWorkspaceFactory(cfg.diag())
 	placementScope := cfg.PlacementScope
 	if placementScope == "" {
 		placementScope = defaultPlacementScope
@@ -9924,9 +9924,11 @@ func defaultLimits() session.Limits {
 // allow at yolo, ask everywhere below), and an escape the policy leaves at
 // Ask never reaches the tool body unapproved. At strict/trusted the relaxed
 // options let an approved escape execute; a non-approved escape still dead-ends.
-// Make lexical external ../ operands available only at yolo in the main
-// session. Child views keep denying escapes; below yolo even an approved
-// external relative operand is not served.
+// Lexical external ../ operands are served only in a yolo run of the main
+// session: the server binds each run's view for the session's current mode
+// (escapeWorkspace.ForPermissionMode), never the server posture. Child views keep
+// denying escapes; below yolo even an approved external relative operand is not
+// served.
 // The same factory is used by the composition-owned local placement provider
 // whenever it binds or exactly reattaches a local EnvironmentRef. Child engines
 // never call it directly: their workspaces come from newForkWorkspace, so the
@@ -9936,7 +9938,7 @@ func defaultLimits() session.Limits {
 // binds no-FS through the nofs adapter before this factory and rejects invalid exact
 // refs; this guard prevents any future private composition caller from turning an
 // empty path into the server process cwd.
-func osfsWorkspaceFactory(d port.Diagnostics, posture Posture) server.WorkspaceFactory {
+func osfsWorkspaceFactory(d port.Diagnostics) server.WorkspaceFactory {
 	return func(root string) tool.Workspace {
 		if root == "" {
 			d.Log(context.Background(), port.LevelError,
@@ -9953,7 +9955,7 @@ func osfsWorkspaceFactory(d port.Diagnostics, posture Posture) server.WorkspaceF
 				d.Log(context.Background(), port.LevelError, "workspace factory: cannot open root", "root", root, "err", err)
 				return nil
 			}
-			return newEscapeWorkspace(ws, clf, posture == PostureYolo)
+			return newEscapeWorkspace(ws, clf)
 		}
 		d.Log(context.Background(), port.LevelError, "workspace factory: cannot build the escape classifier for a relaxed workspace; serving the deny-on-escape workspace", "root", root, "err", cerr)
 		ws, err := osfs.NewWorkspace(root)

@@ -43,6 +43,14 @@ import (
 // or osfs (production) via this seam.
 type WorkspaceFactory func(root string) tool.Workspace
 
+// ModeScopedWorkspace is an optional Workspace capability for a workspace whose
+// serving depends on the executing session's permission mode. The run-entry
+// funnel binds the view for the session's current mode once per run; the mode
+// is fixed for a run because SetMode is refused mid-turn.
+type ModeScopedWorkspace interface {
+	ForPermissionMode(mode session.PermissionMode) tool.Workspace
+}
+
 // Clock returns the current wall time. It defaults to time.Now when nil so the
 // server can stamp session creation timestamps deterministically in tests.
 type Clock func() time.Time
@@ -6923,7 +6931,26 @@ func (s *Service) engineAndEnvironmentFor(ctx context.Context, sess *session.Ses
 		// a ref, namespace, or runner from the override's presence.
 		return engine, envOverride, governanceRoot, nil
 	}
-	return engine, verifiedPlacement.Environment, governanceRoot, nil
+	env, err := modeScopedEnvironment(verifiedPlacement.Environment, sess.Mode)
+	if err != nil {
+		return nil, tool.Environment{}, "", err
+	}
+	return engine, env, governanceRoot, nil
+}
+
+// modeScopedEnvironment rebinds env's workspace to the view for mode when the
+// workspace implements ModeScopedWorkspace; any other environment is returned
+// unchanged.
+func modeScopedEnvironment(env tool.Environment, mode session.PermissionMode) (tool.Environment, error) {
+	scoped, ok := env.Workspace().(ModeScopedWorkspace)
+	if !ok {
+		return env, nil
+	}
+	env, err := tool.NewEnvironment(env.Ref(), scoped.ForPermissionMode(mode), env.ReadLedger(), env.CommandRunner())
+	if err != nil {
+		return tool.Environment{}, fmt.Errorf("%w: bind mode-scoped workspace: %v", ErrConfig, err)
+	}
+	return env, nil
 }
 
 // sessionNeedsPerFactory reports whether a CreateSession with the given inputs
