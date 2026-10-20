@@ -147,8 +147,8 @@ assert_if user-docs hasnot "docs_only"
 # so a daemon change can break it. Studio builds the checked-out SDK, but
 # studio_relevant already covers sdk/typescript/*, so the job needs no separate
 # sdk_relevant term.
-# The browser journeys and the image are split into sibling jobs on the same gate.
-for job in studio studio-browser studio-image; do
+# The browser journeys are split into a sibling job on the same gate.
+for job in studio studio-browser; do
   assert_if "$job" has "needs.changes.outputs.studio_relevant == 'true' || needs.changes.outputs.go_relevant == 'true'"
   assert_if "$job" has "needs.changes.outputs.docs_only != 'true'"
   assert_if "$job" hasnot "sdk_relevant"
@@ -161,10 +161,10 @@ if [[ -z "$sg" ]]; then
   fail 'a studio-gate aggregator must exist for the split Studio jobs'
 else
   grep -Fq 'if: always()' <<<"$sg" || fail 'studio-gate must run with if: always()'
-  grep -Fq 'needs: [changes, studio, studio-browser, studio-image]' <<<"$sg" \
+  grep -Fq 'needs: [changes, studio, studio-browser]' <<<"$sg" \
     || fail 'studio-gate must need every Studio job'
   sg_results="$(sed -n '/results=(/,/)/p' <<<"$sg")"
-  for result in STUDIO_RESULT STUDIO_BROWSER_RESULT STUDIO_IMAGE_RESULT; do
+  for result in STUDIO_RESULT STUDIO_BROWSER_RESULT; do
     grep -Fq "$result" <<<"$sg_results" \
       || fail "studio-gate must check $result"
   done
