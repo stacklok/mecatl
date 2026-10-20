@@ -256,7 +256,7 @@ func TestUnavailableModeHintNamesCheckerOnlyForAuto(t *testing.T) {
 }
 
 // TestHelpOverlayShowsVocabularyAndScopeSplit pins that every token is
-// listed with its posture half marked process-wide and its session half marked as
+// listed with its posture half marked as the server limit and its session half marked as
 // the new-session default, with the exact invocation and the statement that
 // cycling reaches every mode but a posture-raising one needs a restart.
 func TestHelpOverlayShowsVocabularyAndScopeSplit(t *testing.T) {
@@ -274,7 +274,7 @@ func TestHelpOverlayShowsVocabularyAndScopeSplit(t *testing.T) {
 		{"yolo", "yolo", "yolo"},
 	}
 	for _, w := range want {
-		row := "posture " + w.posture + " (process-wide) · new sessions start in " + w.session
+		row := "posture " + w.posture + " (server limit) · new sessions start in " + w.session
 		found := false
 		for _, line := range strings.Split(body, "\n") {
 			fields := strings.Fields(strings.Trim(line, "┃ "))
@@ -289,8 +289,8 @@ func TestHelpOverlayShowsVocabularyAndScopeSplit(t *testing.T) {
 	}
 	for _, phrase := range []string{
 		"--permission-mode",
-		"The posture half applies to the whole server and is fixed when it starts.",
-		"The session half is only the default for new sessions.",
+		"The posture half is fixed when the server starts and limits which modes a session can switch to.",
+		"The session half is the mode new sessions start in; each session's current mode applies live.",
 		m.helpKeyMarkings().modeSwitch + " cycles every mode. A mode that raises the posture needs a restart",
 		"and auto also an enforcing guardrails checker",
 		"keeps the current mode and your draft",
@@ -526,5 +526,40 @@ func TestLegacyStrictServerShowsPlainSessionMode(t *testing.T) {
 	m.caps.Posture = postureStrict
 	if got := statusMode(m); got != "default" {
 		t.Fatalf("status mode = %q, want default", got)
+	}
+}
+
+// TestLegacyYoloServerPostureNamesServerWideAllowAll pins /posture against an
+// older yolo server: after cycling the session mode, both the initial summary
+// and the refreshed one (once guardrail coverage lands) say allow-all is
+// server-wide, never that it is mode-driven. A server with the feature keeps
+// the mode-driven wording.
+func TestLegacyYoloServerPostureNamesServerWideAllowAll(t *testing.T) {
+	conv := &fakeConv{recv: &fakeRecver{}, send: &fakeSender{}, mode: "default"}
+	m := legacyYoloModel(t, conv)
+	m, _ = pressModeSwitch(t, m)
+	if got := statusMode(m); got != "plan (server yolo)" {
+		t.Fatalf("status mode after cycle = %q, want plan (server yolo)", got)
+	}
+	m.guardrailStatusRequest = 7
+	assertLegacy := func(stage, got string) {
+		t.Helper()
+		if !strings.Contains(got, "server-wide allow-all on (every session, whatever its mode)") {
+			t.Errorf("%s: /posture = %q, want server-wide allow-all", stage, got)
+		}
+		if strings.Contains(got, "mode-driven") {
+			t.Errorf("%s: /posture = %q, must not claim allow-all is mode-driven on a legacy server", stage, got)
+		}
+	}
+	next, _ := m.runPosture()
+	assertLegacy("initial", stripANSIstr(next.(Model).statusMsg))
+
+	refreshed := applyAll(m, client.GuardrailCoverageMsg{SessionID: m.sessionID, RequestID: m.guardrailStatusRequest, Posture: true})
+	assertLegacy("refreshed", stripANSIstr(refreshed.statusMsg))
+
+	current := permissionModeTestModel(t, conv, postureYolo, true)
+	next, _ = current.runPosture()
+	if got := stripANSIstr(next.(Model).statusMsg); !strings.Contains(got, "allow-all is mode-driven") || strings.Contains(got, "server-wide allow-all") {
+		t.Errorf("feature server: /posture = %q, want the mode-driven wording", got)
 	}
 }

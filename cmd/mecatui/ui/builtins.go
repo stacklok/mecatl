@@ -587,7 +587,7 @@ func (m Model) runLearningSensitivity() (tea.Model, tea.Cmd) {
 // non-empty. The summary names the four defenses the posture controls so an operator
 // can confirm, e.g., that the child prompt-injection defense is OFF under yolo.
 func (m Model) runPosture() (tea.Model, tea.Cmd) {
-	base := postureSummary(m.caps.Posture, m.caps.ProjectTrust, m.caps.SubagentAskReviewer)
+	base := postureSummary(m.caps.Posture, m.caps.ProjectTrust, m.caps.SubagentAskReviewer, m.legacyPermissionModes())
 	if m.deps.Guardrails == nil || m.sessionID == "" {
 		m.statusMsg = m.deps.Theme.Style("muted").Render(base + "; checker unknown (server does not expose guardrail coverage)")
 		return m, nil
@@ -640,15 +640,17 @@ func (m Model) runDebugAsk() (tea.Model, tea.Cmd) {
 // postureSummary renders the one-line /posture summary for a posture token. It is
 // pure (no Model) so it is directly testable.
 //
-// Posture sets the server ceiling (which modes a session may enter) and the
-// project-trust floor. Allow-all and substitution loosening are now session-mode
-// behaviors: auto/yolo sessions inject the allow-all rule per-evaluate, so the
-// description names the ceiling rather than claiming allow-all is always on.
-// Project-trust is the server-reported trust when known (trust), else inferred
-// from the posture, which raises it for trusted+ on interactive roots. An
-// empty/unknown token degrades to a bare label. The subagent ask reviewer is
-// named only when the server reported it.
-func postureSummary(p, projectTrust, reviewer string) string {
+// On a server with the session_permission_modes feature, posture sets the server
+// ceiling (which modes a session may enter) and the project-trust floor.
+// Allow-all and substitution loosening are session-mode behaviors: auto/yolo
+// sessions inject the allow-all rule per-evaluate, so the description names the
+// ceiling rather than claiming allow-all is always on. A legacy server (legacy
+// true) applies an auto/yolo posture's allow-all to every session whatever its
+// mode, so the summary says so. Project-trust is the server-reported trust when
+// known (trust), else inferred from the posture, which raises it for trusted+ on
+// interactive roots. An empty/unknown token degrades to a bare label. The
+// subagent ask reviewer is named only when the server reported it.
+func postureSummary(p, projectTrust, reviewer string, legacy bool) string {
 	ceilingAuto := p == postureAuto
 	ceilingYolo := p == postureYolo
 	childDefenseOff := p == postureYolo // yolo session mode loosens child substitution
@@ -665,6 +667,16 @@ func postureSummary(p, projectTrust, reviewer string) string {
 	label := p
 	if label == "" {
 		label = unknownLabel
+	}
+	if legacy {
+		allowAll := ceilingAuto || ceilingYolo
+		return "posture " + label +
+			" — server-wide allow-all " + onoff(allowAll) + " (every session, whatever its mode)" +
+			"; main $()/heredoc auto-run " + onoff(allowAll) +
+			"; child $()/heredoc auto-run (injection-defense off) " + onoff(childDefenseOff) +
+			"; project-trust " + onoff(trust) +
+			" (Deny & configured Ask always apply)" +
+			reviewerSummary(reviewer)
 	}
 	ceiling := "default/plan/accept-edits"
 	if ceilingYolo {

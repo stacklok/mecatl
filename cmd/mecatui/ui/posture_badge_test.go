@@ -108,7 +108,7 @@ func TestPostureSummary(t *testing.T) {
 		{"yolo", []string{"posture yolo", "ceiling all modes including yolo", "child $()/heredoc auto-run when in yolo mode (injection-defense off) on", "project-trust on"}},
 	}
 	for _, tc := range cases {
-		got := postureSummary(tc.posture, "", "")
+		got := postureSummary(tc.posture, "", "", false)
 		for _, sub := range tc.want {
 			if !strings.Contains(got, sub) {
 				t.Errorf("postureSummary(%q) missing %q; got %q", tc.posture, sub, got)

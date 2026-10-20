@@ -334,20 +334,20 @@ func PermissionModeVocabulary() []PermissionModeEntry {
 }
 
 // writeHelpPermissionModes lists every permission-mode token with its two
-// halves, states that the posture half is process-wide while the session half is
-// only a new-session default, that cycling reaches every mode but cannot raise
-// the posture, and whose restart a posture change needs.
+// halves, states that the posture half bounds the modes a session may switch to
+// while the session's own mode applies live, that cycling reaches every mode but
+// cannot raise the posture, and whose restart a posture change needs.
 func writeHelpPermissionModes(b *strings.Builder, th theme.Theme, hk helpKeys, embedded bool) {
 	b.WriteString("\n" + th.Style("toolName").Render("Permission modes (--permission-mode, or cycle with "+hk.modeSwitch+")") + "\n")
 	vocab := PermissionModeVocabulary()
 	rows := make([]helpRow, 0, len(vocab))
 	for _, e := range vocab {
-		rows = append(rows, helpRow{key: e.Name, action: "posture " + e.Posture + " (process-wide) · new sessions start in " + e.SessionMode})
+		rows = append(rows, helpRow{key: e.Name, action: "posture " + e.Posture + " (server limit) · new sessions start in " + e.SessionMode})
 	}
 	writeHelpRows(b, th, rows)
 	writeHelpBodyLines(b, th,
-		"The posture half applies to the whole server and is fixed when it starts.",
-		"The session half is only the default for new sessions.",
+		"The posture half is fixed when the server starts and limits which modes a session can switch to.",
+		"The session half is the mode new sessions start in; each session's current mode applies live.",
 		hk.modeSwitch+" cycles every mode. A mode that raises the posture needs a restart, and auto also an enforcing guardrails checker;",
 		"cycling onto one keeps the current mode and your draft, and the footer says what makes it available.",
 		"A mode at or below the posture applies its session half live.",

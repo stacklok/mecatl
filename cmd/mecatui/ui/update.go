@@ -1122,7 +1122,7 @@ func (m Model) updateLifecycle(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 			if msg.Err == nil {
 				checker = guardrailPostureSummary(msg.Coverage)
 			}
-			m.statusMsg = m.deps.Theme.Style("muted").Render(postureSummary(m.caps.Posture, m.caps.ProjectTrust, m.caps.SubagentAskReviewer) + "; " + checker)
+			m.statusMsg = m.deps.Theme.Style("muted").Render(postureSummary(m.caps.Posture, m.caps.ProjectTrust, m.caps.SubagentAskReviewer, m.legacyPermissionModes()) + "; " + checker)
 		} else if msg.Err != nil {
 			m.conv.addNotice("Guardrails status unavailable; checker state is unknown, not off or healthy.")
 		} else {
