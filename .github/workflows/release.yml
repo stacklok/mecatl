@@ -1,7 +1,7 @@
 # Publishes and signs the mecated, mecatui, and mecak8s images, the Slack bot
 # example image, the Mecatl Studio image and Helm chart (early access), the
 # mecak8s Helm chart, and the mecated+mecatui CLI archives (a GitHub Release plus a
-# stacklok/homebrew-tap formula) from root `v*` tags or an explicitly selected tag.
+# stacklok/homebrew-tap cask) from root `v*` tags or an explicitly selected tag.
 # Nested persistence modules are NOT published by root v* releases. Ordinary
 # builds and tidy use public, checksum-verified immutable dependency revisions;
 # independent release tags remain human-controlled; see adapters/COMPATIBILITY.md.
@@ -1687,19 +1687,19 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
   # The CLI half of a mecatl release: the mecated + mecatui BINARIES, shipped as
-  # per-platform tarballs on a GitHub Release, plus the `mecatl` formula in
+  # per-platform tarballs on a GitHub Release, plus the `mecatl` cask in
   # stacklok/homebrew-tap. GoReleaser owns this and only this; ko still owns
-  # every container image (the jobs above, .ko.yaml). One formula, two binaries,
+  # every container image (the jobs above, .ko.yaml). One cask, two binaries,
   # mirroring the `install` Taskfile target.
   #
   # Deliberately NOT `needs:` any job above: there is no artifact dependency, and
   # serialising a multi-minute job behind another buys nothing. It runs the
   # reusable-pin gate ITSELF rather than inheriting it from `publish`, because a
-  # published formula is the most user-visible artifact in this workflow and must
+  # published cask is the most user-visible artifact in this workflow and must
   # not be gated by luck of job ordering.
   #
-  # Partial-failure shape, stated deliberately: GoReleaser's brew pipe continues
-  # on error and the Release is created before the formula is pushed, so a bad
+  # Partial-failure shape, stated deliberately: GoReleaser's cask pipe continues
+  # on error and the Release is created before the cask is pushed, so a bad
   # tap token fails this job WITHOUT losing the Release. Recover by re-running.
   # If a run dies BETWEEN "release created" and "assets uploaded" it leaves a
   # DRAFT, which a lookup by tag does not return, so a naive re-run tries to
@@ -1708,7 +1708,7 @@ jobs:
   # before re-dispatching. See .claude/skills/cut-release.
   publish-cli:
     needs: [guard, create-release]
-    name: Build, publish, sign, attest CLI archives + Homebrew formula
+    name: Build, publish, sign, attest CLI archives + Homebrew cask
     runs-on: ubuntu-24.04
     # 60, measured rather than guessed. On the v0.0.30 run the disk reclaim took
     # ~2 min and eight cross-compiles were still going at 22 min (at --parallelism
@@ -1825,7 +1825,7 @@ jobs:
       # A per-run, scoped GitHub App installation token — the only credential
       # that can write to stacklok/homebrew-tap. This job's GITHUB_TOKEN cannot
       # (it is scoped to this repository), and no long-lived PAT is kept.
-      # permission-contents: write is the single permission the formula commit
+      # permission-contents: write is the single permission the cask commit
       # needs; the App installation itself is restricted to homebrew-tap.
       - name: Mint the Homebrew tap token
         id: homebrew-tap-token
@@ -1866,7 +1866,7 @@ jobs:
           echo "MECATL_METRICS_INGEST_KEY=$key" >> "$GITHUB_ENV"
 
       # `release --clean` wipes dist/, then builds, archives, SBOMs, checksums,
-      # signs, creates the Release, uploads, and LAST pushes the formula.
+      # signs, creates the Release, uploads, and LAST pushes the cask.
       #
       # GORELEASER_CURRENT_TAG is set explicitly rather than relying on
       # `git tag --points-at HEAD`: that fallback picks by -version:refname when

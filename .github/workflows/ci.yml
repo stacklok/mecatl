@@ -881,14 +881,14 @@ jobs:
   # Release archives are cross-compiled for darwin on an ubuntu runner, which
   # cannot execute them, so nothing else in CI ever RUNS a darwin binary. This
   # job is the native Apple Silicon smoke test: it proves the two executables the
-  # Homebrew formula ships actually start on the platform most users install on,
+  # Homebrew cask ships actually start on the platform most users install on,
   # and that the buildinfo.BuildID linker stamp round-trips.
   #
   # The stamp assertion matters because .goreleaser.yaml is the only place that
   # names the -X symbol path; a wrong path still compiles and still produces a
   # working binary, but reports the `dev+<vcs-rev>` fallback instead of the tag.
-  # Catching that here means it cannot reach a published formula, where the only
-  # other check (`brew test`) runs post-publication.
+  # Catching that here means it cannot reach a published cask, which has no
+  # post-install test of its own.
   smoke-darwin-arm64:
     name: CLI smoke test (macOS arm64)
     needs: changes
@@ -915,7 +915,7 @@ jobs:
             internal/adaptersupport/go.sum
             contracts/gen/go/mecatl/driver/go.sum
             adapters/go.sum
-      - name: Build and run the formula's executables
+      - name: Build and run the cask's executables
         env:
           # A recognisable stand-in for a release tag. The release build stamps
           # the same symbol with `v{{ .Version }}` (see .goreleaser.yaml).
@@ -923,7 +923,7 @@ jobs:
         run: |
           set -euo pipefail
           # CGO_ENABLED=0 matches .goreleaser.yaml and .ko.yaml, so this exercises
-          # the same static build the formula ships.
+          # the same static build the cask ships.
           for bin in mecated mecatui; do
             CGO_ENABLED=0 go build -trimpath \
               -ldflags "-s -w -X github.com/stacklok/mecatl/internal/buildinfo.BuildID=${STAMP}" \
@@ -1123,7 +1123,7 @@ jobs:
 
       # Validate .goreleaser.yaml on every PR. A schema error there is otherwise
       # only discoverable AFTER a tag has been pushed, which is irreversible: the
-      # tag has already published images and a public Homebrew formula. GoReleaser
+      # tag has already published images and a public Homebrew cask. GoReleaser
       # loads the config strictly, so an unknown or misspelled field is a hard
       # error here rather than a warning.
       #
@@ -1140,15 +1140,15 @@ jobs:
           install-only: true
       - name: Validate the GoReleaser config
         # `goreleaser check` exits 2 for "valid, but uses DEPRECATED properties".
-        # .goreleaser.yaml deliberately uses the deprecated `brews` block, because
-        # stacklok/homebrew-tap is a Formula/ tap and casks must live in Casks/.
-        # So 2 is expected and accepted; only exit 1 (invalid config) fails.
+        # A deprecation is reported but accepted, so a GoReleaser upgrade that
+        # deprecates a field we use does not block PRs; only exit 1 (invalid
+        # config) fails.
         run: |
           status=0
           goreleaser check || status=$?
           case "$status" in
             0) ;;
-            2) echo "goreleaser check: config valid; uses deprecated properties (brews) - accepted" ;;
+            2) echo "goreleaser check: config valid; uses deprecated properties - accepted" ;;
             *) exit "$status" ;;
           esac
 

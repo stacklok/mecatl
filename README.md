@@ -116,7 +116,7 @@ attenuation remain active design work. See the
 
 The offline demo runs a scripted session with tool calls, a permission approval,
 delegation, and usage accounting. It does not require an API key. It runs from a
-checkout of this repository; the Homebrew formula does not ship `mecademo`.
+checkout of this repository; the Homebrew cask does not ship `mecademo`.
 
 ```sh
 go run ./cmd/mecademo

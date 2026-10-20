@@ -3,7 +3,7 @@ name: cut-release
 description: >-
   Cut a tagged release of mecatl — dispatch the Create Release PR workflow, review and
   merge the release PR, then verify the tag and the artifacts it publishes (images +
-  Helm charts to GHCR, plus a GitHub Release with signed archives and a Homebrew formula
+  Helm charts to GHCR, plus a GitHub Release with signed archives and a Homebrew cask
   bump). Use when asked to cut/ship/tag/publish a release or bump the version. NOT for
   general git tagging unrelated to a mecatl release.
 metadata:
@@ -17,12 +17,12 @@ which publishes signed images (`mecated`, `mecatui`, `mecak8s`, execution provid
 Studio, and the Slack-bot example), Helm charts, and versioned microVM and Brood Box
 artifacts. It also publishes a **GitHub Release** carrying `darwin`/`linux` x
 `amd64`/`arm64` CLI archives, a `checksums.txt`, cosign bundles, SBOMs, and build
-provenance, and pushes a `mecatl` formula bump to the public `stacklok/homebrew-tap`
+provenance, and pushes a `mecatl` cask bump to the public `stacklok/homebrew-tap`
 repository. There is **no** version baked into the Go code — the tag IS the release.
 
 Two consequences of the Homebrew half, before you start:
 
-- **A published tag is immutable in practice.** The formula records the release archives'
+- **A published tag is immutable in practice.** The cask records the release archives'
   SHA256 checksums for a specific tag. Deleting and re-pushing a `vX.Y.Z` that already produced
   a release and a tap commit leaves the tap pointing at checksums that no longer match, which
   breaks `brew install` for everyone. If a release goes wrong after the tap commit lands,
@@ -155,13 +155,13 @@ Run from the repo root.
    a lookup by tag does not return, so a naive re-run fails trying to create the release again.
    Recover with `gh release delete vX.Y.Z --cleanup-tag=false --yes`, then re-dispatch.
 
-8. **Verify the Homebrew tap got the formula bump:**
+8. **Verify the Homebrew tap got the cask bump:**
    ```sh
    gh api repos/stacklok/homebrew-tap/commits --jq '.[0].commit.message'
-   gh api repos/stacklok/homebrew-tap/contents/Formula/mecatl.rb --jq '.content' \
+   gh api repos/stacklok/homebrew-tap/contents/Casks/mecatl.rb --jq '.content' \
      | base64 -d | grep -E 'version|url|sha256' | head
    ```
-   The top commit must name the version you just cut, and the formula's `url` and `sha256`
+   The top commit must name the version you just cut, and the cask's `url` and `sha256`
    values must match the release assets from step 7.
 
    **While `stacklok/mecatl` is private, `brew install stacklok/tap/mecatl` fails** even after a
@@ -219,7 +219,7 @@ Run from the repo root.
 no pin bump, so it never needed the release-PR flow the root `vX.Y.Z` line uses — pushing the
 tag is the whole release.
 
-**IMPORTANT — an engine tag fires NO image build, NO GitHub Release, and NO Homebrew formula bump.** `release.yml` triggers on `v*` (the root tag
+**IMPORTANT — an engine tag fires NO image build, NO GitHub Release, and NO Homebrew cask bump.** `release.yml` triggers on `v*` (the root tag
 glob), which does **not** match `engine/v*`, so cutting an engine tag runs none of the ko build /
 cosign / SBOM / SLSA pipeline. It only publishes the module version, making it resolvable for
 `go get github.com/stacklok/mecatl/engine@engine/vX.Y.Z` consumers. There is no pin
@@ -228,11 +228,11 @@ bump and no `release.yml` run to confirm — the push of the tag is the whole re
 ## Notes
 
 - **Two publishing destinations, one tag.** A run can succeed on the GHCR images and still fail
-  on the release or the tap (or vice versa). GoReleaser's brew pipe continues on error and the
-  Release is created before the formula is pushed, so a bad tap token loses the formula but NOT
+  on the release or the tap (or vice versa). GoReleaser's cask pipe continues on error and the
+  Release is created before the cask is pushed, so a bad tap token loses the cask but NOT
   the Release. Steps 7 and 8 are not optional: a green `gh run list` line is not proof that
   `brew install` works.
-- **Never hand-edit `stacklok/homebrew-tap`.** The formula is generated from the tag by the
+- **Never hand-edit `stacklok/homebrew-tap`.** The cask is generated from the tag by the
   release workflow and carries a `DO NOT EDIT` header. A manual edit is overwritten by the next
   release and desynchronizes the checksums in the meantime.
 - **Never push to `main`, and never create a root `vX.Y.Z` tag by hand.** Both are the

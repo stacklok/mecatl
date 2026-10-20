@@ -249,10 +249,10 @@ tasks:
           --image-label=org.stacklok.broodbox.agent=/var/run/ko/agent.yaml
           ./cmd/mecatui
 
-  # --- Release archives / Homebrew formula (GoReleaser) ----------------------
+  # --- Release archives / Homebrew cask (GoReleaser) -------------------------
   #
   # GoReleaser owns ONLY the mecated+mecatui binary archives, the GitHub Release
-  # they attach to, and the `mecatl` formula in stacklok/homebrew-tap. Container
+  # they attach to, and the `mecatl` cask in stacklok/homebrew-tap. Container
   # images stay with ko (the ko:* targets above, .ko.yaml). See .goreleaser.yaml.
   #
   # These targets are LOCAL VERIFICATION only — the real release runs from
@@ -283,25 +283,24 @@ tasks:
         silent: true
 
   release:check:
-    desc: Validate .goreleaser.yaml offline (strict schema; tolerates the deliberate `brews` deprecation)
+    desc: Validate .goreleaser.yaml offline (strict schema; deprecations warn, not fail)
     cmds:
       # `goreleaser check` exits 2 for "valid, but uses DEPRECATED properties".
-      # We use the deprecated `brews` block deliberately, because
-      # stacklok/homebrew-tap is a Formula/ tap and casks must live in Casks/
-      # (see the rationale in .goreleaser.yaml). Exit 2 is therefore expected and
-      # accepted; only exit 1 (genuinely invalid config) fails this gate.
+      # A deprecation is reported but accepted, so a GoReleaser upgrade that
+      # deprecates a field we use does not block unrelated work; only exit 1
+      # (genuinely invalid config) fails this gate.
       - task: release:require-goreleaser
       - cmd: |
           status=0
           goreleaser check || status=$?
           case "$status" in
             0) ;;
-            2) echo "goreleaser check: config valid; uses deprecated properties (brews) - accepted" ;;
+            2) echo "goreleaser check: config valid; uses deprecated properties - accepted" ;;
             *) exit "$status" ;;
           esac
 
   release:snapshot:
-    desc: Build the release archives and Homebrew formula locally into dist/ (no tag, no upload, no tokens)
+    desc: Build the release archives and Homebrew cask locally into dist/ (no tag, no upload, no tokens)
     cmds:
       # --snapshot skips publish/announce/validate, so this needs neither a clean
       # tree, nor a tag, nor GITHUB_TOKEN, nor HOMEBREW_TAP_GITHUB_TOKEN (the tap
@@ -312,17 +311,20 @@ tasks:
       - goreleaser release --snapshot --clean --skip=publish,sign,sbom
 
   release:verify:
-    desc: Prove the release:snapshot output - both binaries per archive, the linker stamp, and formula style
+    desc: Prove the release:snapshot output - both binaries per archive, the linker stamp, and cask style
     cmds:
       # Run `task release:snapshot` first. Three assertions, each guarding a
       # failure mode that would otherwise reach Homebrew users silently:
       #   1. the archive is FLAT and carries BOTH binaries (the generated
-      #      `bin.install "mecated"` requires them at the archive root),
+      #      `binary "mecated"` stanzas require them at the archive root),
       #   2. --version reports the stamped tag and not buildinfo's `dev+<rev>`
       #      VCS fallback (which is what a wrong -X symbol path produces),
-      #   3. the generated formula passes Homebrew's own rubocop rules.
-      # Note `brew style` is called WITHOUT --formula: that flag requires the
+      #   3. the generated cask passes Homebrew's own rubocop rules.
+      # Note `brew style` is called WITHOUT --cask: that flag requires the
       # file to live in a real tap and rejects a path under dist/.
+      # Cask/StanzaOrder is skipped because .goreleaser.yaml's custom_block puts
+      # postflight_steps at the top of the cask; drop the exception once that
+      # moves to GoReleaser's hooks.post.install_steps.
       - cmd: |
           set -eu
           arch="$(ls dist/mecatl_*_"$(go env GOOS)"_"$(go env GOARCH)".tar.gz)"
@@ -341,8 +343,8 @@ tasks:
               *"dev+"*) echo "STAMP LOST: $bin reports the buildinfo VCS fallback; check the -X symbol path"; exit 1 ;;
             esac
           done
-          echo "==> brew style dist/homebrew/Formula/mecatl.rb"
-          brew style dist/homebrew/Formula/mecatl.rb
+          echo "==> brew style dist/homebrew/Casks/mecatl.rb"
+          brew style --except-cops Cask/StanzaOrder dist/homebrew/Casks/mecatl.rb
 
   test:_module:
     internal: true
