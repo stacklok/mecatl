@@ -65,13 +65,13 @@ bypass the evaluator.
 | Session mode | Allow-all rule | Substitution floor loosened |
 | --- | --- | --- |
 | `plan`, `default`, `accept-edits` | No | No |
-| `auto` | Main and children | Main engine |
+| `auto` | Main and children | No |
 | `yolo` | Main and children | Main and children |
 
 The allow-all rule is one ordinary `ScopeCLI` Allow, pinned per audience, so it loosens
 only the built-in floor: every Deny and configured Ask still applies at `yolo`. Only
-`yolo` lets children auto-run substitutions, which turns off the child prompt-injection
-defense.
+`yolo` lets the main engine and children auto-run substitutions, which turns off the
+child prompt-injection defense.
 
 `Service.admitMode` (`internal/adapter/server/service.go`) refuses a created or switched
 mode above the ceiling, and `auto` without an enforcing guardrails checker; a server

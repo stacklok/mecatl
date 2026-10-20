@@ -459,7 +459,7 @@ func TestPermissionModeTokenDerivesNoTrust(t *testing.T) {
 	}
 }
 
-func TestAllowAllNarratesSubagentAsymmetry(t *testing.T) {
+func TestAutoNarratesSubstitutionGuard(t *testing.T) {
 	rec := slogdiagBuffer(t)
 	cfg := permissionModeCfg(t, "auto", rec.diag)
 	cfg.GuardrailsModel = "mock-checker"
@@ -469,8 +469,8 @@ func TestAllowAllNarratesSubagentAsymmetry(t *testing.T) {
 	}
 	built.Close()
 	line := rec.lineContaining("KEEP the command-substitution guard")
-	if line == "" || !strings.Contains(line, "--subagent-ask-reviewer") {
-		t.Fatalf("auto must narrate the subagent asymmetry and name the reviewer; log:\n%s", rec.String())
+	if line == "" || !strings.Contains(line, "main agent and subagents") || !strings.Contains(line, "--subagent-ask-reviewer") {
+		t.Fatalf("auto must say the main agent and subagents keep the guard and name the reviewer; log:\n%s", rec.String())
 	}
 }
 

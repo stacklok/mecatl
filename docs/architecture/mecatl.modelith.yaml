@@ -603,7 +603,10 @@ entities:
       - id: mode-switch-rejected-mid-turn
         statement: >
           A `PermissionMode` change is rejected while a turn is in flight (running
-          or awaiting); a control surface defers it to the next turn boundary.
+          or awaiting); a control surface defers it to the next turn boundary. The
+          one exception: for a stored `Session` awaiting an approval in a mode the
+          server no longer admits, a change to an admitted, strictly lower mode
+          cancels the pending turn without running it and applies the mode.
       - id: mode-model-same-provider
         statement: >
           A mode-driven `Model` re-resolution stays within the `Session`'s bound

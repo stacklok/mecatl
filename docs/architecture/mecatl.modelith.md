@@ -237,7 +237,7 @@ A `Session`'s permission posture — plan, default, acceptEdits, auto, or yolo �
 
 **Invariants**
 
-- **mode-switch-rejected-mid-turn** — A `PermissionMode` change is rejected while a turn is in flight (running or awaiting); a control surface defers it to the next turn boundary.
+- **mode-switch-rejected-mid-turn** — A `PermissionMode` change is rejected while a turn is in flight (running or awaiting); a control surface defers it to the next turn boundary. The one exception: for a stored `Session` awaiting an approval in a mode the server no longer admits, a change to an admitted, strictly lower mode cancels the pending turn without running it and applies the mode.
 
 - **mode-model-same-provider** — A mode-driven `Model` re-resolution stays within the `Session`'s bound `Provider`; the provider is fixed per session.
 
@@ -886,7 +886,7 @@ erDiagram
 
 **Invariants touched**
 
-- **mode-switch-rejected-mid-turn** — A `PermissionMode` change is rejected while a turn is in flight (running or awaiting); a control surface defers it to the next turn boundary.
+- **mode-switch-rejected-mid-turn** — A `PermissionMode` change is rejected while a turn is in flight (running or awaiting); a control surface defers it to the next turn boundary. The one exception: for a stored `Session` awaiting an approval in a mode the server no longer admits, a change to an admitted, strictly lower mode cancels the pending turn without running it and applies the mode.
 
 - **mode-model-same-provider** — A mode-driven `Model` re-resolution stays within the `Session`'s bound `Provider`; the provider is fixed per session.
 

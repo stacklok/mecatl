@@ -43,12 +43,12 @@ Pass `--permission-mode` when you start `mecated`, `mecatui`, `mecak8s`, or
 `mecatequi`. Deny rules and configured asks win in every mode, including
 `yolo`.
 
-|Mode|Edits|Shell and other mutations|Command substitution in subagents|Guardrails checker|
+|Mode|Edits|Shell and other mutations|Command substitution|Guardrails checker|
 |-|-|-|-|-|
 |`plan`|Denied|Denied|Not applicable, read-only|Optional|
 |`default`|Ask|Ask|Ask|Optional|
 |`accept-edits`|Allowed|Ask|Ask|Optional|
-|`auto`|Allowed|Allowed|Adjudicated by a reviewer model when headless|Required, enforcing|
+|`auto`|Allowed|Allowed|Ask; headless subagent requests go to a reviewer model|Required, enforcing|
 |`yolo`|Allowed|Allowed|Allowed|Optional, advisory only|
 
 Whether Mecatl loads project instructions, rules, and allow rules is the
@@ -222,11 +222,10 @@ Subagents, `Parallel` branches, and team members started from an `auto` or
 `permissionMode` keeps that mode instead. Children of a `plan`, `default`, or `accept-edits` session
 run in `default` mode.
 
-Under `auto`, subagents keep the command-substitution guard that the main agent
-loses. A subagent Shell command containing `$(...)`, backticks, or a subshell
-that Mecatl cannot prove read-only is not run automatically, even though the
-main agent would run the same command. `yolo` removes that guard for subagents
-too.
+Under `auto`, the main agent and subagents keep the command-substitution guard.
+A Shell command containing `$(...)`, backticks, or a subshell that Mecatl cannot
+prove read-only is not run automatically; it becomes an approval request.
+`yolo` removes that guard for the main agent and subagents.
 
 An interactive client receives these requests as ordinary approval prompts. A
 headless `auto` or `yolo` deployment has nobody to ask, so the _subagent ask
@@ -270,6 +269,11 @@ and deployments can observe:
   must configure one or choose `--permission-mode yolo`. The `mecak8s` chart
   default and the `mecatequi` action default are `auto`, so they need the same
   choice.
+- **`auto` keeps the command-substitution guard for the main agent.**
+  Previously, `--posture auto` let the main agent run `$(...)`, backtick, and
+  subshell commands that Mecatl could not prove read-only. Under `auto` they now
+  become approval requests, which a headless server leaves waiting for a
+  client. Use `yolo` if the main agent must run them unattended.
 - **A mode never grants project trust.** `--permission-mode` no longer loads
   project instructions and rules on interactive roots the way `--posture` did.
   Pass `--trust-project` or add the workspace to `trustedWorkspaces`.
