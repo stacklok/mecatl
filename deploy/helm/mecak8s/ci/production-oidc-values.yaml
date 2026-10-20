@@ -4,6 +4,9 @@ image:
   tag: v0.0.0
 defaultProvider: openrouter
 model: anthropic/claude-sonnet-4-6
+# auto (the default) requires an enforcing checker.
+guardrails:
+  model: anthropic/claude-haiku-4-5
 extraEnv:
   # The chart references this operator-provisioned Secret; it never creates it.
   - name: OPENROUTER_API_KEY

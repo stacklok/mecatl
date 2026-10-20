@@ -6,6 +6,9 @@ image:
 mockProvider: false
 defaultProvider: openrouter
 model: anthropic/claude-sonnet-4-6
+# auto (the default) requires an enforcing checker.
+guardrails:
+  model: anthropic/claude-haiku-4-5
 maxRunTokens: 200000
 maxTeamTokens: 800000
 redis:

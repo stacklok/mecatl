@@ -167,9 +167,24 @@ mounted
 {{- if regexMatch "^--?(posture|permission-mode|yolo)(=|$)" $a -}}
 {{- fail (printf "extraArgs entry %q sets the permission mode, which the chart owns; remove it and set permissionMode instead (--posture=strict becomes permissionMode: default, --posture=auto becomes permissionMode: auto, --posture=yolo or --yolo becomes permissionMode: yolo)" $a) -}}
 {{- end -}}
+{{- if regexMatch "^--?(guardrails|guardrails-model)(=|$)" $a -}}
+{{- fail (printf "extraArgs entry %q sets the guardrails checker, which the chart owns; remove it and set guardrails.model, guardrails.fromSettings, or guardrails.disabled instead" $a) -}}
 {{- end -}}
-{{- if and .Values.guardrails.model .Values.guardrails.disabled -}}
-{{- fail "set at most one of guardrails.model or guardrails.disabled" -}}
+{{- end -}}
+{{- $choices := 0 -}}
+{{- if .Values.guardrails.model -}}{{- $choices = add1 $choices -}}{{- end -}}
+{{- if .Values.guardrails.fromSettings -}}{{- $choices = add1 $choices -}}{{- end -}}
+{{- if .Values.guardrails.disabled -}}{{- $choices = add1 $choices -}}{{- end -}}
+{{- if gt $choices 1 -}}
+{{- fail "set at most one of guardrails.model, guardrails.fromSettings, or guardrails.disabled" -}}
+{{- end -}}
+{{- if eq .Values.permissionMode "auto" -}}
+{{- if .Values.guardrails.disabled -}}
+{{- fail "permissionMode auto requires a guardrails checker; guardrails.disabled=true is the kill-switch: set permissionMode: yolo or remove guardrails.disabled" -}}
+{{- end -}}
+{{- if not (or .Values.guardrails.model .Values.guardrails.fromSettings) -}}
+{{- fail "permissionMode auto requires an enforcing guardrails checker and mecak8s refuses to start without one: set guardrails.model, set guardrails.fromSettings=true when mounted settings bind the checker, or set permissionMode: yolo to run without a checker" -}}
+{{- end -}}
 {{- end -}}
 {{- end -}}
 

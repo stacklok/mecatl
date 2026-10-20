@@ -5,6 +5,9 @@
 image:
   tag: v0.0.0
 mockProvider: true
+# The mock provider has no guardrails checker, and auto refuses to start
+# without one.
+permissionMode: yolo
 redis:
   endpoint: redis.example.internal:6379
   credentialsSecret: redis-credentials

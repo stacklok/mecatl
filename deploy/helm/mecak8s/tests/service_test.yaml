@@ -4,6 +4,7 @@ templates:
 release:
   name: unit
 set:
+  guardrails.fromSettings: true
   redis.endpoint: redis.example.internal:6379
   redis.credentialsSecret: redis-credentials
   mockProvider: true

@@ -4,6 +4,8 @@ redis:
 
 replicaCount: 1
 mockProvider: false
+guardrails:
+  fromSettings: true
 
 oidc:
   enabled: true

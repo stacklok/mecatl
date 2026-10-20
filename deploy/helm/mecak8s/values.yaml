@@ -115,24 +115,31 @@ maxTeamTokens: null
 # permissionMode renders --permission-mode=<value>: one of plan, default,
 # accept-edits, auto, or yolo. auto (the default) runs every tool without asking;
 # only deny rules and configured ask rules still apply. mecak8s refuses to start
-# in auto without an ENFORCING guardrails checker: set guardrails.model, or bind
-# a checker in mounted settings (a `guardrails:` model or the `guardrail` model
-# slot). yolo is the explicit choice to run every tool without a checker.
-# Migration: earlier charts always ran --posture=auto with --guardrails=off. Such
-# a deployment must now configure a checker or set permissionMode: yolo. Move
+# in auto without an ENFORCING guardrails checker, so the chart refuses to render
+# auto unless guardrails.model is set, or guardrails.fromSettings is true because
+# mounted settings bind the checker (a `guardrails:` model or the `guardrail`
+# model slot). yolo is the explicit choice to run every tool without a checker.
+# Migration: earlier charts always ran --posture=auto with no guardrails flag.
+# Such a deployment must now configure a checker or set permissionMode: yolo. Move
 # any --posture, --permission-mode, or --yolo entry from extraArgs to this
 # value (--posture=strict is permissionMode: default).
 permissionMode: auto
 
 # guardrails selects the checker for tool arguments and results. Set at most one:
-#   - neither (the default): the chart passes no guardrails flag, so mecak8s uses
-#     the checker configured in mounted settings, if any.
+#   - none (the default): the chart passes no guardrails flag, so mecak8s uses
+#     the checker configured in mounted settings, if any. permissionMode: auto
+#     does not render in this state.
 #   - model: --guardrails-model=<model>, a tool-free checker model that inspects
 #     outbound tool arguments and inbound results.
+#   - fromSettings: true: the chart still passes no guardrails flag, and you
+#     assert that mounted settings bind an enforcing checker. This lets
+#     permissionMode: auto render; mecak8s still refuses to start if the
+#     settings do not provide one.
 #   - disabled: true: --guardrails=off, the kill-switch. It also disables a
-#     checker configured in mounted settings, and auto refuses to start with it.
+#     checker configured in mounted settings, and auto refuses to render with it.
 guardrails:
   model: ""
+  fromSettings: false
   disabled: false
 
 # Stable, non-secret identity exported on mecak8s OTel resources. Empty is safe

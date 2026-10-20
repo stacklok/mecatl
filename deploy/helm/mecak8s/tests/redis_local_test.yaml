@@ -5,6 +5,7 @@ release:
   name: unit
   namespace: test
 set:
+  guardrails.fromSettings: true
   redis.local.enabled: true
   mockProvider: true
 tests:

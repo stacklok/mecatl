@@ -380,11 +380,11 @@ func TestMecak8sHelmChart_ProbeTimeoutsCoverReadinessBound(t *testing.T) {
 }
 
 func productionArgs() []string {
-	return []string{"template", "production", ".", "--set", "image.tag=v0.0.0", "--set", "redis.endpoint=redis.example.internal:6380", "--set", "redis.credentialsSecret=redis-credentials", "--set", "security.allowUnsafeRealProvider=true"}
+	return []string{"template", "production", ".", "--set", "image.tag=v0.0.0", "--set", "redis.endpoint=redis.example.internal:6380", "--set", "redis.credentialsSecret=redis-credentials", "--set", "security.allowUnsafeRealProvider=true", "--set", "guardrails.fromSettings=true"}
 }
 
 func secureProductionArgs() []string {
-	return []string{"template", "production", ".", "--set", "image.tag=v0.0.0", "--set", "redis.endpoint=redis.example.internal:6380", "--set", "redis.credentialsSecret=redis-credentials", "--set", "tls.enabled=true,tls.secretName=mecak8s-tls", "--set", "oidc.enabled=true,oidc.issuer=https://idp.example.com,oidc.audience=mecatl"}
+	return []string{"template", "production", ".", "--set", "image.tag=v0.0.0", "--set", "redis.endpoint=redis.example.internal:6380", "--set", "redis.credentialsSecret=redis-credentials", "--set", "tls.enabled=true,tls.secretName=mecak8s-tls", "--set", "oidc.enabled=true,oidc.issuer=https://idp.example.com,oidc.audience=mecatl", "--set", "guardrails.fromSettings=true"}
 }
 
 func TestMecak8sHelmChart_RedisFilesystemFlagsAndWorkspaceExclusion(t *testing.T) {
@@ -491,7 +491,7 @@ func TestMecak8sHelmChart_KindProfileAloneHasNoSecretDependency(t *testing.T) {
 }
 
 func TestMecak8sHelmChart_ProtectedResourceProfile(t *testing.T) {
-	rendered, err := helm(t, "template", "profile", ".", "--set", "mockProvider=true", "--set", "redis.local.enabled=true", "--set", "oidc.enabled=true", "--set", "oidc.issuer=https://idp.example.com", "--set", "oidc.audience=mecatl", "--set", "oidc.resource=https://api.example.com/mcp", "--set", "oidc.clientID=mecatui", "--set", "oidc.scopes[0]=openid", "--set", "oidc.scopes[1]=profile")
+	rendered, err := helm(t, "template", "profile", ".", "--set", "mockProvider=true,permissionMode=yolo", "--set", "redis.local.enabled=true", "--set", "oidc.enabled=true", "--set", "oidc.issuer=https://idp.example.com", "--set", "oidc.audience=mecatl", "--set", "oidc.resource=https://api.example.com/mcp", "--set", "oidc.clientID=mecatui", "--set", "oidc.scopes[0]=openid", "--set", "oidc.scopes[1]=profile")
 	if err != nil {
 		t.Fatalf("render protected-resource profile: %v\n%s", err, rendered)
 	}
@@ -502,7 +502,7 @@ func TestMecak8sHelmChart_ProtectedResourceProfile(t *testing.T) {
 			t.Fatalf("rendered args missing %q: %v", want, args)
 		}
 	}
-	if rendered, err := helm(t, "template", "profile-ipv6", ".", "--set", "mockProvider=true", "--set", "redis.local.enabled=true", "--set", "oidc.enabled=true", "--set", "oidc.issuer=https://idp.example.com", "--set", "oidc.audience=mecatl", "--set-string", "oidc.resource=https://[::1]:8443/mcp", "--set", "oidc.clientID=mecatui"); err != nil {
+	if rendered, err := helm(t, "template", "profile-ipv6", ".", "--set", "mockProvider=true,permissionMode=yolo", "--set", "redis.local.enabled=true", "--set", "oidc.enabled=true", "--set", "oidc.issuer=https://idp.example.com", "--set", "oidc.audience=mecatl", "--set-string", "oidc.resource=https://[::1]:8443/mcp", "--set", "oidc.clientID=mecatui"); err != nil {
 		t.Fatalf("render valid IPv6 resource with a valid port: %v\n%s", err, rendered)
 	} else if want := "--oidc-resource=https://[::1]:8443/mcp"; !strings.Contains(rendered, want) {
 		t.Fatalf("valid IPv6 resource render missing %q", want)
@@ -513,7 +513,7 @@ func TestMecak8sHelmChart_ProtectedResourceProfile(t *testing.T) {
 		"scope":    "oidc.enabled=true,oidc.issuer=https://idp.example.com,oidc.audience=mecatl,oidc.resource=https://api.example.com/mcp,oidc.clientID=mecatui,oidc.scopes={open%20id}",
 	} {
 		t.Run(name, func(t *testing.T) {
-			if output, err := helm(t, "template", name, ".", "--set", "mockProvider=true", "--set", values); err == nil {
+			if output, err := helm(t, "template", name, ".", "--set", "mockProvider=true,permissionMode=yolo", "--set", values); err == nil {
 				t.Fatalf("malformed profile rendered successfully:\n%s", output)
 			}
 		})
@@ -543,7 +543,7 @@ func TestMecak8sHelmChart_ProtectedResourceProfile(t *testing.T) {
 		"backslash-scope":           {`oidc.scopes[0]=openid\\\\`},
 	} {
 		t.Run(name, func(t *testing.T) {
-			args := []string{"template", name, ".", "--set", "mockProvider=true", "--set", "redis.local.enabled=true", "--set", "oidc.enabled=true", "--set", "oidc.issuer=https://idp.example.com", "--set", "oidc.audience=mecatl", "--set", "oidc.clientID=mecatui"}
+			args := []string{"template", name, ".", "--set", "mockProvider=true,permissionMode=yolo", "--set", "redis.local.enabled=true", "--set", "oidc.enabled=true", "--set", "oidc.issuer=https://idp.example.com", "--set", "oidc.audience=mecatl", "--set", "oidc.clientID=mecatui"}
 			for _, value := range values {
 				args = append(args, "--set-string", value)
 			}
@@ -703,7 +703,7 @@ func TestMecak8sHelmChart_HasNoAffinityPolicySurface(t *testing.T) {
 }
 
 func TestMecak8sHelmChart_ChartOwnedAnnotationsCannotBeOverridden(t *testing.T) {
-	base := []string{"template", "production", ".", "--set", "image.tag=v0.0.0", "--set", "redis.endpoint=redis.example.internal:6380", "--set", "redis.credentialsSecret=redis-credentials"}
+	base := []string{"template", "production", ".", "--set", "image.tag=v0.0.0", "--set", "redis.endpoint=redis.example.internal:6380", "--set", "redis.credentialsSecret=redis-credentials", "--set", "guardrails.fromSettings=true"}
 	for _, tc := range []struct {
 		name string
 		set  string
@@ -924,6 +924,7 @@ func TestMecak8sHelmChart_DeployCheckProductionFixtureRuntimeAndSpread(t *testin
 		"--session-lease-k8s-namespace=default",
 		"--headless=true",
 		"--permission-mode=auto",
+		"--guardrails-model=anthropic/claude-haiku-4-5",
 		"--default-provider=openrouter",
 		"--model=anthropic/claude-sonnet-4-6",
 		"--max-run-tokens=200000",
@@ -1092,7 +1093,7 @@ func TestMecak8sHelmHelperMatchesProviderSecuritySchema(t *testing.T) {
 	if err := os.Remove(filepath.Join(chart, "values.schema.json")); err != nil {
 		t.Fatalf("remove chart schema: %v", err)
 	}
-	base := []string{"template", "production", chart, "--set", "image.tag=v0.0.0", "--set", "redis.endpoint=redis.example.internal:6380", "--set", "redis.credentialsSecret=redis-credentials"}
+	base := []string{"template", "production", chart, "--set", "image.tag=v0.0.0", "--set", "redis.endpoint=redis.example.internal:6380", "--set", "redis.credentialsSecret=redis-credentials", "--set", "guardrails.fromSettings=true"}
 	for _, tc := range providerSecurityCases() {
 		t.Run(tc.name(), func(t *testing.T) {
 			args := append([]string{}, base...)
@@ -1237,7 +1238,7 @@ func TestMecak8sHelmChart_SecureRedisModes(t *testing.T) {
 	}
 
 	// System-trust TLS without ACL credentials needs no Secret at all.
-	publicTLS := []string{"template", "production", ".", "--set", "image.tag=v0.0.0", "--set", "redis.endpoint=redis.example.internal:6380", "--set", "redis.caKey=", "--set", "security.allowUnsafeRealProvider=true"}
+	publicTLS := []string{"template", "production", ".", "--set", "image.tag=v0.0.0", "--set", "redis.endpoint=redis.example.internal:6380", "--set", "redis.caKey=", "--set", "security.allowUnsafeRealProvider=true", "--set", "guardrails.fromSettings=true"}
 	rendered, err := helm(t, publicTLS...)
 	if err != nil {
 		t.Fatalf("render system-trust TLS without Secret: %v", err)
@@ -3073,11 +3074,12 @@ mcp:
 	}
 }
 
-// TestShippedAllowAllDefaultsDeclareCheckerChoice pins the chart's tri-state
-// checker choice: with neither guardrails.model nor guardrails.disabled set the
-// chart passes no guardrails flag, so mecak8s inherits the checker from mounted
-// settings; a model renders --guardrails-model; disabled renders the
-// --guardrails=off kill-switch. permissionMode renders --permission-mode.
+// TestShippedAllowAllDefaultsDeclareCheckerChoice pins the chart's checker
+// choice: with no guardrails.model or guardrails.disabled the chart passes no
+// guardrails flag, so mecak8s inherits the checker from mounted settings (auto
+// renders that only with guardrails.fromSettings); a model renders
+// --guardrails-model; disabled renders the --guardrails=off kill-switch.
+// permissionMode renders --permission-mode.
 func TestShippedAllowAllDefaultsDeclareCheckerChoice(t *testing.T) {
 	cases := []struct {
 		name     string
@@ -3085,11 +3087,11 @@ func TestShippedAllowAllDefaultsDeclareCheckerChoice(t *testing.T) {
 		mode     string
 		guardArg string // the single expected --guardrails* arg; empty means none
 	}{
-		{name: "default inherits the settings checker", mode: "auto"},
-		{name: "model declares checker", extra: []string{"--set-string", "guardrails.model=openrouter/checker"}, mode: "auto", guardArg: "--guardrails-model=openrouter/checker"},
-		{name: "disabled declares the kill-switch", extra: []string{"--set", "permissionMode=yolo,guardrails.disabled=true"}, mode: "yolo", guardArg: "--guardrails=off"},
-		{name: "yolo inherits", extra: []string{"--set", "permissionMode=yolo"}, mode: "yolo"},
-		{name: "default mode", extra: []string{"--set", "permissionMode=default"}, mode: "default"},
+		{name: "fromSettings inherits the settings checker", mode: "auto"},
+		{name: "model declares checker", extra: []string{"--set", "guardrails.fromSettings=false", "--set-string", "guardrails.model=openrouter/checker"}, mode: "auto", guardArg: "--guardrails-model=openrouter/checker"},
+		{name: "disabled declares the kill-switch", extra: []string{"--set", "guardrails.fromSettings=false,permissionMode=yolo,guardrails.disabled=true"}, mode: "yolo", guardArg: "--guardrails=off"},
+		{name: "yolo inherits", extra: []string{"--set", "guardrails.fromSettings=false,permissionMode=yolo"}, mode: "yolo"},
+		{name: "default mode", extra: []string{"--set", "guardrails.fromSettings=false,permissionMode=default"}, mode: "default"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -3121,9 +3123,10 @@ func TestShippedAllowAllDefaultsDeclareCheckerChoice(t *testing.T) {
 	}
 }
 
-// TestPermissionModeValuesAreValidated pins the chart-owned permission mode:
-// an unknown permissionMode, a mode flag in extraArgs, or both checker choices
-// fail rendering with a message naming the fix.
+// TestPermissionModeValuesAreValidated pins the chart-owned permission mode and
+// checker: an unknown permissionMode, a mode or guardrails flag in extraArgs,
+// more than one checker choice, or auto without a checker fail rendering with a
+// message naming the fix.
 func TestPermissionModeValuesAreValidated(t *testing.T) {
 	cases := []struct {
 		name  string
@@ -3143,7 +3146,14 @@ func TestPermissionModeValuesAreValidated(t *testing.T) {
 		{name: "single-dash split permission-mode in extraArgs", extra: []string{"--set", "extraArgs[0]=-permission-mode,extraArgs[1]=yolo"}, want: []string{"-permission-mode", "permissionMode"}},
 		{name: "split permission-mode in extraArgs", extra: []string{"--set", "extraArgs[0]=--permission-mode,extraArgs[1]=yolo"}, want: []string{"--permission-mode", "permissionMode"}},
 		{name: "single-dash yolo in extraArgs", extra: []string{"--set", "extraArgs[0]=-yolo"}, want: []string{"-yolo", "permissionMode"}},
-		{name: "model and disabled", extra: []string{"--set", "guardrails.model=checker,guardrails.disabled=true"}, want: []string{"guardrails.model", "guardrails.disabled"}},
+		{name: "guardrails in extraArgs", extra: []string{"--set", "extraArgs[0]=--guardrails=off"}, want: []string{"--guardrails=off", "guardrails.disabled"}},
+		{name: "split guardrails-model in extraArgs", extra: []string{"--set", "extraArgs[0]=--guardrails-model,extraArgs[1]=checker"}, want: []string{"--guardrails-model", "guardrails.model"}},
+		{name: "single-dash guardrails-model in extraArgs", extra: []string{"--set", "extraArgs[0]=-guardrails-model=checker"}, want: []string{"-guardrails-model=checker", "guardrails.model"}},
+		{name: "model and disabled", extra: []string{"--set", "guardrails.fromSettings=false,guardrails.model=checker,guardrails.disabled=true"}, want: []string{"guardrails.model", "guardrails.disabled"}},
+		{name: "model and fromSettings", extra: []string{"--set", "guardrails.model=checker"}, want: []string{"guardrails.model", "guardrails.fromSettings"}},
+		{name: "fromSettings and disabled", extra: []string{"--set", "permissionMode=yolo,guardrails.disabled=true"}, want: []string{"guardrails.fromSettings", "guardrails.disabled"}},
+		{name: "auto without a checker", extra: []string{"--set", "guardrails.fromSettings=false"}, want: []string{"permissionMode auto", "guardrails.model", "guardrails.fromSettings", "permissionMode: yolo"}},
+		{name: "auto with the kill-switch", extra: []string{"--set", "guardrails.fromSettings=false,guardrails.disabled=true"}, want: []string{"permissionMode auto", "guardrails.disabled", "permissionMode: yolo"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
