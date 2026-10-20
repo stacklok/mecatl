@@ -166,7 +166,11 @@ jobs:
         with:
           prompt-file: ${{ steps.prompt.outputs.prompt-file }}
           untrusted: "true"
-          posture: "auto"
+          # auto refuses to start without an enforcing guardrails checker. Name one here (or
+          # bind it in operator settings and leave this empty), or set permission-mode: "yolo"
+          # with guardrails-model: "off" to run with no checker.
+          permission-mode: "auto"
+          guardrails-model: "gpt-5-mini"
           # OPTIONAL: install a project toolchain the agent's self-verification needs BEYOND the
           # always-provisioned task + golangci-lint. TRUSTED operator code — runs in this job
           # (contents:read, no write token), before the binary. Uncomment and adapt:

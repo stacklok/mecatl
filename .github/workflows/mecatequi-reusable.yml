@@ -47,16 +47,25 @@ on:
         type: string
         required: false
         default: ""
-      posture:
+      permission-mode:
         description: >-
-          Passed to the action's DEPRECATED `posture` input (the binary WARNs): strict,
-          trusted, auto, or yolo. Default "auto" resolves to permission mode auto (allow-all,
-          child injection-defence ON), which refuses to start without an ENFORCING
-          guardrails checker; use "yolo" to run allow-all with no checker. It never grants
-          project trust.
+          Passed to the action's `permission-mode` input: plan, default, accept-edits, auto,
+          or yolo. Empty (default) lets the action resolve it to "auto" (allow-all, child
+          injection-defence ON), which refuses to start without an ENFORCING guardrails
+          checker, from operator settings or `guardrails-model`; use "yolo" to run
+          allow-all with no checker. Setting both this and `posture` fails the run.
         type: string
         required: false
-        default: auto
+        default: ""
+      posture:
+        description: >-
+          DEPRECATED alias for `permission-mode`, passed to the action's `posture` input
+          (the binary WARNs): strict, trusted, auto, or yolo. Empty (default) defers to
+          `permission-mode`. Migrate `posture: "auto"` to `permission-mode: "auto"`. It
+          never grants project trust.
+        type: string
+        required: false
+        default: ""
       max-run-tokens:
         description: >-
           Max cumulative input+output tokens per run; the run ends cleanly with stop=budget
@@ -91,8 +100,8 @@ on:
           Guardrails (issue #27) checker model id / alias that inspects outbound tool args +
           inbound results. Empty (default) passes no guardrails flag, so the checker
           configured in operator settings applies, if any. "off" is the kill-switch. Any
-          other value names the checker model. With posture "auto", an empty value and no
-          settings checker, or "off", refuses to start.
+          other value names the checker model. Under permission mode auto, an empty value
+          and no settings checker, or "off", refuses to start.
         type: string
         required: false
         default: ""
@@ -285,6 +294,7 @@ jobs:
         with:
           prompt-file: ${{ steps.prompt.outputs.prompt-file }}
           untrusted: "true"
+          permission-mode: ${{ inputs.permission-mode }}
           posture: ${{ inputs.posture }}
           model: ${{ inputs.model }}
           default-provider: ${{ inputs.default-provider }}

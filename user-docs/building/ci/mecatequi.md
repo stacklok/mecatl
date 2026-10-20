@@ -162,17 +162,20 @@ jobs:
       label: ready-for-agent
       model: anthropic/claude-sonnet-4.6
       default-provider: openrouter
+      guardrails-model: anthropic/claude-haiku-4.5
 ```
 
 Replace `v0.0.3` with the latest released tag. The workflow preserves the three
 jobs and their separate permissions. Its composite action builds `mecatequi`
 from the tagged Mecatl source.
 
-The workflow's `posture` input defaults to `auto`, which refuses to start
-without an enforcing guardrails checker. Set `guardrails-model` to a checker
-model, or set `posture: yolo` with `guardrails-model: "off"` to run without one.
-Callers that relied on earlier releases running `auto` unchecked must make one
-of these choices when they move to a newer tag.
+The workflow's `permission-mode` input is empty by default, so the action runs
+`auto`, which refuses to start without an enforcing guardrails checker. Set
+`guardrails-model` to a checker model, or set `permission-mode: yolo` with
+`guardrails-model: "off"` to run without one. The `posture` input is a
+deprecated alias for `permission-mode`. Callers that relied on earlier releases
+running `auto` unchecked must make one of these choices when they move to a
+newer tag.
 
 Use `.github/workflows/mecatequi-example.yml` as a customizable alternative when
 you need a different trigger, approval stage, or author gate.

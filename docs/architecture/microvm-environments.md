@@ -215,7 +215,7 @@ QUAL_ROOT="$(pwd)/.scratch/microvm-darwin-check"
 export XDG_STATE_HOME="$QUAL_ROOT/state"
 export XDG_CONFIG_HOME="$QUAL_ROOT/config"
 export XDG_RUNTIME_DIR="$QUAL_ROOT/runtime"
-.scratch/microvm-dev/bin/mecated serve --headless --posture auto \
+.scratch/microvm-dev/bin/mecated serve --headless --permission-mode yolo \
   --store-dir="$QUAL_ROOT/sessions" \
   --default-placement microvm-local \
   --mock-script="$QUAL_ROOT/mock.json" \
