@@ -1607,7 +1607,7 @@ jobs:
       # Redis and secure real-provider guards. Lint with the minimal production
       # overrides that target already uses. The chart version supplies the image tag.
       - name: helm lint
-        run: helm lint "${CHART_PATH}" --set redis.endpoint=redis.example.internal:6379,redis.credentialsSecret=redis-credentials,tls.enabled=true,tls.secretName=mecak8s-tls,oidc.enabled=true,oidc.issuer=https://idp.example.com,oidc.audience=mecatl
+        run: helm lint "${CHART_PATH}" --set guardrails.fromSettings=true,redis.endpoint=redis.example.internal:6379,redis.credentialsSecret=redis-credentials,tls.enabled=true,tls.secretName=mecak8s-tls,oidc.enabled=true,oidc.issuer=https://idp.example.com,oidc.audience=mecatl
 
       - name: helm package
         env:
@@ -1674,7 +1674,7 @@ jobs:
             echo "**Install command:**"
             echo ""
             echo '```'
-            echo "helm install mecak8s oci://${OCI_REGISTRY}/mecak8s --version ${CHART_VERSION}"
+            echo "helm install mecak8s oci://${OCI_REGISTRY}/mecak8s --version ${CHART_VERSION} --set guardrails.model=<CHECKER_MODEL>"
             echo '```'
             echo ""
             echo "**Verify signature:**"

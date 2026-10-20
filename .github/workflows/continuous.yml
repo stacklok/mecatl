@@ -403,7 +403,7 @@ jobs:
       ISSUER: https://token.actions.githubusercontent.com
       # The minimal values each chart needs to render; the same overrides the
       # release workflow lints with.
-      MECAK8S_RENDER_SET: redis.endpoint=redis.example.internal:6379,redis.credentialsSecret=redis-credentials,tls.enabled=true,tls.secretName=mecak8s-tls,oidc.enabled=true,oidc.issuer=https://idp.example.com,oidc.audience=mecatl
+      MECAK8S_RENDER_SET: guardrails.fromSettings=true,redis.endpoint=redis.example.internal:6379,redis.credentialsSecret=redis-credentials,tls.enabled=true,tls.secretName=mecak8s-tls,oidc.enabled=true,oidc.issuer=https://idp.example.com,oidc.audience=mecatl
     outputs:
       mecak8s_chart_digest: ${{ steps.push-mecak8s.outputs.digest }}
       studio_chart_digest: ${{ steps.push-studio.outputs.digest }}
