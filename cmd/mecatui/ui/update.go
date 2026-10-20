@@ -488,7 +488,7 @@ func (m Model) dispatchNonInputMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if mm, handled := m.updateSkillChangesMsg(msg); handled {
 		return mm, nil
 	}
-	// Inventory-overlay result/error msgs (agentsInv, reflections, /schedule)
+	// Inventory-overlay result/error msgs (agentsInv, reflections)
 	// remain grouped while surface-owned results route through the modal.
 	if mm, cmd, handled := m.updateInventoryMsgs(msg); handled {
 		return mm, cmd
@@ -507,13 +507,8 @@ func (m Model) dispatchNonInputMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m.updateStreamEvent(msg)
 }
 
-// updateInventoryMsgs is the fall-through chain for the unmigrated inventory
-// overlays (agentsInv, reflections, execution, schedule):
-// each per-overlay helper returns handled=false for a non-matching msg, so at
-// most one consumes. Most carry no follow-up command; /schedule's
-// ScheduleActionMsg re-lists on success so the cmd is propagated. Surfaces
-// hosted on the modal do not ride this chain — HandleMsg owns their
-// routing.
+// updateInventoryMsgs routes the remaining legacy inventory results; dynamic
+// modal surfaces own their asynchronous results through HandleMsg.
 func (m Model) updateInventoryMsgs(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 	if mm, handled := m.updateAgentsInvMsg(msg); handled {
 		return mm, nil, true
@@ -522,9 +517,6 @@ func (m Model) updateInventoryMsgs(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 		return mm, nil, true
 	}
 	if mm, cmd, handled := m.updateExecutionMsg(msg); handled {
-		return mm, cmd, true
-	}
-	if mm, cmd, handled := m.updateScheduleMsg(msg); handled {
 		return mm, cmd, true
 	}
 	return m, nil, false
@@ -2428,7 +2420,6 @@ func (m Model) onOverlayKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
 		m.onReflectionsKey,
 		m.onConnectKey,
 		m.onExecutionKey,
-		m.onScheduleKey,
 	}
 	for _, route := range overlays {
 		if mm, cmd, handled := route(msg); handled {
@@ -2600,6 +2591,14 @@ func (m Model) applyToolcallsSurfaceIntent(intent surfaceIntent) bool {
 // tells the caller to skip common dispatch post-processing after a root-owned
 // effect takes over; handled=false never carries meaningful work.
 func (m Model) applySurfaceIntent(intent surfaceIntent) (model tea.Model, cmd tea.Cmd, stopSurfaceDispatch bool) {
+	if intent, ok := intent.(scheduleTranscriptIntent); ok {
+		m.closeModal()
+		mm, cmd, _ := m.loadSessionTranscript(client.SessionListItem{
+			ID: intent.sessionID, Kind: client.SessionKindScheduled,
+			Capabilities: client.SessionInventoryCapabilities{Inspect: true},
+		}, true)
+		return mm, cmd, true
+	}
 	if intent, ok := intent.(worktreeSelectIntent); ok {
 		if intent.sourceID != m.sessionID || m.phase != phaseIdle {
 			m.closeModal()

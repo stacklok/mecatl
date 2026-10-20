@@ -223,6 +223,13 @@ The palette also includes workspace-defined slash commands. See
 [Skills, commands, and soul](/features/agent-behavior/skills-commands-and-soul.md)
 for how the server discovers and expands them.
 
+In `/schedule`, each schedule has a run-history view and separate configuration
+and state details. Returning from either view preserves your selection and
+scroll position. Opening a run's transcript is read-only and keeps your active
+chat and draft unchanged. Leaving that transcript takes you to the
+[Sessions browser](sessions.md), rather than back to the schedule. Closing the
+schedule browser while an operation is pending does not undo that operation.
+
 ## Monitor delegated work
 
 Press `f6` to open the agents overlay for Subagents, Parallel runs, and Teams.

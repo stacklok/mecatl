@@ -222,42 +222,54 @@ func TestGetScheduleMapping(t *testing.T) {
 }
 
 func TestCreateScheduleBuildsProto(t *testing.T) {
-	spec := ScheduleSpec{
-		Name:     "daily",
-		Prompt:   "ship it",
-		Trigger:  ScheduleTrigger{Cron: "*/5 * * * *"},
-		Mode:     "plan",
-		Misfire:  "skip",
-		MaxFires: 7,
-		Selector: ScheduleSelector{ProviderID: "anthropic"},
-	}
-	fake := &fakeScheduleClient{createResp: &mecatlv1.CreateScheduleResponse{Schedule: sampleProtoSchedule("daily")}}
-	cl := newScheduleFakeClient(fake)
+	for _, tc := range []struct {
+		mode     string
+		mutating bool
+		want     mecatlv1.PermissionMode
+	}{
+		{"plan", false, mecatlv1.PermissionMode_PERMISSION_MODE_PLAN},
+		{ModeDefaultString, true, mecatlv1.PermissionMode_PERMISSION_MODE_DEFAULT},
+	} {
+		t.Run(tc.mode, func(t *testing.T) {
+			spec := ScheduleSpec{
+				Name:     "daily",
+				Prompt:   "ship it",
+				Trigger:  ScheduleTrigger{Cron: "*/5 * * * *"},
+				Mode:     tc.mode,
+				Mutating: tc.mutating,
+				Misfire:  "skip",
+				MaxFires: 7,
+				Selector: ScheduleSelector{ProviderID: "anthropic"},
+			}
+			fake := &fakeScheduleClient{createResp: &mecatlv1.CreateScheduleResponse{Schedule: sampleProtoSchedule("daily")}}
+			cl := newScheduleFakeClient(fake)
 
-	if _, err := cl.CreateSchedule(context.Background(), spec); err != nil {
-		t.Fatalf("CreateSchedule: %v", err)
-	}
-	if fake.lastCreate == nil || fake.lastCreate.GetSpec() == nil {
-		t.Fatal("create request not sent")
-	}
-	got := fake.lastCreate.GetSpec()
-	if got.GetName() != "daily" || got.GetPrompt() != "ship it" {
-		t.Fatalf("spec proto mismapped: %+v", got)
-	}
-	if got.GetTrigger().GetCron() != "*/5 * * * *" || got.GetTrigger().GetOneShot() != nil {
-		t.Fatalf("trigger proto mismapped: %+v", got.GetTrigger())
-	}
-	if got.GetMode() != mecatlv1.PermissionMode_PERMISSION_MODE_PLAN {
-		t.Fatalf("mode proto = %v, want PLAN", got.GetMode())
-	}
-	if got.GetMisfire() != mecatlv1.MisfirePolicy_MISFIRE_SKIP {
-		t.Fatalf("misfire proto = %v, want SKIP", got.GetMisfire())
-	}
-	if got.GetMaxFires() != 7 {
-		t.Fatalf("max_fires proto = %d, want 7", got.GetMaxFires())
-	}
-	if got.GetSelector().GetProviderId() != "anthropic" {
-		t.Fatalf("selector proto = %+v", got.GetSelector())
+			if _, err := cl.CreateSchedule(context.Background(), spec); err != nil {
+				t.Fatalf("CreateSchedule: %v", err)
+			}
+			if fake.lastCreate == nil || fake.lastCreate.GetSpec() == nil {
+				t.Fatal("create request not sent")
+			}
+			got := fake.lastCreate.GetSpec()
+			if got.GetName() != "daily" || got.GetPrompt() != "ship it" {
+				t.Fatalf("spec proto mismapped: %+v", got)
+			}
+			if got.GetTrigger().GetCron() != "*/5 * * * *" || got.GetTrigger().GetOneShot() != nil {
+				t.Fatalf("trigger proto mismapped: %+v", got.GetTrigger())
+			}
+			if got.GetMode() != tc.want || got.GetMutating() != tc.mutating {
+				t.Fatalf("mode/mutating proto = %v/%t, want %v/%t", got.GetMode(), got.GetMutating(), tc.want, tc.mutating)
+			}
+			if got.GetMisfire() != mecatlv1.MisfirePolicy_MISFIRE_SKIP {
+				t.Fatalf("misfire proto = %v, want SKIP", got.GetMisfire())
+			}
+			if got.GetMaxFires() != 7 {
+				t.Fatalf("max_fires proto = %d, want 7", got.GetMaxFires())
+			}
+			if got.GetSelector().GetProviderId() != "anthropic" {
+				t.Fatalf("selector proto = %+v", got.GetSelector())
+			}
+		})
 	}
 }
 

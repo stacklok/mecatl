@@ -36,12 +36,27 @@ var surfaceFileHomes = map[string]bool{
 	"usermodel.go":        true,
 	"effort.go":           true,
 	"worktrees.go":        true,
+	"schedule.go":         true,
 	"dream.go":            true,
 }
 
 // surfaceFileCount is the explicit homes the gate counts — another surface file
 // is an explicit decision here, not a silent drift.
-const surfaceFileCount = 13
+const surfaceFileCount = 14
+
+func TestModelHasNoScheduleStateField(t *testing.T) {
+	st := reflect.TypeOf(Model{})
+	for i := 0; i < st.NumField(); i++ {
+		f := st.Field(i)
+		typ := f.Type
+		for typ.Kind() == reflect.Pointer {
+			typ = typ.Elem()
+		}
+		if f.Name == "schedule" || typ.Name() == "scheduleState" {
+			t.Errorf("Model.%s retains schedule open-lifetime state", f.Name)
+		}
+	}
+}
 
 var worktreesSymbolHomes = map[string]string{
 	"worktreesState": "worktrees.go", "worktreesResultMsg": "worktrees.go",
@@ -137,6 +152,14 @@ func TestSurfaceSymbolsLiveInSurfaceFiles(t *testing.T) {
 		f, err := parser.ParseFile(fset, file, nil, 0)
 		if err != nil {
 			t.Fatalf("parse %s: %v", file, err)
+		}
+		if file != "schedule.go" {
+			ast.Inspect(f, func(node ast.Node) bool {
+				if id, ok := node.(*ast.Ident); ok && id.Name == "scheduleState" {
+					t.Errorf("concrete schedule state referenced outside its surface: %s", fset.Position(id.Pos()))
+				}
+				return true
+			})
 		}
 		if file != "worktrees.go" {
 			ast.Inspect(f, func(node ast.Node) bool {
