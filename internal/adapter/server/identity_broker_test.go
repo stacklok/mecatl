@@ -365,6 +365,45 @@ func TestIdentityBrokerClosesOnDeleteOnly(t *testing.T) {
 	}
 }
 
+// hangingFindBroker blocks FindSession until its context ends, as an
+// unresponsive remote broker would.
+type hangingFindBroker struct {
+	*recordingBroker
+	hang bool
+}
+
+func (b *hangingFindBroker) FindSession(ctx context.Context, req identitybroker.FindSessionRequest) (identitybroker.Session, bool, error) {
+	if b.hang {
+		<-ctx.Done()
+		return identitybroker.Session{}, false, identitybroker.NewError(identitybroker.CodeUnavailable, "", ctx.Err().Error())
+	}
+	return b.recordingBroker.FindSession(ctx, req)
+}
+
+func TestIdentityBrokerCloseOnDeleteIsBounded(t *testing.T) {
+	restore := server.SetEngineCloseTimeoutForTest(50 * time.Millisecond)
+	defer restore()
+	broker := &hangingFindBroker{recordingBroker: newRecordingBroker()}
+	svc := newIdentityBrokerService(t, broker, mockllm.New())
+	ctx := aliceContext(t)
+	sess, err := svc.CreateSession(ctx, session.ModeDefault, session.Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	broker.hang = true
+	done := make(chan error, 1)
+	go func() { done <- svc.DeleteSession(ctx, sess.ID) }()
+	select {
+	case err := <-done:
+		// The record is gone; the failed close is logged, not returned.
+		if err != nil {
+			t.Fatalf("DeleteSession with a hung identity broker: %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("DeleteSession waited on a hung identity broker")
+	}
+}
+
 func TestIdentityBrokerOffChangesNothing(t *testing.T) {
 	svc := newIdentityBrokerService(t, nil, mockllm.New(mockllm.TextTurn("done")))
 	ctx := aliceContext(t)

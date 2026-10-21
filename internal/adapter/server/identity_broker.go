@@ -70,6 +70,10 @@ func (s *Service) openIdentityBrokerSession(ctx context.Context, sess *session.S
 		}
 		s.logIdentityBroker(ctx, "closed stale broker session", host, open.ID)
 	}
+	// A broker session open under another owner is never closed here: the
+	// broker refuses the open with session_owned, which the design treats as a
+	// pairing bug that fails the open. Session IDs are server-generated, so
+	// another user cannot reuse this one.
 	opened, err := broker.OpenSession(ctx, identitybroker.OpenSessionRequest{HostSessionID: host, Incarnation: incarnation, Owner: owner})
 	if err != nil {
 		return s.identityBrokerFailure(ctx, "open", host, err)
@@ -78,15 +82,27 @@ func (s *Service) openIdentityBrokerSession(ctx context.Context, sess *session.S
 	return nil
 }
 
+// cleanupDeletedSessionLocked releases a deleted session's broker state: it
+// closes the identity broker session, then deletes the MCP broker's logical
+// session. Every deletion path calls it after the durable record is gone, and
+// no local release does. The caller must hold brokerMu for id. Only the MCP
+// broker's failure is returned; the identity close logs its own.
+func (s *Service) cleanupDeletedSessionLocked(ctx context.Context, id session.SessionID) error {
+	s.closeIdentityBrokerSession(ctx, id)
+	return s.deleteBrokerSessionLocked(ctx, id)
+}
+
 // closeIdentityBrokerSession closes the broker session of a deleted host
 // session. The durable record is already gone, so a failure is logged, not
-// returned.
+// returned. The caller holds the session's locks, so the calls are bounded by
+// the same timeout as the MCP broker cleanup.
 func (s *Service) closeIdentityBrokerSession(ctx context.Context, id session.SessionID) {
 	broker := s.cfg.IdentityBroker
 	if broker == nil {
 		return
 	}
-	ctx = context.WithoutCancel(ctx)
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), engineCloseTimeout)
+	defer cancel()
 	host := string(id)
 	open, found, err := broker.FindSession(ctx, identitybroker.FindSessionRequest{RootHostSessionID: host})
 	if err == nil && found {
