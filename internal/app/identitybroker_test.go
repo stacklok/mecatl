@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"sync"
 	"testing"
@@ -112,7 +113,8 @@ func TestIdentityBrokerIsClosedWhenLaterStartupFails(t *testing.T) {
 }
 
 func TestIdentityBrokerDefaultWiringOpensSessions(t *testing.T) {
-	// No core override: this builds the production stand-in and authenticator.
+	// No core override: this builds the real broker and the production
+	// authenticator.
 	built, err := buildIsolated(t, t.Context(), Config{Workspace: t.TempDir(), UseMock: true, NoSoul: true, IdentityBroker: true})
 	if err != nil {
 		t.Fatal(err)
@@ -129,5 +131,28 @@ func TestIdentityBrokerDefaultWiringOpensSessions(t *testing.T) {
 	found, ok, err := built.IdentityBroker.FindSession(t.Context(), identitybroker.FindSessionRequest{RootHostSessionID: "hostS42"})
 	if err != nil || !ok || found != opened {
 		t.Fatalf("FindSession = %+v, %v, %v; want %+v, true, nil", found, ok, err, opened)
+	}
+	// The real broker's session IDs start with bs_; the stand-in's do not.
+	if !strings.HasPrefix(opened.ID, "bs_") {
+		t.Fatalf("broker session ID %q is not the real broker's", opened.ID)
+	}
+}
+
+func TestIdentityBrokerConstructionFailureStopsStartup(t *testing.T) {
+	// The profile lifecycle is built before the identity broker, so its close
+	// shows that a failed startup releases what was already built.
+	closer := new(countingMCPProfileCloser)
+	invalid := identitybroker.Config{}
+	built, err := buildIsolated(t, t.Context(), Config{Workspace: t.TempDir(), UseMock: true, NoSoul: true,
+		IdentityBroker: true, identityBrokerConfig: &invalid, MCPProfileLifecycle: closer})
+	if err == nil {
+		built.Close()
+		t.Fatal("Build succeeded with an invalid identity broker configuration")
+	}
+	if !errors.Is(err, identitybroker.ErrInvalidConfig) {
+		t.Fatalf("Build error = %v, want the identity broker's invalid configuration", err)
+	}
+	if got := closer.calls.Load(); got != 1 {
+		t.Fatalf("profile lifecycle Close calls = %d, want 1", got)
 	}
 }

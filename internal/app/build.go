@@ -973,8 +973,11 @@ type Config struct {
 	// IdentityBroker starts the experimental agent identity broker. Only
 	// mecak8s sets it.
 	IdentityBroker bool
-	// identityBrokerCore replaces the stand-in identity broker in tests.
+	// identityBrokerCore replaces the real identity broker in tests.
 	identityBrokerCore identitybroker.Core
+	// identityBrokerConfig replaces the real identity broker's interim
+	// configuration in tests.
+	identityBrokerConfig *identitybroker.Config
 	// MCPProfileLoader resolves operator-tier profiles with the same permission
 	// resolver Build already owns. Command roots install it so settings are not
 	// parsed a second time and secret lookup remains a runtime-only operation.
@@ -2267,7 +2270,15 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 
 	// The identity broker is released after the MCP broker, on startup failure
 	// and on shutdown.
-	identityBroker, releaseIdentityBroker := buildIdentityBroker(cfg)
+	identityBroker, releaseIdentityBroker, err := buildIdentityBroker(cfg)
+	if err != nil {
+		childLiveness.Close()
+		mcpClose()
+		agentClose()
+		storeClose()
+		commandConnClose()
+		return nil, err
+	}
 	defer func() {
 		if !profilesTransferred {
 			releaseIdentityBroker()

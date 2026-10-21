@@ -1,5 +1,5 @@
-// Package standin is a trivial identity broker used until the real
-// implementation exists. It keeps broker sessions in memory and follows the
+// Package standin is a trivial identity broker for tests; mecak8s runs the
+// real identitybroker.Broker. It keeps broker sessions in memory and follows the
 // identitybroker.Core contract, registers every agent as one fixed agent with
 // a placeholder credential no verifier accepts, and authorizes no calls, so
 // nothing reaches a gateway through it.
@@ -26,8 +26,7 @@ var (
 // guessable and do not repeat after a restart, but a closed session is
 // refused only by the process that closed it, and nothing is shared between
 // replicas. Closed sessions are kept for the life of the process so they keep
-// refusing calls; nothing evicts them. The real implementation replaces the
-// stand-in before any of this matters beyond a single replica.
+// refusing calls; nothing evicts them.
 type Broker struct {
 	mu       sync.Mutex
 	open     map[string]string // root host session ID -> broker session ID

@@ -3,13 +3,13 @@
 // Service is the contract for the whole identity broker: Mecatl calls it, and
 // only it, whether the broker runs in process or as its own service. Core is
 // the broker side of that contract, with the authenticated workload on every
-// call; NewInProcess joins the two through an Authenticator. Package standin
-// provides a trivial Core until the real one exists, and package conformance
-// holds the contract tests every implementation passes.
+// call; NewInProcess joins the two through an Authenticator. Broker is the real
+// Core. Package standin provides a trivial Core for tests, and package
+// conformance holds the contract tests every implementation passes.
 //
 // New validates explicitly supplied configuration, an ECDSA P-256 (ES256)
 // signing capability, and already-loaded definition records, and returns a Broker
-// holding an independently owned snapshot of them. The snapshot holds only
+// holding an independently owned snapshot of them, and no broker sessions. The snapshot holds only
 // definitions the broker loads itself, operator-loaded global definitions and
 // system built-ins; repository definitions never enter it. The package performs no
 // file, environment, or network access; source loading and transport belong
@@ -34,12 +34,15 @@ var (
 	ErrConflictingDefinition = errors.New("identitybroker: conflicting definition records")
 )
 
-// Broker holds the validated startup state. Its state is immutable after New,
-// so its methods are safe for concurrent use.
+// Broker is the identity broker core. Its startup state is immutable after
+// New; its broker sessions are guarded by a mutex. Its methods are safe for
+// concurrent use.
 type Broker struct {
 	config      Config
 	signer      crypto.Signer
 	definitions map[DefinitionRef]DefinitionRecord
+
+	sessions *sessionTable
 }
 
 // New validates its inputs and returns a ready Broker, or an error wrapping one
@@ -65,7 +68,7 @@ func New(config Config, definitions []DefinitionRecord, signer crypto.Signer) (*
 	if err != nil {
 		return nil, err
 	}
-	return &Broker{config: config, signer: signer, definitions: snapshot}, nil
+	return &Broker{config: config, signer: signer, definitions: snapshot, sessions: newSessionTable()}, nil
 }
 
 // Definition returns a copy of the loaded record for ref, and whether one

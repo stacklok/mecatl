@@ -2,6 +2,7 @@ package conformance
 
 import (
 	"context"
+	"sync"
 	"testing"
 
 	"github.com/stacklok/mecatl/internal/identitybroker"
@@ -29,6 +30,26 @@ func runSessions(t *testing.T, factory serviceFactory) {
 		again := mustOpen(t, svc, openRequest("hostS42", alice))
 		if again != first {
 			t.Fatalf("repeated OpenSession = %+v, want %+v", again, first)
+		}
+	})
+
+	t.Run("concurrent opens return one session", func(t *testing.T) {
+		svc := factory(t)
+		const opens = 8
+		var wg sync.WaitGroup
+		got := make([]identitybroker.Session, opens)
+		errs := make([]error, opens)
+		for i := range opens {
+			wg.Go(func() { got[i], errs[i] = svc.OpenSession(ctx, openRequest("hostS42", alice)) })
+		}
+		wg.Wait()
+		for i := range opens {
+			if errs[i] != nil {
+				t.Fatalf("concurrent OpenSession %d: %v", i, errs[i])
+			}
+			if got[i] != got[0] {
+				t.Fatalf("concurrent opens returned %+v and %+v, want one session", got[0], got[i])
+			}
 		}
 	})
 
