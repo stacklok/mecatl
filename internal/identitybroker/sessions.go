@@ -3,6 +3,7 @@ package identitybroker
 import (
 	"context"
 	"crypto/rand"
+	"strings"
 	"sync"
 	"time"
 )
@@ -10,8 +11,9 @@ import (
 var _ Core = (*Broker)(nil)
 
 // sessionTable holds broker sessions in memory, so they last only as long as
-// the process. Session IDs are random, so they cannot be guessed and do not
-// repeat after a restart. A closed session's record is kept for the life of
+// the process. Session IDs are bs_ and 26 lowercase base32 characters (128
+// random bits), like incarnations, so they cannot be guessed and do not repeat
+// after a restart. A closed session's record is kept for the life of
 // the process, so it keeps refusing with its closing reason and its host
 // session gets a new broker session when opened again. The record keeps the
 // session's ID, owner, and closing time, as the design requires.
@@ -66,7 +68,7 @@ func (b *Broker) OpenSession(_ context.Context, workload Workload, req OpenSessi
 	}
 	s := &brokerSession{
 		Session: Session{
-			ID:            "bs_" + rand.Text(),
+			ID:            newSessionID(),
 			HostSessionID: req.HostSessionID,
 			Incarnation:   req.Incarnation,
 			Owner:         req.Owner,
@@ -162,6 +164,12 @@ func (b *Broker) usableSession(workload Workload, id string) (Session, error) {
 		return Session{}, ReasonError(s.closed, "the broker session is closed")
 	}
 	return s.Session, nil
+}
+
+// newSessionID returns a random broker session ID in the same lowercase
+// base32 form as the design's inc_ and ag_ identifiers.
+func newSessionID() string {
+	return "bs_" + strings.ToLower(rand.Text())
 }
 
 // checkCall validates the workload, then the request.

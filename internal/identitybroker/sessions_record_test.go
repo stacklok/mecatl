@@ -2,6 +2,7 @@ package identitybroker
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 )
@@ -39,5 +40,20 @@ func TestClosedSessionRecordKeepsIDOwnerAndClosingTime(t *testing.T) {
 	if rec.ID != s.ID || rec.Owner != owner || rec.closed != ReasonSessionClosed || !rec.closedAt.Equal(closedAt) {
 		t.Fatalf("closed record = {ID: %s, Owner: %+v, closed: %s, closedAt: %v}, want {%s, %+v, %s, %v}",
 			rec.ID, rec.Owner, rec.closed, rec.closedAt, s.ID, owner, ReasonSessionClosed, closedAt)
+	}
+}
+
+func TestSessionIDsAreLowercaseBase32(t *testing.T) {
+	for range 8 {
+		id := newSessionID()
+		rest, ok := strings.CutPrefix(id, "bs_")
+		if !ok || len(rest) != 26 {
+			t.Fatalf("session ID %q, want bs_ and 26 characters", id)
+		}
+		for _, r := range rest {
+			if (r < 'a' || r > 'z') && (r < '2' || r > '7') {
+				t.Fatalf("session ID %q has %q, want lowercase base32", id, r)
+			}
+		}
 	}
 }
