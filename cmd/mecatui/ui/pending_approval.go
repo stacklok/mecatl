@@ -32,7 +32,8 @@ type pendingApprovalRecovery struct {
 	resolving     bool
 	cancelled     bool
 	// verdictRefused records that the server refused a verdict for this ask
-	// (FailedPrecondition) while the refused-mode recovery is available. No
+	// because its stored mode is not admitted, while the refused-mode recovery
+	// is available. No
 	// verdict is resent; the modal stays open for ModeSwitch or exit.
 	verdictRefused bool
 	// modeTried is the ModeSwitch cycle token of the last recovery mode change,
@@ -230,7 +231,7 @@ func (m Model) updatePendingApprovalResolved(msg pendingApprovalResolvedMsg) (te
 	}
 	recovery.resolving = false
 	if msg.err != nil {
-		if client.IsPendingApprovalFailure(msg.err, client.PendingApprovalNotRecoverable) {
+		if client.IsPendingApprovalFailure(msg.err, client.PendingApprovalModeNotAdmitted) {
 			return m.refusedPendingApprovalVerdict(client.PendingApprovalFailureDetail(msg.err)), nil, true
 		}
 		return m.refusePendingApprovalRecovery("the pending approval changed or could not be acknowledged; no verdict will be resent"), nil, true
@@ -303,9 +304,8 @@ func (m Model) updatePendingApprovalWatch(msg pendingApprovalWatchMsg) (tea.Mode
 	return m, tea.Batch(eventCmd, pendingApprovalRecvCmd(recovery.generation, recovery.watch)), true
 }
 
-// refusedPendingApprovalVerdict handles a FailedPrecondition verdict refusal:
-// the server ran nothing, typically because the stored mode is no longer
-// admitted. With the refused-mode recovery available, the modal reopens with
+// refusedPendingApprovalVerdict handles a verdict the server refused because
+// the session's stored mode is no longer admitted; the server ran nothing. With the refused-mode recovery available, the modal reopens with
 // verdicts blocked so ModeSwitch can cancel the request; otherwise the recovery
 // ends with the server's reason. No verdict is ever resent.
 func (m Model) refusedPendingApprovalVerdict(detail string) Model {

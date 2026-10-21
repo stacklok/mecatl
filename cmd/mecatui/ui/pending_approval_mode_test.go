@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"errors"
 	"reflect"
 	"strings"
 	"testing"
@@ -286,15 +287,16 @@ func TestPendingApprovalRecoveryRetractWithoutModeSwitchStaysFatal(t *testing.T)
 	}
 }
 
-// TestPendingApprovalRecoveryRefusedVerdictNamesRecovery pins the
-// FailedPrecondition verdict refusal: with the feature the modal reopens with
-// the server's reason and verdicts blocked, so ModeSwitch can recover;
-// without it recovery ends naming the server's reason, not the generic text.
+// TestPendingApprovalRecoveryRefusedVerdictNamesRecovery pins the stored-mode
+// verdict refusal: with the feature the modal reopens with the server's reason
+// and verdicts blocked, so ModeSwitch can recover; without it recovery ends
+// naming the server's reason, not the generic text. Any other refusal keeps the
+// generic retirement and never offers the mode switch.
 func TestPendingApprovalRecoveryRefusedVerdictNamesRecovery(t *testing.T) {
 	reason := `session "s" is in permission mode "yolo", which this server does not admit`
 	t.Run("with feature", func(t *testing.T) {
 		controller, conv := newRecoveryFixtures("cancelled")
-		controller.resolveErr = client.PendingApprovalNotRecoverableError(reason)
+		controller.resolveErr = client.PendingApprovalModeNotAdmittedError(reason)
 		m := pendingModeRecoveryModel(t, controller, conv, refusedModeCaps(true), "yolo", "")
 		t.Cleanup(m.pendingRecovery.cancel)
 		next, cmd := m.Update(tea.KeyPressMsg{Code: 'a', Text: "a"})
@@ -321,13 +323,30 @@ func TestPendingApprovalRecoveryRefusedVerdictNamesRecovery(t *testing.T) {
 	})
 	t.Run("without feature", func(t *testing.T) {
 		controller, conv := newRecoveryFixtures("cancelled")
-		controller.resolveErr = client.PendingApprovalNotRecoverableError(reason)
+		controller.resolveErr = client.PendingApprovalModeNotAdmittedError(reason)
 		m := pendingModeRecoveryModel(t, controller, conv, refusedModeCaps(false), "yolo", "")
 		next, cmd := m.Update(tea.KeyPressMsg{Code: 'a', Text: "a"})
 		m = applyPendingCommand(t, next.(Model), cmd)
 		status := stripANSIstr(m.statusMsg)
 		if m.phase != phaseFatal || !strings.Contains(status, "does not admit") || strings.Contains(status, "could not be acknowledged") {
 			t.Fatalf("refused verdict without feature: phase %v status %q", m.phase, status)
+		}
+	})
+	t.Run("other refusal with feature", func(t *testing.T) {
+		// An ask another client already resolved is also a FailedPrecondition
+		// on the wire, but not the stored-mode code: the mode switch cannot
+		// recover it, so it must not be offered.
+		controller, conv := newRecoveryFixtures("cancelled")
+		controller.resolveErr = errors.New("pending approval is no longer recoverable because its current state changed")
+		m := pendingModeRecoveryModel(t, controller, conv, refusedModeCaps(true), "yolo", "")
+		next, cmd := m.Update(tea.KeyPressMsg{Code: 'a', Text: "a"})
+		m = applyPendingCommand(t, next.(Model), cmd)
+		status := stripANSIstr(m.statusMsg)
+		if m.phase != phaseFatal || !strings.Contains(status, "could not be acknowledged") || strings.Contains(flatView(m), "lower mode") {
+			t.Fatalf("other refusal with feature: phase %v status %q", m.phase, status)
+		}
+		if got := conv.setModes(); len(got) != 0 {
+			t.Fatalf("SetMode calls = %v, want none", got)
 		}
 	})
 }

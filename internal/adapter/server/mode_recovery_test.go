@@ -135,8 +135,13 @@ func TestSetModeDowngradeRecoversRefusedAwaitingSession(t *testing.T) {
 	svc := recoveryService(t, store, llm, &ran, session.ModeAccept, true, nil, nil)
 
 	_, err := svc.ApproveRun(ctx, id, askID, session.VerdictAllowOnce, "")
-	if !errors.Is(err, server.ErrFailedPrecondition) || !strings.Contains(err.Error(), "SetMode to an admitted lower mode") {
-		t.Fatalf("ApproveRun err = %v, want FailedPrecondition naming the SetMode downgrade", err)
+	if !errors.Is(err, server.ErrStoredModeNotAdmitted) || !strings.Contains(err.Error(), "SetMode to an admitted lower mode") {
+		t.Fatalf("ApproveRun err = %v, want ErrStoredModeNotAdmitted naming the SetMode downgrade", err)
+	}
+	// A client offers the recovery on this stable code alone, not on every
+	// FailedPrecondition the verdict path can return.
+	if got := server.ClassifyErrorCodeForTest(err); got != "session_mode_not_admitted" {
+		t.Fatalf("ApproveRun error code = %q, want session_mode_not_admitted", got)
 	}
 
 	got, err := svc.SetMode(ctx, id, session.ModeDefault)
@@ -285,8 +290,8 @@ func TestSetModeRecoversRefusedCrashOrphanedRunningSession(t *testing.T) {
 	svc := recoveryService(t, store, llm, &ran, session.ModeAccept, true, lease, nil)
 
 	_, err := svc.StartRun(ctx, id, "continue")
-	if !errors.Is(err, server.ErrFailedPrecondition) || !strings.Contains(err.Error(), "SetMode to an admitted mode ends the interrupted turn") {
-		t.Fatalf("StartRun err = %v, want FailedPrecondition naming the SetMode recovery", err)
+	if !errors.Is(err, server.ErrStoredModeNotAdmitted) || !strings.Contains(err.Error(), "SetMode to an admitted mode ends the interrupted turn") {
+		t.Fatalf("StartRun err = %v, want ErrStoredModeNotAdmitted naming the SetMode recovery", err)
 	}
 
 	got, err := svc.SetMode(ctx, id, session.ModeDefault)

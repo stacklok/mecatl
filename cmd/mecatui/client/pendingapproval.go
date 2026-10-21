@@ -39,6 +39,7 @@ const (
 	PendingApprovalWatchUnsupported    PendingApprovalFailure = "watch_unsupported"
 	PendingApprovalControlsUnsupported PendingApprovalFailure = "controls_unsupported"
 	PendingApprovalNotRecoverable      PendingApprovalFailure = "not_recoverable"
+	PendingApprovalModeNotAdmitted     PendingApprovalFailure = "mode_not_admitted"
 	PendingApprovalCorrelation         PendingApprovalFailure = "correlation_mismatch"
 	PendingApprovalUnavailable         PendingApprovalFailure = "unavailable"
 )
@@ -51,24 +52,28 @@ type pendingApprovalError struct {
 
 func (e *pendingApprovalError) Error() string { return e.text }
 
+// StoredModeNotAdmittedCode is the stable server application code for a
+// session whose stored permission mode the server no longer admits.
+const StoredModeNotAdmittedCode = "session_mode_not_admitted"
+
 // PendingApprovalFailureDetail returns the server's reason for a
-// PendingApprovalNotRecoverable control refusal, or "" for every other error.
-// Only that category keeps it: a FailedPrecondition is the server explaining
-// why the exact ask cannot resume (for example, a stored mode it no longer
-// admits), which the user needs in order to recover.
+// PendingApprovalModeNotAdmitted control refusal, or "" for every other error.
+// Only that category keeps it: the server is explaining why the exact ask
+// cannot resume and how SetMode recovers it, which the user needs in order to
+// recover.
 func PendingApprovalFailureDetail(err error) string {
 	var target *pendingApprovalError
-	if errors.As(err, &target) && target.kind == PendingApprovalNotRecoverable {
+	if errors.As(err, &target) && target.kind == PendingApprovalModeNotAdmitted {
 		return target.detail
 	}
 	return ""
 }
 
-// PendingApprovalNotRecoverableError is the PendingApprovalNotRecoverable
+// PendingApprovalModeNotAdmittedError is the PendingApprovalModeNotAdmitted
 // refusal carrying the server's reason, which PendingApprovalFailureDetail
 // returns.
-func PendingApprovalNotRecoverableError(detail string) error {
-	return &pendingApprovalError{kind: PendingApprovalNotRecoverable, text: pendingApprovalFailure(PendingApprovalNotRecoverable).Error(), detail: detail}
+func PendingApprovalModeNotAdmittedError(detail string) error {
+	return &pendingApprovalError{kind: PendingApprovalModeNotAdmitted, text: pendingApprovalFailure(PendingApprovalModeNotAdmitted).Error(), detail: detail}
 }
 
 // IsPendingApprovalFailure reports a closed recovery refusal without exposing a
@@ -95,6 +100,8 @@ func pendingApprovalFailure(kind PendingApprovalFailure) error {
 		text = "pending approval recovery controls are not supported"
 	case PendingApprovalNotRecoverable:
 		text = "pending approval is no longer recoverable because its current state changed"
+	case PendingApprovalModeNotAdmitted:
+		text = "pending approval cannot resume in the session's stored permission mode"
 	case PendingApprovalCorrelation:
 		text = "pending approval recovery correlation changed"
 	}
@@ -106,7 +113,10 @@ func pendingApprovalControlFailure(err error) error {
 	case codes.Aborted:
 		return pendingApprovalFailure(PendingApprovalCorrelation)
 	case codes.FailedPrecondition:
-		return PendingApprovalNotRecoverableError(status.Convert(err).Message())
+		if hasErrorReason(err, StoredModeNotAdmittedCode) {
+			return PendingApprovalModeNotAdmittedError(status.Convert(err).Message())
+		}
+		return pendingApprovalFailure(PendingApprovalNotRecoverable)
 	case codes.Unimplemented:
 		return pendingApprovalFailure(PendingApprovalControlsUnsupported)
 	default:
