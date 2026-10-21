@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"sync"
+	"time"
 )
 
 var _ Core = (*Broker)(nil)
@@ -12,11 +13,13 @@ var _ Core = (*Broker)(nil)
 // the process. Session IDs are random, so they cannot be guessed and do not
 // repeat after a restart. A closed session's record is kept for the life of
 // the process, so it keeps refusing with its closing reason and its host
-// session gets a new broker session when opened again.
+// session gets a new broker session when opened again. The record keeps the
+// session's ID, owner, and closing time, as the design requires.
 type sessionTable struct {
 	mu   sync.Mutex
 	open map[string]string // root host session ID -> open broker session ID
 	byID map[string]*brokerSession
+	now  func() time.Time
 }
 
 // brokerSession is a broker session's record. Agents registered to the
@@ -30,10 +33,12 @@ type brokerSession struct {
 	workload Workload
 	// closed is the closing reason; empty while the session is open.
 	closed Reason
+	// closedAt is when the session was closed; zero while it is open.
+	closedAt time.Time
 }
 
 func newSessionTable() *sessionTable {
-	return &sessionTable{open: map[string]string{}, byID: map[string]*brokerSession{}}
+	return &sessionTable{open: map[string]string{}, byID: map[string]*brokerSession{}, now: time.Now}
 }
 
 // OpenSession implements Core. Opens run one at a time, so concurrent opens
@@ -108,6 +113,7 @@ func (b *Broker) CloseSession(_ context.Context, workload Workload, req CloseSes
 	}
 	if s.closed == "" {
 		s.closed = req.Reason
+		s.closedAt = t.now()
 		delete(t.open, s.HostSessionID)
 	}
 	return nil
