@@ -6,9 +6,12 @@ allowBuilds:
 onlyBuiltDependencies:
   - esbuild
 # Transitive dev-tooling advisories. source-map-js (via vitest > vite > postcss)
-# has a patched release; force it until vite's range picks it up.
+# has a patched release; force it until vite's range picks it up. vite (via
+# vitest) 8.2.0-8.2.3 bundles a vulnerable launch-editor and has dev-server
+# path checks that can be bypassed; 8.2.4 fixes both.
 overrides:
   source-map-js@<1.2.2: ^1.2.2
+  vite@>=8.2.0 <8.2.4: ^8.2.4
 auditConfig:
   ignoreGhsas:
     # sprintf-js DoS via unbounded precision specifiers; no patched release

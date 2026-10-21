@@ -1,6 +1,6 @@
 module github.com/stacklok/mecatl/integration/microvm
 
-go 1.27.2
+go 1.27.3
 
 require (
 	github.com/stacklok/go-microvm v0.0.41
