@@ -549,6 +549,9 @@ func (s *Service) RunTeam(ctx context.Context, teamID string, sink func(agent.Te
 	if err != nil {
 		return agent.TeamOutcome{}, err
 	}
+	if err := s.openTeamRootIdentityBrokerSession(ctx, ts.rootSessionID); err != nil {
+		return agent.TeamOutcome{}, err
+	}
 	// Claim startup under the per-team lock. teamStarting keeps cancellation and
 	// cleanup from observing a running phase before the supervisor is published.
 	rollbackStore, err := s.claimTeamStart(ctx, teamID, ts)

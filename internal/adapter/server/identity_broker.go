@@ -82,6 +82,30 @@ func (s *Service) openIdentityBrokerSession(ctx context.Context, sess *session.S
 	return nil
 }
 
+// openTeamRootIdentityBrokerSession opens the broker session of the session a
+// team is rooted in before the team runs. Team runs do not pass run entry, so
+// without this a team could run in a session tree whose broker session was
+// lost at a restart. A team on the default placement has no root session and
+// its members belong to no session tree; helper agents get identities later.
+func (s *Service) openTeamRootIdentityBrokerSession(ctx context.Context, root session.SessionID) error {
+	if s.cfg.IdentityBroker == nil || root == "" {
+		return nil
+	}
+	sess, err := s.cfg.Store.Load(ctx, root)
+	if err != nil {
+		return fmt.Errorf("%w: load team root session: %v", ErrInternal, err)
+	}
+	return s.openIdentityBrokerSession(ctx, sess)
+}
+
+// EndScheduledRun closes a scheduled session's broker session when its run
+// ends: the design ends a scheduled run's authority with the run. The
+// scheduler calls it as each fire returns; the session itself is kept for
+// result delivery. A failure is logged, not returned.
+func (s *Service) EndScheduledRun(ctx context.Context, id session.SessionID) {
+	s.closeIdentityBrokerSession(ctx, id)
+}
+
 // cleanupDeletedSessionLocked releases a deleted session's broker state: it
 // closes the identity broker session, then deletes the MCP broker's logical
 // session. Every deletion path calls it after the durable record is gone, and
@@ -92,10 +116,11 @@ func (s *Service) cleanupDeletedSessionLocked(ctx context.Context, id session.Se
 	return s.deleteBrokerSessionLocked(ctx, id)
 }
 
-// closeIdentityBrokerSession closes the broker session of a deleted host
-// session. The durable record is already gone, so a failure is logged, not
-// returned. The caller holds the session's locks, so the calls are bounded by
-// the same timeout as the MCP broker cleanup.
+// closeIdentityBrokerSession closes the broker session of a host session that
+// was deleted or whose scheduled run ended. A failure is logged, not returned:
+// the session's state has already moved on. Delete paths hold the session's
+// locks, so the calls are bounded by the same timeout as the MCP broker
+// cleanup.
 func (s *Service) closeIdentityBrokerSession(ctx context.Context, id session.SessionID) {
 	broker := s.cfg.IdentityBroker
 	if broker == nil {
@@ -119,12 +144,16 @@ func (s *Service) closeIdentityBrokerSession(ctx context.Context, id session.Ses
 
 // identityBrokerFailure logs a failed identity broker call and returns the
 // error for the client: ErrIdentityBrokerUnavailable when the broker is
-// unavailable, so the client can retry, and ErrInternal otherwise.
+// unavailable or did not answer in time, so the client can retry, and
+// ErrInternal otherwise.
 func (s *Service) identityBrokerFailure(ctx context.Context, call, host string, err error) error {
 	code := identitybroker.CodeInternal
 	var brokerErr *identitybroker.Error
-	if errors.As(err, &brokerErr) {
+	switch {
+	case errors.As(err, &brokerErr):
 		code = brokerErr.Code
+	case errors.Is(err, context.DeadlineExceeded):
+		code = identitybroker.CodeUnavailable
 	}
 	s.cfg.Diagnostics.Log(context.WithoutCancel(ctx), port.LevelWarn, "identity broker call failed",
 		"call", call, "session", host, "code", string(code))

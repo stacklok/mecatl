@@ -141,6 +141,9 @@ func makeFireFuncWithCancel(svc *server.Service, store port.ScheduleStore, defau
 		// break Singleton: the next fire's trial-acquire on this still-renewed lease
 		// would return ErrLeaseHeld and skip forever (review #189).
 		defer svc.CloseSession(sess.ID)
+		// The fire's run ends when this returns, and with it the fire's
+		// identity broker session. Deferred after CloseSession so it runs first.
+		defer svc.EndScheduledRun(context.WithoutCancel(ownerCtx), sess.ID)
 
 		// Carried-context toggle: when CarryContext is true,
 		// load the prior fire's session and render its conversation as a FENCED

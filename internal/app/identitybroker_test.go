@@ -6,11 +6,21 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
+	"github.com/stacklok/mecatl/adapters/jsonlstore"
+	"github.com/stacklok/mecatl/engine/adapter/mockllm"
+	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
+	"github.com/stacklok/mecatl/engine/agent"
+	"github.com/stacklok/mecatl/engine/port"
+	"github.com/stacklok/mecatl/engine/session"
+	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/adapter/mcpauthority"
 	"github.com/stacklok/mecatl/internal/adapter/permconfig"
+	"github.com/stacklok/mecatl/internal/adapter/server"
 	"github.com/stacklok/mecatl/internal/identitybroker"
 	"github.com/stacklok/mecatl/internal/identitybroker/standin"
+	"github.com/stacklok/mecatl/internal/syscaller"
 )
 
 // closableCore is a stand-in core that records the workloads it sees and
@@ -154,5 +164,74 @@ func TestIdentityBrokerConstructionFailureStopsStartup(t *testing.T) {
 	}
 	if got := closer.calls.Load(); got != 1 {
 		t.Fatalf("profile lifecycle Close calls = %d, want 1", got)
+	}
+}
+
+// countingIdentityBroker counts the broker sessions opened and closed through
+// the boundary it wraps.
+type countingIdentityBroker struct {
+	identitybroker.Service
+	mu            sync.Mutex
+	opens, closes int
+}
+
+func (b *countingIdentityBroker) OpenSession(ctx context.Context, req identitybroker.OpenSessionRequest) (identitybroker.Session, error) {
+	b.mu.Lock()
+	b.opens++
+	b.mu.Unlock()
+	return b.Service.OpenSession(ctx, req)
+}
+
+func (b *countingIdentityBroker) CloseSession(ctx context.Context, req identitybroker.CloseSessionRequest) error {
+	b.mu.Lock()
+	b.closes++
+	b.mu.Unlock()
+	return b.Service.CloseSession(ctx, req)
+}
+
+func TestScheduledFireClosesItsBrokerSessionWhenTheRunEnds(t *testing.T) {
+	store, err := jsonlstore.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	core, err := newIdentityBroker(Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	broker := &countingIdentityBroker{Service: identitybroker.NewInProcess(identitybroker.UnverifiedAuthenticator{Name: identityBrokerWorkload}, core)}
+	llm := mockllm.New(mockllm.TextTurn("fire done"))
+	engine := agent.NewEngine(agent.Deps{
+		LLM: llm, Catalog: tool.NewCatalog(), Model: "test-model", Store: store,
+		Policy: permpolicy.NewPolicy(permpolicy.AllowAllFloorRules(), nil),
+	})
+	svc, err := newTestServerService(server.Config{
+		Engine: engine, Store: store, Now: time.Now, DefaultCapabilities: llm.Capabilities(),
+		EventLog: store, Diagnostics: port.NopDiagnostics{}, IdentityBroker: broker,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner := alicePrincipal
+	sched := port.Schedule{Spec: port.ScheduleSpec{
+		Name: "owned-fire", Prompt: "say hi", Mode: session.ModePlan, Owner: &owner,
+		EnvironmentRef: session.EnvironmentRef{Kind: session.EnvKindLocal, ID: t.TempDir(), Revision: "in-tree-v1"},
+		PlacementScope: "legacy-local",
+	}}
+	fire := makeFireFunc(svc, store.ScheduleStore(), defaultFireTimeout, nil)
+	rec, err := fire(syscaller.Context(context.Background(), syscaller.RootScheduler), sched, time.Now())
+	if err != nil {
+		t.Fatalf("fire: %v", err)
+	}
+	if rec.Stop != session.StopEndTurn {
+		t.Fatalf("fire stop = %q, want %q", rec.Stop, session.StopEndTurn)
+	}
+	broker.mu.Lock()
+	opens, closes := broker.opens, broker.closes
+	broker.mu.Unlock()
+	if opens != 1 || closes != 1 {
+		t.Fatalf("broker sessions opened %d and closed %d, want one of each", opens, closes)
+	}
+	if _, open, err := broker.FindSession(t.Context(), identitybroker.FindSessionRequest{RootHostSessionID: string(rec.SessionID)}); err != nil || open {
+		t.Fatalf("after the fire, FindSession = %v, %v; want none open", open, err)
 	}
 }

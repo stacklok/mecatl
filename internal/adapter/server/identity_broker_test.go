@@ -2,25 +2,30 @@ package server_test
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"errors"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/stacklok/mecatl/engine/adapter/memfs"
+	"github.com/stacklok/mecatl/engine/adapter/memledger"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/session"
+	"github.com/stacklok/mecatl/engine/team"
 	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/adapter/server"
 	"github.com/stacklok/mecatl/internal/identitybroker"
-	"github.com/stacklok/mecatl/internal/identitybroker/standin"
 )
 
 var brokerAlice = &session.Principal{Issuer: "https://login.example.com", Subject: "alice-204", GrantType: session.GrantTypeUser}
 
-// recordingBroker wraps the stand-in broker, records every call, and can make
+// recordingBroker wraps the real broker, records every call, and can make
 // every call fail as unavailable.
 type recordingBroker struct {
 	inner identitybroker.Service
@@ -31,8 +36,22 @@ type recordingBroker struct {
 	unavailable bool
 }
 
+// newRecordingBroker wraps the real identity broker, so these tests exercise
+// the implementation mecak8s runs, not the stand-in.
 func newRecordingBroker() *recordingBroker {
-	return &recordingBroker{inner: identitybroker.NewInProcess(identitybroker.UnverifiedAuthenticator{Name: "mecak8s-test"}, standin.New())}
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		panic(err)
+	}
+	core, err := identitybroker.New(identitybroker.Config{
+		TrustDomain:        "agents.example.com",
+		Audience:           "https://broker.example.com",
+		CredentialLifetime: 5 * time.Minute,
+	}, nil, key)
+	if err != nil {
+		panic(err)
+	}
+	return &recordingBroker{inner: identitybroker.NewInProcess(identitybroker.UnverifiedAuthenticator{Name: "mecak8s-test"}, core)}
 }
 
 func (b *recordingBroker) down() error {
@@ -375,7 +394,8 @@ type hangingFindBroker struct {
 func (b *hangingFindBroker) FindSession(ctx context.Context, req identitybroker.FindSessionRequest) (identitybroker.Session, bool, error) {
 	if b.hang {
 		<-ctx.Done()
-		return identitybroker.Session{}, false, identitybroker.NewError(identitybroker.CodeUnavailable, "", ctx.Err().Error())
+		// A transport, not the broker, reports a deadline as a plain error.
+		return identitybroker.Session{}, false, ctx.Err()
 	}
 	return b.recordingBroker.FindSession(ctx, req)
 }
@@ -420,5 +440,111 @@ func TestIdentityBrokerOffChangesNothing(t *testing.T) {
 	}
 	if err := svc.DeleteSession(ctx, deleted.ID); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestIdentityBrokerDeadlineAtRunEntryIsUnavailable(t *testing.T) {
+	broker := &hangingFindBroker{recordingBroker: newRecordingBroker()}
+	llm := mockllm.New(mockllm.TextTurn("must not run"))
+	svc := newIdentityBrokerService(t, broker, llm)
+	sess, err := svc.CreateSession(aliceContext(t), session.ModeDefault, session.Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	broker.hang = true
+	ctx, cancel := context.WithTimeout(aliceContext(t), 50*time.Millisecond)
+	defer cancel()
+	if _, err := svc.StartRun(ctx, sess.ID, "hello"); !errors.Is(err, server.ErrIdentityBrokerUnavailable) {
+		t.Fatalf("run with an unresponsive identity broker: %v, want ErrIdentityBrokerUnavailable", err)
+	}
+	if n := llm.Calls(); n != 0 {
+		t.Fatalf("the agent ran without a broker session: %d model requests", n)
+	}
+}
+
+func TestIdentityBrokerRetentionDeleteCloses(t *testing.T) {
+	broker := newRecordingBroker()
+	svc := newIdentityBrokerService(t, broker, mockllm.New())
+	sess, err := svc.CreateSession(aliceContext(t), session.ModeDefault, session.Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantBrokerSession(t, broker, sess)
+	if err := svc.DeleteSessionForRetention(t.Context(), sess.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := broker.find(t, sess.ID); ok {
+		t.Fatal("a retention delete left the session's broker session open")
+	}
+}
+
+func TestIdentityBrokerEndScheduledRunCloses(t *testing.T) {
+	broker := newRecordingBroker()
+	svc := newIdentityBrokerService(t, broker, mockllm.New())
+	sess, err := svc.CreateSessionWithProfile(t.Context(), session.ModeDefault, session.Limits{}, server.ProviderSelector{}, server.ProfileDefault,
+		server.WithSessionID("fire-2"), server.WithOwner(brokerAlice), server.WithScheduledRelationship("nightly", ""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantBrokerSession(t, broker, sess)
+	svc.EndScheduledRun(t.Context(), sess.ID)
+	if _, ok := broker.find(t, sess.ID); ok {
+		t.Fatal("the scheduled run ended but its broker session is open")
+	}
+	if _, err := svc.GetSession(t.Context(), sess.ID); err != nil {
+		t.Fatalf("the scheduled session was not kept for result delivery: %v", err)
+	}
+}
+
+func TestIdentityBrokerTeamRunOpensTheRootSession(t *testing.T) {
+	for _, down := range []bool{false, true} {
+		name := "available"
+		if down {
+			name = "unavailable"
+		}
+		t.Run(name, func(t *testing.T) {
+			ctx := context.Background()
+			store := memstore.New()
+			ref := session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}
+			env := tool.MustEnvironment(ref, memfs.NewWorkspace("/ws"), memledger.New(), nil)
+			provider := &teamRootCaptureProvider{}
+			memberEngine := func(*team.Team, agent.MemberSpec, string) agent.MemberBuild {
+				return agent.MemberBuild{Engine: agent.NewEngine(agent.Deps{LLM: provider, Catalog: tool.NewCatalog(), Model: "test"})}
+			}
+			broker := newRecordingBroker()
+			svc, err := server.NewService(server.Config{
+				Engine: agent.NewEngine(agent.Deps{Catalog: tool.NewCatalog()}), Store: store,
+				PlacementProvider: delegationPlacementProvider{binding: server.PlacementBinding{Environment: env, Ref: ref}},
+				PlacementScope:    "test-scope", MemberEngine: memberEngine, IdentityBroker: broker,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(svc.Close)
+			// The root session as a restart leaves it: saved, with no broker session.
+			source := session.New("team-root", session.ModeDefault, ref, session.Limits{}, time.Unix(1, 0))
+			if err := source.RestoreLabels(brokerAlice, session.Authority{}); err != nil {
+				t.Fatal(err)
+			}
+			if err := store.Create(ctx, source); err != nil {
+				t.Fatal(err)
+			}
+			teamID, _, err := svc.CreateTeamForSession(ctx, source.ID, "reviewers", "goal", 0, []agent.MemberSpec{{Name: "lead", Lead: true}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			broker.setUnavailable(down)
+			_, err = svc.RunTeam(ctx, teamID, nil)
+			if down {
+				if !errors.Is(err, server.ErrIdentityBrokerUnavailable) {
+					t.Fatalf("RunTeam with the identity broker down: %v, want ErrIdentityBrokerUnavailable", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			wantBrokerSession(t, broker, source)
+		})
 	}
 }
