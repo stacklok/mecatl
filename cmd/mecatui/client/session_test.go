@@ -53,6 +53,12 @@ type sessionCapabilitiesServer struct {
 	globalErr    error
 	snapshot     *mecatlv1.Session
 	sessionMedia *mecatlv1.SessionCapabilities
+	setModeReq   *mecatlv1.SetModeRequest
+}
+
+func (s *sessionCapabilitiesServer) SetMode(_ context.Context, req *mecatlv1.SetModeRequest) (*mecatlv1.SetModeResponse, error) {
+	s.setModeReq = req
+	return &mecatlv1.SetModeResponse{Session: s.snapshot}, nil
 }
 
 func (s *sessionCapabilitiesServer) GetCompatibilityInfo(context.Context, *mecatlv1.GetCompatibilityInfoRequest) (*mecatlv1.GetCompatibilityInfoResponse, error) {
@@ -114,6 +120,27 @@ func TestGetSessionCapabilitiesFallsBackWhenCompatibilityInfoIsUnavailable(t *te
 	}
 	if !snapshot.Capabilities.Image || snapshot.Capabilities.Audio || !snapshot.Capabilities.SessionMediaPresent || snapshot.Capabilities.Steer || snapshot.Capabilities.Teams {
 		t.Fatalf("older-server resume capabilities = %+v", snapshot.Capabilities)
+	}
+}
+
+// TestSetModeReturnsServerModeAndState pins the SetMode projection the
+// refused-mode recovery relies on: the server's resulting state (cancelled when
+// the pending turn was dropped without running) reaches the caller alongside
+// the authoritative mode.
+func TestSetModeReturnsServerModeAndState(t *testing.T) {
+	server := &sessionCapabilitiesServer{snapshot: &mecatlv1.Session{
+		SessionId: "s", Mode: mecatlv1.PermissionMode_PERMISSION_MODE_ACCEPT_EDITS, State: "cancelled",
+	}}
+	cl := newSessionCapabilitiesClient(t, server)
+	got, err := cl.SetMode(t.Context(), "s", ModeDefaultString)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := (ModeResult{Mode: ModeString(mecatlv1.PermissionMode_PERMISSION_MODE_ACCEPT_EDITS), State: "cancelled"}); got != want {
+		t.Fatalf("SetMode result = %+v, want %+v", got, want)
+	}
+	if req := server.setModeReq; req.GetSessionId() != "s" || req.GetMode() != mecatlv1.PermissionMode_PERMISSION_MODE_DEFAULT {
+		t.Fatalf("SetMode request = %+v", req)
 	}
 }
 
