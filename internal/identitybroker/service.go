@@ -22,6 +22,9 @@ import (
 //     calls with its closing reason, such as ReasonSessionClosed with
 //     CodeFailedPrecondition, and a later OpenSession for the same host
 //     session opens a new broker session with a new ID.
+//   - RegisterAgent refuses a request whose owner differs from the broker
+//     session's owner with CodePermissionDenied: one session tree has one
+//     owner.
 //   - A broker session ID the broker never issued is refused with
 //     CodePermissionDenied.
 //   - Invalid requests fail with CodeInvalidArgument.
@@ -131,9 +134,14 @@ func (a AgentRef) IsZero() bool { return a == AgentRef{} }
 
 // RegisterAgentRequest registers an agent instance in a broker session.
 type RegisterAgentRequest struct {
-	SessionID     string
+	SessionID string
+	// HostSessionID is the agent's own host session. A child agent's differs
+	// from the broker session's root host session, so it is not compared with
+	// it; checking that it belongs to the session's tree will be addressed
+	// later.
 	HostSessionID string
-	Owner         Owner
+	// Owner must equal the broker session's owner.
+	Owner Owner
 	// Incarnation is the agent instance's incarnation, which the harness
 	// allocates and persists.
 	Incarnation string

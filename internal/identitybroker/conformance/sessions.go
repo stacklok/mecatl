@@ -84,6 +84,15 @@ func runSessions(t *testing.T, factory Factory) {
 		err = svc.CloseSession(ctx, identitybroker.CloseSessionRequest{SessionID: unknown.ID, Reason: identitybroker.ReasonSessionClosed})
 		wantError(t, "CloseSession of an unknown session", err, identitybroker.CodePermissionDenied, "")
 	})
+
+	t.Run("registration under another owner is refused", func(t *testing.T) {
+		svc := factory(t)
+		s := mustOpen(t, svc, openRequest("hostS42", alice))
+		req := registerRequest(s)
+		req.Owner = bob
+		_, err := svc.RegisterAgent(ctx, req)
+		wantError(t, "RegisterAgent under another owner", err, identitybroker.CodePermissionDenied, "")
+	})
 }
 
 func runClosedSessions(t *testing.T, factory Factory) {

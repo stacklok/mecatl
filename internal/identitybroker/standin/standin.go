@@ -112,8 +112,12 @@ func (b *Broker) RegisterAgent(_ context.Context, req identitybroker.RegisterAge
 	if err := req.Validate(); err != nil {
 		return identitybroker.Registration{}, err
 	}
-	if err := b.usable(req.SessionID); err != nil {
+	s, err := b.usable(req.SessionID)
+	if err != nil {
 		return identitybroker.Registration{}, err
+	}
+	if req.Owner != s.Owner {
+		return identitybroker.Registration{}, identitybroker.NewError(identitybroker.CodePermissionDenied, "", "the registration's owner is not the broker session's owner")
 	}
 	return identitybroker.Registration{Agent: fixedAgent, Credential: placeholderCredential}, nil
 }
@@ -123,24 +127,25 @@ func (b *Broker) AuthorizeCall(_ context.Context, req identitybroker.AuthorizeCa
 	if err := req.Validate(); err != nil {
 		return identitybroker.Authorization{}, err
 	}
-	if err := b.usable(req.SessionID); err != nil {
+	if _, err := b.usable(req.SessionID); err != nil {
 		return identitybroker.Authorization{}, err
 	}
 	return identitybroker.Authorization{}, identitybroker.ReasonError(identitybroker.ReasonDenied, "the stand-in identity broker authorizes no calls")
 }
 
-// usable returns the error for a session that does not exist or is closed.
-func (b *Broker) usable(id string) error {
+// usable returns the open session for id, or the error for a session that
+// does not exist or is closed.
+func (b *Broker) usable(id string) (identitybroker.Session, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	s, ok := b.sessions[id]
 	if !ok {
-		return unknownSession()
+		return identitybroker.Session{}, unknownSession()
 	}
 	if s.closed != "" {
-		return identitybroker.ReasonError(s.closed, "the broker session is closed")
+		return identitybroker.Session{}, identitybroker.ReasonError(s.closed, "the broker session is closed")
 	}
-	return nil
+	return s.Session, nil
 }
 
 func unknownSession() error {

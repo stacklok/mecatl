@@ -42,17 +42,21 @@ func openSession(t *testing.T, b *Broker) identitybroker.Session {
 func TestRegisterAgentReturnsTheFixedAgent(t *testing.T) {
 	b := New()
 	s := openSession(t, b)
-	cases := map[string]identitybroker.DefinitionRef{
-		"inc_main":     {Source: "system", Name: "main", Revision: "v1"},
-		"inc_reviewer": {Name: "code-reviewer"}, // known only by name
+	cases := map[string]struct {
+		host       string
+		definition identitybroker.DefinitionRef
+	}{
+		"inc_main": {s.HostSessionID, identitybroker.DefinitionRef{Source: "system", Name: "main", Revision: "v1"}},
+		// A child agent has its own host session and may be known only by name.
+		"inc_reviewer": {"hostS42-child", identitybroker.DefinitionRef{Name: "code-reviewer"}},
 	}
-	for incarnation, definition := range cases {
+	for incarnation, c := range cases {
 		got, err := b.RegisterAgent(context.Background(), identitybroker.RegisterAgentRequest{
 			SessionID:     s.ID,
-			HostSessionID: s.HostSessionID,
+			HostSessionID: c.host,
 			Owner:         s.Owner,
 			Incarnation:   incarnation,
-			Definition:    definition,
+			Definition:    c.definition,
 		})
 		if err != nil {
 			t.Fatalf("RegisterAgent(%s): %v", incarnation, err)
