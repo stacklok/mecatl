@@ -14,8 +14,9 @@ type Workload struct {
 	Name string
 	// Verified reports that an authenticator verified the workload's
 	// credential. The zero value is false, so only an authenticator that
-	// verifies a credential sets it, and records can tell an unverified
-	// placeholder from a verified identity.
+	// verifies a credential sets it. When false, Name is a claim nobody
+	// proved: implementations must never treat it as the verified workload of
+	// the same name, and records must not present it as verified.
 	Verified bool
 }
 
@@ -34,10 +35,14 @@ func (w Workload) Validate() error {
 //
 //   - A workload that fails Validate is refused with CodeUnauthenticated,
 //     before any other check.
-//   - A broker session is bound to the workload that opened it. Opening,
-//     finding, closing, registering into, or calling through a session bound
-//     to another workload is refused with CodePermissionDenied, before its
-//     closing reason is revealed.
+//   - A broker session is bound to the whole Workload that opened it, Verified
+//     included, so a verified and an unverified workload with the same name
+//     are different workloads.
+//   - Another workload cannot tell another workload's broker session from
+//     none: closing, registering into, or calling through it fails exactly
+//     as for an unknown session ID (CodePermissionDenied, before any closing
+//     reason), and FindSession reports none open. Opening its host session is
+//     refused with CodePermissionDenied.
 type Core interface {
 	OpenSession(ctx context.Context, workload Workload, req OpenSessionRequest) (Session, error)
 	FindSession(ctx context.Context, workload Workload, req FindSessionRequest) (Session, bool, error)

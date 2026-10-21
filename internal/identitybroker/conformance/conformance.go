@@ -90,6 +90,15 @@ func mustClose(t *testing.T, svc identitybroker.Service, id string) {
 	}
 }
 
+// sameError fails unless a and b are both errors with the same text, so a
+// caller cannot tell the two situations apart.
+func sameError(t *testing.T, call string, a, b error) {
+	t.Helper()
+	if a == nil || b == nil || a.Error() != b.Error() {
+		t.Fatalf("%s: errors %v and %v differ, so the two situations can be told apart", call, a, b)
+	}
+}
+
 // wantError fails unless err is an *identitybroker.Error with code and reason.
 func wantError(t *testing.T, call string, err error, code identitybroker.Code, reason identitybroker.Reason) {
 	t.Helper()

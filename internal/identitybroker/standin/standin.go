@@ -36,7 +36,10 @@ type Broker struct {
 
 type session struct {
 	identitybroker.Session
-	workload string
+	// workload is the whole Workload that opened the session, Verified
+	// included, so a verified and an unverified workload with the same name
+	// never share it.
+	workload identitybroker.Workload
 	closed   identitybroker.Reason
 }
 
@@ -57,7 +60,7 @@ func (b *Broker) OpenSession(_ context.Context, workload identitybroker.Workload
 	if id, ok := b.open[req.HostSessionID]; ok {
 		s := b.sessions[id]
 		switch {
-		case s.workload != workload.Name:
+		case s.workload != workload:
 			return identitybroker.Session{}, otherWorkload()
 		case s.Owner != req.Owner:
 			return identitybroker.Session{}, identitybroker.ReasonError(identitybroker.ReasonSessionOwned, "the host session's broker session belongs to another owner")
@@ -72,7 +75,7 @@ func (b *Broker) OpenSession(_ context.Context, workload identitybroker.Workload
 		Incarnation:   req.Incarnation,
 		Owner:         req.Owner,
 	}
-	b.sessions[s.ID] = &session{Session: s, workload: workload.Name}
+	b.sessions[s.ID] = &session{Session: s, workload: workload}
 	b.open[s.HostSessionID] = s.ID
 	return s, nil
 }
@@ -89,8 +92,10 @@ func (b *Broker) FindSession(_ context.Context, workload identitybroker.Workload
 		return identitybroker.Session{}, false, nil
 	}
 	s := b.sessions[id]
-	if s.workload != workload.Name {
-		return identitybroker.Session{}, false, otherWorkload()
+	if s.workload != workload {
+		// Answer as if there were none, so another workload cannot learn which
+		// host sessions exist.
+		return identitybroker.Session{}, false, nil
 	}
 	return s.Session, true, nil
 }
@@ -103,11 +108,8 @@ func (b *Broker) CloseSession(_ context.Context, workload identitybroker.Workloa
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	s, ok := b.sessions[req.SessionID]
-	switch {
-	case !ok:
+	if !ok || s.workload != workload {
 		return unknownSession()
-	case s.workload != workload.Name:
-		return otherWorkload()
 	}
 	if s.closed == "" {
 		s.closed = req.Reason
@@ -144,16 +146,15 @@ func (b *Broker) AuthorizeCall(_ context.Context, workload identitybroker.Worklo
 }
 
 // usable returns the open session for id, or the error for a session that
-// does not exist, belongs to another workload, or is closed, in that order.
+// does not exist or belongs to another workload (the same error, so the two
+// cannot be told apart), or is closed.
 func (b *Broker) usable(workload identitybroker.Workload, id string) (identitybroker.Session, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	s, ok := b.sessions[id]
 	switch {
-	case !ok:
+	case !ok || s.workload != workload:
 		return identitybroker.Session{}, unknownSession()
-	case s.workload != workload.Name:
-		return identitybroker.Session{}, otherWorkload()
 	case s.closed != "":
 		return identitybroker.Session{}, identitybroker.ReasonError(s.closed, "the broker session is closed")
 	}
@@ -172,6 +173,8 @@ func unknownSession() error {
 	return identitybroker.NewError(identitybroker.CodePermissionDenied, "", "unknown broker session")
 }
 
+// otherWorkload refuses an open for a host session whose broker session
+// another workload holds. Refusing necessarily reveals that one exists.
 func otherWorkload() error {
-	return identitybroker.NewError(identitybroker.CodePermissionDenied, "", "the broker session is bound to another workload")
+	return identitybroker.NewError(identitybroker.CodePermissionDenied, "", "the host session cannot be opened by this workload")
 }

@@ -2,9 +2,12 @@ package app
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"testing"
 
+	"github.com/stacklok/mecatl/internal/adapter/mcpauthority"
+	"github.com/stacklok/mecatl/internal/adapter/permconfig"
 	"github.com/stacklok/mecatl/internal/identitybroker"
 	"github.com/stacklok/mecatl/internal/identitybroker/standin"
 )
@@ -84,5 +87,47 @@ func TestIdentityBrokerIsClosedOnShutdown(t *testing.T) {
 	defer core.mu.Unlock()
 	if core.closed != 1 {
 		t.Fatalf("identity broker closed %d times, want once", core.closed)
+	}
+}
+
+func TestIdentityBrokerIsClosedWhenLaterStartupFails(t *testing.T) {
+	core := &closableCore{Broker: standin.New()}
+	// A protected MCP route without a callback URL makes the bundled MCP broker,
+	// built after the identity broker, fail to construct.
+	cfg := Config{Workspace: t.TempDir(), UseMock: true, NoSoul: true, IdentityBroker: true, identityBrokerCore: core,
+		MCPAuthority: mcpauthority.NewBroker(mcpauthority.BrokerConfig{Routes: []permconfig.MCPServerProfile{protectedToolHiveRoute("calendar")}})}
+	built, err := buildIsolated(t, t.Context(), cfg)
+	if err == nil {
+		built.Close()
+		t.Fatal("Build succeeded; the test needs a startup failure after the identity broker is built")
+	}
+	if !strings.Contains(err.Error(), "MCP broker") {
+		t.Fatalf("Build failed before the MCP broker, so the identity broker may not have been built: %v", err)
+	}
+	core.mu.Lock()
+	defer core.mu.Unlock()
+	if core.closed != 1 {
+		t.Fatalf("identity broker closed %d times after a failed startup, want once", core.closed)
+	}
+}
+
+func TestIdentityBrokerDefaultWiringOpensSessions(t *testing.T) {
+	// No core override: this builds the production stand-in and authenticator.
+	built, err := buildIsolated(t, t.Context(), Config{Workspace: t.TempDir(), UseMock: true, NoSoul: true, IdentityBroker: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(built.Close)
+	if built.IdentityBroker == nil {
+		t.Fatal("no identity broker was constructed with the flag on")
+	}
+	owner := identitybroker.Owner{Issuer: "https://login.example.com", Subject: "alice-204"}
+	opened, err := built.IdentityBroker.OpenSession(t.Context(), identitybroker.OpenSessionRequest{HostSessionID: "hostS42", Incarnation: "inc_hostS42", Owner: owner})
+	if err != nil {
+		t.Fatalf("OpenSession: %v", err)
+	}
+	found, ok, err := built.IdentityBroker.FindSession(t.Context(), identitybroker.FindSessionRequest{RootHostSessionID: "hostS42"})
+	if err != nil || !ok || found != opened {
+		t.Fatalf("FindSession = %+v, %v, %v; want %+v, true, nil", found, ok, err, opened)
 	}
 }

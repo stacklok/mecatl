@@ -20,22 +20,47 @@ func runWorkloads(t *testing.T, factory Factory) {
 		return s
 	}
 
-	t.Run("a session refuses another workload", func(t *testing.T) {
+	// Another workload includes the same name with a different Verified.
+	others := map[string]identitybroker.Workload{
+		"another name":            workloadB,
+		"same name, now verified": {Name: workloadA.Name, Verified: true},
+	}
+
+	for name, other := range others {
+		t.Run("a session refuses another workload: "+name, func(t *testing.T) {
+			core := factory(t)
+			s := open(t, core, workloadA, "hostS42")
+			_, err := core.OpenSession(ctx, other, openRequest("hostS42", alice))
+			wantError(t, "OpenSession by another workload", err, identitybroker.CodePermissionDenied, "")
+			if _, ok, err := core.FindSession(ctx, other, findRequest("hostS42")); err != nil || ok {
+				t.Fatalf("FindSession by another workload = %v, %v; want false, nil", ok, err)
+			}
+			_, err = core.RegisterAgent(ctx, other, registerRequest(s))
+			wantError(t, "RegisterAgent by another workload", err, identitybroker.CodePermissionDenied, "")
+			_, err = core.AuthorizeCall(ctx, other, authorizeRequest(s.ID))
+			wantError(t, "AuthorizeCall by another workload", err, identitybroker.CodePermissionDenied, "")
+			err = core.CloseSession(ctx, other, identitybroker.CloseSessionRequest{SessionID: s.ID, Reason: identitybroker.ReasonSessionClosed})
+			wantError(t, "CloseSession by another workload", err, identitybroker.CodePermissionDenied, "")
+			if got, ok, err := core.FindSession(ctx, workloadA, findRequest("hostS42")); err != nil || !ok || got != s {
+				t.Fatalf("after refusals, FindSession by its workload = %+v, %v, %v; want %+v, true, nil", got, ok, err, s)
+			}
+		})
+	}
+
+	t.Run("another workload's session looks like an unknown one", func(t *testing.T) {
 		core := factory(t)
 		s := open(t, core, workloadA, "hostS42")
-		_, err := core.OpenSession(ctx, workloadB, openRequest("hostS42", alice))
-		wantError(t, "OpenSession by another workload", err, identitybroker.CodePermissionDenied, "")
-		_, _, err = core.FindSession(ctx, workloadB, findRequest("hostS42"))
-		wantError(t, "FindSession by another workload", err, identitybroker.CodePermissionDenied, "")
-		_, err = core.RegisterAgent(ctx, workloadB, registerRequest(s))
-		wantError(t, "RegisterAgent by another workload", err, identitybroker.CodePermissionDenied, "")
-		_, err = core.AuthorizeCall(ctx, workloadB, authorizeRequest(s.ID))
-		wantError(t, "AuthorizeCall by another workload", err, identitybroker.CodePermissionDenied, "")
-		err = core.CloseSession(ctx, workloadB, identitybroker.CloseSessionRequest{SessionID: s.ID, Reason: identitybroker.ReasonSessionClosed})
-		wantError(t, "CloseSession by another workload", err, identitybroker.CodePermissionDenied, "")
-		if got, ok, err := core.FindSession(ctx, workloadA, findRequest("hostS42")); err != nil || !ok || got != s {
-			t.Fatalf("after refusals, FindSession by its workload = %+v, %v, %v; want %+v, true, nil", got, ok, err, s)
-		}
+		unknown := s
+		unknown.ID = s.ID + "-unknown"
+		_, theirs := core.RegisterAgent(ctx, workloadB, registerRequest(s))
+		_, missing := core.RegisterAgent(ctx, workloadB, registerRequest(unknown))
+		sameError(t, "RegisterAgent", theirs, missing)
+		_, theirs = core.AuthorizeCall(ctx, workloadB, authorizeRequest(s.ID))
+		_, missing = core.AuthorizeCall(ctx, workloadB, authorizeRequest(unknown.ID))
+		sameError(t, "AuthorizeCall", theirs, missing)
+		theirs = core.CloseSession(ctx, workloadB, identitybroker.CloseSessionRequest{SessionID: s.ID, Reason: identitybroker.ReasonSessionClosed})
+		missing = core.CloseSession(ctx, workloadB, identitybroker.CloseSessionRequest{SessionID: unknown.ID, Reason: identitybroker.ReasonSessionClosed})
+		sameError(t, "CloseSession", theirs, missing)
 	})
 
 	t.Run("another workload is refused before a closed session's reason", func(t *testing.T) {
