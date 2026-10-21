@@ -74,11 +74,12 @@ tasks:
   test:integration:
     desc: |
       Drive the real BFF over the real SDK against a spawned `mecated --mock`.
-      Builds the daemon first (repo `task build`), so a Go toolchain is required;
-      the offline `test` task never needs one.
+      Builds the daemon first (repo `task build:mecated`), so a Go toolchain is
+      required unless MECATL_PREBUILT_MECATED=1 supplies bin/mecated; the offline
+      `test` task never needs one.
     deps: [install]
     cmds:
-      - task --dir .. build
+      - task --dir .. build:mecated
       # The daemon was just built, so a missing binary is a failure, not a skip.
       - STUDIO_REQUIRE_MECATED=1 pnpm --filter @mecatl-studio/server run test:integration
 

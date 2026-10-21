@@ -64,7 +64,7 @@ tasks:
     deps: [build, e2e:fixture]
     cmds:
       - test -x "${BUN_BIN:-}" || command -v bun >/dev/null 2>&1 || { echo "bun is required for the SDK e2e runtime matrix"; exit 1; }
-      - task --dir ../.. build
+      - task --dir ../.. build:mecated
       - pnpm run test:e2e
 
   e2e:fixture:
@@ -78,7 +78,7 @@ tasks:
     cmds:
       - test -x "${DENO_BIN:-}" || command -v deno >/dev/null 2>&1 || { echo "deno is required for the SDK Deno integration"; exit 1; }
       - if [ -z "${MECATL_SDK_PACKED_TARBALL:-}" ]; then task pack; fi
-      - task --dir ../.. build
+      - task --dir ../.. build:mecated
       - node scripts/run-deno-integration.mjs
 
   browser:install:
@@ -91,7 +91,7 @@ tasks:
     desc: Pack the SDK and run all offline browser projects against same-checkout mecated
     deps: [pack]
     cmds:
-      - task --dir ../.. build
+      - task --dir ../.. build:mecated
       - pnpm run test:browser
 
   browser:project:
@@ -100,7 +100,7 @@ tasks:
     requires:
       vars: [PROJECT]
     cmds:
-      - task --dir ../.. build
+      - task --dir ../.. build:mecated
       - pnpm exec playwright test --config e2e/browser/playwright.config.ts --project "{{.PROJECT}}"
 
   macos-spawn:
@@ -108,7 +108,7 @@ tasks:
     deps: [build]
     platforms: [darwin]
     cmds:
-      - task --dir ../.. build
+      - task --dir ../.. build:mecated
       - pnpm run test:macos-spawn
 
   build:

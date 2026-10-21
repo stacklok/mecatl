@@ -88,7 +88,7 @@ task studio:install          # build checked-out SDK, then pnpm install --frozen
 task studio:lint             # Biome lint + format check, all three packages
 task studio:typecheck        # tsc --noEmit for contracts, server, web
 task studio:test             # Vitest (offline; never spawns mecated)
-task studio:test:integration # Vitest over the REAL SDK against a spawned `mecated --mock`; runs `task build` first (needs Go)
+task studio:test:integration # Vitest over the REAL SDK against a spawned `mecated --mock`; runs `task build:mecated` first (needs Go)
 task studio:generated-check  # regenerate contracts artifacts, fail if the committed copies differ
 task studio:check            # lint + typecheck + test + generated-check — the local gate
 task studio:format           # apply Biome formatting / import organization

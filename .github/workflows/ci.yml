@@ -245,18 +245,70 @@ jobs:
       - name: Verify SDK API reports
         run: task sdk:api:check
 
-  sdk-integration:
-    name: TypeScript SDK codegen and offline e2e
+  mecated:
+    name: Build mecated (shared Linux binary)
     needs: changes
-    # Regenerates contracts from proto and runs the SDK e2e against a same-checkout
-    # mecated, so both Go and SDK/contract changes are relevant.
-    if: needs.changes.outputs.docs_only != 'true' && (needs.changes.outputs.go_relevant == 'true' || needs.changes.outputs.sdk_relevant == 'true')
+    # The SDK, Slack bot, and Studio suites each spawn bin/mecated. Build it once
+    # here and hand it to them as an artifact instead of compiling it per job.
+    # The gate is the union of those jobs' gates, so none of them skips for lack
+    # of a binary.
+    if: needs.changes.outputs.docs_only != 'true' && (needs.changes.outputs.go_relevant == 'true' || needs.changes.outputs.sdk_relevant == 'true' || needs.changes.outputs.studio_relevant == 'true')
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+
+      - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - id: go-cache
+        uses: ./.github/actions/go-cache-restore
+        with:
+          family: go-sdk
+
+      - name: Build mecated
+        run: task build:mecated
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: mecated-linux-amd64
+          path: bin/mecated
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Save Go caches
+        uses: ./.github/actions/go-cache-save
+        with:
+          key: ${{ steps.go-cache.outputs.key }}
+          path: ${{ steps.go-cache.outputs.path }}
+          cache-hit: ${{ steps.go-cache.outputs.cache-hit }}
+
+  sdk-integration:
+    name: TypeScript SDK codegen and offline e2e
+    needs: [changes, mecated]
+    # Regenerates contracts from proto and runs the SDK e2e against a same-checkout
+    # mecated, so both Go and SDK/contract changes are relevant.
+    if: needs.changes.outputs.docs_only != 'true' && (needs.changes.outputs.go_relevant == 'true' || needs.changes.outputs.sdk_relevant == 'true')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      MECATL_PREBUILT_MECATED: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # bin/mecated comes from the mecated job; artifacts drop the exec bit.
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: mecated-linux-amd64
+          path: bin
+      - run: chmod +x bin/mecated
 
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
         with:
@@ -309,11 +361,13 @@ jobs:
 
   sdk-deno:
     name: TypeScript SDK (Deno ${{ matrix.deno-version }})
-    needs: changes
+    needs: [changes, mecated]
     # Spawns mecated via Deno.Command, so both Go and SDK/contract changes matter.
     if: needs.changes.outputs.docs_only != 'true' && (needs.changes.outputs.go_relevant == 'true' || needs.changes.outputs.sdk_relevant == 'true')
     runs-on: ubuntu-24.04
     timeout-minutes: 15
+    env:
+      MECATL_PREBUILT_MECATED: '1'
     strategy:
       fail-fast: false
       matrix:
@@ -322,6 +376,13 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+
+      # bin/mecated comes from the mecated job; artifacts drop the exec bit.
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: mecated-linux-amd64
+          path: bin
+      - run: chmod +x bin/mecated
 
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
         with:
@@ -338,15 +399,6 @@ jobs:
         with:
           deno-version: ${{ matrix.deno-version }}
 
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version-file: go.mod
-          cache: false
-      - id: go-cache
-        uses: ./.github/actions/go-cache-restore
-        with:
-          family: go-sdk
-
       - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
 
       - name: Install SDK dependencies (frozen)
@@ -355,21 +407,16 @@ jobs:
       - name: Type-check and run the Deno.Command local integration
         run: task sdk:deno
 
-      - name: Save Go caches
-        uses: ./.github/actions/go-cache-save
-        with:
-          key: ${{ steps.go-cache.outputs.key }}
-          path: ${{ steps.go-cache.outputs.path }}
-          cache-hit: ${{ steps.go-cache.outputs.cache-hit }}
-
   sdk-browser:
     name: TypeScript SDK browser (${{ matrix.label }})
-    needs: changes
+    needs: [changes, mecated]
     # Builds mecated for the browser integration, so both Go and SDK/contract
     # changes are relevant.
     if: needs.changes.outputs.docs_only != 'true' && (needs.changes.outputs.go_relevant == 'true' || needs.changes.outputs.sdk_relevant == 'true')
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 20
+    env:
+      MECATL_PREBUILT_MECATED: '1'
     strategy:
       fail-fast: false
       matrix:
@@ -391,6 +438,13 @@ jobs:
         with:
           persist-credentials: false
 
+      # bin/mecated comes from the mecated job; artifacts drop the exec bit.
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: mecated-linux-amd64
+          path: bin
+      - run: chmod +x bin/mecated
+
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
         with:
           version: 11.25.0
@@ -401,15 +455,6 @@ jobs:
           node-version: '24.x'
           cache: pnpm
           cache-dependency-path: sdk/typescript/pnpm-lock.yaml
-
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version-file: go.mod
-          cache: false
-      - id: go-cache
-        uses: ./.github/actions/go-cache-restore
-        with:
-          family: go-sdk
 
       - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
 
@@ -434,13 +479,6 @@ jobs:
 
       - name: Run browser project
         run: task sdk:browser:project PROJECT="${{ matrix.project }}"
-
-      - name: Save Go caches
-        uses: ./.github/actions/go-cache-save
-        with:
-          key: ${{ steps.go-cache.outputs.key }}
-          path: ${{ steps.go-cache.outputs.path }}
-          cache-hit: ${{ steps.go-cache.outputs.cache-hit }}
 
   sdk-macos-spawn:
     name: TypeScript SDK macOS spawn (macos-14, Node 22)
@@ -498,18 +536,27 @@ jobs:
 
   slack-bot-example:
     name: Slack bot example
-    needs: changes
+    needs: [changes, mecated]
     # Builds bin/mecated and spawns it (--mock) for the offline bridge test, so
     # both Go and SDK/contract changes are relevant.
     if: needs.changes.outputs.docs_only != 'true' && (needs.changes.outputs.go_relevant == 'true' || needs.changes.outputs.sdk_relevant == 'true')
     runs-on: ubuntu-24.04
     timeout-minutes: 15
+    env:
+      MECATL_PREBUILT_MECATED: '1'
     permissions:
       contents: read # checkout
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+
+      # bin/mecated comes from the mecated job; artifacts drop the exec bit.
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: mecated-linux-amd64
+          path: bin
+      - run: chmod +x bin/mecated
 
       # Install the packageManager pin explicitly. Do not rely on corepack being
       # present or enabled on the runner.
@@ -525,18 +572,6 @@ jobs:
           cache-dependency-path: |
             sdk/typescript/pnpm-lock.yaml
             sdk/typescript/examples/slack-bot/pnpm-lock.yaml
-
-      # Builds bin/mecated for the offline bridge test — a plain Go build, same
-      # toolchain the `sdk` job above already provisions. The example consumes
-      # the in-tree SDK via file:../..; slack-bot:install builds that first.
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version-file: go.mod
-          cache: false
-      - id: go-cache
-        uses: ./.github/actions/go-cache-restore
-        with:
-          family: go-sdk
 
       - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
 
@@ -633,16 +668,9 @@ jobs:
             if (process.getuid() === 0 || forbidden.some(existsSync)) process.exit(1);
           '
 
-      - name: Save Go caches
-        uses: ./.github/actions/go-cache-save
-        with:
-          key: ${{ steps.go-cache.outputs.key }}
-          path: ${{ steps.go-cache.outputs.path }}
-          cache-hit: ${{ steps.go-cache.outputs.cache-hit }}
-
   studio:
     name: Mecatl Studio (apps/)
-    needs: changes
+    needs: [changes, mecated]
     # Studio builds the checked-out SDK (one commit for Studio, SDK, and daemon)
     # and drives its integration suite against the daemon; run for apps/, SDK, or
     # Go changes. The browser journeys run in a sibling job with the same gate;
@@ -650,12 +678,21 @@ jobs:
     if: needs.changes.outputs.docs_only != 'true' && (needs.changes.outputs.studio_relevant == 'true' || needs.changes.outputs.go_relevant == 'true')
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    env:
+      MECATL_PREBUILT_MECATED: '1'
     permissions:
       contents: read # checkout
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+
+      # bin/mecated comes from the mecated job; artifacts drop the exec bit.
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: mecated-linux-amd64
+          path: bin
+      - run: chmod +x bin/mecated
 
       # Install the packageManager pin explicitly (read from apps/package.json —
       # pnpm 12.x, deliberately NOT the SDK's pnpm 11 pin: the workspace is
@@ -693,19 +730,6 @@ jobs:
 
       - name: Verify committed contracts artifacts are fresh
         run: task studio:generated-check
-
-      # The integration suite boots the BFF over the REAL SDK against a spawned
-      # `mecated --mock`, so it needs the Go toolchain to build bin/mecated —
-      # the same shape as the Slack bot example job. The task requires the
-      # binary it just built, so a build that produced none fails here.
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version-file: go.mod
-          cache: false
-      - id: go-cache
-        uses: ./.github/actions/go-cache-restore
-        with:
-          family: go-sdk
 
       - name: Integration-test Studio against a spawned mecated --mock
         run: task studio:test:integration
@@ -810,20 +834,15 @@ jobs:
           severity-cutoff: critical
           output-format: table
 
-      - name: Save Go caches
-        uses: ./.github/actions/go-cache-save
-        with:
-          key: ${{ steps.go-cache.outputs.key }}
-          path: ${{ steps.go-cache.outputs.path }}
-          cache-hit: ${{ steps.go-cache.outputs.cache-hit }}
-
   # Playwright runs its suite on one worker, so shard by project across runners.
   studio-browser:
     name: Mecatl Studio browser journeys (${{ matrix.project }})
-    needs: changes
+    needs: [changes, mecated]
     if: needs.changes.outputs.docs_only != 'true' && (needs.changes.outputs.studio_relevant == 'true' || needs.changes.outputs.go_relevant == 'true')
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    env:
+      MECATL_PREBUILT_MECATED: '1'
     permissions:
       contents: read # checkout
     strategy:
@@ -834,6 +853,13 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+
+      # bin/mecated comes from the mecated job; artifacts drop the exec bit.
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: mecated-linux-amd64
+          path: bin
+      - run: chmod +x bin/mecated
 
       # Install the packageManager pin explicitly (read from apps/package.json —
       # pnpm 12.x, deliberately NOT the SDK's pnpm 11 pin: the workspace is
@@ -860,30 +886,8 @@ jobs:
       - name: Install Chromium for Studio browser journeys
         run: task studio:browser:install
 
-      # The approval journey spawns `mecated --mock` through the checked-out SDK
-      # and a loopback-only browser fixture.
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version-file: go.mod
-          cache: false
-      - id: go-cache
-        uses: ./.github/actions/go-cache-restore
-        with:
-          family: go-sdk
-
-      # Only bin/mecated is needed, so skip the full `task build`.
-      - name: Build mecated
-        run: go build -o bin/mecated ./cmd/mecated
-
       - name: Test Studio browser journeys (Playwright, offline)
         run: task studio:browser -- --project=${{ matrix.project }}
-
-      - name: Save Go caches
-        uses: ./.github/actions/go-cache-save
-        with:
-          key: ${{ steps.go-cache.outputs.key }}
-          path: ${{ steps.go-cache.outputs.path }}
-          cache-hit: ${{ steps.go-cache.outputs.cache-hit }}
 
   studio-gate:
     name: Mecatl Studio (gate)

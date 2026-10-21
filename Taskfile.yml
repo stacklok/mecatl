@@ -112,6 +112,15 @@ tasks:
       - cd provider/openai && go build ./...
       - cd provider/openaichat && go build ./...
 
+  build:mecated:
+    desc: Compile only bin/mecated, the daemon the SDK, Slack bot, and Studio suites spawn
+    # CI builds bin/mecated once and hands it to those suites as an artifact;
+    # MECATL_PREBUILT_MECATED=1 tells this task to use that binary as is.
+    status:
+      - test "${MECATL_PREBUILT_MECATED:-}" = 1 && test -x bin/mecated
+    cmds:
+      - go build -ldflags "{{.BUILD_LDFLAGS}}" -o bin/mecated ./cmd/mecated
+
   install:
     desc: Install mecated and mecatui into GOBIN/GOPATH/bin
     cmds:

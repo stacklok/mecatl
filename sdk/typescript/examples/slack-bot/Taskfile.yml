@@ -40,7 +40,7 @@ tasks:
     desc: Run the Slack bot example's offline bridge test against a spawned mecated --mock
     deps: [install]
     cmds:
-      - task --dir ../../../.. build
+      - task --dir ../../../.. build:mecated
       - pnpm run test
 
   dev:

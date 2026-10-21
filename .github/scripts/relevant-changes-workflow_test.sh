@@ -136,6 +136,17 @@ for job in sdk-integration sdk-deno sdk-browser slack-bot-example; do
   assert_if "$job" has "needs.changes.outputs.go_relevant == 'true' || needs.changes.outputs.sdk_relevant == 'true'"
 done
 
+# The shared mecated job feeds every Linux suite that spawns the daemon, so its
+# gate must cover each consumer's gate; a narrower one would skip a consumer.
+assert_if mecated has "needs.changes.outputs.go_relevant == 'true' || needs.changes.outputs.sdk_relevant == 'true' || needs.changes.outputs.studio_relevant == 'true'"
+assert_if mecated has "needs.changes.outputs.docs_only != 'true'"
+for job in sdk-integration sdk-deno sdk-browser slack-bot-example studio studio-browser; do
+  block="$(job_block "$job")"
+  grep -Fq 'needs: [changes, mecated]' <<<"$block" || fail "$job must need the shared mecated job"
+  grep -Fq "MECATL_PREBUILT_MECATED: '1'" <<<"$block" || fail "$job must use the shared mecated binary"
+  grep -Fq 'name: mecated-linux-amd64' <<<"$block" || fail "$job must download the shared mecated binary"
+done
+
 # The Docusaurus build gates on site_relevant ALONE — deliberately no docs_only
 # guard, so a user-docs/ content change (which IS docs-only) still rebuilds it.
 assert_if user-docs has "needs.changes.outputs.site_relevant == 'true'"
