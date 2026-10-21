@@ -38,6 +38,7 @@ export const MECATL_ERROR_CODES = [
   "failed_precondition",
   "failed_step_retry_ineligible",
   "fire_now_overlap",
+  "identity_broker_unavailable",
   "internal",
   "invalid_argument",
   "learning_unavailable",

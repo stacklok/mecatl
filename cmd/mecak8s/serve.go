@@ -189,6 +189,9 @@ func serveWithDrainWait(ctx context.Context, cfg config, svc *server.Service, ob
 		return err
 	}
 	defer closeTLSLifecycle(tlsLifecycle)
+	if cfg.enableIdentityBroker {
+		slog.Warn("the identity broker keeps broker sessions in this process; run a single mecak8s replica with --enable-identity-broker")
+	}
 
 	auth, err := newAuthenticator(ctx, cfg)
 	if err != nil {

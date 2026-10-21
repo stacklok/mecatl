@@ -165,7 +165,11 @@ func (s *Service) rollbackBrokerAttachment(ctx context.Context, local *localBrok
 // from broker deletion being idempotent (ToolHive's DeleteSession treats an
 // already-deleted/never-existed session as success), not from keeping this
 // handle around pending a durable delete that has already committed.
+//
+// Every deletion path calls it, and no local release does, so it also closes
+// the identity broker session; that close logs its own failure.
 func (s *Service) deleteBrokerSessionLocked(ctx context.Context, id session.SessionID) error {
+	s.closeIdentityBrokerSession(ctx, id)
 	if s.cfg.MCPBroker == nil {
 		return nil
 	}

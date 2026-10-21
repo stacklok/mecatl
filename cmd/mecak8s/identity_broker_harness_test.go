@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/stacklok/mecatl/engine/port"
+	"github.com/stacklok/mecatl/internal/identitybroker"
 	"github.com/stacklok/mecatl/internal/testutil/identityharness"
 )
 
@@ -80,6 +81,36 @@ func TestIdentityBrokerAgainstOfflineHarness(t *testing.T) {
 	}
 	if ids := listSessionIDs(t, api, bob.AccessToken); slices.Contains(ids, created.ID) {
 		t.Errorf("Bob's sessions %v include Alice's %s", ids, created.ID)
+	}
+
+	// Alice's session has a broker session owned by her AS-1 identity. Releasing
+	// the session keeps it; deleting the session closes it.
+	findBrokerSession := func() (identitybroker.Session, bool) {
+		t.Helper()
+		s, ok, err := built.IdentityBroker.FindSession(t.Context(), identitybroker.FindSessionRequest{RootHostSessionID: created.ID})
+		if err != nil {
+			t.Fatalf("FindSession: %v", err)
+		}
+		return s, ok
+	}
+	opened, ok := findBrokerSession()
+	if !ok {
+		t.Fatalf("Alice's session %s has no broker session", created.ID)
+	}
+	if opened.Owner.Issuer != h.AS1.Issuer() || opened.Owner.Subject == "" {
+		t.Errorf("broker session owner = %+v, want Alice at AS-1 %s", opened.Owner, h.AS1.Issuer())
+	}
+	if status, body := apiCall(t, http.MethodDelete, api+"/v1/sessions/"+created.ID, alice.AccessToken, ""); status >= 300 {
+		t.Fatalf("Alice releases her session: status %d: %s", status, body)
+	}
+	if got, ok := findBrokerSession(); !ok || got != opened {
+		t.Errorf("after releasing the session, broker session = %+v, %v; want %+v", got, ok, opened)
+	}
+	if status, body := apiCall(t, http.MethodPost, api+"/v1/sessions/"+created.ID+"/delete", alice.AccessToken, ""); status >= 300 {
+		t.Fatalf("Alice deletes her session: status %d: %s", status, body)
+	}
+	if _, ok := findBrokerSession(); ok {
+		t.Error("deleting Alice's session left its broker session open")
 	}
 
 	for name, token := range map[string]string{

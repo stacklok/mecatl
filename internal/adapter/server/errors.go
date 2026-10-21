@@ -136,6 +136,11 @@ var (
 	// map it to Unavailable / HTTP 503. The gate starts false (byte-identical
 	// default); Service.Drain arms it.
 	ErrUnavailable = errors.New("server: draining, not accepting new runs")
+	// ErrIdentityBrokerUnavailable is returned when the agent identity broker
+	// cannot be reached to open a session's broker session. The session's agent
+	// does not run without one. Adapters map it to Unavailable / HTTP 503; a
+	// later retry can succeed.
+	ErrIdentityBrokerUnavailable = errors.New("server: identity broker unavailable")
 	// ErrContextWindowUnavailable is a transient admission failure: running with
 	// the speculative floor could irreversibly compact valid persisted history.
 	ErrContextWindowUnavailable = errors.New("server: context window unavailable")

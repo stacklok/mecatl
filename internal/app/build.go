@@ -3000,6 +3000,9 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	if brokerRuntime != nil {
 		svcCfg.MCPBroker = brokerRuntime
 	}
+	// The session code gets the same boundary Built.IdentityBroker exposes; nil
+	// when the flag is off.
+	svcCfg.IdentityBroker = identityBroker
 	// Workspace enrollment (pre-prompt authenticate-then-discover) applies only
 	// to the bundled ToolHive Process path: a plain Compile-based Runtime has no
 	// live discovery primitive and never satisfies the enrollment boundary.

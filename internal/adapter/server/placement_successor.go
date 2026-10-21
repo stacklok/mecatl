@@ -381,6 +381,9 @@ func (s *Service) createPlacedSuccessorLocked(ctx context.Context, req ForkSucce
 		}
 		brokerCommitted = true
 	}
+	// A fork or clear starts a new session tree. A failed open is logged and
+	// retried before the successor's first run.
+	_ = s.openIdentityBrokerSession(mutationCtx, created)
 	return created.ID, nil
 }
 

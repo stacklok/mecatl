@@ -35,6 +35,7 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/scheduler"
 	"github.com/stacklok/mecatl/internal/adapter/skills"
 	"github.com/stacklok/mecatl/internal/creatediag"
+	"github.com/stacklok/mecatl/internal/identitybroker"
 	brokercontract "github.com/stacklok/mecatl/internal/mcpbroker"
 )
 
@@ -803,6 +804,10 @@ type Config struct {
 	SessionContextEngine SessionContextEngineFactory
 	// MCPBroker owns logical broker state; Service owns only local attachments.
 	MCPBroker brokercontract.Service
+	// IdentityBroker is the agent identity broker, or nil when it is not
+	// enabled. With it set, every root session with an owner has a broker
+	// session; see openIdentityBrokerSession.
+	IdentityBroker identitybroker.Service
 	// MCPConnectorInspector exposes local-only inventory for the bundled broker.
 	MCPConnectorInspector brokercontract.ConnectorInspector
 	// WorkspaceEnrollment advertises the optional pre-prompt enrollment capability.
@@ -2707,8 +2712,21 @@ func (s *Service) bindRelatedIncarnations(ctx context.Context, opts *createSessi
 	return nil
 }
 
-//nolint:gocyclo // Creation intentionally keeps placement, ownership, limits, engine selection, and persistence in one transaction.
+// createSession creates and saves a session, then opens its identity broker
+// session. The open uses the saved session, so a create that lost a race
+// opens with the winner's incarnation. A failed open does not fail the create:
+// the session is already saved, and the open is retried before each run,
+// which refuses to start the agent without a broker session.
 func (s *Service) createSession(ctx context.Context, mode session.PermissionMode, limits session.Limits, sel ProviderSelector, specs []mcp.ServerConfig, profile SessionProfile, opts createSessionOpts) (*session.Session, error) {
+	sess, err := s.createSessionRecord(ctx, mode, limits, sel, specs, profile, opts)
+	if err == nil && sess != nil {
+		_ = s.openIdentityBrokerSession(ctx, sess) // logged; retried at run entry
+	}
+	return sess, err
+}
+
+//nolint:gocyclo // Creation intentionally keeps placement, ownership, limits, engine selection, and persistence in one transaction.
+func (s *Service) createSessionRecord(ctx context.Context, mode session.PermissionMode, limits session.Limits, sel ProviderSelector, specs []mcp.ServerConfig, profile SessionProfile, opts createSessionOpts) (*session.Session, error) {
 	if profile != ProfileDefault && profile != ProfileNoFS {
 		return nil, fmt.Errorf("%w: unknown session profile %q", ErrInvalidArgument, profile)
 	}
@@ -6819,6 +6837,12 @@ func (s *Service) engineAndEnvironmentFor(ctx context.Context, sess *session.Ses
 	s.mu.Unlock()
 	if !sess.EnvironmentRef.Valid() {
 		return nil, tool.Environment{}, "", ErrInvalidPlacementSelection
+	}
+	// Every run path passes here, so the agent never runs without its broker
+	// session: this reopens it after a restart and retries an open that failed
+	// at create.
+	if err := s.openIdentityBrokerSession(ctx, sess); err != nil {
+		return nil, tool.Environment{}, "", err
 	}
 	verified, err := s.sessionPlacement(ctx, sess)
 	if err != nil {
