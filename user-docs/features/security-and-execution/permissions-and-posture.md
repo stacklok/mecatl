@@ -139,6 +139,10 @@ conversation. Clients watching the session's event log see the request
 withdrawn and the run end as cancelled. Servers that support this advertise the
 `refused_mode_recovery` feature identifier. In `mecatui`, see
 [Recover a pending approval](/mecatui/sessions.md#recover-a-pending-approval).
+If a server crashed while the session was running, switch it to any admitted
+mode. The server ends the interrupted turn without running anything, records
+each unfinished tool call as interrupted, then applies the mode. The switch is
+refused while another server still holds the session's lease.
 If the session is waiting on an MCP server authorization,
 completing or cancelling that authorization records a result for the waiting
 tool call without running it or resuming the turn, and the session then

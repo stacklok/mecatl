@@ -68,6 +68,7 @@ var sessionMutationInventory = map[string]SessionMutationEntry{
 	"Persist":                               {SessionMutationLeaseProven, "relay persistence is admitted only while the registered run's held lease remains valid"},
 	"saveSession":                           {SessionMutationLeaseProven, "single pre-backend snapshot-save gate revalidates the current process-local mutation capability"},
 	"repairRunningSession":                  {SessionMutationLeaseProven, "run-entry crash repair executes only after acquisition and persists through saveSession"},
+	"abandonRefusedRunning":                 {SessionMutationLeaseProven, "SetMode's refused-mode crash repair runs only after run-entry and lease acquisition; SetMode persists through saveSession"},
 	"deleteSessionFamily":                   {SessionMutationLeaseProven, "single pre-backend family-delete gate revalidates the exact held session lease"},
 	"appendEvent":                           {SessionMutationLeaseProven, "relay event append is admitted only while the registered run or management mutation holds the lease"},
 	"recordPlanContinuationFailure":         {SessionMutationLeaseProven, "known failed proceed start appends through appendEvent's held-lease gate; publication follows only a successful append"},

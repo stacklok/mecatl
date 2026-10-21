@@ -234,6 +234,150 @@ func TestSetModeOnAwaitingSessionStillRefusedOutsideRecovery(t *testing.T) {
 	}
 }
 
+// crashOrphanInMode stores a session as a crash leaves it mid-turn: running in
+// stored, with an assistant tool call that never got a result and no process
+// driving it. It returns the session id and the unanswered call's id.
+func crashOrphanInMode(t *testing.T, store port.SessionStore, stored session.PermissionMode) (session.SessionID, session.ToolCallID) {
+	t.Helper()
+	ctx := context.Background()
+	var ran atomic.Int64
+	loose := recoveryService(t, store, mockllm.New(), &ran, session.ModeYolo, true, nil, nil)
+	created, err := loose.CreateSession(ctx, session.ModeDefault, session.Limits{})
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	sess, err := store.Load(ctx, created.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sess.RecordUserPrompt("go", nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := sess.BeginTurn(); err != nil {
+		t.Fatal(err)
+	}
+	call := session.NewToolCall("w1", "Write", json.RawMessage(`{"path":"a.go"}`))
+	if err := sess.RecordAssistant(session.NewAssistantMessage("", "", []session.ToolCall{call})); err != nil {
+		t.Fatal(err)
+	}
+	sess.Mode = stored
+	if err := store.Save(ctx, sess); err != nil {
+		t.Fatal(err)
+	}
+	return sess.ID, call.ID
+}
+
+// TestSetModeRecoversRefusedCrashOrphanedRunningSession pins the recovery for
+// a session a crash left running in a mode the restarted server refuses.
+// StartRun refuses it before its crash-orphan repair, so without this nothing
+// short of the background stale sweep could unstick it. Once the lease proves
+// no server drives the run, SetMode to an admitted mode abandons the dead turn
+// to idle without provider or tool work and applies the mode in one save; the
+// next StartRun then runs in the new mode.
+func TestSetModeRecoversRefusedCrashOrphanedRunningSession(t *testing.T) {
+	ctx := context.Background()
+	store := memstore.New()
+	id, callID := crashOrphanInMode(t, store, session.ModeYolo)
+
+	var ran atomic.Int64
+	llm := mockllm.New(mockllm.TextTurn("continued"))
+	lease := memlease.New(wallclock.Clock{}, time.Minute)
+	svc := recoveryService(t, store, llm, &ran, session.ModeAccept, true, lease, nil)
+
+	_, err := svc.StartRun(ctx, id, "continue")
+	if !errors.Is(err, server.ErrFailedPrecondition) || !strings.Contains(err.Error(), "SetMode to an admitted mode ends the interrupted turn") {
+		t.Fatalf("StartRun err = %v, want FailedPrecondition naming the SetMode recovery", err)
+	}
+
+	got, err := svc.SetMode(ctx, id, session.ModeDefault)
+	if err != nil {
+		t.Fatalf("SetMode(default) on refused crash-orphaned session: %v", err)
+	}
+	if got.Mode != session.ModeDefault || got.State != session.StateIdle {
+		t.Fatalf("SetMode returned mode %q state %q, want default/idle", got.Mode, got.State)
+	}
+	if llm.Calls() != 0 || ran.Load() != 0 {
+		t.Fatalf("recovery ran work: provider calls %d, tool executions %d", llm.Calls(), ran.Load())
+	}
+	kept, err := store.Load(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if kept.Mode != session.ModeDefault || kept.State != session.StateIdle {
+		t.Fatalf("stored after recovery: mode %q state %q, want default/idle", kept.Mode, kept.State)
+	}
+	msgs := kept.Conversation.Messages
+	if last := msgs[len(msgs)-1]; last.ToolResult == nil || last.ToolResult.CallID != callID || !last.ToolResult.IsError {
+		t.Fatalf("the unanswered call was not closed out: last message %+v", last)
+	}
+
+	run, err := svc.StartRun(ctx, id, "continue")
+	if err != nil {
+		t.Fatalf("StartRun after recovery: %v", err)
+	}
+	drainRun(t, run)
+	svc.FinishRun(id, run)
+	if llm.Calls() != 1 || ran.Load() != 0 {
+		t.Fatalf("next run: provider calls %d, tool executions %d; want 1, 0", llm.Calls(), ran.Load())
+	}
+	after, err := store.Load(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.Mode != session.ModeDefault || after.State != session.StateCompleted {
+		t.Fatalf("after next run: mode %q state %q, want default/completed", after.Mode, after.State)
+	}
+}
+
+// TestSetModeOnRunningSessionStillRefusedOutsideRecovery pins that only the
+// narrow recovery widens SetMode on a running session: an admitted stored mode
+// is left for StartRun's repair, an inadmissible target is refused, and a peer
+// holding the lease (the run may still be live there) blocks the abandon. Each
+// refusal leaves the running snapshot unchanged and runs no work.
+func TestSetModeOnRunningSessionStillRefusedOutsideRecovery(t *testing.T) {
+	ctx := context.Background()
+	for _, tc := range []struct {
+		name    string
+		stored  session.PermissionMode
+		ceiling session.PermissionMode
+		target  session.PermissionMode
+		peer    bool
+		want    error
+	}{
+		{"stored mode still admitted", session.ModeAccept, session.ModeAccept, session.ModeDefault, false, server.ErrInvalidArgument},
+		{"target above ceiling", session.ModeYolo, session.ModeAccept, session.ModeAuto, false, server.ErrInvalidArgument},
+		{"peer holds the lease", session.ModeYolo, session.ModeAccept, session.ModeDefault, true, server.ErrSessionLeasedElsewhere},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := memstore.New()
+			id, _ := crashOrphanInMode(t, store, tc.stored)
+			lease := memlease.New(wallclock.Clock{}, time.Minute)
+			if tc.peer {
+				if _, err := lease.Acquire(ctx, id, "peer"); err != nil {
+					t.Fatalf("peer Acquire: %v", err)
+				}
+			}
+			var ran atomic.Int64
+			llm := mockllm.New(mockllm.TextTurn("must not run"))
+			svc := recoveryService(t, store, llm, &ran, tc.ceiling, true, lease, nil)
+
+			if _, err := svc.SetMode(ctx, id, tc.target); !errors.Is(err, tc.want) {
+				t.Fatalf("SetMode(%s) err = %v, want %v", tc.target, err, tc.want)
+			}
+			if llm.Calls() != 0 || ran.Load() != 0 {
+				t.Fatalf("refusal ran work: provider calls %d, tool executions %d", llm.Calls(), ran.Load())
+			}
+			kept, err := store.Load(ctx, id)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if kept.State != session.StateRunning || kept.Mode != tc.stored {
+				t.Fatalf("refusal changed the session: state %q mode %q", kept.State, kept.Mode)
+			}
+		})
+	}
+}
+
 // TestSetModeRecoveryClosesTheParkedTurnForWatchers pins that the recovery is
 // observable: after the snapshot save, the durable log gains, stamped with the
 // parked run and the acting caller, a retract of the open ask, the cancellation

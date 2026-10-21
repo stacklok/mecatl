@@ -168,7 +168,10 @@ awaiting an approval in a mode the server no longer admits: a switch to an admit
 mode cancels the pending turn without running it, then applies the mode
 (`refused_mode_recovery`). The event log then closes the parked run as a live cancel
 would: a retract of the ask, a cancellation result for each unanswered tool call, and a
-cancelled result, so watchers see the turn end. `CompactSession` likewise runs
+cancelled result, so watchers see the turn end. A stored session a crash left running in
+such a mode recovers the same way: once the session lease proves no server drives the run,
+a switch to an admitted mode abandons the interrupted turn without running it.
+`CompactSession` likewise runs
 only at an idle or terminal boundary.
 
 ## Scheduled tasks

@@ -11154,7 +11154,10 @@ export const HarnessService: GenService<{
    * to an admitted, strictly lower mode cancels the pending turn without running
    * it and applies the mode. The session's event log then records, for the
    * parked run, a permission.retract of the open ask, a cancellation tool result
-   * for each unanswered call, and a cancelled result.
+   * for each unanswered call, and a cancelled result. The same feature covers a
+   * stored session a crash left running in such a mode: when no server still
+   * drives that run, a change to an admitted mode ends the interrupted turn
+   * without running it and applies the mode.
    *
    * @generated from rpc mecatl.v1.HarnessService.SetMode
    */
