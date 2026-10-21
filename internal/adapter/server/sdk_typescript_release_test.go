@@ -221,6 +221,7 @@ func TestSDKTypescriptRelease_Scenario1_PublicServiceProjectionParity(t *testing
 		"Diagnostics",
 		"Drain",
 		"EmitScheduleEvent",
+		"EndScheduledRun",
 		"FinishRun",
 		"GetUserModelDetail",
 		"GracefulDrain",
