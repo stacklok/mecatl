@@ -482,8 +482,8 @@ $ curl -s -N -X POST http://127.0.0.1:8081/v1/sessions/<SESSION_ID>/plan:approve
 - `"default"` → allow-once: flip to `default` mode (deny→ask→allow) and execute.
 - `"accept_edits"` → allow-always: flip to `acceptEdits` mode (auto-accept edits
   for the execution phase).
-- `"plan"` or `""` → deny/iterate: stay in plan mode, no continuation run starts
-  (the model re-plans on the next prompt).
+- `"plan"`, `""`, or an unrecognized value → deny/iterate: stay in plan mode, no
+  continuation run starts (the model re-plans on the next prompt).
 
 A `409` means a precondition failed: the session has a live run (use the
 `Converse` `resume_approval` frame for an in-flight run), is not `awaiting`, or

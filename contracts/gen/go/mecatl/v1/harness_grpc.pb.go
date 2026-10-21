@@ -527,9 +527,9 @@ type HarnessServiceClient interface {
 	//   - PERMISSION_MODE_DEFAULT  → allow-once (the session flips to DEFAULT).
 	//   - PERMISSION_MODE_ACCEPT_EDITS → allow-always (the session flips to
 	//     ACCEPT_EDITS).
-	//   - PERMISSION_MODE_PLAN / UNSPECIFIED → deny (the run stays in plan mode;
-	//     no continuation run starts — the model iterates on the plan on the next
-	//     prompt).
+	//   - PERMISSION_MODE_PLAN / UNSPECIFIED / an unrecognized value → deny (the
+	//     run stays in plan mode; no continuation run starts — the model iterates
+	//     on the plan on the next prompt).
 	//
 	// `note` is an OPTIONAL operator remark appended to the proceed message
 	// injected into the continuation run's first user message (allow paths only).
@@ -1814,9 +1814,9 @@ type HarnessServiceServer interface {
 	//   - PERMISSION_MODE_DEFAULT  → allow-once (the session flips to DEFAULT).
 	//   - PERMISSION_MODE_ACCEPT_EDITS → allow-always (the session flips to
 	//     ACCEPT_EDITS).
-	//   - PERMISSION_MODE_PLAN / UNSPECIFIED → deny (the run stays in plan mode;
-	//     no continuation run starts — the model iterates on the plan on the next
-	//     prompt).
+	//   - PERMISSION_MODE_PLAN / UNSPECIFIED / an unrecognized value → deny (the
+	//     run stays in plan mode; no continuation run starts — the model iterates
+	//     on the plan on the next prompt).
 	//
 	// `note` is an OPTIONAL operator remark appended to the proceed message
 	// injected into the continuation run's first user message (allow paths only).

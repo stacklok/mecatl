@@ -80,7 +80,7 @@ run carrying the proceed message. One stream carries both runs' events.
 |-|-|
 |`DEFAULT`|Allow once, switch to default mode, and start the continuation.|
 |`ACCEPT_EDITS`|Allow always, switch to accept-edits mode, and start the continuation.|
-|`PLAN` or `UNSPECIFIED`|Deny and iterate in plan mode, with no mode switch or continuation.|
+|`PLAN`, `UNSPECIFIED`, or an unrecognized value|Deny and iterate in plan mode, with no mode switch or continuation.|
 
 A live run returns `FAILED_PRECONDITION`; resolve its ask with the `Converse`
 `resume_approval` frame instead. A session that is not `awaiting` a
