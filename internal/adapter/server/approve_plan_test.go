@@ -906,6 +906,47 @@ func TestApprovePlanGRPCStreaming(t *testing.T) {
 	}
 }
 
+// TestApprovePlanGRPCUnspecifiedTargetDenies pins the proto contract that an
+// UNSPECIFIED (omitted) target_mode is a deny, the same as PLAN and the HTTP
+// path's empty target: the plan iterates, the session stays in plan mode, and
+// no continuation run starts.
+func TestApprovePlanGRPCUnspecifiedTargetDenies(t *testing.T) {
+	llm := mockllm.New(mockllm.ToolCallTurn(call("c1", "PresentPlan", `{"note":"plan"}`)))
+	svc := planApprovalService(t, llm, allowRules())
+	client, cleanup := dialGRPC(t, svc)
+	defer cleanup()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	sess, err := svc.CreateSession(ctx, session.ModePlan, session.Limits{})
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	_, finishParked := parkPlanAsk(t, svc, sess.ID)
+	defer finishParked()
+
+	stream, err := client.ApprovePlan(ctx, &mecatlv1.ApprovePlanRequest{SessionId: string(sess.ID)})
+	if err != nil {
+		t.Fatalf("ApprovePlan: %v", err)
+	}
+	evs := recvAllApprovePlanEvents(t, stream)
+
+	if indexOfProtoStop(evs, "plan_iterate") < 0 {
+		t.Fatalf("UNSPECIFIED target must deny and iterate; events = %v", protoTypesOf(evs))
+	}
+	if indexOfProtoStop(evs, "plan_approved") >= 0 || indexOfProtoStop(evs, "end_turn") >= 0 {
+		t.Fatal("UNSPECIFIED target must not approve the plan or start a continuation run")
+	}
+	got, err := svc.GetSession(ctx, sess.ID)
+	if err != nil {
+		t.Fatalf("GetSession: %v", err)
+	}
+	if got.Mode != session.ModePlan {
+		t.Fatalf("mode after UNSPECIFIED ApprovePlan = %q, want %q (no flip)", got.Mode, session.ModePlan)
+	}
+}
+
 // TestApprovePlanGRPCMidRunFailsPrecondition asserts that the gRPC ApprovePlan
 // maps ErrNotAwaitingPlan to codes.FailedPrecondition. Error arrives on Recv()
 // (server-streaming RPC: the initial call opens the stream, the handler error
