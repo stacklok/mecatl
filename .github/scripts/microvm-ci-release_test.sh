@@ -53,12 +53,15 @@ require 'onerror=traversal_error' "$package"
 require 'onerror=traversal_error' "$prepare_dev"
 
 # Ordinary PR CI must cross the nested-module boundary at every relevant gate.
-require 'go-version-file: environment/microvm/go.mod' "$ci"
 require 'cd environment/microvm && go build ./...' "$ci"
 require 'cd environment/microvm && golangci-lint run --config ../../.golangci.yml' "$ci"
-require 'name: MicroVM module (standalone, GOWORK=off)' "$ci"
 require "if: needs.changes.outputs.microvm_relevant == 'true'" "$ci"
-require 'GOWORK: off' "$ci"
+# Standalone (GOWORK=off) tests run through the Test job's per-module suite.
+require 'run: task --concurrency 3 test:race' "$ci"
+require '    - environment/microvm' "$taskfile"
+require '    - integration/microvm' "$taskfile"
+require "cd {{.MODULE | shellQuote}} && GOWORK={{.TEST_GOWORK | shellQuote}} go test" "$taskfile"
+require "TEST_GOWORK: '{{default \"off\" .TEST_GOWORK}}'" "$taskfile"
 
 # The dedicated real-hypervisor workflow is expensive, so it triggers only for
 # the runtime's direct closure and the exact CI controls that execute it.

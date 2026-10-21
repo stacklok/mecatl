@@ -112,7 +112,7 @@ fi
 # --- per-job gating ------------------------------------------------------------
 # The remaining Go build/analysis jobs gate on go_relevant; the required test
 # context checks changes.result itself, even when no Go tests need running.
-for job in build analysis module-lint action-scripts fuzz-smoke engine-standalone provider-standalone api-compat vuln; do
+for job in build analysis module-lint action-scripts fuzz-smoke api-compat vuln; do
   assert_if "$job" has "needs.changes.outputs.go_relevant == 'true'"
 done
 
@@ -170,8 +170,12 @@ else
   done
 fi
 
-# The opt-in MicroVM standalone job still uses the dedicated relevance output.
-assert_if microvm-standalone has "needs.changes.outputs.microvm_relevant == 'true'"
+# The opt-in MicroVM build and lint steps still use the dedicated relevance
+# output; its standalone tests run in the Test job's per-module GOWORK=off suite.
+for job in build module-lint; do
+  grep -Fq "if: needs.changes.outputs.microvm_relevant == 'true'" <<<"$(job_block "$job")" \
+    || fail "$job must gate its microVM step on microvm_relevant"
+done
 
 # --- lint aggregator tolerates non-Go skips ------------------------------------
 lint_block="$(job_block lint)"

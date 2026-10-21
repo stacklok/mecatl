@@ -140,8 +140,7 @@ class ModuleMetadataTests(unittest.TestCase):
         build = re.search(r"^  build:\n(.*?)(?=^  [\w-]+:)", workflow, re.M | re.S)[1]
         guard = "        run: task test:module-metadata\n"
         infrastructure = "        run: task test:workspace-infrastructure\n"
-        suite = ('          if [ "$IS_DRAFT" = true ]; then task --concurrency 3 test; '
-                 'else task --concurrency 3 test:race; fi\n')
+        suite = "        run: task --concurrency 3 test:race\n"
         self.assertIn(guard, test)
         self.assertIn(infrastructure, test)
         self.assertIn(suite, test)
@@ -163,7 +162,7 @@ class ModuleMetadataTests(unittest.TestCase):
             workflow.replace(guard, ""),
             workflow.replace("          task tidy\n          task test:module-metadata\n",
                              "          task test:module-metadata\n          task tidy\n"),
-            workflow.replace("task --concurrency 3 test:race;", "task --concurrency 3 test:workspace:race;"),
+            workflow.replace("task --concurrency 3 test:race\n", "task --concurrency 3 test:workspace:race\n"),
         ):
             with self.subTest(broken=broken != workflow):
                 with self.assertRaises(AssertionError):

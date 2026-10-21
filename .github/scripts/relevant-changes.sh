@@ -7,7 +7,7 @@
 # Usage:  ... | bash relevant-changes.sh <go|sdk|site|studio|microvm>
 #
 #   go   — the Go build/test matrix (build, test-race-*, analysis/lint, vuln,
-#          fuzz-smoke, engine-standalone, provider-standalone, api-compat).
+#          fuzz-smoke, api-compat).
 #          Irrelevant paths are documentation, the docs/user-facing site, and the
 #          TypeScript SDK frontend (pure TS cannot change a Go binary or Go test).
 #          EVERYTHING else — including contracts/ (proto is the codegen source for

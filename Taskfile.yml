@@ -623,10 +623,9 @@ tasks:
       Prove the opt-in provider/ submodules build + test with NO workspace
       (GOWORK=off), the same hygiene gate as test:engine-standalone. All four
       provider modules are checked with their own published dependency closures.
-      Locally the engine dependency resolves through your git credentials
-      (GOPROXY unset). In CI the job runs it fully offline (GOPROXY=off) over a
-      warmed module cache, needing no credential — replicate that locally with
-      `task test:provider-standalone GOPROXY=off`.
+      CI covers this through `task test:race`, which tests every module with
+      GOWORK=off. To prove the closure needs no network over a warmed module
+      cache, run `task test:provider-standalone GOPROXY=off`.
     vars:
       GOPROXY: '{{.GOPROXY | default ""}}'
     cmds:
