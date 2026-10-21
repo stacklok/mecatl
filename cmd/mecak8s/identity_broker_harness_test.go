@@ -83,33 +83,71 @@ func TestIdentityBrokerAgainstOfflineHarness(t *testing.T) {
 		t.Errorf("Bob's sessions %v include Alice's %s", ids, created.ID)
 	}
 
-	// Alice's session has a broker session owned by her AS-1 identity. Releasing
-	// the session keeps it; deleting the session closes it.
-	findBrokerSession := func() (identitybroker.Session, bool) {
+	// Each user's session has a broker session owned by their AS-1 identity.
+	// Running the session keeps it, a fork gets its own, releasing the session
+	// keeps it, and deleting the session closes it.
+	findBrokerSession := func(id string) (identitybroker.Session, bool) {
 		t.Helper()
-		s, ok, err := built.IdentityBroker.FindSession(t.Context(), identitybroker.FindSessionRequest{RootHostSessionID: created.ID})
+		s, ok, err := built.IdentityBroker.FindSession(t.Context(), identitybroker.FindSessionRequest{RootHostSessionID: id})
 		if err != nil {
-			t.Fatalf("FindSession: %v", err)
+			t.Fatalf("FindSession(%s): %v", id, err)
 		}
 		return s, ok
 	}
-	opened, ok := findBrokerSession()
+	opened, ok := findBrokerSession(created.ID)
 	if !ok {
 		t.Fatalf("Alice's session %s has no broker session", created.ID)
 	}
 	if opened.Owner.Issuer != h.AS1.Issuer() || opened.Owner.Subject == "" {
 		t.Errorf("broker session owner = %+v, want Alice at AS-1 %s", opened.Owner, h.AS1.Issuer())
 	}
+
+	status, body = apiCall(t, http.MethodPost, api+"/v1/sessions", bob.AccessToken, "{}")
+	if status != http.StatusCreated && status != http.StatusOK {
+		t.Fatalf("Bob creates a session: status %d: %s", status, body)
+	}
+	var bobCreated struct {
+		ID string `json:"session_id"`
+	}
+	if err := json.Unmarshal([]byte(body), &bobCreated); err != nil || bobCreated.ID == "" {
+		t.Fatalf("create session response %s: %v", body, err)
+	}
+	if bobs, ok := findBrokerSession(bobCreated.ID); !ok || bobs.Owner.Issuer != h.AS1.Issuer() || bobs.Owner.Subject == opened.Owner.Subject {
+		t.Errorf("Bob's broker session = %+v, %v; want one owned by Bob, not Alice (%+v)", bobs, ok, opened.Owner)
+	}
+
+	// The run passes run entry, which finds the open broker session and keeps it.
+	if status, body := apiCall(t, http.MethodPost, api+"/v1/sessions/"+created.ID+"/prompt", alice.AccessToken, `{"text":"hello"}`); status != http.StatusOK {
+		t.Fatalf("Alice prompts her session: status %d: %s", status, body)
+	}
+	if got, ok := findBrokerSession(created.ID); !ok || got != opened {
+		t.Errorf("after a run, broker session = %+v, %v; want %+v", got, ok, opened)
+	}
+
+	status, body = apiCall(t, http.MethodPost, api+"/v1/sessions/"+created.ID+"/fork", alice.AccessToken, "{}")
+	if status != http.StatusCreated && status != http.StatusOK {
+		t.Fatalf("Alice forks her session: status %d: %s", status, body)
+	}
+	var forked struct {
+		ID string `json:"session_id"`
+	}
+	if err := json.Unmarshal([]byte(body), &forked); err != nil || forked.ID == "" {
+		t.Fatalf("fork response %s: %v", body, err)
+	}
+	if fork, ok := findBrokerSession(forked.ID); !ok || fork.ID == opened.ID || fork.Owner != opened.Owner {
+		t.Errorf("fork's broker session = %+v, %v; want its own, owned by Alice", fork, ok)
+	}
+
 	if status, body := apiCall(t, http.MethodDelete, api+"/v1/sessions/"+created.ID, alice.AccessToken, ""); status >= 300 {
 		t.Fatalf("Alice releases her session: status %d: %s", status, body)
 	}
-	if got, ok := findBrokerSession(); !ok || got != opened {
+	if got, ok := findBrokerSession(created.ID); !ok || got != opened {
 		t.Errorf("after releasing the session, broker session = %+v, %v; want %+v", got, ok, opened)
 	}
 	if status, body := apiCall(t, http.MethodPost, api+"/v1/sessions/"+created.ID+"/delete", alice.AccessToken, ""); status >= 300 {
 		t.Fatalf("Alice deletes her session: status %d: %s", status, body)
 	}
-	if _, ok := findBrokerSession(); ok {
+	if _, ok := findBrokerSession(created.ID); ok {
 		t.Error("deleting Alice's session left its broker session open")
 	}
 
