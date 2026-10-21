@@ -73,8 +73,9 @@ Run from the repo root.
    The workflow validates the tracked `ARG` defaults in
    `build/execution-provider/Dockerfile` and `build/execution-workload/Dockerfile`
    on `main`: the Go builder, static provider runtime, and Brood Box workload
-   runtime must have tagged digest pins available for Linux amd64 and arm64;
-   it also builds both images without publishing. The tag workflow repeats the
+   runtime must have tagged digest pins available for Linux amd64 and arm64.
+   It does not build the images: `execution-images.yml` builds both for amd64
+   and arm64, without publishing, on every push to `main`. The tag workflow repeats the
    pin and availability validation on the merged commit before tagging. Renovate
    updates the pins through its native Dockerfile manager; no image repository
    variables are required.

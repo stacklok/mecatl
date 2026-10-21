@@ -90,8 +90,13 @@ def test_release_workflow_graph_and_contract(release_path: Path, release_pr_path
     assert "persist-credentials: false" in preflight
     assert "contents: read" in preflight and "contents: write" not in preflight
     assert "secrets." not in preflight
-    assert preflight.index("ref: refs/heads/main") < preflight.index("docker/setup-buildx-action@") < preflight.index(validator) < preflight.index("name: Build execution images without publishing")
-    assert preflight.count('docker buildx build --platform linux/amd64,linux/arm64 --file "$dockerfile" --output=type=cacheonly .') == 1
+    assert preflight.index("ref: refs/heads/main") < preflight.index("docker/setup-buildx-action@") < preflight.index(validator)
+    # The multi-arch no-publish build lives in execution-images.yml, not on the release path.
+    build = 'docker buildx build --platform linux/amd64,linux/arm64 --file "$dockerfile" --output=type=cacheonly .'
+    assert build not in release_pr
+    images = (release_pr_path.parent / "execution-images.yml").read_text(encoding="utf-8")
+    assert images.count(build) == 1 and "    branches: [main]\n" in images
+    assert images.index(validator) < images.index(build)
     assert "    needs: preflight" in release_pr
     assert release_pr.index(validator) < release_pr.index("name: Refuse or clean up an in-flight release") < release_pr.index("name: Mint the release app token")
     release_tag = release_tag_path.read_text(encoding="utf-8")

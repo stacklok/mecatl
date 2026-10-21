@@ -55,11 +55,8 @@ jobs:
           version: v0.38.0
       - name: Validate execution base images
         run: sh .github/scripts/validate-execution-base-images.sh
-      - name: Build execution images without publishing
-        run: |
-          for dockerfile in build/execution-provider/Dockerfile build/execution-workload/Dockerfile; do
-            docker buildx build --platform linux/amd64,linux/arm64 --file "$dockerfile" --output=type=cacheonly .
-          done
+      # execution-images.yml builds both images for amd64 + arm64 on every push to
+      # main, so the release need not repeat that build.
 
   release-pr:
     needs: preflight

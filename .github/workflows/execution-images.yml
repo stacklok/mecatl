@@ -1,0 +1,42 @@
+# No-publish amd64 + arm64 builds of the execution provider and workload images,
+# on every push to main (as ToolHive and the registry server build their images).
+#
+# release.yml publishes these images only after the release tag exists, and a
+# published tag cannot be moved. Building on main surfaces a broken image build
+# within minutes of the merge that causes it, before a release is cut from it.
+# The Kind suites in k8s-e2e.yml build only amd64, and build the provider with ko
+# rather than its Dockerfile, so neither is covered there.
+name: execution-images
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - README.md
+      - 'docs/**/*.md'
+      - 'user-docs/**'
+      - 'website/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Execution images (amd64 + arm64, no push)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+        with:
+          version: v0.38.0
+      - name: Validate execution base images
+        run: sh .github/scripts/validate-execution-base-images.sh
+      - name: Build execution images without publishing
+        run: |
+          for dockerfile in build/execution-provider/Dockerfile build/execution-workload/Dockerfile; do
+            docker buildx build --platform linux/amd64,linux/arm64 --file "$dockerfile" --output=type=cacheonly .
+          done
