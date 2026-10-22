@@ -30,6 +30,7 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/mcp"
 	"github.com/stacklok/mecatl/internal/adapter/mcpbroker"
 	brokercontract "github.com/stacklok/mecatl/internal/mcpbroker"
+	"github.com/stacklok/mecatl/internal/testutil/oauthbrowser"
 )
 
 type multiUpstreamTokenStore struct {
@@ -327,7 +328,7 @@ func (f *multiUpstreamFixture) requestAuthorization(presentation string) (int, e
 	}
 	client := f.gateway.Client()
 	client.Timeout = 8 * time.Second
-	response, err := client.Do(req)
+	response, err := oauthbrowser.Approve(client, req)
 	if err != nil {
 		return 0, err
 	}

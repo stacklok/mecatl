@@ -35,6 +35,7 @@ import (
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 	contract "github.com/stacklok/mecatl/internal/mcpbroker"
+	"github.com/stacklok/mecatl/internal/testutil/oauthbrowser"
 )
 
 // registerClientSpy wraps storage.NewMemoryStorage(), recording whether
@@ -814,7 +815,7 @@ func TestToolHiveEnrollmentUsesRealIdentityMiddleware(t *testing.T) {
 			}
 			client := gateway.Client()
 			client.Timeout = 5 * time.Second
-			response, err := client.Do(request)
+			response, err := oauthbrowser.Approve(client, request)
 			if err != nil {
 				t.Fatalf("complete authorization: %v", err)
 			}
@@ -937,7 +938,7 @@ func TestGenericStaticOAuth2AuthorizationCallbackAndExactExecution(t *testing.T)
 	}
 	redirectClient := gateway.Client()
 	redirectClient.Timeout = 5 * time.Second
-	response, err := redirectClient.Do(request)
+	response, err := oauthbrowser.Approve(redirectClient, request)
 	if err != nil {
 		t.Fatalf("complete embedded authorization: %v", err)
 	}
@@ -1309,6 +1310,41 @@ func TestDCRRequiresExplicitOAuth2Upstream(t *testing.T) {
 	}
 }
 
+func TestToolHiveConsentRouteRetainsOriginChecks(t *testing.T) {
+	fixture := newToolHiveDCRFixture(t, false)
+	process := fixture.newProcess(t)
+	t.Cleanup(func() { _ = process.Close() })
+	mux := http.NewServeMux()
+	mux.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusTeapot)
+	}))
+	if err := process.Handlers.Mount(mux, "/callback"); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name, origin string
+		want         int
+	}{
+		{name: "missing origin", want: http.StatusForbidden},
+		{name: "foreign origin", origin: "https://other.example", want: http.StatusForbidden},
+		{name: "unknown authorization", origin: fixture.gateway.URL, want: http.StatusBadRequest},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodPost, fixture.gateway.URL+toolHiveBasePath+"/oauth/consent",
+				strings.NewReader("handle=missing&decision=approve"))
+			request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			if tc.origin != "" {
+				request.Header.Set("Origin", tc.origin)
+			}
+			response := httptest.NewRecorder()
+			mux.ServeHTTP(response, request)
+			if response.Code != tc.want {
+				t.Fatalf("consent status = %d, want %d", response.Code, tc.want)
+			}
+		})
+	}
+}
+
 func TestMcpBrokerDCRClient_Scenario2_RegistersAndEnrolls(t *testing.T) {
 	fixture := newToolHiveDCRFixture(t, false)
 	process := fixture.newProcess(t)
@@ -1507,7 +1543,7 @@ func (f *toolHiveDCRFixture) serveGateway(w http.ResponseWriter, request *http.R
 	handlers := value.(HandlerBundle)
 	var handler http.Handler
 	switch request.URL.Path {
-	case toolHiveBasePath + "/oauth/authorize":
+	case toolHiveBasePath + "/oauth/authorize", toolHiveBasePath + "/oauth/consent":
 		handler = handlers.Authorization
 	case toolHiveBasePath + "/oauth/token":
 		handler = handlers.Token
@@ -1550,7 +1586,7 @@ func (f *toolHiveDCRFixture) enrollAndCall(t *testing.T, process *Process, id se
 	if err != nil {
 		t.Fatalf("build authorization request: %v", err)
 	}
-	response, err := f.gateway.Client().Do(request)
+	response, err := oauthbrowser.Approve(f.gateway.Client(), request)
 	if err != nil {
 		t.Fatalf("complete authorization: %v", err)
 	}

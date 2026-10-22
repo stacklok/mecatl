@@ -64,6 +64,7 @@ func (h HandlerBundle) Mount(mux *http.ServeMux, callbackPath string) (err error
 func (h HandlerBundle) routes(callbackPath string) ([]handlerRoute, error) {
 	fixed := []handlerRoute{
 		{path: toolHiveBasePath + "/oauth/authorize", pattern: toolHiveBasePath + "/oauth/authorize", handler: h.Authorization},
+		{path: toolHiveBasePath + "/oauth/consent", pattern: toolHiveBasePath + "/oauth/consent", handler: h.Authorization},
 		{path: toolHiveBasePath + "/oauth/token", pattern: toolHiveBasePath + "/oauth/token", handler: h.Token},
 		{path: toolHiveBasePath + "/oauth/callback", pattern: toolHiveBasePath + "/oauth/callback", handler: h.UpstreamCallback},
 		{path: toolHiveBasePath + "/.well-known/openid-configuration", pattern: toolHiveBasePath + "/.well-known/openid-configuration", handler: h.Discovery},
@@ -71,11 +72,11 @@ func (h HandlerBundle) routes(callbackPath string) ([]handlerRoute, error) {
 		{path: toolHiveBasePath + "/.well-known/oauth-protected-resource", pattern: toolHiveBasePath + "/.well-known/oauth-protected-resource", handler: h.ProtectedResource},
 		{path: toolHiveMCPPath, pattern: toolHiveMCPPath, handler: h.VMCP},
 	}
-	if err := protectedHandlersComplete(fixed[:6]); err != nil {
+	if err := protectedHandlersComplete(fixed[:7]); err != nil {
 		return nil, err
 	}
 	if h.VMCP != nil {
-		for _, route := range fixed[:6] {
+		for _, route := range fixed[:7] {
 			if route.handler == nil {
 				return nil, errors.New("mcpbroker: vMCP handler requires the protected authorization bundle")
 			}

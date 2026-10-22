@@ -123,7 +123,7 @@ func TestHandlerBundleMountRejectsEachMissingProtectedHandlerWithoutRoutes(t *te
 				t.Fatal("mount with a missing protected handler succeeded")
 			}
 			for _, route := range []string{
-				toolHiveBasePath + "/oauth/authorize", toolHiveBasePath + "/oauth/token", toolHiveBasePath + "/oauth/callback",
+				toolHiveBasePath + "/oauth/authorize", toolHiveBasePath + "/oauth/consent", toolHiveBasePath + "/oauth/token", toolHiveBasePath + "/oauth/callback",
 				toolHiveBasePath + "/.well-known/openid-configuration", toolHiveBasePath + "/.well-known/jwks.json",
 				toolHiveBasePath + "/.well-known/oauth-protected-resource", toolHiveMCPPath, "/agent/callback",
 			} {

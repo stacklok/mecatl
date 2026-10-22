@@ -12,6 +12,7 @@ import (
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 	toolhiveauth "github.com/stacklok/toolhive/pkg/auth"
+	toolhivemcp "github.com/stacklok/toolhive/pkg/mcp"
 	"github.com/stacklok/toolhive/pkg/vmcp"
 	"github.com/stacklok/toolhive/pkg/vmcp/aggregator"
 	vmcpauth "github.com/stacklok/toolhive/pkg/vmcp/auth"
@@ -43,7 +44,15 @@ func identityMiddleware(wantBrokerToken, provider, upstreamToken string) func(ht
 
 func TestAuthenticatedDiscoveryUsesToolHiveIdentityMiddleware(t *testing.T) {
 	queries := &discoveryQueries{response: validDiscoveryResponse()}
-	process := discoveryProcess(queries, identityMiddleware("opaque-broker", "provider-private", "upstream-private"), "provider-private")
+	process := discoveryProcess(queries, func(next http.Handler) http.Handler {
+		parsed := http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+			if got := toolhivemcp.GetParsedMCPRequest(request.Context()); got == nil || got.Method != "tools/list" {
+				t.Fatal("authenticated discovery did not pass a tools/list request through ToolHive's parser")
+			}
+			next.ServeHTTP(w, request)
+		})
+		return identityMiddleware("opaque-broker", "provider-private", "upstream-private")(toolhivemcp.ParsingMiddleware(parsed))
+	}, "provider-private")
 
 	got, err := process.QueryAuthenticatedCapabilities(t.Context(), staticTokenSource("opaque-broker"), "private")
 	if err != nil {

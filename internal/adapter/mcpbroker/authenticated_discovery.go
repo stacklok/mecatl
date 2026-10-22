@@ -107,11 +107,13 @@ func (d *authenticatedDiscovery) query(ctx context.Context, brokerToken, backend
 		}
 		result, queryErr = neutralCapabilities(backend, capabilities, []string{brokerToken})
 	})
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://mecatl.invalid/private/toolhive-discovery", nil)
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://mecatl.invalid/private/toolhive-discovery",
+		strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`))
 	if err != nil {
 		return AuthenticatedCapabilities{}, ErrAuthenticatedDiscovery
 	}
 	request.Header.Set("Authorization", "Bearer "+brokerToken)
+	request.Header.Set("Content-Type", "application/json")
 	response := &privateResponseWriter{header: make(http.Header)}
 	d.incoming(terminal).ServeHTTP(response, request)
 	if queryErr != nil || response.status >= http.StatusBadRequest || result.Backend != backend {
