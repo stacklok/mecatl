@@ -32,7 +32,9 @@ import (
 //     fresh credential, so a lost response or an expiring credential is
 //     handled by registering again. Registering it into a new broker session
 //     moves it there, keeping its identity.
-//   - Agents with different incarnations are different agents.
+//   - Agents with different incarnations are different agents. An agent's
+//     subject is a SPIFFE ID ending in "/inst/" and its incarnation, so the
+//     caller can check that the agent returned is the one it registered.
 //   - A broker session ID the broker never issued is refused with
 //     CodePermissionDenied.
 //   - Invalid requests fail with CodeInvalidArgument.

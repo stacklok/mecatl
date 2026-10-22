@@ -15,8 +15,8 @@ func mustRegister(t *testing.T, svc identitybroker.Service, req identitybroker.R
 	if err != nil {
 		t.Fatalf("RegisterAgent(%s): %v", req.Incarnation, err)
 	}
-	if reg.Agent.IsZero() || !strings.HasPrefix(reg.Agent.Subject, "spiffe://") {
-		t.Fatalf("RegisterAgent returned agent %+v, want a SPIFFE ID", reg.Agent)
+	if !strings.HasPrefix(reg.Agent.Subject, "spiffe://") || !strings.HasSuffix(reg.Agent.Subject, "/inst/"+req.Incarnation) {
+		t.Fatalf("RegisterAgent returned agent %+v, want a SPIFFE ID ending in /inst/%s", reg.Agent, req.Incarnation)
 	}
 	if reg.Credential.IsZero() {
 		t.Fatal("RegisterAgent returned no credential")
