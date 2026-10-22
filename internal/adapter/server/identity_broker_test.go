@@ -389,10 +389,16 @@ func TestIdentityBrokerClosesOnDeleteOnly(t *testing.T) {
 type hangingFindBroker struct {
 	*recordingBroker
 	hang bool
+	// waiting, when set, receives a value each time a hanging FindSession
+	// starts waiting, so a test can act while the call is in flight.
+	waiting chan struct{}
 }
 
 func (b *hangingFindBroker) FindSession(ctx context.Context, req identitybroker.FindSessionRequest) (identitybroker.Session, bool, error) {
 	if b.hang {
+		if b.waiting != nil {
+			b.waiting <- struct{}{}
+		}
 		<-ctx.Done()
 		// A transport, not the broker, reports a deadline as a plain error.
 		return identitybroker.Session{}, false, ctx.Err()
@@ -487,7 +493,7 @@ func TestIdentityBrokerEndScheduledRunCloses(t *testing.T) {
 		t.Fatal(err)
 	}
 	wantBrokerSession(t, broker, sess)
-	svc.EndScheduledRun(t.Context(), sess.ID)
+	svc.EndScheduledRun(t.Context(), sess)
 	if _, ok := broker.find(t, sess.ID); ok {
 		t.Fatal("the scheduled run ended but its broker session is open")
 	}

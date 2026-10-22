@@ -353,7 +353,7 @@ var serviceAccessTable = map[string]ClassificationEntry{
 	"RecoverNotice":                {KindDerived, "pops a notice keyed by id that only the relay's own immediately-preceding, already-authorized StartRunContent call could have set"},
 	"SetSessionEnvironment":        {KindDerived, "called only with the id CreateSession* just returned to the same caller (internal/adapter/acp); renamed from SetSessionWorkspace by the execution-environments refactor"},
 	"CloseSession":                 {KindDerived, "internal cleanup for an id the caller (EndSession, already authorized) or the owning connection has already established as its own; takes no ctx"},
-	"EndScheduledRun":              {KindDerived, "scheduler-only cleanup for the fire session id the scheduler just created under the schedule's captured owner; closes only that session's identity broker session and changes no session bytes"},
+	"EndScheduledRun":              {KindDerived, "scheduler-only cleanup for the fire session the scheduler just created under the schedule's captured owner; closes only that scheduled session's identity broker session and changes no session bytes"},
 	"EmitScheduleEvent":            {KindDerived, "stamps the fire's ALREADY-established actor (the scheduler's system principal for a tick fire, or FireNow's caller) captured at fire time; makes no independent ownership decision"},
 	"CanProcessSchedule":           {KindDerived, "scheduler-only pre-claim deployment-authority check over an already-loaded durable schedule; no caller-facing ownership decision"},
 	"MaybeAutoApprovePlan":         {KindDerived, "invoked from relayEvent only for an id the SAME request's already-authorized StartRunContent/ApprovePlan call is streaming"},

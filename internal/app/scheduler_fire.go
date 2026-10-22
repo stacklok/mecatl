@@ -143,7 +143,7 @@ func makeFireFuncWithCancel(svc *server.Service, store port.ScheduleStore, defau
 		defer svc.CloseSession(sess.ID)
 		// The fire's run ends when this returns, and with it the fire's
 		// identity broker session. Deferred after CloseSession so it runs first.
-		defer svc.EndScheduledRun(context.WithoutCancel(ownerCtx), sess.ID)
+		defer svc.EndScheduledRun(context.WithoutCancel(ownerCtx), sess)
 
 		// Carried-context toggle: when CarryContext is true,
 		// load the prior fire's session and render its conversation as a FENCED

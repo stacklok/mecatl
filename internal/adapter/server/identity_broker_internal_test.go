@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stacklok/mecatl/engine/port"
+	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/internal/identitybroker"
 )
@@ -24,7 +24,17 @@ func TestIdentityBrokerOpensOnlyForRootSessions(t *testing.T) {
 		t.Fatal(err)
 	}
 	broker := identitybroker.NewInProcess(identitybroker.UnverifiedAuthenticator{Name: "mecak8s-test"}, core)
-	svc := &Service{cfg: Config{IdentityBroker: broker, Diagnostics: port.NopDiagnostics{}}}
+	svc, err := NewService(Config{
+		Engine:            brokerEngineResult().Engine,
+		Store:             memstore.New(),
+		PlacementProvider: brokerPlacementProvider{},
+		PlacementScope:    "test",
+		IdentityBroker:    broker,
+	})
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+	t.Cleanup(svc.Close)
 
 	ref := session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}
 	owner := &session.Principal{Issuer: "https://login.example.com", Subject: "alice-204", GrantType: session.GrantTypeUser}

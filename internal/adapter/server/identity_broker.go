@@ -100,19 +100,15 @@ func (s *Service) openTeamRootIdentityBrokerSession(ctx context.Context, root se
 
 // EndScheduledRun closes a scheduled session's broker session when its run
 // ends: the design ends a scheduled run's authority with the run. The
-// scheduler calls it as each fire returns; the session itself is kept for
-// result delivery. Only a scheduled session's broker session is closed, so an
-// interactive session's ID passed by mistake leaves its broker session open.
-// A failure is logged, not returned.
-func (s *Service) EndScheduledRun(ctx context.Context, id session.SessionID) {
-	if s.cfg.IdentityBroker == nil {
+// scheduler calls it with the fire's session as each fire returns; the session
+// itself is kept for result delivery. Only a scheduled session's broker
+// session is closed, so an interactive session passed by mistake keeps its
+// broker session. A failure is logged, not returned.
+func (s *Service) EndScheduledRun(ctx context.Context, sess *session.Session) {
+	if sess == nil || sess.Kind != session.SessionKindScheduled {
 		return
 	}
-	sess, err := s.cfg.Store.Load(context.WithoutCancel(ctx), id)
-	if err != nil || sess.Kind != session.SessionKindScheduled {
-		return
-	}
-	s.closeIdentityBrokerSession(ctx, id)
+	s.closeIdentityBrokerSession(ctx, sess.ID)
 }
 
 // closeIdentityBrokerSession closes the broker session of a host session that

@@ -6,7 +6,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
@@ -215,7 +214,7 @@ func TestIdentityBrokerConcurrentRetriedCreatesOpenForTheSavedSession(t *testing
 }
 
 func TestIdentityBrokerCancelledRunEntryIsACancellation(t *testing.T) {
-	broker := &hangingFindBroker{recordingBroker: newRecordingBroker()}
+	broker := &hangingFindBroker{recordingBroker: newRecordingBroker(), waiting: make(chan struct{})}
 	svc := newIdentityBrokerService(t, broker, mockllm.New(mockllm.TextTurn("must not run")))
 	sess, err := svc.CreateSession(aliceContext(t), session.ModeDefault, session.Limits{})
 	if err != nil {
@@ -223,7 +222,12 @@ func TestIdentityBrokerCancelledRunEntryIsACancellation(t *testing.T) {
 	}
 	broker.hang = true
 	ctx, cancel := context.WithCancel(aliceContext(t))
-	time.AfterFunc(20*time.Millisecond, cancel)
+	// Cancel only once run entry is waiting on the broker, so the cancellation
+	// reaches the broker call rather than an earlier step.
+	go func() {
+		<-broker.waiting
+		cancel()
+	}()
 	_, err = svc.StartRun(ctx, sess.ID, "hello")
 	if !errors.Is(err, context.Canceled) || errors.Is(err, server.ErrInternal) {
 		t.Fatalf("run entry cancelled by the caller: %v, want context.Canceled, not ErrInternal", err)
@@ -238,7 +242,7 @@ func TestIdentityBrokerEndScheduledRunIgnoresOtherSessions(t *testing.T) {
 		t.Fatal(err)
 	}
 	opened := wantBrokerSession(t, broker, sess)
-	svc.EndScheduledRun(t.Context(), sess.ID)
+	svc.EndScheduledRun(t.Context(), sess)
 	if got, ok := broker.find(t, sess.ID); !ok || got != opened {
 		t.Fatalf("EndScheduledRun on an interactive session: broker session = %+v, %v; want %+v left open", got, ok, opened)
 	}
