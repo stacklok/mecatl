@@ -124,4 +124,55 @@ func runAgents(t *testing.T, factory serviceFactory) {
 			wantError(t, "RegisterAgent under a parent "+name, err, identitybroker.CodePermissionDenied, "")
 		}
 	})
+
+	t.Run("a registered agent cannot be taken over by another owner or host session", func(t *testing.T) {
+		svc := factory(t)
+		first := mustRegister(t, svc, registerRequest(mustOpen(t, svc, openRequest("hostS42", alice))))
+		for name, s := range map[string]identitybroker.Session{
+			"another owner's session":        mustOpen(t, svc, openRequest("hostS43", bob)),
+			"the owner's other host session": mustOpen(t, svc, openRequest("hostS44", alice)),
+		} {
+			req := registerRequest(s)
+			req.Incarnation = "inc_main" // the first agent's incarnation
+			_, err := svc.RegisterAgent(ctx, req)
+			wantError(t, "RegisterAgent of an existing agent from "+name, err, identitybroker.CodeAlreadyExists, "")
+		}
+		// The agent is unchanged: registering it again where it is succeeds.
+		if again := mustRegister(t, svc, registerRequest(mustOpen(t, svc, openRequest("hostS42", alice)))); again.Agent != first.Agent {
+			t.Fatalf("after refused takeovers, the agent is %+v, want %+v", again.Agent, first.Agent)
+		}
+	})
+
+	t.Run("another owner reopening the host session cannot take over its agent", func(t *testing.T) {
+		svc := factory(t)
+		alices := mustOpen(t, svc, openRequest("hostS42", alice))
+		mustRegister(t, svc, registerRequest(alices))
+		mustClose(t, svc, alices.ID)
+		// Only the owner differs from the earlier registration.
+		_, err := svc.RegisterAgent(ctx, registerRequest(mustOpen(t, svc, openRequest("hostS42", bob))))
+		wantError(t, "RegisterAgent of an existing agent by another owner", err, identitybroker.CodeAlreadyExists, "")
+	})
+
+	t.Run("a registered child cannot change its parent", func(t *testing.T) {
+		svc := factory(t)
+		s := mustOpen(t, svc, openRequest("hostS42", alice))
+		parent := mustRegister(t, svc, registerRequest(s))
+		childReq := registerRequest(s)
+		childReq.HostSessionID = "hostS42-child"
+		childReq.Incarnation = "inc_child"
+		childReq.Parent = parent.Agent
+		child := mustRegister(t, svc, childReq)
+		sibling := childReq
+		sibling.Incarnation = "inc_sibling"
+		siblingReg := mustRegister(t, svc, sibling)
+		for name, newParent := range map[string]identitybroker.AgentRef{
+			"itself":    child.Agent,
+			"a sibling": siblingReg.Agent,
+		} {
+			req := childReq
+			req.Parent = newParent
+			_, err := svc.RegisterAgent(ctx, req)
+			wantError(t, "RegisterAgent of a child with "+name+" as parent", err, identitybroker.CodeAlreadyExists, "")
+		}
+	})
 }

@@ -12,6 +12,7 @@ import (
 	"io"
 	"math/big"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -303,6 +304,67 @@ func TestCredentialFromAnOpaqueSignerVerifies(t *testing.T) {
 	}
 	if _, err := b.VerifyCredential(context.Background(), VerifyCredentialRequest{SessionID: s.ID, Credential: reg.Credential}); err != nil {
 		t.Fatalf("VerifyCredential: %v", err)
+	}
+}
+
+// failingSigner fails to sign while fail is set.
+type failingSigner struct {
+	keySigner
+	fail *atomic.Bool
+}
+
+func (s failingSigner) Sign(r io.Reader, digest []byte, opts crypto.SignerOpts) ([]byte, error) {
+	if s.fail.Load() {
+		return nil, errors.New("signer unavailable")
+	}
+	return s.keySigner.Sign(r, digest, opts)
+}
+
+func TestFailedSigningLeavesTheAgentWhereItWas(t *testing.T) {
+	fail := new(atomic.Bool)
+	b, err := New(testConfig(), nil, failingSigner{keySigner{testKey(t, "failing signer key")}, fail})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	ctx := context.Background()
+	owner := Owner{Issuer: "https://login.example.com", Subject: "alice-204"}
+	open := func() Session {
+		s, err := b.OpenSession(ctx, credentialTestWorkload, OpenSessionRequest{HostSessionID: "hostS42", Incarnation: "inc_hostS42", Owner: owner})
+		if err != nil {
+			t.Fatalf("OpenSession: %v", err)
+		}
+		return s
+	}
+	register := func(s Session) (Registration, error) {
+		return b.RegisterAgent(ctx, credentialTestWorkload, RegisterAgentRequest{
+			SessionID: s.ID, HostSessionID: s.HostSessionID, Owner: owner, Incarnation: "inc_main", Definition: DefinitionRef{Name: "main"},
+		})
+	}
+	old := open()
+	reg, err := register(old)
+	if err != nil {
+		t.Fatalf("RegisterAgent: %v", err)
+	}
+	if err := b.CloseSession(ctx, credentialTestWorkload, CloseSessionRequest{SessionID: old.ID, Reason: ReasonSessionClosed}); err != nil {
+		t.Fatalf("CloseSession: %v", err)
+	}
+	reopened := open()
+
+	fail.Store(true)
+	if _, err := register(reopened); !errors.Is(err, NewError(CodeInternal, "", "")) {
+		t.Fatalf("RegisterAgent with a failing signer = %v, want INTERNAL", err)
+	}
+	// The agent did not move: its credential still verifies in the old session.
+	if _, err := b.VerifyCredential(ctx, VerifyCredentialRequest{SessionID: old.ID, Credential: reg.Credential}); err != nil {
+		t.Fatalf("after a failed move, VerifyCredential in the old session: %v", err)
+	}
+	fail.Store(false)
+	moved, err := register(reopened)
+	if err != nil {
+		t.Fatalf("RegisterAgent after the signer recovers: %v", err)
+	}
+	if _, err := b.VerifyCredential(ctx, VerifyCredentialRequest{SessionID: reopened.ID, Credential: moved.Credential}); err != nil {
+		t.Fatalf("VerifyCredential in the new session: %v", err)
 	}
 }
 

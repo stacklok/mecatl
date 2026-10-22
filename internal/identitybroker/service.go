@@ -31,7 +31,10 @@ import (
 //   - Registering the same incarnation again returns the same agent with a
 //     fresh credential, so a lost response or an expiring credential is
 //     handled by registering again. Registering it into a new broker session
-//     moves it there, keeping its identity.
+//     moves it there, keeping its identity. A registration of the same
+//     incarnation with a different owner, host session, or parent fails with
+//     CodeAlreadyExists and changes nothing.
+//   - A failed registration leaves any earlier registration as it was.
 //   - Agents with different incarnations are different agents. An agent's
 //     subject is a SPIFFE ID ending in "/inst/" and its incarnation, so the
 //     caller can check that the agent returned is the one it registered.

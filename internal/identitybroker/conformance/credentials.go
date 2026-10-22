@@ -110,6 +110,21 @@ func runCredentials(t *testing.T, factory Factory) {
 		wantRefused(t, "VerifyCredential in the old session", got, err, identitybroker.CodePermissionDenied, identitybroker.ReasonDenied)
 	})
 
+	t.Run("a refused takeover leaves the credential bound to its session", func(t *testing.T) {
+		f := setup(t)
+		bobs := mustOpen(t, f.svc, openRequest("hostS43", bob))
+		takeover := registerRequest(bobs)
+		takeover.Incarnation = registerRequest(f.session).Incarnation
+		if _, err := f.svc.RegisterAgent(ctx, takeover); err == nil {
+			t.Fatal("another owner's session took over the agent")
+		}
+		got, err := verify(f.core, bobs.ID, f.reg.Credential)
+		wantRefused(t, "VerifyCredential in the other owner's session", got, err, identitybroker.CodePermissionDenied, identitybroker.ReasonDenied)
+		if _, err := verify(f.core, f.session.ID, f.reg.Credential); err != nil {
+			t.Fatalf("VerifyCredential in its own session after a refused takeover: %v", err)
+		}
+	})
+
 	t.Run("an expired credential is refused, and registering again renews it", func(t *testing.T) {
 		f := setup(t)
 		f.clock.Advance(time.Until(f.reg.ExpiresAt) + time.Hour)
