@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/alicebob/miniredis/v2"
 	"google.golang.org/grpc/connectivity"
 
 	"github.com/stacklok/mecatl/adapters/jsonlstore"
@@ -194,6 +195,21 @@ func TestIdentityBrokerRefusesSessionsWithAShell(t *testing.T) {
 			}
 		})
 	}
+	// The Redis filesystem turns the shell off before the broker's check runs.
+	t.Run("the Redis filesystem", func(t *testing.T) {
+		mr := miniredis.RunT(t)
+		built, err := buildIsolated(t, t.Context(), Config{
+			RedisURL: mr.Addr(), RedisAllowPlaintext: true, RedisFilesystem: true,
+			Shell: "/bin/sh", UseMock: true, NoSoul: true, IdentityBroker: true,
+		})
+		if err != nil {
+			t.Fatalf("Build: %v", err)
+		}
+		t.Cleanup(built.Close)
+		if built.IdentityBroker == nil {
+			t.Fatal("no identity broker was constructed")
+		}
+	})
 }
 
 func TestIdentityBrokerDefaultWiringRegistersAgents(t *testing.T) {
@@ -208,7 +224,7 @@ func TestIdentityBrokerDefaultWiringRegistersAgents(t *testing.T) {
 		t.Fatalf("OpenSession: %v", err)
 	}
 	reg, err := built.IdentityBroker.RegisterAgent(t.Context(), identitybroker.RegisterAgentRequest{
-		SessionID: opened.ID, HostSessionID: "hostS42", Owner: owner, Incarnation: "inc_hostS42",
+		SessionID: opened.ID, HostSessionID: "hostS42", Owner: owner, Incarnation: "inc_abcdefghijklmnopqrstuvwxya",
 		Definition: identitybroker.DefinitionRef{Source: "system", Name: "main"},
 	})
 	if err != nil {

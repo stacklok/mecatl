@@ -904,8 +904,16 @@ func mainServerResourceCapability(mainMgr *mcp.Manager, name string) (string, bo
 // hookexec.New(nil)), so behaviour is unchanged for defs that scope no hooks.
 // Unknown phases are dropped with a diagnostic. The runner uses cfg.Shell when set
 // so a def hook runs under the same interpreter as the main session's hooks.
+// With the identity broker on, def hooks are dropped: they run a shell in this
+// process, which holds the broker's signing key, and a trusted project's
+// definitions can be written by the model (see errIdentityBrokerWithShell).
 func defHookRunner(cfg Config, def agents.AgentDef, fallback port.HookRunner) port.HookRunner {
 	if len(def.Hooks) == 0 {
+		return fallback
+	}
+	if cfg.IdentityBroker {
+		cfg.diag().Log(context.Background(), port.LevelWarn, "agent def hooks are disabled while the identity broker runs; ignored",
+			"agent", def.Name, "origin", string(def.Origin))
 		return fallback
 	}
 	hooks := make(map[governance.HookPhase]string, len(def.Hooks))

@@ -88,7 +88,7 @@ func TestNewAcceptsEmptyDefinitionsAndOpaqueSigner(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	if b.signer != crypto.Signer(signer) || len(b.definitions) != 0 {
+	if b.issuer.signer != crypto.Signer(signer) || len(b.definitions) != 0 {
 		t.Errorf("broker = %+v", b)
 	}
 }
@@ -325,7 +325,7 @@ func TestCallerMutationsDoNotAlterRetainedState(t *testing.T) {
 	if !ok || !got.equal(testRecord("global", "code-reviewer")) {
 		t.Errorf("retained definition changed: %+v, %v", got, ok)
 	}
-	if gotPub := b.signer.Public().(*ecdsa.PublicKey); !gotPub.Equal(wantPub) {
+	if gotPub := b.issuer.signer.Public().(*ecdsa.PublicKey); !gotPub.Equal(wantPub) {
 		t.Error("retained signing key changed after the caller replaced its key")
 	}
 }

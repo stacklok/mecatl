@@ -113,6 +113,16 @@ func TestDefHookRunnerBuildsScopedRunner(t *testing.T) {
 	}
 }
 
+// TestDefHookRunnerDropsHooksWithIdentityBroker asserts a def's hooks never
+// run a shell in a process holding the identity broker's signing key.
+func TestDefHookRunnerDropsHooksWithIdentityBroker(t *testing.T) {
+	fallback := hookexec.New(nil)
+	def := agents.AgentDef{Name: "gated", Hooks: map[string]string{"PreToolUse": "exit 2"}}
+	if r := defHookRunner(Config{Shell: "/bin/sh", IdentityBroker: true}, def, fallback); r != fallback {
+		t.Fatalf("with the identity broker on, a def with hooks should return the fallback runner")
+	}
+}
+
 // TestDefHookRunnerNoHooksReturnsFallback asserts a def with no (valid) hooks
 // adopts the fallback runner unchanged (no behaviour change for hook-less defs).
 func TestDefHookRunnerNoHooksReturnsFallback(t *testing.T) {

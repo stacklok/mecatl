@@ -55,11 +55,10 @@ type Core interface {
 	AuthorizeCall(ctx context.Context, workload Workload, req AuthorizeCallRequest) (Authorization, error)
 	// VerifyCredential checks an agent credential for use in a broker
 	// session: the design's credential checks, in order, then that the agent
-	// is registered to that session. It returns the agent, its ag_
-	// identifier, and the credential's expiry. An expired credential fails
-	// with CodeUnauthenticated and ReasonSVIDExpired; every other failure
-	// with CodePermissionDenied and ReasonDenied. The session's own state is
-	// the caller's to check.
+	// is registered to that session and the session is open. It returns the
+	// agent, its ag_ identifier, and the credential's expiry. An expired
+	// credential fails with CodeUnauthenticated and ReasonSVIDExpired; every
+	// other failure with CodePermissionDenied and ReasonDenied.
 	VerifyCredential(ctx context.Context, req VerifyCredentialRequest) (VerifiedAgent, error)
 }
 

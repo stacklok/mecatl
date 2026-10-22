@@ -21,6 +21,12 @@ import (
 
 var credentialTestWorkload = Workload{Name: "system:serviceaccount:mecatl:mecak8s"}
 
+// Well-formed minted incarnations for test agents.
+const (
+	incMain  = "inc_abcdefghijklmnopqrstuvwxya"
+	incOther = "inc_bcdefghijklmnopqrstuvwxyza"
+)
+
 // credentialFixture is a broker on a controlled clock with one registered
 // main agent.
 type credentialFixture struct {
@@ -41,7 +47,7 @@ func newCredentialFixture(t *testing.T) *credentialFixture {
 	b.sessions.now = func() time.Time { return f.now }
 	f.broker = b
 	f.session = f.open(t, "hostS42")
-	f.reg = f.register(t, f.session, "inc_main")
+	f.reg = f.register(t, f.session, incMain)
 	return f
 }
 
@@ -129,7 +135,7 @@ func TestCredentialHasExactlyTheDesignedHeaderAndClaims(t *testing.T) {
 		t.Fatalf("header = %v, want exactly alg ES256 and kid %s", header, f.broker.issuer.kid)
 	}
 	claims := segment(t, token, "claims")
-	wantSub := "spiffe://agents.example.com/mecatl/agent/shared/inst/inc_main"
+	wantSub := "spiffe://agents.example.com/mecatl/agent/shared/inst/" + incMain
 	wantExp := float64(f.now.Add(testConfig().CredentialLifetime).Unix())
 	aud, _ := claims["aud"].([]any)
 	if len(claims) != 3 || claims["sub"] != wantSub || len(aud) != 1 || aud[0] != "https://broker.example.com" || claims["exp"] != wantExp {
@@ -231,7 +237,7 @@ func TestVerifyCredentialChecks(t *testing.T) {
 			return f.forge(t, f.validHeader(), c, nil)
 		}, denied},
 		"registered to another session": {func(t *testing.T, f *credentialFixture) Token {
-			return f.register(t, f.open(t, "hostS43"), "inc_other").Credential
+			return f.register(t, f.open(t, "hostS43"), incOther).Credential
 		}, denied},
 		// Order: the audience check comes before expiry, and expiry before
 		// registration.
@@ -297,7 +303,7 @@ func TestCredentialFromAnOpaqueSignerVerifies(t *testing.T) {
 		t.Fatalf("OpenSession: %v", err)
 	}
 	reg, err := b.RegisterAgent(context.Background(), credentialTestWorkload, RegisterAgentRequest{
-		SessionID: s.ID, HostSessionID: s.HostSessionID, Owner: s.Owner, Incarnation: "inc_main", Definition: DefinitionRef{Name: "main"},
+		SessionID: s.ID, HostSessionID: s.HostSessionID, Owner: s.Owner, Incarnation: incMain, Definition: DefinitionRef{Name: "main"},
 	})
 	if err != nil {
 		t.Fatalf("RegisterAgent: %v", err)
@@ -337,7 +343,7 @@ func TestFailedSigningLeavesTheAgentWhereItWas(t *testing.T) {
 	}
 	register := func(s Session) (Registration, error) {
 		return b.RegisterAgent(ctx, credentialTestWorkload, RegisterAgentRequest{
-			SessionID: s.ID, HostSessionID: s.HostSessionID, Owner: owner, Incarnation: "inc_main", Definition: DefinitionRef{Name: "main"},
+			SessionID: s.ID, HostSessionID: s.HostSessionID, Owner: owner, Incarnation: incMain, Definition: DefinitionRef{Name: "main"},
 		})
 	}
 	old := open()
@@ -354,9 +360,13 @@ func TestFailedSigningLeavesTheAgentWhereItWas(t *testing.T) {
 	if _, err := register(reopened); !errors.Is(err, NewError(CodeInternal, "", "")) {
 		t.Fatalf("RegisterAgent with a failing signer = %v, want INTERNAL", err)
 	}
-	// The agent did not move: its credential still verifies in the old session.
-	if _, err := b.VerifyCredential(ctx, VerifyCredentialRequest{SessionID: old.ID, Credential: reg.Credential}); err != nil {
-		t.Fatalf("after a failed move, VerifyCredential in the old session: %v", err)
+	// The agent did not move: it is still recorded in the old session, so its
+	// credential does not verify in the new one.
+	if got := b.sessions.agents[reg.Agent.Subject].sessionID; got != old.ID {
+		t.Fatalf("after a failed move, the agent is recorded in %q, want the old session %q", got, old.ID)
+	}
+	if _, err := b.VerifyCredential(ctx, VerifyCredentialRequest{SessionID: reopened.ID, Credential: reg.Credential}); err == nil {
+		t.Fatal("after a failed move, the old credential verified in the new session")
 	}
 	fail.Store(false)
 	moved, err := register(reopened)
@@ -365,6 +375,110 @@ func TestFailedSigningLeavesTheAgentWhereItWas(t *testing.T) {
 	}
 	if _, err := b.VerifyCredential(ctx, VerifyCredentialRequest{SessionID: reopened.ID, Credential: moved.Credential}); err != nil {
 		t.Fatalf("VerifyCredential in the new session: %v", err)
+	}
+}
+
+// blockingSigner holds its first Sign call until release is closed, after
+// signalling entered, so a test can change broker state while a registration
+// is signing. Later calls sign at once.
+type blockingSigner struct {
+	keySigner
+	calls   *atomic.Int32
+	entered chan struct{}
+	release chan struct{}
+}
+
+func newBlockingSigner(t *testing.T) blockingSigner {
+	return blockingSigner{keySigner{testKey(t, "blocking signer key")}, new(atomic.Int32), make(chan struct{}), make(chan struct{})}
+}
+
+func (s blockingSigner) Sign(r io.Reader, digest []byte, opts crypto.SignerOpts) ([]byte, error) {
+	if s.calls.Add(1) == 1 {
+		close(s.entered)
+		<-s.release
+	}
+	return s.keySigner.Sign(r, digest, opts)
+}
+
+// TestRegistrationChecksAgainAfterSigning changes broker state while a
+// registration is signing, and expects the registration to be refused and
+// recorded nowhere.
+func TestRegistrationChecksAgainAfterSigning(t *testing.T) {
+	ctx := context.Background()
+	alice := Owner{Issuer: "https://login.example.com", Subject: "alice-204"}
+	bob := Owner{Issuer: "https://login.example.com", Subject: "bob-117"}
+	setup := func(t *testing.T) (*Broker, blockingSigner, Session) {
+		signer := newBlockingSigner(t)
+		b, err := New(testConfig(), nil, signer)
+		if err != nil {
+			t.Fatalf("New: %v", err)
+		}
+		s, err := b.OpenSession(ctx, credentialTestWorkload, OpenSessionRequest{HostSessionID: "hostS42", Incarnation: "inc_hostS42", Owner: alice})
+		if err != nil {
+			t.Fatalf("OpenSession: %v", err)
+		}
+		return b, signer, s
+	}
+	register := func(b *Broker, s Session) <-chan error {
+		done := make(chan error, 1)
+		go func() {
+			_, err := b.RegisterAgent(ctx, credentialTestWorkload, RegisterAgentRequest{
+				SessionID: s.ID, HostSessionID: s.HostSessionID, Owner: s.Owner, Incarnation: incMain, Definition: DefinitionRef{Name: "main"},
+			})
+			done <- err
+		}()
+		return done
+	}
+
+	t.Run("the session closes while signing", func(t *testing.T) {
+		b, signer, s := setup(t)
+		done := register(b, s)
+		<-signer.entered
+		if err := b.CloseSession(ctx, credentialTestWorkload, CloseSessionRequest{SessionID: s.ID, Reason: ReasonSessionClosed}); err != nil {
+			t.Fatalf("CloseSession: %v", err)
+		}
+		close(signer.release)
+		if err := <-done; !errors.Is(err, ReasonError(ReasonSessionClosed, "")) {
+			t.Fatalf("RegisterAgent = %v, want %s", err, ReasonSessionClosed)
+		}
+		if n := len(b.sessions.agents); n != 0 {
+			t.Fatalf("a refused registration recorded %d agents", n)
+		}
+	})
+
+	t.Run("another owner registers the instance while signing", func(t *testing.T) {
+		b, signer, s := setup(t)
+		done := register(b, s)
+		<-signer.entered
+		bobs, err := b.OpenSession(ctx, credentialTestWorkload, OpenSessionRequest{HostSessionID: "hostS43", Incarnation: "inc_hostS43", Owner: bob})
+		if err != nil {
+			t.Fatalf("OpenSession: %v", err)
+		}
+		if err := <-register(b, bobs); err != nil {
+			t.Fatalf("RegisterAgent for bob: %v", err)
+		}
+		close(signer.release)
+		if err := <-done; !errors.Is(err, NewError(CodeAlreadyExists, "", "")) {
+			t.Fatalf("RegisterAgent = %v, want ALREADY_EXISTS", err)
+		}
+		subject := b.issuer.subject(incMain)
+		if rec := b.sessions.agents[subject]; rec.owner != bob || rec.sessionID != bobs.ID {
+			t.Fatalf("agent record = %+v, want bob's in %s", rec, bobs.ID)
+		}
+	})
+}
+
+func TestReregistrationKeepsTheFirstDefinition(t *testing.T) {
+	f := newCredentialFixture(t)
+	_, err := f.broker.RegisterAgent(context.Background(), credentialTestWorkload, RegisterAgentRequest{
+		SessionID: f.session.ID, HostSessionID: f.session.HostSessionID, Owner: f.session.Owner,
+		Incarnation: incMain, Definition: DefinitionRef{Name: "deployer"},
+	})
+	if err != nil {
+		t.Fatalf("RegisterAgent again: %v", err)
+	}
+	if got := f.broker.sessions.agents[f.reg.Agent.Subject].definition; got != (DefinitionRef{Name: "main"}) {
+		t.Fatalf("stored definition = %+v, want the first one reported", got)
 	}
 }
 

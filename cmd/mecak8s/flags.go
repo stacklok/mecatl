@@ -509,7 +509,7 @@ func parseFlags(argv []string) (config, error) {
 	// Fan-out / teams toggles.
 	fs.BoolVar(&cfg.enableParallel, "enable-parallel", false, "Enable the Parallel tool for isolated child branches")
 	fs.BoolVar(&cfg.enableTeams, "enable-teams", false, "Enable the experimental agent-team capability")
-	fs.BoolVar(&cfg.enableIdentityBroker, "enable-identity-broker", false, "Start the experimental agent identity broker, which gives each signed-in user's session a broker session. Supports a single replica only, and requires the Shell tool to be off (--no-shell)")
+	fs.BoolVar(&cfg.enableIdentityBroker, "enable-identity-broker", false, "Start the experimental agent identity broker, which gives each signed-in user's session a broker session. Supports a single replica only, requires the Shell tool to be off (--no-shell), and disables agent-definition hooks")
 
 	// Headless telemetry (issue #343): OPT-IN. --metrics-addr mounts a
 	// SEPARATE loopback /metrics listener (the admin mux — Prometheus scrape).

@@ -11,6 +11,13 @@ import (
 
 func mustRegister(t *testing.T, svc identitybroker.Service, req identitybroker.RegisterAgentRequest) identitybroker.Registration {
 	t.Helper()
+	return mustRegisterAt(t, svc, req, time.Now)
+}
+
+// mustRegisterAt is mustRegister for an implementation reading the time from
+// now.
+func mustRegisterAt(t *testing.T, svc identitybroker.Service, req identitybroker.RegisterAgentRequest, now func() time.Time) identitybroker.Registration {
+	t.Helper()
 	reg, err := svc.RegisterAgent(context.Background(), req)
 	if err != nil {
 		t.Fatalf("RegisterAgent(%s): %v", req.Incarnation, err)
@@ -21,7 +28,7 @@ func mustRegister(t *testing.T, svc identitybroker.Service, req identitybroker.R
 	if reg.Credential.IsZero() {
 		t.Fatal("RegisterAgent returned no credential")
 	}
-	if !reg.ExpiresAt.After(time.Now()) {
+	if !reg.ExpiresAt.After(now()) {
 		t.Fatalf("RegisterAgent returned a credential expiring at %v, want a future time", reg.ExpiresAt)
 	}
 	return reg
@@ -66,7 +73,7 @@ func runAgents(t *testing.T, factory serviceFactory) {
 		svc := factory(t)
 		a := registerRequest(mustOpen(t, svc, openRequest("hostS42", alice)))
 		b := registerRequest(mustOpen(t, svc, openRequest("hostS43", alice)))
-		b.Incarnation = "inc_other"
+		b.Incarnation = incarnation("other")
 		if ra, rb := mustRegister(t, svc, a), mustRegister(t, svc, b); ra.Agent == rb.Agent {
 			t.Fatalf("two incarnations share agent %+v", ra.Agent)
 		}
@@ -97,7 +104,7 @@ func runAgents(t *testing.T, factory serviceFactory) {
 		parent := mustRegister(t, svc, registerRequest(s))
 		child := registerRequest(s)
 		child.HostSessionID = "hostS42-child"
-		child.Incarnation = "inc_child"
+		child.Incarnation = incarnation("child")
 		child.Parent = parent.Agent
 		if got := mustRegister(t, svc, child); got.Agent == parent.Agent {
 			t.Fatalf("the child shares its parent's agent %+v", got.Agent)
@@ -108,17 +115,17 @@ func runAgents(t *testing.T, factory serviceFactory) {
 		svc := factory(t)
 		other := mustOpen(t, svc, openRequest("hostS43", alice))
 		elsewhere := registerRequest(other)
-		elsewhere.Incarnation = "inc_elsewhere"
+		elsewhere.Incarnation = incarnation("elsewhere")
 		parentElsewhere := mustRegister(t, svc, elsewhere)
 		s := mustOpen(t, svc, openRequest("hostS42", alice))
 		for name, parent := range map[string]identitybroker.AgentRef{
-			"unregistered":           {Subject: strings.Replace(parentElsewhere.Agent.Subject, "inc_elsewhere", "inc_unknown", 1)},
+			"unregistered":           {Subject: strings.Replace(parentElsewhere.Agent.Subject, incarnation("elsewhere"), incarnation("unknown"), 1)},
 			"in another session":     parentElsewhere.Agent,
 			"not a registered agent": {Subject: "spiffe://agents.example.com/other"},
 		} {
 			child := registerRequest(s)
 			child.HostSessionID = "hostS42-child"
-			child.Incarnation = "inc_child"
+			child.Incarnation = incarnation("child")
 			child.Parent = parent
 			_, err := svc.RegisterAgent(ctx, child)
 			wantError(t, "RegisterAgent under a parent "+name, err, identitybroker.CodePermissionDenied, "")
@@ -133,7 +140,7 @@ func runAgents(t *testing.T, factory serviceFactory) {
 			"the owner's other host session": mustOpen(t, svc, openRequest("hostS44", alice)),
 		} {
 			req := registerRequest(s)
-			req.Incarnation = "inc_main" // the first agent's incarnation
+			req.Incarnation = incarnation("main") // the first agent's incarnation
 			_, err := svc.RegisterAgent(ctx, req)
 			wantError(t, "RegisterAgent of an existing agent from "+name, err, identitybroker.CodeAlreadyExists, "")
 		}
@@ -159,11 +166,11 @@ func runAgents(t *testing.T, factory serviceFactory) {
 		parent := mustRegister(t, svc, registerRequest(s))
 		childReq := registerRequest(s)
 		childReq.HostSessionID = "hostS42-child"
-		childReq.Incarnation = "inc_child"
+		childReq.Incarnation = incarnation("child")
 		childReq.Parent = parent.Agent
 		child := mustRegister(t, svc, childReq)
 		sibling := childReq
-		sibling.Incarnation = "inc_sibling"
+		sibling.Incarnation = incarnation("sibling")
 		siblingReg := mustRegister(t, svc, sibling)
 		for name, newParent := range map[string]identitybroker.AgentRef{
 			"itself":    child.Agent,

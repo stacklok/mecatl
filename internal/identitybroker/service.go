@@ -159,7 +159,8 @@ type RegisterAgentRequest struct {
 	Owner Owner
 	// Incarnation is the agent instance's incarnation, which the harness
 	// allocates and persists. It becomes a segment of the agent's SPIFFE ID,
-	// so it must match [A-Za-z0-9._-]+ and be at most MaxIncarnationBytes.
+	// so it must be a Mecatl incarnation: inc_ and 26 lowercase base32
+	// characters, or legacy_ and 64 hex characters.
 	Incarnation string
 	// Definition is the definition the instance runs. Name is required. Source
 	// and Revision are checked when set but may be empty for now, because
@@ -177,8 +178,8 @@ func (r RegisterAgentRequest) Validate() error {
 	if err := requireIDs("broker session", r.SessionID, "host session", r.HostSessionID); err != nil {
 		return err
 	}
-	if !isPathSegment(r.Incarnation, MaxIncarnationBytes) {
-		return invalid(fmt.Sprintf("incarnation %q must match [A-Za-z0-9._-]+, be at most %d bytes, and not be '.' or '..'", r.Incarnation, MaxIncarnationBytes))
+	if !isIncarnation(r.Incarnation) {
+		return invalid(fmt.Sprintf("incarnation %q must be inc_ and 26 lowercase base32 characters, or legacy_ and 64 hex characters", r.Incarnation))
 	}
 	if err := r.Owner.validate(); err != nil {
 		return err

@@ -1,9 +1,11 @@
 package identitybroker
 
 import (
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"maps"
+	"strings"
 	"unicode/utf8"
 )
 
@@ -142,10 +144,30 @@ func (r DefinitionRecord) equal(o DefinitionRecord) bool {
 		maps.Equal(r.Provenance.Metadata, o.Provenance.Metadata)
 }
 
-// MaxIncarnationBytes bounds RegisterAgentRequest.Incarnation, which becomes a
-// segment of the agent's SPIFFE ID. It admits Mecatl's longest incarnation, a
-// legacy_ one of 71 bytes.
-const MaxIncarnationBytes = 71
+// isIncarnation reports whether s has the syntax of a Mecatl incarnation: a
+// minted inc_ followed by 26 lowercase base32 characters (128 random bits, so
+// the last character encodes two bits), or a deterministic legacy_ followed by
+// 64 hex characters. Both are SPIFFE-path-safe, and neither can be guessed
+// or chosen to collide with another user's agent. The syntax mirrors the
+// engine's session.IncarnationID.Valid; the broker does not import the engine.
+func isIncarnation(s string) bool {
+	if rest, ok := strings.CutPrefix(s, "inc_"); ok {
+		if len(rest) != 26 {
+			return false
+		}
+		for _, c := range rest {
+			if (c < 'a' || c > 'z') && (c < '2' || c > '7') {
+				return false
+			}
+		}
+		return strings.IndexByte("aeimquy4", rest[25]) >= 0
+	}
+	if rest, ok := strings.CutPrefix(s, "legacy_"); ok {
+		_, err := hex.DecodeString(rest)
+		return len(rest) == 64 && err == nil
+	}
+	return false
+}
 
 // isSegment reports whether s is a SPIFFE-path-safe segment of at most
 // MaxSegmentBytes.

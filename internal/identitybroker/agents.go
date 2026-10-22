@@ -52,13 +52,19 @@ func (b *Broker) RegisterAgent(_ context.Context, workload Workload, req Registe
 	if err != nil {
 		return Registration{}, err
 	}
-	t.agents[subject] = &agentRecord{
-		sessionID:     s.ID,
-		hostSessionID: req.HostSessionID,
-		owner:         req.Owner,
-		incarnation:   req.Incarnation,
-		definition:    req.Definition,
-		parent:        req.Parent,
+	if rec, ok := t.agents[subject]; ok {
+		// Registering again only moves the instance. Its definition stays the
+		// first one reported, since a later one is not compared yet.
+		rec.sessionID = s.ID
+	} else {
+		t.agents[subject] = &agentRecord{
+			sessionID:     s.ID,
+			hostSessionID: req.HostSessionID,
+			owner:         req.Owner,
+			incarnation:   req.Incarnation,
+			definition:    req.Definition,
+			parent:        req.Parent,
+		}
 	}
 	return Registration{Agent: AgentRef{Subject: subject}, Credential: credential, ExpiresAt: expiresAt}, nil
 }
@@ -97,11 +103,11 @@ func (t *sessionTable) checkRegistrationLocked(workload Workload, subject string
 
 // VerifyCredential implements Core. After the credential's own checks (see
 // credentialIssuer.verify), its subject must be a registered instance, and
-// that instance must be registered to the request's session. Per-instance
-// subjects are what bind a credential to one session, with no session claim.
-// It does not check that the session is open or which workload opened it: the
-// broker checks the session before a call, and AS-1 from its refresh token's
-// record.
+// that instance must be registered to the request's session, and that session
+// must be open, so closing a session ends its credentials' use at once rather
+// than at their expiry. Per-instance subjects are what bind a credential to
+// one session, with no session claim. It does not check which workload opened
+// the session: AS-1 checks that from its refresh token's record.
 func (b *Broker) VerifyCredential(_ context.Context, req VerifyCredentialRequest) (VerifiedAgent, error) {
 	if err := req.Validate(); err != nil {
 		return VerifiedAgent{}, err
@@ -112,17 +118,17 @@ func (b *Broker) VerifyCredential(_ context.Context, req VerifyCredentialRequest
 		return VerifiedAgent{}, err
 	}
 	t.mu.Lock()
-	rec, ok := t.agents[cred.subject]
-	var sessionID string
-	if ok {
-		sessionID = rec.sessionID
-	}
+	rec, registered := t.agents[cred.subject]
+	bound := registered && rec.sessionID == req.SessionID
+	open := bound && t.byID[req.SessionID].closed == ""
 	t.mu.Unlock()
-	if !ok {
+	switch {
+	case !registered:
 		return VerifiedAgent{}, credentialDenied("the credential's subject is not a registered agent")
-	}
-	if sessionID != req.SessionID {
+	case !bound:
 		return VerifiedAgent{}, credentialDenied("the agent is not registered to the broker session")
+	case !open:
+		return VerifiedAgent{}, credentialDenied("the broker session is closed")
 	}
 	return VerifiedAgent{Agent: AgentRef{Subject: cred.subject}, AgentID: b.agentID, ExpiresAt: cred.expiresAt}, nil
 }

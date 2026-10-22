@@ -11,7 +11,10 @@ package conformance
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/base32"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -65,12 +68,20 @@ func findRequest(host string) identitybroker.FindSessionRequest {
 	return identitybroker.FindSessionRequest{RootHostSessionID: host}
 }
 
+// incarnation returns a well-formed minted incarnation derived from label, so
+// cases can name agents readably and the same label gives the same agent.
+func incarnation(label string) string {
+	sum := sha256.Sum256([]byte(label))
+	enc := strings.ToLower(base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(sum[:]))
+	return "inc_" + enc[:25] + "a"
+}
+
 func registerRequest(s identitybroker.Session) identitybroker.RegisterAgentRequest {
 	return identitybroker.RegisterAgentRequest{
 		SessionID:     s.ID,
 		HostSessionID: s.HostSessionID,
 		Owner:         s.Owner,
-		Incarnation:   "inc_main",
+		Incarnation:   incarnation("main"),
 		Definition:    identitybroker.DefinitionRef{Source: "system", Name: "main", Revision: "v1"},
 	}
 }

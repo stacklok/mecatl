@@ -48,7 +48,7 @@ func runCredentials(t *testing.T, factory Factory) {
 		core := factory(t, c.Now)
 		svc := asMecatl(core)
 		s := mustOpen(t, svc, openRequest("hostS42", alice))
-		return fixture{clock: c, core: core, svc: svc, session: s, reg: mustRegister(t, svc, registerRequest(s))}
+		return fixture{clock: c, core: core, svc: svc, session: s, reg: mustRegisterAt(t, svc, registerRequest(s), c.Now)}
 	}
 	verify := func(core identitybroker.Core, sessionID string, credential identitybroker.Token) (identitybroker.VerifiedAgent, error) {
 		return core.VerifyCredential(ctx, identitybroker.VerifyCredentialRequest{SessionID: sessionID, Credential: credential})
@@ -79,8 +79,8 @@ func runCredentials(t *testing.T, factory Factory) {
 		f := setup(t)
 		other := mustOpen(t, f.svc, openRequest("hostS43", alice))
 		req := registerRequest(other)
-		req.Incarnation = "inc_other"
-		otherReg := mustRegister(t, f.svc, req)
+		req.Incarnation = incarnation("other")
+		otherReg := mustRegisterAt(t, f.svc, req, f.clock.Now)
 		a, errA := verify(f.core, f.session.ID, f.reg.Credential)
 		b, errB := verify(f.core, other.ID, otherReg.Credential)
 		if errA != nil || errB != nil {
@@ -98,11 +98,18 @@ func runCredentials(t *testing.T, factory Factory) {
 		wantRefused(t, "VerifyCredential in another session", got, err, identitybroker.CodePermissionDenied, identitybroker.ReasonDenied)
 	})
 
+	t.Run("a credential of a closed session is refused", func(t *testing.T) {
+		f := setup(t)
+		mustClose(t, f.svc, f.session.ID)
+		got, err := verify(f.core, f.session.ID, f.reg.Credential)
+		wantRefused(t, "VerifyCredential in a closed session", got, err, identitybroker.CodePermissionDenied, identitybroker.ReasonDenied)
+	})
+
 	t.Run("after the agent moves to a reopened session, its old credential is refused", func(t *testing.T) {
 		f := setup(t)
 		mustClose(t, f.svc, f.session.ID)
 		reopened := mustOpen(t, f.svc, openRequest("hostS42", alice))
-		again := mustRegister(t, f.svc, registerRequest(reopened))
+		again := mustRegisterAt(t, f.svc, registerRequest(reopened), f.clock.Now)
 		if _, err := verify(f.core, reopened.ID, again.Credential); err != nil {
 			t.Fatalf("VerifyCredential in the reopened session: %v", err)
 		}
@@ -127,7 +134,7 @@ func runCredentials(t *testing.T, factory Factory) {
 
 	t.Run("an expired credential is refused, and registering again renews it", func(t *testing.T) {
 		f := setup(t)
-		f.clock.Advance(time.Until(f.reg.ExpiresAt) + time.Hour)
+		f.clock.Advance(f.reg.ExpiresAt.Sub(f.clock.Now()) + time.Hour)
 		got, err := verify(f.core, f.session.ID, f.reg.Credential)
 		wantRefused(t, "VerifyCredential of an expired credential", got, err, identitybroker.CodeUnauthenticated, identitybroker.ReasonSVIDExpired)
 		renewed, err := f.svc.RegisterAgent(ctx, registerRequest(f.session))
@@ -144,7 +151,7 @@ func runCredentials(t *testing.T, factory Factory) {
 		// Another implementation has its own key; register the same agent there.
 		otherSvc := asMecatl(factory(t, f.clock.Now))
 		otherSession := mustOpen(t, otherSvc, openRequest("hostS42", alice))
-		foreign := mustRegister(t, otherSvc, registerRequest(otherSession))
+		foreign := mustRegisterAt(t, otherSvc, registerRequest(otherSession), f.clock.Now)
 		got, err := verify(f.core, f.session.ID, foreign.Credential)
 		wantRefused(t, "VerifyCredential of another key's credential", got, err, identitybroker.CodePermissionDenied, identitybroker.ReasonDenied)
 	})

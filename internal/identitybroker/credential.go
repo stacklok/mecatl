@@ -41,16 +41,8 @@ type credentialIssuer struct {
 	kid string
 }
 
-func newCredentialIssuer(config Config, signer crypto.Signer) (credentialIssuer, error) {
-	pub, err := publicKey(signer)
-	if err != nil {
-		return credentialIssuer{}, err
-	}
-	ecPub, ok := pub.(*ecdsa.PublicKey)
-	if !ok {
-		return credentialIssuer{}, fmt.Errorf("unexpected public key type %T", pub)
-	}
-	kid, err := keyID(ecPub)
+func newCredentialIssuer(config Config, signer crypto.Signer, pub *ecdsa.PublicKey) (credentialIssuer, error) {
+	kid, err := keyID(pub)
 	if err != nil {
 		return credentialIssuer{}, err
 	}
@@ -59,7 +51,7 @@ func newCredentialIssuer(config Config, signer crypto.Signer) (credentialIssuer,
 		audience:    config.Audience,
 		lifetime:    config.CredentialLifetime,
 		signer:      signer,
-		publicKey:   ecPub,
+		publicKey:   pub,
 		kid:         kid,
 	}, nil
 }

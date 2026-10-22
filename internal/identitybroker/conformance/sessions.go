@@ -214,13 +214,20 @@ func runInvalidRequests(t *testing.T, factory serviceFactory) {
 	}
 
 	registers := map[string]func(*identitybroker.RegisterAgentRequest){
-		"no session":      func(r *identitybroker.RegisterAgentRequest) { r.SessionID = "" },
-		"no host session": func(r *identitybroker.RegisterAgentRequest) { r.HostSessionID = "" },
-		"no owner":        func(r *identitybroker.RegisterAgentRequest) { r.Owner = identitybroker.Owner{} },
-		"no incarnation":  func(r *identitybroker.RegisterAgentRequest) { r.Incarnation = "" },
-		"bad incarnation": func(r *identitybroker.RegisterAgentRequest) { r.Incarnation = "inc/main" },
-		"long incarnation": func(r *identitybroker.RegisterAgentRequest) {
-			r.Incarnation = strings.Repeat("a", identitybroker.MaxIncarnationBytes+1)
+		"no session":                func(r *identitybroker.RegisterAgentRequest) { r.SessionID = "" },
+		"no host session":           func(r *identitybroker.RegisterAgentRequest) { r.HostSessionID = "" },
+		"no owner":                  func(r *identitybroker.RegisterAgentRequest) { r.Owner = identitybroker.Owner{} },
+		"no incarnation":            func(r *identitybroker.RegisterAgentRequest) { r.Incarnation = "" },
+		"a path in the incarnation": func(r *identitybroker.RegisterAgentRequest) { r.Incarnation = "inc/main" },
+		"an unprefixed incarnation": func(r *identitybroker.RegisterAgentRequest) { r.Incarnation = "main" },
+		"a short inc_ incarnation":  func(r *identitybroker.RegisterAgentRequest) { r.Incarnation = "inc_main" },
+		"an uppercase inc_": func(r *identitybroker.RegisterAgentRequest) {
+			r.Incarnation = "inc_" + strings.ToUpper(r.Incarnation[4:])
+		},
+		"a non-canonical inc_ ending": func(r *identitybroker.RegisterAgentRequest) { r.Incarnation = r.Incarnation[:29] + "b" },
+		"a short legacy_ incarnation": func(r *identitybroker.RegisterAgentRequest) { r.Incarnation = "legacy_" + strings.Repeat("0f", 31) },
+		"a non-hex legacy_": func(r *identitybroker.RegisterAgentRequest) {
+			r.Incarnation = "legacy_" + strings.Repeat("zz", 32)
 		},
 		"no definition":  func(r *identitybroker.RegisterAgentRequest) { r.Definition = identitybroker.DefinitionRef{} },
 		"bad definition": func(r *identitybroker.RegisterAgentRequest) { r.Definition.Name = "../main" },
