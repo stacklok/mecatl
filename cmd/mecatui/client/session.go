@@ -135,15 +135,24 @@ func (c *Client) GetSession(ctx context.Context, id string) (SessionSnapshot, er
 	return snapshotFromWithGlobalCapabilities(resp.GetSession(), global), nil
 }
 
+// ModeResult is the authoritative session a SetMode returned: its mode and
+// lifecycle state. State is "cancelled" when the server's refused-mode
+// recovery cancelled a pending approval to apply the mode.
+type ModeResult struct {
+	Mode  string
+	State string
+}
+
 // SetMode asks the server to change the session's permission posture and returns
-// the updated authoritative mode. Mid-turn changes are rejected by the server;
-// callers that want next-prompt semantics should defer and retry once idle.
-func (c *Client) SetMode(ctx context.Context, id, mode string) (string, error) {
+// the updated authoritative mode and state. Mid-turn changes are rejected by the
+// server; callers that want next-prompt semantics should defer and retry once idle.
+func (c *Client) SetMode(ctx context.Context, id, mode string) (ModeResult, error) {
 	resp, err := c.svc.SetMode(withSessionAffinity(ctx, id), &mecatlv1.SetModeRequest{SessionId: id, Mode: ModeFromString(mode)})
 	if err != nil {
-		return "", fmt.Errorf("set mode: %w", err)
+		return ModeResult{}, fmt.Errorf("set mode: %w", err)
 	}
-	return snapshotFrom(resp.GetSession()).Mode, nil
+	snap := snapshotFrom(resp.GetSession())
+	return ModeResult{Mode: snap.Mode, State: snap.State}, nil
 }
 
 // ModeErrorText is the server's reason for a failed SetMode, without the
@@ -226,14 +235,16 @@ type SessionGetter interface {
 
 // ModeSetter changes a server-side session's permission mode.
 type ModeSetter interface {
-	SetMode(ctx context.Context, id, mode string) (string, error)
+	SetMode(ctx context.Context, id, mode string) (ModeResult, error)
 }
 
-// ModeChangedMsg carries the async result of SetModeCmd.
+// ModeChangedMsg carries the async result of SetModeCmd. State is the
+// session's authoritative lifecycle state after a successful change.
 type ModeChangedMsg struct {
 	SessionID string
 	Requested string
 	Mode      string
+	State     string
 	Err       error
 }
 
@@ -241,7 +252,7 @@ type ModeChangedMsg struct {
 func SetModeCmd(ctx context.Context, s ModeSetter, id, mode string) tea.Cmd {
 	return func() tea.Msg {
 		actual, err := s.SetMode(ctx, id, mode)
-		return ModeChangedMsg{SessionID: id, Requested: mode, Mode: actual, Err: err}
+		return ModeChangedMsg{SessionID: id, Requested: mode, Mode: actual.Mode, State: actual.State, Err: err}
 	}
 }
 

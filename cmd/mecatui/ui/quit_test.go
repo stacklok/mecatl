@@ -438,7 +438,9 @@ func (errSession) GetSession(_ context.Context, _ string) (client.SessionSnapsho
 	return client.SessionSnapshot{}, nil
 }
 
-func (errSession) SetMode(_ context.Context, _, mode string) (string, error) { return mode, nil }
+func (errSession) SetMode(_ context.Context, _, mode string) (client.ModeResult, error) {
+	return client.ModeResult{Mode: mode, State: "idle"}, nil
+}
 
 func (errSession) ForkSession(_ context.Context, _, _ string) (string, error) {
 	return "", context.DeadlineExceeded

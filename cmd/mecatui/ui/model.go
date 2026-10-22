@@ -85,9 +85,9 @@ type SessionCreator interface {
 	// the test fakes satisfy both.
 	GetSession(ctx context.Context, id string) (client.SessionSnapshot, error)
 	// SetMode asks the server to change the current session's permission mode and
-	// returns the server-confirmed mode. Mid-turn attempts may be rejected; the ui
-	// defers and retries at the next prompt boundary.
-	SetMode(ctx context.Context, id, mode string) (string, error)
+	// returns the server-confirmed mode and session state. Mid-turn attempts may be
+	// rejected; the ui defers and retries at the next prompt boundary.
+	SetMode(ctx context.Context, id, mode string) (client.ModeResult, error)
 	// ForkSession creates a peer session from srcID's conversation-history snapshot
 	// with an OPTIONAL reasoning-effort override (empty
 	// inherits the source's) and returns the new session id. The /effort fork-resume
@@ -703,6 +703,11 @@ type Model struct {
 	pendingApproval           *approvalResolvedIntent
 	pendingRecovery           *pendingApprovalRecovery
 	pendingRecoveryGeneration uint64
+	// recoveryModeSwitch is the session mode a recovered approval's own
+	// refused-mode recovery requested, non-empty while that SetMode is in
+	// flight. It outlives pendingRecovery: the watch may deliver the cancelled
+	// run's terminal before the SetMode response.
+	recoveryModeSwitch string
 	// modelSwitchRequestToken correlates the asynchronous create-and-hydrate handoff.
 	// A stale result must not replace a session selected by a later lifecycle action.
 	modelSwitchRequestToken uint64

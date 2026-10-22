@@ -969,7 +969,7 @@ type Config struct {
 	// posture. The loop NEVER imports port.SessionLease;
 	// the renewer and the held-lease registry live entirely on Service (the same
 	// storage-agnostic discipline as EventLog). A backend that reports
-	// ErrLeaseUnsupported is stickily disabled (one INFO, then the no-lease path).
+	// ErrLeaseUnsupported is stickily disabled (one WARN, then the no-lease path).
 	SessionLease port.SessionLease
 
 	// MutationCapability is the process-local admission gate shared by Service
@@ -4769,8 +4769,9 @@ func (s *Service) managementTargetAwaitingDrain(ctx context.Context, id session.
 // mode, and propagates session.ErrIllegalTransition (wrapped as ErrInvalidArgument)
 // when the session is mid-turn (running/awaiting) — the aggregate refuses a mode
 // change while a turn is in flight, so the caller must defer it to the next
-// prompt. The one exception is cancelRefusedAwaiting's recovery for a stored
-// awaiting session whose mode this server refuses. A change to the mode the
+// prompt. The exceptions are the recoveries for a stored session whose mode
+// this server refuses: abandonRefusedRunning for one a crash left running, and
+// cancelRefusedAwaiting for one awaiting an approval. A change to the mode the
 // session already has is a no-op success.
 func (s *Service) SetMode(ctx context.Context, id session.SessionID, mode session.PermissionMode) (*session.Session, error) {
 	if s.draining.Load() {
@@ -4806,6 +4807,7 @@ func (s *Service) SetMode(ctx context.Context, id session.SessionID, mode sessio
 	s.mu.Unlock()
 
 	var sess *session.Session
+	var recovery *refusedAwaitingRecovery
 	if live {
 		sess = st.sess
 		if err := s.authorizeSession(ctx, sess); err != nil {
@@ -4817,9 +4819,14 @@ func (s *Service) SetMode(ctx context.Context, id session.SessionID, mode sessio
 			return nil, loadErr
 		}
 		sess = loaded
-		if err := s.cancelRefusedAwaiting(sess, mode); err != nil {
+		if err := s.abandonRefusedRunning(sess); err != nil {
 			return nil, err
 		}
+		rec, err := s.cancelRefusedAwaiting(sess, mode)
+		if err != nil {
+			return nil, err
+		}
+		recovery = rec
 	}
 
 	if sess.AgentDefinitionName != "" {
@@ -4838,6 +4845,9 @@ func (s *Service) SetMode(ctx context.Context, id session.SessionID, mode sessio
 	if err := s.saveSession(ctx, sess); err != nil {
 		return nil, fmt.Errorf("server: persist session: %w", err)
 	}
+	if recovery != nil {
+		s.recordRefusedAwaitingRecovery(ctx, id, recovery)
+	}
 	return sess, nil
 }
 
@@ -4852,16 +4862,32 @@ func (s *Service) admitMode(mode session.PermissionMode) error {
 }
 
 func admitModeFor(cfg *Config, mode session.PermissionMode) error {
-	if mode.Rank() == 0 {
-		return fmt.Errorf("%w: unknown permission mode %q", ErrInvalidArgument, mode)
-	}
-	if cfg.MaxAllowedMode != "" && !modeWithinCeiling(mode, cfg.MaxAllowedMode) {
-		return fmt.Errorf("%w: mode %q exceeds the server ceiling %q; the server must be relaunched with a higher --permission-mode to allow it", ErrInvalidArgument, mode, cfg.MaxAllowedMode)
-	}
-	if mode == session.ModeAuto && !cfg.EnforcingCheckerConfigured {
-		return fmt.Errorf("%w: mode %q requires an enforcing guardrails checker; configure one with --guardrails-model <model> or bind the guardrail model slot, or use yolo for gate-free autonomous operation", ErrInvalidArgument, mode)
+	if err := ModeAdmission(cfg.MaxAllowedMode, cfg.EnforcingCheckerConfigured)(mode); err != nil {
+		return fmt.Errorf("%w: %v", ErrInvalidArgument, err)
 	}
 	return nil
+}
+
+// ModeAdmission returns the session-mode admission rule for a deployment with
+// the given ceiling (Config.MaxAllowedMode) and checker state
+// (Config.EnforcingCheckerConfigured): an unknown mode or one above the ceiling
+// is refused, and auto requires an enforcing guardrails checker. admitMode
+// wraps its refusal in ErrInvalidArgument; the composition root passes the
+// returned function to the Subagent tool so a resumed child is admitted by the
+// same rule as a stored top-level session.
+func ModeAdmission(ceiling session.PermissionMode, enforcingChecker bool) func(session.PermissionMode) error {
+	return func(mode session.PermissionMode) error {
+		if mode.Rank() == 0 {
+			return fmt.Errorf("unknown permission mode %q", mode)
+		}
+		if ceiling != "" && !modeWithinCeiling(mode, ceiling) {
+			return fmt.Errorf("mode %q exceeds the server ceiling %q; the server must be relaunched with a higher --permission-mode to allow it", mode, ceiling)
+		}
+		if mode == session.ModeAuto && !enforcingChecker {
+			return fmt.Errorf("mode %q requires an enforcing guardrails checker; configure one with --guardrails-model <model> or bind the guardrail model slot, or use yolo for gate-free autonomous operation", mode)
+		}
+		return nil
+	}
 }
 
 // normalizeDefaultMode defaults an empty DefaultMode to default and runs the
@@ -4897,18 +4923,42 @@ func (s *Service) AdmittedModes() []session.PermissionMode {
 // admitStoredMode re-admits a persisted session's mode against the CURRENT
 // ceiling and checker before execution, approval resume, or successor
 // publication. A refusal leaves the session and its history untouched; the
-// owner can SetMode to an admitted mode and continue. For a session awaiting
-// an approval that SetMode must be a downgrade, which cancels the pending turn
-// (cancelRefusedAwaiting).
+// owner can SetMode to an admitted mode and continue. For a session a crash
+// left running, that SetMode first abandons the dead turn
+// (abandonRefusedRunning). For a session awaiting an approval it must be a
+// downgrade, which cancels the pending turn (cancelRefusedAwaiting).
 func (s *Service) admitStoredMode(sess *session.Session) error {
 	if err := s.admitMode(sess.Mode); err != nil {
+		if sess.State == session.StateRunning {
+			return fmt.Errorf("%w: session %q is in permission mode %q, which this server does not admit (%v), and its stored run never finished; once no server is driving that run, SetMode to an admitted mode ends the interrupted turn without running it and lets the session continue", ErrStoredModeNotAdmitted, sess.ID, sess.Mode, err)
+		}
 		if sess.State == session.StateAwaiting {
-			return fmt.Errorf("%w: session %q is in permission mode %q, which this server does not admit (%v), and its pending approval cannot resume in that mode; SetMode to an admitted lower mode cancels the pending turn without running it and lets the session continue", ErrFailedPrecondition, sess.ID, sess.Mode, err)
+			return fmt.Errorf("%w: session %q is in permission mode %q, which this server does not admit (%v), and its pending approval cannot resume in that mode; SetMode to an admitted lower mode cancels the pending turn without running it and lets the session continue", ErrStoredModeNotAdmitted, sess.ID, sess.Mode, err)
 		}
 		if sess.State == session.StateAuthorizing {
-			return fmt.Errorf("%w: session %q is in permission mode %q, which this server does not admit (%v), and its pending MCP authorization cannot resume in that mode; completing or cancelling the authorization settles the parked call without running the turn, after which SetMode can switch it to an admitted mode", ErrFailedPrecondition, sess.ID, sess.Mode, err)
+			return fmt.Errorf("%w: session %q is in permission mode %q, which this server does not admit (%v), and its pending MCP authorization cannot resume in that mode; completing or cancelling the authorization settles the parked call without running the turn, after which SetMode can switch it to an admitted mode", ErrStoredModeNotAdmitted, sess.ID, sess.Mode, err)
 		}
-		return fmt.Errorf("%w: session %q is in permission mode %q, which this server does not admit (%v); switch it to an admitted mode with SetMode to continue", ErrFailedPrecondition, sess.ID, sess.Mode, err)
+		return fmt.Errorf("%w: session %q is in permission mode %q, which this server does not admit (%v); switch it to an admitted mode with SetMode to continue", ErrStoredModeNotAdmitted, sess.ID, sess.Mode, err)
+	}
+	return nil
+}
+
+// abandonRefusedRunning is the recovery for a stored session a crash left
+// running in a mode this server refuses: admitStoredMode refuses every run
+// entry before StartRunContent's crash-orphan repair, the aggregate refuses
+// SetMode from running, and there is no live run to cancel. The caller holds
+// runEntryMu and the mutation lease and found no registered run, the same
+// proof that repair relies on that the running snapshot is orphaned. So it
+// abandons the dead turn to idle, closing out its unanswered tool calls,
+// without executing anything, which makes the caller's mode change and single
+// save legal. A running session whose mode is admitted is left for that
+// repair, which the next run entry performs.
+func (s *Service) abandonRefusedRunning(sess *session.Session) error {
+	if sess.State != session.StateRunning || s.admitMode(sess.Mode) == nil || s.IsLive(sess.ID) {
+		return nil
+	}
+	if err := sess.Abandon(); err != nil {
+		return fmt.Errorf("%w: %v", ErrInvalidArgument, err)
 	}
 	return nil
 }
@@ -4922,14 +4972,62 @@ func (s *Service) admitStoredMode(sess *session.Session) error {
 // the ordinary interrupt path. Every other awaiting session is left for the
 // aggregate's mid-turn refusal. The caller holds runEntryMu and the mutation
 // lease, found no live run, and passes the snapshot loaded under that lease.
-func (s *Service) cancelRefusedAwaiting(sess *session.Session, mode session.PermissionMode) error {
+//
+// It returns the facts the durable event stream needs to close the parked turn
+// (recordRefusedAwaitingRecovery), captured before Cancel clears them, or nil
+// when it cancelled nothing.
+func (s *Service) cancelRefusedAwaiting(sess *session.Session, mode session.PermissionMode) (*refusedAwaitingRecovery, error) {
 	if sess.State != session.StateAwaiting || s.admitMode(sess.Mode) == nil || mode.Rank() >= sess.Mode.Rank() {
-		return nil
+		return nil, nil
+	}
+	rec := &refusedAwaitingRecovery{runID: sess.RunID(), closeOuts: sess.InterruptCloseOuts()}
+	if ask, ok := sess.PendingAsk(); ok {
+		rec.askID = ask.AskID
 	}
 	if err := sess.Cancel(); err != nil {
-		return fmt.Errorf("%w: %v", ErrInvalidArgument, err)
+		return nil, fmt.Errorf("%w: %v", ErrInvalidArgument, err)
 	}
-	return nil
+	return rec, nil
+}
+
+// refusedAwaitingRecovery is what cancelRefusedAwaiting cancelled: the parked
+// run, its open ask, and the cancellation close-outs for the trailing turn's
+// unanswered tool calls.
+type refusedAwaitingRecovery struct {
+	runID     string
+	askID     string
+	closeOuts []session.ToolResult
+}
+
+// recordRefusedAwaitingRecovery closes the parked turn on the durable event
+// stream after SetMode persisted the recovery, so a watcher sees the ask
+// withdrawn and the run end instead of an ask that stays open forever. The
+// events mirror a live cancellation, all stamped with the parked run's id:
+// permission.retract for the ask, one cancellation tool.result per unanswered
+// call (the same close-out the next run's Interrupt writes into the
+// conversation, which keeps the log foldable), then result{cancelled}. Each
+// event is appended at most once on a cancellation-detached context and
+// published live after its append. The snapshot is already committed, so an
+// append failure is a diagnostic, not a SetMode failure (as for manual
+// compaction).
+func (s *Service) recordRefusedAwaitingRecovery(ctx context.Context, id session.SessionID, rec *refusedAwaitingRecovery) {
+	events := make([]session.Event, 0, len(rec.closeOuts)+2)
+	if rec.askID != "" {
+		events = append(events, session.Event{Type: session.EvPermissionRetract, RunID: rec.runID, Ask: &session.PendingAsk{AskID: rec.askID}})
+	}
+	for i := range rec.closeOuts {
+		events = append(events, session.Event{Type: session.EvToolResult, RunID: rec.runID, ToolResult: &rec.closeOuts[i]})
+	}
+	events = append(events, session.Event{Type: session.EvResult, RunID: rec.runID, Result: &session.ResultPayload{Stop: session.StopCancelled}})
+
+	appendCtx := context.WithoutCancel(ctx)
+	for _, ev := range events {
+		if err := s.appendEvent(appendCtx, id, ev); err != nil {
+			s.cfg.Diagnostics.Log(appendCtx, port.LevelWarn, "refused-mode recovery event append failed; the cancelled snapshot remains committed", "session", string(id), "event", string(ev.Type), "error", err)
+			continue
+		}
+		s.PublishSessionEvent(id, ev)
+	}
 }
 
 // adoptLeasedSession replaces a run entry's pre-lease snapshot with the
@@ -5331,8 +5429,9 @@ func (s *Service) reopenLoadedSession(ctx context.Context, sess *session.Session
 // an illegal RecordUserPrompt-from-terminal. Awaiting, idle, and running are
 // deliberate no-ops: awaiting is the preserved resume point (repairing
 // it would clear its still-resolvable PendingAsk); idle is the target state;
-// running is repaired ONLY by StartRunContent's crash-orphan Abandon arm, AFTER
-// it holds the real lock/lease (issue #475) — never here.
+// running is repaired ONLY by StartRunContent's crash-orphan Abandon arm (or
+// SetMode's abandonRefusedRunning), AFTER it holds the real lock/lease (issue
+// #475) — never here.
 func (s *Service) repairTerminalState(ctx context.Context, sess *session.Session) error {
 	switch sess.State {
 	case session.StateCompleted:
@@ -8899,7 +8998,7 @@ func (s *Service) acquireLeaseCore(ctx context.Context, id session.SessionID, by
 		s.mu.Unlock()
 		s.cfg.MutationCapability.Disable()
 		if firstTime {
-			s.cfg.Diagnostics.Log(ctx, port.LevelInfo, "session leasing unsupported by backend; disabling (running without cross-process exclusion)",
+			s.cfg.Diagnostics.Log(ctx, port.LevelWarn, "session leasing unsupported by backend; disabling (running without cross-process exclusion)",
 				"owner", s.cfg.LeaseOwner)
 		}
 		return nil

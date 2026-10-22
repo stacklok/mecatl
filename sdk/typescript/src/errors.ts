@@ -74,6 +74,7 @@ export const MECATL_ERROR_CODES = [
   "session_leased_elsewhere",
   "session_metadata_cursor_restart",
   "session_metadata_paging_unsupported",
+  "session_mode_not_admitted",
   "session_not_found",
   "skill_file_not_found",
   "skill_file_not_text",

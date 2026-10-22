@@ -158,8 +158,10 @@ type fakeConv struct {
 	mode        string
 	setModeErr  error
 	setModeSeen []string
-	created     chan struct{}
-	createdOnce sync.Once
+	// setModeState is the session state SetMode reports; empty means "idle".
+	setModeState string
+	created      chan struct{}
+	createdOnce  sync.Once
 	// resolvedModel is the EFFECTIVE model the fake's create response echoes back —
 	// the header e2e asserts it lands in m.resolvedSessionModel and renders from turn zero.
 	resolvedModel client.ResolvedModel
@@ -339,15 +341,19 @@ func (c *fakeConv) GetSession(_ context.Context, id string) (client.SessionSnaps
 	return client.SessionSnapshot{Mode: mode, ResolvedModel: resolved, Title: c.getSessionTitle, Capabilities: c.getSessionCaps}, nil
 }
 
-func (c *fakeConv) SetMode(_ context.Context, _ string, mode string) (string, error) {
+func (c *fakeConv) SetMode(_ context.Context, _ string, mode string) (client.ModeResult, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.setModeSeen = append(c.setModeSeen, mode)
 	if c.setModeErr != nil {
-		return "", c.setModeErr
+		return client.ModeResult{}, c.setModeErr
 	}
 	c.mode = mode
-	return c.mode, nil
+	state := c.setModeState
+	if state == "" {
+		state = "idle"
+	}
+	return client.ModeResult{Mode: c.mode, State: state}, nil
 }
 
 func (c *fakeConv) setModes() []string {

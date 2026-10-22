@@ -214,6 +214,7 @@ func helpBodyFor(th theme.Theme, caps client.Capabilities, hk helpKeys, embedded
 		{key: "←/→/tab", action: "choose an action; enter confirms it"},
 		{key: hk.toolcallsFull, action: "open full approval details when available"},
 		{key: hk.rawArgs, action: "show raw arguments in the full view"},
+		{key: hk.modeSwitch, action: "resumed request: switch to a lower mode, cancelling the request without running it", available: caps.RefusedModeRecovery, gated: true},
 	})
 
 	b.WriteString("\n" + heading.Render("Inspect and manage") + "\n")

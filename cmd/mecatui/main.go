@@ -1880,7 +1880,7 @@ func (s *sessionAdapter) GetSession(ctx context.Context, id string) (client.Sess
 	return s.cl.GetSession(ctx, id)
 }
 
-func (s *sessionAdapter) SetMode(ctx context.Context, id, mode string) (string, error) {
+func (s *sessionAdapter) SetMode(ctx context.Context, id, mode string) (client.ModeResult, error) {
 	return s.cl.SetMode(ctx, id, mode)
 }
 

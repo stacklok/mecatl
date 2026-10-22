@@ -1425,6 +1425,24 @@ func createModeFromProto(m mecatlv1.PermissionMode) session.PermissionMode {
 	return modeFromProto(m)
 }
 
+// planModeFromProto maps an ApprovePlanRequest target_mode. Unlike
+// modeFromProto, only a named mode passes through: UNSPECIFIED and any value
+// this server does not recognize are a deny (ModePlan), as the proto documents
+// and as the HTTP plan:approve path treats an empty or unknown target, so a
+// malformed target never approves a plan. AUTO and YOLO pass through so the
+// Service refuses them explicitly.
+func planModeFromProto(m mecatlv1.PermissionMode) session.PermissionMode {
+	switch m {
+	case mecatlv1.PermissionMode_PERMISSION_MODE_DEFAULT,
+		mecatlv1.PermissionMode_PERMISSION_MODE_ACCEPT_EDITS,
+		mecatlv1.PermissionMode_PERMISSION_MODE_AUTO,
+		mecatlv1.PermissionMode_PERMISSION_MODE_YOLO:
+		return modeFromProto(m)
+	default:
+		return session.ModePlan
+	}
+}
+
 // scheduleModeToProto reports a stored schedule mode. An empty mode means the
 // fire uses the server's default session mode, so it reads back as UNSPECIFIED
 // (round-tripping through createModeFromProto) rather than as an explicit

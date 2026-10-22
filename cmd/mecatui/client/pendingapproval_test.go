@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"google.golang.org/genproto/googleapis/rpc/errdetails"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
@@ -399,21 +400,31 @@ func TestResolvePendingApprovalChecksAckAndPayload(t *testing.T) {
 
 func TestPendingApprovalControlsClassifyClosedRPCFailures(t *testing.T) {
 	tests := []struct {
-		name string
-		code codes.Code
-		kind PendingApprovalFailure
+		name   string
+		code   codes.Code
+		reason string
+		kind   PendingApprovalFailure
 	}{
-		{"stale run", codes.Aborted, PendingApprovalCorrelation},
-		{"state changed", codes.FailedPrecondition, PendingApprovalNotRecoverable},
-		{"unsupported", codes.Unimplemented, PendingApprovalControlsUnsupported},
-		{"transport", codes.Unavailable, PendingApprovalUnavailable},
-		{"deadline", codes.DeadlineExceeded, PendingApprovalUnavailable},
-		{"masked absence", codes.NotFound, PendingApprovalUnavailable},
-		{"masked denial", codes.PermissionDenied, PendingApprovalUnavailable},
+		{"stale run", codes.Aborted, "", PendingApprovalCorrelation},
+		{"state changed", codes.FailedPrecondition, "", PendingApprovalNotRecoverable},
+		{"ask already resolved", codes.FailedPrecondition, "ask_not_pending", PendingApprovalNotRecoverable},
+		{"stored mode not admitted", codes.FailedPrecondition, StoredModeNotAdmittedCode, PendingApprovalModeNotAdmitted},
+		{"unsupported", codes.Unimplemented, "", PendingApprovalControlsUnsupported},
+		{"transport", codes.Unavailable, "", PendingApprovalUnavailable},
+		{"deadline", codes.DeadlineExceeded, "", PendingApprovalUnavailable},
+		{"masked absence", codes.NotFound, "", PendingApprovalUnavailable},
+		{"masked denial", codes.PermissionDenied, "", PendingApprovalUnavailable},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			serverErr := status.Error(tt.code, "private backend detail")
+			if tt.reason != "" {
+				st, err := status.New(tt.code, "private backend detail").WithDetails(&errdetails.ErrorInfo{Reason: tt.reason, Domain: "mecatl.stacklok.com"})
+				if err != nil {
+					t.Fatal(err)
+				}
+				serverErr = st.Err()
+			}
 			service := &pendingApprovalWireServer{resolveErr: serverErr, cancelErr: serverErr}
 			client := newPendingApprovalWireClient(t, service)
 			approval := PendingApproval{SessionID: "session-1", RunID: "run-1", AskID: "ask-1"}
@@ -423,6 +434,17 @@ func TestPendingApprovalControlsClassifyClosedRPCFailures(t *testing.T) {
 			} {
 				if !IsPendingApprovalFailure(err, tt.kind) || err.Error() == "private backend detail" {
 					t.Fatalf("%s error = %v, want kind %q", name, err, tt.kind)
+				}
+				// Only the stored-mode refusal keeps the server's reason, behind
+				// an explicit accessor, so the user can see why the ask cannot
+				// resume and how to recover it. Any other FailedPrecondition stays
+				// a closed category with no server text.
+				wantDetail := ""
+				if tt.kind == PendingApprovalModeNotAdmitted {
+					wantDetail = "private backend detail"
+				}
+				if got := PendingApprovalFailureDetail(err); got != wantDetail {
+					t.Fatalf("%s detail = %q, want %q", name, got, wantDetail)
 				}
 			}
 		})

@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -201,8 +202,15 @@ func TestUnavailableModeKeepsComposerUsable(t *testing.T) {
 
 			mm, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 			m = mm.(Model)
-			if m.prompt.Value() != "" || (cmd == nil && len(m.queued) == 0) {
-				t.Fatalf("enter did not send or queue the draft: prompt=%q queued=%v cmd=%v", m.prompt.Value(), m.queued, cmd != nil)
+			runBatchLeaves(cmd)
+			// Idle sends exactly one Prompt frame carrying the draft; running
+			// stages exactly that draft and sends nothing until the run ends.
+			wantSent, wantQueued := []string{"keep this draftx pasted"}, []string(nil)
+			if phase == phaseRunning {
+				wantSent, wantQueued = nil, []string{"keep this draftx pasted"}
+			}
+			if got := promptTexts(conv.send); m.prompt.Value() != "" || !reflect.DeepEqual(got, wantSent) || !reflect.DeepEqual(m.queued, wantQueued) {
+				t.Fatalf("enter: prompt=%q sent=%q queued=%q, want sent=%q queued=%q", m.prompt.Value(), got, m.queued, wantSent, wantQueued)
 			}
 
 			m = runModeCycle(t, m, []modeCycleStep{{token: "yolo", stays: "accept-edits"}})
@@ -228,6 +236,10 @@ func TestUnavailableModeDoesNotHoldQueuedPrompt(t *testing.T) {
 	m = mm.(Model)
 	if cmd == nil || m.queuePaused != "" || m.phase != phaseRunning {
 		t.Fatalf("drain: cmd=%v paused=%q phase=%v, want the follow-up sent", cmd != nil, m.queuePaused, m.phase)
+	}
+	runBatchLeaves(cmd)
+	if got := promptTexts(conv.send); !reflect.DeepEqual(got, []string{"queued follow-up"}) || len(m.queued) != 0 {
+		t.Fatalf("drain sent %q (queued %q), want exactly one Prompt frame with the follow-up", got, m.queued)
 	}
 }
 

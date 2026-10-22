@@ -22,7 +22,7 @@ func embeddedCaps() client.Capabilities {
 func allOnCaps() client.Capabilities {
 	return client.Capabilities{
 		MCP: true, SlashCommands: true, Memory: true, Skills: true, Teams: true, Shell: true,
-		ModelSelection: true, Scheduling: true, Steer: true,
+		ModelSelection: true, Scheduling: true, Steer: true, RefusedModeRecovery: true,
 	}
 }
 

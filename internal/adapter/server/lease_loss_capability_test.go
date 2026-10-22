@@ -247,12 +247,14 @@ func (r *leaseLossRecorder) ToolCall(session.SessionID, session.ToolCall, sessio
 type leaseLossDiagnostics struct {
 	mu       sync.Mutex
 	messages []string
+	levels   []port.Level
 }
 
-func (d *leaseLossDiagnostics) Log(_ context.Context, _ port.Level, msg string, _ ...any) {
+func (d *leaseLossDiagnostics) Log(_ context.Context, level port.Level, msg string, _ ...any) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.messages = append(d.messages, msg)
+	d.levels = append(d.levels, level)
 }
 
 func (d *leaseLossDiagnostics) With(...any) port.Diagnostics { return d }
@@ -263,6 +265,18 @@ func (d *leaseLossDiagnostics) count(msg string) int {
 	n := 0
 	for _, got := range d.messages {
 		if got == msg {
+			n++
+		}
+	}
+	return n
+}
+
+func (d *leaseLossDiagnostics) countAt(level port.Level, msg string) int {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	n := 0
+	for i, got := range d.messages {
+		if got == msg && d.levels[i] == level {
 			n++
 		}
 	}
@@ -526,8 +540,8 @@ func TestOptionalLeaseCompatibilityAndUnsupportedFallback(t *testing.T) {
 			t.Fatalf("unsupported lease acquires = %d, want 1", acquires)
 		}
 		const unsupportedMessage = "session leasing unsupported by backend; disabling (running without cross-process exclusion)"
-		if got := diag.count(unsupportedMessage); got != 1 {
-			t.Fatalf("unsupported diagnostics = %d, want one sticky message", got)
+		if got := diag.countAt(port.LevelWarn, unsupportedMessage); got != 1 {
+			t.Fatalf("unsupported WARN diagnostics = %d, want one sticky WARN (losing cross-process exclusion is operator-actionable)", got)
 		}
 	})
 }

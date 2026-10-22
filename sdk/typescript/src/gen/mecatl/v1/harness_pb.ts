@@ -10029,7 +10029,8 @@ export type ApprovePlanRequest = Message<"mecatl.v1.ApprovePlanRequest"> & {
   /**
    * target_mode selects the verdict / resulting posture: DEFAULT → allow-once
    * (flip to default), ACCEPT_EDITS → allow-always (flip to accept-edits),
-   * PLAN/UNSPECIFIED → deny (iterate, no flip, no continuation run).
+   * PLAN/UNSPECIFIED/unrecognized → deny (iterate, no flip, no continuation
+   * run).
    *
    * @generated from field: mecatl.v1.PermissionMode target_mode = 2;
    */
@@ -11152,7 +11153,12 @@ export const HarnessService: GenService<{
    * One exception, advertised by the refused_mode_recovery feature: for a stored
    * session awaiting an approval in a mode the server no longer admits, a change
    * to an admitted, strictly lower mode cancels the pending turn without running
-   * it and applies the mode.
+   * it and applies the mode. The session's event log then records, for the
+   * parked run, a permission.retract of the open ask, a cancellation tool result
+   * for each unanswered call, and a cancelled result. The same feature covers a
+   * stored session a crash left running in such a mode: when no server still
+   * drives that run, a change to an admitted mode ends the interrupted turn
+   * without running it and applies the mode.
    *
    * @generated from rpc mecatl.v1.HarnessService.SetMode
    */
@@ -12034,9 +12040,9 @@ export const HarnessService: GenService<{
    *   - PERMISSION_MODE_DEFAULT  → allow-once (the session flips to DEFAULT).
    *   - PERMISSION_MODE_ACCEPT_EDITS → allow-always (the session flips to
    *     ACCEPT_EDITS).
-   *   - PERMISSION_MODE_PLAN / UNSPECIFIED → deny (the run stays in plan mode;
-   *     no continuation run starts — the model iterates on the plan on the next
-   *     prompt).
+   *   - PERMISSION_MODE_PLAN / UNSPECIFIED / an unrecognized value → deny (the
+   *     run stays in plan mode; no continuation run starts — the model iterates
+   *     on the plan on the next prompt).
    *
    * `note` is an OPTIONAL operator remark appended to the proceed message
    * injected into the continuation run's first user message (allow paths only).

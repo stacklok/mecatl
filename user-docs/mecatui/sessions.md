@@ -53,6 +53,14 @@ original tool, arguments, and reason. Choose **Allow once** or **Deny**. The
 client follows the same run and displays its later model messages and tool
 results. **Allow always** is unavailable during recovery.
 
+If the server no longer admits the chat's stored permission mode, it refuses
+the approval, and the footer says so. Press `shift+tab` to switch the chat to
+the next lower mode. The server cancels the pending request without running the
+tool, the tool call shows as interrupted, and the chat returns to idle with your
+draft kept. If the server refuses that mode too, the request stays pending and
+the footer shows the server's reason; press `shift+tab` again to try a lower
+mode. This needs a server that advertises the `refused_mode_recovery` feature.
+
 `--resume-latest` continues to exclude chats that are waiting for approval. A
 `--prompt` value remains in the composer as a draft. `mecatui` does not send it
 before your choice or automatically send it after the recovered run finishes.

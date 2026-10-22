@@ -81,7 +81,8 @@ re-checks a persisted session's mode at run, approval resume, fork, and clear, s
 mode admitted under a looser deployment fails with `FailedPrecondition` until the owner
 switches it; history is untouched. A session parked awaiting an approval in such a mode
 recovers through `SetMode` to an admitted, lower mode, which cancels the pending turn
-without running it (`cancelRefusedAwaiting`). A session parked on an MCP authorization
+without running it (`cancelRefusedAwaiting`) and closes the parked run on the event log
+with the ask's retract, cancellation tool results, and a cancelled result. A session parked on an MCP authorization
 settles the parked call without a continuation, so it ends idle and can switch. A project file's `permissionMode:` is ignored with a
 warning, and `auto` or `yolo` are refused as root without a declared sandbox.
 
@@ -89,7 +90,11 @@ Delegated children receive the parent session's mode through `parentCaps.parentM
 `effectiveChildMode` (`engine/agent/subagent.go`) runs a default-configured Subagent
 child, Parallel branch, or Team member in its parent's mode when that mode is `auto` or
 `yolo`, and keeps an explicitly configured child mode or a member definition's
-`permissionMode`. `Service.AdmittedModes` lists the modes `admitMode` accepts, which the
+`permissionMode`. A resumed Subagent child runs in the narrower of its stored mode and
+`effectiveChildMode` for the current parent (`resumedChildMode`), and the composition
+root passes `server.ModeAdmission`, the rule behind `admitMode`, through
+`WithChildModeAdmission`, so a resumed child in a mode the server no longer admits is
+refused with a tool error before it runs. `Service.AdmittedModes` lists the modes `admitMode` accepts, which the
 ACP adapter offers as its mode picker.
 
 A mode change is a session-aggregate transition that `session.SetMode` refuses while the

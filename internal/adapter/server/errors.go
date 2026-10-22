@@ -70,6 +70,11 @@ var (
 	// session cannot retry its failed model step from persisted conversation state.
 	// Eligibility is based only on typed persisted state.
 	ErrFailedStepRetryIneligible = fmt.Errorf("%w: failed-step retry is not eligible", ErrFailedPrecondition)
+	// ErrStoredModeNotAdmitted is the precondition sentinel returned when a
+	// session's stored permission mode is one this server no longer admits. Its
+	// stable code lets a client offer the SetMode recovery for exactly this
+	// refusal rather than for every FailedPrecondition.
+	ErrStoredModeNotAdmitted = fmt.Errorf("%w: stored permission mode is not admitted", ErrFailedPrecondition)
 	// ErrFailedPrecondition signals the request is well-formed but the server is
 	// in a state that forbids it — typically a server-side misconfiguration the
 	// client cannot fix by changing its arguments (e.g. spawning a Mutating team
