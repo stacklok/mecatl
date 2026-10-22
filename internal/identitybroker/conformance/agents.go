@@ -51,9 +51,9 @@ func runAgents(t *testing.T, factory serviceFactory) {
 
 	t.Run("a legacy incarnation registers", func(t *testing.T) {
 		svc := factory(t)
-		req := registerRequest(mustOpen(t, svc, openRequest("hostS42", alice)))
-		req.Incarnation = "legacy_" + strings.Repeat("0f", 32)
-		mustRegister(t, svc, req)
+		open := openRequest("hostS42", alice)
+		open.Incarnation = "legacy_" + strings.Repeat("0f", 32)
+		mustRegister(t, svc, registerRequest(mustOpen(t, svc, open)))
 	})
 
 	t.Run("registering again returns the same agent with a credential", func(t *testing.T) {
@@ -73,7 +73,6 @@ func runAgents(t *testing.T, factory serviceFactory) {
 		svc := factory(t)
 		a := registerRequest(mustOpen(t, svc, openRequest("hostS42", alice)))
 		b := registerRequest(mustOpen(t, svc, openRequest("hostS43", alice)))
-		b.Incarnation = incarnation("other")
 		if ra, rb := mustRegister(t, svc, a), mustRegister(t, svc, b); ra.Agent == rb.Agent {
 			t.Fatalf("two incarnations share agent %+v", ra.Agent)
 		}
@@ -98,6 +97,26 @@ func runAgents(t *testing.T, factory serviceFactory) {
 		wantError(t, "RegisterAgent of a main agent in another host session", err, identitybroker.CodePermissionDenied, "")
 	})
 
+	t.Run("a main agent with a stale incarnation is refused", func(t *testing.T) {
+		svc := factory(t)
+		// The host session was recreated under the same ID: the earlier
+		// session's main agent has another incarnation.
+		earlier := mustOpen(t, svc, openRequest("hostS42", alice))
+		stale := mustRegister(t, svc, registerRequest(earlier))
+		mustClose(t, svc, earlier.ID)
+		recreated := openRequest("hostS42", alice)
+		recreated.Incarnation = incarnation("hostS42 recreated")
+		s := mustOpen(t, svc, recreated)
+		req := registerRequest(s)
+		req.Incarnation = earlier.Incarnation
+		_, err := svc.RegisterAgent(ctx, req)
+		wantError(t, "RegisterAgent of a main agent with a stale incarnation", err, identitybroker.CodePermissionDenied, "")
+		// The recreated session's own main agent is a different agent.
+		if got := mustRegister(t, svc, registerRequest(s)); got.Agent == stale.Agent {
+			t.Fatalf("the recreated session's main agent is the stale one, %+v", got.Agent)
+		}
+	})
+
 	t.Run("a child registers under a parent registered to the session", func(t *testing.T) {
 		svc := factory(t)
 		s := mustOpen(t, svc, openRequest("hostS42", alice))
@@ -114,12 +133,10 @@ func runAgents(t *testing.T, factory serviceFactory) {
 	t.Run("a parent not registered to the session is refused", func(t *testing.T) {
 		svc := factory(t)
 		other := mustOpen(t, svc, openRequest("hostS43", alice))
-		elsewhere := registerRequest(other)
-		elsewhere.Incarnation = incarnation("elsewhere")
-		parentElsewhere := mustRegister(t, svc, elsewhere)
+		parentElsewhere := mustRegister(t, svc, registerRequest(other))
 		s := mustOpen(t, svc, openRequest("hostS42", alice))
 		for name, parent := range map[string]identitybroker.AgentRef{
-			"unregistered":           {Subject: strings.Replace(parentElsewhere.Agent.Subject, incarnation("elsewhere"), incarnation("unknown"), 1)},
+			"unregistered":           {Subject: strings.Replace(parentElsewhere.Agent.Subject, other.Incarnation, incarnation("unknown"), 1)},
 			"in another session":     parentElsewhere.Agent,
 			"not a registered agent": {Subject: "spiffe://agents.example.com/other"},
 		} {
@@ -134,14 +151,20 @@ func runAgents(t *testing.T, factory serviceFactory) {
 
 	t.Run("a registered agent cannot be taken over by another owner or host session", func(t *testing.T) {
 		svc := factory(t)
-		first := mustRegister(t, svc, registerRequest(mustOpen(t, svc, openRequest("hostS42", alice))))
+		alices := mustOpen(t, svc, openRequest("hostS42", alice))
+		first := mustRegister(t, svc, registerRequest(alices))
+		// Sessions reporting the first agent's incarnation as their own, so
+		// only the earlier registration can refuse them.
+		withFirstIncarnation := func(host string, owner identitybroker.Owner) identitybroker.Session {
+			req := openRequest(host, owner)
+			req.Incarnation = alices.Incarnation
+			return mustOpen(t, svc, req)
+		}
 		for name, s := range map[string]identitybroker.Session{
-			"another owner's session":        mustOpen(t, svc, openRequest("hostS43", bob)),
-			"the owner's other host session": mustOpen(t, svc, openRequest("hostS44", alice)),
+			"another owner's session":        withFirstIncarnation("hostS43", bob),
+			"the owner's other host session": withFirstIncarnation("hostS44", alice),
 		} {
-			req := registerRequest(s)
-			req.Incarnation = incarnation("main") // the first agent's incarnation
-			_, err := svc.RegisterAgent(ctx, req)
+			_, err := svc.RegisterAgent(ctx, registerRequest(s))
 			wantError(t, "RegisterAgent of an existing agent from "+name, err, identitybroker.CodeAlreadyExists, "")
 		}
 		// The agent is unchanged: registering it again where it is succeeds.

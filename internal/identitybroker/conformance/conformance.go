@@ -61,7 +61,7 @@ var (
 )
 
 func openRequest(host string, owner identitybroker.Owner) identitybroker.OpenSessionRequest {
-	return identitybroker.OpenSessionRequest{HostSessionID: host, Incarnation: "inc_" + host, Owner: owner}
+	return identitybroker.OpenSessionRequest{HostSessionID: host, Incarnation: incarnation(host), Owner: owner}
 }
 
 func findRequest(host string) identitybroker.FindSessionRequest {
@@ -76,12 +76,14 @@ func incarnation(label string) string {
 	return "inc_" + enc[:25] + "a"
 }
 
+// registerRequest registers s's main agent, whose incarnation is its host
+// session's.
 func registerRequest(s identitybroker.Session) identitybroker.RegisterAgentRequest {
 	return identitybroker.RegisterAgentRequest{
 		SessionID:     s.ID,
 		HostSessionID: s.HostSessionID,
 		Owner:         s.Owner,
-		Incarnation:   incarnation("main"),
+		Incarnation:   s.Incarnation,
 		Definition:    identitybroker.DefinitionRef{Source: "system", Name: "main", Revision: "v1"},
 	}
 }

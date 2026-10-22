@@ -46,15 +46,17 @@ func newCredentialFixture(t *testing.T) *credentialFixture {
 	}
 	b.sessions.now = func() time.Time { return f.now }
 	f.broker = b
-	f.session = f.open(t, "hostS42")
+	f.session = f.open(t, "hostS42", incMain)
 	f.reg = f.register(t, f.session, incMain)
 	return f
 }
 
-func (f *credentialFixture) open(t *testing.T, host string) Session {
+// open opens host's broker session with incarnation, which its main agent
+// must register with.
+func (f *credentialFixture) open(t *testing.T, host, incarnation string) Session {
 	t.Helper()
 	s, err := f.broker.OpenSession(context.Background(), credentialTestWorkload, OpenSessionRequest{
-		HostSessionID: host, Incarnation: "inc_" + host,
+		HostSessionID: host, Incarnation: incarnation,
 		Owner: Owner{Issuer: "https://login.example.com", Subject: "alice-204"},
 	})
 	if err != nil {
@@ -237,7 +239,7 @@ func TestVerifyCredentialChecks(t *testing.T) {
 			return f.forge(t, f.validHeader(), c, nil)
 		}, denied},
 		"registered to another session": {func(t *testing.T, f *credentialFixture) Token {
-			return f.register(t, f.open(t, "hostS43"), incOther).Credential
+			return f.register(t, f.open(t, "hostS43", incOther), incOther).Credential
 		}, denied},
 		// Order: the audience check comes before expiry, and expiry before
 		// registration.
@@ -297,7 +299,7 @@ func TestCredentialFromAnOpaqueSignerVerifies(t *testing.T) {
 		t.Fatalf("New: %v", err)
 	}
 	s, err := b.OpenSession(context.Background(), credentialTestWorkload, OpenSessionRequest{
-		HostSessionID: "hostS42", Incarnation: "inc_hostS42", Owner: Owner{Issuer: "https://login.example.com", Subject: "alice-204"},
+		HostSessionID: "hostS42", Incarnation: incMain, Owner: Owner{Issuer: "https://login.example.com", Subject: "alice-204"},
 	})
 	if err != nil {
 		t.Fatalf("OpenSession: %v", err)
@@ -335,7 +337,7 @@ func TestFailedSigningLeavesTheAgentWhereItWas(t *testing.T) {
 	ctx := context.Background()
 	owner := Owner{Issuer: "https://login.example.com", Subject: "alice-204"}
 	open := func() Session {
-		s, err := b.OpenSession(ctx, credentialTestWorkload, OpenSessionRequest{HostSessionID: "hostS42", Incarnation: "inc_hostS42", Owner: owner})
+		s, err := b.OpenSession(ctx, credentialTestWorkload, OpenSessionRequest{HostSessionID: "hostS42", Incarnation: incMain, Owner: owner})
 		if err != nil {
 			t.Fatalf("OpenSession: %v", err)
 		}
@@ -413,7 +415,7 @@ func TestRegistrationChecksAgainAfterSigning(t *testing.T) {
 		if err != nil {
 			t.Fatalf("New: %v", err)
 		}
-		s, err := b.OpenSession(ctx, credentialTestWorkload, OpenSessionRequest{HostSessionID: "hostS42", Incarnation: "inc_hostS42", Owner: alice})
+		s, err := b.OpenSession(ctx, credentialTestWorkload, OpenSessionRequest{HostSessionID: "hostS42", Incarnation: incMain, Owner: alice})
 		if err != nil {
 			t.Fatalf("OpenSession: %v", err)
 		}
@@ -450,7 +452,7 @@ func TestRegistrationChecksAgainAfterSigning(t *testing.T) {
 		b, signer, s := setup(t)
 		done := register(b, s)
 		<-signer.entered
-		bobs, err := b.OpenSession(ctx, credentialTestWorkload, OpenSessionRequest{HostSessionID: "hostS43", Incarnation: "inc_hostS43", Owner: bob})
+		bobs, err := b.OpenSession(ctx, credentialTestWorkload, OpenSessionRequest{HostSessionID: "hostS43", Incarnation: incMain, Owner: bob})
 		if err != nil {
 			t.Fatalf("OpenSession: %v", err)
 		}

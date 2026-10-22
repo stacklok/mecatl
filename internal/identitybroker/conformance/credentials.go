@@ -78,9 +78,7 @@ func runCredentials(t *testing.T, factory Factory) {
 	t.Run("agents share the ag_ identifier but not their instance", func(t *testing.T) {
 		f := setup(t)
 		other := mustOpen(t, f.svc, openRequest("hostS43", alice))
-		req := registerRequest(other)
-		req.Incarnation = incarnation("other")
-		otherReg := mustRegisterAt(t, f.svc, req, f.clock.Now)
+		otherReg := mustRegisterAt(t, f.svc, registerRequest(other), f.clock.Now)
 		a, errA := verify(f.core, f.session.ID, f.reg.Credential)
 		b, errB := verify(f.core, other.ID, otherReg.Credential)
 		if errA != nil || errB != nil {
@@ -119,10 +117,11 @@ func runCredentials(t *testing.T, factory Factory) {
 
 	t.Run("a refused takeover leaves the credential bound to its session", func(t *testing.T) {
 		f := setup(t)
-		bobs := mustOpen(t, f.svc, openRequest("hostS43", bob))
-		takeover := registerRequest(bobs)
-		takeover.Incarnation = registerRequest(f.session).Incarnation
-		if _, err := f.svc.RegisterAgent(ctx, takeover); err == nil {
+		// Bob's session reports Alice's agent's incarnation as its own.
+		open := openRequest("hostS43", bob)
+		open.Incarnation = f.session.Incarnation
+		bobs := mustOpen(t, f.svc, open)
+		if _, err := f.svc.RegisterAgent(ctx, registerRequest(bobs)); err == nil {
 			t.Fatal("another owner's session took over the agent")
 		}
 		got, err := verify(f.core, bobs.ID, f.reg.Credential)

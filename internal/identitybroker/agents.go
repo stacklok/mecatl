@@ -92,6 +92,12 @@ func (t *sessionTable) checkRegistrationLocked(workload Workload, subject string
 		if req.HostSessionID != s.HostSessionID {
 			return Session{}, NewError(CodePermissionDenied, "", "an agent with no parent must run in the broker session's root host session")
 		}
+		// The main agent's incarnation is its host session's, so a stale one
+		// (from an earlier session under the same host session ID) cannot
+		// move that session's agent and identity into this one.
+		if req.Incarnation != s.Incarnation {
+			return Session{}, NewError(CodePermissionDenied, "", "an agent with no parent must have the root host session's incarnation")
+		}
 	} else if parent, ok := t.agents[req.Parent.Subject]; !ok || parent.sessionID != s.ID {
 		return Session{}, NewError(CodePermissionDenied, "", "the parent agent is not registered to the broker session")
 	}

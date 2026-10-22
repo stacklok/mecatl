@@ -26,8 +26,9 @@ import (
 //   - RegisterAgent refuses a request whose owner differs from the broker
 //     session's owner with CodePermissionDenied: one session tree has one
 //     owner. It also refuses, with CodePermissionDenied, an agent with no
-//     parent whose host session is not the broker session's root host
-//     session, and an agent whose parent is not registered to the session.
+//     parent whose host session or incarnation is not the broker session's
+//     root host session or incarnation, and an agent whose parent is not
+//     registered to the session.
 //   - Registering the same incarnation again returns the same agent with a
 //     fresh credential, so a lost response or an expiring credential is
 //     handled by registering again. Registering it into a new broker session
@@ -158,9 +159,10 @@ type RegisterAgentRequest struct {
 	// Owner must equal the broker session's owner.
 	Owner Owner
 	// Incarnation is the agent instance's incarnation, which the harness
-	// allocates and persists. It becomes a segment of the agent's SPIFFE ID,
-	// so it must be a Mecatl incarnation: inc_ and 26 lowercase base32
-	// characters, or legacy_ and 64 hex characters.
+	// allocates and persists: its host session's incarnation. With no Parent
+	// it must equal the broker session's incarnation. It becomes a segment of
+	// the agent's SPIFFE ID, so it must be a Mecatl incarnation: inc_ and 26
+	// lowercase base32 characters, or legacy_ and 64 hex characters.
 	Incarnation string
 	// Definition is the definition the instance runs. Name is required. Source
 	// and Revision are checked when set but may be empty for now, because

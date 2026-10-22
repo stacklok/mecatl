@@ -219,12 +219,13 @@ func TestIdentityBrokerDefaultWiringRegistersAgents(t *testing.T) {
 	}
 	t.Cleanup(built.Close)
 	owner := identitybroker.Owner{Issuer: "https://login.example.com", Subject: "alice-204"}
-	opened, err := built.IdentityBroker.OpenSession(t.Context(), identitybroker.OpenSessionRequest{HostSessionID: "hostS42", Incarnation: "inc_hostS42", Owner: owner})
+	incarnation := string(session.NewIncarnationID())
+	opened, err := built.IdentityBroker.OpenSession(t.Context(), identitybroker.OpenSessionRequest{HostSessionID: "hostS42", Incarnation: incarnation, Owner: owner})
 	if err != nil {
 		t.Fatalf("OpenSession: %v", err)
 	}
 	reg, err := built.IdentityBroker.RegisterAgent(t.Context(), identitybroker.RegisterAgentRequest{
-		SessionID: opened.ID, HostSessionID: "hostS42", Owner: owner, Incarnation: "inc_abcdefghijklmnopqrstuvwxya",
+		SessionID: opened.ID, HostSessionID: "hostS42", Owner: owner, Incarnation: incarnation,
 		Definition: identitybroker.DefinitionRef{Source: "system", Name: "main"},
 	})
 	if err != nil {
