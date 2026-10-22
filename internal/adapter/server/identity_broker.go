@@ -46,6 +46,8 @@ func identityBrokerOwner(owner *session.Principal) (identitybroker.Owner, bool) 
 // kept in memory only, never persisted and never given to the engine or the
 // model, so the MCP broker can present it later.
 type identityAgent struct {
+	// incarnation is the session incarnation the agent was registered with.
+	incarnation string
 	// brokerSessionID is the broker session the agent was registered to; the
 	// credential verifies only there.
 	brokerSessionID string
@@ -62,7 +64,7 @@ type identityAgent struct {
 // the saved session, so its incarnation is the persisted one.
 //
 // If registration finds the broker session closed, it opens a new one and
-// registers again, once.
+// registers again, once; closed a second time, it fails as unavailable.
 func (s *Service) openIdentityBrokerSession(ctx context.Context, sess *session.Session) error {
 	if s.cfg.IdentityBroker == nil || !identityBrokerRoot(sess) {
 		return nil
@@ -77,8 +79,13 @@ func (s *Service) openIdentityBrokerSession(ctx context.Context, sess *session.S
 			return err
 		}
 		err = s.registerIdentityAgent(ctx, sess, owner, brokerSession)
-		if attempt == 0 && errors.Is(err, errIdentityBrokerSessionClosed) {
-			continue
+		if errors.Is(err, errIdentityBrokerSessionClosed) {
+			if attempt == 0 {
+				continue
+			}
+			// Closed again: something keeps closing it, such as a delete in
+			// flight. Report it as retryable, like an unavailable broker.
+			return ErrIdentityBrokerUnavailable
 		}
 		return err
 	}
@@ -133,6 +140,9 @@ func (s *Service) registerIdentityAgent(ctx context.Context, sess *session.Sessi
 	s.mu.Lock()
 	held, ok := s.identityAgents[sess.ID]
 	s.mu.Unlock()
+	// A credential held for another incarnation of this session ID belongs to
+	// an agent that no longer exists here: replace it rather than compare.
+	ok = ok && held.incarnation == incarnation
 	if ok && held.brokerSessionID == brokerSession.ID && now.Before(held.renewAt) {
 		return nil
 	}
@@ -157,6 +167,7 @@ func (s *Service) registerIdentityAgent(ctx context.Context, sess *session.Sessi
 	}
 	s.mu.Lock()
 	s.identityAgents[sess.ID] = identityAgent{
+		incarnation:     incarnation,
 		brokerSessionID: brokerSession.ID,
 		registration:    reg,
 		renewAt:         now.Add(reg.ExpiresAt.Sub(now) / 2),

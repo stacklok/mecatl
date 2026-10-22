@@ -6,6 +6,7 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -42,6 +43,9 @@ type recordingBroker struct {
 	beforeRegister func(identitybroker.RegisterAgentRequest)
 	// otherAgent makes RegisterAgent return another agent than registered.
 	otherAgent bool
+	// renamedAgent makes RegisterAgent return another agent whose SPIFFE ID
+	// still ends in the registered incarnation.
+	renamedAgent bool
 }
 
 // newRecordingBroker wraps the real identity broker, so these tests exercise
@@ -110,7 +114,7 @@ func (b *recordingBroker) RegisterAgent(ctx context.Context, req identitybroker.
 	}
 	b.mu.Lock()
 	b.registers = append(b.registers, req)
-	registerDown, hook, other := b.registerUnavailable, b.beforeRegister, b.otherAgent
+	registerDown, hook, other, renamed := b.registerUnavailable, b.beforeRegister, b.otherAgent, b.renamedAgent
 	b.mu.Unlock()
 	if registerDown {
 		return identitybroker.Registration{}, identitybroker.NewError(identitybroker.CodeUnavailable, "", "test broker cannot register")
@@ -121,6 +125,9 @@ func (b *recordingBroker) RegisterAgent(ctx context.Context, req identitybroker.
 	reg, err := b.inner.RegisterAgent(ctx, req)
 	if err == nil && other {
 		reg.Agent.Subject += "-other"
+	}
+	if err == nil && renamed {
+		reg.Agent.Subject = strings.Replace(reg.Agent.Subject, "/shared/", "/renamed/", 1)
 	}
 	return reg, err
 }

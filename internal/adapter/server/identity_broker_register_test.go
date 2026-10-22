@@ -187,6 +187,58 @@ func TestIdentityBrokerRefusesAnotherAgent(t *testing.T) {
 	}
 }
 
+func TestIdentityBrokerRefusesAnotherAgentOnRenewal(t *testing.T) {
+	// The renewed agent's ID still ends in the incarnation, so only the
+	// comparison with the agent held before catches it.
+	broker := newRecordingBroker()
+	llm := mockllm.New(mockllm.TextTurn("must not run"))
+	svc := newIdentityBrokerService(t, broker, llm)
+	ctx := aliceContext(t)
+	sess, err := svc.CreateSession(ctx, session.ModeDefault, session.Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := wantBrokerSession(t, broker, sess)
+	// A reopen makes run entry register again.
+	if err := broker.inner.CloseSession(t.Context(), identitybroker.CloseSessionRequest{SessionID: first.ID, Reason: identitybroker.ReasonSessionClosed}); err != nil {
+		t.Fatal(err)
+	}
+	broker.set(func(b *recordingBroker) { b.renamedAgent = true })
+	if err := runToEnd(ctx, t, svc, sess.ID); !errors.Is(err, server.ErrInternal) {
+		t.Fatalf("run when a renewal returns another agent: %v, want ErrInternal", err)
+	}
+	if n := llm.Calls(); n != 0 {
+		t.Fatalf("the agent ran with another agent's credential: %d model requests", n)
+	}
+}
+
+func TestIdentityBrokerSessionClosedTwiceDuringRegistrationIsRetryable(t *testing.T) {
+	broker := newRecordingBroker()
+	llm := mockllm.New(mockllm.TextTurn("must not run"))
+	svc := newIdentityBrokerService(t, broker, llm)
+	ctx := aliceContext(t)
+	sess, err := svc.CreateSession(ctx, session.ModeDefault, session.Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := wantBrokerSession(t, broker, sess)
+	if err := broker.inner.CloseSession(t.Context(), identitybroker.CloseSessionRequest{SessionID: first.ID, Reason: identitybroker.ReasonSessionClosed}); err != nil {
+		t.Fatal(err)
+	}
+	// Every registration finds its broker session closed.
+	broker.set(func(b *recordingBroker) {
+		b.beforeRegister = func(req identitybroker.RegisterAgentRequest) {
+			_ = b.inner.CloseSession(t.Context(), identitybroker.CloseSessionRequest{SessionID: req.SessionID, Reason: identitybroker.ReasonSessionClosed})
+		}
+	})
+	if err := runToEnd(ctx, t, svc, sess.ID); !errors.Is(err, server.ErrIdentityBrokerUnavailable) {
+		t.Fatalf("run when the broker session keeps closing: %v, want ErrIdentityBrokerUnavailable", err)
+	}
+	if n := llm.Calls(); n != 0 {
+		t.Fatalf("the agent ran unregistered: %d model requests", n)
+	}
+}
+
 func TestIdentityBrokerSuccessorsRegisterTheirOwnAgents(t *testing.T) {
 	broker := newRecordingBroker()
 	svc := newIdentityBrokerService(t, broker, mockllm.New())

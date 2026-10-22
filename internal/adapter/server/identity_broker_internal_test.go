@@ -91,7 +91,10 @@ func TestIdentityAgentDefinition(t *testing.T) {
 	}
 }
 
-func TestClosingASessionDropsItsHeldCredential(t *testing.T) {
+// newRegisteringService returns a Service with the real identity broker, and
+// a saved-looking root session with an owner.
+func newRegisteringService(t *testing.T) (*Service, *session.Session) {
+	t.Helper()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		t.Fatal(err)
@@ -118,6 +121,35 @@ func TestClosingASessionDropsItsHeldCredential(t *testing.T) {
 	if err := sess.RestoreLabels(&session.Principal{Issuer: "https://login.example.com", Subject: "alice-204", GrantType: session.GrantTypeUser}, session.Authority{}); err != nil {
 		t.Fatal(err)
 	}
+	return svc, sess
+}
+
+func TestACredentialHeldForAnotherIncarnationIsReplaced(t *testing.T) {
+	svc, sess := newRegisteringService(t)
+	// Left from an earlier incarnation of this session ID, as a session
+	// recreated elsewhere would leave it.
+	stale := identityAgent{
+		incarnation:     string(session.NewIncarnationID()),
+		brokerSessionID: "bs_stale",
+		registration:    identitybroker.Registration{Agent: identitybroker.AgentRef{Subject: "spiffe://agents.example.com/mecatl/agent/shared/inst/stale"}},
+		renewAt:         time.Now().Add(time.Hour),
+	}
+	svc.mu.Lock()
+	svc.identityAgents[sess.ID] = stale
+	svc.mu.Unlock()
+	if err := svc.openIdentityBrokerSession(t.Context(), sess); err != nil {
+		t.Fatalf("openIdentityBrokerSession with a stale credential held: %v", err)
+	}
+	svc.mu.Lock()
+	got := svc.identityAgents[sess.ID]
+	svc.mu.Unlock()
+	if got.incarnation != string(sess.Incarnation()) || got.registration.Agent == stale.registration.Agent {
+		t.Fatalf("held credential = %+v, want the current incarnation's agent", got)
+	}
+}
+
+func TestClosingASessionDropsItsHeldCredential(t *testing.T) {
+	svc, sess := newRegisteringService(t)
 	if err := svc.openIdentityBrokerSession(t.Context(), sess); err != nil {
 		t.Fatal(err)
 	}
