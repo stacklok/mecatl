@@ -511,6 +511,7 @@ test("a schedule row opens on a plain click, not on a modified click or a text s
 });
 
 test("the one-shot date and time stay independent while the date is edited", async ({
+  isMobile,
   offlineBff,
   page,
 }) => {
@@ -541,9 +542,13 @@ test("the one-shot date and time stay independent while the date is edited", asy
   await expect(time).toHaveValue("15:30");
   await expect(create).toBeEnabled();
 
-  // Clearing one date segment from the keyboard leaves no date, but the time stays.
-  await date.focus();
-  await page.keyboard.press("Backspace");
+  // Mobile uses a native date picker, not the desktop's keyboard-editable segments.
+  if (isMobile) {
+    await date.clear();
+  } else {
+    await date.focus();
+    await page.keyboard.press("Backspace");
+  }
   await expect(date).toHaveValue("");
   await expect(time).toHaveValue("15:30");
   await expect(create).toBeDisabled();
