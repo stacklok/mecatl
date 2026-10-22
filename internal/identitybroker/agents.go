@@ -23,10 +23,31 @@ type agentRecord struct {
 	definition    DefinitionRef
 	parent        AgentRef
 	// credentials holds the credentials issued since the instance last moved
-	// to another broker session, by SHA-256 of the token, with their expiry.
-	// Only these verify, so reopening a session does not revive credentials
-	// issued before it closed, however close together the two were issued.
+	// to another broker session, by SHA-256 of the token, with their expiry;
+	// at most maxIssuedCredentials. Only these verify, so reopening a session
+	// does not revive credentials issued before it closed, however close
+	// together the two were issued. Expired entries are dropped when the
+	// instance registers again.
 	credentials map[[sha256.Size]byte]time.Time
+}
+
+// maxIssuedCredentials bounds agentRecord.credentials, so repeated
+// registrations cannot grow an agent's record, or the work done under the
+// session lock, without limit. Mecatl registers again only when a credential
+// nears expiry or the session changes, so a few cover a lost response or a
+// retry racing another registration.
+const maxIssuedCredentials = 4
+
+// earliestToExpire returns the credential in credentials that expires first.
+func earliestToExpire(credentials map[[sha256.Size]byte]time.Time) [sha256.Size]byte {
+	var first [sha256.Size]byte
+	var firstExp time.Time
+	for h, exp := range credentials {
+		if firstExp.IsZero() || exp.Before(firstExp) {
+			first, firstExp = h, exp
+		}
+	}
+	return first
 }
 
 // credentialHash identifies a credential in agentRecord.credentials.
@@ -65,6 +86,14 @@ func (b *Broker) RegisterAgent(_ context.Context, workload Workload, req Registe
 	if err != nil {
 		return Registration{}, err
 	}
+	t.recordLocked(subject, s.ID, req, credential, expiresAt)
+	return Registration{Agent: AgentRef{Subject: subject}, Credential: credential, ExpiresAt: expiresAt}, nil
+}
+
+// recordLocked records a registration of subject in session sessionID, with
+// the credential just issued, which always verifies afterwards. The caller
+// holds t.mu.
+func (t *sessionTable) recordLocked(subject, sessionID string, req RegisterAgentRequest, credential Token, expiresAt time.Time) {
 	rec, ok := t.agents[subject]
 	switch {
 	case !ok:
@@ -76,25 +105,33 @@ func (b *Broker) RegisterAgent(_ context.Context, workload Workload, req Registe
 			parent:        req.Parent,
 		}
 		t.agents[subject] = rec
-	case rec.sessionID == s.ID:
+	case rec.sessionID == sessionID:
 		// Registering again in the same session keeps the credentials issued
-		// there, dropping expired ones. Its definition stays the first one
-		// reported, since a later one is not compared yet.
-		now := t.now()
-		for h, exp := range rec.credentials {
-			if !now.Before(exp.Add(credentialClockSkew)) {
-				delete(rec.credentials, h)
-			}
-		}
+		// there, dropping expired ones and, past maxIssuedCredentials, the
+		// earliest to expire. Its definition stays the first one reported,
+		// since a later one is not compared yet.
+		rec.pruneCredentials(t.now())
 	}
-	if !ok || rec.sessionID != s.ID {
+	if !ok || rec.sessionID != sessionID {
 		// A new instance, or one moving to another session: only the
 		// credential issued now verifies.
-		rec.sessionID = s.ID
+		rec.sessionID = sessionID
 		rec.credentials = map[[sha256.Size]byte]time.Time{}
 	}
 	rec.credentials[credentialHash(credential)] = expiresAt
-	return Registration{Agent: AgentRef{Subject: subject}, Credential: credential, ExpiresAt: expiresAt}, nil
+}
+
+// pruneCredentials drops expired credentials, then the earliest to expire
+// until there is room for one more within maxIssuedCredentials.
+func (r *agentRecord) pruneCredentials(now time.Time) {
+	for h, exp := range r.credentials {
+		if !now.Before(exp.Add(credentialClockSkew)) {
+			delete(r.credentials, h)
+		}
+	}
+	for len(r.credentials) >= maxIssuedCredentials {
+		delete(r.credentials, earliestToExpire(r.credentials))
+	}
 }
 
 // checkRegistration is checkRegistrationLocked under t.mu.

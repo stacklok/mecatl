@@ -578,13 +578,24 @@ func TestRegistrationsRacingAMoveBothGetUsableCredentials(t *testing.T) {
 	}
 }
 
-func TestReregistrationInTheSameSessionKeepsEarlierCredentials(t *testing.T) {
+func TestReregistrationKeepsAtMostMaxIssuedCredentials(t *testing.T) {
 	f := newCredentialFixture(t)
-	f.now = f.now.Add(time.Minute)
-	again := f.register(t, f.session, incMain)
-	for name, reg := range map[string]Registration{"earlier": f.reg, "later": again} {
-		if _, err := f.verify(f.session.ID, reg.Credential); err != nil {
-			t.Errorf("the %s credential does not verify: %v", name, err)
+	regs := []Registration{f.reg}
+	for range maxIssuedCredentials + 1 {
+		f.now = f.now.Add(time.Second) // a distinct expiry, so a distinct token
+		regs = append(regs, f.register(t, f.session, incMain))
+	}
+	if n := len(f.broker.sessions.agents[f.reg.Agent.Subject].credentials); n != maxIssuedCredentials {
+		t.Fatalf("the agent keeps %d credentials, want %d", n, maxIssuedCredentials)
+	}
+	evicted := len(regs) - maxIssuedCredentials
+	for i, reg := range regs {
+		_, err := f.verify(f.session.ID, reg.Credential)
+		if i < evicted && err == nil {
+			t.Errorf("credential %d, among the earliest to expire, still verifies", i)
+		}
+		if i >= evicted && err != nil {
+			t.Errorf("credential %d does not verify: %v", i, err)
 		}
 	}
 }

@@ -115,6 +115,18 @@ func runCredentials(t *testing.T, factory Factory) {
 		wantRefused(t, "VerifyCredential in the old session", got, err, identitybroker.CodePermissionDenied, identitybroker.ReasonDenied)
 	})
 
+	t.Run("registering again in the same session keeps the earlier credential", func(t *testing.T) {
+		// A lost response or a retry leaves the caller holding the earlier one.
+		f := setup(t)
+		f.clock.Advance(time.Minute)
+		again := mustRegisterAt(t, f.svc, registerRequest(f.session), f.clock.Now)
+		for name, reg := range map[string]identitybroker.Registration{"earlier": f.reg, "later": again} {
+			if _, err := verify(f.core, f.session.ID, reg.Credential); err != nil {
+				t.Errorf("VerifyCredential of the %s credential: %v", name, err)
+			}
+		}
+	})
+
 	t.Run("a reopened session does not revive credentials issued before it closed", func(t *testing.T) {
 		// The clock does not move, so both credentials are issued in the same
 		// second and carry the same expiry.
