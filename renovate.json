@@ -69,11 +69,25 @@
       "minimumReleaseAge": "3 days"
     },
     {
-      "description": "One routine update PR across Go modules, JavaScript workspaces, images, CI actions, and toolchains; override preset groups so related pins move together",
+      "description": "Group routine images, CI actions, and toolchains; Go and JavaScript rules below override this fallback group",
       "matchPackageNames": ["*"],
       "matchUpdateTypes": ["minor", "patch", "pin", "pinDigest", "digest"],
-      "groupName": "routine dependencies",
-      "groupSlug": "routine-dependencies"
+      "groupName": "tooling dependencies",
+      "groupSlug": "tooling-dependencies"
+    },
+    {
+      "description": "Group routine Go module updates across all modules",
+      "matchManagers": ["gomod"],
+      "matchUpdateTypes": ["minor", "patch", "pin", "pinDigest", "digest"],
+      "groupName": "go dependencies",
+      "groupSlug": "go-dependencies"
+    },
+    {
+      "description": "Group routine npm packages across JavaScript workspaces and CI, including pnpm pins so packageManager fields and action inputs move together",
+      "matchDatasources": ["npm"],
+      "matchUpdateTypes": ["minor", "patch", "pin", "pinDigest", "digest"],
+      "groupName": "javascript dependencies",
+      "groupSlug": "javascript-dependencies"
     },
     {
       "description": "Keep approval-gated runner upgrades out of the routine batch so they cannot hold it up",
@@ -111,7 +125,7 @@
       "addLabels": ["studio-runtime"]
     },
     {
-      "description": "Label GitHub Actions and setup-tool updates without splitting them out of the routine dependency PR",
+      "description": "Label GitHub Actions and setup-tool updates without changing their dependency bucket",
       "matchManagers": ["github-actions"],
       "matchDepTypes": ["action", "workflow", "uses-with"],
       "addLabels": ["ci"]
