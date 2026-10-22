@@ -21,6 +21,8 @@
   "vulnerabilityAlerts": {
     "enabled": true,
     "schedule": ["at any time"],
+    "groupName": null,
+    "groupSlug": null,
     "addLabels": ["security"]
   },
   "prConcurrentLimit": 10,
@@ -62,94 +64,24 @@
       "enabled": false
     },
     {
-      "description": "Runner image upgrades change the build environment; request them from the Dependency Dashboard",
-      "matchManagers": ["github-actions"],
-      "matchDepTypes": ["github-runner"],
-      "dependencyDashboardApproval": true
-    },
-    {
       "description": "Wait before adopting new npm releases (supply-chain hygiene)",
       "matchDatasources": ["npm"],
       "minimumReleaseAge": "3 days"
     },
     {
-      "description": "Group routine Go module updates not covered by a more specific group",
-      "matchManagers": ["gomod"],
-      "matchUpdateTypes": ["minor", "patch", "digest"],
-      "groupName": "go dependencies"
-    },
-    {
-      "matchManagers": ["gomod"],
-      "matchPackageNames": ["go.opentelemetry.io/**"],
-      "groupName": "go opentelemetry"
-    },
-    {
-      "matchManagers": ["gomod"],
-      "matchPackageNames": ["k8s.io/**", "sigs.k8s.io/**"],
-      "groupName": "go kubernetes"
-    },
-    {
-      "matchManagers": ["gomod"],
-      "matchPackageNames": ["google.golang.org/**", "buf.build/gen/go/**"],
-      "groupName": "go grpc and protobuf"
-    },
-    {
-      "matchManagers": ["gomod"],
-      "matchPackageNames": ["golang.org/x/**"],
-      "groupName": "go golang.org/x"
-    },
-    {
-      "description": "mecatui terminal UI stack",
-      "matchManagers": ["gomod"],
-      "matchPackageNames": ["charm.land/**", "github.com/charmbracelet/**"],
-      "groupName": "go charm"
-    },
-    {
-      "matchManagers": ["gomod"],
-      "matchPackageNames": ["github.com/prometheus/**"],
-      "groupName": "go prometheus"
-    },
-    {
-      "matchManagers": ["gomod"],
-      "matchPackageNames": ["github.com/onsi/**"],
-      "groupName": "go ginkgo and gomega"
-    },
-    {
-      "matchManagers": ["gomod"],
-      "matchPackageNames": [
-        "github.com/stacklok/**",
-        "!github.com/stacklok/mecatl/**"
-      ],
-      "groupName": "go stacklok modules"
-    },
-    {
-      "description": "Provider SDKs change model-facing behaviour; keep each vendor reviewable on its own across root and provider modules",
-      "matchManagers": ["gomod"],
-      "matchPackageNames": ["github.com/anthropics/anthropic-sdk-go"],
-      "groupName": "go anthropic sdk"
-    },
-    {
-      "matchManagers": ["gomod"],
-      "matchPackageNames": ["github.com/openai/openai-go/**"],
-      "groupName": "go openai sdk"
-    },
-    {
-      "description": "Group routine Docker image updates",
-      "matchDatasources": ["docker"],
+      "description": "One routine update PR across Go modules, JavaScript workspaces, images, CI actions, and toolchains; override preset groups so related pins move together",
+      "matchPackageNames": ["*"],
       "matchUpdateTypes": ["minor", "patch", "pin", "pinDigest", "digest"],
-      "groupName": "docker images"
+      "groupName": "routine dependencies",
+      "groupSlug": "routine-dependencies"
     },
     {
-      "description": "Review Slack bot Chainguard builder (latest-dev) and runtime (latest) digest updates together; their tags preserve the separate update channels",
-      "matchManagers": ["dockerfile"],
-      "matchFileNames": ["sdk/typescript/examples/slack-bot/docker/bot.Dockerfile"],
-      "matchPackageNames": ["cgr.dev/chainguard/node"],
-      "groupName": "slack bot base images"
-    },
-    {
-      "description": "Website (Docusaurus docs site): one PR for routine updates; majors land separately so one needing config work doesn't hold up the rest",
-      "matchFileNames": ["website/**"],
-      "groupName": "website"
+      "description": "Keep approval-gated runner upgrades out of the routine batch so they cannot hold it up",
+      "matchManagers": ["github-actions"],
+      "matchDepTypes": ["github-runner"],
+      "dependencyDashboardApproval": true,
+      "groupName": null,
+      "groupSlug": null
     },
     {
       "description": "Website: bump package.json ranges so every update is visible in the diff, not only in the lockfile",
@@ -165,18 +97,6 @@
       "rangeStrategy": "replace"
     },
     {
-      "description": "Published TypeScript SDK and its examples",
-      "matchFileNames": ["sdk/typescript/**"],
-      "matchUpdateTypes": ["minor", "patch"],
-      "groupName": "typescript sdk"
-    },
-    {
-      "description": "Mecatl Studio workspace, Node version, and image",
-      "matchFileNames": ["apps/**"],
-      "matchUpdateTypes": ["minor", "patch", "pin", "pinDigest", "digest"],
-      "groupName": "studio"
-    },
-    {
       "description": "Studio runs one Node major everywhere, set by apps/package.json engines (>=26 <27); never propose the next major for the builder image, .node-version, or @types/node — move them together with engines on purpose",
       "matchFileNames": ["apps/**"],
       "matchPackageNames": ["node", "@types/node"],
@@ -187,29 +107,19 @@
       "matchFileNames": ["apps/Dockerfile"],
       "matchPackageNames": ["cgr.dev/chainguard/node"],
       "groupName": "studio node runtime",
+      "groupSlug": "studio-node-runtime",
       "addLabels": ["studio-runtime"]
     },
     {
-      "description": "Group routine GitHub Actions updates",
+      "description": "Label GitHub Actions and setup-tool updates without splitting them out of the routine dependency PR",
       "matchManagers": ["github-actions"],
-      "matchDepTypes": ["action", "workflow"],
-      "matchUpdateTypes": ["minor", "patch", "pin", "pinDigest", "digest"],
-      "groupName": "github actions",
-      "semanticCommitScope": "ci",
+      "matchDepTypes": ["action", "workflow", "uses-with"],
       "addLabels": ["ci"]
     },
     {
-      "description": "Tool versions passed to setup-* actions (node, buf, helm, deno, bun, ...)",
-      "matchManagers": ["github-actions"],
-      "matchDepTypes": ["uses-with"],
-      "matchUpdateTypes": ["minor", "patch"],
-      "groupName": "ci toolchain versions",
-      "semanticCommitScope": "ci",
-      "addLabels": ["ci"]
-    },
-    {
-      "description": "pnpm pins in packageManager fields and pnpm/action-setup inputs must move together, or pnpm/action-setup fails on a version mismatch",
+      "description": "Keep pnpm major upgrades coordinated across packageManager fields and pnpm/action-setup inputs; routine pnpm updates join the shared batch",
       "matchPackageNames": ["pnpm"],
+      "matchUpdateTypes": ["major"],
       "groupName": "pnpm"
     }
   ]
