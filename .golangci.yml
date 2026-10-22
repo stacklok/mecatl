@@ -743,6 +743,9 @@ linters:
             - '!$test'
           allow:
             - $gostd
+            # Agent credentials are JWT-SVIDs; the library encodes, parses, and
+            # verifies them rather than hand-rolled JWS code.
+            - github.com/golang-jwt/jwt/v5$
           deny:
             - pkg: crypto/tls
               desc: 'the identity broker core is in-process; TLS connections belong in transport adapters'

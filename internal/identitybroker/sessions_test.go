@@ -66,24 +66,6 @@ func TestBrokerSessionIDsDoNotRepeatAcrossRestarts(t *testing.T) {
 	}
 }
 
-func TestBrokerRegisterAgentIsNotAvailableYet(t *testing.T) {
-	b := newBroker(t)
-	s := openSession(t, b)
-	got, err := b.RegisterAgent(context.Background(), testWorkload, identitybroker.RegisterAgentRequest{
-		SessionID:     s.ID,
-		HostSessionID: s.HostSessionID,
-		Owner:         s.Owner,
-		Incarnation:   "inc_main",
-		Definition:    identitybroker.DefinitionRef{Name: "main"},
-	})
-	if !errors.Is(err, identitybroker.NewError(identitybroker.CodeInternal, "", "")) {
-		t.Fatalf("RegisterAgent error = %v, want INTERNAL", err)
-	}
-	if got != (identitybroker.Registration{}) {
-		t.Fatalf("a failed RegisterAgent returned %+v", got)
-	}
-}
-
 func TestBrokerAuthorizeCallDeniesEveryCall(t *testing.T) {
 	b := newBroker(t)
 	s := openSession(t, b)

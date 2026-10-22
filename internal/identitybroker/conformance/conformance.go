@@ -31,6 +31,7 @@ func Run(t *testing.T, factory Factory) {
 	}
 	t.Run("sessions", func(t *testing.T) { runSessions(t, service) })
 	t.Run("closed sessions", func(t *testing.T) { runClosedSessions(t, service) })
+	t.Run("agents", func(t *testing.T) { runAgents(t, service) })
 	t.Run("invalid requests", func(t *testing.T) { runInvalidRequests(t, service) })
 	t.Run("workloads", func(t *testing.T) { runWorkloads(t, factory) })
 }

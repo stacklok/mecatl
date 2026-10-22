@@ -2,6 +2,7 @@ package conformance
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"testing"
 
@@ -217,11 +218,15 @@ func runInvalidRequests(t *testing.T, factory serviceFactory) {
 		"no host session": func(r *identitybroker.RegisterAgentRequest) { r.HostSessionID = "" },
 		"no owner":        func(r *identitybroker.RegisterAgentRequest) { r.Owner = identitybroker.Owner{} },
 		"no incarnation":  func(r *identitybroker.RegisterAgentRequest) { r.Incarnation = "" },
-		"no definition":   func(r *identitybroker.RegisterAgentRequest) { r.Definition = identitybroker.DefinitionRef{} },
-		"bad definition":  func(r *identitybroker.RegisterAgentRequest) { r.Definition.Name = "../main" },
-		"bad source":      func(r *identitybroker.RegisterAgentRequest) { r.Definition.Source = "../system" },
-		"bad revision":    func(r *identitybroker.RegisterAgentRequest) { r.Definition.Revision = "v 1" },
-		"bad parent":      func(r *identitybroker.RegisterAgentRequest) { r.Parent.Subject = "spiffe://x/ y" },
+		"bad incarnation": func(r *identitybroker.RegisterAgentRequest) { r.Incarnation = "inc/main" },
+		"long incarnation": func(r *identitybroker.RegisterAgentRequest) {
+			r.Incarnation = strings.Repeat("a", identitybroker.MaxIncarnationBytes+1)
+		},
+		"no definition":  func(r *identitybroker.RegisterAgentRequest) { r.Definition = identitybroker.DefinitionRef{} },
+		"bad definition": func(r *identitybroker.RegisterAgentRequest) { r.Definition.Name = "../main" },
+		"bad source":     func(r *identitybroker.RegisterAgentRequest) { r.Definition.Source = "../system" },
+		"bad revision":   func(r *identitybroker.RegisterAgentRequest) { r.Definition.Revision = "v 1" },
+		"bad parent":     func(r *identitybroker.RegisterAgentRequest) { r.Parent.Subject = "spiffe://x/ y" },
 	}
 	for name, mutate := range registers {
 		req := registerRequest(s)

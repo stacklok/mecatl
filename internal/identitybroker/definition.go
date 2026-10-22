@@ -142,11 +142,20 @@ func (r DefinitionRecord) equal(o DefinitionRecord) bool {
 		maps.Equal(r.Provenance.Metadata, o.Provenance.Metadata)
 }
 
-// isSegment reports whether s is a SPIFFE-path-safe segment: non-empty, at most
-// MaxSegmentBytes, [A-Za-z0-9._-] only, and neither "." nor "..". Invalid values
+// MaxIncarnationBytes bounds RegisterAgentRequest.Incarnation, which becomes a
+// segment of the agent's SPIFFE ID. It admits Mecatl's longest incarnation, a
+// legacy_ one of 71 bytes.
+const MaxIncarnationBytes = 71
+
+// isSegment reports whether s is a SPIFFE-path-safe segment of at most
+// MaxSegmentBytes.
+func isSegment(s string) bool { return isPathSegment(s, MaxSegmentBytes) }
+
+// isPathSegment reports whether s is a SPIFFE-path-safe segment: non-empty, at
+// most maxBytes, [A-Za-z0-9._-] only, and neither "." nor "..". Invalid values
 // are rejected, never rewritten.
-func isSegment(s string) bool {
-	if s == "" || len(s) > MaxSegmentBytes || s == "." || s == ".." {
+func isPathSegment(s string, maxBytes int) bool {
+	if s == "" || len(s) > maxBytes || s == "." || s == ".." {
 		return false
 	}
 	for _, r := range s {

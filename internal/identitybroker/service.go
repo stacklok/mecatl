@@ -3,6 +3,7 @@ package identitybroker
 import (
 	"context"
 	"fmt"
+	"time"
 )
 
 // Service is the contract between Mecatl and the identity broker: every call
@@ -24,7 +25,14 @@ import (
 //     session opens a new broker session with a new ID.
 //   - RegisterAgent refuses a request whose owner differs from the broker
 //     session's owner with CodePermissionDenied: one session tree has one
-//     owner.
+//     owner. It also refuses, with CodePermissionDenied, an agent with no
+//     parent whose host session is not the broker session's root host
+//     session, and an agent whose parent is not registered to the session.
+//   - Registering the same incarnation again returns the same agent with a
+//     fresh credential, so a lost response or an expiring credential is
+//     handled by registering again. Registering it into a new broker session
+//     moves it there, keeping its identity.
+//   - Agents with different incarnations are different agents.
 //   - A broker session ID the broker never issued is refused with
 //     CodePermissionDenied.
 //   - Invalid requests fail with CodeInvalidArgument.
@@ -137,15 +145,16 @@ func (a AgentRef) IsZero() bool { return a == AgentRef{} }
 // RegisterAgentRequest registers an agent instance in a broker session.
 type RegisterAgentRequest struct {
 	SessionID string
-	// HostSessionID is the agent's own host session. A child agent's differs
-	// from the broker session's root host session, so it is not compared with
-	// it; checking that it belongs to the session's tree will be addressed
-	// later.
+	// HostSessionID is the agent's own host session. With no Parent it must
+	// equal the broker session's root host session. A child agent's differs,
+	// so it is not compared; checking that it belongs to the session's tree
+	// will be addressed later.
 	HostSessionID string
 	// Owner must equal the broker session's owner.
 	Owner Owner
 	// Incarnation is the agent instance's incarnation, which the harness
-	// allocates and persists.
+	// allocates and persists. It becomes a segment of the agent's SPIFFE ID,
+	// so it must match [A-Za-z0-9._-]+ and be at most MaxIncarnationBytes.
 	Incarnation string
 	// Definition is the definition the instance runs. Name is required. Source
 	// and Revision are checked when set but may be empty for now, because
@@ -160,8 +169,11 @@ type RegisterAgentRequest struct {
 // Validate reports whether r is well formed. The error is an *Error with
 // CodeInvalidArgument.
 func (r RegisterAgentRequest) Validate() error {
-	if err := requireIDs("broker session", r.SessionID, "host session", r.HostSessionID, "incarnation", r.Incarnation); err != nil {
+	if err := requireIDs("broker session", r.SessionID, "host session", r.HostSessionID); err != nil {
 		return err
+	}
+	if !isPathSegment(r.Incarnation, MaxIncarnationBytes) {
+		return invalid(fmt.Sprintf("incarnation %q must match [A-Za-z0-9._-]+, be at most %d bytes, and not be '.' or '..'", r.Incarnation, MaxIncarnationBytes))
 	}
 	if err := r.Owner.validate(); err != nil {
 		return err
@@ -197,6 +209,38 @@ func (r RegisterAgentRequest) validateDefinition() error {
 type Registration struct {
 	Agent      AgentRef
 	Credential Token
+	// ExpiresAt is when the credential expires. Register again before then
+	// for a fresh one.
+	ExpiresAt time.Time
+}
+
+// VerifyCredentialRequest asks whether an agent credential is valid for use
+// in a broker session.
+type VerifyCredentialRequest struct {
+	SessionID  string
+	Credential Token
+}
+
+// Validate reports whether r is well formed. The error is an *Error with
+// CodeInvalidArgument.
+func (r VerifyCredentialRequest) Validate() error {
+	if err := requireIDs("broker session", r.SessionID); err != nil {
+		return err
+	}
+	if r.Credential.IsZero() {
+		return invalid("credential is required")
+	}
+	return nil
+}
+
+// VerifiedAgent is the agent a valid credential identifies.
+type VerifiedAgent struct {
+	Agent AgentRef
+	// AgentID is the agent's opaque ag_ identifier, the value AS-1 names the
+	// acting agent by. It never contains a SPIFFE path or definition name.
+	AgentID string
+	// ExpiresAt is when the credential expires.
+	ExpiresAt time.Time
 }
 
 // AuthorizeCallRequest asks whether an agent may make one MCP call.

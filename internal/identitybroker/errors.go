@@ -37,6 +37,9 @@ const (
 	ReasonSessionOwned Reason = "session_owned"
 	// ReasonDenied: the call is not allowed.
 	ReasonDenied Reason = "denied"
+	// ReasonSVIDExpired: the agent credential has expired; get a new one and
+	// retry.
+	ReasonSVIDExpired Reason = "svid_expired"
 )
 
 // Code returns the code the design assigns to r.
@@ -46,6 +49,8 @@ func (r Reason) Code() Code {
 		return CodeFailedPrecondition
 	case ReasonSessionOwned, ReasonDenied:
 		return CodePermissionDenied
+	case ReasonSVIDExpired:
+		return CodeUnauthenticated
 	default:
 		return CodeInternal
 	}

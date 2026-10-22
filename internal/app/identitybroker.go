@@ -4,6 +4,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"errors"
 	"fmt"
 	"io"
 	"time"
@@ -23,16 +24,24 @@ const identityBrokerWorkload = "mecak8s-unverified"
 var interimIdentityBrokerConfig = identitybroker.Config{
 	TrustDomain:        "agents.mecatl.invalid",
 	Audience:           "https://identity-broker.mecatl.invalid",
-	CredentialLifetime: 5 * time.Minute,
+	CredentialLifetime: time.Hour,
 }
+
+// errIdentityBrokerWithShell refuses the identity broker while sessions can run
+// a shell in this process: a model-driven shell could read the agent issuer's
+// signing key from the process's memory or environment.
+var errIdentityBrokerWithShell = errors.New("the identity broker holds its signing key in this process, so it cannot run while sessions have a shell; disable the Shell tool (for example --no-shell)")
 
 // buildIdentityBroker returns the identity broker Mecatl calls, and a function
 // that releases it. Both are no-ops when the broker is not enabled. Mecatl gets
 // only the authentication boundary, never the core behind it. A construction
-// failure fails startup.
+// failure fails startup, as does a configuration that gives sessions a shell.
 func buildIdentityBroker(cfg Config) (identitybroker.Service, func(), error) {
 	if !cfg.IdentityBroker {
 		return nil, func() {}, nil
+	}
+	if shellAvailable(cfg) {
+		return nil, nil, errIdentityBrokerWithShell
 	}
 	core := cfg.identityBrokerCore
 	if core == nil {

@@ -159,6 +159,70 @@ func TestIdentityBrokerDefaultWiringOpensSessions(t *testing.T) {
 	}
 }
 
+func TestIdentityBrokerRefusesSessionsWithAShell(t *testing.T) {
+	for name, cfg := range map[string]Config{
+		"a shell":                   {Shell: "/bin/sh"},
+		"a shell with Parallel on":  {Shell: "/bin/sh", EnableParallel: true},
+		"a shell with a remote env": {Shell: "/bin/sh", RemoteExecution: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			core := newClosableCore(t)
+			cfg.Workspace, cfg.UseMock, cfg.NoSoul, cfg.IdentityBroker, cfg.identityBrokerCore = t.TempDir(), true, true, true, core
+			built, err := buildIsolated(t, t.Context(), cfg)
+			if err == nil {
+				built.Close()
+				t.Fatal("Build started the identity broker while sessions have a shell")
+			}
+			if !errors.Is(err, errIdentityBrokerWithShell) {
+				t.Fatalf("Build error = %v, want %v", err, errIdentityBrokerWithShell)
+			}
+		})
+	}
+	for name, cfg := range map[string]Config{
+		"no shell":         {Shell: ""},
+		"the shell is off": {Shell: "/bin/sh", NoShell: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			cfg.Workspace, cfg.UseMock, cfg.NoSoul, cfg.IdentityBroker = t.TempDir(), true, true, true
+			built, err := buildIsolated(t, t.Context(), cfg)
+			if err != nil {
+				t.Fatalf("Build: %v", err)
+			}
+			t.Cleanup(built.Close)
+			if built.IdentityBroker == nil {
+				t.Fatal("no identity broker was constructed")
+			}
+		})
+	}
+}
+
+func TestIdentityBrokerDefaultWiringRegistersAgents(t *testing.T) {
+	built, err := buildIsolated(t, t.Context(), Config{Workspace: t.TempDir(), UseMock: true, NoSoul: true, IdentityBroker: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(built.Close)
+	owner := identitybroker.Owner{Issuer: "https://login.example.com", Subject: "alice-204"}
+	opened, err := built.IdentityBroker.OpenSession(t.Context(), identitybroker.OpenSessionRequest{HostSessionID: "hostS42", Incarnation: "inc_hostS42", Owner: owner})
+	if err != nil {
+		t.Fatalf("OpenSession: %v", err)
+	}
+	reg, err := built.IdentityBroker.RegisterAgent(t.Context(), identitybroker.RegisterAgentRequest{
+		SessionID: opened.ID, HostSessionID: "hostS42", Owner: owner, Incarnation: "inc_hostS42",
+		Definition: identitybroker.DefinitionRef{Source: "system", Name: "main"},
+	})
+	if err != nil {
+		t.Fatalf("RegisterAgent: %v", err)
+	}
+	if reg.Credential.IsZero() {
+		t.Fatal("RegisterAgent returned no credential")
+	}
+	// The interim configuration issues hour-long credentials.
+	if lifetime := time.Until(reg.ExpiresAt); lifetime < 59*time.Minute || lifetime > time.Hour {
+		t.Fatalf("credential lifetime = %v, want an hour", lifetime)
+	}
+}
+
 func TestIdentityBrokerConstructionFailureStopsStartup(t *testing.T) {
 	// The session store's driver connection is closed on this failure only by
 	// the identity broker's own error branch: no deferred cleanup covers the

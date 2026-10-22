@@ -9,7 +9,11 @@
 //
 // New validates explicitly supplied configuration, an ECDSA P-256 (ES256)
 // signing capability, and already-loaded definition records, and returns a Broker
-// holding an independently owned snapshot of them, and no broker sessions. The snapshot holds only
+// holding an independently owned snapshot of them, and no broker sessions. The
+// broker signs agent credentials (JWT-SVIDs) with the signer and publishes its
+// public key as a SPIFFE trust bundle. Every agent has the shared agent
+// identity: one ag_ identifier generated per process, and a SPIFFE ID under one
+// shared path that differs only by incarnation. The snapshot holds only
 // definitions the broker loads itself, operator-loaded global definitions and
 // system built-ins; repository definitions never enter it. The package performs no
 // file, environment, or network access; source loading and transport belong
@@ -41,6 +45,10 @@ type Broker struct {
 	config      Config
 	signer      crypto.Signer
 	definitions map[DefinitionRef]DefinitionRecord
+	issuer      credentialIssuer
+	// agentID is the shared agent identity's ag_ identifier, generated for
+	// this process.
+	agentID string
 
 	sessions *sessionTable
 }
@@ -68,7 +76,18 @@ func New(config Config, definitions []DefinitionRecord, signer crypto.Signer) (*
 	if err != nil {
 		return nil, err
 	}
-	return &Broker{config: config, signer: signer, definitions: snapshot, sessions: newSessionTable()}, nil
+	issuer, err := newCredentialIssuer(config, signer)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrInvalidSigner, err)
+	}
+	return &Broker{
+		config:      config,
+		signer:      signer,
+		definitions: snapshot,
+		issuer:      issuer,
+		agentID:     newAgentID(),
+		sessions:    newSessionTable(),
+	}, nil
 }
 
 // Definition returns a copy of the loaded record for ref, and whether one

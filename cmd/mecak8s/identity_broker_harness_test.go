@@ -24,7 +24,7 @@ func TestIdentityBrokerAgainstOfflineHarness(t *testing.T) {
 	h := identityharness.New(t, identityharness.Options{})
 	cfg, err := parseFlags([]string{
 		"--mock",
-		"--enable-identity-broker",
+		"--enable-identity-broker", "--no-shell", // the identity broker refuses to run beside a shell
 		"--permission-mode=yolo", "--guardrails=off", // unchecked allow-all is yolo
 		"--grpc-addr", freeLoopbackPort(t),
 		"--http-addr", freeLoopbackPort(t),

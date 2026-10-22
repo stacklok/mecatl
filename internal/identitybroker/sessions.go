@@ -21,7 +21,9 @@ type sessionTable struct {
 	mu   sync.Mutex
 	open map[string]string // root host session ID -> open broker session ID
 	byID map[string]*brokerSession
-	now  func() time.Time
+	// agents holds registered agents by subject, apart from their sessions.
+	agents map[string]*agentRecord
+	now    func() time.Time
 }
 
 // brokerSession is a broker session's record. Agents registered to the
@@ -40,7 +42,7 @@ type brokerSession struct {
 }
 
 func newSessionTable() *sessionTable {
-	return &sessionTable{open: map[string]string{}, byID: map[string]*brokerSession{}, now: time.Now}
+	return &sessionTable{open: map[string]string{}, byID: map[string]*brokerSession{}, agents: map[string]*agentRecord{}, now: time.Now}
 }
 
 // OpenSession implements Core. Opens run one at a time, so concurrent opens
@@ -121,22 +123,6 @@ func (b *Broker) CloseSession(_ context.Context, workload Workload, req CloseSes
 	return nil
 }
 
-// RegisterAgent implements Core. It applies the session and owner checks;
-// registration itself is not built yet, so a request that passes them fails.
-func (b *Broker) RegisterAgent(_ context.Context, workload Workload, req RegisterAgentRequest) (Registration, error) {
-	if err := checkCall(workload, req); err != nil {
-		return Registration{}, err
-	}
-	s, err := b.usableSession(workload, req.SessionID)
-	if err != nil {
-		return Registration{}, err
-	}
-	if req.Owner != s.Owner {
-		return Registration{}, NewError(CodePermissionDenied, "", "the registration's owner is not the broker session's owner")
-	}
-	return Registration{}, NewError(CodeInternal, "", "agent registration is not available yet")
-}
-
 // AuthorizeCall implements Core. It applies the session checks, then denies
 // every call: no call is authorized until per-call grants exist.
 func (b *Broker) AuthorizeCall(_ context.Context, workload Workload, req AuthorizeCallRequest) (Authorization, error) {
@@ -156,6 +142,11 @@ func (b *Broker) usableSession(workload Workload, id string) (Session, error) {
 	t := b.sessions
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	return t.usableLocked(workload, id)
+}
+
+// usableLocked is usableSession for a caller holding t.mu.
+func (t *sessionTable) usableLocked(workload Workload, id string) (Session, error) {
 	s, ok := t.byID[id]
 	switch {
 	case !ok || s.workload != workload:
