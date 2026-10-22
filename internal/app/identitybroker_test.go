@@ -240,6 +240,48 @@ func TestIdentityBrokerDefaultWiringRegistersAgents(t *testing.T) {
 	}
 }
 
+// TestIdentityBrokerSessionsRegisterTheirAgent is the slice test: with the
+// real broker and no shell, a signed-in user's session registers its main agent
+// when created, and runs.
+func TestIdentityBrokerSessionsRegisterTheirAgent(t *testing.T) {
+	llm := mockllm.New(mockllm.TextTurn("done"))
+	built, err := buildIsolated(t, t.Context(), Config{Workspace: t.TempDir(), MockProvider: llm, NoSoul: true, NoShell: true, IdentityBroker: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(built.Close)
+	ctx := session.WithPrincipal(t.Context(), &session.Principal{Issuer: "https://login.example.com", Subject: "alice-204", GrantType: session.GrantTypeUser})
+	sess, err := built.Service.CreateSession(ctx, session.ModeDefault, session.Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	open, found, err := built.IdentityBroker.FindSession(t.Context(), identitybroker.FindSessionRequest{RootHostSessionID: string(sess.ID)})
+	if err != nil || !found {
+		t.Fatalf("FindSession = %v, %v; want the session's broker session", found, err)
+	}
+	// The main agent is registered: a child naming it as parent passes the
+	// parent check (an unregistered parent is PERMISSION_DENIED), then is
+	// refused as a takeover of the main agent's incarnation.
+	mainAgent := identitybroker.AgentRef{Subject: "spiffe://" + interimIdentityBrokerConfig.TrustDomain + "/mecatl/agent/shared/inst/" + string(sess.Incarnation())}
+	_, err = built.IdentityBroker.RegisterAgent(t.Context(), identitybroker.RegisterAgentRequest{
+		SessionID: open.ID, HostSessionID: string(sess.ID) + "-child", Owner: open.Owner, Incarnation: string(sess.Incarnation()),
+		Definition: identitybroker.DefinitionRef{Source: "system", Name: "main"}, Parent: mainAgent,
+	})
+	if !errors.Is(err, identitybroker.NewError(identitybroker.CodeAlreadyExists, "", "")) {
+		t.Fatalf("a child taking the main agent's incarnation = %v, want ALREADY_EXISTS", err)
+	}
+	run, err := built.Service.StartRun(ctx, sess.ID, "hello")
+	if err != nil {
+		t.Fatalf("StartRun: %v", err)
+	}
+	for range run.Events() {
+	}
+	built.Service.FinishRun(sess.ID, run)
+	if llm.Calls() == 0 {
+		t.Fatal("the agent did not run")
+	}
+}
+
 func TestIdentityBrokerConstructionFailureStopsStartup(t *testing.T) {
 	// The session store's driver connection is closed on this failure only by
 	// the identity broker's own error branch: no deferred cleanup covers the

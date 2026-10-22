@@ -78,3 +78,60 @@ func TestIdentityBrokerOpensOnlyForRootSessions(t *testing.T) {
 		t.Fatalf("the root session got no broker session (found=%v, err=%v)", ok, err)
 	}
 }
+
+func TestIdentityAgentDefinition(t *testing.T) {
+	ref := session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}
+	sess := session.New("s", session.ModeDefault, ref, session.Limits{}, time.Unix(1, 0))
+	if got := identityAgentDefinition(sess); got != (identitybroker.DefinitionRef{Source: "system", Name: "main"}) {
+		t.Fatalf("definition of an ordinary session = %+v, want system/main", got)
+	}
+	sess.AgentDefinitionName = "reviewer"
+	if got := identityAgentDefinition(sess); got != (identitybroker.DefinitionRef{Name: "reviewer"}) {
+		t.Fatalf("definition of a named session = %+v, want reviewer with no source", got)
+	}
+}
+
+func TestClosingASessionDropsItsHeldCredential(t *testing.T) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	core, err := identitybroker.New(identitybroker.Config{
+		TrustDomain: "agents.example.com", Audience: "https://broker.example.com", CredentialLifetime: 5 * time.Minute,
+	}, nil, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc, err := NewService(Config{
+		Engine:            brokerEngineResult().Engine,
+		Store:             memstore.New(),
+		PlacementProvider: brokerPlacementProvider{},
+		PlacementScope:    "test",
+		IdentityBroker:    identitybroker.NewInProcess(identitybroker.UnverifiedAuthenticator{Name: "mecak8s-test"}, core),
+	})
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+	t.Cleanup(svc.Close)
+	ref := session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}
+	sess := session.New("root", session.ModeDefault, ref, session.Limits{}, time.Unix(1, 0))
+	if err := sess.RestoreLabels(&session.Principal{Issuer: "https://login.example.com", Subject: "alice-204", GrantType: session.GrantTypeUser}, session.Authority{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.openIdentityBrokerSession(t.Context(), sess); err != nil {
+		t.Fatal(err)
+	}
+	held := func() bool {
+		svc.mu.Lock()
+		defer svc.mu.Unlock()
+		_, ok := svc.identityAgents[sess.ID]
+		return ok
+	}
+	if !held() {
+		t.Fatal("no credential is held after registration")
+	}
+	svc.CloseSession(sess.ID)
+	if held() {
+		t.Fatal("a closed session kept its agent's credential")
+	}
+}

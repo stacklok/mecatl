@@ -1243,6 +1243,10 @@ type Service struct {
 	// exact reattachment). Replacement, CloseSession, and Service.Close each
 	// detach it exactly once. Guarded by mu.
 	sessionEnvironmentCloses map[session.SessionID]func() error
+	// identityAgents holds the identity broker credential of each root
+	// session's main agent, in memory only. CloseSession, a failed create, and
+	// Close drop it. Guarded by mu.
+	identityAgents map[session.SessionID]identityAgent
 
 	// clientMCPSpecs holds the ORIGINAL client-supplied MCP server specs for a
 	// session's lifetime, guarded by mu. The Service never threaded these through
@@ -1769,6 +1773,7 @@ func NewService(cfg Config) (*Service, error) {
 		authorizationExpiry:      make(map[session.SessionID]*authorizationExpiry),
 		sessionEnvironments:      make(map[session.SessionID]tool.Environment),
 		sessionEnvironmentCloses: make(map[session.SessionID]func() error),
+		identityAgents:           make(map[session.SessionID]identityAgent),
 		clientMCPSpecs:           make(map[session.SessionID][]mcp.ServerConfig),
 		reservedIDs:              make(map[session.SessionID]struct{}),
 		runEntryGenerations:      make(map[session.SessionID]uint64),
@@ -3227,6 +3232,7 @@ func (s *Service) createPerSessionEngine(ctx context.Context, mintID func() sess
 		delete(s.sessionEngines, sess.ID)
 		delete(s.sessionEnvironments, sess.ID)
 		delete(s.clientMCPSpecs, sess.ID)
+		delete(s.identityAgents, sess.ID)
 		s.mu.Unlock()
 		if closeFn != nil {
 			_ = closeFn()
@@ -3631,6 +3637,7 @@ func (s *Service) closeSessionLocal(id session.SessionID) {
 	delete(s.sessionEnvironmentCloses, id)
 	delete(s.sessionEnvironments, id)
 	delete(s.clientMCPSpecs, id)
+	delete(s.identityAgents, id)
 	// Drop the once-per-id approval-replay marker: the
 	// OnCloseSession above Forgot this session's learned rules, so a LATER reload of
 	// the same id in this process MUST be allowed to replay them from the durable log
@@ -3796,6 +3803,7 @@ func (s *Service) Close() {
 	s.sessionEnvironmentCloses = make(map[session.SessionID]func() error)
 	s.sessionEnvironments = make(map[session.SessionID]tool.Environment)
 	s.clientMCPSpecs = make(map[session.SessionID][]mcp.ServerConfig)
+	s.identityAgents = make(map[session.SessionID]identityAgent)
 	// Close all per-session event subscriptions so subscriber goroutines can exit
 	// cleanly. Close owns both shutdown and channel closure while holding subMu: a
 	// publisher holds subMu.RLock through its send, so no send can race close.

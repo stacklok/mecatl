@@ -33,7 +33,15 @@ type recordingBroker struct {
 	mu          sync.Mutex
 	opens       []identitybroker.OpenSessionRequest
 	closes      []identitybroker.CloseSessionRequest
+	registers   []identitybroker.RegisterAgentRequest
 	unavailable bool
+	// registerUnavailable makes only RegisterAgent fail as unavailable.
+	registerUnavailable bool
+	// beforeRegister, when set, runs before each RegisterAgent reaches the
+	// broker.
+	beforeRegister func(identitybroker.RegisterAgentRequest)
+	// otherAgent makes RegisterAgent return another agent than registered.
+	otherAgent bool
 }
 
 // newRecordingBroker wraps the real identity broker, so these tests exercise
@@ -97,7 +105,36 @@ func (b *recordingBroker) CloseSession(ctx context.Context, req identitybroker.C
 }
 
 func (b *recordingBroker) RegisterAgent(ctx context.Context, req identitybroker.RegisterAgentRequest) (identitybroker.Registration, error) {
-	return b.inner.RegisterAgent(ctx, req)
+	if err := b.down(); err != nil {
+		return identitybroker.Registration{}, err
+	}
+	b.mu.Lock()
+	b.registers = append(b.registers, req)
+	registerDown, hook, other := b.registerUnavailable, b.beforeRegister, b.otherAgent
+	b.mu.Unlock()
+	if registerDown {
+		return identitybroker.Registration{}, identitybroker.NewError(identitybroker.CodeUnavailable, "", "test broker cannot register")
+	}
+	if hook != nil {
+		hook(req)
+	}
+	reg, err := b.inner.RegisterAgent(ctx, req)
+	if err == nil && other {
+		reg.Agent.Subject += "-other"
+	}
+	return reg, err
+}
+
+func (b *recordingBroker) registerRequests() []identitybroker.RegisterAgentRequest {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return append([]identitybroker.RegisterAgentRequest(nil), b.registers...)
+}
+
+func (b *recordingBroker) set(f func(*recordingBroker)) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	f(b)
 }
 
 func (b *recordingBroker) AuthorizeCall(ctx context.Context, req identitybroker.AuthorizeCallRequest) (identitybroker.Authorization, error) {
@@ -550,7 +587,7 @@ func TestIdentityBrokerTeamRunOpensTheRootSession(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			wantBrokerSession(t, broker, source)
+			wantRegistered(t, broker, wantBrokerSession(t, broker, source), source)
 		})
 	}
 }
