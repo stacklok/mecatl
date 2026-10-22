@@ -1,4 +1,4 @@
-# syntax=docker/dockerfile:1@sha256:ecfaec9ed6d810b56388c508f4121597bfbba70d41a6dfeee4d8cad5f295fc32
+# syntax=docker/dockerfile:1@sha256:4edf897a3ffa55b89f906fc8cc78afdb3f1834cc9c7083565e611a8a7d5fe99e
 # SPDX-License-Identifier: Apache-2.0
 #
 # Mecatl Studio image — ghcr.io/stacklok/mecatl/studio: one image serving the
@@ -59,7 +59,7 @@
 # ---------------------------------------------------------------------------
 # Stage 1: build (Node 26 — matches apps/package.json `engines` and .node-version)
 # ---------------------------------------------------------------------------
-FROM --platform=$BUILDPLATFORM node:26-slim@sha256:930557a230abacbc3f4fd9b8648abf8f4bee1e17cb72195dcdfb2f709bc85b33 AS build
+FROM --platform=$BUILDPLATFORM node:26-slim@sha256:36793bcbb160a6a16cede1e62b93f84e26b78a972a8a4c0b879c1c12f22761ec AS build
 ARG STUDIO_BUILD_ID=""
 ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0 \
     CI=1
