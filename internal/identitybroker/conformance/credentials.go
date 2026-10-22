@@ -30,8 +30,10 @@ func (c *clock) Advance(d time.Duration) {
 	c.now = c.now.Add(d)
 }
 
-// runCredentials checks the credentials registration issues with the Core's
-// VerifyCredential, the call AS-1 makes in process.
+// runCredentials checks the credentials registration issues with the
+// CredentialVerifier, the check AS-1 makes in process.
+//
+//nolint:gocyclo // One flat subtest per contract case; splitting would scatter the shared fixture.
 func runCredentials(t *testing.T, factory Factory) {
 	ctx := context.Background()
 
