@@ -2092,3 +2092,19 @@ func TestStopDetailNamesCollapsedStatus(t *testing.T) {
 		}
 	}
 }
+
+// TestDecodeCompletedIncompleteCarriesStopDetail drives a terminal response
+// whose status is incomplete through the real decode path, so the done chunk
+// must carry the refined detail, not only the stopDetail helper.
+func TestDecodeCompletedIncompleteCarriesStopDetail(t *testing.T) {
+	sse := "event: response.completed\n" +
+		`data: {"type":"response.completed","sequence_number":1,"response":{"id":"resp_1","status":"incomplete","incomplete_details":{"reason":"max_output_tokens"},"usage":{"input_tokens":1,"input_tokens_details":{"cached_tokens":0},"output_tokens":1,"output_tokens_details":{"reasoning_tokens":1},"total_tokens":2}}}` + "\n\n"
+	chunks, err := decodeSSE(strings.NewReader(sse))
+	if err != nil {
+		t.Fatalf("decodeSSE: %v", err)
+	}
+	done := chunks[len(chunks)-1]
+	if done.Kind != port.ChunkDone || done.Stop != session.StopError || done.StopDetail != "incomplete:max_output_tokens" {
+		t.Fatalf("done = %+v, want ChunkDone StopError incomplete:max_output_tokens", done)
+	}
+}

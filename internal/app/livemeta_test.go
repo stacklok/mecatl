@@ -459,3 +459,16 @@ func TestOutputLimitForGatewayFallsBackToAnthropicCatalog(t *testing.T) {
 		t.Fatalf("uncatalogued model = %d, want 0 (adapter default applies)", got)
 	}
 }
+
+// TestOutputLimitForOpenRouterAnthropicHasNoCatalogFloor pins that OpenRouter's
+// Anthropic surface keeps no catalog floor: its "anthropic/…" model ids never
+// match a first-party Anthropic catalog id, so without a live output limit the
+// resolver returns 0 and the adapter default applies.
+func TestOutputLimitForOpenRouterAnthropicHasNoCatalogFloor(t *testing.T) {
+	s := newMetadataFixture()
+	s.setEligibilityFixture([]string{providerOpenRouterAnthropic})
+
+	if got := s.outputLimitFor(providerOpenRouterAnthropic, "anthropic/"+catAnthropicModel); got != 0 {
+		t.Fatalf("outputLimitFor(%q, %q) = %d, want 0 (no catalog floor)", providerOpenRouterAnthropic, "anthropic/"+catAnthropicModel, got)
+	}
+}

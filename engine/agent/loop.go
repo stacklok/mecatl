@@ -3905,26 +3905,6 @@ func (e *Engine) observeCompletion(ctx context.Context, r *Run, sess *session.Se
 	}
 }
 
-// stopTerminalCause synthesises the terminal REASON for a run that ended on a
-// provider stop CHUNK (no Go error) — the terminateComplete counterpart of the
-// error terminate() carries. Both adapters relay a real terminal condition
-// (max_tokens / refusal / incomplete / failed → StopError; cancelled →
-// StopCancelled) on the ChunkDone stop, NOT as a Go error, so without this the
-// ResultPayload.Error is empty and a delegation's subagentErrorBody renders the
-// child's last text AS the failure — the exact #319 presentation on the
-// terminateComplete path (reachable only WITH text: the empty shape already
-// routes through terminate with a cause). The phrase deliberately matches the
-// empty-shape terminate cause ("agent: model ended turn with no output and a
-// terminal stop reason %q") so both stop-only terminals read alike. It is
-// harness-authored metadata (a stop label + a shape note), never model text, so
-// it is gauntlet-#7 safe on the same footing as every other cause. It is
-// StopError-ONLY: the SubagentPayload.Cause contract is "empty on every other
-// terminal", and a cancellation already names itself everywhere it matters (the
-// Subagent timeout path renders its own time-budget note BEFORE the cause is
-// consulted; Parallel's cancelled-branch arm overrides with "cancelled"). It
-// returns "" for a benign stop (end_turn / a clean limit), where a cause would
-// be noise — StopBudget/StopMaxTurns/StopNoProgress already carry their own
-// honest notes.
 // failureFacts extracts neutral typed metadata from a terminal provider error.
 // Missing interfaces remain conservative unknown values; no text inference occurs.
 func failureFacts(err error) (session.RetryDisposition, session.StreamProgress) {
@@ -3954,6 +3934,26 @@ func permanentCause(err error) bool {
 	return disposition == session.RetryDispositionPermanent
 }
 
+// stopTerminalCause synthesises the terminal REASON for a run that ended on a
+// provider stop CHUNK (no Go error) — the terminateComplete counterpart of the
+// error terminate() carries. The adapters relay a real terminal condition
+// (max_tokens / refusal / incomplete / failed → StopError; cancelled →
+// StopCancelled) on the ChunkDone stop, NOT as a Go error, so without this the
+// ResultPayload.Error is empty and a delegation's subagentErrorBody renders the
+// child's last text AS the failure — the exact #319 presentation on the
+// terminateComplete path (reachable only WITH text: the empty shape already
+// routes through terminate with a cause). The empty-shape terminate cause is
+// built here too, so both stop-only terminals read alike; a non-empty detail
+// (the sanitized Chunk.StopDetail) names the provider stop label. It is
+// harness-authored metadata (a stop label + a shape note), never model text, so
+// it is gauntlet-#7 safe on the same footing as every other cause. It is
+// StopError-ONLY: the SubagentPayload.Cause contract is "empty on every other
+// terminal", and a cancellation already names itself everywhere it matters (the
+// Subagent timeout path renders its own time-budget note BEFORE the cause is
+// consulted; Parallel's cancelled-branch arm overrides with "cancelled"). It
+// returns "" for a benign stop (end_turn / a clean limit), where a cause would
+// be noise — StopBudget/StopMaxTurns/StopNoProgress already carry their own
+// honest notes.
 func stopTerminalCause(stop session.StopReason, detail, text string) string {
 	if stop != session.StopError {
 		return ""

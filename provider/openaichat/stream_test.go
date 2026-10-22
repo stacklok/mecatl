@@ -426,3 +426,23 @@ func TestStopDetailNamesCollapsedFinishReason(t *testing.T) {
 		}
 	}
 }
+
+// TestDecodeLengthFinishCarriesStopDetail drives a "length" finish through the
+// real decode and finalize path, so the done chunk must carry the detail, not
+// only the stopDetail helper.
+func TestDecodeLengthFinishCarriesStopDetail(t *testing.T) {
+	sse := `data: {"id":"c1","object":"chat.completion.chunk","created":1,"model":"m","choices":[{"index":0,"finish_reason":null,"delta":{"role":"assistant","content":"","reasoning_content":"thinking"}}]}` + "\n\n" +
+		`data: {"id":"c1","object":"chat.completion.chunk","created":1,"model":"m","choices":[{"index":0,"finish_reason":"length","delta":{}}]}` + "\n\n" +
+		"data: [DONE]\n\n"
+	chunks, err := decodeSSE(strings.NewReader(sse))
+	if err != nil {
+		t.Fatalf("decodeSSE: %v", err)
+	}
+	done, ok := lastOfKind(chunks, port.ChunkDone)
+	if !ok {
+		t.Fatalf("no ChunkDone in %+v", chunks)
+	}
+	if done.Stop != session.StopError || done.StopDetail != "length" {
+		t.Fatalf("done = {Stop:%q StopDetail:%q}, want {error length}", done.Stop, done.StopDetail)
+	}
+}
