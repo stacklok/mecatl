@@ -25,10 +25,11 @@ to start fresh and reattach the same authorized storage. Process restoration is 
 required.
 
 After a successful shell write and close, a fresh file-tool read should see the change without waiting for command
-completion. After a file-tool Edit completes, a fresh shell read should see it. Both placement modes retain files
-independently of compute. Filesystem-only sessions access them through shared workers; execution-bound sessions depend
-on their executor being available to serve them. The loop mounts neither workspace. Storage technology and the executor
-provider remain integration choices; the selected architecture does not require FUSE.
+completion. After a file-tool Edit completes, a fresh shell read should see it. Both placement modes, filesystem-only
+and execution-bound, retain files independently of compute. Filesystem-only sessions access them through shared
+workers; execution-bound sessions depend on their executor being available to serve them. The loop mounts neither
+workspace. Storage technology and the executor provider remain integration choices; the selected architecture does not
+require FUSE.
 
 ## Context, files, and commands are different
 
@@ -103,10 +104,11 @@ proposal, and the Redis workspace may be removed from Mecatl.
 
 ## Selected architecture: capability-based placement
 
-One shared API exposes file operations and optional command execution. The loop reaches these through `Workspace` and
-`CommandRunner`; a common endpoint does not collapse those contracts into one interface. The trusted service resolves
-each authorized request to the session's recorded placement. Clients do not select a Pod address, mount path, or storage
-credential. The API and worker processes can scale separately.
+The design has two components. An always-running trusted service authenticates the agent loop's requests, authorizes
+them, and routes each one to the session's recorded placement. When a session needs execution, the service provisions a
+dedicated executor Pod bound to that session; this proposal does not define sharing executors across sessions. The
+executor serves two APIs: file operations behind tools such as `Read` and `Edit`, and command execution behind `Shell`.
+Because the shared service and executors are separate, they scale independently.
 
 | Admitted session capabilities | Where operations run | Availability and resource use |
 | --- | --- | --- |
@@ -157,7 +159,7 @@ small authenticated listener; the shared API does not require every executor to 
 
 ### Admission and binding
 
-The session-creation request declares the needed capabilities. A request for Shell is not a grant: the server admits
+The session-creation request declares the needed capabilities. A request for `Shell` is not a grant: the server admits
 it under operator policy, chooses the placement, and records the environment and storage identities. Per-operation
 permission checks still apply, and withdrawing authority must stop access even if the placement remains allocated.
 The initial design keeps the placement class fixed for the session. Adding execution later needs an explicit transition
@@ -231,14 +233,11 @@ writable mappings, cache behavior, and delayed writes remain qualification point
 single transaction; job-start/end snapshots cannot meet live two-way visibility. [inotify][inotify] is not a reliable
 cross-host change feed.
 
-Completed, closed files must survive executor Pod loss. Filesystem-only sessions must remain accessible through shared
-workers without an executor. Execution-bound sessions regain access after a replacement has safely reattached and serves
-the same authorized storage; they do not have an executor-independent file-access guarantee. An interrupted write may be
-incomplete, but unrelated completed files remain retained. If the filesystem client runs inside the executor Pod, its
-loss is part of the same failure and cannot be excluded from durability qualification.
-Separate filesystem-client, node, and storage-cluster failures need their own documented durability guarantees.
-Qualify close and `fsync` behavior at the actual client placement, including writeback errors and server failures;
-no candidate integration is claimed to meet these guarantees without qualification.
+Files that were written and closed must survive the loss of the executor Pod; a write in progress may be lost.
+Filesystem-only sessions keep access through the shared workers. Execution-bound sessions regain access once a
+replacement executor reattaches the same storage. Durability also depends on where the filesystem client runs and on
+node and storage failures. No candidate meets these guarantees until close and `fsync` behavior is tested in that
+deployment.
 
 ### Concurrent edits
 
@@ -251,14 +250,8 @@ explicit commit boundaries.
 
 ### Agent identity and withdrawal
 
-Workload authentication and user authentication are inputs, not substitutes for the acting agent's identity. Mecatl
-would issue logical agent identities in its own SPIFFE trust domain using those and any additional authenticators.
-The user -> agent -> subagent chain can continue through further hops under policy; each hop may preserve or narrow,
-never widen, delegated authority. Ancestors provide provenance, not extra rights. The verifier must enforce the
-acting agent's *current* delegated authority from Mecatl's session and permission checks, not treat a signed history
-as authority. A trusted client authenticates its workload while acting for the agent; both identities stay distinct.
-The [identity draft][identity-draft] is a proposal, not current support; this requirement does not freeze token format,
-require per-process keys, or ask SPIRE to attest goroutines.
+Agent identity and delegation are designed in the [agent identity][identity-draft] and [scoped resource
+grants][grant-draft] drafts.
 
 Native filesystem enforcement, a concrete trusted adapter, or an upstream change can provide the checks on *both*
 file-tool and shell paths. Mecatl selects each agent's permitted files and operations, including read-only inputs and
