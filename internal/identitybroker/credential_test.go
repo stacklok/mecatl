@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto"
 	"crypto/ecdsa"
-	"crypto/elliptic"
 	"crypto/sha256"
 	"encoding/asn1"
 	"encoding/base64"
@@ -140,77 +139,28 @@ func TestCredentialHasExactlyTheDesignedHeaderAndClaims(t *testing.T) {
 	}
 }
 
-func TestCredentialVerifiesAgainstTheTrustBundle(t *testing.T) {
+func TestCredentialVerifiesWithTheSignersPublicKey(t *testing.T) {
 	f := newCredentialFixture(t)
-	var bundle struct {
-		Keys []map[string]string `json:"keys"`
-	}
-	if err := json.Unmarshal(f.broker.TrustBundle(), &bundle); err != nil {
-		t.Fatalf("trust bundle: %v", err)
-	}
-	if len(bundle.Keys) != 1 {
-		t.Fatalf("trust bundle has %d keys, want 1", len(bundle.Keys))
-	}
-	jwk := bundle.Keys[0]
-	if jwk["kty"] != "EC" || jwk["crv"] != "P-256" || jwk["use"] != "jwt-svid" || jwk["kid"] == "" {
-		t.Fatalf("trust bundle key = %v, want an EC P-256 jwt-svid key with a kid", jwk)
-	}
-	// RFC 7638 thumbprint of the published key.
-	thumb := sha256.Sum256([]byte(`{"crv":"P-256","kty":"EC","x":"` + jwk["x"] + `","y":"` + jwk["y"] + `"}`))
-	if want := base64.RawURLEncoding.EncodeToString(thumb[:]); jwk["kid"] != want {
-		t.Fatalf("kid = %s, want the JWK thumbprint %s", jwk["kid"], want)
-	}
-	x, errX := base64.RawURLEncoding.DecodeString(jwk["x"])
-	y, errY := base64.RawURLEncoding.DecodeString(jwk["y"])
-	if errX != nil || errY != nil {
-		t.Fatalf("trust bundle coordinates: %v %v", errX, errY)
-	}
-	pub, err := ecdsa.ParseUncompressedPublicKey(elliptic.P256(), append(append([]byte{4}, x...), y...))
+	// The kid is the RFC 7638 thumbprint of the signer's public key.
+	point, err := f.key.PublicKey.Bytes()
 	if err != nil {
-		t.Fatalf("trust bundle key: %v", err)
+		t.Fatal(err)
 	}
+	enc := base64.RawURLEncoding
+	thumb := sha256.Sum256([]byte(`{"crv":"P-256","kty":"EC","x":"` + enc.EncodeToString(point[1:33]) + `","y":"` + enc.EncodeToString(point[33:]) + `"}`))
+	kid := enc.EncodeToString(thumb[:])
 
-	// An independent verifier that knows only the bundle accepts the credential.
+	// An independent verifier that knows only the public key and its kid
+	// accepts the credential.
 	parsed, err := jwt.Parse(f.reg.Credential.Value(), func(tok *jwt.Token) (any, error) {
-		if tok.Header["kid"] != jwk["kid"] {
+		if tok.Header["kid"] != kid {
 			return nil, errors.New("unknown kid")
 		}
-		return pub, nil
+		return &f.key.PublicKey, nil
 	}, jwt.WithValidMethods([]string{"ES256"}), jwt.WithAudience("https://broker.example.com"),
 		jwt.WithTimeFunc(func() time.Time { return f.now }))
 	if err != nil || !parsed.Valid {
-		t.Fatalf("the credential does not verify against the trust bundle: %v", err)
-	}
-
-	// The bundle is a copy.
-	f.broker.TrustBundle()[0] = 'x'
-	if f.broker.TrustBundle()[0] != '{' {
-		t.Fatal("mutating TrustBundle's result changed the broker's bundle")
-	}
-}
-
-func TestVerifyCredentialReturnsTheSharedAgent(t *testing.T) {
-	f := newCredentialFixture(t)
-	got, err := f.verify(f.session.ID, f.reg.Credential)
-	if err != nil {
-		t.Fatalf("VerifyCredential: %v", err)
-	}
-	if got.Agent != f.reg.Agent || !got.ExpiresAt.Equal(f.reg.ExpiresAt) {
-		t.Fatalf("VerifyCredential = %+v, want agent %+v expiring at %v", got, f.reg.Agent, f.reg.ExpiresAt)
-	}
-	if !strings.HasPrefix(got.AgentID, "ag_") || strings.Contains(got.AgentID, "main") || strings.Contains(got.AgentID, "spiffe") {
-		t.Fatalf("agent ID %q is not an opaque ag_ identifier", got.AgentID)
-	}
-
-	// Another agent shares the ag_ identifier but not the instance.
-	other := f.open(t, "hostS43")
-	otherReg := f.register(t, other, "inc_other")
-	gotOther, err := f.verify(other.ID, otherReg.Credential)
-	if err != nil {
-		t.Fatalf("VerifyCredential(other): %v", err)
-	}
-	if gotOther.AgentID != got.AgentID || gotOther.Agent == got.Agent {
-		t.Fatalf("other agent = %+v, want the shared ag_ %s and its own instance", gotOther, got.AgentID)
+		t.Fatalf("the credential does not verify with the signer's public key: %v", err)
 	}
 }
 
@@ -321,36 +271,6 @@ func TestVerifyCredentialAllowsClockSkewAfterExpiry(t *testing.T) {
 	f.now = f.reg.ExpiresAt.Add(credentialClockSkew)
 	if _, err := f.verify(f.session.ID, f.reg.Credential); !errors.Is(err, ReasonError(ReasonSVIDExpired, "")) {
 		t.Fatalf("VerifyCredential past the clock skew = %v, want svid_expired", err)
-	}
-}
-
-func TestRegisteringIntoANewSessionMovesTheAgent(t *testing.T) {
-	f := newCredentialFixture(t)
-	if err := f.broker.CloseSession(context.Background(), credentialTestWorkload, CloseSessionRequest{SessionID: f.session.ID, Reason: ReasonSessionClosed}); err != nil {
-		t.Fatalf("CloseSession: %v", err)
-	}
-	reopened := f.open(t, "hostS42")
-	again := f.register(t, reopened, "inc_main")
-	if again.Agent != f.reg.Agent {
-		t.Fatalf("after reopening, agent = %+v, want %+v", again.Agent, f.reg.Agent)
-	}
-	if _, err := f.verify(reopened.ID, again.Credential); err != nil {
-		t.Fatalf("the new credential in the new session: %v", err)
-	}
-	if _, err := f.verify(f.session.ID, f.reg.Credential); !errors.Is(err, ReasonError(ReasonDenied, "")) {
-		t.Fatalf("the old credential in the old session = %v, want denied", err)
-	}
-}
-
-func TestVerifyCredentialRejectsInvalidRequests(t *testing.T) {
-	f := newCredentialFixture(t)
-	for name, req := range map[string]VerifyCredentialRequest{
-		"no session":    {Credential: f.reg.Credential},
-		"no credential": {SessionID: f.session.ID},
-	} {
-		if _, err := f.broker.VerifyCredential(context.Background(), req); !errors.Is(err, NewError(CodeInvalidArgument, "", "")) {
-			t.Errorf("%s: error = %v, want INVALID_ARGUMENT", name, err)
-		}
 	}
 }
 

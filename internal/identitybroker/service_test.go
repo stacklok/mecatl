@@ -54,6 +54,7 @@ func TestReasonsCarryTheDesignCodes(t *testing.T) {
 		ReasonSessionClosed: CodeFailedPrecondition,
 		ReasonSessionOwned:  CodePermissionDenied,
 		ReasonDenied:        CodePermissionDenied,
+		ReasonSVIDExpired:   CodeUnauthenticated,
 		Reason("unknown"):   CodeInternal,
 	}
 	for reason, code := range want {
@@ -91,6 +92,10 @@ func (c *recordingCore) RegisterAgent(_ context.Context, workload Workload, _ Re
 func (c *recordingCore) AuthorizeCall(_ context.Context, workload Workload, _ AuthorizeCallRequest) (Authorization, error) {
 	c.workloads = append(c.workloads, workload)
 	return Authorization{}, nil
+}
+
+func (*recordingCore) VerifyCredential(context.Context, VerifyCredentialRequest) (VerifiedAgent, error) {
+	return VerifiedAgent{}, nil
 }
 
 // callAll makes every Service call once and returns their errors in order.

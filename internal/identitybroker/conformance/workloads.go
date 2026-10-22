@@ -8,7 +8,7 @@ import (
 )
 
 // runWorkloads calls the Core directly, so the cases can choose the workload.
-func runWorkloads(t *testing.T, factory Factory) {
+func runWorkloads(t *testing.T, factory coreFactory) {
 	ctx := context.Background()
 
 	open := func(t *testing.T, core identitybroker.Core, workload identitybroker.Workload, host string) identitybroker.Session {

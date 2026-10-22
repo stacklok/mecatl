@@ -80,17 +80,13 @@ func checkRegistration(t *sessionTable, s Session, req RegisterAgentRequest) err
 	return nil
 }
 
-// VerifyCredential checks an agent credential with the design's checks, in
-// order: the credential itself (see credentialIssuer.verify), then that its
-// subject is a registered instance, then that the instance is registered to
-// the request's session. It returns the instance, its ag_ identifier, and the
-// credential's expiry. An expired credential fails with CodeUnauthenticated
-// and ReasonSVIDExpired; every other failure with CodePermissionDenied and
-// ReasonDenied.
-//
-// It does not check that the session is open or which workload opened it:
-// callers check the session's state themselves, the broker before a call and
-// AS-1 from its refresh token's record.
+// VerifyCredential implements Core. After the credential's own checks (see
+// credentialIssuer.verify), its subject must be a registered instance, and
+// that instance must be registered to the request's session. Per-instance
+// subjects are what bind a credential to one session, with no session claim.
+// It does not check that the session is open or which workload opened it: the
+// broker checks the session before a call, and AS-1 from its refresh token's
+// record.
 func (b *Broker) VerifyCredential(_ context.Context, req VerifyCredentialRequest) (VerifiedAgent, error) {
 	if err := req.Validate(); err != nil {
 		return VerifiedAgent{}, err
@@ -114,11 +110,4 @@ func (b *Broker) VerifyCredential(_ context.Context, req VerifyCredentialRequest
 		return VerifiedAgent{}, credentialDenied("the agent is not registered to the broker session")
 	}
 	return VerifiedAgent{Agent: AgentRef{Subject: cred.subject}, AgentID: b.agentID, ExpiresAt: cred.expiresAt}, nil
-}
-
-// TrustBundle returns the SPIFFE trust bundle for agent credentials: a JWK
-// set holding the agent issuer's public key, with use "jwt-svid" and its key
-// ID. The returned slice is a copy.
-func (b *Broker) TrustBundle() []byte {
-	return append([]byte(nil), b.issuer.bundle...)
 }

@@ -7,7 +7,6 @@ import (
 	"crypto/sha256"
 	"encoding/asn1"
 	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"math/big"
@@ -40,8 +39,6 @@ type credentialIssuer struct {
 	publicKey   *ecdsa.PublicKey
 	// kid is the RFC 7638 JWK thumbprint of publicKey.
 	kid string
-	// bundle is the SPIFFE trust bundle publishing publicKey.
-	bundle []byte
 }
 
 func newCredentialIssuer(config Config, signer crypto.Signer) (credentialIssuer, error) {
@@ -53,13 +50,9 @@ func newCredentialIssuer(config Config, signer crypto.Signer) (credentialIssuer,
 	if !ok {
 		return credentialIssuer{}, fmt.Errorf("unexpected public key type %T", pub)
 	}
-	jwk, err := newJWK(ecPub)
+	kid, err := keyID(ecPub)
 	if err != nil {
 		return credentialIssuer{}, err
-	}
-	bundle, err := json.Marshal(trustBundle{Keys: []jwkKey{jwk}})
-	if err != nil {
-		return credentialIssuer{}, fmt.Errorf("encode trust bundle: %w", err)
 	}
 	return credentialIssuer{
 		trustDomain: config.TrustDomain,
@@ -67,8 +60,7 @@ func newCredentialIssuer(config Config, signer crypto.Signer) (credentialIssuer,
 		lifetime:    config.CredentialLifetime,
 		signer:      signer,
 		publicKey:   ecPub,
-		kid:         jwk.KeyID,
-		bundle:      bundle,
+		kid:         kid,
 	}, nil
 }
 
@@ -182,32 +174,18 @@ func (signerES256) Sign(signingString string, key any) ([]byte, error) {
 	return out, nil
 }
 
-// trustBundle is a SPIFFE trust bundle: a JWK set whose keys say what they
-// authenticate.
-type trustBundle struct {
-	Keys []jwkKey `json:"keys"`
-}
-
-// jwkKey is a P-256 public key as a JWK for JWT-SVID verification.
-type jwkKey struct {
-	KeyType string `json:"kty"`
-	Curve   string `json:"crv"`
-	X       string `json:"x"`
-	Y       string `json:"y"`
-	KeyID   string `json:"kid"`
-	Use     string `json:"use"`
-}
-
-func newJWK(pub *ecdsa.PublicKey) (jwkKey, error) {
+// keyID returns the RFC 7638 JWK thumbprint of a P-256 public key, so the key
+// ID stays the same wherever the key is later published.
+func keyID(pub *ecdsa.PublicKey) (string, error) {
 	point, err := pub.Bytes()
 	if err != nil || len(point) != 65 {
-		return jwkKey{}, errors.New("the signer's public key is not an uncompressed P-256 point")
+		return "", errors.New("the signer's public key is not an uncompressed P-256 point")
 	}
 	enc := base64.RawURLEncoding
 	x, y := enc.EncodeToString(point[1:33]), enc.EncodeToString(point[33:])
-	// RFC 7638: the required members in lexicographic order, no whitespace.
+	// The required members in lexicographic order, no whitespace.
 	thumbprint := sha256.Sum256([]byte(`{"crv":"P-256","kty":"EC","x":"` + x + `","y":"` + y + `"}`))
-	return jwkKey{KeyType: "EC", Curve: "P-256", X: x, Y: y, KeyID: enc.EncodeToString(thumbprint[:]), Use: "jwt-svid"}, nil
+	return enc.EncodeToString(thumbprint[:]), nil
 }
 
 // newAgentID returns a random ag_ identifier in the same lowercase base32 form

@@ -4,7 +4,7 @@ import (
 	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
-	"crypto/sha256"
+	"crypto/rand"
 	"errors"
 	"testing"
 	"time"
@@ -18,10 +18,10 @@ var (
 	testOwner    = identitybroker.Owner{Issuer: "https://login.example.com", Subject: "alice-204"}
 )
 
+// newBroker returns a broker with its own signing key.
 func newBroker(t *testing.T) *identitybroker.Broker {
 	t.Helper()
-	scalar := sha256.Sum256([]byte("sessions test key"))
-	key, err := ecdsa.ParseRawPrivateKey(elliptic.P256(), scalar[:])
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		t.Fatalf("test key: %v", err)
 	}
@@ -50,7 +50,11 @@ func openSession(t *testing.T, b *identitybroker.Broker) identitybroker.Session 
 }
 
 func TestBrokerPassesContract(t *testing.T) {
-	conformance.Run(t, func(t *testing.T) identitybroker.Core { return newBroker(t) })
+	conformance.Run(t, func(t *testing.T, now func() time.Time) identitybroker.Core {
+		b := newBroker(t)
+		identitybroker.SetClock(b, now)
+		return b
+	})
 }
 
 func TestBrokerSessionIDsDoNotRepeatAcrossRestarts(t *testing.T) {

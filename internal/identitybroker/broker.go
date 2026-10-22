@@ -10,8 +10,8 @@
 // New validates explicitly supplied configuration, an ECDSA P-256 (ES256)
 // signing capability, and already-loaded definition records, and returns a Broker
 // holding an independently owned snapshot of them, and no broker sessions. The
-// broker signs agent credentials (JWT-SVIDs) with the signer and publishes its
-// public key as a SPIFFE trust bundle. Every agent has the shared agent
+// broker signs agent credentials (JWT-SVIDs) with the signer and verifies them
+// itself, for Mecatl's calls and for AS-1. Every agent has the shared agent
 // identity: one ag_ identifier generated per process, and a SPIFFE ID under one
 // shared path that differs only by incarnation. The snapshot holds only
 // definitions the broker loads itself, operator-loaded global definitions and
