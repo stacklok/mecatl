@@ -91,7 +91,9 @@ type Session struct {
 // OpenSessionRequest opens the broker session for a root host session.
 type OpenSessionRequest struct {
 	HostSessionID string
-	// Incarnation is the host session's incarnation.
+	// Incarnation is the host session's incarnation, which its main agent
+	// registers with, so it must be a Mecatl incarnation (see
+	// RegisterAgentRequest.Incarnation).
 	Incarnation string
 	Owner       Owner
 	// AccessToken is the user's AS-1 access token, when the request has one.
@@ -101,8 +103,11 @@ type OpenSessionRequest struct {
 // Validate reports whether r is well formed. The error is an *Error with
 // CodeInvalidArgument.
 func (r OpenSessionRequest) Validate() error {
-	if err := requireIDs("host session", r.HostSessionID, "incarnation", r.Incarnation); err != nil {
+	if err := requireIDs("host session", r.HostSessionID); err != nil {
 		return err
+	}
+	if !isIncarnation(r.Incarnation) {
+		return invalidIncarnation(r.Incarnation)
 	}
 	return r.Owner.validate()
 }
@@ -181,7 +186,7 @@ func (r RegisterAgentRequest) Validate() error {
 		return err
 	}
 	if !isIncarnation(r.Incarnation) {
-		return invalid(fmt.Sprintf("incarnation %q must be inc_ and 26 lowercase base32 characters, or legacy_ and 64 hex characters", r.Incarnation))
+		return invalidIncarnation(r.Incarnation)
 	}
 	if err := r.Owner.validate(); err != nil {
 		return err

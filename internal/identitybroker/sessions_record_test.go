@@ -20,7 +20,7 @@ func TestClosedSessionRecordKeepsIDOwnerAndClosingTime(t *testing.T) {
 	ctx := context.Background()
 	workload := Workload{Name: "system:serviceaccount:mecatl:mecak8s"}
 	owner := Owner{Issuer: "https://login.example.com", Subject: "alice-204"}
-	s, err := b.OpenSession(ctx, workload, OpenSessionRequest{HostSessionID: "hostS42", Incarnation: "inc_hostS42", Owner: owner})
+	s, err := b.OpenSession(ctx, workload, OpenSessionRequest{HostSessionID: "hostS42", Incarnation: incMain, Owner: owner})
 	if err != nil {
 		t.Fatal(err)
 	}

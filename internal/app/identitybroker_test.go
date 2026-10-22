@@ -146,7 +146,7 @@ func TestIdentityBrokerDefaultWiringOpensSessions(t *testing.T) {
 		t.Fatal("no identity broker was constructed with the flag on")
 	}
 	owner := identitybroker.Owner{Issuer: "https://login.example.com", Subject: "alice-204"}
-	opened, err := built.IdentityBroker.OpenSession(t.Context(), identitybroker.OpenSessionRequest{HostSessionID: "hostS42", Incarnation: "inc_hostS42", Owner: owner})
+	opened, err := built.IdentityBroker.OpenSession(t.Context(), identitybroker.OpenSessionRequest{HostSessionID: "hostS42", Incarnation: string(session.NewIncarnationID()), Owner: owner})
 	if err != nil {
 		t.Fatalf("OpenSession: %v", err)
 	}

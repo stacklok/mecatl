@@ -30,7 +30,7 @@ var interimIdentityBrokerConfig = identitybroker.Config{
 // errIdentityBrokerWithShell refuses the identity broker while sessions can run
 // a shell in this process: a model-driven shell could read the agent issuer's
 // signing key from the process's memory or environment.
-var errIdentityBrokerWithShell = errors.New("the identity broker holds its signing key in this process, so it cannot run while sessions have a shell; disable the Shell tool (for example --no-shell)")
+var errIdentityBrokerWithShell = errors.New("the identity broker holds its signing key in this process, so it cannot run while sessions have a shell in this process; use --no-shell, or --shell \"\" with Kubernetes execution to keep the remote Shell")
 
 // buildIdentityBroker returns the identity broker Mecatl calls, and a function
 // that releases it. Both are no-ops when the broker is not enabled. Mecatl gets

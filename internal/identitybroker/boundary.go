@@ -43,22 +43,26 @@ func (w Workload) Validate() error {
 //     as for an unknown session ID (CodePermissionDenied, before any closing
 //     reason), and FindSession reports none open. Opening its host session is
 //     refused with CodePermissionDenied.
-//
-// VerifyCredential is the one call that is not Service's. AS-1 is a module of
-// the broker and calls it in process to check the agent credential on each
-// grant, so it takes no workload, and Mecatl never calls it.
 type Core interface {
 	OpenSession(ctx context.Context, workload Workload, req OpenSessionRequest) (Session, error)
 	FindSession(ctx context.Context, workload Workload, req FindSessionRequest) (Session, bool, error)
 	CloseSession(ctx context.Context, workload Workload, req CloseSessionRequest) error
 	RegisterAgent(ctx context.Context, workload Workload, req RegisterAgentRequest) (Registration, error)
 	AuthorizeCall(ctx context.Context, workload Workload, req AuthorizeCallRequest) (Authorization, error)
+}
+
+// CredentialVerifier is the check AS-1 makes on each grant. AS-1 is a module
+// of the broker and calls it in process, so it takes no workload, and Mecatl
+// never calls it. It is apart from Core so that a transport serving Core cannot
+// publish an unauthenticated credential check by accident.
+type CredentialVerifier interface {
 	// VerifyCredential checks an agent credential for use in a broker
 	// session: the design's credential checks, in order, then that the agent
-	// is registered to that session, the credential was not issued before the
+	// is registered to that session, the credential was issued since the
 	// agent moved there, and the session is open. It returns the agent, its
-	// ag_ identifier, and the credential's expiry. An expired credential fails
-	// with CodeUnauthenticated and ReasonSVIDExpired; a closed session with its
+	// ag_ identifier, and the credential's expiry. A malformed request fails
+	// with CodeInvalidArgument; an expired credential with
+	// CodeUnauthenticated and ReasonSVIDExpired; a closed session with its
 	// closing reason, such as ReasonSessionClosed; every other failure with
 	// CodePermissionDenied and ReasonDenied.
 	VerifyCredential(ctx context.Context, req VerifyCredentialRequest) (VerifiedAgent, error)

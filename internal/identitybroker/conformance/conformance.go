@@ -1,5 +1,6 @@
-// Package conformance provides the contract tests every identitybroker.Core
-// implementation passes.
+// Package conformance provides the contract tests every identity broker
+// implementation, an identitybroker.Core and identitybroker.CredentialVerifier,
+// passes.
 //
 // Importing testing from this non-test package is intentional: each
 // implementation's tests call Run with a factory for fresh, empty instances.
@@ -21,9 +22,16 @@ import (
 	"github.com/stacklok/mecatl/internal/identitybroker"
 )
 
+// Implementation is an identity broker under test: the Core Mecatl's calls
+// reach and the CredentialVerifier AS-1 calls.
+type Implementation interface {
+	identitybroker.Core
+	identitybroker.CredentialVerifier
+}
+
 // Factory returns a fresh, empty implementation for one test, which reads
 // the time from now. Each implementation it returns has its own signing key.
-type Factory func(t *testing.T, now func() time.Time) identitybroker.Core
+type Factory func(t *testing.T, now func() time.Time) Implementation
 
 // coreFactory returns an implementation on the real clock.
 type coreFactory func(t *testing.T) identitybroker.Core
@@ -31,7 +39,7 @@ type coreFactory func(t *testing.T) identitybroker.Core
 // serviceFactory returns an implementation as Mecatl sees it.
 type serviceFactory func(t *testing.T) identitybroker.Service
 
-// Run executes the identitybroker.Core contract against factory.
+// Run executes the identity broker contract against factory.
 func Run(t *testing.T, factory Factory) {
 	t.Helper()
 	core := func(t *testing.T) identitybroker.Core { return factory(t, time.Now) }

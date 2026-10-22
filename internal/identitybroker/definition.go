@@ -145,9 +145,10 @@ func (r DefinitionRecord) equal(o DefinitionRecord) bool {
 }
 
 // isIncarnation reports whether s has the syntax of a Mecatl incarnation: a
-// minted inc_ followed by 26 lowercase base32 characters (128 random bits, so
-// the last character encodes two bits), or a deterministic legacy_ followed by
-// 64 hex characters. Both are SPIFFE-path-safe, and neither can be guessed
+// minted inc_ followed by 26 lowercase base32 characters (130 bits holding 128
+// random ones, so the last character carries three random bits and two zero
+// padding bits, and has 8 legal values), or a deterministic legacy_ followed
+// by 64 hex characters. Both are SPIFFE-path-safe, and neither can be guessed
 // or chosen to collide with another user's agent. The syntax mirrors the
 // engine's session.IncarnationID.Valid; the broker does not import the engine.
 func isIncarnation(s string) bool {
@@ -167,6 +168,10 @@ func isIncarnation(s string) bool {
 		return len(rest) == 64 && err == nil
 	}
 	return false
+}
+
+func invalidIncarnation(s string) error {
+	return invalid(fmt.Sprintf("incarnation %q must be inc_ and 26 lowercase base32 characters, or legacy_ and 64 hex characters", s))
 }
 
 // isSegment reports whether s is a SPIFFE-path-safe segment of at most

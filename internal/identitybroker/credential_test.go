@@ -110,6 +110,13 @@ func (f *credentialFixture) validClaims() jwt.MapClaims {
 	}
 }
 
+// expiredClaims is validClaims an hour past expiry.
+func (f *credentialFixture) expiredClaims() jwt.MapClaims {
+	c := f.validClaims()
+	c["exp"] = f.now.Add(-time.Hour).Unix()
+	return c
+}
+
 func segment(t *testing.T, token, which string) map[string]any {
 	t.Helper()
 	parts := strings.Split(token, ".")
@@ -255,6 +262,29 @@ func TestVerifyCredentialChecks(t *testing.T) {
 			c["exp"] = f.now.Add(-time.Hour).Unix()
 			return f.forge(t, f.validHeader(), c, nil)
 		}, expired},
+		// Order: checks 1 to 4 (trust domain, kid, alg, signature) come before
+		// expiry, so a forged expired credential is denied rather than told to
+		// register again with svid_expired.
+		"expired and signed by another key": {func(t *testing.T, f *credentialFixture) Token {
+			return f.forge(t, f.validHeader(), f.expiredClaims(), testKey(t, "another key"))
+		}, denied},
+		"expired with an unknown kid": {func(t *testing.T, f *credentialFixture) Token {
+			return f.forge(t, map[string]any{"alg": "ES256", "kid": "other"}, f.expiredClaims(), nil)
+		}, denied},
+		"expired with the HMAC algorithm": {func(t *testing.T, f *credentialFixture) Token {
+			pub, _ := f.key.PublicKey.Bytes()
+			return f.forge(t, map[string]any{"alg": "HS256", "kid": f.broker.issuer.kid}, f.expiredClaims(), pub)
+		}, denied},
+		"expired with a subject in another trust domain": {func(t *testing.T, f *credentialFixture) Token {
+			c := f.expiredClaims()
+			c["sub"] = "spiffe://other.example.com/mecatl/agent/shared/inst/" + incMain
+			return f.forge(t, f.validHeader(), c, nil)
+		}, denied},
+		"expired with a subject that is not a SPIFFE ID": {func(t *testing.T, f *credentialFixture) Token {
+			c := f.expiredClaims()
+			c["sub"] = "agents.example.com/mecatl/agent/shared/inst/" + incMain
+			return f.forge(t, f.validHeader(), c, nil)
+		}, denied},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -439,7 +469,7 @@ func TestRegistrationChecksAgainAfterSigning(t *testing.T) {
 	t.Run("the session closes while signing", func(t *testing.T) {
 		b, signer, s := setup(t)
 		done := register(b, s)
-		<-signer.entered
+		waitSigning(t, signer, done)
 		if err := b.CloseSession(ctx, credentialTestWorkload, CloseSessionRequest{SessionID: s.ID, Reason: ReasonSessionClosed}); err != nil {
 			t.Fatalf("CloseSession: %v", err)
 		}
@@ -455,7 +485,7 @@ func TestRegistrationChecksAgainAfterSigning(t *testing.T) {
 	t.Run("another owner registers the instance while signing", func(t *testing.T) {
 		b, signer, s := setup(t)
 		done := register(b, s)
-		<-signer.entered
+		waitSigning(t, signer, done)
 		bobs, err := b.OpenSession(ctx, credentialTestWorkload, OpenSessionRequest{HostSessionID: "hostS43", Incarnation: incMain, Owner: bob})
 		if err != nil {
 			t.Fatalf("OpenSession: %v", err)
@@ -472,6 +502,91 @@ func TestRegistrationChecksAgainAfterSigning(t *testing.T) {
 			t.Fatalf("agent record = %+v, want bob's in %s", rec, bobs.ID)
 		}
 	})
+}
+
+// waitSigning waits until the registration behind done is held in the signer,
+// failing rather than hanging if it returns first.
+func waitSigning[T any](t *testing.T, signer blockingSigner, done <-chan T) {
+	t.Helper()
+	select {
+	case <-signer.entered:
+	case got := <-done:
+		t.Fatalf("the registration returned %v before signing", got)
+	}
+}
+
+// TestRegistrationsRacingAMoveBothGetUsableCredentials races two registrations
+// of one agent into a reopened session: the one that signed first records
+// last, after the other has moved the agent. Both credentials must verify.
+func TestRegistrationsRacingAMoveBothGetUsableCredentials(t *testing.T) {
+	ctx := context.Background()
+	owner := Owner{Issuer: "https://login.example.com", Subject: "alice-204"}
+	signer := newBlockingSigner(t)
+	signer.calls.Store(-1) // the first registration signs at once; the next one blocks
+	b, err := New(testConfig(), nil, signer)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	now := time.Unix(1_800_000_000, 0)
+	b.sessions.now = func() time.Time { return now }
+	open := func() Session {
+		s, err := b.OpenSession(ctx, credentialTestWorkload, OpenSessionRequest{HostSessionID: "hostS42", Incarnation: incMain, Owner: owner})
+		if err != nil {
+			t.Fatalf("OpenSession: %v", err)
+		}
+		return s
+	}
+	type result struct {
+		reg Registration
+		err error
+	}
+	register := func(s Session) <-chan result {
+		done := make(chan result, 1)
+		go func() {
+			reg, err := b.RegisterAgent(ctx, credentialTestWorkload, RegisterAgentRequest{
+				SessionID: s.ID, HostSessionID: s.HostSessionID, Owner: owner, Incarnation: incMain, Definition: DefinitionRef{Name: "main"},
+			})
+			done <- result{reg, err}
+		}()
+		return done
+	}
+	old := open()
+	if r := <-register(old); r.err != nil {
+		t.Fatalf("RegisterAgent: %v", r.err)
+	}
+	if err := b.CloseSession(ctx, credentialTestWorkload, CloseSessionRequest{SessionID: old.ID, Reason: ReasonSessionClosed}); err != nil {
+		t.Fatalf("CloseSession: %v", err)
+	}
+	reopened := open()
+
+	first := register(reopened) // signs first, then waits
+	waitSigning(t, signer, first)
+	now = now.Add(2 * time.Second)
+	second := <-register(reopened) // signs later, and moves the agent
+	if second.err != nil {
+		t.Fatalf("second RegisterAgent: %v", second.err)
+	}
+	close(signer.release)
+	firstResult := <-first
+	if firstResult.err != nil {
+		t.Fatalf("first RegisterAgent: %v", firstResult.err)
+	}
+	for name, reg := range map[string]Registration{"first": firstResult.reg, "second": second.reg} {
+		if _, err := b.VerifyCredential(ctx, VerifyCredentialRequest{SessionID: reopened.ID, Credential: reg.Credential}); err != nil {
+			t.Errorf("the %s registration's credential does not verify: %v", name, err)
+		}
+	}
+}
+
+func TestReregistrationInTheSameSessionKeepsEarlierCredentials(t *testing.T) {
+	f := newCredentialFixture(t)
+	f.now = f.now.Add(time.Minute)
+	again := f.register(t, f.session, incMain)
+	for name, reg := range map[string]Registration{"earlier": f.reg, "later": again} {
+		if _, err := f.verify(f.session.ID, reg.Credential); err != nil {
+			t.Errorf("the %s credential does not verify: %v", name, err)
+		}
+	}
 }
 
 func TestVerifyTreatsAMissingSessionRecordAsClosed(t *testing.T) {

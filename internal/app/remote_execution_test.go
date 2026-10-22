@@ -200,6 +200,45 @@ func TestRemoteExecutionWithoutShellPromptMatchesCatalog(t *testing.T) {
 	}
 }
 
+// TestIdentityBrokerWithRemoteExecutionKeepsTheRemoteShell pins the
+// configuration for the Kubernetes execution provider: an empty --shell leaves
+// no in-process shell, so the identity broker starts, and sessions keep the
+// remote Shell, which runs in the executor Pod.
+func TestIdentityBrokerWithRemoteExecutionKeepsTheRemoteShell(t *testing.T) {
+	fakeRulesEnv(t, t.TempDir(), t.TempDir())
+	ref := session.EnvironmentRef{Kind: "kubernetes", ID: "env-broker", Revision: "rev-1"}
+	env := tool.MustEnvironment(ref, memfs.NewWorkspace("/workspace"), memledger.New(), remotePermissionRunner{memfs.NewCommandRunner(), "/workspace"})
+	var captured port.LLMRequest
+	provider := mockllm.NewWith([]mockllm.Option{mockllm.WithRequestObserver(func(req port.LLMRequest) { captured = req })}, mockllm.TextTurn("done"))
+	built, err := buildIsolated(t, t.Context(), Config{MockProvider: provider, PlacementProvider: remoteFactoryPlacement{env: env}, PlacementScope: "remote", RemoteExecution: true, Shell: "", IdentityBroker: true, NoSoul: true, SchedulerEnabled: false})
+	if err != nil {
+		t.Fatalf("Build with remote execution and an empty shell: %v", err)
+	}
+	defer built.Close()
+	if built.IdentityBroker == nil {
+		t.Fatal("no identity broker was constructed")
+	}
+	ctx := session.WithPrincipal(t.Context(), &session.Principal{Issuer: "issuer", Subject: "alice", GrantType: session.GrantTypeUser})
+	created, err := server.NewHarnessServer(built.Service).CreateSession(ctx, &mecatlv1.CreateSessionRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := session.SessionID(created.GetSessionId())
+	run, err := built.Service.StartRun(ctx, id, "run a command")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range run.Events() {
+	}
+	built.Service.FinishRun(id, run)
+	for _, spec := range captured.Tools {
+		if spec.Name == tool.ShellToolName {
+			return
+		}
+	}
+	t.Fatal("the remote Shell tool is missing")
+}
+
 type remotePermissionRunner struct {
 	*memfs.CommandRunner
 	root string

@@ -94,10 +94,6 @@ func (c *recordingCore) AuthorizeCall(_ context.Context, workload Workload, _ Au
 	return Authorization{}, nil
 }
 
-func (*recordingCore) VerifyCredential(context.Context, VerifyCredentialRequest) (VerifiedAgent, error) {
-	return VerifiedAgent{}, nil
-}
-
 // callAll makes every Service call once and returns their errors in order.
 func callAll(svc Service) []error {
 	ctx := context.Background()

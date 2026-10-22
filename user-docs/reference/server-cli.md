@@ -640,9 +640,10 @@ Usage: mecak8s [flags]
         PEM client private key for --driver-tls-cert
   --enable-identity-broker
         Start the experimental agent identity broker, which gives each signed-in user's
-        session a broker session. Supports a single replica only, requires the Shell
-        tool to be off (--no-shell), and blocks the tool calls of agent definitions
-        that have hooks
+        session a broker session. Supports a single replica only, requires no shell in
+        this process (--no-shell, or --shell "" with Kubernetes execution, which keeps
+        the remote Shell), and blocks the tool calls of agent definitions that have
+        hooks
   --enable-parallel
         Enable the Parallel tool for isolated child branches
   --enable-teams

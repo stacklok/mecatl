@@ -2,6 +2,7 @@ package identitybroker
 
 import (
 	"context"
+	"crypto/sha256"
 	"time"
 )
 
@@ -21,10 +22,16 @@ type agentRecord struct {
 	incarnation   string
 	definition    DefinitionRef
 	parent        AgentRef
-	// minExpiry is the expiry of the credential issued when the instance last
-	// moved to another broker session. Credentials expiring earlier were
-	// issued before the move, so they do not verify in the new session.
-	minExpiry time.Time
+	// credentials holds the credentials issued since the instance last moved
+	// to another broker session, by SHA-256 of the token, with their expiry.
+	// Only these verify, so reopening a session does not revive credentials
+	// issued before it closed, however close together the two were issued.
+	credentials map[[sha256.Size]byte]time.Time
+}
+
+// credentialHash identifies a credential in agentRecord.credentials.
+func credentialHash(credential Token) [sha256.Size]byte {
+	return sha256.Sum256([]byte(credential.Value()))
 }
 
 // RegisterAgent implements Core. It checks the session, the owner, the root
@@ -58,23 +65,35 @@ func (b *Broker) RegisterAgent(_ context.Context, workload Workload, req Registe
 	if err != nil {
 		return Registration{}, err
 	}
-	if rec, ok := t.agents[subject]; ok {
-		// Registering again only moves the instance. Its definition stays the
-		// first one reported, since a later one is not compared yet.
-		if rec.sessionID != s.ID {
-			rec.sessionID = s.ID
-			rec.minExpiry = expiresAt
-		}
-	} else {
-		t.agents[subject] = &agentRecord{
-			sessionID:     s.ID,
+	rec, ok := t.agents[subject]
+	switch {
+	case !ok:
+		rec = &agentRecord{
 			hostSessionID: req.HostSessionID,
 			owner:         req.Owner,
 			incarnation:   req.Incarnation,
 			definition:    req.Definition,
 			parent:        req.Parent,
 		}
+		t.agents[subject] = rec
+	case rec.sessionID == s.ID:
+		// Registering again in the same session keeps the credentials issued
+		// there, dropping expired ones. Its definition stays the first one
+		// reported, since a later one is not compared yet.
+		now := t.now()
+		for h, exp := range rec.credentials {
+			if !now.Before(exp.Add(credentialClockSkew)) {
+				delete(rec.credentials, h)
+			}
+		}
 	}
+	if !ok || rec.sessionID != s.ID {
+		// A new instance, or one moving to another session: only the
+		// credential issued now verifies.
+		rec.sessionID = s.ID
+		rec.credentials = map[[sha256.Size]byte]time.Time{}
+	}
+	rec.credentials[credentialHash(credential)] = expiresAt
 	return Registration{Agent: AgentRef{Subject: subject}, Credential: credential, ExpiresAt: expiresAt}, nil
 }
 
@@ -116,12 +135,14 @@ func (t *sessionTable) checkRegistrationLocked(workload Workload, subject string
 	return s, nil
 }
 
-// VerifyCredential implements Core. After the credential's own checks (see
+var _ CredentialVerifier = (*Broker)(nil)
+
+// VerifyCredential implements CredentialVerifier. After the credential's own checks (see
 // credentialIssuer.verify), its subject must be a registered instance, and
 // that instance must be registered to the request's session, and that session
 // must be open, so closing a session ends its credentials' use at once rather
-// than at their expiry. A credential issued before the instance moved to this
-// session is refused, so reopening a session does not revive credentials
+// than at their expiry. Only a credential issued since the instance moved to
+// this session verifies, so reopening a session does not revive credentials
 // issued before it closed. Per-instance subjects are what bind a credential to
 // one session, with no session claim. It does not check which workload opened
 // the session: AS-1 checks that from its refresh token's record.
@@ -137,7 +158,10 @@ func (b *Broker) VerifyCredential(_ context.Context, req VerifyCredentialRequest
 	t.mu.Lock()
 	rec, registered := t.agents[cred.subject]
 	bound := registered && rec.sessionID == req.SessionID
-	current := bound && !cred.expiresAt.Before(rec.minExpiry)
+	var current bool
+	if bound {
+		_, current = rec.credentials[credentialHash(req.Credential)]
+	}
 	// A missing session record counts as closed, with no closing reason.
 	var closed Reason
 	s, ok := t.byID[req.SessionID]
@@ -152,7 +176,7 @@ func (b *Broker) VerifyCredential(_ context.Context, req VerifyCredentialRequest
 	case !bound:
 		return VerifiedAgent{}, credentialDenied("the agent is not registered to the broker session")
 	case !current:
-		return VerifiedAgent{}, credentialDenied("the credential was issued before the agent moved to the broker session")
+		return VerifiedAgent{}, credentialDenied("the credential was not issued since the agent moved to the broker session")
 	case !open && closed != "":
 		// The design reports a closed session by its closing reason, so the
 		// caller opens a new session on the user's next request.

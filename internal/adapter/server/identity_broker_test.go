@@ -319,7 +319,7 @@ func TestIdentityBrokerReplacesABrokerSessionLeftForAnEarlierIncarnation(t *test
 	// A broker session for an earlier incarnation of the same host session ID,
 	// as a delete whose close failed would leave.
 	if _, err := broker.inner.OpenSession(t.Context(), identitybroker.OpenSessionRequest{
-		HostSessionID: string(sess.ID), Incarnation: "inc_earlier", Owner: stale.Owner,
+		HostSessionID: string(sess.ID), Incarnation: string(session.NewIncarnationID()), Owner: stale.Owner,
 	}); err != nil {
 		t.Fatal(err)
 	}

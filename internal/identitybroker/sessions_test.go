@@ -40,7 +40,7 @@ func openSession(t *testing.T, b *identitybroker.Broker) identitybroker.Session 
 	t.Helper()
 	s, err := b.OpenSession(context.Background(), testWorkload, identitybroker.OpenSessionRequest{
 		HostSessionID: "hostS42",
-		Incarnation:   "inc_hostS42",
+		Incarnation:   "inc_abcdefghijklmnopqrstuvwxya",
 		Owner:         testOwner,
 	})
 	if err != nil {
@@ -50,7 +50,7 @@ func openSession(t *testing.T, b *identitybroker.Broker) identitybroker.Session 
 }
 
 func TestBrokerPassesContract(t *testing.T) {
-	conformance.Run(t, func(t *testing.T, now func() time.Time) identitybroker.Core {
+	conformance.Run(t, func(t *testing.T, now func() time.Time) conformance.Implementation {
 		b := newBroker(t)
 		identitybroker.SetClock(b, now)
 		return b
@@ -67,6 +67,30 @@ func TestBrokerSessionIDsDoNotRepeatAcrossRestarts(t *testing.T) {
 			t.Fatalf("a restarted broker reissued broker session ID %q", id)
 		}
 		seen[id] = true
+	}
+}
+
+func TestBrokerAgentIDIsRandomPerProcess(t *testing.T) {
+	// A fresh Broker stands in for another process: a constant ag_ identifier
+	// would repeat here.
+	agentID := func() string {
+		b := newBroker(t)
+		s := openSession(t, b)
+		reg, err := b.RegisterAgent(context.Background(), testWorkload, identitybroker.RegisterAgentRequest{
+			SessionID: s.ID, HostSessionID: s.HostSessionID, Owner: s.Owner, Incarnation: s.Incarnation,
+			Definition: identitybroker.DefinitionRef{Name: "main"},
+		})
+		if err != nil {
+			t.Fatalf("RegisterAgent: %v", err)
+		}
+		got, err := b.VerifyCredential(context.Background(), identitybroker.VerifyCredentialRequest{SessionID: s.ID, Credential: reg.Credential})
+		if err != nil {
+			t.Fatalf("VerifyCredential: %v", err)
+		}
+		return got.AgentID
+	}
+	if a, b := agentID(), agentID(); a == b {
+		t.Fatalf("two brokers share the ag_ identifier %q", a)
 	}
 }
 
