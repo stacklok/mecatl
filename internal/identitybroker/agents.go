@@ -138,9 +138,13 @@ func (b *Broker) VerifyCredential(_ context.Context, req VerifyCredentialRequest
 	rec, registered := t.agents[cred.subject]
 	bound := registered && rec.sessionID == req.SessionID
 	current := bound && !cred.expiresAt.Before(rec.minExpiry)
-	// A missing session record counts as closed.
+	// A missing session record counts as closed, with no closing reason.
+	var closed Reason
 	s, ok := t.byID[req.SessionID]
-	open := current && ok && s.closed == ""
+	if ok {
+		closed = s.closed
+	}
+	open := current && ok && closed == ""
 	t.mu.Unlock()
 	switch {
 	case !registered:
@@ -149,6 +153,10 @@ func (b *Broker) VerifyCredential(_ context.Context, req VerifyCredentialRequest
 		return VerifiedAgent{}, credentialDenied("the agent is not registered to the broker session")
 	case !current:
 		return VerifiedAgent{}, credentialDenied("the credential was issued before the agent moved to the broker session")
+	case !open && closed != "":
+		// The design reports a closed session by its closing reason, so the
+		// caller opens a new session on the user's next request.
+		return VerifiedAgent{}, ReasonError(closed, "the broker session is closed")
 	case !open:
 		return VerifiedAgent{}, credentialDenied("the broker session is closed")
 	}

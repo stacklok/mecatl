@@ -96,11 +96,11 @@ func runCredentials(t *testing.T, factory Factory) {
 		wantRefused(t, "VerifyCredential in another session", got, err, identitybroker.CodePermissionDenied, identitybroker.ReasonDenied)
 	})
 
-	t.Run("a credential of a closed session is refused", func(t *testing.T) {
+	t.Run("a credential of a closed session is refused with the closing reason", func(t *testing.T) {
 		f := setup(t)
 		mustClose(t, f.svc, f.session.ID)
 		got, err := verify(f.core, f.session.ID, f.reg.Credential)
-		wantRefused(t, "VerifyCredential in a closed session", got, err, identitybroker.CodePermissionDenied, identitybroker.ReasonDenied)
+		wantRefused(t, "VerifyCredential in a closed session", got, err, identitybroker.CodeFailedPrecondition, identitybroker.ReasonSessionClosed)
 	})
 
 	t.Run("after the agent moves to a reopened session, its old credential is refused", func(t *testing.T) {
