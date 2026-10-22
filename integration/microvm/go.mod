@@ -5,7 +5,7 @@ go 1.27.3
 require (
 	github.com/stacklok/go-microvm v0.0.41
 	github.com/stacklok/mecatl v0.0.48
-	github.com/stacklok/mecatl/engine v0.16.1-0.20261013103539-36b6ca993df9
+	github.com/stacklok/mecatl/engine v0.18.0
 	github.com/stacklok/mecatl/environment/microvm v0.0.0
 	go.uber.org/goleak v1.3.0
 )

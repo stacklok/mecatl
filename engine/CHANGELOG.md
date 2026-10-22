@@ -628,7 +628,8 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   across omitted refreshes, and refuses legacy-absent provenance. Changed (breaking,
   pre-v1 minor).
 
-- **Go compatibility floor** - the engine module requires Go 1.27. The root,
+- **Go compatibility floor** - the engine module requires Go 1.27.3 (raised
+  from 1.27.2 for a security fix; first tagged in `engine/v0.18.0`). The root,
   provider, and authentication modules use the same floor. Changed (breaking,
   pre-v1 minor).
 

@@ -37,7 +37,7 @@ require (
 	github.com/stacklok/mecatl/adapters v0.1.1
 	github.com/stacklok/mecatl/authn/oidc v0.0.0-00010101000000-000000000000
 	github.com/stacklok/mecatl/contracts/gen/go/mecatl/driver v0.1.0
-	github.com/stacklok/mecatl/engine v0.16.1-0.20261013103539-36b6ca993df9
+	github.com/stacklok/mecatl/engine v0.18.0
 	github.com/stacklok/mecatl/internal/adaptersupport v0.1.0
 	github.com/stacklok/mecatl/provider/anthropic v0.0.0-00010101000000-000000000000
 	github.com/stacklok/mecatl/provider/openai v0.0.0-00010101000000-000000000000

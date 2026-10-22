@@ -217,6 +217,8 @@ jobs:
           cache-dependency-path: sdk/typescript/pnpm-lock.yaml
 
       - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
+        with:
+          version: 3.54.0
 
       - name: Install SDK dependencies (frozen)
         run: task sdk:install
@@ -261,6 +263,8 @@ jobs:
           persist-credentials: false
 
       - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
+        with:
+          version: 3.54.0
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
@@ -340,6 +344,8 @@ jobs:
           github_token: ${{ github.token }}
 
       - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
+        with:
+          version: 3.54.0
 
       - name: Install SDK dependencies (frozen)
         run: task sdk:install
@@ -400,6 +406,8 @@ jobs:
           deno-version: ${{ matrix.deno-version }}
 
       - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
+        with:
+          version: 3.54.0
 
       - name: Install SDK dependencies (frozen)
         run: task sdk:install
@@ -457,6 +465,8 @@ jobs:
           cache-dependency-path: sdk/typescript/pnpm-lock.yaml
 
       - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
+        with:
+          version: 3.54.0
 
       - name: Install SDK dependencies (frozen)
         run: task sdk:install
@@ -520,6 +530,8 @@ jobs:
           family: go-sdk
 
       - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
+        with:
+          version: 3.54.0
 
       - name: Install SDK dependencies (frozen)
         run: task sdk:install
@@ -574,6 +586,8 @@ jobs:
             sdk/typescript/examples/slack-bot/pnpm-lock.yaml
 
       - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
+        with:
+          version: 3.54.0
 
       - name: Install Slack bot example dependencies (frozen)
         run: task slack-bot:install
@@ -712,6 +726,8 @@ jobs:
             sdk/typescript/pnpm-lock.yaml
 
       - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
+        with:
+          version: 3.54.0
 
       - name: Install Studio dependencies (frozen)
         run: task studio:install
@@ -879,6 +895,8 @@ jobs:
             sdk/typescript/pnpm-lock.yaml
 
       - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
+        with:
+          version: 3.54.0
 
       - name: Install Studio dependencies (frozen)
         run: task studio:install
@@ -947,6 +965,8 @@ jobs:
           persist-credentials: false
 
       - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
+        with:
+          version: 3.54.0
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
@@ -1146,6 +1166,8 @@ jobs:
         with:
           persist-credentials: false
       - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
+        with:
+          version: 3.54.0
         if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.go_relevant == 'true'
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         id: setup-go
@@ -1489,7 +1511,7 @@ jobs:
 
       - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
         with:
-          version: 3.x
+          version: 3.54.0
           repo-token: ${{ secrets.GITHUB_TOKEN }}
 
       # A short coverage-guided pass over the security-critical parsers. This is
@@ -1683,6 +1705,8 @@ jobs:
           family: go-docs
 
       - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
+        with:
+          version: 3.54.0
 
       # AGENTS.md size and symlinks, rule size, agent/skill description size, and
       # that every `task` an AGENTS.md names exists (needs setup-task above).
@@ -1791,6 +1815,8 @@ jobs:
           cache-dependency-path: website/package-lock.json
 
       - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
+        with:
+          version: 3.54.0
 
       - name: Verify generated SDK reference is fresh
         run: task sdk:docs:check
