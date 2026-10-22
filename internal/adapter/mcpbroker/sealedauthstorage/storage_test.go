@@ -875,3 +875,238 @@ func TestEncryptedAuthStorage_NativeCASRejectsInterveningWriter(t *testing.T) {
 		})
 	}
 }
+
+func dcrCASFixture(t *testing.T, makeStorage func(*testing.T) storage.Storage) (storage.Storage, *Storage, storage.DCRCredentials) {
+	t.Helper()
+	inner := makeStorage(t)
+	decorated, err := New(inner, testCredentialKeyRing(t), testNamespace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Sub-second times: Redis persists seconds, so a matching expected must tolerate that.
+	creds := storage.DCRCredentials{
+		Key:      storage.DCRKey{Issuer: "issuer", UpstreamID: "provider", RedirectURI: "https://broker/callback", ScopesHash: "scope"},
+		ClientID: "client", ClientSecret: "initial-secret", RegistrationAccessToken: "initial-registration",
+		AuthorizationEndpoint: "https://issuer/authorize", TokenEndpoint: "https://issuer/token",
+		CreatedAt: time.Now(), ClientSecretExpiresAt: time.Now().Add(time.Hour),
+	}
+	if _, err := decorated.StoreDCRCredentialsIfAbsent(t.Context(), &creds); err != nil {
+		t.Fatal(err)
+	}
+	return inner, decorated, creds
+}
+
+func TestEncryptedAuthStorage_DCRCompareAndSwap(t *testing.T) {
+	for name, makeStorage := range encryptedStorageTestBackends {
+		t.Run(name, func(t *testing.T) {
+			inner, decorated, creds := dcrCASFixture(t, makeStorage)
+			ctx := t.Context()
+			before, err := inner.(storage.DCRCredentialStore).GetDCRCredentials(ctx, creds.Key)
+			if err != nil {
+				t.Fatal(err)
+			}
+			next := creds
+			next.ClientSecret, next.RegistrationAccessToken = "rotated-secret", "rotated-registration"
+			input := next
+			got, err := decorated.UpdateDCRCredentialsIfUnchanged(ctx, &input, &creds)
+			if err != nil || !reflect.DeepEqual(got, &next) || !reflect.DeepEqual(input, next) {
+				t.Fatalf("CAS = %v", err)
+			}
+			stored, err := decorated.GetDCRCredentials(ctx, creds.Key)
+			if err != nil || stored.ClientSecret != "rotated-secret" || stored.RegistrationAccessToken != "rotated-registration" {
+				t.Fatalf("update not durable: %v", err)
+			}
+			raw, err := inner.(storage.DCRCredentialStore).GetDCRCredentials(ctx, creds.Key)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.HasPrefix(raw.ClientSecret, "mecatl.v1.") || !strings.HasPrefix(raw.RegistrationAccessToken, "mecatl.v1.") ||
+				strings.Contains(raw.ClientSecret+raw.RegistrationAccessToken, "rotated") || raw.ClientSecret == before.ClientSecret {
+				t.Fatal("updated row is not freshly sealed")
+			}
+		})
+	}
+}
+
+func TestEncryptedAuthStorage_DCRCASStaleExpected(t *testing.T) {
+	for name, makeStorage := range encryptedStorageTestBackends {
+		t.Run(name, func(t *testing.T) {
+			_, decorated, creds := dcrCASFixture(t, makeStorage)
+			ctx := t.Context()
+			winner := creds
+			winner.RegistrationAccessToken = "winner-registration"
+			if _, err := decorated.UpdateDCRCredentialsIfPresent(ctx, &winner); err != nil {
+				t.Fatal(err)
+			}
+			loser := creds
+			loser.RegistrationAccessToken = "loser-registration"
+			if _, err := decorated.UpdateDCRCredentialsIfUnchanged(ctx, &loser, &creds); !errors.Is(err, storage.ErrDCRCredentialsChanged) {
+				t.Fatalf("stale expected = %v", err)
+			}
+			stored, err := decorated.GetDCRCredentials(ctx, creds.Key)
+			if err != nil || stored.RegistrationAccessToken != "winner-registration" {
+				t.Fatalf("stale CAS overwrote the winner: %v", err)
+			}
+		})
+	}
+}
+
+// Every field of expected must take part in the comparison. Reflection keeps
+// this honest when ToolHive adds a field.
+func TestEncryptedAuthStorage_DCRCASEveryFieldCompared(t *testing.T) {
+	for name, makeStorage := range encryptedStorageTestBackends {
+		t.Run(name, func(t *testing.T) {
+			_, decorated, creds := dcrCASFixture(t, makeStorage)
+			typ := reflect.TypeFor[storage.DCRCredentials]()
+			for i := range typ.NumField() {
+				field := typ.Field(i)
+				if field.Name == "Key" {
+					continue // a different key is invalid input, covered separately
+				}
+				stale := creds
+				v := reflect.ValueOf(&stale).Elem().Field(i)
+				switch v.Kind() {
+				case reflect.String:
+					v.SetString(v.String() + "-stale")
+				case reflect.Struct:
+					if field.Type != reflect.TypeFor[time.Time]() {
+						t.Fatalf("field %s has unhandled type %s", field.Name, field.Type)
+					}
+					v.Set(reflect.ValueOf(v.Interface().(time.Time).Add(time.Second)))
+				default:
+					t.Fatalf("field %s has unhandled kind %s", field.Name, v.Kind())
+				}
+				next := creds
+				next.ClientSecret = "should-not-land"
+				if _, err := decorated.UpdateDCRCredentialsIfUnchanged(t.Context(), &next, &stale); !errors.Is(err, storage.ErrDCRCredentialsChanged) {
+					t.Fatalf("expected differing in %s = %v", field.Name, err)
+				}
+			}
+		})
+	}
+}
+
+type interveningDCRCASStorage struct {
+	storage.Storage
+	storage.DCRCredentialStore
+	beforeSwap func()
+}
+
+func (s *interveningDCRCASStorage) UpdateDCRCredentialsIfUnchanged(ctx context.Context, creds, expected *storage.DCRCredentials) (*storage.DCRCredentials, error) {
+	s.beforeSwap()
+	return s.DCRCredentialStore.UpdateDCRCredentialsIfUnchanged(ctx, creds, expected)
+}
+
+// The decorator's own plaintext compare passes; only the inner store's atomic
+// check can catch a writer that lands between the read and the write.
+func TestEncryptedAuthStorage_DCRCASRejectsInterveningWriter(t *testing.T) {
+	for name, makeStorage := range encryptedStorageTestBackends {
+		t.Run(name, func(t *testing.T) {
+			inner := makeStorage(t)
+			interposed := &interveningDCRCASStorage{Storage: inner, DCRCredentialStore: inner.(storage.DCRCredentialStore)}
+			decorated, err := New(interposed, testCredentialKeyRing(t), testNamespace)
+			if err != nil {
+				t.Fatal(err)
+			}
+			creds := storage.DCRCredentials{
+				Key:      storage.DCRKey{Issuer: "issuer", UpstreamID: "provider", RedirectURI: "https://broker/callback", ScopesHash: "scope"},
+				ClientID: "client", ClientSecret: "initial-secret", RegistrationAccessToken: "initial-registration",
+				AuthorizationEndpoint: "https://issuer/authorize", TokenEndpoint: "https://issuer/token",
+			}
+			if _, err := decorated.StoreDCRCredentialsIfAbsent(t.Context(), &creds); err != nil {
+				t.Fatal(err)
+			}
+			winner := creds
+			winner.RegistrationAccessToken = "winner-registration"
+			called := false
+			interposed.beforeSwap = func() {
+				called = true
+				if _, err := decorated.UpdateDCRCredentialsIfPresent(t.Context(), &winner); err != nil {
+					t.Fatal(err)
+				}
+			}
+			loser := creds
+			loser.RegistrationAccessToken = "loser-registration"
+			if _, err := decorated.UpdateDCRCredentialsIfUnchanged(t.Context(), &loser, &creds); !errors.Is(err, storage.ErrDCRCredentialsChanged) {
+				t.Fatalf("intervening writer CAS = %v", err)
+			}
+			stored, err := decorated.GetDCRCredentials(t.Context(), creds.Key)
+			if !called || err != nil || stored.RegistrationAccessToken != "winner-registration" {
+				t.Fatalf("CAS overwrote the intervening winner: %v", err)
+			}
+		})
+	}
+}
+
+func TestEncryptedAuthStorage_DCRCASConcurrentWriters(t *testing.T) {
+	const writers = 4
+	for name, makeStorage := range encryptedStorageTestBackends {
+		t.Run(name, func(t *testing.T) {
+			_, decorated, creds := dcrCASFixture(t, makeStorage)
+			errs := make(chan error, writers)
+			for i := range writers {
+				go func() {
+					next := creds
+					next.RegistrationAccessToken = "writer-" + string(rune('a'+i))
+					_, err := decorated.UpdateDCRCredentialsIfUnchanged(t.Context(), &next, &creds)
+					errs <- err
+				}()
+			}
+			wins := 0
+			for range writers {
+				switch err := <-errs; {
+				case err == nil:
+					wins++
+				case !errors.Is(err, storage.ErrDCRCredentialsChanged):
+					t.Fatalf("loser error = %v", err)
+				}
+			}
+			if wins != 1 {
+				t.Fatalf("%d writers won the same expected value, want exactly 1", wins)
+			}
+		})
+	}
+}
+
+func TestEncryptedAuthStorage_DCRCASMissingInvalidAndUndecodable(t *testing.T) {
+	for name, makeStorage := range encryptedStorageTestBackends {
+		t.Run(name, func(t *testing.T) {
+			inner, decorated, creds := dcrCASFixture(t, makeStorage)
+			ctx := t.Context()
+			dcr := inner.(storage.DCRCredentialStore)
+
+			missing := creds
+			missing.Key.ScopesHash = "absent"
+			if _, err := decorated.UpdateDCRCredentialsIfUnchanged(ctx, &missing, &missing); !errors.Is(err, storage.ErrNotFound) {
+				t.Fatalf("missing row = %v", err)
+			}
+			if _, err := dcr.GetDCRCredentials(ctx, missing.Key); !errors.Is(err, storage.ErrNotFound) {
+				t.Fatalf("CAS created the missing row: %v", err)
+			}
+
+			other := creds
+			other.Key.ScopesHash = "other"
+			for label, args := range map[string][2]*storage.DCRCredentials{
+				"nil creds": {nil, &creds}, "nil expected": {&creds, nil}, "key mismatch": {&creds, &other},
+			} {
+				if _, err := decorated.UpdateDCRCredentialsIfUnchanged(ctx, args[0], args[1]); !errors.Is(err, credentialenvelope.ErrUnavailable) {
+					t.Fatalf("%s = %v", label, err)
+				}
+			}
+
+			// A row sealed under another namespace cannot be opened: report that, not "changed".
+			foreign, err := New(inner, testCredentialKeyRing(t), "other:authserver:")
+			if err != nil {
+				t.Fatal(err)
+			}
+			foreignCreds := creds
+			foreignCreds.Key.ScopesHash = "foreign"
+			if _, err := foreign.StoreDCRCredentialsIfAbsent(ctx, &foreignCreds); err != nil {
+				t.Fatal(err)
+			}
+			if _, err = decorated.UpdateDCRCredentialsIfUnchanged(ctx, &foreignCreds, &foreignCreds); !errors.Is(err, credentialenvelope.ErrUnavailable) || errors.Is(err, storage.ErrDCRCredentialsChanged) {
+				t.Fatalf("undecodable row = %v", err)
+			}
+		})
+	}
+}

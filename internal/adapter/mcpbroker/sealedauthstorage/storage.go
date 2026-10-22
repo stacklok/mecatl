@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"time"
 
 	"github.com/stacklok/toolhive/pkg/authserver/storage"
 
@@ -204,6 +205,55 @@ func (s *Storage) UpdateDCRCredentialsIfPresent(ctx context.Context, creds *stor
 		return nil, err
 	}
 	return s.openDCR(creds.Key, raw)
+}
+
+// UpdateDCRCredentialsIfUnchanged replaces the sealed credentials only if the
+// stored row still equals expected. Seals use a fresh nonce, so expected cannot
+// be sealed and compared byte for byte: compare plaintext, then hand the inner
+// store the exact sealed row read here so it refuses the write if anyone
+// changed the row in between. A rewrite of identical plaintext counts as
+// unchanged. Unlike the native stores, invalid input returns ErrUnavailable,
+// matching the other methods of this decorator.
+func (s *Storage) UpdateDCRCredentialsIfUnchanged(ctx context.Context, creds, expected *storage.DCRCredentials) (*storage.DCRCredentials, error) {
+	if creds == nil || expected == nil || creds.Key != expected.Key {
+		return nil, credentialenvelope.ErrUnavailable
+	}
+	raw, err := s.dcr.GetDCRCredentials(ctx, creds.Key)
+	if err != nil {
+		return nil, err
+	}
+	// An undecodable row is not "changed": callers would loop or re-register.
+	plain, err := s.openDCR(creds.Key, raw)
+	if err != nil {
+		return nil, err
+	}
+	if !dcrEqual(plain, expected) {
+		return nil, storage.ErrDCRCredentialsChanged
+	}
+	sealed, err := s.sealDCR(creds.Key, creds)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := s.dcr.UpdateDCRCredentialsIfUnchanged(ctx, sealed, raw); err != nil {
+		return nil, err
+	}
+	// Return the caller's value, as the native stores do. Unsealing the stored
+	// row here could fail after the write landed and strand a rotated token.
+	out := *creds
+	return &out, nil
+}
+
+// dcrEqual compares plaintext credentials at the precision of the coarsest
+// backend: Redis persists times as Unix seconds.
+func dcrEqual(a, b *storage.DCRCredentials) bool {
+	x, y := *a, *b
+	if !x.CreatedAt.Truncate(time.Second).Equal(y.CreatedAt.Truncate(time.Second)) ||
+		!x.ClientSecretExpiresAt.Truncate(time.Second).Equal(y.ClientSecretExpiresAt.Truncate(time.Second)) {
+		return false
+	}
+	x.CreatedAt, y.CreatedAt = time.Time{}, time.Time{}
+	x.ClientSecretExpiresAt, y.ClientSecretExpiresAt = time.Time{}, time.Time{}
+	return x == y // every remaining field is a string; a new non-comparable field fails to compile
 }
 
 func (s *Storage) sealTokens(sessionID, provider string, in *storage.UpstreamTokens) (*storage.UpstreamTokens, error) {
