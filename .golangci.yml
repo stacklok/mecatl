@@ -739,7 +739,6 @@ linters:
           list-mode: strict
           files:
             - '**/internal/identitybroker/**.go'
-            - '!**/internal/identitybroker/standin/**.go'
             - '!**/internal/identitybroker/conformance/**.go'
             - '!$test'
           allow:
@@ -759,28 +758,6 @@ linters:
               desc: 'the identity broker core receives explicit inputs; system calls belong in adapters'
             - pkg: testing
               desc: 'the identity broker core has no test helpers; contract tests live in identitybroker/conformance'
-        # The stand-in identity broker answers the core contract in memory.
-        internal-identitybroker-standin:
-          list-mode: strict
-          files:
-            - '**/internal/identitybroker/standin/**.go'
-            - '!$test'
-          allow:
-            - $gostd
-            - github.com/stacklok/mecatl/internal/identitybroker$
-          deny:
-            - pkg: crypto/tls
-              desc: 'the stand-in identity broker is in-memory'
-            - pkg: log
-              desc: 'the stand-in identity broker returns errors and has no logging surface'
-            - pkg: net
-              desc: 'the stand-in identity broker is in-memory'
-            - pkg: os
-              desc: 'the stand-in identity broker is in-memory'
-            - pkg: syscall
-              desc: 'the stand-in identity broker is in-memory'
-            - pkg: testing
-              desc: 'the stand-in identity broker is production code; contract tests live in identitybroker/conformance'
         # The identity broker contract tests drive the abstract Service without host I/O.
         internal-identitybroker-conformance:
           list-mode: strict

@@ -3,9 +3,9 @@
 // Service is the contract for the whole identity broker: Mecatl calls it, and
 // only it, whether the broker runs in process or as its own service. Core is
 // the broker side of that contract, with the authenticated workload on every
-// call; NewInProcess joins the two through an Authenticator. Broker is the real
-// Core. Package standin provides a trivial Core for tests, and package
-// conformance holds the contract tests every implementation passes.
+// call; NewInProcess joins the two through an Authenticator. Broker is the
+// Core, and package conformance holds the contract tests every implementation
+// passes.
 //
 // New validates explicitly supplied configuration, an ECDSA P-256 (ES256)
 // signing capability, and already-loaded definition records, and returns a Broker

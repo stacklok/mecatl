@@ -8,7 +8,10 @@ import (
 	"testing"
 	"time"
 
+	"google.golang.org/grpc/connectivity"
+
 	"github.com/stacklok/mecatl/adapters/jsonlstore"
+	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
 	"github.com/stacklok/mecatl/engine/agent"
@@ -19,14 +22,13 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/permconfig"
 	"github.com/stacklok/mecatl/internal/adapter/server"
 	"github.com/stacklok/mecatl/internal/identitybroker"
-	"github.com/stacklok/mecatl/internal/identitybroker/standin"
 	"github.com/stacklok/mecatl/internal/syscaller"
 )
 
-// closableCore is a stand-in core that records the workloads it sees and
+// closableCore wraps the real broker, recording the workloads it sees and
 // whether it was closed.
 type closableCore struct {
-	*standin.Broker
+	*identitybroker.Broker
 	mu        sync.Mutex
 	workloads []identitybroker.Workload
 	closed    int
@@ -37,6 +39,15 @@ func (c *closableCore) FindSession(ctx context.Context, workload identitybroker.
 	c.workloads = append(c.workloads, workload)
 	c.mu.Unlock()
 	return c.Broker.FindSession(ctx, workload, req)
+}
+
+func newClosableCore(t *testing.T) *closableCore {
+	t.Helper()
+	broker, err := newIdentityBroker(Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &closableCore{Broker: broker}
 }
 
 func (c *closableCore) Close() error {
@@ -58,7 +69,7 @@ func TestIdentityBrokerIsOffByDefault(t *testing.T) {
 }
 
 func TestIdentityBrokerCallsCarryTheUnverifiedWorkload(t *testing.T) {
-	core := &closableCore{Broker: standin.New()}
+	core := newClosableCore(t)
 	built, err := buildIsolated(t, t.Context(), Config{Workspace: t.TempDir(), UseMock: true, NoSoul: true, IdentityBroker: true, identityBrokerCore: core})
 	if err != nil {
 		t.Fatal(err)
@@ -81,7 +92,7 @@ func TestIdentityBrokerCallsCarryTheUnverifiedWorkload(t *testing.T) {
 }
 
 func TestIdentityBrokerIsClosedOnShutdown(t *testing.T) {
-	core := &closableCore{Broker: standin.New()}
+	core := newClosableCore(t)
 	built, err := buildIsolated(t, t.Context(), Config{Workspace: t.TempDir(), UseMock: true, NoSoul: true, IdentityBroker: true, identityBrokerCore: core})
 	if err != nil {
 		t.Fatal(err)
@@ -102,7 +113,7 @@ func TestIdentityBrokerIsClosedOnShutdown(t *testing.T) {
 }
 
 func TestIdentityBrokerIsClosedWhenLaterStartupFails(t *testing.T) {
-	core := &closableCore{Broker: standin.New()}
+	core := newClosableCore(t)
 	// A protected MCP route without a callback URL makes the bundled MCP broker,
 	// built after the identity broker, fail to construct.
 	cfg := Config{Workspace: t.TempDir(), UseMock: true, NoSoul: true, IdentityBroker: true, identityBrokerCore: core,
@@ -142,18 +153,23 @@ func TestIdentityBrokerDefaultWiringOpensSessions(t *testing.T) {
 	if err != nil || !ok || found != opened {
 		t.Fatalf("FindSession = %+v, %v, %v; want %+v, true, nil", found, ok, err, opened)
 	}
-	// The real broker's session IDs start with bs_; the stand-in's do not.
+	// The real broker's session IDs start with bs_.
 	if !strings.HasPrefix(opened.ID, "bs_") {
 		t.Fatalf("broker session ID %q is not the real broker's", opened.ID)
 	}
 }
 
 func TestIdentityBrokerConstructionFailureStopsStartup(t *testing.T) {
-	// The profile lifecycle is built before the identity broker, so its close
-	// shows that a failed startup releases what was already built.
+	// The session store's driver connection is closed on this failure only by
+	// the identity broker's own error branch: no deferred cleanup covers the
+	// store at this point in Build. The profile lifecycle is closed by Build's
+	// earlier deferred cleanup.
 	closer := new(countingMCPProfileCloser)
+	addr := startSessionStoreDriver(t, memstore.New())
+	conns := newDriverConns()
 	invalid := identitybroker.Config{}
 	built, err := buildIsolated(t, t.Context(), Config{Workspace: t.TempDir(), UseMock: true, NoSoul: true,
+		SessionStoreURL: addr, driverConns: conns,
 		IdentityBroker: true, identityBrokerConfig: &invalid, MCPProfileLifecycle: closer})
 	if err == nil {
 		built.Close()
@@ -164,6 +180,15 @@ func TestIdentityBrokerConstructionFailureStopsStartup(t *testing.T) {
 	}
 	if got := closer.calls.Load(); got != 1 {
 		t.Fatalf("profile lifecycle Close calls = %d, want 1", got)
+	}
+	conns.mu.Lock()
+	dc := conns.conns[addr]
+	conns.mu.Unlock()
+	if dc == nil {
+		t.Fatal("Build did not dial the session store driver")
+	}
+	if state := dc.conn.GetState(); state != connectivity.Shutdown {
+		t.Fatalf("session store driver connection = %v after the failed startup, want %v", state, connectivity.Shutdown)
 	}
 }
 

@@ -4468,13 +4468,14 @@ func (s *Service) DeleteSession(ctx context.Context, id session.SessionID) error
 	defer unlockBroker()
 	if err := s.deleteSessionFamily(ctx, sess.ID, prunable); err != nil {
 		if errors.Is(err, port.ErrSessionNotFound) {
+			s.closeIdentityBrokerSession(ctx, id)
 			if confirmErr := s.confirmReferenceDelete(ctx, referenceDelete); confirmErr != nil {
 				return fmt.Errorf("%w: confirm deleted session reference: %v", ErrInternal, confirmErr)
 			}
 			// The durable record is already gone: still attempt broker cleanup
 			// (best-effort) before reporting success, so a locally-retained
 			// broker handle is never orphaned by an already-completed delete.
-			if brokerErr := s.cleanupDeletedSessionLocked(ctx, id); brokerErr != nil {
+			if brokerErr := s.deleteBrokerSessionLocked(ctx, id); brokerErr != nil {
 				s.cfg.Diagnostics.Log(context.WithoutCancel(ctx), port.LevelWarn, "broker cleanup after already-deleted session failed",
 					"session", string(id), "err", brokerErr.Error())
 			}
@@ -4486,6 +4487,10 @@ func (s *Service) DeleteSession(ctx context.Context, id session.SessionID) error
 		}
 		return fmt.Errorf("%w: delete session: %v", ErrInternal, err)
 	}
+	// The durable record is gone, so close the identity broker session before
+	// confirming the reference: a failed confirmation returns, and a retry finds
+	// the record absent and never reaches the cleanup below.
+	s.closeIdentityBrokerSession(ctx, id)
 	if err := s.confirmReferenceDelete(ctx, referenceDelete); err != nil {
 		return fmt.Errorf("%w: session deleted but reference confirmation must be retried", ErrInternal)
 	}
@@ -4495,7 +4500,7 @@ func (s *Service) DeleteSession(ctx context.Context, id session.SessionID) error
 	// would survive pointing at broker state that no longer exists. Broker
 	// state is process-local, so an orphaned entry here is a bounded leak, the
 	// strictly safer failure direction.
-	if err := s.cleanupDeletedSessionLocked(ctx, id); err != nil {
+	if err := s.deleteBrokerSessionLocked(ctx, id); err != nil {
 		s.cfg.Diagnostics.Log(context.WithoutCancel(ctx), port.LevelWarn, "broker cleanup after session delete failed",
 			"session", string(id), "err", err.Error())
 	}
@@ -4560,12 +4565,16 @@ func (s *Service) DeleteSessionForRetentionCandidate(ctx context.Context, candid
 		s.cancelReferenceDelete(ctx, referenceDelete)
 		return errRetentionCandidateChanged
 	}
+	// The durable record is gone, so close the identity broker session before
+	// confirming the reference: a failed confirmation returns, and a retry finds
+	// the record absent and never reaches the cleanup below.
+	s.closeIdentityBrokerSession(ctx, candidate.ID)
 	if err := s.confirmReferenceDelete(ctx, referenceDelete); err != nil {
 		return fmt.Errorf("%w: retention deleted session but reference confirmation must be retried", ErrInternal)
 	}
 	// The durable record is gone; broker cleanup is now best-effort (I-8: see
 	// deleteBrokerSessionLocked's doc comment for the ordering rationale).
-	if err := s.cleanupDeletedSessionLocked(ctx, candidate.ID); err != nil {
+	if err := s.deleteBrokerSessionLocked(ctx, candidate.ID); err != nil {
 		s.cfg.Diagnostics.Log(context.WithoutCancel(ctx), port.LevelWarn, "broker cleanup after retention delete failed",
 			"session", string(candidate.ID), "err", err.Error())
 	}
@@ -4628,10 +4637,11 @@ func (s *Service) DeleteSessionForRetention(ctx context.Context, id session.Sess
 	defer unlockBroker()
 	if err := s.deleteSessionFamily(ctx, id, prunable); err != nil {
 		if errors.Is(err, port.ErrSessionNotFound) {
+			s.closeIdentityBrokerSession(ctx, id)
 			if confirmErr := s.confirmReferenceDelete(ctx, referenceDelete); confirmErr != nil {
 				return fmt.Errorf("%w: confirm deleted retention reference: %v", ErrInternal, confirmErr)
 			}
-			if brokerErr := s.cleanupDeletedSessionLocked(ctx, id); brokerErr != nil {
+			if brokerErr := s.deleteBrokerSessionLocked(ctx, id); brokerErr != nil {
 				s.cfg.Diagnostics.Log(context.WithoutCancel(ctx), port.LevelWarn, "broker cleanup after already-deleted retention candidate failed",
 					"session", string(id), "err", brokerErr.Error())
 			}
@@ -4643,12 +4653,16 @@ func (s *Service) DeleteSessionForRetention(ctx context.Context, id session.Sess
 		}
 		return fmt.Errorf("%w: delete retention candidate: %v", ErrInternal, err)
 	}
+	// The durable record is gone, so close the identity broker session before
+	// confirming the reference: a failed confirmation returns, and a retry finds
+	// the record absent and never reaches the cleanup below.
+	s.closeIdentityBrokerSession(ctx, id)
 	if err := s.confirmReferenceDelete(ctx, referenceDelete); err != nil {
 		return fmt.Errorf("%w: retention deleted session but reference confirmation must be retried", ErrInternal)
 	}
 	// The durable record is gone; broker cleanup is now best-effort (I-8: see
 	// deleteBrokerSessionLocked's doc comment for the ordering rationale).
-	if err := s.cleanupDeletedSessionLocked(ctx, id); err != nil {
+	if err := s.deleteBrokerSessionLocked(ctx, id); err != nil {
 		s.cfg.Diagnostics.Log(context.WithoutCancel(ctx), port.LevelWarn, "broker cleanup after retention delete failed",
 			"session", string(id), "err", err.Error())
 	}

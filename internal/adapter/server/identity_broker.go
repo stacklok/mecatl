@@ -56,7 +56,7 @@ func (s *Service) openIdentityBrokerSession(ctx context.Context, sess *session.S
 	host, incarnation := string(sess.ID), string(sess.Incarnation())
 	open, found, err := broker.FindSession(ctx, identitybroker.FindSessionRequest{RootHostSessionID: host})
 	if err != nil {
-		return s.identityBrokerFailure(ctx, "find", host, err)
+		return s.identityBrokerFailure(ctx, "find", host, "", err)
 	}
 	if found && open.Incarnation == incarnation && open.Owner == owner {
 		return nil
@@ -66,7 +66,7 @@ func (s *Service) openIdentityBrokerSession(ctx context.Context, sess *session.S
 		// session ID: that incarnation no longer exists, so its broker session
 		// cannot be used again. Close it so this incarnation can open.
 		if err := broker.CloseSession(ctx, identitybroker.CloseSessionRequest{SessionID: open.ID, Reason: identitybroker.ReasonSessionClosed}); err != nil {
-			return s.identityBrokerFailure(ctx, "close stale", host, err)
+			return s.identityBrokerFailure(ctx, "close stale", host, open.ID, err)
 		}
 		s.logIdentityBroker(ctx, "closed stale broker session", host, open.ID)
 	}
@@ -76,7 +76,7 @@ func (s *Service) openIdentityBrokerSession(ctx context.Context, sess *session.S
 	// another user cannot reuse this one.
 	opened, err := broker.OpenSession(ctx, identitybroker.OpenSessionRequest{HostSessionID: host, Incarnation: incarnation, Owner: owner})
 	if err != nil {
-		return s.identityBrokerFailure(ctx, "open", host, err)
+		return s.identityBrokerFailure(ctx, "open", host, "", err)
 	}
 	s.logIdentityBroker(ctx, "opened broker session", host, opened.ID)
 	return nil
@@ -101,26 +101,26 @@ func (s *Service) openTeamRootIdentityBrokerSession(ctx context.Context, root se
 // EndScheduledRun closes a scheduled session's broker session when its run
 // ends: the design ends a scheduled run's authority with the run. The
 // scheduler calls it as each fire returns; the session itself is kept for
-// result delivery. A failure is logged, not returned.
+// result delivery. Only a scheduled session's broker session is closed, so an
+// interactive session's ID passed by mistake leaves its broker session open.
+// A failure is logged, not returned.
 func (s *Service) EndScheduledRun(ctx context.Context, id session.SessionID) {
+	if s.cfg.IdentityBroker == nil {
+		return
+	}
+	sess, err := s.cfg.Store.Load(context.WithoutCancel(ctx), id)
+	if err != nil || sess.Kind != session.SessionKindScheduled {
+		return
+	}
 	s.closeIdentityBrokerSession(ctx, id)
-}
-
-// cleanupDeletedSessionLocked releases a deleted session's broker state: it
-// closes the identity broker session, then deletes the MCP broker's logical
-// session. Every deletion path calls it after the durable record is gone, and
-// no local release does. The caller must hold brokerMu for id. Only the MCP
-// broker's failure is returned; the identity close logs its own.
-func (s *Service) cleanupDeletedSessionLocked(ctx context.Context, id session.SessionID) error {
-	s.closeIdentityBrokerSession(ctx, id)
-	return s.deleteBrokerSessionLocked(ctx, id)
 }
 
 // closeIdentityBrokerSession closes the broker session of a host session that
 // was deleted or whose scheduled run ended. A failure is logged, not returned:
-// the session's state has already moved on. Delete paths hold the session's
-// locks, so the calls are bounded by the same timeout as the MCP broker
-// cleanup.
+// the session's state has already moved on. Every deletion path calls it once
+// the durable record is gone, before anything that can still fail and return;
+// no local release does. Delete paths hold the session's locks, so the calls
+// are bounded by the same timeout as the MCP broker cleanup.
 func (s *Service) closeIdentityBrokerSession(ctx context.Context, id session.SessionID) {
 	broker := s.cfg.IdentityBroker
 	if broker == nil {
@@ -134,7 +134,7 @@ func (s *Service) closeIdentityBrokerSession(ctx context.Context, id session.Ses
 		err = broker.CloseSession(ctx, identitybroker.CloseSessionRequest{SessionID: open.ID, Reason: identitybroker.ReasonSessionClosed})
 	}
 	if err != nil {
-		_ = s.identityBrokerFailure(ctx, "close", host, err)
+		_ = s.identityBrokerFailure(ctx, "close", host, open.ID, err)
 		return
 	}
 	if found {
@@ -143,10 +143,16 @@ func (s *Service) closeIdentityBrokerSession(ctx context.Context, id session.Ses
 }
 
 // identityBrokerFailure logs a failed identity broker call and returns the
-// error for the client: ErrIdentityBrokerUnavailable when the broker is
-// unavailable or did not answer in time, so the client can retry, and
-// ErrInternal otherwise.
-func (s *Service) identityBrokerFailure(ctx context.Context, call, host string, err error) error {
+// error for the client: the caller's cancellation when the caller went away,
+// ErrIdentityBrokerUnavailable when the broker is unavailable or did not answer
+// in time, so the client can retry, and ErrInternal otherwise. brokerSession is
+// the broker session involved, or empty when none is known yet.
+func (s *Service) identityBrokerFailure(ctx context.Context, call, host, brokerSession string, err error) error {
+	if errors.Is(err, context.Canceled) && ctx.Err() != nil {
+		s.cfg.Diagnostics.Log(context.WithoutCancel(ctx), port.LevelInfo, "identity broker call cancelled by the caller",
+			"call", call, "session", host, "broker_session", brokerSession)
+		return fmt.Errorf("identity broker %s: %w", call, ctx.Err())
+	}
 	code := identitybroker.CodeInternal
 	var brokerErr *identitybroker.Error
 	switch {
@@ -156,7 +162,7 @@ func (s *Service) identityBrokerFailure(ctx context.Context, call, host string, 
 		code = identitybroker.CodeUnavailable
 	}
 	s.cfg.Diagnostics.Log(context.WithoutCancel(ctx), port.LevelWarn, "identity broker call failed",
-		"call", call, "session", host, "code", string(code))
+		"call", call, "session", host, "broker_session", brokerSession, "code", string(code))
 	if code == identitybroker.CodeUnavailable {
 		return ErrIdentityBrokerUnavailable
 	}

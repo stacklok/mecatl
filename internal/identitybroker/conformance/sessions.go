@@ -35,13 +35,20 @@ func runSessions(t *testing.T, factory serviceFactory) {
 
 	t.Run("concurrent opens return one session", func(t *testing.T) {
 		svc := factory(t)
-		const opens = 8
+		// Release every open at once, so an implementation that looks up and
+		// inserts under separate locks is likely to open two sessions.
+		const opens = 64
 		var wg sync.WaitGroup
+		start := make(chan struct{})
 		got := make([]identitybroker.Session, opens)
 		errs := make([]error, opens)
 		for i := range opens {
-			wg.Go(func() { got[i], errs[i] = svc.OpenSession(ctx, openRequest("hostS42", alice)) })
+			wg.Go(func() {
+				<-start
+				got[i], errs[i] = svc.OpenSession(ctx, openRequest("hostS42", alice))
+			})
 		}
+		close(start)
 		wg.Wait()
 		for i := range opens {
 			if errs[i] != nil {
@@ -50,6 +57,10 @@ func runSessions(t *testing.T, factory serviceFactory) {
 			if got[i] != got[0] {
 				t.Fatalf("concurrent opens returned %+v and %+v, want one session", got[0], got[i])
 			}
+		}
+		found, ok, err := svc.FindSession(ctx, findRequest("hostS42"))
+		if err != nil || !ok || found != got[0] {
+			t.Fatalf("FindSession after concurrent opens = %+v, %v, %v; want %+v, true, nil", found, ok, err, got[0])
 		}
 	})
 
