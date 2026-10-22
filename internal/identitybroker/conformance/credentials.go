@@ -115,6 +115,19 @@ func runCredentials(t *testing.T, factory Factory) {
 		wantRefused(t, "VerifyCredential in the old session", got, err, identitybroker.CodePermissionDenied, identitybroker.ReasonDenied)
 	})
 
+	t.Run("a reopened session does not revive credentials issued before it closed", func(t *testing.T) {
+		f := setup(t)
+		mustClose(t, f.svc, f.session.ID)
+		f.clock.Advance(time.Minute)
+		reopened := mustOpen(t, f.svc, openRequest("hostS42", alice))
+		again := mustRegisterAt(t, f.svc, registerRequest(reopened), f.clock.Now)
+		got, err := verify(f.core, reopened.ID, f.reg.Credential)
+		wantRefused(t, "VerifyCredential in the reopened session of a credential from before", got, err, identitybroker.CodePermissionDenied, identitybroker.ReasonDenied)
+		if _, err := verify(f.core, reopened.ID, again.Credential); err != nil {
+			t.Fatalf("VerifyCredential of the credential issued on reopening: %v", err)
+		}
+	})
+
 	t.Run("a refused takeover leaves the credential bound to its session", func(t *testing.T) {
 		f := setup(t)
 		// Bob's session reports Alice's agent's incarnation as its own.

@@ -2,7 +2,7 @@ package identitybroker
 
 import (
 	"context"
-	"fmt"
+	"time"
 )
 
 // agentRecord is a registered agent instance. Records are kept apart from
@@ -21,6 +21,10 @@ type agentRecord struct {
 	incarnation   string
 	definition    DefinitionRef
 	parent        AgentRef
+	// minExpiry is the expiry of the credential issued when the instance last
+	// moved to another broker session. Credentials expiring earlier were
+	// issued before the move, so they do not verify in the new session.
+	minExpiry time.Time
 }
 
 // RegisterAgent implements Core. It checks the session, the owner, the root
@@ -41,7 +45,9 @@ func (b *Broker) RegisterAgent(_ context.Context, workload Workload, req Registe
 	// Sign outside the lock: a remote signer may be slow.
 	credential, expiresAt, err := b.issuer.issue(subject, t.now())
 	if err != nil {
-		return Registration{}, NewError(CodeInternal, "", fmt.Sprintf("issue the agent credential: %v", err))
+		// The signer's error is not passed on: from a key service it can name
+		// keys or endpoints, and the broker has no log of its own.
+		return Registration{}, NewError(CodeInternal, "", "the agent credential could not be issued")
 	}
 
 	// Check again under the lock that records the instance: the session or
@@ -55,7 +61,10 @@ func (b *Broker) RegisterAgent(_ context.Context, workload Workload, req Registe
 	if rec, ok := t.agents[subject]; ok {
 		// Registering again only moves the instance. Its definition stays the
 		// first one reported, since a later one is not compared yet.
-		rec.sessionID = s.ID
+		if rec.sessionID != s.ID {
+			rec.sessionID = s.ID
+			rec.minExpiry = expiresAt
+		}
 	} else {
 		t.agents[subject] = &agentRecord{
 			sessionID:     s.ID,
@@ -111,7 +120,9 @@ func (t *sessionTable) checkRegistrationLocked(workload Workload, subject string
 // credentialIssuer.verify), its subject must be a registered instance, and
 // that instance must be registered to the request's session, and that session
 // must be open, so closing a session ends its credentials' use at once rather
-// than at their expiry. Per-instance subjects are what bind a credential to
+// than at their expiry. A credential issued before the instance moved to this
+// session is refused, so reopening a session does not revive credentials
+// issued before it closed. Per-instance subjects are what bind a credential to
 // one session, with no session claim. It does not check which workload opened
 // the session: AS-1 checks that from its refresh token's record.
 func (b *Broker) VerifyCredential(_ context.Context, req VerifyCredentialRequest) (VerifiedAgent, error) {
@@ -126,13 +137,18 @@ func (b *Broker) VerifyCredential(_ context.Context, req VerifyCredentialRequest
 	t.mu.Lock()
 	rec, registered := t.agents[cred.subject]
 	bound := registered && rec.sessionID == req.SessionID
-	open := bound && t.byID[req.SessionID].closed == ""
+	current := bound && !cred.expiresAt.Before(rec.minExpiry)
+	// A missing session record counts as closed.
+	s, ok := t.byID[req.SessionID]
+	open := current && ok && s.closed == ""
 	t.mu.Unlock()
 	switch {
 	case !registered:
 		return VerifiedAgent{}, credentialDenied("the credential's subject is not a registered agent")
 	case !bound:
 		return VerifiedAgent{}, credentialDenied("the agent is not registered to the broker session")
+	case !current:
+		return VerifiedAgent{}, credentialDenied("the credential was issued before the agent moved to the broker session")
 	case !open:
 		return VerifiedAgent{}, credentialDenied("the broker session is closed")
 	}

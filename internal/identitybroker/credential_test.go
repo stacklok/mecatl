@@ -359,8 +359,12 @@ func TestFailedSigningLeavesTheAgentWhereItWas(t *testing.T) {
 	reopened := open()
 
 	fail.Store(true)
-	if _, err := register(reopened); !errors.Is(err, NewError(CodeInternal, "", "")) {
+	_, err = register(reopened)
+	if !errors.Is(err, NewError(CodeInternal, "", "")) {
 		t.Fatalf("RegisterAgent with a failing signer = %v, want INTERNAL", err)
+	}
+	if strings.Contains(err.Error(), "signer unavailable") {
+		t.Fatalf("RegisterAgent passed on the signer's error: %v", err)
 	}
 	// The agent did not move: it is still recorded in the old session, so its
 	// credential does not verify in the new one.
@@ -468,6 +472,27 @@ func TestRegistrationChecksAgainAfterSigning(t *testing.T) {
 			t.Fatalf("agent record = %+v, want bob's in %s", rec, bobs.ID)
 		}
 	})
+}
+
+func TestVerifyTreatsAMissingSessionRecordAsClosed(t *testing.T) {
+	f := newCredentialFixture(t)
+	delete(f.broker.sessions.byID, f.session.ID) // as a later purge would
+	if _, err := f.verify(f.session.ID, f.reg.Credential); !errors.Is(err, ReasonError(ReasonDenied, "")) {
+		t.Fatalf("VerifyCredential with no session record = %v, want denied", err)
+	}
+}
+
+func TestOpaqueSignerPublicKeyIsCopied(t *testing.T) {
+	pub := testKey(t, "opaque public key").PublicKey
+	want := pub
+	b, err := New(testConfig(), nil, opaqueSigner{pub: &pub})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	pub = testKey(t, "replacement").PublicKey // the caller changes its key in place
+	if !b.issuer.publicKey.Equal(&want) {
+		t.Fatal("the broker's verification key changed with the caller's key")
+	}
 }
 
 func TestReregistrationKeepsTheFirstDefinition(t *testing.T) {

@@ -899,22 +899,34 @@ func mainServerResourceCapability(mainMgr *mcp.Manager, name string) (string, bo
 	return "", false
 }
 
+// hooksDisabledRunner stands in for a def's hooks that cannot run: it blocks
+// every tool call, and leaves other phases to fallback.
+type hooksDisabledRunner struct{ fallback port.HookRunner }
+
+func (r hooksDisabledRunner) Run(ctx context.Context, ev governance.HookEvent) (governance.HookOutcome, error) {
+	if ev.Phase == governance.PhasePreToolUse {
+		return governance.HookOutcome{Block: true, Message: "this agent's hooks are disabled while the identity broker runs, so its tool calls are blocked"}, nil
+	}
+	return r.fallback.Run(ctx, ev)
+}
+
 // defHookRunner builds the HookRunner scoped to a def's engine from its `hooks:`
 // map. A def with no (valid) hooks returns the shared default runner (an inert
 // hookexec.New(nil)), so behaviour is unchanged for defs that scope no hooks.
 // Unknown phases are dropped with a diagnostic. The runner uses cfg.Shell when set
 // so a def hook runs under the same interpreter as the main session's hooks.
-// With the identity broker on, def hooks are dropped: they run a shell in this
+// With the identity broker on, def hooks do not run: they run a shell in this
 // process, which holds the broker's signing key, and a trusted project's
 // definitions can be written by the model (see errIdentityBrokerWithShell).
+// A hook can be a guard, so the def fails closed: every tool call is blocked.
 func defHookRunner(cfg Config, def agents.AgentDef, fallback port.HookRunner) port.HookRunner {
 	if len(def.Hooks) == 0 {
 		return fallback
 	}
 	if cfg.IdentityBroker {
-		cfg.diag().Log(context.Background(), port.LevelWarn, "agent def hooks are disabled while the identity broker runs; ignored",
+		cfg.diag().Log(context.Background(), port.LevelWarn, "agent def hooks cannot run while the identity broker runs; its tool calls are blocked",
 			"agent", def.Name, "origin", string(def.Origin))
-		return fallback
+		return hooksDisabledRunner{fallback: fallback}
 	}
 	hooks := make(map[governance.HookPhase]string, len(def.Hooks))
 	for rawPhase, cmd := range def.Hooks {

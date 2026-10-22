@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -113,13 +114,26 @@ func TestDefHookRunnerBuildsScopedRunner(t *testing.T) {
 	}
 }
 
-// TestDefHookRunnerDropsHooksWithIdentityBroker asserts a def's hooks never
-// run a shell in a process holding the identity broker's signing key.
-func TestDefHookRunnerDropsHooksWithIdentityBroker(t *testing.T) {
+// TestDefHookRunnerFailsClosedWithIdentityBroker asserts a def's hooks never
+// run a shell in a process holding the identity broker's signing key, and that
+// the def's tool calls are blocked rather than let through unguarded.
+func TestDefHookRunnerFailsClosedWithIdentityBroker(t *testing.T) {
+	marker := filepath.Join(t.TempDir(), "hook-ran")
 	fallback := hookexec.New(nil)
-	def := agents.AgentDef{Name: "gated", Hooks: map[string]string{"PreToolUse": "exit 2"}}
-	if r := defHookRunner(Config{Shell: "/bin/sh", IdentityBroker: true}, def, fallback); r != fallback {
-		t.Fatalf("with the identity broker on, a def with hooks should return the fallback runner")
+	def := agents.AgentDef{Name: "gated", Hooks: map[string]string{
+		"PreToolUse":  "touch " + marker, // would allow if it ran
+		"PostToolUse": "touch " + marker,
+	}}
+	r := defHookRunner(Config{Shell: "/bin/sh", IdentityBroker: true}, def, fallback)
+	pre, err := r.Run(context.Background(), governance.HookEvent{Phase: governance.PhasePreToolUse, Tool: "Read"})
+	if err != nil || !pre.Block {
+		t.Fatalf("PreToolUse = %+v, %v; want a block", pre, err)
+	}
+	if _, err := r.Run(context.Background(), governance.HookEvent{Phase: governance.PhasePostToolUse, Tool: "Read"}); err != nil {
+		t.Fatalf("PostToolUse: %v", err)
+	}
+	if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("a def hook ran with the identity broker on (marker: %v)", err)
 	}
 }
 

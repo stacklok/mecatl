@@ -125,7 +125,17 @@ func checkSigner(signer crypto.Signer) (crypto.Signer, *ecdsa.PublicKey, error) 
 	if !ok || ecPub == nil || ecPub.Curve != elliptic.P256() {
 		return nil, nil, fmt.Errorf("only ECDSA P-256 (ES256) signers are supported, got public key type %T", pub)
 	}
-	return signer, ecPub, nil
+	// The signer's public key is caller-owned memory: copy it, so caller
+	// mutation cannot change the key credentials verify against.
+	point, err := ecPub.Bytes()
+	if err != nil {
+		return nil, nil, fmt.Errorf("ecdsa public key: %w", err)
+	}
+	dup, err := ecdsa.ParseUncompressedPublicKey(elliptic.P256(), point)
+	if err != nil {
+		return nil, nil, fmt.Errorf("ecdsa public key: %w", err)
+	}
+	return signer, dup, nil
 }
 
 // copyP256Key returns an independent copy of key. The copy derives its public

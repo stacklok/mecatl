@@ -641,7 +641,8 @@ Usage: mecak8s [flags]
   --enable-identity-broker
         Start the experimental agent identity broker, which gives each signed-in user's
         session a broker session. Supports a single replica only, requires the Shell
-        tool to be off (--no-shell), and disables agent-definition hooks
+        tool to be off (--no-shell), and blocks the tool calls of agent definitions
+        that have hooks
   --enable-parallel
         Enable the Parallel tool for isolated child branches
   --enable-teams
