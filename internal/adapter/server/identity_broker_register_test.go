@@ -471,3 +471,50 @@ func TestIdentityBrokerCredentialStaysInMemory(t *testing.T) {
 		t.Fatal("a closed server kept an agent's credential")
 	}
 }
+
+// TestIdentityBrokerHeldCredentialVerifiesForItsSession is the slice's
+// testable result: a real session's agent holds a credential that the broker
+// verifies for the session's broker session and maps to the shared ag_
+// identifier, as AS-1's in-process check will.
+func TestIdentityBrokerHeldCredentialVerifiesForItsSession(t *testing.T) {
+	broker := newRecordingBroker()
+	svc := newIdentityBrokerService(t, broker, mockllm.New(mockllm.TextTurn("done")))
+	ctx := aliceContext(t)
+	sess, err := svc.CreateSession(ctx, session.ModeDefault, session.Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := runToEnd(ctx, t, svc, sess.ID); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	credential, held := svc.HeldIdentityCredentialForTest(sess.ID)
+	if !held {
+		t.Fatal("the session's agent holds no credential")
+	}
+	brokerSession := wantBrokerSession(t, broker, sess)
+	verify := func(sessionID string) (identitybroker.VerifiedAgent, error) {
+		return broker.verifier.VerifyCredential(t.Context(), identitybroker.VerifyCredentialRequest{SessionID: sessionID, Credential: identitybroker.NewToken(credential)})
+	}
+	got, err := verify(brokerSession.ID)
+	if err != nil {
+		t.Fatalf("VerifyCredential of the held credential: %v", err)
+	}
+	if !strings.HasSuffix(got.Agent.Subject, "/inst/"+string(sess.Incarnation())) {
+		t.Fatalf("verified agent = %q, want the session's agent", got.Agent.Subject)
+	}
+	if !strings.HasPrefix(got.AgentID, "ag_") {
+		t.Fatalf("verified ag_ identifier = %q", got.AgentID)
+	}
+	if !got.ExpiresAt.After(time.Now()) {
+		t.Fatalf("verified credential expires at %v, want a future time", got.ExpiresAt)
+	}
+	// Negative control: the credential verifies only for its own broker
+	// session, not another session's.
+	other, err := svc.CreateSession(ctx, session.ModeDefault, session.Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := verify(wantBrokerSession(t, broker, other).ID); err == nil {
+		t.Fatal("the held credential verified for another session's broker session")
+	}
+}

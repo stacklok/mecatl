@@ -30,6 +30,8 @@ var brokerAlice = &session.Principal{Issuer: "https://login.example.com", Subjec
 // every call fail as unavailable.
 type recordingBroker struct {
 	inner identitybroker.Service
+	// verifier is the broker's in-process credential check, as AS-1 calls it.
+	verifier identitybroker.CredentialVerifier
 
 	mu        sync.Mutex
 	opens     []identitybroker.OpenSessionRequest
@@ -70,7 +72,7 @@ func newRecordingBroker() *recordingBroker {
 	if err != nil {
 		panic(err)
 	}
-	return &recordingBroker{inner: identitybroker.NewInProcess(identitybroker.UnverifiedAuthenticator{Name: "mecak8s-test"}, core)}
+	return &recordingBroker{inner: identitybroker.NewInProcess(identitybroker.UnverifiedAuthenticator{Name: "mecak8s-test"}, core), verifier: core}
 }
 
 func (b *recordingBroker) down() error {
