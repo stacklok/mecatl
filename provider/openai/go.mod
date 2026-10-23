@@ -1,10 +1,10 @@
 module github.com/stacklok/mecatl/provider/openai
 
-go 1.27.3
+go 1.27
 
 require (
 	github.com/openai/openai-go/v3 v3.61.0
-	github.com/stacklok/mecatl/engine v0.18.0
+	github.com/stacklok/mecatl/engine v0.18.1
 	github.com/stacklok/mecatl/provider/ssefilter v0.1.0
 	go.uber.org/goleak v1.3.0
 )

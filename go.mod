@@ -1,6 +1,6 @@
 module github.com/stacklok/mecatl
 
-go 1.27.3
+go 1.27.0
 
 require (
 	buf.build/gen/go/bufbuild/protovalidate/protocolbuffers/go v1.36.12-20260825204119-511051f7f437.2
@@ -37,7 +37,7 @@ require (
 	github.com/stacklok/mecatl/adapters v0.1.1
 	github.com/stacklok/mecatl/authn/oidc v0.0.0-00010101000000-000000000000
 	github.com/stacklok/mecatl/contracts/gen/go/mecatl/driver v0.1.0
-	github.com/stacklok/mecatl/engine v0.18.0
+	github.com/stacklok/mecatl/engine v0.18.1
 	github.com/stacklok/mecatl/internal/adaptersupport v0.1.0
 	github.com/stacklok/mecatl/provider/anthropic v0.0.0-00010101000000-000000000000
 	github.com/stacklok/mecatl/provider/openai v0.0.0-00010101000000-000000000000

@@ -1,11 +1,11 @@
 module github.com/stacklok/mecatl/integration/microvm
 
-go 1.27.3
+go 1.27.0
 
 require (
 	github.com/stacklok/go-microvm v0.0.41
 	github.com/stacklok/mecatl v0.0.48
-	github.com/stacklok/mecatl/engine v0.18.0
+	github.com/stacklok/mecatl/engine v0.18.1
 	github.com/stacklok/mecatl/environment/microvm v0.0.0
 	go.uber.org/goleak v1.3.0
 )
