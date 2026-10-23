@@ -334,9 +334,9 @@ Checks 5 and 6 exist because the broker supplies `A42`, and only mecak8s checks 
 1. The workload is authenticated ([step (2)](#2-workload-credential)).
 2. Session `A42` is open and bound to that workload.
 3. The definition reference names a definition the loader recorded, or, for a definition the broker did not load, is accepted as a mecak8s report and marked as such; see [definition provenance](agent-definitions.md#definition-provenance).
-4. With no parent, including after a fork or clear, the definition is root-eligible. With a parent, the parent is registered to `A42`.
-5. The definition category and name match `[A-Za-z0-9._-]+` and are neither `.` nor `..` (SPIFFE-ID §2.2). A name that would need encoding is rejected, not rewritten.
-6. The name and the nesting depth stay within the caps. Proposed: the definition category and name each up to 63 bytes, a `legacy_` incarnation no longer than an `inc_` one, and up to 8 child levels below the root, which keeps the longest subject near 1,600 bytes. The agent-instance issuer also checks the whole URI against the 2,048 bytes SPIFFE-ID §2.3 says implementations should not generate beyond.
+4. With no parent, including after a fork or clear, the definition is root-eligible, the host session is `A42`'s root host session, and the incarnation is the one `A42` was opened with. With a parent, the parent is registered to `A42`.
+5. The definition category and name match `[A-Za-z0-9._-]+` and are neither `.` nor `..` (SPIFFE-ID §2.2). A name that would need encoding is rejected, not rewritten. The incarnation is exactly `inc_` and 26 lowercase base32 characters, or `legacy_` and 64 hex characters.
+6. The name and the nesting depth stay within the caps. Proposed: the definition category and name each up to 63 bytes, and up to 8 child levels below the root, which keeps the longest subject under 2,000 bytes, even with `legacy_` incarnations. The agent-instance issuer also checks the whole URI against the 2,048 bytes SPIFFE-ID §2.3 says implementations should not generate beyond.
 7. If the SPIFFE ID was registered before, in any session, that registration had the same host session, owner, definition reference and revision, and parent; only the broker session may differ.
 
 Registration records identity, not permission to spawn, run, or call tools. The agent-instance issuer constructs the canonical subject; see the [registration checks](agent-definitions.md#registering-instances). In the same transaction the agent-instance issuer gives the instance its **`ag_` identifier**: a random, opaque value such as `ag_7hq2x9`, created only if the SPIFFE ID has none yet and reused otherwise. Both directions are unique, one `ag_` identifier per SPIFFE ID and one SPIFFE ID per `ag_` identifier, and an identifier is never reassigned. Registering the same instance into a new session therefore keeps its `ag_` identifier. AS-1 later writes it into `act`.
@@ -363,7 +363,7 @@ mecak8s checks that the returned subject is the registered instance. The harness
 5. `aud` is exactly the broker's audience, as its only value. JWT-SVID §3.2 only requires the verifier's own value to be present; the single value is Mecatl policy.
 6. `exp` has not passed, allowing the clock skew, and is no further in the future than the configured maximum SVID lifetime.
 7. `sub` matches the full canonical subject of a registered instance byte for byte.
-8. The instance is registered to the session in use: `A42` from the request at the broker, the session of `RT-A42`'s record at AS-1.
+8. The instance is registered to the session in use: `A42` from the request at the broker, the session of `RT-A42`'s record at AS-1. The SVID was issued while the instance was registered to that session, so an SVID issued before a session closed does not verify in the session that replaces it.
 
 **Failures.**
 
@@ -371,7 +371,8 @@ mecak8s checks that the returned subject is the registered instance. The harness
 | --- | --- | --- |
 | Registration 1 | Step (2)'s codes | Only an expired workload credential. |
 | Registration 2 | The session's closing reason with its status from [error reasons](#error-reasons), or `PERMISSION_DENIED` for a session bound to another workload | After a new session opens. |
-| Registration 3, 4, 7 | `PERMISSION_DENIED` | No. |
+| Registration 3, 4 | `PERMISSION_DENIED` | No. |
+| Registration 7 | `ALREADY_EXISTS` | No. |
 | Registration 5, 6 | `INVALID_ARGUMENT` | No. |
 | Registration repeated | The same instance reference for the same session and content; `ALREADY_EXISTS` for the same SPIFFE ID with different content | A lost response is retried safely. |
 | SVID 6, expired | `UNAUTHENTICATED` with `svid_expired` at the broker; 400 `invalid_request` with `svid_expired` at AS-1 | mecak8s renews the SVID, one renewal per instance at a time, and retries once. |
@@ -790,7 +791,7 @@ The failures each step can return: where each is detected, what the user sees, a
 | Access token issued before a user-wide revocation | AS-1 | `invalid_request` with that revocation's reason | Alice signs in again | Nothing more |
 | Echoed entry differs | Broker | Open fails | Session open fails | The new `RT-A42`, closing `A42` |
 | Registration into a closed or foreign session | Agent-instance issuer | The closing reason's status, or `PERMISSION_DENIED` | Agent cannot start until a new session opens | Nothing |
-| Re-registration under a different owner | Agent-instance issuer | `PERMISSION_DENIED` | Agent cannot start | Nothing |
+| Re-registration with a different owner, host session, or parent | Agent-instance issuer | `ALREADY_EXISTS` | Agent cannot start | Nothing |
 | Root registration of a non-root-eligible definition | Agent-instance issuer | `PERMISSION_DENIED` | Session cannot start with that definition | Nothing |
 | Definition name or depth beyond the caps | Agent-instance issuer | `INVALID_ARGUMENT` | Child agent cannot start | Nothing |
 | SVID expired | Broker, AS-1 | `UNAUTHENTICATED`, `invalid_request` with `svid_expired` | None: renewed and retried once | Nothing |
@@ -848,7 +849,7 @@ An agent instance keeps its identity across runs. Each credential's lifetime is 
 | AS-1 access token | AS-1 policy; short. Expiry ends API authentication, not the broker session. | Before expiry and before each session open, with the client refresh token. | Client |
 | Client refresh token | AS-1 policy, sign out everywhere, or an upstream revocation or owner-action outcome. | Sign in again. | Alice |
 | Workload credential | Expiry. | Before it expires. | Kubelet; mecak8s rereads the file |
-| Agent-instance SVID | Expiry. | When less than half its lifetime remains, on the next use; the old one stays valid until its `exp`. One renewal per instance at a time; the `ag_` identifier and the ceiling do not change. | Agent-instance issuer |
+| Agent-instance SVID | Expiry. | When less than half its lifetime remains, on the next use; the old one stays valid until its `exp`, while the instance stays registered to the same session. One renewal per instance at a time; the `ag_` identifier and the ceiling do not change. | Agent-instance issuer |
 | Client assertion | After one use. | Every token-endpoint request. | Broker |
 | `RT-A42` | Hard expiry, session close, sign out everywhere, or the upstream re-check. Losing it closes `A42`. | Never renewed; a new broker session for `hostS42`, opened with a fresh access token. | mecak8s and broker |
 | Schedule grant | Its horizon, schedule deletion, sign out everywhere, or the upstream re-check. | Before the horizon, renewal moves it; after a revocation, setup creates a new grant. Alice is notified before the horizon. | Alice |
@@ -922,7 +923,7 @@ Each agent instance has its own vMCP session (`Mcp-Session-Id`) for each user it
 
 ## Pauses and restart
 
-The broker's session reference and broker session incarnation are separate from the host session ID and [agent-instance incarnation](agent-definitions.md#definitions-and-executing-instances). An existing stable broker session can recover a new process-local attachment through continuity checks. Those references do not combine user, agent, definition, and authority into one record.
+The broker's session reference is separate from the host session ID. A broker session has no incarnation of its own: it carries its root host session's [incarnation](agent-definitions.md#definitions-and-executing-instances), which is also the main agent-instance incarnation. An existing stable broker session can recover a new process-local attachment through continuity checks. Those references do not combine user, agent, definition, and authority into one record.
 
 Workload-only session access checks the exact authenticated workload and configured deployment. It never takes the owner from a workload's assertion: an owner mecak8s reports is only compared with AS-1's record, and a mismatch refuses. A replacement Pod with the same workload identity can serve the existing partition; a different identity cannot assume access.
 

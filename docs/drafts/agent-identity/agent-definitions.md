@@ -17,7 +17,7 @@ An agent definition describes how an agent performs work. Mecatl represents it w
 | Agent-instance incarnation | The durable identity of an instance for its whole lifetime. It stays the same across restoration and credential renewal. A fresh incarnation identifies a distinct instance. | Yes, as a session incarnation. Using it as the instance identity is new. |
 | Workload | The Mecatl service process that hosts instances for many users and sessions. It has its own infrastructure identity. | Yes. |
 
-The session aggregate mints an [incarnation](../../../engine/session/incarnation.go) when it creates a session. It persists the incarnation on every session, including child sessions. The design uses that durable incarnation as the agent-instance identity. The incarnation is not the host session ID or a run ID. mecak8s persists the incarnation and reports it to the broker. The broker's own session incarnation and attachment binding are separate [recovery concepts](credentials-and-lifecycle.md#pauses-and-restart).
+The session aggregate mints an [incarnation](../../../engine/session/incarnation.go) when it creates a session. It persists the incarnation on every session, including child sessions. The design uses that durable incarnation as the agent-instance identity. The incarnation is not the host session ID or a run ID. mecak8s persists the incarnation and reports it to the broker. A broker session has no incarnation of its own: it is opened with its root host session's incarnation, which is also the main agent's. The broker session's attachment binding is a separate [recovery concept](credentials-and-lifecycle.md#pauses-and-restart).
 
 ## Relationships and lifetimes
 
@@ -116,9 +116,9 @@ The broker's agent-instance issuer validates the registration records that the w
 
 - The workload can act for the session and the instance.
 - If there is a parent, the parent is registered to the same broker session.
-- A registration with no parent names a definition that can be a session's root.
+- A registration with no parent names a definition that can be a session's root. It runs in the broker session's root host session, with that host session's incarnation.
 - For a definition that the broker loaded, the reference matches the broker's record.
-- The subject follows the SPIFFE rules. Each definition category and name uses only `[A-Za-z0-9._-]`, is neither `.` nor `..`, and is at most 63 bytes. The nesting is at most 8 child levels below the root. A `legacy_` incarnation is no longer than an `inc_` one. The whole ID stays within the 2,048 bytes SPIFFE-ID §2.3 says not to exceed.
+- The subject follows the SPIFFE rules. Each definition category and name uses only `[A-Za-z0-9._-]`, is neither `.` nor `..`, and is at most 63 bytes. The nesting is at most 8 child levels below the root. The incarnation is an `inc_` value, or a `legacy_` value for an older snapshot. The whole ID stays within the 2,048 bytes SPIFFE-ID §2.3 says not to exceed.
 - If the SPIFFE ID was registered before, the earlier registration had the same host session, owner, definition reference and revision, and parent. Only the broker session may differ, when a replacement session re-registers the instance.
 
 A registration that breaks a rule fails closed. The issuer also gives each new SPIFFE ID its `ag_` identifier, reused on re-registration. The [SVID step](credentials-and-lifecycle.md#4-agent-instance-jwt-svid) of the credential flow is the full, ordered list of checks and their errors.
