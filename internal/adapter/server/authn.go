@@ -706,7 +706,7 @@ func (a *Authenticator) Middleware(next http.Handler) http.Handler {
 					category = authCategoryMissingBearer
 				}
 				a.observeAuthentication(r.Context(), authOutcomeRejected, category, authTransportHTTP, authStatusHTTPUnauthorized)
-				w.Header().Set("WWW-Authenticate", protectedResourceChallenge())
+				w.Header().Set("WWW-Authenticate", protectedResourceChallenge(present))
 				writeError(w, http.StatusUnauthorized, "missing or invalid bearer token")
 				return
 			}
@@ -744,7 +744,7 @@ func (a *Authenticator) Middleware(next http.Handler) http.Handler {
 				category = authCategoryMissingBearer
 			}
 			a.observeAuthentication(r.Context(), authOutcomeRejected, category, authTransportHTTP, authStatusHTTPUnauthorized)
-			w.Header().Set("WWW-Authenticate", protectedResourceChallenge())
+			w.Header().Set("WWW-Authenticate", protectedResourceChallenge(present))
 			writeError(w, http.StatusUnauthorized, "missing or invalid bearer token")
 			return
 		}

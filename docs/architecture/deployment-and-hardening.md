@@ -20,8 +20,10 @@ Three optional mechanisms are enforced by the gRPC interceptors and HTTP middlew
 - **TLS and mutual TLS.** A client CA bundle makes the server require and verify client
   certificates. mTLS authenticates the transport, not a caller.
 - **OIDC.** A `server.PrincipalValidator` turns a JWT into a `session.Principal`
-  identified by its `(Issuer, Subject)` pair. The shipped validator lives in the
-  separate `authn/oidc` module, keeping JWT and IdP dependencies out of the engine.
+  identified by its `(Issuer, Subject)` pair: the token's `iss` and `sub`, or, with
+  owner from `sub_id` enabled, the `iss` and `sub` inside its `sub_id` claim. The
+  shipped validator lives in the separate `authn/oidc` module, keeping JWT and IdP
+  dependencies out of the engine.
 
 Static bearer and OIDC are mutually exclusive (`cliconfig.ValidateOIDCAuthToken`), and
 every OIDC misconfiguration is fatal at startup (`cliconfig.OIDCValidator`): degrading
@@ -117,7 +119,7 @@ binding, run epoch, claim, and revocation checks for each operation. Run acquire
 renew, and replay recheck template revocation and current client policy;
 reference release and authorized lifecycle cleanup remain possible. The helper
 has no service credentials or Kubernetes API token. mTLS authenticates services;
-the verified OIDC issuer/subject still supplies the session owner. See
+the verified OIDC principal (see [Edge authentication](#edge-authentication)) still supplies the session owner. See
 [Configure the Kubernetes execution provider](../../user-docs/operating/mecak8s/native-execution.md)
 for the operator workflow.
 
@@ -269,8 +271,9 @@ With OIDC configured, `mecated` and `mecak8s` can publish RFC 9728 protected-res
 metadata (`protected_resource.go`) advertising the issuer, audience, public client ID,
 and scopes, which `mecatui login` uses to enroll. The resource URL is explicit operator
 configuration, never inferred from listeners or the untrusted `Host`. For the same
-reason, protected API routes return a generic `Bearer` challenge: a subordinate path
-cannot prove the exact resource identity. The anonymous metadata endpoint is HTTP-only.
+reason, protected API routes return a generic challenge without resource parameters: a
+subordinate path cannot prove the exact resource identity. It is the bare `Bearer` scheme
+when no bearer was presented and `Bearer error="invalid_token"` for a rejected one. The anonymous metadata endpoint is HTTP-only.
 
 ## Internal credential store
 

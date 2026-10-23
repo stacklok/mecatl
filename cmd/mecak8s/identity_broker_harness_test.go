@@ -5,12 +5,14 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
-	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/golang-jwt/jwt/v5"
+
 	"github.com/stacklok/mecatl/engine/port"
+	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/internal/identitybroker"
 	"github.com/stacklok/mecatl/internal/testutil/identityharness"
 )
@@ -34,6 +36,8 @@ func TestIdentityBrokerAgainstOfflineHarness(t *testing.T) {
 		"--oidc-audience", h.AS1.Audience(),
 		"--oidc-allow-private-https-issuer",
 		"--oidc-ca-cert-file", h.WriteCACert(t, t.TempDir()),
+		"--oidc-owner-from-sub-id",
+		"--oidc-accepted-client-ids", identityharness.DefaultClientID + ",studio",
 	})
 	if err != nil {
 		t.Fatalf("parseFlags: %v", err)
@@ -76,14 +80,23 @@ func TestIdentityBrokerAgainstOfflineHarness(t *testing.T) {
 	if err := json.Unmarshal([]byte(body), &created); err != nil || created.ID == "" {
 		t.Fatalf("create session response %s: %v", body, err)
 	}
-	if ids := listSessionIDs(t, api, alice.AccessToken); !slices.Contains(ids, created.ID) {
-		t.Errorf("Alice's sessions %v do not include %s", ids, created.ID)
+	// The session owner is Alice's company identity from sub_id, not AS-1's
+	// issuer and pseudonymous subject.
+	aliceCompany := identitybroker.Owner{Issuer: h.IdP.Issuer(), Subject: identityharness.Alice}
+	bobCompany := identitybroker.Owner{Issuer: h.IdP.Issuer(), Subject: identityharness.Bob}
+	if owners := listSessionOwners(t, api, alice.AccessToken); owners[created.ID] != aliceCompany {
+		t.Errorf("Alice's sessions %v: %s owner = %+v, want %+v", owners, created.ID, owners[created.ID], aliceCompany)
 	}
-	if ids := listSessionIDs(t, api, bob.AccessToken); slices.Contains(ids, created.ID) {
-		t.Errorf("Bob's sessions %v include Alice's %s", ids, created.ID)
+	// The second accepted client carries the same identity.
+	studio := h.AS1.MintAccessToken(identityharness.AccessTokenSpec{User: identityharness.Alice, ClientID: "studio"})
+	if owners := listSessionOwners(t, api, studio); owners[created.ID] != aliceCompany {
+		t.Errorf("Alice through studio: sessions %v, want %s owned by %+v", owners, created.ID, aliceCompany)
+	}
+	if _, listed := listSessionOwners(t, api, bob.AccessToken)[created.ID]; listed {
+		t.Errorf("Bob's sessions include Alice's %s", created.ID)
 	}
 
-	// Each user's session has a broker session owned by their AS-1 identity.
+	// Each user's session has a broker session owned by their company identity.
 	// Running the session keeps it, a fork gets its own, releasing the session
 	// keeps it, and deleting the session closes it.
 	findBrokerSession := func(id string) (identitybroker.Session, bool) {
@@ -98,8 +111,8 @@ func TestIdentityBrokerAgainstOfflineHarness(t *testing.T) {
 	if !ok {
 		t.Fatalf("Alice's session %s has no broker session", created.ID)
 	}
-	if opened.Owner.Issuer != h.AS1.Issuer() || opened.Owner.Subject == "" {
-		t.Errorf("broker session owner = %+v, want Alice at AS-1 %s", opened.Owner, h.AS1.Issuer())
+	if opened.Owner != aliceCompany {
+		t.Errorf("broker session owner = %+v, want Alice's company identity %+v", opened.Owner, aliceCompany)
 	}
 
 	status, body = apiCall(t, http.MethodPost, api+"/v1/sessions", bob.AccessToken, "{}")
@@ -112,16 +125,52 @@ func TestIdentityBrokerAgainstOfflineHarness(t *testing.T) {
 	if err := json.Unmarshal([]byte(body), &bobCreated); err != nil || bobCreated.ID == "" {
 		t.Fatalf("create session response %s: %v", body, err)
 	}
-	if bobs, ok := findBrokerSession(bobCreated.ID); !ok || bobs.Owner.Issuer != h.AS1.Issuer() || bobs.Owner.Subject == opened.Owner.Subject {
-		t.Errorf("Bob's broker session = %+v, %v; want one owned by Bob, not Alice (%+v)", bobs, ok, opened.Owner)
+	if bobs, ok := findBrokerSession(bobCreated.ID); !ok || bobs.Owner != bobCompany {
+		t.Errorf("Bob's broker session = %+v, %v; want one owned by %+v", bobs, ok, bobCompany)
 	}
 
 	// The run passes run entry, which finds the open broker session and keeps it.
-	if status, body := apiCall(t, http.MethodPost, api+"/v1/sessions/"+created.ID+"/prompt", alice.AccessToken, `{"text":"hello"}`); status != http.StatusOK {
+	const aliceTitle, alicePrompt = "alice-private-title", "alice-private-prompt"
+	if status, body := apiCall(t, http.MethodPost, api+"/v1/sessions/"+created.ID+"/rename", alice.AccessToken, `{"title":"`+aliceTitle+`"}`); status != http.StatusOK {
+		t.Fatalf("Alice renames her session: status %d: %s", status, body)
+	}
+	if status, body := apiCall(t, http.MethodPost, api+"/v1/sessions/"+created.ID+"/prompt", alice.AccessToken, `{"text":"`+alicePrompt+`"}`); status != http.StatusOK {
 		t.Fatalf("Alice prompts her session: status %d: %s", status, body)
 	}
 	if got, ok := findBrokerSession(created.ID); !ok || got != opened {
 		t.Errorf("after a run, broker session = %+v, %v; want %+v", got, ok, opened)
+	}
+
+	// Another user's session is not found, never forbidden, so its existence,
+	// title, and prompts stay undisclosed. Delete is idempotent success for an
+	// absent or foreign session alike, and deletes nothing.
+	for _, c := range []struct {
+		method, path string
+		want         int
+	}{
+		{http.MethodGet, "", http.StatusNotFound},
+		{http.MethodGet, "/events", http.StatusNotFound},
+		{http.MethodGet, "/transcript", http.StatusNotFound},
+		{http.MethodPost, "/fork", http.StatusNotFound},
+		{http.MethodPost, "/delete", http.StatusNoContent},
+	} {
+		body := ""
+		if c.method == http.MethodPost {
+			body = "{}"
+		}
+		status, resp := apiCall(t, c.method, api+"/v1/sessions/"+created.ID+c.path, bob.AccessToken, body)
+		if status != c.want || (c.want == http.StatusNotFound && !strings.Contains(resp, "session_not_found")) {
+			t.Errorf("Bob %s %s on Alice's session: status %d: %s; want %d", c.method, c.path, status, resp, c.want)
+		}
+		if strings.Contains(resp, aliceTitle) || strings.Contains(resp, alicePrompt) {
+			t.Errorf("Bob %s %s on Alice's session disclosed her title or prompt: %s", c.method, c.path, resp)
+		}
+	}
+	if status, resp := apiCall(t, http.MethodGet, api+"/v1/sessions/"+created.ID, alice.AccessToken, ""); status != http.StatusOK || !strings.Contains(resp, aliceTitle) {
+		t.Errorf("after Bob's delete, Alice gets her session: status %d: %s; want it intact", status, resp)
+	}
+	if status, resp := apiCall(t, http.MethodGet, api+"/v1/sessions/"+created.ID+"/transcript", alice.AccessToken, ""); status != http.StatusOK || !strings.Contains(resp, alicePrompt) {
+		t.Errorf("Alice reads her transcript: status %d: %s; want her prompt", status, resp)
 	}
 
 	status, body = apiCall(t, http.MethodPost, api+"/v1/sessions/"+created.ID+"/fork", alice.AccessToken, "{}")
@@ -157,10 +206,41 @@ func TestIdentityBrokerAgainstOfflineHarness(t *testing.T) {
 		"other audience": h.AS1.MintAccessToken(identityharness.AccessTokenSpec{Audience: "https://other.test/api"}),
 		"other issuer":   h.AS1.MintAccessToken(identityharness.AccessTokenSpec{Issuer: h.IdP.Issuer()}),
 		"expired":        h.AS1.MintAccessToken(identityharness.AccessTokenSpec{Lifetime: -time.Hour}),
+		"typ JWT":        h.AS1.MintAccessToken(identityharness.AccessTokenSpec{Type: "JWT"}),
+		"no typ":         h.AS1.MintAccessToken(identityharness.AccessTokenSpec{OmitType: true}),
+		"alg none":       unsignedToken(t, h.AS1.Issuer(), h.AS1.Audience()),
+		"other client":   h.AS1.MintAccessToken(identityharness.AccessTokenSpec{ClientID: "rogue"}),
+		"no sub_id":      h.AS1.MintAccessToken(identityharness.AccessTokenSpec{OmitSubID: true}),
+		"sub_id format":  h.AS1.MintAccessToken(identityharness.AccessTokenSpec{SubID: map[string]string{"format": "email", "iss": h.IdP.Issuer(), "sub": identityharness.Alice}}),
+		"sub_id string":  h.AS1.MintAccessToken(identityharness.AccessTokenSpec{SubID: identityharness.Alice}),
+		"sub_id no sub":  h.AS1.MintAccessToken(identityharness.AccessTokenSpec{SubID: map[string]string{"format": "iss_sub", "iss": h.IdP.Issuer()}}),
 	} {
-		if status, _ := apiCall(t, http.MethodGet, api+"/v1/sessions", token, ""); status != http.StatusUnauthorized {
+		status, _, challenge := apiRequest(t, http.MethodGet, api+"/v1/sessions", token, "")
+		if status != http.StatusUnauthorized {
 			t.Errorf("%s: status %d, want 401", name, status)
 		}
+		want := `Bearer error="invalid_token"`
+		if token == "" {
+			want = "Bearer"
+		}
+		if challenge != want {
+			t.Errorf("%s: WWW-Authenticate = %q, want %q", name, challenge, want)
+		}
+	}
+
+	// Upgrade: a session created before AS-1, when mecak8s validated the
+	// company IdP's tokens directly, is owned by the company identity. The
+	// same user arriving through AS-1 still owns it; another user does not.
+	preAS1 := session.WithPrincipal(t.Context(), &session.Principal{Issuer: h.IdP.Issuer(), Subject: identityharness.Alice, GrantType: session.GrantTypeUser})
+	legacy, err := built.Service.CreateSession(preAS1, session.ModeDefault, session.Limits{})
+	if err != nil {
+		t.Fatalf("create a session under the company IdP identity: %v", err)
+	}
+	if status, body := apiCall(t, http.MethodGet, api+"/v1/sessions/"+string(legacy.ID), alice.AccessToken, ""); status != http.StatusOK {
+		t.Errorf("Alice through AS-1 gets her pre-AS-1 session: status %d: %s", status, body)
+	}
+	if status, _ := apiCall(t, http.MethodGet, api+"/v1/sessions/"+string(legacy.ID), bob.AccessToken, ""); status != http.StatusNotFound {
+		t.Errorf("Bob gets Alice's pre-AS-1 session: status %d, want 404", status)
 	}
 
 	cancel()
@@ -175,6 +255,13 @@ func TestIdentityBrokerAgainstOfflineHarness(t *testing.T) {
 }
 
 func apiCall(t *testing.T, method, url, token, body string) (int, string) {
+	t.Helper()
+	status, resp, _ := apiRequest(t, method, url, token, body)
+	return status, resp
+}
+
+// apiRequest returns the status, body, and WWW-Authenticate challenge.
+func apiRequest(t *testing.T, method, url, token, body string) (int, string, string) {
 	t.Helper()
 	req, err := http.NewRequestWithContext(t.Context(), method, url, strings.NewReader(body))
 	if err != nil {
@@ -195,10 +282,28 @@ func apiCall(t *testing.T, method, url, token, body string) (int, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return resp.StatusCode, string(raw)
+	return resp.StatusCode, string(raw), resp.Header.Get("WWW-Authenticate")
 }
 
-func listSessionIDs(t *testing.T, api, token string) []string {
+// unsignedToken is an otherwise well-formed AS-1 access token with alg none.
+func unsignedToken(t *testing.T, issuer, audience string) string {
+	t.Helper()
+	now := time.Now()
+	token := jwt.NewWithClaims(jwt.SigningMethodNone, jwt.MapClaims{
+		"iss": issuer, "sub": "u-alice", "aud": audience, "client_id": identityharness.DefaultClientID,
+		"sub_id": map[string]string{"format": "iss_sub", "iss": "https://login.example.com", "sub": identityharness.Alice},
+		"iat":    now.Unix(), "exp": now.Add(time.Minute).Unix(),
+	})
+	token.Header["typ"] = "at+jwt"
+	signed, err := token.SignedString(jwt.UnsafeAllowNoneSignatureType)
+	if err != nil {
+		t.Fatalf("sign alg none: %v", err)
+	}
+	return signed
+}
+
+// listSessionOwners maps each listed session to its owner.
+func listSessionOwners(t *testing.T, api, token string) map[string]identitybroker.Owner {
 	t.Helper()
 	status, body := apiCall(t, http.MethodGet, api+"/v1/sessions", token, "")
 	if status != http.StatusOK {
@@ -206,15 +311,16 @@ func listSessionIDs(t *testing.T, api, token string) []string {
 	}
 	var page struct {
 		Sessions []struct {
-			ID string `json:"session_id"`
+			ID    string               `json:"session_id"`
+			Owner identitybroker.Owner `json:"owner"`
 		} `json:"sessions"`
 	}
 	if err := json.Unmarshal([]byte(body), &page); err != nil {
 		t.Fatalf("list sessions response %s: %v", body, err)
 	}
-	ids := make([]string, 0, len(page.Sessions))
+	owners := make(map[string]identitybroker.Owner, len(page.Sessions))
 	for _, s := range page.Sessions {
-		ids = append(ids, s.ID)
+		owners[s.ID] = s.Owner
 	}
-	return ids
+	return owners
 }

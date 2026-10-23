@@ -118,6 +118,12 @@ func validProtectedResourceScopes(scopes []string) bool {
 	return true
 }
 
-func protectedResourceChallenge() string {
+// protectedResourceChallenge is the RFC 6750 challenge: a request without a
+// bearer gets the bare scheme, a presented-but-rejected bearer gets the
+// invalid_token error code.
+func protectedResourceChallenge(bearerPresented bool) string {
+	if bearerPresented {
+		return `Bearer error="invalid_token"`
+	}
 	return "Bearer"
 }

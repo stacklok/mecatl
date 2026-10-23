@@ -186,6 +186,8 @@ type AccessTokenSpec struct {
 	OmitType bool
 	// OmitSubID leaves the sub_id claim out.
 	OmitSubID bool
+	// SubID, when non-nil, replaces the sub_id claim, for a malformed one.
+	SubID any
 	// ForeignKey signs with a key that is not in AS-1's JWKS, under AS-1's
 	// kid.
 	ForeignKey bool
@@ -239,7 +241,11 @@ func (a *AS1) signAccessToken(spec AccessTokenSpec) (string, error) {
 		"exp":       iat.Add(lifetime).Unix(),
 		"jti":       randomToken("at-"),
 	}
-	if !spec.OmitSubID {
+	switch {
+	case spec.OmitSubID:
+	case spec.SubID != nil:
+		claims["sub_id"] = spec.SubID
+	default:
 		claims["sub_id"] = map[string]string{"format": "iss_sub", "iss": a.idp.Issuer(), "sub": spec.User}
 	}
 	token := jwt.NewWithClaims(jwt.SigningMethodES256, claims)

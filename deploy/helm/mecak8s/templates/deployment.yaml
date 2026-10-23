@@ -197,6 +197,10 @@ spec:
             - {{ printf "--oidc-scopes=%s" (join "," .Values.oidc.scopes) | quote }}
             {{- end }}
             {{- end }}
+            {{- if .Values.oidc.ownerFromSubID }}
+            - --oidc-owner-from-sub-id
+            - {{ printf "--oidc-accepted-client-ids=%s" (join "," .Values.oidc.acceptedClientIDs) | quote }}
+            {{- end }}
             {{- end }}
             {{- if .Values.tls.enabled }}
             - {{ printf "--tls-cert=/var/run/secrets/tls/%s" .Values.tls.certKey | quote }}

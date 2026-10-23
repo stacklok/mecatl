@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -72,6 +73,13 @@ type OIDCConfig struct {
 	AllowPrivateHTTPSIssuer bool
 	// TrustedCAFile is the PEM CA bundle required by AllowPrivateHTTPSIssuer.
 	TrustedCAFile string
+
+	// OwnerFromSubID keys the caller by the iss_sub identity in the token's
+	// sub_id claim; it requires at+jwt access tokens from AcceptedClientIDs.
+	// authn/oidc enforces the pairing with AcceptedClientIDs; both require Issuer.
+	OwnerFromSubID bool
+	// AcceptedClientIDs is the parsed --oidc-accepted-client-ids list.
+	AcceptedClientIDs []string
 }
 
 // InsecureIssuerWarning returns the operator-facing warning for a configuration
@@ -133,6 +141,19 @@ func RegisterOIDCFlags(fs *flag.FlagSet, c *OIDCConfig) {
 		"optional comma-separated OAuth scopes to advertise in protected-resource metadata")
 	fs.DurationVar(&c.MaxJWKSStaleness, "oidc-max-jwks-staleness", DefaultMaxJWKSStaleness,
 		"maximum age of cached JWKS signing keys when refresh cannot reach the IdP; stale, unrefreshable keys yield 503 instead of validating tokens. 0 disables the upper bound; negative values are rejected")
+	fs.BoolVar(&c.OwnerFromSubID, "oidc-owner-from-sub-id", false,
+		"key session owners by the issuer and subject inside the token's sub_id claim, an RFC 9493 iss_sub subject identifier, instead of the token's own iss and sub. Requires RFC 9068 access tokens (typ header at+jwt) whose client_id is listed in --oidc-accepted-client-ids; other tokens are rejected. Requires --oidc-issuer.")
+	fs.Func("oidc-accepted-client-ids",
+		"comma-separated OAuth client IDs whose access tokens --oidc-owner-from-sub-id accepts",
+		func(raw string) error {
+			c.AcceptedClientIDs = nil
+			for _, part := range strings.Split(raw, ",") {
+				if id := strings.TrimSpace(part); id != "" {
+					c.AcceptedClientIDs = append(c.AcceptedClientIDs, id)
+				}
+			}
+			return nil
+		})
 }
 
 type oidcStringValue struct {
@@ -281,7 +302,15 @@ func OIDCValidator(ctx context.Context, c OIDCConfig) (server.PrincipalValidator
 		return nil, err
 	}
 	if !c.Enabled() {
+		// authn/oidc validates these only when it is constructed.
+		if c.OwnerFromSubID || len(c.AcceptedClientIDs) != 0 {
+			return nil, fmt.Errorf("%w: --oidc-owner-from-sub-id and --oidc-accepted-client-ids require --oidc-issuer", ErrOIDCMisconfigured)
+		}
 		return nil, nil
+	}
+	// mecatui signs in as the advertised client; its tokens would all be refused.
+	if c.OwnerFromSubID && c.ClientID != "" && !slices.Contains(c.AcceptedClientIDs, c.ClientID) {
+		return nil, fmt.Errorf("%w: --oidc-client-id %q must be listed in --oidc-accepted-client-ids when --oidc-owner-from-sub-id is set", ErrOIDCMisconfigured, c.ClientID)
 	}
 	if c.AllowPrivateHTTPSIssuer && c.TrustedCAFile == "" {
 		return nil, fmt.Errorf("%w: --oidc-allow-private-https-issuer requires --oidc-ca-cert-file", ErrOIDCMisconfigured)

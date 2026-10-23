@@ -667,6 +667,11 @@ func parseFlags(argv []string) (config, error) {
 			return config{}, errors.New("remote execution does not support --enable-parallel or --enable-teams")
 		}
 	}
+	// The broker's owner is the company identity AS-1 witnessed in sub_id;
+	// without this it would be AS-1's own issuer and pseudonymous subject.
+	if cfg.enableIdentityBroker && cfg.oidc.Enabled() && !cfg.oidc.OwnerFromSubID {
+		return config{}, errors.New("--enable-identity-broker with --oidc-issuer requires --oidc-owner-from-sub-id")
+	}
 	if cfg.redisFilesystem && cfg.workspace != "" {
 		return config{}, errors.New("--redis-filesystem and --workspace are mutually exclusive")
 	}

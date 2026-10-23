@@ -107,6 +107,67 @@ func TestOIDCPrivateHTTPSIssuerFlagsAndValidation(t *testing.T) {
 	}
 }
 
+func TestOIDCOwnerFromSubIDFlags(t *testing.T) {
+	fs := flag.NewFlagSet("oidc", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	var cfg OIDCConfig
+	RegisterOIDCFlags(fs, &cfg)
+	if err := fs.Parse([]string{"--oidc-owner-from-sub-id", "--oidc-accepted-client-ids= mecatui, ,studio,"}); err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if !cfg.OwnerFromSubID || !reflect.DeepEqual(cfg.AcceptedClientIDs, []string{"mecatui", "studio"}) {
+		t.Fatalf("owner-from-sub_id flags = %v %#v", cfg.OwnerFromSubID, cfg.AcceptedClientIDs)
+	}
+
+	var defaults OIDCConfig
+	fs = flag.NewFlagSet("defaults", flag.ContinueOnError)
+	RegisterOIDCFlags(fs, &defaults)
+	if err := fs.Parse(nil); err != nil || defaults.OwnerFromSubID || defaults.AcceptedClientIDs != nil {
+		t.Fatalf("defaults = %v %#v (%v), want off", defaults.OwnerFromSubID, defaults.AcceptedClientIDs, err)
+	}
+}
+
+// TestOIDCOwnerFromSubIDMisconfigurationFailsStartup pins that every
+// misconfiguration is a fatal ErrOIDCMisconfigured from OIDCValidator: the
+// missing-issuer and unaccepted advertised client ID cases are caught here, the
+// pairing with client IDs by the real
+// authn/oidc constructor before it contacts the issuer.
+func TestOIDCOwnerFromSubIDMisconfigurationFailsStartup(t *testing.T) {
+	const issuer = "https://idp.example.invalid"
+	for _, tc := range []struct {
+		name string
+		cfg  OIDCConfig
+		want string
+	}{
+		{name: "owner from sub_id without issuer", cfg: OIDCConfig{OwnerFromSubID: true, AcceptedClientIDs: []string{"mecatui"}}, want: "require --oidc-issuer"},
+		{name: "client IDs without issuer", cfg: OIDCConfig{AcceptedClientIDs: []string{"mecatui"}}, want: "require --oidc-issuer"},
+		{name: "owner from sub_id without client IDs", cfg: OIDCConfig{Issuer: issuer, Audience: "mecatl", OwnerFromSubID: true}, want: "requires accepted client IDs"},
+		{name: "client IDs without owner from sub_id", cfg: OIDCConfig{Issuer: issuer, Audience: "mecatl", AcceptedClientIDs: []string{"mecatui"}}, want: "require owner from sub_id"},
+		{
+			name: "advertised client ID not accepted",
+			cfg:  OIDCConfig{Issuer: issuer, Audience: "mecatl", Resource: "https://mecatl.example", ClientID: "mecatui", OwnerFromSubID: true, AcceptedClientIDs: []string{"studio"}},
+			want: `--oidc-client-id "mecatui" must be listed in --oidc-accepted-client-ids`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			v, err := OIDCValidator(context.Background(), tc.cfg)
+			if v != nil || !errors.Is(err, ErrOIDCMisconfigured) || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("OIDCValidator = (%v, %v), want %q ErrOIDCMisconfigured", v, err, tc.want)
+			}
+		})
+	}
+	ok := OIDCConfig{Issuer: issuer, Audience: "mecatl", Resource: "https://mecatl.example", ClientID: "mecatui", OwnerFromSubID: true, AcceptedClientIDs: []string{"studio", "mecatui"}}
+	ok.NewValidator = func(_ context.Context, c OIDCConfig) (server.PrincipalValidator, error) {
+		if !c.OwnerFromSubID || len(c.AcceptedClientIDs) != 2 {
+			t.Fatalf("constructor saw %#v", c)
+		}
+		return fakeValidator{}, nil
+	}
+	if _, err := OIDCValidator(context.Background(), ok); err != nil {
+		t.Fatalf("OIDCValidator(valid) = %v", err)
+	}
+}
+
 func TestOIDCProfileProjection(t *testing.T) {
 	var got OIDCConfig
 	cfg := OIDCConfig{Issuer: "https://issuer.example", Audience: "api://mecatl", Resource: "https://api.example.com", ClientID: "mecatui"}

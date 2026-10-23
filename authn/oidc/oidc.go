@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"sync"
 	"time"
 
@@ -68,7 +69,20 @@ type Config struct {
 	// the validator's hardened client. When set, the caller is responsible for
 	// preserving equivalent redirect and private-address protections.
 	HTTPClient *http.Client
+	// OwnerFromSubID keys the returned principal by the `iss` and `sub` inside
+	// the token's `sub_id` claim, an RFC 9493 `iss_sub` subject identifier,
+	// rather than by the token's own `iss` and `sub`. As preconditions it
+	// requires an RFC 9068 access token (`typ` header `at+jwt`) whose
+	// `client_id` claim is in AcceptedClientIDs. Off by default.
+	OwnerFromSubID bool
+	// AcceptedClientIDs lists the OAuth clients whose access tokens are accepted.
+	// It is required, and only allowed, with OwnerFromSubID.
+	AcceptedClientIDs []string
 }
+
+// accessTokenType is the RFC 9068 JWT access-token media type. toolhive-core
+// also accepts the `application/` prefix and rejects a missing `typ`.
+const accessTokenType = "at+jwt"
 
 // ErrInvalidToken identifies a malformed, invalid, or otherwise inadmissible
 // bearer credential.
@@ -92,6 +106,14 @@ type Validator struct {
 	healthClient   *http.Client
 	healthURL      string
 	closeOnce      sync.Once
+	// subIDOwner is non-nil exactly when OwnerFromSubID is on. It is a pointer
+	// so Validator stays comparable.
+	subIDOwner *subIDOwner
+}
+
+// subIDOwner holds the OwnerFromSubID settings; acceptedClientIDs is non-empty.
+type subIDOwner struct {
+	acceptedClientIDs []string
 }
 
 // NewValidator constructs a fail-closed OIDC validator. Issuer must be non-empty;
@@ -109,6 +131,9 @@ func NewValidator(ctx context.Context, cfg Config) (*Validator, error) {
 	}
 	if cfg.AllowPrivateHTTPSIssuer && cfg.HTTPClient != nil {
 		return nil, fmt.Errorf("%w: custom HTTP client is not allowed with private HTTPS issuer mode", ErrInvalidConfig)
+	}
+	if err := validateOwnerFromSubID(cfg); err != nil {
+		return nil, err
 	}
 	toolhiveConfig := authnConfig(cfg)
 	var internalClient *http.Client
@@ -138,7 +163,31 @@ func NewValidator(ctx context.Context, cfg Config) (*Validator, error) {
 			return nil, fmt.Errorf("%w: %v", ErrInvalidConfig, err)
 		}
 	}
-	return &Validator{validator: validator, internalClient: internalClient, healthClient: healthClient, healthURL: cfg.JWKSURI}, nil
+	out := &Validator{validator: validator, internalClient: internalClient, healthClient: healthClient, healthURL: cfg.JWKSURI}
+	// validateOwnerFromSubID guarantees the client list is non-empty exactly
+	// when OwnerFromSubID is on.
+	if cfg.OwnerFromSubID {
+		out.subIDOwner = &subIDOwner{acceptedClientIDs: slices.Clone(cfg.AcceptedClientIDs)}
+	}
+	return out, nil
+}
+
+// validateOwnerFromSubID requires a non-empty, well-formed client list exactly
+// when OwnerFromSubID is on, so neither half is a silent no-op.
+func validateOwnerFromSubID(cfg Config) error {
+	if !cfg.OwnerFromSubID {
+		if len(cfg.AcceptedClientIDs) != 0 {
+			return fmt.Errorf("%w: accepted client IDs require owner from sub_id", ErrInvalidConfig)
+		}
+		return nil
+	}
+	if len(cfg.AcceptedClientIDs) == 0 {
+		return fmt.Errorf("%w: owner from sub_id requires accepted client IDs", ErrInvalidConfig)
+	}
+	if slices.Contains(cfg.AcceptedClientIDs, "") {
+		return fmt.Errorf("%w: accepted client IDs must not be empty", ErrInvalidConfig)
+	}
+	return nil
 }
 
 // readinessClient returns the client Ready uses when the validator owns no
@@ -179,15 +228,20 @@ func authnConfig(cfg Config) authn.Config {
 	if allowAnyAudience {
 		audiences = nil
 	}
+	var tokenTypes []string
+	if cfg.OwnerFromSubID {
+		tokenTypes = []string{accessTokenType}
+	}
 	return authn.Config{
-		Issuer:            cfg.Issuer,
-		Audiences:         audiences,
-		JWKSURL:           cfg.JWKSURI,
-		MaxJWKSStaleness:  cfg.MaxJWKSStaleness,
-		AllowAnyAudience:  allowAnyAudience,
-		InsecureAllowHTTP: cfg.InsecureAllowPrivateIssuer,
-		AllowPrivateIP:    cfg.InsecureAllowPrivateIssuer,
-		CACertPath:        cfg.TrustedCAFile,
+		AcceptedTokenTypes: tokenTypes,
+		Issuer:             cfg.Issuer,
+		Audiences:          audiences,
+		JWKSURL:            cfg.JWKSURI,
+		MaxJWKSStaleness:   cfg.MaxJWKSStaleness,
+		AllowAnyAudience:   allowAnyAudience,
+		InsecureAllowHTTP:  cfg.InsecureAllowPrivateIssuer,
+		AllowPrivateIP:     cfg.InsecureAllowPrivateIssuer,
+		CACertPath:         cfg.TrustedCAFile,
 	}
 }
 
@@ -202,7 +256,33 @@ func (v *Validator) Validate(ctx context.Context, bearer string) (*session.Princ
 	if out == nil {
 		return nil, fmt.Errorf("%w: verified claims have no issuer or subject", ErrInvalidToken)
 	}
+	if v.subIDOwner == nil {
+		return out, nil
+	}
+	if clientID, ok := principal.Claims["client_id"].(string); !ok || !slices.Contains(v.subIDOwner.acceptedClientIDs, clientID) {
+		return nil, subIDRejection("client_id claim is missing or not an accepted client")
+	}
+	identity := issSubIdentifier(principal.Claims["sub_id"])
+	if identity == nil {
+		return nil, subIDRejection("sub_id claim is missing or not a well-formed iss_sub identifier")
+	}
+	out.Issuer, out.Subject = identity.Issuer, identity.Subject
 	return out, nil
+}
+
+// issSubIdentifier reads an RFC 9493 `iss_sub` subject identifier, applying the
+// same identity rule as the token's own `iss` and `sub`: both non-empty strings
+// free of the reserved owner-key separator. Nil means it is not usable.
+func issSubIdentifier(claim any) *session.Principal {
+	subID, isObject := claim.(map[string]any)
+	if !isObject || subID["format"] != "iss_sub" {
+		return nil
+	}
+	return session.PrincipalFromClaims(subID)
+}
+
+func subIDRejection(reason string) error {
+	return authenticationRejection{category: "invalid_token", err: fmt.Errorf("%w: %s", ErrInvalidToken, reason)}
 }
 
 // Ready performs a bounded, read-only check that the configured JWKS endpoint

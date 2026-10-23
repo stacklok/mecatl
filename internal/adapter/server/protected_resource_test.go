@@ -7,6 +7,10 @@ import (
 	"strings"
 	"testing"
 
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+
+	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/internal/adapter/server"
 )
 
@@ -168,13 +172,57 @@ type protectedResourceMetadataDocument struct {
 	AuthorizationServers []string `json:"authorization_servers"`
 }
 
-func TestProtectedResourceChallengeIsAlwaysGeneric(t *testing.T) {
+// TestMissingBearerChallengeIsBare pins that a request without credentials is
+// challenged with the bare scheme and no resource-specific parameters.
+func TestMissingBearerChallengeIsBare(t *testing.T) {
 	auth := server.NewAuthenticator(server.SecurityConfig{AuthToken: "static-token"})
 	defer auth.Close()
 	rec := httptest.NewRecorder()
 	auth.Middleware(http.NotFoundHandler()).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/sessions", nil))
 	if got := rec.Header().Get("WWW-Authenticate"); got != "Bearer" {
 		t.Fatalf("challenge = %q, want bare Bearer", got)
+	}
+}
+
+// TestRejectedBearerChallengeCarriesInvalidToken pins RFC 6750 §3: a presented
+// but rejected bearer is challenged with error="invalid_token", a missing one
+// with the bare scheme, and gRPC stays Unauthenticated either way.
+func TestRejectedBearerChallengeCarriesInvalidToken(t *testing.T) {
+	static := server.NewAuthenticator(server.SecurityConfig{AuthToken: "static-token"})
+	defer static.Close()
+	identity := oidcOnly(t, fakeValidator{ok: map[string]session.Principal{"good": edgeAlice}}, 0, 0)
+	defer identity.Close()
+	for _, tc := range []struct {
+		name   string
+		auth   *server.Authenticator
+		header string
+		want   string
+	}{
+		{name: "static missing", auth: static, want: "Bearer"},
+		{name: "static rejected", auth: static, header: "Bearer wrong-token", want: `Bearer error="invalid_token"`},
+		{name: "identity missing", auth: identity, want: "Bearer"},
+		{name: "identity non-bearer scheme", auth: identity, header: "Basic Zm9vOmJhcg==", want: "Bearer"},
+		{name: "identity rejected", auth: identity, header: "Bearer rejected", want: `Bearer error="invalid_token"`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodGet, "/v1/sessions", nil)
+			if tc.header != "" {
+				req.Header.Set("Authorization", tc.header)
+			}
+			tc.auth.Middleware(http.NotFoundHandler()).ServeHTTP(rec, req)
+			if rec.Code != http.StatusUnauthorized {
+				t.Fatalf("status = %d, want 401", rec.Code)
+			}
+			if got := rec.Header().Get("WWW-Authenticate"); got != tc.want {
+				t.Fatalf("challenge = %q, want %q", got, tc.want)
+			}
+		})
+	}
+	for _, bearer := range []string{"", "rejected"} {
+		if _, err := callUnary(identity, bearer); status.Code(err) != codes.Unauthenticated {
+			t.Fatalf("gRPC bearer %q: code = %v, want Unauthenticated", bearer, status.Code(err))
+		}
 	}
 }
 

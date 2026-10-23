@@ -48,9 +48,11 @@ func (g GrantType) Valid() bool {
 // Absent identity is a nil *Principal, NEVER a fabricated anonymous one (the
 // ToolHive anonymous-middleware anti-pattern this rejects).
 type Principal struct {
-	// Issuer is the IdP that minted the token (the canonical `iss` claim).
+	// Issuer is the identity's issuer: the token's canonical `iss` claim, or
+	// the `iss` inside an accepted `sub_id` claim.
 	Issuer string
-	// Subject is the caller id within that issuer (the `sub` claim).
+	// Subject is the caller id within that issuer: the token's `sub` claim, or
+	// the `sub` inside an accepted `sub_id` claim.
 	Subject string
 	// GrantType is how the caller authenticated.
 	GrantType GrantType

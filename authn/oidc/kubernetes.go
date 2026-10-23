@@ -46,19 +46,8 @@ type KubernetesBootstrapConfig struct {
 //
 // The bearer is re-read per request by toolhive-core v0.0.51 or later.
 func NewKubernetesValidator(ctx context.Context, cfg Config, bootstrap KubernetesBootstrapConfig) (*Validator, error) {
-	switch {
-	case bootstrap.TokenFile == "" || bootstrap.TokenSource == nil:
-		return nil, fmt.Errorf("%w: Kubernetes token file and token source are required", ErrInvalidConfig)
-	case bootstrap.DiscoveryURL == "" || bootstrap.JWKSURI == "":
-		return nil, fmt.Errorf("%w: Kubernetes discovery and JWKS URLs are required", ErrInvalidConfig)
-	case cfg.Issuer != "" || cfg.JWKSURI != "":
-		return nil, fmt.Errorf("%w: Kubernetes issuer and JWKS URL come from the bootstrap", ErrInvalidConfig)
-	case cfg.Audience == "" || cfg.AllowAnyAudience:
-		return nil, fmt.Errorf("%w: Kubernetes validation requires a dedicated audience", ErrInvalidConfig)
-	case cfg.TrustedCAFile == "":
-		return nil, fmt.Errorf("%w: Kubernetes validation requires a trusted CA file", ErrInvalidConfig)
-	case cfg.HTTPClient != nil || cfg.InsecureAllowPrivateIssuer || cfg.AllowPrivateHTTPSIssuer:
-		return nil, fmt.Errorf("%w: Kubernetes validation builds its own HTTP client", ErrInvalidConfig)
+	if err := validateKubernetesConfig(cfg, bootstrap); err != nil {
+		return nil, err
 	}
 	if err := validateKubernetesEndpointOrigin(bootstrap.DiscoveryURL, bootstrap.JWKSURI); err != nil {
 		return nil, fmt.Errorf("%w: Kubernetes bootstrap endpoints: %v", ErrInvalidConfig, err)
@@ -104,6 +93,26 @@ func NewKubernetesValidator(ctx context.Context, cfg Config, bootstrap Kubernete
 		return fail(fmt.Errorf("%w: %v", ErrInvalidConfig, err))
 	}
 	return &Validator{validator: validator, internalClient: client, healthClient: client, healthURL: cfg.JWKSURI}, nil
+}
+
+func validateKubernetesConfig(cfg Config, bootstrap KubernetesBootstrapConfig) error {
+	switch {
+	case bootstrap.TokenFile == "" || bootstrap.TokenSource == nil:
+		return fmt.Errorf("%w: Kubernetes token file and token source are required", ErrInvalidConfig)
+	case bootstrap.DiscoveryURL == "" || bootstrap.JWKSURI == "":
+		return fmt.Errorf("%w: Kubernetes discovery and JWKS URLs are required", ErrInvalidConfig)
+	case cfg.Issuer != "" || cfg.JWKSURI != "":
+		return fmt.Errorf("%w: Kubernetes issuer and JWKS URL come from the bootstrap", ErrInvalidConfig)
+	case cfg.Audience == "" || cfg.AllowAnyAudience:
+		return fmt.Errorf("%w: Kubernetes validation requires a dedicated audience", ErrInvalidConfig)
+	case cfg.TrustedCAFile == "":
+		return fmt.Errorf("%w: Kubernetes validation requires a trusted CA file", ErrInvalidConfig)
+	case cfg.HTTPClient != nil || cfg.InsecureAllowPrivateIssuer || cfg.AllowPrivateHTTPSIssuer:
+		return fmt.Errorf("%w: Kubernetes validation builds its own HTTP client", ErrInvalidConfig)
+	case cfg.OwnerFromSubID || len(cfg.AcceptedClientIDs) != 0:
+		return fmt.Errorf("%w: Kubernetes validation does not support owner from sub_id", ErrInvalidConfig)
+	}
+	return nil
 }
 
 func validateKubernetesEndpointOrigin(discoveryURL, jwksURL string) error {

@@ -58,9 +58,13 @@ func TestSignInIssuesDesignAccessToken(t *testing.T) {
 	}
 }
 
+// TestSubjectsAreStableAndDistinct also pins the AS-1 property mecak8s's
+// ownership relies on (the real AS-1 must hold it too): two AS-1 subjects never
+// carry the same company identity in sub_id.
 func TestSubjectsAreStableAndDistinct(t *testing.T) {
 	h := identityharness.New(t, identityharness.Options{})
 	subjects := map[string]string{}
+	companyBySubject := map[string]string{}
 	for _, user := range []string{identityharness.Alice, identityharness.Bob, identityharness.Alice} {
 		tokens, err := h.SignIn(t.Context(), identityharness.SignInRequest{User: user})
 		if err != nil {
@@ -72,6 +76,13 @@ func TestSubjectsAreStableAndDistinct(t *testing.T) {
 			t.Errorf("%s signed in as %q, then %q", user, prev, sub)
 		}
 		subjects[user] = sub
+		company := mustJSON(t, claims["sub_id"])
+		for otherSub, otherCompany := range companyBySubject {
+			if otherSub != sub && otherCompany == company {
+				t.Errorf("AS-1 subjects %q and %q both carry company identity %s", otherSub, sub, company)
+			}
+		}
+		companyBySubject[sub] = company
 	}
 	if subjects[identityharness.Alice] == subjects[identityharness.Bob] {
 		t.Errorf("Alice and Bob share AS-1 subject %q", subjects[identityharness.Alice])

@@ -87,13 +87,15 @@ var flagMetaByFlag = map[string]flagMeta{
 	"rate-burst": {group: groupSecurity, common: false, acp: acpExclude},
 	// Caller identity: advanced, server-boundary — an ACP client
 	// speaks over stdio and has no authenticated edge.
-	"oidc-issuer":             {group: groupSecurity, common: false, acp: acpExclude},
-	"oidc-jwks-uri":           {group: groupSecurity, common: false, acp: acpExclude},
-	"oidc-audience":           {group: groupSecurity, common: false, acp: acpExclude},
-	"oidc-resource":           {group: groupSecurity, common: false, acp: acpExclude},
-	"oidc-client-id":          {group: groupSecurity, common: false, acp: acpExclude},
-	"oidc-scopes":             {group: groupSecurity, common: false, acp: acpExclude},
-	"oidc-max-jwks-staleness": {group: groupSecurity, common: false, acp: acpExclude},
+	"oidc-issuer":              {group: groupSecurity, common: false, acp: acpExclude},
+	"oidc-jwks-uri":            {group: groupSecurity, common: false, acp: acpExclude},
+	"oidc-audience":            {group: groupSecurity, common: false, acp: acpExclude},
+	"oidc-resource":            {group: groupSecurity, common: false, acp: acpExclude},
+	"oidc-client-id":           {group: groupSecurity, common: false, acp: acpExclude},
+	"oidc-scopes":              {group: groupSecurity, common: false, acp: acpExclude},
+	"oidc-max-jwks-staleness":  {group: groupSecurity, common: false, acp: acpExclude},
+	"oidc-owner-from-sub-id":   {group: groupSecurity, common: false, acp: acpExclude},
+	"oidc-accepted-client-ids": {group: groupSecurity, common: false, acp: acpExclude},
 	// TEST-ONLY SSRF relaxation (see cliconfig.OIDCConfig): not common, and
 	// acpExclude like its siblings — an ACP client has no business setting it.
 	"oidc-insecure-allow-private-issuer": {group: groupSecurity, common: false, acp: acpExclude},

@@ -144,6 +144,45 @@ func TestDefaultOIDCValidatorMapsWrongAudience(t *testing.T) {
 	}
 }
 
+// TestDefaultOIDCValidatorPassesOwnerFromSubID pins that the flags reach
+// authn/oidc: the owner comes from sub_id and a token failing its preconditions
+// is the server's 401-class rejection.
+func TestDefaultOIDCValidatorPassesOwnerFromSubID(t *testing.T) {
+	fixture := newRootJWKSFixture(t)
+	validator, err := OIDCValidator(context.Background(), OIDCConfig{
+		Issuer: fixture.srv.URL, Audience: rootTestAudience, JWKSURI: fixture.srv.URL + "/keys",
+		OwnerFromSubID: true, AcceptedClientIDs: []string{"mecatui"},
+		httpClient: fixture.srv.Client(),
+	})
+	if err != nil {
+		t.Fatalf("OIDCValidator: %v", err)
+	}
+	t.Cleanup(func() { _ = validator.(interface{ Close() error }).Close() })
+	sign := func(typ, clientID string) string {
+		now := time.Now()
+		token := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.MapClaims{
+			"iss": fixture.srv.URL, "aud": rootTestAudience, "sub": "u-alice-91", "client_id": clientID,
+			"sub_id": map[string]any{"format": "iss_sub", "iss": "https://login.example.com", "sub": rootTestSubject},
+			"iat":    now.Unix(), "exp": now.Add(10 * time.Minute).Unix(),
+		})
+		token.Header["kid"], token.Header["typ"] = rootTestKID, typ
+		signed, err := token.SignedString(fixture.key)
+		if err != nil {
+			t.Fatalf("sign: %v", err)
+		}
+		return signed
+	}
+	principal, err := validator.Validate(context.Background(), sign("at+jwt", "mecatui"))
+	if err != nil || principal.Issuer != "https://login.example.com" || principal.Subject != rootTestSubject {
+		t.Fatalf("Validate = (%#v, %v), want the sub_id identity", principal, err)
+	}
+	for _, bad := range []string{sign("JWT", "mecatui"), sign("at+jwt", "rogue")} {
+		if _, err := validator.Validate(context.Background(), bad); !errors.Is(err, server.ErrInvalidToken) || errors.Is(err, server.ErrIdentityUnavailable) {
+			t.Fatalf("precondition rejection = %v, want server.ErrInvalidToken only", err)
+		}
+	}
+}
+
 func TestDefaultOIDCValidatorUsesPinnedJWKS(t *testing.T) {
 	fixture := newRootJWKSFixture(t)
 	if _, err := fixture.validator(t).Validate(context.Background(), fixture.sign(t, rootTestAudience)); err != nil {

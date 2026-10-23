@@ -16,6 +16,20 @@ an event serialized from the generated protobuf Go value with `encoding/json`.
 Field names match the gRPC event structure; protobuf enums are JSON numbers
 rather than ProtoJSON enum names.
 
+## Authentication errors
+
+When the server requires a static bearer token or OIDC caller identity, a
+request that fails authentication receives `401 Unauthorized` with an RFC 9457
+problem body and an RFC 6750 `WWW-Authenticate` challenge:
+
+|Request|Challenge|
+|-|-|
+|No `Authorization: Bearer` credential|`Bearer`|
+|A bearer token the server rejects|`Bearer error="invalid_token"`|
+
+An unreachable identity provider returns `503` without a challenge, because the
+token's validity is unknown.
+
 ## Server identity
 
 `GET /v1/info?provider_id=<PROVIDER_ID>` is a process-wide, state-free identity
@@ -48,7 +62,8 @@ list alternatives.
 The route is inside the normal API authentication boundary. When `--auth-token`
 (or `MECATL_AUTH_TOKEN`) is configured, send its bearer token exactly as for the
 other HTTP API routes; configured TLS or mTLS requirements also apply. A caller
-without required authentication receives the normal `401` response. The endpoint
+without required authentication receives the normal
+[`401` response](#authentication-errors). The endpoint
 never returns configuration beyond this sanitized endpoint projection, nor does
 it return capabilities, topology, listener details, authentication or TLS
 material, workspace paths, session or durable state, prompts, credentials, or

@@ -554,6 +554,58 @@ func TestMecak8sHelmChart_ProtectedResourceProfile(t *testing.T) {
 	}
 }
 
+func TestMecak8sHelmChart_OwnerFromSubID(t *testing.T) {
+	base := []string{"template", "owner", ".", "--set", "mockProvider=true,permissionMode=yolo", "--set", "redis.local.enabled=true", "--set", "oidc.enabled=true,oidc.issuer=https://as1.example.com,oidc.audience=mecatl"}
+	rendered, err := helm(t, append(slices.Clone(base), "--set", "oidc.ownerFromSubID=true", "--set", "oidc.acceptedClientIDs={mecatui,studio}", "--set", "oidc.resource=https://mecatl.example.com,oidc.clientID=studio")...)
+	if err != nil {
+		t.Fatalf("render owner from sub_id: %v\n%s", err, rendered)
+	}
+	args := deploymentFromRender(t, rendered).Spec.Template.Spec.Containers[0].Args
+	for _, want := range []string{"--oidc-owner-from-sub-id", "--oidc-accepted-client-ids=mecatui,studio"} {
+		if !slices.Contains(args, want) {
+			t.Fatalf("rendered args missing %q: %v", want, args)
+		}
+	}
+
+	rendered, err = helm(t, base...)
+	if err != nil {
+		t.Fatalf("render default OIDC: %v\n%s", err, rendered)
+	}
+	for _, arg := range deploymentFromRender(t, rendered).Spec.Template.Spec.Containers[0].Args {
+		if strings.HasPrefix(arg, "--oidc-owner-from-sub-id") || strings.HasPrefix(arg, "--oidc-accepted-client-ids") {
+			t.Fatalf("default OIDC rendered owner from sub_id: %v", arg)
+		}
+	}
+
+	const badEntry = "must be non-blank and contain no surrounding spaces, commas, control, or Unicode format characters"
+	for name, tc := range map[string]struct {
+		values []string
+		want   string
+	}{
+		"without client IDs":        {[]string{"oidc.ownerFromSubID=true"}, "oidc.ownerFromSubID requires at least one oidc.acceptedClientIDs entry"},
+		"client IDs without it":     {[]string{"oidc.acceptedClientIDs={mecatui}"}, "oidc.acceptedClientIDs requires oidc.ownerFromSubID=true"},
+		"without OIDC":              {[]string{"oidc.enabled=false,oidc.ownerFromSubID=true", "oidc.acceptedClientIDs={mecatui}"}, "oidc.ownerFromSubID requires oidc.enabled=true"},
+		"comma in client ID":        {[]string{"oidc.ownerFromSubID=true", "oidc.acceptedClientIDs[0]=mecatui\\,studio"}, badEntry},
+		"padded client ID":          {[]string{"oidc.ownerFromSubID=true", "oidc.acceptedClientIDs[0]= mecatui"}, badEntry},
+		"control char in client ID": {[]string{"oidc.ownerFromSubID=true", "oidc.acceptedClientIDs[0]=mecatui\x01"}, badEntry},
+		"advertised client ID not accepted": {
+			[]string{"oidc.ownerFromSubID=true", "oidc.acceptedClientIDs={studio}", "oidc.resource=https://mecatl.example.com,oidc.clientID=mecatui"},
+			`oidc.clientID "mecatui" must be listed in oidc.acceptedClientIDs when oidc.ownerFromSubID is true`,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			args := slices.Clone(base)
+			for _, value := range tc.values {
+				args = append(args, "--set", value)
+			}
+			output, err := helm(t, args...)
+			if err == nil || !strings.Contains(output, tc.want) {
+				t.Fatalf("render = %v, want failure %q:\n%s", err, tc.want, output)
+			}
+		})
+	}
+}
+
 func TestMecak8sHelmChart_EdgeTerminatedTLS(t *testing.T) {
 	rendered, err := helm(t, "template", "production", ".", "-f", "ci/production-edge-tls-values.yaml")
 	if err != nil {

@@ -202,9 +202,9 @@ The client receives an access token for the Mecatl API and keeps its own refresh
 
 **Output.** An authenticated request from owner `(https://login.example.com, alice-204)`.
 
-**Failures.** Checks 1–7 return HTTP 401 with `WWW-Authenticate: Bearer error="invalid_token"` (RFC 6750 §3.1). The client refreshes its access token and retries once; a second failure is shown to the user. Check 8 returns 403 with the Mecatl API's `not_session_owner` error body and is not retryable. RFC 6750 has no error code for an ownership failure, so the body carries it.
+**Failures.** Checks 1–7 return HTTP 401 with `WWW-Authenticate: Bearer error="invalid_token"` (RFC 6750 §3.1). The client refreshes its access token and retries once; a second failure is shown to the user. Check 8 returns 404 with the Mecatl API's `session_not_found` error body, the same response as for a session that does not exist, and is not retryable. A 403 would confirm that another user's session exists, so an ownership failure is deliberately indistinguishable from absence; for the same reason, deleting another user's session succeeds and deletes nothing.
 
-**Why.** An `id_token` is not accepted here: its audience is the client, not the API. Session ownership is keyed by the company identity in `sub_id`, not by AS-1's own `(iss, sub)`, so existing owners keep matching without migration and the owner stays Alice's stable human identity.
+**Why.** An `id_token` is not accepted here: its audience is the client, not the API. Session ownership is keyed by the company identity in `sub_id`, not by AS-1's own `(iss, sub)`, so existing owners keep matching without migration and the owner stays Alice's stable human identity. That holds only when the IdP gives the same subject across application registrations: an IdP with pairwise subjects per application (for example Microsoft Entra ID) gives AS-1 a different `sub`, so owners must be remapped.
 
 **Does not prove.** That the caller is the TUI: both clients are public, so `client_id` names the client the token was issued to, not the one presenting it.
 
@@ -782,7 +782,7 @@ The failures each step can return: where each is detected, what the user sees, a
 | Failure | Detected at | Response | User-visible outcome | Revokes |
 | --- | --- | --- | --- | --- |
 | Expired or invalid AS-1 access token | mecak8s | 401 `invalid_token` | Client refreshes silently once; signs in again if that fails | Nothing |
-| Not the owner of `hostS42` | mecak8s | 403 `not_session_owner` | Request refused | Nothing |
+| Not the owner of `hostS42` | mecak8s | 404 `session_not_found` | Request refused as if the session did not exist | Nothing |
 | Workload credential expired | Broker, agent-instance issuer | `UNAUTHENTICATED` | None: mecak8s rereads the rotated token | Nothing |
 | Workload not allowed | Broker, agent-instance issuer | `PERMISSION_DENIED` | Every request fails; an operator fault | Nothing |
 | Owner mismatch at open | AS-1 | `invalid_request` with `owner_mismatch`, recorded | Session open fails | Nothing |

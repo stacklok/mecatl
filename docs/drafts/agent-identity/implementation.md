@@ -6,7 +6,7 @@ This companion records implementation and verification requirements for the [age
 
 Verify that session enumeration, session access, and event replay enforce the authenticated caller's ownership, including on shared storage. Include negative tests proving another user cannot obtain session titles, prompts, or archived conversation content.
 
-Session ownership is keyed by the company identity in the validated AS-1 access token's `sub_id`, not by the token's own `(iss, sub)`, so existing owners need no migration. Test the following:
+Session ownership is keyed by the company identity in the validated AS-1 access token's `sub_id`, not by the token's own `(iss, sub)`, so existing owners need no migration, provided the IdP gives the same subject across application registrations rather than pairwise subjects per application. Test the following:
 
 - mecak8s rejects an AS-1 token without `sub_id`.
 - It accepts `sub_id` only from tokens AS-1 issued.
@@ -270,7 +270,7 @@ Verify the [AuditEvent profile](audit.md#auditevent-profile) through the real to
 
 Test the checks at each hop:
 
-- mecak8s rejects each failing step (1) check, returning 401 `invalid_token` for checks 1–7 and 403 `not_session_owner` for check 8.
+- mecak8s rejects each failing step (1) check, returning 401 `invalid_token` for checks 1–7 and, for check 8, the 404 `session_not_found` an absent session gets.
 - The broker rejects a legacy ServiceAccount token, a token with the Kubernetes API server's audience, a token whose `exp - iat` exceeds the maximum, and a ServiceAccount not on the allowlist.
 - SVID validation rejects a platform SVID with the broker's audience (wrong trust domain and bundle), a header without `kid`, an `aud` with two values, a disallowed `alg`, and an `exp` beyond the maximum lifetime.
 - Registration rejects names over 63 bytes, nesting past 8 child levels, `.` and `..`, and a parentless registration of a definition that is not root-eligible.

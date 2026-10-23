@@ -47,6 +47,18 @@ func TestCallerIdentity_Scenario1_MisconfiguredOIDCFailsToStart(t *testing.T) {
 			wantErr: true,
 		},
 		{
+			name: "advertised client ID not accepted by owner from sub_id",
+			oidc: cliconfig.OIDCConfig{
+				Issuer: "https://idp.example.com", Audience: "mecatl",
+				Resource: "https://mecatl.example.com", ClientID: "mecatui",
+				OwnerFromSubID: true, AcceptedClientIDs: []string{"studio"},
+				NewValidator: func(context.Context, cliconfig.OIDCConfig) (server.PrincipalValidator, error) {
+					panic("validator constructed despite an unaccepted advertised client ID")
+				},
+			},
+			wantErr: true,
+		},
+		{
 			// OIDC off: unchanged, the authenticator builds.
 			name:    "oidc not configured",
 			oidc:    cliconfig.OIDCConfig{},

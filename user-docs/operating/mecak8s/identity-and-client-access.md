@@ -164,6 +164,32 @@ The chart rejects partial profiles and never derives the public resource URL
 from pod addresses. Metadata discovery is anonymous HTTPS and remains separate
 from authenticated gRPC transport.
 
+## Own sessions by the company identity
+
+When users sign in through the authorization server that issues the identity
+broker's user tokens (AS-1), point OIDC at that server and key owners by the
+company identity in each token's `sub_id` claim:
+
+```yaml
+oidc:
+  enabled: true
+  issuer: https://auth.example.com/as
+  audience: https://mecatl.example.com/api
+  ownerFromSubID: true
+  acceptedClientIDs: [mecatui, studio]
+```
+
+`oidc.ownerFromSubID` sets `--oidc-owner-from-sub-id` and
+`oidc.acceptedClientIDs` sets `--oidc-accepted-client-ids`; the chart rejects
+one without the other. The experimental identity broker requires this setting:
+with `--enable-identity-broker` and OIDC enabled, `mecak8s` refuses to start
+without it. When `oidc.clientID` is set, the chart requires it in
+`oidc.acceptedClientIDs`. Existing owners and principal settings keep matching
+only if AS-1's upstream IdP returns each user's same issuer and `sub`, which
+`mecak8s` cannot check at startup. For that precondition, the token checks, and
+the requirements on AS-1, see
+[Own resources by the `sub_id` identity](/features/security-and-execution/caller-identity.md#own-resources-by-the-sub_id-identity).
+
 ## Security boundaries
 
 |Boundary|Operator responsibility|
@@ -309,7 +335,9 @@ For a first-deployment 401, check the token audience and issuer:
    regardless of how your pods reach it. Take `--oidc-issuer` from the IdP's
    `/.well-known/openid-configuration`, never from the in-cluster Service URL.
 
-Beyond that: a **401** means the credential was rejected; a **503** means a
+Beyond that: a **401** means the credential was rejected (see the
+[authentication errors](/reference/http-sse-api.md#authentication-errors)
+reference for its challenge). A **503** means a
 required JWKS refresh could not obtain current keys after the configured
 staleness bound. Before that bound, a last-good JWKS can keep validation
 available during a short IdP outage. Authn failures are **not currently
