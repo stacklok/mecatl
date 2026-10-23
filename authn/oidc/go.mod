@@ -9,7 +9,7 @@ require (
 )
 
 require (
-	github.com/ebitengine/purego v0.11.1 // indirect
+	github.com/ebitengine/purego v0.11.2 // indirect
 	github.com/go-ole/go-ole v1.3.0 // indirect
 	github.com/golang-jwt/jwt/v5 v5.3.1 // indirect
 	github.com/jwx-go/jwkfetch/v4 v4.0.4 // indirect
