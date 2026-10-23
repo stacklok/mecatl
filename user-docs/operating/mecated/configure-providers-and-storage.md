@@ -37,19 +37,21 @@ providers:
   opencode:
     api_key: <OPENCODE_API_KEY>
 
-  # Search providers: configure the Exa paid tier, Brave Search, or a generic HTTP endpoint.
+  # Search providers: Exa paid tier, Brave Search, You.com, or a generic HTTP endpoint.
   exa:
     api_key: <EXA_API_KEY>
   brave:
     api_key: <BRAVE_API_KEY>
+  you:
+    api_key: <YDC_API_KEY>
   websearch:
     api_key: <WEBSEARCH_API_KEY>
 ```
 
 A matching API-key environment variable takes precedence over the file entry.
 The `exa` entry enables Exa's paid search tier; the `brave` entry selects Brave
-Search; and `websearch` supplies the credential for a configured generic HTTP
-endpoint. These entries are search credentials, not model providers, and do
+Search; the `you` entry selects You.com's keyed endpoint; and `websearch`
+supplies the credential for a configured generic HTTP endpoint. These entries are search credentials, not model providers, and do
 not satisfy the requirement for an LLM provider. See [Configure web
 search](/features/sessions/tools.md#configure-web-search) for backend
 selection.

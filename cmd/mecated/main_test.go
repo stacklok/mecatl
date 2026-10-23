@@ -92,11 +92,12 @@ func TestApplyPostureCLIYoloWarning(t *testing.T) {
 
 func TestSearchCommandRootProjection(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "auth.yaml")
-	if err := os.WriteFile(path, []byte("providers:\n  exa:\n    api_key: daemon-exa-key\n  brave:\n    api_key: daemon-brave-key\n  websearch:\n    api_key: daemon-websearch-key\n"), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte("providers:\n  exa:\n    api_key: daemon-exa-key\n  brave:\n    api_key: daemon-brave-key\n  you:\n    api_key: daemon-you-key\n  websearch:\n    api_key: daemon-websearch-key\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("EXA_API_KEY", "")
 	t.Setenv("BRAVE_API_KEY", "")
+	t.Setenv("YDC_API_KEY", "")
 	t.Setenv("WEBSEARCH_API_KEY", "")
 	cfg, err := parseFlags([]string{"--api-key-file", path})
 	if err != nil {
@@ -106,21 +107,22 @@ func TestSearchCommandRootProjection(t *testing.T) {
 		t.Fatal("search keys must not count as LLM provider credentials")
 	}
 	out := appConfig(cfg, nil, nil, nil, nil, nil)
-	if out.ExaAPIKey != "daemon-exa-key" || out.BraveAPIKey != "daemon-brave-key" || out.WebSearchAPIKey != "daemon-websearch-key" {
+	if out.ExaAPIKey != "daemon-exa-key" || out.BraveAPIKey != "daemon-brave-key" || out.YouAPIKey != "daemon-you-key" || out.WebSearchAPIKey != "daemon-websearch-key" {
 		t.Fatal("daemon did not project file-backed search credentials")
 	}
 	profile, _, err := out.ProviderCredentialLoader.Load(nil)
-	if err != nil || profile.ExaAPIKey != out.ExaAPIKey || profile.BraveAPIKey != out.BraveAPIKey || profile.WebSearchAPIKey != out.WebSearchAPIKey {
+	if err != nil || profile.ExaAPIKey != out.ExaAPIKey || profile.BraveAPIKey != out.BraveAPIKey || profile.YouAPIKey != out.YouAPIKey || profile.WebSearchAPIKey != out.WebSearchAPIKey {
 		t.Fatalf("daemon credential loader search keys = exa=%q brave=%q websearch=%q err=%v", profile.ExaAPIKey, profile.BraveAPIKey, profile.WebSearchAPIKey, err)
 	}
 	t.Setenv("BRAVE_API_KEY", "env-brave-key")
 	t.Setenv("WEBSEARCH_API_KEY", "env-websearch-key")
+	t.Setenv("YDC_API_KEY", "env-you-key")
 	cfg, err = parseFlags([]string{"--api-key-file", path})
 	if err != nil {
 		t.Fatal(err)
 	}
 	out = appConfig(cfg, nil, nil, nil, nil, nil)
-	if out.BraveAPIKey != "env-brave-key" || out.WebSearchAPIKey != "env-websearch-key" {
+	if out.BraveAPIKey != "env-brave-key" || out.YouAPIKey != "env-you-key" || out.WebSearchAPIKey != "env-websearch-key" {
 		t.Fatalf("daemon did not give environment search credentials precedence: brave=%q websearch=%q", out.BraveAPIKey, out.WebSearchAPIKey)
 	}
 }
@@ -1106,5 +1108,15 @@ func TestAdminMuxMountsPerfMCP(t *testing.T) {
 	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusNotFound {
 		t.Errorf("POST /mcp status = %d, want 404 when --perf-mcp is off", resp.StatusCode)
+	}
+}
+
+func TestWebSearchYouConflictsWithExplicitURL(t *testing.T) {
+	if _, err := parseFlags([]string{"--websearch=you", "--websearch-url=https://flag.example/search"}); err == nil || !strings.Contains(err.Error(), "set only one") {
+		t.Fatalf("--websearch=you with --websearch-url: err = %v, want a conflict error", err)
+	}
+	cfg, err := parseFlags([]string{"--websearch=you"})
+	if err != nil || !cfg.websearchYou || cfg.websearchOff {
+		t.Fatalf("--websearch=you: you=%v off=%v err=%v", cfg.websearchYou, cfg.websearchOff, err)
 	}
 }

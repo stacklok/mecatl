@@ -23,6 +23,14 @@ var ErrSearchUnavailable = errors.New("tool: no search provider configured")
 // a backend-down condition is environmental/transient, not a deployment choice.
 var ErrSearchBackendDown = errors.New("tool: search backend unavailable")
 
+// SearchBackendHint is an optional interface a backend-down error may implement
+// (found with errors.As) to add a short, model-safe detail to the backend-down
+// message, such as a rate limit's Retry-After. The hint must never carry a
+// credential.
+type SearchBackendHint interface {
+	SearchBackendHint() string
+}
+
 // SearchProvider is the outbound web-search seam the WebSearch tool depends on,
 // the way the Shell tool depends on CommandRunner. It lives here in engine/tool,
 // NOT engine/port, for the same layering reason FileSystem/Workspace/CommandRunner

@@ -55,6 +55,7 @@ var DenyExact = map[string]struct{}{
 	"WEBSEARCH_API_KEY": {},
 	"BRAVE_API_KEY":     {},
 	"EXA_API_KEY":       {},
+	"YDC_API_KEY":       {},
 	// Harness / driver auth tokens (cmd/mecated, cmd/mecatui).
 	"MECATL_AUTH_TOKEN":        {},
 	"MECATL_DRIVER_AUTH_TOKEN": {},
@@ -70,7 +71,7 @@ var DenyExact = map[string]struct{}{
 // NonOverridableExact names credentials read by Mecatl that an inheritance grant cannot restore.
 var NonOverridableExact = map[string]struct{}{
 	"OPENAI_API_KEY": {}, "OPENROUTER_API_KEY": {}, "ANTHROPIC_API_KEY": {}, "OPENCODE_API_KEY": {}, "TYPESAFE_API_KEY": {},
-	"WEBSEARCH_API_KEY": {}, "BRAVE_API_KEY": {}, "EXA_API_KEY": {},
+	"WEBSEARCH_API_KEY": {}, "BRAVE_API_KEY": {}, "EXA_API_KEY": {}, "YDC_API_KEY": {},
 }
 
 // denyPatternSuffixes are case-SENSITIVE name SUFFIXES that mark a variable as

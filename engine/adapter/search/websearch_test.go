@@ -241,9 +241,39 @@ func TestWebSearchBackendDown(t *testing.T) {
 	if res.IsError {
 		t.Fatalf("backend-down should not be an error result: %q", res.Content)
 	}
-	for _, want := range []string{"temporarily unavailable", "Exa", "BRAVE_API_KEY", "SEARXNG_URL", "mecatl.dev/docs/features/tools#configure-web-search"} {
+	for _, want := range []string{"temporarily unavailable", "BRAVE_API_KEY", "SEARXNG_URL", "mecatl.dev/docs/features/tools#configure-web-search"} {
 		if !strings.Contains(res.Content, want) {
 			t.Fatalf("backend-down message missing %q; got %q", want, res.Content)
+		}
+	}
+}
+
+// TestWebSearchBackendDownGeneric asserts the shared backend-down message does
+// not name a specific backend, since every provider returns it.
+func TestWebSearchBackendDownGeneric(t *testing.T) {
+	res := exec(t, NewWebSearchTool(NewFakeError(tool.ErrSearchBackendDown)), call(t, "WebSearch", map[string]any{"query": "go"}), nil)
+	if strings.Contains(res.Content, "Exa") {
+		t.Fatalf("shared backend-down message must not name Exa; got %q", res.Content)
+	}
+}
+
+type hintErr struct{ hint string }
+
+func (hintErr) Error() string               { return "rate limited" }
+func (hintErr) Unwrap() error               { return tool.ErrSearchBackendDown }
+func (e hintErr) SearchBackendHint() string { return e.hint }
+
+// TestWebSearchBackendDownCarriesHint asserts a provider's SearchBackendHint
+// (for example a Retry-After) reaches the model.
+func TestWebSearchBackendDownCarriesHint(t *testing.T) {
+	err := fmt.Errorf("wrapped: %w", hintErr{hint: "You.com rate limited the request; retry after 42s."})
+	res := exec(t, NewWebSearchTool(NewFakeError(err)), call(t, "WebSearch", map[string]any{"query": "go"}), nil)
+	if res.IsError {
+		t.Fatalf("backend-down should not be an error result: %q", res.Content)
+	}
+	for _, want := range []string{"temporarily unavailable", "retry after 42s", "BRAVE_API_KEY"} {
+		if !strings.Contains(res.Content, want) {
+			t.Fatalf("message missing %q; got %q", want, res.Content)
 		}
 	}
 }
