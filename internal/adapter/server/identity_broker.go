@@ -167,6 +167,9 @@ func (s *Service) registerIdentityAgent(ctx context.Context, sess *session.Sessi
 	// misbehaves, and dropping the held agent would let the next run accept
 	// the wrong one. A legitimate change, such as another trust domain or
 	// per-agent identities, comes with a restart, which clears what is held.
+	// The comparison lasts only while this process holds the credential; across
+	// a restart, release, or lease loss the suffix check is the guarantee, as the
+	// server does not know the broker's trust domain to predict the full ID.
 	if !strings.HasSuffix(reg.Agent.Subject, "/inst/"+incarnation) || ok && reg.Agent != held.registration.Agent {
 		s.cfg.Diagnostics.Log(context.WithoutCancel(ctx), port.LevelWarn, "identity broker returned another agent",
 			"session", host, "broker_session", brokerSession.ID)
@@ -175,10 +178,11 @@ func (s *Service) registerIdentityAgent(ctx context.Context, sess *session.Sessi
 	s.mu.Lock()
 	// Losing the session's lease takes leaseLossMu, not runEntryMu, so it can
 	// land while the broker call is in flight. Another process now runs the
-	// session's agent, so this one keeps no credential for it.
+	// session's agent, so this one keeps no credential for it and refuses the
+	// run rather than start the agent without one.
 	if _, lost := s.lostOwnership[sess.ID]; lost {
 		s.mu.Unlock()
-		return nil
+		return fmt.Errorf("%w: %q", ErrSessionLeasedElsewhere, sess.ID)
 	}
 	s.identityAgents[sess.ID] = identityAgent{
 		incarnation:     incarnation,

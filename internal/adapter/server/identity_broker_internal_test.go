@@ -4,6 +4,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"errors"
 	"testing"
 	"time"
 
@@ -92,8 +93,9 @@ func TestIdentityAgentDefinition(t *testing.T) {
 }
 
 // newRegisteringService returns a Service with the real identity broker, and
-// a saved-looking root session with an owner.
-func newRegisteringService(t *testing.T) (*Service, *session.Session) {
+// a saved-looking root session with an owner. configure, if given, adjusts the
+// Config before the Service is built.
+func newRegisteringService(t *testing.T, configure ...func(*Config)) (*Service, *session.Session) {
 	t.Helper()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -105,13 +107,17 @@ func newRegisteringService(t *testing.T) (*Service, *session.Session) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	svc, err := NewService(Config{
+	cfg := Config{
 		Engine:            brokerEngineResult().Engine,
 		Store:             memstore.New(),
 		PlacementProvider: brokerPlacementProvider{},
 		PlacementScope:    "test",
 		IdentityBroker:    identitybroker.NewInProcess(identitybroker.UnverifiedAuthenticator{Name: "mecak8s-test"}, core),
-	})
+	}
+	for _, c := range configure {
+		c(&cfg)
+	}
+	svc, err := NewService(cfg)
 	if err != nil {
 		t.Fatalf("NewService: %v", err)
 	}
@@ -210,14 +216,55 @@ func TestALostLeaseKeepsNoCredential(t *testing.T) {
 	svc.mu.Lock()
 	svc.lostOwnership[sess.ID] = struct{}{}
 	svc.mu.Unlock()
-	if err := svc.openIdentityBrokerSession(t.Context(), sess); err != nil {
-		t.Fatal(err)
+	// The run must not start without a credential: registration refuses it.
+	if err := svc.openIdentityBrokerSession(t.Context(), sess); !errors.Is(err, ErrSessionLeasedElsewhere) {
+		t.Fatalf("registration after a lost lease = %v, want ErrSessionLeasedElsewhere", err)
 	}
 	svc.mu.Lock()
 	_, held := svc.identityAgents[sess.ID]
 	svc.mu.Unlock()
 	if held {
 		t.Fatal("a session whose lease was lost holds its agent's credential")
+	}
+}
+
+func TestLosingTheLeaseDropsTheHeldCredential(t *testing.T) {
+	svc, sess := newRegisteringService(t, func(cfg *Config) {
+		// Every renew reports the lease taken, so the renewer declares the
+		// loss through onLeaseLost on its first tick.
+		cfg.SessionLease = immediateLeaseLoss{}
+		cfg.LeaseOwner = "test"
+		cfg.LeaseTTL = time.Hour
+		cfg.LeaseRenewInterval = time.Millisecond
+	})
+	if err := svc.openIdentityBrokerSession(t.Context(), sess); err != nil {
+		t.Fatal(err)
+	}
+	svc.mu.Lock()
+	_, held := svc.identityAgents[sess.ID]
+	svc.mu.Unlock()
+	if !held {
+		t.Fatal("no credential is held after registration")
+	}
+	if err := svc.acquireLease(t.Context(), sess.ID); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		svc.mu.Lock()
+		_, lost := svc.lostOwnership[sess.ID]
+		_, held = svc.identityAgents[sess.ID]
+		svc.mu.Unlock()
+		if lost {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the lease loss was never declared")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if held {
+		t.Fatal("a session whose lease was lost kept its agent's credential")
 	}
 }
 
