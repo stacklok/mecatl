@@ -42,7 +42,7 @@ flowchart LR
     R -.->|"delegates work to"| CR
 ```
 
-In the diagram, the host session is the persisted context for one agent instance. A child has its own child session. The root session and its children form the session tree. The tree shares one broker session. Each child follows the same relationships as the parent instance. A child can use a different selected definition. A root instance has no creation parent. A child has one creation-parent link. Today the authority of a root session allows one delegation hop, so a child cannot create children of its own. The design allows deeper nesting, up to a depth limit. The broker enforces the limit at registration.
+In the diagram, the host session is the persisted context for one agent instance. A child has its own child session. The root session and its children form the session tree. The tree shares one broker session. Main, scheduled, and debug sessions are roots, as is an older session saved without a kind. Subagent, parallel-branch, and team-member sessions belong to the tree of the session that started them. A session with no owner gets no broker session, so its gateway calls fail closed. Each child follows the same relationships as the parent instance. A child can use a different selected definition. A root instance has no creation parent. A child has one creation-parent link. Today the authority of a root session allows one delegation hop, so a child cannot create children of its own. The design allows deeper nesting, up to a depth limit. The broker enforces the limit at registration.
 
 The same reviewer instance can review PR 42 and later review PR 57, in separate runs. The selected definition stays fixed for the instance. A run that is paused for approval resumes as the same run.
 
@@ -115,6 +115,7 @@ Before the main loop starts, mecak8s persists the main's agent-instance incarnat
 The broker's agent-instance issuer validates the registration records that the workload authenticated. It then constructs the canonical instance subject. The issuer makes these checks:
 
 - The workload can act for the session and the instance.
+- The reported owner is the broker session's owner. One session tree has one owner.
 - If there is a parent, the parent is registered to the same broker session.
 - A registration with no parent names a definition that can be a session's root. It runs in the broker session's root host session, with that host session's incarnation.
 - For a definition that the broker loaded, the reference matches the broker's record.
@@ -145,7 +146,7 @@ The table shows how the design handles each event. Today, a turn that was in pro
 | Definition source edited | The instance keeps the revision that it registered with. Restoration never uses the revision that is current at the source. The broker keeps the stored ceiling and the revision record, not the source bytes. If the harness cannot rebuild the registered revision, the instance fails closed and does not resume. The user starts a new instance on the current revision. |
 | Process restart or session restoration | Restore the original incarnation, definition reference, creation parent, stored effective ceiling, and each unfinished run's owner. Recover the unfinished execution context and its user, actor, and connection association, or fail closed. An unfinished run whose owner cannot be restored denies calls. |
 | Instance credential expires | Renew the credential for the registered identity after the required checks. Renewal does not widen authority. |
-| Fork or clear | Register a distinct identity. A fork or a clear creates a new root instance. |
+| Fork or clear | Register a distinct identity. A fork or a clear creates a new root instance in a new host session, which opens its own broker session. The source session keeps its broker session. |
 | Fresh incarnation | Register a distinct identity. Reusing a session name or a definition name does not inherit the old instance's authority. |
 | Authority work switched on | The broker computes a ceiling once for each live instance, parents before children. It marks the ceiling as backfilled. Until then, an instance with no ceiling is denied every MCP call. An instance whose definition or parent cannot be resolved gets a ceiling that denies every MCP call. That instance must register again. |
 

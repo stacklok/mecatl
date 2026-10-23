@@ -253,7 +253,7 @@ The `kubernetes.io` claims are recorded for audit and never decide anything.
 
 ### (3) Session open and the broker refresh token
 
-At `OpenSession`, mecak8s passes Alice's current AS-1 access token to the broker once, with its workload credential and the owner it holds for `hostS42`. This replaces the harness reporting `human {issuer, subject}` as plain data: the broker now holds a token AS-1 signed for Alice's client, not mecak8s's statement about her. Clients refresh their access token before each new session open, so the token is fresh and not yet used to open a session. The broker runs at most one `OpenSession` per broker session at a time. A scheduled run opens its session from the schedule grant instead; see [scheduled runs](#scheduled-runs).
+At `OpenSession`, mecak8s passes Alice's current AS-1 access token to the broker once, with its workload credential and the owner it holds for `hostS42`. This replaces the harness reporting `human {issuer, subject}` as plain data: the broker now holds a token AS-1 signed for Alice's client, not mecak8s's statement about her. Clients refresh their access token before each new session open, so the token is fresh and not yet used to open a session. The broker runs at most one `OpenSession` per broker session at a time. It keeps at most one open broker session for each root host session, and mecak8s finds it by that host session. An open that repeats the host session, incarnation, and owner returns `A42`. An open with another owner fails with `session_owned`, and one with another incarnation fails with `ALREADY_EXISTS`. A session bound to another workload gets the same `PERMISSION_DENIED` as an unknown session ID, at open too, and a lookup by host session finds none, so a workload cannot learn that another workload's session exists. A scheduled run opens its session from the schedule grant instead; see [scheduled runs](#scheduled-runs).
 
 **Input.** The broker exchanges the token at AS-1 with RFC 8693, authenticating as client `mecatl` ([step (5)](#5-broker-client-authentication)). RFC 8693 has no parameter for the broker session or its owner, so the request carries both in an RFC 9396 `authorization_details` entry of type `mecatl_session`. RFC 9396 does not mention token exchange; Mecatl applies its §3, which allows `authorization_details` wherever `scope` is used, by analogy. The owner field is deployment-defined context for the owner check, not an authorization the user granted. The `mecatl_session` type requires AS-1 to echo the entry unchanged. Form encoding is shown decoded:
 
@@ -323,16 +323,16 @@ Checks 5 and 6 exist because the broker supplies `A42`, and only mecak8s checks 
 
 **Evidence.** AS-1 records the conversion: client `mecatl`, user `u-alice-91`, owner, source token `jti`, session `A42`, and the hard expiry. It records a refused open with its reason, and each refresh token a later open replaced.
 
-**Session end.** `RT-A42` is not tied to Alice's AS-1 login session, so signing out of one client does not end it. Closing the session, signing out everywhere, the hard expiry, and AS-1's upstream re-check revoke it. Losing `RT-A42` for any of these reasons closes `A42`. On Alice's next request, mecak8s opens a new broker session for `hostS42` with a fresh access token, registers its live instances into it again, parents first, with their existing incarnations ([step (4)](#4-agent-instance-jwt-svid)), and reports the open delegations again, parents first ([delegation report](#delegation-report)). A closed session leaves a record, its ID, owner, and closing time, so check 6 can refuse to reopen it. The converted `jti` is kept until the source token's `exp` plus the clock skew.
+**Session end.** `RT-A42` is not tied to Alice's AS-1 login session, so signing out of one client does not end it. Deleting `hostS42` closes `A42`. Releasing `hostS42`, a client disconnecting, or a replica losing its lease leaves `A42` open, because agents keep working after Alice closes her client. Deleting the session, signing out everywhere, the hard expiry, and AS-1's upstream re-check revoke it. Losing `RT-A42` for any of these reasons closes `A42`. On Alice's next request, mecak8s opens a new broker session for `hostS42` with a fresh access token, registers its live instances into it again, parents first, with their existing incarnations ([step (4)](#4-agent-instance-jwt-svid)), and reports the open delegations again, parents first ([delegation report](#delegation-report)). A closed session leaves a record, its ID, owner, and closing time, so check 6 can refuse to reopen it. The converted `jti` is kept until the source token's `exp` plus the clock skew.
 
 ### (4) Agent-instance JWT-SVID
 
-**Input.** For the diagram's main registration, mecak8s supplies session `A42`, the persisted main agent-instance incarnation, and the selected definition reference, with no parent. For the reviewer, it supplies `A42`, the child's persisted incarnation, the definition reference `global/code-reviewer`, and the registered main-instance reference, not the main's token. Both calls carry the workload credential.
+**Input.** For the diagram's main registration, mecak8s supplies session `A42`, the persisted main agent-instance incarnation, and the selected definition reference, with no parent. For the reviewer, it supplies `A42`, the child's persisted incarnation, the definition reference `global/code-reviewer`, and the registered main-instance reference, not the main's token. Both calls also report the instance's host session and owner, and carry the workload credential.
 
 **Registration checks, at the agent-instance issuer:**
 
 1. The workload is authenticated ([step (2)](#2-workload-credential)).
-2. Session `A42` is open and bound to that workload.
+2. Session `A42` is open, bound to that workload, and owned by the reported owner: one session tree has one owner.
 3. The definition reference names a definition the loader recorded, or, for a definition the broker did not load, is accepted as a mecak8s report and marked as such; see [definition provenance](agent-definitions.md#definition-provenance).
 4. With no parent, including after a fork or clear, the definition is root-eligible, the host session is `A42`'s root host session, and the incarnation is the one `A42` was opened with. With a parent, the parent is registered to `A42`.
 5. The definition category and name match `[A-Za-z0-9._-]+` and are neither `.` nor `..` (SPIFFE-ID §2.2). A name that would need encoding is rejected, not rewritten. The incarnation is exactly `inc_` and 26 lowercase base32 characters, or `legacy_` and 64 hex characters.
@@ -370,7 +370,7 @@ mecak8s checks that the returned subject is the registered instance. The harness
 | Check | Response | Retry |
 | --- | --- | --- |
 | Registration 1 | Step (2)'s codes | Only an expired workload credential. |
-| Registration 2 | The session's closing reason with its status from [error reasons](#error-reasons), or `PERMISSION_DENIED` for a session bound to another workload | After a new session opens. |
+| Registration 2 | The session's closing reason with its status from [error reasons](#error-reasons), or `PERMISSION_DENIED` for a session bound to another workload, the same as for an unknown session ID, or for an owner that is not the session's owner | After a new session opens. |
 | Registration 3, 4 | `PERMISSION_DENIED` | No. |
 | Registration 7 | `ALREADY_EXISTS` | No. |
 | Registration 5, 6 | `INVALID_ARGUMENT` | No. |
@@ -824,7 +824,7 @@ RFC 8693 §2.2.2 requires `invalid_request` for any subject or actor token that 
 | `subject_invalid` | AS-1, session open | `UNAUTHENTICATED` | Ask the client to refresh its access token and retry once. |
 | `token_used` | AS-1, session open | `UNAUTHENTICATED` | The same. |
 | `owner_mismatch` | AS-1, session open | `PERMISSION_DENIED` | Fail the open; a mecak8s pairing bug. |
-| `session_owned` | AS-1, session open | `PERMISSION_DENIED` | Fail the open; a mecak8s pairing bug or a closed session ID reused. |
+| `session_owned` | AS-1 or broker, session open | `PERMISSION_DENIED` | Fail the open; a mecak8s pairing bug or a closed session ID reused. |
 | `session_closed` | AS-1, broker | `FAILED_PRECONDITION` | Open a new broker session on the user's next request. |
 | `signed_out` | AS-1, broker | `FAILED_PRECONDITION` | Stop the run; the client shows the user as signed out. At session open: 401, and the client signs in again. |
 | `upstream_revoked` | AS-1, broker | `PERMISSION_DENIED` | Stop the run; the client shows the user as signed out. At session open: 401, and the client signs in again. |
