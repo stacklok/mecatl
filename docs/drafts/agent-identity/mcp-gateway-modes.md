@@ -16,7 +16,7 @@ This chapter covers the protocol between AS-1 and AS-2 and how the two modes dif
 | Gateway authorization server (AS-2) | Mecatl, separate issuer and key | Gateway operator |
 | Provider credentials | Mecatl's gateway store, keyed by (gateway, native user, provider) | Gateway operator, keyed the same way |
 | Trust in AS-1 | Local configuration; AS-1 is the SSO IdP AS-2 trusts | Gateway administrator registers AS-1 as an assertion issuer only |
-| User consent | Implicit | One-time consent link at AS-2's own login |
+| User approval | Implicit | One-time approval at AS-2's own login |
 
 The design works in two deployments: standalone Mecatl, with no Stacklok Enterprise Platform, Directory, or connector gateway, and enterprise deployments that integrate with them. Three roles are therefore pluggable: the **identity resolver**, which maps an AS-1 subject to a native user; the **consent store**; and the **credential store**. Standalone Mecatl provides local implementations, and enterprise deployments back them with Directory and the connector gateway. Nothing in the flow presumes Directory.
 
@@ -45,12 +45,23 @@ The per-call flow, with every request, token, and check, is in [credentials and 
 
 | Mode | How AS-2 resolves and authorizes the user |
 | --- | --- |
-| Embedded | ID-JAG as specified. Users log in to AS-2 through AS-1, so AS-1 is the SSO IdP AS-2 trusts (§4.1) and the subject is the shared AS-1 `sub` (§5). `u-alice-91` maps directly to native user `usr-alice-7c1d`. Consent is implicit: AS-1, AS-2, and the credential store share one administrative domain. AS-1 and AS-2 are distinct issuers with distinct keys, so no issuer redeems its own ID-JAG. |
-| External | Identity chaining across administrative domains ([chaining §§2.1, 2.5](https://www.ietf.org/archive/id/draft-ietf-oauth-identity-chaining-17.html#section-2.1)) using the ID-JAG token profile. AS-2's users log in through the gateway's own IdP, so the §4.1 precondition, that the resource AS already trusts the IdP for SSO, does not hold, and its consent waiver does not apply. AS-2 trusts AS-1 only as an assertion issuer. It redeems only when the ID-JAG's `(iss, sub)` and `client_id` match a consent link, which supplies the native user (chaining §2.2, deployment-specific resolution). No just-in-time provisioning. |
+| Embedded | ID-JAG as specified. Users log in to AS-2 through AS-1, so AS-1 is the SSO IdP AS-2 trusts (§4.1) and the subject is the shared AS-1 `sub` (§5). `u-alice-91` maps directly to native user `usr-alice-7c1d`. Approval is implicit, set by deployment configuration: AS-1, AS-2, and the credential store share one administrative domain. AS-1 and AS-2 are distinct issuers with distinct keys, so no issuer redeems its own ID-JAG. |
+| External | Identity chaining across administrative domains ([chaining §§2.1, 2.5](https://www.ietf.org/archive/id/draft-ietf-oauth-identity-chaining-17.html#section-2.1)) using the ID-JAG token profile. AS-2's users log in through the gateway's own IdP, so the §4.1 precondition, that the resource AS already trusts the IdP for SSO, does not hold, and its consent waiver does not apply. AS-2 trusts AS-1 only as an assertion issuer. It redeems only when the local user found from the ID-JAG's `upstream_subject` holds an unrevoked approval for its `client_id` and the actor's issuer (chaining §2.2, deployment-specific resolution). No just-in-time provisioning. |
 
-The external consent link records (native user, AS-1 issuer, AS-1 `sub`, client `mecatl`, grant time, and scope or providers). Alice creates it once per gateway, through AS-2's own login, by approving "Allow Mecatl" on a consent screen AS-2 generates. It is keyed on the AS-1 `sub` in the ID-JAG, never on a `sub_id` (§9.5). It stops a compromised AS-1 from using the gateway credentials of a user who never chose Mecatl. Admin pre-consent without an independent witness of the user is rejected for the same reason. The link's creation flow, the link-swap attack it must resist, and the shared-IdP shortcut are in the [implementation companion](implementation.md#external-consent-link). The gateway UI can revoke the link.
+Two separate facts decide redemption. The first is which native user the AS-1 subject is (mapping). The second is whether client `mecatl` may use that user's connections at this gateway (approval). A valid mapping is not an approval. In embedded mode, both follow from configuration: AS-2 trusts AS-1 as its SSO IdP, and approval is implicit. In external mode, AS-2 looks up both in one approval record:
 
-An unresolved or unlinked subject fails closed, with reason `consent_required` in external mode. AS-2 must not create an unlinked user as a side effect of lookup. Resolving the user does not establish that a provider connection exists; the vMCP's credential lookup remains a separate check.
+```text
+(gateway, local user, client, actor_iss, revoked)
+```
+
+There is one row per (gateway, local user, client, `actor_iss`). On each redemption, AS-2 finds the local user from the ID-JAG's `upstream_subject`. It uses the shared login or, under administrator pre-approval, the directory-synced mapping. AS-2 does not store AS-1's subject. Mecatl's approvals name AS-1 as `actor_iss`, so one approval covers any Mecatl agent. Two ways create an approval:
+
+- **Alice approves (the default).** Alice opens an approval link, signs in at AS-2, and approves "Allow Mecatl (any Mecatl agent) to use your connections". AS-2 activates the approval only if her company IdP identity matches the ID-JAG's. So a compromised AS-1 can act only for users who approved. See the [implementation companion](implementation.md#external-consent-link).
+- **An administrator pre-approves (opt-in).** The gateway administrator explicitly approves client `mecatl` for a group. The mapping from AS-1 subjects to native users is created on first use from AS-1's `upstream_subject`, or imported by directory sync. This rests on AS-1's word, so a compromised AS-1 reaches every covered user, whether or not the user used Mecatl. This is embedded-mode trust ([implementation companion](implementation.md#external-consent-link)).
+
+The approval flow and the link-swap attack it must resist are in the [implementation companion](implementation.md#external-consent-link). The gateway UI, or Mecatl, can revoke an approval; a client may revoke only approvals that name it.
+
+An unresolved or unapproved subject fails closed, with reason `consent_required` in external mode. AS-2 must not create a user as a side effect of lookup. Resolving the user does not establish that a provider connection exists; the vMCP's credential lookup remains a separate check.
 
 ## Gateway administrator configuration
 
@@ -60,7 +71,7 @@ In external mode, the gateway administrator configures AS-2 with:
 - the `mecatl` OAuth client, with the broker's `jwks_uri` registered once for `private_key_jwt`;
 - the consent-link flow and its revocation in the gateway UI;
 - permitted actors and allowed vMCP resources;
-- ID-JAG lifetime and `jti` replay handling.
+- ID-JAG lifetime, and single use for AS-1's issuer (recommended; Mecatl never re-submits an ID-JAG).
 
 Mecatl's operator configures AS-1 with the `mecatl` client, the accepted agent trust domain and audience, and the allowed AS-2 targets. Embedded mode uses the same roles and checks with local configuration, and AS-2 trusts AS-1 as its SSO IdP. Co-location does not create isolation.
 
@@ -86,8 +97,8 @@ Embedded mode is outside the cross-domain scope that ID-JAG §9.3 states, becaus
 
 AS-1 must accept `RT-A42` as `subject_token` and the registered agent-instance JWT-SVID as `actor_token` from client `mecatl` authenticated with `private_key_jwt`. It resolves the subject only from the refresh token's record, checks session state and hard expiry, re-checks the user's upstream refresh token when due, checks the actor's registration to the broker session, authorizes client, subject, actor, and AS-2 target together, and returns an ID-JAG whose single-level `act` holds the actor's opaque `ag_` identifier.
 
-AS-2 must authenticate `mecatl`, validate the ID-JAG under ID-JAG §4.4.1, reject a reused `jti` (RFC 7523 §3), and resolve the native user: directly in embedded mode, and only through a consent link in external mode. It must issue an access token for the native user that preserves `act` and `client_id`, and no refresh token. Unresolved or unlinked subjects fail closed.
+AS-2 must authenticate `mecatl`, validate the ID-JAG under ID-JAG §4.4.1, apply the issuer's ID-JAG reuse policy, and resolve the native user: directly in embedded mode, and only for an approved user in external mode. It must issue an access token for the native user that preserves `act` and `client_id`, and no refresh token. Unresolved or unapproved subjects fail closed.
 
-The vMCP must validate `V`, bind its session to the user and `act.sub`, and load provider credentials keyed by (gateway, native user, provider). Do not add a callback or response fields that expose AS-2's private native mappings to the broker. The design does not claim a backend-to-SaaS audit trail.
+The vMCP must validate `V`, bind its session to `iss`, `sub`, `client_id`, `act.iss`, `act.sub`, and the delegated-access marker, and load provider credentials only for a marked `V`, keyed by (gateway, native user, routed provider). Do not add a callback or response fields that expose AS-2's private native mappings to the broker. The design does not claim a backend-to-SaaS audit trail.
 
 Embedded and external deployments implement the same protocol roles and token formats. Embedded wiring uses local configuration, separate issuer keys and storage namespaces, and implicit consent; external wiring uses gateway-administrator trust and the consent link. Co-location is not isolation.

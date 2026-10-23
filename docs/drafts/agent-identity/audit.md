@@ -78,7 +78,7 @@ These records have limits:
 
 - They are unsigned, so they do not provide non-repudiation.
 - In external mode, AS-2 and vMCP records belong to the gateway operator; the Mecatl-side trail ends at the broker's dispatch event.
-- AS-2 rejects a reused ID-JAG `jti`, so each ID-JAG leads to at most one redemption event. ID-JAG §4.4.3 would allow re-submission; single use is Mecatl policy.
+- An external gateway may allow an ID-JAG to be re-submitted until it expires, as ID-JAG §4.4.3 permits, so one ID-JAG can lead to several redemption events there, all linked by its `jti`. The embedded gateway accepts each ID-JAG once. In external mode, AS-2 records which approval record authorized each redemption.
 - Reaching one operation from a gateway record depends on the propagated operation ID, which vMCP records as reported, not verified.
 
 ### Lineage
