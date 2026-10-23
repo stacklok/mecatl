@@ -48,6 +48,11 @@ type recordingBroker struct {
 	// renamedAgent makes RegisterAgent return another agent whose SPIFFE ID
 	// still ends in the registered incarnation.
 	renamedAgent bool
+	// registerErr, when set, makes RegisterAgent fail with it.
+	registerErr error
+	// editRegistration, when set, changes each registration RegisterAgent
+	// returns.
+	editRegistration func(*identitybroker.Registration)
 }
 
 // newRecordingBroker wraps the real identity broker, so these tests exercise
@@ -117,9 +122,13 @@ func (b *recordingBroker) RegisterAgent(ctx context.Context, req identitybroker.
 	b.mu.Lock()
 	b.registers = append(b.registers, req)
 	registerDown, hook, other, renamed := b.registerUnavailable, b.beforeRegister, b.otherAgent, b.renamedAgent
+	registerErr, edit := b.registerErr, b.editRegistration
 	b.mu.Unlock()
 	if registerDown {
 		return identitybroker.Registration{}, identitybroker.NewError(identitybroker.CodeUnavailable, "", "test broker cannot register")
+	}
+	if registerErr != nil {
+		return identitybroker.Registration{}, registerErr
 	}
 	if hook != nil {
 		hook(req)
@@ -135,6 +144,9 @@ func (b *recordingBroker) RegisterAgent(ctx context.Context, req identitybroker.
 	}
 	if err == nil && renamed {
 		reg.Agent.Subject = strings.Replace(reg.Agent.Subject, "/shared/", "/renamed/", 1)
+	}
+	if err == nil && edit != nil {
+		edit(&reg)
 	}
 	return reg, err
 }

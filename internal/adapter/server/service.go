@@ -2722,11 +2722,16 @@ func (s *Service) bindRelatedIncarnations(ctx context.Context, opts *createSessi
 // session. The open uses the saved session, so a create that lost a race
 // opens with the winner's incarnation. A failed open does not fail the create:
 // the session is already saved, and the open is retried before each run,
-// which refuses to start the agent without a broker session.
+// which refuses to start the agent without a broker session. Like fork and
+// clear, the open is best effort: it outlives the caller's cancellation, so a
+// saved session is not left unregistered by a client that went away, and is
+// bounded, so a slow broker cannot hold the session's runEntryMu.
 func (s *Service) createSession(ctx context.Context, mode session.PermissionMode, limits session.Limits, sel ProviderSelector, specs []mcp.ServerConfig, profile SessionProfile, opts createSessionOpts) (*session.Session, error) {
 	sess, err := s.createSessionRecord(ctx, mode, limits, sel, specs, profile, opts)
 	if err == nil && sess != nil {
-		_ = s.openSavedIdentityBrokerSession(ctx, sess.ID) // logged; retried at run entry
+		openCtx, cancelOpen := context.WithTimeout(context.WithoutCancel(ctx), engineCloseTimeout)
+		_ = s.openSavedIdentityBrokerSession(openCtx, sess.ID) // logged; retried at run entry
+		cancelOpen()
 	}
 	return sess, err
 }

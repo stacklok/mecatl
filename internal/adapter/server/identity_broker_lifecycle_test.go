@@ -129,14 +129,21 @@ func TestIdentityBrokerClosesEvenWhenReferenceConfirmationFails(t *testing.T) {
 		t.Fatal(err)
 	}
 	wantBrokerSession(t, broker, sess)
+	if _, held := svc.HeldIdentityCredentialForTest(sess.ID); !held {
+		t.Fatal("no credential is held after create")
+	}
 	failConfirm.Store(true)
 	if err := svc.DeleteSession(ctx, sess.ID); err == nil {
 		t.Fatal("DeleteSession succeeded although reference confirmation failed")
 	}
 	// The record is gone, so a retry finds nothing to delete and never reaches
-	// the cleanup: the broker session must already be closed.
+	// the cleanup: the broker session must already be closed and the
+	// credential dropped.
 	if _, ok := broker.find(t, sess.ID); ok {
 		t.Fatal("a failed reference confirmation left the broker session open")
+	}
+	if _, held := svc.HeldIdentityCredentialForTest(sess.ID); held {
+		t.Fatal("a failed reference confirmation left the agent's credential held")
 	}
 	if err := svc.DeleteSession(ctx, sess.ID); err != nil {
 		t.Fatalf("retried DeleteSession: %v", err)

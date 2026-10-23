@@ -42,6 +42,15 @@ func SetEngineCloseTimeoutForTest(d time.Duration) (restore func()) {
 	return func() { engineCloseTimeout = prev }
 }
 
+// HeldIdentityCredentialForTest returns the identity broker credential held
+// for session id's agent, so a test can check where it does and does not go.
+func (s *Service) HeldIdentityCredentialForTest(id session.SessionID) (string, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	held, ok := s.identityAgents[id]
+	return held.registration.Credential.Value(), ok
+}
+
 // SessionEngineContextWindowForTest exposes the per-session engine's compaction
 // context window (Engine.ContextWindow(), engine/agent/loop.go) for the session
 // under id, or (0, false) if no per-session engine is registered (the session is

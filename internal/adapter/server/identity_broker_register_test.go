@@ -1,12 +1,17 @@
 package server_test
 
 import (
+	"encoding/json"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
+	"github.com/stacklok/mecatl/engine/adapter/sessnap"
+	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/internal/adapter/server"
 	"github.com/stacklok/mecatl/internal/identitybroker"
@@ -280,5 +285,189 @@ func TestIdentityBrokerSuccessorsRegisterTheirOwnAgents(t *testing.T) {
 	}
 	if !strings.HasPrefix(string(source.Incarnation()), "inc_") {
 		t.Fatalf("source incarnation %q is not minted", source.Incarnation())
+	}
+}
+
+func TestIdentityBrokerForkAndClearStayBestEffort(t *testing.T) {
+	broker := newRecordingBroker()
+	llm := mockllm.New(mockllm.TextTurn("forked"), mockllm.TextTurn("cleared"))
+	svc := newIdentityBrokerService(t, broker, llm)
+	ctx := aliceContext(t)
+	source, err := svc.CreateSession(ctx, session.ModeDefault, session.Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	broker.set(func(b *recordingBroker) { b.registerUnavailable = true })
+	forked, err := svc.ForkSessionSuccessor(ctx, server.ForkSuccessorRequest{Source: source.ID})
+	if err != nil {
+		t.Fatalf("fork with registration down: %v", err)
+	}
+	cleared, err := svc.ClearSessionSuccessor(ctx, source.ID, server.SuccessorPlacement{})
+	if err != nil {
+		t.Fatalf("clear with registration down: %v", err)
+	}
+	if n := len(broker.acceptedRegistrations()); n != 1 {
+		t.Fatalf("accepted registrations with registration down = %d, want only the source's", n)
+	}
+	// Once the broker recovers, each successor's first run registers its agent.
+	broker.set(func(b *recordingBroker) { b.registerUnavailable = false })
+	for _, id := range []session.SessionID{forked, cleared} {
+		if err := runToEnd(ctx, t, svc, id); err != nil {
+			t.Fatalf("first run of successor %s: %v", id, err)
+		}
+		successor, err := svc.GetSession(ctx, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		wantRegistered(t, broker, wantBrokerSession(t, broker, successor), successor)
+	}
+}
+
+func TestIdentityBrokerPermanentRegistrationErrorsAreNotRetryable(t *testing.T) {
+	for _, code := range []identitybroker.Code{identitybroker.CodeAlreadyExists, identitybroker.CodePermissionDenied, identitybroker.CodeInvalidArgument} {
+		t.Run(string(code), func(t *testing.T) {
+			broker := newRecordingBroker()
+			llm := mockllm.New(mockllm.TextTurn("must not run"))
+			svc := newIdentityBrokerService(t, broker, llm)
+			ctx := aliceContext(t)
+			broker.set(func(b *recordingBroker) { b.registerErr = identitybroker.NewError(code, "", "test broker refuses") })
+			sess, err := svc.CreateSession(ctx, session.ModeDefault, session.Limits{})
+			if err != nil {
+				t.Fatalf("create with registration refused: %v", err)
+			}
+			err = runToEnd(ctx, t, svc, sess.ID)
+			if !errors.Is(err, server.ErrInternal) || errors.Is(err, server.ErrIdentityBrokerUnavailable) {
+				t.Fatalf("run with registration refused with %s: %v, want ErrInternal", code, err)
+			}
+			if n := llm.Calls(); n != 0 {
+				t.Fatalf("the agent ran unregistered: %d model requests", n)
+			}
+		})
+	}
+}
+
+func TestIdentityBrokerRefusesAnExpiredCredential(t *testing.T) {
+	broker := newRecordingBroker()
+	llm := mockllm.New(mockllm.TextTurn("must not run"))
+	svc := newIdentityBrokerService(t, broker, llm) // the server's clock reads time.Unix(0, 0)
+	ctx := aliceContext(t)
+	broker.set(func(b *recordingBroker) {
+		b.editRegistration = func(reg *identitybroker.Registration) { reg.ExpiresAt = time.Unix(0, 0) }
+	})
+	sess, err := svc.CreateSession(ctx, session.ModeDefault, session.Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, held := svc.HeldIdentityCredentialForTest(sess.ID); held {
+		t.Fatal("an expired credential is held")
+	}
+	if err := runToEnd(ctx, t, svc, sess.ID); !errors.Is(err, server.ErrInternal) {
+		t.Fatalf("run when the broker returns an expired credential: %v, want ErrInternal", err)
+	}
+	if n := llm.Calls(); n != 0 {
+		t.Fatalf("the agent ran with an expired credential: %d model requests", n)
+	}
+}
+
+func TestIdentityBrokerRegistrationAtCreateIsBounded(t *testing.T) {
+	restore := server.SetEngineCloseTimeoutForTest(50 * time.Millisecond)
+	defer restore()
+	broker := &hangingFindBroker{recordingBroker: newRecordingBroker(), hang: true}
+	svc := newIdentityBrokerService(t, broker, mockllm.New())
+	done := make(chan error, 1)
+	go func() {
+		_, err := svc.CreateSession(aliceContext(t), session.ModeDefault, session.Limits{})
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		// Registration is best effort at create: the failure is logged.
+		if err != nil {
+			t.Fatalf("create with a hung identity broker: %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("create waited on a hung identity broker")
+	}
+}
+
+func TestIdentityBrokerCredentialStaysInMemory(t *testing.T) {
+	broker := newRecordingBroker() // real broker: the credential is a real JWT
+	var mu sync.Mutex
+	var requests []string
+	observe := func(req port.LLMRequest) {
+		body, err := json.Marshal(req)
+		if err != nil {
+			t.Errorf("marshal model request: %v", err)
+		}
+		mu.Lock()
+		requests = append(requests, req.System.Render()+string(body))
+		mu.Unlock()
+	}
+	llm := mockllm.NewWith([]mockllm.Option{mockllm.WithRequestObserver(observe)}, mockllm.TextTurn("done"))
+	var store *memstore.Store
+	svc := newIdentityBrokerService(t, broker, llm, func(cfg *server.Config) { store = cfg.Store.(*memstore.Store) })
+	ctx := aliceContext(t)
+	sess, err := svc.CreateSession(ctx, session.ModeDefault, session.Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Releasing the session drops the credential from create, so run entry
+	// registers on the session the run then persists and sends to the model.
+	svc.CloseSession(sess.ID)
+	run, err := svc.StartRun(ctx, sess.ID, "hello")
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	for range run.Events() {
+	}
+	svc.FinishRun(sess.ID, run)
+	credential, held := svc.HeldIdentityCredentialForTest(sess.ID)
+	if !held || strings.Count(credential, ".") != 2 {
+		t.Fatalf("held credential = %q, %v; want a JWT", credential, held)
+	}
+	loaded, err := store.Load(ctx, sess.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	persisted, err := sessnap.Marshal(loaded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(persisted), credential) {
+		t.Fatal("the persisted session contains the agent's credential")
+	}
+	mu.Lock()
+	seen := append([]string(nil), requests...)
+	mu.Unlock()
+	if len(seen) == 0 {
+		t.Fatal("the model saw no request")
+	}
+	for _, req := range seen {
+		// Positive control: the observed text carries the conversation.
+		if !strings.Contains(req, "hello") {
+			t.Fatalf("model request does not carry the prompt: %s", req)
+		}
+		if strings.Contains(req, credential) {
+			t.Fatal("the model's input contains the agent's credential")
+		}
+	}
+
+	if err := svc.DeleteSession(ctx, sess.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, held := svc.HeldIdentityCredentialForTest(sess.ID); held {
+		t.Fatal("a deleted session kept its agent's credential")
+	}
+
+	open, err := svc.CreateSession(ctx, session.ModeDefault, session.Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, held := svc.HeldIdentityCredentialForTest(open.ID); !held {
+		t.Fatal("no credential is held after create")
+	}
+	svc.Close()
+	if _, held := svc.HeldIdentityCredentialForTest(open.ID); held {
+		t.Fatal("a closed server kept an agent's credential")
 	}
 }
