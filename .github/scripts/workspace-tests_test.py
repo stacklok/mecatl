@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Offline runner contracts: python3 .github/scripts/workspace-tests_test.py.
 
-Requires task and a Go >= 1.27.2 binary on PATH (toolchain downloads are disabled).
+Requires task and a Go 1.27 or newer binary on PATH (toolchain downloads are disabled).
 """
 
 import json
@@ -55,9 +55,9 @@ class WorkspaceTests(unittest.TestCase):
             (self.root / module).mkdir(parents=True, exist_ok=True)
         other = self.base / "unrelated"
         other.mkdir()
-        (other / "go.mod").write_text("module fixture.invalid/unrelated\n\ngo 1.27.2\n")
+        (other / "go.mod").write_text("module fixture.invalid/unrelated\n\ngo 1.27\n")
         self.unrelated = self.base / "unrelated.work"
-        self.unrelated.write_text("go 1.27.2\n\nuse ./unrelated\n")
+        self.unrelated.write_text("go 1.27\n\nuse ./unrelated\n")
 
     def run_command(self, args, *, succeeds=True, env=None, cwd=None):
         result = subprocess.run(args, cwd=cwd or self.root, env=env or self.env,
@@ -181,7 +181,7 @@ sys.exit(1 if os.environ.get("FAIL_LEG") == ("tag" if tagged else module) else 0
         for module in self.modules:
             (self.root / module / "go.mod").write_text(
                 f"module fixture.invalid/{module if module != '.' else 'root'}\n\n"
-                "go 1.27.2\n\nrequire fixture.invalid/unused v1.0.0\n")
+                "go 1.27\n\nrequire fixture.invalid/unused v1.0.0\n")
             (self.root / module / "fixture.go").write_text("package fixture\n")
         metadata = [self.root / "go.work"]
         metadata += [self.root / module / "go.mod" for module in self.modules]
@@ -211,12 +211,12 @@ sys.exit(1 if os.environ.get("FAIL_LEG") == ("tag" if tagged else module) else 0
         for index, module in enumerate(self.modules):
             directory = self.root / module
             name = dependency if module == candidate else f"fixture.invalid/module{index}"
-            (directory / "go.mod").write_text(f"module {name}\n\ngo 1.27.2\n")
+            (directory / "go.mod").write_text(f"module {name}\n\ngo 1.27\n")
             (directory / "fixture.go").write_text("package fixture\n")
 
         old = self.base / "published"
         old.mkdir()
-        (old / "go.mod").write_text(f"module {dependency}\n\ngo 1.27.2\n")
+        (old / "go.mod").write_text(f"module {dependency}\n\ngo 1.27\n")
         (old / "fixture.go").write_text('package fixture\nfunc Standalone() string { return "published" }\n')
         with (self.root / "go.mod").open("a") as mod:
             mod.write(f'\nrequire {dependency} v1.0.0\nreplace {dependency} => "{old}"\n')
@@ -225,7 +225,7 @@ sys.exit(1 if os.environ.get("FAIL_LEG") == ("tag" if tagged else module) else 0
         proxy = self.base / "proxy"
         versions = proxy / "fixture.invalid/supplement/@v"
         versions.mkdir(parents=True)
-        mod = "module fixture.invalid/supplement\n\ngo 1.27.2\n"
+        mod = "module fixture.invalid/supplement\n\ngo 1.27\n"
         (versions / "v1.0.0.mod").write_text(mod)
         (versions / "v1.0.0.info").write_text('{"Version":"v1.0.0","Time":"2026-01-01T00:00:00Z"}')
         with zipfile.ZipFile(versions / "v1.0.0.zip", "w") as archive:
