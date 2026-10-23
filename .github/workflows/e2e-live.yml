@@ -87,7 +87,8 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version-file: go.mod
+          go-version: '1.27.x'
+          check-latest: true
           cache: true
           # engine/ is its own module (go.work monorepo); its go.sum is part of
           # the build cache key alongside the root's.
@@ -203,7 +204,8 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version-file: go.mod
+          go-version: '1.27.x'
+          check-latest: true
           cache: true
           # engine/ is its own module (go.work monorepo); its go.sum is part of
           # the build cache key alongside the root's.
@@ -310,7 +312,8 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         timeout-minutes: 2
         with:
-          go-version-file: go.mod
+          go-version: '1.27.x'
+          check-latest: true
           cache: false
       - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
         timeout-minutes: 1

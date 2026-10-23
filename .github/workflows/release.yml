@@ -161,7 +161,8 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version-file: go.mod
+          go-version: '1.27.x'
+          check-latest: true
           cache: true
           # engine/ is its own module (go.work monorepo); its go.sum is part of
           # the build cache key alongside the root's.
@@ -340,7 +341,8 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version-file: environment/microvm/go.mod
+          go-version: '1.27.x'
+          check-latest: true
           cache: true
           cache-dependency-path: |
             engine/go.sum
@@ -507,7 +509,8 @@ jobs:
         run: test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version-file: environment/microvm/go.mod
+          go-version: '1.27.x'
+          check-latest: true
       - name: Reuse the tag's frozen resolution or resolve it once
         run: |
           set -euo pipefail
@@ -616,7 +619,8 @@ jobs:
         run: test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version-file: go.mod
+          go-version: '1.27.x'
+          check-latest: true
           cache: true
           cache-dependency-path: |
             go.sum
@@ -743,7 +747,8 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version-file: go.mod
+          go-version: '1.27.x'
+          check-latest: true
           cache: true
           # engine/ is its own module (go.work monorepo); its go.sum is part of
           # the build cache key alongside the root's.
@@ -911,7 +916,8 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version-file: go.mod
+          go-version: '1.27.x'
+          check-latest: true
           cache: true
           # engine/ is its own module (go.work monorepo); its go.sum is part of
           # the build cache key alongside the root's.
@@ -1805,7 +1811,8 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version-file: go.mod
+          go-version: '1.27.x'
+          check-latest: true
           cache: true
           # engine/ and authn/oidc are their own modules (go.work monorepo);
           # their go.sum files are part of the build cache key.
