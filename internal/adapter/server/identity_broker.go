@@ -173,6 +173,13 @@ func (s *Service) registerIdentityAgent(ctx context.Context, sess *session.Sessi
 		return fmt.Errorf("%w: identity broker returned another agent", ErrInternal)
 	}
 	s.mu.Lock()
+	// Losing the session's lease takes leaseLossMu, not runEntryMu, so it can
+	// land while the broker call is in flight. Another process now runs the
+	// session's agent, so this one keeps no credential for it.
+	if _, lost := s.lostOwnership[sess.ID]; lost {
+		s.mu.Unlock()
+		return nil
+	}
 	s.identityAgents[sess.ID] = identityAgent{
 		incarnation:     incarnation,
 		brokerSessionID: brokerSession.ID,
@@ -182,6 +189,25 @@ func (s *Service) registerIdentityAgent(ctx context.Context, sess *session.Sessi
 	s.mu.Unlock()
 	s.logIdentityBroker(ctx, "registered agent", host, brokerSession.ID)
 	return nil
+}
+
+// openSavedIdentityBrokerSession opens the broker session of session id and
+// registers its agent, as create, fork, and clear do after saving it. It loads
+// the session under id's runEntryMu, as run entry does, so a delete that won
+// the lock first leaves nothing to open instead of a broker session that no
+// delete will close. A failure is the caller's to log; registration is retried
+// at run entry.
+func (s *Service) openSavedIdentityBrokerSession(ctx context.Context, id session.SessionID) error {
+	if s.cfg.IdentityBroker == nil {
+		return nil
+	}
+	unlock := s.runEntryMu.lock(id)
+	defer unlock()
+	sess, err := s.cfg.Store.Load(ctx, id)
+	if err != nil {
+		return err
+	}
+	return s.openIdentityBrokerSession(ctx, sess)
 }
 
 // identityAgentDefinition is the definition a session's main agent runs: its

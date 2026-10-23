@@ -202,3 +202,43 @@ func TestTeamRootRegistrationWaitsForRunEntry(t *testing.T) {
 		t.Fatalf("team root registration: %v", err)
 	}
 }
+
+func TestALostLeaseKeepsNoCredential(t *testing.T) {
+	svc, sess := newRegisteringService(t)
+	// The lease is lost while registration is in flight: the tombstone is
+	// already set when the credential would be recorded.
+	svc.mu.Lock()
+	svc.lostOwnership[sess.ID] = struct{}{}
+	svc.mu.Unlock()
+	if err := svc.openIdentityBrokerSession(t.Context(), sess); err != nil {
+		t.Fatal(err)
+	}
+	svc.mu.Lock()
+	_, held := svc.identityAgents[sess.ID]
+	svc.mu.Unlock()
+	if held {
+		t.Fatal("a session whose lease was lost holds its agent's credential")
+	}
+}
+
+func TestADeletedSessionGetsNoBrokerSession(t *testing.T) {
+	svc, sess := newRegisteringService(t)
+	// A delete that won the lock before create's registration: the session is
+	// gone from the store.
+	if err := svc.openSavedIdentityBrokerSession(t.Context(), sess.ID); err == nil {
+		t.Fatal("opening a broker session for an unsaved session succeeded")
+	}
+	if _, found, err := svc.cfg.IdentityBroker.FindSession(t.Context(), identitybroker.FindSessionRequest{RootHostSessionID: string(sess.ID)}); err != nil || found {
+		t.Fatalf("a deleted session got a broker session (found=%v, err=%v)", found, err)
+	}
+	// Positive control: once saved, the same call opens one.
+	if err := svc.cfg.Store.Save(t.Context(), sess); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.openSavedIdentityBrokerSession(t.Context(), sess.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, found, err := svc.cfg.IdentityBroker.FindSession(t.Context(), identitybroker.FindSessionRequest{RootHostSessionID: string(sess.ID)}); err != nil || !found {
+		t.Fatalf("a saved session got no broker session (found=%v, err=%v)", found, err)
+	}
+}

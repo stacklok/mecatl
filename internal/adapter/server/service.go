@@ -2726,11 +2726,7 @@ func (s *Service) bindRelatedIncarnations(ctx context.Context, opts *createSessi
 func (s *Service) createSession(ctx context.Context, mode session.PermissionMode, limits session.Limits, sel ProviderSelector, specs []mcp.ServerConfig, profile SessionProfile, opts createSessionOpts) (*session.Session, error) {
 	sess, err := s.createSessionRecord(ctx, mode, limits, sel, specs, profile, opts)
 	if err == nil && sess != nil {
-		// Under runEntryMu, as at run entry, so a close or delete of this
-		// session cannot race the registration.
-		unlock := s.runEntryMu.lock(sess.ID)
-		_ = s.openIdentityBrokerSession(ctx, sess) // logged; retried at run entry
-		unlock()
+		_ = s.openSavedIdentityBrokerSession(ctx, sess.ID) // logged; retried at run entry
 	}
 	return sess, err
 }
