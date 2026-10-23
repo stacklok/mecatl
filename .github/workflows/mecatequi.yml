@@ -163,12 +163,11 @@ jobs:
       #
       # Set up Go FIRST so the `go install` + `go env GOPATH` below run against a deterministic
       # toolchain (matching ci.yml) instead of the runner's incidental preinstalled Go.
-      # check-latest resolves the newest Go 1.27 patch release rather than a cached older one.
+      # 'stable' resolves the latest Go release from setup-go's manifest, not a cached one.
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.27.x'
-          check-latest: true
+          go-version: 'stable'
           cache: true
           # engine/ is its own module (go.work monorepo); its go.sum is part of
           # the build cache key alongside the root's.

@@ -137,8 +137,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.27.x'
-          check-latest: true
+          go-version: 'stable'
           cache: false
       - id: go-cache
         uses: ./.github/actions/go-cache-restore
@@ -246,8 +245,7 @@ jobs:
       - id: setup-go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.27.x'
-          check-latest: true
+          go-version: 'stable'
           cache: false
       - id: go-cache
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0

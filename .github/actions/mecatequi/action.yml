@@ -298,15 +298,13 @@ runs:
   using: composite
   steps:
     # ── Toolchain provision ───────────────────────────────────────────────────────
-    # Provision the newest Go 1.27 patch release, so the runner's preinstalled Go never decides
-    # the build. go.mod declares only the 1.27 language floor; check-latest makes setup-go
-    # resolve the newest patch instead of reusing an older cached one.
+    # Provision the latest stable Go, resolved from setup-go's release manifest, so the runner's
+    # preinstalled Go never decides the build. go.mod declares only the language floor.
     # SHA-pinned to the house set (matches ci.yml / release.yml).
     - name: Set up Go
       uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
       with:
-        go-version: '1.27.x'
-        check-latest: true
+        go-version: 'stable'
         cache: true
         # engine/ is its own module (go.work monorepo); mecatequi (root module)
         # depends on it, so its go.sum participates in the build cache key too.

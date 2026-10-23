@@ -268,8 +268,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.27.x'
-          check-latest: true
+          go-version: 'stable'
           cache: false
       - id: go-cache
         uses: ./.github/actions/go-cache-restore
@@ -332,8 +331,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.27.x'
-          check-latest: true
+          go-version: 'stable'
           cache: false
       - id: go-cache
         uses: ./.github/actions/go-cache-restore
@@ -524,8 +522,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.27.x'
-          check-latest: true
+          go-version: 'stable'
           cache: false
       - id: go-cache
         uses: ./.github/actions/go-cache-restore
@@ -973,8 +970,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.27.x'
-          check-latest: true
+          go-version: 'stable'
           cache: false
       - id: go-cache
         uses: ./.github/actions/go-cache-restore
@@ -1071,8 +1067,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.27.x'
-          check-latest: true
+          go-version: 'stable'
           cache: false
       - id: go-cache
         uses: ./.github/actions/go-cache-restore
@@ -1130,8 +1125,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.27.x'
-          check-latest: true
+          go-version: 'stable'
           cache: false
       - id: go-cache
         uses: ./.github/actions/go-cache-restore
@@ -1179,8 +1173,7 @@ jobs:
         id: setup-go
         if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.go_relevant == 'true'
         with:
-          go-version: '1.27.x'
-          check-latest: true
+          go-version: 'stable'
           cache: false
       # The race suite takes about 6 minutes with a warm build and test cache and
       # about 17-23 minutes cold. setup-go's own cache restores only an exact
@@ -1230,8 +1223,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.27.x'
-          check-latest: true
+          go-version: 'stable'
           cache: false
       - id: go-cache
         uses: ./.github/actions/go-cache-restore
@@ -1338,8 +1330,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.27.x'
-          check-latest: true
+          go-version: 'stable'
           cache: false
       - id: go-cache
         uses: ./.github/actions/go-cache-restore
@@ -1411,8 +1402,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.27.x'
-          check-latest: true
+          go-version: 'stable'
           cache: false
       - id: go-cache
         uses: ./.github/actions/go-cache-restore
@@ -1512,8 +1502,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.27.x'
-          check-latest: true
+          go-version: 'stable'
           cache: false
       - id: go-cache
         uses: ./.github/actions/go-cache-restore
@@ -1574,8 +1563,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.27.x'
-          check-latest: true
+          go-version: 'stable'
           cache: false
       - id: go-cache
         uses: ./.github/actions/go-cache-restore
@@ -1624,8 +1612,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.27.x'
-          check-latest: true
+          go-version: 'stable'
           cache: false
       - id: go-cache
         uses: ./.github/actions/go-cache-restore
@@ -1710,8 +1697,7 @@ jobs:
       # SHA as the other jobs (house rule).
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.27.x'
-          check-latest: true
+          go-version: 'stable'
           cache: false
       - id: go-cache
         uses: ./.github/actions/go-cache-restore
