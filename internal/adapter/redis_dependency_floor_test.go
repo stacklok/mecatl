@@ -41,16 +41,7 @@ func TestRedisFollowCapacity_Scenario1_Go127DependencyFloor(t *testing.T) {
 	if len(manifests) < 2 {
 		t.Fatalf("found %d Go manifests, want every committed module plus go.work", len(manifests))
 	}
-	// Manifests declare the Go 1.27 language floor, not a patch floor. These
-	// consume published Mecatl modules released with go 1.27.0, and Go requires
-	// a module to declare at least its dependencies' floor. Lower each to go 1.27
-	// once its pins move to releases that declare go 1.27.
-	inheritedPatchFloor := map[string]string{
-		"go.mod":                     "go 1.27.0", // adapters v0.1.1
-		"go.work":                    "go 1.27.0", // highest workspace module
-		"integration/microvm/go.mod": "go 1.27.0", // adapters v0.1.1
-		"adapters/go.mod":            "go 1.27.0", // adaptersupport and driver contracts v0.1.0
-	}
+	// Manifests declare the Go 1.27 language floor, not a patch floor or toolchain.
 	for _, manifest := range manifests {
 		body, err := os.ReadFile(manifest)
 		if err != nil {
@@ -63,12 +54,8 @@ func TestRedisFollowCapacity_Scenario1_Go127DependencyFloor(t *testing.T) {
 			line := scanner.Text()
 			if strings.HasPrefix(line, "go ") {
 				found = true
-				want := "go 1.27"
-				if floor, ok := inheritedPatchFloor[filepath.ToSlash(name)]; ok {
-					want = floor
-				}
-				if line != want {
-					t.Errorf("%s declares %q, want %q", name, line, want)
+				if line != "go 1.27" {
+					t.Errorf("%s declares %q, want \"go 1.27\"", name, line)
 				}
 			}
 			if strings.HasPrefix(line, "toolchain ") {
