@@ -1244,8 +1244,9 @@ type Service struct {
 	// detach it exactly once. Guarded by mu.
 	sessionEnvironmentCloses map[session.SessionID]func() error
 	// identityAgents holds the identity broker credential of each root
-	// session's main agent, in memory only. CloseSession, a failed create, and
-	// Close drop it. Guarded by mu.
+	// session's main agent, in memory only. A local release or delete
+	// (closeSessionLocal), lease loss, the end of a scheduled run, and Close
+	// drop it. Guarded by mu.
 	identityAgents map[session.SessionID]identityAgent
 
 	// clientMCPSpecs holds the ORIGINAL client-supplied MCP server specs for a
@@ -2725,7 +2726,11 @@ func (s *Service) bindRelatedIncarnations(ctx context.Context, opts *createSessi
 func (s *Service) createSession(ctx context.Context, mode session.PermissionMode, limits session.Limits, sel ProviderSelector, specs []mcp.ServerConfig, profile SessionProfile, opts createSessionOpts) (*session.Session, error) {
 	sess, err := s.createSessionRecord(ctx, mode, limits, sel, specs, profile, opts)
 	if err == nil && sess != nil {
+		// Under runEntryMu, as at run entry, so a close or delete of this
+		// session cannot race the registration.
+		unlock := s.runEntryMu.lock(sess.ID)
 		_ = s.openIdentityBrokerSession(ctx, sess) // logged; retried at run entry
+		unlock()
 	}
 	return sess, err
 }
@@ -3232,7 +3237,6 @@ func (s *Service) createPerSessionEngine(ctx context.Context, mintID func() sess
 		delete(s.sessionEngines, sess.ID)
 		delete(s.sessionEnvironments, sess.ID)
 		delete(s.clientMCPSpecs, sess.ID)
-		delete(s.identityAgents, sess.ID)
 		s.mu.Unlock()
 		if closeFn != nil {
 			_ = closeFn()
@@ -9095,6 +9099,9 @@ func (s *Service) onLeaseLost(ctx context.Context, id session.SessionID, expecte
 	expected.valid = false
 	s.lostOwnership[id] = struct{}{}
 	delete(s.instructionSnapshots, id)
+	// Another process now runs this session's agent; run entry registers
+	// again if this process wins it back.
+	delete(s.identityAgents, id)
 	s.cfg.MutationCapability.Invalidate(id)
 	leaseCancel = expected.cancel
 	lease = expected.lease

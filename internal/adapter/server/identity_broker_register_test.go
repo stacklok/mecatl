@@ -262,14 +262,16 @@ func TestIdentityBrokerSuccessorsRegisterTheirOwnAgents(t *testing.T) {
 			t.Fatal(err)
 		}
 		brokerSession := wantBrokerSession(t, broker, sess)
+		// Only accepted registrations count: successor registration is best
+		// effort, so one refused with ALREADY_EXISTS would still be attempted.
 		var found bool
-		for _, req := range broker.registerRequests() {
-			if req.SessionID == brokerSession.ID && req.Incarnation == string(sess.Incarnation()) {
+		for _, req := range broker.acceptedRegistrations() {
+			if req.SessionID == brokerSession.ID && req.HostSessionID == string(id) && req.Incarnation == string(sess.Incarnation()) {
 				found = true
 			}
 		}
 		if !found {
-			t.Fatalf("session %s registered no agent in its broker session", id)
+			t.Fatalf("session %s has no accepted registration in its broker session", id)
 		}
 		if other, dup := seen[string(sess.Incarnation())]; dup {
 			t.Fatalf("sessions %s and %s share incarnation %s", other, id, sess.Incarnation())

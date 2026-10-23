@@ -31,10 +31,12 @@ var brokerAlice = &session.Principal{Issuer: "https://login.example.com", Subjec
 type recordingBroker struct {
 	inner identitybroker.Service
 
-	mu          sync.Mutex
-	opens       []identitybroker.OpenSessionRequest
-	closes      []identitybroker.CloseSessionRequest
-	registers   []identitybroker.RegisterAgentRequest
+	mu        sync.Mutex
+	opens     []identitybroker.OpenSessionRequest
+	closes    []identitybroker.CloseSessionRequest
+	registers []identitybroker.RegisterAgentRequest
+	// registered holds the registrations the broker accepted.
+	registered  []identitybroker.RegisterAgentRequest
 	unavailable bool
 	// registerUnavailable makes only RegisterAgent fail as unavailable.
 	registerUnavailable bool
@@ -123,6 +125,11 @@ func (b *recordingBroker) RegisterAgent(ctx context.Context, req identitybroker.
 		hook(req)
 	}
 	reg, err := b.inner.RegisterAgent(ctx, req)
+	if err == nil {
+		b.mu.Lock()
+		b.registered = append(b.registered, req)
+		b.mu.Unlock()
+	}
 	if err == nil && other {
 		reg.Agent.Subject += "-other"
 	}
@@ -136,6 +143,12 @@ func (b *recordingBroker) registerRequests() []identitybroker.RegisterAgentReque
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return append([]identitybroker.RegisterAgentRequest(nil), b.registers...)
+}
+
+func (b *recordingBroker) acceptedRegistrations() []identitybroker.RegisterAgentRequest {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return append([]identitybroker.RegisterAgentRequest(nil), b.registered...)
 }
 
 func (b *recordingBroker) set(f func(*recordingBroker)) {

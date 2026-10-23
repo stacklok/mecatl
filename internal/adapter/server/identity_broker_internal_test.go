@@ -167,3 +167,38 @@ func TestClosingASessionDropsItsHeldCredential(t *testing.T) {
 		t.Fatal("a closed session kept its agent's credential")
 	}
 }
+
+func TestEndingAScheduledRunDropsItsHeldCredential(t *testing.T) {
+	svc, sess := newRegisteringService(t)
+	sess.Kind = session.SessionKindScheduled
+	if err := svc.openIdentityBrokerSession(t.Context(), sess); err != nil {
+		t.Fatal(err)
+	}
+	svc.EndScheduledRun(t.Context(), sess)
+	svc.mu.Lock()
+	_, ok := svc.identityAgents[sess.ID]
+	svc.mu.Unlock()
+	if ok {
+		t.Fatal("an ended scheduled run kept its agent's credential")
+	}
+}
+
+func TestTeamRootRegistrationWaitsForRunEntry(t *testing.T) {
+	svc, sess := newRegisteringService(t)
+	if err := svc.cfg.Store.Save(t.Context(), sess); err != nil {
+		t.Fatal(err)
+	}
+	unlock := svc.runEntryMu.lock(sess.ID)
+	done := make(chan error, 1)
+	go func() { done <- svc.openTeamRootIdentityBrokerSession(t.Context(), sess.ID) }()
+	select {
+	case err := <-done:
+		unlock()
+		t.Fatalf("team root registered while run entry held the session: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+	unlock()
+	if err := <-done; err != nil {
+		t.Fatalf("team root registration: %v", err)
+	}
+}

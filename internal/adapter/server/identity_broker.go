@@ -61,7 +61,8 @@ type identityAgent struct {
 // already open, and registers the session's main agent in it. It does nothing
 // without an identity broker, for a session that is not a root, or for a
 // session without an owner, whose gateway calls then fail closed. sess must be
-// the saved session, so its incarnation is the persisted one.
+// the saved session, so its incarnation is the persisted one. The caller holds
+// sess's runEntryMu, so a close or delete cannot race the registration.
 //
 // If registration finds the broker session closed, it opens a new one and
 // registers again, once; closed a second time, it fails as unavailable.
@@ -160,6 +161,12 @@ func (s *Service) registerIdentityAgent(ctx context.Context, sess *session.Sessi
 	if err != nil {
 		return s.identityBrokerFailure(ctx, "register", host, brokerSession.ID, err)
 	}
+	// A mismatch keeps the held credential, so every later run fails the same
+	// way until the session is released. That is deliberate: in this phase the
+	// ID is built from the incarnation, so it changes only if the broker
+	// misbehaves, and dropping the held agent would let the next run accept
+	// the wrong one. A legitimate change, such as another trust domain or
+	// per-agent identities, comes with a restart, which clears what is held.
 	if !strings.HasSuffix(reg.Agent.Subject, "/inst/"+incarnation) || ok && reg.Agent != held.registration.Agent {
 		s.cfg.Diagnostics.Log(context.WithoutCancel(ctx), port.LevelWarn, "identity broker returned another agent",
 			"session", host, "broker_session", brokerSession.ID)
@@ -196,6 +203,12 @@ func (s *Service) openTeamRootIdentityBrokerSession(ctx context.Context, root se
 	if s.cfg.IdentityBroker == nil || root == "" {
 		return nil
 	}
+	// Load and register under the root's runEntryMu, as run entry does: a
+	// delete of the root then either finishes first, so the load fails, or
+	// waits, so it cannot close the broker session mid-registration and have
+	// it reopened for a deleted session.
+	unlock := s.runEntryMu.lock(root)
+	defer unlock()
 	sess, err := s.cfg.Store.Load(ctx, root)
 	if err != nil {
 		return fmt.Errorf("%w: load team root session: %v", ErrInternal, err)
@@ -214,6 +227,10 @@ func (s *Service) EndScheduledRun(ctx context.Context, sess *session.Session) {
 		return
 	}
 	s.closeIdentityBrokerSession(ctx, sess.ID)
+	// The held credential verified only in the closed broker session.
+	s.mu.Lock()
+	delete(s.identityAgents, sess.ID)
+	s.mu.Unlock()
 }
 
 // closeIdentityBrokerSession closes the broker session of a host session that
