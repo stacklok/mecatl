@@ -41,20 +41,41 @@ func TestRedisFollowCapacity_Scenario1_Go127DependencyFloor(t *testing.T) {
 	if len(manifests) < 2 {
 		t.Fatalf("found %d Go manifests, want every committed module plus go.work", len(manifests))
 	}
+	// Manifests declare the Go 1.27 language floor, not a patch floor. These
+	// consume published engine versions released with a patch floor, and Go
+	// requires a module to declare at least its dependencies' floor. Lower each
+	// to go 1.27 once its engine pin moves to a release that declares go 1.27.
+	inheritedPatchFloor := map[string]string{
+		"go.mod":                     "go 1.27.3", // engine v0.18.0
+		"go.work":                    "go 1.27.3", // highest workspace module
+		"integration/microvm/go.mod": "go 1.27.3", // engine v0.18.0
+		"provider/anthropic/go.mod":  "go 1.27.3", // engine v0.18.0
+		"provider/openai/go.mod":     "go 1.27.3", // engine v0.18.0
+		"provider/openaichat/go.mod": "go 1.27.3", // engine v0.18.0
+		"adapters/go.mod":            "go 1.27.2", // engine pseudo-version of 2026-10-13
+	}
 	for _, manifest := range manifests {
 		body, err := os.ReadFile(manifest)
 		if err != nil {
 			t.Fatal(err)
 		}
 		scanner := bufio.NewScanner(bytes.NewReader(body))
+		name := strings.TrimPrefix(manifest, root+string(filepath.Separator))
 		found := false
 		for scanner.Scan() {
-			if strings.HasPrefix(scanner.Text(), "go ") {
+			line := scanner.Text()
+			if strings.HasPrefix(line, "go ") {
 				found = true
-				if directive := scanner.Text(); directive != "go 1.27.3" {
-					t.Errorf("%s declares %q, want Go 1.27.3", strings.TrimPrefix(manifest, root+string(filepath.Separator)), directive)
+				want := "go 1.27"
+				if floor, ok := inheritedPatchFloor[filepath.ToSlash(name)]; ok {
+					want = floor
 				}
-				break
+				if line != want {
+					t.Errorf("%s declares %q, want %q", name, line, want)
+				}
+			}
+			if strings.HasPrefix(line, "toolchain ") {
+				t.Errorf("%s declares %q; manifests must not pin a toolchain", name, line)
 			}
 		}
 		if err := scanner.Err(); err != nil {

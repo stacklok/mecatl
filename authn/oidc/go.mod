@@ -1,6 +1,6 @@
 module github.com/stacklok/mecatl/authn/oidc
 
-go 1.27.3
+go 1.27
 
 require (
 	github.com/lestrrat-go/jwx/v4 v4.5.0
