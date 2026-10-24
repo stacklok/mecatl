@@ -25,6 +25,23 @@ import { SideThreadPanel } from "./side-thread-panel";
 beforeEach(() => clearUserScopedStorage());
 afterEach(() => cleanup());
 
+/** Owns its own selection and decision state, as activity and authorization content do. */
+function OwnedContent({ delivery }: { delivery: string }) {
+  const [selection, setSelection] = useState("activity-a");
+  const [decision, setDecision] = useState("pending");
+  return (
+    <>
+      <button onClick={() => setSelection("activity-b")} type="button">
+        {selection}
+      </button>
+      <button onClick={() => setDecision("reviewing")} type="button">
+        {decision}
+      </button>
+      <p>{delivery}</p>
+    </>
+  );
+}
+
 describe("shared side panel frame", () => {
   it("preserves the active panel and width during stream updates", () => {
     const onClose = vi.fn();
@@ -88,21 +105,6 @@ describe("shared side panel frame", () => {
   });
 
   it("hosts activity and authorization without owning their content", () => {
-    function OwnedContent({ delivery }: { delivery: string }) {
-      const [selection, setSelection] = useState("activity-a");
-      const [decision, setDecision] = useState("pending");
-      return (
-        <>
-          <button onClick={() => setSelection("activity-b")} type="button">
-            {selection}
-          </button>
-          <button onClick={() => setDecision("reviewing")} type="button">
-            {decision}
-          </button>
-          <p>{delivery}</p>
-        </>
-      );
-    }
     const { rerender } = render(
       <SidePanelShell onClose={() => {}} title="Activity">
         <OwnedContent delivery="First" />

@@ -12,7 +12,7 @@
 # one commit, and a change spanning all three needs no intermediate SDK release.
 #
 # Shape (multi-stage):
-#   1. build   — node:26-slim (Debian + shell + toolchain): pnpm 12.4.2 via
+#   1. build   — node:26-slim (Debian + shell + toolchain): pnpm 12.15.0 via
 #                corepack (the `packageManager` pin in package.json; Node 25+
 #                no longer bundles corepack, so it is installed first), a frozen
 #                lockfile installs for SDK and Studio, `pnpm build` (contracts

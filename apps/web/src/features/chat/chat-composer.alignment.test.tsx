@@ -48,6 +48,12 @@ const models = [
   },
 ];
 
+/** Records the global shortcuts-help binding so a test can prove it is blocked. */
+function ShortcutProbe({ onOpen }: { onOpen: () => void }) {
+  useShortcut("shortcuts.open", onOpen);
+  return null;
+}
+
 function composerInput() {
   return screen.getByRole<HTMLTextAreaElement>("textbox", { name: "Message Mecatl" });
 }
@@ -638,13 +644,9 @@ describe("composer pills", () => {
   it("blocks app shortcuts while the phone sheet is open", async () => {
     const user = userEvent.setup();
     const openShortcuts = vi.fn();
-    function ShortcutProbe() {
-      useShortcut("shortcuts.open", openShortcuts);
-      return null;
-    }
     render(
       <ShortcutProvider>
-        <ShortcutProbe />
+        <ShortcutProbe onOpen={openShortcuts} />
         <ChatComposer
           configuration={configuration}
           models={models}
