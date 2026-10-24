@@ -3,9 +3,14 @@ package server
 import (
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"strings"
 	"testing"
 )
+
+// sdkReleaseAppTokenPin matches the release App-token action pinned to a full
+// commit SHA, so a version bump keeps passing while a tag or branch ref fails.
+var sdkReleaseAppTokenPin = regexp.MustCompile(`uses: actions/create-github-app-token@[0-9a-f]{40}\b`)
 
 func TestSDKReleasePRAndTagAutomation(t *testing.T) {
 	t.Parallel()
@@ -54,12 +59,14 @@ func TestSDKReleasePRAndTagAutomation(t *testing.T) {
 		`:(exclude)sdk/typescript/CHANGELOG.md`, "no TypeScript SDK changes exist",
 		"sdk-changelog-entry.md", "www.npmjs.com/package/%40stacklok-oss%2Fmecatl-sdk/v/",
 		"SDK VERSION and package.json identity do not agree", "git diff --name-only | sort",
-		"actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1",
 		"vars.RELEASE_APP_CLIENT_ID", "secrets.RELEASE_APP_PRIVATE_KEY", "gh pr create",
 	} {
 		if !strings.Contains(prSource, proof) {
 			t.Errorf("release PR workflow is missing %q", proof)
 		}
+	}
+	if !sdkReleaseAppTokenPin.MatchString(prSource) {
+		t.Error("release PR workflow must pin actions/create-github-app-token to a commit SHA")
 	}
 	prTokenIndex := sdkScenario11ActionIndex(prJob, "actions/create-github-app-token@")
 	prPushIndex := sdkScenario11StepNamed(prJob, "Push the version bump and open the PR")
@@ -91,12 +98,14 @@ func TestSDKReleasePRAndTagAutomation(t *testing.T) {
 		`.user.type == "Bot"`, "git diff --name-only", "sdk/typescript/CHANGELOG.md",
 		"SDK changelog does not start with", "sdk/typescript/package.json",
 		"previous_tag", "git merge-base --is-ancestor", "should_tag=true",
-		"actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1",
 		"release-sdk-typescript.yml",
 	} {
 		if !strings.Contains(tagSource, proof) {
 			t.Errorf("release tag workflow is missing %q", proof)
 		}
+	}
+	if !sdkReleaseAppTokenPin.MatchString(tagSource) {
+		t.Error("release tag workflow must pin actions/create-github-app-token to a commit SHA")
 	}
 	decideIndex := sdkScenario11StepNamed(tagJob, "Decide whether to tag")
 	tagTokenIndex := sdkScenario11ActionIndex(tagJob, "actions/create-github-app-token@")
