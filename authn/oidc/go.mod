@@ -3,9 +3,9 @@ module github.com/stacklok/mecatl/authn/oidc
 go 1.27
 
 require (
-	github.com/lestrrat-go/jwx/v4 v4.5.0
+	github.com/lestrrat-go/jwx/v4 v4.6.0
 	github.com/stacklok/mecatl/engine v0.14.0
-	github.com/stacklok/toolhive-core v0.0.55
+	github.com/stacklok/toolhive-core v0.0.57
 )
 
 require (
@@ -20,7 +20,6 @@ require (
 	github.com/lestrrat-go/option/v3 v3.0.0-alpha1 // indirect
 	github.com/power-devops/perfstat v0.0.0-20260916203055-22a1a467d9f0 // indirect
 	github.com/shirou/gopsutil/v4 v4.26.9 // indirect
-	github.com/valyala/fastjson v1.6.10 // indirect
 	github.com/yusufpapurcu/wmi v1.2.4 // indirect
 	golang.org/x/net v0.61.0 // indirect
 	golang.org/x/oauth2 v0.37.0 // indirect
