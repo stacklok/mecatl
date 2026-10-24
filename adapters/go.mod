@@ -4,15 +4,15 @@ go 1.27
 
 require (
 	github.com/alicebob/miniredis/v2 v2.40.0
-	github.com/bmatcuk/doublestar/v4 v4.10.2
+	github.com/bmatcuk/doublestar/v4 v4.10.4
 	github.com/gofrs/flock v0.13.1
 	github.com/redis/go-redis/v9 v9.23.0
 	github.com/stacklok/mecatl/contracts/gen/go/mecatl/driver v0.1.1
 	github.com/stacklok/mecatl/engine v0.18.1
 	github.com/stacklok/mecatl/internal/adaptersupport v0.1.1
-	github.com/stacklok/toolhive-core/redisconn v0.0.4
+	github.com/stacklok/toolhive-core/redisconn v0.0.57
 	go.uber.org/goleak v1.3.0
-	google.golang.org/genproto/googleapis/rpc v0.0.0-20261012220534-4341edf3f941
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20261019180522-ce908d29299b
 	google.golang.org/grpc v1.84.0
 	google.golang.org/protobuf v1.36.12
 )
