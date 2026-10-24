@@ -709,7 +709,7 @@ jobs:
       - run: chmod +x bin/mecated
 
       # Install the packageManager pin explicitly (read from apps/package.json —
-      # pnpm 12.x, deliberately NOT the SDK's pnpm 11 pin: the workspace is
+      # deliberately independent of the SDK's pnpm pin: the workspace is
       # self-contained). Do not rely on corepack being present or enabled on the
       # runner.
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
@@ -878,7 +878,7 @@ jobs:
       - run: chmod +x bin/mecated
 
       # Install the packageManager pin explicitly (read from apps/package.json —
-      # pnpm 12.x, deliberately NOT the SDK's pnpm 11 pin: the workspace is
+      # deliberately independent of the SDK's pnpm pin: the workspace is
       # self-contained). Do not rely on corepack being present or enabled on the
       # runner.
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0

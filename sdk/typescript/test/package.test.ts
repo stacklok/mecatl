@@ -177,9 +177,41 @@ test("exports map exposes exactly ., ./node, ./deno, ./gen", () => {
   expect(privateImport.stderr).toContain("ERR_PACKAGE_PATH_NOT_EXPORTED");
 });
 
+test("the SDK pnpm pin moves in lockstep with the Slack bot and SDK CI pins", () => {
+  // Renovate updates the SDK packageManager field and the workflow inputs, but
+  // not the Slack bot example manifest or its Dockerfile's corepack calls.
+  const pin = packageJson.packageManager;
+  const version = pin.replace(/^pnpm@/u, "");
+  const repositoryRoot = join(packageRoot, "..", "..");
+  const slackBotRoot = join(packageRoot, "examples", "slack-bot");
+
+  const slackBot = JSON.parse(readFileSync(join(slackBotRoot, "package.json"), "utf8")) as {
+    packageManager: string;
+  };
+  expect(slackBot.packageManager).toBe(pin);
+
+  const dockerfile = readFileSync(join(slackBotRoot, "docker", "bot.Dockerfile"), "utf8");
+  const corepackPins = [...dockerfile.matchAll(/corepack (pnpm@\S+)/gu)].map((match) => match[1]);
+  expect(corepackPins.length).toBeGreaterThan(0);
+  expect(new Set(corepackPins)).toEqual(new Set([pin]));
+
+  // Studio (apps/) is a self-contained workspace that reads its own pin through
+  // package_json_file, so only explicit version inputs must match the SDK.
+  for (const workflow of ["ci.yml", "release-sdk-typescript.yml"]) {
+    const source = readFileSync(join(repositoryRoot, ".github", "workflows", workflow), "utf8");
+    const inputs = [
+      ...source.matchAll(/uses: pnpm\/action-setup@[^\n]*\n\s+with:\n\s+version: (\S+)/gu),
+    ].map((match) => match[1]);
+    expect(inputs.length, `${workflow} pnpm/action-setup version inputs`).toBeGreaterThan(0);
+    expect(new Set(inputs), `${workflow} pnpm/action-setup version inputs`).toEqual(
+      new Set([version]),
+    );
+  }
+});
+
 test("packed tarball carries dist and license only", () => {
   expect(packageJson.engines).toEqual({ deno: ">=2.9.3 <3", node: ">=22" });
-  expect(packageJson.packageManager).toBe("pnpm@11.25.0");
+  expect(packageJson.packageManager).toMatch(/^pnpm@\d+\.\d+\.\d+$/u);
 
   const expectedFiles = [
     "package/LICENSE",
