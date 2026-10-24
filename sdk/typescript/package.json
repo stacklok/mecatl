@@ -22,7 +22,7 @@
     "deno": ">=2.9.3 <3",
     "node": ">=22"
   },
-  "packageManager": "pnpm@11.25.0",
+  "packageManager": "pnpm@11.28.6",
   "files": [
     "dist",
     "LICENSE"
