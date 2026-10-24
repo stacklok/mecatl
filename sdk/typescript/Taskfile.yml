@@ -42,7 +42,7 @@ tasks:
       - pnpm exec vitest run --exclude test/declarations.test.ts --exclude test/package.test.ts
 
   declarations:
-    desc: Compile the published declarations with both supported TypeScript compilers
+    desc: Compile the published declarations with TypeScript 5.7, 6, and 7
     deps: [install]
     cmds:
       - pnpm exec vitest run test/declarations.test.ts

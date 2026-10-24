@@ -14,7 +14,9 @@ const consumerInstall = join(
   "mecatl-sdk",
 );
 
-function compileDeclarations(compilerPackage: "typescript" | "typescript-5.7"): void {
+function compileDeclarations(
+  compilerPackage: "typescript" | "typescript-6" | "typescript-5.7",
+): void {
   const result = spawnSync(
     process.execPath,
     [join(packageRoot, "node_modules", compilerPackage, "bin", "tsc"), "-p", consumerConfig],
@@ -59,5 +61,9 @@ test("public declarations compile with TypeScript 5.7", () => {
 });
 
 test("public declarations compile with TypeScript 6", () => {
+  compileDeclarations("typescript-6");
+});
+
+test("public declarations compile with TypeScript 7", () => {
   compileDeclarations("typescript");
 });

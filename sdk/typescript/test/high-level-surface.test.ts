@@ -2,7 +2,9 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRouterTransport } from "@connectrpc/connect";
-import * as ts from "typescript";
+// TypeScript 7 ships no JavaScript compiler API; the 6.x line keeps the stable
+// syntax-tree API this source scan uses.
+import * as ts from "typescript-6";
 import { describe, expect, it } from "vitest";
 import { HarnessService } from "../src/gen/mecatl/v1/harness_pb.js";
 import { ScheduleService } from "../src/gen/mecatl/v1/schedule_pb.js";

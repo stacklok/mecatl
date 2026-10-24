@@ -28,7 +28,7 @@ package is ESM-only.
 |Bun|1.4 or later|Remote connections and local daemon management on macOS and Linux.|
 |Deno|2.9.3 or later in the 2.x line|Remote connections and local daemon management on macOS and Linux.|
 |Browsers|Latest two stable Chrome, Firefox, and Safari releases|HTTP and SSE through a same-origin backend-for-frontend.|
-|TypeScript|5.7 or later|Published declarations. The SDK is developed with TypeScript 6.|
+|TypeScript|5.7 or later|Published declarations. The SDK is developed with TypeScript 7.|
 
 ## Error model
 
