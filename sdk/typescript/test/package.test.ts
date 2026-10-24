@@ -179,7 +179,7 @@ test("exports map exposes exactly ., ./node, ./deno, ./gen", () => {
 
 test("packed tarball carries dist and license only", () => {
   expect(packageJson.engines).toEqual({ deno: ">=2.9.3 <3", node: ">=22" });
-  expect(packageJson.packageManager).toBe("pnpm@11.25.0");
+  expect(packageJson.packageManager).toBe("pnpm@11.28.7");
 
   const expectedFiles = [
     "package/LICENSE",

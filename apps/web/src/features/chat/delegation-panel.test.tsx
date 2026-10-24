@@ -128,6 +128,72 @@ const parallel: ParallelGroupActivity = {
   ],
 };
 
+const journeyFleet = {
+  ...createDelegationFleet("session-a"),
+  subagents: [subagent],
+  parallelGroups: [parallel],
+  teams: [team],
+};
+
+/** Opens activity from a card or the session control the way the chat surface does. */
+function Journey() {
+  const [preview, setPreview] = useState<ContentPreview>();
+  const [focus, setFocus] = useState<DelegationFocus>();
+  const [focusRequest, setFocusRequest] = useState(0);
+  const [revision, setRevision] = useState(0);
+  const opener = useRef<HTMLButtonElement>(null);
+  const openerFocus = useRef<DelegationFocus>(undefined);
+  const sessionControl = useRef<HTMLButtonElement>(null);
+  return (
+    <>
+      <button
+        onClick={(event) => {
+          opener.current = event.currentTarget;
+          openerFocus.current = undefined;
+          setFocus(undefined);
+          setFocusRequest((value) => value + 1);
+          setPreview({ kind: "activity" });
+        }}
+        ref={sessionControl}
+        type="button"
+      >
+        Session activity
+      </button>
+      <DelegationCardRow
+        activities={[subagent, parallel, team]}
+        key={revision}
+        onOpen={(next, button) => {
+          opener.current = button;
+          openerFocus.current = next;
+          setFocus(next);
+          setFocusRequest((value) => value + 1);
+          setPreview({ kind: "activity" });
+        }}
+      />
+      <button onClick={() => setRevision((value) => value + 1)} type="button">
+        Refresh transcript rows
+      </button>
+      {preview && (
+        <ContentPreviewPanel
+          activity={{
+            fallbackOpener: sessionControl.current,
+            fleet: journeyFleet,
+            focus,
+            focusRequest,
+            onFocusChange: setFocus,
+            opener: opener.current,
+            openerFocus: openerFocus.current,
+          }}
+          canvas=""
+          onCanvasChange={() => {}}
+          onClose={() => setPreview(undefined)}
+          preview={preview}
+        />
+      )}
+    </>
+  );
+}
+
 describe("session activity content", () => {
   it("leaves panel Escape to the owning chat when managed externally", async () => {
     let closes = 0;
@@ -222,69 +288,6 @@ describe("session activity content", () => {
   });
 
   it("opens activity from a card and restores focus on close", async () => {
-    const fleet = {
-      ...createDelegationFleet("session-a"),
-      subagents: [subagent],
-      parallelGroups: [parallel],
-      teams: [team],
-    };
-    function Journey() {
-      const [preview, setPreview] = useState<ContentPreview>();
-      const [focus, setFocus] = useState<DelegationFocus>();
-      const [focusRequest, setFocusRequest] = useState(0);
-      const [revision, setRevision] = useState(0);
-      const opener = useRef<HTMLButtonElement>(null);
-      const openerFocus = useRef<DelegationFocus>(undefined);
-      const sessionControl = useRef<HTMLButtonElement>(null);
-      return (
-        <>
-          <button
-            onClick={(event) => {
-              opener.current = event.currentTarget;
-              openerFocus.current = undefined;
-              setFocus(undefined);
-              setFocusRequest((value) => value + 1);
-              setPreview({ kind: "activity" });
-            }}
-            ref={sessionControl}
-            type="button"
-          >
-            Session activity
-          </button>
-          <DelegationCardRow
-            activities={[subagent, parallel, team]}
-            key={revision}
-            onOpen={(next, button) => {
-              opener.current = button;
-              openerFocus.current = next;
-              setFocus(next);
-              setFocusRequest((value) => value + 1);
-              setPreview({ kind: "activity" });
-            }}
-          />
-          <button onClick={() => setRevision((value) => value + 1)} type="button">
-            Refresh transcript rows
-          </button>
-          {preview && (
-            <ContentPreviewPanel
-              activity={{
-                fallbackOpener: sessionControl.current,
-                fleet,
-                focus,
-                focusRequest,
-                onFocusChange: setFocus,
-                opener: opener.current,
-                openerFocus: openerFocus.current,
-              }}
-              canvas=""
-              onCanvasChange={() => {}}
-              onClose={() => setPreview(undefined)}
-              preview={preview}
-            />
-          )}
-        </>
-      );
-    }
     const node = await mount(<Journey />);
     const card = node.querySelector("fieldset button") as HTMLButtonElement;
     card.focus();

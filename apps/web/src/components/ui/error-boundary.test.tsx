@@ -23,6 +23,10 @@ function Flaky() {
   return <p>Recovered panel</p>;
 }
 
+function Thrower(): never {
+  throw new Error("boom");
+}
+
 describe("ErrorBoundary", () => {
   it("renders its children when nothing throws", () => {
     render(
@@ -54,9 +58,6 @@ describe("ErrorBoundary", () => {
   });
 
   it("prefers a caller-supplied fallback", () => {
-    function Thrower(): never {
-      throw new Error("boom");
-    }
     render(
       <ErrorBoundary fallback={<p>Custom fallback</p>}>
         <Thrower />

@@ -13,13 +13,13 @@ product features, starting with chat. The published image is
 `ghcr.io/stacklok/mecatl/studio`.
 
 Mecatl Studio is a browser UI for a mecatl deployment, split in three packages that form
-one self-contained pnpm workspace (pnpm 12.4.2, Node 26, see `package.json`):
+one self-contained pnpm workspace (pnpm 12.15.0, Node 26, see `package.json`):
 
-| Package                               | What it is                                                                                                                                                            |
-| ------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `server/` (`@mecatl-studio/server`)   | A Hono **backend for frontend (BFF)**. Holds the user's mecatl credential, talks to the daemon through the checked-out `@stacklok-oss/mecatl-sdk`, serves the SPA and `/api` from one origin. |
-| `web/` (`@mecatl-studio/web`)         | A Vite + React SPA. Calls only the BFF's `/api/v1`; imports neither the SDK nor daemon protocol types.                                                                  |
-| `contracts/` (`@mecatl-studio/contracts`) | Zod schemas, the generated `openapi.json`, and the generated Hey API / TanStack Query client. Generated files are committed and drift-gated.                        |
+| Package                                   | What it is                                                                                                                                                                                    |
+| ----------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `server/` (`@mecatl-studio/server`)       | A Hono **backend for frontend (BFF)**. Holds the user's mecatl credential, talks to the daemon through the checked-out `@stacklok-oss/mecatl-sdk`, serves the SPA and `/api` from one origin. |
+| `web/` (`@mecatl-studio/web`)             | A Vite + React SPA. Calls only the BFF's `/api/v1`; imports neither the SDK nor daemon protocol types.                                                                                        |
+| `contracts/` (`@mecatl-studio/contracts`) | Zod schemas, the generated `openapi.json`, and the generated Hey API / TanStack Query client. Generated files are committed and drift-gated.                                                  |
 
 The architecture guide has a [Mecatl Studio](../docs/architecture/api-surface.md#mecatl-studio)
 section.
@@ -27,7 +27,6 @@ section.
 ## Boundary
 
 Studio is a consumer of Mecatl's public surface, not part of the Go build:
-
 - **Checked-out SDK.** `server/` uses the repository's `sdk/typescript` through a
   frozen `file:` dependency, so Studio, its SDK, and the daemon contract it targets
   are built from one commit, and a change spanning all three lands without an
@@ -103,14 +102,14 @@ The BFF connects to a mecatl runtime in exactly one of three modes, chosen from 
 environment at startup (a conflicting combination exits non-zero before listening, naming
 the offending variable):
 
-| Mode       | Selected by                                    | What happens                                                                                                        |
-| ---------- | ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| `external` | `MECATL_BASE_URL`                              | Connects to an existing mecatl gRPC listener. The only mode allowed inside the image. Interactive login is discovered from the deployment's RFC 9728 resource document. |
-| `spawn`    | neither `MECATL_BASE_URL` nor `MECATL_DEV_MOCK` | Spawns a local `mecated` from `MECATED_BIN` or `PATH`. Development only; refused when `STUDIO_IMAGE=1`.           |
-| `mock`     | `MECATL_DEV_MOCK=1`                            | Spawns `mecated --mock` (offline, no model). Development only; refused when `STUDIO_IMAGE=1` or with `MECATL_BASE_URL`. |
+| Mode       | Selected by                                     | What happens                                                                                                                                                            |
+| ---------- | ----------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `external` | `MECATL_BASE_URL`                               | Connects to an existing mecatl gRPC listener. The only mode allowed inside the image. Interactive login is discovered from the deployment's RFC 9728 resource document. |
+| `spawn`    | neither `MECATL_BASE_URL` nor `MECATL_DEV_MOCK` | Spawns a local `mecated` from `MECATED_BIN` or `PATH`. Development only; refused when `STUDIO_IMAGE=1`.                                                                 |
+| `mock`     | `MECATL_DEV_MOCK=1`                             | Spawns `mecated --mock` (offline, no model). Development only; refused when `STUDIO_IMAGE=1` or with `MECATL_BASE_URL`.                                                 |
 
-Authentication follows from the mode and the target: **interactive** (Authorization Code
-+ PKCE against the single issuer the resource document names), **static**
+Authentication follows from the mode and the target: **interactive** (Authorization
+Code + PKCE against the single issuer the resource document names), **static**
 (`MECATL_AUTH_TOKEN`, one service identity for every browser), or **none** (the target has
 no issuer, e.g. a local `mecated` with no auth). Static and none WARN at startup and are
 reported as `mode: "static"` / `"none"`; inside the image they additionally require
@@ -128,12 +127,12 @@ only local development. All configuration is environment variables read once at 
 
 Variables that matter only for development:
 
-| Variable          | Default                                          | Meaning                                                                                     |
-| ----------------- | ------------------------------------------------ | ------------------------------------------------------------------------------------------- |
-| `MECATL_DEV_MOCK` | unset                                            | `1` only. Spawns `mecated --mock`. Rejected together with `MECATL_BASE_URL` and inside the image. |
-| `MECATED_BIN`     | `PATH` lookup                                    | Path of the `mecated` binary for spawn mode (`task studio:dev` sets it to `bin/mecated`).     |
-| `STUDIO_HOST`     | `127.0.0.1` outside the image                    | Listen address. The development server binds loopback only unless you set this.             |
-| `STUDIO_WEB_DIST` | `../web/dist` relative to the server package     | Directory holding the built SPA the BFF serves. The Dockerfile sets it for the image.        |
+| Variable          | Default                                      | Meaning                                                                                           |
+| ----------------- | -------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `MECATL_DEV_MOCK` | unset                                        | `1` only. Spawns `mecated --mock`. Rejected together with `MECATL_BASE_URL` and inside the image. |
+| `MECATED_BIN`     | `PATH` lookup                                | Path of the `mecated` binary for spawn mode (`task studio:dev` sets it to `bin/mecated`).         |
+| `STUDIO_HOST`     | `127.0.0.1` outside the image                | Listen address. The development server binds loopback only unless you set this.                   |
+| `STUDIO_WEB_DIST` | `../web/dist` relative to the server package | Directory holding the built SPA the BFF serves. The Dockerfile sets it for the image.             |
 
 Any startup error exits non-zero before listening, with a stderr line naming the variable.
 

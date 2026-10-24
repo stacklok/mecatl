@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // @vitest-environment happy-dom
 
+import type { ExecutionTemplateInventory } from "@mecatl-studio/contracts";
 import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
@@ -45,6 +46,27 @@ function ControlledComposer({
         onSend={vi.fn().mockResolvedValue(true)}
       />
       <output data-testid="draft-configuration">{JSON.stringify(configuration)}</output>
+    </>
+  );
+}
+
+/** Holds one execution template and can refresh the inventory without it. */
+function RefreshablePicker({ item }: { item: ExecutionTemplateInventory["items"][number] }) {
+  const [configuration, setConfiguration] = useState(initialConfiguration);
+  const [items, setItems] = useState([item]);
+  return (
+    <>
+      <ChatComposer
+        configuration={configuration}
+        executionInventory={{ inventoryRevision: "1", items }}
+        executionStatus="ready"
+        onConfigurationChange={setConfiguration}
+        onSend={vi.fn().mockResolvedValue(false)}
+      />
+      <button onClick={() => setItems([])} type="button">
+        Refresh without revision
+      </button>
+      <output data-testid="choice">{JSON.stringify(configuration.execution)}</output>
     </>
   );
 }
@@ -112,26 +134,7 @@ describe("composer configuration selectors", () => {
       declaredExecutionFiles: true,
       declaredBuiltInShell: false,
     };
-    function Picker() {
-      const [configuration, setConfiguration] = useState(initialConfiguration);
-      const [items, setItems] = useState([item]);
-      return (
-        <>
-          <ChatComposer
-            configuration={configuration}
-            executionInventory={{ inventoryRevision: "1", items }}
-            executionStatus="ready"
-            onConfigurationChange={setConfiguration}
-            onSend={vi.fn().mockResolvedValue(false)}
-          />
-          <button onClick={() => setItems([])} type="button">
-            Refresh without revision
-          </button>
-          <output data-testid="choice">{JSON.stringify(configuration.execution)}</output>
-        </>
-      );
-    }
-    render(<Picker />);
+    render(<RefreshablePicker item={item} />);
     expect(screen.getByRole("option", { name: /declared files: true, Shell: false/ })).toBeTruthy();
     await user.selectOptions(
       screen.getByLabelText("Execution"),
