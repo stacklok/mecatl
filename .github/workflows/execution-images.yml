@@ -32,7 +32,7 @@ jobs:
           persist-credentials: false
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
         with:
-          version: v0.38.0
+          version: v0.38.1
       - name: Validate execution base images
         run: sh .github/scripts/validate-execution-base-images.sh
       - name: Build execution images without publishing

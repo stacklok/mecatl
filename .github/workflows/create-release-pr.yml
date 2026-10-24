@@ -52,7 +52,7 @@ jobs:
       # Validate the tracked defaults on main before any release write authority.
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
         with:
-          version: v0.38.0
+          version: v0.38.1
       - name: Validate execution base images
         run: sh .github/scripts/validate-execution-base-images.sh
       # execution-images.yml builds both images for amd64 + arm64 on every push to
@@ -136,7 +136,7 @@ jobs:
       # holds. It is handed to releaseo, which pushes a branch and opens a PR; that is all.
       - name: Mint the release app token
         id: app-token
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
         with:
           client-id: ${{ vars.RELEASE_APP_CLIENT_ID }}
           private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
