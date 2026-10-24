@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"strings"
 
-	sdk "github.com/anthropics/anthropic-sdk-go"
+	sdk "github.com/anthropics/anthropic-sdk-go/v2"
 
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/prompt"
@@ -158,11 +158,27 @@ func markBuiltMessage(messages []sdk.MessageParam, builtIdx []int, msgIdx int, t
 	if j < 0 || j >= len(messages) {
 		return
 	}
-	content := messages[j].Content
+	content := messageContent(messages[j])
 	if len(content) == 0 {
 		return
 	}
 	setCacheControl(&content[len(content)-1], ttl)
+}
+
+// messageContent returns the content blocks of a built message, whichever role
+// variant holds them. buildMessages only emits user and assistant messages, so
+// any other variant (or an unset union) has no blocks to mark. The returned
+// slice shares its backing array with the message, so a block mutated through
+// it changes the message in place.
+func messageContent(m sdk.MessageParam) []sdk.ContentBlockParamUnion {
+	switch {
+	case m.OfUser != nil:
+		return m.OfUser.Content
+	case m.OfAssistant != nil:
+		return m.OfAssistant.Content
+	default:
+		return nil
+	}
 }
 
 // setCacheControl stamps an ephemeral cache_control breakpoint (carrying ttl,

@@ -19,6 +19,12 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+/** Records the global shortcuts-help binding so a test can prove it is blocked. */
+function ShortcutProbe({ onOpen }: { onOpen: () => void }) {
+  useShortcut("shortcuts.open", onOpen);
+  return null;
+}
+
 function Canvas({ initial }: { initial: string }) {
   const [value, setValue] = useState(initial);
   return (
@@ -133,13 +139,9 @@ describe("side panel frames", () => {
   it("blocks app shortcuts while the Clear confirmation is open", async () => {
     const user = userEvent.setup();
     const openShortcuts = vi.fn();
-    function ShortcutProbe() {
-      useShortcut("shortcuts.open", openShortcuts);
-      return null;
-    }
     render(
       <ShortcutProvider>
-        <ShortcutProbe />
+        <ShortcutProbe onOpen={openShortcuts} />
         <Canvas initial="# Notes" />
       </ShortcutProvider>,
     );

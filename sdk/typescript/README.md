@@ -21,7 +21,6 @@ for release notes.
 ## Public entry points
 
 The package has four public entry points:
-
 - `@stacklok-oss/mecatl-sdk` - transport-neutral core plus browser and Deno remote HTTP/SSE;
 - `@stacklok-oss/mecatl-sdk/node` - Node/Bun gRPC and local-process features;
 - `@stacklok-oss/mecatl-sdk/deno` - Deno gRPC plus `Deno.Command` local-process features;

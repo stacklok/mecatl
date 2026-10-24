@@ -12,8 +12,8 @@ import (
 	"strings"
 	"time"
 
-	sdk "github.com/anthropics/anthropic-sdk-go"
-	"github.com/anthropics/anthropic-sdk-go/option"
+	sdk "github.com/anthropics/anthropic-sdk-go/v2"
+	"github.com/anthropics/anthropic-sdk-go/v2/option"
 
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
@@ -119,7 +119,7 @@ type config struct {
 }
 
 // WithAPIKey sets the API key used to authenticate requests (the x-api-key
-// header). The SDK sets anthropic-version automatically.
+// header). The adapter pins anthropic-version (see anthropicAPIVersion).
 func WithAPIKey(key string) Option {
 	return func(c *config) { c.apiKey = key }
 }
@@ -240,19 +240,7 @@ func New(opts ...Option) *Provider {
 	for _, o := range opts {
 		o(&c)
 	}
-	// WithoutEnvironmentDefaults FIRST: suppress the SDK's ambient autoload of
-	// ANTHROPIC_BASE_URL / ANTHROPIC_AUTH_TOKEN / WIF profiles from the process env.
-	// The adapter contributes ONLY what the harness resolved (the explicit key + an
-	// optional flag base URL), so the documented single-knob credential/base-URL
-	// custody and the availability gate are not bypassed by an ambient env var.
-	reqOpts := make([]option.RequestOption, 0, len(c.extra)+3)
-	reqOpts = append(reqOpts, option.WithoutEnvironmentDefaults())
-	if c.apiKey != "" {
-		reqOpts = append(reqOpts, option.WithAPIKey(c.apiKey))
-	}
-	if c.baseURL != "" {
-		reqOpts = append(reqOpts, option.WithBaseURL(c.baseURL))
-	}
+	reqOpts := baseClientOptions(c.apiKey, c.baseURL)
 	reqOpts = append(reqOpts, c.extra...)
 
 	maxTokens := c.maxTokens
@@ -276,6 +264,47 @@ func New(opts ...Option) *Provider {
 		conversationCaching: !c.disableConversationCaching,
 		cacheTTL:            c.cacheTTL,
 	}
+}
+
+// anthropicAPIVersion is the Messages API version every request names. The SDK
+// would send its own newer default; pinning it keeps the request and response
+// contract fixed independently of SDK upgrades. Moving to a newer API version is
+// a deliberate wire change, not a side effect of a dependency bump.
+const anthropicAPIVersion = "2023-06-01"
+
+// baseClientOptions returns the client options the provider and the Lister
+// share, before any caller-supplied option.
+//
+// WithoutEnvironmentDefaults comes FIRST: it suppresses the SDK's ambient
+// autoload of ANTHROPIC_BASE_URL / ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN /
+// ANTHROPIC_CUSTOM_HEADERS / profiles / WIF from the process env. The adapter
+// contributes ONLY what the harness resolved (the explicit key + an optional
+// flag base URL), so the documented single-knob credential/base-URL custody and
+// the availability gate are not bypassed by an ambient env var.
+//
+// The key rides the x-api-key header, set directly rather than through
+// option.WithAPIKey (which sends it as Authorization: Bearer). Gateways and
+// custom anthropic-messages endpoints authenticate this protocol by x-api-key,
+// and composition's redirect and bearer-stripping transports are written
+// against that header.
+//
+// WithoutOpenTelemetry keeps the SDK from opening its own spans and injecting
+// trace-context headers from the process-global tracer provider and
+// propagator, which composition installs when OTLP export is configured.
+// Request tracing stays the harness's responsibility.
+func baseClientOptions(apiKey, baseURL string) []option.RequestOption {
+	opts := []option.RequestOption{
+		option.WithoutEnvironmentDefaults(),
+		option.WithoutOpenTelemetry(),
+		option.WithHeader("anthropic-version", anthropicAPIVersion),
+	}
+	if apiKey != "" {
+		opts = append(opts, option.WithHeader("X-Api-Key", apiKey))
+	}
+	if baseURL != "" {
+		opts = append(opts, option.WithBaseURL(baseURL))
+	}
+	return opts
 }
 
 func sessionHeaderOptions(ctx context.Context) []option.RequestOption {

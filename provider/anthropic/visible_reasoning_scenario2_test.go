@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/anthropics/anthropic-sdk-go/option"
+	"github.com/anthropics/anthropic-sdk-go/v2/option"
 
 	"github.com/stacklok/mecatl/engine/port"
 )

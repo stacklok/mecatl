@@ -13,15 +13,15 @@ FROM cgr.dev/chainguard/node:latest-dev@sha256:13afe2c05d49286578b74c4a14b8e4bbe
 WORKDIR /home/node/src
 COPY --chown=65532:65532 . .
 
-RUN corepack pnpm@11.25.0 install --frozen-lockfile \
-    && corepack pnpm@11.25.0 run build
+RUN corepack pnpm@11.28.7 install --frozen-lockfile \
+    && corepack pnpm@11.28.7 run build
 RUN cd examples/slack-bot \
-    && corepack pnpm@11.25.0 install --frozen-lockfile \
-    && corepack pnpm@11.25.0 run build
+    && corepack pnpm@11.28.7 install --frozen-lockfile \
+    && corepack pnpm@11.28.7 run build
 
 FROM builder AS production-dependencies
-RUN cd examples/slack-bot && corepack pnpm@11.25.0 prune --prod
-RUN corepack pnpm@11.25.0 prune --prod
+RUN cd examples/slack-bot && corepack pnpm@11.28.7 prune --prod
+RUN corepack pnpm@11.28.7 prune --prod
 
 FROM cgr.dev/chainguard/node:latest@sha256:88c4f6e6941bdd4fb9039d98ad05384e1bfe5693dd31ccc8eb2f0c8522bdb40e
 
