@@ -23,6 +23,6 @@
     "@biomejs/biome": "2.5.15",
     "@playwright/test": "1.64.1",
     "@types/node": "26.6.5",
-    "typescript": "6.0.3"
+    "typescript": "7.0.2"
   }
 }

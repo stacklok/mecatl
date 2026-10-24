@@ -38,7 +38,7 @@
     "@types/react": "^19.3.0",
     "prettier": "^3.9.9",
     "prettier-plugin-compact-markdown-table": "^0.1.0",
-    "typescript": "~6.0.3"
+    "typescript": "~7.0.2"
   },
   "browserslist": {
     "production": [
