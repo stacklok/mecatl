@@ -7,6 +7,9 @@ import (
 	"testing"
 
 	"github.com/anthropics/anthropic-sdk-go/v2/option"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/propagation"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/stacklok/mecatl/engine/port"
 )
@@ -60,6 +63,50 @@ func TestNewSuppressesAmbientEnv(t *testing.T) {
 	}
 	if xk := rec.req.Header.Get("x-api-key"); xk == "ambient-token-should-not-be-sent" {
 		t.Fatal("ambient ANTHROPIC_AUTH_TOKEN was used as the key")
+	}
+}
+
+// TestNewPinsWireDefaults proves the adapter holds the request headers that the
+// SDK's own defaults would otherwise change: the pinned anthropic-version, the
+// key in x-api-key (never Authorization: Bearer), and no trace-context header
+// even when the process has a global propagator and the caller's context
+// carries a span.
+func TestNewPinsWireDefaults(t *testing.T) {
+	prev := otel.GetTextMapPropagator()
+	otel.SetTextMapPropagator(propagation.TraceContext{})
+	t.Cleanup(func() { otel.SetTextMapPropagator(prev) })
+	sc := trace.NewSpanContext(trace.SpanContextConfig{
+		TraceID:    trace.TraceID{1},
+		SpanID:     trace.SpanID{1},
+		TraceFlags: trace.FlagsSampled,
+		Remote:     true,
+	})
+	ctx := trace.ContextWithSpanContext(context.Background(), sc)
+
+	rec := &recordingRoundTripper{}
+	p := New(WithAPIKey("k"), WithRequestOption(option.WithHTTPClient(rec)))
+	stream, err := p.Stream(ctx, port.LLMRequest{Model: "claude-sonnet-4-6"})
+	if err != nil {
+		t.Fatalf("Stream: %v", err)
+	}
+	for range stream {
+	}
+	if rec.req == nil {
+		t.Fatal("no request issued")
+	}
+	if got := rec.req.Header.Values("anthropic-version"); len(got) != 1 || got[0] != anthropicAPIVersion {
+		t.Errorf("anthropic-version = %q, want [%q]", got, anthropicAPIVersion)
+	}
+	if got := rec.req.Header.Get("x-api-key"); got != "k" {
+		t.Errorf("x-api-key = %q, want k", got)
+	}
+	if auth := rec.req.Header.Get("Authorization"); auth != "" {
+		t.Errorf("Authorization = %q, want the key only in x-api-key", auth)
+	}
+	for _, h := range []string{"traceparent", "tracestate"} {
+		if got := rec.req.Header.Get(h); got != "" {
+			t.Errorf("%s = %q, want no SDK trace propagation", h, got)
+		}
 	}
 }
 

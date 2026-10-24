@@ -455,14 +455,15 @@ func TestBuildMessagesToolResultIsUserRole(t *testing.T) {
 		t.Fatalf("messages = %d, want 1", len(params.Messages))
 	}
 	m := params.Messages[0]
-	if m.Role != "user" {
-		t.Errorf("tool_result message role = %q, want user", m.Role)
+	if m.OfUser == nil {
+		t.Fatalf("tool_result message role = %v, want user", m.GetRole())
 	}
-	if m.Content[0].OfToolResult == nil {
+	content := m.OfUser.Content
+	if content[0].OfToolResult == nil {
 		t.Fatal("expected a tool_result block")
 	}
-	if m.Content[0].OfToolResult.ToolUseID != "toolu_1" {
-		t.Errorf("tool_use_id = %q, want toolu_1", m.Content[0].OfToolResult.ToolUseID)
+	if content[0].OfToolResult.ToolUseID != "toolu_1" {
+		t.Errorf("tool_use_id = %q, want toolu_1", content[0].OfToolResult.ToolUseID)
 	}
 }
 
@@ -476,7 +477,7 @@ func TestBuildMessagesUserTextFastPath(t *testing.T) {
 		t.Fatalf("buildParams: %v", err)
 	}
 	m := params.Messages[0]
-	if m.Role != "user" || m.Content[0].OfText == nil || m.Content[0].OfText.Text != "hello" {
+	if m.OfUser == nil || m.OfUser.Content[0].OfText == nil || m.OfUser.Content[0].OfText.Text != "hello" {
 		t.Fatalf("user message = %+v, want a text block 'hello'", m)
 	}
 }
@@ -515,7 +516,7 @@ func TestRequestNoOrphanedToolUseAfterInterrupt(t *testing.T) {
 	toolUseIDs := map[string]bool{}
 	toolResultIDs := map[string]bool{}
 	for _, m := range params.Messages {
-		for _, c := range m.Content {
+		for _, c := range messageContent(m) {
 			if c.OfToolUse != nil {
 				toolUseIDs[c.OfToolUse.ID] = true
 			}

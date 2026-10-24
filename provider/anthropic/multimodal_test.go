@@ -19,7 +19,10 @@ func TestUserImageBase64Block(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildParams: %v", err)
 	}
-	m := params.Messages[0]
+	m := params.Messages[0].OfUser
+	if m == nil {
+		t.Fatal("first message should be a user message")
+	}
 	if m.Content[0].OfText == nil || m.Content[0].OfText.Text != "look" {
 		t.Fatalf("first block should be the text 'look', got %+v", m.Content[0])
 	}
@@ -50,9 +53,13 @@ func TestUserImageURLBlock(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildParams: %v", err)
 	}
-	imgBlock := params.Messages[0].Content[0].OfImage
+	content := messageContent(params.Messages[0])
+	if len(content) == 0 {
+		t.Fatalf("first message has no content blocks: %+v", params.Messages[0])
+	}
+	imgBlock := content[0].OfImage
 	if imgBlock == nil || imgBlock.Source.OfURL == nil {
-		t.Fatalf("expected a URL image source, got %+v", params.Messages[0].Content[0])
+		t.Fatalf("expected a URL image source, got %+v", content[0])
 	}
 	if imgBlock.Source.OfURL.URL != "https://example.com/x.png" {
 		t.Errorf("url = %q", imgBlock.Source.OfURL.URL)
