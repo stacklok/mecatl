@@ -502,14 +502,14 @@ func TestSDKTrustedPublishingNoStoredCredentials(t *testing.T) {
 		t.Error("stage summary does not record candidate evidence, approval, and post-approval verification")
 	}
 	setupNode := sdkScenario11Action(publish, "actions/setup-node@")
-	if setupNode == nil || setupNode.With["node-version"] != "24.18.1" {
-		t.Errorf("publish Node setup = %v, want exact Node 24.18.1", setupNode)
+	if setupNode == nil || setupNode.With["node-version"] != "24.22.1" {
+		t.Errorf("publish Node setup = %v, want exact Node 24.22.1", setupNode)
 	}
 	if _, ok := setupNode.With["registry-url"]; ok {
 		t.Errorf("publish must not set registry-url, got %v", setupNode.With)
 	}
 	floorRun := publish.Steps[sdkScenario11StepNamed(publish, "Assert npm toolchain floors")].Run
-	if !strings.Contains(floorRun, "22.14.0") || !strings.Contains(floorRun, `test "$(npm --version)" = "11.16.0"`) {
+	if !strings.Contains(floorRun, "22.14.0") || !strings.Contains(floorRun, `test "$(npm --version)" = "11.19.1"`) {
 		t.Error("staging does not assert the Node and npm stage publishing floors")
 	}
 	packRun := workflow.Jobs["verify"].Steps[sdkScenario11StepNamed(workflow.Jobs["verify"], "Pack SDK and record integrity")].Run
