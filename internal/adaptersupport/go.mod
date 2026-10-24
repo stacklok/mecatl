@@ -8,7 +8,7 @@ require (
 )
 
 require (
-	github.com/bmatcuk/doublestar/v4 v4.10.2 // indirect
+	github.com/bmatcuk/doublestar/v4 v4.10.4 // indirect
 	github.com/goccy/go-yaml v1.19.2 // indirect
 	golang.org/x/sys v0.49.0 // indirect
 )
