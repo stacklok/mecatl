@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	sdk "github.com/anthropics/anthropic-sdk-go"
+	sdk "github.com/anthropics/anthropic-sdk-go/v2"
 )
 
 // roundTripFunc adapts a func to http.RoundTripper so a test can serve a canned

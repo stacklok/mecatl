@@ -7,8 +7,8 @@ import (
 	"io"
 	"net/http"
 
-	sdk "github.com/anthropics/anthropic-sdk-go"
-	"github.com/anthropics/anthropic-sdk-go/option"
+	sdk "github.com/anthropics/anthropic-sdk-go/v2"
+	"github.com/anthropics/anthropic-sdk-go/v2/option"
 )
 
 // listerPageLimit is the per-page size for the paginated /v1/models fetch. The

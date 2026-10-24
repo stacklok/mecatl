@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"strings"
 
-	sdk "github.com/anthropics/anthropic-sdk-go"
+	sdk "github.com/anthropics/anthropic-sdk-go/v2"
 
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/prompt"

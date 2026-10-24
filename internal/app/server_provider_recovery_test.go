@@ -14,8 +14,8 @@ import (
 	"testing"
 	"time"
 
-	anthropicsdk "github.com/anthropics/anthropic-sdk-go"
-	anthropicoption "github.com/anthropics/anthropic-sdk-go/option"
+	anthropicsdk "github.com/anthropics/anthropic-sdk-go/v2"
+	anthropicoption "github.com/anthropics/anthropic-sdk-go/v2/option"
 	oai "github.com/openai/openai-go/v3"
 	openaichatoption "github.com/openai/openai-go/v3/option"
 
