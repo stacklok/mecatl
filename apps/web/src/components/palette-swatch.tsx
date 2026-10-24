@@ -8,6 +8,7 @@ const swatches = new Map<string, ComponentType<{ className?: string }>>();
 export function paletteSwatch(color: string): ComponentType<{ className?: string }> {
   const cached = swatches.get(color);
   if (cached) return cached;
+  // biome-ignore lint/correctness/noComponentHookFactories: the module-level cache returns one stable component per color, so callers never see a new component identity; option icons must be component types.
   function PaletteSwatch({ className }: { className?: string }) {
     return (
       <span

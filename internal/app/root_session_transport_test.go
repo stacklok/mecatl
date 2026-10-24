@@ -16,7 +16,7 @@ import (
 	"testing"
 	"time"
 
-	anthropicoption "github.com/anthropics/anthropic-sdk-go/option"
+	anthropicoption "github.com/anthropics/anthropic-sdk-go/v2/option"
 	openaioption "github.com/openai/openai-go/v3/option"
 
 	agents "github.com/stacklok/mecatl/engine/adapter/agentfs"

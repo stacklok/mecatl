@@ -116,7 +116,34 @@ const fleet: DelegationFleet = {
   teams: [team],
 };
 
-/** Holds the chosen activity the way the chat surface does, and records every change. */
+/** Holds the chosen activity the way the chat surface does. */
+function Harness({
+  family,
+  initialFocus,
+  onFocusChange,
+}: {
+  family?: DelegationFocus["family"];
+  initialFocus?: DelegationFocus;
+  onFocusChange: (focus?: DelegationFocus) => void;
+}) {
+  const [focus, setFocus] = useState(initialFocus);
+  return (
+    <>
+      <button type="button">Before the panel</button>
+      <SessionActivityContent
+        family={family}
+        fleet={fleet}
+        focus={focus}
+        onFocusChange={(next) => {
+          onFocusChange(next);
+          setFocus(next);
+        }}
+      />
+    </>
+  );
+}
+
+/** Renders the held panel and records every change. */
 function renderPanel({
   family,
   focus: initialFocus,
@@ -125,24 +152,7 @@ function renderPanel({
   focus?: DelegationFocus;
 } = {}) {
   const onFocusChange = vi.fn<(focus?: DelegationFocus) => void>();
-  function Harness() {
-    const [focus, setFocus] = useState(initialFocus);
-    return (
-      <>
-        <button type="button">Before the panel</button>
-        <SessionActivityContent
-          family={family}
-          fleet={fleet}
-          focus={focus}
-          onFocusChange={(next) => {
-            onFocusChange(next);
-            setFocus(next);
-          }}
-        />
-      </>
-    );
-  }
-  render(<Harness />);
+  render(<Harness family={family} initialFocus={initialFocus} onFocusChange={onFocusChange} />);
   return { onFocusChange, user: userEvent.setup() };
 }
 

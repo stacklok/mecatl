@@ -79,6 +79,19 @@ let container: HTMLDivElement | undefined;
 let root: Root | undefined;
 let queryClient: QueryClient | undefined;
 
+/** A chat route whose session can be switched from A to B mid-stream. */
+function Switchable() {
+  const [sessionId, setSessionId] = useState("session-a");
+  return (
+    <>
+      <button onClick={() => setSessionId("session-b")} type="button">
+        Switch to B
+      </button>
+      <ChatWorkspace sessionId={sessionId} />
+    </>
+  );
+}
+
 async function mountWorkspace(
   fetcher: (request: Request) => Promise<Response>,
   component: () => React.ReactNode,
@@ -438,18 +451,6 @@ describe("mounted delegated activity", () => {
       }
       throw new Error(`Unexpected request ${path}`);
     };
-    function Switchable() {
-      const [sessionId, setSessionId] = useState("session-a");
-      return (
-        <>
-          <button onClick={() => setSessionId("session-b")} type="button">
-            Switch to B
-          </button>
-          <ChatWorkspace sessionId={sessionId} />
-        </>
-      );
-    }
-
     await mountWorkspace(fetcher, Switchable);
     await act(async () => vi.waitFor(() => expect(oldSignal).toBeDefined()));
     await act(async () => {
@@ -1191,17 +1192,6 @@ describe("mounted delegated activity", () => {
       }
       throw new Error(`Unexpected request ${path}`);
     };
-    function Switchable() {
-      const [sessionId, setSessionId] = useState("session-a");
-      return (
-        <>
-          <button onClick={() => setSessionId("session-b")} type="button">
-            Switch to B
-          </button>
-          <ChatWorkspace sessionId={sessionId} />
-        </>
-      );
-    }
     await mountWorkspace(fetcher, Switchable);
     await act(async () => vi.waitFor(() => expect(oldSignal).toBeDefined()));
     await act(async () => {

@@ -3,7 +3,7 @@
 # Taskfile for Mecatl Studio (apps/), included in the root Taskfile as `studio:`.
 # The checked-out SDK is compiled before pnpm installs the BFF's local file
 # dependency; the browser never imports SDK sources.
-version: '3'
+version: "3"
 
 tasks:
   install:
@@ -116,7 +116,7 @@ tasks:
       `task build` from the repository root first (for bin/mecated).
     deps: [install]
     env:
-      MECATED_BIN: '{{.TASKFILE_DIR}}/../bin/mecated'
+      MECATED_BIN: "{{.TASKFILE_DIR}}/../bin/mecated"
     cmds:
       - cmd: |
           test -x "$MECATED_BIN" || {

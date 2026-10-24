@@ -28,6 +28,10 @@ const chatApi = { broken: false };
 let container: HTMLDivElement;
 let reactRoot: Root;
 
+function CrashedRoot(): React.ReactNode {
+  throw new Error(privateError);
+}
+
 async function mount(element: React.ReactNode) {
   container = document.createElement("div");
   document.body.append(container);
@@ -260,9 +264,6 @@ describe("Studio error routes", () => {
   it("keeps a root render failure generic and offers reload and home", async () => {
     vi.spyOn(console, "error").mockImplementation(() => undefined);
     const reload = vi.fn();
-    function CrashedRoot(): React.ReactNode {
-      throw new Error(privateError);
-    }
     await mount(
       <RootErrorBoundary reload={reload}>
         <CrashedRoot />

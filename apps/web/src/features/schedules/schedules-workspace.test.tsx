@@ -397,6 +397,12 @@ describe("schedule detail delete", () => {
   });
 });
 
+/** Records the schedules filter binding so a test can prove open dialogs block it. */
+function Probe({ handler }: { handler: () => void }) {
+  useShortcut("schedules.filter", handler);
+  return null;
+}
+
 describe("schedule keyboard focus and shortcuts", () => {
   const alpha = schedule({ name: "Alpha" });
 
@@ -456,11 +462,6 @@ describe("schedule keyboard focus and shortcuts", () => {
   });
 
   describe("on the detail page", () => {
-    function Probe({ handler }: { handler: () => void }) {
-      useShortcut("schedules.filter", handler);
-      return null;
-    }
-
     function detailApi() {
       fakeApi((method, path) => {
         if (method !== "GET") return undefined;

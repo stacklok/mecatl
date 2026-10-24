@@ -14,7 +14,7 @@ import (
 	"sync"
 	"time"
 
-	anthropicoption "github.com/anthropics/anthropic-sdk-go/option"
+	anthropicoption "github.com/anthropics/anthropic-sdk-go/v2/option"
 	openaichatoption "github.com/openai/openai-go/v3/option"
 
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"

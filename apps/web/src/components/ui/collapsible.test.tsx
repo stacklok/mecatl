@@ -11,6 +11,29 @@ Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 
 afterEach(cleanup);
 
+// A toggle-style owner, like the tool-call list: it flips on any change
+// request and ignores the value, so a stray request would close it.
+function ToggleOwnedOuter({ onToggle }: { onToggle: () => void }) {
+  const [open, setOpen] = React.useState(true);
+  return (
+    <Collapsible
+      onOpenChange={() => {
+        onToggle();
+        setOpen((current) => !current);
+      }}
+      open={open}
+    >
+      <CollapsibleTrigger>Outer</CollapsibleTrigger>
+      <CollapsibleContent hiddenUntilFound>
+        <Collapsible>
+          <CollapsibleTrigger>Inner</CollapsibleTrigger>
+          <CollapsibleContent hiddenUntilFound>Nested body</CollapsibleContent>
+        </Collapsible>
+      </CollapsibleContent>
+    </Collapsible>
+  );
+}
+
 describe("Collapsible", () => {
   it("shows and hides its content from a trigger that controls it", async () => {
     const user = userEvent.setup();
@@ -109,30 +132,14 @@ describe("Collapsible", () => {
   });
 
   it("leaves an open outer collapsible alone when a match opens a nested one", () => {
-    // A toggle-style owner, like the tool-call list: it flips on any change
-    // request and ignores the value, so a stray request would close it.
     let outerToggles = 0;
-    function Outer() {
-      const [open, setOpen] = React.useState(true);
-      return (
-        <Collapsible
-          onOpenChange={() => {
-            outerToggles += 1;
-            setOpen((current) => !current);
-          }}
-          open={open}
-        >
-          <CollapsibleTrigger>Outer</CollapsibleTrigger>
-          <CollapsibleContent hiddenUntilFound>
-            <Collapsible>
-              <CollapsibleTrigger>Inner</CollapsibleTrigger>
-              <CollapsibleContent hiddenUntilFound>Nested body</CollapsibleContent>
-            </Collapsible>
-          </CollapsibleContent>
-        </Collapsible>
-      );
-    }
-    render(<Outer />);
+    render(
+      <ToggleOwnedOuter
+        onToggle={() => {
+          outerToggles += 1;
+        }}
+      />,
+    );
     const outer = screen.getByRole("button", { name: "Outer" });
     const inner = screen.getByRole("button", { name: "Inner" });
     const nested = screen.getByText("Nested body");

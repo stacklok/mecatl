@@ -9,7 +9,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	anthropicoption "github.com/anthropics/anthropic-sdk-go/option"
+	anthropicoption "github.com/anthropics/anthropic-sdk-go/v2/option"
 
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/internal/adapter/permconfig"

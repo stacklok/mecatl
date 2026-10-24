@@ -7,7 +7,7 @@
   "engines": {
     "node": ">=26 <27"
   },
-  "packageManager": "pnpm@12.4.2",
+  "packageManager": "pnpm@12.15.0",
   "scripts": {
     "build": "pnpm generate && pnpm -r --if-present run build",
     "check": "biome check . && pnpm typecheck && pnpm test && pnpm generated:check",
@@ -20,7 +20,7 @@
     "typecheck": "pnpm -r --if-present run typecheck"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.5.15",
+    "@biomejs/biome": "2.6.2",
     "@playwright/test": "1.64.1",
     "@types/node": "26.6.5",
     "typescript": "6.0.3"
