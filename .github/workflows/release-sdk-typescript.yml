@@ -43,13 +43,13 @@ jobs:
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: '24.7.0'
+          node-version: '24.22.1'
           cache: pnpm
           cache-dependency-path: sdk/typescript/pnpm-lock.yaml
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
-          bun-version: '1.4.2'
+          bun-version: '1.4.4'
 
       - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
         with:
@@ -240,14 +240,14 @@ jobs:
       contents: read
       id-token: write
     steps:
-      # Node 24.18.1 bundles npm 11.16.0, the first bundled CLI in this line
-      # above npm stage's 11.15.0 floor. This exact distribution pin fixes both
-      # publishing tool versions without an install step. Do not set
-      # registry-url: a generated user npmrc with a blank token disables
+      # Node 24.22.1 bundles npm 11.19.1, above npm stage's 11.15.0 floor, and
+      # carries the CVE-2026-111497 Brotli decoder fix. This exact distribution
+      # pin fixes both publishing tool versions without an install step. Do not
+      # set registry-url: a generated user npmrc with a blank token disables
       # trusted publishing.
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: '24.18.1'
+          node-version: '24.22.1'
 
       - name: Download inspected npm tarball
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
@@ -265,7 +265,7 @@ jobs:
               (version[1] === 14 && version[2] >= 0)));
           if (!meetsFloor) throw new Error(`Node ${process.versions.node} is below 22.14.0`);
           NODE
-          test "$(npm --version)" = "11.16.0"
+          test "$(npm --version)" = "11.19.1"
 
       - name: Re-verify downloaded tarball integrity
         env:
