@@ -179,6 +179,31 @@ func TestWorktreeCopyDescribesStartingANewSession(t *testing.T) {
 	}
 }
 
+func TestWorktreeConfirmShowsBranchOnlyWhenItDiffersFromLabel(t *testing.T) {
+	for _, tc := range []struct {
+		wt         client.Worktree
+		wantBranch bool
+	}{
+		{client.Worktree{Selector: testWorktreeSelector("same"), Label: "feat/x", Branch: "feat/x"}, false},
+		{client.Worktree{Selector: testWorktreeSelector("differs"), Label: "Primary repository", Branch: "main"}, true},
+	} {
+		m := newWorktreesModel(t, &fakeConv{}, &fakeWorktreeLister{wts: []client.Worktree{tc.wt}})
+		mm, cmd := m.openWorktrees()
+		m = feedWorktreesList(t, mm.(Model), cmd)
+		mm, _, handled := m.dispatchSurfaceKey(tea.KeyPressMsg{Code: tea.KeyEnter})
+		if !handled {
+			t.Fatal("enter was not handled")
+		}
+		confirm := stripANSIstr(mm.(Model).View().Content)
+		if got := strings.Contains(confirm, "branch: "+tc.wt.Branch); got != tc.wantBranch {
+			t.Errorf("confirm for %+v shows branch line = %v, want %v:\n%s", tc.wt, got, tc.wantBranch, confirm)
+		}
+		if !tc.wantBranch && strings.Contains(confirm, "branch:") {
+			t.Errorf("confirm repeats the branch:\n%s", confirm)
+		}
+	}
+}
+
 func TestWorktreeRowShowsBranchOnlyWhenItDiffersFromLabel(t *testing.T) {
 	for _, tc := range []struct {
 		wt   client.Worktree

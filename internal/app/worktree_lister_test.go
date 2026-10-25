@@ -192,11 +192,15 @@ var _ server.WorktreeLister = gitWorktreeLister{}
 // local provider: two worktrees sharing a HEAD stay distinguishable by branch,
 // including a namespaced one (issue #2420).
 func TestLocalPlacementShowsShortBranchNames(t *testing.T) {
-	base := t.TempDir()
+	root := t.TempDir()
+	base := filepath.Join(root, "repo")
+	if err := os.Mkdir(base, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	wtInitRepo(t, base)
 	wtWriteFile(t, filepath.Join(base, "README"), "base\n")
 	wtCommit(t, base)
-	wtRunGit(t, base, "worktree", "add", "-b", "feat/x", filepath.Join(base, "..", "wt-feat-x"))
+	wtRunGit(t, base, "worktree", "add", "-b", "feat/x", filepath.Join(root, "wt-feat-x"))
 
 	issuer, err := server.NewWorktreeSelectorIssuer(make([]byte, 32))
 	if err != nil {
