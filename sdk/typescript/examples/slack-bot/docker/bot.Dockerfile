@@ -8,7 +8,7 @@
 # the digest still pins the build. Keep latest-dev for the builder and latest for
 # the runtime so updates cannot silently swap the development/runtime variants.
 # https://docs.renovatebot.com/docker/#digest-updating
-FROM cgr.dev/chainguard/node:latest-dev@sha256:13afe2c05d49286578b74c4a14b8e4bbe70e98828abeb3d0ea9f9fd2af4cc431 AS builder
+FROM cgr.dev/chainguard/node:latest-dev@sha256:ef42c7738c0bf32fd85dd9111aa4da253495e2e331c3ebdae80908643604de22 AS builder
 
 WORKDIR /home/node/src
 COPY --chown=65532:65532 . .
