@@ -2512,8 +2512,8 @@ backend locator, exact EnvironmentRef, or reusable selector.
 | Field | Type | Label | Oneof | Description |
 |---|---|---|---|---|
 | `kind` | `string` |  |  |  |
-| `label` | `string` |  |  | label is provider display text, such as &#34;Primary repository&#34; or, for a git worktree, the short branch name. |
-| `branch` | `string` |  |  | branch is the short branch name (for example &#34;feat/x&#34;); empty for a detached or unknown HEAD. |
+| `label` | `string` |  |  | label is provider display text, such as &#34;Local workspace&#34; or, for a git worktree, the short branch name. It may be empty. |
+| `branch` | `string` |  |  | branch is the git branch name (for example &#34;feat/x&#34;). It is empty for a non-git placement, a detached or unknown HEAD, or a rejected name. |
 | `revision` | `string` |  |  |  |
 
 
@@ -3984,8 +3984,8 @@ caller/source scoped, and accepted only by ClearSession or ForkSession.
 |---|---|---|---|---|
 | `selector` | `string` |  |  |  |
 | `kind` | `string` |  |  |  |
-| `label` | `string` |  |  | label is display text: the short branch name, or &#34;Detached worktree&#34;. |
-| `branch` | `string` |  |  | branch is the short branch name (for example &#34;feat/x&#34;); empty for a detached HEAD. |
+| `label` | `string` |  |  | label is provider display text, such as the short branch name or &#34;Detached worktree&#34;. It may be empty. |
+| `branch` | `string` |  |  | branch is the git branch name (for example &#34;feat/x&#34;). It is empty for a detached HEAD or a rejected name. |
 | `revision` | `string` |  |  |  |
 | `bare` | `bool` |  |  |  |
 

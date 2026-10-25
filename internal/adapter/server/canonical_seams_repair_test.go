@@ -503,6 +503,25 @@ func TestPlacementBranchDisplayKeepsOnlyWellFormedBranchNames(t *testing.T) {
 	if got := sanitizePlacementBranch(strings.Repeat("a", maxPlacementNameRunes+10)); len([]rune(got)) != maxPlacementNameRunes {
 		t.Errorf("branch not capped: %d runes", len([]rune(got)))
 	}
+	// The whole name is validated before the cap, so a cut that ends on "/"
+	// or "." still shows the capped prefix.
+	for _, tail := range []string{"/x", ".x"} {
+		long := strings.Repeat("a", maxPlacementNameRunes-1) + tail
+		if got := sanitizePlacementBranch(long); got != long[:maxPlacementNameRunes] {
+			t.Errorf("branch cut at %q = %q, want capped prefix", tail[:1], got)
+		}
+	}
+	if got := sanitizePlacementBranch(strings.Repeat("a", maxPlacementNameRunes) + "/../x"); got != "" {
+		t.Errorf("invalid tail past the cap accepted: %q", got)
+	}
+	// Providers must supply short names; ref- and path-shaped names that pass
+	// the branch rules are accepted on purpose and never escape to an absolute
+	// path.
+	for _, value := range []string{"refs/heads/feat/x", "srv/private/x"} {
+		if got := sanitizePlacementBranch(value); got != value {
+			t.Errorf("sanitizePlacementBranch(%q) = %q, want unchanged", value, got)
+		}
+	}
 }
 
 func TestPlacementLabelRelaxesPathGuardOnlyForTheBranch(t *testing.T) {

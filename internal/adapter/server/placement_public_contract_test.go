@@ -41,7 +41,7 @@ func (p adrPlacementProvider) Bind(_ context.Context, req PlacementBindRequest) 
 			return PlacementBinding{}, err
 		}
 		ref := session.EnvironmentRef{Kind: session.EnvKindLocal, ID: choice.Path, Revision: choice.Head}
-		return PlacementBinding{Ref: ref, Environment: tool.MustEnvironment(ref, memfs.NewWorkspace(choice.Path), memledger.New(), nil), Metadata: PlacementMetadata{Label: choice.Branch, Branch: choice.Branch, Revision: choice.Head}}, nil
+		return PlacementBinding{Ref: ref, Environment: tool.MustEnvironment(ref, memfs.NewWorkspace(choice.Path), memledger.New(), nil), Metadata: PlacementMetadata{Label: adrWorktreeLabel(choice), Branch: choice.Branch, Revision: choice.Head}}, nil
 	}
 	return adrPlacementBinding(), nil
 }
@@ -71,14 +71,24 @@ func (adrWorktrees) List(context.Context, string) ([]Worktree, error) {
 		{Path: adrPrivateRoot, Branch: "main", Head: "abc123"},
 		{Path: "/srv/private/feature", Branch: "feature", Head: "def456"},
 		{Path: "/srv/private/nested", Branch: "feat/x", Head: "def456"},
+		{Path: "/srv/private/labelled", Branch: "feat/y", Head: "def456"},
 	}, nil
+}
+
+// adrWorktreeLabel labels most worktrees by branch, but gives feat/y a
+// path-shaped label that the server must blank.
+func adrWorktreeLabel(choice Worktree) string {
+	if choice.Branch == "feat/y" {
+		return choice.Path
+	}
+	return choice.Branch
 }
 
 func (p adrPlacementProvider) ListWorktrees(_ context.Context, req PlacementDiscoveryRequest) ([]ScopedWorktree, error) {
 	current, _ := (adrWorktrees{}).List(context.Background(), req.SourceRef.ID)
 	out := make([]ScopedWorktree, 0, len(current))
 	for _, choice := range current {
-		out = append(out, ScopedWorktree{Selector: p.selectors.Issue(req.Principal, req.Source, choice), Label: choice.Branch, Branch: choice.Branch, Revision: choice.Head})
+		out = append(out, ScopedWorktree{Selector: p.selectors.Issue(req.Principal, req.Source, choice), Label: adrWorktreeLabel(choice), Branch: choice.Branch, Revision: choice.Head})
 	}
 	return out, nil
 }
@@ -182,7 +192,7 @@ func TestDiscoveryIsSessionScopedAndOwnerAuthorized(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(resp.GetWorktrees()) != 3 || resp.GetWorktrees()[0].GetSelector() == "" {
+	if len(resp.GetWorktrees()) != 4 || resp.GetWorktrees()[0].GetSelector() == "" {
 		t.Fatalf("worktrees = %+v", resp.GetWorktrees())
 	}
 	for _, wt := range resp.GetWorktrees() {
@@ -266,6 +276,43 @@ func TestNamespacedBranchSurvivesDiscoveryAndPlacement(t *testing.T) {
 		t.Fatalf("fork placement metadata = %+v", p)
 	}
 	for _, msg := range []string{cleared.String(), got.String(), forked.String()} {
+		if strings.Contains(msg, "/srv/") {
+			t.Fatalf("private path escaped: %v", msg)
+		}
+	}
+}
+
+func TestPathShapedLabelStaysBlankWhenItIsNotTheBranch(t *testing.T) {
+	svc := newPlacementContractService(t)
+	h := NewHarnessServer(svc)
+	created, err := h.CreateSession(context.Background(), &mecatlv1.CreateSessionRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := h.ListWorktrees(context.Background(), &mecatlv1.ListWorktreesRequest{SessionId: created.GetSessionId()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var selector string
+	for _, wt := range resp.GetWorktrees() {
+		if wt.GetBranch() == "feat/y" {
+			if wt.GetLabel() != "" {
+				t.Fatalf("path-shaped label = %q, want empty", wt.GetLabel())
+			}
+			selector = wt.GetSelector()
+		}
+	}
+	if selector == "" {
+		t.Fatalf("feat/y missing from %+v", resp.GetWorktrees())
+	}
+	cleared, err := h.ClearSession(context.Background(), &mecatlv1.ClearSessionRequest{SourceSessionId: created.GetSessionId(), WorktreeSelector: &selector})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := cleared.GetPlacement(); got.GetLabel() != "" || got.GetBranch() != "feat/y" {
+		t.Fatalf("clear placement metadata = %+v", got)
+	}
+	for _, msg := range []string{resp.String(), cleared.String()} {
 		if strings.Contains(msg, "/srv/") {
 			t.Fatalf("private path escaped: %v", msg)
 		}

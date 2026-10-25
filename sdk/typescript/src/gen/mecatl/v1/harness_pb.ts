@@ -1040,16 +1040,16 @@ export type PlacementMetadata = Message<"mecatl.v1.PlacementMetadata"> & {
   kind: string;
 
   /**
-   * label is provider display text, such as "Primary repository" or, for a
-   * git worktree, the short branch name.
+   * label is provider display text, such as "Local workspace" or, for a git
+   * worktree, the short branch name. It may be empty.
    *
    * @generated from field: string label = 2;
    */
   label: string;
 
   /**
-   * branch is the short branch name (for example "feat/x"); empty for a
-   * detached or unknown HEAD.
+   * branch is the git branch name (for example "feat/x"). It is empty for a
+   * non-git placement, a detached or unknown HEAD, or a rejected name.
    *
    * @generated from field: string branch = 3;
    */
@@ -7173,15 +7173,16 @@ export type Worktree = Message<"mecatl.v1.Worktree"> & {
   kind: string;
 
   /**
-   * label is display text: the short branch name, or "Detached worktree".
+   * label is provider display text, such as the short branch name or
+   * "Detached worktree". It may be empty.
    *
    * @generated from field: string label = 3;
    */
   label: string;
 
   /**
-   * branch is the short branch name (for example "feat/x"); empty for a
-   * detached HEAD.
+   * branch is the git branch name (for example "feat/x"). It is empty for a
+   * detached HEAD or a rejected name.
    *
    * @generated from field: string branch = 4;
    */

@@ -17,6 +17,7 @@ import (
 type ScopedWorktree struct {
 	Selector string
 	Label    string
+	// Branch is the short branch name, such as "feat/x", not a full ref.
 	Branch   string
 	Revision string
 	Bare     bool

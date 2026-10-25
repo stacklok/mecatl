@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 	"sync"
 	"time"
@@ -177,8 +178,9 @@ type PlacementBindRequest struct {
 // PlacementMetadata is the bounded, display-safe provider projection returned
 // with a binding. It contains no roots, locators, credentials, or authority.
 type PlacementMetadata struct {
-	Kind     string
-	Label    string
+	Kind  string
+	Label string
+	// Branch is the short branch name, such as "feat/x", not a full ref.
 	Branch   string
 	Revision string
 }
@@ -939,15 +941,17 @@ func sanitizePlacementDisplay(value string, maxRunes int) string {
 	return value
 }
 
-// sanitizePlacementBranch keeps a short branch name such as "feat/x". It
-// permits "/" only inside a well-formed git branch name, whose rules already
-// exclude absolute paths, ".." traversal, backslashes, and drive letters.
+// sanitizePlacementBranch keeps a well-formed branch name such as "feat/x".
+// The branch rules exclude absolute paths, ".." traversal, backslashes, and
+// drive letters, but not relative path-shaped names, so providers must
+// supply real short branch names. It validates the whole name before capping
+// its length, so a cut never decides whether the name is accepted.
 func sanitizePlacementBranch(value string) string {
-	value = cleanPlacementText(value, maxPlacementNameRunes)
+	value = cleanPlacementText(value, math.MaxInt)
 	if !validBranchName(value) {
 		return ""
 	}
-	return value
+	return truncateRunes(value, maxPlacementNameRunes)
 }
 
 // sanitizePlacementLabel relaxes the path guard only for a label that is the
@@ -967,16 +971,19 @@ func cleanPlacementText(value string, maxRunes int) string {
 			b.WriteRune(r)
 		}
 	}
-	value = strings.TrimSpace(b.String())
-	runes := []rune(value)
-	if len(runes) > maxRunes {
-		value = string(runes[:maxRunes])
+	return truncateRunes(strings.TrimSpace(b.String()), maxRunes)
+}
+
+func truncateRunes(value string, maxRunes int) string {
+	if runes := []rune(value); len(runes) > maxRunes {
+		return string(runes[:maxRunes])
 	}
 	return value
 }
 
-// validBranchName applies the `git check-ref-format --branch` rules to a short
-// branch name.
+// validBranchName reports whether name passes the character and component
+// rules of `git check-ref-format --branch`. Callers strip control runes
+// first; it does not reject "HEAD".
 func validBranchName(name string) bool {
 	if name == "" || name == "@" || strings.HasPrefix(name, "-") || strings.HasSuffix(name, ".") ||
 		strings.Contains(name, "..") || strings.Contains(name, "@{") ||
