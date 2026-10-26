@@ -5,12 +5,15 @@ import (
 	"testing"
 
 	"github.com/stacklok/mecatl/engine/session"
+	"github.com/stacklok/mecatl/internal/identitybroker"
 )
 
 const internalBearer = "as1-internal-bearer-c41d"
 
+var internalToken = identitybroker.NewToken(internalBearer)
+
 func TestRequestAccessTokenEndsWithTheRequest(t *testing.T) {
-	ctx, done := withRequestAccessToken(t.Context(), internalBearer)
+	ctx, done := withRequestAccessToken(t.Context(), internalToken)
 	detached := context.WithoutCancel(ctx)
 	for name, c := range map[string]context.Context{"request": ctx, "detached copy": detached} {
 		if got := accessTokenFromRequest(c).Value(); got != internalBearer {
@@ -29,7 +32,7 @@ func TestRequestAccessTokenEndsWithTheRequest(t *testing.T) {
 }
 
 func TestServerOwnedContextsHaveNoAccessToken(t *testing.T) {
-	ctx, done := withRequestAccessToken(t.Context(), internalBearer)
+	ctx, done := withRequestAccessToken(t.Context(), internalToken)
 	defer done()
 
 	if plain := t.Context(); withoutRequestAccessToken(plain) != plain {
@@ -59,7 +62,7 @@ func TestServerOwnedContextsHaveNoAccessToken(t *testing.T) {
 
 func TestWithVerifiedCallerCarriesATokenOnlyWithAPrincipal(t *testing.T) {
 	alice := &session.Principal{Issuer: "https://login.example.com", Subject: "alice", GrantType: session.GrantTypeUser}
-	ctx, done := withVerifiedCaller(t.Context(), alice, internalBearer)
+	ctx, done := withVerifiedCaller(t.Context(), alice, internalToken)
 	if p := session.PrincipalFromContext(ctx); p == nil || p.Subject != alice.Subject || accessTokenFromRequest(ctx).Value() != internalBearer {
 		t.Fatal("a verified caller lacks its principal or token")
 	}
@@ -68,7 +71,7 @@ func TestWithVerifiedCallerCarriesATokenOnlyWithAPrincipal(t *testing.T) {
 		t.Fatal("done left the token")
 	}
 
-	ctx, done = withVerifiedCaller(t.Context(), nil, internalBearer)
+	ctx, done = withVerifiedCaller(t.Context(), nil, internalToken)
 	defer done()
 	if !accessTokenFromRequest(ctx).IsZero() {
 		t.Fatal("a request without a verified principal carries a token")

@@ -20,6 +20,7 @@ import (
 
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
+	"github.com/stacklok/mecatl/internal/identitybroker"
 	"github.com/stacklok/mecatl/internal/syscaller"
 )
 
@@ -566,14 +567,16 @@ func (a *Authenticator) observeAuthentication(ctx context.Context, outcome authO
 // authGRPC verifies the static bearer token (when configured) and the caller
 // identity (when a verifier is wired), returning the token presented (empty when
 // static auth is off), the verified principal (nil when identity is off), and
-// the bearer presented, which verified the principal when it is non-nil.
-func (a *Authenticator) authGRPC(ctx context.Context) (string, *session.Principal, string, error) {
+// the bearer presented as an access token, which verified the principal when
+// it is non-nil. The access token's own type keeps it from being swapped with
+// the static token.
+func (a *Authenticator) authGRPC(ctx context.Context) (string, *session.Principal, identitybroker.Token, error) {
 	bearer, present, duplicate := tokenFromMetadata(ctx)
 	if duplicate {
 		if a.cfg.authEnabled() || a.cfg.identityConfigured() {
 			a.observeAuthentication(ctx, authOutcomeRejected, authCategoryDuplicateAuthorization, authTransportGRPC, authStatusGRPCUnauthenticated)
 		}
-		return "", nil, "", status.Error(codes.Unauthenticated, "duplicate authorization metadata")
+		return "", nil, identitybroker.Token{}, status.Error(codes.Unauthenticated, "duplicate authorization metadata")
 	}
 	staticTok := ""
 	if a.cfg.authEnabled() {
@@ -583,7 +586,7 @@ func (a *Authenticator) authGRPC(ctx context.Context) (string, *session.Principa
 				category = authCategoryMissingBearer
 			}
 			a.observeAuthentication(ctx, authOutcomeRejected, category, authTransportGRPC, authStatusGRPCUnauthenticated)
-			return "", nil, "", status.Error(codes.Unauthenticated, "missing or invalid bearer token")
+			return "", nil, identitybroker.Token{}, status.Error(codes.Unauthenticated, "missing or invalid bearer token")
 		}
 		staticTok = bearer
 	}
@@ -610,25 +613,25 @@ func (a *Authenticator) authGRPC(ctx context.Context) (string, *session.Principa
 			}
 			a.observeAuthentication(ctx, outcome, category, authTransportGRPC, statusText)
 		}
-		return "", nil, "", identityErr
+		return "", nil, identitybroker.Token{}, identityErr
 	}
 	if a.cfg.identityConfigured() {
 		a.observeAuthentication(ctx, authOutcomeAccepted, authCategoryValidatedIdentity, authTransportGRPC, authStatusGRPCOK)
 	} else if a.cfg.authEnabled() {
 		a.observeAuthentication(ctx, authOutcomeAccepted, authCategoryStaticBearer, authTransportGRPC, authStatusGRPCOK)
 	}
-	return staticTok, p, bearer, nil
+	return staticTok, p, identitybroker.NewToken(bearer), nil
 }
 
-// withVerifiedCaller attaches the verified principal and the bearer that
+// withVerifiedCaller attaches the verified principal and the access token that
 // verified it, for the identity broker's session open. The caller must call the
 // returned function when the request returns, which empties the token.
-func withVerifiedCaller(ctx context.Context, p *session.Principal, bearer string) (context.Context, func()) {
+func withVerifiedCaller(ctx context.Context, p *session.Principal, token identitybroker.Token) (context.Context, func()) {
 	ctx = session.WithPrincipal(ctx, p)
 	if p == nil {
 		return ctx, func() {}
 	}
-	return withRequestAccessToken(ctx, bearer)
+	return withRequestAccessToken(ctx, token)
 }
 
 // rateGRPC enforces the rate limit for a gRPC call keyed by the verified
@@ -785,7 +788,7 @@ func (a *Authenticator) Middleware(next http.Handler) http.Handler {
 			}
 		}
 		if principal != nil {
-			ctx, done := withVerifiedCaller(r.Context(), principal, bearer)
+			ctx, done := withVerifiedCaller(r.Context(), principal, identitybroker.NewToken(bearer))
 			defer done()
 			r = r.WithContext(ctx)
 		}

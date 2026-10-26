@@ -25,10 +25,10 @@ type requestAccessToken struct {
 
 type requestAccessTokenKey struct{}
 
-// withRequestAccessToken attaches the bearer that authenticated the request.
-// The caller must call the returned function when the request returns.
-func withRequestAccessToken(ctx context.Context, bearer string) (context.Context, func()) {
-	held := &requestAccessToken{token: identitybroker.NewToken(bearer)}
+// withRequestAccessToken attaches the access token that authenticated the
+// request. The caller must call the returned function when the request returns.
+func withRequestAccessToken(ctx context.Context, token identitybroker.Token) (context.Context, func()) {
+	held := &requestAccessToken{token: token}
 	return context.WithValue(ctx, requestAccessTokenKey{}, held), func() {
 		held.mu.Lock()
 		held.token = identitybroker.Token{}
