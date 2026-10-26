@@ -2,6 +2,8 @@ package app
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"strings"
 	"sync"
@@ -48,7 +50,7 @@ func newClosableCore(t *testing.T) *closableCore {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &closableCore{Broker: broker}
+	return &closableCore{Broker: broker.core}
 }
 
 func (c *closableCore) Close() error {
@@ -240,6 +242,53 @@ func TestIdentityBrokerDefaultWiringRegistersAgents(t *testing.T) {
 	}
 }
 
+// TestIdentityBrokerKeysAreSeparatePerRole: the wiring generates a broker
+// client key that is not the agent issuer key, nor another build's.
+func TestIdentityBrokerKeysAreSeparatePerRole(t *testing.T) {
+	broker, err := newIdentityBroker(Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if broker.core == nil || broker.client == nil {
+		t.Fatalf("newIdentityBroker = %+v, want a core and a client assertion signer", broker)
+	}
+	workload := identitybroker.Workload{Name: identityBrokerWorkload}
+	owner := identitybroker.Owner{Issuer: "https://login.example.com", Subject: "alice-204"}
+	incarnation := string(session.NewIncarnationID())
+	opened, err := broker.core.OpenSession(t.Context(), workload, identitybroker.OpenSessionRequest{HostSessionID: "hostS42", Incarnation: incarnation, Owner: owner})
+	if err != nil {
+		t.Fatalf("OpenSession: %v", err)
+	}
+	reg, err := broker.core.RegisterAgent(t.Context(), workload, identitybroker.RegisterAgentRequest{
+		SessionID: opened.ID, HostSessionID: "hostS42", Owner: owner, Incarnation: incarnation,
+		Definition: identitybroker.DefinitionRef{Source: "system", Name: "main"},
+	})
+	if err != nil {
+		t.Fatalf("RegisterAgent: %v", err)
+	}
+	header, err := base64.RawURLEncoding.DecodeString(strings.Split(reg.Credential.Value(), ".")[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var agentKey struct {
+		KID string `json:"kid"`
+	}
+	if err := json.Unmarshal(header, &agentKey); err != nil || agentKey.KID == "" {
+		t.Fatalf("credential header %s: %v", header, err)
+	}
+	keys := broker.client.JWKS().Keys
+	if len(keys) != 1 || keys[0].KeyID == "" || keys[0].KeyID == agentKey.KID {
+		t.Fatalf("broker client JWKS %+v; want one key distinct from the agent issuer key %q", keys, agentKey.KID)
+	}
+	other, err := newIdentityBroker(Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if other.client.JWKS().Keys[0].KeyID == keys[0].KeyID {
+		t.Fatal("two builds generated the same broker client key")
+	}
+}
+
 // TestIdentityBrokerSessionsRegisterTheirAgent is the slice test: with the
 // real broker and no shell, a signed-in user's session registers its main agent
 // when created, and runs.
@@ -342,11 +391,11 @@ func TestScheduledFireClosesItsBrokerSessionWhenTheRunEnds(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	core, err := newIdentityBroker(Config{})
+	ib, err := newIdentityBroker(Config{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	broker := &countingIdentityBroker{Service: identitybroker.NewInProcess(identitybroker.UnverifiedAuthenticator{Name: identityBrokerWorkload}, core)}
+	broker := &countingIdentityBroker{Service: identitybroker.NewInProcess(identitybroker.UnverifiedAuthenticator{Name: identityBrokerWorkload}, ib.core)}
 	llm := mockllm.New(mockllm.TextTurn("fire done"))
 	engine := agent.NewEngine(agent.Deps{
 		LLM: llm, Catalog: tool.NewCatalog(), Model: "test-model", Store: store,

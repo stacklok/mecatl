@@ -25,8 +25,11 @@ const (
 	authPrivateKeyJWT      = "private_key_jwt"
 	clientAssertionTypeJWT = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
 	clientAssertionTyp     = "client-authentication+jwt"
-	// as1ClockSkew is how long past exp AS-1 keeps a used jti.
+	// as1ClockSkew is the clock skew AS-1 allows a client assertion's exp and
+	// iat, and so how long past exp it keeps a used jti.
 	as1ClockSkew = time.Minute
+	// ClientAssertionClockSkew is as1ClockSkew, for tests at the boundary.
+	ClientAssertionClockSkew = as1ClockSkew
 )
 
 // BrokerKey is a public key registered for BrokerClientID, as from its
@@ -155,7 +158,7 @@ func (a *AS1) verifyAssertion(assertion string) bool {
 		}
 		return key, nil
 	}, jwt.WithValidMethods([]string{"ES256"}), jwt.WithIssuer(BrokerClientID), jwt.WithSubject(BrokerClientID),
-		jwt.WithExpirationRequired(), jwt.WithIssuedAt(), jwt.WithTimeFunc(a.now))
+		jwt.WithExpirationRequired(), jwt.WithIssuedAt(), jwt.WithLeeway(as1ClockSkew), jwt.WithTimeFunc(a.now))
 	if err != nil {
 		return false
 	}
