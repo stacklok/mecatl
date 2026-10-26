@@ -965,7 +965,11 @@ message CreateSessionResponse {
 // backend locator, exact EnvironmentRef, or reusable selector.
 message PlacementMetadata {
   string kind = 1;
+  // label is provider display text, such as "Local workspace" or, for a git
+  // worktree, the short branch name. It may be empty.
   string label = 2;
+  // branch is the git branch name (for example "feat/x"). It is empty for a
+  // non-git placement, a detached or unknown HEAD, or a rejected name.
   string branch = 3;
   string revision = 4;
 }
@@ -3156,7 +3160,11 @@ message ListCommandsResponse {
 message Worktree {
   string selector = 1;
   string kind = 2;
+  // label is provider display text, such as the short branch name or
+  // "Detached worktree". It may be empty.
   string label = 3;
+  // branch is the git branch name (for example "feat/x"). It is empty for a
+  // detached HEAD or a rejected name.
   string branch = 4;
   string revision = 5;
   bool bare = 6;

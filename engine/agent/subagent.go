@@ -608,7 +608,7 @@ var subagentSchema = json.RawMessage(`{
     "mode": {
       "type": "string",
       "enum": ["read-only", "read-write"],
-      "description": "Workspace mode (default 'read-only'). 'read-write' gives the subagent the Edit and Write tools and lets it change files DIRECTLY in your workspace — exactly as you do — so its edits land immediately, with no copy or merge step. There is no isolation: a read-write subagent that crashes or goes wrong can leave partial edits in your working tree, the same as any interrupted edit; recover with git (git diff / git checkout / git stash) since your repository is the safety net. Use 'read-write' when you want a focused subagent to actually make and keep file changes (e.g. 'implement this fix and edit the files'); omit (or 'read-only') for an investigation that must not touch your files. Runs serially — never concurrently with your other tools — so it cannot race your own reads or writes. Cannot be combined with 'background' or with 'agent'+'model' together; 'read-write'+'agent' alone runs the named specialist writable (its scoped catalog + Edit/Write against your workspace); 'read-write'+'model' (no 'agent') runs the writable explorer on that model. Composes with 'fork', 'resume', 'output_schema'."
+      "description": "Workspace mode (default 'read-only'). 'read-write' gives the subagent the Edit and Write tools and lets it change files DIRECTLY in your workspace — exactly as you do — so its edits land immediately, with no copy or merge step. There is no isolation: a read-write subagent that crashes or goes wrong can leave partial edits in your working tree, the same as any interrupted edit; recover with git (git diff / git checkout / git stash) since your repository is the safety net. 'read-write' keeps the subagent's file changes; omit (or 'read-only') for an investigation that must not touch your files. Runs serially — never concurrently with your other tools — so it cannot race your own reads or writes. Cannot be combined with 'background' or with 'agent'+'model' together; 'read-write'+'agent' alone runs the named specialist writable (its scoped catalog + Edit/Write against your workspace); 'read-write'+'model' (no 'agent') runs the writable explorer on that model. Composes with 'fork', 'resume', 'output_schema'."
     }
   },
   "required": ["prompt"]
@@ -1425,25 +1425,25 @@ func (t *SubagentTool) Spec() tool.ToolSpec {
 		shellClause = "By default the subagent is READ-ONLY — " + t.shellDisabledNote + " — with no Edit/Write"
 	}
 	desc := "Delegate ONE focused, self-contained task to a subagent with its own fresh context. " +
+		"Delegation has a real cost: the subagent starts empty, re-reads what you already have, and " +
+		"returns only its final message, so detail you did not ask for is lost. Do the work yourself " +
+		"when it is a handful of tool calls or depends on context you already hold. Delegate a " +
+		"read-only investigation whose intermediate output you do not need: a broad search ('search → " +
+		"summarize'), a code path traced across many files, or history work ('bisect the history'). " +
 		"For two or more independent READ-ONLY tasks, prefer one Subagent call per task in the SAME " +
 		"assistant turn; eligible calls execute concurrently and return separate results. Do not wait " +
-		"for one before launching the next unless a later task depends on an earlier result. Use it for " +
-		"a multi-step investigation ('search → summarize', 'trace this code path'), build/test/git " +
-		"work ('run the tests and report failures', 'bisect the history'), or an implementation task " +
-		"('implement this fix and edit the files'). " +
+		"for one before launching the next unless a later task depends on an earlier result. " +
+		"Run full test suites and repository-wide checks yourself; subagents run only focused checks. " +
 		shellClause + ". " +
-		"Set mode:\"read-write\" to let it edit and write files DIRECTLY in your workspace — exactly " +
-		"as you do — so its edits land immediately, with no copy or merge step. This is how you " +
-		"delegate an implementation task and have the edits LAND. Serial execution applies only to a " +
-		"mode:\"read-write\" call (it never runs alongside your other tools), so it cannot race you; " +
-		"there is no isolation, so review its result with `git diff`/`git status` and undo with " +
-		"`git checkout`/`git stash` if needed. " +
+		"mode:\"read-write\" lets it edit and write files DIRECTLY in your workspace, with no copy or " +
+		"merge step. Serial execution applies only to a mode:\"read-write\" call (it never runs " +
+		"alongside your other tools), so it cannot race you; there is no isolation, so review its " +
+		"result with `git diff`/`git status` and undo with `git checkout`/`git stash` if needed. " +
 		"The subagent cannot delegate further. " +
 		"The subagent's FINAL MESSAGE is its deliverable — you receive only that " +
 		"(see `prompt`; with `background: true` the call instead returns at once and you collect the " +
 		"result later). Do NOT use it when you need the intermediate outputs in this conversation " +
-		"(do the work yourself) or when workers must coordinate (use Team) — and don't delegate a " +
-		"single quick read you can do with Read/Grep." +
+		"or when workers must coordinate (use Team)." +
 		" Inline context you already hold (e.g. a diff, file contents, prior findings) directly in " +
 		"`prompt` rather than making the subagent re-fetch it — that saves its limited turn/tool " +
 		"budget for the actual task." +
@@ -1453,7 +1453,8 @@ func (t *SubagentTool) Spec() tool.ToolSpec {
 		"conversation survives)." +
 		" Set `fork: true` to seed the subagent with a COPY of THIS conversation (your full context " +
 		"so far) instead of a fresh, empty one — for a focused continuation that needs everything " +
-		"you have already gathered; it runs on your own model (no model/agent/resume)."
+		"you have already gathered; it runs on your own model (no model/agent/resume)." +
+		" When in doubt, don't spawn: do the work yourself."
 	desc += t.agentEnumeration()
 	return tool.ToolSpec{
 		Name:        subagentToolName,

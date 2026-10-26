@@ -2,12 +2,13 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/port"
-	"github.com/stacklok/mecatl/engine/prompt"
 	"github.com/stacklok/mecatl/engine/session"
 )
 
@@ -28,7 +29,7 @@ func TestDelegationGuidanceLandsInBuiltEnginePrompt(t *testing.T) {
 		{"both", true, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			prefix := captureBuiltDelegationPrompt(t, tc.parallel, tc.teams).StablePrefix
+			prefix := captureBuiltPrefixes(t, tc.parallel, tc.teams, mockllm.TextTurn("done"))[0]
 			if !strings.Contains(prefix, subagentGuidance) {
 				t.Errorf("StablePrefix omits Subagent guidance")
 			}
@@ -47,16 +48,24 @@ func TestDelegationGuidanceLandsInBuiltEnginePrompt(t *testing.T) {
 	}
 }
 
-func captureBuiltDelegationPrompt(t *testing.T, parallel, teams bool) prompt.Layered {
+// captureBuiltPrefixes runs one prompt through a built session driven by the
+// scripted turns and returns the StablePrefix of every provider request, in order.
+func captureBuiltPrefixes(t *testing.T, parallel, teams bool, turns ...mockllm.Turn) []string {
 	t.Helper()
 
-	var captured prompt.Layered
+	var (
+		mu       sync.Mutex
+		prefixes []string
+	)
 	provider := mockllm.NewWith([]mockllm.Option{
-		mockllm.WithRequestObserver(func(req port.LLMRequest) { captured = req.System }),
-	}, mockllm.TextTurn("done"))
-	workspace := t.TempDir()
+		mockllm.WithRequestObserver(func(req port.LLMRequest) {
+			mu.Lock()
+			prefixes = append(prefixes, req.System.StablePrefix)
+			mu.Unlock()
+		}),
+	}, turns...)
 	built, err := buildIsolated(t, context.Background(), Config{
-		Workspace:      workspace,
+		Workspace:      t.TempDir(),
 		Model:          "mock",
 		MockProvider:   provider,
 		EnableParallel: parallel,
@@ -78,8 +87,30 @@ func captureBuiltDelegationPrompt(t *testing.T, parallel, teams bool) prompt.Lay
 	}
 	for range run.Events() {
 	}
-	if captured.StablePrefix == "" {
+	mu.Lock()
+	defer mu.Unlock()
+	if len(prefixes) == 0 || prefixes[0] == "" {
 		t.Fatal("provider did not receive a built system prompt")
 	}
-	return captured
+	return prefixes
+}
+
+// TestSubagentChildPromptScopesVerification drives a real Subagent call through
+// the built session: the child's stable system prefix carries the verification
+// scope note, while the parent's does not.
+func TestSubagentChildPromptScopesVerification(t *testing.T) {
+	prefixes := captureBuiltPrefixes(t, false, false,
+		mockllm.ToolCallTurn(session.ToolCall{ID: "s1", Name: "Subagent", Args: json.RawMessage(`{"prompt":"check one thing","description":"probe"}`)}),
+		mockllm.TextTurn("child done"),
+		mockllm.TextTurn("parent done"),
+	)
+	if len(prefixes) != 3 {
+		t.Fatalf("provider saw %d requests, want 3 (parent, child, parent)", len(prefixes))
+	}
+	if strings.Contains(prefixes[0], subagentVerificationScopeNote) {
+		t.Error("parent system prompt must not carry the subagent verification scope note")
+	}
+	if !strings.Contains(prefixes[1], subagentVerificationScopeNote) {
+		t.Errorf("Subagent child system prompt must carry the verification scope note, got:\n%s", prefixes[1])
+	}
 }

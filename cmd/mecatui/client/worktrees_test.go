@@ -33,8 +33,8 @@ func (f *fakeWorktreesClient) ListWorktrees(_ context.Context, in *mecatlv1.List
 
 func TestListWorktreesMapping(t *testing.T) {
 	fake := &fakeWorktreesClient{resp: &mecatlv1.ListWorktreesResponse{Worktrees: []*mecatlv1.Worktree{
-		{Selector: "s1", Label: "repo", Branch: "refs/heads/main", Revision: "abcdef1"},
-		{Selector: "s2", Label: "repo-wt", Branch: "refs/heads/feature", Revision: "1234567"},
+		{Selector: "s1", Label: "repo", Branch: "main", Revision: "abcdef1"},
+		{Selector: "s2", Label: "repo-wt", Branch: "feature", Revision: "1234567"},
 	}}}
 	cl := newFakeClient(fake)
 
@@ -48,7 +48,7 @@ func TestListWorktreesMapping(t *testing.T) {
 	if len(wts) != 2 {
 		t.Fatalf("worktrees = %d, want 2", len(wts))
 	}
-	if wts[0].Selector.token != "s1" || wts[0].Label != "repo" || wts[0].Branch != "refs/heads/main" || wts[0].Revision != "abcdef1" {
+	if wts[0].Selector.token != "s1" || wts[0].Label != "repo" || wts[0].Branch != "main" || wts[0].Revision != "abcdef1" {
 		t.Fatalf("wts[0] = %+v", wts[0])
 	}
 	if wts[1].Selector.token != "s2" || wts[1].Label != "repo-wt" || wts[1].Revision != "1234567" {
@@ -58,7 +58,7 @@ func TestListWorktreesMapping(t *testing.T) {
 
 func TestListWorktreesCmdSuccess(t *testing.T) {
 	fake := &fakeWorktreesClient{resp: &mecatlv1.ListWorktreesResponse{Worktrees: []*mecatlv1.Worktree{
-		{Selector: "s1", Label: "repo", Branch: "refs/heads/main"},
+		{Selector: "s1", Label: "repo", Branch: "main"},
 	}}}
 	cl := newFakeClient(fake)
 

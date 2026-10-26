@@ -8,7 +8,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/port"
+	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/adapter/osfs"
 	"github.com/stacklok/mecatl/internal/adapter/server"
 )
@@ -185,3 +187,49 @@ func TestParseWorktreePorcelainDetached(t *testing.T) {
 
 // Compile-time: ensure the lister type satisfies the interface.
 var _ server.WorktreeLister = gitWorktreeLister{}
+
+// TestLocalPlacementShowsShortBranchNames runs real porcelain output through the
+// local provider: two worktrees sharing a HEAD stay distinguishable by branch,
+// including a namespaced one (issue #2420).
+func TestLocalPlacementShowsShortBranchNames(t *testing.T) {
+	root := t.TempDir()
+	base := filepath.Join(root, "repo")
+	if err := os.Mkdir(base, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	wtInitRepo(t, base)
+	wtWriteFile(t, filepath.Join(base, "README"), "base\n")
+	wtCommit(t, base)
+	wtRunGit(t, base, "worktree", "add", "-b", "feat/x", filepath.Join(root, "wt-feat-x"))
+
+	issuer, err := server.NewWorktreeSelectorIssuer(make([]byte, 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := Config{Workspace: base, Shell: "/bin/sh", TrustProject: true, Diagnostics: port.NopDiagnostics{}}
+	provider := &localPlacementProvider{scope: "test", root: base, selectors: issuer, worktrees: buildWorktreeLister(cfg),
+		workspace: func(root string) tool.Workspace { return memfs.NewWorkspace(root) }}
+	sourceRef := configuredLocalPlacementRef(base)
+	listed, err := provider.ListWorktrees(context.Background(), server.PlacementDiscoveryRequest{Source: "source", SourceRef: sourceRef, Scope: "test"})
+	if err != nil || len(listed) != 2 {
+		t.Fatalf("ListWorktrees = %+v, %v", listed, err)
+	}
+	if listed[0].Revision != listed[1].Revision {
+		t.Fatalf("worktrees should share a HEAD: %+v", listed)
+	}
+	for _, wt := range listed {
+		if strings.HasPrefix(wt.Branch, "refs/") || wt.Label != wt.Branch || wt.Branch == "" {
+			t.Errorf("worktree display = label %q, branch %q; want matching short names", wt.Label, wt.Branch)
+		}
+	}
+	if listed[1].Branch != "feat/x" {
+		t.Fatalf("listed[1].Branch = %q, want feat/x", listed[1].Branch)
+	}
+	bound, err := provider.Bind(context.Background(), server.PlacementBindRequest{Selector: server.SelectWorktree("source", sourceRef, listed[1].Selector), Scope: "test", Operation: server.PlacementOperationSuccessor})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bound.Metadata.Label != "feat/x" || bound.Metadata.Branch != "feat/x" {
+		t.Fatalf("bound metadata = %+v, want feat/x", bound.Metadata)
+	}
+}
