@@ -1,9 +1,9 @@
 # Kubernetes execution and filesystems
 
-This proposal chooses **capability-based placement behind a shared filesystem-and-execution API**. At session creation,
-the server admits the requested capabilities and binds the session either to shared filesystem workers or to a dedicated
-executor that handles both files and commands. Filesystem-only sessions need no executor. This is the selected design
-for this proposal, not implemented behavior. The alternatives and their diagrams are retained in the appendices.
+This proposal chooses **a dedicated per-session executor behind a shared filesystem-and-execution API**. At session
+creation, the server admits the requested capabilities and binds the session to an executor that serves its files and,
+when admitted, its commands. This is the selected design for this proposal, not implemented behavior. The alternatives
+and their diagrams are retained in the appendices.
 
 The agent loop stays separate from execution, keeping credentials and permission checks outside untrusted shell
 programs. The [cloud-native harness explanation](../../user-docs/cloud-native-harness.md) describes that broader design.
@@ -25,9 +25,8 @@ to start fresh and reattach the same authorized storage. Process restoration is 
 required.
 
 After a successful shell write and close, a fresh file-tool read should see the change without waiting for command
-completion. After a file-tool Edit completes, a fresh shell read should see it. Both placement modes, filesystem-only
-and execution-bound, retain files independently of compute. Filesystem-only sessions access them through shared
-workers; execution-bound sessions depend on their executor being available to serve them. The loop mounts neither
+completion. After a file-tool Edit completes, a fresh shell read should see it. Files are retained independently of
+compute, but a session can reach them only while its executor is available to serve them. The loop mounts neither
 workspace. Storage technology and the executor provider remain integration choices; the selected architecture does not
 require FUSE.
 
@@ -85,11 +84,11 @@ executor's termination is uncertain or its lease expires, access stops rather th
 This is a draft provider, **not** an approved boundary for hostile multi-tenant workloads. Its operation grants and
 run claim also do not implement the full proposed identity system. [Lifecycle][k8s-lifecycle] · [Run claim][link-8]
 
-So the gap is not basic persistence or shared files between the current file and shell tools. It is independent file
-access when compute is absent, and a defined consistency contract when independently placed clients use one filesystem.
-Current `Workspace` operations include versioned reads, create-only writes, conditional replacement, and search.
-Compare-and-swap (CAS) means replacing a file only if its version still matches the version previously read. Existing
-adapter guarantees do not establish atomic CAS against a shell process writing through a separate mount.
+So the gap is not basic persistence or shared files between the current file and shell tools. It is a defined
+consistency contract when independently placed clients use one filesystem. Current `Workspace` operations include
+versioned reads, create-only writes, conditional replacement, and search. Compare-and-swap (CAS) means replacing a file
+only if its version still matches the version previously read. Existing adapter guarantees do not establish atomic CAS
+against a shell process writing through a separate mount.
 [Workspace operations][link-3]
 
 Mecatl also has a Redis-backed workspace shared among sessions of the same authenticated user identity. It has no
@@ -102,22 +101,23 @@ We intend to deprecate the Redis workspace. Giving shell programs access to file
 otherwise, requires using or building a FUSE driver for it. That may be needed later, but it is out of scope for this
 proposal, and the Redis workspace may be removed from Mecatl.
 
-## Selected architecture: capability-based placement
+## Selected architecture: a per-session executor
 
 The design has two components. An always-running trusted service authenticates the agent loop's requests, authorizes
-them, and routes each one to the session's recorded placement. When a session needs execution, the service provisions a
-dedicated executor Pod bound to that session; this proposal does not define sharing executors across sessions. The
-executor serves two APIs: file operations behind tools such as `Read` and `Edit`, and command execution behind `Shell`.
+them, and routes each one to the session's recorded placement. For each session with file or command access, the service
+provisions a dedicated executor Pod bound to that session; this proposal does not define sharing executors across
+sessions. The executor serves two APIs: file operations behind tools such as `Read` and `Edit`, and, when admitted,
+command execution behind `Shell`.
 Because the shared service and executors are separate, they scale independently.
 
 | Admitted session capabilities | Where operations run | Availability and resource use |
 | --- | --- | --- |
-| Filesystem only | Shared file-service workers serving authorized workspace allocations | File access needs no executor; workers can serve multiple users and sessions and scale with file demand. |
-| Filesystem and execution | A dedicated executor's file helper and command runner, using the same workspace mount | Both file and command access depend on that executor; compute is reserved for the isolated execution environment. |
+| Filesystem only | The executor's file helper; `Shell` is not admitted | File access depends on the executor. |
+| Filesystem and execution | The executor's file helper and command runner, using the same workspace mount | Both file and command access depend on the executor. |
 
-This combines the shared file-serving path from [option 1](#option-1-the-agent-uses-an-api-the-executor-mounts-the-filesystem)
-with the co-located file and command path from [option 3](#option-3-the-executor-pod-also-serves-the-filesystem-api).
-It does not route file requests for an execution-bound session to shared workers while commands run elsewhere.
+This is the co-located file and command path from [option 3](#option-3-the-executor-pod-also-serves-the-filesystem-api),
+with the trusted entry point from [option 1](#option-1-the-agent-uses-an-api-the-executor-mounts-the-filesystem) in
+front of it. No file request is served outside the session's executor.
 
 ```mermaid
 flowchart TB
@@ -127,9 +127,7 @@ flowchart TB
     end
     subgraph trusted["Trusted service infrastructure"]
         api["Shared filesystem-and-execution API<br/>Authenticate, authorize, resolve session placement"]
-        workers["Shared file-service workers<br/>Tenant-scoped file operations"]
         control["Environment lifecycle and mount control"]
-        api -->|"Filesystem-only session"| workers
         api -->|"Provision / recover / retire"| control
     end
     subgraph executor["Dedicated executor Pod"]
@@ -142,47 +140,40 @@ flowchart TB
         fileops --> mount
         programs --> mount
     end
-    sharedstore[("Retained storage for filesystem-only workspaces")]
-    execstore[("Retained storage for execution-bound workspaces")]
+    execstore[("Retained workspace storage")]
 
     workspace -->|"File request"| api
     runner -->|"Command request"| api
-    api -->|"Execution-bound session: file or command request"| helper
+    api -->|"File or command request"| helper
     control -.->|"Establish restricted environment"| executor
-    workers --> sharedstore
     mount --> execstore
 ```
 
-The storage boxes represent authorized allocations, not a requirement for separate storage products or a volume shared
-by everyone. Boxes show placement, not proof of isolation. The helper transport can be provider-mediated invocation or a
-small authenticated listener; the shared API does not require every executor to expose its own public API.
+The storage box represents authorized allocations, not a volume shared by everyone. Boxes show placement, not proof of
+isolation. The helper transport can be provider-mediated invocation or a small authenticated listener; the shared API
+does not require every executor to expose its own public API.
 
 ### Admission and binding
 
 The session-creation request declares the needed capabilities. A request for `Shell` is not a grant: the server admits
 it under operator policy, chooses the placement, and records the environment and storage identities. Per-operation
 permission checks still apply, and withdrawing authority must stop access even if the placement remains allocated.
-The initial design keeps the placement class fixed for the session. Adding execution later needs an explicit transition
-contract or a new session; it must not silently provision compute or broaden authority.
+The initial design keeps the admitted capabilities fixed for the session. Adding `Shell` later needs an explicit
+transition contract or a new session; it must not silently broaden authority.
 
 A dedicated environment can be scoped per session, user, or workspace according to authorized sharing policy. The
 initial routing model binds each session to one environment; it does not require one permanent Pod per user. Sharing
 an executor across differently authorized agents requires a defined isolation and coordination contract. Existing no-FS
 sessions remain a separate, valid configuration.
 
-The two implementations must preserve the same file-tool contract, including path containment, versioned reads,
-create-only writes, conditional replacement, and error behavior. Read evidence remains session-specific even when
-sessions share content. This is host-side placement and adapter composition; it does not make Kubernetes or a remote
-service mandatory for local use or the importable Go engine.
+The executor's file API must preserve the same file-tool contract as local adapters, including path containment,
+versioned reads, create-only writes, conditional replacement, and error behavior. Read evidence remains session-specific
+even when sessions share content. This is host-side placement and adapter composition; it does not make Kubernetes or a
+remote service mandatory for local use or the importable Go engine.
 
 ### Scaling and recovery
 
-Shared file-service workers can serve file-only sessions without reserving execution sandboxes. Horizontal scaling
-still depends on backend capacity, cross-replica mutation coordination, and per-tenant limits for expensive operations
-such as recursive searches. Process-local locks cannot coordinate independent replicas, and shared capacity must not
-combine agents' authority.
-
-Execution-bound sessions accept coupled file and command availability. If their Pod disappears, the shared API waits
+Sessions accept coupled file and command availability. If the executor disappears, the trusted service waits
 for authorized recovery against the exact retained storage rather than transparently sending file operations elsewhere.
 The frontend can remain available while that session's operations are unavailable. An independent file-access fallback
 would need separate fencing, storage-attachment, and consistency rules and is outside the initial design. The presence
@@ -195,22 +186,17 @@ conditional Edit into atomic CAS against arbitrary shell writes.
 
 ### Keep trusted authority outside execution
 
-The shared service owns authentication, current authorization, and routing. Trusted infrastructure owns grant issuance,
-provisioning, storage attachment, retirement, and authoritative withdrawal. Broad storage credentials, signing keys,
-and mount-control interfaces stay outside the shell's reach. Shared file workers are trusted services, not hosts for
-user-supplied shell commands.
+The trusted service owns authentication, current authorization, routing, grant issuance, provisioning, storage
+attachment, retirement, and withdrawal. Broad storage credentials, signing keys, and mount-control interfaces stay
+outside the shell's reach.
 
-The executor gets only the helper and filesystem view needed for its admitted environment. The helper must have no
-greater filesystem authority than the shell's assigned view and cannot select other allocations, issue grants, or manage
-infrastructure. This supports a small executor security profile without moving the shared service's authority into the
-Pod. It does not remove the risk of shell attacks on the helper or on shell-controlled paths and content. A sidecar alone
-is not an isolation proof, and helper compromise must not grant access to other environments.
+The executor's file and command APIs run with only the filesystem view admitted for its session. They cannot select
+other allocations, issue grants, or manage infrastructure. Because they share a Pod with untrusted shell programs, shell
+attacks on the helper or on shell-controlled paths remain possible. A compromise must not reach other environments.
 
-Restrictions must hold on the native shell path as well as through the API. Trusted mount setup or backend enforcement
-must establish the authorized view and bounded withdrawal; API checks alone cannot enforce either on mounted writers.
-FUSE is one possible mount implementation, not the source of those guarantees. Neither a listener nor file handling
-inherently requires root or added Linux capabilities; the actual helper, mount placement, and runtime still need security
-qualification.
+The trusted service fixes that view when it provisions the executor and attaches storage, so the file API and the shell
+see the same restrictions. Withdrawal must still be enforced by the mount or backend, since already-running programs
+never call back to the trusted service. The helper, mount placement, and runtime still need security qualification.
 
 ## Filesystem requirements
 
@@ -234,7 +220,7 @@ single transaction; job-start/end snapshots cannot meet live two-way visibility.
 cross-host change feed.
 
 Files that were written and closed must survive the loss of the executor Pod; a write in progress may be lost.
-Filesystem-only sessions keep access through the shared workers. Execution-bound sessions regain access once a
+Sessions regain file access once a
 replacement executor reattaches the same storage. Durability also depends on where the filesystem client runs and on
 node and storage failures. No candidate meets these guarantees until close and `fsync` behavior is tested in that
 deployment.
@@ -274,34 +260,33 @@ Agent Substrate is a possible execution backend for this design, not an alternat
 model][substrate-selected-architecture] separates logical workloads from physical worker Pods. The companion
 [env service][env-selected-overview] adds an external API that proxies commands and file operations into an
 `ate-env-guest` daemon inside an actor. These findings are source-backed at Substrate `288694ef2297` and env
-`0d359ea73823`; they do not establish a tested Mecatl integration.
+`fccd920ae90a`; they do not establish a tested Mecatl integration.
 
-### Shared frontend, different placement decisions
+### What Substrate and `env` would provide
 
 An external `ate-env-api` resembles our shared entry point, but its filesystem requests still reach a guest actor.
 Substrate can suspend idle actors and multiplex them over fewer worker Pods, resuming them when traffic arrives.
 Therefore its executor-hosted file API does not require a permanently running Pod per session. File access still needs
-actor activation and worker capacity, however; a scalable proxy is not an executor-independent filesystem service.
+actor activation and worker capacity, as it needs a running executor in the selected design.
 
-| Concern | Selected capability-based placement | Substrate with the standard env service |
+| Concern | Selected design | Substrate with the standard `env` service |
 | --- | --- | --- |
-| File-only session | Shared file workers; no execution sandbox to activate | File requests are proxied into an active or resumed actor. |
 | Session with Shell | Dedicated environment serves both file and command requests on one mount | Guest process and filesystem services provide a similar co-located route. |
-| Idle capacity | File-only sessions share service capacity; execution environments have a separate lifecycle | Suspend/resume lets many idle actors share a smaller worker pool. |
+| Idle capacity | Each session keeps a dedicated executor Pod while idle; retiring it also removes file access until a replacement reattaches. | Suspend/resume lets many idle actors share a smaller worker pool. |
 | Retained workspace | Storage identity and deletion are independent of executor lifetime | Reviewed external-volume templates provision per actor and delete with it. |
-| File-tool semantics | Both routes preserve Mecatl's versioned reads, create-only writes, and conditional replacement | Guest file RPCs stream raw reads and writes; they do not expose Mecatl's version/CAS contract. |
-| Authority | Trusted admission, routing, and lifecycle control remain outside a narrowly scoped helper | Substrate controls sandbox lifecycle; Mecatl agent scopes and env request authorization still need integration. |
+| Authority | Trusted admission, routing, and lifecycle control remain outside a narrowly scoped helper | Substrate controls sandbox lifecycle; Mecatl agent scopes and `env` request authorization still need integration. |
 
-For execution-bound sessions, env supplies useful process operations: asynchronous launch, output streaming, input,
-and signals. Its [guest protocol][env-selected-protocol] also exposes file reads and writes, but writes have no expected
-version or create-only precondition. A client-side read/compare/write sequence cannot substitute for an authoritative
-conditional replacement. Reusing that API would require extending it or using a Mecatl-compatible helper.
+Substrate's env service supplies useful process operations: asynchronous launch, output
+streaming, input, and signals. Its [guest protocol][env-selected-protocol] also exposes file reads and writes, but a
+write truncates and rewrites the file in place, with no expected version or create-only precondition. Mecatl's
+conditional replacement must therefore run next to the storage, in a Mecatl helper inside the executor or through an
+extended guest API. A read/compare/write issued from replicated trusted services would not serialize writers.
 
-Substrate's sandbox boundary protects surrounding infrastructure; it does not by itself isolate shell programs from
-the file daemon inside the same actor. The reviewed [env API entry point][env-selected-api] and
-[guest server][env-selected-server] do not establish Mecatl's authenticated, agent-scoped request boundary. Keep that
-boundary in trusted infrastructure and limit guest authority as in the selected design. The guest library separately
-controls process and filesystem service registration, so adopting Substrate does not require adopting every env service.
+Neither the [env API entry point][env-selected-api] nor the [guest server][env-selected-server] authenticates callers.
+Mecatl's authenticated, agent-scoped request boundary therefore stays in trusted infrastructure, as in the selected
+design. As with any helper that shares an executor with shell programs, the sandbox protects surrounding
+infrastructure, not the guest daemon from its neighbours. The env guest enables its process and filesystem services
+independently, so Mecatl can adopt `env`'s process execution without its file service.
 
 ### Adoption work and decision
 
@@ -315,31 +300,29 @@ plumbing some storage drivers require. The mount schema has no read-only or subt
 filesystem therefore needs appropriate access modes, restricted views, and protected credentials rather than assuming
 CSI support alone supplies them. Its direct CSI integration also differs from ordinary Kubernetes PVC attachment.
 
-We can use Substrate for the execution-bound path while retaining our own shared file workers for file-only sessions.
-That would preserve the selected API and admission model. Adopting env unchanged for every session would instead make
-file-only access depend on actor activation. Suspend/resume and snapshots could improve execution density and continuity,
+We can use Substrate as the executor provider while keeping the selected API and admission model. Suspend/resume would
+reduce the cost of idle executors, and snapshots could improve execution density and continuity,
 but are not required by our fresh-executor/retained-workspace contract. Snapshot persistence alone does not establish
 survival of completed files after abrupt executor loss.
 
 The decision to adopt Substrate remains open: its scheduling, routing, and continuation features must justify the
 storage and API integration work and the operational cost of worker pools, control-plane state, and snapshots. Both
-projects have pre-stable APIs; env's [dependency pin][env-selected-module] targets an older Substrate revision, so a
+projects have pre-stable APIs; env's [dependency pin][env-selected-module] targets a different Substrate revision, so a
 specific version pair needs qualification rather than assuming the reviewed heads work together.
 
 ## Remaining integration choices
 
-The placement architecture is selected; the filesystem backend, helper transport, and execution provider are not.
-Choose them against the contracts above, using the source comparisons in the appendices. The implementation must settle
-cross-replica mutation coordination, command-process supervision, protected mount placement, and the exact withdrawal
-cutoff before claiming those guarantees. Qualify file-only operation with no executor, file/command visibility in a
-dedicated environment, retained-storage recovery, and denial of access outside each admitted scope. Process snapshots
-and automatic transitions between placement classes are not prerequisites for the initial design.
+The per-session executor architecture is selected; the filesystem backend, helper transport, and execution provider are
+not. Choose them against the contracts above, using the source comparisons in the appendices. The implementation must
+settle how the helper coordinates file-tool mutations with shell writers, command-process supervision, protected mount
+placement, and the exact withdrawal cutoff before claiming those guarantees. Qualify file/command visibility in the
+executor, retained-storage recovery, and denial of access outside each admitted scope. Process snapshots and adding
+`Shell` to a running session are not prerequisites for the initial design.
 
 ## Appendix A: Alternative filesystem layouts
 
-These are the three layouts considered before selecting capability-based placement. The selected design combines the
-shared-serving benefits of option 1 with the dedicated execution path of option 3; none is adopted unchanged for every
-session. Their diagrams are retained to explain the tradeoffs. File and shell changes still need live visibility, and
+These are the three layouts considered before selecting a per-session executor. The selected design is option 3's
+co-located file and command path behind option 1's trusted entry point. Their diagrams are retained to explain the tradeoffs. File and shell changes still need live visibility, and
 runtime support depends on the actual mount and isolation configuration. The text diagrams show access paths; Mermaid
 boxes show component placement, not proof of security isolation. Common identity and lifecycle services are omitted.
 
@@ -580,7 +563,7 @@ container is not automatically visible in another.
 ## Appendix B: Filesystem candidates
 
 These candidates remain backend choices for the selected placement model. Each integration must meet the filesystem
-requirements above, including the different availability guarantees for file-only and execution-bound sessions.
+requirements above, including file availability tied to the session's executor.
 
 Source review baseline: 2026-10-07. The implementation links below identify reviewed commits or releases; general
 manuals may change independently. These are existing capabilities and proposed integration points, not tested Mecatl
@@ -606,10 +589,10 @@ stops executor Pods.
 ## Appendix C: Upstream execution platforms
 
 These source comparisons retain the independent-file-access integrations explored for options 1 and 2. In the selected
-architecture, an upstream platform can instead supply only the execution-bound path; our shared file workers serve
-file-only sessions. Guest file APIs are relevant to that dedicated path but still need Mecatl-compatible semantics and
-restricted authority. All four platforms can keep the loop external. Process restoration is an optional benefit, not
-a requirement. Agent Substrate's refreshed comparison is in the main discussion.
+architecture, an upstream platform can instead supply the per-session executor. Guest file APIs are relevant to that
+path but still need Mecatl-compatible semantics and restricted authority. All four platforms can keep the loop external.
+Process restoration is an optional benefit, not a requirement. Agent Substrate's refreshed comparison is in the main
+discussion.
 
 ### Shared integration work
 
@@ -659,8 +642,8 @@ reusable Pod specifications; claims request sandboxes, optionally from a pool st
 
 ### Agent Substrate and env
 
-See [Comparison with Agent Substrate](#comparison-with-agent-substrate) for the refreshed source review, the distinction
-between actor activation and executor-independent file access, and the retained-storage and API work needed for adoption.
+See [Comparison with Agent Substrate](#comparison-with-agent-substrate) for the refreshed source review and the
+retained-storage and API work needed for adoption.
 
 ### E2B
 
@@ -687,11 +670,11 @@ do not select one only for its compute lifecycle features.
 [substrate-selected-volumes]: https://github.com/agent-substrate/substrate/blob/288694ef2297bb5d6fab30eca328ddaa89015f91/pkg/proto/ateapipb/ateapi.proto#L1248-L1311
 [substrate-selected-delete]: https://github.com/agent-substrate/substrate/blob/288694ef2297bb5d6fab30eca328ddaa89015f91/cmd/ateapi/internal/controlapi/workflow_delete.go#L72-L105
 [substrate-selected-csi]: https://github.com/agent-substrate/substrate/blob/288694ef2297bb5d6fab30eca328ddaa89015f91/internal/volume/csi/plugin.go
-[env-selected-overview]: https://github.com/agent-substrate/env/blob/0d359ea738233e7ad510c5c79dae6635148a64eb/README.md
-[env-selected-protocol]: https://github.com/agent-substrate/env/blob/0d359ea738233e7ad510c5c79dae6635148a64eb/proto/ateenv/v1alpha/guest.proto
-[env-selected-api]: https://github.com/agent-substrate/env/blob/0d359ea738233e7ad510c5c79dae6635148a64eb/cmd/ate-env-api/main.go
-[env-selected-server]: https://github.com/agent-substrate/env/blob/0d359ea738233e7ad510c5c79dae6635148a64eb/guest/server.go
-[env-selected-module]: https://github.com/agent-substrate/env/blob/0d359ea738233e7ad510c5c79dae6635148a64eb/go.mod
+[env-selected-overview]: https://github.com/agent-substrate/env/blob/fccd920ae90a8d5ce1b7c2fb57162e99e45f942a/README.md
+[env-selected-protocol]: https://github.com/agent-substrate/env/blob/fccd920ae90a8d5ce1b7c2fb57162e99e45f942a/proto/ateenv/v1alpha/guest.proto
+[env-selected-api]: https://github.com/agent-substrate/env/blob/fccd920ae90a8d5ce1b7c2fb57162e99e45f942a/cmd/ate-env-api/main.go
+[env-selected-server]: https://github.com/agent-substrate/env/blob/fccd920ae90a8d5ce1b7c2fb57162e99e45f942a/guest/server.go
+[env-selected-module]: https://github.com/agent-substrate/env/blob/fccd920ae90a8d5ce1b7c2fb57162e99e45f942a/go.mod
 
 [ganesha-fsal]: https://github.com/nfs-ganesha/nfs-ganesha/blob/952fb93373a6f9f9e187bf9bc35c41a9fc25efa6/src/include/fsal_api.h
 [ceph-eviction]: https://github.com/ceph/ceph/blob/v19.2.3/doc/cephfs/eviction.rst
