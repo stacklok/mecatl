@@ -338346,6 +338346,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1793007307475,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "radoslav@stacklok.com",
+            "name": "Radoslav Dimitrov",
+            "username": "rdimitrov"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "e56ff17d796e0bca0816dee038028ade531415dc",
+          "message": "test(mecatui): make template clock refresh test deterministic (#2518)\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-26T05:54:06-04:00",
+          "tree_id": "6d83817b76ce660076ac569cf91812057a1e06bc",
+          "url": "https://github.com/stacklok/mecatl/commit/e56ff17d796e0bca0816dee038028ade531415dc"
+        },
+        "date": 1793009177562,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -489205,6 +489239,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1793009174291,
+  "lastUpdate": 1793009178371,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
