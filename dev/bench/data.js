@@ -340494,6 +340494,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1793037166945,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "280093410+toolhive-release-app[bot]@users.noreply.github.com",
+            "name": "toolhive-release-app[bot]",
+            "username": "toolhive-release-app[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "89c2fbaa4ca2804c4fe583ba49034b7a30ebd250",
+          "message": "Release v0.0.51 (#2532)\n\nCo-authored-by: toolhive-release-app[bot] <280093410+toolhive-release-app[bot]@users.noreply.github.com>",
+          "timestamp": "2026-10-26T14:34:27-04:00",
+          "tree_id": "b3ef5856034f6cde73e311833a740023d8e61003",
+          "url": "https://github.com/stacklok/mecatl/commit/89c2fbaa4ca2804c4fe583ba49034b7a30ebd250"
+        },
+        "date": 1793040448487,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -492271,6 +492305,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1793040445026,
+  "lastUpdate": 1793040449428,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
