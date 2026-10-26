@@ -3,15 +3,36 @@ package agent
 import (
 	"context"
 	"errors"
+	"iter"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/governance"
+	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 )
+
+// heldFinalTurn delays the model's second call until release closes (or a
+// safety timeout), so background reviews can publish before run end cancels them.
+type heldFinalTurn struct {
+	port.LLMProvider
+	release chan struct{}
+	calls   int
+}
+
+func (h *heldFinalTurn) Stream(ctx context.Context, req port.LLMRequest) (iter.Seq2[port.Chunk, error], error) {
+	h.calls++
+	if h.calls == 2 {
+		select {
+		case <-h.release:
+		case <-time.After(5 * time.Second):
+		}
+	}
+	return h.LLMProvider.Stream(ctx, req)
+}
 
 // yoloReviewer reviews both jobs. optIn controls GuardrailYoloReviews; gate, when
 // set, parks every Review until it is closed or the review context ends.
@@ -55,13 +76,19 @@ func (r *yoloReviewer) counts() (int, int) {
 	return r.reviews, r.cancelled
 }
 
-func runYoloReview(t *testing.T, reviewer *yoloReviewer, preparer ReviewEvidencePreparer, onEvent func(session.Event)) ([]session.Event, int, *session.Session) {
+// runYoloReview drives one Act call in a yolo session. When hooks > 0 the final
+// model turn waits until that many guardrail events have been delivered.
+func runYoloReview(t *testing.T, reviewer *yoloReviewer, preparer ReviewEvidencePreparer, hooks int, onEvent func(session.Event)) ([]session.Event, int, *session.Session) {
 	t.Helper()
 	executions := 0
 	catalog := tool.NewCatalog()
 	catalog.MustRegister(revisionActionTool{executions: &executions})
+	llm := &heldFinalTurn{LLMProvider: mockllm.New(mockllm.ToolCallTurn(session.NewToolCall("call", "Act", []byte(`{}`))), mockllm.TextTurn("done")), release: make(chan struct{})}
+	if hooks == 0 {
+		close(llm.release)
+	}
 	engine := NewEngine(Deps{
-		LLM:                    mockllm.New(mockllm.ToolCallTurn(session.NewToolCall("call", "Act", []byte(`{}`))), mockllm.TextTurn("done")),
+		LLM:                    llm,
 		Catalog:                catalog,
 		Policy:                 terminalFailurePolicy{job: ReviewJobAction},
 		ToolReviewer:           reviewer,
@@ -70,8 +97,14 @@ func runYoloReview(t *testing.T, reviewer *yoloReviewer, preparer ReviewEvidence
 	env := memEnv("/ws")
 	sess := session.New("yolo-review", session.ModeYolo, env.Ref(), session.Limits{}, time.Unix(0, 0))
 	var events []session.Event
+	seen := 0
 	for ev := range engine.Run(context.Background(), sess, env, RunRequest{Text: "act"}).Events() {
 		events = append(events, ev)
+		if ev.Hook != nil && ev.Hook.Guardrail != nil {
+			if seen++; seen == hooks {
+				close(llm.release)
+			}
+		}
 		if onEvent != nil {
 			onEvent(ev)
 		}
@@ -91,7 +124,7 @@ func guardrailHooks(events []session.Event) []session.Event {
 
 func TestYoloSkipsGuardrailReviewWithoutOptIn(t *testing.T) {
 	reviewer := &yoloReviewer{result: ToolReviewResult{Assessment: ReviewProhibited}}
-	events, executions, _ := runYoloReview(t, reviewer, nil, nil)
+	events, executions, _ := runYoloReview(t, reviewer, nil, 0, nil)
 	if reviews, _ := reviewer.counts(); reviews != 0 {
 		t.Fatalf("reviews = %d, want 0: yolo without opt-in must not call the checker", reviews)
 	}
@@ -111,7 +144,7 @@ func TestYoloOptInReviewsRunInBackgroundWithoutDelayingTheTool(t *testing.T) {
 	// late turns that regression into the ordering failure asserted below.
 	safety := time.AfterFunc(5*time.Second, func() { once.Do(func() { close(gate) }) })
 	defer safety.Stop()
-	events, executions, sess := runYoloReview(t, reviewer, nil, func(ev session.Event) {
+	events, executions, sess := runYoloReview(t, reviewer, nil, 2, func(ev session.Event) {
 		// The checker is still parked when the canonical result arrives; only then
 		// is it released, so a blocking review would deadlock this run.
 		if ev.Type == session.EvToolResult && ev.ToolResult != nil && ev.ToolResult.CallID == "call" {
@@ -159,7 +192,7 @@ func TestYoloOptInReviewsRunInBackgroundWithoutDelayingTheTool(t *testing.T) {
 
 func TestYoloOptInTerminalEvidenceFailureNeverFailsClosed(t *testing.T) {
 	reviewer := &yoloReviewer{optIn: true, result: ToolReviewResult{Assessment: ReviewAcceptable}}
-	events, executions, _ := runYoloReview(t, reviewer, failingEvidencePreparer{err: errors.New("evidence unavailable")}, nil)
+	events, executions, _ := runYoloReview(t, reviewer, failingEvidencePreparer{err: errors.New("evidence unavailable")}, 2, nil)
 	if executions != 1 {
 		t.Fatalf("executions = %d, want 1: yolo must not fail closed", executions)
 	}
@@ -182,16 +215,12 @@ func TestYoloOptInTerminalEvidenceFailureNeverFailsClosed(t *testing.T) {
 	}
 }
 
-func TestYoloBackgroundReviewDrainIsCapped(t *testing.T) {
-	prevCap, prevGrace := backgroundReviewDrainCap, backgroundReviewDrainGrace
-	backgroundReviewDrainCap, backgroundReviewDrainGrace = 20*time.Millisecond, time.Second
-	t.Cleanup(func() { backgroundReviewDrainCap, backgroundReviewDrainGrace = prevCap, prevGrace })
-
+func TestYoloBackgroundReviewsAreCancelledAtRunEnd(t *testing.T) {
 	reviewer := &yoloReviewer{optIn: true, gate: make(chan struct{}), result: ToolReviewResult{Assessment: ReviewAcceptable}}
 	start := time.Now()
-	events, executions, _ := runYoloReview(t, reviewer, nil, nil)
-	if elapsed := time.Since(start); elapsed > 5*time.Second {
-		t.Fatalf("run took %s, want the drain cap to bound it", elapsed)
+	events, executions, _ := runYoloReview(t, reviewer, nil, 0, nil)
+	if elapsed := time.Since(start); elapsed > backgroundReviewDrainGrace {
+		t.Fatalf("run took %s, want run end to cancel parked reviews at once", elapsed)
 	}
 	if executions != 1 {
 		t.Fatalf("executions = %d, want 1", executions)

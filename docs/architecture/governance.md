@@ -78,7 +78,7 @@ mode above the ceiling, and `auto` without an enforcing guardrails checker; a se
 whose default mode is `auto` refuses to start without one. Unchecked autonomy is the
 explicit `yolo` choice, where a configured checker never blocks: the engine skips it
 unless the reviewer opts in (`YoloReviewPolicyProvider`), and then reviews off the
-dispatch path and joins in-flight reviews, bounded, before the run ends. `admitStoredMode`
+dispatch path, cancelling reviews still in flight when the run ends. `admitStoredMode`
 re-checks a persisted session's mode at run, approval resume, fork, and clear, so a
 mode admitted under a looser deployment fails with `FailedPrecondition` until the owner
 switches it; history is untouched. A session parked awaiting an approval in such a mode

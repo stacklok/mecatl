@@ -432,9 +432,6 @@ func TestBuildDoesNotDiscloseEvidenceWithoutReadPermission(t *testing.T) {
 
 func TestBuildWiresFiniteScriptEvidenceToContextualReviewer(t *testing.T) {
 	cfg := guardrailE2ECfg(t, false, PostureYolo, "./review-script.sh")
-	// Yolo skips the checker unless opted in; opt in so the review runs (in the
-	// background) and must still receive the finite script evidence.
-	cfg.GuardrailsYoloAdvisory = true
 	script := "#!/bin/sh\n# SCRIPT_EVIDENCE_MARKER\nexit 0\n" + strings.Repeat("# pad line\n", 2_500) + "# SCRIPT_EVIDENCE_TAIL\n"
 	if err := os.WriteFile(cfg.Workspace+"/review-script.sh", []byte(script), 0o700); err != nil {
 		t.Fatal(err)
@@ -446,10 +443,10 @@ func TestBuildWiresFiniteScriptEvidenceToContextualReviewer(t *testing.T) {
 		t.Fatalf("Build: %v", err)
 	}
 	defer built.Close()
-	// ModeYolo: Shell is auto-allowed (allow-all rules injected by Policy.Evaluate),
-	// and guardrails.yoloAdvisory routes the call to the contextual reviewer.
+	// ModeAuto: Shell is auto-allowed and the enforcing guardrails block rule routes
+	// the call to the contextual reviewer inline (yolo would skip the checker).
 	// ModeDefault would floor Shell at Ask, hanging the test without a human approver.
-	sess, err := built.Service.CreateSession(context.Background(), session.ModeYolo, session.Limits{MaxTurns: 2})
+	sess, err := built.Service.CreateSession(context.Background(), session.ModeAuto, session.Limits{MaxTurns: 2})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}

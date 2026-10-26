@@ -206,8 +206,8 @@ calls never wait for it. To keep its findings as warnings, opt in with
 `guardrails.yoloAdvisory: true` in your user-global `settings.yaml`. The checker
 then reviews each matching call in the background: the tool runs and its result
 reaches the model without waiting, findings appear as advisory guardrail events,
-and a checker failure never blocks. When a run ends, Mecatl waits up to about 10
-seconds for reviews still in progress, then cancels them. The startup line
+and a checker failure never blocks. Reviews still in progress when a run ends
+are cancelled, so their findings are not reported. The startup line
 reports the checker as `advisory` and states whether `yolo` skips it. Choose
 `auto` when you want the checker to block findings. On a server started with `yolo`, a session you switch to `auto`
 or a lower mode keeps the checker enforcing.

@@ -441,7 +441,7 @@ func (e *Engine) fanOutReadBatchActionAssessments(ctx context.Context, r *Run, s
 				assessAction(ctx, r, a)
 			}(p.assessment)
 		} else {
-			e.startBackgroundActionReview(ctx, r, sess, env, turnIdx, p.call)
+			e.startBackgroundActionReview(r, sess, env, turnIdx, p.call)
 		}
 	}
 	reviewWG.Wait()
@@ -1757,7 +1757,7 @@ func (e *Engine) executePrivate(ctx context.Context, r *Run, sess *session.Sessi
 		assessment = e.prepareInboundAssessment(ctx, r, sess, env, c, res)
 		assessInbound(ctx, r, &assessment)
 		if !assessment.applies {
-			e.startBackgroundInboundReview(ctx, r, sess, env, turnIdx, c, res)
+			e.startBackgroundInboundReview(r, sess, env, turnIdx, c, res)
 		}
 	}
 	return executionRecord{

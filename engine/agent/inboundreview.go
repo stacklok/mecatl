@@ -70,13 +70,6 @@ func configuredReviewPolicy(reviewer ToolReviewer, toolName string, job ReviewJo
 	return applies, enforce
 }
 
-// terminalReviewEnforces reports whether err is an authority-relevant terminal
-// failure that must fail closed. Yolo never fails closed on checker problems.
-func terminalReviewEnforces(mode session.PermissionMode, err error) bool {
-	var terminal GuardrailReviewTerminalFailure
-	return mode != session.ModeYolo && errors.As(err, &terminal) && terminal.GuardrailReviewTerminalFailure()
-}
-
 // yoloBackgroundReview reports whether a yolo session runs this review as
 // advisory background work: only when the reviewer opts in and a rule applies.
 func yoloBackgroundReview(reviewer ToolReviewer, mode session.PermissionMode, toolName string, job ReviewJob) bool {
@@ -157,7 +150,8 @@ func assessInbound(parent context.Context, r *Run, assessment *inboundAssessment
 		assessment.result.Assessment = ReviewUnresolved
 		recordReviewFailure(r.reviewRoot.reviewer, assessment.result, assessment.err)
 		_, assessment.enforce = reviewPolicy(r.reviewRoot.reviewer, assessment.mode, assessment.request.EffectiveCall.Name, ReviewJobInbound, true)
-		if terminalReviewEnforces(assessment.mode, assessment.err) {
+		var terminal GuardrailReviewTerminalFailure
+		if errors.As(assessment.err, &terminal) && terminal.GuardrailReviewTerminalFailure() {
 			assessment.enforce = true
 		}
 		return
@@ -177,7 +171,8 @@ func assessInbound(parent context.Context, r *Run, assessment *inboundAssessment
 	}
 	if assessment.err != nil {
 		_, assessment.enforce = reviewPolicy(r.reviewRoot.reviewer, assessment.mode, assessment.request.EffectiveCall.Name, ReviewJobInbound, true)
-		if terminalReviewEnforces(assessment.mode, assessment.err) {
+		var terminal GuardrailReviewTerminalFailure
+		if errors.As(assessment.err, &terminal) && terminal.GuardrailReviewTerminalFailure() {
 			assessment.enforce = true
 		}
 	}
@@ -298,8 +293,12 @@ func (e *Engine) emitInboundReview(r *Run, turnIdx int, call session.ToolCall, a
 	if !assessment.applies {
 		return
 	}
+	e.emit(r, inboundReviewEvent(r, turnIdx, call, assessment, disposition))
+}
+
+func inboundReviewEvent(r *Run, turnIdx int, call session.ToolCall, assessment inboundAssessment, disposition string) session.Event {
 	machine := reviewMachinePayload(r.reviewRoot.reviewer, assessment.request, assessment.result, assessment.err, disposition)
-	e.emit(r, session.Event{Type: session.EvHook, Turn: turnIdx, Hook: &session.HookPayload{Phase: string(governance.PhasePostToolUse), Tool: call.Name, Decision: session.HookInfo, CallID: call.ID, Guardrail: machine}})
+	return session.Event{Type: session.EvHook, Turn: turnIdx, Hook: &session.HookPayload{Phase: string(governance.PhasePostToolUse), Tool: call.Name, Decision: session.HookInfo, CallID: call.ID, Guardrail: machine}}
 }
 
 // resolveInbound returns whether the effective tool result was released, distinct

@@ -18,8 +18,8 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   has its applicable action and inbound reviews in yolo-mode sessions run in the
   background: the tool call neither waits for the verdict nor fails closed, and
   the verdict is emitted as an advisory guardrail `EvHook` after the tool result
-  and before the run's terminal event. Run end waits up to 10s (plus a 1s grace)
-  for in-flight reviews, then cancels them. Added (minor).
+  and before the run's terminal event. Run end cancels reviews still in flight
+  and drops their verdicts. Added (minor).
 
 - **Provider stop detail** — adds `port.Chunk.StopDetail`, the provider's own
   terminal label (for example `max_tokens`, `refusal`, `length`) that an adapter
