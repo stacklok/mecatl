@@ -76,8 +76,13 @@ func (s *Service) openIdentityBrokerSession(ctx context.Context, sess *session.S
 		return nil
 	}
 	// The user's access token, read once for this open; zero on a path with no
-	// user request, such as a scheduler fire or a server-owned continuation.
-	token := accessTokenFromRequest(ctx)
+	// user request, such as a server-owned continuation. A scheduled session
+	// never takes one, even when a user's fire-now request creates it: its
+	// authority comes from the schedule, not the user's sign-in.
+	var token identitybroker.Token
+	if sess.Kind != session.SessionKindScheduled {
+		token = accessTokenFromRequest(ctx)
+	}
 	for attempt := 0; ; attempt++ {
 		brokerSession, err := s.openIdentityBrokerSessionOnce(ctx, sess, owner, token)
 		if err != nil {

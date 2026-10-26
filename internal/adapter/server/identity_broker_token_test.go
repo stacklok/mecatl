@@ -506,6 +506,22 @@ func TestIdentityBrokerStaticTokenAuthCarriesNoAccessToken(t *testing.T) {
 			})
 		}
 	}
+	// A fire-now request creates the scheduled session inside the user's
+	// request; the scheduled session still opens without the user's token.
+	for _, surface := range []string{"unary", "stream", "http"} {
+		t.Run("scheduled create in a request "+surface, func(t *testing.T) {
+			broker := newRecordingBroker()
+			svc := newIdentityBrokerService(t, broker, mockllm.New())
+			auth := server.NewAuthenticator(server.SecurityConfig{Validator: brokerTokenValidator()})
+			withinRequest(t, surface, auth, userBearer, func(ctx context.Context) {
+				if _, err := svc.CreateSessionWithProfile(ctx, session.ModeDefault, session.Limits{}, server.ProviderSelector{}, server.ProfileDefault,
+					server.WithSessionID("fire-now-1"), server.WithOwner(brokerAlice), server.WithScheduledRelationship("nightly", "")); err != nil {
+					t.Fatal(err)
+				}
+			})
+			wantNewOpenTokens(t, broker, 0, "")
+		})
+	}
 	t.Run("rejected bearer", func(t *testing.T) {
 		broker := newRecordingBroker()
 		svc := newIdentityBrokerService(t, broker, mockllm.New())
