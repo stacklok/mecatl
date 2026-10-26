@@ -376561,6 +376561,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1793032450792,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "tgrunnagle@gmail.com",
+            "name": "Trey",
+            "username": "tgrunnagle"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "ac34f9ed5aeea2c3fcd52df0795f31b804e046ae",
+          "message": "fix(placement): show short branch names for worktrees (#2504)\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-26T09:34:55-07:00",
+          "tree_id": "6527222123537169f5a8295982fb16239f014d2d",
+          "url": "https://github.com/stacklok/mecatl/commit/ac34f9ed5aeea2c3fcd52df0795f31b804e046ae"
+        },
+        "date": 1793033225795,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 16151.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12916,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 795,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -491283,6 +491322,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1793033220128,
+  "lastUpdate": 1793033227048,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
