@@ -423,7 +423,7 @@ The subject tokens the broker presents are bearer tokens: they prove whose autho
 
 **Why.** It makes "accept only from the broker" enforceable. A leaked `RT-A42` is useless without the key: a refresh token issued to an authenticated confidential client is already sender-constrained (RFC 9449 §5) and usable only by that client (RFC 9700 §4.14.2).
 
-The private key never leaves the broker and can live in a KMS or HSM. In external mode the gateway administrator registers the broker's `jwks_uri` once. A `client_secret` is rejected: it is shared, replayable once leaked, and rotated by hand. mTLS client authentication (RFC 8705) is an equivalent alternative.
+The private key never leaves the broker and can live in a KMS or HSM. In mecak8s the key is held in a Kubernetes Secret, later a KMS. In external mode the gateway administrator registers the broker's public key as an inline JWKS, and registers it again when the key rotates; ToolHive does not fetch a `jwks_uri`. A `client_secret` is rejected: it is shared, replayable once leaked, and rotated by hand. mTLS client authentication (RFC 8705) is an equivalent alternative.
 
 One client ID, `mecatl`, is used at both servers, because the ID-JAG's `client_id` must match the client that redeems it at AS-2.
 
@@ -575,7 +575,7 @@ ID-JAG makes a refresh token as subject token optional (§4.3: an IdP "MAY addit
 - `act` has one level and names the current actor only (RFC 8693 §4.1). RFC 8693 treats prior actors in a nested `act` as informational, so leaving them out removes nothing the gateway enforces. That main delegated `D42` to the reviewer is recorded in Mecatl's harness and broker records, not in the token. A nested `act` naming main comes later, from a [chained exchange](mcp-authorization.md#chained-exchange) at delegation time.
 - `resource` is signed by AS-1, so AS-2 checks the redemption's `resource` against a claim, not only against a broker parameter.
 - `aud_sub` and `email`, recommended by the draft, are deliberately omitted: AS-1 does not know AS-2's subject, and an email address is not an identity link.
-- The ID-JAG also carries the user's company IdP identity as `upstream_subject` ([identifying claim](#identifying-claim); [#6900](https://github.com/stacklok/toolhive/issues/6900)).
+- The ID-JAG also carries the user's company IdP identity as `upstream_subject`, which AS-2 uses to find the local user in both modes ([identifying claim](#identifying-claim); [#6898](https://github.com/stacklok/toolhive/issues/6898)).
 
 **Failures.**
 
