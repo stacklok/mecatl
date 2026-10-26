@@ -237,7 +237,7 @@ func (s *worktreesState) renderConfirm(width, height int) string {
 	lines := skillsTextLines(th.Style("askTitle"), "start session in worktree", width)
 	lines = append(lines, skillsTextLines(th.Style("muted"), "a new session will start in:", width)...)
 	lines = append(lines, skillsTextLines(th.Style("spinner"), terminaltext.SanitizeSingleLine(s.confirm.Label), width)...)
-	if s.confirm.Branch != "" {
+	if s.confirm.Branch != "" && s.confirm.Branch != s.confirm.Label {
 		lines = append(lines, skillsTextLines(th.Style("muted"), "branch: "+terminaltext.SanitizeSingleLine(s.confirm.Branch), width)...)
 	}
 	footer := hk.closeOnly + ": back"
@@ -272,7 +272,7 @@ func (s *worktreesState) stateLines(width int) []string {
 
 func worktreeRowText(w client.Worktree) string {
 	text := terminaltext.SanitizeSingleLine(w.Label)
-	if w.Branch != "" {
+	if w.Branch != "" && w.Branch != w.Label {
 		text += "  (" + terminaltext.SanitizeSingleLine(w.Branch) + ")"
 	} else if w.Revision != "" {
 		text += "  (" + shortSHA(terminaltext.SanitizeSingleLine(w.Revision)) + ")"

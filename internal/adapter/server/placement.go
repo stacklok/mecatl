@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 	"sync"
 	"time"
@@ -177,8 +178,9 @@ type PlacementBindRequest struct {
 // PlacementMetadata is the bounded, display-safe provider projection returned
 // with a binding. It contains no roots, locators, credentials, or authority.
 type PlacementMetadata struct {
-	Kind     string
-	Label    string
+	Kind  string
+	Label string
+	// Branch is the short branch name, such as "feat/x", not a full ref.
 	Branch   string
 	Revision string
 }
@@ -924,13 +926,44 @@ func safePlacementText(value string, maxRunes int) bool {
 func canonicalPlacementMetadata(binding PlacementBinding) session.PlacementMetadata {
 	return session.PlacementMetadata{
 		Kind:     sanitizePlacementDisplay(string(binding.Ref.Kind), maxPlacementKindRunes),
-		Label:    sanitizePlacementDisplay(binding.Metadata.Label, maxPlacementNameRunes),
-		Branch:   sanitizePlacementDisplay(binding.Metadata.Branch, maxPlacementNameRunes),
+		Label:    sanitizePlacementLabel(binding.Metadata.Label, binding.Metadata.Branch),
+		Branch:   sanitizePlacementBranch(binding.Metadata.Branch),
 		Revision: sanitizePlacementDisplay(binding.Metadata.Revision, maxPlacementIdentityRunes),
 	}
 }
 
 func sanitizePlacementDisplay(value string, maxRunes int) string {
+	value = cleanPlacementText(value, maxRunes)
+	if strings.ContainsAny(value, `/\\`) || strings.HasPrefix(value, "..") ||
+		(len(value) >= 2 && value[1] == ':') {
+		return ""
+	}
+	return value
+}
+
+// sanitizePlacementBranch keeps a well-formed branch name such as "feat/x".
+// The branch rules exclude absolute paths, ".." traversal, backslashes, and
+// drive letters, but not relative path-shaped names, so providers must
+// supply real short branch names. It validates the whole name before capping
+// its length, so a cut never decides whether the name is accepted.
+func sanitizePlacementBranch(value string) string {
+	value = cleanPlacementText(value, math.MaxInt)
+	if !validBranchName(value) {
+		return ""
+	}
+	return truncateRunes(value, maxPlacementNameRunes)
+}
+
+// sanitizePlacementLabel relaxes the path guard only for a label that is the
+// branch itself; any other slash-bearing label stays blank.
+func sanitizePlacementLabel(label, branch string) string {
+	if got := sanitizePlacementDisplay(label, maxPlacementNameRunes); got != "" || label != branch {
+		return got
+	}
+	return sanitizePlacementBranch(branch)
+}
+
+func cleanPlacementText(value string, maxRunes int) string {
 	value = session.ToValidUTF8(value)
 	var b strings.Builder
 	for _, r := range value {
@@ -938,14 +971,29 @@ func sanitizePlacementDisplay(value string, maxRunes int) string {
 			b.WriteRune(r)
 		}
 	}
-	value = strings.TrimSpace(b.String())
-	runes := []rune(value)
-	if len(runes) > maxRunes {
-		value = string(runes[:maxRunes])
-	}
-	if strings.ContainsAny(value, `/\\`) || strings.HasPrefix(value, "..") ||
-		(len(value) >= 2 && value[1] == ':') {
-		return ""
+	return truncateRunes(strings.TrimSpace(b.String()), maxRunes)
+}
+
+func truncateRunes(value string, maxRunes int) string {
+	if runes := []rune(value); len(runes) > maxRunes {
+		return string(runes[:maxRunes])
 	}
 	return value
+}
+
+// validBranchName reports whether name passes the character and component
+// rules of `git check-ref-format --branch`. Callers strip control runes
+// first; it does not reject "HEAD".
+func validBranchName(name string) bool {
+	if name == "" || name == "@" || strings.HasPrefix(name, "-") || strings.HasSuffix(name, ".") ||
+		strings.Contains(name, "..") || strings.Contains(name, "@{") ||
+		strings.ContainsAny(name, ` ~^:?*[\`) {
+		return false
+	}
+	for _, component := range strings.Split(name, "/") {
+		if component == "" || strings.HasPrefix(component, ".") || strings.HasSuffix(component, ".lock") {
+			return false
+		}
+	}
+	return true
 }

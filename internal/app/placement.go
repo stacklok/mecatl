@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"strings"
 
 	"github.com/stacklok/mecatl/engine/adapter/memledger"
 	"github.com/stacklok/mecatl/engine/adapter/nofs"
@@ -202,13 +203,14 @@ func (p *localPlacementProvider) ListWorktrees(ctx context.Context, req server.P
 	}
 	out := make([]server.ScopedWorktree, 0, len(current))
 	for _, choice := range current {
-		label := choice.Branch
+		branch := displayBranch(choice.Branch)
+		label := branch
 		if label == "" {
 			label = "Detached worktree"
 		}
 		out = append(out, server.ScopedWorktree{
 			Selector: p.selectors.Issue(req.Principal, req.Source, choice),
-			Label:    label, Branch: choice.Branch, Revision: choice.Head, Bare: choice.Bare,
+			Label:    label, Branch: branch, Revision: choice.Head, Bare: choice.Bare,
 		})
 	}
 	return out, nil
@@ -283,9 +285,16 @@ func (p *localPlacementProvider) bindWorktree(choice server.Worktree) (server.Pl
 	if err != nil {
 		return server.PlacementBinding{}, server.ErrPlacementUnavailable
 	}
+	branch := displayBranch(choice.Branch)
 	return server.PlacementBinding{Environment: env, Ref: ref, GovernanceRoot: choice.Path, Metadata: server.PlacementMetadata{
-		Label: choice.Branch, Branch: choice.Branch, Revision: choice.Head,
+		Label: branch, Branch: branch, Revision: choice.Head,
 	}}, nil
+}
+
+// displayBranch returns the short branch name for display. The raw porcelain
+// ref stays on server.Worktree so selector matching compares exact values.
+func displayBranch(ref string) string {
+	return strings.TrimPrefix(ref, "refs/heads/")
 }
 
 func configuredLocalPlacementRef(root string) session.EnvironmentRef {

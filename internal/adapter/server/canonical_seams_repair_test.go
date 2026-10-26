@@ -6,6 +6,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -479,5 +480,63 @@ func TestInvariant_placement_display_rejects_path_like_metadata(t *testing.T) {
 	}
 	if got := sanitizePlacementDisplay("feature-name", maxPlacementNameRunes); got != "feature-name" {
 		t.Fatalf("safe display = %q", got)
+	}
+}
+
+func TestPlacementBranchDisplayKeepsOnlyWellFormedBranchNames(t *testing.T) {
+	for _, value := range []string{"main", "feat", "feat/x", "user/a.b-c", "release/1.2/hotfix"} {
+		if got := sanitizePlacementBranch(value); got != value {
+			t.Errorf("sanitizePlacementBranch(%q) = %q, want unchanged", value, got)
+		}
+	}
+	for _, value := range []string{
+		"", "/etc/passwd", "feat/", "../x", "a/../b", "a//b", `C:\x`, "C:foo", `a\b`,
+		".hidden/x", "x/.y", "x.lock", "x/y.lock", "x.", "-x", "@", "a@{1}", "a b", "a~1", "a^", "a?", "a*", "a[b",
+	} {
+		if got := sanitizePlacementBranch(value); got != "" {
+			t.Errorf("sanitizePlacementBranch(%q) = %q, want empty", value, got)
+		}
+	}
+	if got := sanitizePlacementBranch("fe\u200bat/x\n"); got != "feat/x" {
+		t.Errorf("format and control runes not stripped: %q", got)
+	}
+	if got := sanitizePlacementBranch(strings.Repeat("a", maxPlacementNameRunes+10)); len([]rune(got)) != maxPlacementNameRunes {
+		t.Errorf("branch not capped: %d runes", len([]rune(got)))
+	}
+	// The whole name is validated before the cap, so a cut that ends on "/"
+	// or "." still shows the capped prefix.
+	for _, tail := range []string{"/x", ".x"} {
+		long := strings.Repeat("a", maxPlacementNameRunes-1) + tail
+		if got := sanitizePlacementBranch(long); got != long[:maxPlacementNameRunes] {
+			t.Errorf("branch cut at %q = %q, want capped prefix", tail[:1], got)
+		}
+	}
+	if got := sanitizePlacementBranch(strings.Repeat("a", maxPlacementNameRunes) + "/../x"); got != "" {
+		t.Errorf("invalid tail past the cap accepted: %q", got)
+	}
+	// Providers must supply short names; ref- and path-shaped names that pass
+	// the branch rules are accepted on purpose and never escape to an absolute
+	// path.
+	for _, value := range []string{"refs/heads/feat/x", "srv/private/x"} {
+		if got := sanitizePlacementBranch(value); got != value {
+			t.Errorf("sanitizePlacementBranch(%q) = %q, want unchanged", value, got)
+		}
+	}
+}
+
+func TestPlacementLabelRelaxesPathGuardOnlyForTheBranch(t *testing.T) {
+	if got := sanitizePlacementLabel("feat/x", "feat/x"); got != "feat/x" {
+		t.Errorf("branch label = %q, want feat/x", got)
+	}
+	if got := sanitizePlacementLabel("Primary repository", "feat/x"); got != "Primary repository" {
+		t.Errorf("free-form label = %q", got)
+	}
+	for _, label := range []string{"safe/segment", "/srv/private/x"} {
+		if got := sanitizePlacementLabel(label, "feat/x"); got != "" {
+			t.Errorf("non-branch label %q = %q, want empty", label, got)
+		}
+	}
+	if got := sanitizePlacementLabel("/srv/private/x", "/srv/private/x"); got != "" {
+		t.Errorf("path-shaped branch label = %q, want empty", got)
 	}
 }
