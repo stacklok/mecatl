@@ -280,7 +280,7 @@ func discoveredEnrollmentFrom(discovered discoveredResource, grpcTarget string, 
 	if err != nil {
 		return discoveredEnrollment{}, err
 	}
-	return discoveredEnrollment{Resource: discovered.Resource, MetadataURL: discovered.MetadataURL, Connection: clientauth.Connection{Identity: identity, ResourceURL: discovered.Resource, IssuerAddressPolicy: clientauth.IssuerAddressPolicyPublic}}, nil
+	return discoveredEnrollment{Resource: discovered.Resource, MetadataURL: discovered.MetadataURL, Connection: clientauth.Connection{Identity: identity, ResourceURL: discovered.Resource, IssuerAddressPolicy: clientauth.IssuerAddressPolicyPublic, IdentityBrokerSignIn: discovered.IdentityBrokerSignIn}}, nil
 }
 
 func confirmDiscoveredLogin(in io.Reader, out io.Writer, enrollment discoveredEnrollment) (bool, error) {
@@ -521,7 +521,7 @@ func runSavedRemoteLoginWith(ctx context.Context, conn clientauth.Connection, no
 		})
 		return result, err
 	})
-	token, err := clientauth.Login(ctx, clientauth.LoginConfig{Identity: conn.Identity, Presenter: presenter, IssuerAddressPolicy: conn.IssuerAddressPolicy, TrustedCAPEM: ca})
+	token, err := clientauth.Login(ctx, clientauth.LoginConfig{Identity: conn.Identity, Presenter: presenter, IssuerAddressPolicy: conn.IssuerAddressPolicy, TrustedCAPEM: ca, IdentityBrokerSignIn: conn.IdentityBrokerSignIn})
 	if err != nil {
 		return signinError(err)
 	}

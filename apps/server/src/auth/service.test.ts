@@ -7,7 +7,7 @@ import { bootstrap } from "../bootstrap.js";
 import { ConfigurationError, studioConfigFromEnvironment } from "../config.js";
 import type { AppEnv } from "../http/env.js";
 import type { RuntimeConfig } from "../mecatl/runtime.js";
-import { fakeIssuer, resourceUrl } from "../testing/fake-issuer.js";
+import { fakeIssuer, jwtClaims, resourceUrl } from "../testing/fake-issuer.js";
 import {
   cookieHeader,
   csrfHeaders,
@@ -374,6 +374,79 @@ describe("authentication service", () => {
     expect(late.status).toBe(200);
     expect(issuer.refreshCalls()).toBe(1);
     expect(late.headers.getSetCookie().some((c) => c.includes("Max-Age=0"))).toBe(false);
+  });
+
+  it("on AS-1 sends resource on authorize, code exchange and refresh; elsewhere never", async () => {
+    for (const identityBrokerSignIn of [true, false]) {
+      // Near expiry, so the first API request refreshes.
+      const { app, callback, issuer } = await loggedInApp({
+        expiresIn: 10_000,
+        identityBrokerSignIn,
+      });
+      expect(callback.status).toBe(302);
+      const login = await app.request("https://studio.example.com/api/v1/auth/login");
+      const authorize = new URL(login.headers.get("location") ?? "").searchParams;
+      // The audience parameter stays for issuers that read it.
+      expect(authorize.get("audience")).toBe("mecatl");
+      expect(authorize.get("resource")).toBe(identityBrokerSignIn ? "mecatl" : null);
+
+      const refreshed = await app.request("https://studio.example.com/api/v1/runtime", {
+        headers: { Cookie: cookieHeader(callback.headers.getSetCookie()) },
+      });
+      expect(refreshed.status).toBe(200);
+      expect(
+        issuer.tokenRequests().map(({ grantType, resource }) => [grantType, resource]),
+      ).toEqual([
+        ["authorization_code", identityBrokerSignIn ? "mecatl" : null],
+        ["refresh_token", identityBrokerSignIn ? "mecatl" : null],
+      ]);
+    }
+  });
+
+  it("STUDIO_OIDC_CLIENT_ID replaces the advertised client ID; unset keeps it", async () => {
+    for (const [configured, expected] of [
+      ["studio-web", "studio-web"],
+      [undefined, "studio"],
+      ["", "studio"],
+    ] as const) {
+      const issuer = fakeIssuer({ identityBrokerSignIn: true });
+      const booted = await bootstrap({
+        environment: {
+          MECATL_BASE_URL: resourceUrl,
+          STUDIO_PUBLIC_URL: publicUrl.origin,
+          STUDIO_SESSION_SECRET: secret,
+          ...(configured === undefined ? {} : { STUDIO_OIDC_CLIENT_ID: configured }),
+        },
+        fetch: issuer.fetch,
+        runtime: { createClient: async () => fakeClient() },
+      });
+      const login = await booted.app.request("https://studio.example.com/api/v1/auth/login");
+      const location = new URL(login.headers.get("location") ?? "");
+      expect(location.searchParams.get("client_id")).toBe(expected);
+      const callback = await booted.app.request(
+        `https://studio.example.com/api/v1/auth/callback?code=code-1&state=${location.searchParams.get("state")}`,
+        { headers: { Cookie: cookieHeader(login.headers.getSetCookie()) } },
+      );
+      expect(callback.status).toBe(302);
+      expect(issuer.tokenRequests().map((request) => request.clientId)).toEqual([expected]);
+      // AS-1 names the client and the resource in the access token it issues.
+      const sealed = cookieHeader(callback.headers.getSetCookie())
+        .split("; ")
+        .find((cookie) => cookie.startsWith("studio_access="))
+        ?.slice("studio_access=".length);
+      const access = await new SealedCookieCodec(secret).open<{ accessToken: string }>(
+        "access",
+        sealed,
+      );
+      expect(jwtClaims(access?.accessToken ?? "")).toMatchObject({
+        aud: "mecatl",
+        client_id: expected,
+      });
+      await booted.runtime.close();
+    }
+    expect(() => studioConfigFromEnvironment({ STUDIO_OIDC_CLIENT_ID: "has space" })).toThrow(
+      ConfigurationError,
+    );
   });
 
   it("a sealed cookie above 3800 bytes fails login with session_too_large", async () => {

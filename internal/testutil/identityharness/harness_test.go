@@ -122,10 +122,90 @@ func TestRefreshRenewsForTheSameUserAndClient(t *testing.T) {
 	if claims["sub"] != h.AS1.Subject(identityharness.Bob) || claims["client_id"] != "mecatui" {
 		t.Errorf("renewed claims = %v, want Bob for mecatui", claims)
 	}
-	_, err = h.Refresh(t.Context(), "studio", tokens.RefreshToken)
+	_, err = h.Refresh(t.Context(), "studio", renewed.RefreshToken)
 	assertOAuthError(t, err, "invalid_grant")
 	_, err = h.Refresh(t.Context(), "mecatui", "not-a-refresh-token")
 	assertOAuthError(t, err, "invalid_grant")
+}
+
+// TestRefreshRotatesTheRefreshToken: each refresh grant issues a new refresh
+// token and retires the presented one, as ToolHive's AS does.
+func TestRefreshRotatesTheRefreshToken(t *testing.T) {
+	h := identityharness.New(t, identityharness.Options{})
+	tokens, err := h.SignIn(t.Context(), identityharness.SignInRequest{})
+	if err != nil {
+		t.Fatalf("SignIn: %v", err)
+	}
+	renewed, err := h.Refresh(t.Context(), "", tokens.RefreshToken)
+	if err != nil {
+		t.Fatalf("Refresh: %v", err)
+	}
+	if renewed.RefreshToken == "" || renewed.RefreshToken == tokens.RefreshToken {
+		t.Fatal("refresh did not rotate the refresh token")
+	}
+	_, err = h.Refresh(t.Context(), "", tokens.RefreshToken)
+	assertOAuthError(t, err, "invalid_grant")
+	if _, err := h.Refresh(t.Context(), "", renewed.RefreshToken); err != nil {
+		t.Fatalf("Refresh with the rotated token: %v", err)
+	}
+}
+
+// TestResourceMustNameTheMecatlAPI: an RFC 8707 resource is optional, but when
+// sent it must be the audience, at the authorization and token endpoints.
+func TestResourceMustNameTheMecatlAPI(t *testing.T) {
+	h := identityharness.New(t, identityharness.Options{})
+	authorize := func(resource string) url.Values {
+		t.Helper()
+		q := url.Values{
+			"response_type": {"code"}, "client_id": {identityharness.DefaultClientID},
+			"redirect_uri": {identityharness.DefaultRedirectURI}, "state": {"s"},
+			"code_challenge": {"E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"}, "code_challenge_method": {"S256"},
+			"resource": {resource},
+		}
+		back, err := h.Authorize(t.Context(), h.AS1.AuthorizationEndpoint()+"?"+q.Encode())
+		if err != nil {
+			t.Fatalf("Authorize: %v", err)
+		}
+		return back
+	}
+	if back := authorize("https://other.test/api"); back.Get("error") != "invalid_target" {
+		t.Fatalf("foreign resource: error = %q, want invalid_target", back.Get("error"))
+	}
+	if back := authorize(h.AS1.Audience()); back.Get("code") == "" {
+		t.Fatalf("audience resource: no code (error %q)", back.Get("error"))
+	}
+
+	tokens, err := h.SignIn(t.Context(), identityharness.SignInRequest{})
+	if err != nil {
+		t.Fatalf("SignIn: %v", err)
+	}
+	refresh := func(resource string) (*http.Response, error) {
+		form := url.Values{"grant_type": {"refresh_token"}, "client_id": {identityharness.DefaultClientID}, "refresh_token": {tokens.RefreshToken}, "resource": {resource}}
+		return h.HTTPClient().PostForm(h.AS1.TokenEndpoint(), form)
+	}
+	resp, err := refresh("https://other.test/api")
+	if err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+	var oauthErr identityharness.OAuthError
+	decodeErr := json.NewDecoder(resp.Body).Decode(&oauthErr)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest || decodeErr != nil || oauthErr.Code != "invalid_target" {
+		t.Fatalf("foreign resource refresh: status %d error %q, want 400 invalid_target", resp.StatusCode, oauthErr.Code)
+	}
+	resp, err = refresh(h.AS1.Audience())
+	if err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+	var renewed identityharness.Tokens
+	decodeErr = json.NewDecoder(resp.Body).Decode(&renewed)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK || decodeErr != nil {
+		t.Fatalf("audience resource refresh: status %d", resp.StatusCode)
+	}
+	if _, claims := verify(t, h, renewed.AccessToken); claims["aud"] != h.AS1.Audience() {
+		t.Errorf("aud = %v, want the audience", claims["aud"])
+	}
 }
 
 func TestSignInFailures(t *testing.T) {

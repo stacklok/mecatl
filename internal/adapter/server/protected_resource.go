@@ -22,6 +22,11 @@ type ProtectedResourceProfile struct {
 	Audience string
 	ClientID string
 	Scopes   []string
+	// IdentityBrokerSignIn tells clients to send the RFC 8707 resource parameter
+	// (the audience) on authorization and token requests. Some identity
+	// providers reject the parameter, so it is advertised only when the
+	// server's token profile requires it.
+	IdentityBrokerSignIn bool
 }
 
 // WellKnownProtectedResourceURL derives the RFC 9728 metadata URL for resource.
@@ -92,6 +97,7 @@ func (h protectedResourceHandler) ServeHTTP(w http.ResponseWriter, r *http.Reque
 		BearerMethodsSupported: []string{"header"},
 		Audience:               h.profile.Audience,
 		ClientID:               h.profile.ClientID,
+		IdentityBrokerSignIn:   h.profile.IdentityBrokerSignIn,
 	}
 	if len(h.profile.Scopes) != 0 {
 		metadata.ScopesSupported = append([]string(nil), h.profile.Scopes...)
@@ -107,6 +113,7 @@ type protectedResourceMetadata struct {
 	ScopesSupported        []string `json:"scopes_supported,omitempty"`
 	Audience               string   `json:"com.stacklok.mecatl.audience"`
 	ClientID               string   `json:"com.stacklok.mecatl.client_id"`
+	IdentityBrokerSignIn   bool     `json:"com.stacklok.mecatl.identity_broker_sign_in,omitempty"`
 }
 
 func validProtectedResourceScopes(scopes []string) bool {

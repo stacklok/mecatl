@@ -12,6 +12,7 @@ import (
 	pathpkg "path"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 	"unicode/utf8"
@@ -40,11 +41,25 @@ type DialConfig struct {
 	TLSCAFile              string      // optional custom CA bundle for server verification
 	Insecure               bool        // skip TLS verification (testing only; with UseTLS)
 	RemotePlaintextAllowed bool        // explicit authorization for non-loopback plaintext
+	// IdentityBrokerSignIn is the saved server signal that users sign in through
+	// the identity broker's authorization server (AS-1), which accepts each
+	// access token for only one session open. With a TokenRefresher source,
+	// every request that opens a session then carries a freshly refreshed token.
+	IdentityBrokerSignIn bool
 }
 
 // TokenSource supplies a current bearer token for an RPC. Dial must not invoke it.
 type TokenSource interface {
 	Token(context.Context) (string, error)
+}
+
+// TokenRefresher is optionally implemented by a TokenSource that can obtain an
+// access token the server has never seen. The retry after a rejected bearer
+// uses it, and so do session-opening requests when DialConfig's
+// IdentityBrokerSignIn is set. A source without it (a static token) is used
+// unchanged.
+type TokenRefresher interface {
+	Refresh(context.Context) (string, error)
 }
 
 // Client is a connected mecated gRPC client: the dialled conn plus the generated
@@ -55,6 +70,18 @@ type Client struct {
 	localContext mecatlv1.LocalSessionContextServiceClient
 	scheduleSvc  mecatlv1.ScheduleServiceClient
 	bearerBacked bool
+	// refreshes reports a TokenRefresher-backed dial: only then are the
+	// rejected-bearer retry and the Converse reopen meaningful.
+	refreshes bool
+	// freshOpens additionally requires DialConfig.IdentityBrokerSignIn: only
+	// then do session-opening requests force a refresh (see openingContext).
+	freshOpens bool
+	// opened holds the sessions this client created, forked, or cleared with a
+	// fresh token, or already entered once. Any other session was bound without
+	// this client opening it (resumed), so its first run-entry request uses a
+	// fresh token; see runEntryContext.
+	openedMu sync.Mutex
+	opened   map[string]struct{}
 	// displayServerEndpoint is a sanitized diagnostic projection of the configured
 	// connection target, never a reconnect target, server response, or TLS/auth setting.
 	displayServerEndpoint string
@@ -139,14 +166,64 @@ func Dial(cfg DialConfig) (*Client, error) {
 	if err != nil {
 		return nil, fmt.Errorf("dial %q: %w", cfg.Server, err)
 	}
+	refreshes := cfg.AuthToken == "" && isRefresher(cfg.TokenSource)
 	return &Client{
 		conn:                  conn,
 		svc:                   mecatlv1.NewHarnessServiceClient(conn),
 		localContext:          mecatlv1.NewLocalSessionContextServiceClient(conn),
 		scheduleSvc:           mecatlv1.NewScheduleServiceClient(conn),
 		bearerBacked:          cfg.AuthToken != "" || cfg.TokenSource != nil,
+		refreshes:             refreshes,
+		freshOpens:            refreshes && cfg.IdentityBrokerSignIn,
 		displayServerEndpoint: displayServerEndpoint(cfg),
 	}, nil
+}
+
+// openingContext returns ctx for a request that opens a session: on an
+// identity-broker sign-in it asks for a freshly refreshed token, otherwise ctx
+// is used unchanged.
+func (c *Client) openingContext(ctx context.Context) context.Context {
+	if !c.freshOpens {
+		return ctx
+	}
+	return withFreshToken(ctx)
+}
+
+func isRefresher(source TokenSource) bool {
+	_, ok := source.(TokenRefresher)
+	return ok
+}
+
+// noteOpened records that this client opened id with a fresh token.
+func (c *Client) noteOpened(id string) {
+	if !c.freshOpens || id == "" {
+		return
+	}
+	c.openedMu.Lock()
+	defer c.openedMu.Unlock()
+	if c.opened == nil {
+		c.opened = make(map[string]struct{})
+	}
+	c.opened[id] = struct{}{}
+}
+
+// runEntryContext returns ctx for a run-entry request on id. Run entry reopens
+// a lost broker session, so the first one for a session this client did not
+// open itself (a resumed session) asks for a fresh token; later ones do not.
+func (c *Client) runEntryContext(ctx context.Context, id string) context.Context {
+	if !c.freshOpens || id == "" {
+		return ctx
+	}
+	c.openedMu.Lock()
+	defer c.openedMu.Unlock()
+	if _, ok := c.opened[id]; ok {
+		return ctx
+	}
+	if c.opened == nil {
+		c.opened = make(map[string]struct{})
+	}
+	c.opened[id] = struct{}{}
+	return withFreshToken(ctx)
 }
 
 // credentialFreeAuthError preserves the server's gRPC status while carrying a
@@ -214,25 +291,62 @@ type tokenContextValue struct {
 	token string
 }
 
+// freshTokenKey marks a request context whose RPC must carry a freshly
+// refreshed token (see TokenRefresher).
+type freshTokenKey struct{}
+
+func withFreshToken(ctx context.Context) context.Context {
+	return context.WithValue(ctx, freshTokenKey{}, true)
+}
+
+// sourceToken refreshes when ctx asks for a fresh token and the source can;
+// otherwise it returns the source's current token.
+func sourceToken(ctx context.Context, source TokenSource) (string, error) {
+	if refresher, ok := source.(TokenRefresher); ok && ctx.Value(freshTokenKey{}) != nil {
+		return refresher.Refresh(ctx)
+	}
+	return source.Token(ctx)
+}
+
+func withToken(ctx context.Context, token string) context.Context {
+	return context.WithValue(ctx, tokenContextKey{}, tokenContextValue{token: token})
+}
+
+// tokenSourceUnary attaches the source's token and, when the server rejects it
+// (Unauthenticated) and the source can refresh, retries exactly once with a
+// freshly refreshed token. The authenticator rejects before any handler runs,
+// so the retry cannot repeat work. A second rejection is returned as is.
 func tokenSourceUnary(source TokenSource) grpc.UnaryClientInterceptor {
 	return func(ctx context.Context, method string, req, reply any, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
-		token, err := source.Token(ctx)
+		token, err := sourceToken(ctx, source)
 		if err != nil {
 			return err
 		}
-		ctx = context.WithValue(ctx, tokenContextKey{}, tokenContextValue{token: token})
-		return invoker(ctx, method, req, reply, cc, opts...)
+		err = invoker(withToken(ctx, token), method, req, reply, cc, opts...)
+		refresher, ok := source.(TokenRefresher)
+		if !ok || status.Code(err) != codes.Unauthenticated {
+			return err
+		}
+		token, refreshErr := refresher.Refresh(ctx)
+		if refreshErr != nil {
+			// A classified local cause (an expired session) is the more useful
+			// recovery; anything else keeps the server's rejection.
+			if _, local := localAuthFailure(refreshErr); local {
+				return refreshErr
+			}
+			return err
+		}
+		return invoker(withToken(ctx, token), method, req, reply, cc, opts...)
 	}
 }
 
 func tokenSourceStream(source TokenSource) grpc.StreamClientInterceptor {
 	return func(ctx context.Context, desc *grpc.StreamDesc, cc *grpc.ClientConn, method string, streamer grpc.Streamer, opts ...grpc.CallOption) (grpc.ClientStream, error) {
-		token, err := source.Token(ctx)
+		token, err := sourceToken(ctx, source)
 		if err != nil {
 			return nil, err
 		}
-		ctx = context.WithValue(ctx, tokenContextKey{}, tokenContextValue{token: token})
-		return streamer(ctx, desc, cc, method, opts...)
+		return streamer(withToken(ctx, token), desc, cc, method, opts...)
 	}
 }
 
@@ -447,12 +561,13 @@ func (c *Client) CreateSessionWithCarryover(ctx context.Context, sel ModelSelect
 	if sourceSessionID == "" {
 		return "", Capabilities{}, ResolvedModel{}, fmt.Errorf("fork session: source session ID is required")
 	}
-	resp, err := c.svc.ForkSession(withSessionAffinity(ctx, sourceSessionID), &mecatlv1.ForkSessionRequest{
+	resp, err := c.svc.ForkSession(c.openingContext(withSessionAffinity(ctx, sourceSessionID)), &mecatlv1.ForkSessionRequest{
 		SourceSessionId: sourceSessionID, ProviderId: sel.ProviderID, ModelId: sel.ModelID, ReasoningEffort: sel.ReasoningEffort,
 	})
 	if err != nil {
 		return "", Capabilities{}, ResolvedModel{}, fmt.Errorf("fork session: %w", err)
 	}
+	c.noteOpened(resp.GetSessionId())
 	snapshot, err := c.GetSession(ctx, resp.GetSessionId())
 	if err != nil {
 		return "", Capabilities{}, ResolvedModel{}, err
@@ -482,10 +597,11 @@ func (c *Client) createSession(ctx context.Context, req *mecatlv1.CreateSessionR
 	if err != nil {
 		return "", Capabilities{}, ResolvedModel{}, err
 	}
-	resp, err := c.svc.CreateSession(ctx, req)
+	resp, err := c.svc.CreateSession(c.openingContext(ctx), req)
 	if err != nil {
 		return "", Capabilities{}, ResolvedModel{}, fmt.Errorf("create session: %w", err)
 	}
+	c.noteOpened(resp.GetSessionId())
 	caps = capabilitiesWithSessionMediaFrom(caps, resp.GetSessionCapabilities())
 	return resp.GetSessionId(), caps, resolvedModelFrom(resp.GetResolvedModel()), nil
 }
@@ -502,10 +618,11 @@ func (c *Client) ClearSession(ctx context.Context, sourceID string, selector *Wo
 		}
 		token = &selector.token
 	}
-	resp, err := c.svc.ClearSession(withSessionAffinity(ctx, sourceID), &mecatlv1.ClearSessionRequest{SourceSessionId: sourceID, WorktreeSelector: token})
+	resp, err := c.svc.ClearSession(c.openingContext(withSessionAffinity(ctx, sourceID)), &mecatlv1.ClearSessionRequest{SourceSessionId: sourceID, WorktreeSelector: token})
 	if err != nil {
 		return "", SessionSnapshot{}, fmt.Errorf("clear session: %w", err)
 	}
+	c.noteOpened(resp.GetSessionId())
 	snapshot, err := c.GetSession(ctx, resp.GetSessionId())
 	if err != nil {
 		return "", SessionSnapshot{}, err
@@ -521,7 +638,7 @@ func (c *Client) ClearSession(ctx context.Context, sourceID string, selector *Wo
 // caller owns the follow-up GetSession refetch for the forked session's resolved
 // model/capabilities echo (ForkSessionResponse carries only the id, no streaming).
 func (c *Client) ForkSession(ctx context.Context, srcID, title, reasoningEffort string) (string, error) {
-	resp, err := c.svc.ForkSession(withSessionAffinity(ctx, srcID), &mecatlv1.ForkSessionRequest{
+	resp, err := c.svc.ForkSession(c.openingContext(withSessionAffinity(ctx, srcID)), &mecatlv1.ForkSessionRequest{
 		SourceSessionId: srcID,
 		Title:           title,
 		ReasoningEffort: reasoningEffort,
@@ -529,6 +646,7 @@ func (c *Client) ForkSession(ctx context.Context, srcID, title, reasoningEffort 
 	if err != nil {
 		return "", fmt.Errorf("fork session: %w", err)
 	}
+	c.noteOpened(resp.GetSessionId())
 	return resp.GetSessionId(), nil
 }
 
@@ -688,7 +806,7 @@ func (c *Client) OpenConverseForSession(ctx context.Context, sessionID string) (
 	if !sessionaffinity.ValidValue(sessionID) {
 		return nil, fmt.Errorf("open converse: session affinity requires 1-256 bytes of printable ASCII without boundary spaces")
 	}
-	return c.openConverse(withSessionAffinity(ctx, sessionID))
+	return c.openConverse(c.runEntryContext(withSessionAffinity(ctx, sessionID), sessionID))
 }
 
 func (c *Client) openConverse(ctx context.Context) (*Stream, error) {
@@ -696,7 +814,17 @@ func (c *Client) openConverse(ctx context.Context) (*Stream, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open converse: %w", err)
 	}
-	return newAuthenticatedStream(bidi, bidi, c.bearerBacked), nil
+	stream := newAuthenticatedStream(bidi, bidi, c.bearerBacked)
+	if c.refreshes {
+		stream.enableReopen(func() (Recver, Sender, error) {
+			bidi, err := c.svc.Converse(withFreshToken(ctx))
+			if err != nil {
+				return nil, nil, err
+			}
+			return bidi, bidi, nil
+		})
+	}
+	return stream, nil
 }
 
 // ModeDefaultString is the canonical CLI/UI spelling for default permission mode.

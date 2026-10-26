@@ -142,6 +142,44 @@ func TestResourceProfileDocumentValidation(t *testing.T) {
 	}
 }
 
+// TestResourceProfileIdentityBrokerSignIn pins that the server-advertised RFC 8707
+// opt-in reaches the saved enrollment, that its absence (older servers) or
+// false means off, and that a duplicate or non-boolean value is rejected.
+func TestResourceProfileIdentityBrokerSignIn(t *testing.T) {
+	t.Parallel()
+	resource, err := parseProtectedResource("https://api.example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	prefix := `{"resource":"https://api.example.com","authorization_servers":["https://issuer.example.com"],"com.stacklok.mecatl.audience":"api","com.stacklok.mecatl.client_id":"client"`
+	for suffix, want := range map[string]bool{
+		`}`: false,
+		`,"com.stacklok.mecatl.identity_broker_sign_in":false}`: false,
+		`,"com.stacklok.mecatl.identity_broker_sign_in":true}`:  true,
+	} {
+		profile, err := parseProfileDocument(resource, []byte(prefix+suffix))
+		if err != nil {
+			t.Fatalf("profile %s: %v", suffix, err)
+		}
+		discovered := discoveredResource{protectedResource: resource, Issuer: profile.Issuer, Audience: profile.Audience, ClientID: profile.ClientID, IdentityBrokerSignIn: profile.IdentityBrokerSignIn}
+		enrollment, err := discoveredEnrollmentFrom(discovered, "", []string{"openid"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if enrollment.Connection.IdentityBrokerSignIn != want {
+			t.Errorf("profile %s: enrollment IdentityBrokerSignIn = %v, want %v", suffix, enrollment.Connection.IdentityBrokerSignIn, want)
+		}
+	}
+	for _, suffix := range []string{
+		`,"com.stacklok.mecatl.identity_broker_sign_in":"true"}`,
+		`,"com.stacklok.mecatl.identity_broker_sign_in":false,"com.stacklok.mecatl.identity_broker_sign_in":true}`,
+	} {
+		if _, err := parseProfileDocument(resource, []byte(prefix+suffix)); !errors.Is(err, errDiscoveryRejected) {
+			t.Errorf("profile %s error = %v, want rejection", suffix, err)
+		}
+	}
+}
+
 func TestMecatuiServerOwnedDiscoveryScopes_Scenario1_ScopesMemberPresenceMatrix(t *testing.T) {
 	resource, err := parseProtectedResource("https://api.example.com")
 	if err != nil {

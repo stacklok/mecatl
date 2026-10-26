@@ -66,6 +66,27 @@ func TestProtectedResourceMetadataFields(t *testing.T) {
 	}
 }
 
+// TestProtectedResourceMetadataIdentityBrokerSignIn pins that the private
+// resource-indicator field is published as true when set and omitted, not
+// false, otherwise.
+func TestProtectedResourceMetadataIdentityBrokerSignIn(t *testing.T) {
+	const field = "com.stacklok.mecatl.identity_broker_sign_in"
+	for _, on := range []bool{false, true} {
+		profile := protectedResourceProfile()
+		profile.IdentityBrokerSignIn = on
+		rec := httptest.NewRecorder()
+		server.NewProtectedResourceHandler(profile).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/.well-known/oauth-protected-resource/mecatl/v1", nil))
+		var got map[string]any
+		if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+			t.Fatalf("decode metadata: %v", err)
+		}
+		value, present := got[field]
+		if present != on || on && value != true {
+			t.Errorf("IdentityBrokerSignIn=%v: metadata[%q] = %#v (present %v)", on, field, value, present)
+		}
+	}
+}
+
 func TestProtectedResourceWellKnownRouting(t *testing.T) {
 	h := server.NewProtectedResourceHandler(protectedResourceProfile())
 	for _, tc := range []struct {

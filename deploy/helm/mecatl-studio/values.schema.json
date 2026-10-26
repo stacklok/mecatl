@@ -39,6 +39,14 @@
       }
     },
     "publicURL": {"type": "string"},
+    "oidc": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["clientID"],
+      "properties": {
+        "clientID": {"type": "string", "maxLength": 2048, "pattern": "^[!-~]*$"}
+      }
+    },
     "session": {
       "type": "object",
       "additionalProperties": false,

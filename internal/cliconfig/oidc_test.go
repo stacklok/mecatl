@@ -2,9 +2,12 @@ package cliconfig
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"reflect"
 	"strings"
 	"testing"
@@ -218,6 +221,42 @@ func TestOIDCProfileProjection(t *testing.T) {
 	}
 	if projection.Issuer != cfg.Issuer || projection.Audience != cfg.Audience {
 		t.Fatalf("metadata projection = issuer %q audience %q, want %q %q", projection.Issuer, projection.Audience, cfg.Issuer, cfg.Audience)
+	}
+}
+
+// TestOIDCProfileIdentityBrokerSignInFollowsSubIDOwnerIdentity pins that the
+// published metadata asks clients for the RFC 8707 resource parameter only with
+// the AS-1 (sub_id) token profile, and omits the field otherwise.
+func TestOIDCProfileIdentityBrokerSignInFollowsSubIDOwnerIdentity(t *testing.T) {
+	const field = "com.stacklok.mecatl.identity_broker_sign_in"
+	for _, tc := range []struct {
+		name string
+		cfg  OIDCConfig
+		want any
+	}{
+		{"owner identity off", OIDCConfig{Issuer: "https://issuer.example", Audience: "api://mecatl", Resource: "https://api.example.com", ClientID: "mecatui"}, nil},
+		{"owner identity sub_id", OIDCConfig{Issuer: "https://issuer.example", Audience: "api://mecatl", Resource: "https://api.example.com", ClientID: "mecatui", OwnerIdentity: oidcauthn.OwnerIdentitySubID, AcceptedClientIDs: []string{"mecatui"}}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			projection, err := tc.cfg.ProfileProjection()
+			if err != nil {
+				t.Fatalf("ProfileProjection: %v", err)
+			}
+			h := server.NewProtectedResourceHandler(projection.ProtectedResourceProfile())
+			if h == nil {
+				t.Fatal("metadata handler disabled")
+			}
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, server.WellKnownProtectedResourceURL("https://api.example.com"), nil))
+			var doc map[string]any
+			if err := json.Unmarshal(rec.Body.Bytes(), &doc); err != nil {
+				t.Fatalf("decode metadata (status %d): %v", rec.Code, err)
+			}
+			got, present := doc[field]
+			if tc.want == nil && present || tc.want != nil && got != tc.want {
+				t.Fatalf("metadata %s = %#v (present %v), want %#v", field, got, present, tc.want)
+			}
+		})
 	}
 }
 

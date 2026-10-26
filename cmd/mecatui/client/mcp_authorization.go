@@ -60,7 +60,7 @@ func (c *Client) MCPAuthorizationPresentation(ctx context.Context, sessionID, au
 
 // RecheckMCPAuthorization starts the bidirectional authorization-control stream.
 func (c *Client) RecheckMCPAuthorization(ctx context.Context, sessionID, authorizationID string) (*EventStream, error) {
-	stream, err := c.svc.RecheckMcpAuthorization(ctx)
+	stream, err := c.svc.RecheckMcpAuthorization(c.runEntryContext(ctx, sessionID))
 	if err != nil {
 		return nil, fmt.Errorf("recheck MCP authorization: %w", err)
 	}
@@ -73,7 +73,7 @@ func (c *Client) RecheckMCPAuthorization(ctx context.Context, sessionID, authori
 
 // CancelMCPAuthorization starts the bidirectional authorization cancellation.
 func (c *Client) CancelMCPAuthorization(ctx context.Context, sessionID, authorizationID string) (*EventStream, error) {
-	stream, err := c.svc.CancelMcpAuthorization(ctx)
+	stream, err := c.svc.CancelMcpAuthorization(c.runEntryContext(ctx, sessionID))
 	if err != nil {
 		return nil, fmt.Errorf("cancel MCP authorization: %w", err)
 	}

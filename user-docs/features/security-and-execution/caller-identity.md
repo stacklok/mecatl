@@ -187,7 +187,16 @@ client requests; it does not grant server authorization. When omitted, login
 requests `openid`, `profile`, and `offline_access`.
 
 Mecatl publishes the audience and client ID as `com.stacklok.mecatl.audience`
-and `com.stacklok.mecatl.client_id` extension members.
+and `com.stacklok.mecatl.client_id` extension members. With
+`--oidc-owner-identity=sub_id`, it also publishes
+`com.stacklok.mecatl.identity_broker_sign_in: true`: users sign in through the
+identity broker's authorization server (AS-1). A client that discovers this
+member sends the audience as the RFC 8707 `resource` parameter when it signs in
+and refreshes, and refreshes its access token before each request that opens a
+session, because AS-1 accepts each access token for only one session open.
+Otherwise it omits `resource`, because some identity providers, such as
+Microsoft Entra ID, reject the parameter. Explicit `mecatui login --issuer ...`
+never sends it.
 
 Discovery rejects a `--scopes` override. Configure advertised scopes through
 `oidc.scopes`; explicit `mecatui login --issuer ...` still accepts `--scopes`.

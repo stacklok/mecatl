@@ -79,6 +79,10 @@ spec:
             {{- end }}
             - name: STUDIO_PUBLIC_URL
               value: {{ .Values.publicURL | quote }}
+            {{- with .Values.oidc.clientID }}
+            - name: STUDIO_OIDC_CLIENT_ID
+              value: {{ . | quote }}
+            {{- end }}
             {{- with .Values.session.secretName }}
             - name: STUDIO_SESSION_SECRET
               valueFrom:

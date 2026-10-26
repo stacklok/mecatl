@@ -140,7 +140,7 @@ fail at startup.
 {{- fail (printf "podLabels must not set the selector label %s" $label) -}}
 {{- end -}}
 {{- end -}}
-{{- $owned := list "MECATL_BASE_URL" "MECATL_RESOURCE_URL" "MECATL_AUTH_TOKEN" "MECATL_DEV_MOCK" "STUDIO_PUBLIC_URL" "STUDIO_SESSION_SECRET" "STUDIO_ALLOW_UNAUTHENTICATED" "STUDIO_TRUSTED_PROXY_HOPS" "STUDIO_LOG_LEVEL" "STUDIO_HOST" "STUDIO_PORT" "STUDIO_IMAGE" "STUDIO_WEB_DIST" "NODE_ENV" -}}
+{{- $owned := list "MECATL_BASE_URL" "MECATL_RESOURCE_URL" "MECATL_AUTH_TOKEN" "MECATL_DEV_MOCK" "STUDIO_PUBLIC_URL" "STUDIO_OIDC_CLIENT_ID" "STUDIO_SESSION_SECRET" "STUDIO_ALLOW_UNAUTHENTICATED" "STUDIO_TRUSTED_PROXY_HOPS" "STUDIO_LOG_LEVEL" "STUDIO_HOST" "STUDIO_PORT" "STUDIO_IMAGE" "STUDIO_WEB_DIST" "NODE_ENV" -}}
 {{- range $env := .Values.extraEnv -}}
 {{- if and (hasKey $env "name") (has $env.name $owned) -}}
 {{- fail (printf "extraEnv name %q collides with a variable the chart or image owns" $env.name) -}}

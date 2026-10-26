@@ -490,24 +490,44 @@ export function registerChatRoutes(
 ) {
   const { maxStreams, replayMax } = limits;
   const streams = activityStreamGate(maxStreams);
-  const streamRunEvents = (
+  const streamRunEvents = async (
     context: Parameters<typeof problem>[0],
     source: (signal: AbortSignal) => AsyncIterable<RunStreamEvent>,
-  ) =>
-    streamSSE(context, async (stream) => {
-      const { controller, abort, unlink } = linkedAbort(context.req.raw.signal);
+  ) => {
+    const { controller, abort, unlink } = linkedAbort(context.req.raw.signal);
+    // Pull the first delivery before committing the response: a credential
+    // refresh on the way must reach this response's cookies, and a session
+    // Mecatl still rejects is an ordinary 401 rather than an in-band error.
+    let opened:
+      | { first: IteratorResult<RunStreamEvent>; iterator: AsyncIterator<RunStreamEvent> }
+      | { failure: unknown };
+    try {
+      const iterator = source(controller.signal)[Symbol.asyncIterator]();
+      opened = { first: await iterator.next(), iterator };
+    } catch (error) {
+      if (rejectedCredential(error)) {
+        unlink();
+        throw error;
+      }
+      opened = { failure: error };
+    }
+    return streamSSE(context, async (stream) => {
       stream.onAbort(abort);
       try {
-        for await (const delivery of source(controller.signal)) {
-          await stream.writeSSE({ data: JSON.stringify(delivery), event: delivery.type });
+        if ("failure" in opened) throw opened.failure;
+        const { iterator } = opened;
+        for (let next = opened.first; next.done !== true; next = await iterator.next()) {
+          await stream.writeSSE({ data: JSON.stringify(next.value), event: next.value.type });
         }
       } catch (error) {
         const delivery = runError(error);
         await stream.writeSSE({ data: JSON.stringify(delivery), event: delivery.type });
       } finally {
         unlink();
+        if ("iterator" in opened) await opened.iterator.return?.().catch(() => undefined);
       }
     });
+  };
   app.openapi(listSessionsRoute, async (context) => {
     if (chat === undefined) {
       return unavailable(context);
@@ -900,10 +920,17 @@ function invalidPresentation(context: Parameters<typeof problem>[0]) {
   );
 }
 
+function rejectedCredential(error: unknown): boolean {
+  return (
+    error instanceof MecatlError &&
+    (error.code === "authentication" || error.code === "unauthenticated")
+  );
+}
+
 /** A selector may occur in an upstream error; selected successor failures use fixed details. */
 function successorFailure(context: Parameters<typeof problem>[0], error: unknown) {
+  if (rejectedCredential(error)) throw error;
   if (error instanceof MecatlError) {
-    if (error.code === "authentication" || error.code === "unauthenticated") throw error;
     if (error.code === "session_not_found" || error.code === "not_found")
       return problem(
         context,

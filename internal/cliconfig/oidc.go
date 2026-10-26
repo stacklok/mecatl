@@ -200,17 +200,20 @@ type OIDCProfileProjection struct {
 	Issuer   string
 	Audience string
 	Scopes   []string
+	// IdentityBrokerSignIn is derived from OwnerIdentity, not separately configured.
+	IdentityBrokerSignIn bool
 }
 
 // ProtectedResourceProfile converts this validated projection to the public
 // metadata shape. It deliberately exposes only fields RFC 9728 permits here.
 func (p OIDCProfileProjection) ProtectedResourceProfile() server.ProtectedResourceProfile {
 	return server.ProtectedResourceProfile{
-		Resource: p.Resource,
-		Issuer:   p.Issuer,
-		Audience: p.Audience,
-		ClientID: p.ClientID,
-		Scopes:   append([]string(nil), p.Scopes...),
+		Resource:             p.Resource,
+		Issuer:               p.Issuer,
+		Audience:             p.Audience,
+		ClientID:             p.ClientID,
+		Scopes:               append([]string(nil), p.Scopes...),
+		IdentityBrokerSignIn: p.IdentityBrokerSignIn,
 	}
 }
 
@@ -281,7 +284,12 @@ func (c *OIDCConfig) ProfileProjection() (OIDCProfileProjection, error) {
 	if err := c.ValidateOIDCProfile(); err != nil {
 		return OIDCProfileProjection{}, err
 	}
-	return OIDCProfileProjection{Resource: c.Resource, ClientID: c.ClientID, Issuer: c.Issuer, Audience: c.Audience, Scopes: append([]string(nil), c.Scopes...)}, nil
+	return OIDCProfileProjection{
+		Resource: c.Resource, ClientID: c.ClientID, Issuer: c.Issuer, Audience: c.Audience, Scopes: append([]string(nil), c.Scopes...),
+		// The sub_id owner identity is the AS-1 token profile, whose
+		// authorization server binds tokens to the RFC 8707 resource.
+		IdentityBrokerSignIn: c.OwnerIdentity == oidcauthn.OwnerIdentitySubID,
+	}, nil
 }
 
 // ErrOIDCMisconfigured is returned when caller identity or its protected

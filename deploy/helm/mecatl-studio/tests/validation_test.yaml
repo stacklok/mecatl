@@ -177,6 +177,22 @@ tests:
       - failedTemplate:
           errorPattern: "/logLevel"
 
+  - it: rejects a client ID Studio would refuse through the schema
+    set:
+      oidc.clientID: has space
+    asserts:
+      - failedTemplate:
+          errorPattern: "/oidc/clientID"
+
+  - it: refuses the client ID through extraEnv
+    set:
+      extraEnv:
+        - name: STUDIO_OIDC_CLIENT_ID
+          value: mecatl-studio
+    asserts:
+      - failedTemplate:
+          errorPattern: 'extraEnv name "STUDIO_OIDC_CLIENT_ID" collides'
+
   - it: rejects more trusted proxy hops than Studio accepts
     set:
       trustedProxyHops: 17

@@ -184,7 +184,9 @@ the default empty string. `oidc.acceptedClientIDs` sets
 `--oidc-accepted-client-ids`; the chart rejects one without the other. The experimental identity broker requires this setting:
 with `--enable-identity-broker` and OIDC enabled, `mecak8s` refuses to start
 without it. When `oidc.clientID` is set, the chart requires it in
-`oidc.acceptedClientIDs`. Existing owners and principal settings keep matching
+`oidc.acceptedClientIDs`. Studio needs its own client ID here too; see
+[Sign in through the identity broker](/operating/studio.md#sign-in-through-the-identity-broker).
+Existing owners and principal settings keep matching
 only if AS-1's upstream IdP returns each user's same issuer and `sub`, which
 `mecak8s` cannot check at startup. For that precondition, the token checks, and
 the requirements on AS-1, see

@@ -346,6 +346,10 @@ func (a *AS1) authorize(w http.ResponseWriter, r *http.Request) {
 		redirectWithError(w, r, redirectURI, state, "invalid_request")
 		return
 	}
+	if !a.validResource(q) {
+		redirectWithError(w, r, redirectURI, state, errInvalidTarget)
+		return
+	}
 	upstreamState := randomToken("as1-state-")
 	pending := as1Pending{
 		clientID: clientID, redirectURI: redirectURI, state: state, challenge: q.Get("code_challenge"),
@@ -510,6 +514,10 @@ func (a *AS1) token(w http.ResponseWriter, r *http.Request) {
 		writeOAuthError(w, fault.Status, fault.Error, fault.Reason)
 		return
 	}
+	if !a.validResource(r.PostForm) {
+		writeOAuthError(w, http.StatusBadRequest, errInvalidTarget, "")
+		return
+	}
 	var user, refresh string
 	switch r.PostForm.Get("grant_type") {
 	case grantAuthorizationCode:
@@ -524,9 +532,16 @@ func (a *AS1) token(w http.ResponseWriter, r *http.Request) {
 		a.refresh[refresh] = as1Refresh{clientID: clientID, user: user}
 		a.mu.Unlock()
 	case grantRefreshToken:
-		refresh = r.PostForm.Get("refresh_token")
+		// Refresh tokens rotate on every use, as they do at ToolHive's fosite
+		// AS: the presented one stops working.
+		presented := r.PostForm.Get("refresh_token")
+		refresh = randomToken("as1-rt-")
 		a.mu.Lock()
-		record, ok := a.refresh[refresh]
+		record, ok := a.refresh[presented]
+		if ok && record.clientID == clientID {
+			delete(a.refresh, presented)
+			a.refresh[refresh] = record
+		}
 		a.mu.Unlock()
 		if !ok || record.clientID != clientID {
 			writeOAuthError(w, http.StatusBadRequest, "invalid_grant", "")
@@ -566,6 +581,19 @@ func (a *AS1) brokerToken(w http.ResponseWriter, r *http.Request) {
 	default:
 		writeOAuthError(w, http.StatusBadRequest, "unsupported_grant_type", "")
 	}
+}
+
+const (
+	paramResource = "resource"
+	// errInvalidTarget is RFC 8707's error for an unacceptable resource.
+	errInvalidTarget = "invalid_target"
+)
+
+// validResource reports whether an optional RFC 8707 resource names the Mecatl
+// API, the only resource AS-1 issues tokens for (so aud stays the audience).
+func (a *AS1) validResource(values url.Values) bool {
+	resources, ok := values[paramResource]
+	return !ok || len(resources) == 1 && resources[0] == a.audience
 }
 
 // redeemCode checks an authorization code grant (RFC 6749 §4.1.3, RFC 7636

@@ -78,6 +78,13 @@ export type CredentialResolution =
 export interface MecatlAuthenticationProfile {
   readonly audience: string;
   readonly clientId: string;
+  /**
+   * `com.stacklok.mecatl.identity_broker_sign_in`: users sign in at the
+   * identity broker's authorization server (AS-1), which wants RFC 8707
+   * `resource` on every token request and accepts each access token for only
+   * one session open.
+   */
+  readonly identityBrokerSignIn: boolean;
   readonly issuer: string;
   readonly resource: string;
   readonly scopes: readonly string[];
@@ -85,6 +92,18 @@ export interface MecatlAuthenticationProfile {
 
 export interface AuthenticationService {
   clear(context: Context<AppEnv>): void;
+  /** True when every request that opens a session needs a freshly refreshed access token. */
+  readonly freshTokenPerSessionOpen: boolean;
+  /**
+   * Exchanges the credential's refresh token for an access token no request
+   * has carried yet, never one the rotation grace window would reuse, and
+   * stores it in the response's session cookies. Rejects when the credential
+   * cannot be refreshed; the caller decides whether that ends the session.
+   */
+  refresh(
+    context: Context<AppEnv>,
+    credential: AuthenticationCredential,
+  ): Promise<AuthenticationCredential>;
   /** Records a completed login; call only after the credential is verified and stored. */
   noteLoginComplete(context: Context<AppEnv>): void;
   /** Records a login that failed after the exchange, such as a rejected credential. */
@@ -114,6 +133,11 @@ export class AuthenticationError extends Error {
 }
 
 export interface AuthenticationOptions {
+  /**
+   * Studio's own OAuth client ID at the authorization server. When set it
+   * replaces the protected-resource document's `com.stacklok.mecatl.client_id`.
+   */
+  readonly clientId?: string;
   readonly fetch?: typeof fetch;
   readonly logger?: Logger;
   /** Browser-facing origin; the callback URL and cookie `Secure` flag derive from it. */
@@ -138,8 +162,10 @@ export async function createAuthenticationService(
   }
 
   const fetcher = options.fetch ?? globalThis.fetch;
-  const profile = await discoverMecatlAuthentication(runtimeConfig.resourceUrl, fetcher);
-  if (profile === undefined) return undefined;
+  const discovered = await discoverMecatlAuthentication(runtimeConfig.resourceUrl, fetcher);
+  if (discovered === undefined) return undefined;
+  const profile =
+    options.clientId === undefined ? discovered : { ...discovered, clientId: options.clientId };
 
   const secret = options.sessionSecret;
   if (secret === undefined || new TextEncoder().encode(secret).byteLength < 32) {
@@ -230,6 +256,7 @@ export async function discoverMecatlAuthentication(
   return {
     audience,
     clientId,
+    identityBrokerSignIn: metadata["com.stacklok.mecatl.identity_broker_sign_in"] === true,
     issuer,
     resource,
     scopes: [...discoveredScopes].sort(),
@@ -271,6 +298,10 @@ class OidcAuthenticationService implements AuthenticationService {
     this.#verifyCredential = verifyCredential;
   }
 
+  get freshTokenPerSessionOpen(): boolean {
+    return this.#profile.identityBrokerSignIn;
+  }
+
   clear(context: Context<AppEnv>): void {
     const options = this.#deletionOptions(context);
     deleteCookie(context, accessCookie, options);
@@ -299,10 +330,15 @@ class OidcAuthenticationService implements AuthenticationService {
       const configuration = await this.#configuration();
       const authorizationResponseUrl = new URL(transaction.redirectUri);
       authorizationResponseUrl.search = callbackUrl.search;
-      const tokens = await authorizationCodeGrant(configuration, authorizationResponseUrl, {
-        expectedState: transaction.state,
-        pkceCodeVerifier: transaction.codeVerifier,
-      });
+      const tokens = await authorizationCodeGrant(
+        configuration,
+        authorizationResponseUrl,
+        {
+          expectedState: transaction.state,
+          pkceCodeVerifier: transaction.codeVerifier,
+        },
+        this.#resourceParameters(),
+      );
       // Audited by noteLoginComplete once the caller has verified the
       // credential and sealed the session: a token exchange that Mecatl then
       // rejects, or a session too large to store, is not a completed login.
@@ -402,6 +438,18 @@ class OidcAuthenticationService implements AuthenticationService {
     }
   }
 
+  async refresh(
+    context: Context<AppEnv>,
+    credential: AuthenticationCredential,
+  ): Promise<AuthenticationCredential> {
+    if (credential.refreshToken === undefined) {
+      throw new AuthenticationError("refresh_unavailable", "The session holds no refresh token");
+    }
+    const refreshed = await this.#freshCredential(credential.refreshToken, credential);
+    await this.save(context, refreshed);
+    return refreshed;
+  }
+
   async save(context: Context<AppEnv>, credential: AuthenticationCredential): Promise<void> {
     const options = this.#sessionOptions(context);
     let access: string;
@@ -486,6 +534,7 @@ class OidcAuthenticationService implements AuthenticationService {
         // issuer must mint the token for; omitting it yields a token Mecatl
         // then rejects. The Go client sends the same parameter.
         ...(this.#profile.audience === "" ? {} : { audience: this.#profile.audience }),
+        ...this.#resourceParameters(),
         code_challenge: codeChallenge,
         code_challenge_method: "S256",
         redirect_uri: redirectUri,
@@ -566,12 +615,41 @@ class OidcAuthenticationService implements AuthenticationService {
    * session affinity can still race each other.
    */
   #refresh(refreshToken: string, access: AccessCredential): Promise<AuthenticationCredential> {
-    const active = this.#refreshes.get(refreshToken);
-    if (active !== undefined) return active;
+    return this.#refreshes.get(refreshToken) ?? this.#grant(refreshToken, access);
+  }
 
+  /**
+   * A refresh whose access token no other request has received. A refresh
+   * token that was already exchanged, or is being exchanged, is followed to
+   * the newest one its grant returned, one completed grant at a time, so a
+   * rotating issuer is never handed a spent token and concurrent callers each
+   * get their own grant. Between the last check and `#grant` there is no
+   * `await`, so a concurrent caller always sees the grant this one started.
+   */
+  async #freshCredential(
+    refreshToken: string,
+    access: AccessCredential,
+  ): Promise<AuthenticationCredential> {
+    let current = refreshToken;
+    for (;;) {
+      const previous = this.#refreshes.get(current);
+      if (previous === undefined) break;
+      const next = (await previous).refreshToken;
+      // An issuer that does not rotate returned the same token: it stays usable.
+      if (next === undefined || next === current) break;
+      current = next;
+    }
+    return this.#grant(current, access);
+  }
+
+  #grant(refreshToken: string, access: AccessCredential): Promise<AuthenticationCredential> {
     const operation = this.#configuration()
       .then(async (configuration) => {
-        const tokens = await refreshTokenGrant(configuration, refreshToken);
+        const tokens = await refreshTokenGrant(
+          configuration,
+          refreshToken,
+          this.#resourceParameters(),
+        );
         const claims = tokens.claims();
         const subject = claims === undefined ? access.subject : verifiedSubject(claims.sub);
         if (subject === undefined || subject !== access.subject) {
@@ -601,12 +679,17 @@ class OidcAuthenticationService implements AuthenticationService {
           return refreshed;
         },
         (error: unknown) => {
-          this.#refreshes.delete(refreshToken);
+          if (this.#refreshes.get(refreshToken) === operation) this.#refreshes.delete(refreshToken);
           throw error;
         },
       );
     this.#refreshes.set(refreshToken, operation);
     return operation;
+  }
+
+  /** RFC 8707 `resource` for authorize, code exchange, and refresh, only when AS-1 asks for it. */
+  #resourceParameters(): Record<string, string> {
+    return this.#profile.identityBrokerSignIn ? { resource: this.#profile.audience } : {};
   }
 
   /**

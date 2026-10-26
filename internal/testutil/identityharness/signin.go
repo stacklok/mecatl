@@ -93,6 +93,18 @@ func (h *Harness) Refresh(ctx context.Context, clientID, refreshToken string) (T
 	})
 }
 
+// Authorize plays the browser for a real client's authorization request:
+// it follows authorizationURL through AS-1 and the upstream IdP to the
+// redirect_uri the request names, and returns that redirect's query (code,
+// state, or error) without contacting the client's redirect URI.
+func (h *Harness) Authorize(ctx context.Context, authorizationURL string) (url.Values, error) {
+	u, err := url.Parse(authorizationURL)
+	if err != nil {
+		return nil, err
+	}
+	return h.followToRedirect(ctx, authorizationURL, u.Query().Get("redirect_uri"))
+}
+
 // followToRedirect follows redirects from start until one targets
 // redirectURI, and returns that redirect's query.
 func (h *Harness) followToRedirect(ctx context.Context, start, redirectURI string) (url.Values, error) {

@@ -671,24 +671,31 @@ type Connection struct {
 	IssuerCAFile        string              `json:"issuer_ca_file,omitempty"`
 	ServerCAFile        string              `json:"server_ca_file,omitempty"`
 	IssuerAddressPolicy IssuerAddressPolicy `json:"issuer_address_policy,omitempty"`
+	// IdentityBrokerSignIn records that the server's protected-resource metadata
+	// asked for the RFC 8707 resource parameter, so refresh after a restart
+	// sends it too. Like ResourceURL it stays outside Identity, keeping credential
+	// record keys stable; a row without it (older registries) means false.
+	IdentityBrokerSignIn bool `json:"identity_broker_sign_in,omitempty"`
 }
 
 // UnmarshalJSON reads the former tls_ca_file field as issuer trust. When both are
 // present, the explicit issuer_ca_file value wins, including an explicit empty value.
 func (c *Connection) UnmarshalJSON(data []byte) error {
 	var wire struct {
-		Identity     Identity        `json:"identity"`
-		ResourceURL  string          `json:"resource_url"`
-		IssuerCAFile *string         `json:"issuer_ca_file"`
-		ServerCAFile string          `json:"server_ca_file"`
-		LegacyCAFile string          `json:"tls_ca_file"`
-		Policy       json.RawMessage `json:"issuer_address_policy"`
+		Identity             Identity        `json:"identity"`
+		ResourceURL          string          `json:"resource_url"`
+		IssuerCAFile         *string         `json:"issuer_ca_file"`
+		ServerCAFile         string          `json:"server_ca_file"`
+		LegacyCAFile         string          `json:"tls_ca_file"`
+		Policy               json.RawMessage `json:"issuer_address_policy"`
+		IdentityBrokerSignIn bool            `json:"identity_broker_sign_in"`
 	}
 	if err := json.Unmarshal(data, &wire); err != nil {
 		return err
 	}
 	c.Identity = wire.Identity
 	c.ResourceURL = wire.ResourceURL
+	c.IdentityBrokerSignIn = wire.IdentityBrokerSignIn
 	c.ServerCAFile = wire.ServerCAFile
 	if wire.IssuerCAFile != nil {
 		c.IssuerCAFile = *wire.IssuerCAFile
@@ -833,7 +840,7 @@ func (r *Registry) readRows() ([]registryRow, error) {
 
 func validConnectionFields(fields map[string]json.RawMessage) bool {
 	for key := range fields {
-		if key != "identity" && key != "resource_url" && key != "issuer_ca_file" && key != "server_ca_file" && key != "tls_ca_file" && key != "issuer_address_policy" {
+		if key != "identity" && key != "resource_url" && key != "issuer_ca_file" && key != "server_ca_file" && key != "tls_ca_file" && key != "issuer_address_policy" && key != "identity_broker_sign_in" {
 			return false
 		}
 	}
@@ -1103,7 +1110,7 @@ func sameConnections(a, b []Connection) bool {
 		if right == "" {
 			right = IssuerAddressPolicyPrivate
 		}
-		if conn.ResourceURL != b[i].ResourceURL || conn.IssuerCAFile != b[i].IssuerCAFile || conn.ServerCAFile != b[i].ServerCAFile || left != right || !conn.Identity.Equal(b[i].Identity) {
+		if conn.ResourceURL != b[i].ResourceURL || conn.IdentityBrokerSignIn != b[i].IdentityBrokerSignIn || conn.IssuerCAFile != b[i].IssuerCAFile || conn.ServerCAFile != b[i].ServerCAFile || left != right || !conn.Identity.Equal(b[i].Identity) {
 			return false
 		}
 	}

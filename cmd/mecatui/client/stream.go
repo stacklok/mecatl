@@ -7,6 +7,8 @@ import (
 	"sync"
 
 	tea "charm.land/bubbletea/v2"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
 )
@@ -52,6 +54,17 @@ type Stream struct {
 	// late duplicate event.
 	resolvedApprovals map[string]struct{}
 	bearerBacked      bool
+
+	// reopen, when set, opens a replacement Converse stream with a freshly
+	// refreshed token. It is used at most once, only when the server rejects
+	// the bearer before delivering any response. Until the first response,
+	// sent frames are kept in unanswered so the replacement can replay them:
+	// the server never processed them. Guarded by mu.
+	reopen     func() (Recver, Sender, error)
+	recording  bool
+	unanswered []*mecatlv1.ConverseRequest
+	// answered is set by the reader goroutine alone, after the first response.
+	answered bool
 }
 
 // NewStream binds a receive and send side into a Stream. Pass the same
@@ -63,6 +76,66 @@ func NewStream(recv Recver, send Sender) *Stream {
 
 func newAuthenticatedStream(recv Recver, send Sender, bearerBacked bool) *Stream {
 	return &Stream{recv: recv, send: send, bearerBacked: bearerBacked}
+}
+
+// enableReopen arms the one-time reopen after a rejected bearer.
+func (s *Stream) enableReopen(reopen func() (Recver, Sender, error)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.reopen = reopen
+	s.recording = true
+}
+
+// recvResponse receives the next response. If the server rejects the bearer
+// (Unauthenticated) before any response, it reopens the stream once with a
+// fresh token, replays the frames sent so far, and receives from the
+// replacement; a second rejection, or one after a response, is returned.
+func (s *Stream) recvResponse() (*mecatlv1.ConverseResponse, error) {
+	resp, err := s.recv.Recv()
+	if err != nil && !s.answered && status.Code(err) == codes.Unauthenticated {
+		if reopened, reopenErr := s.reopenOnce(); reopened {
+			resp, err = s.recv.Recv()
+		} else if _, local := localAuthFailure(reopenErr); local {
+			err = reopenErr // e.g. the session can no longer refresh
+		}
+	}
+	if err == nil && !s.answered {
+		s.answered = true
+		s.mu.Lock()
+		s.recording = false
+		s.unanswered = nil
+		s.mu.Unlock()
+	}
+	return resp, err
+}
+
+// reopenOnce replaces the rejected stream and reports whether it did. Frames
+// sent while the replacement is opening still go to the rejected stream and
+// are recorded, so the replay under mu sends each frame once.
+func (s *Stream) reopenOnce() (bool, error) {
+	s.mu.Lock()
+	reopen := s.reopen
+	s.reopen = nil
+	s.mu.Unlock()
+	if reopen == nil {
+		return false, nil
+	}
+	recv, send, err := reopen()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.recording = false
+	frames := s.unanswered
+	s.unanswered = nil
+	if err != nil {
+		return false, err
+	}
+	for _, frame := range frames {
+		if send.Send(frame) != nil {
+			break // the replacement's Recv reports why
+		}
+	}
+	s.recv, s.send = recv, send
+	return true, nil
 }
 
 // MarkApprovalResolved records an ask id as resolved for this stream. It is
@@ -122,7 +195,7 @@ func (s *Stream) ForgetApprovalResolved(askID string) {
 // StreamClosedMsg as a no-op.
 func (s *Stream) ReadLoop(ctx context.Context, out chan<- tea.Msg) {
 	readEventLoop(ctx, func() (*mecatlv1.Event, error) {
-		resp, err := s.recv.Recv()
+		resp, err := s.recvResponse()
 		if err != nil {
 			return nil, err
 		}
@@ -326,9 +399,19 @@ func (s *Stream) SendSteerCancel(messageID string) error {
 	})
 }
 
-// sendFrame serialises one Send under the mutex.
+// sendFrame serialises one Send under the mutex. While a reopen is still
+// possible the frame is recorded for replay, and io.EOF (the stream already
+// ended) is not an error: the reader receives the stream's real status and
+// either reopens and replays the frame or reports that status.
 func (s *Stream) sendFrame(req *mecatlv1.ConverseRequest) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.send.Send(req)
+	if !s.recording {
+		return s.send.Send(req)
+	}
+	s.unanswered = append(s.unanswered, req)
+	if err := s.send.Send(req); err != nil && !errors.Is(err, io.EOF) {
+		return err
+	}
+	return nil
 }

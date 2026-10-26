@@ -40,6 +40,13 @@ mecatl:
 # <publicURL>/api/v1/auth/callback from it and answers only that Host.
 publicURL: ""
 
+oidc:
+  # Studio's own OAuth client ID at the authorization server
+  # (STUDIO_OIDC_CLIENT_ID). Empty uses the client ID the deployment advertises
+  # (com.stacklok.mecatl.client_id). Set it when users sign in through the
+  # identity broker (AS-1), where Studio needs its own registration.
+  clientID: ""
+
 # Same-namespace Secret holding the cookie-sealing secret
 # (STUDIO_SESSION_SECRET, at least 32 bytes). Required unless
 # allowUnauthenticated is true.

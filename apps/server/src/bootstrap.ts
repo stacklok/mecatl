@@ -38,6 +38,7 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<Bootstr
   const runtime = await startMecatlRuntime(runtimeConfig, { logger, ...options.runtime });
   try {
     const authentication = await createAuthenticationService(runtimeConfig, {
+      ...(config.oidcClientId === undefined ? {} : { clientId: config.oidcClientId }),
       ...(options.fetch === undefined ? {} : { fetch: options.fetch }),
       logger,
       ...(config.publicUrl === undefined ? {} : { publicUrl: config.publicUrl }),

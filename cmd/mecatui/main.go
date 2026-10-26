@@ -1376,7 +1376,7 @@ func resolveRemoteTransport(ctx context.Context, cfg config, noop func()) (targe
 		}
 		return target, client.DialConfig{}, noop, &client.AuthError{Reason: client.AuthStorageUnavailable}
 	}
-	source, sourceErr := clientauth.NewRefreshSource(ctx, creds, clientauth.LoginConfig{Identity: conn.Identity, IssuerAddressPolicy: conn.IssuerAddressPolicy, TrustedCAPEM: ca, Registry: registry})
+	source, sourceErr := clientauth.NewRefreshSource(ctx, creds, clientauth.LoginConfig{Identity: conn.Identity, IssuerAddressPolicy: conn.IssuerAddressPolicy, TrustedCAPEM: ca, Registry: registry, IdentityBrokerSignIn: conn.IdentityBrokerSignIn})
 	if sourceErr != nil {
 		_ = store.Close()
 		// NewRefreshSource fails with ErrDiscovery when the issuer is
@@ -1391,6 +1391,7 @@ func resolveRemoteTransport(ctx context.Context, cfg config, noop func()) (targe
 		return target, client.DialConfig{}, noop, &client.AuthError{Reason: client.AuthStorageUnavailable}
 	}
 	dial.TokenSource = mapAuthTokenSource(source)
+	dial.IdentityBrokerSignIn = conn.IdentityBrokerSignIn
 	return target, dial, func() { _ = source.Close(); _ = store.Close() }, nil
 }
 

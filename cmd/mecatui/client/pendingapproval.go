@@ -435,7 +435,7 @@ func (c *Client) ResolvePendingApproval(ctx context.Context, approval PendingApp
 	if verdict == VerdictDeny {
 		wireVerdict = mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_DENY
 	}
-	ack, err := c.svc.ResolveRunAsk(withSessionAffinity(ctx, approval.SessionID), &mecatlv1.ResolveRunAskRequest{
+	ack, err := c.svc.ResolveRunAsk(c.runEntryContext(withSessionAffinity(ctx, approval.SessionID), approval.SessionID), &mecatlv1.ResolveRunAskRequest{
 		SessionId: approval.SessionID, ExpectedRunId: approval.RunID, AskId: approval.AskID, Verdict: wireVerdict,
 	})
 	if err != nil {

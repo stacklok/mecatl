@@ -83,6 +83,11 @@ type LoginConfig struct {
 	// Registry supplies target-scoped transaction locking to RefreshSource. Login
 	// itself does not use it, so browser interaction remains outside the lock.
 	Registry *Registry
+	// IdentityBrokerSignIn sends the RFC 8707 resource parameter, set to the
+	// audience, on the authorization request, code exchange, and refresh. Only
+	// a server's protected-resource metadata turns it on: some providers (for
+	// example Microsoft Entra) reject the parameter.
+	IdentityBrokerSignIn bool
 }
 type discovery struct {
 	Issuer                string   `json:"issuer"`
@@ -125,7 +130,16 @@ func Login(ctx context.Context, cfg LoginConfig) (Token, error) {
 		return Token{}, ErrAuthorization
 	}
 	oc := oauth2.Config{ClientID: id.ClientID, RedirectURL: id.RedirectURI, Endpoint: oauth2.Endpoint{AuthURL: doc.AuthorizationEndpoint, TokenURL: doc.TokenEndpoint, AuthStyle: oauth2.AuthStyleInParams}, Scopes: id.Scopes}
-	authURL := oc.AuthCodeURL(state, oauth2.AccessTypeOffline, oauth2.S256ChallengeOption(verifier))
+	authOpts := []oauth2.AuthCodeOption{oauth2.AccessTypeOffline, oauth2.S256ChallengeOption(verifier)}
+	exchangeOpts := []oauth2.AuthCodeOption{oauth2.VerifierOption(verifier)}
+	if cfg.IdentityBrokerSignIn {
+		// RFC 8707: the audience is the Mecatl API identifier, so the
+		// authorization server can bind the access token to it.
+		resource := oauth2.SetAuthURLParam(paramResource, id.Audience)
+		authOpts = append(authOpts, resource)
+		exchangeOpts = append(exchangeOpts, resource)
+	}
+	authURL := oc.AuthCodeURL(state, authOpts...)
 	result, err := cfg.Presenter.Present(ctx, authURL)
 	if err != nil {
 		// Preserve the callback rejection reason and any context error; the
@@ -148,7 +162,7 @@ func Login(ctx context.Context, cfg LoginConfig) (Token, error) {
 		}
 	}
 	exchangeCtx := context.WithValue(ctx, oauth2.HTTPClient, client)
-	tok, err := oc.Exchange(exchangeCtx, result.Code, oauth2.VerifierOption(verifier))
+	tok, err := oc.Exchange(exchangeCtx, result.Code, exchangeOpts...)
 	if err != nil {
 		return Token{}, ErrTokenExchange
 	}
@@ -173,19 +187,22 @@ type RefreshSource struct {
 	endpoint   oauth2.Endpoint
 	validator  *authoidc.Validator
 	ownsClient bool
-	mu         sync.Mutex
-	activity   uint64
-	refreshed  uint64
-	pending    LoginRequiredCause
-	ctx        context.Context
-	cancel     context.CancelFunc
-	done       chan struct{}
-	closeOnce  sync.Once
+	// identityBrokerSignIn is LoginConfig.IdentityBrokerSignIn.
+	identityBrokerSignIn bool
+	mu                   sync.Mutex
+	activity             uint64
+	refreshed            uint64
+	pending              LoginRequiredCause
+	ctx                  context.Context
+	cancel               context.CancelFunc
+	done                 chan struct{}
+	closeOnce            sync.Once
 }
 
 const (
-	refreshAhead = 30 * time.Second
-	refreshPoll  = 5 * time.Second
+	refreshAhead  = 30 * time.Second
+	refreshPoll   = 5 * time.Second
+	paramResource = "resource"
 )
 
 // NewRefreshSource constructs a target-bound source. Call Close when the dial is done.
@@ -218,6 +235,7 @@ func NewRefreshSource(ctx context.Context, creds *Credentials, cfg LoginConfig) 
 	}
 	result := newRefreshSource(id, creds, cfg.Registry, client, doc.TokenEndpoint, validator, refreshPoll)
 	result.ownsClient = ownsClient
+	result.identityBrokerSignIn = cfg.IdentityBrokerSignIn
 	closeOnFailure = false
 	return result, nil
 }
@@ -286,7 +304,7 @@ func (s *RefreshSource) maybeProactiveRefresh() {
 	if err != nil || time.Until(expiry) > refreshAhead {
 		return
 	}
-	if _, _, err := s.tokenLocked(s.ctx, rec, expiry); err == nil {
+	if _, _, err := s.tokenLocked(s.ctx, rec, expiry, false); err == nil {
 		s.refreshed = s.activity
 	} else {
 		var required *LoginRequiredError
@@ -298,6 +316,18 @@ func (s *RefreshSource) maybeProactiveRefresh() {
 
 // Token returns a validated access token and persists a rotated token using CAS.
 func (s *RefreshSource) Token(ctx context.Context) (string, error) {
+	return s.token(ctx, false)
+}
+
+// Refresh always performs the refresh_token grant, even when the current access
+// token is still valid, and persists any rotation exactly as Token does. Callers
+// use it when a request needs an access token the server has never seen: AS-1
+// accepts each access token for only one session open.
+func (s *RefreshSource) Refresh(ctx context.Context) (string, error) {
+	return s.token(ctx, true)
+}
+
+func (s *RefreshSource) token(ctx context.Context, force bool) (string, error) {
 	if s.registry == nil {
 		return "", loginRequired(CredentialUnusable)
 	}
@@ -308,7 +338,7 @@ func (s *RefreshSource) Token(ctx context.Context) (string, error) {
 	defer unlock()
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	token, refreshed, err := s.tokenLocked(ctx, CredentialRecord{}, time.Time{})
+	token, refreshed, err := s.tokenLocked(ctx, CredentialRecord{}, time.Time{}, force)
 	if s.pending != "" {
 		var required *LoginRequiredError
 		if errors.As(err, &required) && required.Cause == NotEnrolled {
@@ -329,7 +359,7 @@ func (s *RefreshSource) Token(ctx context.Context) (string, error) {
 	return token, err
 }
 
-func (s *RefreshSource) tokenLocked(ctx context.Context, loaded CredentialRecord, expiry time.Time) (string, bool, error) {
+func (s *RefreshSource) tokenLocked(ctx context.Context, loaded CredentialRecord, expiry time.Time, force bool) (string, bool, error) {
 	rec := loaded
 	var err error
 	if rec.Token.AccessToken == "" {
@@ -350,7 +380,7 @@ func (s *RefreshSource) tokenLocked(ctx context.Context, loaded CredentialRecord
 			return "", false, loginRequired(CredentialUnusable)
 		}
 	}
-	if time.Until(expiry) > refreshAhead {
+	if !force && time.Until(expiry) > refreshAhead {
 		if _, err := s.validator.Validate(ctx, rec.Token.AccessToken); err == nil {
 			return rec.Token.AccessToken, false, nil
 		}
@@ -365,17 +395,7 @@ func (s *RefreshSource) tokenLocked(ctx context.Context, loaded CredentialRecord
 // the result, split out of tokenLocked to keep that function's branching
 // within the complexity gate.
 func (s *RefreshSource) exchangeAndPersist(ctx context.Context, rec CredentialRecord) (string, bool, error) {
-	exchangeCtx := context.WithValue(ctx, oauth2.HTTPClient, s.client)
-	// The seed token's Expiry is deliberately already-past, not the real expiry:
-	// refreshAhead already decided a refresh is due, so TokenSource must always
-	// perform a genuine refresh_token exchange here. Passing the real (not-yet-
-	// expired-by-x/oauth2's own smaller reuse threshold) expiry lets TokenSource
-	// hand back this locally-constructed token verbatim without ever calling the
-	// token endpoint -- and since that placeholder never had TokenType set,
-	// validToken() then rejects it as corrupt even though the stored credential
-	// was never touched.
-	seed := &oauth2.Token{AccessToken: rec.Token.AccessToken, RefreshToken: rec.Token.RefreshToken, Expiry: time.Now().Add(-time.Minute)}
-	tok, err := (&oauth2.Config{ClientID: s.identity.ClientID, Endpoint: s.endpoint}).TokenSource(exchangeCtx, seed).Token()
+	tok, err := s.refreshGrant(ctx, rec.Token.RefreshToken)
 	if err != nil {
 		if isInvalidGrant(err) {
 			if deleteErr := s.creds.Delete(ctx, s.identity, rec.Version); deleteErr != nil && !errors.Is(deleteErr, credentialstore.ErrNotFound) {
@@ -408,6 +428,58 @@ func (s *RefreshSource) exchangeAndPersist(ctx context.Context, rec CredentialRe
 		}
 	}
 	return replacement.AccessToken, true, nil
+}
+
+// refreshGrant performs one RFC 6749 section 6 refresh_token grant, carrying
+// the RFC 8707 resource indicator when enabled, which x/oauth2's TokenSource
+// cannot send. An OAuth error response yields a body-free *oauth2.RetrieveError
+// so invalid_grant stays recognisable; no provider response text is retained.
+func (s *RefreshSource) refreshGrant(ctx context.Context, refreshToken string) (*oauth2.Token, error) {
+	form := url.Values{
+		"grant_type":    {"refresh_token"},
+		"refresh_token": {refreshToken},
+		"client_id":     {s.identity.ClientID},
+	}
+	if s.identityBrokerSignIn {
+		form.Set(paramResource, s.identity.Audience)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.endpoint.TokenURL, strings.NewReader(form.Encode()))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Accept", "application/json")
+	res, err := s.client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = res.Body.Close() }()
+	body, err := io.ReadAll(io.LimitReader(res.Body, 1<<20))
+	if err != nil {
+		return nil, err
+	}
+	var payload struct {
+		AccessToken  string      `json:"access_token"`
+		TokenType    string      `json:"token_type"`
+		RefreshToken string      `json:"refresh_token"`
+		ExpiresIn    json.Number `json:"expires_in"`
+		Error        string      `json:"error"`
+	}
+	decodeErr := json.Unmarshal(body, &payload)
+	if res.StatusCode < 200 || res.StatusCode > 299 {
+		if decodeErr != nil {
+			payload.Error = ""
+		}
+		return nil, &oauth2.RetrieveError{ErrorCode: payload.Error}
+	}
+	if decodeErr != nil || payload.AccessToken == "" {
+		return nil, errors.New("token response malformed")
+	}
+	tok := &oauth2.Token{AccessToken: payload.AccessToken, TokenType: payload.TokenType, RefreshToken: payload.RefreshToken}
+	if seconds, err := payload.ExpiresIn.Int64(); err == nil && seconds > 0 {
+		tok.Expiry = time.Now().Add(time.Duration(seconds) * time.Second)
+	}
+	return tok, nil
 }
 
 func isInvalidGrant(err error) bool {

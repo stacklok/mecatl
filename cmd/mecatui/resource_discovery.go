@@ -45,6 +45,9 @@ type discoveredResource struct {
 	ClientID      string
 	Scopes        []string
 	ScopesPresent bool
+	// IdentityBrokerSignIn is the server's request to send the RFC 8707 resource
+	// parameter; absent means false.
+	IdentityBrokerSignIn bool
 }
 
 func parseProtectedResource(raw string) (protectedResource, error) {
@@ -219,7 +222,7 @@ func discoverProtectedResource(ctx context.Context, resource protectedResource, 
 	if err != nil || validateIssuerDocument(profile.Issuer, issuerBody) != nil {
 		return discoveredResource{}, errDiscoveryRejected
 	}
-	return discoveredResource{protectedResource: resource, Issuer: profile.Issuer, Audience: profile.Audience, ClientID: profile.ClientID, Scopes: profile.Scopes, ScopesPresent: profile.ScopesPresent}, nil
+	return discoveredResource{protectedResource: resource, Issuer: profile.Issuer, Audience: profile.Audience, ClientID: profile.ClientID, Scopes: profile.Scopes, ScopesPresent: profile.ScopesPresent, IdentityBrokerSignIn: profile.IdentityBrokerSignIn}, nil
 }
 
 func fetchDiscoveryJSON(ctx context.Context, client *http.Client, endpoint string) ([]byte, error) {
@@ -263,15 +266,16 @@ func readJSONBody(body io.Reader) ([]byte, error) {
 }
 
 type profileDocument struct {
-	Issuer        string
-	Audience      string
-	ClientID      string
-	Scopes        []string
-	ScopesPresent bool
+	Issuer               string
+	Audience             string
+	ClientID             string
+	Scopes               []string
+	ScopesPresent        bool
+	IdentityBrokerSignIn bool
 }
 
 func parseProfileDocument(resource protectedResource, body []byte) (profileDocument, error) {
-	if hasDuplicateSecurityFields(body, map[string]bool{"resource": true, "authorization_servers": true, "com.stacklok.mecatl.audience": true, "com.stacklok.mecatl.client_id": true, "scopes_supported": true}) {
+	if hasDuplicateSecurityFields(body, map[string]bool{"resource": true, "authorization_servers": true, "com.stacklok.mecatl.audience": true, "com.stacklok.mecatl.client_id": true, "scopes_supported": true, "com.stacklok.mecatl.identity_broker_sign_in": true}) {
 		return profileDocument{}, errDiscoveryRejected
 	}
 	var fields map[string]json.RawMessage
@@ -281,6 +285,7 @@ func parseProfileDocument(resource protectedResource, body []byte) (profileDocum
 		Audience             string   `json:"com.stacklok.mecatl.audience"`
 		ClientID             string   `json:"com.stacklok.mecatl.client_id"`
 		Scopes               []string `json:"scopes_supported"`
+		IdentityBrokerSignIn bool     `json:"com.stacklok.mecatl.identity_broker_sign_in"`
 	}
 	if json.Unmarshal(body, &fields) != nil || json.Unmarshal(body, &doc) != nil || !resourceMatches(resource, doc.Resource) || len(doc.AuthorizationServers) != 1 || !safeProfileValue(doc.Audience) || !safeProfileValue(doc.ClientID) {
 		return profileDocument{}, errDiscoveryRejected
@@ -300,7 +305,7 @@ func parseProfileDocument(resource protectedResource, body []byte) (profileDocum
 		}
 		scopes[scope] = true
 	}
-	return profileDocument{Issuer: issuer, Audience: doc.Audience, ClientID: doc.ClientID, Scopes: append([]string(nil), doc.Scopes...), ScopesPresent: scopesPresent}, nil
+	return profileDocument{Issuer: issuer, Audience: doc.Audience, ClientID: doc.ClientID, Scopes: append([]string(nil), doc.Scopes...), ScopesPresent: scopesPresent, IdentityBrokerSignIn: doc.IdentityBrokerSignIn}, nil
 }
 
 func validateIssuerDocument(expected string, body []byte) error {
