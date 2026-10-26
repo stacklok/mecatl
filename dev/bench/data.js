@@ -340852,6 +340852,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1793040448487,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "29541485+ChrisJBurns@users.noreply.github.com",
+            "name": "Chris Burns",
+            "username": "ChrisJBurns"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "62d056c56ca79e6ef2f70a7db712435836581281",
+          "message": "feat(identitybroker): carry the request's AS-1 token to broker session open (#2522)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-26T20:41:57Z",
+          "tree_id": "4209046ccf1e31e373a683f83d68cfea9d39e788",
+          "url": "https://github.com/stacklok/mecatl/commit/62d056c56ca79e6ef2f70a7db712435836581281"
+        },
+        "date": 1793048043570,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -492782,6 +492816,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1793048040324,
+  "lastUpdate": 1793048044544,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
