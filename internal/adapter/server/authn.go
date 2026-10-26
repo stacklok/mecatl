@@ -565,14 +565,15 @@ func (a *Authenticator) observeAuthentication(ctx context.Context, outcome authO
 
 // authGRPC verifies the static bearer token (when configured) and the caller
 // identity (when a verifier is wired), returning the token presented (empty when
-// static auth is off) and the verified principal (nil when identity is off).
-func (a *Authenticator) authGRPC(ctx context.Context) (string, *session.Principal, error) {
+// static auth is off), the verified principal (nil when identity is off), and
+// the bearer presented, which verified the principal when it is non-nil.
+func (a *Authenticator) authGRPC(ctx context.Context) (string, *session.Principal, string, error) {
 	bearer, present, duplicate := tokenFromMetadata(ctx)
 	if duplicate {
 		if a.cfg.authEnabled() || a.cfg.identityConfigured() {
 			a.observeAuthentication(ctx, authOutcomeRejected, authCategoryDuplicateAuthorization, authTransportGRPC, authStatusGRPCUnauthenticated)
 		}
-		return "", nil, status.Error(codes.Unauthenticated, "duplicate authorization metadata")
+		return "", nil, "", status.Error(codes.Unauthenticated, "duplicate authorization metadata")
 	}
 	staticTok := ""
 	if a.cfg.authEnabled() {
@@ -582,7 +583,7 @@ func (a *Authenticator) authGRPC(ctx context.Context) (string, *session.Principa
 				category = authCategoryMissingBearer
 			}
 			a.observeAuthentication(ctx, authOutcomeRejected, category, authTransportGRPC, authStatusGRPCUnauthenticated)
-			return "", nil, status.Error(codes.Unauthenticated, "missing or invalid bearer token")
+			return "", nil, "", status.Error(codes.Unauthenticated, "missing or invalid bearer token")
 		}
 		staticTok = bearer
 	}
@@ -609,14 +610,25 @@ func (a *Authenticator) authGRPC(ctx context.Context) (string, *session.Principa
 			}
 			a.observeAuthentication(ctx, outcome, category, authTransportGRPC, statusText)
 		}
-		return "", nil, identityErr
+		return "", nil, "", identityErr
 	}
 	if a.cfg.identityConfigured() {
 		a.observeAuthentication(ctx, authOutcomeAccepted, authCategoryValidatedIdentity, authTransportGRPC, authStatusGRPCOK)
 	} else if a.cfg.authEnabled() {
 		a.observeAuthentication(ctx, authOutcomeAccepted, authCategoryStaticBearer, authTransportGRPC, authStatusGRPCOK)
 	}
-	return staticTok, p, nil
+	return staticTok, p, bearer, nil
+}
+
+// withVerifiedCaller attaches the verified principal and the bearer that
+// verified it, for the identity broker's session open. The caller must call the
+// returned function when the request returns, which empties the token.
+func withVerifiedCaller(ctx context.Context, p *session.Principal, bearer string) (context.Context, func()) {
+	ctx = session.WithPrincipal(ctx, p)
+	if p == nil {
+		return ctx, func() {}
+	}
+	return withRequestAccessToken(ctx, bearer)
 }
 
 // rateGRPC enforces the rate limit for a gRPC call keyed by the verified
@@ -649,14 +661,16 @@ func (a *Authenticator) rateGRPC(ctx context.Context, token string, p *session.P
 // the handler context.
 func (a *Authenticator) UnaryInterceptor() grpc.UnaryServerInterceptor {
 	return func(ctx context.Context, req any, _ *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
-		tok, p, err := a.authGRPC(ctx)
+		tok, p, bearer, err := a.authGRPC(ctx)
 		if err != nil {
 			return nil, err
 		}
 		if err := a.rateGRPC(ctx, tok, p); err != nil {
 			return nil, err
 		}
-		return handler(session.WithPrincipal(ctx, p), req)
+		ctx, done := withVerifiedCaller(ctx, p, bearer)
+		defer done()
+		return handler(ctx, req)
 	}
 }
 
@@ -666,7 +680,7 @@ func (a *Authenticator) UnaryInterceptor() grpc.UnaryServerInterceptor {
 func (a *Authenticator) StreamInterceptor() grpc.StreamServerInterceptor {
 	return func(srv any, ss grpc.ServerStream, _ *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
 		ctx := ss.Context()
-		tok, p, err := a.authGRPC(ctx)
+		tok, p, bearer, err := a.authGRPC(ctx)
 		if err != nil {
 			return err
 		}
@@ -676,7 +690,9 @@ func (a *Authenticator) StreamInterceptor() grpc.StreamServerInterceptor {
 		if p == nil {
 			return handler(srv, ss)
 		}
-		return handler(srv, principalStream{ServerStream: ss, ctx: session.WithPrincipal(ctx, p)})
+		ctx, done := withVerifiedCaller(ctx, p, bearer)
+		defer done()
+		return handler(srv, principalStream{ServerStream: ss, ctx: ctx})
 	}
 }
 
@@ -769,7 +785,9 @@ func (a *Authenticator) Middleware(next http.Handler) http.Handler {
 			}
 		}
 		if principal != nil {
-			r = r.WithContext(session.WithPrincipal(r.Context(), principal))
+			ctx, done := withVerifiedCaller(r.Context(), principal, bearer)
+			defer done()
+			r = r.WithContext(ctx)
 		}
 		next.ServeHTTP(w, r)
 	})

@@ -181,6 +181,12 @@ func (b *recordingBroker) openCount() int {
 	return len(b.opens)
 }
 
+func (b *recordingBroker) openRequests() []identitybroker.OpenSessionRequest {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return append([]identitybroker.OpenSessionRequest(nil), b.opens...)
+}
+
 func (b *recordingBroker) closeCount() int {
 	b.mu.Lock()
 	defer b.mu.Unlock()

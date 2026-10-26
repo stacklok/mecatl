@@ -75,8 +75,11 @@ func (s *Service) openIdentityBrokerSession(ctx context.Context, sess *session.S
 	if !ok {
 		return nil
 	}
+	// The user's access token, read once for this open; zero on a path with no
+	// user request, such as a scheduler fire or a server-owned continuation.
+	token := accessTokenFromRequest(ctx)
 	for attempt := 0; ; attempt++ {
-		brokerSession, err := s.openIdentityBrokerSessionOnce(ctx, sess, owner)
+		brokerSession, err := s.openIdentityBrokerSessionOnce(ctx, sess, owner, token)
 		if err != nil {
 			return err
 		}
@@ -94,8 +97,8 @@ func (s *Service) openIdentityBrokerSession(ctx context.Context, sess *session.S
 }
 
 // openIdentityBrokerSessionOnce returns sess's open broker session, opening
-// one if needed.
-func (s *Service) openIdentityBrokerSessionOnce(ctx context.Context, sess *session.Session, owner identitybroker.Owner) (identitybroker.Session, error) {
+// one if needed with the user's access token.
+func (s *Service) openIdentityBrokerSessionOnce(ctx context.Context, sess *session.Session, owner identitybroker.Owner, token identitybroker.Token) (identitybroker.Session, error) {
 	broker := s.cfg.IdentityBroker
 	host, incarnation := string(sess.ID), string(sess.Incarnation())
 	open, found, err := broker.FindSession(ctx, identitybroker.FindSessionRequest{RootHostSessionID: host})
@@ -118,7 +121,7 @@ func (s *Service) openIdentityBrokerSessionOnce(ctx context.Context, sess *sessi
 	// broker refuses the open with session_owned, which the design treats as a
 	// pairing bug that fails the open. Session IDs are server-generated, so
 	// another user cannot reuse this one.
-	opened, err := broker.OpenSession(ctx, identitybroker.OpenSessionRequest{HostSessionID: host, Incarnation: incarnation, Owner: owner})
+	opened, err := broker.OpenSession(ctx, identitybroker.OpenSessionRequest{HostSessionID: host, Incarnation: incarnation, Owner: owner, AccessToken: token})
 	if err != nil {
 		return identitybroker.Session{}, s.identityBrokerFailure(ctx, "open", host, "", err)
 	}

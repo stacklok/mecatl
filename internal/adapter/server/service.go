@@ -1642,7 +1642,7 @@ func (st *runState) recordExactApprovalContext(ctx context.Context, askID string
 	if st.exactApprovalContexts == nil {
 		st.exactApprovalContexts = make(map[string]context.Context)
 	}
-	st.exactApprovalContexts[askID] = context.WithoutCancel(ctx)
+	st.exactApprovalContexts[askID] = withoutRequestAccessToken(context.WithoutCancel(ctx))
 }
 
 // keyedMutex is a map of per-key mutexes with reference counting, so a caller can
@@ -6369,7 +6369,9 @@ func (s *Service) waitBounded(wait func(), timeoutWarning string) {
 }
 
 func (s *Service) detachedControlContext(request context.Context) (context.Context, context.CancelFunc) {
-	ctx, cancel := context.WithCancel(context.WithoutCancel(request))
+	// Detached work is server-owned, not the user's request, so it has no
+	// access token to open a broker session with.
+	ctx, cancel := context.WithCancel(withoutRequestAccessToken(context.WithoutCancel(request)))
 	shutdown := s.shutdownCtx
 	if shutdown == nil {
 		shutdown = context.Background()
@@ -8684,7 +8686,8 @@ func (s *Service) MaybeAutoApprovePlan(ctx context.Context, id session.SessionID
 // approved); only a StopPlanApproved terminal proceeds, matching
 // ApprovePlan's `resumedStop == StopPlanApproved` gate.
 func (s *Service) autoApproveContinuation(ctx context.Context, id session.SessionID, generation runEntryGeneration) {
-	logCtx := context.WithoutCancel(ctx)
+	// The continuation acts without a user request, so it has no access token.
+	logCtx := withoutRequestAccessToken(context.WithoutCancel(ctx))
 	deadline := time.Now().Add(autoApproveWaitTimeout)
 	for {
 		sess, err := s.GetSession(logCtx, id)
