@@ -376164,6 +376164,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1793027598507,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "radoslav@stacklok.com",
+            "name": "Radoslav Dimitrov",
+            "username": "rdimitrov"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "b3f5ae10dd1f72f880191a1b0e35164b3c518a51",
+          "message": "perf(agent): frame subagent delegation by cost and keep verification in the parent (#2520)",
+          "timestamp": "2026-10-26T12:21:04-04:00",
+          "tree_id": "d58b50356dcf8a3769448336dd15e904736f6a60",
+          "url": "https://github.com/stacklok/mecatl/commit/b3f5ae10dd1f72f880191a1b0e35164b3c518a51"
+        },
+        "date": 1793032450792,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 16146.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12910,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 795,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -490772,6 +490811,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1793032447675,
+  "lastUpdate": 1793032451920,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
