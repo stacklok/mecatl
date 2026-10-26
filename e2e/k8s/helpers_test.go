@@ -238,6 +238,9 @@ func helmInstallMecak8sChart() {
 		"--set", "image.repository=ko.local/mecak8s",
 		"--set", "image.tag=e2e",
 		"--set", "fullnameOverride=mecak8s-agent",
+		// Helm 4 upgrades with server-side apply. Specs kubectl-patch the agent
+		// args, so the chart must reclaim those fields when restoring the baseline.
+		"--force-conflicts",
 		"--wait", "--timeout=4m")
 	gomega.ExpectWithOffset(1, err).NotTo(gomega.HaveOccurred(),
 		"helm upgrade --install mecak8s failed\n--- output ---\n%s", installOut)
