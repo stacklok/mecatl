@@ -857,6 +857,9 @@ type Run struct {
 	// conversation content crosses that seam.
 	reviewRoot     *reviewRoot
 	ownsReviewRoot bool
+	// backgroundReviews tracks opted-in yolo advisory reviews still running off
+	// the dispatch path; drainChildren joins them before the terminal event.
+	backgroundReviews backgroundReviews
 	// currentPrompt is the accepted genuine prompt for this run. Completion locates
 	// it in the final history; if compaction removed it, automatic admission gets an
 	// invalid span and fails closed.
@@ -3690,6 +3693,7 @@ var childDrainGrace = 1 * time.Second
 // BEFORE its clean-terminal calls — by the time this hook runs, the children it
 // would ask about are already cancelled and the registry sealed.
 func (e *Engine) drainChildren(ctx context.Context, r *Run) {
+	r.drainBackgroundReviews(ctx)
 	joins := r.children.cancelLiveBackground()
 	if len(joins) > 0 {
 		if pending := joinChildren(joins, childDrainCap); len(pending) > 0 {

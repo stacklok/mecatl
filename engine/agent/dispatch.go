@@ -361,7 +361,7 @@ func (e *Engine) runReadBatch(ctx context.Context, r *Run, sess *session.Session
 
 	// Human permission and pre-hook waits are complete. Prepare each sibling
 	// serially, launching its private checker before preparing the next.
-	e.fanOutReadBatchActionAssessments(ctx, r, sess, env, prepared)
+	e.fanOutReadBatchActionAssessments(ctx, r, sess, env, turnIdx, prepared)
 	if ctx.Err() != nil {
 		r.recordCompletedActionUsage(ctx, sess, prepared)
 		return out, true
@@ -422,7 +422,7 @@ func (e *Engine) runReadBatch(ctx context.Context, r *Run, sess *session.Session
 
 // fanOutReadBatchActionAssessments starts every eligible private action review,
 // then joins them before the ordered decision drain begins.
-func (e *Engine) fanOutReadBatchActionAssessments(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, prepared []readBatchPending) {
+func (e *Engine) fanOutReadBatchActionAssessments(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, turnIdx int, prepared []readBatchPending) {
 	var reviewWG sync.WaitGroup
 	for i := range prepared {
 		if ctx.Err() != nil {
@@ -440,6 +440,8 @@ func (e *Engine) fanOutReadBatchActionAssessments(ctx context.Context, r *Run, s
 				defer reviewWG.Done()
 				assessAction(ctx, r, a)
 			}(p.assessment)
+		} else {
+			e.startBackgroundActionReview(ctx, r, sess, env, turnIdx, p.call)
 		}
 	}
 	reviewWG.Wait()
@@ -1754,6 +1756,9 @@ func (e *Engine) executePrivate(ctx context.Context, r *Run, sess *session.Sessi
 	if r.reviewRoot != nil && r.reviewRoot.reviewer != nil {
 		assessment = e.prepareInboundAssessment(ctx, r, sess, env, c, res)
 		assessInbound(ctx, r, &assessment)
+		if !assessment.applies {
+			e.startBackgroundInboundReview(ctx, r, sess, env, turnIdx, c, res)
+		}
 	}
 	return executionRecord{
 		result: res, queued: queued, duration: dur, assessment: assessment, postEvents: postEvents,

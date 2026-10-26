@@ -842,6 +842,9 @@ type Config struct {
 	// fails closed to the write-escape Ask). Default false = the un-routed
 	// posture table (auto read-allow / write-ask).
 	GuardrailsEscape bool
+	// GuardrailsYoloAdvisory opts yolo-mode sessions in to background advisory
+	// review (guardrails.yoloAdvisory). Default false: yolo calls no checker.
+	GuardrailsYoloAdvisory bool
 
 	// ModelAliases maps a short alias (e.g. "sonnet"/"opus"/"haiku"/"fast") to a
 	// concrete provider model id. Resolved only here; the domain/agent always
@@ -5476,6 +5479,11 @@ func guardrailsPostureLine(cfg Config, model string, src guardrailSource, specs 
 	// reflects the demoted specs for explicit rules; the note states WHY it is advisory.
 	if guardrailsDemoted(cfg) {
 		out += " — YOLO: AI safety checks are advisory only."
+		if cfg.GuardrailsYoloAdvisory {
+			out += " They run in the background and never block."
+		} else {
+			out += " Yolo-mode sessions skip them; set guardrails.yoloAdvisory to run them in the background."
+		}
 	}
 	return out
 }

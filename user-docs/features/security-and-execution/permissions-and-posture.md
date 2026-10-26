@@ -49,7 +49,7 @@ Pass `--permission-mode` when you start `mecated`, `mecatui`, `mecak8s`, or
 |`default`|Ask|Ask|Ask|Optional|
 |`accept-edits`|Allowed|Ask|Ask|Optional|
 |`auto`|Allowed|Allowed|Ask; headless subagent requests go to a reviewer model|Required, enforcing|
-|`yolo`|Allowed|Allowed|Allowed|Optional, advisory only|
+|`yolo`|Allowed|Allowed|Allowed|Skipped unless opted in, then advisory only|
 
 Whether Mecatl loads project instructions, rules, and allow rules is the
 separate [project trust](#project-trust) decision; a permission mode never
@@ -201,11 +201,15 @@ flag by default, so the checker configured in settings applies. Each can also
 name a checker model or pass the kill-switch. See [Guardrails for mecak8s](/operating/mecak8s.md#choose-a-guardrails-checker)
 and the [`mecatequi` action inputs](/building/ci/mecatequi.md#headless-posture-and-permission-asks).
 
-In a session running in `yolo` mode, a configured checker is advisory only. It
-has no pre-tool veto, no approve-once human ask, and no fail-closed behavior when
-the checker fails, so a checker outage looks the same as a clean result. The
-startup line reports it as `advisory`. Choose `auto` when you want the checker to
-block findings. On a server started with `yolo`, a session you switch to `auto`
+In a session running in `yolo` mode, a configured checker does not run, so tool
+calls never wait for it. To keep its findings as warnings, opt in with
+`guardrails.yoloAdvisory: true` in your user-global `settings.yaml`. The checker
+then reviews each matching call in the background: the tool runs and its result
+reaches the model without waiting, findings appear as advisory guardrail events,
+and a checker failure never blocks. When a run ends, Mecatl waits up to about 10
+seconds for reviews still in progress, then cancels them. The startup line
+reports the checker as `advisory` and states whether `yolo` skips it. Choose
+`auto` when you want the checker to block findings. On a server started with `yolo`, a session you switch to `auto`
 or a lower mode keeps the checker enforcing.
 
 ## Headless roots and project trust

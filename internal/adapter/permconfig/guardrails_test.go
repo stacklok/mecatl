@@ -156,3 +156,25 @@ guardrails:
 		t.Fatalf("CLI guardrails must out-rank user-global; got %+v", g)
 	}
 }
+
+func TestOperatorGuardrailsYoloAdvisoryParsed(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		yaml string
+		want bool
+	}{
+		{name: "default_off", yaml: "\nguardrails:\n  model: \"gpt-5\"\n", want: false},
+		{name: "opt_in", yaml: "\nguardrails:\n  model: \"gpt-5\"\n  yoloAdvisory: true\n", want: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			env := envWithExplicit("/etc/mecatl/guardrails.yaml", tc.yaml)
+			g := newWithEnv(Options{ExplicitFiles: []string{"/etc/mecatl/guardrails.yaml"}}, env).OperatorGuardrails()
+			if g == nil {
+				t.Fatal("operator guardrails not parsed")
+			}
+			if g.YoloAdvisory != tc.want {
+				t.Fatalf("YoloAdvisory = %v, want %v", g.YoloAdvisory, tc.want)
+			}
+		})
+	}
+}

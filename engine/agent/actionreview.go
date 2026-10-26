@@ -818,11 +818,8 @@ func (e *Engine) resolveActionAssessment(ctx context.Context, r *Run, sess *sess
 		result.Assessment = ReviewUnresolved
 	}
 	_, enforce := reviewPolicy(r.reviewRoot.reviewer, sess.Mode, call.Name, ReviewJobAction, assessment.err != nil)
-	if assessment.err != nil {
-		var terminal GuardrailReviewTerminalFailure
-		if errors.As(assessment.err, &terminal) && terminal.GuardrailReviewTerminalFailure() {
-			enforce = true
-		}
+	if assessment.err != nil && terminalReviewEnforces(sess.Mode, assessment.err) {
+		enforce = true
 	}
 	r.reviewRoot.record(reviewFact(call, assessment.action.request.Target, decision))
 	r.publishActionDetail(ctx, sess.ID, assessment.action.request.ReviewID, assessment.action.request, result, assessment.err)
@@ -944,6 +941,7 @@ func (e *Engine) reviewActionWithTail(ctx context.Context, r *Run, sess *session
 			e.publishToolResult(r, session.Event{Type: session.EvToolResult, Turn: turnIdx, ToolResult: ptr(res)})
 			return res, nil, false, false
 		}
+		e.startBackgroundActionReview(ctx, r, sess, env, turnIdx, call)
 		return session.ToolResult{}, nil, false, true
 	}
 	assessment := e.prepareActionAssessment(ctx, r, sess, env, call)

@@ -2059,6 +2059,12 @@ type GuardrailsSection struct {
 	// guardrail checker (an unsafe verdict denies; a checker error fails closed
 	// to the write-escape Ask). Default false = the un-routed posture table.
 	Escape bool `yaml:"escape"`
+	// YoloAdvisory opts yolo-mode sessions in to advisory guardrail review. By
+	// default a yolo-mode session calls no checker. When true, each matching
+	// review runs in the background: the tool never waits for the verdict, is
+	// never blocked or held, and a checker failure never fails closed. Findings
+	// appear as advisory guardrail events. Other modes are unaffected.
+	YoloAdvisory bool `yaml:"yoloAdvisory"`
 	// Rules is the guardrail rule list.
 	Rules []GuardrailRuleSpec `yaml:"rules"`
 }
@@ -2108,6 +2114,7 @@ func (g *GuardrailsSection) strictFields() map[string]any {
 		"defaultMode":   &g.DefaultMode,
 		"taskWindow":    &g.TaskWindow,
 		"escape":        &g.Escape,
+		"yoloAdvisory":  &g.YoloAdvisory,
 		"rules":         &g.Rules,
 	}
 }
