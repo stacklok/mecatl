@@ -21,7 +21,7 @@ Three optional mechanisms are enforced by the gRPC interceptors and HTTP middlew
   certificates. mTLS authenticates the transport, not a caller.
 - **OIDC.** A `server.PrincipalValidator` turns a JWT into a `session.Principal`
   identified by its `(Issuer, Subject)` pair: the token's `iss` and `sub`, or, with
-  owner from `sub_id` enabled, the `iss` and `sub` inside its `sub_id` claim. The
+  owner identity `sub_id` selected, the `iss` and `sub` inside its `sub_id` claim. The
   shipped validator lives in the separate `authn/oidc` module, keeping JWT and IdP
   dependencies out of the engine.
 

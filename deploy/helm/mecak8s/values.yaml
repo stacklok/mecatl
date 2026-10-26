@@ -266,14 +266,15 @@ oidc:
   # These entries are joined into the same comma-separated syntax accepted by
   # --oidc-scopes and validated by cliconfig.ParseOIDCScopes.
   scopes: []
-  # ownerFromSubID keys session owners by the iss and sub inside the token's
-  # sub_id claim (an RFC 9493 iss_sub identifier) instead of the token's own iss
-  # and sub. It requires RFC 9068 access tokens (typ at+jwt) whose client_id is
-  # listed in acceptedClientIDs; other tokens are rejected. It requires
-  # oidc.enabled and at least one acceptedClientIDs entry.
-  ownerFromSubID: false
+  # ownerIdentity selects the identity that keys session owners. Empty keys them
+  # by the token's own iss and sub. The only other accepted value, sub_id, keys
+  # them by the iss and sub inside the token's sub_id claim (an RFC 9493 iss_sub
+  # identifier). sub_id requires RFC 9068 access tokens (typ at+jwt) whose
+  # client_id is listed in acceptedClientIDs; other tokens are rejected. It
+  # requires oidc.enabled and at least one acceptedClientIDs entry.
+  ownerIdentity: ""
   # acceptedClientIDs are the OAuth clients (for example the TUI and Studio)
-  # whose access tokens ownerFromSubID accepts. When clientID is set it must be
+  # whose access tokens ownerIdentity sub_id accepts. When clientID is set it must be
   # listed here.
   acceptedClientIDs: []
 

@@ -84,12 +84,13 @@ mounted
 {{- if or (eq (trim $scope) "") (not (regexMatch "^[!-~]+$" $scope)) (contains "," $scope) (contains "\"" $scope) (contains "\\" $scope) -}}{{ fail (printf "oidc.scopes entry %q is invalid" $scope) }}{{- end -}}
 {{- end -}}
 {{- end -}}
-{{- if .Values.oidc.ownerFromSubID -}}
-{{- if not .Values.oidc.enabled -}}{{ fail "oidc.ownerFromSubID requires oidc.enabled=true" }}{{- end -}}
-{{- if not .Values.oidc.acceptedClientIDs -}}{{ fail "oidc.ownerFromSubID requires at least one oidc.acceptedClientIDs entry" }}{{- end -}}
-{{- if and .Values.oidc.clientID (not (has .Values.oidc.clientID .Values.oidc.acceptedClientIDs)) -}}{{ fail (printf "oidc.clientID %q must be listed in oidc.acceptedClientIDs when oidc.ownerFromSubID is true" .Values.oidc.clientID) }}{{- end -}}
+{{- if not (has .Values.oidc.ownerIdentity (list "" "sub_id")) -}}{{ fail (printf "oidc.ownerIdentity %q is not supported; accepted values: sub_id" .Values.oidc.ownerIdentity) }}{{- end -}}
+{{- if .Values.oidc.ownerIdentity -}}
+{{- if not .Values.oidc.enabled -}}{{ fail "oidc.ownerIdentity requires oidc.enabled=true" }}{{- end -}}
+{{- if not .Values.oidc.acceptedClientIDs -}}{{ fail "oidc.ownerIdentity=sub_id requires at least one oidc.acceptedClientIDs entry" }}{{- end -}}
+{{- if and .Values.oidc.clientID (not (has .Values.oidc.clientID .Values.oidc.acceptedClientIDs)) -}}{{ fail (printf "oidc.clientID %q must be listed in oidc.acceptedClientIDs when oidc.ownerIdentity is sub_id" .Values.oidc.clientID) }}{{- end -}}
 {{- else if .Values.oidc.acceptedClientIDs -}}
-{{- fail "oidc.acceptedClientIDs requires oidc.ownerFromSubID=true" -}}
+{{- fail "oidc.acceptedClientIDs requires oidc.ownerIdentity=sub_id" -}}
 {{- end -}}
 {{- range $clientID := .Values.oidc.acceptedClientIDs -}}
 {{- if or (eq (trim $clientID) "") (ne (trim $clientID) $clientID) (contains "," $clientID) (regexMatch "[\\x00-\\x1f\\x7f-\\x9f]" $clientID) (regexMatch "[\\p{Cf}]" $clientID) -}}{{ fail (printf "oidc.acceptedClientIDs entry %q must be non-blank and contain no surrounding spaces, commas, control, or Unicode format characters" $clientID) }}{{- end -}}

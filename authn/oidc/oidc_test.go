@@ -374,14 +374,14 @@ func jwtSigningInput(t *testing.T, header, claims map[string]any) string {
 	return base64.RawURLEncoding.EncodeToString(headerJSON) + "." + base64.RawURLEncoding.EncodeToString(claimsJSON)
 }
 
-func (f *jwksFixture) ownerValidator(t *testing.T, ownerFromSubID bool) *Validator {
+func (f *jwksFixture) ownerValidator(t *testing.T, subID bool) *Validator {
 	t.Helper()
 	cfg := Config{
 		Issuer: f.srv.URL, Audience: testAudience, JWKSURI: f.srv.URL + "/keys",
 		HTTPClient: f.srv.Client(),
 	}
-	if ownerFromSubID {
-		cfg.OwnerFromSubID = true
+	if subID {
+		cfg.OwnerIdentity = OwnerIdentitySubID
 		cfg.AcceptedClientIDs = []string{"mecatui", "studio"}
 	}
 	validator, err := NewValidator(context.Background(), cfg)
@@ -408,7 +408,7 @@ func accessTokenHeader() map[string]any {
 	return map[string]any{"alg": "RS256", "kid": testKID, "typ": "at+jwt"}
 }
 
-func TestOwnerFromSubIDTokenType(t *testing.T) {
+func TestOwnerIdentitySubIDTokenType(t *testing.T) {
 	fixture := newJWKSFixture(t)
 	on, off := fixture.ownerValidator(t, true), fixture.ownerValidator(t, false)
 	for _, tc := range []struct {
@@ -431,10 +431,10 @@ func TestOwnerFromSubIDTokenType(t *testing.T) {
 			token := fixture.signedToken(t, header, fixture.subIDClaims())
 			principal, err := on.Validate(t.Context(), token)
 			if tc.wantOn && (err != nil || principal == nil) {
-				t.Fatalf("owner from sub_id: Validate = (%#v, %v), want principal", principal, err)
+				t.Fatalf("owner identity sub_id: Validate = (%#v, %v), want principal", principal, err)
 			}
 			if !tc.wantOn && (principal != nil || !errors.Is(err, ErrInvalidToken)) {
-				t.Fatalf("owner from sub_id: Validate = (%#v, %v), want ErrInvalidToken", principal, err)
+				t.Fatalf("owner identity sub_id: Validate = (%#v, %v), want ErrInvalidToken", principal, err)
 			}
 			if principal, err := off.Validate(t.Context(), token); err != nil || principal == nil {
 				t.Fatalf("default: Validate = (%#v, %v), want principal for any typ", principal, err)
@@ -443,7 +443,9 @@ func TestOwnerFromSubIDTokenType(t *testing.T) {
 	}
 }
 
-func TestOwnerFromSubIDRejectsDisallowedAlgorithms(t *testing.T) {
+// toolhive-core's fixed signing-algorithm allowlist rejects these tokens; this
+// test pins that behaviour rather than code in this package.
+func TestOwnerIdentitySubIDRejectsDisallowedAlgorithms(t *testing.T) {
 	fixture := newJWKSFixture(t)
 	validator := fixture.ownerValidator(t, true)
 	none := jwtSigningInput(t, map[string]any{"alg": "none", "typ": "at+jwt"}, fixture.subIDClaims()) + "."
@@ -458,7 +460,7 @@ func TestOwnerFromSubIDRejectsDisallowedAlgorithms(t *testing.T) {
 	}
 }
 
-func TestOwnerFromSubIDClaims(t *testing.T) {
+func TestOwnerIdentitySubIDClaims(t *testing.T) {
 	fixture := newJWKSFixture(t)
 	on, off := fixture.ownerValidator(t, true), fixture.ownerValidator(t, false)
 	subID := func(format, iss, sub any) map[string]any {
@@ -490,11 +492,11 @@ func TestOwnerFromSubIDClaims(t *testing.T) {
 			token := fixture.signedToken(t, accessTokenHeader(), claims)
 			principal, err := on.Validate(t.Context(), token)
 			if principal != nil || !errors.Is(err, ErrInvalidToken) {
-				t.Fatalf("owner from sub_id: Validate = (%#v, %v), want ErrInvalidToken", principal, err)
+				t.Fatalf("owner identity sub_id: Validate = (%#v, %v), want ErrInvalidToken", principal, err)
 			}
 			categorized, ok := err.(interface{ AuthenticationRejectionCategory() string })
 			if !ok || categorized.AuthenticationRejectionCategory() != "invalid_token" {
-				t.Fatalf("owner from sub_id: category = %#v, want invalid_token", err)
+				t.Fatalf("owner identity sub_id: category = %#v, want invalid_token", err)
 			}
 			if principal, err := off.Validate(t.Context(), token); err != nil || principal == nil {
 				t.Fatalf("default: Validate = (%#v, %v), want principal", principal, err)
@@ -503,7 +505,7 @@ func TestOwnerFromSubIDClaims(t *testing.T) {
 	}
 }
 
-func TestOwnerFromSubIDPrincipalComesFromSubID(t *testing.T) {
+func TestOwnerIdentitySubIDPrincipalComesFromSubID(t *testing.T) {
 	fixture := newJWKSFixture(t)
 	token := fixture.signedToken(t, accessTokenHeader(), fixture.subIDClaims())
 
@@ -512,10 +514,10 @@ func TestOwnerFromSubIDPrincipalComesFromSubID(t *testing.T) {
 	for name, token := range map[string]string{"first client": token, "second client": fixture.signedToken(t, accessTokenHeader(), studioClaims)} {
 		got, err := fixture.ownerValidator(t, true).Validate(t.Context(), token)
 		if err != nil {
-			t.Fatalf("owner from sub_id, %s: Validate: %v", name, err)
+			t.Fatalf("owner identity sub_id, %s: Validate: %v", name, err)
 		}
 		if got.Issuer != "https://login.example.com" || got.Subject != "alice-204" || got.Name != "Alice" || got.GrantType != session.GrantTypeUser {
-			t.Fatalf("owner from sub_id, %s: principal = %#v, want the sub_id identity", name, got)
+			t.Fatalf("owner identity sub_id, %s: principal = %#v, want the sub_id identity", name, got)
 		}
 	}
 
@@ -528,12 +530,12 @@ func TestOwnerFromSubIDPrincipalComesFromSubID(t *testing.T) {
 	}
 }
 
-func TestOwnerFromSubIDClonesAcceptedClientIDs(t *testing.T) {
+func TestOwnerIdentitySubIDClonesAcceptedClientIDs(t *testing.T) {
 	fixture := newJWKSFixture(t)
 	ids := []string{"mecatui"}
 	validator, err := NewValidator(context.Background(), Config{
 		Issuer: fixture.srv.URL, Audience: testAudience, JWKSURI: fixture.srv.URL + "/keys",
-		HTTPClient: fixture.srv.Client(), OwnerFromSubID: true, AcceptedClientIDs: ids,
+		HTTPClient: fixture.srv.Client(), OwnerIdentity: OwnerIdentitySubID, AcceptedClientIDs: ids,
 	})
 	if err != nil {
 		t.Fatalf("NewValidator: %v", err)
@@ -546,39 +548,44 @@ func TestOwnerFromSubIDClonesAcceptedClientIDs(t *testing.T) {
 	}
 }
 
-func TestOwnerFromSubIDConfig(t *testing.T) {
+func TestOwnerIdentitySubIDConfig(t *testing.T) {
 	t.Parallel()
-	if got := authnConfig(Config{OwnerFromSubID: true}); len(got.AcceptedTokenTypes) != 1 || got.AcceptedTokenTypes[0] != "at+jwt" {
-		t.Fatalf("owner from sub_id: AcceptedTokenTypes = %v, want [at+jwt]", got.AcceptedTokenTypes)
+	if got := authnConfig(Config{OwnerIdentity: OwnerIdentitySubID}); len(got.AcceptedTokenTypes) != 1 || got.AcceptedTokenTypes[0] != "at+jwt" {
+		t.Fatalf("owner identity sub_id: AcceptedTokenTypes = %v, want [at+jwt]", got.AcceptedTokenTypes)
 	}
 	if got := authnConfig(Config{}); got.AcceptedTokenTypes != nil {
 		t.Fatalf("default: AcceptedTokenTypes = %v, want any typ", got.AcceptedTokenTypes)
 	}
+	// The empty owner identity is off: the token's own iss and sub key the caller.
+	if off := newJWKSFixture(t).ownerValidator(t, false); off.subIDOwner != nil {
+		t.Fatalf("empty owner identity: subIDOwner = %#v, want nil", off.subIDOwner)
+	}
 	base := Config{Issuer: "https://idp.example", Audience: testAudience}
 	for _, tc := range []struct {
-		name           string
-		ownerFromSubID bool
-		clientIDs      []string
-		mutate         func(*Config)
-		want           string
+		name          string
+		ownerIdentity OwnerIdentity
+		clientIDs     []string
+		mutate        func(*Config)
+		want          string
 	}{
-		{name: "owner from sub_id without client IDs", ownerFromSubID: true, want: "requires accepted client IDs"},
-		{name: "owner from sub_id with empty client ID", ownerFromSubID: true, clientIDs: []string{"mecatui", ""}, want: "must not be empty"},
-		{name: "client IDs without owner from sub_id", clientIDs: []string{"mecatui"}, want: "require owner from sub_id"},
-		{name: "owner from sub_id with any audience", ownerFromSubID: true, clientIDs: []string{"mecatui"}, mutate: func(c *Config) {
+		{name: "unknown owner identity", ownerIdentity: "upstream_subject", clientIDs: []string{"mecatui"}, want: `unknown owner identity "upstream_subject" (accepted: sub_id)`},
+		{name: "owner identity sub_id without client IDs", ownerIdentity: OwnerIdentitySubID, want: "requires accepted client IDs"},
+		{name: "owner identity sub_id with empty client ID", ownerIdentity: OwnerIdentitySubID, clientIDs: []string{"mecatui", ""}, want: "must not be empty"},
+		{name: "client IDs without owner identity sub_id", clientIDs: []string{"mecatui"}, want: "require owner identity sub_id"},
+		{name: "owner identity sub_id with any audience", ownerIdentity: OwnerIdentitySubID, clientIDs: []string{"mecatui"}, mutate: func(c *Config) {
 			c.Audience, c.AllowAnyAudience = "", true
 		}, want: "requires an audience"},
-		{name: "owner from sub_id with AllowAnyAudience beside an audience", ownerFromSubID: true, clientIDs: []string{"mecatui"}, mutate: func(c *Config) {
+		{name: "owner identity sub_id with AllowAnyAudience beside an audience", ownerIdentity: OwnerIdentitySubID, clientIDs: []string{"mecatui"}, mutate: func(c *Config) {
 			c.AllowAnyAudience = true
 		}, want: "requires an audience"},
-		{name: "owner from sub_id with empty audience", ownerFromSubID: true, clientIDs: []string{"mecatui"}, mutate: func(c *Config) {
+		{name: "owner identity sub_id with empty audience", ownerIdentity: OwnerIdentitySubID, clientIDs: []string{"mecatui"}, mutate: func(c *Config) {
 			c.Audience = ""
 		}, want: "audience is empty"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			cfg := base
-			cfg.OwnerFromSubID, cfg.AcceptedClientIDs = tc.ownerFromSubID, tc.clientIDs
+			cfg.OwnerIdentity, cfg.AcceptedClientIDs = tc.ownerIdentity, tc.clientIDs
 			if tc.mutate != nil {
 				tc.mutate(&cfg)
 			}
@@ -949,8 +956,8 @@ func TestKubernetesValidatorRejectsIncompleteConfiguration(t *testing.T) {
 		"caller HTTP client":     func(c *Config, _ *KubernetesBootstrapConfig) { c.HTTPClient = http.DefaultClient },
 		"insecure private mode":  func(c *Config, _ *KubernetesBootstrapConfig) { c.InsecureAllowPrivateIssuer = true },
 		"scoped private mode":    func(c *Config, _ *KubernetesBootstrapConfig) { c.AllowPrivateHTTPSIssuer = true },
-		"owner from sub_id": func(c *Config, _ *KubernetesBootstrapConfig) {
-			c.OwnerFromSubID, c.AcceptedClientIDs = true, []string{"mecatui"}
+		"owner identity sub_id": func(c *Config, _ *KubernetesBootstrapConfig) {
+			c.OwnerIdentity, c.AcceptedClientIDs = OwnerIdentitySubID, []string{"mecatui"}
 		},
 	} {
 		t.Run(name, func(t *testing.T) {

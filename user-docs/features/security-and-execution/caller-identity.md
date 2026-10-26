@@ -36,7 +36,7 @@ same caller. Do not expose that posture as a multi-user endpoint.
 
 The durable owner is a verified `(issuer, subject)` pair: by default the token's
 own `iss` and `sub`, or the pair inside its `sub_id` claim when
-[owner from `sub_id`](#own-resources-by-the-sub_id-identity) is on:
+[`--oidc-owner-identity=sub_id`](#own-resources-by-the-sub_id-identity) is set:
 
 ```json
 {
@@ -111,15 +111,16 @@ so a restarted process fetches keys again.
 
 When users sign in through an authorization server that federates to your
 company IdP, the token's own `iss` and `sub` name the authorization server and
-its subject for the user. Set `--oidc-owner-from-sub-id` to key owners by the
-company IdP identity the token carries instead, in its `sub_id` claim (an
-RFC 9493 `iss_sub` subject identifier):
+its subject for the user. Set `--oidc-owner-identity=sub_id` to key owners by
+the company IdP identity the token carries instead, in its `sub_id` claim (an
+RFC 9493 `iss_sub` subject identifier). `sub_id` is the only accepted value; an
+empty value keeps owners keyed by the token's own `iss` and `sub`.
 
 ```sh
 mecated serve \
   --oidc-issuer https://auth.example.com/as \
   --oidc-audience https://mecatl.example.com/api \
-  --oidc-owner-from-sub-id \
+  --oidc-owner-identity=sub_id \
   --oidc-accepted-client-ids mecatui,studio \
   --workspace /srv/mecatl/workspace
 ```
@@ -132,16 +133,17 @@ with a non-empty `iss` and `sub`. The owner is that `iss` and `sub`.
 
 The server refuses to start when:
 
-- `--oidc-owner-from-sub-id` or `--oidc-accepted-client-ids` is set without
+- `--oidc-owner-identity` is set to a non-empty value other than `sub_id`.
+- `--oidc-owner-identity` or `--oidc-accepted-client-ids` is set without
   `--oidc-issuer`.
-- `--oidc-owner-from-sub-id` is set without `--oidc-accepted-client-ids`.
-- `--oidc-accepted-client-ids` is set without `--oidc-owner-from-sub-id`.
+- `--oidc-owner-identity=sub_id` is set without `--oidc-accepted-client-ids`.
+- `--oidc-accepted-client-ids` is set without `--oidc-owner-identity=sub_id`.
 - `--oidc-accepted-client-ids` lists no client IDs, for example
   `--oidc-accepted-client-ids=`.
 - `--oidc-client-id` names a client that `--oidc-accepted-client-ids` does not
   list.
 - In `mecak8s`, `--enable-identity-broker` is set with `--oidc-issuer` but
-  without `--oidc-owner-from-sub-id`.
+  without `--oidc-owner-identity=sub_id`.
 
 Existing sessions, schedules, memory, and other owned data keep matching their
 owners only if, for each user, the authorization server's upstream IdP returns

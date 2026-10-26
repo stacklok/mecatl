@@ -69,17 +69,24 @@ type Config struct {
 	// the validator's hardened client. When set, the caller is responsible for
 	// preserving equivalent redirect and private-address protections.
 	HTTPClient *http.Client
-	// OwnerFromSubID keys the returned principal by the `iss` and `sub` inside
-	// the token's `sub_id` claim, an RFC 9493 `iss_sub` subject identifier,
-	// rather than by the token's own `iss` and `sub`. As preconditions it
-	// requires an RFC 9068 access token (`typ` header `at+jwt`) whose
-	// `client_id` claim is in AcceptedClientIDs, and it requires Audience with
-	// AllowAnyAudience off. Off by default.
-	OwnerFromSubID bool
+	// OwnerIdentity selects which identity keys the returned principal. The
+	// zero value keys it by the token's own `iss` and `sub`; see
+	// OwnerIdentitySubID. Any other value is rejected with ErrInvalidConfig.
+	OwnerIdentity OwnerIdentity
 	// AcceptedClientIDs lists the OAuth clients whose access tokens are accepted.
-	// It is required, and only allowed, with OwnerFromSubID.
+	// It is required, and only allowed, with OwnerIdentitySubID.
 	AcceptedClientIDs []string
 }
+
+// OwnerIdentity names the token identity that keys the returned principal.
+type OwnerIdentity string
+
+// OwnerIdentitySubID keys the returned principal by the `iss` and `sub` inside
+// the token's `sub_id` claim, an RFC 9493 `iss_sub` subject identifier, rather
+// than by the token's own `iss` and `sub`. As preconditions it requires an RFC
+// 9068 access token (`typ` header `at+jwt`) whose `client_id` claim is in
+// AcceptedClientIDs, and it requires Audience with AllowAnyAudience off.
+const OwnerIdentitySubID OwnerIdentity = "sub_id"
 
 // accessTokenType is the RFC 9068 JWT access-token media type. toolhive-core
 // also accepts the `application/` prefix and rejects a missing `typ`.
@@ -107,12 +114,12 @@ type Validator struct {
 	healthClient   *http.Client
 	healthURL      string
 	closeOnce      sync.Once
-	// subIDOwner is non-nil exactly when OwnerFromSubID is on. It is a pointer
-	// so Validator stays comparable.
+	// subIDOwner is non-nil exactly when OwnerIdentity is OwnerIdentitySubID.
+	// It is a pointer so Validator stays comparable.
 	subIDOwner *subIDOwner
 }
 
-// subIDOwner holds the OwnerFromSubID settings; acceptedClientIDs is non-empty.
+// subIDOwner holds the OwnerIdentitySubID settings; acceptedClientIDs is non-empty.
 type subIDOwner struct {
 	acceptedClientIDs []string
 }
@@ -133,7 +140,7 @@ func NewValidator(ctx context.Context, cfg Config) (*Validator, error) {
 	if cfg.AllowPrivateHTTPSIssuer && cfg.HTTPClient != nil {
 		return nil, fmt.Errorf("%w: custom HTTP client is not allowed with private HTTPS issuer mode", ErrInvalidConfig)
 	}
-	if err := validateOwnerFromSubID(cfg); err != nil {
+	if err := validateOwnerIdentity(cfg); err != nil {
 		return nil, err
 	}
 	toolhiveConfig := authnConfig(cfg)
@@ -165,30 +172,35 @@ func NewValidator(ctx context.Context, cfg Config) (*Validator, error) {
 		}
 	}
 	out := &Validator{validator: validator, internalClient: internalClient, healthClient: healthClient, healthURL: cfg.JWKSURI}
-	// validateOwnerFromSubID guarantees the client list is non-empty exactly
-	// when OwnerFromSubID is on.
-	if cfg.OwnerFromSubID {
+	// validateOwnerIdentity guarantees the client list is non-empty exactly
+	// when OwnerIdentitySubID is selected.
+	if cfg.OwnerIdentity == OwnerIdentitySubID {
 		out.subIDOwner = &subIDOwner{acceptedClientIDs: slices.Clone(cfg.AcceptedClientIDs)}
 	}
 	return out, nil
 }
 
-// validateOwnerFromSubID requires a non-empty, well-formed client list exactly
-// when OwnerFromSubID is on, so neither half is a silent no-op, and requires a
-// bound audience with OwnerFromSubID.
-func validateOwnerFromSubID(cfg Config) error {
-	if !cfg.OwnerFromSubID {
+// validateOwnerIdentity rejects an unknown owner identity, requires a
+// non-empty, well-formed client list exactly when OwnerIdentitySubID is
+// selected, so neither half is a silent no-op, and requires a bound audience
+// with it.
+func validateOwnerIdentity(cfg Config) error {
+	switch cfg.OwnerIdentity {
+	case "":
 		if len(cfg.AcceptedClientIDs) != 0 {
-			return fmt.Errorf("%w: accepted client IDs require owner from sub_id", ErrInvalidConfig)
+			return fmt.Errorf("%w: accepted client IDs require owner identity sub_id", ErrInvalidConfig)
 		}
 		return nil
+	case OwnerIdentitySubID:
+	default:
+		return fmt.Errorf("%w: unknown owner identity %q (accepted: %s)", ErrInvalidConfig, cfg.OwnerIdentity, OwnerIdentitySubID)
 	}
 	// RFC 9068 §4: an access token's aud must name this resource server.
 	if cfg.Audience == "" || cfg.AllowAnyAudience {
-		return fmt.Errorf("%w: owner from sub_id requires an audience", ErrInvalidConfig)
+		return fmt.Errorf("%w: owner identity sub_id requires an audience", ErrInvalidConfig)
 	}
 	if len(cfg.AcceptedClientIDs) == 0 {
-		return fmt.Errorf("%w: owner from sub_id requires accepted client IDs", ErrInvalidConfig)
+		return fmt.Errorf("%w: owner identity sub_id requires accepted client IDs", ErrInvalidConfig)
 	}
 	if slices.Contains(cfg.AcceptedClientIDs, "") {
 		return fmt.Errorf("%w: accepted client IDs must not be empty", ErrInvalidConfig)
@@ -235,7 +247,7 @@ func authnConfig(cfg Config) authn.Config {
 		audiences = nil
 	}
 	var tokenTypes []string
-	if cfg.OwnerFromSubID {
+	if cfg.OwnerIdentity == OwnerIdentitySubID {
 		tokenTypes = []string{accessTokenType}
 	}
 	return authn.Config{

@@ -9,22 +9,24 @@ import (
 	"github.com/stacklok/mecatl/internal/cliconfig"
 )
 
-// TestIdentityBrokerRequiresOwnerFromSubID pins fail-closed startup: with
+// TestIdentityBrokerRequiresOwnerIdentitySubID pins fail-closed startup: with
 // caller identity on, the broker must not start unless owners come from the
 // AS-1 access token's sub_id.
-func TestIdentityBrokerRequiresOwnerFromSubID(t *testing.T) {
+func TestIdentityBrokerRequiresOwnerIdentitySubID(t *testing.T) {
 	oidc := []string{"--mock", "--oidc-issuer=https://as1.example", "--oidc-audience=mecatl"}
-	owner := []string{"--oidc-owner-from-sub-id", "--oidc-accepted-client-ids=mecatui,studio"}
+	owner := []string{"--oidc-owner-identity=sub_id", "--oidc-accepted-client-ids=mecatui,studio"}
 	join := slices.Concat[[]string]
 	for _, c := range []struct {
 		name string
 		args []string
 		want string
 	}{
-		{name: "broker with OIDC and owner from sub_id", args: join([]string{"--enable-identity-broker"}, oidc, owner)},
+		{name: "broker with OIDC and owner identity sub_id", args: join([]string{"--enable-identity-broker"}, oidc, owner)},
 		{name: "broker without OIDC", args: []string{"--mock", "--enable-identity-broker"}},
 		{name: "OIDC without broker", args: oidc},
-		{name: "broker with OIDC but not owner from sub_id", args: join([]string{"--enable-identity-broker"}, oidc), want: "requires --oidc-owner-from-sub-id"},
+		{name: "broker with OIDC but no owner identity", args: join([]string{"--enable-identity-broker"}, oidc), want: "requires --oidc-owner-identity=sub_id"},
+		{name: "broker with OIDC and empty owner identity", args: join([]string{"--enable-identity-broker", "--oidc-owner-identity="}, oidc), want: "requires --oidc-owner-identity=sub_id"},
+		{name: "unknown owner identity", args: join(oidc, []string{"--oidc-owner-identity=upstream_subject"}), want: "accepted values: sub_id"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			_, err := parseFlags(c.args)
@@ -41,16 +43,16 @@ func TestIdentityBrokerRequiresOwnerFromSubID(t *testing.T) {
 	}
 }
 
-// TestOwnerFromSubIDMisconfigurationRefusesStartup pins that a misconfigured
-// owner-from-sub_id setting stops mecak8s before it serves anything.
-func TestOwnerFromSubIDMisconfigurationRefusesStartup(t *testing.T) {
+// TestOwnerIdentityMisconfigurationRefusesStartup pins that a misconfigured
+// owner identity setting stops mecak8s before it serves anything.
+func TestOwnerIdentityMisconfigurationRefusesStartup(t *testing.T) {
 	oidc := []string{"--mock", "--oidc-issuer=https://as1.example.invalid", "--oidc-audience=mecatl"}
 	for name, args := range map[string][]string{
-		"without client IDs":            slices.Concat(oidc, []string{"--oidc-owner-from-sub-id"}),
+		"without client IDs":            slices.Concat(oidc, []string{"--oidc-owner-identity=sub_id"}),
 		"client IDs without the option": slices.Concat(oidc, []string{"--oidc-accepted-client-ids=mecatui"}),
-		"without issuer":                {"--mock", "--oidc-owner-from-sub-id", "--oidc-accepted-client-ids=mecatui"},
+		"without issuer":                {"--mock", "--oidc-owner-identity=sub_id", "--oidc-accepted-client-ids=mecatui"},
 		"advertised client ID not accepted": slices.Concat(oidc, []string{
-			"--oidc-owner-from-sub-id", "--oidc-accepted-client-ids=studio",
+			"--oidc-owner-identity=sub_id", "--oidc-accepted-client-ids=studio",
 			"--oidc-resource=https://mecatl.example", "--oidc-client-id=mecatui",
 		}),
 	} {

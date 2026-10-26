@@ -197,8 +197,8 @@ spec:
             - {{ printf "--oidc-scopes=%s" (join "," .Values.oidc.scopes) | quote }}
             {{- end }}
             {{- end }}
-            {{- if .Values.oidc.ownerFromSubID }}
-            - --oidc-owner-from-sub-id
+            {{- if .Values.oidc.ownerIdentity }}
+            - {{ printf "--oidc-owner-identity=%s" .Values.oidc.ownerIdentity | quote }}
             - {{ printf "--oidc-accepted-client-ids=%s" (join "," .Values.oidc.acceptedClientIDs) | quote }}
             {{- end }}
             {{- end }}

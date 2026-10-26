@@ -58,7 +58,7 @@
         "resource": {"type": "string"},
         "clientID": {"type": "string"},
         "scopes": {"type": "array", "items": {"type": "string"}},
-        "ownerFromSubID": {"type": "boolean"},
+        "ownerIdentity": {"type": "string", "enum": ["", "sub_id"]},
         "acceptedClientIDs": {"type": "array", "items": {"type": "string", "minLength": 1}}
       }
     },

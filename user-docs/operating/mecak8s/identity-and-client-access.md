@@ -175,13 +175,13 @@ oidc:
   enabled: true
   issuer: https://auth.example.com/as
   audience: https://mecatl.example.com/api
-  ownerFromSubID: true
+  ownerIdentity: sub_id
   acceptedClientIDs: [mecatui, studio]
 ```
 
-`oidc.ownerFromSubID` sets `--oidc-owner-from-sub-id` and
-`oidc.acceptedClientIDs` sets `--oidc-accepted-client-ids`; the chart rejects
-one without the other. The experimental identity broker requires this setting:
+`oidc.ownerIdentity` sets `--oidc-owner-identity` and accepts only `sub_id` or
+the default empty string. `oidc.acceptedClientIDs` sets
+`--oidc-accepted-client-ids`; the chart rejects one without the other. The experimental identity broker requires this setting:
 with `--enable-identity-broker` and OIDC enabled, `mecak8s` refuses to start
 without it. When `oidc.clientID` is set, the chart requires it in
 `oidc.acceptedClientIDs`. Existing owners and principal settings keep matching

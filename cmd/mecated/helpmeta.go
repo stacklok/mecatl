@@ -94,7 +94,7 @@ var flagMetaByFlag = map[string]flagMeta{
 	"oidc-client-id":           {group: groupSecurity, common: false, acp: acpExclude},
 	"oidc-scopes":              {group: groupSecurity, common: false, acp: acpExclude},
 	"oidc-max-jwks-staleness":  {group: groupSecurity, common: false, acp: acpExclude},
-	"oidc-owner-from-sub-id":   {group: groupSecurity, common: false, acp: acpExclude},
+	"oidc-owner-identity":      {group: groupSecurity, common: false, acp: acpExclude},
 	"oidc-accepted-client-ids": {group: groupSecurity, common: false, acp: acpExclude},
 	// TEST-ONLY SSRF relaxation (see cliconfig.OIDCConfig): not common, and
 	// acpExclude like its siblings — an ACP client has no business setting it.

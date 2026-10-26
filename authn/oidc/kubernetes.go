@@ -109,8 +109,8 @@ func validateKubernetesConfig(cfg Config, bootstrap KubernetesBootstrapConfig) e
 		return fmt.Errorf("%w: Kubernetes validation requires a trusted CA file", ErrInvalidConfig)
 	case cfg.HTTPClient != nil || cfg.InsecureAllowPrivateIssuer || cfg.AllowPrivateHTTPSIssuer:
 		return fmt.Errorf("%w: Kubernetes validation builds its own HTTP client", ErrInvalidConfig)
-	case cfg.OwnerFromSubID || len(cfg.AcceptedClientIDs) != 0:
-		return fmt.Errorf("%w: Kubernetes validation does not support owner from sub_id", ErrInvalidConfig)
+	case cfg.OwnerIdentity != "" || len(cfg.AcceptedClientIDs) != 0:
+		return fmt.Errorf("%w: Kubernetes validation does not support an owner identity", ErrInvalidConfig)
 	}
 	return nil
 }

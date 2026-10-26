@@ -144,14 +144,14 @@ func TestDefaultOIDCValidatorMapsWrongAudience(t *testing.T) {
 	}
 }
 
-// TestDefaultOIDCValidatorPassesOwnerFromSubID pins that the flags reach
+// TestDefaultOIDCValidatorPassesOwnerIdentity pins that the flags reach
 // authn/oidc: the owner comes from sub_id and a token failing its preconditions
 // is the server's 401-class rejection.
-func TestDefaultOIDCValidatorPassesOwnerFromSubID(t *testing.T) {
+func TestDefaultOIDCValidatorPassesOwnerIdentity(t *testing.T) {
 	fixture := newRootJWKSFixture(t)
 	validator, err := OIDCValidator(context.Background(), OIDCConfig{
 		Issuer: fixture.srv.URL, Audience: rootTestAudience, JWKSURI: fixture.srv.URL + "/keys",
-		OwnerFromSubID: true, AcceptedClientIDs: []string{"mecatui"},
+		OwnerIdentity: oidcauthn.OwnerIdentitySubID, AcceptedClientIDs: []string{"mecatui"},
 		httpClient: fixture.srv.Client(),
 	})
 	if err != nil {

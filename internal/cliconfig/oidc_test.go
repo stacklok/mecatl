@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	oidcauthn "github.com/stacklok/mecatl/authn/oidc"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/internal/adapter/server"
 )
@@ -107,16 +108,34 @@ func TestOIDCPrivateHTTPSIssuerFlagsAndValidation(t *testing.T) {
 	}
 }
 
-func TestOIDCOwnerFromSubIDFlags(t *testing.T) {
+func TestOIDCOwnerIdentityFlags(t *testing.T) {
 	fs := flag.NewFlagSet("oidc", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	var cfg OIDCConfig
 	RegisterOIDCFlags(fs, &cfg)
-	if err := fs.Parse([]string{"--oidc-owner-from-sub-id", "--oidc-accepted-client-ids= mecatui, ,studio,"}); err != nil {
+	if err := fs.Parse([]string{"--oidc-owner-identity=sub_id", "--oidc-accepted-client-ids= mecatui, ,studio,"}); err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
-	if !cfg.OwnerFromSubID || !reflect.DeepEqual(cfg.AcceptedClientIDs, []string{"mecatui", "studio"}) {
-		t.Fatalf("owner-from-sub_id flags = %v %#v", cfg.OwnerFromSubID, cfg.AcceptedClientIDs)
+	if cfg.OwnerIdentity != oidcauthn.OwnerIdentitySubID || !reflect.DeepEqual(cfg.AcceptedClientIDs, []string{"mecatui", "studio"}) {
+		t.Fatalf("owner identity flags = %q %#v", cfg.OwnerIdentity, cfg.AcceptedClientIDs)
+	}
+
+	for _, raw := range []string{"upstream_subject", "SUB_ID", " sub_id", "true"} {
+		fs = flag.NewFlagSet("unknown", flag.ContinueOnError)
+		fs.SetOutput(io.Discard)
+		var unknown OIDCConfig
+		RegisterOIDCFlags(fs, &unknown)
+		if err := fs.Parse([]string{"--oidc-owner-identity=" + raw}); err == nil || !strings.Contains(err.Error(), "accepted values: sub_id") {
+			t.Fatalf("--oidc-owner-identity=%q: Parse = %v, want an accepted-values error", raw, err)
+		}
+	}
+
+	fs = flag.NewFlagSet("empty", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	var off OIDCConfig
+	RegisterOIDCFlags(fs, &off)
+	if err := fs.Parse([]string{"--oidc-owner-identity=sub_id", "--oidc-owner-identity="}); err != nil || off.OwnerIdentity != "" {
+		t.Fatalf("--oidc-owner-identity= : Parse = %v, OwnerIdentity = %q, want off", err, off.OwnerIdentity)
 	}
 
 	for _, raw := range []string{"", ",,", " , "} {
@@ -132,30 +151,32 @@ func TestOIDCOwnerFromSubIDFlags(t *testing.T) {
 	var defaults OIDCConfig
 	fs = flag.NewFlagSet("defaults", flag.ContinueOnError)
 	RegisterOIDCFlags(fs, &defaults)
-	if err := fs.Parse(nil); err != nil || defaults.OwnerFromSubID || defaults.AcceptedClientIDs != nil {
-		t.Fatalf("defaults = %v %#v (%v), want off", defaults.OwnerFromSubID, defaults.AcceptedClientIDs, err)
+	if err := fs.Parse(nil); err != nil || defaults.OwnerIdentity != "" || defaults.AcceptedClientIDs != nil {
+		t.Fatalf("defaults = %q %#v (%v), want off", defaults.OwnerIdentity, defaults.AcceptedClientIDs, err)
 	}
 }
 
-// TestOIDCOwnerFromSubIDMisconfigurationFailsStartup pins that every
+// TestOIDCOwnerIdentityMisconfigurationFailsStartup pins that every
 // misconfiguration is a fatal ErrOIDCMisconfigured from OIDCValidator: the
 // missing-issuer and unaccepted advertised client ID cases are caught here, the
 // pairing with client IDs by the real
 // authn/oidc constructor before it contacts the issuer.
-func TestOIDCOwnerFromSubIDMisconfigurationFailsStartup(t *testing.T) {
+func TestOIDCOwnerIdentityMisconfigurationFailsStartup(t *testing.T) {
 	const issuer = "https://idp.example.invalid"
+	subID := oidcauthn.OwnerIdentitySubID
 	for _, tc := range []struct {
 		name string
 		cfg  OIDCConfig
 		want string
 	}{
-		{name: "owner from sub_id without issuer", cfg: OIDCConfig{OwnerFromSubID: true, AcceptedClientIDs: []string{"mecatui"}}, want: "require --oidc-issuer"},
+		{name: "owner identity without issuer", cfg: OIDCConfig{OwnerIdentity: subID, AcceptedClientIDs: []string{"mecatui"}}, want: "require --oidc-issuer"},
 		{name: "client IDs without issuer", cfg: OIDCConfig{AcceptedClientIDs: []string{"mecatui"}}, want: "require --oidc-issuer"},
-		{name: "owner from sub_id without client IDs", cfg: OIDCConfig{Issuer: issuer, Audience: "mecatl", OwnerFromSubID: true}, want: "requires accepted client IDs"},
-		{name: "client IDs without owner from sub_id", cfg: OIDCConfig{Issuer: issuer, Audience: "mecatl", AcceptedClientIDs: []string{"mecatui"}}, want: "require owner from sub_id"},
+		{name: "owner identity sub_id without client IDs", cfg: OIDCConfig{Issuer: issuer, Audience: "mecatl", OwnerIdentity: subID}, want: "requires accepted client IDs"},
+		{name: "client IDs without owner identity", cfg: OIDCConfig{Issuer: issuer, Audience: "mecatl", AcceptedClientIDs: []string{"mecatui"}}, want: "require owner identity sub_id"},
+		{name: "unknown owner identity", cfg: OIDCConfig{Issuer: issuer, Audience: "mecatl", OwnerIdentity: "upstream_subject", AcceptedClientIDs: []string{"mecatui"}}, want: `unknown owner identity "upstream_subject"`},
 		{
 			name: "advertised client ID not accepted",
-			cfg:  OIDCConfig{Issuer: issuer, Audience: "mecatl", Resource: "https://mecatl.example", ClientID: "mecatui", OwnerFromSubID: true, AcceptedClientIDs: []string{"studio"}},
+			cfg:  OIDCConfig{Issuer: issuer, Audience: "mecatl", Resource: "https://mecatl.example", ClientID: "mecatui", OwnerIdentity: subID, AcceptedClientIDs: []string{"studio"}},
 			want: `--oidc-client-id "mecatui" must be listed in --oidc-accepted-client-ids`,
 		},
 	} {
@@ -166,9 +187,9 @@ func TestOIDCOwnerFromSubIDMisconfigurationFailsStartup(t *testing.T) {
 			}
 		})
 	}
-	ok := OIDCConfig{Issuer: issuer, Audience: "mecatl", Resource: "https://mecatl.example", ClientID: "mecatui", OwnerFromSubID: true, AcceptedClientIDs: []string{"studio", "mecatui"}}
+	ok := OIDCConfig{Issuer: issuer, Audience: "mecatl", Resource: "https://mecatl.example", ClientID: "mecatui", OwnerIdentity: subID, AcceptedClientIDs: []string{"studio", "mecatui"}}
 	ok.NewValidator = func(_ context.Context, c OIDCConfig) (server.PrincipalValidator, error) {
-		if !c.OwnerFromSubID || len(c.AcceptedClientIDs) != 2 {
+		if c.OwnerIdentity != subID || len(c.AcceptedClientIDs) != 2 {
 			t.Fatalf("constructor saw %#v", c)
 		}
 		return fakeValidator{}, nil

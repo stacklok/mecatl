@@ -309,8 +309,7 @@ Flags:
   --no-user-model
         disable the user-model entirely (explicit tools and live operator profile)
   --oidc-accepted-client-ids value
-        comma-separated OAuth client IDs whose access tokens --oidc-owner-from-sub-id
-        accepts
+        comma-separated OAuth client IDs accepted by --oidc-owner-identity=sub_id
   --oidc-allow-private-https-issuer
         allow an HTTPS issuer or JWKS URL to resolve to a private, loopback, or link-
         local address. Requires --oidc-ca-cert-file; TLS, CA, hostname, redirect, and
@@ -339,12 +338,12 @@ Flags:
         maximum age of cached JWKS signing keys when refresh cannot reach the IdP;
         stale, unrefreshable keys yield 503 instead of validating tokens. 0 disables
         the upper bound; negative values are rejected (default 1h0m0s)
-  --oidc-owner-from-sub-id
-        key session owners by the issuer and subject inside the token's sub_id claim,
-        an RFC 9493 iss_sub subject identifier, instead of the token's own iss and sub.
-        Requires RFC 9068 access tokens (typ header at+jwt) whose client_id is listed
-        in --oidc-accepted-client-ids; other tokens are rejected. Requires --oidc-
-        issuer.
+  --oidc-owner-identity value
+        identity that keys session owners. Empty keys owners by the token's own iss and
+        sub. sub_id keys them by the issuer and subject inside the token's sub_id
+        claim, an RFC 9493 iss_sub subject identifier; it requires RFC 9068 access
+        tokens (typ header at+jwt) whose client_id is listed in --oidc-accepted-client-
+        ids, and other tokens are rejected. Requires --oidc-issuer.
   --oidc-resource value
         canonical external HTTPS URL of the OAuth protected resource
   --oidc-scopes value
@@ -773,8 +772,7 @@ Usage: mecak8s [flags]
   --no-user-model
         Disable the user model
   --oidc-accepted-client-ids value
-        comma-separated OAuth client IDs whose access tokens --oidc-owner-from-sub-id
-        accepts
+        comma-separated OAuth client IDs accepted by --oidc-owner-identity=sub_id
   --oidc-allow-private-https-issuer
         allow an HTTPS issuer or JWKS URL to resolve to a private, loopback, or link-
         local address. Requires --oidc-ca-cert-file; TLS, CA, hostname, redirect, and
@@ -803,12 +801,12 @@ Usage: mecak8s [flags]
         maximum age of cached JWKS signing keys when refresh cannot reach the IdP;
         stale, unrefreshable keys yield 503 instead of validating tokens. 0 disables
         the upper bound; negative values are rejected (default 1h0m0s)
-  --oidc-owner-from-sub-id
-        key session owners by the issuer and subject inside the token's sub_id claim,
-        an RFC 9493 iss_sub subject identifier, instead of the token's own iss and sub.
-        Requires RFC 9068 access tokens (typ header at+jwt) whose client_id is listed
-        in --oidc-accepted-client-ids; other tokens are rejected. Requires --oidc-
-        issuer.
+  --oidc-owner-identity value
+        identity that keys session owners. Empty keys owners by the token's own iss and
+        sub. sub_id keys them by the issuer and subject inside the token's sub_id
+        claim, an RFC 9493 iss_sub subject identifier; it requires RFC 9068 access
+        tokens (typ header at+jwt) whose client_id is listed in --oidc-accepted-client-
+        ids, and other tokens are rejected. Requires --oidc-issuer.
   --oidc-resource value
         canonical external HTTPS URL of the OAuth protected resource
   --oidc-scopes value

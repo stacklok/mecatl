@@ -36,7 +36,7 @@ func TestIdentityBrokerAgainstOfflineHarness(t *testing.T) {
 		"--oidc-audience", h.AS1.Audience(),
 		"--oidc-allow-private-https-issuer",
 		"--oidc-ca-cert-file", h.WriteCACert(t, t.TempDir()),
-		"--oidc-owner-from-sub-id",
+		"--oidc-owner-identity=sub_id",
 		"--oidc-accepted-client-ids", identityharness.DefaultClientID + ",studio",
 	})
 	if err != nil {
@@ -208,7 +208,7 @@ func TestIdentityBrokerAgainstOfflineHarness(t *testing.T) {
 		"expired":        h.AS1.MintAccessToken(identityharness.AccessTokenSpec{Lifetime: -time.Hour}),
 		"typ JWT":        h.AS1.MintAccessToken(identityharness.AccessTokenSpec{Type: "JWT"}),
 		"no typ":         h.AS1.MintAccessToken(identityharness.AccessTokenSpec{OmitType: true}),
-		"alg none":       unsignedToken(t, h.AS1.Issuer(), h.AS1.Audience()),
+		"alg none":       unsignedToken(t, h.AS1.Issuer(), h.AS1.Audience()), // toolhive-core's fixed algorithm allowlist rejects this
 		"other client":   h.AS1.MintAccessToken(identityharness.AccessTokenSpec{ClientID: "rogue"}),
 		"no sub_id":      h.AS1.MintAccessToken(identityharness.AccessTokenSpec{OmitSubID: true}),
 		"sub_id format":  h.AS1.MintAccessToken(identityharness.AccessTokenSpec{SubID: map[string]string{"format": "email", "iss": h.IdP.Issuer(), "sub": identityharness.Alice}}),
