@@ -16,8 +16,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stacklok/mecatl/internal/adapter/authserverclient"
 	"github.com/stacklok/mecatl/internal/identitybroker"
+	"github.com/stacklok/mecatl/internal/identitybroker/adapter/authserverclient"
 	"github.com/stacklok/mecatl/internal/testutil/identityharness"
 )
 
