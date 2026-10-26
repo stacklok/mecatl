@@ -589,6 +589,24 @@ func TestMecak8sHelmChart_OwnerIdentity(t *testing.T) {
 		t.Fatalf("template: render = %v, want failure %q:\n%s", err, wantUnknown, output)
 	}
 
+	// The identity broker, enabled through extraArgs, needs the owner identity
+	// when OIDC is on; mecak8s refuses it at startup, so the chart fails first.
+	for _, arg := range []string{"--enable-identity-broker", "-enable-identity-broker", "--enable-identity-broker=true", "--enable-identity-broker=1"} {
+		want := fmt.Sprintf("extraArgs entry %q enables the identity broker, which requires oidc.ownerIdentity=sub_id when oidc.enabled is true", arg)
+		if output, err := helm(t, append(slices.Clone(base), "--set-string", "extraArgs[0]="+arg)...); err == nil || !strings.Contains(output, want) {
+			t.Fatalf("broker %s without owner identity: render = %v, want failure %q:\n%s", arg, err, want, output)
+		}
+	}
+	for name, extra := range map[string][]string{
+		"broker explicitly off":  {"--set-string", "extraArgs[0]=--enable-identity-broker=false"},
+		"broker with identity":   {"--set-string", "extraArgs[0]=--enable-identity-broker", "--set", "oidc.ownerIdentity=sub_id", "--set", "oidc.acceptedClientIDs={mecatui}"},
+		"broker without OIDC on": {"--set-string", "extraArgs[0]=--enable-identity-broker", "--set", "oidc.enabled=false"},
+	} {
+		if output, err := helm(t, append(slices.Clone(base), extra...)...); err != nil {
+			t.Fatalf("%s: render failed: %v\n%s", name, err, output)
+		}
+	}
+
 	const badEntry = "must be non-blank and contain no surrounding spaces, commas, control, or Unicode format characters"
 	for name, tc := range map[string]struct {
 		values []string

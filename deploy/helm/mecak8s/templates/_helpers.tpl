@@ -92,6 +92,14 @@ mounted
 {{- else if .Values.oidc.acceptedClientIDs -}}
 {{- fail "oidc.acceptedClientIDs requires oidc.ownerIdentity=sub_id" -}}
 {{- end -}}
+{{- if and .Values.oidc.enabled (not .Values.oidc.ownerIdentity) -}}
+{{- range $arg := .Values.extraArgs -}}
+{{- /* mecak8s refuses this combination at startup; fail at render time instead of crash-looping. */ -}}
+{{- if regexMatch "^--?enable-identity-broker(=(1|t|T|true|TRUE|True))?$" (toString $arg) -}}
+{{- fail (printf "extraArgs entry %q enables the identity broker, which requires oidc.ownerIdentity=sub_id when oidc.enabled is true" (toString $arg)) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
 {{- range $clientID := .Values.oidc.acceptedClientIDs -}}
 {{- if or (eq (trim $clientID) "") (ne (trim $clientID) $clientID) (contains "," $clientID) (regexMatch "[\\x00-\\x1f\\x7f-\\x9f]" $clientID) (regexMatch "[\\p{Cf}]" $clientID) -}}{{ fail (printf "oidc.acceptedClientIDs entry %q must be non-blank and contain no surrounding spaces, commas, control, or Unicode format characters" $clientID) }}{{- end -}}
 {{- end -}}

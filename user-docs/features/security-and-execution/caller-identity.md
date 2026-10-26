@@ -158,6 +158,10 @@ switching, sign in through the authorization server and confirm that the
 `sub_id` claim carries the same `iss` and `sub` as a token the server accepts
 today.
 
+The same applies later: with a pairwise-subject IdP, replacing the authorization
+server's application registration changes every user's `sub`, and users lose
+access to the sessions and other data they owned.
+
 Settings that name exact principals match the `sub_id` identity once the option
 is on, so list the IdP's issuer and subject there, not the authorization
 server's:
