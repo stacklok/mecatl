@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -523,5 +524,65 @@ func TestNewValidatesConfig(t *testing.T) {
 		if _, err := authserverclient.New(cfg); err == nil {
 			t.Errorf("%s: accepted", name)
 		}
+	}
+}
+
+// echoingTransport fails every request with an error quoting a secret and
+// the request body, as a careless custom transport might.
+type echoingTransport struct{}
+
+func (echoingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	body, _ := io.ReadAll(req.Body)
+	return nil, errors.New("upstream said: Bearer sk_live_secret_canary; request was " + string(body))
+}
+
+// blockingTransport answers nothing until the request is abandoned.
+type blockingTransport struct{}
+
+func (blockingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	<-req.Context().Done()
+	return nil, req.Context().Err()
+}
+
+func TestTransportErrorTextIsNeverReturned(t *testing.T) {
+	r := &recorder{}
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.signer, err = identitybroker.NewClientAssertionSigner(key, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := authserverclient.New(authserverclient.Config{
+		Issuer: "https://as.example.com", TokenEndpoint: "https://as.example.com/token",
+		Assertions: r, HTTPClient: &http.Client{Transport: echoingTransport{}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const subject = "subject-token-canary"
+	err = c.Token(t.Context(), url.Values{"subject_token": {subject}}, &sessionOpenResult{})
+	if !errors.Is(err, identitybroker.ErrNoResponse) || !strings.HasSuffix(err.Error(), ": other") {
+		t.Fatalf("Token = %v, want ErrNoResponse of kind other", err)
+	}
+	assertNoSecrets(t, err, append(values(r.all()), subject, "sk_live_secret_canary", "upstream said")...)
+}
+
+func TestTransportTimeoutIsNamed(t *testing.T) {
+	c := newStubClient(t, "https://as.example.com", &http.Client{Transport: blockingTransport{}, Timeout: 50 * time.Millisecond})
+	err := c.Token(t.Context(), url.Values{"grant_type": {"x"}}, &sessionOpenResult{})
+	if !errors.Is(err, identitybroker.ErrNoResponse) || !identitybroker.IsUnavailable(err) || !strings.HasSuffix(err.Error(), ": timeout") {
+		t.Fatalf("Token = %v, want ErrNoResponse of kind timeout", err)
+	}
+}
+
+func TestTransportFailureAgainstAClosedPort(t *testing.T) {
+	server := httptest.NewTLSServer(http.NotFoundHandler())
+	hc, base := server.Client(), server.URL
+	server.Close()
+	err := newStubClient(t, base, hc).Token(t.Context(), url.Values{"grant_type": {"x"}}, &sessionOpenResult{})
+	if !errors.Is(err, identitybroker.ErrNoResponse) || !strings.HasSuffix(err.Error(), ": connection refused") {
+		t.Fatalf("Token = %v, want ErrNoResponse of kind connection refused", err)
 	}
 }

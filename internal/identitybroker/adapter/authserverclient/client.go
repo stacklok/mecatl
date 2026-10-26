@@ -13,14 +13,18 @@ package authserverclient
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"maps"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/stacklok/mecatl/internal/identitybroker"
@@ -150,8 +154,7 @@ func (c *Client) post(ctx context.Context, endpoint string, form url.Values, out
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return fmt.Errorf("authserverclient: %w", ctxErr)
 		}
-		// The *url.Error names only the configured endpoint, never the body.
-		return fmt.Errorf("authserverclient: %w: %v", identitybroker.ErrNoResponse, err)
+		return fmt.Errorf("authserverclient: %w: %s", identitybroker.ErrNoResponse, transportFailure(err))
 	}
 	defer func() { _ = resp.Body.Close() }()
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes+1))
@@ -176,4 +179,35 @@ func (c *Client) post(ctx context.Context, endpoint string, form url.Values, out
 		return errors.New("authserverclient: the response is not valid JSON")
 	}
 	return nil
+}
+
+// transportFailure returns a fixed, coarse name for a failed request. The
+// error's own text is never used: a custom transport or a net/http protocol
+// error can carry request or server-echoed content.
+func transportFailure(err error) string {
+	var (
+		netErr     net.Error
+		dnsErr     *net.DNSError
+		certErr    *tls.CertificateVerificationError
+		recordErr  tls.RecordHeaderError
+		alertErr   tls.AlertError
+		unknownCA  x509.UnknownAuthorityError
+		hostErr    x509.HostnameError
+		invalidErr x509.CertificateInvalidError
+	)
+	switch {
+	case errors.As(err, &netErr) && netErr.Timeout(), errors.Is(err, context.DeadlineExceeded):
+		return "timeout"
+	case errors.As(err, &dnsErr):
+		return "dns"
+	case errors.As(err, &certErr), errors.As(err, &recordErr), errors.As(err, &alertErr),
+		errors.As(err, &unknownCA), errors.As(err, &hostErr), errors.As(err, &invalidErr):
+		return "tls"
+	case errors.Is(err, syscall.ECONNREFUSED):
+		return "connection refused"
+	case errors.Is(err, io.EOF), errors.Is(err, io.ErrUnexpectedEOF), errors.Is(err, syscall.ECONNRESET):
+		return "connection closed"
+	default:
+		return "other"
+	}
 }
