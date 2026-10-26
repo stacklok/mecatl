@@ -1145,9 +1145,11 @@ message ListSessionsRequest {
 // An ABSENT principal is an ABSENT message (a nil owner), never a present-but-empty
 // one — "nobody" must never be renderable as an anonymous somebody.
 message Principal {
-  // issuer is the IdP that minted the token (the canonical `iss` claim).
+  // issuer is the identity's issuer: the token's canonical `iss` claim, or the
+  // `iss` inside an accepted `sub_id` claim.
   string issuer = 1;
-  // subject is the caller id within that issuer (the `sub` claim).
+  // subject is the caller id within that issuer: the token's `sub` claim, or the
+  // `sub` inside an accepted `sub_id` claim.
   string subject = 2;
   // grant_type is how the caller authenticated: "user", "client_credentials" or
   // "system". A bare string passthrough (no enum) — the domain owns the closed set.

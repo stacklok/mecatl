@@ -1505,14 +1505,16 @@ export const ListSessionsRequestSchema: GenMessage<ListSessionsRequest> = /*@__P
  */
 export type Principal = Message<"mecatl.v1.Principal"> & {
   /**
-   * issuer is the IdP that minted the token (the canonical `iss` claim).
+   * issuer is the identity's issuer: the token's canonical `iss` claim, or the
+   * `iss` inside an accepted `sub_id` claim.
    *
    * @generated from field: string issuer = 1;
    */
   issuer: string;
 
   /**
-   * subject is the caller id within that issuer (the `sub` claim).
+   * subject is the caller id within that issuer: the token's `sub` claim, or the
+   * `sub` inside an accepted `sub_id` claim.
    *
    * @generated from field: string subject = 2;
    */

@@ -3385,9 +3385,11 @@ func (x *ListSessionsRequest) GetCursor() string {
 // one — "nobody" must never be renderable as an anonymous somebody.
 type Principal struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// issuer is the IdP that minted the token (the canonical `iss` claim).
+	// issuer is the identity's issuer: the token's canonical `iss` claim, or the
+	// `iss` inside an accepted `sub_id` claim.
 	Issuer string `protobuf:"bytes,1,opt,name=issuer,proto3" json:"issuer,omitempty"`
-	// subject is the caller id within that issuer (the `sub` claim).
+	// subject is the caller id within that issuer: the token's `sub` claim, or the
+	// `sub` inside an accepted `sub_id` claim.
 	Subject string `protobuf:"bytes,2,opt,name=subject,proto3" json:"subject,omitempty"`
 	// grant_type is how the caller authenticated: "user", "client_credentials" or
 	// "system". A bare string passthrough (no enum) — the domain owns the closed set.

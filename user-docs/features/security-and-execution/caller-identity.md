@@ -128,9 +128,20 @@ Set `--oidc-issuer` to the authorization server. With this option, the server
 rejects a token with `401` unless its `typ` header is `at+jwt` or
 `application/at+jwt` (an RFC 9068 access token), its `client_id` claim is listed
 in `--oidc-accepted-client-ids`, and its `sub_id` claim has format `iss_sub`
-with a non-empty `iss` and `sub`. The owner is that `iss` and `sub`. When
-`--oidc-client-id` is set, the server refuses to start unless that client ID is
-also listed in `--oidc-accepted-client-ids`.
+with a non-empty `iss` and `sub`. The owner is that `iss` and `sub`.
+
+The server refuses to start when:
+
+- `--oidc-owner-from-sub-id` or `--oidc-accepted-client-ids` is set without
+  `--oidc-issuer`.
+- `--oidc-owner-from-sub-id` is set without `--oidc-accepted-client-ids`.
+- `--oidc-accepted-client-ids` is set without `--oidc-owner-from-sub-id`.
+- `--oidc-accepted-client-ids` lists no client IDs, for example
+  `--oidc-accepted-client-ids=`.
+- `--oidc-client-id` names a client that `--oidc-accepted-client-ids` does not
+  list.
+- In `mecak8s`, `--enable-identity-broker` is set with `--oidc-issuer` but
+  without `--oidc-owner-from-sub-id`.
 
 Existing sessions, schedules, memory, and other owned data keep matching their
 owners only if, for each user, the authorization server's upstream IdP returns

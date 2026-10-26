@@ -119,6 +119,16 @@ func TestOIDCOwnerFromSubIDFlags(t *testing.T) {
 		t.Fatalf("owner-from-sub_id flags = %v %#v", cfg.OwnerFromSubID, cfg.AcceptedClientIDs)
 	}
 
+	for _, raw := range []string{"", ",,", " , "} {
+		fs = flag.NewFlagSet("empty", flag.ContinueOnError)
+		fs.SetOutput(io.Discard)
+		var empty OIDCConfig
+		RegisterOIDCFlags(fs, &empty)
+		if err := fs.Parse([]string{"--oidc-accepted-client-ids=" + raw}); err == nil || !strings.Contains(err.Error(), "at least one client ID") {
+			t.Fatalf("--oidc-accepted-client-ids=%q: Parse = %v, want an empty-list error", raw, err)
+		}
+	}
+
 	var defaults OIDCConfig
 	fs = flag.NewFlagSet("defaults", flag.ContinueOnError)
 	RegisterOIDCFlags(fs, &defaults)

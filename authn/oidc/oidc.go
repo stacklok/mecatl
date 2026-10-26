@@ -73,7 +73,8 @@ type Config struct {
 	// the token's `sub_id` claim, an RFC 9493 `iss_sub` subject identifier,
 	// rather than by the token's own `iss` and `sub`. As preconditions it
 	// requires an RFC 9068 access token (`typ` header `at+jwt`) whose
-	// `client_id` claim is in AcceptedClientIDs. Off by default.
+	// `client_id` claim is in AcceptedClientIDs, and it requires Audience with
+	// AllowAnyAudience off. Off by default.
 	OwnerFromSubID bool
 	// AcceptedClientIDs lists the OAuth clients whose access tokens are accepted.
 	// It is required, and only allowed, with OwnerFromSubID.
@@ -173,13 +174,18 @@ func NewValidator(ctx context.Context, cfg Config) (*Validator, error) {
 }
 
 // validateOwnerFromSubID requires a non-empty, well-formed client list exactly
-// when OwnerFromSubID is on, so neither half is a silent no-op.
+// when OwnerFromSubID is on, so neither half is a silent no-op, and requires a
+// bound audience with OwnerFromSubID.
 func validateOwnerFromSubID(cfg Config) error {
 	if !cfg.OwnerFromSubID {
 		if len(cfg.AcceptedClientIDs) != 0 {
 			return fmt.Errorf("%w: accepted client IDs require owner from sub_id", ErrInvalidConfig)
 		}
 		return nil
+	}
+	// RFC 9068 §4: an access token's aud must name this resource server.
+	if cfg.Audience == "" || cfg.AllowAnyAudience {
+		return fmt.Errorf("%w: owner from sub_id requires an audience", ErrInvalidConfig)
 	}
 	if len(cfg.AcceptedClientIDs) == 0 {
 		return fmt.Errorf("%w: owner from sub_id requires accepted client IDs", ErrInvalidConfig)

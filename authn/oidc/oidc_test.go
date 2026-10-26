@@ -418,6 +418,7 @@ func TestOwnerFromSubIDTokenType(t *testing.T) {
 	}{
 		{name: "at+jwt", typ: "at+jwt", wantOn: true},
 		{name: "application/at+jwt", typ: "application/at+jwt", wantOn: true},
+		{name: "AT+JWT", typ: "AT+JWT", wantOn: true},
 		{name: "JWT", typ: "JWT"},
 		{name: "missing"},
 	} {
@@ -477,6 +478,8 @@ func TestOwnerFromSubIDClaims(t *testing.T) {
 		{name: "sub_id empty iss", mutate: func(c map[string]any) { c["sub_id"] = subID("iss_sub", "", "alice-204") }},
 		{name: "sub_id empty sub", mutate: func(c map[string]any) { c["sub_id"] = subID("iss_sub", "https://login.example.com", "") }},
 		{name: "sub_id non-string iss", mutate: func(c map[string]any) { c["sub_id"] = subID("iss_sub", 7, "alice-204") }},
+		{name: "sub_id non-string sub", mutate: func(c map[string]any) { c["sub_id"] = subID("iss_sub", "https://login.example.com", 204) }},
+		{name: "sub_id non-string format", mutate: func(c map[string]any) { c["sub_id"] = subID(true, "https://login.example.com", "alice-204") }},
 		{name: "sub_id missing sub", mutate: func(c map[string]any) { delete(c["sub_id"].(map[string]any), "sub") }},
 		{name: "sub_id NUL iss", mutate: func(c map[string]any) { c["sub_id"] = subID("iss_sub", "https://login.example.com\x00x", "alice-204") }},
 		{name: "sub_id NUL sub", mutate: func(c map[string]any) { c["sub_id"] = subID("iss_sub", "https://login.example.com", "alice\x00204") }},
@@ -525,6 +528,24 @@ func TestOwnerFromSubIDPrincipalComesFromSubID(t *testing.T) {
 	}
 }
 
+func TestOwnerFromSubIDClonesAcceptedClientIDs(t *testing.T) {
+	fixture := newJWKSFixture(t)
+	ids := []string{"mecatui"}
+	validator, err := NewValidator(context.Background(), Config{
+		Issuer: fixture.srv.URL, Audience: testAudience, JWKSURI: fixture.srv.URL + "/keys",
+		HTTPClient: fixture.srv.Client(), OwnerFromSubID: true, AcceptedClientIDs: ids,
+	})
+	if err != nil {
+		t.Fatalf("NewValidator: %v", err)
+	}
+	t.Cleanup(func() { _ = validator.Close() })
+	ids[0] = "rogue"
+	token := fixture.signedToken(t, accessTokenHeader(), fixture.subIDClaims())
+	if principal, err := validator.Validate(t.Context(), token); err != nil || principal == nil {
+		t.Fatalf("Validate after caller mutated AcceptedClientIDs = (%#v, %v), want principal", principal, err)
+	}
+}
+
 func TestOwnerFromSubIDConfig(t *testing.T) {
 	t.Parallel()
 	if got := authnConfig(Config{OwnerFromSubID: true}); len(got.AcceptedTokenTypes) != 1 || got.AcceptedTokenTypes[0] != "at+jwt" {
@@ -538,16 +559,29 @@ func TestOwnerFromSubIDConfig(t *testing.T) {
 		name           string
 		ownerFromSubID bool
 		clientIDs      []string
+		mutate         func(*Config)
 		want           string
 	}{
 		{name: "owner from sub_id without client IDs", ownerFromSubID: true, want: "requires accepted client IDs"},
 		{name: "owner from sub_id with empty client ID", ownerFromSubID: true, clientIDs: []string{"mecatui", ""}, want: "must not be empty"},
 		{name: "client IDs without owner from sub_id", clientIDs: []string{"mecatui"}, want: "require owner from sub_id"},
+		{name: "owner from sub_id with any audience", ownerFromSubID: true, clientIDs: []string{"mecatui"}, mutate: func(c *Config) {
+			c.Audience, c.AllowAnyAudience = "", true
+		}, want: "requires an audience"},
+		{name: "owner from sub_id with AllowAnyAudience beside an audience", ownerFromSubID: true, clientIDs: []string{"mecatui"}, mutate: func(c *Config) {
+			c.AllowAnyAudience = true
+		}, want: "requires an audience"},
+		{name: "owner from sub_id with empty audience", ownerFromSubID: true, clientIDs: []string{"mecatui"}, mutate: func(c *Config) {
+			c.Audience = ""
+		}, want: "audience is empty"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			cfg := base
 			cfg.OwnerFromSubID, cfg.AcceptedClientIDs = tc.ownerFromSubID, tc.clientIDs
+			if tc.mutate != nil {
+				tc.mutate(&cfg)
+			}
 			validator, err := NewValidator(context.Background(), cfg)
 			if validator != nil || !errors.Is(err, ErrInvalidConfig) || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("NewValidator = (%#v, %v), want %q ErrInvalidConfig", validator, err, tc.want)

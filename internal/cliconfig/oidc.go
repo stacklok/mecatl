@@ -152,6 +152,9 @@ func RegisterOIDCFlags(fs *flag.FlagSet, c *OIDCConfig) {
 					c.AcceptedClientIDs = append(c.AcceptedClientIDs, id)
 				}
 			}
+			if len(c.AcceptedClientIDs) == 0 {
+				return errors.New("must list at least one client ID")
+			}
 			return nil
 		})
 }
