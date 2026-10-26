@@ -44,14 +44,23 @@ type inboundAssessment struct {
 	enforce           bool
 	mode              session.PermissionMode
 	principalRevision uint64
+	snapshot          bool
 }
 
 // reviewPolicy resolves the reviewer's configured applicability and enforcement
 // for the EXECUTING session's mode. A shared reviewRoot carries the operator's
-// undemoted rules, so a yolo session (no enforcing checker; advisory monitoring
-// only) demotes enforcement here while a narrower delegated child of that yolo
-// parent keeps it.
+// undemoted rules, so a yolo session never reviews inline here while a narrower
+// delegated child of that yolo parent keeps enforcing. Opted-in yolo review runs
+// through yoloBackgroundReview instead.
 func reviewPolicy(reviewer ToolReviewer, mode session.PermissionMode, toolName string, job ReviewJob, operationalFailure bool) (bool, bool) {
+	if mode == session.ModeYolo {
+		return false, false
+	}
+	return configuredReviewPolicy(reviewer, toolName, job, operationalFailure)
+}
+
+// configuredReviewPolicy is the operator's policy independent of permission mode.
+func configuredReviewPolicy(reviewer ToolReviewer, toolName string, job ReviewJob, operationalFailure bool) (bool, bool) {
 	applies, enforce := job == ReviewJobAction, true
 	if policy, ok := reviewer.(ReviewPolicyProvider); ok {
 		applies, enforce = policy.GuardrailReviewPolicy(toolName, job, operationalFailure)
@@ -59,7 +68,20 @@ func reviewPolicy(reviewer ToolReviewer, mode session.PermissionMode, toolName s
 	// ToolReviewer predated inbound escrow. Reviewers that do not explicitly
 	// advertise policy retain action-only behavior rather than unexpectedly
 	// inspecting and holding every tool result.
-	return applies, enforce && mode != session.ModeYolo
+	return applies, enforce
+}
+
+// yoloBackgroundReview reports whether a yolo session runs this review as
+// advisory background work: only when the reviewer opts in and a rule applies.
+func yoloBackgroundReview(reviewer ToolReviewer, mode session.PermissionMode, toolName string, job ReviewJob) bool {
+	if mode != session.ModeYolo || reviewer == nil {
+		return false
+	}
+	if opt, ok := reviewer.(YoloReviewPolicyProvider); !ok || !opt.GuardrailYoloReviews() {
+		return false
+	}
+	applies, _ := configuredReviewPolicy(reviewer, toolName, job, false)
+	return applies
 }
 
 func (e *Engine) prepareInboundAssessment(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, call session.ToolCall, result session.ToolResult) inboundAssessment {
@@ -71,6 +93,13 @@ func (e *Engine) prepareInboundAssessment(ctx context.Context, r *Run, sess *ses
 	if !applies {
 		return assessment
 	}
+	e.prepareInboundRequest(ctx, r, sess, env, call, result, &assessment)
+	return assessment
+}
+
+// prepareInboundRequest snapshots the review request and evidence for an
+// applicable inbound assessment. It must run on the dispatching goroutine.
+func (e *Engine) prepareInboundRequest(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, call session.ToolCall, result session.ToolResult, assessment *inboundAssessment) {
 	reviewCtx, cancel := context.WithTimeoutCause(ctx, reviewAssessmentTimeout, reviewFailure(ReviewFailureTimeout))
 	assessment.ctx, assessment.cancel = reviewCtx, cancel
 	e.establishReviewPrincipal(r)
@@ -95,7 +124,7 @@ func (e *Engine) prepareInboundAssessment(ctx context.Context, r *Run, sess *ses
 	var prepared PreparedReviewEvidence
 	var prepareErr error
 	if reviewCtx.Err() == nil {
-		prepared, prepareErr = e.prepareReviewEvidence(reviewCtx, r, sess, env, assessment.request, &result)
+		prepared, prepareErr = e.prepareReviewEvidence(reviewCtx, r, sess, env, assessment.request, &result, assessment.snapshot)
 	} else {
 		prepareErr = reviewFailure(ReviewFailureTimeout)
 	}
@@ -104,7 +133,6 @@ func (e *Engine) prepareInboundAssessment(ctx context.Context, r *Run, sess *ses
 	}
 	assessment.request.Evidence, assessment.request.EvidenceComplete = prepared.Evidence, prepared.Complete
 	assessment.source, assessment.close, assessment.err = prepared.Source, prepared.Close, prepareErr
-	return assessment
 }
 
 func assessInbound(parent context.Context, r *Run, assessment *inboundAssessment) {
@@ -266,8 +294,12 @@ func (e *Engine) emitInboundReview(r *Run, turnIdx int, call session.ToolCall, a
 	if !assessment.applies {
 		return
 	}
+	e.emit(r, inboundReviewEvent(r, turnIdx, call, assessment, disposition))
+}
+
+func inboundReviewEvent(r *Run, turnIdx int, call session.ToolCall, assessment inboundAssessment, disposition string) session.Event {
 	machine := reviewMachinePayload(r.reviewRoot.reviewer, assessment.request, assessment.result, assessment.err, disposition)
-	e.emit(r, session.Event{Type: session.EvHook, Turn: turnIdx, Hook: &session.HookPayload{Phase: string(governance.PhasePostToolUse), Tool: call.Name, Decision: session.HookInfo, CallID: call.ID, Guardrail: machine}})
+	return session.Event{Type: session.EvHook, Turn: turnIdx, Hook: &session.HookPayload{Phase: string(governance.PhasePostToolUse), Tool: call.Name, Decision: session.HookInfo, CallID: call.ID, Guardrail: machine}}
 }
 
 // resolveInbound returns whether the effective tool result was released, distinct

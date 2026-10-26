@@ -19,6 +19,7 @@
     ifacemethod func (TokenCounter).Count(text string) int
     ifacemethod func (TokenCounter).CountMessages(msgs []session.Message) int
     ifacemethod func (ToolReviewer).Review(context.Context, ToolReviewRequest, ReviewEvidenceSource) (ToolReviewResult, session.AuxiliaryUsage, error)
+    ifacemethod func (YoloReviewPolicyProvider).GuardrailYoloReviews() bool
     method func (*Engine).Capabilities() port.ProviderCapabilities
     method func (*Engine).CompactSession(ctx context.Context, sess *session.Session) (ManualCompactionResult, error)
     method func (*Engine).ContextWindow() int
@@ -318,7 +319,7 @@ type ReviewDetail struct{RootSessionID session.SessionID; SessionID session.Sess
 type ReviewDetailSink interface{PublishReviewDetail(context.Context, ReviewDetail)}
 type ReviewEvidence struct{Handle string; Kind string; Version string; Continuation string; Complete bool; Content string}
 type ReviewEvidenceMeta struct{Handle string; Kind string; Display string; Version string; Continuation string; Complete bool}
-type ReviewEvidencePreparation struct{Request ToolReviewRequest; Environment tool.Environment; Owner *session.Principal; Result *session.ToolResult; Authorize func(context.Context, session.ToolCall) error}
+type ReviewEvidencePreparation struct{Request ToolReviewRequest; Environment tool.Environment; Owner *session.Principal; Result *session.ToolResult; Authorize func(context.Context, session.ToolCall) error; Snapshot bool}
 type ReviewEvidencePreparer interface{PrepareReviewEvidence(context.Context, ReviewEvidencePreparation) (PreparedReviewEvidence, error)}
 type ReviewEvidenceRequest struct{ReviewID string; Handle string; Version string}
 type ReviewEvidenceSource interface{ReadReviewEvidence(context.Context, ReviewEvidenceRequest) (ReviewEvidence, error)}
@@ -359,6 +360,7 @@ type ToolReviewRequest struct{ReviewID string; Job ReviewJob; Event governance.H
 type ToolReviewResult struct{Assessment ReviewAssessment; Concerns []ReviewConcern; Evidence []ReviewEvidenceUse; Missing []ReviewMissingEvidence}
 type ToolReviewer interface{Review(context.Context, ToolReviewRequest, ReviewEvidenceSource) (ToolReviewResult, session.AuxiliaryUsage, error)}
 type UserModelReviewer struct{}
+type YoloReviewPolicyProvider interface{GuardrailYoloReviews() bool}
 var ErrApprovalGrantIneligible error
 var ErrApprovalIntentMismatch error
 var ErrApprovalNotPending error

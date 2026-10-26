@@ -334,7 +334,7 @@ func (e *Engine) establishReviewPrincipal(r *Run) {
 	r.reviewRoot.establishInstructions(instructions)
 }
 
-func (e *Engine) prepareActionReview(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, call session.ToolCall) actionReview {
+func (e *Engine) prepareActionReview(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, call session.ToolCall, snapshot bool) actionReview {
 	e.establishReviewPrincipal(r)
 	target, paths := reviewTarget(call)
 	facts, complete, principalRevision := r.reviewRoot.principalSnapshotWithRevision()
@@ -382,7 +382,7 @@ func (e *Engine) prepareActionReview(ctx context.Context, r *Run, sess *session.
 	var prepared PreparedReviewEvidence
 	var prepareErr error
 	if ctx.Err() == nil {
-		prepared, prepareErr = e.prepareReviewEvidence(ctx, r, sess, env, req, nil)
+		prepared, prepareErr = e.prepareReviewEvidence(ctx, r, sess, env, req, nil, snapshot)
 	} else {
 		prepareErr = reviewFailure(ReviewFailureTimeout)
 	}
@@ -428,12 +428,12 @@ func (e *Engine) authorizeReviewEvidenceRead(ctx context.Context, r *Run, sess *
 	return nil
 }
 
-func (e *Engine) prepareReviewEvidence(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, req ToolReviewRequest, result *session.ToolResult) (PreparedReviewEvidence, error) {
+func (e *Engine) prepareReviewEvidence(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, req ToolReviewRequest, result *session.ToolResult, snapshot bool) (PreparedReviewEvidence, error) {
 	if r.reviewRoot.preparer == nil {
 		return PreparedReviewEvidence{}, nil
 	}
 	prepared, err := r.reviewRoot.preparer.PrepareReviewEvidence(ctx, ReviewEvidencePreparation{
-		Request: req, Environment: env, Owner: sess.Owner.Clone(), Result: result,
+		Request: req, Environment: env, Owner: sess.Owner.Clone(), Result: result, Snapshot: snapshot,
 		Authorize: func(authCtx context.Context, call session.ToolCall) error {
 			paths := tool.LocalFileOperands(call.Name, call.Args)
 			if call.Name != "Read" || len(paths) != 1 {
@@ -662,9 +662,9 @@ type actionReviewAssessment struct {
 	grantHit      bool
 }
 
-func (e *Engine) prepareActionAssessment(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, call session.ToolCall) actionReviewAssessment {
+func (e *Engine) prepareActionAssessment(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, call session.ToolCall, snapshot bool) actionReviewAssessment {
 	reviewCtx, cancel := context.WithTimeoutCause(ctx, reviewAssessmentTimeout, reviewFailure(ReviewFailureTimeout))
-	action := e.prepareActionReview(reviewCtx, r, sess, env, call)
+	action := e.prepareActionReview(reviewCtx, r, sess, env, call, snapshot)
 	assessment := actionReviewAssessment{action: action, ctx: reviewCtx, cancel: cancel}
 	if action.prepareErr == nil && reviewCtx.Err() == nil {
 		if issuer, ok := r.reviewRoot.reviewer.(ReviewGrantStore); ok && action.repeat {
@@ -944,9 +944,10 @@ func (e *Engine) reviewActionWithTail(ctx context.Context, r *Run, sess *session
 			e.publishToolResult(r, session.Event{Type: session.EvToolResult, Turn: turnIdx, ToolResult: ptr(res)})
 			return res, nil, false, false
 		}
+		e.startBackgroundActionReview(r, sess, env, turnIdx, call)
 		return session.ToolResult{}, nil, false, true
 	}
-	assessment := e.prepareActionAssessment(ctx, r, sess, env, call)
+	assessment := e.prepareActionAssessment(ctx, r, sess, env, call, false)
 	assessAction(ctx, r, &assessment)
 	if ctx.Err() != nil {
 		r.recordGuardrailUsageWhileActive(ctx, sess, assessment.usage)
@@ -990,7 +991,7 @@ func (e *Engine) armPostActionGrant(ctx context.Context, r *Run, sess *session.S
 	if !repeat || !hasIssuer || park != nil || cancelled || result.IsError {
 		return
 	}
-	post := e.prepareActionReview(ctx, r, sess, env, call)
+	post := e.prepareActionReview(ctx, r, sess, env, call, false)
 	if post.close != nil {
 		defer post.close()
 	}

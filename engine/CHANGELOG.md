@@ -13,6 +13,18 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 
 ### Added
 
+- **Yolo advisory review opt-in** — adds `agent.YoloReviewPolicyProvider`. A
+  `ToolReviewer` that implements it and returns true from `GuardrailYoloReviews`
+  has its applicable action and inbound reviews in yolo-mode sessions run in the
+  background: the tool call neither waits for the verdict nor fails closed, and
+  the verdict is emitted as an advisory guardrail `EvHook` after the tool result
+  and before the run's terminal event. At most four run at once; calls beyond
+  that are not reviewed. Run end cancels reviews still in flight and drops their
+  verdicts. Advisory verdicts are not recorded in the review trajectory. Adds
+  `ReviewEvidencePreparation.Snapshot`, set for these reviews, asking the
+  preparer to capture workspace evidence at preparation time because the
+  reviewed call may change it before the checker reads it. Added (minor).
+
 - **Provider stop detail** — adds `port.Chunk.StopDetail`, the provider's own
   terminal label (for example `max_tokens`, `refusal`, `length`) that an adapter
   collapsed into `StopError` on `ChunkDone`. A stop-only `StopError` run now names
@@ -454,6 +466,15 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 - **`port.SessionLease.Renew` doc comment narrowed (issue #1333)** — clarifies that bare expiry of the caller's own owner/token, with nothing else having taken the lease over, is not by itself one of the definitive-loss conditions `ErrLeaseHeld` documents; loss is specifically a holder or token change. An implementation that can prove no one else could have raced it (e.g. a single-host backend re-checking its own durable record under its stable transition lock) may reclaim instead of declaring loss — `internal/adapter/flocklease.Lease.Renew` now does exactly this. This narrows, never widens, when `ErrLeaseHeld` may be returned, so it is a documentation clarification, not a contract change; no exported signature changed. No `task api:update` needed.
 
 ### Changed
+
+- **Yolo-mode sessions skip contextual review by default** — a yolo-mode session
+  no longer calls the `ToolReviewer` for action or inbound review unless the
+  reviewer implements `YoloReviewPolicyProvider` and opts in. Previously review
+  ran inline and the tool waited for an advisory verdict. A terminal review
+  failure (for example evidence preparation) no longer fails closed in a yolo
+  session. Narrower delegated children of a yolo parent keep enforcing.
+  Changed (breaking for embedders that relied on inline yolo review; pre-v1
+  minor bump).
 
 - **Agent-bound authority enforcement** — `Session.BindAuthority` requires a
   ceiling when `AgentDefinitionName` is set and rejects tools outside that ceiling.

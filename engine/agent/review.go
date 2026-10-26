@@ -135,6 +135,12 @@ type ReviewEvidencePreparation struct {
 	// effective catalog, mode, and bound authority. Preparers must call it before
 	// touching backend metadata or content; model/reviewer input cannot replace it.
 	Authorize func(context.Context, session.ToolCall) error
+	// Snapshot asks the preparer to capture workspace evidence content now,
+	// within its bounded first read, instead of reading it lazily during the
+	// review. The Engine sets it for advisory background reviews, which run
+	// concurrently with the reviewed call and later calls that may change the
+	// files. Content beyond the captured read is reported incomplete.
+	Snapshot bool
 }
 
 // PreparedReviewEvidence owns one review-local finite capability set. Close is
@@ -158,11 +164,20 @@ type ReviewEvidencePreparer interface {
 // checker-down posture. The returns report whether review applies and whether a
 // finding or unresolved assessment is enforced. A ToolReviewer without this
 // capability retains action-only enforcement. Report the operator's configured
-// enforcement independent of permission mode: the engine demotes it to advisory
-// for each executing yolo-mode session, including delegated children that share
-// the reviewer.
+// enforcement independent of permission mode: the engine never enforces review
+// in an executing yolo-mode session, including delegated children that share the
+// reviewer, and skips it there unless YoloReviewPolicyProvider opts in.
 type ReviewPolicyProvider interface {
 	GuardrailReviewPolicy(toolName string, job ReviewJob, operationalFailure bool) (applies, enforce bool)
+}
+
+// YoloReviewPolicyProvider reports whether the operator opted in to advisory
+// review of yolo-mode sessions. Without it, or when it returns false, a yolo
+// session calls no checker. When it returns true, each applicable review runs
+// in the background: the tool call neither waits for the verdict nor fails
+// closed, and the verdict is published as an advisory guardrail event.
+type YoloReviewPolicyProvider interface {
+	GuardrailYoloReviews() bool
 }
 
 // PermissionReviewPolicyProvider reports whether an exact child Shell call has

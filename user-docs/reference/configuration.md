@@ -67,6 +67,7 @@ OPERATOR-TIER LLM content-checker (issue #27). Parsed strictly. A project-tier g
 | `guardrails.defaultMode` | `string` | `(empty)` | DefaultMode sets the enforcement mode for the built-in default rules when no explicit rules are configured: "block" (default) or "advisory". An explicit rules list replaces the defaults entirely (this key is ignored). |
 | `guardrails.taskWindow` | `int` | `1` | TaskWindow selects the last K explicitly authenticated root prompts (default 1, clamped 1..3). |
 | `guardrails.escape` | `bool` | `false` | Escape is the guardrail escape knob: when true AND a checker model is configured, an out-of-root FS escape at posture auto routes through the guardrail checker (an unsafe verdict denies; a checker error fails closed to the write-escape Ask). Default false = the un-routed posture table. |
+| `guardrails.yoloAdvisory` | `bool` | `false` | YoloAdvisory opts yolo-mode sessions in to advisory guardrail review. By default a yolo-mode session calls no checker. When true, each matching review runs in the background: the tool never waits for the verdict, is never blocked or held, and a checker failure never fails closed. Findings appear as advisory guardrail events. Other modes are unaffected. |
 | `guardrails.rules` | `[]guardrailrulespec` | `(absent)` | Rules is the guardrail rule list. |
 | `guardrails.rules[].match` | `string` | `(empty)` | Match is the tool-name matcher (exact / "prefix*" / "*"). |
 | `guardrails.rules[].phases` | `[]string` | `(absent)` | Phases lists "pre"/"post"; empty = both. |

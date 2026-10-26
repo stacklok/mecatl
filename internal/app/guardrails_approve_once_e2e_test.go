@@ -418,7 +418,7 @@ func runDenyingTurn(t *testing.T, built *Built, id session.SessionID) modeTurnOu
 // TestGuardrailE2EExecutedYoloAutoDefaultTransitions runs ONE session through
 // three completed turns on a yolo server with a rejecting checker, switching
 // mode between runs so the engine transitions live: yolo allows the mutation
-// with the checker advisory; auto lets the same checker block it while a
+// without consulting the checker (guardrails.yoloAdvisory is off); auto lets the same checker block it while a
 // configured Deny still denies; default asks for it instead of auto-allowing.
 func TestGuardrailE2EExecutedYoloAutoDefaultTransitions(t *testing.T) {
 	ctx := context.Background()
@@ -461,14 +461,14 @@ func TestGuardrailE2EExecutedYoloAutoDefaultTransitions(t *testing.T) {
 		return err == nil
 	}
 
-	// yolo: the mutation is auto-allowed and the rejecting checker is advisory.
+	// yolo: the mutation is auto-allowed and the checker is skipped by default.
 	yolo := runDenyingTurn(t, built, sess.ID)
 	if len(yolo.policyAsks)+len(yolo.guardrailAsks) != 0 || len(yolo.results) != 1 || yolo.results[0].IsError || !exists("yolo_marker") {
 		t.Fatalf("yolo turn: asks %v/%v results %+v marker %t; want the Shell call to run unasked", yolo.policyAsks, yolo.guardrailAsks, yolo.results, exists("yolo_marker"))
 	}
 
-	if reviewer.Calls() == 0 {
-		t.Fatal("yolo turn: the checker was never consulted, so its advisory verdict proves nothing")
+	if calls := reviewer.Calls(); calls != 0 {
+		t.Fatalf("yolo turn: the checker was consulted %d times; yolo must skip it without guardrails.yoloAdvisory", calls)
 	}
 	if _, err := built.Service.SetMode(ctx, sess.ID, session.ModeAuto); err != nil {
 		t.Fatalf("SetMode(auto) after a completed yolo run: %v", err)

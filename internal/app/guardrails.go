@@ -64,6 +64,10 @@ func foldOperatorGuardrails(cfg Config) Config {
 	if g.Escape {
 		cfg.GuardrailsEscape = true
 	}
+	// YoloAdvisory: YAML-only (no flag); OR-folded like Escape.
+	if g.YoloAdvisory {
+		cfg.GuardrailsYoloAdvisory = true
+	}
 	// Rules: YAML is the sole source. Map the on-disk specs to app.GuardrailRule.
 	if len(cfg.GuardrailsRules) == 0 && len(g.Rules) > 0 {
 		rules := make([]GuardrailRule, 0, len(g.Rules))
@@ -199,11 +203,16 @@ type guardrailActionReviewer struct {
 	base                agent.ToolReviewer
 	rules               []modelhook.CompiledRule
 	failClosed          bool
+	yoloAdvisory        bool
 	grants              *modelhook.WaiverHolder
 	providerID, modelID string
 	ruleOrigin          string
 	health              *guardrailRouteHealth
 }
+
+// GuardrailYoloReviews implements agent.YoloReviewPolicyProvider: yolo-mode
+// sessions review in the background only when the operator opted in.
+func (r *guardrailActionReviewer) GuardrailYoloReviews() bool { return r.yoloAdvisory }
 
 // GuardrailReviewPolicy implements agent.ReviewPolicyProvider so configured
 // matching and enforcement remain explicit on the primary reviewer.
@@ -339,7 +348,7 @@ func buildGuardrailsActionReviewer(cfg Config, provReg *providerRegistry, provid
 	if routed, ok := base.(interface{ GuardrailCheckerRoute() (string, string) }); ok {
 		providerID, modelID = routed.GuardrailCheckerRoute()
 	}
-	return &guardrailActionReviewer{base: base, rules: rules, failClosed: guardrailFailClosed(cfg.GuardrailsOnCheckerDown), grants: grants, providerID: providerID, modelID: modelID, ruleOrigin: origin, health: cfg.guardrailHealth}
+	return &guardrailActionReviewer{base: base, rules: rules, failClosed: guardrailFailClosed(cfg.GuardrailsOnCheckerDown), yoloAdvisory: cfg.GuardrailsYoloAdvisory, grants: grants, providerID: providerID, modelID: modelID, ruleOrigin: origin, health: cfg.guardrailHealth}
 }
 
 func attachGuardrailReviewer(deps *agent.Deps, reviewer agent.ToolReviewer, details agent.ReviewDetailSink) {
