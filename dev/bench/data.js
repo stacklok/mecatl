@@ -339778,6 +339778,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1793032446533,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "tgrunnagle@gmail.com",
+            "name": "Trey",
+            "username": "tgrunnagle"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "ac34f9ed5aeea2c3fcd52df0795f31b804e046ae",
+          "message": "fix(placement): show short branch names for worktrees (#2504)\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-26T09:34:55-07:00",
+          "tree_id": "6527222123537169f5a8295982fb16239f014d2d",
+          "url": "https://github.com/stacklok/mecatl/commit/ac34f9ed5aeea2c3fcd52df0795f31b804e046ae"
+        },
+        "date": 1793033219322,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -491249,6 +491283,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1793033215375,
+  "lastUpdate": 1793033220128,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
