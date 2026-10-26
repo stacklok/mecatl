@@ -337630,6 +337630,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1792968840085,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "29139614+renovate[bot]@users.noreply.github.com",
+            "name": "renovate[bot]",
+            "username": "renovate[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "f13e1cffb70c3d7d3a8ea05744384945995f0a8c",
+          "message": "chore(deps): update github.com/charmbracelet/x/exp/teatest/v2 digest to 835ad00 (#2511)\n\nCo-authored-by: renovate[bot] <29139614+renovate[bot]@users.noreply.github.com>\nCo-authored-by: Radoslav Dimitrov <radoslav@stacklok.com>\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-26T05:11:09-04:00",
+          "tree_id": "0c01be3805a1b8d6f123bc5d6336111212bea5c7",
+          "url": "https://github.com/stacklok/mecatl/commit/f13e1cffb70c3d7d3a8ea05744384945995f0a8c"
+        },
+        "date": 1793006608569,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -488183,6 +488217,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1793006604283,
+  "lastUpdate": 1793006609599,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
