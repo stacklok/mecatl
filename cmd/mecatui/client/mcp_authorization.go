@@ -2,11 +2,14 @@ package client
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"net/url"
 	"sync"
 
 	"google.golang.org/genproto/googleapis/rpc/errdetails"
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
@@ -60,72 +63,161 @@ func (c *Client) MCPAuthorizationPresentation(ctx context.Context, sessionID, au
 
 // RecheckMCPAuthorization starts the bidirectional authorization-control stream.
 func (c *Client) RecheckMCPAuthorization(ctx context.Context, sessionID, authorizationID string) (*EventStream, error) {
-	stream, err := c.svc.RecheckMcpAuthorization(c.runEntryContext(ctx, sessionID))
+	control, err := openAuthorizationControl(ctx, c, sessionID, func(ctx context.Context) (mecatlv1.HarnessService_RecheckMcpAuthorizationClient, error) {
+		return c.svc.RecheckMcpAuthorization(ctx)
+	})
 	if err != nil {
 		return nil, fmt.Errorf("recheck MCP authorization: %w", err)
 	}
-	if err := stream.Send(&mecatlv1.RecheckMcpAuthorizationRequest{SessionId: sessionID, AuthorizationId: authorizationID}); err != nil {
+	if err := control.send(&mecatlv1.RecheckMcpAuthorizationRequest{SessionId: sessionID, AuthorizationId: authorizationID}); err != nil {
 		return nil, fmt.Errorf("recheck MCP authorization: %w", err)
 	}
-	adapter := &recheckAuthorizationStream{stream: stream}
+	adapter := recheckAuthorizationStream{control}
 	return NewAuthorizationEventStream(adapter, adapter), nil
 }
 
 // CancelMCPAuthorization starts the bidirectional authorization cancellation.
 func (c *Client) CancelMCPAuthorization(ctx context.Context, sessionID, authorizationID string) (*EventStream, error) {
-	stream, err := c.svc.CancelMcpAuthorization(c.runEntryContext(ctx, sessionID))
+	control, err := openAuthorizationControl(ctx, c, sessionID, func(ctx context.Context) (mecatlv1.HarnessService_CancelMcpAuthorizationClient, error) {
+		return c.svc.CancelMcpAuthorization(ctx)
+	})
 	if err != nil {
 		return nil, fmt.Errorf("cancel MCP authorization: %w", err)
 	}
-	if err := stream.Send(&mecatlv1.CancelMcpAuthorizationRequest{SessionId: sessionID, AuthorizationId: authorizationID}); err != nil {
+	if err := control.send(&mecatlv1.CancelMcpAuthorizationRequest{SessionId: sessionID, AuthorizationId: authorizationID}); err != nil {
 		return nil, fmt.Errorf("cancel MCP authorization: %w", err)
 	}
-	adapter := &cancelAuthorizationStream{stream: stream}
+	adapter := cancelAuthorizationStream{control}
 	return NewAuthorizationEventStream(adapter, adapter), nil
 }
 
-type recheckAuthorizationStream struct {
-	stream mecatlv1.HarnessService_RecheckMcpAuthorizationClient
-	mu     sync.Mutex
+// openAuthorizationControl opens an authorization-control stream as a run
+// entry on sessionID. With a refreshing token source it is reopenable like a
+// Converse stream (see authorizationControlStream).
+func openAuthorizationControl[Req, Resp any](ctx context.Context, c *Client, sessionID string, open func(context.Context) (grpc.BidiStreamingClient[Req, Resp], error)) (*authorizationControlStream[Req, Resp], error) {
+	stream, err := open(c.runEntryContext(ctx, sessionID))
+	if err != nil {
+		return nil, err
+	}
+	control := &authorizationControlStream[Req, Resp]{stream: stream, onAnswered: func() { c.noteOpened(sessionID) }}
+	if c.refreshes {
+		control.recording = true
+		control.reopen = func() (grpc.BidiStreamingClient[Req, Resp], error) { return open(withFreshToken(ctx)) }
+	}
+	return control, nil
 }
 
-func (r *recheckAuthorizationStream) Recv() (*mecatlv1.Event, error) {
-	response, err := r.stream.Recv()
+// authorizationControlStream is one MCP authorization-control stream. Like a
+// Converse stream, if the server rejects the bearer (Unauthenticated) before
+// any response, reopen replaces it once with a freshly refreshed token and the
+// frames sent so far are replayed: the server processed none of them. A second
+// rejection, or one after a response, is returned.
+type authorizationControlStream[Req, Resp any] struct {
+	mu         sync.Mutex // guards stream for senders, reopen, recording, unanswered
+	stream     grpc.BidiStreamingClient[Req, Resp]
+	reopen     func() (grpc.BidiStreamingClient[Req, Resp], error)
+	recording  bool
+	unanswered []*Req
+	// answered and onAnswered belong to the reader goroutine, which alone
+	// replaces stream.
+	answered   bool
+	onAnswered func()
+}
+
+func (s *authorizationControlStream[Req, Resp]) recv() (*Resp, error) {
+	response, err := s.stream.Recv()
+	if err != nil && !s.answered && status.Code(err) == codes.Unauthenticated {
+		if reopened, reopenErr := s.reopenOnce(); reopened {
+			response, err = s.stream.Recv()
+		} else if _, local := localAuthFailure(reopenErr); local {
+			err = reopenErr // e.g. the session can no longer refresh
+		}
+	}
+	if err == nil && !s.answered {
+		s.answered = true
+		s.mu.Lock()
+		s.recording = false
+		s.unanswered = nil
+		s.mu.Unlock()
+		s.onAnswered()
+	}
+	return response, err
+}
+
+// reopenOnce mirrors Stream.reopenOnce.
+func (s *authorizationControlStream[Req, Resp]) reopenOnce() (bool, error) {
+	s.mu.Lock()
+	reopen := s.reopen
+	s.reopen = nil
+	s.mu.Unlock()
+	if reopen == nil {
+		return false, nil
+	}
+	stream, err := reopen()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.recording = false
+	frames := s.unanswered
+	s.unanswered = nil
+	if err != nil {
+		return false, err
+	}
+	for _, frame := range frames {
+		if stream.Send(frame) != nil {
+			break // the replacement's Recv reports why
+		}
+	}
+	s.stream = stream
+	return true, nil
+}
+
+// send mirrors Stream.sendFrame: while a reopen is possible the frame is
+// recorded and io.EOF (the server already ended the stream) is left to recv.
+func (s *authorizationControlStream[Req, Resp]) send(req *Req) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.recording {
+		return s.stream.Send(req)
+	}
+	s.unanswered = append(s.unanswered, req)
+	if err := s.stream.Send(req); err != nil && !errors.Is(err, io.EOF) {
+		return err
+	}
+	return nil
+}
+
+type recheckAuthorizationStream struct {
+	*authorizationControlStream[mecatlv1.RecheckMcpAuthorizationRequest, mecatlv1.RecheckMcpAuthorizationResponse]
+}
+
+func (r recheckAuthorizationStream) Recv() (*mecatlv1.Event, error) {
+	response, err := r.recv()
 	if err != nil {
 		return nil, err
 	}
 	return response.GetEvent(), nil
 }
-func (r *recheckAuthorizationStream) SendApprovalForScope(id string, v Verdict, scope *GuardrailApprovalScope, expectedRunID string) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return r.stream.Send(&mecatlv1.RecheckMcpAuthorizationRequest{Control: &mecatlv1.RecheckMcpAuthorizationRequest_ResumeApproval{ResumeApproval: resumeApprovalForScope(id, v, scope, expectedRunID)}})
+func (r recheckAuthorizationStream) SendApprovalForScope(id string, v Verdict, scope *GuardrailApprovalScope, expectedRunID string) error {
+	return r.send(&mecatlv1.RecheckMcpAuthorizationRequest{Control: &mecatlv1.RecheckMcpAuthorizationRequest_ResumeApproval{ResumeApproval: resumeApprovalForScope(id, v, scope, expectedRunID)}})
 }
-func (r *recheckAuthorizationStream) SendCancel() error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return r.stream.Send(&mecatlv1.RecheckMcpAuthorizationRequest{Control: &mecatlv1.RecheckMcpAuthorizationRequest_Cancel{Cancel: &mecatlv1.Cancel{}}})
+func (r recheckAuthorizationStream) SendCancel() error {
+	return r.send(&mecatlv1.RecheckMcpAuthorizationRequest{Control: &mecatlv1.RecheckMcpAuthorizationRequest_Cancel{Cancel: &mecatlv1.Cancel{}}})
 }
 
 type cancelAuthorizationStream struct {
-	stream mecatlv1.HarnessService_CancelMcpAuthorizationClient
-	mu     sync.Mutex
+	*authorizationControlStream[mecatlv1.CancelMcpAuthorizationRequest, mecatlv1.CancelMcpAuthorizationResponse]
 }
 
-func (r *cancelAuthorizationStream) Recv() (*mecatlv1.Event, error) {
-	response, err := r.stream.Recv()
+func (r cancelAuthorizationStream) Recv() (*mecatlv1.Event, error) {
+	response, err := r.recv()
 	if err != nil {
 		return nil, err
 	}
 	return response.GetEvent(), nil
 }
-func (r *cancelAuthorizationStream) SendApprovalForScope(id string, v Verdict, scope *GuardrailApprovalScope, expectedRunID string) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return r.stream.Send(&mecatlv1.CancelMcpAuthorizationRequest{Control: &mecatlv1.CancelMcpAuthorizationRequest_ResumeApproval{ResumeApproval: resumeApprovalForScope(id, v, scope, expectedRunID)}})
+func (r cancelAuthorizationStream) SendApprovalForScope(id string, v Verdict, scope *GuardrailApprovalScope, expectedRunID string) error {
+	return r.send(&mecatlv1.CancelMcpAuthorizationRequest{Control: &mecatlv1.CancelMcpAuthorizationRequest_ResumeApproval{ResumeApproval: resumeApprovalForScope(id, v, scope, expectedRunID)}})
 }
-func (r *cancelAuthorizationStream) SendCancel() error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return r.stream.Send(&mecatlv1.CancelMcpAuthorizationRequest{Control: &mecatlv1.CancelMcpAuthorizationRequest_Cancel{Cancel: &mecatlv1.Cancel{}}})
+func (r cancelAuthorizationStream) SendCancel() error {
+	return r.send(&mecatlv1.CancelMcpAuthorizationRequest{Control: &mecatlv1.CancelMcpAuthorizationRequest_Cancel{Cancel: &mecatlv1.Cancel{}}})
 }

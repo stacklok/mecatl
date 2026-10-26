@@ -441,6 +441,7 @@ func (c *Client) ResolvePendingApproval(ctx context.Context, approval PendingApp
 	if err != nil {
 		return pendingApprovalControlFailure(err)
 	}
+	c.noteOpened(approval.SessionID)
 	if ack.GetRunId() != approval.RunID || ack.GetAskId() != approval.AskID {
 		return pendingApprovalFailure(PendingApprovalCorrelation)
 	}

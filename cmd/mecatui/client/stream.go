@@ -65,6 +65,9 @@ type Stream struct {
 	unanswered []*mecatlv1.ConverseRequest
 	// answered is set by the reader goroutine alone, after the first response.
 	answered bool
+	// onAnswered, when set before the read loop starts, runs once with the
+	// first response.
+	onAnswered func()
 }
 
 // NewStream binds a receive and send side into a Stream. Pass the same
@@ -105,6 +108,9 @@ func (s *Stream) recvResponse() (*mecatlv1.ConverseResponse, error) {
 		s.recording = false
 		s.unanswered = nil
 		s.mu.Unlock()
+		if s.onAnswered != nil {
+			s.onAnswered()
+		}
 	}
 	return resp, err
 }

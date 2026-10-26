@@ -24,8 +24,9 @@ interface RequestState {
 /**
  * The browser's credential as one request presents it to Mecatl. Every
  * upstream call made through a guarded service gets one refresh and one retry
- * when Mecatl rejects the bearer; a stream gets it only before its first item,
- * which routes pull before committing a response. When the deployment signs
+ * when Mecatl rejects the bearer. Of the streams, only those whose route pulls
+ * the first item before committing the response get it, and only before that
+ * item (see `guardChat`). When the deployment signs
  * users in at AS-1 (`freshTokenPerSessionOpen`), requests that open a session
  * first refresh, so each carries an access token no earlier request used.
  * Every refresh is stored in the response's cookies, so it must happen before
@@ -54,67 +55,75 @@ export class UpstreamCredentials {
   }
 
   /**
-   * Wraps each method of a feature service with the one-retry policy. Other
-   * properties, live capability getters included, still read the service.
+   * Wraps each method of a feature service, its prototype's included, with
+   * the one-retry policy. A method returning a stream is not retried: its
+   * route may commit the response before the first item, after which a
+   * refresh could not reach the cookies. Other properties, live capability
+   * getters included, still read the service.
    */
   guard<S extends object>(service: S): S {
     const guarded: PropertyDescriptorMap = {};
-    for (const [name, descriptor] of Object.entries(Object.getOwnPropertyDescriptors(service))) {
-      const member: unknown = descriptor.value;
-      guarded[name] =
-        typeof member === "function"
-          ? {
-              ...descriptor,
-              value: (...args: unknown[]) => this.#invoke(() => member.apply(service, args)),
-            }
-          : {
-              enumerable: descriptor.enumerable ?? true,
-              get: () => Reflect.get(service, name),
-            };
+    for (
+      let source: object | null = service;
+      source !== null && source !== Object.prototype;
+      source = Object.getPrototypeOf(source)
+    ) {
+      for (const [name, descriptor] of Object.entries(Object.getOwnPropertyDescriptors(source))) {
+        // An own property shadows the prototype's.
+        if (name in guarded || (name === "constructor" && source !== service)) continue;
+        const member: unknown = descriptor.value;
+        guarded[name] =
+          typeof member === "function"
+            ? {
+                configurable: true,
+                enumerable: descriptor.enumerable ?? true,
+                value: (...args: unknown[]) => this.#invoke(() => member.apply(service, args)),
+                writable: true,
+              }
+            : {
+                configurable: true,
+                enumerable: descriptor.enumerable ?? true,
+                get: () => Reflect.get(service, name),
+              };
+      }
     }
     return Object.defineProperties({}, guarded) as S;
   }
 
-  /** `guard`, plus fresh tokens for the chat operations that open a session. */
+  /**
+   * `guard`, plus fresh tokens for the chat operations that open a session,
+   * and the retry for the streams whose route pulls the first item before
+   * committing the response.
+   */
   guardChat(chat: ChatService): ChatService {
     const opening = async (operation: () => Promise<{ id: string }>) => {
       const opened = await this.#call(operation, true);
       this.#noteOpened(opened.id);
       return opened;
     };
-    return {
-      ...this.guard(chat),
+    const overrides: Pick<
+      ChatService,
+      "authorizationFlow" | "clearSession" | "createSession" | "forkSession" | "retry" | "run"
+    > = {
+      authorizationFlow: (sessionId, authorizationId, operation, signal) =>
+        this.#stream(() => chat.authorizationFlow(sessionId, authorizationId, operation, signal)),
       clearSession: (sessionId, request) => opening(() => chat.clearSession(sessionId, request)),
       createSession: (request) => opening(() => chat.createSession(request)),
       forkSession: (sessionId, request) => opening(() => chat.forkSession(sessionId, request)),
       // Run entry reopens a broker session this process did not open (one
       // created elsewhere, or before a restart), so its first run is fresh.
-      retry: (sessionId, signal) =>
-        this.#stream(
-          () => chat.retry(sessionId, signal),
-          () => this.#firstEntry(sessionId),
-        ),
+      retry: (sessionId, signal) => this.#stream(() => chat.retry(sessionId, signal), sessionId),
       run: (sessionId, request, signal) =>
-        this.#stream(
-          () => chat.run(sessionId, request, signal),
-          () => this.#firstEntry(sessionId),
-        ),
+        this.#stream(() => chat.run(sessionId, request, signal), sessionId),
     };
+    // Defined onto the guarded service rather than spread, so its getters stay live.
+    return Object.defineProperties(this.guard(chat), Object.getOwnPropertyDescriptors(overrides));
   }
 
   #invoke(operation: () => unknown): unknown {
     const state = this.#requests.getStore();
     if (state === undefined) return operation();
     const result = this.#within(state, operation);
-    if (isAsyncIterable(result)) {
-      let first = true;
-      // The stream is already open; a retry opens another.
-      return this.#stream(() => {
-        if (!first) return operation() as AsyncIterable<unknown>;
-        first = false;
-        return result;
-      });
-    }
     if (isPromiseLike(result)) {
       return this.#retrying(state, result, operation as () => PromiseLike<unknown>);
     }
@@ -143,20 +152,23 @@ export class UpstreamCredentials {
   }
 
   /**
-   * Opens `open` lazily. `fresh` decides at the first pull whether the open
-   * needs a fresh token; a rejection before the first item refreshes and
-   * reopens once, later ones propagate.
+   * Opens `open` lazily; a rejection before the first item refreshes and
+   * reopens once, later ones propagate. With `entering`, the stream is a run
+   * entry on that session: until one delivers its first item, the session is
+   * not known to be open, and each entry first refreshes.
    */
   async *#stream<T>(
     open: () => AsyncIterable<T>,
-    fresh: () => boolean = () => false,
+    entering?: string,
   ): AsyncGenerator<T, void, undefined> {
     const state = this.#requests.getStore();
     if (state === undefined) {
       yield* open();
       return;
     }
-    if (fresh() && this.#freshOpens(state)) await this.#refresh(state);
+    if (entering !== undefined && !this.#opened.has(entering) && this.#freshOpens(state)) {
+      await this.#refresh(state);
+    }
     let iterator = this.#within(state, () => open()[Symbol.asyncIterator]());
     let delivered = false;
     let retried = false;
@@ -172,6 +184,7 @@ export class UpstreamCredentials {
           iterator = this.#within(state, () => open()[Symbol.asyncIterator]());
           continue;
         }
+        if (!delivered && entering !== undefined) this.#noteOpened(entering);
         if (next.done === true) return;
         delivered = true;
         yield next.value;
@@ -179,12 +192,6 @@ export class UpstreamCredentials {
     } finally {
       await iterator.return?.();
     }
-  }
-
-  #firstEntry(sessionId: string): boolean {
-    if (this.#opened.has(sessionId)) return false;
-    this.#noteOpened(sessionId);
-    return true;
   }
 
   #freshOpens(state: RequestState): boolean {
@@ -248,10 +255,6 @@ export class UpstreamCredentials {
     if ("error" in outcome) throw outcome.error;
     return outcome.value;
   }
-}
-
-function isAsyncIterable(value: unknown): value is AsyncIterable<unknown> {
-  return typeof value === "object" && value !== null && Symbol.asyncIterator in value;
 }
 
 function isPromiseLike(value: unknown): value is PromiseLike<unknown> {

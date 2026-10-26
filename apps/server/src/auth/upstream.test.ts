@@ -8,7 +8,13 @@ import type { ChatService } from "../mecatl/chat.js";
 import { type MecatlRuntime, type RuntimeConfig, startMecatlRuntime } from "../mecatl/runtime.js";
 import { type FakeIssuerOptions, fakeIssuer, resourceUrl } from "../testing/fake-issuer.js";
 import { cookieHeader, csrfHeaders, fakeClient } from "../testing/fakes.js";
-import { type AuthenticationService, createAuthenticationService } from "./service.js";
+import {
+  type AuthenticationService,
+  createAuthenticationService,
+  rotationGraceMilliseconds,
+  SealedCookieCodec,
+} from "./service.js";
+import { UpstreamCredentials } from "./upstream.js";
 
 const external: RuntimeConfig = { baseUrl: resourceUrl, resourceUrl, source: "external" };
 const secret = "0123456789abcdef0123456789abcdef";
@@ -17,6 +23,7 @@ const origin = publicUrl.origin;
 
 const runtimes: MecatlRuntime[] = [];
 afterEach(async () => {
+  vi.useRealTimers();
   await Promise.all(runtimes.splice(0).map((runtime) => runtime.close()));
 });
 
@@ -98,7 +105,11 @@ async function signedIn(issuerOptions: FakeIssuerOptions, chat: Partial<ChatServ
     });
   const list = (cookies = session) =>
     app.request(`${origin}/api/v1/sessions`, { headers: { Cookie: cookies } });
-  return { issuer, list, record, seen, send };
+  const activity = (sessionId: string) =>
+    app.request(`${origin}/api/v1/sessions/${sessionId}/activity`, {
+      headers: { Cookie: session },
+    });
+  return { activity, issuer, list, record, seen, send };
 }
 
 const fork = { model: { id: "model", providerId: "provider" }, reasoningEffort: "default" };
@@ -316,5 +327,134 @@ describe("upstream credentials", () => {
     expect(body).toContain('"code":"unauthenticated"');
     expect(attempts).toBe(1);
     expect(studio.issuer.refreshCalls()).toBe(1);
+  });
+
+  it("MCP authorization recheck and cancel rejected before their first event are retried once", async () => {
+    const operations: string[] = [];
+    const studio = await signedIn(
+      {},
+      {
+        async *authorizationFlow(sessionId: string, _authorizationId: string, operation: string) {
+          operations.push(operation);
+          if (operations.length % 2 === 1) throw rejected();
+          yield { runId: "run-1", sessionId, type: "run.started" };
+        },
+      },
+    );
+    for (const operation of ["recheck", "cancel"]) {
+      const recovered = await studio.send(`/session-1/authorizations/auth-1/${operation}`);
+      expect(recovered.status, operation).toBe(200);
+      expect(await recovered.text(), operation).toContain('"runId":"run-1"');
+      expect(storedSession(recovered), operation).toBe(true);
+    }
+    expect(operations).toEqual(["recheck", "recheck", "cancel", "cancel"]);
+    expect(studio.issuer.refreshCalls()).toBe(2);
+  });
+
+  it("a stream whose route is not known to pull before committing is never refreshed", async () => {
+    let attempts = 0;
+    const studio = await signedIn(
+      { identityBrokerSignIn: true },
+      {
+        // biome-ignore lint/correctness/useYield: the stream fails before its first item
+        async *activity() {
+          attempts += 1;
+          throw rejected();
+        },
+      },
+    );
+    const expired = await studio.activity("session-1");
+    // As without the retry: the rejection ends the session.
+    expect(expired.status).toBe(401);
+    await expect(expired.json()).resolves.toMatchObject({ code: "session_expired" });
+    expect(attempts).toBe(1);
+    expect(studio.issuer.refreshCalls()).toBe(0);
+    expect(storedSession(expired)).toBe(false);
+    expect(clearedSession(expired)).toBe(true);
+  });
+
+  it("a browser left with a rotated refresh token still refreshes after the grace window", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true, toFake: ["Date", "setTimeout", "clearTimeout"] });
+    const studio = await signedIn({ identityBrokerSignIn: true });
+    const codec = new SealedCookieCodec(secret);
+    const refreshTokenOf = async (response: Response) =>
+      (
+        await codec.open<{ refreshToken: string }>(
+          "refresh",
+          cookieHeader(response.headers.getSetCookie())
+            .split("; ")
+            .find((cookie) => cookie.startsWith("studio_refresh="))
+            ?.slice("studio_refresh=".length),
+        )
+      )?.refreshToken;
+    const presented = () =>
+      studio.issuer
+        .tokenRequests()
+        .filter((request) => request.grantType === "refresh_token")
+        .map((request) => request.refreshToken);
+
+    // Two concurrent opens from the login cookies refresh one after the
+    // other; the earlier answer carries the token the later grant retired.
+    const responses = await Promise.all([studio.send("", {}), studio.send("/source/fork", fork)]);
+    const tokens = await Promise.all(responses.map(refreshTokenOf));
+    const stale = responses.find((_, index) => presented().includes(tokens[index] ?? null));
+    if (stale === undefined) throw new Error("no response carries a retired refresh token");
+
+    // The browser keeps the stale cookies past the grace window.
+    vi.advanceTimersByTime(rotationGraceMilliseconds + 1_000);
+    const later = await studio.send("", {}, cookieHeader(stale.headers.getSetCookie()));
+    expect(later.status).toBe(201);
+    expect(storedSession(later)).toBe(true);
+    // No spent token was presented, and the browser now holds the newest one.
+    expect(new Set(presented()).size).toBe(presented().length);
+    const newest = await refreshTokenOf(later);
+    expect(newest).toBeDefined();
+    expect(presented()).not.toContain(newest);
+  });
+
+  it("a run entry that fails before its first event leaves the next one fresh", async () => {
+    let attempts = 0;
+    const studio = await signedIn(
+      { identityBrokerSignIn: true },
+      {
+        async *run(sessionId: string) {
+          attempts += 1;
+          if (attempts === 1) throw new Error("upstream unavailable");
+          yield { runId: `run-${attempts}`, sessionId, type: "run.started" };
+        },
+      },
+    );
+    for (const refreshes of [1, 2, 2]) {
+      const response = await studio.send("/elsewhere/runs", prompt);
+      expect(response.status).toBe(200);
+      await response.text();
+      expect(studio.issuer.refreshCalls()).toBe(refreshes);
+    }
+  });
+
+  it("a guarded service keeps its prototype's methods and live getters", () => {
+    const upstream = new UpstreamCredentials({} as AuthenticationService, {} as MecatlRuntime);
+    class Counter {
+      #count = 0;
+      get count() {
+        return this.#count;
+      }
+      increment() {
+        this.#count += 1;
+        return this.#count;
+      }
+    }
+    const counter = upstream.guard(new Counter());
+    expect(counter.increment()).toBe(1);
+    expect(counter.count).toBe(1);
+
+    let ready = false;
+    const chat = upstream.guardChat({
+      get ready() {
+        return ready;
+      },
+    } as unknown as ChatService) as unknown as { ready: boolean };
+    ready = true;
+    expect(chat.ready).toBe(true);
   });
 });

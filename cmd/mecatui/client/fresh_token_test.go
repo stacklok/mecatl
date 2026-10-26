@@ -55,7 +55,8 @@ type bearerServer struct {
 	mu     sync.Mutex
 	calls  []bearerCall
 	reject int
-	// prompts are the prompt texts Converse handlers received.
+	// prompts are the prompt texts Converse handlers received and the
+	// authorization IDs authorization-control handlers received.
 	prompts []string
 	// failAfterEvent makes Converse send one event and then fail
 	// Unauthenticated, as a rejection after the run has started would.
@@ -140,6 +141,32 @@ func (s *bearerServer) Converse(stream grpc.BidiStreamingServer[mecatlv1.Convers
 		return status.Error(codes.Unauthenticated, "invalid_token")
 	}
 	return nil
+}
+
+func (s *bearerServer) RecheckMcpAuthorization(stream grpc.BidiStreamingServer[mecatlv1.RecheckMcpAuthorizationRequest, mecatlv1.RecheckMcpAuthorizationResponse]) error {
+	req, err := stream.Recv()
+	if err != nil {
+		return err
+	}
+	s.noteAuthorization(req.GetAuthorizationId())
+	return stream.Send(&mecatlv1.RecheckMcpAuthorizationResponse{Event: &mecatlv1.Event{Type: "message.delta", Text: "rechecked"}})
+}
+
+func (s *bearerServer) CancelMcpAuthorization(stream grpc.BidiStreamingServer[mecatlv1.CancelMcpAuthorizationRequest, mecatlv1.CancelMcpAuthorizationResponse]) error {
+	req, err := stream.Recv()
+	if err != nil {
+		return err
+	}
+	s.noteAuthorization(req.GetAuthorizationId())
+	return stream.Send(&mecatlv1.CancelMcpAuthorizationResponse{Event: &mecatlv1.Event{Type: "message.delta", Text: "cancelled"}})
+}
+
+// noteAuthorization records an authorization-control stream's opening frame
+// in prompts.
+func (s *bearerServer) noteAuthorization(id string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.prompts = append(s.prompts, id)
 }
 
 func (s *bearerServer) receivedPrompts() []string {
@@ -473,4 +500,107 @@ func TestConverseReopensOnceBeforeAnyEvent(t *testing.T) {
 			t.Fatalf("%d stream attempts, %d refreshes; want 1, 0", got, source.count())
 		}
 	})
+}
+
+// TestFailedFirstRunEntryKeepsTheNextOneFresh: a resumed session counts as
+// entered only once a run-entry request succeeds, so a first one the server
+// rejects leaves the next one asking for a fresh token again.
+func TestFailedFirstRunEntryKeepsTheNextOneFresh(t *testing.T) {
+	ctx := t.Context()
+	fake := &bearerServer{}
+	source := &refreshingSource{}
+	c := dialBearerServer(t, fake, source)
+
+	// Fresh token, then the retry's refresh: both rejected.
+	fake.rejectNext(2)
+	if _, err := c.CompactSession(ctx, "resumed"); err == nil {
+		t.Fatal("CompactSession succeeded through two rejections")
+	}
+	if got := source.count(); got != 2 {
+		t.Fatalf("rejected first run entry refreshed %d times, want 2", got)
+	}
+	if _, err := c.CompactSession(ctx, "resumed"); err != nil {
+		t.Fatal(err)
+	}
+	if got := source.count(); got != 3 {
+		t.Fatalf("run entry after a failed first one refreshed %d times in all, want 3", got)
+	}
+	if _, err := c.CompactSession(ctx, "resumed"); err != nil {
+		t.Fatal(err)
+	}
+	if got := source.count(); got != 3 {
+		t.Fatalf("run entry after a successful one refreshed again: %d refreshes, want 3", got)
+	}
+
+	// The same for Converse: the session is entered at the first response.
+	fake.rejectNext(2)
+	if msgs := runConverse(t, c, "resumed-2"); len(msgs) != 1 {
+		t.Fatalf("messages = %#v, want one stream error", msgs)
+	}
+	if got := source.count(); got != 5 {
+		t.Fatalf("rejected first Converse refreshed %d times in all, want 5", got)
+	}
+	runConverse(t, c, "resumed-2")
+	if got := source.count(); got != 6 {
+		t.Fatalf("Converse after a failed first one refreshed %d times in all, want 6", got)
+	}
+	runConverse(t, c, "resumed-2")
+	if got := source.count(); got != 6 {
+		t.Fatalf("Converse after a successful one refreshed again: %d refreshes, want 6", got)
+	}
+}
+
+// TestMCPAuthorizationStreamsReopenOnceBeforeAnyEvent: like Converse, a
+// recheck or cancel stream rejected before any event is reopened once with a
+// fresh token and its opening frame replayed; a second rejection is surfaced.
+func TestMCPAuthorizationStreamsReopenOnceBeforeAnyEvent(t *testing.T) {
+	for _, op := range []struct {
+		method string
+		open   func(*Client, context.Context) (*EventStream, error)
+	}{
+		{"RecheckMcpAuthorization", func(c *Client, ctx context.Context) (*EventStream, error) {
+			return c.RecheckMCPAuthorization(ctx, "s", "auth-1")
+		}},
+		{"CancelMcpAuthorization", func(c *Client, ctx context.Context) (*EventStream, error) {
+			return c.CancelMCPAuthorization(ctx, "s", "auth-1")
+		}},
+	} {
+		for _, rejections := range []int{1, 2} {
+			t.Run(fmt.Sprintf("%s/%d rejections", op.method, rejections), func(t *testing.T) {
+				ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+				defer cancel()
+				fake := &bearerServer{}
+				source := &refreshingSource{}
+				c := dialBearerServer(t, fake, source)
+				c.noteOpened("s") // not resumed: only the reopen refreshes
+				fake.rejectNext(rejections)
+				stream, err := op.open(c, ctx)
+				if err != nil {
+					t.Fatal(err)
+				}
+				out := make(chan tea.Msg, 16)
+				go stream.ReadLoop(ctx, out)
+				var msgs []tea.Msg
+				for m := range out {
+					msgs = append(msgs, m)
+				}
+				tokens := fake.tokensFor(op.method)
+				if len(tokens) != 2 || tokens[0] == tokens[1] || source.count() != 1 {
+					t.Fatalf("%d stream attempts, %d refreshes; want 2, 1 with distinct tokens", len(tokens), source.count())
+				}
+				if rejections == 2 {
+					if _, ok := msgs[len(msgs)-1].(StreamErrMsg); !ok || len(fake.receivedPrompts()) != 0 {
+						t.Fatalf("messages = %#v, want a stream error and no handled request", msgs)
+					}
+					return
+				}
+				if _, ok := msgs[len(msgs)-1].(StreamClosedMsg); !ok || len(msgs) != 2 {
+					t.Fatalf("messages = %#v, want the event and the close", msgs)
+				}
+				if got := fake.receivedPrompts(); len(got) != 1 || got[0] != "auth-1" {
+					t.Fatalf("opening frames received = %q, want the replayed one once", got)
+				}
+			})
+		}
+	}
 }

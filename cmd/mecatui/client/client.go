@@ -77,7 +77,7 @@ type Client struct {
 	// then do session-opening requests force a refresh (see openingContext).
 	freshOpens bool
 	// opened holds the sessions this client created, forked, or cleared with a
-	// fresh token, or already entered once. Any other session was bound without
+	// fresh token, or already entered successfully. Any other session was bound without
 	// this client opening it (resumed), so its first run-entry request uses a
 	// fresh token; see runEntryContext.
 	openedMu sync.Mutex
@@ -194,7 +194,8 @@ func isRefresher(source TokenSource) bool {
 	return ok
 }
 
-// noteOpened records that this client opened id with a fresh token.
+// noteOpened records that this client opened id with a fresh token, or that a
+// run-entry request on id succeeded.
 func (c *Client) noteOpened(id string) {
 	if !c.freshOpens || id == "" {
 		return
@@ -208,8 +209,9 @@ func (c *Client) noteOpened(id string) {
 }
 
 // runEntryContext returns ctx for a run-entry request on id. Run entry reopens
-// a lost broker session, so the first one for a session this client did not
-// open itself (a resumed session) asks for a fresh token; later ones do not.
+// a lost broker session, so until one succeeds for a session this client did
+// not open itself (a resumed session), each asks for a fresh token. The caller
+// records the success with noteOpened.
 func (c *Client) runEntryContext(ctx context.Context, id string) context.Context {
 	if !c.freshOpens || id == "" {
 		return ctx
@@ -219,10 +221,6 @@ func (c *Client) runEntryContext(ctx context.Context, id string) context.Context
 	if _, ok := c.opened[id]; ok {
 		return ctx
 	}
-	if c.opened == nil {
-		c.opened = make(map[string]struct{})
-	}
-	c.opened[id] = struct{}{}
 	return withFreshToken(ctx)
 }
 
@@ -806,7 +804,14 @@ func (c *Client) OpenConverseForSession(ctx context.Context, sessionID string) (
 	if !sessionaffinity.ValidValue(sessionID) {
 		return nil, fmt.Errorf("open converse: session affinity requires 1-256 bytes of printable ASCII without boundary spaces")
 	}
-	return c.openConverse(c.runEntryContext(withSessionAffinity(ctx, sessionID), sessionID))
+	stream, err := c.openConverse(c.runEntryContext(withSessionAffinity(ctx, sessionID), sessionID))
+	if err != nil {
+		return nil, err
+	}
+	// The server answers only a stream it accepted, so the first response
+	// marks the run entry as succeeded.
+	stream.onAnswered = func() { c.noteOpened(sessionID) }
+	return stream, nil
 }
 
 func (c *Client) openConverse(ctx context.Context) (*Stream, error) {

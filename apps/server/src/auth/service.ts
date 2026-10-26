@@ -24,6 +24,15 @@ export const accessCookie = "studio_access";
 export const refreshCookie = "studio_refresh";
 /** How long a completed refresh keeps answering requests that still carry the old token. */
 export const rotationGraceMilliseconds = 60_000;
+/**
+ * How long a rotated refresh token is remembered with its replacement. A
+ * browser can keep a retired token when concurrent refreshes answer out of
+ * order, and keeps it until its next refresh; a day covers a tab left idle
+ * overnight. After that the browser presents the dead token and signs in again.
+ */
+export const rotationMemoryMilliseconds = 24 * 60 * 60 * 1_000;
+/** Remembered rotations per replica; the oldest are forgotten first. */
+const maximumRotations = 10_000;
 
 export const transactionCookie = "studio_login";
 
@@ -280,6 +289,15 @@ class OidcAuthenticationService implements AuthenticationService {
   readonly #profile: MecatlAuthenticationProfile;
   readonly #publicUrl: URL | undefined;
   readonly #refreshes = new Map<string, Promise<AuthenticationCredential>>();
+  /**
+   * Retired refresh token → the one its grant returned, kept for
+   * `rotationMemoryMilliseconds` and at most `maximumRotations` entries.
+   * Per replica, like `#refreshes`.
+   */
+  readonly #rotations = new Map<
+    string,
+    { readonly expiresAt: number; readonly replacement: string }
+  >();
   readonly #verifyCredential: ((accessToken: string) => Promise<void>) | undefined;
 
   constructor(
@@ -612,10 +630,11 @@ class OidcAuthenticationService implements AuthenticationService {
    * arrived must reuse the new credential, not replay the spent token and
    * clear the session it just refreshed. A failed grant is forgotten at once.
    * The window is per replica; replicas behind a load balancer without
-   * session affinity can still race each other.
+   * session affinity can still race each other. After the window, a rotated
+   * token is followed to its replacement (see `#freshCredential`).
    */
   #refresh(refreshToken: string, access: AccessCredential): Promise<AuthenticationCredential> {
-    return this.#refreshes.get(refreshToken) ?? this.#grant(refreshToken, access);
+    return this.#refreshes.get(refreshToken) ?? this.#freshCredential(refreshToken, access);
   }
 
   /**
@@ -623,8 +642,12 @@ class OidcAuthenticationService implements AuthenticationService {
    * token that was already exchanged, or is being exchanged, is followed to
    * the newest one its grant returned, one completed grant at a time, so a
    * rotating issuer is never handed a spent token and concurrent callers each
-   * get their own grant. Between the last check and `#grant` there is no
-   * `await`, so a concurrent caller always sees the grant this one started.
+   * get their own grant. Past the grace window the remembered rotations
+   * (`#rotations`) are followed instead, so a browser left holding a retired
+   * token after concurrent refreshes answered out of order still refreshes,
+   * and its response stores the newest tokens. Between the last check and
+   * `#grant` there is no `await`, so a concurrent caller always sees the grant
+   * this one started.
    */
   async #freshCredential(
     refreshToken: string,
@@ -633,13 +656,33 @@ class OidcAuthenticationService implements AuthenticationService {
     let current = refreshToken;
     for (;;) {
       const previous = this.#refreshes.get(current);
-      if (previous === undefined) break;
-      const next = (await previous).refreshToken;
+      const next =
+        previous === undefined ? this.#replacement(current) : (await previous).refreshToken;
       // An issuer that does not rotate returned the same token: it stays usable.
       if (next === undefined || next === current) break;
       current = next;
     }
     return this.#grant(current, access);
+  }
+
+  #replacement(refreshToken: string): string | undefined {
+    const rotation = this.#rotations.get(refreshToken);
+    if (rotation === undefined) return undefined;
+    if (rotation.expiresAt > Date.now()) return rotation.replacement;
+    this.#rotations.delete(refreshToken);
+    return undefined;
+  }
+
+  #rotated(retired: string, replacement: string) {
+    this.#rotations.delete(retired);
+    this.#rotations.set(retired, {
+      expiresAt: Date.now() + rotationMemoryMilliseconds,
+      replacement,
+    });
+    if (this.#rotations.size > maximumRotations) {
+      const oldest = this.#rotations.keys().next().value;
+      if (oldest !== undefined) this.#rotations.delete(oldest);
+    }
   }
 
   #grant(refreshToken: string, access: AccessCredential): Promise<AuthenticationCredential> {
@@ -671,6 +714,9 @@ class OidcAuthenticationService implements AuthenticationService {
       })
       .then(
         (refreshed) => {
+          if (refreshed.refreshToken !== refreshToken) {
+            this.#rotated(refreshToken, refreshed.refreshToken);
+          }
           const forget = setTimeout(() => {
             if (this.#refreshes.get(refreshToken) === operation)
               this.#refreshes.delete(refreshToken);

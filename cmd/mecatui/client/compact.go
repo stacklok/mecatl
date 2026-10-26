@@ -28,6 +28,7 @@ func (c *Client) CompactSession(ctx context.Context, sessionID string) (bool, er
 	if err != nil {
 		return false, fmt.Errorf("compact session: %w", err)
 	}
+	c.noteOpened(sessionID)
 	return resp.GetCompacted(), nil
 }
 
