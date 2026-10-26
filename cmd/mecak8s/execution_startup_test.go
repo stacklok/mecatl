@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -105,9 +106,10 @@ const subIDFlag = "--oidc-owner-identity=sub_id"
 func TestExecutionAllowlistMatchesIssuerAndSubject(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	entries := []string{"--execution-allowed-principal=https://idp.example|alice", "--execution-allowed-principal=https://idp.example|auth0|bob", "--execution-allowed-principal=http://127.0.0.1:5556/dex|team carol"}
 	cases := map[string][]string{
-		"principal, owner identity off": {"--execution-allowed-principal=https://idp.example|alice", "--execution-allowed-principal=https://idp.example|auth0|bob"},
-		"principal, owner identity on":  {"--execution-allowed-principal=https://idp.example|alice", "--execution-allowed-principal=https://idp.example|auth0|bob", subIDFlag, "--oidc-accepted-client-ids=mecatui"},
+		"principal, owner identity off": entries,
+		"principal, owner identity on":  append(slices.Clone(entries), subIDFlag, "--oidc-accepted-client-ids=mecatui"),
 	}
 	for name, extra := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -116,7 +118,7 @@ func TestExecutionAllowlistMatchesIssuerAndSubject(t *testing.T) {
 				t.Fatal(err)
 			}
 			built := appConfig(cfg, nil, observability{})
-			for _, p := range []session.Principal{{Issuer: "https://idp.example", Subject: "alice"}, {Issuer: "https://idp.example", Subject: "auth0|bob"}} {
+			for _, p := range []session.Principal{{Issuer: "https://idp.example", Subject: "alice"}, {Issuer: "https://idp.example", Subject: "auth0|bob"}, {Issuer: "http://127.0.0.1:5556/dex", Subject: "team carol"}} {
 				p.GrantType = session.GrantTypeUser
 				if !built.ExecutionTemplateAllowed(&p, "go", cfg.executionTemplateRevision) || !built.ExecutionOwnerAllowed(&p) {
 					t.Fatalf("allowlisted %+v refused", p)
@@ -179,6 +181,13 @@ func TestExecutionAllowlistRejectsUnsafeConfiguration(t *testing.T) {
 		"control character":                   {[]string{"--execution-allowed-principal=https://idp.example|al\x00ice"}, "control characters"},
 		"duplicate":                           {[]string{"--execution-allowed-principal=https://idp.example|alice", "--execution-allowed-principal=https://idp.example|alice"}, "duplicate"},
 		"padded legacy subject":               {[]string{"--execution-allowed-subjects=alice, bob"}, "unpadded"},
+		"issuer without scheme":               {[]string{"--execution-allowed-principal=idp.example|alice"}, "must be an https:// or http:// URL"},
+		"issuer with other scheme":            {[]string{"--execution-allowed-principal=ftp://idp.example|alice"}, "must be an https:// or http:// URL"},
+		"issuer without host":                 {[]string{"--execution-allowed-principal=https:///tenant|alice"}, "must be an https:// or http:// URL"},
+		"issuer with credentials":             {[]string{"--execution-allowed-principal=https://user@idp.example|alice"}, "must be an https:// or http:// URL"},
+		"issuer with query":                   {[]string{"--execution-allowed-principal=https://idp.example?x=1|alice"}, "must be an https:// or http:// URL"},
+		"issuer with fragment":                {[]string{"--execution-allowed-principal=https://idp.example#x|alice"}, "must be an https:// or http:// URL"},
+		"issuer with space":                   {[]string{"--execution-allowed-principal=https://idp.example/a b|alice"}, "must be an https:// or http:// URL"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if _, err := parseFlags(executionArgs(tc.extra...)); err == nil || !strings.Contains(err.Error(), tc.want) {

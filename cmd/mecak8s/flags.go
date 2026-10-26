@@ -26,6 +26,7 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
@@ -736,7 +737,21 @@ func parseExecutionPrincipal(raw string) (*session.Principal, error) {
 			return nil, errors.New("issuer and subject must be nonempty, unpadded, and free of control characters")
 		}
 	}
+	if !validIssuerIdentifier(issuer) {
+		return nil, fmt.Errorf("issuer %q must be an https:// or http:// URL with a host and no credentials, spaces, query, or fragment", issuer)
+	}
 	return &session.Principal{Issuer: issuer, Subject: subject}, nil
+}
+
+// validIssuerIdentifier reports whether issuer has an issuer-identifier URL
+// form. mecak8s never contacts it, so plain HTTP is accepted (a local IdP
+// stand-in); the entry is matched byte-exactly, never normalized.
+func validIssuerIdentifier(issuer string) bool {
+	if (!strings.HasPrefix(issuer, "https://") && !strings.HasPrefix(issuer, "http://")) || strings.ContainsAny(issuer, "?# ") {
+		return false
+	}
+	u, err := url.Parse(issuer)
+	return err == nil && u.User == nil && u.Hostname() != ""
 }
 
 // resolveExecutionOwners returns the issuer-and-subject execution allowlist. A

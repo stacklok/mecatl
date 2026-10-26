@@ -53,7 +53,7 @@ func TestExecutionTemplateClientChartRequiresOwnerGrants(t *testing.T) {
 func TestExecutionAllowedPrincipalsChart(t *testing.T) {
 	base := []string{"template", "qualification", ".", "-f", "../../mecatl-execution-kind/mecak8s-values.yaml", "--set-string", "execution.templateRevision=v1-" + strings.Repeat("a", 64), "--set-json", "execution.allowedSubjects=[]"}
 	subID := []string{"--set", "oidc.ownerIdentity=sub_id", "--set", "oidc.acceptedClientIDs={mecatui}"}
-	principals := []string{"--set-json", `execution.allowedPrincipals=[{"issuer":"https://idp.example","subject":"alice"},{"issuer":"https://idp.example","subject":"auth0|bob"}]`}
+	principals := []string{"--set-json", `execution.allowedPrincipals=[{"issuer":"https://idp.example","subject":"alice"},{"issuer":"https://idp.example","subject":"auth0|bob"},{"issuer":"http://127.0.0.1:5556/dex","subject":"team carol"}]`}
 	for name, extra := range map[string][]string{"owner identity off": nil, "owner identity sub_id": subID} {
 		t.Run(name, func(t *testing.T) {
 			rendered, err := helm(t, slices.Concat(base, principals, extra)...)
@@ -61,7 +61,7 @@ func TestExecutionAllowedPrincipalsChart(t *testing.T) {
 				t.Fatalf("render: %v\n%s", err, rendered)
 			}
 			args := deploymentFromRender(t, rendered).Spec.Template.Spec.Containers[0].Args
-			for _, expected := range []string{"--execution-allowed-principal=https://idp.example|alice", "--execution-allowed-principal=https://idp.example|auth0|bob"} {
+			for _, expected := range []string{"--execution-allowed-principal=https://idp.example|alice", "--execution-allowed-principal=https://idp.example|auth0|bob", "--execution-allowed-principal=http://127.0.0.1:5556/dex|team carol"} {
 				if !slices.Contains(args, expected) {
 					t.Fatalf("args %q omit %q", args, expected)
 				}
@@ -82,6 +82,13 @@ func TestExecutionAllowedPrincipalsChart(t *testing.T) {
 		"empty subject":                       {[]string{"--set-json", `execution.allowedPrincipals=[{"issuer":"https://idp.example","subject":""}]`}, "subject"},
 		"separator in issuer":                 {[]string{"--set-json", `execution.allowedPrincipals=[{"issuer":"https://idp.example|x","subject":"alice"}]`}, "issuer"},
 		"padded subject":                      {[]string{"--set-json", `execution.allowedPrincipals=[{"issuer":"https://idp.example","subject":" alice"}]`}, "subject"},
+		"trailing space in subject":           {[]string{"--set-json", `execution.allowedPrincipals=[{"issuer":"https://idp.example","subject":"alice "}]`}, "subject"},
+		"issuer without scheme":               {[]string{"--set-json", `execution.allowedPrincipals=[{"issuer":"idp.example","subject":"alice"}]`}, "must be an https:// or http:// URL"},
+		"issuer with other scheme":            {[]string{"--set-json", `execution.allowedPrincipals=[{"issuer":"ftp://idp.example","subject":"alice"}]`}, "must be an https:// or http:// URL"},
+		"issuer without host":                 {[]string{"--set-json", `execution.allowedPrincipals=[{"issuer":"https:///tenant","subject":"alice"}]`}, "must be an https:// or http:// URL"},
+		"issuer with credentials":             {[]string{"--set-json", `execution.allowedPrincipals=[{"issuer":"https://user@idp.example","subject":"alice"}]`}, "must be an https:// or http:// URL"},
+		"issuer with query":                   {[]string{"--set-json", `execution.allowedPrincipals=[{"issuer":"https://idp.example?x=1","subject":"alice"}]`}, "must be an https:// or http:// URL"},
+		"issuer with fragment":                {[]string{"--set-json", `execution.allowedPrincipals=[{"issuer":"https://idp.example#x","subject":"alice"}]`}, "must be an https:// or http:// URL"},
 		"duplicate":                           {[]string{"--set-json", `execution.allowedPrincipals=[{"issuer":"https://idp.example","subject":"alice"},{"issuer":"https://idp.example","subject":"alice"}]`}, "allowedPrincipals"},
 	} {
 		t.Run(name, func(t *testing.T) {

@@ -147,7 +147,7 @@
         "endpoint": {"type": "string", "anyOf": [{"const": ""}, {"pattern": "^(?:[A-Za-z0-9.-]+|\\[[0-9A-Fa-f:]+\\]):[0-9]+$"}]},
         "templateID": {"type": "string", "pattern": "^$|^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$"},
         "templateRevision": {"type": "string", "pattern": "^$|^v1-[0-9a-f]{64}$"},
-        "allowedPrincipals": {"type": "array", "uniqueItems": true, "maxItems": 64, "items": {"type": "object", "additionalProperties": false, "required": ["issuer", "subject"], "properties": {"issuer": {"type": "string", "minLength": 1, "maxLength": 1024, "pattern": "^[!-{}~]+$"}, "subject": {"type": "string", "minLength": 1, "maxLength": 255, "pattern": "^[!-~]+$"}}}},
+        "allowedPrincipals": {"type": "array", "uniqueItems": true, "maxItems": 64, "items": {"type": "object", "additionalProperties": false, "required": ["issuer", "subject"], "properties": {"issuer": {"type": "string", "minLength": 1, "maxLength": 1024, "pattern": "^[!-{}~]+$"}, "subject": {"type": "string", "minLength": 1, "maxLength": 255, "pattern": "^[!-~]([ -~]*[!-~])?$"}}}},
         "allowedSubjects": {"type": "array", "uniqueItems": true, "maxItems": 64, "items": {"type": "string", "minLength": 1, "maxLength": 253, "pattern": "^[A-Za-z0-9._:@/-]+$"}},
         "tlsSecret": {"type": "string"},
         "caKey": {"type": "string", "minLength": 1},
