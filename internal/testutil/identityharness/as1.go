@@ -58,6 +58,10 @@ type AS1 struct {
 	faults   faults
 	http     *http.Client
 
+	brokerKey       *ecdsa.PrivateKey
+	assertionMax    time.Duration
+	sessionLifetime time.Duration
+
 	mu       sync.Mutex
 	clients  map[string]Client
 	pending  map[string]as1Pending // by upstream state
@@ -65,6 +69,14 @@ type AS1 struct {
 	refresh  map[string]as1Refresh
 	subjects map[string]string // AS-1 subject by company identity
 	upstream map[string]string // upstream refresh token by company subject
+
+	brokerKeys    map[string]*ecdsa.PublicKey // by kid
+	assertionJTIs map[string]time.Time        // used client assertion jti, kept until
+	sessions      map[string]*as1Session
+	sessionTokens map[string]*as1SessionToken
+	conversions   map[string]as1Conversion // by converted access token jti
+	refusals      map[string][]string      // refused open reasons by session
+	echoes        []SessionDetails         // forced mismatched echoes
 }
 
 type as1Pending struct {
@@ -89,25 +101,39 @@ func newAS1(t testing.TB, opts Options, idp *IdP) *AS1 {
 	if err != nil {
 		t.Fatalf("identityharness: foreign key: %v", err)
 	}
+	brokerKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("identityharness: broker key: %v", err)
+	}
 	as := &AS1{
 		key: key, foreign: foreign, now: opts.Now, audience: opts.Audience,
 		lifetime: opts.AccessTokenLifetime, idp: idp, secret: randomToken("as1-secret-"),
-		clients:  make(map[string]Client),
-		pending:  make(map[string]as1Pending),
-		codes:    make(map[string]as1Code),
-		refresh:  make(map[string]as1Refresh),
-		subjects: make(map[string]string),
-		upstream: make(map[string]string),
+		brokerKey: brokerKey, assertionMax: opts.ClientAssertionMaxLifetime,
+		sessionLifetime: opts.SessionRefreshTokenLifetime,
+		clients:         make(map[string]Client),
+		pending:         make(map[string]as1Pending),
+		codes:           make(map[string]as1Code),
+		refresh:         make(map[string]as1Refresh),
+		subjects:        make(map[string]string),
+		upstream:        make(map[string]string),
+		brokerKeys:      make(map[string]*ecdsa.PublicKey),
+		assertionJTIs:   make(map[string]time.Time),
+		sessions:        make(map[string]*as1Session),
+		sessionTokens:   make(map[string]*as1SessionToken),
+		conversions:     make(map[string]as1Conversion),
+		refusals:        make(map[string][]string),
 	}
 	for _, c := range opts.Clients {
 		as.clients[c.ID] = Client{ID: c.ID, RedirectURIs: slices.Clone(c.RedirectURIs)}
 	}
+	as.registerBrokerKeys(t, opts.BrokerKeys)
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET "+as1IssuerPath+"/.well-known/openid-configuration", as.discovery)
 	mux.HandleFunc("GET /.well-known/oauth-authorization-server"+as1IssuerPath, as.discovery)
 	mux.HandleFunc("GET "+as1IssuerPath+"/authorize", as.authorize)
 	mux.HandleFunc("GET "+as1IssuerPath+"/callback", as.callback)
 	mux.HandleFunc("POST "+as1IssuerPath+"/token", as.token)
+	mux.HandleFunc("POST "+as1IssuerPath+"/revoke", as.revoke)
 	mux.HandleFunc("GET "+as1IssuerPath+"/jwks", as.jwks)
 	as.server = httptest.NewTLSServer(mux)
 	t.Cleanup(as.server.Close)
@@ -275,14 +301,19 @@ func firstNonEmpty(values ...string) string {
 func (a *AS1) discovery(w http.ResponseWriter, _ *http.Request) {
 	iss := a.Issuer()
 	writeJSON(w, http.StatusOK, map[string]any{
-		"issuer":                                iss,
-		"authorization_endpoint":                iss + "/authorize",
-		"token_endpoint":                        iss + "/token",
-		"jwks_uri":                              iss + "/jwks",
-		"response_types_supported":              []string{responseTypeCode},
-		"grant_types_supported":                 []string{grantAuthorizationCode, grantRefreshToken},
-		"code_challenge_methods_supported":      []string{pkceS256},
-		"token_endpoint_auth_methods_supported": []string{"none"},
+		"issuer":                           iss,
+		"authorization_endpoint":           iss + "/authorize",
+		"token_endpoint":                   iss + "/token",
+		"revocation_endpoint":              iss + "/revoke",
+		"jwks_uri":                         iss + "/jwks",
+		"response_types_supported":         []string{responseTypeCode},
+		"grant_types_supported":            []string{grantAuthorizationCode, grantRefreshToken, grantTokenExchange},
+		"code_challenge_methods_supported": []string{pkceS256},
+		// none for the public clients, private_key_jwt for the broker.
+		"token_endpoint_auth_methods_supported":            []string{"none", authPrivateKeyJWT},
+		"token_endpoint_auth_signing_alg_values_supported": []string{"ES256"},
+		"revocation_endpoint_auth_methods_supported":       []string{authPrivateKeyJWT},
+		"authorization_details_types_supported":            []string{SessionDetailsType},
 	})
 }
 
@@ -466,12 +497,13 @@ func (a *AS1) token(w http.ResponseWriter, r *http.Request) {
 		writeOAuthError(w, http.StatusBadRequest, "invalid_request", "")
 		return
 	}
-	clientID := r.PostForm.Get(paramClientID)
-	a.mu.Lock()
-	_, known := a.clients[clientID]
-	a.mu.Unlock()
-	if !known {
+	clientID, confidential, ok := a.authenticateClient(r)
+	if !ok {
 		writeOAuthError(w, http.StatusUnauthorized, "invalid_client", "")
+		return
+	}
+	if confidential {
+		a.brokerToken(w, r)
 		return
 	}
 	if fault, ok := a.faults.pop("token"); ok {
@@ -501,6 +533,9 @@ func (a *AS1) token(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		user = record.user
+	case grantTokenExchange:
+		writeOAuthError(w, http.StatusBadRequest, "unauthorized_client", "")
+		return
 	default:
 		writeOAuthError(w, http.StatusBadRequest, "unsupported_grant_type", "")
 		return
@@ -514,6 +549,23 @@ func (a *AS1) token(w http.ResponseWriter, r *http.Request) {
 		"access_token": access, "token_type": "Bearer",
 		"expires_in": int(a.lifetime.Seconds()), "refresh_token": refresh,
 	})
+}
+
+// brokerToken serves the authenticated broker, which may use only the
+// token-exchange grant for session open. Session refresh tokens are stored
+// apart from client refresh tokens and the broker holds none of the latter,
+// so the refresh-token grant always fails with invalid_grant.
+func (a *AS1) brokerToken(w http.ResponseWriter, r *http.Request) {
+	switch r.PostForm.Get("grant_type") {
+	case grantTokenExchange:
+		a.openSession(w, r)
+	case grantRefreshToken:
+		writeOAuthError(w, http.StatusBadRequest, "invalid_grant", "")
+	case grantAuthorizationCode:
+		writeOAuthError(w, http.StatusBadRequest, "unauthorized_client", "")
+	default:
+		writeOAuthError(w, http.StatusBadRequest, "unsupported_grant_type", "")
+	}
 }
 
 // redeemCode checks an authorization code grant (RFC 6749 §4.1.3, RFC 7636
