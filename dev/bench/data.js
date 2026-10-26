@@ -340136,6 +340136,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1793033219322,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "radoslav@stacklok.com",
+            "name": "Radoslav Dimitrov",
+            "username": "rdimitrov"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "eec00143fff9ab331bb49845acebf95b7b1a5751",
+          "message": "fix(guardrails): stop yolo sessions waiting on the guardrail checker (#2519)",
+          "timestamp": "2026-10-26T13:40:31-04:00",
+          "tree_id": "c2ac166153e36d5386f27a8c269483d41c8d5063",
+          "url": "https://github.com/stacklok/mecatl/commit/eec00143fff9ab331bb49845acebf95b7b1a5751"
+        },
+        "date": 1793037166945,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -491760,6 +491794,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1793037163867,
+  "lastUpdate": 1793037167831,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
