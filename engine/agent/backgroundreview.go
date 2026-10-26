@@ -19,7 +19,9 @@ var backgroundReviewDrainGrace = 1 * time.Second
 // review snapshots its request on the dispatching goroutine, then runs the
 // checker off the dispatch path on a context detached from the run's own
 // cancellation. Run end cancels them; their advisory events go out through the
-// child registry's sealed emit, so none follows the run's terminal event.
+// child registry's sealed emit, so none follows the run's terminal event. The
+// context is created on first use, so a run without background reviews pays
+// no allocations for the set.
 type backgroundReviews struct {
 	mu     sync.Mutex
 	wg     sync.WaitGroup
@@ -28,14 +30,27 @@ type backgroundReviews struct {
 	closed bool
 }
 
-func (b *backgroundReviews) init(parent context.Context) {
-	b.ctx, b.cancel = context.WithCancel(context.WithoutCancel(parent))
+// context returns the review context, creating it from parent on first use.
+// It reports false once run end has begun draining.
+func (b *backgroundReviews) context(parent context.Context) (context.Context, bool) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.closed {
+		return nil, false
+	}
+	if b.ctx == nil {
+		if parent == nil {
+			parent = context.Background()
+		}
+		b.ctx, b.cancel = context.WithCancel(context.WithoutCancel(parent))
+	}
+	return b.ctx, true
 }
 
 func (b *backgroundReviews) start(review func()) bool {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	if b.closed || b.ctx == nil {
+	if b.closed {
 		return false
 	}
 	b.wg.Add(1)
@@ -51,11 +66,12 @@ func (b *backgroundReviews) start(review func()) bool {
 func (b *backgroundReviews) drain() bool {
 	b.mu.Lock()
 	b.closed = true
+	cancel := b.cancel
 	b.mu.Unlock()
-	if b.cancel == nil {
+	if cancel == nil {
 		return true
 	}
-	b.cancel()
+	cancel()
 	done := make(chan struct{})
 	go func() {
 		b.wg.Wait()
@@ -88,8 +104,7 @@ func advisoryDisposition(result ToolReviewResult, err error, clean string) strin
 // launchBackgroundReview runs assess off the dispatch path, records its checker
 // usage, and publishes the advisory event built by publish unless run end
 // cancelled the review first. release always runs once.
-func (r *Run) launchBackgroundReview(assess func() session.AuxiliaryUsage, publish func() session.Event, release func()) {
-	ctx := r.backgroundReviews.ctx
+func (r *Run) launchBackgroundReview(ctx context.Context, assess func() session.AuxiliaryUsage, publish func() session.Event, release func()) {
 	if !r.backgroundReviews.start(func() {
 		defer release()
 		usage := assess()
@@ -105,12 +120,16 @@ func (r *Run) launchBackgroundReview(assess func() session.AuxiliaryUsage, publi
 // startBackgroundActionReview reviews an opted-in yolo action without delaying
 // it. The call has already been authorized and proceeds regardless of verdict.
 func (e *Engine) startBackgroundActionReview(r *Run, sess *session.Session, env tool.Environment, turnIdx int, call session.ToolCall) {
-	if r.reviewRoot == nil || r.backgroundReviews.ctx == nil || !yoloBackgroundReview(r.reviewRoot.reviewer, sess.Mode, call.Name, ReviewJobAction) {
+	if r.reviewRoot == nil || !yoloBackgroundReview(r.reviewRoot.reviewer, sess.Mode, call.Name, ReviewJobAction) {
 		return
 	}
-	bg, sessID := r.backgroundReviews.ctx, sess.ID
+	bg, ok := r.backgroundReviews.context(r.ctx)
+	if !ok {
+		return
+	}
+	sessID := sess.ID
 	a := e.prepareActionAssessment(bg, r, sess, env, call)
-	r.launchBackgroundReview(func() session.AuxiliaryUsage {
+	r.launchBackgroundReview(bg, func() session.AuxiliaryUsage {
 		assessAction(bg, r, &a)
 		return a.usage
 	}, func() session.Event {
@@ -133,13 +152,17 @@ func (e *Engine) startBackgroundActionReview(r *Run, sess *session.Session, env 
 // startBackgroundInboundReview inspects an opted-in yolo result that has
 // already been released to the model; the verdict is advisory only.
 func (e *Engine) startBackgroundInboundReview(r *Run, sess *session.Session, env tool.Environment, turnIdx int, call session.ToolCall, result session.ToolResult) {
-	if r.reviewRoot == nil || r.backgroundReviews.ctx == nil || !yoloBackgroundReview(r.reviewRoot.reviewer, sess.Mode, call.Name, ReviewJobInbound) {
+	if r.reviewRoot == nil || !yoloBackgroundReview(r.reviewRoot.reviewer, sess.Mode, call.Name, ReviewJobInbound) {
 		return
 	}
-	bg, sessID := r.backgroundReviews.ctx, sess.ID
+	bg, ok := r.backgroundReviews.context(r.ctx)
+	if !ok {
+		return
+	}
+	sessID := sess.ID
 	a := inboundAssessment{applies: true, mode: sess.Mode}
 	e.prepareInboundRequest(bg, r, sess, env, call, result, &a)
-	r.launchBackgroundReview(func() session.AuxiliaryUsage {
+	r.launchBackgroundReview(bg, func() session.AuxiliaryUsage {
 		assessInbound(bg, r, &a)
 		return a.usage
 	}, func() session.Event {

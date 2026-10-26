@@ -35,10 +35,12 @@ func (h *heldFinalTurn) Stream(ctx context.Context, req port.LLMRequest) (iter.S
 }
 
 // yoloReviewer reviews both jobs. optIn controls GuardrailYoloReviews; gate, when
-// set, parks every Review until it is closed or the review context ends.
+// set, parks every Review until it is closed or the review context ends, and
+// parked (when set) receives once per review that reached the gate.
 type yoloReviewer struct {
 	optIn  bool
 	gate   chan struct{}
+	parked chan struct{}
 	result ToolReviewResult
 	err    error
 
@@ -52,6 +54,9 @@ func (r *yoloReviewer) Review(ctx context.Context, _ ToolReviewRequest, _ Review
 	r.reviews++
 	r.mu.Unlock()
 	if r.gate != nil {
+		if r.parked != nil {
+			r.parked <- struct{}{}
+		}
 		select {
 		case <-r.gate:
 		case <-ctx.Done():
@@ -84,7 +89,15 @@ func runYoloReview(t *testing.T, reviewer *yoloReviewer, preparer ReviewEvidence
 	catalog := tool.NewCatalog()
 	catalog.MustRegister(revisionActionTool{executions: &executions})
 	llm := &heldFinalTurn{LLMProvider: mockllm.New(mockllm.ToolCallTurn(session.NewToolCall("call", "Act", []byte(`{}`))), mockllm.TextTurn("done")), release: make(chan struct{})}
-	if hooks == 0 {
+	switch {
+	case reviewer.parked != nil:
+		// Let the run end only once both reviews are parked in the checker.
+		go func() {
+			<-reviewer.parked
+			<-reviewer.parked
+			close(llm.release)
+		}()
+	case hooks == 0:
 		close(llm.release)
 	}
 	engine := NewEngine(Deps{
@@ -216,10 +229,10 @@ func TestYoloOptInTerminalEvidenceFailureNeverFailsClosed(t *testing.T) {
 }
 
 func TestYoloBackgroundReviewsAreCancelledAtRunEnd(t *testing.T) {
-	reviewer := &yoloReviewer{optIn: true, gate: make(chan struct{}), result: ToolReviewResult{Assessment: ReviewAcceptable}}
+	reviewer := &yoloReviewer{optIn: true, gate: make(chan struct{}), parked: make(chan struct{}, 2), result: ToolReviewResult{Assessment: ReviewAcceptable}}
 	start := time.Now()
 	events, executions, _ := runYoloReview(t, reviewer, nil, 0, nil)
-	if elapsed := time.Since(start); elapsed > backgroundReviewDrainGrace {
+	if elapsed := time.Since(start); elapsed > 4*time.Second {
 		t.Fatalf("run took %s, want run end to cancel parked reviews at once", elapsed)
 	}
 	if executions != 1 {

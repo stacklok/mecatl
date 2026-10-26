@@ -1771,7 +1771,6 @@ func (e *Engine) prepareRun(ctx context.Context, sess *session.Session, req RunR
 	// through registry.safeEmit over this binding (A4c); a delivered event mirrors
 	// to the sink like every loop emit.
 	r.children = newChildRunRegistry()
-	r.backgroundReviews.init(ctx)
 	r.children.liveness = e.deps.SessionLiveness
 	r.children.emit = func(ev session.Event) {
 		if sequenced, delivered := r.emitOrAbortSequenced(ev, r.children.emitAbort); delivered {
