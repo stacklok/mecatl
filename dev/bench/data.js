@@ -378149,6 +378149,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1793048047918,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "29541485+ChrisJBurns@users.noreply.github.com",
+            "name": "Chris Burns",
+            "username": "ChrisJBurns"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "0cf660de3d4f7722f35946577a0dbada88dac062",
+          "message": "test(identityharness): add broker client auth, session open, and revocation to AS-1 (#2524)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-26T21:45:01Z",
+          "tree_id": "87706c10377f64579d051200333f2c426b106af3",
+          "url": "https://github.com/stacklok/mecatl/commit/0cf660de3d4f7722f35946577a0dbada88dac062"
+        },
+        "date": 1793051863478,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 16152,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12916,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 795,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -493327,6 +493366,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1793051860224,
+  "lastUpdate": 1793051864329,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
