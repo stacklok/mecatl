@@ -128,7 +128,15 @@ func (r *guardrailActionReviewer) PrepareReviewEvidence(ctx context.Context, pre
 					complete = false
 					continue
 				}
-				_ = content // The bounded first page establishes version and total size.
+				if prep.Snapshot {
+					// A background review may run after the reviewed call changed the
+					// file, so serve the bounded first read instead of the live file.
+					captured := int64(len(content)) >= total
+					complete = complete && captured
+					candidates = append(candidates, reviewEvidenceCandidate{Kind: "text_file", Display: path, Version: encoded, Complete: captured, Authorized: true, Binding: binding, Backend: memoryReviewEvidenceBackend{content: string(content)}})
+					continue
+				}
+				// The bounded first page establishes version and total size.
 				candidates = append(candidates, reviewEvidenceCandidate{Kind: "text_file", Display: path, Version: encoded, Complete: true, Authorized: true, Binding: binding, Backend: workspaceReviewEvidenceBackend{reader: reader, path: path, size: total, version: encoded, authorize: authorize}})
 			}
 		}

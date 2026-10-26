@@ -210,7 +210,7 @@ func checkerRefusal(cfg Config, checkerConfigured bool) error {
 // yoloCheckerAdvisoryNote states what a configured checker does NOT do at the
 // gate-free tier, where demoteForPosture makes it advisory. Shared by the
 // refusal and the startup line so they cannot disagree.
-const yoloCheckerAdvisoryNote = "In yolo-mode sessions a configured checker is observability-only: it has no pre-tool veto, no approve-once human ask, and no fail-closed on checker failure, so a checker outage looks the same as a clean result. Sessions switched to another mode, including auto, keep it enforcing"
+const yoloCheckerAdvisoryNote = "In yolo-mode sessions a configured checker never blocks: it does not run unless guardrails.yoloAdvisory is set, and then it reviews in the background with no pre-tool veto, no approve-once human ask, and no fail-closed on checker failure, so a checker outage looks the same as a clean result. Sessions switched to another mode, including auto, keep it enforcing"
 
 // headlessTrustRefusal is the headless admission gate.
 // It runs AFTER resolveTrust, so any legitimate trust source satisfies it, and
@@ -273,7 +273,10 @@ func checkerState(cfg Config, configured bool) (state, reason string) {
 	case !compiled:
 		return checkerDisabled, noGuardrailRuleCompiled
 	case cfg.MaxAllowedMode == session.ModeYolo:
-		return checkerAdvisory, "demoted in yolo-mode sessions; other modes keep it enforcing"
+		if cfg.GuardrailsYoloAdvisory {
+			return checkerAdvisory, "background-only in yolo-mode sessions; other modes keep it enforcing"
+		}
+		return checkerAdvisory, "skipped in yolo-mode sessions (guardrails.yoloAdvisory is off); other modes keep it enforcing"
 	case !enforcing:
 		return checkerAdvisory, "configured advisory"
 	}

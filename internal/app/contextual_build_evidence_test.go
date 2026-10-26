@@ -443,10 +443,10 @@ func TestBuildWiresFiniteScriptEvidenceToContextualReviewer(t *testing.T) {
 		t.Fatalf("Build: %v", err)
 	}
 	defer built.Close()
-	// ModeYolo: Shell is auto-allowed (allow-all rules injected by Policy.Evaluate),
-	// so the guardrails block rule fires and routes the call to the contextual reviewer.
+	// ModeAuto: Shell is auto-allowed and the enforcing guardrails block rule routes
+	// the call to the contextual reviewer inline (yolo would skip the checker).
 	// ModeDefault would floor Shell at Ask, hanging the test without a human approver.
-	sess, err := built.Service.CreateSession(context.Background(), session.ModeYolo, session.Limits{MaxTurns: 2})
+	sess, err := built.Service.CreateSession(context.Background(), session.ModeAuto, session.Limits{MaxTurns: 2})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -722,5 +722,54 @@ func TestBuildContextualEvidenceMatchesBuiltinReadPathDecoding(t *testing.T) {
 				t.Fatalf("review calls=%d evidence=%q", provider.reviewCalls, provider.evidence)
 			}
 		})
+	}
+}
+
+func TestSnapshotWorkspaceEvidenceSurvivesLaterChange(t *testing.T) {
+	ctx := context.Background()
+	workspace := memfs.NewWorkspace("/review")
+	if err := workspace.Write(ctx, "review-script.sh", []byte("SCRIPT_EVIDENCE_MARKER")); err != nil {
+		t.Fatal(err)
+	}
+	if err := workspace.Write(ctx, "big.sh", []byte(strings.Repeat("line\n", 8_000))); err != nil {
+		t.Fatal(err)
+	}
+	ref := session.EnvironmentRef{Kind: session.EnvKindMem, ID: "review", Revision: "r1"}
+	env := tool.MustEnvironment(ref, workspace, reviewerReadLedger{}, nil)
+	prepare := func(script string) agent.PreparedReviewEvidence {
+		t.Helper()
+		req := agent.ToolReviewRequest{
+			ReviewID: "review-" + script, Job: agent.ReviewJobAction,
+			Event:         sessionHookEvent("review-" + script),
+			EffectiveCall: session.NewToolCall("call-1", "Shell", json.RawMessage(`{"command":"./`+script+`"}`)),
+			Caller:        agent.ReviewCaller{Role: "main", Capabilities: []string{"Shell"}}, Environment: ref,
+			Capacity: agent.ReviewCapacity{MaxEvidenceHandles: maxReviewEvidenceHandles, MaxEvidenceBytes: maxReviewEvidenceBytes},
+		}
+		prepared, err := (&guardrailActionReviewer{providerID: "provider", modelID: "model"}).PrepareReviewEvidence(ctx, agent.ReviewEvidencePreparation{
+			Request: req, Environment: env, Snapshot: true, Authorize: func(context.Context, session.ToolCall) error { return nil },
+		})
+		if err != nil || len(prepared.Evidence) == 0 || prepared.Source == nil {
+			t.Fatalf("prepare %s = %+v, err=%v", script, prepared, err)
+		}
+		t.Cleanup(prepared.Close)
+		return prepared
+	}
+
+	small := prepare("review-script.sh")
+	if !small.Complete {
+		t.Fatal("a file within the first read must be fully captured")
+	}
+	// The reviewed call (or a later one) changes the file before the checker reads it.
+	if err := workspace.Write(ctx, "review-script.sh", []byte("changed")); err != nil {
+		t.Fatal(err)
+	}
+	meta := small.Evidence[0]
+	evidence, err := small.Source.ReadReviewEvidence(ctx, agent.ReviewEvidenceRequest{ReviewID: "review-review-script.sh", Handle: meta.Handle, Version: meta.Version})
+	if err != nil || evidence.Content != "SCRIPT_EVIDENCE_MARKER" {
+		t.Fatalf("snapshot evidence=%+v err=%v, want the content captured at preparation", evidence, err)
+	}
+
+	if big := prepare("big.sh"); big.Complete {
+		t.Fatal("a file beyond the first read must be reported incomplete under snapshot")
 	}
 }

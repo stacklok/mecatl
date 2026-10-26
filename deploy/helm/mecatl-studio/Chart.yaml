@@ -6,7 +6,7 @@ type: application
 kubeVersion: ">=1.30.0-0"
 # Release PRs keep version and appVersion aligned with VERSION. The Release
 # workflow also sets both when it packages the chart.
-version: 0.0.50
-appVersion: "v0.0.50"
+version: 0.0.51
+appVersion: "v0.0.51"
 annotations:
   org.stacklok.mecatl.studio.stability: early-access
