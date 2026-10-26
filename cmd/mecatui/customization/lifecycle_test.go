@@ -25,18 +25,21 @@ func TestStatusLine_Scenario4_DebounceTemplateRefreshAndClock(t *testing.T) {
 		t.Fatalf("command footer = %q, want latest refresh", got)
 	}
 
-	templates := NewTemplateSource(TemplateSet{Footer: SurfaceTemplates{Full: `<footer><text>{{.Clock.Now.Format "15:04:05"}}</text></footer>`}}, time.Second)
+	// Interval ticks carry the clock value; drive them by hand so the refresh
+	// never lands in the same wall-clock second as the first render.
+	ticks := make(chan time.Time)
+	templates := newTemplateSourceWithTicks(TemplateSet{Footer: SurfaceTemplates{Full: `<footer><text>{{.Clock.Now.Format "15:04:05"}}</text></footer>`}}, ticks)
 	t.Cleanup(func() { _ = templates.Close(context.Background()) })
+	templates.now = func() time.Time { return time.Date(2026, time.August, 28, 12, 0, 0, 0, time.UTC) }
 	templates.Submit(Input{Terminal: Terminal{FooterAvailCols: 80}})
 	waitStatusChange(t, templates)
-	first := statusSurfaceText(templates.Latest().Footer)
-	select {
-	case <-templates.Changed():
-	case <-time.After(1500 * time.Millisecond):
-		t.Fatal("template clock did not refresh on its interval")
+	if got := statusSurfaceText(templates.Latest().Footer); got != "12:00:00" {
+		t.Fatalf("template footer = %q, want submit-time clock", got)
 	}
-	if got := statusSurfaceText(templates.Latest().Footer); got == first {
-		t.Fatalf("template clock did not advance: %q", got)
+	ticks <- time.Date(2026, time.August, 28, 12, 0, 1, 0, time.UTC)
+	waitStatusChange(t, templates)
+	if got := statusSurfaceText(templates.Latest().Footer); got != "12:00:01" {
+		t.Fatalf("template footer = %q, want interval-tick clock", got)
 	}
 }
 

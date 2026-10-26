@@ -33,16 +33,20 @@ func newTemplateSource(templates TemplateSet, interval time.Duration) *statusLin
 		ticker = time.NewTicker(interval)
 		ticks = ticker.C
 	}
-	defaults := defaultTemplateSet()
-	header := compileVariants(templates.Header, defaults.Header)
-	footer := compileVariants(templates.Footer, defaults.Footer)
-	s := newSource(ticks, func(ctx context.Context, input Input) Result {
-		return renderTemplates(ctx, header, footer, input)
-	})
+	s := newTemplateSourceWithTicks(templates, ticks)
 	if ticker != nil {
 		s.stopTicker = ticker.Stop
 	}
 	return s
+}
+
+func newTemplateSourceWithTicks(templates TemplateSet, ticks <-chan time.Time) *statusLineSource {
+	defaults := defaultTemplateSet()
+	header := compileVariants(templates.Header, defaults.Header)
+	footer := compileVariants(templates.Footer, defaults.Footer)
+	return newSource(ticks, func(ctx context.Context, input Input) Result {
+		return renderTemplates(ctx, header, footer, input)
+	})
 }
 
 type templateVariants struct{ full, compact, minimal statusTemplate }
