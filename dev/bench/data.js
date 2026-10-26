@@ -376958,6 +376958,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1793033225795,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "radoslav@stacklok.com",
+            "name": "Radoslav Dimitrov",
+            "username": "rdimitrov"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "eec00143fff9ab331bb49845acebf95b7b1a5751",
+          "message": "fix(guardrails): stop yolo sessions waiting on the guardrail checker (#2519)",
+          "timestamp": "2026-10-26T13:40:31-04:00",
+          "tree_id": "c2ac166153e36d5386f27a8c269483d41c8d5063",
+          "url": "https://github.com/stacklok/mecatl/commit/eec00143fff9ab331bb49845acebf95b7b1a5751"
+        },
+        "date": 1793037170895,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 16135,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12900,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 795,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -491794,6 +491833,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1793037167831,
+  "lastUpdate": 1793037171772,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
