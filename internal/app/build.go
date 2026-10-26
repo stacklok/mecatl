@@ -8798,8 +8798,9 @@ func applyContextualGuardrailWorkerPosture(pc prompt.Config, enabled bool) promp
 // multiplies the slowest step of a turn by the fan-out width.
 const subagentVerificationScopeNote = "You are a subagent: the session that delegated this task owns " +
 	"repository-wide verification. Run only focused tests or checks that exercise your task. Do not run " +
-	"full test suites, lint, docs, or other repository-wide gates, even when project instructions require " +
-	"them before a change is ready; report what you ran and what still needs verifying instead."
+	"full test suites, lint, docs, or other repository-wide gates unless the delegating brief explicitly " +
+	"asks for it, even if project instructions require them; report what you ran and what still needs " +
+	"verifying instead."
 
 // applySubagentVerificationScope appends subagentVerificationScopeNote to the
 // child's Role, seeding the default role first like the other posture notes.

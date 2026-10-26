@@ -1431,10 +1431,8 @@ func (t *SubagentTool) Spec() tool.ToolSpec {
 		"work whose intermediate output you do not need: a broad multi-step investigation ('search → " +
 		"summarize', 'trace this code path'), history work ('bisect the history'), or a large, " +
 		"self-contained implementation task ('implement this fix and edit the files'). Do short or " +
-		"context-dependent work yourself: a few reads or edits, or a task whose brief would have to " +
-		"restate what you already gathered — a fresh subagent re-reads it all and is slower than doing " +
-		"it inline. You own verification: run full test suites and repository-wide checks yourself once " +
-		"the work is integrated; subagents run only focused checks for their own task. " +
+		"context-dependent work yourself; a fresh subagent must re-read what you already gathered. " +
+		"Run full test suites and repository-wide checks yourself; subagents run only focused checks. " +
 		shellClause + ". " +
 		"Set mode:\"read-write\" to let it edit and write files DIRECTLY in your workspace — exactly " +
 		"as you do — so its edits land immediately, with no copy or merge step. This is how you " +
