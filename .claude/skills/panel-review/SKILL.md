@@ -81,6 +81,11 @@ Once pinned, capture once and reuse:
 - **Commit list:** `git log <fp>..HEAD --oneline` (used to find
   issue/spec references).
 - **File list:** `git diff <fp>...HEAD --name-only`.
+- **Diff text:** run the diff command once and keep its output. Every
+  reviewer brief in Step 8 passes this text, so no reviewer re-runs
+  `git` or re-derives the change. For a diff over about 1000 lines,
+  save it once to `.scratch/panel-review/<scope>.diff` and pass that
+  path instead.
 
 Print to the user:
 
@@ -266,7 +271,8 @@ They run concurrently, separate contexts, no order dependencies.
 - `description`: "Spec adherence check for <scope>"
 - `prompt`:
 
-  > Diff to review: `git diff <fp>...HEAD`
+  > Diff to review (captured in Step 1; do not re-run `git diff`):
+  > <diff text or saved diff path>
   > Commit list: <list>
   > Spec source: <path or inline contents of the issue/PRD>
   >
@@ -298,7 +304,8 @@ in final output.
 - `description`: "Standards conformance check for <scope>"
 - `prompt`:
 
-  > Diff to review: `git diff <fp>...HEAD`
+  > Diff to review (captured in Step 1; do not re-run `git diff`):
+  > <diff text or saved diff path>
   > Standards source files (read these): <list from Step 4>
   > Tooling-enforced configs to SKIP (tooling already runs on
   > every commit; do not re-flag what they cover): <list>
@@ -317,7 +324,8 @@ in final output.
 - `description`: "Independent test-adequacy check for <scope>"
 - `prompt`:
 
-  > Diff to review: `git diff <fp>...HEAD`
+  > Diff to review (captured in Step 1; do not re-run `git diff`):
+  > <diff text or saved diff path>
   > Spec source: <path or inline contents; state unavailable if skipped>
   > Acceptance plan / verify contract: <path if present>
   >
@@ -339,7 +347,8 @@ For each specialist in the panel:
 - `subagent_type`: the agent's `name` field.
 - `description`: "<agent-name> review of <scope>".
 - `prompt`:
-  - The exact diff scope (`git diff <fp>...HEAD -- <paths>`).
+  - The Step 1 diff text for this agent's paths, with a note not
+    to re-run `git diff`.
   - A one-line statement of what the agent should focus on,
     derived from its own description.
   - The project-context items the agent's body needs.

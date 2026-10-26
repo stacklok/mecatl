@@ -7150,6 +7150,9 @@ func childEngineDepsForProvider(cfg Config, role string, provider port.LLMProvid
 	)
 	deps.Catalog = cat
 	deps.PromptConfig = applyContextualGuardrailWorkerPosture(pc, guardrailsConfigured(cfg) && len(cat.Tools()) > 0)
+	if roleFamily(role) == "subagent" {
+		deps.PromptConfig = applySubagentVerificationScope(deps.PromptConfig)
+	}
 	if cfg.harnessInstructions != nil {
 		switch role {
 		case "guardrail-reviewer", "ask-reviewer", "model-router", "usermodel-review", "parallel-judge":
@@ -8785,6 +8788,26 @@ func applyContextualGuardrailWorkerPosture(pc prompt.Config, enabled bool) promp
 		pc.Role = prompt.DefaultRole()
 	}
 	pc.Role += "\n\n" + contextualGuardrailWorkerPostureNote
+	return pc
+}
+
+// subagentVerificationScopeNote is the Role suffix of every Subagent child
+// ("task" role family). Children inherit the full project instructions, whose
+// repository-wide gates (full suites, lint, docs) are written for the session
+// that finishes the change; without this note each child re-runs them, which
+// multiplies the slowest step of a turn by the fan-out width.
+const subagentVerificationScopeNote = "You are a subagent: the session that delegated this task owns " +
+	"repository-wide verification. Run only focused tests or checks that exercise your task. Do not run " +
+	"full test suites, lint, docs, or other repository-wide gates, even when project instructions require " +
+	"them before a change is ready; report what you ran and what still needs verifying instead."
+
+// applySubagentVerificationScope appends subagentVerificationScopeNote to the
+// child's Role, seeding the default role first like the other posture notes.
+func applySubagentVerificationScope(pc prompt.Config) prompt.Config {
+	if pc.Role == "" {
+		pc.Role = prompt.DefaultRole()
+	}
+	pc.Role += "\n\n" + subagentVerificationScopeNote
 	return pc
 }
 

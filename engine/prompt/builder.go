@@ -288,7 +288,7 @@ func toolDisciplineHints(tools []tool.ToolSpec) string {
 		writeSentence(&b, "Reserve Shell for real system/terminal commands.")
 	}
 	if present["Subagent"] {
-		writeSentence(&b, "Use Subagent for focused delegation. For multiple independent read-only tasks, issue one Subagent call per task in the same assistant turn so eligible calls run concurrently; wait between calls only when a later task depends on an earlier result.")
+		writeSentence(&b, "Use Subagent for focused delegation. Delegate work whose intermediate output you do not need; do short or context-dependent work yourself, and run full test suites and repository-wide checks yourself rather than delegating them. For multiple independent read-only tasks, issue one Subagent call per task in the same assistant turn so eligible calls run concurrently; wait between calls only when a later task depends on an earlier result.")
 	}
 	if present["Parallel"] {
 		writeSentence(&b, "Use Parallel only for isolated writable or competing branches that need built-in join or winner selection.")

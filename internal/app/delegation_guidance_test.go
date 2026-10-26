@@ -2,7 +2,9 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
@@ -82,4 +84,58 @@ func captureBuiltDelegationPrompt(t *testing.T, parallel, teams bool) prompt.Lay
 		t.Fatal("provider did not receive a built system prompt")
 	}
 	return captured
+}
+
+// TestSubagentChildPromptScopesVerification drives a real Subagent call through
+// the built session: the child's stable system prefix carries the verification
+// scope note, while the parent's does not.
+func TestSubagentChildPromptScopesVerification(t *testing.T) {
+	var (
+		mu       sync.Mutex
+		prefixes []string
+	)
+	provider := mockllm.NewWith([]mockllm.Option{
+		mockllm.WithRequestObserver(func(req port.LLMRequest) {
+			mu.Lock()
+			prefixes = append(prefixes, req.System.StablePrefix)
+			mu.Unlock()
+		}),
+	},
+		mockllm.ToolCallTurn(session.ToolCall{ID: "s1", Name: "Subagent", Args: json.RawMessage(`{"prompt":"check one thing","description":"probe"}`)}),
+		mockllm.TextTurn("child done"),
+		mockllm.TextTurn("parent done"),
+	)
+	built, err := buildIsolated(t, context.Background(), Config{
+		Workspace:    t.TempDir(),
+		Model:        "mock",
+		MockProvider: provider,
+		Diagnostics:  port.NopDiagnostics{},
+	})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	defer built.Close()
+
+	sess, err := built.Service.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	run, err := built.Service.StartRunContent(context.Background(), sess.ID, "delegate", nil)
+	if err != nil {
+		t.Fatalf("StartRunContent: %v", err)
+	}
+	for range run.Events() {
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(prefixes) != 3 {
+		t.Fatalf("provider saw %d requests, want 3 (parent, child, parent)", len(prefixes))
+	}
+	if strings.Contains(prefixes[0], subagentVerificationScopeNote) {
+		t.Error("parent system prompt must not carry the subagent verification scope note")
+	}
+	if !strings.Contains(prefixes[1], subagentVerificationScopeNote) {
+		t.Errorf("Subagent child system prompt must carry the verification scope note, got:\n%s", prefixes[1])
+	}
 }
