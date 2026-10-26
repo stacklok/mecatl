@@ -166,9 +166,14 @@ Settings that name exact principals match the `sub_id` identity once the option
 is on, so list the IdP's issuer and subject there, not the authorization
 server's:
 
-- `storage_management.principals` in `settings.yaml` matches issuer and subject.
-- `mecak8s` `--execution-allowed-subjects` (Helm `execution.allowedSubjects`)
-  matches the subject.
+- `storage_management.principals` in `settings.yaml`.
+- `mecak8s` `--execution-allowed-principal` (Helm
+  `execution.allowedPrincipals`).
+
+Both match issuer and subject exactly. `mecak8s` refuses to start with the
+deprecated subject-only `--execution-allowed-subjects` (Helm
+`execution.allowedSubjects`) while the option is on, because that form cannot
+name the IdP's issuer.
 
 The server cannot detect a changed `sub` or a principal setting that still
 names the authorization server's identity at startup. Either mismatch appears

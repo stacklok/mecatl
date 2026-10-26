@@ -207,7 +207,14 @@ execution:
   endpoint: ""
   templateID: ""
   templateRevision: ""
-  # Exact authenticated OIDC subjects allowed to discover and bind templates.
+  # Callers allowed to discover and bind templates, as {issuer, subject}
+  # entries. A caller is allowed only when both match its verified owner
+  # identity exactly. With oidc.ownerIdentity=sub_id, name the issuer and
+  # subject in the token's sub_id claim (the company IdP's identity).
+  allowedPrincipals: []
+  # Deprecated: use allowedPrincipals. Subjects of oidc.issuer allowed to
+  # discover and bind templates. Refused with oidc.ownerIdentity=sub_id and
+  # alongside allowedPrincipals.
   allowedSubjects: []
   tlsSecret: ""
   caKey: ca.crt

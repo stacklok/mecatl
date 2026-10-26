@@ -393,13 +393,28 @@ execution:
   endpoint: mecatl-execution.<NAMESPACE>.svc:8443
   templateID: coding
   templateRevision: v1-<CANONICAL_EXECUTION_DIGEST>
-  allowedSubjects:
-    - <VERIFIED_OIDC_SUBJECT>
+  allowedPrincipals:
+    - issuer: <VERIFIED_OIDC_ISSUER>
+      subject: <VERIFIED_OIDC_SUBJECT>
   tlsSecret: <MECAK8S_EXECUTION_MTLS_SECRET>
   caKey: ca.crt
   certKey: tls.crt
   keyKey: tls.key
 ```
+
+`allowedPrincipals` decides who can list templates and bind or reattach an
+execution environment. A caller is allowed only when both its issuer and its
+subject match an entry exactly. Name the identity that owns the caller's
+sessions: the `oidc.issuer` and the token's `sub`, or, with
+`oidc.ownerIdentity: sub_id`, the issuer and subject inside the token's
+`sub_id` claim. See [caller identity](/features/security-and-execution/caller-identity.md).
+
+The older `allowedSubjects` list is deprecated. Each entry means a subject of
+`oidc.issuer`. It keeps working while `oidc.ownerIdentity` is unset, but the
+chart and `mecak8s` refuse it with `oidc.ownerIdentity: sub_id` or alongside
+`allowedPrincipals`. To upgrade, replace each subject with an entry whose
+`issuer` is your `oidc.issuer`, or the IdP's issuer if you enable
+`oidc.ownerIdentity: sub_id`.
 
 An enabled client conflicts with `workspace`, `redis.filesystem.enabled`,
 Parallel, and Team. Copy `execution.templateRevision` from the generated

@@ -50,6 +50,49 @@ func TestExecutionTemplateClientChartRequiresOwnerGrants(t *testing.T) {
 	}
 }
 
+func TestExecutionAllowedPrincipalsChart(t *testing.T) {
+	base := []string{"template", "qualification", ".", "-f", "../../mecatl-execution-kind/mecak8s-values.yaml", "--set-string", "execution.templateRevision=v1-" + strings.Repeat("a", 64), "--set-json", "execution.allowedSubjects=[]"}
+	subID := []string{"--set", "oidc.ownerIdentity=sub_id", "--set", "oidc.acceptedClientIDs={mecatui}"}
+	principals := []string{"--set-json", `execution.allowedPrincipals=[{"issuer":"https://idp.example","subject":"alice"},{"issuer":"https://idp.example","subject":"auth0|bob"}]`}
+	for name, extra := range map[string][]string{"owner identity off": nil, "owner identity sub_id": subID} {
+		t.Run(name, func(t *testing.T) {
+			rendered, err := helm(t, slices.Concat(base, principals, extra)...)
+			if err != nil {
+				t.Fatalf("render: %v\n%s", err, rendered)
+			}
+			args := deploymentFromRender(t, rendered).Spec.Template.Spec.Containers[0].Args
+			for _, expected := range []string{"--execution-allowed-principal=https://idp.example|alice", "--execution-allowed-principal=https://idp.example|auth0|bob"} {
+				if !slices.Contains(args, expected) {
+					t.Fatalf("args %q omit %q", args, expected)
+				}
+			}
+			if slices.ContainsFunc(args, func(arg string) bool { return strings.HasPrefix(arg, "--execution-allowed-subjects") }) {
+				t.Fatalf("args %q carry an empty subject allowlist", args)
+			}
+		})
+	}
+	for name, tc := range map[string]struct {
+		extra []string
+		want  string
+	}{
+		"subjects with owner identity sub_id": {slices.Concat([]string{"--set-json", "execution.allowedSubjects=[\"alice\"]"}, subID), "use execution.allowedPrincipals"},
+		"both forms":                          {slices.Concat([]string{"--set-json", "execution.allowedSubjects=[\"alice\"]"}, principals), "mutually exclusive"},
+		"neither form":                        {nil, "execution.allowedPrincipals"},
+		"missing issuer":                      {[]string{"--set-json", `execution.allowedPrincipals=[{"subject":"alice"}]`}, "issuer"},
+		"empty subject":                       {[]string{"--set-json", `execution.allowedPrincipals=[{"issuer":"https://idp.example","subject":""}]`}, "subject"},
+		"separator in issuer":                 {[]string{"--set-json", `execution.allowedPrincipals=[{"issuer":"https://idp.example|x","subject":"alice"}]`}, "issuer"},
+		"padded subject":                      {[]string{"--set-json", `execution.allowedPrincipals=[{"issuer":"https://idp.example","subject":" alice"}]`}, "subject"},
+		"duplicate":                           {[]string{"--set-json", `execution.allowedPrincipals=[{"issuer":"https://idp.example","subject":"alice"},{"issuer":"https://idp.example","subject":"alice"}]`}, "allowedPrincipals"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			output, err := helm(t, slices.Concat(base, tc.extra)...)
+			if err == nil || !strings.Contains(output, tc.want) {
+				t.Fatalf("render = %v, want failure mentioning %q:\n%s", err, tc.want, output)
+			}
+		})
+	}
+}
+
 func TestMecak8sHelmChart_ReleaseMetadataMatchesVersion(t *testing.T) {
 	versionData, err := os.ReadFile("../../../VERSION")
 	if err != nil {

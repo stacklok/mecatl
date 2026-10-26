@@ -656,9 +656,15 @@ Usage: mecak8s [flags]
         Enable the Parallel tool for isolated child branches
   --enable-teams
         Enable the experimental agent-team capability
+  --execution-allowed-principal ISSUER|SUBJECT
+        Caller allowed to list and bind execution templates, as ISSUER|SUBJECT; both
+        must match the caller's verified owner identity exactly. With --oidc-owner-
+        identity=sub_id, name the issuer and subject in the token's sub_id claim.
+        Repeatable
   --execution-allowed-subjects string
-        Comma-separated OIDC subject allowlist for execution template inventory and
-        binding; empty denies all
+        Deprecated: use --execution-allowed-principal. Comma-separated subjects of --
+        oidc-issuer allowed to list and bind execution templates. Refused with --oidc-
+        owner-identity=sub_id
   --execution-enabled
         Use an independently deployed Kubernetes execution provider for default sessions
   --execution-endpoint string

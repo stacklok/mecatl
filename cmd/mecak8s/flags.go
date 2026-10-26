@@ -31,6 +31,7 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/google/uuid"
 
@@ -137,6 +138,12 @@ type config struct {
 	defaultProviderFlagSet    bool
 	useOpenAI                 bool
 	openAIBearerTokenFile     string
+
+	// executionAllowedPrincipals holds the repeatable --execution-allowed-principal
+	// entries; executionOwners is the resolved issuer-and-subject allowlist.
+	executionAllowedPrincipals []*session.Principal
+	executionOwners            []*session.Principal
+
 	// providerFlags holds shared provider flag bindings; providerCredentials is
 	// the once-resolved snapshot projected by appConfig without further I/O.
 	providerFlags       *cliconfig.ProviderFlags
@@ -377,7 +384,19 @@ func parseFlags(argv []string) (config, error) {
 	fs.StringVar(&cfg.executionEndpoint, "execution-endpoint", "", "Host:port endpoint of the mTLS gRPC execution provider. Requires --execution-enabled")
 	fs.StringVar(&cfg.executionTemplateID, "execution-template-id", "", "Operator-configured default execution template ID")
 	fs.StringVar(&cfg.executionTemplateRevision, "execution-template-revision", "", "Exact versioned default execution template revision")
-	fs.StringVar(&cfg.executionAllowedSubjects, "execution-allowed-subjects", "", "Comma-separated OIDC subject allowlist for execution template inventory and binding; empty denies all")
+	fs.Func("execution-allowed-principal", "Caller allowed to list and bind execution templates, as `ISSUER|SUBJECT`; both must match the caller's verified owner identity exactly. With --oidc-owner-identity=sub_id, name the issuer and subject in the token's sub_id claim. Repeatable",
+		func(raw string) error {
+			principal, err := parseExecutionPrincipal(raw)
+			if err != nil {
+				return err
+			}
+			if slices.ContainsFunc(cfg.executionAllowedPrincipals, principal.SameIdentity) {
+				return fmt.Errorf("duplicate entry %q", raw)
+			}
+			cfg.executionAllowedPrincipals = append(cfg.executionAllowedPrincipals, principal)
+			return nil
+		})
+	fs.StringVar(&cfg.executionAllowedSubjects, "execution-allowed-subjects", "", "Deprecated: use --execution-allowed-principal. Comma-separated subjects of --oidc-issuer allowed to list and bind execution templates. Refused with --oidc-owner-identity=sub_id")
 	fs.StringVar(&cfg.executionTLSCA, "execution-tls-ca", "", "Mounted CA bundle used only by the execution client")
 	fs.StringVar(&cfg.executionTLSCert, "execution-tls-cert", "", "Mounted execution-provider mTLS client certificate")
 	fs.StringVar(&cfg.executionTLSKey, "execution-tls-key", "", "Mounted execution-provider mTLS client private key")
@@ -650,16 +669,14 @@ func parseFlags(argv []string) (config, error) {
 		return config{}, fmt.Errorf("--workspace %q must be a clean absolute path (a mounted filesystem root); leave it empty for a file-less deployment", cfg.workspace)
 	}
 	if cfg.executionEnabled {
-		if cfg.executionEndpoint == "" || cfg.executionTemplateID == "" || cfg.executionTemplateRevision == "" || cfg.executionAllowedSubjects == "" || cfg.executionTLSCA == "" || cfg.executionTLSCert == "" || cfg.executionTLSKey == "" {
-			return config{}, errors.New("--execution-enabled requires --execution-endpoint, --execution-template-id, --execution-template-revision, --execution-allowed-subjects, --execution-tls-ca, --execution-tls-cert, and --execution-tls-key")
-		}
-		for _, subject := range strings.Split(cfg.executionAllowedSubjects, ",") {
-			if subject == "" || strings.TrimSpace(subject) != subject {
-				return config{}, errors.New("--execution-allowed-subjects requires nonempty, unpadded OIDC subjects")
-			}
+		if cfg.executionEndpoint == "" || cfg.executionTemplateID == "" || cfg.executionTemplateRevision == "" || (cfg.executionAllowedSubjects == "" && len(cfg.executionAllowedPrincipals) == 0) || cfg.executionTLSCA == "" || cfg.executionTLSCert == "" || cfg.executionTLSKey == "" {
+			return config{}, errors.New("--execution-enabled requires --execution-endpoint, --execution-template-id, --execution-template-revision, --execution-allowed-principal, --execution-tls-ca, --execution-tls-cert, and --execution-tls-key")
 		}
 		if !cfg.oidc.Enabled() {
 			return config{}, errors.New("--execution-enabled requires OIDC caller ownership enforcement")
+		}
+		if cfg.executionOwners, err = resolveExecutionOwners(cfg); err != nil {
+			return config{}, err
 		}
 		if cfg.workspace != "" || cfg.redisFilesystem {
 			return config{}, errors.New("--execution-enabled conflicts with --workspace and --redis-filesystem")
@@ -707,6 +724,44 @@ func selectMockScript(cfg *config) {
 	}
 }
 
+// parseExecutionPrincipal reads one ISSUER|SUBJECT allowlist entry. It splits
+// at the first "|", which an issuer URL cannot contain, so a subject may.
+func parseExecutionPrincipal(raw string) (*session.Principal, error) {
+	issuer, subject, ok := strings.Cut(raw, "|")
+	if !ok {
+		return nil, errors.New("want ISSUER|SUBJECT")
+	}
+	for _, part := range []string{issuer, subject} {
+		if part == "" || strings.TrimSpace(part) != part || strings.ContainsFunc(part, unicode.IsControl) {
+			return nil, errors.New("issuer and subject must be nonempty, unpadded, and free of control characters")
+		}
+	}
+	return &session.Principal{Issuer: issuer, Subject: subject}, nil
+}
+
+// resolveExecutionOwners returns the issuer-and-subject execution allowlist. A
+// subject-only entry names a subject of --oidc-issuer, the only issuer a caller
+// can have unless --oidc-owner-identity takes it from the token's sub_id claim.
+func resolveExecutionOwners(cfg config) ([]*session.Principal, error) {
+	if cfg.executionAllowedSubjects == "" {
+		return cfg.executionAllowedPrincipals, nil
+	}
+	if len(cfg.executionAllowedPrincipals) != 0 {
+		return nil, errors.New("--execution-allowed-subjects and --execution-allowed-principal are mutually exclusive")
+	}
+	if cfg.oidc.OwnerIdentity != "" {
+		return nil, fmt.Errorf("--execution-allowed-subjects matches subjects of --oidc-issuer, but --oidc-owner-identity=%s takes each owner's issuer from the token; use --execution-allowed-principal=ISSUER|SUBJECT", cfg.oidc.OwnerIdentity)
+	}
+	var owners []*session.Principal
+	for _, subject := range strings.Split(cfg.executionAllowedSubjects, ",") {
+		if subject == "" || strings.TrimSpace(subject) != subject {
+			return nil, errors.New("--execution-allowed-subjects requires nonempty, unpadded OIDC subjects")
+		}
+		owners = append(owners, &session.Principal{Issuer: cfg.oidc.Issuer, Subject: subject})
+	}
+	return owners, nil
+}
+
 // mecak8sServerImplementation is the stable family reported to authenticated clients.
 const mecak8sServerImplementation = "mecak8s"
 
@@ -728,7 +783,7 @@ func appConfig(cfg config, diag port.Diagnostics, obs observability) app.Config 
 	ownerAllowed := func(p *session.Principal) bool {
 		return cfg.executionEnabled && cfg.oidc.Enabled() && p != nil && p.Issuer != "" && p.Subject != "" &&
 			(p.GrantType == session.GrantTypeUser || p.GrantType == session.GrantTypeClientCredentials) &&
-			slices.Contains(strings.Split(cfg.executionAllowedSubjects, ","), p.Subject)
+			slices.ContainsFunc(cfg.executionOwners, p.SameIdentity)
 	}
 	out := app.Config{
 		ExecutionTemplateAllowed: func(p *session.Principal, _, _ string) bool {

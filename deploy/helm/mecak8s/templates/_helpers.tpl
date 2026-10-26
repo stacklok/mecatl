@@ -118,6 +118,14 @@ mounted
 {{- $_ := required "oidc.caKey is required when oidc.caSecret is set" .Values.oidc.caKey -}}
 {{- end -}}
 {{- end -}}
+{{- define "mecak8s.validateExecution" -}}
+{{- $execution := .Values.execution -}}
+{{- if $execution.enabled -}}
+{{- /* mecak8s refuses these combinations at startup; fail at render time instead of crash-looping. */ -}}
+{{- if and $execution.allowedPrincipals $execution.allowedSubjects -}}{{ fail "execution.allowedPrincipals and execution.allowedSubjects are mutually exclusive" }}{{- end -}}
+{{- if and $execution.allowedSubjects .Values.oidc.ownerIdentity -}}{{ fail (printf "execution.allowedSubjects matches subjects of oidc.issuer, but oidc.ownerIdentity=%s takes each owner's issuer from the token; use execution.allowedPrincipals" .Values.oidc.ownerIdentity) }}{{- end -}}
+{{- end -}}
+{{- end -}}
 {{- define "mecak8s.validateTLS" -}}
 {{- if .Values.tls.enabled -}}
 {{- $_ := required "tls.secretName is required when tls.enabled is true" .Values.tls.secretName -}}

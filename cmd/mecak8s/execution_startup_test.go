@@ -93,3 +93,97 @@ func TestExecutionHostOwnerPolicyIsExplicit(t *testing.T) {
 		t.Fatal("authorized subject cannot bind")
 	}
 }
+
+// executionArgs returns a complete execution configuration with the given
+// allowlist and OIDC flags.
+func executionArgs(extra ...string) []string {
+	return append([]string{"--mock", "--execution-enabled", "--execution-endpoint=127.0.0.1:1", "--execution-template-id=go", "--execution-template-revision=v1-" + strings.Repeat("a", 64), "--execution-tls-ca=unused", "--execution-tls-cert=unused", "--execution-tls-key=unused", "--oidc-issuer=https://as1.example", "--oidc-audience=mecatl"}, extra...)
+}
+
+const subIDFlag = "--oidc-owner-identity=sub_id"
+
+func TestExecutionAllowlistMatchesIssuerAndSubject(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	cases := map[string][]string{
+		"principal, owner identity off": {"--execution-allowed-principal=https://idp.example|alice", "--execution-allowed-principal=https://idp.example|auth0|bob"},
+		"principal, owner identity on":  {"--execution-allowed-principal=https://idp.example|alice", "--execution-allowed-principal=https://idp.example|auth0|bob", subIDFlag, "--oidc-accepted-client-ids=mecatui"},
+	}
+	for name, extra := range cases {
+		t.Run(name, func(t *testing.T) {
+			cfg, err := parseFlags(executionArgs(extra...))
+			if err != nil {
+				t.Fatal(err)
+			}
+			built := appConfig(cfg, nil, observability{})
+			for _, p := range []session.Principal{{Issuer: "https://idp.example", Subject: "alice"}, {Issuer: "https://idp.example", Subject: "auth0|bob"}} {
+				p.GrantType = session.GrantTypeUser
+				if !built.ExecutionTemplateAllowed(&p, "go", cfg.executionTemplateRevision) || !built.ExecutionOwnerAllowed(&p) {
+					t.Fatalf("allowlisted %+v refused", p)
+				}
+			}
+			for _, p := range []session.Principal{
+				{Issuer: "https://other.example", Subject: "alice"},
+				{Issuer: "https://as1.example", Subject: "alice"},
+				{Issuer: "https://idp.example/", Subject: "alice"},
+				{Issuer: "https://idp.example", Subject: "auth0"},
+				{Issuer: "https://idp.example|auth0", Subject: "bob"},
+			} {
+				p.GrantType = session.GrantTypeUser
+				if built.ExecutionTemplateAllowed(&p, "go", cfg.executionTemplateRevision) || built.ExecutionOwnerAllowed(&p) {
+					t.Fatalf("unlisted %+v allowed", p)
+				}
+			}
+		})
+	}
+}
+
+func TestExecutionAllowedSubjectsMeansOIDCIssuer(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	cfg, err := parseFlags(executionArgs("--execution-allowed-subjects=alice,bob"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	built := appConfig(cfg, nil, observability{})
+	for _, tc := range []struct {
+		issuer, subject string
+		want            bool
+	}{
+		{"https://as1.example", "alice", true},
+		{"https://as1.example", "bob", true},
+		{"https://other.example", "alice", false},
+		{"https://as1.example", "carol", false},
+	} {
+		p := &session.Principal{Issuer: tc.issuer, Subject: tc.subject, GrantType: session.GrantTypeUser}
+		if built.ExecutionTemplateAllowed(p, "go", cfg.executionTemplateRevision) != tc.want || built.ExecutionOwnerAllowed(p) != tc.want {
+			t.Fatalf("%s|%s: want allowed=%v", tc.issuer, tc.subject, tc.want)
+		}
+	}
+}
+
+func TestExecutionAllowlistRejectsUnsafeConfiguration(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	for name, tc := range map[string]struct {
+		extra []string
+		want  string
+	}{
+		"subjects with owner identity sub_id": {[]string{"--execution-allowed-subjects=alice", subIDFlag, "--oidc-accepted-client-ids=mecatui"}, "--execution-allowed-principal=ISSUER|SUBJECT"},
+		"both forms":                          {[]string{"--execution-allowed-subjects=alice", "--execution-allowed-principal=https://idp.example|alice"}, "mutually exclusive"},
+		"no separator":                        {[]string{"--execution-allowed-principal=alice"}, "want ISSUER|SUBJECT"},
+		"empty issuer":                        {[]string{"--execution-allowed-principal=|alice"}, "nonempty"},
+		"empty subject":                       {[]string{"--execution-allowed-principal=https://idp.example|"}, "nonempty"},
+		"padded subject":                      {[]string{"--execution-allowed-principal=https://idp.example| alice"}, "unpadded"},
+		"padded issuer":                       {[]string{"--execution-allowed-principal=https://idp.example |alice"}, "unpadded"},
+		"control character":                   {[]string{"--execution-allowed-principal=https://idp.example|al\x00ice"}, "control characters"},
+		"duplicate":                           {[]string{"--execution-allowed-principal=https://idp.example|alice", "--execution-allowed-principal=https://idp.example|alice"}, "duplicate"},
+		"padded legacy subject":               {[]string{"--execution-allowed-subjects=alice, bob"}, "unpadded"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := parseFlags(executionArgs(tc.extra...)); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("parseFlags error = %v, want %q", err, tc.want)
+			}
+		})
+	}
+}
