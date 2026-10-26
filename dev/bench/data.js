@@ -341210,6 +341210,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1793048043570,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "29541485+ChrisJBurns@users.noreply.github.com",
+            "name": "Chris Burns",
+            "username": "ChrisJBurns"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "0cf660de3d4f7722f35946577a0dbada88dac062",
+          "message": "test(identityharness): add broker client auth, session open, and revocation to AS-1 (#2524)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-26T21:45:01Z",
+          "tree_id": "87706c10377f64579d051200333f2c426b106af3",
+          "url": "https://github.com/stacklok/mecatl/commit/0cf660de3d4f7722f35946577a0dbada88dac062"
+        },
+        "date": 1793051859420,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -493293,6 +493327,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1793051856277,
+  "lastUpdate": 1793051860224,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
