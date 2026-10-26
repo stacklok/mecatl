@@ -124,7 +124,7 @@ func TestActionPreparationFailureRecordedBeforeAssessment(t *testing.T) {
 				r := &Run{reviewRoot: newReviewRoot(reviewer, preparer, nil)}
 				env := memEnv("/ws")
 				sess := session.New("prep-health", session.ModeDefault, env.Ref(), session.Limits{}, time.Now())
-				assessment := NewEngine(Deps{}).prepareActionAssessment(ctx, r, sess, env, session.NewToolCall("call", "Act", []byte(`{}`)))
+				assessment := NewEngine(Deps{}).prepareActionAssessment(ctx, r, sess, env, session.NewToolCall("call", "Act", []byte(`{}`)), false)
 				defer assessment.cancel()
 				wantRecords := 1
 				if stage == "before_checker" || stage == "parent_cancelled" {
@@ -168,7 +168,7 @@ func TestPreparationTerminalContextErrorIsNotDowngraded(t *testing.T) {
 				preparer := &deadlineEvidencePreparer{delay: 91 * time.Second, err: terminalContextEvidenceError{cause}}
 				env := memEnv("/ws")
 				sess := session.New("terminal-context", session.ModeDefault, env.Ref(), session.Limits{}, time.Now())
-				_, err := NewEngine(Deps{}).prepareReviewEvidence(ctx, &Run{reviewRoot: newReviewRoot(nil, preparer, nil)}, sess, env, ToolReviewRequest{}, nil)
+				_, err := NewEngine(Deps{}).prepareReviewEvidence(ctx, &Run{reviewRoot: newReviewRoot(nil, preparer, nil)}, sess, env, ToolReviewRequest{}, nil, false)
 				var terminal GuardrailReviewTerminalFailure
 				if !errors.As(err, &terminal) || !terminal.GuardrailReviewTerminalFailure() {
 					t.Fatalf("terminal error downgraded: %v", err)

@@ -245,3 +245,51 @@ func TestYoloBackgroundReviewsAreCancelledAtRunEnd(t *testing.T) {
 		t.Fatalf("guardrail events = %+v, want none from cancelled reviews", hooks)
 	}
 }
+
+func TestBackgroundReviewsCapConcurrency(t *testing.T) {
+	var b backgroundReviews
+	release := make(chan struct{})
+	for i := range maxBackgroundReviews {
+		if _, ok := b.reserve(context.Background()); !ok {
+			t.Fatalf("reserve %d refused below the cap", i)
+		}
+		b.start(func() { <-release })
+	}
+	if _, ok := b.reserve(context.Background()); ok {
+		t.Fatal("reserve succeeded above maxBackgroundReviews")
+	}
+	close(release)
+	b.wg.Wait()
+	if _, ok := b.reserve(context.Background()); !ok {
+		t.Fatal("finished reviews did not release their slots")
+	}
+	if b.start(func() {}); !b.drain() {
+		t.Fatal("drain did not join the last review")
+	}
+}
+
+type snapshotRecordingPreparer struct {
+	mu        sync.Mutex
+	snapshots []bool
+}
+
+func (p *snapshotRecordingPreparer) PrepareReviewEvidence(_ context.Context, prep ReviewEvidencePreparation) (PreparedReviewEvidence, error) {
+	p.mu.Lock()
+	p.snapshots = append(p.snapshots, prep.Snapshot)
+	p.mu.Unlock()
+	return PreparedReviewEvidence{Complete: true}, nil
+}
+
+func TestYoloBackgroundReviewsSnapshotEvidence(t *testing.T) {
+	reviewer := &yoloReviewer{optIn: true, result: ToolReviewResult{Assessment: ReviewProhibited}}
+	preparer := &snapshotRecordingPreparer{}
+	events, _, _ := runYoloReview(t, reviewer, preparer, 2, nil)
+	if len(guardrailHooks(events)) != 2 {
+		t.Fatalf("guardrail events = %d, want both advisories", len(guardrailHooks(events)))
+	}
+	preparer.mu.Lock()
+	defer preparer.mu.Unlock()
+	if len(preparer.snapshots) != 2 || !preparer.snapshots[0] || !preparer.snapshots[1] {
+		t.Fatalf("snapshot flags = %v, want both background preparations to snapshot", preparer.snapshots)
+	}
+}

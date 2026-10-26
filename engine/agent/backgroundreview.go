@@ -15,10 +15,16 @@ import (
 // advisory reviews to unwind. A var only as a TEST seam, like childDrainCap.
 var backgroundReviewDrainGrace = 1 * time.Second
 
+// maxBackgroundReviews caps concurrent advisory checker runs per run, bounding
+// provider load, cost, and held evidence on read-heavy runs.
+const maxBackgroundReviews = 4
+
 // backgroundReviews is a run's set of opted-in yolo advisory reviews. Each
-// review snapshots its request on the dispatching goroutine, then runs the
-// checker off the dispatch path on a context detached from the run's own
-// cancellation. Run end cancels them; their advisory events go out through the
+// review snapshots its request and evidence on the dispatching goroutine, then
+// runs the checker off the dispatch path on a context detached from the run's
+// own cancellation. At most maxBackgroundReviews run at once; a review over the
+// cap is skipped. Advisory verdicts never feed the shared trajectory, so
+// enforcing reviews of delegated children see the same facts in dispatch order. Run end cancels them; their advisory events go out through the
 // child registry's sealed emit, so none follows the run's terminal event. The
 // context is created on first use, so a run without background reviews pays
 // no allocations for the set.
@@ -28,16 +34,20 @@ type backgroundReviews struct {
 	ctx    context.Context //nolint:containedctx // run-scoped review lifetime, cancelled at run end
 	cancel context.CancelFunc
 	closed bool
+	active int
 }
 
-// context returns the review context, creating it from parent on first use.
-// It reports false once run end has begun draining.
-func (b *backgroundReviews) context(parent context.Context) (context.Context, bool) {
+// reserve claims a review slot and returns the review context, creating it
+// from parent on first use. It reports false once run end has begun draining
+// or when maxBackgroundReviews are already running; a true return must be
+// followed by start, which releases the slot.
+func (b *backgroundReviews) reserve(parent context.Context) (context.Context, bool) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	if b.closed {
+	if b.closed || b.active >= maxBackgroundReviews {
 		return nil, false
 	}
+	b.active++
 	if b.ctx == nil {
 		if parent == nil {
 			parent = context.Background()
@@ -47,18 +57,28 @@ func (b *backgroundReviews) context(parent context.Context) (context.Context, bo
 	return b.ctx, true
 }
 
+// start runs a reserved review and releases its slot when it ends. It reports
+// false, releasing the slot at once, when run end began after the reservation.
 func (b *backgroundReviews) start(review func()) bool {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if b.closed {
+		b.active--
 		return false
 	}
 	b.wg.Add(1)
 	go func() {
 		defer b.wg.Done()
+		defer b.releaseSlot()
 		review()
 	}()
 	return true
+}
+
+func (b *backgroundReviews) releaseSlot() {
+	b.mu.Lock()
+	b.active--
+	b.mu.Unlock()
 }
 
 // drain stops new reviews, cancels in-flight ones, and waits up to the grace for
@@ -123,21 +143,20 @@ func (e *Engine) startBackgroundActionReview(r *Run, sess *session.Session, env 
 	if r.reviewRoot == nil || !yoloBackgroundReview(r.reviewRoot.reviewer, sess.Mode, call.Name, ReviewJobAction) {
 		return
 	}
-	bg, ok := r.backgroundReviews.context(r.ctx)
+	bg, ok := r.backgroundReviews.reserve(r.ctx)
 	if !ok {
 		return
 	}
 	sessID := sess.ID
-	a := e.prepareActionAssessment(bg, r, sess, env, call)
+	a := e.prepareActionAssessment(bg, r, sess, env, call, true)
 	r.launchBackgroundReview(bg, func() session.AuxiliaryUsage {
 		assessAction(bg, r, &a)
 		return a.usage
 	}, func() session.Event {
-		result, decision := a.result, string(a.result.Assessment)
+		result := a.result
 		if a.err != nil {
-			result.Assessment, decision = ReviewUnresolved, "unresolved"
+			result.Assessment = ReviewUnresolved
 		}
-		r.reviewRoot.record(reviewFact(call, a.action.request.Target, decision))
 		r.publishActionDetail(bg, sessID, a.action.request.ReviewID, a.action.request, result, a.err)
 		guardrail := reviewMachinePayload(r.reviewRoot.reviewer, a.action.request, result, a.err, advisoryDisposition(result, a.err, "execute"))
 		return session.Event{Type: session.EvHook, Turn: turnIdx, Hook: &session.HookPayload{Phase: string(governance.PhasePreToolUse), Tool: call.Name, Decision: session.HookInfo, CallID: call.ID, Guardrail: guardrail}}
@@ -155,12 +174,12 @@ func (e *Engine) startBackgroundInboundReview(r *Run, sess *session.Session, env
 	if r.reviewRoot == nil || !yoloBackgroundReview(r.reviewRoot.reviewer, sess.Mode, call.Name, ReviewJobInbound) {
 		return
 	}
-	bg, ok := r.backgroundReviews.context(r.ctx)
+	bg, ok := r.backgroundReviews.reserve(r.ctx)
 	if !ok {
 		return
 	}
 	sessID := sess.ID
-	a := inboundAssessment{applies: true, mode: sess.Mode}
+	a := inboundAssessment{applies: true, mode: sess.Mode, snapshot: true}
 	e.prepareInboundRequest(bg, r, sess, env, call, result, &a)
 	r.launchBackgroundReview(bg, func() session.AuxiliaryUsage {
 		assessInbound(bg, r, &a)

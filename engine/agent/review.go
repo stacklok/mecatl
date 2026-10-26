@@ -135,6 +135,12 @@ type ReviewEvidencePreparation struct {
 	// effective catalog, mode, and bound authority. Preparers must call it before
 	// touching backend metadata or content; model/reviewer input cannot replace it.
 	Authorize func(context.Context, session.ToolCall) error
+	// Snapshot asks the preparer to capture workspace evidence content now,
+	// within its bounded first read, instead of reading it lazily during the
+	// review. The Engine sets it for advisory background reviews, which run
+	// concurrently with the reviewed call and later calls that may change the
+	// files. Content beyond the captured read is reported incomplete.
+	Snapshot bool
 }
 
 // PreparedReviewEvidence owns one review-local finite capability set. Close is

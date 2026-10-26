@@ -44,6 +44,7 @@ type inboundAssessment struct {
 	enforce           bool
 	mode              session.PermissionMode
 	principalRevision uint64
+	snapshot          bool
 }
 
 // reviewPolicy resolves the reviewer's configured applicability and enforcement
@@ -123,7 +124,7 @@ func (e *Engine) prepareInboundRequest(ctx context.Context, r *Run, sess *sessio
 	var prepared PreparedReviewEvidence
 	var prepareErr error
 	if reviewCtx.Err() == nil {
-		prepared, prepareErr = e.prepareReviewEvidence(reviewCtx, r, sess, env, assessment.request, &result)
+		prepared, prepareErr = e.prepareReviewEvidence(reviewCtx, r, sess, env, assessment.request, &result, assessment.snapshot)
 	} else {
 		prepareErr = reviewFailure(ReviewFailureTimeout)
 	}
