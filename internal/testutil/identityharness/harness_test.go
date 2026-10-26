@@ -299,7 +299,7 @@ func postToken(t *testing.T, h *identityharness.Harness, form url.Values) (map[s
 		t.Errorf("token response Cache-Control = %q, want no-store", resp.Header.Get("Cache-Control"))
 	}
 	if resp.StatusCode != http.StatusOK {
-		oauthErr := &identityharness.OAuthError{}
+		oauthErr := &identityharness.OAuthError{Status: resp.StatusCode}
 		if err := json.NewDecoder(resp.Body).Decode(oauthErr); err != nil {
 			t.Fatal(err)
 		}

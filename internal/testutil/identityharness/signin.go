@@ -34,6 +34,8 @@ type Tokens struct {
 type OAuthError struct {
 	Code        string `json:"error"`
 	Description string `json:"error_description"`
+	// Status is the HTTP status of a token or revocation endpoint error.
+	Status int `json:"-"`
 }
 
 func (e *OAuthError) Error() string {
@@ -122,26 +124,33 @@ func (h *Harness) followToRedirect(ctx context.Context, start, redirectURI strin
 }
 
 func (h *Harness) exchange(ctx context.Context, form url.Values) (Tokens, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, h.AS1.TokenEndpoint(), strings.NewReader(form.Encode()))
+	var tokens Tokens
+	err := h.postForm(ctx, h.AS1.TokenEndpoint(), form, &tokens)
+	return tokens, err
+}
+
+// postForm posts form to an AS-1 endpoint and decodes a 200 response into
+// out, when out is non-nil. An OAuth error response returns an *OAuthError.
+func (h *Harness) postForm(ctx context.Context, endpoint string, form url.Values, out any) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(form.Encode()))
 	if err != nil {
-		return Tokens{}, err
+		return err
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	resp, err := h.HTTPClient().Do(req)
 	if err != nil {
-		return Tokens{}, err
+		return err
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
-		oauthErr := &OAuthError{}
+		oauthErr := &OAuthError{Status: resp.StatusCode}
 		if err := json.NewDecoder(resp.Body).Decode(oauthErr); err != nil || oauthErr.Code == "" {
-			return Tokens{}, fmt.Errorf("identityharness: token endpoint: status %d", resp.StatusCode)
+			return fmt.Errorf("identityharness: %s: status %d", req.URL.Path, resp.StatusCode)
 		}
-		return Tokens{}, oauthErr
+		return oauthErr
 	}
-	var tokens Tokens
-	if err := json.NewDecoder(resp.Body).Decode(&tokens); err != nil {
-		return Tokens{}, err
+	if out == nil {
+		return nil
 	}
-	return tokens, nil
+	return json.NewDecoder(resp.Body).Decode(out)
 }

@@ -5,13 +5,55 @@
 // covers, so identity broker tests and Mecatl composition tests share one
 // stand-in instead of each inventing its own.
 //
-// The harness covers user sign-in: authorization code with PKCE at AS-1, which
-// signs the user in at the upstream IdP as an ordinary OIDC client, and AS-1
-// access tokens as design step (1) describes them. Later work adds the
-// session-open exchange, ID-JAG issuance, refresh-token revocation, broker
-// client authentication, and a gateway stand-in, each in its own files. AS-2 is
+// The harness covers:
+//
+//   - user sign-in: authorization code with PKCE at AS-1, which signs the
+//     user in at the upstream IdP as an ordinary OIDC client, and AS-1 access
+//     tokens as design step (1) describes them (as1.go, signin.go);
+//   - broker client authentication, design step (5): the confidential client
+//     BrokerClientID with private_key_jwt, checking the registered key, iss
+//     and sub, aud equal to AS-1's issuer, exp - iat, and a single-use jti; a
+//     client secret is refused (clientauth.go);
+//   - session open, design step (3): the RFC 8693 exchange of an AS-1 access
+//     token for a non-rotating session refresh token bound to a
+//     mecatl_session entry's session and owner, checks 1 to 7 with their
+//     reasons, retry after a lost response, replacement by a later open,
+//     closed-session records, the hard expiry, and refusal of the session
+//     refresh token at the refresh-token grant (sessionopen.go);
+//   - RFC 7009 revocation of session refresh tokens (revoke.go);
+//   - injected faults: one-shot errors such as a 503, a lost response, a
+//     mismatched echo, and a forced hard expiry; and ScriptedBroker, a
+//     hand-driven caller holding the broker's credentials for exercising
+//     AS-1 directly (broker.go). Production code under test uses its own
+//     client, not ScriptedBroker.
+//
+// Later work adds ID-JAG issuance, client refresh-token revocation, and a
+// gateway stand-in, each in its own files. The reason superseded belongs to
+// the ID-JAG exchange, which presents a session refresh token a later open
+// may have replaced; session open never returns it, and until that exchange
+// exists SessionRefreshToken reports a replaced token's state. AS-2 is
 // deliberately absent: tests use the real embedded ToolHive authorization
 // server for it.
+//
+// Where the design is silent the harness guesses, marked "Guess:" in the code:
+//
+//   - Revocation is RFC 7009 at {issuer}/revoke, callable only by the
+//     authenticated broker. Revoking a session's current refresh token closes
+//     the session; revoking a replaced token or any other value changes
+//     nothing and answers 200.
+//   - A mecatl_session entry's members beyond type, session, and owner are
+//     accepted and echoed unchanged. The known members (type, session, owner,
+//     and owner's iss and sub) must be spelled exactly and appear once.
+//   - A client assertion with an explicit typ other than
+//     client-authentication+jwt or JWT (golang-jwt's default) is refused; an
+//     untyped one is accepted; only ES256 is accepted. Because the harness
+//     accepts JWT, the production broker's own tests must check the typ it
+//     emits.
+//   - Following stacklok/toolhive#6897, a retry or a later open replaces the
+//     refresh token without extending the session's hard expiry, which runs
+//     from the first open; expires_in is the time left until it.
+//   - A refused open is recorded with its reason for checks 4 to 7, which
+//     name a session; malformed requests are not recorded.
 //
 // Everything runs on loopback TLS servers that close when the test ends. The
 // harness is test code; production packages never import it.
@@ -69,6 +111,16 @@ type Options struct {
 	AccessTokenLifetime time.Duration
 	// Now is the clock for every issued token and code. Nil selects time.Now.
 	Now func() time.Time
+	// BrokerKeys are public keys registered for BrokerClientID in addition
+	// to the harness's own broker key, DefaultBrokerKeyID. Each needs a
+	// unique, nonempty KeyID other than DefaultBrokerKeyID and a P-256 key.
+	BrokerKeys []BrokerKey
+	// ClientAssertionMaxLifetime is the largest exp - iat AS-1 accepts in a
+	// client assertion. Zero selects DefaultClientAssertionMaxLifetime.
+	ClientAssertionMaxLifetime time.Duration
+	// SessionRefreshTokenLifetime is a session's hard expiry, counted from its
+	// first open. Zero selects DefaultSessionRefreshTokenLifetime.
+	SessionRefreshTokenLifetime time.Duration
 }
 
 // Harness is a running set of stand-ins. Create it with New.
@@ -97,6 +149,12 @@ func New(t testing.TB, opts Options) *Harness {
 	if opts.Now == nil {
 		opts.Now = time.Now
 	}
+	if opts.ClientAssertionMaxLifetime <= 0 {
+		opts.ClientAssertionMaxLifetime = DefaultClientAssertionMaxLifetime
+	}
+	if opts.SessionRefreshTokenLifetime <= 0 {
+		opts.SessionRefreshTokenLifetime = DefaultSessionRefreshTokenLifetime
+	}
 
 	idp := newIdP(t, opts)
 	as1 := newAS1(t, opts, idp)
@@ -122,6 +180,10 @@ func (h *Harness) HTTPClient() *http.Client {
 		Timeout:       10 * time.Second,
 	}
 }
+
+// Owner returns the company identity of user at the upstream IdP, as an
+// access token's sub_id carries it.
+func (h *Harness) Owner(user string) Owner { return Owner{Issuer: h.IdP.Issuer(), Subject: user} }
 
 // CACertPEM returns the PEM certificate that verifies every stand-in.
 func (h *Harness) CACertPEM() []byte { return append([]byte(nil), h.certPEM...) }
