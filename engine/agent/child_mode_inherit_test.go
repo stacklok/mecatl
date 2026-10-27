@@ -2,6 +2,7 @@ package agent_test
 
 import (
 	"context"
+	"fmt"
 	"slices"
 	"strings"
 	"sync"
@@ -13,6 +14,7 @@ import (
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
 	"github.com/stacklok/mecatl/engine/agent"
+	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 )
@@ -110,7 +112,7 @@ func mutatingChildEngine(t *testing.T, executed *atomic.Int32, turns ...mockllm.
 }
 
 // runParent drives one parent run in mode to completion and returns its events.
-func runParent(t *testing.T, sess *session.Session, mode session.PermissionMode, parentLLM *mockllm.Provider, tools ...tool.Tool) []session.Event {
+func runParent(t *testing.T, sess *session.Session, mode session.PermissionMode, parentLLM port.LLMProvider, tools ...tool.Tool) []session.Event {
 	t.Helper()
 	if sess.State == session.StateCompleted {
 		if err := sess.Reopen(); err != nil {
@@ -147,11 +149,7 @@ func TestExplicitDefaultChildModeIsKeptUnderYoloParent(t *testing.T) {
 		{"subagent-background", true, func(e *agent.Engine) tool.Tool {
 			return agent.NewSubagentTool(e, agent.WithChildMode(session.ModeDefault))
 		},
-			[]mockllm.Turn{
-				mockllm.ToolCallTurn(toolCall("p1", "Subagent", `{"prompt":"go","background":true}`)),
-				mockllm.ToolCallTurn(toolCall("p2", "SubagentStatus", `{"agent_id":"subagent-s1-p1","wait_ms":30000}`)),
-				mockllm.TextTurn("ok"),
-			}},
+			[]mockllm.Turn{mockllm.ToolCallTurn(toolCall("p1", "Subagent", `{"prompt":"go","background":true}`)), mockllm.TextTurn("ok")}},
 		{"parallel", true, func(e *agent.Engine) tool.Tool {
 			return agent.NewParallelTool(e, &memForker{}, agent.WithParallelChildMode(session.ModeDefault))
 		}, []mockllm.Turn{mockllm.ToolCallTurn(toolCall("p1", "Parallel", `{"tasks":["A"]}`)), mockllm.TextTurn("ok")}},
@@ -161,7 +159,26 @@ func TestExplicitDefaultChildModeIsKeptUnderYoloParent(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			var executed atomic.Int32
 			delegate := tc.build(mutatingChildEngine(t, &executed, childTurns()...))
-			runParent(t, newSession(t, session.Limits{}), session.ModeYolo, mockllm.New(tc.parent...), delegate, agent.NewSubagentStatusTool())
+			if tc.name == "subagent-background" {
+				evs := runParent(t, newSession(t, session.Limits{}), session.ModeYolo, newScriptedLLM(
+					mockllm.ToolCallTurn(toolCall("p1", "Subagent", `{"prompt":"go","background":true}`)),
+					handleTurn(t, "p1", toolCall("p2", "SubagentStatus", `{"wait_ms":30000}`), "agent_id"),
+					mockllm.TextTurn("ok"),
+				), delegate, agent.NewSubagentStatusTool())
+				collected := resultByCallID(evs)[eventCallID(t, evs, "SubagentStatus", 0)]
+				if collected == nil || collected.IsError || !strings.Contains(collected.Content, "child done") {
+					t.Fatalf("background child was not collected after denied mutation: %+v", collected)
+				}
+				denied := false
+				for _, ev := range evs {
+					denied = denied || ev.Type == session.EvSubagentTool && ev.Subagent != nil && ev.Subagent.InnerKind == session.EvToolResult && ev.Subagent.ToolName == "Mutate" && ev.Subagent.IsError
+				}
+				if !denied {
+					t.Fatal("background child mutation was not denied under explicit default mode")
+				}
+			} else {
+				runParent(t, newSession(t, session.Limits{}), session.ModeYolo, mockllm.New(tc.parent...), delegate, agent.NewSubagentStatusTool())
+			}
 			if got, want := executed.Load() == 1, !tc.explicit; got != want {
 				t.Errorf("child mutating tool executed=%t under a yolo parent, want %t", got, want)
 			}
@@ -189,12 +206,20 @@ func TestResumedSubagentReadmitsModeAfterParentDowngrade(t *testing.T) {
 			first := agent.NewSubagentTool(mutatingChildEngine(t, &executed,
 				mockllm.ToolCallTurn(toolCall("k1", "Mutate", `{}`)), mockllm.TextTurn("FIRST_PASS")),
 				agent.WithSubagentStore(store))
-			runParent(t, sess, session.ModeYolo, mockllm.New(
+			firstEvents := runParent(t, sess, session.ModeYolo, mockllm.New(
 				mockllm.ToolCallTurn(toolCall("p1", "Subagent", `{"prompt":"go"}`)), mockllm.TextTurn("ok")), first)
 			if executed.Load() != 1 {
 				t.Fatalf("yolo parent: child mutation executed %d times, want 1", executed.Load())
 			}
-			if stored, err := store.Load(context.Background(), "subagent-s1-p1"); err != nil || stored.Mode != session.ModeYolo {
+			started := resultByCallID(firstEvents)[eventCallID(t, firstEvents, "Subagent", 0)]
+			if started == nil || started.IsError {
+				t.Fatalf("first child did not complete: %+v", started)
+			}
+			childID := extractAgentID(t, started.Content)
+			if childID == "" {
+				t.Fatalf("first child result did not expose an agentId: %q", started.Content)
+			}
+			if stored, err := store.Load(context.Background(), session.SessionID(childID)); err != nil || stored.Mode != session.ModeYolo {
 				t.Fatalf("persisted child = %v, %v; want mode yolo", stored, err)
 			}
 
@@ -203,24 +228,27 @@ func TestResumedSubagentReadmitsModeAfterParentDowngrade(t *testing.T) {
 			second := agent.NewSubagentTool(mutatingChildEngine(t, &executed,
 				mockllm.ToolCallTurn(toolCall("k2", "Mutate", `{}`)), mockllm.TextTurn("SECOND_PASS")),
 				agent.WithSubagentStore(store))
-			parentTurns := []mockllm.Turn{mockllm.ToolCallTurn(toolCall("p2", "Subagent", `{"prompt":"again","resume":"subagent-s1-p1"}`)), mockllm.TextTurn("ok")}
-			collect := session.ToolCallID("p2")
+			parentTurns := []mockllm.Turn{mockllm.ToolCallTurn(toolCall("p2", "Subagent", resumeArgs(childID, "again"))), mockllm.TextTurn("ok")}
+			parentLLM := port.LLMProvider(mockllm.New(parentTurns...))
 			if background {
-				parentTurns = []mockllm.Turn{
-					mockllm.ToolCallTurn(toolCall("p2", "Subagent", `{"prompt":"again","resume":"subagent-s1-p1","background":true}`)),
-					mockllm.ToolCallTurn(toolCall("p3", "SubagentStatus", `{"agent_id":"subagent-s1-p1","wait_ms":30000}`)),
+				parentLLM = newScriptedLLM(
+					mockllm.ToolCallTurn(toolCall("p2", "Subagent", fmt.Sprintf(`{"prompt":"again","resume":%q,"background":true}`, childID))),
+					handleTurn(t, "p2", toolCall("p3", "SubagentStatus", `{"wait_ms":30000}`), "agent_id"),
 					mockllm.TextTurn("ok"),
-				}
-				collect = "p3"
+				)
 			}
-			evs := runParent(t, sess, session.ModeDefault, mockllm.New(parentTurns...), second, agent.NewSubagentStatusTool())
-			if res := resultByCallID(evs)[collect]; res == nil || !strings.Contains(res.Content, "SECOND_PASS") {
+			evs := runParent(t, sess, session.ModeDefault, parentLLM, second, agent.NewSubagentStatusTool())
+			collect := eventCallID(t, evs, "Subagent", 0)
+			if background {
+				collect = eventCallID(t, evs, "SubagentStatus", 0)
+			}
+			if res := resultByCallID(evs)[collect]; res == nil || res.IsError || !strings.Contains(res.Content, "SECOND_PASS") {
 				t.Fatalf("resumed child did not complete: %+v; events %v; state %s", res, typesOf(evs), sess.State)
 			}
 			if executed.Load() != 1 {
 				t.Errorf("downgraded parent: resumed child kept yolo authority (mutation executed %d times, want 1)", executed.Load())
 			}
-			stored, err := store.Load(context.Background(), "subagent-s1-p1")
+			stored, err := store.Load(context.Background(), session.SessionID(childID))
 			if err != nil {
 				t.Fatal(err)
 			}

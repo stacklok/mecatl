@@ -153,23 +153,30 @@ func TestYoloOptInReviewsRunInBackgroundWithoutDelayingTheTool(t *testing.T) {
 	gate := make(chan struct{})
 	reviewer := &yoloReviewer{optIn: true, gate: gate, result: ToolReviewResult{Assessment: ReviewProhibited}}
 	var once sync.Once
+	var callID session.ToolCallID
 	// Safety release: a blocking review would otherwise hang the run; releasing it
 	// late turns that regression into the ordering failure asserted below.
 	safety := time.AfterFunc(5*time.Second, func() { once.Do(func() { close(gate) }) })
 	defer safety.Stop()
 	events, executions, sess := runYoloReview(t, reviewer, nil, 2, func(ev session.Event) {
+		if ev.Type == session.EvToolCall && ev.ToolCall != nil && ev.ToolCall.Name == "Act" {
+			callID = ev.ToolCall.ID
+		}
 		// The checker is still parked when the canonical result arrives; only then
 		// is it released, so a blocking review would deadlock this run.
-		if ev.Type == session.EvToolResult && ev.ToolResult != nil && ev.ToolResult.CallID == "call" {
+		if ev.Type == session.EvToolResult && ev.ToolResult != nil && ev.ToolResult.CallID == callID {
 			once.Do(func() { close(gate) })
 		}
 	})
 	if executions != 1 {
 		t.Fatalf("executions = %d, want 1", executions)
 	}
+	if callID == "" {
+		t.Fatal("missing accepted Act call")
+	}
 	resultAt, terminalAt := -1, -1
 	for i, ev := range events {
-		if ev.Type == session.EvToolResult && ev.ToolResult != nil && ev.ToolResult.CallID == "call" {
+		if ev.Type == session.EvToolResult && ev.ToolResult != nil && ev.ToolResult.CallID == callID {
 			if ev.ToolResult.IsError || ev.ToolResult.Content != "executed" {
 				t.Fatalf("tool result = %+v, want the released original", ev.ToolResult)
 			}
@@ -209,13 +216,21 @@ func TestYoloOptInTerminalEvidenceFailureNeverFailsClosed(t *testing.T) {
 	if executions != 1 {
 		t.Fatalf("executions = %d, want 1: yolo must not fail closed", executions)
 	}
+	var actCallID session.ToolCallID
+	var actResult *session.ToolResult
 	for _, ev := range events {
-		if ev.Type == session.EvToolResult && ev.ToolResult != nil && ev.ToolResult.CallID == "call" && (ev.ToolResult.IsError || ev.ToolResult.Content != "executed") {
-			t.Fatalf("tool result = %+v, want the released original", ev.ToolResult)
+		if ev.Type == session.EvToolCall && ev.ToolCall != nil && ev.ToolCall.Name == "Act" {
+			actCallID = ev.ToolCall.ID
+		}
+		if ev.Type == session.EvToolResult && ev.ToolResult != nil && ev.ToolResult.CallID == actCallID {
+			actResult = ev.ToolResult
 		}
 		if ev.Type == session.EvPermissionAsk {
 			t.Fatal("yolo must not surface a guardrail ask")
 		}
+	}
+	if actCallID == "" || actResult == nil || actResult.IsError || actResult.Content != "executed" {
+		t.Fatalf("tool result = %+v for canonical call %q, want the released original", actResult, actCallID)
 	}
 	hooks := guardrailHooks(events)
 	if len(hooks) != 2 {
