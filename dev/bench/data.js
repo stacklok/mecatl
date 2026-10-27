@@ -341568,6 +341568,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1793051859420,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "29541485+ChrisJBurns@users.noreply.github.com",
+            "name": "Chris Burns",
+            "username": "ChrisJBurns"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "7d5d79e938cf5d1a4842a7f77e6f2078f55704e9",
+          "message": "feat(identitybroker): authenticate the broker to AS-1 and AS-2 with private_key_jwt (#2573)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-27T14:41:29Z",
+          "tree_id": "edf9780f4b48d92d6b6bbf8767178fe24925f91b",
+          "url": "https://github.com/stacklok/mecatl/commit/7d5d79e938cf5d1a4842a7f77e6f2078f55704e9"
+        },
+        "date": 1793112786208,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -493804,6 +493838,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1793112782555,
+  "lastUpdate": 1793112786871,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
