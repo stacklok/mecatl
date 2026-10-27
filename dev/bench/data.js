@@ -343358,6 +343358,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1793133155009,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "38c5023767c0d5a315648c9c43ddd6de411617cf",
+          "message": "fix(ci): run browser tests in pinned Playwright containers (#2584)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-27T14:21:51-07:00",
+          "tree_id": "20887c410f44037917a514e04b619c248a521703",
+          "url": "https://github.com/stacklok/mecatl/commit/38c5023767c0d5a315648c9c43ddd6de411617cf"
+        },
+        "date": 1793136829978,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -496359,6 +496393,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1793136827074,
+  "lastUpdate": 1793136832004,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
