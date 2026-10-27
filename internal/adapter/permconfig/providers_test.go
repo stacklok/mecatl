@@ -20,6 +20,7 @@ func TestValidateProviderID(t *testing.T) {
 		{"mixed case rejected", "MyProvider", "lowercase letter"},
 		{"reserved rejected", "openai", "reserved"},
 		{"search credential namespace reserved", "websearch", "reserved"},
+		{"you.com search credential namespace reserved", "you", "reserved"},
 		{"router namespace reserved", "model-router", "reserved"},
 		{"empty rejected", "", "lowercase letter"},
 	} {
@@ -72,6 +73,7 @@ func TestOperatorDefinedLLMProviders_Scenario1_InvalidDefinitionsFailClosed(t *t
 		"providers:\n  custom:\n    base_url: https://x.example\n    api_flavor: openai-responses",
 		"providers:\n  mock:\n    base_url: https://x.example\n    default_model: m\n    api_flavor: openai-responses",
 		"providers:\n  websearch:\n    base_url: https://x.example\n    default_model: m\n    api_flavor: openai-responses",
+		"providers:\n  you:\n    base_url: https://x.example\n    default_model: m\n    api_flavor: openai-responses",
 		"providers:\n  model-router:\n    base_url: https://x.example\n    default_model: m\n    api_flavor: openai-responses",
 		"providers:\n  toolhive-anthropic:\n    base_url: https://x.example\n    default_model: m\n    api_flavor: anthropic-messages",
 		"provider_overrides:\n  toolhive:\n    base_url: https://x.example",

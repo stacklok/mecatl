@@ -562,8 +562,9 @@ Flags:
         conventional XDG location. It supplies user-memory tools and a bounded operator
         profile; agent behavior comes from the soul and system rules.
   --websearch string
-        set to "off" to disable web search and outbound search requests. Web search is
-        enabled by default.
+        set to "off" to disable web search and outbound search requests, or "you" to
+        select the You.com backend (keyed endpoint when YDC_API_KEY is set, keyless
+        otherwise). Web search is enabled by default.
   --websearch-auth-header string
         HTTP header for WEBSEARCH_API_KEY. Default "Authorization" sends a Bearer
         token; for example, "X-API-Key" sends the key directly.

@@ -221,7 +221,7 @@ func (t WebSearchTool) Execute(ctx context.Context, in session.ToolCall, _ tool.
 		case errors.Is(err, tool.ErrSearchBackendDown):
 			// A configured/default backend was attempted but is down/rate-limited.
 			// Non-error: the condition is environmental, names the upgrade path.
-			return session.NewToolResult(in.ID, webSearchBackendDownMsg), nil
+			return session.NewToolResult(in.ID, backendDownMessage(err)), nil
 		default:
 			return session.NewToolError(in.ID, fmt.Sprintf("web search failed: %v", err)), nil
 		}
@@ -251,15 +251,30 @@ const webSearchDisabledMsg = "Web search is disabled on this deployment (the ope
 	"No query ran and none will until web search is re-enabled. " +
 	"Report this to the user rather than retrying."
 
-// webSearchBackendDownMsg is the model-facing message returned when a real,
-// configured (or default Exa) backend was attempted but is unreachable or
-// rate-limited (tool.ErrSearchBackendDown). It is NOT an error result: the
-// condition is environmental/transient, and it names the concrete upgrade path so
-// the operator who reads the relayed message knows how to provision a dedicated
-// backend instead of relying on the anonymous default.
-const webSearchBackendDownMsg = "Web search is temporarily unavailable: the default search backend (Exa) is " +
-	"unreachable or rate-limited. The operator can configure a dedicated backend by setting BRAVE_API_KEY or " +
-	"SEARXNG_URL (see https://mecatl.dev/docs/features/tools#configure-web-search). Do not retry immediately."
+// webSearchBackendDownPrefix and webSearchBackendDownSuffix frame the
+// model-facing message returned when a real, configured (or default) backend was
+// attempted but is unreachable or rate-limited (tool.ErrSearchBackendDown). It is
+// NOT an error result: the condition is environmental/transient. The message does
+// not name a backend, because it is shared by all of them; a provider can add its
+// own detail (for example a Retry-After) via tool.SearchBackendHint.
+const (
+	webSearchBackendDownPrefix = "Web search is temporarily unavailable: the search backend is unreachable or rate-limited."
+	webSearchBackendDownSuffix = " If this persists, the operator can configure a different backend, for example by setting " +
+		"BRAVE_API_KEY or SEARXNG_URL (see https://mecatl.dev/docs/features/tools#configure-web-search). Do not retry immediately."
+)
+
+// backendDownMessage renders the backend-down message, including the provider's
+// hint when the error carries one.
+func backendDownMessage(err error) string {
+	msg := webSearchBackendDownPrefix
+	var hint tool.SearchBackendHint
+	if errors.As(err, &hint) {
+		if h := oneLine(hint.SearchBackendHint()); h != "" {
+			msg += " " + h
+		}
+	}
+	return msg + webSearchBackendDownSuffix
+}
 
 // clampSearchLimit normalises the model-supplied limit: nil/absent or <=0 uses the
 // default; anything above the hard max is clamped down. The result is always in

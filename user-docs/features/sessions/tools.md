@@ -65,12 +65,13 @@ guardrails are enabled.
 
 ### Configure web search
 
-`WebSearch` is enabled by default. It uses one of four implementations:
+`WebSearch` is enabled by default. It uses one of five implementations:
 
 |Implementation|Use it when|Configuration|
 |-|-|-|
 |[Exa](#exa)|You want the default web search backend.|No configuration for the anonymous tier. An Exa credential enables its paid tier.|
 |[Brave Search](#brave-search)|You have a Brave Search credential.|Configure the Brave search credential.|
+|[You.com](#youcom)|You want a second hosted backend, with or without a key.|Start `mecated` with `--websearch=you`, or configure the `you` search credential.|
 |[SearXNG](#self-hosted-searxng)|You run a SearXNG instance.|Set its endpoint in the operator `websearch` settings.|
 |[Generic HTTP JSON](#generic-http-json)|You have a compatible search API.|Set its endpoint and request shape in the operator `websearch` settings.|
 
@@ -90,6 +91,24 @@ providers and storage](/operating/mecated/configure-providers-and-storage.md#mod
 Configure the `brave` search credential to select Brave Search. [Configure
 mecated providers and storage](/operating/mecated/configure-providers-and-storage.md#model-and-search-credential-file)
 describes credential custody and environment-variable precedence.
+
+#### You.com
+
+You.com is opt-in. Start `mecated` with `--websearch=you` to select it. Without
+a key it uses the keyless endpoint, which needs no account and allows 100
+searches a day per IP address. Configure the `you` search credential
+(`YDC_API_KEY`) to use the keyed endpoint instead; the credential alone also
+selects You.com. [Configure mecated providers and
+storage](/operating/mecated/configure-providers-and-storage.md#model-and-search-credential-file)
+describes credential custody. [Selection and overrides](#selection-and-overrides)
+lists where each option ranks.
+
+When You.com rate limits a request (HTTP 429), `WebSearch` tells the model that
+search is temporarily unavailable, including the `Retry-After` interval, and
+Mecatl sends no further You.com requests until that interval has passed. The
+interval is 30 seconds when the response gives none, and is capped at 1 hour.
+A rejected credential or exhausted plan (HTTP 401, 402, or 403) is reported as a
+search failure, in keyless mode as well as keyed mode.
 
 #### Self-hosted SearXNG
 
@@ -134,13 +153,17 @@ For `mecated`, the first matching item in this order selects the backend:
 
 1. `--websearch=off` disables outbound search.
 2. A nonempty `--websearch-url` selects the generic HTTP endpoint.
-3. `websearch.enabled: false` disables outbound search when no explicit URL is
-   set.
-4. `websearch.url` selects the generic HTTP endpoint.
-5. `websearch.searxng.url` selects SearXNG.
-6. `SEARXNG_URL` selects SearXNG.
-7. The Brave search credential selects Brave Search.
-8. Exa is the default. Its search credential selects its authenticated paid
+3. `--websearch=you` selects You.com, using the keyed endpoint when the You.com
+   search credential is set. It can't be combined with `--websearch-url`.
+4. `websearch.enabled: false` disables outbound search when no explicit URL or
+   `--websearch=you` is set.
+5. `websearch.url` selects the generic HTTP endpoint.
+6. `websearch.searxng.url` selects SearXNG.
+7. `SEARXNG_URL` selects SearXNG.
+8. The Brave search credential selects Brave Search.
+9. The You.com search credential (`YDC_API_KEY`) selects You.com's keyed
+   endpoint. With both `YDC_API_KEY` and `EXA_API_KEY` set, You.com wins.
+10. Exa is the default. Its search credential selects its authenticated paid
    tier; otherwise, Exa runs anonymously.
 
 `--websearch-auth-header` and `--websearch-query-param` override the generic
@@ -152,7 +175,7 @@ credentials, including `websearch.url` and `websearch.searxng.url`. It does not
 read `SEARXNG_URL` or accept the `mecated` web-search flags. `mecatui connect`
 uses the remote server's web-search configuration.
 
-Exa and Brave are search credentials, not model providers. They do not satisfy
+Exa, Brave, and You.com are search credentials, not model providers. They do not satisfy
 Mecatl's requirement for an LLM credential. Queries are sent verbatim, results
 are marked as untrusted, redirects are refused, and calls have timeout and
 concurrency limits. Use permissions or guardrails for additional exfiltration

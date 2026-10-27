@@ -58,6 +58,7 @@ func (r *ProviderCredentialResolver) Load(definitions permconfig.ProviderDefinit
 	credentials := app.ProviderCredentials{
 		ExaAPIKey:       keys.Exa,
 		BraveAPIKey:     keys.Brave,
+		YouAPIKey:       keys.You,
 		WebSearchAPIKey: keys.WebSearch,
 		OpenAIKey:       keys.OpenAI, OpenRouterKey: keys.OpenRouter,
 		AnthropicKey: keys.Anthropic, OpenCodeKey: keys.OpenCode,

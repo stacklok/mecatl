@@ -437,7 +437,8 @@ type config struct {
 	// anonymous). SearXNG selects a different backend; Exa and Brave keys
 	// are resolved by the shared provider credential lifecycle.
 	searxngURL    string
-	websearchMode string // raw --websearch value ("off" → websearchOff)
+	websearchMode string // raw --websearch value ("off" → websearchOff, "you" → websearchYou)
+	websearchYou  bool
 	websearchOff  bool
 
 	// Parallel: enable the Parallel fan-out tool (parallel isolated child branches).
@@ -1312,6 +1313,7 @@ func appConfig(cfg config, sink port.EventSink, recorder port.ToolCallRecorder, 
 		WebSearchQueryParamFlagSet: cfg.cliExplicit["websearch-query-param"],
 		SearXNGURL:                 cfg.searxngURL,
 		WebSearchOff:               cfg.websearchOff,
+		WebSearchYou:               cfg.websearchYou,
 		ForkPreservedCap:           cfg.forkPreservedCap,
 		EnableTeams:                cfg.enableTeams,
 		MCPServers:                 cfg.mcpServers.Servers(),
@@ -1868,7 +1870,7 @@ func parseFlagsModeOut(mode commandMode, argv []string, out io.Writer) (*flag.Fl
 
 	fs.BoolVar(&cfg.enableParallel, "enable-parallel", true, "register the Parallel fan-out tool (parallel isolated child branches)")
 	fs.StringVar(&cfg.websearchURL, "websearch-url", "", "base URL of an HTTP JSON search endpoint. Overrides configured environment-based search providers. The API key is read from WEBSEARCH_API_KEY.")
-	fs.StringVar(&cfg.websearchMode, "websearch", "", "set to \"off\" to disable web search and outbound search requests. Web search is enabled by default.")
+	fs.StringVar(&cfg.websearchMode, "websearch", "", "set to \"off\" to disable web search and outbound search requests, or \"you\" to select the You.com backend (keyed endpoint when YDC_API_KEY is set, keyless otherwise). Web search is enabled by default.")
 	fs.StringVar(&cfg.websearchAuthHeader, "websearch-auth-header", "", "HTTP header for WEBSEARCH_API_KEY. Default \"Authorization\" sends a Bearer token; for example, \"X-API-Key\" sends the key directly.")
 	fs.StringVar(&cfg.websearchQueryParam, "websearch-query-param", "", "query parameter name for the search string. Default \"q\".")
 	fs.IntVar(&cfg.forkPreservedCap, "fork-preserved-cap", agent.DefaultPreservedForkCap, "maximum preserved winner forks kept on disk. Older forks are deleted and no longer inspectable.")
@@ -2046,8 +2048,13 @@ func parseFlagsModeOut(mode commandMode, argv []string, out io.Writer) (*flag.Fl
 		cfg.websearchOff = false
 	case "off":
 		cfg.websearchOff = true
+	case "you":
+		if strings.TrimSpace(cfg.websearchURL) != "" {
+			return nil, config{}, errors.New("--websearch=you and --websearch-url both select a search backend; set only one")
+		}
+		cfg.websearchYou = true
 	default:
-		return nil, config{}, fmt.Errorf("--websearch %q: only \"off\" is accepted (the kill switch); web search is ON by default (Exa anonymous tier). Set SEARXNG_URL or BRAVE_API_KEY to switch backends, or --websearch-url for an explicit endpoint. Leave --websearch unset to keep web search enabled", cfg.websearchMode)
+		return nil, config{}, fmt.Errorf("--websearch %q: only \"off\" (the kill switch) or \"you\" (opt-in You.com backend) is accepted; web search is ON by default (Exa anonymous tier). Set SEARXNG_URL or BRAVE_API_KEY to switch backends, or --websearch-url for an explicit endpoint. Leave --websearch unset to keep web search enabled", cfg.websearchMode)
 	}
 	return fs, cfg, nil
 }
