@@ -379340,6 +379340,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1793117690042,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "danbarr@users.noreply.github.com",
+            "name": "Dan Barr",
+            "username": "danbarr"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "3a71502efdccb1adf1db3a3a63aab62ada44dd15",
+          "message": "chore: add Context7 ownership verification (#2576)\n\nCo-authored-by: Dan Barr <6922515+danbarr@users.noreply.github.com>\nCo-authored-by: Claude Sonnet 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-27T12:46:09-04:00",
+          "tree_id": "94a0577539eab8deb4ec68725554a7fdaf4578fe",
+          "url": "https://github.com/stacklok/mecatl/commit/3a71502efdccb1adf1db3a3a63aab62ada44dd15"
+        },
+        "date": 1793120314025,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 16151,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12915.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 795,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -494860,6 +494899,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1793120310579,
+  "lastUpdate": 1793120314959,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
