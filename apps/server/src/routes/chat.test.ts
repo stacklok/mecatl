@@ -315,8 +315,6 @@ describe("chat routes", () => {
     const presentation = vi.fn(async () => "https://issuer.example/authorize?token=secret");
     const authentication: AuthenticationService = {
       clear: () => undefined,
-      freshTokenPerSessionOpen: false,
-      refresh: () => Promise.reject(new Error("refresh unavailable")),
       completeLogin: async () => {
         throw new Error("unused");
       },
@@ -951,8 +949,6 @@ describe("chat routes", () => {
     const gated = createApp({
       authentication: {
         clear: () => undefined,
-        freshTokenPerSessionOpen: false,
-        refresh: () => Promise.reject(new Error("refresh unavailable")),
         completeLogin: async () => {
           throw new Error("unused");
         },

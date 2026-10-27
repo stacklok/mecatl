@@ -7,8 +7,6 @@ import (
 	"sync"
 
 	tea "charm.land/bubbletea/v2"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
 )
@@ -44,104 +42,39 @@ type Sender interface {
 // approve/cancel commands Send — so a single send-mutex is sufficient and keeps
 // the control frames ordered.
 type Stream struct {
-	recv Recver
-	send Sender
+	// reopenableStream holds both sides, serialises Sends, and performs the
+	// one-time reopen after a rejected bearer.
+	reopenableStream[mecatlv1.ConverseRequest, mecatlv1.ConverseResponse]
 
-	mu sync.Mutex // serialises Send (Recv is single-goroutine in the reader)
+	mu sync.Mutex // guards resolvedApprovals
 	// resolvedApprovals is run-scoped transport correlation. It is intentionally
 	// owned by the stream rather than the UI Model, so closing a dynamic approval
 	// surface does not leave a Model approval-state tombstone merely to reject a
 	// late duplicate event.
 	resolvedApprovals map[string]struct{}
 	bearerBacked      bool
-
-	// reopen, when set, opens a replacement Converse stream with a freshly
-	// refreshed token. It is used at most once, only when the server rejects
-	// the bearer before delivering any response. Until the first response,
-	// sent frames are kept in unanswered so the replacement can replay them:
-	// the server never processed them. Guarded by mu.
-	reopen     func() (Recver, Sender, error)
-	recording  bool
-	unanswered []*mecatlv1.ConverseRequest
-	// answered is set by the reader goroutine alone, after the first response.
-	answered bool
-	// onAnswered, when set before the read loop starts, runs once with the
-	// first response.
-	onAnswered func()
 }
 
 // NewStream binds a receive and send side into a Stream. Pass the same
 // grpc.BidiStreamingClient for both in production; pass a fake Recver (and a
 // no-op or recording Sender) in tests.
 func NewStream(recv Recver, send Sender) *Stream {
-	return &Stream{recv: recv, send: send}
+	return newAuthenticatedStream(recv, send, false)
 }
 
 func newAuthenticatedStream(recv Recver, send Sender, bearerBacked bool) *Stream {
-	return &Stream{recv: recv, send: send, bearerBacked: bearerBacked}
-}
-
-// enableReopen arms the one-time reopen after a rejected bearer.
-func (s *Stream) enableReopen(reopen func() (Recver, Sender, error)) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.reopen = reopen
-	s.recording = true
-}
-
-// recvResponse receives the next response. If the server rejects the bearer
-// (Unauthenticated) before any response, it reopens the stream once with a
-// fresh token, replays the frames sent so far, and receives from the
-// replacement; a second rejection, or one after a response, is returned.
-func (s *Stream) recvResponse() (*mecatlv1.ConverseResponse, error) {
-	resp, err := s.recv.Recv()
-	if err != nil && !s.answered && status.Code(err) == codes.Unauthenticated {
-		if reopened, reopenErr := s.reopenOnce(); reopened {
-			resp, err = s.recv.Recv()
-		} else if _, local := localAuthFailure(reopenErr); local {
-			err = reopenErr // e.g. the session can no longer refresh
-		}
-	}
-	if err == nil && !s.answered {
-		s.answered = true
-		s.mu.Lock()
-		s.recording = false
-		s.unanswered = nil
-		s.mu.Unlock()
-		if s.onAnswered != nil {
-			s.onAnswered()
-		}
-	}
-	return resp, err
-}
-
-// reopenOnce replaces the rejected stream and reports whether it did. Frames
-// sent while the replacement is opening still go to the rejected stream and
-// are recorded, so the replay under mu sends each frame once.
-func (s *Stream) reopenOnce() (bool, error) {
-	s.mu.Lock()
-	reopen := s.reopen
-	s.reopen = nil
-	s.mu.Unlock()
-	if reopen == nil {
-		return false, nil
-	}
-	recv, send, err := reopen()
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.recording = false
-	frames := s.unanswered
-	s.unanswered = nil
-	if err != nil {
-		return false, err
-	}
-	for _, frame := range frames {
-		if send.Send(frame) != nil {
-			break // the replacement's Recv reports why
-		}
-	}
+	s := &Stream{bearerBacked: bearerBacked}
 	s.recv, s.send = recv, send
-	return true, nil
+	return s
+}
+
+// enableReopen arms the one-time reopen of a Converse stream after a rejected
+// bearer; reopen opens the replacement with a freshly refreshed token.
+func (s *Stream) enableReopen(reopen func() (Recver, Sender, error)) {
+	s.armReopen(func() (recvSide[mecatlv1.ConverseResponse], sendSide[mecatlv1.ConverseRequest], error) {
+		recv, send, err := reopen()
+		return recv, send, err
+	})
 }
 
 // MarkApprovalResolved records an ask id as resolved for this stream. It is
@@ -201,7 +134,7 @@ func (s *Stream) ForgetApprovalResolved(askID string) {
 // StreamClosedMsg as a no-op.
 func (s *Stream) ReadLoop(ctx context.Context, out chan<- tea.Msg) {
 	readEventLoop(ctx, func() (*mecatlv1.Event, error) {
-		resp, err := s.recvResponse()
+		resp, err := s.receive()
 		if err != nil {
 			return nil, err
 		}
@@ -403,21 +336,4 @@ func (s *Stream) SendSteerCancel(messageID string) error {
 	return s.sendFrame(&mecatlv1.ConverseRequest{
 		Kind: &mecatlv1.ConverseRequest_SteerCancel{SteerCancel: &mecatlv1.SteerCancel{MessageId: messageID}},
 	})
-}
-
-// sendFrame serialises one Send under the mutex. While a reopen is still
-// possible the frame is recorded for replay, and io.EOF (the stream already
-// ended) is not an error: the reader receives the stream's real status and
-// either reopens and replays the frame or reports that status.
-func (s *Stream) sendFrame(req *mecatlv1.ConverseRequest) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if !s.recording {
-		return s.send.Send(req)
-	}
-	s.unanswered = append(s.unanswered, req)
-	if err := s.send.Send(req); err != nil && !errors.Is(err, io.EOF) {
-		return err
-	}
-	return nil
 }

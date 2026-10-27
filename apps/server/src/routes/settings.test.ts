@@ -92,7 +92,7 @@ describe("settings routes", () => {
       )) as AuthenticationService;
       let activeToken: string | undefined;
       const list = vi.fn(async () => {
-        expect(activeToken).toMatch(/^access-\d+-/);
+        expect(activeToken).toMatch(/^access-1-/);
         return {
           models: [
             {
@@ -160,12 +160,8 @@ describe("settings routes", () => {
       const body = await rejected.json();
       expect(body).toMatchObject({ code: "session_expired" });
       expect(JSON.stringify(body)).not.toContain("revoked-secret");
-      // An upstream rejection gets one refresh and one retry; a credential
-      // provider failure is local and gets none.
-      const attempts = code === "unauthenticated" ? 2 : 1;
-      expect(info).toHaveBeenCalledTimes(attempts);
-      expect(info).toHaveBeenCalledWith({ providerId: "visible/provider" });
-      expect(issuer.refreshCalls()).toBe(attempts - 1);
+      expect(info).toHaveBeenCalledExactlyOnceWith({ providerId: "visible/provider" });
+      expect(issuer.refreshCalls()).toBe(0);
       for (const name of ["studio_access", "studio_refresh"]) {
         expect(
           rejected.headers
@@ -210,8 +206,6 @@ describe("settings routes", () => {
     const service = createMecatlSettingsService(client, { modelSelection: true, serverInfo: true });
     const auth = {
       clear: () => undefined,
-      freshTokenPerSessionOpen: false,
-      refresh: () => Promise.reject(new Error("refresh unavailable")),
       completeLogin: async () => {
         throw new Error("unused");
       },
@@ -442,8 +436,6 @@ describe("settings routes", () => {
     const gated = createApp({
       authentication: {
         clear: () => undefined,
-        freshTokenPerSessionOpen: false,
-        refresh: () => Promise.reject(new Error("refresh unavailable")),
         completeLogin: async () => {
           throw new Error("unused");
         },

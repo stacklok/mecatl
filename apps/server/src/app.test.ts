@@ -26,8 +26,6 @@ describe("Studio BFF", () => {
     );
     const authentication: AuthenticationService = {
       clear: () => undefined,
-      freshTokenPerSessionOpen: false,
-      refresh: () => Promise.reject(new Error("refresh unavailable")),
       completeLogin: async () => {
         throw new Error("unused");
       },

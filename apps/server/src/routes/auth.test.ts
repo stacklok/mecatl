@@ -513,8 +513,6 @@ describe("authentication routes", () => {
   it("reports an opaque, stable account key for the signed-in identity", async () => {
     const signedIn = (subject: string): AuthenticationService => ({
       clear: () => undefined,
-      freshTokenPerSessionOpen: false,
-      refresh: () => Promise.reject(new Error("refresh unavailable")),
       completeLogin: async () => {
         throw new Error("unused");
       },

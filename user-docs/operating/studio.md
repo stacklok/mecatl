@@ -451,6 +451,13 @@ deployment's identity provider with Authorization Code and PKCE; Studio keeps
 the session in encrypted, HttpOnly cookies and forwards the user's token on
 every request.
 
+Studio doesn't yet support a `mecak8s` deployment that signs users in through
+the identity broker: one that runs with `--oidc-owner-identity=sub_id` and
+publishes
+[`com.stacklok.mecatl.identity_broker_sign_in`](/features/security-and-execution/caller-identity.md#protected-resource-discovery-rfc-9728).
+Connect Studio only to a deployment whose protected-resource document omits
+that member.
+
 Set these variables on the Studio container:
 
 |Variable|Value|
@@ -463,9 +470,7 @@ Set these variables on the Studio container:
 Register the callback URL with your identity provider's public client. Studio
 discovers the issuer, client ID, audience, and scopes from the deployment's
 protected-resource document and refuses to start when that document cannot be
-fetched, so a misconfigured target fails at deploy time. To sign in with a
-client registration of Studio's own, set `STUDIO_OIDC_CLIENT_ID`; it replaces
-the discovered client ID.
+fetched, so a misconfigured target fails at deploy time.
 
 `MECATL_RESOURCE_URL` is the deployment's canonical resource identifier: the
 exact value its protected-resource document publishes as `resource`. Studio
@@ -567,35 +572,6 @@ NetworkPolicy matches the destination pod's port.
 Run `helm show values oci://ghcr.io/stacklok/mecatl/charts/mecatl-studio` for
 every value.
 
-### Sign in through the identity broker
-
-When `mecak8s` signs users in through the identity broker's authorization
-server (AS-1), Studio needs its own client registration there. You can tell
-from the deployment's protected-resource document, which then publishes
-`com.stacklok.mecatl.identity_broker_sign_in: true`. For the `mecak8s` side, see
-[Own sessions by the company identity](./mecak8s/identity-and-client-access.md#own-sessions-by-the-company-identity).
-
-1. Register Studio at AS-1 as a public client with no secret that uses the
-   authorization code flow with PKCE (`S256`) and issues refresh tokens. Use
-   `STUDIO_PUBLIC_URL/api/v1/auth/callback` as its redirect URI, for example
-   `https://studio.example.com/api/v1/auth/callback`. To sign in to a local
-   development Studio served at `http://127.0.0.1:18473`, also allow
-   `http://127.0.0.1:18473/oauth/callback`, the loopback callback Studio
-   shares with `mecatui`.
-
-1. Set `STUDIO_OIDC_CLIENT_ID` to that client ID. With the Helm chart, add
-   `--set oidc.clientID=<STUDIO_CLIENT_ID>` to the install command.
-
-1. Add the same client ID to the `mecak8s` value `oidc.acceptedClientIDs`, so
-   the deployment accepts the tokens AS-1 issues to Studio.
-
-Against such a deployment, Studio sends the deployment's audience as the RFC
-8707 `resource` parameter when it signs in and refreshes. AS-1 accepts each
-access token for only one session open, so Studio refreshes the token before
-every request that opens one: creating, forking, or clearing a chat, and the
-first run of a chat that this Studio replica has not opened since it started,
-such as one created in `mecatui`.
-
 ### Sign in and recover
 
 On your first visit, select **Sign in to Mecatl** in the centered card. If the
@@ -605,11 +581,6 @@ Studio keeps the original tab, route, and unfinished draft open while the popup
 completes login. If the browser blocks the popup or you close it, use **Retry**
 or the manual new-tab sign-in link. Return to the Studio tab after signing in
 through the new tab so it can check your session.
-
-When the deployment rejects your access token, Studio refreshes it and retries
-the request once before it asks you to sign in. A run the deployment rejects
-after its first event has reached the browser ends with an error in the chat
-instead.
 
 If your session expires while Studio is open, sign in again. Studio refetches
 reads after you return to the same account. Retry a write or stream yourself
@@ -639,7 +610,6 @@ so the image refuses to start unless you also set
 |`MECATL_AUTH_TOKEN`|unset|Static bearer token; disables browser login.|
 |`STUDIO_PUBLIC_URL`|unset|Browser-facing origin; required for browser login and inside the image.|
 |`STUDIO_SESSION_SECRET`|unset|Secret sealing the session cookies; required for browser login.|
-|`STUDIO_OIDC_CLIENT_ID`|the deployment's advertised client ID|Studio's own OAuth client ID at the authorization server.|
 |`STUDIO_PORT`|`3100`|Listening port.|
 |`STUDIO_HOST`|`0.0.0.0` in the image, `127.0.0.1` elsewhere|Listening address.|
 |`STUDIO_TRUSTED_PROXY_HOPS`|`0`|Reverse-proxy hops to trust when reading `X-Forwarded-For`.|

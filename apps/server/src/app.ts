@@ -9,7 +9,6 @@ import {
 import { MecatlError, ServerFeature } from "@stacklok-oss/mecatl-sdk";
 import { HTTPException } from "hono/http-exception";
 import type { AuthenticationService } from "./auth/service.js";
-import { UpstreamCredentials } from "./auth/upstream.js";
 import { studioBuildId as bakedStudioBuildId } from "./build-info.js";
 import type { ActivityLimits } from "./config.js";
 import { requestBodyLimit } from "./http/body-limit.js";
@@ -128,12 +127,6 @@ export function createApp(dependencies: AppDependencies = {}) {
   const logger = dependencies.logger ?? silentLogger;
   const security = dependencies.security ?? {};
   const { authentication, runtime } = dependencies;
-  const upstream =
-    authentication === undefined || runtime === undefined
-      ? undefined
-      : new UpstreamCredentials(authentication, runtime);
-  const guard = <S extends object>(service: S | undefined) =>
-    service === undefined || upstream === undefined ? service : upstream.guard(service);
   const readinessTimeoutMs = dependencies.readinessTimeoutMs ?? defaultReadinessTimeoutMs;
 
   for (const middleware of requestContext(security)) app.use(middleware);
@@ -190,8 +183,8 @@ export function createApp(dependencies: AppDependencies = {}) {
         "Your session has expired; sign in again.",
       );
     }
-    if (upstream === undefined) return next();
-    return upstream.bind(context, resolution.credential, next);
+    if (runtime === undefined) return next();
+    return runtime.runWithCredential(resolution.credential.accessToken, next);
   });
 
   // AC2.11: a feature route answers only once compatibility is negotiated.
@@ -243,11 +236,7 @@ export function createApp(dependencies: AppDependencies = {}) {
     (runtime === undefined
       ? undefined
       : createMecatlChatService(runtime.client, () => runtime.compatibility()));
-  registerChatRoutes(
-    app,
-    chat === undefined || upstream === undefined ? chat : upstream.guardChat(chat),
-    dependencies.activity,
-  );
+  registerChatRoutes(app, chat, dependencies.activity);
   // Capability read LIVE from the negotiated snapshot: false until negotiation
   // completes or when the deployment has scheduling off.
   const schedulingSupported = () => {
@@ -263,13 +252,13 @@ export function createApp(dependencies: AppDependencies = {}) {
     (runtime === undefined
       ? undefined
       : createMecatlScheduleService(runtime.client, schedulingSupported));
-  registerScheduleRoutes(app, guard(schedules));
+  registerScheduleRoutes(app, schedules);
   const knowledge =
     dependencies.knowledge ??
     (runtime === undefined
       ? undefined
       : createMecatlKnowledgeService(runtime.client, () => knowledgeCapabilities(runtime)));
-  registerKnowledgeRoutes(app, guard(knowledge));
+  registerKnowledgeRoutes(app, knowledge);
   const snapshotOrUndefined = () => {
     if (runtime === undefined) return undefined;
     try {
@@ -280,7 +269,7 @@ export function createApp(dependencies: AppDependencies = {}) {
   };
   registerInspectionRoutes(
     app,
-    guard(runtime === undefined ? undefined : createMecatlInspectionService(runtime.client)),
+    runtime === undefined ? undefined : createMecatlInspectionService(runtime.client),
     () => {
       const snapshot = snapshotOrUndefined();
       return snapshot === undefined
@@ -300,7 +289,7 @@ export function createApp(dependencies: AppDependencies = {}) {
           modelSelection: snapshotOrUndefined()?.capabilities.modelSelection ?? false,
           serverInfo: snapshotOrUndefined()?.features.includes("server_info") ?? false,
         })));
-  registerSettingsRoutes(app, guard(settings));
+  registerSettingsRoutes(app, settings);
   const storage =
     dependencies.storage ??
     (runtime === undefined
@@ -309,7 +298,7 @@ export function createApp(dependencies: AppDependencies = {}) {
           runtime.client,
           () => snapshotOrUndefined()?.capabilities.storageHealth ?? false,
         ));
-  registerStorageRoutes(app, guard(storage));
+  registerStorageRoutes(app, storage);
 
   if (dependencies.webDist !== undefined) app.use("*", spaHandler(dependencies.webDist));
 

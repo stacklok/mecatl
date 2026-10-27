@@ -765,8 +765,6 @@ describe("knowledge routes", () => {
     const gated = csrfApp({
       authentication: {
         clear: () => undefined,
-        freshTokenPerSessionOpen: false,
-        refresh: () => Promise.reject(new Error("refresh unavailable")),
         completeLogin: async () => {
           throw new Error("unused");
         },

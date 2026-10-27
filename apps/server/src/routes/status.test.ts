@@ -8,8 +8,6 @@ import { fakeClient, fakeRuntime } from "../testing/fakes.js";
 function authentication(status: CredentialResolution["status"]): AuthenticationService {
   return {
     clear: () => undefined,
-    freshTokenPerSessionOpen: false,
-    refresh: () => Promise.reject(new Error("refresh unavailable")),
     completeLogin: async () => {
       throw new Error("unused");
     },

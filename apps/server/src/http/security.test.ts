@@ -9,8 +9,6 @@ import { csrfHeaders, fakeRuntime } from "../testing/fakes.js";
 function anonymousAuthentication(): AuthenticationService {
   return {
     clear: () => undefined,
-    freshTokenPerSessionOpen: false,
-    refresh: () => Promise.reject(new Error("refresh unavailable")),
     completeLogin: async () => {
       throw new Error("unused");
     },

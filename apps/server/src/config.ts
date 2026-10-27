@@ -39,8 +39,6 @@ export interface StudioConfig {
   /** Listen address: loopback unless the image or `STUDIO_HOST` says otherwise. */
   readonly host: string;
   readonly logLevel: LogLevel;
-  /** Studio's own OAuth client ID; replaces the deployment's advertised one when set. */
-  readonly oidcClientId: string | undefined;
   readonly port: number;
   /** Browser-facing origin; the OIDC callback and cookie `Secure` flag derive from it. */
   readonly publicUrl: URL | undefined;
@@ -86,7 +84,6 @@ export function studioConfigFromEnvironment(
     host: parseHost(environment.STUDIO_HOST, image),
     image,
     logLevel: parseLogLevel(environment.STUDIO_LOG_LEVEL),
-    oidcClientId: parseClientId(environment.STUDIO_OIDC_CLIENT_ID),
     port: parseInteger(environment, "STUDIO_PORT", 3100, 1, 65535),
     publicUrl,
     rateLimit: {
@@ -144,19 +141,6 @@ function parseLogLevel(raw: string | undefined): LogLevel {
   if (value === undefined || value === "") return "info";
   if (value === "debug" || value === "info" || value === "warn" || value === "error") return value;
   throw new ConfigurationError("STUDIO_LOG_LEVEL", "must be one of debug, info, warn, error");
-}
-
-/** An OAuth client ID is a printable string sent as a form and query parameter. */
-function parseClientId(raw: string | undefined): string | undefined {
-  const value = raw?.trim();
-  if (value === undefined || value === "") return undefined;
-  if (value.length > 2_048 || !/^[\x21-\x7e]+$/u.test(value)) {
-    throw new ConfigurationError(
-      "STUDIO_OIDC_CLIENT_ID",
-      "must be at most 2048 printable ASCII characters without spaces",
-    );
-  }
-  return value;
 }
 
 function parsePublicUrl(raw: string | undefined): URL | undefined {

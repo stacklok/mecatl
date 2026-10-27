@@ -50,27 +50,6 @@ tests:
             - name: STUDIO_TRUSTED_PROXY_HOPS
               value: "1"
 
-  - it: projects Studio's own OAuth client ID
-    set:
-      oidc.clientID: mecatl-studio
-    asserts:
-      - equal:
-          path: spec.template.spec.containers[0].env
-          value:
-            - name: MECATL_BASE_URL
-              value: https://mecak8s.example.com
-            - name: STUDIO_PUBLIC_URL
-              value: https://studio.example.com
-            - name: STUDIO_OIDC_CLIENT_ID
-              value: mecatl-studio
-            - name: STUDIO_SESSION_SECRET
-              valueFrom:
-                secretKeyRef:
-                  name: studio-session
-                  key: STUDIO_SESSION_SECRET
-            - name: STUDIO_TRUSTED_PROXY_HOPS
-              value: "1"
-
   - it: projects a static-token target with the unauthenticated opt-in
     set:
       session.secretName: ""

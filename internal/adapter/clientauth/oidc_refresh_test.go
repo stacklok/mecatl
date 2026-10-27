@@ -11,6 +11,7 @@ import (
 	"math/big"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -33,6 +34,8 @@ type refreshFixture struct {
 	jwksDown        atomic.Bool
 	rotatedKID      atomic.Bool
 	descriptionOnly atomic.Bool
+	formEncoded     atomic.Bool
+	lastForm        atomic.Pointer[url.Values]
 	tokenEntered    chan struct{}
 	tokenRelease    <-chan struct{}
 }
@@ -68,6 +71,10 @@ func newRefreshFixture(t *testing.T) *refreshFixture {
 			}}})
 		case "/token":
 			f.calls.Add(1)
+			if err := r.ParseForm(); err == nil {
+				form := r.PostForm
+				f.lastForm.Store(&form)
+			}
 			if f.tokenEntered != nil {
 				close(f.tokenEntered)
 				f.tokenEntered = nil
@@ -97,6 +104,14 @@ func newRefreshFixture(t *testing.T) *refreshFixture {
 			accessToken := f.token(t, "rotated", time.Now().Add(time.Minute))
 			if f.rotatedKID.Load() {
 				accessToken = f.tokenWithKID(t, "rotated", time.Now().Add(time.Minute), "refresh-rotated")
+			}
+			if f.formEncoded.Load() {
+				w.Header().Set("Content-Type", "application/x-www-form-urlencoded")
+				_, _ = w.Write([]byte(url.Values{
+					"access_token":  {accessToken},
+					"refresh_token": {"refresh-rotated"}, "token_type": {"Bearer"}, "expires_in": {"60"},
+				}.Encode()))
+				return
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"access_token":  accessToken,
@@ -267,6 +282,55 @@ func TestRefreshMalformedExchangeOutputDoesNotReplaceCredential(t *testing.T) {
 	}
 	if stored.Token != original {
 		t.Fatalf("malformed exchange replaced credential: %#v", stored.Token)
+	}
+}
+
+// TestRefreshPathFollowsIdentityBrokerSignIn pins which refresh implementation
+// runs: without identity broker sign-in the standard x/oauth2 refresh accepts a
+// form-encoded token response and sends no resource; with it the grant carries
+// the audience as the RFC 8707 resource.
+func TestRefreshPathFollowsIdentityBrokerSignIn(t *testing.T) {
+	for _, tc := range []struct {
+		name                 string
+		identityBrokerSignIn bool
+		formEncoded          bool
+		wantResource         []string
+	}{
+		{name: "standard refresh accepts a form-encoded response", formEncoded: true},
+		{name: "identity broker sign-in sends resource", identityBrokerSignIn: true, wantResource: []string{"vmcp"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newRefreshFixture(t)
+			f.formEncoded.Store(tc.formEncoded)
+			c := credentials(t)
+			id := identity("remote.example:443")
+			id.Issuer = f.srv.URL
+			id, _ = id.Canonical()
+			original := Token{AccessToken: f.token(t, "original", time.Now().Add(time.Minute)), RefreshToken: "refresh-original", TokenType: "Bearer", Expiry: time.Now().Add(-time.Minute).UTC().Format(time.RFC3339)}
+			if _, err := c.Save(t.Context(), id, original, nil); err != nil {
+				t.Fatal(err)
+			}
+			s := f.source(t, c, id, 0)
+			defer s.Close()
+			s.identityBrokerSignIn = tc.identityBrokerSignIn
+			if _, err := s.Token(t.Context()); err != nil {
+				t.Fatalf("Token: %v", err)
+			}
+			stored, err := c.Load(t.Context(), id)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if stored.Token.RefreshToken != "refresh-rotated" {
+				t.Fatalf("stored refresh token = %q, want the rotated one", stored.Token.RefreshToken)
+			}
+			form := f.lastForm.Load()
+			if form == nil || form.Get("grant_type") != "refresh_token" {
+				t.Fatalf("token request form = %v, want a refresh_token grant", form)
+			}
+			if got := (*form)["resource"]; fmt.Sprint(got) != fmt.Sprint(tc.wantResource) {
+				t.Fatalf("refresh resource = %q, want %q", got, tc.wantResource)
+			}
+		})
 	}
 }
 

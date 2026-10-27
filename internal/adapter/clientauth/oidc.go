@@ -395,7 +395,7 @@ func (s *RefreshSource) tokenLocked(ctx context.Context, loaded CredentialRecord
 // the result, split out of tokenLocked to keep that function's branching
 // within the complexity gate.
 func (s *RefreshSource) exchangeAndPersist(ctx context.Context, rec CredentialRecord) (string, bool, error) {
-	tok, err := s.refreshGrant(ctx, rec.Token.RefreshToken)
+	tok, err := s.refresh(ctx, rec.Token)
 	if err != nil {
 		if isInvalidGrant(err) {
 			if deleteErr := s.creds.Delete(ctx, s.identity, rec.Version); deleteErr != nil && !errors.Is(deleteErr, credentialstore.ErrNotFound) {
@@ -430,18 +430,35 @@ func (s *RefreshSource) exchangeAndPersist(ctx context.Context, rec CredentialRe
 	return replacement.AccessToken, true, nil
 }
 
-// refreshGrant performs one RFC 6749 section 6 refresh_token grant, carrying
-// the RFC 8707 resource indicator when enabled, which x/oauth2's TokenSource
-// cannot send. An OAuth error response yields a body-free *oauth2.RetrieveError
+// refresh performs one refresh_token exchange for current. Only identity broker
+// sign-in needs the hand-rolled grant; every other deployment keeps x/oauth2's
+// standard refresh, which also accepts form-encoded token responses.
+func (s *RefreshSource) refresh(ctx context.Context, current Token) (*oauth2.Token, error) {
+	if s.identityBrokerSignIn {
+		return s.refreshGrant(ctx, current.RefreshToken)
+	}
+	exchangeCtx := context.WithValue(ctx, oauth2.HTTPClient, s.client)
+	// The seed token's Expiry is deliberately already-past, not the real expiry:
+	// refreshAhead already decided a refresh is due, so TokenSource must always
+	// perform a genuine refresh_token exchange here. Passing the real (not-yet-
+	// expired-by-x/oauth2's own smaller reuse threshold) expiry lets TokenSource
+	// hand back this locally-constructed token verbatim without ever calling the
+	// token endpoint -- and since that placeholder never had TokenType set,
+	// validToken() then rejects it as corrupt even though the stored credential
+	// was never touched.
+	seed := &oauth2.Token{AccessToken: current.AccessToken, RefreshToken: current.RefreshToken, Expiry: time.Now().Add(-time.Minute)}
+	return (&oauth2.Config{ClientID: s.identity.ClientID, Endpoint: s.endpoint}).TokenSource(exchangeCtx, seed).Token()
+}
+
+// refreshGrant performs one RFC 6749 section 6 refresh_token grant carrying the
+// RFC 8707 resource indicator, which x/oauth2's TokenSource cannot send. An OAuth error response yields a body-free *oauth2.RetrieveError
 // so invalid_grant stays recognisable; no provider response text is retained.
 func (s *RefreshSource) refreshGrant(ctx context.Context, refreshToken string) (*oauth2.Token, error) {
 	form := url.Values{
 		"grant_type":    {"refresh_token"},
 		"refresh_token": {refreshToken},
 		"client_id":     {s.identity.ClientID},
-	}
-	if s.identityBrokerSignIn {
-		form.Set(paramResource, s.identity.Audience)
+		paramResource:   {s.identity.Audience},
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.endpoint.TokenURL, strings.NewReader(form.Encode()))
 	if err != nil {
