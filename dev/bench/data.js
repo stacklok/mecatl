@@ -343716,6 +343716,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1793136829978,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "29541485+ChrisJBurns@users.noreply.github.com",
+            "name": "Chris Burns",
+            "username": "ChrisJBurns"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "1f9f81b500b2a68cb79d7b7648f1ca2cfc549c3e",
+          "message": "build(deps): bump toolhive to v0.58.0 and golang.org/x/net to v0.62.0 (#2581)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-27T23:28:40Z",
+          "tree_id": "11efad1b318a5fbe5b50698eb8250634283858e5",
+          "url": "https://github.com/stacklok/mecatl/commit/1f9f81b500b2a68cb79d7b7648f1ca2cfc549c3e"
+        },
+        "date": 1793144421459,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -496870,6 +496904,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1793144418467,
+  "lastUpdate": 1793144422342,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
