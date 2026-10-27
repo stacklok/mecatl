@@ -42,7 +42,7 @@ type credentialIssuer struct {
 }
 
 func newCredentialIssuer(config Config, signer crypto.Signer, pub *ecdsa.PublicKey) (credentialIssuer, error) {
-	kid, err := keyID(pub)
+	jwk, err := publicJWK(pub)
 	if err != nil {
 		return credentialIssuer{}, err
 	}
@@ -52,7 +52,7 @@ func newCredentialIssuer(config Config, signer crypto.Signer, pub *ecdsa.PublicK
 		lifetime:    config.CredentialLifetime,
 		signer:      signer,
 		publicKey:   pub,
-		kid:         kid,
+		kid:         jwk.KeyID,
 	}, nil
 }
 
@@ -166,18 +166,22 @@ func (signerES256) Sign(signingString string, key any) ([]byte, error) {
 	return out, nil
 }
 
-// keyID returns the RFC 7638 JWK thumbprint of a P-256 public key, so the key
-// ID stays the same wherever the key is later published.
-func keyID(pub *ecdsa.PublicKey) (string, error) {
+// publicJWK returns a P-256 public key as an ES256 signing JWK (RFC 7518
+// §6.2.1) whose kid is its RFC 7638 thumbprint, so the key ID stays the same
+// wherever the key is later published.
+func publicJWK(pub *ecdsa.PublicKey) (JWK, error) {
 	point, err := pub.Bytes()
 	if err != nil || len(point) != 65 {
-		return "", errors.New("the signer's public key is not an uncompressed P-256 point")
+		return JWK{}, errors.New("the signer's public key is not an uncompressed P-256 point")
 	}
 	enc := base64.RawURLEncoding
 	x, y := enc.EncodeToString(point[1:33]), enc.EncodeToString(point[33:])
 	// The required members in lexicographic order, no whitespace.
 	thumbprint := sha256.Sum256([]byte(`{"crv":"P-256","kty":"EC","x":"` + x + `","y":"` + y + `"}`))
-	return enc.EncodeToString(thumbprint[:]), nil
+	return JWK{
+		KeyType: "EC", Curve: "P-256", X: x, Y: y,
+		KeyID: enc.EncodeToString(thumbprint[:]), Use: "sig", Algorithm: es256,
+	}, nil
 }
 
 // newAgentID returns a random ag_ identifier in the same lowercase base32 form

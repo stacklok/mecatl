@@ -15,7 +15,11 @@
 // identity: one ag_ identifier generated per process, and a SPIFFE ID under one
 // shared path that differs only by incarnation. The snapshot holds only
 // definitions the broker loads itself, operator-loaded global definitions and
-// system built-ins; repository definitions never enter it. The package performs no
+// system built-ins; repository definitions never enter it.
+//
+// ClientAssertionSigner mints the client assertions the broker authenticates
+// with at AS-1 and AS-2, with the broker client key, separate from the agent
+// issuer key; the token-endpoint client is an adapter. The package performs no
 // file, environment, or network access; source loading and transport belong
 // in adapters that call it.
 package identitybroker

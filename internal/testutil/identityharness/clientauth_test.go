@@ -29,6 +29,7 @@ func TestClientAssertionDefects(t *testing.T) {
 	assertReason(t, err, http.StatusBadRequest, "invalid_request", "subject_invalid")
 
 	maxLife := identityharness.DefaultClientAssertionMaxLifetime
+	skew := identityharness.ClientAssertionClockSkew
 	defects := map[string]string{
 		"alg none": handBuilt(t, h, clock, jwt.SigningMethodNone, jwt.UnsafeAllowNoneSignatureType),
 		"HS256":    handBuilt(t, h, clock, jwt.SigningMethodHS256, []byte("shared-secret-0123456789abcdef")),
@@ -36,10 +37,10 @@ func TestClientAssertionDefects(t *testing.T) {
 	for name, spec := range map[string]identityharness.ClientAssertionSpec{
 		"token endpoint aud": {Audience: []string{h.AS1.TokenEndpoint()}},
 		"two audiences":      {Audience: []string{h.AS1.Issuer(), h.AS1.TokenEndpoint()}},
-		"expired":            {IssuedAt: clock.Now().Add(-2 * maxLife)},
-		"exp exactly now":    {IssuedAt: clock.Now().Add(-maxLife), Lifetime: maxLife},
+		"expired":            {IssuedAt: clock.Now().Add(-2*maxLife - skew)},
+		"exp plus skew now":  {IssuedAt: clock.Now().Add(-maxLife - skew), Lifetime: maxLife},
 		"over-long":          {Lifetime: maxLife + time.Second},
-		"iat in the future":  {IssuedAt: clock.Now().Add(30 * time.Second), Lifetime: 10 * time.Second},
+		"iat in the future":  {IssuedAt: clock.Now().Add(skew + 30*time.Second), Lifetime: 10 * time.Second},
 		"no iat":             {OmitIssuedAt: true},
 		"no exp":             {OmitExpiry: true},
 		"no jti":             {OmitJTI: true},
@@ -112,6 +113,7 @@ func TestClientAssertionAccepted(t *testing.T) {
 		ClientAssertionMaxLifetime: 5 * time.Minute,
 	})
 	b := h.ScriptedBroker()
+	skew := identityharness.ClientAssertionClockSkew
 
 	external := jwt.NewWithClaims(jwt.SigningMethodES256, assertionClaims(h, clock))
 	external.Header["kid"] = "external"
@@ -124,6 +126,13 @@ func TestClientAssertionAccepted(t *testing.T) {
 		"untyped":                                b.Assertion(identityharness.ClientAssertionSpec{OmitType: true}),
 		"typ JWT":                                b.Assertion(identityharness.ClientAssertionSpec{Type: "JWT"}),
 		"lifetime exactly at the maximum":        b.Assertion(identityharness.ClientAssertionSpec{Lifetime: 5 * time.Minute}),
+		// The clock skew AS-1 allows, on each side.
+		"exp passed, within the skew": b.Assertion(identityharness.ClientAssertionSpec{
+			IssuedAt: clock.Now().Add(-time.Minute - skew + time.Second), Lifetime: time.Minute,
+		}),
+		"iat ahead, within the skew": b.Assertion(identityharness.ClientAssertionSpec{
+			IssuedAt: clock.Now().Add(skew - time.Second), Lifetime: time.Minute,
+		}),
 	} {
 		t.Run(name, func(t *testing.T) {
 			req := openReq(h, aliceToken(h), "A42", identityharness.Alice)
