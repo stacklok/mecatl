@@ -1,4 +1,41 @@
 {
+  "$schema": "https://context7.com/schema/context7.json",
   "url": "https://context7.com/stacklok/mecatl",
-  "public_key": "pk_7LkGEIl6ynYjkLDvPvfeM"
+  "public_key": "pk_7LkGEIl6ynYjkLDvPvfeM",
+  "projectTitle": "Mecatl",
+  "description": "Open-source, cloud-native agent harness written in Go. Provides the streaming agent loop, tools, permissions, and session model for running AI agents as production workloads, with the mecated server, the mecatui terminal client, a TypeScript SDK, and Kubernetes deployment via mecak8s.",
+  "folders": [
+    "user-docs",
+    "docs",
+    "engine",
+    "adapters",
+    "provider",
+    "sdk",
+    "examples",
+    "apps",
+    "deploy"
+  ],
+  "excludeFolders": [
+    "docs/drafts",
+    "testdata",
+    "e2e",
+    "*archive*",
+    "*deprecated*",
+    "*legacy*"
+  ],
+  "excludeFiles": [
+    "CLAUDE.md",
+    "CHANGELOG.md",
+    "LICENSE.md",
+    "CODE_OF_CONDUCT.md"
+  ],
+  "rules": [
+    "The server binary is `mecated` and the terminal client is `mecatui`. Both install from the `stacklok/tap/mecatl` Homebrew formula or the `mecatl` conda-forge package.",
+    "Use the `--mock` provider for offline examples and tests.",
+    "For a real provider, set ANTHROPIC_API_KEY, OPENAI_API_KEY, or OPENROUTER_API_KEY in the environment. Never put API keys in flags or source code.",
+    "The Go engine imports no provider SDKs. Add a provider module such as `github.com/stacklok/mecatl/provider/openai` explicitly, and pin compatible engine and provider versions in go.mod.",
+    "In TypeScript, import from `@stacklok-oss/mecatl-sdk/node` (Node.js and Bun) or `@stacklok-oss/mecatl-sdk/deno`, and close spawned clients so the daemon process exits.",
+    "Select a permission mode with `--permission-mode` (plan, default, accept-edits, auto, yolo). `--posture` is deprecated. Default mode is fail-closed.",
+    "`--permission-mode auto` for unattended, single-tenant use needs an enforcing guardrails checker, such as `--guardrails-model <model>`. Without one the server refuses to start."
+  ]
 }
