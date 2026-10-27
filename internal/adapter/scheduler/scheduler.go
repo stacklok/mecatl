@@ -68,12 +68,9 @@ var ErrFireNowDisabled = errors.New("scheduler: fire-now rejected (schedule disa
 // completed one-shot is rejected. The caller maps it to FailedPrecondition.
 var ErrFireNowExhausted = errors.New("scheduler: fire-now rejected (one-shot already fired)")
 
-// ErrNotLeader is returned by FireNow when this replica is not the scheduler
-// leader (a multi-replica deployment where a peer holds the `__scheduler__`
-// lease). A standby replica fails a manual fire fast rather than double-firing
-// against the leader's tick loop. The caller maps it to FailedPrecondition and
-// SHOULD surface the current leader (Scheduler.LeaderOwner) so a client can
-// redirect. Nil-lease (single-replica) schedulers are always the leader.
+// ErrNotLeader is no longer returned: FireNow runs on any replica. It stays
+// defined, and mapped by the server, so the schedule_not_leader wire code
+// remains stable for existing clients.
 var ErrNotLeader = errors.New("scheduler: not the leader (a peer replica is; retry against the leader)")
 
 // Config wires the scheduler. All fields are set by composition;
@@ -559,8 +556,8 @@ func New(cfg Config) *Scheduler {
 // ErrLeaseUnsupported) is treated like contention: logged and retried on the
 // same backoff — a wedged lease backend degrades scheduling to standby rather
 // than crashing the process. Start is idempotent: a second call is a no-op.
-// FireNow is GATED on leadership (ErrNotLeader) so a standby replica fails a
-// manual fire fast rather than double-firing against the leader.
+// FireNow is not gated on leadership: the store's claim fence keeps a standby's
+// manual fire from overlapping the leader's.
 func (s *Scheduler) Start(ctx context.Context) error {
 	if !s.started.CompareAndSwap(false, true) {
 		return nil
@@ -1230,13 +1227,9 @@ func (s *Scheduler) emitScheduleMetrics(sched port.Schedule, payload session.Sch
 // for polling cadence). The nextFire handed to ClaimNow is computed via
 // computeNextFire (the same helper the tick loop uses).
 func (s *Scheduler) FireNow(ctx context.Context, name string, now time.Time) (port.ScheduleFire, error) {
-	// Leadership gate: in a multi-replica deployment only the leader fires (a
-	// standby must not double-fire against the leader's tick loop). Fail fast
-	// with ErrNotLeader so the caller can redirect to the leader. A nil-lease
-	// (single-replica) scheduler is always the leader.
-	if _, leader := s.LeaderOwner(); !leader {
-		return port.ScheduleFire{}, ErrNotLeader
-	}
+	// No leadership gate: any replica may fire. The store's ClaimNow rejects a
+	// claim while a prior fire is pending or started, so a standby cannot
+	// double-fire against the leader's tick loop (or a peer's FireNow).
 	// Per-schedule-name serialization: a concurrent FireNow (or a tick-loop
 	// fireOne) on the SAME schedule must not race the Load→singleton→ClaimNow
 	// fence (the TOCTOU the singleton guard closes — two concurrent FireNow RPCs
