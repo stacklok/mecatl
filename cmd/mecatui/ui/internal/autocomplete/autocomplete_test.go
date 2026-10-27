@@ -7,6 +7,32 @@ import (
 	tea "charm.land/bubbletea/v2"
 )
 
+func TestSearchRetainsSelectionUntilTypedAndPreservesInvalidDraft(t *testing.T) {
+	m := testModel()
+	m.SetValue("America/Los_Angeles")
+	m.Search()
+	focus(&m)
+	if m.Query() != "" || m.Value() != "America/Los_Angeles" || !m.Open() {
+		t.Fatal("fresh search did not retain selected value separately")
+	}
+	m.Update(tea.KeyPressMsg{Code: 'x', Text: "x"})
+	if m.Value() != "America/Los_Angeles" {
+		t.Fatal("accepting untouched search lost selected identity")
+	}
+	m.Search()
+	m.Focus()
+	paste(&m, "New York")
+	if m.Value() != "" || m.Query() != "New York" || !m.Open() {
+		t.Fatal("direct paste appended to accepted label or retained a hidden value")
+	}
+	m.Blur()
+	m.Search()
+	m.Focus()
+	if m.Query() != "New York" || m.Value() != "" {
+		t.Fatal("reentry discarded an unaccepted query")
+	}
+}
+
 func TestQueryMatchesCityAndIdentifierWithoutAcceptingHighlight(t *testing.T) {
 	m := testModel()
 	focus(&m)

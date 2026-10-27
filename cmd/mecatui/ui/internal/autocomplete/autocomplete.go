@@ -80,6 +80,17 @@ func (m *Model) Focus() tea.Cmd {
 	return cmd
 }
 
+// Search starts a fresh query without discarding an accepted selection. Typing
+// replaces that selection; an untouched empty search still retains its value.
+func (m *Model) Search() {
+	if value := m.Value(); value != "" {
+		m.accepted, m.acceptFor = value, ""
+		m.input.Placeholder = value
+		m.input.SetValue("")
+		m.sync()
+	}
+}
+
 // Blur hides suggestions without changing the query or accepted value.
 func (m *Model) Blur() {
 	m.input.Blur()
@@ -158,6 +169,7 @@ func (m *Model) Update(msg tea.Msg) (cmd tea.Cmd, handled bool) {
 	before := m.input.Value()
 	m.input, cmd = m.input.Update(msg)
 	if m.input.Value() != before {
+		m.input.Placeholder = ""
 		m.accepted, m.acceptFor, m.dismissed = "", "", false
 		m.sync()
 	}

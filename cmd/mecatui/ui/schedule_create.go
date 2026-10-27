@@ -7,9 +7,10 @@ import (
 	"time"
 
 	"charm.land/bubbles/v2/key"
-	"charm.land/bubbles/v2/textarea"
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
+	"charm.land/huh/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
@@ -61,24 +62,28 @@ func (s *scheduleState) scheduleNow() time.Time {
 func (s *scheduleState) openCreate() {
 	if !s.form.initialized {
 		s.actionErr = ""
-		input := func(placeholder string) textinput.Model {
-			ti := textinput.New()
-			ti.Placeholder = placeholder
-			return ti
+		keys := huh.NewDefaultKeyMap()
+		// The surface owns traversal and actions; fields only edit their values.
+		for _, binding := range []*key.Binding{&keys.Input.Next, &keys.Input.Prev, &keys.Input.Submit, &keys.Text.Next, &keys.Text.Prev, &keys.Text.Submit, &keys.Text.Editor} {
+			binding.SetEnabled(false)
 		}
-		prompt := textarea.New()
-		prompt.Placeholder = "Task to run on each fire"
-		prompt.ShowLineNumbers = false
-		prompt.Prompt = "  "
-		prompt.CharLimit, prompt.MaxHeight, prompt.MaxWidth = 0, 0, 0
-		prompt.SetVirtualCursor(true)
+		keys.Text.NewLine.SetKeys("enter", "ctrl+m", "ctrl+j")
+		name := huh.NewInput().Title("Name: ").Inline(true).Placeholder("Schedule name")
+		prompt := huh.NewText().Title("Prompt").Placeholder("Task to run on each fire").Lines(3).CharLimit(0).ExternalEditor(false)
+		trigger := huh.NewInput().Title("When (e.g. every day at 9am): ").Inline(true)
+		styles := huh.ThemeBase(true)
+		fieldTheme := huh.ThemeFunc(func(bool) *huh.Styles { return styles })
+		for _, field := range []huh.Field{name, prompt, trigger} {
+			field.WithKeyMap(keys).WithTheme(fieldTheme)
+			field.Init()
+		}
 		options := make([]autocomplete.Option, 0)
 		for _, name := range timezones.Names() {
 			options = append(options, autocomplete.Option{Value: name, Label: name, Search: strings.ReplaceAll(name, "_", " ")})
 		}
 		zone := autocomplete.New(options, autocomplete.KeyMap{Up: s.deps.keys.Up, Down: s.deps.keys.Down, Choose: s.deps.keys.Choose, Close: s.deps.keys.Close})
 		zone.SetValue("UTC")
-		s.form = scheduleForm{name: input("Schedule name"), prompt: prompt, trigger: input("every day at 9am"), timezone: zone, initialized: true}
+		s.form = scheduleForm{name: name, prompt: prompt, trigger: trigger, styles: styles, timezone: zone, initialized: true}
 	}
 	s.view = scheduleCreate
 	s.focusField()
@@ -99,6 +104,7 @@ func (s *scheduleState) focusField() tea.Cmd {
 	case scheduleTiming:
 		return s.editorCmd(f.trigger.Focus())
 	case scheduleTimezone:
+		f.timezone.Search()
 		return s.editorCmd(f.timezone.Focus())
 	}
 	return nil
@@ -115,6 +121,15 @@ func (s *scheduleState) leaveCreate() {
 	s.view = schedulePanel
 }
 
+func (s *scheduleState) createActivation(msg tea.KeyPressMsg) bool {
+	if key.Matches(msg, s.deps.keys.Choose) {
+		return true
+	}
+	return (s.form.focusIdx == scheduleCancel || s.form.focusIdx == scheduleSubmit) &&
+		msg.String() == "space" && key.Matches(tea.KeyPressMsg{Code: tea.KeyEnter}, s.deps.keys.Choose) &&
+		!key.Matches(tea.KeyPressMsg{Code: tea.KeyEnter}, s.deps.keys.Close)
+}
+
 func (s *scheduleState) createKey(msg tea.KeyPressMsg) tea.Cmd {
 	// Back remains available while pending, but cannot undo the operation.
 	if s.pendingAction != "" {
@@ -126,12 +141,16 @@ func (s *scheduleState) createKey(msg tea.KeyPressMsg) tea.Cmd {
 	// Suggestions own their action keys before form Back or focus traversal.
 	if s.form.focusIdx == scheduleTimezone && s.form.timezone.Open() && key.Matches(msg, s.deps.keys.Up, s.deps.keys.Down, s.deps.keys.Choose, s.deps.keys.Close) {
 		cmd, _ := s.form.timezone.Update(msg)
-		return cmd
+		if !key.Matches(msg, s.deps.keys.Close, s.deps.keys.Up, s.deps.keys.Down) && key.Matches(msg, s.deps.keys.Choose) && s.form.timezone.Value() != "" {
+			s.form.focusIdx = scheduleReadOnly
+			return s.focusField()
+		}
+		return s.editorCmd(cmd)
 	}
 	switch {
 	case key.Matches(msg, s.deps.keys.Close):
 		s.leaveCreate()
-	case key.Matches(msg, s.deps.keys.Choose):
+	case s.createActivation(msg):
 		switch s.form.focusIdx {
 		case scheduleSubmit:
 			return s.submitCreate()
@@ -161,14 +180,26 @@ func (s *scheduleState) createKey(msg tea.KeyPressMsg) tea.Cmd {
 }
 
 func (s *scheduleState) updateCreateField(msg tea.Msg) tea.Cmd {
+	if press, ok := msg.(tea.KeyPressMsg); ok && s.form.focusIdx == schedulePrompt {
+		switch press.String() {
+		case "enter", "ctrl+m", "ctrl+j":
+			// Huh exposes no MaxHeight setting. Insert through the same editor's
+			// paste path to avoid Bubbles' legacy 99-line newline guard.
+			msg = tea.PasteMsg{Content: "\n"}
+		}
+	}
+	if paste, ok := msg.(tea.PasteMsg); ok {
+		paste.Content = strings.ReplaceAll(paste.Content, "\r\n", "\n")
+		msg = paste
+	}
 	var cmd tea.Cmd
 	switch s.form.focusIdx {
 	case scheduleName:
-		s.form.name, cmd = s.form.name.Update(msg)
+		_, cmd = s.form.name.Update(msg)
 	case schedulePrompt:
-		s.form.prompt, cmd = s.form.prompt.Update(msg)
+		_, cmd = s.form.prompt.Update(msg)
 	case scheduleTiming:
-		s.form.trigger, cmd = s.form.trigger.Update(msg)
+		_, cmd = s.form.trigger.Update(msg)
 	case scheduleTimezone:
 		cmd, _ = s.form.timezone.Update(msg)
 	}
@@ -178,13 +209,13 @@ func (s *scheduleState) updateCreateField(msg tea.Msg) tea.Cmd {
 // Both rendering and submission use this validation, with a fresh clock at Create.
 func (s *scheduleState) validateCreate() (schedparse.Preview, error) {
 	f := &s.form
-	if strings.TrimSpace(f.name.Value()) == "" {
+	if strings.TrimSpace(f.name.GetValue().(string)) == "" {
 		return schedparse.Preview{}, fmt.Errorf("name: name is required")
 	}
-	if strings.TrimSpace(f.prompt.Value()) == "" {
+	if strings.TrimSpace(f.prompt.GetValue().(string)) == "" {
 		return schedparse.Preview{}, fmt.Errorf("prompt: prompt is required")
 	}
-	return schedparse.Validate(f.trigger.Value(), f.timezone.Value(), s.scheduleNow())
+	return schedparse.Validate(f.trigger.GetValue().(string), f.timezone.Value(), s.scheduleNow())
 }
 
 func (s *scheduleState) submitCreate() tea.Cmd {
@@ -198,7 +229,7 @@ func (s *scheduleState) submitCreate() tea.Cmd {
 	}
 	f := &s.form
 	f.submitted = preview
-	spec := client.ScheduleSpec{Name: f.name.Value(), Prompt: f.prompt.Value(), Trigger: client.ScheduleTrigger{Cron: preview.Cron, OneShot: preview.OneShot}, Timezone: preview.Timezone, Mode: f.permissionMode(), Mutating: f.mutating, Singleton: true}
+	spec := client.ScheduleSpec{Name: f.name.GetValue().(string), Prompt: f.prompt.GetValue().(string), Trigger: client.ScheduleTrigger{Cron: preview.Cron, OneShot: preview.OneShot}, Timezone: preview.Timezone, Mode: f.permissionMode(), Mutating: f.mutating, Singleton: true}
 	return s.mutate(client.CreateScheduleCmd(s.deps.ctx, s.lister, spec), "create", spec.Name)
 }
 
@@ -248,6 +279,9 @@ func (s *scheduleState) createFieldHints() []string {
 		}
 	case scheduleSubmit, scheduleCancel:
 		if choose != "" {
+			if key.Matches(tea.KeyPressMsg{Code: tea.KeyEnter}, s.deps.keys.Choose) && !key.Matches(tea.KeyPressMsg{Code: tea.KeyEnter}, s.deps.keys.Close) && !key.Matches(tea.KeyPressMsg{Code: tea.KeySpace}, s.deps.keys.Close) && choose != "space" {
+				choose += "/space"
+			}
 			hints = append(hints, choose+": activate button")
 		}
 	default:
@@ -294,33 +328,58 @@ func (s *scheduleState) createLabel(idx int, text string) string {
 	return "  " + text
 }
 
-func (s *scheduleState) createFields(width int) (top, middle []string, promptVisible bool) {
+func (s *scheduleState) createFields(width, height int) (fields [][]string) {
 	th, f := s.deps.theme, &s.form
-	f.name.SetWidth(width - 12)
-	f.name.SetCursor(f.name.Position())
-	f.trigger.SetWidth(width - 14)
-	f.trigger.SetCursor(f.trigger.Position())
-	f.prompt.SetWidth(width)
-	f.timezone.SetGeometry(width-16, 3)
-	fields := []string{"Name", "Prompt", "Timing", "Timezone", "Read-only", "Create", "Cancel"}
-	top = scheduleCreateLines(width, th.Style("title").Render(fmt.Sprintf("create schedule — %s (%d/%d)", fields[f.focusIdx], f.focusIdx+1, scheduleControlCount)))
-	// Keep the focused editor in view; the final controls show the draft for review.
-	switch f.focusIdx {
-	case scheduleName:
-		top = append(top, s.createLabel(scheduleName, "name: ")+f.name.View())
-	case schedulePrompt:
-		top = append(top, s.createLabel(schedulePrompt, "prompt (multiline task):"))
-		promptVisible = true
-	case scheduleTiming:
-		top = append(top, s.createLabel(scheduleTiming, "timing: ")+f.trigger.View())
-	case scheduleTimezone:
-		top = append(top, s.createLabel(scheduleTimezone, "timezone: ")+f.timezone.InputView())
-	default:
-		top = append(top, "  name: "+f.name.View(), "  prompt: (preview)")
-		promptVisible = true
-		middle = append(middle, "  timing: "+f.trigger.View(), "  timezone: "+f.timezone.InputView())
+	text := lipgloss.NewStyle().Foreground(lipgloss.Color(th.Palette.Text))
+	muted := th.Style("muted")
+	for _, styles := range []*huh.FieldStyles{&f.styles.Focused, &f.styles.Blurred} {
+		styles.Title = text.Bold(true)
+		styles.TextInput.Text = text
+		styles.TextInput.Placeholder = muted
+		styles.TextInput.Prompt = text
+		styles.TextInput.Cursor = text.Background(lipgloss.Color(th.Palette.Text))
 	}
-	return top, middle, promptVisible
+	f.styles.Focused.Base = f.styles.Focused.Base.BorderForeground(lipgloss.Color(th.Palette.BorderActive))
+	for _, field := range []huh.Field{f.name, f.prompt, f.trigger} {
+		field.WithWidth(width)
+	}
+	f.prompt.Lines(2)
+	if height >= 28 {
+		f.prompt.Lines(5)
+	} else if height >= 18 {
+		f.prompt.Lines(3)
+	}
+	zoneStyles := textinput.DefaultStyles(true)
+	zoneStyles.Focused.Text, zoneStyles.Blurred.Text = text, text
+	zoneStyles.Focused.Placeholder, zoneStyles.Blurred.Placeholder = text, text
+	zoneStyles.Cursor.Color = lipgloss.Color(th.Palette.Text)
+	f.timezone.SetStyles(zoneStyles)
+	f.timezone.SetGeometry(width-5, 3)
+	name, timing := f.name.View(), f.trigger.View()
+	// Huh v2.0.3 only applies Input text styles to its focused Bubbles input.
+	// Project inactive values with the same theme rather than its fixed palette.
+	if f.focusIdx != scheduleName {
+		name = text.Render("  Name: " + terminaltext.SanitizeSingleLine(f.name.GetValue().(string)))
+	}
+	if f.focusIdx != scheduleTiming {
+		timing = text.Render("  When (e.g. every day at 9am): " + terminaltext.SanitizeSingleLine(f.trigger.GetValue().(string)))
+	}
+	fields = append(fields, []string{ansi.Truncate(name, width, "…")}, strings.Split(f.prompt.View(), "\n"), []string{ansi.Truncate(timing, width, "…")})
+	zone := []string{s.createLabel(scheduleTimezone, "Timezone"), "  " + f.timezone.InputView()}
+	if f.focusIdx == scheduleTimezone {
+		zone = append(zone, s.createSuggestions(3)...)
+	}
+	fields = append(fields, zone)
+	checked := "[x]"
+	if f.mutating {
+		checked = "[ ]"
+	}
+	mode := f.permissionMode()
+	if mode == "" {
+		mode = "server default"
+	}
+	fields = append(fields, scheduleCreateLines(width, s.createLabel(scheduleReadOnly, checked+" Read-only")+" permission mode: "+mode))
+	return fields
 }
 
 func (s *scheduleState) createStatus(width int) []string {
@@ -348,19 +407,11 @@ func (s *scheduleState) createStatus(width int) []string {
 	if s.actionErr != "" {
 		bottom = append(bottom, scheduleCreateText(width, "Last attempt: "+s.actionErr, 1)...)
 	}
-	checked := "[x]"
-	if f.mutating {
-		checked = "[ ]"
-	}
 	button := "[Create]"
 	if err != nil || s.pendingAction != "" {
 		button = "[Create disabled]"
 	}
-	mode := f.permissionMode()
-	if mode == "" {
-		mode = "server default"
-	}
-	bottom = append(bottom, scheduleCreateLines(width, s.createLabel(scheduleReadOnly, checked+" Read-only")+" permission mode: "+mode+s.createLabel(scheduleSubmit, button)+s.createLabel(scheduleCancel, "[Cancel]"))...)
+	bottom = append(bottom, scheduleCreateLines(width, s.createLabel(scheduleCancel, "[Cancel]")+s.createLabel(scheduleSubmit, button))...)
 	return bottom
 }
 
@@ -369,47 +420,44 @@ func (s *scheduleState) renderCreate(width, height int) (string, []ClickableRegi
 		return s.renderCompact(width)
 	}
 	f := &s.form
-	top, middle, promptVisible := s.createFields(width)
+	fields := s.createFields(width, height)
+	names := []string{"Name", "Prompt", "When", "Timezone", "Read-only", "Cancel", "Create"}
+	top := scheduleCreateLines(width, s.deps.theme.Style("title").Render(fmt.Sprintf("create schedule — %s (%d/%d)", names[f.focusIdx], f.focusIdx+1, scheduleControlCount)))
 	bottom := s.createStatus(width)
 	footer := scheduleCreateLines(width, s.createHints())
-	// Budget wrapped chrome before allocating the focused field viewport.
-	available := height - len(top) - len(middle) - len(bottom) - len(footer)
-	suggestionRows := 0
-	if f.focusIdx == scheduleTimezone {
-		suggestionRows = 3
-	}
-	promptRows := 0
-	if promptVisible {
-		promptRows = 2
-	}
-	if available < promptRows+suggestionRows {
+	available := height - len(top) - len(bottom) - len(footer)
+	if available < 3 {
 		f.timezone.SetGeometry(0, 0)
 		return s.renderCompact(width)
 	}
-	rows := top
-	if f.focusIdx == schedulePrompt {
-		f.prompt.SetHeight(min(6, available))
-		rows = append(rows, strings.Split(f.prompt.View(), "\n")...)
-	} else if promptVisible {
-		// Review the task, not the editor's scrolled cursor window (which may be blank).
-		summary := scheduleCreateText(width, strings.ReplaceAll(f.prompt.Value(), "\n", " ↵ "), 2)
-		rows = append(rows, summary...)
-		for range 2 - len(summary) {
-			rows = append(rows, "")
+	var content []string
+	start, end := 0, 0
+	for i, field := range fields {
+		if i == f.focusIdx {
+			start, end = len(content), len(content)+len(field)
 		}
+		content = append(content, field...)
 	}
-	rows = append(rows, middle...)
-	rows = append(rows, s.createSuggestions(suggestionRows)...)
-	rows = append(rows, bottom...)
-	for len(rows)+len(footer) < height {
-		rows = append(rows, "")
+	rows := min(available, len(content))
+	if f.focusIdx >= scheduleCancel {
+		start, end = len(content)-len(fields[scheduleReadOnly]), len(content)
 	}
-	rows = append(rows, footer...)
-	if len(rows) > height {
+	if end-start > rows {
+		f.timezone.SetGeometry(0, 0)
 		return s.renderCompact(width)
 	}
+	f.scroll = min(f.scroll, max(0, len(content)-rows))
+	if start < f.scroll {
+		f.scroll = start
+	} else if end > f.scroll+rows {
+		f.scroll = min(start, end-rows)
+	}
+	// Scroll the persistent field stack minimally; actions stay adjacent beneath it.
+	body := append(top, content[f.scroll:f.scroll+rows]...)
+	body = append(body, bottom...)
+	body = append(body, footer...)
 	s.compact = false
-	return strings.Join(rows, "\n"), nil
+	return strings.Join(body, "\n"), nil
 }
 
 func (s *scheduleState) createSuggestions(rows int) []string {

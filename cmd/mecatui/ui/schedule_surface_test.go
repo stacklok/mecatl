@@ -209,9 +209,9 @@ func TestScheduleCompactDisablesEveryHiddenAction(t *testing.T) {
 				s.confirm = fs.schedules[0]
 				if view == scheduleCreate {
 					s.openCreate()
-					s.form.name.SetValue("new")
-					s.form.prompt.SetValue("prompt")
-					s.form.trigger.SetValue("0 9 * * *")
+					s.form.name.Value(new("new"))
+					s.form.prompt.Value(new("prompt"))
+					s.form.trigger.Value(new("0 9 * * *"))
 					s.form.focusIdx = scheduleSubmit
 				}
 				scheduleBody(t, s, size[0], size[1])

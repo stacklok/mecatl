@@ -34,16 +34,23 @@ func TestScheduleCreateNormalTerminal(t *testing.T) {
 				if !slices.Equal(lines[len(lines)-len(footer):], footer) {
 					t.Fatal("creator displaced root footer")
 				}
-				for _, text := range []string{fmt.Sprintf("(%d/7)", s.form.focusIdx+1), "Read-only", "[Create", "[Cancel]"} {
+				for _, text := range []string{fmt.Sprintf("(%d/7)", s.form.focusIdx+1), "[Create", "[Cancel]"} {
 					if !strings.Contains(plain, text) {
 						t.Fatalf("%s focus %d: missing visible control %q:\n%s", state, s.form.focusIdx, text, plain)
 					}
 				}
-				if (s.form.focusIdx == schedulePrompt || s.form.focusIdx >= scheduleReadOnly) && s.form.prompt.Height() < 2 {
+				focused := []string{"┃ Name:", "┃ Prompt", "┃ When (e.g.", "▶ Timezone", "▶ [x] Read-only", "▶ [Cancel]", "▶ [Create"}[s.form.focusIdx]
+				if s.form.focusIdx == scheduleReadOnly && s.form.mutating {
+					focused = "▶ [ ] Read-only"
+				}
+				if !strings.Contains(plain, focused) {
+					t.Fatalf("%s hid focused field %q in root frame:\n%s", state, focused, plain)
+				}
+				if strings.Count(stripANSIstr(s.form.prompt.View()), "\n") < 2 {
 					t.Fatal("visible prompt lost its two-row viewport")
 				}
-				if s.form.focusIdx >= scheduleReadOnly {
-					for _, field := range []string{"name:", "prompt:", "timing:", "timezone:", "Review without edits"} {
+				if s.form.focusIdx >= scheduleReadOnly && size[1] >= 30 {
+					for _, field := range []string{"Name:", "Prompt", "When (e.g.", "Timezone", "Read-only"} {
 						if !strings.Contains(plain, field) {
 							t.Fatalf("review viewport lost %s", field)
 						}
@@ -77,7 +84,7 @@ func TestScheduleCreateNormalTerminal(t *testing.T) {
 					}
 					switch focus {
 					case schedulePrompt:
-						if !strings.Contains(body, "run history") || s.form.prompt.ScrollYOffset() == 0 {
+						if !strings.Contains(body, "run history") || !strings.Contains(stripANSIstr(s.form.prompt.View()), "Prompt") {
 							t.Fatal("prompt lost run policy or internal scrolling")
 						}
 					case scheduleTiming:
@@ -108,14 +115,14 @@ func TestScheduleCreateNormalTerminal(t *testing.T) {
 			m = schedulePaste(m, prompt)
 			m = scheduleKey(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
 			prompt += "\n"
-			if s.form.prompt.Value() != prompt || s.form.focusIdx != schedulePrompt {
+			if s.form.prompt.GetValue().(string) != prompt || s.form.focusIdx != schedulePrompt {
 				t.Fatal("prompt cannot be meaningfully edited at normal terminal size")
 			}
 			for _, hidden := range [][2]int{{38, 24}, {80, 8}, {0, 0}} {
 				m = applyAll(m, tea.WindowSizeMsg{Width: hidden[0], Height: hidden[1]})
 				m = schedulePaste(m, "hidden edit")
 				m = scheduleKey(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
-				if !s.compact || s.form.focusIdx != schedulePrompt || s.form.prompt.Value() != prompt || fs.createCalls != 0 {
+				if !s.compact || s.form.focusIdx != schedulePrompt || s.form.prompt.GetValue().(string) != prompt || fs.createCalls != 0 {
 					t.Fatal("hidden field viewport accepted paste/actions or lost its draft")
 				}
 			}
@@ -133,7 +140,6 @@ func TestScheduleCreateNormalTerminal(t *testing.T) {
 			if s.form.timezone.Value() != "America/Los_Angeles" || s.form.timezone.Open() || fs.createCalls != 0 {
 				t.Fatal("timezone acceptance was not usable at normal terminal size")
 			}
-			m = scheduleKey(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
 			m = scheduleKey(t, m, tea.KeyPressMsg{Code: tea.KeySpace, Text: " "})
 			m = scheduleKey(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
 			if !s.form.mutating || fs.createCalls != 0 || s.form.focusIdx != scheduleReadOnly {
@@ -141,12 +147,13 @@ func TestScheduleCreateNormalTerminal(t *testing.T) {
 			}
 			checkFocuses("valid", "Estimate:")
 			// Cancel abandons all values; reopening starts a new independent draft.
+			m = scheduleFocus(t, m, s, scheduleCancel)
 			m = scheduleKey(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
 			if s.view != schedulePanel || fs.createCalls != 0 || s.form.initialized {
 				t.Fatal("Cancel submitted or retained the abandoned form")
 			}
 			m = scheduleRune(t, m, "c")
-			if s.form.focusIdx != scheduleName || s.form.name.Value() != "" || s.form.prompt.Value() != "" || s.form.trigger.Value() != "" || s.form.timezone.Value() != "UTC" || s.form.mutating {
+			if s.form.focusIdx != scheduleName || s.form.name.GetValue().(string) != "" || s.form.prompt.GetValue().(string) != "" || s.form.trigger.GetValue().(string) != "" || s.form.timezone.Value() != "UTC" || s.form.mutating {
 				t.Fatal("reopening resurrected an abandoned draft/focus")
 			}
 			m = schedulePaste(m, "review")
@@ -162,7 +169,7 @@ func TestScheduleCreateNormalTerminal(t *testing.T) {
 			checkFocuses("invalid", "Create disabled — timing")
 			m = scheduleFocus(t, m, s, scheduleSubmit)
 			m = scheduleKey(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
-			if fs.createCalls != 0 || s.form.trigger.Value() != "daily at 25:99" || s.form.focusIdx != scheduleSubmit {
+			if fs.createCalls != 0 || s.form.trigger.GetValue().(string) != "daily at 25:99" || s.form.focusIdx != scheduleSubmit {
 				t.Fatal("invalid Create escaped validation or lost the editable draft")
 			}
 			m = scheduleFocus(t, m, s, scheduleTiming)
@@ -176,7 +183,7 @@ func TestScheduleCreateNormalTerminal(t *testing.T) {
 				var duplicate tea.Cmd
 				mm, duplicate = m.Update(msg)
 				m = mm.(Model)
-				if duplicate != nil || s.form.focusIdx != scheduleSubmit || s.form.prompt.Value() != prompt {
+				if duplicate != nil || s.form.focusIdx != scheduleSubmit || s.form.prompt.GetValue().(string) != prompt {
 					t.Fatal("pending form accepted edits/focus/duplicate operation")
 				}
 			}

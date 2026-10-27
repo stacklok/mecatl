@@ -238,7 +238,7 @@ that chat. A read-only schedule can use the deployment's configured plan model.
 Unchecked **Read-only** uses the server's default session permission mode.
 The deployment's permission policy determines which tool calls can run unattended.
 
-The timing field accepts the following finite phrases, with an optional leading
+The **When** field accepts the following finite phrases, with an optional leading
 `run `. It also accepts a raw five-field cron expression or an `@` macro that
 the server supports. The form does not interpret arbitrary natural-language
 timing requests.
@@ -259,7 +259,7 @@ Use hours from 1 through 12 with `am` or `pm`, or 0 through 23 without one;
 minutes range from 0 through 59. The optional `run ` prefix applies only to the
 listed phrases.
 
-The form starts with **UTC** selected. Search by city, or enter an exact IANA
+**Timezone** starts with **UTC** selected. Type a city to search, or enter an exact IANA
 name such as `America/Los_Angeles`. Calendar one-shot phrases, such as
 `tomorrow at 9am`, use the chosen timezone to calculate an absolute timestamp.
 Do not put `TZ=` or `CRON_TZ=` in the cron expression. Recurring cron schedules
