@@ -196,7 +196,10 @@ and refreshes, and refreshes its access token before each request that opens a
 session, because AS-1 accepts each access token for only one session open.
 Otherwise it omits `resource`, because some identity providers, such as
 Microsoft Entra ID, reject the parameter. Explicit `mecatui login --issuer ...`
-never sends it.
+never sends it. `mecatui` saves this member when you run `mecatui login`, so if
+you signed in before the server published it, run `mecatui login` again
+(switching to the identity broker changes the issuer, which requires a new login
+anyway).
 
 Discovery rejects a `--scopes` override. Configure advertised scopes through
 `oidc.scopes`; explicit `mecatui login --issuer ...` still accepts `--scopes`.

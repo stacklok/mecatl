@@ -2,6 +2,7 @@ package client
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -24,6 +25,8 @@ import (
 type refreshingSource struct {
 	mu        sync.Mutex
 	refreshes int
+	// refreshErr, when set, fails every Refresh.
+	refreshErr error
 }
 
 func (s *refreshingSource) Token(context.Context) (string, error) {
@@ -36,6 +39,9 @@ func (s *refreshingSource) Refresh(context.Context) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.refreshes++
+	if s.refreshErr != nil {
+		return "", s.refreshErr
+	}
 	return fmt.Sprintf("tok-%d", s.refreshes), nil
 }
 
@@ -351,6 +357,68 @@ func TestRejectedBearerRetriesOnceWithAFreshToken(t *testing.T) {
 	}
 	if got := len(fake.tokensFor("GetSession")); got != 4 || source.count() != 2 {
 		t.Fatalf("two rejections: %d total attempts, %d refreshes; want 4, 2", got, source.count())
+	}
+}
+
+// failedRefreshCases are the outcomes of a rejected request whose forced
+// refresh fails: an issuer failure or a local auth cause is reported instead
+// of the rejection; any other refresh error keeps the rejection.
+var failedRefreshCases = []struct {
+	name       string
+	refreshErr error
+	// issuer: the error is the issuer failure, unclassified as at startup;
+	// otherwise AuthFailure reports reason.
+	issuer bool
+	reason AuthReason
+}{
+	{"issuer unavailable", &IssuerUnavailableError{Err: errors.New("issuer unreachable")}, true, ""},
+	{"session expired", &AuthError{Reason: AuthSessionExpired}, false, AuthSessionExpired},
+	{"unknown", errors.New("refresh failed"), false, AuthRejected},
+}
+
+func checkFailedRefresh(t *testing.T, err error, issuer bool, want AuthReason) {
+	t.Helper()
+	var unavailable *IssuerUnavailableError
+	if got := errors.As(err, &unavailable); got != issuer {
+		t.Fatalf("error = %v; issuer failure = %v, want %v", err, got, issuer)
+	}
+	if reason, ok := AuthFailure(err, true); reason != want || ok == (want == "") {
+		t.Fatalf("AuthFailure(%v) = %q, %v; want %q", err, reason, ok, want)
+	}
+}
+
+func TestRejectedBearerWithAFailedRefresh(t *testing.T) {
+	for _, tc := range failedRefreshCases {
+		t.Run(tc.name, func(t *testing.T) {
+			fake := &bearerServer{}
+			c := dialBearerServer(t, fake, &refreshingSource{refreshErr: tc.refreshErr})
+			fake.rejectNext(1)
+			_, err := c.GetSession(t.Context(), "s")
+			checkFailedRefresh(t, err, tc.issuer, tc.reason)
+			if got := len(fake.tokensFor("GetSession")); got != 1 {
+				t.Fatalf("%d attempts, want 1: a failed refresh is not retried", got)
+			}
+		})
+	}
+}
+
+func TestConverseRejectedWithAFailedRefresh(t *testing.T) {
+	for _, tc := range failedRefreshCases {
+		t.Run(tc.name, func(t *testing.T) {
+			fake := &bearerServer{}
+			c := dialBearerServer(t, fake, &refreshingSource{refreshErr: tc.refreshErr})
+			c.noteOpened("s") // not resumed: only the reopen refreshes
+			fake.rejectNext(1)
+			msgs := runConverse(t, c, "s")
+			if len(msgs) != 1 {
+				t.Fatalf("messages = %#v, want one stream error", msgs)
+			}
+			m, ok := msgs[0].(StreamErrMsg)
+			if !ok || m.AuthReason != tc.reason {
+				t.Fatalf("message = %#v, want StreamErrMsg with %q", msgs[0], tc.reason)
+			}
+			checkFailedRefresh(t, m.Err, tc.issuer, tc.reason)
+		})
 	}
 }
 

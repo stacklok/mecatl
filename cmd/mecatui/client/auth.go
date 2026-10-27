@@ -108,6 +108,25 @@ func AuthFailure(err error, bearerBacked bool) (AuthReason, bool) {
 	return "", false
 }
 
+// IssuerUnavailableError marks a token failure at the issuer rather than in the
+// local credential: it could not be reached, discovery was rejected, or its
+// token endpoint failed. AuthFailure leaves it unclassified, as at startup.
+type IssuerUnavailableError struct{ Err error }
+
+func (e *IssuerUnavailableError) Error() string { return e.Err.Error() }
+func (e *IssuerUnavailableError) Unwrap() error { return e.Err }
+
+// refreshFailure is the error for a rejected request whose forced refresh
+// failed: a local auth cause or an issuer failure explains it better than the
+// server's rejection, which any other refresh error keeps.
+func refreshFailure(rejection, refreshErr error) error {
+	var issuer *IssuerUnavailableError
+	if _, local := localAuthFailure(refreshErr); local || errors.As(refreshErr, &issuer) {
+		return refreshErr
+	}
+	return rejection
+}
+
 func localAuthFailure(err error) (AuthReason, bool) {
 	var reasoned interface{ AuthReason() AuthReason }
 	if errors.As(err, &reasoned) {

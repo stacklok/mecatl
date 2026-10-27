@@ -26,8 +26,15 @@ type reopenableStream[Req, Resp any] struct {
 	// recv belongs to the reader goroutine, which alone replaces it.
 	recv recvSide[Resp]
 
-	mu   sync.Mutex // serialises Send; guards send, reopen, recording, unanswered
-	send sendSide[Req]
+	// sendMu serialises Send, including the replay, and guards send. It is held
+	// across network calls, so the reader goroutine takes it only in reopenOnce,
+	// before any response: a Send blocked on flow control must not stop the
+	// reads that would unblock it.
+	sendMu sync.Mutex
+	send   sendSide[Req]
+	// mu guards reopen, recording, and unanswered and is never held across a
+	// network call. Take it after sendMu, never before.
+	mu sync.Mutex
 	// reopen, when set, is used at most once. Until the first response, sent
 	// frames are kept in unanswered so the replacement can replay them.
 	reopen     func() (recvSide[Resp], sendSide[Req], error)
@@ -54,8 +61,8 @@ func (s *reopenableStream[Req, Resp]) receive() (*Resp, error) {
 	if err != nil && !s.answered && status.Code(err) == codes.Unauthenticated {
 		if reopened, reopenErr := s.reopenOnce(); reopened {
 			resp, err = s.recv.Recv()
-		} else if _, local := localAuthFailure(reopenErr); local {
-			err = reopenErr // e.g. the session can no longer refresh
+		} else {
+			err = refreshFailure(err, reopenErr)
 		}
 	}
 	if err == nil && !s.answered {
@@ -73,7 +80,7 @@ func (s *reopenableStream[Req, Resp]) receive() (*Resp, error) {
 
 // reopenOnce replaces the rejected stream and reports whether it did. Frames
 // sent while the replacement is opening still go to the rejected stream and
-// are recorded, so the replay under mu sends each frame once.
+// are recorded, so the replay under sendMu sends each frame once.
 func (s *reopenableStream[Req, Resp]) reopenOnce() (bool, error) {
 	s.mu.Lock()
 	reopen := s.reopen
@@ -83,11 +90,13 @@ func (s *reopenableStream[Req, Resp]) reopenOnce() (bool, error) {
 		return false, nil
 	}
 	recv, send, err := reopen()
+	s.sendMu.Lock()
+	defer s.sendMu.Unlock()
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.recording = false
 	frames := s.unanswered
 	s.unanswered = nil
+	s.mu.Unlock()
 	if err != nil {
 		return false, err
 	}
@@ -100,19 +109,33 @@ func (s *reopenableStream[Req, Resp]) reopenOnce() (bool, error) {
 	return true, nil
 }
 
-// sendFrame serialises one Send under the mutex. While a reopen is still
-// possible the frame is recorded for replay, and io.EOF (the stream already
-// ended) is not an error: the reader receives the stream's real status and
-// either reopens and replays the frame or reports that status.
+// sendFrame serialises one Send under sendMu. While a reopen is still possible
+// the frame is recorded for replay, and io.EOF (the stream already ended) is
+// not an error: the reader receives the stream's real status and either
+// reopens and replays the frame or reports that status. A frame whose Send
+// failed otherwise is returned as an error, so it is not replayed.
 func (s *reopenableStream[Req, Resp]) sendFrame(req *Req) error {
+	s.sendMu.Lock()
+	defer s.sendMu.Unlock()
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	if !s.recording {
-		return s.send.Send(req)
+	recording := s.recording
+	if recording {
+		s.unanswered = append(s.unanswered, req)
 	}
-	s.unanswered = append(s.unanswered, req)
-	if err := s.send.Send(req); err != nil && !errors.Is(err, io.EOF) {
+	s.mu.Unlock()
+	err := s.send.Send(req)
+	if !recording || err == nil {
 		return err
 	}
-	return nil
+	if errors.Is(err, io.EOF) {
+		return nil
+	}
+	s.mu.Lock()
+	// Only sendFrame appends, under sendMu, so req is last unless the first
+	// response has already cleared the list.
+	if n := len(s.unanswered); n > 0 && s.unanswered[n-1] == req {
+		s.unanswered = s.unanswered[:n-1]
+	}
+	s.mu.Unlock()
+	return err
 }

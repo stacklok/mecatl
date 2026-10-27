@@ -52,10 +52,14 @@ func mapAuthError(err error) error {
 		return &client.AuthError{Reason: client.AuthCredentialCleanup}
 	}
 	// ErrDiscovery means the issuer was unreachable, its TLS was untrusted, or
-	// JWKS failed to load -- an infrastructure/network problem, not evidence
-	// the local keyring/registry/store is broken. Return it unwrapped so it
-	// falls through AuthFailure's deliberate unclassified case instead of
-	// steering the user toward local-storage recovery.
+	// JWKS failed to load; ErrTokenExchange that its token endpoint failed.
+	// Both are infrastructure/network problems, not evidence the local
+	// keyring/registry/store is broken. The marker leaves them in AuthFailure's
+	// deliberate unclassified case, as at startup, and lets a failed forced
+	// refresh report them instead of the server's rejection.
+	if errors.Is(err, clientauth.ErrDiscovery) || errors.Is(err, clientauth.ErrTokenExchange) {
+		return &client.IssuerUnavailableError{Err: err}
+	}
 	return err
 }
 

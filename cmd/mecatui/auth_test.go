@@ -39,15 +39,8 @@ func TestAuthTokenSourcePreservesUnclassifiedErrors(t *testing.T) {
 	unknownCause := clientauth.LoginRequiredCause("future_cause")
 	for _, want := range []error{
 		context.Canceled,
-		clientauth.ErrTokenExchange,
 		errors.New("token validation failed"),
 		&clientauth.LoginRequiredError{Cause: unknownCause},
-		// ErrDiscovery means the issuer was unreachable, its TLS was
-		// untrusted, or JWKS failed to load -- an infrastructure/network
-		// problem, not evidence the local keyring/registry/store is broken.
-		// It must remain unclassified rather than steer the user toward
-		// local-storage recovery.
-		clientauth.ErrDiscovery,
 	} {
 		source := mapAuthTokenSource(authTokenSourceFunc(func(context.Context) (string, error) { return "", want }))
 		_, got := source.Token(t.Context())
@@ -56,6 +49,33 @@ func TestAuthTokenSourcePreservesUnclassifiedErrors(t *testing.T) {
 		}
 	}
 }
+
+// TestAuthTokenSourceMarksIssuerFailures: an unreachable issuer, rejected
+// discovery, or failed token endpoint is an infrastructure problem, not
+// evidence the local keyring/registry/store is broken. It stays unclassified
+// rather than steer the user toward local-storage recovery, and is marked so a
+// failed forced refresh reports it instead of the server's rejection.
+func TestAuthTokenSourceMarksIssuerFailures(t *testing.T) {
+	for _, want := range []error{clientauth.ErrDiscovery, clientauth.ErrTokenExchange} {
+		source := mapAuthTokenSource(refreshingAuthTokenSourceFunc(func(context.Context) (string, error) { return "", want }))
+		_, tokenErr := source.Token(t.Context())
+		_, refreshErr := source.(client.TokenRefresher).Refresh(t.Context())
+		for _, got := range []error{tokenErr, refreshErr} {
+			var issuer *client.IssuerUnavailableError
+			if !errors.Is(got, want) || !errors.As(got, &issuer) || got.Error() != want.Error() {
+				t.Fatalf("error = %v; want %v marked as an issuer failure", got, want)
+			}
+			if reason, ok := client.AuthFailure(got, true); ok {
+				t.Fatalf("AuthFailure(%v) = %q; want unclassified", got, reason)
+			}
+		}
+	}
+}
+
+type refreshingAuthTokenSourceFunc func(context.Context) (string, error)
+
+func (f refreshingAuthTokenSourceFunc) Token(ctx context.Context) (string, error)   { return f(ctx) }
+func (f refreshingAuthTokenSourceFunc) Refresh(ctx context.Context) (string, error) { return f(ctx) }
 
 func TestAuthTokenSourceFetchesOnce(t *testing.T) {
 	calls := 0

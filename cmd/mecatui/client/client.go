@@ -327,12 +327,7 @@ func tokenSourceUnary(source TokenSource) grpc.UnaryClientInterceptor {
 		}
 		token, refreshErr := refresher.Refresh(ctx)
 		if refreshErr != nil {
-			// A classified local cause (an expired session) is the more useful
-			// recovery; anything else keeps the server's rejection.
-			if _, local := localAuthFailure(refreshErr); local {
-				return refreshErr
-			}
-			return err
+			return refreshFailure(err, refreshErr)
 		}
 		return invoker(withToken(ctx, token), method, req, reply, cc, opts...)
 	}
