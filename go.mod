@@ -148,7 +148,7 @@ require (
 	github.com/extism/go-sdk v1.7.1 // indirect
 	github.com/felixge/httpsnoop v1.1.0 // indirect
 	github.com/fsnotify/fsnotify v1.10.1 // indirect
-	github.com/fxamacker/cbor/v2 v2.9.1 // indirect
+	github.com/fxamacker/cbor/v2 v2.9.2 // indirect
 	github.com/getsentry/sentry-go v0.50.0 // indirect
 	github.com/getsentry/sentry-go/otel v0.50.0 // indirect
 	github.com/getsentry/sentry-go/otel/otlp v0.50.0 // indirect
@@ -212,6 +212,7 @@ require (
 	github.com/lestrrat-go/option/v3 v3.0.0-alpha1 // indirect
 	github.com/lucasb-eyer/go-colorful v1.4.1 // indirect
 	github.com/lufia/plan9stats v0.0.0-20260330125221-c963978e514e // indirect
+	github.com/mattn/go-colorable v0.1.15 // indirect
 	github.com/mattn/go-isatty v0.0.24 // indirect
 	github.com/mattn/go-runewidth v0.0.30 // indirect
 	github.com/mattn/goveralls v0.0.12 // indirect
