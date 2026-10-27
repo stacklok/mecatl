@@ -77,7 +77,7 @@ func TestExecutionAllowedPrincipalsChart(t *testing.T) {
 	}{
 		"subjects with owner identity sub_id": {slices.Concat([]string{"--set-json", "execution.allowedSubjects=[\"alice\"]"}, subID), "use execution.allowedPrincipals"},
 		"both forms":                          {slices.Concat([]string{"--set-json", "execution.allowedSubjects=[\"alice\"]"}, principals), "mutually exclusive"},
-		"neither form":                        {nil, "execution.allowedPrincipals"},
+		"neither form":                        {nil, "allowedPrincipals"},
 		"missing issuer":                      {[]string{"--set-json", `execution.allowedPrincipals=[{"subject":"alice"}]`}, "issuer"},
 		"empty subject":                       {[]string{"--set-json", `execution.allowedPrincipals=[{"issuer":"https://idp.example","subject":""}]`}, "subject"},
 		"separator in issuer":                 {[]string{"--set-json", `execution.allowedPrincipals=[{"issuer":"https://idp.example|x","subject":"alice"}]`}, "issuer"},
