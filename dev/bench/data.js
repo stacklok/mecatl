@@ -380134,6 +380134,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1793121981410,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "danbarr@users.noreply.github.com",
+            "name": "Dan Barr",
+            "username": "danbarr"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "4652fd4863d9d1ea3e25a9b31ae5855fd846bdae",
+          "message": "docs: configure Context7 indexing for the repo (#2579)\n\nCo-authored-by: Dan Barr <6922515+danbarr@users.noreply.github.com>\nCo-authored-by: Claude Sonnet 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-27T16:21:15-04:00",
+          "tree_id": "05b874d8f7c86e5707387283aa21769804aa73d9",
+          "url": "https://github.com/stacklok/mecatl/commit/4652fd4863d9d1ea3e25a9b31ae5855fd846bdae"
+        },
+        "date": 1793133160253,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 16129,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12894,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 795,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -495882,6 +495921,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1793133156411,
+  "lastUpdate": 1793133161373,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
