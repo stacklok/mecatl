@@ -310,10 +310,13 @@ func withToken(ctx context.Context, token string) context.Context {
 	return context.WithValue(ctx, tokenContextKey{}, tokenContextValue{token: token})
 }
 
-// tokenSourceUnary attaches the source's token and, when the server rejects it
-// (Unauthenticated) and the source can refresh, retries exactly once with a
-// freshly refreshed token. The authenticator rejects before any handler runs,
-// so the retry cannot repeat work. A second rejection is returned as is.
+// tokenSourceUnary attaches the source's token and, when the server's
+// authenticator rejects it and the source can refresh, retries exactly once
+// with a freshly refreshed token. The server tags only the authenticator's
+// bearer rejections, which happen before any handler runs, with the
+// bearer_rejected ErrorInfo (see isBearerRejected), so the retry cannot repeat
+// work. Any other Unauthenticated, including an untagged one from an older
+// server, and a second rejection are returned as is.
 func tokenSourceUnary(source TokenSource) grpc.UnaryClientInterceptor {
 	return func(ctx context.Context, method string, req, reply any, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
 		token, err := sourceToken(ctx, source)
@@ -322,7 +325,7 @@ func tokenSourceUnary(source TokenSource) grpc.UnaryClientInterceptor {
 		}
 		err = invoker(withToken(ctx, token), method, req, reply, cc, opts...)
 		refresher, ok := source.(TokenRefresher)
-		if !ok || status.Code(err) != codes.Unauthenticated {
+		if !ok || !isBearerRejected(err) {
 			return err
 		}
 		token, refreshErr := refresher.Refresh(ctx)

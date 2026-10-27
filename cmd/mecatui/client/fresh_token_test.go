@@ -12,6 +12,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"google.golang.org/genproto/googleapis/rpc/errdetails"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
@@ -53,14 +54,27 @@ func (s *refreshingSource) count() int {
 
 type bearerCall struct{ method, token string }
 
+// bearerRejectedStatus is the server authenticator's tagged rejection of a
+// bearer, the only Unauthenticated the client refreshes and retries on.
+func bearerRejectedStatus() error {
+	st, err := status.New(codes.Unauthenticated, "invalid_token").WithDetails(&errdetails.ErrorInfo{Reason: "bearer_rejected", Domain: "mecatl.stacklok.com"})
+	if err != nil {
+		panic(err)
+	}
+	return st.Err()
+}
+
 // bearerServer is a HarnessService fake behind an authenticator that records
-// each request's bearer and rejects (Unauthenticated, before any handler)
+// each request's bearer and rejects (bearerRejectedStatus, before any handler)
 // while reject > 0.
 type bearerServer struct {
 	mecatlv1.UnimplementedHarnessServiceServer
 	mu     sync.Mutex
 	calls  []bearerCall
 	reject int
+	// untagged makes the rejections a bare Unauthenticated, as a handler or an
+	// older server sends, which the client must not retry or replay.
+	untagged bool
 	// prompts are the prompt texts Converse handlers received and the
 	// authorization IDs authorization-control handlers received.
 	prompts []string
@@ -79,7 +93,10 @@ func (s *bearerServer) authenticate(ctx context.Context, method string) error {
 	s.calls = append(s.calls, bearerCall{method: method[strings.LastIndex(method, "/")+1:], token: token})
 	if s.reject > 0 {
 		s.reject--
-		return status.Error(codes.Unauthenticated, "invalid_token")
+		if s.untagged {
+			return status.Error(codes.Unauthenticated, "invalid_token")
+		}
+		return bearerRejectedStatus()
 	}
 	return nil
 }
@@ -144,7 +161,7 @@ func (s *bearerServer) Converse(stream grpc.BidiStreamingServer[mecatlv1.Convers
 		return err
 	}
 	if failAfterEvent {
-		return status.Error(codes.Unauthenticated, "invalid_token")
+		return bearerRejectedStatus()
 	}
 	return nil
 }
@@ -360,6 +377,24 @@ func TestRejectedBearerRetriesOnceWithAFreshToken(t *testing.T) {
 	}
 }
 
+// TestUntaggedUnauthenticatedIsNotRetried: only the authenticator's tagged
+// bearer rejection is retried; a bare Unauthenticated is surfaced as the
+// rejected-bearer failure after one attempt and no refresh.
+func TestUntaggedUnauthenticatedIsNotRetried(t *testing.T) {
+	fake := &bearerServer{untagged: true}
+	source := &refreshingSource{}
+	c := dialBearerServer(t, fake, source)
+
+	fake.rejectNext(1)
+	_, err := c.GetSession(t.Context(), "s")
+	if reason, ok := AuthFailure(err, true); !ok || reason != AuthRejected {
+		t.Fatalf("AuthFailure = %q, %v; want %q", reason, ok, AuthRejected)
+	}
+	if got := len(fake.tokensFor("GetSession")); got != 1 || source.count() != 0 {
+		t.Fatalf("%d attempts, %d refreshes; want 1, 0", got, source.count())
+	}
+}
+
 // failedRefreshCases are the outcomes of a rejected request whose forced
 // refresh fails: an issuer failure or a local auth cause is reported instead
 // of the rejection; any other refresh error keeps the rejection.
@@ -476,7 +511,7 @@ func (endedSender) Send(*mecatlv1.ConverseRequest) error { return io.EOF }
 // io.EOF), and the reopen replays it on the replacement exactly once.
 func TestStreamReplaysAFrameSentAfterTheRejection(t *testing.T) {
 	rejected := newFakeStream()
-	rejected.endErr = status.Error(codes.Unauthenticated, "invalid_token")
+	rejected.endErr = bearerRejectedStatus()
 	replacement := newFakeStream(resp(&mecatlv1.Event{Type: "message.delta", Text: "hi"}))
 	s := newAuthenticatedStream(rejected, endedSender{}, true)
 	reopens := 0
@@ -550,6 +585,23 @@ func TestConverseReopensOnceBeforeAnyEvent(t *testing.T) {
 		}
 		if got := len(fake.tokensFor("Converse")); got != 2 || source.count() != 1 {
 			t.Fatalf("%d stream attempts, %d refreshes; want 2, 1", got, source.count())
+		}
+	})
+	t.Run("untagged rejection", func(t *testing.T) {
+		fake := &bearerServer{untagged: true}
+		source := &refreshingSource{}
+		c := dialBearerServer(t, fake, source)
+		c.noteOpened("s")
+		fake.rejectNext(1)
+		msgs := runConverse(t, c, "s")
+		if len(msgs) != 1 {
+			t.Fatalf("messages = %#v, want one stream error", msgs)
+		}
+		if m, ok := msgs[0].(StreamErrMsg); !ok || m.AuthReason != AuthRejected {
+			t.Fatalf("message = %#v, want StreamErrMsg with %q", msgs[0], AuthRejected)
+		}
+		if got := len(fake.tokensFor("Converse")); got != 1 || source.count() != 0 {
+			t.Fatalf("%d stream attempts, %d refreshes; want 1, 0: an untagged Unauthenticated is not replayed", got, source.count())
 		}
 	})
 	t.Run("rejection after an event", func(t *testing.T) {

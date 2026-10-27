@@ -6,9 +6,6 @@ import (
 	"testing"
 	"time"
 
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
-
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
 )
 
@@ -68,7 +65,7 @@ func (s *scriptedSender) Send(*mecatlv1.ConverseRequest) error {
 // stream already ended) is.
 func TestFailedSendIsNotReplayed(t *testing.T) {
 	rejected := newFakeStream()
-	rejected.endErr = status.Error(codes.Unauthenticated, "invalid_token")
+	rejected.endErr = bearerRejectedStatus()
 	replacement := newFakeStream(resp(&mecatlv1.Event{Type: "message.delta", Text: "hi"}))
 	sendErr := errors.New("send failed")
 	s := newAuthenticatedStream(rejected, &scriptedSender{errs: []error{sendErr, io.EOF}}, true)

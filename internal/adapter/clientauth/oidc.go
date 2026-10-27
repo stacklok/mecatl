@@ -174,7 +174,7 @@ func Login(ctx context.Context, cfg LoginConfig) (Token, error) {
 	if _, err := validator.Validate(ctx, tok.AccessToken); err != nil {
 		return Token{}, safeValidationError(err)
 	}
-	return Token{AccessToken: tok.AccessToken, RefreshToken: tok.RefreshToken, TokenType: tok.TokenType, Expiry: tok.Expiry.UTC().Format("2006-01-02T15:04:05Z")}, nil
+	return Token{AccessToken: tok.AccessToken, RefreshToken: tok.RefreshToken, TokenType: tok.Type(), Expiry: tok.Expiry.UTC().Format("2006-01-02T15:04:05Z")}, nil
 }
 
 // RefreshSource validates access tokens and refreshes them only when necessary.
@@ -409,12 +409,14 @@ func (s *RefreshSource) exchangeAndPersist(ctx context.Context, rec CredentialRe
 	if refresh == "" {
 		refresh = rec.Token.RefreshToken
 	}
-	replacement := Token{AccessToken: tok.AccessToken, RefreshToken: refresh, TokenType: tok.TokenType, Expiry: tok.Expiry.UTC().Format(time.RFC3339)}
+	// Type() defaults an omitted token_type to "Bearer" and normalises its case.
+	replacement := Token{AccessToken: tok.AccessToken, RefreshToken: refresh, TokenType: tok.Type(), Expiry: tok.Expiry.UTC().Format(time.RFC3339)}
 	rotated := tok.RefreshToken != "" && tok.RefreshToken != rec.Token.RefreshToken
 	// Persist a rotated refresh token before validating the new access token. A
 	// transient JWKS failure must not strand the one-time refresh token: the next
 	// attempt must be able to validate the replacement without exchanging again.
-	if rotated && validToken(replacement) {
+	// A replacement Save refuses is an error, never a silently skipped save.
+	if rotated {
 		if _, err := s.creds.Save(ctx, s.identity, replacement, &rec.Version); err != nil {
 			return "", false, fmt.Errorf("clientauth: credential update failed: %w", err)
 		}
@@ -443,9 +445,7 @@ func (s *RefreshSource) refresh(ctx context.Context, current Token) (*oauth2.Tok
 	// perform a genuine refresh_token exchange here. Passing the real (not-yet-
 	// expired-by-x/oauth2's own smaller reuse threshold) expiry lets TokenSource
 	// hand back this locally-constructed token verbatim without ever calling the
-	// token endpoint -- and since that placeholder never had TokenType set,
-	// validToken() then rejects it as corrupt even though the stored credential
-	// was never touched.
+	// token endpoint, so a forced refresh would silently refresh nothing.
 	seed := &oauth2.Token{AccessToken: current.AccessToken, RefreshToken: current.RefreshToken, Expiry: time.Now().Add(-time.Minute)}
 	return (&oauth2.Config{ClientID: s.identity.ClientID, Endpoint: s.endpoint}).TokenSource(exchangeCtx, seed).Token()
 }
@@ -484,8 +484,10 @@ func (s *RefreshSource) refreshGrant(ctx context.Context, refreshToken string) (
 	}
 	decodeErr := json.Unmarshal(body, &payload)
 	if res.StatusCode < 200 || res.StatusCode > 299 {
-		if decodeErr != nil {
-			payload.Error = ""
+		// RetrieveError.Error() dereferences Response when ErrorCode is empty, so
+		// only an OAuth error response becomes one.
+		if decodeErr != nil || payload.Error == "" {
+			return nil, fmt.Errorf("token endpoint returned HTTP %d", res.StatusCode)
 		}
 		return nil, &oauth2.RetrieveError{ErrorCode: payload.Error}
 	}

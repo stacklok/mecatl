@@ -4,9 +4,6 @@ import (
 	"errors"
 	"io"
 	"sync"
-
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 )
 
 // recvSide and sendSide are the two halves of a bidirectional stream; a
@@ -17,11 +14,11 @@ type (
 )
 
 // reopenableStream is the transport shared by a Converse stream and the MCP
-// authorization-control streams. If the server rejects the bearer
-// (Unauthenticated) before any response, reopen replaces the stream once with a
-// freshly refreshed token, and the frames sent so far are replayed: the server
-// processed none of them. A second rejection, or one after a response, is
-// returned.
+// authorization-control streams. If the server's authenticator rejects the
+// bearer (isBearerRejected) before any response, reopen replaces the stream
+// once with a freshly refreshed token, and the frames sent so far are
+// replayed: the server processed none of them. Any other Unauthenticated, a
+// second rejection, or one after a response is returned.
 type reopenableStream[Req, Resp any] struct {
 	// recv belongs to the reader goroutine, which alone replaces it.
 	recv recvSide[Resp]
@@ -58,7 +55,7 @@ func (s *reopenableStream[Req, Resp]) armReopen(reopen func() (recvSide[Resp], s
 // receive returns the next response, reopening once as described on the type.
 func (s *reopenableStream[Req, Resp]) receive() (*Resp, error) {
 	resp, err := s.recv.Recv()
-	if err != nil && !s.answered && status.Code(err) == codes.Unauthenticated {
+	if err != nil && !s.answered && isBearerRejected(err) {
 		if reopened, reopenErr := s.reopenOnce(); reopened {
 			resp, err = s.recv.Recv()
 		} else {

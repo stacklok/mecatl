@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"golang.org/x/time/rate"
+	"google.golang.org/genproto/googleapis/rpc/errdetails"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
@@ -529,7 +530,26 @@ func identityStatus(err error) error {
 	if errors.Is(err, ErrIdentityUnavailable) {
 		return status.Error(codes.Unavailable, "identity provider unavailable")
 	}
-	return status.Error(codes.Unauthenticated, "missing or invalid bearer token")
+	return bearerRejected()
+}
+
+// bearerRejectedReason is the ErrorInfo reason on the authenticator's own
+// rejections of a missing or invalid bearer. It is distinct from the
+// handler-level "unauthenticated" code: the authenticator rejects before any
+// handler runs, so a client may refresh its token and retry (or replay a
+// stream) on this reason and on no other Unauthenticated.
+const bearerRejectedReason = "bearer_rejected"
+
+// bearerRejected is the Unauthenticated status for a rejected bearer, tagged
+// with bearerRejectedReason. If attaching the detail fails, the bare status is
+// returned, which a client treats as not retryable.
+func bearerRejected() error {
+	st := status.New(codes.Unauthenticated, "missing or invalid bearer token")
+	tagged, err := st.WithDetails(&errdetails.ErrorInfo{Reason: bearerRejectedReason, Domain: errorDomain})
+	if err != nil {
+		return st.Err()
+	}
+	return tagged.Err()
 }
 
 func rejectionCategory(err error) authObservationCategory {
@@ -586,7 +606,7 @@ func (a *Authenticator) authGRPC(ctx context.Context) (string, *session.Principa
 				category = authCategoryMissingBearer
 			}
 			a.observeAuthentication(ctx, authOutcomeRejected, category, authTransportGRPC, authStatusGRPCUnauthenticated)
-			return "", nil, identitybroker.Token{}, status.Error(codes.Unauthenticated, "missing or invalid bearer token")
+			return "", nil, identitybroker.Token{}, bearerRejected()
 		}
 		staticTok = bearer
 	}

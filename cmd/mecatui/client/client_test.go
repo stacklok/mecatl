@@ -183,8 +183,11 @@ func TestCredentialFreeDialHintClassifiesOnlyServerAuthDecisions(t *testing.T) {
 		t.Fatalf("nil error became %v", got)
 	}
 
-	unauth := status.Error(codes.Unauthenticated, "missing or invalid bearer token")
+	unauth := bearerRejectedStatus()
 	got := credentialFreeDialHint(server, false, unauth)
+	if !isBearerRejected(got) {
+		t.Fatalf("hint dropped the bearer_rejected detail: %v", got)
+	}
 	for _, want := range []string{"server requires caller authentication", "use --auth-token", "if this server supports OIDC enrollment", "mecatui login " + server} {
 		if !strings.Contains(got.Error(), want) {
 			t.Fatalf("hint missing %q: %v", want, got)

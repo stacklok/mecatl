@@ -3,6 +3,7 @@ package client
 import (
 	"errors"
 
+	"google.golang.org/genproto/googleapis/rpc/errdetails"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -115,6 +116,25 @@ type IssuerUnavailableError struct{ Err error }
 
 func (e *IssuerUnavailableError) Error() string { return e.Err.Error() }
 func (e *IssuerUnavailableError) Unwrap() error { return e.Err }
+
+// isBearerRejected reports the server authenticator's rejection of the
+// presented bearer: Unauthenticated tagged with the bearer_rejected ErrorInfo.
+// The authenticator rejects before any handler runs, so only this rejection
+// may be retried or replayed with a refreshed token. An untagged
+// Unauthenticated (a handler's, or an older server's) is never retried.
+func isBearerRejected(err error) bool {
+	st, ok := status.FromError(err)
+	if !ok || st.Code() != codes.Unauthenticated {
+		return false
+	}
+	for _, detail := range st.Details() {
+		info, ok := detail.(*errdetails.ErrorInfo)
+		if ok && info.GetDomain() == "mecatl.stacklok.com" && info.GetReason() == "bearer_rejected" {
+			return true
+		}
+	}
+	return false
+}
 
 // refreshFailure is the error for a rejected request whose forced refresh
 // failed: a local auth cause or an issuer failure explains it better than the
