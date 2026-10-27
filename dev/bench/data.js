@@ -343000,6 +343000,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1793121976968,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "danbarr@users.noreply.github.com",
+            "name": "Dan Barr",
+            "username": "danbarr"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "4652fd4863d9d1ea3e25a9b31ae5855fd846bdae",
+          "message": "docs: configure Context7 indexing for the repo (#2579)\n\nCo-authored-by: Dan Barr <6922515+danbarr@users.noreply.github.com>\nCo-authored-by: Claude Sonnet 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-27T16:21:15-04:00",
+          "tree_id": "05b874d8f7c86e5707387283aa21769804aa73d9",
+          "url": "https://github.com/stacklok/mecatl/commit/4652fd4863d9d1ea3e25a9b31ae5855fd846bdae"
+        },
+        "date": 1793133155009,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -495848,6 +495882,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1793133151283,
+  "lastUpdate": 1793133156411,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
