@@ -101,6 +101,17 @@
       "groupSlug": "javascript-dependencies"
     },
     {
+      "description": "Keep Playwright npm packages and the matching browser container in one update, including major upgrades",
+      "matchPackageNames": [
+        "@playwright/test",
+        "playwright",
+        "playwright-core",
+        "mcr.microsoft.com/playwright"
+      ],
+      "groupName": "playwright",
+      "groupSlug": "playwright"
+    },
+    {
       "description": "Keep approval-gated runner upgrades out of the routine batch so they cannot hold it up",
       "matchManagers": ["github-actions"],
       "matchDepTypes": ["github-runner"],
