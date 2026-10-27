@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"os"
 	"strings"
 	"testing"
 	"time"
@@ -24,50 +23,29 @@ import (
 
 func abandonedContinuation(t *testing.T, source string) *session.Session {
 	t.Helper()
-	if strings.HasPrefix(source, "events-") {
-		control := `{"Type":"permission.ask","Ask":{"AskID":"obsolete-ask","Tool":"Read","Call":"duplicate"}}`
-		if source == "events-auth" {
-			control = `{"Type":"authorization.required","Authorization":{"AuthorizationID":"obsolete-auth","Call":"duplicate","Status":"pending"}}`
-		}
-		var events []session.Event
-		for i, raw := range []string{
-			`{"Type":"tool.call","ToolCall":{"ID":"duplicate","Name":"Read","Args":{"path":"a"}}}`,
-			`{"Type":"tool.call","ToolCall":{"ID":"duplicate","Name":"Read","Args":{"path":"b"}}}`,
-			control,
-		} {
-			e, err := eventcodec.Unmarshal([]byte(raw))
-			if err != nil {
-				t.Fatal(err)
-			}
-			events = append(events, e.WithLegacySource("agent-regression", fmt.Sprint(i)))
-		}
-		s, err := eventsource.Fold(eventsource.SessionMeta{ID: "abandoned-events", Mode: session.ModeDefault, EnvironmentRef: agent.MemEnv("/ws").Ref(), CreatedAt: time.Unix(0, 0)}, func(yield func(session.Event, error) bool) {
-			for _, e := range events {
-				if !yield(e, nil) {
-					return
-				}
-			}
-		})
+	control := `{"Type":"permission.ask","Ask":{"AskID":"obsolete-ask","Tool":"Read","Call":"duplicate"}}`
+	if source == "events-auth" {
+		control = `{"Type":"authorization.required","Authorization":{"AuthorizationID":"obsolete-auth","Call":"duplicate","Status":"pending"}}`
+	}
+	var events []session.Event
+	for i, raw := range []string{
+		`{"Type":"tool.call","ToolCall":{"ID":"duplicate","Name":"Read","Args":{"path":"a"}}}`,
+		`{"Type":"tool.call","ToolCall":{"ID":"duplicate","Name":"Read","Args":{"path":"b"}}}`,
+		control,
+	} {
+		e, err := eventcodec.Unmarshal([]byte(raw))
 		if err != nil {
 			t.Fatal(err)
 		}
-		return s
+		events = append(events, e.WithLegacySource("agent-regression", fmt.Sprint(i)))
 	}
-	fixture := source
-	switch source {
-	case "snapshot-auth":
-		fixture = "legacy-authorizing"
-	case "snapshot-ask":
-		fixture = "legacy-ambiguous-pending"
-	}
-	data, err := os.ReadFile("../adapter/sessnap/testdata/" + fixture + ".json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if source == "snapshot-auth" {
-		data = bytes.ReplaceAll(data, []byte("provider-auth-call"), []byte("provider-call-reused"))
-	}
-	s, err := sessnap.Unmarshal(data)
+	s, err := eventsource.Fold(eventsource.SessionMeta{ID: "abandoned-events", Mode: session.ModeDefault, EnvironmentRef: agent.MemEnv("/ws").Ref(), CreatedAt: time.Unix(0, 0)}, func(yield func(session.Event, error) bool) {
+		for _, e := range events {
+			if !yield(e, nil) {
+				return
+			}
+		}
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,7 +53,7 @@ func abandonedContinuation(t *testing.T, source string) *session.Session {
 }
 
 func TestAbandonedContinuationControlsAreInert(t *testing.T) {
-	for _, source := range []string{"snapshot-ask", "snapshot-auth", "candidate-held", "candidate-held-event", "events-ask", "events-auth"} {
+	for _, source := range []string{"events-ask", "events-auth"} {
 		t.Run(source, func(t *testing.T) {
 			store := &saveCountingStore{inner: memstore.New()}
 			rules := permstore.New()
@@ -157,7 +135,7 @@ func TestAbandonedContinuationControlsAreInert(t *testing.T) {
 }
 
 func TestAbandonedContinuationSeparatePromptRunsNormally(t *testing.T) {
-	for _, source := range []string{"snapshot-ask", "snapshot-auth", "candidate-held", "candidate-held-event", "events-ask", "events-auth"} {
+	for _, source := range []string{"events-ask", "events-auth"} {
 		t.Run(source, func(t *testing.T) {
 			s := abandonedContinuation(t, source)
 			store := memstore.New()

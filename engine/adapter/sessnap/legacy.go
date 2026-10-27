@@ -1,7 +1,6 @@
 package sessnap
 
 import (
-	"bytes"
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
@@ -39,26 +38,6 @@ type legacyMessageDTO struct {
 	UserPromptProvenance session.UserPromptProvenance `json:"user_prompt_provenance,omitempty"`
 	Replay               json.RawMessage              `json:"replay,omitempty"`
 }
-type legacyPendingAskDTO struct {
-	AskID     string
-	Tool      string
-	Args      json.RawMessage
-	Reason    string
-	Call      string                         `json:"call,omitempty"`
-	Guardrail *session.GuardrailPendingScope `json:"guardrail,omitempty"`
-	Origin    session.ApprovalOrigin         `json:"origin,omitempty"`
-}
-type legacyAuthorizationCallDTO struct {
-	ID     string `json:"id"`
-	Name   string `json:"name"`
-	Args   []byte `json:"args,omitempty"`
-	ItemID string `json:"item_id,omitempty"`
-}
-type legacyPendingAuthorizationDTO struct {
-	Authorization externalAuthorizationDTO     `json:"authorization"`
-	Call          legacyAuthorizationCallDTO   `json:"call"`
-	Deferred      []legacyAuthorizationCallDTO `json:"deferred,omitempty"`
-}
 
 type legacyRelationshipDTO struct {
 	session.SessionRelationship
@@ -87,26 +66,18 @@ func (s *Snapshot) UnmarshalJSON(data []byte) error {
 	if err := json.Unmarshal(data, &wire); err != nil {
 		return err
 	}
+	if len(wire.Hold) != 0 {
+		return errors.New("sessnap: unsupported identity_hold")
+	}
 	decoded.IdentitySchema = schema
 	switch decoded.IdentitySchema {
 	case 0:
-		if len(wire.Hold) != 0 {
-			return errors.New("sessnap: legacy snapshot has new identity hold")
+		if decoded.State == session.StateAwaiting || decoded.State == session.StateAuthorizing ||
+			len(wire.Pending) != 0 && string(wire.Pending) != "null" ||
+			len(wire.Authorization) != 0 && string(wire.Authorization) != "null" {
+			return errors.New("sessnap: legacy pending continuation is unsupported")
 		}
-		if len(wire.Relationship) != 0 {
-			var old legacyRelationshipDTO
-			if err := json.Unmarshal(wire.Relationship, &old); err != nil {
-				return err
-			}
-			if len(old.Legacy) != 0 {
-				return errors.New("sessnap: legacy relationship has new carrier")
-			}
-			decoded.Relationship = old.SessionRelationship
-			if old.CallID != "" {
-				decoded.Relationship.Legacy = &session.LegacyRelationshipIdentity{ProviderCallID: old.CallID}
-			}
-		}
-		if err := decoded.decodeLegacy(wire.Messages, wire.Pending, wire.Authorization); err != nil {
+		if err := decoded.decodeLegacy(wire.Relationship, wire.Messages); err != nil {
 			return err
 		}
 	case 2:
@@ -128,11 +99,6 @@ func (s *Snapshot) UnmarshalJSON(data []byte) error {
 				return err
 			}
 		}
-		if len(wire.Hold) != 0 {
-			if err := decoded.normalizeCandidateHold(wire.Hold); err != nil {
-				return err
-			}
-		}
 	default:
 		return fmt.Errorf("sessnap: unknown identity schema %d", decoded.IdentitySchema)
 	}
@@ -140,10 +106,37 @@ func (s *Snapshot) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+func (s *Snapshot) decodeLegacy(relationship, messages json.RawMessage) error {
+	if len(relationship) != 0 {
+		var old legacyRelationshipDTO
+		if err := json.Unmarshal(relationship, &old); err != nil {
+			return err
+		}
+		if len(old.Legacy) != 0 {
+			return errors.New("sessnap: legacy relationship has new carrier")
+		}
+		s.Relationship = old.SessionRelationship
+		if old.CallID != "" {
+			s.Relationship.Legacy = &session.LegacyRelationshipIdentity{ProviderCallID: old.CallID}
+		}
+	}
+	if len(messages) != 0 {
+		if err := json.Unmarshal(messages, &s.legacyMessages); err != nil {
+			return err
+		}
+	}
+	// A non-nil slice distinguishes decoded /1 history from unsupported
+	// schema-zero direct Snapshot construction, even for absent/null history.
+	if s.legacyMessages == nil {
+		s.legacyMessages = []legacyMessageDTO{}
+	}
+	return nil
+}
+
 // MarshalJSON also preserves a decoded old snapshot before Restore is called.
 func (s Snapshot) MarshalJSON() ([]byte, error) {
 	type plain Snapshot
-	if s.IdentitySchema != 0 || s.legacyMessages == nil && s.legacyPendingBytes == nil && s.legacyAuthorizationBytes == nil && s.Relationship.Legacy == nil {
+	if s.IdentitySchema != 0 || s.legacyMessages == nil {
 		return json.Marshal(plain(s))
 	}
 	rel := legacyRelationshipDTO{SessionRelationship: s.Relationship}
@@ -152,32 +145,9 @@ func (s Snapshot) MarshalJSON() ([]byte, error) {
 	}
 	return json.Marshal(struct {
 		plain
-		Relationship  legacyRelationshipDTO `json:"relationship,omitzero"`
-		Messages      []legacyMessageDTO    `json:"messages"`
-		Pending       json.RawMessage       `json:"pending,omitempty"`
-		Authorization json.RawMessage       `json:"pending_authorization,omitempty"`
-	}{plain(s), rel, s.legacyMessages, s.legacyPendingBytes, s.legacyAuthorizationBytes})
-}
-
-func (s *Snapshot) decodeLegacy(messages, pending, authorization []byte) error {
-	if len(messages) != 0 {
-		if err := json.Unmarshal(messages, &s.legacyMessages); err != nil {
-			return err
-		}
-	}
-	if len(pending) != 0 {
-		if err := json.Unmarshal(pending, &s.legacyPending); err != nil {
-			return err
-		}
-		s.legacyPendingBytes = append([]byte(nil), pending...)
-	}
-	if len(authorization) != 0 {
-		if err := json.Unmarshal(authorization, &s.legacyAuthorization); err != nil {
-			return err
-		}
-		s.legacyAuthorizationBytes = append([]byte(nil), authorization...)
-	}
-	return nil
+		Relationship legacyRelationshipDTO `json:"relationship,omitzero"`
+		Messages     []legacyMessageDTO    `json:"messages"`
+	}{plain(s), rel, s.legacyMessages})
 }
 
 const legacySnapshotNamespace = "sessnap/legacy-v1"
@@ -211,161 +181,11 @@ func legacyReplay(m legacyMessageDTO) *session.ProviderReplay {
 }
 
 type legacyOccurrence struct {
-	ordinal  int
-	slot     int
-	call     legacyCallDTO
-	id       session.ToolCallID
-	unsafe   bool
-	answered bool
-}
-
-type legacyHoldPayload struct {
-	Version                 int                      `json:"version"`
-	State                   session.State            `json:"state"`
-	Pending                 []byte                   `json:"pending,omitempty"`
-	Event                   []byte                   `json:"event,omitempty"`
-	Authorization           []byte                   `json:"pending_authorization,omitempty"`
-	Enrollment              []byte                   `json:"pending_workspace_enrollment,omitempty"`
-	Stop                    session.StopReason       `json:"stop_reason,omitempty"`
-	RetryDisposition        session.RetryDisposition `json:"retry_disposition,omitempty"`
-	StreamProgress          session.StreamProgress   `json:"stream_progress,omitempty"`
-	RetryPending            bool                     `json:"retry_pending,omitempty"`
-	RetryPendingDisposition session.RetryDisposition `json:"retry_pending_disposition,omitempty"`
-	RetryPendingProgress    session.StreamProgress   `json:"retry_pending_progress,omitempty"`
-	LastError               string                   `json:"last_error,omitempty"`
-}
-
-// candidateHold is input-only compatibility for already-written candidate /2
-// snapshots. No hold or original continuation is installed on the aggregate.
-type candidateHold struct {
-	Reason  string
-	Payload []byte
-}
-
-func (s *Snapshot) normalizeCandidateHold(data []byte) error {
-	var candidate candidateHold
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&candidate); err != nil {
-		return fmt.Errorf("sessnap: invalid hold: %w", err)
-	}
-	if candidate.Reason != "legacy-continuation-unproven" || len(candidate.Payload) == 0 || len(candidate.Payload) > 16<<20 ||
-		(s.State != session.StateAwaiting && s.State != session.StateAuthorizing) {
-		return errors.New("sessnap: invalid hold reason/payload/lifecycle")
-	}
-	if s.Pending != nil || s.PendingAuthorization != nil || s.PendingWorkspaceEnrollment != nil {
-		return errors.New("sessnap: migration hold has runnable continuation")
-	}
-	if err := validateHoldPayload(s.State, candidate.Payload); err != nil {
-		return err
-	}
-	// Older candidate writers kept unattached result media only in Unsupported.
-	// Recover it for display without introducing any authoritative result link.
-	for i := range s.Messages {
-		m := &s.Messages[i]
-		if m.Legacy == nil || len(m.Legacy.Unsupported) == 0 || m.ToolResult != nil {
-			continue
-		}
-		var old legacyMessageDTO
-		if err := json.Unmarshal(m.Legacy.Unsupported, &old); err != nil {
-			return fmt.Errorf("sessnap: invalid unsupported original: %w", err)
-		}
-		if old.ToolResult != nil {
-			preserveUnattachedResult(m, old.ToolResult)
-		}
-	}
-	return s.abandonLegacyContinuation()
-}
-
-func validateHoldPayload(state session.State, data []byte) error {
-	if !json.Valid(data) {
-		return errors.New("sessnap: invalid hold JSON")
-	}
-	var hold legacyHoldPayload
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&hold); err != nil {
-		return fmt.Errorf("sessnap: invalid hold: %w", err)
-	}
-	if hold.Version != 1 || hold.State != state {
-		return errors.New("sessnap: invalid hold lifecycle/version")
-	}
-	var ask *legacyPendingAskDTO
-	var auth *legacyPendingAuthorizationDTO
-	if len(hold.Pending) != 0 {
-		if err := json.Unmarshal(hold.Pending, &ask); err != nil {
-			return err
-		}
-	}
-	if len(hold.Event) != 0 {
-		// The old eventsource candidate stored the original ask event as bytes.
-		// Decode locally, without treating its provider references as authority.
-		var event struct {
-			Type session.EventType
-			Ask  *legacyPendingAskDTO
-		}
-		if err := json.Unmarshal(hold.Event, &event); err != nil {
-			return fmt.Errorf("sessnap: invalid held event: %w", err)
-		}
-		if state != session.StateAwaiting || event.Type != session.EvPermissionAsk {
-			return errors.New("sessnap: invalid held approval event")
-		}
-	}
-	if len(hold.Authorization) != 0 {
-		if err := json.Unmarshal(hold.Authorization, &auth); err != nil {
-			return err
-		}
-	}
-	if len(hold.Enrollment) != 0 {
-		var enrollment *session.PendingWorkspaceEnrollment
-		if err := json.Unmarshal(hold.Enrollment, &enrollment); err != nil {
-			return err
-		}
-	}
-	// The original continuation need not be valid: this payload records why it
-	// was unprovable. It is validated as storage only and then discarded.
-	return nil
-}
-
-func validateMigrationHistory(messages []messageDTO) error {
-	seen := make(map[session.ToolCallID]bool)
-	open := make(map[session.ToolCallID]bool)
-	bindings := make(map[session.ToolCallID]session.ProviderCallID)
-	providerOpen := make(map[session.ProviderCallID]bool)
-	for _, dto := range messages {
-		if err := session.ValidateMessageReplay(fromDTO(dto)); err != nil {
-			return err
-		}
-		if dto.Replay != nil {
-			for _, binding := range dto.Replay.Bindings {
-				bindings[binding.CallID] = binding.PairingID
-			}
-		}
-		for _, call := range dto.ToolCalls {
-			if dto.Role != session.RoleAssistant || call.ID == "" || seen[call.ID] {
-				return errors.New("sessnap: unsafe migration call identity")
-			}
-			seen[call.ID], open[call.ID] = true, true
-			if dto.Replay == nil {
-				// Replay-free calls use this token at port.ProjectMessages.
-				bindings[call.ID] = session.ProviderCallID("engine_" + string(call.ID))
-			}
-			if providerOpen[bindings[call.ID]] {
-				return errors.New("sessnap: outstanding migration provider pairing")
-			}
-			providerOpen[bindings[call.ID]] = true
-		}
-		if result := dto.ToolResult; result != nil {
-			if dto.Role != session.RoleTool || result.CallID == "" || !open[result.CallID] {
-				return errors.New("sessnap: orphan migration canonical result")
-			}
-			delete(open, result.CallID)
-			delete(providerOpen, bindings[result.CallID])
-		} else if dto.Role == session.RoleTool {
-			return errors.New("sessnap: migration tool message without result")
-		}
-	}
-	return nil
+	ordinal int
+	slot    int
+	call    legacyCallDTO
+	id      session.ToolCallID
+	unsafe  bool
 }
 
 func (s Snapshot) migrateLegacy(inc session.IncarnationID) (Snapshot, error) {
@@ -373,9 +193,6 @@ func (s Snapshot) migrateLegacy(inc session.IncarnationID) (Snapshot, error) {
 }
 
 func (s Snapshot) migrateLegacySource(inc session.IncarnationID, namespace string) (Snapshot, error) {
-	if err := s.decodeLegacyLiteral(); err != nil {
-		return s, err
-	}
 	source, err := indexLegacySource(s.legacyMessages, inc, namespace)
 	if err != nil {
 		return s, err
@@ -383,60 +200,14 @@ func (s Snapshot) migrateLegacySource(inc session.IncarnationID, namespace strin
 	if err := source.migrateMessages(&s, inc, namespace); err != nil {
 		return s, err
 	}
-	s.Pending, s.PendingAuthorization = nil, nil
-	abandoned := false
-	switch s.State {
-	case session.StateAwaiting:
-		abandoned = !source.migratePendingAsk(&s)
-	case session.StateAuthorizing:
-		abandoned, err = source.migratePendingAuthorization(&s)
-		if err != nil {
-			return s, err
-		}
-	default:
-		if s.legacyPending != nil || s.legacyAuthorization != nil {
-			return s, errors.New("sessnap: pending value outside matching state")
-		}
-	}
-	if abandoned {
-		if err := s.abandonLegacyContinuation(); err != nil {
-			return s, err
-		}
-	}
 	s.IdentitySchema = 2
 	return s, nil
 }
 
-func (s *Snapshot) decodeLegacyLiteral() error {
-	// Direct Snapshot literals predate schema discrimination. Decode their old
-	// provider-domain fields through the same private DTOs as the JSON path.
-	if s.legacyMessages == nil && (s.Messages != nil || s.Pending != nil || s.PendingAuthorization != nil) {
-		messages, err := json.Marshal(s.Messages)
-		if err != nil {
-			return err
-		}
-		pending, err := json.Marshal(s.Pending)
-		if err != nil {
-			return err
-		}
-		auth, err := json.Marshal(s.PendingAuthorization)
-		if err != nil {
-			return err
-		}
-		if err := s.decodeLegacy(messages, pending, auth); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 type legacySource struct {
-	old           []legacyMessageDTO
-	calls         [][]*legacyOccurrence
-	results       []*legacyOccurrence
-	open          map[string][]*legacyOccurrence
-	historyProven bool
-	lastAssistant int
+	old     []legacyMessageDTO
+	calls   [][]*legacyOccurrence
+	results []*legacyOccurrence
 }
 
 // indexLegacySource proves call/result pairings within one complete legacy source.
@@ -445,8 +216,8 @@ type legacySource struct {
 func indexLegacySource(old []legacyMessageDTO, inc session.IncarnationID, namespace string) (*legacySource, error) {
 	x := &legacySource{
 		old: old, calls: make([][]*legacyOccurrence, len(old)), results: make([]*legacyOccurrence, len(old)),
-		open: make(map[string][]*legacyOccurrence), historyProven: true, lastAssistant: -1,
 	}
+	open := make(map[string][]*legacyOccurrence)
 	for i, m := range old {
 		if len(m.Replay) != 0 {
 			return nil, errors.New("sessnap: replay carrier without identity schema")
@@ -456,13 +227,13 @@ func indexLegacySource(old []legacyMessageDTO, inc session.IncarnationID, namesp
 			occ := &legacyOccurrence{ordinal: i, slot: j, call: call, id: legacySourceInvocationID(inc, namespace, i, j), unsafe: call.ID == "" || m.Role != session.RoleAssistant}
 			x.calls[i] = append(x.calls[i], occ)
 			batch[call.ID] = append(batch[call.ID], occ)
-			if len(x.open[call.ID]) != 0 {
+			if len(open[call.ID]) != 0 {
 				occ.unsafe = true
-				for _, prior := range x.open[call.ID] {
+				for _, prior := range open[call.ID] {
 					prior.unsafe = true
 				}
 			}
-			x.open[call.ID] = append(x.open[call.ID], occ)
+			open[call.ID] = append(open[call.ID], occ)
 		}
 		for _, occurrences := range batch {
 			if len(occurrences) > 1 {
@@ -473,10 +244,9 @@ func indexLegacySource(old []legacyMessageDTO, inc session.IncarnationID, namesp
 		}
 		if m.ToolResult != nil {
 			key := m.ToolResult.CallID
-			if occurrences := x.open[key]; key != "" && len(occurrences) == 1 && !occurrences[0].unsafe && m.Role == session.RoleTool {
+			if occurrences := open[key]; key != "" && len(occurrences) == 1 && !occurrences[0].unsafe && m.Role == session.RoleTool {
 				x.results[i] = occurrences[0]
-				occurrences[0].answered = true
-				delete(x.open, key)
+				delete(open, key)
 			}
 		}
 	}
@@ -486,9 +256,6 @@ func indexLegacySource(old []legacyMessageDTO, inc session.IncarnationID, namesp
 func (x *legacySource) migrateMessages(s *Snapshot, inc session.IncarnationID, namespace string) error {
 	s.Messages = make([]messageDTO, len(x.old))
 	for i, m := range x.old {
-		if m.Role == session.RoleAssistant {
-			x.lastAssistant = i
-		}
 		dto, err := x.migrateMessage(i, m, inc, namespace)
 		if err != nil {
 			return err
@@ -526,7 +293,6 @@ func (x *legacySource) migrateMessage(i int, m legacyMessageDTO, inc session.Inc
 		dto.Role = session.RoleAssistant
 	}
 	if unsupported {
-		x.historyProven = false
 		var err error
 		dto.Legacy.Unsupported, err = json.Marshal(m)
 		if err != nil {
@@ -540,124 +306,6 @@ func (x *legacySource) migrateMessage(i int, m legacyMessageDTO, inc session.Inc
 		dto.Replay = replay
 	}
 	return dto, nil
-}
-
-func (x *legacySource) resolve(key string) *legacyOccurrence {
-	occurrences := x.open[key]
-	if key == "" || len(occurrences) != 1 || occurrences[0].unsafe {
-		return nil
-	}
-	return occurrences[0]
-}
-
-// migratePendingAsk restores an executable ask only when its unresolved trailing
-// occurrence and all earlier result ordering are proven by the complete source.
-// Unprovable continuations are abandoned locally at the snapshot boundary.
-func (x *legacySource) migratePendingAsk(s *Snapshot) bool {
-	p := s.legacyPending
-	if p == nil || s.legacyAuthorization != nil {
-		return false
-	}
-	occ := x.resolve(p.Call)
-	if occ == nil || occ.call.Name != p.Tool || !x.historyProven || occ.ordinal != x.lastAssistant {
-		return false
-	}
-	proven := true
-	for i, occurrences := range x.calls {
-		for _, other := range occurrences {
-			shouldBeAnswered := i < occ.ordinal || i == occ.ordinal && other.slot < occ.slot
-			if other.answered != shouldBeAnswered {
-				proven = false
-			}
-		}
-	}
-	for _, m := range x.old[occ.ordinal+1:] {
-		if m.Role != session.RoleTool || m.ToolResult == nil {
-			proven = false
-		}
-	}
-	if !proven {
-		return false
-	}
-	s.Pending = &session.PendingAsk{AskID: p.AskID, Tool: p.Tool, Args: append([]byte(nil), p.Args...), Reason: p.Reason, Call: occ.id, Guardrail: p.Guardrail, Origin: p.Origin}
-	return true
-}
-
-func (x *legacySource) convertAuthorizationCall(call legacyAuthorizationCallDTO) (authorizationCallDTO, bool) {
-	occ := x.resolve(call.ID)
-	if occ == nil || occ.call.ItemID != call.ItemID {
-		return authorizationCallDTO{}, false
-	}
-	return authorizationCallDTO{ID: occ.id, Name: call.Name, Args: append([]byte(nil), call.Args...)}, true
-}
-
-func (x *legacySource) migratePendingAuthorization(s *Snapshot) (bool, error) {
-	p := s.legacyAuthorization
-	if p == nil || s.legacyPending != nil || !x.historyProven {
-		return true, nil
-	}
-	call, ok := x.convertAuthorizationCall(p.Call)
-	if !ok {
-		return true, nil
-	}
-	s.PendingAuthorization = &pendingAuthorizationDTO{Authorization: p.Authorization, Call: call}
-	for _, deferred := range p.Deferred {
-		call, ok := x.convertAuthorizationCall(deferred)
-		if !ok {
-			return true, nil
-		}
-		s.PendingAuthorization.Deferred = append(s.PendingAuthorization.Deferred, call)
-	}
-	probe := session.New(s.ID, s.Mode, s.EnvironmentRef, s.Limits, s.CreatedAt)
-	for _, m := range s.Messages {
-		probe.Conversation.Append(fromDTO(m))
-	}
-	if err := probe.BeginTurn(); err != nil {
-		return false, err
-	}
-	if err := probe.PauseForAuthorization(*fromPendingAuthorizationDTO(s.PendingAuthorization)); err != nil {
-		return true, nil
-	}
-	return false, nil
-}
-
-const upgradeAbandonmentNotice = "The prior continuation was abandoned during upgrade. Prior tool effects and completion may be unknown."
-
-// Only canonical calls proven by the source receive interruption results. Source
-// rows and their evidence coordinates stay in place; ambiguous originals remain
-// private, unattached history, not executable continuation authority.
-func (s *Snapshot) abandonLegacyContinuation() error {
-	if err := validateMigrationHistory(s.Messages); err != nil {
-		return err
-	}
-	answered := make(map[session.ToolCallID]bool)
-	for _, m := range s.Messages {
-		if m.ToolResult != nil {
-			answered[m.ToolResult.CallID] = true
-		}
-	}
-	var interrupted []messageDTO
-	for _, m := range s.Messages {
-		for _, call := range m.ToolCalls {
-			if !answered[call.ID] {
-				interrupted = append(interrupted, toDTO(session.NewToolMessage(session.NewToolError(call.ID, upgradeAbandonmentNotice))))
-			}
-		}
-	}
-	s.Messages = append(s.Messages, interrupted...)
-	s.Messages = append(s.Messages, toDTO(session.NewAssistantMessage(upgradeAbandonmentNotice, nil)))
-	messages := make([]session.Message, len(s.Messages))
-	for i, dto := range s.Messages {
-		messages[i] = fromDTO(dto)
-	}
-	if err := session.ValidateToolPairing(messages); err != nil {
-		return err
-	}
-	s.State = session.StateIdle
-	s.Pending, s.PendingAuthorization, s.PendingWorkspaceEnrollment = nil, nil, nil
-	s.StopReason, s.RetryDisposition, s.StreamProgress = "", 0, 0
-	s.RetryPending, s.RetryPendingDisposition, s.RetryPendingProgress, s.LastError = false, 0, 0, ""
-	return nil
 }
 
 func preserveUnattachedResult(dto *messageDTO, result *legacyResultDTO) {

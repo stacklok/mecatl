@@ -39,22 +39,18 @@ import (
 // struct with JSON tags so it serializes deterministically regardless of the
 // (untagged) layout of the domain types.
 type Snapshot struct {
-	IdentitySchema           int `json:"identity_schema,omitempty"`
-	legacyMessages           []legacyMessageDTO
-	legacyPending            *legacyPendingAskDTO
-	legacyAuthorization      *legacyPendingAuthorizationDTO
-	legacyPendingBytes       []byte
-	legacyAuthorizationBytes []byte
-	ID                       session.SessionID       `json:"id"`
-	State                    session.State           `json:"state"`
-	Mode                     session.PermissionMode  `json:"mode"`
-	Limits                   session.Limits          `json:"limits"`
-	Counters                 session.Counters        `json:"counters"`
-	ExternalBinding          session.ExternalBinding `json:"external_binding,omitempty"`
-	CreatedAt                time.Time               `json:"created_at"`
-	Incarnation              session.IncarnationID   `json:"incarnation,omitempty"`
-	Messages                 []messageDTO            `json:"messages"`
-	Pending                  *session.PendingAsk     `json:"pending,omitempty"`
+	IdentitySchema  int `json:"identity_schema,omitempty"`
+	legacyMessages  []legacyMessageDTO
+	ID              session.SessionID       `json:"id"`
+	State           session.State           `json:"state"`
+	Mode            session.PermissionMode  `json:"mode"`
+	Limits          session.Limits          `json:"limits"`
+	Counters        session.Counters        `json:"counters"`
+	ExternalBinding session.ExternalBinding `json:"external_binding,omitempty"`
+	CreatedAt       time.Time               `json:"created_at"`
+	Incarnation     session.IncarnationID   `json:"incarnation,omitempty"`
+	Messages        []messageDTO            `json:"messages"`
+	Pending         *session.PendingAsk     `json:"pending,omitempty"`
 	// PendingAuthorization is present exactly while StateAuthorizing. Its private
 	// DTO base64-encodes tool arguments so JSON normalization cannot change bytes.
 	PendingAuthorization *pendingAuthorizationDTO `json:"pending_authorization,omitempty"`
@@ -382,15 +378,11 @@ func Of(s *session.Session) (Snapshot, error) {
 // machine through its public constructors and transitions, so all invariants
 // hold on the rebuilt aggregate.
 func (s Snapshot) Restore() (*session.Session, error) {
-	if s.IdentitySchema != 0 && s.IdentitySchema != 2 {
+	if s.IdentitySchema != 2 && (s.IdentitySchema != 0 || s.legacyMessages == nil) {
 		return nil, fmt.Errorf("sessnap: unknown identity schema %d", s.IdentitySchema)
 	}
 	if !s.EnvironmentRef.Valid() {
 		return nil, errors.New("sessnap: missing or invalid environment_ref")
-	}
-	if s.IdentitySchema == 0 && s.Relationship.CallID != "" {
-		s.Relationship.Legacy = &session.LegacyRelationshipIdentity{ProviderCallID: string(s.Relationship.CallID)}
-		s.Relationship.CallID = ""
 	}
 	restored := session.New(s.ID, s.Mode, s.EnvironmentRef, s.Limits, s.CreatedAt)
 	if err := restored.RestoreSessionMetadata(s.Kind, s.Relationship); err != nil {

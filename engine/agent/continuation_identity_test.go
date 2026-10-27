@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"os"
 	"reflect"
 	"testing"
 	"time"
@@ -177,13 +176,28 @@ func TestAuthorizationCanonicalInvalidContinuationIsInert(t *testing.T) {
 	}
 }
 
-func TestAuthorizationMigratedContinuationKeepsExactEffectiveArguments(t *testing.T) {
-	data, err := os.ReadFile("../adapter/sessnap/testdata/legacy-authorizing.json")
+func TestAuthorizationCanonicalContinuationKeepsExactEffectiveArguments(t *testing.T) {
+	s := session.New("authorization-exact", session.ModeDefault, agent.MemEnv("/ws").Ref(), session.Limits{}, time.Unix(0, 0))
+	if err := s.BeginTurn(); err != nil {
+		t.Fatal(err)
+	}
+	calls := []session.ToolCall{
+		session.NewToolCall("target", "Shell", []byte(`{"command":"display only"}`)),
+		session.NewToolCall("later", "Shell", []byte(`{"command":"must not run"}`)),
+	}
+	if err := s.RecordAssistant(session.NewAssistantMessage("", calls)); err != nil {
+		t.Fatal(err)
+	}
+	effective := calls[0]
+	effective.Args = []byte(`{"command":  "effective"}`)
+	if err := s.PauseForAuthorization(session.PendingAuthorization{Authorization: session.ExternalAuthorization{ID: "auth", Binding: "binding", ExpiresAt: time.Unix(100, 0)}, Call: effective, Deferred: calls[1:]}); err != nil {
+		t.Fatal(err)
+	}
+	data, err := sessnap.Marshal(s)
 	if err != nil {
 		t.Fatal(err)
 	}
-	data = bytes.Replace(data, []byte("eyJjb21tYW5kIjogICJlY2hvIGF1dGgifQ=="), []byte("eyJjb21tYW5kIjogICJlZmZlY3RpdmUifQ=="), 1)
-	s, err := sessnap.Unmarshal(data)
+	s, err = sessnap.Unmarshal(data)
 	if err != nil {
 		t.Fatal(err)
 	}

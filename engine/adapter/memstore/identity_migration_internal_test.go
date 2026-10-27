@@ -67,15 +67,12 @@ func TestCarrierDirectMemstoreOwnershipAndAccounting(t *testing.T) {
 	}
 }
 
-func TestAbandonedLegacyDirectMemstoreOwnershipAndAccounting(t *testing.T) {
-	for _, name := range []string{"legacy-ambiguous-pending", "legacy-authorizing"} {
+func TestUnsupportedLegacyDirectMemstoreOwnershipAndAccounting(t *testing.T) {
+	for _, name := range []string{"legacy-completed"} {
 		t.Run(name, func(t *testing.T) {
 			data, err := os.ReadFile("../sessnap/testdata/" + name + ".json")
-			ordinal := 0
-			if name == "legacy-authorizing" {
-				data = bytes.Replace(data, []byte(`"ID": "provider-auth-call"`), []byte(`"ID": ""`), 1)
-				ordinal = 2
-			}
+			ordinal := 2
+			data = bytes.Replace(data, []byte(`"CallID":"reused", "Content":"first"`), []byte(`"CallID":"missing", "Content":"first"`), 1)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -83,12 +80,12 @@ func TestAbandonedLegacyDirectMemstoreOwnershipAndAccounting(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			if err := s.Reopen(); err != nil {
+				t.Fatal(err)
+			}
 			ctx := context.Background()
 			store := New()
 			wantHistory := session.CloneMessages(s.Conversation.Messages)
-			if !bytes.Contains([]byte(wantHistory[len(wantHistory)-1].Text), []byte("abandoned during upgrade")) {
-				t.Fatal("missing durable upgrade notice")
-			}
 			if err := store.Save(ctx, s); err != nil {
 				t.Fatal(err)
 			}
@@ -99,7 +96,7 @@ func TestAbandonedLegacyDirectMemstoreOwnershipAndAccounting(t *testing.T) {
 					t.Fatal(err)
 				}
 				if loaded.State != session.StateIdle || !reflect.DeepEqual(loaded.Conversation.Messages, wantHistory) {
-					t.Fatal("direct memstore lost promptable abandoned history")
+					t.Fatal("direct memstore lost historical content")
 				}
 				if _, ok := loaded.PendingAsk(); ok {
 					t.Fatal("obsolete approval resurrected")

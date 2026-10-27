@@ -191,14 +191,20 @@ must accept this replay boundary or retain equivalent private state in its own
 storage. A current-format open external-authorization continuation likewise requires
 private snapshot state; public events do not confer continuation authority.
 
-Legacy codecs preserve provable pending continuations. When proof is unavailable,
-they abandon the continuation at load time, clear its runnable controls, and return
-ordinary promptable history with a durable notice that prior tool effects and
-completion may be unknown. Only proven outstanding calls receive interruption
-results; ambiguous rows retain historical content and source provenance without
-guessed invocation links. Candidate `/2` snapshots carrying `identity_hold` are
-accepted as migration input; normalized writes omit that field. Loading performs
-no tool execution or external authorization action.
+Legacy `/1` snapshots in awaiting or authorizing state are unloadable, even without
+pending payloads. Non-null `pending` or `pending_authorization` payloads in any
+legacy state also reject. Resolve pending work before upgrading or start a fresh
+session. Nonpending `/1` history still migrates; current `/2` approvals and private
+authorization continuations roundtrip unchanged. Any `identity_hold` key rejects,
+including null; intermediate hold formats are unsupported. Direct Go snapshot
+callers must use the current schema (normally via `sessnap.Of`).
+
+Complete-event reconstruction is unchanged: provable legacy continuations are
+preserved; unprovable ones are abandoned during folding, returning ordinary
+promptable history with a durable unknown-effects notice. Only proven outstanding
+calls receive interruption results; ambiguous rows retain historical content and
+source provenance without guessed invocation links. Loading performs no tool
+execution or external authorization action.
 
 ## See also
 

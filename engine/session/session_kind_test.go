@@ -141,6 +141,8 @@ func TestInvalidRelationshipsFailClosed(t *testing.T) {
 		{ID: "bad-unknown", Kind: session.SessionKind("future"), CreatedAt: created},
 	}
 	for _, snap := range invalid {
+		snap.IdentitySchema = 2
+		snap.EnvironmentRef = session.EnvironmentRef{Kind: session.EnvKindMem, ID: "workspace", Revision: "v1"}
 		if _, err := snap.Restore(); err == nil {
 			t.Errorf("Restore(%q) succeeded, want fail-closed error", snap.ID)
 		}

@@ -69,14 +69,19 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   These APIs preserve data and verification provenance without granting execution
   authority. Added (minor).
 
-- **Legacy continuation abandonment (issue #2117)** — removes draft
+- **Legacy continuation storage policy (issue #2117)** — removes draft
   `IdentityMigrationHold`, `ErrMigrationHeld`, `CheckIdentityReady`,
   `IdentityHoldSummary`, `IdentityHoldSnapshot`, and `RestoreIdentityMigrationHold`.
-  Snapshot and complete-event codecs preserve provable continuations and abandon
-  unprovable ones during load, returning ordinary promptable history with an
-  upgrade notice that prior tool effects and completion may be unknown. Readers
-  accept legacy `/1` and candidate hold-bearing `/2` snapshots; normalized writes
-  retain `/2` without held authority. Removed/Changed (breaking, pre-v1 minor).
+  Legacy `/1` snapshots in awaiting/authorizing state or with non-null pending ask
+  or authorization payloads are unloadable. Resolve pending work before upgrading
+  or start a fresh session. Nonpending `/1` history still migrates; current `/2`
+  pending approvals and private authorizations are unchanged. Any `identity_hold`
+  key rejects, including null; intermediate hold formats are unsupported. Direct
+  Go snapshot callers use the current schema, normally via `sessnap.Of`.
+  Complete-event codecs still preserve provable continuations and abandon
+  unprovable ones during folding, returning promptable history with an upgrade
+  notice that prior effects and completion may be unknown. Removed/Changed
+  (breaking, pre-v1 minor); part of the coordinated Harness major 2 upgrade.
 
 - **Canonical evidence protocol and source verification (issue #2117)** — adds
   `learning.ReflectionEvidenceV2`, `EvidenceCitation`, protocol/coordinate
@@ -557,8 +562,8 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   `RecordAssistant`, `RecordToolResults`, history replacement/seeding, and
   `ValidateToolPairing` reject empty/repeated canonical occurrences and duplicate
   final results before mutation. Pending approval/authorization resumes require
-  the exact outstanding canonical occurrence; rejected or ambiguous legacy
-  continuations preserve their pending state. `CloneMessages`, history acceptance,
+  the exact outstanding canonical occurrence; invalid direct resume attempts
+  leave pending state unchanged. `CloneMessages`, history acceptance,
   and `Conversation.Append` now own nested storage, including replay. Historical
   copies retain identity, so client delivery must still be idempotent.
   Changed (breaking behavioral/source contract, pre-v1 minor).
@@ -593,10 +598,11 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   Local JSONL snapshot envelopes and Redis's unchanged outer event tag do not
   protect old local readers. No mixed writers or rollback after new-format
   writes; opaque drivers preserve tag/bytes and `session-store/1` is unchanged.
-  Valid old sessions/continuations/evidence remain readable; unproven
-  continuations are inspection-only and unsupported historical associations
-  retain standalone content. This does not redesign save timing or promise
-  durable-save-before-effects. See the
+  Valid old nonpending snapshot history and evidence remain readable; legacy
+  snapshots awaiting approval/authorization reject, as does any `identity_hold`
+  key. Complete-event continuation proof/abandonment policy is unchanged.
+  Unsupported historical associations retain standalone content. This does not
+  redesign save timing or promise durable-save-before-effects. See the
   [upgrade procedure](../user-docs/operating/session-storage-operations.md#upgrade-to-api-major-2).
 
 - **Atomic one-shot retry eligibility (issue #2273)** —

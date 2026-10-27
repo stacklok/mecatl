@@ -8,7 +8,7 @@ import (
 )
 
 func TestFormatIdentityConsistency(t *testing.T) {
-	for _, name := range []string{"legacy-completed", "legacy-authorizing", "legacy-retry", "legacy-awaiting-plan", "legacy-awaiting-guardrail", "legacy-ambiguous-pending"} {
+	for _, name := range []string{"legacy-completed", "legacy-retry"} {
 		t.Run(name, func(t *testing.T) {
 			old := legacyFixture(t, name)
 			s, err := UnmarshalFormat(old, "sessnap-json/1")

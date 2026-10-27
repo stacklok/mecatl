@@ -782,31 +782,6 @@ func TestSnapshotEnvironmentRefForwardCompat(t *testing.T) {
 // format. They are intentionally hand-held testdata, not Marshal output generated
 // during a test, so a later schema migration must continue to read the old bytes.
 func TestLegacySnapshotFixturesDecode(t *testing.T) {
-	authorizingBytes, err := os.ReadFile("testdata/legacy-authorizing.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	authorizing, err := sessnap.Unmarshal(authorizingBytes)
-	if err != nil {
-		t.Fatalf("Unmarshal authorizing fixture: %v", err)
-	}
-	pending, ok := authorizing.PendingAuthorization()
-	if !ok {
-		t.Fatal("authorizing fixture lost external authorization")
-	}
-	if got, want := string(pending.Call.Args), `{"command":  "echo auth"}`; got != want {
-		t.Fatalf("effective authorization args = %q, want exact %q", got, want)
-	}
-	messages := authorizing.Conversation.Messages
-	if pending.Call.ID != messages[2].ToolCalls[0].ID || pending.Deferred[0].ID != messages[2].ToolCalls[1].ID {
-		t.Fatal("pending continuation is not canonical")
-	}
-	if len(messages) != 3 || messages[0].Replay.Provider.Format != "mecatl.legacy-message" || messages[0].Replay.Bindings[0].ItemID != "fc_item_legacy_1" {
-		t.Fatal("private provider replay data changed")
-	}
-	if messages[0].ToolCalls[0].ID == messages[2].ToolCalls[1].ID || messages[1].ToolResult == nil || messages[1].ToolResult.CallID != messages[0].ToolCalls[0].ID {
-		t.Fatal("completed provider-key reuse did not produce distinct paired engine occurrences")
-	}
 	retryBytes, err := os.ReadFile("testdata/legacy-retry.json")
 	if err != nil {
 		t.Fatal(err)
@@ -817,21 +792,6 @@ func TestLegacySnapshotFixturesDecode(t *testing.T) {
 	}
 	if retry := retrySession.FailureMetadata(); retry != (session.RetryMetadata{Disposition: session.RetryDispositionRetryable, Progress: session.StreamProgressVisible}) || retrySession.LastError() != "legacy retryable stream failure" {
 		t.Fatalf("retry metadata = %+v, last error = %q", retry, retrySession.LastError())
-	}
-
-	ambiguousBytes, err := os.ReadFile("testdata/legacy-ambiguous-pending.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	ambiguous, err := sessnap.Unmarshal(ambiguousBytes)
-	if err != nil {
-		t.Fatalf("Unmarshal ambiguous legacy fixture: %v", err)
-	}
-	if _, ok := ambiguous.PendingAsk(); ok || ambiguous.State != session.StateIdle || len(ambiguous.Conversation.Messages[0].ToolCalls) != 0 {
-		t.Fatal("ambiguous fixture gained runnable authority")
-	}
-	if len(ambiguous.Conversation.Messages[0].Legacy.Unsupported) == 0 || !strings.Contains(ambiguous.Conversation.Messages[len(ambiguous.Conversation.Messages)-1].Text, "abandoned during upgrade") {
-		t.Fatal("ambiguous history or durable upgrade notice was discarded")
 	}
 }
 

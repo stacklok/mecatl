@@ -1,8 +1,8 @@
 package agent
 
 import (
-	"bytes"
 	"testing"
+	"time"
 
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
@@ -12,24 +12,27 @@ import (
 	"github.com/stacklok/mecatl/engine/tool"
 )
 
-func TestResumeApprovalMigratedSystemTempSummaryUsesDecodedStoredCall(t *testing.T) {
-	data := []byte(`{
-		"id":"legacy-system-temp", "state":"awaiting", "mode":"default", "limits":{}, "counters":{"Turns":1}, "created_at":"2025-01-02T03:04:05Z",
-		"messages":[
-			{"role":"assistant","tool_calls":[{"ID":"provider-reused","Name":"Shell","Args":{"command":"echo earlier"}}]},
-			{"role":"tool","tool_result":{"CallID":"provider-reused","Content":"already ran"}},
-			{"role":"assistant","tool_calls":[{"ID":"provider-reused","Name":"Shell","Args":{"command":"echo exact && echo done","timeout_ms":1000,"temp_scope":"system"}},{"ID":"other","Name":"Shell","Args":{"command":"must not run"}}]}
-		],
-		"pending":{"AskID":"separate-session-control:ask","Tool":"Shell","Args":{"command_summary":"old abbreviated display"},"Reason":"system scope","call":"provider-reused","origin":"permission"},
-		"environment_ref":{"Kind":"mem","ID":"legacy-workspace","Revision":"v1"}
-	}`)
-	s, err := sessnap.Unmarshal(data)
-	if err != nil {
+func TestResumeApprovalSystemTempSummaryUsesStoredCall(t *testing.T) {
+	s := session.New("system-temp", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindMem, ID: "workspace", Revision: "v1"}, session.Limits{}, time.Unix(0, 0))
+	if err := s.BeginTurn(); err != nil {
 		t.Fatal(err)
 	}
-	ask, ok := s.PendingAsk()
-	if !ok || ask.Call == "provider-reused" {
-		t.Fatal("legacy pending was not translated")
+	if err := s.RecordAssistant(session.NewAssistantMessage("", []session.ToolCall{session.NewToolCall("earlier", "Shell", []byte(`{"command":"echo earlier"}`))})); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RecordToolResults([]session.ToolResult{session.NewToolResult("earlier", "already ran")}); err != nil {
+		t.Fatal(err)
+	}
+	calls := []session.ToolCall{
+		session.NewToolCall("target", "Shell", []byte(`{"command":"echo exact && echo done","timeout_ms":1000,"temp_scope":"system"}`)),
+		session.NewToolCall("other", "Shell", []byte(`{"command":"must not run"}`)),
+	}
+	if err := s.RecordAssistant(session.NewAssistantMessage("", calls)); err != nil {
+		t.Fatal(err)
+	}
+	ask := session.PendingAsk{AskID: "separate-session-control:ask", Tool: "Shell", Call: calls[0].ID, Args: []byte(`{"command_summary":"old abbreviated display"}`), Reason: "system scope", Origin: session.ApprovalOriginPermission}
+	if err := s.PauseForApproval(ask); err != nil {
+		t.Fatal(err)
 	}
 	before, err := sessnap.Marshal(s)
 	if err != nil {
@@ -60,8 +63,5 @@ func TestResumeApprovalMigratedSystemTempSummaryUsesDecodedStoredCall(t *testing
 	}
 	if err := session.ValidateToolPairing(s.Conversation.Messages); err != nil {
 		t.Fatal(err)
-	}
-	if bytes.Equal(before, data) {
-		t.Fatal("fixture was not migrated before resume")
 	}
 }
