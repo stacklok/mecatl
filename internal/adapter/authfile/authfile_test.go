@@ -191,6 +191,83 @@ func TestLoadPreservesAnchorAndAliasCompatibility(t *testing.T) {
 	}
 }
 
+func TestLoadPreservesAnchoredProviderMappingsAndRoot(t *testing.T) {
+	for name, contents := range map[string]string{
+		"providers mapping": "providers: &credentials\n  openai:\n    api_key: anchored-key\n",
+		"root mapping":      "&auth\nproviders:\n  openai:\n    api_key: anchored-key\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := writeFile(t, dir, contents, 0o600)
+			file, warning := Load(path, false, fakeEnv(dir), testKnownProviders)
+			if warning != "" || file == nil || file.APIKey("openai") != "anchored-key" {
+				t.Fatalf("Load = (%#v, %q), want anchored provider credentials", file, warning)
+			}
+		})
+	}
+}
+
+func TestLoadRejectsMalformedProviderStructure(t *testing.T) {
+	dir := t.TempDir()
+	path := writeFile(t, dir, "providers: not-a-mapping\n", 0o600)
+	file, warning := Load(path, false, fakeEnv(dir), testKnownProviders)
+	if file != nil || warning == "" {
+		t.Fatalf("Load = (%#v, %q), want malformed provider rejection", file, warning)
+	}
+}
+
+func TestMCPTokenSchemaAndAccessor(t *testing.T) {
+	const token = "mcp-token-with-surrounding-space "
+	quotedToken := "\"" + token + "\""
+	for name, contents := range map[string]string{
+		"MCP only": "mcp:\n  Context7:\n    token: " + quotedToken + "\n",
+		"mixed":    "providers:\n  anthropic:\n    api_key: provider-key\nmcp:\n  Context7:\n    token: " + quotedToken + "\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := writeFile(t, dir, contents, 0o600)
+			file, warning := Load(path, false, fakeEnv(dir), testKnownProviders)
+			if warning != "" || file == nil {
+				t.Fatalf("Load = (%v, %q), want valid file", file, warning)
+			}
+			if got := file.MCPToken("Context7"); got != token {
+				t.Fatalf("MCPToken(Context7) = %q, want exact token", got)
+			}
+			if got := file.MCPToken("context7"); got != "" {
+				t.Fatalf("MCPToken case-insensitive lookup = %q, want empty", got)
+			}
+		})
+	}
+}
+
+func TestMCPTokenSchemaRejectsInvalidEntriesWithoutLeakingContent(t *testing.T) {
+	const sentinel = "MCP_TOKEN_SECRET_SENTINEL"
+	for name, contents := range map[string]string{
+		"unknown field":   "mcp:\n  valid:\n    token: " + sentinel + "\n    secret_key: " + sentinel + "\n",
+		"missing token":   "mcp:\n  valid: {}\n",
+		"non-string":      "mcp:\n  valid:\n    token: 123\n",
+		"blank":           "mcp:\n  valid:\n    token: '  '\n",
+		"invalid ID":      "mcp:\n  bad-id:\n    token: " + sentinel + "\n",
+		"duplicate ID":    "mcp:\n  valid:\n    token: " + sentinel + "\n  valid:\n    token: " + sentinel + "\n",
+		"unknown root":    "mcp:\n  valid:\n    token: " + sentinel + "\nsecret_key: " + sentinel + "\n",
+		"malformed entry": "mcp:\n  valid: " + sentinel + "\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := writeFile(t, dir, contents, 0o600)
+			file, warning := Load(path, false, fakeEnv(dir), testKnownProviders)
+			if file != nil || warning == "" {
+				t.Fatalf("Load = (%v, %q), want value-free schema warning", file, warning)
+			}
+			for _, forbidden := range []string{sentinel, "secret_key", "bad-id"} {
+				if strings.Contains(warning, forbidden) {
+					t.Fatalf("warning leaked %q: %q", forbidden, warning)
+				}
+			}
+		})
+	}
+}
+
 func TestDefaultPathIsSettingsYAMLSibling(t *testing.T) {
 	home := t.TempDir()
 	got := DefaultPath(fakeEnv(home))

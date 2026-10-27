@@ -67,6 +67,9 @@ type MCPProfileLoadOptions struct {
 	Operator  *permconfig.MCPSection
 	Legacy    *MCPServerList
 	LookupEnv func(string) (string, bool)
+	// LookupFileToken borrows the command root's final selected auth-file snapshot.
+	// It is called only for effective, selected token_ref profiles.
+	LookupFileToken func(string) (string, error)
 	// Native custody seams keep offline tests away from desktop keyrings and DBus.
 	Keyring mcpcredential.Keyring
 	// SelectedName is used by targeted lifecycle commands. An empty value keeps
@@ -81,20 +84,21 @@ type MCPProfileLoadOptions struct {
 // canonical profile loader. app.Build supplies the operator subtree from its
 // already-created settings resolver, avoiding a second YAML parse.
 type MCPProfileResolver struct {
-	legacy *MCPServerList
-	lookup func(string) (string, bool)
+	legacy          *MCPServerList
+	lookup          func(string) (string, bool)
+	lookupFileToken func(string) (string, error)
 }
 
 // NewMCPProfileResolver constructs a side-effect-free resolver. Environment and
 // credential stores are touched only when Load is called by composition.
-func NewMCPProfileResolver(legacy *MCPServerList, lookup func(string) (string, bool)) *MCPProfileResolver {
-	return &MCPProfileResolver{legacy: legacy, lookup: lookup}
+func NewMCPProfileResolver(legacy *MCPServerList, lookup func(string) (string, bool), lookupFileToken func(string) (string, error)) *MCPProfileResolver {
+	return &MCPProfileResolver{legacy: legacy, lookup: lookup, lookupFileToken: lookupFileToken}
 }
 
 // Load implements app.Config's MCP profile-loader capability without importing
 // the composition package.
 func (r *MCPProfileResolver) Load(operator *permconfig.MCPSection) ([]mcp.ServerConfig, interface{ Close() error }, error) {
-	profiles, err := LoadMCPProfiles(MCPProfileLoadOptions{Operator: operator, Legacy: r.legacy, LookupEnv: r.lookup})
+	profiles, err := LoadMCPProfiles(MCPProfileLoadOptions{Operator: operator, Legacy: r.legacy, LookupEnv: r.lookup, LookupFileToken: r.lookupFileToken})
 	if err != nil {
 		return nil, nil, err
 	}
@@ -105,7 +109,7 @@ func (r *MCPProfileResolver) Load(operator *permconfig.MCPSection) ([]mcp.Server
 // or constructing broker runtime resources.
 func (r *MCPProfileResolver) LoadAuthority(operator *permconfig.MCPSection, defaultMode mcpauthority.Mode, brokerSupported bool) (*mcpauthority.Result, error) {
 	return ResolveMCPAuthority(MCPAuthorityOptions{
-		Operator: operator, Legacy: r.legacy, LookupEnv: r.lookup,
+		Operator: operator, Legacy: r.legacy, LookupEnv: r.lookup, LookupFileToken: r.lookupFileToken,
 		DefaultMode: defaultMode, BrokerSupported: brokerSupported,
 	})
 }
@@ -297,6 +301,9 @@ func loadMCPProfile(input profileInput, loadOpts MCPProfileLoadOptions, owner *M
 		if profile.Auth.StaticBearer == nil {
 			return mcp.ServerConfig{}, &MCPProfileError{Server: profile.Name, Field: "static_bearer", Kind: ErrMCPProfileInvalid}
 		}
+		if profile.Auth.StaticBearer.TokenRef != "" {
+			return loadMCPFileBearer(*profile, loadOpts.LookupFileToken)
+		}
 		ref := profile.Auth.StaticBearer.TokenEnv
 		token, ok := lookupMCPEnv(lookup, ref)
 		if !ok || token == "" {
@@ -317,6 +324,37 @@ func loadMCPProfile(input profileInput, loadOpts MCPProfileLoadOptions, owner *M
 	default:
 		return mcp.ServerConfig{}, &MCPProfileError{Server: profile.Name, Field: "auth.mode", Kind: ErrMCPProfileInvalid}
 	}
+}
+
+func loadMCPFileBearer(profile permconfig.MCPServerProfile, lookup func(string) (string, error)) (mcp.ServerConfig, error) {
+	ref := profile.Auth.StaticBearer.TokenRef
+	secretError := &MCPProfileError{Server: profile.Name, Field: "auth.static_bearer.token_ref", Kind: ErrMCPProfileSecret}
+	if profile.Auth.StaticBearer.TokenEnv != "" || !mcpServerName.MatchString(ref) {
+		return mcp.ServerConfig{}, secretError
+	}
+	if lookup == nil {
+		secretError.Kind = ErrMCPProfileStore
+		return mcp.ServerConfig{}, secretError
+	}
+	token, err := lookup(ref)
+	if err != nil {
+		if errors.Is(err, ErrMCPProfileStore) {
+			secretError.Kind = ErrMCPProfileStore
+		}
+		return mcp.ServerConfig{}, secretError
+	}
+	if strings.TrimSpace(token) == "" {
+		return mcp.ServerConfig{}, secretError
+	}
+	for i := 0; i < len(token); i++ {
+		if (token[i] < 0x20 && token[i] != '\t') || token[i] == 0x7f {
+			return mcp.ServerConfig{}, secretError
+		}
+	}
+	if err := mcp.ValidateClientURL(profile.URL); err != nil {
+		return mcp.ServerConfig{}, &MCPProfileError{Server: profile.Name, Field: "static bearer URL", Kind: ErrMCPProfileInvalid}
+	}
+	return mcp.ServerConfig{Name: profile.Name, URL: profile.URL, Headers: map[string]string{"Authorization": "Bearer " + token}}, nil
 }
 
 func resolvedOAuthScopePolicy(decl *permconfig.MCPOAuthProfile) (bool, []string) {

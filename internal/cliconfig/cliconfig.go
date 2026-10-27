@@ -74,7 +74,7 @@ var DefaultProviderFlagHelp = ProviderFlagHelp{
 	OpenRouterBaseURL: "override the OpenRouter API base URL (default https://openrouter.ai/api/v1; key from OPENROUTER_API_KEY)",
 	AnthropicBaseURL:  "override the native Anthropic API base URL (compatible/proxy endpoints; key from ANTHROPIC_API_KEY)",
 	OpenCodeBaseURL:   "override the OpenCode Go API base URL (default https://opencode.ai/zen/go/v1; key from OPENCODE_API_KEY)",
-	AuthFile:          "provider credentials YAML path (default: $XDG_CONFIG_HOME/mecatl/auth.yaml); environment credentials take precedence",
+	AuthFile:          "provider and MCP credentials YAML path (default: $XDG_CONFIG_HOME/mecatl/auth.yaml); provider environment credentials take precedence",
 }
 
 // ProviderFlags holds the values bound by RegisterProviderFlags. The base-URL fields
@@ -224,10 +224,16 @@ func ResolveProviderCredentials(pf *ProviderFlags, definitions permconfig.Provid
 			return ResolvedCredentials{}, errors.New(pf.authSnapshotWarn)
 		}
 	} else {
-		var err error
-		file, err = authfile.LoadStrict(path, explicit, env, known)
-		if err != nil {
-			return ResolvedCredentials{}, err
+		var warning string
+		file, warning = authfile.Load(path, explicit, env, known)
+		if warning != "" {
+			file = nil // Match LoadStrict: cache the failure, never rejected content.
+		}
+		if pf != nil {
+			pf.authSnapshot, pf.authSnapshotReady, pf.authSnapshotWarn = file, true, warning
+		}
+		if warning != "" {
+			return ResolvedCredentials{}, errors.New(warning)
 		}
 	}
 	keys.OpenAI = cmp.Or(keys.OpenAI, file.APIKey("openai"))
@@ -247,6 +253,29 @@ func ResolveProviderCredentials(pf *ProviderFlags, definitions permconfig.Provid
 		}
 	}
 	return keys, nil
+}
+
+// MCPToken returns an exact file-only lookup from the final selected snapshot.
+// It borrows ProviderFlags, not its preliminary snapshot: composition can select
+// credential_store.api_key.file before the first MCP lookup. Warnings rejected
+// by LoadStrict remain fatal here even when providers accepted a permissive load.
+func (pf *ProviderFlags) MCPToken(id string) (string, error) {
+	if pf == nil {
+		return "", ErrMCPProfileStore
+	}
+	if !pf.authSnapshotReady {
+		path, explicit := pf.AuthFilePath()
+		file, warning := authfile.Load(path, explicit, xdgconfig.OSEnv, nil)
+		pf.authSnapshot, pf.authSnapshotReady, pf.authSnapshotWarn = file, true, warning
+	}
+	if pf.authSnapshotWarn != "" || pf.authSnapshot == nil {
+		return "", ErrMCPProfileStore
+	}
+	token := pf.authSnapshot.MCPToken(id)
+	if token == "" {
+		return "", ErrMCPProfileSecret
+	}
+	return token, nil
 }
 
 // SetAPIKeyFile applies the operator-configured API-key file unless the command

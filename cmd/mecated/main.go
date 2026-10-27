@@ -1315,11 +1315,11 @@ func appConfig(cfg config, sink port.EventSink, recorder port.ToolCallRecorder, 
 		ForkPreservedCap:           cfg.forkPreservedCap,
 		EnableTeams:                cfg.enableTeams,
 		MCPServers:                 cfg.mcpServers.Servers(),
-		MCPProfileLoader:           cliconfig.NewMCPProfileResolver(cfg.mcpServers, os.LookupEnv),
+		MCPProfileLoader:           cliconfig.NewMCPProfileResolver(cfg.mcpServers, os.LookupEnv, cfg.providerFlags.MCPToken),
 		// Route mcp.mode through the canonical authority resolver. Broker stays
 		// opt-in so an omitted mode and an empty MCP configuration retain the
 		// existing global/no-broker behavior.
-		MCPAuthorityLoader:                cliconfig.NewMCPProfileResolver(cfg.mcpServers, os.LookupEnv),
+		MCPAuthorityLoader:                cliconfig.NewMCPProfileResolver(cfg.mcpServers, os.LookupEnv, cfg.providerFlags.MCPToken),
 		MCPAuthorityDefault:               mcpauthority.Global,
 		MCPBrokerSupported:                true,
 		ProviderCredentialLoader:          cliconfig.NewProviderCredentialResolver(cfg.providerFlags, cfg.providerCredentials),

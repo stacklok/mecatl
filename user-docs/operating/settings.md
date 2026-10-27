@@ -21,7 +21,7 @@ configuration file or deployment input.
 |Configuration|Practical location or input|Owner|What it configures|
 |-|-|-|-|
 |Operator settings|`$XDG_CONFIG_HOME/mecatl/settings.yaml` (usually `~/.config/mecatl/settings.yaml`)|Server operator|Providers and models, permissions, posture, MCP profiles, and other shared agent policy.|
-|Provider credentials|`$XDG_CONFIG_HOME/mecatl/auth.yaml` (usually `~/.config/mecatl/auth.yaml`), or `--api-key-file`|Server operator|Provider API keys and the experimental Codex credential snapshot.|
+|Credential file|`$XDG_CONFIG_HOME/mecatl/auth.yaml` (usually `~/.config/mecatl/auth.yaml`), or `--api-key-file`|Server operator|Provider API keys, the experimental Codex credential snapshot, and static MCP bearer tokens.|
 |Daemon topology|A chosen `daemon.yaml`, passed to `mecated serve --config PATH`|`mecated` operator|Listener addresses, TLS material, and rate limits. It is not automatically loaded and never contains the API bearer token.|
 |CLI flags and environment|Invocation flags and documented environment variables|Process launcher|Deployment-specific overrides such as workspace, provider, model, store, or transport.|
 |mecatui client settings|`$XDG_CONFIG_HOME/mecatui/settings.yaml` (usually `~/.config/mecatui/settings.yaml`)|Local terminal user|Keybindings and status-line presentation only.|
@@ -48,10 +48,12 @@ For the daemon and Kubernetes operating details, see
 
 ## Ownership and precedence
 
-`settings.yaml` is the user-global operator file. Put provider keys in
-`auth.yaml`, and use `--api-key-file` to select a non-default credentials file.
-The process reads both files at startup, so restart it after changing either
-file.
+`settings.yaml` is the user-global operator file. Put provider keys and static
+MCP bearer tokens in `auth.yaml`, and use `--api-key-file` to select a
+non-default credentials file. The process reads both files at startup, so
+restart it after changing either file. See
+[MCP OAuth and credentials](/features/security-and-execution/mcp-oauth-and-credentials.md)
+for static MCP bearer profiles and their file-selection rules.
 
 A trusted project can contribute project-tier settings from
 `.mecatl/settings.yaml` or `.mecatl/settings.local.yaml`. Operator-only settings

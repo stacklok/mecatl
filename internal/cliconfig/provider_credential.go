@@ -16,8 +16,9 @@ type ProviderCredentialResolver struct {
 	keys  ResolvedCredentials
 }
 
-// NewProviderCredentialResolver constructs a loader over an already-resolved command
-// snapshot. Load performs no filesystem or environment I/O.
+// NewProviderCredentialResolver constructs a loader over the command snapshot.
+// Load acquires a replacement snapshot if settings select a different auth file;
+// MCP consumers borrowing flags.MCPToken then share that final selected snapshot.
 func NewProviderCredentialResolver(flags *ProviderFlags, keys ResolvedCredentials) *ProviderCredentialResolver {
 	return &ProviderCredentialResolver{flags: flags, keys: keys}
 }

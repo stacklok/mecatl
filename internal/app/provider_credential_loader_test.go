@@ -7,6 +7,8 @@ import (
 	"testing"
 
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
+	"github.com/stacklok/mecatl/internal/adapter/mcp"
+	"github.com/stacklok/mecatl/internal/adapter/mcpauthority"
 	"github.com/stacklok/mecatl/internal/adapter/permconfig"
 )
 
@@ -22,6 +24,38 @@ func (l *capturingProviderCredentialLoader) Load(definitions permconfig.Provider
 	l.calls++
 	l.definitions = definitions
 	return l.profile, l.lifecycle, l.err
+}
+
+type failedCredentialMCP struct{ err error }
+
+func (l failedCredentialMCP) Load(*permconfig.MCPSection) ([]mcp.ServerConfig, interface{ Close() error }, error) {
+	return nil, nil, l.err
+}
+
+func (l failedCredentialMCP) LoadAuthority(*permconfig.MCPSection, mcpauthority.Mode, bool) (*mcpauthority.Result, error) {
+	return nil, l.err
+}
+
+func TestMCPLoadFailureClosesSelectedProviderCredentials(t *testing.T) {
+	for _, authority := range []bool{false, true} {
+		t.Run(map[bool]string{false: "direct", true: "authority"}[authority], func(t *testing.T) {
+			closer := new(countingProviderCredentialsCloser)
+			loader := &capturingProviderCredentialLoader{lifecycle: closer}
+			failure := failedCredentialMCP{err: errors.New("MCP secret unavailable")}
+			cfg := Config{Workspace: t.TempDir(), Model: "mock", MockProvider: mockllm.New(), ProviderCredentialLoader: loader}
+			if authority {
+				cfg.MCPAuthorityLoader = failure
+			} else {
+				cfg.MCPProfileLoader = failure
+			}
+			if _, err := buildIsolated(t, t.Context(), cfg); !errors.Is(err, failure.err) {
+				t.Fatalf("MCP error = %v", err)
+			}
+			if loader.calls != 1 || closer.calls.Load() != 1 {
+				t.Fatal("selected provider lifecycle was not acquired and closed once on MCP failure")
+			}
+		})
+	}
 }
 
 type countingProviderCredentialsCloser struct{ calls atomic.Int32 }

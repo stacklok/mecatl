@@ -416,8 +416,9 @@ Strict OPERATOR-TIER Streamable HTTP MCP authority configuration. Mode selects o
 | `mcp.servers[].url` | `string` | `(empty)` | URL is an absolute HTTP(S) endpoint without userinfo or a fragment. |
 | `mcp.servers[].auth` | `mcpauthprofile` | `(absent)` | Auth selects exactly one of none, static_bearer, or oauth. |
 | `mcp.servers[].auth.mode` | `string` | `(empty)` | Mode is exactly none, static_bearer, or oauth. |
-| `mcp.servers[].auth.static_bearer` | `mcpstaticbearerprofile` | `(absent)` | StaticBearer names the bearer-token environment reference. |
-| `mcp.servers[].auth.static_bearer.token_env` | `string` | `(empty)` | TokenEnv is a MECATL_* environment variable name containing the opaque token. |
+| `mcp.servers[].auth.static_bearer` | `mcpstaticbearerprofile` | `(absent)` | StaticBearer names exactly one bearer-token environment or auth-file reference. |
+| `mcp.servers[].auth.static_bearer.token_env` | `string` | `(empty)` | TokenEnv is a MECATL_* environment variable name containing the opaque token. It is mutually exclusive with TokenRef. |
+| `mcp.servers[].auth.static_bearer.token_ref` | `string` | `(empty)` | TokenRef is an exact, case-sensitive auth.yaml mcp credential ID. It is mutually exclusive with TokenEnv. |
 | `mcp.servers[].auth.oauth` | `mcpoauthprofile` | `(absent)` | OAuth declares the OAuth identity, client, credentials, scopes, and network policy. |
 | `mcp.servers[].auth.oauth.profile` | `string` | `(empty)` | Profile is the required global-mode credential identity profile and is forbidden in broker mode. |
 | `mcp.servers[].auth.oauth.principal` | `string` | `(empty)` | Principal is the required global-mode credential identity principal and is forbidden in broker mode. |

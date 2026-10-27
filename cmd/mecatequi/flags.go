@@ -469,8 +469,8 @@ func appConfig(f flags, diag port.Diagnostics, obs observability) app.Config {
 		// consumed by app.Build's static MCP source. Nil-safe when the flag was
 		// never registered (a hand-built test config).
 		MCPServers:                        f.mcpServers.Servers(),
-		MCPProfileLoader:                  cliconfig.NewMCPProfileResolver(f.mcpServers, os.LookupEnv),
-		MCPAuthorityLoader:                cliconfig.NewMCPProfileResolver(f.mcpServers, os.LookupEnv),
+		MCPProfileLoader:                  cliconfig.NewMCPProfileResolver(f.mcpServers, os.LookupEnv, f.providerFlags.MCPToken),
+		MCPAuthorityLoader:                cliconfig.NewMCPProfileResolver(f.mcpServers, os.LookupEnv, f.providerFlags.MCPToken),
 		MCPAuthorityDefault:               mcpauthority.Global,
 		MCPBrokerSupported:                false,
 		ProviderCredentialLoader:          cliconfig.NewProviderCredentialResolver(f.providerFlags, f.providerCredentials),

@@ -411,7 +411,7 @@ func parseFlags(argv []string) (config, error) {
 	// OPENAI/OPENROUTER/ANTHROPIC_API_KEY — the SAME helper mecated/mecatequi
 	// use, so mecak8s shares the three-mains wiring.
 	cfg.providerFlags = cliconfig.RegisterProviderFlags(fs, cliconfig.ProviderFlagHelp{
-		AuthFile: "provider credentials YAML path (API-key providers only; Codex OAuth is unsupported)",
+		AuthFile: "provider and MCP credentials YAML path (API-key providers and global MCP bearer tokens; Codex OAuth is unsupported)",
 	})
 	// ToolHive LLM gateway (issue #262): a k8s pod naturally has no ToolHive
 	// config file, so this is inert unless an operator mounts one or passes
@@ -883,14 +883,14 @@ func appConfig(cfg config, diag port.Diagnostics, obs observability) app.Config 
 		// Remote MCP servers (issue #341): the static name=URL entries (with any
 		// MCP_<NAME>_TOKEN bearer already resolved into Headers at parse time).
 		MCPServers:       cfg.mcpServers.Servers(),
-		MCPProfileLoader: cliconfig.NewMCPProfileResolver(cfg.mcpServers, os.LookupEnv),
+		MCPProfileLoader: cliconfig.NewMCPProfileResolver(cfg.mcpServers, os.LookupEnv, cfg.providerFlags.MCPToken),
 		// MCPAuthorityLoader/MCPAuthorityDefault/MCPBrokerSupported route operator
 		// mcp: config through the mode-aware canonical authority resolver (global
 		// vs broker) instead of MCPProfileLoader.Load's global-mode-only path.
 		// mecak8s defaults configured MCP profiles to session-scoped broker
 		// authority; the Helm chart explicitly selects global mode for an empty
 		// server list so zero-MCP deployments do not start broker resources.
-		MCPAuthorityLoader:       cliconfig.NewMCPProfileResolver(cfg.mcpServers, os.LookupEnv),
+		MCPAuthorityLoader:       cliconfig.NewMCPProfileResolver(cfg.mcpServers, os.LookupEnv, cfg.providerFlags.MCPToken),
 		MCPAuthorityDefault:      mcpAuthorityDefault,
 		MCPBrokerSupported:       true,
 		ProviderCredentialLoader: cliconfig.NewProviderCredentialResolver(cfg.providerFlags, cfg.providerCredentials),

@@ -18,12 +18,15 @@ func validateAuthDocument(data []byte) error {
 	if err != nil {
 		return errors.New("auth document is invalid or ambiguous")
 	}
-	providersNode, err := uniqueAuthValue(doc.Mapping(), "providers", true)
+	if err := validateAuthSchema(doc.Mapping()); err != nil {
+		return err
+	}
+	providersNode, err := uniqueAuthValue(doc.Mapping(), "providers", false)
 	if err != nil {
 		return err
 	}
 	if providersNode == nil {
-		return errors.New("auth document is missing providers mapping")
+		return nil
 	}
 	providers, ok := providersNode.(*ast.MappingNode)
 	if !ok {
@@ -66,9 +69,20 @@ func mutateAuth(data []byte, update APIKeyUpdate) ([]byte, bool, error) {
 	if err != nil {
 		return nil, false, errors.New("auth document is invalid or ambiguous")
 	}
-	providersNode, err := uniqueAuthValue(doc.Mapping(), "providers", true)
+	providersNode, err := uniqueAuthValue(doc.Mapping(), "providers", false)
 	if err != nil {
 		return nil, false, err
+	}
+	if providersNode == nil {
+		if update.APIKey == nil {
+			return data, true, nil
+		}
+		doc.Mapping().Values = append(doc.Mapping().Values, staticAuthEntry("providers:\n  "+update.Provider+":\n    api_key: "+quoteYAML(*update.APIKey)+"\n"))
+		out := []byte(doc.String())
+		if err := validateUpdatedAuth(out); err != nil {
+			return nil, false, err
+		}
+		return out, false, nil
 	}
 	providers, ok := providersNode.(*ast.MappingNode)
 	if !ok {
@@ -169,14 +183,7 @@ func mutateAuth(data []byte, update APIKeyUpdate) ([]byte, bool, error) {
 }
 
 func validateUpdatedAuth(data []byte) error {
-	if len(bytes.TrimSpace(data)) == 0 {
-		return nil
-	}
-	doc, err := yamldiag.ParseSettingsDocument(data)
-	if err != nil || doc.Mapping() == nil {
-		return errors.New("updated auth document is invalid")
-	}
-	return nil
+	return validateAuthDocument(data)
 }
 
 func validateProviderMapping(mapping *ast.MappingNode) error {

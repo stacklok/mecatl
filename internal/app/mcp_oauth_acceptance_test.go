@@ -633,7 +633,7 @@ func buildAcceptanceMCPConfigWithCert(t *testing.T, settings string, lookup func
 		Workspace: filepath.Dir(settings), UserModelDir: t.TempDir(), Model: "mock", MockProvider: llm, Headless: headless, Diagnostics: diag,
 		PermissionConfigs: []string{settings},
 		MCPProfileLoader: &acceptanceLoopbackProfileResolver{
-			t: t, loader: cliconfig.NewMCPProfileResolver(nil, lookup), cert: cert,
+			t: t, loader: cliconfig.NewMCPProfileResolver(nil, lookup, nil), cert: cert,
 		},
 	})
 }

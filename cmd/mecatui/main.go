@@ -1646,8 +1646,8 @@ func embeddedConfig(cfg config, diag port.Diagnostics) app.Config {
 	// broker) rather than MCPProfileLoader.Load's global-mode-only path. The
 	// embedded server supports broker construction while retaining the existing
 	// profile loader for compatibility with consumers that use it directly.
-	out.MCPProfileLoader = cliconfig.NewMCPProfileResolver(nil, os.LookupEnv)
-	out.MCPAuthorityLoader = cliconfig.NewMCPProfileResolver(nil, os.LookupEnv)
+	out.MCPProfileLoader = cliconfig.NewMCPProfileResolver(nil, os.LookupEnv, cfg.providerFlags.MCPToken)
+	out.MCPAuthorityLoader = cliconfig.NewMCPProfileResolver(nil, os.LookupEnv, cfg.providerFlags.MCPToken)
 	out.MCPAuthorityDefault = mcpauthority.Global
 	out.MCPBrokerSupported = true
 	out.ProviderCredentialLoader = cliconfig.NewProviderCredentialResolver(cfg.providerFlags, keys)

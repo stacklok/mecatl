@@ -399,6 +399,66 @@ enrollment even if ToolHive retained its upstream tokens in Redis. Broker mode
 requires a single replica. The chart enforces `replicaCount: 1` and the
 `Recreate` strategy, so broker mode does not provide high availability.
 
+## Static bearer credentials from `auth.yaml`
+
+Use a static bearer profile when an MCP server issues an API key rather than an
+OAuth credential. Keep the token only in the server's selected `auth.yaml` and
+reference it from non-secret operator `settings.yaml`. For Context7:
+
+```yaml title="settings.yaml"
+mcp:
+  mode: global
+  servers:
+    - name: context7
+      url: https://mcp.context7.com/mcp
+      auth:
+        mode: static_bearer
+        static_bearer:
+          token_ref: context7
+```
+
+```yaml title="auth.yaml"
+mcp:
+  context7:
+    token: '<CONTEXT7_API_KEY>'
+```
+
+`token_ref` is an exact, case-sensitive credential ID matching
+`[A-Za-z0-9_]+`. It selects only `mcp.<ID>.token` in `auth.yaml`; it does not
+need to match the server name. A static bearer profile requires exactly one
+source: `token_ref` or a `token_env` reference to a `MECATL_*` environment
+variable. Mecatl never falls back between file, environment, or legacy bearer
+token sources.
+
+The selected credentials file is `--api-key-file` when set, then
+`credential_store.api_key.file` in operator settings, then the conventional
+XDG `auth.yaml` path. Keep it private to the service account, outside the
+workspace and source control, with owner-only permissions such as `0600`.
+Mecatl fails startup when a profile selects a missing, malformed, blank, or
+permission-unsafe file token. For `token_ref` profiles, token values stay in
+`auth.yaml`, never in `settings.yaml`, a project file, prompts, or tool
+arguments.
+
+Mecatl reads one credentials snapshot at startup. To rotate the token, update
+the file and restart the server or job that owns it. Reconnects do not reread
+the file.
+
+### Deploy static bearer profiles
+
+Static bearer profiles use global MCP mode. `mecated`, `mecatequi`, and embedded
+`mecatui` use global MCP profiles. In `mecak8s`, set `mcp.mode: global`
+explicitly because its default MCP authority is the ToolHive broker, which
+rejects static bearer profiles. Mount `auth.yaml` from a server-side read-only
+Kubernetes Secret with permissions suitable for the service account. Do not
+place it in an executor Pod or upload it from a client.
+
+When `mecatui connect` uses a remote server, configure the remote server's
+credentials file. The client neither reads nor uploads local MCP credentials.
+
+Static bearer file entries are separate from OAuth credential custody. Keep
+OAuth profiles and their encrypted or environment-backed credentials configured
+as described in the OAuth sections of this page.
+
 ## Bearer tokens for flag-configured servers
 
 For a flag-configured server, set `MCP_<NAME>_TOKEN`, where `<NAME>` is the
@@ -411,7 +471,10 @@ mecated serve --mcp-server github=https://mcp.example.com/github
 
 The token is read at startup, sent as an Authorization bearer header, and never
 logged. Token-bearing URLs must use HTTPS, except for loopback HTTP endpoints.
-Server names must match `[A-Za-z0-9_]+` and be case-insensitively unique.
+Server names must match `[A-Za-z0-9_]+` and be case-insensitively unique. When a
+`--mcp-server` entry has the same name as an operator profile, it replaces that
+entire profile and uses only `MCP_<NAME>_TOKEN`; it does not use the profile's
+`token_ref`.
 
 The repeatable `--mcp-server-insecure-http <NAME>` flag permits a named server
 to send its token over off-host HTTP. Use this only when network controls and

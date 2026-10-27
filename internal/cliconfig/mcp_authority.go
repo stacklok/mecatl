@@ -14,6 +14,7 @@ type MCPAuthorityOptions struct {
 	Operator        *permconfig.MCPSection
 	Legacy          *MCPServerList
 	LookupEnv       func(string) (string, bool)
+	LookupFileToken func(string) (string, error)
 	DefaultMode     mcpauthority.Mode
 	BrokerSupported bool
 }
@@ -60,7 +61,7 @@ func resolveGlobalAuthority(opts MCPAuthorityOptions) (*mcpauthority.Result, err
 			}
 		}
 	}
-	profiles, err := LoadMCPProfiles(MCPProfileLoadOptions{Operator: opts.Operator, Legacy: opts.Legacy, LookupEnv: opts.LookupEnv})
+	profiles, err := LoadMCPProfiles(MCPProfileLoadOptions{Operator: opts.Operator, Legacy: opts.Legacy, LookupEnv: opts.LookupEnv, LookupFileToken: opts.LookupFileToken})
 	if err != nil {
 		return nil, err
 	}
