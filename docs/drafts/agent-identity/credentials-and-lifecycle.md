@@ -849,7 +849,7 @@ RFC 8693 §2.2.2 requires `invalid_request` for any subject or actor token that 
 | `denied` | AS-1, broker | `PERMISSION_DENIED` | Deny the call. |
 | `consent_required` | AS-2 | `FAILED_PRECONDITION` | The existing `mcp_authorization_pending` outcome, using the `error_uri` AS-2 returned, when the gateway advertises the approval-continuation profile. |
 | `invalid_assertion` | AS-2 | `INTERNAL` | Fail the call; a broker bug. |
-| HTTP 503 | AS-1, AS-2 | `UNAVAILABLE` | Fail the call as a retryable infrastructure error, not a denial. |
+| HTTP 503, or 429, 502, or 504 from a proxy or rate limiter | AS-1, AS-2 | `UNAVAILABLE` | Fail the call as a retryable infrastructure error, not a denial or a configuration fault. |
 | `invalid_client`, `unauthorized_client`, `invalid_target`, or no reason | AS-1, AS-2 | `INTERNAL` | Fail the call; a configuration fault or broker bug. For an AS-2 `invalid_grant` with no reason code, see [step (8)](#8-as-2-access-token). |
 
 A scheduled run has no client to show anything to: for every revocation reason except `schedule_ended`, it ends with "needs owner action" and Alice is notified.
