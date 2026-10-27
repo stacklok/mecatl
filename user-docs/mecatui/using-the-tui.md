@@ -235,8 +235,8 @@ schedule browser while an operation is pending does not undo that operation.
 The create form creates an independent schedule. It uses the deployment's
 default model and does not inherit the open chat's model or receive results in
 that chat. A read-only schedule can use the deployment's configured plan model.
-Unchecked **Read-only** uses `default` permission mode; it does not
-automatically approve tool calls.
+Unchecked **Read-only** uses the server's default session permission mode.
+The deployment's permission policy determines which tool calls can run unattended.
 
 The timing field accepts the following finite phrases, with an optional leading
 `run `. It also accepts a raw five-field cron expression or an `@` macro that

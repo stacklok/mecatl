@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"go/version"
 	"io"
-	"os"
 	"path/filepath"
 	"runtime"
 	"slices"
@@ -19,14 +18,7 @@ import (
 )
 
 func TestCatalogIntegrityAndFreshness(t *testing.T) {
-	mod, err := os.ReadFile("../../../../go.mod")
-	if err != nil {
-		t.Fatal(err)
-	}
-	declared, err := timezonegen.DeclaredVersion(mod)
-	if err != nil {
-		t.Fatal(err)
-	}
+	declared := timezonegen.SourceVersion
 	regen := timezonegen.Command(declared)
 	var catalog timezonegen.Catalog
 	if err := json.Unmarshal(catalogJSON, &catalog); err != nil {

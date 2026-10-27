@@ -356,7 +356,11 @@ func (s *scheduleState) createStatus(width int) []string {
 	if err != nil || s.pendingAction != "" {
 		button = "[Create disabled]"
 	}
-	bottom = append(bottom, scheduleCreateLines(width, s.createLabel(scheduleReadOnly, checked+" Read-only")+"  permission mode: "+f.permissionMode()+"  "+s.createLabel(scheduleSubmit, button)+"  "+s.createLabel(scheduleCancel, "[Cancel]"))...)
+	mode := f.permissionMode()
+	if mode == "" {
+		mode = "server default"
+	}
+	bottom = append(bottom, scheduleCreateLines(width, s.createLabel(scheduleReadOnly, checked+" Read-only")+" permission mode: "+mode+s.createLabel(scheduleSubmit, button)+s.createLabel(scheduleCancel, "[Cancel]"))...)
 	return bottom
 }
 
@@ -445,7 +449,7 @@ func (s *scheduleState) createGuidance() string {
 	case scheduleTimezone:
 		return "Timezone: search a city or type an exact IANA identifier; choose a match."
 	case scheduleReadOnly:
-		return "Unchecked: normal permissions, not automatic approval.\nModel: server default; read-only may use the configured plan model."
+		return "Unchecked: server default permission mode; deployment policy applies.\nModel: server default; read-only may use the configured plan model."
 	case scheduleSubmit:
 		return "Review before Create. Separate run sessions; results in schedule run history."
 	case scheduleCancel:

@@ -321,7 +321,7 @@ func TestScheduleCreateForm(t *testing.T) {
 			if trigger == "every 30 minutes" {
 				cron = "*/30 * * * *"
 			}
-			if fs.createCalls != 1 || fs.created.Name != "ny-new" || fs.created.Prompt != "run nightly tests\nread-only review" || fs.created.Mode != "default" || !fs.created.Mutating || !fs.created.Singleton || fs.created.Timezone != "UTC" || fs.created.Trigger.Cron != cron || !fs.created.Trigger.OneShot.IsZero() || s.view != schedulePanel || len(s.schedules) != 1 {
+			if fs.createCalls != 1 || fs.created.Name != "ny-new" || fs.created.Prompt != "run nightly tests\nread-only review" || fs.created.Mode != "" || !fs.created.Mutating || !fs.created.Singleton || fs.created.Timezone != "UTC" || fs.created.Trigger.Cron != cron || !fs.created.Trigger.OneShot.IsZero() || s.view != schedulePanel || len(s.schedules) != 1 {
 				t.Fatalf("create semantics lost: %+v", fs.created)
 			}
 			m = scheduleRune(t, m, "c")
@@ -341,6 +341,8 @@ func TestScheduleCreateRetainsFormUntilSuccess(t *testing.T) {
 		t.Run(fmt.Sprint(mutating), func(t *testing.T) {
 			fs := &fakeScheduleLister{}
 			m, s := openedSchedule(t, fs)
+			m.createModelSelection = client.ModelSelection{ProviderID: "create-provider", ModelID: "create-model"}
+			m.resolvedSessionModel = client.ResolvedModel{ProviderID: "chat-provider", ModelID: "chat-model"}
 			m.prompt.Rewrite("unsent draft")
 			m = scheduleRune(t, m, "c")
 			s.form.name.SetValue("nightly")
@@ -350,12 +352,12 @@ func TestScheduleCreateRetainsFormUntilSuccess(t *testing.T) {
 			s.form.focusIdx = scheduleSubmit
 			s.focusField()
 			s.form.mutating = mutating
-			mode := "plan"
+			mode, modeLabel := "plan", "plan"
 			if mutating {
-				mode = "default"
+				mode, modeLabel = "", "server default"
 			}
 			before := s.form
-			if body := scheduleBody(t, s, m.width, m.vp.Height()); !strings.Contains(body, "permission mode: "+mode) {
+			if body := scheduleBody(t, s, m.width, m.vp.Height()); !strings.Contains(body, "permission mode: "+modeLabel) {
 				t.Fatal("permission mode is not visible: " + body)
 			}
 
@@ -380,7 +382,7 @@ func TestScheduleCreateRetainsFormUntilSuccess(t *testing.T) {
 
 			fs.err = errors.New("invalid cron expression")
 			m = feedCmd(t, m, submit)
-			if fs.createCalls != 1 || fs.created.Mode != mode || fs.created.Mutating != mutating {
+			if fs.createCalls != 1 || fs.created.Mode != mode || fs.created.Mutating != mutating || fs.created.Selector != (client.ScheduleSelector{}) || fs.created.Profile != "" {
 				t.Fatalf("creation did not request the expected permission mode: %+v", fs.created)
 			}
 			if s.view != scheduleCreate || s.pendingAction != "" || s.form.name.Value() != before.name.Value() || s.form.prompt.Value() != before.prompt.Value() || s.form.trigger.Value() != before.trigger.Value() || s.form.timezone.Value() != before.timezone.Value() || s.form.timezone.Query() != before.timezone.Query() || s.form.mutating != before.mutating || s.form.focusIdx != before.focusIdx {
@@ -404,7 +406,7 @@ func TestScheduleCreateRetainsFormUntilSuccess(t *testing.T) {
 			}
 			fs.err = nil
 			m = scheduleKey(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
-			if fs.createCalls != 2 || fs.created.Trigger.Cron != "0 9 * * *" || fs.created.Timezone != "America/New_York" || fs.created.Prompt != "review the changes\nreport findings" || fs.created.Mode != mode || fs.created.Mutating != mutating || s.view != schedulePanel || s.form.name.Value() != "" || len(s.schedules) != 1 || s.actionErr != "" {
+			if fs.createCalls != 2 || fs.created.Trigger.Cron != "0 9 * * *" || fs.created.Timezone != "America/New_York" || fs.created.Prompt != "review the changes\nreport findings" || fs.created.Mode != mode || fs.created.Mutating != mutating || fs.created.Selector != (client.ScheduleSelector{}) || fs.created.Profile != "" || s.view != schedulePanel || s.form.name.Value() != "" || len(s.schedules) != 1 || s.actionErr != "" {
 				t.Fatalf("corrected creation failed: spec=%+v, view=%d, error=%q", fs.created, s.view, s.actionErr)
 			}
 			if m.prompt.Value() != "unsent draft" {
@@ -1022,57 +1024,5 @@ func TestScheduleSpecUsesUserFacingLabels(t *testing.T) {
 	rows := []client.Schedule{sampleSchedule("cron"), {Spec: client.ScheduleSpec{Name: "once", Trigger: client.ScheduleTrigger{OneShot: time.Unix(1, 0)}}}}
 	if len(filterSchedules(rows, "cron:")) != 1 || !strings.Contains(triggerSummary(rows[1].Spec), "one-shot:") || formatScheduleTime(time.Time{}) != "—" {
 		t.Fatal("trigger filter/format lost")
-	}
-}
-
-// TestScheduleCreateFormModeFollowsMutating pins the mode the create form
-// sends. A read-leaning schedule must name plan, which the server requires; an
-// empty mode there was refused. A mutating one leaves mode unset so its fires
-// use the server's default session mode rather than an explicit default that
-// asks with no approver on an allow-all server.
-func TestScheduleCreateFormModeFollowsMutating(t *testing.T) {
-	for _, tc := range []struct {
-		toggle   string
-		mutating bool
-		wantMode string
-	}{
-		{toggle: "y", mutating: true, wantMode: ""},
-		{toggle: "n", mutating: false, wantMode: "plan"},
-	} {
-		t.Run("mutating="+tc.toggle, func(t *testing.T) {
-			fs := &fakeScheduleLister{sched: sampleSchedule("s")}
-			m := newScheduleModel(t, newScheduleConv(scheduleCaps()), fs, scheduleCaps())
-			mm, _ := m.openSchedule()
-			m = applyAll(mm.(Model), client.SchedulesMsg{Schedules: nil})
-			press := func(k tea.KeyPressMsg) tea.Cmd {
-				mm, cmd, _ := m.onScheduleKey(k)
-				m = mm.(Model)
-				return cmd
-			}
-			typeText := func(s string) {
-				for _, r := range s {
-					press(tea.KeyPressMsg{Code: r, Text: string(r)})
-				}
-			}
-			tab := tea.KeyPressMsg{Code: tea.KeyTab, Text: "tab"}
-			press(tea.KeyPressMsg{Code: 'c', Text: "c"})
-			typeText("s")
-			press(tab)
-			typeText("run it")
-			press(tab)
-			typeText("0 9 * * *")
-			press(tab)
-			press(tea.KeyPressMsg{Code: rune(tc.toggle[0]), Text: tc.toggle})
-			cmd := press(tea.KeyPressMsg{Code: tea.KeyEnter})
-			if cmd == nil {
-				t.Fatalf("submit returned no command (actionErr=%q)", m.schedule.actionErr)
-			}
-			m = feedCmd(t, m, cmd)
-			got := fs.lastCreateSpec
-			if fs.createCalls != 1 || got.Mutating != tc.mutating || got.Mode != tc.wantMode {
-				t.Fatalf("create sent (mutating %t, mode %q) in %d calls, want (mutating %t, mode %q) once",
-					got.Mutating, got.Mode, fs.createCalls, tc.mutating, tc.wantMode)
-			}
-		})
 	}
 }

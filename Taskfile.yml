@@ -1239,11 +1239,12 @@ tasks:
       - cd provider/openaichat && GOWORK=off go mod tidy
 
   generate:timezones:
-    desc: Regenerate the pinned client timezone catalog using the root Go version
+    desc: Regenerate the client timezone catalog using its pinned source Go version
     cmds:
-      # Requires the exact root go.mod toolchain, which may need installing:
-      # GOTOOLCHAIN=go1.27.2 task generate:timezones (update after a Go bump).
-      # Ordinary builds/tests also support newer Go; generation deliberately does not.
+      # Requires the exact internal/timezonegen.SourceVersion, independently of
+      # the module's language floor and CI's rolling stable Go toolchain:
+      # GOTOOLCHAIN=go1.27.3 task generate:timezones (update with the source pin).
+      # Ordinary builds/tests support other Go runtimes; generation does not.
       # The catalog pins names/provenance, not the runtime's DST rules.
       - GOWORK=off go run ./internal/timezonegen/cmd/timezonegen --output cmd/mecatui/internal/timezones/zones.json
 

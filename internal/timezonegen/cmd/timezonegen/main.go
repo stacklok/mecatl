@@ -17,14 +17,7 @@ func run() error {
 	if *output == "" {
 		return fmt.Errorf("--output is required; use task generate:timezones")
 	}
-	mod, err := os.ReadFile("go.mod")
-	if err != nil {
-		return err
-	}
-	declared, err := timezonegen.DeclaredVersion(mod)
-	if err != nil {
-		return err
-	}
+	declared := timezonegen.SourceVersion
 	if err := timezonegen.RequireVersion(declared, runtime.Version()); err != nil {
 		return err
 	}

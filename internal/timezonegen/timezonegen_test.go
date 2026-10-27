@@ -5,16 +5,8 @@ import (
 	"testing"
 )
 
-func TestDeclaredVersionAndRuntimeEnforcement(t *testing.T) {
-	declared, err := DeclaredVersion([]byte("module example\n\ngo 1.27.2\n"))
-	if err != nil || declared != "go1.27.2" {
-		t.Fatalf("declared=%q err=%v", declared, err)
-	}
-	for _, mod := range []string{"module example", "go invalid", "// go 1.27.2"} {
-		if _, err := DeclaredVersion([]byte(mod)); err == nil {
-			t.Fatalf("accepted %q", mod)
-		}
-	}
+func TestRuntimeEnforcement(t *testing.T) {
+	declared := SourceVersion
 	if err := RequireVersion(declared, declared); err != nil {
 		t.Fatal(err)
 	}
@@ -39,11 +31,11 @@ func TestFreshnessDecisions(t *testing.T) {
 		{"matching source", fresh, "go1.27.2", "go1.27.2", false, true, false},
 		{"newer local", fresh, "go1.27.2", "go1.28.0", false, false, true},
 		{"declared bump stale CI", fresh, "go1.28.0", "go1.28.0", true, false, false},
-		{"declared bump newer local", fresh, "go1.28.0", "go1.29.0", false, false, true},
+		{"declared bump newer local", fresh, "go1.28.0", "go1.29.0", true, false, false},
 		{"missing provenance", Catalog{Names: fresh.Names}, "go1.27.2", "go1.27.2", true, false, false},
 		{"bad fingerprint", Catalog{GoVersion: fresh.GoVersion, ArchiveSHA256: "bad", Names: fresh.Names}, "go1.27.2", "go1.27.2", true, true, false},
 		{"missing name", Catalog{GoVersion: fresh.GoVersion, ArchiveSHA256: fresh.ArchiveSHA256, Names: []string{"UTC"}}, "go1.27.2", "go1.27.2", true, true, false},
-		{"older runtime", fresh, "go1.27.2", "go1.27.1", true, false, false},
+		{"older supported runtime", fresh, "go1.27.2", "go1.27.1", false, false, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			read := false

@@ -8,7 +8,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"go/version"
 	"io"
 	"os"
 	"path/filepath"
@@ -24,16 +23,9 @@ type Catalog struct {
 	Names         []string `json:"names"`
 }
 
-// DeclaredVersion reads the selected source toolchain from the root go.mod.
-func DeclaredVersion(goMod []byte) (string, error) {
-	for line := range strings.SplitSeq(string(goMod), "\n") {
-		fields := strings.Fields(line)
-		if len(fields) == 2 && fields[0] == "go" && version.IsValid("go"+fields[1]) {
-			return "go" + fields[1], nil
-		}
-	}
-	return "", fmt.Errorf("root go.mod has no valid go directive")
-}
+// SourceVersion pins catalog provenance independently of the module's language
+// floor and CI's rolling stable toolchain. Bump deliberately, then regenerate.
+const SourceVersion = "go1.27.3"
 
 // Command is the actionable regeneration command for the declared toolchain.
 func Command(declared string) string {
@@ -85,19 +77,17 @@ func Source(goRoot, sourceVersion string) (Catalog, error) {
 	return Catalog{GoVersion: sourceVersion, ArchiveSHA256: hex.EncodeToString(sum[:]), Names: slices.Compact(names)}, nil
 }
 
-// CheckFreshness compares only the declared source runtime's archive. A supported
-// newer runtime gets a diagnostic instead; semantic checks still belong to the caller.
-// source is lazy so the newer-runtime path never reads a different archive.
+// CheckFreshness always checks the source pin, then compares archives only under
+// that exact runtime. Other supported runtimes get a diagnostic instead;
+// semantic checks still belong to the caller. source is lazy so those runtimes
+// never read a different archive.
 func CheckFreshness(c Catalog, declared, active string, source func() (Catalog, error)) (string, error) {
-	if active != declared {
-		if version.Compare(active, declared) <= 0 {
-			return "", RequireVersion(declared, active)
-		}
-		return fmt.Sprintf("timezone source-archive freshness requires %s (running %s); run: %s", declared, active, Command(declared)), nil
-	}
 	stale := func() error { return fmt.Errorf("stale timezone catalog; regenerate with: %s", Command(declared)) }
 	if c.GoVersion != declared {
 		return "", stale()
+	}
+	if active != declared {
+		return fmt.Sprintf("timezone source-archive freshness requires %s (running %s); run: %s", declared, active, Command(declared)), nil
 	}
 	want, err := source()
 	if err != nil {

@@ -91,7 +91,7 @@ const (
 
 func (f scheduleForm) permissionMode() string {
 	if f.mutating {
-		return client.ModeDefaultString
+		return ""
 	}
 	return "plan"
 }

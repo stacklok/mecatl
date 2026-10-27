@@ -283,7 +283,7 @@ func TestCreateScheduleFormSpecSerialization(t *testing.T) {
 		wireMode mecatlv1.PermissionMode
 	}{
 		{ScheduleTrigger{Cron: "0 9 * * 1-5"}, "plan", false, mecatlv1.PermissionMode_PERMISSION_MODE_PLAN},
-		{ScheduleTrigger{OneShot: instant}, ModeDefaultString, true, mecatlv1.PermissionMode_PERMISSION_MODE_DEFAULT},
+		{ScheduleTrigger{OneShot: instant}, "", true, mecatlv1.PermissionMode_PERMISSION_MODE_UNSPECIFIED},
 	} {
 		t.Run(tc.mode, func(t *testing.T) {
 			fake := &fakeScheduleClient{createResp: &mecatlv1.CreateScheduleResponse{Schedule: sampleProtoSchedule("review")}}

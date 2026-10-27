@@ -89,7 +89,7 @@ func TestScheduleCreateNormalTerminal(t *testing.T) {
 							t.Fatal("timezone field/suggestions/guidance inaccessible")
 						}
 					case scheduleReadOnly:
-						for _, text := range []string{"normal permissions", "not automatic approval", "server default", "plan model"} {
+						for _, text := range []string{"server default permission mode", "deployment policy", "server default", "plan model"} {
 							if !strings.Contains(body, text) {
 								t.Fatalf("read-only focus lost policy: %s", text)
 							}
@@ -193,7 +193,7 @@ func TestScheduleCreateNormalTerminal(t *testing.T) {
 			m = mm.(Model)
 			snapshot("retry-pending")
 			m = feedCmd(t, m, submit)
-			if fs.createCalls != 2 || fs.created.Name != "review-2" || fs.created.Prompt != prompt || fs.created.Trigger.Cron != "0 9 * * 1-5" || fs.created.Timezone != "America/Los_Angeles" || !fs.created.Mutating || fs.created.Mode != "default" || s.view != schedulePanel || !strings.Contains(s.notice, "next run (server)") {
+			if fs.createCalls != 2 || fs.created.Name != "review-2" || fs.created.Prompt != prompt || fs.created.Trigger.Cron != "0 9 * * 1-5" || fs.created.Timezone != "America/Los_Angeles" || !fs.created.Mutating || fs.created.Mode != "" || s.view != schedulePanel || !strings.Contains(s.notice, "next run (server)") {
 				t.Fatalf("correction/retry did not send the chosen spec once: %+v", fs.created)
 			}
 		})

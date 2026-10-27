@@ -19,7 +19,7 @@ var names = func() []string {
 		Names []string `json:"names"`
 	}
 	if err := json.Unmarshal(catalogJSON, &catalog); err != nil {
-		panic("invalid bundled timezone catalog; run task generate:timezones with the root go.mod toolchain: " + err.Error())
+		panic("invalid bundled timezone catalog; run task generate:timezones with the pinned source toolchain: " + err.Error())
 	}
 	return catalog.Names
 }()
