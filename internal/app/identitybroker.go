@@ -49,7 +49,7 @@ func buildIdentityBroker(cfg Config) (identitybroker.Service, func(), error) {
 		if err != nil {
 			return nil, nil, fmt.Errorf("build identity broker: %w", err)
 		}
-		core = broker
+		core = broker.core
 	}
 	release := func() {}
 	if closer, ok := core.(io.Closer); ok {
@@ -58,17 +58,43 @@ func buildIdentityBroker(cfg Config) (identitybroker.Service, func(), error) {
 	return identitybroker.NewInProcess(identitybroker.UnverifiedAuthenticator{Name: identityBrokerWorkload}, core), release, nil
 }
 
+// identityBroker is the real identity broker's startup state: its core and
+// the signer for its client authentication at AS-1 and AS-2. The signer stays
+// inside this wiring; nothing calls AS-1 or AS-2 yet, and broker session open
+// (#2492) will pass it into the broker's construction.
+type identityBroker struct {
+	core   *identitybroker.Broker
+	client *identitybroker.ClientAssertionSigner
+}
+
 // newIdentityBroker constructs the real identity broker with the interim
-// configuration and a key generated for this process. It loads no
-// definitions yet.
-func newIdentityBroker(cfg Config) (*identitybroker.Broker, error) {
+// configuration and, one key per role, an agent issuer key and a broker
+// client key generated for this process. It loads no definitions yet.
+//
+// The broker client key lasts only as long as the process until an operator
+// key replaces it (#2538): an external server registered with its JWKS inline
+// would refuse the broker after a restart, while in-process servers register
+// it again at each build.
+func newIdentityBroker(cfg Config) (identityBroker, error) {
 	config := interimIdentityBrokerConfig
 	if cfg.identityBrokerConfig != nil {
 		config = *cfg.identityBrokerConfig
 	}
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
-		return nil, fmt.Errorf("generate signing key: %w", err)
+		return identityBroker{}, fmt.Errorf("generate signing key: %w", err)
 	}
-	return identitybroker.New(config, nil, key)
+	core, err := identitybroker.New(config, nil, key)
+	if err != nil {
+		return identityBroker{}, err
+	}
+	clientKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return identityBroker{}, fmt.Errorf("generate broker client key: %w", err)
+	}
+	client, err := identitybroker.NewClientAssertionSigner(clientKey, 0)
+	if err != nil {
+		return identityBroker{}, err
+	}
+	return identityBroker{core: core, client: client}, nil
 }

@@ -12,8 +12,9 @@
 //     tokens as design step (1) describes them (as1.go, signin.go);
 //   - broker client authentication, design step (5): the confidential client
 //     BrokerClientID with private_key_jwt, checking the registered key, iss
-//     and sub, aud equal to AS-1's issuer, exp - iat, and a single-use jti; a
-//     client secret is refused (clientauth.go);
+//     and sub, aud equal to AS-1's issuer, exp and iat with
+//     ClientAssertionClockSkew allowed, exp - iat, and a jti used once and
+//     kept until exp plus the skew; a client secret is refused (clientauth.go);
 //   - session open, design step (3): the RFC 8693 exchange of an AS-1 access
 //     token for a non-rotating session refresh token bound to a
 //     mecatl_session entry's session and owner, checks 1 to 7 with their

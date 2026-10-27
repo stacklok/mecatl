@@ -68,7 +68,7 @@ An unresolved or unapproved subject fails closed, with reason `consent_required`
 In external mode, the gateway administrator configures AS-2 with:
 
 - AS-1's issuer and signing keys, trusted as an ID-JAG issuer only, not as an SSO IdP, for any subject AS-1 names; the mapping or consent link, not a list of subjects, decides who is redeemed;
-- the `mecatl` OAuth client, with the broker's `jwks_uri` registered once for `private_key_jwt`;
+- the `mecatl` OAuth client, with the broker's public key registered as an inline JWKS for `private_key_jwt`, and registered again when the key rotates;
 - the consent-link flow and its revocation in the gateway UI;
 - permitted actors and allowed vMCP resources;
 - ID-JAG lifetime, and single use for AS-1's issuer (recommended; Mecatl never re-submits an ID-JAG).

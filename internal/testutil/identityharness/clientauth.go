@@ -5,6 +5,7 @@ import (
 	"crypto/elliptic"
 	"maps"
 	"net/http"
+	"slices"
 	"testing"
 	"time"
 
@@ -25,8 +26,11 @@ const (
 	authPrivateKeyJWT      = "private_key_jwt"
 	clientAssertionTypeJWT = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
 	clientAssertionTyp     = "client-authentication+jwt"
-	// as1ClockSkew is how long past exp AS-1 keeps a used jti.
+	// as1ClockSkew is the clock skew AS-1 allows a client assertion's exp and
+	// iat, and so how long past exp it keeps a used jti.
 	as1ClockSkew = time.Minute
+	// ClientAssertionClockSkew is as1ClockSkew, for tests at the boundary.
+	ClientAssertionClockSkew = as1ClockSkew
 )
 
 // BrokerKey is a public key registered for BrokerClientID, as from its
@@ -114,6 +118,15 @@ func (a *AS1) signAssertion(spec ClientAssertionSpec) string {
 	return signed
 }
 
+// ReceivedClientAssertions returns every client assertion AS-1's token and
+// revocation endpoints received, accepted or not, oldest first, so a test can
+// inspect what a production client actually sent.
+func (a *AS1) ReceivedClientAssertions() []string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return slices.Clone(a.receivedAssertions)
+}
+
 // authenticateClient identifies the token or revocation endpoint caller. The
 // broker authenticates with private_key_jwt; public clients name themselves
 // with client_id and no credential. A client secret, in the form or in Basic
@@ -125,6 +138,9 @@ func (a *AS1) authenticateClient(r *http.Request) (clientID string, confidential
 		return "", false, false
 	}
 	if form.Has("client_assertion") || form.Has("client_assertion_type") {
+		a.mu.Lock()
+		a.receivedAssertions = append(a.receivedAssertions, form.Get("client_assertion"))
+		a.mu.Unlock()
 		if form.Get("client_assertion_type") != clientAssertionTypeJWT ||
 			(form.Has(paramClientID) && form.Get(paramClientID) != BrokerClientID) ||
 			!a.verifyAssertion(form.Get("client_assertion")) {
@@ -155,7 +171,7 @@ func (a *AS1) verifyAssertion(assertion string) bool {
 		}
 		return key, nil
 	}, jwt.WithValidMethods([]string{"ES256"}), jwt.WithIssuer(BrokerClientID), jwt.WithSubject(BrokerClientID),
-		jwt.WithExpirationRequired(), jwt.WithIssuedAt(), jwt.WithTimeFunc(a.now))
+		jwt.WithExpirationRequired(), jwt.WithIssuedAt(), jwt.WithLeeway(as1ClockSkew), jwt.WithTimeFunc(a.now))
 	if err != nil {
 		return false
 	}

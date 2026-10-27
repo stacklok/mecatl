@@ -23,7 +23,7 @@ The human enters the flow once, when Alice signs in through AS-1. AS-1 runs that
 | **Agent-instance JWT-SVID** (the agent-instance SVID) | Which registered agent instance is acting. It can span multiple runs. | Agent-instance issuer → harness → broker, which forwards it to AS-1 as `actor_token`. | Harness, outside model context. Renewal keeps the registered identity and widens nothing. |
 | **Broker refresh token** | Alice's delegated authority for one broker session, usable without her present. | AS-1 → broker → AS-1. Bound to client `mecatl`, the broker session, and the user. Accepted only as the subject of an ID-JAG exchange. | Broker, in shared session storage with the grant's recorded owner and expiry. Does not rotate. |
 | **Schedule grant** | Alice's delegated authority for one schedule, until its horizon. | AS-1 → broker → AS-1. Bound to client `mecatl`, the schedule, and the user. Accepted only to open a scheduled run's session. | Broker, in shared storage under the schedule. |
-| **Broker client credential** | That the caller at AS-1 and AS-2 is the broker, OAuth client `mecatl`. | Broker's private key; each request carries a short-lived `private_key_jwt` assertion verified by AS-1 and AS-2. | KMS or HSM where available; public key published through `jwks_uri`. |
+| **Broker client credential** | That the caller at AS-1 and AS-2 is the broker, OAuth client `mecatl`. | Broker's private key; each request carries a short-lived `private_key_jwt` assertion verified by AS-1 and AS-2. | KMS or HSM where available; public key registered at each server as an inline JWKS, again on rotation. |
 | **ID-JAG** | Alice and the acting agent, for redemption at AS-2. | AS-1 → broker → AS-2. Short-lived; the broker uses each once. | Broker, from issuance to redemption. |
 | **AS-2 access token (`V`)** | AS-2's native Alice, the acting agent, and client `mecatl`, for the vMCP resource. | AS-2 → broker → vMCP. | Broker cache, per session, instance, gateway, and user; per-call checks still apply. |
 | **Provider credential** | Access to Alice's GitHub account. | GitHub → gateway credential store → GitHub. | Gateway credential store, keyed by (gateway, user, provider); never leaves the gateway. |
@@ -410,11 +410,11 @@ The subject tokens the broker presents are bearer tokens: they prove whose autho
 
 **Checks, at AS-1 and AS-2:**
 
-1. `alg` is on the allowlist, and `kid` selects a key registered for `mecatl`, from its `jwks_uri` or static configuration.
+1. `alg` is on the allowlist, and `kid` selects a key in the inline JWKS registered for `mecatl`.
 2. The signature verifies.
 3. `iss` and `sub` are both `mecatl`.
 4. `aud` is the authorization server's issuer identifier as its only value, not its token-endpoint URL, as [draft-ietf-oauth-rfc7523bis](https://datatracker.ietf.org/doc/draft-ietf-oauth-rfc7523bis/) requires.
-5. `exp` has not passed, and `exp - iat` is within the configured maximum, here 60 seconds.
+5. `exp` has not passed, allowing the configured clock skew, and `exp - iat` is within the configured maximum, here 60 seconds.
 6. `jti` has not been seen. The server keeps it until `exp` plus the clock skew, in storage shared by all its replicas.
 
 **Output.** An authenticated client `mecatl`.
@@ -849,8 +849,8 @@ RFC 8693 §2.2.2 requires `invalid_request` for any subject or actor token that 
 | `denied` | AS-1, broker | `PERMISSION_DENIED` | Deny the call. |
 | `consent_required` | AS-2 | `FAILED_PRECONDITION` | The existing `mcp_authorization_pending` outcome, using the `error_uri` AS-2 returned, when the gateway advertises the approval-continuation profile. |
 | `invalid_assertion` | AS-2 | `INTERNAL` | Fail the call; a broker bug. |
-| HTTP 503 | AS-1, AS-2 | `UNAVAILABLE` | Fail the call as a retryable infrastructure error, not a denial. |
-| `invalid_client`, `unauthorized_client`, `invalid_target`, or no reason | AS-1, AS-2 | `INTERNAL` | Fail the call; a configuration fault or broker bug. For an AS-2 `invalid_grant` with no reason code, see [step (8)](#8-as-2-access-token). |
+| HTTP 503, or 429, 502, or 504 from a proxy or rate limiter, or the error code `server_error` or `temporarily_unavailable` | AS-1, AS-2 | `UNAVAILABLE` | Fail the call as a retryable infrastructure error, not a denial or a configuration fault. |
+| `invalid_client`, `unauthorized_client`, `invalid_target`, or any other refusal with no reason | AS-1, AS-2 | `INTERNAL` | Fail the call; a configuration fault or broker bug. For an AS-2 `invalid_grant` with no reason code, see [step (8)](#8-as-2-access-token). |
 
 A scheduled run has no client to show anything to: for every revocation reason except `schedule_ended`, it ends with "needs owner action" and Alice is notified.
 
@@ -870,7 +870,7 @@ An agent instance keeps its identity across runs. Each credential's lifetime is 
 | Upstream refresh token | IdP expiry or revocation. | At most once per re-check interval, at an ID-JAG exchange or scheduled-run open; one refresh per user at a time. | AS-1 |
 | ID-JAG | Short lifetime. | Never renewed or re-submitted; one per `V`. | Broker |
 | `V` | Short lifetime. | A skew margin before `exp` at the next call, or within the same call after a 401; one exchange per cache key at a time. | Broker, through steps (7) and (8) |
-| Key sets: AS-1's, AS-2's, the agent trust bundle, the cluster JWKS, and the broker's `jwks_uri` | Operator rotation. | On an unknown `kid`, rate-limited, and periodically. | Each verifier |
+| Key sets: AS-1's, AS-2's, the agent trust bundle, the cluster JWKS, and the broker client's inline JWKS | Operator rotation; the broker client's key is registered again at each server. | On an unknown `kid`, rate-limited, and periodically. | Each verifier |
 | Consent link | Revocation in the gateway UI or by Mecatl. | The user links again. | Alice |
 | Provider credential | Provider expiry or revocation. | Refresh at the gateway, or the user connects again. | Gateway, or Alice |
 

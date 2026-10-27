@@ -77,6 +77,8 @@ type AS1 struct {
 	conversions   map[string]as1Conversion // by converted access token jti
 	refusals      map[string][]string      // refused open reasons by session
 	echoes        []SessionDetails         // forced mismatched echoes
+	// receivedAssertions are the client assertions received, oldest first.
+	receivedAssertions []string
 }
 
 type as1Pending struct {
