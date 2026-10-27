@@ -341926,6 +341926,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1793112786208,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "29541485+ChrisJBurns@users.noreply.github.com",
+            "name": "Chris Burns",
+            "username": "ChrisJBurns"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "a6635144b9d13bd00dfb83fd4ec0bf7d1c72ed02",
+          "message": "feat(mecatui): sign in at AS-1 from the TUI (#2572)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-27T16:01:43Z",
+          "tree_id": "010c502a00a52cc33dac2610b5a8ea1aba9572e5",
+          "url": "https://github.com/stacklok/mecatl/commit/a6635144b9d13bd00dfb83fd4ec0bf7d1c72ed02"
+        },
+        "date": 1793117685810,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -494315,6 +494349,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1793117682317,
+  "lastUpdate": 1793117686854,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
