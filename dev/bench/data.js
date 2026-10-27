@@ -380531,6 +380531,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1793133160253,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "38c5023767c0d5a315648c9c43ddd6de411617cf",
+          "message": "fix(ci): run browser tests in pinned Playwright containers (#2584)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-27T14:21:51-07:00",
+          "tree_id": "20887c410f44037917a514e04b619c248a521703",
+          "url": "https://github.com/stacklok/mecatl/commit/38c5023767c0d5a315648c9c43ddd6de411617cf"
+        },
+        "date": 1793136834922,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 16114,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12880,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 794,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -496393,6 +496432,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1793136832004,
+  "lastUpdate": 1793136836007,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
