@@ -184,6 +184,7 @@ jobs:
           bash .github/scripts/macos-relevant-workflow_test.sh
           bash .github/scripts/relevant-changes_test.sh
           bash .github/scripts/relevant-changes-workflow_test.sh
+          python3 .github/scripts/playwright-ci_test.py
 
   sdk:
     name: TypeScript SDK (Node ${{ matrix.node-version }})
@@ -422,6 +423,14 @@ jobs:
     # changes are relevant.
     if: needs.changes.outputs.docs_only != 'true' && (needs.changes.outputs.go_relevant == 'true' || needs.changes.outputs.sdk_relevant == 'true')
     runs-on: ${{ matrix.runner }}
+    # Official image includes browsers and OS libraries; avoid apt mirror setup.
+    # Keep its version aligned with both @playwright/test pins (checked below).
+    container:
+      image: mcr.microsoft.com/playwright:v1.64.1-noble@sha256:47b510dd9230bf0b9bfc9b20102241e577ea7a99334ab4c3ca19f19770e9b8ea
+      options: --user 1001:1001 --init --ipc=host
+    defaults:
+      run:
+        shell: bash
     timeout-minutes: 20
     env:
       MECATL_PREBUILT_MECATED: '1'
@@ -471,24 +480,18 @@ jobs:
       - name: Install SDK dependencies (frozen)
         run: task sdk:install
 
-      - name: Resolve pinned Playwright version
-        id: playwright-version
-        working-directory: sdk/typescript
-        run: node -e "process.stdout.write('version=' + require('@playwright/test/package.json').version + '\\n')" >> "$GITHUB_OUTPUT"
-
-      - name: Cache pinned Playwright browser
-        id: playwright-cache
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ~/.cache/ms-playwright
-          key: playwright-${{ matrix.runner }}-${{ runner.arch }}-${{ matrix.browser }}-${{ steps.playwright-version.outputs.version }}
-
-      - name: Ensure pinned Playwright browser and host dependencies
-        working-directory: sdk/typescript
-        run: pnpm exec playwright install --with-deps ${{ matrix.browser }}
-
       - name: Run browser project
         run: task sdk:browser:project PROJECT="${{ matrix.project }}"
+
+      - name: Upload browser failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: sdk-browser-${{ matrix.project }}
+          path: .scratch/sdk-browser-playwright/
+          include-hidden-files: true
+          retention-days: 7
+          if-no-files-found: ignore
 
   sdk-macos-spawn:
     name: TypeScript SDK macOS spawn (macos-14, Node 22)
@@ -856,6 +859,12 @@ jobs:
     needs: [changes, mecated]
     if: needs.changes.outputs.docs_only != 'true' && (needs.changes.outputs.studio_relevant == 'true' || needs.changes.outputs.go_relevant == 'true')
     runs-on: ubuntu-24.04
+    container:
+      image: mcr.microsoft.com/playwright:v1.64.1-noble@sha256:47b510dd9230bf0b9bfc9b20102241e577ea7a99334ab4c3ca19f19770e9b8ea
+      options: --user 1001:1001 --init --ipc=host
+    defaults:
+      run:
+        shell: bash
     timeout-minutes: 20
     env:
       MECATL_PREBUILT_MECATED: '1'
@@ -901,11 +910,18 @@ jobs:
       - name: Install Studio dependencies (frozen)
         run: task studio:install
 
-      - name: Install Chromium for Studio browser journeys
-        run: task studio:browser:install
-
       - name: Test Studio browser journeys (Playwright, offline)
         run: task studio:browser -- --project=${{ matrix.project }}
+
+      - name: Upload browser failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: studio-browser-${{ matrix.project }}
+          path: .scratch/studio-browser-playwright/
+          include-hidden-files: true
+          retention-days: 7
+          if-no-files-found: ignore
 
   studio-gate:
     name: Mecatl Studio (gate)
