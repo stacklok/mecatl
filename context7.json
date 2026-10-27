@@ -31,9 +31,11 @@
   ],
   "rules": [
     "The server binary is `mecated` and the terminal client is `mecatui`. Both install from the `stacklok/tap/mecatl` Homebrew formula or the `mecatl` conda-forge package.",
-    "Use the `--mock` provider for offline examples and tests. For a real provider, set ANTHROPIC_API_KEY, OPENAI_API_KEY, or OPENROUTER_API_KEY in the environment; never put API keys in command-line flags or source code.",
+    "Use the `--mock` provider for offline examples and tests.",
+    "For a real provider, set ANTHROPIC_API_KEY, OPENAI_API_KEY, or OPENROUTER_API_KEY in the environment. Never put API keys in flags or source code.",
     "The Go engine imports no provider SDKs. Add a provider module such as `github.com/stacklok/mecatl/provider/openai` explicitly, and pin compatible engine and provider versions in go.mod.",
     "In TypeScript, import from `@stacklok-oss/mecatl-sdk/node` (Node.js and Bun) or `@stacklok-oss/mecatl-sdk/deno`, and close spawned clients so the daemon process exits.",
-    "`--posture strict` is the fail-closed default. Use `--posture auto` with `--headless` only for unattended, single-tenant deployments."
+    "Select a permission mode with `--permission-mode` (plan, default, accept-edits, auto, yolo). `--posture` is deprecated. Default mode is fail-closed.",
+    "`--permission-mode auto` for unattended, single-tenant use needs an enforcing guardrails checker, such as `--guardrails-model <model>`. Without one the server refuses to start."
   ]
 }
