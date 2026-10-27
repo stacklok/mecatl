@@ -90,7 +90,7 @@ func TestProviderCredentialResolverFailsClosedForMalformedConventionalAuthWithCu
 	if keys.AuthFileWarning == "" {
 		t.Fatal("malformed conventional auth file did not produce the stock-provider warning")
 	}
-	resolver := NewProviderCredentialResolver(flags, keys)
+	resolver := NewProviderCredentialResolver(NewCredentialSource(flags, keys), keys)
 	if _, _, err := resolver.Load(nil); err != nil {
 		t.Fatalf("stock-provider-only startup lost warning-only behavior: %v", err)
 	}

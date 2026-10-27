@@ -399,11 +399,11 @@ enrollment even if ToolHive retained its upstream tokens in Redis. Broker mode
 requires a single replica. The chart enforces `replicaCount: 1` and the
 `Recreate` strategy, so broker mode does not provide high availability.
 
-## Static bearer credentials from `auth.yaml`
+## Static bearer credentials
 
 Use a static bearer profile when an MCP server issues an API key rather than an
-OAuth credential. Keep the token only in the server's selected `auth.yaml` and
-reference it from non-secret operator `settings.yaml`. For Context7:
+OAuth credential. Reference the token from non-secret operator `settings.yaml`,
+then supply it through the server's environment or selected `auth.yaml`:
 
 ```yaml title="settings.yaml"
 mcp:
@@ -423,34 +423,49 @@ mcp:
     token: '<CONTEXT7_API_KEY>'
 ```
 
-`token_ref` is an exact, case-sensitive credential ID matching
-`[A-Za-z0-9_]+`. It selects only `mcp.<ID>.token` in `auth.yaml`; it does not
-need to match the server name. A static bearer profile requires exactly one
-source: `token_ref` or a `token_env` reference to a `MECATL_*` environment
-variable. Mecatl never falls back between file, environment, or legacy bearer
-token sources.
+`token_ref` is a logical reference matching lowercase ASCII `[a-z0-9_]+`. It
+need not match the server name. For `token_ref: context7`, Mecatl first checks
+`MECATL_MCP_TOKEN_CONTEXT7`. If that variable is absent, it reads
+`mcp.context7.token` from the selected `auth.yaml`. To use the environment instead
+of the file example above, inject `MECATL_MCP_TOKEN_CONTEXT7` into the server
+process through your deployment's secret management.
+
+A present but empty, blank, or invalid environment value fails startup, even
+when the file contains a valid token. Missing both sources also fails; the
+profile never becomes anonymous. Tokens are opaque and retain their exact
+bytes. Control characters other than internal tabs, and trailing ASCII spaces
+or tabs, are rejected rather than trimmed.
 
 The selected credentials file is `--api-key-file` when set, then
 `credential_store.api_key.file` in operator settings, then the conventional
 XDG `auth.yaml` path. Keep it private to the service account, outside the
 workspace and source control, with owner-only permissions such as `0600`.
-Mecatl fails startup when a profile selects a missing, malformed, blank, or
-permission-unsafe file token. For `token_ref` profiles, token values stay in
-`auth.yaml`, never in `settings.yaml`, a project file, prompts, or tool
-arguments.
+File fallback fails for missing, malformed, blank, or permission-unsafe
+credentials. An environment winner does not require the unused fallback file;
+independent provider and explicit-file startup checks still apply. Keep token
+values out of `settings.yaml`, project files, prompts, and tool arguments.
 
-Mecatl reads one credentials snapshot at startup. To rotate the token, update
-the file and restart the server or job that owns it. Reconnects do not reread
-the file.
+Mecatl captures credentials at startup, including absent environment variables.
+To rotate a token, update the deployment environment or file and restart the
+server or job that owns it. Reconnects and source refreshes reuse the captured
+credentials.
+
+A static bearer profile requires exactly one selector: `token_ref` or the
+deprecated `token_env`. `token_env` still names an exact `MECATL_*` variable,
+uses only that variable, and emits one startup warning per effective server.
+To migrate, choose a lowercase `token_ref` and provision its derived
+`MECATL_MCP_TOKEN_<UPPERCASE_REF>` variable or file entry. Renaming the YAML field
+alone does not migrate an arbitrary environment variable name.
 
 ### Deploy static bearer profiles
 
 Static bearer profiles use global MCP mode. `mecated`, `mecatequi`, and embedded
 `mecatui` use global MCP profiles. In `mecak8s`, set `mcp.mode: global`
 explicitly because its default MCP authority is the ToolHive broker, which
-rejects static bearer profiles. Mount `auth.yaml` from a server-side read-only
-Kubernetes Secret with permissions suitable for the service account. Do not
-place it in an executor Pod or upload it from a client.
+rejects static bearer profiles. Inject the derived environment variable from a
+Kubernetes Secret, or mount `auth.yaml` from a server-side read-only Secret with
+permissions suitable for the service account. Keep credentials on the server,
+not in an executor Pod or client upload.
 
 When `mecatui connect` uses a remote server, configure the remote server's
 credentials file. The client neither reads nor uploads local MCP credentials.

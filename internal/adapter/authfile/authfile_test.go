@@ -220,8 +220,8 @@ func TestMCPTokenSchemaAndAccessor(t *testing.T) {
 	const token = "mcp-token-with-surrounding-space "
 	quotedToken := "\"" + token + "\""
 	for name, contents := range map[string]string{
-		"MCP only": "mcp:\n  Context7:\n    token: " + quotedToken + "\n",
-		"mixed":    "providers:\n  anthropic:\n    api_key: provider-key\nmcp:\n  Context7:\n    token: " + quotedToken + "\n",
+		"MCP only": "mcp:\n  context7:\n    token: " + quotedToken + "\n",
+		"mixed":    "providers:\n  anthropic:\n    api_key: provider-key\nmcp:\n  context7:\n    token: " + quotedToken + "\n",
 	} {
 		t.Run(name, func(t *testing.T) {
 			dir := t.TempDir()
@@ -230,10 +230,10 @@ func TestMCPTokenSchemaAndAccessor(t *testing.T) {
 			if warning != "" || file == nil {
 				t.Fatalf("Load = (%v, %q), want valid file", file, warning)
 			}
-			if got := file.MCPToken("Context7"); got != token {
-				t.Fatalf("MCPToken(Context7) = %q, want exact token", got)
+			if got := file.MCPToken("context7"); got != token {
+				t.Fatalf("MCPToken(context7) = %q, want exact token", got)
 			}
-			if got := file.MCPToken("context7"); got != "" {
+			if got := file.MCPToken("Context7"); got != "" {
 				t.Fatalf("MCPToken case-insensitive lookup = %q, want empty", got)
 			}
 		})
@@ -248,6 +248,9 @@ func TestMCPTokenSchemaRejectsInvalidEntriesWithoutLeakingContent(t *testing.T) 
 		"non-string":      "mcp:\n  valid:\n    token: 123\n",
 		"blank":           "mcp:\n  valid:\n    token: '  '\n",
 		"invalid ID":      "mcp:\n  bad-id:\n    token: " + sentinel + "\n",
+		"uppercase ID":    "mcp:\n  Context7:\n    token: " + sentinel + "\n",
+		"unicode ID":      "mcp:\n  café:\n    token: " + sentinel + "\n",
+		"empty ID":        "mcp:\n  '':\n    token: " + sentinel + "\n",
 		"duplicate ID":    "mcp:\n  valid:\n    token: " + sentinel + "\n  valid:\n    token: " + sentinel + "\n",
 		"unknown root":    "mcp:\n  valid:\n    token: " + sentinel + "\nsecret_key: " + sentinel + "\n",
 		"malformed entry": "mcp:\n  valid: " + sentinel + "\n",

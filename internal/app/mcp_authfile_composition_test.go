@@ -88,6 +88,12 @@ func isolateAuthFileDiscovery(t *testing.T) {
 	xdg, home := t.TempDir(), t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", xdg)
 	t.Setenv("HOME", home)
+	for _, name := range []string{"MECATL_MCP_TOKEN_EXACT", "MECATL_MCP_TOKEN_FIXTURE"} {
+		t.Setenv(name, "")
+		if err := os.Unsetenv(name); err != nil {
+			t.Fatal(err)
+		}
+	}
 	for _, name := range []string{"OPENAI_API_KEY", "OPENROUTER_API_KEY", "ANTHROPIC_API_KEY", "OPENCODE_API_KEY", "TYPESAFE_API_KEY", "EXA_API_KEY", "BRAVE_API_KEY", "WEBSEARCH_API_KEY"} {
 		t.Setenv(name, "")
 	}
@@ -144,9 +150,13 @@ func assertAuthFileContainment(t *testing.T, token string, capture *authFileRequ
 	if err != nil {
 		surfaces = append(surfaces, []byte(err.Error()))
 	}
+	encoded, marshalErr := json.Marshal(token)
+	if marshalErr != nil {
+		t.Fatal(marshalErr)
+	}
 	for _, surface := range surfaces {
-		if strings.Contains(string(surface), token) {
-			t.Fatal("file-backed bearer reached a model request, event, session snapshot, diagnostic, or error surface")
+		if strings.Contains(string(surface), token) || strings.Contains(string(surface), string(encoded[1:len(encoded)-1])) {
+			t.Fatal("static bearer reached a model request, event, session snapshot, diagnostic, or error surface")
 		}
 	}
 }
@@ -186,8 +196,10 @@ func TestBuildFinalizesAuthFileBeforeMCP(t *testing.T) {
 				t.Fatal(err)
 			}
 			flags := cliconfig.RegisterProviderFlags(flag.NewFlagSet("test", flag.ContinueOnError), cliconfig.ProviderFlagHelp{})
-			provider := cliconfig.NewProviderCredentialResolver(flags, flags.Resolve())
-			probe := &selectedFileMCPProbe{resolver: cliconfig.NewMCPProfileResolver(nil, nil, flags.MCPToken), stop: errors.New("resolved before transport")}
+			keys := flags.Resolve()
+			source := cliconfig.NewCredentialSource(flags, keys)
+			provider := cliconfig.NewProviderCredentialResolver(source, keys)
+			probe := &selectedFileMCPProbe{resolver: cliconfig.NewMCPProfileResolver(nil, nil, source), stop: errors.New("resolved before transport")}
 			cfg := app.Config{Workspace: t.TempDir(), UserModelDir: t.TempDir(), Model: "mock", MockProvider: mockllm.New(), NoSoul: true, PermissionConfigs: []string{settings}, ProviderCredentialLoader: provider, MCPAuthorityDefault: mcpauthority.Global}
 			if authority {
 				cfg.MCPAuthorityLoader = probe
@@ -204,99 +216,146 @@ func TestBuildFinalizesAuthFileBeforeMCP(t *testing.T) {
 			if err := os.WriteFile(path, []byte("providers: {}\n"), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			keys, _, err := provider.Load(nil)
-			if err != nil || keys.OpenAIKey != "selected-provider" {
+			credentials, _, err := provider.Load(nil)
+			if err != nil || credentials.OpenAIKey != "selected-provider" {
 				t.Fatal("provider did not share immutable final selected snapshot")
 			}
 		})
 	}
 }
 
-// TestAuthFileBearerReachesMCPTransport drives token_ref through Build, rather
-// than injecting a prebuilt ServerConfig. The fixture accepts only the expected
-// Authorization header, so a successful tool call proves the file-backed bearer
-// reached the actual HTTP destination.
-func TestAuthFileBearerReachesMCPTransport(t *testing.T) {
-	for _, authority := range []bool{false, true} {
-		t.Run(map[bool]string{false: "direct", true: "authority"}[authority], func(t *testing.T) {
-			isolateAuthFileDiscovery(t)
-			fixture := newLoginFixture(t)
-			const token = "mcp-authfile-transport-canary"
-			fixture.acceptedBearer = token
-			t.Setenv("MECATL_MCP_AUTHFILE_TRANSPORT", "")
+// TestLogicalBearerReachesMCPTransport proves source selection at the HTTP
+// destination, including byte-exact whitespace and immutable credentials on refresh.
+func TestLogicalBearerReachesMCPTransport(t *testing.T) {
+	for _, sourceName := range []string{"file", "derived environment", "environment overrides file", "explicit environment"} {
+		t.Run(sourceName, func(t *testing.T) {
+			for _, authority := range []bool{false, true} {
+				t.Run(map[bool]string{false: "direct", true: "authority"}[authority], func(t *testing.T) {
+					isolateAuthFileDiscovery(t)
+					fixture := newLoginFixture(t)
+					const token = " \tmcp-authfile\t transport-canary"
+					fixture.acceptedBearer = token
+					// The CLI's legacy name must not influence token_ref.
+					t.Setenv("MCP_PROTECTED_TOKEN", "poisoned-cli-token")
+					fileToken := token
+					selector := "token_ref: fixture"
+					switch sourceName {
+					case "derived environment":
+						t.Setenv("MECATL_MCP_TOKEN_FIXTURE", token)
+						fileToken = ""
+					case "environment overrides file":
+						t.Setenv("MECATL_MCP_TOKEN_FIXTURE", token)
+						fileToken = "unused-file-canary"
+					case "explicit environment":
+						t.Setenv("MECATL_EXPLICIT_FIXTURE", token)
+						selector = "token_env: MECATL_EXPLICIT_FIXTURE"
+						fileToken = "unused-file-canary"
+					}
 
-			path := filepath.Join(t.TempDir(), "auth.yaml")
-			if err := os.WriteFile(path, []byte("mcp:\n  fixture:\n    token: "+token+"\n"), 0o600); err != nil {
-				t.Fatal(err)
-			}
-			settings := filepath.Join(t.TempDir(), "settings.yaml")
-			body := "credential_store:\n  api_key:\n    file: " + path + "\nmcp:\n  mode: global\n  servers:\n    - name: protected\n      url: " + fixture.resource() + "\n      auth:\n        mode: static_bearer\n        static_bearer: {token_ref: fixture}\n"
-			if err := os.WriteFile(settings, []byte(body), 0o600); err != nil {
-				t.Fatal(err)
-			}
+					path := filepath.Join(t.TempDir(), "auth.yaml")
+					encodedToken, _ := json.Marshal(fileToken)
+					fileBody := "mcp:\n  fixture:\n    token: " + string(encodedToken) + "\n"
+					if fileToken == "" {
+						fileBody = "mcp: {}\n"
+					}
+					if err := os.WriteFile(path, []byte(fileBody), 0o600); err != nil {
+						t.Fatal(err)
+					}
+					settings := filepath.Join(t.TempDir(), "settings.yaml")
+					body := "credential_store:\n  api_key:\n    file: " + path + "\nmcp:\n  mode: global\n  servers:\n    - name: protected\n      url: " + fixture.resource() + "\n      auth:\n        mode: static_bearer\n        static_bearer: {" + selector + "}\n"
+					if err := os.WriteFile(settings, []byte(body), 0o600); err != nil {
+						t.Fatal(err)
+					}
 
-			flags := cliconfig.RegisterProviderFlags(flag.NewFlagSet("test", flag.ContinueOnError), cliconfig.ProviderFlagHelp{})
-			provider := cliconfig.NewProviderCredentialResolver(flags, flags.Resolve())
-			profiles := cliconfig.NewMCPProfileResolver(nil, nil, flags.MCPToken)
-			capture := &authFileRequestCapture{t: t}
-			diag := &acceptanceDiag{}
-			llm := mockllm.NewWith([]mockllm.Option{mockllm.WithRequestObserver(capture.observe)},
-				mockllm.ToolCallTurn(session.NewToolCall("call", "mcp__protected__ready", []byte(`{}`))), mockllm.TextTurn("complete"),
-				mockllm.ToolCallTurn(session.NewToolCall("after-rotation", "mcp__protected__ready", []byte(`{}`))), mockllm.TextTurn("complete"))
-			cfg := app.Config{
-				Workspace:                t.TempDir(),
-				UserModelDir:             t.TempDir(),
-				Model:                    "mock",
-				MockProvider:             llm,
-				Diagnostics:              diag,
-				PermissionConfigs:        []string{settings},
-				ProviderCredentialLoader: provider,
-				MCPAuthorityDefault:      mcpauthority.Global,
-			}
-			if authority {
-				cfg.MCPAuthorityLoader = profiles
-			} else {
-				cfg.MCPProfileLoader = profiles
-			}
-			built, err := app.Build(t.Context(), cfg)
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer built.Close()
+					flags := cliconfig.RegisterProviderFlags(flag.NewFlagSet("test", flag.ContinueOnError), cliconfig.ProviderFlagHelp{})
+					keys := flags.Resolve()
+					source := cliconfig.NewCredentialSource(flags, keys)
+					provider := cliconfig.NewProviderCredentialResolver(source, keys)
+					profiles := cliconfig.NewMCPProfileResolver(nil, nil, source)
+					capture := &authFileRequestCapture{t: t}
+					diag := &acceptanceDiag{}
+					llm := mockllm.NewWith([]mockllm.Option{mockllm.WithRequestObserver(capture.observe)},
+						mockllm.ToolCallTurn(session.NewToolCall("call", "mcp__protected__ready", []byte(`{}`))), mockllm.TextTurn("complete"),
+						mockllm.ToolCallTurn(session.NewToolCall("after-rotation", "mcp__protected__ready", []byte(`{}`))), mockllm.TextTurn("complete"),
+						mockllm.ToolCallTurn(session.NewToolCall("after-refresh", "mcp__protected__ready", []byte(`{}`))), mockllm.TextTurn("complete"))
+					cfg := app.Config{
+						Workspace:                t.TempDir(),
+						UserModelDir:             t.TempDir(),
+						Model:                    "mock",
+						MockProvider:             llm,
+						Diagnostics:              diag,
+						PermissionConfigs:        []string{settings},
+						ProviderCredentialLoader: provider,
+						MCPAuthorityDefault:      mcpauthority.Global,
+					}
+					if authority {
+						cfg.MCPAuthorityLoader = profiles
+					} else {
+						cfg.MCPProfileLoader = profiles
+					}
+					built, err := app.Build(t.Context(), cfg)
+					if err != nil {
+						t.Fatal(err)
+					}
+					defer built.Close()
 
-			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
-			defer cancel()
-			sessionID, events, runErr := runAuthFileMCPTool(ctx, built, "call the protected tool")
-			if runErr != nil {
-				t.Fatalf("file-backed MCP tool invocation failed: %v", runErr)
+					ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+					defer cancel()
+					sessionID, events, runErr := runAuthFileMCPTool(ctx, built, "call the protected tool")
+					if runErr != nil {
+						t.Fatalf("file-backed MCP tool invocation failed: %v", runErr)
+					}
+					durable, getErr := built.Service.GetSession(ctx, sessionID)
+					if getErr != nil {
+						t.Fatal(getErr)
+					}
+					counts := fixture.snapshot()
+					if counts.authenticated == 0 || counts.toolCalls != 1 {
+						t.Fatalf("fixture did not receive the file-backed bearer and tool call: authenticated=%d tools=%d", counts.authenticated, counts.toolCalls)
+					}
+					if len(capture.payloads()) != 2 {
+						t.Fatalf("model requests = %d, want tool call and tool result turns", len(capture.payloads()))
+					}
+					if err := os.WriteFile(path, []byte("mcp:\n  fixture:\n    token: rotated-token-not-accepted-by-fixture\n"), 0o600); err != nil {
+						t.Fatal(err)
+					}
+					t.Setenv("MECATL_MCP_TOKEN_FIXTURE", "rotated-derived-not-accepted")
+					t.Setenv("MECATL_EXPLICIT_FIXTURE", "rotated-explicit-not-accepted")
+					// Lose the destination's session table, forcing the existing manager
+					// to reconnect before source refresh can replace any runtime state.
+					fixture.mu.Lock()
+					fixture.mcpHandler = fixture.newMCPHandler()
+					fixture.mu.Unlock()
+					_, afterReconnect, err := runAuthFileMCPTool(ctx, built, "call after credential rotation and destination session loss")
+					if err != nil {
+						t.Fatal(err)
+					}
+					reconnected := fixture.snapshot()
+					if reconnected.toolCalls != 2 || reconnected.opened <= counts.opened {
+						t.Fatal("reconnect lost the captured credential or did not open a new session")
+					}
+					if _, err := built.Service.RefreshMcpSources(ctx, sessionID); err != nil {
+						t.Fatalf("refresh after token rotation: %v", err)
+					}
+					_, afterRotation, err := runAuthFileMCPTool(ctx, built, "call after credential-file rotation and source refresh")
+					if err != nil {
+						t.Fatal(err)
+					}
+					after := fixture.snapshot()
+					if after.authenticated <= reconnected.authenticated || after.toolCalls != 3 {
+						t.Fatal("tool call after live refresh lost the original credential snapshot")
+					}
+					allEvents := append(append(events, afterReconnect...), afterRotation...)
+					assertAuthFileContainment(t, token, capture, allEvents, durable, diag, nil)
+					assertAuthFileContainment(t, "unused-file-canary", capture, allEvents, durable, diag, nil)
+					assertAuthFileWireContainment(t, built, sessionID, token)
+					if sourceName == "explicit environment" {
+						if strings.Count(strings.Join(diagnosticSurfaces(diag), "\n"), "deprecated") != 1 {
+							t.Fatal("Build warning missing or repeated on refresh")
+						}
+					}
+				})
 			}
-			durable, getErr := built.Service.GetSession(ctx, sessionID)
-			if getErr != nil {
-				t.Fatal(getErr)
-			}
-			counts := fixture.snapshot()
-			if counts.authenticated == 0 || counts.toolCalls != 1 {
-				t.Fatalf("fixture did not receive the file-backed bearer and tool call: authenticated=%d tools=%d", counts.authenticated, counts.toolCalls)
-			}
-			if len(capture.payloads()) != 2 {
-				t.Fatalf("model requests = %d, want tool call and tool result turns", len(capture.payloads()))
-			}
-			if err := os.WriteFile(path, []byte("mcp:\n  fixture:\n    token: rotated-token-not-accepted-by-fixture\n"), 0o600); err != nil {
-				t.Fatal(err)
-			}
-			if _, err := built.Service.RefreshMcpSources(ctx, sessionID); err != nil {
-				t.Fatalf("refresh after token rotation: %v", err)
-			}
-			_, afterRotation, err := runAuthFileMCPTool(ctx, built, "call after credential-file rotation and source refresh")
-			if err != nil {
-				t.Fatal(err)
-			}
-			after := fixture.snapshot()
-			if after.authenticated <= counts.authenticated || after.toolCalls != 2 {
-				t.Fatal("tool call after live refresh lost the original credential snapshot")
-			}
-			assertAuthFileContainment(t, token, capture, append(events, afterRotation...), durable, diag, nil)
-			assertAuthFileWireContainment(t, built, sessionID, token)
 		})
 	}
 }
@@ -330,6 +389,8 @@ func TestAuthFileBearerAuthenticationFailureIsContained(t *testing.T) {
 	llm := mockllm.NewWith([]mockllm.Option{mockllm.WithRequestObserver(capture.observe)},
 		mockllm.ToolCallTurn(session.NewToolCall("call", "mcp__protected__ready", []byte(`{}`))), mockllm.TextTurn("complete"))
 	flags := cliconfig.RegisterProviderFlags(flag.NewFlagSet("test", flag.ContinueOnError), cliconfig.ProviderFlagHelp{})
+	keys := flags.Resolve()
+	source := cliconfig.NewCredentialSource(flags, keys)
 	diag := &acceptanceDiag{}
 	built, err := app.Build(t.Context(), app.Config{
 		Workspace:                t.TempDir(),
@@ -338,8 +399,8 @@ func TestAuthFileBearerAuthenticationFailureIsContained(t *testing.T) {
 		MockProvider:             llm,
 		Diagnostics:              diag,
 		PermissionConfigs:        []string{settings},
-		ProviderCredentialLoader: cliconfig.NewProviderCredentialResolver(flags, flags.Resolve()),
-		MCPProfileLoader:         cliconfig.NewMCPProfileResolver(nil, nil, flags.MCPToken),
+		ProviderCredentialLoader: cliconfig.NewProviderCredentialResolver(source, keys),
+		MCPProfileLoader:         cliconfig.NewMCPProfileResolver(nil, nil, source),
 	})
 	if err != nil {
 		assertAuthFileContainment(t, token, capture, nil, nil, diag, err)
@@ -366,54 +427,135 @@ func TestAuthFileBearerAuthenticationFailureIsContained(t *testing.T) {
 	}
 }
 
-func TestAuthFileControlCharactersStopBeforeMCPTransport(t *testing.T) {
-	for _, tc := range []struct {
-		name, escaped string
-	}{
-		{name: "CR", escaped: `bad\rcontrol`},
-		{name: "LF", escaped: `bad\ncontrol`},
-		{name: "NUL", escaped: `bad\0control`},
-		{name: "other control", escaped: `bad\u0001control`},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
+func TestBuildLegacyWarningUsesEffectiveProfilesAndResolverLifetime(t *testing.T) {
+	for _, authority := range []bool{false, true} {
+		t.Run(map[bool]string{false: "direct", true: "authority"}[authority], func(t *testing.T) {
 			isolateAuthFileDiscovery(t)
-			var requests atomic.Int32
-			mcpServer := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
-				requests.Add(1)
-			}))
-			defer mcpServer.Close()
-
-			const sentinel = "file-control-secret-sentinel"
-			path := filepath.Join(t.TempDir(), "auth.yaml")
-			if err := os.WriteFile(path, []byte("mcp:\n  fixture:\n    token: \""+sentinel+tc.escaped+"\"\n"), 0o600); err != nil {
-				t.Fatal(err)
-			}
+			t.Setenv("MECATL_BUILD_WARNING", "")
 			settings := filepath.Join(t.TempDir(), "settings.yaml")
-			body := "credential_store:\n  api_key:\n    file: " + path + "\nmcp:\n  servers:\n    - name: protected\n      url: " + mcpServer.URL + "\n      auth:\n        mode: static_bearer\n        static_bearer: {token_ref: fixture}\n"
+			body := "mcp:\n  mode: global\n  servers:\n"
+			for _, name := range []string{"overridden", "selected"} {
+				body += "    - name: " + name + "\n      url: https://mcp.example/mcp\n      auth:\n        mode: static_bearer\n        static_bearer: {token_env: MECATL_BUILD_WARNING}\n"
+			}
 			if err := os.WriteFile(settings, []byte(body), 0o600); err != nil {
 				t.Fatal(err)
 			}
-
-			flags := cliconfig.RegisterProviderFlags(flag.NewFlagSet("test", flag.ContinueOnError), cliconfig.ProviderFlagHelp{})
+			legacy := &cliconfig.MCPServerList{}
+			if err := legacy.Set("overridden=https://legacy.example/mcp"); err != nil {
+				t.Fatal(err)
+			}
+			var loads int
 			diag := &acceptanceDiag{}
-			_, err := app.Build(t.Context(), app.Config{
-				Workspace:                t.TempDir(),
-				UserModelDir:             t.TempDir(),
-				Model:                    "mock",
-				MockProvider:             mockllm.New(),
-				Diagnostics:              diag,
-				PermissionConfigs:        []string{settings},
-				ProviderCredentialLoader: cliconfig.NewProviderCredentialResolver(flags, flags.Resolve()),
-				MCPProfileLoader:         cliconfig.NewMCPProfileResolver(nil, nil, flags.MCPToken),
-			})
-			if !errors.Is(err, cliconfig.ErrMCPProfileSecret) || strings.Contains(err.Error(), sentinel) {
-				t.Fatalf("unsafe file token error = %v", err)
+			load := func(profiles *cliconfig.MCPProfileResolver) {
+				loads++
+				cfg := app.Config{Workspace: t.TempDir(), UserModelDir: t.TempDir(), Model: "mock", MockProvider: mockllm.New(), Diagnostics: diag, PermissionConfigs: []string{settings}, MCPAuthorityDefault: mcpauthority.Global}
+				if authority {
+					cfg.MCPAuthorityLoader = profiles
+				} else {
+					cfg.MCPProfileLoader = profiles
+				}
+				_, err := app.Build(t.Context(), cfg)
+				if !errors.Is(err, cliconfig.ErrMCPProfileSecret) || !strings.Contains(err.Error(), "selected") {
+					t.Fatalf("load %d failed at wrong profile: %v", loads, err)
+				}
 			}
-			if requests.Load() != 0 {
-				t.Fatal("unsafe file token reached the MCP transport")
+			profiles := cliconfig.NewMCPProfileResolver(legacy, func(string) (string, bool) { return "", false }, cliconfig.NewCredentialSource(nil, cliconfig.ResolvedCredentials{}))
+			load(profiles)
+			load(profiles)
+			logs := strings.Join(diagnosticSurfaces(diag), "\n")
+			if strings.Count(logs, "deprecated") != 1 || strings.Contains(logs, "overridden") || strings.Contains(logs, "MECATL_BUILD_WARNING") {
+				t.Fatal("Build warning filtering, containment, or once lifetime failed")
 			}
-			if strings.Contains(strings.Join(diagnosticSurfaces(diag), "\n"), sentinel) {
-				t.Fatal("unsafe file token reached diagnostics")
+			load(cliconfig.NewMCPProfileResolver(legacy, func(string) (string, bool) { return "", false }, cliconfig.NewCredentialSource(nil, cliconfig.ResolvedCredentials{})))
+			if strings.Count(strings.Join(diagnosticSurfaces(diag), "\n"), "deprecated") != 2 {
+				t.Fatal("new Build owner did not warn")
+			}
+		})
+	}
+}
+
+func TestInvalidStaticBearerStopsBeforeMCPTransport(t *testing.T) {
+	for _, sourceName := range []string{"file", "derived environment", "explicit environment"} {
+		t.Run(sourceName, func(t *testing.T) {
+			for _, tc := range []struct{ name, token string }{
+				{"empty", ""}, {"blank", " \t"},
+				{"CR", "sentinel\rcontrol"}, {"LF", "sentinel\ncontrol"},
+				{"NUL", "sentinel\x00control"}, {"other control", "sentinel\x01control"},
+				{"DEL", "sentinel\x7fcontrol"}, {"trailing space", "sentinel "}, {"trailing tab", "sentinel\t"},
+			} {
+				// Blank file entries are rejected by the auth-file document validator;
+				// the profile secret boundary is exercised with nonblank file values.
+				if sourceName == "file" && strings.TrimSpace(tc.token) == "" {
+					continue
+				}
+				t.Run(tc.name, func(t *testing.T) {
+					for _, authority := range []bool{false, true} {
+						t.Run(map[bool]string{false: "direct", true: "authority"}[authority], func(t *testing.T) {
+							isolateAuthFileDiscovery(t)
+							t.Setenv("MECATL_MCP_TOKEN_FIXTURE", "")
+							if err := os.Unsetenv("MECATL_MCP_TOKEN_FIXTURE"); err != nil {
+								t.Fatal(err)
+							}
+							var requests atomic.Int32
+							mcpServer := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { requests.Add(1) }))
+							defer mcpServer.Close()
+							selector := "token_ref: fixture"
+							fileToken := "valid-fallback-must-not-be-used"
+							switch sourceName {
+							case "file":
+								fileToken = tc.token
+							case "derived environment":
+								// An invalid present winner must never fall through to the valid file.
+								// NUL cannot appear in a real process environment; it is covered via file/injected-source tests.
+								if strings.ContainsRune(tc.token, 0) {
+									t.Skip("OS environments cannot contain NUL")
+								}
+								t.Setenv("MECATL_MCP_TOKEN_FIXTURE", tc.token)
+							case "explicit environment":
+								if strings.ContainsRune(tc.token, 0) {
+									t.Skip("OS environments cannot contain NUL")
+								}
+								t.Setenv("MECATL_INVALID_EXPLICIT", tc.token)
+								selector = "token_env: MECATL_INVALID_EXPLICIT"
+							}
+							path := filepath.Join(t.TempDir(), "auth.yaml")
+							encoded, _ := json.Marshal(fileToken)
+							if err := os.WriteFile(path, []byte("mcp:\n  fixture:\n    token: "+string(encoded)+"\n"), 0o600); err != nil {
+								t.Fatal(err)
+							}
+							settings := filepath.Join(t.TempDir(), "settings.yaml")
+							body := "credential_store:\n  api_key:\n    file: " + path + "\nmcp:\n  mode: global\n  servers:\n    - name: protected\n      url: " + mcpServer.URL + "\n      auth:\n        mode: static_bearer\n        static_bearer: {" + selector + "}\n"
+							if err := os.WriteFile(settings, []byte(body), 0o600); err != nil {
+								t.Fatal(err)
+							}
+							flags := cliconfig.RegisterProviderFlags(flag.NewFlagSet("test", flag.ContinueOnError), cliconfig.ProviderFlagHelp{})
+							keys := flags.Resolve()
+							source := cliconfig.NewCredentialSource(flags, keys)
+							diag := &acceptanceDiag{}
+							profiles := cliconfig.NewMCPProfileResolver(nil, nil, source)
+							cfg := app.Config{Workspace: t.TempDir(), UserModelDir: t.TempDir(), Model: "mock", MockProvider: mockllm.New(), Diagnostics: diag, PermissionConfigs: []string{settings}, ProviderCredentialLoader: cliconfig.NewProviderCredentialResolver(source, keys), MCPAuthorityDefault: mcpauthority.Global}
+							if authority {
+								cfg.MCPAuthorityLoader = profiles
+							} else {
+								cfg.MCPProfileLoader = profiles
+							}
+							_, err := app.Build(t.Context(), cfg)
+							if !errors.Is(err, cliconfig.ErrMCPProfileSecret) || strings.Contains(err.Error(), "sentinel") {
+								t.Fatalf("unsafe token error = %v", err)
+							}
+							if requests.Load() != 0 {
+								t.Fatal("unsafe token reached MCP transport")
+							}
+							logs := strings.Join(diagnosticSurfaces(diag), "\n")
+							if strings.Contains(logs, "sentinel") || strings.Contains(logs, fileToken) {
+								t.Fatal("unsafe token reached diagnostics")
+							}
+							if sourceName == "explicit environment" && strings.Count(logs, "deprecated") != 1 {
+								t.Fatal("Build lost warning on selected-secret startup failure")
+							}
+						})
+					}
+				})
 			}
 		})
 	}

@@ -17,53 +17,29 @@ import (
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
 	"github.com/stacklok/mecatl/engine/port"
-	"github.com/stacklok/mecatl/internal/adapter/permconfig"
 	"github.com/stacklok/mecatl/internal/adapter/xdgconfig"
 	"github.com/stacklok/mecatl/internal/app"
+	"github.com/stacklok/mecatl/internal/testutil/mcpauth"
 )
 
-func TestEmbeddedMCPAuthFileComposition(t *testing.T) {
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
-	path := filepath.Join(t.TempDir(), "selected.yaml")
-	if err := os.WriteFile(path, []byte("mcp:\n  exact:\n    token: selected-file-token\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	cfg, err := parseFlags([]string{"--mock", "--toolhive-llm=false", "--workspace", t.TempDir(), "--api-key-file", path})
-	if err != nil {
-		t.Fatal(err)
-	}
-	ac := embeddedConfig(cfg, port.NopDiagnostics{})
-	ac.ProviderCredentialLoader.(interface{ SetAPIKeyFile(string) }).SetAPIKeyFile(filepath.Join(t.TempDir(), "not-selected"))
-	if err := os.WriteFile(path, []byte("mcp: {}\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	operator := &permconfig.MCPSection{Mode: "global", Servers: []permconfig.MCPServerProfile{{Name: "server", URL: "https://mcp.example/mcp", Auth: permconfig.MCPAuthProfile{Mode: "static_bearer", StaticBearer: &permconfig.MCPStaticBearerProfile{TokenRef: "exact"}}}}}
-	servers, lifecycle, err := ac.MCPProfileLoader.Load(operator)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer lifecycle.Close()
-	if len(servers) != 1 || servers[0].Headers["Authorization"] != "Bearer selected-file-token" {
-		t.Fatal("direct loader lost the embedded credential snapshot")
-	}
-	authority, err := ac.MCPAuthorityLoader.LoadAuthority(operator, ac.MCPAuthorityDefault, ac.MCPBrokerSupported)
-	if err != nil {
-		t.Fatal(err)
-	}
-	servers, lifecycle, ok := authority.Global()
-	if !ok {
-		t.Fatal("expected global authority")
-	}
-	defer lifecycle.Close()
-	if len(servers) != 1 || servers[0].Headers["Authorization"] != "Bearer selected-file-token" {
-		t.Fatal("authority loader lost the embedded credential snapshot")
-	}
+func TestEmbeddedMCPLogicalCredentials(t *testing.T) {
+	mcpauth.CheckRoot(t, func(t *testing.T, path string, diag port.Diagnostics) app.Config {
+		cfg, err := parseFlags([]string{"--mock", "--toolhive-llm=false", "--workspace", t.TempDir(), "--api-key-file", path})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return embeddedConfig(cfg, diag)
+	})
 }
 
 // Connect parses and dials the remote server without reading or transmitting the
 // local MCP credential. The read seam also observes a positive embedded load.
 func TestConnectSkipsEmbeddedAuthFileComposition(t *testing.T) {
 	const localToken = "local-mcp-must-not-be-uploaded"
+	const localEnvToken = "local-env-mcp-must-not-be-uploaded"
+	const localLegacyToken = "local-legacy-mcp-must-not-be-uploaded"
+	t.Setenv("MECATL_MCP_TOKEN_LOCAL", localEnvToken)
+	t.Setenv("MECATL_LOCAL_LEGACY", localLegacyToken)
 	const remoteToken = "remote-server-fixture-bearer"
 	configHome := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", configHome)
@@ -97,8 +73,10 @@ func TestConnectSkipsEmbeddedAuthFileComposition(t *testing.T) {
 	remote := grpc.NewServer(grpc.UnaryInterceptor(func(ctx context.Context, req any, _ *grpc.UnaryServerInfo, next grpc.UnaryHandler) (any, error) {
 		calls.Add(1)
 		md, _ := metadata.FromIncomingContext(ctx)
-		if strings.Contains(fmt.Sprint(req, md), localToken) {
-			t.Error("connect uploaded the local MCP credential")
+		for _, token := range []string{localToken, localEnvToken, localLegacyToken} {
+			if strings.Contains(fmt.Sprint(req, md), token) {
+				t.Error("connect uploaded a local MCP credential")
+			}
 		}
 		if values := md.Get("authorization"); len(values) != 1 || values[0] != "Bearer "+remoteToken {
 			t.Error("connect did not send the selected remote-server bearer")

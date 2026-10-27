@@ -32,7 +32,7 @@ func TestProviderSetupFollowup_Scenario3_CodexLoaderAndReuse(t *testing.T) {
 			writeAuthFile(t, "providers: {}\n")
 			flags := &ProviderFlags{}
 			initial := flags.Resolve()
-			loader := NewProviderCredentialResolver(flags, initial)
+			loader := NewProviderCredentialResolver(NewCredentialSource(flags, initial), initial)
 			path := filepath.Join(t.TempDir(), "configured.yaml")
 			body := codexAuthYAML(token, account, expires)
 			if state == "missing" {
@@ -46,7 +46,7 @@ func TestProviderSetupFollowup_Scenario3_CodexLoaderAndReuse(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			inspection, err := ResolveProviderCredentials(flags, nil, xdgconfig.OSEnv)
+			inspection, err := loader.source.ResolveProviders(nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -54,7 +54,7 @@ func TestProviderSetupFollowup_Scenario3_CodexLoaderAndReuse(t *testing.T) {
 			if inspection.HasOpenAICodex() != want || runtime.OpenAICodexCredential.Validate(time.Now()) == nil != want {
 				t.Fatal("configured runtime reload and inspection must agree on local credential usability")
 			}
-			legacy := flags.Resolve()
+			legacy := (&ProviderFlags{authFile: &path}).Resolve()
 			if legacy.OpenAICodex != inspection.OpenAICodex || legacy.AuthFileWarning != inspection.AuthFileWarning {
 				t.Fatal("legacy and strict loaders disagree")
 			}
@@ -69,7 +69,7 @@ func TestProviderSetupFollowup_Scenario3_CodexLoaderAndReuse(t *testing.T) {
 			if err := os.WriteFile(path, []byte("providers: {}\n"), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			cached, err := ResolveProviderCredentials(flags, nil, xdgconfig.OSEnv)
+			cached, err := loader.source.ResolveProviders(nil)
 			if err != nil || cached.OpenAICodex != legacy.OpenAICodex {
 				t.Fatal("resolved file snapshot was reread")
 			}
@@ -97,8 +97,7 @@ func TestProviderSetupFollowup_Scenario1_RuntimeCredentialParity(t *testing.T) {
 				body += "  openrouter:\n    api_key: " + tc.routerFile + "\n"
 			}
 			path := writeAuthFile(t, body)
-			flags := &ProviderFlags{}
-			flags.SetAPIKeyFile(path)
+			flags := &ProviderFlags{authFile: &path}
 			defs := permconfig.ProviderDefinitions{"gateway": {ID: "gateway", Auth: permconfig.ProviderAuth{Method: "api_key"}}}
 			keys, err := ResolveProviderCredentials(flags, defs, xdgconfig.OSEnv)
 			if err != nil {
@@ -133,7 +132,7 @@ func TestProviderSetupFollowup_Scenario1_RuntimeCredentialParity(t *testing.T) {
 				flags.authFile = &path
 			}
 			initial := flags.Resolve()
-			loader := NewProviderCredentialResolver(flags, initial)
+			loader := NewProviderCredentialResolver(NewCredentialSource(flags, initial), initial)
 			if explicit {
 				loader.SetAPIKeyFile(filepath.Join(t.TempDir(), "must-not-read"))
 			} else {
@@ -143,14 +142,15 @@ func TestProviderSetupFollowup_Scenario1_RuntimeCredentialParity(t *testing.T) {
 			t.Setenv("GATEWAY_API_KEY", "not-a-custom-fallback")
 			// Capture the CLI override snapshot after setting the environment, just as startup does.
 			if explicit {
-				loader = NewProviderCredentialResolver(flags, flags.Resolve())
+				fresh := flags.Resolve()
+				loader = NewProviderCredentialResolver(NewCredentialSource(flags, fresh), fresh)
 			}
 			defs := permconfig.ProviderDefinitions{"gateway": {ID: "gateway", Auth: permconfig.ProviderAuth{Method: "api_key"}}}
 			runtime, _, err := loader.Load(defs)
 			if err != nil {
 				t.Fatal(err)
 			}
-			inspection, err := ResolveProviderCredentials(flags, defs, xdgconfig.OSEnv)
+			inspection, err := loader.source.ResolveProviders(defs)
 			if err != nil {
 				t.Fatal(err)
 			}

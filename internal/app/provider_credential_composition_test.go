@@ -64,7 +64,8 @@ func TestBuildLoadsSearchCredentialStoreAPIKeyFile(t *testing.T) {
 	}
 
 	flags := cliconfig.RegisterProviderFlags(flag.NewFlagSet("test", flag.ContinueOnError), cliconfig.ProviderFlagHelp{})
-	loader := cliconfig.NewProviderCredentialResolver(flags, flags.Resolve())
+	keys := flags.Resolve()
+	loader := cliconfig.NewProviderCredentialResolver(cliconfig.NewCredentialSource(flags, keys), keys)
 	diagnostics := &credentialStoreDiagnostics{}
 	built, err := app.Build(t.Context(), app.Config{
 		Workspace:                t.TempDir(),

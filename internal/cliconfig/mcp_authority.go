@@ -5,6 +5,7 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/internal/adapter/mcpauthority"
 	"github.com/stacklok/mecatl/internal/adapter/permconfig"
 )
@@ -14,7 +15,10 @@ type MCPAuthorityOptions struct {
 	Operator        *permconfig.MCPSection
 	Legacy          *MCPServerList
 	LookupEnv       func(string) (string, bool)
-	LookupFileToken func(string) (string, error)
+	Secrets         SecretResolver
+	StaticEnv       func(string) (string, bool)
+	Diagnostics     port.Diagnostics
+	Warnings        *MCPWarnings
 	DefaultMode     mcpauthority.Mode
 	BrokerSupported bool
 }
@@ -61,7 +65,7 @@ func resolveGlobalAuthority(opts MCPAuthorityOptions) (*mcpauthority.Result, err
 			}
 		}
 	}
-	profiles, err := LoadMCPProfiles(MCPProfileLoadOptions{Operator: opts.Operator, Legacy: opts.Legacy, LookupEnv: opts.LookupEnv, LookupFileToken: opts.LookupFileToken})
+	profiles, err := LoadMCPProfiles(MCPProfileLoadOptions{Operator: opts.Operator, Legacy: opts.Legacy, LookupEnv: opts.LookupEnv, Secrets: opts.Secrets, StaticEnv: opts.StaticEnv, Diagnostics: opts.Diagnostics, Warnings: opts.Warnings})
 	if err != nil {
 		return nil, err
 	}
@@ -125,7 +129,7 @@ func resolveBrokerAuthority(section *permconfig.MCPSection) (*mcpauthority.Resul
 	for _, route := range section.Servers {
 		switch route.Auth.Mode {
 		case "none":
-		case "static_bearer":
+		case mcpStaticBearerMode:
 			return nil, fmt.Errorf("%w: MCP server %q: static_bearer is unsupported in broker mode", ErrMCPProfileInvalid, route.Name)
 		case "oauth":
 			oauthCount++

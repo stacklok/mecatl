@@ -800,6 +800,9 @@ func appConfig(cfg config, diag port.Diagnostics, obs observability) app.Config 
 			(p.GrantType == session.GrantTypeUser || p.GrantType == session.GrantTypeClientCredentials) &&
 			slices.ContainsFunc(cfg.executionOwners, p.SameIdentity)
 	}
+	credentialSource := cliconfig.NewCredentialSource(cfg.providerFlags, cfg.providerCredentials)
+	mcpLoader := cliconfig.NewMCPProfileResolver(cfg.mcpServers, os.LookupEnv, credentialSource)
+	mcpLoader.SetDiagnostics(diag)
 	out := app.Config{
 		ExecutionTemplateAllowed: func(p *session.Principal, _, _ string) bool {
 			return ownerAllowed(p)
@@ -883,17 +886,17 @@ func appConfig(cfg config, diag port.Diagnostics, obs observability) app.Config 
 		// Remote MCP servers (issue #341): the static name=URL entries (with any
 		// MCP_<NAME>_TOKEN bearer already resolved into Headers at parse time).
 		MCPServers:       cfg.mcpServers.Servers(),
-		MCPProfileLoader: cliconfig.NewMCPProfileResolver(cfg.mcpServers, os.LookupEnv, cfg.providerFlags.MCPToken),
+		MCPProfileLoader: mcpLoader,
 		// MCPAuthorityLoader/MCPAuthorityDefault/MCPBrokerSupported route operator
 		// mcp: config through the mode-aware canonical authority resolver (global
 		// vs broker) instead of MCPProfileLoader.Load's global-mode-only path.
 		// mecak8s defaults configured MCP profiles to session-scoped broker
 		// authority; the Helm chart explicitly selects global mode for an empty
 		// server list so zero-MCP deployments do not start broker resources.
-		MCPAuthorityLoader:       cliconfig.NewMCPProfileResolver(cfg.mcpServers, os.LookupEnv, cfg.providerFlags.MCPToken),
+		MCPAuthorityLoader:       mcpLoader,
 		MCPAuthorityDefault:      mcpAuthorityDefault,
 		MCPBrokerSupported:       true,
-		ProviderCredentialLoader: cliconfig.NewProviderCredentialResolver(cfg.providerFlags, cfg.providerCredentials),
+		ProviderCredentialLoader: cliconfig.NewProviderCredentialResolver(credentialSource, cfg.providerCredentials),
 		ProviderOverrides:        cfg.providerFlags.EndpointOverrides(),
 		EnableParallel:           cfg.enableParallel,
 		EnableTeams:              cfg.enableTeams,

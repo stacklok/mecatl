@@ -1845,7 +1845,12 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	if learningErr != nil {
 		return nil, learningErr
 	}
-	// Finalize the shared auth-file source before MCP resolves file references.
+	// Finalize the shared auth-file source before MCP resolves logical references.
+	for _, loader := range []any{cfg.MCPProfileLoader, cfg.MCPAuthorityLoader} {
+		if receiver, ok := loader.(interface{ SetDiagnostics(port.Diagnostics) }); ok {
+			receiver.SetDiagnostics(cfg.diag())
+		}
+	}
 	definitions := cfg.ProviderDefinitions
 	if resolver, ok := cfg.permResolver.(*permconfig.Resolver); ok {
 		var err error

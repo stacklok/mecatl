@@ -100,7 +100,7 @@ func TestMCPStaticBearerTokenSourceXOR(t *testing.T) {
 	}
 
 	for name, source := range map[string]string{
-		"token reference": "          token_ref: Context7\n",
+		"token reference": "          token_ref: context7\n",
 		"environment":     "          token_env: MECATL_MCP_TOKEN\n",
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -108,7 +108,7 @@ func TestMCPStaticBearerTokenSourceXOR(t *testing.T) {
 			if err != nil {
 				t.Fatalf("parseYAML: %v", err)
 			}
-			if name == "token reference" && cfg.MCP.Servers[0].Auth.StaticBearer.TokenRef != "Context7" {
+			if name == "token reference" && cfg.MCP.Servers[0].Auth.StaticBearer.TokenRef != "context7" {
 				t.Fatalf("TokenRef = %q", cfg.MCP.Servers[0].Auth.StaticBearer.TokenRef)
 			}
 		})
@@ -120,6 +120,9 @@ func TestMCPStaticBearerTokenSourceXOR(t *testing.T) {
 		"neither":        "",
 		"empty ref":      "          token_ref: ''\n",
 		"invalid ref":    "          token_ref: context-7\n",
+		"uppercase ref":  "          token_ref: Context7\n",
+		"unicode ref":    "          token_ref: café\n",
+		"empty env":      "          token_env: ''\n",
 		"unknown field":  "          token_file: /run/secret\n",
 	} {
 		t.Run(name, func(t *testing.T) {

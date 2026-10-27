@@ -443,6 +443,9 @@ Exit status:
 // app.Build loads the injected provider credential after resolving operator definitions.
 func appConfig(f flags, diag port.Diagnostics, obs observability) app.Config {
 	nativeEndpointLoader := &cliconfig.NativeEndpointLoader{}
+	credentialSource := cliconfig.NewCredentialSource(f.providerFlags, f.providerCredentials)
+	mcpLoader := cliconfig.NewMCPProfileResolver(f.mcpServers, os.LookupEnv, credentialSource)
+	mcpLoader.SetDiagnostics(diag)
 	out := app.Config{
 		Workspace:       f.workspace,
 		Model:           f.model,
@@ -469,11 +472,11 @@ func appConfig(f flags, diag port.Diagnostics, obs observability) app.Config {
 		// consumed by app.Build's static MCP source. Nil-safe when the flag was
 		// never registered (a hand-built test config).
 		MCPServers:                        f.mcpServers.Servers(),
-		MCPProfileLoader:                  cliconfig.NewMCPProfileResolver(f.mcpServers, os.LookupEnv, f.providerFlags.MCPToken),
-		MCPAuthorityLoader:                cliconfig.NewMCPProfileResolver(f.mcpServers, os.LookupEnv, f.providerFlags.MCPToken),
+		MCPProfileLoader:                  mcpLoader,
+		MCPAuthorityLoader:                mcpLoader,
 		MCPAuthorityDefault:               mcpauthority.Global,
 		MCPBrokerSupported:                false,
-		ProviderCredentialLoader:          cliconfig.NewProviderCredentialResolver(f.providerFlags, f.providerCredentials),
+		ProviderCredentialLoader:          cliconfig.NewProviderCredentialResolver(credentialSource, f.providerCredentials),
 		NativeEndpointCredentialLoader:    nativeEndpointLoader,
 		NativeEndpointCredentialLifecycle: nativeEndpointLoader,
 		ProviderOverrides:                 f.providerFlags.EndpointOverrides(),

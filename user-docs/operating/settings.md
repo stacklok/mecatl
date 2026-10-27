@@ -49,11 +49,13 @@ For the daemon and Kubernetes operating details, see
 ## Ownership and precedence
 
 `settings.yaml` is the user-global operator file. Put provider keys and static
-MCP bearer tokens in `auth.yaml`, and use `--api-key-file` to select a
-non-default credentials file. The process reads both files at startup, so
-restart it after changing either file. See
-[MCP OAuth and credentials](/features/security-and-execution/mcp-oauth-and-credentials.md)
-for static MCP bearer profiles and their file-selection rules.
+MCP bearer tokens in `auth.yaml`, or inject their documented environment
+variables into the server. The credentials file selection order is
+`--api-key-file`, then operator `credential_store.api_key.file`, then the
+conventional XDG `auth.yaml` path. Restart the server or job after changing
+settings, credentials, or credential environment variables. For the preferred
+MCP `token_ref` selector, derived environment naming, and env-over-file rules,
+see [MCP OAuth and credentials](/features/security-and-execution/mcp-oauth-and-credentials.md#static-bearer-credentials).
 
 A trusted project can contribute project-tier settings from
 `.mecatl/settings.yaml` or `.mecatl/settings.local.yaml`. Operator-only settings

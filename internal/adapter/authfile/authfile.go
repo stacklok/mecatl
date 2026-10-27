@@ -67,7 +67,7 @@ type File struct {
 	baseWarning string
 }
 
-var mcpCredentialID = regexp.MustCompile(`^[A-Za-z0-9_]+$`)
+var mcpCredentialID = regexp.MustCompile(`^[a-z0-9_]+$`)
 
 type rawFile struct {
 	Providers map[string]rawProviderEntry `yaml:"providers"`
@@ -141,7 +141,7 @@ func (f *File) OAuth(name string) OAuthEntry {
 	return entry.oauth
 }
 
-// MCPToken returns the opaque token for the exact, case-sensitive MCP credential
+// MCPToken returns the opaque token for the exact lowercase MCP credential
 // ID, or "" if f is nil or no entry exists. Valid tokens are returned unchanged.
 func (f *File) MCPToken(id string) string {
 	if f == nil {

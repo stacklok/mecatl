@@ -684,11 +684,13 @@ type MCPAuthProfile struct {
 
 // MCPStaticBearerProfile contains exactly one reference only, never a bearer-token value.
 type MCPStaticBearerProfile struct {
-	// TokenEnv is a MECATL_* environment variable name containing the opaque token.
-	// It is mutually exclusive with TokenRef.
+	// TokenEnv is a deprecated exact MECATL_* environment variable selector.
+	// Prefer TokenRef; the selectors are mutually exclusive.
 	TokenEnv string `yaml:"token_env"`
-	// TokenRef is an exact, case-sensitive auth.yaml mcp credential ID. It is
-	// mutually exclusive with TokenEnv.
+	// TokenRef is a lowercase [a-z0-9_]+ logical MCP reference. Resolution uses
+	// MECATL_MCP_TOKEN_ followed by the uppercase reference first, then the matching
+	// mcp entry's token in auth.yaml.
+	// It is mutually exclusive with TokenEnv.
 	TokenRef string `yaml:"token_ref"`
 }
 
@@ -856,6 +858,7 @@ type MCPOAuthNetworkProfile struct {
 
 var (
 	mcpProfileName        = regexp.MustCompile(`^[A-Za-z0-9_]+$`)
+	mcpLogicalReference   = regexp.MustCompile(`^[a-z0-9_]+$`)
 	mecatlSecretReference = regexp.MustCompile(`^MECATL_[A-Z0-9_]+$`)
 )
 
@@ -1001,8 +1004,8 @@ func (s *MCPStaticBearerProfile) UnmarshalYAML(node ast.Node) error {
 	if hasEnv {
 		return validateMCPSecretRef("mcp.servers[].auth.static_bearer.token_env", s.TokenEnv)
 	}
-	if !mcpProfileName.MatchString(s.TokenRef) {
-		return errors.New("mcp.servers[].auth.static_bearer.token_ref must match [A-Za-z0-9_]+")
+	if !mcpLogicalReference.MatchString(s.TokenRef) {
+		return errors.New("mcp.servers[].auth.static_bearer.token_ref must match [a-z0-9_]+")
 	}
 	return nil
 }

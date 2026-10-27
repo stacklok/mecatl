@@ -12,6 +12,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/oauthex"
 
+	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/internal/adapter/credentialstore"
 	"github.com/stacklok/mecatl/internal/adapter/mcp"
 	"github.com/stacklok/mecatl/internal/adapter/mcpauthority"
@@ -19,6 +20,8 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/mcpsecretfile"
 	"github.com/stacklok/mecatl/internal/adapter/permconfig"
 )
+
+const mcpStaticBearerMode = "static_bearer"
 
 const mcpOAuthCredentialNamespace = "mecatl-mcp-oauth" // #nosec G101 -- public namespace discriminator, not a credential.
 
@@ -64,12 +67,13 @@ func (e *MCPProfileError) Is(target error) bool { return target == e.Kind }
 // MCPProfileLoadOptions are explicit metadata and environment inputs for the
 // canonical runtime profile loader.
 type MCPProfileLoadOptions struct {
-	Operator  *permconfig.MCPSection
-	Legacy    *MCPServerList
-	LookupEnv func(string) (string, bool)
-	// LookupFileToken borrows the command root's final selected auth-file snapshot.
-	// It is called only for effective, selected token_ref profiles.
-	LookupFileToken func(string) (string, error)
+	Operator    *permconfig.MCPSection
+	Legacy      *MCPServerList
+	LookupEnv   func(string) (string, bool)
+	Secrets     SecretResolver
+	StaticEnv   func(string) (string, bool)
+	Diagnostics port.Diagnostics
+	Warnings    *MCPWarnings
 	// Native custody seams keep offline tests away from desktop keyrings and DBus.
 	Keyring mcpcredential.Keyring
 	// SelectedName is used by targeted lifecycle commands. An empty value keeps
@@ -84,21 +88,64 @@ type MCPProfileLoadOptions struct {
 // canonical profile loader. app.Build supplies the operator subtree from its
 // already-created settings resolver, avoiding a second YAML parse.
 type MCPProfileResolver struct {
-	legacy          *MCPServerList
-	lookup          func(string) (string, bool)
-	lookupFileToken func(string) (string, error)
+	legacy      *MCPServerList
+	lookup      func(string) (string, bool)
+	source      *CredentialSource
+	diagnostics port.Diagnostics
+	warnings    MCPWarnings
 }
 
 // NewMCPProfileResolver constructs a side-effect-free resolver. Environment and
 // credential stores are touched only when Load is called by composition.
-func NewMCPProfileResolver(legacy *MCPServerList, lookup func(string) (string, bool), lookupFileToken func(string) (string, error)) *MCPProfileResolver {
-	return &MCPProfileResolver{legacy: legacy, lookup: lookup, lookupFileToken: lookupFileToken}
+func NewMCPProfileResolver(legacy *MCPServerList, lookup func(string) (string, bool), source *CredentialSource) *MCPProfileResolver {
+	return &MCPProfileResolver{legacy: legacy, lookup: lookup, source: source}
+}
+
+// SetDiagnostics installs the startup sink before loading, including failure paths.
+func (r *MCPProfileResolver) SetDiagnostics(d port.Diagnostics) { r.diagnostics = d }
+
+func (r *MCPProfileResolver) options(operator *permconfig.MCPSection) MCPProfileLoadOptions {
+	opts := MCPProfileLoadOptions{Operator: operator, Legacy: r.legacy, LookupEnv: r.lookup, Diagnostics: r.diagnostics, Warnings: &r.warnings}
+	if r.source != nil {
+		opts.Secrets, opts.StaticEnv = r.source, r.source.LookupEnv
+	}
+	return opts
+}
+
+// MCPWarnings deduplicates safe legacy-selector warnings over a loader lifetime.
+type MCPWarnings struct {
+	mu   sync.Mutex
+	seen map[string]bool
+}
+
+func (w *MCPWarnings) warn(d port.Diagnostics, name string) {
+	if d == nil {
+		return
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	key := strings.ToLower(name)
+	if w.seen[key] {
+		return
+	}
+	if w.seen == nil {
+		w.seen = make(map[string]bool)
+	}
+	w.seen[key] = true
+	d.Log(context.Background(), port.LevelWarn, "MCP token_env is deprecated; prefer token_ref with its conventional MECATL_MCP_TOKEN_<REF> environment name", "server", name, "field", "auth.static_bearer.token_env")
+}
+
+func mcpWarnings(w *MCPWarnings) *MCPWarnings {
+	if w == nil {
+		return &MCPWarnings{}
+	}
+	return w
 }
 
 // Load implements app.Config's MCP profile-loader capability without importing
 // the composition package.
 func (r *MCPProfileResolver) Load(operator *permconfig.MCPSection) ([]mcp.ServerConfig, interface{ Close() error }, error) {
-	profiles, err := LoadMCPProfiles(MCPProfileLoadOptions{Operator: operator, Legacy: r.legacy, LookupEnv: r.lookup, LookupFileToken: r.lookupFileToken})
+	profiles, err := LoadMCPProfiles(r.options(operator))
 	if err != nil {
 		return nil, nil, err
 	}
@@ -108,8 +155,9 @@ func (r *MCPProfileResolver) Load(operator *permconfig.MCPSection) ([]mcp.Server
 // LoadAuthority resolves exactly one authority path without reparsing settings
 // or constructing broker runtime resources.
 func (r *MCPProfileResolver) LoadAuthority(operator *permconfig.MCPSection, defaultMode mcpauthority.Mode, brokerSupported bool) (*mcpauthority.Result, error) {
+	opts := r.options(operator)
 	return ResolveMCPAuthority(MCPAuthorityOptions{
-		Operator: operator, Legacy: r.legacy, LookupEnv: r.lookup, LookupFileToken: r.lookupFileToken,
+		Operator: operator, Legacy: r.legacy, LookupEnv: r.lookup, Secrets: opts.Secrets, StaticEnv: opts.StaticEnv, Diagnostics: r.diagnostics, Warnings: &r.warnings,
 		DefaultMode: defaultMode, BrokerSupported: brokerSupported,
 	})
 }
@@ -203,8 +251,10 @@ func LoadMCPProfiles(opts MCPProfileLoadOptions) (*MCPProfiles, error) {
 		}
 		profiles = selected
 	}
-	if len(profiles) == 0 {
-		return &MCPProfiles{}, nil
+
+	opts.Warnings = mcpWarnings(opts.Warnings)
+	if err := prepareMCPStaticProfiles(profiles, opts); err != nil {
+		return nil, err
 	}
 
 	result := &MCPProfiles{Servers: make([]mcp.ServerConfig, 0, len(profiles))}
@@ -297,20 +347,21 @@ func loadMCPProfile(input profileInput, loadOpts MCPProfileLoadOptions, owner *M
 	switch profile.Auth.Mode {
 	case "none":
 		return cfg, nil
-	case "static_bearer":
-		if profile.Auth.StaticBearer == nil {
-			return mcp.ServerConfig{}, &MCPProfileError{Server: profile.Name, Field: "static_bearer", Kind: ErrMCPProfileInvalid}
+	case mcpStaticBearerMode:
+		decl := profile.Auth.StaticBearer
+		if decl.TokenRef != "" {
+			return loadMCPStaticBearer(*profile, loadOpts.Secrets)
 		}
-		if profile.Auth.StaticBearer.TokenRef != "" {
-			return loadMCPFileBearer(*profile, loadOpts.LookupFileToken)
+		ref := decl.TokenEnv
+		staticLookup := loadOpts.StaticEnv
+		if staticLookup == nil {
+			staticLookup = lookup
 		}
-		ref := profile.Auth.StaticBearer.TokenEnv
-		token, ok := lookupMCPEnv(lookup, ref)
-		if !ok || token == "" {
+		token, ok := lookupMCPEnv(staticLookup, ref)
+		if !ok || !validMCPBearer(token) {
 			return mcp.ServerConfig{}, &MCPProfileError{Server: profile.Name, Field: "auth.static_bearer.token_env", Ref: ref, Kind: ErrMCPProfileSecret, Expected: "a non-empty secret in the referenced MECATL_* environment variable", Remedy: "set the referenced environment variable before starting mecatl"}
 		}
-		cfg.Headers = map[string]string{"Authorization": "Bearer " + token}
-		return cfg, nil
+		return mcpBearerConfig(*profile, token)
 	case "oauth":
 		if profile.Auth.OAuth == nil {
 			return mcp.ServerConfig{}, &MCPProfileError{Server: profile.Name, Field: "oauth", Kind: ErrMCPProfileInvalid}
@@ -326,31 +377,81 @@ func loadMCPProfile(input profileInput, loadOpts MCPProfileLoadOptions, owner *M
 	}
 }
 
-func loadMCPFileBearer(profile permconfig.MCPServerProfile, lookup func(string) (string, error)) (mcp.ServerConfig, error) {
+func prepareMCPStaticProfiles(profiles []profileInput, opts MCPProfileLoadOptions) error {
+	static := false
+	for _, input := range profiles {
+		if input.operator == nil {
+			continue
+		}
+		profile := input.operator
+		switch profile.Auth.Mode {
+		case "none", "oauth":
+		case mcpStaticBearerMode:
+			if err := validateMCPStaticBearer(*profile); err != nil {
+				return err
+			}
+			static = true
+		default:
+			return &MCPProfileError{Server: profile.Name, Field: "auth.mode", Kind: ErrMCPProfileInvalid}
+		}
+	}
+	// Warn for every effective valid selector before any credential can fail.
+	for _, input := range profiles {
+		if p := input.operator; p != nil && p.Auth.Mode == mcpStaticBearerMode && p.Auth.StaticBearer.TokenEnv != "" {
+			opts.Warnings.warn(opts.Diagnostics, p.Name)
+		}
+	}
+	if static {
+		if source, ok := opts.Secrets.(interface{ prepareStatic() }); ok {
+			source.prepareStatic()
+		}
+	}
+	return nil
+}
+
+func validateMCPStaticBearer(profile permconfig.MCPServerProfile) error {
+	decl := profile.Auth.StaticBearer
+	field := "static_bearer"
+	switch {
+	case decl == nil:
+	case (decl.TokenRef == "") == (decl.TokenEnv == ""):
+	case decl.TokenRef != "":
+		if mcpSecretReference.MatchString(decl.TokenRef) {
+			return nil
+		}
+		field = "auth.static_bearer.token_ref"
+	default:
+		if legacyMCPEnvironment.MatchString(decl.TokenEnv) {
+			return nil
+		}
+		field = "auth.static_bearer.token_env"
+	}
+	return &MCPProfileError{Server: profile.Name, Field: field, Kind: ErrMCPProfileInvalid}
+}
+
+func loadMCPStaticBearer(profile permconfig.MCPServerProfile, resolver SecretResolver) (mcp.ServerConfig, error) {
 	ref := profile.Auth.StaticBearer.TokenRef
 	secretError := &MCPProfileError{Server: profile.Name, Field: "auth.static_bearer.token_ref", Kind: ErrMCPProfileSecret}
-	if profile.Auth.StaticBearer.TokenEnv != "" || !mcpServerName.MatchString(ref) {
-		return mcp.ServerConfig{}, secretError
-	}
-	if lookup == nil {
+	if resolver == nil {
 		secretError.Kind = ErrMCPProfileStore
 		return mcp.ServerConfig{}, secretError
 	}
-	token, err := lookup(ref)
+	token, err := resolver.Lookup(MCPBearerSecret, ref)
 	if err != nil {
-		if errors.Is(err, ErrMCPProfileStore) {
+		if errors.Is(err, ErrSecretSource) {
 			secretError.Kind = ErrMCPProfileStore
+		} else if errors.Is(err, ErrSecretReference) {
+			secretError.Kind = ErrMCPProfileInvalid
 		}
 		return mcp.ServerConfig{}, secretError
 	}
-	if strings.TrimSpace(token) == "" {
+	if !validMCPBearer(token) {
 		return mcp.ServerConfig{}, secretError
 	}
-	for i := 0; i < len(token); i++ {
-		if (token[i] < 0x20 && token[i] != '\t') || token[i] == 0x7f {
-			return mcp.ServerConfig{}, secretError
-		}
-	}
+	return mcpBearerConfig(profile, token)
+}
+
+func mcpBearerConfig(profile permconfig.MCPServerProfile, token string) (mcp.ServerConfig, error) {
 	if err := mcp.ValidateClientURL(profile.URL); err != nil {
 		return mcp.ServerConfig{}, &MCPProfileError{Server: profile.Name, Field: "static bearer URL", Kind: ErrMCPProfileInvalid}
 	}
