@@ -1,9 +1,12 @@
 package authserverclient_test
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -212,8 +215,7 @@ func segment(t *testing.T, a identitybroker.Token, i int) map[string]any {
 
 func TestSessionOpenAuthenticatesWithTheBrokerKey(t *testing.T) {
 	f := newFixture(t, fixtureOptions{})
-	r := &recorder{}
-	c := f.client(t, r, nil)
+	c := f.client(t, &recorder{}, nil)
 	var res sessionOpenResult
 	if err := c.Token(t.Context(), f.sessionOpenForm(t, f.aliceToken()), &res); err != nil {
 		t.Fatalf("Token: %v", err)
@@ -225,14 +227,18 @@ func TestSessionOpenAuthenticatesWithTheBrokerKey(t *testing.T) {
 	if !ok || grant.ClientID != identityharness.BrokerClientID || !grant.Active {
 		t.Fatalf("grant = %+v, %v; want an active grant to %s", grant, ok, identityharness.BrokerClientID)
 	}
-	minted := r.all()
-	if len(minted) != 1 {
-		t.Fatalf("minted %d assertions, want 1", len(minted))
+	// Check what AS-1 received, not the signer's output.
+	received := f.h.AS1.ReceivedClientAssertions()
+	if len(received) != 1 {
+		t.Fatalf("AS-1 received %d assertions, want 1", len(received))
 	}
-	if header := segment(t, minted[0], 0); header["typ"] != "client-authentication+jwt" || header["alg"] != "ES256" {
-		t.Fatalf("assertion header = %v, want typ client-authentication+jwt and alg ES256", header)
+	sent := identitybroker.NewToken(received[0])
+	wantKID := f.signer.JWKS().Keys[0].KeyID
+	if header := segment(t, sent, 0); len(header) != 3 || header["typ"] != "client-authentication+jwt" ||
+		header["alg"] != "ES256" || header["kid"] != wantKID {
+		t.Fatalf("assertion header = %v, want exactly typ client-authentication+jwt, alg ES256, and kid %q", header, wantKID)
 	}
-	got := claims(t, minted[0])
+	got := claims(t, sent)
 	jti, _ := got["jti"].(string)
 	if got["iss"] != "mecatl" || got["sub"] != "mecatl" || got["aud"] != f.h.AS1.Issuer() ||
 		got["exp"].(float64)-got["iat"].(float64) != 60 || jti == "" {
@@ -586,3 +592,60 @@ func TestTransportFailureAgainstAClosedPort(t *testing.T) {
 		t.Fatalf("Token = %v, want ErrNoResponse of kind connection refused", err)
 	}
 }
+
+// TestCertificateFailuresAreConfigurationFaults: a server certificate that
+// does not verify is a configuration fault, never a retryable outage.
+func TestCertificateFailuresAreConfigurationFaults(t *testing.T) {
+	server := httptest.NewTLSServer(http.NotFoundHandler())
+	t.Cleanup(server.Close)
+	untrusted := &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{RootCAs: x509.NewCertPool(), MinVersion: tls.VersionTLS12}}}
+	// The httptest certificate names example.com and the loopback addresses,
+	// not localhost.
+	wrongName := strings.Replace(server.URL, "127.0.0.1", "localhost", 1)
+	for name, tt := range map[string]struct {
+		base string
+		hc   *http.Client
+	}{
+		"untrusted CA":      {server.URL, untrusted},
+		"hostname mismatch": {wrongName, server.Client()},
+	} {
+		t.Run(name, func(t *testing.T) {
+			err := newStubClient(t, tt.base, tt.hc).Token(t.Context(), url.Values{"grant_type": {"x"}}, &sessionOpenResult{})
+			if !errors.Is(err, identitybroker.ErrTransportConfiguration) || errors.Is(err, identitybroker.ErrNoResponse) ||
+				!identitybroker.IsConfigurationFault(err) || identitybroker.IsUnavailable(err) {
+				t.Fatalf("Token = %v, want ErrTransportConfiguration, a configuration fault only", err)
+			}
+		})
+	}
+}
+
+// TestCancelDuringBodyReadReturnsTheContextError: a request abandoned while
+// the response body is arriving is the caller's cancellation, not a lost
+// response.
+func TestCancelDuringBodyReadReturnsTheContextError(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	// The response arrives; the caller cancels while its body is read.
+	hc := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: cancelingBody{cancel}}, nil
+	})}
+	err := newStubClient(t, "https://as.example.com", hc).Token(ctx, url.Values{"grant_type": {"x"}}, &sessionOpenResult{})
+	if !errors.Is(err, context.Canceled) || errors.Is(err, identitybroker.ErrNoResponse) || identitybroker.IsUnavailable(err) {
+		t.Fatalf("Token = %v, want context.Canceled, not a lost response", err)
+	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) { return f(req) }
+
+// cancelingBody cancels the request's context on its first read and fails
+// that read, as a body interrupted by the caller's cancellation does.
+type cancelingBody struct{ cancel context.CancelFunc }
+
+func (b cancelingBody) Read([]byte) (int, error) {
+	b.cancel()
+	return 0, errors.New("read interrupted")
+}
+
+func (cancelingBody) Close() error { return nil }

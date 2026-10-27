@@ -3,8 +3,9 @@
 // authenticating every request as the OAuth client
 // identitybroker.BrokerClientID with private_key_jwt (RFC 7523), a fresh
 // client assertion each time, and never with a client secret. It turns HTTP
-// outcomes into the core's identitybroker.ServerRefusal and
-// identitybroker.ErrNoResponse, which identitybroker.IsConfigurationFault and
+// outcomes into the core's identitybroker.ServerRefusal,
+// identitybroker.ErrNoResponse, and identitybroker.ErrTransportConfiguration,
+// which identitybroker.IsConfigurationFault and
 // identitybroker.IsUnavailable classify; the package itself is only
 // transport.
 //
@@ -116,7 +117,9 @@ func checkEndpoint(name, raw string) error {
 
 // Token posts form to the token endpoint and decodes the JSON success
 // response into out. A refusal returns an *identitybroker.ServerRefusal; no
-// response returns an error wrapping identitybroker.ErrNoResponse.
+// response returns an error wrapping identitybroker.ErrNoResponse, or
+// identitybroker.ErrTransportConfiguration when the server certificate does
+// not verify; a cancelled or expired ctx returns its error.
 func (c *Client) Token(ctx context.Context, form url.Values, out any) error {
 	return c.post(ctx, c.token, form, out)
 }
@@ -154,12 +157,15 @@ func (c *Client) post(ctx context.Context, endpoint string, form url.Values, out
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return fmt.Errorf("authserverclient: %w", ctxErr)
 		}
-		return fmt.Errorf("authserverclient: %w: %s", identitybroker.ErrNoResponse, transportFailure(err))
+		return failedRequest(err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes+1))
 	if err != nil {
-		return fmt.Errorf("authserverclient: %w: reading the response failed", identitybroker.ErrNoResponse)
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return fmt.Errorf("authserverclient: %w", ctxErr)
+		}
+		return failedRequest(err)
 	}
 	if len(raw) > maxResponseBytes {
 		return ErrResponseTooLarge
@@ -181,27 +187,43 @@ func (c *Client) post(ctx context.Context, endpoint string, form url.Values, out
 	return nil
 }
 
-// transportFailure returns a fixed, coarse name for a failed request. The
-// error's own text is never used: a custom transport or a net/http protocol
-// error can carry request or server-echoed content.
-func transportFailure(err error) string {
+// failedRequest returns the error for a request that got no usable
+// response. The underlying error's text is never used: a custom transport or
+// a net/http protocol error can carry request or server-echoed content.
+func failedRequest(err error) error {
+	if certificateFailure(err) {
+		return fmt.Errorf("authserverclient: %w: the server certificate does not verify", identitybroker.ErrTransportConfiguration)
+	}
+	return fmt.Errorf("authserverclient: %w: %s", identitybroker.ErrNoResponse, transportFailure(err))
+}
+
+// certificateFailure reports whether err is a server certificate that does
+// not verify against the client's trust, a configuration fault.
+func certificateFailure(err error) bool {
 	var (
-		netErr     net.Error
-		dnsErr     *net.DNSError
 		certErr    *tls.CertificateVerificationError
-		recordErr  tls.RecordHeaderError
-		alertErr   tls.AlertError
 		unknownCA  x509.UnknownAuthorityError
 		hostErr    x509.HostnameError
 		invalidErr x509.CertificateInvalidError
+	)
+	return errors.As(err, &certErr) || errors.As(err, &unknownCA) || errors.As(err, &hostErr) || errors.As(err, &invalidErr)
+}
+
+// transportFailure returns a fixed, coarse name for a failed request that
+// may succeed later.
+func transportFailure(err error) string {
+	var (
+		netErr    net.Error
+		dnsErr    *net.DNSError
+		recordErr tls.RecordHeaderError
+		alertErr  tls.AlertError
 	)
 	switch {
 	case errors.As(err, &netErr) && netErr.Timeout(), errors.Is(err, context.DeadlineExceeded):
 		return "timeout"
 	case errors.As(err, &dnsErr):
 		return "dns"
-	case errors.As(err, &certErr), errors.As(err, &recordErr), errors.As(err, &alertErr),
-		errors.As(err, &unknownCA), errors.As(err, &hostErr), errors.As(err, &invalidErr):
+	case errors.As(err, &recordErr), errors.As(err, &alertErr):
 		return "tls"
 	case errors.Is(err, syscall.ECONNREFUSED):
 		return "connection refused"
