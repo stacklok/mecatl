@@ -160,9 +160,9 @@ func decodeLegacySnapshot(data []byte) (Snapshot, error) {
 
 const legacySnapshotNamespace = "sessnap/legacy-v1"
 
-// legacySourceInvocationID derives a stable canonical ID from immutable source
+// legacySourceToolCallID derives a stable canonical ID from immutable source
 // coordinates, so repeated loads preserve references before a migrated snapshot saves.
-func legacySourceInvocationID(inc session.IncarnationID, namespace string, ordinal, slot int) session.ToolCallID {
+func legacySourceToolCallID(inc session.IncarnationID, namespace string, ordinal, slot int) session.ToolCallID {
 	h := sha256.New()
 	for _, part := range []string{"mecatl.tool-call/legacy-v1", string(inc), namespace, strconv.Itoa(ordinal), strconv.Itoa(slot)} {
 		var size [8]byte
@@ -215,7 +215,7 @@ func indexLegacySource(old []legacyMessageDTO, inc session.IncarnationID, namesp
 		}
 		batch := make(map[string][]*legacyOccurrence)
 		for j, call := range m.ToolCalls {
-			occ := &legacyOccurrence{ordinal: i, slot: j, call: call, id: legacySourceInvocationID(inc, namespace, i, j), unsafe: call.ID == "" || m.Role != session.RoleAssistant}
+			occ := &legacyOccurrence{ordinal: i, slot: j, call: call, id: legacySourceToolCallID(inc, namespace, i, j), unsafe: call.ID == "" || m.Role != session.RoleAssistant}
 			x.calls[i] = append(x.calls[i], occ)
 			batch[call.ID] = append(batch[call.ID], occ)
 			if len(open[call.ID]) != 0 {

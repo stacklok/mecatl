@@ -1,4 +1,4 @@
-package eventcodec
+package eventsource
 
 import (
 	"fmt"
@@ -9,17 +9,17 @@ import (
 
 const upgradeAbandonmentNotice = "The prior continuation was abandoned during upgrade. Prior tool effects and completion may be unknown."
 
-// NormalizeHistory abandons an unprovable legacy continuation at the end of one
+// normalizeHistory abandons an unprovable legacy continuation at the end of one
 // reconstruction segment, before any later canonical run is folded. The added
 // messages are migration outcomes, not durable source records: they have no
 // invented event coordinates or evidence attachments.
 // Current-format authorization validation must run before this normalization.
-func (p Projection) NormalizeHistory(messages []session.Message, data sessnap.RestoreData) ([]session.Message, sessnap.RestoreData, error) {
+func (p Projection) normalizeHistory(messages []session.Message, data sessnap.RestoreData) ([]session.Message, sessnap.RestoreData, error) {
 	if !p.abandoned {
 		return messages, data, nil
 	}
 	if data.Pending != nil {
-		return nil, data, fmt.Errorf("eventcodec: current approval overlaps abandoned legacy continuation")
+		return nil, data, fmt.Errorf("eventsource: current approval overlaps abandoned legacy continuation")
 	}
 	for _, id := range p.interrupted {
 		messages = append(messages, session.NewToolMessage(session.NewToolError(id, upgradeAbandonmentNotice)))

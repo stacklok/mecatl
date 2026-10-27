@@ -117,7 +117,7 @@ func TestFoldAbandonmentEndsBeforeNewCanonicalRun(t *testing.T) {
 					t.Fatal(err)
 				}
 				events := append(old, current...)
-				projection, err := eventcodec.Project(events, initial.Incarnation())
+				projection, err := eventsource.Project(events, initial.Incarnation())
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -227,7 +227,7 @@ func TestFoldMigrationBoundaryDoesNotPairAcrossSources(t *testing.T) {
 	late = late.WithLegacySource("durable", "late-result")
 	events := append(old, currentRunEvents(t, []session.Event{prompt})...)
 	events = append(events, late)
-	p, err := eventcodec.Project(events, session.LegacyIncarnationID(meta().ID, meta().CreatedAt.UnixNano(), nil))
+	p, err := eventsource.Project(events, session.LegacyIncarnationID(meta().ID, meta().CreatedAt.UnixNano(), nil))
 	if err != nil {
 		t.Fatal(err)
 	}

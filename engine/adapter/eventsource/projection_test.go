@@ -1,7 +1,6 @@
-package eventcodec_test
+package eventsource_test
 
 import (
-	"strings"
 	"testing"
 
 	"github.com/stacklok/mecatl/engine/adapter/eventcodec"
@@ -84,17 +83,5 @@ func TestDurableCoordinateDoesNotRebaseFrozenEvidenceOrdinal(t *testing.T) {
 	other := project(t, []session.Event{call.WithLegacyIdentity(*identity), decode(t, oldResult).WithLegacySource("durable", "offset:200")})
 	if p.Events[0].ToolCall.ID != other.Events[0].ToolCall.ID {
 		t.Fatal("evidence ordinal overrode the durable invocation coordinate")
-	}
-}
-
-func TestLegacyTeamDetailIsStandalone(t *testing.T) {
-	e := decode(t, `{"Type":"team.member","Team":{"Member":"reviewer","InnerKind":"tool.result","ToolName":"Read","Text":"preview","Detail":"unique bounded team result","ParentCallID":"private-parent","ChildToolCallID":"private-child"}}`)
-	p := project(t, []session.Event{e})
-	h := p.Events[0].Historical
-	if h == nil || !strings.Contains(h.Text, "unique bounded team result") || !h.AttachmentUnavailable || p.Events[0].Team != nil || p.Events[0].ToolResult != nil {
-		t.Fatalf("lost detail or guessed link: %+v", p.Events[0])
-	}
-	if strings.Contains(h.Text, "private-") {
-		t.Fatal("private delegation references leaked")
 	}
 }

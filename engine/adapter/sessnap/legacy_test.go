@@ -12,6 +12,14 @@ import (
 	"github.com/stacklok/mecatl/engine/session"
 )
 
+func TestLegacySourceToolCallIDPreservesDerivation(t *testing.T) {
+	inc := session.IncarnationID("legacy_" + strings.Repeat("a", 64))
+	const want = session.ToolCallID("call_legacy_f7a6dc9b5fe9f199006b0aa28f3696e570191dab4d26e3b7e5f1958da9840ea7")
+	if got := legacySourceToolCallID(inc, legacySnapshotNamespace, 7, 2); got != want {
+		t.Fatalf("legacy source ToolCallID = %q, want %q", got, want)
+	}
+}
+
 func legacyFixture(t *testing.T, name string) []byte {
 	t.Helper()
 	data, err := os.ReadFile("testdata/" + name + ".json")

@@ -1,4 +1,4 @@
-package eventcodec_test
+package eventsource_test
 
 import (
 	"bytes"
@@ -160,37 +160,6 @@ func TestLegacyAbandonmentCompleteSource(t *testing.T) {
 					t.Fatal(err)
 				}
 			})
-		}
-	}
-}
-
-func TestLegacySparseControlsNeverAcquireAuthority(t *testing.T) {
-	call := decode(t, oldCall).WithLegacySource("durable", "call")
-	ask := decode(t, `{"Type":"permission.ask","Ask":{"AskID":"private-ask","Tool":"Read","Call":"provider-secret","Reason":"readable approval"}}`).WithLegacySource("durable", "ask")
-	auth := decode(t, `{"Type":"authorization.required","Authorization":{"AuthorizationID":"private-auth","Call":"provider-secret","DisplayName":"readable service","Status":"pending"}}`).WithLegacySource("durable", "auth")
-	for _, events := range [][]session.Event{{call, ask}, {call, auth}} {
-		p := project(t, events)
-		for _, source := range [][]session.Event{events, p.Events} {
-			for i, e := range source {
-				data, err := eventcodec.Marshal(e)
-				if err != nil {
-					t.Fatal(err)
-				}
-				e = decode(t, string(data))
-				sparse, err := eventcodec.ProjectRecord(e, session.LegacyIncarnationID("test", 0, nil), -1)
-				if err != nil {
-					t.Fatal(err)
-				}
-				if sparse.Type != session.EvHistorical || sparse.Historical == nil || !sparse.Historical.AttachmentUnavailable || sparse.Ask != nil || sparse.Authorization != nil || sparse.ToolCall != nil {
-					t.Fatal("sparse record acquired authority")
-				}
-				if sparse.LegacyIdentity().Coordinate != events[i].LegacyIdentity().Coordinate || sparse.LegacyIdentity().Ordinal != -1 {
-					t.Fatal("sparse coordinate changed")
-				}
-				if i == 1 && !strings.Contains(sparse.Historical.Text, "readable") {
-					t.Fatal("standalone control text lost")
-				}
-			}
 		}
 	}
 }

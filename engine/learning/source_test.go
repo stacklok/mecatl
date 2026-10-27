@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/stacklok/mecatl/engine/adapter/eventcodec"
+	"github.com/stacklok/mecatl/engine/adapter/eventsource"
 	"github.com/stacklok/mecatl/engine/adapter/sessnap"
 	"github.com/stacklok/mecatl/engine/learning"
 	"github.com/stacklok/mecatl/engine/session"
@@ -185,7 +186,7 @@ func TestLegacyEventCoordinatesAndSafePreview(t *testing.T) {
 	resultIdentity := result.LegacyIdentity()
 	resultIdentity.Ordinal = 1
 	result = result.WithLegacyIdentity(*resultIdentity)
-	projected, err := eventcodec.Project([]session.Event{event, result}, inc)
+	projected, err := eventsource.Project([]session.Event{event, result}, inc)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -376,7 +377,7 @@ func TestLegacyVerificationInputBindingsAndPreview(t *testing.T) {
 		identity.Ordinal = i // Original coordinate in this complete fixture.
 		decoded = append(decoded, event.WithLegacyIdentity(*identity))
 	}
-	projected, err := eventcodec.Project(decoded, inc)
+	projected, err := eventsource.Project(decoded, inc)
 	if err != nil {
 		t.Fatal(err)
 	}

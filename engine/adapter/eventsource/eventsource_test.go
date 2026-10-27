@@ -80,7 +80,7 @@ func TestFoldLegacyUnprovenApprovalPreservesMetadataAcrossSnapshot(t *testing.T)
 			t.Fatal(err)
 		}
 	}
-	projection, err := eventcodec.Project(events, m.Incarnation)
+	projection, err := eventsource.Project(events, m.Incarnation)
 	if err != nil {
 		t.Fatal(err)
 	}

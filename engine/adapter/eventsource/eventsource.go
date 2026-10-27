@@ -57,7 +57,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/stacklok/mecatl/engine/adapter/eventcodec"
 	"github.com/stacklok/mecatl/engine/adapter/sessnap"
 	"github.com/stacklok/mecatl/engine/session"
 )
@@ -187,13 +186,13 @@ func Fold(meta SessionMeta, events iter.Seq2[session.Event, error]) (*session.Se
 	if meta.Incarnation == "" {
 		meta.Incarnation = session.LegacyIncarnationID(meta.ID, meta.CreatedAt.UnixNano(), meta.Owner)
 	}
-	projection, err := eventcodec.Project(collected, meta.Incarnation)
+	projection, err := Project(collected, meta.Incarnation)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrReconstruct, err)
 	}
 	f := &folder{}
 	var data sessnap.RestoreData
-	for i, segment := range projection.Segments() {
+	for i, segment := range projection.segments {
 		if i > 0 {
 			// The prior span is now ordinary paired history. A new run starts with
 			// fresh lifecycle/counters, but cumulative history, usage, and canonical
@@ -225,7 +224,7 @@ func Fold(meta SessionMeta, events iter.Seq2[session.Event, error]) (*session.Se
 			data.RetryPending = true
 			data.Retry = session.RetryMetadata{Disposition: f.retryDisposition, Progress: f.retryProgress}
 		}
-		f.messages, data, err = segment.NormalizeHistory(f.messages, data)
+		f.messages, data, err = segment.normalizeHistory(f.messages, data)
 		if err != nil {
 			return nil, fmt.Errorf("%w: %w", ErrReconstruct, err)
 		}

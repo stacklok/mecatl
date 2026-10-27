@@ -73,19 +73,30 @@ func Unmarshal(data []byte) (session.Event, error) {
 	return e, nil
 }
 
+// LegacyCall contains original provider references, not canonical tool-call IDs.
+type LegacyCall struct {
+	ID   string
+	Name string
+	Args json.RawMessage
+}
+
 type legacyCall struct {
 	ID     string
 	Name   string
 	Args   json.RawMessage
 	ItemID string `json:"item_id"`
 }
-type legacyResult struct {
+
+// LegacyResult contains the original result reference and content.
+type LegacyResult struct {
 	CallID  string
 	Content string
 	IsError bool
 	Parts   []session.Content
 }
-type legacyAsk struct {
+
+// LegacyAsk contains original approval facts without granting continuation authority.
+type LegacyAsk struct {
 	AskID     string
 	Tool      string
 	Args      json.RawMessage
@@ -98,8 +109,8 @@ type legacyEvent struct {
 	Type       session.EventType
 	Text       string
 	ToolCall   *legacyCall
-	ToolResult *legacyResult
-	Ask        *legacyAsk
+	ToolResult *LegacyResult
+	Ask        *LegacyAsk
 	Hook       *struct {
 		Phase, Tool string
 		Decision    session.HookDecision
@@ -122,6 +133,40 @@ type legacyEvent struct {
 	}
 	Parallel          *struct{ Goal, ToolName, Text, Detail string }
 	CompactionArchive json.RawMessage
+}
+
+// LegacyRecord exposes only raw facts needed for complete-source reconstruction.
+// Its string references remain noncanonical until the source proves their pairing.
+// Display-only attachments stay private to the codec.
+type LegacyRecord struct {
+	Type          session.EventType
+	ToolCall      *LegacyCall
+	ToolResult    *LegacyResult
+	Ask           *LegacyAsk
+	Authorization *struct {
+		AuthorizationID, Call string
+		Status                session.AuthorizationStatus
+	}
+	CompactionArchive json.RawMessage
+}
+
+// DecodeLegacyRecord decodes legacy storage facts without reconstructing history.
+func DecodeLegacyRecord(data []byte) (LegacyRecord, error) {
+	old, err := decodeLegacy(data)
+	if err != nil {
+		return LegacyRecord{}, err
+	}
+	record := LegacyRecord{Type: old.Type, ToolResult: old.ToolResult, Ask: old.Ask, CompactionArchive: old.CompactionArchive}
+	if old.ToolCall != nil {
+		record.ToolCall = &LegacyCall{ID: old.ToolCall.ID, Name: old.ToolCall.Name, Args: old.ToolCall.Args}
+	}
+	if old.Authorization != nil {
+		record.Authorization = &struct {
+			AuthorizationID, Call string
+			Status                session.AuthorizationStatus
+		}{old.Authorization.AuthorizationID, old.Authorization.Call, old.Authorization.Status}
+	}
+	return record, nil
 }
 
 func decodeLegacy(data []byte) (legacyEvent, error) {
