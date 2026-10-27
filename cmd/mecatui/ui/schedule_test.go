@@ -27,6 +27,7 @@ type fakeScheduleLister struct {
 	listCalls, getCalls, createCalls, deleteCalls, fireCalls, pauseCalls, resumeCalls, firesCalls int
 	lastDeleteName, lastPauseName, lastResumeName, lastFireName, lastFiresName, lastGetname       string
 	created                                                                                       client.ScheduleSpec
+	nextFire                                                                                      time.Time
 }
 
 func (f *fakeScheduleLister) ListSchedules(context.Context) ([]client.Schedule, error) {
@@ -53,7 +54,7 @@ func (f *fakeScheduleLister) GetSchedule(_ context.Context, name string) (client
 func (f *fakeScheduleLister) CreateSchedule(_ context.Context, spec client.ScheduleSpec) (client.Schedule, error) {
 	f.createCalls++
 	f.created = spec
-	row := client.Schedule{Spec: spec}
+	row := client.Schedule{Spec: spec, State: client.ScheduleState{NextFireAt: f.nextFire}}
 	if f.err == nil {
 		f.schedules = append(f.schedules, row)
 	}
@@ -244,16 +245,9 @@ func TestScheduleCreateForm(t *testing.T) {
 			if s.view != scheduleCreate || !s.form.name.Focused() {
 				t.Fatal("form did not own focus")
 			}
-			// Enter advances; submit with empty fields validates without a mutation.
-			for range 4 {
-				m = scheduleKey(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
-			}
-			if fs.createCalls != 0 || s.actionErr != "name is required" {
-				t.Fatal("empty form submitted")
-			}
 			focus := func(want int) {
 				t.Helper()
-				if s.form.focusIdx != want || s.form.name.Focused() != (want == 0) || s.form.prompt.Focused() != (want == 1) || s.form.trigger.Focused() != (want == 2) {
+				if s.form.focusIdx != want || s.form.name.Focused() != (want == scheduleName) || s.form.prompt.Focused() != (want == schedulePrompt) || s.form.trigger.Focused() != (want == scheduleTiming) {
 					t.Fatalf("focus = %d, want %d", s.form.focusIdx, want)
 				}
 			}
@@ -262,61 +256,72 @@ func TestScheduleCreateForm(t *testing.T) {
 					m = scheduleRune(t, m, string(r))
 				}
 			}
-			for _, want := range []int{2, 1, 0} {
-				m = scheduleKey(t, m, tea.KeyPressMsg{Code: tea.KeyUp})
+			// Only the explicit Create control attempts submission.
+			for range scheduleSubmit {
+				m = scheduleKey(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
+			}
+			m = scheduleKey(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+			if fs.createCalls != 0 || !strings.Contains(s.actionErr, "name is required") {
+				t.Fatal("empty form submitted")
+			}
+			for want := scheduleReadOnly; want >= scheduleName; want-- {
+				m = scheduleKey(t, m, tea.KeyPressMsg{Code: tea.KeyTab, Mod: tea.ModShift})
 				focus(want)
 			}
 			typeText("ny-new")
-			if s.form.mutating {
-				t.Fatal("y/n in name toggled workspace changes")
-			}
-			m = scheduleKey(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
-			focus(1)
-			for _, want := range []int{2, 3} {
-				m = scheduleKey(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
-				focus(want)
-			}
 			m = scheduleKey(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
-			if fs.createCalls != 0 || s.actionErr != "prompt is required" {
+			focus(schedulePrompt)
+			m = scheduleFocus(t, m, s, scheduleSubmit)
+			m = scheduleKey(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+			if fs.createCalls != 0 || !strings.Contains(s.actionErr, "prompt is required") {
 				t.Fatal("missing prompt submitted")
 			}
-			for _, want := range []int{2, 1} {
-				m = scheduleKey(t, m, tea.KeyPressMsg{Code: tea.KeyUp})
-				focus(want)
-			}
+			m = scheduleFocus(t, m, s, schedulePrompt)
 			typeText("run nightly tests")
-			for _, want := range []int{2, 3} {
-				m = scheduleKey(t, m, tea.KeyPressMsg{Code: tea.KeyDown})
-				focus(want)
-			}
 			m = scheduleKey(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
-			if fs.createCalls != 0 || s.actionErr != "trigger (cron or NL) is required" {
-				t.Fatal("trigger validation lost")
-			}
-			m = scheduleKey(t, m, tea.KeyPressMsg{Code: tea.KeyUp})
-			focus(2)
-			typeText(trigger)
-			if s.form.mutating {
-				t.Fatal("y/n in prompt or trigger toggled workspace changes")
+			focus(schedulePrompt)
+			typeText("read-only review")
+			if s.form.prompt.Value() != "run nightly tests\nread-only review" {
+				t.Fatal("Enter did not insert prompt newline")
 			}
 			m = scheduleKey(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
-			focus(3)
-			for _, key := range []string{"y", "n", "y"} {
-				m = scheduleRune(t, m, key)
-				if s.form.mutating != (key == "y") || fs.createCalls != 0 {
-					t.Fatal("y/n must only toggle, not submit")
+			focus(scheduleTiming)
+			m = scheduleFocus(t, m, s, scheduleSubmit)
+			m = scheduleKey(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+			if fs.createCalls != 0 || !strings.Contains(scheduleBody(t, s, 100, 30), "Create disabled — timing") {
+				t.Fatal("missing timing submitted")
+			}
+			m = scheduleFocus(t, m, s, scheduleTiming)
+			typeText(trigger)
+			if s.form.mutating {
+				t.Fatal("y/n in fields toggled workspace changes")
+			}
+			m = scheduleKey(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
+			focus(scheduleTimezone)
+			m = scheduleKey(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+			if s.form.timezone.Open() || s.form.timezone.Value() != "UTC" {
+				t.Fatalf("timezone acceptance did not close suggestions: open=%v value=%q query=%q compact=%v", s.form.timezone.Open(), s.form.timezone.Value(), s.form.timezone.Query(), s.compact)
+			}
+			m = scheduleKey(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
+			focus(scheduleReadOnly)
+			m = scheduleKey(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+			if fs.createCalls != 0 || s.form.mutating {
+				t.Fatal("checkbox Enter submitted or toggled")
+			}
+			for _, want := range []bool{true, false, true} {
+				m = scheduleKey(t, m, tea.KeyPressMsg{Code: tea.KeySpace, Text: " "})
+				if s.form.mutating != want || fs.createCalls != 0 {
+					t.Fatal("Space must only toggle, not submit")
 				}
 			}
-			m = scheduleKey(t, m, tea.KeyPressMsg{Code: tea.KeyDown})
-			focus(0)
-			m = scheduleKey(t, m, tea.KeyPressMsg{Code: tea.KeyUp})
-			focus(3)
+			m = scheduleKey(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
+			focus(scheduleSubmit)
 			m = scheduleKey(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
 			cron := trigger
 			if trigger == "every 30 minutes" {
 				cron = "*/30 * * * *"
 			}
-			if fs.createCalls != 1 || fs.created.Name != "ny-new" || fs.created.Prompt != "run nightly tests" || fs.created.Mode != "default" || !fs.created.Mutating || !fs.created.Singleton || fs.created.Timezone != "UTC" || fs.created.Trigger.Cron != cron || !fs.created.Trigger.OneShot.IsZero() || s.view != schedulePanel || len(s.schedules) != 1 {
+			if fs.createCalls != 1 || fs.created.Name != "ny-new" || fs.created.Prompt != "run nightly tests\nread-only review" || fs.created.Mode != "default" || !fs.created.Mutating || !fs.created.Singleton || fs.created.Timezone != "UTC" || fs.created.Trigger.Cron != cron || !fs.created.Trigger.OneShot.IsZero() || s.view != schedulePanel || len(s.schedules) != 1 {
 				t.Fatalf("create semantics lost: %+v", fs.created)
 			}
 			m = scheduleRune(t, m, "c")
@@ -339,13 +344,12 @@ func TestScheduleCreateRetainsFormUntilSuccess(t *testing.T) {
 			m.prompt.Rewrite("unsent draft")
 			m = scheduleRune(t, m, "c")
 			s.form.name.SetValue("nightly")
-			s.form.prompt.SetValue("review the changes")
-			s.form.trigger.SetValue("invalid cron")
-			s.form.focusIdx = scheduleFormFieldCount
+			s.form.prompt.SetValue("review the changes\nreport findings")
+			s.form.timezone.SetValue("America/New_York")
+			s.form.trigger.SetValue("0 8 * * *")
+			s.form.focusIdx = scheduleSubmit
 			s.focusField()
-			if mutating {
-				m = scheduleRune(t, m, "y")
-			}
+			s.form.mutating = mutating
 			mode := "plan"
 			if mutating {
 				mode = "default"
@@ -360,14 +364,14 @@ func TestScheduleCreateRetainsFormUntilSuccess(t *testing.T) {
 			if submit == nil || s.view != scheduleCreate || s.pendingAction != "create" {
 				t.Fatal("submission left the form before confirmation")
 			}
-			for _, msg := range []tea.KeyPressMsg{{Code: tea.KeyEnter}, {Code: tea.KeyTab}, navigationTestKey("y"), navigationTestKey("x")} {
+			for _, msg := range []tea.Msg{tea.KeyPressMsg{Code: tea.KeyEnter}, tea.KeyPressMsg{Code: tea.KeyTab}, navigationTestKey("y"), navigationTestKey("x"), tea.PasteMsg{Content: "hidden edit\n"}} {
 				mm, duplicate := m.Update(msg)
 				m = mm.(Model)
 				if duplicate != nil {
 					t.Fatal("pending creation accepted more input or another submission")
 				}
 			}
-			if s.form.name.Value() != before.name.Value() || s.form.prompt.Value() != before.prompt.Value() || s.form.trigger.Value() != before.trigger.Value() || s.form.mutating != before.mutating || s.form.focusIdx != before.focusIdx {
+			if s.form.name.Value() != before.name.Value() || s.form.prompt.Value() != before.prompt.Value() || s.form.trigger.Value() != before.trigger.Value() || s.form.timezone.Value() != before.timezone.Value() || s.form.timezone.Query() != before.timezone.Query() || s.form.mutating != before.mutating || s.form.focusIdx != before.focusIdx {
 				t.Fatal("pending creation changed form values or focus")
 			}
 			if body := scheduleBody(t, s, m.width, m.vp.Height()); !strings.Contains(body, "operation pending (closing does not undo it)") {
@@ -379,7 +383,7 @@ func TestScheduleCreateRetainsFormUntilSuccess(t *testing.T) {
 			if fs.createCalls != 1 || fs.created.Mode != mode || fs.created.Mutating != mutating {
 				t.Fatalf("creation did not request the expected permission mode: %+v", fs.created)
 			}
-			if s.view != scheduleCreate || s.pendingAction != "" || s.form.name.Value() != before.name.Value() || s.form.prompt.Value() != before.prompt.Value() || s.form.trigger.Value() != before.trigger.Value() || s.form.mutating != before.mutating || s.form.focusIdx != before.focusIdx {
+			if s.view != scheduleCreate || s.pendingAction != "" || s.form.name.Value() != before.name.Value() || s.form.prompt.Value() != before.prompt.Value() || s.form.trigger.Value() != before.trigger.Value() || s.form.timezone.Value() != before.timezone.Value() || s.form.timezone.Query() != before.timezone.Query() || s.form.mutating != before.mutating || s.form.focusIdx != before.focusIdx {
 				t.Fatal("failed creation discarded form values or focus")
 			}
 			if body := scheduleBody(t, s, m.width, m.vp.Height()); !strings.Contains(body, "invalid cron expression") {
@@ -387,16 +391,20 @@ func TestScheduleCreateRetainsFormUntilSuccess(t *testing.T) {
 			}
 
 			// Correct the rejected field using the normal input route, then retry.
-			m = scheduleKey(t, m, tea.KeyPressMsg{Code: tea.KeyUp})
+			for range scheduleSubmit - scheduleTiming {
+				m = scheduleKey(t, m, tea.KeyPressMsg{Code: tea.KeyTab, Mod: tea.ModShift})
+			}
 			m = scheduleKey(t, m, tea.KeyPressMsg{Code: 'a', Mod: tea.ModCtrl})
 			m = scheduleKey(t, m, tea.KeyPressMsg{Code: 'k', Mod: tea.ModCtrl})
 			for _, r := range "0 9 * * *" {
 				m = scheduleRune(t, m, string(r))
 			}
-			m = scheduleKey(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+			for range scheduleSubmit - scheduleTiming {
+				m = scheduleKey(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
+			}
 			fs.err = nil
 			m = scheduleKey(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
-			if fs.createCalls != 2 || fs.created.Trigger.Cron != "0 9 * * *" || fs.created.Mode != mode || fs.created.Mutating != mutating || s.view != schedulePanel || s.form.name.Value() != "" || len(s.schedules) != 1 || s.actionErr != "" {
+			if fs.createCalls != 2 || fs.created.Trigger.Cron != "0 9 * * *" || fs.created.Timezone != "America/New_York" || fs.created.Prompt != "review the changes\nreport findings" || fs.created.Mode != mode || fs.created.Mutating != mutating || s.view != schedulePanel || s.form.name.Value() != "" || len(s.schedules) != 1 || s.actionErr != "" {
 				t.Fatalf("corrected creation failed: spec=%+v, view=%d, error=%q", fs.created, s.view, s.actionErr)
 			}
 			if m.prompt.Value() != "unsent draft" {
@@ -416,24 +424,42 @@ func TestScheduleCreatePendingBackDoesNotCancelRequest(t *testing.T) {
 			s.form.name.SetValue("new")
 			s.form.prompt.SetValue("review changes")
 			s.form.trigger.SetValue("0 9 * * *")
-			s.form.focusIdx = scheduleFormFieldCount
+			s.form.focusIdx = scheduleSubmit
 			s.focusField()
 			mm, submit := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 			m = mm.(Model)
 			mm, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
 			m = mm.(Model)
-			if s.view != schedulePanel || s.pendingAction != "create" {
-				t.Fatal("explicit Back failed to leave pending form")
+			if s.view != schedulePanel || s.pendingAction != "create" || s.form.initialized {
+				t.Fatal("explicit Back failed to abandon the pending form")
+			}
+			m = scheduleRune(t, m, "c")
+			if s.view != schedulePanel || s.form.initialized {
+				t.Fatal("pending mutation allowed a new independent form")
 			}
 			if fail {
 				fs.err = errors.New("creation rejected")
 			}
-			m = feedCmd(t, m, submit)
+			result := submit()
+			m = feedCmd(t, m, func() tea.Msg { return result })
 			if fs.createCalls != 1 || s.view != schedulePanel || s.pendingAction != "" || m.modal != s || m.prompt.Value() != "retained draft" {
 				t.Fatal("late creation result cancelled, reopened form, or changed the draft")
 			}
 			if fail && !strings.Contains(scheduleBody(t, s, 100, 30), "creation rejected") {
 				t.Fatal("late creation error was lost")
+			}
+			m = scheduleRune(t, m, "c")
+			if s.form.name.Value() != "" || s.form.focusIdx != scheduleName || s.form.timezone.Value() != "UTC" {
+				t.Fatal("late result resurrected an abandoned form")
+			}
+			m = schedulePaste(m, "fresh")
+			m = scheduleKey(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
+			m = schedulePaste(m, "independent draft")
+			stale := result.(scheduleResultMsg)
+			stale.result = client.ScheduleMsg{Schedule: sampleSchedule("new")}
+			m = applyAll(m, stale)
+			if s.form.name.Value() != "fresh" || s.form.prompt.Value() != "independent draft" || s.form.focusIdx != schedulePrompt || s.view != scheduleCreate || m.prompt.Value() != "retained draft" || fs.createCalls != 1 {
+				t.Fatal("late duplicate success cleared a new draft or changed the root chat")
 			}
 		})
 	}
@@ -612,8 +638,8 @@ func TestScheduleEmptyClaimedAndErrors(t *testing.T) {
 				m = scheduleRune(t, m, "c")
 				s.form.name.SetValue("new")
 				s.form.prompt.SetValue("prompt")
-				s.form.trigger.SetValue("bad cron")
-				s.form.focusIdx = 3
+				s.form.trigger.SetValue("0 9 * * *")
+				s.form.focusIdx = scheduleSubmit
 				fs.err = errors.New("invalid cron expression")
 				m = scheduleKey(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
 				want = "invalid cron expression"

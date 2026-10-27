@@ -55,8 +55,9 @@ rather than keeping a second set of row offsets.
 
 Overlays that take over the conversation region own their interaction state and
 size themselves from the geometry offered on each render; the parent owns placement
-and pointer mapping. Before keys or wheel events on any open surface, the parent
-prepares its current Render offer; only View publishes pointer hits. Resize and
+and pointer mapping. Before keys, wheel events, paste, or marked asynchronous
+widget input on an open surface, the parent prepares its current Render offer;
+only View publishes pointer hits. Resize and
 undisplayed preparation invalidate both hits and placement metrics. A surface
 captures its presentation and operating dependencies when it opens. Introduce
 dynamic theme or keybinding updates only with a deliberate UI-wide design that
@@ -75,7 +76,10 @@ correlation must also cover read/write ordering: a snapshot started before a
 mutation cannot replace its confirmed result. Closing a view does not undo an
 operation already submitted to the server. When an intent replaces a surface,
 tear down the outgoing instance and stop its common close/refocus processing
-before it can affect the replacement.
+before it can affect the replacement. Widget command receipts, including private
+clipboard results, carry surface and focus ownership so delayed input cannot edit
+a different field or reopened surface. Pass unrelated asynchronous messages to
+the root reducer, including while a form is pending or compact.
 
 The `ui` package is large, so keep its internal components narrow and their
 contracts explicit. Prefer a shared contract when all comparable components use

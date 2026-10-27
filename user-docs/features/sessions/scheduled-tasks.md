@@ -48,14 +48,18 @@ atomic and can use the shared `engine/adapter/scheduleconformance` suite.
 
 ## Create and manage a schedule
 
-Use the in-chat `Schedule` tool, gRPC, REST API, or `mecatui` `/schedule`
-overlay to create, inspect, pause, resume, delete, or immediately fire a
-schedule. Mecatl has no separate schedules CLI.
+Use the in-chat `Schedule` and `ScheduleQuery` tools, gRPC, REST API, or
+`mecatui` `/schedule` overlay to create and manage a schedule. `Schedule`
+creates, pauses, resumes, deletes, or immediately fires a schedule;
+`ScheduleQuery` lists and inspects schedules. Mecatl has no separate schedules
+CLI.
 
 A schedule uses exactly one trigger: a cron expression or a one-shot timestamp.
-It defaults to read-leaning behavior. A schedule that may use `Edit`, `Write`,
-or `Shell` must explicitly set `mutating: true`; this is not an implicit
-allow-all mode.
+A cron schedule evaluates its expression in the stored IANA timezone; an empty
+timezone means UTC. A one-shot runs at its absolute timestamp; the server does
+not reinterpret it in the stored timezone. Schedules default to read-leaning
+behavior. A schedule that may use `Edit`, `Write`, or `Shell` must explicitly
+set `mutating: true`; this is not an implicit allow-all mode.
 
 A read-leaning schedule must set `mode` to plan. For a mutating schedule, the
 fire's permission mode depends on how you created it:

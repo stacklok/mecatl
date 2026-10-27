@@ -230,6 +230,57 @@ chat and draft unchanged. Leaving that transcript takes you to the
 [Sessions browser](sessions.md), rather than back to the schedule. Closing the
 schedule browser while an operation is pending does not undo that operation.
 
+## Create a schedule
+
+The create form creates an independent schedule. It uses the deployment's
+default model and does not inherit the open chat's model or receive results in
+that chat. A read-only schedule can use the deployment's configured plan model.
+Unchecked **Read-only** uses `default` permission mode; it does not
+automatically approve tool calls.
+
+The timing field accepts the following finite phrases, with an optional leading
+`run `. It also accepts a raw five-field cron expression or an `@` macro that
+the server supports. The form does not interpret arbitrary natural-language
+timing requests.
+
+|Input|Meaning|
+|-|-|
+|`every N minutes`|Recurring cron interval, where `N` is 1 through 59.|
+|`every N hours`|Recurring cron interval, where `N` is 1 through 23.|
+|`every hour`|Hourly recurring cron.|
+|`daily at H[:MM] [am/pm]`, `every day at ...`, or `everyday at ...`|Daily recurring cron.|
+|`every weekday at H[:MM] [am/pm]`|Monday through Friday recurring cron.|
+|`every <weekday> at H[:MM] [am/pm]`|Recurring cron for Monday through Sunday. Sunday compiles to cron weekday `0`.|
+|`next <weekday> H[:MM] [am/pm]`|One-shot at the next matching weekday and time.|
+|`in N minute(s)`, `in N hour(s)`, `in N day(s)`, or `in N week(s)`|One-shot after the specified elapsed duration.|
+|`tomorrow at H[:MM] [am/pm]`|One-shot on the next calendar day at that time.|
+
+Use hours from 1 through 12 with `am` or `pm`, or 0 through 23 without one;
+minutes range from 0 through 59. The optional `run ` prefix applies only to the
+listed phrases.
+
+The form starts with **UTC** selected. Search by city, or enter an exact IANA
+name such as `America/Los_Angeles`. Calendar one-shot phrases, such as
+`tomorrow at 9am`, use the chosen timezone to calculate an absolute timestamp.
+Do not put `TZ=` or `CRON_TZ=` in the cron expression. Recurring cron schedules
+remain in that local wall-clock timezone across daylight-saving time changes
+instead of converting the cron expression to a fixed UTC offset.
+
+The displayed next occurrence is an estimate. The server's returned
+`NextFireAt` after creation is authoritative. Relative one-shot phrases, such
+as `in 2 hours`, are calculated again when you choose **Create**, so they use a
+fresh current time. The form validates its input before sending it, but server
+cadence, governance, and other restrictions still apply. It retains the form
+values when creation fails so you can correct them.
+
+To ask conversationally, use ordinary chat. The agent uses `Schedule` to
+create or manage schedules and `ScheduleQuery` to list or inspect them. A
+schedule created through chat can deliver results to its originating
+conversation when the deployment supports delivery. A schedule created in the
+form keeps its results in its separate run history. The `/schedule` browser
+does not edit existing schedule definitions; use chat to replace one or use the
+API to change one.
+
 ## Monitor delegated work
 
 Press `f6` to open the agents overlay for Subagents, Parallel runs, and Teams.

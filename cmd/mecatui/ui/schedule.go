@@ -6,7 +6,9 @@ import (
 	"strings"
 	"time"
 
+	"charm.land/bubbles/v2/cursor"
 	"charm.land/bubbles/v2/key"
+	"charm.land/bubbles/v2/textarea"
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -16,6 +18,7 @@ import (
 	"github.com/stacklok/mecatl/cmd/mecatui/internal/terminaltext"
 	"github.com/stacklok/mecatl/cmd/mecatui/schedparse"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
+	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/autocomplete"
 	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/bounded"
 )
 
@@ -31,6 +34,7 @@ const (
 
 // scheduleState owns one open lifetime; raw names and fire IDs address the lists.
 type scheduleState struct {
+	now             func() time.Time
 	deps            surfaceDeps
 	lister          client.ScheduleLister
 	transcriptWired bool
@@ -52,6 +56,7 @@ type scheduleState struct {
 	listRequest                uint64
 	inspectRequest             uint64
 	mutationRequest            uint64
+	editorGeneration           uint64
 	specPending                bool
 	pendingName, pendingAction string
 	intent                     surfaceIntent
@@ -64,12 +69,25 @@ type scheduleState struct {
 }
 
 type scheduleForm struct {
-	name, prompt, trigger textinput.Model
-	mutating              bool
-	focusIdx              int
+	name, trigger textinput.Model
+	prompt        textarea.Model
+	timezone      autocomplete.Model
+	mutating      bool
+	focusIdx      int
+	initialized   bool
+	submitted     schedparse.Preview
 }
 
-const scheduleFormFieldCount = 3
+const (
+	scheduleName = iota
+	schedulePrompt
+	scheduleTiming
+	scheduleTimezone
+	scheduleReadOnly
+	scheduleSubmit
+	scheduleCancel
+	scheduleControlCount
+)
 
 func (f scheduleForm) permissionMode() string {
 	if f.mutating {
@@ -169,12 +187,33 @@ func (s *scheduleState) HandleMsg(msg tea.Msg) (tea.Cmd, bool, bool) {
 }
 
 func (s *scheduleState) handleScheduleMessage(msg tea.Msg) (tea.Cmd, bool, bool) {
-	if s.view != schedulePanel {
+	switch input := msg.(type) {
+	case scheduleEditorMsg:
+		if input.owner != s || input.generation != s.editorGeneration || input.view != s.view || s.closed {
+			return nil, true, false
+		}
+		msg = input.msg
+	case tea.PasteMsg, cursor.BlinkMsg:
+	default:
 		return nil, false, false
 	}
+	if s.view == scheduleCreate {
+		if s.compact || s.pendingAction != "" {
+			return nil, true, false
+		}
+		return s.updateCreateField(msg), true, false
+	}
+	if s.view != schedulePanel || s.compact {
+		return nil, false, false
+	}
+	before := s.filter.Value()
 	var cmd tea.Cmd
 	s.filter, cmd = s.filter.Update(msg)
-	return cmd, cmd != nil, false
+	changed := s.filter.Value() != before
+	if changed {
+		s.syncFilter()
+	}
+	return s.editorCmd(cmd), changed || cmd != nil, false
 }
 
 func (s *scheduleState) handleListResult(r scheduleResultMsg) {
@@ -272,6 +311,9 @@ func (s *scheduleState) mutationResultError(r scheduleResultMsg) (bool, error) {
 	case client.ScheduleMsg:
 		if r.kind != "create" || result.Err == nil && result.Schedule.Spec.Name != r.name {
 			return false, nil
+		}
+		if result.Err == nil {
+			s.notice = "created " + r.name + " — next run (server): " + formatScheduleTime(result.Schedule.State.NextFireAt) + " UTC"
 		}
 		return true, result.Err
 	case client.ScheduleActionMsg:
@@ -401,7 +443,7 @@ func (s *scheduleState) filterKey(msg tea.KeyPressMsg) (tea.Cmd, bool, bool) {
 	var cmd tea.Cmd
 	s.filter, cmd = s.filter.Update(msg)
 	s.syncFilter()
-	return cmd, true, false
+	return s.editorCmd(cmd), true, false
 }
 
 func (s *scheduleState) activeViewKey(msg tea.KeyPressMsg) (tea.Cmd, bool, bool) {
@@ -527,89 +569,6 @@ func (s *scheduleState) HandleWheel(msg tea.MouseWheelMsg) (tea.Cmd, bool) {
 	}
 	return nil, true
 }
-func (s *scheduleState) openCreate() {
-	input := func(placeholder string) textinput.Model {
-		ti := textinput.New()
-		ti.Placeholder = placeholder
-		return ti
-	}
-	s.form = scheduleForm{name: input("schedule name"), prompt: input("prompt to run on each fire"), trigger: input("cron or natural-language trigger")}
-	s.form.name.Focus()
-	s.view, s.actionErr = scheduleCreate, ""
-}
-func (s *scheduleState) focusField() {
-	for i, f := range []*textinput.Model{&s.form.name, &s.form.prompt, &s.form.trigger} {
-		if i == s.form.focusIdx {
-			f.Focus()
-		} else {
-			f.Blur()
-		}
-	}
-}
-func (s *scheduleState) createKey(msg tea.KeyPressMsg) tea.Cmd {
-	switch {
-	case key.Matches(msg, s.deps.keys.Close):
-		s.view = schedulePanel
-		s.form = scheduleForm{}
-		return nil
-	case s.pendingAction != "":
-		return nil
-	case key.Matches(msg, s.deps.keys.Choose):
-		if s.form.focusIdx == scheduleFormFieldCount {
-			return s.submitCreate()
-		}
-		s.form.focusIdx++
-		s.focusField()
-		return nil
-	case msg.String() == "tab", msg.String() == keyMenuDown:
-		s.form.focusIdx = (s.form.focusIdx + 1) % (scheduleFormFieldCount + 1)
-		s.focusField()
-		return nil
-	case msg.String() == keyMenuUp:
-		s.form.focusIdx = (s.form.focusIdx + scheduleFormFieldCount) % (scheduleFormFieldCount + 1)
-		s.focusField()
-		return nil
-	}
-	if s.form.focusIdx == scheduleFormFieldCount {
-		if msg.String() == "y" {
-			s.form.mutating = true
-		}
-		if msg.String() == "n" {
-			s.form.mutating = false
-		}
-		return nil
-	}
-	fields := []*textinput.Model{&s.form.name, &s.form.prompt, &s.form.trigger}
-	var cmd tea.Cmd
-	*fields[s.form.focusIdx], cmd = fields[s.form.focusIdx].Update(msg)
-	return cmd
-}
-func (s *scheduleState) submitCreate() tea.Cmd {
-	if s.pendingAction != "" {
-		return nil
-	}
-	f := s.form
-	switch {
-	case f.name.Value() == "":
-		s.actionErr = "name is required"
-		return nil
-	case f.prompt.Value() == "":
-		s.actionErr = "prompt is required"
-		return nil
-	case f.trigger.Value() == "":
-		s.actionErr = "trigger (cron or NL) is required"
-		return nil
-	}
-	var trigger client.ScheduleTrigger
-	if result, ok := schedparse.Compile(f.trigger.Value(), time.Now()); ok {
-		trigger.Cron, trigger.OneShot = result.Cron, result.OneShot
-	} else {
-		trigger.Cron = f.trigger.Value()
-	}
-	spec := client.ScheduleSpec{Name: f.name.Value(), Prompt: f.prompt.Value(), Trigger: trigger, Mode: f.permissionMode(), Mutating: f.mutating, Singleton: true, Timezone: "UTC"}
-	return s.mutate(client.CreateScheduleCmd(s.deps.ctx, s.lister, spec), "create", spec.Name)
-}
-
 func (s *scheduleState) Render(width, height int) (string, []ClickableRegion) {
 	reveal := s.offers[s.view] != [2]int{width, height}
 	s.offers[s.view], s.compact = [2]int{width, height}, true
@@ -617,9 +576,6 @@ func (s *scheduleState) Render(width, height int) (string, []ClickableRegion) {
 		return "", nil
 	}
 	s.filter.SetWidth(max(1, width-2))
-	for _, field := range []*textinput.Model{&s.form.name, &s.form.prompt, &s.form.trigger} {
-		field.SetWidth(max(1, width-14))
-	}
 	var body string
 	var regions []ClickableRegion
 	switch s.view {
@@ -637,10 +593,10 @@ func (s *scheduleState) renderCompact(width int) (string, []ClickableRegion) {
 
 func (s *scheduleState) renderOverlay(width, height int) (string, []ClickableRegion) {
 	th, hk := s.deps.theme, s.deps.marks
-	body := renderScheduleConfirm(th, *s, hk, width, height)
 	if s.view == scheduleCreate {
-		body = renderScheduleCreate(th, *s, hk, width, height)
+		return s.renderCreate(width, height)
 	}
+	body := renderScheduleConfirm(th, *s, hk, width, height)
 	lines := strings.Split(ansi.Hardwrap(body, width, true), "\n")
 	if width < 16 || len(lines) > height {
 		return s.renderCompact(width)
@@ -716,6 +672,7 @@ func (s *scheduleState) surfacePrefix(th theme.Theme, title string, width int) [
 	prefix := skillsTextLines(th.Style("title"), title, width)
 	switch s.view {
 	case schedulePanel:
+		prefix = append(prefix, skillsTextLines(th.Style("muted"), scheduleChatHint, width)...)
 		if s.filter.Focused() {
 			return append(prefix, ansi.Cut(s.filter.View(), 0, width))
 		}
@@ -879,27 +836,6 @@ func filterSchedules(scheds []client.Schedule, q string) []client.Schedule {
 }
 func renderScheduleConfirm(th theme.Theme, st scheduleState, hk helpKeys, _, _ int) string {
 	return th.Style("title").Render("delete schedule") + "\n\ndelete " + terminaltext.Sanitize(st.confirm.Spec.Name) + "? This cannot be undone.\n\n" + hk.choose + ": delete  " + hk.closeOnly + ": back"
-}
-func renderScheduleCreate(th theme.Theme, st scheduleState, hk helpKeys, _, _ int) string {
-	var b strings.Builder
-	b.WriteString(th.Style("title").Render("create schedule") + "\n\n")
-	f := st.form
-	for i, field := range []struct{ label, value string }{{"name", f.name.View()}, {"prompt", f.prompt.View()}, {"trigger", f.trigger.View()}, {"may change workspace", boolStr(f.mutating)}} {
-		marker := "  "
-		if i == f.focusIdx {
-			marker = "▶ "
-		}
-		b.WriteString(marker + field.label + ": " + field.value + "\n")
-	}
-	b.WriteString("\npermission mode: " + f.permissionMode() + "\n")
-	if st.actionErr != "" {
-		b.WriteString("\n" + terminaltext.Sanitize(st.actionErr) + "\n")
-	}
-	if st.pendingAction != "" {
-		b.WriteString("\noperation pending (closing does not undo it)\n")
-	}
-	b.WriteString("\ntab/↑↓: next  " + hk.choose + ": advance/submit  y/n: allow/disallow changes  " + hk.closeOnly + ": back")
-	return b.String()
 }
 func renderScheduleSpecBlock(b *strings.Builder, muted lipgloss.Style, spec client.ScheduleSpec) {
 	b.WriteString(muted.Render("trigger: ") + terminaltext.Sanitize(triggerSummary(spec)) + "\n")

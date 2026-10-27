@@ -37,12 +37,13 @@ var surfaceFileHomes = map[string]bool{
 	"effort.go":           true,
 	"worktrees.go":        true,
 	"schedule.go":         true,
+	"schedule_create.go":  true,
 	"dream.go":            true,
 }
 
 // surfaceFileCount is the explicit homes the gate counts — another surface file
 // is an explicit decision here, not a silent drift.
-const surfaceFileCount = 14
+const surfaceFileCount = 15
 
 func TestModelHasNoScheduleStateField(t *testing.T) {
 	st := reflect.TypeOf(Model{})
@@ -153,7 +154,7 @@ func TestSurfaceSymbolsLiveInSurfaceFiles(t *testing.T) {
 		if err != nil {
 			t.Fatalf("parse %s: %v", file, err)
 		}
-		if file != "schedule.go" {
+		if file != "schedule.go" && file != "schedule_create.go" {
 			ast.Inspect(f, func(node ast.Node) bool {
 				if id, ok := node.(*ast.Ident); ok && id.Name == "scheduleState" {
 					t.Errorf("concrete schedule state referenced outside its surface: %s", fset.Position(id.Pos()))

@@ -2477,6 +2477,9 @@ func (m Model) dispatchSurfaceMsg(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 	if m.modal == nil {
 		return m, nil, false
 	}
+	if _, input := msg.(surfaceInputMsg); input {
+		(&m).prepareSurfaceInput()
+	}
 	cmd, handled, closed := m.modal.HandleMsg(msg)
 	if !handled {
 		return m, nil, false
@@ -2940,16 +2943,18 @@ func (m Model) onPasteMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 }
 
-// onPaste routes a bracketed-paste payload to the prompt input. Bubble Tea v2
-// emits tea.PasteMsg (not KeyPressMsg) for a paste, so it does NOT pass through
-// onKey — this mirrors onKey's overlay/help/phase gating itself. A paste is
-// dropped while any overlay/help/approval owns the keyboard (it must not leak
-// into the input behind the modal); otherwise it is accepted ONLY in the
-// input-accepting phases (idle or running — both keep the textarea focused for
-// compose/enqueue) and forwarded to the textarea, which inserts the runes
-// internally, then run through afterInputEdit so the slash palette re-syncs
-// (e.g. pasting "/cl" opens the palette) — the same funnel typed input uses.
+// onPaste routes bracketed paste to the active surface before considering the
+// chat editor. Unhandled modal paste is dropped, never staged as chat media/text.
+// Without a surface, the normal chat gates, staging and afterInputEdit apply.
 func (m Model) onPaste(msg tea.PasteMsg) (tea.Model, tea.Cmd) {
+	if m.modal != nil {
+		(&m).prepareSurfaceInput()
+		msg.Content = normalizePastedNewlines(msg.Content)
+		if mm, cmd, handled := m.dispatchSurfaceMsg(msg); handled {
+			return mm, cmd
+		}
+		return m, nil
+	}
 	if !m.pasteGateOpen() {
 		return m, nil
 	}

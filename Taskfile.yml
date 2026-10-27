@@ -1238,9 +1238,19 @@ tasks:
       - cd provider/openai && GOWORK=off go mod tidy
       - cd provider/openaichat && GOWORK=off go mod tidy
 
-  generate:
-    desc: Regenerate Go and TypeScript contracts from contracts/proto via buf
+  generate:timezones:
+    desc: Regenerate the pinned client timezone catalog using the root Go version
     cmds:
+      # Requires the exact root go.mod toolchain, which may need installing:
+      # GOTOOLCHAIN=go1.27.2 task generate:timezones (update after a Go bump).
+      # Ordinary builds/tests also support newer Go; generation deliberately does not.
+      # The catalog pins names/provenance, not the runtime's DST rules.
+      - GOWORK=off go run ./internal/timezonegen/cmd/timezonegen --output cmd/mecatui/internal/timezones/zones.json
+
+  generate:
+    desc: Regenerate timezone catalog and Go and TypeScript contracts
+    cmds:
+      - task: generate:timezones
       # Regenerates the gRPC contracts — the harness API (contracts/proto/
       # mecatl/v1) AND the store-driver protocol (contracts/proto/mecatl/
       # driver/v1) — into contracts/gen (never hand-edit the output). The buf

@@ -212,7 +212,7 @@ func TestScheduleCompactDisablesEveryHiddenAction(t *testing.T) {
 					s.form.name.SetValue("new")
 					s.form.prompt.SetValue("prompt")
 					s.form.trigger.SetValue("0 9 * * *")
-					s.form.focusIdx = 3
+					s.form.focusIdx = scheduleSubmit
 				}
 				scheduleBody(t, s, size[0], size[1])
 				for _, msg := range []tea.KeyPressMsg{navigationTestKey("c"), navigationTestKey("p"), navigationTestKey("r"), navigationTestKey("f"), navigationTestKey("d"), navigationTestKey("t"), {Code: tea.KeyEnter}, {Code: tea.KeyDown}} {

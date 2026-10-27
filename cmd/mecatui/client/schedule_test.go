@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
@@ -268,6 +269,36 @@ func TestCreateScheduleBuildsProto(t *testing.T) {
 			}
 			if got.GetSelector().GetProviderId() != "anthropic" {
 				t.Fatalf("selector proto = %+v", got.GetSelector())
+			}
+		})
+	}
+}
+
+func TestCreateScheduleFormSpecSerialization(t *testing.T) {
+	instant := time.Date(2027, 1, 3, 17, 0, 0, 0, time.UTC)
+	for _, tc := range []struct {
+		trigger  ScheduleTrigger
+		mode     string
+		mutating bool
+		wireMode mecatlv1.PermissionMode
+	}{
+		{ScheduleTrigger{Cron: "0 9 * * 1-5"}, "plan", false, mecatlv1.PermissionMode_PERMISSION_MODE_PLAN},
+		{ScheduleTrigger{OneShot: instant}, ModeDefaultString, true, mecatlv1.PermissionMode_PERMISSION_MODE_DEFAULT},
+	} {
+		t.Run(tc.mode, func(t *testing.T) {
+			fake := &fakeScheduleClient{createResp: &mecatlv1.CreateScheduleResponse{Schedule: sampleProtoSchedule("review")}}
+			cl := newScheduleFakeClient(fake)
+			spec := ScheduleSpec{Name: "review", Prompt: "first\nsecond", Trigger: tc.trigger, Timezone: "America/Los_Angeles", Mode: tc.mode, Mutating: tc.mutating, Singleton: true}
+			if _, err := cl.CreateSchedule(context.Background(), spec); err != nil {
+				t.Fatal(err)
+			}
+			trigger := &mecatlv1.TriggerSpec{Cron: tc.trigger.Cron}
+			if !tc.trigger.OneShot.IsZero() {
+				trigger.OneShot = timestamppb.New(instant)
+			}
+			want := &mecatlv1.ScheduleSpec{Name: "review", Prompt: "first\nsecond", Trigger: trigger, Timezone: "America/Los_Angeles", Mode: tc.wireMode, Mutating: tc.mutating, Singleton: true, Misfire: mecatlv1.MisfirePolicy_MISFIRE_FIRE_ONCE_NOW}
+			if !proto.Equal(fake.lastCreate.GetSpec(), want) {
+				t.Fatalf("form spec gained overrides or lost chosen fields: got %v, want %v", fake.lastCreate.GetSpec(), want)
 			}
 		})
 	}
