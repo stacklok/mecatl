@@ -126,8 +126,8 @@ mounted
 {{- if and $execution.allowedSubjects .Values.oidc.ownerIdentity -}}{{ fail (printf "execution.allowedSubjects matches subjects of oidc.issuer, but oidc.ownerIdentity=%s takes each owner's issuer from the token; use execution.allowedPrincipals" .Values.oidc.ownerIdentity) }}{{- end -}}
 {{- end -}}
 {{- range $execution.allowedPrincipals -}}
-{{- /* The schema limits issuers to printable ASCII without spaces or "|"; this adds the URL form mecak8s requires. */ -}}
-{{- if not (regexMatch "^https?://([^/?#@:\\[]+|\\[[0-9A-Fa-f:.]+\\])(:[0-9]*)?(/[^?#]*)?$" .issuer) -}}{{ fail (printf "execution.allowedPrincipals issuer %q must be an https:// or http:// URL with a host and no credentials, query, or fragment" .issuer) }}{{- end -}}
+{{- /* The schema limits issuers to printable ASCII without spaces or "|"; this adds the URL form mecak8s requires. The host excludes characters Go's url.Parse refuses there, and a path "%" must start a valid escape. */ -}}
+{{- if not (regexMatch "^https?://([^/?#@:\\[\\]%\\\\^`{}]+|\\[[0-9A-Fa-f:.]+\\])(:[0-9]*)?(/([^?#%]|%[0-9A-Fa-f]{2})*)?$" .issuer) -}}{{ fail (printf "execution.allowedPrincipals issuer %q must be an https:// or http:// URL with a host and no credentials, query, or fragment" .issuer) }}{{- end -}}
 {{- end -}}
 {{- end -}}
 {{- define "mecak8s.validateTLS" -}}

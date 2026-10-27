@@ -188,6 +188,8 @@ func TestExecutionAllowlistRejectsUnsafeConfiguration(t *testing.T) {
 		"issuer with query":                   {[]string{"--execution-allowed-principal=https://idp.example?x=1|alice"}, "must be an https:// or http:// URL"},
 		"issuer with fragment":                {[]string{"--execution-allowed-principal=https://idp.example#x|alice"}, "must be an https:// or http:// URL"},
 		"issuer with space":                   {[]string{"--execution-allowed-principal=https://idp.example/a b|alice"}, "must be an https:// or http:// URL"},
+		"issuer with malformed escape":        {[]string{"--execution-allowed-principal=https://idp.example/%zz|alice"}, "must be an https:// or http:// URL"},
+		"issuer with brace in host":           {[]string{"--execution-allowed-principal=https://idp{x}.example|alice"}, "must be an https:// or http:// URL"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if _, err := parseFlags(executionArgs(tc.extra...)); err == nil || !strings.Contains(err.Error(), tc.want) {
