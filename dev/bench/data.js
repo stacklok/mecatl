@@ -342642,6 +342642,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1793120309494,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "29541485+ChrisJBurns@users.noreply.github.com",
+            "name": "Chris Burns",
+            "username": "ChrisJBurns"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "05911d859ec9057bfc359fd6d32f8b7c888ba683",
+          "message": "feat(mecak8s): match the execution allowlist on issuer and subject (#2544)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-27T17:13:21Z",
+          "tree_id": "5a02ec3faf7bb81e0f569c1d18361bb3e4fabfbe",
+          "url": "https://github.com/stacklok/mecatl/commit/05911d859ec9057bfc359fd6d32f8b7c888ba683"
+        },
+        "date": 1793121976968,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -495337,6 +495371,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1793121971555,
+  "lastUpdate": 1793121978141,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
