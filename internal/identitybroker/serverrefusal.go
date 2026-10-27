@@ -127,11 +127,10 @@ func IsUnavailable(err error) bool {
 	return errors.Is(err, ErrNoResponse)
 }
 
-// transient reports whether the refusal may succeed later: HTTP 503 or the
-// error code server_error or temporarily_unavailable at any status, as the
-// design names, or HTTP 429, 502, or 504, whatever the body. The last three
-// are a deliberate extension: a rate limit or a proxy's bad or timed-out
-// gateway is not an OAuth refusal.
+// transient reports whether the refusal may succeed later, as the design's
+// error-reasons table lists: HTTP 503, 429, 502, or 504 whatever the body (a
+// rate limit or a proxy's bad or timed-out gateway is not an OAuth refusal),
+// or the error code server_error or temporarily_unavailable at any status.
 func (r *ServerRefusal) transient() bool {
 	return transientStatuses[r.Status] || r.Code == "server_error" || r.Code == "temporarily_unavailable"
 }
