@@ -35,12 +35,11 @@ import (
 	"github.com/stacklok/mecatl/engine/session"
 )
 
-// Snapshot is the on-the-wire form of a session.Session. It is a plain data
-// struct with JSON tags so it serializes deterministically regardless of the
-// (untagged) layout of the domain types.
+// Snapshot is the current-schema on-the-wire form of a session.Session. JSON
+// decoding normalizes supported older snapshots into this schema before Restore.
+// Explicit tags keep serialization independent of the domain types' layout.
 type Snapshot struct {
-	IdentitySchema  int `json:"identity_schema,omitempty"`
-	legacyMessages  []legacyMessageDTO
+	IdentitySchema  int                     `json:"identity_schema,omitempty"`
 	ID              session.SessionID       `json:"id"`
 	State           session.State           `json:"state"`
 	Mode            session.PermissionMode  `json:"mode"`
@@ -378,7 +377,7 @@ func Of(s *session.Session) (Snapshot, error) {
 // machine through its public constructors and transitions, so all invariants
 // hold on the rebuilt aggregate.
 func (s Snapshot) Restore() (*session.Session, error) {
-	if s.IdentitySchema != 2 && (s.IdentitySchema != 0 || s.legacyMessages == nil) {
+	if s.IdentitySchema != 2 {
 		return nil, fmt.Errorf("sessnap: unknown identity schema %d", s.IdentitySchema)
 	}
 	if !s.EnvironmentRef.Valid() {
@@ -409,13 +408,6 @@ func (s Snapshot) Restore() (*session.Session, error) {
 	}
 	if err := restored.RestoreIncarnation(s.Incarnation); err != nil {
 		return nil, fmt.Errorf("sessnap: restore incarnation: %w", err)
-	}
-	if s.IdentitySchema == 0 {
-		var err error
-		s, err = s.migrateLegacy(restored.Incarnation())
-		if err != nil {
-			return nil, err
-		}
 	}
 	// Rebuild the conversation history with independently owned provenance.
 	for _, dto := range s.Messages {

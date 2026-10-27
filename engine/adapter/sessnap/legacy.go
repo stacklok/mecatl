@@ -6,8 +6,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"strconv"
+	"time"
 
 	"github.com/stacklok/mecatl/engine/session"
 )
@@ -39,115 +39,123 @@ type legacyMessageDTO struct {
 	Replay               json.RawMessage              `json:"replay,omitempty"`
 }
 
+// legacySnapshotDTO is the /1 storage schema, separate from the current Snapshot.
+// Stable metadata is copied explicitly; provider-era references stay in legacy DTOs.
+type legacySnapshotDTO struct {
+	ID                                   session.SessionID                        `json:"id"`
+	State                                session.State                            `json:"state"`
+	Mode                                 session.PermissionMode                   `json:"mode"`
+	Limits                               session.Limits                           `json:"limits"`
+	Counters                             session.Counters                         `json:"counters"`
+	ExternalBinding                      session.ExternalBinding                  `json:"external_binding,omitempty"`
+	CreatedAt                            time.Time                                `json:"created_at"`
+	Incarnation                          session.IncarnationID                    `json:"incarnation,omitempty"`
+	Messages                             []legacyMessageDTO                       `json:"messages"`
+	Pending                              json.RawMessage                          `json:"pending"`
+	PendingAuthorization                 json.RawMessage                          `json:"pending_authorization"`
+	PendingWorkspaceEnrollment           *session.PendingWorkspaceEnrollment      `json:"pending_workspace_enrollment,omitempty"`
+	StopReason                           session.StopReason                       `json:"stop_reason,omitempty"`
+	Kind                                 session.SessionKind                      `json:"kind,omitempty"`
+	Relationship                         legacyRelationshipDTO                    `json:"relationship"`
+	Profile                              string                                   `json:"profile,omitempty"`
+	ExecutionTemplateID                  string                                   `json:"execution_template_id,omitempty"`
+	ExecutionTemplateRevision            string                                   `json:"execution_template_revision,omitempty"`
+	AgentDefinitionName                  string                                   `json:"agent_definition_name,omitempty"`
+	AgentCreateIntent                    string                                   `json:"agent_create_intent,omitempty"`
+	ProviderID                           string                                   `json:"provider_id,omitempty"`
+	ModelID                              string                                   `json:"model_id,omitempty"`
+	ReasoningEffort                      string                                   `json:"reasoning_effort,omitempty"`
+	DebugMCPServers                      []string                                 `json:"debug_mcp_servers,omitempty"`
+	DebugMCPTools                        []string                                 `json:"debug_mcp_tools,omitempty"`
+	DebugTargetFingerprint               string                                   `json:"debug_target_fingerprint,omitempty"`
+	Title                                string                                   `json:"title,omitempty"`
+	TitleProvenance                      session.TitleProvenance                  `json:"title_provenance,omitempty"`
+	TitleRevision                        uint64                                   `json:"title_revision,omitempty"`
+	TitleGeneration                      session.TitleGenerationState             `json:"title_generation,omitempty"`
+	TitleSourcePrompts                   []string                                 `json:"title_source_prompts,omitempty"`
+	TitleAttempts                        []session.TitleAttempt                   `json:"title_attempts,omitempty"`
+	TokenUsage                           map[session.UsageKind]session.TokenUsage `json:"token_usage"`
+	LatestContextOccupancy               *session.ContextOccupancy                `json:"latest_context_occupancy,omitempty"`
+	RetryDisposition                     session.RetryDisposition                 `json:"retry_disposition,omitempty"`
+	StreamProgress                       session.StreamProgress                   `json:"stream_progress,omitempty"`
+	RetryPending                         bool                                     `json:"retry_pending,omitempty"`
+	RetryPendingDisposition              session.RetryDisposition                 `json:"retry_pending_disposition,omitempty"`
+	RetryPendingProgress                 session.StreamProgress                   `json:"retry_pending_progress,omitempty"`
+	LastError                            string                                   `json:"last_error,omitempty"`
+	RunID                                string                                   `json:"run_id,omitempty"`
+	Owner                                *session.Principal                       `json:"owner,omitempty"`
+	Authority                            *session.Authority                       `json:"authority,omitempty"`
+	ExecutionCapabilities                *session.ExecutionCapabilities           `json:"execution_capabilities,omitempty"`
+	WorkspaceEnrollmentBrokerKeys        []string                                 `json:"workspace_enrollment_broker_keys,omitempty"`
+	WorkspaceEnrollmentBrokerKeysPresent bool                                     `json:"workspace_enrollment_broker_keys_present,omitempty"`
+	EnvironmentRef                       session.EnvironmentRef                   `json:"environment_ref"`
+	Placement                            session.PlacementMetadata                `json:"placement,omitempty"`
+}
+
 type legacyRelationshipDTO struct {
-	session.SessionRelationship
-	CallID string          `json:"call_id,omitempty"`
-	Legacy json.RawMessage `json:"legacy_identity,omitempty"`
+	ScheduleName           string                `json:"schedule_name,omitempty"`
+	OriginSessionID        session.SessionID     `json:"origin_session_id,omitempty"`
+	OriginIncarnation      session.IncarnationID `json:"origin_incarnation,omitempty"`
+	ParentSessionID        session.SessionID     `json:"parent_session_id,omitempty"`
+	ParentIncarnation      session.IncarnationID `json:"parent_incarnation,omitempty"`
+	CallID                 string                `json:"call_id,omitempty"`
+	Legacy                 json.RawMessage       `json:"legacy_identity,omitempty"`
+	BranchIndex            *int                  `json:"branch_index,omitempty"`
+	TeamID                 string                `json:"team_id,omitempty"`
+	MemberName             string                `json:"member_name,omitempty"`
+	DebugTargetID          session.SessionID     `json:"debug_target_id,omitempty"`
+	DebugTargetIncarnation session.IncarnationID `json:"debug_target_incarnation,omitempty"`
 }
 
-// UnmarshalJSON discriminates before decoding any invocation-bearing field.
-func (s *Snapshot) UnmarshalJSON(data []byte) error {
-	schema, err := identitySchema(data)
+func decodeLegacySnapshot(data []byte) (Snapshot, error) {
+	var old legacySnapshotDTO
+	if err := json.Unmarshal(data, &old); err != nil {
+		return Snapshot{}, err
+	}
+	if old.State == session.StateAwaiting || old.State == session.StateAuthorizing ||
+		len(old.Pending) != 0 && string(old.Pending) != "null" ||
+		len(old.PendingAuthorization) != 0 && string(old.PendingAuthorization) != "null" {
+		return Snapshot{}, errors.New("sessnap: legacy pending continuation is unsupported")
+	}
+	if len(old.Relationship.Legacy) != 0 {
+		return Snapshot{}, errors.New("sessnap: legacy relationship contains schema-2 legacy_identity field")
+	}
+	inc, err := snapshotIncarnation(old.Incarnation, old.ID, old.CreatedAt, old.Owner)
 	if err != nil {
-		return err
+		return Snapshot{}, err
 	}
-	type plain Snapshot
-	var wire struct {
-		*plain
-		IdentitySchema json.RawMessage `json:"identity_schema"`
-		Messages       json.RawMessage `json:"messages"`
-		Pending        json.RawMessage `json:"pending"`
-		Authorization  json.RawMessage `json:"pending_authorization"`
-		Relationship   json.RawMessage `json:"relationship"`
-		Hold           json.RawMessage `json:"identity_hold"`
+	messages, err := migrateLegacyMessages(old.Messages, inc, legacySnapshotNamespace)
+	if err != nil {
+		return Snapshot{}, err
 	}
-	var decoded Snapshot
-	wire.plain = (*plain)(&decoded)
-	if err := json.Unmarshal(data, &wire); err != nil {
-		return err
+	rel := old.Relationship
+	relationship := session.SessionRelationship{
+		ScheduleName: rel.ScheduleName, OriginSessionID: rel.OriginSessionID, OriginIncarnation: rel.OriginIncarnation,
+		ParentSessionID: rel.ParentSessionID, ParentIncarnation: rel.ParentIncarnation,
+		BranchIndex: rel.BranchIndex, TeamID: rel.TeamID, MemberName: rel.MemberName,
+		DebugTargetID: rel.DebugTargetID, DebugTargetIncarnation: rel.DebugTargetIncarnation,
 	}
-	if len(wire.Hold) != 0 {
-		return errors.New("sessnap: unsupported identity_hold")
+	if rel.CallID != "" {
+		relationship.Legacy = &session.LegacyRelationshipIdentity{ProviderCallID: rel.CallID}
 	}
-	decoded.IdentitySchema = schema
-	switch decoded.IdentitySchema {
-	case 0:
-		if decoded.State == session.StateAwaiting || decoded.State == session.StateAuthorizing ||
-			len(wire.Pending) != 0 && string(wire.Pending) != "null" ||
-			len(wire.Authorization) != 0 && string(wire.Authorization) != "null" {
-			return errors.New("sessnap: legacy pending continuation is unsupported")
-		}
-		if err := decoded.decodeLegacy(wire.Relationship, wire.Messages); err != nil {
-			return err
-		}
-	case 2:
-		if len(wire.Relationship) != 0 {
-			if err := json.Unmarshal(wire.Relationship, &decoded.Relationship); err != nil {
-				return err
-			}
-		}
-		if err := json.Unmarshal(wire.Messages, &decoded.Messages); err != nil {
-			return err
-		}
-		if len(wire.Pending) != 0 {
-			if err := json.Unmarshal(wire.Pending, &decoded.Pending); err != nil {
-				return err
-			}
-		}
-		if len(wire.Authorization) != 0 {
-			if err := json.Unmarshal(wire.Authorization, &decoded.PendingAuthorization); err != nil {
-				return err
-			}
-		}
-	default:
-		return fmt.Errorf("sessnap: unknown identity schema %d", decoded.IdentitySchema)
-	}
-	*s = decoded
-	return nil
-}
-
-func (s *Snapshot) decodeLegacy(relationship, messages json.RawMessage) error {
-	if len(relationship) != 0 {
-		var old legacyRelationshipDTO
-		if err := json.Unmarshal(relationship, &old); err != nil {
-			return err
-		}
-		if len(old.Legacy) != 0 {
-			return errors.New("sessnap: legacy relationship has new carrier")
-		}
-		s.Relationship = old.SessionRelationship
-		if old.CallID != "" {
-			s.Relationship.Legacy = &session.LegacyRelationshipIdentity{ProviderCallID: old.CallID}
-		}
-	}
-	if len(messages) != 0 {
-		if err := json.Unmarshal(messages, &s.legacyMessages); err != nil {
-			return err
-		}
-	}
-	// A non-nil slice distinguishes decoded /1 history from unsupported
-	// schema-zero direct Snapshot construction, even for absent/null history.
-	if s.legacyMessages == nil {
-		s.legacyMessages = []legacyMessageDTO{}
-	}
-	return nil
-}
-
-// MarshalJSON also preserves a decoded old snapshot before Restore is called.
-func (s Snapshot) MarshalJSON() ([]byte, error) {
-	type plain Snapshot
-	if s.IdentitySchema != 0 || s.legacyMessages == nil {
-		return json.Marshal(plain(s))
-	}
-	rel := legacyRelationshipDTO{SessionRelationship: s.Relationship}
-	if s.Relationship.Legacy != nil {
-		rel.CallID = s.Relationship.Legacy.ProviderCallID
-	}
-	return json.Marshal(struct {
-		plain
-		Relationship legacyRelationshipDTO `json:"relationship,omitzero"`
-		Messages     []legacyMessageDTO    `json:"messages"`
-	}{plain(s), rel, s.legacyMessages})
+	return Snapshot{
+		IdentitySchema: 2, Incarnation: inc, Messages: messages, Relationship: relationship,
+		ID: old.ID, State: old.State, Mode: old.Mode, Limits: old.Limits, Counters: old.Counters,
+		ExternalBinding: old.ExternalBinding, CreatedAt: old.CreatedAt,
+		PendingWorkspaceEnrollment: old.PendingWorkspaceEnrollment, StopReason: old.StopReason, Kind: old.Kind,
+		Profile: old.Profile, ExecutionTemplateID: old.ExecutionTemplateID, ExecutionTemplateRevision: old.ExecutionTemplateRevision,
+		AgentDefinitionName: old.AgentDefinitionName, AgentCreateIntent: old.AgentCreateIntent,
+		ProviderID: old.ProviderID, ModelID: old.ModelID, ReasoningEffort: old.ReasoningEffort,
+		DebugMCPServers: old.DebugMCPServers, DebugMCPTools: old.DebugMCPTools, DebugTargetFingerprint: old.DebugTargetFingerprint,
+		Title: old.Title, TitleProvenance: old.TitleProvenance, TitleRevision: old.TitleRevision,
+		TitleGeneration: old.TitleGeneration, TitleSourcePrompts: old.TitleSourcePrompts, TitleAttempts: old.TitleAttempts,
+		TokenUsage: old.TokenUsage, LatestContextOccupancy: old.LatestContextOccupancy,
+		RetryDisposition: old.RetryDisposition, StreamProgress: old.StreamProgress,
+		RetryPending: old.RetryPending, RetryPendingDisposition: old.RetryPendingDisposition, RetryPendingProgress: old.RetryPendingProgress,
+		LastError: old.LastError, RunID: old.RunID, Owner: old.Owner, Authority: old.Authority, ExecutionCapabilities: old.ExecutionCapabilities,
+		WorkspaceEnrollmentBrokerKeys: old.WorkspaceEnrollmentBrokerKeys, WorkspaceEnrollmentBrokerKeysPresent: old.WorkspaceEnrollmentBrokerKeysPresent,
+		EnvironmentRef: old.EnvironmentRef, Placement: old.Placement,
+	}, nil
 }
 
 const legacySnapshotNamespace = "sessnap/legacy-v1"
@@ -188,24 +196,7 @@ type legacyOccurrence struct {
 	unsafe  bool
 }
 
-func (s Snapshot) migrateLegacy(inc session.IncarnationID) (Snapshot, error) {
-	return s.migrateLegacySource(inc, legacySnapshotNamespace)
-}
-
-func (s Snapshot) migrateLegacySource(inc session.IncarnationID, namespace string) (Snapshot, error) {
-	source, err := indexLegacySource(s.legacyMessages, inc, namespace)
-	if err != nil {
-		return s, err
-	}
-	if err := source.migrateMessages(&s, inc, namespace); err != nil {
-		return s, err
-	}
-	s.IdentitySchema = 2
-	return s, nil
-}
-
 type legacySource struct {
-	old     []legacyMessageDTO
 	calls   [][]*legacyOccurrence
 	results []*legacyOccurrence
 }
@@ -215,7 +206,7 @@ type legacySource struct {
 // a key to be reused after its earlier occurrence has been answered.
 func indexLegacySource(old []legacyMessageDTO, inc session.IncarnationID, namespace string) (*legacySource, error) {
 	x := &legacySource{
-		old: old, calls: make([][]*legacyOccurrence, len(old)), results: make([]*legacyOccurrence, len(old)),
+		calls: make([][]*legacyOccurrence, len(old)), results: make([]*legacyOccurrence, len(old)),
 	}
 	open := make(map[string][]*legacyOccurrence)
 	for i, m := range old {
@@ -253,16 +244,20 @@ func indexLegacySource(old []legacyMessageDTO, inc session.IncarnationID, namesp
 	return x, nil
 }
 
-func (x *legacySource) migrateMessages(s *Snapshot, inc session.IncarnationID, namespace string) error {
-	s.Messages = make([]messageDTO, len(x.old))
-	for i, m := range x.old {
-		dto, err := x.migrateMessage(i, m, inc, namespace)
-		if err != nil {
-			return err
-		}
-		s.Messages[i] = dto
+func migrateLegacyMessages(old []legacyMessageDTO, inc session.IncarnationID, namespace string) ([]messageDTO, error) {
+	source, err := indexLegacySource(old, inc, namespace)
+	if err != nil {
+		return nil, err
 	}
-	return nil
+	messages := make([]messageDTO, len(old))
+	for i, m := range old {
+		dto, err := source.migrateMessage(i, m, inc, namespace)
+		if err != nil {
+			return nil, err
+		}
+		messages[i] = dto
+	}
+	return messages, nil
 }
 
 func (x *legacySource) migrateMessage(i int, m legacyMessageDTO, inc session.IncarnationID, namespace string) (messageDTO, error) {

@@ -34,8 +34,10 @@ func TestLegacyAmbiguousNonpendingHistorySalvaged(t *testing.T) {
 }
 
 func TestUnattachedLegacyResultPreservesTypedContent(t *testing.T) {
-	var old Snapshot
-	if err := json.Unmarshal(legacyFixture(t, "legacy-completed"), &old); err != nil {
+	data := legacyFixture(t, "legacy-completed")
+	fields := snapshotObject(t, data)
+	var messages []json.RawMessage
+	if err := json.Unmarshal(fields["messages"], &messages); err != nil {
 		t.Fatal(err)
 	}
 	parts := []session.Content{
@@ -43,8 +45,16 @@ func TestUnattachedLegacyResultPreservesTypedContent(t *testing.T) {
 		session.NewResourceLinkBlock("fixture:asset", "asset", "title", "description", "image/png", 3, []string{"user"}),
 		{BlockKind: session.BlockImage, Kind: session.MediaImage, MIMEType: "image/png", Data: []byte{1, 2, 3}},
 	}
-	old.legacyMessages = append(old.legacyMessages, legacyMessageDTO{Role: session.RoleTool, Text: "row text", Parts: []contentDTO{{Kind: session.MediaAudio, MIMEType: "audio/wav", Data: []byte{4, 5, 6}}}, ToolResult: &legacyResultDTO{CallID: "missing", Content: "result summary", Parts: parts}})
-	s, err := old.Restore()
+	result, err := json.Marshal(legacyMessageDTO{Role: session.RoleTool, Text: "row text", Parts: []contentDTO{{Kind: session.MediaAudio, MIMEType: "audio/wav", Data: []byte{4, 5, 6}}}, ToolResult: &legacyResultDTO{CallID: "missing", Content: "result summary", Parts: parts}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fields["messages"], err = json.Marshal(append(messages, result))
+	if err != nil {
+		t.Fatal(err)
+	}
+	data = withJSONFields(t, data, fields)
+	s, err := Unmarshal(data)
 	if err != nil {
 		t.Fatal(err)
 	}

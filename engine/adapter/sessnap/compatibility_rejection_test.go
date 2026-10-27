@@ -53,8 +53,8 @@ func TestSnapshotIdentityHoldRejected(t *testing.T) {
 		if _, err := Unmarshal([]byte(base + `}`)); err != nil {
 			t.Fatalf("load positive control: %v", err)
 		}
-		for _, hold := range []string{`null`, `{}`, `{"unsupported":true}`} {
-			data := []byte(base + `,"identity_hold":` + hold + `}`)
+		for _, hold := range []string{`"identity_hold":null`, `"identity_hold":{}`, `"identity_hold":{"unsupported":true}`, `"IDENTITY_HOLD":null`, `"Identity_Hold":{}`, `"identity_hold":{},"IDENTITY_HOLD":null`} {
+			data := []byte(base + `,` + hold + `}`)
 			if err := json.Unmarshal(data, &snap); err == nil {
 				t.Errorf("decoded identity_hold: %s", data)
 			}
@@ -113,7 +113,7 @@ func TestLegacyEmptyHistoryDecodeRestore(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if s, err := UnmarshalFormat(encoded, "sessnap-json/1"); err != nil || len(s.Conversation.Messages) != 0 {
+		if s, err := UnmarshalFormat(encoded, Format); err != nil || len(s.Conversation.Messages) != 0 {
 			t.Fatalf("empty history roundtrip: %v, %v", s, err)
 		}
 	}

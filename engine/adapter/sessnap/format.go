@@ -3,8 +3,10 @@ package sessnap
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/stacklok/mecatl/engine/session"
 )
@@ -27,6 +29,60 @@ func UnmarshalFormat(data []byte, format string) (*session.Session, error) {
 	return Unmarshal(data)
 }
 
+// UnmarshalJSON selects a version-specific decoder before interpreting invocation
+// references. Both paths yield only current-schema data; Restore does not migrate.
+func (s *Snapshot) UnmarshalJSON(data []byte) error {
+	schema, err := identitySchema(data)
+	if err != nil {
+		return err
+	}
+	var decoded Snapshot
+	if schema == 0 {
+		decoded, err = decodeLegacySnapshot(data)
+	} else {
+		decoded, err = decodeCurrentSnapshot(data)
+	}
+	if err != nil {
+		return err
+	}
+	*s = decoded
+	return nil
+}
+
+func decodeCurrentSnapshot(data []byte) (Snapshot, error) {
+	// A defined type retains the full current DTO's fields but has no JSON
+	// methods, avoiding recursive calls to Snapshot.UnmarshalJSON.
+	type currentSnapshot Snapshot
+	var decoded struct {
+		currentSnapshot
+		// Shadow messages to require its presence: null is valid empty history,
+		// but an absent field must not silently discard the conversation.
+		Messages json.RawMessage `json:"messages"`
+	}
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return Snapshot{}, err
+	}
+	if err := json.Unmarshal(decoded.Messages, &decoded.currentSnapshot.Messages); err != nil {
+		return Snapshot{}, err
+	}
+	inc, err := snapshotIncarnation(decoded.Incarnation, decoded.ID, decoded.CreatedAt, decoded.Owner)
+	if err != nil {
+		return Snapshot{}, err
+	}
+	decoded.Incarnation = inc
+	return Snapshot(decoded.currentSnapshot), nil
+}
+
+func snapshotIncarnation(inc session.IncarnationID, id session.SessionID, createdAt time.Time, owner *session.Principal) (session.IncarnationID, error) {
+	if inc == "" {
+		return session.LegacyIncarnationID(id, createdAt.UnixNano(), owner), nil
+	}
+	if !inc.Valid() {
+		return "", errors.New("sessnap: invalid incarnation")
+	}
+	return inc, nil
+}
+
 func identitySchema(data []byte) (int, error) {
 	if !json.Valid(data) {
 		return 0, fmt.Errorf("sessnap: invalid snapshot JSON")
@@ -46,6 +102,10 @@ func identitySchema(data []byte) (int, error) {
 		var raw json.RawMessage
 		if err := decoder.Decode(&raw); err != nil {
 			return 0, err
+		}
+		// identity_hold is never supported data, even when null or case-varied.
+		if strings.EqualFold(key.(string), "identity_hold") {
+			return 0, errors.New("sessnap: unsupported identity_hold")
 		}
 		if !strings.EqualFold(key.(string), "identity_schema") {
 			continue

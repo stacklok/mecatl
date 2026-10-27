@@ -72,10 +72,10 @@ func TestLegacyIdentityStableAcrossReadsAndSaves(t *testing.T) {
 			if err := json.Unmarshal(data, &old); err != nil {
 				t.Fatal(err)
 			}
-			if len(old.Messages) != 0 || old.Pending != nil || old.PendingAuthorization != nil {
-				t.Fatal("old provider references decoded into canonical DTOs")
+			if old.IdentitySchema != 2 || len(old.Messages) != len(first.Conversation.Messages) || old.Pending != nil || old.PendingAuthorization != nil {
+				t.Fatal("legacy decode did not normalize to the current schema")
 			}
-			// A decoded legacy Snapshot is also safe to re-encode before restoration.
+			// A decoded legacy Snapshot re-encodes as the current schema.
 			reencoded, err := json.Marshal(old)
 			if err != nil {
 				t.Fatal(err)
@@ -243,11 +243,16 @@ func TestIdentitySchemaAndIncarnationFailClosed(t *testing.T) {
 	if _, err := (Snapshot{IdentitySchema: 99}).Restore(); err == nil {
 		t.Fatal("direct restore accepted unknown schema")
 	}
-	var snap Snapshot
-	if err := json.Unmarshal(legacyFixture(t, "legacy-completed"), &snap); err != nil {
+	incarnation := session.NewIncarnationID()
+	encodedIncarnation, err := json.Marshal(incarnation)
+	if err != nil {
 		t.Fatal(err)
 	}
-	snap.Incarnation = session.NewIncarnationID()
+	data = withJSONFields(t, legacyFixture(t, "legacy-completed"), map[string]json.RawMessage{"incarnation": encodedIncarnation})
+	var snap Snapshot
+	if err := json.Unmarshal(data, &snap); err != nil {
+		t.Fatal(err)
+	}
 	withInc, err := snap.Restore()
 	if err != nil {
 		t.Fatal(err)

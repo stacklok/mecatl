@@ -28,12 +28,12 @@ func DecodeLegacyArchive(data []byte, inc session.IncarnationID, namespace strin
 	for i, m := range archive.Replaced {
 		old[i] = legacyMessageDTO{Role: m.Role, Text: m.Text, ToolCalls: m.ToolCalls, ToolResult: m.ToolResult, Reasoning: m.Reasoning, ReasoningItemID: m.ReasoningItemID, Phase: m.ProviderPhase, Parts: contentToDTO(m.Parts), UserPromptProvenance: m.UserPromptProvenance}
 	}
-	s, err := (Snapshot{State: session.StateIdle, legacyMessages: old}).migrateLegacySource(inc, namespace)
+	dtos, err := migrateLegacyMessages(old, inc, namespace)
 	if err != nil {
 		return nil, err
 	}
-	messages := make([]session.Message, len(s.Messages))
-	for i, dto := range s.Messages {
+	messages := make([]session.Message, len(dtos))
+	for i, dto := range dtos {
 		messages[i] = fromDTO(dto)
 	}
 	// An archive is closed history, not a parked continuation. Incomplete calls
