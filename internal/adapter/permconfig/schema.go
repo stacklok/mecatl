@@ -689,7 +689,7 @@ type MCPStaticBearerProfile struct {
 	TokenEnv string `yaml:"token_env"`
 	// TokenRef is a lowercase [a-z0-9_]+ logical MCP reference. Resolution uses
 	// MECATL_MCP_TOKEN_ followed by the uppercase reference first, then the matching
-	// mcp entry's token in auth.yaml.
+	// mcp entry's api_key in auth.yaml.
 	// It is mutually exclusive with TokenEnv.
 	TokenRef string `yaml:"token_ref"`
 }

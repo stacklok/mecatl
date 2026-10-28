@@ -390,7 +390,7 @@ func TestEmbeddedCredentialStartup(t *testing.T) {
 			writeIsolatedExecutionSettings(t, app.PlacementHostLocal)
 			const key = "embedded-search-key"
 			authPath := filepath.Join(os.Getenv("XDG_CONFIG_HOME"), "mecatl", "auth.yaml")
-			if err := os.WriteFile(authPath, []byte("providers:\n  "+tt.provider+":\n    api_key: "+key+"\n"), 0o600); err != nil {
+			if err := os.WriteFile(authPath, []byte("search:\n  "+tt.provider+":\n    api_key: "+key+"\n"), 0o600); err != nil {
 				t.Fatal(err)
 			}
 			t.Setenv("EXA_API_KEY", "")

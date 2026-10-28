@@ -1378,7 +1378,7 @@ func TestOpenAICodexCommandRootSurfaces(t *testing.T) {
 		t.Setenv(envName, "")
 	}
 	help := helpRenderOut(t, modeLocal, []string{"--help"})
-	if !hasFlagHeader(help, "api-key-file") || !strings.Contains(help, "provider and MCP credentials YAML") {
+	if !hasFlagHeader(help, "api-key-file") || !strings.Contains(help, "provider, search, and MCP credentials YAML") {
 		t.Fatalf("embedded help does not surface provider file auth:\n%s", help)
 	}
 

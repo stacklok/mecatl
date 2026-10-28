@@ -417,7 +417,7 @@ func validateMCPStaticBearer(profile permconfig.MCPServerProfile) error {
 	case decl == nil:
 	case (decl.TokenRef == "") == (decl.TokenEnv == ""):
 	case decl.TokenRef != "":
-		if mcpSecretReference.MatchString(decl.TokenRef) {
+		if staticSecretReference.MatchString(decl.TokenRef) {
 			return nil
 		}
 		field = "auth.static_bearer.token_ref"
@@ -450,6 +450,18 @@ func loadMCPStaticBearer(profile permconfig.MCPServerProfile, resolver SecretRes
 		return mcp.ServerConfig{}, secretError
 	}
 	return mcpBearerConfig(profile, token)
+}
+
+func validMCPBearer(token string) bool {
+	if strings.TrimSpace(token) == "" || strings.HasSuffix(token, " ") || strings.HasSuffix(token, "\t") {
+		return false
+	}
+	for i := 0; i < len(token); i++ {
+		if (token[i] < 0x20 && token[i] != '\t') || token[i] == 0x7f {
+			return false
+		}
+	}
+	return true
 }
 
 func mcpBearerConfig(profile permconfig.MCPServerProfile, token string) (mcp.ServerConfig, error) {

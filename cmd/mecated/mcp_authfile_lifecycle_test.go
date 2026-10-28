@@ -57,7 +57,7 @@ func TestMCPDirectLifecycleStaticSourceSelection(t *testing.T) {
 				path = filepath.Join(t.TempDir(), "selected.yaml")
 				prefix = "credential_store:\n  api_key:\n    file: " + path + "\n"
 			}
-			if err := os.WriteFile(path, []byte("mcp:\n  lifecycle_test:\n    token: selected-direct-token\n"), 0o600); err != nil {
+			if err := os.WriteFile(path, []byte("mcp:\n  lifecycle_test:\n    api_key: selected-direct-token\n"), 0o600); err != nil {
 				t.Fatal(err)
 			}
 			settings := filepath.Join(t.TempDir(), "settings.yaml")

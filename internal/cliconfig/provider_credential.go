@@ -54,6 +54,9 @@ func (r *ProviderCredentialResolver) Load(definitions permconfig.ProviderDefinit
 		s.strictWarning = joinCredentialWarnings(s.strictWarning, warning)
 		return app.ProviderCredentials{}, nil, errors.New(warning)
 	}
+	if keys.searchErr != nil {
+		return app.ProviderCredentials{}, nil, keys.searchErr
+	}
 	credentials := app.ProviderCredentials{
 		ExaAPIKey: keys.Exa, BraveAPIKey: keys.Brave, WebSearchAPIKey: keys.WebSearch,
 		OpenAIKey: keys.OpenAI, OpenRouterKey: keys.OpenRouter,

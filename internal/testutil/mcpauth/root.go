@@ -138,7 +138,7 @@ func writeRootAuthFile(t *testing.T, token string) string {
 	body := "mcp: {}\n"
 	if token != "" {
 		encoded, _ := json.Marshal(token)
-		body = "mcp:\n  root_fixture:\n    token: " + string(encoded) + "\n"
+		body = "mcp:\n  root_fixture:\n    api_key: " + string(encoded) + "\n"
 	}
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
@@ -173,7 +173,7 @@ func runRootLoaders(t *testing.T, cfg app.Config, path string, operator *permcon
 		_ = lifecycle.Close()
 		cancel()
 		// Both loader paths must keep the factory's file snapshot.
-		if err := os.WriteFile(path, []byte("mcp:\n  root_fixture:\n    token: rotated-file\n"), 0o600); err != nil {
+		if err := os.WriteFile(path, []byte("mcp:\n  root_fixture:\n    api_key: rotated-file\n"), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}

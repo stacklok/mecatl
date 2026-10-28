@@ -15,7 +15,7 @@ func TestStaticSnapshotEnvironmentFirstThenFileReference(t *testing.T) {
 		for _, first := range []string{"lookup", "direct", "authority", "explicit token env direct", "explicit token env authority"} {
 			t.Run(initial+"/"+first, func(t *testing.T) {
 				reads := 0
-				body := "mcp:\n  later:\n    token: original-file\n"
+				body := "mcp:\n  later:\n    api_key: original-file\n"
 				if initial == "broken" {
 					body = "mcp: [broken"
 				}
@@ -67,7 +67,7 @@ func TestStaticSnapshotEnvironmentFirstThenFileReference(t *testing.T) {
 				if reads != 1 {
 					t.Fatalf("initial acquisitions = %d, want 1", reads)
 				}
-				body, missing = "mcp:\n  later:\n    token: rotated-file\n", false
+				body, missing = "mcp:\n  later:\n    api_key: rotated-file\n", false
 				for _, authority := range []bool{false, true} {
 					// Refresh declarations to a different ref whose environment was absent.
 					operator.Servers[0] = fileBearerProfile("server", "later")
@@ -76,8 +76,14 @@ func TestStaticSnapshotEnvironmentFirstThenFileReference(t *testing.T) {
 						if err != nil || servers[0].Headers["Authorization"] != "Bearer original-file" {
 							t.Fatal("refresh did not preserve original file and environment absence")
 						}
-					} else if !errors.Is(err, ErrMCPProfileStore) {
-						t.Fatalf("refresh lost original source failure: %v", err)
+					} else {
+						want := ErrMCPProfileStore
+						if initial == "missing" {
+							want = ErrMCPProfileSecret
+						}
+						if !errors.Is(err, want) {
+							t.Fatalf("refresh lost cached source failure or absence: %v", err)
+						}
 					}
 					operator.Servers[0] = profile
 					servers, err = load(authority)
