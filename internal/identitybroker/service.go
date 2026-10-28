@@ -68,8 +68,11 @@ import (
 //     after which the user signs in again; an unavailable AS-1 fails with
 //     CodeUnavailable, and any other failure with CodeInternal. A failed
 //     exchange leaves the session paired, with any refresh token it held; an
-//     answer that does not match the request or cannot be decoded, or a
-//     session past its hard expiry, closes it.
+//     answer that does not match the request or cannot be decoded closes it.
+//   - Closes a session with ReasonSessionClosed when its refresh token's
+//     expiry, the session's hard expiry, passes: from then on every call
+//     finds it closed, and the next OpenSession for its host session opens a
+//     new broker session.
 //
 // No request names the calling workload: the broker authenticates it itself,
 // and Mecatl gets a Service from NewInProcess. Implementations provide this

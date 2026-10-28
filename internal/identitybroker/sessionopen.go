@@ -132,8 +132,9 @@ func readAccessToken(token Token) (accessTokenClaims, bool) {
 //
 // A refused or failed conversion leaves s paired under the reported owner,
 // with whatever refresh token it held, so a retry with a fresh access token
-// finds it; only an expired session, or an answer that does not match the
-// request or cannot be decoded, closes it.
+// finds it; only an answer that does not match the request or cannot be
+// decoded closes it. s is open and, if it holds a refresh token, not past
+// its hard expiry (pairLocked closes such a session first).
 func (b *Broker) convert(ctx context.Context, s *brokerSession, req OpenSessionRequest) (Session, error) {
 	t := b.sessions
 	// Check 1: the token's company identity is the owner mecak8s reports.
@@ -160,21 +161,16 @@ func (b *Broker) convert(ctx context.Context, s *brokerSession, req OpenSessionR
 		return t.viewLocked(s), nil
 	}
 	// A new refresh token never extends the session: once it has a hard
-	// expiry, ask for no more.
+	// expiry, ask for no more. pairLocked already closed s if that expiry had
+	// passed, so a held grant here is live.
 	var requested time.Time
 	if s.grant != nil {
 		requested = s.grant.expiresAt
-		if !t.now().Before(requested) {
-			t.closeLocked(s, ReasonSessionClosed)
-			return Session{}, ReasonError(ReasonSessionClosed, "the broker session reached its hard expiry")
-		}
 	}
 
 	sent := ExchangeGrant{Type: ExchangeGrantType, IssuableTokenTypes: []string{TokenTypeIDJAG}, ExpiresAt: requested}
 
-	t.mu.Unlock()
-	res, err := b.exchange(ctx, TokenExchange{SubjectToken: req.AccessToken, Grant: sent})
-	t.mu.Lock()
+	res, err := b.exchangeUnlocked(ctx, TokenExchange{SubjectToken: req.AccessToken, Grant: sent})
 
 	if errors.Is(err, ErrMalformedResponse) {
 		// AS-1 may have issued a refresh token the broker cannot read: treat
@@ -202,6 +198,17 @@ func (b *Broker) convert(ctx context.Context, s *brokerSession, req OpenSessionR
 	// any held before.
 	s.grant = &heldGrant{refreshToken: res.RefreshToken, expiresAt: res.Grants[0].ExpiresAt, sourceJTI: claims.jti}
 	return t.viewLocked(s), nil
+}
+
+// exchangeUnlocked is exchange with t.mu released, for a caller holding it.
+// t.mu is taken again in a defer, so a panic in the AuthServer unwinds with
+// t.mu held, as the caller's deferred Unlock expects, and stays an ordinary
+// recoverable panic.
+func (b *Broker) exchangeUnlocked(ctx context.Context, req TokenExchange) (TokenExchangeResult, error) {
+	t := b.sessions
+	t.mu.Unlock()
+	defer t.mu.Lock()
+	return b.exchange(ctx, req)
 }
 
 // exchange calls AS-1 and, after a lost response or a 502 or 504, which AS-1
@@ -245,9 +252,9 @@ func exchangeError(err error) error {
 		// client signs in again, so it is UNAUTHENTICATED, not the reason's
 		// usual code.
 		return NewError(CodeUnauthenticated, Reason(r.Reason), "the user's authorization was revoked; sign in again")
-	case isRefusal && r.Code == "invalid_request" && r.Reason == "":
+	case isRefusal && (r.Reason == string(ReasonSubjectInvalid) || r.Code == "invalid_request" && r.Reason == ""):
 		// The broker builds every other part of the request, so AS-1 refused
-		// the access token.
+		// the access token, with no reason or saying so.
 		return ReasonError(ReasonSubjectInvalid, "the authorization server refused the access token")
 	case isRefusal:
 		return NewError(CodeInternal, "", r.Error())

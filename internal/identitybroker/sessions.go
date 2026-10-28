@@ -82,6 +82,9 @@ func (b *Broker) OpenSession(ctx context.Context, workload Workload, req OpenSes
 	}
 	defer unlock()
 	t.mu.Lock()
+	// convert releases t.mu around the AS-1 call and takes it again in a
+	// defer, so a panic there still unwinds through this Unlock with t.mu
+	// held.
 	defer t.mu.Unlock()
 	s, err := t.pairLocked(workload, req)
 	if err != nil {
@@ -99,8 +102,11 @@ func (b *Broker) OpenSession(ctx context.Context, workload Workload, req OpenSes
 // pairLocked returns the open broker session of req's host session after
 // the workload, owner, and incarnation checks, or opens a new one paired with
 // the reported owner. The caller holds t.mu.
+//
+// An open session past its hard expiry is closed first, so the host session
+// gets a new broker session as after any close.
 func (t *sessionTable) pairLocked(workload Workload, req OpenSessionRequest) (*brokerSession, error) {
-	if id, ok := t.open[req.HostSessionID]; ok {
+	if id, ok := t.open[req.HostSessionID]; ok && !t.expireLocked(t.byID[id]) {
 		s := t.byID[id]
 		switch {
 		case s.workload != workload:
@@ -147,6 +153,18 @@ func (t *sessionTable) closeLocked(s *brokerSession, reason Reason) {
 	delete(t.open, s.HostSessionID)
 }
 
+// expireLocked closes s with ReasonSessionClosed if it is open and its
+// refresh token has reached its expiry, the session's hard expiry, and
+// reports whether s is closed now. A session that holds no refresh token
+// never expires. Every lookup of an open session calls it, so the session
+// stops working at its hard expiry. The caller holds t.mu.
+func (t *sessionTable) expireLocked(s *brokerSession) bool {
+	if s.closed == "" && s.grant != nil && !t.now().Before(s.grant.expiresAt) {
+		t.closeLocked(s, ReasonSessionClosed)
+	}
+	return s.closed != ""
+}
+
 // FindSession implements Core.
 func (b *Broker) FindSession(_ context.Context, workload Workload, req FindSessionRequest) (Session, bool, error) {
 	if err := checkCall(workload, req); err != nil {
@@ -163,6 +181,9 @@ func (b *Broker) FindSession(_ context.Context, workload Workload, req FindSessi
 	if s.workload != workload {
 		// Answer as if there were none, so another workload cannot learn which
 		// host sessions exist.
+		return Session{}, false, nil
+	}
+	if t.expireLocked(s) {
 		return Session{}, false, nil
 	}
 	return t.viewLocked(s), true, nil
@@ -214,7 +235,7 @@ func (t *sessionTable) usableLocked(workload Workload, id string) (Session, erro
 	switch {
 	case !ok || s.workload != workload:
 		return Session{}, unknownSession()
-	case s.closed != "":
+	case t.expireLocked(s):
 		return Session{}, ReasonError(s.closed, "the broker session is closed")
 	}
 	return s.Session, nil

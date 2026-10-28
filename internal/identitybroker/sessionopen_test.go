@@ -434,32 +434,101 @@ func TestSessionOpenFailedReplaceKeepsTheHeldToken(t *testing.T) {
 	}
 }
 
-func TestSessionOpenPastTheHardExpiryClosesTheSession(t *testing.T) {
+// TestSessionHardExpiryClosesTheSession: once the held refresh token's
+// expiry passes, every lookup finds the session closed, and the next open
+// pairs a new broker session.
+func TestSessionHardExpiryClosesTheSession(t *testing.T) {
+	ctx := context.Background()
+	tests := []struct {
+		name string
+		// lookup is the first call after the expiry.
+		lookup func(t *testing.T, f *openFixture, old identitybroker.Session, cred identitybroker.Token)
+	}{
+		{"a token-bearing open", func(t *testing.T, f *openFixture, old identitybroker.Session, _ identitybroker.Token) {
+			next, err := f.open(openHost, old.Owner, f.token(identityharness.Alice))
+			if err != nil || next.ID == old.ID || !next.HoldsRefreshToken {
+				t.Fatalf("open = %+v, %v; want a new session holding a refresh token", next, err)
+			}
+			// The new session has no hard expiry yet: AS-1 applies its maximum.
+			held, _ := identitybroker.SessionGrant(f.b, next.ID)
+			if want := f.clock.Now().Add(identityharness.DefaultGrantMaxLifetime); !held.ExpiresAt.Equal(want) {
+				t.Fatalf("new grant expires %v, want %v", held.ExpiresAt, want)
+			}
+		}},
+		{"a tokenless open", func(t *testing.T, f *openFixture, old identitybroker.Session, _ identitybroker.Token) {
+			next, err := f.open(openHost, old.Owner, identitybroker.Token{})
+			if err != nil || next.ID == old.ID || next.HoldsRefreshToken {
+				t.Fatalf("open = %+v, %v; want a new paired session", next, err)
+			}
+		}},
+		{"FindSession", func(t *testing.T, f *openFixture, _ identitybroker.Session, _ identitybroker.Token) {
+			if s, ok := f.find(t, openHost); ok {
+				t.Fatalf("FindSession = %+v, want none", s)
+			}
+		}},
+		{"RegisterAgent", func(t *testing.T, f *openFixture, old identitybroker.Session, _ identitybroker.Token) {
+			_, err := f.b.RegisterAgent(ctx, testWorkload, mainAgent(old))
+			wantError(t, err, identitybroker.CodeFailedPrecondition, identitybroker.ReasonSessionClosed)
+		}},
+		{"AuthorizeCall", func(t *testing.T, f *openFixture, old identitybroker.Session, cred identitybroker.Token) {
+			_, err := f.b.AuthorizeCall(ctx, testWorkload, identitybroker.AuthorizeCallRequest{
+				SessionID: old.ID, Credential: cred, OperationID: "op-1", Target: "gateway", Tool: "search",
+			})
+			wantError(t, err, identitybroker.CodeFailedPrecondition, identitybroker.ReasonSessionClosed, cred)
+		}},
+		{"VerifyCredential", func(t *testing.T, f *openFixture, old identitybroker.Session, cred identitybroker.Token) {
+			_, err := f.b.VerifyCredential(ctx, identitybroker.VerifyCredentialRequest{SessionID: old.ID, Credential: cred})
+			wantError(t, err, identitybroker.CodeFailedPrecondition, identitybroker.ReasonSessionClosed, cred)
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newOpenFixture(t)
+			old, err := f.open(openHost, f.owner(identityharness.Alice), f.token(identityharness.Alice))
+			if err != nil {
+				t.Fatal(err)
+			}
+			// Register just before the expiry, so the credential outlives it.
+			f.clock.Advance(identityharness.DefaultGrantMaxLifetime - 2*time.Minute)
+			reg, err := f.b.RegisterAgent(ctx, testWorkload, mainAgent(old))
+			if err != nil {
+				t.Fatalf("RegisterAgent before the expiry: %v", err)
+			}
+			f.clock.Advance(2 * time.Minute)
+
+			tt.lookup(t, f, old, reg.Credential)
+
+			if _, ok := identitybroker.SessionGrant(f.b, old.ID); ok {
+				t.Fatal("the expired session still holds a refresh token")
+			}
+			_, err = f.b.RegisterAgent(ctx, testWorkload, mainAgent(old))
+			wantError(t, err, identitybroker.CodeFailedPrecondition, identitybroker.ReasonSessionClosed)
+		})
+	}
+}
+
+// TestSessionWithoutARefreshTokenDoesNotExpire: a session that holds no
+// refresh token has no hard expiry.
+func TestSessionWithoutARefreshTokenDoesNotExpire(t *testing.T) {
 	f := newOpenFixture(t)
-	alice := f.owner(identityharness.Alice)
-	s, err := f.open(openHost, alice, f.token(identityharness.Alice))
+	s, err := f.open(openHost, f.owner(identityharness.Alice), identitybroker.Token{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.clock.Advance(identityharness.DefaultGrantMaxLifetime)
-	if found, _ := f.find(t, openHost); found.HoldsRefreshToken {
-		t.Fatal("an expired refresh token is reported as live")
+	f.clock.Advance(10 * identityharness.DefaultGrantMaxLifetime)
+	if found, ok := f.find(t, openHost); !ok || found.ID != s.ID {
+		t.Fatalf("FindSession = %+v, %v; want %+v", found, ok, s)
 	}
-	token := f.token(identityharness.Alice)
-	_, err = f.open(openHost, alice, token)
-	wantError(t, err, identitybroker.CodeFailedPrecondition, identitybroker.ReasonSessionClosed, token)
-	if f.attempts() != 1 {
-		t.Fatalf("%d exchanges, want none after the first", f.attempts()-1)
+	if _, err := f.b.RegisterAgent(context.Background(), testWorkload, mainAgent(s)); err != nil {
+		t.Fatalf("RegisterAgent: %v", err)
 	}
-	if _, ok := f.find(t, openHost); ok {
-		t.Fatal("the expired session is still open")
-	}
-	if _, ok := identitybroker.SessionGrant(f.b, s.ID); ok {
-		t.Fatal("the closed session still holds a refresh token")
-	}
-	next, err := f.open(openHost, alice, token)
-	if err != nil || next.ID == s.ID || !next.HoldsRefreshToken {
-		t.Fatalf("reopen = %+v, %v; want a new session holding a refresh token", next, err)
+}
+
+// mainAgent is the registration of s's main agent.
+func mainAgent(s identitybroker.Session) identitybroker.RegisterAgentRequest {
+	return identitybroker.RegisterAgentRequest{
+		SessionID: s.ID, HostSessionID: s.HostSessionID, Owner: s.Owner, Incarnation: s.Incarnation,
+		Definition: identitybroker.DefinitionRef{Name: "main"},
 	}
 }
 
@@ -591,6 +660,7 @@ func TestSessionOpenMapsAS1Refusals(t *testing.T) {
 		{"upstream_revoked", identityharness.Fault{Error: "invalid_request", Reason: "upstream_revoked"}, identitybroker.CodeUnauthenticated, identitybroker.ReasonUpstreamRevoked},
 		{"owner_action_required", identityharness.Fault{Error: "invalid_request", Reason: "owner_action_required"}, identitybroker.CodeUnauthenticated, identitybroker.ReasonOwnerActionRequired},
 		{"invalid_request with no reason", identityharness.Fault{Error: "invalid_request"}, identitybroker.CodeUnauthenticated, identitybroker.ReasonSubjectInvalid},
+		{"subject_invalid", identityharness.Fault{Error: "invalid_request", Reason: "subject_invalid"}, identitybroker.CodeUnauthenticated, identitybroker.ReasonSubjectInvalid},
 		{"503", identityharness.Fault{Status: 503}, identitybroker.CodeUnavailable, ""},
 		{"429", identityharness.Fault{Status: 429}, identitybroker.CodeUnavailable, ""},
 		{"server_error", identityharness.Fault{Status: 500, Error: "server_error"}, identitybroker.CodeUnavailable, ""},
@@ -1012,5 +1082,62 @@ func TestSessionOpensOfOneHostSessionAreSerialized(t *testing.T) {
 	}
 	if refs, ok := identitybroker.HostLockRefs(b, openHost); ok {
 		t.Fatalf("the host lock is still held by %d opens after every open finished", refs)
+	}
+}
+
+// TestSessionOpenSurvivesAPanickingAuthServer: a panic in the AuthServer
+// reaches the caller as an ordinary panic, with the broker's locks released.
+func TestSessionOpenSurvivesAPanickingAuthServer(t *testing.T) {
+	as1 := &fakeAS1{answer: func(context.Context, int) (identitybroker.TokenExchangeResult, error) {
+		panic("auth server bug")
+	}}
+	b := newBroker(t, identitybroker.WithAuthServer(as1))
+	identitybroker.SetClock(b, fixedNow)
+	ctx := context.Background()
+	req := identitybroker.OpenSessionRequest{HostSessionID: openHost, Incarnation: openIncarnation, Owner: testOwner}
+
+	withToken := req
+	withToken.AccessToken = unsignedToken(t, testOwner)
+	recovered := make(chan any, 1)
+	go func() {
+		defer func() { recovered <- recover() }()
+		_, _ = b.OpenSession(ctx, testWorkload, withToken)
+	}()
+	if got := receive(t, recovered); got != "auth server bug" {
+		t.Fatalf("recovered %v, want the AuthServer's panic", got)
+	}
+	if refs, ok := identitybroker.HostLockRefs(b, openHost); ok {
+		t.Fatalf("the host lock is still held by %d opens after the panic", refs)
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		done <- func() error {
+			s, err := b.OpenSession(ctx, testWorkload, req)
+			if err != nil {
+				return fmt.Errorf("OpenSession of the same host session: %w", err)
+			}
+			found, ok, err := b.FindSession(ctx, testWorkload, identitybroker.FindSessionRequest{RootHostSessionID: openHost})
+			if err != nil || !ok || found.ID != s.ID {
+				return fmt.Errorf("FindSession = %+v, %v, %v; want %+v", found, ok, err, s)
+			}
+			if err := b.CloseSession(ctx, testWorkload, identitybroker.CloseSessionRequest{SessionID: s.ID, Reason: identitybroker.ReasonSessionClosed}); err != nil {
+				return fmt.Errorf("CloseSession: %w", err)
+			}
+			other := req
+			other.HostSessionID = "hostS43"
+			if _, err := b.OpenSession(ctx, testWorkload, other); err != nil {
+				return fmt.Errorf("OpenSession of another host session: %w", err)
+			}
+			return nil
+		}()
+	}()
+	if err := receive(t, done); err != nil {
+		t.Fatal(err)
+	}
+	for _, host := range []string{openHost, "hostS43"} {
+		if refs, ok := identitybroker.HostLockRefs(b, host); ok {
+			t.Fatalf("the host lock of %s is still held by %d opens", host, refs)
+		}
 	}
 }
