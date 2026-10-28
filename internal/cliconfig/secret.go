@@ -28,13 +28,18 @@ var (
 )
 
 // SecretResolver exposes logical static credentials, never storage paths.
+// It is a startup-time lookup boundary for static MCP bearer credentials, not a
+// Mecatl-wide secret store: it provides no writes, OAuth lifecycle, or key custody.
+// Shared explicit and system-managed secret storage is tracked in
+// https://github.com/stacklok/mecatl/issues/2585.
 type SecretResolver interface {
 	Lookup(SecretKind, string) (string, error)
 }
 
-// CredentialSource owns path provenance, the shared file and the captured static
-// environment. Preliminary provider discovery may acquire the file; settings can
-// reselect it only before the authoritative provider/MCP view is finalized.
+// CredentialSource owns path provenance, the shared auth.yaml snapshot and the
+// captured static environment; it does not use keyring or external-store backends.
+// Preliminary provider discovery may acquire the file; settings can reselect it
+// only before the authoritative provider/MCP view is finalized.
 type CredentialSource struct {
 	mu            sync.Mutex
 	env           xdgconfig.ResolveEnv
