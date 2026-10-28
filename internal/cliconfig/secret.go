@@ -16,7 +16,7 @@ type SecretKind string
 const (
 	// MCPBearerSecret identifies static MCP bearer credentials.
 	MCPBearerSecret SecretKind = "mcp_bearer"
-	// SearchAPIKeySecret identifies optional built-in search API keys.
+	// SearchAPIKeySecret identifies optional search API keys.
 	SearchAPIKeySecret SecretKind = "search_api_key"
 )
 
@@ -28,8 +28,14 @@ var (
 	// ErrSecretSource reports an unavailable static credential source.
 	ErrSecretSource         = errors.New("static credential source unavailable")
 	explicitTokenEnvPattern = regexp.MustCompile(`^MECATL_[A-Z0-9_]+$`)
-	mcpSecretReference      = regexp.MustCompile(`^[a-z0-9_]+$`)
+	staticSecretReference   = regexp.MustCompile(`^[a-z0-9_]+$`)
 )
+
+var searchAPIKeyAliases = map[string]string{
+	"exa":       envExaKey,
+	"brave":     envBraveKey,
+	"websearch": envWebSearchKey,
+}
 
 // SecretResolver exposes logical static credentials, never storage paths.
 // It is a startup-time lookup boundary for search API keys and static MCP bearer
@@ -61,8 +67,8 @@ type CredentialSource struct {
 }
 
 // NewCredentialSource reuses a preliminary provider acquisition when available.
-// MCP environment values and absence are captured now; provider/search projections
-// retain their environment lookup at resolution time.
+// Canonical token environment values and absence are captured now; provider keys
+// and search aliases retain their environment lookup at resolution time.
 func NewCredentialSource(flags *ProviderFlags, preliminary ResolvedCredentials) *CredentialSource {
 	if preliminary.source != nil {
 		return preliminary.source
@@ -163,15 +169,21 @@ func (s *CredentialSource) Lookup(kind SecretKind, ref string) (string, error) {
 
 // lookupLocked shares kind-specific policy with preliminary/final projections
 // without finalizing preliminary discovery or recursively locking final resolution.
-// searchKey is read by the caller so projections retain their pre-acquisition
-// environment snapshot; MCP always uses its separately captured environment.
+// searchKey is the caller's pre-acquisition alias snapshot; canonical environment
+// values and absence are captured when the source is constructed.
 func (s *CredentialSource) lookupLocked(kind SecretKind, ref, searchKey string) (string, error) {
-	switch kind {
-	case SearchAPIKeySecret:
-		if searchAPIKeyEnv(ref) == "" {
-			return "", ErrSecretReference
+	name := secretTokenEnv(kind, ref)
+	if name == "" {
+		return "", ErrSecretReference
+	}
+	s.acquire()
+	if token, ok := s.LookupEnv(name); ok {
+		if kind == MCPBearerSecret && !validMCPBearer(token) {
+			return "", ErrSecretUnavailable
 		}
-		s.acquire()
+		return token, nil
+	}
+	if kind == SearchAPIKeySecret {
 		if searchKey != "" {
 			return searchKey, nil
 		}
@@ -180,19 +192,6 @@ func (s *CredentialSource) lookupLocked(kind SecretKind, ref, searchKey string) 
 			return "", ErrSecretSource
 		}
 		return s.file.SearchAPIKey(ref), nil
-	case MCPBearerSecret:
-		if !mcpSecretReference.MatchString(ref) {
-			return "", ErrSecretReference
-		}
-	default:
-		return "", ErrSecretReference
-	}
-	s.acquire()
-	if token, ok := s.LookupEnv("MECATL_MCP_TOKEN_" + strings.ToUpper(ref)); ok {
-		if !validMCPBearer(token) {
-			return "", ErrSecretUnavailable
-		}
-		return token, nil
 	}
 	if s.strictWarning != "" || s.file == nil {
 		return "", ErrSecretSource
@@ -204,17 +203,24 @@ func (s *CredentialSource) lookupLocked(kind SecretKind, ref, searchKey string) 
 	return token, nil
 }
 
-func searchAPIKeyEnv(ref string) string {
-	switch ref {
-	case "exa":
-		return envExaKey
-	case "brave":
-		return envBraveKey
-	case "websearch":
-		return envWebSearchKey
+func secretTokenEnv(kind SecretKind, ref string) string {
+	if !staticSecretReference.MatchString(ref) {
+		return ""
+	}
+	var namespace string
+	switch kind {
+	case MCPBearerSecret:
+		namespace = "MCP"
+	case SearchAPIKeySecret:
+		namespace = "SEARCH"
 	default:
 		return ""
 	}
+	return "MECATL_" + namespace + "_TOKEN_" + strings.ToUpper(ref)
+}
+
+func searchAPIKeyEnv(ref string) string {
+	return searchAPIKeyAliases[ref]
 }
 
 func validMCPBearer(token string) bool {

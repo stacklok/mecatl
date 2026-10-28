@@ -21,7 +21,7 @@ the client to the service and leaves server provider setup with its operator.
 
 Use `auth.yaml` to store model-provider and search API keys in an operator-owned
 file. The `providers:` mapping contains LLM credentials, and `search:` contains
-built-in search credentials:
+built-in search credentials and other search keys:
 
 ```yaml
 providers:
@@ -45,10 +45,32 @@ search:
     api_key: <WEBSEARCH_API_KEY>
 ```
 
-A matching API-key environment variable takes precedence over the file entry.
-The `exa` entry enables Exa's paid search tier; the `brave` entry selects Brave
-Search; and `websearch` supplies the credential for a configured generic HTTP
-endpoint. These keys do not satisfy the requirement for an LLM provider. See
+A matching model-provider API-key environment variable takes precedence over its
+file entry. Search and MCP credential IDs accept lowercase ASCII `[a-z0-9_]+`.
+Their canonical environment names use the uppercase ID:
+`MECATL_SEARCH_TOKEN_<ID>` and `MECATL_MCP_TOKEN_<ID>`. For example,
+`search.exa` maps to `MECATL_SEARCH_TOKEN_EXA`.
+
+Search lookup checks the canonical variable first, then a non-empty alias from
+the table below, then `search.<id>.api_key` in `auth.yaml`.
+
+| Search ID | Environment alias |
+| --- | --- |
+| `exa` | `EXA_API_KEY` |
+| `brave` | `BRAVE_API_KEY` |
+| `websearch` | `WEBSEARCH_API_KEY` |
+
+A present but empty canonical variable blocks alias and file fallback. For
+search, it supplies an empty key; an empty alias behaves as absent. MCP bearer
+credentials require a non-empty, valid header value; see
+[static bearer credentials](/features/security-and-execution/mcp-oauth-and-credentials.md#static-bearer-credentials).
+
+You can store and resolve other valid IDs under `search:` and `mcp:`, even when
+no configured component uses them. Adding a search credential does not register
+a search backend. The built-in `exa` entry enables Exa's paid search tier; the
+`brave` entry selects Brave Search; and `websearch` supplies the credential for
+a configured generic HTTP endpoint. These keys do not satisfy the requirement
+for an LLM provider. See
 [Configure web search](/features/sessions/tools.md#configure-web-search) for
 backend selection.
 

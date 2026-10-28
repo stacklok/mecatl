@@ -417,7 +417,7 @@ func validateMCPStaticBearer(profile permconfig.MCPServerProfile) error {
 	case decl == nil:
 	case (decl.TokenRef == "") == (decl.TokenEnv == ""):
 	case decl.TokenRef != "":
-		if mcpSecretReference.MatchString(decl.TokenRef) {
+		if staticSecretReference.MatchString(decl.TokenRef) {
 			return nil
 		}
 		field = "auth.static_bearer.token_ref"

@@ -256,7 +256,7 @@ func TestSearchSecretReferenceBoundary(t *testing.T) {
 	env := envWithAuth("/config/mecatl/auth.yaml", "")
 	env.ReadFile = func(string) ([]byte, error) { t.Fatal("invalid reference acquired file"); return nil, nil }
 	source := newCredentialSource(nil, env)
-	for _, ref := range []string{"", "Exa", "../exa", "exa-x", "é", "github", "EXA_API_KEY", "private-sentinel"} {
+	for _, ref := range []string{"", "Exa", "../exa", "exa-x", "é", "EXA_API_KEY", "private-sentinel"} {
 		key, err := source.Lookup(SearchAPIKeySecret, ref)
 		if key != "" || err != ErrSecretReference {
 			t.Fatal("invalid search reference did not return fixed diagnostic")

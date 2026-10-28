@@ -102,7 +102,7 @@ func TestMutateAuthPreservesStaticAPIKeyEntries(t *testing.T) {
 }
 
 func TestMutateAuthUpdatesCustomExaWithoutChangingSearchExa(t *testing.T) {
-	initial := "providers:\n  exa:\n    api_key: old-llm-key\nsearch:\n  exa:\n    api_key: search-key\n"
+	initial := "providers:\n  exa:\n    api_key: old-llm-key\nsearch:\n  exa:\n    api_key: search-key\n  custom_42:\n    api_key: unused-key\n"
 	newKey := "new-llm-key"
 	out, unchanged, err := mutateAuth([]byte(initial), APIKeyUpdate{Provider: "exa", APIKey: &newKey})
 	if err != nil || unchanged {
@@ -111,7 +111,7 @@ func TestMutateAuthUpdatesCustomExaWithoutChangingSearchExa(t *testing.T) {
 	dir := t.TempDir()
 	path := writeFile(t, dir, string(out), 0o600)
 	file, warning := Load(path, false, fakeEnv(dir), []string{"exa"})
-	if warning != "" || file == nil || file.APIKey("exa") != newKey || file.SearchAPIKey("exa") != "search-key" {
+	if warning != "" || file == nil || file.APIKey("exa") != newKey || file.SearchAPIKey("exa") != "search-key" || file.SearchAPIKey("custom_42") != "unused-key" {
 		t.Fatal("custom providers.exa update changed or consumed search.exa")
 	}
 }
@@ -119,7 +119,7 @@ func TestMutateAuthUpdatesCustomExaWithoutChangingSearchExa(t *testing.T) {
 func TestMutateAuthRejectsInvalidStaticAPIKeyEntries(t *testing.T) {
 	for name, document := range map[string]string{
 		"obsolete MCP token": "mcp:\n  context7:\n    token: old-token\n",
-		"invalid search ID":  "search:\n  unknown:\n    api_key: search-key\n",
+		"invalid search ID":  "search:\n  bad-id:\n    api_key: search-key\n",
 	} {
 		t.Run(name, func(t *testing.T) {
 			if err := validateAuthDocument([]byte(document)); err == nil {

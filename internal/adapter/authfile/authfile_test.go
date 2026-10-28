@@ -263,7 +263,7 @@ func TestStaticAPIKeySchemaRejectsInvalidEntriesWithoutLeakingContent(t *testing
 		"null":                  "search:\n  exa:\n    api_key: null\n",
 		"non-string":            "mcp:\n  valid:\n    api_key: 123\n",
 		"blank":                 "search:\n  exa:\n    api_key: '  '\n",
-		"invalid search ID":     "search:\n  invalid:\n    api_key: " + sentinel + "\n",
+		"invalid search ID":     "search:\n  bad-id:\n    api_key: " + sentinel + "\n",
 		"invalid MCP ID":        "mcp:\n  bad-id:\n    api_key: " + sentinel + "\n",
 		"duplicate ID":          "search:\n  exa:\n    api_key: " + sentinel + "\n  exa:\n    api_key: " + sentinel + "\n",
 		"duplicate MCP ID":      "mcp:\n  valid:\n    api_key: " + sentinel + "\n  valid:\n    api_key: " + sentinel + "\n",

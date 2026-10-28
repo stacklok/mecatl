@@ -132,9 +132,8 @@ func (pf *ProviderFlags) Resolve() ResolvedCredentials {
 }
 
 func (pf *ProviderFlags) resolve(env xdgconfig.ResolveEnv, now time.Time) ResolvedCredentials {
-	keys := readProviderKeys(env.Getenv)
-
 	source := newCredentialSource(pf, env)
+	keys := readProviderKeys(env.Getenv, source.LookupEnv)
 	source.mu.Lock()
 	defer source.mu.Unlock()
 	source.acquire()
@@ -196,7 +195,7 @@ func (s *CredentialSource) ResolveProviders(definitions permconfig.ProviderDefin
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.finalized = true
-	keys := readProviderKeys(s.env.Getenv)
+	keys := readProviderKeys(s.env.Getenv, s.LookupEnv)
 	keys.source = s
 	known := append([]string{}, knownAuthProviders...)
 	for id := range definitions {
@@ -290,19 +289,25 @@ func (pf *ProviderFlags) EndpointOverrides() permconfig.ProviderOverrides {
 // A caller that must account for auth.yaml should call ProviderFlags.Resolve instead.
 // The values are SECRET-shaped; callers must not log or print them.
 func ReadProviderKeys() ResolvedKeys {
-	return readProviderKeys(os.Getenv)
+	return readProviderKeys(os.Getenv, os.LookupEnv)
 }
 
-func readProviderKeys(getenv func(string) string) ResolvedCredentials {
+func readProviderKeys(getenv func(string) string, lookupEnv func(string) (string, bool)) ResolvedCredentials {
+	searchKey := func(ref string) string {
+		if key, ok := lookupEnv(secretTokenEnv(SearchAPIKeySecret, ref)); ok {
+			return key
+		}
+		return getenv(searchAPIKeyEnv(ref))
+	}
 	return ResolvedCredentials{
 		OpenAI:     getenv(envOpenAIKey),
 		OpenRouter: getenv(envOpenRouterKey),
 		Anthropic:  getenv(envAnthropicKey),
 		OpenCode:   getenv(envOpenCodeKey),
 		Typesafe:   getenv(envTypesafeKey),
-		Exa:        getenv(searchAPIKeyEnv("exa")),
-		Brave:      getenv(searchAPIKeyEnv("brave")),
-		WebSearch:  getenv(searchAPIKeyEnv("websearch")),
+		Exa:        searchKey("exa"),
+		Brave:      searchKey("brave"),
+		WebSearch:  searchKey("websearch"),
 	}
 }
 

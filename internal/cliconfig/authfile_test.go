@@ -59,6 +59,13 @@ func clearProviderEnv(t *testing.T) {
 	t.Setenv(envExaKey, "")
 	t.Setenv(envBraveKey, "")
 	t.Setenv(envWebSearchKey, "")
+	for _, ref := range []string{"exa", "brave", "websearch"} {
+		name := "MECATL_SEARCH_TOKEN_" + strings.ToUpper(ref)
+		t.Setenv(name, "")
+		if err := os.Unsetenv(name); err != nil {
+			t.Fatal(err)
+		}
+	}
 }
 
 func TestSearchCredentialLifecycle(t *testing.T) {

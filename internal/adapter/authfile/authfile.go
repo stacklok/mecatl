@@ -68,13 +68,7 @@ type File struct {
 	baseWarning string
 }
 
-var mcpCredentialID = regexp.MustCompile(`^[a-z0-9_]+$`)
-
-var searchCredentialIDs = map[string]bool{
-	"exa":       true,
-	"brave":     true,
-	"websearch": true,
-}
+var staticCredentialID = regexp.MustCompile(`^[a-z0-9_]+$`)
 
 type rawFile struct {
 	Providers map[string]rawProviderEntry `yaml:"providers"`
@@ -149,7 +143,7 @@ func (f *File) OAuth(name string) OAuthEntry {
 	return entry.oauth
 }
 
-// SearchAPIKey returns the api_key for the exact built-in search provider name,
+// SearchAPIKey returns the api_key for the exact lowercase search credential ID,
 // or "" if f is nil or has no entry. Valid API keys are returned unchanged.
 func (f *File) SearchAPIKey(name string) string {
 	if f == nil {
@@ -350,13 +344,7 @@ func validateStaticAPIKeyAuthSchema(node ast.Node) error {
 			return errors.New("auth root has duplicate static API-key schema")
 		}
 		seen[key] = true
-		if key == "search" {
-			if err := validateStaticAPIKeyMapping(entry.Value, "search", func(id string) bool { return searchCredentialIDs[id] }); err != nil {
-				return err
-			}
-			continue
-		}
-		if err := validateStaticAPIKeyMapping(entry.Value, "mcp", mcpCredentialID.MatchString); err != nil {
+		if err := validateStaticAPIKeyMapping(entry.Value, key); err != nil {
 			return err
 		}
 	}
@@ -396,12 +384,8 @@ func validateAuthSchema(node ast.Node) error {
 			if _, ok := entry.Value.(*ast.MappingNode); !ok {
 				return errors.New("auth providers must be a mapping")
 			}
-		case "search":
-			if err := validateStaticAPIKeyMapping(entry.Value, "search", func(id string) bool { return searchCredentialIDs[id] }); err != nil {
-				return err
-			}
-		case "mcp":
-			if err := validateStaticAPIKeyMapping(entry.Value, "mcp", mcpCredentialID.MatchString); err != nil {
+		case "search", "mcp":
+			if err := validateStaticAPIKeyMapping(entry.Value, key); err != nil {
 				return err
 			}
 		}
@@ -409,7 +393,7 @@ func validateAuthSchema(node ast.Node) error {
 	return nil
 }
 
-func validateStaticAPIKeyMapping(node ast.Node, namespace string, validID func(string) bool) error {
+func validateStaticAPIKeyMapping(node ast.Node, namespace string) error {
 	entries, ok := authMapping(node)
 	if !ok {
 		return fmt.Errorf("auth %s must be a mapping", namespace)
@@ -417,7 +401,7 @@ func validateStaticAPIKeyMapping(node ast.Node, namespace string, validID func(s
 	seen := map[string]bool{}
 	for _, entry := range entries.Values {
 		id, ok := authString(entry.Key)
-		if !ok || !validID(id) || seen[id] {
+		if !ok || !staticCredentialID.MatchString(id) || seen[id] {
 			return fmt.Errorf("auth %s contains an invalid or duplicate id", namespace)
 		}
 		seen[id] = true
