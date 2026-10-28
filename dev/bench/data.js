@@ -382119,6 +382119,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1793221124875,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "11a6a85a4454851cf77416a4c2505637c2d65bda",
+          "message": "feat(mecatui): bound schedule browsing on the shared surface (#2398)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-28T14:20:41-07:00",
+          "tree_id": "b5f962c6e7f2bcf1a150ae75fe5eb335b85db6ed",
+          "url": "https://github.com/stacklok/mecatl/commit/11a6a85a4454851cf77416a4c2505637c2d65bda"
+        },
+        "date": 1793223195256,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 16146,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12909,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 794,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -498437,6 +498476,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1793223191812,
+  "lastUpdate": 1793223195817,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
