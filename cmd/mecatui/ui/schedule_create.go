@@ -328,7 +328,7 @@ func (s *scheduleState) createLabel(idx int, text string) string {
 	return "  " + text
 }
 
-func (s *scheduleState) createFields(width, height int) (fields [][]string) {
+func (s *scheduleState) createFields(width, height, suggestionRows int) (fields [][]string) {
 	th, f := s.deps.theme, &s.form
 	text := lipgloss.NewStyle().Foreground(lipgloss.Color(th.Palette.Text))
 	muted := th.Style("muted")
@@ -354,7 +354,7 @@ func (s *scheduleState) createFields(width, height int) (fields [][]string) {
 	zoneStyles.Focused.Placeholder, zoneStyles.Blurred.Placeholder = text, text
 	zoneStyles.Cursor.Color = lipgloss.Color(th.Palette.Text)
 	f.timezone.SetStyles(zoneStyles)
-	f.timezone.SetGeometry(width-5, 3)
+	f.timezone.SetGeometry(width-5, suggestionRows)
 	name, timing := f.name.View(), f.trigger.View()
 	// Huh v2.0.3 only applies Input text styles to its focused Bubbles input.
 	// Project inactive values with the same theme rather than its fixed palette.
@@ -367,7 +367,13 @@ func (s *scheduleState) createFields(width, height int) (fields [][]string) {
 	fields = append(fields, []string{ansi.Truncate(name, width, "…")}, strings.Split(f.prompt.View(), "\n"), []string{ansi.Truncate(timing, width, "…")})
 	zone := []string{s.createLabel(scheduleTimezone, "Timezone"), "  " + f.timezone.InputView()}
 	if f.focusIdx == scheduleTimezone {
-		zone = append(zone, s.createSuggestions(3)...)
+		if height >= 24 {
+			zone = append(zone, "")
+		}
+		zone = append(zone, s.createSuggestions(suggestionRows)...)
+		if height >= 24 {
+			zone = append(zone, "")
+		}
 	}
 	fields = append(fields, zone)
 	checked := "[x]"
@@ -388,30 +394,36 @@ func (s *scheduleState) createStatus(width int) []string {
 	if s.pendingAction == "create" {
 		preview, err = f.submitted, nil
 	}
-	bottom := []string{}
+	button := "[Create]"
+	if err != nil || s.pendingAction != "" {
+		button = "[Create disabled]"
+	}
+	bottom := scheduleCreateLines(width, s.createLabel(scheduleCancel, "[Cancel]")+s.createLabel(scheduleSubmit, button))
+	bottom = append(bottom, "")
+	var information []string
 	if err != nil {
 		field := "Create disabled"
 		if e, ok := err.(*schedparse.ValidationError); ok {
 			field += " — " + e.Field
 		}
-		bottom = append(bottom, scheduleCreateText(width, field+": "+err.Error(), 2)...)
+		information = append(information, scheduleCreateText(width, field+": "+err.Error(), 2)...)
 	} else {
 		trigger := preview.Cron
 		if trigger == "" {
 			trigger = "instant " + preview.OneShot.Format(time.RFC3339)
 		}
-		bottom = append(bottom, scheduleCreateText(width, "Estimate: "+trigger, 1)...)
-		bottom = append(bottom, scheduleCreateText(width, "Next: "+preview.Next.Format("2006-01-02 15:04:05 -07:00")+" · "+preview.Timezone, 1)...)
+		information = append(information, scheduleCreateText(width, "Estimate: "+trigger, 1)...)
+		information = append(information, scheduleCreateText(width, "Next: "+preview.Next.Format("2006-01-02 15:04:05 -07:00")+" · "+preview.Timezone, 1)...)
 	}
-	bottom = append(bottom, scheduleCreateLines(width, s.createGuidance())...)
+	information = append(information, scheduleCreateLines(width, s.createGuidance())...)
+	for _, line := range information {
+		bottom = append(bottom, s.deps.theme.Style("muted").Render(line))
+	}
 	if s.actionErr != "" {
-		bottom = append(bottom, scheduleCreateText(width, "Last attempt: "+s.actionErr, 1)...)
+		for _, line := range scheduleCreateText(width, "Last attempt: "+s.actionErr, 1) {
+			bottom = append(bottom, s.deps.theme.Style("errorText").Render(line))
+		}
 	}
-	button := "[Create]"
-	if err != nil || s.pendingAction != "" {
-		button = "[Create disabled]"
-	}
-	bottom = append(bottom, scheduleCreateLines(width, s.createLabel(scheduleCancel, "[Cancel]")+s.createLabel(scheduleSubmit, button))...)
 	return bottom
 }
 
@@ -420,9 +432,13 @@ func (s *scheduleState) renderCreate(width, height int) (string, []ClickableRegi
 		return s.renderCompact(width)
 	}
 	f := &s.form
-	fields := s.createFields(width, height)
 	names := []string{"Name", "Prompt", "When", "Timezone", "Read-only", "Cancel", "Create"}
 	top := scheduleCreateLines(width, s.deps.theme.Style("title").Render(fmt.Sprintf("create schedule — %s (%d/%d)", names[f.focusIdx], f.focusIdx+1, scheduleControlCount)))
+	if height >= 18 {
+		top = append(top, "")
+	}
+	// Restore suggestion availability before deriving hints after a compact render.
+	f.timezone.SetGeometry(width-5, 6)
 	bottom := s.createStatus(width)
 	footer := scheduleCreateLines(width, s.createHints())
 	available := height - len(top) - len(bottom) - len(footer)
@@ -430,9 +446,17 @@ func (s *scheduleState) renderCreate(width, height int) (string, []ClickableRegi
 		f.timezone.SetGeometry(0, 0)
 		return s.renderCompact(width)
 	}
+	listOverhead := 2 // Timezone label and input.
+	if height >= 24 {
+		listOverhead += 2 // Space above and below suggestions.
+	}
+	fields := s.createFields(width, height, min(6, max(3, available-listOverhead)))
 	var content []string
 	start, end := 0, 0
 	for i, field := range fields {
+		if i > 0 && height >= 24 {
+			content = append(content, "")
+		}
 		if i == f.focusIdx {
 			start, end = len(content), len(content)+len(field)
 		}

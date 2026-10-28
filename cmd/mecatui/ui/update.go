@@ -2527,6 +2527,11 @@ func (m Model) applyModelsSurfaceIntent(intent surfaceIntent) (model tea.Model, 
 // active-session, startup, and maintenance effects owned by Model.
 func (m Model) applySessionsSurfaceIntent(intent surfaceIntent) (model tea.Model, cmd tea.Cmd, handled bool, stopSurfaceDispatch bool) {
 	switch intent := intent.(type) {
+	case sessionsReturnIntent:
+		m.closeModal()
+		m.modal = intent.target
+		m.phase = phaseIdle
+		return m, nil, true, true
 	case sessionsPhaseIntent:
 		switch intent.phase {
 		case sessionsIntentPhaseIdle:
@@ -2595,12 +2600,16 @@ func (m Model) applyToolcallsSurfaceIntent(intent surfaceIntent) bool {
 // effect takes over; handled=false never carries meaningful work.
 func (m Model) applySurfaceIntent(intent surfaceIntent) (model tea.Model, cmd tea.Cmd, stopSurfaceDispatch bool) {
 	if intent, ok := intent.(scheduleTranscriptIntent); ok {
-		m.closeModal()
+		previous := m.modal
 		mm, cmd, _ := m.loadSessionTranscript(client.SessionListItem{
 			ID: intent.sessionID, Kind: client.SessionKindScheduled,
 			Capabilities: client.SessionInventoryCapabilities{Inspect: true},
 		}, true)
-		return mm, cmd, true
+		m = mm.(Model)
+		if viewer, ok := m.modal.(*sessionsState); ok {
+			viewer.returnTo = previous
+		}
+		return m, cmd, true
 	}
 	if intent, ok := intent.(worktreeSelectIntent); ok {
 		if intent.sourceID != m.sessionID || m.phase != phaseIdle {

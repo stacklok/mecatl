@@ -55,6 +55,54 @@ func TestScheduleFillPlacementRetainsRootChrome(t *testing.T) {
 	}
 }
 
+func TestScheduleListsSeparateRowsFromInformation(t *testing.T) {
+	m, s := openedSchedule(t, &fakeScheduleLister{schedules: scheduleRows(1), fires: scheduleFires("schedule-00", 1)})
+	for _, view := range []scheduleView{schedulePanel, scheduleInspect} {
+		if view == scheduleInspect {
+			m = inspectSchedule(t, m)
+		}
+		body := stripANSIstr(m.View().Content)
+		lines := strings.Split(body, "\n")
+		selected := -1
+		for i, line := range lines {
+			if strings.HasPrefix(strings.TrimSpace(line), "▶") {
+				selected = i
+				break
+			}
+		}
+		list, _, _, _ := s.activeScheduleList()
+		rows := list.ViewWithIndicators(list.Height(), false).Rows
+		end := selected + len(rows)
+		if s.compact || selected < 1 || end >= len(lines) || strings.TrimSpace(lines[selected-1]) != "" || strings.TrimSpace(lines[end]) != "" {
+			t.Fatalf("view %d does not separate its list from information and hints:\n%s", view, body)
+		}
+	}
+}
+
+func TestScheduleListSpacingBudgetBoundary(t *testing.T) {
+	_, s := openedSchedule(t, &fakeScheduleLister{schedules: scheduleRows(10)})
+	title, footer := s.surfaceChrome()
+	chrome := len(s.surfacePrefix(s.deps.theme, title, 100)) + len(skillsTextLines(s.deps.theme.Style("muted"), footer, 100))
+	for _, budget := range []int{4, 5} {
+		body := scheduleBody(t, s, 100, chrome+budget)
+		rows := budget
+		if budget == 5 {
+			rows -= 2
+		}
+		if s.compact || s.rowBudgets[schedulePanel] != rows {
+			t.Fatalf("budget %d lost usable list geometry:\n%s", budget, body)
+		}
+		lines := strings.Split(body, "\n")
+		for i, line := range lines {
+			if strings.HasPrefix(strings.TrimSpace(line), "▶") {
+				if i == 0 || (strings.TrimSpace(lines[i-1]) == "") != (budget == 5) {
+					t.Fatalf("budget %d has incorrect decorative spacing:\n%s", budget, body)
+				}
+			}
+		}
+	}
+}
+
 func TestScheduleNavigationAndDetailsKeyPrecedence(t *testing.T) {
 	m, s := openedSchedule(t, &fakeScheduleLister{schedules: scheduleRows(60), fires: scheduleFires("schedule-00", 60)})
 	m.prompt.Rewrite("draft")
@@ -438,7 +486,7 @@ func TestScheduleWrappedContentReachable(t *testing.T) {
 	}
 }
 
-func TestScheduleCompactTranscriptCloseExitsSessions(t *testing.T) {
+func TestScheduleCompactTranscriptCloseReturnsToHistory(t *testing.T) {
 	m, s := openedSchedule(t, &fakeScheduleLister{schedules: scheduleRows(1), fires: scheduleFires("schedule-00", 1)})
 	m.deps.Transcript = &fakeSessionTranscriptLoader{}
 	m.deps.Sessions = &fakeSessionLister{}
@@ -452,8 +500,8 @@ func TestScheduleCompactTranscriptCloseExitsSessions(t *testing.T) {
 	}
 	m = applyAll(m, tea.WindowSizeMsg{Width: 0, Height: 0})
 	m = scheduleKey(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
-	if m.modal != nil || m.phase != phaseIdle || m.sessionID != active || m.prompt.Value() != "draft" {
-		t.Fatal("compact transcript Close did not exit non-destructively")
+	if m.modal != s || s.closed || s.view != scheduleInspect || s.runs.CursorID() != "fire-00" || m.phase != phaseIdle || m.sessionID != active || m.prompt.Value() != "draft" {
+		t.Fatal("compact transcript Close did not return to its schedule history non-destructively")
 	}
 }
 

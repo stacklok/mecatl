@@ -148,6 +148,22 @@ keep a concise status summary beside the history and put complete details in a
 separate scrollable view. Selection keys and wheel input operate only on the
 visible browsing region.
 
+Give selectable lists a blank row above and below their rows and overflow
+indicators so they read as a distinct interaction region. Include that spacing in
+the geometry budget; reduce decorative spacing before hiding useful content in
+small terminals. Inline search pickers should offer several choices at once.
+Budget enough rows for both matches and above/below indicators; a six-row window
+keeps multiple matches visible even with both indicators present.
+
+Keep persistent form controls together in traversal order, with Cancel and the
+explicit submit action directly after the last field. Place previews, explanatory
+text, and validation feedback below the actions, separated by a blank row. Use
+normal theme text for editable values, muted text for supporting information, and
+the error style for failed operations. Focus needs a non-color marker. At smaller
+sizes, scroll the field stack just enough to reveal the focused control while
+keeping actions and feedback visible; use a close-only fallback when the focused
+control cannot fit.
+
 List and inspector cards cap their outer width at 128 cells, permission cards at
 132, and inline tool cards at 100, or the available width if smaller. These are
 ceilings, not target sizes. Small finite pickers should prefer a content-sized

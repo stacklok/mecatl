@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -379,7 +380,7 @@ func TestScheduleCreatePopulatedGeometryAndErrorBounds(t *testing.T) {
 	m = schedulePaste(m, "America")
 	for _, size := range [][2]int{{100, 35}, {60, 40}, {38, 20}, {100, 8}, {0, 0}, {100, 35}} {
 		body := scheduleBody(t, s, size[0], size[1])
-		if size[0] >= 60 && size[1] >= 35 && (s.compact || !strings.Contains(body, "Try another name") || !strings.Contains(body, "…") || !strings.Contains(body, "Timezone:") || !strings.Contains(body, "suggestions") || strings.Count(body, "America/") > 5) {
+		if size[0] >= 60 && size[1] >= 35 && (s.compact || !strings.Contains(body, "Try another name") || !strings.Contains(body, "…") || !strings.Contains(body, "Timezone:") || !strings.Contains(body, "suggestions") || strings.Count(body, "America/") > 7) {
 			t.Fatalf("populated geometry hid bounded controls/help: %v\n%s", size, body)
 		}
 		if s.form.name.GetValue().(string) != strings.Repeat("界name", 50) || s.form.prompt.GetValue().(string) != strings.Repeat("界task\n", 100) || s.form.timezone.Query() != "America" || s.form.timezone.Value() != "" || s.form.focusIdx != scheduleTimezone {
@@ -440,8 +441,12 @@ func TestScheduleCreatePersistentFieldsAndAdjacentActions(t *testing.T) {
 		if strings.Index(body, "[Cancel]") > strings.Index(body, "[Create]") {
 			t.Fatal("actions are not in traversal order")
 		}
-		if row := strings.Count(body[:strings.Index(body, "[Cancel]")], "\n"); row > 20 {
-			t.Fatalf("actions pushed away from form to row %d", row)
+		lines := strings.Split(body, "\n")
+		actions := strings.Count(body[:strings.Index(body, "[Cancel]")], "\n")
+		readOnly := strings.Count(body[:strings.Index(body, "[x] Read-only")], "\n")
+		estimate := strings.Count(body[:strings.Index(body, "Estimate:")], "\n")
+		if actions != readOnly+1 || estimate != actions+2 || strings.TrimSpace(lines[actions+1]) != "" {
+			t.Fatalf("form actions are not grouped before separate information:\n%s", body)
 		}
 		if focus <= scheduleTiming && !strings.Contains(body, "┃") || focus >= scheduleTimezone && !strings.Contains(body, "▶") {
 			t.Fatal("focus has no non-color marker")
@@ -454,6 +459,56 @@ func TestScheduleCreatePersistentFieldsAndAdjacentActions(t *testing.T) {
 		m = scheduleKey(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
 		if s.form.focusIdx != (focus+1)%scheduleControlCount || fs.createCalls != 0 {
 			t.Fatal("Tab changed traversal order or submitted")
+		}
+	}
+}
+
+func TestScheduleCreateTimezoneListHasRoomAndSpacing(t *testing.T) {
+	m, s := openedSchedule(t, &fakeScheduleLister{})
+	m = applyAll(m, tea.WindowSizeMsg{Width: 100, Height: 50})
+	m = scheduleRune(t, m, "c")
+	m = scheduleFocus(t, m, s, scheduleTimezone)
+	m = schedulePaste(m, "America")
+	for range 20 {
+		m = scheduleKey(t, m, tea.KeyPressMsg{Code: tea.KeyUp})
+	}
+	body := stripANSIstr(m.View().Content)
+	view := s.form.timezone.View()
+	if s.compact || view.Above == 0 || view.Below == 0 || len(view.Rows) != 4 {
+		t.Fatalf("six-row timezone list must fit four matches plus both indicators: %+v\n%s", view, body)
+	}
+	lines := strings.Split(body, "\n")
+	above, below := -1, -1
+	for i, line := range lines {
+		if strings.TrimSpace(line) == fmt.Sprintf("↑ %d more", view.Above) {
+			above = i
+		}
+		if strings.TrimSpace(line) == fmt.Sprintf("↓ %d more", view.Below) {
+			below = i
+		}
+	}
+	if above < 1 || below != above+5 || below+1 >= len(lines) || strings.TrimSpace(lines[above-1]) != "" || strings.TrimSpace(lines[below+1]) != "" {
+		t.Fatalf("timezone choices lack space around their six-row region:\n%s", body)
+	}
+}
+
+func TestScheduleCreateTimezoneListAdaptsToSmallOffers(t *testing.T) {
+	m, s := openedSchedule(t, &fakeScheduleLister{})
+	m = scheduleRune(t, m, "c")
+	m = scheduleFocus(t, m, s, scheduleTimezone)
+	schedulePaste(m, "America")
+	for _, tc := range []struct{ height, rows int }{{12, 3}, {13, 4}, {14, 5}, {15, 6}, {23, 6}, {24, 6}} {
+		body := scheduleBody(t, s, 100, tc.height)
+		view := s.form.timezone.View()
+		rows := len(view.Rows)
+		if view.Above > 0 {
+			rows++
+		}
+		if view.Below > 0 {
+			rows++
+		}
+		if s.compact || rows != tc.rows || !strings.Contains(body, "▶ Timezone") || !strings.Contains(body, "[Cancel]") || !strings.Contains(body, "suggestions") {
+			t.Fatalf("height %d: want %d timezone rows with visible focus/actions/hints, got %d:\n%s", tc.height, tc.rows, rows, body)
 		}
 	}
 }

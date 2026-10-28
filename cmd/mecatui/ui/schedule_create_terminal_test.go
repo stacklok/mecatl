@@ -39,6 +39,24 @@ func TestScheduleCreateNormalTerminal(t *testing.T) {
 						t.Fatalf("%s focus %d: missing visible control %q:\n%s", state, s.form.focusIdx, text, plain)
 					}
 				}
+				bodyLines := strings.Split(plain, "\n")
+				for i, line := range bodyLines {
+					if strings.Contains(line, "[Cancel]") && (i+2 >= len(bodyLines) || strings.TrimSpace(bodyLines[i+1]) != "" || strings.TrimSpace(bodyLines[i+2]) == "") {
+						t.Fatal("form actions are not separated from the following information")
+					}
+					info := strings.TrimSpace(line)
+					style := s.deps.theme.Style("muted")
+					if strings.HasPrefix(info, "Last attempt:") {
+						style = s.deps.theme.Style("errorText")
+					} else if !strings.HasPrefix(info, "Estimate:") && !strings.HasPrefix(info, "Next:") && !strings.HasPrefix(info, "Create disabled —") {
+						continue
+					}
+					styled := style.Render(info)
+					prefix, _, _ := strings.Cut(styled, info)
+					if styled == stripANSIstr(styled) || !strings.Contains(frame, prefix+info) {
+						t.Fatalf("supporting information lost its semantic style: %q", info)
+					}
+				}
 				focused := []string{"┃ Name:", "┃ Prompt", "┃ When (e.g.", "▶ Timezone", "▶ [x] Read-only", "▶ [Cancel]", "▶ [Create"}[s.form.focusIdx]
 				if s.form.focusIdx == scheduleReadOnly && s.form.mutating {
 					focused = "▶ [ ] Read-only"

@@ -940,9 +940,9 @@ func TestSchedulePendingMutationAllowsNavigationAndKeepsError(t *testing.T) {
 func TestScheduleTranscriptHandoff(t *testing.T) {
 	for _, loadError := range []bool{false, true} {
 		t.Run(fmt.Sprint(loadError), func(t *testing.T) {
-			fs := &fakeScheduleLister{schedules: []client.Schedule{sampleSchedule("nightly")}, fires: scheduleFires("nightly", 3)}
+			fs := &fakeScheduleLister{schedules: []client.Schedule{sampleSchedule("nightly")}, fires: scheduleFires("nightly", 40)}
 			m, s := openedSchedule(t, fs)
-			loader := &fakeSessionTranscriptLoader{transcript: client.SessionTranscript{SessionID: "session-01", Complete: true, Messages: []client.ConversationMessage{{Role: "assistant", Text: "scheduled output"}}}}
+			loader := &fakeSessionTranscriptLoader{transcript: client.SessionTranscript{SessionID: "session-25", Complete: true, Messages: []client.ConversationMessage{{Role: "assistant", Text: "scheduled output"}}}}
 			if loadError {
 				loader.err = errors.New("load failed")
 			}
@@ -952,19 +952,27 @@ func TestScheduleTranscriptHandoff(t *testing.T) {
 			m.prompt.Rewrite("keep my draft")
 			m.conv.addUser("active conversation")
 			activeID, chat := m.sessionID, m.rend.renderConversation(&m.conv, false)
+			m = scheduleRune(t, m, "/")
+			m = schedulePaste(m, "night")
+			m = scheduleKey(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
 			m = inspectSchedule(t, m)
-			s.runs.SetCursor(1)
+			s.runs.SetCursor(25)
+			_ = m.View()
+			selected, offset := s.runs.CursorID(), s.runs.Offset()
+			if offset == 0 {
+				t.Fatal("fixture did not scroll the run list")
+			}
 			late := scheduleMessages(s.inspectCmd())
 			// Resolve the current reads, then activate through Update, not a direct helper.
 			m = applyAll(m, late...)
 			mm, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 			m = mm.(Model)
 			replacement, ok := m.modal.(*sessionsState)
-			if !ok || !s.closed || m.phase != phaseReplay {
-				t.Fatal("generic close killed replacement Sessions")
+			if !ok || s.closed || replacement.returnTo != s || m.phase != phaseReplay {
+				t.Fatal("transcript handoff discarded its originating schedule browser")
 			}
 			m = feedCmd(t, m, cmd)
-			if len(loader.calls) != 1 || loader.calls[0] != "session-01" || (replacement.loadErr != nil) != loadError {
+			if len(loader.calls) != 1 || loader.calls[0] != "session-25" || (replacement.loadErr != nil) != loadError {
 				t.Fatal("wrong transcript target/result")
 			}
 			m = applyAll(m, late...)
@@ -972,8 +980,11 @@ func TestScheduleTranscriptHandoff(t *testing.T) {
 				t.Fatal("late Schedule result killed Sessions")
 			}
 			m = scheduleKey(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
-			if m.modal != replacement || replacement.view != sessionsPanel || replacement.loading || len(replacement.sessions) != 1 {
-				t.Fatalf("Back did not populate usable Sessions inventory: %+v", replacement)
+			if m.modal != s || s.closed || s.view != scheduleInspect || s.runs.CursorID() != selected || s.runs.Offset() != offset || s.filter.Value() != "night" {
+				t.Fatal("Back did not restore the originating schedule, run selection, window and filter")
+			}
+			if inventory.calls != 0 || replacement.returnTo != nil {
+				t.Fatal("Back opened Sessions inventory or retained duplicate ownership of Schedule")
 			}
 			if m.phase != phaseIdle || m.sessionID != activeID || m.prompt.Value() != "keep my draft" || m.rend.renderConversation(&m.conv, false) != chat {
 				t.Fatal("inspection rebound/changed active chat or draft")
@@ -981,6 +992,135 @@ func TestScheduleTranscriptHandoff(t *testing.T) {
 		})
 	}
 }
+func TestScheduleTranscriptBackBeforeLoadAndAfterResize(t *testing.T) {
+	for _, compact := range []bool{false, true} {
+		t.Run(fmt.Sprint(compact), func(t *testing.T) {
+			fs := &fakeScheduleLister{schedules: []client.Schedule{sampleSchedule("A")}, fires: scheduleFires("A", 1)}
+			m, s := openedSchedule(t, fs)
+			loader := &fakeSessionTranscriptLoader{transcript: client.SessionTranscript{SessionID: "session-00", Complete: true}}
+			m.deps.Transcript = loader
+			s.transcriptWired = true
+			m = inspectSchedule(t, m)
+			mm, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+			m = mm.(Model)
+			old := scheduleMessages(cmd)
+			if compact {
+				m = applyAll(m, tea.WindowSizeMsg{Width: 0, Height: 0})
+			}
+			m = scheduleKey(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
+			m = applyAll(m, old...)
+			if m.modal != s || s.closed || s.view != scheduleInspect || m.phase != phaseIdle {
+				t.Fatal("Back while loading or compact did not restore Schedule, or a late result replaced it")
+			}
+			m = applyAll(m, tea.WindowSizeMsg{Width: 100, Height: 40})
+			mm, reopen := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+			m = mm.(Model)
+			viewer := m.modal.(*sessionsState)
+			m = applyAll(m, old...)
+			if !viewer.loading || viewer.returnTo != s {
+				t.Fatal("a prior transcript receipt hydrated the reopened viewer")
+			}
+			m = feedCmd(t, m, reopen)
+			if viewer.loading || viewer.loadErr != nil || len(loader.calls) != 2 || loader.calls[1] != "session-00" {
+				t.Fatal("reopening did not load the same selected run")
+			}
+			m.closeModal()
+			if !s.closed || viewer.returnTo != nil {
+				t.Fatal("closing the transcript externally leaked its retained browser")
+			}
+		})
+	}
+}
+
+type retainedBrowserSpy struct {
+	surface
+	messages []tea.Msg
+}
+
+func (s *retainedBrowserSpy) HandleMsg(msg tea.Msg) (tea.Cmd, bool, bool) {
+	s.messages = append(s.messages, msg)
+	return s.surface.HandleMsg(msg)
+}
+
+func TestScheduleTranscriptDoesNotForwardHiddenInput(t *testing.T) {
+	m, s := openedSchedule(t, &fakeScheduleLister{schedules: []client.Schedule{sampleSchedule("A")}, fires: scheduleFires("A", 1)})
+	m.deps.Transcript = &fakeSessionTranscriptLoader{}
+	s.transcriptWired = true
+	m.prompt.Rewrite("draft")
+	m = inspectSchedule(t, m)
+	m = inspectSchedule(t, m)
+	viewer := m.modal.(*sessionsState)
+	spy := &retainedBrowserSpy{surface: s}
+	viewer.returnTo = spy
+	for _, input := range []tea.Msg{
+		tea.PasteMsg{Content: "hidden paste"},
+		surfaceHitMsg{},
+		scheduleEditorMsg{owner: s, generation: s.editorGeneration, view: s.view, msg: tea.PasteMsg{Content: "hidden widget input"}},
+	} {
+		cmd, handled, closed := viewer.HandleMsg(input)
+		if cmd != nil || handled || closed || len(spy.messages) != 0 {
+			t.Fatalf("transcript forwarded hidden input %T", input)
+		}
+		m = applyAll(m, input)
+		if len(spy.messages) != 0 || m.prompt.Value() != "draft" || s.filter.Value() != "" || len(m.stagedPastes)+len(m.stagedMedia) != 0 {
+			t.Fatalf("input %T reached the hidden browser or active chat draft", input)
+		}
+	}
+	viewer.HandleMsg(struct{}{})
+	if len(spy.messages) != 1 {
+		t.Fatal("positive control did not forward a non-input message to the retained browser")
+	}
+}
+
+func TestScheduleTranscriptReturnRespectsKeyBindings(t *testing.T) {
+	for _, tc := range []struct {
+		name                      string
+		closeKeys                 []string
+		expand, compact, returned bool
+	}{
+		{name: "remapped", closeKeys: []string{"q"}, returned: true},
+		{name: "disabled"},
+		{name: "shared-expand", closeKeys: []string{"q"}, expand: true},
+		{name: "compact-close", closeKeys: []string{"q"}, expand: true, compact: true, returned: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			keys := applyKeyOverrides(defaultKeys(), map[string][]string{"Close": tc.closeKeys})
+			if tc.expand {
+				keys = applyKeyOverrides(keys, map[string][]string{"ExpandConversation": {"q"}})
+			}
+			viewer := &sessionsState{view: sessionsTranscript, returnTo: &bodyOwnerTestSurface{}, compact: tc.compact, deps: surfaceDeps{keys: keys}}
+			viewer.HandleKey(navigationTestKey("q"))
+			_, returned := viewer.takeSurfaceIntent().(sessionsReturnIntent)
+			if returned != tc.returned || !returned && tc.expand && !viewer.transcriptExpand {
+				t.Fatal("transcript return changed captured Close/Expand precedence")
+			}
+		})
+	}
+}
+
+func TestScheduleTranscriptKeepsPendingBrowserMutation(t *testing.T) {
+	fs := &fakeScheduleLister{schedules: []client.Schedule{sampleSchedule("A")}, fires: scheduleFires("A", 1)}
+	m, s := openedSchedule(t, fs)
+	m.deps.Transcript = &fakeSessionTranscriptLoader{transcript: client.SessionTranscript{SessionID: "session-00", Complete: true}}
+	s.transcriptWired = true
+	fs.fireID = "pending-fire"
+	mm, fire := m.Update(navigationTestKey("f"))
+	m = inspectSchedule(t, mm.(Model))
+	m = inspectSchedule(t, m)
+	viewer := m.modal.(*sessionsState)
+	if s.pendingAction == "" {
+		t.Fatal("fixture did not leave a pending browser operation")
+	}
+	m = feedCmd(t, m, fire)
+	if m.modal != viewer || s.pendingAction != "" || s.notice == "" || fs.fireCalls != 1 {
+		t.Fatal("transcript viewer dropped or navigated away for the browser's mutation receipt")
+	}
+	m = scheduleKey(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
+	if m.modal != s || s.closed || !strings.Contains(scheduleBody(t, s, 100, 30), "pending-fire") {
+		t.Fatal("Back lost the completed browser operation")
+	}
+}
+
 func TestScheduleTranscriptMissingAndCompact(t *testing.T) {
 	for _, missing := range []string{"loader", "session", "compact"} {
 		t.Run(missing, func(t *testing.T) {

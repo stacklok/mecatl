@@ -136,6 +136,11 @@ type sessionsPhaseIntent struct {
 
 func (sessionsPhaseIntent) isSurfaceIntent() {}
 
+// Return transfers the originating browser back to the Model.
+type sessionsReturnIntent struct{ target surface }
+
+func (sessionsReturnIntent) isSurfaceIntent() {}
+
 type sessionsCleanupJobIntent struct {
 	jobID string
 }
@@ -359,6 +364,7 @@ type sessionsState struct {
 	clipboard                     client.Clipboard
 	actionRequestToken            uint64
 	intent                        surfaceIntent
+	returnTo                      surface // retained browser while inspecting its transcript
 }
 
 func (*sessionsState) modalPlacement() modalPlacement {
@@ -390,7 +396,17 @@ func (s *sessionsState) Render(width, height int) (string, []ClickableRegion) {
 	return renderSessionsPanelSized(s.deps.theme, s, s.deps.caps, s.deps.marks, width, height, s.activeSessionID), nil
 }
 
+func (s *sessionsState) isTranscriptReturnKey(msg tea.KeyPressMsg) bool {
+	return s.view == sessionsTranscript && s.returnTo != nil && key.Matches(msg, s.deps.keys.Close) &&
+		(s.compact || !key.Matches(msg, s.deps.keys.ExpandConversation))
+}
+
 func (s *sessionsState) HandleKey(msg tea.KeyPressMsg) (tea.Cmd, bool, bool) {
+	if s.isTranscriptReturnKey(msg) {
+		s.intent = sessionsReturnIntent{target: s.returnTo}
+		s.returnTo = nil
+		return nil, true, false
+	}
 	if s.compact {
 		if key.Matches(msg, s.deps.keys.Close) {
 			if s.view == sessionsTranscript {
@@ -810,6 +826,15 @@ func (s *sessionsState) HandleMsg(msg tea.Msg) (tea.Cmd, bool, bool) {
 	case cleanupJobMsg:
 		s.handleCleanupJob(msg)
 	default:
+		if s.returnTo != nil {
+			switch msg.(type) {
+			case surfaceInputMsg, surfaceHitMsg, tea.PasteMsg:
+				return nil, false, false
+			default:
+				// Keep outstanding browser operations current without routing input there.
+				return s.returnTo.HandleMsg(msg)
+			}
+		}
 		return nil, false, false
 	}
 	return nil, true, false
@@ -917,6 +942,10 @@ func (s *sessionsState) refreshTranscriptInventory() tea.Cmd {
 }
 
 func (s *sessionsState) Close() {
+	if s.returnTo != nil {
+		s.returnTo.Close()
+		s.returnTo = nil
+	}
 	if s.pageCancel != nil {
 		s.pageCancel()
 	}

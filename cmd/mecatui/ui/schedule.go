@@ -614,6 +614,11 @@ func (s *scheduleState) renderSurface(width, height int, reveal bool) (string, [
 	prefix = s.appendSurfaceStatus(th, prefix, width)
 	foot := skillsTextLines(th.Style("muted"), footer, width)
 	rows := height - len(prefix) - len(foot)
+	if s.view != scheduleDetails && rows >= 5 {
+		prefix = append(prefix, "")
+		foot = append([]string{""}, foot...)
+		rows -= 2
+	}
 	if width < 4 || rows < 1 {
 		return s.renderCompact(width)
 	}
