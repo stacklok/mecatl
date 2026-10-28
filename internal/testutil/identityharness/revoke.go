@@ -5,12 +5,12 @@ import "net/http"
 // RevocationEndpoint is AS-1's RFC 7009 revocation endpoint.
 func (a *AS1) RevocationEndpoint() string { return a.Issuer() + "/revoke" }
 
-// revoke is an RFC 7009 revocation endpoint for session refresh tokens.
+// revoke is an RFC 7009 revocation endpoint for grant refresh tokens.
 //
-// Guess: only the authenticated broker may call it. Revoking the session's
-// current refresh token closes the session (design step (3): revoking RT-A42
-// closes A42); revoking a replaced token or any other value changes nothing
-// and, as RFC 7009 §2.2 requires for an invalid token, still answers 200.
+// Guess: only the authenticated broker may call it. Revoking a grant's
+// refresh token revokes the grant, so a later use gets revoked; any other
+// value changes nothing and, as RFC 7009 §2.2 requires for an invalid token,
+// still answers 200.
 func (a *AS1) revoke(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
 		writeOAuthError(w, http.StatusBadRequest, "invalid_request", "")
@@ -26,10 +26,8 @@ func (a *AS1) revoke(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.mu.Lock()
-	if rec, ok := a.sessionTokens[token]; ok && rec.clientID == BrokerClientID {
-		if s := a.sessionLocked(rec.session); s.current == token {
-			s.closed = true
-		}
+	if g, ok := a.grants[token]; ok && g.clientID == BrokerClientID {
+		g.revoked = true
 	}
 	a.mu.Unlock()
 	w.Header().Set("Cache-Control", "no-store")

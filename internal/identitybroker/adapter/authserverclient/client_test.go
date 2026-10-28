@@ -151,12 +151,12 @@ func (f *fixture) client(t *testing.T, r *recorder, edit func(*authserverclient.
 	return c
 }
 
-// sessionOpenForm is a session-open exchange (design step (3)) for Alice's
-// session A42, without client authentication.
-func (f *fixture) sessionOpenForm(t *testing.T, accessToken string) url.Values {
+// sessionOpenForm is a session-open exchange (design step (3)): one
+// exchange-grant entry listing only id-jag, without client authentication.
+func (*fixture) sessionOpenForm(t *testing.T, accessToken string) url.Values {
 	t.Helper()
-	details, err := json.Marshal([]identityharness.SessionDetails{{
-		Type: identityharness.SessionDetailsType, Session: "A42", Owner: f.h.Owner(identityharness.Alice),
+	details, err := json.Marshal([]identityharness.ExchangeGrant{{
+		Type: identityharness.ExchangeGrantType, IssuableTokenTypes: []string{identityharness.TokenTypeIDJAG},
 	}})
 	if err != nil {
 		t.Fatal(err)
@@ -221,11 +221,11 @@ func TestSessionOpenAuthenticatesWithTheBrokerKey(t *testing.T) {
 		t.Fatalf("Token: %v", err)
 	}
 	if res.RefreshToken == "" || res.IssuedTokenType != tokenTypeRefresh {
-		t.Fatalf("result = %+v, want a session refresh token", res)
+		t.Fatalf("result = %+v, want a grant refresh token", res)
 	}
-	grant, ok := f.h.AS1.SessionRefreshToken(res.RefreshToken)
-	if !ok || grant.ClientID != identityharness.BrokerClientID || !grant.Active {
-		t.Fatalf("grant = %+v, %v; want an active grant to %s", grant, ok, identityharness.BrokerClientID)
+	grant, ok := f.h.AS1.Grant(res.RefreshToken)
+	if !ok || grant.ClientID != identityharness.BrokerClientID || grant.Output != identityharness.TokenTypeIDJAG || !grant.Active {
+		t.Fatalf("grant = %+v, %v; want an active id-jag grant to %s", grant, ok, identityharness.BrokerClientID)
 	}
 	// Check what AS-1 received, not the signer's output.
 	received := f.h.AS1.ReceivedClientAssertions()
@@ -256,8 +256,8 @@ func TestRevocationAuthenticates(t *testing.T) {
 	if err := c.Revoke(t.Context(), url.Values{"token": {res.RefreshToken}, "token_type_hint": {"refresh_token"}}); err != nil {
 		t.Fatalf("Revoke: %v", err)
 	}
-	if !f.h.AS1.SessionClosed("A42") {
-		t.Fatal("revoking the session refresh token did not close A42")
+	if grant, _ := f.h.AS1.Grant(res.RefreshToken); grant.Active || grant.Reason != "revoked" {
+		t.Fatalf("grant = %+v after revocation, want revoked", grant)
 	}
 }
 
@@ -339,32 +339,79 @@ func TestLeakedAccessTokenWithoutTheBrokerKeyIsRefused(t *testing.T) {
 			}
 		})
 	}
-	if f.h.AS1.SessionRefreshTokensIssued("A42") != 0 {
-		t.Fatal("AS-1 issued a session refresh token for a leaked access token")
+	if f.h.AS1.GrantsIssued() != 0 {
+		t.Fatal("AS-1 issued a grant for a leaked access token")
 	}
 }
 
-func TestRetryAfterLostResponseUsesANewAssertion(t *testing.T) {
+// TestResendAfterProcessedRequestGetsTokenUsed: after a lost session-open
+// response from a request AS-1 processed, the one resend of the same request
+// is refused with token_used, and a retry with a fresh access token converts.
+// Every attempt carries a new assertion and jti.
+func TestResendAfterProcessedRequestGetsTokenUsed(t *testing.T) {
 	f := newFixture(t, fixtureOptions{})
 	r := &recorder{}
 	c := f.client(t, r, nil)
 	form := f.sessionOpenForm(t, f.aliceToken())
-	f.h.AS1.LoseNextSessionOpenResponse()
+	f.h.AS1.LoseNextExchangeResponse()
 	err := c.Token(t.Context(), form, &sessionOpenResult{})
 	if !errors.Is(err, identitybroker.ErrNoResponse) || !identitybroker.IsUnavailable(err) || identitybroker.IsConfigurationFault(err) {
 		t.Fatalf("lost response: %v, want ErrNoResponse classified unavailable", err)
 	}
 	assertNoSecrets(t, err, append(values(r.all()), form.Get("subject_token"))...)
+
+	err = c.Token(t.Context(), form, &sessionOpenResult{})
+	var oe *identitybroker.ServerRefusal
+	if !errors.As(err, &oe) || *oe != (identitybroker.ServerRefusal{Status: http.StatusBadRequest, Code: "invalid_request", Reason: "token_used"}) {
+		t.Fatalf("resend with the same access token = %v, want 400 invalid_request token_used", err)
+	}
+	if identitybroker.IsConfigurationFault(err) || identitybroker.IsUnavailable(err) {
+		t.Fatalf("%v is classified; token_used is for the caller to map", err)
+	}
+
 	var res sessionOpenResult
-	if err := c.Token(t.Context(), form, &res); err != nil {
-		t.Fatalf("retry: %v", err)
+	if err := c.Token(t.Context(), f.sessionOpenForm(t, f.aliceToken()), &res); err != nil {
+		t.Fatalf("retry with a fresh access token: %v", err)
 	}
 	minted := r.all()
-	if len(minted) != 2 || minted[0].Value() == minted[1].Value() || claims(t, minted[0])["jti"] == claims(t, minted[1])["jti"] {
-		t.Fatal("the retry did not send a new assertion with a new jti")
+	if len(minted) != 3 {
+		t.Fatalf("minted %d assertions, want one per attempt", len(minted))
 	}
-	if grant, ok := f.h.AS1.SessionRefreshToken(res.RefreshToken); !ok || !grant.Active {
-		t.Fatalf("retry grant = %+v, %v; want active", grant, ok)
+	jtis := map[any]bool{}
+	for _, a := range minted {
+		jtis[claims(t, a)["jti"]] = true
+	}
+	if len(jtis) != 3 {
+		t.Fatal("the attempts did not each send a new assertion with a new jti")
+	}
+	if grant, ok := f.h.AS1.Grant(res.RefreshToken); !ok || !grant.Active || f.h.AS1.GrantsIssued() != 2 {
+		t.Fatalf("retry grant = %+v, %v, %d issued; want an active grant beside the orphan", grant, ok, f.h.AS1.GrantsIssued())
+	}
+}
+
+// TestResendAfterUnprocessedRequestSucceeds: a session open lost before AS-1
+// processed it is resent once with the same access token and a new
+// assertion, and converts.
+func TestResendAfterUnprocessedRequestSucceeds(t *testing.T) {
+	f := newFixture(t, fixtureOptions{})
+	r := &recorder{}
+	c := f.client(t, r, nil)
+	form := f.sessionOpenForm(t, f.aliceToken())
+	f.h.AS1.DropNextExchange()
+	err := c.Token(t.Context(), form, &sessionOpenResult{})
+	if !errors.Is(err, identitybroker.ErrNoResponse) || !identitybroker.IsUnavailable(err) {
+		t.Fatalf("dropped request: %v, want ErrNoResponse classified unavailable", err)
+	}
+	var res sessionOpenResult
+	if err := c.Token(t.Context(), form, &res); err != nil {
+		t.Fatalf("resend with the same access token: %v", err)
+	}
+	minted := r.all()
+	if len(minted) != 2 || claims(t, minted[0])["jti"] == claims(t, minted[1])["jti"] {
+		t.Fatal("the resend did not send a new assertion with a new jti")
+	}
+	if grant, ok := f.h.AS1.Grant(res.RefreshToken); !ok || !grant.Active || f.h.AS1.GrantsIssued() != 1 {
+		t.Fatalf("resend grant = %+v, %v, %d issued; want one active grant", grant, ok, f.h.AS1.GrantsIssued())
 	}
 }
 
@@ -400,26 +447,31 @@ func TestServerErrorsAreClassified(t *testing.T) {
 	f := newFixture(t, fixtureOptions{})
 	c := f.client(t, &recorder{}, nil)
 
-	f.h.AS1.FailNextSessionOpen(identityharness.Fault{Status: http.StatusServiceUnavailable, Error: "temporarily_unavailable"})
+	f.h.AS1.FailNextExchange(identityharness.Fault{Status: http.StatusServiceUnavailable, Error: "temporarily_unavailable"})
 	err := c.Token(t.Context(), f.sessionOpenForm(t, f.aliceToken()), &sessionOpenResult{})
 	if !identitybroker.IsUnavailable(err) || identitybroker.IsConfigurationFault(err) {
 		t.Fatalf("503 = %v, want unavailable only", err)
 	}
 
-	f.h.AS1.FailNextSessionOpen(identityharness.Fault{Error: "invalid_request", Reason: "session_closed"})
+	f.h.AS1.FailNextExchange(identityharness.Fault{Error: "invalid_request", Reason: "revoked"})
 	err = c.Token(t.Context(), f.sessionOpenForm(t, f.aliceToken()), &sessionOpenResult{})
 	var oe *identitybroker.ServerRefusal
-	if !errors.As(err, &oe) || *oe != (identitybroker.ServerRefusal{Status: http.StatusBadRequest, Code: "invalid_request", Reason: "session_closed"}) {
-		t.Fatalf("refusal = %#v, want 400 invalid_request session_closed", err)
+	if !errors.As(err, &oe) || *oe != (identitybroker.ServerRefusal{Status: http.StatusBadRequest, Code: "invalid_request", Reason: "revoked"}) {
+		t.Fatalf("refusal = %#v, want 400 invalid_request revoked", err)
 	}
 	if identitybroker.IsConfigurationFault(err) || identitybroker.IsUnavailable(err) {
 		t.Fatalf("%v is classified; a reason code is for the caller to map", err)
 	}
 
-	// A real refusal from AS-1's own checks: a token that is not AS-1's.
+	// A real refusal from AS-1's own checks: a token that is not AS-1's gets
+	// invalid_request with no reason. The client stays generic and reports a
+	// configuration fault; session open maps it to subject_invalid first.
 	err = c.Token(t.Context(), f.sessionOpenForm(t, "not-a-token"), &sessionOpenResult{})
-	if !errors.As(err, &oe) || oe.Code != "invalid_request" || oe.Reason != "subject_invalid" {
-		t.Fatalf("refusal = %v, want invalid_request subject_invalid", err)
+	if !errors.As(err, &oe) || *oe != (identitybroker.ServerRefusal{Status: http.StatusBadRequest, Code: "invalid_request"}) {
+		t.Fatalf("refusal = %v, want 400 invalid_request with no reason", err)
+	}
+	if !identitybroker.IsConfigurationFault(err) || identitybroker.IsUnavailable(err) {
+		t.Fatalf("%v: want a configuration fault only", err)
 	}
 
 	for _, tt := range []struct {
@@ -429,10 +481,12 @@ func TestServerErrorsAreClassified(t *testing.T) {
 		{identityharness.Fault{Error: "invalid_request"}, true, false},
 		{identityharness.Fault{Status: http.StatusUnauthorized, Error: "invalid_client", Reason: "denied"}, true, false},
 		{identityharness.Fault{Error: "unauthorized_client", Reason: "denied"}, true, false},
-		{identityharness.Fault{Error: "invalid_request", Reason: "owner_mismatch"}, false, false},
+		{identityharness.Fault{Error: "invalid_request", Reason: "parent_revoked"}, false, false},
+		{identityharness.Fault{Error: "invalid_request", Reason: "not_issuable"}, false, false},
+		{identityharness.Fault{Error: "invalid_request", Reason: "superseded"}, true, false},
 		{identityharness.Fault{Status: http.StatusServiceUnavailable, Error: "invalid_client"}, false, true},
 	} {
-		f.h.AS1.FailNextSessionOpen(tt.fault)
+		f.h.AS1.FailNextExchange(tt.fault)
 		err = c.Token(t.Context(), f.sessionOpenForm(t, f.aliceToken()), &sessionOpenResult{})
 		if !errors.As(err, &oe) || identitybroker.IsConfigurationFault(err) != tt.config || identitybroker.IsUnavailable(err) != tt.unavailable {
 			t.Errorf("%+v: %v; want configuration fault %v, unavailable %v", tt.fault, err, tt.config, tt.unavailable)

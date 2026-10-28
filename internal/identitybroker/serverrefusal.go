@@ -25,12 +25,17 @@ var knownErrorCodes = map[string]bool{
 }
 
 // knownReasons are the reason codes of the design's error reasons
-// (docs/drafts/agent-identity/credentials-and-lifecycle.md).
+// (docs/drafts/agent-identity/credentials-and-lifecycle.md). AS-1 returns
+// only token_used, revoked, parent_revoked, and not_issuable for grants;
+// subject_invalid, owner_mismatch, session_owned, session_closed, and
+// schedule_ended are the broker's own, kept so a server sending one is not
+// taken for a configuration fault.
 var knownReasons = map[string]bool{
 	"subject_invalid": true, "token_used": true, "owner_mismatch": true,
 	"session_owned": true, "session_closed": true, "signed_out": true,
 	"upstream_revoked": true, "schedule_ended": true, "owner_action_required": true,
-	"superseded": true, "svid_expired": true, "denied": true,
+	"revoked": true, "parent_revoked": true, "not_issuable": true,
+	"svid_expired": true, "denied": true,
 	"consent_required": true, "invalid_assertion": true,
 }
 
@@ -41,7 +46,10 @@ var transientStatuses = map[int]bool{429: true, 502: true, 503: true, 504: true}
 // ErrNoResponse reports a token or revocation endpoint request to AS-1 or
 // AS-2 that got no response, such as a dropped connection: the server may or
 // may not have processed it. Callers may retry once, with a new client
-// assertion.
+// assertion. At session open the retry resends the same access token: if AS-1
+// had converted it, the resend is refused with token_used and the client must
+// refresh its access token and open again (design step (3), "Lost
+// response"), which applies to a 502 or 504 there too.
 var ErrNoResponse = errors.New("identitybroker: no response from the authorization server")
 
 // ErrTransportConfiguration reports a request to AS-1 or AS-2 that failed
@@ -101,7 +109,10 @@ func (r *ServerRefusal) Error() string {
 // convention, such as prose, counts as no reason. A transient refusal (see
 // IsUnavailable) never is. A failed client authentication is always
 // invalid_client. A caller needing a reason-specific outcome, such as an
-// AS-2 invalid_grant with no reason, checks the ServerRefusal first.
+// AS-2 invalid_grant with no reason, checks the ServerRefusal first. Session
+// open does: AS-1 refuses an unacceptable access token with invalid_request
+// and no reason, which session open reports as subject_invalid before asking
+// IsConfigurationFault (design step (3)).
 func IsConfigurationFault(err error) bool {
 	if errors.Is(err, ErrTransportConfiguration) {
 		return true
