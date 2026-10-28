@@ -626,7 +626,10 @@
 #|                 read_only: true
 #|     # Global mode additionally supports static_bearer and OIDC identity profiles:
 #|     # static_bearer:
-#|     #   token_env: MECATL_MCP_STATIC_TOKEN
+#|     #   # MECATL_MCP_TOKEN_GITHUB wins over auth.yaml mcp.github.token:
+#|     #   token_ref: github
+#|     #   # Deprecated alternative (use exactly one selector):
+#|     #   # token_env: MECATL_MCP_STATIC_TOKEN
 #|     # profile: work
 #|     # principal: alice@example.com
 #|     # issuer: https://id.example.com

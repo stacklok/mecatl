@@ -1197,6 +1197,9 @@ func microVMReadyRequest(egress ...microvmmanager.GuestEgressSelection) (microvm
 
 func appConfig(cfg config, sink port.EventSink, recorder port.ToolCallRecorder, roleScoper func(string) (port.EventSink, port.ToolCallRecorder), metrics *telemetry.Metrics, diag port.Diagnostics) app.Config {
 	nativeEndpointLoader := &cliconfig.NativeEndpointLoader{}
+	credentialSource := cliconfig.NewCredentialSource(cfg.providerFlags, cfg.providerCredentials)
+	mcpLoader := cliconfig.NewMCPProfileResolver(cfg.mcpServers, os.LookupEnv, credentialSource)
+	mcpLoader.SetDiagnostics(diag)
 	out := app.Config{
 		Workspace:             cfg.workspace,
 		DefaultPlacement:      cfg.defaultPlacement,
@@ -1315,14 +1318,14 @@ func appConfig(cfg config, sink port.EventSink, recorder port.ToolCallRecorder, 
 		ForkPreservedCap:           cfg.forkPreservedCap,
 		EnableTeams:                cfg.enableTeams,
 		MCPServers:                 cfg.mcpServers.Servers(),
-		MCPProfileLoader:           cliconfig.NewMCPProfileResolver(cfg.mcpServers, os.LookupEnv),
+		MCPProfileLoader:           mcpLoader,
 		// Route mcp.mode through the canonical authority resolver. Broker stays
 		// opt-in so an omitted mode and an empty MCP configuration retain the
 		// existing global/no-broker behavior.
-		MCPAuthorityLoader:                cliconfig.NewMCPProfileResolver(cfg.mcpServers, os.LookupEnv),
+		MCPAuthorityLoader:                mcpLoader,
 		MCPAuthorityDefault:               mcpauthority.Global,
 		MCPBrokerSupported:                true,
-		ProviderCredentialLoader:          cliconfig.NewProviderCredentialResolver(cfg.providerFlags, cfg.providerCredentials),
+		ProviderCredentialLoader:          cliconfig.NewProviderCredentialResolver(credentialSource, cfg.providerCredentials),
 		NativeEndpointCredentialLoader:    nativeEndpointLoader,
 		NativeEndpointCredentialLifecycle: nativeEndpointLoader,
 		ProviderOverrides:                 cfg.providerFlags.EndpointOverrides(),

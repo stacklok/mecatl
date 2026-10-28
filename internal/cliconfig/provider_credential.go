@@ -5,72 +5,65 @@ import (
 	"sort"
 
 	"github.com/stacklok/mecatl/internal/adapter/permconfig"
-	"github.com/stacklok/mecatl/internal/adapter/xdgconfig"
 	"github.com/stacklok/mecatl/internal/app"
 )
 
-// ProviderCredentialResolver adapts the command root's one immutable credential
-// snapshot to app.Build's composition-owned provider-credential seam.
+// ProviderCredentialResolver projects providers from the shared source owner.
 type ProviderCredentialResolver struct {
-	flags *ProviderFlags
-	keys  ResolvedCredentials
+	source *CredentialSource
+	keys   ResolvedCredentials
 }
 
-// NewProviderCredentialResolver constructs a loader over an already-resolved command
-// snapshot. Load performs no filesystem or environment I/O.
-func NewProviderCredentialResolver(flags *ProviderFlags, keys ResolvedCredentials) *ProviderCredentialResolver {
-	return &ProviderCredentialResolver{flags: flags, keys: keys}
+// NewProviderCredentialResolver returns a resolver backed by source and keys.
+func NewProviderCredentialResolver(source *CredentialSource, keys ResolvedCredentials) *ProviderCredentialResolver {
+	return &ProviderCredentialResolver{source: source, keys: keys}
 }
 
-// SetAPIKeyFile applies the composition-resolved credential_store.api_key.file.
+// SetAPIKeyFile selects the auth file before credentials are loaded.
 func (r *ProviderCredentialResolver) SetAPIKeyFile(path string) {
-	if r == nil || r.flags == nil {
-		return
-	}
-	r.flags.SetAPIKeyFile(path)
+	r.source.SetAPIKeyFile(path)
 }
 
-// Load validates custom auth IDs only after Build has resolved the operator
-// definitions, then returns a detached immutable-by-convention credential snapshot.
+// Load resolves credentials for the given provider definitions.
 func (r *ProviderCredentialResolver) Load(definitions permconfig.ProviderDefinitions) (app.ProviderCredentials, interface{ Close() error }, error) {
+	s := r.source
+	s.mu.Lock()
+	s.finalized = true
+	reselected := s.reselected
+	s.mu.Unlock()
 	keys := r.keys
-	if r.flags != nil && r.flags.apiKeyFile != "" {
+	if reselected || keys.source == nil {
 		var err error
-		keys, err = ResolveProviderCredentials(r.flags, definitions, xdgconfig.OSEnv)
+		keys, err = s.ResolveProviders(definitions)
 		if err != nil {
 			return app.ProviderCredentials{}, nil, err
 		}
 	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.acquire()
 	known := append([]string{}, knownAuthProviders...)
 	for id := range definitions {
 		known = append(known, id)
 	}
 	sort.Strings(known)
-	if len(definitions) > 0 && r.flags != nil && r.flags.authSnapshotReady && r.flags.authSnapshot == nil && r.flags.authSnapshotWarn != "" {
-		return app.ProviderCredentials{}, nil, errors.New(r.flags.authSnapshotWarn)
+	if len(definitions) > 0 && s.file == nil && s.warning != "" {
+		return app.ProviderCredentials{}, nil, errors.New(s.warning)
 	}
-	if r.flags != nil && r.flags.authSnapshotReady && r.flags.authSnapshot != nil {
-		if warning := r.flags.authSnapshot.ValidateKnown(known); warning != "" {
-			return app.ProviderCredentials{}, nil, errors.New(warning)
-		}
+	if warning := s.file.ValidateKnown(known); warning != "" {
+		s.strictWarning = joinCredentialWarnings(s.strictWarning, warning)
+		return app.ProviderCredentials{}, nil, errors.New(warning)
 	}
-
 	credentials := app.ProviderCredentials{
-		ExaAPIKey:       keys.Exa,
-		BraveAPIKey:     keys.Brave,
-		WebSearchAPIKey: keys.WebSearch,
-		OpenAIKey:       keys.OpenAI, OpenRouterKey: keys.OpenRouter,
+		ExaAPIKey: keys.Exa, BraveAPIKey: keys.Brave, WebSearchAPIKey: keys.WebSearch,
+		OpenAIKey: keys.OpenAI, OpenRouterKey: keys.OpenRouter,
 		AnthropicKey: keys.Anthropic, OpenCodeKey: keys.OpenCode,
 		OpenAICodexCredential: keys.OpenAICodex,
 		CustomProviderAPIKeys: make(map[string]string, len(definitions)),
 	}
 	for id, definition := range definitions {
 		if definition.Auth.Method == "api_key" {
-			key := keys.CustomAPIKey(id)
-			if key == "" && r.flags != nil && r.flags.authSnapshot != nil {
-				key = r.flags.authSnapshot.APIKey(id)
-			}
-			if key != "" {
+			if key := s.file.APIKey(id); key != "" {
 				credentials.CustomProviderAPIKeys[id] = key
 			}
 		}

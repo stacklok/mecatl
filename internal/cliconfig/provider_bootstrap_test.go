@@ -44,7 +44,7 @@ func testProviderCredentialsRoots(t *testing.T) {
 			}
 			flags := &ProviderFlags{}
 			keys := flags.resolve(env, time.Time{})
-			loader := NewProviderCredentialResolver(flags, keys)
+			loader := NewProviderCredentialResolver(NewCredentialSource(flags, keys), keys)
 			profile, lifecycle, err := loader.Load(definitions)
 			if err != nil {
 				t.Fatal(err)

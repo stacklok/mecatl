@@ -11,6 +11,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/internal/adapter/mcp"
 	"github.com/stacklok/mecatl/internal/adapter/permconfig"
 	"github.com/stacklok/mecatl/internal/adapter/slogdiag"
@@ -197,21 +198,28 @@ func loadMCPLoginProfiles(explicit []string) (*cliconfig.MCPProfiles, error) {
 }
 
 func loadMCPLoginProfilesSelected(explicit []string, selected string) (*cliconfig.MCPProfiles, error) {
-	return loadMCPLoginProfilesWithCustodyMode(explicit, selected, false)
+	return loadMCPLoginProfilesWithCustodyMode(explicit, selected, false, slogdiag.NewText(os.Stderr))
 }
 
-func loadMCPLoginProfilesForLogin(explicit []string, selected string) (*cliconfig.MCPProfiles, error) {
-	return loadMCPLoginProfilesWithCustodyMode(explicit, selected, true)
+func loadMCPLoginProfilesForLogin(explicit []string, selected string, diagnostics port.Diagnostics) (*cliconfig.MCPProfiles, error) {
+	return loadMCPLoginProfilesWithCustodyMode(explicit, selected, true, diagnostics)
 }
 
-func loadMCPLoginProfilesWithCustodyMode(explicit []string, selected string, initializeNative bool) (*cliconfig.MCPProfiles, error) {
+func loadMCPLoginProfilesWithCustodyMode(explicit []string, selected string, initializeNative bool, diagnostics port.Diagnostics) (*cliconfig.MCPProfiles, error) {
 	resolver := permconfig.NewWithEnv(permconfig.Options{Conventional: true, ExplicitFiles: explicit}, xdgconfig.OSEnv)
 	var operator *permconfig.MCPSection
 	if resolver != nil {
 		operator = resolver.OperatorMCP()
 	}
+	source := cliconfig.NewCredentialSource(nil, cliconfig.ResolvedCredentials{})
+	if resolver != nil {
+		if store := resolver.OperatorCredentialStore(); store != nil && store.APIKey != nil {
+			source.SetAPIKeyFile(store.APIKey.File)
+		}
+	}
 	return cliconfig.LoadMCPProfiles(cliconfig.MCPProfileLoadOptions{
 		Operator: operator, LookupEnv: os.LookupEnv, SelectedName: selected,
+		Secrets: source, StaticEnv: source.LookupEnv, Diagnostics: diagnostics,
 		InitializeNativeCustody: initializeNative,
 	})
 }
@@ -303,7 +311,7 @@ func runMCPLoginContext(ctx context.Context, args []string, stdout io.Writer, st
 	if parsed.file != "" {
 		explicit = []string{path}
 	}
-	profiles, err := loadMCPLoginProfilesForLogin(explicit, parsed.server)
+	profiles, err := loadMCPLoginProfilesForLogin(explicit, parsed.server, slogdiag.NewText(diagnosticOut))
 	if err != nil {
 		if parsed.file != "" || len(parsed.permissionConfigs) > 0 {
 			return mcpLoginSourceRemedy(err, parsed.server, sources)

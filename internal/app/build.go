@@ -1845,6 +1845,47 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	if learningErr != nil {
 		return nil, learningErr
 	}
+	// Finalize the shared auth-file source before MCP resolves logical references.
+	for _, loader := range []any{cfg.MCPProfileLoader, cfg.MCPAuthorityLoader} {
+		if receiver, ok := loader.(interface{ SetDiagnostics(port.Diagnostics) }); ok {
+			receiver.SetDiagnostics(cfg.diag())
+		}
+	}
+	definitions := cfg.ProviderDefinitions
+	if resolver, ok := cfg.permResolver.(*permconfig.Resolver); ok {
+		var err error
+		var settingsOverrides permconfig.ProviderOverrides
+		definitions, settingsOverrides, err = resolver.OperatorProviders()
+		if err != nil {
+			return nil, err
+		}
+		cfg.ProviderDefinitions = definitions
+		cfg.ProviderOverrides = mergeProviderOverrides(settingsOverrides, cfg.ProviderOverrides)
+		if store := resolver.OperatorCredentialStore(); store != nil && store.APIKey != nil {
+			if loader, ok := cfg.ProviderCredentialLoader.(providerCredentialFileSetter); ok {
+				loader.SetAPIKeyFile(store.APIKey.File)
+			}
+		}
+	}
+	if cfg.ProviderCredentialLoader != nil {
+		credentials, lifecycle, err := cfg.ProviderCredentialLoader.Load(definitions)
+		if err != nil {
+			return nil, err
+		}
+		cfg.CustomProviderAPIKeys = credentials.CustomProviderAPIKeys
+		cfg.ExaAPIKey = credentials.ExaAPIKey
+		cfg.BraveAPIKey = credentials.BraveAPIKey
+		cfg.WebSearchAPIKey = credentials.WebSearchAPIKey
+		cfg.OpenAIKey = credentials.OpenAIKey
+		cfg.OpenRouterKey = credentials.OpenRouterKey
+		cfg.AnthropicKey = credentials.AnthropicKey
+		cfg.OpenCodeKey = credentials.OpenCodeKey
+		cfg.OpenAICodexCredential = credentials.OpenAICodexCredential
+		cfg.UseOpenAI = cfg.UseOpenAI || credentials.OpenAIKey != ""
+		cfg.ProviderCredentialLifecycle = lifecycle
+		providerCredentialLifecycle = lifecycle
+	}
+
 	if resolver, ok := cfg.permResolver.(*permconfig.Resolver); ok {
 		if cfg.MCPAuthorityLoader != nil {
 			authority, err := cfg.MCPAuthorityLoader.LoadAuthority(resolver.OperatorMCP(), cfg.MCPAuthorityDefault, cfg.MCPBrokerSupported)
@@ -1891,41 +1932,6 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	}
 	if err := validateMCPAuthority(cfg); err != nil {
 		return nil, err
-	}
-
-	definitions := cfg.ProviderDefinitions
-	if resolver, ok := cfg.permResolver.(*permconfig.Resolver); ok {
-		var err error
-		var settingsOverrides permconfig.ProviderOverrides
-		definitions, settingsOverrides, err = resolver.OperatorProviders()
-		if err != nil {
-			return nil, err
-		}
-		cfg.ProviderDefinitions = definitions
-		cfg.ProviderOverrides = mergeProviderOverrides(settingsOverrides, cfg.ProviderOverrides)
-		if store := resolver.OperatorCredentialStore(); store != nil && store.APIKey != nil {
-			if loader, ok := cfg.ProviderCredentialLoader.(providerCredentialFileSetter); ok {
-				loader.SetAPIKeyFile(store.APIKey.File)
-			}
-		}
-	}
-	if cfg.ProviderCredentialLoader != nil {
-		credentials, lifecycle, err := cfg.ProviderCredentialLoader.Load(definitions)
-		if err != nil {
-			return nil, err
-		}
-		cfg.CustomProviderAPIKeys = credentials.CustomProviderAPIKeys
-		cfg.ExaAPIKey = credentials.ExaAPIKey
-		cfg.BraveAPIKey = credentials.BraveAPIKey
-		cfg.WebSearchAPIKey = credentials.WebSearchAPIKey
-		cfg.OpenAIKey = credentials.OpenAIKey
-		cfg.OpenRouterKey = credentials.OpenRouterKey
-		cfg.AnthropicKey = credentials.AnthropicKey
-		cfg.OpenCodeKey = credentials.OpenCodeKey
-		cfg.OpenAICodexCredential = credentials.OpenAICodexCredential
-		cfg.UseOpenAI = cfg.UseOpenAI || credentials.OpenAIKey != ""
-		cfg.ProviderCredentialLifecycle = lifecycle
-		providerCredentialLifecycle = lifecycle
 	}
 
 	// Guardrails operator-tier config (issue #27, decision 3): fold the user-global +

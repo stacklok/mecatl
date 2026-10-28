@@ -74,7 +74,7 @@ var DefaultProviderFlagHelp = ProviderFlagHelp{
 	OpenRouterBaseURL: "override the OpenRouter API base URL (default https://openrouter.ai/api/v1; key from OPENROUTER_API_KEY)",
 	AnthropicBaseURL:  "override the native Anthropic API base URL (compatible/proxy endpoints; key from ANTHROPIC_API_KEY)",
 	OpenCodeBaseURL:   "override the OpenCode Go API base URL (default https://opencode.ai/zen/go/v1; key from OPENCODE_API_KEY)",
-	AuthFile:          "provider credentials YAML path (default: $XDG_CONFIG_HOME/mecatl/auth.yaml); environment credentials take precedence",
+	AuthFile:          "provider and MCP credentials YAML path (default: $XDG_CONFIG_HOME/mecatl/auth.yaml); provider environment credentials take precedence",
 }
 
 // ProviderFlags holds the values bound by RegisterProviderFlags. The base-URL fields
@@ -90,10 +90,6 @@ type ProviderFlags struct {
 	anthropicBaseURL  *string
 	openCodeBaseURL   *string
 	authFile          *string
-	authSnapshot      *authfile.File
-	authSnapshotReady bool
-	authSnapshotWarn  string
-	apiKeyFile        string
 }
 
 // RegisterProviderFlags registers --openai-base-url / --openrouter-base-url /
@@ -139,22 +135,10 @@ func (pf *ProviderFlags) Resolve() ResolvedCredentials {
 func (pf *ProviderFlags) resolve(env xdgconfig.ResolveEnv, now time.Time) ResolvedCredentials {
 	keys := readProviderKeys(env.Getenv)
 
-	explicitPath := ""
-	if pf != nil {
-		explicitPath = value(pf.authFile)
-	}
-	path := explicitPath
-	if path == "" && pf != nil {
-		path = pf.apiKeyFile
-	}
-	if path == "" {
-		path = authfile.DefaultPath(env)
-	}
-	configuredPath := explicitPath != "" || (pf != nil && pf.apiKeyFile != "")
-	af, warning := authfile.Load(path, configuredPath, env, nil)
-	if pf != nil {
-		pf.authSnapshot, pf.authSnapshotReady, pf.authSnapshotWarn = af, true, warning
-	}
+	source := newCredentialSource(pf, env)
+	source.acquire()
+	af, warning, path := source.file, source.warning, source.path
+	keys.source = source
 	keys.AuthFileWarning = warning
 	keys.OpenAI = cmp.Or(keys.OpenAI, af.APIKey("openai"))
 	keys.OpenRouter = cmp.Or(keys.OpenRouter, af.APIKey("openrouter"))
@@ -197,38 +181,34 @@ func HasOperatorProviderDefinitions(conventional, importClaude bool, files []str
 // a resolved operator provider definition set. Custom credentials come only from
 // auth.yaml; they deliberately have no environment fallback.
 func ResolveProviderCredentials(pf *ProviderFlags, definitions permconfig.ProviderDefinitions, env xdgconfig.ResolveEnv) (ResolvedCredentials, error) {
-	var keys ResolvedCredentials
-	if pf != nil {
-		keys = readProviderKeys(env.Getenv)
+	source := newCredentialSource(pf, env)
+	if pf == nil {
+		// A nil flags input requests file-only provider inspection.
+		source.env.Getenv = func(string) string { return "" }
 	}
-	path, explicit := authfile.DefaultPath(env), false
-	if pf != nil && value(pf.authFile) != "" {
-		path, explicit = value(pf.authFile), true
-	} else if pf != nil && pf.apiKeyFile != "" {
-		path, explicit = pf.apiKeyFile, true
-	}
+	return source.ResolveProviders(definitions)
+}
+
+// ResolveProviders projects provider credentials from the finalized shared file.
+func (s *CredentialSource) ResolveProviders(definitions permconfig.ProviderDefinitions) (ResolvedCredentials, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.finalized = true
+	keys := readProviderKeys(s.env.Getenv)
+	keys.source = s
 	known := append([]string{}, knownAuthProviders...)
 	for id := range definitions {
 		known = append(known, id)
 	}
 	sort.Strings(known)
-	var file *authfile.File
-	if pf != nil && pf.authSnapshotReady {
-		file = pf.authSnapshot
-		if file != nil {
-			if warning := file.ValidateKnown(known); warning != "" {
-				return ResolvedCredentials{}, errors.New(warning)
-			}
-		}
-		if file == nil && pf.authSnapshotWarn != "" {
-			return ResolvedCredentials{}, errors.New(pf.authSnapshotWarn)
-		}
-	} else {
-		var err error
-		file, err = authfile.LoadStrict(path, explicit, env, known)
-		if err != nil {
-			return ResolvedCredentials{}, err
-		}
+	s.acquire()
+	file, path := s.file, s.path
+	warning := file.ValidateKnown(known)
+	if warning != "" {
+		s.strictWarning = joinCredentialWarnings(s.strictWarning, warning)
+	}
+	if s.strictWarning != "" {
+		return ResolvedCredentials{}, errors.New(s.strictWarning)
 	}
 	keys.OpenAI = cmp.Or(keys.OpenAI, file.APIKey("openai"))
 	keys.OpenRouter = cmp.Or(keys.OpenRouter, file.APIKey("openrouter"))
@@ -249,19 +229,6 @@ func ResolveProviderCredentials(pf *ProviderFlags, definitions permconfig.Provid
 	return keys, nil
 }
 
-// SetAPIKeyFile applies the operator-configured API-key file unless the command
-// line already selected one. It is called by composition after operator settings
-// are resolved and before the immutable credential snapshot is loaded.
-func (pf *ProviderFlags) SetAPIKeyFile(path string) {
-	if pf == nil || value(pf.authFile) != "" {
-		return
-	}
-	pf.apiKeyFile = path
-	pf.authSnapshot = nil
-	pf.authSnapshotReady = false
-	pf.authSnapshotWarn = ""
-}
-
 // AuthFilePath reports the path Resolve would inspect and whether it came from
 // --api-key-file. It exposes path provenance without exposing credentials so a
 // command-specific startup policy can decide how to present a conventional
@@ -269,9 +236,6 @@ func (pf *ProviderFlags) SetAPIKeyFile(path string) {
 func (pf *ProviderFlags) AuthFilePath() (path string, explicit bool) {
 	if pf != nil && value(pf.authFile) != "" {
 		return value(pf.authFile), true
-	}
-	if pf != nil && pf.apiKeyFile != "" {
-		return pf.apiKeyFile, true
 	}
 	return authfile.DefaultPath(xdgconfig.OSEnv), false
 }
@@ -343,6 +307,7 @@ func readProviderKeys(getenv func(string) string) ResolvedCredentials {
 // environment and auth.yaml. API-key fields are SECRET-shaped: callers
 // must not log or print them.
 type ResolvedCredentials struct {
+	source     *CredentialSource
 	OpenAI     string
 	OpenRouter string
 	Anthropic  string

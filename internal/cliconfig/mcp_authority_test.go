@@ -150,7 +150,7 @@ func TestMCPAuthorityRootDefaultsAndExplicitSelection(t *testing.T) {
 	}
 }
 
-func TestMCPAuthorityBrokerIsExclusiveAndRejectsLegacy(t *testing.T) {
+func TestMCPAuthorityBrokerIsExclusiveAndRejectsCLIServers(t *testing.T) {
 	route := permconfig.MCPServerProfile{Name: "public", URL: "https://public.example/mcp", Auth: permconfig.MCPAuthProfile{Mode: "none"}}
 	got, err := ResolveMCPAuthority(MCPAuthorityOptions{Operator: &permconfig.MCPSection{Mode: "broker", Servers: []permconfig.MCPServerProfile{route}}, DefaultMode: mcpauthority.Global, BrokerSupported: true})
 	if err != nil {
@@ -163,9 +163,9 @@ func TestMCPAuthorityBrokerIsExclusiveAndRejectsLegacy(t *testing.T) {
 	if _, _, ok := got.Global(); ok {
 		t.Fatal("broker authority exposed global payload")
 	}
-	legacy := &MCPServerList{entries: []mcpServerEntry{{}}}
-	if _, err := ResolveMCPAuthority(MCPAuthorityOptions{Operator: &permconfig.MCPSection{Mode: "broker"}, Legacy: legacy, DefaultMode: mcpauthority.Global, BrokerSupported: true}); !errors.Is(err, ErrMCPProfileInvalid) {
-		t.Fatalf("legacy conflict error = %v", err)
+	cliServers := &MCPServerList{entries: []mcpServerEntry{{}}}
+	if _, err := ResolveMCPAuthority(MCPAuthorityOptions{Operator: &permconfig.MCPSection{Mode: "broker"}, CLIServers: cliServers, DefaultMode: mcpauthority.Global, BrokerSupported: true}); !errors.Is(err, ErrMCPProfileInvalid) {
+		t.Fatalf("CLI server conflict error = %v", err)
 	}
 	static := permconfig.MCPServerProfile{Name: "static", URL: "https://static.example/mcp", Auth: permconfig.MCPAuthProfile{Mode: "static_bearer", StaticBearer: &permconfig.MCPStaticBearerProfile{TokenEnv: "MECATL_TOKEN"}}}
 	if _, err := ResolveMCPAuthority(MCPAuthorityOptions{Operator: &permconfig.MCPSection{Mode: "broker", Servers: []permconfig.MCPServerProfile{static}}, DefaultMode: mcpauthority.Global, BrokerSupported: true}); !errors.Is(err, ErrMCPProfileInvalid) {

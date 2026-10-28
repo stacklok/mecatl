@@ -49,8 +49,9 @@ Flags:
         API default of 5m elsewhere; set 5m for cheaper cache writes. Other values are
         ignored with a warning.
   --api-key-file string
-        provider credentials YAML path (default: $XDG_CONFIG_HOME/mecatl/auth.yaml);
-        environment credentials take precedence
+        provider and MCP credentials YAML path (default:
+        $XDG_CONFIG_HOME/mecatl/auth.yaml); provider environment credentials take
+        precedence
   --approve-soul
         record the current soul content hash as its baseline. Later hash changes
         produce a warning.
@@ -573,8 +574,7 @@ Flags:
         base URL of an HTTP JSON search endpoint. Overrides configured environment-
         based search providers. The API key is read from WEBSEARCH_API_KEY.
   --workspace string
-        default session workspace root (default
-        "<WORKSPACE>")
+        default session workspace root (default "<WORKSPACE>")
   --yolo
         DEPRECATED: use --permission-mode yolo. Alias for --posture=yolo. Allows tools
         server-wide and lets child command substitutions run automatically. Deny rules
@@ -604,8 +604,8 @@ Usage: mecak8s [flags]
         Anthropic endpoint and the ToolHive gateway, the API default elsewhere; other
         values are ignored
   --api-key-file string
-        provider credentials YAML path (API-key providers only; Codex OAuth is
-        unsupported)
+        provider and MCP credentials YAML path (API-key providers and global MCP bearer
+        tokens; Codex OAuth is unsupported)
   --auth-token string
         Bearer token for RPC/API requests. Empty disables static bearer authentication;
         OIDC or mTLS may still apply. Reads MECATL_AUTH_TOKEN when unset

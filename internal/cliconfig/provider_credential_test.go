@@ -28,7 +28,7 @@ func TestInvariant_provider_credentials_auth_snapshot(t *testing.T) {
 	}
 	flags := &ProviderFlags{}
 	keys := flags.resolve(env, time.Time{})
-	loader := NewProviderCredentialResolver(flags, keys)
+	loader := NewProviderCredentialResolver(NewCredentialSource(flags, keys), keys)
 	definitions := permconfig.ProviderDefinitions{"gateway": {
 		ID: "gateway", Auth: permconfig.ProviderAuth{Method: "api_key"},
 	}}

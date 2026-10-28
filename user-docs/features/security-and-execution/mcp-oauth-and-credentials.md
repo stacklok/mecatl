@@ -399,6 +399,49 @@ enrollment even if ToolHive retained its upstream tokens in Redis. Broker mode
 requires a single replica. The chart enforces `replicaCount: 1` and the
 `Recreate` strategy, so broker mode does not provide high availability.
 
+## Static bearer credentials
+
+Use a static bearer profile when an MCP server issues an API key rather than an
+OAuth credential. Reference the token from non-secret operator `settings.yaml`,
+then supply it through the server's environment or selected `auth.yaml`:
+
+```yaml title="settings.yaml"
+mcp:
+  mode: global
+  servers:
+    - name: github
+      url: https://mcp.example.com/github
+      auth:
+        mode: static_bearer
+        static_bearer:
+          token_ref: github
+```
+
+```yaml title="auth.yaml"
+mcp:
+  github:
+    token: '<GITHUB_API_KEY>'
+```
+
+`token_ref` must match lowercase ASCII `[a-z0-9_]+`. Mecatl first checks
+`MECATL_MCP_TOKEN_GITHUB` for the reference above, then reads
+`mcp.github.token` from `auth.yaml` if the variable is absent. A present but
+empty, blank, or invalid environment value fails startup without file fallback;
+missing both sources also fails.
+
+Use exactly one selector. The deprecated `token_env` names an exact `MECATL_*`
+environment variable and emits a startup warning. To replace it with
+`token_ref`, provision the derived environment variable or matching file entry;
+renaming the YAML field alone does not migrate the credential.
+
+Restart the owning server or job after rotating a token; reconnects reuse the
+startup credentials. See [credential ownership and file selection](/operating/settings.md#ownership-and-precedence)
+and [credential-file security](/operating/mecated/configure-providers-and-storage.md#model-and-search-credential-file)
+for shared configuration and storage guidance.
+
+Static bearer profiles require `mcp.mode: global`. Set this explicitly in
+`mecak8s`, whose default ToolHive broker mode rejects static bearer profiles.
+
 ## Bearer tokens for flag-configured servers
 
 For a flag-configured server, set `MCP_<NAME>_TOKEN`, where `<NAME>` is the
@@ -411,7 +454,10 @@ mecated serve --mcp-server github=https://mcp.example.com/github
 
 The token is read at startup, sent as an Authorization bearer header, and never
 logged. Token-bearing URLs must use HTTPS, except for loopback HTTP endpoints.
-Server names must match `[A-Za-z0-9_]+` and be case-insensitively unique.
+Server names must match `[A-Za-z0-9_]+` and be case-insensitively unique. When a
+`--mcp-server` entry has the same name as an operator profile, it replaces that
+entire profile and uses only `MCP_<NAME>_TOKEN`; it does not use the profile's
+`token_ref`.
 
 The repeatable `--mcp-server-insecure-http <NAME>` flag permits a named server
 to send its token over off-host HTTP. Use this only when network controls and

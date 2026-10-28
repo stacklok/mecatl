@@ -676,16 +676,22 @@ type MCPServerProfile struct {
 type MCPAuthProfile struct {
 	// Mode is exactly none, static_bearer, or oauth.
 	Mode string `yaml:"mode"`
-	// StaticBearer names the bearer-token environment reference.
+	// StaticBearer names exactly one bearer-token environment or auth-file reference.
 	StaticBearer *MCPStaticBearerProfile `yaml:"static_bearer"`
 	// OAuth declares the OAuth identity, client, credentials, scopes, and network policy.
 	OAuth *MCPOAuthProfile `yaml:"oauth"`
 }
 
-// MCPStaticBearerProfile contains a reference only, never a bearer-token value.
+// MCPStaticBearerProfile contains exactly one reference only, never a bearer-token value.
 type MCPStaticBearerProfile struct {
-	// TokenEnv is a MECATL_* environment variable name containing the opaque token.
+	// TokenEnv is a deprecated exact MECATL_* environment variable selector.
+	// Prefer TokenRef; the selectors are mutually exclusive.
 	TokenEnv string `yaml:"token_env"`
+	// TokenRef is a lowercase [a-z0-9_]+ logical MCP reference. Resolution uses
+	// MECATL_MCP_TOKEN_ followed by the uppercase reference first, then the matching
+	// mcp entry's token in auth.yaml.
+	// It is mutually exclusive with TokenEnv.
+	TokenRef string `yaml:"token_ref"`
 }
 
 // MCPOAuthProfile is the metadata-only OAuth configuration for one server.
@@ -852,6 +858,7 @@ type MCPOAuthNetworkProfile struct {
 
 var (
 	mcpProfileName        = regexp.MustCompile(`^[A-Za-z0-9_]+$`)
+	mcpLogicalReference   = regexp.MustCompile(`^[a-z0-9_]+$`)
 	mecatlSecretReference = regexp.MustCompile(`^MECATL_[A-Z0-9_]+$`)
 )
 
@@ -981,7 +988,7 @@ func (a *MCPAuthProfile) UnmarshalYAML(node ast.Node) error {
 }
 
 func (s *MCPStaticBearerProfile) strictFields() map[string]any {
-	return map[string]any{"token_env": &s.TokenEnv}
+	return map[string]any{"token_env": &s.TokenEnv, "token_ref": &s.TokenRef}
 }
 
 // UnmarshalYAML strictly decodes a static bearer secret reference.
@@ -989,7 +996,18 @@ func (s *MCPStaticBearerProfile) UnmarshalYAML(node ast.Node) error {
 	if err := decodeStrictMapping(node, "mcp.servers[].auth.static_bearer", s.strictFields()); err != nil {
 		return err
 	}
-	return validateMCPSecretRef("mcp.servers[].auth.static_bearer.token_env", s.TokenEnv)
+	hasEnv := mappingHasKey(node, "token_env")
+	hasRef := mappingHasKey(node, "token_ref")
+	if hasEnv == hasRef {
+		return errors.New("mcp.servers[].auth.static_bearer requires exactly one of token_env or token_ref")
+	}
+	if hasEnv {
+		return validateMCPSecretRef("mcp.servers[].auth.static_bearer.token_env", s.TokenEnv)
+	}
+	if !mcpLogicalReference.MatchString(s.TokenRef) {
+		return errors.New("mcp.servers[].auth.static_bearer.token_ref must match [a-z0-9_]+")
+	}
+	return nil
 }
 
 func (o *MCPOAuthProfile) strictFields() map[string]any {

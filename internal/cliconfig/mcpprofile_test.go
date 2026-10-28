@@ -40,15 +40,15 @@ func TestLoadMCPProfilesModesAndWholeEntryPrecedence(t *testing.T) {
 		{Name: "static", URL: "https://static.example/mcp", Auth: permconfig.MCPAuthProfile{Mode: "static_bearer", StaticBearer: &permconfig.MCPStaticBearerProfile{TokenEnv: "MECATL_STATIC"}}},
 		{Name: "none", URL: "http://public.example/mcp", Auth: permconfig.MCPAuthProfile{Mode: "none"}},
 	}}
-	legacy := new(MCPServerList)
-	if err := legacy.Set("PUBLIC=https://cli.example/mcp"); err != nil {
+	cliServers := new(MCPServerList)
+	if err := cliServers.Set("PUBLIC=https://cli.example/mcp"); err != nil {
 		t.Fatal(err)
 	}
-	if err := legacy.Set("tail=https://tail.example/mcp"); err != nil {
+	if err := cliServers.Set("tail=https://tail.example/mcp"); err != nil {
 		t.Fatal(err)
 	}
 	lookups := make([]string, 0)
-	profiles, err := LoadMCPProfiles(MCPProfileLoadOptions{Operator: operator, Legacy: legacy, LookupEnv: func(name string) (string, bool) {
+	profiles, err := LoadMCPProfiles(MCPProfileLoadOptions{Operator: operator, CLIServers: cliServers, LookupEnv: func(name string) (string, bool) {
 		lookups = append(lookups, name)
 		values := map[string]string{"MCP_PUBLIC_TOKEN": "cli-token", "MECATL_STATIC": "static-token"}
 		value, ok := values[name]

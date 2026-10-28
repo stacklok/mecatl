@@ -94,6 +94,45 @@ func TestMCPValidTaggedUnionVariants(t *testing.T) {
 	}
 }
 
+func TestMCPStaticBearerTokenSourceXOR(t *testing.T) {
+	profile := func(source string) string {
+		return "mcp:\n  servers:\n    - name: static\n      url: https://mcp.example/mcp\n      auth:\n        mode: static_bearer\n        static_bearer:\n" + source
+	}
+
+	for name, source := range map[string]string{
+		"token reference": "          token_ref: context7\n",
+		"environment":     "          token_env: MECATL_MCP_TOKEN\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			cfg, err := parseYAML([]byte(profile(source)))
+			if err != nil {
+				t.Fatalf("parseYAML: %v", err)
+			}
+			if name == "token reference" && cfg.MCP.Servers[0].Auth.StaticBearer.TokenRef != "context7" {
+				t.Fatalf("TokenRef = %q", cfg.MCP.Servers[0].Auth.StaticBearer.TokenRef)
+			}
+		})
+	}
+
+	for name, source := range map[string]string{
+		"both nonempty":  "          token_env: MECATL_MCP_TOKEN\n          token_ref: context7\n",
+		"both one empty": "          token_env: ''\n          token_ref: context7\n",
+		"neither":        "",
+		"empty ref":      "          token_ref: ''\n",
+		"invalid ref":    "          token_ref: context-7\n",
+		"uppercase ref":  "          token_ref: Context7\n",
+		"unicode ref":    "          token_ref: café\n",
+		"empty env":      "          token_env: ''\n",
+		"unknown field":  "          token_file: /run/secret\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := parseYAML([]byte(profile(source))); err == nil {
+				t.Fatal("parseYAML succeeded, want strict source validation error")
+			}
+		})
+	}
+}
+
 func TestMcpBrokerDCRClient_Scenario1_PermConfigClosedUnion(t *testing.T) {
 	const dcr = `mcp:
   servers:

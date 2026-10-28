@@ -5,6 +5,7 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/internal/adapter/mcpauthority"
 	"github.com/stacklok/mecatl/internal/adapter/permconfig"
 )
@@ -12,8 +13,12 @@ import (
 // MCPAuthorityOptions supplies the already-parsed operator block and command-root policy.
 type MCPAuthorityOptions struct {
 	Operator        *permconfig.MCPSection
-	Legacy          *MCPServerList
+	CLIServers      *MCPServerList
 	LookupEnv       func(string) (string, bool)
+	Secrets         SecretResolver
+	StaticEnv       func(string) (string, bool)
+	Diagnostics     port.Diagnostics
+	Warnings        *MCPWarnings
 	DefaultMode     mcpauthority.Mode
 	BrokerSupported bool
 }
@@ -35,7 +40,7 @@ func ResolveMCPAuthority(opts MCPAuthorityOptions) (*mcpauthority.Result, error)
 		if !opts.BrokerSupported {
 			return nil, fmt.Errorf("%w: broker MCP mode is unsupported by this command root", ErrMCPProfileInvalid)
 		}
-		if opts.Legacy != nil && len(opts.Legacy.entries) != 0 {
+		if opts.CLIServers != nil && len(opts.CLIServers.entries) != 0 {
 			return nil, fmt.Errorf("%w: --mcp-server is global-only and conflicts with mcp.mode: broker", ErrMCPProfileInvalid)
 		}
 		return resolveBrokerAuthority(opts.Operator)
@@ -60,7 +65,7 @@ func resolveGlobalAuthority(opts MCPAuthorityOptions) (*mcpauthority.Result, err
 			}
 		}
 	}
-	profiles, err := LoadMCPProfiles(MCPProfileLoadOptions{Operator: opts.Operator, Legacy: opts.Legacy, LookupEnv: opts.LookupEnv})
+	profiles, err := LoadMCPProfiles(MCPProfileLoadOptions{Operator: opts.Operator, CLIServers: opts.CLIServers, LookupEnv: opts.LookupEnv, Secrets: opts.Secrets, StaticEnv: opts.StaticEnv, Diagnostics: opts.Diagnostics, Warnings: opts.Warnings})
 	if err != nil {
 		return nil, err
 	}
@@ -124,7 +129,7 @@ func resolveBrokerAuthority(section *permconfig.MCPSection) (*mcpauthority.Resul
 	for _, route := range section.Servers {
 		switch route.Auth.Mode {
 		case "none":
-		case "static_bearer":
+		case mcpStaticBearerMode:
 			return nil, fmt.Errorf("%w: MCP server %q: static_bearer is unsupported in broker mode", ErrMCPProfileInvalid, route.Name)
 		case "oauth":
 			oauthCount++

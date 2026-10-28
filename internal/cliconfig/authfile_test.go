@@ -70,7 +70,7 @@ func TestSearchCredentialLifecycle(t *testing.T) {
 	if cfg.ExaAPIKey != keys.Exa || cfg.BraveAPIKey != keys.Brave || cfg.WebSearchAPIKey != keys.WebSearch {
 		t.Fatal("search credentials missing from app config")
 	}
-	profile, _, err := NewProviderCredentialResolver(pf, keys).Load(nil)
+	profile, _, err := NewProviderCredentialResolver(NewCredentialSource(pf, keys), keys).Load(nil)
 	if err != nil || profile.ExaAPIKey != keys.Exa || profile.BraveAPIKey != keys.Brave || profile.WebSearchAPIKey != keys.WebSearch {
 		t.Fatalf("credential loader search keys = exa=%q brave=%q websearch=%q err=%v", profile.ExaAPIKey, profile.BraveAPIKey, profile.WebSearchAPIKey, err)
 	}
@@ -104,7 +104,8 @@ func TestSearchConfiguredCredentialStorePath(t *testing.T) {
 		t.Fatal(err)
 	}
 	pf := RegisterProviderFlags(flag.NewFlagSet("exa", flag.ContinueOnError), ProviderFlagHelp{})
-	loader := NewProviderCredentialResolver(pf, pf.Resolve())
+	keys := pf.Resolve()
+	loader := NewProviderCredentialResolver(NewCredentialSource(pf, keys), keys)
 	loader.SetAPIKeyFile(path)
 	profile, _, err := loader.Load(nil)
 	if err != nil || profile.ExaAPIKey != "configured-exa-key" || profile.BraveAPIKey != "configured-brave-key" {
@@ -447,7 +448,7 @@ func TestProviderUnification_Scenario4_CredentialPrecedenceAndSafeStatus(t *test
 
 	flags := &ProviderFlags{}
 	keys := flags.Resolve()
-	loader := NewProviderCredentialResolver(flags, keys)
+	loader := NewProviderCredentialResolver(NewCredentialSource(flags, keys), keys)
 	profile, _, err := loader.Load(permconfig.ProviderDefinitions{"gateway": {
 		ID: "gateway", Auth: permconfig.ProviderAuth{Method: "api_key"},
 	}})

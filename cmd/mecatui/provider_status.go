@@ -204,14 +204,14 @@ func inspectLocalProviders() (providerInspection, error) {
 	if err != nil {
 		return providerInspection{}, err
 	}
-	flags := &cliconfig.ProviderFlags{}
+	source := cliconfig.NewCredentialSource(nil, cliconfig.ResolvedCredentials{})
 	credentialStore := resolver.OperatorCredentialStore()
 	if credentialStore != nil && credentialStore.APIKey != nil {
-		flags.SetAPIKeyFile(credentialStore.APIKey.File)
+		source.SetAPIKeyFile(credentialStore.APIKey.File)
 	}
-	credentials, err := cliconfig.ResolveProviderCredentials(flags, definitions, xdgconfig.OSEnv)
+	credentials, err := source.ResolveProviders(definitions)
 	if err != nil {
-		return providerInspection{}, providerCredentialInputError(flags)
+		return providerInspection{}, providerCredentialInputError(source)
 	}
 	var aliases map[string]string
 	selectedProvider, selectedModel := "", ""
@@ -224,14 +224,14 @@ func inspectLocalProviders() (providerInspection, error) {
 		}
 		selectedProvider, selectedModel = policy.DefaultProvider, policy.Default
 	}
-	path, explicit := flags.AuthFilePath()
+	path, explicit := source.AuthFilePath()
 	known := append(stockAPIKeyProviderIDs(), openAICodexEndpointID)
 	for id := range definitions {
 		known = append(known, id)
 	}
 	file, err := authfile.LoadStrict(path, explicit, xdgconfig.OSEnv, known)
 	if err != nil {
-		return providerInspection{}, providerCredentialInputError(flags)
+		return providerInspection{}, providerCredentialInputError(source)
 	}
 	envKeys := cliconfig.ReadProviderKeys()
 	shadowed := make(map[string]bool, len(stockAPIKeyProviders))
@@ -274,8 +274,8 @@ func (c providerCommands) inspectForEnrollment() (providerInspection, error) {
 	return inspection, err
 }
 
-func providerCredentialInputError(flags *cliconfig.ProviderFlags) error {
-	path, _ := flags.AuthFilePath()
+func providerCredentialInputError(source *cliconfig.CredentialSource) error {
+	path, _ := source.AuthFilePath()
 	_, readErr := os.ReadFile(path)
 	switch {
 	case errors.Is(readErr, os.ErrNotExist):
