@@ -429,26 +429,6 @@ mcp:
 empty, blank, or invalid environment value fails startup without file fallback;
 missing both sources also fails.
 
-### Update an existing MCP credential entry
-
-Replace the former `token` field with `api_key` before you restart the owning
-server or job:
-
-```yaml title="Before"
-mcp:
-  github:
-    token: <GITHUB_API_KEY>
-```
-
-```yaml title="After"
-mcp:
-  github:
-    api_key: <GITHUB_API_KEY>
-```
-
-Mecatl does not accept `token` as an alias or fall back to it. The parser
-reports that field through ordinary schema validation.
-
 Use exactly one selector. The deprecated `token_env` names an exact `MECATL_*`
 environment variable and emits a startup warning. To replace it with
 `token_ref`, provision the derived environment variable or matching file entry;

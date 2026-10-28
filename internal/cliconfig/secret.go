@@ -13,8 +13,12 @@ import (
 // SecretKind is a closed static-credential namespace. OAuth has separate custody.
 type SecretKind string
 
-// MCPBearerSecret identifies static MCP bearer credentials.
-const MCPBearerSecret SecretKind = "mcp_bearer"
+const (
+	// MCPBearerSecret identifies static MCP bearer credentials.
+	MCPBearerSecret SecretKind = "mcp_bearer"
+	// SearchAPIKeySecret identifies optional built-in search API keys.
+	SearchAPIKeySecret SecretKind = "search_api_key"
+)
 
 var (
 	// ErrSecretReference reports an invalid static secret reference.
@@ -28,8 +32,9 @@ var (
 )
 
 // SecretResolver exposes logical static credentials, never storage paths.
-// It is a startup-time lookup boundary for static MCP bearer credentials, not a
-// Mecatl-wide secret store: it provides no writes, OAuth lifecycle, or key custody.
+// It is a startup-time lookup boundary for search API keys and static MCP bearer
+// credentials, not a Mecatl-wide secret store: it provides no writes, OAuth
+// lifecycle, or key custody.
 // Shared explicit and system-managed secret storage is tracked in
 // https://github.com/stacklok/mecatl/issues/2585.
 type SecretResolver interface {
@@ -56,7 +61,8 @@ type CredentialSource struct {
 }
 
 // NewCredentialSource reuses a preliminary provider acquisition when available.
-// Environment values and absence are captured now, not at each credential lookup.
+// MCP environment values and absence are captured now; provider/search projections
+// retain their environment lookup at resolution time.
 func NewCredentialSource(flags *ProviderFlags, preliminary ResolvedCredentials) *CredentialSource {
 	if preliminary.source != nil {
 		return preliminary.source
@@ -142,12 +148,46 @@ func (s *CredentialSource) prepareStatic() {
 
 // Lookup resolves a static secret by kind and logical reference.
 func (s *CredentialSource) Lookup(kind SecretKind, ref string) (string, error) {
-	if kind != MCPBearerSecret || !mcpSecretReference.MatchString(ref) {
-		return "", ErrSecretReference
-	}
-	s.prepareStatic()
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	searchKey := ""
+	if name := searchAPIKeyEnv(ref); kind == SearchAPIKeySecret && name != "" {
+		searchKey = s.env.Getenv(name)
+	}
+	secret, err := s.lookupLocked(kind, ref, searchKey)
+	if err != ErrSecretReference {
+		s.finalized = true
+	}
+	return secret, err
+}
+
+// lookupLocked shares kind-specific policy with preliminary/final projections
+// without finalizing preliminary discovery or recursively locking final resolution.
+// searchKey is read by the caller so projections retain their pre-acquisition
+// environment snapshot; MCP always uses its separately captured environment.
+func (s *CredentialSource) lookupLocked(kind SecretKind, ref, searchKey string) (string, error) {
+	switch kind {
+	case SearchAPIKeySecret:
+		if searchAPIKeyEnv(ref) == "" {
+			return "", ErrSecretReference
+		}
+		s.acquire()
+		if searchKey != "" {
+			return searchKey, nil
+		}
+		// Unlike MCP, search keeps usable entries from warning-only files.
+		if s.file == nil && s.strictWarning != "" {
+			return "", ErrSecretSource
+		}
+		return s.file.SearchAPIKey(ref), nil
+	case MCPBearerSecret:
+		if !mcpSecretReference.MatchString(ref) {
+			return "", ErrSecretReference
+		}
+	default:
+		return "", ErrSecretReference
+	}
+	s.acquire()
 	if token, ok := s.LookupEnv("MECATL_MCP_TOKEN_" + strings.ToUpper(ref)); ok {
 		if !validMCPBearer(token) {
 			return "", ErrSecretUnavailable
@@ -162,6 +202,19 @@ func (s *CredentialSource) Lookup(kind SecretKind, ref string) (string, error) {
 		return "", ErrSecretUnavailable
 	}
 	return token, nil
+}
+
+func searchAPIKeyEnv(ref string) string {
+	switch ref {
+	case "exa":
+		return envExaKey
+	case "brave":
+		return envBraveKey
+	case "websearch":
+		return envWebSearchKey
+	default:
+		return ""
+	}
 }
 
 func validMCPBearer(token string) bool {

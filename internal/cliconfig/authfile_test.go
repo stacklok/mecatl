@@ -93,6 +93,24 @@ func TestSearchCredentialLifecycle(t *testing.T) {
 	}
 }
 
+func TestReadProviderSearchKeysEnvironmentOnly(t *testing.T) {
+	clearProviderEnv(t)
+	writeAuthFile(t, "search:\n  exa:\n    api_key: file-only\n  brave:\n    api_key: file-only\n  websearch:\n    api_key: file-only\n")
+	for _, populated := range []bool{false, true} {
+		want := ""
+		if populated {
+			want = "env-only"
+		}
+		for _, name := range []string{envExaKey, envBraveKey, envWebSearchKey} {
+			t.Setenv(name, want)
+		}
+		keys := ReadProviderKeys()
+		if keys.Exa != want || keys.Brave != want || keys.WebSearch != want || keys.AuthFileWarning != "" || keys.source != nil || keys.Any() {
+			t.Fatal("environment-only helper consulted auth.yaml or changed search semantics")
+		}
+	}
+}
+
 func TestSearchBraveFileKeyReachesCustomHeader(t *testing.T) {
 	const apiKey = "brave-file-key"
 	keys, err := ResolveProviderCredentials(nil, nil, envWithAuth("/config/mecatl/auth.yaml", "search:\n  brave:\n    api_key: "+apiKey+"\n"))

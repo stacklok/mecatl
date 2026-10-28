@@ -135,6 +135,8 @@ func (pf *ProviderFlags) resolve(env xdgconfig.ResolveEnv, now time.Time) Resolv
 	keys := readProviderKeys(env.Getenv)
 
 	source := newCredentialSource(pf, env)
+	source.mu.Lock()
+	defer source.mu.Unlock()
 	source.acquire()
 	af, warning, path := source.file, source.warning, source.path
 	keys.source = source
@@ -143,9 +145,10 @@ func (pf *ProviderFlags) resolve(env xdgconfig.ResolveEnv, now time.Time) Resolv
 	keys.OpenRouter = cmp.Or(keys.OpenRouter, af.APIKey("openrouter"))
 	keys.Anthropic = cmp.Or(keys.Anthropic, af.APIKey("anthropic"))
 	keys.OpenCode = cmp.Or(keys.OpenCode, af.APIKey("opencode"))
-	keys.Exa = cmp.Or(keys.Exa, af.SearchAPIKey("exa"))
-	keys.Brave = cmp.Or(keys.Brave, af.SearchAPIKey("brave"))
-	keys.WebSearch = cmp.Or(keys.WebSearch, af.SearchAPIKey("websearch"))
+	// Source warnings remain preliminary diagnostics, not fatal search failures.
+	keys.Exa, _ = source.lookupLocked(SearchAPIKeySecret, "exa", keys.Exa)
+	keys.Brave, _ = source.lookupLocked(SearchAPIKeySecret, "brave", keys.Brave)
+	keys.WebSearch, _ = source.lookupLocked(SearchAPIKeySecret, "websearch", keys.WebSearch)
 	loadCodexCredential(&keys, af, path, now)
 	return keys
 }
@@ -213,9 +216,10 @@ func (s *CredentialSource) ResolveProviders(definitions permconfig.ProviderDefin
 	keys.OpenRouter = cmp.Or(keys.OpenRouter, file.APIKey("openrouter"))
 	keys.Anthropic = cmp.Or(keys.Anthropic, file.APIKey("anthropic"))
 	keys.OpenCode = cmp.Or(keys.OpenCode, file.APIKey("opencode"))
-	keys.Exa = cmp.Or(keys.Exa, file.SearchAPIKey("exa"))
-	keys.Brave = cmp.Or(keys.Brave, file.SearchAPIKey("brave"))
-	keys.WebSearch = cmp.Or(keys.WebSearch, file.SearchAPIKey("websearch"))
+	// Source failures were checked above; absent search credentials are optional.
+	keys.Exa, _ = s.lookupLocked(SearchAPIKeySecret, "exa", keys.Exa)
+	keys.Brave, _ = s.lookupLocked(SearchAPIKeySecret, "brave", keys.Brave)
+	keys.WebSearch, _ = s.lookupLocked(SearchAPIKeySecret, "websearch", keys.WebSearch)
 	loadCodexCredential(&keys, file, path, time.Now())
 	keys.customAPIKeys = make(map[string]string, len(definitions))
 	keys.customMethods = make(map[string]string, len(definitions))
@@ -296,9 +300,9 @@ func readProviderKeys(getenv func(string) string) ResolvedCredentials {
 		Anthropic:  getenv(envAnthropicKey),
 		OpenCode:   getenv(envOpenCodeKey),
 		Typesafe:   getenv(envTypesafeKey),
-		Exa:        getenv(envExaKey),
-		Brave:      getenv(envBraveKey),
-		WebSearch:  getenv(envWebSearchKey),
+		Exa:        getenv(searchAPIKeyEnv("exa")),
+		Brave:      getenv(searchAPIKeyEnv("brave")),
+		WebSearch:  getenv(searchAPIKeyEnv("websearch")),
 	}
 }
 

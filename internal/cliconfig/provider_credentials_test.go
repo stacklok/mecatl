@@ -1,6 +1,7 @@
 package cliconfig
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -234,6 +235,11 @@ func TestProviderSearchAndMCPNamespacesStaySeparateAcrossResolutionFlows(t *test
 				if keys.Any() {
 					t.Fatal("search-only and custom LLM credentials satisfied the built-in LLM predicate")
 				}
+				for ref, want := range map[string]string{"exa": profile.ExaAPIKey, "brave": profile.BraveAPIKey, "websearch": profile.WebSearchAPIKey} {
+					if key, err := source.Lookup(SearchAPIKeySecret, ref); err != nil || key != want {
+						t.Fatal("provider projection and generic search lookup disagree")
+					}
+				}
 				mcpKey, err := source.Lookup(MCPBearerSecret, id)
 				if err != nil || mcpKey != prefix+"-mcp" {
 					t.Fatal("MCP credential crossed namespaces or resolved from the wrong snapshot")
@@ -242,6 +248,148 @@ func TestProviderSearchAndMCPNamespacesStaySeparateAcrossResolutionFlows(t *test
 					t.Fatalf("selected file reads = preliminary %d, selected %d; want one snapshot per selected path", reads[preliminaryPath], reads[selectedPath])
 				}
 			})
+		}
+	}
+}
+
+func TestSearchCredentialEnvironmentLifetime(t *testing.T) {
+	for _, flow := range []string{"reused", "reselected", "direct", "without provenance"} {
+		t.Run(flow, func(t *testing.T) {
+			values := map[string]string{envExaKey: "preliminary-exa", envBraveKey: "", envWebSearchKey: "preliminary-websearch"}
+			lookups, reads := map[string]int{}, map[string]int{}
+			env := envWithAuth("/config/mecatl/auth.yaml", "")
+			env.Getenv = func(name string) string {
+				if name == "XDG_CONFIG_HOME" {
+					return "/config"
+				}
+				lookups[name]++
+				return values[name]
+			}
+			env.Environ = func() []string { return []string{"EXA_API_KEY=captured-poison", "MECATL_MCP_TOKEN_EXA=original-mcp"} }
+			env.ReadFile = func(path string) ([]byte, error) {
+				reads[path]++
+				// All search environment inputs must already have been read once
+				// for this projection before the selected file is acquired.
+				for _, name := range []string{envExaKey, envBraveKey, envWebSearchKey} {
+					if lookups[name] != reads["/config/mecatl/auth.yaml"]+reads["/selected/auth.yaml"] {
+						t.Fatal("search environment read twice or after file acquisition")
+					}
+				}
+				// A file read must not change this projection's environment snapshot.
+				values[envExaKey] = "changed-during-acquisition"
+				return []byte("search:\n  exa:\n    api_key: file-exa\n  brave:\n    api_key: file-brave\n  websearch:\n    api_key: file-websearch\n"), nil
+			}
+			flags := &ProviderFlags{}
+			var keys ResolvedCredentials
+			var source *CredentialSource
+			if flow == "direct" || flow == "without provenance" {
+				source = newCredentialSource(flags, env)
+			} else {
+				keys = flags.resolve(env, time.Time{})
+				if keys.Exa != "preliminary-exa" || keys.Brave != "file-brave" || keys.WebSearch != "preliminary-websearch" || keys.Any() {
+					t.Fatal("preliminary search lookup changed precedence or environment lifetime")
+				}
+				source = keys.source
+			}
+			values[envExaKey], values[envBraveKey], values[envWebSearchKey] = "final-exa", "final-brave", ""
+			if flow == "reselected" {
+				source.SetAPIKeyFile("/selected/auth.yaml")
+			}
+			if flow == "direct" {
+				var err error
+				keys, err = source.ResolveProviders(nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			profile, _, err := NewProviderCredentialResolver(source, keys).Load(nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			wantExa, wantBrave, wantWebSearch := "final-exa", "final-brave", "file-websearch"
+			wantLookups := 1
+			switch flow {
+			case "reused":
+				wantExa, wantBrave, wantWebSearch = "preliminary-exa", "file-brave", "preliminary-websearch"
+			case "reselected":
+				wantLookups = 2
+			}
+			if profile.ExaAPIKey != wantExa || profile.BraveAPIKey != wantBrave || profile.WebSearchAPIKey != wantWebSearch {
+				t.Fatal("final search projection lost cached/reselected environment policy")
+			}
+			for _, name := range []string{envExaKey, envBraveKey, envWebSearchKey} {
+				if lookups[name] != wantLookups {
+					t.Fatal("search environment was read more than once per resolution")
+				}
+			}
+			for _, count := range reads {
+				if count != 1 {
+					t.Fatal("selected file was reacquired")
+				}
+			}
+			// Public lookup shares policy, but search remains live at resolution
+			// time while MCP retains its startup environment snapshot.
+			values[envExaKey] = "latest-exa"
+			if key, err := source.Lookup(SearchAPIKeySecret, "exa"); err != nil || key != "latest-exa" {
+				t.Fatal("generic search lookup silently adopted MCP environment lifetime")
+			}
+			if key, err := source.Lookup(MCPBearerSecret, "exa"); err != nil || key != "original-mcp" {
+				t.Fatal("search resolution changed MCP environment snapshot")
+			}
+		})
+	}
+}
+
+func TestSearchCredentialSourcePoliciesAcrossFlows(t *testing.T) {
+	for _, sanitized := range []bool{false, true} {
+		for _, flow := range []string{"reused", "direct", "reselected"} {
+			for _, custom := range []bool{false, true} {
+				t.Run(fmt.Sprintf("sanitized=%t/%s/custom=%t", sanitized, flow, custom), func(t *testing.T) {
+					body := "search: [private-sentinel"
+					if sanitized {
+						body = "providers:\n  openai-codex:\n    api_key: ignored\nsearch:\n  brave:\n    api_key: file-brave\n"
+					}
+					env := envWithAuth("/config/mecatl/auth.yaml", body)
+					getenv := env.Getenv
+					env.Getenv = func(name string) string {
+						if name == envExaKey {
+							return "env-exa"
+						}
+						return getenv(name)
+					}
+					var definitions permconfig.ProviderDefinitions
+					if custom {
+						definitions = permconfig.ProviderDefinitions{"custom": {ID: "custom", Auth: permconfig.ProviderAuth{Method: "none"}}}
+					}
+					flags := &ProviderFlags{}
+					var keys ResolvedCredentials
+					var source *CredentialSource
+					if flow == "direct" {
+						source = newCredentialSource(flags, env)
+					} else {
+						keys = flags.resolve(env, time.Time{})
+						if keys.AuthFileWarning == "" || keys.Exa != "env-exa" || (sanitized && keys.Brave != "file-brave") {
+							t.Fatal("preliminary projection lost warning-only source handling")
+						}
+						source = keys.source
+						if flow == "reselected" {
+							// Same-path explicit selection must retain the cached warning.
+							source.SetAPIKeyFile("/config/mecatl/auth.yaml")
+						}
+					}
+					profile, _, err := NewProviderCredentialResolver(source, keys).Load(definitions)
+					wantFatal := flow != "reused" || (custom && !sanitized)
+					if (err != nil) != wantFatal {
+						t.Fatal("search lookup normalized warning/fatal source policy")
+					}
+					if !wantFatal && (profile.ExaAPIKey != "env-exa" || (sanitized && profile.BraveAPIKey != "file-brave")) {
+						t.Fatal("permissive reuse discarded usable search credentials")
+					}
+					if err != nil && strings.Contains(err.Error(), "private-sentinel") {
+						t.Fatal("source error exposed file content")
+					}
+				})
+			}
 		}
 	}
 }

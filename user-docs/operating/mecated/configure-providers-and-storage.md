@@ -57,34 +57,6 @@ example, `providers.websearch` can configure a custom LLM while
 `search.websearch` supplies a generic HTTP search credential. Entries with the
 same ID do not share credentials.
 
-### Update an existing credential file
-
-Move built-in search credentials from `providers:` to `search:` before you
-restart `mecated`:
-
-```yaml title="Before"
-providers:
-  exa:
-    api_key: <EXA_API_KEY>
-  brave:
-    api_key: <BRAVE_API_KEY>
-  websearch:
-    api_key: <WEBSEARCH_API_KEY>
-```
-
-```yaml title="After"
-search:
-  exa:
-    api_key: <EXA_API_KEY>
-  brave:
-    api_key: <BRAVE_API_KEY>
-  websearch:
-    api_key: <WEBSEARCH_API_KEY>
-```
-
-Mecatl does not read the former locations or fall back to them. The parser
-reports obsolete entries as ordinary unknown or schema validation errors.
-
 The default path is `$XDG_CONFIG_HOME/mecatl/auth.yaml`, normally
 `~/.config/mecatl/auth.yaml`. `--api-key-file <PATH>` selects another file;
 `credential_store.api_key.file` in operator settings can also select the path.
