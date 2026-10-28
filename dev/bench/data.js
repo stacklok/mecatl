@@ -345506,6 +345506,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1793229614503,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "5c1a60808e5ccb51e97c6a7cfdde4e359ff0e61f",
+          "message": "refactor(auth): unify search and MCP API keys in auth.yaml (#2591)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-28T16:08:38-07:00",
+          "tree_id": "65b45d812bf14c03ad9d5f01736c663bb23fc629",
+          "url": "https://github.com/stacklok/mecatl/commit/5c1a60808e5ccb51e97c6a7cfdde4e359ff0e61f"
+        },
+        "date": 1793230353912,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -499425,6 +499459,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1793230350857,
+  "lastUpdate": 1793230354726,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
