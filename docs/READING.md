@@ -46,7 +46,7 @@ Also for contributors:
 - [User-docs authoring contract](../user-docs/AGENTS.md) and
   [style guide](../user-docs/_STYLE.md), for public documentation.
 
-- The [Kubernetes execution and filesystems proposal](drafts/kubernetes-execution-and-filesystems.md) selects capability-based placement behind a shared API, with shared file workers and dedicated executors; it is not implemented.
+- The [Kubernetes execution and filesystems proposal](drafts/kubernetes-execution/README.md) selects a dedicated per-session executor behind a shared API; it is not implemented.
 
 ## Operators
 
