@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"image/png"
+	"os"
 	"strings"
 	"testing"
 
@@ -67,6 +68,7 @@ func TestDetectKittyTruthTable(t *testing.T) {
 		// The operator force-override still works under a multiplexer (for users who
 		// have enabled tmux allow-passthrough on).
 		{"force on under tmux", map[string]string{"MECATUI_FORCE_KITTY": "1", "TMUX": "/tmp/sock"}, true},
+		{"modern Ghostty force on under tmux", map[string]string{"TERM_PROGRAM": "ghostty", "TERM_PROGRAM_VERSION": "1.4.0", "MECATUI_FORCE_KITTY": "1", "TMUX": "/tmp/sock"}, true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -86,13 +88,92 @@ func TestKittyNativeResolution(t *testing.T) {
 	}{
 		{name: "kitty term", env: map[string]string{"TERM": "xterm-kitty"}, want: true},
 		{name: "kitty window", env: map[string]string{"KITTY_WINDOW_ID": "42"}, want: true},
-		{name: "ghostty", env: map[string]string{"TERM_PROGRAM": "ghostty"}, want: false},
+		{name: "native Kitty takes precedence", env: map[string]string{"TERM": "xterm-kitty", "TERM_PROGRAM": "ghostty", "TERM_PROGRAM_VERSION": "1.3.1", "TMUX": "/tmp/tmux"}, want: true},
+		{name: "Ghostty threshold", env: map[string]string{"TERM_PROGRAM": "ghostty", "TERM_PROGRAM_VERSION": "1.4.0"}, want: true},
+		{name: "Ghostty later minor", env: map[string]string{"TERM_PROGRAM": "ghostty", "TERM_PROGRAM_VERSION": "1.10.0"}, want: true},
+		{name: "Ghostty later major", env: map[string]string{"TERM_PROGRAM": "ghostty", "TERM_PROGRAM_VERSION": "2.0.0"}, want: true},
+		{name: "Ghostty older", env: map[string]string{"TERM_PROGRAM": "ghostty", "TERM_PROGRAM_VERSION": "1.3.1"}, want: false},
+		{name: "Ghostty missing version", env: map[string]string{"TERM_PROGRAM": "ghostty"}, want: false},
+		{name: "Ghostty empty version", env: map[string]string{"TERM_PROGRAM": "ghostty", "TERM_PROGRAM_VERSION": ""}, want: false},
+		{name: "Ghostty malformed version", env: map[string]string{"TERM_PROGRAM": "ghostty", "TERM_PROGRAM_VERSION": "not-a-version"}, want: false},
+		{name: "Ghostty incomplete version", env: map[string]string{"TERM_PROGRAM": "ghostty", "TERM_PROGRAM_VERSION": "1.4"}, want: false},
+		{name: "Ghostty leading v version", env: map[string]string{"TERM_PROGRAM": "ghostty", "TERM_PROGRAM_VERSION": "v1.4.0"}, want: false},
+		{name: "Ghostty whitespace version", env: map[string]string{"TERM_PROGRAM": "ghostty", "TERM_PROGRAM_VERSION": " 1.4.0"}, want: false},
+		{name: "Ghostty threshold prerelease", env: map[string]string{"TERM_PROGRAM": "ghostty", "TERM_PROGRAM_VERSION": "1.4.0-rc.1"}, want: false},
+		{name: "Ghostty later prerelease", env: map[string]string{"TERM_PROGRAM": "ghostty", "TERM_PROGRAM_VERSION": "1.4.1-rc.1"}, want: true},
+		{name: "Ghostty build metadata", env: map[string]string{"TERM_PROGRAM": "ghostty", "TERM_PROGRAM_VERSION": "1.4.0+build.1"}, want: true},
+		{name: "wrong terminal program", env: map[string]string{"TERM_PROGRAM": "WezTerm", "TERM_PROGRAM_VERSION": "1.4.0"}, want: false},
+		{name: "missing terminal program", env: map[string]string{"TERM_PROGRAM_VERSION": "1.4.0"}, want: false},
+		{name: "capitalized Ghostty", env: map[string]string{"TERM_PROGRAM": "Ghostty", "TERM_PROGRAM_VERSION": "1.4.0"}, want: false},
+		{name: "Ghostty under tmux", env: map[string]string{"TERM_PROGRAM": "ghostty", "TERM_PROGRAM_VERSION": "1.4.0", "TMUX": "/tmp/tmux"}, want: false},
+		{name: "Ghostty with empty tmux", env: map[string]string{"TERM_PROGRAM": "ghostty", "TERM_PROGRAM_VERSION": "1.4.0", "TMUX": ""}, want: false},
+		{name: "force does not elevate Ghostty", env: map[string]string{"TERM_PROGRAM": "ghostty", "TERM_PROGRAM_VERSION": "1.4.0", "MECATUI_FORCE_KITTY": "1"}, want: true},
+		{name: "force does not elevate old Ghostty", env: map[string]string{"TERM_PROGRAM": "ghostty", "TERM_PROGRAM_VERSION": "1.3.1", "MECATUI_FORCE_KITTY": "1"}, want: false},
+		{name: "force does not bypass tmux", env: map[string]string{"TERM_PROGRAM": "ghostty", "TERM_PROGRAM_VERSION": "1.4.0", "TMUX": "/tmp/tmux", "MECATUI_FORCE_KITTY": "1"}, want: false},
 		{name: "plain", env: map[string]string{"TERM": "xterm-256color"}, want: false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := kittyNativeResolution(mapLookup(tc.env)); got != tc.want {
 				t.Fatalf("kittyNativeResolution(%v) = %v, want %v", tc.env, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestTransmitMascotGhosttyResolution(t *testing.T) {
+	const cols, rows = 36, 18
+	cases := []struct {
+		name       string
+		env        map[string]string
+		wantSource bool
+	}{
+		{name: "Ghostty 1.4", env: map[string]string{"TERM_PROGRAM": "ghostty", "TERM_PROGRAM_VERSION": "1.4.0"}, wantSource: true},
+		{name: "older Ghostty", env: map[string]string{"TERM_PROGRAM": "ghostty", "TERM_PROGRAM_VERSION": "1.3.1"}},
+		{name: "invalid Ghostty version", env: map[string]string{"TERM_PROGRAM": "ghostty", "TERM_PROGRAM_VERSION": "invalid"}},
+		{name: "Ghostty under tmux", env: map[string]string{"TERM_PROGRAM": "ghostty", "TERM_PROGRAM_VERSION": "1.4.0", "TMUX": "/tmp/tmux"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, key := range []string{"KITTY_WINDOW_ID", "TERM", "TERM_PROGRAM", "TERM_PROGRAM_VERSION", "TMUX"} {
+				t.Setenv(key, "") // Register restoration even when the variable must be absent.
+				if err := os.Unsetenv(key); err != nil {
+					t.Fatalf("unset %s: %v", key, err)
+				}
+			}
+			for key, value := range tc.env {
+				t.Setenv(key, value)
+			}
+
+			out := TransmitMascot(cols, rows)
+			if out == "" {
+				t.Fatal("TransmitMascot returned empty")
+			}
+			controls := transmitChunkControls(t, out)
+			first := controlKeys(controls[0])
+			if first["a"] != "T" || first["U"] != "1" || first["i"] != fmt.Sprint(MascotImageID) || first["c"] != fmt.Sprint(cols) || first["r"] != fmt.Sprint(rows) {
+				t.Fatalf("first chunk controls = %q, want transmit-and-put virtual placement for mascot", controls[0])
+			}
+			for n, control := range controls {
+				if got := controlKeys(control)["q"]; got != "2" {
+					t.Errorf("chunk %d q=%q, want q=2", n, got)
+				}
+			}
+
+			img, err := png.Decode(bytes.NewReader(reassemblePayload(t, out)))
+			if err != nil {
+				t.Fatalf("transmitted payload is not PNG: %v", err)
+			}
+			wantWidth, wantHeight := cols, rows*2
+			if tc.wantSource {
+				wantWidth, wantHeight = 1254, 1254
+				_, _, _, alpha := img.At(0, 0).RGBA()
+				if alpha != 0 {
+					t.Errorf("source PNG lost transparent corner: alpha=%d", alpha)
+				}
+			}
+			if got := img.Bounds(); got.Dx() != wantWidth || got.Dy() != wantHeight {
+				t.Errorf("PNG dimensions = %dx%d, want %dx%d", got.Dx(), got.Dy(), wantWidth, wantHeight)
 			}
 		})
 	}
@@ -360,10 +441,9 @@ func TestDeleteMascotWellFormed(t *testing.T) {
 // TestTransmitMascotPayloadBounded asserts the transmit is small after the
 // downscale-before-transmit path: the mascot is downscaled to the target
 // cols×rows cell footprint before PNG re-encoding, so the escape is tens of KB
-// (not the ~1 MB of the full 1254×1254 PNG). A huge multi-chunk payload over the
-// a=T/U=1/U+10EEEE virtual-placement path is the known-buggy shape on Ghostty
-// 1.3.1 stable (ghostty-org/ghostty#13056); keeping the payload small and
-// single-chunk sidesteps the worst of it.
+// (not the ~1 MB of the full 1254×1254 PNG). Ghostty #13056 describes a
+// tmux-specific virtual-placement issue in 1.3.1; keeping the compatibility path
+// small remains appropriate for older, unknown, and other terminals.
 func TestTransmitMascotPayloadBounded(t *testing.T) {
 	out := transmitMascot(60, 30, false)
 	if out == "" {
