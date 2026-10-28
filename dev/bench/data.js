@@ -344790,6 +344790,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1793221120359,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "11a6a85a4454851cf77416a4c2505637c2d65bda",
+          "message": "feat(mecatui): bound schedule browsing on the shared surface (#2398)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-28T14:20:41-07:00",
+          "tree_id": "b5f962c6e7f2bcf1a150ae75fe5eb335b85db6ed",
+          "url": "https://github.com/stacklok/mecatl/commit/11a6a85a4454851cf77416a4c2505637c2d65bda"
+        },
+        "date": 1793223191051,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -498403,6 +498437,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1793223187790,
+  "lastUpdate": 1793223191812,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
