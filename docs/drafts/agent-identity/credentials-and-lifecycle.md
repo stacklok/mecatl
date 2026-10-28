@@ -320,7 +320,7 @@ The broker checks that the echoed entry has the type and `issuable_token_types` 
 | AS-1 3 | 400 `invalid_request`, `invalid_scope` for a `scope` parameter, `invalid_target` for `resource` or `audience`, or `invalid_authorization_details` for a malformed entry | No; a broker bug. |
 | AS-1 4 | 400 `invalid_request` with no reason (RFC 8693 §2.2.2), or with the user-wide revocation's reason for a token issued before it | No reason: after the client refreshes its access token. A revocation reason: after Alice signs in again. |
 | AS-1 5 | 400 `invalid_request` with `token_used` | After the client refreshes its access token. |
-| Lost response | None received | Once: resend the same request with a new client assertion. If AS-1 never processed it, the resend succeeds. If it did, check 5 refuses the resend with `token_used` and revokes the grant the first request created; the client then refreshes its access token and opens again. |
+| Lost response, or 502 or 504 | None received, or a proxy's, which AS-1 may have processed | Once: resend the same request with a new client assertion. If AS-1 never processed it, the resend succeeds. If it did, check 5 refuses the resend with `token_used` and revokes the grant the first request created; the client then refreshes its access token and opens again. |
 
 The broker builds every other part of the request, so it reports an `invalid_request` with no reason at session open as `subject_invalid`. mecak8s reports any of these to the client as a failed session open. It answers `subject_invalid` and `token_used` with 401 `invalid_token`, so the client refreshes its access token and tries once more.
 
@@ -861,7 +861,7 @@ RFC 8693 §2.2.2 requires `invalid_request` for any subject or actor token that 
 | `denied` | AS-1, broker | `PERMISSION_DENIED` | Deny the call. |
 | `consent_required` | AS-2 | `FAILED_PRECONDITION` | The existing `mcp_authorization_pending` outcome, using the `error_uri` AS-2 returned, when the gateway advertises the approval-continuation profile. |
 | `invalid_assertion` | AS-2 | `INTERNAL` | Fail the call; a broker bug. |
-| HTTP 503, or 429, 502, or 504 from a proxy or rate limiter, or the error code `server_error` or `temporarily_unavailable` | AS-1, AS-2 | `UNAVAILABLE` | Fail the call as a retryable infrastructure error, not a denial or a configuration fault. |
+| HTTP 503, or 429, 502, or 504 from a proxy or rate limiter, or the error code `server_error` or `temporarily_unavailable` | AS-1, AS-2 | `UNAVAILABLE` | Fail the call as a retryable infrastructure error, not a denial or a configuration fault. At session open, a 502 or 504 follows the lost-response rule of [step (3)](#3-session-open-and-the-broker-refresh-token). |
 | `invalid_client`, `unauthorized_client`, `invalid_target`, or any other refusal with no reason | AS-1, AS-2 | `INTERNAL` | Fail the call; a configuration fault or broker bug. For an AS-2 `invalid_grant` with no reason code, see [step (8)](#8-as-2-access-token). |
 
 A scheduled run has no client to show anything to: for every revocation reason except `schedule_ended`, it ends with "needs owner action" and Alice is notified.
