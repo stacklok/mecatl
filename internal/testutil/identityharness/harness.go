@@ -22,11 +22,14 @@
 //     request carries one exchange-grant entry whose optional expires_at AS-1
 //     caps at its maximum and echoes. Checks 1 to 5 apply, with one
 //     conversion per access-token jti and no retry exception; a refused
-//     access token gets no reason. The grant's refresh token is refused at
-//     the refresh-token grant (sessionopen.go);
+//     access token gets no reason. A reused jti is refused with token_used
+//     but does not revoke the grant it created: replay-revoke
+//     (stacklok/toolhive#6973) is phase 2. The grant's refresh token is
+//     refused at the refresh-token grant (sessionopen.go);
 //   - RFC 7009 revocation of grant refresh tokens (revoke.go);
 //   - injected faults: one-shot errors such as a 503, a lost response, a
-//     mismatched echo, and a forced grant expiry; and ScriptedBroker, a
+//     request dropped before AS-1 processes it, a mismatched echo, and a
+//     forced grant expiry; and ScriptedBroker, a
 //     hand-driven caller holding the broker's credentials for exercising
 //     AS-1 directly (broker.go). Production code under test uses its own
 //     client, not ScriptedBroker.

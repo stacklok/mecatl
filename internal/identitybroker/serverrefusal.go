@@ -46,9 +46,10 @@ var transientStatuses = map[int]bool{429: true, 502: true, 503: true, 504: true}
 // ErrNoResponse reports a token or revocation endpoint request to AS-1 or
 // AS-2 that got no response, such as a dropped connection: the server may or
 // may not have processed it. Callers may retry once, with a new client
-// assertion, except at session open: AS-1 may have converted the access
-// token, and converts each one once, so the client must refresh its access
-// token and open again (design step (3), "Lost response").
+// assertion. At session open the retry resends the same access token: if AS-1
+// had converted it, the resend is refused with token_used and the client must
+// refresh its access token and open again (design step (3), "Lost
+// response"), which applies to a 502 or 504 there too.
 var ErrNoResponse = errors.New("identitybroker: no response from the authorization server")
 
 // ErrTransportConfiguration reports a request to AS-1 or AS-2 that failed

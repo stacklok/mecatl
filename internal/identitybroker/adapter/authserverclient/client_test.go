@@ -344,11 +344,11 @@ func TestLeakedAccessTokenWithoutTheBrokerKeyIsRefused(t *testing.T) {
 	}
 }
 
-// TestRetryAfterLostResponseUsesANewAssertion: after a lost session-open
-// response, resending the same access token is refused with token_used, and
-// a retry with a fresh access token converts. Every attempt carries a new
-// assertion and jti.
-func TestRetryAfterLostResponseUsesANewAssertion(t *testing.T) {
+// TestResendAfterProcessedRequestGetsTokenUsed: after a lost session-open
+// response from a request AS-1 processed, the one resend of the same request
+// is refused with token_used, and a retry with a fresh access token converts.
+// Every attempt carries a new assertion and jti.
+func TestResendAfterProcessedRequestGetsTokenUsed(t *testing.T) {
 	f := newFixture(t, fixtureOptions{})
 	r := &recorder{}
 	c := f.client(t, r, nil)
@@ -386,6 +386,32 @@ func TestRetryAfterLostResponseUsesANewAssertion(t *testing.T) {
 	}
 	if grant, ok := f.h.AS1.Grant(res.RefreshToken); !ok || !grant.Active || f.h.AS1.GrantsIssued() != 2 {
 		t.Fatalf("retry grant = %+v, %v, %d issued; want an active grant beside the orphan", grant, ok, f.h.AS1.GrantsIssued())
+	}
+}
+
+// TestResendAfterUnprocessedRequestSucceeds: a session open lost before AS-1
+// processed it is resent once with the same access token and a new
+// assertion, and converts.
+func TestResendAfterUnprocessedRequestSucceeds(t *testing.T) {
+	f := newFixture(t, fixtureOptions{})
+	r := &recorder{}
+	c := f.client(t, r, nil)
+	form := f.sessionOpenForm(t, f.aliceToken())
+	f.h.AS1.DropNextExchange()
+	err := c.Token(t.Context(), form, &sessionOpenResult{})
+	if !errors.Is(err, identitybroker.ErrNoResponse) || !identitybroker.IsUnavailable(err) {
+		t.Fatalf("dropped request: %v, want ErrNoResponse classified unavailable", err)
+	}
+	var res sessionOpenResult
+	if err := c.Token(t.Context(), form, &res); err != nil {
+		t.Fatalf("resend with the same access token: %v", err)
+	}
+	minted := r.all()
+	if len(minted) != 2 || claims(t, minted[0])["jti"] == claims(t, minted[1])["jti"] {
+		t.Fatal("the resend did not send a new assertion with a new jti")
+	}
+	if grant, ok := f.h.AS1.Grant(res.RefreshToken); !ok || !grant.Active || f.h.AS1.GrantsIssued() != 1 {
+		t.Fatalf("resend grant = %+v, %v, %d issued; want one active grant", grant, ok, f.h.AS1.GrantsIssued())
 	}
 }
 

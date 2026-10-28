@@ -101,6 +101,11 @@ func (a *AS1) FailNextExchange(fault Fault) { a.faults.push("exchange", fault) }
 // full and then drop the connection without a response, as a lost response.
 func (a *AS1) LoseNextExchangeResponse() { a.faults.push("exchange-lost", Fault{}) }
 
+// DropNextExchange makes AS-1 drop the connection of the next token exchange
+// without processing it, as a request lost on its way. Client authentication
+// has already run, which is harmless: a resend carries a new assertion.
+func (a *AS1) DropNextExchange() { a.faults.push("exchange-dropped", Fault{}) }
+
 // MismatchNextExchangeEcho makes the next successful token exchange echo
 // echo instead of the entry it granted. The grant is still the one granted.
 func (a *AS1) MismatchNextExchangeEcho(echo ExchangeGrant) {
@@ -161,6 +166,9 @@ func (a *AS1) Grant(token string) (Grant, bool) {
 // authenticated broker. Check 1 (client authentication) and check 2 (the
 // broker may use this grant) have passed.
 func (a *AS1) exchange(w http.ResponseWriter, r *http.Request) {
+	if _, dropped := a.faults.pop("exchange-dropped"); dropped {
+		panic(http.ErrAbortHandler) // closes the connection with no response
+	}
 	if fault, ok := a.faults.pop("exchange"); ok {
 		writeOAuthError(w, fault.Status, fault.Error, fault.Reason)
 		return

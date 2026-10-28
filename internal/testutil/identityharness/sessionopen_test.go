@@ -268,11 +268,12 @@ func TestSessionOpenRefusals(t *testing.T) {
 	})
 }
 
-// TestSessionOpenLostResponseIsNotRetried: AS-1 converts the token but the
-// broker never sees the response. Resending the same access token is refused
-// with token_used, even with a new assertion; the orphan grant stays valid,
-// and a fresh access token converts.
-func TestSessionOpenLostResponseIsNotRetried(t *testing.T) {
+// TestSessionOpenResendAfterProcessedRequest: AS-1 converts the token but the
+// broker never sees the response. The one resend of the same request, with a
+// new assertion, is refused with token_used, and a fresh access token
+// converts. Until replay-revoke (stacklok/toolhive#6973) the orphan grant
+// stays valid.
+func TestSessionOpenResendAfterProcessedRequest(t *testing.T) {
 	h := identityharness.New(t, identityharness.Options{})
 	b := h.ScriptedBroker()
 	token := aliceToken(h)
@@ -288,7 +289,7 @@ func TestSessionOpenLostResponseIsNotRetried(t *testing.T) {
 	_, err = b.OpenSession(t.Context(), openReq(token))
 	assertReason(t, err, http.StatusBadRequest, "invalid_request", "token_used")
 	if h.AS1.GrantsIssued() != 1 {
-		t.Fatal("the retry with the same token was converted")
+		t.Fatal("the resend with the same token was converted")
 	}
 	resp, err := b.OpenSession(t.Context(), openReq(aliceToken(h)))
 	if err != nil {
@@ -296,6 +297,30 @@ func TestSessionOpenLostResponseIsNotRetried(t *testing.T) {
 	}
 	if grant, _ := h.AS1.Grant(resp.RefreshToken); !grant.Active || h.AS1.GrantsIssued() != 2 {
 		t.Errorf("after a fresh token: grant %+v, %d issued; want a second active grant beside the orphan", grant, h.AS1.GrantsIssued())
+	}
+}
+
+// TestSessionOpenResendAfterUnprocessedRequest: the request never reaches
+// AS-1's checks, so the one resend of the same access token converts it.
+func TestSessionOpenResendAfterUnprocessedRequest(t *testing.T) {
+	h := identityharness.New(t, identityharness.Options{})
+	b := h.ScriptedBroker()
+	token := aliceToken(h)
+	h.AS1.DropNextExchange()
+	_, err := b.OpenSession(t.Context(), openReq(token))
+	var oauthErr *identityharness.OAuthError
+	if err == nil || errors.As(err, &oauthErr) {
+		t.Fatalf("OpenSession = %v, want no response", err)
+	}
+	if h.AS1.GrantsIssued() != 0 || len(h.AS1.ExchangeRefusals()) != 0 {
+		t.Fatal("AS-1 processed the dropped exchange")
+	}
+	resp, err := b.OpenSession(t.Context(), openReq(token))
+	if err != nil {
+		t.Fatalf("resend: %v", err)
+	}
+	if grant, _ := h.AS1.Grant(resp.RefreshToken); !grant.Active || h.AS1.GrantsIssued() != 1 {
+		t.Errorf("after the resend: grant %+v, %d issued; want one active grant", grant, h.AS1.GrantsIssued())
 	}
 }
 
