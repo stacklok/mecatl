@@ -1,57 +1,85 @@
 package timezonegen
 
 import (
-	"strings"
+	"archive/zip"
+	"bytes"
+	"crypto/sha256"
+	"encoding/binary"
+	"encoding/hex"
+	"os"
+	"path/filepath"
+	"reflect"
+	"runtime"
+	"slices"
 	"testing"
 )
 
-func TestRuntimeEnforcement(t *testing.T) {
-	declared := SourceVersion
-	if err := RequireVersion(declared, declared); err != nil {
+func TestSourceRecordsArchiveProvenanceAndNames(t *testing.T) {
+	// A UTC TZif v1 file: one local-time type, no transitions, "UTC" abbreviation.
+	rules := make([]byte, 54)
+	copy(rules, "TZif")
+	binary.BigEndian.PutUint32(rules[36:40], 1)
+	binary.BigEndian.PutUint32(rules[40:44], 4)
+	copy(rules[50:], "UTC\x00")
+	var archive bytes.Buffer
+	writer := zip.NewWriter(&archive)
+	for _, name := range []string{"Region/Zulu", "Region/Alpha", "Region/Alpha", "UTC", "bare", "directory/", "invalid/zone"} {
+		entry, err := writer.Create(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if name == "directory/" {
+			continue
+		}
+		data := rules
+		if name == "invalid/zone" {
+			data = []byte("invalid TZif")
+		}
+		if _, err := entry.Write(data); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := writer.Close(); err != nil {
 		t.Fatal(err)
 	}
-	for _, active := range []string{"go1.28.0", "go1.27.1", "devel go1.28-abc"} {
-		if err := RequireVersion(declared, active); err == nil || !strings.Contains(err.Error(), Command(declared)) {
-			t.Fatalf("runtime %s: %v", active, err)
-		}
+	root := t.TempDir()
+	path := filepath.Join(root, "lib", "time", "zoneinfo.zip")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, archive.Bytes(), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	catalog, err := Source(root, runtime.Version())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(archive.Bytes())
+	if catalog.GoVersion != runtime.Version() || catalog.ArchiveSHA256 != hex.EncodeToString(sum[:]) {
+		t.Fatalf("incorrect source provenance: %+v", catalog)
+	}
+	if want := []string{"Region/Alpha", "Region/Zulu", "UTC"}; !slices.Equal(catalog.Names, want) {
+		t.Fatalf("names = %v, want %v", catalog.Names, want)
+	}
+	again, err := Source(root, runtime.Version())
+	if err != nil || !reflect.DeepEqual(catalog, again) {
+		t.Fatalf("generation is not deterministic: %+v, %v", again, err)
 	}
 }
 
-func TestFreshnessDecisions(t *testing.T) {
-	fresh := Catalog{GoVersion: "go1.27.2", ArchiveSHA256: strings.Repeat("a", 64), Names: []string{"America/New_York", "UTC"}}
-	for _, tc := range []struct {
-		name     string
-		catalog  Catalog
-		declared string
-		active   string
-		wantErr  bool
-		wantRead bool
-		wantNote bool
-	}{
-		{"matching source", fresh, "go1.27.2", "go1.27.2", false, true, false},
-		{"newer local", fresh, "go1.27.2", "go1.28.0", false, false, true},
-		{"declared bump stale CI", fresh, "go1.28.0", "go1.28.0", true, false, false},
-		{"declared bump newer local", fresh, "go1.28.0", "go1.29.0", true, false, false},
-		{"missing provenance", Catalog{Names: fresh.Names}, "go1.27.2", "go1.27.2", true, false, false},
-		{"bad fingerprint", Catalog{GoVersion: fresh.GoVersion, ArchiveSHA256: "bad", Names: fresh.Names}, "go1.27.2", "go1.27.2", true, true, false},
-		{"missing name", Catalog{GoVersion: fresh.GoVersion, ArchiveSHA256: fresh.ArchiveSHA256, Names: []string{"UTC"}}, "go1.27.2", "go1.27.2", true, true, false},
-		{"older supported runtime", fresh, "go1.27.2", "go1.27.1", false, false, true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			read := false
-			note, err := CheckFreshness(tc.catalog, tc.declared, tc.active, func() (Catalog, error) {
-				read = true
-				return fresh, nil
-			})
-			if (err != nil) != tc.wantErr || read != tc.wantRead || (note != "") != tc.wantNote {
-				t.Fatalf("note=%q err=%v read=%v", note, err, read)
-			}
-			if err != nil && !strings.Contains(err.Error(), Command(tc.declared)) {
-				t.Fatalf("not actionable: %v", err)
-			}
-			if note != "" && !strings.Contains(note, Command(tc.declared)) {
-				t.Fatalf("not actionable: %s", note)
-			}
-		})
+func TestSourceRejectsMissingOrInvalidArchive(t *testing.T) {
+	root := t.TempDir()
+	if _, err := Source(root, runtime.Version()); err == nil {
+		t.Fatal("missing source archive accepted")
+	}
+	path := filepath.Join(root, "lib", "time", "zoneinfo.zip")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("not a zip"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Source(root, runtime.Version()); err == nil {
+		t.Fatal("invalid source archive accepted")
 	}
 }

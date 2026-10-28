@@ -17,12 +17,8 @@ func run() error {
 	if *output == "" {
 		return fmt.Errorf("--output is required; use task generate:timezones")
 	}
-	declared := timezonegen.SourceVersion
-	if err := timezonegen.RequireVersion(declared, runtime.Version()); err != nil {
-		return err
-	}
-	//nolint:staticcheck // SA1019: the generator uses its selected runtime archive, not a relocated binary or ambient PATH toolchain.
-	catalog, err := timezonegen.Source(runtime.GOROOT(), declared)
+	//nolint:staticcheck // SA1019: the generator uses its running toolchain's archive, not a relocated binary or ambient PATH toolchain.
+	catalog, err := timezonegen.Source(runtime.GOROOT(), runtime.Version())
 	if err != nil {
 		return err
 	}

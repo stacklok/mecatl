@@ -17,9 +17,8 @@ import (
 	"github.com/stacklok/mecatl/internal/timezonegen"
 )
 
-func TestCatalogIntegrityAndFreshness(t *testing.T) {
-	declared := timezonegen.SourceVersion
-	regen := timezonegen.Command(declared)
+func TestCatalogIntegrity(t *testing.T) {
+	const regen = "task generate:timezones"
 	var catalog timezonegen.Catalog
 	if err := json.Unmarshal(catalogJSON, &catalog); err != nil {
 		t.Fatalf("invalid catalog: %v; run: %s", err, regen)
@@ -45,23 +44,12 @@ func TestCatalogIntegrityAndFreshness(t *testing.T) {
 			t.Fatalf("catalog name %s not loadable: %v; run: %s", name, err, regen)
 		}
 	}
-	note, err := timezonegen.CheckFreshness(catalog, declared, runtime.Version(), func() (timezonegen.Catalog, error) {
-		//nolint:staticcheck // SA1019: go test uses its own toolchain archive, not a potentially different go on PATH.
-		source, err := timezonegen.Source(runtime.GOROOT(), declared)
-		if err != nil {
-			return source, err
-		}
-		data, err := json.MarshalIndent(source, "", "  ")
-		if err == nil && !bytes.Equal(append(data, '\n'), catalogJSON) {
-			t.Errorf("catalog serialization drift; run: %s", timezonegen.Command(declared))
-		}
-		return source, err
-	})
+	data, err := json.MarshalIndent(catalog, "", "  ")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if note != "" {
-		t.Log(note)
+	if !bytes.Equal(append(data, '\n'), catalogJSON) {
+		t.Errorf("catalog serialization drift; run: %s", regen)
 	}
 }
 

@@ -85,7 +85,7 @@ func TestSDKTypescriptRelease_Scenario7_NodeMatrixShape(t *testing.T) {
 	assertSDKScenario7ActionInput(t, integrationJob, "actions/setup-node@", "node-version", "24.x")
 	for _, command := range []string{
 		"task generate",
-		"git diff --exit-code -- contracts/gen sdk/typescript/src/gen",
+		"git diff --exit-code -- contracts/gen sdk/typescript/src/gen cmd/mecatui/internal/timezones/zones.json",
 		"task sdk:e2e",
 	} {
 		if count := sdkScenario7WorkflowCommandCount(workflow, command); count != 1 {
@@ -178,7 +178,7 @@ func TestSDKTypescriptRelease_Scenario7_CompatibilityGateSeparation(t *testing.T
 	if count := sdkScenario7WorkflowCommandCount(workflow, "task generate"); count != 1 {
 		t.Errorf("codegen freshness task count = %d, want 1", count)
 	}
-	if count := sdkScenario7WorkflowCommandCount(workflow, "git diff --exit-code -- contracts/gen sdk/typescript/src/gen"); count != 1 {
+	if count := sdkScenario7WorkflowCommandCount(workflow, "git diff --exit-code -- contracts/gen sdk/typescript/src/gen cmd/mecatui/internal/timezones/zones.json"); count != 1 {
 		t.Errorf("generated Go/TypeScript diff gate count = %d, want 1", count)
 	}
 }

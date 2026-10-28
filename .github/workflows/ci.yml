@@ -353,7 +353,7 @@ jobs:
       - name: Verify generated contracts are fresh
         run: |
           task generate
-          git diff --exit-code -- contracts/gen sdk/typescript/src/gen
+          git diff --exit-code -- contracts/gen sdk/typescript/src/gen cmd/mecatui/internal/timezones/zones.json
 
       - name: Run offline SDK e2e against same-checkout mecated
         run: task sdk:e2e

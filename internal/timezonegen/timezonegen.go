@@ -1,4 +1,4 @@
-// Package timezonegen owns the pinned timezone catalog's source and freshness checks.
+// Package timezonegen generates a snapshot of timezone names and their provenance.
 // It uses only the standard library and is not linked into the client.
 package timezonegen
 
@@ -7,7 +7,6 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
-	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -23,25 +22,8 @@ type Catalog struct {
 	Names         []string `json:"names"`
 }
 
-// SourceVersion pins catalog provenance independently of the module's language
-// floor and CI's rolling stable toolchain. Bump deliberately, then regenerate.
-const SourceVersion = "go1.27.3"
-
-// Command is the actionable regeneration command for the declared toolchain.
-func Command(declared string) string {
-	return "GOTOOLCHAIN=" + declared + " task generate:timezones"
-}
-
-// RequireVersion prevents an ambient newer toolchain from changing catalog provenance.
-func RequireVersion(declared, active string) error {
-	if active != declared {
-		return fmt.Errorf("timezone source requires %s, running %s; install/select the source toolchain and run: %s", declared, active, Command(declared))
-	}
-	return nil
-}
-
 // Source reads the Go distribution archive and retains loadable slash-qualified IDs plus UTC.
-// The caller enforces the source runtime version before generating or comparing it.
+// sourceVersion records the toolchain that supplied the archive; it is not a build requirement.
 func Source(goRoot, sourceVersion string) (Catalog, error) {
 	data, err := os.ReadFile(filepath.Join(goRoot, "lib", "time", "zoneinfo.zip"))
 	if err != nil {
@@ -75,26 +57,4 @@ func Source(goRoot, sourceVersion string) (Catalog, error) {
 	}
 	slices.Sort(names)
 	return Catalog{GoVersion: sourceVersion, ArchiveSHA256: hex.EncodeToString(sum[:]), Names: slices.Compact(names)}, nil
-}
-
-// CheckFreshness always checks the source pin, then compares archives only under
-// that exact runtime. Other supported runtimes get a diagnostic instead;
-// semantic checks still belong to the caller. source is lazy so those runtimes
-// never read a different archive.
-func CheckFreshness(c Catalog, declared, active string, source func() (Catalog, error)) (string, error) {
-	stale := func() error { return fmt.Errorf("stale timezone catalog; regenerate with: %s", Command(declared)) }
-	if c.GoVersion != declared {
-		return "", stale()
-	}
-	if active != declared {
-		return fmt.Sprintf("timezone source-archive freshness requires %s (running %s); run: %s", declared, active, Command(declared)), nil
-	}
-	want, err := source()
-	if err != nil {
-		return "", fmt.Errorf("timezone source: %w; run: %s", err, Command(declared))
-	}
-	if c.ArchiveSHA256 != want.ArchiveSHA256 || !slices.Equal(c.Names, want.Names) {
-		return "", stale()
-	}
-	return "", nil
 }

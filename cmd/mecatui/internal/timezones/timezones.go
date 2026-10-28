@@ -1,4 +1,4 @@
-// Package timezones provides the client's pinned selectable timezone names and
+// Package timezones provides the client's checked-in selectable timezone names and
 // links Go's standard embedded rule fallback. Catalog names do not pin runtime rules.
 package timezones
 
@@ -19,7 +19,7 @@ var names = func() []string {
 		Names []string `json:"names"`
 	}
 	if err := json.Unmarshal(catalogJSON, &catalog); err != nil {
-		panic("invalid bundled timezone catalog; run task generate:timezones with the pinned source toolchain: " + err.Error())
+		panic("invalid bundled timezone catalog; run task generate:timezones: " + err.Error())
 	}
 	return catalog.Names
 }()
