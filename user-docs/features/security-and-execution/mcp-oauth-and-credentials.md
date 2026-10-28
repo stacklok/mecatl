@@ -402,7 +402,7 @@ requires a single replica. The chart enforces `replicaCount: 1` and the
 ## Static bearer credentials
 
 Use a static bearer profile when an MCP server issues an API key rather than an
-OAuth credential. Reference the token from non-secret operator `settings.yaml`,
+OAuth credential. Reference the key from non-secret operator `settings.yaml`,
 then supply it through the server's environment or selected `auth.yaml`:
 
 ```yaml title="settings.yaml"
@@ -420,14 +420,34 @@ mcp:
 ```yaml title="auth.yaml"
 mcp:
   github:
-    token: '<GITHUB_API_KEY>'
+    api_key: <GITHUB_API_KEY>
 ```
 
 `token_ref` must match lowercase ASCII `[a-z0-9_]+`. Mecatl first checks
 `MECATL_MCP_TOKEN_GITHUB` for the reference above, then reads
-`mcp.github.token` from `auth.yaml` if the variable is absent. A present but
+`mcp.github.api_key` from `auth.yaml` if the variable is absent. A present but
 empty, blank, or invalid environment value fails startup without file fallback;
 missing both sources also fails.
+
+### Update an existing MCP credential entry
+
+Replace the former `token` field with `api_key` before you restart the owning
+server or job:
+
+```yaml title="Before"
+mcp:
+  github:
+    token: <GITHUB_API_KEY>
+```
+
+```yaml title="After"
+mcp:
+  github:
+    api_key: <GITHUB_API_KEY>
+```
+
+Mecatl does not accept `token` as an alias or fall back to it. The parser
+reports that field through ordinary schema validation.
 
 Use exactly one selector. The deprecated `token_env` names an exact `MECATL_*`
 environment variable and emits a startup warning. To replace it with

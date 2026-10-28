@@ -216,12 +216,15 @@ func TestLoadRejectsMalformedProviderStructure(t *testing.T) {
 	}
 }
 
-func TestMCPTokenSchemaAndAccessor(t *testing.T) {
-	const token = "mcp-token-with-surrounding-space "
-	quotedToken := "\"" + token + "\""
+func TestStaticAPIKeySchemaAndAccessors(t *testing.T) {
+	const apiKey = "api-key-with-surrounding-space "
+	quotedAPIKey := "\"" + apiKey + "\""
 	for name, contents := range map[string]string{
-		"MCP only": "mcp:\n  context7:\n    token: " + quotedToken + "\n",
-		"mixed":    "providers:\n  anthropic:\n    api_key: provider-key\nmcp:\n  context7:\n    token: " + quotedToken + "\n",
+		"search only":           "search:\n  exa:\n    api_key: " + quotedAPIKey + "\n",
+		"websearch":             "search:\n  websearch:\n    api_key: " + quotedAPIKey + "\n",
+		"empty static mappings": "search: {}\nmcp: {}\n",
+		"MCP only":              "mcp:\n  context7:\n    api_key: " + quotedAPIKey + "\n",
+		"mixed":                 "providers:\n  anthropic:\n    api_key: provider-key\nsearch:\n  brave:\n    api_key: " + quotedAPIKey + "\nmcp:\n  context7:\n    api_key: " + quotedAPIKey + "\n",
 	} {
 		t.Run(name, func(t *testing.T) {
 			dir := t.TempDir()
@@ -230,30 +233,43 @@ func TestMCPTokenSchemaAndAccessor(t *testing.T) {
 			if warning != "" || file == nil {
 				t.Fatalf("Load = (%v, %q), want valid file", file, warning)
 			}
-			if got := file.MCPToken("context7"); got != token {
-				t.Fatalf("MCPToken(context7) = %q, want exact token", got)
+			if got := file.SearchAPIKey("exa"); name == "search only" && got != apiKey {
+				t.Fatalf("SearchAPIKey(exa) = %q, want exact API key", got)
 			}
-			if got := file.MCPToken("Context7"); got != "" {
-				t.Fatalf("MCPToken case-insensitive lookup = %q, want empty", got)
+			if got := file.SearchAPIKey("brave"); name == "mixed" && got != apiKey {
+				t.Fatalf("SearchAPIKey(brave) = %q, want exact API key", got)
+			}
+			if got := file.SearchAPIKey("websearch"); name == "websearch" && got != apiKey {
+				t.Fatalf("SearchAPIKey(websearch) = %q, want exact API key", got)
+			}
+			if got := file.MCPAPIKey("context7"); name != "search only" && name != "websearch" && name != "empty static mappings" && got != apiKey {
+				t.Fatalf("MCPAPIKey(context7) = %q, want exact API key", got)
+			}
+			if got := file.MCPAPIKey("Context7"); got != "" {
+				t.Fatalf("MCPAPIKey case-insensitive lookup = %q, want empty", got)
 			}
 		})
 	}
 }
 
-func TestMCPTokenSchemaRejectsInvalidEntriesWithoutLeakingContent(t *testing.T) {
-	const sentinel = "MCP_TOKEN_SECRET_SENTINEL"
+func TestStaticAPIKeySchemaRejectsInvalidEntriesWithoutLeakingContent(t *testing.T) {
+	const sentinel = "STATIC_API_KEY_SECRET_SENTINEL"
 	for name, contents := range map[string]string{
-		"unknown field":   "mcp:\n  valid:\n    token: " + sentinel + "\n    secret_key: " + sentinel + "\n",
-		"missing token":   "mcp:\n  valid: {}\n",
-		"non-string":      "mcp:\n  valid:\n    token: 123\n",
-		"blank":           "mcp:\n  valid:\n    token: '  '\n",
-		"invalid ID":      "mcp:\n  bad-id:\n    token: " + sentinel + "\n",
-		"uppercase ID":    "mcp:\n  Context7:\n    token: " + sentinel + "\n",
-		"unicode ID":      "mcp:\n  café:\n    token: " + sentinel + "\n",
-		"empty ID":        "mcp:\n  '':\n    token: " + sentinel + "\n",
-		"duplicate ID":    "mcp:\n  valid:\n    token: " + sentinel + "\n  valid:\n    token: " + sentinel + "\n",
-		"unknown root":    "mcp:\n  valid:\n    token: " + sentinel + "\nsecret_key: " + sentinel + "\n",
-		"malformed entry": "mcp:\n  valid: " + sentinel + "\n",
+		"MCP token":             "mcp:\n  valid:\n    token: " + sentinel + "\n",
+		"MCP token and API key": "mcp:\n  valid:\n    token: " + sentinel + "\n    api_key: " + sentinel + "\n",
+		"search unknown field":  "search:\n  exa:\n    api_key: " + sentinel + "\n    secret_key: " + sentinel + "\n",
+		"missing API key":       "search:\n  exa: {}\n",
+		"duplicate API key":     "mcp:\n  valid:\n    api_key: " + sentinel + "\n    api_key: " + sentinel + "\n",
+		"null":                  "search:\n  exa:\n    api_key: null\n",
+		"non-string":            "mcp:\n  valid:\n    api_key: 123\n",
+		"blank":                 "search:\n  exa:\n    api_key: '  '\n",
+		"invalid search ID":     "search:\n  invalid:\n    api_key: " + sentinel + "\n",
+		"invalid MCP ID":        "mcp:\n  bad-id:\n    api_key: " + sentinel + "\n",
+		"duplicate ID":          "search:\n  exa:\n    api_key: " + sentinel + "\n  exa:\n    api_key: " + sentinel + "\n",
+		"duplicate MCP ID":      "mcp:\n  valid:\n    api_key: " + sentinel + "\n  valid:\n    api_key: " + sentinel + "\n",
+		"duplicate root":        "search: {}\nsearch: {}\n",
+		"duplicate MCP root":    "mcp: {}\nmcp: {}\n",
+		"unknown root":          "search: {}\nsecret_key: " + sentinel + "\n",
 	} {
 		t.Run(name, func(t *testing.T) {
 			dir := t.TempDir()

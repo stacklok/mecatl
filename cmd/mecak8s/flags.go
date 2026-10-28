@@ -411,7 +411,7 @@ func parseFlags(argv []string) (config, error) {
 	// OPENAI/OPENROUTER/ANTHROPIC_API_KEY — the SAME helper mecated/mecatequi
 	// use, so mecak8s shares the three-mains wiring.
 	cfg.providerFlags = cliconfig.RegisterProviderFlags(fs, cliconfig.ProviderFlagHelp{
-		AuthFile: "provider and MCP credentials YAML path (API-key providers and global MCP bearer tokens; Codex OAuth is unsupported)",
+		AuthFile: "provider, search, and MCP credentials YAML path (API-key providers and global MCP bearer tokens; Codex OAuth is unsupported)",
 	})
 	// ToolHive LLM gateway (issue #262): a k8s pod naturally has no ToolHive
 	// config file, so this is inert unless an operator mounts one or passes

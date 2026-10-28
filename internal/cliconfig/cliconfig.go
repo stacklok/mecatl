@@ -33,10 +33,9 @@ import (
 	"github.com/stacklok/mecatl/internal/app"
 )
 
-// knownAuthProviders is the closed set of provider names an auth.yaml entry
-// may use — passed into authfile.Load so that package stays agnostic of which
-// providers mecatl specifically knows about.
-var knownAuthProviders = []string{"anthropic", "openai", "openrouter", "opencode", "openai-codex", "brave", "exa", "websearch"}
+// knownAuthProviders contains the built-in LLM provider names. Final validation
+// also includes operator-defined providers.
+var knownAuthProviders = []string{"anthropic", "openai", "openrouter", "opencode", "openai-codex"}
 
 // Provider credential / base-URL environment variables. These are the SECRET-shaped
 // inputs the cmd layer reads on the operator's behalf (the registry also auto-detects
@@ -74,7 +73,7 @@ var DefaultProviderFlagHelp = ProviderFlagHelp{
 	OpenRouterBaseURL: "override the OpenRouter API base URL (default https://openrouter.ai/api/v1; key from OPENROUTER_API_KEY)",
 	AnthropicBaseURL:  "override the native Anthropic API base URL (compatible/proxy endpoints; key from ANTHROPIC_API_KEY)",
 	OpenCodeBaseURL:   "override the OpenCode Go API base URL (default https://opencode.ai/zen/go/v1; key from OPENCODE_API_KEY)",
-	AuthFile:          "provider and MCP credentials YAML path (default: $XDG_CONFIG_HOME/mecatl/auth.yaml); provider environment credentials take precedence",
+	AuthFile:          "provider, search, and MCP credentials YAML path (default: $XDG_CONFIG_HOME/mecatl/auth.yaml); provider and search environment credentials take precedence",
 }
 
 // ProviderFlags holds the values bound by RegisterProviderFlags. The base-URL fields
@@ -144,9 +143,9 @@ func (pf *ProviderFlags) resolve(env xdgconfig.ResolveEnv, now time.Time) Resolv
 	keys.OpenRouter = cmp.Or(keys.OpenRouter, af.APIKey("openrouter"))
 	keys.Anthropic = cmp.Or(keys.Anthropic, af.APIKey("anthropic"))
 	keys.OpenCode = cmp.Or(keys.OpenCode, af.APIKey("opencode"))
-	keys.Exa = cmp.Or(keys.Exa, af.APIKey("exa"))
-	keys.Brave = cmp.Or(keys.Brave, af.APIKey("brave"))
-	keys.WebSearch = cmp.Or(keys.WebSearch, af.APIKey("websearch"))
+	keys.Exa = cmp.Or(keys.Exa, af.SearchAPIKey("exa"))
+	keys.Brave = cmp.Or(keys.Brave, af.SearchAPIKey("brave"))
+	keys.WebSearch = cmp.Or(keys.WebSearch, af.SearchAPIKey("websearch"))
 	loadCodexCredential(&keys, af, path, now)
 	return keys
 }
@@ -214,9 +213,9 @@ func (s *CredentialSource) ResolveProviders(definitions permconfig.ProviderDefin
 	keys.OpenRouter = cmp.Or(keys.OpenRouter, file.APIKey("openrouter"))
 	keys.Anthropic = cmp.Or(keys.Anthropic, file.APIKey("anthropic"))
 	keys.OpenCode = cmp.Or(keys.OpenCode, file.APIKey("opencode"))
-	keys.Exa = cmp.Or(keys.Exa, file.APIKey("exa"))
-	keys.Brave = cmp.Or(keys.Brave, file.APIKey("brave"))
-	keys.WebSearch = cmp.Or(keys.WebSearch, file.APIKey("websearch"))
+	keys.Exa = cmp.Or(keys.Exa, file.SearchAPIKey("exa"))
+	keys.Brave = cmp.Or(keys.Brave, file.SearchAPIKey("brave"))
+	keys.WebSearch = cmp.Or(keys.WebSearch, file.SearchAPIKey("websearch"))
 	loadCodexCredential(&keys, file, path, time.Now())
 	keys.customAPIKeys = make(map[string]string, len(definitions))
 	keys.customMethods = make(map[string]string, len(definitions))

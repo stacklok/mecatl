@@ -20,7 +20,7 @@ func TestSettingsSelectsPreliminaryPathWithoutReread(t *testing.T) {
 			if missing {
 				return nil, os.ErrNotExist
 			}
-			return []byte("mcp:\n  github:\n    token: original\n"), nil
+			return []byte("mcp:\n  github:\n    api_key: original\n"), nil
 		}
 		source := newCredentialSource(nil, env)
 		source.acquire()
@@ -59,7 +59,7 @@ func TestSelectedCredentialSnapshotAcquiredOnce(t *testing.T) {
 			if reads > 1 {
 				return []byte("providers: {}\n"), nil
 			}
-			return []byte("providers:\n  openai:\n    api_key: original-provider\nmcp:\n  exact:\n    token: original-mcp\n"), nil
+			return []byte("providers:\n  openai:\n    api_key: original-provider\nmcp:\n  exact:\n    api_key: original-mcp\n"), nil
 		},
 	}
 	source := newCredentialSource(nil, env)
@@ -126,7 +126,10 @@ func TestStaticSecretEnvironmentSelectionAndSnapshot(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			reads := 0
 			env := envWithAuth("/config/mecatl/auth.yaml", "")
-			env.ReadFile = func(string) ([]byte, error) { reads++; return []byte("mcp:\n  github:\n    token: file-token\n"), nil }
+			env.ReadFile = func(string) ([]byte, error) {
+				reads++
+				return []byte("mcp:\n  github:\n    api_key: file-token\n"), nil
+			}
 			env.Environ = func() []string { return tc.environ }
 			source := newCredentialSource(nil, env)
 			for range 2 {
@@ -158,7 +161,7 @@ func TestCredentialSourceUsesInjectedEnviron(t *testing.T) {
 	} {
 		for _, providers := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/providers=%v", tc.name, providers), func(t *testing.T) {
-				env := envWithAuth("/config/mecatl/auth.yaml", "mcp:\n  github:\n    token: file-token\n")
+				env := envWithAuth("/config/mecatl/auth.yaml", "mcp:\n  github:\n    api_key: file-token\n")
 				env.Environ = tc.environ
 				var keys ResolvedCredentials
 				if providers {
@@ -194,7 +197,7 @@ func TestStaticSecretReferenceBoundary(t *testing.T) {
 }
 
 func TestAcquisitionWarningSurvivesProviderSanitization(t *testing.T) {
-	env := envWithAuth("/config/mecatl/auth.yaml", "providers:\n  openai-codex:\n    api_key: ignored\nmcp:\n  github:\n    token: valid\n")
+	env := envWithAuth("/config/mecatl/auth.yaml", "providers:\n  openai-codex:\n    api_key: ignored\nmcp:\n  github:\n    api_key: valid\n")
 	flags := &ProviderFlags{}
 	keys := flags.resolve(env, time.Time{})
 	source := NewCredentialSource(flags, keys)

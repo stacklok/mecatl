@@ -62,6 +62,7 @@ type providerEntry struct {
 // equivalent (a project has no business supplying credentials).
 type File struct {
 	providers   map[string]providerEntry
+	search      map[string]string
 	mcp         map[string]string
 	path        string
 	baseWarning string
@@ -69,15 +70,22 @@ type File struct {
 
 var mcpCredentialID = regexp.MustCompile(`^[a-z0-9_]+$`)
 
-type rawFile struct {
-	Providers map[string]rawProviderEntry `yaml:"providers"`
-	MCP       map[string]rawMCPEntry      `yaml:"mcp"`
+var searchCredentialIDs = map[string]bool{
+	"exa":       true,
+	"brave":     true,
+	"websearch": true,
 }
 
-// rawMCPEntry is deliberately kept private: auth.yaml token values are exposed
-// only through File.MCPToken.
-type rawMCPEntry struct {
-	Token strictString `yaml:"token"`
+type rawFile struct {
+	Providers map[string]rawProviderEntry `yaml:"providers"`
+	Search    map[string]rawAPIKeyEntry   `yaml:"search"`
+	MCP       map[string]rawAPIKeyEntry   `yaml:"mcp"`
+}
+
+// rawAPIKeyEntry is deliberately kept private: auth.yaml API-key values are
+// exposed only through namespace-specific File accessors.
+type rawAPIKeyEntry struct {
+	APIKey strictString `yaml:"api_key"`
 }
 
 type rawProviderEntry struct {
@@ -141,9 +149,18 @@ func (f *File) OAuth(name string) OAuthEntry {
 	return entry.oauth
 }
 
-// MCPToken returns the opaque token for the exact lowercase MCP credential
-// ID, or "" if f is nil or no entry exists. Valid tokens are returned unchanged.
-func (f *File) MCPToken(id string) string {
+// SearchAPIKey returns the api_key for the exact built-in search provider name,
+// or "" if f is nil or has no entry. Valid API keys are returned unchanged.
+func (f *File) SearchAPIKey(name string) string {
+	if f == nil {
+		return ""
+	}
+	return f.search[name]
+}
+
+// MCPAPIKey returns the api_key for the exact lowercase MCP credential ID, or
+// "" if f is nil or no entry exists. Valid API keys are returned unchanged.
+func (f *File) MCPAPIKey(id string) string {
 	if f == nil {
 		return ""
 	}
@@ -237,11 +254,11 @@ func Load(path string, explicit bool, env xdgconfig.ResolveEnv, knownProviders [
 	if len(file.Docs) != 1 || file.Docs[0] == nil || file.Docs[0].Body == nil || len(ast.Filter(ast.NullType, file.Docs[0].Body)) > 0 {
 		return nil, schemaWarning(path, nil)
 	}
-	if err := validateMCPAuthSchema(file.Docs[0].Body); err != nil {
+	if err := validateStaticAPIKeyAuthSchema(file.Docs[0].Body); err != nil {
 		return nil, schemaWarning(path, nil)
 	}
 	var raw rawFile
-	if err := yaml.NodeToValue(file.Docs[0].Body, &raw, yaml.DisallowUnknownField()); err != nil || (raw.Providers == nil && raw.MCP == nil) {
+	if err := yaml.NodeToValue(file.Docs[0].Body, &raw, yaml.DisallowUnknownField()); err != nil || (raw.Providers == nil && raw.Search == nil && raw.MCP == nil) {
 		return nil, schemaWarning(path, nil)
 	}
 	// Count, never the names: an unknown provider name is an arbitrary YAML
@@ -251,7 +268,8 @@ func Load(path string, explicit bool, env xdgconfig.ResolveEnv, knownProviders [
 	// the whole warning surface, not just that one branch.
 	f := File{
 		providers:   make(map[string]providerEntry, len(raw.Providers)),
-		mcp:         make(map[string]string, len(raw.MCP)),
+		search:      apiKeyValues(raw.Search),
+		mcp:         apiKeyValues(raw.MCP),
 		path:        path,
 		baseWarning: permWarning,
 	}
@@ -267,10 +285,15 @@ func Load(path string, explicit bool, env xdgconfig.ResolveEnv, knownProviders [
 		}
 		f.providers[name] = entry
 	}
-	for id, rawEntry := range raw.MCP {
-		f.mcp[id] = string(rawEntry.Token)
-	}
 	return &f, f.ValidateKnown(knownProviders)
+}
+
+func apiKeyValues(entries map[string]rawAPIKeyEntry) map[string]string {
+	values := make(map[string]string, len(entries))
+	for id, entry := range entries {
+		values[id] = string(entry.APIKey)
+	}
+	return values
 }
 
 // ValidateKnown applies the command root's final provider allowlist to an
@@ -309,25 +332,31 @@ func (f *File) ValidateKnown(knownProviders []string) string {
 	return joinWarnings(append([]string{f.baseWarning}, contentWarnings...)...)
 }
 
-// validateMCPAuthSchema checks only the newly introduced namespace before the
-// typed decoder validates the established provider schema. Keeping those paths
-// separate preserves Load's anchor and alias compatibility for providers.
-func validateMCPAuthSchema(node ast.Node) error {
+// validateStaticAPIKeyAuthSchema checks the static API-key namespaces before
+// the typed decoder validates the established provider schema. Keeping those
+// paths separate preserves Load's anchor and alias compatibility for providers.
+func validateStaticAPIKeyAuthSchema(node ast.Node) error {
 	root, ok := authMapping(node)
 	if !ok {
 		return nil
 	}
-	seenMCP := false
+	seen := map[string]bool{}
 	for _, entry := range root.Values {
 		key, ok := authString(entry.Key)
-		if !ok || key != "mcp" {
+		if !ok || (key != "search" && key != "mcp") {
 			continue
 		}
-		if seenMCP {
-			return errors.New("auth root has duplicate mcp schema")
+		if seen[key] {
+			return errors.New("auth root has duplicate static API-key schema")
 		}
-		seenMCP = true
-		if err := validateMCPMapping(entry.Value); err != nil {
+		seen[key] = true
+		if key == "search" {
+			if err := validateStaticAPIKeyMapping(entry.Value, "search", func(id string) bool { return searchCredentialIDs[id] }); err != nil {
+				return err
+			}
+			continue
+		}
+		if err := validateStaticAPIKeyMapping(entry.Value, "mcp", mcpCredentialID.MatchString); err != nil {
 			return err
 		}
 	}
@@ -358,7 +387,7 @@ func validateAuthSchema(node ast.Node) error {
 	seen := map[string]bool{}
 	for _, entry := range root.Values {
 		key, ok := authString(entry.Key)
-		if !ok || seen[key] || (key != "providers" && key != "mcp") {
+		if !ok || seen[key] || (key != "providers" && key != "search" && key != "mcp") {
 			return errors.New("auth root has duplicate or unknown schema")
 		}
 		seen[key] = true
@@ -367,8 +396,12 @@ func validateAuthSchema(node ast.Node) error {
 			if _, ok := entry.Value.(*ast.MappingNode); !ok {
 				return errors.New("auth providers must be a mapping")
 			}
+		case "search":
+			if err := validateStaticAPIKeyMapping(entry.Value, "search", func(id string) bool { return searchCredentialIDs[id] }); err != nil {
+				return err
+			}
 		case "mcp":
-			if err := validateMCPMapping(entry.Value); err != nil {
+			if err := validateStaticAPIKeyMapping(entry.Value, "mcp", mcpCredentialID.MatchString); err != nil {
 				return err
 			}
 		}
@@ -376,36 +409,36 @@ func validateAuthSchema(node ast.Node) error {
 	return nil
 }
 
-func validateMCPMapping(node ast.Node) error {
-	mcp, ok := authMapping(node)
+func validateStaticAPIKeyMapping(node ast.Node, namespace string, validID func(string) bool) error {
+	entries, ok := authMapping(node)
 	if !ok {
-		return errors.New("auth mcp must be a mapping")
+		return fmt.Errorf("auth %s must be a mapping", namespace)
 	}
 	seen := map[string]bool{}
-	for _, entry := range mcp.Values {
+	for _, entry := range entries.Values {
 		id, ok := authString(entry.Key)
-		if !ok || !mcpCredentialID.MatchString(id) || seen[id] {
-			return errors.New("auth mcp contains an invalid or duplicate id")
+		if !ok || !validID(id) || seen[id] {
+			return fmt.Errorf("auth %s contains an invalid or duplicate id", namespace)
 		}
 		seen[id] = true
 		fields, ok := entry.Value.(*ast.MappingNode)
 		if !ok {
-			return errors.New("auth mcp entry must be a mapping")
+			return fmt.Errorf("auth %s entry must be a mapping", namespace)
 		}
 		found := false
 		for _, field := range fields.Values {
 			key, ok := authString(field.Key)
-			if !ok || key != "token" || found {
-				return errors.New("auth mcp entry has duplicate or unknown schema")
+			if !ok || key != "api_key" || found {
+				return fmt.Errorf("auth %s entry has duplicate or unknown schema", namespace)
 			}
 			value, ok := authString(field.Value)
 			if !ok || strings.TrimSpace(value) == "" {
-				return errors.New("auth mcp token must be a non-blank string")
+				return fmt.Errorf("auth %s api_key must be a non-blank string", namespace)
 			}
 			found = true
 		}
 		if !found {
-			return errors.New("auth mcp entry requires token")
+			return fmt.Errorf("auth %s entry requires api_key", namespace)
 		}
 	}
 	return nil
@@ -415,14 +448,14 @@ func schemaWarning(path string, parseErr error) string {
 	location := yamldiag.Classify("parse auth file", parseErr)
 	if location.HasLocation {
 		return fmt.Sprintf(
-			"auth file %s: does not match the expected schema at line %d, column %d (providers.<name>.api_key, providers.openai-codex.oauth, or mcp.<id>.token) — check indentation and field names",
+			"auth file %s: does not match the expected schema at line %d, column %d (providers.<name>.api_key, providers.openai-codex.oauth, search.<id>.api_key, or mcp.<id>.api_key) — check indentation and field names",
 			path,
 			location.Line,
 			location.Column,
 		)
 	}
 	return fmt.Sprintf(
-		"auth file %s: does not match the expected schema (providers.<name>.api_key, providers.openai-codex.oauth, or mcp.<id>.token) — check indentation and field names",
+		"auth file %s: does not match the expected schema (providers.<name>.api_key, providers.openai-codex.oauth, search.<id>.api_key, or mcp.<id>.api_key) — check indentation and field names",
 		path,
 	)
 }

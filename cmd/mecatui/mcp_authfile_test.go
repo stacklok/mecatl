@@ -52,7 +52,7 @@ func TestConnectSkipsEmbeddedAuthFileComposition(t *testing.T) {
 		t.Fatal(err)
 	}
 	path := filepath.Join(authDir, "auth.yaml")
-	if err := os.WriteFile(path, []byte("mcp:\n  local:\n    token: "+localToken+"\n"), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte("mcp:\n  local:\n    api_key: "+localToken+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	originalEnv := xdgconfig.OSEnv

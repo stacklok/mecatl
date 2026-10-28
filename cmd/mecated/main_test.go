@@ -92,7 +92,7 @@ func TestApplyPostureCLIYoloWarning(t *testing.T) {
 
 func TestSearchCommandRootProjection(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "auth.yaml")
-	if err := os.WriteFile(path, []byte("providers:\n  exa:\n    api_key: daemon-exa-key\n  brave:\n    api_key: daemon-brave-key\n  websearch:\n    api_key: daemon-websearch-key\n"), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte("search:\n  exa:\n    api_key: daemon-exa-key\n  brave:\n    api_key: daemon-brave-key\n  websearch:\n    api_key: daemon-websearch-key\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("EXA_API_KEY", "")

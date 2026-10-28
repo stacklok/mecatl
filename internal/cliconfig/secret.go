@@ -157,7 +157,7 @@ func (s *CredentialSource) Lookup(kind SecretKind, ref string) (string, error) {
 	if s.strictWarning != "" || s.file == nil {
 		return "", ErrSecretSource
 	}
-	token := s.file.MCPToken(ref)
+	token := s.file.MCPAPIKey(ref)
 	if !validMCPBearer(token) {
 		return "", ErrSecretUnavailable
 	}

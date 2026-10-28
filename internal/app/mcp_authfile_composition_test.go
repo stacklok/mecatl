@@ -187,7 +187,7 @@ func TestBuildFinalizesAuthFileBeforeMCP(t *testing.T) {
 			isolateAuthFileDiscovery(t)
 			dir := filepath.Join(os.Getenv("XDG_CONFIG_HOME"), "mecatl")
 			path := filepath.Join(t.TempDir(), "selected.yaml")
-			if err := os.WriteFile(path, []byte("providers:\n  openai:\n    api_key: selected-provider\nmcp:\n  exact:\n    token: selected-mcp\n"), 0o600); err != nil {
+			if err := os.WriteFile(path, []byte("providers:\n  openai:\n    api_key: selected-provider\nmcp:\n  exact:\n    api_key: selected-mcp\n"), 0o600); err != nil {
 				t.Fatal(err)
 			}
 			settings := filepath.Join(dir, "settings.yaml")
@@ -254,7 +254,7 @@ func TestLogicalBearerReachesMCPTransport(t *testing.T) {
 
 					path := filepath.Join(t.TempDir(), "auth.yaml")
 					encodedToken, _ := json.Marshal(fileToken)
-					fileBody := "mcp:\n  fixture:\n    token: " + string(encodedToken) + "\n"
+					fileBody := "mcp:\n  fixture:\n    api_key: " + string(encodedToken) + "\n"
 					if fileToken == "" {
 						fileBody = "mcp: {}\n"
 					}
@@ -316,7 +316,7 @@ func TestLogicalBearerReachesMCPTransport(t *testing.T) {
 					if len(capture.payloads()) != 2 {
 						t.Fatalf("model requests = %d, want tool call and tool result turns", len(capture.payloads()))
 					}
-					if err := os.WriteFile(path, []byte("mcp:\n  fixture:\n    token: rotated-token-not-accepted-by-fixture\n"), 0o600); err != nil {
+					if err := os.WriteFile(path, []byte("mcp:\n  fixture:\n    api_key: rotated-token-not-accepted-by-fixture\n"), 0o600); err != nil {
 						t.Fatal(err)
 					}
 					// Lose the destination's session table, forcing the existing manager
@@ -374,7 +374,7 @@ func TestAuthFileBearerAuthenticationFailureIsContained(t *testing.T) {
 	defer mcpServer.Close()
 
 	path := filepath.Join(t.TempDir(), "auth.yaml")
-	if err := os.WriteFile(path, []byte("mcp:\n  fixture:\n    token: "+token+"\n"), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte("mcp:\n  fixture:\n    api_key: "+token+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	settings := filepath.Join(t.TempDir(), "settings.yaml")
@@ -518,7 +518,7 @@ func TestInvalidStaticBearerStopsBeforeMCPTransport(t *testing.T) {
 							}
 							path := filepath.Join(t.TempDir(), "auth.yaml")
 							encoded, _ := json.Marshal(fileToken)
-							if err := os.WriteFile(path, []byte("mcp:\n  fixture:\n    token: "+string(encoded)+"\n"), 0o600); err != nil {
+							if err := os.WriteFile(path, []byte("mcp:\n  fixture:\n    api_key: "+string(encoded)+"\n"), 0o600); err != nil {
 								t.Fatal(err)
 							}
 							settings := filepath.Join(t.TempDir(), "settings.yaml")

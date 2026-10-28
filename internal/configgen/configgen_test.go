@@ -235,7 +235,7 @@ func TestMCPArtifactsShowStrictUnionWithoutSecretValues(t *testing.T) {
 		"authorization_endpoint: https://github.com/login/oauth/authorize",
 		"token_endpoint: https://github.com/login/oauth/access_token",
 		"secret_file: /var/run/secrets/mecatl/github-mcp-client-secret", "token_ref: github",
-		"MECATL_MCP_TOKEN_GITHUB", "auth.yaml mcp.github.token",
+		"MECATL_MCP_TOKEN_GITHUB", "auth.yaml mcp.github.api_key",
 		"key_env: MECATL_MCP_CREDENTIAL_KEY",
 		"- name: get_issue", "input_schema:", "read_only: true",
 	} {

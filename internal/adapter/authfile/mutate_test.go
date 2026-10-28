@@ -23,9 +23,9 @@ func TestMutateAuthRemovesFinalProvidersSection(t *testing.T) {
 
 func TestAuthDocumentValidationRetainsProviderChecksWithMCP(t *testing.T) {
 	for name, document := range map[string]string{
-		"invalid provider ID":    "providers:\n  BadID:\n    api_key: key\nmcp:\n  context7:\n    token: token\n",
-		"unknown provider field": "providers:\n  openai:\n    unexpected: value\nmcp:\n  context7:\n    token: token\n",
-		"non-string API key":     "providers:\n  openai:\n    api_key: 123\nmcp:\n  context7:\n    token: token\n",
+		"invalid provider ID":    "providers:\n  BadID:\n    api_key: key\nmcp:\n  context7:\n    api_key: token\n",
+		"unknown provider field": "providers:\n  openai:\n    unexpected: value\nmcp:\n  context7:\n    api_key: token\n",
+		"non-string API key":     "providers:\n  openai:\n    api_key: 123\nmcp:\n  context7:\n    api_key: token\n",
 	} {
 		t.Run(name, func(t *testing.T) {
 			if err := validateAuthDocument([]byte(document)); err == nil {
@@ -38,30 +38,40 @@ func TestAuthDocumentValidationRetainsProviderChecksWithMCP(t *testing.T) {
 	}
 }
 
-func TestMutateAuthPreservesMCPEntries(t *testing.T) {
-	const token = "mcp-secret"
+func TestMutateAuthPreservesStaticAPIKeyEntries(t *testing.T) {
+	const apiKey = "static-secret"
 	for _, tt := range []struct {
-		name, initial string
-		update        APIKeyUpdate
-		wantProvider  string
+		name, initial  string
+		update         APIKeyUpdate
+		wantProvider   string
+		wantNamespaces []string
 	}{
 		{
-			name:         "add provider to MCP-only file",
-			initial:      "mcp:\n  context7:\n    token: '" + token + "'\n",
-			update:       APIKeyUpdate{Provider: "openai", APIKey: stringPtr("new-key")},
-			wantProvider: "new-key",
+			name:           "add provider to search-only file",
+			initial:        "# keep this comment\nsearch:\n  exa:\n    api_key: '" + apiKey + "'\n",
+			update:         APIKeyUpdate{Provider: "openai", APIKey: stringPtr("new-key")},
+			wantProvider:   "new-key",
+			wantNamespaces: []string{"search:"},
 		},
 		{
-			name:         "update provider in mixed file",
-			initial:      "providers:\n  openai:\n    api_key: old-key\nmcp:\n  context7:\n    token: '" + token + "'\n",
-			update:       APIKeyUpdate{Provider: "openai", APIKey: stringPtr("updated-key")},
-			wantProvider: "updated-key",
+			name:           "add provider to MCP-only file",
+			initial:        "mcp:\n  context7:\n    api_key: '" + apiKey + "'\n",
+			update:         APIKeyUpdate{Provider: "openai", APIKey: stringPtr("new-key")},
+			wantProvider:   "new-key",
+			wantNamespaces: []string{"mcp:"},
 		},
 		{
-			name:         "remove final provider from mixed file",
-			initial:      "providers:\n  openai:\n    api_key: old-key\nmcp:\n  context7:\n    token: '" + token + "'\n",
-			update:       APIKeyUpdate{Provider: "openai"},
-			wantProvider: "",
+			name:           "update provider in mixed file",
+			initial:        "providers:\n  openai:\n    api_key: old-key\nsearch:\n  brave:\n    api_key: '" + apiKey + "'\nmcp:\n  context7:\n    api_key: '" + apiKey + "'\n",
+			update:         APIKeyUpdate{Provider: "openai", APIKey: stringPtr("updated-key")},
+			wantProvider:   "updated-key",
+			wantNamespaces: []string{"search:", "mcp:"},
+		},
+		{
+			name:           "remove final provider from mixed file",
+			initial:        "providers:\n  openai:\n    api_key: old-key\nsearch:\n  websearch:\n    api_key: '" + apiKey + "'\nmcp:\n  context7:\n    api_key: '" + apiKey + "'\n",
+			update:         APIKeyUpdate{Provider: "openai"},
+			wantNamespaces: []string{"search:", "mcp:"},
 		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
@@ -69,8 +79,13 @@ func TestMutateAuthPreservesMCPEntries(t *testing.T) {
 			if err != nil || unchanged {
 				t.Fatalf("mutateAuth = (%q, %v, %v), want changed success", out, unchanged, err)
 			}
-			if !strings.Contains(string(out), "token: '"+token+"'") {
-				t.Fatalf("mutation dropped MCP token: %q", out)
+			if tt.name == "add provider to search-only file" && !strings.Contains(string(out), "# keep this comment") {
+				t.Fatalf("mutation dropped comment: %q", out)
+			}
+			for _, namespace := range tt.wantNamespaces {
+				if !strings.Contains(string(out), namespace) || !strings.Contains(string(out), "api_key: '"+apiKey+"'") {
+					t.Fatalf("mutation dropped %s API key: %q", namespace, out)
+				}
 			}
 			if tt.wantProvider == "" {
 				if strings.Contains(string(out), "providers:") {
@@ -81,6 +96,37 @@ func TestMutateAuthPreservesMCPEntries(t *testing.T) {
 			}
 			if err := validateAuthDocument(out); err != nil {
 				t.Fatalf("mutated document is invalid: %v\n%s", err, out)
+			}
+		})
+	}
+}
+
+func TestMutateAuthUpdatesCustomExaWithoutChangingSearchExa(t *testing.T) {
+	initial := "providers:\n  exa:\n    api_key: old-llm-key\nsearch:\n  exa:\n    api_key: search-key\n"
+	newKey := "new-llm-key"
+	out, unchanged, err := mutateAuth([]byte(initial), APIKeyUpdate{Provider: "exa", APIKey: &newKey})
+	if err != nil || unchanged {
+		t.Fatalf("mutateAuth = (%q, %v, %v), want changed success", out, unchanged, err)
+	}
+	dir := t.TempDir()
+	path := writeFile(t, dir, string(out), 0o600)
+	file, warning := Load(path, false, fakeEnv(dir), []string{"exa"})
+	if warning != "" || file == nil || file.APIKey("exa") != newKey || file.SearchAPIKey("exa") != "search-key" {
+		t.Fatal("custom providers.exa update changed or consumed search.exa")
+	}
+}
+
+func TestMutateAuthRejectsInvalidStaticAPIKeyEntries(t *testing.T) {
+	for name, document := range map[string]string{
+		"obsolete MCP token": "mcp:\n  context7:\n    token: old-token\n",
+		"invalid search ID":  "search:\n  unknown:\n    api_key: search-key\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := validateAuthDocument([]byte(document)); err == nil {
+				t.Fatal("validateAuthDocument succeeded, want static API-key rejection")
+			}
+			if _, _, err := mutateAuth([]byte(document), APIKeyUpdate{Provider: "openai", APIKey: stringPtr("new-key")}); err == nil {
+				t.Fatal("mutateAuth succeeded, want static API-key preflight rejection")
 			}
 		})
 	}

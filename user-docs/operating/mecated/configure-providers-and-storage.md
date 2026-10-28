@@ -19,11 +19,9 @@ the client to the service and leaves server provider setup with its operator.
 
 ### Model and search credential file
 
-This file primarily configures LLM providers, but its `providers:` mapping is
-the shared credential namespace for model and search providers. Set
-model-provider API keys with `OPENAI_API_KEY`, `OPENROUTER_API_KEY`,
-`ANTHROPIC_API_KEY`, or `OPENCODE_API_KEY`. To keep model credentials and
-optional search credentials in one operator-owned file, use `auth.yaml`:
+Use `auth.yaml` to store model-provider and search API keys in an operator-owned
+file. The `providers:` mapping contains LLM credentials, and `search:` contains
+built-in search credentials:
 
 ```yaml
 providers:
@@ -37,7 +35,8 @@ providers:
   opencode:
     api_key: <OPENCODE_API_KEY>
 
-  # Search providers: configure the Exa paid tier, Brave Search, or a generic HTTP endpoint.
+search:
+  # Built-in search providers.
   exa:
     api_key: <EXA_API_KEY>
   brave:
@@ -49,10 +48,43 @@ providers:
 A matching API-key environment variable takes precedence over the file entry.
 The `exa` entry enables Exa's paid search tier; the `brave` entry selects Brave
 Search; and `websearch` supplies the credential for a configured generic HTTP
-endpoint. These entries are search credentials, not model providers, and do
-not satisfy the requirement for an LLM provider. See [Configure web
-search](/features/sessions/tools.md#configure-web-search) for backend
-selection.
+endpoint. These keys do not satisfy the requirement for an LLM provider. See
+[Configure web search](/features/sessions/tools.md#configure-web-search) for
+backend selection.
+
+The `providers`, `search`, and `mcp` mappings are independent namespaces. For
+example, `providers.websearch` can configure a custom LLM while
+`search.websearch` supplies a generic HTTP search credential. Entries with the
+same ID do not share credentials.
+
+### Update an existing credential file
+
+Move built-in search credentials from `providers:` to `search:` before you
+restart `mecated`:
+
+```yaml title="Before"
+providers:
+  exa:
+    api_key: <EXA_API_KEY>
+  brave:
+    api_key: <BRAVE_API_KEY>
+  websearch:
+    api_key: <WEBSEARCH_API_KEY>
+```
+
+```yaml title="After"
+search:
+  exa:
+    api_key: <EXA_API_KEY>
+  brave:
+    api_key: <BRAVE_API_KEY>
+  websearch:
+    api_key: <WEBSEARCH_API_KEY>
+```
+
+Mecatl does not read the former locations or fall back to them. The parser
+reports obsolete entries as ordinary unknown or schema validation errors.
+
 The default path is `$XDG_CONFIG_HOME/mecatl/auth.yaml`, normally
 `~/.config/mecatl/auth.yaml`. `--api-key-file <PATH>` selects another file;
 `credential_store.api_key.file` in operator settings can also select the path.

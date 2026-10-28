@@ -94,9 +94,20 @@ func TestBuildWebSearchCredentialLoaderSendsGenericAuthHeader(t *testing.T) {
 }
 
 func TestBuildWebSearchCredentialLoaderDoesNotSendSearXNGAuthHeader(t *testing.T) {
-	var gotAuth string
+	const exaKey, braveKey, webSearchKey = "test-exa-key", "test-brave-key", "test-websearch-key"
+	called := make(chan struct{}, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotAuth = r.Header.Get("Authorization")
+		for _, key := range []string{exaKey, braveKey, webSearchKey} {
+			if strings.Contains(fmt.Sprint(r.Header)+r.URL.String(), key) {
+				t.Error("SearXNG request contained a search credential")
+			}
+		}
+		for _, header := range []string{"Authorization", "X-Subscription-Token", "X-Search-Key"} {
+			if r.Header.Get(header) != "" {
+				t.Error("SearXNG request contained a credential header")
+			}
+		}
+		called <- struct{}{}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"results":[]}`))
 	}))
@@ -110,7 +121,7 @@ func TestBuildWebSearchCredentialLoaderDoesNotSendSearXNGAuthHeader(t *testing.T
 		),
 		PermissionConfigs:        []string{writeOperatorSettingsFile(t, fmt.Sprintf("websearch:\n  searxng:\n    url: %s\n", server.URL))},
 		permConfigEnv:            isolatedPermConfigEnv(t),
-		ProviderCredentialLoader: &capturingProviderCredentialLoader{profile: ProviderCredentials{WebSearchAPIKey: "test-websearch-key"}},
+		ProviderCredentialLoader: &capturingProviderCredentialLoader{profile: ProviderCredentials{ExaAPIKey: exaKey, BraveAPIKey: braveKey, WebSearchAPIKey: webSearchKey}},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -118,8 +129,10 @@ func TestBuildWebSearchCredentialLoaderDoesNotSendSearXNGAuthHeader(t *testing.T
 	defer built.Close()
 
 	harnessRun(t, built, t.Context(), harnessCreate(t, built, t.Context()), "search")
-	if gotAuth != "" {
-		t.Fatalf("SearXNG Authorization header = %q, want empty", gotAuth)
+	select {
+	case <-called:
+	default:
+		t.Fatal("SearXNG request was not made")
 	}
 }
 

@@ -122,6 +122,130 @@ func TestResolveProviderCredentialsReportsUnknownProviderWarningSafely(t *testin
 	}
 }
 
+func TestSearchProviderIDsRequireCustomDefinitions(t *testing.T) {
+	const path = "/config/mecatl/auth.yaml"
+	for _, id := range []string{"exa", "brave", "websearch"} {
+		for _, flow := range []string{"preliminary", "direct", "reselected"} {
+			for _, custom := range []bool{false, true} {
+				name := id + "/" + flow + "/unknown"
+				var definitions permconfig.ProviderDefinitions
+				if custom {
+					name = id + "/" + flow + "/custom"
+					definitions = permconfig.ProviderDefinitions{id: {ID: id, Auth: permconfig.ProviderAuth{Method: "api_key"}}}
+				}
+				t.Run(name, func(t *testing.T) {
+					selected := path
+					if flow == "reselected" {
+						selected = "/selected/auth.yaml"
+					}
+					env := envWithAuth(selected, "providers:\n  "+id+":\n    api_key: llm-only-sentinel\n")
+					flags := &ProviderFlags{}
+					var keys ResolvedCredentials
+					var err error
+					if flow == "direct" {
+						keys, err = ResolveProviderCredentials(nil, definitions, env)
+					} else {
+						keys = flags.resolve(env, time.Time{})
+						if keys.AuthFileWarning != "" || keys.Exa != "" || keys.Brave != "" || keys.WebSearch != "" {
+							t.Fatal("preliminary discovery rejected a potential custom ID or consumed it as search")
+						}
+						source := NewCredentialSource(flags, keys)
+						if flow == "reselected" {
+							source.SetAPIKeyFile(selected)
+						}
+						profile, _, loadErr := NewProviderCredentialResolver(source, keys).Load(definitions)
+						err = loadErr
+						if custom && (profile.CustomProviderAPIKeys[id] != "llm-only-sentinel" || profile.ExaAPIKey != "" || profile.BraveAPIKey != "" || profile.WebSearchAPIKey != "") {
+							t.Fatal("custom LLM credentials crossed namespaces or were not resolved")
+						}
+					}
+					if !custom {
+						if err == nil || !strings.Contains(err.Error(), "unknown provider(s)") || strings.Contains(err.Error(), "llm-only-sentinel") {
+							t.Fatal("unconfigured provider did not receive ordinary value-free unknown-provider validation")
+						}
+						return
+					}
+					if err != nil {
+						t.Fatalf("configured custom provider rejected: %v", err)
+					}
+					if flow == "direct" && (keys.CustomAPIKey(id) != "llm-only-sentinel" || keys.Exa != "" || keys.Brave != "" || keys.WebSearch != "") {
+						t.Fatal("direct custom LLM credentials crossed namespaces or were not resolved")
+					}
+				})
+			}
+		}
+	}
+}
+
+func TestProviderSearchAndMCPNamespacesStaySeparateAcrossResolutionFlows(t *testing.T) {
+	const preliminaryPath = "/config/mecatl/auth.yaml"
+	const selectedPath = "/selected/auth.yaml"
+
+	for _, id := range []string{"exa", "brave", "websearch"} {
+		for _, flow := range []string{"preliminary", "direct", "reselected"} {
+			t.Run(id+"/"+flow, func(t *testing.T) {
+				document := func(prefix string) string {
+					return "providers:\n  " + id + ":\n    api_key: " + prefix + "-llm\nsearch:\n  exa:\n    api_key: " + prefix + "-exa\n  brave:\n    api_key: " + prefix + "-brave\n  websearch:\n    api_key: " + prefix + "-websearch\nmcp:\n  " + id + ":\n    api_key: " + prefix + "-mcp\n"
+				}
+				files := map[string]string{preliminaryPath: document("preliminary"), selectedPath: document("selected")}
+				reads := map[string]int{}
+				env := xdgconfig.ResolveEnv{
+					Getenv: func(key string) string {
+						if key == "XDG_CONFIG_HOME" {
+							return "/config"
+						}
+						return ""
+					},
+					Environ: func() []string { return nil },
+					ReadFile: func(path string) ([]byte, error) {
+						reads[path]++
+						return []byte(files[path]), nil
+					},
+				}
+				definitions := permconfig.ProviderDefinitions{id: {ID: id, Auth: permconfig.ProviderAuth{Method: "api_key"}}}
+				flags := &ProviderFlags{}
+				var source *CredentialSource
+				var keys ResolvedCredentials
+				var err error
+				if flow == "direct" {
+					source = newCredentialSource(nil, env)
+					keys, err = source.ResolveProviders(definitions)
+				} else {
+					keys = flags.resolve(env, time.Time{})
+					source = NewCredentialSource(flags, keys)
+					if flow == "reselected" {
+						source.SetAPIKeyFile(selectedPath)
+					}
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				profile, _, err := NewProviderCredentialResolver(source, keys).Load(definitions)
+				if err != nil {
+					t.Fatal(err)
+				}
+				prefix := "preliminary"
+				if flow == "reselected" {
+					prefix = "selected"
+				}
+				if profile.CustomProviderAPIKeys[id] != prefix+"-llm" || profile.ExaAPIKey != prefix+"-exa" || profile.BraveAPIKey != prefix+"-brave" || profile.WebSearchAPIKey != prefix+"-websearch" {
+					t.Fatal("provider and search credentials crossed namespaces or resolved from the wrong snapshot")
+				}
+				if keys.Any() {
+					t.Fatal("search-only and custom LLM credentials satisfied the built-in LLM predicate")
+				}
+				mcpKey, err := source.Lookup(MCPBearerSecret, id)
+				if err != nil || mcpKey != prefix+"-mcp" {
+					t.Fatal("MCP credential crossed namespaces or resolved from the wrong snapshot")
+				}
+				if flow == "reselected" && (reads[preliminaryPath] != 1 || reads[selectedPath] != 1) {
+					t.Fatalf("selected file reads = preliminary %d, selected %d; want one snapshot per selected path", reads[preliminaryPath], reads[selectedPath])
+				}
+			})
+		}
+	}
+}
+
 func envWithAuth(path, contents string) xdgconfig.ResolveEnv {
 	return xdgconfig.ResolveEnv{
 		Getenv: func(key string) string {

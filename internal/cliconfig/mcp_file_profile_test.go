@@ -71,7 +71,7 @@ func TestMCPSelectedFileWarningsFailClosed(t *testing.T) {
 				t.Fatal(err)
 			}
 			path := filepath.Join(t.TempDir(), "auth.yaml")
-			body := "mcp:\n  exact:\n    token: private-token-sentinel\n"
+			body := "mcp:\n  exact:\n    api_key: private-token-sentinel\n"
 			switch state {
 			case "malformed":
 				body = "mcp: [private-token-sentinel"
@@ -201,7 +201,7 @@ func TestMCPFinalSelectedPathAndSnapshot(t *testing.T) {
 			if sourceName == "conventional" {
 				path = conventional
 			}
-			body := "providers:\n  openai:\n    api_key: selected-provider\nmcp:\n  exact:\n    token: selected-mcp\n"
+			body := "providers:\n  openai:\n    api_key: selected-provider\nsearch:\n  exa:\n    api_key: selected-exa\n  brave:\n    api_key: selected-brave\n  websearch:\n    api_key: selected-websearch\nmcp:\n  exact:\n    api_key: selected-mcp\n"
 			if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 				t.Fatal(err)
 			}
@@ -224,10 +224,10 @@ func TestMCPFinalSelectedPathAndSnapshot(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if keys.OpenAIKey != "selected-provider" {
-				t.Fatal("provider used preliminary source")
+			if keys.OpenAIKey != "selected-provider" || keys.ExaAPIKey != "selected-exa" || keys.BraveAPIKey != "selected-brave" || keys.WebSearchAPIKey != "selected-websearch" {
+				t.Fatal("provider/search credentials used preliminary source or crossed namespaces")
 			}
-			if err := os.WriteFile(path, []byte("mcp:\n  exact:\n    token: rotated-token\n"), 0o600); err != nil {
+			if err := os.WriteFile(path, []byte("mcp:\n  exact:\n    api_key: rotated-token\n"), 0o600); err != nil {
 				t.Fatal(err)
 			}
 			operator := &permconfig.MCPSection{Mode: "global", Servers: []permconfig.MCPServerProfile{fileBearerProfile("server", "exact")}}
