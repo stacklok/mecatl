@@ -172,9 +172,7 @@ func runRootLoaders(t *testing.T, cfg app.Config, path string, operator *permcon
 		_ = manager.Close()
 		_ = lifecycle.Close()
 		cancel()
-		// Both loader paths must keep the factory's startup snapshot.
-		t.Setenv("MECATL_MCP_TOKEN_ROOT_FIXTURE", "rotated-env")
-		t.Setenv("MECATL_ROOT_LEGACY", "rotated-legacy")
+		// Both loader paths must keep the factory's file snapshot.
 		if err := os.WriteFile(path, []byte("mcp:\n  root_fixture:\n    token: rotated-file\n"), 0o600); err != nil {
 			t.Fatal(err)
 		}
@@ -249,13 +247,12 @@ func rootFreshAuthorization(t *testing.T, source string) string {
 	t.Helper()
 	switch source {
 	case "file":
-		if err := os.Unsetenv("MECATL_MCP_TOKEN_ROOT_FIXTURE"); err != nil {
-			t.Fatal(err)
-		}
 		return "Bearer rotated-file"
 	case "legacy environment":
+		t.Setenv("MECATL_ROOT_LEGACY", "rotated-legacy")
 		return "Bearer rotated-legacy"
 	default:
+		t.Setenv("MECATL_MCP_TOKEN_ROOT_FIXTURE", "rotated-env")
 		return "Bearer rotated-env"
 	}
 }

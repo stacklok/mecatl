@@ -626,8 +626,8 @@
 #|                 read_only: true
 #|     # Global mode additionally supports static_bearer and OIDC identity profiles:
 #|     # static_bearer:
-#|     #   # MECATL_MCP_TOKEN_CONTEXT7 wins over auth.yaml mcp.context7.token:
-#|     #   token_ref: context7
+#|     #   # MECATL_MCP_TOKEN_GITHUB wins over auth.yaml mcp.github.token:
+#|     #   token_ref: github
 #|     #   # Deprecated alternative (use exactly one selector):
 #|     #   # token_env: MECATL_MCP_STATIC_TOKEN
 #|     # profile: work

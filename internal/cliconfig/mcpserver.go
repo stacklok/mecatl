@@ -133,7 +133,7 @@ func (l *MCPServerList) Set(v string) error {
 // Validate checks only cross-flag metadata. It performs no environment lookup;
 // runtime secret resolution belongs to LoadMCPProfiles.
 func (l *MCPServerList) Validate() error {
-	return validateLegacyRelaxations(l)
+	return validateCLIHTTPRelaxations(l)
 }
 
 // Finalize is the post-parse validation step every main calls right after

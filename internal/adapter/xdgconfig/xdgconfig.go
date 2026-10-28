@@ -24,12 +24,13 @@ import (
 // bound via OSEnv and never call it — an unused field, not a behavioural cost.
 type ResolveEnv struct {
 	Getenv      func(string) string
+	Environ     func() []string
 	UserHomeDir func() (string, error)
 	ReadFile    func(string) ([]byte, error)
 }
 
 // OSEnv binds a resolver to the real process environment + filesystem.
-var OSEnv = ResolveEnv{Getenv: os.Getenv, UserHomeDir: os.UserHomeDir, ReadFile: os.ReadFile}
+var OSEnv = ResolveEnv{Getenv: os.Getenv, Environ: os.Environ, UserHomeDir: os.UserHomeDir, ReadFile: os.ReadFile}
 
 // UserConfigDir returns the XDG config base for a user-level config location: the
 // value of $XDG_CONFIG_HOME when set, else ~/.config. It returns "" when neither

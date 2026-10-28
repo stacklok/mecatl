@@ -129,13 +129,13 @@ func (pf *ProviderFlags) Apply(cfg *app.Config) ResolvedKeys {
 // returns the immutable credential snapshot command roots cache for their
 // lifetime. The manual Codex token intentionally has no environment seam.
 func (pf *ProviderFlags) Resolve() ResolvedCredentials {
-	return pf.resolve(xdgconfig.OSEnv, time.Now(), os.Environ()...)
+	return pf.resolve(xdgconfig.OSEnv, time.Now())
 }
 
-func (pf *ProviderFlags) resolve(env xdgconfig.ResolveEnv, now time.Time, environ ...string) ResolvedCredentials {
+func (pf *ProviderFlags) resolve(env xdgconfig.ResolveEnv, now time.Time) ResolvedCredentials {
 	keys := readProviderKeys(env.Getenv)
 
-	source := newCredentialSource(pf, env, environ)
+	source := newCredentialSource(pf, env)
 	source.acquire()
 	af, warning, path := source.file, source.warning, source.path
 	keys.source = source
@@ -181,7 +181,7 @@ func HasOperatorProviderDefinitions(conventional, importClaude bool, files []str
 // a resolved operator provider definition set. Custom credentials come only from
 // auth.yaml; they deliberately have no environment fallback.
 func ResolveProviderCredentials(pf *ProviderFlags, definitions permconfig.ProviderDefinitions, env xdgconfig.ResolveEnv) (ResolvedCredentials, error) {
-	source := newCredentialSource(pf, env, os.Environ())
+	source := newCredentialSource(pf, env)
 	if pf == nil {
 		// A nil flags input requests file-only provider inspection.
 		source.env.Getenv = func(string) string { return "" }

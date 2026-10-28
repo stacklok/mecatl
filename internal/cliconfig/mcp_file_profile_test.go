@@ -22,9 +22,9 @@ type testSecretLookup func(SecretKind, string) (string, error)
 func (f testSecretLookup) Lookup(kind SecretKind, ref string) (string, error) { return f(kind, ref) }
 
 func TestMCPStaticSourceSelection(t *testing.T) {
-	for _, legacy := range []bool{false, true} {
+	for _, explicitTokenEnv := range []bool{false, true} {
 		p := fileBearerProfile("server", "exact")
-		if legacy {
+		if explicitTokenEnv {
 			p.Auth.StaticBearer = &permconfig.MCPStaticBearerProfile{TokenEnv: "MECATL_SELECTED_TOKEN"}
 		}
 		secretCalls, envCalls := 0, 0
@@ -40,9 +40,9 @@ func TestMCPStaticSourceSelection(t *testing.T) {
 			LookupEnv: func(name string) (string, bool) {
 				envCalls++
 				if name != "MECATL_SELECTED_TOKEN" {
-					t.Fatal("wrong legacy environment variable")
+					t.Fatal("wrong explicit token environment variable")
 				}
-				return "legacy-token", true
+				return "explicit-token", true
 			},
 		})
 		if err != nil {
@@ -50,13 +50,13 @@ func TestMCPStaticSourceSelection(t *testing.T) {
 		}
 		defer profiles.Close()
 		want := "Bearer  logical\ttoken"
-		if legacy {
-			want = "Bearer legacy-token"
+		if explicitTokenEnv {
+			want = "Bearer explicit-token"
 		}
 		if profiles.Servers[0].Headers["Authorization"] != want {
 			t.Fatal("incorrect or normalized bearer")
 		}
-		if legacy && (envCalls != 1 || secretCalls != 0) || !legacy && (envCalls != 0 || secretCalls != 1) {
+		if explicitTokenEnv && (envCalls != 1 || secretCalls != 0) || !explicitTokenEnv && (envCalls != 0 || secretCalls != 1) {
 			t.Fatal("credential sources crossed")
 		}
 	}
@@ -120,9 +120,9 @@ func TestMCPSelectedFileWarningsFailClosed(t *testing.T) {
 
 func TestMCPStaticHeaderSafetyAndLookupErrors(t *testing.T) {
 	for _, token := range []string{"sentinel\rvalue", "sentinel\nvalue", "sentinel\x00value", "sentinel\x01value", "sentinel\x1fvalue", "sentinel\x7fvalue", " \t ", "sentinel ", "sentinel\t"} {
-		for _, legacy := range []bool{false, true} {
+		for _, explicitTokenEnv := range []bool{false, true} {
 			p := fileBearerProfile("server", "exact")
-			if legacy {
+			if explicitTokenEnv {
 				p.Auth.StaticBearer = &permconfig.MCPStaticBearerProfile{TokenEnv: "MECATL_TOKEN"}
 			}
 			profiles, err := LoadMCPProfiles(MCPProfileLoadOptions{Operator: &permconfig.MCPSection{Servers: []permconfig.MCPServerProfile{p}}, Secrets: testSecretLookup(func(SecretKind, string) (string, error) { return token, nil }), LookupEnv: func(string) (string, bool) { return token, true }})
@@ -164,22 +164,22 @@ func TestMCPLookupAfterSelectionAndOverride(t *testing.T) {
 		t.Fatal(err)
 	}
 	profiles.Close()
-	legacy := &MCPServerList{}
-	if err := legacy.Set("discarded=https://legacy.example/mcp"); err != nil {
+	cliServers := &MCPServerList{}
+	if err := cliServers.Set("discarded=https://cli.example/mcp"); err != nil {
 		t.Fatal(err)
 	}
-	profiles, err = LoadMCPProfiles(MCPProfileLoadOptions{Operator: operator, Legacy: legacy, Secrets: lookup, LookupEnv: func(name string) (string, bool) {
+	profiles, err = LoadMCPProfiles(MCPProfileLoadOptions{Operator: operator, CLIServers: cliServers, Secrets: lookup, LookupEnv: func(name string) (string, bool) {
 		if name != "MCP_DISCARDED_TOKEN" {
-			t.Fatal("wrong legacy env")
+			t.Fatal("wrong CLI environment variable")
 		}
-		return "legacy-token", true
+		return "cli-token", true
 	}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer profiles.Close()
-	if profiles.Servers[0].URL != "https://legacy.example/mcp" || profiles.Servers[0].Headers["Authorization"] != "Bearer legacy-token" {
-		t.Fatal("legacy whole-entry replacement changed")
+	if profiles.Servers[0].URL != "https://cli.example/mcp" || profiles.Servers[0].Headers["Authorization"] != "Bearer cli-token" {
+		t.Fatal("CLI whole-entry replacement changed")
 	}
 	operator.Mode = "broker"
 	_, err = ResolveMCPAuthority(MCPAuthorityOptions{Operator: operator, DefaultMode: mcpauthority.Global, BrokerSupported: true, Secrets: lookup})

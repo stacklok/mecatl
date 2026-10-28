@@ -319,8 +319,6 @@ func TestLogicalBearerReachesMCPTransport(t *testing.T) {
 					if err := os.WriteFile(path, []byte("mcp:\n  fixture:\n    token: rotated-token-not-accepted-by-fixture\n"), 0o600); err != nil {
 						t.Fatal(err)
 					}
-					t.Setenv("MECATL_MCP_TOKEN_FIXTURE", "rotated-derived-not-accepted")
-					t.Setenv("MECATL_EXPLICIT_FIXTURE", "rotated-explicit-not-accepted")
 					// Lose the destination's session table, forcing the existing manager
 					// to reconnect before source refresh can replace any runtime state.
 					fixture.mu.Lock()

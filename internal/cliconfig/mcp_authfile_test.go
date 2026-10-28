@@ -2,6 +2,7 @@ package cliconfig
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -21,7 +22,7 @@ func TestSettingsSelectsPreliminaryPathWithoutReread(t *testing.T) {
 			}
 			return []byte("mcp:\n  github:\n    token: original\n"), nil
 		}
-		source := newCredentialSource(nil, env, nil)
+		source := newCredentialSource(nil, env)
 		source.acquire()
 		source.SetAPIKeyFile("/config/mecatl/auth.yaml")
 		for range 2 {
@@ -61,7 +62,7 @@ func TestSelectedCredentialSnapshotAcquiredOnce(t *testing.T) {
 			return []byte("providers:\n  openai:\n    api_key: original-provider\nmcp:\n  exact:\n    token: original-mcp\n"), nil
 		},
 	}
-	source := newCredentialSource(nil, env, nil)
+	source := newCredentialSource(nil, env)
 	source.SetAPIKeyFile("/selected/auth.yaml")
 	first, err := source.ResolveProviders(nil)
 	if err != nil {
@@ -87,7 +88,7 @@ func TestSelectedCredentialSnapshotCachesFailure(t *testing.T) {
 		reads := 0
 		env := envWithAuth("/selected/auth.yaml", "")
 		env.ReadFile = func(string) ([]byte, error) { reads++; return []byte(body), nil }
-		source := newCredentialSource(nil, env, nil)
+		source := newCredentialSource(nil, env)
 		source.SetAPIKeyFile("/selected/auth.yaml")
 		for range 2 {
 			if _, err := source.ResolveProviders(nil); err == nil {
@@ -126,7 +127,8 @@ func TestStaticSecretEnvironmentSelectionAndSnapshot(t *testing.T) {
 			reads := 0
 			env := envWithAuth("/config/mecatl/auth.yaml", "")
 			env.ReadFile = func(string) ([]byte, error) { reads++; return []byte("mcp:\n  github:\n    token: file-token\n"), nil }
-			source := newCredentialSource(nil, env, tc.environ)
+			env.Environ = func() []string { return tc.environ }
+			source := newCredentialSource(nil, env)
 			for range 2 {
 				token, err := source.Lookup(MCPBearerSecret, "github")
 				if token != tc.want || !errors.Is(err, tc.wantErr) {
@@ -134,11 +136,6 @@ func TestStaticSecretEnvironmentSelectionAndSnapshot(t *testing.T) {
 				}
 				if err != nil && strings.Contains(err.Error(), "private") {
 					t.Fatal("secret in error")
-				}
-				// Neither a newly present ambient value nor rotation changes this view.
-				t.Setenv("MECATL_MCP_TOKEN_GITHUB", "rotated")
-				if len(tc.environ) > 0 {
-					tc.environ[0] = "MECATL_MCP_TOKEN_GITHUB=rotated"
 				}
 			}
 			if reads != tc.reads {
@@ -148,10 +145,44 @@ func TestStaticSecretEnvironmentSelectionAndSnapshot(t *testing.T) {
 	}
 }
 
+func TestCredentialSourceUsesInjectedEnviron(t *testing.T) {
+	t.Setenv("MECATL_MCP_TOKEN_GITHUB", "ambient-token")
+	for _, tc := range []struct {
+		name    string
+		environ func() []string
+		want    string
+	}{
+		{"nil", nil, "file-token"},
+		{"empty", func() []string { return nil }, "file-token"},
+		{"injected", func() []string { return []string{"MECATL_MCP_TOKEN_GITHUB=injected-token"} }, "injected-token"},
+	} {
+		for _, providers := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/providers=%v", tc.name, providers), func(t *testing.T) {
+				env := envWithAuth("/config/mecatl/auth.yaml", "mcp:\n  github:\n    token: file-token\n")
+				env.Environ = tc.environ
+				var keys ResolvedCredentials
+				if providers {
+					var err error
+					keys, err = ResolveProviderCredentials(nil, nil, env)
+					if err != nil {
+						t.Fatal(err)
+					}
+				} else {
+					keys = (&ProviderFlags{}).resolve(env, time.Time{})
+				}
+				token, err := keys.source.Lookup(MCPBearerSecret, "github")
+				if err != nil || token != tc.want {
+					t.Fatalf("injected environment selection failed: %v", err)
+				}
+			})
+		}
+	}
+}
+
 func TestStaticSecretReferenceBoundary(t *testing.T) {
 	env := envWithAuth("/config/mecatl/auth.yaml", "")
 	env.ReadFile = func(string) ([]byte, error) { t.Fatal("invalid reference acquired file"); return nil, nil }
-	source := newCredentialSource(nil, env, nil)
+	source := newCredentialSource(nil, env)
 	for _, ref := range []string{"", "GitHub", "../github", "github-x", "é", "MECATL_MCP_TOKEN_GITHUB"} {
 		if _, err := source.Lookup(MCPBearerSecret, ref); !errors.Is(err, ErrSecretReference) {
 			t.Fatal("invalid ref accepted")

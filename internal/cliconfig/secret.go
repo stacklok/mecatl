@@ -2,7 +2,6 @@ package cliconfig
 
 import (
 	"errors"
-	"os"
 	"regexp"
 	"strings"
 	"sync"
@@ -23,9 +22,9 @@ var (
 	// ErrSecretUnavailable reports a missing or invalid static secret.
 	ErrSecretUnavailable = errors.New("static secret unavailable")
 	// ErrSecretSource reports an unavailable static credential source.
-	ErrSecretSource      = errors.New("static credential source unavailable")
-	legacyMCPEnvironment = regexp.MustCompile(`^MECATL_[A-Z0-9_]+$`)
-	mcpSecretReference   = regexp.MustCompile(`^[a-z0-9_]+$`)
+	ErrSecretSource         = errors.New("static credential source unavailable")
+	explicitTokenEnvPattern = regexp.MustCompile(`^MECATL_[A-Z0-9_]+$`)
+	mcpSecretReference      = regexp.MustCompile(`^[a-z0-9_]+$`)
 )
 
 // SecretResolver exposes logical static credentials, never storage paths.
@@ -57,14 +56,16 @@ func NewCredentialSource(flags *ProviderFlags, preliminary ResolvedCredentials) 
 	if preliminary.source != nil {
 		return preliminary.source
 	}
-	return newCredentialSource(flags, xdgconfig.OSEnv, os.Environ())
+	return newCredentialSource(flags, xdgconfig.OSEnv)
 }
 
-func newCredentialSource(flags *ProviderFlags, env xdgconfig.ResolveEnv, environ []string) *CredentialSource {
+func newCredentialSource(flags *ProviderFlags, env xdgconfig.ResolveEnv) *CredentialSource {
 	values := make(map[string]string)
-	for _, entry := range environ {
-		if key, value, ok := strings.Cut(entry, "="); ok && legacyMCPEnvironment.MatchString(key) {
-			values[key] = value
+	if env.Environ != nil {
+		for _, entry := range env.Environ() {
+			if key, value, ok := strings.Cut(entry, "="); ok && explicitTokenEnvPattern.MatchString(key) {
+				values[key] = value
+			}
 		}
 	}
 	cli := ""

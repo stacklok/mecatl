@@ -11,13 +11,13 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/slogdiag"
 )
 
-func legacyBearerProfile(name string) permconfig.MCPServerProfile {
+func explicitTokenEnvBearerProfile(name string) permconfig.MCPServerProfile {
 	p := fileBearerProfile(name, "")
 	p.Auth.StaticBearer.TokenEnv = "MECATL_EXACT_LEGACY"
 	return p
 }
 
-func TestMCPLegacyWarningSharedLifetimeAndCapturedEnvironment(t *testing.T) {
+func TestMCPExplicitTokenEnvWarningSharedLifetime(t *testing.T) {
 	for _, present := range []bool{false, true} {
 		t.Run(map[bool]string{false: "missing secret still warns", true: "valid secret"}[present], func(t *testing.T) {
 			var environ []string
@@ -27,11 +27,12 @@ func TestMCPLegacyWarningSharedLifetimeAndCapturedEnvironment(t *testing.T) {
 			env := envWithAuth("/config/mecatl/auth.yaml", "")
 			reads := 0
 			env.ReadFile = func(string) ([]byte, error) { reads++; return []byte("mcp: [poisoned-unused-fallback"), nil }
-			source := newCredentialSource(nil, env, environ)
+			env.Environ = func() []string { return environ }
+			source := newCredentialSource(nil, env)
 			resolver := NewMCPProfileResolver(nil, func(string) (string, bool) { t.Fatal("static secret used live OAuth lookup"); return "", false }, source)
 			var logs bytes.Buffer
 			resolver.SetDiagnostics(slogdiag.NewText(&logs))
-			operator := &permconfig.MCPSection{Servers: []permconfig.MCPServerProfile{legacyBearerProfile("server")}}
+			operator := &permconfig.MCPSection{Servers: []permconfig.MCPServerProfile{explicitTokenEnvBearerProfile("server")}}
 			for range 2 {
 				configs, closer, err := resolver.Load(operator)
 				if present {
@@ -39,14 +40,12 @@ func TestMCPLegacyWarningSharedLifetimeAndCapturedEnvironment(t *testing.T) {
 						t.Fatal(err)
 					}
 					if configs[0].Headers["Authorization"] != "Bearer private-legacy-sentinel" {
-						t.Fatal("legacy token changed")
+						t.Fatal("explicit token environment value changed")
 					}
 					closer.Close()
 				} else if !errors.Is(err, ErrMCPProfileSecret) {
 					t.Fatalf("missing secret error = %v", err)
 				}
-				// A refresh can reselect declarations, but not ambient credentials.
-				t.Setenv("MECATL_EXACT_LEGACY", "rotated-private-sentinel")
 				authority, err := resolver.LoadAuthority(operator, mcpauthority.Global, true)
 				if present {
 					if err != nil {
@@ -80,15 +79,16 @@ func TestMCPLegacyWarningSharedLifetimeAndCapturedEnvironment(t *testing.T) {
 	}
 }
 
-func TestMCPLegacyWarningsPrecedeAllSecretResolution(t *testing.T) {
+func TestMCPExplicitTokenEnvWarningsPrecedeAllSecretResolution(t *testing.T) {
 	for _, first := range []string{"missing token_env", "failing token_ref"} {
 		t.Run(first, func(t *testing.T) {
 			env := envWithAuth("/config/mecatl/auth.yaml", "mcp: [broken-unused-fallback")
-			source := newCredentialSource(nil, env, []string{"MECATL_EXACT_LEGACY=valid-later-token"})
+			env.Environ = func() []string { return []string{"MECATL_EXACT_LEGACY=valid-later-token"} }
+			source := newCredentialSource(nil, env)
 			resolver := NewMCPProfileResolver(nil, nil, source)
 			var logs bytes.Buffer
 			resolver.SetDiagnostics(slogdiag.NewText(&logs))
-			leading := legacyBearerProfile("first")
+			leading := explicitTokenEnvBearerProfile("first")
 			leading.Auth.StaticBearer.TokenEnv = "MECATL_MISSING_LEGACY"
 			wantWarnings := 3
 			wantError := ErrMCPProfileSecret
@@ -97,7 +97,7 @@ func TestMCPLegacyWarningsPrecedeAllSecretResolution(t *testing.T) {
 				wantWarnings = 2
 				wantError = ErrMCPProfileStore
 			}
-			operator := &permconfig.MCPSection{Mode: "global", Servers: []permconfig.MCPServerProfile{leading, legacyBearerProfile("second"), legacyBearerProfile("third")}}
+			operator := &permconfig.MCPSection{Mode: "global", Servers: []permconfig.MCPServerProfile{leading, explicitTokenEnvBearerProfile("second"), explicitTokenEnvBearerProfile("third")}}
 			for range 2 {
 				if _, _, err := resolver.Load(operator); !errors.Is(err, wantError) {
 					t.Fatalf("direct error = %v", err)
@@ -121,10 +121,10 @@ func TestMCPLegacyWarningsPrecedeAllSecretResolution(t *testing.T) {
 	}
 }
 
-func TestMCPLegacyWarningOnlyEffectiveValidGlobalSelectors(t *testing.T) {
+func TestMCPExplicitTokenEnvWarningOnlyEffectiveValidGlobalSelectors(t *testing.T) {
 	for _, scenario := range []string{"unselected", "overridden", "invalid union", "invalid environment", "invalid reference", "unknown mode", "broker"} {
 		t.Run(scenario, func(t *testing.T) {
-			p := legacyBearerProfile("discarded")
+			p := explicitTokenEnvBearerProfile("discarded")
 			operator := &permconfig.MCPSection{Servers: []permconfig.MCPServerProfile{p, {Name: "selected", URL: "https://mcp.example/mcp", Auth: permconfig.MCPAuthProfile{Mode: "none"}}}}
 			var logs bytes.Buffer
 			opts := MCPProfileLoadOptions{Operator: operator, Diagnostics: slogdiag.NewText(&logs), LookupEnv: func(string) (string, bool) { t.Fatal("discarded/invalid selector read secret"); return "", false }}
@@ -132,8 +132,8 @@ func TestMCPLegacyWarningOnlyEffectiveValidGlobalSelectors(t *testing.T) {
 			case "unselected":
 				opts.SelectedName = "selected"
 			case "overridden":
-				opts.Legacy = &MCPServerList{}
-				if err := opts.Legacy.Set("discarded=https://legacy.example/mcp"); err != nil {
+				opts.CLIServers = &MCPServerList{}
+				if err := opts.CLIServers.Set("discarded=https://legacy.example/mcp"); err != nil {
 					t.Fatal(err)
 				}
 				opts.LookupEnv = func(name string) (string, bool) {

@@ -12,7 +12,7 @@ import (
 
 func TestStaticSnapshotEnvironmentFirstThenFileReference(t *testing.T) {
 	for _, initial := range []string{"valid", "missing", "broken"} {
-		for _, first := range []string{"lookup", "direct", "authority", "legacy direct", "legacy authority"} {
+		for _, first := range []string{"lookup", "direct", "authority", "explicit token env direct", "explicit token env authority"} {
 			t.Run(initial+"/"+first, func(t *testing.T) {
 				reads := 0
 				body := "mcp:\n  later:\n    token: original-file\n"
@@ -28,11 +28,14 @@ func TestStaticSnapshotEnvironmentFirstThenFileReference(t *testing.T) {
 					}
 					return []byte(body), nil
 				}
-				source := newCredentialSource(nil, env, []string{"MECATL_MCP_TOKEN_FIRST=original-env", "MECATL_EXACT_LEGACY=original-env"})
+				env.Environ = func() []string {
+					return []string{"MECATL_MCP_TOKEN_FIRST=original-env", "MECATL_EXACT_LEGACY=original-env"}
+				}
+				source := newCredentialSource(nil, env)
 				resolver := NewMCPProfileResolver(nil, nil, source)
 				profile := fileBearerProfile("server", "first")
-				if first == "legacy direct" || first == "legacy authority" {
-					profile = legacyBearerProfile("server")
+				if first == "explicit token env direct" || first == "explicit token env authority" {
+					profile = explicitTokenEnvBearerProfile("server")
 				}
 				operator := &permconfig.MCPSection{Mode: "global", Servers: []permconfig.MCPServerProfile{profile}}
 				load := func(authority bool) ([]mcp.ServerConfig, error) {
@@ -56,7 +59,7 @@ func TestStaticSnapshotEnvironmentFirstThenFileReference(t *testing.T) {
 						t.Fatal("environment winner required usable fallback")
 					}
 				} else {
-					servers, err := load(first == "authority" || first == "legacy authority")
+					servers, err := load(first == "authority" || first == "explicit token env authority")
 					if err != nil || servers[0].Headers["Authorization"] != "Bearer original-env" {
 						t.Fatal("environment winner required usable fallback")
 					}
@@ -65,9 +68,6 @@ func TestStaticSnapshotEnvironmentFirstThenFileReference(t *testing.T) {
 					t.Fatalf("initial acquisitions = %d, want 1", reads)
 				}
 				body, missing = "mcp:\n  later:\n    token: rotated-file\n", false
-				t.Setenv("MECATL_MCP_TOKEN_FIRST", "rotated-env")
-				t.Setenv("MECATL_EXACT_LEGACY", "rotated-env")
-				t.Setenv("MECATL_MCP_TOKEN_LATER", "newly-present-env")
 				for _, authority := range []bool{false, true} {
 					// Refresh declarations to a different ref whose environment was absent.
 					operator.Servers[0] = fileBearerProfile("server", "later")

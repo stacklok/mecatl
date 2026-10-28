@@ -68,7 +68,7 @@ func (e *MCPProfileError) Is(target error) bool { return target == e.Kind }
 // canonical runtime profile loader.
 type MCPProfileLoadOptions struct {
 	Operator    *permconfig.MCPSection
-	Legacy      *MCPServerList
+	CLIServers  *MCPServerList
 	LookupEnv   func(string) (string, bool)
 	Secrets     SecretResolver
 	StaticEnv   func(string) (string, bool)
@@ -84,11 +84,11 @@ type MCPProfileLoadOptions struct {
 	InitializeNativeCustody bool
 }
 
-// MCPProfileResolver binds the legacy CLI metadata and environment lookup to the
+// MCPProfileResolver binds CLI --mcp-server metadata and environment lookup to the
 // canonical profile loader. app.Build supplies the operator subtree from its
 // already-created settings resolver, avoiding a second YAML parse.
 type MCPProfileResolver struct {
-	legacy      *MCPServerList
+	cliServers  *MCPServerList
 	lookup      func(string) (string, bool)
 	source      *CredentialSource
 	diagnostics port.Diagnostics
@@ -97,22 +97,23 @@ type MCPProfileResolver struct {
 
 // NewMCPProfileResolver constructs a side-effect-free resolver. Environment and
 // credential stores are touched only when Load is called by composition.
-func NewMCPProfileResolver(legacy *MCPServerList, lookup func(string) (string, bool), source *CredentialSource) *MCPProfileResolver {
-	return &MCPProfileResolver{legacy: legacy, lookup: lookup, source: source}
+func NewMCPProfileResolver(cliServers *MCPServerList, lookup func(string) (string, bool), source *CredentialSource) *MCPProfileResolver {
+	return &MCPProfileResolver{cliServers: cliServers, lookup: lookup, source: source}
 }
 
 // SetDiagnostics installs the startup sink before loading, including failure paths.
 func (r *MCPProfileResolver) SetDiagnostics(d port.Diagnostics) { r.diagnostics = d }
 
 func (r *MCPProfileResolver) options(operator *permconfig.MCPSection) MCPProfileLoadOptions {
-	opts := MCPProfileLoadOptions{Operator: operator, Legacy: r.legacy, LookupEnv: r.lookup, Diagnostics: r.diagnostics, Warnings: &r.warnings}
+	opts := MCPProfileLoadOptions{Operator: operator, CLIServers: r.cliServers, LookupEnv: r.lookup, Diagnostics: r.diagnostics, Warnings: &r.warnings}
 	if r.source != nil {
 		opts.Secrets, opts.StaticEnv = r.source, r.source.LookupEnv
 	}
 	return opts
 }
 
-// MCPWarnings deduplicates safe legacy-selector warnings over a loader lifetime.
+// MCPWarnings deduplicates safe explicit-token-environment selector warnings
+// over a loader lifetime.
 type MCPWarnings struct {
 	mu   sync.Mutex
 	seen map[string]bool
@@ -157,7 +158,7 @@ func (r *MCPProfileResolver) Load(operator *permconfig.MCPSection) ([]mcp.Server
 func (r *MCPProfileResolver) LoadAuthority(operator *permconfig.MCPSection, defaultMode mcpauthority.Mode, brokerSupported bool) (*mcpauthority.Result, error) {
 	opts := r.options(operator)
 	return ResolveMCPAuthority(MCPAuthorityOptions{
-		Operator: operator, Legacy: r.legacy, LookupEnv: r.lookup, Secrets: opts.Secrets, StaticEnv: opts.StaticEnv, Diagnostics: r.diagnostics, Warnings: &r.warnings,
+		Operator: operator, CLIServers: r.cliServers, LookupEnv: r.lookup, Secrets: opts.Secrets, StaticEnv: opts.StaticEnv, Diagnostics: r.diagnostics, Warnings: &r.warnings,
 		DefaultMode: defaultMode, BrokerSupported: brokerSupported,
 	})
 }
@@ -199,14 +200,14 @@ func (p *MCPProfiles) OAuthServer(name string) (mcp.ServerConfig, bool) {
 	return mcp.ServerConfig{}, false
 }
 
-// LoadMCPProfiles resolves the selected operator and legacy entries. Settings
-// retain their order; a same-name legacy CLI entry replaces the whole settings
-// entry in place, and a distinct legacy entry appends.
+// LoadMCPProfiles resolves the selected operator and CLI --mcp-server entries. Settings
+// retain their order; a same-name CLI entry replaces the whole settings
+// entry in place, and a distinct CLI entry appends.
 func LoadMCPProfiles(opts MCPProfileLoadOptions) (*MCPProfiles, error) {
 	if opts.Operator != nil && opts.Operator.Mode == "broker" {
 		return nil, fmt.Errorf("%w: broker MCP authority cannot be loaded as direct profiles", ErrMCPProfileInvalid)
 	}
-	if err := validateLegacyRelaxations(opts.Legacy); err != nil {
+	if err := validateCLIHTTPRelaxations(opts.CLIServers); err != nil {
 		return nil, err
 	}
 	profiles := make([]profileInput, 0)
@@ -225,10 +226,10 @@ func LoadMCPProfiles(opts MCPProfileLoadOptions) (*MCPProfiles, error) {
 			profiles = append(profiles, profileInput{operator: profile})
 		}
 	}
-	if opts.Legacy != nil {
-		for i := range opts.Legacy.entries {
-			entry := &opts.Legacy.entries[i]
-			replacement := profileInput{legacy: entry, relaxed: opts.Legacy.relaxed(entry.cfg.Name), finalized: opts.Legacy.finalized}
+	if opts.CLIServers != nil {
+		for i := range opts.CLIServers.entries {
+			entry := &opts.CLIServers.entries[i]
+			replacement := profileInput{cliEntry: entry, relaxed: opts.CLIServers.relaxed(entry.cfg.Name), finalized: opts.CLIServers.finalized}
 			found := false
 			for j := range profiles {
 				if strings.EqualFold(profiles[j].name(), entry.cfg.Name) {
@@ -275,7 +276,7 @@ func LoadMCPProfiles(opts MCPProfileLoadOptions) (*MCPProfiles, error) {
 
 type profileInput struct {
 	operator  *permconfig.MCPServerProfile
-	legacy    *mcpServerEntry
+	cliEntry  *mcpServerEntry
 	relaxed   bool
 	finalized bool
 }
@@ -284,7 +285,7 @@ func (p profileInput) name() string {
 	if p.operator != nil {
 		return p.operator.Name
 	}
-	return p.legacy.cfg.Name
+	return p.cliEntry.cfg.Name
 }
 
 func (l *MCPServerList) relaxed(name string) bool {
@@ -296,7 +297,7 @@ func (l *MCPServerList) relaxed(name string) bool {
 	return false
 }
 
-func validateLegacyRelaxations(list *MCPServerList) error {
+func validateCLIHTTPRelaxations(list *MCPServerList) error {
 	if list == nil {
 		return nil
 	}
@@ -321,8 +322,8 @@ func validateLegacyRelaxations(list *MCPServerList) error {
 
 func loadMCPProfile(input profileInput, loadOpts MCPProfileLoadOptions, owner *MCPProfiles, stores map[string]credentialstore.Store) (mcp.ServerConfig, error) {
 	lookup := loadOpts.LookupEnv
-	if input.legacy != nil {
-		entry := input.legacy
+	if input.cliEntry != nil {
+		entry := input.cliEntry
 		if input.finalized {
 			return entry.cfg, nil
 		}
@@ -333,7 +334,7 @@ func loadMCPProfile(input profileInput, loadOpts MCPProfileLoadOptions, owner *M
 		}
 		if !input.relaxed {
 			if err := mcp.ValidateClientURL(cfg.URL); err != nil {
-				return mcp.ServerConfig{}, &MCPProfileError{Server: cfg.Name, Field: "legacy bearer URL", Ref: entry.envName, Kind: ErrMCPProfileInvalid}
+				return mcp.ServerConfig{}, &MCPProfileError{Server: cfg.Name, Field: "CLI bearer URL", Ref: entry.envName, Kind: ErrMCPProfileInvalid}
 			}
 		} else if !plainHTTPOffHost(cfg.URL) {
 			return mcp.ServerConfig{}, &MCPProfileError{Server: cfg.Name, Field: "insecure HTTP acknowledgement", Kind: ErrMCPProfileInvalid}
@@ -421,7 +422,7 @@ func validateMCPStaticBearer(profile permconfig.MCPServerProfile) error {
 		}
 		field = "auth.static_bearer.token_ref"
 	default:
-		if legacyMCPEnvironment.MatchString(decl.TokenEnv) {
+		if explicitTokenEnvPattern.MatchString(decl.TokenEnv) {
 			return nil
 		}
 		field = "auth.static_bearer.token_env"

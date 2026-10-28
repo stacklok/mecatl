@@ -130,6 +130,7 @@ func envWithAuth(path, contents string) xdgconfig.ResolveEnv {
 			}
 			return ""
 		},
+		Environ: func() []string { return nil },
 		ReadFile: func(got string) ([]byte, error) {
 			if got == path {
 				return []byte(contents), nil
