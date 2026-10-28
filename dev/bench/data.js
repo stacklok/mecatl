@@ -344432,6 +344432,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1793211063585,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "29541485+ChrisJBurns@users.noreply.github.com",
+            "name": "Chris Burns",
+            "username": "ChrisJBurns"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "0a3f8c0f68f37786b89705820201cd2ca8905a04",
+          "message": "test(identityharness): re-cut AS-1 to the generic grant (#2589)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-28T20:45:12Z",
+          "tree_id": "0a919cb0d906fcb26827546d4e03eab36ef82a53",
+          "url": "https://github.com/stacklok/mecatl/commit/0a3f8c0f68f37786b89705820201cd2ca8905a04"
+        },
+        "date": 1793221120359,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -497892,6 +497926,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1793221116543,
+  "lastUpdate": 1793221121314,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
