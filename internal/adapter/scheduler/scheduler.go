@@ -30,6 +30,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	_ "time/tzdata" // Standard embedded fallback for hosts without zoneinfo.
 
 	"github.com/stacklok/mecatl/engine/adapter/cronparse"
 	"github.com/stacklok/mecatl/engine/port"

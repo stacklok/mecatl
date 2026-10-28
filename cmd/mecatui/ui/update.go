@@ -488,7 +488,7 @@ func (m Model) dispatchNonInputMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if mm, handled := m.updateSkillChangesMsg(msg); handled {
 		return mm, nil
 	}
-	// Inventory-overlay result/error msgs (agentsInv, reflections, /schedule)
+	// Inventory-overlay result/error msgs (agentsInv, reflections)
 	// remain grouped while surface-owned results route through the modal.
 	if mm, cmd, handled := m.updateInventoryMsgs(msg); handled {
 		return mm, cmd
@@ -507,13 +507,8 @@ func (m Model) dispatchNonInputMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m.updateStreamEvent(msg)
 }
 
-// updateInventoryMsgs is the fall-through chain for the unmigrated inventory
-// overlays (agentsInv, reflections, execution, schedule):
-// each per-overlay helper returns handled=false for a non-matching msg, so at
-// most one consumes. Most carry no follow-up command; /schedule's
-// ScheduleActionMsg re-lists on success so the cmd is propagated. Surfaces
-// hosted on the modal do not ride this chain — HandleMsg owns their
-// routing.
+// updateInventoryMsgs routes the remaining legacy inventory results; dynamic
+// modal surfaces own their asynchronous results through HandleMsg.
 func (m Model) updateInventoryMsgs(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 	if mm, handled := m.updateAgentsInvMsg(msg); handled {
 		return mm, nil, true
@@ -522,9 +517,6 @@ func (m Model) updateInventoryMsgs(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 		return mm, nil, true
 	}
 	if mm, cmd, handled := m.updateExecutionMsg(msg); handled {
-		return mm, cmd, true
-	}
-	if mm, cmd, handled := m.updateScheduleMsg(msg); handled {
 		return mm, cmd, true
 	}
 	return m, nil, false
@@ -2428,7 +2420,6 @@ func (m Model) onOverlayKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
 		m.onReflectionsKey,
 		m.onConnectKey,
 		m.onExecutionKey,
-		m.onScheduleKey,
 	}
 	for _, route := range overlays {
 		if mm, cmd, handled := route(msg); handled {
@@ -2486,6 +2477,9 @@ func (m Model) dispatchSurfaceMsg(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 	if m.modal == nil {
 		return m, nil, false
 	}
+	if _, input := msg.(surfaceInputMsg); input {
+		(&m).prepareSurfaceInput()
+	}
 	cmd, handled, closed := m.modal.HandleMsg(msg)
 	if !handled {
 		return m, nil, false
@@ -2533,6 +2527,11 @@ func (m Model) applyModelsSurfaceIntent(intent surfaceIntent) (model tea.Model, 
 // active-session, startup, and maintenance effects owned by Model.
 func (m Model) applySessionsSurfaceIntent(intent surfaceIntent) (model tea.Model, cmd tea.Cmd, handled bool, stopSurfaceDispatch bool) {
 	switch intent := intent.(type) {
+	case sessionsReturnIntent:
+		m.closeModal()
+		m.modal = intent.target
+		m.phase = phaseIdle
+		return m, nil, true, true
 	case sessionsPhaseIntent:
 		switch intent.phase {
 		case sessionsIntentPhaseIdle:
@@ -2600,6 +2599,18 @@ func (m Model) applyToolcallsSurfaceIntent(intent surfaceIntent) bool {
 // tells the caller to skip common dispatch post-processing after a root-owned
 // effect takes over; handled=false never carries meaningful work.
 func (m Model) applySurfaceIntent(intent surfaceIntent) (model tea.Model, cmd tea.Cmd, stopSurfaceDispatch bool) {
+	if intent, ok := intent.(scheduleTranscriptIntent); ok {
+		previous := m.modal
+		mm, cmd, _ := m.loadSessionTranscript(client.SessionListItem{
+			ID: intent.sessionID, Kind: client.SessionKindScheduled,
+			Capabilities: client.SessionInventoryCapabilities{Inspect: true},
+		}, true)
+		m = mm.(Model)
+		if viewer, ok := m.modal.(*sessionsState); ok {
+			viewer.returnTo = previous
+		}
+		return m, cmd, true
+	}
 	if intent, ok := intent.(worktreeSelectIntent); ok {
 		if intent.sourceID != m.sessionID || m.phase != phaseIdle {
 			m.closeModal()
@@ -2941,16 +2952,18 @@ func (m Model) onPasteMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 }
 
-// onPaste routes a bracketed-paste payload to the prompt input. Bubble Tea v2
-// emits tea.PasteMsg (not KeyPressMsg) for a paste, so it does NOT pass through
-// onKey — this mirrors onKey's overlay/help/phase gating itself. A paste is
-// dropped while any overlay/help/approval owns the keyboard (it must not leak
-// into the input behind the modal); otherwise it is accepted ONLY in the
-// input-accepting phases (idle or running — both keep the textarea focused for
-// compose/enqueue) and forwarded to the textarea, which inserts the runes
-// internally, then run through afterInputEdit so the slash palette re-syncs
-// (e.g. pasting "/cl" opens the palette) — the same funnel typed input uses.
+// onPaste routes bracketed paste to the active surface before considering the
+// chat editor. Unhandled modal paste is dropped, never staged as chat media/text.
+// Without a surface, the normal chat gates, staging and afterInputEdit apply.
 func (m Model) onPaste(msg tea.PasteMsg) (tea.Model, tea.Cmd) {
+	if m.modal != nil {
+		(&m).prepareSurfaceInput()
+		msg.Content = normalizePastedNewlines(msg.Content)
+		if mm, cmd, handled := m.dispatchSurfaceMsg(msg); handled {
+			return mm, cmd
+		}
+		return m, nil
+	}
 	if !m.pasteGateOpen() {
 		return m, nil
 	}

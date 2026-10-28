@@ -72,6 +72,13 @@ type surface interface {
 	Close()
 }
 
+// surfaceInputMsg marks asynchronous widget input (including private clipboard
+// receipts) that needs the same fresh geometry offer as keys and paste. Ownership
+// and stale-input rejection remain with the receiving surface.
+type surfaceInputMsg interface {
+	isSurfaceInputMsg()
+}
+
 // modalPlacement controls how the Model places a modal body. Surfaces that do
 // not implement modalPlacementSource use the card default.
 type modalPlacement uint8

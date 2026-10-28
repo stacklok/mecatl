@@ -111,8 +111,8 @@ jobs:
         run: |
           set -euo pipefail
           task generate
-          git diff --exit-code -- contracts/gen sdk/typescript/src/gen sdk/typescript/pnpm-lock.yaml
-          test -z "$(git status --porcelain --untracked-files=all -- contracts/gen sdk/typescript/src/gen sdk/typescript/pnpm-lock.yaml)"
+          git diff --exit-code -- contracts/gen sdk/typescript/src/gen sdk/typescript/pnpm-lock.yaml cmd/mecatui/internal/timezones/zones.json
+          test -z "$(git status --porcelain --untracked-files=all -- contracts/gen sdk/typescript/src/gen sdk/typescript/pnpm-lock.yaml cmd/mecatui/internal/timezones/zones.json)"
 
       - name: Lint and format-check SDK
         run: task sdk:lint

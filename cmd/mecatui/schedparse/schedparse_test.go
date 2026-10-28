@@ -84,7 +84,7 @@ func TestCompileEveryDowAt(t *testing.T) {
 	cases := map[string]string{
 		"every monday at 9am":     "0 9 * * 1",
 		"every friday at 5pm":     "0 17 * * 5",
-		"every sunday at 10:30am": "30 10 * * 7",
+		"every sunday at 10:30am": "30 10 * * 0",
 	}
 	for in, want := range cases {
 		r, ok := Compile(in, fixedNow())

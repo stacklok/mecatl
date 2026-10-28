@@ -10,7 +10,7 @@ import (
 	"testing"
 )
 
-func TestUIProductionDoesNotImportUpstreamTextarea(t *testing.T) {
+func TestUIProductionUsesTextareaOnlyInOwnedEditors(t *testing.T) {
 	const upstream = "charm.land/bubbles/v2/textarea"
 
 	entries, err := os.ReadDir(".")
@@ -32,8 +32,10 @@ func TestUIProductionDoesNotImportUpstreamTextarea(t *testing.T) {
 			if err != nil {
 				t.Fatalf("unquote import in %s: %v", name, err)
 			}
-			if path == upstream {
-				t.Errorf("%s imports %q; only prompttextarea may own the upstream model", name, upstream)
+			// The out-of-band schedule form deliberately uses upstream textarea,
+			// not the session editor's attachments/history/submission state.
+			if path == upstream && name != "schedule.go" && name != "schedule_create.go" {
+				t.Errorf("%s imports %q; only prompttextarea and the schedule form may own the upstream model", name, upstream)
 			}
 		}
 	}

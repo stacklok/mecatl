@@ -687,9 +687,10 @@ func TestScheduleOverlayHintsReflectKeyOverride(t *testing.T) {
 	hk := liveHK()
 	th := theme.New("aztec", theme.AztecPalette())
 	t.Run("panel", func(t *testing.T) {
-		st := scheduleState{view: schedulePanel, filtered: []client.Schedule{{Spec: client.ScheduleSpec{Name: "n1"}}}}
-		got := stripANSIstr(renderScheduleOverlay(th, st, client.Capabilities{}, false, hk, 100, 30))
-		if !strings.Contains(got, "ctrl+f17: inspect  c: create  p: pause  r: resume  f: fire-now  d: delete  /: filter  ctrl+f16: close") {
+		st := scheduleState{deps: surfaceDeps{theme: th, keys: defaultKeys(), marks: hk}, view: schedulePanel}
+		body, _ := st.Render(200, 30)
+		got := stripANSIstr(body)
+		if !strings.Contains(got, "ctrl+f17: runs  c: create  p: pause  r: resume  f: fire-now  d: delete  /: filter  ctrl+f16: close") {
 			t.Errorf("schedule panel hint should carry live inspect/close + literal c/p/r/f/d: %q", got)
 		}
 		if strings.Contains(got, "enter: inspect") || strings.Contains(got, "esc: close") {
@@ -697,8 +698,9 @@ func TestScheduleOverlayHintsReflectKeyOverride(t *testing.T) {
 		}
 	})
 	t.Run("confirm", func(t *testing.T) {
-		st := scheduleState{view: scheduleConfirm, confirm: client.Schedule{Spec: client.ScheduleSpec{Name: "n1"}}}
-		got := stripANSIstr(renderScheduleOverlay(th, st, client.Capabilities{}, false, hk, 100, 30))
+		st := scheduleState{deps: surfaceDeps{theme: th, keys: defaultKeys(), marks: hk}, view: scheduleConfirm, confirm: client.Schedule{Spec: client.ScheduleSpec{Name: "n1"}}}
+		body, _ := st.Render(100, 30)
+		got := stripANSIstr(body)
 		if !strings.Contains(got, "ctrl+f17: delete  ctrl+f16: back") {
 			t.Errorf("schedule confirm hint should carry live delete/back: %q", got)
 		}
