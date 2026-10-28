@@ -381722,6 +381722,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1793211069273,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "29541485+ChrisJBurns@users.noreply.github.com",
+            "name": "Chris Burns",
+            "username": "ChrisJBurns"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "0a3f8c0f68f37786b89705820201cd2ca8905a04",
+          "message": "test(identityharness): re-cut AS-1 to the generic grant (#2589)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-28T20:45:12Z",
+          "tree_id": "0a919cb0d906fcb26827546d4e03eab36ef82a53",
+          "url": "https://github.com/stacklok/mecatl/commit/0a3f8c0f68f37786b89705820201cd2ca8905a04"
+        },
+        "date": 1793221124875,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 16147,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12911,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 795,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -497926,6 +497965,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1793221121314,
+  "lastUpdate": 1793221125920,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
