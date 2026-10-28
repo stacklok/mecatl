@@ -389,11 +389,13 @@ func testFireRecovery(t *testing.T, blockedCancel, stopBeforeRecovery bool) {
 type blockedAdmissionLease struct {
 	port.SessionLease
 	entered, release chan struct{}
+	acquireCtx       context.Context
 	once             sync.Once
 }
 
 func (l *blockedAdmissionLease) Acquire(ctx context.Context, id session.SessionID, owner string) (port.Lease, error) {
 	l.once.Do(func() {
+		l.acquireCtx = ctx
 		close(l.entered)
 		<-l.release // Deliberately uncooperative provisional admission.
 	})
@@ -427,9 +429,10 @@ func TestFireProvisionalAdmissionDeadlineKeepsPendingUntilRecovery(t *testing.T)
 	var once sync.Once
 	t.Cleanup(func() {
 		once.Do(func() { close(lease.release) })
+		close(llm.release)
+		defer svc.Close()
+		defer func() { _ = s.Stop() }()
 		waitDeadlineGate(t, done)
-		_ = s.Stop()
-		svc.Close()
 	})
 	now := time.Now()
 	sched := port.Schedule{Spec: port.ScheduleSpec{Name: "pending-admission", Prompt: "wait", Trigger: port.TriggerSpec{Cron: "* * * * *"}, FireTimeout: time.Second, EnvironmentRef: session.EnvironmentRef{Kind: session.EnvKindLocal, ID: workspace, Revision: "in-tree-v1"}, PlacementScope: "legacy-local"}, State: port.ScheduleState{Enabled: true, NextFireAt: now}}
@@ -440,7 +443,15 @@ func TestFireProvisionalAdmissionDeadlineKeepsPendingUntilRecovery(t *testing.T)
 	var fireErr error
 	go func() { defer close(done); fire, fireErr = s.FireNow(ctx, sched.Spec.Name, now) }()
 	waitDeadlineGate(t, lease.entered)
+	if deadline, ok := lease.acquireCtx.Deadline(); !ok || !deadline.Equal(now.Add(sched.Spec.FireTimeout)) {
+		t.Fatalf("admission did not inherit the fire deadline: %v (present=%v)", deadline, ok)
+	}
 	waitDeadlineDiagnostic(t, diag, "termination unconfirmed")
+	// The watchdog diagnostic and deadline cancellation are independent timers.
+	waitDeadlineGate(t, lease.acquireCtx.Done())
+	if !errors.Is(lease.acquireCtx.Err(), context.DeadlineExceeded) {
+		t.Fatalf("admission context did not expire: %v", lease.acquireCtx.Err())
+	}
 	loaded, err := schedStore.Load(ctx, sched.Spec.Name)
 	if err != nil || loaded.State.LastFireSessionID != port.PendingFireSessionID || loaded.State.LastFireAt.IsZero() || !loaded.State.LastFireStartedAt.IsZero() {
 		t.Fatalf("provisional ownership published as execution: %+v %v", loaded.State, err)
