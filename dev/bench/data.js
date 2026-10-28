@@ -344074,6 +344074,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1793144421459,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "90e9f3073247e87cd8357017583490eaab321c20",
+          "message": "feat(mcp): support static bearer credentials in auth.yaml (#2583)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-28T10:58:36-07:00",
+          "tree_id": "5eb7df01388b34e409a160e44b0ea79c09b3f57f",
+          "url": "https://github.com/stacklok/mecatl/commit/90e9f3073247e87cd8357017583490eaab321c20"
+        },
+        "date": 1793211063585,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -497381,6 +497415,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1793211059338,
+  "lastUpdate": 1793211064647,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
