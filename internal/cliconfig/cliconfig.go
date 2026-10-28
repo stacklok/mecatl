@@ -133,9 +133,10 @@ func (pf *ProviderFlags) Resolve() ResolvedCredentials {
 
 func (pf *ProviderFlags) resolve(env xdgconfig.ResolveEnv, now time.Time) ResolvedCredentials {
 	source := newCredentialSource(pf, env)
-	keys := readProviderKeys(env.Getenv, source.LookupEnv)
 	source.mu.Lock()
 	defer source.mu.Unlock()
+	lookup := source.providerLookupLocked()
+	keys := readProviderKeys(lookup.env)
 	source.acquire()
 	af, warning, path := source.file, source.warning, source.path
 	keys.source = source
@@ -145,9 +146,9 @@ func (pf *ProviderFlags) resolve(env xdgconfig.ResolveEnv, now time.Time) Resolv
 	keys.Anthropic = cmp.Or(keys.Anthropic, af.APIKey("anthropic"))
 	keys.OpenCode = cmp.Or(keys.OpenCode, af.APIKey("opencode"))
 	var exaErr, braveErr, webSearchErr error
-	keys.Exa, exaErr = source.lookupLocked(SearchAPIKeySecret, "exa", keys.Exa)
-	keys.Brave, braveErr = source.lookupLocked(SearchAPIKeySecret, "brave", keys.Brave)
-	keys.WebSearch, webSearchErr = source.lookupLocked(SearchAPIKeySecret, "websearch", keys.WebSearch)
+	keys.Exa, exaErr = lookup.lookupLocked(SearchAPIKeySecret, "exa")
+	keys.Brave, braveErr = lookup.lookupLocked(SearchAPIKeySecret, "brave")
+	keys.WebSearch, webSearchErr = lookup.lookupLocked(SearchAPIKeySecret, "websearch")
 	keys.searchErr = cmp.Or(exaErr, braveErr, webSearchErr)
 	loadCodexCredential(&keys, af, path, now)
 	return keys
@@ -196,7 +197,8 @@ func (s *CredentialSource) ResolveProviders(definitions permconfig.ProviderDefin
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.finalized = true
-	keys := readProviderKeys(s.env.Getenv, s.LookupEnv)
+	lookup := s.providerLookupLocked()
+	keys := readProviderKeys(lookup.env)
 	keys.source = s
 	known := append([]string{}, knownAuthProviders...)
 	for id := range definitions {
@@ -217,9 +219,9 @@ func (s *CredentialSource) ResolveProviders(definitions permconfig.ProviderDefin
 	keys.Anthropic = cmp.Or(keys.Anthropic, file.APIKey("anthropic"))
 	keys.OpenCode = cmp.Or(keys.OpenCode, file.APIKey("opencode"))
 	// Source failures were checked above; absent search credentials are optional.
-	keys.Exa, _ = s.lookupLocked(SearchAPIKeySecret, "exa", keys.Exa)
-	keys.Brave, _ = s.lookupLocked(SearchAPIKeySecret, "brave", keys.Brave)
-	keys.WebSearch, _ = s.lookupLocked(SearchAPIKeySecret, "websearch", keys.WebSearch)
+	keys.Exa, _ = lookup.lookupLocked(SearchAPIKeySecret, "exa")
+	keys.Brave, _ = lookup.lookupLocked(SearchAPIKeySecret, "brave")
+	keys.WebSearch, _ = lookup.lookupLocked(SearchAPIKeySecret, "websearch")
 	loadCodexCredential(&keys, file, path, time.Now())
 	keys.customAPIKeys = make(map[string]string, len(definitions))
 	keys.customMethods = make(map[string]string, len(definitions))
@@ -285,20 +287,22 @@ func (pf *ProviderFlags) EndpointOverrides() permconfig.ProviderOverrides {
 	return overrides
 }
 
-// ReadProviderKeys reads provider credentials from the environment alone
-// (no auth.yaml). It is the SINGLE definition of which env vars hold which credential.
+// ReadProviderKeys reads model-provider and search credentials from the environment
+// alone, without consulting auth.yaml.
 // A caller that must account for auth.yaml should call ProviderFlags.Resolve instead.
 // The values are SECRET-shaped; callers must not log or print them.
 func ReadProviderKeys() ResolvedKeys {
-	return readProviderKeys(os.Getenv, os.LookupEnv)
+	return readProviderKeys(os.LookupEnv)
 }
 
-func readProviderKeys(getenv func(string) string, lookupEnv func(string) (string, bool)) ResolvedCredentials {
+func readProviderKeys(lookupEnv func(string) (string, bool)) ResolvedCredentials {
+	getenv := func(name string) string {
+		value, _ := lookupEnv(name)
+		return value
+	}
 	searchKey := func(ref string) string {
-		if key, ok := lookupEnv(secretTokenEnv(SearchAPIKeySecret, ref)); ok {
-			return key
-		}
-		return getenv(searchAPIKeyEnv(ref))
+		key, _ := lookupSecretEnv(SearchAPIKeySecret, ref, lookupEnv)
+		return key
 	}
 	return ResolvedCredentials{
 		OpenAI:     getenv(envOpenAIKey),

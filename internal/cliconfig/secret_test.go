@@ -62,6 +62,35 @@ func TestStaticSecretGenericMapping(t *testing.T) {
 	}
 }
 
+func TestPublicSearchLookupCapturesAliasBeforeAcquisition(t *testing.T) {
+	env := envWithAuth("/config/mecatl/auth.yaml", "search:\n  exa:\n    api_key: file-key\n")
+	getenv, readFile := env.Getenv, env.ReadFile
+	alias := "before-acquisition"
+	lookups, reads := 0, 0
+	env.Getenv = func(name string) string {
+		if name == envExaKey {
+			lookups++
+			return alias
+		}
+		return getenv(name)
+	}
+	env.ReadFile = func(path string) ([]byte, error) {
+		reads++
+		if lookups != 1 {
+			t.Fatal("alias was not read exactly once before acquisition")
+		}
+		alias = "after-acquisition"
+		return readFile(path)
+	}
+	source := newCredentialSource(nil, env)
+	for i, want := range []string{"before-acquisition", "after-acquisition"} {
+		key, err := source.Lookup(SearchAPIKeySecret, "exa")
+		if err != nil || key != want || lookups != i+1 || reads != 1 {
+			t.Fatal("public lookup lost its per-resolution alias snapshot or reacquired the file")
+		}
+	}
+}
+
 func TestStaticSecretSourcePolicy(t *testing.T) {
 	const valid = "search:\n  exa:\n    api_key: file-key\nmcp:\n  exa:\n    api_key: file-key\n"
 	for _, kind := range []SecretKind{SearchAPIKeySecret, MCPBearerSecret} {

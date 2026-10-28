@@ -157,32 +157,70 @@ func (s *CredentialSource) prepareStatic() {
 func (s *CredentialSource) Lookup(kind SecretKind, ref string) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	searchKey := ""
-	if name := searchAPIKeyEnv(ref); kind == SearchAPIKeySecret && name != "" {
-		searchKey = s.env.Getenv(name)
-	}
-	secret, err := s.lookupLocked(kind, ref, searchKey)
+	lookup := credentialLookup{source: s, env: s.lookupCredentialEnv}
+	secret, err := lookup.lookupLocked(kind, ref)
 	if err != ErrSecretReference {
 		s.finalized = true
 	}
 	return secret, err
 }
 
-// lookupLocked shares source policy with preliminary/final projections
-// without finalizing preliminary discovery or recursively locking final resolution.
-// searchKey is the caller's pre-acquisition alias snapshot; canonical environment
-// values and absence are captured when the source is constructed.
-func (s *CredentialSource) lookupLocked(kind SecretKind, ref, searchKey string) (string, error) {
+// credentialLookup is a lock-held view of a source and its resolution-time environment.
+type credentialLookup struct {
+	source *CredentialSource
+	env    func(string) (string, bool)
+}
+
+// providerLookupLocked captures all search aliases before any file acquisition.
+func (s *CredentialSource) providerLookupLocked() credentialLookup {
+	aliases := make(map[string]string, len(searchAPIKeyAliases))
+	for _, name := range searchAPIKeyAliases {
+		aliases[name] = s.env.Getenv(name)
+	}
+	return credentialLookup{source: s, env: func(name string) (string, bool) {
+		if value, ok := aliases[name]; ok {
+			return value, value != ""
+		}
+		return s.lookupCredentialEnv(name)
+	}}
+}
+
+func (s *CredentialSource) lookupCredentialEnv(name string) (string, bool) {
+	if strings.HasPrefix(name, "MECATL_") {
+		return s.LookupEnv(name)
+	}
+	value := s.env.Getenv(name)
+	return value, value != ""
+}
+
+func lookupSecretEnv(kind SecretKind, ref string, lookupEnv func(string) (string, bool)) (string, bool) {
 	name := secretTokenEnv(kind, ref)
 	if name == "" {
+		return "", false
+	}
+	if token, ok := lookupEnv(name); ok {
+		return token, true
+	}
+	if kind == SearchAPIKeySecret {
+		if alias := searchAPIKeyEnv(ref); alias != "" {
+			token, _ := lookupEnv(alias)
+			return token, token != ""
+		}
+	}
+	return "", false
+}
+
+// lookupLocked shares source policy without finalizing preliminary discovery
+// or recursively locking final resolution.
+func (l credentialLookup) lookupLocked(kind SecretKind, ref string) (string, error) {
+	if secretTokenEnv(kind, ref) == "" {
 		return "", ErrSecretReference
 	}
+	token, present := lookupSecretEnv(kind, ref, l.env)
+	s := l.source
 	s.acquire()
-	if token, ok := s.LookupEnv(name); ok {
+	if present {
 		return token, nil
-	}
-	if searchKey != "" {
-		return searchKey, nil
 	}
 	if s.strictWarning != "" {
 		return "", ErrSecretSource
