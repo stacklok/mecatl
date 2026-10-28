@@ -1626,6 +1626,14 @@ func (s *Scheduler) shouldReconcileStaleFire(ctx context.Context, sched port.Sch
 	// is still running → skip. No lease backend (single-replica by affinity) →
 	// the window is the only oracle (a stale in-flight fire with no lease
 	// backend IS stale — there is no cross-process lease to hold).
+	//
+	// Past an explicit FireDeadline, a hung fire must be reaped even if the
+	// lease is still held (issue #2588); the deadline watchdog should have
+	// terminated the run and RecordFire should have cleared in-flight state.
+	pastDeadline := !sched.State.FireDeadline.IsZero() && !now.Before(sched.State.FireDeadline)
+	if pastDeadline {
+		return true
+	}
 	if s.cfg.Lease != nil {
 		overlap, rel := s.isPriorFireLive(ctx, sched.State.LastFireSessionID)
 		if rel != nil {
