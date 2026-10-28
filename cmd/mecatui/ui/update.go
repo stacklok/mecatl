@@ -488,8 +488,11 @@ func (m Model) dispatchNonInputMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if mm, handled := m.updateSkillChangesMsg(msg); handled {
 		return mm, nil
 	}
-	// Inventory-overlay result/error msgs (agentsInv, reflections)
-	// remain grouped while surface-owned results route through the modal.
+	// Explicit /reflect execution receipts remain root-owned with any modal open.
+	if mm, handled := m.updateReflectMsg(msg); handled {
+		return mm, nil
+	}
+	// Legacy inventory results remain grouped; surfaces own their own results.
 	if mm, cmd, handled := m.updateInventoryMsgs(msg); handled {
 		return mm, cmd
 	}
@@ -511,9 +514,6 @@ func (m Model) dispatchNonInputMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 // modal surfaces own their asynchronous results through HandleMsg.
 func (m Model) updateInventoryMsgs(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 	if mm, handled := m.updateAgentsInvMsg(msg); handled {
-		return mm, nil, true
-	}
-	if mm, handled := m.updateReflectionsMsg(msg); handled {
 		return mm, nil, true
 	}
 	if mm, cmd, handled := m.updateExecutionMsg(msg); handled {
@@ -2357,7 +2357,7 @@ func (m Model) onPendingApprovalRecoveryKey(msg tea.KeyPressMsg) (tea.Model, tea
 func (m Model) clearAnySelection(msg tea.KeyPressMsg) (Model, bool) {
 	if !key.Matches(msg, m.keys.Cancel) || (!m.sel.active && !m.prompt.HasSelection()) ||
 		m.modal != nil || m.team.view != teamNone || m.agentsInv.view != agentsInvNone ||
-		m.reflections.view != reflectionsNone || m.executionPicker.open {
+		m.executionPicker.open {
 		return m, false
 	}
 	m = m.clearSelection()
@@ -2417,7 +2417,6 @@ func (m Model) onOverlayKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
 		m.onSessionDetailsKey,
 		m.onAgentsKey,
 		m.onAgentsInvKey,
-		m.onReflectionsKey,
 		m.onConnectKey,
 		m.onExecutionKey,
 	}

@@ -672,8 +672,8 @@ type Model struct {
 	parallel                     parallelState      // Parallel-tab state of the unified agents overlay (roster | group focus)
 	agentsInv                    agentsInvState     // agent-definition inventory overlay state (view==agentsInvNone when closed)
 	userModelRequestToken        uint64             // Model-lifetime fence for delayed saved-memory results
-	reflections                  reflectionsState
-	reflectionsGen               uint64
+
+	reflectRequest *reflectionExecution // root-owned /reflect receipt provenance
 	// steer is the steer-mode (Capabilities.Steer) mid-run state: ONE bundle (the
 	// merged operator steer text + its client-minted message_id) with its
 	// AUTHORITATIVE lifecycle — idle → pending (sent, un-acked) → sent (acked,
@@ -1243,6 +1243,7 @@ func (m Model) resetSession() Model {
 }
 
 func (m Model) resetSessionDerived() Model {
+	m.reflectRequest = nil
 	m.settlePendingApproval()
 	(&m).retirePendingApprovalRecovery()
 	m.admissionSubmission = nil

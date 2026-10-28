@@ -106,8 +106,6 @@ func (m Model) renderBody() string {
 		return renderAgentsInvOverlay(m.deps.Theme, m.agentsInv, m.caps, m.helpKeyMarkings(), m.width, m.vp.Height())
 	case m.modal != nil:
 		return (&m).renderModalSurface()
-	case m.reflections.view != reflectionsNone:
-		return renderReflectionsOverlay(m.deps.Theme, m.reflections, m.caps, m.helpKeyMarkings(), m.width, m.vp.Height())
 	case m.executionPicker.open:
 		return m.renderExecutionPicker()
 	case m.connect.open:
