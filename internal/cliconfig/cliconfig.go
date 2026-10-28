@@ -144,10 +144,11 @@ func (pf *ProviderFlags) resolve(env xdgconfig.ResolveEnv, now time.Time) Resolv
 	keys.OpenRouter = cmp.Or(keys.OpenRouter, af.APIKey("openrouter"))
 	keys.Anthropic = cmp.Or(keys.Anthropic, af.APIKey("anthropic"))
 	keys.OpenCode = cmp.Or(keys.OpenCode, af.APIKey("opencode"))
-	// Source warnings remain preliminary diagnostics, not fatal search failures.
-	keys.Exa, _ = source.lookupLocked(SearchAPIKeySecret, "exa", keys.Exa)
-	keys.Brave, _ = source.lookupLocked(SearchAPIKeySecret, "brave", keys.Brave)
-	keys.WebSearch, _ = source.lookupLocked(SearchAPIKeySecret, "websearch", keys.WebSearch)
+	var exaErr, braveErr, webSearchErr error
+	keys.Exa, exaErr = source.lookupLocked(SearchAPIKeySecret, "exa", keys.Exa)
+	keys.Brave, braveErr = source.lookupLocked(SearchAPIKeySecret, "brave", keys.Brave)
+	keys.WebSearch, webSearchErr = source.lookupLocked(SearchAPIKeySecret, "websearch", keys.WebSearch)
+	keys.searchErr = cmp.Or(exaErr, braveErr, webSearchErr)
 	loadCodexCredential(&keys, af, path, now)
 	return keys
 }
@@ -316,6 +317,7 @@ func readProviderKeys(getenv func(string) string, lookupEnv func(string) (string
 // must not log or print them.
 type ResolvedCredentials struct {
 	source     *CredentialSource
+	searchErr  error
 	OpenAI     string
 	OpenRouter string
 	Anthropic  string

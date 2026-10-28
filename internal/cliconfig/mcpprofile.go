@@ -452,6 +452,18 @@ func loadMCPStaticBearer(profile permconfig.MCPServerProfile, resolver SecretRes
 	return mcpBearerConfig(profile, token)
 }
 
+func validMCPBearer(token string) bool {
+	if strings.TrimSpace(token) == "" || strings.HasSuffix(token, " ") || strings.HasSuffix(token, "\t") {
+		return false
+	}
+	for i := 0; i < len(token); i++ {
+		if (token[i] < 0x20 && token[i] != '\t') || token[i] == 0x7f {
+			return false
+		}
+	}
+	return true
+}
+
 func mcpBearerConfig(profile permconfig.MCPServerProfile, token string) (mcp.ServerConfig, error) {
 	if err := mcp.ValidateClientURL(profile.URL); err != nil {
 		return mcp.ServerConfig{}, &MCPProfileError{Server: profile.Name, Field: "static bearer URL", Kind: ErrMCPProfileInvalid}

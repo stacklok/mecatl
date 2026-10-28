@@ -23,8 +23,6 @@ const (
 var (
 	// ErrSecretReference reports an invalid static secret reference.
 	ErrSecretReference = errors.New("invalid static secret reference")
-	// ErrSecretUnavailable reports a missing or invalid static secret.
-	ErrSecretUnavailable = errors.New("static secret unavailable")
 	// ErrSecretSource reports an unavailable static credential source.
 	ErrSecretSource         = errors.New("static credential source unavailable")
 	explicitTokenEnvPattern = regexp.MustCompile(`^MECATL_[A-Z0-9_]+$`)
@@ -44,6 +42,9 @@ var searchAPIKeyAliases = map[string]string{
 // Shared explicit and system-managed secret storage is tracked in
 // https://github.com/stacklok/mecatl/issues/2585.
 type SecretResolver interface {
+	// Lookup returns an opaque value, or "" when no credential is present.
+	// Callers enforce requiredness and format; errors identify invalid references
+	// or rejected file fallback, not missing credentials.
 	Lookup(SecretKind, string) (string, error)
 }
 
@@ -167,7 +168,7 @@ func (s *CredentialSource) Lookup(kind SecretKind, ref string) (string, error) {
 	return secret, err
 }
 
-// lookupLocked shares kind-specific policy with preliminary/final projections
+// lookupLocked shares source policy with preliminary/final projections
 // without finalizing preliminary discovery or recursively locking final resolution.
 // searchKey is the caller's pre-acquisition alias snapshot; canonical environment
 // values and absence are captured when the source is constructed.
@@ -178,29 +179,18 @@ func (s *CredentialSource) lookupLocked(kind SecretKind, ref, searchKey string) 
 	}
 	s.acquire()
 	if token, ok := s.LookupEnv(name); ok {
-		if kind == MCPBearerSecret && !validMCPBearer(token) {
-			return "", ErrSecretUnavailable
-		}
 		return token, nil
 	}
-	if kind == SearchAPIKeySecret {
-		if searchKey != "" {
-			return searchKey, nil
-		}
-		// Unlike MCP, search keeps usable entries from warning-only files.
-		if s.file == nil && s.strictWarning != "" {
-			return "", ErrSecretSource
-		}
-		return s.file.SearchAPIKey(ref), nil
+	if searchKey != "" {
+		return searchKey, nil
 	}
-	if s.strictWarning != "" || s.file == nil {
+	if s.strictWarning != "" {
 		return "", ErrSecretSource
 	}
-	token := s.file.MCPAPIKey(ref)
-	if !validMCPBearer(token) {
-		return "", ErrSecretUnavailable
+	if kind == SearchAPIKeySecret {
+		return s.file.SearchAPIKey(ref), nil
 	}
-	return token, nil
+	return s.file.MCPAPIKey(ref), nil
 }
 
 func secretTokenEnv(kind SecretKind, ref string) string {
@@ -221,16 +211,4 @@ func secretTokenEnv(kind SecretKind, ref string) string {
 
 func searchAPIKeyEnv(ref string) string {
 	return searchAPIKeyAliases[ref]
-}
-
-func validMCPBearer(token string) bool {
-	if strings.TrimSpace(token) == "" || strings.HasSuffix(token, " ") || strings.HasSuffix(token, "\t") {
-		return false
-	}
-	for i := 0; i < len(token); i++ {
-		if (token[i] < 0x20 && token[i] != '\t') || token[i] == 0x7f {
-			return false
-		}
-	}
-	return true
 }

@@ -110,8 +110,8 @@ func TestMCPSelectedFileWarningsFailClosed(t *testing.T) {
 				t.Fatal("file error exposed credential material or underlying diagnostics")
 			}
 			if state == "malformed" || state == "missing" {
-				if _, _, err := NewProviderCredentialResolver(source, keys).Load(nil); err != nil {
-					t.Fatal("provider-only permissive lifecycle changed")
+				if _, _, err := NewProviderCredentialResolver(source, keys).Load(nil); err == nil {
+					t.Fatal("search source error was discarded during provider loading")
 				}
 			}
 		})

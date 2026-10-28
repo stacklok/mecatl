@@ -76,8 +76,14 @@ func TestStaticSnapshotEnvironmentFirstThenFileReference(t *testing.T) {
 						if err != nil || servers[0].Headers["Authorization"] != "Bearer original-file" {
 							t.Fatal("refresh did not preserve original file and environment absence")
 						}
-					} else if !errors.Is(err, ErrMCPProfileStore) {
-						t.Fatalf("refresh lost original source failure: %v", err)
+					} else {
+						want := ErrMCPProfileStore
+						if initial == "missing" {
+							want = ErrMCPProfileSecret
+						}
+						if !errors.Is(err, want) {
+							t.Fatalf("refresh lost cached source failure or absence: %v", err)
+						}
 					}
 					operator.Servers[0] = profile
 					servers, err = load(authority)

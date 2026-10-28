@@ -92,8 +92,8 @@ func TestProviderCredentialResolverFailsClosedForMalformedConventionalAuthWithCu
 		t.Fatal("malformed conventional auth file did not produce the stock-provider warning")
 	}
 	resolver := NewProviderCredentialResolver(NewCredentialSource(flags, keys), keys)
-	if _, _, err := resolver.Load(nil); err != nil {
-		t.Fatalf("stock-provider-only startup lost warning-only behavior: %v", err)
+	if _, _, err := resolver.Load(nil); err == nil {
+		t.Fatal("stock-provider startup discarded search source failure")
 	}
 	definitions := permconfig.ProviderDefinitions{"custom": {ID: "custom", Auth: permconfig.ProviderAuth{Method: "api_key"}}}
 	if _, _, err := resolver.Load(definitions); err == nil {
@@ -368,8 +368,8 @@ func TestSearchCredentialSourcePoliciesAcrossFlows(t *testing.T) {
 						source = newCredentialSource(flags, env)
 					} else {
 						keys = flags.resolve(env, time.Time{})
-						if keys.AuthFileWarning == "" || keys.Exa != "env-exa" || (sanitized && keys.Brave != "file-brave") {
-							t.Fatal("preliminary projection lost warning-only source handling")
+						if keys.AuthFileWarning == "" || keys.Exa != "env-exa" || keys.Brave != "" || keys.searchErr == nil {
+							t.Fatal("preliminary projection lost environment credential or source failure")
 						}
 						source = keys.source
 						if flow == "reselected" {
@@ -377,19 +377,66 @@ func TestSearchCredentialSourcePoliciesAcrossFlows(t *testing.T) {
 							source.SetAPIKeyFile("/config/mecatl/auth.yaml")
 						}
 					}
-					profile, _, err := NewProviderCredentialResolver(source, keys).Load(definitions)
-					wantFatal := flow != "reused" || (custom && !sanitized)
-					if (err != nil) != wantFatal {
-						t.Fatal("search lookup normalized warning/fatal source policy")
-					}
-					if !wantFatal && (profile.ExaAPIKey != "env-exa" || (sanitized && profile.BraveAPIKey != "file-brave")) {
-						t.Fatal("permissive reuse discarded usable search credentials")
+					_, _, err := NewProviderCredentialResolver(source, keys).Load(definitions)
+					if err == nil {
+						t.Fatal("search source error was discarded by credential projection")
 					}
 					if err != nil && strings.Contains(err.Error(), "private-sentinel") {
 						t.Fatal("source error exposed file content")
 					}
 				})
 			}
+		}
+	}
+}
+
+func TestSearchEnvironmentAndIndependentProviderValidation(t *testing.T) {
+	for _, malformed := range []bool{false, true} {
+		for _, flow := range []string{"reused", "direct", "reselected"} {
+			t.Run(fmt.Sprintf("malformed=%t/%s", malformed, flow), func(t *testing.T) {
+				body := "providers:\n  openai-codex:\n    api_key: ignored\n"
+				if malformed {
+					body = "search: [private-sentinel"
+				}
+				env := envWithAuth("/config/mecatl/auth.yaml", body)
+				getenv := env.Getenv
+				env.Getenv = func(name string) string {
+					if name == envOpenAIKey || name == envExaKey || name == envBraveKey || name == envWebSearchKey {
+						return "env-key"
+					}
+					return getenv(name)
+				}
+				var keys ResolvedCredentials
+				var source *CredentialSource
+				if flow == "direct" {
+					source = newCredentialSource(nil, env)
+				} else {
+					keys = (&ProviderFlags{}).resolve(env, time.Time{})
+					if keys.searchErr != nil {
+						t.Fatal("environment-only search projection consulted rejected file fallback")
+					}
+					source = keys.source
+					if flow == "reselected" {
+						source.SetAPIKeyFile("/config/mecatl/auth.yaml")
+					}
+				}
+				profile, _, err := NewProviderCredentialResolver(source, keys).Load(nil)
+				// Authoritative provider resolution validates its own file even
+				// when search lookups have no need for file fallback.
+				wantError := flow != "reused"
+				if (err != nil) != wantError {
+					t.Fatal("independent provider validation changed")
+				}
+				if !wantError && (profile.ExaAPIKey != "env-key" || profile.BraveAPIKey != "env-key" || profile.WebSearchAPIKey != "env-key") {
+					t.Fatal("environment-only search credentials lost")
+				}
+				for _, ref := range []string{"exa", "brave", "websearch"} {
+					key, err := source.Lookup(SearchAPIKeySecret, ref)
+					if err != nil || key != "env-key" {
+						t.Fatal("provider validation changed environment lookup precedence")
+					}
+				}
+			})
 		}
 	}
 }

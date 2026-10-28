@@ -85,9 +85,14 @@ The default path is `$XDG_CONFIG_HOME/mecatl/auth.yaml`, normally
 
 The parser reports unknown providers, fields, duplicate keys, and invalid
 credential formats without printing values. A missing conventional file is
-accepted; a missing explicitly selected file produces a warning. On Unix, Mecatl
-warns when group or other users can read the file. Use mode `0600` and restart
-the server after replacing a credential.
+accepted. Search and MCP file fallback rejects the whole file on any warning
+or error, including a missing explicitly selected file or, on Unix, permissions
+that let group or other users read it. Individual search and MCP lookups prefer
+environment credentials over file fallback; model-provider validation can still
+independently reject the file during startup. A missing key in a clean file
+means no credential: search allows an empty key, while an MCP bearer profile
+requires a valid token.
+Use mode `0600` and restart the server after replacing a credential.
 
 The file is plaintext. Another process running under the same OS account can
 read it even with mode `0600`, including an authorized agent Shell command. Use

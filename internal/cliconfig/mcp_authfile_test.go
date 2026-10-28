@@ -115,13 +115,13 @@ func TestStaticSecretEnvironmentSelectionAndSnapshot(t *testing.T) {
 		{"absent", nil, "file-token", nil, 1},
 		{"present", []string{"MECATL_MCP_TOKEN_GITHUB=env-token"}, "env-token", nil, 1},
 		{"opaque whitespace", []string{"MECATL_MCP_TOKEN_GITHUB= \topaque\t token"}, " \topaque\t token", nil, 1},
-		{"empty", []string{"MECATL_MCP_TOKEN_GITHUB="}, "", ErrSecretUnavailable, 1},
-		{"blank", []string{"MECATL_MCP_TOKEN_GITHUB= \t"}, "", ErrSecretUnavailable, 1},
-		{"control", []string{"MECATL_MCP_TOKEN_GITHUB=private\rvalue"}, "", ErrSecretUnavailable, 1},
-		{"NUL", []string{"MECATL_MCP_TOKEN_GITHUB=private\x00value"}, "", ErrSecretUnavailable, 1},
-		{"DEL", []string{"MECATL_MCP_TOKEN_GITHUB=private\x7fvalue"}, "", ErrSecretUnavailable, 1},
-		{"edge space", []string{"MECATL_MCP_TOKEN_GITHUB=private "}, "", ErrSecretUnavailable, 1},
-		{"edge tab", []string{"MECATL_MCP_TOKEN_GITHUB=private\t"}, "", ErrSecretUnavailable, 1},
+		{"empty", []string{"MECATL_MCP_TOKEN_GITHUB="}, "", nil, 1},
+		{"blank", []string{"MECATL_MCP_TOKEN_GITHUB= \t"}, " \t", nil, 1},
+		{"control", []string{"MECATL_MCP_TOKEN_GITHUB=private\rvalue"}, "private\rvalue", nil, 1},
+		{"NUL", []string{"MECATL_MCP_TOKEN_GITHUB=private\x00value"}, "private\x00value", nil, 1},
+		{"DEL", []string{"MECATL_MCP_TOKEN_GITHUB=private\x7fvalue"}, "private\x7fvalue", nil, 1},
+		{"edge space", []string{"MECATL_MCP_TOKEN_GITHUB=private "}, "private ", nil, 1},
+		{"edge tab", []string{"MECATL_MCP_TOKEN_GITHUB=private\t"}, "private\t", nil, 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			reads := 0
@@ -207,7 +207,7 @@ func TestSearchSecretLookupPolicy(t *testing.T) {
 			{"environment", "search:\n  " + ref + ":\n    api_key: file-key\n", "env-key", "env-key", nil},
 			{"opaque environment", "search: {}\n", "key\rvalue ", "key\rvalue ", nil},
 			{"optional", "search: {}\n", "", "", nil},
-			{"sanitized provider warning", "providers:\n  openai-codex:\n    api_key: ignored\nsearch:\n  " + ref + ":\n    api_key: file-key\n", "", "file-key", nil},
+			{"sanitized provider warning", "providers:\n  openai-codex:\n    api_key: ignored\nsearch:\n  " + ref + ":\n    api_key: file-key\n", "", "", ErrSecretSource},
 			{"namespace isolation", "providers:\n  " + ref + ":\n    api_key: llm-key\nmcp:\n  " + ref + ":\n    api_key: mcp-key\n", "", "", nil},
 			{"invalid source", "search: [private-sentinel", "", "", ErrSecretSource},
 			{"environment overrides invalid source", "search: [private-sentinel", "env-key", "env-key", nil},
@@ -342,8 +342,8 @@ func TestAcquisitionWarningSurvivesProviderSanitization(t *testing.T) {
 	source := NewCredentialSource(flags, keys)
 	loader := NewProviderCredentialResolver(source, keys)
 	for range 2 {
-		if _, _, err := loader.Load(nil); err != nil {
-			t.Fatal("provider permissive projection changed")
+		if _, _, err := loader.Load(nil); !errors.Is(err, ErrSecretSource) {
+			t.Fatal("search source failure was lost after provider sanitization")
 		}
 		if _, err := source.Lookup(MCPBearerSecret, "github"); !errors.Is(err, ErrSecretSource) {
 			t.Fatal("acquisition warning lost after sanitization")
