@@ -13,12 +13,16 @@ import (
 )
 
 const (
-	// SessionDetailsType is the RFC 9396 authorization_details type naming
-	// the broker session and its owner at session open.
-	SessionDetailsType = "mecatl_session"
-	// DefaultSessionRefreshTokenLifetime is a session's hard expiry, counted
-	// from its first open.
-	DefaultSessionRefreshTokenLifetime = 12 * time.Hour
+	// ExchangeGrantType is the RFC 9396 authorization_details type of
+	// ToolHive's generic grant (stacklok/toolhive#6897): a refresh token
+	// whose use is fixed when it is issued.
+	ExchangeGrantType = "https://toolhive.dev/exchange_grant"
+	// TokenTypeIDJAG is the ID-JAG token type, the only output AS-1 issues
+	// the broker's grants for.
+	TokenTypeIDJAG = "urn:ietf:params:oauth:token-type:id-jag" // #nosec G101 -- token type URN, not a credential.
+	// DefaultGrantMaxLifetime is AS-1's configured maximum lifetime for a
+	// grant that issues ID-JAGs.
+	DefaultGrantMaxLifetime = 12 * time.Hour
 
 	grantTokenExchange   = "urn:ietf:params:oauth:grant-type:token-exchange" // #nosec G101 -- RFC 8693 grant type URN, not a credential.
 	tokenTypeAccess      = "urn:ietf:params:oauth:token-type:access_token"   // #nosec G101 -- RFC 8693 token type URN, not a credential.
@@ -26,13 +30,17 @@ const (
 	paramAuthDetails     = "authorization_details"
 	errInvalidAuthDetail = "invalid_authorization_details"
 
-	// Reason codes from the design's error reasons.
-	reasonSubjectInvalid = "subject_invalid"
-	reasonOwnerMismatch  = "owner_mismatch"
-	reasonSessionOwned   = "session_owned"
-	reasonTokenUsed      = "token_used"
-	reasonSuperseded     = "superseded"
-	reasonSessionClosed  = "session_closed"
+	// Reason codes AS-1 returns for grants (design "Error reasons").
+	reasonTokenUsed = "token_used"
+	reasonRevoked   = "revoked"
+
+	// Reasons for an invalid_authorization_details refusal
+	// (stacklok/toolhive#6897).
+	reasonSingleEntryRequired   = "single_entry_required"
+	reasonMalformedEntry        = "malformed_entry"
+	reasonInvalidIssuableTypes  = "invalid_issuable_token_types"
+	reasonTokenTypeNotPermitted = "token_type_not_permitted"
+	reasonInvalidExpiresAt      = "invalid_expires_at"
 )
 
 // Owner is a company identity: the upstream IdP's issuer and subject, as in
@@ -42,289 +50,262 @@ type Owner struct {
 	Subject string `json:"sub"`
 }
 
-// SessionDetails is the mecatl_session authorization_details entry a session
-// open sends and AS-1 echoes.
-type SessionDetails struct {
-	Type    string `json:"type"`
-	Session string `json:"session"`
-	Owner   Owner  `json:"owner"`
+// ExchangeGrant is the exchange-grant authorization_details entry a session
+// open sends and AS-1 echoes with the expiry it granted. ExpiresAt is Unix
+// seconds; zero leaves it out.
+type ExchangeGrant struct {
+	Type               string   `json:"type"`
+	IssuableTokenTypes []string `json:"issuable_token_types"`
+	ExpiresAt          int64    `json:"expires_at,omitempty"`
 }
 
-// SessionGrant is AS-1's record of a session refresh token.
-type SessionGrant struct {
-	Session  string
-	Owner    Owner
+// Grant is AS-1's record of a grant and its refresh token. It names the
+// client and the user, never a Mecatl session or owner.
+type Grant struct {
 	ClientID string
-	// Subject is the user's AS-1 subject.
+	// Subject is the user's AS-1 subject, and SubID their company identity.
 	Subject string
-	// SourceJTI is the jti of the access token the open converted.
+	SubID   Owner
+	// SourceJTI is the jti of the access token the exchange converted.
 	SourceJTI string
-	// HardExpiry is the session's hard expiry; a later open never extends it.
-	HardExpiry time.Time
-	// Active reports whether the token is still usable. Otherwise Reason is
-	// the reason a later use (the ID-JAG exchange, not built yet) would get,
-	// never a session-open outcome: superseded when a later open replaced it,
-	// session_closed when the session was revoked or passed its hard expiry.
+	// Output is the one token type the grant issues.
+	Output    string
+	ExpiresAt time.Time
+	// Active reports whether the refresh token is still usable. Otherwise
+	// Reason is what a later use (the ID-JAG exchange, not built yet) would
+	// get: revoked for a revoked grant, and no reason for an expired one.
 	Active bool
 	Reason string
 }
 
-type as1Session struct {
-	owner      Owner
-	hardExpiry time.Time
-	current    string
-	closed     bool
+// Refusal is a refused exchange AS-1 recorded: its OAuth error code and its
+// reason, empty when it has none.
+type Refusal struct {
+	Code   string
+	Reason string
 }
 
-type as1SessionToken struct {
-	session, clientID, subject, sourceJTI string
-	owner                                 Owner
-	replaced                              bool
+type as1Grant struct {
+	clientID, subject, sourceJTI, output string
+	subID                                Owner
+	expiresAt                            time.Time
+	revoked                              bool
 }
 
-type as1Conversion struct {
-	clientID, session string
-	expires           time.Time
-}
-
-// FailNextSessionOpen makes the next session open from an authenticated
+// FailNextExchange makes the next token exchange from an authenticated
 // broker fail with fault before any other check, for a 503 or any other
 // injected error.
-func (a *AS1) FailNextSessionOpen(fault Fault) { a.faults.push("session-open", fault) }
+func (a *AS1) FailNextExchange(fault Fault) { a.faults.push("exchange", fault) }
 
-// LoseNextSessionOpenResponse makes AS-1 process the next session open in
+// LoseNextExchangeResponse makes AS-1 process the next token exchange in
 // full and then drop the connection without a response, as a lost response.
-func (a *AS1) LoseNextSessionOpenResponse() { a.faults.push("session-open-lost", Fault{}) }
+func (a *AS1) LoseNextExchangeResponse() { a.faults.push("exchange-lost", Fault{}) }
 
-// MismatchNextSessionOpenEcho makes the next successful session open echo
-// echo instead of the entry it was sent. The refresh token is still bound to
-// the entry sent.
-func (a *AS1) MismatchNextSessionOpenEcho(echo SessionDetails) {
+// MismatchNextExchangeEcho makes the next successful token exchange echo
+// echo instead of the entry it granted. The grant is still the one granted.
+func (a *AS1) MismatchNextExchangeEcho(echo ExchangeGrant) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.echoes = append(a.echoes, echo)
 }
 
-// ExpireSession forces session past its hard expiry: its refresh token stops
-// working with session_closed and the session is closed, as if the clock had
-// passed the hard expiry.
-func (a *AS1) ExpireSession(session string) {
+// ExpireGrant forces the grant of refresh token past its expiry, as if the
+// clock had passed it.
+func (a *AS1) ExpireGrant(token string) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	if s, ok := a.sessions[session]; ok && !s.closed {
-		s.hardExpiry = a.now()
+	if g, ok := a.grants[token]; ok {
+		g.expiresAt = a.now()
 	}
 }
 
-// SessionClosed reports whether AS-1 holds a closed-session record for
-// session: revoked, or past its hard expiry.
-func (a *AS1) SessionClosed(session string) bool {
+// ExchangeRefusals returns the refused exchanges AS-1 recorded, oldest
+// first.
+func (a *AS1) ExchangeRefusals() []Refusal {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	s := a.sessionLocked(session)
-	return s != nil && s.closed
+	return slices.Clone(a.refusals)
 }
 
-// SessionOpenRefusals returns the reasons AS-1 recorded for refused opens of
-// session, oldest first.
-func (a *AS1) SessionOpenRefusals(session string) []string {
+// GrantsIssued returns how many grants AS-1 has issued, including any a lost
+// response orphaned.
+func (a *AS1) GrantsIssued() int {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	return slices.Clone(a.refusals[session])
+	return len(a.grants)
 }
 
-// SessionRefreshTokensIssued returns how many session refresh tokens AS-1
-// has issued for session, including any a lost response orphaned.
-func (a *AS1) SessionRefreshTokensIssued(session string) int {
+// Grant returns AS-1's record of the grant of refresh token.
+func (a *AS1) Grant(token string) (Grant, bool) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	n := 0
-	for _, rec := range a.sessionTokens {
-		if rec.session == session {
-			n++
-		}
-	}
-	return n
-}
-
-// SessionRefreshToken returns AS-1's record of a session refresh token.
-func (a *AS1) SessionRefreshToken(token string) (SessionGrant, bool) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	rec, ok := a.sessionTokens[token]
+	g, ok := a.grants[token]
 	if !ok {
-		return SessionGrant{}, false
+		return Grant{}, false
 	}
-	s := a.sessionLocked(rec.session)
-	grant := SessionGrant{
-		Session: rec.session, Owner: rec.owner, ClientID: rec.clientID, Subject: rec.subject,
-		SourceJTI: rec.sourceJTI, HardExpiry: s.hardExpiry, Active: true,
+	grant := Grant{
+		ClientID: g.clientID, Subject: g.subject, SubID: g.subID, SourceJTI: g.sourceJTI,
+		Output: g.output, ExpiresAt: g.expiresAt, Active: true,
 	}
 	switch {
-	case rec.replaced:
-		grant.Active, grant.Reason = false, reasonSuperseded
-	case s.closed:
-		grant.Active, grant.Reason = false, reasonSessionClosed
+	case g.revoked:
+		grant.Active, grant.Reason = false, reasonRevoked
+	case !a.now().Before(g.expiresAt):
+		grant.Active = false
 	}
 	return grant, true
 }
 
-// sessionLocked returns the session record, closing it once its hard expiry
-// has passed. Losing the refresh token closes the session.
-func (a *AS1) sessionLocked(id string) *as1Session {
-	s, ok := a.sessions[id]
-	if !ok {
-		return nil
-	}
-	if !s.closed && !a.now().Before(s.hardExpiry) {
-		s.closed = true
-	}
-	return s
-}
-
-// openSession is the session-open token exchange of design step (3), for an
+// exchange is AS-1's side of session open, design step (3): the RFC 8693
+// exchange of an access token for a grant that issues only ID-JAGs, for an
 // authenticated broker. Check 1 (client authentication) and check 2 (the
 // broker may use this grant) have passed.
-func (a *AS1) openSession(w http.ResponseWriter, r *http.Request) {
-	if fault, ok := a.faults.pop("session-open"); ok {
+func (a *AS1) exchange(w http.ResponseWriter, r *http.Request) {
+	if fault, ok := a.faults.pop("exchange"); ok {
 		writeOAuthError(w, fault.Status, fault.Error, fault.Reason)
 		return
 	}
-	entry, echo, code := checkSessionOpenForm(r.PostForm)
+	now := a.now()
+	entry, code, reason := checkExchangeForm(r.PostForm, now)
 	if code != "" {
-		writeOAuthError(w, http.StatusBadRequest, code, "")
+		writeOAuthError(w, http.StatusBadRequest, code, reason)
 		return
 	}
 	// Check 4: the subject token is a live AS-1 access token for the Mecatl
-	// API, issued to a public client.
+	// API, issued to a public client. A refused token gets no reason.
 	subject, ok := a.verifySubjectToken(r.PostForm.Get("subject_token"))
 	if !ok {
-		a.refuse(w, entry.Session, "invalid_request", reasonSubjectInvalid)
+		a.refuse(w, "invalid_request", "")
 		return
 	}
-	refresh, expiresIn, code, reason := a.convert(subject, entry)
-	if reason != "" {
-		a.refuse(w, entry.Session, code, reason)
+	refresh, granted, ok := a.convert(subject, entry, now)
+	if !ok {
+		a.refuse(w, "invalid_request", reasonTokenUsed)
 		return
 	}
+	echo := ExchangeGrant{Type: ExchangeGrantType, IssuableTokenTypes: entry.IssuableTokenTypes, ExpiresAt: granted.Unix()}
 	a.mu.Lock()
 	if len(a.echoes) > 0 {
-		echo, _ = json.Marshal(a.echoes[0])
+		echo = a.echoes[0]
 		a.echoes = a.echoes[1:]
 	}
 	a.mu.Unlock()
 
-	if _, lost := a.faults.pop("session-open-lost"); lost {
+	if _, lost := a.faults.pop("exchange-lost"); lost {
 		panic(http.ErrAbortHandler) // closes the connection with no response
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"access_token":      refresh,
 		"issued_token_type": tokenTypeRefresh,
 		"token_type":        "N_A",
-		"expires_in":        expiresIn,
-		paramAuthDetails:    []json.RawMessage{echo},
+		"expires_in":        int(granted.Sub(now).Seconds()),
+		paramAuthDetails:    []ExchangeGrant{echo},
 	})
 }
 
-// checkSessionOpenForm runs check 3: the request is well formed. It returns
-// the entry and its compact JSON for the echo, or the OAuth error code.
-func checkSessionOpenForm(form url.Values) (SessionDetails, json.RawMessage, string) {
+// checkExchangeForm runs check 3: the request is well formed. It returns the
+// entry, or the OAuth error code and any reason.
+func checkExchangeForm(form url.Values, now time.Time) (ExchangeGrant, string, string) {
 	for _, values := range form {
 		if len(values) > 1 { // RFC 6749 §3.2
-			return SessionDetails{}, nil, "invalid_request"
+			return ExchangeGrant{}, "invalid_request", ""
 		}
 	}
 	switch {
 	case form.Has("scope"):
-		return SessionDetails{}, nil, "invalid_scope"
+		return ExchangeGrant{}, "invalid_scope", ""
+	case form.Has("resource") || form.Has("audience"):
+		return ExchangeGrant{}, errInvalidTarget, ""
 	case form.Get("subject_token") == "" || form.Get("subject_token_type") != tokenTypeAccess ||
 		form.Get("requested_token_type") != tokenTypeRefresh || form.Has("actor_token") ||
 		form.Has("actor_token_type") || !form.Has(paramAuthDetails):
-		return SessionDetails{}, nil, "invalid_request"
+		return ExchangeGrant{}, "invalid_request", ""
 	}
-	entry, raw, ok := parseSessionDetails(form.Get(paramAuthDetails))
-	if !ok {
-		return SessionDetails{}, nil, errInvalidAuthDetail
+	entry, reason := parseExchangeGrant(form.Get(paramAuthDetails), now)
+	if reason != "" {
+		return ExchangeGrant{}, errInvalidAuthDetail, reason
 	}
-	return entry, raw, ""
+	return entry, "", ""
 }
 
-// convert runs checks 5 to 7 and, if they pass, in one transaction records
-// the conversion and the owner, writes the new refresh token, and revokes the
-// session's previous one. A refusal returns its OAuth error code and reason.
-func (a *AS1) convert(subject as1Subject, entry SessionDetails) (refresh string, expiresIn int, code, reason string) {
-	now := a.now()
+// parseExchangeGrant accepts exactly one exchange-grant entry listing only
+// id-jag, with an optional expires_at in the future, and returns it, or the
+// invalid_authorization_details reason. Member names match exactly, appear
+// once, and no other member is allowed; encoding/json alone would match them
+// case-insensitively, let a duplicate win, and ignore unknown ones.
+func parseExchangeGrant(value string, now time.Time) (ExchangeGrant, string) {
+	var entries []json.RawMessage
+	if json.Unmarshal([]byte(value), &entries) != nil {
+		return ExchangeGrant{}, reasonMalformedEntry
+	}
+	if len(entries) != 1 {
+		return ExchangeGrant{}, reasonSingleEntryRequired
+	}
+	members, ok := strictObject(entries[0])
+	if !ok || strictString(members["type"]) != ExchangeGrantType {
+		return ExchangeGrant{}, reasonMalformedEntry
+	}
+	for name := range members {
+		if name != "type" && name != "issuable_token_types" && name != "expires_at" {
+			return ExchangeGrant{}, reasonMalformedEntry
+		}
+	}
+	var types []string
+	if json.Unmarshal(members["issuable_token_types"], &types) != nil || len(types) != 1 {
+		return ExchangeGrant{}, reasonInvalidIssuableTypes
+	}
+	switch types[0] {
+	case TokenTypeIDJAG:
+	case tokenTypeRefresh:
+		// The broker's client is configured for ID-JAG grants only.
+		return ExchangeGrant{}, reasonTokenTypeNotPermitted
+	default:
+		return ExchangeGrant{}, reasonInvalidIssuableTypes
+	}
+	entry := ExchangeGrant{Type: ExchangeGrantType, IssuableTokenTypes: types}
+	if raw, ok := members["expires_at"]; ok {
+		dec := json.NewDecoder(bytes.NewReader(raw))
+		dec.UseNumber()
+		var n json.Number
+		if dec.Decode(&n) != nil {
+			return ExchangeGrant{}, reasonInvalidExpiresAt
+		}
+		exp, err := n.Int64()
+		if err != nil || exp <= now.Unix() {
+			return ExchangeGrant{}, reasonInvalidExpiresAt
+		}
+		entry.ExpiresAt = exp
+	}
+	return entry, ""
+}
+
+// convert runs check 5 and, if it passes, in one transaction records the
+// converted jti and writes the grant, expiring at the requested expires_at
+// capped at AS-1's maximum. It returns false when the jti was converted
+// before; a retry is not an exception.
+func (a *AS1) convert(subject as1Subject, entry ExchangeGrant, now time.Time) (string, time.Time, bool) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	// Check 5: the token's company identity is the owner sent.
-	if subject.owner != entry.Owner {
-		return "", 0, "invalid_request", reasonOwnerMismatch
-	}
-	// Check 6: the session was never closed and has no other owner.
-	s := a.sessionLocked(entry.Session)
-	if s != nil && (s.closed || s.owner != entry.Owner) {
-		return "", 0, errInvalidAuthDetail, reasonSessionOwned
-	}
-	// Check 7: the jti has not opened a session, or this is a retry with the
-	// same jti, client, and session. Check 4 already holds it within exp, and
-	// check 6 holds the session open.
-	// Only BrokerClientID reaches this exchange, so the client always matches.
-	maps.DeleteFunc(a.conversions, func(_ string, c as1Conversion) bool {
-		return now.After(c.expires.Add(as1ClockSkew))
+	// Check 4 already holds the token within exp, so a converted jti is kept
+	// until exp plus the clock skew.
+	maps.DeleteFunc(a.conversions, func(_ string, until time.Time) bool {
+		return now.After(until.Add(as1ClockSkew))
 	})
-	if c, used := a.conversions[subject.jti]; used && c.session != entry.Session {
-		return "", 0, "invalid_request", reasonTokenUsed
+	if _, used := a.conversions[subject.jti]; used {
+		return "", time.Time{}, false
 	}
-	a.conversions[subject.jti] = as1Conversion{clientID: BrokerClientID, session: entry.Session, expires: subject.expires}
-	// Guess (stacklok/toolhive#6897): the hard expiry runs from the first
-	// open; a retry or later open does not extend it.
-	if s == nil {
-		s = &as1Session{owner: entry.Owner, hardExpiry: now.Add(a.sessionLifetime)}
-		a.sessions[entry.Session] = s
+	a.conversions[subject.jti] = subject.expires
+	expires := now.Add(a.grantMax)
+	if requested := time.Unix(entry.ExpiresAt, 0); entry.ExpiresAt != 0 && requested.Before(expires) {
+		expires = requested
 	}
-	if prev, ok := a.sessionTokens[s.current]; ok {
-		prev.replaced = true
+	refresh := randomToken("as1-grant-rt-")
+	// Only BrokerClientID reaches this exchange.
+	a.grants[refresh] = &as1Grant{
+		clientID: BrokerClientID, subject: subject.sub, subID: subject.owner,
+		sourceJTI: subject.jti, output: TokenTypeIDJAG, expiresAt: expires,
 	}
-	refresh = randomToken("as1-session-rt-")
-	a.sessionTokens[refresh] = &as1SessionToken{
-		session: entry.Session, clientID: BrokerClientID, subject: subject.sub,
-		sourceJTI: subject.jti, owner: entry.Owner,
-	}
-	s.current = refresh
-	return refresh, int(s.hardExpiry.Sub(now).Seconds()), "", ""
-}
-
-// parseSessionDetails accepts exactly one mecatl_session entry with a session
-// and an owner, and returns it with its compact JSON for the echo. Member
-// names match exactly and appear once; encoding/json alone would match them
-// case-insensitively and let a duplicate win.
-func parseSessionDetails(value string) (SessionDetails, json.RawMessage, bool) {
-	var entries []json.RawMessage
-	if json.Unmarshal([]byte(value), &entries) != nil || len(entries) != 1 {
-		return SessionDetails{}, nil, false
-	}
-	// Guess: members beyond type, session, and owner are kept and echoed
-	// unchanged, as RFC 9396 allows extension members.
-	members, ok := strictObject(entries[0])
-	if !ok {
-		return SessionDetails{}, nil, false
-	}
-	owner, ok := strictObject(members["owner"])
-	if !ok {
-		return SessionDetails{}, nil, false
-	}
-	entry := SessionDetails{
-		Type: strictString(members["type"]), Session: strictString(members["session"]),
-		Owner: Owner{Issuer: strictString(owner["iss"]), Subject: strictString(owner["sub"])},
-	}
-	if entry.Type != SessionDetailsType || entry.Session == "" || entry.Owner.Issuer == "" || entry.Owner.Subject == "" {
-		return SessionDetails{}, nil, false
-	}
-	var compact bytes.Buffer
-	if json.Compact(&compact, entries[0]) != nil {
-		return SessionDetails{}, nil, false
-	}
-	return entry, compact.Bytes(), true
+	return refresh, expires, true
 }
 
 // strictObject decodes a JSON object into its members by exact name,
@@ -371,7 +352,7 @@ type as1Subject struct {
 	expires  time.Time
 }
 
-// verifySubjectToken runs check 4 on a session-open subject token.
+// verifySubjectToken runs check 4 on an exchange's subject token.
 func (a *AS1) verifySubjectToken(token string) (as1Subject, bool) {
 	var claims struct {
 		jwt.RegisteredClaims
@@ -400,13 +381,13 @@ func (a *AS1) verifySubjectToken(token string) (as1Subject, bool) {
 	return as1Subject{sub: claims.Subject, jti: claims.ID, owner: claims.SubID.Owner, expires: claims.ExpiresAt.Time}, true
 }
 
-// refuse records a refused open with its reason and writes the error.
+// refuse records a refused exchange and writes the error.
 //
-// Guess: checks 4 to 7 are recorded, since they name a session; the design
-// requires it for checks 5 and 6 and records "a refused open with its reason".
-func (a *AS1) refuse(w http.ResponseWriter, session, code, reason string) {
+// Guess: checks 4 and 5 are recorded, since they concern the user's token;
+// malformed requests are not.
+func (a *AS1) refuse(w http.ResponseWriter, code, reason string) {
 	a.mu.Lock()
-	a.refusals[session] = append(a.refusals[session], reason)
+	a.refusals = append(a.refusals, Refusal{Code: code, Reason: reason})
 	a.mu.Unlock()
 	writeOAuthError(w, http.StatusBadRequest, code, reason)
 }

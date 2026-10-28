@@ -15,46 +15,43 @@
 //     and sub, aud equal to AS-1's issuer, exp and iat with
 //     ClientAssertionClockSkew allowed, exp - iat, and a jti used once and
 //     kept until exp plus the skew; a client secret is refused (clientauth.go);
-//   - session open, design step (3): the RFC 8693 exchange of an AS-1 access
-//     token for a non-rotating session refresh token bound to a
-//     mecatl_session entry's session and owner, checks 1 to 7 with their
-//     reasons, retry after a lost response, replacement by a later open,
-//     closed-session records, the hard expiry, and refusal of the session
-//     refresh token at the refresh-token grant (sessionopen.go);
-//   - RFC 7009 revocation of session refresh tokens (revoke.go);
+//   - AS-1's side of session open, design step (3): the RFC 8693 exchange of
+//     an AS-1 access token for a non-rotating refresh token of a generic
+//     grant (stacklok/toolhive#6897). The grant names the client and the
+//     user, never a Mecatl session or owner, and issues only ID-JAGs. The
+//     request carries one exchange-grant entry whose optional expires_at AS-1
+//     caps at its maximum and echoes. Checks 1 to 5 apply, with one
+//     conversion per access-token jti and no retry exception; a refused
+//     access token gets no reason. The grant's refresh token is refused at
+//     the refresh-token grant (sessionopen.go);
+//   - RFC 7009 revocation of grant refresh tokens (revoke.go);
 //   - injected faults: one-shot errors such as a 503, a lost response, a
-//     mismatched echo, and a forced hard expiry; and ScriptedBroker, a
+//     mismatched echo, and a forced grant expiry; and ScriptedBroker, a
 //     hand-driven caller holding the broker's credentials for exercising
 //     AS-1 directly (broker.go). Production code under test uses its own
 //     client, not ScriptedBroker.
 //
-// Later work adds ID-JAG issuance, client refresh-token revocation, and a
-// gateway stand-in, each in its own files. The reason superseded belongs to
-// the ID-JAG exchange, which presents a session refresh token a later open
-// may have replaced; session open never returns it, and until that exchange
-// exists SessionRefreshToken reports a replaced token's state. AS-2 is
-// deliberately absent: tests use the real embedded ToolHive authorization
-// server for it.
+// Keeping one live refresh token per session, checking the owner, and
+// refusing to reopen a closed session are the broker's job, so AS-1 does
+// none of them. Later work adds ID-JAG issuance (with the reasons revoked,
+// parent_revoked, and not_issuable on use), child grants, client
+// refresh-token revocation, and a gateway stand-in, each in its own files.
+// Until ID-JAG issuance exists, Grant reports what a later use would get.
+// AS-2 is deliberately absent: tests use the real embedded ToolHive
+// authorization server for it.
 //
 // Where the design is silent the harness guesses, marked "Guess:" in the code:
 //
 //   - Revocation is RFC 7009 at {issuer}/revoke, callable only by the
-//     authenticated broker. Revoking a session's current refresh token closes
-//     the session; revoking a replaced token or any other value changes
-//     nothing and answers 200.
-//   - A mecatl_session entry's members beyond type, session, and owner are
-//     accepted and echoed unchanged. The known members (type, session, owner,
-//     and owner's iss and sub) must be spelled exactly and appear once.
+//     authenticated broker. Revoking a grant's refresh token revokes the
+//     grant; any other value changes nothing and answers 200.
 //   - A client assertion with an explicit typ other than
 //     client-authentication+jwt or JWT (golang-jwt's default) is refused; an
 //     untyped one is accepted; only ES256 is accepted. Because the harness
 //     accepts JWT, the production broker's own tests must check the typ it
 //     emits.
-//   - Following stacklok/toolhive#6897, a retry or a later open replaces the
-//     refresh token without extending the session's hard expiry, which runs
-//     from the first open; expires_in is the time left until it.
-//   - A refused open is recorded with its reason for checks 4 to 7, which
-//     name a session; malformed requests are not recorded.
+//   - A refused exchange is recorded for checks 4 and 5, which concern the
+//     user's token; malformed requests are not recorded.
 //
 // Everything runs on loopback TLS servers that close when the test ends. The
 // harness is test code; production packages never import it.
@@ -119,9 +116,10 @@ type Options struct {
 	// ClientAssertionMaxLifetime is the largest exp - iat AS-1 accepts in a
 	// client assertion. Zero selects DefaultClientAssertionMaxLifetime.
 	ClientAssertionMaxLifetime time.Duration
-	// SessionRefreshTokenLifetime is a session's hard expiry, counted from its
-	// first open. Zero selects DefaultSessionRefreshTokenLifetime.
-	SessionRefreshTokenLifetime time.Duration
+	// GrantMaxLifetime is AS-1's maximum lifetime for a grant that issues
+	// ID-JAGs: the expiry when an exchange asks for none, and the cap on one
+	// it asks for. Zero selects DefaultGrantMaxLifetime.
+	GrantMaxLifetime time.Duration
 }
 
 // Harness is a running set of stand-ins. Create it with New.
@@ -153,8 +151,8 @@ func New(t testing.TB, opts Options) *Harness {
 	if opts.ClientAssertionMaxLifetime <= 0 {
 		opts.ClientAssertionMaxLifetime = DefaultClientAssertionMaxLifetime
 	}
-	if opts.SessionRefreshTokenLifetime <= 0 {
-		opts.SessionRefreshTokenLifetime = DefaultSessionRefreshTokenLifetime
+	if opts.GrantMaxLifetime <= 0 {
+		opts.GrantMaxLifetime = DefaultGrantMaxLifetime
 	}
 
 	idp := newIdP(t, opts)
