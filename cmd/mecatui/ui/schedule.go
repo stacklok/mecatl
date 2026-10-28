@@ -76,7 +76,6 @@ type scheduleForm struct {
 	timezone      autocomplete.Model
 	mutating      bool
 	focusIdx      int
-	initialized   bool
 	submitted     schedparse.Preview
 }
 
@@ -130,6 +129,7 @@ func (*scheduleState) modalPlacement() modalPlacement { return modalPlacementFil
 func (s *scheduleState) Close() {
 	s.closed = true
 	s.invalidateReads()
+	s.editorGeneration++
 	s.filter.Blur()
 	s.intent = nil
 }
@@ -341,7 +341,7 @@ func (s *scheduleState) syncFilter() {
 func (s *scheduleState) syncRuns() {
 	items := make([]bounded.ListItem, len(s.fires))
 	for i, f := range s.fires {
-		items[i] = bounded.ListItem{ID: f.ID, Text: renderScheduleFireLine(f)}
+		items[i] = bounded.ListItem{ID: f.ID, Text: terminaltext.ExpandTabs(renderScheduleFireLine(f), terminaltext.DefaultTabWidth)}
 	}
 	s.runs.SetItems(items)
 }
@@ -439,6 +439,7 @@ func (s *scheduleState) confirmKey(msg tea.KeyPressMsg) (tea.Cmd, bool, bool) {
 
 func (s *scheduleState) filterKey(msg tea.KeyPressMsg) (tea.Cmd, bool, bool) {
 	if key.Matches(msg, s.deps.keys.Close, s.deps.keys.Choose) {
+		s.editorGeneration++
 		s.filter.Blur()
 		return nil, true, false
 	}
@@ -517,7 +518,8 @@ func (s *scheduleState) activeViewAction(msg tea.KeyPressMsg) (tea.Cmd, bool, bo
 }
 func (s *scheduleState) panelAction(msg tea.KeyPressMsg) tea.Cmd {
 	if msg.String() == "/" {
-		return s.filter.Focus()
+		s.editorGeneration++
+		return s.editorCmd(s.filter.Focus())
 	}
 	if s.pendingAction != "" {
 		return nil
@@ -652,7 +654,7 @@ func (s *scheduleState) surfaceChrome() (string, string) {
 		hints = append(hints, closeHint+": close")
 		return "schedules", strings.Join(hints, "  ")
 	}
-	title := "schedule — " + terminaltext.SanitizeSingleLine(s.inspect.Spec.Name)
+	title := "schedule — " + terminaltext.SanitizeSingleLine(terminaltext.ExpandTabs(s.inspect.Spec.Name, terminaltext.DefaultTabWidth))
 	footer := closeHint + ": back"
 	if s.view == scheduleInspect {
 		if chord := s.detailsKey(); chord != "" {
@@ -805,7 +807,8 @@ func scheduleLifecycle(s client.Schedule) string {
 	return state
 }
 func scheduleRowText(s client.Schedule) string {
-	return terminaltext.SanitizeSingleLine(s.Spec.Name) + "  " + terminaltext.SanitizeSingleLine(triggerSummary(s.Spec)) + "  " + scheduleLifecycle(s) + "  next:" + formatScheduleTime(s.State.NextFireAt) + "  last:" + formatScheduleTime(s.State.LastFireAt) + "  fires:" + strconv.Itoa(int(s.State.FireCount))
+	text := s.Spec.Name + "  " + triggerSummary(s.Spec) + "  " + scheduleLifecycle(s) + "  next:" + formatScheduleTime(s.State.NextFireAt) + "  last:" + formatScheduleTime(s.State.LastFireAt) + "  fires:" + strconv.Itoa(int(s.State.FireCount))
+	return terminaltext.SanitizeSingleLine(terminaltext.ExpandTabs(text, terminaltext.DefaultTabWidth))
 }
 func scheduleDetailText(th theme.Theme, s client.Schedule) string {
 	var b strings.Builder

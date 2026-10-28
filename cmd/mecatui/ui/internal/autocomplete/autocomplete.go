@@ -49,8 +49,8 @@ func New(options []Option, keys KeyMap) Model {
 	input.KeyMap.AcceptSuggestion.SetEnabled(false)
 	input.KeyMap.NextSuggestion.SetEnabled(false)
 	input.KeyMap.PrevSuggestion.SetEnabled(false)
-	m := Model{input: input, keys: keys}
-	m.SetOptions(options)
+	m := Model{input: input, keys: keys, options: append([]Option(nil), options...)}
+	m.sync()
 	return m
 }
 
@@ -105,13 +105,6 @@ func (m *Model) SetValue(value string) bool {
 	}
 	m.accept(option)
 	return true
-}
-
-// SetOptions replaces caller-owned choices while preserving a compatible accepted
-// value and list cursor identity.
-func (m *Model) SetOptions(options []Option) {
-	m.options = append([]Option(nil), options...)
-	m.sync()
 }
 
 // SetGeometry configures the visible match-list area. Invalid geometry suppresses

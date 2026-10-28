@@ -2,6 +2,10 @@ package ui
 
 import (
 	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -189,6 +193,86 @@ func TestSchedulePasteOnlyReachesFocusedSurfaceInput(t *testing.T) {
 	}
 }
 
+func TestScheduleFilterClipboardReceiptOwnership(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test clipboard uses a POSIX executable")
+	}
+	if os.Getenv("MECATL_TEST_SCHEDULE_CLIPBOARD") == "" {
+		dir := t.TempDir()
+		for _, name := range []string{"xclip", "pbpaste"} {
+			if err := os.WriteFile(filepath.Join(dir, name), []byte("#!/bin/sh\nprintf 'queued clipboard'\n"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+		}
+		// Bubbles' clipboard backend is selected at process initialization.
+		t.Setenv("PATH", dir)
+		t.Setenv("WAYLAND_DISPLAY", "")
+		t.Setenv("MECATL_TEST_SCHEDULE_CLIPBOARD", "1")
+		exe, err := os.Executable()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if out, err := exec.Command(exe, "-test.run=^TestScheduleFilterClipboardReceiptOwnership$", "-test.count=1").CombinedOutput(); err != nil {
+			t.Fatalf("isolated clipboard test: %v\n%s", err, out)
+		}
+		return
+	}
+	for _, transition := range []string{"escape", "enter", "inspect", "create", "close"} {
+		t.Run(transition, func(t *testing.T) {
+			m, s := openedSchedule(t, &fakeScheduleLister{schedules: scheduleRows(1)})
+			m.prompt.Rewrite("root draft")
+			m = scheduleRune(t, m, "/")
+			mm, paste := m.Update(tea.KeyPressMsg{Code: 'v', Mod: tea.ModCtrl})
+			m = mm.(Model)
+			receipts := scheduleMessages(paste)
+			if len(receipts) != 1 || fmt.Sprintf("%T", receipts[0].(scheduleEditorMsg).msg) != "textinput.pasteMsg" {
+				t.Fatalf("expected actual Bubbles clipboard receipt, got %#v", receipts)
+			}
+			leave := tea.KeyEscape
+			if transition == "enter" {
+				leave = tea.KeyEnter
+			}
+			m = scheduleKey(t, m, tea.KeyPressMsg{Code: leave})
+			m = applyAll(m, receipts...)
+			if s.filter.Focused() || s.filter.Value() != "" {
+				t.Fatal("blurred filter accepted queued clipboard")
+			}
+			switch transition {
+			case "inspect":
+				m = inspectSchedule(t, m)
+				m = applyAll(m, receipts...)
+				m = scheduleKey(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
+			case "create":
+				m = scheduleRune(t, m, "c")
+				m = applyAll(m, receipts...)
+				if s.form.name.GetValue().(string) != "" {
+					t.Fatal("filter clipboard reached creator")
+				}
+				m = scheduleKey(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
+			case "close":
+				m = scheduleKey(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
+				mm, cmd := m.openSchedule()
+				m = feedCmd(t, mm.(Model), cmd)
+				s = m.modal.(*scheduleState)
+			}
+			mm, focus := m.Update(navigationTestKey("/"))
+			m = mm.(Model)
+			m = applyAll(m, receipts...)
+			if !s.filter.Focused() || s.filter.Value() != "" || m.prompt.Value() != "root draft" {
+				t.Fatal("stale clipboard edited refocused filter or root draft")
+			}
+			if _, ok := focus().(scheduleEditorMsg); !ok {
+				t.Fatal("filter focus command has no editor ownership")
+			}
+			mm, paste = m.Update(tea.KeyPressMsg{Code: 'v', Mod: tea.ModCtrl})
+			m = applyAll(mm.(Model), scheduleMessages(paste)...)
+			if s.filter.Value() != "queued clipboard" || m.prompt.Value() != "root draft" {
+				t.Fatal("current-focus clipboard did not edit only the filter")
+			}
+		})
+	}
+}
+
 func TestScheduleCreatePasteSelectionAndCursorDispatch(t *testing.T) {
 	fs := &fakeScheduleLister{}
 	m, s := openedSchedule(t, fs)
@@ -306,11 +390,11 @@ func TestScheduleCreateTimezoneQueryAcceptanceDismissAndGeometry(t *testing.T) {
 		t.Fatal("first Esc did not just dismiss suggestions")
 	}
 	m = scheduleKey(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
-	if s.view != schedulePanel || m.prompt.Value() != "chat draft" || s.form.initialized {
+	if s.view != schedulePanel || m.prompt.Value() != "chat draft" || (s.form.name != nil || s.form.prompt != nil || s.form.trigger != nil || s.form.styles != nil) {
 		t.Fatal("second Esc did not abandon the form without chat leakage")
 	}
 	m = scheduleRune(t, m, "c")
-	if m.modal != s || s.form.focusIdx != scheduleName || !s.form.initialized || s.form.name.GetValue().(string) != "" || s.form.prompt.GetValue().(string) != "" || s.form.trigger.GetValue().(string) != "" || s.form.timezone.Value() != "UTC" || s.form.mutating || s.actionErr != "" {
+	if m.modal != s || s.form.focusIdx != scheduleName || s.form.name == nil || s.form.prompt == nil || s.form.trigger == nil || s.form.styles == nil || s.form.name.GetValue().(string) != "" || s.form.prompt.GetValue().(string) != "" || s.form.trigger.GetValue().(string) != "" || s.form.timezone.Value() != "UTC" || s.form.mutating || s.actionErr != "" {
 		t.Fatal("reopening resurrected an abandoned draft, timezone, focus or error")
 	}
 }
@@ -415,7 +499,7 @@ func TestScheduleCreateActionBindingsAndCancel(t *testing.T) {
 	s.form.focusIdx = scheduleCancel
 	s.focusField()
 	m = scheduleKey(t, m, tea.KeyPressMsg{Code: tea.KeySpace, Text: " "})
-	if s.view != schedulePanel || fs.createCalls != 0 || m.modal != s || s.form.initialized {
+	if s.view != schedulePanel || fs.createCalls != 0 || m.modal != s || (s.form.name != nil || s.form.prompt != nil || s.form.trigger != nil || s.form.styles != nil) {
 		t.Fatal("independent Cancel submitted or retained its abandoned form")
 	}
 }

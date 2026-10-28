@@ -11,6 +11,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
+	"github.com/stacklok/mecatl/cmd/mecatui/internal/terminaltext"
 	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/bounded"
 )
 
@@ -482,6 +483,64 @@ func TestScheduleWrappedContentReachable(t *testing.T) {
 			}
 		} else if strings.Contains(body, "more") {
 			t.Fatal("partial single-row segments counted as hidden logical items: " + body)
+		}
+	}
+}
+
+func TestScheduleTabbedListsMatchExpandedFrames(t *testing.T) {
+	row := sampleSchedule("night\twatch")
+	row.Spec.Trigger.Cron = strings.Repeat("0\t9\t*\t*\t* ", 30) + "cron-tail"
+	fire := scheduleFires(row.Spec.Name, 1)[0]
+	fire.Stop = strings.Repeat("stop\tdetail ", 8) + "stop-tail"
+	fire.Err = strings.Repeat("error\tdetail ", 30) + "error-tail"
+	expand := func(text string) string { return terminaltext.ExpandTabs(text, terminaltext.DefaultTabWidth) }
+	spacedRow, spacedFire := row, fire
+	spacedRow.Spec.Name, spacedRow.Spec.Trigger.Cron = expand(row.Spec.Name), expand(row.Spec.Trigger.Cron)
+	spacedFire.ScheduleName, spacedFire.Stop, spacedFire.Err = spacedRow.Spec.Name, expand(fire.Stop), expand(fire.Err)
+	m, s := openedSchedule(t, &fakeScheduleLister{schedules: []client.Schedule{row}, fires: []client.ScheduleFire{fire}})
+	reference, ref := openedSchedule(t, &fakeScheduleLister{schedules: []client.Schedule{spacedRow}, fires: []client.ScheduleFire{spacedFire}})
+	m = applyAll(m, tea.WindowSizeMsg{Width: 40, Height: 24})
+	reference = applyAll(reference, tea.WindowSizeMsg{Width: 40, Height: 24})
+	for _, state := range []*scheduleState{s, ref} {
+		state.deps.keys = applyKeyOverrides(state.deps.keys, map[string][]string{"ScrollD": {"pgdown"}})
+	}
+	for _, view := range []scheduleView{schedulePanel, scheduleInspect} {
+		if view == scheduleInspect {
+			m, reference = inspectSchedule(t, m), inspectSchedule(t, reference)
+		}
+		text := scheduleRowText(spacedRow)
+		if view == scheduleInspect {
+			text = renderScheduleFireLine(spacedFire)
+		}
+		physical := strings.Split(ansi.Hardwrap(text, m.width-2, true), "\n")
+		if len(physical) <= m.vp.Height() {
+			t.Fatal("fixture must require scrolling to the remaining text")
+		}
+		var seen strings.Builder
+		for i := 0; i <= len(physical); i++ {
+			frame, want := m.View().Content, reference.View().Content
+			if frame != want {
+				t.Fatalf("view %d scroll %d: tabbed frame differs from expanded spaces\ngot:\n%s\nwant:\n%s", view, i, stripANSIstr(frame), stripANSIstr(want))
+			}
+			if s.compact || lipgloss.Width(frame) > m.width || lipgloss.Height(frame) != m.height {
+				t.Fatal("tabbed list did not render a usable bounded root frame")
+			}
+			plain := stripANSIstr(frame)
+			marker := "▶ night    watch"
+			if view == scheduleInspect {
+				marker = "▶ fire-00"
+			}
+			if i == 0 && !strings.Contains(plain, marker) {
+				t.Fatalf("view %d missing selected-row positive control %q", view, marker)
+			}
+			seen.WriteString(plain + "\n")
+			m = scheduleKey(t, m, tea.KeyPressMsg{Code: tea.KeyPgDown})
+			reference = scheduleKey(t, reference, tea.KeyPressMsg{Code: tea.KeyPgDown})
+		}
+		for _, line := range physical {
+			if line = strings.TrimSpace(line); line != "" && !strings.Contains(seen.String(), line) {
+				t.Fatalf("view %d lost expanded content %q", view, line)
+			}
 		}
 	}
 }

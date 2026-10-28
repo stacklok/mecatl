@@ -167,7 +167,7 @@ func TestScheduleCreateNormalTerminal(t *testing.T) {
 			// Cancel abandons all values; reopening starts a new independent draft.
 			m = scheduleFocus(t, m, s, scheduleCancel)
 			m = scheduleKey(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
-			if s.view != schedulePanel || fs.createCalls != 0 || s.form.initialized {
+			if s.view != schedulePanel || fs.createCalls != 0 || (s.form.name != nil || s.form.prompt != nil || s.form.trigger != nil || s.form.styles != nil) {
 				t.Fatal("Cancel submitted or retained the abandoned form")
 			}
 			m = scheduleRune(t, m, "c")

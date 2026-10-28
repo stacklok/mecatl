@@ -60,31 +60,29 @@ func (s *scheduleState) scheduleNow() time.Time {
 }
 
 func (s *scheduleState) openCreate() {
-	if !s.form.initialized {
-		s.actionErr = ""
-		keys := huh.NewDefaultKeyMap()
-		// The surface owns traversal and actions; fields only edit their values.
-		for _, binding := range []*key.Binding{&keys.Input.Next, &keys.Input.Prev, &keys.Input.Submit, &keys.Text.Next, &keys.Text.Prev, &keys.Text.Submit, &keys.Text.Editor} {
-			binding.SetEnabled(false)
-		}
-		keys.Text.NewLine.SetKeys("enter", "ctrl+m", "ctrl+j")
-		name := huh.NewInput().Title("Name: ").Inline(true).Placeholder("Schedule name")
-		prompt := huh.NewText().Title("Prompt").Placeholder("Task to run on each fire").Lines(3).CharLimit(0).ExternalEditor(false)
-		trigger := huh.NewInput().Title("When (e.g. every day at 9am): ").Inline(true)
-		styles := huh.ThemeBase(true)
-		fieldTheme := huh.ThemeFunc(func(bool) *huh.Styles { return styles })
-		for _, field := range []huh.Field{name, prompt, trigger} {
-			field.WithKeyMap(keys).WithTheme(fieldTheme)
-			field.Init()
-		}
-		options := make([]autocomplete.Option, 0)
-		for _, name := range timezones.Names() {
-			options = append(options, autocomplete.Option{Value: name, Label: name, Search: strings.ReplaceAll(name, "_", " ")})
-		}
-		zone := autocomplete.New(options, autocomplete.KeyMap{Up: s.deps.keys.Up, Down: s.deps.keys.Down, Choose: s.deps.keys.Choose, Close: s.deps.keys.Close})
-		zone.SetValue("UTC")
-		s.form = scheduleForm{name: name, prompt: prompt, trigger: trigger, styles: styles, timezone: zone, initialized: true}
+	s.actionErr = ""
+	keys := huh.NewDefaultKeyMap()
+	// The surface owns traversal and actions; fields only edit their values.
+	for _, binding := range []*key.Binding{&keys.Input.Next, &keys.Input.Prev, &keys.Input.Submit, &keys.Text.Next, &keys.Text.Prev, &keys.Text.Submit, &keys.Text.Editor} {
+		binding.SetEnabled(false)
 	}
+	keys.Text.NewLine.SetKeys("enter", "ctrl+m", "ctrl+j")
+	name := huh.NewInput().Title("Name: ").Inline(true).Placeholder("Schedule name")
+	prompt := huh.NewText().Title("Prompt").Placeholder("Task to run on each fire").Lines(3).CharLimit(0).ExternalEditor(false)
+	trigger := huh.NewInput().Title("When (e.g. every day at 9am): ").Inline(true)
+	styles := huh.ThemeBase(true)
+	fieldTheme := huh.ThemeFunc(func(bool) *huh.Styles { return styles })
+	for _, field := range []huh.Field{name, prompt, trigger} {
+		field.WithKeyMap(keys).WithTheme(fieldTheme)
+		field.Init()
+	}
+	options := make([]autocomplete.Option, 0)
+	for _, name := range timezones.Names() {
+		options = append(options, autocomplete.Option{Value: name, Label: name})
+	}
+	zone := autocomplete.New(options, autocomplete.KeyMap{Up: s.deps.keys.Up, Down: s.deps.keys.Down, Choose: s.deps.keys.Choose, Close: s.deps.keys.Close})
+	zone.SetValue("UTC")
+	s.form = scheduleForm{name: name, prompt: prompt, trigger: trigger, styles: styles, timezone: zone}
 	s.view = scheduleCreate
 	s.focusField()
 }

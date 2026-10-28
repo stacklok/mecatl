@@ -409,7 +409,7 @@ func TestScheduleCreateRetainsFormUntilSuccess(t *testing.T) {
 			}
 			fs.err = nil
 			m = scheduleKey(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
-			if fs.createCalls != 2 || fs.created.Trigger.Cron != "0 9 * * *" || fs.created.Timezone != "America/New_York" || fs.created.Prompt != "review the changes\nreport findings" || fs.created.Mode != mode || fs.created.Mutating != mutating || fs.created.Selector != (client.ScheduleSelector{}) || fs.created.Profile != "" || s.view != schedulePanel || s.form.initialized || len(s.schedules) != 1 || s.actionErr != "" {
+			if fs.createCalls != 2 || fs.created.Trigger.Cron != "0 9 * * *" || fs.created.Timezone != "America/New_York" || fs.created.Prompt != "review the changes\nreport findings" || fs.created.Mode != mode || fs.created.Mutating != mutating || fs.created.Selector != (client.ScheduleSelector{}) || fs.created.Profile != "" || s.view != schedulePanel || (s.form.name != nil || s.form.prompt != nil || s.form.trigger != nil || s.form.styles != nil) || len(s.schedules) != 1 || s.actionErr != "" {
 				t.Fatalf("corrected creation failed: spec=%+v, view=%d, error=%q", fs.created, s.view, s.actionErr)
 			}
 			if m.prompt.Value() != "unsent draft" {
@@ -435,11 +435,11 @@ func TestScheduleCreatePendingBackDoesNotCancelRequest(t *testing.T) {
 			m = mm.(Model)
 			mm, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
 			m = mm.(Model)
-			if s.view != schedulePanel || s.pendingAction != "create" || s.form.initialized {
+			if s.view != schedulePanel || s.pendingAction != "create" || (s.form.name != nil || s.form.prompt != nil || s.form.trigger != nil || s.form.styles != nil) {
 				t.Fatal("explicit Back failed to abandon the pending form")
 			}
 			m = scheduleRune(t, m, "c")
-			if s.view != schedulePanel || s.form.initialized {
+			if s.view != schedulePanel || (s.form.name != nil || s.form.prompt != nil || s.form.trigger != nil || s.form.styles != nil) {
 				t.Fatal("pending mutation allowed a new independent form")
 			}
 			if fail {
@@ -718,7 +718,13 @@ func scheduleMessages(cmd tea.Cmd) []tea.Msg {
 	return []tea.Msg{msg}
 }
 func TestScheduleReadOwnership(t *testing.T) {
-	m, s := openedSchedule(t, &fakeScheduleLister{schedules: []client.Schedule{sampleSchedule("A"), sampleSchedule("B")}})
+	m := newScheduleModel(t, newScheduleConv(scheduleCaps()), &fakeScheduleLister{schedules: []client.Schedule{sampleSchedule("A"), sampleSchedule("B")}}, scheduleCaps())
+	mm, initial := m.runSchedule()
+	m = mm.(Model)
+	s := m.modal.(*scheduleState)
+	first := scheduleMessages(initial)[0].(scheduleResultMsg)
+	m = applyAll(m, first)
+	_ = m.View()
 	oldList := scheduleMessages(s.listCmd())
 	old := oldList[0].(scheduleResultMsg)
 	old.result = client.SchedulesMsg{Schedules: []client.Schedule{sampleSchedule("obsolete")}}
@@ -762,15 +768,23 @@ func TestScheduleReadOwnership(t *testing.T) {
 	if s.inspect.Spec.Name != "A" || !s.specPending {
 		t.Fatal("wrong schedule payload applied")
 	}
-	stale := scheduleMessages(s.listCmd())
 	s.Close()
 	m.closeModal()
 	mm, cmd := m.openSchedule()
-	m = feedCmd(t, mm.(Model), cmd)
+	m = mm.(Model)
 	next := m.modal.(*scheduleState)
-	m = applyAll(m, stale...)
-	if m.modal != next || next.loading {
-		t.Fatal("closed owner affected reopened surface")
+	current := scheduleMessages(cmd)[0].(scheduleResultMsg)
+	if current.request != first.request || current.owner == first.owner {
+		t.Fatal("fixture must isolate owner identity from request counters")
+	}
+	first.result = client.SchedulesMsg{Schedules: []client.Schedule{sampleSchedule("obsolete owner")}}
+	m = applyAll(m, first)
+	if m.modal != next || !next.loading || len(next.schedules) != 0 {
+		t.Fatal("closed owner affected reopened surface before its initial load")
+	}
+	m = applyAll(m, current)
+	if next.loading || len(next.schedules) != 2 || next.schedules[0].Spec.Name != "A" {
+		t.Fatal("current owner did not hydrate reopened surface")
 	}
 }
 func TestScheduleMutationReadOrdering(t *testing.T) {
@@ -863,6 +877,36 @@ func TestScheduleMutationReadOrdering(t *testing.T) {
 		})
 	}
 }
+func TestScheduleMutationReceiptDoesNotCompleteNewIdenticalOperation(t *testing.T) {
+	fs := &fakeScheduleLister{schedules: []client.Schedule{sampleSchedule("A")}}
+	m, s := openedSchedule(t, fs)
+	mm, pause := m.Update(navigationTestKey("p"))
+	m = mm.(Model)
+	first := scheduleMessages(pause)[0].(scheduleResultMsg)
+	m = feedCmd(t, m, func() tea.Msg { return first })
+	mm, pause = m.Update(navigationTestKey("p"))
+	m = mm.(Model)
+	fs.err = errors.New("new pause rejected")
+	current := scheduleMessages(pause)[0].(scheduleResultMsg)
+	if first.kind != current.kind || first.name != current.name || first.request == current.request {
+		t.Fatal("fixture must isolate request identity from action and name")
+	}
+	notice, actionErr, request := s.notice, s.actionErr, s.listRequest
+	mm, refresh := m.Update(first)
+	m = mm.(Model)
+	if refresh != nil || s.pendingAction != "paused" || s.pendingName != "A" || s.listRequest != request || s.notice != notice || s.actionErr != actionErr {
+		t.Fatal("old pause receipt completed the newer identical operation")
+	}
+	mm, refresh = m.Update(current)
+	m = mm.(Model)
+	if refresh == nil || s.pendingAction != "" || s.pendingName != "" || s.actionErr != "new pause rejected" || s.notice != notice {
+		t.Fatal("new pause error did not exclusively complete its operation")
+	}
+	if !strings.Contains(stripANSIstr(m.View().Content), "new pause rejected") {
+		t.Fatal("current operation error is not displayed")
+	}
+}
+
 func TestScheduleMutationCompletionWhileInspectingDifferentSchedule(t *testing.T) {
 	fs := &fakeScheduleLister{schedules: []client.Schedule{sampleSchedule("A"), sampleSchedule("B")}, fires: scheduleFires("B", 2)}
 	m, s := openedSchedule(t, fs)
