@@ -382913,6 +382913,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1793229618323,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "5c1a60808e5ccb51e97c6a7cfdde4e359ff0e61f",
+          "message": "refactor(auth): unify search and MCP API keys in auth.yaml (#2591)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-28T16:08:38-07:00",
+          "tree_id": "65b45d812bf14c03ad9d5f01736c663bb23fc629",
+          "url": "https://github.com/stacklok/mecatl/commit/5c1a60808e5ccb51e97c6a7cfdde4e359ff0e61f"
+        },
+        "date": 1793230357774,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 16113,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12878.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 794,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -499459,6 +499498,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1793230354726,
+  "lastUpdate": 1793230358598,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
