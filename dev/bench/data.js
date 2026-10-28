@@ -345148,6 +345148,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1793223191051,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "e2ef6e901ea9f985daa7b244621ff09a29a3ba46",
+          "message": "test(scheduler): fix provisional admission deadline flake (#2594)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-28T16:07:57-07:00",
+          "tree_id": "1e31e26ed2ca11b1ec23c969cf8efbc979d2654f",
+          "url": "https://github.com/stacklok/mecatl/commit/e2ef6e901ea9f985daa7b244621ff09a29a3ba46"
+        },
+        "date": 1793229614503,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -498914,6 +498948,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1793229611399,
+  "lastUpdate": 1793229615243,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
