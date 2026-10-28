@@ -19,7 +19,9 @@
 //
 // ClientAssertionSigner mints the client assertions the broker authenticates
 // with at AS-1 and AS-2, with the broker client key, separate from the agent
-// issuer key; the token-endpoint client is an adapter. The package performs no
+// issuer key; the token-endpoint client is an adapter. With WithAuthServer,
+// session open converts the user's access token at AS-1 through that adapter
+// into a refresh token the session holds. The package performs no
 // file, environment, or network access; source loading and transport belong
 // in adapters that call it.
 package identitybroker
@@ -52,6 +54,9 @@ type Broker struct {
 	// agentID is the shared agent identity's ag_ identifier, generated for
 	// this process.
 	agentID string
+	// as1 converts access tokens at session open; nil when the broker only
+	// pairs sessions.
+	as1 AuthServer
 
 	sessions *sessionTable
 }
@@ -67,7 +72,9 @@ type Broker struct {
 // The signer must have an ECDSA P-256 public key, the ES256 algorithm that
 // JWT-SVID permits. A raw *ecdsa.PrivateKey is copied; any other signer, such
 // as a KMS handle, is retained as supplied.
-func New(config Config, definitions []DefinitionRecord, signer crypto.Signer) (*Broker, error) {
+//
+// Options add optional collaborators, such as WithAuthServer.
+func New(config Config, definitions []DefinitionRecord, signer crypto.Signer, opts ...Option) (*Broker, error) {
 	if err := config.validate(); err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrInvalidConfig, err)
 	}
@@ -83,13 +90,17 @@ func New(config Config, definitions []DefinitionRecord, signer crypto.Signer) (*
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrInvalidSigner, err)
 	}
-	return &Broker{
+	b := &Broker{
 		config:      config,
 		definitions: snapshot,
 		issuer:      issuer,
 		agentID:     newAgentID(),
 		sessions:    newSessionTable(),
-	}, nil
+	}
+	for _, opt := range opts {
+		opt(b)
+	}
+	return b, nil
 }
 
 // Definition returns a copy of the loaded record for ref, and whether one

@@ -119,7 +119,9 @@ func checkEndpoint(name, raw string) error {
 // response into out. A refusal returns an *identitybroker.ServerRefusal; no
 // response returns an error wrapping identitybroker.ErrNoResponse, or
 // identitybroker.ErrTransportConfiguration when the server certificate does
-// not verify; a cancelled or expired ctx returns its error.
+// not verify; a success response that does not decode into out wraps both
+// identitybroker.ErrMalformedResponse and ErrTransportConfiguration; a
+// cancelled or expired ctx returns its error.
 func (c *Client) Token(ctx context.Context, form url.Values, out any) error {
 	return c.post(ctx, c.token, form, out)
 }
@@ -182,7 +184,9 @@ func (c *Client) post(ctx context.Context, endpoint string, form url.Values, out
 		return nil
 	}
 	if json.Unmarshal(raw, out) != nil {
-		return errors.New("authserverclient: the response is not valid JSON")
+		// A success response the client cannot read points at the wrong
+		// server or an incompatible one, not an outage.
+		return fmt.Errorf("authserverclient: %w (%w): the response is not valid JSON of the expected shape", identitybroker.ErrMalformedResponse, identitybroker.ErrTransportConfiguration)
 	}
 	return nil
 }

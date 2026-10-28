@@ -40,16 +40,35 @@ const (
 	// ReasonSVIDExpired: the agent credential has expired; get a new one and
 	// retry.
 	ReasonSVIDExpired Reason = "svid_expired"
+	// ReasonOwnerMismatch: at session open, the access token's company
+	// identity is not the owner the caller reported; a pairing bug.
+	ReasonOwnerMismatch Reason = "owner_mismatch"
+	// ReasonSubjectInvalid: at session open, the access token is not
+	// acceptable; refresh it and open once more.
+	ReasonSubjectInvalid Reason = "subject_invalid"
+	// ReasonTokenUsed: at session open, the access token was already
+	// converted; refresh it and open once more.
+	ReasonTokenUsed Reason = "token_used"
+	// ReasonSignedOut: the user signed out everywhere. At session open the
+	// error is CodeUnauthenticated, and the client signs in again.
+	ReasonSignedOut Reason = "signed_out"
+	// ReasonUpstreamRevoked: the company IdP revoked the user's sign-in. At
+	// session open the error is CodeUnauthenticated, and the client signs in
+	// again.
+	ReasonUpstreamRevoked Reason = "upstream_revoked"
+	// ReasonOwnerActionRequired: the user must sign in again. At session
+	// open the error is CodeUnauthenticated.
+	ReasonOwnerActionRequired Reason = "owner_action_required"
 )
 
 // Code returns the code the design assigns to r.
 func (r Reason) Code() Code {
 	switch r {
-	case ReasonSessionClosed:
+	case ReasonSessionClosed, ReasonSignedOut, ReasonOwnerActionRequired:
 		return CodeFailedPrecondition
-	case ReasonSessionOwned, ReasonDenied:
+	case ReasonSessionOwned, ReasonDenied, ReasonOwnerMismatch, ReasonUpstreamRevoked:
 		return CodePermissionDenied
-	case ReasonSVIDExpired:
+	case ReasonSVIDExpired, ReasonSubjectInvalid, ReasonTokenUsed:
 		return CodeUnauthenticated
 	default:
 		return CodeInternal
