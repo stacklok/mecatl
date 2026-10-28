@@ -78,9 +78,11 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   pending approvals and private authorizations are unchanged. Any `identity_hold`
   key rejects, including null; intermediate hold formats are unsupported. Direct
   Go snapshot callers use the current schema, normally via `sessnap.Of`.
-  Complete-event codecs still preserve provable continuations and abandon
-  unprovable ones during folding, returning promptable history with an upgrade
-  notice that prior effects and completion may be unknown. Removed/Changed
+  Complete-event reconstruction preserves unambiguous legacy calls and approvals,
+  including sequential provider-ID reuse, and rejects ambiguous or unsupported
+  sources with `ErrReconstruct`. Legacy external authorization rejects. Folding
+  consumes the iterator incrementally without synthetic repair messages or results.
+  Removed/Changed
   (breaking, pre-v1 minor); part of the coordinated Harness major 2 upgrade.
 
 - **Canonical evidence protocol and source verification (issue #2117)** — adds
@@ -600,8 +602,9 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   writes; opaque drivers preserve tag/bytes and `session-store/1` is unchanged.
   Valid old nonpending snapshot history and evidence remain readable; legacy
   snapshots awaiting approval/authorization reject, as does any `identity_hold`
-  key. Complete-event continuation proof/abandonment policy is unchanged.
-  Unsupported historical associations retain standalone content. This does not
+  key. Complete-event reconstruction rejects ambiguous legacy references and
+  unsupported legacy authorization rather than repairing them. Sparse historical
+  reads retain standalone content. This does not
   redesign save timing or promise durable-save-before-effects. See the
   [upgrade procedure](../user-docs/operating/session-storage-operations.md#upgrade-to-api-major-2).
 

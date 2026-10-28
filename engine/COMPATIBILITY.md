@@ -199,12 +199,13 @@ authorization continuations roundtrip unchanged. Any `identity_hold` key rejects
 including null; intermediate hold formats are unsupported. Direct Go snapshot
 callers must use the current schema (normally via `sessnap.Of`).
 
-Complete-event reconstruction is unchanged: provable legacy continuations are
-preserved; unprovable ones are abandoned during folding, returning ordinary
-promptable history with a durable unknown-effects notice. Only proven outstanding
-calls receive interruption results; ambiguous rows retain historical content and
-source provenance without guessed invocation links. Loading performs no tool
-execution or external authorization action.
+Complete-event reconstruction converts unambiguous legacy call/result references
+incrementally, including provider-ID reuse after completion. Ambiguous or
+unsupported legacy sources return `ErrReconstruct`, including overlapping provider
+references, orphan results, unprovable approvals, and legacy external authorization.
+Reconstruction adds no repair messages or interruption results. Sparse historical
+reads remain display-only. Loading performs no tool execution or external
+authorization action.
 
 ## See also
 

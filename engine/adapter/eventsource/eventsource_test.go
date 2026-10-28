@@ -55,7 +55,7 @@ func TestFoldRestoresExecutionCapabilityFacts(t *testing.T) {
 	}
 }
 
-func TestFoldLegacyUnprovenApprovalPreservesMetadataAcrossSnapshot(t *testing.T) {
+func TestFoldLegacyApprovalPreservesMetadataAcrossSnapshot(t *testing.T) {
 	m := meta()
 	m.Incarnation = session.LegacyIncarnationID(m.ID, m.CreatedAt.UnixNano(), m.Owner)
 	m.AgentDefinitionName = "reviewer"
@@ -68,8 +68,7 @@ func TestFoldLegacyUnprovenApprovalPreservesMetadataAcrossSnapshot(t *testing.T)
 	m.WorkspaceEnrollmentBrokerKeysPresent = true
 
 	rawEvents := []string{
-		`{"Type":"tool.call","ToolCall":{"ID":"provider-call","Name":"Read","Args":{"path":"first.txt"}}}`,
-		`{"Type":"tool.call","ToolCall":{"ID":"provider-call","Name":"Read","Args":{"path":"second.txt"}}}`,
+		`{"Type":"tool.call","RunID":"legacy-run","Seq":1,"ToolCall":{"ID":"provider-call","Name":"Read","Args":{"path":"second.txt"}}}`,
 		`{"Type":"permission.ask","Ask":{"AskID":"ask-legacy","Tool":"Read","Call":"provider-call","Args":{"path":"second.txt"},"Reason":"approve"}}`,
 	}
 	events := make([]session.Event, len(rawEvents))
@@ -92,13 +91,13 @@ func TestFoldLegacyUnprovenApprovalPreservesMetadataAcrossSnapshot(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertAbandonedMetadata := func(s *session.Session) {
+	assertMetadata := func(s *session.Session) {
 		t.Helper()
-		if s.State != session.StateIdle {
-			t.Fatalf("unproven legacy approval not abandoned: %v", s.State)
+		if s.State != session.StateAwaiting {
+			t.Fatalf("proven legacy approval not awaiting: %v", s.State)
 		}
-		if _, ok := s.PendingAsk(); ok {
-			t.Fatal("held legacy approval restored as executable")
+		if _, ok := s.PendingAsk(); !ok {
+			t.Fatal("proven legacy approval not restored")
 		}
 		if s.AgentDefinitionName != m.AgentDefinitionName {
 			t.Fatalf("AgentDefinitionName = %q, want %q", s.AgentDefinitionName, m.AgentDefinitionName)
@@ -112,7 +111,7 @@ func TestFoldLegacyUnprovenApprovalPreservesMetadataAcrossSnapshot(t *testing.T)
 			t.Fatalf("broker keys = %q, present = %v", keys, present)
 		}
 	}
-	assertAbandonedMetadata(folded)
+	assertMetadata(folded)
 	wantHistory := session.CloneMessages(folded.Conversation.Messages)
 
 	raw, err := sessnap.Marshal(folded)
@@ -123,9 +122,9 @@ func TestFoldLegacyUnprovenApprovalPreservesMetadataAcrossSnapshot(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertAbandonedMetadata(restored)
+	assertMetadata(restored)
 	if !reflect.DeepEqual(restored.Conversation.Messages, wantHistory) {
-		t.Fatal("normalized history changed at restart")
+		t.Fatal("folded history changed at restart")
 	}
 }
 

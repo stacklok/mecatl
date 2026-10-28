@@ -173,61 +173,46 @@ var (
 // It returns ErrStream (wrapping the per-item error) if the iterator yields an
 // error, ErrReconstruct if the reconstructed history or authorization lifecycle is
 // inconsistent, and ErrPrivateStateRequired if a well-formed current-format
-// authorization lifecycle remains open after the final event. Unprovable legacy
-// continuations become ordinary idle history with an upgrade notice. It never panics.
+// authorization lifecycle remains open after the final event. Ambiguous or
+// unsupported legacy continuations return ErrReconstruct. It never panics.
 func Fold(meta SessionMeta, events iter.Seq2[session.Event, error]) (*session.Session, error) {
-	var collected []session.Event
+	if meta.Incarnation == "" {
+		meta.Incarnation = session.LegacyIncarnationID(meta.ID, meta.CreatedAt.UnixNano(), meta.Owner)
+	}
+	if !meta.Incarnation.Valid() {
+		return nil, fmt.Errorf("%w: missing stable source incarnation", ErrReconstruct)
+	}
+	c := legacyConverter{inc: meta.Incarnation}
+	f := &folder{}
 	for ev, err := range events {
 		if err != nil {
 			return nil, fmt.Errorf("%w: %w", ErrStream, err)
 		}
-		collected = append(collected, ev)
-	}
-	if meta.Incarnation == "" {
-		meta.Incarnation = session.LegacyIncarnationID(meta.ID, meta.CreatedAt.UnixNano(), meta.Owner)
-	}
-	projection, err := Project(collected, meta.Incarnation)
-	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrReconstruct, err)
-	}
-	f := &folder{}
-	var data sessnap.RestoreData
-	for i, segment := range projection.segments {
-		if i > 0 {
-			// The prior span is now ordinary paired history. A new run starts with
-			// fresh lifecycle/counters, but cumulative history, usage, and canonical
-			// authorization uniqueness/completeness evidence remain intact.
-			f = &folder{
-				messages: f.messages, usage: f.usage, firstGenuineText: f.firstGenuineText,
-				authorizations: f.authorizations, openAuthorizationCalls: f.openAuthorizationCalls,
-				seenAuthorizationIDs: f.seenAuthorizationIDs, seenAuthorizationCalls: f.seenAuthorizationCalls,
-				toolResultCalls: f.toolResultCalls,
-			}
-		}
-		for _, ev := range segment.Events {
-			f.consume(ev)
-			if f.reconstructErr != nil {
-				return nil, fmt.Errorf("%w: %v", ErrReconstruct, f.reconstructErr)
-			}
-		}
-		if len(f.authorizations) != 0 {
-			return nil, ErrPrivateStateRequired
-		}
-		f.finalizeOpenTurn()
-		data = sessnap.RestoreData{
-			State: f.restoreState(), Stop: f.stop, Pending: f.pending, Counters: f.finalCounters(),
-			TokenUsage: foldedTokenUsage(meta.TokenUsage, f.usage),
-			Failure:    session.RetryMetadata{Disposition: f.disposition, Progress: f.progress},
-			LastError:  f.lastError,
-		}
-		if f.retryPending {
-			data.RetryPending = true
-			data.Retry = session.RetryMetadata{Disposition: f.retryDisposition, Progress: f.retryProgress}
-		}
-		f.messages, data, err = segment.normalizeHistory(f.messages, data)
+		converted, err := c.convert(ev)
 		if err != nil {
 			return nil, fmt.Errorf("%w: %w", ErrReconstruct, err)
 		}
+		f.consume(converted)
+		if f.reconstructErr != nil {
+			return nil, fmt.Errorf("%w: %w", ErrReconstruct, f.reconstructErr)
+		}
+	}
+	if err := c.finish(); err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrReconstruct, err)
+	}
+	if len(f.authorizations) != 0 {
+		return nil, ErrPrivateStateRequired
+	}
+	f.finalizeOpenTurn()
+	data := sessnap.RestoreData{
+		State: f.restoreState(), Stop: f.stop, Pending: f.pending, Counters: f.finalCounters(),
+		TokenUsage: foldedTokenUsage(meta.TokenUsage, f.usage),
+		Failure:    session.RetryMetadata{Disposition: f.disposition, Progress: f.progress},
+		LastError:  f.lastError,
+	}
+	if f.retryPending {
+		data.RetryPending = true
+		data.Retry = session.RetryMetadata{Disposition: f.retryDisposition, Progress: f.retryProgress}
 	}
 	s, err := restoreMetadata(meta)
 	if err != nil {

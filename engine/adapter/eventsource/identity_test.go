@@ -93,8 +93,7 @@ func TestOldNewMixedAndReencode(t *testing.T) {
 }
 
 func TestSourceIsolationAndUnsupportedContent(t *testing.T) {
-	es := []session.Event{decode(t, oldCall).WithLegacySource("source-a", "record-0"), decode(t, oldResult).WithLegacySource("source-b", "record-1")}
-	es = append(es, decode(t, `{"Type":"hook","Text":"blocked","Hook":{"CallID":"provider-secret","Phase":"PreToolUse","Tool":"Read"}}`), decode(t, `{"Type":"approval","Approval":{"Call":"provider-secret","Tool":"Read","Verdict":"allow_always","AllowAlways":true}}`), decode(t, `{"Type":"subagent.tool","Subagent":{"ParentCallID":"provider-secret","ChildToolCallID":"child-secret","ToolName":"Read","Text":"bounded child preview","Args":"NEVER-FORWARD"}}`))
+	es := []session.Event{decode(t, `{"Type":"hook","Text":"blocked","Hook":{"CallID":"provider-secret","Phase":"PreToolUse","Tool":"Read"}}`).WithLegacySource("display", "hook"), decode(t, `{"Type":"approval","Approval":{"Call":"provider-secret","Tool":"Read","Verdict":"allow_always","AllowAlways":true}}`).WithLegacySource("display", "approval"), decode(t, `{"Type":"subagent.tool","Subagent":{"ParentCallID":"provider-secret","ChildToolCallID":"child-secret","ToolName":"Read","Text":"bounded child preview","Args":"NEVER-FORWARD"}}`).WithLegacySource("display", "child")}
 	p := project(t, es)
 	for _, e := range p.Events {
 		if e.Type != session.EvHistorical || e.Historical == nil || !e.Historical.AttachmentUnavailable || e.Historical.RecordID == "" || e.ToolCall != nil || e.ToolResult != nil || e.Approval != nil || e.Hook != nil || e.Subagent != nil {
@@ -107,7 +106,7 @@ func TestSourceIsolationAndUnsupportedContent(t *testing.T) {
 			}
 		}
 	}
-	if p.Events[1].Historical.Text != "hello" || len(p.Events[1].Historical.Parts) != 1 || !strings.Contains(p.Events[4].Historical.Text, "bounded child preview") {
+	if !strings.Contains(p.Events[2].Historical.Text, "bounded child preview") {
 		t.Fatal("content dropped")
 	}
 	s, err := fold(es)
@@ -122,15 +121,6 @@ func TestSourceIsolationAndUnsupportedContent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	found := false
-	for _, m := range saved.Conversation.Messages {
-		if h := session.HistoricalMessage(m); h != nil && h.Kind == string(session.EvToolResult) {
-			found = len(h.Parts) == 1 && h.Text == "hello"
-		}
-	}
-	if !found {
-		t.Fatal("unattached media lost after snapshot save")
-	}
 	llm, err := port.ProjectMessages(saved.Conversation.Messages)
 	if err != nil {
 		t.Fatal(err)
@@ -142,75 +132,70 @@ func TestSourceIsolationAndUnsupportedContent(t *testing.T) {
 	if bytes.Contains(modelBytes, []byte("bounded child preview")) {
 		t.Fatal("historical delegation display entered parent model context")
 	}
-	// Equal contents at different positions remain distinct records.
-	same := project(t, []session.Event{decode(t, oldResult), decode(t, oldResult)})
-	if same.Events[0].Historical.RecordID == same.Events[1].Historical.RecordID {
-		t.Fatal("content-hash merging")
-	}
 }
 
-func TestLegacyAwaitingAndAmbiguousAbandonment(t *testing.T) {
+func TestLegacyAwaitingAndAmbiguousRejection(t *testing.T) {
 	ask := decode(t, `{"Type":"permission.ask","Ask":{"AskID":"ask","Tool":"Read","Call":"provider-secret","Args":{"path":"x"},"Reason":"approve"}}`)
 	for _, ambiguous := range []bool{false, true} {
 		es := []session.Event{decode(t, oldCall)}
 		if ambiguous {
-			es = append(es, decode(t, oldCall))
+			es = append(es, decode(t, oldCall).WithLegacySource("", "second"))
 		}
 		es = append(es, ask)
+		if ambiguous {
+			requireFoldError(t, es, eventsource.ErrReconstruct)
+			continue
+		}
 		s, err := fold(es)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if ambiguous {
-			if s.State != session.StateIdle {
-				t.Fatal("ambiguous ask not abandoned", s.State)
-			}
-			if _, ok := s.PendingAsk(); ok {
-				t.Fatal("ambiguous pending authority")
-			}
-		} else {
-			pending, ok := s.PendingAsk()
-			if !ok || s.State != session.StateAwaiting || pending.Call == "provider-secret" || pending.Call != s.Conversation.Messages[0].ToolCalls[0].ID || !bytes.Equal(pending.Args, []byte(`{"path":"x"}`)) {
-				t.Fatal("pending identity not proven")
-			}
+		pending, ok := s.PendingAsk()
+		if !ok || s.State != session.StateAwaiting || pending.Call == "provider-secret" || pending.Call != s.Conversation.Messages[0].ToolCalls[0].ID || !bytes.Equal(pending.Args, []byte(`{"path":"x"}`)) {
+			t.Fatal("pending identity not proven")
 		}
 		raw, err := sessnap.Marshal(s)
 		if err != nil {
 			t.Fatal(err)
 		}
 		saved, err := sessnap.Unmarshal(raw)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if ambiguous && (saved.State != session.StateIdle) {
-			t.Fatal("abandonment lost at restart")
+		if err != nil || saved.State != session.StateAwaiting {
+			t.Fatal("pending identity lost at restart", err)
 		}
 	}
 }
 
-func TestLegacyExternalAuthorizationAbandoned(t *testing.T) {
+func TestLegacyExternalAuthorizationRejected(t *testing.T) {
 	es := []session.Event{decode(t, oldCall), decode(t, `{"Type":"authorization.required","Authorization":{"AuthorizationID":"auth","Call":"provider-secret","DisplayName":"broker","Status":"pending"}}`)}
 	for range 2 {
-		s, err := fold(es)
-		if err != nil || s.State != session.StateIdle {
-			t.Fatal("legacy public authorization not abandoned", s, err)
-		}
-		if err := s.BeginTurn(); err != nil {
-			t.Fatal(err)
-		}
+		requireFoldError(t, es, eventsource.ErrReconstruct)
 		es = append(es, decode(t, `{"Type":"authorization.resolved","Authorization":{"AuthorizationID":"auth","Call":"WRONG","Status":"closed"}}`))
 	}
 }
 
 func TestLegacyArchiveIsIndependentAndReplayPrivate(t *testing.T) {
 	archive := decode(t, `{"Type":"compaction.archive","CompactionArchive":{"Replaced":[{"Role":"assistant","Reasoning":"opaque-private","ToolCalls":[{"ID":"provider-secret","Name":"Read","Args":{}}]},{"Role":"tool","ToolResult":{"CallID":"provider-secret","Content":"archived"}}]}}`)
-	p := project(t, []session.Event{decode(t, oldCall), decode(t, oldResult), archive})
+	p := project(t, []session.Event{decode(t, oldCall), decode(t, oldResult), archive.WithLegacySource("archive", "record")})
 	ms := p.Events[2].CompactionArchive.Replaced
 	if ms[0].ToolCalls[0].ID == p.Events[0].ToolCall.ID || ms[1].ToolResult.CallID != ms[0].ToolCalls[0].ID || ms[0].Replay == nil || ms[0].Replay.Provider == nil {
 		t.Fatal("archive linked to live or lost replay")
 	}
 	if !bytes.Contains(ms[0].Replay.Provider.Data, []byte("opaque-private")) {
 		t.Fatal("archive replay changed")
+	}
+	current := session.Event{Type: session.EvCompactionArchive, CompactionArchive: p.Events[2].CompactionArchive}
+	stored, err := eventcodec.Marshal(current)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reloaded, err := eventcodec.UnmarshalFormat(stored, eventcodec.Format)
+	if err != nil || !reflect.DeepEqual(current, reloaded) {
+		t.Fatal("current archive codec changed replay, bindings or provenance", err)
+	}
+	projected := project(t, []session.Event{reloaded})
+	folded, err := fold(projected.Events)
+	if err != nil || !reflect.DeepEqual(ms, folded.Conversation.Messages) {
+		t.Fatal("current archive reconstruction changed replay, bindings or provenance", err)
 	}
 }
 
@@ -232,6 +217,28 @@ func TestEventSnapshotAnchorsAreIndependent(t *testing.T) {
 	p := project(t, []session.Event{decode(t, oldCall), decode(t, oldResult)})
 	if s.Conversation.Messages[0].ToolCalls[0].ID == p.Events[0].ToolCall.ID {
 		t.Fatal("manufactured snapshot/log crosswalk")
+	}
+}
+
+func TestLegacyCompletedApprovalsAllowSequentialProviderKeyReuse(t *testing.T) {
+	var events []session.Event
+	for _, coordinate := range []string{"first", "second"} {
+		events = append(events,
+			decode(t, oldCall).WithLegacySource("durable", coordinate),
+			decode(t, `{"Type":"permission.ask","Ask":{"AskID":"ask","Tool":"Read","Call":"provider-secret"}}`).WithLegacySource("durable", coordinate+"-ask"),
+			decode(t, `{"Type":"approval","Approval":{"AskID":"ask","Tool":"Read","Call":"provider-secret","Verdict":"allow_once"}}`).WithLegacySource("durable", coordinate+"-approval"),
+			decode(t, oldResult).WithLegacySource("durable", coordinate+"-result"))
+	}
+	p := project(t, events)
+	if p.Events[0].ToolCall.ID == p.Events[4].ToolCall.ID || p.Events[1].Ask.Call != p.Events[0].ToolCall.ID || p.Events[5].Ask.Call != p.Events[4].ToolCall.ID {
+		t.Fatal("sequential control identity collapsed")
+	}
+	s, err := fold(p.Events)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.State != session.StateIdle || session.ValidateToolPairing(s.Conversation.Messages) != nil {
+		t.Fatal("completed legacy controls changed")
 	}
 }
 

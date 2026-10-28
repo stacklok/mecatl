@@ -1,9 +1,11 @@
 package eventsource_test
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/stacklok/mecatl/engine/adapter/eventcodec"
+	"github.com/stacklok/mecatl/engine/adapter/eventsource"
 	"github.com/stacklok/mecatl/engine/session"
 )
 
@@ -50,17 +52,33 @@ func TestDurableOccurrenceSurvivesReloadAndPrefixPruning(t *testing.T) {
 	}
 }
 
-func TestMissingOccurrenceAnchorStaysUnattachedAcrossRestart(t *testing.T) {
+func TestLegacyCallsPairIndependentlyAcrossSources(t *testing.T) {
+	events := []session.Event{
+		decode(t, oldCall).WithLegacySource("source-a", "call"),
+		decode(t, oldCall).WithLegacySource("source-b", "call"),
+		decode(t, oldResult).WithLegacySource("source-b", "result"),
+		decode(t, oldResult).WithLegacySource("source-a", "result"),
+	}
+	p := project(t, events)
+	if p.Events[0].ToolCall.ID == p.Events[1].ToolCall.ID || p.Events[2].ToolResult.CallID != p.Events[1].ToolCall.ID || p.Events[3].ToolResult.CallID != p.Events[0].ToolCall.ID {
+		t.Fatal("provider-key equality crossed source boundaries")
+	}
+	if _, err := fold(p.Events); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestMissingOccurrenceAnchorRejectedAcrossRestart(t *testing.T) {
 	es := []session.Event{
 		decode(t, `{"Type":"tool.call","ToolCall":{"ID":"old","Name":"Read"}}`),
 		decode(t, `{"Type":"tool.result","ToolResult":{"CallID":"old","Content":"readable"}}`),
 	}
 	for range 2 {
-		p := project(t, es)
-		for i, e := range p.Events {
-			if e.Historical == nil || !e.Historical.AttachmentUnavailable || e.ToolCall != nil || e.ToolResult != nil || e.LegacyIdentity().Ordinal != -1 || e.LegacyIdentity().Coordinate != "" {
-				t.Fatal("retained index became a durable invocation anchor")
-			}
+		requireFoldError(t, es, eventsource.ErrReconstruct)
+		if _, err := eventsource.Project(es, session.LegacyIncarnationID("test", 0, nil)); !errors.Is(err, eventsource.ErrReconstruct) {
+			t.Fatal("unanchored source projected", err)
+		}
+		for i, e := range es {
 			raw, err := eventcodec.Marshal(e)
 			if err != nil {
 				t.Fatal(err)
@@ -83,5 +101,73 @@ func TestDurableCoordinateDoesNotRebaseFrozenEvidenceOrdinal(t *testing.T) {
 	other := project(t, []session.Event{call.WithLegacyIdentity(*identity), decode(t, oldResult).WithLegacySource("durable", "offset:200")})
 	if p.Events[0].ToolCall.ID != other.Events[0].ToolCall.ID {
 		t.Fatal("evidence ordinal overrode the durable invocation coordinate")
+	}
+}
+
+func TestLegacyInvocationDerivationUsesOnlyStableSourceFacts(t *testing.T) {
+	inc := session.LegacyIncarnationID("test", 0, nil)
+	ordinal := decode(t, `{"Type":"tool.call","ToolCall":{"ID":"old","Name":"Read"}}`)
+	identity := ordinal.LegacyIdentity()
+	identity.Ordinal = 47
+	ordinal = ordinal.WithLegacyIdentity(*identity)
+	persisted := decode(t, `{"Type":"tool.call","ToolCall":{"ID":"old","Name":"Read"}}`)
+	binding := session.NewToolCall("persisted-without-coordinate", "Read", nil)
+	persisted.ToolCall = &binding
+	for name, tc := range map[string]struct {
+		call session.Event
+		ref  string
+		want session.ToolCallID
+	}{
+		"original ordinal":  {ordinal, "old", session.HistoricalInvocationID(inc, eventcodec.LegacyNamespace, 47)},
+		"run sequence":      {decode(t, oldCall), "provider-secret", session.ToolCallID("call_" + session.HistoricalRecordID(inc, eventcodec.LegacyNamespace, "run:fixture-run/seq:90"))},
+		"persisted binding": {persisted, "old", binding.ID},
+	} {
+		t.Run(name, func(t *testing.T) {
+			result := decode(t, `{"Type":"tool.result","ToolResult":{"CallID":"`+tc.ref+`","Content":"done"}}`)
+			events := []session.Event{tc.call, result}
+			p := project(t, events)
+			if p.Events[0].ToolCall.ID != tc.want || p.Events[1].ToolResult.CallID != tc.want {
+				t.Fatal("stable derivation changed")
+			}
+			s, err := fold(events)
+			if err != nil || s.Conversation.Messages[0].ToolCalls[0].ID != tc.want {
+				t.Fatal("Fold and Project disagree", err)
+			}
+			// Reencoding cannot turn an unknown ordinal into a retained-page index.
+			for i, e := range p.Events {
+				raw, err := eventcodec.Marshal(e)
+				if err != nil {
+					t.Fatal(err)
+				}
+				events[i] = decode(t, string(raw))
+			}
+			if again := project(t, events); again.Events[0].ToolCall.ID != tc.want {
+				t.Fatal("persisted derivation changed")
+			}
+		})
+	}
+}
+
+func TestLegacyPersistedReferenceConflictsRejected(t *testing.T) {
+	call := decode(t, oldCall)
+	result := decode(t, oldResult)
+	wrongResult := session.NewToolResult("conflicting-binding", "done")
+	result.ToolResult = &wrongResult
+	ask := decode(t, `{"Type":"permission.ask","Ask":{"AskID":"ask","Tool":"Read","Call":"provider-secret"}}`)
+	ask.Ask = &session.PendingAsk{AskID: "ask", Tool: "Read", Call: "conflicting-binding"}
+	for _, last := range []session.Event{result, ask} {
+		events := []session.Event{call, last}
+		requireFoldError(t, events, eventsource.ErrReconstruct)
+		if _, err := eventsource.Project(events, session.LegacyIncarnationID("test", 0, nil)); !errors.Is(err, eventsource.ErrReconstruct) {
+			t.Fatal("persisted reference silently rebound", err)
+		}
+	}
+}
+
+func TestLegacyDisplayDoesNotInventCoordinates(t *testing.T) {
+	e := decode(t, `{"Type":"hook","Hook":{"Phase":"PreToolUse","Tool":"Read"}}`)
+	p := project(t, []session.Event{e})
+	if p.Events[0].Historical.RecordID != "" || p.Events[0].LegacyIdentity().Ordinal != -1 || p.Events[0].LegacyIdentity().Coordinate != "" {
+		t.Fatal("retained-page index became durable evidence")
 	}
 }

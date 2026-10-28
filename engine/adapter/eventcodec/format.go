@@ -24,7 +24,7 @@ func UnmarshalFormat(data []byte, format string) (session.Event, error) {
 	if (format == Format) != (schema == 2) {
 		return session.Event{}, fmt.Errorf("eventcodec: format %q does not match identity schema %d", format, schema)
 	}
-	return Unmarshal(data)
+	return decodeEvent(data, schema)
 }
 
 func identitySchema(data []byte) (int, error) {
