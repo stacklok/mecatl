@@ -287,7 +287,7 @@ client_assertion=<private_key_jwt for mecatl>
 2. The client may use the token-exchange grant.
 3. The request is well formed: the two token types above, no `actor_token`, no `scope`, `resource`, or `audience`, and exactly one exchange-grant entry listing only `id-jag`, an output configured for `mecatl`.
 4. The subject token is an AS-1 access token from a sign-in, not from a token exchange: signature, `iss`, `exp`, not revoked at AS-1, no `act`, `aud` is the Mecatl API, and `client_id` is the TUI or Studio. It was issued after the user's last user-wide revocation, if any; see [the revocation time](#sign-out-and-revocation). Accepting a Mecatl-API token from `mecatl` is a narrow policy for this one client, not a general audience bypass.
-5. The token's `jti` has not been converted before. A retry is not an exception.
+5. The token's `jti` has not been converted before. A reuse is refused with `token_used`, and when the reusing client is the one that holds the grant the `jti` created, AS-1 also revokes that grant; any child grants stop working, because their parent is revoked. A reuse by another client revokes nothing.
 
 **Output.** In one transaction, AS-1 records the converted `jti` and writes the grant: client `mecatl`, Alice as `u-alice-91`, her `sub_id`, the source `jti`, `id-jag` as its only output, and its expiry. RFC 8693 returns the issued token in `access_token` even when it is not an access token (§2.2.1). AS-1 echoes the entry with the expiry it granted, which the exchange-grant type allows (RFC 9396 §7.1):
 
@@ -320,13 +320,13 @@ The broker checks that the echoed entry has the type and `issuable_token_types` 
 | AS-1 3 | 400 `invalid_request`, `invalid_scope` for a `scope` parameter, `invalid_target` for `resource` or `audience`, or `invalid_authorization_details` for a malformed entry | No; a broker bug. |
 | AS-1 4 | 400 `invalid_request` with no reason (RFC 8693 §2.2.2), or with the user-wide revocation's reason for a token issued before it | No reason: after the client refreshes its access token. A revocation reason: after Alice signs in again. |
 | AS-1 5 | 400 `invalid_request` with `token_used` | After the client refreshes its access token. |
-| Lost response, or 502 or 504 | None received, or one AS-1 may have processed; the broker reports `token_used` | Not with the same access token, which check 5 now refuses. The client refreshes its access token and opens again. |
+| Lost response | None received | Once: resend the same request with a new client assertion. If AS-1 never processed it, the resend succeeds. If it did, check 5 refuses the resend with `token_used` and revokes the grant the first request created; the client then refreshes its access token and opens again. |
 
 The broker builds every other part of the request, so it reports an `invalid_request` with no reason at session open as `subject_invalid`. mecak8s reports any of these to the client as a failed session open. It answers `subject_invalid` and `token_used` with 401 `invalid_token`, so the client refreshes its access token and tries once more.
 
-If the broker crashes, or loses the response, after AS-1 issued `RT-A42` but before storing it, nothing holds that refresh token. It stays valid at AS-1 until its hard expiry, usable only with the broker's key. mecak8s opens the session again with a fresh access token when the broker returns.
+If the broker loses the response after AS-1 issued `RT-A42`, the resend above revokes it. If the broker crashes before it can resend, nothing holds that refresh token. It stays valid at AS-1 until its hard expiry, usable only with the broker's key, and sign out everywhere ends it. mecak8s opens the session again with a fresh access token when the broker returns.
 
-**Why.** One conversion per `jti` stops a leaked access token from opening a second session. AS-1 stores only a hash of each refresh token and cannot return it again, so a lost response cannot be answered with the same token; a retry needs a fresh access token. Writing the converted `jti` and the grant in one transaction means a crash cannot leave a converted `jti` with no grant, or a grant whose conversion was not recorded. Keeping one live refresh token per session is the broker's job.
+**Why.** One conversion per `jti` stops a leaked access token from opening a second session. AS-1 stores only a hash of each refresh token and cannot return it again, so a lost response cannot be answered with the same token; once the resend has cleaned up, a retry needs a fresh access token. The broker resends at most once, only after a lost response, and never presents a spent access token for a second session: a second request with the same access token would revoke the grant the first created, and neither session would have a usable grant. Writing the converted `jti` and the grant in one transaction means a crash cannot leave a converted `jti` with no grant, or a grant whose conversion was not recorded. Keeping one live refresh token per session is the broker's job.
 
 `RT-A42` is accepted only as the subject token of an ID-JAG exchange; presented at the refresh-token grant, it returns `invalid_grant`, so the broker cannot mint Mecatl API tokens as Alice. `RT-A42` does not rotate, because [client authentication](#5-broker-client-authentication) already binds it to the broker, and rotation would make concurrent exchanges from several broker replicas look like token reuse.
 
@@ -431,7 +431,7 @@ The subject tokens the broker presents are bearer tokens: they prove whose autho
 
 **Output.** An authenticated client `mecatl`.
 
-**Failures.** Any failed check returns 401 `invalid_client`. Only a lost response is retryable, with a new assertion and `jti`, except at session open ([step (3)](#3-session-open-and-the-broker-refresh-token)).
+**Failures.** Any failed check returns 401 `invalid_client`. Only a lost response is retryable, with a new assertion and `jti`.
 
 **Why.** It makes "accept only from the broker" enforceable. A leaked `RT-A42` is useless without the key: a refresh token issued to an authenticated confidential client is already sender-constrained (RFC 9449 §5) and usable only by that client (RFC 9700 §4.14.2).
 
@@ -847,7 +847,7 @@ RFC 8693 §2.2.2 requires `invalid_request` for any subject or actor token that 
 | Reason | Returned by | Broker gRPC status | mecak8s outcome |
 | --- | --- | --- | --- |
 | `subject_invalid` | Broker, for AS-1's `invalid_request` with no reason at session open | `UNAUTHENTICATED` | Ask the client to refresh its access token and retry once. |
-| `token_used` | AS-1, session open; the broker, for a lost session-open response or a 502 or 504 | `UNAUTHENTICATED` | The same. |
+| `token_used` | AS-1, session open | `UNAUTHENTICATED` | The same. |
 | `owner_mismatch` | Broker, session open | `PERMISSION_DENIED` | Fail the open; a mecak8s pairing bug. |
 | `session_owned` | Broker, session open | `PERMISSION_DENIED` | Fail the open; a mecak8s pairing bug or a closed session ID reused. |
 | `session_closed` | Broker | `FAILED_PRECONDITION` | Open a new broker session on the user's next request. |
@@ -861,7 +861,7 @@ RFC 8693 §2.2.2 requires `invalid_request` for any subject or actor token that 
 | `denied` | AS-1, broker | `PERMISSION_DENIED` | Deny the call. |
 | `consent_required` | AS-2 | `FAILED_PRECONDITION` | The existing `mcp_authorization_pending` outcome, using the `error_uri` AS-2 returned, when the gateway advertises the approval-continuation profile. |
 | `invalid_assertion` | AS-2 | `INTERNAL` | Fail the call; a broker bug. |
-| HTTP 503, or 429, 502, or 504 from a proxy or rate limiter, or the error code `server_error` or `temporarily_unavailable` | AS-1, AS-2 | `UNAVAILABLE` | Fail the call as a retryable infrastructure error, not a denial or a configuration fault. At session open, a 502 or 504 is `token_used` instead. |
+| HTTP 503, or 429, 502, or 504 from a proxy or rate limiter, or the error code `server_error` or `temporarily_unavailable` | AS-1, AS-2 | `UNAVAILABLE` | Fail the call as a retryable infrastructure error, not a denial or a configuration fault. |
 | `invalid_client`, `unauthorized_client`, `invalid_target`, or any other refusal with no reason | AS-1, AS-2 | `INTERNAL` | Fail the call; a configuration fault or broker bug. For an AS-2 `invalid_grant` with no reason code, see [step (8)](#8-as-2-access-token). |
 
 A scheduled run has no client to show anything to: for every revocation reason except `schedule_ended`, it ends with "needs owner action" and Alice is notified.
