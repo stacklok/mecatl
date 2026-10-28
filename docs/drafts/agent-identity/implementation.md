@@ -42,7 +42,7 @@ The flow has four integration points: AS-1 sign-in, the session-open exchange, t
 | Field | Example | Purpose |
 | --- | --- | --- |
 | Broker session or schedule | `A42`, `sch-nightly-7` | The session or schedule that holds the grant. One live refresh token per session. |
-| Owner | `(https://login.example.com, alice-204)` | Recorded at the first open after AS-1 accepts the token; later opens for another user are refused. |
+| Owner | `(https://login.example.com, alice-204)` | Verified when AS-1 first accepts a token for the session; until then the owner mecak8s reports only pairs the session. Later opens for another user are refused. |
 | Host session and incarnation | `hostS42` | Restart and recovery continuity. |
 | Source access-token `jti` | | Joins the broker's open record to AS-1's conversion record. |
 | Expiry | | The `expires_at` AS-1 echoed; the broker does not use a grant past it. |
@@ -68,8 +68,9 @@ Test the session-open exchange:
 - A crash between writing the converted-`jti` record and the refresh-token record leaves neither.
 - The response echoes the exchange-grant entry with the granted `expires_at`; the broker accepts an `expires_at` no later than requested and stores it. An echo with another type or output makes the broker revoke the refresh token and fail the open.
 - The broker refuses, without calling AS-1, an open whose token `sub_id` differs from the owner mecak8s sends (`owner_mismatch`), and an open of a session owned by another user or closed (`session_owned`).
-- A later open of a session that has a live refresh token, by the same owner with a fresh `jti`, requests `expires_at` no later than the session's hard expiry, stores the new token, and revokes the old one; an exchange still holding the old one gets `revoked` and retries once with the new one. Two opens with one `jti` for two sessions yield one session until replay-revoke lands, and none after: the second revokes the first's grant, and the client refreshes and opens again.
-- After a lost response, the broker resends once with a new client assertion. If AS-1 had not processed the request, the resend succeeds. If it had, the resend is refused with `token_used`, the first grant is revoked once replay-revoke lands, and the client refreshes its access token and opens again. After a broker crash, the client refreshes and opens again, and the first refresh token stays unused until its expiry and is ended by sign out everywhere.
+- mecak8s sends no token to a session that holds a live refresh token, nor from a gRPC stream after its first response. An open without a token pairs the session, gets no refresh token, and leaves gateway calls failing closed.
+- An open of a session that has a stored expiry requests `expires_at` no later than it. If an open by the same owner converts a token while the session holds a live one, the broker stores the new token and revokes the old one; an exchange still holding the old one gets `revoked` and retries once with the new one. Two opens with one `jti` for two sessions yield one session until replay-revoke lands, and none after: the second revokes the first's grant, and the client refreshes and opens again.
+- After a lost response, or a 502 or 504, the broker resends once with a new client assertion. If AS-1 had not processed the request, the resend succeeds. If it had, the resend is refused with `token_used`, the first grant is revoked once replay-revoke lands, and the client refreshes its access token and opens again. After a broker crash, the client refreshes and opens again, and the first refresh token stays unused until its expiry and is ended by sign out everywhere.
 - Losing the refresh token closes the session, and a new open of the same session ID is refused.
 
 Test ID-JAG issuance:
@@ -297,7 +298,7 @@ Test the checks at each hop:
 - The broker rejects a legacy ServiceAccount token, a token with the Kubernetes API server's audience, a token whose `exp - iat` exceeds the maximum, and a ServiceAccount not on the allowlist.
 - SVID validation rejects a platform SVID with the broker's audience (wrong trust domain and bundle), a header without `kid`, an `aud` with two values, a disallowed `alg`, and an `exp` beyond the maximum lifetime.
 - Registration rejects names over 63 bytes, nesting past 8 child levels, `.` and `..`, and a parentless registration of a definition that is not root-eligible.
-- An AS-1 503 maps to `UNAVAILABLE` and is reported as a retryable failure, not a denial; `invalid_client` and a bare `invalid_request` map to `INTERNAL`; each reason in [error reasons](credentials-and-lifecycle.md#error-reasons) maps to its gRPC status and mecak8s outcome.
+- An AS-1 503 maps to `UNAVAILABLE` and is reported as a retryable failure, not a denial; `invalid_client`, and outside session open a bare `invalid_request`, map to `INTERNAL`; each reason in [error reasons](credentials-and-lifecycle.md#error-reasons) maps to its gRPC status and mecak8s outcome.
 - Two users' calls through the same instance never share a cached `V`, ID-JAG, or vMCP session ID.
 - Signing out everywhere revokes only that user's grants and cache entries.
 
