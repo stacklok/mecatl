@@ -347654,6 +347654,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1793284855569,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "0798b9fd2ddb92a722665a6baf8ced6c990015c0",
+          "message": "test(mecatui): fix Converse refresh and queued prompt flakes (#2605)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-29T09:39:36-07:00",
+          "tree_id": "dde023808dbdcba83fce25e51d2bf68d637393a9",
+          "url": "https://github.com/stacklok/mecatl/commit/0798b9fd2ddb92a722665a6baf8ced6c990015c0"
+        },
+        "date": 1793292692816,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -502491,6 +502525,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1793292689367,
+  "lastUpdate": 1793292693700,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
