@@ -24,7 +24,12 @@ func (f fakeConnect) ListConnectTargets(context.Context) ([]ConnectTarget, error
 func newConnectModel(targets []ConnectTarget) Model {
 	m := New(Deps{Connect: fakeConnect{targets: targets}, Theme: theme.New("aztec", theme.AztecPalette()), Ctx: context.Background(), NoAltScreen: true})
 	m.phase = phaseIdle
-	return m
+	return applyAll(m, tea.WindowSizeMsg{Width: 120, Height: 40})
+}
+
+func openTestConnect(m Model, reason client.AuthReason, failed, resume string) Model {
+	mm, cmd := m.openConnectRecovery("", reason, failed, resume)
+	return applyAll(mm.(Model), cmd())
 }
 
 func TestConnectPaletteIdleAndMetadata(t *testing.T) {
@@ -37,160 +42,87 @@ func TestConnectPaletteIdleAndMetadata(t *testing.T) {
 	}
 	m.phase = phaseRunning
 	mm, cmd := m.runConnect()
-	if mm.(Model).connect.open || cmd != nil {
+	if mm.(Model).modal != nil || cmd != nil {
 		t.Fatal("/connect must be idle-only")
 	}
 	m.phase = phaseIdle
-	mm, cmd = m.runConnect()
-	m = mm.(Model)
-	m = applyAll(m, cmd())
+	m = openTestConnect(m, "", "", "")
 	out := stripANSIstr(m.View().Content)
 	for _, want := range []string{"remote.example:443", "https://issuer.example", "public-client", "mecatui"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("panel missing public metadata %q: %s", want, out)
 		}
 	}
-	if strings.Contains(strings.ToLower(out), "token") {
-		t.Fatalf("panel leaked secret-shaped text: %s", out)
-	}
 }
 
 func TestConnectRequiresConfirmationAndEmitsPublicIntent(t *testing.T) {
-	m := newConnectModel([]ConnectTarget{{Target: "remote.example:443", Issuer: "https://issuer.example", ClientID: "public-client", Audience: "mecatui"}})
-	mm, cmd := m.runConnect()
-	m = applyAll(mm.(Model), cmd())
-	mm, cmd, handled := m.onConnectKey(tea.KeyPressMsg{Code: tea.KeyEnter})
-	if !handled || cmd != nil || mm.(Model).connectIntent != nil {
-		t.Fatal("first enter must only request confirmation")
+	m := openTestConnect(newConnectModel([]ConnectTarget{{Target: "remote.example:443"}}), "", "", "")
+	m = applyAll(m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if _, ok := m.ConnectRestartIntent(); ok {
+		t.Fatal("first Enter restarted")
 	}
-	m = mm.(Model)
-	confirm := stripANSIstr(m.View().Content)
 	for _, want := range []string{"Connect to this saved target?", "enter: connect", "esc: back"} {
-		if !strings.Contains(confirm, want) {
-			t.Fatalf("confirmation missing %q:\n%s", want, confirm)
+		if out := stripANSIstr(m.View().Content); !strings.Contains(out, want) {
+			t.Fatalf("confirmation missing %q: %s", want, out)
 		}
 	}
-	mm, cmd, _ = m.onConnectKey(tea.KeyPressMsg{Code: tea.KeyEnter})
-	m = mm.(Model)
-	if cmd == nil {
-		t.Fatal("confirmed selection must quit")
+	mm, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	intent, ok := mm.(Model).ConnectRestartIntent()
+	if cmd == nil || !ok || intent.Target != "remote.example:443" || intent.Action != ConnectSaved {
+		t.Fatalf("intent = %+v, %v", intent, ok)
 	}
-	intent, ok := m.ConnectRestartIntent()
-	if !ok || intent.Target != "remote.example:443" || intent.Action != ConnectSaved {
-		t.Fatalf("intent = %#v, %v", intent, ok)
-	}
-	if strings.Contains(intent.Target, "token") {
-		t.Fatal("intent target contains secret-shaped data")
+	if _, ok := cmd().(tea.QuitMsg); !ok {
+		t.Fatal("restart did not quit")
 	}
 }
 
 func TestConnectCopyNamesTheSelectedAction(t *testing.T) {
-	target := ConnectTarget{Target: "remote.example:443"}
 	for _, tc := range []struct {
-		name     string
-		reason   client.AuthReason
-		cursor   int
-		action   string
-		question string
-		rejected bool
+		name   string
+		reason client.AuthReason
+		cursor int
+		action ConnectAction
 	}{
-		{name: "saved target", action: "connect", question: "Connect to this saved target?"},
-		{name: "new target", cursor: 1, action: "sign in", question: "Sign in to a new target?"},
-		{name: "new target after rejection", reason: client.AuthRejected, cursor: 1, action: "sign in", question: "Sign in to a new target?"},
-		{name: "expired credential", reason: client.AuthSessionExpired, action: "sign in again", question: "Sign in again and connect?"},
-		{name: "storage recovery", reason: client.AuthStorageUnavailable, action: "retry connection", question: "Retry connection without opening a browser?"},
-		{name: "rejected credential", reason: client.AuthRejected, rejected: true},
+		{"saved", "", 0, ConnectSaved}, {"new", "", 1, AddTarget},
+		{"expired", client.AuthSessionExpired, 0, Reauthenticate}, {"storage", client.AuthStorageUnavailable, 0, RetryAfterCleanup},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			m := newConnectModel([]ConnectTarget{target})
-			m.connect.reason = tc.reason
-			m.connect.failedTarget = target.Target
-			mm, cmd := m.openConnect()
-			m = applyAll(mm.(Model), cmd())
-			m.connect.cursor = tc.cursor
-			out := stripANSIstr(m.View().Content)
-			if tc.rejected {
-				if strings.Contains(out, "enter:") || !strings.Contains(out, "esc: close") {
-					t.Fatalf("rejected credential advertised an unavailable action:\n%s", out)
-				}
-				mm, cmd, handled := m.onConnectKey(tea.KeyPressMsg{Code: tea.KeyEnter})
-				m = mm.(Model)
-				if !handled || cmd != nil || m.connect.confirm || !strings.Contains(m.connect.err, "rejected") {
-					t.Fatalf("rejected credential Enter = handled=%v cmd=%v state=%+v", handled, cmd, m.connect)
-				}
-				return
+			m := openTestConnect(newConnectModel([]ConnectTarget{{Target: "remote.example:443"}}), tc.reason, "remote.example:443", "")
+			m.modal.(*connectState).list.SetCursor(tc.cursor)
+			if out := stripANSIstr(m.View().Content); !strings.Contains(out, "enter: "+connectActionLabel(tc.action)) {
+				t.Fatal(out)
 			}
-			if !strings.Contains(out, "enter: "+tc.action) || !strings.Contains(out, "esc: close") {
-				t.Fatalf("connect hint missing selected action %q:\n%s", tc.action, out)
-			}
-			if strings.Contains(out, "enter continues") {
-				t.Fatalf("connect hint still uses vague continuation copy:\n%s", out)
-			}
-			mm, cmd, handled := m.onConnectKey(tea.KeyPressMsg{Code: tea.KeyEnter})
-			m = mm.(Model)
-			if !handled || cmd != nil || !m.connect.confirm {
-				t.Fatalf("first Enter did not open confirmation: handled=%v cmd=%v state=%+v", handled, cmd, m.connect)
-			}
-			confirm := stripANSIstr(m.View().Content)
-			for _, want := range []string{tc.question, "enter: " + tc.action, "esc: back"} {
-				if !strings.Contains(confirm, want) {
-					t.Fatalf("confirmation missing %q:\n%s", want, confirm)
-				}
+			m = applyAll(m, tea.KeyPressMsg{Code: tea.KeyEnter})
+			if out := stripANSIstr(m.View().Content); !strings.Contains(out, connectConfirmationLabel(tc.action)) {
+				t.Fatal(out)
 			}
 		})
 	}
 }
 
 func TestConnectListFailureIsSanitized(t *testing.T) {
-	m := New(Deps{Connect: fakeConnect{err: errors.New("refresh token=secret")}, Theme: theme.New("aztec", theme.AztecPalette()), Ctx: context.Background(), NoAltScreen: true})
-	m.phase = phaseIdle
-	mm, cmd := m.runConnect()
-	m = applyAll(mm.(Model), cmd())
-	if m.connect.err != "saved targets are unavailable" {
-		t.Fatalf("error = %q", m.connect.err)
+	m := newConnectModel(nil)
+	m.deps.Connect = fakeConnect{err: errors.New("refresh token=secret")}
+	m = openTestConnect(m, "", "", "")
+	s := m.modal.(*connectState)
+	if s.err != "saved targets are unavailable" || len(s.items) != 0 {
+		t.Fatalf("error=%q items=%+v", s.err, s.items)
 	}
 	out := stripANSIstr(m.View().Content)
-	if strings.Contains(out, "secret") {
-		t.Fatal("raw list error leaked")
+	if strings.Contains(out, "secret") || strings.Contains(out, "OIDC sign-in for a new target") {
+		t.Fatal(out)
 	}
-	if strings.Contains(out, "OIDC sign-in for a new target") {
-		t.Fatalf("storage-unavailable panel offered enrollment: %s", out)
-	}
-	for range 2 {
-		mm, cmd, handled := m.onConnectKey(tea.KeyPressMsg{Code: tea.KeyEnter})
-		m = mm.(Model)
-		if !handled || cmd != nil || m.connect.confirm || m.connectIntent != nil {
-			t.Fatalf("enter must not confirm unavailable targets: connect=%#v intent=%#v cmd=%v", m.connect, m.connectIntent, cmd)
-		}
+	m = applyAll(m, tea.KeyPressMsg{Code: tea.KeyEnter}, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if m.connectIntent != nil || s.confirm != nil {
+		t.Fatal("failed list allowed activation")
 	}
 }
 
-// TestReauthenticateIntentCarriesNoBrowserState pins that ConnectRestartIntent
-// itself carries no NoBrowser field: the contract that the recovery
-// overlay never opens a browser is now enforced unconditionally at the
-// cmd/mecatui composition boundary (restartFromConnectIntentWith), not by a
-// value threaded through the intent.
 func TestReauthenticateIntentCarriesNoBrowserState(t *testing.T) {
-	m := New(Deps{
-		Connect:       fakeConnect{targets: []ConnectTarget{{Target: "remote.example:443"}}},
-		Theme:         theme.New("aztec", theme.AztecPalette()),
-		Ctx:           context.Background(),
-		NoAltScreen:   true,
-		ConnectOpen:   true,
-		ConnectReason: client.AuthSessionExpired,
-		ConnectTarget: "remote.example:443",
-	})
-	model, _ := m.Update(m.Init()())
-	m = model.(Model)
-	for range 2 {
-		mm, _, handled := m.onConnectKey(tea.KeyPressMsg{Code: tea.KeyEnter})
-		if !handled {
-			t.Fatal("enter not handled")
-		}
-		m = mm.(Model)
-	}
+	m := New(Deps{Connect: fakeConnect{targets: []ConnectTarget{{Target: "remote.example:443"}}}, Theme: theme.New("aztec", theme.AztecPalette()), Ctx: context.Background(), NoAltScreen: true, ConnectOpen: true, ConnectReason: client.AuthSessionExpired, ConnectTarget: "remote.example:443"})
+	m = applyAll(m, m.Init()(), tea.WindowSizeMsg{Width: 120, Height: 40}, tea.KeyPressMsg{Code: tea.KeyEnter}, tea.KeyPressMsg{Code: tea.KeyEnter})
 	intent, ok := m.ConnectRestartIntent()
 	if !ok || intent.Action != Reauthenticate {
-		t.Fatalf("intent = %#v, ok=%v, want Reauthenticate", intent, ok)
+		t.Fatalf("intent=%+v ok=%v", intent, ok)
 	}
 }

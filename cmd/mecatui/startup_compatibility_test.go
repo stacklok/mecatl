@@ -278,6 +278,8 @@ func TestStartupCompatibilityRejectedBeforeFreshOrExplicitResume(t *testing.T) {
 						statusSourceStarted: func(started customization.Source) { source = started },
 						runProgram: func(_ context.Context, model ui.Model) (tea.Model, error) {
 							assertStartupSourceStopped(t, source)
+							updated, _ := model.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+							model = updated.(ui.Model)
 							view := model.View().Content
 							if !tc.auth || !strings.Contains(view, "Authentication needs attention.") || strings.Contains(view, "remote-private-detail") {
 								t.Fatalf("unexpected normal/recovery UI: %s", view)
