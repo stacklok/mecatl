@@ -384898,6 +384898,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1793284136784,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "6c43f4981a0809b626f97ef798a325bf9e4179e8",
+          "message": "fix(mecatui): simplify thinking summary headings (#2602)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-29T07:26:00-07:00",
+          "tree_id": "11544a48df749c30e9c1b8457d14d76b8c8f2209",
+          "url": "https://github.com/stacklok/mecatl/commit/6c43f4981a0809b626f97ef798a325bf9e4179e8"
+        },
+        "date": 1793284861297,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 16129,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12894,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 794,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -502014,6 +502053,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1793284856843,
+  "lastUpdate": 1793284862319,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
