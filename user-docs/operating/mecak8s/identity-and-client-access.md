@@ -196,7 +196,13 @@ the requirements on AS-1, see
 `mecak8s` can host AS-1, Mecatl's own sign-in server, in front of your company
 IdP. `mecatui` users sign in at AS-1, AS-1 signs them in at the company IdP,
 and `mecak8s` validates the access tokens AS-1 issues, keyed by the company
-identity in their `sub_id` claim. These values turn it on:
+identity in their `sub_id` claim.
+
+Enabling AS-1 makes it the only issuer `mecak8s` accepts. Access tokens the
+company IdP issues directly stop working, so every client must sign in through
+AS-1. Studio does not support AS-1 yet and stops working until it does.
+
+These values turn it on:
 
 ```yaml
 replicaCount: 1
@@ -225,8 +231,8 @@ identityBroker:
 
 |Value|Flag|Meaning|
 |-|-|-|
-|`identityBroker.enabled`|`--enable-identity-broker`|Starts the identity broker. Requires `replicaCount: 1`, `oidc.ownerIdentity: sub_id` when OIDC is enabled, and no shell in the process: `--no-shell` in `extraArgs`, or `--shell=` with `execution.enabled` to keep the remote Shell. The chart refuses to render without one. The Deployment rolls out with `Recreate`.|
-|`identityBroker.subjectClaim` (default `sub`)|`--identity-broker-subject-claim`|The company IdP's ID-token claim that names each user. Requires `identityBroker.as1.issuer`.|
+|`identityBroker.enabled`|`--enable-identity-broker`|Starts the identity broker. Requires `replicaCount: 1`, `oidc.ownerIdentity: sub_id` when OIDC is enabled, and no shell in the process: `--no-shell` in `extraArgs`, or `--shell=` with `execution.enabled` to keep the remote Shell. The chart refuses to render without one. The Deployment rolls out with `Recreate`. This value is the only way to start the broker: the chart refuses `--enable-identity-broker` in `extraArgs`.|
+|`identityBroker.subjectClaim`|`--identity-broker-subject-claim`|The company IdP's ID-token claim that names each user. Required with `identityBroker.as1.issuer`, and allowed only with it.|
 |`identityBroker.as1.issuer`|`--identity-broker-as1-issuer`|AS-1's HTTPS issuer URL. Setting it hosts AS-1 and requires `oidc.enabled`, `oidc.audience`, and `oidc.resource`.|
 |`identityBroker.as1.tuiClientID`|`--identity-broker-as1-tui-client-id`|The client ID `mecatui` uses at AS-1.|
 |`identityBroker.as1.signingKey`|`--identity-broker-as1-signing-key-file`|_Optional._ Secret key holding AS-1's PEM signing key (EC P-256 or RSA).|
@@ -248,9 +254,16 @@ hostname, such as `https://signin.example.com`, or a path on the `mecak8s`
 host, such as `https://mecatl.example.com/as1`. Route that hostname or path
 prefix to the HTTP listener so browsers reach it.
 
-AS-1's sign-in endpoints are anonymous and `mecak8s` rate limits them per
-client address, which behind an ingress is the ingress itself, so also
-configure a per-client rate limit for `<ISSUER>/oauth/*` at your ingress.
+AS-1's sign-in endpoints are anonymous. Behind an ingress, `mecak8s` cannot
+tell users apart, so its rate limits are global: 50 requests per second, with
+bursts of 200, for the browser sign-in endpoints, and a separate budget of the
+same size for `<ISSUER>/oauth/token`, so a sign-in flood does not block token
+refresh. One client can still use up the budget for everyone, so configure a
+per-client rate limit for `<ISSUER>/oauth/*` at your ingress.
+
+AS-1 also holds at most 10,000 sign-ins that have not been approved yet. Past
+that, new sign-ins fail with a `server_error` until pending ones complete or
+expire, within 15 minutes.
 
 Keep the issuer once users have signed in. It is in every token, in each user's
 saved `mecatui` login, and in the redirect URI registered at the company IdP.
@@ -263,10 +276,10 @@ redirect URI `<ISSUER>/oauth/callback`. This registration replaces the separate
 per-application IdP policies can no longer tell those clients apart. AS-1
 requests the `offline_access` scope with `prompt=consent`.
 
-Set `subjectClaim` to a claim that is the same for a user across applications.
-For Microsoft Entra ID, use `oid`, because Entra ID issues a different `sub` to
-each application. Keep the default `sub` for an IdP whose `sub` does not depend
-on the application. The claim names the user to MCP gateways; session
+Set `subjectClaim` to a claim that is the same for a user across applications;
+it has no default. For Microsoft Entra ID, use `oid`, because Entra ID issues a
+different `sub` to each application. Use `sub` for an IdP whose `sub` does not
+depend on the application. The claim names the user to MCP gateways; session
 ownership still keys on the access token's `sub_id`.
 
 ### Sign-in and restarts
@@ -278,8 +291,7 @@ signs all users out of AS-1 and they run `mecatui login` again. With
 expire. Without it, AS-1 generates a key at startup and those tokens stop
 verifying immediately.
 
-Studio does not support signing in through AS-1 yet. Turning on
-`oidc.ownerIdentity: sub_id` for a deployment with existing sessions leaves
+Turning on `oidc.ownerIdentity: sub_id` for a deployment with existing sessions leaves
 those sessions with their previous owners; see
 [Own resources by the `sub_id` identity](/features/security-and-execution/caller-identity.md#own-resources-by-the-sub_id-identity)
 before switching.

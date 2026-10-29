@@ -273,22 +273,6 @@ func (s *limiterSet) allowValidation(ctx context.Context, key string, validate f
 	return p, true, err
 }
 
-// PeerRateLimit wraps an anonymous surface so each direct peer IP gets
-// peerRPS/peerBurst and all peers together get globalRPS/globalBurst; an
-// excess request gets 429. The peer map is bounded like the rejected-token
-// limiter's: past its cap, new peers share one bucket.
-func PeerRateLimit(next http.Handler, peerRPS float64, peerBurst int, globalRPS float64, globalBurst int) http.Handler {
-	limiters := newRejectedLimiterSet(peerRPS, peerBurst)
-	limiters.global = rate.NewLimiter(rate.Limit(globalRPS), globalBurst)
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !limiters.allow(clientKeyFromAddr(r.RemoteAddr)) {
-			writeError(w, http.StatusTooManyRequests, "rate limit exceeded")
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
-}
-
 // clientLimiter returns (creating if needed) the limiter for key, refreshing its
 // last-seen stamp and opportunistically evicting idle entries.
 func (s *limiterSet) clientLimiter(key string) *rate.Limiter {

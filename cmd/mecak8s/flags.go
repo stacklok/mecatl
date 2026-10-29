@@ -556,7 +556,7 @@ func parseFlags(argv []string) (config, error) {
 	fs.StringVar(&cfg.as1.upstreamIssuer, "identity-broker-as1-upstream-issuer", "", "HTTPS issuer URL of the OIDC identity provider users sign in at through AS-1. Required with --identity-broker-as1-issuer")
 	fs.StringVar(&cfg.as1.upstreamClientID, "identity-broker-as1-upstream-client-id", "", "AS-1's client ID at the upstream identity provider, registered with the redirect URI ISSUER/oauth/callback. Required with --identity-broker-as1-issuer")
 	fs.StringVar(&cfg.as1.upstreamClientSecretFile, "identity-broker-as1-upstream-client-secret-file", "", "File holding AS-1's client secret at the upstream identity provider. Empty makes AS-1 a public client there")
-	fs.StringVar(&cfg.identityBrokerSubjectClaim, "identity-broker-subject-claim", "sub", "Upstream identity provider ID-token claim that names the company identity, such as oid for Entra ID. Requires --identity-broker-as1-issuer")
+	fs.StringVar(&cfg.identityBrokerSubjectClaim, "identity-broker-subject-claim", "", "Upstream identity provider ID-token claim that names the company identity, the same for a user in every application: oid for Entra ID, whose sub differs per application, or sub for a provider whose sub does not. Required with, and only allowed with, --identity-broker-as1-issuer")
 
 	// Headless telemetry (issue #343): OPT-IN. --metrics-addr mounts a
 	// SEPARATE loopback /metrics listener (the admin mux — Prometheus scrape).
@@ -769,6 +769,8 @@ func resolveAS1Flags(cfg *config) error {
 		return errors.New("--identity-broker-as1-issuer requires --enable-identity-broker")
 	case as1.tuiClientID == "" || as1.upstreamIssuer == "" || as1.upstreamClientID == "":
 		return errors.New("--identity-broker-as1-issuer requires --identity-broker-as1-tui-client-id, --identity-broker-as1-upstream-issuer, and --identity-broker-as1-upstream-client-id")
+	case cfg.identityBrokerSubjectClaim == "":
+		return errors.New("--identity-broker-as1-issuer requires --identity-broker-subject-claim: oid for Entra ID, whose sub differs per application, or sub for an identity provider whose sub is the same across applications")
 	case !strings.HasPrefix(as1.issuer, "https://") || !validIssuerIdentifier(as1.issuer):
 		return errors.New("--identity-broker-as1-issuer must be an https URL with a host and no credentials, query, or fragment")
 	case !strings.HasPrefix(as1.upstreamIssuer, "https://") || !validIssuerIdentifier(as1.upstreamIssuer):

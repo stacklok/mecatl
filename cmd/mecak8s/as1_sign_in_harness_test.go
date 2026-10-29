@@ -183,7 +183,7 @@ func TestHostedAS1ServesBesideTheMCPBroker(t *testing.T) {
 
 // TestHostedAS1AnonymousSurfaceIsBounded pins the limits on AS-1's anonymous
 // routes: an oversized query never reaches AS-1, where /oauth/authorize would
-// store it, the body is capped, and a peer past the burst gets 429.
+// store it, and the body is capped.
 func TestHostedAS1AnonymousSurfaceIsBounded(t *testing.T) {
 	built, err := buildIsolated(t, context.Background(), app.Config{
 		Workspace: t.TempDir(), UseMock: true, NoSoul: true, NoUserModel: true, Diagnostics: port.NopDiagnostics{},
@@ -225,23 +225,63 @@ func TestHostedAS1AnonymousSurfaceIsBounded(t *testing.T) {
 	if !bodyCapped.Load() {
 		t.Error("an oversized body was not capped")
 	}
+}
 
-	// The two requests above were charged. The bucket refills while the test
-	// runs, so the remaining burst passes and a 429 follows soon after it.
-	passed := 0
-	for range 10 * as1PeerBurst {
-		code := probe(t, srv.URL+"/as1/oauth/authorize")
-		if code == http.StatusTooManyRequests {
-			break
+// TestHostedAS1RateLimitsAreGlobalPerSurface pins AS-1's rate limits: one
+// peer, as every user is behind an ingress, gets each whole burst, and the
+// browser sign-in routes and the token endpoint have separate buckets, so
+// exhausting either leaves the other serving.
+func TestHostedAS1RateLimitsAreGlobalPerSurface(t *testing.T) {
+	const authorize, callback, token = "/as1/oauth/authorize", "/as1/oauth/callback", "/as1/oauth/token"
+	serve := func(t *testing.T) string {
+		mux := http.NewServeMux()
+		ok := http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})
+		as1 := &app.IdentityBrokerAS1Server{Issuer: "https://mecatl.test/as1", Routes: []string{authorize, callback, token}, Handler: ok}
+		if err := mountAS1(mux, as1, server.ProtectedResourceProfile{}); err != nil {
+			t.Fatalf("mountAS1: %v", err)
 		}
-		if code != http.StatusOK {
-			t.Fatalf("request within the burst = %d, want 200", code)
+		srv := httptest.NewServer(mux)
+		t.Cleanup(srv.Close)
+		return srv.URL
+	}
+	// exhaust sends requests to path until a 429 and returns how many passed.
+	// The bucket refills while it runs, so at least its burst passes.
+	exhaust := func(t *testing.T, target string, burst int) int {
+		t.Helper()
+		for passed := range 10 * burst {
+			switch code := probe(t, target); code {
+			case http.StatusTooManyRequests:
+				return passed
+			case http.StatusOK:
+			default:
+				t.Fatalf("GET %s = %d, want 200 or 429", target, code)
+			}
 		}
-		passed++
+		t.Fatalf("GET %s: no 429 after %d requests", target, 10*burst)
+		return 0
 	}
-	if passed < as1PeerBurst-2 || passed == 10*as1PeerBurst {
-		t.Fatalf("%d requests passed before a 429, want the burst of %d then 429", passed+2, as1PeerBurst)
-	}
+
+	t.Run("sign-in flood", func(t *testing.T) {
+		base := serve(t)
+		if passed := exhaust(t, base+authorize, as1SignInBurst); passed < as1SignInBurst {
+			t.Fatalf("%d sign-in requests from one peer passed before a 429, want the global burst of %d", passed, as1SignInBurst)
+		}
+		if passed := exhaust(t, base+callback, as1SignInBurst); passed > 5 {
+			t.Errorf("%d callback requests passed after authorize exhausted the sign-in bucket, want it shared", passed)
+		}
+		if passed := exhaust(t, base+token, as1TokenBurst); passed < as1TokenBurst {
+			t.Errorf("%d token requests passed while sign-in was exhausted, want the token burst of %d", passed, as1TokenBurst)
+		}
+	})
+	t.Run("token flood", func(t *testing.T) {
+		base := serve(t)
+		if passed := exhaust(t, base+token, as1TokenBurst); passed < as1TokenBurst {
+			t.Fatalf("%d token requests from one peer passed before a 429, want the global burst of %d", passed, as1TokenBurst)
+		}
+		if passed := exhaust(t, base+authorize, as1SignInBurst); passed < as1SignInBurst {
+			t.Errorf("%d sign-in requests passed while the token endpoint was exhausted, want the sign-in burst of %d", passed, as1SignInBurst)
+		}
+	})
 }
 
 // TestHostedAS1SignsTheTUIIn hosts AS-1 in mecak8s, with the harness IdP as
@@ -278,6 +318,7 @@ func TestHostedAS1SignsTheTUIIn(t *testing.T) {
 		"--identity-broker-as1-upstream-issuer", h.IdP.Issuer(),
 		"--identity-broker-as1-upstream-client-id", "mecak8s-as1",
 		"--identity-broker-as1-upstream-client-secret-file", secretFile,
+		"--identity-broker-subject-claim", "sub",
 		"--oidc-audience", identityharness.DefaultAudience,
 		"--oidc-resource", "https://mecatl.test",
 		"--oidc-owner-identity=sub_id",

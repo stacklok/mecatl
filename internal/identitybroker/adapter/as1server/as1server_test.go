@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -15,11 +16,14 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/stacklok/toolhive/pkg/authserver/storage"
 
 	"github.com/stacklok/mecatl/internal/testutil/identityharness"
 )
@@ -48,13 +52,24 @@ func startAS1(t *testing.T, h *identityharness.Harness, edit func(*Config)) *fix
 // startAS1At is startAS1 with the issuer path issuerPath.
 func startAS1At(t *testing.T, h *identityharness.Harness, issuerPath string, edit func(*Config)) *fixture {
 	t.Helper()
+	return startAS1With(t, h, issuerPath, edit, options{}, nil)
+}
+
+// startAS1With is startAS1At with opts, serving server.Handler() through
+// wrap when it is set.
+func startAS1With(t *testing.T, h *identityharness.Harness, issuerPath string, edit func(*Config), opts options, wrap func(http.Handler) http.Handler) *fixture {
+	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
 	issuer := "https://" + ln.Addr().String() + issuerPath
-	server := newTestServer(t, h, issuer, edit)
-	ts := &httptest.Server{Listener: ln, Config: &http.Server{Handler: server.Handler(), ReadHeaderTimeout: 10 * time.Second}}
+	server := newTestServerWith(t, h, issuer, edit, opts)
+	handler := server.Handler()
+	if wrap != nil {
+		handler = wrap(handler)
+	}
+	ts := &httptest.Server{Listener: ln, Config: &http.Server{Handler: handler, ReadHeaderTimeout: 10 * time.Second}}
 	ts.StartTLS()
 	t.Cleanup(ts.Close)
 	return &fixture{h: h, server: server, issuer: issuer}
@@ -86,11 +101,19 @@ func testConfig(t *testing.T, h *identityharness.Harness, issuer string) Config 
 // newTestServer builds AS-1 for issuer from testConfig after edit.
 func newTestServer(t *testing.T, h *identityharness.Harness, issuer string, edit func(*Config)) *Server {
 	t.Helper()
+	return newTestServerWith(t, h, issuer, edit, options{})
+}
+
+// newTestServerWith is newTestServer with opts, to which it adds the other
+// test audience.
+func newTestServerWith(t *testing.T, h *identityharness.Harness, issuer string, edit func(*Config), opts options) *Server {
+	t.Helper()
 	cfg := testConfig(t, h, issuer)
 	if edit != nil {
 		edit(&cfg)
 	}
-	server, err := newServer(t.Context(), cfg, options{extraAudiences: []string{otherAudience}})
+	opts.extraAudiences = append(opts.extraAudiences, otherAudience)
+	server, err := newServer(t.Context(), cfg, opts)
 	if err != nil {
 		t.Fatalf("newServer: %v", err)
 	}
@@ -120,19 +143,8 @@ func (f *fixture) signIn(t *testing.T, resource string) tokenResponse {
 // signInAs is signIn as client, at its first redirect URI.
 func (f *fixture) signInAs(t *testing.T, client PublicClient, resource string) tokenResponse {
 	t.Helper()
-	verifier := rand.Text() + rand.Text()
-	sum := sha256.Sum256([]byte(verifier))
-	state := rand.Text()
-	q := url.Values{
-		"response_type":         {"code"},
-		"client_id":             {client.ID},
-		"redirect_uri":          {client.RedirectURIs[0]},
-		"scope":                 {"openid offline_access"},
-		"state":                 {state},
-		"code_challenge":        {base64.RawURLEncoding.EncodeToString(sum[:])},
-		"code_challenge_method": {"S256"},
-		"resource":              {resource},
-	}
+	q, verifier := authorizationRequest(client, resource)
+	state := q.Get("state")
 	back, err := f.h.AuthorizeWithConsent(t.Context(), f.issuer+"/oauth/authorize?"+q.Encode())
 	if err != nil {
 		t.Fatalf("authorize: %v", err)
@@ -152,6 +164,42 @@ func (f *fixture) signInAs(t *testing.T, client PublicClient, resource string) t
 		t.Fatalf("code exchange: status %d error %q", tokens.status, tokens.Error)
 	}
 	return tokens
+}
+
+// authorizationRequest is the query of client's PKCE authorization request
+// for resource, and its code verifier.
+func authorizationRequest(client PublicClient, resource string) (url.Values, string) {
+	verifier := rand.Text() + rand.Text()
+	sum := sha256.Sum256([]byte(verifier))
+	return url.Values{
+		"response_type":         {"code"},
+		"client_id":             {client.ID},
+		"redirect_uri":          {client.RedirectURIs[0]},
+		"scope":                 {"openid offline_access"},
+		"state":                 {rand.Text()},
+		"code_challenge":        {base64.RawURLEncoding.EncodeToString(sum[:])},
+		"code_challenge_method": {"S256"},
+		"resource":              {resource},
+	}, verifier
+}
+
+// startAuthorization sends the test client's authorization request without
+// following redirects and returns the response status, its Location (nil
+// without one), and its body.
+func (f *fixture) startAuthorization(t *testing.T) (int, *url.URL, string) {
+	t.Helper()
+	q, _ := authorizationRequest(PublicClient{ID: testClientID, RedirectURIs: []string{testRedirect}}, testAudience)
+	client := f.h.HTTPClient()
+	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	resp, err := client.Get(f.issuer + "/oauth/authorize?" + q.Encode())
+	if err != nil {
+		t.Errorf("authorize: %v", err)
+		return 0, nil, ""
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, _ := io.ReadAll(resp.Body)
+	location, _ := resp.Location()
+	return resp.StatusCode, location, string(body)
 }
 
 func (f *fixture) refresh(t *testing.T, refreshToken, resource string) tokenResponse {
@@ -553,6 +601,139 @@ func TestServesOnlySignInRoutes(t *testing.T) {
 	}
 	if got := f.server.Routes(); !slices.Equal(got, wantRoutes) {
 		t.Errorf("Routes() = %v, want %v", got, wantRoutes)
+	}
+}
+
+// TestDiscoveryOmitsUnroutedEndpoints: both discovery documents keep the
+// endpoints AS-1 serves and drop every other endpoint ToolHive advertises,
+// with a Content-Length that matches the rewritten body.
+func TestDiscoveryOmitsUnroutedEndpoints(t *testing.T) {
+	h := identityharness.New(t, identityharness.Options{})
+	f := startAS1(t, h, nil)
+	for _, doc := range []string{"/.well-known/openid-configuration", "/.well-known/oauth-authorization-server"} {
+		resp, err := h.HTTPClient().Get(f.issuer + doc)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, err := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		if err != nil || resp.StatusCode != http.StatusOK {
+			t.Fatalf("GET %s: status %d: %v", doc, resp.StatusCode, err)
+		}
+		if resp.Header.Get("Content-Length") != strconv.Itoa(len(body)) || resp.Header.Get("Content-Type") != "application/json" {
+			t.Errorf("GET %s: Content-Length %q Content-Type %q for a %d-byte body", doc, resp.Header.Get("Content-Length"), resp.Header.Get("Content-Type"), len(body))
+		}
+		var got map[string]any
+		if err := json.Unmarshal(body, &got); err != nil {
+			t.Fatalf("GET %s: %v", doc, err)
+		}
+		for key, want := range map[string]string{
+			"authorization_endpoint": f.issuer + "/oauth/authorize",
+			"token_endpoint":         f.issuer + "/oauth/token",
+			"jwks_uri":               f.issuer + "/.well-known/jwks.json",
+			"issuer":                 f.issuer,
+		} {
+			if got[key] != want {
+				t.Errorf("GET %s: %s = %v, want %s", doc, key, got[key], want)
+			}
+		}
+		for key := range got {
+			if strings.HasSuffix(key, "_endpoint") && key != "authorization_endpoint" && key != "token_endpoint" {
+				t.Errorf("GET %s advertises %s = %v, which AS-1 does not serve", doc, key, got[key])
+			}
+		}
+	}
+
+	// Endpoints ToolHive advertises in other configurations, such as the
+	// device flow, are dropped the same way.
+	routed := map[string]bool{"https://as1.test/oauth/token": true}
+	upstream := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Length", "999")
+		_, _ = w.Write([]byte(`{"token_endpoint":"https://as1.test/oauth/token","device_authorization_endpoint":"https://as1.test/oauth/device_authorization",` +
+			`"revocation_endpoint":"https://elsewhere.test/oauth/token","odd_endpoint":7,"scopes_supported":["openid"]}`))
+	})
+	rec := httptest.NewRecorder()
+	withoutUnroutedEndpoints(upstream, routed).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+	want := `{"scopes_supported":["openid"],"token_endpoint":"https://as1.test/oauth/token"}`
+	if rec.Body.String() != want || rec.Header().Get("Content-Length") != strconv.Itoa(len(want)) {
+		t.Errorf("rewritten document = %s (Content-Length %s), want %s", rec.Body, rec.Header().Get("Content-Length"), want)
+	}
+}
+
+// TestPendingSignInsAreCapped: once the cap of pending sign-ins is reached a
+// new authorization request gets a clean server_error redirect, a sign-in
+// already in progress still completes, and finished sign-ins free capacity.
+func TestPendingSignInsAreCapped(t *testing.T) {
+	const limit = 3
+	h := identityharness.New(t, identityharness.Options{})
+	var f *fixture
+	var filled atomic.Bool
+	// When the sign-in in progress approves its consent page, it holds one
+	// pending authorization: fill the rest and check the next is refused.
+	fillAtConsent := func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/oauth/consent") && filled.CompareAndSwap(false, true) {
+				for range limit - 1 {
+					if status, _, _ := f.startAuthorization(t); status != http.StatusOK {
+						t.Errorf("authorization below the cap: status %d, want the consent page", status)
+					}
+				}
+				checkRefused(t, f)
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+	f = startAS1With(t, h, testIssuerPath, nil, options{maxPendingAuthorizations: limit}, fillAtConsent)
+
+	f.signIn(t, testAudience)
+	if !filled.Load() {
+		t.Fatal("the sign-in never posted its consent page")
+	}
+	// The completed sign-in freed its entry; the next one takes it.
+	if status, _, _ := f.startAuthorization(t); status != http.StatusOK {
+		t.Errorf("authorization after a sign-in completed: status %d, want the consent page", status)
+	}
+	checkRefused(t, f)
+}
+
+// checkRefused checks that a new authorization request at f gets ToolHive's
+// server_error redirect to the client, without a 500 or the storage error.
+func checkRefused(t *testing.T, f *fixture) {
+	t.Helper()
+	status, location, body := f.startAuthorization(t)
+	if status != http.StatusFound && status != http.StatusSeeOther {
+		t.Errorf("authorization at the cap: status %d, want a redirect to the client", status)
+		return
+	}
+	if location == nil || !strings.HasPrefix(location.String(), testRedirect+"?") || location.Query().Get("error") != "server_error" {
+		t.Errorf("authorization at the cap redirected to %v, want server_error at the client", location)
+	}
+	if strings.Contains(location.String()+body, errTooManyPendingAuthorizations.Error()) {
+		t.Errorf("authorization at the cap leaked the storage error: %v %s", location, body)
+	}
+}
+
+// TestPendingCapReservesRoomPastConsent: new sign-ins stop at the cap, and
+// those past consent may use a further tenth.
+func TestPendingCapReservesRoomPastConsent(t *testing.T) {
+	store := &cappedStorage{MemoryStorage: storage.NewMemoryStorage(), limit: 10}
+	t.Cleanup(func() { _ = store.Close() })
+	pending := func(stage string) *storage.PendingAuthorization {
+		return &storage.PendingAuthorization{ConsentStage: stage, CreatedAt: time.Now()}
+	}
+	for i := range 10 {
+		if err := store.StorePendingAuthorization(t.Context(), rand.Text(), pending(storage.ConsentStageAwaiting)); err != nil {
+			t.Fatalf("new sign-in %d below the cap: %v", i, err)
+		}
+	}
+	if err := store.StorePendingAuthorization(t.Context(), rand.Text(), pending(storage.ConsentStageAwaiting)); !errors.Is(err, errTooManyPendingAuthorizations) {
+		t.Fatalf("new sign-in at the cap: %v, want refused", err)
+	}
+	if err := store.StorePendingAuthorization(t.Context(), rand.Text(), pending(storage.ConsentStageApproved)); err != nil {
+		t.Fatalf("sign-in past consent at the cap: %v", err)
+	}
+	if err := store.StorePendingAuthorization(t.Context(), rand.Text(), pending(storage.ConsentStageApproved)); !errors.Is(err, errTooManyPendingAuthorizations) {
+		t.Fatalf("sign-in past consent beyond the reserve: %v, want refused", err)
 	}
 }
 

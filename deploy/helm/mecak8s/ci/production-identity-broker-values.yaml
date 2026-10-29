@@ -28,6 +28,7 @@ oidc:
   ownerIdentity: sub_id
 identityBroker:
   enabled: true
+  # Required with as1.issuer: Entra ID gives each application its own sub.
   subjectClaim: oid
   as1:
     issuer: https://mecatl.example.com/as1

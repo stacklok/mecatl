@@ -16,6 +16,7 @@ set:
   oidc.ownerIdentity: sub_id
   oidc.resource: https://mecatl.example.com
   identityBroker.enabled: true
+  identityBroker.subjectClaim: sub
   identityBroker.as1.issuer: https://mecatl.example.com/as1
   identityBroker.as1.tuiClientID: mecatui
   identityBroker.as1.upstream.issuer: https://login.example.com/tenant/v2.0
@@ -41,6 +42,9 @@ tests:
       - contains:
           path: spec.template.spec.containers[0].args
           content: --oidc-accepted-client-ids=mecatui
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --identity-broker-subject-claim=sub
       - notExists:
           path: spec.template.spec.volumes[?(@.name == "as1-signing-key")]
 
@@ -93,6 +97,7 @@ tests:
 
   - it: renders the identity broker without OIDC when AS-1 is off
     set:
+      identityBroker.subjectClaim: ""
       oidc.enabled: false
       oidc.audience: ""
       oidc.ownerIdentity: ""
@@ -193,6 +198,31 @@ tests:
       extraArgs: [--no-shell, --enable-identity-broker]
     asserts:
       - failedTemplate:
+          errorMessage: extraArgs entry "--enable-identity-broker" enables the identity broker without the single replica it needs; remove it and set identityBroker.enabled=true
+
+  - it: rejects the broker flag in extraArgs with the identity broker off
+    set:
+      extraArgs: [-enable-identity-broker=true]
+      replicaCount: 3
+      oidc.enabled: false
+      oidc.audience: ""
+      oidc.ownerIdentity: ""
+      oidc.resource: ""
+      identityBroker.enabled: false
+      identityBroker.subjectClaim: ""
+      identityBroker.as1.issuer: ""
+      identityBroker.as1.tuiClientID: ""
+      identityBroker.as1.upstream.issuer: ""
+      identityBroker.as1.upstream.clientID: ""
+    asserts:
+      - failedTemplate:
+          errorPattern: enables the identity broker without the single replica it needs; remove it and set identityBroker.enabled=true
+
+  - it: rejects another identity broker flag in extraArgs
+    set:
+      extraArgs: [--no-shell, --identity-broker-subject-claim=oid]
+    asserts:
+      - failedTemplate:
           errorPattern: sets an identity broker flag
 
   - it: rejects more than one replica
@@ -212,6 +242,7 @@ tests:
   - it: rejects AS-1 values without its issuer
     set:
       identityBroker.as1.issuer: ""
+      identityBroker.subjectClaim: ""
     asserts:
       - failedTemplate:
           errorMessage: identityBroker.as1 values require identityBroker.as1.issuer
@@ -222,6 +253,13 @@ tests:
     asserts:
       - failedTemplate:
           errorPattern: identityBroker.as1.tuiClientID is required
+
+  - it: requires the subject claim with AS-1
+    set:
+      identityBroker.subjectClaim: ""
+    asserts:
+      - failedTemplate:
+          errorMessage: "identityBroker.subjectClaim is required when identityBroker.as1.issuer is set: oid for Microsoft Entra ID, or sub for an identity provider whose sub is the same across applications"
 
   - it: requires the upstream issuer and client ID
     set:

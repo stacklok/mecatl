@@ -15,6 +15,7 @@ import (
 	"syscall"
 	"time"
 
+	"golang.org/x/time/rate"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/health"
@@ -156,29 +157,42 @@ func mountAS1(mux *http.ServeMux, as1 *app.IdentityBrokerAS1Server, profile serv
 			return fmt.Errorf("route %q conflicts with a mecak8s route; choose another --identity-broker-as1-issuer path", route)
 		}
 	}
-	handler := limitAS1(as1.Handler)
+	signIn := limitAS1(as1.Handler, rate.NewLimiter(as1SignInRatePerSec, as1SignInBurst))
+	token := limitAS1(as1.Handler, rate.NewLimiter(as1TokenRatePerSec, as1TokenBurst))
 	for _, route := range as1.Routes {
-		mux.Handle(route, handler)
+		if strings.HasSuffix(route, "/oauth/token") {
+			mux.Handle(route, token)
+		} else {
+			mux.Handle(route, signIn)
+		}
 	}
 	return nil
 }
 
 // Bounds on AS-1's anonymous routes. /oauth/authorize stores a pending
 // authorization before anyone signs in, so request size and rate bound the
-// memory an unauthenticated caller can make AS-1 hold.
+// memory an unauthenticated caller can make AS-1 hold. mecak8s does not trust
+// forwarded headers, so behind an ingress every user has the same peer
+// address: the rates are global, with the browser sign-in routes and the
+// token endpoint in separate buckets so a flood of one cannot starve the
+// other.
 const (
 	as1MaxQueryBytes    = 8 << 10
 	as1MaxBodyBytes     = 64 << 10
-	as1PeerRatePerSec   = 10
-	as1PeerBurst        = 20
-	as1GlobalRatePerSec = 50
-	as1GlobalBurst      = 100
+	as1SignInRatePerSec = 50
+	as1SignInBurst      = 200
+	as1TokenRatePerSec  = 50
+	as1TokenBurst       = 200
 )
 
-// limitAS1 rate limits AS-1 per direct peer and globally, refuses an
+// limitAS1 refuses a request limiter has no room for with 429, refuses an
 // oversized query, and caps the request body.
-func limitAS1(next http.Handler) http.Handler {
-	bounded := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+func limitAS1(next http.Handler, limiter *rate.Limiter) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !limiter.Allow() {
+			http.Error(w, "rate limit exceeded", http.StatusTooManyRequests)
+			return
+		}
 		if len(r.URL.RawQuery) > as1MaxQueryBytes {
 			http.Error(w, "query too long", http.StatusRequestURITooLong)
 			return
@@ -186,7 +200,6 @@ func limitAS1(next http.Handler) http.Handler {
 		r.Body = http.MaxBytesReader(w, r.Body, as1MaxBodyBytes)
 		next.ServeHTTP(w, r)
 	})
-	return server.PeerRateLimit(bounded, as1PeerRatePerSec, as1PeerBurst, as1GlobalRatePerSec, as1GlobalBurst)
 }
 
 func drainHTTPMux(svc *server.Service, wait func(time.Duration)) http.Handler {

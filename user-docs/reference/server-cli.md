@@ -722,8 +722,10 @@ Usage: mecak8s [flags]
         HTTPS issuer URL of the OIDC identity provider users sign in at through AS-1.
         Required with --identity-broker-as1-issuer
   --identity-broker-subject-claim string
-        Upstream identity provider ID-token claim that names the company identity, such
-        as oid for Entra ID. Requires --identity-broker-as1-issuer (default "sub")
+        Upstream identity provider ID-token claim that names the company identity, the
+        same for a user in every application: oid for Entra ID, whose sub differs per
+        application, or sub for a provider whose sub does not. Required with, and only
+        allowed with, --identity-broker-as1-issuer
   --import-claude-permissions
         Import compatible Claude Code permission settings
   --learning-store-url string

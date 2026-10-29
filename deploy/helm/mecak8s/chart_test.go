@@ -643,21 +643,21 @@ func TestMecak8sHelmChart_OwnerIdentity(t *testing.T) {
 		t.Fatalf("template: render = %v, want failure %q:\n%s", err, wantUnknown, output)
 	}
 
-	// The identity broker, enabled through extraArgs, needs the owner identity
-	// when OIDC is on; mecak8s refuses it at startup, so the chart fails first.
-	for _, arg := range []string{"--enable-identity-broker", "-enable-identity-broker", "--enable-identity-broker=true", "--enable-identity-broker=1"} {
-		want := fmt.Sprintf("extraArgs entry %q enables the identity broker, which requires oidc.ownerIdentity=sub_id when oidc.enabled is true", arg)
-		if output, err := helm(t, append(slices.Clone(base), "--set-string", "extraArgs[0]="+arg)...); err == nil || !strings.Contains(output, want) {
-			t.Fatalf("broker %s without owner identity: render = %v, want failure %q:\n%s", arg, err, want, output)
-		}
-	}
-	for name, extra := range map[string][]string{
-		"broker explicitly off":  {"--set-string", "extraArgs[0]=--enable-identity-broker=false"},
-		"broker with identity":   {"--set-string", "extraArgs[0]=--enable-identity-broker", "--set", "oidc.ownerIdentity=sub_id", "--set", "oidc.acceptedClientIDs={mecatui}"},
-		"broker without OIDC on": {"--set-string", "extraArgs[0]=--enable-identity-broker", "--set", "oidc.enabled=false"},
-	} {
-		if output, err := helm(t, append(slices.Clone(base), extra...)...); err != nil {
-			t.Fatalf("%s: render failed: %v\n%s", name, err, output)
+	// The identity broker is enabled only through identityBroker.enabled, which
+	// also renders its single replica: extraArgs may not enable it in any
+	// spelling, whatever the owner identity, OIDC, or identityBroker.enabled.
+	for _, arg := range []string{"--enable-identity-broker", "-enable-identity-broker", "--enable-identity-broker=true", "-enable-identity-broker=1", "--enable-identity-broker=false"} {
+		want := fmt.Sprintf("extraArgs entry %q enables the identity broker without the single replica it needs; remove it and set identityBroker.enabled=true", arg)
+		for name, extra := range map[string][]string{
+			"without owner identity": nil,
+			"with owner identity":    {"--set", "oidc.ownerIdentity=sub_id", "--set", "oidc.acceptedClientIDs={mecatui}"},
+			"without OIDC":           {"--set", "oidc.enabled=false"},
+			"with the broker on":     {"--set", "oidc.ownerIdentity=sub_id", "--set", "oidc.acceptedClientIDs={mecatui}", "--set", "identityBroker.enabled=true,replicaCount=1", "--set-string", "extraArgs[1]=--no-shell"},
+		} {
+			args := slices.Concat(base, []string{"--set-string", "extraArgs[0]=" + arg}, extra)
+			if output, err := helm(t, args...); err == nil || !strings.Contains(output, want) {
+				t.Fatalf("extraArgs %s %s: render = %v, want failure %q:\n%s", arg, name, err, want, output)
+			}
 		}
 	}
 
@@ -694,7 +694,7 @@ func TestMecak8sHelmChart_IdentityBrokerAS1(t *testing.T) {
 	base := []string{"template", "as1", ".", "--set", "mockProvider=true,permissionMode=yolo,replicaCount=1", "--set", "redis.local.enabled=true",
 		"--set", "extraArgs={--no-shell}",
 		"--set", "oidc.enabled=true,oidc.audience=mecatl,oidc.ownerIdentity=sub_id,oidc.resource=https://mecatl.example.com",
-		"--set", "identityBroker.enabled=true",
+		"--set", "identityBroker.enabled=true,identityBroker.subjectClaim=sub",
 		"--set", "identityBroker.as1.issuer=https://mecatl.example.com/as1,identityBroker.as1.tuiClientID=mecatui",
 		"--set", "identityBroker.as1.upstream.issuer=https://login.example.com/tenant/v2.0,identityBroker.as1.upstream.clientID=as1"}
 	with := func(values ...string) []string {
@@ -717,13 +717,14 @@ func TestMecak8sHelmChart_IdentityBrokerAS1(t *testing.T) {
 		"--oidc-issuer=https://mecatl.example.com/as1", "--oidc-client-id=mecatui", "--oidc-accepted-client-ids=mecatui", "--oidc-owner-identity=sub_id",
 		"--enable-identity-broker", "--identity-broker-as1-issuer=https://mecatl.example.com/as1", "--identity-broker-as1-tui-client-id=mecatui",
 		"--identity-broker-as1-upstream-issuer=https://login.example.com/tenant/v2.0", "--identity-broker-as1-upstream-client-id=as1",
+		"--identity-broker-subject-claim=sub",
 	} {
 		if !slices.Contains(args, want) {
 			t.Fatalf("rendered args missing %q: %v", want, args)
 		}
 	}
 	for _, arg := range args {
-		if strings.HasPrefix(arg, "--identity-broker-as1-signing-key-file") || strings.HasPrefix(arg, "--identity-broker-as1-upstream-client-secret-file") || strings.HasPrefix(arg, "--identity-broker-subject-claim") {
+		if strings.HasPrefix(arg, "--identity-broker-as1-signing-key-file") || strings.HasPrefix(arg, "--identity-broker-as1-upstream-client-secret-file") {
 			t.Fatalf("minimal AS-1 rendered optional flag %q", arg)
 		}
 	}
@@ -807,11 +808,12 @@ func TestMecak8sHelmChart_IdentityBrokerAS1(t *testing.T) {
 		"broker without owner identity":  {with("oidc.ownerIdentity="), "identityBroker.enabled with oidc.enabled requires oidc.ownerIdentity=sub_id"},
 		"broker with a shell":            {with("extraArgs[0]=--shell=/bin/sh"), "identityBroker.enabled requires no shell in the mecak8s process"},
 		"subject claim without AS-1":     {with("identityBroker.subjectClaim=oid", "identityBroker.as1.issuer=", "identityBroker.as1.tuiClientID=", "identityBroker.as1.upstream.issuer=", "identityBroker.as1.upstream.clientID="), "identityBroker.subjectClaim requires identityBroker.as1.issuer"},
-		"broker flag also in extraArgs":  {with("extraArgs[0]=--enable-identity-broker"), `extraArgs entry "--enable-identity-broker" sets an identity broker flag`},
+		"AS-1 without subject claim":     {with("identityBroker.subjectClaim="), "identityBroker.subjectClaim is required when identityBroker.as1.issuer is set: oid for Microsoft Entra ID, or sub for an identity provider whose sub is the same across applications"},
+		"broker flag also in extraArgs":  {with("extraArgs[0]=--enable-identity-broker"), `extraArgs entry "--enable-identity-broker" enables the identity broker without the single replica it needs`},
 		"AS-1 flag also in extraArgs":    {with("extraArgs[0]=-identity-broker-as1-issuer=https://x.example.com"), `extraArgs entry "-identity-broker-as1-issuer=https://x.example.com" sets an identity broker flag`},
 		"subject claim in extraArgs":     {with("extraArgs[0]=--identity-broker-subject-claim=oid"), `extraArgs entry "--identity-broker-subject-claim=oid" sets an identity broker flag`},
 		"AS-1 without broker":            {with("identityBroker.enabled=false"), "identityBroker.as1.issuer requires identityBroker.enabled=true"},
-		"AS-1 values without issuer":     {with("identityBroker.as1.issuer="), "identityBroker.as1 values require identityBroker.as1.issuer"},
+		"AS-1 values without issuer":     {with("identityBroker.as1.issuer=", "identityBroker.subjectClaim="), "identityBroker.as1 values require identityBroker.as1.issuer"},
 		"without TUI client ID":          {with("identityBroker.as1.tuiClientID="), "identityBroker.as1.tuiClientID is required"},
 		"without upstream issuer":        {with("identityBroker.as1.upstream.issuer="), "identityBroker.as1.upstream.issuer is required"},
 		"without upstream client ID":     {with("identityBroker.as1.upstream.clientID="), "identityBroker.as1.upstream.clientID is required"},

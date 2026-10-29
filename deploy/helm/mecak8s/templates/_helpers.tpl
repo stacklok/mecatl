@@ -78,6 +78,12 @@ client IDs from it; the chart renders the same derived values.
 {{- /* mecak8s refuses these combinations at startup; fail at render time instead of crash-looping. */ -}}
 {{- $broker := .Values.identityBroker -}}
 {{- $as1 := $broker.as1 -}}
+{{- range $arg := .Values.extraArgs -}}
+{{- /* Only identityBroker.enabled also renders the one replica and Recreate strategy the process-local broker state needs. */ -}}
+{{- if regexMatch "^--?enable-identity-broker(=|$)" (toString $arg) -}}
+{{- fail (printf "extraArgs entry %q enables the identity broker without the single replica it needs; remove it and set identityBroker.enabled=true" (toString $arg)) -}}
+{{- end -}}
+{{- end -}}
 {{- if $broker.enabled -}}
 {{- if and .Values.oidc.enabled (ne .Values.oidc.ownerIdentity "sub_id") -}}{{ fail "identityBroker.enabled with oidc.enabled requires oidc.ownerIdentity=sub_id" }}{{- end -}}
 {{- /* Go's flag parser takes one or two leading dashes, a bool value only after "=", and a string value after "=" or in the next argument; the last setting wins. */ -}}
@@ -89,7 +95,7 @@ client IDs from it; the chart renders the same derived values.
 {{- if $shellValueNext -}}
 {{- $emptyShell = eq $a "" -}}
 {{- $shellValueNext = false -}}
-{{- else if regexMatch "^--?(enable-identity-broker|identity-broker-as1-[a-z-]+|identity-broker-subject-claim)(=|$)" $a -}}
+{{- else if regexMatch "^--?(identity-broker-as1-[a-z-]+|identity-broker-subject-claim)(=|$)" $a -}}
 {{- fail (printf "extraArgs entry %q sets an identity broker flag, which the chart owns when identityBroker.enabled is true; remove it and set identityBroker values instead" $a) -}}
 {{- else if regexMatch "^--?no-shell(=|$)" $a -}}
 {{- $noShell = regexMatch "^--?no-shell(=(1|t|T|TRUE|true|True))?$" $a -}}
@@ -110,6 +116,7 @@ client IDs from it; the chart renders the same derived values.
 {{- $_ := required "identityBroker.as1.tuiClientID is required when identityBroker.as1.issuer is set" $as1.tuiClientID -}}
 {{- $_ := required "identityBroker.as1.upstream.issuer is required when identityBroker.as1.issuer is set" $as1.upstream.issuer -}}
 {{- $_ := required "identityBroker.as1.upstream.clientID is required when identityBroker.as1.issuer is set" $as1.upstream.clientID -}}
+{{- $_ := required "identityBroker.subjectClaim is required when identityBroker.as1.issuer is set: oid for Microsoft Entra ID, or sub for an identity provider whose sub is the same across applications" $broker.subjectClaim -}}
 {{- range $name, $url := dict "identityBroker.as1.issuer" $as1.issuer "identityBroker.as1.upstream.issuer" $as1.upstream.issuer -}}
 {{- if not (regexMatch "^https://[^/?#@[:space:]]+(/[^?#[:space:]]*)?$" $url) -}}{{ fail (printf "%s must be an https URL with a host and no credentials, query, or fragment" $name) }}{{- end -}}
 {{- end -}}
@@ -161,14 +168,6 @@ client IDs from it; the chart renders the same derived values.
 {{- if and $clientID (not (has $clientID $acceptedClientIDs)) -}}{{ fail (printf "oidc.clientID %q must be listed in oidc.acceptedClientIDs when oidc.ownerIdentity is sub_id" $clientID) }}{{- end -}}
 {{- else if .Values.oidc.acceptedClientIDs -}}
 {{- fail "oidc.acceptedClientIDs requires oidc.ownerIdentity=sub_id" -}}
-{{- end -}}
-{{- if and .Values.oidc.enabled (not .Values.oidc.ownerIdentity) -}}
-{{- range $arg := .Values.extraArgs -}}
-{{- /* mecak8s refuses this combination at startup; fail at render time instead of crash-looping. */ -}}
-{{- if regexMatch "^--?enable-identity-broker(=(1|t|T|true|TRUE|True))?$" (toString $arg) -}}
-{{- fail (printf "extraArgs entry %q enables the identity broker, which requires oidc.ownerIdentity=sub_id when oidc.enabled is true" (toString $arg)) -}}
-{{- end -}}
-{{- end -}}
 {{- end -}}
 {{- range $accepted := $acceptedClientIDs -}}
 {{- if or (eq (trim $accepted) "") (ne (trim $accepted) $accepted) (contains "," $accepted) (regexMatch "[\\x00-\\x1f\\x7f-\\x9f]" $accepted) (regexMatch "[\\p{Cf}]" $accepted) -}}{{ fail (printf "oidc.acceptedClientIDs entry %q must be non-blank and contain no surrounding spaces, commas, control, or Unicode format characters" $accepted) }}{{- end -}}

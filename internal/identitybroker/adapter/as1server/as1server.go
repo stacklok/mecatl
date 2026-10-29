@@ -6,23 +6,27 @@
 // PKCE.
 //
 // The server keeps its own in-memory storage, so pending sign-ins and refresh
-// tokens do not survive a restart. Its signing key does when
-// Config.SigningKeyFile is set.
+// tokens do not survive a restart, and caps the sign-ins pending there. Its
+// signing key survives when Config.SigningKeyFile is set.
 //
 // Only the sign-in surface is served: dynamic client registration and the
-// device flow are not, whatever ToolHive's discovery document advertises.
+// device flow are not, and the discovery documents do not advertise them.
 package as1server
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"net/url"
 	"path"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/stacklok/toolhive/pkg/authserver"
 	"github.com/stacklok/toolhive/pkg/authserver/runner"
@@ -102,6 +106,9 @@ type options struct {
 	// extraAudiences are further allowed audiences whose tokens carry no
 	// sub_id. Test-only.
 	extraAudiences []string
+	// maxPendingAuthorizations replaces the pending sign-in cap when
+	// positive. Test-only.
+	maxPendingAuthorizations int
 }
 
 // New validates cfg, discovers the upstream IdP, and builds AS-1.
@@ -115,7 +122,10 @@ func newServer(ctx context.Context, cfg Config, opts options) (*Server, error) {
 		return nil, err
 	}
 	audiences := append([]string{cfg.Audience}, opts.extraAudiences...)
-	store := storage.NewMemoryStorage()
+	store := &cappedStorage{MemoryStorage: storage.NewMemoryStorage(), limit: maxPendingAuthorizations}
+	if opts.maxPendingAuthorizations > 0 {
+		store.limit = opts.maxPendingAuthorizations
+	}
 	for _, pc := range cfg.PublicClients {
 		client, err := registration.New(registration.Config{
 			ID:                      pc.ID,
@@ -154,8 +164,45 @@ func newServer(ctx context.Context, cfg Config, opts options) (*Server, error) {
 		return nil, fmt.Errorf("as1server: create authorization server: %w", err)
 	}
 	s := &Server{issuer: issuer, auth: auth}
-	s.routes, s.handler = signInRoutes(issuer.Path, auth.Handler())
+	s.routes, s.handler = signInRoutes(issuer, auth.Handler())
 	return s, nil
+}
+
+// maxPendingAuthorizations caps the sign-ins AS-1 holds before the user has
+// approved them: /oauth/authorize stores one for every anonymous request.
+// Sign-ins past that step may use a further tenth so a flood of new ones does
+// not fail those already in progress. ToolHive keeps an entry for its
+// ten-minute lifetime plus up to one five-minute cleanup interval.
+const maxPendingAuthorizations = 10_000
+
+// errTooManyPendingAuthorizations refuses a sign-in at the cap. ToolHive
+// answers it with a server_error redirect to the client and does not show
+// this text to the browser.
+var errTooManyPendingAuthorizations = errors.New("as1server: too many pending sign-ins")
+
+// cappedStorage is ToolHive's memory storage with pending authorizations
+// capped. The embedded storage serves every other method, including the
+// optional interfaces ToolHive looks for.
+type cappedStorage struct {
+	*storage.MemoryStorage
+	// mu makes the count and the store one step.
+	mu    sync.Mutex
+	limit int
+}
+
+// StorePendingAuthorization refuses a new sign-in once limit are pending, and
+// one past consent once a further tenth are.
+func (s *cappedStorage) StorePendingAuthorization(ctx context.Context, state string, pending *storage.PendingAuthorization) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	limit := s.limit
+	if pending != nil && pending.ConsentStage != storage.ConsentStageAwaiting {
+		limit += s.limit / 10
+	}
+	if s.Stats().PendingAuthorizations >= limit {
+		return errTooManyPendingAuthorizations
+	}
+	return s.MemoryStorage.StorePendingAuthorization(ctx, state, pending)
 }
 
 // upstreamRunConfig is ToolHive's configuration of AS-1's upstream IdP. It
@@ -228,11 +275,13 @@ func httpsURL(name, raw string) (*url.URL, error) {
 	return u, nil
 }
 
-// signInRoutes lists the routes AS-1 serves under issuerPath and returns a
-// handler that serves only those, passing them to embedded with issuerPath
-// stripped. Everything else, including registration and the device flow, is
-// not found.
-func signInRoutes(issuerPath string, embedded http.Handler) ([]string, http.Handler) {
+// signInRoutes lists the routes AS-1 serves under issuer's path and returns a
+// handler that serves only those, passing them to embedded with the issuer
+// path stripped. Everything else, including registration and the device flow,
+// is not found, and the discovery documents leave out the endpoints that
+// would be.
+func signInRoutes(issuer *url.URL, embedded http.Handler) ([]string, http.Handler) {
+	issuerPath := issuer.Path
 	routes := []string{
 		issuerPath + "/oauth/authorize",
 		issuerPath + "/oauth/consent",
@@ -242,12 +291,51 @@ func signInRoutes(issuerPath string, embedded http.Handler) ([]string, http.Hand
 		issuerPath + "/.well-known/oauth-authorization-server",
 		issuerPath + "/.well-known/jwks.json",
 	}
+	routed := make(map[string]bool, len(routes))
+	for _, route := range routes {
+		routed[issuer.Scheme+"://"+issuer.Host+route] = true
+	}
 	stripped := http.StripPrefix(issuerPath, embedded)
+	discovery := withoutUnroutedEndpoints(stripped, routed)
 	mux := http.NewServeMux()
 	for _, route := range routes {
-		mux.Handle(route, stripped)
+		if strings.HasPrefix(route, issuerPath+"/.well-known/") && !strings.HasSuffix(route, "/jwks.json") {
+			mux.Handle(route, discovery)
+		} else {
+			mux.Handle(route, stripped)
+		}
 	}
 	return routes, mux
+}
+
+// withoutUnroutedEndpoints serves next's discovery document without the
+// *_endpoint fields whose URL is not one of routed, such as ToolHive's
+// registration and device-flow endpoints. Any other response passes through.
+func withoutUnroutedEndpoints(next http.Handler, routed map[string]bool) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		recorded := &bufferedResponse{header: make(http.Header)}
+		next.ServeHTTP(recorded, r)
+		if recorded.status == 0 {
+			recorded.status = http.StatusOK
+		}
+		body := recorded.body.Bytes()
+		var doc map[string]json.RawMessage
+		if recorded.status == http.StatusOK && json.Unmarshal(body, &doc) == nil {
+			for key, raw := range doc {
+				var endpoint string
+				if strings.HasSuffix(key, "_endpoint") && (json.Unmarshal(raw, &endpoint) != nil || !routed[endpoint]) {
+					delete(doc, key)
+				}
+			}
+			if rewritten, err := json.Marshal(doc); err == nil {
+				body = rewritten
+			}
+		}
+		maps.Copy(w.Header(), recorded.header)
+		w.Header().Set("Content-Length", strconv.Itoa(len(body)))
+		w.WriteHeader(recorded.status)
+		_, _ = w.Write(body)
+	})
 }
 
 // Issuer is AS-1's issuer URL.

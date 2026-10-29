@@ -77,6 +77,7 @@ var as1Args = []string{
 	"--identity-broker-as1-tui-client-id=mecatui",
 	"--identity-broker-as1-upstream-issuer=https://idp.example",
 	"--identity-broker-as1-upstream-client-id=mecatl-as1",
+	"--identity-broker-subject-claim=sub",
 	"--oidc-audience=https://mecatl.example/api",
 	"--oidc-resource=https://mecatl.example",
 	"--oidc-owner-identity=sub_id",
@@ -112,6 +113,8 @@ func TestIdentityBrokerAS1FlagRules(t *testing.T) {
 		{name: "without the TUI client", args: without("--identity-broker-as1-tui-client-id"), want: "requires --identity-broker-as1-tui-client-id"},
 		{name: "without the upstream issuer", args: without("--identity-broker-as1-upstream-issuer"), want: "requires --identity-broker-as1-tui-client-id"},
 		{name: "without the upstream client", args: without("--identity-broker-as1-upstream-client-id"), want: "requires --identity-broker-as1-tui-client-id"},
+		{name: "without the subject claim", args: without("--identity-broker-subject-claim"), want: "requires --identity-broker-subject-claim: oid for Entra ID, whose sub differs per application, or sub for an identity provider whose sub is the same across applications"},
+		{name: "empty subject claim", args: with("--identity-broker-subject-claim="), want: "requires --identity-broker-subject-claim"},
 		{name: "http issuer", args: with("--identity-broker-as1-issuer=http://mecatl.example/as1"), want: "--identity-broker-as1-issuer must be an https URL"},
 		{name: "issuer with a query", args: with("--identity-broker-as1-issuer=https://mecatl.example/as1?x=1"), want: "--identity-broker-as1-issuer must be an https URL"},
 		{name: "http upstream issuer", args: with("--identity-broker-as1-upstream-issuer=http://idp.example"), want: "--identity-broker-as1-upstream-issuer must be an https URL"},
@@ -152,7 +155,7 @@ func TestIdentityBrokerAS1FlagRules(t *testing.T) {
 		t.Fatal(err)
 	}
 	if got := appConfig(cfg, nil, observability{}).IdentityBrokerHostedAS1; got.SubjectClaim != "sub" || got.SigningKeyFile != "" || got.UpstreamClientSecretFile != "" {
-		t.Fatalf("IdentityBrokerHostedAS1 defaults = %+v, want subject claim sub and no files", got)
+		t.Fatalf("IdentityBrokerHostedAS1 defaults = %+v, want the explicit subject claim sub and no files", got)
 	}
 	cfg, err = parseFlags(with("--identity-broker-subject-claim=oid", "--identity-broker-as1-signing-key-file=/keys/as1.pem", "--identity-broker-as1-upstream-client-secret-file=/secrets/as1"))
 	if err != nil {

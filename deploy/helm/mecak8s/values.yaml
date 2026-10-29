@@ -279,8 +279,7 @@ oidc:
   # identifier). sub_id requires RFC 9068 access tokens (typ at+jwt) whose
   # client_id is listed in acceptedClientIDs; other tokens are rejected. It
   # requires oidc.enabled and at least one acceptedClientIDs entry. The identity
-  # broker (identityBroker.enabled, or --enable-identity-broker in extraArgs)
-  # requires sub_id when OIDC is on.
+  # broker (identityBroker.enabled) requires sub_id when OIDC is on.
   ownerIdentity: ""
   # acceptedClientIDs are the OAuth clients (for example the TUI and Studio)
   # whose access tokens ownerIdentity sub_id accepts. When clientID is set it must be
@@ -292,12 +291,18 @@ oidc:
 # state is process-local; the Deployment then rolls out with Recreate), and no shell
 # in the process: add --no-shell to extraArgs, or --shell= with execution.enabled to
 # keep the remote Shell (redis.filesystem.enabled also has no shell). The chart
-# refuses to render without one of these rather than let the pod crash-loop. With
-# enabled, the chart owns the identity broker flags and refuses them in extraArgs.
+# refuses to render without one of these rather than let the pod crash-loop.
+# enabled is the only way to turn the broker on: the chart refuses
+# --enable-identity-broker in extraArgs, which would skip the single replica and
+# Recreate rollout. With enabled, the chart also owns the other identity broker
+# flags and refuses them in extraArgs.
 identityBroker:
   enabled: false
-  # Upstream ID-token claim that names the company identity. Empty uses sub; set
-  # oid for Microsoft Entra ID. Requires as1.issuer.
+  # Upstream ID-token claim that names the company identity, required with
+  # as1.issuer and allowed only with it. It must identify a user the same way in
+  # every IdP application the identity broker uses: oid for Microsoft Entra ID,
+  # whose sub differs per application; sub for an IdP whose sub is the same
+  # across applications.
   subjectClaim: ""
   # as1 hosts AS-1, Mecatl's sign-in authorization server in front of the company
   # identity provider, on mecak8s's HTTP listener under the issuer URL's path. A
