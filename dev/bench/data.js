@@ -388471,6 +388471,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1793310491234,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "77584ed9980e88bbe7de2ff74f9b6a7736ed2edb",
+          "message": "fix(studio): refresh thread IDs after subscribing (#2619)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-29T23:33:46Z",
+          "tree_id": "ff0d2c9819d422e6d7776e490ba370b30b97646e",
+          "url": "https://github.com/stacklok/mecatl/commit/77584ed9980e88bbe7de2ff74f9b6a7736ed2edb"
+        },
+        "date": 1793317565803,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 16108,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12874,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 794,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -506613,6 +506652,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1793317562964,
+  "lastUpdate": 1793317566804,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
