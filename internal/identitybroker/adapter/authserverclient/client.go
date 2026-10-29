@@ -36,7 +36,11 @@ const (
 	maxResponseBytes       = 1 << 20
 )
 
-// ErrResponseTooLarge reports a response body over 1 MiB.
+// ErrResponseTooLarge reports a success response body over 1 MiB that the
+// client was asked to decode; such errors also wrap
+// identitybroker.ErrMalformedResponse and
+// identitybroker.ErrTransportConfiguration. An oversized refusal is a
+// *identitybroker.ServerRefusal with its status and no code.
 var ErrResponseTooLarge = errors.New("authserverclient: the response is too large")
 
 // Assertions mints client assertions; *identitybroker.ClientAssertionSigner
@@ -169,19 +173,25 @@ func (c *Client) post(ctx context.Context, endpoint string, form url.Values, out
 		}
 		return failedRequest(err)
 	}
-	if len(raw) > maxResponseBytes {
-		return ErrResponseTooLarge
-	}
+	// An oversized body keeps its status's meaning: a refusal stays a refusal
+	// with that status, so a proxy's 502 is still resent, and a success the
+	// client cannot read stays a malformed response.
+	tooLarge := len(raw) > maxResponseBytes
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		var oauthErr struct {
 			Error       string `json:"error"`
 			Description string `json:"error_description"`
 		}
-		_ = json.Unmarshal(raw, &oauthErr) // a non-JSON body leaves both empty
+		if !tooLarge {
+			_ = json.Unmarshal(raw, &oauthErr) // a non-JSON body leaves both empty
+		}
 		return identitybroker.NewServerRefusal(resp.StatusCode, oauthErr.Error, oauthErr.Description)
 	}
 	if out == nil {
 		return nil
+	}
+	if tooLarge {
+		return fmt.Errorf("authserverclient: %w (%w, %w)", ErrResponseTooLarge, identitybroker.ErrMalformedResponse, identitybroker.ErrTransportConfiguration)
 	}
 	if json.Unmarshal(raw, out) != nil {
 		// A success response the client cannot read points at the wrong
