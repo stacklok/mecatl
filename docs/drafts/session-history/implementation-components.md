@@ -11,6 +11,7 @@ The motivation comes from Joe's supplied review handoff for [identity PR #2404](
 The implementation observations below describe that review context, not an independent qualification of its branch or this checkout.
 Recheck concrete interfaces against the source selected for implementation; the proposal does not depend on the handoff's line numbers.
 Use the [design review map](README.md) for the core contracts and the [ownership note](implementation-ownership.md) for consistent snapshot and cloning patterns at these interfaces.
+The [execution-kernel investigation](implementation-kernel.md) identifies additional candidates in the current source and staging boundaries to establish before storage integration.
 
 ## Extensions compose capabilities through different seams
 
@@ -36,6 +37,7 @@ Neither entry path can bypass memory approval, skill evaluation/activation, disc
 Where both entry paths offer the same action, they should delegate to the same authorized application operation rather than implement separate policies.
 
 Host composition supplies explicit, bounded capabilities: history/evidence reads, permitted subsystem operations, and lifecycle services as needed.
+For session-owned work, drivers declare their specific lifecycle state, outcomes, and safe points; the kernel/coordinator admits transitions and records obligations and accepted outcomes before authorized publication.
 Installing an extension does not grant unrestricted access to live session objects, private history, or arbitrary storage writes.
 Use the [ownership patterns](implementation-ownership.md) consistently at each seam.
 Prefer purpose-specific interfaces over passing the entire engine or host to every extension.

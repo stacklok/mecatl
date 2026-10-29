@@ -60,6 +60,7 @@ This work introduces no new guardrail decision semantics, hook-criticality taxon
 The initial service rollout is teardown and upgrade, not mixed-version rolling deployment.
 
 **Development staging:** build infrastructure in short PRs, using new packages alongside existing ones where that keeps the current runtime unchanged.
+Establish [kernel/driver boundaries](implementation-kernel.md#staging-before-and-through-the-storage-rework) early enough to separate capability extraction from new-history integration; preparatory extractions preserve existing behavior and storage contracts.
 Defer binding those foundations into execution until explicit integration work.
 An engine-selection flag chooses the old or new runtime for a server instance, including an embedded server started by a client.
 It is not a per-session hot switch: old sessions do not work in the new runtime, and new sessions do not work in the old runtime.

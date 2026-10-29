@@ -30,6 +30,7 @@ Open-decision lists live in the packets, not in competing reference backlogs.
 
 ## Implementation considerations
 
+- [Execution kernel and staged capability extraction](implementation-kernel.md): source-based candidates, kernel-retained invariants, and boundaries to establish before storage integration so work can proceed in small, verifiable updates.
 - [Snapshots, ownership, and cloning](implementation-ownership.md): candidate patterns for stable reader views and enforceable representation boundaries. This note guides implementation discussion; it does not change core contracts or select an analyzer.
 - [Extensions and execution policy boundaries](implementation-components.md): delegation and learning compose capabilities through different extension points and can contribute tools or client commands. Also covers compaction policy extraction and diagnostic storage observations; concrete interfaces and implementation remain unapproved.
 
