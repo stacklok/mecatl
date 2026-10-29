@@ -31,7 +31,8 @@ See [commands and lifecycle](commands-and-lifecycle.md).
 
 ### Registered extensions share the contracts
 
-See [extension reconstruction evidence](session-commit-history-contracts.md#built-in-extension-reconstruction-boundary) and [core records/extensions](#core-records-and-extensions).
+See [capability composition and its different extension points](implementation-components.md#extensions-compose-capabilities-through-different-seams) for delegation and learning.
+The [extension reconstruction evidence](session-commit-history-contracts.md#built-in-extension-reconstruction-boundary) and [core records/extensions](#core-records-and-extensions) specify the durable session-record seam.
 
 ### Ownership eventually moves with the tree
 
@@ -274,6 +275,8 @@ Versioning and explicit compatibility must not silently reinterpret old IDs or p
 
 #### Core records and extensions
 
+This section specifies the durable session-record extension point, one of the [capability-composition seams](implementation-components.md#extensions-compose-capabilities-through-different-seams).
+Learning can use other extension points without implementing this protocol unless it introduces state that requires it.
 An `Extension` is a trusted, registered interpreter for namespaced, versioned session records and their derived state.
 Keep tool-specific lifecycles in these records rather than making each one a core event type.
 The core envelope is the shared record structure, not a storage implementation or client payload.

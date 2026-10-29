@@ -31,7 +31,7 @@ Open-decision lists live in the packets, not in competing reference backlogs.
 ## Implementation considerations
 
 - [Snapshots, ownership, and cloning](implementation-ownership.md): candidate patterns for stable reader views and enforceable representation boundaries. This note guides implementation discussion; it does not change core contracts or select an analyzer.
-- [Learning and compaction policy boundaries](implementation-components.md): explore separating policy implementations from execution while preserving authority, history, and storage-purpose contracts. This is follow-up input from the identity work, not an approved extraction plan.
+- [Extensions and execution policy boundaries](implementation-components.md): delegation and learning compose capabilities through different extension points and can contribute tools or client commands. Also covers compaction policy extraction and diagnostic storage observations; concrete interfaces and implementation remain unapproved.
 
 ## Optional models and research
 
