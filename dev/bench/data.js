@@ -387280,6 +387280,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1793300287068,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "d1e29fc4129a1be0b921e22d6864f28eb020f7c7",
+          "message": "feat(mecatui): move reflections browsing onto bounded surfaces (#2595)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-29T19:02:18Z",
+          "tree_id": "a28ae268e99350407658629bb5001154b2c207da",
+          "url": "https://github.com/stacklok/mecatl/commit/d1e29fc4129a1be0b921e22d6864f28eb020f7c7"
+        },
+        "date": 1793301262490,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 16116,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12881,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 794,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -505080,6 +505119,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1793301259189,
+  "lastUpdate": 1793301264304,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
