@@ -383310,6 +383310,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1793230357774,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "8d9e6ea8bf6a7706622e615a44b5b86534c5fbe1",
+          "message": "fix(mecatui): render sharp splash in direct Ghostty 1.4+ (#2596)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-28T18:01:20-07:00",
+          "tree_id": "e448c3a397442f6be3530e4add432a6b879126e6",
+          "url": "https://github.com/stacklok/mecatl/commit/8d9e6ea8bf6a7706622e615a44b5b86534c5fbe1"
+        },
+        "date": 1793236434629,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 16143,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12906.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 794,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -499970,6 +500009,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1793236431197,
+  "lastUpdate": 1793236435564,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
