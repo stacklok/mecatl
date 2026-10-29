@@ -385692,6 +385692,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1793292697268,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "c366c3e8119fb2c412d3c8dfc2ec61db99d80d7c",
+          "message": "fix(learning): fit manual synchronous reflection to request budgets (#2600)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-29T10:14:23-07:00",
+          "tree_id": "83d57266410e81ad612ec22ea1ba6c09619caeb5",
+          "url": "https://github.com/stacklok/mecatl/commit/c366c3e8119fb2c412d3c8dfc2ec61db99d80d7c"
+        },
+        "date": 1793294828793,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 16155.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12919,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 794,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -503036,6 +503075,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1793294825050,
+  "lastUpdate": 1793294830072,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
