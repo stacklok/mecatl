@@ -206,6 +206,13 @@ you signed in before the server published it, run `mecatui login` again
 (switching to the identity broker changes the issuer, which requires a new login
 anyway).
 
+When the identity broker exchanges access tokens at AS-1, the server refuses a
+token that was already used, or that AS-1 rejects, before the request changes
+anything. It answers with `bearer_rejected` (HTTP 401 with an `invalid_token`
+challenge), and `mecatui` refreshes its access token and resends the request
+once. If your sign-in was revoked, the server answers `sign_in_required`
+instead, and `mecatui` asks you to sign in again.
+
 Discovery rejects a `--scopes` override. Configure advertised scopes through
 `oidc.scopes`; explicit `mecatui login --issuer ...` still accepts `--scopes`.
 

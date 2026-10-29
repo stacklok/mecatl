@@ -69,18 +69,29 @@ func (d *leakDiagnostics) text() string {
 }
 
 // wantNewOpenTokens checks that the broker opened at least one session since
-// from opens and that every such open carried want (zero when want is "").
+// from opens, all within one request, and that the request presented want
+// exactly once, every other open carrying no token: a token converts once, so
+// the open that presents it takes it from the request. With want "", no open
+// carries a token.
 func wantNewOpenTokens(t *testing.T, broker *recordingBroker, from int, want string) {
 	t.Helper()
 	opens := broker.openRequests()
 	if len(opens) <= from {
 		t.Fatalf("OpenSession calls = %d, want more than %d", len(opens), from)
 	}
+	presented := 0
 	for i, open := range opens[from:] {
-		if got := open.AccessToken.Value(); got != want {
-			t.Fatalf("open %d for %s carried a token %t, want the request's token %t (matches = %t)",
-				from+i, open.HostSessionID, got != "", want != "", got == want)
+		got := open.AccessToken.Value()
+		if got == "" {
+			continue
 		}
+		presented++
+		if got != want {
+			t.Fatalf("open %d for %s carried a token that is not the request's (want one: %t)", from+i, open.HostSessionID, want != "")
+		}
+	}
+	if wantPresented := map[bool]int{true: 1, false: 0}[want != ""]; presented != wantPresented {
+		t.Fatalf("opens since %d presented a token %d times, want %d", from, presented, wantPresented)
 	}
 }
 

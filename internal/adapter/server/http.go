@@ -2831,5 +2831,11 @@ func writeError(w http.ResponseWriter, code int, msg string) {
 // errorRegistry, so the two transports cannot report a different class for the
 // same sentinel.
 func writeServiceError(w http.ResponseWriter, err error) {
+	// A refused access token is answered as the authenticator answers one, with
+	// an invalid_token challenge. Other 401s carry no challenge, so this keys on
+	// the sentinels rather than on the status.
+	if errors.Is(err, ErrBearerRejected) || errors.Is(err, ErrSignInRequired) {
+		w.Header().Set("WWW-Authenticate", protectedResourceChallenge(true))
+	}
 	writeProblem(w, classifyError(err), err.Error())
 }

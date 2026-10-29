@@ -48,7 +48,7 @@ func withoutRequestAccessToken(ctx context.Context) context.Context {
 
 // accessTokenFromRequest returns the access token of the request ctx belongs
 // to, or the zero Token when there is none: no verified caller, a path with no
-// user request, or a request that has returned.
+// user request, a request that has returned, or a token already taken.
 func accessTokenFromRequest(ctx context.Context) identitybroker.Token {
 	held, _ := ctx.Value(requestAccessTokenKey{}).(*requestAccessToken)
 	if held == nil {
@@ -57,4 +57,21 @@ func accessTokenFromRequest(ctx context.Context) identitybroker.Token {
 	held.mu.Lock()
 	defer held.mu.Unlock()
 	return held.token
+}
+
+// takeRequestAccessToken returns the request's access token and empties the
+// holder. The identity broker converts an access token once, so the open that
+// presents it takes it, and every later open in the same request presents
+// nothing and so cannot be refused for the token after the request changed
+// something.
+func takeRequestAccessToken(ctx context.Context) identitybroker.Token {
+	held, _ := ctx.Value(requestAccessTokenKey{}).(*requestAccessToken)
+	if held == nil {
+		return identitybroker.Token{}
+	}
+	held.mu.Lock()
+	defer held.mu.Unlock()
+	token := held.token
+	held.token = identitybroker.Token{}
+	return token
 }

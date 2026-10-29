@@ -2635,10 +2635,21 @@ func (s *Service) persistNewSession(ctx context.Context, sess *session.Session) 
 }
 
 func (s *Service) persistCreatedSession(ctx context.Context, sess *session.Session, owner *session.Principal, request *createRequest) (*session.Session, error) {
+	// Open the identity broker session before saving, converting the request's
+	// access token: a refused token then fails the create before it saved
+	// anything, so the client's retry cannot leave a second session behind.
+	// Callers roll back the placement and engine of an unsaved session.
+	preOpened, err := s.preOpenIdentityBrokerSession(ctx, sess)
+	if err != nil {
+		return nil, err
+	}
 	persistDone := creatediag.Begin(ctx, "session_persist")
 	persistErr := s.persistNewSession(ctx, sess)
 	persistDone(persistErr)
 	if err := persistErr; err != nil {
+		// Not saved, or saved by a concurrent create that won: the broker
+		// session opened above is this attempt's alone, so close it by ID.
+		s.closePreOpenedBrokerSession(ctx, string(sess.ID), preOpened)
 		if existing, ok, collisionErr := s.resolveCreateCollision(ctx, sess.ID, owner, request, err); ok || collisionErr != nil {
 			return existing, collisionErr
 		}
@@ -2718,14 +2729,18 @@ func (s *Service) bindRelatedIncarnations(ctx context.Context, opts *createSessi
 	return nil
 }
 
-// createSession creates and saves a session, then opens its identity broker
-// session. The open uses the saved session, so a create that lost a race
-// opens with the winner's incarnation. A failed open does not fail the create:
-// the session is already saved, and the open is retried before each run,
-// which refuses to start the agent without a broker session. Like fork and
-// clear, the open is best effort: it outlives the caller's cancellation, so a
-// saved session is not left unregistered by a client that went away, and is
-// bounded, so a slow broker cannot hold the session's runEntryMu.
+// createSession creates and saves a session, then registers its main agent in
+// its identity broker session. A request that carries an access token already
+// opened the broker session before the save (persistCreatedSession), and that
+// open's refusal fails the create. The open and registration after the save
+// use the saved session, so a create that lost a race opens with the winner's
+// incarnation. Their failure does not fail the create: the session is already
+// saved, so returning an error would make the client's retry create a second
+// one; the open is retried before each run, which refuses to start the agent
+// without a broker session. Like fork and clear, it is best effort: it
+// outlives the caller's cancellation, so a saved session is not left
+// unregistered by a client that went away, and is bounded, so a slow broker
+// cannot hold the session's runEntryMu.
 func (s *Service) createSession(ctx context.Context, mode session.PermissionMode, limits session.Limits, sel ProviderSelector, specs []mcp.ServerConfig, profile SessionProfile, opts createSessionOpts) (*session.Session, error) {
 	sess, err := s.createSessionRecord(ctx, mode, limits, sel, specs, profile, opts)
 	if err == nil && sess != nil {
@@ -5900,6 +5915,13 @@ func (s *Service) startRunContentLocked(ctx context.Context, id session.SessionI
 	}
 	if _, pending := sess.FailedStepRetryPending(); pending {
 		return nil, fmt.Errorf("%w: session %q has a pending failed-step retry", ErrFailedPrecondition, id)
+	}
+	// Open the identity broker session, converting the request's access token,
+	// before the funnel below can save anything: a refused token is answered
+	// with a retryable 401 only while the request has changed nothing. The open
+	// in engineAndEnvironmentFor then finds it open and presents no token.
+	if err := s.openIdentityBrokerSession(ctx, sess); err != nil {
+		return nil, err
 	}
 	// Apply the unchanged reopen/interrupt/recover funnel only after the trusted
 	// purpose and ownership gates and lease acquisition. Rejected kinds are never

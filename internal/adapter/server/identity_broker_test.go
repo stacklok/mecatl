@@ -55,11 +55,16 @@ type recordingBroker struct {
 	// editRegistration, when set, changes each registration RegisterAgent
 	// returns.
 	editRegistration func(*identitybroker.Registration)
+	// openErr, when set, makes OpenSession fail with it.
+	openErr error
+	// afterOpen, when set, runs after each OpenSession the broker answered.
+	afterOpen func(identitybroker.OpenSessionRequest)
 }
 
 // newRecordingBroker wraps the real identity broker, so these tests exercise
-// the implementation mecak8s runs, not the stand-in.
-func newRecordingBroker() *recordingBroker {
+// the implementation mecak8s runs, not the stand-in. opts configure it, such
+// as identitybroker.WithAuthServer for session open to convert tokens.
+func newRecordingBroker(opts ...identitybroker.Option) *recordingBroker {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		panic(err)
@@ -68,7 +73,7 @@ func newRecordingBroker() *recordingBroker {
 		TrustDomain:        "agents.example.com",
 		Audience:           "https://broker.example.com",
 		CredentialLifetime: 5 * time.Minute,
-	}, nil, key)
+	}, nil, key, opts...)
 	if err != nil {
 		panic(err)
 	}
@@ -96,8 +101,16 @@ func (b *recordingBroker) OpenSession(ctx context.Context, req identitybroker.Op
 	}
 	b.mu.Lock()
 	b.opens = append(b.opens, req)
+	openErr, after := b.openErr, b.afterOpen
 	b.mu.Unlock()
-	return b.inner.OpenSession(ctx, req)
+	if openErr != nil {
+		return identitybroker.Session{}, openErr
+	}
+	opened, err := b.inner.OpenSession(ctx, req)
+	if after != nil {
+		after(req)
+	}
+	return opened, err
 }
 
 func (b *recordingBroker) FindSession(ctx context.Context, req identitybroker.FindSessionRequest) (identitybroker.Session, bool, error) {

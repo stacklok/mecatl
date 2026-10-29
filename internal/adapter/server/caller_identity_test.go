@@ -136,13 +136,15 @@ func (testAddr) Network() string  { return "tcp" }
 func (a testAddr) String() string { return string(a) }
 
 // fakeServerStream is the minimal grpc.ServerStream the StreamInterceptor needs:
-// it only ever reads Context() before delegating, and principalStream wraps it.
+// it reads Context() before delegating, and principalStream wraps it. Sends
+// succeed, so a handler can answer.
 type fakeServerStream struct {
 	grpc.ServerStream
 	ctx context.Context
 }
 
 func (s fakeServerStream) Context() context.Context { return s.ctx }
+func (fakeServerStream) SendMsg(any) error          { return nil }
 
 // callStream drives the gRPC STREAM interceptor with an Authorization bearer
 // (when non-empty) and reports the stream context the handler saw (nil when the

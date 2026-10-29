@@ -67,6 +67,10 @@ func TestReasonsCarryTheDesignCodes(t *testing.T) {
 		if got := reason.Code(); got != code {
 			t.Errorf("%s.Code() = %s, want %s", reason, got, code)
 		}
+		signIn := reason == ReasonSignedOut || reason == ReasonUpstreamRevoked || reason == ReasonOwnerActionRequired
+		if got := reason.RequiresSignIn(); got != signIn {
+			t.Errorf("%s.RequiresSignIn() = %v, want %v", reason, got, signIn)
+		}
 	}
 }
 

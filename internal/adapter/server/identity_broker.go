@@ -68,28 +68,27 @@ type identityAgent struct {
 // If registration finds the broker session closed, it opens a new one and
 // registers again, once; closed a second time, it fails as unavailable.
 func (s *Service) openIdentityBrokerSession(ctx context.Context, sess *session.Session) error {
-	if s.cfg.IdentityBroker == nil || !identityBrokerRoot(sess) {
-		return nil
-	}
-	owner, ok := identityBrokerOwner(sess.Owner)
+	owner, mayPresent, ok := s.identityBrokerOpenFor(sess)
 	if !ok {
 		return nil
 	}
-	// The user's access token, read once for this open; zero on a path with no
-	// user request, such as a server-owned continuation. A scheduled session
-	// never takes one, even when a user's fire-now request creates it: its
-	// authority comes from the schedule, not the user's sign-in.
-	var token identitybroker.Token
-	if sess.Kind != session.SessionKindScheduled {
-		token = accessTokenFromRequest(ctx)
-	}
 	for attempt := 0; ; attempt++ {
-		brokerSession, err := s.openIdentityBrokerSessionOnce(ctx, sess, owner, token)
+		brokerSession, presented, err := s.openIdentityBrokerSessionOnce(ctx, sess, owner, mayPresent)
 		if err != nil {
 			return err
 		}
 		err = s.registerIdentityAgent(ctx, sess, owner, brokerSession)
 		if errors.Is(err, errIdentityBrokerSessionClosed) {
+			if attempt == 0 && presented {
+				// This open took and converted the request's token for the
+				// session that just closed, and a token converts once: a new
+				// broker session needs a fresh one. Only a request's first
+				// presenting open can get here, and every path makes that open
+				// before it changes anything, so the client may refresh and
+				// retry as if nothing happened.
+				s.logIdentityBroker(ctx, "broker session closed after its open converted the request's token", string(sess.ID), brokerSession.ID)
+				return fmt.Errorf("%w: the broker session closed after the access token was used", ErrBearerRejected)
+			}
 			if attempt == 0 {
 				continue
 			}
@@ -101,24 +100,51 @@ func (s *Service) openIdentityBrokerSession(ctx context.Context, sess *session.S
 	}
 }
 
+// identityBrokerOpenFor reports whether sess opens a broker session, its
+// owner, and whether the open may present the request's access token. Only a
+// root session with an owner opens one, with an identity broker configured. A
+// scheduled session never presents a token, even when a user's fire-now
+// request creates it: its authority comes from the schedule, not the user's
+// sign-in.
+func (s *Service) identityBrokerOpenFor(sess *session.Session) (owner identitybroker.Owner, mayPresent, ok bool) {
+	if s.cfg.IdentityBroker == nil || !identityBrokerRoot(sess) {
+		return identitybroker.Owner{}, false, false
+	}
+	owner, ok = identityBrokerOwner(sess.Owner)
+	return owner, ok && sess.Kind != session.SessionKindScheduled, ok
+}
+
+// presentsToken reports whether an open presents the request's access token
+// to a broker session: one found open for this incarnation and owner (found),
+// or a new one. A token converts once, so it goes to the broker only while
+// the broker session holds no live refresh token; presenting it on every
+// request would make the next request carrying it fail.
+func presentsToken(open identitybroker.Session, found bool) bool {
+	return !found || !open.HoldsRefreshToken
+}
+
 // openIdentityBrokerSessionOnce returns sess's open broker session, opening
-// one if needed with the user's access token.
-func (s *Service) openIdentityBrokerSessionOnce(ctx context.Context, sess *session.Session, owner identitybroker.Owner, token identitybroker.Token) (identitybroker.Session, error) {
+// one if needed, and whether it presented the request's access token. A token
+// it presents is taken from the request (takeRequestAccessToken), so no later
+// open in the same request presents it again.
+func (s *Service) openIdentityBrokerSessionOnce(ctx context.Context, sess *session.Session, owner identitybroker.Owner, mayPresent bool) (identitybroker.Session, bool, error) {
 	broker := s.cfg.IdentityBroker
 	host, incarnation := string(sess.ID), string(sess.Incarnation())
 	open, found, err := broker.FindSession(ctx, identitybroker.FindSessionRequest{RootHostSessionID: host})
 	if err != nil {
-		return identitybroker.Session{}, s.identityBrokerFailure(ctx, "find", host, "", err)
+		return identitybroker.Session{}, false, s.identityBrokerFailure(ctx, "find", host, "", err)
 	}
-	if found && open.Incarnation == incarnation && open.Owner == owner {
-		return open, nil
+	matched := found && open.Incarnation == incarnation && open.Owner == owner
+	present := mayPresent && presentsToken(open, matched) && !accessTokenFromRequest(ctx).IsZero()
+	if matched && !present {
+		return open, false, nil
 	}
 	if found && open.Incarnation != incarnation && open.Owner == owner {
 		// A broker session left open for an earlier incarnation of this host
 		// session ID: that incarnation no longer exists, so its broker session
 		// cannot be used again. Close it so this incarnation can open.
 		if err := broker.CloseSession(ctx, identitybroker.CloseSessionRequest{SessionID: open.ID, Reason: identitybroker.ReasonSessionClosed}); err != nil {
-			return identitybroker.Session{}, s.identityBrokerFailure(ctx, "close stale", host, open.ID, err)
+			return identitybroker.Session{}, false, s.identityBrokerFailure(ctx, "close stale", host, open.ID, err)
 		}
 		s.logIdentityBroker(ctx, "closed stale broker session", host, open.ID)
 	}
@@ -126,12 +152,108 @@ func (s *Service) openIdentityBrokerSessionOnce(ctx context.Context, sess *sessi
 	// broker refuses the open with session_owned, which the design treats as a
 	// pairing bug that fails the open. Session IDs are server-generated, so
 	// another user cannot reuse this one.
+	var token identitybroker.Token
+	if present {
+		token = takeRequestAccessToken(ctx)
+	}
 	opened, err := broker.OpenSession(ctx, identitybroker.OpenSessionRequest{HostSessionID: host, Incarnation: incarnation, Owner: owner, AccessToken: token})
 	if err != nil {
-		return identitybroker.Session{}, s.identityBrokerFailure(ctx, "open", host, "", err)
+		err = s.identityBrokerFailure(ctx, "open", host, "", err)
+		if token.IsZero() && errors.Is(err, ErrBearerRejected) {
+			// The tag says "this request's token was refused before anything
+			// happened"; an open that presented no token cannot mean that.
+			err = fmt.Errorf("%w: identity broker refused an access token this open did not present", ErrInternal)
+		}
+		return identitybroker.Session{}, false, err
 	}
 	s.logIdentityBroker(ctx, "opened broker session", host, opened.ID)
-	return opened, nil
+	return opened, !token.IsZero(), nil
+}
+
+// preOpenIdentityBrokerSession opens the broker session of sess before sess is
+// saved, converting the request's access token, so a refused token fails the
+// request before it changed anything. It returns the broker session it
+// opened, which the caller closes with closePreOpenedBrokerSession if sess is
+// then not saved, or "" when it opened none. It only acts when the open would
+// present a token: without one, an open cannot be refused for the token, and
+// the open after the save covers it.
+//
+// It never closes a broker session another request may own. One found for
+// another incarnation or owner can only be a concurrent create's of the same
+// session ID on another replica (same-process creates reserve their ID), so it
+// is left alone and the open after the save handles it; that open's refusal,
+// if any, is then logged rather than returned, as the session is saved.
+func (s *Service) preOpenIdentityBrokerSession(ctx context.Context, sess *session.Session) (string, error) {
+	owner, mayPresent, ok := s.identityBrokerOpenFor(sess)
+	if !ok || !mayPresent || accessTokenFromRequest(ctx).IsZero() {
+		return "", nil
+	}
+	broker := s.cfg.IdentityBroker
+	host, incarnation := string(sess.ID), string(sess.Incarnation())
+	open, found, err := broker.FindSession(ctx, identitybroker.FindSessionRequest{RootHostSessionID: host})
+	if err != nil {
+		return "", s.identityBrokerFailure(ctx, "find", host, "", err)
+	}
+	if found && (open.Incarnation != incarnation || open.Owner != owner) {
+		return "", nil
+	}
+	if !presentsToken(open, found) {
+		return "", nil
+	}
+	token := takeRequestAccessToken(ctx)
+	if token.IsZero() {
+		return "", nil
+	}
+	opened, err := broker.OpenSession(ctx, identitybroker.OpenSessionRequest{HostSessionID: host, Incarnation: incarnation, Owner: owner, AccessToken: token})
+	if err != nil {
+		var refusal *identitybroker.Error
+		if !found && errors.As(err, &refusal) {
+			// The broker pairs a new broker session before it converts, and
+			// keeps it paired when the conversion is refused. This request
+			// created it, and the session it belongs to will not be saved.
+			s.closeUnsavedPairing(ctx, host, incarnation, owner)
+		}
+		return "", s.identityBrokerFailure(ctx, "open", host, "", err)
+	}
+	s.logIdentityBroker(ctx, "opened broker session before saving", host, opened.ID)
+	if found {
+		// The session was already paired before this request: it is not this
+		// request's to close if the save fails.
+		return "", nil
+	}
+	return opened.ID, nil
+}
+
+// closePreOpenedBrokerSession closes a broker session preOpenIdentityBrokerSession
+// opened for a session that was then not saved. It closes by broker session ID,
+// never by host session: a create that lost a race shares its host session ID
+// with the winner, whose broker session must stay open. A failure is logged.
+func (s *Service) closePreOpenedBrokerSession(ctx context.Context, host, brokerSessionID string) {
+	if brokerSessionID == "" {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), engineCloseTimeout)
+	defer cancel()
+	if err := s.cfg.IdentityBroker.CloseSession(ctx, identitybroker.CloseSessionRequest{SessionID: brokerSessionID, Reason: identitybroker.ReasonSessionClosed}); err != nil {
+		_ = s.identityBrokerFailure(ctx, "close unsaved", host, brokerSessionID, err)
+		return
+	}
+	s.logIdentityBroker(ctx, "closed broker session of an unsaved session", host, brokerSessionID)
+}
+
+// closeUnsavedPairing closes the broker session a refused preOpen left paired
+// for host, if the broker reports one for exactly this incarnation and owner.
+func (s *Service) closeUnsavedPairing(ctx context.Context, host, incarnation string, owner identitybroker.Owner) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), engineCloseTimeout)
+	defer cancel()
+	open, found, err := s.cfg.IdentityBroker.FindSession(ctx, identitybroker.FindSessionRequest{RootHostSessionID: host})
+	if err != nil {
+		_ = s.identityBrokerFailure(ctx, "find unsaved", host, "", err)
+		return
+	}
+	if found && open.Incarnation == incarnation && open.Owner == owner {
+		s.closePreOpenedBrokerSession(ctx, host, open.ID)
+	}
 }
 
 // errIdentityBrokerSessionClosed marks a registration refused because the
@@ -333,10 +455,22 @@ func (s *Service) closeIdentityBrokerSession(ctx context.Context, id session.Ses
 }
 
 // identityBrokerFailure logs a failed identity broker call and returns the
-// error for the client: the caller's cancellation when the caller went away,
-// ErrIdentityBrokerUnavailable when the broker is unavailable or did not answer
-// in time, so the client can retry, and ErrInternal otherwise. brokerSession is
-// the broker session involved, or empty when none is known yet.
+// error for the client (design "Error reasons", mecak8s outcome):
+//   - the caller's cancellation when the caller went away;
+//   - ErrBearerRejected for a refused access token (token_used,
+//     subject_invalid), so the client refreshes it and retries once;
+//   - ErrSignInRequired when the user's authority was revoked (signed_out,
+//     upstream_revoked, owner_action_required), so the client signs in again;
+//   - ErrIdentityBrokerSessionRefused for a pairing refusal (owner_mismatch,
+//     session_owned);
+//   - ErrIdentityBrokerUnavailable when the broker is unavailable or did not
+//     answer in time, so the client can retry;
+//   - ErrInternal otherwise.
+//
+// Only an open that presents the request's token gets the token reasons, and
+// every such open runs before the request changes anything, so the tagged 401
+// keeps its "nothing happened" meaning. brokerSession is the broker session
+// involved, or empty when none is known yet.
 func (s *Service) identityBrokerFailure(ctx context.Context, call, host, brokerSession string, err error) error {
 	if errors.Is(err, context.Canceled) && ctx.Err() != nil {
 		s.cfg.Diagnostics.Log(context.WithoutCancel(ctx), port.LevelInfo, "identity broker call cancelled by the caller",
@@ -344,15 +478,24 @@ func (s *Service) identityBrokerFailure(ctx context.Context, call, host, brokerS
 		return fmt.Errorf("identity broker %s: %w", call, ctx.Err())
 	}
 	code := identitybroker.CodeInternal
+	var reason identitybroker.Reason
 	var brokerErr *identitybroker.Error
 	switch {
 	case errors.As(err, &brokerErr):
-		code = brokerErr.Code
+		code, reason = brokerErr.Code, brokerErr.Reason
 	case errors.Is(err, context.DeadlineExceeded):
 		code = identitybroker.CodeUnavailable
 	}
 	s.cfg.Diagnostics.Log(context.WithoutCancel(ctx), port.LevelWarn, "identity broker call failed",
-		"call", call, "session", host, "broker_session", brokerSession, "code", string(code))
+		"call", call, "session", host, "broker_session", brokerSession, "code", string(code), "reason", string(reason))
+	switch {
+	case reason == identitybroker.ReasonTokenUsed, reason == identitybroker.ReasonSubjectInvalid:
+		return fmt.Errorf("%w: identity broker %s refused the access token (%s)", ErrBearerRejected, call, reason)
+	case reason.RequiresSignIn():
+		return fmt.Errorf("%w: identity broker %s: %s", ErrSignInRequired, call, reason)
+	case reason == identitybroker.ReasonOwnerMismatch, reason == identitybroker.ReasonSessionOwned:
+		return fmt.Errorf("%w: identity broker %s: %s", ErrIdentityBrokerSessionRefused, call, reason)
+	}
 	if code == identitybroker.CodeUnavailable {
 		return ErrIdentityBrokerUnavailable
 	}

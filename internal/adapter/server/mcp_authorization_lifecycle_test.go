@@ -105,6 +105,9 @@ type lifecycleAttachment struct {
 	cancelOutcome      brokercontract.CancelOutcome
 	refreshTools       []tool.Tool
 	refreshCalls       int
+	// refreshHook, when set, runs as a granted catalogue refresh starts,
+	// without the attachment's lock held.
+	refreshHook func()
 }
 
 func (*lifecycleAttachment) Commit(context.Context) error { return nil }
@@ -114,6 +117,12 @@ func (a *lifecycleAttachment) Binding() session.ExternalBinding {
 }
 func (a *lifecycleAttachment) Tools() []tool.Tool { return []tool.Tool{a.tool} }
 func (a *lifecycleAttachment) RefreshGrantedAuthorizationCatalogue(context.Context, session.ExternalAuthorization) ([]tool.Tool, error) {
+	a.mu.Lock()
+	hook := a.refreshHook
+	a.mu.Unlock()
+	if hook != nil {
+		hook()
+	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.refreshCalls++

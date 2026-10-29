@@ -317,7 +317,7 @@ func exchangeError(err error) error {
 		return NewError(CodeUnavailable, "", "no response from the authorization server")
 	case isRefusal && r.Reason == string(ReasonTokenUsed):
 		return ReasonError(ReasonTokenUsed, "the access token was already converted; refresh it and open again")
-	case isRefusal && revocationReasons[Reason(r.Reason)]:
+	case isRefusal && Reason(r.Reason).RequiresSignIn():
 		// A user-wide revocation predating the token keeps the reason's
 		// status; mecak8s answers it at session open with a 401, so the
 		// client signs in again.
@@ -333,12 +333,6 @@ func exchangeError(err error) error {
 	default:
 		return NewError(CodeInternal, "", "the token exchange failed")
 	}
-}
-
-// revocationReasons are the reasons of a user-wide revocation AS-1 may
-// refuse a session-open token with (design "Error reasons").
-var revocationReasons = map[Reason]bool{
-	ReasonSignedOut: true, ReasonUpstreamRevoked: true, ReasonOwnerActionRequired: true,
 }
 
 // echoMatches reports whether res is the grant the broker sent for: a
