@@ -388074,6 +388074,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1793308620939,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "2b8be428ba693fe41b2eebb7f5b7ba519d09469e",
+          "message": "fix(mecatui): restore Markdown bullet markers and nested indentation (#2615)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-29T21:36:26Z",
+          "tree_id": "1e061c7630d2e585a1bfccfab914d101e12dc0d1",
+          "url": "https://github.com/stacklok/mecatl/commit/2b8be428ba693fe41b2eebb7f5b7ba519d09469e"
+        },
+        "date": 1793310491234,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 16131,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12896,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 794,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -506102,6 +506141,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1793310488240,
+  "lastUpdate": 1793310491918,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
