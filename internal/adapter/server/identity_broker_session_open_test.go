@@ -531,6 +531,11 @@ func TestIdentityBrokerClearKeepsARunningSourceOnARefusedToken(t *testing.T) {
 		<-release
 	})}, mockllm.TextTurn("done"))
 	f := newSessionOpenFixture(t, llm)
+	// Released on every exit, so a failure before the release cannot leave the
+	// model call blocked.
+	var releaseOnce sync.Once
+	releaseRun := func() { releaseOnce.Do(func() { close(release) }) }
+	t.Cleanup(releaseRun)
 	ctx := aliceContext(t)
 	source, err := f.svc.CreateSession(ctx, session.ModeDefault, session.Limits{})
 	if err != nil {
@@ -540,7 +545,6 @@ func TestIdentityBrokerClearKeepsARunningSourceOnARefusedToken(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer once.Do(func() {})
 	select {
 	case <-entered:
 	case <-time.After(10 * time.Second):
@@ -557,7 +561,7 @@ func TestIdentityBrokerClearKeepsARunningSourceOnARefusedToken(t *testing.T) {
 	if after := f.state(t); after != before {
 		t.Fatalf("the refused clear changed state:\nbefore:\n%s\nafter:\n%s", before, after)
 	}
-	close(release)
+	releaseRun()
 	var evs []session.Event
 	for ev := range run.Events() {
 		evs = append(evs, ev)
@@ -794,8 +798,14 @@ func TestIdentityBrokerRefusalAfterAResponseIsNotTagged(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if runErr == nil || errors.Is(runErr, server.ErrBearerRejected) {
-		t.Fatalf("open refused for a token after the stream answered: %v; want an error without the bearer_rejected tag", runErr)
+	if !errors.Is(runErr, server.ErrInternal) || errors.Is(runErr, server.ErrBearerRejected) {
+		t.Fatalf("open refused for a token after the stream answered: %v; want ErrInternal without the bearer_rejected tag", runErr)
+	}
+	// The create's open, then the run's, which came after the answer and so
+	// presented nothing.
+	if opens := broker.openRequests(); len(opens) != 2 || !opens[1].AccessToken.IsZero() {
+		t.Fatalf("opens = %d (late open presented a token: %t), want 2 with the late one presenting none",
+			len(opens), len(opens) == 2 && !opens[1].AccessToken.IsZero())
 	}
 }
 
@@ -1163,5 +1173,106 @@ func TestIdentityBrokerExplicitIDHeldByAnotherOwner(t *testing.T) {
 	if heldErr == nil || plainErr == nil || heldErr.Error() != plainErr.Error() ||
 		!errors.Is(heldErr, server.ErrNotFound) || !errors.Is(plainErr, server.ErrNotFound) {
 		t.Fatalf("create of an ID held by another user's broker session = %v; plain collision = %v; want the same error", heldErr, plainErr)
+	}
+}
+
+// TestIdentityBrokerForkClosesItsBrokerSessionWhenTheSuccessorIsNotSaved
+// proves a fork closes the broker session it opened before saving when the
+// save then fails, here because the successor's ID turns out to be taken.
+func TestIdentityBrokerForkClosesItsBrokerSessionWhenTheSuccessorIsNotSaved(t *testing.T) {
+	f := newSessionOpenFixture(t, mockllm.New())
+	source, err := f.svc.CreateSession(aliceContext(t), session.ModeDefault, session.Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var successorHost session.SessionID
+	f.broker.set(func(b *recordingBroker) {
+		b.afterOpen = func(req identitybroker.OpenSessionRequest) {
+			if req.HostSessionID == string(source.ID) || successorHost != "" {
+				return
+			}
+			successorHost = session.SessionID(req.HostSessionID)
+			// Something saves under the successor's ID before the fork does.
+			placeholder := session.New(successorHost, session.ModeDefault, source.EnvironmentRef, session.Limits{}, time.Unix(1, 0))
+			if err := f.store.Save(context.Background(), placeholder); err != nil {
+				t.Error(err)
+			}
+		}
+	})
+	closes := f.broker.closeCount()
+	var successor session.SessionID
+	f.within(t, func(ctx context.Context) {
+		successor, err = f.svc.ForkSessionSuccessor(ctx, server.ForkSuccessorRequest{Source: source.ID})
+	})
+	if successor != "" || !errors.Is(err, port.ErrSessionAlreadyExists) {
+		t.Fatalf("fork onto a taken ID = %q, %v; want no successor and ErrSessionAlreadyExists", successor, err)
+	}
+	if successorHost == "" {
+		t.Fatal("the fork opened no broker session for its successor")
+	}
+	if open, ok := f.broker.find(t, successorHost); ok {
+		t.Fatalf("the unsaved successor's broker session %+v is still open", open)
+	}
+	if n := f.broker.closeCount() - closes; n != 1 {
+		t.Fatalf("the fork closed %d broker sessions, want exactly its own", n)
+	}
+}
+
+// TestIdentityBrokerRefusalTextIsFixed proves the error text clients see for
+// a broker refusal at session open names neither the broker's reason nor the
+// broker call: the reason stays in the server's diagnostics.
+func TestIdentityBrokerRefusalTextIsFixed(t *testing.T) {
+	leaks := []string{"token_used", "subject_invalid", "signed_out", "owner_mismatch", "invalid_client", "identity broker open", "open:"}
+	for _, tc := range []struct {
+		name       string
+		refuse     func(*fakeAS1)
+		otherSubID bool
+	}{
+		{name: "token_used", refuse: func(a *fakeAS1) { a.refuseWith("token_used") }},
+		{name: "subject_invalid", refuse: func(a *fakeAS1) {
+			a.setRefusal(identitybroker.NewServerRefusal(http.StatusBadRequest, "invalid_request", ""))
+		}},
+		{name: "signed_out", refuse: func(a *fakeAS1) { a.refuseWith("signed_out") }},
+		{name: "owner_mismatch", refuse: func(*fakeAS1) {}, otherSubID: true},
+		{name: "invalid_client", refuse: func(a *fakeAS1) {
+			a.setRefusal(identitybroker.NewServerRefusal(http.StatusUnauthorized, "invalid_client", ""))
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newSessionOpenFixture(t, mockllm.New())
+			tc.refuse(f.as1)
+			bearer := func() string {
+				if !tc.otherSubID {
+					return f.token()
+				}
+				tok := accessTokenFor(&session.Principal{Issuer: brokerAlice.Issuer, Subject: "bob-117"}, fmt.Sprintf("jti-mismatch-%d", f.next))
+				f.next++
+				f.tokens[tok] = *brokerAlice
+				return tok
+			}
+			client, cleanup := dialGRPCSecure(t, f.svc, f.auth)
+			t.Cleanup(cleanup)
+			_, err := client.CreateSession(bearerCtx(t.Context(), bearer()), &mecatlv1.CreateSessionRequest{})
+			st, ok := status.FromError(err)
+			if !ok || st.Code() == codes.OK {
+				t.Fatalf("gRPC create = %v, want a refusal", err)
+			}
+			req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/v1/sessions", strings.NewReader(`{}`))
+			req.Header.Set("Authorization", "Bearer "+bearer())
+			req.Header.Set("Content-Type", "application/json")
+			rec := httptest.NewRecorder()
+			f.auth.Middleware(server.NewHTTPHandler(f.svc)).ServeHTTP(rec, req)
+			var problem struct {
+				Detail string `json:"detail"`
+			}
+			if err := json.Unmarshal(rec.Body.Bytes(), &problem); err != nil || problem.Detail == "" {
+				t.Fatalf("HTTP create body %q: %v", rec.Body.String(), err)
+			}
+			for _, leak := range leaks {
+				if strings.Contains(st.Message(), leak) || strings.Contains(problem.Detail, leak) {
+					t.Fatalf("client-visible text names %q: gRPC %q, HTTP %q", leak, st.Message(), problem.Detail)
+				}
+			}
+		})
 	}
 }

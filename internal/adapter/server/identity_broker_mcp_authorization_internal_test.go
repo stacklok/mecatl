@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -15,9 +16,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/sessnap"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/internal/identitybroker"
+	brokercontract "github.com/stacklok/mecatl/internal/mcpbroker"
 )
 
 // switchableAS1 converts access tokens, or refuses them with token_used.
@@ -107,11 +110,12 @@ func requestWithAccessToken(t *testing.T, owner *session.Principal, jti string) 
 var mcpAuthorizationOwner = &session.Principal{Issuer: "https://login.example.com", Subject: "alice-204", GrantType: session.GrantTypeUser}
 
 // mcpAuthorizationBrokerFixture is the lifecycle fixture with a converting
-// identity broker and an owner on its parked session.
+// identity broker, an event log, and an owner on its parked session.
 type mcpAuthorizationBrokerFixture struct {
 	lifecycleFixture
 	as1     *switchableAS1
 	broker  *presentingBroker
+	events  *memstore.EventLog
 	control MCPAuthorizationControl
 }
 
@@ -120,7 +124,9 @@ func newMCPAuthorizationBrokerFixture(t *testing.T, status session.Authorization
 	f := newLifecycleFixture(t, status, nil, now, nil)
 	as1 := &switchableAS1{refuse: true}
 	broker := convertingBroker(t, as1)
+	events := memstore.NewEventLog()
 	f.svc.cfg.IdentityBroker = broker
+	f.svc.cfg.EventLog = events
 	sess, err := f.store.Load(t.Context(), "authorization-session")
 	if err != nil {
 		t.Fatal(err)
@@ -130,11 +136,13 @@ func newMCPAuthorizationBrokerFixture(t *testing.T, status session.Authorization
 		t.Fatal(err)
 	}
 	return mcpAuthorizationBrokerFixture{
-		lifecycleFixture: f, as1: as1, broker: broker,
+		lifecycleFixture: f, as1: as1, broker: broker, events: events,
 		control: MCPAuthorizationControl{SessionID: "authorization-session", AuthorizationID: f.pending.Authorization.ID},
 	}
 }
 
+// snapshot is everything a control could have changed: the stored session and
+// its event log.
 func (f mcpAuthorizationBrokerFixture) snapshot(t *testing.T) string {
 	t.Helper()
 	loaded, err := f.store.Load(t.Context(), "authorization-session")
@@ -145,7 +153,18 @@ func (f mcpAuthorizationBrokerFixture) snapshot(t *testing.T) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return string(out)
+	snap := string(out)
+	for ev, err := range f.events.Read(t.Context(), "authorization-session") {
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, err := json.Marshal(ev)
+		if err != nil {
+			t.Fatal(err)
+		}
+		snap += "\n" + string(body)
+	}
+	return snap
 }
 
 // TestMCPAuthorizationRefusedTokenChangesNothing proves the MCP authorization
@@ -161,12 +180,18 @@ func TestMCPAuthorizationRefusedTokenChangesNothing(t *testing.T) {
 		// expired makes the pending authorization's expiry pass before the
 		// control, so the recheck cancels it.
 		expired bool
-		act     control
+		// attachmentLost and statusLost lose the MCP broker's state, so the
+		// control settles the authorization as interrupted.
+		attachmentLost, statusLost bool
+		act                        control
 	}{
 		{name: "recheck granted", status: session.AuthorizationGranted, act: (*Service).RecheckMCPAuthorization},
 		{name: "recheck denied", status: session.AuthorizationDenied, act: (*Service).RecheckMCPAuthorization},
 		{name: "recheck expired", status: session.AuthorizationPending, expired: true, act: (*Service).RecheckMCPAuthorization},
+		{name: "recheck attachment lost", status: session.AuthorizationPending, attachmentLost: true, act: (*Service).RecheckMCPAuthorization},
+		{name: "recheck status lost", status: session.AuthorizationPending, statusLost: true, act: (*Service).RecheckMCPAuthorization},
 		{name: "cancel", status: session.AuthorizationPending, act: (*Service).CancelMCPAuthorization},
+		{name: "cancel attachment lost", status: session.AuthorizationPending, attachmentLost: true, act: (*Service).CancelMCPAuthorization},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			// An expired authorization is parked two hours ago, so its hour
@@ -179,6 +204,14 @@ func TestMCPAuthorizationRefusedTokenChangesNothing(t *testing.T) {
 			now := func() time.Time { return time.Now().Add(time.Duration(offset.Load())) }
 			f := newMCPAuthorizationBrokerFixture(t, tc.status, now)
 			offset.Store(0)
+			if tc.attachmentLost {
+				f.lifecycleFixture.broker.attachErr = fmt.Errorf("broker restarted: %w", brokercontract.ErrStateUnavailable)
+			}
+			if tc.statusLost {
+				f.attach.mu.Lock()
+				f.attach.statusErr = fmt.Errorf("authorization gone: %w", brokercontract.ErrStateUnavailable)
+				f.attach.mu.Unlock()
+			}
 			before := f.snapshot(t)
 
 			_, err := tc.act(f.svc, requestWithAccessToken(t, mcpAuthorizationOwner, "jti-1"), f.control.SessionID, f.control)
@@ -328,5 +361,42 @@ func TestMCPAuthorizationFirstOpenTakesAnUnpresentedToken(t *testing.T) {
 	drainLifecycleRun(t, f.svc, result)
 	if n := f.broker.presented.Load() - presented; n != 0 {
 		t.Fatalf("the recheck presented its token %d times, want none", n)
+	}
+}
+
+// TestRequireEarlierOpen proves the late-open guard refuses a late broker open
+// while the request still holds its token, which only a path that skipped its
+// early open can reach, and passes every legitimate late open.
+func TestRequireEarlierOpen(t *testing.T) {
+	f := newMCPAuthorizationBrokerFixture(t, session.AuthorizationPending, time.Now)
+	sess, err := f.store.Load(t.Context(), "authorization-session")
+	if err != nil {
+		t.Fatal(err)
+	}
+	withToken := func() context.Context { return requestWithAccessToken(t, mcpAuthorizationOwner, "jti-late") }
+	if err := f.svc.requireEarlierOpen(withToken(), sess); !errors.Is(err, ErrInternal) {
+		t.Fatalf("late open with the token still held = %v, want ErrInternal", err)
+	}
+	// The early open took the token: the late open may proceed.
+	taken := withToken()
+	if err := f.svc.openIdentityBrokerSession(taken, sess); err == nil || !errors.Is(err, ErrBearerRejected) {
+		t.Fatalf("setup: early open = %v, want the refusal AS-1 gives", err)
+	}
+	if err := f.svc.requireEarlierOpen(taken, sess); err != nil {
+		t.Fatalf("late open after the early open = %v, want nil", err)
+	}
+	for name, ctx := range map[string]context.Context{
+		"no user request":   session.WithPrincipal(t.Context(), mcpAuthorizationOwner),
+		"server-owned work": withoutRequestAccessToken(withToken()),
+	} {
+		if err := f.svc.requireEarlierOpen(ctx, sess); err != nil {
+			t.Errorf("%s: %v, want nil", name, err)
+		}
+	}
+	scheduled := session.New("scheduled-session", session.ModeDefault, sess.EnvironmentRef, session.Limits{}, time.Now())
+	scheduled.Owner = mcpAuthorizationOwner
+	scheduled.Kind = session.SessionKindScheduled
+	if err := f.svc.requireEarlierOpen(withToken(), scheduled); err != nil {
+		t.Errorf("scheduled session: %v, want nil: it never presents a token", err)
 	}
 }

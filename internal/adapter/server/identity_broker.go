@@ -7,8 +7,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
+	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/identitybroker"
 )
 
@@ -112,6 +114,26 @@ func (s *Service) identityBrokerOpenFor(sess *session.Session) (owner identitybr
 	}
 	owner, ok = identityBrokerOwner(sess.Owner)
 	return owner, ok && sess.Kind != session.SessionKindScheduled, ok
+}
+
+// requireEarlierOpen fails a late open that would still present the request's
+// token: the path changed state before opening, which would let a refused token
+// surface as a retryable 401 after a change.
+func (s *Service) requireEarlierOpen(ctx context.Context, sess *session.Session) error {
+	if _, mayPresent, ok := s.identityBrokerOpenFor(sess); ok && mayPresent && !accessTokenFromRequest(ctx).IsZero() {
+		return fmt.Errorf("%w: identity broker open skipped before a change", ErrInternal)
+	}
+	return nil
+}
+
+// lateEngineAndEnvironmentFor is engineAndEnvironmentFor for a path that may
+// already have saved something, so its broker open must not be the request's
+// first: an earlier open took the request's token (requireEarlierOpen).
+func (s *Service) lateEngineAndEnvironmentFor(ctx context.Context, sess *session.Session) (*agent.Engine, tool.Environment, string, error) {
+	if err := s.requireEarlierOpen(ctx, sess); err != nil {
+		return nil, tool.Environment{}, "", err
+	}
+	return s.engineAndEnvironmentFor(ctx, sess)
 }
 
 // presentsToken reports whether the request's first open presents the token
@@ -514,19 +536,21 @@ func (s *Service) identityBrokerFailure(ctx context.Context, call, host, brokerS
 	// The reasons map to client outcomes only for the session open, which this
 	// change owns; other calls, registration among them (#2552), keep the
 	// unavailable-or-internal mapping below.
+	// The client sees each error's text, so it is fixed: the call and the
+	// broker's reason and code are in the diagnostics record above.
 	switch {
 	case call != "open":
 	case reason == identitybroker.ReasonTokenUsed, reason == identitybroker.ReasonSubjectInvalid:
-		return fmt.Errorf("%w: identity broker %s refused the access token (%s)", ErrBearerRejected, call, reason)
+		return fmt.Errorf("%w: identity broker refused the access token", ErrBearerRejected)
 	case reason.RequiresSignIn():
-		return fmt.Errorf("%w: identity broker %s: %s", ErrSignInRequired, call, reason)
+		return fmt.Errorf("%w: sign in again", ErrSignInRequired)
 	case reason == identitybroker.ReasonOwnerMismatch, reason == identitybroker.ReasonSessionOwned:
-		return fmt.Errorf("%w: identity broker %s: %s", ErrIdentityBrokerSessionRefused, call, reason)
+		return fmt.Errorf("%w: identity broker refused the session", ErrIdentityBrokerSessionRefused)
 	}
 	if code == identitybroker.CodeUnavailable {
 		return ErrIdentityBrokerUnavailable
 	}
-	return fmt.Errorf("%w: identity broker %s failed with %s", ErrInternal, call, code)
+	return fmt.Errorf("%w: identity broker call failed", ErrInternal)
 }
 
 func (s *Service) logIdentityBroker(ctx context.Context, msg, host, brokerSession string) {

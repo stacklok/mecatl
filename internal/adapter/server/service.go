@@ -6006,7 +6006,9 @@ func (s *Service) startRunContentLocked(ctx context.Context, id session.SessionI
 	if err := s.attachLiveInstructions(sess, true); err != nil {
 		return nil, err
 	}
-	engine, env, governanceRoot, err := s.engineAndEnvironmentFor(ctx, sess)
+	// The early open above took the request's token; this open runs after the
+	// repair saves.
+	engine, env, governanceRoot, err := s.lateEngineAndEnvironmentFor(ctx, sess)
 	if err != nil {
 		return nil, err
 	}
