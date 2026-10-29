@@ -2,6 +2,7 @@ package microvm
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -38,6 +39,9 @@ func TestRepositoryObjectSnapshotRetainsPackedGitObjects(t *testing.T) {
 	}
 
 	common := filepath.Join(repository, ".git")
+	if err := os.WriteFile(filepath.Join(common, "objects", "maintenance.lock"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
 	prepared := false
 	snapshot, err := snapshotRepositoryObjectsWithOwnership(t.Context(), common, root, func(ctx context.Context, snapshot, relative string) error {
 		if relative != "." {
@@ -61,6 +65,9 @@ func TestRepositoryObjectSnapshotRetainsPackedGitObjects(t *testing.T) {
 		t.Fatal("object snapshot was not ownership-prepared before publication")
 	}
 	defer removeObjectSnapshot(snapshot)
+	if _, err := os.Stat(filepath.Join(snapshot, "maintenance.lock")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("snapshot maintenance.lock: %v, want absent", err)
+	}
 	packs, err := filepath.Glob(filepath.Join(snapshot, "pack", "*.pack"))
 	if err != nil || len(packs) == 0 {
 		t.Fatalf("packed objects missing from snapshot: packs=%v err=%v", packs, err)
@@ -95,6 +102,62 @@ func TestRepositoryObjectSnapshotRetainsPackedGitObjects(t *testing.T) {
 	status, err := gitexec.RunWithEnv(t.Context(), repository, nil, environment, "status", "--porcelain")
 	if err != nil || strings.TrimSpace(string(status)) != "" {
 		t.Fatalf("logical worktree status over snapshot = %q, %v", status, err)
+	}
+}
+
+func TestCopyObjectEntryVanishedAfterEnumeration(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		path string
+		skip bool
+	}{
+		{path: "maintenance.lock", skip: true},
+		{path: "other.lock"},
+		{path: "aa/maintenance.lock"},
+		{path: "aa/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},
+		{path: "pack/pack-test.pack"},
+	} {
+		t.Run(tc.path, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			relative := filepath.Dir(tc.path)
+			directory := filepath.Join(root, relative)
+			if err := os.MkdirAll(directory, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(root, tc.path)
+			if err := os.WriteFile(path, []byte("object"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			source, err := os.Open(directory)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer source.Close()
+			entries, err := source.ReadDir(-1)
+			if err != nil || len(entries) != 1 {
+				t.Fatalf("enumerate object entry: entries=%v err=%v", entries, err)
+			}
+			// Force the same disappearance as Git removing its maintenance lock
+			// between copyObjectDirectory's ReadDir and copyObjectEntry's open.
+			if err := os.Remove(path); err != nil {
+				t.Fatal(err)
+			}
+			destination, err := os.OpenRoot(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer destination.Close()
+			limit := objectSnapshotLimit{bytes: defaultRepositoryObjectSnapshotBytes, entries: defaultRepositoryObjectSnapshotEntries}
+			err = copyObjectEntry(t.Context(), source, destination, relative, entries[0], &limit)
+			if tc.skip {
+				if err != nil {
+					t.Fatalf("vanished maintenance lock failed snapshot: %v", err)
+				}
+			} else if !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("vanished object entry: %v, want not-exist error", err)
+			}
+		})
 	}
 }
 
