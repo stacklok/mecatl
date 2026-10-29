@@ -386883,6 +386883,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1793299490170,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "1d40f688eb871494925f924100c462c13fc2a762",
+          "message": "test(studio): fix sidebar viewport contamination flake (#2609)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-29T18:43:03Z",
+          "tree_id": "2a105f5945f94b449a738d8c5e09704503e4d85a",
+          "url": "https://github.com/stacklok/mecatl/commit/1d40f688eb871494925f924100c462c13fc2a762"
+        },
+        "date": 1793300287068,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 16155,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12918.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 794,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -504569,6 +504608,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1793300283320,
+  "lastUpdate": 1793300288035,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
