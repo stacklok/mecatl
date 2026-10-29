@@ -265,7 +265,7 @@ func TestToolcallsShortcutOpensInspector(t *testing.T) {
 // TestReasoningBlockCollapsedThenExpanded asserts a reasoning delta renders as a
 // dim, collapsed one-line "reasoning summary" header by default (the full text
 // hidden), and that the retained expansion state shows the streamed reasoning text
-// under a lossy-summary caveat. It also asserts the reasoning renders ABOVE the
+// beneath a single summary header. It also asserts the reasoning renders ABOVE the
 // assistant answer of the same turn.
 func TestReasoningBlockCollapsedThenExpanded(t *testing.T) {
 	m := newTestModelFromDeps(Deps{Theme: theme.New("aztec", theme.AztecPalette())})
@@ -296,10 +296,10 @@ func TestReasoningBlockCollapsedThenExpanded(t *testing.T) {
 
 	// f9 expands reasoning; Toolcalls never changes this state.
 	m, _ = pressKey(m, f9)
-	// Expanded: the caveat + the full reasoning text become visible.
+	// Expanded: one summary header and the full reasoning text become visible.
 	expanded := stripANSIstr(m.rend.renderConversation(&m.conv, m.expandConversation))
-	if !strings.Contains(expanded, "may not reflect its actual process") {
-		t.Errorf("expanded reasoning should carry the lossy-summary caveat:\n%s", expanded)
+	if strings.Contains(expanded, "may not reflect its actual process") || strings.Count(expanded, "reasoning summary") != 1 {
+		t.Errorf("expanded reasoning should have just one summary header:\n%s", expanded)
 	}
 	if !strings.Contains(expanded, "inspect the file") || !strings.Contains(expanded, "then I will edit it") {
 		t.Errorf("expanded reasoning should show the body text:\n%s", expanded)

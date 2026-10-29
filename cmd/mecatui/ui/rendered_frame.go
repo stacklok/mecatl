@@ -5,7 +5,6 @@ import (
 
 	"github.com/charmbracelet/x/ansi"
 
-	"github.com/stacklok/mecatl/cmd/mecatui/internal/terminaltext"
 	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/scrollback"
 )
 
@@ -258,10 +257,9 @@ func (r *renderer) snapshotProvenanceRows(blockID uint64, kind scrollback.Kind, 
 				rows[i] = renderedRow{blockID: blockID, region: conversationRegionReasoning, row: i - textStart}
 			}
 			if expand {
-				text := terminaltext.Sanitize(strings.TrimRight(assistant.Reasoning, "\n"))
-				textRows := len(strings.Split(r.wrapStyled(text, r.th.Style("transcriptReasoningText")), "\n"))
-				for i := textStart + reasoningRows - textRows; i < min(textStart+reasoningRows, len(rows)); i++ {
-					rows[i].text = true
+				headerRows := lineCount(r.reasoningHeader(assistant, true))
+				for i := textStart + headerRows; i < min(textStart+reasoningRows, len(rows)); i++ {
+					rows[i].text = canonicalRowText(kind, ansi.Strip(lines[i]), r.indent) != ""
 				}
 			}
 			textStart += reasoningRows
