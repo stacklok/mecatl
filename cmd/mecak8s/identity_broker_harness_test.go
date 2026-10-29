@@ -83,7 +83,7 @@ func TestIdentityBrokerAgainstOfflineHarness(t *testing.T) {
 		serveErr <- serveWithDrainWait(ctx, cfg, built.Service, observability{}, func(time.Duration) {}, built.MCPBrokerHandlers, built.MCPBrokerCallbackPath)
 	}()
 	api := "http://" + cfg.httpAddr
-	waitForHTTPStatus(t, api+"/readyz", http.StatusOK)
+	waitForHTTPStatus(t, http.DefaultClient, api+"/readyz", http.StatusOK)
 
 	alice, err := h.SignIn(t.Context(), identityharness.SignInRequest{User: identityharness.Alice})
 	if err != nil {

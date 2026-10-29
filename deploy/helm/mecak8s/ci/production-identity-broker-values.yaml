@@ -1,0 +1,46 @@
+# task deploy:check fixture: a secure real-provider profile with the identity
+# broker hosting AS-1 in front of the company identity provider.
+image:
+  tag: v0.0.0
+defaultProvider: openrouter
+model: anthropic/claude-sonnet-4-6
+guardrails:
+  model: anthropic/claude-haiku-4-5
+# The identity broker keeps its state in this process and needs no in-process shell.
+replicaCount: 1
+extraArgs:
+  - --no-shell
+extraEnv:
+  # The chart references these operator-provisioned Secrets; it never creates them.
+  - name: OPENROUTER_API_KEY
+    valueFrom:
+      secretKeyRef:
+        name: provider-credentials
+        key: openrouter-api-key
+redis:
+  endpoint: redis.example.internal:6379
+  caKey: ""
+# oidc.issuer, oidc.clientID, and oidc.acceptedClientIDs are derived from AS-1.
+oidc:
+  enabled: true
+  audience: mecatl
+  resource: https://mecatl.example.com
+  ownerIdentity: sub_id
+identityBroker:
+  enabled: true
+  subjectClaim: oid
+  as1:
+    issuer: https://mecatl.example.com/as1
+    tuiClientID: mecatui
+    signingKey:
+      secretName: as1-signing-key
+      key: signing-key.pem
+    upstream:
+      issuer: https://login.microsoftonline.com/00000000-0000-0000-0000-000000000000/v2.0
+      clientID: 11111111-1111-1111-1111-111111111111
+      clientSecret:
+        secretName: as1-upstream
+        key: client-secret
+tls:
+  enabled: true
+  secretName: mecak8s-tls

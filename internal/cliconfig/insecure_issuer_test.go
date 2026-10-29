@@ -48,7 +48,7 @@ func TestCallerIdentityE2E_Scenario3_PrivateIssuerRefusedByDefault(t *testing.T)
 
 	build := func(t *testing.T, srv *httptest.Server, insecure bool) error {
 		t.Helper()
-		// No httpClient override: this asserts what the validator's OWN client
+		// No HTTPClient override: this asserts what the validator's OWN client
 		// does, which is the only thing a real deployment has.
 		_, err := OIDCValidator(context.Background(), OIDCConfig{
 			Issuer:                     srv.URL,

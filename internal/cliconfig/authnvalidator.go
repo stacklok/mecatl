@@ -60,7 +60,7 @@ func defaultNewValidator(ctx context.Context, c OIDCConfig) (server.PrincipalVal
 		AllowPrivateHTTPSIssuer:    c.AllowPrivateHTTPSIssuer,
 		TrustedCAFile:              c.TrustedCAFile,
 		TrustedCAPEM:               caPEM,
-		HTTPClient:                 c.httpClient,
+		HTTPClient:                 c.HTTPClient,
 		OwnerIdentity:              c.OwnerIdentity,
 		AcceptedClientIDs:          c.AcceptedClientIDs,
 	})

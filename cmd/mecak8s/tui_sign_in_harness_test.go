@@ -66,13 +66,13 @@ type protectedResourceDocument struct {
 	IdentityBrokerSignIn bool     `json:"com.stacklok.mecatl.identity_broker_sign_in"`
 }
 
-func fetchProtectedResourceProfile(t *testing.T, metadataURL string) protectedResourceDocument {
+func fetchProtectedResourceProfile(t *testing.T, client *http.Client, metadataURL string) protectedResourceDocument {
 	t.Helper()
 	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, metadataURL, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	res, err := http.DefaultClient.Do(req)
+	res, err := client.Do(req)
 	if err != nil {
 		t.Fatalf("fetch protected-resource metadata: %v", err)
 	}
@@ -171,11 +171,11 @@ func TestTUISignsInAtAS1AndOpensEachSessionWithAFreshToken(t *testing.T) {
 	go func() {
 		serveErr <- serveWithDrainWait(ctx, cfg, built.Service, observability{}, func(time.Duration) {}, built.MCPBrokerHandlers, built.MCPBrokerCallbackPath)
 	}()
-	waitForHTTPStatus(t, "http://"+cfg.httpAddr+"/readyz", http.StatusOK)
+	waitForHTTPStatus(t, http.DefaultClient, "http://"+cfg.httpAddr+"/readyz", http.StatusOK)
 
 	// The client learns its sign-in profile, including whether to send the
 	// RFC 8707 resource, from mecak8s's protected-resource metadata.
-	profile := fetchProtectedResourceProfile(t, "http://"+cfg.httpAddr+"/.well-known/oauth-protected-resource")
+	profile := fetchProtectedResourceProfile(t, http.DefaultClient, "http://"+cfg.httpAddr+"/.well-known/oauth-protected-resource")
 	if len(profile.AuthorizationServers) != 1 || profile.AuthorizationServers[0] != h.AS1.Issuer() || profile.Audience != h.AS1.Audience() || profile.ClientID != identityharness.DefaultClientID {
 		t.Fatalf("protected-resource metadata = %+v, want the AS-1 issuer, audience, and client", profile)
 	}

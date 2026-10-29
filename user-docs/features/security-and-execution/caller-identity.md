@@ -144,6 +144,8 @@ The server refuses to start when:
   list.
 - In `mecak8s`, `--enable-identity-broker` is set with `--oidc-issuer` but
   without `--oidc-owner-identity=sub_id`.
+- In `mecak8s`, the hosted AS-1 flags conflict with the OIDC flags; see
+  [Host AS-1 in mecak8s](/operating/mecak8s/identity-and-client-access.md#host-as-1-in-mecak8s).
 
 Existing sessions, schedules, memory, and other owned data keep matching their
 owners only if, for each user, the authorization server's upstream IdP returns

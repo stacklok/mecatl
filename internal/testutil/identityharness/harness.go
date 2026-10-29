@@ -32,7 +32,9 @@
 //     forced grant expiry; and ScriptedBroker, a
 //     hand-driven caller holding the broker's credentials for exercising
 //     AS-1 directly (broker.go). Production code under test uses its own
-//     client, not ScriptedBroker.
+//     client, not ScriptedBroker;
+//   - a browser for tests hosting the real AS-1, which keeps cookies and
+//     approves ToolHive's consent page (browser.go).
 //
 // Keeping one live refresh token per session, checking the owner, and
 // refusing to reopen a closed session are the broker's job, so AS-1 does
@@ -61,6 +63,9 @@
 package identityharness
 
 import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/pem"
@@ -199,6 +204,45 @@ func (h *Harness) WriteCACert(t testing.TB, dir string) string {
 		t.Fatalf("identityharness: write CA certificate: %v", err)
 	}
 	return path
+}
+
+// WriteSigningKey writes a new P-256 private key in PEM to a file in dir and
+// returns its path, for a real AS-1's signing key file.
+func (*Harness) WriteSigningKey(t testing.TB, dir string) string {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("identityharness: signing key: %v", err)
+	}
+	der, err := x509.MarshalECPrivateKey(key)
+	if err != nil {
+		t.Fatalf("identityharness: marshal signing key: %v", err)
+	}
+	path := filepath.Join(dir, "as1-signing-key.pem")
+	if err := os.WriteFile(path, pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: der}), 0o600); err != nil {
+		t.Fatalf("identityharness: write signing key: %v", err)
+	}
+	return path
+}
+
+// WriteServerKeyPair writes the stand-ins' loopback TLS certificate and its
+// private key to files in dir and returns their paths, so a server under test
+// (such as mecak8s with --tls-cert and --tls-key) is trusted wherever the
+// stand-ins are, including by HTTPClient.
+func (h *Harness) WriteServerKeyPair(t testing.TB, dir string) (certFile, keyFile string) {
+	t.Helper()
+	der, err := x509.MarshalPKCS8PrivateKey(h.IdP.server.TLS.Certificates[0].PrivateKey)
+	if err != nil {
+		t.Fatalf("identityharness: marshal TLS key: %v", err)
+	}
+	certFile, keyFile = filepath.Join(dir, "identityharness-tls.crt"), filepath.Join(dir, "identityharness-tls.key")
+	if err := os.WriteFile(certFile, h.certPEM, 0o600); err != nil {
+		t.Fatalf("identityharness: write TLS certificate: %v", err)
+	}
+	if err := os.WriteFile(keyFile, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der}), 0o600); err != nil {
+		t.Fatalf("identityharness: write TLS key: %v", err)
+	}
+	return certFile, keyFile
 }
 
 // faults holds one-shot failures a test forces on a stand-in endpoint.

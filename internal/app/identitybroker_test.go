@@ -8,6 +8,11 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"net/http"
+	"os"
+	"path/filepath"
+	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -28,6 +33,7 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/permconfig"
 	"github.com/stacklok/mecatl/internal/adapter/server"
 	"github.com/stacklok/mecatl/internal/identitybroker"
+	"github.com/stacklok/mecatl/internal/identitybroker/adapter/as1server"
 	"github.com/stacklok/mecatl/internal/syscaller"
 	"github.com/stacklok/mecatl/internal/testutil/identityharness"
 )
@@ -70,8 +76,8 @@ func TestIdentityBrokerIsOffByDefault(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(built.Close)
-	if built.IdentityBroker != nil {
-		t.Fatal("an identity broker was constructed with the flag off")
+	if built.IdentityBroker != nil || built.IdentityBrokerHostedAS1 != nil {
+		t.Fatal("an identity broker or AS-1 was constructed with the flag off")
 	}
 }
 
@@ -150,6 +156,9 @@ func TestIdentityBrokerDefaultWiringOpensSessions(t *testing.T) {
 	t.Cleanup(built.Close)
 	if built.IdentityBroker == nil {
 		t.Fatal("no identity broker was constructed with the flag on")
+	}
+	if built.IdentityBrokerHostedAS1 != nil {
+		t.Fatal("AS-1 was hosted without its configuration")
 	}
 	owner := identitybroker.Owner{Issuer: "https://login.example.com", Subject: "alice-204"}
 	opened, err := built.IdentityBroker.OpenSession(t.Context(), identitybroker.OpenSessionRequest{HostSessionID: "hostS42", Incarnation: string(session.NewIncarnationID()), Owner: owner})
@@ -376,6 +385,119 @@ func TestIdentityBrokerSessionsRegisterTheirAgent(t *testing.T) {
 	built.Service.FinishRun(sess.ID, run)
 	if llm.Calls() == 0 {
 		t.Fatal("the agent did not run")
+	}
+}
+
+// hostedAS1Config configures a hosted AS-1 for issuer with h's IdP as its
+// upstream, registering it there.
+func hostedAS1Config(t *testing.T, h *identityharness.Harness, issuer string) *IdentityBrokerAS1Config {
+	t.Helper()
+	dir := t.TempDir()
+	secret := rand.Text()
+	secretFile := filepath.Join(dir, "upstream-client-secret")
+	if err := os.WriteFile(secretFile, []byte(secret), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	h.IdP.RegisterClient("hosted-as1", secret, issuer+"/oauth/callback")
+	return &IdentityBrokerAS1Config{
+		Issuer: issuer, Audience: identityharness.DefaultAudience,
+		TUIClientID: identityharness.DefaultClientID, TUIRedirectURIs: []string{identityharness.DefaultRedirectURI},
+		UpstreamIssuer: h.IdP.Issuer(), UpstreamClientID: "hosted-as1", UpstreamClientSecretFile: secretFile,
+		UpstreamCAFile: h.WriteCACert(t, dir), UpstreamAllowPrivateAddresses: true,
+	}
+}
+
+// as1StorageRunning reports whether a hosted AS-1's in-memory storage is
+// still running its cleanup loop, the one goroutine Close stops.
+func as1StorageRunning() bool {
+	buf := make([]byte, 1<<20)
+	for {
+		n := runtime.Stack(buf, true)
+		if n < len(buf) {
+			return strings.Contains(string(buf[:n]), "storage.(*MemoryStorage).cleanupLoop")
+		}
+		buf = make([]byte, 2*len(buf))
+	}
+}
+
+// TestIdentityBrokerHostsAS1 builds a hosted AS-1 beside the broker, serving
+// its routes under the issuer path and reachable in process, releases it with
+// the broker, and leaves session open unchanged: the broker converts no token
+// at it.
+func TestIdentityBrokerHostsAS1(t *testing.T) {
+	h := identityharness.New(t, identityharness.Options{})
+	const issuer = "https://mecatl.test/as1"
+	built, err := buildIsolated(t, t.Context(), Config{Workspace: t.TempDir(), UseMock: true, NoSoul: true, IdentityBroker: true, IdentityBrokerHostedAS1: hostedAS1Config(t, h, issuer)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	closed := false
+	t.Cleanup(func() {
+		if !closed {
+			built.Close()
+		}
+	})
+	as1 := built.IdentityBrokerHostedAS1
+	if as1 == nil || as1.Issuer != issuer || !slices.Contains(as1.Routes, "/as1/oauth/token") || as1.Handler == nil {
+		t.Fatalf("hosted AS-1 = %+v, want one for %s serving under /as1", as1, issuer)
+	}
+	resp, err := as1.HTTPClient.Get(issuer + "/.well-known/openid-configuration")
+	if err != nil {
+		t.Fatalf("in-process discovery: %v", err)
+	}
+	var doc struct {
+		Issuer string `json:"issuer"`
+	}
+	err = json.NewDecoder(resp.Body).Decode(&doc)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK || err != nil || doc.Issuer != issuer {
+		t.Fatalf("in-process discovery: status %d, issuer %q, err %v", resp.StatusCode, doc.Issuer, err)
+	}
+	alice := h.Owner(identityharness.Alice)
+	opened, err := built.IdentityBroker.OpenSession(t.Context(), identitybroker.OpenSessionRequest{
+		HostSessionID: "hostS42", Incarnation: string(session.NewIncarnationID()),
+		Owner:       identitybroker.Owner{Issuer: alice.Issuer, Subject: alice.Subject},
+		AccessToken: identitybroker.NewToken(h.AS1.MintAccessToken(identityharness.AccessTokenSpec{User: identityharness.Alice})),
+	})
+	if err != nil || opened.HoldsRefreshToken {
+		t.Fatalf("OpenSession with an access token = %+v, %v; want a session holding no refresh token", opened, err)
+	}
+	if !as1StorageRunning() {
+		t.Fatal("the hosted AS-1's storage is not running")
+	}
+	built.Close()
+	closed = true
+	if as1StorageRunning() {
+		t.Fatal("the hosted AS-1 was not released on shutdown")
+	}
+}
+
+func TestIdentityBrokerAS1RequiresTheBroker(t *testing.T) {
+	built, err := buildIsolated(t, t.Context(), Config{Workspace: t.TempDir(), UseMock: true, NoSoul: true, IdentityBrokerHostedAS1: &IdentityBrokerAS1Config{Issuer: "https://mecatl.test/as1"}})
+	if err == nil {
+		built.Close()
+		t.Fatal("Build hosted AS-1 without the identity broker")
+	}
+	if !errors.Is(err, errIdentityBrokerAS1WithoutBroker) {
+		t.Fatalf("Build error = %v, want %v", err, errIdentityBrokerAS1WithoutBroker)
+	}
+}
+
+func TestIdentityBrokerIsReleasedWhenAS1ConstructionFails(t *testing.T) {
+	core := newClosableCore(t)
+	invalid := &IdentityBrokerAS1Config{Issuer: "https://mecatl.test/as1"}
+	built, err := buildIsolated(t, t.Context(), Config{Workspace: t.TempDir(), UseMock: true, NoSoul: true, IdentityBroker: true, identityBrokerCore: core, IdentityBrokerHostedAS1: invalid})
+	if err == nil {
+		built.Close()
+		t.Fatal("Build succeeded with an invalid AS-1 configuration")
+	}
+	if !errors.Is(err, as1server.ErrInvalidConfig) {
+		t.Fatalf("Build error = %v, want AS-1's invalid configuration", err)
+	}
+	core.mu.Lock()
+	defer core.mu.Unlock()
+	if core.closed != 1 {
+		t.Fatalf("identity broker closed %d times after AS-1 failed to build, want once", core.closed)
 	}
 }
 

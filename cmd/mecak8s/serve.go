@@ -9,7 +9,9 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -23,6 +25,7 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/server"
 	"github.com/stacklok/mecatl/internal/adapter/telemetry"
 	"github.com/stacklok/mecatl/internal/adapter/tlsreload"
+	"github.com/stacklok/mecatl/internal/app"
 	"github.com/stacklok/mecatl/internal/cliconfig"
 )
 
@@ -95,7 +98,10 @@ func mountBrokerHandlers(mux *http.ServeMux, addr string, verifiedIdentity, owne
 // non-empty) is mounted in front of the authenticated API, same as mecated —
 // it must stay reachable without credentials, and outside the drain listener
 // since it is discovery metadata, not a lifecycle operation.
-func normalHTTPMux(svc *server.Service, auth *server.Authenticator, profile server.ProtectedResourceProfile, addr string, authed bool, brokerHandlers mcpbroker.HandlerBundle, brokerCallbackPath string) (http.Handler, error) {
+//
+// The hosted AS-1's anonymous OAuth routes, when as1 is non-nil, are mounted
+// after the broker's with the same kind of conflict check.
+func normalHTTPMux(svc *server.Service, auth *server.Authenticator, profile server.ProtectedResourceProfile, addr string, authed bool, brokerHandlers mcpbroker.HandlerBundle, brokerCallbackPath string, as1 *app.IdentityBrokerAS1Server) (http.Handler, error) {
 	ready := server.ReadyFunc(func() bool {
 		if svc.IsDraining() {
 			return false
@@ -114,7 +120,73 @@ func normalHTTPMux(svc *server.Service, auth *server.Authenticator, profile serv
 	if err := mountBrokerHandlers(mux, addr, authed, false, brokerHandlers, brokerCallbackPath); err != nil {
 		return nil, fmt.Errorf("mount MCP broker handlers: %w", err)
 	}
+	if err := mountAS1(mux, as1, profile); err != nil {
+		return nil, fmt.Errorf("mount AS-1: %w", err)
+	}
 	return mux, nil
+}
+
+// mountAS1 registers the hosted AS-1's routes on mux, which must already hold
+// every other route. A route another pattern on mux already serves is a
+// conflict, as is one the API behind the "/" fallback owns: its /v1 namespace
+// and the protected-resource metadata document.
+func mountAS1(mux *http.ServeMux, as1 *app.IdentityBrokerAS1Server, profile server.ProtectedResourceProfile) error {
+	if as1 == nil {
+		return nil
+	}
+	metadataPath := ""
+	if profile.Resource != "" {
+		if u, err := url.Parse(server.WellKnownProtectedResourceURL(profile.Resource)); err == nil {
+			metadataPath = u.Path
+		}
+	}
+	conflicts := func(route string) bool {
+		if route == "/v1" || strings.HasPrefix(route, "/v1/") || route == metadataPath {
+			return true
+		}
+		for _, method := range []string{http.MethodGet, http.MethodHead, http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete, http.MethodConnect, http.MethodOptions, http.MethodTrace} {
+			if _, pattern := mux.Handler(&http.Request{Method: method, URL: &url.URL{Path: route}}); pattern != "" && pattern != "/" {
+				return true
+			}
+		}
+		return false
+	}
+	for _, route := range as1.Routes {
+		if conflicts(route) {
+			return fmt.Errorf("route %q conflicts with a mecak8s route; choose another --identity-broker-as1-issuer path", route)
+		}
+	}
+	handler := limitAS1(as1.Handler)
+	for _, route := range as1.Routes {
+		mux.Handle(route, handler)
+	}
+	return nil
+}
+
+// Bounds on AS-1's anonymous routes. /oauth/authorize stores a pending
+// authorization before anyone signs in, so request size and rate bound the
+// memory an unauthenticated caller can make AS-1 hold.
+const (
+	as1MaxQueryBytes    = 8 << 10
+	as1MaxBodyBytes     = 64 << 10
+	as1PeerRatePerSec   = 10
+	as1PeerBurst        = 20
+	as1GlobalRatePerSec = 50
+	as1GlobalBurst      = 100
+)
+
+// limitAS1 rate limits AS-1 per direct peer and globally, refuses an
+// oversized query, and caps the request body.
+func limitAS1(next http.Handler) http.Handler {
+	bounded := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if len(r.URL.RawQuery) > as1MaxQueryBytes {
+			http.Error(w, "query too long", http.StatusRequestURITooLong)
+			return
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, as1MaxBodyBytes)
+		next.ServeHTTP(w, r)
+	})
+	return server.PeerRateLimit(bounded, as1PeerRatePerSec, as1PeerBurst, as1GlobalRatePerSec, as1GlobalBurst)
 }
 
 func drainHTTPMux(svc *server.Service, wait func(time.Duration)) http.Handler {
@@ -227,7 +299,7 @@ func serveWithHooks(ctx context.Context, cfg config, svc *server.Service, obs ob
 	// A bearer token, OIDC, or verified mTLS authenticates callers. Ordinary
 	// server TLS only authenticates the server.
 	authed := callerAuthenticationConfigured(cfg, tlsCfg)
-	normalMux, err := normalHTTPMux(svc, auth, protectedResourceProfile(cfg.oidc), cfg.httpAddr, authed, brokerHandlers, brokerCallbackPath)
+	normalMux, err := normalHTTPMux(svc, auth, protectedResourceProfile(cfg.oidc), cfg.httpAddr, authed, brokerHandlers, brokerCallbackPath, cfg.as1Server)
 	if err != nil {
 		return err
 	}
@@ -326,7 +398,16 @@ func newAuthenticator(ctx context.Context, cfg config) (*server.Authenticator, e
 	if err := cliconfig.ValidateOIDCAuthToken(cfg.oidc, cfg.authToken); err != nil {
 		return nil, err
 	}
-	validator, err := cliconfig.OIDCValidator(ctx, cfg.oidc)
+	oidc := cfg.oidc
+	if cfg.as1.issuer != "" {
+		// The validator fetches the hosted AS-1's discovery document and
+		// keys in process: listeners are not serving yet.
+		if cfg.as1Server == nil || cfg.as1Server.Issuer != oidc.Issuer {
+			return nil, errors.New("--identity-broker-as1-issuer is set but the hosted AS-1 was not built for it")
+		}
+		oidc.HTTPClient = cfg.as1Server.HTTPClient
+	}
+	validator, err := cliconfig.OIDCValidator(ctx, oidc)
 	if err != nil {
 		return nil, err
 	}

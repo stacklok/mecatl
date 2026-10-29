@@ -1,0 +1,240 @@
+// Package as1server hosts AS-1, Mecatl's sign-in authorization server, on
+// ToolHive's embedded authorization server. AS-1 signs users in through one
+// upstream OIDC IdP and issues RFC 9068 (typ at+jwt) access tokens for the
+// Mecatl API audience that carry the company identity as the RFC 9493 sub_id
+// claim. The TUI is its one registered client, a public client using PKCE.
+//
+// The server keeps its own in-memory storage, so pending sign-ins and refresh
+// tokens do not survive a restart. Its signing key does when
+// Config.SigningKeyFile is set.
+//
+// Only the sign-in surface is served: dynamic client registration and the
+// device flow are not, whatever ToolHive's discovery document advertises.
+package as1server
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"net/http"
+	"net/url"
+	"path"
+	"path/filepath"
+	"slices"
+	"strings"
+
+	"github.com/stacklok/toolhive/pkg/authserver"
+	"github.com/stacklok/toolhive/pkg/authserver/runner"
+	"github.com/stacklok/toolhive/pkg/authserver/server/registration"
+	"github.com/stacklok/toolhive/pkg/authserver/storage"
+	"github.com/stacklok/toolhive/pkg/oauthproto"
+)
+
+// accessTokenType is the JOSE typ of AS-1 access tokens (RFC 9068).
+const accessTokenType = "at+jwt"
+
+// ErrInvalidConfig reports a Config that New refuses before starting anything.
+var ErrInvalidConfig = errors.New("as1server: invalid configuration")
+
+// Config configures AS-1.
+type Config struct {
+	// Issuer is AS-1's issuer URL: https, without query, fragment, or trailing
+	// slash. It may have a path, under which every route is served.
+	Issuer string
+	// Audience is the Mecatl API identifier, the only audience AS-1 issues
+	// tokens for and the one whose tokens carry sub_id.
+	Audience string
+	// SigningKeyFile is a PEM private key (EC P-256 for ES256, or RSA) that
+	// signs access tokens. Empty generates a key at startup, so tokens stop
+	// verifying when the server restarts.
+	SigningKeyFile string
+	// TUIClientID is the client ID of the TUI, a public client.
+	TUIClientID string
+	// TUIRedirectURIs are the TUI's redirect URIs, matched exactly.
+	TUIRedirectURIs []string
+	// Upstream is the IdP users sign in at.
+	Upstream UpstreamConfig
+}
+
+// UpstreamConfig is AS-1's registration at the upstream OIDC IdP.
+type UpstreamConfig struct {
+	// Issuer is the IdP's https issuer URL, used for OIDC discovery.
+	Issuer string
+	// ClientID is AS-1's client ID at the IdP.
+	ClientID string
+	// ClientSecretFile holds AS-1's client secret at the IdP. Empty makes AS-1
+	// a public client of the IdP.
+	ClientSecretFile string
+	// SubjectClaim is the ID-token claim that names the company identity.
+	// Empty selects "sub"; Entra ID needs "oid".
+	SubjectClaim string
+	// CAFile is a PEM bundle trusted for the IdP's TLS certificate in
+	// addition to the system roots. Empty trusts the system roots only.
+	CAFile string
+	// AllowPrivateAddresses lets AS-1 reach the IdP on a private or
+	// link-local address, which its SSRF protection otherwise refuses.
+	// ToolHive admits a loopback issuer host (localhost, 127.0.0.0/8, ::1)
+	// either way.
+	AllowPrivateAddresses bool
+}
+
+// Server is a running AS-1. Close releases it.
+type Server struct {
+	issuer  *url.URL
+	routes  []string
+	handler http.Handler
+	auth    *runner.EmbeddedAuthServer
+}
+
+// options are test-only construction settings.
+type options struct {
+	// extraAudiences are further allowed audiences whose tokens carry no
+	// sub_id. Test-only.
+	extraAudiences []string
+}
+
+// New validates cfg, discovers the upstream IdP, and builds AS-1.
+func New(ctx context.Context, cfg Config) (*Server, error) {
+	return newServer(ctx, cfg, options{})
+}
+
+func newServer(ctx context.Context, cfg Config, opts options) (*Server, error) {
+	issuer, err := cfg.validate()
+	if err != nil {
+		return nil, err
+	}
+	audiences := append([]string{cfg.Audience}, opts.extraAudiences...)
+	client, err := registration.New(registration.Config{
+		ID:                      cfg.TUIClientID,
+		RedirectURIs:            slices.Clone(cfg.TUIRedirectURIs),
+		TokenEndpointAuthMethod: oauthproto.TokenEndpointAuthMethodNone,
+		GrantTypes:              []string{oauthproto.GrantTypeAuthorizationCode, oauthproto.GrantTypeRefreshToken},
+		ResponseTypes:           []string{oauthproto.ResponseTypeCode},
+		Scopes:                  []string{"openid", "profile", "offline_access"},
+		Audience:                audiences,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("as1server: construct TUI client: %w", err)
+	}
+	store := storage.NewMemoryStorage()
+	if err := store.RegisterClient(ctx, client); err != nil {
+		_ = store.Close()
+		return nil, fmt.Errorf("as1server: register TUI client: %w", err)
+	}
+	runConfig := &authserver.RunConfig{
+		SchemaVersion:    "v1",
+		Issuer:           cfg.Issuer,
+		AllowedAudiences: audiences,
+		Upstreams:        []authserver.UpstreamRunConfig{{Type: authserver.UpstreamProviderTypeOIDC, OIDCConfig: cfg.upstreamRunConfig()}},
+	}
+	if cfg.SigningKeyFile != "" {
+		runConfig.SigningKeyConfig = &authserver.SigningKeyRunConfig{
+			KeyDir: filepath.Dir(cfg.SigningKeyFile), SigningKeyFile: filepath.Base(cfg.SigningKeyFile),
+		}
+	}
+	// On error the constructor closes store.
+	auth, err := runner.NewEmbeddedAuthServerWithStorage(ctx, runConfig, store,
+		runner.WithSubjectIdentifierAudiences([]string{cfg.Audience}),
+		runner.WithAccessTokenType(accessTokenType))
+	if err != nil {
+		return nil, fmt.Errorf("as1server: create authorization server: %w", err)
+	}
+	s := &Server{issuer: issuer, auth: auth}
+	s.routes, s.handler = signInRoutes(issuer.Path, auth.Handler())
+	return s, nil
+}
+
+// upstreamRunConfig is ToolHive's configuration of AS-1's upstream IdP. It
+// asks for offline access the way OIDC Core requires.
+func (cfg Config) upstreamRunConfig() *authserver.OIDCUpstreamRunConfig {
+	return &authserver.OIDCUpstreamRunConfig{
+		IssuerURL:                     cfg.Upstream.Issuer,
+		ClientID:                      cfg.Upstream.ClientID,
+		ClientSecretFile:              cfg.Upstream.ClientSecretFile,
+		RedirectURI:                   cfg.Issuer + "/oauth/callback",
+		Scopes:                        []string{"openid", "offline_access"},
+		AdditionalAuthorizationParams: map[string]string{"prompt": "consent"},
+		SubjectClaim:                  cfg.Upstream.SubjectClaim,
+		CAFilePath:                    cfg.Upstream.CAFile,
+		AllowPrivateIPs:               cfg.Upstream.AllowPrivateAddresses,
+	}
+}
+
+// validate checks cfg and returns the parsed issuer.
+func (cfg Config) validate() (*url.URL, error) {
+	issuer, err := httpsURL("issuer", cfg.Issuer)
+	if err != nil {
+		return nil, err
+	}
+	if strings.HasSuffix(issuer.Path, "/") || (issuer.Path != "" && path.Clean(issuer.Path) != issuer.Path) ||
+		issuer.EscapedPath() != issuer.Path {
+		return nil, fmt.Errorf("%w: issuer path must be clean, unescaped, and without a trailing slash", ErrInvalidConfig)
+	}
+	switch {
+	case cfg.Audience == "":
+		return nil, fmt.Errorf("%w: audience is required", ErrInvalidConfig)
+	case cfg.TUIClientID == "":
+		return nil, fmt.Errorf("%w: TUI client ID is required", ErrInvalidConfig)
+	case len(cfg.TUIRedirectURIs) == 0:
+		return nil, fmt.Errorf("%w: at least one TUI redirect URI is required", ErrInvalidConfig)
+	case cfg.Upstream.ClientID == "":
+		return nil, fmt.Errorf("%w: upstream client ID is required", ErrInvalidConfig)
+	}
+	for _, raw := range cfg.TUIRedirectURIs {
+		if u, err := url.Parse(raw); err != nil || !u.IsAbs() || u.Host == "" || u.Fragment != "" {
+			return nil, fmt.Errorf("%w: TUI redirect URI %q must be an absolute URL without a fragment", ErrInvalidConfig, raw)
+		}
+	}
+	if _, err := httpsURL("upstream issuer", cfg.Upstream.Issuer); err != nil {
+		return nil, err
+	}
+	return issuer, nil
+}
+
+// httpsURL parses an issuer-style URL: https, with a host, and without
+// userinfo, query, or fragment.
+func httpsURL(name, raw string) (*url.URL, error) {
+	if raw == "" {
+		return nil, fmt.Errorf("%w: %s is required", ErrInvalidConfig, name)
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" {
+		return nil, fmt.Errorf("%w: %s must be an https URL with a host and without userinfo, query, or fragment", ErrInvalidConfig, name)
+	}
+	return u, nil
+}
+
+// signInRoutes lists the routes AS-1 serves under issuerPath and returns a
+// handler that serves only those, passing them to embedded with issuerPath
+// stripped. Everything else, including registration and the device flow, is
+// not found.
+func signInRoutes(issuerPath string, embedded http.Handler) ([]string, http.Handler) {
+	routes := []string{
+		issuerPath + "/oauth/authorize",
+		issuerPath + "/oauth/consent",
+		issuerPath + "/oauth/token",
+		issuerPath + "/oauth/callback",
+		issuerPath + "/.well-known/openid-configuration",
+		issuerPath + "/.well-known/oauth-authorization-server",
+		issuerPath + "/.well-known/jwks.json",
+	}
+	stripped := http.StripPrefix(issuerPath, embedded)
+	mux := http.NewServeMux()
+	for _, route := range routes {
+		mux.Handle(route, stripped)
+	}
+	return routes, mux
+}
+
+// Issuer is AS-1's issuer URL.
+func (s *Server) Issuer() string { return s.issuer.String() }
+
+// Routes are the exact paths Handler serves, for the caller to mount on its
+// mux after checking they collide with nothing already there.
+func (s *Server) Routes() []string { return slices.Clone(s.routes) }
+
+// Handler serves AS-1's routes and nothing else.
+func (s *Server) Handler() http.Handler { return s.handler }
+
+// Close releases the authorization server and its storage. It is idempotent.
+func (s *Server) Close() error { return s.auth.Close() }

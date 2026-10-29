@@ -690,6 +690,154 @@ func TestMecak8sHelmChart_OwnerIdentity(t *testing.T) {
 	}
 }
 
+func TestMecak8sHelmChart_IdentityBrokerAS1(t *testing.T) {
+	base := []string{"template", "as1", ".", "--set", "mockProvider=true,permissionMode=yolo,replicaCount=1", "--set", "redis.local.enabled=true",
+		"--set", "extraArgs={--no-shell}",
+		"--set", "oidc.enabled=true,oidc.audience=mecatl,oidc.ownerIdentity=sub_id,oidc.resource=https://mecatl.example.com",
+		"--set", "identityBroker.enabled=true",
+		"--set", "identityBroker.as1.issuer=https://mecatl.example.com/as1,identityBroker.as1.tuiClientID=mecatui",
+		"--set", "identityBroker.as1.upstream.issuer=https://login.example.com/tenant/v2.0,identityBroker.as1.upstream.clientID=as1"}
+	with := func(values ...string) []string {
+		args := slices.Clone(base)
+		for _, value := range values {
+			args = append(args, "--set", value)
+		}
+		return args
+	}
+
+	// mecak8s derives the unset OIDC issuer, client ID, and accepted client IDs
+	// from AS-1; the chart renders the same values.
+	rendered, err := helm(t, base...)
+	if err != nil {
+		t.Fatalf("render minimal AS-1: %v\n%s", err, rendered)
+	}
+	deployment := deploymentFromRender(t, rendered)
+	args := deployment.Spec.Template.Spec.Containers[0].Args
+	for _, want := range []string{
+		"--oidc-issuer=https://mecatl.example.com/as1", "--oidc-client-id=mecatui", "--oidc-accepted-client-ids=mecatui", "--oidc-owner-identity=sub_id",
+		"--enable-identity-broker", "--identity-broker-as1-issuer=https://mecatl.example.com/as1", "--identity-broker-as1-tui-client-id=mecatui",
+		"--identity-broker-as1-upstream-issuer=https://login.example.com/tenant/v2.0", "--identity-broker-as1-upstream-client-id=as1",
+	} {
+		if !slices.Contains(args, want) {
+			t.Fatalf("rendered args missing %q: %v", want, args)
+		}
+	}
+	for _, arg := range args {
+		if strings.HasPrefix(arg, "--identity-broker-as1-signing-key-file") || strings.HasPrefix(arg, "--identity-broker-as1-upstream-client-secret-file") || strings.HasPrefix(arg, "--identity-broker-subject-claim") {
+			t.Fatalf("minimal AS-1 rendered optional flag %q", arg)
+		}
+	}
+	if deployment.Spec.Strategy.Type != appsv1.RecreateDeploymentStrategyType {
+		t.Fatalf("identity broker strategy = %q, want Recreate", deployment.Spec.Strategy.Type)
+	}
+
+	// Explicit OIDC values equal to the derived ones, and the optional values.
+	rendered, err = helm(t, with(
+		"oidc.issuer=https://mecatl.example.com/as1", "oidc.clientID=mecatui", "oidc.acceptedClientIDs={studio,mecatui}",
+		"identityBroker.subjectClaim=oid",
+		"identityBroker.as1.signingKey.secretName=as1-signing", "identityBroker.as1.signingKey.key=key.pem",
+		"identityBroker.as1.upstream.clientSecret.secretName=as1-upstream", "identityBroker.as1.upstream.clientSecret.key=client-secret",
+	)...)
+	if err != nil {
+		t.Fatalf("render full AS-1: %v\n%s", err, rendered)
+	}
+	spec := deploymentFromRender(t, rendered).Spec.Template.Spec
+	args = spec.Containers[0].Args
+	for _, want := range []string{
+		"--oidc-accepted-client-ids=studio,mecatui", "--identity-broker-subject-claim=oid",
+		"--identity-broker-as1-signing-key-file=/var/run/secrets/as1-signing-key/key.pem",
+		"--identity-broker-as1-upstream-client-secret-file=/var/run/secrets/as1-upstream-client-secret/client-secret",
+	} {
+		if !slices.Contains(args, want) {
+			t.Fatalf("rendered args missing %q: %v", want, args)
+		}
+	}
+	if n := len(slices.DeleteFunc(slices.Clone(args), func(arg string) bool { return arg != "--enable-identity-broker" })); n != 1 {
+		t.Fatalf("--enable-identity-broker rendered %d times: %v", n, args)
+	}
+	for volume, secret := range map[string]struct{ name, key string }{"as1-signing-key": {"as1-signing", "key.pem"}, "as1-upstream-client-secret": {"as1-upstream", "client-secret"}} {
+		i := slices.IndexFunc(spec.Volumes, func(v corev1.Volume) bool { return v.Name == volume })
+		if i < 0 || spec.Volumes[i].Secret == nil || spec.Volumes[i].Secret.SecretName != secret.name || len(spec.Volumes[i].Secret.Items) != 1 || spec.Volumes[i].Secret.Items[0].Key != secret.key {
+			t.Fatalf("volume %s does not project %s/%s: %+v", volume, secret.name, secret.key, spec.Volumes)
+		}
+		m := slices.IndexFunc(spec.Containers[0].VolumeMounts, func(m corev1.VolumeMount) bool { return m.Name == volume })
+		if m < 0 || !spec.Containers[0].VolumeMounts[m].ReadOnly || spec.Containers[0].VolumeMounts[m].MountPath != "/var/run/secrets/"+volume {
+			t.Fatalf("volume %s is not mounted read-only at /var/run/secrets/%s: %+v", volume, volume, spec.Containers[0].VolumeMounts)
+		}
+	}
+
+	// The identity broker without AS-1 keeps the company IdP as the OIDC issuer,
+	// and, like mecak8s, needs no OIDC at all.
+	brokerOnly := []string{"template", "broker", ".", "--set", "mockProvider=true,permissionMode=yolo,replicaCount=1", "--set", "redis.local.enabled=true",
+		"--set", "identityBroker.enabled=true"}
+	for name, extra := range map[string][]string{
+		"with OIDC":                  {"--set", "extraArgs={--no-shell}", "--set", "oidc.enabled=true,oidc.issuer=https://as1.example.com,oidc.audience=mecatl,oidc.ownerIdentity=sub_id", "--set", "oidc.acceptedClientIDs={mecatui}"},
+		"without OIDC":               {"--set", "extraArgs={--no-shell}"},
+		"-no-shell":                  {"--set", "extraArgs={-no-shell}"},
+		"no-shell=1":                 {"--set", "extraArgs={--no-shell=1}"},
+		"shell=":                     {"--set-string", "extraArgs[0]=--shell="},
+		"shell-less Redis workspace": {"--set", "redis.filesystem.enabled=true"},
+	} {
+		rendered, err = helm(t, slices.Concat(brokerOnly, extra)...)
+		if err != nil {
+			t.Fatalf("render broker without AS-1 %s: %v\n%s", name, err, rendered)
+		}
+		args = deploymentFromRender(t, rendered).Spec.Template.Spec.Containers[0].Args
+		if !slices.Contains(args, "--enable-identity-broker") || slices.ContainsFunc(args, func(arg string) bool { return strings.HasPrefix(arg, "--identity-broker-") }) {
+			t.Fatalf("broker without AS-1 %s rendered %v", name, args)
+		}
+	}
+	for name, extra := range map[string][]string{
+		"no shell flag":           nil,
+		"no-shell turned off":     {"--set", "extraArgs={--no-shell,--no-shell=false}"},
+		"non-empty shell":         {"--set", "extraArgs={--shell=/bin/bash}"},
+		"shell value next":        {"--set", "extraArgs={--shell,/bin/bash}"},
+		"shell reset after empty": {"--set-string", "extraArgs[0]=--shell=", "--set-string", "extraArgs[1]=-shell=/bin/sh"},
+	} {
+		if output, err := helm(t, slices.Concat(brokerOnly, extra)...); err == nil || !strings.Contains(output, "identityBroker.enabled requires no shell in the mecak8s process") {
+			t.Fatalf("render broker %s = %v, want the shell refusal:\n%s", name, err, output)
+		}
+	}
+
+	for name, tc := range map[string]struct {
+		args []string
+		want string
+	}{
+		"AS-1 without OIDC":              {with("oidc.enabled=false"), "identityBroker.as1.issuer requires oidc.enabled=true"},
+		"broker without owner identity":  {with("oidc.ownerIdentity="), "identityBroker.enabled with oidc.enabled requires oidc.ownerIdentity=sub_id"},
+		"broker with a shell":            {with("extraArgs[0]=--shell=/bin/sh"), "identityBroker.enabled requires no shell in the mecak8s process"},
+		"subject claim without AS-1":     {with("identityBroker.subjectClaim=oid", "identityBroker.as1.issuer=", "identityBroker.as1.tuiClientID=", "identityBroker.as1.upstream.issuer=", "identityBroker.as1.upstream.clientID="), "identityBroker.subjectClaim requires identityBroker.as1.issuer"},
+		"broker flag also in extraArgs":  {with("extraArgs[0]=--enable-identity-broker"), `extraArgs entry "--enable-identity-broker" sets an identity broker flag`},
+		"AS-1 flag also in extraArgs":    {with("extraArgs[0]=-identity-broker-as1-issuer=https://x.example.com"), `extraArgs entry "-identity-broker-as1-issuer=https://x.example.com" sets an identity broker flag`},
+		"subject claim in extraArgs":     {with("extraArgs[0]=--identity-broker-subject-claim=oid"), `extraArgs entry "--identity-broker-subject-claim=oid" sets an identity broker flag`},
+		"AS-1 without broker":            {with("identityBroker.enabled=false"), "identityBroker.as1.issuer requires identityBroker.enabled=true"},
+		"AS-1 values without issuer":     {with("identityBroker.as1.issuer="), "identityBroker.as1 values require identityBroker.as1.issuer"},
+		"without TUI client ID":          {with("identityBroker.as1.tuiClientID="), "identityBroker.as1.tuiClientID is required"},
+		"without upstream issuer":        {with("identityBroker.as1.upstream.issuer="), "identityBroker.as1.upstream.issuer is required"},
+		"without upstream client ID":     {with("identityBroker.as1.upstream.clientID="), "identityBroker.as1.upstream.clientID is required"},
+		"plain HTTP issuer":              {with("identityBroker.as1.issuer=http://mecatl.example.com/as1"), "identityBroker.as1.issuer must be an https URL"},
+		"upstream issuer with query":     {with("identityBroker.as1.upstream.issuer=https://login.example.com?x=1"), "identityBroker.as1.upstream.issuer must be an https URL"},
+		"without audience":               {with("oidc.audience="), "oidc.audience is required with identityBroker.as1.issuer"},
+		"without resource":               {with("oidc.resource="), "oidc.resource is required with identityBroker.as1.issuer"},
+		"private HTTPS issuer":           {with("oidc.allowPrivateHTTPSIssuer=true", "oidc.caSecret=ca", "oidc.caKey=ca.crt"), "oidc.allowPrivateHTTPSIssuer cannot be used with identityBroker.as1.issuer"},
+		"foreign JWKS URI":               {with("oidc.jwksURI=https://idp.example.com/keys"), "oidc.jwksURI cannot be used with identityBroker.as1.issuer"},
+		"AS-1's own JWKS URI":            {with("oidc.jwksURI=https://mecatl.example.com/as1/.well-known/jwks.json"), "oidc.jwksURI cannot be used with identityBroker.as1.issuer"},
+		"different OIDC issuer":          {with("oidc.issuer=https://idp.example.com"), "oidc.issuer must be empty or equal identityBroker.as1.issuer"},
+		"different OIDC client ID":       {with("oidc.clientID=studio"), "oidc.clientID must be empty or equal identityBroker.as1.tuiClientID"},
+		"accepted IDs without TUI":       {with("oidc.acceptedClientIDs={studio}"), "oidc.acceptedClientIDs must include identityBroker.as1.tuiClientID"},
+		"signing key Secret without key": {with("identityBroker.as1.signingKey.secretName=as1-signing"), "identityBroker.as1.signingKey.key is required"},
+		"client secret key without name": {with("identityBroker.as1.upstream.clientSecret.key=client-secret"), "identityBroker.as1.upstream.clientSecret.secretName is required"},
+		"two replicas":                   {with("replicaCount=2"), "replicaCount"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			output, err := helm(t, tc.args...)
+			if err == nil || !strings.Contains(output, tc.want) {
+				t.Fatalf("render = %v, want failure %q:\n%s", err, tc.want, output)
+			}
+		})
+	}
+}
+
 func TestMecak8sHelmChart_EdgeTerminatedTLS(t *testing.T) {
 	rendered, err := helm(t, "template", "production", ".", "-f", "ci/production-edge-tls-values.yaml")
 	if err != nil {
