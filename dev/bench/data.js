@@ -384104,6 +384104,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1793239445551,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "29541485+ChrisJBurns@users.noreply.github.com",
+            "name": "Chris Burns",
+            "username": "ChrisJBurns"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "27dceccfe85d0d0708254013e9df856b5a2dfd11",
+          "message": "feat(identitybroker): convert the AS-1 access token at session open (#2593)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-29T13:23:21Z",
+          "tree_id": "4c462411ab42089a3de213a6fb8eeeb93613ff81",
+          "url": "https://github.com/stacklok/mecatl/commit/27dceccfe85d0d0708254013e9df856b5a2dfd11"
+        },
+        "date": 1793280940948,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 16145,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12908,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 794,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -500992,6 +501031,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1793280937482,
+  "lastUpdate": 1793280941988,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
