@@ -286,7 +286,7 @@ client_assertion=<private_key_jwt for mecatl>
 1. Client authentication as `mecatl` ([step (5)](#5-broker-client-authentication)).
 2. The client may use the token-exchange grant.
 3. The request is well formed: the two token types above, no `actor_token`, no `scope`, `resource`, or `audience`, and exactly one exchange-grant entry listing only `id-jag`, an output configured for `mecatl`.
-4. The subject token is an AS-1 access token from a sign-in, not from a token exchange: signature, `iss`, `exp`, not revoked at AS-1, no `act`, `aud` is the Mecatl API, and `client_id` is the TUI or Studio. It was issued after the user's last user-wide revocation, if any; see [the revocation time](#sign-out-and-revocation). Accepting a Mecatl-API token from `mecatl` is a narrow policy for this one client, not a general audience bypass.
+4. The subject token is an AS-1 access token from a sign-in, not from a token exchange: signature, `iss`, `exp`, not revoked at AS-1, no `act`, `aud` is the Mecatl API, and `client_id` is the TUI or Studio. It was issued with the `offline_access` scope, which ToolHive's exchange handler requires and the TUI requests at sign-in. It was issued after the user's last user-wide revocation, if any; see [the revocation time](#sign-out-and-revocation). Accepting a Mecatl-API token from `mecatl` is a narrow policy for this one client, not a general audience bypass.
 5. The token's `jti` has not been converted before. A reuse is refused with `token_used`, and when the reusing client is the one that holds the grant the `jti` created, AS-1 also revokes that grant; any child grants stop working, because their parent is revoked. A reuse by another client revokes nothing.
 
 **Output.** In one transaction, AS-1 records the converted `jti` and writes the grant: client `mecatl`, Alice as `u-alice-91`, her `sub_id`, the source `jti`, `id-jag` as its only output, and its expiry. RFC 8693 returns the issued token in `access_token` even when it is not an access token (§2.2.1). AS-1 echoes the entry with the expiry it granted, which the exchange-grant type allows (RFC 9396 §7.1):
@@ -825,8 +825,8 @@ The failures each step can return: where each is detected, what the user sees, a
 | Run owner differs from the grant's recorded owner | Broker | `PERMISSION_DENIED`, recorded | Call denied | Nothing |
 | No route, or ceiling denies the tool | Broker | `PERMISSION_DENIED` | Call denied | Nothing |
 | Inconsistent delegation report | Broker | `PERMISSION_DENIED`, `ALREADY_EXISTS` | Delegated task cannot call tools | Nothing |
-| Session closed or past its hard expiry | Broker, AS-1 | `invalid_request` with `session_closed`; the broker returns its status from error reasons | A new session opens on Alice's next request | Already revoked |
-| Grant revoked by sign out everywhere | Broker, AS-1 | `invalid_request` with `signed_out`; the broker returns its status from error reasons | Run stops; Alice is signed out | Already revoked |
+| Session closed or past its hard expiry | Broker | `session_closed`, with its status from error reasons | A new session opens on Alice's next request | Already revoked |
+| Grant revoked by sign out everywhere | Broker | `signed_out`, with its status from error reasons | Run stops; Alice is signed out | Already revoked |
 | Schedule grant presented to an ID-JAG exchange, or a broker refresh token used to open a scheduled run | AS-1 | `invalid_request` with `denied` | Call or run fails; a broker bug | Nothing |
 | Company IdP refuses the refresh | AS-1 | `invalid_request` with `upstream_revoked` | Every agent and schedule for Alice stops; she is signed out | All of Alice's grants and client refresh tokens |
 | Upstream refresh token past its recorded expiry, missing, or refused after an ambiguous refresh | AS-1 | `invalid_request` with `owner_action_required` | "Needs owner action": Alice signs in again | All of Alice's grants and client refresh tokens |
