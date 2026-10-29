@@ -383707,6 +383707,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1793236434629,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "22a8ce6e218782d463cd911d5be57221737e529d",
+          "message": "docs(mecatui): organize UI contributor guidance by task (#2597)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-28T18:51:49-07:00",
+          "tree_id": "21e83f7ffbf2fc958cb5d9bb0ae5ef653f12dc4e",
+          "url": "https://github.com/stacklok/mecatl/commit/22a8ce6e218782d463cd911d5be57221737e529d"
+        },
+        "date": 1793239445551,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 16115,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12880.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 794,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -500481,6 +500520,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1793239442556,
+  "lastUpdate": 1793239446467,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
