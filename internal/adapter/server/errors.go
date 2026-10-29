@@ -141,6 +141,24 @@ var (
 	// does not run without one. Adapters map it to Unavailable / HTTP 503; a
 	// later retry can succeed.
 	ErrIdentityBrokerUnavailable = errors.New("server: identity broker unavailable")
+	// ErrBearerRejected is returned when the identity broker refuses the
+	// request's access token at session open (token_used, subject_invalid)
+	// before the request changed anything. It carries the authenticator's
+	// bearer_rejected tag, so a client refreshes its access token and retries
+	// once. Adapters map it to Unauthenticated / HTTP 401 with an invalid_token
+	// challenge. It is never returned once a request has changed state.
+	ErrBearerRejected = errors.New("server: access token rejected")
+	// ErrSignInRequired is returned when the identity broker reports that the
+	// user's authority was revoked (signed_out, upstream_revoked,
+	// owner_action_required) at session open: a refreshed access token would be
+	// refused too, so the client signs the user in again. Adapters map it to
+	// Unauthenticated / HTTP 401 with an invalid_token challenge.
+	ErrSignInRequired = errors.New("server: sign in required")
+	// ErrIdentityBrokerSessionRefused is returned when the identity broker
+	// refuses to pair the request's access token with the session's broker
+	// session (owner_mismatch, session_owned). Adapters map it to
+	// PermissionDenied / HTTP 403; retrying does not help.
+	ErrIdentityBrokerSessionRefused = errors.New("server: identity broker refused the session")
 	// ErrContextWindowUnavailable is a transient admission failure: running with
 	// the speculative floor could irreversibly compact valid persisted history.
 	ErrContextWindowUnavailable = errors.New("server: context window unavailable")

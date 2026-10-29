@@ -130,6 +130,12 @@ var errorRegistry = []errorCodeEntry{
 	{Sentinel: ErrContextWindowUnavailable, Code: "context_window_unavailable", GRPC: codes.Unavailable, HTTPStatus: http.StatusServiceUnavailable, Title: "Context window metadata is unavailable"},
 	{Sentinel: ErrUnavailable, Code: "draining", GRPC: codes.Unavailable, HTTPStatus: http.StatusServiceUnavailable, Title: "Server is draining and not accepting new runs"},
 	{Sentinel: ErrIdentityBrokerUnavailable, Code: "identity_broker_unavailable", GRPC: codes.Unavailable, HTTPStatus: http.StatusServiceUnavailable, Title: "Identity broker is unavailable"},
+	// The code equals the authenticator's bearerRejectedReason, so a refusal
+	// at session open reaches the client exactly as an authenticator rejection
+	// does: nothing happened, refresh the access token and retry once.
+	{Sentinel: ErrBearerRejected, Code: bearerRejectedReason, GRPC: codes.Unauthenticated, HTTPStatus: http.StatusUnauthorized, Title: "Access token rejected"},
+	{Sentinel: ErrSignInRequired, Code: "sign_in_required", GRPC: codes.Unauthenticated, HTTPStatus: http.StatusUnauthorized, Title: "Sign in again"},
+	{Sentinel: ErrIdentityBrokerSessionRefused, Code: "identity_broker_session_refused", GRPC: codes.PermissionDenied, HTTPStatus: http.StatusForbidden, Title: "Identity broker refused the session"},
 	{Sentinel: ErrNoMCPProvider, Code: "no_mcp_provider", GRPC: codes.FailedPrecondition, HTTPStatus: http.StatusPreconditionFailed, Title: "No MCP provider configured"},
 	{Sentinel: ErrTeamsDisabled, Code: "teams_disabled", GRPC: codes.FailedPrecondition, HTTPStatus: http.StatusPreconditionFailed, Title: "Agent teams are not enabled"},
 	{Sentinel: ErrTeamRunning, Code: "team_running", GRPC: codes.FailedPrecondition, HTTPStatus: http.StatusPreconditionFailed, Title: "Team is already running"},

@@ -19,13 +19,18 @@ rather than ProtoJSON enum names.
 ## Authentication errors
 
 When the server requires a static bearer token or OIDC caller identity, a
-request that fails authentication receives `401 Unauthorized` with an RFC 9457
-problem body and an RFC 6750 `WWW-Authenticate` challenge:
+request that fails authentication receives an RFC 9457 problem body whose `code`
+names the failure, and a `401` carries an RFC 6750 `WWW-Authenticate`
+challenge. The identity broker rows apply only when the identity broker is
+configured to exchange access tokens at AS-1:
 
-|Request|Challenge|
-|-|-|
-|No `Authorization: Bearer` credential|`Bearer`|
-|A bearer token the server rejects|`Bearer error="invalid_token"`|
+|Status|`code`|Challenge|Meaning and recovery|
+|-|-|-|-|
+|`401`|`bearer_rejected`|`Bearer`|The request has no `Authorization: Bearer` credential. Send one.|
+|`401`|`bearer_rejected`|`Bearer error="invalid_token"`|The server rejected the bearer token, or the identity broker refused it before the request changed anything. Refresh the token and retry once.|
+|`401`|`sign_in_required`|`Bearer error="invalid_token"`|The user's sign-in was revoked. Sign in again; a refreshed token is refused too.|
+|`403`|`identity_broker_session_refused`|None|The token belongs to a different user than the session's owner. Retrying does not help.|
+|`503`|`identity_broker_unavailable`|None|The identity broker is unreachable. Nothing was saved, so retry later.|
 
 An unreachable identity provider returns `503` without a challenge, because the
 token's validity is unknown.

@@ -308,7 +308,7 @@ func TestIdentityBrokerWiringConvertsAtAS1(t *testing.T) {
 	h := identityharness.New(t, identityharness.Options{
 		BrokerKeys: []identityharness.BrokerKey{{KeyID: signer.JWKS().Keys[0].KeyID, Public: &clientKey.PublicKey}},
 	})
-	broker, err := newIdentityBroker(Config{identityBrokerAS1: &identityBrokerAS1{
+	broker, err := newIdentityBroker(Config{IdentityBrokerAS1: &IdentityBrokerAS1{
 		Issuer: h.AS1.Issuer(), TokenEndpoint: h.AS1.TokenEndpoint(), HTTPClient: h.HTTPClient(), ClientKey: clientKey,
 	}})
 	if err != nil {

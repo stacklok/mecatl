@@ -70,9 +70,9 @@ type identityBroker struct {
 	client *identitybroker.ClientAssertionSigner
 }
 
-// identityBrokerAS1 is the AS-1 the identity broker converts access tokens
+// IdentityBrokerAS1 is the AS-1 the identity broker converts access tokens
 // at during session open.
-type identityBrokerAS1 struct {
+type IdentityBrokerAS1 struct {
 	Issuer        string
 	TokenEndpoint string
 	HTTPClient    *http.Client
@@ -84,7 +84,7 @@ type identityBrokerAS1 struct {
 // newIdentityBroker constructs the real identity broker with the interim
 // configuration and, one key per role, an agent issuer key and a broker
 // client key generated for this process. It loads no definitions yet. With
-// cfg.identityBrokerAS1, session open converts access tokens at that AS-1,
+// cfg.IdentityBrokerAS1, session open converts access tokens at that AS-1,
 // authenticating with the broker client key.
 //
 // The broker client key lasts only as long as the process until an operator
@@ -100,7 +100,7 @@ func newIdentityBroker(cfg Config) (identityBroker, error) {
 	if err != nil {
 		return identityBroker{}, fmt.Errorf("generate signing key: %w", err)
 	}
-	as1 := cfg.identityBrokerAS1
+	as1 := cfg.IdentityBrokerAS1
 	var clientKey *ecdsa.PrivateKey
 	if as1 != nil {
 		clientKey = as1.ClientKey

@@ -299,6 +299,13 @@ func TestProblemDetailsCarryNoSecrets(t *testing.T) {
 
 		low := strings.ToLower(doc.Code)
 		for _, w := range secretWords {
+			// bearer_rejected names a rejection, not a credential, and is the
+			// authenticator's already-published ErrorInfo reason that clients
+			// key their refresh-and-retry on; the identity broker's refusal of
+			// an access token must carry the same string.
+			if e.Code == bearerRejectedReason && w == "bearer" {
+				continue
+			}
 			if strings.Contains(low, w) {
 				t.Errorf("code %q contains secret-shaped word %q; codes are a machine vocabulary and must never name a credential", e.Code, w)
 			}

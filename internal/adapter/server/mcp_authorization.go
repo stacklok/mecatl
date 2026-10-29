@@ -135,6 +135,11 @@ func (s *Service) RecheckMCPAuthorization(ctx context.Context, id session.Sessio
 		s.cfg.Diagnostics.Log(ctx, port.LevelDebug, "MCP authorization recheck: attachment unavailable",
 			"session", string(id), "authorization", pending.Authorization.ID, "err", err.Error(), "broker_state_lost", brokerStateLost(err))
 		if brokerStateLost(err) {
+			// Settling saves and appends: open the identity broker session
+			// first, so a refused token leaves the authorization pending.
+			if oerr := s.openIdentityBrokerSession(ctx, sess); oerr != nil {
+				return MCPAuthorizationResult{}, oerr
+			}
 			return s.resolveAuthorizationWithoutContinuationLocked(ctx, sess, pending)
 		}
 		return MCPAuthorizationResult{}, err
@@ -147,11 +152,25 @@ func (s *Service) RecheckMCPAuthorization(ctx context.Context, id session.Sessio
 	if statusErr != nil {
 		release()
 		if brokerStateLost(statusErr) {
+			if oerr := s.openIdentityBrokerSession(ctx, sess); oerr != nil {
+				return MCPAuthorizationResult{}, oerr
+			}
 			return s.resolveAuthorizationWithoutContinuationLocked(ctx, sess, pending)
 		}
 		return MCPAuthorizationResult{}, statusErr
 	}
-	if status == session.AuthorizationPending && !pending.Authorization.ExpiresAt.After(s.cfg.Now()) {
+	expired := status == session.AuthorizationPending && !pending.Authorization.ExpiresAt.After(s.cfg.Now())
+	if status != session.AuthorizationPending || expired {
+		// Every outcome from here settles the authorization and may start its
+		// continuation. Open the identity broker session first, converting the
+		// request's access token, so a refused token leaves the authorization
+		// pending and the session as it was. A pending poll opens nothing.
+		if err := s.openIdentityBrokerSession(ctx, sess); err != nil {
+			release()
+			return MCPAuthorizationResult{}, err
+		}
+	}
+	if expired {
 		s.cfg.Diagnostics.Log(ctx, port.LevelDebug, "MCP authorization recheck: pending authorization expired locally, cancelling",
 			"session", string(id), "authorization", pending.Authorization.ID)
 		outcome, cancelErr := attachment.CancelAuthorization(ctx, pending.Authorization)
@@ -197,9 +216,21 @@ func (s *Service) CancelMCPAuthorization(ctx context.Context, id session.Session
 	attachment, release, attachErr := s.authorizationAttachment(ctx, sess)
 	if attachErr != nil {
 		if brokerStateLost(attachErr) {
+			// Settling saves and appends: open the identity broker session
+			// first, so a refused token leaves the authorization pending.
+			if oerr := s.openIdentityBrokerSession(ctx, sess); oerr != nil {
+				return MCPAuthorizationResult{}, oerr
+			}
 			return s.resolveAuthorizationWithoutContinuationLocked(ctx, sess, pending)
 		}
 		return MCPAuthorizationResult{}, attachErr
+	}
+	// Open the identity broker session, converting the request's access token,
+	// before the cancel reaches the MCP broker: a refused token must leave the
+	// authorization pending and the session as it was.
+	if err := s.openIdentityBrokerSession(ctx, sess); err != nil {
+		release()
+		return MCPAuthorizationResult{}, err
 	}
 	outcome, cancelErr := attachment.CancelAuthorization(ctx, pending.Authorization)
 	if cancelErr != nil {
@@ -414,7 +445,7 @@ func (s *Service) continueGrantedAuthorizationLocked(ctx context.Context, sess *
 		// so the original call and every deferred sibling stay paired.
 		return s.resolveAuthorizationWithFailureLocked(ctx, sess, claimed, session.AuthorizationGranted, authorizationSchemaMismatch, true)
 	}
-	engine, env, governanceRoot, err := s.engineAndEnvironmentFor(ctx, sess)
+	engine, env, governanceRoot, err := s.lateEngineAndEnvironmentFor(ctx, sess)
 	if err != nil {
 		if restoreErr := s.restoreAuthorizationClaimOrSettle(ctx, sess.ID, sess, claimed); restoreErr != nil {
 			return MCPAuthorizationResult{}, fmt.Errorf("%w: continuation engine: %v; restore claim: %v", ErrInternal, err, restoreErr)
@@ -693,7 +724,7 @@ func (s *Service) resolveAuthorizationWithFailureLocked(ctx context.Context, ses
 		}
 		return mcpAuthorizationResult(pending, status, nil), nil
 	}
-	engine, env, governanceRoot, err := s.engineAndEnvironmentFor(ctx, sess)
+	engine, env, governanceRoot, err := s.lateEngineAndEnvironmentFor(ctx, sess)
 	if err != nil {
 		// Engine/environment reconstruction is not required to make a terminal
 		// authorization lifecycle reconstructable. The snapshot is already settled;
