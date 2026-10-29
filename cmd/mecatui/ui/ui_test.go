@@ -728,7 +728,15 @@ func TestQueuedPromptAutoSendsProgram(t *testing.T) {
 	// own result once the drain fires it).
 	run1 := &fakeRecver{script: simpleRunScript("first"), gateType: "message.delta", gate: make(chan struct{}), reachedGate: make(chan struct{})}
 	run2 := &fakeRecver{script: simpleRunScript("second")}
-	send := &fakeSender{}
+	firstSent, secondSent := make(chan struct{}), make(chan struct{})
+	send := &fakeSender{onSend: func(req *mecatlv1.ConverseRequest) {
+		switch req.GetPrompt().GetText() {
+		case "first":
+			close(firstSent)
+		case "second":
+			close(secondSent)
+		}
+	}}
 	conv := &fakeConv{recv: run1, send: send, recvers: []*fakeRecver{run1, run2}, sessionReady: make(chan struct{})}
 	prog := newProgress()
 	model := newTestModelFromDeps(Deps{
@@ -758,6 +766,7 @@ func TestQueuedPromptAutoSendsProgram(t *testing.T) {
 	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter})
 	prog.wait(t, phaseRunning, 5*time.Second)
 	waitClosed(t, "run 1 streamed its delta (result gated)", run1.reachedGate, 5*time.Second)
+	waitClosed(t, "first prompt frame recorded", firstSent, 5*time.Second)
 
 	// Mid-run (run 1 is provably still streaming — its result is gated): type "second"
 	// + enter to ENQUEUE it. Keys are delivered FIFO via program.Send and reduced
@@ -773,6 +782,9 @@ func TestQueuedPromptAutoSendsProgram(t *testing.T) {
 	// ungated to its own result, which IS an observable completion: waitRunComplete(1)
 	// fires only after the WHOLE chain (run 1 done → drained → run 2 done) has settled.
 	run1.release()
+	// The fake can finish receiving before the asynchronous send command runs;
+	// program shutdown does not join that command. Wait for the frame itself too.
+	waitClosed(t, "second prompt frame recorded", secondSent, 5*time.Second)
 	prog.waitRunComplete(t, 1, 5*time.Second)
 
 	// ctrl+c is now a graceful double-press (issue #17): the first arms the quit
