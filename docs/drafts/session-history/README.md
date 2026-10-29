@@ -28,6 +28,10 @@ The packets own the review explanations and relocated worked sequences.
 The linked detailed sections own exhaustive requirements; summaries do not create a parallel specification.
 Open-decision lists live in the packets, not in competing reference backlogs.
 
+## Implementation considerations
+
+- [Snapshots, ownership, and cloning](implementation-ownership.md): candidate patterns for stable reader views and enforceable representation boundaries. This note guides implementation discussion; it does not change core contracts or select an analyzer.
+
 ## Optional models and research
 
 - [History/execution model](session-commit-history.modelith.md) ([YAML](session-commit-history.modelith.yaml)) and [catalog/command model](session-command-protocol.modelith.md) ([YAML](session-command-protocol.modelith.yaml)): domain invariants and scenarios, not final API types.
