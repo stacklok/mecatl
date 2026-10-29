@@ -179,12 +179,12 @@ func TestReplayFreeCanonicalHistoryUsesSyntheticPairing(t *testing.T) {
 	}
 	seen := map[string]bool{}
 	for i := 1; i < len(params.Messages); i += 2 {
-		blocks := params.Messages[i].Content
+		blocks := messageContent(params.Messages[i])
 		if len(blocks) != 2 || blocks[0].OfText == nil || blocks[1].OfToolUse == nil || messages[i].Replay != nil {
 			t.Fatal("replay-free history fabricated thinking or lost text/tools")
 		}
 		id := blocks[1].OfToolUse.ID
-		if id == "" || id == string(history[i].ToolCalls[0].ID) || seen[id] || params.Messages[i+1].Content[0].OfToolResult.ToolUseID != id {
+		if id == "" || id == string(history[i].ToolCalls[0].ID) || seen[id] || messageContent(params.Messages[i+1])[0].OfToolResult.ToolUseID != id {
 			t.Fatal("synthetic provider pairing is missing, reused or unmatched")
 		}
 		seen[id] = true

@@ -71,7 +71,7 @@ func TestReplayCompatibilityAndMalformedSafety(t *testing.T) {
 				if len(params.Messages) != 0 || strings.Contains(fmt.Sprintf("%+v", buildErr), canary) {
 					t.Fatal("malformed replay leaked private data or partial request")
 				}
-			} else if len(params.Messages[0].Content) != 2 || params.Messages[0].Content[0].OfText.Text != "safe text" {
+			} else if blocks := messageContent(params.Messages[0]); len(blocks) != 2 || blocks[0].OfText.Text != "safe text" {
 				t.Fatal("incompatible replay affected ordinary text/tool history")
 			}
 		})
