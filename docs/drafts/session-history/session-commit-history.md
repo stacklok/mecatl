@@ -62,7 +62,8 @@ The initial service rollout is teardown and upgrade, not mixed-version rolling d
 **Development staging:** build infrastructure in short PRs, using new packages alongside existing ones where that keeps the current runtime unchanged.
 Establish [kernel/driver boundaries](implementation-kernel.md#staging-before-and-through-the-storage-rework) early enough to separate capability extraction from new-history integration; preparatory extractions preserve existing behavior and storage contracts.
 Defer binding those foundations into execution until explicit integration work.
-An engine-selection flag chooses the old or new runtime for a server instance, including an embedded server started by a client.
+The [first executable foundation](implementation-kernel.md#first-executable-foundation-and-growing-test-harness) uses a growing isolated harness around the real new kernel, not early activation through full server/client composition.
+An engine-selection flag belongs to that later integration and chooses the old or new runtime for a server instance, including an embedded server started by a client.
 It is not a per-session hot switch: old sessions do not work in the new runtime, and new sessions do not work in the old runtime.
 Separate namespaces and fail-closed version checks prevent dual ownership or accidental fallback.
 Development coexistence does not add legacy migration, dual-writing, or mixed-version runtime compatibility.
@@ -118,7 +119,7 @@ The table distinguishes those existing boundaries from changed responsibilities 
 | --- | --- | --- |
 | Core engine | `engine/agent.Engine` and `Run` drive turns and tools, mutate `engine/session.Session`, and save snapshots through `port.SessionStore`. | Retain execution and domain invariants; make required commits execution gates rather than best-effort saves, and use registered reducers for extension state. |
 | Storage adapter | Implementations of `engine/port.SessionStore`, `EventLog`, and `SessionLease` provide distinct snapshot, activity-history, and ownership contracts. | Replace the split authority with committed history; implement durable reads and append, assign history positions, and enforce atomic head and ownership checks under the declared operating mode. |
-| Host/server | `internal/app` wires dependencies; `internal/adapter/server.Service` manages sessions, run entry, controls, and leases, while server recorders write activity history. | Retain composition, authentication, and authorization; coordinate required commits and authorized projections, register extension handlers, forward to the owning replica, and drive recovery. Execution becomes independent of the initiating client stream. |
+| Host/server | `internal/app` wires dependencies; `internal/adapter/server.Service` manages sessions, run entry, controls, and leases, while server recorders write activity history. | Retain composition, authentication, and API authorization; compose kernel coordination with storage adapters and authorized projections, register extension handlers, forward to the owning replica, and initiate recovery. Execution becomes independent of the initiating client stream. |
 | Extensions | `Subagent`, `Parallel`, and `Team` are built-in tools in `engine/agent`, with team domain behavior in `engine/team`, registered by host composition. They do not currently use the proposed generic extension record/state mechanism. | Introduce versioned records, private-state reducers, checkpoint serialization, lifecycle handlers, and approved display-detail projections within core constraints. |
 | Clients | `cmd/mecatui/client` receives server-produced transcripts and events; the TUI maintains local display state and submits controls. | Retain local rendering and control submission; consume complete authorized history and committed updates joined by position, reconcile provisional output, and reflect shared pending controls. |
 
@@ -128,8 +129,10 @@ Server [`RunEventRecorder`](../../../internal/adapter/server/event_recorder.go) 
 All of these writers must enter the required commit boundary in the redesign; the table does not move every write into the host or make the engine depend on concrete storage adapters.
 
 Here, *host* or *server* means the application layer that wires the core engine to adapters and exposes the API.
-*Session coordinator* names a proposed application-level responsibility for ordering transitions and coordinating commits with the engine, not an existing type or a storage-port implementation.
-The exact engine/coordinator interfaces and package allocation remain open.
+The kernel comprises the coupled `loop`, `coordinator`, and `session` responsibilities in the [shared vocabulary](vocabulary.md#kernel-and-driver-vocabulary).
+The coordinator orders transitions and controls and arranges commits with the loop; host composition owns its installation and lifetime, not a separate implementation of execution correctness.
+It is not an existing type, a storage-port implementation, or a public custom-coordinator extension point.
+One active coordination authority governs each session history under the root-tree ownership claim; object counts and exact package paths remain open.
 
 The *owning replica* is the host process holding the backend-authoritative right to drive a session and its delegation tree.
 That right is an `OwnershipClaim`, with an owner, writer epoch, and expiry.
@@ -137,13 +140,13 @@ A writer epoch distinguishes successive ownership acquisitions so the adapter ca
 Client attachment is a connection/interaction relationship, not an ownership claim.
 
 These are responsibility boundaries, not final interface names or a decision to place all coordination in one package.
-The exact allocation of commit APIs between the engine and application coordinator remains an interface question.
+The exact allocation of commit APIs between the loop and coupled kernel coordinator remains an interface question.
 
 #### Derived views and their owners
 
 A `ContinuationCheckpoint` materializes private continuation state through a known committed position.
 The engine and registered extension reducers reconstruct that state from history.
-The host/coordinator arranges checkpoint construction and any persistence through the storage adapter to accelerate later loading.
+The kernel coordinator arranges checkpoint construction and any persistence through the storage adapter to accelerate later loading.
 A checkpoint is optional acceleration, not another authority.
 
 A `ClientProjection` is the server-produced, authorized display view of committed session facts.
@@ -313,6 +316,8 @@ An `Operation` has a durable session-scoped identity, with initiating tool-call 
 Every Team has a session owner, including the direct Team API; the contract must not invent an absent parent tool call to establish that ownership.
 Session-independent teams are a separate feature.
 The call may commit an immediate started-result; later operation progress and completion retain their own identities.
+For a long-running external background job, use this split rather than keeping the launch tool call live until the process exits: later monitoring and cancellation are separate tool calls against the job identity.
+Job completion does not replace the launch call's canonical started-result, and a completed launch does not establish that its driver's outstanding job obligations are safe to hand off.
 This lets the envelope represent work that spans runs without implying that today's run-scoped background children do so.
 
 The trusted `Extension` declares how run end, explicit cancellation, shutdown, owner loss, and restart affect its `Operation`.
@@ -443,7 +448,7 @@ Credential layout is not a new requirement on every storage backend.
 Read access does not imply a public API for private records, permission to mutate, or permission to activate the session.
 
 The storage port does not serialize protobuf or publish to clients.
-The host's application-level session coordinator owns the transition: it requests the commit, then builds an authorized projected update and may wake connected readers.
+The kernel coordinator orders the semantic transition and requests its commit; after acceptance, host projection/delivery builds an authorized update and may wake connected readers.
 The outermost durable transaction must commit successfully before confirmed projection, acknowledgement, or notification; a nested savepoint or successful inner write is insufficient.
 Extension handlers supply approved tool-specific detail; the host remains responsible for caller authorization and delivery.
 Clients apply those projected updates to local rendering state, not to private continuation state.
@@ -1063,7 +1068,7 @@ Report transport state separately from server-confirmed run state:
 
 The client may present these facts compactly, but cannot infer completion or failure from a missing event.
 
-The host's recovery coordinator commits an interrupted-run marker only after establishing that no writer can continue the old `Run`.
+The kernel coordinator commits an interrupted-run marker only after establishing that no writer can continue the old `Run`.
 That marker explains why streamed model text is absent from recovered conversation.
 Even after fencing, a started external tool may have had side effects; its outcome remains unknown until verified.
 If ownership or storage is unavailable, report uncertainty rather than claiming the run ended.
@@ -1100,7 +1105,7 @@ Tool names or declared read-only classification alone cannot justify speculative
 
 Crash takeover and agent continuation are separate decisions.
 A crashed active `Run` is **interrupted**, not resumed under the same run identity in the first cutover.
-After fencing the former writer, the host's recovery coordinator uses committed request, intent, and result evidence to repair tool pairing, with registered extension handlers for tool-specific state.
+After fencing the former writer, the kernel coordinator uses committed request, intent, and result evidence to repair tool pairing, with registered extension handlers for tool-specific state.
 Requested calls with no intent were not dispatched as tools; intent without an established result has unknown outcome.
 Pre-intent hooks may nevertheless have caused external effects, as described in the [hook execution contract](#hook-execution-and-recovery).
 No ordinary tool is automatically retried.
@@ -1133,7 +1138,7 @@ Who may change a session's policy and when remain later decisions; do not create
 
 #### Durable steer recovery
 
-The host coordinator commits a steer's admission to the source `SteerSlot`, including stable action identity and `SteerRevision`, before acknowledging it.
+The kernel coordinator commits a steer's admission to the source `SteerSlot`, including stable action identity and `SteerRevision`, before acknowledging it.
 Content, replacement, retraction, and consumption survive crash or handoff.
 Acceptance does not mean the model has received the input.
 
@@ -1180,6 +1185,8 @@ An authorized fresh submission ordered after cancellation may request new execut
 This first-cutover contract adds no independent cross-run background work to cancel.
 
 Cancellation acknowledgement means accepted and signaled, not that every process or external effect has stopped.
+Tools need not implement in-flight interruption; a short invocation can finish normally after the signal, with its execution evidence and permitted output preserved through normal settlement.
+Lack of interruption support does not bypass pre-admission cancellation or bounded shutdown, and a deadline does not prove the external work stopped.
 Expose canceling separately from terminal settlement through the common work-observation contract.
 Finish bounded execution shutdown and [result settlement](#result-settlement-after-cancellation) before admitting a new run, but do not wait for optional result-release approval.
 At the deadline, record unresolved external activity honestly; cancellation neither proves rollback nor makes an uncertain ordinary tool safe to repeat.
@@ -1378,7 +1385,7 @@ The durable evidence distinguishes three states:
 | Committed intent, no committed result | The call might have started. |
 | Actionable durable execution ask | Approval is still pending; do not close the call as not-started. A release ask additionally requires its live memory-only payload and is closed unavailable if that payload was lost. |
 
-After fencing the former writer and checking for a committed result, the host's recovery path closes an orphaned requested tool call with a harness-authored tool result, using extension handlers where its semantics require them:
+After fencing the former writer and checking for a committed result, the kernel coordinator's recovery path closes an orphaned requested tool call with a harness-authored tool result, using extension handlers where its semantics require them:
 
 - **Not-started** if no intent was committed: the dispatch gate prevented tool execution, though pre-intent hooks may have had effects.
 - **Unknown-outcome** if intent committed but the outcome cannot be established: the tool may have had effects and may still be running.
@@ -1395,7 +1402,7 @@ Which tool-start phases and post-crash facts are meaningful across implementatio
 #### Execution gates
 
 The following boundaries distinguish fast observation from permission to advance the session.
-The engine enforces execution gates, the host coordinator orders and submits transitions, and the storage adapter verifies and accepts their durable writes.
+The loop enforces execution gates, the kernel coordinator orders and submits transitions, and the storage adapter verifies and accepts their durable writes.
 The server exposes only authorized projections of accepted facts; clients may display provisional observations but cannot use them to authorize work.
 "Committed" means the authoritative adapter has accepted the record under its operating-mode and ownership contract; an in-process queue is not enough.
 
@@ -1501,7 +1508,7 @@ Optional API receipts and capacity-driven cutoff changes share their protected d
 Run admission, ownership renewal, cancellation, checkpoints, and large-payload storage have separate costs; this is not a whole-run physical-write estimate.
 Lost memory-only holds settle unavailable and never cause a tool rerun to recover output.
 
-An engine-side commit coordinator owns tunable maximum batching delay and batch-size bounds, outside individual agent loops and above storage acceptance.
+The kernel coordinator owns tunable maximum batching delay and batch-size bounds, outside individual loops and above storage acceptance.
 Use per-session ordered queues with shared scheduling; preserve each session's head, claim, and execution gates.
 Do not require a timer or goroutine per session, cross-session atomic transactions, or one stalled session to block unrelated sessions.
 A storage adapter can aggregate physical writes across ready sessions where supported, but does not introduce a second independent application batching policy or acknowledge a volatile queue as durable.
@@ -1534,7 +1541,8 @@ Open decisions now live with their bounded review topics, not in a second archit
 - [Storage/read interfaces, projection budgets, extension compatibility, and cutover encodings](storage-and-observation.md#open-decisions-and-detail).
 
 Development staging remains specified in the [delivery boundary](#delivery-boundary).
-Closing open decisions and reviewing interfaces precede an implementation breakdown.
+Planning readiness is scoped to an implementation slice: settle and review the contracts that slice depends on, explicitly recording unresolved dependencies and what must remain unbound.
+Other open decisions need not block independent preparatory or foundation work; runtime integration and cutover remain gated on their required contracts.
 
 ## Vocabulary reference
 
