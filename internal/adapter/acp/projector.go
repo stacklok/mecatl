@@ -64,50 +64,34 @@ func newRunProjector() *runProjector {
 // project maps ordinary events directly and correlates a transient availability
 // result with its authoritative canonical confirmation. A canonical-only stream
 // remains a normal projection, which covers reconnect and older servers.
-func (p *runProjector) projectAll(ev session.Event) []any {
+func (p *runProjector) project(ev session.Event) (any, bool) {
 	switch ev.Type {
 	case session.EvToolResultAvailable:
 		if ev.ToolResult == nil {
-			return nil
+			return nil, false
 		}
-		updates := projectUpdates(ev)
-		if len(updates) != 0 {
+		update, ok := projectUpdate(ev)
+		if ok {
 			p.available[ev.ToolResult.CallID] = *ev.ToolResult
 		}
-		return updates
+		return update, ok
 
 	case session.EvToolResult:
 		if ev.ToolResult == nil {
-			return nil
+			return nil, false
 		}
 		available, seen := p.available[ev.ToolResult.CallID]
 		if seen {
 			delete(p.available, ev.ToolResult.CallID)
 			if reflect.DeepEqual(available, *ev.ToolResult) {
-				return nil
+				return nil, false
 			}
 		}
-		return projectUpdates(ev)
+		return projectUpdate(ev)
 
 	default:
-		return projectUpdates(ev)
+		return projectUpdate(ev)
 	}
-}
-
-func (p *runProjector) project(ev session.Event) (any, bool) {
-	updates := p.projectAll(ev)
-	if len(updates) == 0 {
-		return nil, false
-	}
-	return updates[0], true
-}
-
-// projectUpdates maps an event to ACP updates.
-func projectUpdates(ev session.Event) []any {
-	if update, ok := projectUpdate(ev); ok {
-		return []any{update}
-	}
-	return nil
 }
 
 // projectUpdate maps a domain Event to one ACP update.

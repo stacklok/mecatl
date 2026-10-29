@@ -991,6 +991,9 @@ func (s *Store) activate(ctx context.Context, p learning.SkillPartition, owner s
 		if (!validated && verdict != learning.EvaluationPass) || (validated && (verdict != learning.EvaluationAbstain || len(value.Provenance.EvidenceRefs) == 0 || (value.Disposition != learning.ValidationAccept && value.Disposition != learning.ValidationExactDuplicate) || value.Provenance.Origin == learning.SkillProvenanceLegacyModel)) {
 			return learning.ErrSkillTransition
 		}
+		if err := learning.ValidateSkillActivationProvenance(value.Provenance); err != nil {
+			return err
+		}
 		for i := range record.Versions {
 			if i != index && record.Versions[i].State == learning.SkillActive {
 				from := record.Versions[i].State

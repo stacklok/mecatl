@@ -95,7 +95,7 @@ func (r *attemptRecovery) Close() {
 
 //nolint:gocyclo // exact-source reconstruction and claim-fenced publication stay visibly ordered
 func recoverAttempt(ctx context.Context, cfg Config, reg *providerRegistry, sessions port.SessionStore, events port.EventLog, repository learning.AttemptRepository, proposals learning.ProposalRepository, assets catalogAssets, placements server.PlacementProvider, placementScope server.PlacementScope, item learning.AttemptWork) error {
-	// Claiming an attempt is already an effect; held sources remain inspection-only.
+	// Verify source evidence before acquiring an execution environment.
 	checkTimeout := cfg.LearningAttemptTimeout
 	if checkTimeout <= 0 {
 		checkTimeout = defaultAttemptCallbackTimeout
@@ -111,11 +111,6 @@ func recoverAttempt(ctx context.Context, cfg Config, reg *providerRegistry, sess
 	}
 	if sourceErr == nil && sourceSnapshot == nil {
 		return errAttemptSetupTransient
-	}
-	if sourceErr == nil {
-		if err := sourceSnapshot.CheckIdentityReady(); err != nil {
-			return err
-		}
 	}
 	loader := newLearningEvidenceLoader(sessions, events)
 	var source *session.Session
@@ -175,6 +170,9 @@ func recoverAttempt(ctx context.Context, cfg Config, reg *providerRegistry, sess
 				return learning.FailureEvidenceUnavailable, nil
 			}
 			source = loaded
+			if _, _, failure, err := loader.loadForExecution(prepareCtx, item.Partition, record, ""); failure != learning.FailureNone || err != nil {
+				return failure, err
+			}
 			reattacher, ok := placements.(server.PlacementReattacher)
 			if !ok {
 				return learning.FailureNone, errAttemptSetupTransient

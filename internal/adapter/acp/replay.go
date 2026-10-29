@@ -105,7 +105,7 @@ func (a *Agent) replayHistory(ctx context.Context, sessionID string, c *session.
 		return
 	}
 	for _, ev := range historyEvents(c) {
-		for _, update := range projectUpdates(ev) {
+		if update, ok := projectUpdate(ev); ok {
 			a.notifyUpdate(ctx, sessionID, update)
 		}
 	}

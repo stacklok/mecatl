@@ -109,7 +109,7 @@ func TestReplayApprovalsLearnsPresentCall(t *testing.T) {
 // the SAME single rule, never a duplicate — verified through the REAL permstore-backed
 // policy (permstore.Record de-dups identical rules).
 func TestReplayApprovalsRejectsAmbiguousAndLegacyAssociation(t *testing.T) {
-	for _, name := range []string{"duplicate", "wrong-tool", "legacy-event", "held"} {
+	for _, name := range []string{"duplicate", "wrong-tool", "legacy-event", "unattached"} {
 		t.Run(name, func(t *testing.T) {
 			replay, sess, spy := seedReplayFixture(t, "exact-call", true)
 			switch name {
@@ -121,16 +121,8 @@ func TestReplayApprovalsRejectsAmbiguousAndLegacyAssociation(t *testing.T) {
 				sess.Conversation.Messages[0].ToolCalls[0].Name = "Shell"
 			case "legacy-event":
 				sess.Conversation.Messages[0].ToolCalls[0].ID = "migrated-canonical"
-			case "held":
-				if err := sess.Complete(); err != nil {
-					t.Fatal(err)
-				}
-				if err := sess.Reopen(); err != nil {
-					t.Fatal(err)
-				}
-				if err := sess.RestoreIdentityMigrationHold(session.StateAwaiting, session.IdentityMigrationHold{Reason: "legacy-continuation-unproven", Payload: []byte("private")}); err != nil {
-					t.Fatal(err)
-				}
+			case "unattached":
+				sess.Conversation.Messages[0].ToolCalls = nil
 			}
 			replay(t.Context(), sess)
 			if len(spy.learned) != 0 {

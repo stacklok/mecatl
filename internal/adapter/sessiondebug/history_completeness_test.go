@@ -85,19 +85,26 @@ func TestHistoryRequiresCompleteCursorEvidence(t *testing.T) {
 			if catalog.ScanComplete != (kind == "current") {
 				t.Fatalf("scan completeness: %+v", catalog)
 			}
+			snapshotCount := 0
+			var snapshotHandle string
 			for _, src := range catalog.Sources {
 				if src.Source == "current_snapshot" {
+					snapshotCount++
 					if !src.Authoritative || !src.ProjectionComplete || src.Messages != 1 {
 						t.Fatalf("snapshot lost authority: %+v", src)
 					}
-					page, err := inspect.historyView(t.Context(), loaded, "root", src.HistoryHandle, 0, 10)
-					if err != nil || !strings.Contains(fmt.Sprintf("%+v", page), "authoritative snapshot") {
-						t.Fatalf("snapshot unavailable: %+v %v", page, err)
-					}
+					snapshotHandle = src.HistoryHandle
 				}
 				if src.Source == "retained_event_history" && (src.Authoritative || src.ProjectionComplete) != (kind == "current") {
 					t.Fatalf("incomplete history claimed authority: %+v", src)
 				}
+			}
+			if snapshotCount != 1 || snapshotHandle == "" {
+				t.Fatalf("want exactly one addressable current snapshot, got %+v", catalog.Sources)
+			}
+			page, err := inspect.historyView(t.Context(), loaded, "root", snapshotHandle, 0, 10)
+			if err != nil || !strings.Contains(fmt.Sprintf("%+v", page), "authoritative snapshot") {
+				t.Fatalf("snapshot unavailable: %+v %v", page, err)
 			}
 			if kind == "current" && len(catalog.Sources) != 2 {
 				t.Fatalf("current retained history unavailable: %+v", catalog)

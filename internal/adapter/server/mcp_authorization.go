@@ -253,9 +253,6 @@ func (s *Service) loadMatchingAuthorization(ctx context.Context, id session.Sess
 	if err != nil {
 		return nil, session.PendingAuthorization{}, errAuthorizationSessionUnavailable
 	}
-	if err := sess.CheckIdentityReady(); err != nil {
-		return nil, session.PendingAuthorization{}, fmt.Errorf("%w: %w", ErrFailedPrecondition, err)
-	}
 	if err := sess.ValidateAuthorizationState(); err != nil {
 		return nil, session.PendingAuthorization{}, errAuthorizationUnclaimable
 	}

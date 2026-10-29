@@ -341,32 +341,6 @@ func proposalServiceError(err error) error {
 	}
 }
 
-func selectManifestSource(messages []session.Message, entries []learning.ManifestEntry, protocol learning.EvidenceProtocol) ([]session.Message, map[int64]struct{}, error) {
-	selectedMessages := make([]session.Message, 0, min(len(messages), len(entries)))
-	eventSequences := make(map[int64]struct{})
-	for _, entry := range entries {
-		switch entry.Locator {
-		case learning.EvidenceMessage:
-			if entry.OriginalMessage == nil {
-				return nil, nil, fmt.Errorf("%w: proposal message coordinate is unavailable", ErrFailedPrecondition)
-			}
-			index := *entry.OriginalMessage
-			if protocol != learning.ReflectionEvidenceV2 || index < 0 || index >= len(messages) {
-				return nil, nil, fmt.Errorf("%w: proposal message coordinate is unavailable", ErrFailedPrecondition)
-			}
-			selectedMessages = append(selectedMessages, messages[index])
-		case learning.EvidenceEvent:
-			if entry.EventSequence == nil {
-				return nil, nil, fmt.Errorf("%w: proposal event sequence is unavailable", ErrFailedPrecondition)
-			}
-			eventSequences[*entry.EventSequence] = struct{}{}
-		default:
-			return nil, nil, fmt.Errorf("%w: proposal manifest locator is invalid", ErrFailedPrecondition)
-		}
-	}
-	return selectedMessages, eventSequences, nil
-}
-
 //nolint:gocyclo // exact manifest replay keeps protocol, coordinates, source reads, and citations visibly ordered
 func (s *Service) rematerializeProposal(ctx context.Context, part learning.ProposalPartition, record learning.ProposalRecord) (learning.Input, bool, error) {
 	manifestBacked := false
@@ -383,12 +357,6 @@ func (s *Service) rematerializeProposal(ctx context.Context, part learning.Propo
 	if !manifestBacked {
 		return learning.Input{}, false, nil
 	}
-	protocol := record.Candidate.Evidence[0].Protocol
-	for _, ref := range record.Candidate.Evidence {
-		if ref.Protocol != protocol {
-			return learning.Input{}, true, fmt.Errorf("%w: proposal mixes evidence protocols", ErrFailedPrecondition)
-		}
-	}
 	if s.cfg.ProposalManifest == nil {
 		return learning.Input{}, true, fmt.Errorf("%w: proposal manifest is unavailable", ErrFailedPrecondition)
 	}
@@ -399,7 +367,7 @@ func (s *Service) rematerializeProposal(ctx context.Context, part learning.Propo
 	if !found {
 		return learning.Input{}, true, fmt.Errorf("%w: proposal manifest is unavailable", ErrFailedPrecondition)
 	}
-	if manifest.Protocol != protocol || !learning.ManifestProtocolSupported(manifest.Protocol, manifest.Source.Domain) {
+	if manifest.Protocol != learning.ReflectionEvidenceV2 || !learning.ManifestProtocolSupported(manifest.Protocol, manifest.Source.Domain) {
 		return learning.Input{}, true, fmt.Errorf("%w: invalid proposal manifest protocol or source boundary", ErrFailedPrecondition)
 	}
 	sess, err := s.GetSession(ctx, manifest.Source.Value)
@@ -407,9 +375,14 @@ func (s *Service) rematerializeProposal(ctx context.Context, part learning.Propo
 		return learning.Input{}, true, fmt.Errorf("%w: proposal source is unavailable", ErrFailedPrecondition)
 	}
 	stop, _ := sess.StopReason()
-	_, eventSequences, err := selectManifestSource(sess.Conversation.Messages, manifest.Entries, manifest.Protocol)
-	if err != nil {
-		return learning.Input{}, true, err
+	eventSequences := make(map[int64]struct{})
+	for _, entry := range manifest.Entries {
+		if entry.Locator == learning.EvidenceEvent {
+			if entry.EventSequence == nil {
+				return learning.Input{}, true, fmt.Errorf("%w: proposal event sequence is unavailable", ErrFailedPrecondition)
+			}
+			eventSequences[*entry.EventSequence] = struct{}{}
+		}
 	}
 	selectedEvents := make([]session.Event, 0, len(eventSequences))
 	selectedOrdinals := make([]int, 0, len(eventSequences))

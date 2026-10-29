@@ -684,9 +684,6 @@ func (s *Service) installSessionPlacement(id session.SessionID, binding Placemen
 // session. Repeated and concurrent borrowers share it; only lifecycle teardown
 // owns the detach callback.
 func (s *Service) sessionPlacement(ctx context.Context, sess *session.Session) (PlacementBinding, error) {
-	if err := sess.CheckIdentityReady(); err != nil {
-		return PlacementBinding{}, fmt.Errorf("%w: %w", ErrFailedPrecondition, err)
-	}
 	s.placementAttachMu.Lock()
 	s.mu.Lock()
 	env, registered := s.sessionEnvironments[sess.ID]

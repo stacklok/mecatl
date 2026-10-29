@@ -138,6 +138,12 @@ similar skills, name collisions, unsupported repositories, and altered or
 unavailable evidence remain inactive. Set `evaluated` when every automatic
 activation must have a positive evaluator result.
 
+Evidence-backed skill activation requires `reflection-evidence/v2` on every
+retained evidence reference. Candidates with older or missing protocols remain
+readable but cannot activate; generate a fresh candidate from an eligible
+session. Already-active skills remain available, and rollback can restore a
+previously active version.
+
 Automatic learning does not activate operator/manual skills already supplied
 through `--skills-dir`, and it does not make quarantined `SkillDraft` content
 live. The operator-controlled promotion and lifecycle gates remain

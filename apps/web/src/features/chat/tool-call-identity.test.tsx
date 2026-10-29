@@ -32,7 +32,7 @@ describe("canonical Studio invocation identity", () => {
     let state = initialRunDeliveryState("assistant", "");
     const first = event("tool.call", 1, { id: "engine-a", name: "Read", args: "{}" });
     state = applyRunDelivery(state, first, options);
-    expect(applyRunDelivery(state, first, options)).toBe(state);
+    expect(applyRunDelivery(state, first, options).messages).toBe(state.messages);
     state = applyRunDelivery(
       state,
       event("tool.call", 2, { id: "engine-a", name: "Read", args: "{}" }),
@@ -107,6 +107,74 @@ describe("canonical Studio invocation identity", () => {
     state = applyRunDelivery(state, event("authorization.required", 12, auth), options);
     expect(state.messages[0]?.authorizations?.[0]?.status).toBe("expired");
   });
+
+  it.each([
+    ["permission", false],
+    ["permission", true],
+    ["authorization", false],
+    ["authorization", true],
+  ] as const)(
+    "accepts lower-sequence %s continuation in the same run (truncated: %s)",
+    (pause, truncated) => {
+      let state = initialRunDeliveryState("assistant", "Read the file");
+      const call = { id: "engine-a", name: "Read", args: '{"path":"README.md"}' };
+      const authorization = {
+        authorizationId: "auth-a",
+        callId: call.id,
+        displayName: "Server",
+        status: "pending",
+      };
+      state = applyRunDelivery(state, event("tool.call", 20, call), options);
+      state = applyRunDelivery(
+        state,
+        pause === "permission"
+          ? event("permission.ask", 30, {
+              askId: "ask-a",
+              callId: call.id,
+              tool: call.name,
+              args: call.args,
+            })
+          : event("authorization.required", 30, authorization),
+        options,
+      );
+      if (pause === "permission") expect(state.approvals).toHaveLength(1);
+      else expect(state.messages[0]?.authorizations?.[0]?.status).toBe("pending");
+      const paused = state;
+      if (truncated) {
+        state = applyRunDelivery(
+          state,
+          { cursor: "after-pause", reason: "bound", type: "run.truncated" },
+          options,
+        );
+        expect(state).toBe(paused);
+      }
+      state = applyRunDelivery(
+        state,
+        pause === "permission"
+          ? event("approval", 1, { askId: "ask-a" })
+          : event("authorization.resolved", 1, { ...authorization, status: "granted" }),
+        options,
+      );
+      state = applyRunDelivery(
+        state,
+        event("tool.result", 2, { callId: call.id, content: "file contents", isError: false }),
+        options,
+      );
+      state = applyRunDelivery(state, event("result", 3, { stop: "end_turn" }), options);
+      expect(state.runId).toBe("run-a");
+      expect(state.activeAssistantId).toBe(paused.activeAssistantId);
+      expect(state.messages).toHaveLength(1);
+      expect(state.messages[0]?.tools).toEqual([
+        { ...call, runId: "run-a", output: "file contents", isError: false },
+      ]);
+      expect(state.approvals).toEqual([]);
+      if (pause === "authorization") {
+        expect(state.messages[0]?.authorizations?.[0]?.status).toBe("granted");
+      }
+      expect(state.sawResult).toBe(true);
+      expect(state.stopReason).toBe("end_turn");
+    },
+  );
 
   it("deduplicates a snapshot call without requiring live run metadata for placement", () => {
     const snapshot = messagesFromTranscript([

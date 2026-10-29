@@ -441,19 +441,17 @@ the same conversation either way.
 
 ### Replay-fidelity limitation
 
-The event stream does not contain three provider-private replay fields:
+The event stream omits `Message.Replay`, which holds occurrence-specific provider
+pairing/item bindings and opaque adapter payloads, and `Message.ProviderPhase`
+display metadata. `EvReasoningDelta` contains readable reasoning and cannot
+substitute for signed or encrypted replay data.
 
-- `Message.Reasoning`, the provider reasoning replay blob
-- `Message.ProviderPhase`, the OpenAI Responses phase marker
-- `ToolCall.ItemID`, the provider-assigned item ID
-
-`EvReasoningDelta` contains a readable summary, not the opaque replay value. A
-fold must not place it in `Message.Reasoning`.
-
-A folded session provides byte-identical replay only for providers that do not
-use these fields. Mecatl resumes its own sessions from snapshots, which retain
-them. Event-log systems that need reasoning-provider replay must store the
-opaque values in a richer event schema.
+A fold reconstructs structural history. `port.ProjectMessages` can construct
+provider-facing messages using synthesized pairing tokens, but this does not
+prove byte-identical replay of the original request. Mecatl resumes its own
+sessions from snapshots, which retain the private replay state. Event-sourced
+hosts that need exact provider replay must retain equivalent private state in
+their storage.
 
 ## Run the conformance suites
 

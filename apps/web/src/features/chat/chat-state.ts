@@ -317,7 +317,6 @@ export interface RunDeliveryState {
   approvals: ApprovalRequest[];
   failure?: RunFailure;
   liveUsage?: SessionUsageResponse;
-  latestSequences?: Record<string, string>;
   messages: ChatMessage[];
   runId?: string;
   settledAskKeys: string[];
@@ -386,12 +385,6 @@ export function applyRunDelivery(
 
   const event = delivery.event;
   let next = state;
-  // Session-scoped authorization status uses the durable cursor, not seq 0.
-  if (event.runId && /^\d+$/u.test(event.seq)) {
-    const previous = state.latestSequences?.[event.runId];
-    if (typeof previous === "string" && BigInt(event.seq) <= BigInt(previous)) return state;
-    next = { ...next, latestSequences: { ...next.latestSequences, [event.runId]: event.seq } };
-  }
   if (event.runId && startsNewRun(state.runId, event.runId)) {
     next = {
       ...next,

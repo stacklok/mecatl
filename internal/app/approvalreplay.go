@@ -37,9 +37,6 @@ func replayApprovals(log port.EventLog, policy port.PermissionPolicy, diag port.
 		diag = port.NopDiagnostics{}
 	}
 	return func(ctx context.Context, sess *session.Session) {
-		if sess.CheckIdentityReady() != nil {
-			return
-		}
 		// Index the loaded conversation's tool calls by id once, so each verdict's
 		// correlation is an O(1) map lookup rather than an O(messages) walk.
 		// Message legacy provenance does not invalidate a new canonical approval.
