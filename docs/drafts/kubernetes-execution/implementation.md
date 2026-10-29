@@ -115,7 +115,7 @@ Every write is a read followed by `UpdateStatus` on the session's `ExecutionEnvi
 | Frequency | Writes | Target design |
 | --- | --- | --- |
 | Every tool call | Set the operation lease, renew it every 10 seconds while the operation runs, clear it; plus the Pod exec call itself | None. The executor server tracks its own in-flight operations. |
-| Every run | `AcquireRun`, periodic `RenewRun`, `ReleaseRun` | Probably kept: the claim carries the epoch and grant generation used for fencing. Decided in the trusted-service chapter. |
+| Every run | `AcquireRun`, periodic `RenewRun`, `ReleaseRun` | Probably kept: the claim carries the epoch and grant generation used for fencing. See [open questions](#open-questions). |
 | Environment lifecycle | Create the resource, reconcile the PVC and Pod, receipt ledgers in a ConfigMap, retire, replace, delete | Kept. Kubernetes is the source of truth for the PVC and Pod. |
 
 The operation lease has three jobs today: mutual exclusion between provider replicas, crash detection (an expired lease
@@ -158,6 +158,17 @@ The guest's file API also does less than the current executor: it has no rename,
   binds it to a fresh environment instead.
 - **Fork.** Today the forked session shares the source environment through `ReserveSuccessor`. The proposed design
   clones the source environment's storage, which needs a storage-level copy that the provider does not have.
+- **Run claims.** Whether run claims stay as they are, and whether they stay in the `ExecutionEnvironment` status, which
+  costs Kubernetes API writes on every run. No change is needed for this work.
+- **Claim ID and epoch.** `AcquireRun` both generates a claim ID and increments the environment's epoch, and every call
+  is checked against both, so the claim ID may be redundant. Neither is documented outside the code; whichever stays
+  needs documenting.
+- **Owner attestation.** The provider trusts the calling mecak8s to state the session owner. Whether the owner should be
+  verified end to end belongs with the [agent identity](../agent-identity/README.md) work.
+
+Once `Files` and `Commands` move to the shared services (see the [executor protocol](executor-protocol.md)), the rest
+of `ExecutionProviderService` stays unchanged as a lifecycle service that only the trusted service implements. The
+request context fields are an open question in that chapter.
 
 ## Existing mechanisms to account for
 
