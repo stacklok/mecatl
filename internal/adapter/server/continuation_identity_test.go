@@ -3,8 +3,6 @@ package server
 import (
 	"bytes"
 	"context"
-	"encoding/json"
-	"errors"
 	"testing"
 	"time"
 
@@ -19,9 +17,16 @@ import (
 
 type identityGuardStore struct {
 	*memstore.Store
+	raw   []byte
 	saves int
 }
 
+func (s *identityGuardStore) Load(ctx context.Context, id session.SessionID) (*session.Session, error) {
+	if s.raw != nil {
+		return sessnap.Unmarshal(s.raw)
+	}
+	return s.Store.Load(ctx, id)
+}
 func (s *identityGuardStore) Save(ctx context.Context, sess *session.Session) error {
 	s.saves++
 	return s.Store.Save(ctx, sess)
@@ -60,6 +65,7 @@ func TestResumeApprovalHostCanonicalSameToolUsesRetainedArguments(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer svc.Close()
 	s := session.New("same-tool-host", session.ModeDefault, placement.binding("1").Ref, session.Limits{}, time.Unix(0, 0))
 	calls := []session.ToolCall{
 		session.NewToolCall("canonical-first", "Write", []byte(`{"path":"first"}`)),
@@ -98,108 +104,40 @@ func TestResumeApprovalHostCanonicalSameToolUsesRetainedArguments(t *testing.T) 
 	}
 }
 
-func TestMigrationHoldHostInspectionAndControlsAreOwnerSafeAndInert(t *testing.T) {
-	for _, state := range []session.State{session.StateAwaiting, session.StateAuthorizing} {
-		t.Run(string(state), func(t *testing.T) {
-			owner := &session.Principal{Issuer: "test", Subject: "owner"}
-			ctx := session.WithPrincipal(t.Context(), owner)
-			foreign := session.WithPrincipal(t.Context(), &session.Principal{Issuer: "test", Subject: "foreign"})
-			store := &identityGuardStore{Store: memstore.New()}
-			placement := &revisionPlacementProvider{}
+func TestUnsupportedHostContinuationRejectsBeforeEffects(t *testing.T) {
+	for name, raw := range map[string]string{
+		"approval":      `{"id":"old","state":"awaiting","mode":"default","environment_ref":{"Kind":"mem","ID":"/same-root","Revision":"1"},"messages":[{"role":"assistant","tool_calls":[{"ID":"provider-old","Name":"Write"}]}],"pending":{"AskID":"old-ask","Tool":"Write","call":"provider-old","origin":"permission"}}`,
+		"authorization": `{"id":"old","state":"authorizing","mode":"default","environment_ref":{"Kind":"mem","ID":"/same-root","Revision":"1"},"messages":[{"role":"assistant","tool_calls":[{"ID":"provider-old","Name":"Write"}]}],"pending_authorization":{"authorization":{"id":"old-auth","binding":"opaque"},"call":{"id":"provider-old","name":"Write"}}}`,
+		"malformed":     `{"id":"old","state":"completed","mode":"default","environment_ref":{"Kind":"mem","ID":"/same-root","Revision":"1"},"messages":[{"role":"tool","tool_result":{"CallID":"orphan","Content":"old"}}]}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			store := &identityGuardStore{Store: memstore.New(), raw: []byte(raw)}
 			broker := &identityGuardBroker{}
+			placement := &revisionPlacementProvider{}
+			llm := mockllm.New(mockllm.TextTurn("must not run"))
+			write := &identityContinuationTool{}
+			catalog := tool.NewCatalog()
+			catalog.MustRegister(write)
+			engine := agent.NewEngine(agent.Deps{LLM: llm, Catalog: catalog, Policy: lifecycleAllowPolicy{}, Store: store})
 			learned := 0
-			svc, err := NewService(Config{Engine: repairEngine(), Store: store, OwnershipEnforced: true,
-				PlacementProvider: placement, PlacementScope: "test", SharedEngineRoot: "/same-root", MCPBroker: broker,
-				ReplayApprovals: func(context.Context, *session.Session) { learned++ },
-			})
+			svc, err := NewService(Config{Engine: engine, Store: store, PlacementProvider: placement, PlacementScope: "test", SharedEngineRoot: "/same-root", MCPBroker: broker, ReplayApprovals: func(context.Context, *session.Session) { learned++ }})
 			if err != nil {
 				t.Fatal(err)
 			}
-			s := session.New("held-host", session.ModeDefault, placement.binding("1").Ref, session.Limits{}, time.Unix(0, 0))
-			if err := s.RestoreLabels(owner, session.Authority{}); err != nil {
-				t.Fatal(err)
-			}
-			s.Conversation.Append(session.NewUserMessage("inspectable"))
-			pending, authorization := []byte(nil), []byte(nil)
-			if state == session.StateAwaiting {
-				pending = []byte(`{"AskID":"held-ask","Tool":"Write","call":"ambiguous-provider","Args":{"path":"held"}}`)
-			} else {
-				authorization = []byte(`{"authorization":{"id":"held-auth","status":"pending"},"call":{"id":"ambiguous-provider","name":"protected","args":"e30="}}`)
-			}
-			payload, err := json.Marshal(struct {
-				Version       int           `json:"version"`
-				State         session.State `json:"state"`
-				Pending       []byte        `json:"pending,omitempty"`
-				Authorization []byte        `json:"pending_authorization,omitempty"`
-			}{1, state, pending, authorization})
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err := s.RestoreIdentityMigrationHold(state, session.IdentityMigrationHold{Reason: "legacy-continuation-unproven", Payload: payload}); err != nil {
-				t.Fatal(err)
-			}
-			if err := store.Save(ctx, s); err != nil {
-				t.Fatal(err)
-			}
-			store.saves = 0
-			before, err := sessnap.Marshal(s)
-			if err != nil {
-				t.Fatal(err)
-			}
+			defer svc.Close()
 			for _, load := range []func(context.Context, session.SessionID) (*session.Session, error){svc.GetSession, svc.LoadSession} {
-				loaded, err := load(ctx, s.ID)
-				if err != nil || loaded.CheckIdentityReady() != session.ErrMigrationHeld {
-					t.Fatalf("inspection = %v", err)
-				}
-				if _, err := load(foreign, s.ID); !errors.Is(err, ErrNotFound) {
-					t.Fatalf("foreign inspection = %v", err)
+				if _, err := load(t.Context(), "old"); err == nil {
+					t.Fatal("unsupported continuation loaded")
 				}
 			}
-			for name, action := range map[string]func() error{
-				"prompt":  func() error { _, err := svc.StartInteractiveRunContent(ctx, s.ID, "must not run", nil); return err },
-				"retry":   func() error { _, err := svc.RetryFailedRun(ctx, s.ID); return err },
-				"approve": func() error { return svc.Approve(ctx, s.ID, "control:ask", session.VerdictAllowAlways) },
-				"mode":    func() error { _, err := svc.SetMode(ctx, s.ID, session.ModeAccept); return err },
-				"delete":  func() error { return svc.DeleteSession(ctx, s.ID) },
-				"recheck": func() error {
-					_, err := svc.RecheckMCPAuthorization(ctx, s.ID, MCPAuthorizationControl{SessionID: s.ID, AuthorizationID: "auth"})
-					return err
-				},
-				"cancel auth": func() error {
-					_, err := svc.CancelMCPAuthorization(ctx, s.ID, MCPAuthorizationControl{SessionID: s.ID, AuthorizationID: "auth"})
-					return err
-				},
-				"presentation": func() error {
-					_, err := svc.MCPAuthorizationPresentation(ctx, s.ID, MCPAuthorizationControl{SessionID: s.ID, AuthorizationID: "auth"})
-					return err
-				},
-				"exact ask": func() error {
-					return svc.validatePersistedRunAsk(s, s.RunID(), agent.ApprovalResolution{AskID: "control:ask", Verdict: session.VerdictAllowAlways}, false)
-				},
-				"reopen":       func() error { _, err := svc.reopenLoadedSession(ctx, s); return err },
-				"interruption": func() error { _, _, err := svc.interruptRestoredAuthorizationLocked(ctx, s); return err },
-				"granted":      func() error { _, err := svc.continueGrantedAuthorizationLocked(ctx, s); return err },
-				"settle":       func() error { return svc.settleAuthorizationLocked(ctx, s.ID) },
-			} {
-				t.Run(name, func(t *testing.T) {
-					if err := action(); !errors.Is(err, session.ErrMigrationHeld) {
-						t.Fatalf("held control = %v", err)
-					}
-				})
+			if _, err := svc.StartRun(t.Context(), "old", "new prompt"); err == nil {
+				t.Fatal("unsupported snapshot started a run")
 			}
-			if _, err := svc.StartRun(foreign, s.ID, "foreign"); !errors.Is(err, ErrNotFound) {
-				t.Fatalf("foreign prompt = %v", err)
+			if err := svc.Approve(t.Context(), "old", "old-ask", session.VerdictAllowAlways); err == nil {
+				t.Fatal("unsupported approval accepted")
 			}
-			if store.saves != 0 || learned != 0 || broker.calls != 0 || len(placement.reattachCalls) != 0 {
-				t.Fatalf("effects: saves=%d learned=%d broker=%d placement=%d", store.saves, learned, broker.calls, len(placement.reattachCalls))
-			}
-			loaded, err := store.Load(ctx, s.ID)
-			if err != nil {
-				t.Fatal(err)
-			}
-			after, err := sessnap.Marshal(loaded)
-			if err != nil || !bytes.Equal(before, after) {
-				t.Fatal("persisted held bytes changed")
+			if store.saves != 0 || broker.calls != 0 || len(placement.reattachCalls) != 0 || len(write.executed) != 0 || llm.Calls() != 0 || learned != 0 {
+				t.Fatalf("unsupported snapshot caused effects: saves=%d broker=%d placement=%d tools=%d model=%d learning=%d", store.saves, broker.calls, len(placement.reattachCalls), len(write.executed), llm.Calls(), learned)
 			}
 		})
 	}

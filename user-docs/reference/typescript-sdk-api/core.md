@@ -69,7 +69,6 @@ For entry points and runtime support, see the [SDK API overview](./index.md).
 | [`ForkSessionOptions`](#api-forksessionoptions-interface) | Interface |
 | [`getRawJson`](#api-getrawjson-function) | Function |
 | [`GuardrailApprovalScope`](#api-guardrailapprovalscope-interface) | Interface |
-| [`HistoricalRecord`](#api-historicalrecord-interface) | Interface |
 | [`HookEventPayload`](#api-hookeventpayload-interface) | Interface |
 | [`HttpTransportOptions`](#api-httptransportoptions-interface) | Interface |
 | [`imagePart`](#api-imagepart-function) | Function |
@@ -936,12 +935,6 @@ One conversation entry in a compaction archive.
 
 ```ts
 export interface ArchivedConversationMessage
-```
-
-<Heading as="h4" id="api-archivedconversationmessage-historical-propertysignature"><code>ArchivedConversationMessage.historical</code></Heading>
-
-```ts
-readonly historical?: HistoricalRecord | undefined;
 ```
 
 <Heading as="h4" id="api-archivedconversationmessage-parts-propertysignature"><code>ArchivedConversationMessage.parts</code></Heading>
@@ -2039,12 +2032,6 @@ readonly approval: ApprovalEventPayload;
 readonly compaction: undefined;
 ```
 
-<Heading as="h4" id="api-eventpayloads-historical-propertysignature"><code>EventPayloads.historical</code></Heading>
-
-```ts
-readonly historical: HistoricalRecord;
-```
-
 <Heading as="h4" id="api-eventpayloads-hook-propertysignature"><code>EventPayloads.hook</code></Heading>
 
 ```ts
@@ -2272,46 +2259,6 @@ readonly reviewId: string;
 
 ```ts
 readonly sessionOnly: boolean;
-```
-
-<Heading as="h3" id="api-historicalrecord-interface"><code>HistoricalRecord</code></Heading>
-
-Standalone historical content, never a tool attachment or control authority.
-
-```ts
-export interface HistoricalRecord
-```
-
-<Heading as="h4" id="api-historicalrecord-attachmentunavailable-propertysignature"><code>HistoricalRecord.attachmentUnavailable</code></Heading>
-
-```ts
-readonly attachmentUnavailable: boolean;
-```
-
-<Heading as="h4" id="api-historicalrecord-kind-propertysignature"><code>HistoricalRecord.kind</code></Heading>
-
-```ts
-readonly kind: string;
-```
-
-<Heading as="h4" id="api-historicalrecord-parts-propertysignature"><code>HistoricalRecord.parts</code></Heading>
-
-```ts
-readonly parts: readonly EventContent[];
-```
-
-<Heading as="h4" id="api-historicalrecord-recordid-propertysignature"><code>HistoricalRecord.recordId</code></Heading>
-
-Source-local record identity, not a canonical tool-call ID.
-
-```ts
-readonly recordId: string;
-```
-
-<Heading as="h4" id="api-historicalrecord-text-propertysignature"><code>HistoricalRecord.text</code></Heading>
-
-```ts
-readonly text: string;
 ```
 
 <Heading as="h3" id="api-hookeventpayload-interface"><code>HookEventPayload</code></Heading>
@@ -5697,12 +5644,6 @@ One human-displayable message in the authoritative session transcript.
 export interface SessionTranscriptMessage
 ```
 
-<Heading as="h4" id="api-sessiontranscriptmessage-historical-propertysignature"><code>SessionTranscriptMessage.historical</code></Heading>
-
-```ts
-readonly historical?: HistoricalRecord;
-```
-
 <Heading as="h4" id="api-sessiontranscriptmessage-parts-propertysignature"><code>SessionTranscriptMessage.parts</code></Heading>
 
 ```ts
@@ -7507,7 +7448,7 @@ MECATL_ERROR_CODES: readonly ["activity_gap", "ask_not_pending", "approval_grant
 Stable event kinds, kept in parity with the Go server vocabulary.
 
 ```ts
-MECATL_EVENT_KINDS: readonly ["approval", "authorization.required", "authorization.resolved", "compaction", "compaction.archive", "control.refused", "historical", "hook", "message.delta", "model.retry", "network.attempt", "no_progress", "parallel.branch", "parallel.end", "parallel.start", "permission.ask", "permission.retract", "plan.continuation_failed", "provider.route", "reasoning.delta", "recover_notice", "request.manifest", "result", "schedule.failed", "schedule.fired", "schedule.skipped", "session.init", "session.title", "steer", "steer.outcome", "subagent.end", "subagent.start", "subagent.tool", "team.end", "team.findings", "team.member", "team.start", "team.tasks", "tool.call", "tool.progress", "tool.result", "tool.result.available", "turn.end", "turn.start", "user_prompt"]
+MECATL_EVENT_KINDS: readonly ["approval", "authorization.required", "authorization.resolved", "compaction", "compaction.archive", "control.refused", "hook", "message.delta", "model.retry", "network.attempt", "no_progress", "parallel.branch", "parallel.end", "parallel.start", "permission.ask", "permission.retract", "plan.continuation_failed", "provider.route", "reasoning.delta", "recover_notice", "request.manifest", "result", "schedule.failed", "schedule.fired", "schedule.skipped", "session.init", "session.title", "steer", "steer.outcome", "subagent.end", "subagent.start", "subagent.tool", "team.end", "team.findings", "team.member", "team.start", "team.tasks", "tool.call", "tool.progress", "tool.result", "tool.result.available", "turn.end", "turn.start", "user_prompt"]
 ```
 
 <Heading as="h3" id="api-mecatl-watch-phases-variable"><code>MECATL_WATCH_PHASES</code></Heading>

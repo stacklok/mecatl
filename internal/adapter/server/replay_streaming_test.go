@@ -9,7 +9,6 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/stacklok/mecatl/engine/adapter/eventcodec"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 )
@@ -38,14 +37,7 @@ func (l *countingReplayLog) Read(context.Context, session.SessionID) iter.Seq2[s
 }
 
 func TestSessionReplayStreamsBeforeReadingLargeSource(t *testing.T) {
-	legacy, err := eventcodec.Unmarshal([]byte(`{"Type":"tool.result","RunID":"old","Seq":1,"ToolResult":{"CallID":"private-provider","Content":"orphan"}}`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	p := legacy.LegacyIdentity()
-	p.Incarnation = session.LegacyIncarnationID("counting", 0, nil)
-	legacy = legacy.WithLegacyIdentity(*p)
-	for _, ev := range []session.Event{{Type: session.EvUserPrompt, Text: strings.Repeat("x", 64<<10)}, legacy} {
+	for _, ev := range []session.Event{{Type: session.EvUserPrompt, Text: strings.Repeat("x", 64<<10)}} {
 		log := &countingReplayLog{event: ev}
 		svc := &Service{cfg: Config{EventLog: log}}
 		var wg sync.WaitGroup
@@ -56,11 +48,9 @@ func TestSessionReplayStreamsBeforeReadingLargeSource(t *testing.T) {
 					t.Error(err)
 					return
 				}
-				for got, err := range stream {
+				for _, err := range stream {
 					if err != nil {
 						t.Error(err)
-					} else if ev.LegacyIdentity() != nil && (got.Historical == nil || got.ToolResult != nil || got.Historical.RecordID == "") {
-						t.Error("legacy streaming record lost its unavailable-association projection")
 					}
 					break // Slow/disconnected readers cannot cause read-ahead.
 				}

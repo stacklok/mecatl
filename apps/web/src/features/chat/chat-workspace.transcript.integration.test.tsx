@@ -234,24 +234,13 @@ describe("mounted transcript streaming", () => {
           isError: false,
         }),
       );
-      activity.send(
-        runEvent("historical", 7, "", {
-          recordId: "local-old-edge",
-          kind: "subagent.start",
-          text: "Old child output",
-          attachmentUnavailable: true,
-          parts: [],
-        }),
-      );
     });
-    expect(await screen.findByText("Old child output")).toBeTruthy();
     expect(panel.textContent).toContain("second output");
     expect(panel.textContent).not.toContain("first output");
     expect(screen.getAllByTestId("tool-result-summary").map((node) => node.textContent)).toEqual([
       "first output",
       "second output",
     ]);
-    expect(screen.getByLabelText("Historical activity").querySelector("button")).toBeNull();
   });
   it.each([
     {

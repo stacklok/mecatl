@@ -338,7 +338,7 @@ describe("session projections", () => {
       "unavailableReason",
     ]);
     expect(fields(ConversationMessageSchema)).toEqual(
-      ["parts", "providerPhase", "historical", "role", "text", "toolCalls", "toolResult"].sort(),
+      ["parts", "providerPhase", "role", "text", "toolCalls", "toolResult"].sort(),
     );
   });
 });

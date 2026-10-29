@@ -47,7 +47,7 @@ func newProposalManifestFixture(t *testing.T) *proposalManifestFixture {
 		Bindings: []session.ToolCallBinding{{CallID: "call-1", PairingID: "private-pairing"}},
 		Provider: &session.ProviderReplay{Format: "private", Version: 1, Data: []byte("private reasoning")},
 	}
-	trajectory := learning.NewTrajectory("manifest-source", "", session.StopEndTurn, session.Usage{}, messages)
+	trajectory := currentTestTrajectory("manifest-source", "", session.StopEndTurn, session.Usage{}, messages)
 	events := []session.Event{{Type: session.EvResult, Seq: 7, Turn: 1, Result: &session.ResultPayload{Stop: session.StopEndTurn}}}
 	materialized, err := learning.MaterializeEvidence(context.Background(), learning.MaterializationRequest{Trajectory: trajectory, Events: events, Explicit: true})
 	if err != nil || materialized.Disposition != learning.MaterializationSelected {
@@ -116,7 +116,7 @@ func TestProposalVerificationBuildsSelectedEvidenceOnly(t *testing.T) {
 	runtime.GC()
 	var before, after runtime.MemStats
 	runtime.ReadMemStats(&before)
-	selected, eventSequences, err := selectManifestSource(messages, entries, learning.ReflectionEvidenceV2, "")
+	selected, eventSequences, err := selectManifestSource(messages, entries, learning.ReflectionEvidenceV2)
 	runtime.ReadMemStats(&after)
 	runtime.KeepAlive(messages)
 	if err != nil {
@@ -267,7 +267,7 @@ func TestV1EventEvidencePreviewUsesSessionStreamOrdinal(t *testing.T) {
 		{Type: session.EvToolResult, Seq: 1, RunID: "run-two", ToolResult: &session.ToolResult{CallID: "second", Content: "second run result"}},
 	}
 	materialized, err := learning.MaterializeEvidence(context.Background(), learning.MaterializationRequest{
-		Trajectory: learning.NewTrajectory(sourceID, "", session.StopEndTurn, session.Usage{}, nil),
+		Trajectory: currentTestTrajectory(sourceID, "", session.StopEndTurn, session.Usage{}, nil),
 		Events:     events,
 		Explicit:   true,
 	})

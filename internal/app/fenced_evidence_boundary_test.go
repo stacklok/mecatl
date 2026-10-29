@@ -77,7 +77,7 @@ func TestEvidenceProjectionIsBoundedFencedAndInjectionSafe(t *testing.T) {
 		}
 	}
 
-	trajectory := learning.NewTrajectory(source.ID, "/workspace", session.StopEndTurn, usage, source.Conversation.Messages)
+	trajectory := learning.NewSessionTrajectory(source, "/workspace", session.StopEndTurn, usage)
 	trajectory.RunID = runID
 	trajectory.Kind = source.Kind
 	trajectory.Counters = source.Counters

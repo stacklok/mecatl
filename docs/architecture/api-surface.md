@@ -135,29 +135,24 @@ loop gives up. A busy run therefore never blocks behind a dead consumer, while a
 still receives the terminal result. Cancel leaves a run durably parked on an
 authorization handoff untouched, so its resume point survives.
 
-## Historical display and evidence
+## Current display and evidence
 
-`GetSessionTranscript` projects one ownership-checked snapshot, never a snapshot/log
-join. Archives use the same public-safe message mapper while internal archives keep
-private replay. Bounded, complete-source inspection can prove legacy call/result
-pairs within that one event source. `StreamSessionEvents` and cursor watches instead
-project each record conservatively, without collecting the log before delivery:
-streaming prefixes cannot prove a pair. Neither path injects synthetic events or
-changes log positions, run sequences, or delivery order. Inspection rejects incomplete
-or oversized history scans rather than treating a retained prefix as a complete source.
+`GetSessionTranscript` projects one ownership-checked snapshot, never a
+snapshot/log join. Archives use the same public-safe message mapper while internal
+archives keep private replay. Current calls, results, and delegation references use
+canonical invocation IDs.
 
-Unsupported associations use the standalone `HistoricalRecord` on `Event.historical`
-or `ConversationMessage.historical`: source-local record identity, kind, readable
-text/media, and `attachment_unavailable`. They are not ordinary tool results, hooks,
-approvals, or delegation edges with blank or guessed invocation keys. Legacy parent
-relationships without a proven canonical call are omitted, not joined by provider key.
-Current canonical events retain their usual payloads.
+Event streams and cursor watches decode incrementally. They omit recognized
+unsupported legacy invocation, control, delegation, and archive records. A cursor
+still advances through an omitted record and preserves the resulting gap, so a
+filtered stream cannot be treated as complete reconstruction or learning evidence.
+Malformed JSON, unknown or contradictory formats, and invalid current events remain
+decode errors. Current canonical events retain their usual payloads.
 
-Learning citations report their evidence protocol and invocation-attachment status
-separately from source availability. A verified old citation can remain available
-without `tool_call_id`; previews are sanitized readable projections, not serialized
-provider-era verification views. Frozen evidence digests and source coordinates
-continue to verify the original source without becoming executable lookup keys.
+Learning accepts only current `reflection-evidence/v2` evidence. Public driver
+evidence carries the protocol, coordinates, and digest needed to verify its current
+source. Frozen older evidence is unavailable, and no public historical-specific
+payload represents it.
 
 ## Durable watch
 

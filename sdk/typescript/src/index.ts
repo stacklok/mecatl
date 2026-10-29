@@ -71,7 +71,6 @@ export type {
   EventPayloads,
   EventUsage,
   GuardrailApprovalScope,
-  HistoricalRecord,
   HookEventPayload,
   KnownEvent,
   KnownEventKind,

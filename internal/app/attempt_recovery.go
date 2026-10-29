@@ -153,6 +153,7 @@ func recoverAttempt(ctx context.Context, cfg Config, reg *providerRegistry, sess
 			}
 		}
 		workerCfg = cfg
+		workerCfg.learningSourceStore = sessions
 		workerCfg.Workspace = workspace
 		workerCfg.Model = model
 		workerCfg.LearningMode, workerCfg.LearningSensitivity, workerCfg.SkillActivationPolicy = learningPolicyForWorkspace(cfg, workspace)
@@ -170,7 +171,7 @@ func recoverAttempt(ctx context.Context, cfg Config, reg *providerRegistry, sess
 		callbackTimeout: cfg.LearningAttemptTimeout,
 		prepare: func(prepareCtx context.Context, record learning.AttemptRecord) (learning.AttemptFailureCode, error) {
 			loaded, err := sourceSnapshot, sourceErr
-			if loaded == nil || err != nil {
+			if loaded == nil || err != nil || !loaded.LearningEligible() {
 				return learning.FailureEvidenceUnavailable, nil
 			}
 			source = loaded
@@ -202,14 +203,12 @@ func recoverAttempt(ctx context.Context, cfg Config, reg *providerRegistry, sess
 			return learning.FailureNone, setupProvider()
 		},
 		reflect: func(reflectCtx context.Context) (learning.Outcome, error) {
-			if len(projection.Messages) == 0 {
-				current, found, getErr := repository.Get(reflectCtx, item.Partition, item.Record.ID)
-				if getErr != nil {
-					return learning.Outcome{}, getErr
-				}
-				if !found || load(reflectCtx, current) != learning.FailureNone {
-					return learning.Outcome{}, learning.ErrInvalidEvidence
-				}
+			current, found, getErr := repository.Get(reflectCtx, item.Partition, item.Record.ID)
+			if getErr != nil {
+				return learning.Outcome{}, getErr
+			}
+			if !found || load(reflectCtx, current) != learning.FailureNone || loadErr != nil {
+				return learning.Outcome{}, learning.ErrInvalidEvidence
 			}
 			outcome, usage, reflectErr := reflector.ReflectProjection(reflectCtx, projection)
 			if len(usage.Buckets) > 0 {
@@ -218,6 +217,10 @@ func recoverAttempt(ctx context.Context, cfg Config, reg *providerRegistry, sess
 			return outcome, reflectErr
 		},
 		publish: func(publishCtx context.Context, outcome learning.Outcome) (learning.AttemptCheckpoint, learning.AttemptFailureCode, error) {
+			current, err := sessions.Load(publishCtx, item.Record.Provenance.Source.SessionID)
+			if err != nil || current == nil || !current.LearningEligible() {
+				return learning.AttemptCheckpoint{}, learning.FailureEvidenceUnavailable, nil
+			}
 			if len(outcome.Candidates) == 0 {
 				return learning.AttemptCheckpoint{}, learning.FailureEvaluationRejected, nil
 			}

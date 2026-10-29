@@ -199,18 +199,24 @@ not survive the transport.
 
 ### Preserve identity and replay encodings
 
-Snapshot and event writers use `sessnap-json/2` and `eventlog-json/2`; current
-typed readers accept `/1` and `/2` with consistent inner identity schemas.
-Opaque drivers preserve the format tag and payload bytes exactly. Decoding
-wrappers restore typed values and emit the newest encoding, so an upgraded
-wrapper is not compatible with an old harness reader. The `session-store/1`
-capability marker does not negotiate these formats, and event drivers have no
-startup format handshake.
+Snapshot and event writers use `sessnap-json/2` and `eventlog-json/2`; typed
+readers convert straightforward `/1` records and read `/2` records. A `/1`
+conversion produces current snapshot data but permanently excludes the session
+from learning. A current `/2` snapshot remains eligible only when it stores a
+positive `learning_eligible` value. Opaque drivers preserve the format tag and
+payload bytes exactly. Decoding wrappers restore typed values and emit the newest
+encoding, so an upgraded wrapper is not compatible with an old harness reader.
+The `session-store/1` capability marker does not negotiate these formats, and
+event drivers have no startup format handshake.
 
-Store private message replay, occurrence bindings, and held legacy continuation
-data with the aggregate. Keep opaque provider bytes and unknown private replay
-versions intact; never expose them through public transcript projections. Use
-the coordinated [API-major-2 upgrade procedure](/operating/session-storage-operations.md#upgrade-to-api-major-2)
+Store private message replay and occurrence bindings with the aggregate. Keep
+opaque provider bytes and unknown private replay versions intact; never expose them
+through public transcript projections. A `/1` snapshot converts only when its
+history has unambiguous, correctly ordered call/result pairs and provable parent
+calls. Awaiting or authorizing `/1` snapshots, pending payloads, and any
+`identity_hold` key reject. A converted session remains permanently excluded from
+learning. Use the coordinated
+[API-major-2 upgrade procedure](/operating/session-storage-operations.md#upgrade-to-api-major-2)
 for decoding drivers and local stores.
 
 ### Serve a backend

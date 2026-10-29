@@ -43,19 +43,9 @@ describe("Mecatl chat event serialization", () => {
 });
 
 describe("Mecatl chat sessions", () => {
-  it("preserves standalone historical output/media and phase, without replay serializer aliases", async () => {
-    const historical = {
-      recordId: "source-local-3",
-      kind: "tool.result",
-      text: "Old output",
-      attachmentUnavailable: true,
-      parts: [
-        { kind: 1, mimeType: "image/png", data: new Uint8Array([1, 2, 3]), text: "", url: "" },
-      ],
-    };
+  it("preserves ordinary output and phase without private replay serializer aliases", async () => {
     const message = {
-      historical,
-      role: "notice",
+      role: "assistant",
       text: "Old output",
       providerPhase: "commentary",
       parts: [],
@@ -74,26 +64,9 @@ describe("Mecatl chat sessions", () => {
     const projected = sessionTranscriptResponseSchema.parse(await service.transcript("s"));
     expect(projected.messages[0]).toMatchObject({
       providerPhase: "commentary",
-      historical: {
-        ...historical,
-        parts: [{ ...historical.parts[0], data: { encoding: "base64", data: "AQID" } }],
-      },
       toolCalls: [],
     });
     expect(JSON.stringify(projected)).not.toMatch(/PRIVATE|reasoningItemId|replay/);
-    const event = serializeEvent({
-      kind: "historical",
-      payload: historical,
-      runId: "r",
-      seq: 3n,
-      text: historical.text,
-      turn: 1,
-    } as Event);
-    expect(event).toMatchObject({
-      kind: "historical",
-      seq: "3",
-      payload: projected.messages[0]?.historical,
-    });
   });
   it("projects inspect only sessions without chat controls", async () => {
     const row = (

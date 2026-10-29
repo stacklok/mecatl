@@ -3,7 +3,6 @@ package acp_test
 import (
 	"bufio"
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -1588,7 +1587,7 @@ func TestSessionLoadReplaysTranscript(t *testing.T) {
 	}
 }
 
-func TestSessionLoadReplaysFrozenLegacyOrphanTextAndMediaWithoutAttachmentClaims(t *testing.T) {
+func TestMalformedLegacyOrphanSnapshotRejected(t *testing.T) {
 	const legacyOrphanSnapshot = `{
 		"id":"legacy-orphan-media", "state":"completed", "mode":"default",
 		"limits":{}, "counters":{"Turns":1}, "stop_reason":"end_turn",
@@ -1603,78 +1602,8 @@ func TestSessionLoadReplaysFrozenLegacyOrphanTextAndMediaWithoutAttachmentClaims
 		],
 		"environment_ref":{"Kind":"local", "ID":"acp-test-placement", "Revision":"v1"}
 	}`
-	store := memstore.New()
-	svc := newServiceCfg(t, mockllm.New(), allowRules(), func(c *server.Config) { c.Store = store })
-	s, err := sessnap.Unmarshal([]byte(legacyOrphanSnapshot))
-	if err != nil {
-		t.Fatalf("decode frozen legacy orphan fixture: %v", err)
-	}
-	if len(s.Conversation.Messages) != 2 || s.Conversation.Messages[1].Legacy == nil || len(s.Conversation.Messages[1].Legacy.Unsupported) == 0 {
-		t.Fatalf("legacy orphan fixture was not retained as unsupported history: %+v", s.Conversation.Messages)
-	}
-	if err := store.Save(context.Background(), s); err != nil {
-		t.Fatalf("persist migrated legacy orphan fixture: %v", err)
-	}
-
-	e, cleanup := startAgent(t, svc, acp.WithResume(true))
-	defer cleanup()
-	_ = e.call("session/load", map[string]any{"sessionId": string(s.ID), "cwd": testCWD(t), "mcpServers": []any{}})
-	updates := drainUpdates(e.notes)
-	select {
-	case request := <-e.reqs:
-		t.Fatalf("session/load sent fabricated permission request: %s", request.Method)
-	default:
-	}
-
-	var topText, historicalTopText, retainedText, unavailable bool
-	media := map[string]map[string]any{}
-	for _, update := range updates {
-		if update["sessionUpdate"] != "agent_message_chunk" {
-			t.Fatalf("historical replay fabricated non-chunk update: %v", update)
-		}
-		content, _ := update["content"].(map[string]any)
-		switch content["type"] {
-		case "text":
-			switch content["text"] {
-			case "current assistant text":
-				topText = true
-			case "historical top text":
-				historicalTopText = true
-			case "retained text-only part":
-				retainedText = true
-			case "Historical attachment unavailable":
-				unavailable = true
-			}
-		case "image", "audio":
-			media[content["type"].(string)] = content
-		}
-	}
-	if !topText || !historicalTopText || !retainedText || !unavailable {
-		t.Fatalf("missing retained text/status: top=%v historicalTop=%v retained=%v unavailable=%v updates=%v", topText, historicalTopText, retainedText, unavailable, updates)
-	}
-	wantMedia := map[string]struct {
-		mime string
-		data []byte
-	}{
-		"image": {mime: "image/png", data: []byte("legacy-image")},
-		"audio": {mime: "audio/wav", data: []byte("legacy-audio")},
-	}
-	for kind, want := range wantMedia {
-		content := media[kind]
-		if content == nil || content["mimeType"] != want.mime {
-			t.Fatalf("historical %s MIME = %v, want %q", kind, content, want.mime)
-		}
-		if _, hasURI := content["uri"]; hasURI {
-			t.Fatalf("historical %s unexpectedly contains URI: %v", kind, content)
-		}
-		encoded, ok := content["data"].(string)
-		if !ok {
-			t.Fatalf("historical %s data = %T, want base64 string", kind, content["data"])
-		}
-		data, err := base64.StdEncoding.DecodeString(encoded)
-		if err != nil || string(data) != string(want.data) {
-			t.Fatalf("historical %s data = %q, err=%v, want %q", kind, data, err, want.data)
-		}
+	if _, err := sessnap.Unmarshal([]byte(legacyOrphanSnapshot)); err == nil {
+		t.Fatal("malformed orphan snapshot was accepted")
 	}
 }
 

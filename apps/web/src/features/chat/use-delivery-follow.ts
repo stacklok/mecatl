@@ -44,7 +44,6 @@ function deliveryKey(message: ChatMessage): string | undefined {
 }
 
 function matchKey(message: ChatMessage): string {
-  if (message.historical) return `historical:${message.historical.recordId}`;
   if (message.tools?.length) return `calls:${JSON.stringify(message.tools.map((tool) => tool.id))}`;
   const delivery = deliveryKey(message);
   if (delivery) return `delivery:${delivery}`;
@@ -225,7 +224,6 @@ export function reconcileRecordedMessages(
       saved.role === "assistant" &&
       saved.content &&
       !saved.tools?.length &&
-      !saved.historical &&
       !delivery &&
       !saved.images?.length
     ) {
@@ -241,20 +239,13 @@ export function reconcileRecordedMessages(
     }
     let live =
       matchIndex !== undefined && matchIndex >= 0 ? exact?.splice(matchIndex, 1)[0] : undefined;
-    if (
-      !live &&
-      !saved.tools?.length &&
-      !saved.historical &&
-      saved.role === "assistant" &&
-      saved.content
-    ) {
+    if (!live && !saved.tools?.length && saved.role === "assistant" && saved.content) {
       const prior = recorded.at(-1)?.live;
       const candidate = prior?.message.role === "user" ? liveMessages[prior.index + 1] : undefined;
       if (
         prior &&
         candidate?.role === "assistant" &&
         !candidate.tools?.length &&
-        !candidate.historical &&
         candidate.content &&
         saved.content.startsWith(candidate.content) &&
         !candidate.stopReason &&

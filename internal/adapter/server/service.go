@@ -21,7 +21,6 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
-	"github.com/stacklok/mecatl/engine/adapter/eventcodec"
 	"github.com/stacklok/mecatl/engine/adapter/memledger"
 	"github.com/stacklok/mecatl/engine/adapter/nofs"
 	"github.com/stacklok/mecatl/engine/agent"
@@ -10674,8 +10673,6 @@ func (s *Service) StreamSessionEvents(ctx context.Context, id session.SessionID)
 			yield(session.Event{}, err)
 			return
 		}
-		var inc session.IncarnationID
-		ordinal := 0
 		for ev, err := range s.cfg.EventLog.Read(ctx, id) {
 			if ctxErr := ctx.Err(); ctxErr != nil {
 				yield(session.Event{}, ctxErr)
@@ -10685,22 +10682,6 @@ func (s *Service) StreamSessionEvents(ctx context.Context, id session.SessionID)
 				yield(session.Event{}, err)
 				return
 			}
-			if ev.LegacyIdentity() != nil {
-				if inc == "" {
-					inc, err = s.eventSourceIncarnation(ctx, id, []session.Event{ev})
-					if err != nil {
-						yield(session.Event{}, err)
-						return
-					}
-				}
-				// Streaming prefixes cannot prove legacy invocation attachments.
-				ev, err = eventcodec.ProjectRecord(ev, inc, ordinal)
-				if err != nil {
-					yield(session.Event{}, fmt.Errorf("%w: historical activity unavailable", ErrInternal))
-					return
-				}
-			}
-			ordinal++
 			if !yield(ev, nil) {
 				return
 			}

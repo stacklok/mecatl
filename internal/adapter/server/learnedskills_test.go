@@ -122,7 +122,7 @@ func TestDecodeLearnedSkillMutationIsStrictAndBounded(t *testing.T) {
 
 func TestLearnedSkillProjectionRepairsAndBoundsText(t *testing.T) {
 	value := learning.SkillVersion{ID: "id", Version: "v", Revision: "r", State: learning.SkillDraft, OwnerAgent: "a\xff", Bundle: learning.SkillBundle{Name: "n", Description: "d\xff", Body: strings.Repeat("x", learning.MaxSkillBodyBytes) + "\xff"}}
-	got := toProtoLearnedSkill(value)
+	got := (&Service{}).toProtoLearnedSkill(t.Context(), value)
 	if !strings.Contains(got.GetOwnerAgent(), "�") || !strings.Contains(got.GetDescription(), "�") {
 		t.Fatalf("invalid UTF-8 not repaired: %+v", got)
 	}

@@ -4,8 +4,6 @@ import type { SessionTranscriptResponse } from "@mecatl-studio/contracts";
 import { Loader2, RefreshCw } from "lucide-react";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
-import { type ChatMessage, historicalMessage } from "./chat-state";
-import { ChatTranscript } from "./chat-transcript";
 
 /**
  * The saved-transcript view of the session dialog, ported from the
@@ -18,7 +16,6 @@ export const TRANSCRIPT_EMPTY_NOTE =
   "This session's saved log holds no replayable conversation. Runs driven outside the API record only their outcome.";
 
 interface TranscriptEntry {
-  historical?: ChatMessage;
   key: string;
   role: "user" | "assistant" | "event";
   text: string;
@@ -27,17 +24,6 @@ interface TranscriptEntry {
 function transcriptEntries(transcript: SessionTranscriptResponse): TranscriptEntry[] {
   const entries: TranscriptEntry[] = [];
   transcript.messages.forEach((message, index) => {
-    if (message.historical) {
-      const historical = historicalMessage(message.historical);
-      if (historical)
-        entries.push({
-          historical,
-          key: `${index}-historical`,
-          role: "event",
-          text: historical.content,
-        });
-      return;
-    }
     const calls = message.toolCalls.length;
     if (calls) {
       entries.push({
@@ -108,11 +94,7 @@ export function TranscriptView({
               >
                 {entry.role === "event" ? "activity" : entry.role}
               </Badge>
-              {entry.historical ? (
-                <ChatTranscript messages={[entry.historical]} showToolCalls={false} />
-              ) : (
-                <p className="whitespace-pre-wrap break-words">{entry.text}</p>
-              )}
+              <p className="whitespace-pre-wrap break-words">{entry.text}</p>
             </li>
           ))}
         </ol>

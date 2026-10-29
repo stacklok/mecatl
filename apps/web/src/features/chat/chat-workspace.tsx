@@ -146,7 +146,6 @@ import {
   type ChatMessage,
   enqueueApproval,
   failureFromResult,
-  historicalMessage,
   payloadImages,
   payloadRecord,
   payloadText,
@@ -2114,14 +2113,6 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
             ...message,
             reasoning: (message.reasoning ?? "") + event.text,
           }));
-        } else if (event.kind === "historical") {
-          const message = historicalMessage(event.payload);
-          if (message)
-            setMessages((current) =>
-              current.some((row) => row.historical?.recordId === message.historical?.recordId)
-                ? current
-                : [...current, message],
-            );
         } else if (event.kind === "tool.call") {
           const tool = toolCall(event.payload);
           const assistantId = activeAssistantId;

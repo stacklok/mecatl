@@ -5,7 +5,6 @@ import type {
   SessionTranscriptResponse,
   SessionUsageResponse,
 } from "@mecatl-studio/contracts";
-import { historicalRecordSchema } from "@mecatl-studio/contracts";
 import type { ApprovalRequest } from "./approval-panel";
 import { type AuthorizationHandoff, recordAuthorizationEvent } from "./authorization-review";
 import type { ChatImage } from "./local-file-preview";
@@ -23,7 +22,6 @@ export interface ChatMessage {
   content: string;
   delivery?: SessionTranscriptResponse["messages"][number]["delivery"];
   failure?: { detail: string; message: string; permanent: boolean };
-  historical?: SessionTranscriptResponse["messages"][number]["historical"];
   id: string;
   images?: ChatImage[];
   providerPhase?: string;
@@ -141,7 +139,6 @@ function stringValue(value: unknown): string {
 export function messagesFromTranscript(
   entries: Array<{
     delivery?: SessionTranscriptResponse["messages"][number]["delivery"];
-    historical?: ChatMessage["historical"];
     providerPhase?: string;
     images?: ChatImage[];
     role: string;
@@ -153,11 +150,6 @@ export function messagesFromTranscript(
   const messages: ChatMessage[] = [];
 
   for (const [index, entry] of entries.entries()) {
-    if (entry.historical) {
-      const message = historicalMessage(entry.historical);
-      if (message) messages.push({ ...message, recordedOrdinal: index });
-      continue;
-    }
     if (entry.toolResult) {
       const result = entry.toolResult;
       for (let messageIndex = messages.length - 1; messageIndex >= 0; messageIndex -= 1) {
@@ -199,26 +191,6 @@ export function messagesFromTranscript(
     });
   }
   return messages;
-}
-
-export function historicalMessage(payload: unknown): ChatMessage | undefined {
-  const parsed = historicalRecordSchema.safeParse(payload);
-  if (!parsed.success) return undefined;
-  const historical = parsed.data;
-  return {
-    content: [
-      ...new Set([
-        historical.text,
-        ...historical.parts.filter((part) => part.kind === 0).map((part) => part.text),
-      ]),
-    ]
-      .filter(Boolean)
-      .join("\n"),
-    historical,
-    id: `historical-${historical.recordId}`,
-    images: payloadImages(historical),
-    role: "notice",
-  };
 }
 
 export function appendToolCall(
@@ -469,15 +441,6 @@ export function applyRunDelivery(
         reasoning: (message.reasoning ?? "") + event.text,
       })),
     };
-  }
-  if (event.kind === "historical") {
-    const message = historicalMessage(event.payload);
-    if (
-      !message ||
-      next.messages.some((current) => current.historical?.recordId === message.historical?.recordId)
-    )
-      return next;
-    return { ...next, messages: [...next.messages, message] };
   }
   if (event.kind === "authorization.required" || event.kind === "authorization.resolved") {
     return options.sessionId

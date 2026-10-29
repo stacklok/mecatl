@@ -459,27 +459,6 @@ func (c *conversation) addTurnStat(text string) {
 	c.scrollback.Notices().AddTurnStat(text)
 }
 
-func (c *conversation) addHistorical(record client.HistoricalRecord) {
-	text := "historical " + record.Kind
-	if record.AttachmentUnavailable {
-		text += " — invocation association unavailable"
-	}
-	if record.Text != "" {
-		text += "\n" + record.Text
-	}
-	for _, part := range record.Parts {
-		if part.Text != "" {
-			text += "\n" + part.Text
-		}
-		if line, ok := renderResultBlockLine(part); ok {
-			text += "\n" + line
-		} else if part.Kind == client.ContentBlockAudio {
-			text += "\n[audio: " + part.MimeType + "]"
-		}
-	}
-	c.scrollback.Notices().AddNoticeWithArtifacts(text, artifacts(record.Parts))
-}
-
 func (c *conversation) addTool(id, name, args string) {
 	c.scrollback.Tools().Add(scrollback.ToolCall{ID: id, Name: name, Arguments: args})
 }

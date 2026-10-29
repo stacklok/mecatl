@@ -671,7 +671,7 @@ approval control. Message text remains a sanitized human diagnostic on Event.tex
 ConversationMessage is the public display projection of one session.Message,
 shared by snapshot transcripts and compaction archives. It preserves readable
 text/media, canonical calls/results, and presentation phase, never private
-provider replay. Unsupported associations are standalone historical records.
+provider replay.
 
 | Field | Type | Label | Oneof | Description |
 |---|---|---|---|---|
@@ -681,7 +681,6 @@ provider replay. Unsupported associations are standalone historical records.
 | `tool_result` | `ToolResult` |  |  | tool_result holds the result carried by a tool-role message; nil otherwise. |
 | `provider_phase` | `string` |  |  | provider_phase is the provider&#39;s presentation phase marker (for example, commentary). Exact provider replay remains private to the session. |
 | `parts` | `Content` | repeated |  | parts carries readable non-text media. |
-| `historical` | `HistoricalRecord` |  |  | historical preserves content whose invocation attachment is unavailable. |
 
 
 
@@ -1001,7 +1000,6 @@ event kind; the structured submessages are populated per kind.
 | `authorization` | `Authorization` |  |  | authorization is set on authorization.required and authorization.resolved events. It is safe durable correlation only; the live presentation URL and private continuation state never enter this payload. |
 | `control_refused` | `ControlRefused` |  |  | control_refused is set on control.refused events. It identifies the exact approval ask whose submitted control was rejected and carries only a stable machine category; raw arguments and refusal rationale never enter it. |
 | `plan_continuation_failure` | `PlanContinuationFailure` |  |  | plan_continuation_failure is a session-scoped, content-safe indication that an accepted plan allow could not start its proceed run. |
-| `historical` | `HistoricalRecord` |  |  | historical is standalone readable history with no invocation attachment. |
 
 
 
@@ -1565,22 +1563,6 @@ metadata. The entries reflect the LIVE store index at request time.
 | `checker_model_id` | `string` |  |  |  |
 | `concerns` | `GuardrailRef` | repeated |  |  |
 | `sources` | `GuardrailRef` | repeated |  |  |
-
-
-
-
-#### `mecatl.v1.HistoricalRecord`
-
-HistoricalRecord is a source-local display record, never an executable call,
-permission control, or inferred delegation edge. It contains no private replay.
-
-| Field | Type | Label | Oneof | Description |
-|---|---|---|---|---|
-| `record_id` | `string` |  |  |  |
-| `kind` | `string` |  |  |  |
-| `text` | `string` |  |  |  |
-| `parts` | `Content` | repeated |  |  |
-| `attachment_unavailable` | `bool` |  |  |  |
 
 
 

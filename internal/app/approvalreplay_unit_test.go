@@ -120,7 +120,6 @@ func TestReplayApprovalsRejectsAmbiguousAndLegacyAssociation(t *testing.T) {
 			case "wrong-tool":
 				sess.Conversation.Messages[0].ToolCalls[0].Name = "Shell"
 			case "legacy-event":
-				sess.Conversation.Messages[0].Legacy = &session.LegacyMessageIdentity{Namespace: "snapshot"}
 				sess.Conversation.Messages[0].ToolCalls[0].ID = "migrated-canonical"
 			case "held":
 				if err := sess.Complete(); err != nil {

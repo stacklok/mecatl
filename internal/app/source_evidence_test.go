@@ -92,7 +92,7 @@ func TestWorkerSourceAuthorityFailsClosedWithoutIdentityOracle(t *testing.T) {
 		}
 	}
 
-	trajectory := learning.NewTrajectory(source.ID, "/workspace", session.StopEndTurn, usage, source.Conversation.Messages)
+	trajectory := learning.NewSessionTrajectory(source, "/workspace", session.StopEndTurn, usage)
 	trajectory.RunID = runID
 	trajectory.Kind = source.Kind
 	trajectory.Counters = source.Counters
@@ -276,7 +276,7 @@ func TestWorkerSourceAuthorityFailsClosedWithoutIdentityOracle(t *testing.T) {
 	if err := compactedStore.Save(ctx, compacted); err != nil {
 		t.Fatal(err)
 	}
-	compactedTrajectory := learning.NewTrajectory(compacted.ID, "/workspace", session.StopEndTurn, session.Usage{}, compacted.Conversation.Messages)
+	compactedTrajectory := learning.NewSessionTrajectory(compacted, "/workspace", session.StopEndTurn, session.Usage{})
 	compactedTrajectory.RunID = runID
 	compactedTrajectory.Kind = compacted.Kind
 	compactedTrajectory.Counters = compacted.Counters
@@ -378,7 +378,7 @@ func TestLearningEvidenceLoader_LoadsSourceRunAfterSnapshotAdvances(t *testing.T
 		}
 	}
 
-	trajectory := learning.NewTrajectory(source.ID, "/workspace", session.StopEndTurn, usageA, source.Conversation.Messages)
+	trajectory := learning.NewSessionTrajectory(source, "/workspace", session.StopEndTurn, usageA)
 	trajectory.RunID = runA
 	trajectory.Kind = source.Kind
 	trajectory.Counters = source.Counters

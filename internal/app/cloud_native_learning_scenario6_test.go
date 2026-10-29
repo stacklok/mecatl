@@ -65,7 +65,7 @@ func TestCloudNativeLearning_Scenario6_WeightedAdmissionUsesAttemptLifecycle(t *
 		session.NewToolMessage(session.NewToolResult("d", "second grep")),
 		session.NewAssistantMessage("done", nil),
 	}
-	trajectory := learning.NewTrajectory("weighted-source", "/workspace", session.StopEndTurn, session.Usage{}, messages)
+	trajectory := currentTestTrajectory("weighted-source", "/workspace", session.StopEndTurn, session.Usage{}, messages)
 	trajectory.Principal = owner
 	trajectory.RunID = "run_aaaaaaaaaaaaaaaaaaaaaaaaaa"
 	trajectory.Kind = session.SessionKindMain

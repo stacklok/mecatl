@@ -147,7 +147,7 @@ func (o *reflectionObserver) durableAttemptMaterial(ctx context.Context, input l
 		return "", learning.AttemptCreate{}, errors.New("durable learning admission requires a persisted run ID")
 	}
 	persisted, err := o.sourceStore.Load(ctx, input.Trajectory.SessionID)
-	if err != nil || persisted.RunID() != input.Trajectory.RunID {
+	if err != nil || persisted == nil || !persisted.LearningEligible() || !input.Trajectory.LearningEligible() || persisted.RunID() != input.Trajectory.RunID {
 		return "", learning.AttemptCreate{}, errors.New("durable learning admission requires an exact persisted run ID")
 	}
 	digest, err := automaticTrajectoryDigest(input)
@@ -312,6 +312,15 @@ func (o *reflectionObserver) submitWithEventSource(ctx context.Context, trajecto
 		defer operation.leave()
 		ctx = operation.Context()
 	}
+	if !trajectory.LearningEligible() {
+		return reflectionReceipt{}, nil
+	}
+	if o.sourceStore != nil {
+		source, err := o.sourceStore.Load(ctx, trajectory.SessionID)
+		if err != nil || source == nil || !source.LearningEligible() {
+			return reflectionReceipt{}, learning.ErrInvalidEvidence
+		}
+	}
 	owner := trajectory.Principal.Clone()
 	ctx = reflectionContext(ctx, owner)
 	ctx = memoryadapter.WithWorkspace(ctx, trajectory.Workspace)
@@ -446,6 +455,12 @@ func (o *reflectionObserver) submitWithEventSource(ctx context.Context, trajecto
 	if o.attempts == nil || o.mode == learning.Off {
 		jobCtx, cancel := context.WithTimeout(ctx, defaultReflectionJobTimeout)
 		defer cancel()
+		if o.sourceStore != nil {
+			source, err := o.sourceStore.Load(jobCtx, trajectory.SessionID)
+			if err != nil || source == nil || !source.LearningEligible() {
+				return reflectionReceipt{}, learning.ErrInvalidEvidence
+			}
+		}
 		outcome, usage, err := o.reflector.Reflect(jobCtx, input)
 		if err != nil {
 			return reflectionReceipt{Disposition: reflectionFailed, Usage: usage}, err
@@ -587,6 +602,12 @@ func (o *reflectionObserver) job(input learning.Input, signals []learning.Signal
 		reserve:   reserve,
 		complete:  complete,
 		process: func(ctx context.Context, digest string, outcome learning.Outcome) (reflectionReceipt, error) {
+			if o.sourceStore != nil {
+				source, err := o.sourceStore.Load(ctx, input.Trajectory.SessionID)
+				if err != nil || source == nil || !source.LearningEligible() {
+					return reflectionReceipt{}, learning.ErrInvalidEvidence
+				}
+			}
 			return processReflectionOutcome(memoryadapter.WithWorkspace(reflectionContext(ctx, owner), input.Trajectory.Workspace), o.repository,
 				o.operatorMemory, o.projectMemory, principal, input,
 				digest, outcome, signals, o.mode, o.trusted, o.projectWorkspace, o.procedure)
@@ -669,6 +690,9 @@ func processReflectionOutcome(
 	projectWorkspace string,
 	procedures ...func(context.Context, learning.ProposalRecord, learning.Mode) error,
 ) (reflectionReceipt, error) {
+	if !input.Trajectory.LearningEligible() || input.Protocol != learning.ReflectionEvidenceV2 {
+		return reflectionReceipt{}, learning.ErrInvalidEvidence
+	}
 	var procedure func(context.Context, learning.ProposalRecord, learning.Mode) error
 	if len(procedures) > 0 {
 		procedure = procedures[0]

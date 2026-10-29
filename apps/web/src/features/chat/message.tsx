@@ -62,46 +62,6 @@ export function Message({
   userAvatar: string;
   userName: string;
 }) {
-  if (message.historical) {
-    return (
-      <article
-        aria-label="Historical activity"
-        className="min-w-0 space-y-2 rounded-xl border p-3 text-sm"
-      >
-        <p className="text-muted-foreground">
-          Historical {message.historical.kind}
-          {message.historical.attachmentUnavailable ? " · association unavailable" : ""}
-        </p>
-        <p className="whitespace-pre-wrap break-words">{message.content}</p>
-        {!!message.images?.length && (
-          <MessageImages images={message.images} onPreviewImage={onPreviewImage} />
-        )}
-        {message.historical.parts
-          .filter((part) => part.kind !== 0 && part.kind !== 1)
-          .map((part, index) => {
-            const src =
-              /^audio\/[a-z0-9.+-]+$/iu.test(part.mimeType) &&
-              part.data.data &&
-              /^[a-z0-9+/]*={0,2}$/iu.test(part.data.data)
-                ? `data:${part.mimeType};base64,${part.data.data}`
-                : /^https?:\/\//iu.test(part.url)
-                  ? part.url
-                  : undefined;
-            const key = JSON.stringify([message.historical?.recordId, part]);
-            return part.kind === 2 && src ? (
-              <a className="underline" href={src} key={key} rel="noreferrer" target="_blank">
-                Open historical audio {index + 1}
-              </a>
-            ) : (
-              <p key={key}>
-                Media ({part.mimeType || "unknown format"}) unavailable for preview
-                {part.text ? `: ${part.text}` : ""}
-              </p>
-            );
-          })}
-      </article>
-    );
-  }
   const user = message.role === "user";
   // A turn that ended with no text, no visible tool activity, and nothing
   // else worth surfacing (reasoning, a failure, a stat line, a stop-reason

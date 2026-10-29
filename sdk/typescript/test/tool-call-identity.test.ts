@@ -2,7 +2,6 @@ import { create, fromBinary, fromJson, toBinary, toJson } from "@bufbuild/protob
 import { Code, ConnectError, createRouterTransport } from "@connectrpc/connect";
 import { describe, expect, it } from "vitest";
 
-import { decodeEvent } from "../src/events.js";
 import {
   ConversationMessageSchema,
   EventSchema,
@@ -10,30 +9,22 @@ import {
   GetLearningProposalResponseSchema,
   GetSessionTranscriptResponseSchema,
   HarnessService,
-  HistoricalRecordSchema,
   LearningEvidenceRefSchema,
   WatchSessionEventsResponseSchema,
 } from "../src/gen/mecatl/v1/harness_pb.js";
-import { connect, type Event, InvalidStateError, ProtocolError } from "../src/index.js";
+import { connect, type Event, InvalidStateError } from "../src/index.js";
 import { sseResponse } from "./scripted-state.js";
 
 const sessionId = "identity-session";
 const runId = "identity-run";
 // The server accepted two turns reusing one provider key; only engine IDs cross the wire.
 const callIds = ["opaque-engine-a", "opaque-engine-b"] as const;
-const historical = create(HistoricalRecordSchema, {
-  attachmentUnavailable: true,
-  kind: "tool.result",
-  parts: [{ data: new Uint8Array([1, 2, 3]), kind: 1, mimeType: "image/png" }],
-  recordId: "log-incarnation/7",
-  text: "Readable unattached result",
-});
 const messages = [
   ...callIds.flatMap((id) => [
     { role: "assistant", toolCalls: [{ args: "{}", id, name: "Read" }] },
     { role: "tool", toolResult: { callId: id, content: id } },
   ]),
-  { historical, providerPhase: "commentary", role: "tool", text: historical.text },
+  { providerPhase: "commentary", role: "assistant", text: "Readable output" },
 ];
 const transcript = create(GetSessionTranscriptResponseSchema, { messages, sessionId });
 const proposal = create(GetLearningProposalResponseSchema, {
@@ -42,15 +33,15 @@ const proposal = create(GetLearningProposalResponseSchema, {
       {
         attachmentUnavailable: true,
         available: true,
-        digest: "verified-legacy-digest",
+        digest: "verified-current-digest",
         locator: "conversation",
         ordinal: 4,
-        preview: historical.text,
-        protocol: "v1",
+        preview: "Readable citation",
+        protocol: "reflection-evidence/v2",
         sessionId,
       },
-      { available: true, protocol: "v2", toolCallId: callIds[1] },
-      { attachmentUnavailable: true, available: false, protocol: "v0" },
+      { available: true, protocol: "reflection-evidence/v2", toolCallId: callIds[1] },
+      { attachmentUnavailable: true, available: false, protocol: "reflection-evidence/v2" },
     ],
     id: "proposal",
   },
@@ -60,7 +51,6 @@ const events = [
     { toolCall: { args: "{}", id, name: "Read" }, type: "tool.call" },
     { toolResult: { callId: id, content: id }, type: "tool.result" },
   ]),
-  { historical, type: "historical" },
   { compactionArchive: { replaced: messages }, type: "compaction.archive" },
   { text: "Readable reasoning summary", type: "reasoning.delta" },
   { result: { stop: "end_turn", text: "done" }, type: "result" },
@@ -168,15 +158,7 @@ describe("major-2 canonical identity projections", () => {
             .map((message) => message.toolResult?.callId),
         ).toEqual(callIds);
         const standalone = view.messages[4];
-        expect(standalone?.historical).toMatchObject({
-          attachmentUnavailable: true,
-          kind: historical.kind,
-          parts: [
-            expect.objectContaining({ data: new Uint8Array([1, 2, 3]), mimeType: "image/png" }),
-          ],
-          recordId: historical.recordId,
-          text: historical.text,
-        });
+        expect(standalone?.text).toBe("Readable output");
         expect(standalone?.providerPhase).toBe("commentary");
         expect(standalone?.toolCalls).toEqual([]);
         expect(standalone?.toolResult).toBeUndefined();
@@ -189,19 +171,19 @@ describe("major-2 canonical identity projections", () => {
         expect(evidence?.[0]).toMatchObject({
           attachmentUnavailable: true,
           available: true,
-          protocol: "v1",
+          protocol: "reflection-evidence/v2",
           toolCallId: "",
         });
         expect(evidence?.[1]).toMatchObject({
           attachmentUnavailable: false,
           available: true,
-          protocol: "v2",
+          protocol: "reflection-evidence/v2",
           toolCallId: callIds[1],
         });
         expect(evidence?.[2]).toMatchObject({
           attachmentUnavailable: true,
           available: false,
-          protocol: "v0",
+          protocol: "reflection-evidence/v2",
           toolCallId: "",
         });
 
@@ -222,20 +204,16 @@ describe("major-2 canonical identity projections", () => {
             .filter((event) => event.kind === "tool.result")
             .map((event) => event.payload.callId),
         ).toEqual(callIds);
-        const record = delivered[4];
-        if (record?.kind !== "historical") throw new Error("Expected standalone historical event");
-        expect(record.payload).toMatchObject(historical);
-        expect(record.payload).not.toHaveProperty("callId");
-        const archive = delivered[5];
+        const archive = delivered[4];
         if (archive?.kind !== "compaction.archive") throw new Error("Expected archive");
-        expect(archive.payload.replaced[4]?.historical).toMatchObject(historical);
+        expect(archive.payload.replaced[4]?.text).toBe("Readable output");
         expect(archive.payload.replaced[4]?.providerPhase).toBe("commentary");
         for (const message of archive.payload.replaced) {
           expect(message).not.toHaveProperty("reasoning");
           expect(message).not.toHaveProperty("reasoningItemId");
           expect(message).not.toHaveProperty("replay");
         }
-        expect(delivered[6]).toMatchObject({
+        expect(delivered[5]).toMatchObject({
           kind: "reasoning.delta",
           text: "Readable reasoning summary",
         });
@@ -245,14 +223,14 @@ describe("major-2 canonical identity projections", () => {
         expect((await iterator.next()).value).toMatchObject({ kind: "boundary" });
         expect(reopened.cursor).toBe(attached.cursor);
         await reopened.close();
-        expect(cursors.at(-1)).toBe("durable-8");
+        expect(cursors.at(-1)).toBe("durable-7");
       } finally {
         await client.close();
       }
     },
   );
 
-  it("never turns historical notices or canonical call IDs into ask authority", async () => {
+  it("never turns canonical call IDs into ask authority", async () => {
     const responded: string[] = [];
     const client = connect({
       transport: createRouterTransport((router) => {
@@ -264,13 +242,6 @@ describe("major-2 canonical identity projections", () => {
             features: ["server_info"],
           }),
           converse: async function* () {
-            yield {
-              event: {
-                historical: { ...historical, kind: "permission.ask" },
-                runId,
-                type: "historical",
-              },
-            };
             yield {
               event: {
                 ask: { askId: "retained-ask", callId: callIds[0], tool: "Read" },
@@ -292,11 +263,6 @@ describe("major-2 canonical identity projections", () => {
         },
       });
       const iterator = run[Symbol.asyncIterator]();
-      expect((await iterator.next()).value?.kind).toBe("historical");
-      expect(responded).toEqual([]);
-      await expect(run.resolveAsk(historical.recordId, "allow_once")).rejects.toBeInstanceOf(
-        InvalidStateError,
-      );
       expect((await iterator.next()).value?.kind).toBe("permission.ask");
       expect(responded).toEqual(["retained-ask"]);
       await expect(run.resolveAsk(callIds[0], "allow_once")).rejects.toBeInstanceOf(
@@ -317,8 +283,8 @@ describe("major-2 canonical identity projections", () => {
       schema: { fields: readonly { localName: string; number: number }[] },
       name: string,
     ) => schema.fields.find((field) => field.localName === name)?.number;
-    expect(tag(EventSchema, "historical")).toBe(27);
-    expect(tag(ConversationMessageSchema, "historical")).toBe(9);
+    expect(tag(EventSchema, "historical")).toBeUndefined();
+    expect(tag(ConversationMessageSchema, "historical")).toBeUndefined();
     expect(tag(LearningEvidenceRefSchema, "protocol")).toBe(10);
     expect(tag(LearningEvidenceRefSchema, "attachmentUnavailable")).toBe(11);
     expect(tag(ConversationMessageSchema, "reasoning")).toBeUndefined();
@@ -326,7 +292,6 @@ describe("major-2 canonical identity projections", () => {
     const archived = fromJson(
       ConversationMessageSchema,
       {
-        historical: toJson(HistoricalRecordSchema, historical),
         reasoning: "withdrawn-private-replay",
         reasoning_item_id: "provider-item",
       },
@@ -334,15 +299,5 @@ describe("major-2 canonical identity projections", () => {
     );
     expect(archived).not.toHaveProperty("reasoning");
     expect(archived).not.toHaveProperty("reasoningItemId");
-    expect(archived.historical?.text).toBe(historical.text);
   });
-
-  it.each(["grpc", "http"] as const)(
-    "rejects a historical event missing its payload over %s",
-    (kind) => {
-      expect(() => decodeEvent(create(EventSchema, { type: "historical" }), kind)).toThrow(
-        ProtocolError,
-      );
-    },
-  );
 });

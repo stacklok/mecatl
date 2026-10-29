@@ -62,7 +62,7 @@ func TestDurableExecutionReloadsPersistedRunEvidence(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	trajectory := learning.NewTrajectory(source.ID, "/workspace", session.StopEndTurn, session.Usage{}, source.Conversation.Messages)
+	trajectory := learning.NewSessionTrajectory(source, "/workspace", session.StopEndTurn, session.Usage{})
 	trajectory.Principal = owner
 	trajectory.RunID = runID
 	trajectory.Kind = session.SessionKindMain

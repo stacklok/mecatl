@@ -1442,9 +1442,6 @@ func (m *Model) beginTurnEvent() {
 // only so neither dispatcher grows past the cyclomatic-complexity bound.
 func (m Model) updateStreamSecondary(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
-	case client.HistoricalRecord:
-		m.conv.addHistorical(msg)
-		return m.afterEvent()
 	case client.MCPAuthorizationMsg:
 		return m.applyMCPAuthorization(msg)
 	case client.PermissionRetractMsg:

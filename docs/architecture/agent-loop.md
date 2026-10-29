@@ -117,11 +117,14 @@ canonical occurrence and ordered deferred suffix; provider item IDs are replay
 metadata, not execution identity. The authorization owner retains the effective
 argument bytes, token, binding, expiry, and existing claim/save/compensation order.
 
-Unprovable legacy continuation identity is held privately rather than guessed.
-Ownership-checked inspection and snapshot save/reload remain available, but held
-sessions cannot resume, learn approval rules, claim external authorization,
-prepare execution, terminalize, or destructively rewrite their pending state.
-Missing runnable pending data on a held session is not an ordinary awaiting error.
+A legacy `/1` snapshot converts only when it contains straightforward closed
+history with provable call/result and parent-call relationships. `/1` snapshots in
+awaiting or authorizing state, with pending data, or with an `identity_hold` key
+reject. Ambiguous, orphaned, wrong-role, and unprovable history or archives reject
+before any continuation action. A converted session remains permanently excluded
+from learning. Loading executes no continuation or external authorization action.
+Current-format event folds still require private state to resume an open external
+authorization.
 
 ## Plan-approval gate
 

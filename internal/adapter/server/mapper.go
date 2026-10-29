@@ -140,11 +140,6 @@ func toProto(ev session.Event) *mecatlv1.Event {
 		Turn:  ClampInt32(ev.Turn),
 		Text:  valid(ev.Text),
 	}
-	if ev.Historical != nil {
-		out.Type = string(session.EvHistorical)
-		out.Historical = toProtoHistorical(ev.Historical)
-		return out
-	}
 	if ev.Title != nil {
 		out.Title = toProtoSessionTitle(*ev.Title)
 	}
@@ -430,27 +425,12 @@ func toProtoTranscriptMessage(m session.Message) *mecatlv1.ConversationMessage {
 	return toProtoConversationMessage(m)
 }
 
-// toProtoHistorical maps only the safe display record, never private provenance.
-func toProtoHistorical(h *session.HistoricalRecord) *mecatlv1.HistoricalRecord {
-	if h == nil {
-		return nil
-	}
-	return &mecatlv1.HistoricalRecord{
-		RecordId: valid(h.RecordID), Kind: valid(h.Kind), Text: valid(h.Text),
-		Parts: contentToProto(h.Parts), AttachmentUnavailable: h.AttachmentUnavailable,
-	}
-}
-
 // toProtoConversationMessage preserves readable content and presentation phase;
-// opaque replay and unsupported provider-era invocation references stay private.
+// opaque provider replay stays private.
 func toProtoConversationMessage(m session.Message) *mecatlv1.ConversationMessage {
 	out := &mecatlv1.ConversationMessage{
 		Role: valid(string(m.Role)), Text: valid(m.Text),
 		ProviderPhase: valid(m.ProviderPhase), Parts: contentToProto(m.Parts),
-		Historical: toProtoHistorical(session.HistoricalMessage(m)),
-	}
-	if out.Historical != nil {
-		return out
 	}
 	for _, c := range m.ToolCalls {
 		out.ToolCalls = append(out.ToolCalls, toProtoToolCall(c))
@@ -1295,10 +1275,6 @@ func toProtoSessionSummary(s SessionSummary) *mecatlv1.SessionSummary {
 }
 
 func toProtoSessionRelationship(r session.SessionRelationship) *mecatlv1.SessionRelationship {
-	if r.Legacy != nil {
-		return nil
-	}
-	r = session.HistoricalRelationship(r)
 	out := &mecatlv1.SessionRelationship{
 		ParentSessionId: string(r.ParentSessionID), CallId: string(r.CallID),
 		ScheduleName: r.ScheduleName, OriginSessionId: string(r.OriginSessionID),

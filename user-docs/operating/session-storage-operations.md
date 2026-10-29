@@ -262,19 +262,19 @@ the existing `mecatl.v1` package and `/v1` routes remain in use.
    use the operator's backup procedure for the complete snapshot/event namespace.
 1. **Upgrade both decoding drivers.** Upgrade the snapshot driver and the event
    driver, even if configured independently. Current writers use
-   `sessnap-json/2` and `eventlog-json/2`; readers accept `/1` and `/2` with
-   matching inner identity schemas. A decoding wrapper can return `/2` even
-   when reading old backend data, so keep old harness readers stopped. Raw
-   opaque drivers must preserve the exact format tag and payload bytes.
+   `sessnap-json/2` and `eventlog-json/2`; readers convert straightforward `/1`
+   records and read `/2` records. A decoding wrapper can return `/2` even when
+   reading old backend data, so keep old harness readers stopped. Raw opaque
+   drivers must preserve the exact format tag and payload bytes.
 1. **Upgrade the harness and clients together.** Deploy API-major-2 server and
    client builds before reopening access. There is no public major-1
    identity-alias mode. Rebuild client-maintained views keyed by old invocation
    IDs from current transcripts or event replay. Retain sessions and logs;
    watch cursors are log positions and do not need resetting for this upgrade.
 1. **Verify before admitting work.** Check compatibility discovery, representative
-   old transcripts, valid pending approvals/authorization, event reads, and
-   learning citations against the upgraded deployment. Resume writers only with
-   the coordinated versions.
+   readable old transcripts, current `/2` pending approvals or authorization, event
+   reads, and current learning citations against the upgraded deployment. Resume
+   writers only with the coordinated versions.
 
 Keep old binaries away from the migrated namespace. Mixed-version writers and
 rollback after new-format writes are unsupported. Old decoding wrappers reject
@@ -285,31 +285,29 @@ snapshots retain their private outer envelope, and Redis events retain
 `redisstore-eventlog/1`. Old local readers can ignore the inner schema and
 misinterpret identity, so these tags do not make old readers safe.
 
-### Retained sessions and historical records
+### Retained sessions and old records
 
-Valid old sessions and pending continuations remain readable and resumable.
-When an old continuation cannot be uniquely associated with its invocation,
-Mecatl keeps it available for ownership-checked inspection but blocks execution,
-authorization claims, and continuation consumption. Saves preserve its private
-continuation data. There is no automatic repair or recovery UI; preserve the
-state for diagnosis rather than guessing an association or editing the snapshot.
+A straightforward nonpending `/1` snapshot remains readable when each call/result
+pair and parent-call relationship is unambiguous. A `/1` snapshot in awaiting or
+authorizing state, with pending data, or with an `identity_hold` key is rejected.
+Ambiguous, orphaned, wrong-role, and unprovable snapshot or archive relationships
+also reject. Confirm any external effects before repeating work from retained
+history.
 
-History with a proven call/result association renders normally. Unsupported
-associations render as standalone historical text/media with an unavailable
-attachment indication. Mecatl does not guess tool-card or parent-delegation
-links from provider IDs. Copied history retains an invocation's identity, and
-clients must still handle repeated delivery idempotently.
+Every `/1`-derived session remains ineligible for learning after conversion,
+saving, restarting, or later runs. Current `/2` snapshots retain learning
+eligibility only when they store a positive `learning_eligible` value. Frozen
+legacy learning evidence and proposals are unavailable.
+
+Recognized unsupported legacy event invocation, control, delegation, and archive
+records are omitted. Cursor readers advance through their physical positions and
+surface the resulting gaps. Current events retain their normal payloads and
+malformed or contradictory records still fail decoding.
 
 Public `ConversationMessage` omits the opaque `reasoning` and
 `reasoning_item_id` fields (reserved tags 5 and 8). Readable reasoning events,
 text/media, and `provider_phase` remain available; exact provider replay is
 retained privately in snapshots and internal archives.
-
-New learning evidence uses `reflection-evidence/v2`. Legacy-v0/v1 evidence keeps
-its original digests, coordinates, and stored attempts and remains verifiable
-while its source exists. An available citation can lack a canonical tool-call
-attachment. Pruned source remains unavailable; this upgrade does not promise
-indefinite archival or recovery of missing evidence.
 
 ## Next steps
 

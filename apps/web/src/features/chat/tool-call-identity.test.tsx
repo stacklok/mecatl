@@ -11,14 +11,11 @@ import {
   initialRunDeliveryState,
   messagesFromTranscript,
 } from "./chat-state";
-import { ChatTranscript } from "./chat-transcript";
 import { liveTool } from "./chat-workspace";
 import { applyDelegationDelivery, createDelegationFleet } from "./delegation-fleet";
 import { placeDelegationCards } from "./delegation-placement";
-import { Message } from "./message";
 import type { ToolActivity } from "./tool-activity";
 import { ToolCallList } from "./tool-call-list";
-import { TranscriptView } from "./transcript-dialog";
 import { reconcileRecordedMessages } from "./use-delivery-follow";
 
 const options = { newId: () => crypto.randomUUID(), now: 1, replay: true, sessionId: "session-a" };
@@ -28,42 +25,6 @@ function event(kind: string, seq: number, payload?: unknown, runId = "run-a"): R
     event: { kind, seq: String(seq), runId, payload, text: "", turn: 1, unknown: false },
   };
 }
-const historical = {
-  recordId: "log-local-1",
-  kind: "permission.ask",
-  text: "Old output, not a pending ask",
-  attachmentUnavailable: true,
-  parts: [
-    {
-      kind: 0,
-      mimeType: "",
-      data: { encoding: "base64" as const, data: "" },
-      text: "Old output, not a pending ask",
-      url: "",
-    },
-    {
-      kind: 0,
-      mimeType: "",
-      data: { encoding: "base64" as const, data: "" },
-      text: "Distinct historical text part",
-      url: "",
-    },
-    {
-      kind: 1,
-      mimeType: "image/png",
-      data: { encoding: "base64" as const, data: "aGVsbG8=" },
-      text: "",
-      url: "",
-    },
-    {
-      kind: 2,
-      mimeType: "audio/wav",
-      data: { encoding: "base64" as const, data: "aGVsbG8=" },
-      text: "",
-      url: "",
-    },
-  ],
-};
 afterEach(cleanup);
 
 describe("canonical Studio invocation identity", () => {
@@ -345,7 +306,7 @@ describe("canonical Studio invocation identity", () => {
     },
   );
 
-  it("places current delegation by canonical parent and never infers a historical edge", () => {
+  it("places current delegation by canonical parent", () => {
     let fleet = createDelegationFleet("session-a");
     fleet = applyDelegationDelivery(
       fleet,
@@ -359,10 +320,6 @@ describe("canonical Studio invocation identity", () => {
         { childId: "child-b", parentCallId: "engine-b", goal: "Read" },
         "run-b",
       ),
-    );
-    fleet = applyDelegationDelivery(
-      fleet,
-      event("historical", 2, { ...historical, kind: "subagent.start" }),
     );
     const messages: ChatMessage[] = [
       {
@@ -387,72 +344,5 @@ describe("canonical Studio invocation identity", () => {
         (item) => item.parentCallId,
       ),
     ).toEqual(["engine-a"]);
-  });
-
-  it("renders source-local historical content/media standalone in transcript and side thread, without authority or parent lanes", () => {
-    let state = applyRunDelivery(
-      initialRunDeliveryState("assistant", ""),
-      event("historical", 1, historical),
-      options,
-    );
-    state = applyRunDelivery(state, event("historical", 2, historical), options);
-    expect(state.messages).toHaveLength(1);
-    expect(state.approvals).toEqual([]);
-    expect(state.messages[0]?.tools).toBeUndefined();
-    const saved = messagesFromTranscript([{ historical, role: "tool", text: "", toolCalls: [] }]);
-    expect(reconcileRecordedMessages(state.messages, saved)).toHaveLength(1);
-    render(<ChatTranscript messages={state.messages} showToolCalls />);
-    expect(screen.getByText(/Distinct historical text part/).textContent).toBe(
-      `${historical.text}\nDistinct historical text part`,
-    );
-    expect(screen.getByRole("img", { name: /^Image/ })).toBeTruthy();
-    expect(screen.getByRole("link", { name: "Open historical audio 1" }).getAttribute("href")).toBe(
-      "data:audio/wav;base64,aGVsbG8=",
-    );
-    expect(screen.queryByRole("button", { name: /Allow/ })).toBeNull();
-    expect(placeDelegationCards(state.messages, createDelegationFleet("session-a"), {})).toEqual({
-      byMessageId: {},
-      unanchored: [],
-    });
-    cleanup();
-    const message = state.messages[0];
-    if (!message) throw new Error("missing history");
-    render(
-      <Message
-        message={message}
-        agentAvatar=""
-        agentName="Agent"
-        userAvatar=""
-        userName="User"
-        showToolCalls
-        streaming={false}
-        threadDisabled
-      />,
-    );
-    expect(screen.getByLabelText("Historical activity")).toBeTruthy();
-    expect(screen.getByRole("link", { name: "Open historical audio 1" }).getAttribute("href")).toBe(
-      "data:audio/wav;base64,aGVsbG8=",
-    );
-    expect(screen.queryByRole("button", { name: /thread/i })).toBeNull();
-    cleanup();
-    render(
-      <TranscriptView
-        error={false}
-        pending={false}
-        onRetry={() => {}}
-        transcript={{
-          complete: true,
-          sessionId: "session-a",
-          messages: [
-            { historical, images: [], role: "notice", text: historical.text, toolCalls: [] },
-          ],
-        }}
-      />,
-    );
-    expect(screen.getByText(/Distinct historical text part/).textContent).toBe(
-      `${historical.text}\nDistinct historical text part`,
-    );
-    expect(screen.getByRole("img", { name: /^Image/ })).toBeTruthy();
-    expect(screen.queryByText(/tool call/)).toBeNull();
   });
 });

@@ -41,10 +41,11 @@ keys are private, and a later provider-key reuse denotes a different invocation.
 Ask IDs, authorization IDs, and run IDs remain separate control identifiers;
 use the exact control target rather than treating a tool-row ID as authority.
 
-Handle replayed delivery idempotently. The same historical invocation can appear
-in copied history or an archive with its original ID. An unattached
-`HistoricalRecord` preserves readable content/media without a guessed tool or
-parent link. Citation availability is independent of tool-call attachment.
+Handle replayed delivery idempotently. Current tool calls, results, hooks, and
+delegation references use canonical invocation IDs. Event streams omit recognized
+unsupported old invocation, control, delegation, and archive records rather than
+returning a historical-specific payload. Cursor-based readers retain the skipped
+record's physical position as a gap.
 
 For a coordinated server, client, and storage rollout, follow
 [Upgrade to API major 2](/operating/session-storage-operations.md#upgrade-to-api-major-2).

@@ -2107,18 +2107,8 @@ message Event {
   // plan_continuation_failure is a session-scoped, content-safe indication
   // that an accepted plan allow could not start its proceed run.
   PlanContinuationFailure plan_continuation_failure = 26;
-  // historical is standalone readable history with no invocation attachment.
-  HistoricalRecord historical = 27;
-}
-
-// HistoricalRecord is a source-local display record, never an executable call,
-// permission control, or inferred delegation edge. It contains no private replay.
-message HistoricalRecord {
-  string record_id = 1;
-  string kind = 2;
-  string text = 3;
-  repeated Content parts = 4;
-  bool attachment_unavailable = 5;
+  reserved 27;
+  reserved "historical";
 }
 
 // ControlRefused is the metadata-only acknowledgement for a rejected in-stream
@@ -2311,7 +2301,7 @@ message CompactionArchive {
 // ConversationMessage is the public display projection of one session.Message,
 // shared by snapshot transcripts and compaction archives. It preserves readable
 // text/media, canonical calls/results, and presentation phase, never private
-// provider replay. Unsupported associations are standalone historical records.
+// provider replay.
 message ConversationMessage {
   // role is the author (user / assistant / tool / system).
   string role = 1;
@@ -2328,8 +2318,8 @@ message ConversationMessage {
   string provider_phase = 6;
   // parts carries readable non-text media.
   repeated Content parts = 7;
-  // historical preserves content whose invocation attachment is unavailable.
-  HistoricalRecord historical = 9;
+  reserved 9;
+  reserved "historical";
 }
 
 // SchedulePayload is the structured detail carried by the schedule.* events

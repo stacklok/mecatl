@@ -2,7 +2,6 @@ import type {
   EventContent,
   EventContentBlock,
   EventUsage,
-  HistoricalRecord,
   ToolCallEventPayload,
   ToolResultEventPayload,
 } from "./events.js";
@@ -181,7 +180,6 @@ export interface SessionContextOccupancy {
 
 /** One human-displayable message in the authoritative session transcript. @public */
 export interface SessionTranscriptMessage {
-  readonly historical?: HistoricalRecord;
   readonly providerPhase: string;
   readonly role: string;
   readonly text: string;
@@ -350,17 +348,6 @@ function content(value: Content): EventContent {
 
 function transcriptMessage(value: ConversationMessage): SessionTranscriptMessage {
   return {
-    ...(value.historical === undefined
-      ? {}
-      : {
-          historical: {
-            recordId: value.historical.recordId,
-            kind: value.historical.kind,
-            text: value.historical.text,
-            parts: value.historical.parts.map(content),
-            attachmentUnavailable: value.historical.attachmentUnavailable,
-          },
-        }),
     parts: value.parts.map(content),
     providerPhase: value.providerPhase,
     role: value.role,

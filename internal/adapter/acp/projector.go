@@ -1,7 +1,6 @@
 package acp
 
 import (
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"reflect"
@@ -103,32 +102,17 @@ func (p *runProjector) project(ev session.Event) (any, bool) {
 	return updates[0], true
 }
 
-// projectUpdates maps an event to one or more ACP updates. Historical records can
-// carry several independent retained parts, so they are deliberately standalone
-// chunks rather than fabricated tool cards or authority controls.
+// projectUpdates maps an event to ACP updates.
 func projectUpdates(ev session.Event) []any {
-	if ev.Type == session.EvHistorical {
-		if ev.Historical == nil {
-			return nil
-		}
-		return historicalUpdates(*ev.Historical)
-	}
 	if update, ok := projectUpdate(ev); ok {
 		return []any{update}
 	}
 	return nil
 }
 
-// projectUpdate maps a domain Event to one ACP update. Callers that need every
-// retained historical part use projectUpdates.
+// projectUpdate maps a domain Event to one ACP update.
 func projectUpdate(ev session.Event) (any, bool) {
 	switch ev.Type {
-	case session.EvHistorical:
-		updates := projectUpdates(ev)
-		if len(updates) == 0 {
-			return nil, false
-		}
-		return updates[0], true
 	case session.EvMessageDelta:
 		if ev.Text == "" {
 			return nil, false
@@ -204,72 +188,6 @@ func projectUpdate(ev session.Event) (any, bool) {
 		// line; tool.progress is a transient advisory drop, never an error.)
 		return nil, false
 	}
-}
-
-// historicalUpdates preserves the readable retained record without turning it
-// into a tool card, permission request, or relationship. URLs are never replayed
-// to the editor: historical sources can be older than the current media trust
-// boundary, and emitting one could make the editor fetch it. Safe inline media
-// uses the same validated Content representation as ACP prompt media.
-func historicalUpdates(h session.HistoricalRecord) []any {
-	updates := make([]any, 0, 2+len(h.Parts))
-	if h.AttachmentUnavailable {
-		updates = append(updates, chunkUpdate{SessionUpdate: updateAgentMessageChunk, Content: textBlock("Historical attachment unavailable")})
-	}
-	if h.Text != "" {
-		updates = append(updates, chunkUpdate{SessionUpdate: updateAgentMessageChunk, Content: textBlock(h.Text)})
-	}
-	for _, part := range h.Parts {
-		if text := historicalText(part); text != "" {
-			updates = append(updates, chunkUpdate{SessionUpdate: updateAgentMessageChunk, Content: textBlock(text)})
-			continue
-		}
-		if block, ok := historicalMediaBlock(part); ok {
-			updates = append(updates, chunkUpdate{SessionUpdate: updateAgentMessageChunk, Content: block})
-			continue
-		}
-		if label := historicalMediaFallback(part); label != "" {
-			updates = append(updates, chunkUpdate{SessionUpdate: updateAgentMessageChunk, Content: textBlock(label)})
-		}
-	}
-	return updates
-}
-
-func historicalText(part session.Content) string {
-	switch part.BlockKind {
-	case session.BlockText, session.BlockStructuredContent:
-		return part.Text
-	case session.BlockEmbeddedResource:
-		if part.Text != "" {
-			return part.Text
-		}
-	}
-	if part.Kind != session.MediaImage && part.Kind != session.MediaAudio {
-		return part.Text
-	}
-	return ""
-}
-
-func historicalMediaBlock(part session.Content) (contentBlock, bool) {
-	if part.Kind != session.MediaImage && part.Kind != session.MediaAudio || len(part.Data) == 0 || part.URL != "" {
-		return contentBlock{}, false
-	}
-	validated, err := session.NewContent(part.Kind, part.MIMEType, part.Data, "")
-	if err != nil || session.ValidateMediaParts([]session.Content{validated}) != nil {
-		return contentBlock{}, false
-	}
-	return contentBlock{Type: string(part.Kind), MimeType: part.MIMEType, Data: base64.StdEncoding.EncodeToString(part.Data)}, true
-}
-
-func historicalMediaFallback(part session.Content) string {
-	if part.Kind != session.MediaImage && part.Kind != session.MediaAudio {
-		return ""
-	}
-	label := "Historical " + string(part.Kind) + " attachment unavailable"
-	if part.MIMEType != "" {
-		label += " (" + part.MIMEType + ")"
-	}
-	return label
 }
 
 func authorizationDisplayTarget(p *session.AuthorizationPayload) string {

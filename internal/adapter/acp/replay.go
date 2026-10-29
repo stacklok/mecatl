@@ -72,10 +72,6 @@ func historyEvents(c *session.Conversation) []session.Event {
 	}
 	var events []session.Event
 	for _, m := range c.Messages {
-		if historical := session.HistoricalMessage(m); historical != nil {
-			events = append(events, session.Event{Type: session.EvHistorical, Historical: historical})
-			continue
-		}
 		switch m.Role {
 		case session.RoleSystem, session.RoleUser:
 			// Nothing: system prompt is not a transcript entry; the editor renders

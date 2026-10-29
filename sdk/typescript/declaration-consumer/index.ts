@@ -28,15 +28,8 @@ void denoInjected;
 
 const wireMajor: 2 = mecatl.SUPPORTED_API_MAJOR;
 void wireMajor;
-function displayHistorical(event: mecatl.Event, archive: mecatl.ArchivedConversationMessage): void {
-  if (event.kind === "historical") {
-    const record: mecatl.HistoricalRecord = event.payload;
-    const nodeRecord: mecatlNode.HistoricalRecord = record;
-    const denoRecord: mecatlDeno.HistoricalRecord = nodeRecord;
-    void denoRecord.parts;
-    // @ts-expect-error Source-local history identity is not a tool-call attachment.
-    void record.callId;
-  }
+function displayArchive(archive: mecatl.ArchivedConversationMessage): void {
+  // @ts-expect-error Archives expose ordinary messages, not a historical side channel.
   void archive.historical;
   void archive.providerPhase;
   // @ts-expect-error Opaque provider replay is not part of the public archive.
@@ -44,4 +37,4 @@ function displayHistorical(event: mecatl.Event, archive: mecatl.ArchivedConversa
   // @ts-expect-error Provider item identity is not part of the public archive.
   void archive.reasoningItemId;
 }
-void displayHistorical;
+void displayArchive;

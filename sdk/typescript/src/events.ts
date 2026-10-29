@@ -13,7 +13,6 @@ export const MECATL_EVENT_KINDS = [
   "compaction",
   "compaction.archive",
   "control.refused",
-  "historical",
   "hook",
   "message.delta",
   "model.retry",
@@ -230,19 +229,8 @@ export interface SessionTitleEventPayload {
   readonly title: string;
 }
 
-/** Standalone historical content, never a tool attachment or control authority. @public */
-export interface HistoricalRecord {
-  /** Source-local record identity, not a canonical tool-call ID. */
-  readonly recordId: string;
-  readonly kind: string;
-  readonly text: string;
-  readonly parts: readonly EventContent[];
-  readonly attachmentUnavailable: boolean;
-}
-
 /** One conversation entry in a compaction archive. @public */
 export interface ArchivedConversationMessage {
-  readonly historical?: HistoricalRecord | undefined;
   readonly parts: readonly EventContent[];
   readonly providerPhase: string;
   readonly role: string;
@@ -430,7 +418,6 @@ export interface EventPayloads {
   readonly compaction: undefined;
   readonly "compaction.archive": CompactionArchiveEventPayload;
   readonly "control.refused": ControlRefusedEventPayload;
-  readonly historical: HistoricalRecord;
   readonly hook: HookEventPayload;
   readonly "message.delta": undefined;
   readonly "model.retry": ModelRetryEventPayload;
@@ -563,8 +550,6 @@ function payload(
         category: event.controlRefused?.category ?? "",
         message: event.text,
       };
-    case "historical":
-      return required(event.historical, kind, transport);
     case "hook":
       return required(event.hook, kind, transport);
     case "model.retry":

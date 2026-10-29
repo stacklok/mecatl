@@ -191,6 +191,10 @@ permissions or tools.
 - Remote stores must advertise the lifecycle operations required by the action;
   Mecatl does not silently replace a missing lifecycle operation with an
   unconditional legacy write.
+- Automatic learning accepts only current `reflection-evidence/v2` evidence. A
+  session restored from `/1`, or a current snapshot without a positive stored
+  eligibility value, remains ineligible across saves, restarts, and later runs.
+  Frozen older evidence, proposals, and attempts are unavailable.
 - Automatic learning is not semantic or embedding search. No vector database or
   external embedding service is required or supported by this path.
 - Manual `/dream` consolidation is a separate maintenance workflow; see
