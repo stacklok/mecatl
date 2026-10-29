@@ -38,12 +38,13 @@ var surfaceFileHomes = map[string]bool{
 	"worktrees.go":        true,
 	"schedule.go":         true,
 	"schedule_create.go":  true,
+	"reflections.go":      true,
 	"dream.go":            true,
 }
 
 // surfaceFileCount is the explicit homes the gate counts — another surface file
 // is an explicit decision here, not a silent drift.
-const surfaceFileCount = 15
+const surfaceFileCount = 16
 
 func TestModelHasNoScheduleStateField(t *testing.T) {
 	st := reflect.TypeOf(Model{})
@@ -153,6 +154,14 @@ func TestSurfaceSymbolsLiveInSurfaceFiles(t *testing.T) {
 		f, err := parser.ParseFile(fset, file, nil, 0)
 		if err != nil {
 			t.Fatalf("parse %s: %v", file, err)
+		}
+		if file != "reflections.go" {
+			ast.Inspect(f, func(node ast.Node) bool {
+				if id, ok := node.(*ast.Ident); ok && id.Name == "reflectionsState" {
+					t.Errorf("concrete reflections state referenced outside its surface: %s", fset.Position(id.Pos()))
+				}
+				return true
+			})
 		}
 		if file != "schedule.go" && file != "schedule_create.go" {
 			ast.Inspect(f, func(node ast.Node) bool {
@@ -359,6 +368,21 @@ func TestModelKeepsUserModelRequestToken(t *testing.T) {
 	field, ok := reflect.TypeOf(Model{}).FieldByName("userModelRequestToken")
 	if !ok || field.Type.Kind() != reflect.Uint64 {
 		t.Error("Model must retain uint64 userModelRequestToken as the /memory lifetime token")
+	}
+}
+
+func TestModelHasNoReflectionsTombstones(t *testing.T) {
+	st := reflect.TypeOf(Model{})
+	for _, name := range []string{"reflections", "reflectionsGen"} {
+		if _, ok := st.FieldByName(name); ok {
+			t.Errorf("Model retains browser tombstone %q", name)
+		}
+	}
+	state := reflect.TypeFor[reflectionsState]()
+	for i := 0; i < st.NumField(); i++ {
+		if st.Field(i).Type == state || st.Field(i).Type == reflect.PointerTo(state) {
+			t.Errorf("Model field %q holds reflectionsState outside m.modal", st.Field(i).Name)
+		}
 	}
 }
 
