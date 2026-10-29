@@ -92,6 +92,7 @@ func sessionsSurface(m *Model) *sessionsState {
 }
 
 func (m Model) bindSessionID(id string) Model {
+	m.reflectRequest = nil
 	m.settlePendingApproval()
 	if id != m.sessionID {
 		m.conv.guardrailReviews = nil

@@ -185,6 +185,7 @@ jobs:
           bash .github/scripts/relevant-changes_test.sh
           bash .github/scripts/relevant-changes-workflow_test.sh
           python3 .github/scripts/playwright-ci_test.py
+          python3 .github/scripts/ci-gate_test.py
 
   sdk:
     name: TypeScript SDK (Node ${{ matrix.node-version }})
@@ -1916,3 +1917,90 @@ jobs:
           files: docs/architecture/mecatl.modelith.yaml
           completeness: error
           check-rendered: true
+
+  # One stable required check for this workflow, including legitimate path/draft
+  # skips. Keep every other job in needs; ci-gate_test.py guards that coverage.
+  ci-gate:
+    name: CI gate
+    needs:
+      - changes
+      - sdk
+      - mecated
+      - sdk-integration
+      - sdk-deno
+      - sdk-browser
+      - sdk-macos-spawn
+      - slack-bot-example
+      - studio
+      - studio-browser
+      - studio-gate
+      - build
+      - smoke-darwin-arm64
+      - managed-temp-macos
+      - test
+      - analysis
+      - module-lint
+      - action-scripts
+      - lint
+      - fuzz-smoke
+      - api-compat
+      - vuln
+      - docs
+      - user-docs
+      - user-docs-gate
+      - domain-model
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Require all applicable CI coverage
+        shell: python
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
+          EVENT_NAME: ${{ github.event_name }}
+          PR_DRAFT: ${{ github.event.pull_request.draft }}
+        run: |
+          import json
+          import os
+          import sys
+
+          needs = json.loads(os.environ["NEEDS_JSON"])
+          if needs.get("changes", {}).get("result") != "success":
+              sys.exit("Change classification did not succeed")
+          flags = needs["changes"]["outputs"]
+          flag_names = "docs_only go_relevant sdk_relevant studio_relevant site_relevant macos_go macos_sdk".split()
+          if any(flags.get(name) not in ("true", "false") for name in flag_names):
+              sys.exit("Missing or invalid change-classification flags")
+          code = flags["docs_only"] != "true"
+          go = flags["go_relevant"] == "true"
+          sdk = flags["sdk_relevant"] == "true"
+          studio = flags["studio_relevant"] == "true"
+          event = os.environ["EVENT_NAME"]
+          draft = os.environ["PR_DRAFT"]
+          if event == "pull_request" and draft not in ("true", "false"):
+              sys.exit("Missing or invalid pull-request draft state")
+          ready = event != "pull_request" or draft == "false"
+          groups = [
+              (True, "changes test lint studio-gate user-docs-gate docs domain-model"),
+              (code and go, "build analysis module-lint action-scripts fuzz-smoke api-compat vuln"),
+              (sdk, "sdk"),
+              (code and (go or sdk), "sdk-integration sdk-deno sdk-browser slack-bot-example"),
+              (code and (go or sdk or studio), "mecated"),
+              (code and (go or studio), "studio studio-browser"),
+              (flags["site_relevant"] == "true", "user-docs"),
+              (code and ready and flags["macos_go"] == "true", "smoke-darwin-arm64 managed-temp-macos"),
+              (code and ready and flags["macos_sdk"] == "true", "sdk-macos-spawn"),
+          ]
+          expected = {
+              job: "success" if required else "skipped"
+              for required, jobs in groups for job in jobs.split()
+          }
+          if needs.keys() != expected.keys():
+              sys.exit("CI gate dependencies do not match the checked jobs")
+          failed = False
+          for job, result in expected.items():
+              actual = needs[job].get("result")
+              if actual != result:
+                  print(f"{job}: expected {result}, got {actual}", file=sys.stderr)
+                  failed = True
+          sys.exit(1 if failed else 0)

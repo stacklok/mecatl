@@ -5,10 +5,32 @@ import (
 	"errors"
 	"testing"
 
+	"google.golang.org/genproto/googleapis/rpc/errdetails"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
+
+// serverStatus is a status carrying the server's ErrorInfo with reason.
+func serverStatus(t *testing.T, code codes.Code, reason string) error {
+	t.Helper()
+	st, err := status.New(code, "anything").WithDetails(&errdetails.ErrorInfo{Domain: "mecatl.stacklok.com", Reason: reason})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return st.Err()
+}
+
+// foreignStatus is an Unauthenticated status whose ErrorInfo is another
+// domain's, which the client must not trust.
+func foreignStatus(t *testing.T, reason string) error {
+	t.Helper()
+	st, err := status.New(codes.Unauthenticated, "anything").WithDetails(&errdetails.ErrorInfo{Domain: "attacker.invalid", Reason: reason})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return st.Err()
+}
 
 func TestAuthFailureUsesTypedLocalCausesAndBearerProvenance(t *testing.T) {
 	for _, tc := range []struct {
@@ -27,6 +49,11 @@ func TestAuthFailureUsesTypedLocalCausesAndBearerProvenance(t *testing.T) {
 		{"anonymous server rejection", status.Error(codes.Unauthenticated, "anything"), false, AuthNotEnrolled},
 		{"explicit anonymous server rejection", &credentialFreeAuthError{cause: status.Error(codes.Unauthenticated, "anything"), reason: AuthAnonymousRejected, msg: "rejected"}, false, AuthAnonymousRejected},
 		{"bearer server rejection", status.Error(codes.Unauthenticated, "anything"), true, AuthRejected},
+		// A revoked authority needs a new sign-in, which the expired-session
+		// flow offers, with or without a bearer.
+		{"sign in required", serverStatus(t, codes.Unauthenticated, "sign_in_required"), true, AuthSessionExpired},
+		{"sign in required, credential-free", serverStatus(t, codes.Unauthenticated, "sign_in_required"), false, AuthSessionExpired},
+		{"another domain's sign_in_required", foreignStatus(t, "sign_in_required"), true, AuthRejected},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got, ok := AuthFailure(tc.err, tc.bearer)

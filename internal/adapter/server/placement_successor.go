@@ -65,12 +65,35 @@ func (s *Service) ClearSessionSuccessor(ctx context.Context, source session.Sess
 		}
 		rollbackUnpublishedPlacement(s, &preflight)
 	}
+	// Clear cancels the source's run below, which cannot be undone. Open the
+	// successor's identity broker session first, converting the request's
+	// access token, so a refused token fails the clear before it cancelled or
+	// saved anything. The successor's ID and incarnation are fixed here so the
+	// broker session opened now is the one it is created with.
+	preset := presetSuccessor{id: s.cfg.NewID(), incarnation: session.NewIncarnationID(), owner: lockedSource.Owner}
+	probe := session.New(preset.id, lockedSource.Mode, lockedSource.EnvironmentRef, lockedSource.Limits, s.cfg.Now())
+	probe.Owner = preset.owner
+	if err := probe.RestoreIncarnation(preset.incarnation); err != nil {
+		return "", fmt.Errorf("%w: successor incarnation: %v", ErrInternal, err)
+	}
+	if preset.brokerSessionID, err = s.preOpenIdentityBrokerSession(ctx, probe); err != nil {
+		return "", err
+	}
+	// The broker session opened here is Clear's to close unless the successor
+	// was saved, which only a successor ID tells: createPlacedSuccessorLocked
+	// returns one, error or not, exactly when it saved the successor.
+	var successor session.SessionID
+	defer func() {
+		if successor == "" {
+			s.closePreOpenedBrokerSession(ctx, string(preset.id), preset.brokerSessionID)
+		}
+	}()
 	if err := s.cancelAndAwaitClearSource(ctx, source); err != nil {
 		return "", err
 	}
-	successor, err := s.createPlacedSuccessorLocked(ctx, req, false, true)
+	successor, err = s.createPlacedSuccessorLocked(ctx, req, false, true, &preset)
 	if err != nil {
-		return "", err
+		return successor, err
 	}
 	if s.cfg.SessionCleared != nil {
 		s.cfg.SessionCleared(source)
@@ -136,11 +159,26 @@ func (s *Service) createPlacedSuccessor(ctx context.Context, req ForkSuccessorRe
 	if _, absent, err = s.managementTarget(ctx, req.Source, false); err != nil || absent {
 		return "", err
 	}
-	return s.createPlacedSuccessorLocked(ctx, req, copyHistory, false)
+	return s.createPlacedSuccessorLocked(ctx, req, copyHistory, false, nil)
 }
 
+// presetSuccessor fixes a successor's ID and incarnation before it is built,
+// with the identity broker session already opened for them and owner, if any.
+type presetSuccessor struct {
+	id              session.SessionID
+	incarnation     session.IncarnationID
+	owner           *session.Principal
+	brokerSessionID string
+}
+
+// createPlacedSuccessorLocked builds and saves a successor of req.Source. With
+// preset nil it mints the successor's ID and opens its identity broker session
+// before saving, and closes that broker session if the successor is then not
+// saved; with preset, the caller did both and owns that close. It returns the
+// successor's ID, with or without an error, exactly when it saved it.
+//
 //nolint:gocyclo // Successor creation keeps validation, exact placement, engine setup, and publication atomic.
-func (s *Service) createPlacedSuccessorLocked(ctx context.Context, req ForkSuccessorRequest, copyHistory, clearSource bool) (session.SessionID, error) {
+func (s *Service) createPlacedSuccessorLocked(ctx context.Context, req ForkSuccessorRequest, copyHistory, clearSource bool, preset *presetSuccessor) (session.SessionID, error) {
 	release, err := s.acquireMutationLease(ctx, req.Source)
 	if err != nil {
 		return "", err
@@ -170,7 +208,21 @@ func (s *Service) createPlacedSuccessorLocked(ctx context.Context, req ForkSucce
 			return "", err
 		}
 	}
-	destinationID := s.cfg.NewID()
+	var destinationID session.SessionID
+	// preOpened is the broker session this call opened, so this call closes;
+	// a preset's is the caller's.
+	preOpened := ""
+	if preset != nil {
+		destinationID = preset.id
+	} else {
+		destinationID = s.cfg.NewID()
+	}
+	saved := false
+	defer func() {
+		if !saved {
+			s.closePreOpenedBrokerSession(ctx, string(destinationID), preOpened)
+		}
+	}()
 	if s.cfg.MCPBroker != nil && !brokercontract.ValidLogicalSessionID(destinationID) {
 		return "", fmt.Errorf("%w: session id is not admissible for broker", ErrInvalidArgument)
 	}
@@ -209,6 +261,11 @@ func (s *Service) createPlacedSuccessorLocked(ctx context.Context, req ForkSucce
 	}
 
 	created := session.New(destinationID, source.Mode, binding.Ref, source.Limits, s.cfg.Now())
+	if preset != nil {
+		if err := created.RestoreIncarnation(preset.incarnation); err != nil {
+			return "", fmt.Errorf("%w: successor incarnation: %v", ErrInternal, err)
+		}
+	}
 	created.Placement = canonicalPlacementMetadata(binding)
 	brokerKeys, brokerKeysPresent := source.WorkspaceEnrollmentBrokerKeys()
 	authority, bound := source.BoundAuthority()
@@ -225,6 +282,15 @@ func (s *Service) createPlacedSuccessorLocked(ctx context.Context, req ForkSucce
 	if err := setSessionLabels(created, selector, profileForSession(source), source.Owner, authority, brokerKeys, brokerKeysPresent); err != nil {
 		return "", err
 	}
+	if preset != nil {
+		// The broker session was opened for the owner the source had before
+		// its run was cancelled; a successor with another owner must not take it.
+		want, _ := identityBrokerOwner(preset.owner)
+		got, _ := identityBrokerOwner(created.Owner)
+		if want != got {
+			return "", fmt.Errorf("%w: the clear source's owner changed", ErrInternal)
+		}
+	}
 	created.ExecutionTemplateID, created.ExecutionTemplateRevision = source.ExecutionTemplateID, source.ExecutionTemplateRevision
 	created.EnvironmentRef = binding.Ref
 	if copyHistory {
@@ -238,6 +304,15 @@ func (s *Service) createPlacedSuccessorLocked(ctx context.Context, req ForkSucce
 	if req.Title != "" {
 		if err := created.RenameTitle(req.Title); err != nil {
 			return "", fmt.Errorf("%w: %v", ErrInvalidArgument, err)
+		}
+	}
+	// A fork opens its successor's identity broker session here, before the
+	// engine, broker attachment, and save below, so a refused access token
+	// fails the fork before it built or saved anything. Clear opened it before
+	// cancelling the source (preset).
+	if preset == nil {
+		if preOpened, err = s.preOpenIdentityBrokerSession(mutationCtx, created); err != nil {
+			return "", err
 		}
 	}
 	// A same-placement fork starts with the source's live examined guidance, not
@@ -359,6 +434,7 @@ func (s *Service) createPlacedSuccessorLocked(ctx context.Context, req ForkSucce
 		s.logDiscoveryError(ctx, "persist successor placement", err)
 		return "", fmt.Errorf("%w: placement storage failed", ErrInternal)
 	}
+	saved = true
 	if binding.Commit != nil {
 		commitCtx, cancelCommit := context.WithTimeout(context.WithoutCancel(mutationCtx), 10*time.Second)
 		commitErr := binding.Commit(commitCtx)
@@ -377,15 +453,20 @@ func (s *Service) createPlacedSuccessorLocked(ctx context.Context, req ForkSucce
 		cancelCommit()
 		if commitErr != nil {
 			cleanupEngine()
-			return "", fmt.Errorf("%w: %v", ErrInternal, commitErr)
+			// Saved already: report the ID with the error, as the reference
+			// commit failure above does.
+			return created.ID, fmt.Errorf("%w: %v", ErrInternal, commitErr)
 		}
 		brokerCommitted = true
 	}
-	// A fork or clear starts a new session tree. A failed open is logged and
-	// retried before the successor's first run. The source's mutation lease is
-	// still held, so the open is bounded like the MCP broker commit above.
-	// It loads the successor under its runEntryMu, so a close or delete of it
-	// cannot race the registration.
+	// A fork or clear starts a new session tree. The broker session was opened
+	// before the save; this registers the successor's agent. A failure is
+	// logged, not returned: the successor is saved, so an error would make the
+	// client's retry create another, and registration is retried before the
+	// successor's first run. The source's mutation lease is still held, so the
+	// call is bounded like the MCP broker commit above. It loads the successor
+	// under its runEntryMu, so a close or delete of it cannot race the
+	// registration.
 	openCtx, cancelOpen := context.WithTimeout(context.WithoutCancel(mutationCtx), engineCloseTimeout)
 	_ = s.openSavedIdentityBrokerSession(openCtx, created.ID)
 	cancelOpen()

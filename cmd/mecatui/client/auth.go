@@ -101,6 +101,12 @@ func AuthFailure(err error, bearerBacked bool) (AuthReason, bool) {
 		return reason, true
 	}
 	if status.Code(err) == codes.Unauthenticated {
+		// The server needs a new sign-in, not just a refreshed token: the
+		// user's authority was revoked, so treat it as an expired session,
+		// which offers to sign in again.
+		if hasServerReason(err, "sign_in_required") {
+			return AuthSessionExpired, true
+		}
 		if bearerBacked {
 			return AuthRejected, true
 		}
@@ -117,19 +123,27 @@ type IssuerUnavailableError struct{ Err error }
 func (e *IssuerUnavailableError) Error() string { return e.Err.Error() }
 func (e *IssuerUnavailableError) Unwrap() error { return e.Err }
 
-// isBearerRejected reports the server authenticator's rejection of the
-// presented bearer: Unauthenticated tagged with the bearer_rejected ErrorInfo.
-// The authenticator rejects before any handler runs, so only this rejection
-// may be retried or replayed with a refreshed token. An untagged
-// Unauthenticated (a handler's, or an older server's) is never retried.
+// isBearerRejected reports the server's rejection of the presented bearer:
+// Unauthenticated tagged with the bearer_rejected ErrorInfo. The server tags
+// only rejections that happen before the request changed anything, from its
+// authenticator or from an identity broker session open that refused the
+// access token, so only this rejection may be retried or replayed with a
+// refreshed token. An untagged Unauthenticated (a handler's, or an older
+// server's) is never retried.
 func isBearerRejected(err error) bool {
+	return hasServerReason(err, "bearer_rejected")
+}
+
+// hasServerReason reports an Unauthenticated status carrying the server's
+// ErrorInfo with reason.
+func hasServerReason(err error, reason string) bool {
 	st, ok := status.FromError(err)
 	if !ok || st.Code() != codes.Unauthenticated {
 		return false
 	}
 	for _, detail := range st.Details() {
 		info, ok := detail.(*errdetails.ErrorInfo)
-		if ok && info.GetDomain() == "mecatl.stacklok.com" && info.GetReason() == "bearer_rejected" {
+		if ok && info.GetDomain() == "mecatl.stacklok.com" && info.GetReason() == reason {
 			return true
 		}
 	}

@@ -63,8 +63,11 @@ server. For configuration details, see
   decision. When a plan has expired or already reached another terminal
   decision, generate a fresh plan only after confirming the additional token
   spend.
-- `/reflections` opens staged learning proposals. Review their evidence and
-  approve or reject each proposal when the server allows it.
+- `/reflections` opens learning proposals for evidence review. Approval,
+  rejection, and undo require confirmation of the displayed proposal and
+  version. Closing the browser after submission does not cancel the server's
+  operation. If an action fails, refresh the proposal before making another
+  decision; a failed response does not establish whether the action completed.
 - `/reflect` submits the completed session for immediate reflection, even when
   automatic learning is off. On completion, it reports a proposal count, an
   abstention because the evidence or bounds were insufficient, or a failure. An

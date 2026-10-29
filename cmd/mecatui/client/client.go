@@ -312,10 +312,9 @@ func withToken(ctx context.Context, token string) context.Context {
 
 // tokenSourceUnary attaches the source's token and, when the server's
 // authenticator rejects it and the source can refresh, retries exactly once
-// with a freshly refreshed token. The server tags only the authenticator's
-// bearer rejections, which happen before any handler runs, with the
-// bearer_rejected ErrorInfo (see isBearerRejected), so the retry cannot repeat
-// work. Any other Unauthenticated, including an untagged one from an older
+// with a freshly refreshed token. The server tags with the bearer_rejected
+// ErrorInfo only rejections that happen before the request changed anything
+// (see isBearerRejected), so the retry cannot repeat work. Any other Unauthenticated, including an untagged one from an older
 // server, and a second rejection are returned as is.
 func tokenSourceUnary(source TokenSource) grpc.UnaryClientInterceptor {
 	return func(ctx context.Context, method string, req, reply any, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {

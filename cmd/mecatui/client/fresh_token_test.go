@@ -441,7 +441,8 @@ func TestConverseRejectedWithAFailedRefresh(t *testing.T) {
 	for _, tc := range failedRefreshCases {
 		t.Run(tc.name, func(t *testing.T) {
 			fake := &bearerServer{}
-			c := dialBearerServer(t, fake, &refreshingSource{refreshErr: tc.refreshErr})
+			source := &refreshingSource{refreshErr: tc.refreshErr}
+			c := dialBearerServer(t, fake, source)
 			c.noteOpened("s") // not resumed: only the reopen refreshes
 			fake.rejectNext(1)
 			msgs := runConverse(t, c, "s")
@@ -453,6 +454,12 @@ func TestConverseRejectedWithAFailedRefresh(t *testing.T) {
 				t.Fatalf("message = %#v, want StreamErrMsg with %q", msgs[0], tc.reason)
 			}
 			checkFailedRefresh(t, m.Err, tc.issuer, tc.reason)
+			if got := len(fake.tokensFor("Converse")); got != 1 || source.count() != 1 {
+				t.Fatalf("%d stream attempts, %d refreshes; want 1, 1", got, source.count())
+			}
+			if got := fake.receivedPrompts(); len(got) != 0 {
+				t.Fatalf("rejected handler received prompts: %q", got)
+			}
 		})
 	}
 }
@@ -491,9 +498,7 @@ func runConverse(t *testing.T, c *Client, id string) []tea.Msg {
 	}
 	out := make(chan tea.Msg, 16)
 	go stream.ReadLoop(ctx, out)
-	if err := stream.SendPrompt(id, "hello", nil); err != nil {
-		t.Fatalf("send prompt: %v", err)
-	}
+	sendConversePrompt(t, stream, id)
 	var msgs []tea.Msg
 	for m := range out {
 		msgs = append(msgs, m)
@@ -501,10 +506,51 @@ func runConverse(t *testing.T, c *Client, id string) []tea.Msg {
 	return msgs
 }
 
+func sendConversePrompt(t *testing.T, stream *Stream, id string) {
+	t.Helper()
+	// gRPC Send may return EOF after a remote rejection. ReadLoop supplies the
+	// authoritative status, including the reason a forced refresh failed.
+	if err := stream.SendPrompt(id, "hello", nil); err != nil && !errors.Is(err, io.EOF) {
+		t.Fatalf("send prompt: %v", err)
+	}
+}
+
 // endedSender is the send side of a stream the server already ended.
 type endedSender struct{}
 
 func (endedSender) Send(*mecatlv1.ConverseRequest) error { return io.EOF }
+
+func TestConversePromptSentAfterFailedRefresh(t *testing.T) {
+	for _, tc := range failedRefreshCases {
+		t.Run(tc.name, func(t *testing.T) {
+			rejected := newFakeStream()
+			rejected.endErr = bearerRejectedStatus()
+			stream := newAuthenticatedStream(rejected, endedSender{}, true)
+			reopens := 0
+			stream.enableReopen(func() (Recver, Sender, error) {
+				reopens++
+				return nil, nil, tc.refreshErr
+			})
+			out := make(chan tea.Msg, 1)
+			// Finish the failed reopen before sending, deterministically exercising
+			// Send's EOF after the stream has stopped recording frames for replay.
+			stream.ReadLoop(t.Context(), out)
+			sendConversePrompt(t, stream, "s")
+			var msgs []tea.Msg
+			for m := range out {
+				msgs = append(msgs, m)
+			}
+			if len(msgs) != 1 || reopens != 1 {
+				t.Fatalf("messages = %#v after %d reopens, want one error after one reopen", msgs, reopens)
+			}
+			m, ok := msgs[0].(StreamErrMsg)
+			if !ok || m.AuthReason != tc.reason {
+				t.Fatalf("message = %#v, want StreamErrMsg with %q", msgs[0], tc.reason)
+			}
+			checkFailedRefresh(t, m.Err, tc.issuer, tc.reason)
+		})
+	}
+}
 
 // TestStreamReplaysAFrameSentAfterTheRejection pins the ordering gRPC does not
 // guarantee: the prompt is sent after the server ended the stream (Send sees

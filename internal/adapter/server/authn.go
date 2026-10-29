@@ -534,10 +534,12 @@ func identityStatus(err error) error {
 }
 
 // bearerRejectedReason is the ErrorInfo reason on the authenticator's own
-// rejections of a missing or invalid bearer. It is distinct from the
-// handler-level "unauthenticated" code: the authenticator rejects before any
-// handler runs, so a client may refresh its token and retry (or replay a
-// stream) on this reason and on no other Unauthenticated.
+// rejections of a missing or invalid bearer, and on ErrBearerRejected, an
+// identity broker session open's refusal of the request's access token. It is
+// distinct from the handler-level "unauthenticated" code: both rejections
+// happen before the request changed anything, so a client may refresh its
+// token and retry (or replay a stream) on this reason and on no other
+// Unauthenticated.
 const bearerRejectedReason = "bearer_rejected"
 
 // bearerRejected is the Unauthenticated status for a rejected bearer, tagged
@@ -550,6 +552,15 @@ func bearerRejected() error {
 		return st.Err()
 	}
 	return tagged.Err()
+}
+
+// writeBearerRejected writes the REST problem for a rejected bearer: the
+// ErrBearerRejected row, so bearer_rejected means the same on both transports
+// and for the authenticator and an identity broker refusal alike. The caller
+// sets the WWW-Authenticate challenge, which depends on whether a bearer was
+// presented.
+func writeBearerRejected(w http.ResponseWriter) {
+	writeProblem(w, classifyError(ErrBearerRejected), "missing or invalid bearer token")
 }
 
 func rejectionCategory(err error) authObservationCategory {
@@ -715,16 +726,29 @@ func (a *Authenticator) StreamInterceptor() grpc.StreamServerInterceptor {
 		}
 		ctx, done := withVerifiedCaller(ctx, p, bearer)
 		defer done()
-		return handler(srv, principalStream{ServerStream: ss, ctx: ctx})
+		return handler(srv, principalStream{ServerStream: ss, ctx: ctx, dropToken: done})
 	}
 }
 
 // principalStream overrides a ServerStream's Context so the stream handler sees
 // the verified principal. It is only used when identity is on, so the no-auth
 // path hands the handler the ORIGINAL stream, unchanged.
+//
+// The stream's access token is dropped when its first response is sent. An
+// identity broker open that presents the token can be refused, and a refusal
+// is a retryable 401 only before the stream has answered: a client cannot
+// replay a stream that already produced output. So once the stream answers,
+// later opens in it, such as a resume or a steer promotion, carry no token.
 type principalStream struct {
 	grpc.ServerStream
-	ctx context.Context
+	ctx       context.Context
+	dropToken func()
+}
+
+// SendMsg drops the stream's access token, then sends m.
+func (s principalStream) SendMsg(m any) error {
+	s.dropToken()
+	return s.ServerStream.SendMsg(m)
 }
 
 func (s principalStream) Context() context.Context { return s.ctx }
@@ -746,7 +770,7 @@ func (a *Authenticator) Middleware(next http.Handler) http.Handler {
 				}
 				a.observeAuthentication(r.Context(), authOutcomeRejected, category, authTransportHTTP, authStatusHTTPUnauthorized)
 				w.Header().Set("WWW-Authenticate", protectedResourceChallenge(present))
-				writeError(w, http.StatusUnauthorized, "missing or invalid bearer token")
+				writeBearerRejected(w)
 				return
 			}
 			token = bearer
@@ -784,7 +808,7 @@ func (a *Authenticator) Middleware(next http.Handler) http.Handler {
 			}
 			a.observeAuthentication(r.Context(), authOutcomeRejected, category, authTransportHTTP, authStatusHTTPUnauthorized)
 			w.Header().Set("WWW-Authenticate", protectedResourceChallenge(present))
-			writeError(w, http.StatusUnauthorized, "missing or invalid bearer token")
+			writeBearerRejected(w)
 			return
 		}
 		if a.cfg.identityConfigured() {
@@ -811,7 +835,36 @@ func (a *Authenticator) Middleware(next http.Handler) http.Handler {
 			ctx, done := withVerifiedCaller(r.Context(), principal, identitybroker.NewToken(bearer))
 			defer done()
 			r = r.WithContext(ctx)
+			w = tokenDroppingWriter{ResponseWriter: w, dropToken: done}
 		}
 		next.ServeHTTP(w, r)
 	})
 }
+
+// tokenDroppingWriter drops the request's access token once the response
+// starts, as principalStream does for a gRPC stream: an identity broker open
+// refused after the client received any of the response, such as an SSE
+// event, could not be retried as if nothing happened.
+type tokenDroppingWriter struct {
+	http.ResponseWriter
+	dropToken func()
+}
+
+func (w tokenDroppingWriter) WriteHeader(code int) {
+	w.dropToken()
+	w.ResponseWriter.WriteHeader(code)
+}
+
+func (w tokenDroppingWriter) Write(b []byte) (int, error) {
+	w.dropToken()
+	return w.ResponseWriter.Write(b)
+}
+
+// Flush keeps SSE streaming working through the wrapper.
+func (w tokenDroppingWriter) Flush() {
+	w.dropToken()
+	_ = http.NewResponseController(w.ResponseWriter).Flush()
+}
+
+// Unwrap lets http.ResponseController reach the underlying writer.
+func (w tokenDroppingWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }

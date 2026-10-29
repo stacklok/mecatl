@@ -75,6 +75,18 @@ func (r Reason) Code() Code {
 	}
 }
 
+// RequiresSignIn reports whether r is a user-wide revocation of the user's
+// authority (signed_out, upstream_revoked, owner_action_required): a refreshed
+// access token is refused too, so the user signs in again.
+func (r Reason) RequiresSignIn() bool {
+	switch r {
+	case ReasonSignedOut, ReasonUpstreamRevoked, ReasonOwnerActionRequired:
+		return true
+	default:
+		return false
+	}
+}
+
 // Error is the error every Service call returns. Detail is for diagnostics; it
 // never contains credentials.
 type Error struct {

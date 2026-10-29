@@ -55,8 +55,9 @@ import { resetApiClientState } from "./lib/api-client";
  * proves is shared; the unproven ones are not worth the lines.
  *
  * SPEC: after any test, the text selection is cleared, fake timers and the fake
- * system clock are off, React Testing Library trees are unmounted, Web Storage
- * is empty, `account-storage`'s and `api-client`'s module-level state is reset,
+ * system clock are off, React Testing Library trees are unmounted, viewport
+ * dimensions and matchMedia are restored, Web Storage is empty,
+ * `account-storage`'s and `api-client`'s module-level state is reset,
  * no sonner toast is still active, and the shared generated client has its
  * original `baseUrl` and `fetch`.
  * Testing Library registers its own auto-cleanup once per module load, which
@@ -69,6 +70,12 @@ import { resetApiClientState } from "./lib/api-client";
 const realLocal = typeof window === "undefined" ? undefined : window.localStorage;
 const realSession = typeof window === "undefined" ? undefined : window.sessionStorage;
 const realWindow = typeof window === "undefined" ? undefined : window;
+const initialViewportProperties = realWindow
+  ? (["innerWidth", "innerHeight", "matchMedia"] as const).map(
+      (name) =>
+        [name, Object.getOwnPropertyDescriptor(realWindow, name), realWindow[name]] as const,
+    )
+  : [];
 
 const initialApiConfig = apiClient.getConfig();
 
@@ -83,6 +90,16 @@ if (typeof document !== "undefined") await import("./routeTree.gen");
 afterEach(() => {
   vi.useRealTimers();
   cleanup();
+  // Direct viewport patches bypass unstubGlobals and survive into the next file.
+  if (realWindow) {
+    for (const [name, descriptor, value] of initialViewportProperties) {
+      if (descriptor) {
+        Object.defineProperty(realWindow, name, descriptor);
+        // Vitest's window accessors retain assignments separately from descriptors.
+        descriptor.set?.call(realWindow, value);
+      } else Reflect.deleteProperty(realWindow, name);
+    }
+  }
   resetApiClientState();
   apiClient.setConfig({ baseUrl: initialApiConfig.baseUrl, fetch: initialApiConfig.fetch });
   // The text selection lives on the shared document; addRange() is a no-op while one exists.
