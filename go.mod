@@ -12,6 +12,7 @@ require (
 	github.com/adrg/xdg v0.5.3
 	github.com/alicebob/miniredis/v2 v2.40.0
 	github.com/anthropics/anthropic-sdk-go/v2 v2.3.0
+	github.com/blang/semver/v4 v4.0.0
 	github.com/bmatcuk/doublestar/v4 v4.10.4
 	github.com/cedar-policy/cedar-go v1.8.0
 	github.com/charmbracelet/colorprofile v0.4.3
@@ -112,7 +113,6 @@ require (
 	github.com/aymerick/douceur v0.2.0 // indirect
 	github.com/bahlo/generic-list-go v0.2.0 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
-	github.com/blang/semver/v4 v4.0.0 // indirect
 	github.com/buger/jsonparser v1.1.2 // indirect
 	github.com/catppuccin/go v0.2.0 // indirect
 	github.com/cenkalti/backoff/v5 v5.0.3 // indirect
