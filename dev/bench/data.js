@@ -349802,6 +349802,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1793301257365,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "fb8c4956720ff67951b6b9cf31019426f3be86d9",
+          "message": "fix(microvm): ignore transient Git maintenance lock in snapshots (#2614)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-29T14:03:56-07:00",
+          "tree_id": "f91c5147e77bb90adf23ac3d752498fa7d31dc47",
+          "url": "https://github.com/stacklok/mecatl/commit/fb8c4956720ff67951b6b9cf31019426f3be86d9"
+        },
+        "date": 1793308617232,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -505557,6 +505591,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1793308614217,
+  "lastUpdate": 1793308617965,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
