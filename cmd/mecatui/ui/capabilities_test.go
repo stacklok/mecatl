@@ -89,10 +89,10 @@ func TestInitialCreateAuthFailureOpensTargetAwareConnectRecovery(t *testing.T) {
 		t.Fatal("auth create failure was not handled")
 	}
 	model := got.(Model)
-	if model.connect.failedTarget != "remote.example:443" {
-		t.Fatalf("failed target=%q", model.connect.failedTarget)
+	if model.modal.(*connectState).failedTarget != "remote.example:443" {
+		t.Fatalf("failed target=%q", model.modal.(*connectState).failedTarget)
 	}
-	if !strings.Contains(model.connect.err+" "+connectAuthHint(model.connect.reason, model.connect.failedTarget), "remote.example:443") {
+	if !strings.Contains(model.modal.(*connectState).err+" "+connectAuthHint(model.modal.(*connectState).reason, model.modal.(*connectState).failedTarget), "remote.example:443") {
 		t.Fatal("recovery lost target-aware not-enrolled context")
 	}
 }

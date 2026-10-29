@@ -13,105 +13,102 @@ import (
 
 func TestRecoveryOnlyModelInitListsTargetsWithoutSessionCreator(t *testing.T) {
 	m := New(Deps{Connect: fakeConnect{targets: []ConnectTarget{{Target: "remote.example:443"}}}, ConnectOpen: true, ConnectError: "Authentication needs attention.", ConnectReason: client.AuthNotEnrolled, ConnectTarget: "remote.example:443", ConnectResumeSessionID: "session-1", Theme: theme.New("aztec", theme.AztecPalette()), Ctx: context.Background(), NoAltScreen: true})
-	if m.phase != phaseIdle || !m.connect.open || !m.connect.loading {
-		t.Fatalf("recovery model state = %#v", m.connect)
+	s, ok := m.modal.(*connectState)
+	if m.phase != phaseIdle || !ok {
+		t.Fatal("missing recovery surface")
 	}
 	cmd := m.Init()
 	if cmd == nil {
 		t.Fatal("recovery Init must list saved targets")
 	}
-	mm, _ := m.Update(cmd())
-	m = mm.(Model)
-	if m.phase != phaseIdle || !m.connect.open || m.connect.loading || len(m.connect.targets) != 1 || m.connect.cursor != 0 {
-		t.Fatalf("after target list: phase=%v connect=%#v", m.phase, m.connect)
+	result := cmd().(connectTargetsMsg)
+	if result.owner != s || result.request != 1 {
+		t.Fatal("Init did not issue exactly one owned load")
+	}
+	m = applyAll(m, result)
+	if s.loading || len(s.targets) != 1 || s.list.CursorID() != "target:remote.example:443" {
+		t.Fatalf("load not applied: %+v", s)
 	}
 }
+
 func TestConnectAuthReasonsRenderHonestAffordances(t *testing.T) {
 	for _, tc := range []struct {
 		reason client.AuthReason
 		want   string
 	}{
-		{client.AuthNotEnrolled, "server requires caller authentication"},
-		{client.AuthNotEnrolled, "OIDC"},
-		{client.AuthAnonymousRejected, "rejected --anonymous"},
-		{client.AuthSessionExpired, "session expired"},
-		{client.AuthCredentialUnusable, "corrupt"},
-		{client.AuthStorageUnavailable, "unavailable"},
-		{client.AuthStorageUnavailable, "will not fix"},
-		{client.AuthCredentialCleanup, "Retry the connection"},
+		{client.AuthNotEnrolled, "server requires caller authentication"}, {client.AuthNotEnrolled, "OIDC"},
+		{client.AuthAnonymousRejected, "rejected --anonymous"}, {client.AuthSessionExpired, "session expired"},
+		{client.AuthCredentialUnusable, "corrupt"}, {client.AuthStorageUnavailable, "unavailable"},
+		{client.AuthStorageUnavailable, "will not fix"}, {client.AuthCredentialCleanup, "Retry the connection"},
 		{client.AuthRejected, "Re-login is disabled"},
 	} {
-		t.Run(string(tc.reason), func(t *testing.T) {
-			m := newConnectModel([]ConnectTarget{{Target: "remote.example:443"}})
-			m.connect = connectState{open: true, reason: tc.reason, failedTarget: "remote.example:443"}
+		t.Run(string(tc.reason)+tc.want, func(t *testing.T) {
+			m := openTestConnect(newConnectModel([]ConnectTarget{{Target: "remote.example:443"}}), tc.reason, "remote.example:443", "")
 			if got := stripANSIstr(m.View().Content); !strings.Contains(got, tc.want) {
-				t.Fatalf("overlay missing %q: %s", tc.want, got)
+				t.Fatalf("missing %q: %s", tc.want, got)
 			}
 		})
 	}
 }
 
 func TestConnectChooserLabelsEnrollmentAsOIDCSignIn(t *testing.T) {
-	m := newConnectModel([]ConnectTarget{{Target: "remote.example:443"}})
-	m.connect = connectState{open: true, targets: []ConnectTarget{{Target: "remote.example:443"}}}
-	out := stripANSIstr(m.View().Content)
-	if !strings.Contains(out, "OIDC sign-in for a new target") {
-		t.Fatalf("chooser does not identify OIDC enrollment: %s", out)
+	m := openTestConnect(newConnectModel(nil), "", "", "")
+	if got := stripANSIstr(m.View().Content); !strings.Contains(got, "OIDC sign-in for a new target") {
+		t.Fatal(got)
 	}
 }
 
-func TestConnectAuthRecoveryDropsCandidateOnTargetChange(t *testing.T) {
-	m := newConnectModel([]ConnectTarget{{Target: "failed:443"}, {Target: "other:443"}})
-	m.connect = connectState{open: true, failedTarget: "failed:443", resumeSessionID: "session-1", targets: []ConnectTarget{{Target: "failed:443"}, {Target: "other:443"}}, cursor: 1}
-	mm, _, _ := m.onConnectKey(tea.KeyPressMsg{Code: tea.KeyEnter})
-	mm, cmd, _ := mm.(Model).onConnectKey(tea.KeyPressMsg{Code: tea.KeyEnter})
-	intent, ok := mm.(Model).ConnectRestartIntent()
-	if !ok || cmd == nil || intent.Target != "other:443" || intent.ResumeSessionID != "" {
-		t.Fatalf("cross-target intent = %#v, ok=%v cmd=%v", intent, ok, cmd)
-	}
-}
 func TestRejectedTargetDoesNotOfferRelogin(t *testing.T) {
-	m := newConnectModel([]ConnectTarget{{Target: "remote.example:443"}})
-	m.connect = connectState{open: true, reason: client.AuthRejected, failedTarget: "remote.example:443", targets: []ConnectTarget{{Target: "remote.example:443"}}}
-	mm, _, _ := m.onConnectKey(tea.KeyPressMsg{Code: tea.KeyEnter})
-	m = mm.(Model)
-	mm, cmd, _ := m.onConnectKey(tea.KeyPressMsg{Code: tea.KeyEnter})
-	m = mm.(Model)
-	if cmd != nil || m.connectIntent != nil || !strings.Contains(m.connect.err, "rejected") {
-		t.Fatalf("rejected target must not restart: intent=%#v err=%q", m.connectIntent, m.connect.err)
+	for _, targets := range [][]ConnectTarget{
+		{{Target: "failed:443"}}, {{Target: "failed:443"}, {Target: "other:443"}},
+	} {
+		m := openTestConnect(newConnectModel(targets), client.AuthRejected, "failed:443", "session-1")
+		s := m.modal.(*connectState)
+		for _, item := range s.items {
+			if item.ID == "add" || item.ID == "target:failed:443" {
+				t.Fatalf("unavailable choice selectable: %+v", item)
+			}
+		}
+		if out := stripANSIstr(m.View().Content); !strings.Contains(out, "failed:443") || !strings.Contains(out, "credential rejected") {
+			t.Fatal(out)
+		}
+		m = applyAll(m, tea.KeyPressMsg{Code: tea.KeyEnter}, tea.KeyPressMsg{Code: tea.KeyEnter})
+		intent, ok := m.ConnectRestartIntent()
+		if len(targets) == 1 && ok {
+			t.Fatal("rejected target activated")
+		}
+		if len(targets) == 2 && (!ok || intent.Target != "other:443" || intent.Action != ConnectSaved || intent.ResumeSessionID != "") {
+			t.Fatalf("other target blocked/changed: %+v", intent)
+		}
 	}
 }
 
 func TestConnectActionTable(t *testing.T) {
-	tests := []struct {
-		name       string
-		reason     client.AuthReason
-		cursor     int
-		want       ConnectAction
-		wantResume bool
+	for _, tc := range []struct {
+		name   string
+		reason client.AuthReason
+		cursor int
+		want   ConnectAction
+		resume bool
 	}{
 		{"ordinary saved", "", 0, ConnectSaved, false},
 		{"expired same", client.AuthSessionExpired, 0, Reauthenticate, true},
 		{"unusable same", client.AuthCredentialUnusable, 0, Reauthenticate, true},
+		{"changed same", client.AuthTargetChanged, 0, Reauthenticate, true},
 		{"storage same", client.AuthStorageUnavailable, 0, RetryAfterCleanup, true},
 		{"not enrolled same", client.AuthNotEnrolled, 0, Reauthenticate, true},
 		{"anonymous rejected same", client.AuthAnonymousRejected, 0, ConnectSaved, false},
 		{"cleanup same", client.AuthCredentialCleanup, 0, RetryAfterCleanup, true},
 		{"different target", client.AuthSessionExpired, 1, ConnectSaved, false},
 		{"add target", client.AuthSessionExpired, 2, AddTarget, false},
-	}
-	for _, tc := range tests {
+	} {
 		t.Run(tc.name, func(t *testing.T) {
-			targets := []ConnectTarget{{Target: "canonical.example:443"}, {Target: "other.example:443"}}
-			m := newConnectModel(targets)
-			m.connect = connectState{open: true, reason: tc.reason, failedTarget: "canonical.example:443", resumeSessionID: "session-1", targets: targets, cursor: tc.cursor, confirm: true}
-			mm, cmd, _ := m.onConnectKey(tea.KeyPressMsg{Code: tea.KeyEnter})
-			intent, ok := mm.(Model).ConnectRestartIntent()
-			if !ok || cmd == nil || intent.Action != tc.want {
-				t.Fatalf("intent = %#v, ok=%v", intent, ok)
-			}
-			if (intent.ResumeSessionID != "") != tc.wantResume {
-				t.Fatalf("resume = %q, want present=%v", intent.ResumeSessionID, tc.wantResume)
+			m := openTestConnect(newConnectModel([]ConnectTarget{{Target: "canonical.example:443"}, {Target: "other.example:443"}}), tc.reason, "canonical.example:443", "session-1")
+			m.modal.(*connectState).list.SetCursor(tc.cursor)
+			m = applyAll(m, tea.KeyPressMsg{Code: tea.KeyEnter}, tea.KeyPressMsg{Code: tea.KeyEnter})
+			intent, ok := m.ConnectRestartIntent()
+			if !ok || intent.Action != tc.want || (intent.ResumeSessionID != "") != tc.resume {
+				t.Fatalf("intent=%+v ok=%v", intent, ok)
 			}
 		})
 	}
@@ -119,35 +116,27 @@ func TestConnectActionTable(t *testing.T) {
 
 func TestConnectLoadsIgnoreStaleGenerations(t *testing.T) {
 	m := newConnectModel(nil)
-	mm, _ := m.openConnect()
+	mm, load := m.openConnect()
 	m = mm.(Model)
-	first := m.connectLoadGeneration
-	m.connect = connectState{} // closing must not reset the model-owned generation
-	mm, _ = m.openConnect()
+	first := m.modal.(*connectState)
+	stale := load().(connectTargetsMsg)
+	m = applyAll(m, tea.KeyPressMsg{Code: tea.KeyEscape})
+	mm, load = m.openConnect()
 	m = mm.(Model)
-	second := m.connectLoadGeneration
-	if first == 0 || second != first+1 {
-		t.Fatalf("generations = %d, %d", first, second)
+	current := m.modal.(*connectState)
+	m = applyAll(m, stale)
+	if !current.loading {
+		t.Fatal("old instance load applied")
 	}
-	mm, handled := m.updateConnectMsg(connectTargetsMsg{generation: first, targets: []ConnectTarget{{Target: "stale"}}})
-	m = mm.(Model)
-	if !handled || len(m.connect.targets) != 0 || !m.connect.loading {
-		t.Fatalf("stale load changed state: %#v", m.connect)
+	fresh := load().(connectTargetsMsg)
+	fresh.targets = []ConnectTarget{{Target: "fresh"}}
+	m = applyAll(m, fresh)
+	fresh.targets = []ConnectTarget{{Target: "duplicate"}}
+	m = applyAll(m, fresh)
+	if current.loading || current.targets[0].Target != "fresh" {
+		t.Fatal("duplicate response applied")
 	}
-	mm, _ = m.updateConnectMsg(connectTargetsMsg{generation: second, targets: []ConnectTarget{{Target: "fresh"}}})
-	m = mm.(Model)
-	if m.connect.loading || len(m.connect.targets) != 1 || m.connect.targets[0].Target != "fresh" {
-		t.Fatalf("fresh load not applied: %#v", m.connect)
-	}
-}
-
-func TestRecoveryInitialConnectLoadHasGeneration(t *testing.T) {
-	m := New(Deps{Connect: fakeConnect{}, ConnectOpen: true, Theme: theme.New("aztec", theme.AztecPalette()), Ctx: context.Background(), NoAltScreen: true})
-	if m.connectLoadGeneration == 0 {
-		t.Fatal("initial recovery load generation is zero")
-	}
-	msg := m.Init()().(connectTargetsMsg)
-	if msg.generation != m.connectLoadGeneration {
-		t.Fatalf("message generation = %d, want %d", msg.generation, m.connectLoadGeneration)
+	if first.request == stale.request {
+		t.Fatal("close did not invalidate request")
 	}
 }
