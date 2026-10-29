@@ -347296,6 +347296,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1793284131572,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "6c43f4981a0809b626f97ef798a325bf9e4179e8",
+          "message": "fix(mecatui): simplify thinking summary headings (#2602)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-29T07:26:00-07:00",
+          "tree_id": "11544a48df749c30e9c1b8457d14d76b8c8f2209",
+          "url": "https://github.com/stacklok/mecatl/commit/6c43f4981a0809b626f97ef798a325bf9e4179e8"
+        },
+        "date": 1793284855569,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -501980,6 +502014,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1793284852300,
+  "lastUpdate": 1793284856843,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
