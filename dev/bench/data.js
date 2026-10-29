@@ -350518,6 +350518,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1793310487400,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "77584ed9980e88bbe7de2ff74f9b6a7736ed2edb",
+          "message": "fix(studio): refresh thread IDs after subscribing (#2619)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-29T23:33:46Z",
+          "tree_id": "ff0d2c9819d422e6d7776e490ba370b30b97646e",
+          "url": "https://github.com/stacklok/mecatl/commit/77584ed9980e88bbe7de2ff74f9b6a7736ed2edb"
+        },
+        "date": 1793317561955,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -506579,6 +506613,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1793317558962,
+  "lastUpdate": 1793317562964,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
