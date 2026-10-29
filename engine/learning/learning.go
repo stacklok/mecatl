@@ -80,11 +80,23 @@ type Trajectory struct {
 	// Current is the verified half-open message span for the current run.
 	Current MessageSpan
 	// Principal is a copied completed-session owner for host partitioning.
-	Principal *session.Principal
+	Principal        *session.Principal
+	learningEligible bool
+}
+
+// LearningEligible reports eligibility derived from a real Session, never a serialized trajectory.
+func (t Trajectory) LearningEligible() bool { return t.learningEligible }
+
+// NewSessionTrajectory snapshots session history and its irreversible learning eligibility.
+func NewSessionTrajectory(sess *session.Session, workspace string, stop session.StopReason, usage session.Usage) Trajectory {
+	tr := NewTrajectory(sess.ID, workspace, stop, usage, sess.Conversation.Messages)
+	tr.learningEligible = sess.LearningEligible()
+	return tr
 }
 
 // NewTrajectory constructs an owned completed-run snapshot. Every mutable nested
 // value is copied so an Observer cannot mutate the live or persisted Session history.
+// It cannot establish learning eligibility; learning producers use NewSessionTrajectory.
 func NewTrajectory(id session.SessionID, workspace string, stop session.StopReason, usage session.Usage, messages []session.Message) Trajectory {
 	return Trajectory{
 		SessionID: id,

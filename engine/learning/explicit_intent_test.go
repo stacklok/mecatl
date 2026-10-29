@@ -136,7 +136,7 @@ func TestExplicitIntentRequiresVerifiedCurrentPrincipalPrompt(t *testing.T) {
 }
 
 func explicitIntentDecision(stop session.StopReason, messages []session.Message, kind session.SessionKind, current learning.MessageSpan) learning.AdmissionDecision {
-	trajectory := learning.NewTrajectory("session", "/workspace", stop, session.Usage{}, messages)
+	trajectory := currentTrajectory("session", "/workspace", stop, session.Usage{}, messages)
 	trajectory.Kind = kind
 	trajectory.Current = current
 	trajectory.Counters = session.Counters{Turns: 1}

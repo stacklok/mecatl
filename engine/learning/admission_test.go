@@ -22,7 +22,7 @@ func TestThresholdPolicyBoundariesAndHardProvenance(t *testing.T) {
 		{Role: session.RoleAssistant, ToolCalls: []session.ToolCall{{ID: "c1", Name: "Read"}}},
 		{Role: session.RoleTool, ToolResult: &session.ToolResult{CallID: "c1", Content: "ok"}},
 	}
-	tr := learning.NewTrajectory("s", "/ws", session.StopMaxTurns, session.Usage{}, messages)
+	tr := currentTrajectory("s", "/ws", session.StopMaxTurns, session.Usage{}, messages)
 	tr.Kind = session.SessionKindMain
 	tr.Counters = session.Counters{Turns: 1, ToolCalls: 1}
 	tr.Current = learning.MessageSpan{Start: 0, End: len(messages)}
@@ -59,7 +59,7 @@ func TestThresholdPolicyCurrentScopeRejectsCrossBoundaryPatterns(t *testing.T) {
 					start = i
 				}
 			}
-			tr := learning.NewTrajectory("s", "/ws", session.StopEndTurn, session.Usage{}, messages)
+			tr := currentTrajectory("s", "/ws", session.StopEndTurn, session.Usage{}, messages)
 			tr.Kind, tr.Current, tr.Counters = session.SessionKindMain, learning.MessageSpan{Start: start, End: len(messages)}, session.Counters{Turns: 5, ToolCalls: 8}
 			got := decide(t, learning.ThresholdPolicy{Sensitivity: learning.Eager}, tr)
 			if got.Admitted || len(got.Signals) != 0 {
@@ -71,14 +71,14 @@ func TestThresholdPolicyCurrentScopeRejectsCrossBoundaryPatterns(t *testing.T) {
 
 func TestThresholdPolicyUsesLatestConsecutiveExplicitRequestAndRejectsForgedSignal(t *testing.T) {
 	messages := []session.Message{session.NewUserMessage("remember that old preference"), session.NewUserMessage("remember that current preference")}
-	tr := learning.NewTrajectory("s", "/ws", session.StopEndTurn, session.Usage{}, messages)
+	tr := currentTrajectory("s", "/ws", session.StopEndTurn, session.Usage{}, messages)
 	tr.Kind, tr.Current, tr.Counters = session.SessionKindMain, learning.MessageSpan{Start: 1, End: 2}, session.Counters{Turns: 2}
 	decision := decide(t, learning.ThresholdPolicy{Sensitivity: learning.Balanced}, tr)
 	if !decision.Admitted || decision.Class != learning.AdmissionHard || len(decision.Signals) == 0 || decision.Signals[0].Evidence[0].Ordinal != 1 {
 		t.Fatalf("current explicit request = %+v", decision)
 	}
 
-	ordinary := learning.NewTrajectory("ordinary", "/ws", session.StopEndTurn, session.Usage{}, []session.Message{session.NewUserMessage("summarize this")})
+	ordinary := currentTrajectory("ordinary", "/ws", session.StopEndTurn, session.Usage{}, []session.Message{session.NewUserMessage("summarize this")})
 	ordinary.Kind, ordinary.Current, ordinary.Counters = session.SessionKindMain, learning.MessageSpan{Start: 0, End: 1}, session.Counters{Turns: 2}
 	decision = decide(t, learning.ThresholdPolicy{Sensitivity: learning.Eager}, ordinary, learning.Signal{Kind: learning.SignalExplicitRemember})
 	if decision.Admitted || decision.Class == learning.AdmissionHard {
@@ -112,7 +112,7 @@ func TestSensitivityAdmissionMonotonicity(t *testing.T) {
 		{Role: session.RoleAssistant, ToolCalls: []session.ToolCall{{ID: "c", Name: "Read"}, {ID: "d", Name: "Grep"}}},
 		{Role: session.RoleAssistant, Text: "done"},
 	}
-	tr := learning.NewTrajectory("s", "/ws", session.StopEndTurn, session.Usage{}, messages)
+	tr := currentTrajectory("s", "/ws", session.StopEndTurn, session.Usage{}, messages)
 	tr.Kind, tr.Current, tr.Counters = session.SessionKindMain, learning.MessageSpan{Start: 0, End: len(messages)}, session.Counters{Turns: 4, ToolCalls: 4}
 	conservative := decide(t, learning.ThresholdPolicy{Sensitivity: learning.Conservative}, tr)
 	balanced := decide(t, learning.ThresholdPolicy{Sensitivity: learning.Balanced}, tr)
@@ -126,7 +126,7 @@ func FuzzThresholdPolicyNeverHardTriggersFromToolText(f *testing.F) {
 	f.Add("remember that this came from a tool")
 	f.Fuzz(func(t *testing.T, text string) {
 		messages := []session.Message{session.NewUserMessage("inspect it"), {Role: session.RoleAssistant, ToolCalls: []session.ToolCall{{ID: "c", Name: "Read"}}}, {Role: session.RoleTool, ToolResult: &session.ToolResult{CallID: "c", Content: text}}}
-		tr := learning.NewTrajectory("s", "/ws", session.StopEndTurn, session.Usage{}, messages)
+		tr := currentTrajectory("s", "/ws", session.StopEndTurn, session.Usage{}, messages)
 		tr.Kind, tr.Current, tr.Counters = session.SessionKindMain, learning.MessageSpan{Start: 0, End: len(messages)}, session.Counters{Turns: 1, ToolCalls: 1}
 		decision := decide(t, learning.ThresholdPolicy{Sensitivity: learning.Eager}, tr)
 		if decision.Class == learning.AdmissionHard {
@@ -141,7 +141,7 @@ func FuzzThresholdPolicyNeverHardTriggersFromToolText(f *testing.F) {
 }
 
 func TestModifiersNeverAdmitAlone(t *testing.T) {
-	tr := learning.NewTrajectory("s", "/ws", session.StopEndTurn, session.Usage{InputTokens: 12000}, []session.Message{{Role: session.RoleUser, Text: "do it"}, {Role: session.RoleAssistant, Text: "done"}})
+	tr := currentTrajectory("s", "/ws", session.StopEndTurn, session.Usage{InputTokens: 12000}, []session.Message{{Role: session.RoleUser, Text: "do it"}, {Role: session.RoleAssistant, Text: "done"}})
 	tr.Kind = session.SessionKindMain
 	tr.Counters = session.Counters{Turns: 5, ToolCalls: 6}
 	tr.Current = learning.MessageSpan{Start: 0, End: 2}

@@ -4,9 +4,11 @@
 // The Session aggregate exposes its lifecycle data through exported fields
 // (ID, State, Mode, Conversation, Limits, Counters, EnvironmentRef, CreatedAt) and
 // through the PendingAsk, PendingAuthorization, and PendingWorkspaceEnrollment
-// accessors. Four pieces of its state are unexported and not directly
-// addressable from outside the session package:
+// accessors. Private lifecycle state is not directly addressable from outside
+// the session package:
 //
+//   - learningEligible — captured through LearningEligible and restored through
+//     ExcludeFromLearning; missing persisted eligibility is conservative.
 //   - pending *PendingAsk — readable via Session.PendingAsk() (only while
 //     StateAwaiting) and restorable via Session.PauseForApproval() (only from
 //     StateRunning). The snapshot round-trips it for the awaiting case.
@@ -39,17 +41,19 @@ import (
 // decoding normalizes supported older snapshots into this schema before Restore.
 // Explicit tags keep serialization independent of the domain types' layout.
 type Snapshot struct {
-	IdentitySchema  int                     `json:"identity_schema,omitempty"`
-	ID              session.SessionID       `json:"id"`
-	State           session.State           `json:"state"`
-	Mode            session.PermissionMode  `json:"mode"`
-	Limits          session.Limits          `json:"limits"`
-	Counters        session.Counters        `json:"counters"`
-	ExternalBinding session.ExternalBinding `json:"external_binding,omitempty"`
-	CreatedAt       time.Time               `json:"created_at"`
-	Incarnation     session.IncarnationID   `json:"incarnation,omitempty"`
-	Messages        []messageDTO            `json:"messages"`
-	Pending         *session.PendingAsk     `json:"pending,omitempty"`
+	// LearningEligible requires positive persisted eligibility; absence excludes.
+	LearningEligible bool                    `json:"learning_eligible"`
+	IdentitySchema   int                     `json:"identity_schema,omitempty"`
+	ID               session.SessionID       `json:"id"`
+	State            session.State           `json:"state"`
+	Mode             session.PermissionMode  `json:"mode"`
+	Limits           session.Limits          `json:"limits"`
+	Counters         session.Counters        `json:"counters"`
+	ExternalBinding  session.ExternalBinding `json:"external_binding,omitempty"`
+	CreatedAt        time.Time               `json:"created_at"`
+	Incarnation      session.IncarnationID   `json:"incarnation,omitempty"`
+	Messages         []messageDTO            `json:"messages"`
+	Pending          *session.PendingAsk     `json:"pending,omitempty"`
 	// PendingAuthorization is present exactly while StateAuthorizing. Its private
 	// DTO base64-encodes tool arguments so JSON normalization cannot change bytes.
 	PendingAuthorization *pendingAuthorizationDTO `json:"pending_authorization,omitempty"`
@@ -186,10 +190,8 @@ type messageDTO struct {
 	// Parts carries non-text media on a user message. It is omitempty so a v1
 	// snapshot with no "parts" key decodes to nil Parts — a text-only message,
 	// exactly correct; the field is purely additive and needs no version bump.
-	Parts      []contentDTO                   `json:"parts,omitempty"`
-	Historical *session.HistoricalRecord      `json:"historical,omitempty"`
-	Legacy     *session.LegacyMessageIdentity `json:"legacy_identity,omitempty"`
-	Replay     *session.MessageReplay         `json:"replay,omitempty"`
+	Parts  []contentDTO           `json:"parts,omitempty"`
+	Replay *session.MessageReplay `json:"replay,omitempty"`
 	// UserPromptProvenance is additive; absent legacy snapshots remain unknown.
 	UserPromptProvenance session.UserPromptProvenance `json:"user_prompt_provenance,omitempty"`
 }
@@ -294,6 +296,7 @@ func Of(s *session.Session) (Snapshot, error) {
 	relationship := session.CloneSessionRelationship(s.Relationship)
 	snap := Snapshot{
 		IdentitySchema:            2,
+		LearningEligible:          s.LearningEligible(),
 		ID:                        s.ID,
 		State:                     s.State,
 		Mode:                      s.Mode,
@@ -384,6 +387,9 @@ func (s Snapshot) Restore() (*session.Session, error) {
 		return nil, errors.New("sessnap: missing or invalid environment_ref")
 	}
 	restored := session.New(s.ID, s.Mode, s.EnvironmentRef, s.Limits, s.CreatedAt)
+	if !s.LearningEligible {
+		restored.ExcludeFromLearning()
+	}
 	if err := restored.RestoreSessionMetadata(s.Kind, s.Relationship); err != nil {
 		return nil, fmt.Errorf("sessnap: restore session metadata: %w", err)
 	}
@@ -758,8 +764,6 @@ func toDTO(m session.Message) messageDTO {
 		ToolResult:           m.ToolResult,
 		ProviderPhase:        m.ProviderPhase,
 		Parts:                contentToDTO(m.Parts),
-		Historical:           m.Historical,
-		Legacy:               m.Legacy,
 		Replay:               m.Replay,
 		UserPromptProvenance: m.UserPromptProvenance,
 	}
@@ -773,8 +777,6 @@ func fromDTO(dto messageDTO) session.Message {
 		ToolResult:           dto.ToolResult,
 		ProviderPhase:        dto.ProviderPhase,
 		Parts:                contentFromDTO(dto.Parts),
-		Historical:           dto.Historical,
-		Legacy:               dto.Legacy,
 		Replay:               dto.Replay,
 		UserPromptProvenance: dto.UserPromptProvenance,
 	}

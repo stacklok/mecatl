@@ -266,11 +266,10 @@ func TestFoldContractDocMatchesSessionFields(t *testing.T) {
 	// Every EXPORTED field of session.Message the fold reconstructs or documents as a
 	// limitation:
 	//   reconstructed: Role, Text, ToolCalls, ToolResult, Parts, UserPromptProvenance
-	//   historical/private provenance: Historical, Legacy
 	//   not reconstructed from ordinary execution events: Replay, ProviderPhase
 	wantMessageFields := map[string]struct{}{
 		"Role": {}, "Text": {}, "ToolCalls": {}, "ToolResult": {},
-		"Historical": {}, "Legacy": {}, "Replay": {},
+		"Replay":        {},
 		"ProviderPhase": {}, "Parts": {}, "UserPromptProvenance": {},
 	}
 	assertExportedFields(t, reflect.TypeOf(session.Message{}), wantMessageFields,

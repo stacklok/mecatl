@@ -325,7 +325,6 @@ func TestStripProviderState(t *testing.T) {
 	}
 	assistant := replayMessage()
 	assistant.ProviderPhase = "commentary"
-	assistant.Legacy = &LegacyMessageIdentity{Namespace: "source", Ordinal: 7, Unsupported: []byte(`{"original":true}`)}
 	for _, input := range [][]Message{
 		nil, {},
 		{NewSystemMessage("sys"), NewUserMessageWithParts("goal", []Content{media}), assistant,
@@ -348,7 +347,6 @@ func TestStripProviderState(t *testing.T) {
 		if len(stripped) > 0 {
 			stripped[1].Parts[0].Data[0] = 0
 			stripped[2].ToolCalls[0].Args[0] = '!'
-			stripped[2].Legacy.Unsupported[0] = '!'
 			stripped[3].ToolResult.Parts[0].Text = "changed"
 			if !reflect.DeepEqual(input, before) {
 				t.Fatal("stripped history aliases source storage")

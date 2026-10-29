@@ -9,7 +9,7 @@ import (
 	"github.com/stacklok/mecatl/engine/session"
 )
 
-func TestCopiedHistoryRetainsCanonicalIdentityAndOwnsProvenance(t *testing.T) {
+func TestCopiedHistoryRetainsCanonicalIdentityAndOwnsReplay(t *testing.T) {
 	t.Parallel()
 	callID, delegationID := session.NewToolCallID(), session.NewToolCallID()
 	ref := session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "v1"}
@@ -18,11 +18,6 @@ func TestCopiedHistoryRetainsCanonicalIdentityAndOwnsProvenance(t *testing.T) {
 	assistant.Replay = &session.MessageReplay{
 		Bindings: []session.ToolCallBinding{{CallID: callID, PairingID: "reused", ItemID: "item"}},
 		Provider: &session.ProviderReplay{Format: "test", Version: 1, Data: []byte("opaque")},
-	}
-	assistant.Legacy = &session.LegacyMessageIdentity{
-		Incarnation: parent.Incarnation(), Namespace: "sessnap/legacy-v1", Ordinal: 7,
-		Calls:       []session.LegacyCallIdentity{{CallID: callID, Slot: 0, ProviderID: "reused", ItemID: "item"}},
-		Unsupported: []byte(`{"original":"metadata"}`),
 	}
 	history := []session.Message{assistant, session.NewToolMessage(session.NewToolResult(callID, "read"))}
 	if err := parent.SeedHistory(history); err != nil {
@@ -47,8 +42,6 @@ func TestCopiedHistoryRetainsCanonicalIdentityAndOwnsProvenance(t *testing.T) {
 			historyCopy[0].ToolCalls[0].Args[0] = '!'
 			historyCopy[0].Replay.Bindings[0].PairingID = "changed"
 			historyCopy[0].Replay.Provider.Data[0] = '!'
-			historyCopy[0].Legacy.Calls[0].ProviderID = "changed"
-			historyCopy[0].Legacy.Unsupported[0] = '!'
 			historyCopy[1].ToolResult.CallID = session.NewToolCallID()
 			if !reflect.DeepEqual(child.Conversation.Messages, want) || !reflect.DeepEqual(parent.Conversation.Messages, want) {
 				t.Fatal("SeedHistory aliases its input or copied history changed invocation/provenance")
@@ -65,8 +58,6 @@ func TestCopiedHistoryRetainsCanonicalIdentityAndOwnsProvenance(t *testing.T) {
 				t.Fatal("snapshot reminted copied identity or changed provenance/parent relationship")
 			}
 			child.Conversation.Messages[0].Replay.Provider.Data[0] = '!'
-			child.Conversation.Messages[0].Legacy.Calls[0].ProviderID = "changed"
-			restored.Conversation.Messages[0].Legacy.Unsupported[0] = '!'
 			if !reflect.DeepEqual(parent.Conversation.Messages, want) {
 				t.Fatal("copied child history aliases its source")
 			}

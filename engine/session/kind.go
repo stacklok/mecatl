@@ -36,20 +36,17 @@ const (
 //
 //revive:disable-next-line:exported // SessionRelationship distinguishes it from unrelated relationships.
 type SessionRelationship struct {
-	ScheduleName      string        `json:"schedule_name,omitempty"`
-	OriginSessionID   SessionID     `json:"origin_session_id,omitempty"`
-	OriginIncarnation IncarnationID `json:"origin_incarnation,omitempty"`
-	ParentSessionID   SessionID     `json:"parent_session_id,omitempty"`
-	ParentIncarnation IncarnationID `json:"parent_incarnation,omitempty"`
-	// Legacy preserves an unproven provider-era parent call privately. Public
-	// projections use HistoricalRelationship and never copy this carrier.
-	Legacy                 *LegacyRelationshipIdentity `json:"legacy_identity,omitempty"`
-	CallID                 ToolCallID                  `json:"call_id,omitempty"`
-	BranchIndex            *int                        `json:"branch_index,omitempty"`
-	TeamID                 string                      `json:"team_id,omitempty"`
-	MemberName             string                      `json:"member_name,omitempty"`
-	DebugTargetID          SessionID                   `json:"debug_target_id,omitempty"`
-	DebugTargetIncarnation IncarnationID               `json:"debug_target_incarnation,omitempty"`
+	ScheduleName           string        `json:"schedule_name,omitempty"`
+	OriginSessionID        SessionID     `json:"origin_session_id,omitempty"`
+	OriginIncarnation      IncarnationID `json:"origin_incarnation,omitempty"`
+	ParentSessionID        SessionID     `json:"parent_session_id,omitempty"`
+	ParentIncarnation      IncarnationID `json:"parent_incarnation,omitempty"`
+	CallID                 ToolCallID    `json:"call_id,omitempty"`
+	BranchIndex            *int          `json:"branch_index,omitempty"`
+	TeamID                 string        `json:"team_id,omitempty"`
+	MemberName             string        `json:"member_name,omitempty"`
+	DebugTargetID          SessionID     `json:"debug_target_id,omitempty"`
+	DebugTargetIncarnation IncarnationID `json:"debug_target_incarnation,omitempty"`
 }
 
 // ErrInvalidSessionMetadata marks an invalid kind/relationship combination.
@@ -108,8 +105,7 @@ func validSubagentRelationship(rel SessionRelationship) bool {
 	forbidden.ParentSessionID = ""
 	forbidden.ParentIncarnation = ""
 	forbidden.CallID = ""
-	forbidden.Legacy = nil
-	return rel.ParentSessionID != "" && validRelationshipCall(rel) && validRelatedIncarnation(rel.ParentSessionID, rel.ParentIncarnation) && forbidden == (SessionRelationship{})
+	return rel.ParentSessionID != "" && rel.CallID != "" && validRelatedIncarnation(rel.ParentSessionID, rel.ParentIncarnation) && forbidden == (SessionRelationship{})
 }
 
 func validParallelBranchRelationship(rel SessionRelationship) bool {
@@ -118,8 +114,7 @@ func validParallelBranchRelationship(rel SessionRelationship) bool {
 	forbidden.ParentIncarnation = ""
 	forbidden.CallID = ""
 	forbidden.BranchIndex = nil
-	forbidden.Legacy = nil
-	return rel.ParentSessionID != "" && validRelationshipCall(rel) && rel.BranchIndex != nil && *rel.BranchIndex >= 0 && validRelatedIncarnation(rel.ParentSessionID, rel.ParentIncarnation) && forbidden == (SessionRelationship{})
+	return rel.ParentSessionID != "" && rel.CallID != "" && rel.BranchIndex != nil && *rel.BranchIndex >= 0 && validRelatedIncarnation(rel.ParentSessionID, rel.ParentIncarnation) && forbidden == (SessionRelationship{})
 }
 
 func validTeamMemberRelationship(rel SessionRelationship) bool {
@@ -129,8 +124,7 @@ func validTeamMemberRelationship(rel SessionRelationship) bool {
 	forbidden.ParentSessionID = ""
 	forbidden.ParentIncarnation = ""
 	forbidden.CallID = ""
-	forbidden.Legacy = nil
-	callValid := rel.CallID == "" && rel.Legacy == nil || validRelationshipCall(rel) && rel.ParentSessionID != "" && rel.ParentIncarnation.Valid()
+	callValid := rel.CallID == "" || rel.ParentSessionID != "" && rel.ParentIncarnation.Valid()
 	return rel.TeamID != "" && rel.MemberName != "" && callValid && validRelatedIncarnation(rel.ParentSessionID, rel.ParentIncarnation) && forbidden == (SessionRelationship{})
 }
 
@@ -158,13 +152,8 @@ func (s *Session) RestoreSessionMetadata(kind SessionKind, rel SessionRelationsh
 	return nil
 }
 
-// CloneSessionRelationship copies private persistence metadata without aliasing.
-// Public projections must use HistoricalRelationship instead.
+// CloneSessionRelationship returns an independently owned relationship.
 func CloneSessionRelationship(rel SessionRelationship) SessionRelationship {
-	if rel.Legacy != nil {
-		p := *rel.Legacy
-		rel.Legacy = &p
-	}
 	if rel.BranchIndex != nil {
 		branchIndex := *rel.BranchIndex
 		rel.BranchIndex = &branchIndex

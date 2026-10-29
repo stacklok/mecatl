@@ -132,7 +132,7 @@ func (r *EvidenceReflector) buildRequest(in learning.Input) (port.LLMRequest, er
 	}
 	projectedInput := in
 	projectedInput.Signals = append([]learning.Signal(nil), detected...)
-	projection, err := learning.ProjectVerifiedInput(projectedInput)
+	projection, err := learning.ProjectInput(projectedInput)
 	if err != nil {
 		return port.LLMRequest{}, err
 	}

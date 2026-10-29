@@ -3946,11 +3946,11 @@ type auxiliaryUsageObserver interface {
 // observer from mutating the live conversation. Failures are operational facts:
 // they never alter the terminal result and no session event owns them.
 func (e *Engine) observeCompletion(ctx context.Context, r *Run, sess *session.Session, reason session.StopReason, usage session.Usage) {
-	if e.deps.LearningMode == learning.Off || e.deps.LearningObserver == nil ||
+	if e.deps.LearningMode == learning.Off || e.deps.LearningObserver == nil || !sess.LearningEligible() ||
 		sess.State != session.StateCompleted || reason == session.StopError || reason == session.StopCancelled {
 		return
 	}
-	tr := learning.NewTrajectory(sess.ID, r.workspace, reason, usage, sess.Conversation.Messages)
+	tr := learning.NewSessionTrajectory(sess, r.workspace, reason, usage)
 	tr.RunID = sess.RunID()
 	tr.Principal = sess.Owner.Clone()
 	tr.Kind = sess.Kind

@@ -39,19 +39,7 @@ func DecodeLegacyArchive(data []byte, inc session.IncarnationID, namespace strin
 	// An archive is closed history, not a parked continuation. Incomplete calls
 	// cannot become executable calls or public normal tool cards.
 	if err := session.ValidateToolPairing(messages); err != nil {
-		for i, m := range messages {
-			raw, marshalErr := json.Marshal(old[i])
-			if marshalErr != nil {
-				return nil, marshalErr
-			}
-			m.ToolCalls, m.ToolResult, m.Replay = nil, nil, nil
-			m.Role = session.RoleAssistant
-			m.Legacy.Unsupported = raw
-			if old[i].ToolResult != nil && m.Text == "" {
-				m.Text = old[i].ToolResult.Content
-			}
-			messages[i] = m
-		}
+		return nil, err
 	}
 	return session.CloneMessages(messages), nil
 }

@@ -57,7 +57,6 @@ type cancellingReplayCompactor struct{ cancel context.CancelFunc }
 func (c cancellingReplayCompactor) Compact(_ context.Context, conv *session.Conversation) ([]session.Message, string, session.AuxiliaryUsage, error) {
 	conv.Messages[0].Replay.Provider.Data[0] = '!'
 	conv.Messages[0].Replay.Bindings[0].PairingID = "changed"
-	conv.Messages[0].Legacy.Ordinal = 0
 	c.cancel()
 	return []session.Message{session.NewUserMessage("small candidate")}, "summary", session.AuxiliaryUsage{}, nil
 }
@@ -70,7 +69,6 @@ func TestAutomaticCompactionCancellationOwnsReplay(t *testing.T) {
 		Bindings: []session.ToolCallBinding{{CallID: "canonical", PairingID: "provider"}},
 		Provider: &session.ProviderReplay{Format: "opaque", Version: 7, Data: []byte("bytes")},
 	}
-	m.Legacy = &session.LegacyMessageIdentity{Namespace: "source", Ordinal: 9}
 	if err := s.SeedHistory([]session.Message{m, session.NewToolMessage(session.NewToolResult("canonical", "read"))}); err != nil {
 		t.Fatal(err)
 	}

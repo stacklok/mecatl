@@ -159,10 +159,10 @@ func TestLegacySnapshotJSONPreservesStableMetadataDuringNormalization(t *testing
 		}
 		fields[key] = encoded
 	}
-	// Invocation-bearing fields and incarnation have separate normalization tests.
+	// Identity-bearing fields and learning eligibility have separate normalization tests.
 	for _, field := range reflect.VisibleFields(reflect.TypeFor[Snapshot]()) {
 		switch field.Name {
-		case "IdentitySchema", "Incarnation", "Messages", "Pending", "PendingAuthorization", "Relationship":
+		case "IdentitySchema", "LearningEligible", "Incarnation", "Messages", "Pending", "PendingAuthorization", "Relationship":
 			continue
 		}
 		key, _, _ := strings.Cut(field.Tag.Get("json"), ",")
@@ -189,7 +189,7 @@ func TestLegacySnapshotJSONPreservesRelationshipMetadata(t *testing.T) {
 	inc := session.NewIncarnationID()
 	want := session.SessionRelationship{
 		ScheduleName: "schedule", OriginSessionID: "origin", OriginIncarnation: inc,
-		ParentSessionID: "parent", ParentIncarnation: inc, CallID: "provider-call",
+		ParentSessionID: "parent", ParentIncarnation: inc,
 		BranchIndex: &branch, TeamID: "team", MemberName: "member",
 		DebugTargetID: "debug-target", DebugTargetIncarnation: inc,
 	}
@@ -198,8 +198,6 @@ func TestLegacySnapshotJSONPreservesRelationshipMetadata(t *testing.T) {
 		t.Fatal(err)
 	}
 	snap := decodeSnapshot(t, legacyWithFields(t, map[string]json.RawMessage{"relationship": relationship}))
-	want.CallID = ""
-	want.Legacy = &session.LegacyRelationshipIdentity{ProviderCallID: "provider-call"}
 	if !reflect.DeepEqual(snap.Relationship, want) {
 		t.Fatal("legacy normalization lost relationship metadata or promoted a provider reference")
 	}
@@ -238,10 +236,8 @@ func TestSnapshotJSONNormalizationKeepsIncarnationAndCanonicalIDsStable(t *testi
 			if first.Incarnation != want {
 				t.Fatalf("incarnation = %q, want stored or derived %q", first.Incarnation, want)
 			}
-			for _, message := range first.Messages {
-				if message.Legacy == nil || message.Legacy.Incarnation != want {
-					t.Fatal("migration provenance did not use resolved incarnation")
-				}
+			if first.LearningEligible {
+				t.Fatal("legacy decode enabled learning")
 			}
 			encoded, err := json.Marshal(first)
 			if err != nil {

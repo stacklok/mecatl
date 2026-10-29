@@ -6,14 +6,22 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stacklok/mecatl/engine/learning"
 	"github.com/stacklok/mecatl/engine/session"
 )
 
+func currentTrajectory(id session.SessionID, workspace string, stop session.StopReason, usage session.Usage, messages []session.Message) learning.Trajectory {
+	sess := session.New(id, session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/fixture", Revision: "test"}, session.Limits{}, time.Unix(0, 0))
+	tr := learning.NewSessionTrajectory(sess, workspace, stop, usage)
+	tr.Messages = session.CloneMessages(messages)
+	return tr
+}
+
 func reflectionInput(messages ...session.Message) learning.Input {
 	return learning.NewInput(
-		learning.NewTrajectory("session-1", "/workspace", session.StopEndTurn, session.Usage{}, messages),
+		currentTrajectory("session-1", "/workspace", session.StopEndTurn, session.Usage{}, messages),
 		nil,
 		nil,
 		nil,
@@ -262,7 +270,7 @@ func TestNewInputOwnsEventsAndExistingFacts(t *testing.T) {
 	call := session.NewToolCall("call-1", "Read", json.RawMessage(`{"path":"a"}`))
 	events := []session.Event{{Type: session.EvToolCall, Seq: 4, Text: "before", ToolCall: &call}}
 	existing := []learning.ExistingFact{{Kind: learning.CandidateProjectFact, Key: "project/language", Value: "Go", Description: "Primary language"}}
-	input := learning.NewInput(learning.NewTrajectory("s", "", session.StopEndTurn, session.Usage{}, nil), events, nil, existing)
+	input := learning.NewInput(currentTrajectory("s", "", session.StopEndTurn, session.Usage{}, nil), events, nil, existing)
 	events[0].Text = "after"
 	events[0].ToolCall.Name = "Write"
 	existing[0].Value = "Rust"

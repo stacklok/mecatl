@@ -430,7 +430,7 @@ func TestSnapshotRoundTripsItemID(t *testing.T) {
 	// ItemID == "" (wire-omit safe — replaying without an id is the pre-fix behavior).
 	oldSnap := `{"id":"old2","state":"idle","mode":"default","limits":{},"counters":{},"token_usage":{},` +
 		`"environment_ref":{"Kind":"local","ID":"/ws","Revision":"in-tree-v1"},"created_at":"2023-11-14T22:13:20Z",` +
-		`"messages":[{"role":"assistant","tool_calls":[{"ID":"call_x","Name":"read_file","Args":{"path":"z.go"}}]}]}`
+		`"messages":[{"role":"assistant","tool_calls":[{"ID":"call_x","Name":"read_file","Args":{"path":"z.go"}}]},{"role":"tool","tool_result":{"CallID":"call_x","Content":"done"}}]}`
 	got2, err := sessnap.Unmarshal([]byte(oldSnap))
 	if err != nil {
 		t.Fatalf("Unmarshal old snapshot: %v", err)

@@ -123,7 +123,7 @@ func TestLegacyIdentityStableAcrossReadsAndSaves(t *testing.T) {
 	}
 }
 
-func TestLegacyProvenanceSurvivesForkPruneAndOwnership(t *testing.T) {
+func TestLegacyReplaySurvivesForkPruneAndOwnership(t *testing.T) {
 	s := restoreFixture(t, legacyFixture(t, "legacy-completed"))
 	messages := s.Conversation.Messages
 	if messages[1].ToolCalls[0].ID == messages[3].ToolCalls[0].ID || messages[1].Replay.Bindings[0].PairingID != messages[3].Replay.Bindings[0].PairingID {
@@ -134,8 +134,8 @@ func TestLegacyProvenanceSurvivesForkPruneAndOwnership(t *testing.T) {
 	if err := child.SeedHistory(session.ForkSnapshot(s.Conversation)); err != nil {
 		t.Fatal(err)
 	}
-	if child.Conversation.Messages[3].Legacy.Ordinal != 3 || child.Conversation.Messages[3].Legacy.Incarnation != s.Incarnation() {
-		t.Fatal("fork rebased source coordinates")
+	if !child.LearningEligible() || s.LearningEligible() {
+		t.Fatal("fresh child inherited legacy exclusion or legacy source became eligible")
 	}
 	if err := s.ReplaceHistoryAtBoundary(want); err != nil {
 		t.Fatal(err)
@@ -144,7 +144,7 @@ func TestLegacyProvenanceSurvivesForkPruneAndOwnership(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s.Conversation.Messages[0].Legacy.Calls[0].ProviderID = "mutated"
+	s.Conversation.Messages[0].Replay.Bindings[0].PairingID = "mutated"
 	restored, err := snap.Restore()
 	if err != nil {
 		t.Fatal(err)
@@ -152,8 +152,8 @@ func TestLegacyProvenanceSurvivesForkPruneAndOwnership(t *testing.T) {
 	if !reflect.DeepEqual(restored.Conversation.Messages, want) {
 		t.Fatal("Of aliases source metadata")
 	}
-	restored.Conversation.Messages[0].Legacy.Ordinal = 0
-	restored.Conversation.Messages[0].Legacy.Calls[0].Slot = 9
+	restored.Conversation.Messages[0].Replay.Provider.Data[0] = '!'
+	restored.Conversation.Messages[0].Replay.Bindings[0].ItemID = "changed"
 	again, err := snap.Restore()
 	if err != nil {
 		t.Fatal(err)
@@ -204,35 +204,11 @@ func TestLegacyGenericReplayDoesNotInterpretProviderPayload(t *testing.T) {
 	}
 }
 
-func TestLegacyUnsupportedResultStaysPrivateWithoutOrphanCanonicalResult(t *testing.T) {
+func TestLegacyOrphanResultRejected(t *testing.T) {
 	data := legacyFixture(t, "legacy-completed")
 	data = bytes.Replace(data, []byte(`"CallID":"reused", "Content":"first"`), []byte(`"CallID":"missing", "Content":"first"`), 1)
-	s := restoreFixture(t, data)
-	if s.Conversation.Messages[2].ToolResult != nil || s.Conversation.Messages[2].Text != "first" {
-		t.Fatal("unsupported result became an orphan canonical result or lost readable text")
-	}
-	private := append([]byte(nil), s.Conversation.Messages[2].Legacy.Unsupported...)
-	var original legacyMessageDTO
-	if err := json.Unmarshal(private, &original); err != nil {
-		t.Fatal(err)
-	}
-	if original.ToolResult.CallID != "missing" || len(original.ToolResult.Parts) != 1 {
-		t.Fatal("unsupported identity/media lost")
-	}
-	snap, err := Of(s)
-	if err != nil {
-		t.Fatal(err)
-	}
-	s.Conversation.Messages[2].Legacy.Unsupported[0] = '!'
-	for range 2 {
-		restored, err := snap.Restore()
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !bytes.Equal(restored.Conversation.Messages[2].Legacy.Unsupported, private) {
-			t.Fatal("unsupported payload aliases or changed")
-		}
-		restored.Conversation.Messages[2].Legacy.Unsupported[0] = '!'
+	if _, err := Unmarshal(data); err == nil {
+		t.Fatal("accepted orphan legacy result")
 	}
 }
 
@@ -265,8 +241,8 @@ func TestIdentitySchemaAndIncarnationFailClosed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if withInc.Conversation.Messages[1].Legacy.Incarnation != snap.Incarnation {
-		t.Fatal("allocation preceded stable source incarnation restore")
+	if withInc.Incarnation() != incarnation || withInc.LearningEligible() || withInc.Conversation.Messages[1].ToolCalls[0].ID != legacySourceToolCallID(incarnation, legacySnapshotNamespace, 1, 0) {
+		t.Fatal("conversion did not use stored incarnation or enabled learning")
 	}
 	if strings.Contains(string(withInc.Conversation.Messages[1].ToolCalls[0].ID), "reused") {
 		t.Fatal("provider key leaked into canonical identity")

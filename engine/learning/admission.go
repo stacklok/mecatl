@@ -110,6 +110,7 @@ type AdmissionReason string
 
 // Admission reasons are closed, content-free policy and modifier labels.
 const (
+	ReasonLearningIneligible       AdmissionReason = "learning_ineligible"
 	ReasonBelowThreshold           AdmissionReason = "below_threshold"
 	ReasonInvalidCurrentSpan       AdmissionReason = "invalid_current_span"
 	ReasonNonMainSession           AdmissionReason = "non_main_session"
@@ -145,7 +146,7 @@ const (
 // Valid reports whether r belongs to the closed admission-reason vocabulary.
 func (r AdmissionReason) Valid() bool {
 	switch r {
-	case ReasonBelowThreshold, ReasonInvalidCurrentSpan, ReasonNonMainSession,
+	case ReasonLearningIneligible, ReasonBelowThreshold, ReasonInvalidCurrentSpan, ReasonNonMainSession,
 		ReasonIneligibleStop, ReasonTrivialRun, ReasonExplicitRemember,
 		ReasonExplicitLearnProcedure, ReasonRepeatedCorrection,
 		ReasonTrustedHostContradiction, ReasonFailureRecovery,
@@ -199,6 +200,9 @@ func (p ThresholdPolicy) Decide(ctx context.Context, req AdmissionRequest) (Admi
 	threshold := p.Sensitivity.Threshold()
 	skipped := func(reason AdmissionReason) AdmissionDecision {
 		return AdmissionDecision{Class: AdmissionSkipped, Threshold: threshold, Reasons: []AdmissionReason{reason}}
+	}
+	if !trajectory.LearningEligible() {
+		return skipped(ReasonLearningIneligible), nil
 	}
 	if trajectory.Kind != session.SessionKindMain {
 		return skipped(ReasonNonMainSession), nil
@@ -313,6 +317,9 @@ func (AlwaysPolicy) Decide(ctx context.Context, req AdmissionRequest) (Admission
 		return AdmissionDecision{}, err
 	}
 	tr := req.Trajectory
+	if !tr.LearningEligible() {
+		return AdmissionDecision{Class: AdmissionSkipped, Reasons: []AdmissionReason{ReasonLearningIneligible}}, nil
+	}
 	if tr.Kind != session.SessionKindMain || !tr.Current.Valid(len(tr.Messages)) {
 		return AdmissionDecision{Class: AdmissionSkipped, Reasons: []AdmissionReason{ReasonPolicyNever}}, nil
 	}

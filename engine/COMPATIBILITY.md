@@ -193,19 +193,23 @@ private snapshot state; public events do not confer continuation authority.
 
 Legacy `/1` snapshots in awaiting or authorizing state are unloadable, even without
 pending payloads. Non-null `pending` or `pending_authorization` payloads in any
-legacy state also reject. Resolve pending work before upgrading or start a fresh
-session. Nonpending `/1` history still migrates; current `/2` approvals and private
-authorization continuations roundtrip unchanged. Any `identity_hold` key rejects,
-including null; intermediate hold formats are unsupported. Direct Go snapshot
-callers must use the current schema (normally via `sessnap.Of`).
+legacy state also reject. Any `identity_hold` key rejects, including null.
+Straightforward nonpending `/1` history may convert only when every call/result
+pair and delegation parent call has an unambiguous, valid relationship. Ambiguous,
+incomplete, orphaned, wrong-role, or unprovable history and archives reject. Current `/2`
+approvals and private authorization continuations round-trip unchanged.
 
-Complete-event reconstruction converts unambiguous legacy call/result references
-incrementally, including provider-ID reuse after completion. Ambiguous or
-unsupported legacy sources return `ErrReconstruct`, including overlapping provider
-references, orphan results, unprovable approvals, and legacy external authorization.
-Reconstruction adds no repair messages or interruption results. Sparse historical
-reads remain display-only. Loading performs no tool execution or external
-authorization action.
+A converted `/1` session is permanently excluded from learning. Current snapshots
+persist `learning_eligible`; only an explicit positive value remains eligible, and a
+missing value is ineligible. Saving, reloading, compaction, and later runs do not
+restore eligibility. Frozen legacy learning evidence and proposals are unavailable.
+
+The event codec omits recognized unsupported legacy invocation, control,
+delegation, and archive records. It returns `ErrSkipLegacyRecord` to its reader;
+cursor readers advance the physical position and preserve the resulting gap. Unknown,
+contradictory, malformed, and invalid current records remain errors. A filtered
+legacy stream is not complete evidence for reconstruction or learning. Loading
+performs no tool execution or external authorization action.
 
 ## See also
 

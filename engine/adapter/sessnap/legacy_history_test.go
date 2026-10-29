@@ -1,92 +1,133 @@
 package sessnap
 
 import (
-	"bytes"
 	"encoding/json"
-	"reflect"
 	"testing"
 
 	"github.com/stacklok/mecatl/engine/session"
 )
 
-func TestLegacyAmbiguousNonpendingHistorySalvaged(t *testing.T) {
-	for _, key := range []string{"", "duplicate"} {
-		data := []byte(`{"id":"history","state":"idle","environment_ref":{"Kind":"mem","ID":"workspace","Revision":"v1"},"messages":[{"role":"assistant","tool_calls":[{"ID":"` + key + `","Name":"Read","Args":{}},{"ID":"` + key + `","Name":"Read","Args":{}}]},{"role":"tool","tool_result":{"CallID":"` + key + `","Content":"unattached"}}]}`)
-		first := restoreFixture(t, data)
-		second := restoreFixture(t, data)
-		messages := first.Conversation.Messages
-		if !reflect.DeepEqual(messages, second.Conversation.Messages) || len(messages) != 2 || len(messages[0].ToolCalls) != 0 || messages[1].ToolResult != nil || messages[1].Text != "unattached" {
-			t.Fatal("ambiguous history gained guessed links or lost content")
-		}
-		for i, m := range messages {
-			if m.Legacy == nil || m.Legacy.Ordinal != i || len(m.Legacy.Unsupported) == 0 {
-				t.Fatal("ambiguous history lost source provenance")
+func TestLegacyInvalidHistoryRejected(t *testing.T) {
+	call := legacyCallDTO{ID: "token", Name: "Read", Args: json.RawMessage(`{}`)}
+	assistant := legacyMessageDTO{Role: session.RoleAssistant, ToolCalls: []legacyCallDTO{call}}
+	result := legacyMessageDTO{Role: session.RoleTool, ToolResult: &legacyResultDTO{CallID: "token", Content: "result", Parts: []session.Content{session.NewTextBlock("typed text")}}}
+	for name, history := range map[string][]legacyMessageDTO{
+		"duplicate batch":   {{Role: session.RoleAssistant, ToolCalls: []legacyCallDTO{call, call}}, result},
+		"concurrent reuse":  {assistant, assistant, result},
+		"empty call":        {{Role: session.RoleAssistant, ToolCalls: []legacyCallDTO{{Name: "Read"}}}},
+		"wrong call role":   {{Role: session.RoleUser, ToolCalls: []legacyCallDTO{call}}, result},
+		"orphan result":     {result},
+		"repeated result":   {assistant, result, result},
+		"empty result":      {{Role: session.RoleTool, ToolResult: &legacyResultDTO{Content: "unattached"}}},
+		"wrong result role": {assistant, {Role: session.RoleAssistant, ToolResult: result.ToolResult}},
+		"missing result":    {{Role: session.RoleTool}},
+		"wrong replay role": {{Role: session.RoleUser, Reasoning: "opaque"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			data, err := json.Marshal(history)
+			if err != nil {
+				t.Fatal(err)
 			}
-		}
-		encoded, err := Marshal(first)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if got := restoreFixture(t, encoded); !sameStoredHistory(t, got.Conversation.Messages, messages) {
-			t.Fatal("salvaged history changed on reload")
-		}
+			data = withJSONFields(t, legacyFixture(t, "legacy-completed"), map[string]json.RawMessage{"messages": data})
+			var snap Snapshot
+			if err := json.Unmarshal(data, &snap); err == nil {
+				t.Fatal("decoded invalid legacy history")
+			}
+			if _, err := UnmarshalFormat(data, "sessnap-json/1"); err == nil {
+				t.Fatal("restored invalid legacy history")
+			}
+		})
 	}
 }
 
-func TestUnattachedLegacyResultPreservesTypedContent(t *testing.T) {
-	data := legacyFixture(t, "legacy-completed")
-	fields := snapshotObject(t, data)
-	var messages []json.RawMessage
-	if err := json.Unmarshal(fields["messages"], &messages); err != nil {
+func TestLegacySnapshotRequiresClosedPairing(t *testing.T) {
+	fixture := legacyFixture(t, "legacy-completed")
+	var source struct {
+		Messages []json.RawMessage `json:"messages"`
+	}
+	if err := json.Unmarshal(fixture, &source); err != nil {
 		t.Fatal(err)
 	}
-	parts := []session.Content{
-		session.NewTextBlock("typed result text"),
-		session.NewResourceLinkBlock("fixture:asset", "asset", "title", "description", "image/png", 3, []string{"user"}),
-		{BlockKind: session.BlockImage, Kind: session.MediaImage, MIMEType: "image/png", Data: []byte{1, 2, 3}},
+	for _, state := range []session.State{session.StateIdle, session.StateCompleted, session.StateFailed} {
+		t.Run(string(state), func(t *testing.T) {
+			stateJSON, err := json.Marshal(state)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, closed := range []bool{false, true} {
+				history := source.Messages
+				if !closed {
+					history = history[:len(history)-1]
+				}
+				messagesJSON, err := json.Marshal(history)
+				if err != nil {
+					t.Fatal(err)
+				}
+				data := withJSONFields(t, fixture, map[string]json.RawMessage{"state": stateJSON, "messages": messagesJSON})
+				for name, load := range map[string]func([]byte) (*session.Session, error){
+					"JSON": func(data []byte) (*session.Session, error) {
+						var snap Snapshot
+						if err := json.Unmarshal(data, &snap); err != nil {
+							return nil, err
+						}
+						return snap.Restore()
+					},
+					"Unmarshal": Unmarshal,
+					"/1": func(data []byte) (*session.Session, error) {
+						return UnmarshalFormat(data, "sessnap-json/1")
+					},
+				} {
+					s, err := load(data)
+					if !closed {
+						if err == nil {
+							t.Fatalf("%s restored dangling call", name)
+						}
+						continue
+					}
+					if err != nil {
+						t.Fatalf("%s rejected sequential completed reuse: %v", name, err)
+					}
+					messages := s.Conversation.Messages
+					if s.State != state || len(messages) != len(history) {
+						t.Fatalf("%s changed state or history", name)
+					}
+					if err := session.ValidateToolPairing(messages); err != nil {
+						t.Fatalf("%s invalid pairing: %v", name, err)
+					}
+					if messages[1].ToolCalls[0].ID == messages[3].ToolCalls[0].ID || messages[1].Replay.Bindings[0].PairingID != "reused" || messages[3].Replay.Bindings[0].PairingID != "reused" {
+						t.Fatalf("%s lost sequential identity or provider pairing", name)
+					}
+				}
+			}
+		})
 	}
-	result, err := json.Marshal(legacyMessageDTO{Role: session.RoleTool, Text: "row text", Parts: []contentDTO{{Kind: session.MediaAudio, MIMEType: "audio/wav", Data: []byte{4, 5, 6}}}, ToolResult: &legacyResultDTO{CallID: "missing", Content: "result summary", Parts: parts}})
+}
+
+func TestLegacyArchiveRequiresClosedPairing(t *testing.T) {
+	inc := session.NewIncarnationID()
+	call := `{"Role":"assistant","ToolCalls":[{"ID":"reused","Name":"Read","Args":{},"item_id":"item"}]}`
+	result := `{"Role":"tool","ToolResult":{"CallID":"reused","Content":"result","Parts":[{"BlockKind":"text","Text":"typed"}]}}`
+	for _, history := range []string{call, result, call + "," + call + "," + result, call + "," + result + "," + result} {
+		if _, err := DecodeLegacyArchive([]byte(`{"Replaced":[`+history+`]}`), inc, "archive/one"); err == nil {
+			t.Fatal("accepted ambiguous or incomplete archive")
+		}
+	}
+	data := []byte(`{"Replaced":[` + call + "," + result + "," + call + "," + result + `]}`)
+	messages, err := DecodeLegacyArchive(data, inc, "archive/one")
 	if err != nil {
 		t.Fatal(err)
 	}
-	fields["messages"], err = json.Marshal(append(messages, result))
+	if err := session.ValidateToolPairing(messages); err != nil {
+		t.Fatal(err)
+	}
+	if messages[0].ToolCalls[0].ID == messages[2].ToolCalls[0].ID || messages[0].Replay.Bindings[0].PairingID != "reused" || messages[2].Replay.Bindings[0].ItemID != "item" || messages[1].ToolResult.Parts[0].Text != "typed" {
+		t.Fatal("sequential reuse lost identity, replay, or typed results")
+	}
+	again, err := DecodeLegacyArchive(data, inc, "archive/one")
 	if err != nil {
 		t.Fatal(err)
 	}
-	data = withJSONFields(t, data, fields)
-	s, err := Unmarshal(data)
-	if err != nil {
-		t.Fatal(err)
-	}
-	index := len(s.Conversation.Messages) - 1
-	m := s.Conversation.Messages[index]
-	history := session.HistoricalMessage(m)
-	if m.ToolResult != nil || m.Legacy.ResultOrdinal != -1 || m.Legacy.ResultSlot != -1 || history == nil || history.Text != "row text\nresult summary" || !history.AttachmentUnavailable {
-		t.Fatal("unattached result lost text or gained an authoritative link")
-	}
-	if len(history.Parts) != 4 || !bytes.Equal(history.Parts[0].Data, []byte{4, 5, 6}) || !reflect.DeepEqual(history.Parts[1:], parts) {
-		t.Fatal("unattached result lost typed content/media")
-	}
-	if len(m.Parts) != 1 || m.Parts[0].BlockKind != "" {
-		t.Fatal("tool-result blocks leaked into message media")
-	}
-	want := session.CloneMessages(s.Conversation.Messages)
-	for range 2 {
-		snap, err := Of(s)
-		if err != nil {
-			t.Fatal(err)
-		}
-		s, err = snap.Restore()
-		if err != nil {
-			t.Fatal(err)
-		}
-		data, err := Marshal(s)
-		if err != nil {
-			t.Fatal(err)
-		}
-		s = restoreFixture(t, data)
-		if !sameStoredHistory(t, s.Conversation.Messages, want) {
-			t.Fatal("cycles changed migrated history")
-		}
+	if !sameStoredHistory(t, messages, again) {
+		t.Fatal("archive conversion is not deterministic")
 	}
 }

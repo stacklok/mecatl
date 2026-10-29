@@ -235,9 +235,6 @@ func estimateSnapshotBytes(snap sessnap.Snapshot) int64 {
 	}
 
 	rel := snap.Relationship
-	if rel.Legacy != nil {
-		size += int64(48 + len(rel.Legacy.ProviderCallID))
-	}
 	size += int64(len(rel.ScheduleName) + len(rel.OriginSessionID) + len(rel.OriginIncarnation) + len(rel.ParentSessionID) + len(rel.ParentIncarnation) +
 		len(rel.CallID) + len(rel.TeamID) + len(rel.MemberName) + len(rel.DebugTargetID) + len(rel.DebugTargetIncarnation))
 	if rel.BranchIndex != nil {
@@ -262,18 +259,6 @@ func estimateSnapshotBytes(snap sessnap.Snapshot) int64 {
 func estimateMessagesBytes(snap sessnap.Snapshot) int64 {
 	var size int64
 	for _, message := range snap.Messages {
-		if h := message.Historical; h != nil {
-			size += int64(96 + len(h.RecordID) + len(h.Kind) + len(h.Text))
-			for _, part := range h.Parts {
-				size += estimateContentBytes(part)
-			}
-		}
-		if legacy := message.Legacy; legacy != nil {
-			size += int64(128 + len(legacy.Incarnation) + len(legacy.Namespace) + len(legacy.ResultProviderID) + encodedBytesLen(len(legacy.Unsupported)))
-			for _, call := range legacy.Calls {
-				size += int64(64 + len(call.CallID) + len(call.ProviderID) + len(call.ItemID))
-			}
-		}
 		if replay := message.Replay; replay != nil {
 			size += 32
 			for _, binding := range replay.Bindings {

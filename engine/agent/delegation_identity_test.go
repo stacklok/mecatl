@@ -324,7 +324,6 @@ func TestSubagentForkRetainsMigratedIdentityReplayAndProvenance(t *testing.T) {
 	child.Conversation.Messages[1].ToolCalls[0].Args[0] = '!'
 	child.Conversation.Messages[1].Replay.Bindings[0].PairingID = "changed"
 	child.Conversation.Messages[1].Replay.Provider.Data[0] = '!'
-	child.Conversation.Messages[1].Legacy.Calls[0].ProviderID = "changed"
 	if !reflect.DeepEqual(parent.Conversation.Messages[:len(original)], original) {
 		t.Fatal("child history aliases parent history")
 	}

@@ -68,7 +68,6 @@
     method func (AutomaticReservationRequest).Validate() error
     method func (CandidateKind).Valid() bool
     method func (EvaluationVerdict).Valid() bool
-    method func (EvidenceRef).ResolvedProtocol() EvidenceProtocol
     method func (MaterializationReason).String() string
     method func (MessageSpan).Contains(ordinal int) bool
     method func (MessageSpan).Valid(messageCount int) bool
@@ -88,6 +87,7 @@
     method func (SkillActivationPolicy).Valid() bool
     method func (SkillState).Valid() bool
     method func (ThresholdPolicy).Decide(ctx context.Context, req AdmissionRequest) (AdmissionDecision, error)
+    method func (Trajectory).LearningEligible() bool
     method func (ValidationDisposition).Valid() bool
 const ActivityAbstained ActivityKind = "abstained"
 const ActivityAdmitted ActivityKind = "admitted"
@@ -231,6 +231,7 @@ const ReasonHardTrigger AdmissionReason = "hard"
 const ReasonHostRequested AdmissionReason = "host_requested"
 const ReasonIneligibleStop AdmissionReason = "ineligible_stop"
 const ReasonInvalidCurrentSpan AdmissionReason = "invalid_current_span"
+const ReasonLearningIneligible AdmissionReason = "learning_ineligible"
 const ReasonModelTurnsModifier AdmissionReason = "model_turns_modifier"
 const ReasonNonMainSession AdmissionReason = "non_main_session"
 const ReasonPolicyAlways AdmissionReason = "policy_always"
@@ -249,9 +250,7 @@ const ReasonTimeout AdmissionReason = "timeout"
 const ReasonTrivialRun AdmissionReason = "trivial_run"
 const ReasonTrustedHostContradiction AdmissionReason = "trusted_host_contradiction"
 const ReasonWeightedThreshold AdmissionReason = "weighted"
-const ReflectionEvidenceLegacyV0 EvidenceProtocol = "reflection-evidence/legacy-v0"
 const ReflectionEvidenceSourceV1 untyped string = "mecatl/reflection-evidence/source/v1"
-const ReflectionEvidenceV1 EvidenceProtocol = "reflection-evidence/v1"
 const ReflectionEvidenceV2 EvidenceProtocol = "reflection-evidence/v2"
 const Review Mode = 1
 const SensitivityUnset Sensitivity = 0
@@ -286,26 +285,23 @@ func DeterministicProposalID(p ProposalPartition, input string, c Candidate) (Pr
 func EventEvidenceRef(in Input, ordinal int, callID session.ToolCallID) (EvidenceRef, error)
 func EvidenceHandle(ref EvidenceRef) string
 func EvidencePreview(in Input, ref EvidenceRef) (string, error)
-func LegacyVerificationInput(trajectory Trajectory, events []session.Event) (Input, error)
 func ManifestProtocolSupported(protocol EvidenceProtocol, domain string) bool
 func MaterializeEvidence(ctx context.Context, req MaterializationRequest) (Materialization, error)
 func MessageEvidenceRef(in Input, ordinal int, callID session.ToolCallID) (EvidenceRef, error)
 func NewAdmissionProvenance(class AdmissionClass, source AttemptSource, prompt CurrentPromptBinding) (AdmissionProvenance, error)
 func NewCandidate(in Input, candidate Candidate) (Candidate, error)
 func NewInput(trajectory Trajectory, events []session.Event, signals []Signal, existing []ExistingFact) Input
+func NewSessionTrajectory(sess *session.Session, workspace string, stop session.StopReason, usage session.Usage) Trajectory
 func NewTrajectory(id session.SessionID, workspace string, stop session.StopReason, usage session.Usage, messages []session.Message) Trajectory
 func ParseMode(s string) (Mode, error)
 func ParseSensitivity(value string) (Sensitivity, error)
 func ParseSkillActivationPolicy(value string) (SkillActivationPolicy, error)
 func ProjectAttempt(record AttemptRecord) (AttemptProjection, error)
 func ProjectInput(in Input) (Projection, error)
-func ProjectVerifiedInput(in Input) (Projection, error)
-func RematerializeEvidence(trajectory Trajectory, events []session.Event, incarnation session.IncarnationID, manifest MaterializationManifest, eventOrdinals ...[]int) (Input, error)
+func RematerializeEvidence(trajectory Trajectory, events []session.Event, manifest MaterializationManifest, eventOrdinals ...[]int) (Input, error)
 func ResolveEvidence(in Input, ref EvidenceRef) error
 func ResolveEvidenceHandle(in Input, handle string) (EvidenceRef, error)
 func SkillVersionID(bundle SkillBundle) (VersionID, error)
-func SourceEventOrdinal(event session.Event, incarnation session.IncarnationID, ordinal int) (int, error)
-func SourceMessageIndex(messages []session.Message, incarnation session.IncarnationID, ordinal int, protocol EvidenceProtocol) (int, error)
 func ValidAttemptTransition(from AttemptState, to AttemptState) bool
 func ValidLearnedSkillName(name string) bool
 func ValidSHA256(value string) bool
@@ -320,7 +316,7 @@ func ValidateSkillCandidate(in Input, candidate Candidate) error
 func ValidateSkillEvaluation(e SkillEvaluation) error
 func ValidateSkillPartition(partition SkillPartition, ownerAgent string) error
 func ValidateSkillProvenance(p SkillProvenance) error
-func VerifyEvidenceSource(trajectory Trajectory, events []session.Event, incarnation session.IncarnationID, ref EvidenceRef, eventOrdinals ...[]int) (EvidenceCitation, error)
+func VerifyEvidenceSource(trajectory Trajectory, events []session.Event, ref EvidenceRef, eventOrdinals ...[]int) (EvidenceCitation, error)
 type Activity struct{Kind ActivityKind; Reason AdmissionReason; Sensitivity Sensitivity; Count int64}
 type ActivityKind string
 type AdmissionClass string

@@ -9,7 +9,7 @@ import (
 
 func TestScopedSignalsPreserveEvidenceProtocolAndCoordinates(t *testing.T) {
 	messages := []session.Message{session.NewUserMessage("old context"), session.NewUserMessage("remember that focused tests come first")}
-	for _, protocol := range []learning.EvidenceProtocol{"", learning.ReflectionEvidenceLegacyV0, learning.ReflectionEvidenceV1, learning.ReflectionEvidenceV2} {
+	for _, protocol := range []learning.EvidenceProtocol{learning.ReflectionEvidenceV2} {
 		t.Run(string(protocol), func(t *testing.T) {
 			input := reflectionInput(messages...)
 			input.Protocol = protocol

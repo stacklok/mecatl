@@ -54,10 +54,9 @@ func TestAutomaticReviewerAttributesWriteToCompletedParentTrajectory(t *testing.
 		Catalog: memoryCatalog(t, memorytools.UserTools(store)),
 	})
 	observer := agent.NewUserModelObserver(child)
-	err := observer.Observe(context.Background(), learning.Trajectory{
-		SessionID: "completed-parent", Workspace: "/ws",
-		Messages: []session.Message{session.NewUserMessage("I prefer helix"), session.NewAssistantMessage("noted", nil)},
-	})
+	err := observer.Observe(context.Background(), currentLearningTrajectory(t, "completed-parent", "/ws", session.StopEndTurn, session.Usage{},
+		[]session.Message{session.NewUserMessage("I prefer helix"), session.NewAssistantMessage("noted", nil)},
+	))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -136,7 +136,7 @@ func decodeLegacySnapshot(data []byte) (Snapshot, error) {
 		DebugTargetID: rel.DebugTargetID, DebugTargetIncarnation: rel.DebugTargetIncarnation,
 	}
 	if rel.CallID != "" {
-		relationship.Legacy = &session.LegacyRelationshipIdentity{ProviderCallID: rel.CallID}
+		return Snapshot{}, errors.New("sessnap: legacy delegation call relationship is unsupported")
 	}
 	return Snapshot{
 		IdentitySchema: 2, Incarnation: inc, Messages: messages, Relationship: relationship,
@@ -188,127 +188,47 @@ func legacyReplay(m legacyMessageDTO) *session.ProviderReplay {
 	return &session.ProviderReplay{Format: "mecatl.legacy-message", Version: 1, Data: data}
 }
 
-type legacyOccurrence struct {
-	ordinal int
-	slot    int
-	call    legacyCallDTO
-	id      session.ToolCallID
-	unsafe  bool
-}
-
-type legacySource struct {
-	calls   [][]*legacyOccurrence
-	results []*legacyOccurrence
-}
-
-// indexLegacySource proves call/result pairings within one complete legacy source.
-// It marks duplicate or concurrently outstanding provider keys unsafe, while allowing
-// a key to be reused after its earlier occurrence has been answered.
-func indexLegacySource(old []legacyMessageDTO, inc session.IncarnationID, namespace string) (*legacySource, error) {
-	x := &legacySource{
-		calls: make([][]*legacyOccurrence, len(old)), results: make([]*legacyOccurrence, len(old)),
-	}
-	open := make(map[string][]*legacyOccurrence)
+func migrateLegacyMessages(old []legacyMessageDTO, inc session.IncarnationID, namespace string) ([]messageDTO, error) {
+	messages := make([]messageDTO, len(old))
+	open := make(map[string]session.ToolCallID)
 	for i, m := range old {
 		if len(m.Replay) != 0 {
 			return nil, errors.New("sessnap: replay carrier without identity schema")
 		}
-		batch := make(map[string][]*legacyOccurrence)
-		for j, call := range m.ToolCalls {
-			occ := &legacyOccurrence{ordinal: i, slot: j, call: call, id: legacySourceToolCallID(inc, namespace, i, j), unsafe: call.ID == "" || m.Role != session.RoleAssistant}
-			x.calls[i] = append(x.calls[i], occ)
-			batch[call.ID] = append(batch[call.ID], occ)
-			if len(open[call.ID]) != 0 {
-				occ.unsafe = true
-				for _, prior := range open[call.ID] {
-					prior.unsafe = true
-				}
-			}
-			open[call.ID] = append(open[call.ID], occ)
+		dto := messageDTO{Role: m.Role, Text: m.Text, Parts: m.Parts, ProviderPhase: m.Phase, UserPromptProvenance: m.UserPromptProvenance}
+		replay := &session.MessageReplay{Provider: legacyReplay(m)}
+		if m.Role != session.RoleAssistant && (len(m.ToolCalls) != 0 || replay.Provider != nil) {
+			return nil, errors.New("sessnap: legacy calls or replay on non-assistant message")
 		}
-		for _, occurrences := range batch {
-			if len(occurrences) > 1 {
-				for _, occ := range occurrences {
-					occ.unsafe = true
-				}
+		for j, call := range m.ToolCalls {
+			if call.ID == "" {
+				return nil, errors.New("sessnap: empty legacy call ID")
 			}
+			if _, exists := open[call.ID]; exists {
+				return nil, errors.New("sessnap: ambiguous legacy call ID")
+			}
+			id := legacySourceToolCallID(inc, namespace, i, j)
+			open[call.ID] = id
+			dto.ToolCalls = append(dto.ToolCalls, session.ToolCall{ID: id, Name: call.Name, Args: call.Args})
+			replay.Bindings = append(replay.Bindings, session.ToolCallBinding{CallID: id, PairingID: session.ProviderCallID(call.ID), ItemID: session.ProviderItemID(call.ItemID)})
 		}
 		if m.ToolResult != nil {
-			key := m.ToolResult.CallID
-			if occurrences := open[key]; key != "" && len(occurrences) == 1 && !occurrences[0].unsafe && m.Role == session.RoleTool {
-				x.results[i] = occurrences[0]
-				delete(open, key)
+			occ, exists := open[m.ToolResult.CallID]
+			if !exists || m.Role != session.RoleTool {
+				return nil, errors.New("sessnap: orphaned or wrong-role legacy result")
 			}
+			dto.ToolResult = &session.ToolResult{CallID: occ, Content: m.ToolResult.Content, IsError: m.ToolResult.IsError, Parts: m.ToolResult.Parts}
+			delete(open, m.ToolResult.CallID)
+		} else if m.Role == session.RoleTool {
+			return nil, errors.New("sessnap: legacy tool message without result")
 		}
-	}
-	return x, nil
-}
-
-func migrateLegacyMessages(old []legacyMessageDTO, inc session.IncarnationID, namespace string) ([]messageDTO, error) {
-	source, err := indexLegacySource(old, inc, namespace)
-	if err != nil {
-		return nil, err
-	}
-	messages := make([]messageDTO, len(old))
-	for i, m := range old {
-		dto, err := source.migrateMessage(i, m, inc, namespace)
-		if err != nil {
-			return nil, err
+		if replay.Provider != nil || len(replay.Bindings) != 0 {
+			dto.Replay = replay
 		}
 		messages[i] = dto
 	}
+	if len(open) != 0 {
+		return nil, errors.New("sessnap: incomplete legacy tool pairing")
+	}
 	return messages, nil
-}
-
-func (x *legacySource) migrateMessage(i int, m legacyMessageDTO, inc session.IncarnationID, namespace string) (messageDTO, error) {
-	dto := messageDTO{Role: m.Role, Text: m.Text, Parts: m.Parts, ProviderPhase: m.Phase, UserPromptProvenance: m.UserPromptProvenance,
-		Legacy: &session.LegacyMessageIdentity{Incarnation: inc, Namespace: namespace, Ordinal: i, ResultOrdinal: -1, ResultSlot: -1, ReasoningItemID: m.ReasoningItemID}}
-	replay := &session.MessageReplay{Provider: legacyReplay(m)}
-	unsupported := m.Role != session.RoleAssistant && replay.Provider != nil
-	for _, occ := range x.calls[i] {
-		if occ.unsafe {
-			unsupported = true
-			continue
-		}
-		dto.ToolCalls = append(dto.ToolCalls, session.ToolCall{ID: occ.id, Name: occ.call.Name, Args: occ.call.Args})
-		replay.Bindings = append(replay.Bindings, session.ToolCallBinding{CallID: occ.id, PairingID: session.ProviderCallID(occ.call.ID), ItemID: session.ProviderItemID(occ.call.ItemID)})
-		dto.Legacy.Calls = append(dto.Legacy.Calls, session.LegacyCallIdentity{CallID: occ.id, Slot: occ.slot, ProviderID: occ.call.ID, ItemID: occ.call.ItemID})
-	}
-	if m.ToolResult != nil {
-		dto.Legacy.ResultProviderID = m.ToolResult.CallID
-		if occ := x.results[i]; occ != nil && !occ.unsafe {
-			dto.ToolResult = &session.ToolResult{CallID: occ.id, Content: m.ToolResult.Content, IsError: m.ToolResult.IsError, Parts: m.ToolResult.Parts}
-			dto.Legacy.ResultOrdinal, dto.Legacy.ResultSlot = occ.ordinal, occ.slot
-		} else {
-			unsupported = true
-			dto.Role = session.RoleAssistant
-		}
-	} else if m.Role == session.RoleTool {
-		unsupported = true
-		dto.Role = session.RoleAssistant
-	}
-	if unsupported {
-		var err error
-		dto.Legacy.Unsupported, err = json.Marshal(m)
-		if err != nil {
-			return messageDTO{}, err
-		}
-		if m.ToolResult != nil {
-			preserveUnattachedResult(&dto, m.ToolResult)
-		}
-	}
-	if dto.Role == session.RoleAssistant && (replay.Provider != nil || len(replay.Bindings) != 0) {
-		dto.Replay = replay
-	}
-	return dto, nil
-}
-
-func preserveUnattachedResult(dto *messageDTO, result *legacyResultDTO) {
-	if dto.Text == "" {
-		dto.Text = result.Content
-	} else if result.Content != "" && dto.Text != result.Content {
-		dto.Text += "\n" + result.Content
-	}
-	dto.Historical = session.HistoricalMessage(fromDTO(*dto))
-	dto.Historical.Parts = append(contentFromDTO(dto.Parts), dto.Historical.Parts...)
 }

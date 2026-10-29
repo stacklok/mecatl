@@ -1,8 +1,8 @@
 package eventcodec_test
 
 import (
-	"bytes"
 	"encoding/json"
+	"errors"
 	"reflect"
 	"strings"
 	"testing"
@@ -33,22 +33,21 @@ func TestSchemaDispatch(t *testing.T) {
 			} {
 				t.Run(entry.name, func(t *testing.T) {
 					e, err := entry.decode([]byte(version.raw))
+					if version.legacy {
+						if !errors.Is(err, eventcodec.ErrSkipLegacyRecord) || !reflect.DeepEqual(e, session.Event{}) {
+							t.Fatalf("legacy reference escaped: %+v, %v", e, err)
+						}
+						return
+					}
 					if err != nil {
 						t.Fatal(err)
 					}
 					if e.RunID != "run" || e.Seq != 7 {
 						t.Fatal("source coordinates changed")
 					}
-					if version.legacy {
-						p := e.LegacyIdentity()
-						if e.Type != session.EvHistorical || e.ToolCall != nil || e.Historical == nil || !e.Historical.AttachmentUnavailable || p == nil || !bytes.Equal(p.Payload, []byte(version.raw)) {
-							t.Fatalf("legacy reference escaped quarantine: %+v", e)
-						}
-					} else {
-						want := session.NewToolCall("call_current", "Read", json.RawMessage(`{"z":1,"a":2}`))
-						if e.Type != session.EvToolCall || e.Historical != nil || e.LegacyIdentity() != nil || !reflect.DeepEqual(e.ToolCall, &want) {
-							t.Fatalf("current call changed: %+v", e)
-						}
+					want := session.NewToolCall("call_current", "Read", json.RawMessage(`{"z":1,"a":2}`))
+					if e.Type != session.EvToolCall || !reflect.DeepEqual(e.ToolCall, &want) {
+						t.Fatalf("current call changed: %+v", e)
 					}
 					stored, err := eventcodec.Marshal(e)
 					if err != nil {
@@ -56,7 +55,7 @@ func TestSchemaDispatch(t *testing.T) {
 					}
 					reloaded, err := eventcodec.UnmarshalFormat(stored, eventcodec.Format)
 					if err != nil || !reflect.DeepEqual(e, reloaded) {
-						t.Fatalf("current reload changed event or legacy provenance: %v", err)
+						t.Fatalf("current reload changed event: %v", err)
 					}
 				})
 			}
@@ -75,7 +74,7 @@ func TestCurrentDecodingDoesNotUseLegacyDTOs(t *testing.T) {
 		func(data []byte) (session.Event, error) { return eventcodec.UnmarshalFormat(data, eventcodec.Format) },
 	} {
 		e, err := decode([]byte(`{"identity_schema":2,` + body + `}`))
-		if err != nil || e.ToolCall == nil || e.ToolCall.ID != "call_current" || e.LegacyIdentity() != nil {
+		if err != nil || e.ToolCall == nil || e.ToolCall.ID != "call_current" {
 			t.Fatalf("current decoder interpreted legacy field: %+v, %v", e, err)
 		}
 		if _, err := decode([]byte(`{"identity_schema":2,"ToolCall":{"ID":17}}`)); err == nil {

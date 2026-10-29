@@ -70,6 +70,26 @@ func TestCanonicalResultBatchAtomic(t *testing.T) {
 	}
 }
 
+func TestCanonicalResultBatchOwnsContent(t *testing.T) {
+	s := newTestSession(Limits{})
+	mustOK(t, s.BeginTurn())
+	mustOK(t, s.RecordAssistant(NewAssistantMessage("", []ToolCall{NewToolCall("a", "Read", nil), NewToolCall("b", "Read", nil)})))
+	parts := []Content{{BlockKind: BlockImage, Kind: MediaImage, MIMEType: "image/png", Data: []byte{1, 2}, Audience: []string{"assistant"}}}
+	results := []ToolResult{NewToolResultWithParts("a", "first", parts), NewToolResultWithParts("b", "second", parts)}
+	mustOK(t, s.RecordToolResults(results))
+	results[0].CallID = "changed"
+	results[0].Parts[0].Data[0] = 9
+	results[0].Parts[0].Audience[0] = "user"
+	first, second := s.Conversation.Messages[1].ToolResult, s.Conversation.Messages[2].ToolResult
+	if first.CallID != "a" || first.Parts[0].Data[0] != 1 || first.Parts[0].Audience[0] != "assistant" || second.Parts[0].Data[0] != 1 {
+		t.Fatal("accepted results alias the input batch")
+	}
+	first.Parts[0].Data[0] = 7
+	if second.Parts[0].Data[0] != 1 {
+		t.Fatal("accepted results alias sibling content")
+	}
+}
+
 func TestCanonicalHistoryRejectsRepeatedOccurrences(t *testing.T) {
 	call := func(id ToolCallID) Message {
 		return NewAssistantMessage("", []ToolCall{NewToolCall(id, "Read", nil)})

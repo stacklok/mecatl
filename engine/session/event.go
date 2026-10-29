@@ -1527,9 +1527,6 @@ func (s AuthorizationStatus) valid() bool {
 // loop runs as a producer writing Events to a channel; server adapters relay
 // them to the gRPC server-stream or HTTP SSE.
 type Event struct {
-	// Historical is an unattached display record, never executable authority.
-	Historical *HistoricalRecord `json:",omitempty"`
-	legacy     *LegacyEventIdentity
 	// Type is the event kind.
 	Type EventType
 	// Seq is a monotonically increasing sequence number within a run.

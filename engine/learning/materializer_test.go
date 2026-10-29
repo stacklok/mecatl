@@ -9,7 +9,9 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/stacklok/mecatl/engine/adapter/sessnap"
 	"github.com/stacklok/mecatl/engine/learning"
 	"github.com/stacklok/mecatl/engine/session"
 )
@@ -24,7 +26,7 @@ func materialize(t *testing.T, req learning.MaterializationRequest) learning.Mat
 }
 
 func sourceTrajectory(messages ...session.Message) learning.Trajectory {
-	return learning.NewTrajectory("session-source", "/private/workspace", session.StopEndTurn, session.Usage{}, messages)
+	return currentTrajectory("session-source", "/private/workspace", session.StopEndTurn, session.Usage{}, messages)
 }
 
 type scanBudgetContext struct {
@@ -164,8 +166,12 @@ func TestMaterializerEventCoordinatesAreSessionUnique(t *testing.T) {
 }
 
 func TestScalableReflectionEvidence_Scenario2_ManifestDeterministicAcrossReloadAndRetry(t *testing.T) {
+	sess := session.New("session-source", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/fixture", Revision: "test"}, session.Limits{}, time.Unix(0, 0))
+	if err := sess.SeedHistory([]session.Message{session.NewUserMessage("remember that Go files use gofmt"), assistantWithReplay("Done.", "private reasoning", nil)}); err != nil {
+		t.Fatal(err)
+	}
 	req := learning.MaterializationRequest{
-		Trajectory: sourceTrajectory(session.NewUserMessage("remember that Go files use gofmt"), assistantWithReplay("Done.", "private reasoning", nil)),
+		Trajectory: learning.NewSessionTrajectory(sess, "/fixture", session.StopEndTurn, session.Usage{}),
 		Events:     []session.Event{{Type: session.EvResult, Seq: 44, Turn: 2, Result: &session.ResultPayload{Stop: session.StopEndTurn}}},
 		Explicit:   true,
 	}
@@ -178,6 +184,18 @@ func TestScalableReflectionEvidence_Scenario2_ManifestDeterministicAcrossReloadA
 	if err := json.Unmarshal(raw, &reloaded); err != nil {
 		t.Fatal(err)
 	}
+	if got := materialize(t, reloaded); got.Disposition != learning.MaterializationAbstained {
+		t.Fatal("serialized request minted learning eligibility")
+	}
+	snapshot, err := sessnap.Marshal(sess)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess, err = sessnap.Unmarshal(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reloaded.Trajectory = learning.NewSessionTrajectory(sess, "/fixture", session.StopEndTurn, session.Usage{})
 	second := materialize(t, reloaded)
 	if first.Manifest.Protocol != learning.ReflectionEvidenceV2 || first.Manifest.Source.Domain != learning.ReflectionEvidenceSourceV1 || first.Manifest.Source.Value != "session-source" {
 		t.Fatalf("identity boundary = %#v", first.Manifest)
@@ -283,68 +301,34 @@ func TestMaterializerSelectedLocalHandlesDoNotReplaceOriginalCoordinates(t *test
 	}
 }
 
-func TestMaterializerLegacyEvidenceOrdinalCompatibilityIsVersioned(t *testing.T) {
-	legacyJSON := []byte(`{"session_id":"s","locator":"message","ordinal":7,"digest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}`)
-	var legacy learning.EvidenceRef
-	if err := json.Unmarshal(legacyJSON, &legacy); err != nil {
-		t.Fatal(err)
-	}
-	if legacy.ResolvedProtocol() != learning.ReflectionEvidenceLegacyV0 || legacy.Ordinal != 7 || legacy.OriginalMessage != nil {
-		t.Fatalf("legacy ref rewritten: %#v", legacy)
-	}
-	modern := learning.EvidenceRef{Protocol: learning.ReflectionEvidenceV1, Locator: learning.EvidenceMessage, Ordinal: 99, OriginalMessage: ptr(7)}
-	raw, _ := json.Marshal(modern)
-	var decoded learning.EvidenceRef
-	if err := json.Unmarshal(raw, &decoded); err != nil {
-		t.Fatal(err)
-	}
-	if decoded.ResolvedProtocol() != learning.ReflectionEvidenceV1 || decoded.Ordinal != 99 || *decoded.OriginalMessage != 7 {
-		t.Fatalf("v1 inferred from fields or ordinal rewritten: %#v", decoded)
-	}
-}
-
-// These were captured from the shipped v0 and v1 evidence representations. Their
-// source coordinates and digests are frozen testdata rather than values recomputed
-// by a materializer during the test.
-func TestFrozenLegacyEvidenceFixturesVerify(t *testing.T) {
-	var v0 struct {
-		Input learning.Input       `json:"input"`
-		Ref   learning.EvidenceRef `json:"ref"`
-	}
-	v0Bytes, err := os.ReadFile("testdata/legacy-evidence-v0.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := json.Unmarshal(v0Bytes, &v0); err != nil {
-		t.Fatalf("decode v0 fixture: %v", err)
-	}
-	if v0.Ref.ResolvedProtocol() != learning.ReflectionEvidenceLegacyV0 {
-		t.Fatalf("v0 protocol = %q", v0.Ref.ResolvedProtocol())
-	}
-	if err := learning.ResolveEvidence(v0.Input, v0.Ref); err != nil {
-		t.Fatalf("verify frozen v0 evidence: %v", err)
-	}
-
-	var v1 learning.Input
-	v1Bytes, err := os.ReadFile("testdata/legacy-evidence-v1.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := json.Unmarshal(v1Bytes, &v1); err != nil {
-		t.Fatalf("decode v1 fixture: %v", err)
-	}
-	if err := learning.ValidateInput(v1); err != nil {
-		t.Fatalf("validate frozen v1 evidence input: %v", err)
-	}
-	ref, err := learning.ResolveEvidenceHandle(v1, "m:1")
-	if err != nil {
-		t.Fatalf("resolve frozen v1 coordinate: %v", err)
-	}
-	if ref.OriginalMessage == nil || *ref.OriginalMessage != 1 || ref.ManifestIndex != 1 || ref.Digest != v1.Manifest.Entries[1].Digest || ref.AggregateDigest != v1.Manifest.Digest {
-		t.Fatalf("frozen v1 coordinates or digests changed: %#v", ref)
-	}
-	if err := learning.ResolveEvidence(v1, ref); err != nil {
-		t.Fatalf("verify frozen v1 evidence: %v", err)
+func TestFrozenLegacyEvidenceFixturesUnavailable(t *testing.T) {
+	for _, path := range []string{"testdata/legacy-evidence-v0.json", "testdata/legacy-evidence-v1.json"} {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var input learning.Input
+		if strings.Contains(path, "v0") {
+			var frozen struct {
+				Input learning.Input
+				Ref   learning.EvidenceRef
+			}
+			if err := json.Unmarshal(raw, &frozen); err != nil {
+				t.Fatal(err)
+			}
+			input = frozen.Input
+			if err := learning.ResolveEvidence(input, frozen.Ref); err == nil {
+				t.Fatal("old evidence resolved")
+			}
+		} else if err := json.Unmarshal(raw, &input); err != nil {
+			t.Fatal(err)
+		}
+		if err := learning.ValidateInput(input); err == nil {
+			t.Fatal("old evidence input accepted")
+		}
+		if _, err := learning.ProjectInput(input); err == nil {
+			t.Fatal("old input projected")
+		}
 	}
 }
 
@@ -381,5 +365,3 @@ func TestScalableReflectionEvidence_Scenario6_UnsafeOnlyInputDoesNoQueueOrProvid
 		t.Fatalf("unsafe-only input escaped pre-work abstention: %#v", got)
 	}
 }
-
-func ptr(v int) *int { return &v }

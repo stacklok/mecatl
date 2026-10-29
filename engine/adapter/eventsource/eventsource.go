@@ -143,6 +143,9 @@ type SessionMeta struct {
 	// runtime reattachment, in which case it MUST be supplied here — there is
 	// no other path into Fold's reconstructed Session for it.
 	ExternalBinding session.ExternalBinding
+	// LearningEligible is trusted durable metadata, never inferred from a filtered
+	// event stream. Missing metadata conservatively excludes learning.
+	LearningEligible bool
 	// CreatedAt is the creation timestamp.
 	CreatedAt time.Time
 }
@@ -173,8 +176,9 @@ var (
 // It returns ErrStream (wrapping the per-item error) if the iterator yields an
 // error, ErrReconstruct if the reconstructed history or authorization lifecycle is
 // inconsistent, and ErrPrivateStateRequired if a well-formed current-format
-// authorization lifecycle remains open after the final event. Ambiguous or
-// unsupported legacy continuations return ErrReconstruct. It never panics.
+// authorization lifecycle remains open after the final event. Only complete
+// current-format streams are supported; skipped old records cannot be recovered.
+// It never panics.
 func Fold(meta SessionMeta, events iter.Seq2[session.Event, error]) (*session.Session, error) {
 	if meta.Incarnation == "" {
 		meta.Incarnation = session.LegacyIncarnationID(meta.ID, meta.CreatedAt.UnixNano(), meta.Owner)
@@ -182,23 +186,15 @@ func Fold(meta SessionMeta, events iter.Seq2[session.Event, error]) (*session.Se
 	if !meta.Incarnation.Valid() {
 		return nil, fmt.Errorf("%w: missing stable source incarnation", ErrReconstruct)
 	}
-	c := legacyConverter{inc: meta.Incarnation}
 	f := &folder{}
 	for ev, err := range events {
 		if err != nil {
 			return nil, fmt.Errorf("%w: %w", ErrStream, err)
 		}
-		converted, err := c.convert(ev)
-		if err != nil {
-			return nil, fmt.Errorf("%w: %w", ErrReconstruct, err)
-		}
-		f.consume(converted)
+		f.consume(ev)
 		if f.reconstructErr != nil {
 			return nil, fmt.Errorf("%w: %w", ErrReconstruct, f.reconstructErr)
 		}
-	}
-	if err := c.finish(); err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrReconstruct, err)
 	}
 	if len(f.authorizations) != 0 {
 		return nil, ErrPrivateStateRequired
@@ -253,6 +249,9 @@ func restoreMetadata(meta SessionMeta) (*session.Session, error) {
 		return nil, fmt.Errorf("%w: missing or invalid environment ref", ErrReconstruct)
 	}
 	s := session.New(meta.ID, meta.Mode, meta.EnvironmentRef, meta.Limits, meta.CreatedAt)
+	if !meta.LearningEligible {
+		s.ExcludeFromLearning()
+	}
 	if err := s.RestoreSessionMetadata(meta.Kind, meta.Relationship); err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrReconstruct, err)
 	}
@@ -445,8 +444,6 @@ type folder struct {
 // consume folds one event into the accumulator.
 func (f *folder) consume(ev session.Event) {
 	switch ev.Type {
-	case session.EvHistorical:
-		f.consumeHistorical(ev)
 	case session.EvAuthorizationRequired:
 		f.requireAuthorization(ev.Authorization)
 	case session.EvAuthorizationResolved:
@@ -521,26 +518,6 @@ func (f *folder) consume(ev session.Event) {
 		// no_progress, hook, the delegation families) carry no conversation or lifecycle
 		// state a fold needs — ignore them.
 	}
-}
-
-func (f *folder) consumeHistorical(ev session.Event) {
-	if ev.Historical == nil {
-		return
-	}
-	if ev.Historical.Kind == string(session.EvApproval) || ev.Historical.Kind == string(session.EvPermissionRetract) {
-		f.pending = nil
-	}
-	if ev.Historical.Kind == string(session.EvToolCall) || ev.Historical.Kind == string(session.EvToolResult) {
-		f.flushTurn()
-	}
-	// Historical display is not model history, especially for redacted
-	// delegation previews which must stay outside the parent's context.
-	m := session.NewAssistantMessage("", nil)
-	m.Historical = ev.Historical
-	if p := ev.LegacyIdentity(); p != nil {
-		m.Legacy = &session.LegacyMessageIdentity{Incarnation: p.Incarnation, Namespace: p.Namespace, Ordinal: p.Ordinal, Unsupported: p.Payload}
-	}
-	f.messages = append(f.messages, m)
 }
 
 func (f *folder) requireAuthorization(p *session.AuthorizationPayload) {

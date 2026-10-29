@@ -477,6 +477,8 @@ type Session struct {
 	// incarnation is minted once by New and replaced only while idle during
 	// restoration of persisted creation metadata.
 	incarnation IncarnationID
+	// learningEligible is lifetime state, never reset between runs.
+	learningEligible bool
 
 	// authorityBound records that Authority was stamped through BindAuthority.
 	// A zero Authority with this marker is impossible: BindAuthority validates the
@@ -567,19 +569,26 @@ func New(id SessionID, mode PermissionMode, ref EnvironmentRef, limits Limits, c
 		panic("session: New requires a valid environment ref")
 	}
 	return &Session{
-		ID:              id,
-		State:           StateIdle,
-		Mode:            mode,
-		Conversation:    &Conversation{},
-		Limits:          limits,
-		tokenUsage:      make(map[UsageKind]TokenUsage),
-		EnvironmentRef:  ref,
-		Kind:            SessionKindMain,
-		TitleGeneration: TitleGenerationDisabled,
-		CreatedAt:       createdAt,
-		incarnation:     NewIncarnationID(),
+		ID:               id,
+		State:            StateIdle,
+		Mode:             mode,
+		Conversation:     &Conversation{},
+		Limits:           limits,
+		tokenUsage:       make(map[UsageKind]TokenUsage),
+		EnvironmentRef:   ref,
+		Kind:             SessionKindMain,
+		TitleGeneration:  TitleGenerationDisabled,
+		CreatedAt:        createdAt,
+		incarnation:      NewIncarnationID(),
+		learningEligible: true,
 	}
 }
+
+// LearningEligible reports whether this session may supply learning evidence.
+func (s *Session) LearningEligible() bool { return s.learningEligible }
+
+// ExcludeFromLearning permanently excludes this session from learning evidence.
+func (s *Session) ExcludeFromLearning() { s.learningEligible = false }
 
 // BeginTurn transitions the session into StateRunning at the start of a model
 // call. It is legal from StateIdle (first turn) or StateRunning (a follow-up
@@ -632,8 +641,8 @@ func (s *Session) RecordToolResults(results []ToolResult) error {
 	if _, err := validateToolHistory(slices.Concat(s.Conversation.Messages, messages)); err != nil {
 		return fmt.Errorf("RecordToolResults: %w", err)
 	}
-	for _, r := range results {
-		s.Conversation.Append(NewToolMessage(r))
+	for i, r := range results {
+		s.Conversation.Append(messages[i])
 		s.Counters.ToolCalls++
 		if r.IsError {
 			s.Counters.ConsecutiveFailures++

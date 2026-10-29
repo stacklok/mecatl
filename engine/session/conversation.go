@@ -54,11 +54,6 @@ type Message struct {
 	// URL-referenced media that rides alongside the text. Do not mutate Parts (or a
 	// Part's Data) after construction.
 	Parts []Content
-	// Historical preserves unattached display content across snapshot saves.
-	Historical *HistoricalRecord `json:"Historical,omitempty"`
-	// Legacy is private source-local verification provenance, not model history
-	// or executable identity lookup. Public projections must not copy it.
-	Legacy *LegacyMessageIdentity `json:"Legacy,omitempty"`
 	// Replay owns occurrence-specific bindings and opaque provider replay state.
 	// It is accepted atomically with this message, never as a separate sidecar.
 	Replay *MessageReplay `json:"Replay,omitempty"`
@@ -211,12 +206,6 @@ func CloneMessages(msgs []Message) []Message {
 }
 
 func cloneMessage(m Message) Message {
-	m.Legacy = m.Legacy.clone()
-	if m.Historical != nil {
-		h := *m.Historical
-		h.Parts = cloneContents(h.Parts)
-		m.Historical = &h
-	}
 	m.ToolCalls = slices.Clone(m.ToolCalls)
 	for i := range m.ToolCalls {
 		m.ToolCalls[i].Args = slices.Clone(m.ToolCalls[i].Args)
@@ -304,7 +293,7 @@ func ForkSnapshot(c *Conversation) []Message {
 }
 
 // StripProviderState returns independently owned canonical history without active
-// provider replay or phase. Legacy source coordinates remain verification metadata.
+// provider replay or phase.
 // Pairing tokens and target item IDs are reconstructed at the LLM/adapter seam.
 func StripProviderState(messages []Message) []Message {
 	out := CloneMessages(messages)

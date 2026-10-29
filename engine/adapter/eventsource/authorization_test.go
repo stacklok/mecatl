@@ -59,10 +59,6 @@ func TestFoldCanonicalAuthorizationCodecRoundTrip(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		projected, err := eventcodec.ProjectRecord(events[i], session.LegacyIncarnationID("s1", 0, nil), -1)
-		if err != nil || projected.Type != event.Type || projected.Historical != nil {
-			t.Fatal("canonical sparse record changed", err)
-		}
 	}
 	folded, err := eventsource.Fold(meta(), seq(events))
 	if err != nil {

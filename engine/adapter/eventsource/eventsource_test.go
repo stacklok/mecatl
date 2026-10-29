@@ -55,7 +55,7 @@ func TestFoldRestoresExecutionCapabilityFacts(t *testing.T) {
 	}
 }
 
-func TestFoldLegacyApprovalPreservesMetadataAcrossSnapshot(t *testing.T) {
+func TestFoldCurrentApprovalPreservesMetadataAcrossSnapshot(t *testing.T) {
 	m := meta()
 	m.Incarnation = session.LegacyIncarnationID(m.ID, m.CreatedAt.UnixNano(), m.Owner)
 	m.AgentDefinitionName = "reviewer"
@@ -67,24 +67,10 @@ func TestFoldLegacyApprovalPreservesMetadataAcrossSnapshot(t *testing.T) {
 	m.WorkspaceEnrollmentBrokerKeys = []string{"broker-read"}
 	m.WorkspaceEnrollmentBrokerKeysPresent = true
 
-	rawEvents := []string{
-		`{"Type":"tool.call","RunID":"legacy-run","Seq":1,"ToolCall":{"ID":"provider-call","Name":"Read","Args":{"path":"second.txt"}}}`,
-		`{"Type":"permission.ask","Ask":{"AskID":"ask-legacy","Tool":"Read","Call":"provider-call","Args":{"path":"second.txt"},"Reason":"approve"}}`,
-	}
-	events := make([]session.Event, len(rawEvents))
-	for i, raw := range rawEvents {
-		var err error
-		events[i], err = eventcodec.Unmarshal([]byte(raw))
-		if err != nil {
-			t.Fatal(err)
-		}
-	}
-	projection, err := eventsource.Project(events, m.Incarnation)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(projection.Events) != len(events) {
-		t.Fatal("migration changed durable record count")
+	call := session.NewToolCall("call-current", "Read", json.RawMessage(`{"path":"second.txt"}`))
+	events := []session.Event{
+		{Type: session.EvToolCall, ToolCall: &call},
+		{Type: session.EvPermissionAsk, Ask: &session.PendingAsk{AskID: "ask-current", Tool: "Read", Call: call.ID, Args: call.Args, Reason: "approve"}},
 	}
 
 	folded, err := eventsource.Fold(m, seq(events))
@@ -94,10 +80,10 @@ func TestFoldLegacyApprovalPreservesMetadataAcrossSnapshot(t *testing.T) {
 	assertMetadata := func(s *session.Session) {
 		t.Helper()
 		if s.State != session.StateAwaiting {
-			t.Fatalf("proven legacy approval not awaiting: %v", s.State)
+			t.Fatalf("current approval not awaiting: %v", s.State)
 		}
 		if _, ok := s.PendingAsk(); !ok {
-			t.Fatal("proven legacy approval not restored")
+			t.Fatal("current approval not restored")
 		}
 		if s.AgentDefinitionName != m.AgentDefinitionName {
 			t.Fatalf("AgentDefinitionName = %q, want %q", s.AgentDefinitionName, m.AgentDefinitionName)
@@ -926,9 +912,9 @@ func TestFoldMultiRunFailureMetadataIsLastRun(t *testing.T) {
 	}
 }
 
-// This fixture is frozen at the provider-key baseline and decoded through the
-// real discriminator before any source-aware pairing is attempted.
-func TestLegacyEventFixtureDecodesAndFoldsCompletedReuse(t *testing.T) {
+// The frozen provider-key fixture is now a sparse display source, not a source
+// from which invocation identity or a complete learning trajectory can be rebuilt.
+func TestLegacyEventFixtureSkipsInvocationRecords(t *testing.T) {
 	raw, err := os.ReadFile("testdata/legacy-events.json")
 	if err != nil {
 		t.Fatal(err)
@@ -937,33 +923,30 @@ func TestLegacyEventFixtureDecodesAndFoldsCompletedReuse(t *testing.T) {
 	if err := json.Unmarshal(raw, &records); err != nil {
 		t.Fatal(err)
 	}
-	events := make([]session.Event, len(records))
-	for i, record := range records {
-		events[i], err = eventcodec.Unmarshal(record)
+	var events []session.Event
+	var skipped int
+	for _, record := range records {
+		e, err := eventcodec.UnmarshalFormat(record, "eventlog-json/1")
+		if errors.Is(err, eventcodec.ErrSkipLegacyRecord) {
+			skipped++
+			continue
+		}
 		if err != nil {
 			t.Fatal(err)
 		}
-		// This frozen, complete array supplies its original source ordinals.
-		identity := events[i].LegacyIdentity()
-		identity.Ordinal = i
-		events[i] = events[i].WithLegacyIdentity(*identity)
+		events = append(events, e)
 	}
-	if len(events) != 14 || events[2].Type != session.EvHistorical || events[2].ToolCall != nil || events[7].Hook != nil || events[8].Ask != nil || events[10].Authorization != nil {
-		t.Fatalf("old references decoded as executable canonical IDs: %+v", events)
+	if skipped != 9 || len(events) != 5 || events[0].Seq != 1 || events[3].Seq != 13 || events[4].Seq != 14 {
+		t.Fatalf("lost source positions: skipped=%d events=%+v", skipped, events)
 	}
-	if events[12].PlanContinuationFailure == nil || events[13].ModelRetry == nil {
+	if events[3].PlanContinuationFailure == nil || events[4].ModelRetry == nil {
 		t.Fatal("non-invocation payloads lost")
 	}
-	folded, err := eventsource.Fold(meta(), seq(events[:7]))
+	folded, err := eventsource.Fold(meta(), seq(events))
 	if err != nil {
 		t.Fatal(err)
 	}
-	messages := folded.Conversation.Messages
-	if len(messages) != 5 {
-		t.Fatalf("messages: %+v", messages)
-	}
-	first, second := messages[1].ToolCalls[0].ID, messages[3].ToolCalls[0].ID
-	if first == second || first == "provider-call-reused" || second == "provider-call-reused" || messages[2].ToolResult.CallID != first || messages[4].ToolResult.CallID != second {
-		t.Fatalf("completed reused occurrences did not migrate distinctly: %+v", messages)
+	if folded.LearningEligible() {
+		t.Fatal("missing eligibility metadata laundered filtered legacy history")
 	}
 }

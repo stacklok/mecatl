@@ -19,10 +19,6 @@ import (
 type EvidenceProtocol string
 
 const (
-	// ReflectionEvidenceLegacyV0 preserves the original input-local ordinal semantics.
-	ReflectionEvidenceLegacyV0 EvidenceProtocol = "reflection-evidence/legacy-v0"
-	// ReflectionEvidenceV1 identifies manifest-backed durable source coordinates.
-	ReflectionEvidenceV1 EvidenceProtocol = "reflection-evidence/v1"
 	// ReflectionEvidenceV2 uses canonical engine invocation identities.
 	ReflectionEvidenceV2 EvidenceProtocol = "reflection-evidence/v2"
 	// ReflectionEvidenceSourceV1 identifies the session source-boundary domain.
@@ -113,7 +109,6 @@ type materialUnit struct {
 	mandatory       bool
 	component       string
 	calls           []session.ToolCallID
-	identifiers     []string
 }
 
 // MaterializeEvidence selects whole source components without constructing a full
@@ -128,6 +123,9 @@ func MaterializeEvidence(ctx context.Context, req MaterializationRequest) (Mater
 	}
 	if req.Trajectory.SessionID == "" {
 		return Materialization{}, fmt.Errorf("%w: trajectory session id is required", ErrInvalidInput)
+	}
+	if !req.Trajectory.LearningEligible() {
+		return emptyMaterialization(req, MaterializationNoEligibleEvidence), nil
 	}
 	limits := req.Limits
 	if limits.MaxMessages <= 0 {
@@ -261,15 +259,12 @@ func boundedUnits(ctx context.Context, req MaterializationRequest, limits Materi
 		if !eligibleEvent(event) {
 			return
 		}
-		if p := event.LegacyIdentity(); p != nil && p.Ordinal >= 0 {
-			coordinate = int64(p.Ordinal)
-		}
 		projected := materializerEvent(event)
 		raw, _ := json.Marshal(projectEvent(projected))
 		if len(raw) > limits.MaxBytes {
 			return
 		}
-		units = retainRankedUnit(units, materialUnit{event: &projected, eventCoordinate: coordinate, tier: 4, order: len(messages) + int(coordinate), bytes: len(raw), identifiers: legacySourceIdentifiers(nil, []session.Event{event})}, capUnits)
+		units = retainRankedUnit(units, materialUnit{event: &projected, eventCoordinate: coordinate, tier: 4, order: len(messages) + int(coordinate), bytes: len(raw)}, capUnits)
 	}
 	for _, event := range req.Events {
 		if err := ctx.Err(); err != nil {
@@ -444,13 +439,11 @@ func materializerEvent(event session.Event) EvidenceEventData {
 func buildMaterialization(req MaterializationRequest, selected []materialUnit) Materialization {
 	var selectedMessages []session.Message
 	var selectedEvents []EvidenceEventData
-	var identifiers []string
 	manifest := MaterializationManifest{Protocol: ReflectionEvidenceV2, Source: SourceIdentity{Domain: ReflectionEvidenceSourceV1, Value: req.Trajectory.SessionID}}
 	messageLocal, eventLocal := 0, 0
 	for _, unit := range selected {
 		if len(unit.messages) > 0 {
 			for _, original := range unit.messages {
-				identifiers = append(identifiers, legacySourceIdentifiers(req.Trajectory.Messages[original:original+1], nil)...)
 				projected := projectMessage(req.Trajectory.Messages[original])
 				selectedMessages = append(selectedMessages, canonicalMessage(projected))
 				o := original
@@ -458,7 +451,6 @@ func buildMaterialization(req MaterializationRequest, selected []materialUnit) M
 				messageLocal++
 			}
 		} else {
-			identifiers = append(identifiers, unit.identifiers...)
 			event := *unit.event
 			selectedEvents = append(selectedEvents, event)
 			coordinate := unit.eventCoordinate
@@ -467,7 +459,8 @@ func buildMaterialization(req MaterializationRequest, selected []materialUnit) M
 		}
 	}
 	trajectory := NewTrajectory(req.Trajectory.SessionID, "", req.Trajectory.Stop, req.Trajectory.Usage, selectedMessages)
-	input := Input{Protocol: ReflectionEvidenceV2, Trajectory: trajectory, Events: selectedEvents, legacyIdentifiers: identifiers}
+	trajectory.learningEligible = req.Trajectory.learningEligible
+	input := Input{Protocol: ReflectionEvidenceV2, Trajectory: trajectory, Events: selectedEvents}
 	digest, canonical := materializationDigest(manifest, selectedMessages, selectedEvents)
 	manifest.Digest = digest
 	input.Manifest = &manifest
@@ -503,11 +496,7 @@ func validateMaterializationManifest(in Input) error {
 	if !ManifestProtocolSupported(manifest.Protocol, manifest.Source.Domain) || manifest.Source.Value != in.Trajectory.SessionID || !ValidSHA256(manifest.Digest) || len(manifest.Entries) != len(in.Trajectory.Messages)+len(in.Events) {
 		return fmt.Errorf("%w: invalid materialization manifest identity", ErrInvalidInput)
 	}
-	pairingErr := session.ValidateToolPairing(in.Trajectory.Messages)
-	if manifest.Protocol == ReflectionEvidenceV1 {
-		pairingErr = validateLegacyEvidencePairing(in.Trajectory.Messages)
-	}
-	if pairingErr != nil {
+	if err := session.ValidateToolPairing(in.Trajectory.Messages); err != nil {
 		return fmt.Errorf("%w: materialization tool component is incomplete", ErrInvalidInput)
 	}
 	messageEntries := manifest.Entries[:len(in.Trajectory.Messages)]

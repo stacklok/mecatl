@@ -3,8 +3,8 @@ package eventcodec_test
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"reflect"
-	"strings"
 	"testing"
 
 	"github.com/stacklok/mecatl/engine/adapter/eventcodec"
@@ -19,9 +19,6 @@ func decode(t *testing.T, raw string) session.Event {
 	}
 	return e
 }
-
-const oldCall = `{"Type":"tool.call","RunID":"fixture-run","Seq":90,"ToolCall":{"ID":"provider-secret","Name":"Read","Args":{"path":"x"},"item_id":"private-item"}}`
-const oldResult = `{"Type":"tool.result","Seq":2,"ToolResult":{"CallID":"provider-secret","Content":"hello","Parts":[{"BlockKind":"image","Kind":"image","MIMEType":"image/png","Data":"AQI="}]}}`
 
 func TestCanonicalRoundTrip(t *testing.T) {
 	call := session.NewToolCall(session.NewToolCallID(), "Read", json.RawMessage(`{}`))
@@ -40,131 +37,90 @@ func TestCanonicalRoundTrip(t *testing.T) {
 	}
 }
 
-func TestMalformedSchemaAndLegacyDTOs(t *testing.T) {
-	for _, raw := range []string{`null`, `[]`, `{"identity_schema":0}`, `{"identity_schema":3}`, `{"identity_schema":null}`, `{"ToolCall":{"ID":1}}`, `{"ToolResult":{"CallID":[]}}`} {
-		if _, err := eventcodec.Unmarshal([]byte(raw)); err == nil {
-			t.Fatalf("accepted %s", raw)
-		}
-	}
-}
-
-func TestLegacyPrivateDecodeAndReencode(t *testing.T) {
-	for _, raw := range []string{oldCall, oldResult, `{"Type":"hook","Hook":{"CallID":"provider-secret","Tool":"Read"}}`, `{"Type":"subagent.tool","Subagent":{"ParentCallID":"provider-secret","ChildToolCallID":"child-secret","ToolName":"Read","Text":"bounded child preview","Args":"NEVER-FORWARD"}}`} {
-		e := decode(t, raw)
-		if e.Type != session.EvHistorical || e.Historical == nil || !e.Historical.AttachmentUnavailable || e.ToolCall != nil || e.ToolResult != nil || e.Hook != nil || e.Subagent != nil {
-			t.Fatalf("unsafe decode: %+v", e)
-		}
-		public, err := json.Marshal(e)
-		if err != nil {
-			t.Fatal(err)
-		}
-		for _, secret := range []string{"provider-secret", "private-item", "child-secret", "NEVER-FORWARD"} {
-			if bytes.Contains(public, []byte(secret)) {
-				t.Fatalf("private data leaked: %s", public)
+func TestLegacyUnsupportedRecordsReturnSkip(t *testing.T) {
+	for _, raw := range []string{
+		`{"Type":"tool.call","ToolCall":{"ID":"provider-secret","Name":"Read","Args":{},"item_id":"private-item"}}`,
+		`{"Type":"tool.result","ToolResult":{"CallID":"provider-secret","Content":"hello","Parts":[{"BlockKind":"image","Data":"AQI="}]}}`,
+		`{"Type":"tool.result.available","ToolResult":{"CallID":"provider-secret"}}`,
+		`{"Type":"permission.ask","Ask":{"AskID":"ask","Call":"provider-secret"}}`,
+		`{"Type":"permission.retract"}`, `{"Type":"approval"}`, `{"Type":"hook"}`,
+		`{"Type":"authorization.required"}`, `{"Type":"authorization.resolved"}`,
+		`{"Type":"subagent.start"}`, `{"Type":"subagent.tool","Subagent":{"ParentCallID":"provider-secret","ChildToolCallID":"private-child"}}`,
+		`{"Type":"subagent.end"}`, `{"Type":"team.start"}`, `{"Type":"team.member"}`,
+		`{"Type":"team.tasks"}`, `{"Type":"team.findings"}`, `{"Type":"team.end"}`,
+		`{"Type":"parallel.start"}`, `{"Type":"parallel.branch"}`, `{"Type":"parallel.end"}`,
+		`{"Type":"compaction.archive","CompactionArchive":{"Replaced":[{"Role":"assistant","ToolCalls":[{"ID":"provider-secret"}]}]}}`,
+	} {
+		for _, format := range []string{"", "eventlog-json/1"} {
+			var e session.Event
+			var err error
+			if format == "" {
+				e, err = eventcodec.Unmarshal([]byte(raw))
+			} else {
+				e, err = eventcodec.UnmarshalFormat([]byte(raw), format)
+			}
+			if !errors.Is(err, eventcodec.ErrSkipLegacyRecord) || !reflect.DeepEqual(e, session.Event{}) {
+				t.Fatalf("decode %s (%q) = %+v, %v", raw, format, e, err)
 			}
 		}
-		stored, err := eventcodec.Marshal(e)
-		if err != nil {
-			t.Fatal(err)
-		}
-		reloaded := decode(t, string(stored))
-		if !reflect.DeepEqual(e, reloaded) || !bytes.Equal(reloaded.LegacyIdentity().Payload, []byte(raw)) {
-			t.Fatal("private provenance changed")
+	}
+}
+
+func TestLegacyAttachmentsCannotHideBehindNeutralType(t *testing.T) {
+	for _, attachment := range []string{
+		`"ToolCall":{"ID":"provider-secret"}`, `"ToolResult":{"CallID":"provider-secret"}`,
+		`"Ask":{"Call":"provider-secret"}`, `"Hook":{"CallID":"provider-secret"}`,
+		`"Approval":{"Call":"provider-secret"}`, `"Authorization":{"Call":"provider-secret"}`,
+		`"Subagent":{"ParentCallID":"provider-secret"}`, `"Team":{"ParentCallID":"provider-secret"}`,
+		`"Parallel":{"ParentCallID":"provider-secret"}`, `"CompactionArchive":{"Replaced":[{"Role":"tool","ToolResult":{"CallID":"provider-secret"}}]}`,
+		`"toolCALL":{"ID":"provider-secret"}`,
+	} {
+		e, err := eventcodec.Unmarshal([]byte(`{"Type":"message.delta","Text":"harmless",` + attachment + `}`))
+		if !errors.Is(err, eventcodec.ErrSkipLegacyRecord) || !reflect.DeepEqual(e, session.Event{}) {
+			t.Fatalf("attachment escaped: %+v, %v", e, err)
 		}
 	}
 }
 
-func TestLegacyTeamDetailIsStandalone(t *testing.T) {
-	e := decode(t, `{"Type":"team.member","Team":{"Member":"reviewer","InnerKind":"tool.result","ToolName":"Read","Text":"preview","Detail":"unique bounded team result","ParentCallID":"private-parent","ChildToolCallID":"private-child"}}`)
-	h := e.Historical
-	if h == nil || !strings.Contains(h.Text, "unique bounded team result") || !h.AttachmentUnavailable || e.Team != nil || e.ToolResult != nil {
-		t.Fatalf("lost detail or guessed link: %+v", e)
+func TestLegacyNeutralFieldsConvertWithoutPrivateCarrier(t *testing.T) {
+	raw := `{"Type":"user_prompt","RunID":"run","Seq":17,"Turn":2,"Text":"prompt","UserPrompt":{"Text":"prompt","Parts":[{"Kind":"image","Data":"AQI="}]},"ToolCall":null,"ToolResult":null,"Ask":null}`
+	e := decode(t, raw)
+	if e.Type != session.EvUserPrompt || e.RunID != "run" || e.Seq != 17 || e.Turn != 2 || e.UserPrompt.Text != "prompt" || !bytes.Equal(e.UserPrompt.Parts[0].Data, []byte{1, 2}) {
+		t.Fatalf("neutral content changed: %+v", e)
 	}
-	if strings.Contains(h.Text, "private-") {
-		t.Fatal("private delegation references leaked")
-	}
-}
-
-func TestSingleCursorProjection(t *testing.T) {
-	inc := session.LegacyIncarnationID("test", 0, nil)
-	orphan := decode(t, oldResult).WithLegacySource("durable-source", "record-17")
-	safe, err := eventcodec.ProjectRecord(orphan, inc, -1)
+	stored, err := eventcodec.Marshal(e)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if safe.ToolResult != nil || safe.Type != session.EvHistorical || safe.Historical.RecordID == "" || safe.LegacyIdentity().Ordinal != -1 {
-		t.Fatal("cursor projected orphan or guessed iterator ordinal")
-	}
-	if _, err := eventcodec.ProjectRecord(decode(t, oldResult), inc, -1); err == nil {
-		t.Fatal("source-less record got guessed identity")
-	}
-	archived := decode(t, `{"Type":"compaction.archive","CompactionArchive":{"Replaced":[{"Role":"tool","ToolResult":{"CallID":"orphan","Content":"archived","Parts":[{"BlockKind":"image","Kind":"image","Data":"AQI="}]}}]}}`).WithLegacySource("durable-source", "record-18")
-	archived, err = eventcodec.ProjectRecord(archived, inc, -1)
-	if err != nil {
-		t.Fatal(err)
-	}
-	h := session.HistoricalMessage(archived.CompactionArchive.Replaced[0])
-	if h == nil || h.Text != "archived" || len(h.Parts) != 1 {
-		t.Fatal("archive orphan content dropped")
+	if bytes.Contains(stored, []byte("legacy_identity")) || !reflect.DeepEqual(e, decode(t, string(stored))) {
+		t.Fatal("neutral event reencoding changed")
 	}
 }
 
-func TestLegacySparseControlsNeverAcquireAuthority(t *testing.T) {
-	inc := session.LegacyIncarnationID("test", 0, nil)
-	call := decode(t, oldCall).WithLegacySource("durable", "call")
-	ask := decode(t, `{"Type":"permission.ask","Ask":{"AskID":"private-ask","Tool":"Read","Call":"provider-secret","Reason":"readable approval"}}`).WithLegacySource("durable", "ask")
-	auth := decode(t, `{"Type":"authorization.required","Authorization":{"AuthorizationID":"private-auth","Call":"provider-secret","DisplayName":"readable service","Status":"pending"}}`).WithLegacySource("durable", "auth")
-	boundCall := call
-	c := session.NewToolCall("persisted-canonical-binding", "Read", nil)
-	boundCall.Type, boundCall.ToolCall, boundCall.Historical = session.EvToolCall, &c, nil
-	boundAsk := ask
-	boundAsk.Type, boundAsk.Ask, boundAsk.Historical = session.EvPermissionAsk, &session.PendingAsk{AskID: "private-ask", Tool: "Read", Call: c.ID}, nil
-	for _, e := range []session.Event{call, ask, auth, boundCall, boundAsk} {
-		data, err := eventcodec.Marshal(e)
-		if err != nil {
-			t.Fatal(err)
-		}
-		sparse, err := eventcodec.ProjectRecord(decode(t, string(data)), inc, -1)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if sparse.Type != session.EvHistorical || sparse.Historical == nil || !sparse.Historical.AttachmentUnavailable || sparse.Ask != nil || sparse.Authorization != nil || sparse.ToolCall != nil {
-			t.Fatal("sparse record acquired authority")
-		}
-		if sparse.LegacyIdentity().Coordinate != e.LegacyIdentity().Coordinate || sparse.LegacyIdentity().Ordinal != -1 {
-			t.Fatal("sparse coordinate changed")
-		}
-		if e.LegacyIdentity().Coordinate != "call" && !strings.Contains(sparse.Historical.Text, "readable") {
-			t.Fatal("standalone control text lost")
+func TestMalformedAndUnknownLegacyRecordsAreNotSkips(t *testing.T) {
+	for _, raw := range []string{
+		`null`, `[]`, `{`, `{} `, `{"identity_schema":0}`, `{"identity_schema":3}`, `{"identity_schema":null}`,
+		`{"Type":"tool.call","ToolCall":{"ID":1}}`, `{"Type":"tool.call","ToolCall":{"item_id":1}}`,
+		`{"Type":"tool.result","ToolResult":{"CallID":[]}}`, `{"Type":"permission.ask","Ask":{"Call":{}}}`,
+		`{"Type":"authorization.required","Authorization":{"Call":false}}`, `{"Type":"hook","Hook":{"CallID":1}}`,
+		`{"Type":"compaction.archive","CompactionArchive":{"Replaced":false}}`,
+		`{"Type":"subagent.tool","Subagent":42}`, `{"Type":"team.member","Team":[]}`,
+		`{"Type":"message.delta","Text":42}`, `{"Type":"unknown"}`,
+		`{"Type":"message.delta","Unknown":{"ID":"provider-secret"}}`,
+		`{"Type":"tool.call","Unknown":{}}`, `{"Type":"historical"}`,
+		`{"Type":"message.delta","Historical":{}}`, `{"Type":"message.delta","legacy_identity":{}}`,
+	} {
+		if _, err := eventcodec.Unmarshal([]byte(raw)); err == nil || errors.Is(err, eventcodec.ErrSkipLegacyRecord) {
+			t.Fatalf("wanted ordinary error for %s, got %v", raw, err)
 		}
 	}
-}
-
-func TestDecodeLegacyRecordFacts(t *testing.T) {
-	call, err := eventcodec.DecodeLegacyRecord([]byte(oldCall))
-	if err != nil || call.Type != session.EvToolCall || call.ToolCall == nil || call.ToolCall.ID != "provider-secret" || call.ToolCall.Name != "Read" || !bytes.Equal(call.ToolCall.Args, []byte(`{"path":"x"}`)) {
-		t.Fatalf("call facts = %+v, %v", call, err)
-	}
-	result, err := eventcodec.DecodeLegacyRecord([]byte(oldResult))
-	if err != nil || result.ToolResult == nil || result.ToolResult.CallID != "provider-secret" || result.ToolResult.Content != "hello" || len(result.ToolResult.Parts) != 1 {
-		t.Fatalf("result facts = %+v, %v", result, err)
-	}
-	ask, err := eventcodec.DecodeLegacyRecord([]byte(`{"Type":"permission.ask","Ask":{"AskID":"ask","Tool":"Read","Call":"provider-secret","Args":{ "z":1, "a":2 },"Reason":"approve"}}`))
-	if err != nil || ask.Ask == nil || ask.Ask.Call != "provider-secret" || ask.Ask.AskID != "ask" || !bytes.Equal(ask.Ask.Args, []byte(`{ "z":1, "a":2 }`)) {
-		t.Fatalf("ask facts = %+v, %v", ask, err)
-	}
-	auth, err := eventcodec.DecodeLegacyRecord([]byte(`{"Type":"authorization.required","Authorization":{"AuthorizationID":"auth","Call":"provider-secret","Status":"pending","DisplayName":"service"}}`))
-	if err != nil || auth.Authorization == nil || auth.Authorization.Call != "provider-secret" || auth.Authorization.AuthorizationID != "auth" || auth.Authorization.Status != session.AuthorizationPending {
-		t.Fatalf("authorization facts = %+v, %v", auth, err)
-	}
-	archive := `{ "Replaced": [ {"Role":"assistant","Reasoning":"private", "Text":"unchanged"} ] }`
-	record, err := eventcodec.DecodeLegacyRecord([]byte(`{"Type":"compaction.archive","CompactionArchive":` + archive + `}`))
-	if err != nil || !bytes.Equal(record.CompactionArchive, []byte(archive)) {
-		t.Fatal("raw archive changed", err)
-	}
-	for _, raw := range []string{`{"ToolCall":{"ID":1}}`, `{"ToolCall":{"item_id":1}}`, `{"ToolResult":{"CallID":[]}}`, `{"Ask":{"Call":{}}}`, `{"Authorization":{"Call":false}}`, `{"Hook":{"CallID":1}}`} {
-		if _, err := eventcodec.DecodeLegacyRecord([]byte(raw)); err == nil {
-			t.Fatalf("accepted malformed legacy DTO: %s", raw)
+	for _, tc := range []struct{ raw, format string }{
+		{`{"Type":"tool.call"}`, eventcodec.Format},
+		{`{"identity_schema":2,"Type":"tool.call"}`, "eventlog-json/1"},
+		{`{"Type":"tool.call"}`, "unknown"},
+	} {
+		if _, err := eventcodec.UnmarshalFormat([]byte(tc.raw), tc.format); err == nil || errors.Is(err, eventcodec.ErrSkipLegacyRecord) {
+			t.Fatalf("format mismatch skipped: %v", err)
 		}
 	}
 }

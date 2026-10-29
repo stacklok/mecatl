@@ -50,13 +50,12 @@ func TestManualCompactionReplayOwnership(t *testing.T) {
 func TestCompactionRetainsAndPrunesReplayAtomically(t *testing.T) {
 	sess := manualSession(t)
 	var history []session.Message
-	for i, id := range []session.ToolCallID{"removed", "retained"} {
+	for _, id := range []session.ToolCallID{"removed", "retained"} {
 		message := session.NewAssistantMessage("original long assistant text", []session.ToolCall{session.NewToolCall(id, "Read", []byte(`{}`))})
 		message.Replay = &session.MessageReplay{
 			Bindings: []session.ToolCallBinding{{CallID: id, PairingID: session.ProviderCallID("provider_" + string(id)), ItemID: "item"}},
 			Provider: &session.ProviderReplay{Format: "opaque", Version: 3, Data: []byte("private " + string(id))},
 		}
-		message.Legacy = &session.LegacyMessageIdentity{Namespace: "source", Ordinal: i + 8}
 		history = append(history, message, session.NewToolMessage(session.NewToolResult(id, "read")))
 	}
 	if err := sess.ReplaceHistoryAtBoundary(history); err != nil {
@@ -74,7 +73,6 @@ func TestCompactionRetainsAndPrunesReplayAtomically(t *testing.T) {
 	}
 	compactor.out[0].Replay.Provider.Data[0] = '!'
 	result.Archive[2].Replay.Bindings[0].PairingID = "changed"
-	result.Archive[2].Legacy.Ordinal = 0
 	if !reflect.DeepEqual(sess.Conversation.Messages, want[2:]) {
 		t.Fatal("candidate/archive aliases active replay or legacy coordinates")
 	}

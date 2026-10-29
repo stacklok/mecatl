@@ -5,8 +5,8 @@ package eventcodec
 import "github.com/stacklok/mecatl/engine/session"
 
 // Unmarshal selects a version-specific decoder before interpreting invocation
-// references. Legacy records retain private facts for eventsource's full-source
-// proof; current records decode directly, including any preserved provenance.
+// references. Unsupported well-formed old records return ErrSkipLegacyRecord;
+// current records decode directly.
 func Unmarshal(data []byte) (session.Event, error) {
 	schema, err := identitySchema(data)
 	if err != nil {

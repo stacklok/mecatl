@@ -124,11 +124,8 @@ const (
 	EvidenceEvent EvidenceLocator = "event"
 )
 
-// EvidenceRef is a content-addressed evidence citation. Legacy-v0 keeps Ordinal's
-// selected-input meaning. V1 and V2 keep selected-local ManifestIndex separate
-// from durable original coordinates; V2 uses canonical invocation identities.
-// Provider-era references are private verification data. Public callers use a
-// verified EvidenceCitation with an optional proven canonical ToolCallID.
+// EvidenceRef is a content-addressed canonical evidence citation. Selected-local
+// ManifestIndex is separate from durable original source coordinates.
 type EvidenceRef struct {
 	Protocol        EvidenceProtocol   `json:"protocol,omitempty"`
 	SessionID       session.SessionID  `json:"session_id"`
@@ -140,15 +137,6 @@ type EvidenceRef struct {
 	ToolCallID      session.ToolCallID `json:"tool_call_id,omitempty"`
 	Digest          string             `json:"digest"`
 	AggregateDigest string             `json:"aggregate_digest,omitempty"`
-}
-
-// ResolvedProtocol applies the sole compatibility rule: an absent protocol is
-// a legacy-v0 record. Field presence never changes that decision.
-func (r EvidenceRef) ResolvedProtocol() EvidenceProtocol {
-	if r.Protocol == "" {
-		return ReflectionEvidenceLegacyV0
-	}
-	return r.Protocol
 }
 
 // Signal is a host-supplied or structurally detected reflection admission hint.
@@ -186,15 +174,12 @@ type ExistingFact struct {
 // with NewInput so transcript, event, signal, and existing-fact storage does not
 // alias caller-owned values.
 type Input struct {
-	Protocol          EvidenceProtocol         `json:"protocol,omitempty"`
-	Trajectory        Trajectory               `json:"trajectory"`
-	Events            []EvidenceEventData      `json:"events,omitempty"`
-	Signals           []Signal                 `json:"signals,omitempty"`
-	Existing          []ExistingFact           `json:"existing,omitempty"`
-	Manifest          *MaterializationManifest `json:"manifest,omitempty"`
-	previewMessages   []session.Message
-	previewEvents     []session.Event
-	legacyIdentifiers []string
+	Protocol   EvidenceProtocol         `json:"protocol,omitempty"`
+	Trajectory Trajectory               `json:"trajectory"`
+	Events     []EvidenceEventData      `json:"events,omitempty"`
+	Signals    []Signal                 `json:"signals,omitempty"`
+	Existing   []ExistingFact           `json:"existing,omitempty"`
+	Manifest   *MaterializationManifest `json:"manifest,omitempty"`
 }
 
 // NewInput constructs an owned reflection input from existing session data.
@@ -205,13 +190,13 @@ func NewInput(trajectory Trajectory, events []session.Event, signals []Signal, e
 	ownedTrajectory.Kind = trajectory.Kind
 	ownedTrajectory.Counters = trajectory.Counters
 	ownedTrajectory.Current = trajectory.Current
+	ownedTrajectory.learningEligible = trajectory.learningEligible
 	return Input{
-		Protocol:          ReflectionEvidenceV2,
-		Trajectory:        ownedTrajectory,
-		Events:            projectSessionEvents(events),
-		Signals:           cloneSignals(signals),
-		Existing:          append([]ExistingFact(nil), existing...),
-		legacyIdentifiers: legacySourceIdentifiers(trajectory.Messages, events),
+		Protocol:   ReflectionEvidenceV2,
+		Trajectory: ownedTrajectory,
+		Events:     projectSessionEvents(events),
+		Signals:    cloneSignals(signals),
+		Existing:   append([]ExistingFact(nil), existing...),
 	}
 }
 
@@ -228,6 +213,9 @@ type Reflector interface {
 
 // ValidateInput enforces domain bounds and validates caller-supplied signals.
 func ValidateInput(in Input) error {
+	if !in.Trajectory.LearningEligible() || in.Protocol != ReflectionEvidenceV2 {
+		return fmt.Errorf("%w: learning eligibility or current evidence protocol unavailable", ErrInvalidInput)
+	}
 	if in.Trajectory.SessionID == "" {
 		return fmt.Errorf("%w: trajectory session id is required", ErrInvalidInput)
 	}
