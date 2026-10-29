@@ -15,7 +15,7 @@ import (
 func TestLegacySourceToolCallIDPreservesDerivation(t *testing.T) {
 	inc := session.IncarnationID("legacy_" + strings.Repeat("a", 64))
 	const want = session.ToolCallID("call_legacy_f7a6dc9b5fe9f199006b0aa28f3696e570191dab4d26e3b7e5f1958da9840ea7")
-	if got := legacySourceToolCallID(inc, legacySnapshotNamespace, 7, 2); got != want {
+	if got := legacySourceToolCallID(inc, 7, 2); got != want {
 		t.Fatalf("legacy source ToolCallID = %q, want %q", got, want)
 	}
 }
@@ -241,7 +241,7 @@ func TestIdentitySchemaAndIncarnationFailClosed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if withInc.Incarnation() != incarnation || withInc.LearningEligible() || withInc.Conversation.Messages[1].ToolCalls[0].ID != legacySourceToolCallID(incarnation, legacySnapshotNamespace, 1, 0) {
+	if withInc.Incarnation() != incarnation || withInc.LearningEligible() || withInc.Conversation.Messages[1].ToolCalls[0].ID != legacySourceToolCallID(incarnation, 1, 0) {
 		t.Fatal("conversion did not use stored incarnation or enabled learning")
 	}
 	if strings.Contains(string(withInc.Conversation.Messages[1].ToolCalls[0].ID), "reused") {

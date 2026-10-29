@@ -196,7 +196,7 @@ pending payloads. Non-null `pending` or `pending_authorization` payloads in any
 legacy state also reject. Any `identity_hold` key rejects, including null.
 Straightforward nonpending `/1` history may convert only when every call/result
 pair and delegation parent call has an unambiguous, valid relationship. Ambiguous,
-incomplete, orphaned, wrong-role, or unprovable history and archives reject. Current `/2`
+incomplete, orphaned, wrong-role, or unprovable snapshot history rejects. Current `/2`
 approvals and private authorization continuations round-trip unchanged.
 
 A converted `/1` session is permanently excluded from learning. Current snapshots
@@ -206,9 +206,10 @@ restore eligibility. Frozen legacy learning evidence and proposals are unavailab
 
 The event codec omits recognized unsupported legacy invocation, control,
 delegation, and archive records. It returns `ErrSkipLegacyRecord` to its reader;
-cursor readers advance the physical position and preserve the resulting gap. Unknown,
-contradictory, malformed, and invalid current records remain errors. A filtered
-legacy stream is not complete evidence for reconstruction or learning. Loading
+cursor readers advance the physical position and preserve the resulting gap.
+Malformed JSON, unknown or contradictory formats, and invalid current records remain
+errors. Unsupported legacy payloads selected for omission are not fully validated.
+A filtered legacy stream is not complete evidence for reconstruction or learning. Loading
 performs no tool execution or external authorization action.
 
 ## See also

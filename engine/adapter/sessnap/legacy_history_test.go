@@ -102,32 +102,3 @@ func TestLegacySnapshotRequiresClosedPairing(t *testing.T) {
 		})
 	}
 }
-
-func TestLegacyArchiveRequiresClosedPairing(t *testing.T) {
-	inc := session.NewIncarnationID()
-	call := `{"Role":"assistant","ToolCalls":[{"ID":"reused","Name":"Read","Args":{},"item_id":"item"}]}`
-	result := `{"Role":"tool","ToolResult":{"CallID":"reused","Content":"result","Parts":[{"BlockKind":"text","Text":"typed"}]}}`
-	for _, history := range []string{call, result, call + "," + call + "," + result, call + "," + result + "," + result} {
-		if _, err := DecodeLegacyArchive([]byte(`{"Replaced":[`+history+`]}`), inc, "archive/one"); err == nil {
-			t.Fatal("accepted ambiguous or incomplete archive")
-		}
-	}
-	data := []byte(`{"Replaced":[` + call + "," + result + "," + call + "," + result + `]}`)
-	messages, err := DecodeLegacyArchive(data, inc, "archive/one")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := session.ValidateToolPairing(messages); err != nil {
-		t.Fatal(err)
-	}
-	if messages[0].ToolCalls[0].ID == messages[2].ToolCalls[0].ID || messages[0].Replay.Bindings[0].PairingID != "reused" || messages[2].Replay.Bindings[0].ItemID != "item" || messages[1].ToolResult.Parts[0].Text != "typed" {
-		t.Fatal("sequential reuse lost identity, replay, or typed results")
-	}
-	again, err := DecodeLegacyArchive(data, inc, "archive/one")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !sameStoredHistory(t, messages, again) {
-		t.Fatal("archive conversion is not deterministic")
-	}
-}

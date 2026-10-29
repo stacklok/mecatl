@@ -311,6 +311,7 @@ func ValidateDecision(d Decision) error
 func ValidateInput(in Input) error
 func ValidateOutcome(in Input, out Outcome) error
 func ValidateProposalMaterial(p ProposalPartition, input string, c Candidate, signals []Signal) error
+func ValidateSkillActivationProvenance(p SkillProvenance) error
 func ValidateSkillBundle(bundle SkillBundle) error
 func ValidateSkillCandidate(in Input, candidate Candidate) error
 func ValidateSkillEvaluation(e SkillEvaluation) error

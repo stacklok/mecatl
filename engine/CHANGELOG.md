@@ -65,7 +65,8 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 - **Canonical learning evidence (issue #2117)** — adds
   `learning.ReflectionEvidenceV2`, `EvidenceCitation`, evidence protocol,
   coordinate, and digest fields on current driver evidence, and
-  `NewSessionTrajectory`. `NewSessionTrajectory` is the authoritative learning
+  `NewSessionTrajectory` and `ValidateSkillActivationProvenance`.
+  `NewSessionTrajectory` is the authoritative learning
   trajectory producer: it carries the Session's durable eligibility into learning.
   `Session.LearningEligible` and `Session.ExcludeFromLearning` provide the
   irreversible aggregate-level eligibility control. Current evidence is verified
@@ -575,7 +576,12 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   `learning_eligible`, and frozen older evidence are ineligible or unavailable;
   eligibility cannot be recovered by saving, restarting, or later runs. Current
   public driver evidence carries protocol, coordinates, and digests for source
-  verification. Changed (breaking struct/behavioral contract, pre-v1 minor).
+  verification. Ordinary and validated learned-skill activation reject candidates
+  with missing or unsupported evidence protocols, including evidence retained in
+  signals; evidence-free candidates require the explicit legacy-model origin.
+  Persisted history and already-active skills remain readable, and rollback of a
+  previously active version is unchanged. Changed (breaking struct/behavioral
+  contract, pre-v1 minor).
 
 - **Wire and storage compatibility assessment (issue #2117)** — separate from
   engine Go versioning, the approved Harness API major is 2. Server, `mecatui`,
@@ -861,7 +867,8 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 
 - **Redundant learning compatibility facades (issue #2117)** — removes
   `SourceEventOrdinal`, `SourceMessageIndex`, `ProjectVerifiedInput`, and
-  `EvidenceRef.ResolvedProtocol`. Use original source coordinates, `ProjectInput`,
+  `EvidenceRef.ResolvedProtocol`, and the unused adapter
+  `sessnap.DecodeLegacyArchive`. Use original source coordinates, `ProjectInput`,
   and `EvidenceRef.Protocol` directly. `RematerializeEvidence` and
   `VerifyEvidenceSource` no longer accept an unused incarnation argument;
   protocol, coordinate, eligibility, and digest validation remain mandatory.

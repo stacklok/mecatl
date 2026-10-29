@@ -124,7 +124,7 @@ func decodeLegacySnapshot(data []byte) (Snapshot, error) {
 	if err != nil {
 		return Snapshot{}, err
 	}
-	messages, err := migrateLegacyMessages(old.Messages, inc, legacySnapshotNamespace)
+	messages, err := migrateLegacyMessages(old.Messages, inc)
 	if err != nil {
 		return Snapshot{}, err
 	}
@@ -158,13 +158,11 @@ func decodeLegacySnapshot(data []byte) (Snapshot, error) {
 	}, nil
 }
 
-const legacySnapshotNamespace = "sessnap/legacy-v1"
-
 // legacySourceToolCallID derives a stable canonical ID from immutable source
 // coordinates, so repeated loads preserve references before a migrated snapshot saves.
-func legacySourceToolCallID(inc session.IncarnationID, namespace string, ordinal, slot int) session.ToolCallID {
+func legacySourceToolCallID(inc session.IncarnationID, ordinal, slot int) session.ToolCallID {
 	h := sha256.New()
-	for _, part := range []string{"mecatl.tool-call/legacy-v1", string(inc), namespace, strconv.Itoa(ordinal), strconv.Itoa(slot)} {
+	for _, part := range []string{"mecatl.tool-call/legacy-v1", string(inc), "sessnap/legacy-v1", strconv.Itoa(ordinal), strconv.Itoa(slot)} {
 		var size [8]byte
 		binary.BigEndian.PutUint64(size[:], uint64(len(part)))
 		_, _ = h.Write(size[:])
@@ -188,7 +186,7 @@ func legacyReplay(m legacyMessageDTO) *session.ProviderReplay {
 	return &session.ProviderReplay{Format: "mecatl.legacy-message", Version: 1, Data: data}
 }
 
-func migrateLegacyMessages(old []legacyMessageDTO, inc session.IncarnationID, namespace string) ([]messageDTO, error) {
+func migrateLegacyMessages(old []legacyMessageDTO, inc session.IncarnationID) ([]messageDTO, error) {
 	messages := make([]messageDTO, len(old))
 	open := make(map[string]session.ToolCallID)
 	for i, m := range old {
@@ -207,7 +205,7 @@ func migrateLegacyMessages(old []legacyMessageDTO, inc session.IncarnationID, na
 			if _, exists := open[call.ID]; exists {
 				return nil, errors.New("sessnap: ambiguous legacy call ID")
 			}
-			id := legacySourceToolCallID(inc, namespace, i, j)
+			id := legacySourceToolCallID(inc, i, j)
 			open[call.ID] = id
 			dto.ToolCalls = append(dto.ToolCalls, session.ToolCall{ID: id, Name: call.Name, Args: call.Args})
 			replay.Bindings = append(replay.Bindings, session.ToolCallBinding{CallID: id, PairingID: session.ProviderCallID(call.ID), ItemID: session.ProviderItemID(call.ItemID)})
