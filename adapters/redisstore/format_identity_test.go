@@ -17,7 +17,7 @@ import (
 
 func TestUnknownPrivateReplayVersionSurvivesSnapshotEventAndCursor(t *testing.T) {
 	st := newTestStore(t).(*redisstore.Store)
-	data, err := os.ReadFile("../../engine/adapter/sessnap/testdata/legacy-authorizing.json")
+	data, err := os.ReadFile("../../engine/adapter/sessnap/testdata/legacy-completed.json")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -25,7 +25,7 @@ func TestUnknownPrivateReplayVersionSurvivesSnapshotEventAndCursor(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	s.Conversation.Messages[0].Replay.Provider = &session.ProviderReplay{Format: "future/private", Version: 99, Data: []byte{0xff, 0, '\n'}}
+	s.Conversation.Messages[1].Replay.Provider = &session.ProviderReplay{Format: "future/private", Version: 99, Data: []byte{0xff, 0, '\n'}}
 	if err := st.Save(t.Context(), s); err != nil {
 		t.Fatal(err)
 	}
@@ -38,7 +38,7 @@ func TestUnknownPrivateReplayVersionSurvivesSnapshotEventAndCursor(t *testing.T)
 		t.Fatal(err)
 	}
 	gotData, err := sessnap.Marshal(got)
-	if err != nil || !bytes.Equal(wantData, gotData) || !reflect.DeepEqual(got.Conversation.Messages[0].Replay, s.Conversation.Messages[0].Replay) {
+	if err != nil || !bytes.Equal(wantData, gotData) || !reflect.DeepEqual(got.Conversation.Messages[1].Replay, s.Conversation.Messages[1].Replay) {
 		t.Fatalf("snapshot replay: %v", err)
 	}
 	// Visible JSON arguments use the snapshot's existing normalization; private
@@ -62,6 +62,10 @@ func TestUnknownPrivateReplayVersionSurvivesSnapshotEventAndCursor(t *testing.T)
 
 func TestIdentityFormatRejectionDoesNotRewriteStreamOrCursor(t *testing.T) {
 	for _, raw := range []string{
+		`{`,
+		`{"v":"redisstore-eventlog/1","ev":{"Type":"tool.result","ToolResult":false}}`,
+		`{"v":"redisstore-eventlog/1","ev":{"Type":"unknown"}}`,
+		`{"v":"redisstore-eventlog/1","ev":{"identity_schema":2,"Type":"tool.result","ToolResult":false}}`,
 		`{"v":"redisstore-eventlog/1","ev":{"identity_schema":99}}`,
 		`{"v":"redisstore-eventlog/1","ev":{"identity_schema":null}}`,
 		`{"v":"redisstore-eventlog/99","ev":{"identity_schema":2}}`,
@@ -117,7 +121,7 @@ func TestIdentityFormatRejectionDoesNotRewriteStreamOrCursor(t *testing.T) {
 }
 
 func TestIdentitySnapshotPrivateStateAndLocalSchema(t *testing.T) {
-	for _, name := range []string{"legacy-authorizing", "legacy-ambiguous-pending"} {
+	for _, name := range []string{"legacy-completed", "legacy-pending", "legacy-authorizing", "unknown-schema"} {
 		t.Run(name, func(t *testing.T) {
 			mr := miniredis.RunT(t)
 			st, err := redisstore.New(mr.Addr())
@@ -127,7 +131,7 @@ func TestIdentitySnapshotPrivateStateAndLocalSchema(t *testing.T) {
 			t.Cleanup(func() { _ = st.Close() })
 			client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 			t.Cleanup(func() { _ = client.Close() })
-			old, err := os.ReadFile("../../engine/adapter/sessnap/testdata/" + name + ".json")
+			old, err := os.ReadFile("../../engine/adapter/sessnap/testdata/legacy-completed.json")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -138,7 +142,29 @@ func TestIdentitySnapshotPrivateStateAndLocalSchema(t *testing.T) {
 			if err := st.Save(t.Context(), s); err != nil {
 				t.Fatal(err)
 			}
+			key := "mecatl:session:" + string(s.ID)
+			switch name {
+			case "legacy-pending":
+				old = bytes.Replace(old, []byte(`"state": "completed"`), []byte(`"state": "awaiting", "pending": {}`), 1)
+			case "legacy-authorizing":
+				old = bytes.Replace(old, []byte(`"state": "completed"`), []byte(`"state": "authorizing", "pending_authorization": {}`), 1)
+			case "unknown-schema":
+				old = bytes.Replace(old, []byte(`"state": "completed"`), []byte(`"state": "completed", "identity_schema":99`), 1)
+			}
+			if err := client.HSet(t.Context(), key, "blob", old).Err(); err != nil {
+				t.Fatal(err)
+			}
 			got, err := st.Load(t.Context(), s.ID)
+			if name != "legacy-completed" {
+				if err == nil {
+					t.Fatal("accepted unsupported snapshot")
+				}
+				unchanged, readErr := client.HGet(t.Context(), key, "blob").Bytes()
+				if readErr != nil || !bytes.Equal(old, unchanged) {
+					t.Fatal("failed load rewrote snapshot")
+				}
+				return
+			}
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -147,10 +173,26 @@ func TestIdentitySnapshotPrivateStateAndLocalSchema(t *testing.T) {
 				t.Fatal(err)
 			}
 			data, err := sessnap.Marshal(got)
-			if err != nil || !bytes.Equal(want, data) || !reflect.DeepEqual(s.IdentityHoldSnapshot(), got.IdentityHoldSnapshot()) {
+			if err != nil || !bytes.Equal(want, data) {
 				t.Fatal("local snapshot dropped private continuation or replay")
 			}
-			key := "mecatl:session:" + string(s.ID)
+			unchanged, err := client.HGet(t.Context(), key, "blob").Bytes()
+			if err != nil || !bytes.Equal(old, unchanged) {
+				t.Fatal("load rewrote legacy snapshot")
+			}
+			for range 2 {
+				if err := st.Save(t.Context(), got); err != nil {
+					t.Fatal(err)
+				}
+				got, err = st.Load(t.Context(), s.ID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				data, err = sessnap.Marshal(got)
+				if err != nil || !bytes.Equal(want, data) || bytes.Contains(data, []byte("identity_hold")) {
+					t.Fatal("save/reload resurrected authority or changed history")
+				}
+			}
 			stored, err := client.HGet(t.Context(), key, "blob").Bytes()
 			if err != nil {
 				t.Fatal(err)

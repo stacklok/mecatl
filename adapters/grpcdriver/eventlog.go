@@ -62,7 +62,8 @@ func (l *EventLog) Append(ctx context.Context, id session.SessionID, ev session.
 // data, never an error. A mid-stream fault — an unknown envelope format, a
 // payload that fails to decode, or an RPC/stream error — yields
 // (session.Event{}, err) and then stops, honouring the port.EventLog contract
-// (Read yields no further events after an error).
+// (Read yields no further events after an error). Recognized unsupported legacy
+// records are omitted; ReadAfter exposes them as gaps at their original cursors.
 func (l *EventLog) Read(ctx context.Context, id session.SessionID) iter.Seq2[session.Event, error] {
 	return func(yield func(session.Event, error) bool) {
 		// A child context cancelled on early break releases the stream's
@@ -86,11 +87,14 @@ func (l *EventLog) Read(ctx context.Context, id session.SessionID) iter.Seq2[ses
 			}
 			env := resp.GetEvent()
 			ev, err := eventcodec.UnmarshalFormat(env.GetPayload(), env.GetFormat())
+			if errors.Is(err, eventcodec.ErrSkipLegacyRecord) {
+				continue
+			}
 			if err != nil {
 				yield(session.Event{}, fmt.Errorf("grpcdriver: read events %q: decode event: %w", id, err))
 				return
 			}
-			if !yield(ev.WithLegacySource("grpcdriver/eventlog", ""), nil) {
+			if !yield(ev, nil) {
 				return // consumer broke out early; cancel releases the stream
 			}
 		}

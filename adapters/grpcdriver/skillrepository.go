@@ -179,7 +179,14 @@ func skillProvenanceFromProto(p *driverv1.LearnedSkillProvenance) learning.Skill
 	return out
 }
 func skillEvidenceToProto(ref learning.EvidenceRef) *driverv1.LearnedSkillEvidenceRef {
-	out := &driverv1.LearnedSkillEvidenceRef{SessionId: string(ref.SessionID), Locator: string(ref.Locator), Ordinal: int32(ref.Ordinal), ToolCallId: string(ref.ToolCallID), Digest: ref.Digest} // #nosec G115 -- validated evidence ordinal is bounded by source input
+	if ref.ManifestIndex < 0 || ref.ManifestIndex >= learning.MaxInputMessages+learning.MaxInputEvents {
+		return &driverv1.LearnedSkillEvidenceRef{ManifestIndex: learning.MaxInputMessages + learning.MaxInputEvents}
+	}
+	out := &driverv1.LearnedSkillEvidenceRef{SessionId: string(ref.SessionID), Locator: string(ref.Locator), Ordinal: int32(ref.Ordinal), ToolCallId: string(ref.ToolCallID), Digest: ref.Digest, Protocol: string(ref.Protocol), AggregateDigest: ref.AggregateDigest, ManifestIndex: uint32(ref.ManifestIndex)} // #nosec G115 -- validated evidence ordinal is bounded by source input
+	if ref.OriginalMessage != nil {
+		value := int64(*ref.OriginalMessage)
+		out.OriginalMessage = &value
+	}
 	if ref.EventSeq != nil {
 		value := *ref.EventSeq
 		out.EventSeq = &value
@@ -187,10 +194,17 @@ func skillEvidenceToProto(ref learning.EvidenceRef) *driverv1.LearnedSkillEviden
 	return out
 }
 func skillEvidenceFromProto(ref *driverv1.LearnedSkillEvidenceRef) learning.EvidenceRef {
-	if ref == nil {
+	if ref == nil || ref.GetManifestIndex() >= learning.MaxInputMessages+learning.MaxInputEvents {
 		return learning.EvidenceRef{}
 	}
-	out := learning.EvidenceRef{SessionID: session.SessionID(ref.GetSessionId()), Locator: learning.EvidenceLocator(ref.GetLocator()), Ordinal: int(ref.GetOrdinal()), ToolCallID: session.ToolCallID(ref.GetToolCallId()), Digest: ref.GetDigest()}
+	out := learning.EvidenceRef{Protocol: learning.EvidenceProtocol(ref.GetProtocol()), AggregateDigest: ref.GetAggregateDigest(), ManifestIndex: int(ref.GetManifestIndex()), SessionID: session.SessionID(ref.GetSessionId()), Locator: learning.EvidenceLocator(ref.GetLocator()), Ordinal: int(ref.GetOrdinal()), ToolCallID: session.ToolCallID(ref.GetToolCallId()), Digest: ref.GetDigest()}
+	if ref.OriginalMessage != nil {
+		value := int(ref.GetOriginalMessage())
+		if int64(value) != ref.GetOriginalMessage() {
+			return learning.EvidenceRef{}
+		}
+		out.OriginalMessage = &value
+	}
 	if ref.EventSeq != nil {
 		value := ref.GetEventSeq()
 		out.EventSeq = &value

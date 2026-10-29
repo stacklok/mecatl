@@ -620,10 +620,8 @@ func (st *Store) Append(ctx context.Context, id session.SessionID, ev session.Ev
 // It reads only the current STREAM representation. Unsupported old datatypes
 // are rejected without mutation.
 //
-// GAP MARKERS ARE SKIPPED. This port's shipped contract is that it returns
-// EVENTS, and a gap is a delivery envelope that the event-sourced fold would
-// choke on. Cursor readers see gaps via
-// ReadAfter.
+// GAP MARKERS AND RECOGNIZED UNSUPPORTED LEGACY EVENTS ARE SKIPPED. This port
+// returns events only. Cursor readers see both kinds of gaps via ReadAfter.
 func (st *Store) Read(ctx context.Context, id session.SessionID) iter.Seq2[session.Event, error] {
 	return func(yield func(session.Event, error) bool) {
 		client, release, err := st.clients.acquire()
@@ -638,11 +636,6 @@ func (st *Store) Read(ctx context.Context, id session.SessionID) iter.Seq2[sessi
 			yield(session.Event{}, err)
 			return
 		}
-		generation, err := client.Get(ctx, eventsGenerationKey(id)).Result()
-		if err != nil && !errors.Is(err, redis.Nil) {
-			yield(session.Event{}, err)
-			return
-		}
 		for _, raw := range raws {
 			rec, ok, err := decodeStreamMessage(raw)
 			if err != nil {
@@ -652,8 +645,7 @@ func (st *Store) Read(ctx context.Context, id session.SessionID) iter.Seq2[sessi
 			if !ok || rec.Kind != port.LogRecordEvent {
 				continue // a gap or a record carrying no event
 			}
-			position := string(port.EncodeCursor(id, generation, raw.ID))
-			if !yield(rec.Event.WithLegacySource("redisstore/"+generation, position), nil) {
+			if !yield(rec.Event, nil) {
 				return
 			}
 		}

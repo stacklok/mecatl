@@ -944,9 +944,10 @@ func (st *Store) Append(ctx context.Context, id session.SessionID, ev session.Ev
 	return err
 }
 
-// Read scans the per-session event log and yields every recorded event in append
+// Read scans the per-session event log and yields supported events in append
 // order (cumulative — NOT latest-line-wins like the snapshot read). It satisfies
 // port.EventLog. A MISS (no event file) yields an EMPTY sequence: absence is data.
+// Recognized unsupported legacy events are omitted; ReadAfter exposes cursor gaps.
 // A genuine fault — an undecodable newline-terminated record, an unknown format
 // tag, or an I/O error — is yielded as the error on a zero-value event and the
 // consumer stops. Only an unterminated final record is ignored: newline is the
@@ -960,14 +961,12 @@ func (st *Store) Read(ctx context.Context, id session.SessionID) iter.Seq2[sessi
 		var (
 			f            *os.File
 			completeSize int64
-			generation   string
 		)
 		err := st.withSnapshotFamilyLock(ctx, st.resolver.currentSnapshotPath(id), func() error {
-			var err error
-			generation, _, err = st.eventLogGenerationLocked(id)
-			if err != nil {
+			if _, _, err := st.eventLogGenerationLocked(id); err != nil {
 				return err
 			}
+			var err error
 			f, completeSize, err = st.openEventFileLocked(id)
 			return err
 		})
@@ -980,10 +979,8 @@ func (st *Store) Read(ctx context.Context, id session.SessionID) iter.Seq2[sessi
 		}
 		defer func() { _ = f.Close() }()
 
-		var offset int64
 		sc := newEventScanner(io.NewSectionReader(f, 0, completeSize))
 		for sc.Scan() {
-			offset += int64(len(sc.Bytes())) + 1
 			if st.readOnly && ctx.Err() != nil {
 				yield(session.Event{}, ctx.Err())
 				return
@@ -1008,11 +1005,14 @@ func (st *Store) Read(ctx context.Context, id session.SessionID) iter.Seq2[sessi
 				return
 			}
 			ev, err := eventcodec.UnmarshalFormat(rec.Ev, rec.V)
+			if errors.Is(err, eventcodec.ErrSkipLegacyRecord) {
+				continue
+			}
 			if err != nil {
 				yield(session.Event{}, fmt.Errorf("jsonlstore: decode event: %w", err))
 				return
 			}
-			if !yield(ev.WithLegacySource("jsonlstore/"+generation, string(port.EncodeCursor(id, generation, strconv.FormatInt(offset, 10)))), nil) {
+			if !yield(ev, nil) {
 				return
 			}
 		}

@@ -402,7 +402,6 @@ func (st *Store) readStreamAfter(
 				continue // an entry occupying a position but carrying no record
 			}
 			rec.Cursor = port.EncodeCursor(id, basis.generation, msg.ID)
-			rec.Event = rec.Event.WithLegacySource("redisstore/"+basis.generation, string(rec.Cursor))
 			rec.Live = live
 			if !yield(rec, nil) {
 				return
@@ -532,6 +531,9 @@ func decodeEventLogRecord(raw []byte) (rec port.LogRecord, ok bool, err error) {
 		return port.LogRecord{Kind: port.LogRecordGap, GapReason: envelope.R}, true, nil
 	case EventLogFormat:
 		ev, err := eventcodec.Unmarshal(envelope.Ev)
+		if errors.Is(err, eventcodec.ErrSkipLegacyRecord) {
+			return port.LogRecord{Kind: port.LogRecordGap, GapReason: err.Error()}, true, nil
+		}
 		if err != nil {
 			return port.LogRecord{}, false, fmt.Errorf("redisstore: decode event: %w", err)
 		}

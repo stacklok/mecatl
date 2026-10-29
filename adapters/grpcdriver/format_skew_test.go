@@ -105,7 +105,7 @@ func TestDecodingWrapperSkewAndRejectedWritesPreserveBackend(t *testing.T) {
 	ctx := t.Context()
 	for _, frozen := range []bool{false, true} {
 		t.Run(fmt.Sprint("frozen=", frozen), func(t *testing.T) {
-			oldData := legacySnapshotBytes(t, "legacy-authorizing")
+			oldData := legacySnapshotBytes(t, "legacy-completed")
 			s, err := sessnap.Unmarshal(oldData)
 			if err != nil {
 				t.Fatal(err)
@@ -276,7 +276,7 @@ func TestOpaqueDriverFormatsAndPrivateCarrierRoundTrip(t *testing.T) {
 	rawLog := driverv1.NewEventLogServiceClient(conn)
 	store := mustNewSessionStore(t, conn)
 	log := NewEventLog(conn)
-	for _, name := range []string{"legacy-authorizing", "legacy-ambiguous-pending"} {
+	for _, name := range []string{"legacy-completed", "legacy-retry"} {
 		s, err := sessnap.Unmarshal(legacySnapshotBytes(t, name))
 		if err != nil {
 			t.Fatal(err)
@@ -326,12 +326,8 @@ func TestOpaqueDriverFormatsAndPrivateCarrierRoundTrip(t *testing.T) {
 	if err != nil || !reflect.DeepEqual(got.Conversation.Messages, s.Conversation.Messages) {
 		t.Fatalf("private carrier: %v", err)
 	}
-	old, err := eventcodec.Unmarshal([]byte(`{"Type":"tool.result","ToolResult":{"CallID":"provider","Content":"held historical"}}`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	old = old.WithLegacySource("original-driver", "original-position")
-	cursor, err := log.AppendEvent(ctx, s.ID, old)
+	current := session.Event{Type: session.EvToolResult, ToolResult: &session.ToolResult{CallID: session.NewToolCallID(), Content: "current"}}
+	cursor, err := log.AppendEvent(ctx, s.ID, current)
 	if err != nil || cursor != "private-cursor/unchanged" {
 		t.Fatalf("opaque cursor: %q %v", cursor, err)
 	}
@@ -343,7 +339,7 @@ func TestOpaqueDriverFormatsAndPrivateCarrierRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantEvent, err := eventcodec.Marshal(old)
+	wantEvent, err := eventcodec.Marshal(current)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -354,12 +350,12 @@ func TestOpaqueDriverFormatsAndPrivateCarrierRoundTrip(t *testing.T) {
 		t.Fatal("old event reader accepted /2")
 	}
 	for e, err := range log.Read(ctx, s.ID) {
-		if err != nil || !reflect.DeepEqual(e.LegacyIdentity(), old.LegacyIdentity()) {
+		if err != nil || !reflect.DeepEqual(e, current) {
 			t.Fatalf("event private state: %v", err)
 		}
 	}
 	for rec, err := range log.ReadAfter(ctx, s.ID, "", port.ReadOptions{}) {
-		if err != nil || rec.Cursor != cursor || !reflect.DeepEqual(rec.Event.LegacyIdentity(), old.LegacyIdentity()) {
+		if err != nil || rec.Cursor != cursor || !reflect.DeepEqual(rec.Event, current) {
 			t.Fatalf("cursor private state: %v", err)
 		}
 	}
@@ -451,8 +447,47 @@ func TestCursorReaderRejectsContradictoryIdentityFormats(t *testing.T) {
 	}
 }
 
+func TestLegacySnapshotContinuationRejected(t *testing.T) {
+	ctx := t.Context()
+	old := legacySnapshotBytes(t, "legacy-completed")
+	s, err := sessnap.Unmarshal(old)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, replacement := range []string{
+		`"state": "awaiting"`,
+		`"state": "authorizing"`,
+		`"state": "completed", "pending": {}`,
+		`"state": "completed", "pending_authorization": {}`,
+		`"state": "completed", "identity_hold": {}`,
+	} {
+		t.Run(replacement, func(t *testing.T) {
+			payload := bytes.Replace(old, []byte(`"state": "completed"`), []byte(replacement), 1)
+			backend := &countedSnapshotStore{Store: memstore.New()}
+			if err := backend.Store.Save(ctx, s); err != nil {
+				t.Fatal(err)
+			}
+			server := NewSessionStoreServer(backend)
+			for _, write := range []func(context.Context, *driverv1.SaveRequest) (*driverv1.SaveResponse, error){server.Save, server.Create} {
+				_, err := write(ctx, &driverv1.SaveRequest{SessionId: string(s.ID), Snapshot: &driverv1.SessionSnapshot{Format: "sessnap-json/1", Payload: payload}})
+				if status.Code(err) != codes.InvalidArgument {
+					t.Fatalf("unsupported snapshot write: %v", err)
+				}
+			}
+			if backend.writes != 0 {
+				t.Fatal("unsupported snapshot reached backend")
+			}
+			fixture := &opaqueSnapshotFixture{snapshot: &driverv1.SessionSnapshot{Format: "sessnap-json/1", Payload: payload}}
+			conn := dialBufconn(t, func(gs *grpc.Server) { driverv1.RegisterSessionStoreServiceServer(gs, fixture) })
+			if _, err := mustNewSessionStore(t, conn).Load(ctx, s.ID); err == nil {
+				t.Fatal("client repaired unsupported snapshot")
+			}
+		})
+	}
+}
+
 func TestSnapshotClientReadFormatSet(t *testing.T) {
-	old := legacySnapshotBytes(t, "legacy-authorizing")
+	old := legacySnapshotBytes(t, "legacy-completed")
 	s, err := sessnap.Unmarshal(old)
 	if err != nil {
 		t.Fatal(err)

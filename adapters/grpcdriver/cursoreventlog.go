@@ -156,10 +156,14 @@ func logRecordFromProto(id session.SessionID, resp *driverv1.ReadAfterResponse) 
 		env := resp.GetEvent()
 		var err error
 		rec.Event, err = eventcodec.UnmarshalFormat(env.GetPayload(), env.GetFormat())
+		if errors.Is(err, eventcodec.ErrSkipLegacyRecord) {
+			rec.Kind = port.LogRecordGap
+			rec.GapReason = err.Error()
+			return rec, nil
+		}
 		if err != nil {
 			return port.LogRecord{}, fmt.Errorf("grpcdriver: read events %q: decode event: %w", id, err)
 		}
-		rec.Event = rec.Event.WithLegacySource("grpcdriver/eventlog", string(rec.Cursor))
 		return rec, nil
 	default:
 		// An unknown kind is NOT treated as an event. `kind` is an open string so

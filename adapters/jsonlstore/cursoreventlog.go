@@ -313,15 +313,21 @@ func decodeEventPage(ctx context.Context, id session.SessionID, f *os.File, basi
 			})
 		case eventLogFormat, "eventlog-json/1":
 			ev, err := eventcodec.UnmarshalFormat(rec.Ev, rec.V)
-			if err != nil {
+			if errors.Is(err, eventcodec.ErrSkipLegacyRecord) {
+				out = append(out, port.LogRecord{
+					Kind:      port.LogRecordGap,
+					GapReason: err.Error(),
+					Cursor:    cursor,
+				})
+			} else if err != nil {
 				return nil, 0, fmt.Errorf("jsonlstore: decode event: %w", err)
+			} else {
+				out = append(out, port.LogRecord{
+					Kind:   port.LogRecordEvent,
+					Event:  ev,
+					Cursor: cursor,
+				})
 			}
-			ev = ev.WithLegacySource("jsonlstore/"+basis.generation, string(cursor))
-			out = append(out, port.LogRecord{
-				Kind:   port.LogRecordEvent,
-				Event:  ev,
-				Cursor: cursor,
-			})
 		default:
 			return nil, 0, fmt.Errorf("jsonlstore: unknown event-log format %q (want %q)", rec.V, eventLogFormat)
 		}
