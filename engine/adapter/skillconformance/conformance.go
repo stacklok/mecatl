@@ -517,6 +517,11 @@ func RunValidatedActivation(t *testing.T, factory Factory) {
 	})
 }
 
+// runEvidenceRetirement verifies that candidates without exclusively current
+// reflection evidence cannot activate through either activation API, even after
+// provenance merging. Retirement blocks activation; it does not delete stored
+// history or revoke active skills. Ordinary activation still permits legacy-model
+// imports with a PASS evaluation. validated selects the validated activation API.
 func runEvidenceRetirement(t *testing.T, factory Factory, validated bool) {
 	t.Helper()
 	t.Run(fmt.Sprintf("evidence-retirement-validated-%t", validated), func(t *testing.T) {
@@ -559,6 +564,10 @@ func runEvidenceRetirement(t *testing.T, factory Factory, validated bool) {
 	})
 }
 
+// assertRetiredActivation stages an ineligible candidate alongside an active
+// version, then verifies rejection leaves versions, generation, the active skill,
+// and any supported receipt history unchanged. merge adds current provenance to
+// the same draft to prove it cannot wash out obsolete evidence.
 func assertRetiredActivation(t *testing.T, repo learning.SkillRepository, prov learning.SkillProvenance, validated, merge bool) {
 	t.Helper()
 	ctx, p := t.Context(), partition()
