@@ -386486,6 +386486,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1793298739124,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "df62f9a5783a359ac54508ff478ad57e47c2b790",
+          "message": "ci: add a stable omnibus CI gate (#2611)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-29T11:24:42-07:00",
+          "tree_id": "d0ba4219fe31626e41dcf18e23f9671677414a2c",
+          "url": "https://github.com/stacklok/mecatl/commit/df62f9a5783a359ac54508ff478ad57e47c2b790"
+        },
+        "date": 1793299490170,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 16153,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12917,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 794,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -504058,6 +504097,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1793299485459,
+  "lastUpdate": 1793299491067,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
