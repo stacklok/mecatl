@@ -186,9 +186,9 @@ replace them:
 The work splits into three streams that can proceed in parallel once the executor protocol is defined. Each step must
 ship on top of the existing mecak8s deployment. This breakdown is preliminary and will be refined with the chapters.
 
-- **Executor:** an RPC server built from the guest agent's services, deployable in the executor Pod alongside the
-  current Pod exec path; the command-execution switch; a local container mode.
-- **Trusted service:** dial the executor server instead of using Pod exec, behind a flag; remove the per-operation lease
-  once the executor tracks in-flight operations; capability lists in templates and admission.
+- **Executor:** an RPC server built from the guest agent's services, implementing the shared file and command
+  services; the command-execution switch; a local container mode.
+- **Trusted service:** proxy the shared services to the executor server, replacing Pod exec, the per-operation lease,
+  and the one-operation limit; capability lists in templates and admission.
 - **Agent loop:** a session-scoped read ledger; capability requests at session creation; a direct client for local
   execution without the trusted service.
