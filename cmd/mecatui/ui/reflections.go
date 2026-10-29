@@ -12,6 +12,7 @@ import (
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 	"github.com/stacklok/mecatl/cmd/mecatui/internal/terminaltext"
+	"github.com/stacklok/mecatl/cmd/mecatui/theme"
 	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/bounded"
 )
 
@@ -706,23 +707,19 @@ func (s *reflectionsState) Render(width, height int) (string, []ClickableRegion)
 			content = content[:min(rows, len(content))]
 		}
 	} else {
-		var source []string
+		var lines []string
 		viewport, count := &s.details, &s.detailRows
 		if s.detail != nil {
-			source = reflectionDetailLines(*s.detail)
+			lines = reflectionDetailRows(*s.detail, th, width)
 		}
 		if s.view == reflectionsConfirm {
-			source = append(reflectionEffectLines(*s.confirm), source...)
+			lines = append(reflectionStyledRows(th.Style("warning"), reflectionEffectLines(*s.confirm), width), lines...)
 			viewport, count = &s.confirmation, &s.confirmationRows
 		}
-		lines := reflectionPhysicalRows(source, width)
 		viewport.SetGeometry(width, rows, 0, bounded.Clip)
 		*count = len(lines)
 		view := viewport.View(lines)
 		content, above, below = view.Rows, view.Above, view.Below
-		for i := range content {
-			content[i] = th.Style("viewport").Render(content[i])
-		}
 	}
 	// Counters are clipped to the already measured indicator budget, not allowed
 	// to wrap an extra row when their number of digits grows.
@@ -765,61 +762,123 @@ func reflectionPhysicalRows(lines []string, width int) []string {
 	return rows
 }
 
-func reflectionDetailLines(p client.LearningProposal) []string {
-	lines := []string{"id: " + p.ID, "status: " + p.Status, "version: " + p.Version, "kind: " + p.Kind}
-	if p.ProjectScoped {
-		lines = append(lines, "scope: trusted project")
+func reflectionDetailRows(p client.LearningProposal, th theme.Theme, width int) []string {
+	width = min(width, 100)
+	var rows []string
+	text := func(style lipgloss.Style, lines ...string) {
+		rows = append(rows, reflectionStyledRows(style, lines, width)...)
+	}
+	section := func(title string) {
+		rows = append(rows, "")
+		text(th.Style("toolName"), "── "+title+" ──")
+	}
+	field := func(label, value string) {
+		rows = append(rows, reflectionFieldRows(label, value, th, width)...)
+	}
+	if p.Kind == "procedure" {
+		section("Proposed procedure")
 	} else {
-		lines = append(lines, "scope: operator")
+		section("Proposed memory")
 	}
-	if p.Project != "" {
-		lines = append(lines, "request project: "+p.Project)
+	field("status", p.Status)
+	field("kind", p.Kind)
+	if p.ProjectScoped {
+		field("scope", "trusted project")
+	} else {
+		field("scope", "operator")
 	}
-	for _, field := range [][2]string{{"key", p.Key}, {"title", p.Title}, {"value", p.Value}, {"description", p.Description}, {"body", p.Body}} {
-		if field[1] != "" {
-			lines = append(lines, field[0]+": "+field[1])
+	rows = append(rows, "")
+	for _, f := range [][2]string{{"key", p.Key}, {"title", p.Title}, {"value", p.Value}, {"description", p.Description}, {"body", p.Body}} {
+		if f[1] == "" {
+			continue
+		}
+		if f[0] == "value" || f[0] == "body" {
+			text(th.Style("viewport").Bold(true), f[0]+":")
+			for _, line := range reflectionPhysicalRows([]string{f[1]}, max(1, width-2)) {
+				text(th.Style("viewport"), "  "+line)
+			}
+			rows = append(rows, "")
+		} else {
+			field(f[0], f[1])
 		}
 	}
 	if len(p.Triggers) > 0 {
-		lines = append(lines, "triggers: "+strings.Join(p.Triggers, ", "))
+		field("triggers", strings.Join(p.Triggers, ", "))
 	}
-	lines = append(lines, fmt.Sprintf("evidence: %d  decisions: %d", len(p.Evidence), len(p.Decisions)))
-	for _, e := range p.Evidence {
-		lines = append(lines, reflectionEvidenceLines(e)...)
+	if hint, warning := reflectionActionHint(p); hint != "" {
+		style := th.Style("muted")
+		if warning {
+			style = th.Style("warning")
+		}
+		text(style, hint)
 	}
-	for _, d := range p.Decisions {
-		lines = append(lines, "decision: "+d.Kind+" — "+d.Reason)
+	section("Review metadata")
+	field("id", p.ID)
+	field("version", p.Version)
+	if p.Project != "" {
+		field("request project", p.Project)
 	}
-	if p.Promotion != nil {
-		lines = append(lines, "receipt: "+p.Promotion.MemoryKey+" @ "+p.Promotion.ResultVersion)
+	section(fmt.Sprintf("Evidence (%d)", len(p.Evidence)))
+	for i, e := range p.Evidence {
+		if i > 0 {
+			rows = append(rows, "")
+		}
+		text(th.Style("viewport"), reflectionEvidenceLines(e)...)
 	}
-	if p.LearnedSkillID != "" {
-		lines = append(lines, "learned skill: "+p.LearnedSkillID+" (open /skills to inspect versions)")
+	if len(p.Decisions) > 0 {
+		section(fmt.Sprintf("Decision history (%d)", len(p.Decisions)))
+		for _, d := range p.Decisions {
+			field("decision", d.Kind+" — "+d.Reason)
+		}
 	}
+	if p.Promotion != nil || p.LearnedSkillID != "" {
+		section("Promotion")
+		if p.Promotion != nil {
+			field("receipt", p.Promotion.MemoryKey+" @ "+p.Promotion.ResultVersion)
+		}
+		if p.LearnedSkillID != "" {
+			field("learned skill", p.LearnedSkillID+" (open /skills to inspect versions)")
+		}
+	}
+	return rows
+}
+func reflectionFieldRows(label, value string, th theme.Theme, width int) []string {
+	// Sanitize and wrap before styling; proposal values stay literal, not Markdown.
+	lines := reflectionPhysicalRows([]string{label + ": " + value}, width)
+	for i, line := range lines {
+		if i == 0 && strings.HasPrefix(line, label+":") {
+			lines[i] = th.Style("viewport").Bold(true).Render(label+":") + th.Style("viewport").Render(strings.TrimPrefix(line, label+":"))
+		} else {
+			lines[i] = th.Style("viewport").Render(line)
+		}
+	}
+	return lines
+}
+
+func reflectionActionHint(p client.LearningProposal) (text string, warning bool) {
 	if p.Status == client.ProposalStatusStaged || p.Status == client.ProposalStatusDeferred {
 		if reflectionApprovable(p) {
 			if p.Kind == "procedure" {
-				lines = append(lines, "materialize and evaluate learned-skill draft")
-			} else {
-				lines = append(lines, "approve exact key/value/description above")
+				return "materialize and evaluate learned-skill draft", false
 			}
-		} else {
-			reason := p.PromotionUnavailableReason
-			if reason == "" {
-				reason = "evidence unavailable or changed, or target unavailable"
-			}
-			lines = append(lines, "approval disabled: "+reason)
+			return "approve exact key/value/description above", false
 		}
+		reason := p.PromotionUnavailableReason
+		if reason == "" {
+			reason = "evidence unavailable or changed, or target unavailable"
+		}
+		return "approval disabled: " + reason, true
 	}
 	if p.Status == client.ProposalStatusPromoted && !p.PromotionAvailable {
 		reason := p.PromotionUnavailableReason
 		if reason == "" {
 			reason = "memory target unavailable"
 		}
-		lines = append(lines, "undo disabled: "+reason)
+		return "undo disabled: " + reason, true
 	}
-	return lines
+	return "", false
 }
+
 func reflectionEvidenceLines(e client.LearningEvidence) []string {
 	state := "unavailable"
 	if e.Available {
