@@ -61,7 +61,7 @@ Test client authentication at both servers:
 
 Test the session-open exchange:
 
-- AS-1 rejects access tokens it did not issue, tokens for another audience, expired or revoked tokens, a second conversion of the same `jti`, and a `scope` parameter.
+- AS-1 rejects access tokens it did not issue, tokens for another audience, tokens issued without `offline_access`, expired or revoked tokens, a second conversion of the same `jti`, and a `scope` parameter.
 - AS-1 accepts `typ` `at+jwt` and `application/at+jwt`.
 - AS-1 accepts a Mecatl-API-audience token only from client `mecatl`; another client presenting the same token is rejected.
 - AS-1's grant record names the client, the user, and `id-jag` as its only output, and no session; session close revokes it; presenting it at the refresh-token grant returns `invalid_grant`; a second conversion of the same `jti` is refused with `token_used`; once replay-revoke lands ([#6973](https://github.com/stacklok/toolhive/issues/6973)), a reuse by the grant's own client also revokes that grant, and any child grants stop working, while a reuse by another client revokes nothing.
@@ -350,7 +350,8 @@ The **authority work** decides what each agent may do:
 
 While the broker runs as modules inside mecak8s, these constraints keep the later move to a separate service a deployment change rather than a redesign:
 
-- **Fixed issuer URLs.** AS-1 uses its final issuer URL, such as `https://broker.example.com/as`, from the start, and the broker audience is fixed the same way. External approvals name the AS-1 issuer as `actor_iss`, so changing it later would break every approval.
+- **Fixed issuer URLs.** AS-1 uses its final issuer URL, such as `https://broker.example.com/as`, from the start, and the broker audience is fixed the same way. External approvals name the AS-1 issuer as `actor_iss`, so changing it later would break every approval. AS-1 takes its issuer from configuration and is served under the issuer URL's path, so a dedicated hostname or a path on mecak8s's host is a deployment choice.
+- **One tree.** AS-1's ToolHive adapter lives under `internal/identitybroker/adapter/` with the broker's other adapters, so the broker still moves into its own service as one tree. It has its own depguard rule that allows ToolHive's authorization-server packages; the other broker adapters keep the rule that allows only the standard library, the broker core, and the JWT library.
 - **The same contract in-process.** mecak8s calls the broker over the same RPC contract it will use across processes, with real workload authentication, and the broker identifies the caller from authenticated metadata. No in-process shortcut may skip a check.
 - **Separate storage.** The broker's records, including refresh tokens, the instance registry, and audit, use their own schema and database credentials, with no joins or shared transactions with mecak8s's session store.
 - **One key per role.** AS-1, the broker client `mecatl`, and the agent-instance issuer each use their own key behind a signer interface, so moving a key means moving its permission, not changing code.
