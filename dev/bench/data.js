@@ -348012,6 +348012,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1793292692816,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "c366c3e8119fb2c412d3c8dfc2ec61db99d80d7c",
+          "message": "fix(learning): fit manual synchronous reflection to request budgets (#2600)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-29T10:14:23-07:00",
+          "tree_id": "83d57266410e81ad612ec22ea1ba6c09619caeb5",
+          "url": "https://github.com/stacklok/mecatl/commit/c366c3e8119fb2c412d3c8dfc2ec61db99d80d7c"
+        },
+        "date": 1793294823580,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -503002,6 +503036,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1793294819472,
+  "lastUpdate": 1793294825050,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
