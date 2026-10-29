@@ -349086,6 +349086,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1793299484503,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "1d40f688eb871494925f924100c462c13fc2a762",
+          "message": "test(studio): fix sidebar viewport contamination flake (#2609)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-29T18:43:03Z",
+          "tree_id": "2a105f5945f94b449a738d8c5e09704503e4d85a",
+          "url": "https://github.com/stacklok/mecatl/commit/1d40f688eb871494925f924100c462c13fc2a762"
+        },
+        "date": 1793300282424,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -504535,6 +504569,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1793300278924,
+  "lastUpdate": 1793300283320,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
