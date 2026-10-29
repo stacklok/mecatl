@@ -2,6 +2,8 @@
 // @vitest-environment happy-dom
 
 import type { SessionTranscriptResponse } from "@mecatl-studio/contracts";
+import { act, cleanup, renderHook } from "@testing-library/react";
+import { useLayoutEffect } from "react";
 import { afterEach, describe, expect, it } from "vitest";
 import { clearUserScopedStorage } from "../../lib/account-storage";
 import { messagesFromTranscript } from "./chat-state";
@@ -14,9 +16,12 @@ import {
   threadKeyForMessage,
   threadKeyForRoot,
   threadTitleFromRoot,
+  useThreadMap,
+  useThreadSessionIds,
 } from "./thread-map";
 
 afterEach(() => {
+  cleanup();
   clearUserScopedStorage();
   window.localStorage.clear();
 });
@@ -51,6 +56,23 @@ async function rootAt(ordinal: number, saved: SessionTranscriptResponse) {
 }
 
 describe("thread associations", () => {
+  it("observes registration between render and subscription", () => {
+    const { result } = renderHook(() => {
+      const threads = useThreadMap("chat-a");
+      const ids = useThreadSessionIds();
+      useLayoutEffect(() => {
+        registerThreadSession("chat-a", "root", "fork-a");
+      }, []);
+      return { threads, ids };
+    });
+
+    expect(result.current.threads).toEqual({ root: { sessionId: "fork-a" } });
+    expect([...result.current.ids]).toEqual(["fork-a"]);
+
+    act(() => registerThreadSession("chat-a", "next", "fork-b"));
+    expect([...result.current.ids].sort()).toEqual(["fork-a", "fork-b"]);
+  });
+
   it("keeps equal text messages in distinct forked threads", async () => {
     const saved = transcript(["same", "answer", "same", "later turn"]);
     const first = await rootAt(0, saved);

@@ -439,6 +439,7 @@ export function useThreadSessionIds() {
     };
     window.addEventListener(threadsChangedEvent, refresh);
     window.addEventListener("storage", onStorage);
+    refresh();
     return () => {
       window.removeEventListener(threadsChangedEvent, refresh);
       window.removeEventListener("storage", onStorage);
