@@ -292,6 +292,73 @@ func boundedExisting(input learning.Input, existing []learning.ExistingFact) []l
 	return input.Existing
 }
 
+// validateSyncReflectionInput bounds retained input and the exact manual request.
+// The queue's existing raw guard remains independent of this sync-only preflight.
+func (o *reflectionObserver) validateSyncReflectionInput(input learning.Input) error {
+	if err := learning.ValidateInput(input); err != nil {
+		return err
+	}
+	if reflectionRawInputBytes(input, defaultReflectionJobBytes) > defaultReflectionJobBytes {
+		return agent.ErrReflectionLimits
+	}
+	material, err := reflectionInputMaterial(input, defaultReflectionJobBytes)
+	if err != nil {
+		return err
+	}
+	if len(material) > defaultReflectionJobBytes {
+		return agent.ErrReflectionLimits
+	}
+	if estimator, ok := o.reflector.(interface {
+		RequestTokenEstimate(learning.Input) (int, error)
+	}); ok {
+		_, err = estimator.RequestTokenEstimate(input)
+	}
+	return err
+}
+
+func (o *reflectionObserver) prepareSyncReflection(ctx context.Context, trajectory learning.Trajectory, events []session.Event, eventSource iter.Seq2[session.Event, error], existing []learning.ExistingFact) (learning.Materialization, error) {
+	hostSignals := []learning.Signal{{Kind: learning.SignalHostRequested}}
+	selectionSignals := append(hostSignals, learning.DetectSignals(learning.Input{Trajectory: trajectory})...)
+	for limit := defaultReflectionJobBytes; limit > 0; limit /= 2 {
+		materialized, err := learning.MaterializeEvidence(ctx, learning.MaterializationRequest{
+			Trajectory: trajectory, Events: events, EventSource: eventSource,
+			Signals: selectionSignals, Explicit: true,
+			Limits: learning.MaterializationLimits{MaxBytes: limit},
+		})
+		if err != nil || materialized.Disposition != learning.MaterializationSelected {
+			return materialized, err
+		}
+		input := materialized.Input
+		input.Trajectory.Workspace = trajectory.Workspace
+		input.Trajectory.Principal = trajectory.Principal.Clone()
+		input.Trajectory.Kind = trajectory.Kind
+		input.Trajectory.Counters = trajectory.Counters
+		input.Trajectory.Current = selectedCurrentSpan(materialized.Manifest, trajectory.Current)
+		input.Signals = append([]learning.Signal(nil), hostSignals...)
+		input.Signals = append(input.Signals, learning.DetectSignals(input)...)
+		if err := o.validateSyncReflectionInput(input); err != nil {
+			if errors.Is(err, agent.ErrReflectionLimits) {
+				continue
+			}
+			return learning.Materialization{}, err
+		}
+		// Optional comparison facts must not cause evidence to be reselected.
+		for _, fact := range existing {
+			input.Existing = append(input.Existing, fact)
+			if err := o.validateSyncReflectionInput(input); err != nil {
+				if !errors.Is(err, agent.ErrReflectionLimits) {
+					return learning.Materialization{}, err
+				}
+				input.Existing = input.Existing[:len(input.Existing)-1]
+				break
+			}
+		}
+		materialized.Input = input
+		return materialized, nil
+	}
+	return learning.Materialization{Disposition: learning.MaterializationAbstained, Reason: learning.MaterializationNoEligibleEvidence}, nil
+}
+
 func (o *reflectionObserver) submit(ctx context.Context, trajectory learning.Trajectory, events []session.Event, async, automatic bool) (reflectionReceipt, error) {
 	return o.submitWithEventSource(ctx, trajectory, events, nil, async, automatic)
 }
@@ -388,6 +455,20 @@ func (o *reflectionObserver) submitWithEventSource(ctx context.Context, trajecto
 		if err := learning.ValidateInput(input); err != nil {
 			return reflectionReceipt{}, fmt.Errorf("validate automatic materialization: %w", err)
 		}
+		if err := ctx.Err(); err != nil {
+			return reflectionReceipt{}, err
+		}
+	} else if o.attempts == nil || o.mode == learning.Off {
+		materialized, err := o.prepareSyncReflection(ctx, trajectory, events, eventSource, memoryExisting(ctx, stores...))
+		if err != nil {
+			return reflectionReceipt{}, err
+		}
+		if materialized.Disposition != learning.MaterializationSelected {
+			return reflectionReceipt{Disposition: reflectionCompleted, Abstained: true, Err: materialized.Reason.String()}, nil
+		}
+		input = materialized.Input
+		signals = input.Signals
+		decision.Signals = signals
 		if err := ctx.Err(); err != nil {
 			return reflectionReceipt{}, err
 		}
