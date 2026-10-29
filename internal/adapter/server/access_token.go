@@ -60,10 +60,10 @@ func accessTokenFromRequest(ctx context.Context) identitybroker.Token {
 }
 
 // takeRequestAccessToken returns the request's access token and empties the
-// holder. The identity broker converts an access token once, so the open that
-// presents it takes it, and every later open in the same request presents
-// nothing and so cannot be refused for the token after the request changed
-// something.
+// holder. The identity broker converts an access token once, so the request's
+// first broker open takes it, presenting or discarding it, and every later
+// open in the same request presents nothing and so cannot be refused for the
+// token after the request changed something.
 func takeRequestAccessToken(ctx context.Context) identitybroker.Token {
 	held, _ := ctx.Value(requestAccessTokenKey{}).(*requestAccessToken)
 	if held == nil {

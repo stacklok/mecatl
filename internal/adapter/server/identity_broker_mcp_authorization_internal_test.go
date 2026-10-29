@@ -289,3 +289,44 @@ func TestIdentityBrokerSessionRefusalChallengeKeysOnTheSentinel(t *testing.T) {
 		}
 	}
 }
+
+// TestMCPAuthorizationFirstOpenTakesAnUnpresentedToken proves a granted
+// recheck whose first open finds the session holding a refresh token takes
+// the request's token anyway: when the broker session closes after the claim
+// is saved, the continuation's open presents nothing, so a token an earlier
+// request converted is not presented again after the write.
+func TestMCPAuthorizationFirstOpenTakesAnUnpresentedToken(t *testing.T) {
+	f := newMCPAuthorizationBrokerFixture(t, session.AuthorizationGranted, time.Now)
+	f.as1.set(false)
+	sess, err := f.store.Load(t.Context(), "authorization-session")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// An earlier request converted the token with jti-spent for this session.
+	earlier := requestWithAccessToken(t, mcpAuthorizationOwner, "jti-spent")
+	if _, err := f.broker.OpenSession(t.Context(), identitybroker.OpenSessionRequest{
+		HostSessionID: string(sess.ID), Incarnation: string(sess.Incarnation()),
+		Owner:       identitybroker.Owner{Issuer: mcpAuthorizationOwner.Issuer, Subject: mcpAuthorizationOwner.Subject},
+		AccessToken: accessTokenFromRequest(earlier),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	presented := f.broker.presented.Load()
+	f.attach.refreshHook = func() {
+		open, found, err := f.broker.FindSession(context.Background(), identitybroker.FindSessionRequest{RootHostSessionID: string(sess.ID)})
+		if err == nil && found {
+			_ = f.broker.CloseSession(context.Background(), identitybroker.CloseSessionRequest{SessionID: open.ID, Reason: identitybroker.ReasonSessionClosed})
+		}
+	}
+	result, err := f.svc.RecheckMCPAuthorization(requestWithAccessToken(t, mcpAuthorizationOwner, "jti-spent"), f.control.SessionID, f.control)
+	if errors.Is(err, ErrBearerRejected) {
+		t.Fatalf("recheck = %v: a tagged 401 after the claim was saved", err)
+	}
+	if err != nil {
+		t.Fatalf("recheck: %v", err)
+	}
+	drainLifecycleRun(t, f.svc, result)
+	if n := f.broker.presented.Load() - presented; n != 0 {
+		t.Fatalf("the recheck presented its token %d times, want none", n)
+	}
+}

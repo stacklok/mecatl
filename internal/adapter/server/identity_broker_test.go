@@ -59,6 +59,8 @@ type recordingBroker struct {
 	openErr error
 	// afterOpen, when set, runs after each OpenSession the broker answered.
 	afterOpen func(identitybroker.OpenSessionRequest)
+	// beforeFind, when set, runs before each FindSession reaches the broker.
+	beforeFind func(identitybroker.FindSessionRequest)
 }
 
 // newRecordingBroker wraps the real identity broker, so these tests exercise
@@ -117,7 +119,19 @@ func (b *recordingBroker) FindSession(ctx context.Context, req identitybroker.Fi
 	if err := b.down(); err != nil {
 		return identitybroker.Session{}, false, err
 	}
+	b.mu.Lock()
+	hook := b.beforeFind
+	b.mu.Unlock()
+	if hook != nil {
+		hook(req)
+	}
 	return b.inner.FindSession(ctx, req)
+}
+
+func (b *recordingBroker) closeRequests() []identitybroker.CloseSessionRequest {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return append([]identitybroker.CloseSessionRequest(nil), b.closes...)
 }
 
 func (b *recordingBroker) CloseSession(ctx context.Context, req identitybroker.CloseSessionRequest) error {

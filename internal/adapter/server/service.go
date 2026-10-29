@@ -2592,9 +2592,17 @@ func (s *Service) reserveCreateID(ctx context.Context, id session.SessionID, own
 	sameOwner := existing != nil && (existing.Owner == nil && owner == nil || existing.Owner.SameIdentity(owner))
 	if !sameOwner {
 		release()
-		return nil, nil, fmt.Errorf("%w: %q", ErrNotFound, id)
+		return nil, nil, foreignCreateIDError(id)
 	}
 	return existing, release, nil
+}
+
+// foreignCreateIDError is the error a create naming an explicit ID gets when
+// another owner holds that ID: not found, so the create learns nothing about
+// the other owner. It is the same whether a saved session or only an identity
+// broker session holds the ID, so the two cannot be told apart.
+func foreignCreateIDError(id session.SessionID) error {
+	return fmt.Errorf("%w: %q", ErrNotFound, id)
 }
 
 func (s *Service) reserveGeneratedSessionID(ctx context.Context, id session.SessionID) (func(), error) {

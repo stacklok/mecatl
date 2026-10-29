@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -134,8 +135,15 @@ func (f *sessionOpenFixture) token() string {
 // returns how many broker opens in it presented a token.
 func (f *sessionOpenFixture) within(t *testing.T, fn func(context.Context)) int {
 	t.Helper()
+	return f.withinBearer(t, f.token(), fn)
+}
+
+// withinBearer is within with bearer, such as a token an earlier request
+// presented.
+func (f *sessionOpenFixture) withinBearer(t *testing.T, bearer string, fn func(context.Context)) int {
+	t.Helper()
 	before := f.broker.openCount()
-	withinRequest(t, "unary", f.auth, f.token(), fn)
+	withinRequest(t, "unary", f.auth, bearer, fn)
 	presented := 0
 	for _, open := range f.broker.openRequests()[before:] {
 		if !open.AccessToken.IsZero() {
@@ -938,5 +946,222 @@ func TestIdentityBrokerRefusalTransportParity(t *testing.T) {
 		if httpStatus, code, challenge := restCreate(t, f, tc.bearer); httpStatus != http.StatusUnauthorized || code != "bearer_rejected" || challenge != tc.challenge {
 			t.Errorf("%s: HTTP create = %d %q, challenge %q; want 401 \"bearer_rejected\", %q", tc.name, httpStatus, code, challenge, tc.challenge)
 		}
+	}
+}
+
+// TestIdentityBrokerFirstOpenTakesAnUnpresentedToken proves the request's
+// first broker open takes its token even when it does not present it, because
+// the session already holds a refresh token. Here the request carries the
+// token an earlier request converted, and the broker session closes after the
+// run's repair save: the later open in the request must present nothing, so
+// the request does not fail with the tagged 401 after its write.
+func TestIdentityBrokerFirstOpenTakesAnUnpresentedToken(t *testing.T) {
+	retryable := mockllm.ErrorTurn(&retryFailure{session.RetryDispositionRetryable, session.StreamProgressPrecommit})
+	f := newSessionOpenFixture(t, mockllm.New(retryable, mockllm.TextTurn("done")))
+	spent := f.token()
+	var sess *session.Session
+	var err error
+	f.withinBearer(t, spent, func(ctx context.Context) { sess, err = f.svc.CreateSession(ctx, session.ModeDefault, session.Limits{}) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The run fails retryably, so the next run entry recovers the session and
+	// saves it before its engine opens the broker session again.
+	ctx := aliceContext(t)
+	run, err := f.svc.StartRun(ctx, sess.ID, "hello")
+	if err != nil {
+		t.Fatal(err)
+	}
+	drain(run)
+	f.svc.Persist(ctx, sess.ID)
+	f.svc.FinishRun(sess.ID, run)
+	if loaded, err := f.store.Load(t.Context(), sess.ID); err != nil || loaded.State != session.StateFailed {
+		t.Fatalf("setup: session %v, %v; want it failed", loaded, err)
+	}
+	if got, ok := f.broker.find(t, sess.ID); !ok || !got.HoldsRefreshToken {
+		t.Fatalf("setup: broker session %+v (%v), want one holding a refresh token", got, ok)
+	}
+	// The run entry's first open finds the refresh token; its second, after
+	// the repair save, finds the broker session closed.
+	var finds atomic.Int32
+	f.broker.set(func(b *recordingBroker) {
+		b.beforeFind = func(req identitybroker.FindSessionRequest) {
+			if finds.Add(1) != 2 {
+				return
+			}
+			open, ok, err := b.inner.FindSession(context.Background(), req)
+			if err == nil && ok {
+				_ = b.inner.CloseSession(context.Background(), identitybroker.CloseSessionRequest{SessionID: open.ID, Reason: identitybroker.ReasonSessionClosed})
+			}
+		}
+	})
+	exchanges := f.as1.exchanges()
+	presented := f.withinBearer(t, spent, func(ctx context.Context) { err = runToEnd(ctx, t, f.svc, sess.ID) })
+	if errors.Is(err, server.ErrBearerRejected) {
+		t.Fatalf("run = %v: a tagged 401 after the repair save", err)
+	}
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if finds.Load() < 2 {
+		t.Fatalf("the run looked up the broker session %d times; the close never happened", finds.Load())
+	}
+	if presented != 0 || f.as1.exchanges() != exchanges {
+		t.Fatalf("the run presented its token %d times (%d new exchanges), want none", presented, f.as1.exchanges()-exchanges)
+	}
+	if got, ok := f.broker.find(t, sess.ID); !ok || got.HoldsRefreshToken {
+		t.Fatalf("broker session after the run = %+v (%v), want a new one holding no refresh token", got, ok)
+	}
+}
+
+// TestIdentityBrokerRegistrationRefusalKeepsItsMapping proves the broker's
+// reasons map to the new client outcomes only for the session open: a
+// registration refused with one keeps the internal error, which #2552 owns.
+func TestIdentityBrokerRegistrationRefusalKeepsItsMapping(t *testing.T) {
+	for _, reason := range []identitybroker.Reason{identitybroker.ReasonSessionOwned, identitybroker.ReasonSignedOut, identitybroker.ReasonTokenUsed} {
+		t.Run(string(reason), func(t *testing.T) {
+			broker := newRecordingBroker()
+			svc := newIdentityBrokerService(t, broker, mockllm.New(mockllm.TextTurn("must not run")))
+			ctx := aliceContext(t)
+			sess, err := svc.CreateSession(ctx, session.ModeDefault, session.Limits{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			broker.set(func(b *recordingBroker) {
+				b.registerErr = identitybroker.ReasonError(reason, "test broker refuses the registration")
+			})
+			// A credential held from the create would skip registration.
+			lost := wantBrokerSession(t, broker, sess)
+			if err := broker.inner.CloseSession(t.Context(), identitybroker.CloseSessionRequest{SessionID: lost.ID, Reason: identitybroker.ReasonSessionClosed}); err != nil {
+				t.Fatal(err)
+			}
+			err = runToEnd(ctx, t, svc, sess.ID)
+			for _, newer := range []error{server.ErrBearerRejected, server.ErrSignInRequired, server.ErrIdentityBrokerSessionRefused} {
+				if errors.Is(err, newer) {
+					t.Fatalf("registration refused with %s = %v, want it kept off the session-open outcomes", reason, err)
+				}
+			}
+			if !errors.Is(err, server.ErrInternal) {
+				t.Fatalf("registration refused with %s = %v, want ErrInternal", reason, err)
+			}
+		})
+	}
+}
+
+// TestIdentityBrokerLostCreateRaceWithASharedBroker is the lost-race test with
+// both replicas on one broker: the loser closes only the broker session it
+// opened, by its ID, and the winner's stays open.
+func TestIdentityBrokerLostCreateRaceWithASharedBroker(t *testing.T) {
+	winner := newSessionOpenFixture(t, mockllm.New())
+	loser := newSessionOpenFixture(t, mockllm.New(), func(cfg *server.Config) {
+		cfg.Store = winner.store
+		cfg.IdentityBroker = winner.broker
+	})
+	loser.store, loser.broker, loser.as1 = winner.store, winner.broker, winner.as1
+	create := func(f *sessionOpenFixture) (*session.Session, error) {
+		var sess *session.Session
+		var err error
+		f.within(t, func(ctx context.Context) {
+			sess, err = f.svc.CreateSessionWithProfile(ctx, session.ModeDefault, session.Limits{}, server.ProviderSelector{}, server.ProfileDefault, server.WithSessionID("dup"))
+		})
+		return sess, err
+	}
+	var loserBroker string
+	var won *session.Session
+	var wonErr error
+	// Only the loser's broker open triggers the winner's create; the winner's
+	// own opens re-enter this hook and pass through.
+	var triggered atomic.Bool
+	winner.broker.set(func(b *recordingBroker) {
+		b.afterOpen = func(req identitybroker.OpenSessionRequest) {
+			if !triggered.CompareAndSwap(false, true) {
+				return
+			}
+			open, _, _ := b.inner.FindSession(context.Background(), identitybroker.FindSessionRequest{RootHostSessionID: req.HostSessionID})
+			loserBroker = open.ID
+			// The winner creates while the loser is between its broker open and
+			// its save.
+			won, wonErr = create(winner)
+		}
+	})
+	_, lostErr := create(loser)
+	if wonErr != nil || won == nil {
+		t.Fatalf("the winning create = %v, %v", won, wonErr)
+	}
+	if !errors.Is(lostErr, server.ErrInvalidArgument) || !strings.Contains(lostErr.Error(), "already exists") {
+		t.Fatalf("the losing create = %v, want ErrInvalidArgument for an existing session ID", lostErr)
+	}
+	open, ok := winner.broker.find(t, "dup")
+	if !ok || open.Incarnation != string(won.Incarnation()) {
+		t.Fatalf("broker session for dup after the race = %+v (%v), want the winner's", open, ok)
+	}
+	for _, c := range winner.broker.closeRequests() {
+		if c.SessionID == open.ID {
+			t.Fatalf("a create closed the winner's broker session %s", open.ID)
+		}
+	}
+	closedLosers := 0
+	for _, c := range winner.broker.closeRequests() {
+		if c.SessionID == loserBroker {
+			closedLosers++
+		}
+	}
+	if loserBroker == "" || closedLosers == 0 {
+		t.Fatalf("the loser's broker session %q was not closed by ID: closes %+v", loserBroker, winner.broker.closeRequests())
+	}
+}
+
+// TestIdentityBrokerExplicitIDHeldByAnotherOwner proves a create naming an
+// explicit ID that only another user's broker session holds is refused
+// exactly as a create naming another user's saved session is, saving nothing
+// and leaving that broker session alone.
+func TestIdentityBrokerExplicitIDHeldByAnotherOwner(t *testing.T) {
+	bob := &session.Principal{Issuer: brokerAlice.Issuer, Subject: "bob-117", GrantType: session.GrantTypeUser}
+	createAsBob := func(t *testing.T, f *sessionOpenFixture) error {
+		t.Helper()
+		tok := accessTokenFor(bob, "jti-bob")
+		f.tokens[tok] = *bob
+		var err error
+		withinRequest(t, "unary", f.auth, tok, func(ctx context.Context) {
+			_, err = f.svc.CreateSessionWithProfile(ctx, session.ModeDefault, session.Limits{}, server.ProviderSelector{}, server.ProfileDefault, server.WithSessionID("taken"))
+		})
+		return err
+	}
+
+	// Alice's broker session holds the ID; no session is saved under it.
+	brokerOnly := newSessionOpenFixture(t, mockllm.New())
+	alices, err := brokerOnly.broker.inner.OpenSession(t.Context(), identitybroker.OpenSessionRequest{
+		HostSessionID: "taken", Incarnation: string(session.NewIncarnationID()),
+		Owner: identitybroker.Owner{Issuer: brokerAlice.Issuer, Subject: brokerAlice.Subject},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	heldErr := createAsBob(t, brokerOnly)
+	if state := brokerOnly.state(t); state != "" {
+		t.Fatalf("the refused create saved:\n%s", state)
+	}
+	if got, ok := brokerOnly.broker.find(t, "taken"); !ok || got.ID != alices.ID {
+		t.Fatalf("Alice's broker session after Bob's create = %+v (%v), want it untouched", got, ok)
+	}
+	if brokerOnly.as1.exchanges() != 0 {
+		t.Fatal("Bob's token was presented")
+	}
+
+	// A plain collision: Alice's saved session holds the ID, with no broker
+	// session for it.
+	saved := newSessionOpenFixture(t, mockllm.New())
+	existing := session.New("taken", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1, 0))
+	if err := existing.RestoreLabels(brokerAlice, session.Authority{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := saved.store.Create(t.Context(), existing); err != nil {
+		t.Fatal(err)
+	}
+	plainErr := createAsBob(t, saved)
+
+	if heldErr == nil || plainErr == nil || heldErr.Error() != plainErr.Error() ||
+		!errors.Is(heldErr, server.ErrNotFound) || !errors.Is(plainErr, server.ErrNotFound) {
+		t.Fatalf("create of an ID held by another user's broker session = %v; plain collision = %v; want the same error", heldErr, plainErr)
 	}
 }
