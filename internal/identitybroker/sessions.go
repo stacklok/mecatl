@@ -28,7 +28,11 @@ type sessionTable struct {
 	byID map[string]*brokerSession
 	// agents holds registered agents by subject, apart from their sessions.
 	agents map[string]*agentRecord
-	now    func() time.Time
+	// converted holds the jti of every access token AS-1 may have converted,
+	// for any session, with the token's exp; entries are dropped once exp
+	// plus convertedClockSkew has passed.
+	converted map[string]time.Time
+	now       func() time.Time
 
 	hostMu    sync.Mutex
 	hostLocks map[string]*hostLock // root host session ID -> its open lock
@@ -60,7 +64,7 @@ type brokerSession struct {
 func newSessionTable() *sessionTable {
 	return &sessionTable{
 		open: map[string]string{}, byID: map[string]*brokerSession{}, agents: map[string]*agentRecord{},
-		hostLocks: map[string]*hostLock{}, now: time.Now,
+		converted: map[string]time.Time{}, hostLocks: map[string]*hostLock{}, now: time.Now,
 	}
 }
 

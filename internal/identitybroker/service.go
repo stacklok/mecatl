@@ -58,14 +58,16 @@ import (
 //     when AS-1 first accepts a token for it.
 //   - Exchanges the token at AS-1 for a refresh token the session holds,
 //     never past the session's hard expiry, and reports it in
-//     Session.HoldsRefreshToken. A token the session already converted is
-//     never presented to AS-1 again: an open repeating it returns the
-//     session as it is. AS-1's token_used and its refusal of the token fail
-//     with CodeUnauthenticated and ReasonTokenUsed or ReasonSubjectInvalid,
-//     after which the client refreshes its access token and opens again; a
-//     user-wide revocation fails with CodeUnauthenticated and
-//     ReasonSignedOut, ReasonUpstreamRevoked, or ReasonOwnerActionRequired,
-//     after which the user signs in again; an unavailable AS-1 fails with
+//     Session.HoldsRefreshToken. A token AS-1 may already have converted,
+//     for any session, is never presented to AS-1 again: an open repeating
+//     it returns the session as it is when the session holds a live refresh
+//     token, and fails with ReasonTokenUsed otherwise. AS-1's token_used and
+//     its refusal of the token fail with CodeUnauthenticated and
+//     ReasonTokenUsed or ReasonSubjectInvalid, after which the client
+//     refreshes its access token and opens again; a user-wide revocation
+//     fails with ReasonSignedOut, ReasonUpstreamRevoked, or
+//     ReasonOwnerActionRequired and the reason's code, after which the user
+//     signs in again; an unavailable AS-1 fails with
 //     CodeUnavailable, and any other failure with CodeInternal. A failed
 //     exchange leaves the session paired, with any refresh token it held; an
 //     answer that does not match the request or cannot be decoded closes it.
@@ -120,9 +122,9 @@ type Session struct {
 	Owner Owner
 	// HoldsRefreshToken reports whether the session held a live refresh token
 	// when the call returned: while it does, the caller need not send an
-	// access token. The broker itself never presents a token it already
-	// converted for the session to AS-1 again. The refresh token never leaves
-	// the broker.
+	// access token. The broker itself never presents a token AS-1 may
+	// already have converted, for any session, to AS-1 again. The refresh
+	// token never leaves the broker.
 	HoldsRefreshToken bool
 }
 
@@ -138,9 +140,10 @@ type OpenSessionRequest struct {
 	// A broker that converts tokens checks that its sub_id is Owner and
 	// exchanges it at AS-1 for the session's refresh token. AS-1 converts each
 	// token once, so the caller passes a freshly refreshed token, and need not
-	// pass one while the session holds a live refresh token; a token the
-	// session already converted is not exchanged again. A different token
-	// replaces the session's refresh token. Other brokers ignore it.
+	// pass one while the session holds a live refresh token; a token AS-1 may
+	// already have converted, for any session, is not exchanged again. A
+	// token not converted before replaces the session's refresh token. Other
+	// brokers ignore it.
 	AccessToken Token
 }
 

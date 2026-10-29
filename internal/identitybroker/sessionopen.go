@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"maps"
 	"slices"
 	"strings"
 	"time"
@@ -86,17 +87,25 @@ type heldGrant struct {
 	sourceJTI string
 }
 
-// accessTokenClaims are the claims check 1 reads from an access token
+// convertedClockSkew is how long past an access token's exp the broker
+// remembers that AS-1 may have converted it: at least the clock skew AS-1
+// allows an access token's exp, after which AS-1 refuses the token as
+// expired anyway.
+const convertedClockSkew = 5 * time.Minute
+
+// accessTokenClaims are the claims the broker reads from an access token
 // without verifying it.
 type accessTokenClaims struct {
 	owner Owner
 	jti   string
+	// exp is zero when the token has no numeric exp.
+	exp time.Time
 }
 
-// readAccessToken reads sub_id and jti from a compact JWT's payload without
-// verifying its signature: AS-1 verifies the same token next. It reports
-// false when the token has no sub_id of format iss_sub with a valid issuer
-// and subject.
+// readAccessToken reads sub_id, jti, and exp from a compact JWT's payload
+// without verifying its signature: AS-1 verifies the same token next. It
+// reports false when the token has no sub_id of format iss_sub with a valid
+// issuer and subject; a missing or malformed exp only leaves exp zero.
 func readAccessToken(token Token) (accessTokenClaims, bool) {
 	parts := strings.Split(token.Value(), ".")
 	if len(parts) != 3 {
@@ -107,7 +116,8 @@ func readAccessToken(token Token) (accessTokenClaims, bool) {
 		return accessTokenClaims{}, false
 	}
 	var claims struct {
-		JTI   string `json:"jti"`
+		JTI   string          `json:"jti"`
+		Exp   json.RawMessage `json:"exp"`
 		SubID *struct {
 			Format  string `json:"format"`
 			Issuer  string `json:"iss"`
@@ -121,7 +131,40 @@ func readAccessToken(token Token) (accessTokenClaims, bool) {
 	if owner.validate() != nil {
 		return accessTokenClaims{}, false
 	}
-	return accessTokenClaims{owner: owner, jti: claims.JTI}, true
+	out := accessTokenClaims{owner: owner, jti: claims.JTI}
+	var exp float64
+	if len(claims.Exp) > 0 && json.Unmarshal(claims.Exp, &exp) == nil && exp > 0 {
+		out.exp = time.Unix(int64(exp), 0)
+	}
+	return out, true
+}
+
+// recordConvertedLocked remembers that AS-1 may have converted claims' token,
+// until its exp plus convertedClockSkew. A token with no jti or exp is not
+// remembered: AS-1 requires both, so it converts neither. The caller holds
+// t.mu.
+func (t *sessionTable) recordConvertedLocked(claims accessTokenClaims) {
+	t.pruneConvertedLocked()
+	if claims.jti != "" && !claims.exp.IsZero() && t.now().Before(claims.exp.Add(convertedClockSkew)) {
+		t.converted[claims.jti] = claims.exp
+	}
+}
+
+// wasConvertedLocked reports whether AS-1 may have converted the token with
+// jti. The caller holds t.mu.
+func (t *sessionTable) wasConvertedLocked(jti string) bool {
+	t.pruneConvertedLocked()
+	_, ok := t.converted[jti]
+	return jti != "" && ok
+}
+
+// pruneConvertedLocked forgets tokens past their exp plus convertedClockSkew.
+// The caller holds t.mu.
+func (t *sessionTable) pruneConvertedLocked() {
+	now := t.now()
+	maps.DeleteFunc(t.converted, func(_ string, exp time.Time) bool {
+		return !now.Before(exp.Add(convertedClockSkew))
+	})
 }
 
 // convert runs design step (3) for an open of s with an access token: the
@@ -152,13 +195,17 @@ func (b *Broker) convert(ctx context.Context, s *brokerSession, req OpenSessionR
 	if s.verifiedOwner != nil && *s.verifiedOwner != claims.owner {
 		return Session{}, ReasonError(ReasonSessionOwned, "the broker session's verified owner is another user")
 	}
-	// A token this session already converted is never presented to AS-1
-	// again: AS-1 would refuse it with token_used and, once replay-revoke
-	// lands, revoke the grant the first conversion created. A repeated open
-	// with it, such as a concurrent request for a new host session, gets the
-	// session as it is.
-	if g := s.grant; g != nil && claims.jti != "" && g.sourceJTI == claims.jti && t.now().Before(g.expiresAt) {
-		return t.viewLocked(s), nil
+	// A token AS-1 may already have converted, for any session, is never
+	// presented to AS-1 again: AS-1 would refuse it with token_used and, once
+	// replay-revoke lands, revoke the grant the first conversion created. A
+	// repeated open with it, such as a concurrent request for a new host
+	// session, gets the session as it is when it holds a live refresh token,
+	// and token_used otherwise.
+	if t.wasConvertedLocked(claims.jti) {
+		if view := t.viewLocked(s); view.HoldsRefreshToken {
+			return view, nil
+		}
+		return Session{}, ReasonError(ReasonTokenUsed, "the access token was already converted; refresh it and open again")
 	}
 	// A new refresh token never extends the session: once it has a hard
 	// expiry, ask for no more. pairLocked already closed s if that expiry had
@@ -170,7 +217,10 @@ func (b *Broker) convert(ctx context.Context, s *brokerSession, req OpenSessionR
 
 	sent := ExchangeGrant{Type: ExchangeGrantType, IssuableTokenTypes: []string{TokenTypeIDJAG}, ExpiresAt: requested}
 
-	res, err := b.exchangeUnlocked(ctx, TokenExchange{SubjectToken: req.AccessToken, Grant: sent})
+	res, resent, err := b.exchangeUnlocked(ctx, TokenExchange{SubjectToken: req.AccessToken, Grant: sent})
+	if mayHaveConverted(err, resent) {
+		t.recordConvertedLocked(claims)
+	}
 
 	if errors.Is(err, ErrMalformedResponse) {
 		// AS-1 may have issued a refresh token the broker cannot read: treat
@@ -204,7 +254,7 @@ func (b *Broker) convert(ctx context.Context, s *brokerSession, req OpenSessionR
 // t.mu is taken again in a defer, so a panic in the AuthServer unwinds with
 // t.mu held, as the caller's deferred Unlock expects, and stays an ordinary
 // recoverable panic.
-func (b *Broker) exchangeUnlocked(ctx context.Context, req TokenExchange) (TokenExchangeResult, error) {
+func (b *Broker) exchangeUnlocked(ctx context.Context, req TokenExchange) (TokenExchangeResult, bool, error) {
 	t := b.sessions
 	t.mu.Unlock()
 	defer t.mu.Lock()
@@ -212,15 +262,35 @@ func (b *Broker) exchangeUnlocked(ctx context.Context, req TokenExchange) (Token
 }
 
 // exchange calls AS-1 and, after a lost response or a 502 or 504, which AS-1
-// may have processed, resends the same request once. The adapter mints a new
-// client assertion for the resend; if AS-1 had converted the token, the
-// resend gets token_used.
-func (b *Broker) exchange(ctx context.Context, req TokenExchange) (TokenExchangeResult, error) {
+// may have processed, resends the same request once, reporting whether it
+// did. The adapter mints a new client assertion for the resend; if AS-1 had
+// converted the token, the resend gets token_used.
+func (b *Broker) exchange(ctx context.Context, req TokenExchange) (TokenExchangeResult, bool, error) {
 	res, err := b.as1.Exchange(ctx, req)
 	if err != nil && resendable(err) && ctx.Err() == nil {
 		res, err = b.as1.Exchange(ctx, req)
+		return res, true, err
 	}
-	return res, err
+	return res, false, err
+}
+
+// mayHaveConverted reports whether AS-1 may have converted the token of an
+// exchange that ended with err: on success, an undecodable answer, a
+// token_used refusal, an exchange that had to be resent, a final lost
+// response, 502, or 504, or a cancellation, whose request may have been
+// processed. A refusal of the token, an unavailable AS-1 that answered
+// (503, 429, server_error), or a misconfigured connection converts nothing.
+func mayHaveConverted(err error, resent bool) bool {
+	var r *ServerRefusal
+	switch {
+	case err == nil, resent, resendable(err), errors.Is(err, ErrMalformedResponse):
+		return true
+	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
+		return true
+	case errors.As(err, &r):
+		return r.Reason == string(ReasonTokenUsed)
+	}
+	return false
 }
 
 func resendable(err error) bool {
@@ -248,10 +318,10 @@ func exchangeError(err error) error {
 	case isRefusal && r.Reason == string(ReasonTokenUsed):
 		return ReasonError(ReasonTokenUsed, "the access token was already converted; refresh it and open again")
 	case isRefusal && revocationReasons[Reason(r.Reason)]:
-		// A user-wide revocation predating the token: at session open the
-		// client signs in again, so it is UNAUTHENTICATED, not the reason's
-		// usual code.
-		return NewError(CodeUnauthenticated, Reason(r.Reason), "the user's authorization was revoked; sign in again")
+		// A user-wide revocation predating the token keeps the reason's
+		// status; mecak8s answers it at session open with a 401, so the
+		// client signs in again.
+		return ReasonError(Reason(r.Reason), "the user's authorization was revoked; sign in again")
 	case isRefusal && (r.Reason == string(ReasonSubjectInvalid) || r.Code == "invalid_request" && r.Reason == ""):
 		// The broker builds every other part of the request, so AS-1 refused
 		// the access token, with no reason or saying so.

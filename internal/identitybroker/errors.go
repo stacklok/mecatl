@@ -49,15 +49,15 @@ const (
 	// ReasonTokenUsed: at session open, the access token was already
 	// converted; refresh it and open once more.
 	ReasonTokenUsed Reason = "token_used"
-	// ReasonSignedOut: the user signed out everywhere. At session open the
-	// error is CodeUnauthenticated, and the client signs in again.
-	ReasonSignedOut Reason = "signed_out"
-	// ReasonUpstreamRevoked: the company IdP revoked the user's sign-in. At
-	// session open the error is CodeUnauthenticated, and the client signs in
+	// ReasonSignedOut: the user signed out everywhere; stop the run. At
+	// session open mecak8s answers it with a 401, so the client signs in
 	// again.
+	ReasonSignedOut Reason = "signed_out"
+	// ReasonUpstreamRevoked: the company IdP revoked the user's sign-in; stop
+	// the run. At session open mecak8s answers it with a 401, so the client
+	// signs in again.
 	ReasonUpstreamRevoked Reason = "upstream_revoked"
-	// ReasonOwnerActionRequired: the user must sign in again. At session
-	// open the error is CodeUnauthenticated.
+	// ReasonOwnerActionRequired: the user must sign in again.
 	ReasonOwnerActionRequired Reason = "owner_action_required"
 )
 

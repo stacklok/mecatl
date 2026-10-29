@@ -9,9 +9,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -656,9 +659,9 @@ func TestSessionOpenMapsAS1Refusals(t *testing.T) {
 		reason identitybroker.Reason
 	}{
 		{"token_used", identityharness.Fault{Error: "invalid_request", Reason: "token_used"}, identitybroker.CodeUnauthenticated, identitybroker.ReasonTokenUsed},
-		{"signed_out", identityharness.Fault{Error: "invalid_request", Reason: "signed_out"}, identitybroker.CodeUnauthenticated, identitybroker.ReasonSignedOut},
-		{"upstream_revoked", identityharness.Fault{Error: "invalid_request", Reason: "upstream_revoked"}, identitybroker.CodeUnauthenticated, identitybroker.ReasonUpstreamRevoked},
-		{"owner_action_required", identityharness.Fault{Error: "invalid_request", Reason: "owner_action_required"}, identitybroker.CodeUnauthenticated, identitybroker.ReasonOwnerActionRequired},
+		{"signed_out", identityharness.Fault{Error: "invalid_request", Reason: "signed_out"}, identitybroker.ReasonSignedOut.Code(), identitybroker.ReasonSignedOut},
+		{"upstream_revoked", identityharness.Fault{Error: "invalid_request", Reason: "upstream_revoked"}, identitybroker.ReasonUpstreamRevoked.Code(), identitybroker.ReasonUpstreamRevoked},
+		{"owner_action_required", identityharness.Fault{Error: "invalid_request", Reason: "owner_action_required"}, identitybroker.ReasonOwnerActionRequired.Code(), identitybroker.ReasonOwnerActionRequired},
 		{"invalid_request with no reason", identityharness.Fault{Error: "invalid_request"}, identitybroker.CodeUnauthenticated, identitybroker.ReasonSubjectInvalid},
 		{"subject_invalid", identityharness.Fault{Error: "invalid_request", Reason: "subject_invalid"}, identitybroker.CodeUnauthenticated, identitybroker.ReasonSubjectInvalid},
 		{"503", identityharness.Fault{Status: 503}, identitybroker.CodeUnavailable, ""},
@@ -1140,4 +1143,204 @@ func TestSessionOpenSurvivesAPanickingAuthServer(t *testing.T) {
 			t.Fatalf("the host lock of %s is still held by %d opens", host, refs)
 		}
 	}
+}
+
+// TestSessionOpenNeverRepresentsATokenConvertedBefore: the broker remembers
+// every token AS-1 may have converted, for any session, not only the one
+// behind the held refresh token.
+func TestSessionOpenNeverRepresentsATokenConvertedBefore(t *testing.T) {
+	t.Run("A, B, then A in one session", func(t *testing.T) {
+		f := newOpenFixture(t)
+		alice := f.owner(identityharness.Alice)
+		a, b := f.token(identityharness.Alice), f.token(identityharness.Alice)
+		s, err := f.open(openHost, alice, a)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := f.open(openHost, alice, b); err != nil {
+			t.Fatal(err)
+		}
+		again, err := f.open(openHost, alice, a)
+		held, _ := identitybroker.SessionGrant(f.b, s.ID)
+		if err != nil || again.ID != s.ID || !again.HoldsRefreshToken || held.SourceJTI != jti(t, b) {
+			t.Fatalf("open with A again = %+v, %v; want the session holding B's grant", again, err)
+		}
+		if f.attempts() != 2 {
+			t.Fatalf("%d requests reached AS-1, want 2", f.attempts())
+		}
+	})
+	t.Run("A, expiry, B in a new session, then A", func(t *testing.T) {
+		f := newOpenFixture(t)
+		alice := f.owner(identityharness.Alice)
+		// A outlives the first session's grant.
+		a := identitybroker.NewToken(f.h.AS1.MintAccessToken(identityharness.AccessTokenSpec{User: identityharness.Alice, Lifetime: 24 * time.Hour}))
+		first, err := f.open(openHost, alice, a)
+		if err != nil {
+			t.Fatal(err)
+		}
+		f.clock.Advance(identityharness.DefaultGrantMaxLifetime)
+		second, err := f.open(openHost, alice, f.token(identityharness.Alice))
+		if err != nil || second.ID == first.ID {
+			t.Fatalf("open with B = %+v, %v; want a new session", second, err)
+		}
+		again, err := f.open(openHost, alice, a)
+		if err != nil || again != second || f.attempts() != 2 {
+			t.Fatalf("open with A again = %+v, %v after %d requests; want %+v and no new request", again, err, f.attempts(), second)
+		}
+	})
+	t.Run("A with a mismatched echo, then A in a new session", func(t *testing.T) {
+		f := newOpenFixture(t)
+		alice := f.owner(identityharness.Alice)
+		f.h.AS1.MismatchNextExchangeEcho(identityharness.ExchangeGrant{Type: "https://example.com/other", IssuableTokenTypes: []string{identityharness.TokenTypeIDJAG}})
+		a := f.token(identityharness.Alice)
+		if _, err := f.open(openHost, alice, a); err == nil {
+			t.Fatal("the mismatched open succeeded")
+		}
+		_, err := f.open(openHost, alice, a)
+		wantError(t, err, identitybroker.CodeUnauthenticated, identitybroker.ReasonTokenUsed, a)
+		if f.attempts() != 1 {
+			t.Fatalf("%d requests reached AS-1, want 1", f.attempts())
+		}
+		if s, ok := f.find(t, openHost); !ok || s.HoldsRefreshToken {
+			t.Fatalf("FindSession = %+v, %v; want the new session paired without a refresh token", s, ok)
+		}
+	})
+	t.Run("A is forgotten after its exp plus the skew", func(t *testing.T) {
+		f := newOpenFixture(t)
+		alice := f.owner(identityharness.Alice)
+		a := f.token(identityharness.Alice)
+		if _, err := f.open(openHost, alice, a); err != nil {
+			t.Fatal(err)
+		}
+		if n := identitybroker.ConvertedTokens(f.b); n != 1 {
+			t.Fatalf("%d converted tokens remembered, want 1", n)
+		}
+		f.clock.Advance(identityharness.DefaultAccessTokenLifetime + 5*time.Minute)
+		if n := identitybroker.ConvertedTokens(f.b); n != 0 {
+			t.Fatalf("%d converted tokens remembered past exp plus the skew, want 0", n)
+		}
+		// AS-1 is asked again, and refuses the expired token itself.
+		_, err := f.open(openHost, alice, a)
+		wantError(t, err, identitybroker.CodeUnauthenticated, identitybroker.ReasonSubjectInvalid, a)
+		if f.attempts() != 2 {
+			t.Fatalf("%d requests reached AS-1, want 2", f.attempts())
+		}
+	})
+}
+
+// TestSessionOpenRemembersTokensAS1MayHaveConverted: an exchange AS-1 may
+// have processed remembers the token; one AS-1 surely refused or never
+// processed does not.
+func TestSessionOpenRemembersTokensAS1MayHaveConverted(t *testing.T) {
+	tests := []struct {
+		name  string
+		fault func(*identityharness.AS1)
+		want  int
+	}{
+		{"converted", func(*identityharness.AS1) {}, 1},
+		{"token_used", func(a *identityharness.AS1) {
+			a.FailNextExchange(identityharness.Fault{Error: "invalid_request", Reason: "token_used"})
+		}, 1},
+		{"lost response", (*identityharness.AS1).LoseNextExchangeResponse, 1},
+		{"two lost responses", func(a *identityharness.AS1) { a.DropNextExchange(); a.DropNextExchange() }, 1},
+		{"503", func(a *identityharness.AS1) { a.FailNextExchange(identityharness.Fault{Status: 503}) }, 0},
+		{"invalid_client", func(a *identityharness.AS1) {
+			a.FailNextExchange(identityharness.Fault{Status: 401, Error: "invalid_client"})
+		}, 0},
+		{"the token refused", func(a *identityharness.AS1) { a.FailNextExchange(identityharness.Fault{Error: "invalid_request"}) }, 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newOpenFixture(t)
+			tt.fault(f.h.AS1)
+			_, _ = f.open(openHost, f.owner(identityharness.Alice), f.token(identityharness.Alice))
+			if n := identitybroker.ConvertedTokens(f.b); n != tt.want {
+				t.Fatalf("%d converted tokens remembered, want %d", n, tt.want)
+			}
+		})
+	}
+}
+
+// oversizedStub is an AS-1 stand-in answering each request with the next of
+// answers, as status and body.
+func oversizedStub(t *testing.T, answers ...func(http.ResponseWriter)) (*identitybroker.Broker, *atomic.Int32) {
+	t.Helper()
+	var requests atomic.Int32
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		n := int(requests.Add(1))
+		if n > len(answers) {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		answers[n-1](w)
+	}))
+	t.Cleanup(server.Close)
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	signer, err := identitybroker.NewClientAssertionSigner(key, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	as1, err := authserverclient.New(authserverclient.Config{
+		Issuer: server.URL, TokenEndpoint: server.URL + "/token", Assertions: signer, HTTPClient: server.Client(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := newBroker(t, identitybroker.WithAuthServer(as1))
+	identitybroker.SetClock(b, fixedNow)
+	return b, &requests
+}
+
+func answer(status int, body string) func(http.ResponseWriter) {
+	return func(w http.ResponseWriter) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(status)
+		_, _ = w.Write([]byte(body))
+	}
+}
+
+// TestSessionOpenOversizedAnswers runs oversized AS-1 answers through the
+// real adapter: a 502 is still resent once, and a success still closes the
+// session as an undecodable answer.
+func TestSessionOpenOversizedAnswers(t *testing.T) {
+	huge := strings.Repeat("x", 1<<20+1)
+	ctx := context.Background()
+	open := func(b *identitybroker.Broker) (identitybroker.Token, error) {
+		token := unsignedToken(t, testOwner)
+		_, err := b.OpenSession(ctx, testWorkload, identitybroker.OpenSessionRequest{
+			HostSessionID: openHost, Incarnation: openIncarnation, Owner: testOwner, AccessToken: token,
+		})
+		return token, err
+	}
+	t.Run("an oversized 502 is resent once", func(t *testing.T) {
+		grant := fmt.Sprintf(`{"access_token":"rt-stub-secret","issued_token_type":%q,"authorization_details":[{"type":%q,"issuable_token_types":[%q],"expires_at":%d}]}`,
+			identitybroker.TokenTypeRefreshToken, identitybroker.ExchangeGrantType, identitybroker.TokenTypeIDJAG, fixedNow().Add(time.Hour).Unix())
+		b, requests := oversizedStub(t, answer(http.StatusBadGateway, huge), answer(http.StatusOK, grant))
+		if _, err := open(b); err != nil {
+			t.Fatalf("OpenSession: %v", err)
+		}
+		if n := requests.Load(); n != 2 {
+			t.Fatalf("%d requests, want 2", n)
+		}
+		if s, ok := findSession(t, b, openHost); !ok || !s.HoldsRefreshToken {
+			t.Fatalf("FindSession = %+v, %v; want the session holding the resend's grant", s, ok)
+		}
+	})
+	t.Run("an oversized success closes the session", func(t *testing.T) {
+		b, requests := oversizedStub(t, answer(http.StatusOK, `{"access_token":"`+huge+`"}`))
+		token, err := open(b)
+		wantError(t, err, identitybroker.CodeInternal, "", token)
+		if strings.Contains(err.Error(), "xxxx") {
+			t.Fatalf("error %q discloses the response", err)
+		}
+		if n := requests.Load(); n != 1 {
+			t.Fatalf("%d requests, want 1", n)
+		}
+		if _, ok := findSession(t, b, openHost); ok {
+			t.Fatal("the session is still open after an oversized success")
+		}
+	})
 }

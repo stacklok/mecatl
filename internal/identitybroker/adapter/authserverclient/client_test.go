@@ -528,8 +528,33 @@ func TestOversizedResponseIsRefused(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 	c := newStubClient(t, server.URL, server.Client())
-	if err := c.Token(t.Context(), url.Values{"grant_type": {"x"}}, &sessionOpenResult{}); !errors.Is(err, authserverclient.ErrResponseTooLarge) {
-		t.Fatalf("Token = %v, want ErrResponseTooLarge", err)
+	err := c.Token(t.Context(), url.Values{"grant_type": {"x"}}, &sessionOpenResult{})
+	if !errors.Is(err, authserverclient.ErrResponseTooLarge) || !errors.Is(err, identitybroker.ErrMalformedResponse) ||
+		!errors.Is(err, identitybroker.ErrTransportConfiguration) {
+		t.Fatalf("Token = %v, want ErrResponseTooLarge, a malformed response, and a configuration fault", err)
+	}
+	assertNoSecrets(t, err, strings.Repeat("a", 64))
+}
+
+// TestOversizedRefusalKeepsItsStatus: an oversized error body is not read,
+// but its status still classifies the refusal.
+func TestOversizedRefusalKeepsItsStatus(t *testing.T) {
+	body := `{"error":"server_error","error_description":"` + strings.Repeat("b", 1<<20) + `"}`
+	for _, status := range []int{http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusTooManyRequests} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(status)
+				_, _ = w.Write([]byte(body))
+			}))
+			t.Cleanup(server.Close)
+			c := newStubClient(t, server.URL, server.Client())
+			err := c.Token(t.Context(), url.Values{"grant_type": {"x"}}, &sessionOpenResult{})
+			var refusal *identitybroker.ServerRefusal
+			if !errors.As(err, &refusal) || refusal.Status != status || refusal.Code != "" || !identitybroker.IsUnavailable(err) {
+				t.Fatalf("Token = %v, want an unavailable %d refusal with no code", err, status)
+			}
+			assertNoSecrets(t, err, strings.Repeat("b", 64))
+		})
 	}
 }
 

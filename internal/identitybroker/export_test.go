@@ -62,3 +62,13 @@ func SetVerifiedOwner(b *Broker, id string, owner Owner) {
 	defer t.mu.Unlock()
 	t.byID[id].verifiedOwner = &owner
 }
+
+// ConvertedTokens returns how many converted access tokens b remembers,
+// after forgetting expired ones.
+func ConvertedTokens(b *Broker) int {
+	t := b.sessions
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.pruneConvertedLocked()
+	return len(t.converted)
+}
