@@ -31,15 +31,28 @@ func TestUnknownPrivateReplayVersionSurvivesSnapshotEventAndCursor(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
+	if cursor == "" {
+		t.Fatal("append returned an empty cursor")
+	}
+	count := 0
 	for got, err := range st.Read(t.Context(), s.ID) {
 		if err != nil || !reflect.DeepEqual(got, ev) {
 			t.Fatalf("event replay: %v", err)
 		}
+		count++
 	}
+	if count != 1 {
+		t.Fatalf("event replay count = %d, want 1", count)
+	}
+	count = 0
 	for rec, err := range st.ReadAfter(t.Context(), s.ID, "", port.ReadOptions{}) {
 		if err != nil || rec.Cursor != cursor || !reflect.DeepEqual(rec.Event, ev) {
 			t.Fatalf("cursor replay: %v", err)
 		}
+		count++
+	}
+	if count != 1 {
+		t.Fatalf("cursor replay count = %d, want 1", count)
 	}
 }
 
