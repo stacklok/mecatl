@@ -215,6 +215,39 @@ func TestReflectionInputBudgetsManualCollections(t *testing.T) {
 	}
 }
 
+func TestReflectionInputBudgetsManualIncompatibleComparisonFacts(t *testing.T) {
+	for _, mode := range []learning.Mode{learning.Off, learning.Review} {
+		for _, value := range []string{"Work notes live under .scratch/", strings.Repeat("x", learning.MaxCandidateValueBytes+1)} {
+			t.Run(fmt.Sprintf("mode=%s/bytes=%d", mode, len(value)), func(t *testing.T) {
+				o, r, calls := budgetTestObserver(t, agent.ReflectionLimits{}, mockllm.TextTurn(`{"kind":"abstained","candidates":[]}`))
+				o.mode = mode
+				memory := o.operatorMemory.(*memmemory.Store)
+				rememberProfile(t.Context(), t, memory, tool.MemoryEntry{Key: "user/a_valid", Value: "concise"})
+				rememberProfile(t.Context(), t, memory, tool.MemoryEntry{Key: "user/b_incompatible", Value: value})
+				rememberProfile(t.Context(), t, memory, tool.MemoryEntry{Key: "user/c_valid", Value: "Go examples"})
+				tr := automaticTrajectory("comparison-facts", []session.Message{session.NewUserMessage("Please remember gofmt")}, learning.MessageSpan{})
+				receipt, err := o.Reflect(t.Context(), tr, false)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if *calls != 1 || !receipt.Abstained || len(r.input.Existing) != 2 {
+					t.Fatalf("calls=%d abstained=%v comparison facts=%d", *calls, receipt.Abstained, len(r.input.Existing))
+				}
+				if r.input.Existing[0].Key != "user/a_valid" || r.input.Existing[1].Key != "user/c_valid" {
+					t.Fatal("incompatible comparison included or later valid fact omitted")
+				}
+				if err := learning.ValidateInput(r.input); err != nil {
+					t.Fatal(err)
+				}
+				entry, found, err := memory.Recall(t.Context(), "user/b_incompatible")
+				if err != nil || !found || entry.Value != value {
+					t.Fatal("comparison preparation changed stored memory")
+				}
+			})
+		}
+	}
+}
+
 func TestReflectionInputBudgetsManualOptionalBytes(t *testing.T) {
 	for _, mode := range []learning.Mode{learning.Off, learning.Review} {
 		t.Run(mode.String(), func(t *testing.T) {

@@ -345,6 +345,11 @@ func (o *reflectionObserver) prepareSyncReflection(ctx context.Context, trajecto
 		// Optional comparison facts must not cause evidence to be reselected.
 		for _, fact := range existing {
 			input.Existing = append(input.Existing, fact)
+			// Stored memories can be valid for memory but ineligible for learning.
+			if err := learning.ValidateInput(input); err != nil {
+				input.Existing = input.Existing[:len(input.Existing)-1]
+				continue
+			}
 			if err := o.validateSyncReflectionInput(input); err != nil {
 				if !errors.Is(err, agent.ErrReflectionLimits) {
 					return learning.Materialization{}, err
