@@ -1181,6 +1181,7 @@ tasks:
       - sh .github/scripts/resolve-main-build_test.sh
       - python3 .github/scripts/instruction-files_test.py
       - python3 .github/scripts/playwright-ci_test.py
+      - python3 .github/scripts/ci-gate_test.py
 
   lint:action-templates:
     desc: |
