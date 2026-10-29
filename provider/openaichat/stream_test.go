@@ -4,18 +4,27 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	oai "github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/packages/ssestream"
 
+	"github.com/stacklok/mecatl/engine/adapter/memfs"
+	"github.com/stacklok/mecatl/engine/adapter/memledger"
+	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
+	"github.com/stacklok/mecatl/engine/agent"
+	"github.com/stacklok/mecatl/engine/governance"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
+	"github.com/stacklok/mecatl/engine/tool"
 )
 
 // decodeSSE drives the REAL openai-go ssestream decoder over recorded SSE bytes
@@ -193,30 +202,98 @@ func TestTranslateToolArgsSizeCap(t *testing.T) {
 	}
 }
 
-// TestTranslateTruncatedStreamFailsClosed proves a stream that ends cleanly (no
-// error frame, no [DONE]) but WITHOUT a finish_reason is surfaced as a truncation
-// error — NOT a fabricated successful terminal — and buffered tool calls are NOT
-// flushed. This is the fail-closed guard: a dropped connection after partial
-// tool-call deltas must never become a tool-executing turn.
-func TestTranslateTruncatedStreamFailsClosed(t *testing.T) {
-	// A tool-call delta arrived, then the connection dropped before finish_reason.
-	const sse = `data: {"choices":[{"index":0,"delta":{"role":"assistant","tool_calls":[{"index":0,"id":"call_x","type":"function","function":{"name":"get_weather","arguments":"{\"city\":\"Paris\"}"}}]}}]}
+// TestChatStreamRequiresFinishReason drives HTTP, the SDK, and the production
+// EOF guard. A [DONE] sentinel alone does not make a tool-bearing turn complete.
+func TestChatStreamRequiresFinishReason(t *testing.T) {
+	const text = "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"tentative\"}}]}\n\n"
+	const call = "data: {\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_x\",\"type\":\"function\",\"function\":{\"name\":\"lookup\",\"arguments\":\"{\\\"key\\\":\\\"a\\\"}\"}}]}}]}\n\n"
+	const finish = "data: {\"choices\":[{\"index\":0,\"finish_reason\":\"tool_calls\",\"delta\":{}}]}\n\n"
+	const done = "data: [DONE]\n\n"
+	for _, tc := range []struct {
+		name     string
+		body     string
+		complete bool
+		calls    int
+	}{
+		{name: "empty"},
+		{name: "done-only", body: done},
+		{name: "text-eof", body: text},
+		{name: "tool-eof", body: text + call},
+		{name: "done-without-finish", body: text + call + done},
+		{name: "complete-tool", body: text + call + finish + done, complete: true, calls: 1},
+		{name: "finish-without-done", body: text + call + finish, complete: true, calls: 1},
+		{name: "complete-text", body: text + strings.ReplaceAll(finish, "tool_calls", "stop") + done, complete: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "text/event-stream")
+				fmt.Fprint(w, tc.body)
+			}))
+			defer srv.Close()
+			p := New(WithAPIKey("synthetic"), WithBaseURL(srv.URL))
+			seq, err := p.Stream(t.Context(), port.LLMRequest{Model: "test", Messages: []port.LLMMessage{{Role: session.RoleUser, Text: "lookup"}}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var streamErr error
+			calls, dones := 0, 0
+			for chunk, err := range seq {
+				if err != nil {
+					if streamErr != nil {
+						t.Fatal("multiple stream errors")
+					}
+					streamErr = err
+					continue
+				}
+				switch chunk.Kind {
+				case port.ChunkToolCall:
+					calls++
+				case port.ChunkDone:
+					dones++
+				}
+			}
+			if tc.complete {
+				if streamErr != nil || calls != tc.calls || dones != 1 {
+					t.Fatalf("complete stream: err=%v calls=%d done=%d", streamErr, calls, dones)
+				}
+			} else if !errors.Is(streamErr, io.ErrUnexpectedEOF) || calls != 0 || dones != 0 {
+				t.Fatalf("truncated stream: err=%v calls=%d done=%d", streamErr, calls, dones)
+			}
 
-`
-	chunks, err := decodeSSE(bytes.NewReader([]byte(sse)))
-	if err == nil {
-		t.Fatal("truncated stream returned nil error (fail-open: it could execute a partial tool call)")
-	}
-	if !errors.Is(err, io.ErrUnexpectedEOF) {
-		t.Errorf("error = %v, want it to wrap io.ErrUnexpectedEOF (retryable-when-safe truncation)", err)
-	}
-	for _, c := range chunks {
-		if c.Kind == port.ChunkToolCall {
-			t.Error("a tool call was flushed from a truncated stream (fail-open)")
-		}
-		if c.Kind == port.ChunkDone {
-			t.Error("a terminal ChunkDone was fabricated for a truncated stream (fail-open)")
-		}
+			lookup := &canonicalLookupTool{}
+			catalog := tool.NewCatalog()
+			catalog.MustRegister(lookup)
+			eng := agent.NewEngine(agent.Deps{LLM: p, Catalog: catalog, Model: "test", Policy: permpolicy.NewPolicy([]governance.Rule{{Tool: "lookup", Effect: governance.Allow}}, nil)})
+			env := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindMem, ID: "/ws", Revision: "v1"}, memfs.NewWorkspace("/ws"), memledger.New(), nil)
+			s := session.New("truncation", session.ModeDefault, env.Ref(), session.Limits{MaxTurns: 1}, time.Unix(0, 0))
+			calls, results := 0, 0
+			var terminal *session.ResultPayload
+			for ev := range eng.Run(t.Context(), s, env, agent.RunRequest{Text: "lookup"}).Events() {
+				switch ev.Type {
+				case session.EvToolCall:
+					calls++
+				case session.EvToolResult:
+					results++
+				case session.EvResult:
+					terminal = ev.Result
+				}
+			}
+			if terminal == nil {
+				t.Fatal("missing terminal result")
+			}
+			if tc.complete {
+				if terminal.Error != "" || len(lookup.calls) != tc.calls || calls != tc.calls || results != tc.calls || len(s.Conversation.Messages) != 2+tc.calls {
+					t.Fatalf("complete turn: result=%+v executions=%d calls=%d results=%d history=%+v", terminal, len(lookup.calls), calls, results, s.Conversation.Messages)
+				}
+			} else {
+				if terminal.Stop != session.StopError || terminal.Error == "" || len(lookup.calls) != 0 || calls != 0 || results != 0 {
+					t.Fatalf("truncated turn: result=%+v executions=%d calls=%d results=%d", terminal, len(lookup.calls), calls, results)
+				}
+				if len(s.Conversation.Messages) != 1 || s.Conversation.Messages[0].Role != session.RoleUser {
+					t.Fatalf("truncated turn entered accepted history: %+v", s.Conversation.Messages)
+				}
+			}
+		})
 	}
 }
 

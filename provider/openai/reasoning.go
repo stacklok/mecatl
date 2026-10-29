@@ -11,10 +11,9 @@ import (
 const responsesReplayFormat = "openai.responses"
 const responsesReplayVersion uint32 = 1
 
-// responsesReplay preserves today's flattened text/last-phase replay, not an
-// ordered sequence of message items. Calls and their item IDs travel in LLM DTOs.
-// Legacy packed Reasoning items map directly to Reasoning; ProviderPhase maps to
-// Phase. Legacy ReasoningItemID must not reactivate bare ciphertext.
+// responsesReplay carries encrypted reasoning items and the last nonempty phase
+// for flattened assistant-text replay, not an exact ordered sequence of message
+// items. Function calls and their provider item IDs travel in the LLM DTOs.
 type responsesReplay struct {
 	Reasoning []reasoningItem `json:"reasoning,omitempty"`
 	Phase     string          `json:"phase,omitempty"`
@@ -49,6 +48,13 @@ func unpackReplay(replay *session.ProviderReplay) (responsesReplay, error) {
 	return unpackCurrentReplay(replay.Data)
 }
 
+// unpackLegacyReplay interprets snapshot fields preserved in the generic
+// mecatl.legacy-message wrapper; only the issuing adapter knows their meaning.
+// Packed Reasoning items supply their own IDs and positions, and ProviderPhase
+// supplies Phase. A standalone ReasoningItemID cannot make bare ciphertext
+// replayable: compatibility requires the versioned packed envelope binding each
+// blob to its exact item ID and call position, not inference from detached fields.
+// This compatibility path recovers private replay, not executable identity.
 func unpackLegacyReplay(data []byte) responsesReplay {
 	var legacy struct {
 		Reasoning string `json:"reasoning"`

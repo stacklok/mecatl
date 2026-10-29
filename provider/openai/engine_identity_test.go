@@ -17,6 +17,7 @@ import (
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/governance"
+	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 )
@@ -29,6 +30,112 @@ type canonicalReadTool struct {
 func (r *canonicalReadTool) Execute(_ context.Context, call session.ToolCall, _ tool.Environment) (session.ToolResult, error) {
 	r.calls = append(r.calls, call)
 	return session.NewToolResult(call.ID, fmt.Sprintf("result-%d", len(r.calls))), nil
+}
+
+// Repeated wire IDs in one batch are invalid; completed-turn reuse remains an
+// occurrence binding, covered by TestResponsesEngineCanonicalIdentityRoundTrip.
+func TestResponsesEngineWireCallIDAdmission(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		ids   []string
+		valid bool
+	}{
+		{name: "empty", ids: []string{""}},
+		{name: "valid-then-empty", ids: []string{"pair", ""}},
+		{name: "repeated-in-batch", ids: []string{"pair", "pair"}},
+		{name: "valid", ids: []string{"pair"}, valid: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var body strings.Builder
+			body.WriteString("data: {\"type\":\"response.output_text.delta\",\"delta\":\"tentative\"}\n\n")
+			body.WriteString("data: {\"type\":\"response.output_item.done\",\"item\":{\"id\":\"rs_admission\",\"type\":\"reasoning\",\"encrypted_content\":\"OPAQUE\"}}\n\n")
+			for i, id := range tc.ids {
+				// Distinct item IDs must not mask empty or repeated wire call_id.
+				fmt.Fprintf(&body, "data: {\"type\":\"response.output_item.done\",\"item\":{\"id\":\"fc_%d\",\"type\":\"function_call\",\"call_id\":%q,\"name\":\"Read\",\"arguments\":\"{\\\"path\\\":\\\"a.go\\\"}\"}}\n\n", i, id)
+			}
+			body.WriteString("data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_admission\",\"status\":\"completed\",\"usage\":{\"input_tokens\":7,\"output_tokens\":3}}}\n\n")
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "text/event-stream")
+				fmt.Fprint(w, body.String())
+			}))
+			defer srv.Close()
+			p := New(WithAPIKey("synthetic"), WithBaseURL(srv.URL))
+			seq, err := p.Stream(t.Context(), port.LLMRequest{Model: "gpt-5.2", Messages: []port.LLMMessage{{Role: session.RoleUser, Text: "read"}}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var parsed []port.LLMToolCall
+			done, replay := 0, 0
+			for chunk, err := range seq {
+				if err != nil {
+					t.Fatal(err)
+				}
+				if chunk.Kind == port.ChunkToolCall {
+					parsed = append(parsed, *chunk.ToolCall)
+				}
+				if chunk.Kind == port.ChunkReplay {
+					replay++
+				}
+				if chunk.Kind == port.ChunkDone {
+					done++
+				}
+			}
+			if len(parsed) != len(tc.ids) || done != 1 || replay != 1 {
+				t.Fatalf("parser calls=%+v done=%d replay=%d", parsed, done, replay)
+			}
+			for i, call := range parsed {
+				if string(call.ID) != tc.ids[i] || string(call.ItemID) != fmt.Sprintf("fc_%d", i) {
+					t.Fatalf("parser synthesized pairing identity: %+v", call)
+				}
+			}
+
+			read := &canonicalReadTool{}
+			catalog := tool.NewCatalog()
+			catalog.MustRegister(read)
+			eng := agent.NewEngine(agent.Deps{LLM: p, Catalog: catalog, Model: "gpt-5.2", Policy: permpolicy.NewPolicy([]governance.Rule{{Tool: "Read", Effect: governance.Allow}}, nil)})
+			env := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindMem, ID: "/ws", Revision: "v1"}, memfs.NewWorkspace("/ws"), memledger.New(), nil)
+			s := session.New("admission", session.ModeDefault, env.Ref(), session.Limits{MaxTurns: 1}, time.Unix(0, 0))
+			calls, results := 0, 0
+			var terminal *session.ResultPayload
+			for ev := range eng.Run(t.Context(), s, env, agent.RunRequest{Text: "read"}).Events() {
+				switch ev.Type {
+				case session.EvToolCall:
+					calls++
+				case session.EvToolResult:
+					results++
+				case session.EvResult:
+					terminal = ev.Result
+				}
+			}
+			if terminal == nil {
+				t.Fatal("missing terminal result")
+			}
+			if !tc.valid {
+				if terminal.Stop != session.StopError || terminal.Error == "" || len(read.calls) != 0 || calls != 0 || results != 0 {
+					t.Fatalf("invalid identity escaped admission: result=%+v executions=%d calls=%d results=%d", terminal, len(read.calls), calls, results)
+				}
+				if len(s.Conversation.Messages) != 1 || s.Conversation.Messages[0].Role != session.RoleUser {
+					t.Fatalf("invalid batch entered accepted history: %+v", s.Conversation.Messages)
+				}
+				return
+			}
+			if terminal.Error != "" || len(read.calls) != 1 || calls != 1 || results != 1 {
+				t.Fatalf("valid batch rejected: result=%+v executions=%d calls=%d results=%d", terminal, len(read.calls), calls, results)
+			}
+			m := s.Conversation.Messages[1]
+			if m.Replay == nil || m.Replay.Provider == nil || len(m.Replay.Bindings) != 1 {
+				t.Fatalf("missing occurrence bindings: %+v", m)
+			}
+			for i, binding := range m.Replay.Bindings {
+				if binding != (session.ToolCallBinding{CallID: read.calls[i].ID, PairingID: parsed[i].ID, ItemID: parsed[i].ItemID}) || binding.CallID == session.ToolCallID(binding.PairingID) || binding.CallID == session.ToolCallID(binding.ItemID) {
+					t.Fatalf("identity domains conflated: %+v", binding)
+				}
+			}
+			if err := session.ValidateToolPairing(s.Conversation.Messages); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
 }
 
 func TestResponsesEngineCanonicalIdentityRoundTrip(t *testing.T) {

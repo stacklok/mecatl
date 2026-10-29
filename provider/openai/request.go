@@ -224,11 +224,10 @@ func buildTools(specs []tool.ToolSpec) ([]responses.ToolUnionParam, error) {
 
 // buildInput converts the conversation history into Responses input items.
 //
-// Per the reasoning-preservation rule the ordering within an assistant turn is:
-// reasoning item -> function_call item(s) -> (then tool results as
-// function_call_output items in subsequent tool messages). User/system text
-// become message items; tool messages become function_call_output items keyed by
-// call_id.
+// Assistant turns interleave reasoning items and function calls using the replay
+// positions, then append flattened assistant text with its phase. User/system text
+// becomes message items; subsequent tool messages become function_call_output
+// items keyed by call_id.
 // breakpointIdx names the message that carries the explicit prompt-cache
 // breakpoint, or -1 for none. See breakpointIndex.
 func buildInput(msgs []port.LLMMessage, caps port.ProviderCapabilities, breakpointIdx int) (responses.ResponseInputParam, error) {

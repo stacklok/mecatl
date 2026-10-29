@@ -55,7 +55,12 @@ type streamState struct {
 	// back BETWEEN the right two tool calls instead of hoisting every reasoning
 	// item to the front of the turn.
 	callsSeen int
-	phase     string
+
+	// phase is the last nonempty assistant-message phase, buffered turn-locally
+	// for opaque replay at successful completion. Separately, ChunkPhase carries
+	// public display metadata into Message.ProviderPhase, not a streaming event.
+	// This buffering is not a prompt or efficiency cache.
+	phase string
 }
 
 // errTruncatedStream is surfaced when the Responses stream ends cleanly (no error

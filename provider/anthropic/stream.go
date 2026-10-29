@@ -119,6 +119,10 @@ func (s *streamState) block(index int64) *blockState {
 //   - message_stop                           -> ChunkReplay (packed)? +
 //     ChunkUsage + ChunkDone
 //
+// Tool-block completion emits tentative ChunkToolCall values immediately. The
+// engine buffers those calls until turn acceptance; the adapter buffers signed
+// and redacted reasoning replay until message_stop.
+//
 // The reasoning DISPLAY deltas (ChunkReasoning) and the reasoning REPLAY blob
 // (ChunkReplay) are deliberately distinct and MUST NOT be conflated: the
 // deltas are human-readable prose; the replay blob is the packed

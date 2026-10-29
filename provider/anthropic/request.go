@@ -699,17 +699,14 @@ func userBlocks(m port.LLMMessage) ([]sdk.ContentBlockParamUnion, error) {
 	return blocks, nil
 }
 
-// assistantBlocks expands an assistant message into its ordered content blocks,
-// reconstructing the model's OWN generation order: the reconstructed
-// thinking/redacted_thinking blocks (unpacked from Replay) FIRST,
-// then a text block when the assistant produced visible text, then a tool_use
-// block per requested tool call LAST. tool_use must trail — Anthropic requires
-// it as the terminal content block of a tool-bearing assistant turn, especially
-// under extended thinking; a turn replayed with text AFTER its tool_use (the
-// order this function used to emit) 400s with a misleading
-// "assistant message prefill" error (issue #1465). Thinking-before-tool_use is
-// the §extended-thinking sequence rule: omitting or misordering the thinking
-// blocks on a tool-bearing assistant turn 400s too.
+// assistantBlocks expands an assistant message into protocol-ordered content
+// blocks: thinking/redacted_thinking (unpacked from Replay), then visible text,
+// then tool_use blocks. This is not an exact reconstruction of all source block
+// interleaving. tool_use must trail — Anthropic requires it as the terminal
+// content block of a tool-bearing assistant turn, especially under extended
+// thinking. Text after tool_use can cause a misleading "assistant message prefill"
+// error. Omitting or misordering thinking before tool_use also violates the
+// extended-thinking sequence rule.
 func assistantBlocks(m port.LLMMessage) ([]sdk.ContentBlockParamUnion, error) {
 	reasoning, err := unpackReplay(m.Replay)
 	if err != nil {

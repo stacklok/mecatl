@@ -17,10 +17,9 @@ const (
 	reasoningKindRedacted = "redacted"
 )
 
-// reasoningEnvelope retains the existing signed/redacted block serialization.
-// Blocks are ordered before text and tool_use on replay; this does not expand
-// today's fidelity into an ordered sequence of all provider content blocks.
-// Legacy Message.Reasoning bytes with v=1 can be wrapped directly as Data.
+// reasoningEnvelope serializes signed/redacted blocks in their relative order.
+// Replay places these blocks before text and tool_use; it does not preserve an
+// exact ordered sequence of all provider content blocks.
 type reasoningEnvelope struct {
 	V      int              `json:"v"`
 	Blocks []reasoningBlock `json:"blocks"`
@@ -42,7 +41,7 @@ func packReplay(blocks []reasoningBlock) *session.ProviderReplay {
 	return &session.ProviderReplay{Format: anthropicReplayFormat, Version: anthropicReplayVersion, Data: data}
 }
 
-// Legacy carriers retain the old fail-soft policy; new compatible envelopes fail
+// Legacy carriers are fail-soft; compatible anthropic.messages envelopes fail
 // closed when malformed. Incompatible namespaces are never inspected.
 func unpackReplay(replay *session.ProviderReplay) ([]reasoningBlock, error) {
 	if replay != nil && replay.Format == "mecatl.legacy-message" && replay.Version == 1 {
@@ -54,6 +53,10 @@ func unpackReplay(replay *session.ProviderReplay) ([]reasoningBlock, error) {
 	return unpackCurrentReplay(replay.Data)
 }
 
+// unpackLegacyReplay interprets snapshot Reasoning preserved in the generic
+// mecatl.legacy-message wrapper; only the issuing adapter knows its meaning.
+// A v=1 reasoning envelope supplies signed/redacted blocks. Unsupported or
+// malformed legacy data is ignored; this recovers replay, not executable identity.
 func unpackLegacyReplay(data []byte) []reasoningBlock {
 	var legacy struct {
 		Reasoning string `json:"reasoning"`
