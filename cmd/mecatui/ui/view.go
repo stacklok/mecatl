@@ -442,6 +442,9 @@ func (m Model) footerActivity() string {
 			label = fmt.Sprintf("%s (1 of %d)", label, 1+approval.queued)
 		}
 		left = m.deps.Theme.Style("askTitle").Render(label)
+		if m.pendingRecovery != nil && m.pendingRecovery.notice != "" {
+			left += " " + m.deps.Theme.Style("warning").Render(m.pendingRecovery.notice)
+		}
 	case phaseConnecting:
 		left = m.sp.View() + " connecting…"
 		if m.statusMsg != "" {

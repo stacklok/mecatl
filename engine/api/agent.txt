@@ -207,6 +207,7 @@ func WithAutoMerge(m tool.EnvironmentMerger) ParallelOption
 func WithChildForker(f tool.EnvironmentForker) SubagentOption
 func WithChildLimits(l session.Limits) SubagentOption
 func WithChildMode(m session.PermissionMode) SubagentOption
+func WithChildModeAdmission(admit func(session.PermissionMode) error) SubagentOption
 func WithChildSessionPrefix(p string) SubagentOption
 func WithForker(f tool.EnvironmentForker) SupervisorOption
 func WithJudgeLimits(l session.Limits) EngineJudgeOption

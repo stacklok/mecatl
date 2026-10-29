@@ -15,7 +15,7 @@ type Client interface {
 	CreateSessionWithCarryover(context.Context, client.ModelSelection, string) (string, client.Capabilities, client.ResolvedModel, error)
 	CloseSession(context.Context, string) error
 	GetSession(context.Context, string) (client.SessionSnapshot, error)
-	SetMode(context.Context, string, string) (string, error)
+	SetMode(context.Context, string, string) (client.ModeResult, error)
 	ForkSession(context.Context, string, string, string) (string, error)
 }
 
@@ -88,7 +88,7 @@ func (s *Adapter) GetSession(ctx context.Context, id string) (client.SessionSnap
 }
 
 // SetMode changes a session's permission mode.
-func (s *Adapter) SetMode(ctx context.Context, id, mode string) (string, error) {
+func (s *Adapter) SetMode(ctx context.Context, id, mode string) (client.ModeResult, error) {
 	return s.cl.SetMode(ctx, id, mode)
 }
 

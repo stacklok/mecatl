@@ -36,7 +36,7 @@ func (h *HarnessServer) ApprovePlan(req *mecatlv1.ApprovePlanRequest, stream mec
 	ctx, cancel := context.WithCancel(stream.Context())
 	defer cancel()
 
-	events, err := h.svc.ApprovePlan(ctx, session.SessionID(req.GetSessionId()), modeFromProto(req.GetTargetMode()), req.GetNote())
+	events, err := h.svc.ApprovePlan(ctx, session.SessionID(req.GetSessionId()), planModeFromProto(req.GetTargetMode()), req.GetNote())
 	if err != nil {
 		return toStatus(err)
 	}

@@ -2,6 +2,8 @@ package agent_test
 
 import (
 	"context"
+	"errors"
+	"reflect"
 	"slices"
 	"strings"
 	"sync"
@@ -96,13 +98,20 @@ func TestSubagentInheritsYoloParentMode(t *testing.T) {
 // under the default mode (no rules, headless → denied), counting executions.
 func mutatingChildEngine(t *testing.T, executed *atomic.Int32, turns ...mockllm.Turn) *agent.Engine {
 	t.Helper()
+	return mutatingChildEngineOn(t, executed, mockllm.New(turns...))
+}
+
+// mutatingChildEngineOn is mutatingChildEngine over a caller-held provider, so a
+// test can assert whether the child ever called its model.
+func mutatingChildEngineOn(t *testing.T, executed *atomic.Int32, llm *mockllm.Provider) *agent.Engine {
+	t.Helper()
 	childTool := &fakeTool{name: "Mutate", readOnly: false,
 		exec: func(_ context.Context, in session.ToolCall, _ tool.Workspace) (session.ToolResult, error) {
 			executed.Add(1)
 			return session.NewToolResult(in.ID, "ran"), nil
 		}}
 	return agent.NewEngine(agent.Deps{
-		LLM:     mockllm.New(turns...),
+		LLM:     llm,
 		Catalog: catalogWith(t, childTool),
 		Policy:  permpolicy.NewPolicy(nil, nil),
 		Model:   "child-model",
@@ -248,6 +257,7 @@ func TestResumedChildMode(t *testing.T) {
 		{session.ModeYolo, "", session.ModeAuto, session.ModeAuto},
 		{session.ModeYolo, "", session.ModeYolo, session.ModeYolo},
 		{session.ModeAuto, "", session.ModeYolo, session.ModeAuto},
+		{session.ModeAuto, "", session.ModeDefault, session.ModeDefault},
 		{session.ModeDefault, "", session.ModeYolo, session.ModeDefault},
 		{session.ModePlan, "", session.ModeYolo, session.ModePlan},
 		{session.ModeYolo, session.ModeAccept, session.ModeYolo, session.ModeAccept},
@@ -374,6 +384,171 @@ func TestSharedReviewerEnforcesForNarrowerChildOfYoloParent(t *testing.T) {
 			drainObserving(t, e.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "go"}), nil)
 			if executed.Load() != tc.want {
 				t.Errorf("child Probe executed=%t under a yolo parent with a rejecting reviewer, want %t", executed.Load(), tc.want)
+			}
+		})
+	}
+}
+
+// rejectingMutateReviewer prohibits and enforces against the child's Mutate
+// action only, so the parent's own Subagent and SubagentStatus calls are never
+// reviewed while a background child is running.
+type rejectingMutateReviewer struct{ rejectingActionReviewer }
+
+func (rejectingMutateReviewer) GuardrailReviewPolicy(toolName string, job agent.ReviewJob, _ bool) (bool, bool) {
+	return job == agent.ReviewJobAction && toolName == "Mutate", true
+}
+
+// refuseAutoAdmission mirrors a host with no enforcing guardrails checker: it
+// admits every mode except auto.
+func refuseAutoAdmission(mode session.PermissionMode) error {
+	if mode == session.ModeAuto {
+		return errors.New(`mode "auto" requires an enforcing guardrails checker`)
+	}
+	return nil
+}
+
+// storeAutoChild runs an auto parent whose fresh child (inheriting auto)
+// executes one mutation and is persisted as "subagent-s1-p1" in mode auto.
+func storeAutoChild(t *testing.T, store *memstore.Store, sess *session.Session, executed *atomic.Int32) {
+	t.Helper()
+	first := agent.NewSubagentTool(mutatingChildEngine(t, executed,
+		mockllm.ToolCallTurn(toolCall("k1", "Mutate", `{}`)), mockllm.TextTurn("FIRST_PASS")),
+		agent.WithSubagentStore(store))
+	runParent(t, sess, session.ModeAuto, mockllm.New(
+		mockllm.ToolCallTurn(toolCall("p1", "Subagent", `{"prompt":"go"}`)), mockllm.TextTurn("ok")), first)
+	if executed.Load() != 1 {
+		t.Fatalf("auto parent: child mutation executed %d times, want 1", executed.Load())
+	}
+	if stored, err := store.Load(context.Background(), "subagent-s1-p1"); err != nil || stored.Mode != session.ModeAuto {
+		t.Fatalf("persisted child = %v, %v; want mode auto", stored, err)
+	}
+}
+
+// resumeTurns is the parent script that resumes "subagent-s1-p1", collecting a
+// background resume through SubagentStatus when collect is true.
+func resumeTurns(background, collect bool) ([]mockllm.Turn, session.ToolCallID) {
+	if !background {
+		return []mockllm.Turn{mockllm.ToolCallTurn(toolCall("p2", "Subagent", `{"prompt":"again","resume":"subagent-s1-p1"}`)), mockllm.TextTurn("ok")}, "p2"
+	}
+	turns := []mockllm.Turn{mockllm.ToolCallTurn(toolCall("p2", "Subagent", `{"prompt":"again","resume":"subagent-s1-p1","background":true}`))}
+	if collect {
+		turns = append(turns, mockllm.ToolCallTurn(toolCall("p3", "SubagentStatus", `{"agent_id":"subagent-s1-p1","wait_ms":30000}`)))
+	}
+	return append(turns, mockllm.TextTurn("ok")), map[bool]session.ToolCallID{true: "p3", false: "p2"}[collect]
+}
+
+// TestResumedAutoChildRefusedWhenHostDoesNotAdmitAuto proves the host's mode
+// admission reaches a resumed child: after a restart that leaves no enforcing
+// checker, a child stored in auto and resumed by a yolo parent keeps auto (the
+// narrower mode) and is refused with a tool error, on both resume paths, before
+// it calls its model or runs a tool. Its persisted session is unchanged and the
+// parent run continues to completion.
+func TestResumedAutoChildRefusedWhenHostDoesNotAdmitAuto(t *testing.T) {
+	for _, background := range []bool{false, true} {
+		name := "foreground"
+		if background {
+			name = "background"
+		}
+		t.Run(name, func(t *testing.T) {
+			store := memstore.New()
+			var executed atomic.Int32
+			sess := newSession(t, session.Limits{})
+			storeAutoChild(t, store, sess, &executed)
+			before, err := store.Load(context.Background(), "subagent-s1-p1")
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			childLLM := mockllm.New(mockllm.ToolCallTurn(toolCall("k2", "Mutate", `{}`)), mockllm.TextTurn("SECOND_PASS"))
+			second := agent.NewSubagentTool(mutatingChildEngineOn(t, &executed, childLLM),
+				agent.WithSubagentStore(store), agent.WithChildModeAdmission(refuseAutoAdmission))
+			turns, call := resumeTurns(background, false)
+			evs := runParent(t, sess, session.ModeYolo, mockllm.New(turns...), second, agent.NewSubagentStatusTool())
+
+			res := resultByCallID(evs)[call]
+			if res == nil || !res.IsError {
+				t.Fatalf("resume result = %+v, want a tool error; events %v", res, typesOf(evs))
+			}
+			for _, want := range []string{`permission mode "auto"`, "does not admit", "requires an enforcing guardrails checker", "Start a new Subagent"} {
+				if !strings.Contains(res.Content, want) {
+					t.Errorf("resume error %q does not contain %q", res.Content, want)
+				}
+			}
+			if sess.State != session.StateCompleted {
+				t.Errorf("parent state = %s, want completed after the refused resume", sess.State)
+			}
+			if n := childLLM.Calls(); n != 0 {
+				t.Errorf("refused child called its model %d times, want 0", n)
+			}
+			if executed.Load() != 1 {
+				t.Errorf("refused child executed its mutation (count %d, want 1)", executed.Load())
+			}
+			after, err := store.Load(context.Background(), "subagent-s1-p1")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(before, after) {
+				t.Errorf("refused resume changed the persisted child:\nbefore %+v\nafter  %+v", before, after)
+			}
+		})
+	}
+}
+
+// TestResumedAutoChildAdmittedRunsEnforcedOrUnchecked proves the admitted side:
+// with an admission that allows auto, the resumed child keeps auto under a yolo
+// parent and the shared rejecting reviewer ENFORCES against its action (auto,
+// not the parent's yolo, selects enforcement), on both resume paths. A nil
+// admission keeps the previous behaviour: the resume is not checked and, with no
+// reviewer, the auto child's action runs.
+func TestResumedAutoChildAdmittedRunsEnforcedOrUnchecked(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		admission  func(session.PermissionMode) error
+		reviewer   bool
+		background bool
+		wantRuns   bool
+	}{
+		{"admitted-enforced-foreground", func(session.PermissionMode) error { return nil }, true, false, false},
+		{"admitted-enforced-background", func(session.PermissionMode) error { return nil }, true, true, false},
+		{"nil-admission", nil, false, false, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := memstore.New()
+			var executed atomic.Int32
+			sess := newSession(t, session.Limits{})
+			storeAutoChild(t, store, sess, &executed)
+
+			opts := []agent.SubagentOption{agent.WithSubagentStore(store)}
+			if tc.admission != nil {
+				opts = append(opts, agent.WithChildModeAdmission(tc.admission))
+			}
+			second := agent.NewSubagentTool(mutatingChildEngine(t, &executed,
+				mockllm.ToolCallTurn(toolCall("k2", "Mutate", `{}`)), mockllm.TextTurn("SECOND_PASS")), opts...)
+			turns, call := resumeTurns(tc.background, true)
+			if err := sess.Reopen(); err != nil {
+				t.Fatal(err)
+			}
+			if err := sess.SetMode(session.ModeYolo); err != nil {
+				t.Fatal(err)
+			}
+			deps := agent.Deps{LLM: mockllm.New(turns...), Catalog: catalogWith(t, second, agent.NewSubagentStatusTool())}
+			if tc.reviewer {
+				deps.ToolReviewer = rejectingMutateReviewer{}
+			}
+			evs := drainObserving(t, newEngine(deps).Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "go"}), nil)
+
+			if res := resultByCallID(evs)[call]; res == nil || !strings.Contains(res.Content, "SECOND_PASS") {
+				t.Fatalf("resumed child did not complete: %+v; events %v", res, typesOf(evs))
+			}
+			if got := executed.Load() == 2; got != tc.wantRuns {
+				t.Errorf("resumed auto child's mutation ran=%t (count %d), want %t", got, executed.Load(), tc.wantRuns)
+			}
+			stored, err := store.Load(context.Background(), "subagent-s1-p1")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if stored.Mode != session.ModeAuto {
+				t.Errorf("re-persisted child mode = %q, want %q", stored.Mode, session.ModeAuto)
 			}
 		})
 	}

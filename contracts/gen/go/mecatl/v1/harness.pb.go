@@ -18690,7 +18690,8 @@ type ApprovePlanRequest struct {
 	SessionId string `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
 	// target_mode selects the verdict / resulting posture: DEFAULT → allow-once
 	// (flip to default), ACCEPT_EDITS → allow-always (flip to accept-edits),
-	// PLAN/UNSPECIFIED → deny (iterate, no flip, no continuation run).
+	// PLAN/UNSPECIFIED/unrecognized → deny (iterate, no flip, no continuation
+	// run).
 	TargetMode PermissionMode `protobuf:"varint,2,opt,name=target_mode,json=targetMode,proto3,enum=mecatl.v1.PermissionMode" json:"target_mode,omitempty"`
 	// note is an OPTIONAL operator remark appended to the proceed message
 	// injected into the continuation run's first user message (allow paths only).

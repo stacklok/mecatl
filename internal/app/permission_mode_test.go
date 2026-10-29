@@ -10,6 +10,7 @@ import (
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
 	"github.com/stacklok/mecatl/engine/adapter/memfs"
+	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/internal/adapter/permconfig"
@@ -415,6 +416,49 @@ func TestInteractiveTrustTokenGrantsTrust(t *testing.T) {
 	}
 }
 
+// projectInstructionsReachModel seeds an AGENTS.md sentinel in cfg's workspace,
+// runs one turn of a server-default session through the real Build, and reports
+// whether the sentinel reached the provider request. It observes the effect trust
+// controls (project instructions becoming model context), not only its narration.
+func projectInstructionsReachModel(t *testing.T, cfg Config) bool {
+	t.Helper()
+	const sentinel = "SEEDED-PROJECT-INSTRUCTION-SENTINEL"
+	if err := os.WriteFile(filepath.Join(cfg.Workspace, "AGENTS.md"), []byte(sentinel), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var requests []port.LLMRequest
+	cfg.UseMock = false
+	cfg.MockProvider = mockllm.NewWith([]mockllm.Option{mockllm.WithRequestObserver(func(r port.LLMRequest) { requests = append(requests, r) })}, mockllm.TextTurn("done"))
+	built, err := buildIsolated(t, context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	defer built.Close()
+	sess, err := built.Service.CreateSession(context.Background(), "", defaultLimits())
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	run, err := built.Service.StartRun(context.Background(), sess.ID, "hello")
+	if err != nil {
+		t.Fatalf("StartRun: %v", err)
+	}
+	for range run.Events() {
+	}
+	built.Service.FinishRun(sess.ID, run)
+	if len(requests) == 0 {
+		t.Fatal("no provider request")
+	}
+	if strings.Contains(requests[0].System.Render(), sentinel) {
+		return true
+	}
+	for _, m := range requests[0].Messages {
+		if strings.Contains(m.Text, sentinel) {
+			return true
+		}
+	}
+	return false
+}
+
 // TestPermissionModeTokenDerivesNoTrust pins that the mode surface is not a
 // trust decision: an interactive root under any --permission-mode token stays
 // untrusted unless an explicit trust source is present, while the deprecated
@@ -443,11 +487,17 @@ func TestPermissionModeTokenDerivesNoTrust(t *testing.T) {
 			if trustOf(t, cfg, rec) {
 				t.Fatalf("interactive --permission-mode %s granted project trust with no trust source", token)
 			}
+			if projectInstructionsReachModel(t, cfg) {
+				t.Fatalf("interactive --permission-mode %s fed untrusted project instructions to the model", token)
+			}
 			rec = slogdiagBuffer(t)
 			cfg.Diagnostics = rec.diag
 			cfg.TrustProject = true
 			if !trustOf(t, cfg, rec) {
 				t.Fatalf("--permission-mode %s --trust-project must be trusted", token)
+			}
+			if !projectInstructionsReachModel(t, cfg) {
+				t.Fatalf("--permission-mode %s --trust-project must feed the project instructions to the model", token)
 			}
 		})
 	}
@@ -456,6 +506,9 @@ func TestPermissionModeTokenDerivesNoTrust(t *testing.T) {
 	legacy := Config{Workspace: t.TempDir(), Model: "mock", UseMock: true, NoSoul: true, Posture: PostureYolo, PostureFlagSet: true, GuardrailsDisabled: true, Diagnostics: rec.diag}
 	if !trustOf(t, legacy, rec) {
 		t.Fatal("deprecated interactive --posture yolo must keep its trust floor")
+	}
+	if !projectInstructionsReachModel(t, legacy) {
+		t.Fatal("deprecated interactive --posture yolo trust floor must feed the project instructions to the model")
 	}
 }
 

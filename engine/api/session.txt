@@ -24,6 +24,7 @@
     method func (*Session).InstructionSnapshot() InstructionSnapshot
     method func (*Session).Interrupt() error
     method func (*Session).InterruptAuthorization() ([]ToolResult, error)
+    method func (*Session).InterruptCloseOuts() []ToolResult
     method func (*Session).LastError() string
     method func (*Session).LatestContextOccupancy() (ContextOccupancy, bool)
     method func (*Session).LimitTripped() (StopReason, bool)

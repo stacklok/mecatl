@@ -99,7 +99,14 @@ const (
 	// parked awaiting an approval in a mode this server no longer admits: a
 	// SetMode to an admitted, strictly lower mode cancels the pending turn
 	// without running it and applies the mode, instead of refusing mid-turn.
-	// Every other SetMode on an awaiting session is still refused.
+	// The durable event log then closes the parked run the way a live
+	// cancellation does: permission.retract for the open ask, a cancellation
+	// tool result for each unanswered call, and result{cancelled}, all stamped
+	// with that run's id. Every other SetMode on an awaiting session is still
+	// refused. SetMode likewise recovers a stored session a crash left running
+	// in such a mode: once the session lease proves no server drives the run, a
+	// SetMode to an admitted mode abandons the interrupted turn without running
+	// it and applies the mode.
 	FeatureRefusedModeRecovery = "refused_mode_recovery"
 )
 

@@ -21,12 +21,20 @@ const MCPAuthorizationPendingCode = "mcp_authorization_pending"
 // deliberately ignores status text so server wording cannot change the UI flow.
 func IsMCPAuthorizationPending(err error) bool {
 	st, ok := status.FromError(err)
-	if !ok || st.Code() != codes.FailedPrecondition {
+	return ok && st.Code() == codes.FailedPrecondition && hasErrorReason(err, MCPAuthorizationPendingCode)
+}
+
+// hasErrorReason reports whether err carries the server's stable application
+// code as a mecatl ErrorInfo reason. It ignores status text so server wording
+// cannot change the UI flow.
+func hasErrorReason(err error, code string) bool {
+	st, ok := status.FromError(err)
+	if !ok {
 		return false
 	}
 	for _, detail := range st.Details() {
 		info, ok := detail.(*errdetails.ErrorInfo)
-		if ok && info.GetDomain() == "mecatl.stacklok.com" && info.GetReason() == MCPAuthorizationPendingCode {
+		if ok && info.GetDomain() == "mecatl.stacklok.com" && info.GetReason() == code {
 			return true
 		}
 	}

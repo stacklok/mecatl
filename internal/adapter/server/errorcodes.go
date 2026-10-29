@@ -121,6 +121,7 @@ var errorRegistry = []errorCodeEntry{
 	{Sentinel: ErrDreamDeadline, Code: "dream_deadline", GRPC: codes.DeadlineExceeded, HTTPStatus: http.StatusGatewayTimeout, Title: "Dream plan deadline exceeded"},
 	{Sentinel: ErrDreamRequestFailed, Code: "dream_request_failed", GRPC: codes.Internal, HTTPStatus: http.StatusInternalServerError, Title: "Dream request failed"},
 	{Sentinel: ErrFailedStepRetryIneligible, Code: "failed_step_retry_ineligible", GRPC: codes.FailedPrecondition, HTTPStatus: http.StatusConflict, Title: "Failed-step retry is not eligible"},
+	{Sentinel: ErrStoredModeNotAdmitted, Code: "session_mode_not_admitted", GRPC: codes.FailedPrecondition, HTTPStatus: http.StatusPreconditionFailed, Title: "Session permission mode is not admitted"},
 	{Sentinel: errMCPAuthorizationPending, Code: "mcp_authorization_pending", GRPC: codes.FailedPrecondition, HTTPStatus: http.StatusConflict, Title: "MCP authorization is pending"},
 	{Sentinel: ErrEnvironmentLogicalRootUnavailable, Code: "environment_logical_root_unavailable", GRPC: codes.FailedPrecondition, HTTPStatus: http.StatusPreconditionFailed, Title: "Repository worktree attachment unavailable"},
 	{Sentinel: ErrFailedPrecondition, Code: "failed_precondition", GRPC: codes.FailedPrecondition, HTTPStatus: http.StatusPreconditionFailed, Title: "Failed precondition"},

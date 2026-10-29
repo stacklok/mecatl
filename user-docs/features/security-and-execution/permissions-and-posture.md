@@ -131,11 +131,19 @@ started.
 If the server restarts with a lower ceiling, or without the checker `auto`
 needs, a stored session in a mode it no longer admits refuses to run, resume an
 approval, fork, or clear until its owner switches it to an admitted mode. Its
-history is unchanged. If that session is waiting on an approval, switch it to an
+history is unchanged. A resumed subagent gets the same check, as described in
+[Subagents under auto](#subagents-under-auto). If that session is waiting on an approval, switch it to an
 admitted mode lower than its stored one: the server cancels the pending request
 without running it, then applies the mode, and your next prompt continues the
-conversation. Servers that support this advertise the `refused_mode_recovery`
-feature identifier. If the session is waiting on an MCP server authorization,
+conversation. Clients watching the session's event log see the request
+withdrawn and the run end as cancelled. Servers that support this advertise the
+`refused_mode_recovery` feature identifier. In `mecatui`, see
+[Recover a pending approval](/mecatui/sessions.md#recover-a-pending-approval).
+If a server crashed while the session was running, switch it to any admitted
+mode. The server ends the interrupted turn without running anything, records
+each unfinished tool call as interrupted, then applies the mode. The switch is
+refused while another server still holds the session's lease.
+If the session is waiting on an MCP server authorization,
 completing or cancelling that authorization records a result for the waiting
 tool call without running it or resuming the turn, and the session then
 accepts a switch to an admitted mode.
@@ -226,6 +234,12 @@ Subagents, `Parallel` branches, and team members started from an `auto` or
 `yolo` session run in that same mode. A team member whose agent definition sets
 `permissionMode` keeps that mode instead. Children of a `plan`, `default`, or `accept-edits` session
 run in `default` mode.
+
+A resumed subagent runs in the narrower of its stored mode and the mode its
+parent session has now, and checker enforcement follows the subagent's own mode.
+If that mode is `auto` and the server has no enforcing guardrails checker, the
+resume is refused with a tool error and the subagent's history is unchanged.
+The agent can start a new subagent instead.
 
 Under `auto`, the main agent and subagents keep the command-substitution guard.
 A Shell command containing `$(...)`, backticks, or a subshell that Mecatl cannot

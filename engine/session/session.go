@@ -1083,6 +1083,17 @@ const (
 // orphan. Mutates Conversation only via its append method. Shared by Interrupt
 // (cancelled) and Recover (failed).
 func (s *Session) closeOutInterruptedTurn(message string) {
+	for _, result := range s.closeOutResults(message) {
+		s.Conversation.Append(NewToolMessage(result))
+	}
+}
+
+// closeOutResults returns, in ToolCalls order, one synthetic error result
+// carrying message for each tool call on the trailing assistant message that no
+// following tool-role message answers. It does not mutate the session. IsError
+// here means the call never ran to a result (interrupted/aborted), NOT a real
+// tool failure.
+func (s *Session) closeOutResults(message string) []ToolResult {
 	msgs := s.Conversation.Messages
 	// Find the LAST assistant message.
 	lastAssistant := -1
@@ -1093,7 +1104,7 @@ func (s *Session) closeOutInterruptedTurn(message string) {
 		}
 	}
 	if lastAssistant < 0 {
-		return
+		return nil
 	}
 	// Collect the set of CallIDs already answered by tool-role messages that
 	// follow the trailing assistant message.
@@ -1103,15 +1114,24 @@ func (s *Session) closeOutInterruptedTurn(message string) {
 			answered[m.ToolResult.CallID] = struct{}{}
 		}
 	}
-	// For each tool call on the trailing assistant message not yet answered,
-	// append a synthetic error result in ToolCalls order. IsError here means the
-	// call never ran to a result (interrupted/aborted), NOT a real tool failure.
+	var out []ToolResult
 	for _, call := range msgs[lastAssistant].ToolCalls {
 		if _, ok := answered[call.ID]; ok {
 			continue
 		}
-		s.Conversation.Append(NewToolMessage(NewToolError(call.ID, message)))
+		out = append(out, NewToolError(call.ID, message))
 	}
+	return out
+}
+
+// InterruptCloseOuts returns the synthetic error tool results Interrupt would
+// append for the trailing assistant turn's unanswered tool calls, in call
+// order, without mutating the session. A host that cancels a parked turn out of
+// band uses it to record the same close-out on its durable event stream that
+// the next run's Interrupt writes into the conversation. It returns nil when
+// nothing is unanswered.
+func (s *Session) InterruptCloseOuts() []ToolResult {
+	return s.closeOutResults(interruptCloseOutMessage)
 }
 
 // Interrupt recovers a CANCELLED session to StateIdle after repairing the

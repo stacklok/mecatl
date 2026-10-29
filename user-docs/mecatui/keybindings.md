@@ -23,7 +23,7 @@ bindings and dims features that the connected server does not provide.
 |`esc`|Clear an active selection first. While work is running, cancel directly and preserve the draft, queued follow-ups, and steer. While idle with a paused queue, clear that queue but preserve the draft.|
 |`ctrl+t`|Open `/toolcalls` for the current session; approval requests use it for details.|
 |`f9`|Reveal conversation details: reasoning, turn stats, changed files, permanent error details, benign guardrail notices, and individual settled tool-call summaries. Use `ctrl+t` for tool arguments and results.|
-|`shift+tab`|Cycle every permission mode: **default → plan → accept-edits → auto → yolo → default**. A mode above the server's ceiling keeps the current mode and your draft, and the footer says how to make it available. In an MCP prompt argument form, it instead moves to the previous required field.|
+|`shift+tab`|Cycle every permission mode: **default → plan → accept-edits → auto → yolo → default**. A mode above the server's ceiling keeps the current mode and your draft, and the footer says how to make it available. In an MCP prompt argument form, it instead moves to the previous required field. In a recovered approval that the server refuses because of the chat's stored mode, it switches to the next lower mode and cancels the request; see [Recover a pending approval](./sessions.md#recover-a-pending-approval).|
 |`ctrl+g`|Select all prompt text.|
 |`ctrl+y`|Copy the active prompt or visible conversation selection.|
 |`f6` / `f7` / `f8`|Open Agents / Effort / MCP Prompts.|

@@ -54,6 +54,12 @@ type Capabilities struct {
 	// applies its auto/yolo posture process-wide whatever the session mode, so the
 	// ui must not present a session mode as the effective permission mode there.
 	SessionPermissionModes bool
+	// RefusedModeRecovery reports the refused_mode_recovery feature: a stored
+	// session parked on an approval in a mode the server no longer admits
+	// accepts SetMode to an admitted, strictly lower mode, which cancels the
+	// pending turn without running it. An older server refuses that SetMode
+	// mid-turn.
+	RefusedModeRecovery bool
 	// ProjectTrust is "trusted" or "untrusted" for the server's launch
 	// workspace, CHROME ONLY: the ui's header badge. Empty on an older server.
 	ProjectTrust string
@@ -124,11 +130,16 @@ func capabilitiesWithSessionMediaFrom(caps Capabilities, sessionCaps *mecatlv1.S
 // session-scoped permission modes.
 const SessionPermissionModesFeature = "session_permission_modes"
 
+// RefusedModeRecoveryFeature is the compatibility feature identifier for the
+// SetMode recovery of a stored approval parked in a refused mode.
+const RefusedModeRecoveryFeature = "refused_mode_recovery"
+
 // compatibilityCapabilitiesFrom maps a compatibility response: the capability
 // message plus the feature bits the ui consumes.
 func compatibilityCapabilitiesFrom(resp *mecatlv1.GetCompatibilityInfoResponse) Capabilities {
 	caps := capabilitiesFrom(resp.GetCapabilities())
 	caps.SessionPermissionModes = slices.Contains(resp.GetFeatures(), SessionPermissionModesFeature)
+	caps.RefusedModeRecovery = slices.Contains(resp.GetFeatures(), RefusedModeRecoveryFeature)
 	return caps
 }
 
