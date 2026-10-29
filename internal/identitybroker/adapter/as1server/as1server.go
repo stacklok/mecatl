@@ -2,7 +2,8 @@
 // ToolHive's embedded authorization server. AS-1 signs users in through one
 // upstream OIDC IdP and issues RFC 9068 (typ at+jwt) access tokens for the
 // Mecatl API audience that carry the company identity as the RFC 9493 sub_id
-// claim. The TUI is its one registered client, a public client using PKCE.
+// claim. Its clients are the configured public clients, which sign in with
+// PKCE.
 //
 // The server keeps its own in-memory storage, so pending sign-ins and refresh
 // tokens do not survive a restart. Its signing key does when
@@ -48,12 +49,22 @@ type Config struct {
 	// signs access tokens. Empty generates a key at startup, so tokens stop
 	// verifying when the server restarts.
 	SigningKeyFile string
-	// TUIClientID is the client ID of the TUI, a public client.
-	TUIClientID string
-	// TUIRedirectURIs are the TUI's redirect URIs, matched exactly.
-	TUIRedirectURIs []string
+	// PublicClients are the sign-in clients AS-1 registers. At least one is
+	// required.
+	PublicClients []PublicClient
 	// Upstream is the IdP users sign in at.
 	Upstream UpstreamConfig
+}
+
+// PublicClient is a public sign-in client of AS-1: it has no secret and uses
+// PKCE with the authorization-code and refresh-token grants. It may ask for
+// the openid, profile, and offline_access scopes, and its access tokens are
+// for Config.Audience.
+type PublicClient struct {
+	// ID is the client ID, unique among Config.PublicClients.
+	ID string
+	// RedirectURIs are the client's absolute redirect URIs, matched exactly.
+	RedirectURIs []string
 }
 
 // UpstreamConfig is AS-1's registration at the upstream OIDC IdP.
@@ -104,22 +115,25 @@ func newServer(ctx context.Context, cfg Config, opts options) (*Server, error) {
 		return nil, err
 	}
 	audiences := append([]string{cfg.Audience}, opts.extraAudiences...)
-	client, err := registration.New(registration.Config{
-		ID:                      cfg.TUIClientID,
-		RedirectURIs:            slices.Clone(cfg.TUIRedirectURIs),
-		TokenEndpointAuthMethod: oauthproto.TokenEndpointAuthMethodNone,
-		GrantTypes:              []string{oauthproto.GrantTypeAuthorizationCode, oauthproto.GrantTypeRefreshToken},
-		ResponseTypes:           []string{oauthproto.ResponseTypeCode},
-		Scopes:                  []string{"openid", "profile", "offline_access"},
-		Audience:                audiences,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("as1server: construct TUI client: %w", err)
-	}
 	store := storage.NewMemoryStorage()
-	if err := store.RegisterClient(ctx, client); err != nil {
-		_ = store.Close()
-		return nil, fmt.Errorf("as1server: register TUI client: %w", err)
+	for _, pc := range cfg.PublicClients {
+		client, err := registration.New(registration.Config{
+			ID:                      pc.ID,
+			RedirectURIs:            slices.Clone(pc.RedirectURIs),
+			TokenEndpointAuthMethod: oauthproto.TokenEndpointAuthMethodNone,
+			GrantTypes:              []string{oauthproto.GrantTypeAuthorizationCode, oauthproto.GrantTypeRefreshToken},
+			ResponseTypes:           []string{oauthproto.ResponseTypeCode},
+			Scopes:                  []string{"openid", "profile", "offline_access"},
+			Audience:                audiences,
+		})
+		if err != nil {
+			_ = store.Close()
+			return nil, fmt.Errorf("as1server: construct client %q: %w", pc.ID, err)
+		}
+		if err := store.RegisterClient(ctx, client); err != nil {
+			_ = store.Close()
+			return nil, fmt.Errorf("as1server: register client %q: %w", pc.ID, err)
+		}
 	}
 	runConfig := &authserver.RunConfig{
 		SchemaVersion:    "v1",
@@ -173,16 +187,26 @@ func (cfg Config) validate() (*url.URL, error) {
 	switch {
 	case cfg.Audience == "":
 		return nil, fmt.Errorf("%w: audience is required", ErrInvalidConfig)
-	case cfg.TUIClientID == "":
-		return nil, fmt.Errorf("%w: TUI client ID is required", ErrInvalidConfig)
-	case len(cfg.TUIRedirectURIs) == 0:
-		return nil, fmt.Errorf("%w: at least one TUI redirect URI is required", ErrInvalidConfig)
+	case len(cfg.PublicClients) == 0:
+		return nil, fmt.Errorf("%w: at least one public client is required", ErrInvalidConfig)
 	case cfg.Upstream.ClientID == "":
 		return nil, fmt.Errorf("%w: upstream client ID is required", ErrInvalidConfig)
 	}
-	for _, raw := range cfg.TUIRedirectURIs {
-		if u, err := url.Parse(raw); err != nil || !u.IsAbs() || u.Host == "" || u.Fragment != "" {
-			return nil, fmt.Errorf("%w: TUI redirect URI %q must be an absolute URL without a fragment", ErrInvalidConfig, raw)
+	seen := make(map[string]bool, len(cfg.PublicClients))
+	for _, pc := range cfg.PublicClients {
+		switch {
+		case pc.ID == "":
+			return nil, fmt.Errorf("%w: public client ID is required", ErrInvalidConfig)
+		case seen[pc.ID]:
+			return nil, fmt.Errorf("%w: duplicate public client ID %q", ErrInvalidConfig, pc.ID)
+		case len(pc.RedirectURIs) == 0:
+			return nil, fmt.Errorf("%w: public client %q needs at least one redirect URI", ErrInvalidConfig, pc.ID)
+		}
+		seen[pc.ID] = true
+		for _, raw := range pc.RedirectURIs {
+			if u, err := url.Parse(raw); err != nil || !u.IsAbs() || u.Host == "" || u.Fragment != "" {
+				return nil, fmt.Errorf("%w: public client %q redirect URI %q must be an absolute URL without a fragment", ErrInvalidConfig, pc.ID, raw)
+			}
 		}
 	}
 	if _, err := httpsURL("upstream issuer", cfg.Upstream.Issuer); err != nil {

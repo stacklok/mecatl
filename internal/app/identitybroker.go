@@ -47,9 +47,9 @@ type IdentityBrokerAS1Config struct {
 	// SigningKeyFile is a PEM key that signs access tokens. Empty generates
 	// one, so tokens stop verifying when the process restarts.
 	SigningKeyFile string
-	// TUIClientID and TUIRedirectURIs register the TUI, a public client.
-	TUIClientID     string
-	TUIRedirectURIs []string
+	// PublicClients are the sign-in clients AS-1 registers: no secret, PKCE,
+	// and tokens for Audience. At least one is required.
+	PublicClients []IdentityBrokerAS1PublicClient
 	// UpstreamIssuer, UpstreamClientID, and UpstreamClientSecretFile are
 	// AS-1's registration at the IdP users sign in at. An empty secret file
 	// makes AS-1 a public client there.
@@ -65,6 +65,14 @@ type IdentityBrokerAS1Config struct {
 	// UpstreamAllowPrivateAddresses lets AS-1 reach the IdP on a private or
 	// link-local address, which its SSRF protection otherwise refuses.
 	UpstreamAllowPrivateAddresses bool
+}
+
+// IdentityBrokerAS1PublicClient is a public sign-in client of AS-1.
+type IdentityBrokerAS1PublicClient struct {
+	// ID is the client ID, unique among the configured clients.
+	ID string
+	// RedirectURIs are the client's absolute redirect URIs, matched exactly.
+	RedirectURIs []string
 }
 
 // IdentityBrokerAS1Server is a hosted AS-1 as a command root serves it.
@@ -118,9 +126,13 @@ func buildIdentityBroker(ctx context.Context, cfg Config) (identitybroker.Servic
 	}
 	var hosted *IdentityBrokerAS1Server
 	if as1 := cfg.IdentityBrokerHostedAS1; as1 != nil {
+		clients := make([]as1server.PublicClient, len(as1.PublicClients))
+		for i, c := range as1.PublicClients {
+			clients[i] = as1server.PublicClient{ID: c.ID, RedirectURIs: c.RedirectURIs}
+		}
 		server, err := as1server.New(ctx, as1server.Config{
 			Issuer: as1.Issuer, Audience: as1.Audience, SigningKeyFile: as1.SigningKeyFile,
-			TUIClientID: as1.TUIClientID, TUIRedirectURIs: as1.TUIRedirectURIs,
+			PublicClients: clients,
 			Upstream: as1server.UpstreamConfig{
 				Issuer: as1.UpstreamIssuer, ClientID: as1.UpstreamClientID,
 				ClientSecretFile: as1.UpstreamClientSecretFile, SubjectClaim: as1.SubjectClaim,
@@ -144,7 +156,7 @@ func buildIdentityBroker(ctx context.Context, cfg Config) (identitybroker.Servic
 // identityBroker is the real identity broker's startup state: its core and
 // the signer for its client authentication at AS-1 and AS-2. With an AS-1
 // configured, session open authenticates there with the signer; without one,
-// which is every deployment until session open uses the hosted AS-1 (#2490),
+// which is every deployment until session open uses the hosted AS-1 (#2607),
 // nothing calls AS-1 or AS-2.
 type identityBroker struct {
 	core   *identitybroker.Broker

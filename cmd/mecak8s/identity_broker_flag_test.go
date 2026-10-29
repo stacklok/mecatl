@@ -140,8 +140,8 @@ func TestIdentityBrokerAS1FlagRules(t *testing.T) {
 				t.Fatalf("caller identity = issuer %q, client %q, accepted %v; want AS-1's", cfg.oidc.Issuer, cfg.oidc.ClientID, cfg.oidc.AcceptedClientIDs)
 			}
 			got := appConfig(cfg, nil, observability{}).IdentityBrokerHostedAS1
-			if got == nil || got.Issuer != "https://mecatl.example/as1" || got.Audience != "https://mecatl.example/api" || got.TUIClientID != "mecatui" ||
-				!slices.Equal(got.TUIRedirectURIs, []string{oauthlogin.ExactRedirectURL}) || got.UpstreamIssuer != "https://idp.example" ||
+			if got == nil || got.Issuer != "https://mecatl.example/as1" || got.Audience != "https://mecatl.example/api" || len(got.PublicClients) != 1 || got.PublicClients[0].ID != "mecatui" ||
+				!slices.Equal(got.PublicClients[0].RedirectURIs, []string{oauthlogin.ExactRedirectURL}) || got.UpstreamIssuer != "https://idp.example" ||
 				got.UpstreamClientID != "mecatl-as1" || got.UpstreamCAFile != "" || got.UpstreamAllowPrivateAddresses {
 				t.Fatalf("IdentityBrokerHostedAS1 = %+v", got)
 			}

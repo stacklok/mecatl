@@ -803,7 +803,7 @@ func identityBrokerAS1Config(cfg config) *app.IdentityBrokerAS1Config {
 	}
 	return &app.IdentityBrokerAS1Config{
 		Issuer: cfg.as1.issuer, Audience: cfg.oidc.Audience, SigningKeyFile: cfg.as1.signingKeyFile,
-		TUIClientID: cfg.as1.tuiClientID, TUIRedirectURIs: []string{oauthlogin.ExactRedirectURL},
+		PublicClients:  []app.IdentityBrokerAS1PublicClient{{ID: cfg.as1.tuiClientID, RedirectURIs: []string{oauthlogin.ExactRedirectURL}}},
 		UpstreamIssuer: cfg.as1.upstreamIssuer, UpstreamClientID: cfg.as1.upstreamClientID,
 		UpstreamClientSecretFile: cfg.as1.upstreamClientSecretFile, SubjectClaim: cfg.identityBrokerSubjectClaim,
 	}

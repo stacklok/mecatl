@@ -25,11 +25,11 @@ import (
 )
 
 const (
-	testAudience    = identityharness.DefaultAudience
-	otherAudience   = "https://other.test/api"
-	testTUIClientID = "mecatui"
-	testTUIRedirect = "http://127.0.0.1:18473/oauth/callback"
-	testIssuerPath  = "/as1"
+	testAudience   = identityharness.DefaultAudience
+	otherAudience  = "https://other.test/api"
+	testClientID   = "cli"
+	testRedirect   = "http://127.0.0.1:18473/oauth/callback"
+	testIssuerPath = "/as1"
 )
 
 type fixture struct {
@@ -75,7 +75,7 @@ func testConfig(t *testing.T, h *identityharness.Harness, issuer string) Config 
 	h.IdP.RegisterClient(clientID, secret, issuer+"/oauth/callback")
 	return Config{
 		Issuer: issuer, Audience: testAudience,
-		TUIClientID: testTUIClientID, TUIRedirectURIs: []string{testTUIRedirect},
+		PublicClients: []PublicClient{{ID: testClientID, RedirectURIs: []string{testRedirect}}},
 		Upstream: UpstreamConfig{
 			Issuer: h.IdP.Issuer(), ClientID: clientID, ClientSecretFile: secretFile,
 			CAFile: h.WriteCACert(t, dir), AllowPrivateAddresses: true,
@@ -110,17 +110,23 @@ type tokenResponse struct {
 	status       int
 }
 
-// signIn signs the default harness user in as the TUI, with PKCE, asking for
-// a token for resource.
+// signIn signs the default harness user in as the test client, with PKCE,
+// asking for a token for resource.
 func (f *fixture) signIn(t *testing.T, resource string) tokenResponse {
+	t.Helper()
+	return f.signInAs(t, PublicClient{ID: testClientID, RedirectURIs: []string{testRedirect}}, resource)
+}
+
+// signInAs is signIn as client, at its first redirect URI.
+func (f *fixture) signInAs(t *testing.T, client PublicClient, resource string) tokenResponse {
 	t.Helper()
 	verifier := rand.Text() + rand.Text()
 	sum := sha256.Sum256([]byte(verifier))
 	state := rand.Text()
 	q := url.Values{
 		"response_type":         {"code"},
-		"client_id":             {testTUIClientID},
-		"redirect_uri":          {testTUIRedirect},
+		"client_id":             {client.ID},
+		"redirect_uri":          {client.RedirectURIs[0]},
 		"scope":                 {"openid offline_access"},
 		"state":                 {state},
 		"code_challenge":        {base64.RawURLEncoding.EncodeToString(sum[:])},
@@ -136,9 +142,9 @@ func (f *fixture) signIn(t *testing.T, resource string) tokenResponse {
 	}
 	tokens := f.token(t, url.Values{
 		"grant_type":    {"authorization_code"},
-		"client_id":     {testTUIClientID},
+		"client_id":     {client.ID},
 		"code":          {back.Get("code")},
-		"redirect_uri":  {testTUIRedirect},
+		"redirect_uri":  {client.RedirectURIs[0]},
 		"code_verifier": {verifier},
 		"resource":      {resource},
 	})
@@ -152,7 +158,7 @@ func (f *fixture) refresh(t *testing.T, refreshToken, resource string) tokenResp
 	t.Helper()
 	return f.token(t, url.Values{
 		"grant_type":    {"refresh_token"},
-		"client_id":     {testTUIClientID},
+		"client_id":     {testClientID},
 		"refresh_token": {refreshToken},
 		"resource":      {resource},
 	})
@@ -252,8 +258,8 @@ func TestSignInIssuesAudienceTokenWithCompanyIdentity(t *testing.T) {
 	if iss, _ := claims.GetIssuer(); iss != f.issuer {
 		t.Errorf("iss = %q, want %q", iss, f.issuer)
 	}
-	if claims["client_id"] != testTUIClientID {
-		t.Errorf("client_id = %v, want %s", claims["client_id"], testTUIClientID)
+	if claims["client_id"] != testClientID {
+		t.Errorf("client_id = %v, want %s", claims["client_id"], testClientID)
 	}
 	if jti, _ := claims["jti"].(string); jti == "" {
 		t.Error("jti missing")
@@ -286,6 +292,19 @@ func mapsEqual(got, want map[string]any) bool {
 		}
 	}
 	return true
+}
+
+func TestEveryPublicClientCanSignIn(t *testing.T) {
+	h := identityharness.New(t, identityharness.Options{})
+	second := PublicClient{ID: "studio", RedirectURIs: []string{"http://127.0.0.1:18474/callback"}}
+	f := startAS1(t, h, func(c *Config) { c.PublicClients = append(c.PublicClients, second) })
+
+	for _, client := range []PublicClient{{ID: testClientID, RedirectURIs: []string{testRedirect}}, second} {
+		_, claims := parse(t, f.signInAs(t, client, testAudience).AccessToken)
+		if claims["client_id"] != client.ID {
+			t.Errorf("client_id = %v, want %s", claims["client_id"], client.ID)
+		}
+	}
 }
 
 // TestSubjectClaimReachesTheUpstreamSubject: the harness IdP's ID tokens
@@ -580,9 +599,9 @@ func TestInProcessClientServesOnlyTheIssuer(t *testing.T) {
 func TestConfigValidation(t *testing.T) {
 	valid := Config{
 		Issuer: "https://as1.mecatl.test/as1", Audience: testAudience,
-		TUIClientID: testTUIClientID, TUIRedirectURIs: []string{testTUIRedirect},
 		Upstream: UpstreamConfig{Issuer: "https://idp.example", ClientID: "mecatl-as1"},
 	}
+	client := PublicClient{ID: testClientID, RedirectURIs: []string{testRedirect}}
 	for name, edit := range map[string]func(*Config){
 		"empty issuer":            func(c *Config) { c.Issuer = "" },
 		"http issuer":             func(c *Config) { c.Issuer = "http://as1.mecatl.test/as1" },
@@ -592,9 +611,12 @@ func TestConfigValidation(t *testing.T) {
 		"issuer trailing slash":   func(c *Config) { c.Issuer = "https://as1.mecatl.test/as1/" },
 		"issuer unclean path":     func(c *Config) { c.Issuer = "https://as1.mecatl.test/a/../as1" },
 		"empty audience":          func(c *Config) { c.Audience = "" },
-		"empty TUI client":        func(c *Config) { c.TUIClientID = "" },
-		"no TUI redirect URIs":    func(c *Config) { c.TUIRedirectURIs = nil },
-		"relative redirect URI":   func(c *Config) { c.TUIRedirectURIs = []string{"/oauth/callback"} },
+		"no public clients":       func(c *Config) { c.PublicClients = nil },
+		"empty client ID":         func(c *Config) { c.PublicClients[0].ID = "" },
+		"duplicate client IDs":    func(c *Config) { c.PublicClients = append(c.PublicClients, client) },
+		"no redirect URIs":        func(c *Config) { c.PublicClients[0].RedirectURIs = nil },
+		"relative redirect URI":   func(c *Config) { c.PublicClients[0].RedirectURIs = []string{"/oauth/callback"} },
+		"redirect URI fragment":   func(c *Config) { c.PublicClients[0].RedirectURIs = []string{testRedirect + "#x"} },
 		"empty upstream issuer":   func(c *Config) { c.Upstream.Issuer = "" },
 		"http upstream issuer":    func(c *Config) { c.Upstream.Issuer = "http://idp.example" },
 		"empty upstream client":   func(c *Config) { c.Upstream.ClientID = "" },
@@ -603,7 +625,7 @@ func TestConfigValidation(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			cfg := valid
-			cfg.TUIRedirectURIs = slices.Clone(valid.TUIRedirectURIs)
+			cfg.PublicClients = []PublicClient{client}
 			edit(&cfg)
 			server, err := New(t.Context(), cfg)
 			if server != nil {

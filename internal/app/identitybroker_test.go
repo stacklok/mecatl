@@ -401,7 +401,7 @@ func hostedAS1Config(t *testing.T, h *identityharness.Harness, issuer string) *I
 	h.IdP.RegisterClient("hosted-as1", secret, issuer+"/oauth/callback")
 	return &IdentityBrokerAS1Config{
 		Issuer: issuer, Audience: identityharness.DefaultAudience,
-		TUIClientID: identityharness.DefaultClientID, TUIRedirectURIs: []string{identityharness.DefaultRedirectURI},
+		PublicClients:  []IdentityBrokerAS1PublicClient{{ID: identityharness.DefaultClientID, RedirectURIs: []string{identityharness.DefaultRedirectURI}}},
 		UpstreamIssuer: h.IdP.Issuer(), UpstreamClientID: "hosted-as1", UpstreamClientSecretFile: secretFile,
 		UpstreamCAFile: h.WriteCACert(t, dir), UpstreamAllowPrivateAddresses: true,
 	}
