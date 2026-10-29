@@ -349444,6 +349444,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1793300282424,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "d1e29fc4129a1be0b921e22d6864f28eb020f7c7",
+          "message": "feat(mecatui): move reflections browsing onto bounded surfaces (#2595)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-29T19:02:18Z",
+          "tree_id": "a28ae268e99350407658629bb5001154b2c207da",
+          "url": "https://github.com/stacklok/mecatl/commit/d1e29fc4129a1be0b921e22d6864f28eb020f7c7"
+        },
+        "date": 1793301257365,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -505046,6 +505080,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1793301254285,
+  "lastUpdate": 1793301259189,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
