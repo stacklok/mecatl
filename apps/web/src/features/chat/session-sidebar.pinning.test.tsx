@@ -177,6 +177,26 @@ describe("chat list row pins", () => {
     expect(props.onCreateFolder).toHaveBeenCalledWith("a");
   });
 
+  it("lists folder destinations inline on a phone", async () => {
+    vi.stubGlobal("matchMedia", (query: string) => ({
+      addEventListener: () => {},
+      matches: query.includes("max-width"),
+      media: query,
+      removeEventListener: () => {},
+    }));
+    const user = userEvent.setup();
+    const props = renderSidebar([row("a", "Alpha")]);
+    await user.click(screen.getByRole("button", { name: "Options for chat: Alpha" }));
+    const group = screen.getByRole("group", { name: "Move to folder" });
+    expect(screen.queryByRole("menuitem", { name: "Move to folder" })).toBeNull();
+    for (const name of ["Work", "No folder"]) {
+      expect(within(group).getByRole("menuitemcheckbox", { name })).toBeTruthy();
+    }
+    expect(within(group).getByRole("menuitem", { name: "New folder…" })).toBeTruthy();
+    await user.click(within(group).getByRole("menuitemcheckbox", { name: "Work" }));
+    expect(props.onMoveToFolder).toHaveBeenCalledWith("a", "f1");
+  });
+
   it("keeps a denied rename and delete unavailable", async () => {
     const user = userEvent.setup();
     const props = renderSidebar([
