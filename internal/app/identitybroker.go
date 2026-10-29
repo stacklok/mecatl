@@ -7,9 +7,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"time"
 
 	"github.com/stacklok/mecatl/internal/identitybroker"
+	"github.com/stacklok/mecatl/internal/identitybroker/adapter/authserverclient"
 )
 
 // identityBrokerWorkload is the workload name the identity broker records until
@@ -59,17 +61,31 @@ func buildIdentityBroker(cfg Config) (identitybroker.Service, func(), error) {
 }
 
 // identityBroker is the real identity broker's startup state: its core and
-// the signer for its client authentication at AS-1 and AS-2. The signer stays
-// inside this wiring; nothing calls AS-1 or AS-2 yet, and broker session open
-// (#2492) will pass it into the broker's construction.
+// the signer for its client authentication at AS-1 and AS-2. With an AS-1
+// configured, session open authenticates there with the signer; without one,
+// which is every deployment until hosted AS-1 configuration exists (#2490),
+// nothing calls AS-1 or AS-2.
 type identityBroker struct {
 	core   *identitybroker.Broker
 	client *identitybroker.ClientAssertionSigner
 }
 
+// identityBrokerAS1 is the AS-1 the identity broker converts access tokens
+// at during session open.
+type identityBrokerAS1 struct {
+	Issuer        string
+	TokenEndpoint string
+	HTTPClient    *http.Client
+	// ClientKey replaces the generated broker client key, so a test can
+	// register its public key at AS-1 before the broker is built.
+	ClientKey *ecdsa.PrivateKey
+}
+
 // newIdentityBroker constructs the real identity broker with the interim
 // configuration and, one key per role, an agent issuer key and a broker
-// client key generated for this process. It loads no definitions yet.
+// client key generated for this process. It loads no definitions yet. With
+// cfg.identityBrokerAS1, session open converts access tokens at that AS-1,
+// authenticating with the broker client key.
 //
 // The broker client key lasts only as long as the process until an operator
 // key replaces it (#2538): an external server registered with its JWKS inline
@@ -84,15 +100,31 @@ func newIdentityBroker(cfg Config) (identityBroker, error) {
 	if err != nil {
 		return identityBroker{}, fmt.Errorf("generate signing key: %w", err)
 	}
-	core, err := identitybroker.New(config, nil, key)
+	as1 := cfg.identityBrokerAS1
+	var clientKey *ecdsa.PrivateKey
+	if as1 != nil {
+		clientKey = as1.ClientKey
+	}
+	if clientKey == nil {
+		if clientKey, err = ecdsa.GenerateKey(elliptic.P256(), rand.Reader); err != nil {
+			return identityBroker{}, fmt.Errorf("generate broker client key: %w", err)
+		}
+	}
+	client, err := identitybroker.NewClientAssertionSigner(clientKey, 0)
 	if err != nil {
 		return identityBroker{}, err
 	}
-	clientKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		return identityBroker{}, fmt.Errorf("generate broker client key: %w", err)
+	var opts []identitybroker.Option
+	if as1 != nil {
+		as1Client, err := authserverclient.New(authserverclient.Config{
+			Issuer: as1.Issuer, TokenEndpoint: as1.TokenEndpoint, Assertions: client, HTTPClient: as1.HTTPClient,
+		})
+		if err != nil {
+			return identityBroker{}, fmt.Errorf("AS-1 client: %w", err)
+		}
+		opts = append(opts, identitybroker.WithAuthServer(as1Client))
 	}
-	client, err := identitybroker.NewClientAssertionSigner(clientKey, 0)
+	core, err := identitybroker.New(config, nil, key, opts...)
 	if err != nil {
 		return identityBroker{}, err
 	}

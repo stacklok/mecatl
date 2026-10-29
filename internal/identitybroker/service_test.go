@@ -51,11 +51,17 @@ func TestErrorMatchesByCodeAndReason(t *testing.T) {
 
 func TestReasonsCarryTheDesignCodes(t *testing.T) {
 	want := map[Reason]Code{
-		ReasonSessionClosed: CodeFailedPrecondition,
-		ReasonSessionOwned:  CodePermissionDenied,
-		ReasonDenied:        CodePermissionDenied,
-		ReasonSVIDExpired:   CodeUnauthenticated,
-		Reason("unknown"):   CodeInternal,
+		ReasonSessionClosed:       CodeFailedPrecondition,
+		ReasonSessionOwned:        CodePermissionDenied,
+		ReasonDenied:              CodePermissionDenied,
+		ReasonSVIDExpired:         CodeUnauthenticated,
+		ReasonOwnerMismatch:       CodePermissionDenied,
+		ReasonSubjectInvalid:      CodeUnauthenticated,
+		ReasonTokenUsed:           CodeUnauthenticated,
+		ReasonSignedOut:           CodeFailedPrecondition,
+		ReasonUpstreamRevoked:     CodePermissionDenied,
+		ReasonOwnerActionRequired: CodeFailedPrecondition,
+		Reason("unknown"):         CodeInternal,
 	}
 	for reason, code := range want {
 		if got := reason.Code(); got != code {

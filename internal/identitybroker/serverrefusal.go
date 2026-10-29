@@ -54,9 +54,17 @@ var ErrNoResponse = errors.New("identitybroker: no response from the authorizati
 
 // ErrTransportConfiguration reports a request to AS-1 or AS-2 that failed
 // because the connection's configuration is wrong, such as a server
-// certificate that does not verify against the configured trust: a
-// configuration fault, not an outage, so it is not retried.
+// certificate that does not verify against the configured trust, or because
+// a success response could not be decoded, which points at the wrong or an
+// incompatible server (see ErrMalformedResponse): a configuration fault, not
+// an outage, so it is not retried.
 var ErrTransportConfiguration = errors.New("identitybroker: the connection to the authorization server is misconfigured")
+
+// ErrMalformedResponse reports a success response from AS-1 or AS-2 the
+// broker cannot decode. The server may have issued a token the broker cannot
+// read, so session open closes the session, as for a mismatched answer.
+// Errors wrapping it also wrap ErrTransportConfiguration.
+var ErrMalformedResponse = errors.New("identitybroker: the authorization server's response could not be decoded")
 
 // ServerRefusal is AS-1's or AS-2's refusal of a token or revocation endpoint
 // request: the HTTP status and, from an RFC 6749 §5.2 error body, the error

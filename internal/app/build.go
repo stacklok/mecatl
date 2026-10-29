@@ -981,6 +981,10 @@ type Config struct {
 	// identityBrokerConfig replaces the real identity broker's interim
 	// configuration in tests.
 	identityBrokerConfig *identitybroker.Config
+	// identityBrokerAS1 connects the real identity broker's session open to an
+	// AS-1 in tests. Production leaves it nil until hosted AS-1 configuration
+	// exists (#2490), so the broker converts no access tokens.
+	identityBrokerAS1 *identityBrokerAS1
 	// MCPProfileLoader resolves operator-tier profiles with the same permission
 	// resolver Build already owns. Command roots install it so settings are not
 	// parsed a second time and secret lookup remains a runtime-only operation.

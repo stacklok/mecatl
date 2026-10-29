@@ -2,6 +2,9 @@ package app
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -26,6 +29,7 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/server"
 	"github.com/stacklok/mecatl/internal/identitybroker"
 	"github.com/stacklok/mecatl/internal/syscaller"
+	"github.com/stacklok/mecatl/internal/testutil/identityharness"
 )
 
 // closableCore wraps the real broker, recording the workloads it sees and
@@ -286,6 +290,50 @@ func TestIdentityBrokerKeysAreSeparatePerRole(t *testing.T) {
 	}
 	if other.client.JWKS().Keys[0].KeyID == keys[0].KeyID {
 		t.Fatal("two builds generated the same broker client key")
+	}
+}
+
+// TestIdentityBrokerWiringConvertsAtAS1: with an AS-1 configured, the real
+// broker's session open converts the access token there, authenticating with
+// the broker client key.
+func TestIdentityBrokerWiringConvertsAtAS1(t *testing.T) {
+	clientKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	signer, err := identitybroker.NewClientAssertionSigner(clientKey, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := identityharness.New(t, identityharness.Options{
+		BrokerKeys: []identityharness.BrokerKey{{KeyID: signer.JWKS().Keys[0].KeyID, Public: &clientKey.PublicKey}},
+	})
+	broker, err := newIdentityBroker(Config{identityBrokerAS1: &identityBrokerAS1{
+		Issuer: h.AS1.Issuer(), TokenEndpoint: h.AS1.TokenEndpoint(), HTTPClient: h.HTTPClient(), ClientKey: clientKey,
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	workload := identitybroker.Workload{Name: identityBrokerWorkload}
+	alice := h.Owner(identityharness.Alice)
+	req := identitybroker.OpenSessionRequest{
+		HostSessionID: "hostS42", Incarnation: string(session.NewIncarnationID()),
+		Owner:       identitybroker.Owner{Issuer: alice.Issuer, Subject: alice.Subject},
+		AccessToken: identitybroker.NewToken(h.AS1.MintAccessToken(identityharness.AccessTokenSpec{User: identityharness.Alice})),
+	}
+	opened, err := broker.core.OpenSession(t.Context(), workload, req)
+	if err != nil {
+		t.Fatalf("OpenSession: %v", err)
+	}
+	if !opened.HoldsRefreshToken || h.AS1.GrantsIssued() != 1 {
+		t.Fatalf("session %+v after %d grants; want it holding the one grant AS-1 issued", opened, h.AS1.GrantsIssued())
+	}
+	// A reopen without a token, as mecak8s sends to a session holding a
+	// refresh token, spends nothing.
+	req.AccessToken = identitybroker.Token{}
+	again, err := broker.core.OpenSession(t.Context(), workload, req)
+	if err != nil || again != opened || h.AS1.GrantsIssued() != 1 {
+		t.Fatalf("reopen = %+v, %v after %d grants; want %+v and no new grant", again, err, h.AS1.GrantsIssued(), opened)
 	}
 }
 

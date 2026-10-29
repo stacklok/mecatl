@@ -18,6 +18,8 @@ import (
 //     returns that session when the incarnation and owner match. A different
 //     owner fails with CodePermissionDenied and ReasonSessionOwned; a different
 //     incarnation fails with CodeAlreadyExists.
+//   - OpenSession with no access token pairs the broker session with the
+//     owner the caller reports, and the session holds no refresh token.
 //   - FindSession finds the open broker session from its root host session.
 //   - A closed broker session is never reopened. It refuses registration and
 //     calls with its closing reason, such as ReasonSessionClosed with
@@ -42,6 +44,35 @@ import (
 //   - A broker session ID the broker never issued is refused with
 //     CodePermissionDenied.
 //   - Invalid requests fail with CodeInvalidArgument.
+//
+// An implementation that converts access tokens at session open (design step
+// (3); Broker with WithAuthServer) also:
+//
+//   - Refuses, without calling AS-1, an access token whose sub_id, read
+//     without verification, is not the reported owner, with
+//     CodePermissionDenied and ReasonOwnerMismatch, or is missing or not of
+//     format iss_sub, with CodeUnauthenticated and ReasonSubjectInvalid; and
+//     an open of a session whose verified owner is another user, with
+//     ReasonSessionOwned. A broker session has two owners: the one the
+//     caller reported, which pairs it, and the verified owner, recorded only
+//     when AS-1 first accepts a token for it.
+//   - Exchanges the token at AS-1 for a refresh token the session holds,
+//     never past the session's hard expiry, and reports it in
+//     Session.HoldsRefreshToken. A token the session already converted is
+//     never presented to AS-1 again: an open repeating it returns the
+//     session as it is. AS-1's token_used and its refusal of the token fail
+//     with CodeUnauthenticated and ReasonTokenUsed or ReasonSubjectInvalid,
+//     after which the client refreshes its access token and opens again; a
+//     user-wide revocation fails with CodeUnauthenticated and
+//     ReasonSignedOut, ReasonUpstreamRevoked, or ReasonOwnerActionRequired,
+//     after which the user signs in again; an unavailable AS-1 fails with
+//     CodeUnavailable, and any other failure with CodeInternal. A failed
+//     exchange leaves the session paired, with any refresh token it held; an
+//     answer that does not match the request or cannot be decoded closes it.
+//   - Closes a session with ReasonSessionClosed when its refresh token's
+//     expiry, the session's hard expiry, passes: from then on every call
+//     finds it closed, and the next OpenSession for its host session opens a
+//     new broker session.
 //
 // No request names the calling workload: the broker authenticates it itself,
 // and Mecatl gets a Service from NewInProcess. Implementations provide this
@@ -85,7 +116,14 @@ type Session struct {
 	ID            string
 	HostSessionID string
 	Incarnation   string
-	Owner         Owner
+	// Owner is the owner the caller reported when it opened the session.
+	Owner Owner
+	// HoldsRefreshToken reports whether the session held a live refresh token
+	// when the call returned: while it does, the caller need not send an
+	// access token. The broker itself never presents a token it already
+	// converted for the session to AS-1 again. The refresh token never leaves
+	// the broker.
+	HoldsRefreshToken bool
 }
 
 // OpenSessionRequest opens the broker session for a root host session.
@@ -97,6 +135,12 @@ type OpenSessionRequest struct {
 	Incarnation string
 	Owner       Owner
 	// AccessToken is the user's AS-1 access token, when the request has one.
+	// A broker that converts tokens checks that its sub_id is Owner and
+	// exchanges it at AS-1 for the session's refresh token. AS-1 converts each
+	// token once, so the caller passes a freshly refreshed token, and need not
+	// pass one while the session holds a live refresh token; a token the
+	// session already converted is not exchanged again. A different token
+	// replaces the session's refresh token. Other brokers ignore it.
 	AccessToken Token
 }
 
