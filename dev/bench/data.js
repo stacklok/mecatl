@@ -384501,6 +384501,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1793280940948,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "29541485+ChrisJBurns@users.noreply.github.com",
+            "name": "Chris Burns",
+            "username": "ChrisJBurns"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "de896869208d07f47d660829fd64bb3abb56c8a9",
+          "message": "fix(identitybroker): apply the session-open review follow-ups (#2601)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-29T14:15:34Z",
+          "tree_id": "610c23fd99e55b26d970c87ee3ccbcf7ce2fa861",
+          "url": "https://github.com/stacklok/mecatl/commit/de896869208d07f47d660829fd64bb3abb56c8a9"
+        },
+        "date": 1793284136784,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 16147,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12910.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 794,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -501503,6 +501542,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1793284132956,
+  "lastUpdate": 1793284138098,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
