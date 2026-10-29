@@ -213,8 +213,7 @@ func TestUserBlockInsetTracksStyle(t *testing.T) {
 // TestReasoningExpandedShowsFullBody locks the issue #96 fix: expanding a
 // reasoning summary (f9) shows the FULL body with no line cap, NOT the old
 // 24-line tail truncation. A 58-line reasoning block must render all 58 lines
-// (plus header + caveat) when expanded — matching how resultBody handles tool
-// results — while the collapsed path still shows only the one-line header.
+// (plus header) when expanded, while the collapsed path shows only the header.
 func TestReasoningExpandedShowsFullBody(t *testing.T) {
 	r := newTestRenderer()
 	r.setWidth(200) // wide so each reasoning line stays one logical line
@@ -252,9 +251,7 @@ func TestReasoningExpandedShowsFullBody(t *testing.T) {
 
 // TestReasoningExpandedWraps locks the expanded-reasoning BODY wrap: a long
 // single-line reasoning summary, expanded (f9), wraps without overflow. The
-// short collapsed/expanded HEADER line is intentionally left unwrapped per the
-// fix (it is a short fixed affordance, not free-form body), so the assertion is
-// scoped to the caveat + body lines that follow it.
+// short collapsed/expanded header stays above the reasoning body.
 func TestReasoningExpandedWraps(t *testing.T) {
 	r := newTestRenderer()
 	r.setWidth(60)
@@ -265,9 +262,8 @@ func TestReasoningExpandedWraps(t *testing.T) {
 	if len(lines) <= 3 {
 		t.Fatalf("expected expanded reasoning to wrap the body to multiple lines, got %d", len(lines))
 	}
-	// Find the wrapped caveat/body region (everything after the header line, which
-	// is the line ending in "f9 collapse"). Those free-form lines must not
-	// overflow the viewport width.
+	// Find the wrapped body after the header line ending in "f9 collapse".
+	// These free-form lines must not overflow the viewport width.
 	bodyStart := 0
 	for i, ln := range lines {
 		if strings.Contains(stripANSIstr(ln), "f9 collapse") {
@@ -297,6 +293,8 @@ func TestReasoningWrapFitsFramedConversation(t *testing.T) {
 			name string
 			text string
 		}{
+			{"heading", "**" + strings.Repeat("consider the options carefully ", 12) + "**"},
+			{"heading_tabs", "**consider\tthe\toptions\tcarefully**"},
 			{"prose", strings.Repeat("consider the options carefully ", 12)},
 			{"long_token", strings.Repeat("x", width*3)},
 			{"tabs", strings.Repeat("\tconsider\tthe\toptions\tcarefully", 6)},

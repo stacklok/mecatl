@@ -743,37 +743,46 @@ func blockBlankLinesAfter(kinds []scrollback.Kind, i int) int {
 	return blockBlankLinesBetween(kinds[i-1], kinds[i])
 }
 
-// reasoningCaveat is the dim one-line disclaimer prepended to the EXPANDED
-// reasoning. It signals the prose is a lossy summary, not the model's actual
-// process — streamed chain-of-thought is often unfaithful and drives
-// over-reliance, so it must never read as ground truth.
-const reasoningCaveat = "— summary of the model's reasoning; may not reflect its actual process"
-
-// renderReasoning renders the dim, collapsed-by-default reasoning summary that
-// belongs to an assistant block. It returns "" when the block carries no
-// reasoning. Collapsed (the default) it is a single dim header: while reasoning
-// is still streaming and no answer text has begun it reads "reasoning…" (a live
-// "the model is working" affordance); otherwise it is the static
-// "reasoning summary · N lines · f9 expand". When the conversation detail toggle
-// is on, a dim caveat plus the full summary text are shown with no line cap.
-// Streamed reasoning is never a trust anchor: hidden unless explicitly asked for, and
-// clearly labelled as a lossy summary.
+// renderReasoningSnapshot renders a collapsed-by-default reasoning summary.
+// Expanded summaries retain plain-text layout, with bold standalone headings.
 func (r *renderer) renderReasoningSnapshot(p scrollback.AssistantCardSnapshot, expand bool) string {
 	if strings.TrimSpace(p.Reasoning) == "" {
 		return ""
 	}
-	style := r.th.Style("transcriptReasoningText")
-	text := terminaltext.Sanitize(strings.TrimRight(p.Reasoning, "\n"))
-	n := lineCount(text)
-	expandMark := r.marks.expandConversation
+	header := r.reasoningHeader(p, expand)
 	if !expand {
-		if p.ReasoningStreaming {
-			return r.wrapStyled("reasoning… · "+expandMark+" expand", style)
-		}
-		return r.wrapStyled("reasoning summary · "+plural(n, "line")+" · "+expandMark+" expand", style)
+		return header
 	}
-	header := r.wrapStyled("reasoning summary · "+plural(n, "line")+" · "+expandMark+" collapse", style)
-	return header + "\n" + r.wrapStyled(reasoningCaveat, style) + "\n" + r.wrapStyled(text, style)
+	return header + "\n" + r.reasoningBody(strings.TrimRight(p.Reasoning, "\n"))
+}
+
+func (r *renderer) reasoningHeader(p scrollback.AssistantCardSnapshot, expand bool) string {
+	style := r.th.Style("transcriptReasoningText")
+	n := lineCount(terminaltext.Sanitize(strings.TrimRight(p.Reasoning, "\n")))
+	expandMark := r.marks.expandConversation
+	if !expand && p.ReasoningStreaming {
+		return r.wrapStyled("reasoning… · "+expandMark+" expand", style)
+	}
+	action := "expand"
+	if expand {
+		action = "collapse"
+	}
+	return r.wrapStyled("reasoning summary · "+plural(n, "line")+" · "+expandMark+" "+action, style)
+}
+
+func (r *renderer) reasoningBody(text string) string {
+	lines := strings.Split(terminaltext.Sanitize(text), "\n")
+	for i, line := range lines {
+		style := r.th.Style("transcriptReasoningText")
+		heading, start := strings.CutPrefix(strings.TrimSpace(line), "**")
+		heading, end := strings.CutSuffix(heading, "**")
+		if start && end && heading != "" && !strings.Contains(heading, "**") {
+			line = heading
+			style = style.Bold(true)
+		}
+		lines[i] = r.wrapStyled(line, style)
+	}
+	return strings.Join(lines, "\n")
 }
 
 // wrapStyled wraps assistant reasoning within the body budget, subtracting both

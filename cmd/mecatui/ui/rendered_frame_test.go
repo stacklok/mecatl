@@ -242,7 +242,7 @@ func TestAssistantRailLayoutAndSemanticText(t *testing.T) {
 }
 
 // TestExpandedReasoningProvenanceUsesWrappedRows pins the narrow-width path where
-// the caveat and reasoning body wrap into more rows than the unwrapped source.
+// the header and reasoning body wrap into more rows than the unwrapped source.
 func TestExpandedReasoningProvenanceUsesWrappedRows(t *testing.T) {
 	c := &conversation{}
 	c.startAssistant()
@@ -285,16 +285,18 @@ func TestExpandedReasoningProvenanceUsesWrappedRows(t *testing.T) {
 }
 
 // TestExpandedReasoningAnchorSurvivesReflow keeps the visible reasoning text at
-// its logical grapheme location while leaving the header and caveat as chrome.
+// its logical grapheme location while leaving the summary header as chrome.
 func TestExpandedReasoningAnchorSurvivesReflow(t *testing.T) {
 	c := &conversation{}
 	c.startAssistant()
-	c.appendReasoning("first reasoning detail wraps before the REASONINGANCHOR semantic text and continues after it")
+	c.appendReasoning("**Considering the options**\n\nfirst reasoning detail wraps before the REASONINGANCHOR semantic text and continues after it")
 	c.appendAssistant("answer body keeps the viewport from following the tail")
 
 	r := newCacheRenderer()
 	r.setWidth(30)
 	narrow := r.renderConversationFrame(&c.scrollback, true)
+	// The renderer reuses provenance scratch storage on the next render.
+	narrow.provenance = append([]renderedRow(nil), narrow.provenance...)
 	assistant := c.testBlocks()[0]
 	anchorRow := -1
 	for i, line := range narrow.lines {
@@ -313,7 +315,7 @@ func TestExpandedReasoningAnchorSurvivesReflow(t *testing.T) {
 	for i, line := range narrow.lines {
 		row := narrow.provenance[i]
 		if row.blockID == uint64(assistant.ID) && row.region == conversationRegionReasoning &&
-			(strings.Contains(stripANSIstr(line), "reasoning summary") || strings.Contains(stripANSIstr(line), reasoningCaveat)) && row.text {
+			strings.Contains(stripANSIstr(line), "reasoning summary") && row.text {
 			t.Fatalf("reasoning presentation row %q must not be text-bearing", line)
 		}
 	}
