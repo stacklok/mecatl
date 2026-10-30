@@ -35,6 +35,7 @@ var surfaceFileHomes = map[string]bool{
 	"models_surface.go":   true,
 	"usermodel.go":        true,
 	"effort.go":           true,
+	"connect.go":          true,
 	"worktrees.go":        true,
 	"schedule.go":         true,
 	"schedule_create.go":  true,
@@ -44,7 +45,21 @@ var surfaceFileHomes = map[string]bool{
 
 // surfaceFileCount is the explicit homes the gate counts — another surface file
 // is an explicit decision here, not a silent drift.
-const surfaceFileCount = 16
+const surfaceFileCount = 17
+
+func TestModelHasNoConnectStateField(t *testing.T) {
+	st := reflect.TypeOf(Model{})
+	for i := 0; i < st.NumField(); i++ {
+		f := st.Field(i)
+		typ := f.Type
+		for typ.Kind() == reflect.Pointer {
+			typ = typ.Elem()
+		}
+		if f.Name == "connect" || f.Name == "connectLoadGeneration" || typ.Name() == "connectState" {
+			t.Errorf("Model.%s retains connect open-lifetime state", f.Name)
+		}
+	}
+}
 
 func TestModelHasNoScheduleStateField(t *testing.T) {
 	st := reflect.TypeOf(Model{})
@@ -175,6 +190,14 @@ func TestSurfaceSymbolsLiveInSurfaceFiles(t *testing.T) {
 			ast.Inspect(f, func(node ast.Node) bool {
 				if id, ok := node.(*ast.Ident); ok && id.Name == "worktreesState" {
 					t.Errorf("concrete worktrees state referenced outside its surface: %s", fset.Position(id.Pos()))
+				}
+				return true
+			})
+		}
+		if file != "connect.go" {
+			ast.Inspect(f, func(node ast.Node) bool {
+				if id, ok := node.(*ast.Ident); ok && id.Name == "connectState" {
+					t.Errorf("concrete connect state referenced outside its surface: %s", fset.Position(id.Pos()))
 				}
 				return true
 			})

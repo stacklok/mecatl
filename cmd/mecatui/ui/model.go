@@ -691,8 +691,6 @@ type Model struct {
 	// overwrite root state or a reopened picker.
 	modelCatalogRequestToken uint64
 	modelCatalog             modelCatalog          // root-owned inventory, statuses, defaults, and selection reconciliation
-	connect                  connectState          // /connect saved-target picker (tombstone overlay)
-	connectLoadGeneration    uint64                // monotonic across overlay close/reopen; stale async loads are ignored
 	connectIntent            *ConnectRestartIntent // set only immediately before tea.Quit
 	// modal is the ONE open modal overlay (nil = none). Stack/tiling/focus-tree
 	// is later; the field carries the one migrated surface. A surface's state is
@@ -1139,9 +1137,7 @@ func New(deps Deps) Model {
 	// connect surface so Init cannot fall through to createSessionCmd.
 	if deps.ConnectOpen && deps.Session == nil {
 		m.phase = phaseIdle
-		m.connectLoadGeneration = 1
-		m.connect = connectState{open: true, loading: true, err: deps.ConnectError, reason: deps.ConnectReason, failedTarget: deps.ConnectTarget, resumeSessionID: deps.ConnectResumeSessionID}
-		m.prompt.Blur()
+		m.installConnect(deps.ConnectError, deps.ConnectReason, deps.ConnectTarget, deps.ConnectResumeSessionID)
 	}
 	// Init issues token 1 for the startup catalog request. Resume skips that
 	// request, so its first picker request starts at 1 instead.
@@ -1394,11 +1390,7 @@ func (m Model) startupCmd() tea.Cmd {
 		if m.deps.Connect == nil {
 			return nil
 		}
-		deps := m.deps
-		return func() tea.Msg {
-			targets, err := deps.Connect.ListConnectTargets(deps.Ctx)
-			return connectTargetsMsg{generation: m.connectLoadGeneration, targets: targets, err: err}
-		}
+		return m.connectStartupCmd()
 	}
 	if m.deps.BrowseSessions {
 		cmds := []tea.Cmd{m.sp.Tick, m.statusLineWaitCmd()}

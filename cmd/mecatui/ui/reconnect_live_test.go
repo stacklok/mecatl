@@ -706,11 +706,11 @@ func TestBearerLiveReaderAuthRejectedPreservesHandoffAndStopsRetry(t *testing.T)
 	mm, _ = m.Update(rejected)
 	m = mm.(Model)
 
-	if !m.connect.open || m.connect.reason != client.AuthRejected {
-		t.Fatalf("auth recovery = %#v, want open AuthRejected /connect recovery", m.connect)
+	if m.modal == nil || m.modal.(*connectState).reason != client.AuthRejected {
+		t.Fatalf("auth recovery = %#v, want open AuthRejected /connect recovery", m.modal.(*connectState))
 	}
-	if m.sessionID != "sess-rejected" || m.connect.failedTarget != "remote.example:443" || m.connect.resumeSessionID != "sess-rejected" {
-		t.Fatalf("auth recovery lost target/session: session=%q connect=%#v", m.sessionID, m.connect)
+	if m.sessionID != "sess-rejected" || m.modal.(*connectState).failedTarget != "remote.example:443" || m.modal.(*connectState).resumeSessionID != "sess-rejected" {
+		t.Fatalf("auth recovery lost target/session: session=%q connect=%#v", m.sessionID, m.modal.(*connectState))
 	}
 	if m.liveCh != nil || m.liveReconCh != nil || m.liveStop != nil || m.liveReconStop != nil || m.liveArmed != "" {
 		t.Fatalf("auth recovery did not tear down both readers: live=%v recon=%v armed=%q", m.liveCh, m.liveReconCh, m.liveArmed)
@@ -758,11 +758,11 @@ func TestBearerLiveReaderAuthRejectedPreservesHandoffAndStopsRetry(t *testing.T)
 	}
 	mm, _ = probe.Update(probeRejected)
 	probe = mm.(Model)
-	if !probe.connect.open || probe.connect.reason != client.AuthRejected {
-		t.Fatalf("probe auth recovery = %#v, want open AuthRejected /connect recovery", probe.connect)
+	if probe.modal == nil || probe.modal.(*connectState).reason != client.AuthRejected {
+		t.Fatalf("probe auth recovery = %#v, want open AuthRejected /connect recovery", probe.modal.(*connectState))
 	}
-	if probe.sessionID != "sess-probe-rejected" || probe.connect.failedTarget != "remote.example:443" || probe.connect.resumeSessionID != "sess-probe-rejected" {
-		t.Fatalf("probe auth recovery lost target/session: session=%q connect=%#v", probe.sessionID, probe.connect)
+	if probe.sessionID != "sess-probe-rejected" || probe.modal.(*connectState).failedTarget != "remote.example:443" || probe.modal.(*connectState).resumeSessionID != "sess-probe-rejected" {
+		t.Fatalf("probe auth recovery lost target/session: session=%q connect=%#v", probe.sessionID, probe.modal.(*connectState))
 	}
 	if probe.liveCh != nil || probe.liveReconCh != nil || probe.liveStop != nil || probe.liveReconStop != nil || probe.liveArmed != "" {
 		t.Fatalf("probe auth recovery did not tear down both readers: live=%v recon=%v armed=%q", probe.liveCh, probe.liveReconCh, probe.liveArmed)
@@ -1018,11 +1018,11 @@ func TestBearerLiveReaderRecvAuthRejectedRoutesToConnectRecovery(t *testing.T) {
 	mm, _ := m.Update(msg)
 	m = mm.(Model)
 
-	if !m.connect.open || m.connect.reason != client.AuthRejected {
-		t.Fatalf("connect recovery = %#v, want open AuthRejected recovery", m.connect)
+	if m.modal == nil || m.modal.(*connectState).reason != client.AuthRejected {
+		t.Fatalf("connect recovery = %#v, want open AuthRejected recovery", m.modal.(*connectState))
 	}
-	if m.connect.failedTarget != "remote.example:443" || m.connect.resumeSessionID != "sess-rejected" || m.sessionID != "sess-rejected" {
-		t.Fatalf("target/session not preserved: failed=%q resume=%q session=%q", m.connect.failedTarget, m.connect.resumeSessionID, m.sessionID)
+	if m.modal.(*connectState).failedTarget != "remote.example:443" || m.modal.(*connectState).resumeSessionID != "sess-rejected" || m.sessionID != "sess-rejected" {
+		t.Fatalf("target/session not preserved: failed=%q resume=%q session=%q", m.modal.(*connectState).failedTarget, m.modal.(*connectState).resumeSessionID, m.sessionID)
 	}
 	if m.liveCh != nil || m.liveReconCh != nil || m.liveReconnecting || m.liveArmed != "" {
 		t.Fatalf("auth recovery left live/reconnect state armed: live=%v recon=%v reconnecting=%v armed=%q", m.liveCh, m.liveReconCh, m.liveReconnecting, m.liveArmed)
@@ -1030,6 +1030,7 @@ func TestBearerLiveReaderRecvAuthRejectedRoutesToConnectRecovery(t *testing.T) {
 	if footer := stripANSIstr(m.renderFooter()); containsStr(footer, "live feed reconnecting") {
 		t.Fatalf("stale reconnect footer remained after auth recovery: %q", footer)
 	}
+	m = applyAll(m, tea.WindowSizeMsg{Width: 120, Height: 40})
 	overlay := stripANSIstr(m.View().Content)
 	for _, guidance := range []string{"Re-login is disabled", "issuer, audience, and CA"} {
 		if !containsStr(overlay, guidance) {

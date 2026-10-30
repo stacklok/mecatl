@@ -501,10 +501,6 @@ func (m Model) dispatchNonInputMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if mm, cmd, handled := m.updateModelsMsg(msg); handled {
 		return mm, cmd
 	}
-	// /connect saved-target picker response (tombstone overlay); fires no follow-up command.
-	if mm, handled := m.updateConnectMsg(msg); handled {
-		return mm, nil
-	}
 	// Stream events (session.init / turn.start / deltas / tool.* /
 	// permission.ask / hook / compaction / result).
 	return m.updateStreamEvent(msg)
@@ -653,11 +649,7 @@ func (m Model) applySessionReady(msg client.SessionReadyMsg) (tea.Model, tea.Cmd
 		}
 	}
 	if m.deps.ConnectOpen {
-		m.connect.err = m.deps.ConnectError
-		m.connect.reason = m.deps.ConnectReason
-		m.connect.failedTarget = m.deps.ConnectTarget
-		m.connect.resumeSessionID = m.deps.ConnectResumeSessionID
-		mm, connectCmd := m.openConnect()
+		mm, connectCmd := m.openConnectRecovery(m.deps.ConnectError, m.deps.ConnectReason, m.deps.ConnectTarget, m.deps.ConnectResumeSessionID)
 		m = mm.(Model)
 		cmd = tea.Batch(cmd, connectCmd)
 	}
@@ -936,10 +928,7 @@ func (m Model) updateLifecycle(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 		m = m.syncDebugTarget()
 		if msg.AuthReason != "" {
 			m.phase = phaseIdle
-			m.connect.err = "Authentication needs attention."
-			m.connect.reason = msg.AuthReason
-			m.connect.failedTarget = m.deps.Server
-			mm, cmd := m.openConnect()
+			mm, cmd := m.openConnectRecovery("Authentication needs attention.", msg.AuthReason, m.deps.Server, "")
 			return mm, cmd, true
 		}
 		m.phase = phaseFatal
@@ -2417,7 +2406,6 @@ func (m Model) onOverlayKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
 		m.onSessionDetailsKey,
 		m.onAgentsKey,
 		m.onAgentsInvKey,
-		m.onConnectKey,
 		m.onExecutionKey,
 	}
 	for _, route := range overlays {
@@ -2598,6 +2586,11 @@ func (m Model) applyToolcallsSurfaceIntent(intent surfaceIntent) bool {
 // tells the caller to skip common dispatch post-processing after a root-owned
 // effect takes over; handled=false never carries meaningful work.
 func (m Model) applySurfaceIntent(intent surfaceIntent) (model tea.Model, cmd tea.Cmd, stopSurfaceDispatch bool) {
+	if intent, ok := intent.(connectSelectIntent); ok {
+		m.connectIntent = &intent.restart
+		m.closeModal()
+		return m, tea.Quit, true
+	}
 	if intent, ok := intent.(scheduleTranscriptIntent); ok {
 		previous := m.modal
 		mm, cmd, _ := m.loadSessionTranscript(client.SessionListItem{
@@ -3928,11 +3921,7 @@ func (m Model) reduceLiveAuthRecovery(reason client.AuthReason) (tea.Model, tea.
 	m.liveReconnecting = false
 	m.liveReconnectAttempt = 0
 	m.liveReconnectErr = ""
-	m.connect.err = "Authentication needs attention."
-	m.connect.reason = reason
-	m.connect.failedTarget = m.deps.Server
-	m.connect.resumeSessionID = m.sessionID
-	mm, cmd := m.openConnect()
+	mm, cmd := m.openConnectRecovery("Authentication needs attention.", reason, m.deps.Server, m.sessionID)
 	return mm, tea.Batch(m.refreshCmd(), cmd)
 }
 
