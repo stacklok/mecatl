@@ -1,0 +1,56 @@
+# Identity broker + hosted AS-1 overlay for the disposable mecatl-idbroker Kind
+# profile. Layer it after values-kind.yaml only through
+# deploy/mecak8s-idbroker/Taskfile.yml, which creates every Secret named here
+# (mecak8s-tls, fixture-ca, as1-signing-key, dex-as1-client) and Dex.
+#
+# The Service ports equal the Kind host ports, so the in-cluster names and the
+# host aliases from `task mecak8s-idbroker:hosts-add` are the same URLs.
+image:
+  tag: idbroker
+
+replicaCount: 1
+extraArgs: [--no-shell]
+
+service:
+  type: NodePort
+  grpcPort: 18090
+  httpPort: 18091
+  nodePorts:
+    grpc: 30090
+    http: 30091
+
+tls:
+  enabled: true
+  secretName: mecak8s-tls
+  certKey: tls.crt
+  keyKey: tls.key
+
+# oidc.issuer, clientID, and acceptedClientIDs stay empty: the chart derives
+# them from identityBroker.as1.
+oidc:
+  enabled: true
+  audience: https://mecak8s-mecak8s.mecatl-idbroker.svc.cluster.local:18091/api
+  resource: https://mecak8s-mecak8s.mecatl-idbroker.svc.cluster.local:18091
+  ownerIdentity: sub_id
+  scopes: [openid, profile, offline_access]
+
+identityBroker:
+  enabled: true
+  # Dex's sub is the same for a user across Dex clients.
+  subjectClaim: sub
+  as1:
+    issuer: https://mecak8s-mecak8s.mecatl-idbroker.svc.cluster.local:18091/as1
+    tuiClientID: mecatui
+    signingKey:
+      secretName: as1-signing-key
+      key: signing-key.pem
+    upstream:
+      issuer: https://dex.mecatl-idbroker.svc.cluster.local:5557
+      clientID: mecak8s-as1
+      clientSecret:
+        secretName: dex-as1-client
+        key: client-secret
+      caSecret:
+        secretName: fixture-ca
+        key: tls.crt
+      allowPrivateAddresses: true
