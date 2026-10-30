@@ -44,16 +44,9 @@ new CA. `login` runs:
 
 The browser opens AS-1's consent page, then Dex's login form. Both are served
 with the fixture CA, which the browser does not trust: accept the warning or
-trust that CA file. Dev-only Dex users:
-
-| User | Password |
-| --- | --- |
-| `alice@example.com` | `password` |
-| `bob@example.com` | `password` |
-
-They exist only in this Dex's in-memory configuration. Sessions are owned by
-the Dex identity in the access token's `sub_id`, so alice and bob see only
-their own sessions.
+trust that CA file. Sign in as the dev-only Dex user `dev@example.com` with
+password `password`. It exists only in this Dex's in-memory configuration.
+Sessions are owned by the Dex identity in the access token's `sub_id`.
 
 Export `OPENROUTER_API_KEY` before `kind-setup` for a real provider; without
 it, `mecak8s` runs the offline mock provider. The key reaches the cluster only

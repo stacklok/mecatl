@@ -3,7 +3,7 @@
 # equals its host port (5557), so AS-1 (server-side, in the cluster) and the
 # browser (on the host, through the hosts-add alias) use the same issuer URL.
 #
-# The static users are dev-only: both passwords are the literal "password"
+# The static user is dev-only: its password is the literal "password"
 # (the bcrypt hash below). AS-1's client secret is not here: kind-setup
 # generates the dex-as1-client Secret, which Dex reads through secretEnv and
 # mecak8s mounts as identityBroker.as1.upstream.clientSecret.
@@ -32,14 +32,10 @@ data:
           - https://mecak8s-mecak8s.mecatl-idbroker.svc.cluster.local:18091/as1/oauth/callback
     enablePasswordDB: true
     staticPasswords:
-      - email: alice@example.com
+      - email: dev@example.com
         hash: "$2a$10$2b2cU8CPhOTaGrs1HRQuAueS7JTT5ZHsHSzYiFPm1leZck7Mc8T4W"
-        username: alice
-        userID: alice-uid
-      - email: bob@example.com
-        hash: "$2a$10$2b2cU8CPhOTaGrs1HRQuAueS7JTT5ZHsHSzYiFPm1leZck7Mc8T4W"
-        username: bob
-        userID: bob-uid
+        username: dev
+        userID: dev-uid
 ---
 apiVersion: apps/v1
 kind: Deployment
