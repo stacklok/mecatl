@@ -88,6 +88,39 @@ tests:
           path: spec.template.spec.containers[0].volumeMounts[?(@.name == "as1-upstream-client-secret")].readOnly
           value: true
 
+  - it: trusts a private upstream CA and admits private addresses only when asked
+    set:
+      identityBroker.as1.upstream.caSecret.secretName: as1-upstream-ca
+      identityBroker.as1.upstream.caSecret.key: ca.crt
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --identity-broker-as1-upstream-ca-file=/var/run/secrets/as1-upstream-ca/ca.crt
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: --identity-broker-as1-upstream-allow-private-addresses
+      - equal:
+          path: spec.template.spec.volumes[?(@.name == "as1-upstream-ca")].secret
+          value:
+            secretName: as1-upstream-ca
+            defaultMode: 288
+            items:
+              - key: ca.crt
+                path: ca.crt
+      - equal:
+          path: spec.template.spec.containers[0].volumeMounts[?(@.name == "as1-upstream-ca")].readOnly
+          value: true
+
+  - it: admits a private upstream address without adding CA trust
+    set:
+      identityBroker.as1.upstream.allowPrivateAddresses: true
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --identity-broker-as1-upstream-allow-private-addresses
+      - notExists:
+          path: spec.template.spec.volumes[?(@.name == "as1-upstream-ca")]
+
   - it: rejects the identity broker without the sub_id owner identity
     set:
       oidc.ownerIdentity: ""
@@ -246,6 +279,25 @@ tests:
     asserts:
       - failedTemplate:
           errorMessage: identityBroker.as1 values require identityBroker.as1.issuer
+
+  - it: rejects private upstream settings without the AS-1 issuer
+    set:
+      identityBroker.subjectClaim: ""
+      identityBroker.as1.issuer: ""
+      identityBroker.as1.tuiClientID: ""
+      identityBroker.as1.upstream.issuer: ""
+      identityBroker.as1.upstream.clientID: ""
+      identityBroker.as1.upstream.allowPrivateAddresses: true
+    asserts:
+      - failedTemplate:
+          errorMessage: identityBroker.as1 values require identityBroker.as1.issuer
+
+  - it: rejects an upstream CA Secret without a key
+    set:
+      identityBroker.as1.upstream.caSecret.secretName: as1-upstream-ca
+    asserts:
+      - failedTemplate:
+          errorMessage: identityBroker.as1.upstream.caSecret.key is required when identityBroker.as1.upstream.caSecret.secretName is set
 
   - it: requires the TUI client ID
     set:

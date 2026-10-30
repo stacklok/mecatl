@@ -712,6 +712,14 @@ Usage: mecak8s [flags]
   --identity-broker-as1-tui-client-id string
         OAuth client ID of mecatui at AS-1, a public client. Required with --identity-
         broker-as1-issuer
+  --identity-broker-as1-upstream-allow-private-addresses
+        Let AS-1 reach an upstream identity provider at a private or link-local
+        address, such as an in-cluster Service. Does not add CA trust; see --identity-
+        broker-as1-upstream-ca-file
+  --identity-broker-as1-upstream-ca-file string
+        PEM CA bundle AS-1 trusts, beside the system roots, for the upstream identity
+        provider's TLS certificate. Does not admit private addresses; see --identity-
+        broker-as1-upstream-allow-private-addresses
   --identity-broker-as1-upstream-client-id string
         AS-1's client ID at the upstream identity provider, registered with the
         redirect URI ISSUER/oauth/callback. Required with --identity-broker-as1-issuer

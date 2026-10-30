@@ -239,6 +239,8 @@ identityBroker:
 |`identityBroker.as1.upstream.issuer`|`--identity-broker-as1-upstream-issuer`|The company IdP's HTTPS issuer URL.|
 |`identityBroker.as1.upstream.clientID`|`--identity-broker-as1-upstream-client-id`|AS-1's client ID at the company IdP.|
 |`identityBroker.as1.upstream.clientSecret`|`--identity-broker-as1-upstream-client-secret-file`|_Optional._ Secret key holding AS-1's client secret at the company IdP. Without it, AS-1 is a public client there.|
+|`identityBroker.as1.upstream.caSecret`|`--identity-broker-as1-upstream-ca-file`|_Optional._ Secret key holding a PEM CA bundle AS-1 trusts for the company IdP's certificate, beside the system roots. It does not admit a private address.|
+|`identityBroker.as1.upstream.allowPrivateAddresses`|`--identity-broker-as1-upstream-allow-private-addresses`|_Optional._ Lets AS-1 reach a company IdP at a private or link-local address, such as an in-cluster Service. It adds no CA trust.|
 
 Create the Secret before installing; the chart mounts each key read-only. Leave
 `oidc.issuer`, `oidc.clientID`, and `oidc.acceptedClientIDs` empty: the chart

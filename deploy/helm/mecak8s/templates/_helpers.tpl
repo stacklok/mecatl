@@ -108,7 +108,7 @@ client IDs from it; the chart renders the same derived values.
 {{- if not (or $noShell $emptyShell .Values.redis.filesystem.enabled) -}}{{ fail "identityBroker.enabled requires no shell in the mecak8s process: add --no-shell to extraArgs, or --shell= with execution.enabled to keep the remote Shell" }}{{- end -}}
 {{- end -}}
 {{- if and $broker.subjectClaim (not $as1.issuer) -}}{{ fail "identityBroker.subjectClaim requires identityBroker.as1.issuer" }}{{- end -}}
-{{- $as1Set := or $as1.tuiClientID $as1.signingKey.secretName $as1.signingKey.key $as1.upstream.issuer $as1.upstream.clientID $as1.upstream.clientSecret.secretName $as1.upstream.clientSecret.key -}}
+{{- $as1Set := or $as1.tuiClientID $as1.signingKey.secretName $as1.signingKey.key $as1.upstream.issuer $as1.upstream.clientID $as1.upstream.clientSecret.secretName $as1.upstream.clientSecret.key $as1.upstream.caSecret.secretName $as1.upstream.caSecret.key $as1.upstream.allowPrivateAddresses -}}
 {{- if and $as1Set (not $as1.issuer) -}}{{ fail "identityBroker.as1 values require identityBroker.as1.issuer" }}{{- end -}}
 {{- if $as1.issuer -}}
 {{- if not $broker.enabled -}}{{ fail "identityBroker.as1.issuer requires identityBroker.enabled=true" }}{{- end -}}
@@ -128,7 +128,7 @@ client IDs from it; the chart renders the same derived values.
 {{- if and .Values.oidc.clientID (ne .Values.oidc.clientID $as1.tuiClientID) -}}{{ fail "oidc.clientID must be empty or equal identityBroker.as1.tuiClientID" }}{{- end -}}
 {{- if and .Values.oidc.acceptedClientIDs (not (has $as1.tuiClientID .Values.oidc.acceptedClientIDs)) -}}{{ fail "oidc.acceptedClientIDs must include identityBroker.as1.tuiClientID" }}{{- end -}}
 {{- end -}}
-{{- range $name, $ref := dict "identityBroker.as1.signingKey" $as1.signingKey "identityBroker.as1.upstream.clientSecret" $as1.upstream.clientSecret -}}
+{{- range $name, $ref := dict "identityBroker.as1.signingKey" $as1.signingKey "identityBroker.as1.upstream.clientSecret" $as1.upstream.clientSecret "identityBroker.as1.upstream.caSecret" $as1.upstream.caSecret -}}
 {{- if or $ref.secretName $ref.key -}}
 {{- $_ := required (printf "%s.secretName is required when %s.key is set" $name $name) $ref.secretName -}}
 {{- $_ := required (printf "%s.key is required when %s.secretName is set" $name $name) $ref.key -}}
