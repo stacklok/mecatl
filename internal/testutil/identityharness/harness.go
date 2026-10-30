@@ -22,7 +22,11 @@
 //     request carries one exchange-grant entry whose optional expires_at AS-1
 //     caps at its maximum and echoes. Checks 1 to 5 apply, with one
 //     conversion per access-token jti and no retry exception; a refused
-//     access token gets no reason. A reused jti is refused with token_used
+//     access token gets subject_token_invalid, whatever check 4 found. The
+//     harness never sends ToolHive's configuration-fault reasons
+//     subject_token_audience or subject_token_source_client, even for a token
+//     for another audience or client; the broker's own tests cover them. A
+//     reused jti is refused with token_used
 //     but does not revoke the grant it created: replay-revoke
 //     (stacklok/toolhive#6973) is phase 2. The grant's refresh token is
 //     refused at the refresh-token grant (sessionopen.go);

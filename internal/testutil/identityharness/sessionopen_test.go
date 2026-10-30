@@ -239,9 +239,9 @@ func TestSessionOpenRefusals(t *testing.T) {
 		t.Run("check 4: "+name, func(t *testing.T) {
 			before := len(h.AS1.ExchangeRefusals())
 			_, err := b.OpenSession(t.Context(), openReq(token))
-			assertReason(t, err, http.StatusBadRequest, "invalid_request", "")
-			if got := h.AS1.ExchangeRefusals()[before:]; !slices.Equal(got, []identityharness.Refusal{{Code: "invalid_request"}}) {
-				t.Errorf("recorded refusals = %v, want one invalid_request with no reason", got)
+			assertReason(t, err, http.StatusBadRequest, "invalid_request", "subject_token_invalid")
+			if got := h.AS1.ExchangeRefusals()[before:]; !slices.Equal(got, []identityharness.Refusal{{Code: "invalid_request", Reason: "subject_token_invalid"}}) {
+				t.Errorf("recorded refusals = %v, want one invalid_request with subject_token_invalid", got)
 			}
 		})
 	}

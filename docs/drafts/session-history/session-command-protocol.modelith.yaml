@@ -1,0 +1,200 @@
+# yaml-language-server: $schema=https://modelith.sh/schema/domain-model/v1.json
+kind: DomainModel
+version: v1
+title: Session catalogs and command protocol
+description: >
+  Catalog ownership and API command decisions are distinct from session
+  execution and history. Optional retry identities have bounded receipts;
+  genuinely asynchronous work exposes existing durable lifecycles through a
+  common observation contract. The companion [proposal](session-commit-history.md)
+  owns rationale and delivery scope.
+imports:
+  - scope: history
+    path: ./session-commit-history.modelith.yaml
+
+entities:
+  StorageProvider:
+    definition: >
+      One configured storage authority backing catalog lifecycle decisions and
+      session history. A provider declares its durability and atomic acceptance
+      guarantees; multiple catalogs may use the same provider.
+    relationships:
+      - entity: SessionCatalog
+        cardinality: "1:n"
+    invariants:
+      - id: provider-honest-acceptance
+        statement: A `StorageProvider` acknowledges durable acceptance only under its declared operating guarantees; an in-memory queue or inner savepoint does not satisfy a commit gate.
+      - id: provider-no-cross-catalog-transaction-requirement
+        statement: A `StorageProvider` can aggregate physical writes without requiring atomic transactions across independent sessions or catalogs; batching preserves each affected decision's ordering and acceptance guarantees.
+
+  SessionCatalog:
+    definition: >
+      A stably identified ownership and authorization scope for session listing,
+      creation, publication, and deletion within exactly one `StorageProvider`.
+      Display metadata and any search index are derived views rather than a
+      second continuation authority. A catalog's identity does not depend on
+      its current replica, connection, or display name.
+    relationships:
+      - entity: history.Session
+        cardinality: "1:n"
+        ownership: owned
+      - entity: RetryScope
+        cardinality: "0..1:1"
+        ownership: owned
+        note: Catalog mutation receipts are separate from each session's retry scope.
+      - entity: history.Client
+        cardinality: "n:n"
+        note: Catalog membership and each requested action are independently authorized.
+    invariants:
+      - id: catalog-one-provider
+        statement: Each `SessionCatalog` belongs to exactly one `StorageProvider`; a catalog does not federate multiple storage authorities.
+      - id: catalog-lifecycle-authority
+        statement: Creation identity, fork destination publication, and logical deletion decisions commit through the `SessionCatalog`; derived listing or search metadata cannot admit execution or override authoritative session history.
+      - id: catalog-budget-isolation
+        statement: Catalog-scoped `RetryScope` capacity and cutoff belong to the `SessionCatalog`, not its caller; traffic in another catalog cannot evict these receipts or advance this cutoff.
+      - id: catalog-deletion-survives-session
+        statement: Deletion fences session reads, activation, and writes and retains a minimal deletion identity independent of receipt expiry; creation or deletion retries cannot resurrect a deleted session or reuse its identity.
+
+  APIRequest:
+    definition: >
+      One externally submitted mutation command, separate from the work it
+      targets and the transport attempt carrying it. A caller can opt into
+      bounded retry protection using an opaque token and original creation
+      timestamp; normal durable mutation semantics do not depend on opting in.
+    relationships:
+      - entity: history.Client
+        cardinality: "n:1"
+      - entity: RetryScope
+        cardinality: "n:0..1"
+      - entity: RequestReceipt
+        cardinality: "1:0..1"
+      - entity: WorkReference
+        cardinality: "n:0..1"
+    attributes:
+      - name: retryToken
+        type: string
+        description: Optional nonempty opaque exact value of at most 128 bytes; no UUID syntax or token interpretation is required.
+      - name: createdAt
+        type: timestamp
+        description: Original creation time paired with the retry token and unchanged across attempts.
+    invariants:
+      - id: optional-retry-pair
+        statement: An `APIRequest` supplies both retry token and creation timestamp or neither; a partial pair is invalid, and absence creates no retry receipt or general deduplication guarantee while accepted mutations remain durable.
+      - id: opaque-request-identity
+        statement: A retry token is bounded, nonempty, and compared exactly without normalization; token and original timestamp identify one submission rather than a run, operation, commit position, or ownership epoch.
+      - id: immutable-retry-command
+        statement: Retried `APIRequest` identity and complete command remain unchanged, including method, target, parameters, and content; conflicting reuse within the retained scope is rejected rather than executed.
+      - id: retry-authority-rechecked
+        statement: Every `APIRequest` attempt is authorized independently; possession of a token or receipt grants neither control nor access to another caller's results.
+      - id: validate-retry-time
+        statement: Retry creation time is validated against the one-hour maximum age, durable rejection cutoff, and bounded clock-skew allowance; implausible future values cannot unboundedly advance retention or a cutoff.
+      - id: synchronous-command-default
+        statement: An `APIRequest` returns its typed committed decision synchronously unless independently progressing work justifies asynchronous completion; asynchronous acknowledgement is not itself permission to create a separate job.
+
+  RequestReceipt:
+    definition: >
+      A compact immutable admission decision for a retry-protected `APIRequest`,
+      including the command fingerprint, original resolved target, and relevant
+      durable result or work references. It answers what happened to that
+      submission, not whether subsequent changes still preserve its effects.
+    relationships:
+      - entity: WorkReference
+        cardinality: "n:0..1"
+    invariants:
+      - id: receipt-atomic-with-decision
+        statement: A `RequestReceipt` commits atomically with the mutation decision it protects; receipt bookkeeping can share the existing commit rather than requiring another acceptance gate.
+      - id: retry-original-resolved-decision
+        statement: A valid retained retry returns the original `RequestReceipt` decision and resolved target, never resolves session-current cancellation against newer work or starts a second destination or run.
+      - id: receipt-safe-compact-content
+        statement: A `RequestReceipt` retains only necessary decision, fingerprint, and reference information, never unreleased sensitive tool bytes or payload-bearing hook evidence; it is not a duplicate transcript or full-response archive.
+      - id: receipt-not-work-lifetime
+        statement: Expiring a `RequestReceipt` does not expire the run or operation it references, reverse its accepted mutation, or erase retained historical evidence.
+
+  RetryScope:
+    definition: >
+      A bounded authoritative retry-eligibility domain containing retained
+      receipts and a nondecreasing creation-time rejection cutoff. Each session
+      has its own scope across mutation kinds and concurrent clients; catalog
+      mutations use a distinct catalog-owned scope.
+    relationships:
+      - entity: history.Session
+        cardinality: "1:0..1"
+        note: A session scope belongs to one session; a catalog scope has no session owner.
+      - entity: RequestReceipt
+        cardinality: "1:n"
+        ownership: owned
+    attributes:
+      - name: rejectionCutoff
+        type: timestamp
+        description: Durable nondecreasing boundary at or before which request identities are rejected without execution.
+    invariants:
+      - id: independent-scope-budgets
+        statement: Every session `RetryScope` and each separate catalog `RetryScope` retain at most 256 receipts and accept identities at most one hour old; capacity pressure can shorten that horizon independently in each scope.
+      - id: session-wide-retry-namespace
+        statement: Concurrent clients share a session's `RetryScope` across mutation types and connections; token collisions cannot silently overwrite a different command, and ownership changes do not reset the namespace.
+      - id: expire-with-durable-cutoff
+        statement: Receipt eviction advances the durable cutoff as needed and rejects all identities at or before it, including never-seen delayed requests and every timestamp tie; eviction is creation-time ordered rather than LRU, and cutoff advancement commits atomically with affected mutation and receipt decisions.
+      - id: cutoff-never-reopens
+        statement: Recovery and ownership movement reconstruct the current cutoff and all still-admissible receipts before admitting mutations; clock rollback or retention changes cannot reopen a discarded interval.
+      - id: bounded-retry-lookup
+        statement: Active `RetryScope` lookup and checkpoints need not retain every historical receipt or scan arbitrary old history for expired retries; expired requests fail explicitly and never become fresh mutations.
+      - id: scope-owned-not-caller-cache
+        statement: A `RetryScope` belongs to exactly one session or catalog, survives transport reconnection through durable state, and is not a replica-local or caller-local cache.
+
+  WorkReference:
+    definition: >
+      A stable authorized reference exposing genuinely asynchronous work through
+      common status, waiting, and subscription conventions. Its typed progress
+      and outcome project an existing durable lifecycle rather than creating a
+      second operation state machine or an enumerable universal jobs collection.
+    relationships:
+      - entity: history.Run
+        cardinality: "n:0..1"
+      - entity: history.Operation
+        cardinality: "n:0..1"
+    invariants:
+      - id: common-typed-work-observation
+        statement: A `WorkReference` observation consistently distinguishes pending and terminal state, typed progress and outcomes, structured errors, and explicit unavailable or expired references; authorization applies on every read, wait, and subscription.
+      - id: reuse-authoritative-work-lifecycle
+        statement: A `WorkReference` projects the authoritative run, extension operation, or catalog creation lifecycle; a separate operation exists only where existing resource state cannot express independently progressing work, and no universal operations collection is required.
+      - id: accepted-not-completed
+        statement: A cancellation command's accepted `RequestReceipt` proves admission and signaling against its resolved run; the run's `WorkReference` separately reports bounded terminal settlement without claiming uncertain external effects have stopped.
+      - id: observe-without-retry-token
+        statement: An asynchronous command returns its durable `WorkReference` whether or not the initiating `APIRequest` opted into retry protection; a lost initial response without retry identity requires reconciliation rather than an automatic resubmission.
+
+scenarios:
+  - name: Concurrent clients retry against a recovered session
+    steps:
+      - Two clients send `APIRequest` mutations for the same session with different opaque tokens and original creation timestamps.
+      - Each accepted decision and compact `RequestReceipt` shares its mutation commit, while ordinary session history remains the execution authority.
+      - A replica loses its response after accepting session-current cancellation; another replica reconstructs the session `RetryScope`, cutoff, and retained receipts.
+      - The authorized retry receives the original resolved run and decision instead of canceling a newly started run.
+      - Its `WorkReference` tracks the affected run through the common observation contract without creating a cancel job; a partial pair or conflicting command reuse is rejected.
+    invariants_touched: [optional-retry-pair, opaque-request-identity, immutable-retry-command, retry-authority-rechecked, receipt-atomic-with-decision, retry-original-resolved-decision, session-wide-retry-namespace, cutoff-never-reopens, accepted-not-completed, common-typed-work-observation]
+
+  - name: Receipt pressure rejects an unseen late request
+    steps:
+      - One session `RetryScope` reaches its 256-receipt bound before the oldest request reaches one hour of age.
+      - A new admitted decision atomically advances the cutoff and retires the entire old timestamp boundary, including tied receipts.
+      - Another client's never-seen delayed `APIRequest` at that boundary fails expired without executing, and LRU access cannot restore eligibility.
+      - A recovered owner preserves the cutoff even if its wall clock moves backward, validates future skew, and does not scan old history to reinterpret an expired retry as new.
+      - Existing work handles and historical mutation facts survive receipt expiry, while unreleased tool bytes are never added to `RequestReceipt` data.
+    invariants_touched: [independent-scope-budgets, expire-with-durable-cutoff, cutoff-never-reopens, bounded-retry-lookup, validate-retry-time, receipt-not-work-lifetime, receipt-safe-compact-content, scope-owned-not-caller-cache]
+
+  - name: Catalog lifecycle decisions outlive a destination session
+    steps:
+      - Two `SessionCatalog` scopes use one `StorageProvider`, each with independent authorized membership, receipt budget, and cutoff.
+      - A catalog-owned `RetryScope` records a retry-protected creation or fork-admission `APIRequest` and its destination decision before publication.
+      - A retry returns the same admitted destination or `WorkReference`; asynchronous creation is used only when actual work justifies it.
+      - A deletion commits suppression and fencing, and its `RequestReceipt` remains in the catalog after destination history is unavailable.
+      - Receipt expiration cannot remove the deletion gate or resurrect the old identity; catalog display and search projections cannot bypass authoritative decisions.
+      - The provider may aggregate physical writes while acknowledging only declared durable acceptance and requiring no cross-catalog transaction.
+    invariants_touched: [catalog-one-provider, catalog-lifecycle-authority, catalog-budget-isolation, catalog-deletion-survives-session, provider-honest-acceptance, provider-no-cross-catalog-transaction-requirement, synchronous-command-default, receipt-atomic-with-decision, reuse-authoritative-work-lifecycle, independent-scope-budgets]
+
+  - name: A command omits retry protection without losing durable work tracking
+    steps:
+      - An authorized client sends an `APIRequest` with neither retry token nor timestamp; its mutation still follows normal durable session admission.
+      - A synchronous mutation returns its typed committed decision without adding a `RequestReceipt`.
+      - Genuinely asynchronous work instead returns a `WorkReference` backed by its existing authoritative lifecycle and typed outcome.
+      - A broken connection does not permit blind mutation replay; the client reconciles state while the work remains observable without an operation registry.
+    invariants_touched: [optional-retry-pair, synchronous-command-default, observe-without-retry-token, common-typed-work-observation, reuse-authoritative-work-lifecycle]

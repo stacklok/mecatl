@@ -302,8 +302,11 @@ func resendable(err error) bool {
 }
 
 // exchangeError maps a failed exchange to the Service error the design's
-// error reasons assign. Its detail is a ServerRefusal's text, which holds
-// only known codes, or fixed text.
+// error reasons assign: subject_invalid only for AS-1's
+// subject_token_invalid, which a fresh access token can pass, and INTERNAL
+// for any other refusal that is not transient, token_used, or a revocation,
+// including an invalid_request with no reason. Its detail is a
+// ServerRefusal's text, which holds only known codes, or fixed text.
 func exchangeError(err error) error {
 	var r *ServerRefusal
 	isRefusal := errors.As(err, &r)
@@ -322,10 +325,13 @@ func exchangeError(err error) error {
 		// status; mecak8s answers it at session open with a 401, so the
 		// client signs in again.
 		return ReasonError(Reason(r.Reason), "the user's authorization was revoked; sign in again")
-	case isRefusal && (r.Reason == string(ReasonSubjectInvalid) || r.Code == "invalid_request" && r.Reason == ""):
-		// The broker builds every other part of the request, so AS-1 refused
-		// the access token, with no reason or saying so.
+	case isRefusal && r.Reason == "subject_token_invalid":
+		// Only this reason says a fresh access token can pass.
 		return ReasonError(ReasonSubjectInvalid, "the authorization server refused the access token")
+	case isRefusal && (r.Code == "invalid_request" && r.Reason == "" || r.Reason == string(ReasonSubjectInvalid)):
+		// Not a refusal of the access token: AS-1 names that
+		// subject_token_invalid, and subject_invalid is the broker's own.
+		return NewError(CodeInternal, "", "the authorization server refused the request without saying the access token is invalid")
 	case isRefusal:
 		return NewError(CodeInternal, "", r.Error())
 	case errors.Is(err, ErrTransportConfiguration):
