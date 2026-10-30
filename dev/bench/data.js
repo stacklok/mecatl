@@ -350876,6 +350876,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1793317561955,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "6dd10faa4db94944b060b6f5e9fb72b856d363e0",
+          "message": "fix(mecak8s): make Prometheus listener test deterministic (#2620)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-29T17:52:17-07:00",
+          "tree_id": "0811fc762f5bc4cbc508cec6dfc3ceff5a494909",
+          "url": "https://github.com/stacklok/mecatl/commit/6dd10faa4db94944b060b6f5e9fb72b856d363e0"
+        },
+        "date": 1793322244378,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -507090,6 +507124,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1793322241132,
+  "lastUpdate": 1793322245173,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
