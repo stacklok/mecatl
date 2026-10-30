@@ -390456,6 +390456,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1793377247024,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "cca18a37e48ba95a9003fb993c3ce8eb360a01ae",
+          "message": "fix(forker): tolerate vanished Git worktree locks (#2623)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-30T11:43:26-07:00",
+          "tree_id": "de32ec47d3a51585b39f02d112392f652b4d9c38",
+          "url": "https://github.com/stacklok/mecatl/commit/cca18a37e48ba95a9003fb993c3ce8eb360a01ae"
+        },
+        "date": 1793386516965,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 16128.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12893,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 794,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -509168,6 +509207,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1793386513731,
+  "lastUpdate": 1793386517898,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
