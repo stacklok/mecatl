@@ -270,12 +270,16 @@ func TestEnvironmentResolverReattachesAndRunsReadAndShell(t *testing.T) {
 	// Collect the two tool results + final text. The AllowAllFloorRules floor
 	// pre-approves the read-only `cat`, so no ask is surfaced.
 	var readResult, bashResult, final string
+	callNames := make(map[session.ToolCallID]string)
 	for ev := range run.Events() {
+		if ev.ToolCall != nil {
+			callNames[ev.ToolCall.ID] = ev.ToolCall.Name
+		}
 		if ev.Type == session.EvToolResult && ev.ToolResult != nil {
-			switch string(ev.ToolResult.CallID) {
-			case "c1":
+			switch callNames[ev.ToolResult.CallID] {
+			case "Read":
 				readResult = ev.ToolResult.Content
-			case "c2":
+			case "Shell":
 				bashResult = ev.ToolResult.Content
 			}
 		}

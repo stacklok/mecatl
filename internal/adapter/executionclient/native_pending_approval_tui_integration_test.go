@@ -310,12 +310,15 @@ func TestNativePendingApprovalStartupRecovery(t *testing.T) {
 				cancelRun()
 				t.Fatal(err)
 			}
-			var runID, askID string
+			var runID, askID, callID string
 			for askID == "" {
 				select {
 				case message, ok := <-messages:
 					if !ok {
 						t.Fatal("initial public stream closed before the ask")
+					}
+					if call, ok := message.(mecatuiclient.ToolCallMsg); ok && call.Name == "Shell" {
+						callID = call.ID
 					}
 					if ask, ok := message.(mecatuiclient.PermissionAskMsg); ok {
 						runID, askID = ask.RunID, ask.AskID
@@ -324,6 +327,9 @@ func TestNativePendingApprovalStartupRecovery(t *testing.T) {
 					cancelRun()
 					t.Fatalf("native Shell run did not reach its persisted ask: %v", ctx.Err())
 				}
+			}
+			if callID == "" {
+				t.Fatal("pending ask has no preceding canonical Shell call")
 			}
 			persisted, err := firstClient.DiscoverPendingApproval(ctx, string(sessionID))
 			if err != nil || persisted.RunID != runID || persisted.AskID != askID || persisted.Cursor == "" {
@@ -402,7 +408,7 @@ func TestNativePendingApprovalStartupRecovery(t *testing.T) {
 			var foundOriginalCall bool
 			for _, message := range transcript.Messages {
 				for _, call := range message.ToolCalls {
-					foundOriginalCall = foundOriginalCall || call.ID == "native-shell" && call.Name == "Shell" && strings.Contains(call.Args, "bridge-command")
+					foundOriginalCall = foundOriginalCall || call.ID == callID && call.Name == "Shell" && strings.Contains(call.Args, "bridge-command")
 				}
 			}
 			if !foundOriginalCall {
@@ -548,7 +554,7 @@ func TestNativePendingApprovalStartupRecovery(t *testing.T) {
 				observedKinds = append(observedKinds, event.Kind)
 				observedNil = observedNil || event.Kind == mecatuiclient.PendingApprovalEventOther && event.Message == nil
 				if result, ok := event.Message.(mecatuiclient.ToolResultMsg); ok {
-					if result.CallID != "native-shell" || result.IsError == tc.wantRun {
+					if result.CallID != callID || result.IsError == tc.wantRun {
 						t.Fatal("resumed tool result identity/outcome mismatch")
 					}
 					toolResult = result

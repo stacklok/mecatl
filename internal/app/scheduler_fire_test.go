@@ -468,7 +468,7 @@ func TestRenderCarriedContext(t *testing.T) {
 		Conversation: &session.Conversation{
 			Messages: []session.Message{
 				session.NewUserMessage("summarize the build"),
-				session.NewAssistantMessage("the build is green; tests pass", "", nil),
+				session.NewAssistantMessage("the build is green; tests pass", nil),
 			},
 		},
 	}
@@ -509,7 +509,7 @@ func TestRenderCarriedContextNeutralisesForgedFence(t *testing.T) {
 	prior := &session.Session{
 		Conversation: &session.Conversation{
 			Messages: []session.Message{
-				session.NewAssistantMessage(forged, "", nil),
+				session.NewAssistantMessage(forged, nil),
 			},
 		},
 	}
@@ -633,7 +633,7 @@ func TestRenderCarriedContextRespectsRuneBudget(t *testing.T) {
 	// then clampRunes trims to exactly the rune budget.
 	var msgs []session.Message
 	for i := 0; i < carriedContextMaxTurns; i++ {
-		msgs = append(msgs, session.NewAssistantMessage(strings.Repeat("世", 2000), "", nil))
+		msgs = append(msgs, session.NewAssistantMessage(strings.Repeat("世", 2000), nil))
 	}
 	prior := &session.Session{Conversation: &session.Conversation{Messages: msgs}}
 

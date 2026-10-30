@@ -91,7 +91,7 @@ func assertMessages(t *testing.T, got []session.Message, roles []session.Role, t
 		if got[i].Role != roles[i] || got[i].Text != texts[i] {
 			t.Errorf("Messages[%d] = (%q, %q), want (%q, %q)", i, got[i].Role, got[i].Text, roles[i], texts[i])
 		}
-		if got[i].Reasoning != "" || len(got[i].ToolCalls) != 0 || got[i].ToolResult != nil {
+		if got[i].Replay != nil || len(got[i].ToolCalls) != 0 || got[i].ToolResult != nil {
 			t.Errorf("Messages[%d] retained provider-private state: %#v", i, got[i])
 		}
 	}

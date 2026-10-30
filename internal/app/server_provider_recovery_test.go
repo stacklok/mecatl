@@ -369,10 +369,10 @@ func testRecoverySemanticRepair(t *testing.T) {
 			}))
 			defer srv.Close()
 			entry := newOpenAICompatEntry(isolateConfig(t, Config{LLMMaxAttempts: 3}), providerOpenAI, "test", srv.URL+"/v1")
-			req := port.LLMRequest{Model: "test-model", Messages: []session.Message{session.NewUserMessage("hi")}}
-			const replay = `{"v":1,"items":[{"i":"rs_bad","e":"opaque-blob"}]}`
+			req := port.LLMRequest{Model: "test-model", Messages: []port.LLMMessage{{Role: session.RoleUser, Text: "hi"}}}
+			const replay = `{"reasoning":[{"i":"rs_bad","e":"opaque-blob"}]}`
 			if tc.replay {
-				req.Messages = append(req.Messages, session.NewAssistantMessage("visible history", replay, nil))
+				req.Messages = append(req.Messages, port.LLMMessage{Role: session.RoleAssistant, Text: "visible history", Replay: &session.ProviderReplay{Format: "openai.responses", Version: 1, Data: []byte(replay)}})
 			}
 			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 			defer cancel()
@@ -414,7 +414,7 @@ func testRecoverySemanticRepair(t *testing.T) {
 			if got := hits.Load(); got != tc.wantCalls {
 				t.Fatalf("physical requests = %d, want %d", got, tc.wantCalls)
 			}
-			if tc.replay && req.Messages[1].Reasoning != replay {
+			if tc.replay && string(req.Messages[1].Replay.Data) != replay {
 				t.Fatal("repair mutated caller replay history")
 			}
 		})
@@ -442,7 +442,7 @@ func providerStreamError(t *testing.T, provider port.LLMProvider) error {
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 	seq, err := provider.Stream(ctx, port.LLMRequest{
-		Model: "test-model", Messages: []session.Message{session.NewUserMessage("hi")},
+		Model: "test-model", Messages: []port.LLMMessage{{Role: session.RoleUser, Text: "hi"}},
 	})
 	if err != nil {
 		return err

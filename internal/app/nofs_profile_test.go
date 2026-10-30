@@ -362,25 +362,25 @@ func TestCreateSessionNoFSProfileNoWorkspace(t *testing.T) {
 	// precedes its error result.
 	cardIdx, resIdx := -1, -1
 	for i, ev := range events {
-		if ev.Type == session.EvToolCall && ev.ToolCall != nil && ev.ToolCall.ID == "r1" {
+		if ev.Type == session.EvToolCall && ev.ToolCall != nil && ev.ToolCall.ID == eventCallID(t, events, "Read", 0) {
 			cardIdx = i
 		}
-		if ev.Type == session.EvToolResult && ev.ToolResult != nil && ev.ToolResult.CallID == "r1" {
+		if ev.Type == session.EvToolResult && ev.ToolResult != nil && ev.ToolResult.CallID == eventCallID(t, events, "Read", 0) {
 			resIdx = i
 		}
 	}
 	if cardIdx == -1 || resIdx == -1 || cardIdx >= resIdx {
 		t.Fatalf("Read must get an EvToolCall card (idx %d) BEFORE its result (idx %d)", cardIdx, resIdx)
 	}
-	if !unknownToolResult(events, "r1") {
+	if !unknownToolResult(events, "Read") {
 		t.Fatal("a no-FS session's Read call must come back as an unknown-tool error")
 	}
 	// The memory tool genuinely works.
-	if !sawDispatchedTool(events, "m1") {
+	if !sawDispatchedTool(events, "Remember") {
 		t.Fatal("Remember did not dispatch — the memory six must be in the no-FS catalog")
 	}
 	for _, ev := range events {
-		if ev.Type == session.EvToolResult && ev.ToolResult != nil && ev.ToolResult.CallID == "m1" && ev.ToolResult.IsError {
+		if ev.Type == session.EvToolResult && ev.ToolResult != nil && ev.ToolResult.CallID == eventCallID(t, events, "Remember", 0) && ev.ToolResult.IsError {
 			t.Fatalf("Remember failed in the no-FS session: %s", ev.ToolResult.Content)
 		}
 	}
@@ -541,15 +541,15 @@ func TestNoFSSessionSurvivesRestartE2E(t *testing.T) {
 	events := runEvents(run2)
 
 	// The rehydrated catalog has NO FS tools: Read is an unknown-tool error.
-	if !unknownToolResult(events, "r1") {
+	if !unknownToolResult(events, "Read") {
 		t.Fatal("post-restart Read did NOT come back unknown-tool — the no-fs session escalated onto a filesystem catalog")
 	}
 	// The memory six still work over the same durable memory dir.
-	if !sawDispatchedTool(events, "m1") {
+	if !sawDispatchedTool(events, "Remember") {
 		t.Fatal("post-restart Remember did not dispatch — the rehydrated catalog lost the memory six")
 	}
 	for _, ev := range events {
-		if ev.Type == session.EvToolResult && ev.ToolResult != nil && ev.ToolResult.CallID == "m1" && ev.ToolResult.IsError {
+		if ev.Type == session.EvToolResult && ev.ToolResult != nil && ev.ToolResult.CallID == eventCallID(t, events, "Remember", 0) && ev.ToolResult.IsError {
 			t.Fatalf("post-restart Remember failed: %s", ev.ToolResult.Content)
 		}
 	}
@@ -810,14 +810,14 @@ func TestSelectorSessionSurvivesRestartE2E(t *testing.T) {
 
 	// Leg (a): same (no-fs selector) CATALOG survived the restart — a model Read is
 	// unknown-tool (no FS tools), the memory six still dispatch.
-	if !unknownToolResult(events, "r1") {
+	if !unknownToolResult(events, "Read") {
 		t.Fatal("post-restart Read did NOT come back unknown-tool — the no-fs selector session escalated onto a filesystem catalog")
 	}
-	if !sawDispatchedTool(events, "m1") {
+	if !sawDispatchedTool(events, "Remember") {
 		t.Fatal("post-restart Remember did not dispatch — the rehydrated catalog lost the memory six")
 	}
 	for _, ev := range events {
-		if ev.Type == session.EvToolResult && ev.ToolResult != nil && ev.ToolResult.CallID == "m1" && ev.ToolResult.IsError {
+		if ev.Type == session.EvToolResult && ev.ToolResult != nil && ev.ToolResult.CallID == eventCallID(t, events, "Remember", 0) && ev.ToolResult.IsError {
 			t.Fatalf("post-restart Remember failed: %s", ev.ToolResult.Content)
 		}
 	}

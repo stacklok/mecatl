@@ -18,6 +18,8 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/memory"
 )
 
+const evidenceAvailabilityAvailable = "available"
+
 // ReflectionReceipt is the bounded result of an explicit reflection request.
 type ReflectionReceipt struct {
 	ID          string
@@ -79,6 +81,9 @@ func (s *Service) ReflectSession(ctx context.Context, id session.SessionID) (*me
 	sess, err := s.GetSession(ctx, id)
 	if err != nil {
 		return nil, err
+	}
+	if !sess.LearningEligible() {
+		return nil, fmt.Errorf("%w: session is excluded from learning", ErrFailedPrecondition)
 	}
 	if sess.State != session.StateCompleted {
 		return nil, fmt.Errorf("%w: reflection requires a completed session", ErrFailedPrecondition)
@@ -238,11 +243,17 @@ func (s *Service) DecideLearningProposal(ctx context.Context, id, expected, deci
 		}
 		if manifestBacked {
 			verified = &input
-		} else {
-			for _, evidence := range current.Candidate.Evidence {
-				if available, _ := s.learningEvidenceAvailable(ctx, evidence); !available {
-					return nil, fmt.Errorf("%w: proposal evidence is unavailable or changed", ErrFailedPrecondition)
-				}
+		}
+		for _, evidence := range current.Candidate.Evidence {
+			citation, status := s.learningEvidenceCitation(ctx, evidence)
+			if status != evidenceAvailabilityAvailable {
+				return nil, fmt.Errorf("%w: proposal evidence is unavailable or changed", ErrFailedPrecondition)
+			}
+			if verified != nil {
+				citation, err = learning.CanonicalEvidenceCitation(*verified, evidence)
+			}
+			if err != nil || evidence.ToolCallID != "" && citation.ToolCallID == "" {
+				return nil, fmt.Errorf("%w: proposal invocation evidence is unattached", ErrFailedPrecondition)
 			}
 		}
 		record, err = s.cfg.PromoteProposal(ctx, part, learning.ProposalID(id), learning.ProposalVersion(expected), true)
@@ -330,50 +341,21 @@ func proposalServiceError(err error) error {
 	}
 }
 
-func selectManifestSource(messages []session.Message, entries []learning.ManifestEntry) ([]session.Message, map[int64]struct{}, error) {
-	selectedMessages := make([]session.Message, 0, min(len(messages), len(entries)))
-	eventSequences := make(map[int64]struct{})
-	for _, entry := range entries {
-		switch entry.Locator {
-		case learning.EvidenceMessage:
-			if entry.OriginalMessage == nil || *entry.OriginalMessage < 0 || *entry.OriginalMessage >= len(messages) {
-				return nil, nil, fmt.Errorf("%w: proposal message coordinate is unavailable", ErrFailedPrecondition)
-			}
-			selectedMessages = append(selectedMessages, messages[*entry.OriginalMessage])
-		case learning.EvidenceEvent:
-			if entry.EventSequence == nil {
-				return nil, nil, fmt.Errorf("%w: proposal event sequence is unavailable", ErrFailedPrecondition)
-			}
-			eventSequences[*entry.EventSequence] = struct{}{}
-		default:
-			return nil, nil, fmt.Errorf("%w: proposal manifest locator is invalid", ErrFailedPrecondition)
-		}
-	}
-	return selectedMessages, eventSequences, nil
-}
-
 //nolint:gocyclo // exact manifest replay keeps protocol, coordinates, source reads, and citations visibly ordered
 func (s *Service) rematerializeProposal(ctx context.Context, part learning.ProposalPartition, record learning.ProposalRecord) (learning.Input, bool, error) {
 	manifestBacked := false
 	for _, ref := range record.Candidate.Evidence {
-		switch ref.ResolvedProtocol() {
-		case learning.ReflectionEvidenceLegacyV0:
-			if manifestBacked {
-				return learning.Input{}, true, fmt.Errorf("%w: proposal mixes evidence protocols", ErrFailedPrecondition)
+		switch ref.Protocol {
+		case learning.ReflectionEvidenceV2:
+			if ref.AggregateDigest != "" {
+				manifestBacked = true
 			}
-		case learning.ReflectionEvidenceV1:
-			manifestBacked = true
 		default:
 			return learning.Input{}, true, fmt.Errorf("%w: unsupported proposal evidence protocol", ErrFailedPrecondition)
 		}
 	}
 	if !manifestBacked {
 		return learning.Input{}, false, nil
-	}
-	for _, ref := range record.Candidate.Evidence {
-		if ref.ResolvedProtocol() != learning.ReflectionEvidenceV1 {
-			return learning.Input{}, true, fmt.Errorf("%w: proposal mixes evidence protocols", ErrFailedPrecondition)
-		}
 	}
 	if s.cfg.ProposalManifest == nil {
 		return learning.Input{}, true, fmt.Errorf("%w: proposal manifest is unavailable", ErrFailedPrecondition)
@@ -385,19 +367,25 @@ func (s *Service) rematerializeProposal(ctx context.Context, part learning.Propo
 	if !found {
 		return learning.Input{}, true, fmt.Errorf("%w: proposal manifest is unavailable", ErrFailedPrecondition)
 	}
-	if manifest.Protocol != learning.ReflectionEvidenceV1 || manifest.Source.Domain != learning.ReflectionEvidenceSourceV1 {
+	if manifest.Protocol != learning.ReflectionEvidenceV2 || !learning.ManifestProtocolSupported(manifest.Protocol, manifest.Source.Domain) {
 		return learning.Input{}, true, fmt.Errorf("%w: invalid proposal manifest protocol or source boundary", ErrFailedPrecondition)
 	}
 	sess, err := s.GetSession(ctx, manifest.Source.Value)
-	if err != nil {
+	if err != nil || sess == nil || !sess.LearningEligible() {
 		return learning.Input{}, true, fmt.Errorf("%w: proposal source is unavailable", ErrFailedPrecondition)
 	}
 	stop, _ := sess.StopReason()
-	selectedMessages, eventSequences, err := selectManifestSource(sess.Conversation.Messages, manifest.Entries)
-	if err != nil {
-		return learning.Input{}, true, err
+	eventSequences := make(map[int64]struct{})
+	for _, entry := range manifest.Entries {
+		if entry.Locator == learning.EvidenceEvent {
+			if entry.EventSequence == nil {
+				return learning.Input{}, true, fmt.Errorf("%w: proposal event sequence is unavailable", ErrFailedPrecondition)
+			}
+			eventSequences[*entry.EventSequence] = struct{}{}
+		}
 	}
 	selectedEvents := make([]session.Event, 0, len(eventSequences))
+	selectedOrdinals := make([]int, 0, len(eventSequences))
 	if len(eventSequences) > 0 {
 		if s.cfg.EventLog == nil {
 			return learning.Input{}, true, fmt.Errorf("%w: proposal event source is unavailable", ErrFailedPrecondition)
@@ -407,25 +395,31 @@ func (s *Service) rematerializeProposal(ctx context.Context, part learning.Propo
 			if eventErr != nil {
 				return learning.Input{}, true, fmt.Errorf("%w: proposal event source is unavailable", ErrFailedPrecondition)
 			}
-			if _, wanted := eventSequences[sequence]; wanted {
-				selectedEvents = append(selectedEvents, event)
-				delete(eventSequences, sequence)
-				if len(eventSequences) == 0 {
-					break
+			coordinate := int(sequence)
+			if coordinate < 0 {
+				return learning.Input{}, true, fmt.Errorf("%w: proposal event source mismatch", ErrFailedPrecondition)
+			}
+			if _, wanted := eventSequences[int64(coordinate)]; coordinate >= 0 && wanted {
+				for _, selected := range selectedOrdinals {
+					if selected == coordinate {
+						return learning.Input{}, true, fmt.Errorf("%w: ambiguous proposal event coordinate", ErrFailedPrecondition)
+					}
 				}
+				selectedEvents = append(selectedEvents, event)
+				selectedOrdinals = append(selectedOrdinals, coordinate)
 			}
 			sequence++
 		}
-		if len(eventSequences) != 0 {
+		if len(selectedEvents) != len(eventSequences) {
 			return learning.Input{}, true, fmt.Errorf("%w: proposal event sequence is unavailable", ErrFailedPrecondition)
 		}
 	}
-	selectedTrajectory := learning.NewTrajectory(manifest.Source.Value, "", stop, sess.UsageFor(session.UsageKindMain), selectedMessages)
-	input := learning.NewInput(selectedTrajectory, selectedEvents, record.Signals, nil)
-	input.Manifest = &manifest
-	if err := learning.ValidateInput(input); err != nil {
+	selectedTrajectory := learning.NewSessionTrajectory(sess, "", stop, sess.UsageFor(session.UsageKindMain))
+	input, err := learning.RematerializeEvidence(selectedTrajectory, selectedEvents, manifest, selectedOrdinals)
+	if err != nil {
 		return learning.Input{}, true, fmt.Errorf("%w: proposal manifest mismatch", ErrFailedPrecondition)
 	}
+	input.Signals = record.Signals
 	if err := learning.ValidateCandidate(input, record.Candidate); err != nil {
 		return learning.Input{}, true, fmt.Errorf("%w: proposal citation mismatch", ErrFailedPrecondition)
 	}
@@ -445,6 +439,12 @@ func (s *Service) toProtoLearningProposal(ctx context.Context, r learning.Propos
 			unavailableReason = "learned-skill lifecycle is unavailable"
 		}
 	}
+	for _, ref := range candidate.Evidence {
+		if ref.Protocol != learning.ReflectionEvidenceV2 {
+			available, unavailableReason = false, "unsupported evidence protocol"
+			break
+		}
+	}
 	out := &mecatlv1.LearningProposal{
 		Id: validLearningText(string(r.ID)), Version: validLearningText(string(r.Version)), Status: validLearningText(string(r.Status)), Kind: validLearningText(string(candidate.Kind)),
 		Key: validLearningText(candidate.Key), Value: safeLearningText(candidate.Key, candidate.Value), Description: safeLearningText(candidate.Key, candidate.Description),
@@ -456,22 +456,24 @@ func (s *Service) toProtoLearningProposal(ctx context.Context, r learning.Propos
 	out.Evidence = make([]*mecatlv1.LearningEvidenceRef, len(candidate.Evidence))
 	for i, ref := range candidate.Evidence {
 		available, availability, preview := false, "", ""
+		var callID session.ToolCallID
 		if detail && verified != nil {
-			var previewErr error
-			preview, previewErr = learning.EvidencePreview(*verified, ref)
+			citation, previewErr := learning.CanonicalEvidenceCitation(*verified, ref)
+			preview, callID = citation.Preview, citation.ToolCallID
 			if previewErr == nil {
-				available, availability = true, "available"
+				available, availability = true, evidenceAvailabilityAvailable
 			} else {
 				availability = "evidence changed"
 			}
 		} else if detail {
-			available, availability, preview = s.learningEvidenceStatus(ctx, ref)
+			citation, status := s.learningEvidenceCitation(ctx, ref)
+			available, availability, preview, callID = status == evidenceAvailabilityAvailable, status, citation.Preview, citation.ToolCallID
 		}
 		eventSeq := int64(0)
 		if ref.EventSeq != nil {
 			eventSeq = *ref.EventSeq
 		}
-		out.Evidence[i] = &mecatlv1.LearningEvidenceRef{SessionId: validLearningText(string(ref.SessionID)), Locator: validLearningText(string(ref.Locator)), Ordinal: int32(ref.Ordinal), EventSeq: eventSeq, ToolCallId: validLearningText(string(ref.ToolCallID)), Digest: validLearningText(ref.Digest), Available: available, Availability: validLearningText(availability), Preview: safeLearningText("evidence/preview", preview)} //nolint:gosec // validated reflection ordinals are bounded to 512
+		out.Evidence[i] = &mecatlv1.LearningEvidenceRef{SessionId: validLearningText(string(ref.SessionID)), Locator: validLearningText(string(ref.Locator)), Ordinal: int32(ref.Ordinal), EventSeq: eventSeq, ToolCallId: validLearningText(string(callID)), Digest: validLearningText(ref.Digest), Available: available, Availability: validLearningText(availability), Protocol: string(ref.Protocol), AttachmentUnavailable: callID == "", Preview: safeLearningText("evidence/preview", preview)} //nolint:gosec // validated reflection ordinals are bounded to 512
 	}
 	for _, signal := range r.Signals {
 		out.Triggers = append(out.Triggers, validLearningText(string(signal.Kind)))
@@ -485,90 +487,68 @@ func (s *Service) toProtoLearningProposal(ctx context.Context, r learning.Propos
 	return out
 }
 
-func (s *Service) learningEvidenceAvailable(ctx context.Context, ref learning.EvidenceRef) (bool, string) {
-	available, availability, _ := s.learningEvidenceStatus(ctx, ref)
-	return available, availability
+func (s *Service) learningEvidenceStatus(ctx context.Context, ref learning.EvidenceRef) (bool, string, string) {
+	citation, availability := s.learningEvidenceCitation(ctx, ref)
+	return availability == evidenceAvailabilityAvailable, availability, citation.Preview
 }
 
-//nolint:gocyclo // legacy and manifest-backed message/event evidence share one closed availability projection
-func (s *Service) learningEvidenceStatus(ctx context.Context, ref learning.EvidenceRef) (bool, string, string) {
+// Canonical source evidence is available only from eligible current sessions.
+//
+//nolint:gocyclo // message/event evidence share one closed availability projection
+func (s *Service) learningEvidenceCitation(ctx context.Context, ref learning.EvidenceRef) (learning.EvidenceCitation, string) {
+	unavailable := learning.EvidenceCitation{}
 	if s.cfg.Store == nil {
-		return false, "source unavailable", ""
+		return unavailable, "source unavailable"
 	}
 	sess, err := s.GetSession(ctx, ref.SessionID)
-	if err != nil {
-		return false, "source unavailable", ""
+	if ref.Protocol != learning.ReflectionEvidenceV2 {
+		return unavailable, "unsupported evidence protocol"
+	}
+	if err != nil || sess == nil || !sess.LearningEligible() {
+		return unavailable, "source unavailable"
 	}
 	stop, _ := sess.StopReason()
 	workspace, ok := s.learningWorkspace(ctx, sess)
 	if !ok {
-		return false, "source unavailable", ""
+		return unavailable, "source unavailable"
 	}
-	trajectory := learning.NewTrajectory(sess.ID, workspace, stop, sess.UsageFor(session.UsageKindMain), sess.Conversation.Messages)
-	var (
-		actual     learning.EvidenceRef
-		previewRef learning.EvidenceRef
-		input      learning.Input
-	)
-	switch ref.Locator {
-	case learning.EvidenceMessage:
-		ordinal := ref.Ordinal
-		if ref.ResolvedProtocol() == learning.ReflectionEvidenceV1 {
-			if ref.OriginalMessage == nil {
-				return false, "evidence unavailable", ""
+	trajectory := learning.NewSessionTrajectory(sess, workspace, stop, sess.UsageFor(session.UsageKindMain))
+	var events []session.Event
+	var ordinals []int
+	if ref.Locator == learning.EvidenceEvent {
+		if s.cfg.EventLog == nil {
+			return unavailable, "event evidence unavailable"
+		}
+		wanted := ref.Ordinal
+		if ref.AggregateDigest != "" {
+			if ref.EventSeq == nil {
+				return unavailable, "event evidence unavailable"
 			}
-			ordinal = *ref.OriginalMessage
+			wanted = int(*ref.EventSeq)
 		}
-		if ordinal < 0 || ordinal >= len(sess.Conversation.Messages) {
-			return false, "evidence unavailable", ""
-		}
-		input = learning.NewInput(trajectory, nil, nil, nil)
-		actual, err = learning.MessageEvidenceRef(input, ordinal, ref.ToolCallID)
-		previewRef = actual
-		if err != nil {
-			return false, "evidence changed", ""
-		}
-	case learning.EvidenceEvent:
-		if s.cfg.EventLog == nil || ref.Ordinal < 0 || ref.Ordinal >= learning.MaxInputEvents {
-			return false, "event evidence unavailable", ""
-		}
-		events := make([]session.Event, 0, ref.Ordinal+1)
-		eventOrdinal := ref.Ordinal
-		eventSequence := int64(0)
+		index := 0
 		for event, eventErr := range s.cfg.EventLog.Read(ctx, ref.SessionID) {
 			if eventErr != nil {
-				return false, "event evidence unavailable", ""
+				return unavailable, "event evidence unavailable"
 			}
-			events = append(events, event)
-			if ref.ResolvedProtocol() == learning.ReflectionEvidenceV1 && ref.EventSeq != nil && eventSequence == *ref.EventSeq {
-				eventOrdinal = len(events) - 1
-				break
+			if index < 0 {
+				return unavailable, "evidence changed"
 			}
-			if ref.ResolvedProtocol() != learning.ReflectionEvidenceV1 && len(events) > ref.Ordinal {
-				break
+			if index == wanted {
+				if len(events) != 0 {
+					return unavailable, "evidence changed"
+				}
+				events = append(events, event)
+				ordinals = append(ordinals, index)
 			}
-			eventSequence++
+			index++
 		}
-		if eventOrdinal < 0 || eventOrdinal >= len(events) {
-			return false, "event evidence unavailable", ""
-		}
-		input = learning.NewInput(trajectory, events, nil, nil)
-		actual, err = learning.EventEvidenceRef(input, eventOrdinal, ref.ToolCallID)
-		previewRef = actual
-		if err != nil {
-			return false, "evidence changed", ""
-		}
-	default:
-		return false, "evidence unavailable", ""
 	}
-	if actual.Digest != ref.Digest || !sameEventSequence(actual.EventSeq, ref.EventSeq) {
-		return false, "evidence changed", ""
-	}
-	preview, err := learning.EvidencePreview(input, previewRef)
+	citation, err := learning.VerifyEvidenceSource(trajectory, events, ref, ordinals)
 	if err != nil {
-		return false, "evidence unavailable", ""
+		return unavailable, "evidence changed"
 	}
-	return true, "available", preview
+	return citation, evidenceAvailabilityAvailable
 }
 
 func (s *Service) learningWorkspace(ctx context.Context, sess *session.Session) (string, bool) {
@@ -580,10 +560,6 @@ func (s *Service) learningWorkspace(ctx context.Context, sess *session.Session) 
 		return "", false
 	}
 	return workspace, true
-}
-
-func sameEventSequence(a, b *int64) bool {
-	return a == nil && b == nil || a != nil && b != nil && *a == *b
 }
 
 func timestampOrNil(t time.Time) *timestamppb.Timestamp {

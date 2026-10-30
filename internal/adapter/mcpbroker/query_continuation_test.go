@@ -85,16 +85,17 @@ func TestCallMcpWithQueryBrokerSupport_Scenario1_AuthorizationContinuation(t *te
 				defer runtime.Close()
 				store := memstore.New()
 				buildHost := func(first bool) *server.Service {
+					turns := []mockllm.Turn{mockllm.TextTurn("done")}
+					if first {
+						turns = append([]mockllm.Turn{mockllm.ToolCallTurn(call)}, turns...)
+					}
+					llm := mockllm.New(turns...)
 					factory := func(_ context.Context, _ server.ProviderSelector, _ []mcp.ServerConfig, _ server.SessionProfile, _ string, mode session.PermissionMode, tools []tool.Tool, toolKeys []string) (server.SessionEngineResult, error) {
 						cat := tool.NewCatalog()
 						for _, candidate := range tools {
 							cat.MustRegister(candidate)
 						}
-						turns := []mockllm.Turn{mockllm.TextTurn("done")}
-						if first {
-							turns = append([]mockllm.Turn{mockllm.ToolCallTurn(call)}, turns...)
-						}
-						return server.SessionEngineResult{Engine: agent.NewEngine(agent.Deps{LLM: mockllm.New(turns...), Catalog: cat, Policy: queryAllowPolicy{}, Store: store}), BuiltForMode: mode, BrokerRegistrationKeys: append([]string(nil), toolKeys...), Close: func() error { return nil }}, nil
+						return server.SessionEngineResult{Engine: agent.NewEngine(agent.Deps{LLM: llm, Catalog: cat, Policy: queryAllowPolicy{}, Store: store}), BuiltForMode: mode, BrokerRegistrationKeys: append([]string(nil), toolKeys...), Close: func() error { return nil }}, nil
 					}
 					svc, err := server.NewService(server.Config{Engine: agent.NewEngine(agent.Deps{LLM: mockllm.New(mockllm.TextTurn("done")), Catalog: tool.NewCatalog(), Policy: queryAllowPolicy{}}), Store: store, MCPBroker: runtime, SessionEngineWithTools: factory, SessionEngine: func(ctx context.Context, sel server.ProviderSelector, specs []mcp.ServerConfig, profile server.SessionProfile, workspace string, mode session.PermissionMode) (server.SessionEngineResult, error) {
 						return factory(ctx, sel, specs, profile, workspace, mode, nil, nil)
@@ -128,6 +129,7 @@ func TestCallMcpWithQueryBrokerSupport_Scenario1_AuthorizationContinuation(t *te
 				if !ok {
 					t.Fatalf("did not park: %v", parked.State)
 				}
+				expected.ID = pending.Call.ID
 				if pending.Call.Name != call.Name || string(pending.Call.Args) != string(call.Args) || calls.Load() != 0 {
 					t.Fatalf("pending envelope changed: %+v", pending)
 				}
@@ -205,7 +207,7 @@ func TestCallMcpWithQueryBrokerSupport_Scenario1_AuthorizationContinuation(t *te
 							if strings.Contains(ev.ToolResult.Content, "raw_canary") || strings.Contains(ev.ToolResult.Content, "secret") {
 								t.Fatal("raw response escaped")
 							}
-							if ev.ToolResult.CallID == call.ID && ev.ToolResult.Content == "42" {
+							if ev.ToolResult.CallID == pending.Call.ID && ev.ToolResult.Content == "42" {
 								found = true
 							}
 						}
@@ -216,7 +218,7 @@ func TestCallMcpWithQueryBrokerSupport_Scenario1_AuthorizationContinuation(t *te
 					if calls.Load() != 1 || !found {
 						t.Fatalf("grant calls=%d projection=%v", calls.Load(), found)
 					}
-					replay, replayErr := attachment.CallMcpWithQueryTool().Execute(t.Context(), call, tool.Environment{})
+					replay, replayErr := attachment.CallMcpWithQueryTool().Execute(t.Context(), pending.Call, tool.Environment{})
 					if replayErr != nil || !replay.IsError || calls.Load() != 1 {
 						t.Fatal("protected query replayed")
 					}

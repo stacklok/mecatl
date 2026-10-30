@@ -92,6 +92,23 @@ reachable across the transition so old clients receive an actionable refusal.
 Add mismatch and transport-parity tests, and describe the upgrade in release notes.
 Changing only the version constant is insufficient.
 
+A major-2 server guarantees canonical, globally unique engine tool-call references.
+Provider pairing keys and item identifiers remain private; completed provider-key
+reuse does not reuse an invocation identity. `ConversationMessage` no longer exposes
+opaque `reasoning` or `reasoning_item_id` (their names and tags are reserved).
+Readable reasoning events, text/media, and `provider_phase` remain public.
+
+Upgrade server, mecatui, and SDK/Studio together. Discovery remains on the existing
+`mecatl.v1` RPC and `/v1/compatibility` routes so major-1 clients can refuse with an
+update-client diagnostic, rather than failing to find discovery. Major-2 clients
+must likewise refuse major-1 servers with an update-server diagnostic. The wire
+major does not require deleting stored sessions or resetting watch cursors; storage
+codec rollout and no-downgrade constraints are separate. Rebuild identity-dependent
+major-1 client views from current projections; there is no public v1 identity alias.
+The SDK's software version (including the 0.5.0 baseline) remains independent of
+wire major 2. The coordinated procedure is in
+[session storage operations](../../user-docs/operating/session-storage-operations.md#upgrade-to-api-major-2).
+
 Every PR affecting the wire contract must include an **API compatibility** statement:
 the assessment and rationale, major or feature changes, operator approval for any
 break, and upgrade implications. Record the same decision in a plan when one is
@@ -117,6 +134,25 @@ its events, and `Run.Cancel` arms a short grace after which every guarded send i
 loop gives up. A busy run therefore never blocks behind a dead consumer, while a slow one
 still receives the terminal result. Cancel leaves a run durably parked on an
 authorization handoff untouched, so its resume point survives.
+
+## Current display and evidence
+
+`GetSessionTranscript` projects one ownership-checked snapshot, never a
+snapshot/log join. Archives use the same public-safe message mapper while internal
+archives keep private replay. Current calls, results, and delegation references use
+canonical invocation IDs.
+
+Event streams and cursor watches decode incrementally. They omit recognized
+unsupported legacy invocation, control, delegation, and archive records. A cursor
+still advances through an omitted record and preserves the resulting gap, so a
+filtered stream cannot be treated as complete reconstruction or learning evidence.
+Malformed JSON, unknown or contradictory formats, and invalid current events remain
+decode errors. Current canonical events retain their usual payloads.
+
+Learning accepts only current `reflection-evidence/v2` evidence. Public driver
+evidence carries the protocol, coordinates, and digest needed to verify its current
+source. Frozen older evidence is unavailable, and no public historical-specific
+payload represents it.
 
 ## Durable watch
 

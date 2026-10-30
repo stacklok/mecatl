@@ -2808,6 +2808,9 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 			return true, ""
 		},
 		ReflectSession: func(ctx context.Context, sess *session.Session) (server.ReflectionReceipt, error) {
+			if sess == nil || !sess.LearningEligible() {
+				return server.ReflectionReceipt{}, server.ErrFailedPrecondition
+			}
 			if assets.reflectionLifecycle == nil {
 				return server.ReflectionReceipt{}, server.ErrLearningUnavailable
 			}
@@ -2850,7 +2853,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 				return server.ReflectionReceipt{}, errors.New("reflection is not configured")
 			}
 			stop, _ := sess.StopReason()
-			trajectory := learning.NewTrajectory(sess.ID, workspace, stop, sess.UsageFor(session.UsageKindMain), sess.Conversation.Messages)
+			trajectory := learning.NewSessionTrajectory(sess, workspace, stop, sess.UsageFor(session.UsageKindMain))
 			trajectory.RunID = sess.RunID()
 			trajectory.Principal = sess.Owner.Clone()
 			trajectory.Kind = sess.Kind
@@ -2878,8 +2881,12 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 			if current.Version != version {
 				return learning.ProposalRecord{}, learning.ErrProposalVersionConflict
 			}
+			if !proposalSourcesEligible(ctx, store, current) {
+				return learning.ProposalRecord{}, server.ErrFailedPrecondition
+			}
 			if current.Candidate.Kind == learning.CandidateProcedure {
 				procedureCfg := cfg
+				procedureCfg.learningSourceStore = store
 				if procedureCfg.LearningMode == learning.Off {
 					procedureCfg.LearningMode = learning.Review
 				}
@@ -5855,6 +5862,7 @@ func registerCoreTools(cfg Config, cat *tool.Catalog, log, noFS, remote bool, se
 //
 //nolint:gocyclo // composition wiring branches by optional adapter capability and configured backend.
 func buildCatalog(ctx context.Context, cfg Config, reg *providerRegistry, provider port.LLMProvider, hooks port.HookRunner, agentReg *agents.Registry, store port.SessionStore, scheduleManagerFactory func() port.ScheduleManager) (*tool.Catalog, catalogAssets, mcp.Provider, []mcpsource.SourceInfo, func(), error) {
+	cfg.learningSourceStore = store
 	// Connect the MAIN MCP servers FIRST, so the per-agent-def Subagent engines built by
 	// buildSubagentTool can (a) pull a REFERENCED main server's tools out of this manager
 	// and (b) connect their own INLINE servers. mainMgr is nil when no main servers are

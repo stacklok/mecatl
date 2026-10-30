@@ -87,7 +87,7 @@ func TestHarnessContext_SourceIndependentOfExecution(t *testing.T) {
 	if _, err := source.CreateFile(t.Context(), "AGENTS.md", []byte("SELECTED-CONTEXT")); err != nil {
 		t.Fatal(err)
 	}
-	var contexts [][]session.Message
+	var contexts [][]port.LLMMessage
 	for _, executionMarker := range []string{"EXECUTION-ONE", "EXECUTION-TWO"} {
 		cfg := hcConfiguredFiles(t, source)
 		if err := os.WriteFile(filepath.Join(cfg.Workspace, "AGENTS.md"), []byte(executionMarker), 0o600); err != nil {
@@ -158,8 +158,12 @@ func TestHarnessContext_NoFSKeepsConfiguredSources(t *testing.T) {
 		t.Fatal(err)
 	}
 	var rejected bool
+	var callID session.ToolCallID
 	for ev := range run.Events() {
-		if ev.ToolResult != nil && ev.ToolResult.CallID == "forbidden-read" {
+		if ev.ToolCall != nil && ev.ToolCall.Name == "Read" {
+			callID = ev.ToolCall.ID
+		}
+		if ev.ToolResult != nil && callID != "" && ev.ToolResult.CallID == callID {
 			rejected = ev.ToolResult.IsError
 		}
 	}

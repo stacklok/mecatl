@@ -11,7 +11,9 @@ Use Mecatl's management API to inspect and clean up a local JSONL session store.
 Do not edit or delete store files directly.
 
 This guide covers a single-user `mecated` daemon with stable configuration and
-state paths. For the API, see the [gRPC reference](/reference/grpc-api.md). For
+state paths. The [API-major-2 upgrade procedure](#upgrade-to-api-major-2) also
+covers shared stores and remote drivers. For the API, see the
+[gRPC reference](/reference/grpc-api.md). For
 the terminal workflow, see
 [mecatui session maintenance](/mecatui/sessions.md#privacy-and-maintenance).
 
@@ -243,6 +245,69 @@ artifact or delete the damaged namespace as the default recovery action.
 
 If validation fails, keep the service stopped. Preserve the failed namespace and
 the last known-good backup for diagnosis; do not merge partial state trees.
+
+## Upgrade to API major 2
+
+Coordinate the server, `mecatui`, TypeScript SDK applications, and Studio with
+both snapshot and event storage drivers. API major 2 identifies tool invocations
+with globally unique engine IDs and keeps provider replay private. Software
+package versions are independent: the SDK's `0.5.0` version is not a wire-major
+number. Check `GetCompatibilityInfo` or `GET /v1/compatibility` for the wire major;
+the existing `mecatl.v1` package and `/v1` routes remain in use.
+
+1. **Drain active writers.** Stop admitting work, let active runs settle, and stop
+   all harness processes, replicas, and maintenance writers using the namespace.
+   For local JSONL storage, take and validate a complete backup using the
+   [quiesced runbook](#quiesced-backup-and-restore-runbook). For remote backends,
+   use the operator's backup procedure for the complete snapshot/event namespace.
+1. **Upgrade both decoding drivers.** Upgrade the snapshot driver and the event
+   driver, even if configured independently. Current writers use
+   `sessnap-json/2` and `eventlog-json/2`; readers convert straightforward `/1`
+   records and read `/2` records. A decoding wrapper can return `/2` even when
+   reading old backend data, so keep old harness readers stopped. Raw opaque
+   drivers must preserve the exact format tag and payload bytes.
+1. **Upgrade the harness and clients together.** Deploy API-major-2 server and
+   client builds before reopening access. There is no public major-1
+   identity-alias mode. Rebuild client-maintained views keyed by old invocation
+   IDs from current transcripts or event replay. Retain sessions and logs;
+   watch cursors are log positions and do not need resetting for this upgrade.
+1. **Verify before admitting work.** Check compatibility discovery, representative
+   readable old transcripts, current `/2` pending approvals or authorization, event
+   reads, and current learning citations against the upgraded deployment. Resume
+   writers only with the coordinated versions.
+
+Keep old binaries away from the migrated namespace. Mixed-version writers and
+rollback after new-format writes are unsupported. Old decoding wrappers reject
+`/2` per operation before backend mutation; format rejection is not a startup
+negotiation guarantee. The unchanged `session-store/1` capability marker does
+not negotiate formats, and event drivers have no format handshake. Local JSONL
+snapshots retain their private outer envelope, and Redis events retain
+`redisstore-eventlog/1`. Old local readers can ignore the inner schema and
+misinterpret identity, so these tags do not make old readers safe.
+
+### Retained sessions and old records
+
+A straightforward nonpending `/1` snapshot remains readable when each call/result
+pair and parent-call relationship is unambiguous. A `/1` snapshot in awaiting or
+authorizing state, with pending data, or with an `identity_hold` key is rejected.
+Ambiguous, orphaned, wrong-role, and unprovable snapshot or archive relationships
+also reject. Confirm any external effects before repeating work from retained
+history.
+
+Every `/1`-derived session remains ineligible for learning after conversion,
+saving, restarting, or later runs. Current `/2` snapshots retain learning
+eligibility only when they store a positive `learning_eligible` value. Frozen
+legacy learning evidence and proposals are unavailable.
+
+Recognized unsupported legacy event invocation, control, delegation, and archive
+records are omitted. Cursor readers advance through their physical positions and
+surface the resulting gaps. Current events retain their normal payloads and
+malformed or contradictory records still fail decoding.
+
+Public `ConversationMessage` omits the opaque `reasoning` and
+`reasoning_item_id` fields (reserved tags 5 and 8). Readable reasoning events,
+text/media, and `provider_phase` remain available; exact provider replay is
+retained privately in snapshots and internal archives.
 
 ## Next steps
 

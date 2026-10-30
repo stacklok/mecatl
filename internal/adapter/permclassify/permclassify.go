@@ -288,7 +288,7 @@ type llmClassifier struct {
 func (l *llmClassifier) Classify(ctx context.Context, c session.ToolCall) (Verdict, error) {
 	req := port.LLMRequest{
 		System:   prompt.Layered{StablePrefix: systemPrompt},
-		Messages: []session.Message{session.NewUserMessage(renderCall(c))},
+		Messages: []port.LLMMessage{{Role: session.RoleUser, Text: renderCall(c)}},
 		Model:    l.model,
 	}
 

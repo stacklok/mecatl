@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // @vitest-environment happy-dom
 
-import type { RunStreamEvent } from "@mecatl-studio/contracts";
+import type { RunStreamEvent, SessionTranscriptResponse } from "@mecatl-studio/contracts";
 import { client } from "@mecatl-studio/contracts/client";
 import { listSessionsQueryKey } from "@mecatl-studio/contracts/query";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -99,6 +99,8 @@ class Fixture {
   readonly activityRequests: Array<{ search: string; signal: AbortSignal }> = [];
   readonly requests: Array<{ body: unknown; method: string; pathname: string }> = [];
   readonly verdicts: Array<Promise<Response>> = [];
+  readonly authorizationResponses: Response[] = [];
+  transcriptMessages: SessionTranscriptResponse["messages"] = [];
   runtimeFeatures: string[] = [];
   sessionState = "running";
 
@@ -142,8 +144,13 @@ class Fixture {
           updatedAt: "2026-09-24T12:00:00.000Z",
         })),
       });
+    if (pathname.endsWith("/runs") && request.method === "POST") return this.stream.response;
     if (pathname.endsWith("/transcript"))
-      return json({ complete: true, messages: [], sessionId: pathname.split("/")[4] });
+      return json({
+        complete: true,
+        messages: this.transcriptMessages,
+        sessionId: pathname.split("/")[4],
+      });
     if (pathname.endsWith("/activity")) {
       this.activityRequests.push({ search: url.search, signal: request.signal });
       return this.activityResponses.shift() ?? this.stream.response;
@@ -162,6 +169,11 @@ class Fixture {
           reasoningTokens: "0",
         },
       });
+    if (pathname.includes("/authorizations/")) {
+      const response = this.authorizationResponses.shift();
+      if (!response) throw new Error(`Unexpected authorization control: ${pathname}`);
+      return response;
+    }
     if (pathname.includes("/permissions/")) {
       const verdict = this.verdicts.shift();
       if (!verdict) throw new Error(`Unexpected verdict: ${pathname}`);
@@ -236,7 +248,11 @@ async function mount(fixture: Fixture, side = false, switchable = false) {
     await router.load();
   });
   await waitFor(() =>
-    expect(fixture.requests.some((request) => request.pathname.endsWith("/activity"))).toBe(true),
+    expect(
+      fixture.requests.some((request) =>
+        request.pathname.endsWith(fixture.sessionState === "idle" ? "/transcript" : "/activity"),
+      ),
+    ).toBe(true),
   );
   return queryClient;
 }
@@ -305,10 +321,10 @@ describe("ordinary approval interactions", () => {
       within(row as HTMLElement).getAllByRole("region", { name: "Permission required: Edit" }),
     ).toHaveLength(1);
     expect(
-      within(otherRunRow as HTMLElement).queryByRole("region", {
+      within(otherRunRow as HTMLElement).getAllByRole("region", {
         name: "Permission required: Edit",
       }),
-    ).toBeNull();
+    ).toHaveLength(1);
     expect(screen.getAllByRole("region", { name: "Permission required: Edit" })).toHaveLength(4);
     const card = within(row as HTMLElement).getByRole("region", {
       name: "Permission required: Edit",
@@ -1061,6 +1077,154 @@ describe("prototype approval UI on the workspace ledger", () => {
     });
     return (await screen.findByText(reason)).closest("section") as HTMLElement;
   }
+
+  it.each(["button", "keyboard"])(
+    "keeps snapshot placement separate from exact ask authority via %s",
+    async (input) => {
+      const fixture = new Fixture();
+      fixture.sessionState = "idle";
+      fixture.activityResponses.push(
+        new Response("", { headers: { "Content-Type": "text/event-stream" } }),
+      );
+      fixture.transcriptMessages = [
+        {
+          role: "assistant",
+          text: "Snapshot A",
+          images: [],
+          toolCalls: [{ id: "call-a", name: "Edit", args: editArgs }],
+        },
+      ];
+      window.localStorage.setItem("studio.profile.show-tool-calls", "visible");
+      await mount(fixture);
+      await screen.findByText("Snapshot A");
+      fireEvent.change(screen.getByRole("textbox", { name: "Message Mecatl" }), {
+        target: { value: "Continue" },
+      });
+      fireEvent.submit(
+        screen.getByRole("textbox", { name: "Message Mecatl" }).closest("form") as HTMLFormElement,
+      );
+      await waitFor(() =>
+        expect(
+          fixture.requests.some(
+            (request) => request.method === "POST" && request.pathname.endsWith("/runs"),
+          ),
+        ).toBe(true),
+      );
+      await act(async () => {
+        fixture.stream.send({ type: "run.started", runId: "run-a", sessionId: "chat-a" });
+        fixture.stream.send(
+          event("message.delta", "1", "run-a", undefined, "Unrelated active row"),
+        );
+        fixture.stream.send(
+          event("tool.call", "2", "run-a", { id: "call-b", name: "Edit", args: editArgs }),
+        );
+        fixture.stream.send(
+          event("tool.call", "3", "run-a", { id: "call-a", name: "Edit", args: editArgs }),
+        );
+        fixture.stream.send(
+          event("permission.ask", "4", "run-a", {
+            askId: "ask-snapshot",
+            callId: "call-a",
+            tool: "Edit",
+            args: editArgs,
+            reason: "Snapshot approval",
+          }),
+        );
+      });
+      const snapshot = screen.getByText("Snapshot A").closest("article");
+      const unrelated = screen.getByText("Unrelated active row").closest("article");
+      if (!snapshot || !unrelated) throw new Error("Missing transcript rows");
+      const card = within(snapshot).getByRole("region", { name: "Permission required: Edit" });
+      const tool = within(snapshot).getByText("Tool: Edit").closest("li");
+      if (!tool) throw new Error("Missing snapshot call");
+      expect(within(tool).getByText("Snapshot approval")).toBeTruthy();
+      expect(within(unrelated).queryByText("Snapshot approval")).toBeNull();
+      expect(screen.getAllByText("Tool: Edit")).toHaveLength(2);
+      fireEvent.click(within(card).getByRole("button", { name: "Open in detail panel" }));
+      const panel = screen.getByRole("complementary", { name: "Edit" });
+      fixture.verdicts.push(Promise.resolve(new Response(null, { status: 204 })));
+      (document.activeElement as HTMLElement | null)?.blur();
+      await userEvent.setup().keyboard("y");
+      expect(fixture.posts()).toEqual([]);
+      if (input === "button")
+        fireEvent.click(within(panel).getByRole("button", { name: "Allow once" }));
+      else {
+        within(panel).getByRole("button", { name: "Raw arguments" }).focus();
+        await userEvent.setup().keyboard("y");
+      }
+      await waitFor(() =>
+        expect(fixture.posts()).toEqual([
+          {
+            body: { verdict: "allow_once" },
+            method: "POST",
+            pathname: "/api/v1/sessions/chat-a/runs/run-a/permissions/ask-snapshot",
+          },
+        ]),
+      );
+      await act(async () => {
+        fixture.stream.send(
+          event("authorization.required", "5", "run-a", {
+            authorizationId: "auth-snapshot",
+            callId: "call-a",
+            displayName: "Snapshot connector",
+            status: "pending",
+          }),
+          "auth-cursor",
+        );
+      });
+      expect(within(tool).getByText("Snapshot connector")).toBeTruthy();
+      expect(within(unrelated).queryByText("Snapshot connector")).toBeNull();
+      fireEvent.click(within(tool).getByRole("button", { name: "Review authorization" }));
+      const authorizationPanel = screen.getByRole("complementary", { name: /authorization/i });
+      expect(
+        within(authorizationPanel)
+          .getByRole("link", { name: "Open authorization" })
+          .getAttribute("href"),
+      ).toBe("/api/v1/sessions/chat-a/authorizations/auth-snapshot/presentation");
+      expect(authorizationPanel.textContent).toContain("Run run-a · Call call-a");
+      const checkpoint = heldStream();
+      checkpoint.send(
+        event("authorization.required", "5", "run-a", {
+          authorizationId: "auth-snapshot",
+          callId: "call-a",
+          displayName: "Snapshot connector",
+          status: "pending",
+        }),
+        "auth-cursor",
+      );
+      checkpoint.close();
+      fixture.activityResponses.push(checkpoint.response);
+      const control = heldStream();
+      fixture.authorizationResponses.push(control.response);
+      fireEvent.click(screen.getByRole("button", { name: "Cancel authorization" }));
+      await waitFor(() =>
+        expect(
+          fixture.requests.filter(
+            (request) => request.method === "POST" && request.pathname.includes("/authorizations/"),
+          ),
+        ).toEqual([
+          {
+            body: undefined,
+            method: "POST",
+            pathname: "/api/v1/sessions/chat-a/authorizations/auth-snapshot/cancel",
+          },
+        ]),
+      );
+      await act(async () => {
+        control.send(
+          event("authorization.resolved", "6", "run-a", {
+            authorizationId: "auth-snapshot",
+            callId: "call-a",
+            displayName: "Snapshot connector",
+            status: "cancelled",
+          }),
+          "resolved-cursor",
+        );
+        control.close();
+      });
+      expect((await screen.findAllByText("Authorization cancelled")).length).toBeGreaterThan(0);
+    },
+  );
 
   it("answers the active ask from the keyboard once, through the exact verdict route", async () => {
     for (const side of [false, true]) {

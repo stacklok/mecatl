@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"reflect"
-	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -40,10 +39,14 @@ func newProposalManifestFixture(t *testing.T) *proposalManifestFixture {
 	}
 	messages := []session.Message{
 		session.NewUserMessage("Remember concise output."),
-		session.NewAssistantMessage("I will inspect it.", "private reasoning", []session.ToolCall{session.NewToolCall("call-1", "Read", []byte(`{"token":"ghp_0123456789abcdefghijklmnop"}`))}),
+		session.NewAssistantMessage("I will inspect it.", []session.ToolCall{session.NewToolCall("call-1", "Read", []byte(`{"token":"ghp_0123456789abcdefghijklmnop"}`))}),
 		session.NewToolMessage(session.NewToolResult("call-1", strings.Repeat("safe result ", 180))),
 	}
-	trajectory := learning.NewTrajectory("manifest-source", "", session.StopEndTurn, session.Usage{}, messages)
+	messages[1].Replay = &session.MessageReplay{
+		Bindings: []session.ToolCallBinding{{CallID: "call-1", PairingID: "private-pairing"}},
+		Provider: &session.ProviderReplay{Format: "private", Version: 1, Data: []byte("private reasoning")},
+	}
+	trajectory := currentTestTrajectory("manifest-source", "", session.StopEndTurn, session.Usage{}, messages)
 	events := []session.Event{{Type: session.EvResult, Seq: 7, Turn: 1, Result: &session.ResultPayload{Stop: session.StopEndTurn}}}
 	materialized, err := learning.MaterializeEvidence(context.Background(), learning.MaterializationRequest{Trajectory: trajectory, Events: events, Explicit: true})
 	if err != nil || materialized.Disposition != learning.MaterializationSelected {
@@ -102,27 +105,46 @@ func (f *proposalManifestFixture) service() *Service {
 	}}
 }
 
-func TestProposalVerificationBuildsSelectedEvidenceOnly(t *testing.T) {
-	original := 0
-	messages := []session.Message{
-		session.NewUserMessage("remember selected evidence"),
-		session.NewUserMessageWithParts("", []session.Content{{Data: make([]byte, 16<<20)}}),
-	}
-	entries := []learning.ManifestEntry{{Locator: learning.EvidenceMessage, OriginalMessage: &original}}
-	runtime.GC()
-	var before, after runtime.MemStats
-	runtime.ReadMemStats(&before)
-	selected, eventSequences, err := selectManifestSource(messages, entries)
-	runtime.ReadMemStats(&after)
-	runtime.KeepAlive(messages)
+func TestProposalRematerializationUsesSelectedEvidenceOnly(t *testing.T) {
+	f := newProposalManifestFixture(t)
+	svc := f.service()
+	source, err := f.store.Load(t.Context(), f.manifest.Source.Value)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(selected) != 1 || selected[0].Text != "remember selected evidence" || len(eventSequences) != 0 {
-		t.Fatalf("selected source = %#v, events=%v", selected, eventSequences)
+	messages := append(source.Conversation.Messages, session.NewUserMessage("unselected evidence"))
+	saveMessages := func() {
+		t.Helper()
+		fresh := session.New(source.ID, source.Mode, source.EnvironmentRef, session.Limits{}, time.Unix(2, 0))
+		if err := fresh.SeedHistory(messages); err != nil {
+			t.Fatal(err)
+		}
+		if err := f.store.Save(t.Context(), fresh); err != nil {
+			t.Fatal(err)
+		}
 	}
-	if allocated := after.TotalAlloc - before.TotalAlloc; allocated >= 1<<20 {
-		t.Fatalf("selected-only source traversal allocated %d bytes for 16 MiB of unrelated retained content", allocated)
+	saveMessages()
+	// The manifest's event coordinate is iterator ordinal 0, not engine Seq 7.
+	if err := f.eventLog.Append(t.Context(), source.ID, session.Event{Type: session.EvResult, Seq: 7, Result: &session.ResultPayload{Stop: session.StopCancelled}}); err != nil {
+		t.Fatal(err)
+	}
+	selected, backed, err := svc.rematerializeProposal(t.Context(), f.part, f.record)
+	if err != nil || !backed {
+		t.Fatalf("rematerialize backed=%v err=%v", backed, err)
+	}
+	if len(selected.Trajectory.Messages) != 3 || selected.Trajectory.Messages[0].Text != messages[0].Text || len(selected.Events) != 1 || selected.Events[0].Stop != session.StopEndTurn {
+		t.Fatalf("rematerialized unrelated evidence: %+v", selected)
+	}
+	messages[3] = session.NewUserMessage("changed unselected evidence")
+	saveMessages()
+	again, _, err := svc.rematerializeProposal(t.Context(), f.part, f.record)
+	if err != nil || !reflect.DeepEqual(selected, again) {
+		t.Fatalf("unselected mutation changed rematerialization: %+v, err=%v", again, err)
+	}
+	messages[0] = session.NewUserMessage("changed selected evidence")
+	saveMessages()
+	if _, _, err := svc.rematerializeProposal(t.Context(), f.part, f.record); !errors.Is(err, ErrFailedPrecondition) {
+		t.Fatalf("selected mutation escaped verification: %v", err)
 	}
 }
 
@@ -191,7 +213,12 @@ func TestScalableReflectionEvidence_Scenario4_MismatchFailsPreconditionWithoutPr
 	}{
 		{name: "protocol", mutate: func(m *learning.MaterializationManifest) { m.Protocol = "future" }},
 		{name: "source boundary", mutate: func(m *learning.MaterializationManifest) { m.Source.Domain = "wrong" }},
+		{name: "locator", mutate: func(m *learning.MaterializationManifest) { m.Entries[0].Locator = "invalid" }},
+		{name: "missing message coordinate", mutate: func(m *learning.MaterializationManifest) { m.Entries[0].OriginalMessage = nil }},
+		{name: "negative message coordinate", mutate: func(m *learning.MaterializationManifest) { *m.Entries[0].OriginalMessage = -1 }},
 		{name: "message coordinate", mutate: func(m *learning.MaterializationManifest) { *m.Entries[0].OriginalMessage = 99 }},
+		{name: "missing event sequence", mutate: func(m *learning.MaterializationManifest) { m.Entries[len(m.Entries)-1].EventSequence = nil }},
+		{name: "negative event sequence", mutate: func(m *learning.MaterializationManifest) { *m.Entries[len(m.Entries)-1].EventSequence = -1 }},
 		{name: "event sequence", mutate: func(m *learning.MaterializationManifest) { *m.Entries[len(m.Entries)-1].EventSequence = 99 }},
 		{name: "entry digest", mutate: func(m *learning.MaterializationManifest) { m.Entries[0].Digest = strings.Repeat("0", 64) }},
 		{name: "tool component", mutate: func(m *learning.MaterializationManifest) { m.Entries[1].Component = "tool:wrong" }},
@@ -263,7 +290,7 @@ func TestV1EventEvidencePreviewUsesSessionStreamOrdinal(t *testing.T) {
 		{Type: session.EvToolResult, Seq: 1, RunID: "run-two", ToolResult: &session.ToolResult{CallID: "second", Content: "second run result"}},
 	}
 	materialized, err := learning.MaterializeEvidence(context.Background(), learning.MaterializationRequest{
-		Trajectory: learning.NewTrajectory(sourceID, "", session.StopEndTurn, session.Usage{}, nil),
+		Trajectory: currentTestTrajectory(sourceID, "", session.StopEndTurn, session.Usage{}, nil),
 		Events:     events,
 		Explicit:   true,
 	})

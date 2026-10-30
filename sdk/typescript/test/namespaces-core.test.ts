@@ -143,7 +143,7 @@ class NamespaceTransport implements Transport {
       message: create(
         method.output,
         (method.name === "GetCompatibilityInfo"
-          ? { apiMajor: 1, capabilities: {}, features: ["server_info"] }
+          ? { apiMajor: 2, capabilities: {}, features: ["server_info"] }
           : {}) as MessageInitShape<O>,
       ),
       method,
@@ -265,7 +265,7 @@ describe("core typed namespaces", () => {
       fetch: async (input, init = {}) => {
         const path = new URL(String(input)).pathname;
         if (path === "/v1/compatibility")
-          return Response.json({ api_major: 1, capabilities: {}, features: ["server_info"] });
+          return Response.json({ api_major: 2, capabilities: {}, features: ["server_info"] });
         requests.push(init);
         if (path === "/v1/models") return Response.json({ models: [], provider_status: [] });
         return Response.json(

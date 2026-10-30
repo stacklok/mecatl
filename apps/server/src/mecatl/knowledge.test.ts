@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
+import { learningProposalDetailSchema } from "@mecatl-studio/contracts";
+import { getLearningProposal } from "@mecatl-studio/contracts/generated";
 import { type Client, MecatlError } from "@stacklok-oss/mecatl-sdk";
 import { describe, expect, it, vi } from "vitest";
 import { createApp, knowledgeCapabilities } from "../app.js";
@@ -36,6 +38,8 @@ function sdkProposal() {
     description: "How the user likes answers",
     evidence: [
       {
+        attachmentUnavailable: true,
+        protocol: "v1",
         availability: "available",
         available: true,
         digest: "sha256:aaa",
@@ -47,6 +51,8 @@ function sdkProposal() {
         toolCallId: "",
       },
       {
+        attachmentUnavailable: false,
+        protocol: "v2",
         availability: "evidence changed",
         available: false,
         digest: "sha256:bbb",
@@ -487,6 +493,8 @@ describe("Mecatl knowledge adapter", () => {
     await expect(service.getLearningProposal("proposal-1")).resolves.toMatchObject({
       evidence: [
         {
+          attachmentUnavailable: true,
+          protocol: "v1",
           availability: "available",
           available: true,
           digest: "sha256:aaa",
@@ -495,9 +503,10 @@ describe("Mecatl knowledge adapter", () => {
           ordinal: 3,
           preview: "Please keep answers short.",
           sessionId: "session-1",
-          toolCallId: "",
         },
         {
+          attachmentUnavailable: false,
+          protocol: "v2",
           availability: "evidence changed",
           available: false,
           eventSeq: "9007199254740993",
@@ -510,6 +519,22 @@ describe("Mecatl knowledge adapter", () => {
       id: "proposal-1",
     });
     expect(get).toHaveBeenCalledWith(expect.objectContaining({ id: "proposal-1", project: "" }));
+    const app = createApp({ knowledge: service });
+    const response = await getLearningProposal({
+      path: { proposalId: "proposal-1" },
+      baseUrl: "http://127.0.0.1",
+      fetch: async (request) => app.request(request),
+    });
+    expect(response.error).toBeUndefined();
+    const detail = learningProposalDetailSchema.parse(response.data);
+    expect(detail.evidence[0]).toMatchObject({
+      available: true,
+      attachmentUnavailable: true,
+      protocol: "v1",
+      preview: "Please keep answers short.",
+    });
+    expect(detail.evidence[0]).not.toHaveProperty("toolCallId");
+    expect(detail.evidence[1]?.toolCallId).toBe("call-1");
   });
 
   it("answers 404 not_found for a proposal the daemon cannot find", async () => {

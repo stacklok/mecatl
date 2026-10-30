@@ -89,7 +89,7 @@ func (s *Service) ListLearnedSkills(ctx context.Context, request *mecatlv1.ListL
 	}
 	out := make([]*mecatlv1.LearnedSkillVersion, len(page.Versions))
 	for i := range page.Versions {
-		out[i] = toProtoLearnedSkill(page.Versions[i])
+		out[i] = s.toProtoLearnedSkill(ctx, page.Versions[i])
 	}
 	return &mecatlv1.ListLearnedSkillsResponse{Skills: out, NextCursor: validLearningText(string(page.Next)), Generation: s.liveSkillGeneration(ctx, request.GetProject()), Project: validLearningText(request.GetProject())}, nil
 }
@@ -99,7 +99,7 @@ func (s *Service) GetLearnedSkill(ctx context.Context, request *mecatlv1.GetLear
 	if err != nil {
 		return nil, err
 	}
-	return &mecatlv1.GetLearnedSkillResponse{Skill: toProtoLearnedSkill(version), Generation: s.liveSkillGeneration(ctx, request.GetProject()), Project: validLearningText(request.GetProject())}, nil
+	return &mecatlv1.GetLearnedSkillResponse{Skill: s.toProtoLearnedSkill(ctx, version), Generation: s.liveSkillGeneration(ctx, request.GetProject()), Project: validLearningText(request.GetProject())}, nil
 }
 
 func (s *Service) getLearnedSkill(ctx context.Context, project, owner, id, version string) (learning.SkillVersion, error) {
@@ -173,7 +173,7 @@ func (s *Service) mutateLearnedSkill(ctx context.Context, request *mecatlv1.Muta
 		return nil, skillServiceError(err)
 	}
 	status, publishErr := s.publishLearnedSkills(ctx, partition)
-	return &mecatlv1.MutateLearnedSkillResponse{Skill: toProtoLearnedSkill(value), Generation: s.liveSkillGeneration(ctx, request.GetProject()), Project: validLearningText(request.GetProject()), PublicationStatus: status, PublicationError: publishErr}, nil
+	return &mecatlv1.MutateLearnedSkillResponse{Skill: s.toProtoLearnedSkill(ctx, value), Generation: s.liveSkillGeneration(ctx, request.GetProject()), Project: validLearningText(request.GetProject()), PublicationStatus: status, PublicationError: publishErr}, nil
 }
 
 func (s *Service) ActivateLearnedSkill(ctx context.Context, r *mecatlv1.MutateLearnedSkillRequest) (*mecatlv1.MutateLearnedSkillResponse, error) {
@@ -233,7 +233,7 @@ func (s *Service) RollbackLearnedSkill(ctx context.Context, r *mecatlv1.Rollback
 		return nil, skillServiceError(err)
 	}
 	status, publishErr := s.publishLearnedSkills(ctx, partition)
-	return &mecatlv1.MutateLearnedSkillResponse{Skill: toProtoLearnedSkill(value), Generation: s.liveSkillGeneration(ctx, r.GetProject()), Project: validLearningText(r.GetProject()), PublicationStatus: status, PublicationError: publishErr}, nil
+	return &mecatlv1.MutateLearnedSkillResponse{Skill: s.toProtoLearnedSkill(ctx, value), Generation: s.liveSkillGeneration(ctx, r.GetProject()), Project: validLearningText(r.GetProject()), PublicationStatus: status, PublicationError: publishErr}, nil
 }
 
 func (s *Service) ListSkillChanges(ctx context.Context, r *mecatlv1.ListSkillChangesRequest) (*mecatlv1.ListSkillChangesResponse, error) {
@@ -266,16 +266,24 @@ func (s *Service) ListSkillChanges(ctx context.Context, r *mecatlv1.ListSkillCha
 	return &mecatlv1.ListSkillChangesResponse{Changes: changes, NextCursor: validLearningText(page.Next), Generation: s.liveSkillGeneration(ctx, r.GetProject()), Project: validLearningText(r.GetProject())}, nil
 }
 
-func toProtoLearnedSkill(v learning.SkillVersion) *mecatlv1.LearnedSkillVersion {
+func (s *Service) toProtoLearnedSkill(ctx context.Context, v learning.SkillVersion) *mecatlv1.LearnedSkillVersion {
 	out := &mecatlv1.LearnedSkillVersion{Id: validLearningText(string(v.ID)), Name: validLearningText(v.Bundle.Name), Version: validLearningText(string(v.Version)), Revision: validLearningText(string(v.Revision)), State: validLearningText(string(v.State)), OwnerAgent: validLearningText(v.OwnerAgent), Description: safeSkillText(v.Bundle.Description, learning.MaxSkillDescriptionBytes), Body: safeSkillText(v.Bundle.Body, learning.MaxSkillBodyBytes), Supersedes: validLearningText(string(v.Supersedes)), EvidenceCount: int32(len(v.Provenance.EvidenceRefs)), CreatedAt: timestampOrNil(v.CreatedAt), UpdatedAt: timestampOrNil(v.UpdatedAt), InspectAvailable: true, UndoAvailable: v.State == learning.SkillActive} //nolint:gosec // provenance is capped by MaxSkillEvidence
+	var callIDs []string
 	for _, ref := range v.Provenance.EvidenceRefs {
-		out.Evidence = append(out.Evidence, &mecatlv1.LearningEvidenceRef{SessionId: validLearningText(string(ref.SessionID)), Locator: validLearningText(string(ref.Locator)), Ordinal: int32(ref.Ordinal), ToolCallId: validLearningText(string(ref.ToolCallID)), Digest: validLearningText(ref.Digest)}) //nolint:gosec // validated proposal ordinals are bounded
+		citation, availability := s.learningEvidenceCitation(ctx, ref)
+		callID := validLearningText(string(citation.ToolCallID))
+		if callID != "" {
+			callIDs = append(callIDs, callID)
+		}
+		out.Evidence = append(out.Evidence, &mecatlv1.LearningEvidenceRef{SessionId: validLearningText(string(ref.SessionID)), Locator: validLearningText(string(ref.Locator)), Ordinal: int32(ref.Ordinal), ToolCallId: callID, Digest: validLearningText(ref.Digest), Protocol: string(ref.Protocol), Available: availability == evidenceAvailabilityAvailable, Availability: availability, AttachmentUnavailable: callID == "", Preview: safeLearningText("evidence/preview", citation.Preview)}) //nolint:gosec // validated proposal ordinals are bounded
 	}
 	for _, evaluation := range v.Evaluations {
 		out.Evaluations = append(out.Evaluations, &mecatlv1.SkillEvaluation{Verdict: validLearningText(string(evaluation.Verdict)), FixtureIds: validStrings(evaluation.FixtureIDs), Baseline: safeSkillText(evaluation.Baseline, learning.MaxSkillEvaluationTextBytes), Treatment: safeSkillText(evaluation.Treatment, learning.MaxSkillEvaluationTextBytes), Reason: safeSkillText(evaluation.Reason, learning.MaxSkillEvaluationTextBytes), At: timestampOrNil(evaluation.At)})
 	}
 	for i, receipt := range v.Receipts {
-		out.Receipts = append(out.Receipts, protoSkillReceipt(v, i, receipt))
+		projected := protoSkillReceipt(v, i, receipt)
+		projected.SourceToolCallIds = append([]string(nil), callIDs...)
+		out.Receipts = append(out.Receipts, projected)
 	}
 	return out
 }
@@ -291,9 +299,6 @@ func protoSkillReceipt(v learning.SkillVersion, index int, receipt learning.Skil
 	out := &mecatlv1.SkillChangeReceipt{Id: hex.EncodeToString(sum[:16]), SkillId: validLearningText(string(v.ID)), Name: validLearningText(v.Bundle.Name), Version: validLearningText(string(receipt.Version)), Operation: validLearningText(receipt.Operation), FromState: validLearningText(string(receipt.From)), ToState: validLearningText(string(receipt.To)), EvidenceCount: int32(len(v.Provenance.EvidenceRefs)), At: timestampOrNil(receipt.At), InspectAvailable: true, UndoAvailable: receipt.To == learning.SkillActive} //nolint:gosec // provenance is capped by MaxSkillEvidence
 	for _, ref := range v.Provenance.EvidenceRefs {
 		out.SourceSessionIds = append(out.SourceSessionIds, validLearningText(string(ref.SessionID)))
-		if ref.ToolCallID != "" {
-			out.SourceToolCallIds = append(out.SourceToolCallIds, validLearningText(string(ref.ToolCallID)))
-		}
 	}
 	if len(v.Evaluations) > 0 {
 		e := v.Evaluations[len(v.Evaluations)-1]

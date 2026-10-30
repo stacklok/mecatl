@@ -104,11 +104,11 @@ func TestClientWorkspaceCannotOverrideServerPlacement(t *testing.T) {
 	}
 	events := runEvents(run)
 
-	if !sawDispatchedTool(events, "w1") {
+	if !sawDispatchedTool(events, "Write") {
 		t.Fatal("Write did not dispatch")
 	}
 	for _, ev := range events {
-		if ev.Type == session.EvToolResult && ev.ToolResult != nil && ev.ToolResult.CallID == "w1" && ev.ToolResult.IsError {
+		if ev.Type == session.EvToolResult && ev.ToolResult != nil && ev.ToolResult.CallID == eventCallID(t, events, "Write", 0) && ev.ToolResult.IsError {
 			t.Fatalf("Write failed in the worktree session: %s", ev.ToolResult.Content)
 		}
 	}

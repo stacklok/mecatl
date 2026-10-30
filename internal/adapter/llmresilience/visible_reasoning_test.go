@@ -69,7 +69,7 @@ func TestVisibleReasoning_Scenario3_SummaryEventsStayDisplayOnly(t *testing.T) {
 			if got := run(sess, "first"); got != summary {
 				t.Errorf("reasoning event = %q, want %q", got, summary)
 			}
-			initial := sess.Conversation.Messages[len(sess.Conversation.Messages)-1].Reasoning
+			initial := string(sess.Conversation.Messages[len(sess.Conversation.Messages)-1].Replay.Provider.Data)
 			if err := sess.Reopen(); err != nil {
 				t.Fatalf("reopen: %v", err)
 			}
@@ -88,7 +88,11 @@ func TestVisibleReasoning_Scenario3_SummaryEventsStayDisplayOnly(t *testing.T) {
 				t.Fatalf("messages = %+v", restored.Conversation.Messages)
 			}
 			msg := restored.Conversation.Messages[1]
-			if msg.Reasoning != initial || !strings.Contains(msg.Reasoning, blob) || strings.Contains(msg.Reasoning, summary) {
+			if msg.Replay == nil || msg.Replay.Provider == nil {
+				t.Fatal("persisted replay missing")
+			}
+			data := string(msg.Replay.Provider.Data)
+			if data != initial || !strings.Contains(data, blob) || strings.Contains(data, summary) {
 				t.Errorf("persisted replay differs from original opaque replay")
 			}
 			if err := restored.Reopen(); err != nil {
@@ -212,7 +216,7 @@ func TestVisibleReasoning_Scenario3_NonResponsesAdaptersOmitReasoningFields(t *t
 				_, _ = io.WriteString(w, `{"error":{"message":"fixture error"}}`)
 			}))
 			defer srv.Close()
-			seq, err := tc.newProvider(srv.URL).Stream(context.Background(), port.LLMRequest{Model: "test-model", Messages: []session.Message{session.NewUserMessage("hello")}})
+			seq, err := tc.newProvider(srv.URL).Stream(context.Background(), port.LLMRequest{Model: "test-model", Messages: []port.LLMMessage{{Role: session.RoleUser, Text: "hello"}}})
 			if err == nil {
 				for range seq {
 				}

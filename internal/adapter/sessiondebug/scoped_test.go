@@ -237,7 +237,7 @@ func TestDelegationHistoryManifestAndLifetimeEvidence(t *testing.T) {
 	root := session.New("root", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/workspace", Revision: "in-tree-v1"}, session.Limits{}, time.Now())
 	root.Owner = &session.Principal{Issuer: "i", Subject: "a", GrantType: session.GrantTypeUser}
 	call := session.NewToolCall("delegate-call", "Team", []byte(`{}`))
-	messages := []session.Message{session.NewAssistantMessage("", "", []session.ToolCall{call}), session.NewToolMessage(session.NewToolResult(call.ID, "team synthesis"))}
+	messages := []session.Message{session.NewAssistantMessage("", []session.ToolCall{call}), session.NewToolMessage(session.NewToolResult(call.ID, "team synthesis"))}
 	if err := root.SeedHistory(messages); err != nil {
 		t.Fatal(err)
 	}
@@ -247,15 +247,15 @@ func TestDelegationHistoryManifestAndLifetimeEvidence(t *testing.T) {
 	backgroundIncarnation := session.NewIncarnationID()
 	parallelIncarnation := session.NewIncarnationID()
 	events := []session.Event{
-		{Type: session.EvSubagentStart, RunID: "run-1", Subagent: &session.SubagentPayload{ParentCallID: string(call.ID), ChildID: "background-child-secret", ChildIncarnation: backgroundIncarnation, Background: true}},
-		{Type: session.EvParallelStart, RunID: "run-1", Parallel: &session.ParallelPayload{ParentCallID: string(call.ID), Join: "first", BranchCount: 2}},
-		{Type: session.EvParallelBranch, RunID: "run-1", Parallel: &session.ParallelPayload{ParentCallID: string(call.ID), Kind: session.ParallelBranchStart, BranchIndex: 0, ChildID: "parallel-child-secret", ChildIncarnation: parallelIncarnation}},
-		{Type: session.EvParallelEnd, RunID: "run-1", Parallel: &session.ParallelPayload{ParentCallID: string(call.ID), Join: "first", BranchCount: 2, Winner: 0}},
+		{Type: session.EvSubagentStart, RunID: "run-1", Subagent: &session.SubagentPayload{ParentCallID: call.ID, ChildID: "background-child-secret", ChildIncarnation: backgroundIncarnation, Background: true}},
+		{Type: session.EvParallelStart, RunID: "run-1", Parallel: &session.ParallelPayload{ParentCallID: call.ID, Join: "first", BranchCount: 2}},
+		{Type: session.EvParallelBranch, RunID: "run-1", Parallel: &session.ParallelPayload{ParentCallID: call.ID, Kind: session.ParallelBranchStart, BranchIndex: 0, ChildID: "parallel-child-secret", ChildIncarnation: parallelIncarnation}},
+		{Type: session.EvParallelEnd, RunID: "run-1", Parallel: &session.ParallelPayload{ParentCallID: call.ID, Join: "first", BranchCount: 2, Winner: 0}},
 		{Type: session.EvScheduleSkipped, Schedule: &session.SchedulePayload{ScheduleName: "nightly", Kind: "skipped"}},
 		{Type: session.EvTurnEnd, RunID: "run-1", Turn: 1, TurnEnd: &session.TurnEndPayload{Usage: session.Usage{InputTokens: 3, OutputTokens: 2}}},
 		{Type: session.EvToolCall, RunID: "run-1", ToolCall: &call},
 		{Type: session.EvToolResult, RunID: "run-1", ToolResult: ptr(session.NewToolError(call.ID, "failed once"))},
-		{Type: session.EvTeamEnd, RunID: "run-1", Team: &session.TeamPayload{ParentCallID: string(call.ID), Stop: session.StopEndTurn, Tasks: []session.TeamTaskSnapshot{{ID: "task", Description: "work", State: "completed", Assignee: "lead"}}, Findings: []session.TeamFindingSnapshot{{Member: "lead", Body: "found"}}, Dispositions: []session.TeamMemberDisposition{{Name: "lead", Disposition: "done", ErrorRounds: 1}}}},
+		{Type: session.EvTeamEnd, RunID: "run-1", Team: &session.TeamPayload{ParentCallID: call.ID, Stop: session.StopEndTurn, Tasks: []session.TeamTaskSnapshot{{ID: "task", Description: "work", State: "completed", Assignee: "lead"}}, Findings: []session.TeamFindingSnapshot{{Member: "lead", Body: "found"}}, Dispositions: []session.TeamMemberDisposition{{Name: "lead", Disposition: "done", ErrorRounds: 1}}}},
 		{Type: session.EvCompactionArchive, RunID: "run-1", CompactionArchive: &session.CompactionArchivePayload{Replaced: messages}},
 		{Type: session.EvRequestManifest, RunID: "run-1", Turn: 1, RequestManifest: &session.RequestManifestPayload{Provider: "mock", Model: "m", ReasoningEffort: "high", ContextWindow: 8192, ToolNames: []string{"Read", "Team"}, ToolDecisions: []session.RequestToolDecision{{Name: "Read", Source: session.RequestToolSourceCatalog, Decision: session.RequestToolAdvertised}}, MessageCount: 2, MessageBytes: 42, Prompt: []session.RequestPromptComponent{{Kind: session.RequestPromptSystem, Provenance: session.RequestProvenanceStable, Bytes: 7}}}},
 		{Type: session.EvResult, RunID: "run-1", Result: &session.ResultPayload{Stop: session.StopEndTurn}},

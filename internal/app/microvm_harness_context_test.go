@@ -629,9 +629,13 @@ func TestMicroVMSelectedContextFreshnessAndReadEvidence(t *testing.T) {
 		t.Fatalf("stale list: %+v, %v", commands, err)
 	}
 	events := harnessRun(t, built, t.Context(), sess.ID, "/which")
+	var editID session.ToolCallID
 	denied := false
 	for _, ev := range events {
-		if ev.ToolResult != nil && ev.ToolResult.CallID == "unread-edit" {
+		if ev.ToolCall != nil && ev.ToolCall.Name == "Edit" {
+			editID = ev.ToolCall.ID
+		}
+		if ev.ToolResult != nil && editID != "" && ev.ToolResult.CallID == editID {
 			denied = ev.ToolResult.IsError && strings.Contains(ev.ToolResult.Content, "not read")
 		}
 	}

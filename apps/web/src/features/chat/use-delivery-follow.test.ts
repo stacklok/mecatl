@@ -27,7 +27,6 @@ describe("delivery follow", () => {
       delivery: { fireId: "fire-1", kind: "started", scheduleName: "Daily" },
       id: "live-start",
       role: "user",
-      tools: [{ args: "{}", id: "tool-1", name: "Read", output: "live detail" }],
     };
     const liveAnswer: ChatMessage = {
       content: "The scheduled answer",
@@ -253,6 +252,166 @@ describe("delivery follow", () => {
     const merged = reconcileRecordedMessages([prompt, partial], saved);
     expect(merged).toEqual([prompt, { ...partial, content: "The answer is complete" }]);
     expect(new Set(merged.map((message) => message.id)).size).toBe(2);
+  });
+
+  it.each(
+    [
+      {
+        liveText: "First.Second par",
+        second: "Second complete.",
+        final: "",
+        expected: "First.Second complete.",
+      },
+      {
+        liveText: "First.Second.Final.",
+        second: "Second.",
+        final: "Final.",
+        expected: "First.Second.Final.",
+      },
+      {
+        liveText: "First.Second.Fin",
+        second: "Second.",
+        final: "Final.",
+        expected: "First.Second.Final.",
+      },
+      { first: "", liveText: "Final.", second: "", final: "Final.", expected: "Final." },
+      { liveText: "First.First.", second: "First.", final: "", expected: "First.First." },
+    ].flatMap((example) => [true, false].map((grouped) => ({ ...example, grouped }))),
+  )(
+    "reconciles canonical anchored text without synthetic boundaries: $liveText (live grouped: $grouped)",
+    ({ first = "First.", liveText, second, final, expected, grouped }) => {
+      const a = { id: "engine-a", name: "Read", args: "{}" };
+      const b = { ...a, id: "engine-b" };
+      const live: ChatMessage = {
+        id: "live",
+        role: "assistant",
+        content: liveText,
+        tools: [a, b],
+        reasoning: "Live reasoning",
+        stopReason: "end_turn",
+        turnStat: "Live stat",
+        authorizations: [
+          {
+            authorizationId: "auth-b",
+            callId: b.id,
+            displayName: "Server",
+            runId: "run-a",
+            sessionId: "chat-a",
+            status: "pending",
+          },
+        ],
+      };
+      const current = grouped
+        ? [live]
+        : [
+            { ...live, id: "live-a", content: first, tools: [a] },
+            { ...live, id: "live-b", content: liveText.slice(first.length), tools: [b] },
+          ];
+      const savedCalls: ChatMessage[] = [
+        {
+          id: "saved-a",
+          role: "assistant",
+          content: first,
+          tools: [{ ...a, output: "A result", isError: false }],
+        },
+        {
+          id: "saved-b",
+          role: "assistant",
+          content: second,
+          tools: [{ ...b, output: "B result", isError: true }],
+        },
+      ];
+      const saved: ChatMessage[] = [
+        ...(grouped
+          ? savedCalls
+          : [
+              {
+                id: "saved-ab",
+                role: "assistant",
+                content: first + second,
+                tools: savedCalls.flatMap((message) => message.tools ?? []),
+              },
+            ]),
+        ...(final ? [{ id: "saved-final", role: "assistant", content: final }] : []),
+      ];
+      const merged = reconcileRecordedMessages(current, saved);
+      const repeated = reconcileRecordedMessages(merged, saved);
+      for (const messages of [merged, repeated]) {
+        expect(messages.map(({ content }) => content).filter(Boolean)).toEqual([expected]);
+        expect(messages.map(({ id }) => id)).toEqual(current.map(({ id }) => id));
+        expect(messages.flatMap((message) => message.tools ?? [])).toEqual(
+          savedCalls.flatMap((message) => message.tools ?? []),
+        );
+        for (const message of messages) {
+          expect(message.reasoning).toBe(live.reasoning);
+          expect(message.stopReason).toBe(live.stopReason);
+          expect(message.turnStat).toBe(live.turnStat);
+          expect(message.authorizations).toBe(live.authorizations);
+        }
+      }
+      expect(repeated).toBe(merged);
+    },
+  );
+
+  it.each(
+    ["user", "notice", "assistant"].flatMap((role) =>
+      ["First.", ""].map((prefix) => ({ role, prefix })),
+    ),
+  )(
+    "does not cross an unrelated $role boundary after a canonical anchor (prefix: $prefix)",
+    ({ role, prefix }) => {
+      const tool = { id: "engine-a", name: "Read", args: "{}" };
+      const live: ChatMessage = {
+        id: "live",
+        role: "assistant",
+        content: `${prefix}Final.`,
+        tools: [tool],
+        reasoning: "Live reasoning",
+      };
+      const boundary: ChatMessage = { id: "boundary", role, content: "Unrelated message" };
+      const final = { id: "final", role: "assistant", content: "Final." };
+      const saved = [{ ...live, id: "saved", content: prefix }, boundary, final];
+      const merged = reconcileRecordedMessages([live], saved);
+      expect(merged).toEqual([live, boundary, final]);
+      expect(reconcileRecordedMessages(merged, saved)).toBe(merged);
+    },
+  );
+
+  it("retains live text and invocations not yet covered by the saved snapshot", () => {
+    const a = { id: "engine-a", name: "Read", args: "{}" };
+    const b = { ...a, id: "engine-b" };
+    const live: ChatMessage = {
+      id: "live",
+      role: "assistant",
+      content: "Live first.Live second.",
+      tools: [a, b],
+    };
+    const saved = [{ ...live, id: "saved-a", content: "Saved first.", tools: [a] }];
+    const merged = reconcileRecordedMessages([live], saved);
+    expect(merged).toEqual([live]);
+    expect(reconcileRecordedMessages(merged, saved)).toBe(merged);
+  });
+
+  it("does not consume a text-only row across another canonical invocation", () => {
+    const a = { id: "engine-a", name: "Read", args: "{}" };
+    const other = { ...a, id: "other-run-call" };
+    const live: ChatMessage = {
+      id: "live",
+      role: "assistant",
+      content: "First.Final.",
+      tools: [a],
+    };
+    const otherMessage: ChatMessage = {
+      id: "other",
+      role: "assistant",
+      content: "",
+      tools: [other],
+    };
+    const final = { id: "final", role: "assistant", content: "Final." };
+    const saved = [{ ...live, id: "saved", content: "First." }, otherMessage, final];
+    const merged = reconcileRecordedMessages([live], saved);
+    expect(merged).toEqual([live, otherMessage, final]);
+    expect(reconcileRecordedMessages(merged, saved)).toBe(merged);
   });
 
   it("checks only an idle, visible, connected row for the same open chat", () => {

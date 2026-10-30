@@ -28,7 +28,7 @@ func TestCrashBoundaryMatrixConvergesAfterEveryAtomicWriteStep(t *testing.T) {
 			}
 			partition := learning.SkillPartition{Principal: "principal", Project: "/project"}
 			bundle := learning.SkillBundle{Name: "recoverable", Description: "Recover a durable skill", Body: "1. Retry safely.\nDone when: stored."}
-			provenance := learning.SkillProvenance{ProposalIDs: []learning.ProposalID{"proposal-1"}, EvidenceRefs: []learning.EvidenceRef{{SessionID: session.SessionID("session-1"), Locator: learning.EvidenceMessage, Digest: strings.Repeat("a", 64)}}}
+			provenance := learning.SkillProvenance{ProposalIDs: []learning.ProposalID{"proposal-1"}, EvidenceRefs: []learning.EvidenceRef{{Protocol: learning.ReflectionEvidenceV2, SessionID: session.SessionID("session-1"), Locator: learning.EvidenceMessage, Digest: strings.Repeat("a", 64)}}}
 			if _, err = store.CreateDraft(context.Background(), partition, "agent", bundle, provenance); !errors.Is(err, injected) {
 				t.Fatalf("CreateDraft error = %v", err)
 			}
@@ -119,7 +119,7 @@ func createActiveVersion(t *testing.T, store *Store, partition learning.SkillPar
 	t.Helper()
 	ctx := context.Background()
 	bundle := learning.SkillBundle{Name: "rollback", Description: "Rollback safely", Body: body}
-	provenance := learning.SkillProvenance{ProposalIDs: []learning.ProposalID{learning.ProposalID("proposal-" + suffix)}, EvidenceRefs: []learning.EvidenceRef{{SessionID: session.SessionID("session-" + suffix), Locator: learning.EvidenceMessage, Digest: strings.Repeat("a", 64)}}}
+	provenance := learning.SkillProvenance{ProposalIDs: []learning.ProposalID{learning.ProposalID("proposal-" + suffix)}, EvidenceRefs: []learning.EvidenceRef{{Protocol: learning.ReflectionEvidenceV2, SessionID: session.SessionID("session-" + suffix), Locator: learning.EvidenceMessage, Digest: strings.Repeat("a", 64)}}}
 	value, err := store.CreateDraft(ctx, partition, "agent", bundle, provenance)
 	if err == nil {
 		value, err = store.RecordEvaluation(ctx, partition, "agent", value.ID, value.Version, value.Revision, learning.SkillEvaluation{Verdict: learning.EvaluationPass, FixtureIDs: []string{"fixture"}})

@@ -154,8 +154,12 @@ func TestACPShellLessEnvironmentStaleShellCallIsHonestToolError(t *testing.T) {
 		memfs.NewWorkspace(cfg.Workspace), memledger.New(), nil)
 	run := eng.Run(context.Background(), sess, shellLessEnv, agent.RunRequest{Text: "run echo hi"})
 	var sawNoShell bool
+	var callID session.ToolCallID
 	for ev := range run.Events() {
-		if ev.Type == session.EvToolResult && ev.ToolResult != nil && ev.ToolResult.CallID == "b1" {
+		if ev.ToolCall != nil && ev.ToolCall.Name == "Shell" {
+			callID = ev.ToolCall.ID
+		}
+		if ev.Type == session.EvToolResult && ev.ToolResult != nil && ev.ToolResult.CallID == callID {
 			if ev.ToolResult.IsError && strings.Contains(ev.ToolResult.Content, "no shell available") {
 				sawNoShell = true
 			}

@@ -73,7 +73,7 @@ func (l *learningEvidenceLoader) loadForExecution(ctx context.Context, partition
 	}
 
 	sess, err := l.sessions.Load(ctx, provenance.Source.SessionID)
-	if err != nil || sess == nil || sess.ID != provenance.Source.SessionID ||
+	if err != nil || sess == nil || !sess.LearningEligible() || sess.ID != provenance.Source.SessionID ||
 		sess.Owner != nil && !sess.Owner.IdentityWellFramed() {
 		return unavailable()
 	}
@@ -94,6 +94,8 @@ func (l *learningEvidenceLoader) loadForExecution(ctx context.Context, partition
 		authority = &bound
 	}
 	reconstructed, err := eventsource.Fold(eventsource.SessionMeta{
+		LearningEligible:    sess.LearningEligible(),
+		Incarnation:         sess.Incarnation(),
 		Owner:               sess.Owner.Clone(),
 		Authority:           authority,
 		ID:                  sess.ID,
@@ -125,7 +127,7 @@ func (l *learningEvidenceLoader) loadForExecution(ctx context.Context, partition
 		return unavailable()
 	}
 
-	trajectory := learning.NewTrajectory(sess.ID, workspace, terminal.Stop, terminal.Usage, reconstructed.Conversation.Messages)
+	trajectory := learning.NewSessionTrajectory(reconstructed, workspace, terminal.Stop, terminal.Usage)
 	trajectory.RunID = string(provenance.Source.RunID)
 	trajectory.Kind = sess.Kind
 	trajectory.Counters = reconstructed.Counters
@@ -157,7 +159,7 @@ func (l *learningEvidenceLoader) loadForExecution(ctx context.Context, partition
 	if provenance.Class == learning.AdmissionHostRequested {
 		signals = append(signals, learning.Signal{Kind: learning.SignalHostRequested})
 	}
-	input = learning.NewInput(trajectory, runEvents, signals, nil)
+	input.Signals = signals
 	projection, err := learning.ProjectInput(input)
 	if err != nil {
 		return unavailable()
@@ -173,7 +175,6 @@ func (l *learningEvidenceLoader) readExactRun(ctx context.Context, source learni
 	seenRun, leftRun, seenTerminal := false, false, false
 	compactionPending, archiveOK := false, false
 	read := 0
-
 	consume := func(event session.Event) (done, valid bool) {
 		if event.RunID != string(source.RunID) {
 			if seenRun && event.RunID != "" {

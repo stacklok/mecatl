@@ -15,7 +15,7 @@ describe("session guardrail diagnostics", () => {
     const transport = createRouterTransport((router) => {
       router.service(HarnessService, {
         createSession: () => ({ sessionId: "session-1" }),
-        getCompatibilityInfo: () => ({ apiMajor: 1, capabilities: {}, features: ["server_info"] }),
+        getCompatibilityInfo: () => ({ apiMajor: 2, capabilities: {}, features: ["server_info"] }),
         getGuardrailReviewDetail: (request, context) => {
           calls.push({
             method: "GetGuardrailReviewDetail",
@@ -82,7 +82,7 @@ describe("session guardrail diagnostics", () => {
         const path = new URL(String(input)).pathname;
         paths.push(path);
         if (path === "/v1/compatibility") {
-          return Response.json({ api_major: 1, capabilities: {}, features: ["server_info"] });
+          return Response.json({ api_major: 2, capabilities: {}, features: ["server_info"] });
         }
         if (path === "/v1/sessions") {
           return Response.json({ session_id: "session-1" }, { status: 201 });

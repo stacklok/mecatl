@@ -21,7 +21,7 @@ func TestContextualGuardrails_ApprovalOriginReplay(t *testing.T) {
 	if err := sess.BeginTurn(); err != nil {
 		t.Fatal(err)
 	}
-	if err := sess.RecordAssistant(session.NewAssistantMessage("", "", []session.ToolCall{call})); err != nil {
+	if err := sess.RecordAssistant(session.NewAssistantMessage("", []session.ToolCall{call})); err != nil {
 		t.Fatal(err)
 	}
 	for _, origin := range []session.ApprovalOrigin{session.ApprovalOriginUnknown, "future", session.ApprovalOriginHookGuardrail, session.ApprovalOriginPlan, session.ApprovalOriginPermission} {

@@ -376,9 +376,9 @@ func TestScheduleTool_MutatingCreateGatedByPlanMode(t *testing.T) {
 	var deny, create *session.ToolResult
 	for i := range results {
 		switch results[i].CallID {
-		case "c1":
+		case boundCallID(t, sess, "c1"):
 			deny = &results[i]
-		case "c2":
+		case boundCallID(t, sess, "c2"):
 			create = &results[i]
 		}
 	}

@@ -96,11 +96,13 @@ func TestExactChildApprovalUsesVerdictCaller(t *testing.T) {
 	}
 	recorder := server.NewRunEventRecorder(context.WithoutCancel(starter), svc, sess.ID)
 	var askID string
+	var childCall session.ToolCallID
 	for ev := range run.Events() {
 		recorder.Observe(ev)
 		if ev.Type == session.EvPermissionAsk && ev.Ask != nil {
 			askID = ev.Ask.AskID
-			if ev.RunID != run.RunID() || ev.Ask.Call != "collision" {
+			childCall = ev.Ask.Call
+			if ev.RunID != run.RunID() || childCall == "" || childCall == "collision" {
 				t.Fatalf("surfaced ask = %+v, run = %q", ev.Ask, ev.RunID)
 			}
 			break
@@ -121,7 +123,7 @@ func TestExactChildApprovalUsesVerdictCaller(t *testing.T) {
 	assertExactApprovalActor(t, log, sess.ID, run.RunID(), askID, bob)
 	for _, ev := range readEventLog(t, log, sess.ID) {
 		if ev.Type == session.EvApproval && ev.Approval != nil && ev.Approval.AskID == askID {
-			if ev.Approval.Call != "" || ev.Approval.Tool != "Shell" || !ev.Approval.AllowAlways {
+			if ev.Approval.Call != childCall || ev.Approval.Tool != "Shell" || !ev.Approval.AllowAlways {
 				t.Fatalf("unsafe child approval correlation: %+v", ev.Approval)
 			}
 		}

@@ -29,6 +29,25 @@ func TestNoticeMutationChecksKindAndMaintainsCallIndex(t *testing.T) {
 	}
 }
 
+func TestNoticeArtifactsAreDetachedAndNeverToolTargets(t *testing.T) {
+	var c Conversation
+	input := []Artifact{{Kind: "image", MIMEType: "image/png", Data: []byte{1, 2}, URL: "https://example.invalid/image"}}
+	c.Notices().AddNoticeWithArtifacts("historical output", input)
+	input[0].Data[0] = 9
+	input[0].URL = "changed"
+	snapshot := c.SnapshotAt(0).Payload.(NoticeCardSnapshot)
+	if snapshot.Artifacts[0].Data[0] != 1 || snapshot.Artifacts[0].URL != "https://example.invalid/image" {
+		t.Fatal("notice retained mutable source media")
+	}
+	snapshot.Artifacts[0].Data[0] = 8
+	if c.SnapshotAt(0).Payload.(NoticeCardSnapshot).Artifacts[0].Data[0] != 1 {
+		t.Fatal("notice snapshot aliases retained media")
+	}
+	if c.Tools().Resolve("", ToolResult{Body: "wrong"}) || c.Tools().Resolve("historical output", ToolResult{Body: "wrong"}) {
+		t.Fatal("notice became an invocation target")
+	}
+}
+
 func TestPlainCardsExposeEveryKind(t *testing.T) {
 	var c Conversation
 	plain := c.Notices()

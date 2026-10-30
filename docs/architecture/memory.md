@@ -122,6 +122,15 @@ ID, and body-only learned skills published per caller and project through
 or skill assets. A project's settings can lower learning autonomy or require `evaluated`
 activation; they can never raise either.
 
+### Evidence identity and retained sources
+
+New evidence uses `reflection-evidence/v2` with canonical invocation identity.
+Only current protocol evidence can enter learning verification and promotion. A
+session converted from `/1` remains permanently ineligible, and a current snapshot
+without a positive persisted eligibility value is also ineligible. Frozen older
+evidence, attempts, and proposals are unavailable rather than reconstructed from
+legacy coordinates or digests.
+
 ### Failure modes
 
 - Missing, unauthorized, mismatched, or compacted-away evidence ends the attempt as

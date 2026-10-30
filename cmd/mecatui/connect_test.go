@@ -1005,7 +1005,7 @@ func TestRestartConnectRejectsUnknownAction(t *testing.T) {
 }
 
 func TestConnectRestartCompatibilityFailureReopensSafeRecovery(t *testing.T) {
-	compatibilityErr := startupCompatibilityCheck(t, 2)
+	compatibilityErr := startupCompatibilityCheck(t, 3)
 	invalidErr := startupCompatibilityCheck(t, 0)
 	for _, tc := range []struct {
 		name     string
