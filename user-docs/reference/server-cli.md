@@ -714,8 +714,10 @@ Usage: mecak8s [flags]
         broker-as1-issuer
   --identity-broker-as1-upstream-allow-private-addresses
         Let AS-1 reach an upstream identity provider at a private or link-local
-        address, such as an in-cluster Service. Does not add CA trust; see --identity-
-        broker-as1-upstream-ca-file
+        address, such as an in-cluster Service. Applies to every request AS-1 makes to
+        the upstream identity provider (discovery, the endpoints it discovers, and
+        redirects), not just the issuer host. Requires --identity-broker-as1-upstream-
+        ca-file
   --identity-broker-as1-upstream-ca-file string
         PEM CA bundle AS-1 trusts, beside the system roots, for the upstream identity
         provider's TLS certificate. Does not admit private addresses; see --identity-

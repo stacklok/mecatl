@@ -341,7 +341,9 @@ identityBroker:
         secretName: ""
         key: ""
       # Let AS-1 reach an upstream at a private or link-local address, such as an
-      # in-cluster Service. It adds no CA trust: see caSecret.
+      # in-cluster Service. Applies to every request AS-1 makes to the upstream
+      # (discovery, the endpoints it discovers, and redirects), not just the
+      # issuer host. Requires caSecret.
       allowPrivateAddresses: false
 
 tls:

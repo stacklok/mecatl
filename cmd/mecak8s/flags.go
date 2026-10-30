@@ -557,7 +557,7 @@ func parseFlags(argv []string) (config, error) {
 	fs.StringVar(&cfg.as1.upstreamClientID, "identity-broker-as1-upstream-client-id", "", "AS-1's client ID at the upstream identity provider, registered with the redirect URI ISSUER/oauth/callback. Required with --identity-broker-as1-issuer")
 	fs.StringVar(&cfg.as1.upstreamClientSecretFile, "identity-broker-as1-upstream-client-secret-file", "", "File holding AS-1's client secret at the upstream identity provider. Empty makes AS-1 a public client there")
 	fs.StringVar(&cfg.as1.upstreamCAFile, "identity-broker-as1-upstream-ca-file", "", "PEM CA bundle AS-1 trusts, beside the system roots, for the upstream identity provider's TLS certificate. Does not admit private addresses; see --identity-broker-as1-upstream-allow-private-addresses")
-	fs.BoolVar(&cfg.as1.upstreamAllowPrivate, "identity-broker-as1-upstream-allow-private-addresses", false, "Let AS-1 reach an upstream identity provider at a private or link-local address, such as an in-cluster Service. Does not add CA trust; see --identity-broker-as1-upstream-ca-file")
+	fs.BoolVar(&cfg.as1.upstreamAllowPrivate, "identity-broker-as1-upstream-allow-private-addresses", false, "Let AS-1 reach an upstream identity provider at a private or link-local address, such as an in-cluster Service. Applies to every request AS-1 makes to the upstream identity provider (discovery, the endpoints it discovers, and redirects), not just the issuer host. Requires --identity-broker-as1-upstream-ca-file")
 	fs.StringVar(&cfg.identityBrokerSubjectClaim, "identity-broker-subject-claim", "", "Upstream identity provider ID-token claim that names the company identity, the same for a user in every application: oid for Entra ID, whose sub differs per application, or sub for a provider whose sub does not. Required with, and only allowed with, --identity-broker-as1-issuer")
 
 	// Headless telemetry (issue #343): OPT-IN. --metrics-addr mounts a
@@ -777,6 +777,8 @@ func resolveAS1Flags(cfg *config) error {
 		return errors.New("--identity-broker-as1-issuer must be an https URL with a host and no credentials, query, or fragment")
 	case !strings.HasPrefix(as1.upstreamIssuer, "https://") || !validIssuerIdentifier(as1.upstreamIssuer):
 		return errors.New("--identity-broker-as1-upstream-issuer must be an https URL with a host and no credentials, query, or fragment")
+	case as1.upstreamAllowPrivate && as1.upstreamCAFile == "":
+		return errors.New("--identity-broker-as1-upstream-allow-private-addresses requires --identity-broker-as1-upstream-ca-file")
 	case oidc.Audience == "":
 		return errors.New("--identity-broker-as1-issuer requires --oidc-audience, the Mecatl API audience AS-1 issues access tokens for")
 	case !as1AudienceURI(oidc.Audience):

@@ -123,6 +123,7 @@ func TestIdentityBrokerAS1FlagRules(t *testing.T) {
 		{name: "http issuer", args: with("--identity-broker-as1-issuer=http://mecatl.example/as1"), want: "--identity-broker-as1-issuer must be an https URL"},
 		{name: "issuer with a query", args: with("--identity-broker-as1-issuer=https://mecatl.example/as1?x=1"), want: "--identity-broker-as1-issuer must be an https URL"},
 		{name: "http upstream issuer", args: with("--identity-broker-as1-upstream-issuer=http://idp.example"), want: "--identity-broker-as1-upstream-issuer must be an https URL"},
+		{name: "upstream private addresses without the upstream CA", args: with("--identity-broker-as1-upstream-allow-private-addresses"), want: "--identity-broker-as1-upstream-allow-private-addresses requires --identity-broker-as1-upstream-ca-file"},
 		{name: "without the audience", args: without("--oidc-audience"), want: "requires --oidc-audience"},
 		{name: "plain-word audience", args: with("--oidc-audience=mecatl"), want: "--oidc-audience must be an absolute http or https URL"},
 		{name: "audience without a host", args: with("--oidc-audience=https:///api"), want: "--oidc-audience must be an absolute http or https URL"},
@@ -179,7 +180,6 @@ func TestIdentityBrokerAS1FlagRules(t *testing.T) {
 		wantPrivate bool
 	}{
 		{args: []string{"--identity-broker-as1-upstream-ca-file=/ca/idp.pem"}, wantCA: "/ca/idp.pem"},
-		{args: []string{"--identity-broker-as1-upstream-allow-private-addresses"}, wantPrivate: true},
 		{args: []string{"--identity-broker-as1-upstream-ca-file=/ca/idp.pem", "--identity-broker-as1-upstream-allow-private-addresses"}, wantCA: "/ca/idp.pem", wantPrivate: true},
 	} {
 		cfg, err = parseFlags(with(c.args...))

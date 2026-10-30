@@ -837,6 +837,8 @@ func TestMecak8sHelmChart_IdentityBrokerAS1(t *testing.T) {
 		"signing key Secret without key":   {with("identityBroker.as1.signingKey.secretName=as1-signing"), "identityBroker.as1.signingKey.key is required"},
 		"client secret key without name":   {with("identityBroker.as1.upstream.clientSecret.key=client-secret"), "identityBroker.as1.upstream.clientSecret.secretName is required"},
 		"upstream CA Secret without key":   {with("identityBroker.as1.upstream.caSecret.secretName=as1-upstream-ca"), "identityBroker.as1.upstream.caSecret.key is required"},
+		"upstream CA key without name":     {with("identityBroker.as1.upstream.caSecret.key=ca.crt"), "identityBroker.as1.upstream.caSecret.secretName is required"},
+		"private addresses without CA":     {with("identityBroker.as1.upstream.allowPrivateAddresses=true"), "identityBroker.as1.upstream.allowPrivateAddresses requires identityBroker.as1.upstream.caSecret"},
 		"upstream CA without issuer":       {with("identityBroker.as1.issuer=", "identityBroker.subjectClaim=", "identityBroker.as1.tuiClientID=", "identityBroker.as1.upstream.issuer=", "identityBroker.as1.upstream.clientID=", "identityBroker.as1.upstream.caSecret.secretName=ca", "identityBroker.as1.upstream.caSecret.key=ca.crt"), "identityBroker.as1 values require identityBroker.as1.issuer"},
 		"private addresses without issuer": {with("identityBroker.as1.issuer=", "identityBroker.subjectClaim=", "identityBroker.as1.tuiClientID=", "identityBroker.as1.upstream.issuer=", "identityBroker.as1.upstream.clientID=", "identityBroker.as1.upstream.allowPrivateAddresses=true"), "identityBroker.as1 values require identityBroker.as1.issuer"},
 		"two replicas":                     {with("replicaCount=2"), "replicaCount"},

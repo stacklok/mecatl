@@ -55,7 +55,7 @@ as the `mecak8s-openrouter` Secret, from standard input.
 ## Names and ports
 
 `hosts-add` aliases two names to `127.0.0.1`, marked `# mecatl-idbroker`;
-`hosts-remove` deletes only those lines (backup `/etc/hosts.bak`) and
+`hosts-remove` deletes only those lines (backup `/etc/hosts.mecatl-idbroker.bak`) and
 `hosts-status` shows them. The names are the in-cluster Service names, and each
 Service port equals its host port, so the issuer URLs are the same for the
 browser, `mecatui`, and AS-1 inside the cluster:

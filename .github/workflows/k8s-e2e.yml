@@ -51,11 +51,9 @@ on:
       - internal/identitybroker/**
       - internal/app/identitybroker.go
       - internal/adapter/clientauth/**
-      - internal/adapter/server/authn.go
-      - internal/adapter/server/service.go
-      - internal/adapter/server/errors.go
-      - internal/adapter/server/grpc.go
-      - internal/adapter/server/http.go
+      - internal/adapter/server/**
+      - authn/oidc/**
+      - mcp/oauthlogin/**
       - deploy/helm/mecak8s/**
       - deploy/helm/mecatl-execution/**
       - cmd/mecatl-execution-provider/**
@@ -88,11 +86,9 @@ on:
       - internal/identitybroker/**
       - internal/app/identitybroker.go
       - internal/adapter/clientauth/**
-      - internal/adapter/server/authn.go
-      - internal/adapter/server/service.go
-      - internal/adapter/server/errors.go
-      - internal/adapter/server/grpc.go
-      - internal/adapter/server/http.go
+      - internal/adapter/server/**
+      - authn/oidc/**
+      - mcp/oauthlogin/**
       - deploy/helm/mecak8s/**
       - deploy/helm/mecatl-execution/**
       - cmd/mecatl-execution-provider/**
