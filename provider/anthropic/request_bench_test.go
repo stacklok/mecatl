@@ -56,14 +56,14 @@ type sdkParamsSink = any
 // (assistant-with-reasoning-and-tool-call, tool-result, assistant-text, user)
 // cycles. It is deterministic and allocation-stable across calls (built once,
 // outside the measured loop).
-func benchConversation(n int) []session.Message {
-	msgs := make([]session.Message, 0, n)
-	msgs = append(msgs, session.NewUserMessage(
+func benchConversation(n int) []port.LLMMessage {
+	msgs := make([]port.LLMMessage, 0, n)
+	msgs = append(msgs, userMessage(
 		"Please analyse the repository and summarise the architecture across the engine and adapter layers."))
 
 	// A representative Anthropic reasoning replay blob (one thinking block with a
 	// signature), packed the way the real turn does.
-	reasoning := packReasoning([]reasoningBlock{{
+	reasoning := packReplay([]reasoningBlock{{
 		Kind:      reasoningKindThinking,
 		Thinking:  "I should inspect the layering rules and the port interfaces before answering, then cross-check the adapters.",
 		Signature: "c2lnbmF0dXJlLWJsb2ItZm9yLWJlbmNobWFyay1vbmx5",
@@ -71,14 +71,14 @@ func benchConversation(n int) []session.Message {
 
 	i := 0
 	for len(msgs) < n {
-		callID := session.ToolCallID(fmt.Sprintf("call_%d", i))
+		callID := session.ProviderCallID(fmt.Sprintf("call_%d", i))
 		switch i % 4 {
 		case 0:
 			// Assistant turn: reasoning + a tool call (the thinking-before-tool_use shape).
-			msgs = append(msgs, session.Message{
-				Role:      session.RoleAssistant,
-				Reasoning: reasoning,
-				ToolCalls: []session.ToolCall{{
+			msgs = append(msgs, port.LLMMessage{
+				Role:   session.RoleAssistant,
+				Replay: reasoning,
+				ToolCalls: []port.LLMToolCall{{
 					ID:   callID,
 					Name: "Read",
 					Args: json.RawMessage(fmt.Sprintf(`{"path":"engine/agent/loop_%d.go","offset":0,"limit":200}`, i)),
@@ -86,20 +86,20 @@ func benchConversation(n int) []session.Message {
 			})
 		case 1:
 			// Tool result (rides a user-role tool_result block).
-			res := session.NewToolResult(session.ToolCallID(fmt.Sprintf("call_%d", i-1)),
+			res := toolResult(session.ProviderCallID(fmt.Sprintf("call_%d", i-1)),
 				"package agent\n\n// a representative chunk of file content returned by the Read tool;\n"+
 					"// real results are token-shaped and can run to several KB on a large file.\n"+
 					"func run() error { return nil }\n")
-			msgs = append(msgs, session.Message{Role: session.RoleTool, ToolResult: &res})
+			msgs = append(msgs, port.LLMMessage{Role: session.RoleTool, ToolResult: &res})
 		case 2:
 			// Assistant visible text turn.
-			msgs = append(msgs, session.Message{
+			msgs = append(msgs, port.LLMMessage{
 				Role: session.RoleAssistant,
 				Text: "I read the file; it defines the engine loop entry point. Continuing the survey.",
 			})
 		default:
 			// A follow-up user instruction.
-			msgs = append(msgs, session.NewUserMessage(
+			msgs = append(msgs, userMessage(
 				"Good. Now also check the governance evaluator and how permissions resolve."))
 		}
 		i++

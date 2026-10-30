@@ -129,7 +129,7 @@ func buildTools(specs []tool.ToolSpec) ([]oai.ChatCompletionToolUnionParam, erro
 // a content-part list (text + image_url); an assistant message maps its text and
 // its tool calls (function tool_calls); a tool message maps to a role:"tool"
 // message keyed by tool_call_id.
-func buildMessages(sys prompt.Layered, msgs []session.Message) ([]oai.ChatCompletionMessageParamUnion, error) {
+func buildMessages(sys prompt.Layered, msgs []port.LLMMessage) ([]oai.ChatCompletionMessageParamUnion, error) {
 	out := make([]oai.ChatCompletionMessageParamUnion, 0, len(msgs)+1)
 	if instr := sys.Render(); instr != "" {
 		out = append(out, oai.SystemMessage(instr))
@@ -165,7 +165,7 @@ func buildMessages(sys prompt.Layered, msgs []session.Message) ([]oai.ChatComple
 // part (only when Text is non-empty) followed by one image_url part per image
 // Part (inline bytes as a base64 data URL, or a passthrough URL). Audio is an
 // honest hard error — the provider declares Audio:false.
-func userContent(m session.Message) ([]oai.ChatCompletionContentPartUnionParam, error) {
+func userContent(m port.LLMMessage) ([]oai.ChatCompletionContentPartUnionParam, error) {
 	parts := make([]oai.ChatCompletionContentPartUnionParam, 0, len(m.Parts)+1)
 	if m.Text != "" {
 		parts = append(parts, oai.TextContentPart(m.Text))
@@ -190,9 +190,9 @@ func userContent(m session.Message) ([]oai.ChatCompletionContentPartUnionParam, 
 // assistantMessage maps an assistant turn to a Chat Completions assistant message:
 // its visible text (if any) as the content, and each requested tool call as a
 // function tool_call. An empty Arguments is sent as "{}" so a no-arg call replays
-// as valid JSON. Reasoning/phase are intentionally NOT replayed (Chat Completions
-// is stateless across turns).
-func assistantMessage(m session.Message) oai.ChatCompletionMessageParamUnion {
+// as valid JSON. Opaque replay and phase are intentionally NOT replayed; Chat
+// Completions reasoning is display-only.
+func assistantMessage(m port.LLMMessage) oai.ChatCompletionMessageParamUnion {
 	asst := oai.ChatCompletionAssistantMessageParam{}
 	if m.Text != "" {
 		asst.Content.OfString = oai.String(m.Text)
@@ -225,8 +225,8 @@ func assistantMessage(m session.Message) oai.ChatCompletionMessageParamUnion {
 // with the openai/anthropic adapters modulo that API limitation). A result with
 // no Parts (or none surviving) falls back to the plain Content string —
 // byte-identical to the pre-Parts shape and the common NewToolResult path.
-func toolMessage(tr session.ToolResult) oai.ChatCompletionMessageParamUnion {
-	blocks := port.RouteToolResultParts(tr, port.ProviderCapabilities{EmbeddedContext: true})
+func toolMessage(tr port.LLMToolResult) oai.ChatCompletionMessageParamUnion {
+	blocks := port.RouteToolResultParts(tr.Parts, port.ProviderCapabilities{EmbeddedContext: true})
 	if len(blocks) == 0 {
 		return oai.ToolMessage(tr.Content, string(tr.CallID))
 	}

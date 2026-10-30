@@ -12,11 +12,11 @@ import (
 // toolResultInputItems drives a one-tool-message request through the method
 // buildParams (so the per-session caps thread in) and decodes the marshalled
 // input item list into a generic slice for shape assertions.
-func toolResultInputItems(t *testing.T, p *Provider, tr session.ToolResult) []map[string]any {
+func toolResultInputItems(t *testing.T, p *Provider, tr port.LLMToolResult) []map[string]any {
 	t.Helper()
 	params, err := p.buildParams(port.LLMRequest{
 		Model:    "gpt-5.2",
-		Messages: []session.Message{session.NewToolMessage(tr)},
+		Messages: []port.LLMMessage{toolMessage(tr)},
 	})
 	if err != nil {
 		t.Fatalf("buildParams: %v", err)
@@ -38,7 +38,7 @@ func toolResultInputItems(t *testing.T, p *Provider, tr session.ToolResult) []ma
 // never a content list — regardless of caps.
 func TestToolResultStringOnlyUnchanged(t *testing.T) {
 	p := New(WithAPIKey("sk-test"), WithProviderCapabilities(port.ProviderCapabilities{Image: true}))
-	items := toolResultInputItems(t, p, session.NewToolResult("call_1", "package main"))
+	items := toolResultInputItems(t, p, toolResult("call_1", "package main"))
 	if len(items) != 1 {
 		t.Fatalf("items = %d, want 1: %v", len(items), items)
 	}
@@ -64,7 +64,7 @@ func TestToolResultStringOnlyUnchanged(t *testing.T) {
 // input_image), NOT the legacy single string.
 func TestToolResultWithPartsMapsToMultimodal(t *testing.T) {
 	imgData := []byte{0x89, 0x50, 0x4e, 0x47}
-	tr := session.NewToolResultWithParts("call_1", "fallback", []session.Content{
+	tr := toolResultWithParts("call_1", "fallback", []session.Content{
 		session.NewTextBlock("screenshot follows"),
 		{BlockKind: session.BlockImage, Kind: session.MediaImage, MIMEType: "image/png", Data: imgData},
 	})
@@ -107,7 +107,7 @@ func TestToolResultWithPartsMapsToMultimodal(t *testing.T) {
 // omitted — the per-session intersection, NOT the static adapter caps, gates it.
 func TestToolResultWithPartsDropsImageWhenNoImageCap(t *testing.T) {
 	imgData := []byte{0x89, 0x50, 0x4e, 0x47}
-	tr := session.NewToolResultWithParts("call_1", "fallback", []session.Content{
+	tr := toolResultWithParts("call_1", "fallback", []session.Content{
 		session.NewTextBlock("screenshot follows"),
 		{BlockKind: session.BlockImage, Kind: session.MediaImage, MIMEType: "image/png", Data: imgData},
 	})
@@ -134,7 +134,7 @@ func TestToolResultWithPartsDropsImageWhenNoImageCap(t *testing.T) {
 // to the no-Parts path.
 func TestToolResultWithPartsAllDroppedFallsBackToString(t *testing.T) {
 	imgData := []byte{0x89, 0x50, 0x4e, 0x47}
-	tr := session.NewToolResultWithParts("call_1", "the image only", []session.Content{
+	tr := toolResultWithParts("call_1", "the image only", []session.Content{
 		{BlockKind: session.BlockImage, Kind: session.MediaImage, MIMEType: "image/png", Data: imgData},
 	})
 	p := New(WithAPIKey("sk-test"), WithProviderCapabilities(port.ProviderCapabilities{})) // text-only
@@ -164,20 +164,20 @@ func TestToolResultWithPartsAllDroppedFallsBackToString(t *testing.T) {
 func TestToolResultEmptyContentPoisonHealsToPlaceholder(t *testing.T) {
 	cases := []struct {
 		name string
-		tr   session.ToolResult
+		tr   port.LLMToolResult
 	}{
 		{
 			// The EXACT poison shape from the real session: empty Content, one empty
 			// text Part.
 			name: "empty-content-and-empty-text-part",
-			tr: session.NewToolResultWithParts("call_1", "", []session.Content{
+			tr: toolResultWithParts("call_1", "", []session.Content{
 				session.NewTextBlock(""),
 			}),
 		},
 		{
 			// Legacy no-Parts variant: empty Content, no typed Parts — same branch.
 			name: "empty-content-no-parts",
-			tr:   session.NewToolResult("call_1", ""),
+			tr:   toolResult("call_1", ""),
 		},
 	}
 	for _, tc := range cases {
@@ -203,7 +203,7 @@ func TestToolResultEmptyContentPoisonHealsToPlaceholder(t *testing.T) {
 			// content field — the exact string the provider 400'd on.
 			params, err := p.buildParams(port.LLMRequest{
 				Model:    "gpt-5.2",
-				Messages: []session.Message{session.NewToolMessage(tc.tr)},
+				Messages: []port.LLMMessage{toolMessage(tc.tr)},
 			})
 			if err != nil {
 				t.Fatalf("buildParams: %v", err)

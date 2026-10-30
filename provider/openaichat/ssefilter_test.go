@@ -166,7 +166,7 @@ func TestNewInstallsKeepaliveFilter(t *testing.T) {
 	p := New(WithAPIKey("test-key"), WithBaseURL(srv.URL))
 	seq, err := p.Stream(context.Background(), port.LLMRequest{
 		Model:    "glm-5.2",
-		Messages: []session.Message{{Role: session.RoleUser, Text: "hi"}},
+		Messages: []port.LLMMessage{{Role: session.RoleUser, Text: "hi"}},
 	})
 	if err != nil {
 		t.Fatalf("Stream: %v", err)

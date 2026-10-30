@@ -57,43 +57,44 @@ func benchToolSpecs() []tool.ToolSpec {
 // cycles. It is deterministic and allocation-stable across calls (built once,
 // outside the measured loop). The reasoning blob is the opaque encrypted_content
 // the OpenAI Responses adapter replays verbatim.
-func benchConversation(n int) []session.Message {
-	msgs := make([]session.Message, 0, n)
-	msgs = append(msgs, session.NewUserMessage(
+func benchConversation(n int) []port.LLMMessage {
+	msgs := make([]port.LLMMessage, 0, n)
+	msgs = append(msgs, userMessage(
 		"Please analyse the repository and summarise the architecture across the engine and adapter layers."))
 
 	const reasoning = "Z25jcnlwdGVkLXJlYXNvbmluZy1ibG9iLWZvci1iZW5jaG1hcmstb25seS1ub3QtcmVhbA=="
 
 	i := 0
 	for len(msgs) < n {
-		callID := session.ToolCallID(fmt.Sprintf("call_%d", i))
+		callID := session.ProviderCallID(fmt.Sprintf("call_%d", i))
 		switch i % 4 {
 		case 0:
 			// Assistant turn: reasoning replay blob + a function call.
-			msgs = append(msgs, session.Message{
-				Role:      session.RoleAssistant,
-				Reasoning: reasoning,
-				ToolCalls: []session.ToolCall{{
+			msgs = append(msgs, port.LLMMessage{
+				Role:   session.RoleAssistant,
+				Replay: packReplay(responsesReplay{Reasoning: []reasoningItem{{ID: fmt.Sprintf("rs_%d", i), Blob: reasoning}}}),
+				ToolCalls: []port.LLMToolCall{{
 					ID:     callID,
-					ItemID: fmt.Sprintf("fc_%d", i),
+					ItemID: session.ProviderItemID(fmt.Sprintf("fc_%d", i)),
 					Name:   "Read",
 					Args:   json.RawMessage(fmt.Sprintf(`{"path":"engine/agent/loop_%d.go","offset":0,"limit":200}`, i)),
 				}},
 			})
 		case 1:
-			res := session.NewToolResult(session.ToolCallID(fmt.Sprintf("call_%d", i-1)),
+			res := toolResult(session.ProviderCallID(fmt.Sprintf("call_%d", i-1)),
 				"package agent\n\n// a representative chunk of file content returned by the Read tool;\n"+
 					"// real results are token-shaped and can run to several KB on a large file.\n"+
 					"func run() error { return nil }\n")
-			msgs = append(msgs, session.Message{Role: session.RoleTool, ToolResult: &res})
+			msgs = append(msgs, port.LLMMessage{Role: session.RoleTool, ToolResult: &res})
 		case 2:
-			msgs = append(msgs, session.Message{
+			msgs = append(msgs, port.LLMMessage{
 				Role:          session.RoleAssistant,
 				Text:          "I read the file; it defines the engine loop entry point. Continuing the survey.",
+				Replay:        packReplay(responsesReplay{Phase: "commentary"}),
 				ProviderPhase: "commentary",
 			})
 		default:
-			msgs = append(msgs, session.NewUserMessage(
+			msgs = append(msgs, userMessage(
 				"Good. Now also check the governance evaluator and how permissions resolve."))
 		}
 		i++

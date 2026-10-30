@@ -36,12 +36,12 @@ func TestBuildParamsFullConversation(t *testing.T) {
 	req := port.LLMRequest{
 		System: prompt.Layered{StablePrefix: "You are a coding agent.", VolatileSuffix: "<env>x</env>"},
 		Model:  "glm-5.2",
-		Messages: []session.Message{
+		Messages: []port.LLMMessage{
 			{Role: session.RoleUser, Text: "weather in Paris?"},
-			{Role: session.RoleAssistant, ToolCalls: []session.ToolCall{
+			{Role: session.RoleAssistant, ToolCalls: []port.LLMToolCall{
 				{ID: "call_1", Name: "get_weather", Args: json.RawMessage(`{"city":"Paris"}`)},
 			}},
-			{Role: session.RoleTool, ToolResult: ptr(session.NewToolResult("call_1", "sunny, 21C"))},
+			{Role: session.RoleTool, ToolResult: ptr(port.LLMToolResult{CallID: "call_1", Content: "sunny, 21C"})},
 		},
 		Tools: []tool.ToolSpec{
 			{Name: "get_weather", Description: "Get weather", Schema: json.RawMessage(`{"type":"object","properties":{"city":{"type":"string"}},"required":["city"]}`)},
@@ -95,7 +95,7 @@ func TestBuildParamsFullConversation(t *testing.T) {
 // TestBuildParamsReasoningEffort proves xhigh is passed VERBATIM (no clamp to
 // high, unlike the openai Responses adapter) and an unknown token is omitted.
 func TestBuildParamsReasoningEffort(t *testing.T) {
-	req := port.LLMRequest{Model: "glm-5.2", Messages: []session.Message{{Role: session.RoleUser, Text: "hi"}}}
+	req := port.LLMRequest{Model: "glm-5.2", Messages: []port.LLMMessage{{Role: session.RoleUser, Text: "hi"}}}
 
 	if got := marshalParams(t, req, "xhigh"); got["reasoning_effort"] != "xhigh" {
 		t.Errorf("reasoning_effort = %v, want xhigh (no clamp)", got["reasoning_effort"])
@@ -117,7 +117,7 @@ func TestBuildParamsReasoningEffort(t *testing.T) {
 // TestBuildParamsMultimodal covers an image user part (data URL) and the audio
 // hard error.
 func TestBuildParamsMultimodal(t *testing.T) {
-	img := port.LLMRequest{Model: "m", Messages: []session.Message{{
+	img := port.LLMRequest{Model: "m", Messages: []port.LLMMessage{{
 		Role:  session.RoleUser,
 		Text:  "what is this?",
 		Parts: []session.Content{{Kind: session.MediaImage, MIMEType: "image/png", Data: []byte{0x1, 0x2}}},
@@ -130,7 +130,7 @@ func TestBuildParamsMultimodal(t *testing.T) {
 		t.Fatalf("user content parts = %v, want text+image list", um["content"])
 	}
 
-	audio := port.LLMRequest{Model: "m", Messages: []session.Message{{
+	audio := port.LLMRequest{Model: "m", Messages: []port.LLMMessage{{
 		Role:  session.RoleUser,
 		Parts: []session.Content{{Kind: session.MediaAudio, MIMEType: "audio/wav", Data: []byte{0x1}}},
 	}}}
@@ -145,11 +145,11 @@ func ptr[T any](v T) *T { return &v }
 // the tool message (F2) — text/resource/structured blocks flatten to text via
 // session.ToolBlockText rather than falling back to the plain Content string.
 func TestBuildParamsToolResultParts(t *testing.T) {
-	tr := session.NewToolResultWithParts("call_1", "PLAIN-FALLBACK", []session.Content{
+	tr := port.LLMToolResult{CallID: "call_1", Content: "PLAIN-FALLBACK", Parts: []session.Content{
 		{BlockKind: session.BlockText, Text: "block one"},
 		{BlockKind: session.BlockResourceLink, Title: "doc", URL: "https://x/y"},
-	})
-	req := port.LLMRequest{Model: "m", Messages: []session.Message{
+	}}
+	req := port.LLMRequest{Model: "m", Messages: []port.LLMMessage{
 		{Role: session.RoleTool, ToolResult: &tr},
 	}}
 	got := marshalParams(t, req, "")
@@ -170,8 +170,8 @@ func TestBuildParamsToolResultParts(t *testing.T) {
 // TestBuildParamsToolResultNoParts confirms the byte-identical fallback: a result
 // with no Parts uses the plain Content string.
 func TestBuildParamsToolResultNoParts(t *testing.T) {
-	tr := session.NewToolResult("call_2", "just text")
-	req := port.LLMRequest{Model: "m", Messages: []session.Message{
+	tr := port.LLMToolResult{CallID: "call_2", Content: "just text"}
+	req := port.LLMRequest{Model: "m", Messages: []port.LLMMessage{
 		{Role: session.RoleTool, ToolResult: &tr},
 	}}
 	got := marshalParams(t, req, "")

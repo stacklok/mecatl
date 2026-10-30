@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"iter"
 	"math"
 	"net/http"
@@ -384,6 +385,10 @@ func (p *Provider) Stream(ctx context.Context, req port.LLMRequest) (iter.Seq2[p
 				return
 			}
 			yield(port.Chunk{}, anthropicStreamErr(err, err.Error()))
+			return
+		}
+		if !st.done && ctx.Err() == nil {
+			yield(port.Chunk{}, fmt.Errorf("anthropic: stream ended without message_stop: %w", io.ErrUnexpectedEOF))
 		}
 	}, nil
 }
