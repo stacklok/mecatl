@@ -153,7 +153,7 @@ func driven(t *testing.T) *session.Session {
 		MaxTurns: 7, MaxToolCalls: 11, MaxConsecutiveFailures: 4,
 	}, time.Unix(1700000000, 0).UTC())
 	_ = s.BeginTurn()
-	_ = s.RecordAssistant(session.NewAssistantMessage("plan", "rsn", []session.ToolCall{
+	_ = s.RecordAssistant(session.NewAssistantMessage("plan", []session.ToolCall{
 		session.NewToolCall("c1", "Grep", json.RawMessage(`{"q":"foo"}`)),
 	}))
 	_ = s.RecordToolResults([]session.ToolResult{session.NewToolResult("c1", "hit")})
@@ -188,7 +188,12 @@ func TestCurrentSnapshotLatestWins(t *testing.T) {
 		t.Fatalf("Save#1: %v", err)
 	}
 	// Advance the session and save again.
-	_ = s.PauseForApproval(session.PendingAsk{AskID: "a1", Tool: "Shell", Reason: "approve"})
+	if err := s.RecordAssistant(session.NewAssistantMessage("next", []session.ToolCall{session.NewToolCall("c2", "Shell", nil)})); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.PauseForApproval(session.PendingAsk{AskID: "a1", Tool: "Shell", Call: "c2", Reason: "approve"}); err != nil {
+		t.Fatal(err)
+	}
 	if err := st.Save(ctx, s); err != nil {
 		t.Fatalf("Save#2: %v", err)
 	}
@@ -217,7 +222,10 @@ func TestResumePausedAwaitingSession(t *testing.T) {
 	ctx := context.Background()
 	st, _ := newStore(t)
 	s := driven(t)
-	ask := session.PendingAsk{AskID: "ask-9", Tool: "Edit", Args: json.RawMessage(`{"p":"f"}`), Reason: "write"}
+	if err := s.RecordAssistant(session.NewAssistantMessage("edit", []session.ToolCall{session.NewToolCall("c2", "Edit", json.RawMessage(`{"p":"f"}`))})); err != nil {
+		t.Fatal(err)
+	}
+	ask := session.PendingAsk{AskID: "ask-9", Tool: "Edit", Call: "c2", Args: json.RawMessage(`{"p":"f"}`), Reason: "write"}
 	if err := s.PauseForApproval(ask); err != nil {
 		t.Fatalf("PauseForApproval: %v", err)
 	}
@@ -510,7 +518,7 @@ func TestEventLogAppendReadCumulative(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read events file: %v", err)
 	}
-	if !strings.Contains(string(raw), `"v":"eventlog-json/1"`) {
+	if !strings.Contains(string(raw), `"v":"eventlog-json/2"`) {
 		t.Fatalf("events file missing the format tag: %s", raw)
 	}
 

@@ -146,7 +146,14 @@ func proposalPartitionValid(partition learning.ProposalPartition) bool {
 }
 
 func proposalEvidenceToProto(ref learning.EvidenceRef) *driverv1.ProposalEvidence {
-	wire := &driverv1.ProposalEvidence{SessionId: string(ref.SessionID), Locator: string(ref.Locator), Ordinal: int32(ref.Ordinal), ToolCallId: string(ref.ToolCallID), Digest: ref.Digest} // #nosec G115 -- evidence ordinal is protocol-bounded
+	if ref.ManifestIndex < 0 || ref.ManifestIndex >= learning.MaxInputMessages+learning.MaxInputEvents {
+		return &driverv1.ProposalEvidence{ManifestIndex: learning.MaxInputMessages + learning.MaxInputEvents}
+	}
+	wire := &driverv1.ProposalEvidence{SessionId: string(ref.SessionID), Locator: string(ref.Locator), Ordinal: int32(ref.Ordinal), ToolCallId: string(ref.ToolCallID), Digest: ref.Digest, Protocol: string(ref.Protocol), AggregateDigest: ref.AggregateDigest, ManifestIndex: uint32(ref.ManifestIndex)} // #nosec G115 -- evidence ordinal is protocol-bounded
+	if ref.OriginalMessage != nil {
+		value := int64(*ref.OriginalMessage)
+		wire.OriginalMessage = &value
+	}
 	if ref.EventSeq != nil {
 		wire.EventSeq = ref.EventSeq
 	}
@@ -154,7 +161,7 @@ func proposalEvidenceToProto(ref learning.EvidenceRef) *driverv1.ProposalEvidenc
 }
 
 func proposalEvidenceFromProto(wire *driverv1.ProposalEvidence) learning.EvidenceRef {
-	if wire == nil {
+	if wire == nil || wire.GetManifestIndex() >= learning.MaxInputMessages+learning.MaxInputEvents {
 		return learning.EvidenceRef{}
 	}
 	var eventSeq *int64
@@ -162,7 +169,15 @@ func proposalEvidenceFromProto(wire *driverv1.ProposalEvidence) learning.Evidenc
 		value := wire.GetEventSeq()
 		eventSeq = &value
 	}
-	return learning.EvidenceRef{SessionID: session.SessionID(wire.GetSessionId()), Locator: learning.EvidenceLocator(wire.GetLocator()), Ordinal: int(wire.GetOrdinal()), EventSeq: eventSeq, ToolCallID: session.ToolCallID(wire.GetToolCallId()), Digest: wire.GetDigest()}
+	var originalMessage *int
+	if wire.OriginalMessage != nil {
+		value := int(wire.GetOriginalMessage())
+		if int64(value) != wire.GetOriginalMessage() {
+			return learning.EvidenceRef{}
+		}
+		originalMessage = &value
+	}
+	return learning.EvidenceRef{Protocol: learning.EvidenceProtocol(wire.GetProtocol()), OriginalMessage: originalMessage, AggregateDigest: wire.GetAggregateDigest(), ManifestIndex: int(wire.GetManifestIndex()), SessionID: session.SessionID(wire.GetSessionId()), Locator: learning.EvidenceLocator(wire.GetLocator()), Ordinal: int(wire.GetOrdinal()), EventSeq: eventSeq, ToolCallID: session.ToolCallID(wire.GetToolCallId()), Digest: wire.GetDigest()}
 }
 
 func proposalEvidenceListToProto(refs []learning.EvidenceRef) []*driverv1.ProposalEvidence {

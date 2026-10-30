@@ -7,6 +7,7 @@ import (
 	"os"
 	"testing"
 
+	"github.com/stacklok/mecatl/engine/adapter/eventcodec"
 	"github.com/stacklok/mecatl/engine/session"
 )
 
@@ -44,7 +45,7 @@ func eventRecordLine(t *testing.T, ev session.Event) []byte {
 	if err != nil {
 		t.Fatalf("marshal generation header: %v", err)
 	}
-	evJSON, err := json.Marshal(ev)
+	evJSON, err := eventcodec.Marshal(ev)
 	if err != nil {
 		t.Fatalf("marshal event: %v", err)
 	}

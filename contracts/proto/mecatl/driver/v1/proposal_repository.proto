@@ -46,6 +46,10 @@ message ProposalEvidence {
   optional int64 event_seq = 4;
   string tool_call_id = 5 [(buf.validate.field).string.max_len = 128];
   string digest = 6 [(buf.validate.field).string.max_len = 128];
+  string protocol = 7 [(buf.validate.field).string.max_len = 64];
+  optional int64 original_message = 8 [(buf.validate.field).int64.gte = 0];
+  string aggregate_digest = 9 [(buf.validate.field).string.max_len = 128];
+  uint32 manifest_index = 10 [(buf.validate.field).uint32.lt = 768];
 }
 
 message ProposalSignal {
