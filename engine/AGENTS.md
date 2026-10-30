@@ -5,6 +5,10 @@
 ## Commands
 
 - Focused test: `cd engine && go test ./<pkg>/ -run <Test>`.
+- For isolated engine changes with no effect on other parts of the codebase, run
+  targeted local tests (including relevant race, architecture, and API checks)
+  and rely on CI for the full repository pass. Broaden local checks when changes
+  affect shared behavior or cross-module integration.
 - `task test:engine-standalone` builds and tests with `GOWORK=off`. A new import must
   resolve from `engine/go.mod` alone, never from the root module.
 - The API snapshot tool lives in the root module (`internal/apicheck`), so run

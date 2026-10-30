@@ -107,6 +107,27 @@ linters:
             - $gostd
         # Governance is the session-free domain leaf; session carries its
         # capability value without granting governance a reverse dependency.
+        core-id:
+          list-mode: strict
+          files:
+            - '**/engine/id/**.go'
+            - '!$test'
+          allow:
+            - $gostd
+          deny:
+            - pkg: os
+              desc: 'ID generation uses crypto/rand; host state belongs in composition'
+        core-kernel-history:
+          list-mode: strict
+          files:
+            - '**/engine/kernel/history/**.go'
+            - '!$test'
+          allow:
+            - $gostd
+            - github.com/stacklok/mecatl/engine/id$
+          deny:
+            - pkg: os
+              desc: 'history values must not access host state'
         core-domain-leaf:
           list-mode: strict
           files:
@@ -1130,6 +1151,11 @@ linters:
       - linters:
           - revive
         text: 'type name will be used as (session\.SessionID|tool\.ToolSpec|agent\.AgentMeta)'
+      # HistoryID is the reviewed domain type, distinct from generic id.ID.
+      - linters:
+          - revive
+        path: (^|.*/)engine/kernel/history/id\.go$
+        text: 'type name will be used as history\.HistoryID'
       # Generated proto/grpc code (WP10 will land contracts/gen). Never lint it.
       - linters:
           - errcheck

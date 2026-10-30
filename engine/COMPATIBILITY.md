@@ -7,10 +7,12 @@ enforced (issue #114).
 
 ## The public surface
 
-The contract covers the exported identifiers of these **eight core packages**:
+The contract covers the exported identifiers of these core packages:
 
 | Package             | Role                                                      |
 | ------------------- | -------------------------------------------------------- |
+| `engine/id`         | shared typed resource IDs, secure generation, and strict parsing |
+| `engine/kernel/history` | isolated kernel history identity values              |
 | `engine/session`    | the `Session` aggregate, value objects, event taxonomy   |
 | `engine/governance` | permission `Effect`/`Scope`/`Rule` + `Evaluator`, hooks  |
 | `engine/learning`   | optional completed-trajectory mode, snapshot, observer seam |
@@ -85,7 +87,7 @@ breaking changes require a major bump per strict SemVer.
 Three machine gates protect the contract, all under `task test` / CI:
 
 1. **`api-compat`** — the `engine/api/*.txt` freshness gate (`task api:check`).
-   It re-derives the exported surface of the eight packages and fails on any
+   It re-derives the exported surface of the core packages and fails on any
    drift from the committed text baselines.
 2. **engine-standalone build** — `task test:engine-standalone` (`GOWORK=off`)
    proves the module builds + tests against its own tiny dependency closure.

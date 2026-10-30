@@ -5,13 +5,19 @@ format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); changes
 are classified per [COMPATIBILITY.md](./COMPATIBILITY.md) (Added = minor;
 Changed/Deprecated/Removed = breaking, pre-v1 a minor bump).
 
-The covered surface is the eight core packages (`session`, `governance`, `learning`, `tool`,
-`prompt`, `port`, `team`, `agent`); their committed API snapshots live in
-[`engine/api/`](./api/).
+The covered surface is listed in [COMPATIBILITY.md](./COMPATIBILITY.md); its committed
+API snapshots live in [`engine/api/`](./api/).
 
 ## [Unreleased]
 
 ### Added
+
+- **Typed resource and history IDs** — adds `engine/id` with registered kinds,
+  secure uniform generation, strict parsing, and comparable opaque `ID` values.
+  Adds `kernel/history.HistoryID`, a distinct history-only wrapper. History IDs
+  are `HST` plus 22 random Bitcoin-base58-alphabet characters. These additive
+  packages do not change existing session IDs or activate the isolated kernel.
+  Added (minor).
 
 - **Yolo advisory review opt-in** — adds `agent.YoloReviewPolicyProvider`. A
   `ToolReviewer` that implements it and returns true from `GuardrailYoloReviews`

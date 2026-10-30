@@ -153,6 +153,35 @@ The [later handoff contract](session-commit-history.md#compatible-replica-active
 A completed launch call removes that invocation from the in-flight set, but does not by itself establish that the job's driver can park safely.
 This model adds no remote-job reattachment or cross-run background capability to the first cutover.
 
+## History identity and textual IDs
+
+The kernel uses a stable `HistoryID` for one linear, append-only history, independently of the kind of state reconstructed from it.
+IDs are server-assigned, never reassigned after deletion, and do not encode a session, run, owner, or process lifetime.
+Accepted heads cannot rewind; no separate history incarnation is needed.
+This does not change existing client-assigned session IDs.
+
+The agreed history ID format is exactly **25 ASCII characters**: `HST` followed by 22 independently and uniformly selected characters from the Bitcoin base58 alphabet (`123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz`).
+Generate characters using cryptographically secure randomness and unbiased selection (for example, rejection sampling), not random-byte modulo 58.
+This is a random string, not an encoding of an integer or UUID; no base58 encode/decode dependency or padding is needed.
+Parsing requires only the exact case-sensitive prefix, body length and alphabet.
+The alphanumeric form supports whole-ID selection and copying without separators.
+There is no timestamp or checksum.
+
+The body has approximately 128.88 bits of entropy; at one trillion generated IDs, the probability of any random collision is approximately `8.0 × 10⁻¹⁶`.
+Creation must nevertheless be create-only: regenerate on an ID collision, never attach to or overwrite the existing history, and fail if secure randomness is unavailable.
+
+The shared `engine/id` package owns the opaque comparable `ID`, registered `Kind` values, secure generation and strict parsing; unknown kinds are rejected.
+The distinct `kernel/history.HistoryID` wraps an `id.ID` privately and accepts only the `HST` kind.
+Both types expose their full spelling through `String`; their zero values are unset, not valid identities.
+`id.New` and `history.NewHistoryID` return values directly and panic if secure randomness is unavailable; `id.New` also panics for an unknown kind.
+Parsing returns an error for malformed input instead of panicking.
+Keep domain-specific ID types distinct, rather than accepting any prefixed string interchangeably.
+Commit content addresses have a separate format and integrity contract; they are not random resource IDs.
+
+Only full IDs are authoritative.
+Possible human-facing abbreviations must resolve uniquely within an explicit scope and are not another accepted `HistoryID` spelling.
+Do not use truncated history IDs as persistent filesystem identities: keep paths shallow, avoid repeated IDs, or allocate short local names with exclusive creation and an explicit mapping to the full ID.
+
 ## First executable foundation and growing test harness
 
 Start with an isolated harness around the actual new kernel implementation, not an early activation path through the full Mecatl composition.
