@@ -154,16 +154,16 @@ func listenCoreListeners(cfg config) (net.Listener, net.Listener, net.Listener, 
 	return grpcLis, httpLis, drainLis, nil
 }
 
-func startMetricsServer(addr string, obs observability, errCh chan<- error) (*http.Server, error) {
+func startMetricsServer(addr string, obs observability, errCh chan<- error) (*http.Server, net.Addr, error) {
 	if addr == "" {
-		return nil, nil
+		return nil, nil, nil
 	}
 	if obs.Registry == nil {
-		return nil, fmt.Errorf("metrics-addr %q set but telemetry registry is nil", addr)
+		return nil, nil, fmt.Errorf("metrics-addr %q set but telemetry registry is nil", addr)
 	}
 	metricsLis, err := net.Listen("tcp", addr)
 	if err != nil {
-		return nil, fmt.Errorf("listen metrics %q: %w", addr, err)
+		return nil, nil, fmt.Errorf("listen metrics %q: %w", addr, err)
 	}
 	metricsSrv := &http.Server{
 		Addr:              addr,
@@ -176,7 +176,7 @@ func startMetricsServer(addr string, obs observability, errCh chan<- error) (*ht
 			errCh <- fmt.Errorf("metrics serve: %w", serveErr)
 		}
 	}()
-	return metricsSrv, nil
+	return metricsSrv, metricsLis.Addr(), nil
 }
 
 func serve(ctx context.Context, cfg config, svc *server.Service, obs observability, brokerHandlers mcpbroker.HandlerBundle, brokerCallbackPath string) error {
@@ -184,6 +184,10 @@ func serve(ctx context.Context, cfg config, svc *server.Service, obs observabili
 }
 
 func serveWithDrainWait(ctx context.Context, cfg config, svc *server.Service, obs observability, drainWait func(time.Duration), brokerHandlers mcpbroker.HandlerBundle, brokerCallbackPath string) error {
+	return serveWithHooks(ctx, cfg, svc, obs, drainWait, nil, brokerHandlers, brokerCallbackPath)
+}
+
+func serveWithHooks(ctx context.Context, cfg config, svc *server.Service, obs observability, drainWait func(time.Duration), metricsListening func(net.Addr), brokerHandlers mcpbroker.HandlerBundle, brokerCallbackPath string) error {
 	tlsCfg, tlsLifecycle, err := buildTLSConfig(cfg)
 	if err != nil {
 		return err
@@ -253,9 +257,12 @@ func serveWithDrainWait(ctx context.Context, cfg config, svc *server.Service, ob
 
 	errCh := make(chan error, 4)
 
-	metricsSrv, err := startMetricsServer(cfg.metricsAddr, obs, errCh)
+	metricsSrv, metricsAddr, err := startMetricsServer(cfg.metricsAddr, obs, errCh)
 	if err != nil {
 		return err
+	}
+	if metricsAddr != nil && metricsListening != nil {
+		metricsListening(metricsAddr)
 	}
 
 	go func() {
