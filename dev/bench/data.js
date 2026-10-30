@@ -388868,6 +388868,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1793317565803,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "6dd10faa4db94944b060b6f5e9fb72b856d363e0",
+          "message": "fix(mecak8s): make Prometheus listener test deterministic (#2620)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-29T17:52:17-07:00",
+          "tree_id": "0811fc762f5bc4cbc508cec6dfc3ceff5a494909",
+          "url": "https://github.com/stacklok/mecatl/commit/6dd10faa4db94944b060b6f5e9fb72b856d363e0"
+        },
+        "date": 1793322248492,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 16108.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12875,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 794,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -507124,6 +507163,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1793322245173,
+  "lastUpdate": 1793322249264,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
