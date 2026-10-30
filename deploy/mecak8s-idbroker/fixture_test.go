@@ -236,7 +236,7 @@ func TestPortsAndHostsAgree(t *testing.T) {
 	}
 	hosts := taskCommands(t, tf, "hosts-add") + taskCommands(t, tf, "hosts-remove")
 	for _, want := range []string{
-		"for host in " + mecak8sHost + " " + dexHost, `127.0.0.1 $host # mecatl-idbroker`, "grep -Fqx", "sudo sh -c", "sudo sed -i.bak",
+		"for host in " + mecak8sHost + " " + dexHost, `127.0.0.1 $host # mecatl-idbroker`, "grep -Fqx", "sudo sh -c", "sudo sed -i.mecatl-idbroker.bak",
 		`127\.0\.0\.1 mecak8s-mecak8s\.mecatl-idbroker\.svc\.cluster\.local # mecatl-idbroker$`,
 		`127\.0\.0\.1 dex\.mecatl-idbroker\.svc\.cluster\.local # mecatl-idbroker$`,
 	} {

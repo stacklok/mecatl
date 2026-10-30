@@ -120,6 +120,7 @@ client IDs from it; the chart renders the same derived values.
 {{- range $name, $url := dict "identityBroker.as1.issuer" $as1.issuer "identityBroker.as1.upstream.issuer" $as1.upstream.issuer -}}
 {{- if not (regexMatch "^https://[^/?#@[:space:]]+(/[^?#[:space:]]*)?$" $url) -}}{{ fail (printf "%s must be an https URL with a host and no credentials, query, or fragment" $name) }}{{- end -}}
 {{- end -}}
+{{- if and $as1.upstream.allowPrivateAddresses (not $as1.upstream.caSecret.secretName) -}}{{ fail "identityBroker.as1.upstream.allowPrivateAddresses requires identityBroker.as1.upstream.caSecret" }}{{- end -}}
 {{- $_ := required "oidc.audience is required with identityBroker.as1.issuer: it is the Mecatl API audience AS-1 issues access tokens for" .Values.oidc.audience -}}
 {{- if not (regexMatch "^https?://[^/?#[:space:]]+[^#[:space:]]*$" .Values.oidc.audience) -}}{{ fail "oidc.audience must be an absolute http or https URL with a host and no fragment when identityBroker.as1.issuer is set: AS-1 refuses any other audience" }}{{- end -}}
 {{- $_ := required "oidc.resource is required with identityBroker.as1.issuer: mecatui finds AS-1 through the protected-resource metadata" .Values.oidc.resource -}}

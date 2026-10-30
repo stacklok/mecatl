@@ -122,11 +122,13 @@ tasks:
     cmds:
       - cmd: |
           set -eu
-          sudo sed -i.bak \
+          # A profile-specific backup never overwrites the base fixture's
+          # /etc/hosts.bak; the attached suffix works with GNU and BSD sed.
+          sudo sed -i.mecatl-idbroker.bak \
             -e '\|^127\.0\.0\.1 mecak8s-mecak8s\.mecatl-idbroker\.svc\.cluster\.local # mecatl-idbroker$|d' \
             -e '\|^127\.0\.0\.1 dex\.mecatl-idbroker\.svc\.cluster\.local # mecatl-idbroker$|d' \
             /etc/hosts
-          echo 'Removed the marked mecatl-idbroker entries (backup: /etc/hosts.bak).'
+          echo 'Removed the marked mecatl-idbroker entries (backup: /etc/hosts.mecatl-idbroker.bak).'
 
   destroy:
     desc: Delete only the mecatl-idbroker Kind cluster and its local state

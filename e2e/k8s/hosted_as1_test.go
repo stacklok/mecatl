@@ -16,6 +16,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
 	"errors"
@@ -77,6 +78,9 @@ var _ = ginkgo.Describe("hosted AS-1 signs mecatui in through Dex", ginkgo.Seria
 		registry *clientauth.Registry
 		source   *clientauth.RefreshSource
 		subID    as1SubjectID
+		// signingKey is AS-1's signing key; the test generates it.
+		signingKey   *ecdsa.PrivateKey
+		aliceSession string
 	)
 
 	ginkgo.BeforeAll(func() {
@@ -91,7 +95,8 @@ var _ = ginkgo.Describe("hosted AS-1 signs mecatui in through Dex", ginkgo.Seria
 		pki := newAS1PKI()
 		dexCert, dexKey := pki.serverPair(as1DexName, as1DexName+"."+as1Namespace, as1DexName+"."+as1Namespace+".svc", as1DexHost)
 		as1Cert, as1Key := pki.serverPair(as1Release, as1Release+"."+as1Namespace, as1Release+"."+as1Namespace+".svc", as1Host)
-		signingKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+		var err error
+		signingKey, err = ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		signingDER, err := x509.MarshalECPrivateKey(signingKey)
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -173,17 +178,7 @@ var _ = ginkgo.Describe("hosted AS-1 signs mecatui in through Dex", ginkgo.Seria
 		ctx, cancel := shortCtx(90 * time.Second)
 		defer cancel()
 		browser := newAS1Browser(client, aliceEmail, dexPass)
-		presenter := clientauth.PresenterFunc(func(ctx context.Context, authorizationURL string) (oauthlogin.Result, error) {
-			back, err := browser.authorize(ctx, authorizationURL)
-			if err != nil {
-				return oauthlogin.Result{}, err
-			}
-			if back.Get("error") != "" {
-				return oauthlogin.Result{}, errors.New("authorization refused: " + back.Get("error"))
-			}
-			return oauthlogin.Result{Code: back.Get("code"), State: back.Get("state"), Iss: back.Get("iss")}, nil
-		})
-		login = clientauth.LoginConfig{Identity: identity, Presenter: presenter, HTTPClient: client, IdentityBrokerSignIn: true}
+		login = clientauth.LoginConfig{Identity: identity, Presenter: browser.presenter(), HTTPClient: client, IdentityBrokerSignIn: true}
 		var err error
 		signedIn, err = clientauth.Login(ctx, login)
 		ginkgo.GinkgoWriter.Printf("browser steps: %s\n", strings.Join(browser.steps, " -> "))
@@ -210,9 +205,74 @@ var _ = ginkgo.Describe("hosted AS-1 signs mecatui in through Dex", ginkgo.Seria
 	ginkgo.It("opens a session with the AS-1 access token, owned by the Dex identity in sub_id", func() {
 		ctx, cancel := shortCtx(60 * time.Second)
 		defer cancel()
-		status, sessionID := as1CreateSession(ctx, client, signedIn.AccessToken)
+		var status int
+		status, aliceSession = as1CreateSession(ctx, client, signedIn.AccessToken)
 		gomega.Expect(status).To(gomega.Equal(http.StatusCreated), "session create with the AS-1 access token")
-		expectAS1Owner(ctx, client, signedIn.AccessToken, sessionID, subID)
+		expectAS1Owner(ctx, client, signedIn.AccessToken, aliceSession, subID)
+	})
+
+	ginkgo.It("keeps bob, signed in through AS-1 and Dex, out of alice's session", func() {
+		ctx, cancel := shortCtx(90 * time.Second)
+		defer cancel()
+		browser := newAS1Browser(client, bobEmail, dexPass)
+		bob, err := clientauth.Login(ctx, clientauth.LoginConfig{Identity: identity, Presenter: browser.presenter(), HTTPClient: client, IdentityBrokerSignIn: true})
+		ginkgo.GinkgoWriter.Printf("bob's browser steps: %s\n", strings.Join(browser.steps, " -> "))
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), "clientauth.Login as bob through hosted AS-1")
+		bobSubID := expectAS1AccessToken(bob.AccessToken)
+		gomega.Expect(bobSubID).NotTo(gomega.Equal(subID), "bob's token names alice's identity")
+
+		status, bobSession := as1CreateSession(ctx, client, bob.AccessToken)
+		gomega.Expect(status).To(gomega.Equal(http.StatusCreated), "session create as bob")
+		expectAS1Owner(ctx, client, bob.AccessToken, bobSession, bobSubID)
+		gomega.Expect(as1ListSessions(ctx, client, bob.AccessToken)).NotTo(gomega.ContainElement(aliceSession), "bob's list shows alice's session")
+
+		status, raw := as1Do(ctx, client, http.MethodGet, as1Resource+"/v1/sessions/"+url.PathEscape(aliceSession), bob.AccessToken, nil)
+		gomega.Expect(status).To(gomega.Equal(http.StatusNotFound), "bob opening alice's session: %s", formatBody(raw))
+
+		expectAS1Owner(ctx, client, signedIn.AccessToken, aliceSession, subID)
+		gomega.Expect(as1ListSessions(ctx, client, signedIn.AccessToken)).NotTo(gomega.ContainElement(bobSession), "alice's list shows bob's session")
+	})
+
+	ginkgo.It("refuses AS-1-signed access tokens with the wrong audience or without sub_id, and accepts a correctly minted one", func() {
+		ctx, cancel := shortCtx(60 * time.Second)
+		defer cancel()
+		kid := as1JWKSKeyID(ctx, client, &signingKey.PublicKey)
+		// Re-sign the claims AS-1 itself issued, so only the changed claim differs.
+		issued := jwt.MapClaims{}
+		_, _, err := jwt.NewParser().ParseUnverified(signedIn.AccessToken, issued)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		mint := func(edit func(jwt.MapClaims)) string {
+			claims := jwt.MapClaims{}
+			for k, v := range issued {
+				claims[k] = v
+			}
+			now := time.Now()
+			claims["jti"], claims["iat"], claims["nbf"], claims["exp"] = rand.Text(), now.Unix(), now.Unix(), now.Add(5*time.Minute).Unix()
+			edit(claims)
+			tok := jwt.NewWithClaims(jwt.SigningMethodES256, claims)
+			tok.Header["typ"], tok.Header["kid"] = "at+jwt", kid
+			signed, err := tok.SignedString(signingKey)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			return signed
+		}
+		for _, c := range []struct {
+			name string
+			edit func(jwt.MapClaims)
+			want int
+		}{
+			{"correct claims (positive control)", func(c jwt.MapClaims) {
+				aud, err := c.GetAudience()
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				gomega.Expect([]string(aud)).To(gomega.ContainElement(as1Audience))
+				gomega.Expect(c).To(gomega.HaveKey("sub_id"))
+				gomega.Expect(c["client_id"]).To(gomega.Equal(as1TUIClient))
+			}, http.StatusOK},
+			{"wrong audience", func(c jwt.MapClaims) { c["aud"] = []string{"https://other.example/api"} }, http.StatusUnauthorized},
+			{"no sub_id", func(c jwt.MapClaims) { delete(c, "sub_id") }, http.StatusUnauthorized},
+		} {
+			status, raw := as1Do(ctx, client, http.MethodGet, as1Resource+"/v1/sessions", mint(c.edit), nil)
+			gomega.Expect(status).To(gomega.Equal(c.want), "%s: GET /v1/sessions: %s", c.name, formatBody(raw))
+		}
 	})
 
 	ginkgo.It("refreshes the sign-in at AS-1 and opens a session with the refreshed token", func() {
@@ -244,7 +304,7 @@ var _ = ginkgo.Describe("hosted AS-1 signs mecatui in through Dex", ginkgo.Seria
 		expectAS1Owner(ctx, client, refreshed, sessionID, subID)
 	})
 
-	ginkgo.It("accepts a pre-restart access token after the pod restarts and refuses the pre-restart refresh token", func() {
+	ginkgo.It("accepts a pre-restart access token after the pod restarts and refuses the pre-restart refresh token (in-memory AS-1 state until #2563)", func() {
 		ctx := ginkgoSuiteCtx()
 		reqCtx, cancel := shortCtx(30 * time.Second)
 		beforeRestart, err := source.Refresh(reqCtx)
@@ -281,6 +341,7 @@ var _ = ginkgo.Describe("hosted AS-1 signs mecatui in through Dex", ginkgo.Seria
 		var refusal struct {
 			Error string `json:"error"`
 		}
+		// #2563 persists AS-1's state, which flips this invalid_grant assertion.
 		gomega.Expect(status).To(gomega.Equal(http.StatusBadRequest), "pre-restart refresh token: %s", formatBody(raw))
 		gomega.Expect(json.Unmarshal(raw, &refusal)).To(gomega.Succeed(), "decode %s", formatBody(raw))
 		gomega.Expect(refusal.Error).To(gomega.Equal("invalid_grant"))
@@ -406,6 +467,58 @@ func expectAS1Owner(ctx context.Context, client *http.Client, bearer, sessionID 
 	gomega.Expect(got.Subject).To(gomega.Equal(want.Sub))
 }
 
+// as1ListSessions returns the session IDs bearer's session list shows.
+func as1ListSessions(ctx context.Context, client *http.Client, bearer string) []string {
+	ginkgo.GinkgoHelper()
+	status, raw := as1Do(ctx, client, http.MethodGet, as1Resource+"/v1/sessions", bearer, nil)
+	gomega.Expect(status).To(gomega.Equal(http.StatusOK), "list sessions: %s", formatBody(raw))
+	var out struct {
+		Sessions []struct {
+			SessionID string `json:"session_id"`
+		} `json:"sessions"`
+	}
+	gomega.Expect(json.Unmarshal(raw, &out)).To(gomega.Succeed(), "decode %s", formatBody(raw))
+	ids := make([]string, 0, len(out.Sessions))
+	for _, s := range out.Sessions {
+		ids = append(ids, s.SessionID)
+	}
+	return ids
+}
+
+// as1JWKSKeyID returns the kid AS-1 publishes for pub, found through its
+// discovery document. ToolHive derives the kid as pub's RFC 7638 thumbprint.
+func as1JWKSKeyID(ctx context.Context, client *http.Client, pub *ecdsa.PublicKey) string {
+	ginkgo.GinkgoHelper()
+	status, raw := as1Do(ctx, client, http.MethodGet, as1Issuer+"/.well-known/openid-configuration", "", nil)
+	gomega.Expect(status).To(gomega.Equal(http.StatusOK), "AS-1 discovery: %s", formatBody(raw))
+	var discovery struct {
+		JWKSURI string `json:"jwks_uri"`
+	}
+	gomega.Expect(json.Unmarshal(raw, &discovery)).To(gomega.Succeed(), "decode %s", formatBody(raw))
+	status, raw = as1Do(ctx, client, http.MethodGet, discovery.JWKSURI, "", nil)
+	gomega.Expect(status).To(gomega.Equal(http.StatusOK), "AS-1 JWKS: %s", formatBody(raw))
+	var jwks struct {
+		Keys []struct {
+			Kid string `json:"kid"`
+			Crv string `json:"crv"`
+			X   string `json:"x"`
+			Y   string `json:"y"`
+		} `json:"keys"`
+	}
+	gomega.Expect(json.Unmarshal(raw, &jwks)).To(gomega.Succeed(), "decode %s", formatBody(raw))
+	point, err := pub.Bytes()
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
+	x, y := base64.RawURLEncoding.EncodeToString(point[1:33]), base64.RawURLEncoding.EncodeToString(point[33:])
+	for _, k := range jwks.Keys {
+		if k.Crv == "P-256" && k.X == x && k.Y == y {
+			gomega.Expect(k.Kid).NotTo(gomega.BeEmpty())
+			return k.Kid
+		}
+	}
+	ginkgo.Fail("AS-1's JWKS does not publish the test's signing key: " + formatBody(raw))
+	return ""
+}
+
 // as1Do sends one request: body is JSON, or a form when it is url.Values.
 func as1Do(ctx context.Context, client *http.Client, method, target, bearer string, body any) (int, []byte) {
 	ginkgo.GinkgoHelper()
@@ -500,6 +613,20 @@ func newAS1Browser(base *http.Client, login, password string) *as1Browser {
 	return &as1Browser{client: &c, login: login, password: password}
 }
 
+// presenter answers clientauth's authorization URL with this browser.
+func (b *as1Browser) presenter() clientauth.PresenterFunc {
+	return func(ctx context.Context, authorizationURL string) (oauthlogin.Result, error) {
+		back, err := b.authorize(ctx, authorizationURL)
+		if err != nil {
+			return oauthlogin.Result{}, err
+		}
+		if back.Get("error") != "" {
+			return oauthlogin.Result{}, errors.New("authorization refused: " + back.Get("error"))
+		}
+		return oauthlogin.Result{Code: back.Get("code"), State: back.Get("state"), Iss: back.Get("iss")}, nil
+	}
+}
+
 // authorize follows authorizationURL until the redirect to its redirect_uri,
 // whose query it returns without contacting the redirect URI.
 func (b *as1Browser) authorize(ctx context.Context, authorizationURL string) (url.Values, error) {
@@ -567,6 +694,8 @@ func (b *as1Browser) submit(ctx context.Context, page *url.URL, body []byte) (*h
 			chosen, step, values = f, "dex login", f.hidden()
 			values.Set("login", b.login)
 			values.Set("password", b.password)
+		// ToolHive's consentPageTemplate (pkg/authserver/server/handlers/consent.go)
+		// posts a hidden handle with a decision=approve|deny button.
 		case f.hiddenValues.Has("handle"):
 			chosen, step, values = f, "as1 consent", f.hidden()
 			values.Set("decision", "approve")
@@ -780,6 +909,7 @@ spec:
       labels:
         app.kubernetes.io/name: dex-as1
     spec:
+      automountServiceAccountToken: false
       securityContext:
         runAsNonRoot: true
         runAsUser: 65532
