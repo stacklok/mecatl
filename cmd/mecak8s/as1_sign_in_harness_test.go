@@ -52,7 +52,7 @@ func TestHostedAS1RoutesMountWithoutConflicts(t *testing.T) {
 		if routes != nil {
 			as1 = &app.IdentityBrokerAS1Server{Issuer: "https://mecatl.test/as1", Routes: routes, Handler: as1Handler}
 		}
-		return normalHTTPMux(built.Service, auth, profile, "", true, built.MCPBrokerHandlers, built.MCPBrokerCallbackPath, as1)
+		return normalHTTPMux(built.Service, auth, profile, "", true, builtServing{brokerHandlers: built.MCPBrokerHandlers, brokerCallbackPath: built.MCPBrokerCallbackPath, as1: as1})
 	}
 
 	hosted, err := mux("/as1/oauth/token", "/as1/.well-known/openid-configuration")
@@ -142,7 +142,7 @@ func TestHostedAS1ServesBesideTheMCPBroker(t *testing.T) {
 	const brokerCallback = "/oauth/callback"
 	as1Routes := []string{"/as1/oauth/authorize", "/as1/oauth/token", "/as1/oauth/callback", "/as1/.well-known/openid-configuration", "/as1/.well-known/jwks.json"}
 	as1 := &app.IdentityBrokerAS1Server{Issuer: "https://mecatl.test/as1", Routes: as1Routes, Handler: answer("as1")}
-	mux, err := normalHTTPMux(built.Service, auth, server.ProtectedResourceProfile{}, "", true, bundle, brokerCallback, as1)
+	mux, err := normalHTTPMux(built.Service, auth, server.ProtectedResourceProfile{}, "", true, builtServing{brokerHandlers: bundle, brokerCallbackPath: brokerCallback, as1: as1})
 	if err != nil {
 		t.Fatalf("normalHTTPMux: %v", err)
 	}
@@ -176,7 +176,7 @@ func TestHostedAS1ServesBesideTheMCPBroker(t *testing.T) {
 	}
 
 	rootAS1 := &app.IdentityBrokerAS1Server{Issuer: "https://mecatl.test", Routes: []string{"/oauth/authorize", "/oauth/callback"}, Handler: answer("as1")}
-	if _, err := normalHTTPMux(built.Service, auth, server.ProtectedResourceProfile{}, "", true, bundle, brokerCallback, rootAS1); err == nil || !strings.Contains(err.Error(), "conflicts with a mecak8s route") {
+	if _, err := normalHTTPMux(built.Service, auth, server.ProtectedResourceProfile{}, "", true, builtServing{brokerHandlers: bundle, brokerCallbackPath: brokerCallback, as1: rootAS1}); err == nil || !strings.Contains(err.Error(), "conflicts with a mecak8s route") {
 		t.Fatalf("normalHTTPMux with AS-1 on the broker's callback path = %v, want a conflict", err)
 	}
 }
@@ -204,7 +204,7 @@ func TestHostedAS1AnonymousSurfaceIsBounded(t *testing.T) {
 		}
 	})
 	as1 := &app.IdentityBrokerAS1Server{Issuer: "https://mecatl.test/as1", Routes: []string{"/as1/oauth/authorize", "/as1/oauth/token"}, Handler: as1Handler}
-	mux, err := normalHTTPMux(built.Service, auth, server.ProtectedResourceProfile{}, "", true, built.MCPBrokerHandlers, built.MCPBrokerCallbackPath, as1)
+	mux, err := normalHTTPMux(built.Service, auth, server.ProtectedResourceProfile{}, "", true, builtServing{brokerHandlers: built.MCPBrokerHandlers, brokerCallbackPath: built.MCPBrokerCallbackPath, as1: as1})
 	if err != nil {
 		t.Fatalf("normalHTTPMux: %v", err)
 	}
@@ -343,18 +343,16 @@ func TestHostedAS1SignsTheTUIIn(t *testing.T) {
 		if err != nil {
 			t.Fatalf("app.Build: %v", err)
 		}
-		serving := cfg
 		hosted := *built.IdentityBrokerHostedAS1
 		hosted.Handler = recordGrants(hosted.Handler, func(grant string) {
 			as1Mu.Lock()
 			defer as1Mu.Unlock()
 			as1Grants[grant]++
 		})
-		serving.as1Server = &hosted
 		ctx, cancel := context.WithCancel(context.Background())
 		serveErr := make(chan error, 1)
 		go func() {
-			serveErr <- serveWithDrainWait(ctx, serving, built.Service, observability{}, func(time.Duration) {}, built.MCPBrokerHandlers, built.MCPBrokerCallbackPath)
+			serveErr <- serveWithDrainWait(ctx, cfg, built.Service, observability{}, func(time.Duration) {}, builtServing{brokerHandlers: built.MCPBrokerHandlers, brokerCallbackPath: built.MCPBrokerCallbackPath, as1: &hosted})
 		}()
 		waitForHTTPStatus(t, httpsClient, "https://"+httpAddr+"/readyz", http.StatusOK)
 		return built.IdentityBroker, func() {

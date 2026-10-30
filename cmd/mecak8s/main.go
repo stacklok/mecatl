@@ -114,6 +114,9 @@ func run() error {
 	defer boundedClose(built.Close, cfg.closeTimeout)
 	defer flushTelemetry(os.Stderr, obs, cfg.otlpShutdownTimeout)
 
-	cfg.as1Server = built.IdentityBrokerHostedAS1
-	return serve(ctx, cfg, built.Service, obs, built.MCPBrokerHandlers, built.MCPBrokerCallbackPath)
+	return serve(ctx, cfg, built.Service, obs, builtServing{
+		brokerHandlers:     built.MCPBrokerHandlers,
+		brokerCallbackPath: built.MCPBrokerCallbackPath,
+		as1:                built.IdentityBrokerHostedAS1,
+	})
 }

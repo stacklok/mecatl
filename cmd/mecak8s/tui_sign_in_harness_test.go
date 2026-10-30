@@ -169,7 +169,7 @@ func TestTUISignsInAtAS1AndOpensEachSessionWithAFreshToken(t *testing.T) {
 	defer cancel()
 	serveErr := make(chan error, 1)
 	go func() {
-		serveErr <- serveWithDrainWait(ctx, cfg, built.Service, observability{}, func(time.Duration) {}, built.MCPBrokerHandlers, built.MCPBrokerCallbackPath)
+		serveErr <- serveWithDrainWait(ctx, cfg, built.Service, observability{}, func(time.Duration) {}, builtServing{brokerHandlers: built.MCPBrokerHandlers, brokerCallbackPath: built.MCPBrokerCallbackPath})
 	}()
 	waitForHTTPStatus(t, http.DefaultClient, "http://"+cfg.httpAddr+"/readyz", http.StatusOK)
 

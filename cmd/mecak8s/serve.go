@@ -100,9 +100,9 @@ func mountBrokerHandlers(mux *http.ServeMux, addr string, verifiedIdentity, owne
 // it must stay reachable without credentials, and outside the drain listener
 // since it is discovery metadata, not a lifecycle operation.
 //
-// The hosted AS-1's anonymous OAuth routes, when as1 is non-nil, are mounted
-// after the broker's with the same kind of conflict check.
-func normalHTTPMux(svc *server.Service, auth *server.Authenticator, profile server.ProtectedResourceProfile, addr string, authed bool, brokerHandlers mcpbroker.HandlerBundle, brokerCallbackPath string, as1 *app.IdentityBrokerAS1Server) (http.Handler, error) {
+// The hosted AS-1's anonymous OAuth routes, when built.as1 is non-nil, are
+// mounted after the broker's with the same kind of conflict check.
+func normalHTTPMux(svc *server.Service, auth *server.Authenticator, profile server.ProtectedResourceProfile, addr string, authed bool, built builtServing) (http.Handler, error) {
 	ready := server.ReadyFunc(func() bool {
 		if svc.IsDraining() {
 			return false
@@ -118,10 +118,10 @@ func normalHTTPMux(svc *server.Service, auth *server.Authenticator, profile serv
 	// Broker routes are mounted LAST, after every other route above, so
 	// HandlerBundle.Mount's own route-conflict check is checked against the
 	// real, fully-populated mux — see mountBrokerHandlers' doc comment.
-	if err := mountBrokerHandlers(mux, addr, authed, false, brokerHandlers, brokerCallbackPath); err != nil {
+	if err := mountBrokerHandlers(mux, addr, authed, false, built.brokerHandlers, built.brokerCallbackPath); err != nil {
 		return nil, fmt.Errorf("mount MCP broker handlers: %w", err)
 	}
-	if err := mountAS1(mux, as1, profile); err != nil {
+	if err := mountAS1(mux, built.as1, profile); err != nil {
 		return nil, fmt.Errorf("mount AS-1: %w", err)
 	}
 	return mux, nil
@@ -264,15 +264,22 @@ func startMetricsServer(addr string, obs observability, errCh chan<- error) (*ht
 	return metricsSrv, metricsLis.Addr(), nil
 }
 
-func serve(ctx context.Context, cfg config, svc *server.Service, obs observability, brokerHandlers mcpbroker.HandlerBundle, brokerCallbackPath string) error {
-	return serveWithDrainWait(ctx, cfg, svc, obs, time.Sleep, brokerHandlers, brokerCallbackPath)
+// builtServing is what serve takes from app.Build.
+type builtServing struct {
+	brokerHandlers     mcpbroker.HandlerBundle
+	brokerCallbackPath string
+	as1                *app.IdentityBrokerAS1Server
 }
 
-func serveWithDrainWait(ctx context.Context, cfg config, svc *server.Service, obs observability, drainWait func(time.Duration), brokerHandlers mcpbroker.HandlerBundle, brokerCallbackPath string) error {
-	return serveWithHooks(ctx, cfg, svc, obs, drainWait, nil, brokerHandlers, brokerCallbackPath)
+func serve(ctx context.Context, cfg config, svc *server.Service, obs observability, built builtServing) error {
+	return serveWithDrainWait(ctx, cfg, svc, obs, time.Sleep, built)
 }
 
-func serveWithHooks(ctx context.Context, cfg config, svc *server.Service, obs observability, drainWait func(time.Duration), metricsListening func(net.Addr), brokerHandlers mcpbroker.HandlerBundle, brokerCallbackPath string) error {
+func serveWithDrainWait(ctx context.Context, cfg config, svc *server.Service, obs observability, drainWait func(time.Duration), built builtServing) error {
+	return serveWithHooks(ctx, cfg, svc, obs, drainWait, nil, built)
+}
+
+func serveWithHooks(ctx context.Context, cfg config, svc *server.Service, obs observability, drainWait func(time.Duration), metricsListening func(net.Addr), built builtServing) error {
 	tlsCfg, tlsLifecycle, err := buildTLSConfig(cfg)
 	if err != nil {
 		return err
@@ -285,7 +292,7 @@ func serveWithHooks(ctx context.Context, cfg config, svc *server.Service, obs ob
 		}
 	}
 
-	auth, err := newAuthenticator(ctx, cfg)
+	auth, err := newAuthenticator(ctx, cfg, built.as1)
 	if err != nil {
 		return err
 	}
@@ -312,7 +319,7 @@ func serveWithHooks(ctx context.Context, cfg config, svc *server.Service, obs ob
 	// A bearer token, OIDC, or verified mTLS authenticates callers. Ordinary
 	// server TLS only authenticates the server.
 	authed := callerAuthenticationConfigured(cfg, tlsCfg)
-	normalMux, err := normalHTTPMux(svc, auth, protectedResourceProfile(cfg.oidc), cfg.httpAddr, authed, brokerHandlers, brokerCallbackPath, cfg.as1Server)
+	normalMux, err := normalHTTPMux(svc, auth, protectedResourceProfile(cfg.oidc), cfg.httpAddr, authed, built)
 	if err != nil {
 		return err
 	}
@@ -404,7 +411,11 @@ func protectedResourceProfile(c cliconfig.OIDCConfig) server.ProtectedResourcePr
 // newAuthenticator constructs the caller-identity boundary with the server-root
 // context so its JWKS refresh survives individual requests. A broken OIDC setup
 // is fatal: the pod must not silently serve unauthenticated traffic.
-func newAuthenticator(ctx context.Context, cfg config) (*server.Authenticator, error) {
+//
+// A non-nil as1 is the hosted AS-1, whose discovery document and keys the
+// validator fetches in process: listeners are not serving yet. Without it a
+// hosted issuer is fetched over the network, which fails startup closed.
+func newAuthenticator(ctx context.Context, cfg config, as1 *app.IdentityBrokerAS1Server) (*server.Authenticator, error) {
 	// Log before construction so an insecure test-only relaxation is visible even
 	// when validator construction then fails.
 	warnInsecureIssuer(cfg.oidc)
@@ -412,13 +423,8 @@ func newAuthenticator(ctx context.Context, cfg config) (*server.Authenticator, e
 		return nil, err
 	}
 	oidc := cfg.oidc
-	if cfg.as1.issuer != "" {
-		// The validator fetches the hosted AS-1's discovery document and
-		// keys in process: listeners are not serving yet.
-		if cfg.as1Server == nil || cfg.as1Server.Issuer != oidc.Issuer {
-			return nil, errors.New("--identity-broker-as1-issuer is set but the hosted AS-1 was not built for it")
-		}
-		oidc.HTTPClient = cfg.as1Server.HTTPClient
+	if as1 != nil {
+		oidc.HTTPClient = as1.HTTPClient
 	}
 	validator, err := cliconfig.OIDCValidator(ctx, oidc)
 	if err != nil {

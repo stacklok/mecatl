@@ -1,11 +1,14 @@
 package main
 
 import (
+	"context"
 	"errors"
+	"net/http"
 	"slices"
 	"strings"
 	"testing"
 
+	"github.com/stacklok/mecatl/internal/adapter/server"
 	"github.com/stacklok/mecatl/internal/app"
 	"github.com/stacklok/mecatl/internal/cliconfig"
 	"github.com/stacklok/mecatl/mcp/oauthlogin"
@@ -63,7 +66,7 @@ func TestOwnerIdentityMisconfigurationRefusesStartup(t *testing.T) {
 			if err != nil {
 				t.Fatalf("parseFlags(%v): %v", args, err)
 			}
-			if auth, err := newAuthenticator(t.Context(), cfg); auth != nil || !errors.Is(err, cliconfig.ErrOIDCMisconfigured) {
+			if auth, err := newAuthenticator(t.Context(), cfg, nil); auth != nil || !errors.Is(err, cliconfig.ErrOIDCMisconfigured) {
 				t.Fatalf("newAuthenticator(%v) = (%v, %v), want ErrOIDCMisconfigured", args, auth, err)
 			}
 		})
@@ -166,19 +169,28 @@ func TestIdentityBrokerAS1FlagRules(t *testing.T) {
 	}
 }
 
-// TestHostedAS1MustBeBuiltBeforeServing pins that caller identity never
-// falls back to fetching the hosted AS-1 over the network.
-func TestHostedAS1MustBeBuiltBeforeServing(t *testing.T) {
+// TestNewAuthenticatorFetchesThroughTheHostedAS1 pins that the validator
+// fetches through the passed hosted AS-1's in-process client, and through no
+// AS-1 client when none is passed. TestHostedAS1SignsTheTUIIn proves the
+// in-process fetch end to end.
+func TestNewAuthenticatorFetchesThroughTheHostedAS1(t *testing.T) {
 	cfg, err := parseFlags(as1Args)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if auth, err := newAuthenticator(t.Context(), cfg); auth != nil || err == nil || !strings.Contains(err.Error(), "hosted AS-1 was not built") {
-		t.Fatalf("newAuthenticator without the hosted AS-1 = (%v, %v), want a refusal", auth, err)
+	errStop := errors.New("validator construction stopped")
+	var got *http.Client
+	cfg.oidc.NewValidator = func(_ context.Context, c cliconfig.OIDCConfig) (server.PrincipalValidator, error) {
+		got = c.HTTPClient
+		return nil, errStop
 	}
-	cfg.as1Server = &app.IdentityBrokerAS1Server{Issuer: "https://other.example/as1"}
-	if auth, err := newAuthenticator(t.Context(), cfg); auth != nil || err == nil || !strings.Contains(err.Error(), "hosted AS-1 was not built") {
-		t.Fatalf("newAuthenticator with another AS-1 = (%v, %v), want a refusal", auth, err)
+	hosted := &app.IdentityBrokerAS1Server{Issuer: cfg.oidc.Issuer, HTTPClient: &http.Client{}}
+	if _, err := newAuthenticator(t.Context(), cfg, hosted); !errors.Is(err, errStop) || got != hosted.HTTPClient {
+		t.Fatalf("newAuthenticator with the hosted AS-1: err %v, client %p; want the AS-1's client %p", err, got, hosted.HTTPClient)
+	}
+	got = &http.Client{}
+	if _, err := newAuthenticator(t.Context(), cfg, nil); !errors.Is(err, errStop) || got != nil {
+		t.Fatalf("newAuthenticator without a hosted AS-1: err %v, client %p; want none", err, got)
 	}
 }
 

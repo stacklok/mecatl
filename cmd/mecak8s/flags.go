@@ -316,8 +316,6 @@ type config struct {
 	// identity, explicitly set or not.
 	identityBrokerSubjectClaim    string
 	identityBrokerSubjectClaimSet bool
-	// as1Server is the hosted AS-1 app.Build returned, set before serve.
-	as1Server *app.IdentityBrokerAS1Server
 
 	// Scheduled tasks (issue #189): the in-process scheduler.
 	// mecak8s is the multi-replica home — the leader-lease (the k8s session-lease
