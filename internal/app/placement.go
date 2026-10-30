@@ -14,9 +14,13 @@ import (
 const (
 	localDefaultPlacementID       = "local-default"
 	localDefaultPlacementRevision = "configured-v1"
-	noFSPlacementID               = "no-fs"
-	noFSPlacementRevision         = "nofs-v1"
-	defaultPlacementScope         = server.PlacementScope("deployment")
+	// localWorktreePlacementRevision marks a selected worktree ref. HEAD is
+	// checked when the selector binds; reattach identifies the worktree by path
+	// so the session's own commits do not strand it.
+	localWorktreePlacementRevision = "worktree-v1"
+	noFSPlacementID                = "no-fs"
+	noFSPlacementRevision          = "nofs-v1"
+	defaultPlacementScope          = server.PlacementScope("deployment")
 )
 
 func referenceIntentLifecycle(provider server.PlacementProvider) server.ReferenceIntentLifecycle {
@@ -188,7 +192,7 @@ func (p *localPlacementProvider) Reattach(ctx context.Context, req server.Placem
 		return p.bindNoFS()
 	}
 	if choice, ok := p.currentWorktree(ctx, req.Ref); ok {
-		return p.bindWorktree(choice)
+		return p.bindWorktree(choice, req.Ref)
 	}
 	return server.PlacementBinding{}, server.ErrPlacementNotFound
 }
@@ -244,7 +248,7 @@ func (p *localPlacementProvider) bindSelectedWorktree(ctx context.Context, req s
 	if !matched {
 		return server.PlacementBinding{}, server.ErrPlacementChanged
 	}
-	return p.bindWorktree(choice)
+	return p.bindWorktree(choice, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: choice.Path, Revision: localWorktreePlacementRevision})
 }
 
 func (p *localPlacementProvider) authorizedSource(ctx context.Context, ref session.EnvironmentRef) bool {
@@ -256,7 +260,7 @@ func (p *localPlacementProvider) authorizedSource(ctx context.Context, ref sessi
 }
 
 func (p *localPlacementProvider) currentWorktree(ctx context.Context, ref session.EnvironmentRef) (server.Worktree, bool) {
-	if p.worktrees == nil || ref.Kind != session.EnvKindLocal {
+	if p.worktrees == nil || ref.Kind != session.EnvKindLocal || (ref.Revision != localWorktreePlacementRevision && !isGitObjectID(ref.Revision)) {
 		return server.Worktree{}, false
 	}
 	current, err := p.worktrees.List(ctx, p.root)
@@ -264,15 +268,16 @@ func (p *localPlacementProvider) currentWorktree(ctx context.Context, ref sessio
 		return server.Worktree{}, false
 	}
 	for _, choice := range current {
-		if choice.Path == ref.ID && choice.Head == ref.Revision {
+		if choice.Path == ref.ID {
 			return choice, true
 		}
 	}
 	return server.Worktree{}, false
 }
 
-func (p *localPlacementProvider) bindWorktree(choice server.Worktree) (server.PlacementBinding, error) {
-	ref := session.EnvironmentRef{Kind: session.EnvKindLocal, ID: choice.Path, Revision: choice.Head}
+// bindWorktree returns ref unchanged so reattach preserves the persisted
+// identity exactly, including legacy refs whose revision is a bind-time HEAD.
+func (p *localPlacementProvider) bindWorktree(choice server.Worktree, ref session.EnvironmentRef) (server.PlacementBinding, error) {
 	ws := p.workspace(choice.Path)
 	if ws == nil {
 		return server.PlacementBinding{}, server.ErrPlacementUnavailable
@@ -295,6 +300,20 @@ func (p *localPlacementProvider) bindWorktree(choice server.Worktree) (server.Pl
 // ref stays on server.Worktree so selector matching compares exact values.
 func displayBranch(ref string) string {
 	return strings.TrimPrefix(ref, "refs/heads/")
+}
+
+// isGitObjectID reports whether s is a full SHA-1 or SHA-256 object name.
+// Worktree refs persisted before localWorktreePlacementRevision carry one.
+func isGitObjectID(s string) bool {
+	if len(s) != 40 && len(s) != 64 {
+		return false
+	}
+	for _, c := range s {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 func configuredLocalPlacementRef(root string) session.EnvironmentRef {
