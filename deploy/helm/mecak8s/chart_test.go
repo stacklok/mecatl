@@ -693,7 +693,7 @@ func TestMecak8sHelmChart_OwnerIdentity(t *testing.T) {
 func TestMecak8sHelmChart_IdentityBrokerAS1(t *testing.T) {
 	base := []string{"template", "as1", ".", "--set", "mockProvider=true,permissionMode=yolo,replicaCount=1", "--set", "redis.local.enabled=true",
 		"--set", "extraArgs={--no-shell}",
-		"--set", "oidc.enabled=true,oidc.audience=mecatl,oidc.ownerIdentity=sub_id,oidc.resource=https://mecatl.example.com",
+		"--set", "oidc.enabled=true,oidc.audience=https://mecatl.example.com/api,oidc.ownerIdentity=sub_id,oidc.resource=https://mecatl.example.com",
 		"--set", "identityBroker.enabled=true,identityBroker.subjectClaim=sub",
 		"--set", "identityBroker.as1.issuer=https://mecatl.example.com/as1,identityBroker.as1.tuiClientID=mecatui",
 		"--set", "identityBroker.as1.upstream.issuer=https://login.example.com/tenant/v2.0,identityBroker.as1.upstream.clientID=as1"}
@@ -825,6 +825,8 @@ func TestMecak8sHelmChart_IdentityBrokerAS1(t *testing.T) {
 		"plain HTTP issuer":                {with("identityBroker.as1.issuer=http://mecatl.example.com/as1"), "identityBroker.as1.issuer must be an https URL"},
 		"upstream issuer with query":       {with("identityBroker.as1.upstream.issuer=https://login.example.com?x=1"), "identityBroker.as1.upstream.issuer must be an https URL"},
 		"without audience":                 {with("oidc.audience="), "oidc.audience is required with identityBroker.as1.issuer"},
+		"plain-word audience":              {with("oidc.audience=mecatl"), "oidc.audience must be an absolute http or https URL"},
+		"audience with a fragment":         {with("oidc.audience=https://mecatl.example.com/api#x"), "oidc.audience must be an absolute http or https URL"},
 		"without resource":                 {with("oidc.resource="), "oidc.resource is required with identityBroker.as1.issuer"},
 		"private HTTPS issuer":             {with("oidc.allowPrivateHTTPSIssuer=true", "oidc.caSecret=ca", "oidc.caKey=ca.crt"), "oidc.allowPrivateHTTPSIssuer cannot be used with identityBroker.as1.issuer"},
 		"foreign JWKS URI":                 {with("oidc.jwksURI=https://idp.example.com/keys"), "oidc.jwksURI cannot be used with identityBroker.as1.issuer"},

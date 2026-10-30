@@ -12,7 +12,7 @@ set:
   replicaCount: 1
   extraArgs: [--no-shell]
   oidc.enabled: true
-  oidc.audience: mecatl
+  oidc.audience: https://mecatl.example.com/api
   oidc.ownerIdentity: sub_id
   oidc.resource: https://mecatl.example.com
   identityBroker.enabled: true
@@ -333,6 +333,13 @@ tests:
     asserts:
       - failedTemplate:
           errorPattern: oidc.audience is required with identityBroker.as1.issuer
+
+  - it: requires a URL audience for AS-1
+    set:
+      oidc.audience: mecatl
+    asserts:
+      - failedTemplate:
+          errorPattern: oidc.audience must be an absolute http or https URL
 
   - it: requires the protected-resource identifier
     set:
