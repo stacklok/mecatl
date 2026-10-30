@@ -389662,6 +389662,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1793369944381,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "37e6a94753de5aa55d874d41fda7b5f286e2489c",
+          "message": "docs(drafts): design committed session history and execution kernel (#2179)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-30T08:56:02-07:00",
+          "tree_id": "91c3d888c17e33056176ff321b76e065f9e36de7",
+          "url": "https://github.com/stacklok/mecatl/commit/37e6a94753de5aa55d874d41fda7b5f286e2489c"
+        },
+        "date": 1793376513668,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 16151,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12913,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 794,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -508146,6 +508185,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1793376509721,
+  "lastUpdate": 1793376514779,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
