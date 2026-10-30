@@ -352308,6 +352308,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1793377241986,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "cca18a37e48ba95a9003fb993c3ce8eb360a01ae",
+          "message": "fix(forker): tolerate vanished Git worktree locks (#2623)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-30T11:43:26-07:00",
+          "tree_id": "de32ec47d3a51585b39f02d112392f652b4d9c38",
+          "url": "https://github.com/stacklok/mecatl/commit/cca18a37e48ba95a9003fb993c3ce8eb360a01ae"
+        },
+        "date": 1793386512731,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -509134,6 +509168,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1793386509531,
+  "lastUpdate": 1793386513731,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
