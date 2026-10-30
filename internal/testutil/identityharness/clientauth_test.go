@@ -26,7 +26,7 @@ func TestClientAssertionDefects(t *testing.T) {
 		SubjectToken: "not-a-jwt",
 		Assertion:    b.Assertion(identityharness.ClientAssertionSpec{JTI: "ca-reused"}),
 	})
-	assertReason(t, err, http.StatusBadRequest, "invalid_request", "")
+	assertReason(t, err, http.StatusBadRequest, "invalid_request", "subject_token_invalid")
 
 	maxLife := identityharness.DefaultClientAssertionMaxLifetime
 	skew := identityharness.ClientAssertionClockSkew

@@ -223,9 +223,10 @@ func TestIdentityBrokerOpenRefusalMapping(t *testing.T) {
 		as1Called bool
 	}{
 		{name: "token_used", refuse: func(a *fakeAS1) { a.refuseWith("token_used") }, want: server.ErrBearerRejected, as1Called: true},
-		{name: "subject_invalid", refuse: func(a *fakeAS1) {
+		{name: "subject_invalid", refuse: func(a *fakeAS1) { a.refuseWith("subject_token_invalid") }, want: server.ErrBearerRejected, as1Called: true},
+		{name: "invalid_request with no reason", refuse: func(a *fakeAS1) {
 			a.setRefusal(identitybroker.NewServerRefusal(http.StatusBadRequest, "invalid_request", ""))
-		}, want: server.ErrBearerRejected, as1Called: true},
+		}, want: server.ErrInternal, as1Called: true},
 		{name: "signed_out", refuse: func(a *fakeAS1) { a.refuseWith("signed_out") }, want: server.ErrSignInRequired, as1Called: true},
 		{name: "upstream_revoked", refuse: func(a *fakeAS1) { a.refuseWith("upstream_revoked") }, want: server.ErrSignInRequired, as1Called: true},
 		{name: "owner_action_required", refuse: func(a *fakeAS1) { a.refuseWith("owner_action_required") }, want: server.ErrSignInRequired, as1Called: true},
@@ -1222,14 +1223,15 @@ func TestIdentityBrokerForkClosesItsBrokerSessionWhenTheSuccessorIsNotSaved(t *t
 // a broker refusal at session open names neither the broker's reason nor the
 // broker call: the reason stays in the server's diagnostics.
 func TestIdentityBrokerRefusalTextIsFixed(t *testing.T) {
-	leaks := []string{"token_used", "subject_invalid", "signed_out", "owner_mismatch", "invalid_client", "identity broker open", "open:"}
+	leaks := []string{"token_used", "subject_invalid", "subject_token_invalid", "signed_out", "owner_mismatch", "invalid_client", "invalid_request", "identity broker open", "open:"}
 	for _, tc := range []struct {
 		name       string
 		refuse     func(*fakeAS1)
 		otherSubID bool
 	}{
 		{name: "token_used", refuse: func(a *fakeAS1) { a.refuseWith("token_used") }},
-		{name: "subject_invalid", refuse: func(a *fakeAS1) {
+		{name: "subject_invalid", refuse: func(a *fakeAS1) { a.refuseWith("subject_token_invalid") }},
+		{name: "invalid_request with no reason", refuse: func(a *fakeAS1) {
 			a.setRefusal(identitybroker.NewServerRefusal(http.StatusBadRequest, "invalid_request", ""))
 		}},
 		{name: "signed_out", refuse: func(a *fakeAS1) { a.refuseWith("signed_out") }},

@@ -26,10 +26,12 @@ var knownErrorCodes = map[string]bool{
 
 // knownReasons are the reason codes of the design's error reasons
 // (docs/drafts/agent-identity/credentials-and-lifecycle.md). AS-1 returns
-// only token_used, revoked, parent_revoked, and not_issuable for grants;
-// subject_invalid, owner_mismatch, session_owned, session_closed, and
-// schedule_ended are the broker's own, kept so a server sending one is not
-// taken for a configuration fault.
+// only token_used, revoked, parent_revoked, and not_issuable for grants, and
+// subject_token_invalid, subject_token_audience, subject_token_source_client,
+// and grant_invalid for the tokens a request presents; subject_invalid,
+// owner_mismatch, session_owned, session_closed, and schedule_ended are the
+// broker's own, kept so a server sending one is not taken for a
+// configuration fault.
 var knownReasons = map[string]bool{
 	"subject_invalid": true, "token_used": true, "owner_mismatch": true,
 	"session_owned": true, "session_closed": true, "signed_out": true,
@@ -37,6 +39,15 @@ var knownReasons = map[string]bool{
 	"revoked": true, "parent_revoked": true, "not_issuable": true,
 	"svid_expired": true, "denied": true,
 	"consent_required": true, "invalid_assertion": true,
+	"subject_token_invalid": true, "subject_token_audience": true,
+	"subject_token_source_client": true, "grant_invalid": true,
+}
+
+// configurationFaultReasons are the known reasons that still mean a
+// configuration fault or broker bug: a subject token for another audience or
+// from a client AS-1 does not accept, and an unknown or expired grant.
+var configurationFaultReasons = map[string]bool{
+	"subject_token_audience": true, "subject_token_source_client": true, "grant_invalid": true,
 }
 
 // transientStatuses are the HTTP statuses ServerRefusal.transient treats as
@@ -112,15 +123,17 @@ func (r *ServerRefusal) Error() string {
 // IsConfigurationFault reports whether err is a failure the design's error
 // reasons treat as a configuration fault or broker bug (gRPC INTERNAL):
 // ErrTransportConfiguration, or a refusal with invalid_client,
-// unauthorized_client, or invalid_target, or any other refusal without a
-// known reason code. A description that does not follow the reason-code
-// convention, such as prose, counts as no reason. A transient refusal (see
-// IsUnavailable) never is. A failed client authentication is always
-// invalid_client. A caller needing a reason-specific outcome, such as an
-// AS-2 invalid_grant with no reason, checks the ServerRefusal first. Session
-// open does: AS-1 refuses an unacceptable access token with invalid_request
-// and no reason, which session open reports as subject_invalid before asking
-// IsConfigurationFault (design step (3)).
+// unauthorized_client, or invalid_target, or with the reason
+// subject_token_audience, subject_token_source_client, or grant_invalid, or
+// any other refusal without a known reason code. A description that does not
+// follow the reason-code convention, such as prose, counts as no reason. A
+// transient refusal (see IsUnavailable) never is. A failed client
+// authentication is always invalid_client. A caller needing a
+// reason-specific outcome, such as an AS-2 invalid_grant with no reason,
+// checks the ServerRefusal first. Session open does: AS-1 refuses an access
+// token a fresh one could replace with subject_token_invalid, which session
+// open reports as subject_invalid; an invalid_request with no reason is a
+// broker bug or configuration fault there too (design step (3)).
 func IsConfigurationFault(err error) bool {
 	if errors.Is(err, ErrTransportConfiguration) {
 		return true
@@ -133,7 +146,7 @@ func IsConfigurationFault(err error) bool {
 	case "invalid_client", "unauthorized_client", "invalid_target":
 		return true
 	}
-	return !knownReasons[r.Reason]
+	return configurationFaultReasons[r.Reason] || !knownReasons[r.Reason]
 }
 
 // IsUnavailable reports whether err is a retryable infrastructure failure
