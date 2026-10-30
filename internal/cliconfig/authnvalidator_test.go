@@ -111,7 +111,7 @@ func (f *rootJWKSFixture) validator(t *testing.T) server.PrincipalValidator {
 	t.Helper()
 	validator, err := OIDCValidator(context.Background(), OIDCConfig{
 		Issuer: f.srv.URL, Audience: rootTestAudience, JWKSURI: f.srv.URL + "/keys",
-		httpClient: f.srv.Client(),
+		HTTPClient: f.srv.Client(),
 	})
 	if err != nil {
 		t.Fatalf("OIDCValidator: %v", err)
@@ -152,7 +152,7 @@ func TestDefaultOIDCValidatorPassesOwnerIdentity(t *testing.T) {
 	validator, err := OIDCValidator(context.Background(), OIDCConfig{
 		Issuer: fixture.srv.URL, Audience: rootTestAudience, JWKSURI: fixture.srv.URL + "/keys",
 		OwnerIdentity: oidcauthn.OwnerIdentitySubID, AcceptedClientIDs: []string{"mecatui"},
-		httpClient: fixture.srv.Client(),
+		HTTPClient: fixture.srv.Client(),
 	})
 	if err != nil {
 		t.Fatalf("OIDCValidator: %v", err)

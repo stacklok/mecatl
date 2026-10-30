@@ -277,7 +277,7 @@ func TestTelemetryMetricsAddrServesPrometheus(t *testing.T) {
 		defer cancel()
 		serveErr = serveWithHooks(ctx, cfg, built.Service, obs, time.Sleep, func(addr net.Addr) {
 			metricsListening <- addr
-		}, built.MCPBrokerHandlers, built.MCPBrokerCallbackPath)
+		}, builtServing{brokerHandlers: built.MCPBrokerHandlers, brokerCallbackPath: built.MCPBrokerCallbackPath})
 	}()
 	defer func() {
 		cancel()
@@ -367,7 +367,7 @@ func TestTelemetryMetricsAddrBindFailure(t *testing.T) {
 	listening := false
 	err = serveWithHooks(ctx, cfg, built.Service, obs, time.Sleep, func(net.Addr) {
 		listening = true
-	}, built.MCPBrokerHandlers, built.MCPBrokerCallbackPath)
+	}, builtServing{brokerHandlers: built.MCPBrokerHandlers, brokerCallbackPath: built.MCPBrokerCallbackPath})
 	if err == nil || !strings.Contains(err.Error(), "listen metrics") || !strings.Contains(err.Error(), addr) {
 		t.Fatalf("serve with occupied metrics address = %v, want listen metrics error naming %s", err, addr)
 	}
@@ -459,7 +459,7 @@ func TestTelemetryPushesRunMetricsOnExit(t *testing.T) {
 	defer cancel()
 	serveErr := make(chan error, 1)
 	go func() {
-		serveErr <- serve(ctx, cfg, built.Service, obs, built.MCPBrokerHandlers, built.MCPBrokerCallbackPath)
+		serveErr <- serve(ctx, cfg, built.Service, obs, builtServing{brokerHandlers: built.MCPBrokerHandlers, brokerCallbackPath: built.MCPBrokerCallbackPath})
 	}()
 	cancel()
 	select {

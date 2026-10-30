@@ -698,6 +698,34 @@ Usage: mecak8s [flags]
         authentication (default "0.0.0.0:8081")
   --http-shutdown-timeout value
         Maximum time for graceful HTTP and metrics shutdown (default 5s)
+  --identity-broker-as1-issuer string
+        HTTPS issuer URL of AS-1, the identity broker's sign-in authorization server,
+        hosted under the URL's path on the HTTP listener. Requires --enable-identity-
+        broker, --oidc-audience, --oidc-resource, and --oidc-owner-identity=sub_id;
+        sets --oidc-issuer, --oidc-client-id, and --oidc-accepted-client-ids when
+        unset, and refuses other values. AS-1 keeps sign-ins and refresh tokens in
+        memory. Empty does not host AS-1
+  --identity-broker-as1-signing-key-file string
+        PEM private key (EC P-256 or RSA) AS-1 signs access tokens with. Empty
+        generates a key at startup, so access tokens stop verifying when mecak8s
+        restarts
+  --identity-broker-as1-tui-client-id string
+        OAuth client ID of mecatui at AS-1, a public client. Required with --identity-
+        broker-as1-issuer
+  --identity-broker-as1-upstream-client-id string
+        AS-1's client ID at the upstream identity provider, registered with the
+        redirect URI ISSUER/oauth/callback. Required with --identity-broker-as1-issuer
+  --identity-broker-as1-upstream-client-secret-file string
+        File holding AS-1's client secret at the upstream identity provider. Empty
+        makes AS-1 a public client there
+  --identity-broker-as1-upstream-issuer string
+        HTTPS issuer URL of the OIDC identity provider users sign in at through AS-1.
+        Required with --identity-broker-as1-issuer
+  --identity-broker-subject-claim string
+        Upstream identity provider ID-token claim that names the company identity, the
+        same for a user in every application: oid for Entra ID, whose sub differs per
+        application, or sub for a provider whose sub does not. Required with, and only
+        allowed with, --identity-broker-as1-issuer
   --import-claude-permissions
         Import compatible Claude Code permission settings
   --learning-store-url string

@@ -1,5 +1,6 @@
 {{- include "mecak8s.validateImage" . -}}
 {{- include "mecak8s.validateRedis" . -}}
+{{- include "mecak8s.validateIdentityBroker" . -}}
 {{- include "mecak8s.validateOIDC" . -}}
 {{- include "mecak8s.validateExecution" . -}}
 {{- include "mecak8s.validateTLS" . -}}
@@ -20,8 +21,9 @@ metadata:
 spec:
   replicas: {{ .Values.replicaCount }}
   strategy:
-    {{- if $mcpOAuth }}
-    # Broker mode: session/grant/authorization state is process-local. A surge
+    {{- if or $mcpOAuth .Values.identityBroker.enabled }}
+    # Broker mode (the MCP OAuth broker or the identity broker and its AS-1):
+    # session/grant/authorization state is process-local. A surge
     # rollout (the RollingUpdate default) would briefly run a second, empty
     # broker incarnation alongside the old one before it drains, which can
     # receive traffic bound to the old pod's in-flight state. Recreate retires
@@ -184,7 +186,7 @@ spec:
             {{- end }}
             {{- end }}
             {{- if .Values.oidc.enabled }}
-            - {{ printf "--oidc-issuer=%s" .Values.oidc.issuer | quote }}
+            - {{ printf "--oidc-issuer=%s" (include "mecak8s.oidcIssuer" .) | quote }}
             - {{ printf "--oidc-audience=%s" .Values.oidc.audience | quote }}
             {{- if .Values.oidc.jwksURI }}
             - {{ printf "--oidc-jwks-uri=%s" .Values.oidc.jwksURI | quote }}
@@ -198,14 +200,34 @@ spec:
             - {{ printf "--oidc-max-jwks-staleness=%s" .Values.oidc.maxJWKSStaleness | quote }}
             {{- if .Values.oidc.resource }}
             - {{ printf "--oidc-resource=%s" .Values.oidc.resource | quote }}
-            - {{ printf "--oidc-client-id=%s" .Values.oidc.clientID | quote }}
+            - {{ printf "--oidc-client-id=%s" (include "mecak8s.oidcClientID" .) | quote }}
             {{- if .Values.oidc.scopes }}
             - {{ printf "--oidc-scopes=%s" (join "," .Values.oidc.scopes) | quote }}
             {{- end }}
             {{- end }}
             {{- if .Values.oidc.ownerIdentity }}
             - {{ printf "--oidc-owner-identity=%s" .Values.oidc.ownerIdentity | quote }}
-            - {{ printf "--oidc-accepted-client-ids=%s" (join "," .Values.oidc.acceptedClientIDs) | quote }}
+            - {{ printf "--oidc-accepted-client-ids=%s" (join "," (include "mecak8s.oidcAcceptedClientIDs" . | fromJsonArray)) | quote }}
+            {{- end }}
+            {{- end }}
+            {{- if .Values.identityBroker.enabled }}
+            - --enable-identity-broker
+            {{- with .Values.identityBroker.as1 }}
+            {{- if .issuer }}
+            - {{ printf "--identity-broker-as1-issuer=%s" .issuer | quote }}
+            - {{ printf "--identity-broker-as1-tui-client-id=%s" .tuiClientID | quote }}
+            - {{ printf "--identity-broker-as1-upstream-issuer=%s" .upstream.issuer | quote }}
+            - {{ printf "--identity-broker-as1-upstream-client-id=%s" .upstream.clientID | quote }}
+            {{- if .upstream.clientSecret.secretName }}
+            - {{ printf "--identity-broker-as1-upstream-client-secret-file=/var/run/secrets/as1-upstream-client-secret/%s" .upstream.clientSecret.key | quote }}
+            {{- end }}
+            {{- if .signingKey.secretName }}
+            - {{ printf "--identity-broker-as1-signing-key-file=/var/run/secrets/as1-signing-key/%s" .signingKey.key | quote }}
+            {{- end }}
+            {{- end }}
+            {{- end }}
+            {{- with .Values.identityBroker.subjectClaim }}
+            - {{ printf "--identity-broker-subject-claim=%s" . | quote }}
             {{- end }}
             {{- end }}
             {{- if .Values.tls.enabled }}
@@ -323,6 +345,12 @@ spec:
             {{- if .Values.oidc.caSecret }}
             - {name: oidc-ca, mountPath: /var/run/secrets/oidc-ca, readOnly: true}
             {{- end }}
+            {{- if .Values.identityBroker.as1.signingKey.secretName }}
+            - {name: as1-signing-key, mountPath: /var/run/secrets/as1-signing-key, readOnly: true}
+            {{- end }}
+            {{- if .Values.identityBroker.as1.upstream.clientSecret.secretName }}
+            - {name: as1-upstream-client-secret, mountPath: /var/run/secrets/as1-upstream-client-secret, readOnly: true}
+            {{- end }}
             {{- if .Values.execution.enabled }}
             - {name: execution-mtls, mountPath: /var/run/secrets/execution, readOnly: true}
             {{- end }}
@@ -373,6 +401,26 @@ spec:
             defaultMode: 0440
             items:
               - {key: {{ .Values.oidc.caKey | quote }}, path: {{ .Values.oidc.caKey | quote }}}
+        {{- end }}
+        {{- with .Values.identityBroker.as1.signingKey }}
+        {{- if .secretName }}
+        - name: as1-signing-key
+          secret:
+            secretName: {{ .secretName }}
+            defaultMode: 0440
+            items:
+              - {key: {{ .key | quote }}, path: {{ .key | quote }}}
+        {{- end }}
+        {{- end }}
+        {{- with .Values.identityBroker.as1.upstream.clientSecret }}
+        {{- if .secretName }}
+        - name: as1-upstream-client-secret
+          secret:
+            secretName: {{ .secretName }}
+            defaultMode: 0440
+            items:
+              - {key: {{ .key | quote }}, path: {{ .key | quote }}}
+        {{- end }}
         {{- end }}
         {{- if .Values.execution.enabled }}
         - name: execution-mtls

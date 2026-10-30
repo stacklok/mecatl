@@ -80,10 +80,10 @@ func TestIdentityBrokerAgainstOfflineHarness(t *testing.T) {
 	defer cancel()
 	serveErr := make(chan error, 1)
 	go func() {
-		serveErr <- serveWithDrainWait(ctx, cfg, built.Service, observability{}, func(time.Duration) {}, built.MCPBrokerHandlers, built.MCPBrokerCallbackPath)
+		serveErr <- serveWithDrainWait(ctx, cfg, built.Service, observability{}, func(time.Duration) {}, builtServing{brokerHandlers: built.MCPBrokerHandlers, brokerCallbackPath: built.MCPBrokerCallbackPath})
 	}()
 	api := "http://" + cfg.httpAddr
-	waitForHTTPStatus(t, api+"/readyz", http.StatusOK)
+	waitForHTTPStatus(t, http.DefaultClient, api+"/readyz", http.StatusOK)
 
 	alice, err := h.SignIn(t.Context(), identityharness.SignInRequest{User: identityharness.Alice})
 	if err != nil {

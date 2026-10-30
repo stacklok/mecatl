@@ -784,11 +784,26 @@ linters:
           list-mode: strict
           files:
             - '**/internal/identitybroker/adapter/**.go'
+            - '!**/internal/identitybroker/adapter/as1server/**.go'
             - '!$test'
           allow:
             - $gostd
             - github.com/stacklok/mecatl/internal/identitybroker$
             - github.com/golang-jwt/jwt/v5$
+        # AS-1 is hosted on ToolHive's embedded authorization server; only the
+        # authorization server packages it constructs are allowed.
+        internal-identitybroker-adapter-as1server:
+          list-mode: strict
+          files:
+            - '**/internal/identitybroker/adapter/as1server/**.go'
+            - '!$test'
+          allow:
+            - $gostd
+            - github.com/stacklok/toolhive/pkg/authserver$
+            - github.com/stacklok/toolhive/pkg/authserver/runner$
+            - github.com/stacklok/toolhive/pkg/authserver/server/registration$
+            - github.com/stacklok/toolhive/pkg/authserver/storage$
+            - github.com/stacklok/toolhive/pkg/oauthproto$
         # Only the composition root wires the identity broker's adapters; the
         # rest of Mecatl reaches the broker through its authentication boundary.
         internal-identitybroker-adapter-importers:

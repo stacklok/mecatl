@@ -44,6 +44,7 @@ import (
 	"github.com/stacklok/mecatl/internal/app"
 	"github.com/stacklok/mecatl/internal/cliconfig"
 	"github.com/stacklok/mecatl/internal/flaghelp"
+	"github.com/stacklok/mecatl/mcp/oauthlogin"
 )
 
 // k8s-native listen defaults. A pod binds 0.0.0.0 (not loopback — the
@@ -309,6 +310,12 @@ type config struct {
 
 	// enableIdentityBroker starts the experimental agent identity broker.
 	enableIdentityBroker bool
+	// as1 hosts AS-1 beside the identity broker when its issuer is set.
+	as1 as1Flags
+	// identityBrokerSubjectClaim is the IdP claim naming the company
+	// identity, explicitly set or not.
+	identityBrokerSubjectClaim    string
+	identityBrokerSubjectClaimSet bool
 
 	// Scheduled tasks (issue #189): the in-process scheduler.
 	// mecak8s is the multi-replica home — the leader-lease (the k8s session-lease
@@ -344,6 +351,16 @@ type config struct {
 	// the no-PII claim before trusting --product-metrics for real.
 	productMetricsDryRun bool
 	installationID       string
+}
+
+// as1Flags are the --identity-broker-as1-* flags.
+type as1Flags struct {
+	issuer                   string
+	signingKeyFile           string
+	tuiClientID              string
+	upstreamIssuer           string
+	upstreamClientID         string
+	upstreamClientSecretFile string
 }
 
 // stringList is a repeatable string flag.Value, preserving order across
@@ -531,6 +548,13 @@ func parseFlags(argv []string) (config, error) {
 	fs.BoolVar(&cfg.enableParallel, "enable-parallel", false, "Enable the Parallel tool for isolated child branches")
 	fs.BoolVar(&cfg.enableTeams, "enable-teams", false, "Enable the experimental agent-team capability")
 	fs.BoolVar(&cfg.enableIdentityBroker, "enable-identity-broker", false, "Start the experimental agent identity broker, which gives each signed-in user's session a broker session. Supports a single replica only, requires no shell in this process (--no-shell, or --shell \"\" with Kubernetes execution, which keeps the remote Shell), and blocks the tool calls of agent definitions that have hooks")
+	fs.StringVar(&cfg.as1.issuer, "identity-broker-as1-issuer", "", "HTTPS issuer URL of AS-1, the identity broker's sign-in authorization server, hosted under the URL's path on the HTTP listener. Requires --enable-identity-broker, --oidc-audience, --oidc-resource, and --oidc-owner-identity=sub_id; sets --oidc-issuer, --oidc-client-id, and --oidc-accepted-client-ids when unset, and refuses other values. AS-1 keeps sign-ins and refresh tokens in memory. Empty does not host AS-1")
+	fs.StringVar(&cfg.as1.signingKeyFile, "identity-broker-as1-signing-key-file", "", "PEM private key (EC P-256 or RSA) AS-1 signs access tokens with. Empty generates a key at startup, so access tokens stop verifying when mecak8s restarts")
+	fs.StringVar(&cfg.as1.tuiClientID, "identity-broker-as1-tui-client-id", "", "OAuth client ID of mecatui at AS-1, a public client. Required with --identity-broker-as1-issuer")
+	fs.StringVar(&cfg.as1.upstreamIssuer, "identity-broker-as1-upstream-issuer", "", "HTTPS issuer URL of the OIDC identity provider users sign in at through AS-1. Required with --identity-broker-as1-issuer")
+	fs.StringVar(&cfg.as1.upstreamClientID, "identity-broker-as1-upstream-client-id", "", "AS-1's client ID at the upstream identity provider, registered with the redirect URI ISSUER/oauth/callback. Required with --identity-broker-as1-issuer")
+	fs.StringVar(&cfg.as1.upstreamClientSecretFile, "identity-broker-as1-upstream-client-secret-file", "", "File holding AS-1's client secret at the upstream identity provider. Empty makes AS-1 a public client there")
+	fs.StringVar(&cfg.identityBrokerSubjectClaim, "identity-broker-subject-claim", "", "Upstream identity provider ID-token claim that names the company identity, the same for a user in every application: oid for Entra ID, whose sub differs per application, or sub for a provider whose sub does not. Required with, and only allowed with, --identity-broker-as1-issuer")
 
 	// Headless telemetry (issue #343): OPT-IN. --metrics-addr mounts a
 	// SEPARATE loopback /metrics listener (the admin mux — Prometheus scrape).
@@ -588,6 +612,8 @@ func parseFlags(argv []string) (config, error) {
 			cfg.subagentModelRouterSet = true
 		case "product-metrics":
 			cfg.productMetricsSet = true
+		case "identity-broker-subject-claim":
+			cfg.identityBrokerSubjectClaimSet = true
 		}
 		markRetentionCLIFlag(&cfg.retentionCLISet, fl.Name)
 		if fl.Name == "schedule-fire-retention" {
@@ -686,6 +712,9 @@ func parseFlags(argv []string) (config, error) {
 			return config{}, errors.New("remote execution does not support --enable-parallel or --enable-teams")
 		}
 	}
+	if err := resolveAS1Flags(&cfg); err != nil {
+		return config{}, err
+	}
 	// The broker's owner is the company identity AS-1 witnessed in sub_id;
 	// without this it would be AS-1's own issuer and pseudonymous subject.
 	if cfg.enableIdentityBroker && cfg.oidc.Enabled() && cfg.oidc.OwnerIdentity != oidcauthn.OwnerIdentitySubID {
@@ -717,6 +746,67 @@ func parseFlags(argv []string) (config, error) {
 	}
 
 	return cfg, nil
+}
+
+// resolveAS1Flags checks the hosted AS-1 flags and, with AS-1 on, points
+// caller identity at it: mecak8s validates the access tokens AS-1 issues, for
+// the TUI client, with the --oidc-audience AS-1 issues them for. AS-1's own
+// configuration is checked again when app.Build constructs it.
+//
+//nolint:gocyclo // the startup refusals are one explicit list.
+func resolveAS1Flags(cfg *config) error {
+	as1, oidc := cfg.as1, &cfg.oidc
+	if as1.issuer == "" {
+		if as1 != (as1Flags{}) || cfg.identityBrokerSubjectClaimSet {
+			return errors.New("--identity-broker-as1-* and --identity-broker-subject-claim require --identity-broker-as1-issuer")
+		}
+		return nil
+	}
+	switch {
+	case !cfg.enableIdentityBroker:
+		return errors.New("--identity-broker-as1-issuer requires --enable-identity-broker")
+	case as1.tuiClientID == "" || as1.upstreamIssuer == "" || as1.upstreamClientID == "":
+		return errors.New("--identity-broker-as1-issuer requires --identity-broker-as1-tui-client-id, --identity-broker-as1-upstream-issuer, and --identity-broker-as1-upstream-client-id")
+	case cfg.identityBrokerSubjectClaim == "":
+		return errors.New("--identity-broker-as1-issuer requires --identity-broker-subject-claim: oid for Entra ID, whose sub differs per application, or sub for an identity provider whose sub is the same across applications")
+	case !strings.HasPrefix(as1.issuer, "https://") || !validIssuerIdentifier(as1.issuer):
+		return errors.New("--identity-broker-as1-issuer must be an https URL with a host and no credentials, query, or fragment")
+	case !strings.HasPrefix(as1.upstreamIssuer, "https://") || !validIssuerIdentifier(as1.upstreamIssuer):
+		return errors.New("--identity-broker-as1-upstream-issuer must be an https URL with a host and no credentials, query, or fragment")
+	case oidc.Audience == "":
+		return errors.New("--identity-broker-as1-issuer requires --oidc-audience, the Mecatl API audience AS-1 issues access tokens for")
+	case oidc.Resource == "":
+		return errors.New("--identity-broker-as1-issuer requires --oidc-resource: mecatui finds AS-1 through the protected-resource metadata")
+	case oidc.AllowPrivateHTTPSIssuer:
+		return errors.New("--oidc-allow-private-https-issuer cannot be used with --identity-broker-as1-issuer: mecak8s reaches the AS-1 it hosts without the network")
+	case oidc.JWKSURI != "":
+		return errors.New("--oidc-jwks-uri cannot be used with --identity-broker-as1-issuer: AS-1's discovery document supplies its keys")
+	case oidc.Issuer != "" && oidc.Issuer != as1.issuer:
+		return errors.New("--oidc-issuer must be unset or equal --identity-broker-as1-issuer")
+	case oidc.ClientID != "" && oidc.ClientID != as1.tuiClientID:
+		return errors.New("--oidc-client-id must be unset or equal --identity-broker-as1-tui-client-id")
+	case len(oidc.AcceptedClientIDs) != 0 && !slices.Contains(oidc.AcceptedClientIDs, as1.tuiClientID):
+		return errors.New("--oidc-accepted-client-ids must include --identity-broker-as1-tui-client-id")
+	}
+	oidc.Issuer, oidc.ClientID = as1.issuer, as1.tuiClientID
+	if len(oidc.AcceptedClientIDs) == 0 {
+		oidc.AcceptedClientIDs = []string{as1.tuiClientID}
+	}
+	return nil
+}
+
+// identityBrokerAS1Config is AS-1's composition configuration, or nil when
+// AS-1 is not hosted.
+func identityBrokerAS1Config(cfg config) *app.IdentityBrokerAS1Config {
+	if cfg.as1.issuer == "" {
+		return nil
+	}
+	return &app.IdentityBrokerAS1Config{
+		Issuer: cfg.as1.issuer, Audience: cfg.oidc.Audience, SigningKeyFile: cfg.as1.signingKeyFile,
+		PublicClients:  []app.IdentityBrokerAS1PublicClient{{ID: cfg.as1.tuiClientID, RedirectURIs: []string{oauthlogin.ExactRedirectURL}}},
+		UpstreamIssuer: cfg.as1.upstreamIssuer, UpstreamClientID: cfg.as1.upstreamClientID,
+		UpstreamClientSecretFile: cfg.as1.upstreamClientSecretFile, SubjectClaim: cfg.identityBrokerSubjectClaim,
+	}
 }
 
 func selectMockScript(cfg *config) {
@@ -901,6 +991,7 @@ func appConfig(cfg config, diag port.Diagnostics, obs observability) app.Config 
 		EnableParallel:           cfg.enableParallel,
 		EnableTeams:              cfg.enableTeams,
 		IdentityBroker:           cfg.enableIdentityBroker,
+		IdentityBrokerHostedAS1:  identityBrokerAS1Config(cfg),
 		SoulPath:                 cfg.soulFile,
 		NoSoul:                   cfg.noSoul,
 		UserModelDir:             cfg.userModelDir,

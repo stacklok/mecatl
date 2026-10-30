@@ -9,10 +9,13 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
+	"golang.org/x/time/rate"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/health"
@@ -23,6 +26,7 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/server"
 	"github.com/stacklok/mecatl/internal/adapter/telemetry"
 	"github.com/stacklok/mecatl/internal/adapter/tlsreload"
+	"github.com/stacklok/mecatl/internal/app"
 	"github.com/stacklok/mecatl/internal/cliconfig"
 )
 
@@ -95,7 +99,10 @@ func mountBrokerHandlers(mux *http.ServeMux, addr string, verifiedIdentity, owne
 // non-empty) is mounted in front of the authenticated API, same as mecated —
 // it must stay reachable without credentials, and outside the drain listener
 // since it is discovery metadata, not a lifecycle operation.
-func normalHTTPMux(svc *server.Service, auth *server.Authenticator, profile server.ProtectedResourceProfile, addr string, authed bool, brokerHandlers mcpbroker.HandlerBundle, brokerCallbackPath string) (http.Handler, error) {
+//
+// The hosted AS-1's anonymous OAuth routes, when built.as1 is non-nil, are
+// mounted after the broker's with the same kind of conflict check.
+func normalHTTPMux(svc *server.Service, auth *server.Authenticator, profile server.ProtectedResourceProfile, addr string, authed bool, built builtServing) (http.Handler, error) {
 	ready := server.ReadyFunc(func() bool {
 		if svc.IsDraining() {
 			return false
@@ -111,10 +118,88 @@ func normalHTTPMux(svc *server.Service, auth *server.Authenticator, profile serv
 	// Broker routes are mounted LAST, after every other route above, so
 	// HandlerBundle.Mount's own route-conflict check is checked against the
 	// real, fully-populated mux — see mountBrokerHandlers' doc comment.
-	if err := mountBrokerHandlers(mux, addr, authed, false, brokerHandlers, brokerCallbackPath); err != nil {
+	if err := mountBrokerHandlers(mux, addr, authed, false, built.brokerHandlers, built.brokerCallbackPath); err != nil {
 		return nil, fmt.Errorf("mount MCP broker handlers: %w", err)
 	}
+	if err := mountAS1(mux, built.as1, profile); err != nil {
+		return nil, fmt.Errorf("mount AS-1: %w", err)
+	}
 	return mux, nil
+}
+
+// mountAS1 registers the hosted AS-1's routes on mux, which must already hold
+// every other route. A route another pattern on mux already serves is a
+// conflict, as is one the API behind the "/" fallback owns: its /v1 namespace
+// and the protected-resource metadata document.
+func mountAS1(mux *http.ServeMux, as1 *app.IdentityBrokerAS1Server, profile server.ProtectedResourceProfile) error {
+	if as1 == nil {
+		return nil
+	}
+	metadataPath := ""
+	if profile.Resource != "" {
+		if u, err := url.Parse(server.WellKnownProtectedResourceURL(profile.Resource)); err == nil {
+			metadataPath = u.Path
+		}
+	}
+	conflicts := func(route string) bool {
+		if route == "/v1" || strings.HasPrefix(route, "/v1/") || route == metadataPath {
+			return true
+		}
+		for _, method := range []string{http.MethodGet, http.MethodHead, http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete, http.MethodConnect, http.MethodOptions, http.MethodTrace} {
+			if _, pattern := mux.Handler(&http.Request{Method: method, URL: &url.URL{Path: route}}); pattern != "" && pattern != "/" {
+				return true
+			}
+		}
+		return false
+	}
+	for _, route := range as1.Routes {
+		if conflicts(route) {
+			return fmt.Errorf("route %q conflicts with a mecak8s route; choose another --identity-broker-as1-issuer path", route)
+		}
+	}
+	signIn := limitAS1(as1.Handler, rate.NewLimiter(as1SignInRatePerSec, as1SignInBurst))
+	token := limitAS1(as1.Handler, rate.NewLimiter(as1TokenRatePerSec, as1TokenBurst))
+	for _, route := range as1.Routes {
+		if strings.HasSuffix(route, "/oauth/token") {
+			mux.Handle(route, token)
+		} else {
+			mux.Handle(route, signIn)
+		}
+	}
+	return nil
+}
+
+// Bounds on AS-1's anonymous routes. /oauth/authorize stores a pending
+// authorization before anyone signs in, so request size and rate bound the
+// memory an unauthenticated caller can make AS-1 hold. mecak8s does not trust
+// forwarded headers, so behind an ingress every user has the same peer
+// address: the rates are global, with the browser sign-in routes and the
+// token endpoint in separate buckets so a flood of one cannot starve the
+// other.
+const (
+	as1MaxQueryBytes    = 8 << 10
+	as1MaxBodyBytes     = 64 << 10
+	as1SignInRatePerSec = 50
+	as1SignInBurst      = 200
+	as1TokenRatePerSec  = 50
+	as1TokenBurst       = 200
+)
+
+// limitAS1 refuses a request limiter has no room for with 429, refuses an
+// oversized query, and caps the request body.
+func limitAS1(next http.Handler, limiter *rate.Limiter) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !limiter.Allow() {
+			http.Error(w, "rate limit exceeded", http.StatusTooManyRequests)
+			return
+		}
+		if len(r.URL.RawQuery) > as1MaxQueryBytes {
+			http.Error(w, "query too long", http.StatusRequestURITooLong)
+			return
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, as1MaxBodyBytes)
+		next.ServeHTTP(w, r)
+	})
 }
 
 func drainHTTPMux(svc *server.Service, wait func(time.Duration)) http.Handler {
@@ -179,15 +264,22 @@ func startMetricsServer(addr string, obs observability, errCh chan<- error) (*ht
 	return metricsSrv, metricsLis.Addr(), nil
 }
 
-func serve(ctx context.Context, cfg config, svc *server.Service, obs observability, brokerHandlers mcpbroker.HandlerBundle, brokerCallbackPath string) error {
-	return serveWithDrainWait(ctx, cfg, svc, obs, time.Sleep, brokerHandlers, brokerCallbackPath)
+// builtServing is what serve takes from app.Build.
+type builtServing struct {
+	brokerHandlers     mcpbroker.HandlerBundle
+	brokerCallbackPath string
+	as1                *app.IdentityBrokerAS1Server
 }
 
-func serveWithDrainWait(ctx context.Context, cfg config, svc *server.Service, obs observability, drainWait func(time.Duration), brokerHandlers mcpbroker.HandlerBundle, brokerCallbackPath string) error {
-	return serveWithHooks(ctx, cfg, svc, obs, drainWait, nil, brokerHandlers, brokerCallbackPath)
+func serve(ctx context.Context, cfg config, svc *server.Service, obs observability, built builtServing) error {
+	return serveWithDrainWait(ctx, cfg, svc, obs, time.Sleep, built)
 }
 
-func serveWithHooks(ctx context.Context, cfg config, svc *server.Service, obs observability, drainWait func(time.Duration), metricsListening func(net.Addr), brokerHandlers mcpbroker.HandlerBundle, brokerCallbackPath string) error {
+func serveWithDrainWait(ctx context.Context, cfg config, svc *server.Service, obs observability, drainWait func(time.Duration), built builtServing) error {
+	return serveWithHooks(ctx, cfg, svc, obs, drainWait, nil, built)
+}
+
+func serveWithHooks(ctx context.Context, cfg config, svc *server.Service, obs observability, drainWait func(time.Duration), metricsListening func(net.Addr), built builtServing) error {
 	tlsCfg, tlsLifecycle, err := buildTLSConfig(cfg)
 	if err != nil {
 		return err
@@ -200,7 +292,7 @@ func serveWithHooks(ctx context.Context, cfg config, svc *server.Service, obs ob
 		}
 	}
 
-	auth, err := newAuthenticator(ctx, cfg)
+	auth, err := newAuthenticator(ctx, cfg, built.as1)
 	if err != nil {
 		return err
 	}
@@ -227,7 +319,7 @@ func serveWithHooks(ctx context.Context, cfg config, svc *server.Service, obs ob
 	// A bearer token, OIDC, or verified mTLS authenticates callers. Ordinary
 	// server TLS only authenticates the server.
 	authed := callerAuthenticationConfigured(cfg, tlsCfg)
-	normalMux, err := normalHTTPMux(svc, auth, protectedResourceProfile(cfg.oidc), cfg.httpAddr, authed, brokerHandlers, brokerCallbackPath)
+	normalMux, err := normalHTTPMux(svc, auth, protectedResourceProfile(cfg.oidc), cfg.httpAddr, authed, built)
 	if err != nil {
 		return err
 	}
@@ -319,14 +411,22 @@ func protectedResourceProfile(c cliconfig.OIDCConfig) server.ProtectedResourcePr
 // newAuthenticator constructs the caller-identity boundary with the server-root
 // context so its JWKS refresh survives individual requests. A broken OIDC setup
 // is fatal: the pod must not silently serve unauthenticated traffic.
-func newAuthenticator(ctx context.Context, cfg config) (*server.Authenticator, error) {
+//
+// A non-nil as1 is the hosted AS-1, whose discovery document and keys the
+// validator fetches in process: listeners are not serving yet. Without it a
+// hosted issuer is fetched over the network, which fails startup closed.
+func newAuthenticator(ctx context.Context, cfg config, as1 *app.IdentityBrokerAS1Server) (*server.Authenticator, error) {
 	// Log before construction so an insecure test-only relaxation is visible even
 	// when validator construction then fails.
 	warnInsecureIssuer(cfg.oidc)
 	if err := cliconfig.ValidateOIDCAuthToken(cfg.oidc, cfg.authToken); err != nil {
 		return nil, err
 	}
-	validator, err := cliconfig.OIDCValidator(ctx, cfg.oidc)
+	oidc := cfg.oidc
+	if as1 != nil {
+		oidc.HTTPClient = as1.HTTPClient
+	}
+	validator, err := cliconfig.OIDCValidator(ctx, oidc)
 	if err != nil {
 		return nil, err
 	}

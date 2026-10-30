@@ -27,6 +27,8 @@ func TestToolHiveImportsStayBehindApprovedAdapterLeaves(t *testing.T) {
 		// import leaf unrelated to the MCP broker's own construction/discovery.
 		"cmd/mecatui/resource_discovery.go":           true,
 		"internal/adapter/resourceurl/resourceurl.go": true,
+		// AS-1, hosted on ToolHive's embedded authorization server (#2490).
+		"internal/identitybroker/adapter/as1server/as1server.go": true,
 	}
 	const toolHiveModule = "github.com/stacklok/toolhive"
 	if err := filepath.WalkDir(root, func(sourcePath string, entry fs.DirEntry, walkErr error) error {

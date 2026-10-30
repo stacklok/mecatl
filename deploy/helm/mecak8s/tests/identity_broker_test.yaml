@@ -1,0 +1,341 @@
+suite: identity broker and hosted AS-1
+templates:
+  - templates/deployment.yaml
+release:
+  name: unit
+  namespace: test
+set:
+  guardrails.fromSettings: true
+  redis.endpoint: redis.example.internal:6379
+  redis.credentialsSecret: redis-credentials
+  mockProvider: true
+  replicaCount: 1
+  extraArgs: [--no-shell]
+  oidc.enabled: true
+  oidc.audience: mecatl
+  oidc.ownerIdentity: sub_id
+  oidc.resource: https://mecatl.example.com
+  identityBroker.enabled: true
+  identityBroker.subjectClaim: sub
+  identityBroker.as1.issuer: https://mecatl.example.com/as1
+  identityBroker.as1.tuiClientID: mecatui
+  identityBroker.as1.upstream.issuer: https://login.example.com/tenant/v2.0
+  identityBroker.as1.upstream.clientID: as1
+tests:
+  - it: renders AS-1 and derives the OIDC issuer and clients from it
+    asserts:
+      - equal:
+          path: spec.strategy.type
+          value: Recreate
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --enable-identity-broker
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --identity-broker-as1-issuer=https://mecatl.example.com/as1
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --oidc-issuer=https://mecatl.example.com/as1
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --oidc-client-id=mecatui
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --oidc-accepted-client-ids=mecatui
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --identity-broker-subject-claim=sub
+      - notExists:
+          path: spec.template.spec.volumes[?(@.name == "as1-signing-key")]
+
+  - it: projects the signing key and upstream client secret read-only
+    set:
+      identityBroker.subjectClaim: oid
+      identityBroker.as1.signingKey.secretName: as1-signing
+      identityBroker.as1.signingKey.key: key.pem
+      identityBroker.as1.upstream.clientSecret.secretName: as1-upstream
+      identityBroker.as1.upstream.clientSecret.key: client-secret
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --identity-broker-as1-signing-key-file=/var/run/secrets/as1-signing-key/key.pem
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --identity-broker-as1-upstream-client-secret-file=/var/run/secrets/as1-upstream-client-secret/client-secret
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --identity-broker-subject-claim=oid
+      - equal:
+          path: spec.template.spec.volumes[?(@.name == "as1-signing-key")].secret
+          value:
+            secretName: as1-signing
+            defaultMode: 288
+            items:
+              - key: key.pem
+                path: key.pem
+      - equal:
+          path: spec.template.spec.volumes[?(@.name == "as1-upstream-client-secret")].secret
+          value:
+            secretName: as1-upstream
+            defaultMode: 288
+            items:
+              - key: client-secret
+                path: client-secret
+      - equal:
+          path: spec.template.spec.containers[0].volumeMounts[?(@.name == "as1-signing-key")].readOnly
+          value: true
+      - equal:
+          path: spec.template.spec.containers[0].volumeMounts[?(@.name == "as1-upstream-client-secret")].readOnly
+          value: true
+
+  - it: rejects the identity broker without the sub_id owner identity
+    set:
+      oidc.ownerIdentity: ""
+    asserts:
+      - failedTemplate:
+          errorMessage: identityBroker.enabled with oidc.enabled requires oidc.ownerIdentity=sub_id
+
+  - it: renders the identity broker without OIDC when AS-1 is off
+    set:
+      identityBroker.subjectClaim: ""
+      oidc.enabled: false
+      oidc.audience: ""
+      oidc.ownerIdentity: ""
+      oidc.resource: ""
+      identityBroker.as1.issuer: ""
+      identityBroker.as1.tuiClientID: ""
+      identityBroker.as1.upstream.issuer: ""
+      identityBroker.as1.upstream.clientID: ""
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --enable-identity-broker
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: --identity-broker-as1-issuer=https://mecatl.example.com/as1
+
+  - it: rejects AS-1 without OIDC
+    set:
+      oidc.enabled: false
+    asserts:
+      - failedTemplate:
+          errorMessage: identityBroker.as1.issuer requires oidc.enabled=true
+
+  - it: rejects the identity broker with a shell in the process
+    set:
+      extraArgs: []
+    asserts:
+      - failedTemplate:
+          errorPattern: identityBroker.enabled requires no shell in the mecak8s process
+
+  - it: rejects a no-shell flag a later flag turns off
+    set:
+      extraArgs: [--no-shell, --no-shell=false]
+    asserts:
+      - failedTemplate:
+          errorPattern: identityBroker.enabled requires no shell
+
+  - it: rejects a non-empty shell
+    set:
+      extraArgs: [--shell, /bin/bash]
+    asserts:
+      - failedTemplate:
+          errorPattern: identityBroker.enabled requires no shell
+
+  - it: accepts each Go form of disabling the shell
+    set:
+      extraArgs: [-no-shell]
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: -no-shell
+
+  - it: accepts --no-shell=True
+    set:
+      extraArgs: [--no-shell=True]
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --no-shell=True
+
+  - it: accepts an empty --shell=
+    set:
+      extraArgs: [--shell=]
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --shell=
+
+  - it: reads the argument after --shell as its value
+    set:
+      extraArgs: [--shell, --no-shell]
+    asserts:
+      - failedTemplate:
+          errorPattern: identityBroker.enabled requires no shell
+
+  - it: accepts the shell-less Redis workspace
+    set:
+      extraArgs: []
+      redis.filesystem.enabled: true
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --redis-filesystem
+
+  - it: rejects a subject claim without AS-1
+    set:
+      identityBroker.subjectClaim: oid
+      identityBroker.as1.issuer: ""
+      identityBroker.as1.tuiClientID: ""
+      identityBroker.as1.upstream.issuer: ""
+      identityBroker.as1.upstream.clientID: ""
+    asserts:
+      - failedTemplate:
+          errorMessage: identityBroker.subjectClaim requires identityBroker.as1.issuer
+
+  - it: rejects the broker flag in extraArgs as well
+    set:
+      extraArgs: [--no-shell, --enable-identity-broker]
+    asserts:
+      - failedTemplate:
+          errorMessage: extraArgs entry "--enable-identity-broker" enables the identity broker without the single replica it needs; remove it and set identityBroker.enabled=true
+
+  - it: rejects the broker flag in extraArgs with the identity broker off
+    set:
+      extraArgs: [-enable-identity-broker=true]
+      replicaCount: 3
+      oidc.enabled: false
+      oidc.audience: ""
+      oidc.ownerIdentity: ""
+      oidc.resource: ""
+      identityBroker.enabled: false
+      identityBroker.subjectClaim: ""
+      identityBroker.as1.issuer: ""
+      identityBroker.as1.tuiClientID: ""
+      identityBroker.as1.upstream.issuer: ""
+      identityBroker.as1.upstream.clientID: ""
+    asserts:
+      - failedTemplate:
+          errorPattern: enables the identity broker without the single replica it needs; remove it and set identityBroker.enabled=true
+
+  - it: rejects another identity broker flag in extraArgs
+    set:
+      extraArgs: [--no-shell, --identity-broker-subject-claim=oid]
+    asserts:
+      - failedTemplate:
+          errorPattern: sets an identity broker flag
+
+  - it: rejects more than one replica
+    set:
+      replicaCount: 2
+    asserts:
+      - failedTemplate:
+          errorPattern: replicaCount
+
+  - it: rejects AS-1 without the identity broker
+    set:
+      identityBroker.enabled: false
+    asserts:
+      - failedTemplate:
+          errorMessage: identityBroker.as1.issuer requires identityBroker.enabled=true
+
+  - it: rejects AS-1 values without its issuer
+    set:
+      identityBroker.as1.issuer: ""
+      identityBroker.subjectClaim: ""
+    asserts:
+      - failedTemplate:
+          errorMessage: identityBroker.as1 values require identityBroker.as1.issuer
+
+  - it: requires the TUI client ID
+    set:
+      identityBroker.as1.tuiClientID: ""
+    asserts:
+      - failedTemplate:
+          errorPattern: identityBroker.as1.tuiClientID is required
+
+  - it: requires the subject claim with AS-1
+    set:
+      identityBroker.subjectClaim: ""
+    asserts:
+      - failedTemplate:
+          errorMessage: "identityBroker.subjectClaim is required when identityBroker.as1.issuer is set: oid for Microsoft Entra ID, or sub for an identity provider whose sub is the same across applications"
+
+  - it: requires the upstream issuer and client ID
+    set:
+      identityBroker.as1.upstream.clientID: ""
+    asserts:
+      - failedTemplate:
+          errorPattern: identityBroker.as1.upstream.clientID is required
+
+  - it: requires an HTTPS issuer
+    set:
+      identityBroker.as1.issuer: http://mecatl.example.com/as1
+    asserts:
+      - failedTemplate:
+          errorPattern: identityBroker.as1.issuer must be an https URL
+
+  - it: requires the Mecatl API audience
+    set:
+      oidc.audience: ""
+    asserts:
+      - failedTemplate:
+          errorPattern: oidc.audience is required with identityBroker.as1.issuer
+
+  - it: requires the protected-resource identifier
+    set:
+      oidc.resource: ""
+    asserts:
+      - failedTemplate:
+          errorPattern: oidc.resource is required with identityBroker.as1.issuer
+
+  - it: rejects a different OIDC issuer
+    set:
+      oidc.issuer: https://idp.example.com
+    asserts:
+      - failedTemplate:
+          errorMessage: oidc.issuer must be empty or equal identityBroker.as1.issuer
+
+  - it: rejects a different OIDC client ID
+    set:
+      oidc.clientID: studio
+    asserts:
+      - failedTemplate:
+          errorMessage: oidc.clientID must be empty or equal identityBroker.as1.tuiClientID
+
+  - it: rejects accepted client IDs without the TUI client
+    set:
+      oidc.acceptedClientIDs: [studio]
+    asserts:
+      - failedTemplate:
+          errorMessage: oidc.acceptedClientIDs must include identityBroker.as1.tuiClientID
+
+  - it: rejects a JWKS URI outside AS-1
+    set:
+      oidc.jwksURI: https://idp.example.com/keys
+    asserts:
+      - failedTemplate:
+          errorMessage: "oidc.jwksURI cannot be used with identityBroker.as1.issuer: AS-1's discovery document supplies its keys"
+
+  - it: rejects even AS-1's own JWKS URI
+    set:
+      oidc.jwksURI: https://mecatl.example.com/as1/.well-known/jwks.json
+    asserts:
+      - failedTemplate:
+          errorPattern: oidc.jwksURI cannot be used with identityBroker.as1.issuer
+
+  - it: rejects a private HTTPS issuer
+    set:
+      oidc.allowPrivateHTTPSIssuer: true
+      oidc.caSecret: oidc-ca
+      oidc.caKey: ca.crt
+    asserts:
+      - failedTemplate:
+          errorPattern: oidc.allowPrivateHTTPSIssuer cannot be used with identityBroker.as1.issuer
+
+  - it: rejects a signing key Secret without a key
+    set:
+      identityBroker.as1.signingKey.secretName: as1-signing
+    asserts:
+      - failedTemplate:
+          errorMessage: identityBroker.as1.signingKey.key is required when identityBroker.as1.signingKey.secretName is set

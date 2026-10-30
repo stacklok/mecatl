@@ -982,10 +982,14 @@ type Config struct {
 	// configuration in tests.
 	identityBrokerConfig *identitybroker.Config
 	// IdentityBrokerAS1 connects the real identity broker's session open to an
-	// AS-1, where it converts users' access tokens. No flag sets it yet: #2490
-	// fills it from operator configuration for AS-1 hosted in mecak8s. Nil, as
-	// in every deployment until then, converts no access tokens.
+	// AS-1, where it converts users' access tokens. No flag sets it yet: #2607
+	// fills it for AS-1 hosted in mecak8s. Nil, as in every deployment until
+	// then, converts no access tokens.
 	IdentityBrokerAS1 *IdentityBrokerAS1
+	// IdentityBrokerHostedAS1 hosts AS-1 beside the identity broker; nil hosts
+	// none. Only mecak8s sets it. Hosting AS-1 does not connect session open
+	// to it: IdentityBrokerAS1 stays nil until #2607.
+	IdentityBrokerHostedAS1 *IdentityBrokerAS1Config
 	// MCPProfileLoader resolves operator-tier profiles with the same permission
 	// resolver Build already owns. Command roots install it so settings are not
 	// parsed a second time and secret lookup remains a runtime-only operation.
@@ -1551,6 +1555,9 @@ type Built struct {
 	// IdentityBroker is the agent identity broker, as Mecatl calls it; nil when
 	// it is not enabled. Close releases it.
 	IdentityBroker identitybroker.Service
+	// IdentityBrokerHostedAS1 is the hosted AS-1; nil when
+	// Config.IdentityBrokerHostedAS1 is. Close releases it.
+	IdentityBrokerHostedAS1 *IdentityBrokerAS1Server
 	// GuardrailsAdvisory reports a configured checker demoted to advisory for
 	// sessions in the server's default mode (yolo); other modes keep it enforcing.
 	GuardrailsAdvisory bool
@@ -2284,7 +2291,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 
 	// The identity broker is released after the MCP broker, on startup failure
 	// and on shutdown.
-	identityBroker, releaseIdentityBroker, err := buildIdentityBroker(cfg)
+	identityBroker, identityBrokerAS1, releaseIdentityBroker, err := buildIdentityBroker(ctx, cfg)
 	if err != nil {
 		childLiveness.Close()
 		mcpClose()
@@ -3132,7 +3139,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		diag.Log(ctx, port.LevelWarn, "durable automatic reservation reconciliation unavailable")
 	})
 	attempts = startAttemptRecovery(ctx, cfg, reg, store, eventLog, assets.attemptRepository, assets.reflectionRepository, assets, placementProvider, placementScope)
-	return &Built{Service: svc, MCPBroker: brokerRuntime, MCPBrokerHandlers: brokerHandlers, MCPBrokerCallbackPath: brokerCallbackPath, IdentityBroker: identityBroker, GuardrailsAdvisory: guardrailConfigured && guardrailsDemoted(cfg), Close: closeAll}, nil
+	return &Built{Service: svc, MCPBroker: brokerRuntime, MCPBrokerHandlers: brokerHandlers, MCPBrokerCallbackPath: brokerCallbackPath, IdentityBroker: identityBroker, IdentityBrokerHostedAS1: identityBrokerAS1, GuardrailsAdvisory: guardrailConfigured && guardrailsDemoted(cfg), Close: closeAll}, nil
 }
 
 // resolveAgentSeam resolves the agent-definition registry from cfg: the

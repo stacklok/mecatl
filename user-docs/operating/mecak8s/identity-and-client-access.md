@@ -181,14 +181,120 @@ oidc:
 
 `oidc.ownerIdentity` sets `--oidc-owner-identity` and accepts only `sub_id` or
 the default empty string. `oidc.acceptedClientIDs` sets
-`--oidc-accepted-client-ids`; the chart rejects one without the other. The experimental identity broker requires this setting:
-with `--enable-identity-broker` and OIDC enabled, `mecak8s` refuses to start
-without it. When `oidc.clientID` is set, the chart requires it in
+`--oidc-accepted-client-ids`; the chart rejects one without the other. The
+experimental identity broker requires this setting: with
+`--enable-identity-broker` and OIDC enabled, `mecak8s` refuses to start without
+it, and the chart refuses `identityBroker.enabled` without it. When `oidc.clientID` is set, the chart requires it in
 `oidc.acceptedClientIDs`. Existing owners and principal settings keep matching
 only if AS-1's upstream IdP returns each user's same issuer and `sub`, which
 `mecak8s` cannot check at startup. For that precondition, the token checks, and
 the requirements on AS-1, see
 [Own resources by the `sub_id` identity](/features/security-and-execution/caller-identity.md#own-resources-by-the-sub_id-identity).
+
+## Host AS-1 in mecak8s
+
+`mecak8s` can host AS-1, Mecatl's own sign-in server, in front of your company
+IdP. `mecatui` users sign in at AS-1, AS-1 signs them in at the company IdP,
+and `mecak8s` validates the access tokens AS-1 issues, keyed by the company
+identity in their `sub_id` claim.
+
+Enabling AS-1 makes it the only issuer `mecak8s` accepts. Access tokens the
+company IdP issues directly stop working, so every client must sign in through
+AS-1. Studio does not support AS-1 yet and stops working until it does.
+
+These values turn it on:
+
+```yaml
+replicaCount: 1
+extraArgs: [--no-shell]
+oidc:
+  enabled: true
+  audience: https://mecatl.example.com/api
+  resource: https://mecatl.example.com
+  ownerIdentity: sub_id
+identityBroker:
+  enabled: true
+  subjectClaim: oid
+  as1:
+    issuer: https://mecatl.example.com/as1
+    tuiClientID: mecatui
+    signingKey:
+      secretName: mecak8s-as1
+      key: signing-key.pem
+    upstream:
+      issuer: https://login.microsoftonline.com/<TENANT_ID>/v2.0
+      clientID: <AS1_CLIENT_ID>
+      clientSecret:
+        secretName: mecak8s-as1
+        key: upstream-client-secret
+```
+
+|Value|Flag|Meaning|
+|-|-|-|
+|`identityBroker.enabled`|`--enable-identity-broker`|Starts the identity broker. Requires `replicaCount: 1`, `oidc.ownerIdentity: sub_id` when OIDC is enabled, and no shell in the process: `--no-shell` in `extraArgs`, or `--shell=` with `execution.enabled` to keep the remote Shell. The chart refuses to render without one. The Deployment rolls out with `Recreate`. This value is the only way to start the broker: the chart refuses `--enable-identity-broker` in `extraArgs`.|
+|`identityBroker.subjectClaim`|`--identity-broker-subject-claim`|The company IdP's ID-token claim that names each user. Required with `identityBroker.as1.issuer`, and allowed only with it.|
+|`identityBroker.as1.issuer`|`--identity-broker-as1-issuer`|AS-1's HTTPS issuer URL. Setting it hosts AS-1 and requires `oidc.enabled`, `oidc.audience`, and `oidc.resource`.|
+|`identityBroker.as1.tuiClientID`|`--identity-broker-as1-tui-client-id`|The client ID `mecatui` uses at AS-1.|
+|`identityBroker.as1.signingKey`|`--identity-broker-as1-signing-key-file`|_Optional._ Secret key holding AS-1's PEM signing key (EC P-256 or RSA).|
+|`identityBroker.as1.upstream.issuer`|`--identity-broker-as1-upstream-issuer`|The company IdP's HTTPS issuer URL.|
+|`identityBroker.as1.upstream.clientID`|`--identity-broker-as1-upstream-client-id`|AS-1's client ID at the company IdP.|
+|`identityBroker.as1.upstream.clientSecret`|`--identity-broker-as1-upstream-client-secret-file`|_Optional._ Secret key holding AS-1's client secret at the company IdP. Without it, AS-1 is a public client there.|
+
+Create the Secret before installing; the chart mounts each key read-only. Leave
+`oidc.issuer`, `oidc.clientID`, and `oidc.acceptedClientIDs` empty: the chart
+sets them to AS-1's issuer and `tuiClientID`. It refuses values that differ,
+any `oidc.jwksURI` (AS-1's discovery document supplies its keys),
+`oidc.allowPrivateHTTPSIssuer`, and identity broker flags in `extraArgs`.
+
+### Choose the issuer
+
+AS-1 serves its sign-in endpoints and discovery documents under the issuer
+URL's path on the `mecak8s` HTTP listener. The issuer can be a dedicated
+hostname, such as `https://signin.example.com`, or a path on the `mecak8s`
+host, such as `https://mecatl.example.com/as1`. Route that hostname or path
+prefix to the HTTP listener so browsers reach it.
+
+AS-1's sign-in endpoints are anonymous. Behind an ingress, `mecak8s` cannot
+tell users apart, so its rate limits are global: 50 requests per second, with
+bursts of 200, for the browser sign-in endpoints, and a separate budget of the
+same size for `<ISSUER>/oauth/token`, so a sign-in flood does not block token
+refresh. One client can still use up the budget for everyone, so configure a
+per-client rate limit for `<ISSUER>/oauth/*` at your ingress.
+
+AS-1 also holds at most 10,000 sign-ins that have not been approved yet. Past
+that, new sign-ins fail with a `server_error` until pending ones complete or
+expire, within 15 minutes.
+
+Keep the issuer once users have signed in. It is in every token, in each user's
+saved `mecatui` login, and in the redirect URI registered at the company IdP.
+
+### Register AS-1 at the company IdP
+
+Ask the IdP administrator to register one web application for AS-1 with the
+redirect URI `<ISSUER>/oauth/callback`. This registration replaces the separate
+`mecatui` and Studio registrations: every client signs in through AS-1, so
+per-application IdP policies can no longer tell those clients apart. AS-1
+requests the `offline_access` scope with `prompt=consent`.
+
+Set `subjectClaim` to a claim that is the same for a user across applications;
+it has no default. For Microsoft Entra ID, use `oid`, because Entra ID issues a
+different `sub` to each application. Use `sub` for an IdP whose `sub` does not
+depend on the application. The claim names the user to MCP gateways; session
+ownership still keys on the access token's `sub_id`.
+
+### Sign-in and restarts
+
+Users approve a consent page at AS-1 when they sign in. AS-1 keeps its users,
+pending sign-ins, and refresh tokens in memory, so every pod restart or rollout
+signs all users out of AS-1 and they run `mecatui login` again. With
+`signingKey`, access tokens issued before a restart keep verifying until they
+expire. Without it, AS-1 generates a key at startup and those tokens stop
+verifying immediately.
+
+Turning on `oidc.ownerIdentity: sub_id` for a deployment with existing sessions leaves
+those sessions with their previous owners; see
+[Own resources by the `sub_id` identity](/features/security-and-execution/caller-identity.md#own-resources-by-the-sub_id-identity)
+before switching.
 
 ## Security boundaries
 
@@ -199,6 +305,7 @@ the requirements on AS-1, see
 |**Ownerless data**|Caller APIs, retention, and scheduling exclude it. Preserve backups and use the [ownerless-record investigation](#investigate-ownerless-records); do not disable ownership on a tenant-facing service.|
 |**Signing-key revocation**|The default one-hour JWKS staleness bound permits cached signing keys during a short IdP outage. Tokens remain valid until their own expiry.|
 |**Rate limits and quotas**|`mecak8s` has no rate-limit flags. Enforce caller limits at the gateway or mesh.|
+|**Identity broker and AS-1**|The identity broker and AS-1 run inside the `mecak8s` process and keep their state in its memory, so there is no separate broker listener or store for executor Pods to reach. AS-1's sign-in endpoints are public by design. Keep executor workloads on the `mecatl-execution` default-deny network policy, and do not give a workload profile egress to the `mecak8s` Service.|
 |**Store confidentiality**|Production Redis requires verified TLS. Client-certificate authentication is not supported.|
 |**Identity data**|The token's `name` claim, often an email address, is stored unredacted in session snapshots, schedule records, and durable event actor metadata. Configure retention and deletion accordingly.|
 |**Authentication visibility**|Mecatl emits no authentication metric and does not log authentication failures. The caller sees the 401 or 503 response.|

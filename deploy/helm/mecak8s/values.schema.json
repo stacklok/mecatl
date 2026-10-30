@@ -62,6 +62,35 @@
         "acceptedClientIDs": {"type": "array", "items": {"type": "string", "minLength": 1}}
       }
     },
+    "identityBroker": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled", "as1"],
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "subjectClaim": {"type": "string", "pattern": "^\\S*$"},
+        "as1": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["issuer", "tuiClientID", "signingKey", "upstream"],
+          "properties": {
+            "issuer": {"type": "string"},
+            "tuiClientID": {"type": "string"},
+            "signingKey": {"$ref": "#/definitions/optionalSecretKey"},
+            "upstream": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["issuer", "clientID", "clientSecret"],
+              "properties": {
+                "issuer": {"type": "string"},
+                "clientID": {"type": "string"},
+                "clientSecret": {"$ref": "#/definitions/optionalSecretKey"}
+              }
+            }
+          }
+        }
+      }
+    },
     "tls": {
       "type": "object",
       "additionalProperties": false,
@@ -553,9 +582,28 @@
         "required": ["replicaCount"],
         "properties": {"replicaCount": {"const": 1}}
       }
+    },
+    {
+      "if": {
+        "required": ["identityBroker"],
+        "properties": {"identityBroker": {"required": ["enabled"], "properties": {"enabled": {"const": true}}}}
+      },
+      "then": {
+        "required": ["replicaCount"],
+        "properties": {"replicaCount": {"const": 1}}
+      }
     }
   ],
   "definitions": {
+    "optionalSecretKey": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["secretName", "key"],
+      "properties": {
+        "secretName": {"type": "string", "maxLength": 253, "pattern": "^(|[a-z0-9]([-.a-z0-9]*[a-z0-9])?)$"},
+        "key": {"type": "string", "maxLength": 253, "pattern": "^(|[-._a-zA-Z0-9]+)$"}
+      }
+    },
     "secretKeyRef": {
       "type": "object",
       "additionalProperties": false,
