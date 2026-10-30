@@ -272,10 +272,17 @@ func TestInvariant_worktree_ref_survives_head_move(t *testing.T) {
 func TestWorktreeReattachRejectsUnknownRevision(t *testing.T) {
 	choice := server.Worktree{Path: "/private/worktree", Branch: "refs/heads/feature", Head: "head-1"}
 	provider := &localPlacementProvider{scope: "test", root: t.TempDir(), worktrees: &scriptedWorktreeLister{responses: [][]server.Worktree{{choice}}}, workspace: func(root string) tool.Workspace { return memfs.NewWorkspace(root) }}
-	for _, revision := range []string{"", "head-1", "worktree-v2", strings.Repeat("A", 40), strings.Repeat("a", 39)} {
+	for _, revision := range []string{"", "head-1", "worktree-v2", strings.Repeat("A", 40), strings.Repeat("a", 39), strings.Repeat("a", 41), strings.Repeat("a", 65)} {
 		ref := session.EnvironmentRef{Kind: session.EnvKindLocal, ID: choice.Path, Revision: revision}
 		if _, err := provider.Reattach(context.Background(), server.PlacementReattachRequest{Ref: ref, Scope: "test"}); !errors.Is(err, server.ErrPlacementNotFound) {
 			t.Fatalf("revision %q reattach = %v, want not found", revision, err)
+		}
+	}
+	for _, revision := range []string{strings.Repeat("a", 40), strings.Repeat("0f", 32)} {
+		ref := session.EnvironmentRef{Kind: session.EnvKindLocal, ID: choice.Path, Revision: revision}
+		rebound, err := provider.Reattach(context.Background(), server.PlacementReattachRequest{Ref: ref, Scope: "test"})
+		if err != nil || rebound.Ref != ref {
+			t.Fatalf("legacy object ID %q reattach = %+v, %v", revision, rebound, err)
 		}
 	}
 	unlisted := session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/private/other", Revision: localWorktreePlacementRevision}
