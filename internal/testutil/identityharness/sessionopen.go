@@ -31,8 +31,9 @@ const (
 	errInvalidAuthDetail = "invalid_authorization_details"
 
 	// Reason codes AS-1 returns for grants (design "Error reasons").
-	reasonTokenUsed = "token_used"
-	reasonRevoked   = "revoked"
+	reasonTokenUsed           = "token_used"
+	reasonRevoked             = "revoked"
+	reasonSubjectTokenInvalid = "subject_token_invalid"
 
 	// Reasons for an invalid_authorization_details refusal
 	// (stacklok/toolhive#6897).
@@ -180,10 +181,11 @@ func (a *AS1) exchange(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Check 4: the subject token is a live AS-1 access token for the Mecatl
-	// API, issued to a public client. A refused token gets no reason.
+	// API, issued to a public client. A refused token gets
+	// subject_token_invalid whatever the failure (see the package doc).
 	subject, ok := a.verifySubjectToken(r.PostForm.Get("subject_token"))
 	if !ok {
-		a.refuse(w, "invalid_request", "")
+		a.refuse(w, "invalid_request", reasonSubjectTokenInvalid)
 		return
 	}
 	refresh, granted, ok := a.convert(subject, entry, now)

@@ -464,14 +464,14 @@ func TestServerErrorsAreClassified(t *testing.T) {
 	}
 
 	// A real refusal from AS-1's own checks: a token that is not AS-1's gets
-	// invalid_request with no reason. The client stays generic and reports a
-	// configuration fault; session open maps it to subject_invalid first.
+	// invalid_request with subject_token_invalid, a reason for the caller,
+	// which session open maps to subject_invalid.
 	err = c.Token(t.Context(), f.sessionOpenForm(t, "not-a-token"), &sessionOpenResult{})
-	if !errors.As(err, &oe) || *oe != (identitybroker.ServerRefusal{Status: http.StatusBadRequest, Code: "invalid_request"}) {
-		t.Fatalf("refusal = %v, want 400 invalid_request with no reason", err)
+	if !errors.As(err, &oe) || *oe != (identitybroker.ServerRefusal{Status: http.StatusBadRequest, Code: "invalid_request", Reason: "subject_token_invalid"}) {
+		t.Fatalf("refusal = %v, want 400 invalid_request subject_token_invalid", err)
 	}
-	if !identitybroker.IsConfigurationFault(err) || identitybroker.IsUnavailable(err) {
-		t.Fatalf("%v: want a configuration fault only", err)
+	if identitybroker.IsConfigurationFault(err) || identitybroker.IsUnavailable(err) {
+		t.Fatalf("%v is classified; a reason code is for the caller to map", err)
 	}
 
 	for _, tt := range []struct {
@@ -484,6 +484,9 @@ func TestServerErrorsAreClassified(t *testing.T) {
 		{identityharness.Fault{Error: "invalid_request", Reason: "parent_revoked"}, false, false},
 		{identityharness.Fault{Error: "invalid_request", Reason: "not_issuable"}, false, false},
 		{identityharness.Fault{Error: "invalid_request", Reason: "superseded"}, true, false},
+		{identityharness.Fault{Error: "invalid_request", Reason: "subject_token_audience"}, true, false},
+		{identityharness.Fault{Error: "invalid_request", Reason: "subject_token_source_client"}, true, false},
+		{identityharness.Fault{Error: "invalid_request", Reason: "grant_invalid"}, true, false},
 		{identityharness.Fault{Status: http.StatusServiceUnavailable, Error: "invalid_client"}, false, true},
 	} {
 		f.h.AS1.FailNextExchange(tt.fault)

@@ -662,8 +662,12 @@ func TestSessionOpenMapsAS1Refusals(t *testing.T) {
 		{"signed_out", identityharness.Fault{Error: "invalid_request", Reason: "signed_out"}, identitybroker.ReasonSignedOut.Code(), identitybroker.ReasonSignedOut},
 		{"upstream_revoked", identityharness.Fault{Error: "invalid_request", Reason: "upstream_revoked"}, identitybroker.ReasonUpstreamRevoked.Code(), identitybroker.ReasonUpstreamRevoked},
 		{"owner_action_required", identityharness.Fault{Error: "invalid_request", Reason: "owner_action_required"}, identitybroker.ReasonOwnerActionRequired.Code(), identitybroker.ReasonOwnerActionRequired},
-		{"invalid_request with no reason", identityharness.Fault{Error: "invalid_request"}, identitybroker.CodeUnauthenticated, identitybroker.ReasonSubjectInvalid},
-		{"subject_invalid", identityharness.Fault{Error: "invalid_request", Reason: "subject_invalid"}, identitybroker.CodeUnauthenticated, identitybroker.ReasonSubjectInvalid},
+		{"subject_token_invalid", identityharness.Fault{Error: "invalid_request", Reason: "subject_token_invalid"}, identitybroker.CodeUnauthenticated, identitybroker.ReasonSubjectInvalid},
+		{"subject_token_audience", identityharness.Fault{Error: "invalid_request", Reason: "subject_token_audience"}, identitybroker.CodeInternal, ""},
+		{"subject_token_source_client", identityharness.Fault{Error: "invalid_request", Reason: "subject_token_source_client"}, identitybroker.CodeInternal, ""},
+		{"grant_invalid", identityharness.Fault{Error: "invalid_request", Reason: "grant_invalid"}, identitybroker.CodeInternal, ""},
+		{"invalid_request with no reason", identityharness.Fault{Error: "invalid_request"}, identitybroker.CodeInternal, ""},
+		{"subject_invalid from AS-1", identityharness.Fault{Error: "invalid_request", Reason: "subject_invalid"}, identitybroker.CodeInternal, ""},
 		{"503", identityharness.Fault{Status: 503}, identitybroker.CodeUnavailable, ""},
 		{"429", identityharness.Fault{Status: 429}, identitybroker.CodeUnavailable, ""},
 		{"server_error", identityharness.Fault{Status: 500, Error: "server_error"}, identitybroker.CodeUnavailable, ""},
@@ -696,7 +700,7 @@ func TestSessionOpenMapsAS1Refusals(t *testing.T) {
 
 // TestSessionOpenReportsAS1sOwnRefusals runs AS-1's real checks 4 and 5.
 func TestSessionOpenReportsAS1sOwnRefusals(t *testing.T) {
-	t.Run("a token AS-1 did not sign: subject_invalid", func(t *testing.T) {
+	t.Run("a token AS-1 did not sign: subject_token_invalid is subject_invalid", func(t *testing.T) {
 		f := newOpenFixture(t)
 		token := identitybroker.NewToken(f.h.AS1.MintAccessToken(identityharness.AccessTokenSpec{ForeignKey: true}))
 		_, err := f.open(openHost, f.owner(identityharness.Alice), token)
@@ -1247,7 +1251,10 @@ func TestSessionOpenRemembersTokensAS1MayHaveConverted(t *testing.T) {
 		{"invalid_client", func(a *identityharness.AS1) {
 			a.FailNextExchange(identityharness.Fault{Status: 401, Error: "invalid_client"})
 		}, 0},
-		{"the token refused", func(a *identityharness.AS1) { a.FailNextExchange(identityharness.Fault{Error: "invalid_request"}) }, 0},
+		{"the token refused", func(a *identityharness.AS1) {
+			a.FailNextExchange(identityharness.Fault{Error: "invalid_request", Reason: "subject_token_invalid"})
+		}, 0},
+		{"invalid_request with no reason", func(a *identityharness.AS1) { a.FailNextExchange(identityharness.Fault{Error: "invalid_request"}) }, 0},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
