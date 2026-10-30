@@ -318,11 +318,11 @@ The broker checks that the echoed entry has the type and `issuable_token_types` 
 | AS-1 1 | 401 `invalid_client` | No; a configuration or key fault. |
 | AS-1 2 | 400 `unauthorized_client` | No. |
 | AS-1 3 | 400 `invalid_request`, `invalid_scope` for a `scope` parameter, `invalid_target` for `resource` or `audience`, or `invalid_authorization_details` for a malformed entry | No; a broker bug. |
-| AS-1 4 | 400 `invalid_request` with no reason (RFC 8693 §2.2.2), or with the user-wide revocation's reason for a token issued before it | No reason: after the client refreshes its access token. A revocation reason: after Alice signs in again. |
+| AS-1 4 | 400 `invalid_request` (RFC 8693 §2.2.2) with `subject_token_invalid` when a fresh access token can pass, `subject_token_audience` or `subject_token_source_client` when the token's audience or client is not allowed, or the user-wide revocation's reason for a token issued before it | `subject_token_invalid`: after the client refreshes its access token. `subject_token_audience`, `subject_token_source_client`: no; a configuration fault. A revocation reason: after Alice signs in again. |
 | AS-1 5 | 400 `invalid_request` with `token_used` | After the client refreshes its access token. |
 | Lost response, or 502 or 504 | None received, or a proxy's, which AS-1 may have processed | Once: resend the same request with a new client assertion. If AS-1 never processed it, the resend succeeds. If it did, check 5 refuses the resend with `token_used` and, once replay-revoke lands, revokes the grant the first request created; the client then refreshes its access token and opens again. |
 
-The broker builds every other part of the request, so it reports an `invalid_request` with no reason at session open as `subject_invalid`. mecak8s reports any of these to the client as a failed session open. It answers `subject_invalid` and `token_used` with 401 `invalid_token`, so the client refreshes its access token and tries once more; the error code is `bearer_rejected`. A user-wide revocation reason gets 401 with code `sign_in_required`, so the client signs in again.
+The broker reports AS-1's `subject_token_invalid` at session open as `subject_invalid`. It builds every other part of the request, so an `invalid_request` with no reason is a broker bug or a configuration fault, not a subject problem. mecak8s reports any of these to the client as a failed session open. It answers `subject_invalid` and `token_used` with 401 `invalid_token`, so the client refreshes its access token and tries once more; the error code is `bearer_rejected`. A user-wide revocation reason gets 401 with code `sign_in_required`, so the client signs in again.
 
 If the broker loses the response after AS-1 issued `RT-A42`, the resend above revokes it once replay-revoke lands. If the broker crashes before it can resend, nothing holds that refresh token. It stays valid at AS-1 until its hard expiry, usable only with the broker's key, and sign out everywhere ends it. mecak8s opens the session again with a fresh access token when the broker returns.
 
@@ -597,7 +597,7 @@ ID-JAG makes a refresh token as subject token optional (§4.3: an IdP "MAY addit
 | 2 | 400 `invalid_request` | Call fails; a broker bug. |
 | 3 | 400 `invalid_target` | Call fails; a configuration fault. |
 | 4, revoked | 400 `invalid_request` with `revoked` or `parent_revoked` | See [error reasons](#error-reasons). |
-| 4, unknown or expired | 400 `invalid_request` with no reason | Call fails. The broker checks the stored expiry in step (6), so this is a broker bug or clock skew. |
+| 4, unknown or expired | 400 `invalid_request` with `grant_invalid` | Call fails. The broker checks the stored expiry in step (6), so this is a broker bug or clock skew. |
 | 4, a schedule grant | 400 `invalid_request` with `not_issuable` | Call fails; a broker bug. |
 | 5, IdP refuses the refresh | 400 `invalid_request` with `upstream_revoked` or `owner_action_required` | AS-1 has ended all of Alice's grants; see [upstream re-check](#upstream-re-check). |
 | 5, recorded expiry reached, or no upstream refresh token | 400 `invalid_request` with `owner_action_required` | AS-1 has ended all of Alice's grants; she must sign in again. |
@@ -787,7 +787,7 @@ client_assertion=<private_key_jwt for mecatl>
 | 1 | 401 `invalid_client` | No. |
 | 2 | 400 `invalid_request` or `invalid_authorization_details` | No; a broker bug. |
 | 3, revoked | 400 `invalid_request` with `revoked` | No; the run does not start. The broker reports `schedule_ended` if it revoked the grant because the schedule was deleted, and otherwise the reason it recorded. |
-| 3, past the horizon | 400 `invalid_request` with no reason | No. The broker checks the stored horizon first and reports `owner_action_required`; Alice is notified to renew. |
+| 3, past the horizon | 400 `invalid_request` with `grant_invalid` | No. The broker checks the stored horizon first and reports `owner_action_required`; Alice is notified to renew. |
 | 3, not a schedule grant | 400 `invalid_request` with `not_issuable` | No; a broker bug. |
 | 4 | As step (7) check 5 | As step (7) check 5. |
 | Lost response | None received | Yes: the same request with a new client assertion. The first child is an orphan, usable only with the broker's key, and ends with the schedule grant. |
@@ -842,11 +842,13 @@ The failures each step can return: where each is detected, what the user sees, a
 
 ## Error reasons
 
-RFC 8693 §2.2.2 requires `invalid_request` for any subject or actor token that is invalid or unacceptable by policy, so the error code alone cannot tell the broker what to do. AS-1 and AS-2 therefore start `error_description` with a reason code, either alone or followed by a colon and text: `error_description=revoked`, or `error_description=revoked: grant revoked`. The broker parses both forms. RFC 6749 §5.2 limits `error_description` to the characters `%x20-21 / %x23-5B / %x5D-7E`, so the text never contains `"` or `\`; reason codes are lowercase letters and underscores. For grants, AS-1 returns only `token_used`, `revoked`, `parent_revoked`, and `not_issuable`, besides the reasons of the upstream re-check and the actor checks. The broker carries the reason in a gRPC `google.rpc.ErrorInfo` detail, and mecak8s maps it to an outcome.
+RFC 8693 §2.2.2 requires `invalid_request` for any subject or actor token that is invalid or unacceptable by policy, so the error code alone cannot tell the broker what to do. AS-1 and AS-2 therefore start `error_description` with a reason code, either alone or followed by a colon and text: `error_description=revoked`, or `error_description=revoked: grant revoked`. The broker parses both forms. RFC 6749 §5.2 limits `error_description` to the characters `%x20-21 / %x23-5B / %x5D-7E`, so the text never contains `"` or `\`; reason codes are lowercase letters and underscores. For grants, AS-1 returns only `token_used`, `revoked`, `parent_revoked`, `not_issuable`, and `grant_invalid` for an unknown or expired grant, besides the reasons of the upstream re-check and the actor checks. For a refused subject token at session open it returns `subject_token_invalid`, `subject_token_audience`, or `subject_token_source_client`. The broker carries the reason in a gRPC `google.rpc.ErrorInfo` detail, and mecak8s maps it to an outcome.
 
 | Reason | Returned by | Broker gRPC status | mecak8s outcome |
 | --- | --- | --- | --- |
-| `subject_invalid` | Broker, for AS-1's `invalid_request` with no reason at session open | `UNAUTHENTICATED` | Ask the client to refresh its access token and retry once. |
+| `subject_invalid` | Broker, for AS-1's `subject_token_invalid` at session open | `UNAUTHENTICATED` | Ask the client to refresh its access token and retry once. |
+| `subject_token_audience`, `subject_token_source_client` | AS-1, session open | `INTERNAL` | Fail the open; a configuration fault: the token's audience or client is not allowed for `mecatl`. |
+| `grant_invalid` | AS-1 | `INTERNAL` | Fail the call; the broker checks the stored expiry first, so this is a broker bug or clock skew. |
 | `token_used` | AS-1, session open | `UNAUTHENTICATED` | The same. |
 | `owner_mismatch` | Broker, session open | `PERMISSION_DENIED` | Fail the open with 403; a mecak8s pairing bug. |
 | `session_owned` | Broker, session open | `PERMISSION_DENIED` | Fail the open with 403; a mecak8s pairing bug or a closed session ID reused. A create naming an explicit session ID that another owner's broker session holds is refused before saving, as for an ID that is taken. |
