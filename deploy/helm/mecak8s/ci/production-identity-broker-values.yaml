@@ -23,7 +23,8 @@ redis:
 # oidc.issuer, oidc.clientID, and oidc.acceptedClientIDs are derived from AS-1.
 oidc:
   enabled: true
-  audience: mecatl
+  # AS-1 accepts only an absolute http(s) URL as its audience.
+  audience: https://mecatl.example.com/api
   resource: https://mecatl.example.com
   ownerIdentity: sub_id
 identityBroker:

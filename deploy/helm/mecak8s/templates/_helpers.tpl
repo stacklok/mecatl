@@ -121,6 +121,7 @@ client IDs from it; the chart renders the same derived values.
 {{- if not (regexMatch "^https://[^/?#@[:space:]]+(/[^?#[:space:]]*)?$" $url) -}}{{ fail (printf "%s must be an https URL with a host and no credentials, query, or fragment" $name) }}{{- end -}}
 {{- end -}}
 {{- $_ := required "oidc.audience is required with identityBroker.as1.issuer: it is the Mecatl API audience AS-1 issues access tokens for" .Values.oidc.audience -}}
+{{- if not (regexMatch "^https?://[^/?#[:space:]]+[^#[:space:]]*$" .Values.oidc.audience) -}}{{ fail "oidc.audience must be an absolute http or https URL with a host and no fragment when identityBroker.as1.issuer is set: AS-1 refuses any other audience" }}{{- end -}}
 {{- $_ := required "oidc.resource is required with identityBroker.as1.issuer: mecatui finds AS-1 through the protected-resource metadata" .Values.oidc.resource -}}
 {{- if .Values.oidc.allowPrivateHTTPSIssuer -}}{{ fail "oidc.allowPrivateHTTPSIssuer cannot be used with identityBroker.as1.issuer: mecak8s reaches the AS-1 it hosts without the network" }}{{- end -}}
 {{- if .Values.oidc.jwksURI -}}{{ fail "oidc.jwksURI cannot be used with identityBroker.as1.issuer: AS-1's discovery document supplies its keys" }}{{- end -}}

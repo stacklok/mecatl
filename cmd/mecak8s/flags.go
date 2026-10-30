@@ -779,6 +779,8 @@ func resolveAS1Flags(cfg *config) error {
 		return errors.New("--identity-broker-as1-upstream-issuer must be an https URL with a host and no credentials, query, or fragment")
 	case oidc.Audience == "":
 		return errors.New("--identity-broker-as1-issuer requires --oidc-audience, the Mecatl API audience AS-1 issues access tokens for")
+	case !as1AudienceURI(oidc.Audience):
+		return errors.New("--oidc-audience must be an absolute http or https URL with a host and no fragment when --identity-broker-as1-issuer is set: AS-1 refuses any other audience")
 	case oidc.Resource == "":
 		return errors.New("--identity-broker-as1-issuer requires --oidc-resource: mecatui finds AS-1 through the protected-resource metadata")
 	case oidc.AllowPrivateHTTPSIssuer:
@@ -797,6 +799,13 @@ func resolveAS1Flags(cfg *config) error {
 		oidc.AcceptedClientIDs = []string{as1.tuiClientID}
 	}
 	return nil
+}
+
+// as1AudienceURI reports whether audience is one AS-1 accepts: ToolHive
+// requires an absolute http or https URI with a host and no fragment.
+func as1AudienceURI(audience string) bool {
+	u, err := url.Parse(audience)
+	return err == nil && u.IsAbs() && u.Host != "" && u.Fragment == "" && (u.Scheme == "http" || u.Scheme == "https")
 }
 
 // identityBrokerAS1Config is AS-1's composition configuration, or nil when
