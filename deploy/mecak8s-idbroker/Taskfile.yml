@@ -47,7 +47,7 @@ tasks:
           printf '\nmecatl-idbroker is ready. Next steps:\n\n'
           printf '  task mecak8s-idbroker:hosts-add   # once; sudo; aliases %s and %s to 127.0.0.1\n' '{{.MECAK8S_HOST}}' '{{.DEX_HOST}}'
           printf '  task build                        # builds ./bin/mecatui\n'
-          printf '  task mecak8s-idbroker:login       # browser: approve AS-1 consent, then sign in to Dex as alice@example.com / password\n'
+          printf '  task mecak8s-idbroker:login       # browser: approve AS-1 consent, then sign in to Dex as dev@example.com / password\n'
           printf '  task mecak8s-idbroker:connect\n\n'
           printf 'The browser does not trust the fixture CA (%s); accept its warning or trust that CA.\n' '{{.STATE}}/fixture-ca.crt'
 
