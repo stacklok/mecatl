@@ -351592,6 +351592,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1793369939542,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "37e6a94753de5aa55d874d41fda7b5f286e2489c",
+          "message": "docs(drafts): design committed session history and execution kernel (#2179)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-30T08:56:02-07:00",
+          "tree_id": "91c3d888c17e33056176ff321b76e065f9e36de7",
+          "url": "https://github.com/stacklok/mecatl/commit/37e6a94753de5aa55d874d41fda7b5f286e2489c"
+        },
+        "date": 1793376508576,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -508112,6 +508146,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1793376504243,
+  "lastUpdate": 1793376509721,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
