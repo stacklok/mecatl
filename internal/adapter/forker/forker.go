@@ -667,14 +667,14 @@ func copyTree(src, dst string) error {
 }
 
 // copyTreeEntry copies one WalkDir entry. It is separate from the walk so the
-// transient maintenance-lock race is deterministic to test.
+// Git lock races are deterministic to test.
 func copyTreeEntry(src, dst, p string, d fs.DirEntry, err error) error {
 	rel, rerr := filepath.Rel(src, p)
 	if rerr != nil {
 		return rerr
 	}
 	if err != nil {
-		if isTransientGitMaintenanceLock(rel) && errors.Is(err, fs.ErrNotExist) {
+		if (isTransientGitMaintenanceLock(rel) || isGitWorktreeLock(rel)) && errors.Is(err, fs.ErrNotExist) {
 			return nil
 		}
 		return err
@@ -698,7 +698,16 @@ func copyTreeEntry(src, dst, p string, d fs.DirEntry, err error) error {
 		}
 		return os.MkdirAll(target, info.Mode().Perm()|0o700)
 	case d.Type().IsRegular():
-		return copyFile(p, target)
+		err := copyFile(p, target)
+		// Git removes its temporary worktree lock after checkout. Preserve a
+		// lock that still exists (it may be operator-owned), but tolerate one
+		// that vanished after enumeration. Destination failures remain errors.
+		var pathErr *fs.PathError
+		if isGitWorktreeLock(rel) && errors.Is(err, fs.ErrNotExist) &&
+			errors.As(err, &pathErr) && pathErr.Op == "open" && pathErr.Path == p {
+			return nil
+		}
+		return err
 	default:
 		// Skip irregular files (devices, sockets, pipes).
 		return nil
@@ -710,6 +719,12 @@ func copyTreeEntry(src, dst, p string, d fs.DirEntry, err error) error {
 // vanished; unrelated paths and errors remain copy failures.
 func isTransientGitMaintenanceLock(rel string) bool {
 	return filepath.ToSlash(rel) == ".git/objects/maintenance.lock"
+}
+
+func isGitWorktreeLock(rel string) bool {
+	id, ok := strings.CutPrefix(filepath.ToSlash(rel), ".git/worktrees/")
+	id, locked := strings.CutSuffix(id, "/locked")
+	return ok && locked && id != "" && !strings.Contains(id, "/")
 }
 
 // copyFile copies a single regular file from src to dst, preserving its mode.
