@@ -31,7 +31,7 @@ func (e *Engine) requestManifest(r *Run, sess *session.Session, env tool.Environ
 		AdvertisedToolSchemaBytes: advertisedToolSchemaBytes(req.Tools),
 		MessageCount:              len(req.Messages),
 		MessageBytes:              len(messageBytes),
-		Prompt:                    requestPromptManifest(req.System, r.fragments, r.fragmentManifest),
+		Prompt:                    requestPromptManifest(req.System, req.Messages[:len(r.fragments)], r.fragmentManifest),
 	}
 	if e.deps.ContextWindow != nil {
 		if window := e.deps.ContextWindow(); window > 0 {
@@ -105,7 +105,7 @@ func requestToolSource(name string, overlay bool) string {
 	return session.RequestToolSourceCatalog
 }
 
-func requestPromptManifest(system prompt.Layered, fragments []session.Message, metadata []prompt.InstructionManifest) []session.RequestPromptComponent {
+func requestPromptManifest(system prompt.Layered, fragments []port.LLMMessage, metadata []prompt.InstructionManifest) []session.RequestPromptComponent {
 	out := make([]session.RequestPromptComponent, 0, 2+len(fragments))
 	appendComponent := func(kind, provenance string, body []byte) {
 		if len(body) == 0 {

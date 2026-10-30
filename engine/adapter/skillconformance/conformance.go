@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -28,6 +29,7 @@ type DistributedFixture func(*testing.T) DistributedFactory
 //nolint:gocyclo // the shared suite keeps the complete lifecycle contract together
 func Run(t *testing.T, factory Factory) {
 	t.Helper()
+	runEvidenceRetirement(t, factory, false)
 	t.Run("authoritative-partition-generation", func(t *testing.T) {
 		repo := factory(t)
 		ctx := context.Background()
@@ -377,6 +379,7 @@ func RunDistributed(t *testing.T, newFixture DistributedFixture) {
 //nolint:gocyclo // the optional suite keeps all activation preconditions together
 func RunValidatedActivation(t *testing.T, factory Factory) {
 	t.Helper()
+	runEvidenceRetirement(t, factory, true)
 	ctx, p := context.Background(), partition()
 	newDraft := func(t *testing.T, repo learning.SkillRepository, name string, prov learning.SkillProvenance) learning.SkillVersion {
 		t.Helper()
@@ -514,6 +517,122 @@ func RunValidatedActivation(t *testing.T, factory Factory) {
 	})
 }
 
+// runEvidenceRetirement verifies that candidates without exclusively current
+// reflection evidence cannot activate through either activation API, even after
+// provenance merging. Retirement blocks activation; it does not delete stored
+// history or revoke active skills. Ordinary activation still permits legacy-model
+// imports with a PASS evaluation. validated selects the validated activation API.
+func runEvidenceRetirement(t *testing.T, factory Factory, validated bool) {
+	t.Helper()
+	t.Run(fmt.Sprintf("evidence-retirement-validated-%t", validated), func(t *testing.T) {
+		for _, protocol := range []learning.EvidenceProtocol{"", "reflection-evidence/v1", "unknown"} {
+			for _, placement := range []string{"direct", "nested", "mixed", "merged"} {
+				t.Run(string(protocol)+"/"+placement, func(t *testing.T) {
+					prov := provenance("retired")
+					prov.EvidenceRefs[0].Protocol = protocol
+					current := provenance("current").EvidenceRefs[0]
+					switch placement {
+					case "nested":
+						prov.Signals = []learning.Signal{{Kind: learning.SignalExplicitRemember, Evidence: prov.EvidenceRefs}}
+						prov.EvidenceRefs = []learning.EvidenceRef{current}
+					case "mixed":
+						prov.EvidenceRefs = append(prov.EvidenceRefs, current)
+					}
+					assertRetiredActivation(t, factory(t), prov, validated, placement == "merged")
+				})
+			}
+		}
+		for _, placement := range []string{"proposal-only", "signal-only"} {
+			t.Run(placement, func(t *testing.T) {
+				prov := learning.SkillProvenance{ProposalIDs: []learning.ProposalID{"proposal-only"}}
+				if placement == "signal-only" {
+					prov = learning.SkillProvenance{Signals: []learning.Signal{{Kind: learning.SignalExplicitRemember}}}
+				}
+				assertRetiredActivation(t, factory(t), prov, validated, false)
+			})
+		}
+		if !validated {
+			t.Run("legacy-model-pass", func(t *testing.T) {
+				repo := factory(t)
+				draft, err := repo.CreateDraft(t.Context(), partition(), "agent-a", skill("legacy", "Imported knowledge."), learning.SkillProvenance{Origin: learning.SkillProvenanceLegacyModel})
+				if err != nil {
+					t.Fatal(err)
+				}
+				activateVersion(t, repo, partition(), draft)
+			})
+		}
+	})
+}
+
+// assertRetiredActivation stages an ineligible candidate alongside an active
+// version, then verifies rejection leaves versions, generation, the active skill,
+// and any supported receipt history unchanged. merge adds current provenance to
+// the same draft to prove it cannot wash out obsolete evidence.
+func assertRetiredActivation(t *testing.T, repo learning.SkillRepository, prov learning.SkillProvenance, validated, merge bool) {
+	t.Helper()
+	ctx, p := t.Context(), partition()
+	active := activate(t, repo, p, "Already active workflow.")
+	prov.ValidationDisposition = learning.ValidationAccept
+	draft, err := repo.CreateDraft(ctx, p, "agent-a", skill("review-code", "Retired candidate workflow."), prov)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if merge {
+		current := provenance("fresh")
+		current.ValidationDisposition = learning.ValidationAccept
+		draft, err = repo.CreateDraft(ctx, p, "agent-a", draft.Bundle, current)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	verdict := learning.EvaluationPass
+	if validated {
+		verdict = learning.EvaluationAbstain
+	}
+	evaluated, err := repo.RecordEvaluation(ctx, p, "agent-a", draft.ID, draft.Version, draft.Revision, evaluation(verdict))
+	if err != nil {
+		t.Fatal(err)
+	}
+	staged, err := repo.Stage(ctx, p, "agent-a", draft.ID, draft.Version, evaluated.Revision)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, err := repo.List(ctx, p, learning.SkillList{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var receipts learning.SkillReceiptPage
+	history, hasHistory := repo.(learning.SkillReceiptRepository)
+	if hasHistory {
+		receipts, err = history.ListSkillReceipts(ctx, p, learning.SkillReceiptList{})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if validated {
+		_, err = repo.(learning.ValidatedSkillActivator).ActivateValidated(ctx, p, "agent-a", staged.ID, staged.Version, staged.Revision)
+	} else {
+		_, err = repo.Activate(ctx, p, "agent-a", staged.ID, staged.Version, staged.Revision)
+	}
+	if !errors.Is(err, learning.ErrSkillTransition) {
+		t.Fatalf("retired activation error=%v, want ErrSkillTransition", err)
+	}
+	after, err := repo.List(ctx, p, learning.SkillList{})
+	if err != nil || !reflect.DeepEqual(before, after) {
+		t.Fatalf("failed activation changed versions/generation: before=%+v after=%+v err=%v", before, after, err)
+	}
+	got, found, err := repo.Get(ctx, p, "agent-a", active.ID, active.Version)
+	if err != nil || !found || !reflect.DeepEqual(active, got) {
+		t.Fatalf("failed activation replaced active version: %+v err=%v", got, err)
+	}
+	if hasHistory {
+		afterReceipts, receiptErr := history.ListSkillReceipts(ctx, p, learning.SkillReceiptList{})
+		if receiptErr != nil || !reflect.DeepEqual(receipts, afterReceipts) {
+			t.Fatalf("failed activation changed receipt history: %+v err=%v", afterReceipts, receiptErr)
+		}
+	}
+}
+
 func raceCAS(t *testing.T, operation func() error) int {
 	t.Helper()
 	var wg sync.WaitGroup
@@ -542,7 +661,7 @@ func partition() learning.SkillPartition {
 	return learning.SkillPartition{Principal: "issuer\x00subject", Project: "project"}
 }
 func provenance(s string) learning.SkillProvenance {
-	return learning.SkillProvenance{ProposalIDs: []learning.ProposalID{learning.ProposalID("proposal-" + s)}, EvidenceRefs: []learning.EvidenceRef{{SessionID: session.SessionID("s-" + s), Locator: learning.EvidenceMessage, Digest: strings.Repeat("a", 64)}}}
+	return learning.SkillProvenance{ProposalIDs: []learning.ProposalID{learning.ProposalID("proposal-" + s)}, EvidenceRefs: []learning.EvidenceRef{{Protocol: learning.ReflectionEvidenceV2, SessionID: session.SessionID("s-" + s), Locator: learning.EvidenceMessage, Digest: strings.Repeat("a", 64)}}}
 }
 func skill(name, body string) learning.SkillBundle {
 	return learning.SkillBundle{Name: name, Description: "Reusable " + name + " instructions", Body: body}

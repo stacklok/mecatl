@@ -167,7 +167,7 @@ func TestTurnEndLatencyMaxIsFirstGap(t *testing.T) {
 
 // TestTurnEndLatencyReasoningCountsAsContent asserts a ChunkReasoning (the
 // human-readable summary) counts as a content chunk for TTFT/inter-token, while a
-// ChunkReasoningItem (the opaque replay blob), usage, and done chunks do NOT.
+// ChunkReplay (the opaque replay payload), usage, and done chunks do NOT.
 //
 // Clock reads: [0] turnStart, [1] streamStart, [2] reasoning #1 → TTFT, [3] text
 // #2 → gap, [4] durMs. The ReasoningItem/Usage/Done chunks consume no clock read.
@@ -175,7 +175,7 @@ func TestTurnEndLatencyReasoningCountsAsContent(t *testing.T) {
 	llm := mockllm.New(
 		mockllm.ChunksTurn(
 			mockllm.ReasoningChunk("thinking"),
-			mockllm.ReasoningItemChunk("BLOB"), // not content: no clock read, no gap
+			mockllm.ReplayChunk("BLOB"), // not content: no clock read, no gap
 			mockllm.TextChunk("answer"),
 			mockllm.UsageChunk(session.Usage{}),
 			mockllm.DoneChunk(session.StopEndTurn),
@@ -293,7 +293,7 @@ func TestTurnEndLatencyToolCallAnchorsTTFT(t *testing.T) {
 func TestTurnEndLatencyReasoningItemAnchorsTTFT(t *testing.T) {
 	llm := mockllm.New(
 		mockllm.ChunksTurn(
-			mockllm.ReasoningItemChunk("BLOB"),
+			mockllm.ReplayChunk("BLOB"),
 			mockllm.UsageChunk(session.Usage{}),
 			mockllm.DoneChunk(session.StopEndTurn),
 		),

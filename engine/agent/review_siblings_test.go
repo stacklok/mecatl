@@ -66,7 +66,7 @@ func TestCancelledReadBatchClosesUnassessedSibling(t *testing.T) {
 	defer cancel()
 	policy := terminalFailurePolicy{job: ReviewJobAction}
 	preparer := &closingReviewPreparer{cancel: cancel}
-	calls := []session.ToolCall{session.NewToolCall("first", "BudgetRead", []byte(`{}`)), session.NewToolCall("second", "BudgetRead", []byte(`{}`))}
+	calls := []session.ToolCall{session.NewToolCall("first", "BudgetRead", []byte(`{}`)), session.NewToolCall("second", "BudgetRead", []byte(`{"sibling":2}`))}
 	engine := NewEngine(Deps{LLM: mockllm.New(mockllm.ToolCallTurn(calls...)), Catalog: catalog, Policy: policy, ToolReviewer: &siblingBudgetReviewer{}, ReviewEvidencePreparer: preparer})
 	env := memEnv("/ws")
 	sess := session.New("cancel-siblings", session.ModeDefault, env.Ref(), session.Limits{}, time.Now())
@@ -78,13 +78,15 @@ func TestCancelledReadBatchClosesUnassessedSibling(t *testing.T) {
 }
 
 type cancellingSiblingPreparer struct {
-	entered <-chan struct{}
-	cancel  context.CancelFunc
-	closed  atomic.Int32
+	prepared int
+	entered  <-chan struct{}
+	cancel   context.CancelFunc
+	closed   atomic.Int32
 }
 
-func (p *cancellingSiblingPreparer) PrepareReviewEvidence(ctx context.Context, req ReviewEvidencePreparation) (PreparedReviewEvidence, error) {
-	if req.Request.EffectiveCall.ID == "second" {
+func (p *cancellingSiblingPreparer) PrepareReviewEvidence(ctx context.Context, _ ReviewEvidencePreparation) (PreparedReviewEvidence, error) {
+	p.prepared++
+	if p.prepared == 2 {
 		<-p.entered
 		p.cancel()
 		return PreparedReviewEvidence{}, ctx.Err()
@@ -119,7 +121,7 @@ func TestCancelledReadBatchJoinsActiveCheckerBeforeClosingSource(t *testing.T) {
 		var executions atomic.Int32
 		catalog := tool.NewCatalog()
 		catalog.MustRegister(budgetReadTool{executions: &executions})
-		calls := []session.ToolCall{session.NewToolCall("first", "BudgetRead", []byte(`{}`)), session.NewToolCall("second", "BudgetRead", []byte(`{}`))}
+		calls := []session.ToolCall{session.NewToolCall("first", "BudgetRead", []byte(`{}`)), session.NewToolCall("second", "BudgetRead", []byte(`{"sibling":2}`))}
 		details := &rootContractSink{}
 		engine := NewEngine(Deps{LLM: mockllm.New(mockllm.ToolCallTurn(calls...)), Catalog: catalog, Policy: terminalFailurePolicy{job: ReviewJobAction}, ToolReviewer: reviewer, ReviewEvidencePreparer: preparer, ReviewDetails: details, Interactive: true})
 		env := memEnv("/ws")
@@ -178,7 +180,7 @@ type siblingAskGate struct {
 }
 
 func (g *siblingAskGate) Evaluate(_ context.Context, _ session.SessionID, _ session.PermissionMode, call session.ToolCall, _ tool.WorkspaceReader) port.PermissionResult {
-	if !g.hook && call.ID == "second" && !g.asked {
+	if !g.hook && string(call.Args) == `{"sibling":2}` && !g.asked {
 		g.asked = true
 		return port.PermissionResult{Decision: governance.PermissionDecision{Effect: governance.Ask, Reason: "second sibling needs approval"}}
 	}
@@ -186,7 +188,7 @@ func (g *siblingAskGate) Evaluate(_ context.Context, _ session.SessionID, _ sess
 }
 func (*siblingAskGate) Learn(session.SessionID, session.ToolCall) {}
 func (g *siblingAskGate) Run(_ context.Context, ev governance.HookEvent) (governance.HookOutcome, error) {
-	if g.hook && ev.Phase == governance.PhasePreToolUse && ev.CallID == "second" && !g.asked {
+	if g.hook && ev.Phase == governance.PhasePreToolUse && string(ev.Input) == `{"sibling":2}` && !g.asked {
 		g.asked = true
 		return governance.HookOutcome{Block: true, AskApproval: true, Message: "approve second sibling"}, nil
 	}
@@ -206,7 +208,7 @@ func TestReadBatchHumanWaitPrecedesAllReviewBudgets(t *testing.T) {
 				catalog.MustRegister(budgetReadTool{executions: &executions})
 				reviewer := &siblingBudgetReviewer{}
 				gate := &siblingAskGate{hook: hook}
-				calls := []session.ToolCall{session.NewToolCall("first", "BudgetRead", []byte(`{}`)), session.NewToolCall("second", "BudgetRead", []byte(`{}`))}
+				calls := []session.ToolCall{session.NewToolCall("first", "BudgetRead", []byte(`{}`)), session.NewToolCall("second", "BudgetRead", []byte(`{"sibling":2}`))}
 				engine := NewEngine(Deps{LLM: mockllm.New(mockllm.ToolCallTurn(calls...), mockllm.TextTurn("done")), Catalog: catalog, Policy: gate, Hooks: gate, ToolReviewer: reviewer, Interactive: true})
 				env := memEnv("/ws")
 				sess := session.New("wait-siblings", session.ModeDefault, env.Ref(), session.Limits{}, time.Now())
@@ -234,15 +236,19 @@ func TestReadBatchHumanWaitPrecedesAllReviewBudgets(t *testing.T) {
 
 type observingSiblingPreparer struct {
 	deadlineEvidencePreparer
+	firstCallID              session.ToolCallID
 	reviewer                 *siblingBudgetReviewer
 	firstCheckedDuringSecond bool
 }
 
 func (p *observingSiblingPreparer) PrepareReviewEvidence(ctx context.Context, req ReviewEvidencePreparation) (PreparedReviewEvidence, error) {
+	if p.calls == 0 {
+		p.firstCallID = req.Request.EffectiveCall.ID
+	}
 	if p.calls == 1 {
 		synctest.Wait()
 		p.reviewer.mu.Lock()
-		p.firstCheckedDuringSecond = len(p.reviewer.called) == 1 && p.reviewer.called[0] == "first"
+		p.firstCheckedDuringSecond = len(p.reviewer.called) == 1 && p.reviewer.called[0] == p.firstCallID
 		p.reviewer.mu.Unlock()
 	}
 	return p.deadlineEvidencePreparer.PrepareReviewEvidence(ctx, req)
@@ -255,7 +261,7 @@ func TestReadBatchSiblingReviewBudgetsStartAtOwnPreparation(t *testing.T) {
 		catalog.MustRegister(budgetReadTool{executions: &executions})
 		reviewer := &siblingBudgetReviewer{enforce: true}
 		preparer := &observingSiblingPreparer{deadlineEvidencePreparer: deadlineEvidencePreparer{delay: 50 * time.Second}, reviewer: reviewer}
-		calls := []session.ToolCall{session.NewToolCall("first", "BudgetRead", []byte(`{}`)), session.NewToolCall("second", "BudgetRead", []byte(`{}`))}
+		calls := []session.ToolCall{session.NewToolCall("first", "BudgetRead", []byte(`{}`)), session.NewToolCall("second", "BudgetRead", []byte(`{"sibling":2}`))}
 		engine := NewEngine(Deps{LLM: mockllm.New(mockllm.ToolCallTurn(calls...), mockllm.TextTurn("done")), Catalog: catalog, Policy: terminalFailurePolicy{job: ReviewJobAction}, ToolReviewer: reviewer, ReviewEvidencePreparer: preparer})
 		env := memEnv("/ws")
 		sess := session.New("siblings", session.ModeDefault, env.Ref(), session.Limits{}, time.Now())
@@ -267,7 +273,7 @@ func TestReadBatchSiblingReviewBudgetsStartAtOwnPreparation(t *testing.T) {
 		}
 		reviewer.mu.Lock()
 		defer reviewer.mu.Unlock()
-		if len(reviewer.called) != 2 || reviewer.called[0] != "first" || reviewer.called[1] != "second" || timeouts != 0 || executions.Load() != 2 || preparer.calls != 2 || !preparer.firstCheckedDuringSecond {
+		if len(reviewer.called) != 2 || reviewer.called[0] != acceptedCallIDs(sess)[0] || reviewer.called[1] != acceptedCallIDs(sess)[1] || timeouts != 0 || executions.Load() != 2 || preparer.calls != 2 || !preparer.firstCheckedDuringSecond {
 			t.Fatalf("called=%v timeouts=%d executions=%d prepares=%d first checked during second=%t", reviewer.called, timeouts, executions.Load(), preparer.calls, preparer.firstCheckedDuringSecond)
 		}
 	})
@@ -280,7 +286,7 @@ func TestReadBatchSlowOwnPreparationTimesOutUnderEnforcement(t *testing.T) {
 		catalog.MustRegister(budgetReadTool{executions: &executions})
 		reviewer := &siblingBudgetReviewer{enforce: true}
 		preparer := &deadlineEvidencePreparer{delay: 91 * time.Second}
-		calls := []session.ToolCall{session.NewToolCall("first", "BudgetRead", []byte(`{}`)), session.NewToolCall("second", "BudgetRead", []byte(`{}`))}
+		calls := []session.ToolCall{session.NewToolCall("first", "BudgetRead", []byte(`{}`)), session.NewToolCall("second", "BudgetRead", []byte(`{"sibling":2}`))}
 		engine := NewEngine(Deps{LLM: mockllm.New(mockllm.ToolCallTurn(calls...), mockllm.TextTurn("done")), Catalog: catalog, Policy: terminalFailurePolicy{job: ReviewJobAction}, ToolReviewer: reviewer, ReviewEvidencePreparer: preparer})
 		env := memEnv("/ws")
 		sess := session.New("slow-own-prep", session.ModeDefault, env.Ref(), session.Limits{}, time.Now())

@@ -18,11 +18,20 @@ import (
 	"github.com/stacklok/mecatl/engine/session"
 )
 
+func currentLearningTrajectory(t *testing.T, id session.SessionID, workspace string, stop session.StopReason, usage session.Usage, messages []session.Message) learning.Trajectory {
+	t.Helper()
+	sess := session.New(id, session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/fixture", Revision: "test"}, session.Limits{}, time.Unix(0, 0))
+	if err := sess.SeedHistory(messages); err != nil {
+		t.Fatal(err)
+	}
+	return learning.NewSessionTrajectory(sess, workspace, stop, usage)
+}
+
 func admittedInput(t *testing.T) (learning.Input, learning.EvidenceRef) {
 	t.Helper()
-	input := learning.NewInput(learning.NewTrajectory("reflection-session", "/workspace", session.StopEndTurn, session.Usage{}, []session.Message{
+	input := learning.NewInput(currentLearningTrajectory(t, "reflection-session", "/workspace", session.StopEndTurn, session.Usage{}, []session.Message{
 		session.NewUserMessageWithParts("remember that Go changes use gofmt", []session.Content{{Data: []byte("binary-payload")}}),
-		session.NewAssistantMessage("Done", "opaque-reasoning", nil),
+		{Role: session.RoleAssistant, Text: "Done", Replay: &session.MessageReplay{Provider: &session.ProviderReplay{Format: "test", Version: 1, Data: []byte("opaque-reasoning")}}},
 	}), nil, nil, nil)
 	ref, err := learning.MessageEvidenceRef(input, 0, "")
 	if err != nil {
@@ -125,7 +134,7 @@ func TestEvidenceReflectorOneProviderCallZeroToolsAndSelectedModel(t *testing.T)
 }
 
 func TestEvidenceReflectorAbstainsWithoutSignalAndDoesNotCall(t *testing.T) {
-	input := learning.Input{Trajectory: learning.NewTrajectory("s", "", session.StopEndTurn, session.Usage{}, []session.Message{session.NewUserMessage("ordinary request")})}
+	input := learning.NewInput(currentLearningTrajectory(t, "s", "", session.StopEndTurn, session.Usage{}, []session.Message{session.NewUserMessage("ordinary request")}), nil, nil, nil)
 	provider := mockllm.New(mockllm.TextTurn(`{"kind":"proposed"}`))
 	reflector, err := agent.NewEvidenceReflector(provider, session.ProviderModelID{ProviderID: "test", ModelID: "m"}, nil, agent.ReflectionLimits{})
 	if err != nil {
@@ -283,7 +292,7 @@ func TestEvidenceReflectorRejectsUnexpectedAndNonBenignStreams(t *testing.T) {
 	input, _ := admittedInput(t)
 	valid := string(modelOutcome(learning.Candidate{Kind: learning.CandidateOperatorFact, Key: "user/style", Value: "concise"}, "m:0"))
 	tests := map[string][]port.Chunk{
-		"tool":             {{Kind: port.ChunkToolCall, ToolCall: new(session.ToolCall)}, {Kind: port.ChunkDone, Stop: session.StopEndTurn}},
+		"tool":             {{Kind: port.ChunkToolCall, ToolCall: new(port.LLMToolCall)}, {Kind: port.ChunkDone, Stop: session.StopEndTurn}},
 		"unknown":          {{Kind: port.ChunkKind(99)}, {Kind: port.ChunkDone, Stop: session.StopEndTurn}},
 		"error stop":       {{Kind: port.ChunkText, Text: valid}, {Kind: port.ChunkDone, Stop: session.StopError}},
 		"cancel stop":      {{Kind: port.ChunkText, Text: valid}, {Kind: port.ChunkDone, Stop: session.StopCancelled}},
@@ -343,7 +352,7 @@ func TestEvidenceReflectorAcceptsHarmlessStreamMetadata(t *testing.T) {
 	valid := string(modelOutcome(learning.Candidate{Kind: learning.CandidateOperatorFact, Key: "user/style", Value: "concise"}, "m:0"))
 	provider := mockllm.New(mockllm.Turn{Chunks: []port.Chunk{
 		{Kind: port.ChunkReasoning, Text: "hidden"},
-		{Kind: port.ChunkReasoningItem, Text: "item"},
+		{Kind: port.ChunkReplay, Replay: &session.ProviderReplay{Format: "test", Version: 1, Data: []byte("item")}},
 		{Kind: port.ChunkPhase, Text: "commentary"},
 		{Kind: port.ChunkText, Text: valid},
 		{Kind: port.ChunkProviderRoute, Text: "OpenAI"},

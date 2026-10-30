@@ -11,6 +11,7 @@ import (
 	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/governance"
+	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 )
@@ -88,18 +89,40 @@ func TestHookMutatedAmbiguousArgsAreRejected(t *testing.T) {
 			catalog := tool.NewCatalog()
 			catalog.MustRegister(tc.tool)
 			policy := newPolicyArgsRecorder()
-			call := session.NewToolCall("c", tc.tool.Spec().Name, []byte(tc.original))
-			eng := NewEngine(Deps{LLM: mockllm.New(mockllm.ToolCallTurn(call), mockllm.TextTurn("done")), Catalog: catalog, Policy: policy, Hooks: argsRewriteHook{mutated: tc.mutated}})
+			call := port.LLMToolCall{ID: "c", Name: tc.tool.Spec().Name, Args: []byte(tc.original)}
+			eng := NewEngine(Deps{LLM: mockllm.New(mockllm.LLMToolCallTurn(call), mockllm.TextTurn("done")), Catalog: catalog, Policy: policy, Hooks: argsRewriteHook{mutated: tc.mutated}})
 			env := testEnvironment(policyArgsWorkspace(t), runner)
 			sess := session.New("hook-mutation", session.ModeDefault, env.Ref(), session.Limits{MaxTurns: 3}, time.Now())
 			var result session.ToolResult
+			seenResult := false
 			for event := range eng.Run(context.Background(), sess, env, RunRequest{Text: "run"}).Events() {
 				if event.Type == session.EvPermissionAsk {
 					t.Fatalf("unexpected permission ask: %+v", event.Ask)
 				}
-				if event.Type == session.EvToolResult && event.ToolResult != nil && event.ToolResult.CallID == call.ID {
+				if event.Type == session.EvToolResult && event.ToolResult != nil {
+					if seenResult {
+						t.Fatalf("multiple tool results for provider call %q", call.ID)
+					}
 					result = *event.ToolResult
+					seenResult = true
 				}
+			}
+			if !seenResult {
+				t.Fatalf("no tool result for provider call %q", call.ID)
+			}
+			var canonical session.ToolCallID
+			for _, message := range sess.Conversation.Messages {
+				if message.Replay == nil {
+					continue
+				}
+				for _, binding := range message.Replay.Bindings {
+					if binding.PairingID == call.ID {
+						canonical = binding.CallID
+					}
+				}
+			}
+			if canonical == "" || result.CallID != canonical {
+				t.Fatalf("provider call %q result ID = %q, want canonical ID %q", call.ID, result.CallID, canonical)
 			}
 			runner.mu.Lock()
 			executed := runner.command
@@ -146,12 +169,12 @@ func TestResumedApprovalWithAmbiguousArgsIsRejected(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			call := session.NewToolCall("pending", tool.ShellToolName, []byte(tc.pending))
+			call := session.NewToolCall(session.NewToolCallID(), tool.ShellToolName, []byte(tc.pending))
 			sess := session.New("resume", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindMem, ID: "/ws", Revision: "v1"}, session.Limits{MaxTurns: 3}, time.Now())
 			if err := sess.BeginTurn(); err != nil {
 				t.Fatal(err)
 			}
-			if err := sess.RecordAssistant(session.NewAssistantMessage("", "", []session.ToolCall{call})); err != nil {
+			if err := sess.RecordAssistant(session.NewAssistantMessage("", []session.ToolCall{call})); err != nil {
 				t.Fatal(err)
 			}
 			const askID = "resume:0:pending:r1"
@@ -197,15 +220,15 @@ func TestResumedApprovalWithAmbiguousArgsIsRejected(t *testing.T) {
 func TestReadBatchRejectsOnlyTheAmbiguousCall(t *testing.T) {
 	t.Parallel()
 	const ambiguous = `{"path":"a.txt","Path":"b.txt"}`
-	calls := []session.ToolCall{
-		session.NewToolCall("first", "Read", []byte(`{"path":"a.txt"}`)),
-		session.NewToolCall("ambiguous", "Read", []byte(ambiguous)),
-		session.NewToolCall("last", "Read", []byte(`{"path":"b.txt"}`)),
+	calls := []port.LLMToolCall{
+		{ID: "first", Name: "Read", Args: []byte(`{"path":"a.txt"}`)},
+		{ID: "ambiguous", Name: "Read", Args: []byte(ambiguous)},
+		{ID: "last", Name: "Read", Args: []byte(`{"path":"b.txt"}`)},
 	}
 	catalog := tool.NewCatalog()
 	catalog.MustRegister(fstools.ReadTool{})
 	policy := newPolicyArgsRecorder()
-	eng := NewEngine(Deps{LLM: mockllm.New(mockllm.ToolCallTurn(calls...), mockllm.TextTurn("done")), Catalog: catalog, Policy: policy})
+	eng := NewEngine(Deps{LLM: mockllm.New(mockllm.LLMToolCallTurn(calls...), mockllm.TextTurn("done")), Catalog: catalog, Policy: policy})
 	env := testEnvironment(policyArgsWorkspace(t), nil)
 	sess := session.New("read-batch", session.ModeDefault, env.Ref(), session.Limits{MaxTurns: 3}, time.Now())
 	results := map[session.ToolCallID]session.ToolResult{}
@@ -218,17 +241,35 @@ func TestReadBatchRejectsOnlyTheAmbiguousCall(t *testing.T) {
 		}
 	}
 
+	canonical := make(map[session.ProviderCallID]session.ToolCallID)
+	for _, message := range sess.Conversation.Messages {
+		if message.Replay == nil {
+			continue
+		}
+		for _, binding := range message.Replay.Bindings {
+			canonical[binding.PairingID] = binding.CallID
+		}
+	}
+	ambiguousID, ok := canonical["ambiguous"]
+	if !ok {
+		t.Fatal("missing canonical ID for ambiguous provider call")
+	}
 	assertNotEvaluated(t, policy, ambiguous)
-	assertAmbiguousResult(t, results["ambiguous"])
-	if got := results["ambiguous"].Content; strings.Contains(got, "alpha") || strings.Contains(got, "beta") {
+	assertAmbiguousResult(t, results[ambiguousID])
+	if got := results[ambiguousID].Content; strings.Contains(got, "alpha") || strings.Contains(got, "beta") {
 		t.Fatalf("ambiguous call read a file: %q", got)
 	}
 	if len(policy.observations()) != 2 {
 		t.Errorf("policy evaluated %d calls, want the 2 canonical ones: %+v", len(policy.observations()), policy.observations())
 	}
-	for id, want := range map[session.ToolCallID]string{"first": "alpha", "last": "beta"} {
+	for providerID, want := range map[session.ProviderCallID]string{"first": "alpha", "last": "beta"} {
+		id, ok := canonical[providerID]
+		if !ok {
+			t.Errorf("missing canonical ID for provider call %q", providerID)
+			continue
+		}
 		if res := results[id]; res.IsError || !strings.Contains(res.Content, want) {
-			t.Errorf("canonical sibling %s = %+v, want content %q", id, res, want)
+			t.Errorf("canonical sibling %s = %+v, want content %q", providerID, res, want)
 		}
 	}
 }

@@ -142,7 +142,7 @@ func TestSubagentBudgetStopSalvages(t *testing.T) {
 		t.Fatalf("child made %d model calls, want initial turn plus one cleanup", got)
 	}
 
-	child, err := store.Load(context.Background(), session.SessionID("subagent-s1-p1"))
+	child, err := store.Load(context.Background(), session.SessionID(extractAgentID(t, results[0].Content)))
 	if err != nil {
 		t.Fatalf("load persisted child: %v", err)
 	}

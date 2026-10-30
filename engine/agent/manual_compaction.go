@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 )
 
@@ -24,10 +25,8 @@ type budgetedCompactor interface {
 }
 
 // compactionCandidate runs a compactor and applies the one candidate-admission
-// contract shared by automatic and manual compaction. Callers choose input
-// ownership: the hot automatic path passes the live immutable conversation,
-// while CompactSession passes a deep copy to isolate the aggregate from an
-// out-of-band compactor.
+// contract shared by automatic and manual compaction. Both callers pass an owned
+// history copy so compactor failure/cancellation cannot mutate active replay.
 func (e *Engine) compactionCandidate(ctx context.Context, input *session.Conversation, budget int) (ManualCompactionResult, []session.Message, session.AuxiliaryUsage, error) {
 	original := input.Messages
 	var candidate []session.Message
@@ -39,13 +38,16 @@ func (e *Engine) compactionCandidate(ctx context.Context, input *session.Convers
 	} else {
 		candidate, summary, usage, err = e.deps.Compactor.Compact(ctx, input)
 	}
+	if err := ctx.Err(); err != nil {
+		return ManualCompactionResult{}, nil, usage, err
+	}
 	if err != nil {
 		return ManualCompactionResult{}, nil, usage, err
 	}
 	if len(candidate) == 0 {
 		return ManualCompactionResult{}, nil, usage, nil
 	}
-	if err := session.ValidateToolPairing(candidate); err != nil {
+	if _, err := port.ProjectMessages(candidate); err != nil {
 		return ManualCompactionResult{}, nil, usage, fmt.Errorf("%w: %v", ErrCompactionWouldOrphan, err)
 	}
 	if e.deps.TokenCounter.CountMessages(candidate) >= e.deps.TokenCounter.CountMessages(original) {
@@ -55,30 +57,7 @@ func (e *Engine) compactionCandidate(ctx context.Context, input *session.Convers
 }
 
 func cloneCompactionMessages(messages []session.Message) []session.Message {
-	out := make([]session.Message, len(messages))
-	for i, message := range messages {
-		out[i] = message
-		out[i].ToolCalls = append([]session.ToolCall(nil), message.ToolCalls...)
-		for j := range out[i].ToolCalls {
-			out[i].ToolCalls[j].Args = append([]byte(nil), message.ToolCalls[j].Args...)
-		}
-		out[i].Parts = cloneCompactionParts(message.Parts)
-		if message.ToolResult != nil {
-			result := *message.ToolResult
-			result.Parts = cloneCompactionParts(message.ToolResult.Parts)
-			out[i].ToolResult = &result
-		}
-	}
-	return out
-}
-
-func cloneCompactionParts(parts []session.Content) []session.Content {
-	out := append([]session.Content(nil), parts...)
-	for i := range out {
-		out[i].Data = append([]byte(nil), parts[i].Data...)
-		out[i].Audience = append([]string(nil), parts[i].Audience...)
-	}
-	return out
+	return session.CloneMessages(messages)
 }
 
 // CompactSession runs the configured Compactor once at a session turn boundary,

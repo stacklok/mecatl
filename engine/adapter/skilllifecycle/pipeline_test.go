@@ -172,5 +172,5 @@ func TestPipelineOffRejectsAutomaticButKeepsExplicitDraft(t *testing.T) {
 
 func evidenceDraft() learning.SkillDraftInput {
 	seq := int64(1)
-	return learning.SkillDraftInput{Partition: learning.SkillPartition{Principal: "p"}, OwnerAgent: "reflection", Bundle: learning.SkillBundle{Name: "review-code", Description: "Review code safely", Body: "Inspect the change and run focused tests."}, Provenance: learning.SkillProvenance{ProposalIDs: []learning.ProposalID{"proposal-1"}, EvidenceRefs: []learning.EvidenceRef{{SessionID: "s", Locator: learning.EvidenceEvent, EventSeq: &seq, Digest: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}}}
+	return learning.SkillDraftInput{Partition: learning.SkillPartition{Principal: "p"}, OwnerAgent: "reflection", Bundle: learning.SkillBundle{Name: "review-code", Description: "Review code safely", Body: "Inspect the change and run focused tests."}, Provenance: learning.SkillProvenance{ProposalIDs: []learning.ProposalID{"proposal-1"}, EvidenceRefs: []learning.EvidenceRef{{Protocol: learning.ReflectionEvidenceV2, SessionID: "s", Locator: learning.EvidenceEvent, EventSeq: &seq, Digest: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}}}
 }

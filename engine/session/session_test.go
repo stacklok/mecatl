@@ -31,10 +31,10 @@ func TestValidLifecycle_IdleRunningAwaitingRunningCompleted(t *testing.T) {
 	if s.State != StateRunning {
 		t.Fatalf("after BeginTurn state = %q, want running", s.State)
 	}
-	if err := s.RecordAssistant(NewAssistantMessage("hi", "", nil)); err != nil {
+	if err := s.RecordAssistant(NewAssistantMessage("hi", []ToolCall{NewToolCall("edit-1", "Edit", nil)})); err != nil {
 		t.Fatalf("RecordAssistant: %v", err)
 	}
-	if err := s.PauseForApproval(PendingAsk{AskID: "a1", Tool: "Edit"}); err != nil {
+	if err := s.PauseForApproval(PendingAsk{AskID: "a1", Tool: "Edit", Call: "edit-1"}); err != nil {
 		t.Fatalf("PauseForApproval: %v", err)
 	}
 	if s.State != StateAwaiting {
@@ -86,10 +86,10 @@ func TestSetMode(t *testing.T) {
 	}
 
 	// Awaiting: also rejected.
-	if err := s.RecordAssistant(NewAssistantMessage("hi", "", nil)); err != nil {
+	if err := s.RecordAssistant(NewAssistantMessage("hi", []ToolCall{NewToolCall("edit-1", "Edit", nil)})); err != nil {
 		t.Fatalf("RecordAssistant: %v", err)
 	}
-	if err := s.PauseForApproval(PendingAsk{AskID: "a1", Tool: "Edit"}); err != nil {
+	if err := s.PauseForApproval(PendingAsk{AskID: "a1", Tool: "Edit", Call: "edit-1"}); err != nil {
 		t.Fatalf("PauseForApproval: %v", err)
 	}
 	if err := s.SetMode(ModeDefault); !errors.Is(err, ErrIllegalTransition) {
@@ -120,7 +120,7 @@ func TestIllegalTransitions(t *testing.T) {
 		{
 			name:  "RecordAssistant from idle",
 			setup: func(*Session) {},
-			op:    func(s *Session) error { return s.RecordAssistant(NewAssistantMessage("x", "", nil)) },
+			op:    func(s *Session) error { return s.RecordAssistant(NewAssistantMessage("x", nil)) },
 		},
 		{
 			name:  "RecordToolResults from idle",
@@ -239,8 +239,9 @@ func TestStopConditionsTrip(t *testing.T) {
 			name:   "max tool calls",
 			limits: Limits{MaxToolCalls: 2},
 			drive: func(s *Session) {
-				_ = s.BeginTurn()
-				_ = s.RecordToolResults([]ToolResult{NewToolResult("a", "ok"), NewToolResult("b", "ok")})
+				mustOK(t, s.BeginTurn())
+				mustOK(t, s.RecordAssistant(NewAssistantMessage("", []ToolCall{NewToolCall("a", "Read", nil), NewToolCall("b", "Read", nil)})))
+				mustOK(t, s.RecordToolResults([]ToolResult{NewToolResult("a", "ok"), NewToolResult("b", "ok")}))
 			},
 			want: StopMaxToolCalls,
 		},
@@ -248,8 +249,9 @@ func TestStopConditionsTrip(t *testing.T) {
 			name:   "max consecutive failures",
 			limits: Limits{MaxConsecutiveFailures: 2},
 			drive: func(s *Session) {
-				_ = s.BeginTurn()
-				_ = s.RecordToolResults([]ToolResult{NewToolError("a", "boom"), NewToolError("b", "boom")})
+				mustOK(t, s.BeginTurn())
+				mustOK(t, s.RecordAssistant(NewAssistantMessage("", []ToolCall{NewToolCall("a", "Read", nil), NewToolCall("b", "Read", nil)})))
+				mustOK(t, s.RecordToolResults([]ToolResult{NewToolError("a", "boom"), NewToolError("b", "boom")}))
 			},
 			want: StopMaxConsecutiveFailures,
 		},
@@ -268,8 +270,9 @@ func TestStopConditionsTrip(t *testing.T) {
 
 func TestStopConditionsDoNotTripUnderLimit(t *testing.T) {
 	s := newTestSession(Limits{MaxTurns: 5, MaxToolCalls: 5, MaxConsecutiveFailures: 5})
-	_ = s.BeginTurn()
-	_ = s.RecordToolResults([]ToolResult{NewToolResult("a", "ok")})
+	mustOK(t, s.BeginTurn())
+	mustOK(t, s.RecordAssistant(NewAssistantMessage("", []ToolCall{NewToolCall("a", "Read", nil)})))
+	mustOK(t, s.RecordToolResults([]ToolResult{NewToolResult("a", "ok")}))
 	if r, ok := s.StopReason(); ok {
 		t.Fatalf("StopReason = %q,%v; want none,false", r, ok)
 	}
@@ -277,9 +280,10 @@ func TestStopConditionsDoNotTripUnderLimit(t *testing.T) {
 
 func TestConsecutiveFailuresResetOnSuccess(t *testing.T) {
 	s := newTestSession(Limits{MaxConsecutiveFailures: 2})
-	_ = s.BeginTurn()
-	_ = s.RecordToolResults([]ToolResult{NewToolError("a", "boom")})
-	_ = s.RecordToolResults([]ToolResult{NewToolResult("b", "ok")})
+	mustOK(t, s.BeginTurn())
+	mustOK(t, s.RecordAssistant(NewAssistantMessage("", []ToolCall{NewToolCall("a", "Read", nil), NewToolCall("b", "Read", nil)})))
+	mustOK(t, s.RecordToolResults([]ToolResult{NewToolError("a", "boom")}))
+	mustOK(t, s.RecordToolResults([]ToolResult{NewToolResult("b", "ok")}))
 	if s.Counters.ConsecutiveFailures != 0 {
 		t.Fatalf("ConsecutiveFailures = %d, want 0 after success", s.Counters.ConsecutiveFailures)
 	}
@@ -356,7 +360,7 @@ func TestRecordUserPromptFromTerminalIsIllegal(t *testing.T) {
 func TestReplaceHistoryAtomicWhileRunning(t *testing.T) {
 	s := newTestSession(Limits{})
 	_ = s.BeginTurn()
-	_ = s.RecordAssistant(NewAssistantMessage("old", "", nil))
+	_ = s.RecordAssistant(NewAssistantMessage("old", nil))
 	compacted := []Message{NewSystemMessage("summary"), NewUserMessage("continue")}
 	if err := s.ReplaceHistory(compacted); err != nil {
 		t.Fatalf("ReplaceHistory: %v", err)
@@ -380,7 +384,7 @@ func TestReplaceHistoryOnlyWhileRunning(t *testing.T) {
 func TestReplaceHistoryRejectsUnpairedHistory(t *testing.T) {
 	s := newTestSession(Limits{})
 	_ = s.BeginTurn()
-	_ = s.RecordAssistant(NewAssistantMessage("old", "", nil))
+	_ = s.RecordAssistant(NewAssistantMessage("old", nil))
 	before := append([]Message(nil), s.Conversation.Messages...)
 
 	// (a) Leading-orphan slice: a tool result whose call never preceded it.
@@ -403,7 +407,7 @@ func TestReplaceHistoryRejectsUnpairedHistory(t *testing.T) {
 	clean := []Message{
 		NewSystemMessage("summary"),
 		NewUserMessage("continue"),
-		NewAssistantMessage("", "", []ToolCall{NewToolCall("c1", "Read", nil)}),
+		NewAssistantMessage("", []ToolCall{NewToolCall("c1", "Read", nil)}),
 		NewToolMessage(NewToolResult("c1", "ok")),
 	}
 	if err := s.ReplaceHistory(clean); err != nil {
@@ -510,7 +514,7 @@ func TestReopenFromCompletedReturnsToIdleAndResetsCounters(t *testing.T) {
 	if err := s.BeginTurn(); err != nil {
 		t.Fatalf("BeginTurn: %v", err)
 	}
-	if err := s.RecordAssistant(NewAssistantMessage("first answer", "", nil)); err != nil {
+	if err := s.RecordAssistant(NewAssistantMessage("first answer", nil)); err != nil {
 		t.Fatalf("RecordAssistant: %v", err)
 	}
 	if err := s.Complete(); err != nil {
@@ -615,7 +619,7 @@ func TestInterruptFromCancelledReturnsToIdleAndResetsCounters(t *testing.T) {
 	if err := s.BeginTurn(); err != nil {
 		t.Fatalf("BeginTurn: %v", err)
 	}
-	if err := s.RecordAssistant(NewAssistantMessage("partial answer", "", nil)); err != nil {
+	if err := s.RecordAssistant(NewAssistantMessage("partial answer", nil)); err != nil {
 		t.Fatalf("RecordAssistant: %v", err)
 	}
 	if err := s.Cancel(); err != nil {
@@ -687,7 +691,7 @@ func TestInterruptClosesOutOrphanedToolCalls(t *testing.T) {
 		NewToolCall("call-a", "read_file", nil),
 		NewToolCall("call-b", "list_dir", nil),
 	}
-	if err := s.RecordAssistant(NewAssistantMessage("", "", calls)); err != nil {
+	if err := s.RecordAssistant(NewAssistantMessage("", calls)); err != nil {
 		t.Fatalf("RecordAssistant: %v", err)
 	}
 	if err := s.Cancel(); err != nil {
@@ -737,7 +741,7 @@ func TestInterruptPartialToolResultsCloseOutRemainder(t *testing.T) {
 		NewToolCall("call-a", "read_file", nil),
 		NewToolCall("call-b", "list_dir", nil),
 	}
-	if err := s.RecordAssistant(NewAssistantMessage("", "", calls)); err != nil {
+	if err := s.RecordAssistant(NewAssistantMessage("", calls)); err != nil {
 		t.Fatalf("RecordAssistant: %v", err)
 	}
 	// call-a already answered before the cancel.
@@ -773,7 +777,7 @@ func TestInterruptNoOpWhenHistoryClean(t *testing.T) {
 		if err := s.BeginTurn(); err != nil {
 			t.Fatalf("BeginTurn: %v", err)
 		}
-		if err := s.RecordAssistant(NewAssistantMessage("the answer", "", nil)); err != nil {
+		if err := s.RecordAssistant(NewAssistantMessage("the answer", nil)); err != nil {
 			t.Fatalf("RecordAssistant: %v", err)
 		}
 		if err := s.Cancel(); err != nil {
@@ -821,7 +825,7 @@ func TestInterruptNoOpWhenHistoryClean(t *testing.T) {
 		if err := s.BeginTurn(); err != nil {
 			t.Fatalf("BeginTurn: %v", err)
 		}
-		if err := s.RecordAssistant(NewAssistantMessage("", "", []ToolCall{NewToolCall("call-a", "read_file", nil)})); err != nil {
+		if err := s.RecordAssistant(NewAssistantMessage("", []ToolCall{NewToolCall("call-a", "read_file", nil)})); err != nil {
 			t.Fatalf("RecordAssistant: %v", err)
 		}
 		if err := s.RecordToolResults([]ToolResult{NewToolResult("call-a", "ok")}); err != nil {
@@ -866,14 +870,14 @@ func TestInterruptClosesOnlyTrailingOrphan(t *testing.T) {
 		t.Fatalf("BeginTurn: %v", err)
 	}
 	// First assistant turn: a tool call that IS answered.
-	if err := s.RecordAssistant(NewAssistantMessage("", "", []ToolCall{NewToolCall("call-old", "read_file", nil)})); err != nil {
+	if err := s.RecordAssistant(NewAssistantMessage("", []ToolCall{NewToolCall("call-old", "read_file", nil)})); err != nil {
 		t.Fatalf("RecordAssistant turn one: %v", err)
 	}
 	if err := s.RecordToolResults([]ToolResult{NewToolResult("call-old", "ok")}); err != nil {
 		t.Fatalf("RecordToolResults: %v", err)
 	}
 	// Second assistant turn: an UNANSWERED tool call (the orphan).
-	if err := s.RecordAssistant(NewAssistantMessage("", "", []ToolCall{NewToolCall("call-new", "list_dir", nil)})); err != nil {
+	if err := s.RecordAssistant(NewAssistantMessage("", []ToolCall{NewToolCall("call-new", "list_dir", nil)})); err != nil {
 		t.Fatalf("RecordAssistant turn two: %v", err)
 	}
 	if err := s.Cancel(); err != nil {
@@ -921,7 +925,7 @@ func TestRecoverFromFailedReturnsToIdleAndResetsCounters(t *testing.T) {
 	if err := s.BeginTurn(); err != nil {
 		t.Fatalf("BeginTurn: %v", err)
 	}
-	if err := s.RecordAssistant(NewAssistantMessage("partial answer", "", nil)); err != nil {
+	if err := s.RecordAssistant(NewAssistantMessage("partial answer", nil)); err != nil {
 		t.Fatalf("RecordAssistant: %v", err)
 	}
 	if err := s.Fail(); err != nil {
@@ -996,7 +1000,7 @@ func TestRecoverClosesOutOrphanedToolCalls(t *testing.T) {
 		NewToolCall("call-a", "read_file", nil),
 		NewToolCall("call-b", "list_dir", nil),
 	}
-	if err := s.RecordAssistant(NewAssistantMessage("", "", calls)); err != nil {
+	if err := s.RecordAssistant(NewAssistantMessage("", calls)); err != nil {
 		t.Fatalf("RecordAssistant: %v", err)
 	}
 	if err := s.Fail(); err != nil {
@@ -1054,7 +1058,7 @@ func TestRecoverPartialToolResultsCloseOutRemainder(t *testing.T) {
 		NewToolCall("call-a", "read_file", nil),
 		NewToolCall("call-b", "list_dir", nil),
 	}
-	if err := s.RecordAssistant(NewAssistantMessage("", "", calls)); err != nil {
+	if err := s.RecordAssistant(NewAssistantMessage("", calls)); err != nil {
 		t.Fatalf("RecordAssistant: %v", err)
 	}
 	// call-a already answered before the failure.
@@ -1093,7 +1097,7 @@ func TestRecoverNoOpWhenHistoryClean(t *testing.T) {
 		if err := s.BeginTurn(); err != nil {
 			t.Fatalf("BeginTurn: %v", err)
 		}
-		if err := s.RecordAssistant(NewAssistantMessage("the answer", "", nil)); err != nil {
+		if err := s.RecordAssistant(NewAssistantMessage("the answer", nil)); err != nil {
 			t.Fatalf("RecordAssistant: %v", err)
 		}
 		if err := s.Fail(); err != nil {
@@ -1118,7 +1122,7 @@ func TestRecoverNoOpWhenHistoryClean(t *testing.T) {
 		if err := s.BeginTurn(); err != nil {
 			t.Fatalf("BeginTurn: %v", err)
 		}
-		if err := s.RecordAssistant(NewAssistantMessage("", "", []ToolCall{NewToolCall("call-a", "read_file", nil)})); err != nil {
+		if err := s.RecordAssistant(NewAssistantMessage("", []ToolCall{NewToolCall("call-a", "read_file", nil)})); err != nil {
 			t.Fatalf("RecordAssistant: %v", err)
 		}
 		if err := s.RecordToolResults([]ToolResult{NewToolResult("call-a", "ok")}); err != nil {
@@ -1167,7 +1171,7 @@ func TestRecoverNoOpWhenHistoryClean(t *testing.T) {
 // illegal from any non-idle state.
 func TestSeedHistoryRejectsUnpaired(t *testing.T) {
 	call := func(id ToolCallID) Message {
-		return NewAssistantMessage("", "", []ToolCall{NewToolCall(id, "Read", nil)})
+		return NewAssistantMessage("", []ToolCall{NewToolCall(id, "Read", nil)})
 	}
 	result := func(id ToolCallID) Message { return NewToolMessage(NewToolResult(id, "ok")) }
 
@@ -1246,7 +1250,7 @@ func TestRecordUsageRunningOnly(t *testing.T) {
 		{"idle", func(*Session) {}},
 		{"awaiting", func(s *Session) {
 			mustOK(t, s.BeginTurn())
-			mustOK(t, s.PauseForApproval(PendingAsk{AskID: "a1", Tool: "Edit"}))
+			mustOK(t, s.PauseForApproval(PendingAsk{AskID: "a1", Tool: "Edit", Call: "edit-1"}))
 		}},
 		{"completed", func(s *Session) {
 			mustOK(t, s.BeginTurn())
@@ -1324,7 +1328,7 @@ func TestAbandonFromRunningClosesOutOrphansAndIdles(t *testing.T) {
 		NewToolCall("call-a", "read_file", nil),
 		NewToolCall("call-b", "list_dir", nil),
 	}
-	if err := s.RecordAssistant(NewAssistantMessage("", "", calls)); err != nil {
+	if err := s.RecordAssistant(NewAssistantMessage("", calls)); err != nil {
 		t.Fatalf("RecordAssistant: %v", err)
 	}
 	// The session is left StateRunning here — no Cancel, no Fail — mirroring
@@ -1434,7 +1438,7 @@ func TestAbandonIsIdempotentAgainstAlreadyRepairedHistory(t *testing.T) {
 		NewToolCall("call-a", "read_file", nil),
 		NewToolCall("call-b", "list_dir", nil),
 	}
-	if err := s.RecordAssistant(NewAssistantMessage("", "", calls)); err != nil {
+	if err := s.RecordAssistant(NewAssistantMessage("", calls)); err != nil {
 		t.Fatalf("RecordAssistant: %v", err)
 	}
 	s.closeOutInterruptedTurn(abandonCloseOutMessage)

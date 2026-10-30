@@ -1306,6 +1306,14 @@ func validateRunEnvironment(sess *session.Session, env tool.Environment) error {
 	return nil
 }
 
+// rejectRunEntry reports a rejected continuation without terminalizing or saving
+// the persisted session.
+func (e *Engine) rejectRunEntry(r *Run, sess *session.Session, err error) {
+	e.emit(r, session.Event{Type: session.EvSessionInit})
+	r.setOutcome(RunOutcomeCompleted)
+	e.emitResult(r, sess, session.StopError, "", session.Usage{}, err.Error(), session.RetryDispositionPermanent, session.StreamProgressUnknown)
+}
+
 func (e *Engine) prepareRunEnvironment(ctx context.Context, r *Run, sess *session.Session, env tool.Environment) bool {
 	if err := validateRunEnvironment(sess, env); err != nil {
 		e.emit(r, session.Event{Type: session.EvSessionInit})
@@ -1347,15 +1355,15 @@ func (e *Engine) runWithCurrentMainUsageBaseline(ctx context.Context, sess *sess
 // sess must carry durable failed-step retry intent prepared by the host.
 func (e *Engine) RetryFailedStep(ctx context.Context, sess *session.Session, env tool.Environment) *Run {
 	return e.startRun(ctx, sess, RunRequest{}, session.Usage{}, func(ctx context.Context, r *Run) {
+		metadata, pending := sess.FailedStepRetryPending()
+		if !pending {
+			e.rejectRunEntry(r, sess, errors.New("agent: failed-step retry intent is not prepared"))
+			return
+		}
 		if !e.prepareRunEnvironment(ctx, r, sess, env) {
 			return
 		}
 		e.emit(r, session.Event{Type: session.EvSessionInit})
-		metadata, pending := sess.FailedStepRetryPending()
-		if !pending {
-			e.terminate(ctx, r, sess, session.StopError, "", session.Usage{}, errors.New("agent: failed-step retry intent is not prepared"), false)
-			return
-		}
 		retryText := "The failed model step is being retried without adding another user prompt."
 		if metadata.Progress == session.StreamProgressVisible {
 			retryText = "The prior partial model output failed and is superseded; the failed model step is being retried."
@@ -1388,11 +1396,12 @@ func (e *Engine) RetryFailedStep(ctx context.Context, sess *session.Session, env
 // PRECONDITION FAILURES surface ON THE RUN, not as a return value (ResumeApproval
 // only ever returns a live *Run): if sess is not in StateAwaiting, or its pending ask
 // does not match askID, or the trailing assistant message carries no matching tool
-// call, driveFromAwaiting terminates the returned run with session.StopError carrying
-// a cause matching errors.Is(_, ErrNotAwaiting). A consumer reads this off the run's
-// terminal EvResult (Stop == StopError, the Error field), exactly like any other
-// terminal — it never silently completes. The pending tool executes EXACTLY ONCE on
-// the allow path and NOT AT ALL on a precondition failure or a deny.
+// call, the returned run reports session.StopError with ErrNotAwaiting. Rejected
+// pending references leave the persisted ask and lifecycle intact without
+// environment preparation or saves.
+// A consumer reads the failure off the run's terminal EvResult (the Error field).
+// The pending tool executes EXACTLY ONCE on the allow path and NOT AT ALL on a
+// precondition failure or a deny.
 type ResumeApprovalOptions struct {
 	// CanPresentAuthorization permits this resumed main run to present a newly
 	// required external authorization. The zero value fails closed.
@@ -1417,6 +1426,10 @@ func (e *Engine) ResumeApprovalWith(ctx context.Context, sess *session.Session, 
 	// the run that just ended, and inheriting it would silently attribute a brand
 	// new run's events to the previous one.
 	return e.startRun(ctx, sess, RunRequest{RunID: sess.RunID(), CanPresentAuthorization: opts.CanPresentAuthorization}, session.Usage{}, func(ctx context.Context, r *Run) {
+		if _, _, _, err := pendingApprovalTarget(sess, askID); err != nil {
+			e.rejectRunEntry(r, sess, err)
+			return
+		}
 		// Reject malformed internal callers before inspecting the environment or
 		// clearing the pending ask. Wire mappers already fail unknown enum values to
 		// deny, but the public engine seam must not treat a future value as an allow.
@@ -1536,14 +1549,17 @@ func (p *PreparedRun) Abort() PreparedRunTransition {
 	}
 }
 
-// PrepareAuthorizationContinuation prepares an already durably claimed
-// external-authorization continuation without executing it. The caller must
-// register Run before Start. It may present another authorization because its
-// sole production caller has already authenticated the owner at the Service
-// boundary.
+// PrepareAuthorizationContinuation validates an already durably claimed
+// external-authorization continuation before preparing, but not executing, it.
+// The caller must register Run before Start. It may present another authorization
+// because its sole production caller has already authenticated the owner at the
+// Service boundary.
 func (e *Engine) PrepareAuthorizationContinuation(ctx context.Context, sess *session.Session, env tool.Environment, pending session.PendingAuthorization, resolution session.AuthorizationResolution) (*PreparedRun, error) {
 	if !resolution.Valid() {
 		return nil, errors.New("agent: authorization continuation requires a terminal resolution")
+	}
+	if err := sess.ValidateAuthorizationContinuation(pending); err != nil {
+		return nil, err
 	}
 	status := resolution.Status()
 	return e.prepareRun(ctx, sess, RunRequest{RunID: sess.RunID(), CanPresentAuthorization: true}, session.Usage{}, func(ctx context.Context, r *Run) {
@@ -1629,6 +1645,25 @@ func (e *Engine) PrepareAuthorizationContinuation(ctx context.Context, sess *ses
 func (e *Engine) PrepareAfterAuthorization(ctx context.Context, sess *session.Session, env tool.Environment, authorization session.ExternalAuthorization, callID session.ToolCallID, results []session.ToolResult, resolution session.AuthorizationResolution) (*PreparedRun, error) {
 	if !resolution.Valid() {
 		return nil, errors.New("agent: authorization continuation requires a terminal resolution")
+	}
+	if sess.State != session.StateRunning {
+		return nil, fmt.Errorf("%w: authorization resolution from %q", session.ErrIllegalTransition, sess.State)
+	}
+	if err := sess.ValidateAuthorizationState(); err != nil {
+		return nil, err
+	}
+	messages := sess.Conversation.Messages
+	if err := session.ValidateToolPairing(messages); err != nil {
+		return nil, err
+	}
+	if len(results) == 0 || results[0].CallID != callID || len(results) >= len(messages) {
+		return nil, errors.New("agent: authorization resolution requires recorded results")
+	}
+	for i, result := range results {
+		message := messages[len(messages)-len(results)+i]
+		if message.Role != session.RoleTool || message.ToolResult == nil || !reflect.DeepEqual(*message.ToolResult, result) {
+			return nil, errors.New("agent: authorization resolution does not match recorded results")
+		}
 	}
 	status := resolution.Status()
 	return e.prepareRun(ctx, sess, RunRequest{RunID: sess.RunID(), CanPresentAuthorization: true}, session.Usage{}, func(ctx context.Context, r *Run) {
@@ -1942,10 +1977,12 @@ func (e *Engine) runLoop(ctx context.Context, r *Run, sess *session.Session, env
 			turnStart = e.deps.Clock.Now()
 		}
 
-		// Step 3: assemble the complete provider request once, then compact against
-		// exactly that model-visible shape. On a successful replacement maybeCompact
-		// updates only the request's persisted-history suffix.
-		req := e.buildRequest(ctx, r, sess, env)
+		// Step 3: project canonical history before handing it to the model.
+		req, err := e.buildRequest(ctx, r, sess, env)
+		if err != nil {
+			e.terminate(ctx, r, sess, session.StopError, lastText, total, err, false)
+			return
+		}
 		e.maybeCompact(ctx, r, sess, turnIdx, &req)
 
 		// Step 4: when durable evidence is configured, emit the content-safe
@@ -2012,15 +2049,9 @@ func (e *Engine) runLoop(ctx context.Context, r *Run, sess *session.Session, env
 				InterTokenMaxMs:  timing.interTokenMaxMs,
 			}})
 
-		if err := sess.RecordAssistant(asst); err != nil {
+		if err := recordTurnAssistant(sess, asst, streamStop, emitUsage, estimated); err != nil {
 			e.terminate(ctx, r, sess, session.StopError, lastText, total, err, false)
 			return
-		}
-		if streamStop != session.StopCancelled && streamStop != session.StopError {
-			sess.RecordLatestContextOccupancy(session.ContextOccupancy{
-				InputTokens: emitUsage.InputTokens,
-				Estimated:   estimated,
-			})
 		}
 
 		// Step 5: a tool-call-free turn is either a real answer, a bounded no-progress
@@ -2040,7 +2071,22 @@ func (e *Engine) runLoop(ctx context.Context, r *Run, sess *session.Session, env
 	}
 }
 
+func recordTurnAssistant(sess *session.Session, asst session.Message, stop session.StopReason, emitUsage session.Usage, estimated bool) error {
+	if err := sess.RecordAssistant(asst); err != nil {
+		return err
+	}
+	if stop != session.StopCancelled && stop != session.StopError {
+		sess.RecordLatestContextOccupancy(session.ContextOccupancy{
+			InputTokens: emitUsage.InputTokens,
+			Estimated:   estimated,
+		})
+	}
+	return nil
+}
+
 // dispatchTurn owns the dispatch-to-record tail and reports whether the run ended.
+// Tool effects and history recording precede best-effort saves; this sequence does
+// not provide durable-save-before-effects or cross-crash exactly-once execution.
 func (e *Engine) dispatchTurn(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, turnIdx int, calls []session.ToolCall, lastText string, total session.Usage) bool {
 	results, park, cancelled := e.dispatch(ctx, r, sess, env, turnIdx, calls)
 	if cancelled {
@@ -2844,14 +2890,15 @@ func (l *turnLatency) summary() turnTiming {
 }
 
 // runTurn sends an already-assembled LLMRequest and folds the model stream into
-// a single assistant Message. It emits message.delta events for text. It honours
-// ctx cancellation mid-stream by returning context.Canceled.
+// a single assistant Message only after validating the entire provider batch.
+// Calls and opaque replay stay tentative until successful stream completion.
+// It emits message.delta events for text and returns context.Canceled on cancel.
 //
 // It also measures, via the injected Clock (never time.Now directly, so tests
 // drive it with a fake clock): TTFT — the elapsed time from the start of the
 // model stream to the FIRST OBSERVABLE OUTPUT (text, reasoning, a reasoning
-// replay item, or a tool call) — and the inter-token gaps between consecutive
-// STREAMING content deltas (text or reasoning), summarised as mean and max. TTFT
+// replay envelope marked ReplayIsOutput, or a tool call) — and the gaps between
+// consecutive STREAMING content deltas (text or reasoning), summarised as mean and max. TTFT
 // anchors on whatever observable output arrives first (see noteFirstOutput);
 // usage/done/phase chunks carry no output and never anchor it. The inter-token
 // gaps, by contrast, count ONLY streaming content deltas (see noteStreamDelta) —
@@ -2860,6 +2907,9 @@ func (l *turnLatency) summary() turnTiming {
 // no observable output at all reports no TTFT; a turn with fewer than two
 // streaming content deltas reports no inter-token summary (there is no gap).
 func (e *Engine) runTurn(ctx context.Context, r *Run, req port.LLMRequest, turnIdx int) (session.Message, session.Usage, session.StopReason, turnTiming, error) {
+	if err := ctx.Err(); err != nil {
+		return session.Message{}, session.Usage{}, session.StopNone, turnTiming{}, err
+	}
 	if e.deps.EnableDurableEvidence {
 		ctx = port.WithAttemptObserver(ctx, func(observation session.NetworkAttemptPayload) {
 			id, ok := port.SessionIDFromContext(r.ctx)
@@ -2884,29 +2934,8 @@ func (e *Engine) runTurn(ctx context.Context, r *Run, req port.LLMRequest, turnI
 	// noteStreamDelta accumulates the inter-token gap series over streaming content
 	// deltas only. See turnLatency.
 	lat := newTurnLatency(e.deps.Clock)
-	noteFirstOutput := lat.noteFirstOutput
-	noteStreamDelta := lat.noteStreamDelta
-
-	// text is the visible assistant text. reasoningBlob is the opaque
-	// encrypted_content replayed back to the provider on subsequent turns (stored
-	// on Message.Reasoning); it is distinct from the human-readable reasoning
-	// summary, which only drives display-only reasoning.delta events.
-	var text, reasoningBlob string
-	// reasoningItemID is the provider's per-item id carried alongside the
-	// ChunkReasoningItem replay blob (the OpenAI Responses reasoning-item id).
-	// Last-non-empty-wins, like the phase marker — distinct from the additive
-	// reasoning blob. Stored on Message.ReasoningItemID and replayed verbatim
-	// next turn so strict gateways get the id back unchanged.
-	var reasoningItemID string
-	// phase is the OpenAI Responses opaque phase marker (commentary/final_answer),
-	// stored verbatim on Message.ProviderPhase and replayed next turn; like the
-	// reasoning blob it is never displayed or interpreted. It is NOT observable
-	// output (it anchors no TTFT — no noteFirstOutput) and carries no streamed
-	// token (no noteStreamDelta).
-	var phase string
-	var calls []session.ToolCall
+	var state turnStreamState
 	var usage session.Usage
-	stop := session.StopNone
 
 	for chunk, cerr := range seq {
 		// Usage is accounting, even when a buffered stream arrives after cancel.
@@ -2916,81 +2945,111 @@ func (e *Engine) runTurn(ctx context.Context, r *Run, req port.LLMRequest, turnI
 			usage = usage.Add(*chunk.Usage)
 		}
 		if cerr != nil {
-			return session.Message{}, usage, stop, turnTiming{}, fmt.Errorf("agent: stream: %w", cerr)
+			return session.Message{}, usage, state.stop, turnTiming{}, fmt.Errorf("agent: stream: %w", cerr)
 		}
 		if ctx.Err() != nil {
-			return session.Message{}, usage, stop, turnTiming{}, context.Canceled
+			return session.Message{}, usage, state.stop, turnTiming{}, context.Canceled
 		}
-		switch chunk.Kind {
-		case port.ChunkText:
-			noteStreamDelta()
-			text += chunk.Text
-			e.emit(r, session.Event{Type: session.EvMessageDelta, Turn: turnIdx, Text: chunk.Text})
-		case port.ChunkReasoning:
-			// Display-only: surface the human-readable reasoning summary to
-			// clients. This text is NOT what gets replayed to the provider (see
-			// ChunkReasoningItem below); it must not be stored on Message.Reasoning.
-			noteStreamDelta()
-			e.emit(r, session.Event{Type: session.EvReasoningDelta, Turn: turnIdx, Text: chunk.Text})
-		case port.ChunkReasoningItem:
-			// The opaque reasoning replay blob. Stored on Message.Reasoning and sent
-			// back verbatim next turn for stateless reasoning continuity. It is
-			// observable OUTPUT (it anchors TTFT) but not a streamed token, so it
-			// never counts toward the inter-token gap series.
-			//
-			// An adapter emits ONE per turn: where the provider's replay unit is a
-			// LIST (several OpenAI reasoning items, several Anthropic thinking
-			// blocks), the adapter packs the ordered list into its own opaque
-			// envelope and flushes it at the terminal event. The accumulation here
-			// is therefore a degenerate case, and MUST NOT be relied on to assemble
-			// a multi-part payload: the fold below keeps only the last item id, so a
-			// per-item id would be lost — which is exactly how concatenated OpenAI
-			// blobs came to be replayed under the wrong id and rejected
-			// (invalid_encrypted_content). Structure belongs in the adapter's
-			// envelope, never in this concatenation.
-			noteFirstOutput()
-			reasoningBlob += chunk.Text
-			if chunk.ReasoningItemID != "" {
-				reasoningItemID = chunk.ReasoningItemID
-			}
-		case port.ChunkPhase:
-			// The opaque phase marker (commentary/final_answer). Stored on
-			// Message.ProviderPhase and replayed verbatim next turn. Last-wins (like the
-			// reasoning blob); never displayed or interpreted.
-			phase = chunk.Text
-		case port.ChunkToolCall:
-			// A tool call is observable OUTPUT — a pure tool-call turn must still
-			// anchor TTFT (issue #155) — but it is not a streamed token, so it goes
-			// through noteFirstOutput, never noteStreamDelta: it must never seed the
-			// inter-token gap series.
-			noteFirstOutput()
-			if chunk.ToolCall != nil {
-				calls = append(calls, *chunk.ToolCall)
-			}
-		case port.ChunkProviderRoute:
-			// The downstream provider slug that routed this turn (issue #480).
-			// Relayed verbatim onto a client-visible event; never stored on the
-			// message, never branched on, never replayed. It anchors no TTFT and
-			// feeds no usage (like ChunkPhase). Absent on a cache hit.
-			e.emit(r, session.Event{Type: session.EvProviderRoute, Turn: turnIdx, Text: chunk.Text})
-		case port.ChunkDone:
-			stop = chunk.Stop
-			r.turnStopDetail = sanitizeStopDetail(chunk.StopDetail)
-		}
+		e.foldTurnChunk(r, turnIdx, &state, lat, chunk)
 	}
 
 	// A consumer that exited because ctx was cancelled mid-stream surfaces as a
 	// cancellation, not a normal end-of-turn.
 	if ctx.Err() != nil {
-		return session.Message{}, usage, stop, turnTiming{}, context.Canceled
+		return session.Message{}, usage, state.stop, turnTiming{}, context.Canceled
 	}
 
 	timing := lat.summary()
+	msg, err := state.acceptAssistant()
+	return msg, usage, state.stop, timing, err
+}
 
-	msg := session.NewAssistantMessage(text, reasoningBlob, calls)
-	msg.ProviderPhase = phase
-	msg.ReasoningItemID = reasoningItemID
-	return msg, usage, stop, timing, nil
+type turnStreamState struct {
+	text, phase string
+	replay      *session.ProviderReplay
+	calls       []port.LLMToolCall
+	invalidCall bool
+	stop        session.StopReason
+}
+
+// foldTurnChunk accumulates tentative provider output and emits only streaming
+// display events. It copies provider-owned arguments and replay so later provider
+// mutation cannot alter the input to acceptAssistant.
+func (e *Engine) foldTurnChunk(r *Run, turnIdx int, state *turnStreamState, lat *turnLatency, chunk port.Chunk) {
+	switch chunk.Kind {
+	case port.ChunkText:
+		lat.noteStreamDelta()
+		state.text += chunk.Text
+		e.emit(r, session.Event{Type: session.EvMessageDelta, Turn: turnIdx, Text: chunk.Text})
+	case port.ChunkReasoning:
+		// Display-only; private replay travels separately in ChunkReplay.
+		lat.noteStreamDelta()
+		e.emit(r, session.Event{Type: session.EvReasoningDelta, Turn: turnIdx, Text: chunk.Text})
+	case port.ChunkReplay:
+		if chunk.ReplayIsOutput {
+			lat.noteFirstOutput()
+		}
+		if chunk.Replay != nil {
+			owned := *chunk.Replay
+			owned.Data = append([]byte(nil), chunk.Replay.Data...)
+			state.replay = &owned
+		}
+	case port.ChunkPhase:
+		// Preserve the public display phase without interpreting it.
+		// Exact provider-private phase replay belongs in the opaque envelope.
+		state.phase = chunk.Text
+	case port.ChunkToolCall:
+		// Tool calls anchor TTFT but never seed the streaming inter-token gaps.
+		lat.noteFirstOutput()
+		if chunk.ToolCall == nil {
+			state.invalidCall = true
+		} else {
+			call := *chunk.ToolCall
+			call.Args = append([]byte(nil), call.Args...)
+			state.calls = append(state.calls, call)
+		}
+	case port.ChunkProviderRoute:
+		// Relayed verbatim; never stored or replayed, and anchors no TTFT or usage.
+		e.emit(r, session.Event{Type: session.EvProviderRoute, Turn: turnIdx, Text: chunk.Text})
+	case port.ChunkDone:
+		state.stop = chunk.Stop
+		r.turnStopDetail = sanitizeStopDetail(chunk.StopDetail)
+	}
+}
+
+// acceptAssistant is the model-turn acceptance boundary. It validates the whole
+// provider batch before minting canonical invocation IDs and constructing their
+// occurrence bindings; RecordAssistant later commits the message to session history.
+// Provider cancellation/error stops retain display content, not calls or replay.
+func (state *turnStreamState) acceptAssistant() (session.Message, error) {
+	msg := session.NewAssistantMessage(state.text, nil)
+	msg.ProviderPhase = state.phase
+	// Terminal provider stops retain display text but never accept tentative calls
+	// or private replay. Context cancellation and stream errors returned above.
+	if state.stop == session.StopCancelled || state.stop == session.StopError {
+		return msg, nil
+	}
+	pairings := make(map[session.ProviderCallID]bool, len(state.calls))
+	for _, call := range state.calls {
+		if call.ID == "" || pairings[call.ID] {
+			state.invalidCall = true
+		}
+		pairings[call.ID] = true
+	}
+	if state.invalidCall {
+		return session.Message{}, fmt.Errorf("agent: invalid provider tool-call batch: missing or duplicate pairing ID")
+	}
+	// Mint only after validating the WHOLE batch. Session records calls and their
+	// occurrence-specific bindings atomically before dispatch publishes anything.
+	if state.replay != nil || len(state.calls) > 0 {
+		msg.Replay = &session.MessageReplay{Provider: state.replay}
+	}
+	for _, call := range state.calls {
+		id := session.NewToolCallID()
+		msg.ToolCalls = append(msg.ToolCalls, session.NewToolCall(id, call.Name, call.Args))
+		msg.Replay.Bindings = append(msg.Replay.Bindings, session.ToolCallBinding{CallID: id, PairingID: call.ID, ItemID: call.ItemID})
+	}
+	return msg, nil
 }
 
 // buildRequest assembles the provider-neutral LLMRequest for the current turn:
@@ -3005,7 +3064,7 @@ func (e *Engine) runTurn(ctx context.Context, r *Run, req port.LLMRequest, turnI
 // rehydration paths. Messages is a FRESH slice each call
 // (fragments ++ conversation); Conversation.Messages is never mutated. The
 // prefix remains stable until a new structured directory is encountered.
-func (e *Engine) buildRequest(ctx context.Context, r *Run, sess *session.Session, env tool.Environment) port.LLMRequest {
+func (e *Engine) buildRequest(ctx context.Context, r *Run, sess *session.Session, env tool.Environment) (port.LLMRequest, error) {
 	cfg := e.deps.PromptConfig
 	// Progressive disclosure (pattern 9): when enabled, advertise lightweight
 	// specs (full spec for non-disclosable tools, including the ToolSearch tool
@@ -3073,7 +3132,10 @@ func (e *Engine) buildRequest(ctx context.Context, r *Run, sess *session.Session
 	}
 	// Build a NEW slice — fragments first, then the persisted conversation — so
 	// Conversation.Messages is never mutated and the prefix is byte-stable per run.
-	msgs := requestMessages(r.fragments, sess.Conversation.Messages)
+	msgs, err := port.ProjectMessages(requestMessages(r.fragments, sess.Conversation.Messages))
+	if err != nil {
+		return port.LLMRequest{}, fmt.Errorf("agent: project history: %w", err)
+	}
 	var system prompt.Layered
 	if e.deps.PromptBuilder == nil {
 		system = prompt.Build(cfg)
@@ -3101,7 +3163,7 @@ func (e *Engine) buildRequest(ctx context.Context, r *Run, sess *session.Session
 		Messages: msgs,
 		Tools:    cfg.Tools,
 		Model:    e.deps.Model,
-	}
+	}, nil
 }
 
 func (e *Engine) assembleRequestInstructions(ctx context.Context, r *Run, sess *session.Session, targeted bool) {
@@ -3427,7 +3489,7 @@ func (r *Run) closeAuxiliaryUsageOwnership() {
 }
 
 func estimateRequestTokens(counter TokenCounter, req port.LLMRequest) int {
-	total := countLayered(counter, req.System) + counter.CountMessages(req.Messages)
+	total := countLayered(counter, req.System) + countLLMMessages(counter, req.Messages)
 	for _, spec := range req.Tools {
 		total += perToolSpecOverhead
 		total += counter.Count(spec.Name)
@@ -3471,7 +3533,8 @@ func (e *Engine) maybeCompact(ctx context.Context, r *Run, sess *session.Session
 	if budget < 1 {
 		budget = 1
 	}
-	result, compacted, usage, err := e.compactionCandidate(ctx, sess.Conversation, budget)
+	input := &session.Conversation{Messages: session.CloneMessages(sess.Conversation.Messages)}
+	result, compacted, usage, err := e.compactionCandidate(ctx, input, budget)
 	usage = RemapAuxiliaryUsage(ctx, r.diag, session.UsageKindCompaction, usage)
 	// The active run owns sess through its existing run capability; record all
 	// provider-reported usage before handling a terminal compaction error.
@@ -3497,6 +3560,11 @@ func (e *Engine) maybeCompact(ctx context.Context, r *Run, sess *session.Session
 	// history, never the rewritten tail. The archive is emitted only AFTER a successful
 	// replace below; the degrade-and-continue branches above emit nothing (no compaction
 	// happened, so there is no replaced span to archive).
+	projected, err := port.ProjectMessages(requestMessages(r.fragments, compacted))
+	if err != nil {
+		r.diag.Log(ctx, port.LevelWarn, "compaction produced history the provider projection rejected; continuing without compaction", "error", err)
+		return false
+	}
 	archived := sess.Conversation.Messages
 	if err := sess.ReplaceHistory(compacted); err != nil {
 		// Replacement is legal only while running; if the seam rejects it, keep the
@@ -3508,7 +3576,7 @@ func (e *Engine) maybeCompact(ctx context.Context, r *Run, sess *session.Session
 	// The system prompt, advertised tools, and ephemeral prefix were already
 	// assembled and measured. Preserve them byte-for-byte and replace only the
 	// persisted-history suffix that compaction changed.
-	req.Messages = requestMessages(r.fragments, sess.Conversation.Messages)
+	req.Messages = projected
 	e.emit(r, session.Event{Type: session.EvCompaction, Turn: turnIdx, Text: result.Summary})
 	// Emit the durable non-destructive archive of the span the replace just dropped.
 	// The loop only EMITS it; the server relay Appends it to port.EventLog (the loop
@@ -3878,11 +3946,11 @@ type auxiliaryUsageObserver interface {
 // observer from mutating the live conversation. Failures are operational facts:
 // they never alter the terminal result and no session event owns them.
 func (e *Engine) observeCompletion(ctx context.Context, r *Run, sess *session.Session, reason session.StopReason, usage session.Usage) {
-	if e.deps.LearningMode == learning.Off || e.deps.LearningObserver == nil ||
+	if e.deps.LearningMode == learning.Off || e.deps.LearningObserver == nil || !sess.LearningEligible() ||
 		sess.State != session.StateCompleted || reason == session.StopError || reason == session.StopCancelled {
 		return
 	}
-	tr := learning.NewTrajectory(sess.ID, r.workspace, reason, usage, sess.Conversation.Messages)
+	tr := learning.NewSessionTrajectory(sess, r.workspace, reason, usage)
 	tr.RunID = sess.RunID()
 	tr.Principal = sess.Owner.Clone()
 	tr.Kind = sess.Kind

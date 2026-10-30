@@ -7,7 +7,6 @@ package learning
 import (
 	"context"
 	"fmt"
-	"slices"
 
 	"github.com/stacklok/mecatl/engine/session"
 )
@@ -81,45 +80,31 @@ type Trajectory struct {
 	// Current is the verified half-open message span for the current run.
 	Current MessageSpan
 	// Principal is a copied completed-session owner for host partitioning.
-	Principal *session.Principal
+	Principal        *session.Principal
+	learningEligible bool
+}
+
+// LearningEligible reports eligibility derived from a real Session, never a serialized trajectory.
+func (t Trajectory) LearningEligible() bool { return t.learningEligible }
+
+// NewSessionTrajectory snapshots session history and its irreversible learning eligibility.
+func NewSessionTrajectory(sess *session.Session, workspace string, stop session.StopReason, usage session.Usage) Trajectory {
+	tr := NewTrajectory(sess.ID, workspace, stop, usage, sess.Conversation.Messages)
+	tr.learningEligible = sess.LearningEligible()
+	return tr
 }
 
 // NewTrajectory constructs an owned completed-run snapshot. Every mutable nested
 // value is copied so an Observer cannot mutate the live or persisted Session history.
+// It cannot establish learning eligibility; learning producers use NewSessionTrajectory.
 func NewTrajectory(id session.SessionID, workspace string, stop session.StopReason, usage session.Usage, messages []session.Message) Trajectory {
 	return Trajectory{
 		SessionID: id,
 		Workspace: workspace,
 		Stop:      stop,
 		Usage:     usage,
-		Messages:  cloneMessages(messages),
+		Messages:  session.CloneMessages(messages),
 	}
-}
-
-func cloneMessages(messages []session.Message) []session.Message {
-	out := slices.Clone(messages)
-	for i := range out {
-		out[i].ToolCalls = slices.Clone(out[i].ToolCalls)
-		for j := range out[i].ToolCalls {
-			out[i].ToolCalls[j].Args = slices.Clone(out[i].ToolCalls[j].Args)
-		}
-		out[i].Parts = cloneContents(out[i].Parts)
-		if out[i].ToolResult != nil {
-			result := *out[i].ToolResult
-			result.Parts = cloneContents(result.Parts)
-			out[i].ToolResult = &result
-		}
-	}
-	return out
-}
-
-func cloneContents(contents []session.Content) []session.Content {
-	out := slices.Clone(contents)
-	for i := range out {
-		out[i].Data = slices.Clone(out[i].Data)
-		out[i].Audience = slices.Clone(out[i].Audience)
-	}
-	return out
 }
 
 // Observer synchronously observes an eligible completed trajectory. Implementations

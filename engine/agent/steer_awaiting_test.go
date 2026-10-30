@@ -180,7 +180,7 @@ func TestSteer_AwaitingAskIsHeld(t *testing.T) {
 		if m.Role == session.RoleUser && m.Text == steerText {
 			steerIdx = i
 		}
-		if m.Role == session.RoleTool && m.ToolResult != nil && m.ToolResult.CallID == "c1" {
+		if m.Role == session.RoleTool && m.ToolResult != nil && m.ToolResult.CallID == boundCallID(t, sess, "c1") {
 			toolResultIdx = i
 		}
 	}

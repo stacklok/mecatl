@@ -148,11 +148,12 @@ func (s *Session) RestoreSessionMetadata(kind SessionKind, rel SessionRelationsh
 		return err
 	}
 	s.Kind = kind
-	s.Relationship = cloneSessionRelationship(rel)
+	s.Relationship = CloneSessionRelationship(rel)
 	return nil
 }
 
-func cloneSessionRelationship(rel SessionRelationship) SessionRelationship {
+// CloneSessionRelationship returns an independently owned relationship.
+func CloneSessionRelationship(rel SessionRelationship) SessionRelationship {
 	if rel.BranchIndex != nil {
 		branchIndex := *rel.BranchIndex
 		rel.BranchIndex = &branchIndex

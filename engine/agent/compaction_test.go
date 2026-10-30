@@ -24,11 +24,11 @@ func TestHeuristicCompactorPreservesPaths(t *testing.T) {
 	conv := &session.Conversation{}
 	conv.Append(session.NewSystemMessage("system rules"))
 	conv.Append(session.NewUserMessage("fix the bug in handler.go"))
-	conv.Append(session.NewAssistantMessage("", "", []session.ToolCall{
+	conv.Append(session.NewAssistantMessage("", []session.ToolCall{
 		session.NewToolCall("c1", "Read", json.RawMessage(`{"path":"handler.go"}`)),
 	}))
 	conv.Append(session.NewToolMessage(session.NewToolResult("c1", strings.Repeat("X", 5000))))
-	conv.Append(session.NewAssistantMessage("", "", []session.ToolCall{
+	conv.Append(session.NewAssistantMessage("", []session.ToolCall{
 		session.NewToolCall("c2", "Edit", json.RawMessage(`{"file_path":"util.go"}`)),
 	}))
 	conv.Append(session.NewToolMessage(session.NewToolResult("c2", "edited")))
@@ -89,7 +89,7 @@ func TestHeuristicCompactorNoOrphanedToolResultAtTailHead(t *testing.T) {
 	// cut bisects a pair, the tail's first message is a tool result.
 	for i := 0; i < 5; i++ {
 		id := session.ToolCallID(string(rune('a' + i)))
-		conv.Append(session.NewAssistantMessage("", "", []session.ToolCall{
+		conv.Append(session.NewAssistantMessage("", []session.ToolCall{
 			session.NewToolCall(id, "Read", json.RawMessage(`{"path":"f.go"}`)),
 		}))
 		conv.Append(session.NewToolMessage(session.NewToolResult(id, "body")))
@@ -123,7 +123,7 @@ func TestHeuristicCompactorTailAllToolResults(t *testing.T) {
 		id := session.ToolCallID(string(rune('a' + i)))
 		calls = append(calls, session.NewToolCall(id, "Read", json.RawMessage(`{}`)))
 	}
-	conv.Append(session.NewAssistantMessage("", "", calls))
+	conv.Append(session.NewAssistantMessage("", calls))
 	for i := 0; i < 4; i++ {
 		id := session.ToolCallID(string(rune('a' + i)))
 		conv.Append(session.NewToolMessage(session.NewToolResult(id, "body")))
@@ -154,11 +154,11 @@ func TestHeuristicCompactorMultipleConsecutiveLeadingOrphans(t *testing.T) {
 		id := session.ToolCallID(string(rune('a' + i)))
 		calls = append(calls, session.NewToolCall(id, "Read", json.RawMessage(`{}`)))
 	}
-	conv.Append(session.NewAssistantMessage("", "", calls))              // index 2
+	conv.Append(session.NewAssistantMessage("", calls))                  // index 2
 	conv.Append(session.NewToolMessage(session.NewToolResult("a", "x"))) // 3
 	conv.Append(session.NewToolMessage(session.NewToolResult("b", "x"))) // 4
 	conv.Append(session.NewToolMessage(session.NewToolResult("c", "x"))) // 5
-	conv.Append(session.NewAssistantMessage("done", "", nil))            // 6
+	conv.Append(session.NewAssistantMessage("done", nil))                // 6
 	// len=7, keep=4 => cut=3 => tail would start at T(a) with 3 consecutive
 	// leading orphans T(a),T(b),T(c). Snapping must consume all three.
 	compacted, _, _, err := agent.HeuristicCompactor{KeepLastTurns: 4}.Compact(context.Background(), conv)
@@ -189,7 +189,7 @@ func TestCascadeCompactorNoOrphanedToolResult(t *testing.T) {
 	conv.Append(session.NewUserMessage("fix the bug"))
 	for i := 0; i < 5; i++ {
 		id := session.ToolCallID(string(rune('a' + i)))
-		conv.Append(session.NewAssistantMessage("", "", []session.ToolCall{
+		conv.Append(session.NewAssistantMessage("", []session.ToolCall{
 			session.NewToolCall(id, "Read", json.RawMessage(`{"path":"f.go"}`)),
 		}))
 		conv.Append(session.NewToolMessage(session.NewToolResult(id, strings.Repeat("X", 2000))))
@@ -218,7 +218,7 @@ func TestCascadeCompactorTailAllToolResults(t *testing.T) {
 		id := session.ToolCallID(string(rune('a' + i)))
 		calls = append(calls, session.NewToolCall(id, "Read", json.RawMessage(`{}`)))
 	}
-	conv.Append(session.NewAssistantMessage("", "", calls))
+	conv.Append(session.NewAssistantMessage("", calls))
 	for i := 0; i < 4; i++ {
 		id := session.ToolCallID(string(rune('a' + i)))
 		conv.Append(session.NewToolMessage(session.NewToolResult(id, "body")))
@@ -247,11 +247,11 @@ func TestCascadeCompactorMultipleConsecutiveLeadingOrphans(t *testing.T) {
 		id := session.ToolCallID(string(rune('a' + i)))
 		calls = append(calls, session.NewToolCall(id, "Read", json.RawMessage(`{}`)))
 	}
-	conv.Append(session.NewAssistantMessage("", "", calls))
+	conv.Append(session.NewAssistantMessage("", calls))
 	conv.Append(session.NewToolMessage(session.NewToolResult("a", "x")))
 	conv.Append(session.NewToolMessage(session.NewToolResult("b", "x")))
 	conv.Append(session.NewToolMessage(session.NewToolResult("c", "x")))
-	conv.Append(session.NewAssistantMessage("done", "", nil))
+	conv.Append(session.NewAssistantMessage("done", nil))
 	compacted, _, _, err := agent.CascadeCompactor{KeepLastTurns: 4}.Compact(context.Background(), conv)
 	if err != nil {
 		t.Fatalf("Compact: %v", err)
@@ -283,7 +283,7 @@ func recentTaskConversation() *session.Conversation {
 	// Several clean assistant/tool pairs (older settled work).
 	for i := 0; i < 3; i++ {
 		id := session.ToolCallID(string(rune('a' + i)))
-		conv.Append(session.NewAssistantMessage("", "", []session.ToolCall{
+		conv.Append(session.NewAssistantMessage("", []session.ToolCall{
 			session.NewToolCall(id, "Read", json.RawMessage(`{"path":"f.go"}`)),
 		}))
 		conv.Append(session.NewToolMessage(session.NewToolResult(id, "body")))
@@ -294,7 +294,7 @@ func recentTaskConversation() *session.Conversation {
 	// ENTIRELY non-user and the task falls outside it.
 	for i := 0; i < 4; i++ {
 		id := session.ToolCallID("t" + string(rune('0'+i)))
-		conv.Append(session.NewAssistantMessage("", "", []session.ToolCall{
+		conv.Append(session.NewAssistantMessage("", []session.ToolCall{
 			session.NewToolCall(id, "Read", json.RawMessage(`{"path":"g.go"}`)),
 		}))
 		conv.Append(session.NewToolMessage(session.NewToolResult(id, "body")))
@@ -359,7 +359,7 @@ func cascadeRecentTaskConversation() *session.Conversation {
 	// the task AND keeps the count-tail (keep=6) entirely non-user.
 	for i := 0; i < 10; i++ {
 		id := session.ToolCallID("t" + string(rune('a'+i)))
-		conv.Append(session.NewAssistantMessage("", "", []session.ToolCall{
+		conv.Append(session.NewAssistantMessage("", []session.ToolCall{
 			session.NewToolCall(id, "Read", json.RawMessage(`{"path":"g.go"}`)),
 		}))
 		conv.Append(session.NewToolMessage(session.NewToolResult(id, "body")))
@@ -384,7 +384,7 @@ func TestCascadeCompactorPreservesRecentUserTaskOutsideCountTail(t *testing.T) {
 func pairBulk(conv *session.Conversation, prefix string, n int) {
 	for i := 0; i < n; i++ {
 		id := session.ToolCallID(prefix + string(rune('a'+i)))
-		conv.Append(session.NewAssistantMessage("", "", []session.ToolCall{
+		conv.Append(session.NewAssistantMessage("", []session.ToolCall{
 			session.NewToolCall(id, "Read", json.RawMessage(`{"path":"f.go"}`)),
 		}))
 		conv.Append(session.NewToolMessage(session.NewToolResult(id, "body")))
@@ -576,12 +576,12 @@ func TestCompactorRecentUserAdjacentToToolPair(t *testing.T) {
 		// The recent user instruction, FOLLOWED by a tool-call/result pair, then more
 		// trailing non-user pairs so the user turn falls OUTSIDE the keep=6 count-tail.
 		conv.Append(session.NewUserMessage("DO THE THING now"))
-		conv.Append(session.NewAssistantMessage("", "", []session.ToolCall{
+		conv.Append(session.NewAssistantMessage("", []session.ToolCall{
 			session.NewToolCall("z", "Read", json.RawMessage(`{"path":"z.go"}`)),
 		}))
 		conv.Append(session.NewToolMessage(session.NewToolResult("z", "body")))
 		pairBulk(conv, "b", 3) // trailing non-user: pushes the user turn out of the count-tail
-		conv.Append(session.NewAssistantMessage("ok", "", nil))
+		conv.Append(session.NewAssistantMessage("ok", nil))
 		return conv
 	}
 
@@ -763,13 +763,13 @@ func danglingTailConversation() *session.Conversation {
 	// A run of clean pairs to give the head/middle something to summarise.
 	for i := 0; i < 3; i++ {
 		id := session.ToolCallID(string(rune('a' + i)))
-		conv.Append(session.NewAssistantMessage("", "", []session.ToolCall{
+		conv.Append(session.NewAssistantMessage("", []session.ToolCall{
 			session.NewToolCall(id, "Read", json.RawMessage(`{"path":"f.go"}`)),
 		}))
 		conv.Append(session.NewToolMessage(session.NewToolResult(id, "body")))
 	}
 	// The final message dangles: an assistant tool call with NO following result.
-	conv.Append(session.NewAssistantMessage("", "", []session.ToolCall{
+	conv.Append(session.NewAssistantMessage("", []session.ToolCall{
 		session.NewToolCall("dangle", "Read", json.RawMessage(`{"path":"g.go"}`)),
 	}))
 	return conv
@@ -919,7 +919,7 @@ func TestCarryoverSeededCompactsOnTurn0(t *testing.T) {
 			conv.Append(session.NewUserMessage(recentTask))
 		}
 		id := session.ToolCallID(string(rune('a' + i)))
-		conv.Append(session.NewAssistantMessage("", "", []session.ToolCall{
+		conv.Append(session.NewAssistantMessage("", []session.ToolCall{
 			session.NewToolCall(id, "Read", json.RawMessage(`{"path":"f.go"}`)),
 		}))
 		conv.Append(session.NewToolMessage(session.NewToolResult(id, strings.Repeat("data ", 50))))
@@ -1334,7 +1334,7 @@ func TestCompactionAccountsForCompleteRequest(t *testing.T) {
 				call := session.NewToolCall("call", "T", json.RawMessage(`{}`))
 				withParts := []session.Message{
 					session.NewUserMessage("seed"),
-					session.NewAssistantMessage("", "", []session.ToolCall{call}),
+					session.NewAssistantMessage("", []session.ToolCall{call}),
 					session.NewToolMessage(session.NewToolResultWithParts(call.ID, "short", []session.Content{{
 						BlockKind: session.BlockStructuredContent, Text: filler,
 					}})),
@@ -1421,14 +1421,14 @@ func TestAutomaticCascadeUsesLiveCompleteRequestBudget(t *testing.T) {
 	call := session.NewToolCall("call", "Read", json.RawMessage(`{"path":"large"}`))
 	messages := []session.Message{session.NewUserMessage("goal")}
 	for i := 0; i < 70; i++ {
-		messages = append(messages, session.NewAssistantMessage(strings.Repeat("old response ", 10), "", nil))
+		messages = append(messages, session.NewAssistantMessage(strings.Repeat("old response ", 10), nil))
 	}
 	messages = append(messages,
-		session.NewAssistantMessage("", "", []session.ToolCall{call}),
+		session.NewAssistantMessage("", []session.ToolCall{call}),
 		session.NewToolMessage(session.NewToolResult(call.ID, strings.Repeat("tool body ", 300))),
 	)
 	for i := 0; i < 6; i++ {
-		messages = append(messages, session.NewAssistantMessage("recent", "", nil))
+		messages = append(messages, session.NewAssistantMessage("recent", nil))
 	}
 	sess := session.New("cascade-budget", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0))
 	if err := sess.SeedHistory(messages); err != nil {
