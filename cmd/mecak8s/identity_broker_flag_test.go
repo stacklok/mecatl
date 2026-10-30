@@ -112,6 +112,8 @@ func TestIdentityBrokerAS1FlagRules(t *testing.T) {
 		{name: "upstream client without issuer", args: []string{"--mock", "--identity-broker-as1-upstream-client-id=x"}, want: "require --identity-broker-as1-issuer"},
 		{name: "upstream secret without issuer", args: []string{"--mock", "--identity-broker-as1-upstream-client-secret-file=/s"}, want: "require --identity-broker-as1-issuer"},
 		{name: "subject claim without issuer", args: []string{"--mock", "--identity-broker-subject-claim=oid"}, want: "require --identity-broker-as1-issuer"},
+		{name: "upstream CA without issuer", args: []string{"--mock", "--identity-broker-as1-upstream-ca-file=/ca.pem"}, want: "require --identity-broker-as1-issuer"},
+		{name: "upstream private addresses without issuer", args: []string{"--mock", "--identity-broker-as1-upstream-allow-private-addresses"}, want: "require --identity-broker-as1-issuer"},
 		{name: "without the broker", args: without("--enable-identity-broker"), want: "requires --enable-identity-broker"},
 		{name: "without the TUI client", args: without("--identity-broker-as1-tui-client-id"), want: "requires --identity-broker-as1-tui-client-id"},
 		{name: "without the upstream issuer", args: without("--identity-broker-as1-upstream-issuer"), want: "requires --identity-broker-as1-tui-client-id"},
@@ -166,6 +168,23 @@ func TestIdentityBrokerAS1FlagRules(t *testing.T) {
 	}
 	if got := appConfig(cfg, nil, observability{}).IdentityBrokerHostedAS1; got.SubjectClaim != "oid" || got.SigningKeyFile != "/keys/as1.pem" || got.UpstreamClientSecretFile != "/secrets/as1" {
 		t.Fatalf("IdentityBrokerHostedAS1 = %+v, want the configured subject claim and files", got)
+	}
+	for _, c := range []struct {
+		args        []string
+		wantCA      string
+		wantPrivate bool
+	}{
+		{args: []string{"--identity-broker-as1-upstream-ca-file=/ca/idp.pem"}, wantCA: "/ca/idp.pem"},
+		{args: []string{"--identity-broker-as1-upstream-allow-private-addresses"}, wantPrivate: true},
+		{args: []string{"--identity-broker-as1-upstream-ca-file=/ca/idp.pem", "--identity-broker-as1-upstream-allow-private-addresses"}, wantCA: "/ca/idp.pem", wantPrivate: true},
+	} {
+		cfg, err = parseFlags(with(c.args...))
+		if err != nil {
+			t.Fatalf("parseFlags(%v): %v", c.args, err)
+		}
+		if got := appConfig(cfg, nil, observability{}).IdentityBrokerHostedAS1; got.UpstreamCAFile != c.wantCA || got.UpstreamAllowPrivateAddresses != c.wantPrivate {
+			t.Fatalf("%v: upstream CA %q, private addresses %v; want %q, %v", c.args, got.UpstreamCAFile, got.UpstreamAllowPrivateAddresses, c.wantCA, c.wantPrivate)
+		}
 	}
 }
 

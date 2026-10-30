@@ -724,7 +724,8 @@ func TestMecak8sHelmChart_IdentityBrokerAS1(t *testing.T) {
 		}
 	}
 	for _, arg := range args {
-		if strings.HasPrefix(arg, "--identity-broker-as1-signing-key-file") || strings.HasPrefix(arg, "--identity-broker-as1-upstream-client-secret-file") {
+		if strings.HasPrefix(arg, "--identity-broker-as1-signing-key-file") || strings.HasPrefix(arg, "--identity-broker-as1-upstream-client-secret-file") ||
+			strings.HasPrefix(arg, "--identity-broker-as1-upstream-ca-file") || strings.HasPrefix(arg, "--identity-broker-as1-upstream-allow-private-addresses") {
 			t.Fatalf("minimal AS-1 rendered optional flag %q", arg)
 		}
 	}
@@ -738,6 +739,8 @@ func TestMecak8sHelmChart_IdentityBrokerAS1(t *testing.T) {
 		"identityBroker.subjectClaim=oid",
 		"identityBroker.as1.signingKey.secretName=as1-signing", "identityBroker.as1.signingKey.key=key.pem",
 		"identityBroker.as1.upstream.clientSecret.secretName=as1-upstream", "identityBroker.as1.upstream.clientSecret.key=client-secret",
+		"identityBroker.as1.upstream.caSecret.secretName=as1-upstream-ca", "identityBroker.as1.upstream.caSecret.key=ca.crt",
+		"identityBroker.as1.upstream.allowPrivateAddresses=true",
 	)...)
 	if err != nil {
 		t.Fatalf("render full AS-1: %v\n%s", err, rendered)
@@ -748,6 +751,8 @@ func TestMecak8sHelmChart_IdentityBrokerAS1(t *testing.T) {
 		"--oidc-accepted-client-ids=studio,mecatui", "--identity-broker-subject-claim=oid",
 		"--identity-broker-as1-signing-key-file=/var/run/secrets/as1-signing-key/key.pem",
 		"--identity-broker-as1-upstream-client-secret-file=/var/run/secrets/as1-upstream-client-secret/client-secret",
+		"--identity-broker-as1-upstream-ca-file=/var/run/secrets/as1-upstream-ca/ca.crt",
+		"--identity-broker-as1-upstream-allow-private-addresses",
 	} {
 		if !slices.Contains(args, want) {
 			t.Fatalf("rendered args missing %q: %v", want, args)
@@ -756,7 +761,7 @@ func TestMecak8sHelmChart_IdentityBrokerAS1(t *testing.T) {
 	if n := len(slices.DeleteFunc(slices.Clone(args), func(arg string) bool { return arg != "--enable-identity-broker" })); n != 1 {
 		t.Fatalf("--enable-identity-broker rendered %d times: %v", n, args)
 	}
-	for volume, secret := range map[string]struct{ name, key string }{"as1-signing-key": {"as1-signing", "key.pem"}, "as1-upstream-client-secret": {"as1-upstream", "client-secret"}} {
+	for volume, secret := range map[string]struct{ name, key string }{"as1-signing-key": {"as1-signing", "key.pem"}, "as1-upstream-client-secret": {"as1-upstream", "client-secret"}, "as1-upstream-ca": {"as1-upstream-ca", "ca.crt"}} {
 		i := slices.IndexFunc(spec.Volumes, func(v corev1.Volume) bool { return v.Name == volume })
 		if i < 0 || spec.Volumes[i].Secret == nil || spec.Volumes[i].Secret.SecretName != secret.name || len(spec.Volumes[i].Secret.Items) != 1 || spec.Volumes[i].Secret.Items[0].Key != secret.key {
 			t.Fatalf("volume %s does not project %s/%s: %+v", volume, secret.name, secret.key, spec.Volumes)
@@ -804,32 +809,35 @@ func TestMecak8sHelmChart_IdentityBrokerAS1(t *testing.T) {
 		args []string
 		want string
 	}{
-		"AS-1 without OIDC":              {with("oidc.enabled=false"), "identityBroker.as1.issuer requires oidc.enabled=true"},
-		"broker without owner identity":  {with("oidc.ownerIdentity="), "identityBroker.enabled with oidc.enabled requires oidc.ownerIdentity=sub_id"},
-		"broker with a shell":            {with("extraArgs[0]=--shell=/bin/sh"), "identityBroker.enabled requires no shell in the mecak8s process"},
-		"subject claim without AS-1":     {with("identityBroker.subjectClaim=oid", "identityBroker.as1.issuer=", "identityBroker.as1.tuiClientID=", "identityBroker.as1.upstream.issuer=", "identityBroker.as1.upstream.clientID="), "identityBroker.subjectClaim requires identityBroker.as1.issuer"},
-		"AS-1 without subject claim":     {with("identityBroker.subjectClaim="), "identityBroker.subjectClaim is required when identityBroker.as1.issuer is set: oid for Microsoft Entra ID, or sub for an identity provider whose sub is the same across applications"},
-		"broker flag also in extraArgs":  {with("extraArgs[0]=--enable-identity-broker"), `extraArgs entry "--enable-identity-broker" enables the identity broker without the single replica it needs`},
-		"AS-1 flag also in extraArgs":    {with("extraArgs[0]=-identity-broker-as1-issuer=https://x.example.com"), `extraArgs entry "-identity-broker-as1-issuer=https://x.example.com" sets an identity broker flag`},
-		"subject claim in extraArgs":     {with("extraArgs[0]=--identity-broker-subject-claim=oid"), `extraArgs entry "--identity-broker-subject-claim=oid" sets an identity broker flag`},
-		"AS-1 without broker":            {with("identityBroker.enabled=false"), "identityBroker.as1.issuer requires identityBroker.enabled=true"},
-		"AS-1 values without issuer":     {with("identityBroker.as1.issuer=", "identityBroker.subjectClaim="), "identityBroker.as1 values require identityBroker.as1.issuer"},
-		"without TUI client ID":          {with("identityBroker.as1.tuiClientID="), "identityBroker.as1.tuiClientID is required"},
-		"without upstream issuer":        {with("identityBroker.as1.upstream.issuer="), "identityBroker.as1.upstream.issuer is required"},
-		"without upstream client ID":     {with("identityBroker.as1.upstream.clientID="), "identityBroker.as1.upstream.clientID is required"},
-		"plain HTTP issuer":              {with("identityBroker.as1.issuer=http://mecatl.example.com/as1"), "identityBroker.as1.issuer must be an https URL"},
-		"upstream issuer with query":     {with("identityBroker.as1.upstream.issuer=https://login.example.com?x=1"), "identityBroker.as1.upstream.issuer must be an https URL"},
-		"without audience":               {with("oidc.audience="), "oidc.audience is required with identityBroker.as1.issuer"},
-		"without resource":               {with("oidc.resource="), "oidc.resource is required with identityBroker.as1.issuer"},
-		"private HTTPS issuer":           {with("oidc.allowPrivateHTTPSIssuer=true", "oidc.caSecret=ca", "oidc.caKey=ca.crt"), "oidc.allowPrivateHTTPSIssuer cannot be used with identityBroker.as1.issuer"},
-		"foreign JWKS URI":               {with("oidc.jwksURI=https://idp.example.com/keys"), "oidc.jwksURI cannot be used with identityBroker.as1.issuer"},
-		"AS-1's own JWKS URI":            {with("oidc.jwksURI=https://mecatl.example.com/as1/.well-known/jwks.json"), "oidc.jwksURI cannot be used with identityBroker.as1.issuer"},
-		"different OIDC issuer":          {with("oidc.issuer=https://idp.example.com"), "oidc.issuer must be empty or equal identityBroker.as1.issuer"},
-		"different OIDC client ID":       {with("oidc.clientID=studio"), "oidc.clientID must be empty or equal identityBroker.as1.tuiClientID"},
-		"accepted IDs without TUI":       {with("oidc.acceptedClientIDs={studio}"), "oidc.acceptedClientIDs must include identityBroker.as1.tuiClientID"},
-		"signing key Secret without key": {with("identityBroker.as1.signingKey.secretName=as1-signing"), "identityBroker.as1.signingKey.key is required"},
-		"client secret key without name": {with("identityBroker.as1.upstream.clientSecret.key=client-secret"), "identityBroker.as1.upstream.clientSecret.secretName is required"},
-		"two replicas":                   {with("replicaCount=2"), "replicaCount"},
+		"AS-1 without OIDC":                {with("oidc.enabled=false"), "identityBroker.as1.issuer requires oidc.enabled=true"},
+		"broker without owner identity":    {with("oidc.ownerIdentity="), "identityBroker.enabled with oidc.enabled requires oidc.ownerIdentity=sub_id"},
+		"broker with a shell":              {with("extraArgs[0]=--shell=/bin/sh"), "identityBroker.enabled requires no shell in the mecak8s process"},
+		"subject claim without AS-1":       {with("identityBroker.subjectClaim=oid", "identityBroker.as1.issuer=", "identityBroker.as1.tuiClientID=", "identityBroker.as1.upstream.issuer=", "identityBroker.as1.upstream.clientID="), "identityBroker.subjectClaim requires identityBroker.as1.issuer"},
+		"AS-1 without subject claim":       {with("identityBroker.subjectClaim="), "identityBroker.subjectClaim is required when identityBroker.as1.issuer is set: oid for Microsoft Entra ID, or sub for an identity provider whose sub is the same across applications"},
+		"broker flag also in extraArgs":    {with("extraArgs[0]=--enable-identity-broker"), `extraArgs entry "--enable-identity-broker" enables the identity broker without the single replica it needs`},
+		"AS-1 flag also in extraArgs":      {with("extraArgs[0]=-identity-broker-as1-issuer=https://x.example.com"), `extraArgs entry "-identity-broker-as1-issuer=https://x.example.com" sets an identity broker flag`},
+		"subject claim in extraArgs":       {with("extraArgs[0]=--identity-broker-subject-claim=oid"), `extraArgs entry "--identity-broker-subject-claim=oid" sets an identity broker flag`},
+		"AS-1 without broker":              {with("identityBroker.enabled=false"), "identityBroker.as1.issuer requires identityBroker.enabled=true"},
+		"AS-1 values without issuer":       {with("identityBroker.as1.issuer=", "identityBroker.subjectClaim="), "identityBroker.as1 values require identityBroker.as1.issuer"},
+		"without TUI client ID":            {with("identityBroker.as1.tuiClientID="), "identityBroker.as1.tuiClientID is required"},
+		"without upstream issuer":          {with("identityBroker.as1.upstream.issuer="), "identityBroker.as1.upstream.issuer is required"},
+		"without upstream client ID":       {with("identityBroker.as1.upstream.clientID="), "identityBroker.as1.upstream.clientID is required"},
+		"plain HTTP issuer":                {with("identityBroker.as1.issuer=http://mecatl.example.com/as1"), "identityBroker.as1.issuer must be an https URL"},
+		"upstream issuer with query":       {with("identityBroker.as1.upstream.issuer=https://login.example.com?x=1"), "identityBroker.as1.upstream.issuer must be an https URL"},
+		"without audience":                 {with("oidc.audience="), "oidc.audience is required with identityBroker.as1.issuer"},
+		"without resource":                 {with("oidc.resource="), "oidc.resource is required with identityBroker.as1.issuer"},
+		"private HTTPS issuer":             {with("oidc.allowPrivateHTTPSIssuer=true", "oidc.caSecret=ca", "oidc.caKey=ca.crt"), "oidc.allowPrivateHTTPSIssuer cannot be used with identityBroker.as1.issuer"},
+		"foreign JWKS URI":                 {with("oidc.jwksURI=https://idp.example.com/keys"), "oidc.jwksURI cannot be used with identityBroker.as1.issuer"},
+		"AS-1's own JWKS URI":              {with("oidc.jwksURI=https://mecatl.example.com/as1/.well-known/jwks.json"), "oidc.jwksURI cannot be used with identityBroker.as1.issuer"},
+		"different OIDC issuer":            {with("oidc.issuer=https://idp.example.com"), "oidc.issuer must be empty or equal identityBroker.as1.issuer"},
+		"different OIDC client ID":         {with("oidc.clientID=studio"), "oidc.clientID must be empty or equal identityBroker.as1.tuiClientID"},
+		"accepted IDs without TUI":         {with("oidc.acceptedClientIDs={studio}"), "oidc.acceptedClientIDs must include identityBroker.as1.tuiClientID"},
+		"signing key Secret without key":   {with("identityBroker.as1.signingKey.secretName=as1-signing"), "identityBroker.as1.signingKey.key is required"},
+		"client secret key without name":   {with("identityBroker.as1.upstream.clientSecret.key=client-secret"), "identityBroker.as1.upstream.clientSecret.secretName is required"},
+		"upstream CA Secret without key":   {with("identityBroker.as1.upstream.caSecret.secretName=as1-upstream-ca"), "identityBroker.as1.upstream.caSecret.key is required"},
+		"upstream CA without issuer":       {with("identityBroker.as1.issuer=", "identityBroker.subjectClaim=", "identityBroker.as1.tuiClientID=", "identityBroker.as1.upstream.issuer=", "identityBroker.as1.upstream.clientID=", "identityBroker.as1.upstream.caSecret.secretName=ca", "identityBroker.as1.upstream.caSecret.key=ca.crt"), "identityBroker.as1 values require identityBroker.as1.issuer"},
+		"private addresses without issuer": {with("identityBroker.as1.issuer=", "identityBroker.subjectClaim=", "identityBroker.as1.tuiClientID=", "identityBroker.as1.upstream.issuer=", "identityBroker.as1.upstream.clientID=", "identityBroker.as1.upstream.allowPrivateAddresses=true"), "identityBroker.as1 values require identityBroker.as1.issuer"},
+		"two replicas":                     {with("replicaCount=2"), "replicaCount"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			output, err := helm(t, tc.args...)

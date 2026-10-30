@@ -2,7 +2,8 @@
 #
 # Spins a real kind cluster + Redis StatefulSet + two storage-free mecak8s agent
 # replicas and asserts lease exclusion, graceful failover, session persistence,
-# and caller identity against an in-cluster Dex OIDC provider. The suite lives
+# caller identity against an in-cluster Dex OIDC provider, and mecatui sign-in at
+# the hosted AS-1 of a second release in front of an HTTPS Dex. The suite lives
 # under e2e/k8s/ (build tag `kind_e2e`); `task e2e:k8s` runs
 # `GOWORK=off go test -tags kind_e2e -count=1 -timeout 30m ./e2e/k8s/...`. Slow
 # (~5-8 min) and needs Docker, so it is NOT part of `task test` and runs only on
@@ -47,6 +48,9 @@ on:
       - contracts/gen/go/mecatl/driver/**
       - go.work
       - go.work.sum
+      - internal/identitybroker/**
+      - internal/app/identitybroker.go
+      - internal/adapter/clientauth/**
       - internal/adapter/server/authn.go
       - internal/adapter/server/service.go
       - internal/adapter/server/errors.go
@@ -81,6 +85,9 @@ on:
       - internal/adaptersupport/**
       - contracts/gen/go/mecatl/driver/**
       - go.work
+      - internal/identitybroker/**
+      - internal/app/identitybroker.go
+      - internal/adapter/clientauth/**
       - internal/adapter/server/authn.go
       - internal/adapter/server/service.go
       - internal/adapter/server/errors.go
