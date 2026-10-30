@@ -351234,6 +351234,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1793322244378,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "29541485+ChrisJBurns@users.noreply.github.com",
+            "name": "Chris Burns",
+            "username": "ChrisJBurns"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "c893660fd7aabe223e0ddfe65576dbdb6f80857b",
+          "message": "feat(mecak8s): host AS-1 for identity broker sign-in (#2613)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-30T14:05:43Z",
+          "tree_id": "4e578f4656136af2ab75b0166ca526cc5b342d6b",
+          "url": "https://github.com/stacklok/mecatl/commit/c893660fd7aabe223e0ddfe65576dbdb6f80857b"
+        },
+        "date": 1793369939542,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -507601,6 +507635,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1793369935882,
+  "lastUpdate": 1793369940601,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
