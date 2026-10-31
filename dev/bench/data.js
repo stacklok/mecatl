@@ -353382,6 +353382,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1793476917788,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "43f621da765e0659b8bd20afb73283a4f7a4e33a",
+          "message": "test(mecatui): replace lifecycle sleeps with observed barriers (#2630)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-31T20:00:03Z",
+          "tree_id": "d0c84c63bdbc411aecbad5e1380cf0d559518c1c",
+          "url": "https://github.com/stacklok/mecatl/commit/43f621da765e0659b8bd20afb73283a4f7a4e33a"
+        },
+        "date": 1793477721824,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -510667,6 +510701,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1793477717188,
+  "lastUpdate": 1793477722902,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
