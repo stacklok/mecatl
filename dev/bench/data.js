@@ -354098,6 +354098,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1793481502042,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "becb683af308deeda8dc50963ec0a0f63690a665",
+          "message": "test(app): wait for scheduler leadership before busy fire (#2635)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-31T15:12:00-07:00",
+          "tree_id": "63abfd4531d9ef529806880e5c3295c08c72fd3f",
+          "url": "https://github.com/stacklok/mecatl/commit/becb683af308deeda8dc50963ec0a0f63690a665"
+        },
+        "date": 1793485414763,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -511689,6 +511723,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1793485411764,
+  "lastUpdate": 1793485415890,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
