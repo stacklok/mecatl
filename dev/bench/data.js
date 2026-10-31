@@ -392044,6 +392044,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1793477726565,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "9da89759fb246fe37c34b20da94500e7dca802e1",
+          "message": "test(mecatequi): observe telemetry shutdown cancellation (#2634)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-31T21:06:20Z",
+          "tree_id": "ca3e1388a986323ec1a51181202b6d717c24209f",
+          "url": "https://github.com/stacklok/mecatl/commit/9da89759fb246fe37c34b20da94500e7dca802e1"
+        },
+        "date": 1793481505523,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 16108.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12874,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 794,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -511212,6 +511251,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1793481502788,
+  "lastUpdate": 1793481506287,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
