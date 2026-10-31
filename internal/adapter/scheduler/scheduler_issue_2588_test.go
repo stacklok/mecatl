@@ -155,7 +155,7 @@ func TestIssue2588_PastFireDeadlineLogsSearchableMessage(t *testing.T) {
 	s.RunOnceForTest(context.Background())
 
 	const wantSub = "reconcile stale fire past FireDeadline (issue #2588)"
-	for _, msg := range diag.messages {
+	for _, msg := range diag.msgs {
 		if strings.Contains(msg, wantSub) {
 			if err := s.Stop(); err != nil {
 				t.Fatalf("Stop: %v", err)
@@ -163,5 +163,5 @@ func TestIssue2588_PastFireDeadlineLogsSearchableMessage(t *testing.T) {
 			return
 		}
 	}
-	t.Fatalf("expected diagnostics containing %q, got %v", wantSub, diag.messages)
+	t.Fatalf("expected diagnostics containing %q, got %v", wantSub, diag.msgs)
 }
