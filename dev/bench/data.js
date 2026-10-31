@@ -392838,6 +392838,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1793485419086,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "0c28cdf0650a8eddb7dcc1245045ba84d3be9d21",
+          "message": "test(oauthlogin): reuse probe callback connection (#2636)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-31T22:48:16Z",
+          "tree_id": "bed3135bb348f6362deff2cd0cfdf6b9b6d8346d",
+          "url": "https://github.com/stacklok/mecatl/commit/0c28cdf0650a8eddb7dcc1245045ba84d3be9d21"
+        },
+        "date": 1793487702986,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 16142,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12908,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 794,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -512234,6 +512273,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1793487699678,
+  "lastUpdate": 1793487704121,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
