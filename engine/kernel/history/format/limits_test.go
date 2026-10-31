@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/stacklok/mecatl/engine/kernel/history/format"
+	historyid "github.com/stacklok/mecatl/engine/kernel/history/id"
 )
 
 func TestLimits(t *testing.T) {
@@ -84,6 +85,31 @@ func TestLimits(t *testing.T) {
 			assertEncodeError(t, wide, exact)
 			assertDecodeError(t, encoded, exact)
 		}
+	}
+	for _, sequence := range []int64{2, 23, 24, 255, 256, 65535, 65536, math.MaxUint32, math.MaxUint32 + 1, math.MaxInt64} {
+		wide := validRoot(t)
+		wide.HistoryID = historyid.HistoryID{}
+		wide.Parent, err = format.ParseCID(emptyDigestCID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		wide.Sequence = sequence
+		encoded, _, err := format.EncodeCommit(wide, unrestrictedLimits)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(encoded) != cap(encoded) {
+			t.Fatal("incorrect sequence size")
+		}
+		exact := unrestrictedLimits
+		exact.MaxCommitBytes = len(encoded)
+		decoded, _, err := format.DecodeCommit(encoded, exact)
+		if err != nil || !decoded.Equal(wide) {
+			t.Fatalf("sequence size transition: %v", err)
+		}
+		exact.MaxCommitBytes--
+		assertEncodeError(t, wide, exact)
+		assertDecodeError(t, encoded, exact)
 	}
 	for _, count := range []int{23, 24, 255, 256} {
 		group := validRoot(t)

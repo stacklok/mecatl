@@ -21,6 +21,12 @@ type Commit struct {
 	HistoryID historyid.HistoryID
 	// Parent is unset for a root commit and names the predecessor for a successor.
 	Parent CID
+	// Sequence is the one-based commit ordinal. Root commits are exactly 1; zero
+	// is unset and invalid. Successors are greater than 1. Verifying that a
+	// successor is its parent's sequence plus one is an acceptance or
+	// reconstruction obligation; storage that increments it must guard overflow.
+	// This DTO cannot access the parent commit.
+	Sequence int64
 	// Records is the nonempty group in authoritative order.
 	Records []Record
 }
@@ -43,19 +49,29 @@ func (c Commit) Equal(other Commit) bool {
 	return c.FormatVersion == other.FormatVersion &&
 		c.HistoryID == other.HistoryID &&
 		c.Parent == other.Parent &&
+		c.Sequence == other.Sequence &&
 		slices.EqualFunc(c.Records, other.Records, Record.Equal)
 }
 
 // Validate checks the v1 commit envelope and every record, without mutation,
 // cloning, freezing, or resource budgets. Keep the input stable during the call.
 // It establishes neither ancestry, history membership, acceptance, authorization,
-// nor payload schema validity.
+// nor payload schema validity. For successors, it cannot verify that Sequence is
+// the parent's sequence plus one; acceptance or reconstruction must do that with
+// the parent available.
 func (c Commit) Validate() error {
 	if c.FormatVersion != 1 {
 		return errors.New("unsupported commit format version")
 	}
 	if (c.Parent == (CID{})) == (c.HistoryID == (historyid.HistoryID{})) {
 		return errors.New("commit requires exactly one of history ID or parent")
+	}
+	if c.Parent == (CID{}) {
+		if c.Sequence != 1 {
+			return errors.New("root commit sequence must be 1")
+		}
+	} else if c.Sequence <= 1 {
+		return errors.New("successor commit sequence must be greater than 1")
 	}
 	if len(c.Records) == 0 {
 		return errors.New("commit requires records")
@@ -87,15 +103,15 @@ func EncodeCommit(c Commit, limits Limits) ([]byte, CID, error) {
 	}
 	out := make([]byte, 0, size)
 	if c.Parent == (CID{}) {
-		// Root fields are h, p, r, v; h is required and p is canonical null.
-		out = cbor.AppendMapHeader(out, 4)
+		// Root fields are h, p, r, s, v; h is required and p is canonical null.
+		out = cbor.AppendMapHeader(out, 5)
 		out = cbor.AppendText(out, "h")
 		out = cbor.AppendText(out, c.HistoryID.String())
 		out = cbor.AppendText(out, "p")
 		out = cbor.AppendNull(out)
 	} else {
-		// Successor fields are p, r, v; p is required and h is omitted.
-		out = cbor.AppendMapHeader(out, 3)
+		// Successor fields are p, r, s, v; p is required and h is omitted.
+		out = cbor.AppendMapHeader(out, 4)
 		out = cbor.AppendText(out, "p")
 		out = append(out, 0xd8, 0x2a)
 		var link [37]byte
@@ -107,6 +123,8 @@ func EncodeCommit(c Commit, limits Limits) ([]byte, CID, error) {
 	for _, r := range c.Records {
 		out = r.appendCBOR(out)
 	}
+	out = cbor.AppendText(out, "s")
+	out = cbor.AppendInt(out, c.Sequence)
 	out = cbor.AppendText(out, "v")
 	out = cbor.AppendInt(out, c.FormatVersion)
 	return out, contentCID(out), nil
@@ -127,14 +145,14 @@ func (c Commit) encodedSize(l Limits) (int, error) {
 		total += n
 		return true
 	}
-	// Root overhead is the map, four keys, null, and version (11 bytes).
-	// Successor overhead includes the 41-byte tagged CID link (49 bytes).
+	// Root overhead is the map, five keys, null, and version (13 bytes).
+	// Successor overhead includes the 41-byte tagged CID link (51 bytes).
 	if c.Parent == (CID{}) {
 		h := c.HistoryID.String()
-		if !add(11) || !add(headerSize(len(h))) || !add(len(h)) {
+		if !add(13) || !add(headerSize(len(h))) || !add(len(h)) {
 			return 0, errors.New("commit bytes exceed limit")
 		}
-	} else if !add(49) {
+	} else if !add(51) {
 		return 0, errors.New("commit bytes exceed limit")
 	}
 	if !add(headerSize(len(c.Records))) {
@@ -149,12 +167,15 @@ func (c Commit) encodedSize(l Limits) (int, error) {
 			return 0, errors.New("commit bytes exceed limit")
 		}
 	}
+	if !add(positiveIntHeaderSize(c.Sequence)) {
+		return 0, errors.New("commit bytes exceed limit")
+	}
 	return total, nil
 }
 
 // DecodeCommit accepts only the closed, canonical v1 DAG-CBOR schema and hashes
-// the exact accepted input. Root fields are h, p, r, v; successor fields are p,
-// r, v. Every record has k, p, v in that order, and payload remains opaque.
+// the exact accepted input. Root fields are h, p, r, s, v; successor fields are
+// p, r, s, v. Every record has k, p, v in that order, and payload remains opaque.
 // Strict decoding preserves canonical wire bytes and pre-allocation budgets. Decoded
 // strings and bytes own their storage. Keep input stable during the call. Every
 // error returns a zero Commit and CID. Success establishes no ancestry, membership,
@@ -170,7 +191,7 @@ func DecodeCommit(data []byte, limits Limits) (Commit, CID, error) {
 	fields := d.header(5)
 	var c Commit
 	switch fields {
-	case 4:
+	case 5:
 		d.key('h')
 		h := string(d.scalar(3, limits.MaxCommitBytes))
 		if d.err == nil {
@@ -182,7 +203,7 @@ func DecodeCommit(data []byte, limits Limits) (Commit, CID, error) {
 		}
 		d.key('p')
 		d.literal(0xf6)
-	case 3:
+	case 4:
 		d.key('p')
 		c.Parent = d.link()
 	default:
@@ -209,8 +230,10 @@ func DecodeCommit(data []byte, limits Limits) (Commit, CID, error) {
 			}
 		}
 	}
+	d.key('s')
+	c.Sequence = d.positiveInt64()
 	d.key('v')
-	c.FormatVersion = d.version()
+	c.FormatVersion = d.positiveInt64()
 	if d.err != nil {
 		return Commit{}, CID{}, d.err
 	}

@@ -21,14 +21,15 @@ func testLimits() format.Limits {
 // wireFixtures are literal canonical bytes, independent of codec append helpers.
 func wireFixtures(t testing.TB) (root, successor []byte) {
 	t.Helper()
-	records := "\x61r\x81\xa3\x61k\x61x\x61p\x42\xff\x00\x61v\x01\x61v\x01"
-	root = []byte("\xa4\x61h\x78\x19HST1111111111111111111111\x61p\xf6" + records)
+	records := "\x61r\x81\xa3\x61k\x61x\x61p\x42\xff\x00\x61v\x01"
+	root = []byte("\xa5\x61h\x78\x19HST1111111111111111111111\x61p\xf6" + records + "\x61s\x01\x61v\x01")
 	link, err := hex.DecodeString("0001711220e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
 	if err != nil {
 		t.Fatal(err)
 	}
-	successor = append([]byte("\xa3\x61p\xd8\x2a\x58\x25"), link...)
+	successor = append([]byte("\xa4\x61p\xd8\x2a\x58\x25"), link...)
 	successor = append(successor, records...)
+	successor = append(successor, "\x61s\x02\x61v\x01"...)
 	return root, successor
 }
 
@@ -47,6 +48,7 @@ func TestCodecGoldens(t *testing.T) {
 	root := validRoot(t)
 	successor := root.Clone()
 	successor.HistoryID = historyid.HistoryID{}
+	successor.Sequence = 2
 	var err error
 	successor.Parent, err = format.ParseCID(emptyDigestCID)
 	if err != nil {
@@ -105,6 +107,7 @@ func TestCodecIdentityAndOpaquePayloads(t *testing.T) {
 		"history": func(c *format.Commit) { c.HistoryID, _ = historyid.ParseHistoryID("HST2222222222222222222222") },
 		"parent": func(c *format.Commit) {
 			c.HistoryID = historyid.HistoryID{}
+			c.Sequence = 2
 			c.Parent, _ = format.ParseCID(emptyDigestCID)
 		},
 		"payload":  func(c *format.Commit) { c.Records[0].Payload[0]++ },
@@ -121,6 +124,22 @@ func TestCodecIdentityAndOpaquePayloads(t *testing.T) {
 				t.Fatalf("identity change failed: %v", err)
 			}
 		})
+	}
+	// Successors can carry any positive ordinal above one: validating parent+1
+	// requires a parent commit and is deliberately outside this codec.
+	sequence2 := base.Clone()
+	sequence2.HistoryID = historyid.HistoryID{}
+	sequence2.Parent, _ = format.ParseCID(emptyDigestCID)
+	sequence2.Sequence = 2
+	sequence3 := sequence2.Clone()
+	sequence3.Sequence = 3
+	_, sequence2CID, err := format.EncodeCommit(sequence2, testLimits())
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, sequence3CID, err := format.EncodeCommit(sequence3, testLimits())
+	if err != nil || sequence2CID == sequence3CID || !reflect.DeepEqual(sequence2.Records, sequence3.Records) {
+		t.Fatalf("sequence did not independently affect commit identity: %v", err)
 	}
 	for _, payload := range [][]byte{nil, {}, {0xff, 0x9f, 0, 0xfe}, []byte(`{ "a": invalid json }`), []byte(`{"a":1}`), []byte(`{ "a": 1 }`)} {
 		c := base.Clone()
@@ -143,11 +162,13 @@ func TestCodecIdentityAndOpaquePayloads(t *testing.T) {
 	if !bytes.Equal(ad, bd) || ac != bc {
 		t.Fatal("nil and empty must encode equally")
 	}
-	// Changing a successor's parent, rather than just changing root to successor,
-	// must change identity even when every record stays identical.
+	// This codec validates only local successor shape; parent+1 is checked during
+	// acceptance or reconstruction where the parent is available.
 	a.HistoryID = historyid.HistoryID{}
+	a.Sequence = 2
 	a.Parent = original
 	b.HistoryID = historyid.HistoryID{}
+	b.Sequence = 2
 	b.Parent = ac
 	_, ac, err = format.EncodeCommit(a, testLimits())
 	if err != nil {
@@ -218,6 +239,8 @@ func assertEncodeError(t testing.TB, c format.Commit, limits format.Limits) {
 func TestCodecRejectsInvalidDTO(t *testing.T) {
 	for _, mutate := range []func(*format.Commit){
 		func(c *format.Commit) { c.FormatVersion = 2 },
+		func(c *format.Commit) { c.Sequence = 0 },
+		func(c *format.Commit) { c.Sequence = 2 },
 		func(c *format.Commit) { c.Records = nil },
 		func(c *format.Commit) { c.HistoryID = historyid.HistoryID{} },
 		func(c *format.Commit) { c.Parent, _ = format.ParseCID(emptyDigestCID) },

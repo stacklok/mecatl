@@ -24,9 +24,9 @@ func headerSize(n int) int {
 	}
 }
 
-// versionHeaderSize is the minimal canonical CBOR header size for a positive
-// version. Record and commit validation establishes the precondition.
-func versionHeaderSize(n int64) int {
+// positiveIntHeaderSize is the minimal canonical CBOR header size for a positive
+// int64. Callers establish the precondition.
+func positiveIntHeaderSize(n int64) int {
 	switch {
 	case n < 24:
 		return 1
@@ -109,14 +109,14 @@ func (d *cborDecoder) scalar(major byte, maxBytes int) []byte {
 	return value
 }
 
-// version accepts only positive minimal integers representable as int64.
-func (d *cborDecoder) version() int64 {
+// positiveInt64 accepts only positive minimal integers representable as int64.
+func (d *cborDecoder) positiveInt64() int64 {
 	n := d.header(0)
 	if d.err != nil {
 		return 0
 	}
 	if n == 0 || n > math.MaxInt64 {
-		d.err = errors.New("version must be positive int64")
+		d.err = errors.New("integer must be positive int64")
 		return 0
 	}
 	return int64(n)

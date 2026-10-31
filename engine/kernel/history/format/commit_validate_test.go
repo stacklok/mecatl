@@ -16,7 +16,7 @@ func validRoot(t testing.TB) format.Commit {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return format.Commit{FormatVersion: 1, HistoryID: h, Records: []format.Record{{Kind: "x", KindVersion: 1, Payload: []byte{0xff, 0}}}}
+	return format.Commit{FormatVersion: 1, Sequence: 1, HistoryID: h, Records: []format.Record{{Kind: "x", KindVersion: 1, Payload: []byte{0xff, 0}}}}
 }
 
 func TestCommitValidate(t *testing.T) {
@@ -27,6 +27,7 @@ func TestCommitValidate(t *testing.T) {
 	}
 	successor := root.Clone()
 	successor.HistoryID = historyid.HistoryID{}
+	successor.Sequence = 2
 	successor.Parent = parent
 	for _, c := range []format.Commit{root, successor} {
 		before := c.Clone()
@@ -37,10 +38,20 @@ func TestCommitValidate(t *testing.T) {
 			t.Fatal("validation mutated commit")
 		}
 	}
+	for _, sequence := range []int64{-1, 0, 1} {
+		c := successor.Clone()
+		c.Sequence = sequence
+		if err := c.Validate(); err == nil {
+			t.Fatalf("successor sequence %d accepted", sequence)
+		}
+	}
 	for _, change := range []func(*format.Commit){
 		func(c *format.Commit) { c.FormatVersion = 0 },
 		func(c *format.Commit) { c.FormatVersion = -1 },
 		func(c *format.Commit) { c.FormatVersion = 2 },
+		func(c *format.Commit) { c.Sequence = 0 },
+		func(c *format.Commit) { c.Sequence = -1 },
+		func(c *format.Commit) { c.Sequence = 2 },
 		func(c *format.Commit) { c.HistoryID = historyid.HistoryID{} },
 		func(c *format.Commit) { c.Parent = parent },
 		func(c *format.Commit) { c.Records = nil },

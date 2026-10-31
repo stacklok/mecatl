@@ -69,7 +69,7 @@ func (r Record) encodedSize(l Limits) (int, error) {
 	// The record map and its three keys cost seven bytes. Account for each
 	// component separately so even maximal caller budgets cannot overflow int.
 	total := 0
-	for _, n := range [...]int{7, headerSize(len(r.Kind)), len(r.Kind), headerSize(len(r.Payload)), len(r.Payload), versionHeaderSize(r.KindVersion)} {
+	for _, n := range [...]int{7, headerSize(len(r.Kind)), len(r.Kind), headerSize(len(r.Payload)), len(r.Payload), positiveIntHeaderSize(r.KindVersion)} {
 		if n > l.MaxCommitBytes-total {
 			return 0, errors.New("commit bytes exceed limit")
 		}
@@ -89,6 +89,6 @@ func decodeRecord(d *cborDecoder, limits Limits) Record {
 	d.key('p')
 	r.Payload = bytes.Clone(d.scalar(2, limits.MaxPayloadBytes))
 	d.key('v')
-	r.KindVersion = d.version()
+	r.KindVersion = d.positiveInt64()
 	return r
 }

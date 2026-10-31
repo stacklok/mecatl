@@ -49,12 +49,14 @@ func TestCommitEqual(t *testing.T) {
 	if other := commitFixture(t); !base.Equal(other) || !other.Equal(base) {
 		t.Fatal("independently allocated equal commits compared unequal")
 	}
-	for _, field := range []string{"format version", "history", "parent", "record kind", "record version", "record payload", "later record payload", "record order", "record count"} {
+	for _, field := range []string{"format version", "sequence", "history", "parent", "record kind", "record version", "record payload", "later record payload", "record order", "record count"} {
 		t.Run(field, func(t *testing.T) {
 			other := commitFixture(t)
 			switch field {
 			case "format version":
 				other.FormatVersion++
+			case "sequence":
+				other.Sequence++
 			case "history":
 				other.HistoryID = historyid.HistoryID{}
 			case "parent":
@@ -101,6 +103,7 @@ func commitFixture(t *testing.T) format.Commit {
 	}
 	return format.Commit{
 		FormatVersion: 1,
+		Sequence:      2,
 		HistoryID:     h,
 		Parent:        parent,
 		Records: []format.Record{

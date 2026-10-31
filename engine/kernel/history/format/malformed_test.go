@@ -21,79 +21,94 @@ func replaceWire(t testing.TB, wire []byte, old, replacement string) []byte {
 
 func TestDecodeCommitMalformed(t *testing.T) {
 	root, successor := wireFixtures(t)
-	prefix := "\xa4\x61h\x78\x19HST1111111111111111111111\x61p\xf6\x61r"
+	prefix := "\xa5\x61h\x78\x19HST1111111111111111111111\x61p\xf6\x61r"
 	record := "\xa3\x61k\x61x\x61p\x42\xff\x00\x61v\x01"
-	tail := "\x61v\x01"
+	tail := "\x61s\x01\x61v\x01"
 	wrapRecord := func(r string) []byte { return []byte(prefix + "\x81" + r + tail) }
 	huge := "\xff\xff\xff\xff\xff\xff\xff\xff"
 	cases := map[string][]byte{
-		"empty":                     nil,
-		"wrong envelope type":       []byte("\x84"),
-		"empty map":                 []byte("\xa0"),
-		"unknown envelope field":    append([]byte("\xa5"), root[1:]...),
-		"indefinite map":            append([]byte("\xbf"), root[1:]...),
-		"nonminimal map":            append([]byte("\xb8\x04"), root[1:]...),
-		"unknown first key":         replaceWire(t, root, "\x61h", "\x61a"),
-		"duplicate root key":        replaceWire(t, root, "\x61p\xf6", "\x61h\xf6"),
-		"nonminimal key":            replaceWire(t, root, "\x61h", "\x78\x01h"),
-		"bytes key":                 replaceWire(t, root, "\x61h", "\x41h"),
-		"null key":                  replaceWire(t, root, "\x61h", "\xf6"),
-		"null history":              replaceWire(t, root, "\x78\x19HST1111111111111111111111", "\xf6"),
-		"empty history":             replaceWire(t, root, "\x78\x19HST1111111111111111111111", "\x60"),
-		"invalid history":           replaceWire(t, root, "HST1111111111111111111111", "HST0000000000000000000000"),
-		"nonhistory ID":             replaceWire(t, root, "HST1111111111111111111111", "SES1111111111111111111111"),
-		"invalid history UTF8":      replaceWire(t, root, "HST1111111111111111111111", "\xffST1111111111111111111111"),
-		"bytes history":             replaceWire(t, root, "\x78\x19HST", "\x58\x19HST"),
-		"nonminimal history length": replaceWire(t, root, "\x78\x19HST", "\x79\x00\x19HST"),
-		"huge history":              replaceWire(t, root, "\x78\x19HST1111111111111111111111", "\x7b"+huge),
-		"root parent not null":      replaceWire(t, root, "\x61p\xf6", "\x61p\xf4"),
-		"noncanonical null":         replaceWire(t, root, "\x61p\xf6", "\x61p\xf8\x16"),
-		"root with link":            replaceWire(t, root, "\x61p\xf6", "\x61p"+string(successor[3:44])),
-		"successor null parent":     append([]byte("\xa3\x61p\xf6"), successor[44:]...),
-		"successor empty parent":    append([]byte("\xa3\x61p\x40"), successor[44:]...),
-		"successor text parent":     append([]byte("\xa3\x61p\x60"), successor[44:]...),
-		"missing root history":      append([]byte("\xa3"), root[30:]...),
-		"null records":              []byte(prefix + "\xf6" + tail),
-		"map records":               []byte(prefix + "\xa0" + tail),
-		"empty records":             []byte(prefix + "\x80" + tail),
-		"nonminimal array":          []byte(prefix + "\x98\x01" + record + tail),
-		"indefinite array":          []byte(prefix + "\x9f" + record + "\xff" + tail),
-		"huge array":                []byte(prefix + "\x9b" + huge + tail),
-		"implausible array":         []byte(prefix + "\x98\xff" + tail),
-		"null record":               wrapRecord("\xf6"),
-		"array record":              wrapRecord("\x83\x61x\x40\x01"),
-		"missing record field":      wrapRecord("\xa2\x61k\x61x\x61v\x01"),
-		"unknown record field":      wrapRecord("\xa4\x61k\x61x\x61p\x40\x61v\x01\x61z\x00"),
-		"unknown record key":        wrapRecord("\xa3\x61j\x61x\x61p\x40\x61v\x01"),
-		"duplicate record key":      wrapRecord("\xa3\x61k\x61x\x61k\x40\x61v\x01"),
-		"unsorted record keys":      wrapRecord("\xa3\x61p\x40\x61k\x61x\x61v\x01"),
-		"nonminimal record map":     wrapRecord("\xb8\x03" + record[1:]),
-		"null kind":                 wrapRecord("\xa3\x61k\xf6\x61p\x40\x61v\x01"),
-		"bytes kind":                wrapRecord("\xa3\x61k\x41x\x61p\x40\x61v\x01"),
-		"empty kind":                wrapRecord("\xa3\x61k\x60\x61p\x40\x61v\x01"),
-		"invalid kind UTF8":         wrapRecord("\xa3\x61k\x61\xff\x61p\x40\x61v\x01"),
-		"huge kind":                 wrapRecord("\xa3\x61k\x7b" + huge),
-		"indefinite kind":           wrapRecord("\xa3\x61k\x7f\x61x\xff\x61p\x40\x61v\x01"),
-		"null payload":              wrapRecord("\xa3\x61k\x61x\x61p\xf6\x61v\x01"),
-		"text payload":              wrapRecord("\xa3\x61k\x61x\x61p\x62hi\x61v\x01"),
-		"array payload":             wrapRecord("\xa3\x61k\x61x\x61p\x80\x61v\x01"),
-		"missing payload":           wrapRecord("\xa3\x61k\x61x\x61v\x01"),
-		"huge payload":              wrapRecord("\xa3\x61k\x61x\x61p\x5b" + huge),
-		"truncated payload":         wrapRecord("\xa3\x61k\x61x\x61p\x58\xff"),
-		"nonminimal payload length": wrapRecord("\xa3\x61k\x61x\x61p\x58\x00\x61v\x01"),
-		"indefinite payload":        wrapRecord("\xa3\x61k\x61x\x61p\x5f\x40\xff\x61v\x01"),
-		"missing envelope version":  root[:len(root)-3],
-		"unsorted root keys":        []byte("\xa4\x61p\xf6\x61h\x78\x19HST1111111111111111111111\x61r\x81" + record + tail),
-		"trailing null":             append(bytes.Clone(root), 0xf6),
-		"trailing second commit":    append(bytes.Clone(root), root...),
+		"empty":                        nil,
+		"wrong envelope type":          []byte("\x84"),
+		"empty map":                    []byte("\xa0"),
+		"unknown envelope field":       append([]byte("\xa6"), root[1:]...),
+		"indefinite map":               append([]byte("\xbf"), root[1:]...),
+		"nonminimal map":               append([]byte("\xb8\x05"), root[1:]...),
+		"unknown first key":            replaceWire(t, root, "\x61h", "\x61a"),
+		"duplicate root key":           replaceWire(t, root, "\x61p\xf6", "\x61h\xf6"),
+		"nonminimal key":               replaceWire(t, root, "\x61h", "\x78\x01h"),
+		"bytes key":                    replaceWire(t, root, "\x61h", "\x41h"),
+		"null key":                     replaceWire(t, root, "\x61h", "\xf6"),
+		"null history":                 replaceWire(t, root, "\x78\x19HST1111111111111111111111", "\xf6"),
+		"empty history":                replaceWire(t, root, "\x78\x19HST1111111111111111111111", "\x60"),
+		"invalid history":              replaceWire(t, root, "HST1111111111111111111111", "HST0000000000000000000000"),
+		"nonhistory ID":                replaceWire(t, root, "HST1111111111111111111111", "SES1111111111111111111111"),
+		"invalid history UTF8":         replaceWire(t, root, "HST1111111111111111111111", "\xffST1111111111111111111111"),
+		"bytes history":                replaceWire(t, root, "\x78\x19HST", "\x58\x19HST"),
+		"nonminimal history length":    replaceWire(t, root, "\x78\x19HST", "\x79\x00\x19HST"),
+		"huge history":                 replaceWire(t, root, "\x78\x19HST1111111111111111111111", "\x7b"+huge),
+		"root parent not null":         replaceWire(t, root, "\x61p\xf6", "\x61p\xf4"),
+		"noncanonical null":            replaceWire(t, root, "\x61p\xf6", "\x61p\xf8\x16"),
+		"root with link":               replaceWire(t, root, "\x61p\xf6", "\x61p"+string(successor[3:44])),
+		"successor null parent":        append([]byte("\xa4\x61p\xf6"), successor[44:]...),
+		"successor empty parent":       append([]byte("\xa4\x61p\x40"), successor[44:]...),
+		"successor text parent":        append([]byte("\xa4\x61p\x60"), successor[44:]...),
+		"successor extra field count":  append(append([]byte("\xa5"), successor[1:]...), "\x61z\x00"...),
+		"successor duplicate key":      replaceWire(t, successor, "\x61s\x02", "\x61p\x02"),
+		"successor unsorted keys":      replaceWire(t, successor, "\x61s\x02\x61v\x01", "\x61v\x01\x61s\x02"),
+		"missing root history":         append([]byte("\xa4"), root[30:]...),
+		"null records":                 []byte(prefix + "\xf6" + tail),
+		"map records":                  []byte(prefix + "\xa0" + tail),
+		"empty records":                []byte(prefix + "\x80" + tail),
+		"nonminimal array":             []byte(prefix + "\x98\x01" + record + tail),
+		"indefinite array":             []byte(prefix + "\x9f" + record + "\xff" + tail),
+		"huge array":                   []byte(prefix + "\x9b" + huge + tail),
+		"implausible array":            []byte(prefix + "\x98\xff" + tail),
+		"null record":                  wrapRecord("\xf6"),
+		"array record":                 wrapRecord("\x83\x61x\x40\x01"),
+		"missing record field":         wrapRecord("\xa2\x61k\x61x\x61v\x01"),
+		"unknown record field":         wrapRecord("\xa4\x61k\x61x\x61p\x40\x61v\x01\x61z\x00"),
+		"unknown record key":           wrapRecord("\xa3\x61j\x61x\x61p\x40\x61v\x01"),
+		"duplicate record key":         wrapRecord("\xa3\x61k\x61x\x61k\x40\x61v\x01"),
+		"unsorted record keys":         wrapRecord("\xa3\x61p\x40\x61k\x61x\x61v\x01"),
+		"nonminimal record map":        wrapRecord("\xb8\x03" + record[1:]),
+		"null kind":                    wrapRecord("\xa3\x61k\xf6\x61p\x40\x61v\x01"),
+		"bytes kind":                   wrapRecord("\xa3\x61k\x41x\x61p\x40\x61v\x01"),
+		"empty kind":                   wrapRecord("\xa3\x61k\x60\x61p\x40\x61v\x01"),
+		"invalid kind UTF8":            wrapRecord("\xa3\x61k\x61\xff\x61p\x40\x61v\x01"),
+		"huge kind":                    wrapRecord("\xa3\x61k\x7b" + huge),
+		"indefinite kind":              wrapRecord("\xa3\x61k\x7f\x61x\xff\x61p\x40\x61v\x01"),
+		"null payload":                 wrapRecord("\xa3\x61k\x61x\x61p\xf6\x61v\x01"),
+		"text payload":                 wrapRecord("\xa3\x61k\x61x\x61p\x62hi\x61v\x01"),
+		"array payload":                wrapRecord("\xa3\x61k\x61x\x61p\x80\x61v\x01"),
+		"missing payload":              wrapRecord("\xa3\x61k\x61x\x61v\x01"),
+		"huge payload":                 wrapRecord("\xa3\x61k\x61x\x61p\x5b" + huge),
+		"truncated payload":            wrapRecord("\xa3\x61k\x61x\x61p\x58\xff"),
+		"nonminimal payload length":    wrapRecord("\xa3\x61k\x61x\x61p\x58\x00\x61v\x01"),
+		"indefinite payload":           wrapRecord("\xa3\x61k\x61x\x61p\x5f\x40\xff\x61v\x01"),
+		"missing envelope version":     root[:len(root)-3],
+		"missing sequence":             append(bytes.Clone(root[:len(root)-6]), root[len(root)-3:]...),
+		"duplicate sequence":           replaceWire(t, root, "\x61s\x01\x61v\x01", "\x61s\x01\x61s\x01"),
+		"misplaced sequence":           replaceWire(t, root, "\x61r", "\x61s"),
+		"root sequence not one":        replaceWire(t, root, "\x61s\x01", "\x61s\x02"),
+		"successor sequence one":       replaceWire(t, successor, "\x61s\x02", "\x61s\x01"),
+		"successor sequence zero":      replaceWire(t, successor, "\x61s\x02", "\x61s\x00"),
+		"missing sequence four fields": []byte("\xa4\x61h\x78\x19HST1111111111111111111111\x61p\xf6\x61r\x81" + record + "\x61v\x01"),
+		"unsorted root keys":           []byte("\xa5\x61p\xf6\x61h\x78\x19HST1111111111111111111111\x61r\x81" + record + tail),
+		"trailing null":                append(bytes.Clone(root), 0xf6),
+		"trailing second commit":       append(bytes.Clone(root), root...),
 	}
 	for name, version := range map[string]string{
 		"zero": "\x00", "negative": "\x20", "null": "\xf6", "text": "\x611", "bool": "\xf5", "bytes": "\x410", "float": "\xfb\x3f\xf0\x00\x00\x00\x00\x00\x00",
 		"overflow": "\x1b\x80\x00\x00\x00\x00\x00\x00\x00", "maxuint": "\x1b" + huge,
+		"array": "\x80", "map": "\xa0", "tag": "\xc0\x01", "indefinite": "\x7f\xff",
 		"nonminimal uint8": "\x18\x01", "nonminimal uint16": "\x19\x00\x01", "nonminimal uint32": "\x1a\x00\x00\x00\x01", "nonminimal uint64": "\x1b\x00\x00\x00\x00\x00\x00\x00\x01",
 	} {
 		cases["record version "+name] = wrapRecord(record[:len(record)-1] + version)
 		cases["envelope version "+name] = append(bytes.Clone(root[:len(root)-1]), []byte(version)...)
+		cases["sequence "+name] = replaceWire(t, root, "\x61s\x01", "\x61s"+version)
+	}
+	for _, sequence := range []string{"\x18\x02", "\x19\x00\x02", "\x1a\x00\x00\x00\x02", "\x1b\x00\x00\x00\x00\x00\x00\x00\x02"} {
+		cases[fmt.Sprintf("successor nonminimal sequence %x", sequence)] = replaceWire(t, successor, "\x61s\x02", "\x61s"+sequence)
 	}
 	for _, version := range []string{"\x02", "\x1b\x7f\xff\xff\xff\xff\xff\xff\xff"} {
 		cases[fmt.Sprintf("unsupported envelope version %x", version)] = append(bytes.Clone(root[:len(root)-1]), []byte(version)...)
@@ -126,7 +141,7 @@ func TestDecodeCommitRejectsCIDAlternatives(t *testing.T) {
 		"wrong multibase":        append([]byte{0xd8, 0x2a, 0x58, 37, 1}, binary...),
 	} {
 		t.Run(name, func(t *testing.T) {
-			wire := append([]byte("\xa3\x61p"), link...)
+			wire := append([]byte("\xa4\x61p"), link...)
 			wire = append(wire, successor[44:]...)
 			assertDecodeError(t, wire, testLimits())
 		})
@@ -149,7 +164,7 @@ func TestDecodeCommitRejectsCIDAlternatives(t *testing.T) {
 	alternatives["raw codec"] = raw
 	for name, bad := range alternatives {
 		t.Run(name, func(t *testing.T) {
-			wire := append([]byte{0xa3, 0x61, 'p', 0xd8, 0x2a, 0x58, byte(len(bad) + 1), 0}, bad...)
+			wire := append([]byte{0xa4, 0x61, 'p', 0xd8, 0x2a, 0x58, byte(len(bad) + 1), 0}, bad...)
 			wire = append(wire, successor[44:]...)
 			assertDecodeError(t, wire, testLimits())
 		})

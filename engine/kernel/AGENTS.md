@@ -11,8 +11,8 @@ production entry points unchanged unless Joe explicitly approves integration.
 - Do not wrap, embed, alias, or import the legacy `session.Session` aggregate.
 - Review new public contracts in coherent, useful slices before adding consumers.
 - Keep model/provider, host, learning, and delegation machinery out of this slice.
-- Public exports require API snapshots and compatibility classification under
-  the engine module's existing policy.
+- Keep generated public API snapshots current. During this early kernel experiment,
+  skip compatibility notes and changelog bookkeeping.
 
 ## Code organization and documentation
 
