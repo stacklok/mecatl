@@ -31,7 +31,7 @@ See [commands and lifecycle](commands-and-lifecycle.md).
 
 ### Registered extensions share the contracts
 
-See [capability composition and its different extension points](implementation-components.md#extensions-compose-capabilities-through-different-seams) for delegation and learning.
+See [capability composition and its different extension points](implementation/components.md#extensions-compose-capabilities-through-different-seams) for delegation and learning.
 The [extension reconstruction evidence](session-commit-history-contracts.md#built-in-extension-reconstruction-boundary) and [core records/extensions](#core-records-and-extensions) specify the durable session-record seam.
 
 ### Ownership eventually moves with the tree
@@ -59,11 +59,9 @@ This work introduces no new guardrail decision semantics, hook-criticality taxon
 **Breaking rollout:** the new storage and client protocol do not migrate legacy sessions.
 The initial service rollout is teardown and upgrade, not mixed-version rolling deployment.
 
-**Development staging:** build infrastructure in short PRs, using new packages alongside existing ones where that keeps the current runtime unchanged.
-Establish [kernel/driver boundaries](implementation-kernel.md#staging-before-and-through-the-storage-rework) early enough to separate capability extraction from new-history integration; preparatory extractions preserve existing behavior and storage contracts.
-Defer binding those foundations into execution until explicit integration work.
-The [first executable foundation](implementation-kernel.md#first-executable-foundation-and-growing-test-harness) uses a growing isolated harness around the real new kernel, not early activation through full server/client composition.
-An engine-selection flag belongs to that later integration and chooses the old or new runtime for a server instance, including an embedded server started by a client.
+**Runtime isolation:** explicit [kernel/driver interfaces](implementation/kernel.md#interfaces-that-prevent-coupled-changes) separate capability behavior from history integration.
+An [isolated harness around the real kernel](implementation/kernel.md#runtime-isolation-and-reconstruction-evidence) can exercise acceptance and reconstruction without activating it through server/client composition.
+An engine-selection flag chooses the old or new runtime per server instance, including an embedded server started by a client.
 It is not a per-session hot switch: old sessions do not work in the new runtime, and new sessions do not work in the old runtime.
 Separate namespaces and fail-closed version checks prevent dual ownership or accidental fallback.
 Development coexistence does not add legacy migration, dual-writing, or mixed-version runtime compatibility.
@@ -279,7 +277,7 @@ Versioning and explicit compatibility must not silently reinterpret old IDs or p
 
 #### Core records and extensions
 
-This section specifies the durable session-record extension point, one of the [capability-composition seams](implementation-components.md#extensions-compose-capabilities-through-different-seams).
+This section specifies the durable session-record extension point, one of the [capability-composition seams](implementation/components.md#extensions-compose-capabilities-through-different-seams).
 Learning can use other extension points without implementing this protocol unless it introduces state that requires it.
 An `Extension` is a trusted, registered interpreter for namespaced, versioned session records and their derived state.
 Keep tool-specific lifecycles in these records rather than making each one a core event type.

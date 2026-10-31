@@ -1,15 +1,13 @@
-# Implementation note: snapshots, ownership, and cloning
+# Snapshots, ownership, and cloning
 
-**Status:** Candidate implementation principles, not a change to the session-history contracts or an approved analyzer specification or implementation plan.
-
-The implementation will pass rich state between execution, history, projections, and adapters.
+Execution, history, projections, and adapters exchange rich state.
 Readers need to know whether that state can change underneath them.
 Without a consistent ownership model, each caller must compensate with defensive checks or ad hoc clones, and it becomes difficult to establish whether accepted facts still describe the data being used.
-Related work in [#2404](https://github.com/stacklok/mecatl/pull/2404) has raised the same concern around mutable aliases and independent snapshot capture and restore.
+The identity review in [#2404](https://github.com/stacklok/mecatl/pull/2404) raised the same concern around mutable aliases and independent snapshot capture and restore.
 
-As implementation begins, look for repeatable patterns that give readers stable snapshots or, where mutation is necessary, explicit ownership and cloning boundaries.
-This is an engineering consideration across the implementation, not another history layer, a requirement to make every object immutable, or authorization for a repository-wide refactor.
-The [complete logical-input and transformation contract](session-commit-history.md#complete-logical-model-inputs-and-transformation-evidence) is one place where stable ownership matters; use the [review map](README.md) for the broader design.
+Stable snapshots and explicit ownership/cloning boundaries let readers distinguish captured facts from live mutable state.
+These principles apply across representations without requiring every object to be immutable or introducing another history layer.
+The [complete logical-input and transformation contract](../session-commit-history.md#complete-logical-model-inputs-and-transformation-evidence) is one place where stable ownership matters; use the [review map](../README.md) for the broader design.
 
 ## The guarantee readers need
 
@@ -60,7 +58,7 @@ Correctness alone is not enough if every type achieves it differently.
 A reader should be able to recognize an adopted ownership pattern from its API and a short contract, without tracing callers and nested helpers to discover whether the data is shared, copied, or still mutable.
 Deep analysis belongs in establishing and verifying the pattern; ordinary use should not require repeating that analysis.
 
-During implementation, converge on a small set of recognizable patterns for immutable snapshots, detached mutable copies, and borrowed access to owner-controlled state.
+Use a small set of recognizable patterns for immutable snapshots, detached mutable copies, and borrowed access to owner-controlled state.
 Use consistent naming and semantics for construction, snapshot capture, cloning, and accessors wherever the guarantees are the same.
 For each pattern, make input retention, nested-copy depth, returned aliases, and the permitted lifetime of borrowed access explicit.
 A method named `Clone` should not leave readers guessing which nested mutable fields remain shared; distinguish weaker copy operations when needed.
@@ -68,7 +66,8 @@ A method named `Clone` should not leave readers guessing which nested mutable fi
 Consistency does not require one generic clone helper or a common interface for unrelated types.
 Type-specific implementations can follow the same ownership contract and regression-test shape.
 Exceptions should be explicit and locally explained rather than silently weakening a familiar convention.
-Select the initial patterns against representative boundaries, then reuse them as implementation grows instead of inventing a new ownership scheme for each component.
+Patterns should fit actual boundaries rather than impose a universal ownership scheme.
+The [owning codec contract](codecs-and-dtos.md#owning-operations-detach-storage), for example, requires detaching decoded strings as well as mutable byte slices from the encoded input.
 
 ## Representation boundaries worth enforcing
 
@@ -110,5 +109,5 @@ For each adopted snapshot boundary, tests should show that:
 Use the race detector as supplementary evidence.
 Sequential aliasing bugs can violate snapshot stability without a race, so race-free execution alone does not establish the contract.
 
-The direction to evaluate during implementation is to enforce where representation access is allowed, then establish and verify ownership within that boundary.
-Choose concrete patterns against actual implementation needs before standardizing helpers or committing to a custom analyzer.
+The enforceable boundary is where representation access is allowed; ownership must then be established and verified within it.
+Type-specific contracts can supply that guarantee without standardizing generic helpers or requiring a custom analyzer.
