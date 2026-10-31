@@ -5,7 +5,27 @@ import (
 	"testing"
 
 	"github.com/stacklok/mecatl/engine/kernel/history"
+	historyid "github.com/stacklok/mecatl/engine/kernel/history/id"
 )
+
+func TestHistoryIDAlias(t *testing.T) {
+	direct := historyid.NewHistoryID()
+	throughHistory := history.NewHistoryID()
+	// Bidirectional assignment proves both packages expose the same Go type.
+	direct, throughHistory = throughHistory, direct
+	parsed, err := historyid.ParseHistoryID(direct.String())
+	if err != nil || parsed != direct {
+		t.Fatalf("parse wrapper-generated ID through leaf: got %v, %v; want %v", parsed, err, direct)
+	}
+
+	direct, err = history.ParseHistoryID(throughHistory.String())
+	if err != nil || direct != throughHistory {
+		t.Fatalf("parse leaf-generated ID through wrapper: got %v, %v; want %v", direct, err, throughHistory)
+	}
+	if got := map[history.HistoryID]bool{throughHistory: true}; !got[direct] {
+		t.Fatal("aliased IDs must be interchangeable map keys")
+	}
+}
 
 func TestHistoryID(t *testing.T) {
 	v := history.NewHistoryID()

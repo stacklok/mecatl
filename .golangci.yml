@@ -121,13 +121,25 @@ linters:
           list-mode: strict
           files:
             - '**/engine/kernel/history/**.go'
+            - '!**/engine/kernel/history/id/**.go'
+            - '!$test'
+          allow:
+            - $gostd
+            - github.com/stacklok/mecatl/engine/kernel/history/id$
+          deny:
+            - pkg: os
+              desc: 'history values must not access host state'
+        core-kernel-history-id:
+          list-mode: strict
+          files:
+            - '**/engine/kernel/history/id/**.go'
             - '!$test'
           allow:
             - $gostd
             - github.com/stacklok/mecatl/engine/id$
           deny:
             - pkg: os
-              desc: 'history values must not access host state'
+              desc: 'history identity values must not access host state'
         core-domain-leaf:
           list-mode: strict
           files:

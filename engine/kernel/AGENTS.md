@@ -4,7 +4,8 @@ This is the isolated kernel experiment, not `agent.Engine`. Keep existing
 production entry points unchanged unless Joe explicitly approves integration.
 
 - `history` owns public history values and persistence vocabulary, not execution
-  or a storage backend. Its only current engine dependency is `id`.
+  or a storage backend. It imports the `history/id` identity leaf, which depends
+  only on the shared `engine/id` utility and the standard library.
 - Do not wrap, embed, alias, or import the legacy `session.Session` aggregate.
 - Review new public contracts in small steps before adding their consumers.
 - Document every public declaration for Godoc. Also document pivotal internal

@@ -3,8 +3,7 @@
 //
 // # The contract
 //
-// The seven core packages of the engine module — engine/session, engine/governance,
-// engine/tool, engine/prompt, engine/port, engine/team, engine/agent — are the
+// The core packages listed in arch.CorePackages form the engine module's
 // importable, COMPATIBILITY-COMMITTED surface (see engine/COMPATIBILITY.md). This
 // test enumerates every exported identifier of those packages into a stable,
 // human-readable text snapshot and commits it at engine/api/<pkg>.txt. On every
@@ -42,8 +41,8 @@ import (
 	"github.com/stacklok/mecatl/engine/arch"
 )
 
-// guardedPackages is the source-of-truth list of the engine module's seven
-// COMPATIBILITY-COMMITTED core packages, as engine-module import paths.
+// guardedPackages lists the engine module's COMPATIBILITY-COMMITTED core
+// packages as engine-module import paths.
 //
 // It is DERIVED from arch.CorePackages (engine/arch/surface.go) — the SINGLE
 // source of truth that the layering DAG tests also consume — so the public-API
@@ -53,10 +52,25 @@ import (
 // dependency closure unchanged.
 var guardedPackages = arch.CorePackages
 
-// shortName maps a full import path to its baseline filename stem (the last path
-// element), e.g. ".../engine/port" → "port".
+// shortName maps an import path to its baseline filename stem, preserving
+// existing names and disambiguating the history ID leaf from engine/id.
 func shortName(importPath string) string {
+	if importPath == "github.com/stacklok/mecatl/engine/kernel/history/id" {
+		return "history_id"
+	}
 	return importPath[strings.LastIndex(importPath, "/")+1:]
+}
+
+func TestShortName(t *testing.T) {
+	for importPath, want := range map[string]string{
+		"github.com/stacklok/mecatl/engine/id":                "id",
+		"github.com/stacklok/mecatl/engine/kernel/history":    "history",
+		"github.com/stacklok/mecatl/engine/kernel/history/id": "history_id",
+	} {
+		if got := shortName(importPath); got != want {
+			t.Errorf("shortName(%q) = %q; want %q", importPath, got, want)
+		}
+	}
 }
 
 // updateBaselines reports whether baselines should be rewritten. It reuses the
@@ -287,6 +301,15 @@ func dedup(in []string) []string {
 // and fails on any drift.
 func TestPublicAPIUnchanged(t *testing.T) {
 	t.Parallel()
+	// Check all filenames before -update can overwrite a colliding baseline.
+	names := make(map[string]string, len(guardedPackages))
+	for _, importPath := range guardedPackages {
+		name := shortName(importPath)
+		if previous, exists := names[name]; exists {
+			t.Fatalf("baseline filename %s.txt collides for %s and %s", name, previous, importPath)
+		}
+		names[name] = importPath
+	}
 	pkgs := loadPackages(t)
 	dir := apiDir(t)
 

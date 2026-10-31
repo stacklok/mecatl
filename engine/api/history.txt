@@ -1,4 +1,3 @@
-    method func (HistoryID).String() string
 func NewHistoryID() HistoryID
 func ParseHistoryID(s string) (HistoryID, error)
-type HistoryID struct{}
+type HistoryID = id.HistoryID

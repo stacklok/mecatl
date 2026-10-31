@@ -83,11 +83,18 @@ var coreImportRules = []coreImportRule{
 		desc:            "ID values may import stdlib only",
 	},
 	{
-		pkg: modulePrefix + "engine/kernel/history",
+		pkg: modulePrefix + "engine/kernel/history/id",
 		allowedCore: map[string]bool{
 			modulePrefix + "engine/id": true,
 		},
-		desc: "kernel history may import only ID values + stdlib, never the legacy aggregate",
+		desc: "history identity values may import only resource ID values + stdlib, never history or formats",
+	},
+	{
+		pkg: modulePrefix + "engine/kernel/history",
+		allowedCore: map[string]bool{
+			modulePrefix + "engine/kernel/history/id": true,
+		},
+		desc: "kernel history may import only history identity values + stdlib, never the legacy aggregate",
 	},
 	{
 		pkg: modulePrefix + "engine/session",

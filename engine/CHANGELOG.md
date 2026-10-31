@@ -473,6 +473,14 @@ API snapshots live in [`engine/api/`](./api/).
 
 ### Changed
 
+- **History identity package** — moves the defining `HistoryID` type to
+  `kernel/history/id` so persistence formats can use it without importing the
+  higher-level history package. `kernel/history.HistoryID` is a type alias and
+  its constructor/parser remain available; ordinary Go source usage, ID text,
+  equality, and zero-value behavior are preserved. The defining package and
+  reflection identity change. Changed (breaking, pre-v1 minor); no production
+  wire or stored-data change.
+
 - **Yolo-mode sessions skip contextual review by default** — a yolo-mode session
   no longer calls the `ToolReviewer` for action or inbound review unless the
   reviewer implements `YoloReviewPolicyProvider` and opts in. Previously review
