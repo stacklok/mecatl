@@ -353024,6 +353024,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1793476172376,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "88b3fa61b437515a5b9fefda55070f59142c9331",
+          "message": "fix(sdk): override API Extractor's vulnerable minimatch dependency (#2633)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-31T12:49:32-07:00",
+          "tree_id": "1b0e56fe34c75edd995f04d3c0ba639a6a5aa081",
+          "url": "https://github.com/stacklok/mecatl/commit/88b3fa61b437515a5b9fefda55070f59142c9331"
+        },
+        "date": 1793476917788,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -510156,6 +510190,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1793476914706,
+  "lastUpdate": 1793476918526,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
