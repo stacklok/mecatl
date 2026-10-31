@@ -2,6 +2,7 @@ package scheduler_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -98,4 +99,69 @@ func TestIssue2588_PastFireDeadlineHeldLeaseReconciles(t *testing.T) {
 	if err := s.Stop(); err != nil {
 		t.Fatalf("Stop: %v", err)
 	}
+}
+
+func TestIssue2588_PastFireDeadlineLogsSearchableMessage(t *testing.T) {
+	defer goleak.VerifyNone(t)
+	restore := scheduler.SetStaleFireWindowForTest(1 * time.Hour)
+	defer restore()
+
+	const schedName = "singleton-hung-deadline-log"
+	sessID := session.SessionID("sched--hung-past-deadline-log")
+
+	clk := &fakeClock{t: time.Unix(1_700_000_000, 0)}
+	leaseBE := &heldSessionLease{
+		held: map[session.SessionID]string{sessID: "owner-hung"},
+		clk:  clk,
+	}
+	store := memschedulestore.New()
+	diag := &capturingDiag{}
+
+	now := clk.Now()
+	startAt := now.Add(-2 * time.Minute)
+	deadline := startAt.Add(50 * time.Millisecond)
+
+	if err := store.Save(context.Background(), port.Schedule{
+		Spec: port.ScheduleSpec{
+			Name:        schedName,
+			Prompt:      "x",
+			Trigger:     port.TriggerSpec{Cron: "* * * * *"},
+			Singleton:   true,
+			FireTimeout: 50 * time.Millisecond,
+		},
+		State: port.ScheduleState{
+			NextFireAt:         now,
+			Enabled:            true,
+			LastFireAt:         startAt,
+			LastFireSessionID:  sessID,
+			LastFireStartedAt:  startAt,
+			LastFireProgressAt: startAt,
+			FireDeadline:       deadline,
+		},
+	}); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	s := scheduler.New(scheduler.Config{
+		Store:              store,
+		Lease:              leaseBE,
+		LeaseOwner:         "owner-tick",
+		Clock:              clk,
+		TickInterval:       time.Hour,
+		MaxConcurrentFires: 4,
+		Diagnostics:        diag,
+		ReconcileStaleFire: func(_ context.Context, _ port.Schedule) {},
+	})
+	s.RunOnceForTest(context.Background())
+
+	const wantSub = "reconcile stale fire past FireDeadline (issue #2588)"
+	for _, msg := range diag.messages {
+		if strings.Contains(msg, wantSub) {
+			if err := s.Stop(); err != nil {
+				t.Fatalf("Stop: %v", err)
+			}
+			return
+		}
+	}
+	t.Fatalf("expected diagnostics containing %q, got %v", wantSub, diag.messages)
 }

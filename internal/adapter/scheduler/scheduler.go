@@ -1632,6 +1632,13 @@ func (s *Scheduler) shouldReconcileStaleFire(ctx context.Context, sched port.Sch
 	// terminated the run and RecordFire should have cleared in-flight state.
 	pastDeadline := !sched.State.FireDeadline.IsZero() && !now.Before(sched.State.FireDeadline)
 	if pastDeadline {
+		// Searchable in production logs if a hung singleton stalls again (issue #2588).
+		s.diag.Log(ctx, port.LevelWarn, "scheduler: reconcile stale fire past FireDeadline (issue #2588)",
+			"schedule", sched.Spec.Name,
+			"session", sched.State.LastFireSessionID,
+			"fire_deadline", sched.State.FireDeadline.UTC().Format(time.RFC3339Nano),
+			"last_fire_started_at", anchor.UTC().Format(time.RFC3339Nano),
+		)
 		return true
 	}
 	if s.cfg.Lease != nil {
