@@ -392441,6 +392441,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1793481505523,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "becb683af308deeda8dc50963ec0a0f63690a665",
+          "message": "test(app): wait for scheduler leadership before busy fire (#2635)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-31T15:12:00-07:00",
+          "tree_id": "63abfd4531d9ef529806880e5c3295c08c72fd3f",
+          "url": "https://github.com/stacklok/mecatl/commit/becb683af308deeda8dc50963ec0a0f63690a665"
+        },
+        "date": 1793485419086,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 16129.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12894,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 794,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -511723,6 +511762,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1793485415890,
+  "lastUpdate": 1793485420199,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
