@@ -94,7 +94,10 @@ var coreImportRules = []coreImportRule{
 		allowedCore: map[string]bool{
 			modulePrefix + "engine/kernel/history/id": true,
 		},
-		desc: "history format values may import only history identity values + stdlib, never higher-level history contracts",
+		allowedExternal: map[string]bool{
+			"github.com/jcalabro/atmos/cbor": true,
+		},
+		desc: "history format values may import only history identity values, the Atmos CBOR codec, and stdlib, never higher-level history contracts",
 	},
 	{
 		pkg: modulePrefix + "engine/kernel/history",

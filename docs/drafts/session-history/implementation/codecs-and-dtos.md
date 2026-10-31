@@ -54,9 +54,11 @@ exploit or an inference of neglect.
 The Atmos API observations refer to v0.8.0, used in the October 30, 2026 experiments.
 Helpers including `ReadHeader`, `ReadTextKey`, `ReadInt`, `ReadCIDLink`,
 `CheckMapKeyOrder`, and `SkipValue` supply wire checks. A typed codec must compose
-them correctly: traverse containers, invoke ordering checks, reject trailing
-data, enforce resource limits, and validate the schema. Reading a header does
-not validate an entire object. Generic-codec experiments do not qualify every
+them correctly: traverse containers, check ordering, reject trailing data,
+enforce resource limits, and validate the schema. A closed fixed-key schema can
+require the exact canonical key sequence to reject reordered, duplicate, missing,
+and unknown fields without a general map traversal. Reading a header does not
+validate an entire object. Generic-codec experiments do not qualify every
 handwritten path.
 
 The codec contract combines exact canonical bytes with closed-envelope checks:
@@ -67,10 +69,13 @@ validation supplies neither authorization nor safe interpretation of unfamiliar
 payloads.
 
 Resource bounds are explicit positive per-operation budgets for total commit
-bytes, record count, kind bytes, and payload bytes. There are no implicit
-defaults or zero-as-unlimited semantics, and operations must not change Atmos's
-package-global settings. Bounds apply before relevant allocations. Numerical
-budgets remain a policy/API choice; this report does not prescribe defaults.
+bytes, record count, kind bytes, and per-record payload bytes. There are no
+implicit defaults or zero-as-unlimited semantics, and operations must not change
+Atmos's package-global settings. Bounds apply before relevant allocations on
+both encoding and decoding. `Validate` checks DTO data contracts without applying
+budgets; codec operations additionally enforce policy and wire canonicality.
+Numerical budgets remain a caller policy choice; this report does not prescribe
+defaults.
 
 Exact-byte fixtures and malformed/noncanonical cases must exercise the public
 encode/decode boundary, including root binding, missing/null/empty distinctions,
@@ -83,9 +88,12 @@ checks.
 `engine/kernel/history/format` owns public persistence data types, format
 versions, and package-level encode/decode functions. Atmos types stay out of
 exported signatures. Public commit CIDs are Mecatl-owned opaque, comparable
-values, with internal conversion to Atmos's representation. The initial
-CIDv1/DAG-CBOR/SHA-256 profile belongs to the format contract rather than to a
-library's generic CID acceptance policy.
+values; library-specific representations stay behind the codec boundary. The
+initial CIDv1/DAG-CBOR/SHA-256 profile belongs to the format contract rather than
+to a library's generic CID acceptance policy. The `atmos/cbor` package at v0.8.0
+imports only the standard library, but its module requires Go 1.27.3. That minimum
+applies to the entire engine module and propagates through local engine consumers;
+it cannot be restricted to packages that import the codec.
 
 History identity belongs in the small leaf `engine/kernel/history/id`, using the
 existing `engine/id` resource utility. `history` re-exports `HistoryID` as an

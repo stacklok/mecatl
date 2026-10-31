@@ -1,6 +1,8 @@
 package format
 
 import (
+	"bytes"
+	"crypto/sha256"
 	"encoding/base32"
 	"errors"
 )
@@ -47,4 +49,30 @@ func (v CID) String() string {
 		return ""
 	}
 	return "b" + cidEncoding.EncodeToString(v.binary[:])
+}
+
+// contentCID hashes authoritative bytes without reencoding or exposing digests.
+func contentCID(data []byte) CID {
+	v := CID{binary: [36]byte{1, 0x71, 0x12, 32}}
+	digest := sha256.Sum256(data)
+	copy(v.binary[4:], digest[:])
+	return v
+}
+
+// link requires canonical tag 42, the identity multibase prefix, and the exact
+// fixed CID profile; fixed bytes also exclude nonminimal binary varints.
+func (d *cborDecoder) link() CID {
+	d.literal(0xd8)
+	d.literal(0x2a)
+	value := d.scalar(2, 37)
+	if d.err != nil {
+		return CID{}
+	}
+	if len(value) != 37 || !bytes.Equal(value[:5], []byte{0, 1, 0x71, 0x12, 32}) {
+		d.err = errors.New("invalid parent CID profile")
+		return CID{}
+	}
+	var v CID
+	copy(v.binary[:], value[1:])
+	return v
 }

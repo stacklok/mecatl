@@ -12,6 +12,14 @@ API snapshots live in [`engine/api/`](./api/).
 
 ### Added
 
+- **Canonical history commit codec**: adds `kernel/history/format.EncodeCommit`,
+  `DecodeCommit`, and explicit positive per-operation `Limits`. The v1 closed
+  DAG-CBOR envelope preserves opaque record payloads and rejects noncanonical
+  input. Both operations return independently owned data and the CID of the
+  exact encoded bytes. Adds budget-independent `Commit.Validate` and
+  `Record.Validate` methods. No production runtime, wire, or storage integration.
+  Added (minor).
+
 - **History persistence DTOs**: adds `kernel/history/format.Commit` and `Record`
   with strongly typed root/history linkage, envelope and kind versions, ordered
   records, and opaque payload bytes. Concrete `Clone` methods detach nested
@@ -485,6 +493,11 @@ API snapshots live in [`engine/api/`](./api/).
 - **`port.SessionLease.Renew` doc comment narrowed (issue #1333)** — clarifies that bare expiry of the caller's own owner/token, with nothing else having taken the lease over, is not by itself one of the definitive-loss conditions `ErrLeaseHeld` documents; loss is specifically a holder or token change. An implementation that can prove no one else could have raced it (e.g. a single-host backend re-checking its own durable record under its stable transition lock) may reclaim instead of declaring loss — `internal/adapter/flocklease.Lease.Renew` now does exactly this. This narrows, never widens, when `ErrLeaseHeld` may be returned, so it is a documentation clarification, not a contract change; no exported signature changed. No `task api:update` needed.
 
 ### Changed
+
+- **Minimum Go toolchain**: the engine now requires Go 1.27.3, inherited from
+  Atmos v0.8.0. This minimum applies to every engine consumer, including those
+  that do not import the isolated history codec. Consumers using older
+  toolchains must upgrade. Changed (breaking, pre-v1 minor).
 
 - **History identity package** — moves the defining `HistoryID` type to
   `kernel/history/id` so persistence formats can use it without importing the

@@ -129,9 +129,10 @@ envelope versions and unknown commit/record envelope fields are rejected.
 Versions are positive integers within the signed-64-bit range.
 
 Compact text keys retain the string-keyed DAG-CBOR model while reducing repeated
-names. Commit keys are `v`, `h`, `p`, and `r`; record kind and version keys are
-`k` and `v`. The payload key remains unsettled: the experiment used `b`, and `p`
-is proposed. These maps are separate, so reuse across maps is unambiguous.
+names. Commit keys are `v`, `h`, `p`, and `r`; record keys are `k` for kind,
+`v` for kind version, and `p` for payload. These maps are separate, so reuse
+across maps is unambiguous. Kind names are nonempty UTF-8 strings; no namespace
+grammar is imposed by the envelope.
 Descriptive Go names need not become long wire keys. Integer labels leave the
 chosen string-keyed model; positional arrays make evolution more restrictive.
 

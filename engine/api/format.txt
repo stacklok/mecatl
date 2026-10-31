@@ -1,9 +1,14 @@
     method func (CID).String() string
     method func (Commit).Clone() Commit
     method func (Commit).Equal(other Commit) bool
+    method func (Commit).Validate() error
     method func (Record).Clone() Record
     method func (Record).Equal(other Record) bool
+    method func (Record).Validate() error
+func DecodeCommit(data []byte, limits Limits) (Commit, CID, error)
+func EncodeCommit(c Commit, limits Limits) ([]byte, CID, error)
 func ParseCID(s string) (CID, error)
 type CID struct{}
 type Commit struct{FormatVersion int64; HistoryID id.HistoryID; Parent CID; Records []Record}
+type Limits struct{MaxCommitBytes int; MaxRecords int; MaxKindBytes int; MaxPayloadBytes int}
 type Record struct{Kind string; KindVersion int64; Payload []byte}

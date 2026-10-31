@@ -138,6 +138,7 @@ linters:
           allow:
             - $gostd
             - github.com/stacklok/mecatl/engine/kernel/history/id$
+            - github.com/jcalabro/atmos/cbor$
           deny:
             - pkg: os
               desc: 'history formats must not access host state'
