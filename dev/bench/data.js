@@ -354456,6 +354456,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1793485414763,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "0c28cdf0650a8eddb7dcc1245045ba84d3be9d21",
+          "message": "test(oauthlogin): reuse probe callback connection (#2636)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-31T22:48:16Z",
+          "tree_id": "bed3135bb348f6362deff2cd0cfdf6b9b6d8346d",
+          "url": "https://github.com/stacklok/mecatl/commit/0c28cdf0650a8eddb7dcc1245045ba84d3be9d21"
+        },
+        "date": 1793487698596,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -512200,6 +512234,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1793487695156,
+  "lastUpdate": 1793487699678,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
