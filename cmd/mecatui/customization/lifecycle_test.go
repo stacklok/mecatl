@@ -2,6 +2,8 @@ package customization
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -196,16 +198,65 @@ func TestStatusLine_Scenario4_OptionalInterval(t *testing.T) {
 }
 
 func TestStatusLine_Scenario4_ProcessLifecycleAndGenerationGuard(t *testing.T) {
-	command := commandTest(t.TempDir(), "latest")
+	dir := t.TempDir()
+	started := filepath.Join(dir, "started")
+	command := commandTest(dir, "latest", started)
 	source := NewCommandSource(command)
-	t.Cleanup(func() { _ = source.Close(context.Background()) })
+	t.Cleanup(func() {
+		if err := source.Close(context.Background()); err != nil {
+			t.Errorf("close command source: %v", err)
+		}
+	})
+
+	status := source.(commandSource).status
+	// Replacement must cancel the command; its normal deadline must not rescue it.
+	status.invocationTimeout = 0
+	firstContext := make(chan context.Context, 1)
+	firstJoined := make(chan struct{})
+	render := status.render
+	status.render = func(ctx context.Context, input Input) renderedStatusLine {
+		if input.Session.Title == "first" {
+			firstContext <- ctx
+			defer close(firstJoined)
+		} else {
+			select {
+			case <-firstJoined:
+			default:
+				t.Error("replacement started before the older command joined")
+			}
+		}
+		return render(ctx, input)
+	}
 
 	source.Submit(Input{Session: Session{Title: "first"}, Terminal: Terminal{FooterAvailCols: 80}})
-	time.Sleep(300 * time.Millisecond) // let the debounced first tree start
+	// The child writes this marker only after the debounced command tree starts.
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	poll := time.NewTicker(time.Millisecond)
+	defer poll.Stop()
+waitForChild:
+	for {
+		if _, err := os.Stat(started); err == nil {
+			break waitForChild
+		} else if !os.IsNotExist(err) {
+			t.Fatalf("stat command marker: %v", err)
+		}
+		select {
+		case <-poll.C:
+		case <-ctx.Done():
+			t.Fatal("first command tree never started")
+		}
+	}
+	firstCtx := <-firstContext
 	source.Submit(Input{Session: Session{Title: "latest"}, Terminal: Terminal{FooterAvailCols: 80}})
 	select {
+	case <-firstCtx.Done():
+	case <-ctx.Done():
+		t.Fatal("replacement did not cancel the older command")
+	}
+	select {
 	case <-source.Changed():
-	case <-time.After(2 * time.Second):
+	case <-ctx.Done():
 		t.Fatal("replacement did not cancel and join the older command tree")
 	}
 	if got := statusSurfaceText(source.Latest().Footer); got != "latest" {
