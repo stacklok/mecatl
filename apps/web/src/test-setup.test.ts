@@ -32,3 +32,28 @@ it("ends with an active toast", () => {
 it("starts with no active toast", () => {
   expect(toast.getToasts()).toEqual([]);
 });
+
+const initialViewport = {
+  width: window.innerWidth,
+  height: window.innerHeight,
+  matchMedia: window.matchMedia,
+};
+
+// Direct patches in no-isolate workers must not turn a later desktop menu into
+// its mobile inline-folder surface (#2603). These tests deliberately run in order.
+it("ends with directly patched mobile viewport properties", () => {
+  Object.defineProperties(window, {
+    innerWidth: { configurable: true, value: 320 },
+    innerHeight: { configurable: true, value: 480 },
+  });
+  window.matchMedia = (query) =>
+    ({ matches: query.includes("max-width") && window.innerWidth < 500 }) as MediaQueryList;
+  expect(window.matchMedia("(max-width: 499px)").matches).toBe(true);
+  expect(window.innerHeight).toBe(480);
+});
+
+it("starts with the original viewport properties", () => {
+  expect(window.innerWidth).toBe(initialViewport.width);
+  expect(window.innerHeight).toBe(initialViewport.height);
+  expect(window.matchMedia).toBe(initialViewport.matchMedia);
+});

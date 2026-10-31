@@ -12,6 +12,9 @@ onlyBuiltDependencies:
 overrides:
   source-map-js@<1.2.2: ^1.2.2
   vite@>=8.2.0 <8.2.4: ^8.2.4
+  # GHSA-g3hv-75wg-m249: API Extractor still pins vulnerable minimatch 10.
+  # Remove this scoped override when upstream adopts a patched version.
+  "@microsoft/api-extractor>minimatch@<11.0.1": ^11.0.1
 auditConfig:
   ignoreGhsas:
     # sprintf-js DoS via unbounded precision specifiers; no patched release

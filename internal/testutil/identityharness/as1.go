@@ -58,9 +58,9 @@ type AS1 struct {
 	faults   faults
 	http     *http.Client
 
-	brokerKey       *ecdsa.PrivateKey
-	assertionMax    time.Duration
-	sessionLifetime time.Duration
+	brokerKey    *ecdsa.PrivateKey
+	assertionMax time.Duration
+	grantMax     time.Duration
 
 	mu       sync.Mutex
 	clients  map[string]Client
@@ -72,11 +72,10 @@ type AS1 struct {
 
 	brokerKeys    map[string]*ecdsa.PublicKey // by kid
 	assertionJTIs map[string]time.Time        // used client assertion jti, kept until
-	sessions      map[string]*as1Session
-	sessionTokens map[string]*as1SessionToken
-	conversions   map[string]as1Conversion // by converted access token jti
-	refusals      map[string][]string      // refused open reasons by session
-	echoes        []SessionDetails         // forced mismatched echoes
+	grants        map[string]*as1Grant        // by refresh token
+	conversions   map[string]time.Time        // converted access token jti, kept until
+	refusals      []Refusal                   // refused exchanges, oldest first
+	echoes        []ExchangeGrant             // forced mismatched echoes
 	// receivedAssertions are the client assertions received, oldest first.
 	receivedAssertions []string
 }
@@ -111,19 +110,17 @@ func newAS1(t testing.TB, opts Options, idp *IdP) *AS1 {
 		key: key, foreign: foreign, now: opts.Now, audience: opts.Audience,
 		lifetime: opts.AccessTokenLifetime, idp: idp, secret: randomToken("as1-secret-"),
 		brokerKey: brokerKey, assertionMax: opts.ClientAssertionMaxLifetime,
-		sessionLifetime: opts.SessionRefreshTokenLifetime,
-		clients:         make(map[string]Client),
-		pending:         make(map[string]as1Pending),
-		codes:           make(map[string]as1Code),
-		refresh:         make(map[string]as1Refresh),
-		subjects:        make(map[string]string),
-		upstream:        make(map[string]string),
-		brokerKeys:      make(map[string]*ecdsa.PublicKey),
-		assertionJTIs:   make(map[string]time.Time),
-		sessions:        make(map[string]*as1Session),
-		sessionTokens:   make(map[string]*as1SessionToken),
-		conversions:     make(map[string]as1Conversion),
-		refusals:        make(map[string][]string),
+		grantMax:      opts.GrantMaxLifetime,
+		clients:       make(map[string]Client),
+		pending:       make(map[string]as1Pending),
+		codes:         make(map[string]as1Code),
+		refresh:       make(map[string]as1Refresh),
+		subjects:      make(map[string]string),
+		upstream:      make(map[string]string),
+		brokerKeys:    make(map[string]*ecdsa.PublicKey),
+		assertionJTIs: make(map[string]time.Time),
+		grants:        make(map[string]*as1Grant),
+		conversions:   make(map[string]time.Time),
 	}
 	for _, c := range opts.Clients {
 		as.clients[c.ID] = Client{ID: c.ID, RedirectURIs: slices.Clone(c.RedirectURIs)}
@@ -315,7 +312,7 @@ func (a *AS1) discovery(w http.ResponseWriter, _ *http.Request) {
 		"token_endpoint_auth_methods_supported":            []string{"none", authPrivateKeyJWT},
 		"token_endpoint_auth_signing_alg_values_supported": []string{"ES256"},
 		"revocation_endpoint_auth_methods_supported":       []string{authPrivateKeyJWT},
-		"authorization_details_types_supported":            []string{SessionDetailsType},
+		"authorization_details_types_supported":            []string{ExchangeGrantType},
 	})
 }
 
@@ -569,13 +566,13 @@ func (a *AS1) token(w http.ResponseWriter, r *http.Request) {
 }
 
 // brokerToken serves the authenticated broker, which may use only the
-// token-exchange grant for session open. Session refresh tokens are stored
+// token-exchange grant for session open. Grant refresh tokens are stored
 // apart from client refresh tokens and the broker holds none of the latter,
 // so the refresh-token grant always fails with invalid_grant.
 func (a *AS1) brokerToken(w http.ResponseWriter, r *http.Request) {
 	switch r.PostForm.Get("grant_type") {
 	case grantTokenExchange:
-		a.openSession(w, r)
+		a.exchange(w, r)
 	case grantRefreshToken:
 		writeOAuthError(w, http.StatusBadRequest, "invalid_grant", "")
 	case grantAuthorizationCode:

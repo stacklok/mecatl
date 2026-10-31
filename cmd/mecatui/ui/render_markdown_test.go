@@ -6,6 +6,8 @@ import (
 
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
+
+	"github.com/stacklok/mecatl/cmd/mecatui/theme"
 )
 
 // TestMarkdownNoTrailingPadding locks the trimTrailingSpaces hygiene: glamour
@@ -27,6 +29,51 @@ func TestMarkdownNoTrailingPadding(t *testing.T) {
 		if ln != strings.TrimRight(ln, " ") {
 			t.Errorf("line %d has trailing padding spaces: %q", i, stripANSIstr(ln))
 		}
+	}
+}
+
+func TestMarkdownLists(t *testing.T) {
+	registry := theme.NewRegistry()
+	for _, name := range registry.List() {
+		t.Run(name, func(t *testing.T) {
+			th, _ := registry.Get(name)
+			r := newRenderer(th, defaultHelpKeys())
+			r.setWidth(100)
+			for _, marker := range []string{"-", "*", "+"} {
+				t.Run(marker, func(t *testing.T) {
+					src := marker + " First item\n" + marker + " Second **bold** item\n  " + marker + " Nested item\n    " + marker + " Deep item\n"
+					out := stripANSIstr(r.markdown(src))
+					for _, want := range []string{"• First item", "• Second bold item", "  • Nested item", "    • Deep item"} {
+						if !strings.Contains(out, want) {
+							t.Errorf("missing list structure %q in:\n%s", want, out)
+						}
+					}
+				})
+			}
+
+			for _, marker := range []struct{ source, rendered string }{{"-", "•"}, {"1.", "1."}} {
+				t.Run("wrapping/"+marker.source, func(t *testing.T) {
+					r.setWidth(40)
+					text := strings.TrimSpace(strings.Repeat("wrapped words ", 12))
+					out := r.markdown(marker.source + " Parent\n    " + marker.source + " " + text + "\n")
+					plain := stripANSIstr(out)
+					if !strings.Contains(plain, marker.rendered+" Parent") || !strings.Contains(plain, "  "+marker.rendered+" wrapped words") {
+						t.Fatalf("wrapped list lost markers or nesting:\n%s", plain)
+					}
+					if got := strings.Join(strings.Fields(strings.ReplaceAll(plain, marker.rendered, "")), " "); got != "Parent "+text {
+						t.Errorf("wrapped list changed content: %q", got)
+					}
+					if strings.Count(plain, "\n") < 3 {
+						t.Errorf("long list item did not wrap:\n%s", plain)
+					}
+					for _, line := range strings.Split(out, "\n") {
+						if lipgloss.Width(line) >= r.contentWidth()-assistantBodyHang || ansi.StringWidthWc(line) != lipgloss.Width(line) {
+							t.Errorf("list line exceeds wrap budget or disagrees on cell width: %q", stripANSIstr(line))
+						}
+					}
+				})
+			}
+		})
 	}
 }
 

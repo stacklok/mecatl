@@ -19,7 +19,9 @@ func TestValidateProviderID(t *testing.T) {
 		{"uppercase rejected", "MYPROVIDER", "lowercase letter"},
 		{"mixed case rejected", "MyProvider", "lowercase letter"},
 		{"reserved rejected", "openai", "reserved"},
-		{"search credential namespace reserved", "websearch", "reserved"},
+		{"search namespace independent", "websearch", ""},
+		{"exa namespace independent", "exa", ""},
+		{"brave namespace independent", "brave", ""},
 		{"router namespace reserved", "model-router", "reserved"},
 		{"empty rejected", "", "lowercase letter"},
 	} {
@@ -63,6 +65,20 @@ provider_overrides:
 	}
 }
 
+func TestOperatorDefinedLLMProviders_SearchIDsAllowed(t *testing.T) {
+	for _, id := range []string{"exa", "brave", "websearch"} {
+		t.Run(id, func(t *testing.T) {
+			cfg, err := parseYAML([]byte("providers:\n  " + id + ":\n    base_url: https://gateway.example/v1\n    default_model: chat\n    api_flavor: openai-responses\n    auth: {method: api_key}\n"))
+			if err != nil {
+				t.Fatalf("parseYAML: %v", err)
+			}
+			if provider := cfg.Providers[id]; provider.ID != id || provider.Auth.Method != "api_key" {
+				t.Fatal("custom LLM definition missing or altered")
+			}
+		})
+	}
+}
+
 func TestOperatorDefinedLLMProviders_Scenario1_InvalidDefinitionsFailClosed(t *testing.T) {
 	cases := []string{
 		"providers:\n  OpenAI:\n    base_url: https://x.example\n    default_model: m\n    api_flavor: openai-responses",
@@ -71,7 +87,6 @@ func TestOperatorDefinedLLMProviders_Scenario1_InvalidDefinitionsFailClosed(t *t
 		"providers:\n  custom:\n    base_url: https://x.example\n    default_model: m\n    api_flavor: invalid",
 		"providers:\n  custom:\n    base_url: https://x.example\n    api_flavor: openai-responses",
 		"providers:\n  mock:\n    base_url: https://x.example\n    default_model: m\n    api_flavor: openai-responses",
-		"providers:\n  websearch:\n    base_url: https://x.example\n    default_model: m\n    api_flavor: openai-responses",
 		"providers:\n  model-router:\n    base_url: https://x.example\n    default_model: m\n    api_flavor: openai-responses",
 		"providers:\n  toolhive-anthropic:\n    base_url: https://x.example\n    default_model: m\n    api_flavor: anthropic-messages",
 		"provider_overrides:\n  toolhive:\n    base_url: https://x.example",

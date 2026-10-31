@@ -313,7 +313,14 @@ const predecessorTerminal = "predecessor terminal"
 // would observe.
 func TestRevokedGenerationCannotDeliverIntoItsSuccessor(t *testing.T) {
 	b := newBlockingRunner()
+	release := sync.OnceFunc(func() { close(b.release) })
 	old := notifierWith(b.run, time.Minute) // per-delivery bound far exceeds Close's
+	t.Cleanup(func() {
+		release()
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		old.Close(ctx)
+	})
 
 	// One delivery parks in the runner; the terminal queues up behind it.
 	old.Start(context.Background(), "gen-1")
@@ -327,15 +334,34 @@ func TestRevokedGenerationCannotDeliverIntoItsSuccessor(t *testing.T) {
 
 	// main now builds the successor generation, which announces itself.
 	succ := notifierWith(b.run, time.Minute)
+	t.Cleanup(func() {
+		release()
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		succ.Close(ctx)
+	})
 	succ.Start(context.Background(), "gen-2")
-	waitForDeliveries(t, b, 2)
+	for i := 0; ; i++ {
+		b.ctxAt(t, i)
+		if decode(t, b.delivered()[i]).SessionID == "gen-2" {
+			break
+		}
+	}
 
 	// Release anything still parked. A predecessor that was only abandoned —
 	// queue closed, nothing revoked — resumes HERE and delivers its queued
 	// terminal, after the successor has already gone busy. A revoked one has
 	// discarded it and exited.
-	close(b.release)
-	time.Sleep(200 * time.Millisecond)
+	release()
+	// The worker's exit, not elapsed time, settles every queued delivery.
+	old.mu.Lock()
+	done := old.done
+	old.mu.Unlock()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("retired worker did not exit after release")
+	}
 
 	got := b.delivered()
 	var sawSuccessor bool

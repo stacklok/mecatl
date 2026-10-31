@@ -672,8 +672,8 @@ type Model struct {
 	parallel                     parallelState      // Parallel-tab state of the unified agents overlay (roster | group focus)
 	agentsInv                    agentsInvState     // agent-definition inventory overlay state (view==agentsInvNone when closed)
 	userModelRequestToken        uint64             // Model-lifetime fence for delayed saved-memory results
-	reflections                  reflectionsState
-	reflectionsGen               uint64
+
+	reflectRequest *reflectionExecution // root-owned /reflect receipt provenance
 	// steer is the steer-mode (Capabilities.Steer) mid-run state: ONE bundle (the
 	// merged operator steer text + its client-minted message_id) with its
 	// AUTHORITATIVE lifecycle — idle → pending (sent, un-acked) → sent (acked,
@@ -691,7 +691,6 @@ type Model struct {
 	// overwrite root state or a reopened picker.
 	modelCatalogRequestToken uint64
 	modelCatalog             modelCatalog          // root-owned inventory, statuses, defaults, and selection reconciliation
-	schedule                 scheduleState         // /schedule overlay state (view==scheduleNone when closed) — issue #234
 	connect                  connectState          // /connect saved-target picker (tombstone overlay)
 	connectLoadGeneration    uint64                // monotonic across overlay close/reopen; stale async loads are ignored
 	connectIntent            *ConnectRestartIntent // set only immediately before tea.Quit
@@ -1244,6 +1243,7 @@ func (m Model) resetSession() Model {
 }
 
 func (m Model) resetSessionDerived() Model {
+	m.reflectRequest = nil
 	m.settlePendingApproval()
 	(&m).retirePendingApprovalRecovery()
 	m.admissionSubmission = nil

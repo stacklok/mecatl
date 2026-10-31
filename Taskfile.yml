@@ -1171,7 +1171,7 @@ tasks:
       # ref as "invalid format". Upstream request: rhysd/actionlint#711. Drop the flag
       # when it lands — it is scoped to that one message, so every other `uses:` error
       # still fails the build.
-      - go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7 -ignore 'specifying action "\$/.*" in invalid format'
+      - go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12 -ignore 'specifying action "\$/.*" in invalid format'
       - task: lint:action-templates
       - task: test:workspace-infrastructure
       - bash .github/scripts/ensure-perf-dashboard-noindex_test.sh
@@ -1181,6 +1181,7 @@ tasks:
       - sh .github/scripts/resolve-main-build_test.sh
       - python3 .github/scripts/instruction-files_test.py
       - python3 .github/scripts/playwright-ci_test.py
+      - python3 .github/scripts/ci-gate_test.py
 
   lint:action-templates:
     desc: |
@@ -1239,8 +1240,16 @@ tasks:
       - cd provider/openai && GOWORK=off go mod tidy
       - cd provider/openaichat && GOWORK=off go mod tidy
 
+  generate:timezones:
+    desc: Refresh the client timezone catalog from the active Go toolchain
+    cmds:
+      # Explicit maintenance only: compiler upgrades do not require a catalog refresh.
+      # Record the active Go version/archive checksum as provenance, not a toolchain pin.
+      # The catalog contains names, not the runtime's DST rules.
+      - GOWORK=off go run ./internal/timezonegen/cmd/timezonegen --output cmd/mecatui/internal/timezones/zones.json
+
   generate:
-    desc: Regenerate Go and TypeScript contracts from contracts/proto via buf
+    desc: Regenerate Go and TypeScript contracts and configuration reference
     cmds:
       # Regenerates the gRPC contracts — the harness API (contracts/proto/
       # mecatl/v1) AND the store-driver protocol (contracts/proto/mecatl/

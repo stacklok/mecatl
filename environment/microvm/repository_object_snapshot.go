@@ -125,6 +125,11 @@ func copyObjectDirectory(ctx context.Context, source *os.File, destination *os.R
 
 func copyObjectEntry(ctx context.Context, source *os.File, destination *os.Root, relative string, entry os.DirEntry, limit *objectSnapshotLimit) (retErr error) {
 	name := entry.Name()
+	// Git's transient maintenance lock is not object data and may disappear
+	// after enumeration. Ignore only that artifact at the object-store root.
+	if relative == "." && name == "maintenance.lock" {
+		return nil
+	}
 	fd, err := openatOpaque(int(source.Fd()), name, unix.O_RDONLY|unix.O_CLOEXEC|unix.O_NOFOLLOW|unix.O_NONBLOCK, 0)
 	if err != nil {
 		return fmt.Errorf("open object entry %q: %w", name, err)

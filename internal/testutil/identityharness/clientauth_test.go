@@ -23,10 +23,10 @@ func TestClientAssertionDefects(t *testing.T) {
 
 	// Using a jti once, even for an open AS-1 then refuses, consumes it.
 	_, err := b.OpenSession(t.Context(), identityharness.SessionOpenExchange{
-		SubjectToken: "not-a-jwt", Session: "A42", Owner: h.Owner(identityharness.Alice),
-		Assertion: b.Assertion(identityharness.ClientAssertionSpec{JTI: "ca-reused"}),
+		SubjectToken: "not-a-jwt",
+		Assertion:    b.Assertion(identityharness.ClientAssertionSpec{JTI: "ca-reused"}),
 	})
-	assertReason(t, err, http.StatusBadRequest, "invalid_request", "subject_invalid")
+	assertReason(t, err, http.StatusBadRequest, "invalid_request", "subject_token_invalid")
 
 	maxLife := identityharness.DefaultClientAssertionMaxLifetime
 	skew := identityharness.ClientAssertionClockSkew
@@ -56,11 +56,11 @@ func TestClientAssertionDefects(t *testing.T) {
 	}
 	for name, assertion := range defects {
 		t.Run(name, func(t *testing.T) {
-			_, err := b.OpenSession(t.Context(), openReq(h, aliceToken(h), "A42", identityharness.Alice))
+			_, err := b.OpenSession(t.Context(), openReq(aliceToken(h)))
 			if err != nil {
 				t.Fatalf("control open: %v", err)
 			}
-			req := openReq(h, aliceToken(h), "A42", identityharness.Alice)
+			req := openReq(aliceToken(h))
 			req.Assertion = assertion
 			_, err = b.OpenSession(t.Context(), req)
 			assertReason(t, err, http.StatusUnauthorized, "invalid_client", "")
@@ -135,7 +135,7 @@ func TestClientAssertionAccepted(t *testing.T) {
 		}),
 	} {
 		t.Run(name, func(t *testing.T) {
-			req := openReq(h, aliceToken(h), "A42", identityharness.Alice)
+			req := openReq(aliceToken(h))
 			req.Assertion = assertion
 			if _, err := b.OpenSession(t.Context(), req); err != nil {
 				t.Fatalf("OpenSession: %v", err)

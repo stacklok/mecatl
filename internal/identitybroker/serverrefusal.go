@@ -25,13 +25,29 @@ var knownErrorCodes = map[string]bool{
 }
 
 // knownReasons are the reason codes of the design's error reasons
-// (docs/drafts/agent-identity/credentials-and-lifecycle.md).
+// (docs/drafts/agent-identity/credentials-and-lifecycle.md). AS-1 returns
+// only token_used, revoked, parent_revoked, and not_issuable for grants, and
+// subject_token_invalid, subject_token_audience, subject_token_source_client,
+// and grant_invalid for the tokens a request presents; subject_invalid,
+// owner_mismatch, session_owned, session_closed, and schedule_ended are the
+// broker's own, kept so a server sending one is not taken for a
+// configuration fault.
 var knownReasons = map[string]bool{
 	"subject_invalid": true, "token_used": true, "owner_mismatch": true,
 	"session_owned": true, "session_closed": true, "signed_out": true,
 	"upstream_revoked": true, "schedule_ended": true, "owner_action_required": true,
-	"superseded": true, "svid_expired": true, "denied": true,
+	"revoked": true, "parent_revoked": true, "not_issuable": true,
+	"svid_expired": true, "denied": true,
 	"consent_required": true, "invalid_assertion": true,
+	"subject_token_invalid": true, "subject_token_audience": true,
+	"subject_token_source_client": true, "grant_invalid": true,
+}
+
+// configurationFaultReasons are the known reasons that still mean a
+// configuration fault or broker bug: a subject token for another audience or
+// from a client AS-1 does not accept, and an unknown or expired grant.
+var configurationFaultReasons = map[string]bool{
+	"subject_token_audience": true, "subject_token_source_client": true, "grant_invalid": true,
 }
 
 // transientStatuses are the HTTP statuses ServerRefusal.transient treats as
@@ -41,14 +57,25 @@ var transientStatuses = map[int]bool{429: true, 502: true, 503: true, 504: true}
 // ErrNoResponse reports a token or revocation endpoint request to AS-1 or
 // AS-2 that got no response, such as a dropped connection: the server may or
 // may not have processed it. Callers may retry once, with a new client
-// assertion.
+// assertion. At session open the retry resends the same access token: if AS-1
+// had converted it, the resend is refused with token_used and the client must
+// refresh its access token and open again (design step (3), "Lost
+// response"), which applies to a 502 or 504 there too.
 var ErrNoResponse = errors.New("identitybroker: no response from the authorization server")
 
 // ErrTransportConfiguration reports a request to AS-1 or AS-2 that failed
 // because the connection's configuration is wrong, such as a server
-// certificate that does not verify against the configured trust: a
-// configuration fault, not an outage, so it is not retried.
+// certificate that does not verify against the configured trust, or because
+// a success response could not be decoded, which points at the wrong or an
+// incompatible server (see ErrMalformedResponse): a configuration fault, not
+// an outage, so it is not retried.
 var ErrTransportConfiguration = errors.New("identitybroker: the connection to the authorization server is misconfigured")
+
+// ErrMalformedResponse reports a success response from AS-1 or AS-2 the
+// broker cannot decode. The server may have issued a token the broker cannot
+// read, so session open closes the session, as for a mismatched answer.
+// Errors wrapping it also wrap ErrTransportConfiguration.
+var ErrMalformedResponse = errors.New("identitybroker: the authorization server's response could not be decoded")
 
 // ServerRefusal is AS-1's or AS-2's refusal of a token or revocation endpoint
 // request: the HTTP status and, from an RFC 6749 §5.2 error body, the error
@@ -96,12 +123,17 @@ func (r *ServerRefusal) Error() string {
 // IsConfigurationFault reports whether err is a failure the design's error
 // reasons treat as a configuration fault or broker bug (gRPC INTERNAL):
 // ErrTransportConfiguration, or a refusal with invalid_client,
-// unauthorized_client, or invalid_target, or any other refusal without a
-// known reason code. A description that does not follow the reason-code
-// convention, such as prose, counts as no reason. A transient refusal (see
-// IsUnavailable) never is. A failed client authentication is always
-// invalid_client. A caller needing a reason-specific outcome, such as an
-// AS-2 invalid_grant with no reason, checks the ServerRefusal first.
+// unauthorized_client, or invalid_target, or with the reason
+// subject_token_audience, subject_token_source_client, or grant_invalid, or
+// any other refusal without a known reason code. A description that does not
+// follow the reason-code convention, such as prose, counts as no reason. A
+// transient refusal (see IsUnavailable) never is. A failed client
+// authentication is always invalid_client. A caller needing a
+// reason-specific outcome, such as an AS-2 invalid_grant with no reason,
+// checks the ServerRefusal first. Session open does: AS-1 refuses an access
+// token a fresh one could replace with subject_token_invalid, which session
+// open reports as subject_invalid; an invalid_request with no reason is a
+// broker bug or configuration fault there too (design step (3)).
 func IsConfigurationFault(err error) bool {
 	if errors.Is(err, ErrTransportConfiguration) {
 		return true
@@ -114,7 +146,7 @@ func IsConfigurationFault(err error) bool {
 	case "invalid_client", "unauthorized_client", "invalid_target":
 		return true
 	}
-	return !knownReasons[r.Reason]
+	return configurationFaultReasons[r.Reason] || !knownReasons[r.Reason]
 }
 
 // IsUnavailable reports whether err is a retryable infrastructure failure

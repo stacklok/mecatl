@@ -18,8 +18,8 @@ var (
 	testOwner    = identitybroker.Owner{Issuer: "https://login.example.com", Subject: "alice-204"}
 )
 
-// newBroker returns a broker with its own signing key.
-func newBroker(t *testing.T) *identitybroker.Broker {
+// newBroker returns a broker with its own signing key and opts.
+func newBroker(t *testing.T, opts ...identitybroker.Option) *identitybroker.Broker {
 	t.Helper()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -29,7 +29,7 @@ func newBroker(t *testing.T) *identitybroker.Broker {
 		TrustDomain:        "agents.example.com",
 		Audience:           "https://broker.example.com",
 		CredentialLifetime: 5 * time.Minute,
-	}, nil, key)
+	}, nil, key, opts...)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}

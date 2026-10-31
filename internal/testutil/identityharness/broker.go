@@ -25,29 +25,31 @@ func (b *ScriptedBroker) Assertion(spec ClientAssertionSpec) string {
 }
 
 // SessionOpenExchange is one session-open exchange: the user's AS-1 access
-// token and the session and owner it is converted for.
+// token and the grant expiry to ask for.
 type SessionOpenExchange struct {
 	SubjectToken string
-	Session      string
-	Owner        Owner
+	// ExpiresAt is the requested expires_at in Unix seconds; zero leaves it
+	// out, as a session's first open does.
+	ExpiresAt int64
 	// Assertion replaces the fresh, valid client assertion.
 	Assertion string
 }
 
 // SessionOpenResult is AS-1's RFC 8693 response to a session open. The
-// session refresh token arrives in access_token (RFC 8693 §2.2.1).
+// grant's refresh token arrives in access_token (RFC 8693 §2.2.1).
 type SessionOpenResult struct {
-	RefreshToken         string           `json:"access_token"`
-	IssuedTokenType      string           `json:"issued_token_type"`
-	TokenType            string           `json:"token_type"`
-	ExpiresIn            int              `json:"expires_in"`
-	AuthorizationDetails []SessionDetails `json:"authorization_details"`
+	RefreshToken         string          `json:"access_token"`
+	IssuedTokenType      string          `json:"issued_token_type"`
+	TokenType            string          `json:"token_type"`
+	ExpiresIn            int             `json:"expires_in"`
+	AuthorizationDetails []ExchangeGrant `json:"authorization_details"`
 }
 
-// OpenSession runs the session-open token exchange of design step (3). A
-// refusal returns an *OAuthError; a lost response returns a transport error.
+// OpenSession runs the session-open token exchange of design step (3), with
+// one exchange-grant entry listing only id-jag. A refusal returns an
+// *OAuthError; a lost response returns a transport error.
 func (b *ScriptedBroker) OpenSession(ctx context.Context, ex SessionOpenExchange) (SessionOpenResult, error) {
-	details, err := json.Marshal([]SessionDetails{{Type: SessionDetailsType, Session: ex.Session, Owner: ex.Owner}})
+	details, err := json.Marshal([]ExchangeGrant{{Type: ExchangeGrantType, IssuableTokenTypes: []string{TokenTypeIDJAG}, ExpiresAt: ex.ExpiresAt}})
 	if err != nil {
 		return SessionOpenResult{}, err
 	}
@@ -64,7 +66,7 @@ func (b *ScriptedBroker) OpenSession(ctx context.Context, ex SessionOpenExchange
 	return result, err
 }
 
-// Revoke revokes a session refresh token at AS-1's RFC 7009 endpoint.
+// Revoke revokes a grant refresh token at AS-1's RFC 7009 endpoint.
 func (b *ScriptedBroker) Revoke(ctx context.Context, token string) error {
 	form := url.Values{"token": {token}, "token_type_hint": {"refresh_token"}}
 	b.authenticate(form, "")

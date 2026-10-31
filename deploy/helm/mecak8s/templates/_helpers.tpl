@@ -61,13 +61,90 @@ mounted
 {{- end -}}
 {{- end -}}
 {{- end -}}
+{{/*
+With a hosted AS-1, mecak8s derives an unset OIDC issuer, client ID, and accepted
+client IDs from it; the chart renders the same derived values.
+*/}}
+{{- define "mecak8s.oidcIssuer" -}}
+{{- .Values.oidc.issuer | default .Values.identityBroker.as1.issuer -}}
+{{- end -}}
+{{- define "mecak8s.oidcClientID" -}}
+{{- .Values.oidc.clientID | default .Values.identityBroker.as1.tuiClientID -}}
+{{- end -}}
+{{- define "mecak8s.oidcAcceptedClientIDs" -}}
+{{- if .Values.oidc.acceptedClientIDs -}}{{ toJson .Values.oidc.acceptedClientIDs }}{{- else if .Values.identityBroker.as1.issuer -}}{{ toJson (list .Values.identityBroker.as1.tuiClientID) }}{{- else -}}[]{{- end -}}
+{{- end -}}
+{{- define "mecak8s.validateIdentityBroker" -}}
+{{- /* mecak8s refuses these combinations at startup; fail at render time instead of crash-looping. */ -}}
+{{- $broker := .Values.identityBroker -}}
+{{- $as1 := $broker.as1 -}}
+{{- range $arg := .Values.extraArgs -}}
+{{- /* Only identityBroker.enabled also renders the one replica and Recreate strategy the process-local broker state needs. */ -}}
+{{- if regexMatch "^--?enable-identity-broker(=|$)" (toString $arg) -}}
+{{- fail (printf "extraArgs entry %q enables the identity broker without the single replica it needs; remove it and set identityBroker.enabled=true" (toString $arg)) -}}
+{{- end -}}
+{{- end -}}
+{{- if $broker.enabled -}}
+{{- if and .Values.oidc.enabled (ne .Values.oidc.ownerIdentity "sub_id") -}}{{ fail "identityBroker.enabled with oidc.enabled requires oidc.ownerIdentity=sub_id" }}{{- end -}}
+{{- /* Go's flag parser takes one or two leading dashes, a bool value only after "=", and a string value after "=" or in the next argument; the last setting wins. */ -}}
+{{- $noShell := false -}}
+{{- $emptyShell := false -}}
+{{- $shellValueNext := false -}}
+{{- range $arg := .Values.extraArgs -}}
+{{- $a := toString $arg -}}
+{{- if $shellValueNext -}}
+{{- $emptyShell = eq $a "" -}}
+{{- $shellValueNext = false -}}
+{{- else if regexMatch "^--?(identity-broker-as1-[a-z-]+|identity-broker-subject-claim)(=|$)" $a -}}
+{{- fail (printf "extraArgs entry %q sets an identity broker flag, which the chart owns when identityBroker.enabled is true; remove it and set identityBroker values instead" $a) -}}
+{{- else if regexMatch "^--?no-shell(=|$)" $a -}}
+{{- $noShell = regexMatch "^--?no-shell(=(1|t|T|TRUE|true|True))?$" $a -}}
+{{- else if regexMatch "^--?shell$" $a -}}
+{{- $shellValueNext = true -}}
+{{- else if regexMatch "^--?shell=" $a -}}
+{{- $emptyShell = regexMatch "^--?shell=$" $a -}}
+{{- end -}}
+{{- end -}}
+{{- if not (or $noShell $emptyShell .Values.redis.filesystem.enabled) -}}{{ fail "identityBroker.enabled requires no shell in the mecak8s process: add --no-shell to extraArgs, or --shell= with execution.enabled to keep the remote Shell" }}{{- end -}}
+{{- end -}}
+{{- if and $broker.subjectClaim (not $as1.issuer) -}}{{ fail "identityBroker.subjectClaim requires identityBroker.as1.issuer" }}{{- end -}}
+{{- $as1Set := or $as1.tuiClientID $as1.signingKey.secretName $as1.signingKey.key $as1.upstream.issuer $as1.upstream.clientID $as1.upstream.clientSecret.secretName $as1.upstream.clientSecret.key -}}
+{{- if and $as1Set (not $as1.issuer) -}}{{ fail "identityBroker.as1 values require identityBroker.as1.issuer" }}{{- end -}}
+{{- if $as1.issuer -}}
+{{- if not $broker.enabled -}}{{ fail "identityBroker.as1.issuer requires identityBroker.enabled=true" }}{{- end -}}
+{{- if not .Values.oidc.enabled -}}{{ fail "identityBroker.as1.issuer requires oidc.enabled=true" }}{{- end -}}
+{{- $_ := required "identityBroker.as1.tuiClientID is required when identityBroker.as1.issuer is set" $as1.tuiClientID -}}
+{{- $_ := required "identityBroker.as1.upstream.issuer is required when identityBroker.as1.issuer is set" $as1.upstream.issuer -}}
+{{- $_ := required "identityBroker.as1.upstream.clientID is required when identityBroker.as1.issuer is set" $as1.upstream.clientID -}}
+{{- $_ := required "identityBroker.subjectClaim is required when identityBroker.as1.issuer is set: oid for Microsoft Entra ID, or sub for an identity provider whose sub is the same across applications" $broker.subjectClaim -}}
+{{- range $name, $url := dict "identityBroker.as1.issuer" $as1.issuer "identityBroker.as1.upstream.issuer" $as1.upstream.issuer -}}
+{{- if not (regexMatch "^https://[^/?#@[:space:]]+(/[^?#[:space:]]*)?$" $url) -}}{{ fail (printf "%s must be an https URL with a host and no credentials, query, or fragment" $name) }}{{- end -}}
+{{- end -}}
+{{- $_ := required "oidc.audience is required with identityBroker.as1.issuer: it is the Mecatl API audience AS-1 issues access tokens for" .Values.oidc.audience -}}
+{{- $_ := required "oidc.resource is required with identityBroker.as1.issuer: mecatui finds AS-1 through the protected-resource metadata" .Values.oidc.resource -}}
+{{- if .Values.oidc.allowPrivateHTTPSIssuer -}}{{ fail "oidc.allowPrivateHTTPSIssuer cannot be used with identityBroker.as1.issuer: mecak8s reaches the AS-1 it hosts without the network" }}{{- end -}}
+{{- if .Values.oidc.jwksURI -}}{{ fail "oidc.jwksURI cannot be used with identityBroker.as1.issuer: AS-1's discovery document supplies its keys" }}{{- end -}}
+{{- if and .Values.oidc.issuer (ne .Values.oidc.issuer $as1.issuer) -}}{{ fail "oidc.issuer must be empty or equal identityBroker.as1.issuer" }}{{- end -}}
+{{- if and .Values.oidc.clientID (ne .Values.oidc.clientID $as1.tuiClientID) -}}{{ fail "oidc.clientID must be empty or equal identityBroker.as1.tuiClientID" }}{{- end -}}
+{{- if and .Values.oidc.acceptedClientIDs (not (has $as1.tuiClientID .Values.oidc.acceptedClientIDs)) -}}{{ fail "oidc.acceptedClientIDs must include identityBroker.as1.tuiClientID" }}{{- end -}}
+{{- end -}}
+{{- range $name, $ref := dict "identityBroker.as1.signingKey" $as1.signingKey "identityBroker.as1.upstream.clientSecret" $as1.upstream.clientSecret -}}
+{{- if or $ref.secretName $ref.key -}}
+{{- $_ := required (printf "%s.secretName is required when %s.key is set" $name $name) $ref.secretName -}}
+{{- $_ := required (printf "%s.key is required when %s.secretName is set" $name $name) $ref.key -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
 {{- define "mecak8s.validateOIDC" -}}
-{{- $profileSet := or .Values.oidc.resource .Values.oidc.clientID (gt (len .Values.oidc.scopes) 0) -}}
+{{- $issuer := include "mecak8s.oidcIssuer" . -}}
+{{- $clientID := include "mecak8s.oidcClientID" . -}}
+{{- $acceptedClientIDs := include "mecak8s.oidcAcceptedClientIDs" . | fromJsonArray -}}
+{{- $profileSet := or .Values.oidc.resource $clientID (gt (len .Values.oidc.scopes) 0) -}}
 {{- if $profileSet -}}
 {{- if not .Values.oidc.enabled -}}{{ fail "oidc protected-resource profile requires oidc.enabled=true" }}{{- end -}}
-{{- if not (regexMatch "^https://[^/?#[:space:]]+" .Values.oidc.issuer) -}}{{ fail "oidc protected-resource profile requires an https:// oidc.issuer with a non-empty host" }}{{- end -}}
+{{- if not (regexMatch "^https://[^/?#[:space:]]+" $issuer) -}}{{ fail "oidc protected-resource profile requires an https:// oidc.issuer with a non-empty host" }}{{- end -}}
 {{- if not .Values.oidc.resource -}}{{ fail "oidc.resource is required when protected-resource profile is set" }}{{- end -}}
-{{- if not .Values.oidc.clientID -}}{{ fail "oidc.clientID is required when protected-resource profile is set" }}{{- end -}}
+{{- if not $clientID -}}{{ fail "oidc.clientID is required when protected-resource profile is set" }}{{- end -}}
 {{- if or (gt (len .Values.oidc.resource) 1024) (regexMatch "[\\x00-\\x1f\\x7f-\\x9f]" .Values.oidc.resource) (regexMatch "[\\p{Cf}]" .Values.oidc.resource) (not (regexMatch "^https://[^/?#[:space:]]+(/[^?#[:space:]]*)?$" .Values.oidc.resource)) (contains "@" .Values.oidc.resource) (contains "," .Values.oidc.resource) (contains "\"" .Values.oidc.resource) (contains "\\" .Values.oidc.resource) (regexMatch "%[^0-9A-Fa-f]|%[0-9A-Fa-f][^0-9A-Fa-f]|%[0-9A-Fa-f]$" .Values.oidc.resource) (regexMatch "(^|/|%2[fF])(\\.|\\.\\.|%2[eE]|%2[eE]%2[eE]|\\.%2[eE]|%2[eE]\\.)(/|%2[fF]|$)" .Values.oidc.resource) (regexMatch "^https://:" .Values.oidc.resource) (regexMatch "^https://[^/?#:\\[]+:([^0-9/]|$)" .Values.oidc.resource) (regexMatch "^https://[^/?#:\\[]+:[0-9]+[^0-9/]" .Values.oidc.resource) (regexMatch "^https://\\[[^\\]/?#]+\\]:([^0-9/]|$)" .Values.oidc.resource) (regexMatch "^https://\\[[^\\]/?#]+\\]:[0-9]+[^0-9/]" .Values.oidc.resource) -}}{{ fail "oidc.resource must be an absolute HTTPS URL of at most 1024 bytes without credentials, query, fragment, commas, quotes, backslashes, malformed escapes, dot segments, invalid authority, control, or Unicode format characters" }}{{- end -}}
 {{- $resourcePort := regexFind "^https://[^/?#:\\[]+:[0-9]+" .Values.oidc.resource -}}
 {{- if $resourcePort -}}
@@ -79,7 +156,7 @@ mounted
 {{- $port6 := regexFind "\\]:[0-9]+$" $resourceIPv6Port | trimPrefix "]:" | int -}}
 {{- if or (lt $port6 1) (gt $port6 65535) -}}{{ fail "oidc.resource port must be between 1 and 65535" }}{{- end -}}
 {{- end -}}
-{{- if or (gt (len .Values.oidc.clientID) 1024) (regexMatch "[\\x00-\\x1f\\x7f-\\x9f]" .Values.oidc.clientID) (regexMatch "[\\p{Cf}]" .Values.oidc.clientID) -}}{{ fail "oidc.clientID must be non-empty, at most 1024 bytes, and contain no control or Unicode format characters" }}{{- end -}}
+{{- if or (gt (len $clientID) 1024) (regexMatch "[\\x00-\\x1f\\x7f-\\x9f]" $clientID) (regexMatch "[\\p{Cf}]" $clientID) -}}{{ fail "oidc.clientID must be non-empty, at most 1024 bytes, and contain no control or Unicode format characters" }}{{- end -}}
 {{- range $scope := .Values.oidc.scopes -}}
 {{- if or (eq (trim $scope) "") (not (regexMatch "^[!-~]+$" $scope)) (contains "," $scope) (contains "\"" $scope) (contains "\\" $scope) -}}{{ fail (printf "oidc.scopes entry %q is invalid" $scope) }}{{- end -}}
 {{- end -}}
@@ -87,24 +164,16 @@ mounted
 {{- if not (has .Values.oidc.ownerIdentity (list "" "sub_id")) -}}{{ fail (printf "oidc.ownerIdentity %q is not supported; accepted values: sub_id" .Values.oidc.ownerIdentity) }}{{- end -}}
 {{- if .Values.oidc.ownerIdentity -}}
 {{- if not .Values.oidc.enabled -}}{{ fail "oidc.ownerIdentity requires oidc.enabled=true" }}{{- end -}}
-{{- if not .Values.oidc.acceptedClientIDs -}}{{ fail "oidc.ownerIdentity=sub_id requires at least one oidc.acceptedClientIDs entry" }}{{- end -}}
-{{- if and .Values.oidc.clientID (not (has .Values.oidc.clientID .Values.oidc.acceptedClientIDs)) -}}{{ fail (printf "oidc.clientID %q must be listed in oidc.acceptedClientIDs when oidc.ownerIdentity is sub_id" .Values.oidc.clientID) }}{{- end -}}
+{{- if not $acceptedClientIDs -}}{{ fail "oidc.ownerIdentity=sub_id requires at least one oidc.acceptedClientIDs entry" }}{{- end -}}
+{{- if and $clientID (not (has $clientID $acceptedClientIDs)) -}}{{ fail (printf "oidc.clientID %q must be listed in oidc.acceptedClientIDs when oidc.ownerIdentity is sub_id" $clientID) }}{{- end -}}
 {{- else if .Values.oidc.acceptedClientIDs -}}
 {{- fail "oidc.acceptedClientIDs requires oidc.ownerIdentity=sub_id" -}}
 {{- end -}}
-{{- if and .Values.oidc.enabled (not .Values.oidc.ownerIdentity) -}}
-{{- range $arg := .Values.extraArgs -}}
-{{- /* mecak8s refuses this combination at startup; fail at render time instead of crash-looping. */ -}}
-{{- if regexMatch "^--?enable-identity-broker(=(1|t|T|true|TRUE|True))?$" (toString $arg) -}}
-{{- fail (printf "extraArgs entry %q enables the identity broker, which requires oidc.ownerIdentity=sub_id when oidc.enabled is true" (toString $arg)) -}}
-{{- end -}}
-{{- end -}}
-{{- end -}}
-{{- range $clientID := .Values.oidc.acceptedClientIDs -}}
-{{- if or (eq (trim $clientID) "") (ne (trim $clientID) $clientID) (contains "," $clientID) (regexMatch "[\\x00-\\x1f\\x7f-\\x9f]" $clientID) (regexMatch "[\\p{Cf}]" $clientID) -}}{{ fail (printf "oidc.acceptedClientIDs entry %q must be non-blank and contain no surrounding spaces, commas, control, or Unicode format characters" $clientID) }}{{- end -}}
+{{- range $accepted := $acceptedClientIDs -}}
+{{- if or (eq (trim $accepted) "") (ne (trim $accepted) $accepted) (contains "," $accepted) (regexMatch "[\\x00-\\x1f\\x7f-\\x9f]" $accepted) (regexMatch "[\\p{Cf}]" $accepted) -}}{{ fail (printf "oidc.acceptedClientIDs entry %q must be non-blank and contain no surrounding spaces, commas, control, or Unicode format characters" $accepted) }}{{- end -}}
 {{- end -}}
 {{- if .Values.oidc.enabled -}}
-{{- $_ := required "oidc.issuer is required when oidc.enabled is true" .Values.oidc.issuer -}}
+{{- $_ := required "oidc.issuer is required when oidc.enabled is true" $issuer -}}
 {{- $_ := required "oidc.audience is required when oidc.enabled is true" .Values.oidc.audience -}}
 {{- end -}}
 {{- if .Values.oidc.allowPrivateHTTPSIssuer -}}

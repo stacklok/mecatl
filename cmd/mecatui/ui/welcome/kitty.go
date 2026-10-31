@@ -9,6 +9,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/blang/semver/v4"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/charmbracelet/x/ansi/kitty"
 )
@@ -142,16 +143,31 @@ func truthy(v string) bool {
 	return false
 }
 
-// kittyNativeResolution identifies the Kitty terminal itself, as opposed to a
-// terminal that merely advertises the Kitty graphics protocol. Kitty can resample
-// the original mascot cleanly; the Ghostty/WezTerm compatibility path deliberately
-// remains target-sized because of its virtual-placement bug.
+// kittyNativeResolution identifies terminals that can resample the original mascot
+// cleanly: Kitty itself and direct Ghostty 1.4.0 or newer. Older, unknown, and
+// other compatibility terminals keep the target-sized transmit. Ghostty #13056 is
+// a tmux-specific virtual-placement issue in 1.3.1, not a universal large-transmit
+// bug, so Ghostty under tmux is never selected here.
 func kittyNativeResolution(look envLookup) bool {
 	if _, ok := look("KITTY_WINDOW_ID"); ok {
 		return true
 	}
-	term, ok := look("TERM")
-	return ok && strings.Contains(strings.ToLower(term), "kitty")
+	if term, ok := look("TERM"); ok && strings.Contains(strings.ToLower(term), "kitty") {
+		return true
+	}
+	if _, ok := look("TMUX"); ok {
+		return false
+	}
+	program, ok := look("TERM_PROGRAM")
+	if !ok || program != "ghostty" {
+		return false
+	}
+	version, ok := look("TERM_PROGRAM_VERSION")
+	if !ok {
+		return false
+	}
+	parsed, err := semver.Parse(version)
+	return err == nil && !parsed.LT(semver.Version{Major: 1, Minor: 4})
 }
 
 // TransmitMascot builds the OUT-OF-BAND Kitty escape that transmits the mascot
@@ -166,13 +182,13 @@ func kittyNativeResolution(look envLookup) bool {
 // parse it into cells and desync the cursor), so interleaving it with frames is
 // harmless.
 //
-// The mascot is encoded at the source resolution for Kitty itself. Kitty's image
-// scaler has the real cell-size information and can resample the 1254px source
-// cleanly; pre-sampling to a 60px-ish cell footprint makes the result visibly
-// pixelated (especially on high-DPI Kitty windows). Ghostty still uses the small
-// target-resolution path because its virtual-placement implementation has a known
-// large-transmit bug (ghostty-org/ghostty#13056). The data is chunked at
-// kitty.MaxChunkSize.
+// The mascot is encoded at source resolution for native Kitty and direct Ghostty
+// 1.4.0 or newer. Their image scalers have the real cell-size information and can
+// resample the 1254px source cleanly; pre-sampling to a 60px-ish cell footprint
+// makes the result visibly pixelated (especially on high-DPI windows). Older,
+// unknown, and other compatibility terminals use the target-resolution path. The
+// Ghostty #13056 report concerns tmux-specific virtual placement in 1.3.1, not a
+// universal large-transmit bug. The data is chunked at kitty.MaxChunkSize.
 // Returns "" if the image can't be decoded (caller then keeps the half-block
 // path).
 func TransmitMascot(cols, rows int) string {

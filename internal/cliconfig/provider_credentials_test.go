@@ -1,6 +1,7 @@
 package cliconfig
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -91,8 +92,8 @@ func TestProviderCredentialResolverFailsClosedForMalformedConventionalAuthWithCu
 		t.Fatal("malformed conventional auth file did not produce the stock-provider warning")
 	}
 	resolver := NewProviderCredentialResolver(NewCredentialSource(flags, keys), keys)
-	if _, _, err := resolver.Load(nil); err != nil {
-		t.Fatalf("stock-provider-only startup lost warning-only behavior: %v", err)
+	if _, _, err := resolver.Load(nil); err == nil {
+		t.Fatal("stock-provider startup discarded search source failure")
 	}
 	definitions := permconfig.ProviderDefinitions{"custom": {ID: "custom", Auth: permconfig.ProviderAuth{Method: "api_key"}}}
 	if _, _, err := resolver.Load(definitions); err == nil {
@@ -119,6 +120,324 @@ func TestResolveProviderCredentialsReportsUnknownProviderWarningSafely(t *testin
 	}
 	if strings.Contains(message, staleID) || strings.Contains(message, "secret") {
 		t.Fatalf("error = %q, leaked stale provider ID or credential", message)
+	}
+}
+
+func TestSearchProviderIDsRequireCustomDefinitions(t *testing.T) {
+	const path = "/config/mecatl/auth.yaml"
+	for _, id := range []string{"exa", "brave", "websearch"} {
+		for _, flow := range []string{"preliminary", "direct", "reselected"} {
+			for _, custom := range []bool{false, true} {
+				name := id + "/" + flow + "/unknown"
+				var definitions permconfig.ProviderDefinitions
+				if custom {
+					name = id + "/" + flow + "/custom"
+					definitions = permconfig.ProviderDefinitions{id: {ID: id, Auth: permconfig.ProviderAuth{Method: "api_key"}}}
+				}
+				t.Run(name, func(t *testing.T) {
+					selected := path
+					if flow == "reselected" {
+						selected = "/selected/auth.yaml"
+					}
+					env := envWithAuth(selected, "providers:\n  "+id+":\n    api_key: llm-only-sentinel\n")
+					flags := &ProviderFlags{}
+					var keys ResolvedCredentials
+					var err error
+					if flow == "direct" {
+						keys, err = ResolveProviderCredentials(nil, definitions, env)
+					} else {
+						keys = flags.resolve(env, time.Time{})
+						if keys.AuthFileWarning != "" || keys.Exa != "" || keys.Brave != "" || keys.WebSearch != "" {
+							t.Fatal("preliminary discovery rejected a potential custom ID or consumed it as search")
+						}
+						source := NewCredentialSource(flags, keys)
+						if flow == "reselected" {
+							source.SetAPIKeyFile(selected)
+						}
+						profile, _, loadErr := NewProviderCredentialResolver(source, keys).Load(definitions)
+						err = loadErr
+						if custom && (profile.CustomProviderAPIKeys[id] != "llm-only-sentinel" || profile.ExaAPIKey != "" || profile.BraveAPIKey != "" || profile.WebSearchAPIKey != "") {
+							t.Fatal("custom LLM credentials crossed namespaces or were not resolved")
+						}
+					}
+					if !custom {
+						if err == nil || !strings.Contains(err.Error(), "unknown provider(s)") || strings.Contains(err.Error(), "llm-only-sentinel") {
+							t.Fatal("unconfigured provider did not receive ordinary value-free unknown-provider validation")
+						}
+						return
+					}
+					if err != nil {
+						t.Fatalf("configured custom provider rejected: %v", err)
+					}
+					if flow == "direct" && (keys.CustomAPIKey(id) != "llm-only-sentinel" || keys.Exa != "" || keys.Brave != "" || keys.WebSearch != "") {
+						t.Fatal("direct custom LLM credentials crossed namespaces or were not resolved")
+					}
+				})
+			}
+		}
+	}
+}
+
+func TestProviderSearchAndMCPNamespacesStaySeparateAcrossResolutionFlows(t *testing.T) {
+	const preliminaryPath = "/config/mecatl/auth.yaml"
+	const selectedPath = "/selected/auth.yaml"
+
+	for _, id := range []string{"exa", "brave", "websearch"} {
+		for _, flow := range []string{"preliminary", "direct", "reselected"} {
+			t.Run(id+"/"+flow, func(t *testing.T) {
+				document := func(prefix string) string {
+					return "providers:\n  " + id + ":\n    api_key: " + prefix + "-llm\nsearch:\n  exa:\n    api_key: " + prefix + "-exa\n  brave:\n    api_key: " + prefix + "-brave\n  websearch:\n    api_key: " + prefix + "-websearch\nmcp:\n  " + id + ":\n    api_key: " + prefix + "-mcp\n"
+				}
+				files := map[string]string{preliminaryPath: document("preliminary"), selectedPath: document("selected")}
+				reads := map[string]int{}
+				env := xdgconfig.ResolveEnv{
+					Getenv: func(key string) string {
+						if key == "XDG_CONFIG_HOME" {
+							return "/config"
+						}
+						return ""
+					},
+					Environ: func() []string { return nil },
+					ReadFile: func(path string) ([]byte, error) {
+						reads[path]++
+						return []byte(files[path]), nil
+					},
+				}
+				definitions := permconfig.ProviderDefinitions{id: {ID: id, Auth: permconfig.ProviderAuth{Method: "api_key"}}}
+				flags := &ProviderFlags{}
+				var source *CredentialSource
+				var keys ResolvedCredentials
+				var err error
+				if flow == "direct" {
+					source = newCredentialSource(nil, env)
+					keys, err = source.ResolveProviders(definitions)
+				} else {
+					keys = flags.resolve(env, time.Time{})
+					source = NewCredentialSource(flags, keys)
+					if flow == "reselected" {
+						source.SetAPIKeyFile(selectedPath)
+					}
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				profile, _, err := NewProviderCredentialResolver(source, keys).Load(definitions)
+				if err != nil {
+					t.Fatal(err)
+				}
+				prefix := "preliminary"
+				if flow == "reselected" {
+					prefix = "selected"
+				}
+				if profile.CustomProviderAPIKeys[id] != prefix+"-llm" || profile.ExaAPIKey != prefix+"-exa" || profile.BraveAPIKey != prefix+"-brave" || profile.WebSearchAPIKey != prefix+"-websearch" {
+					t.Fatal("provider and search credentials crossed namespaces or resolved from the wrong snapshot")
+				}
+				if keys.Any() {
+					t.Fatal("search-only and custom LLM credentials satisfied the built-in LLM predicate")
+				}
+				for ref, want := range map[string]string{"exa": profile.ExaAPIKey, "brave": profile.BraveAPIKey, "websearch": profile.WebSearchAPIKey} {
+					if key, err := source.Lookup(SearchAPIKeySecret, ref); err != nil || key != want {
+						t.Fatal("provider projection and generic search lookup disagree")
+					}
+				}
+				mcpKey, err := source.Lookup(MCPBearerSecret, id)
+				if err != nil || mcpKey != prefix+"-mcp" {
+					t.Fatal("MCP credential crossed namespaces or resolved from the wrong snapshot")
+				}
+				if flow == "reselected" && (reads[preliminaryPath] != 1 || reads[selectedPath] != 1) {
+					t.Fatalf("selected file reads = preliminary %d, selected %d; want one snapshot per selected path", reads[preliminaryPath], reads[selectedPath])
+				}
+			})
+		}
+	}
+}
+
+func TestSearchCredentialEnvironmentLifetime(t *testing.T) {
+	for _, flow := range []string{"reused", "reselected", "direct", "without provenance"} {
+		t.Run(flow, func(t *testing.T) {
+			values := map[string]string{envExaKey: "preliminary-exa", envBraveKey: "", envWebSearchKey: "preliminary-websearch"}
+			lookups, reads := map[string]int{}, map[string]int{}
+			env := envWithAuth("/config/mecatl/auth.yaml", "")
+			env.Getenv = func(name string) string {
+				if name == "XDG_CONFIG_HOME" {
+					return "/config"
+				}
+				lookups[name]++
+				return values[name]
+			}
+			env.Environ = func() []string { return []string{"EXA_API_KEY=captured-poison", "MECATL_MCP_TOKEN_EXA=original-mcp"} }
+			env.ReadFile = func(path string) ([]byte, error) {
+				reads[path]++
+				// All search environment inputs must already have been read once
+				// for this projection before the selected file is acquired.
+				for _, name := range []string{envExaKey, envBraveKey, envWebSearchKey} {
+					if lookups[name] != reads["/config/mecatl/auth.yaml"]+reads["/selected/auth.yaml"] {
+						t.Fatal("search environment read twice or after file acquisition")
+					}
+				}
+				// A file read must not change this projection's environment snapshot.
+				values[envExaKey] = "changed-during-acquisition"
+				return []byte("search:\n  exa:\n    api_key: file-exa\n  brave:\n    api_key: file-brave\n  websearch:\n    api_key: file-websearch\n"), nil
+			}
+			flags := &ProviderFlags{}
+			var keys ResolvedCredentials
+			var source *CredentialSource
+			if flow == "direct" || flow == "without provenance" {
+				source = newCredentialSource(flags, env)
+			} else {
+				keys = flags.resolve(env, time.Time{})
+				if keys.Exa != "preliminary-exa" || keys.Brave != "file-brave" || keys.WebSearch != "preliminary-websearch" || keys.Any() {
+					t.Fatal("preliminary search lookup changed precedence or environment lifetime")
+				}
+				source = keys.source
+			}
+			values[envExaKey], values[envBraveKey], values[envWebSearchKey] = "final-exa", "final-brave", ""
+			if flow == "reselected" {
+				source.SetAPIKeyFile("/selected/auth.yaml")
+			}
+			if flow == "direct" {
+				var err error
+				keys, err = source.ResolveProviders(nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			profile, _, err := NewProviderCredentialResolver(source, keys).Load(nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			wantExa, wantBrave, wantWebSearch := "final-exa", "final-brave", "file-websearch"
+			wantLookups := 1
+			switch flow {
+			case "reused":
+				wantExa, wantBrave, wantWebSearch = "preliminary-exa", "file-brave", "preliminary-websearch"
+			case "reselected":
+				wantLookups = 2
+			}
+			if profile.ExaAPIKey != wantExa || profile.BraveAPIKey != wantBrave || profile.WebSearchAPIKey != wantWebSearch {
+				t.Fatal("final search projection lost cached/reselected environment policy")
+			}
+			for _, name := range []string{envExaKey, envBraveKey, envWebSearchKey} {
+				if lookups[name] != wantLookups {
+					t.Fatal("search environment was read more than once per resolution")
+				}
+			}
+			for _, count := range reads {
+				if count != 1 {
+					t.Fatal("selected file was reacquired")
+				}
+			}
+			// Public lookup shares policy, but search remains live at resolution
+			// time while MCP retains its startup environment snapshot.
+			values[envExaKey] = "latest-exa"
+			if key, err := source.Lookup(SearchAPIKeySecret, "exa"); err != nil || key != "latest-exa" {
+				t.Fatal("generic search lookup silently adopted MCP environment lifetime")
+			}
+			if key, err := source.Lookup(MCPBearerSecret, "exa"); err != nil || key != "original-mcp" {
+				t.Fatal("search resolution changed MCP environment snapshot")
+			}
+		})
+	}
+}
+
+func TestSearchCredentialSourcePoliciesAcrossFlows(t *testing.T) {
+	for _, sanitized := range []bool{false, true} {
+		for _, flow := range []string{"reused", "direct", "reselected"} {
+			for _, custom := range []bool{false, true} {
+				t.Run(fmt.Sprintf("sanitized=%t/%s/custom=%t", sanitized, flow, custom), func(t *testing.T) {
+					body := "search: [private-sentinel"
+					if sanitized {
+						body = "providers:\n  openai-codex:\n    api_key: ignored\nsearch:\n  brave:\n    api_key: file-brave\n"
+					}
+					env := envWithAuth("/config/mecatl/auth.yaml", body)
+					getenv := env.Getenv
+					env.Getenv = func(name string) string {
+						if name == envExaKey {
+							return "env-exa"
+						}
+						return getenv(name)
+					}
+					var definitions permconfig.ProviderDefinitions
+					if custom {
+						definitions = permconfig.ProviderDefinitions{"custom": {ID: "custom", Auth: permconfig.ProviderAuth{Method: "none"}}}
+					}
+					flags := &ProviderFlags{}
+					var keys ResolvedCredentials
+					var source *CredentialSource
+					if flow == "direct" {
+						source = newCredentialSource(flags, env)
+					} else {
+						keys = flags.resolve(env, time.Time{})
+						if keys.AuthFileWarning == "" || keys.Exa != "env-exa" || keys.Brave != "" || keys.searchErr == nil {
+							t.Fatal("preliminary projection lost environment credential or source failure")
+						}
+						source = keys.source
+						if flow == "reselected" {
+							// Same-path explicit selection must retain the cached warning.
+							source.SetAPIKeyFile("/config/mecatl/auth.yaml")
+						}
+					}
+					_, _, err := NewProviderCredentialResolver(source, keys).Load(definitions)
+					if err == nil {
+						t.Fatal("search source error was discarded by credential projection")
+					}
+					if err != nil && strings.Contains(err.Error(), "private-sentinel") {
+						t.Fatal("source error exposed file content")
+					}
+				})
+			}
+		}
+	}
+}
+
+func TestSearchEnvironmentAndIndependentProviderValidation(t *testing.T) {
+	for _, malformed := range []bool{false, true} {
+		for _, flow := range []string{"reused", "direct", "reselected"} {
+			t.Run(fmt.Sprintf("malformed=%t/%s", malformed, flow), func(t *testing.T) {
+				body := "providers:\n  openai-codex:\n    api_key: ignored\n"
+				if malformed {
+					body = "search: [private-sentinel"
+				}
+				env := envWithAuth("/config/mecatl/auth.yaml", body)
+				getenv := env.Getenv
+				env.Getenv = func(name string) string {
+					if name == envOpenAIKey || name == envExaKey || name == envBraveKey || name == envWebSearchKey {
+						return "env-key"
+					}
+					return getenv(name)
+				}
+				var keys ResolvedCredentials
+				var source *CredentialSource
+				if flow == "direct" {
+					source = newCredentialSource(nil, env)
+				} else {
+					keys = (&ProviderFlags{}).resolve(env, time.Time{})
+					if keys.searchErr != nil {
+						t.Fatal("environment-only search projection consulted rejected file fallback")
+					}
+					source = keys.source
+					if flow == "reselected" {
+						source.SetAPIKeyFile("/config/mecatl/auth.yaml")
+					}
+				}
+				profile, _, err := NewProviderCredentialResolver(source, keys).Load(nil)
+				// Authoritative provider resolution validates its own file even
+				// when search lookups have no need for file fallback.
+				wantError := flow != "reused"
+				if (err != nil) != wantError {
+					t.Fatal("independent provider validation changed")
+				}
+				if !wantError && (profile.ExaAPIKey != "env-key" || profile.BraveAPIKey != "env-key" || profile.WebSearchAPIKey != "env-key") {
+					t.Fatal("environment-only search credentials lost")
+				}
+				for _, ref := range []string{"exa", "brave", "websearch"} {
+					key, err := source.Lookup(SearchAPIKeySecret, ref)
+					if err != nil || key != "env-key" {
+						t.Fatal("provider validation changed environment lookup precedence")
+					}
+				}
+			})
+		}
 	}
 }
 

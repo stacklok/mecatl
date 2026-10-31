@@ -19,11 +19,9 @@ the client to the service and leaves server provider setup with its operator.
 
 ### Model and search credential file
 
-This file primarily configures LLM providers, but its `providers:` mapping is
-the shared credential namespace for model and search providers. Set
-model-provider API keys with `OPENAI_API_KEY`, `OPENROUTER_API_KEY`,
-`ANTHROPIC_API_KEY`, or `OPENCODE_API_KEY`. To keep model credentials and
-optional search credentials in one operator-owned file, use `auth.yaml`:
+Use `auth.yaml` to store model-provider and search API keys in an operator-owned
+file. The `providers:` mapping contains LLM credentials, and `search:` contains
+built-in search credentials and other search keys:
 
 ```yaml
 providers:
@@ -37,7 +35,8 @@ providers:
   opencode:
     api_key: <OPENCODE_API_KEY>
 
-  # Search providers: configure the Exa paid tier, Brave Search, or a generic HTTP endpoint.
+search:
+  # Built-in search providers.
   exa:
     api_key: <EXA_API_KEY>
   brave:
@@ -46,22 +45,54 @@ providers:
     api_key: <WEBSEARCH_API_KEY>
 ```
 
-A matching API-key environment variable takes precedence over the file entry.
-The `exa` entry enables Exa's paid search tier; the `brave` entry selects Brave
-Search; and `websearch` supplies the credential for a configured generic HTTP
-endpoint. These entries are search credentials, not model providers, and do
-not satisfy the requirement for an LLM provider. See [Configure web
-search](/features/sessions/tools.md#configure-web-search) for backend
-selection.
+A matching model-provider API-key environment variable takes precedence over its
+file entry. Search and MCP credential IDs accept lowercase ASCII `[a-z0-9_]+`.
+Their canonical environment names use the uppercase ID:
+`MECATL_SEARCH_TOKEN_<ID>` and `MECATL_MCP_TOKEN_<ID>`. For example,
+`search.exa` maps to `MECATL_SEARCH_TOKEN_EXA`.
+
+Search lookup checks the canonical variable first, then a non-empty alias from
+the table below, then `search.<id>.api_key` in `auth.yaml`.
+
+| Search ID | Environment alias |
+| --- | --- |
+| `exa` | `EXA_API_KEY` |
+| `brave` | `BRAVE_API_KEY` |
+| `websearch` | `WEBSEARCH_API_KEY` |
+
+A present but empty canonical variable blocks alias and file fallback. For
+search, it supplies an empty key; an empty alias behaves as absent. MCP bearer
+credentials require a non-empty, valid header value; see
+[static bearer credentials](/features/security-and-execution/mcp-oauth-and-credentials.md#static-bearer-credentials).
+
+You can store and resolve other valid IDs under `search:` and `mcp:`, even when
+no configured component uses them. Adding a search credential does not register
+a search backend. The built-in `exa` entry enables Exa's paid search tier; the
+`brave` entry selects Brave Search; and `websearch` supplies the credential for
+a configured generic HTTP endpoint. These keys do not satisfy the requirement
+for an LLM provider. See
+[Configure web search](/features/sessions/tools.md#configure-web-search) for
+backend selection.
+
+The `providers`, `search`, and `mcp` mappings are independent namespaces. For
+example, `providers.websearch` can configure a custom LLM while
+`search.websearch` supplies a generic HTTP search credential. Entries with the
+same ID do not share credentials.
+
 The default path is `$XDG_CONFIG_HOME/mecatl/auth.yaml`, normally
 `~/.config/mecatl/auth.yaml`. `--api-key-file <PATH>` selects another file;
 `credential_store.api_key.file` in operator settings can also select the path.
 
 The parser reports unknown providers, fields, duplicate keys, and invalid
 credential formats without printing values. A missing conventional file is
-accepted; a missing explicitly selected file produces a warning. On Unix, Mecatl
-warns when group or other users can read the file. Use mode `0600` and restart
-the server after replacing a credential.
+accepted. Search and MCP file fallback rejects the whole file on any warning
+or error, including a missing explicitly selected file or, on Unix, permissions
+that let group or other users read it. Individual search and MCP lookups prefer
+environment credentials over file fallback; model-provider validation can still
+independently reject the file during startup. A missing key in a clean file
+means no credential: search allows an empty key, while an MCP bearer profile
+requires a valid token.
+Use mode `0600` and restart the server after replacing a credential.
 
 The file is plaintext. Another process running under the same OS account can
 read it even with mode `0600`, including an authorized agent Shell command. Use

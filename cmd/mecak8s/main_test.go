@@ -549,7 +549,7 @@ func TestDrainHTTPRouting(t *testing.T) {
 
 	auth := server.NewAuthenticator(server.SecurityConfig{AuthToken: "test-token"})
 	defer auth.Close()
-	normalMux, err := normalHTTPMux(built.Service, auth, server.ProtectedResourceProfile{}, "", true, built.MCPBrokerHandlers, built.MCPBrokerCallbackPath)
+	normalMux, err := normalHTTPMux(built.Service, auth, server.ProtectedResourceProfile{}, "", true, builtServing{brokerHandlers: built.MCPBrokerHandlers, brokerCallbackPath: built.MCPBrokerCallbackPath})
 	if err != nil {
 		t.Fatalf("normalHTTPMux: %v", err)
 	}
@@ -646,14 +646,14 @@ func TestServeWiresSeparateDrainListener(t *testing.T) {
 	defer cancel()
 	serveErr := make(chan error, 1)
 	go func() {
-		serveErr <- serveWithDrainWait(ctx, cfg, built.Service, observability{}, func(time.Duration) {}, built.MCPBrokerHandlers, built.MCPBrokerCallbackPath)
+		serveErr <- serveWithDrainWait(ctx, cfg, built.Service, observability{}, func(time.Duration) {}, builtServing{brokerHandlers: built.MCPBrokerHandlers, brokerCallbackPath: built.MCPBrokerCallbackPath})
 	}()
 
-	waitForHTTPStatus(t, "http://"+cfg.httpAddr+"/drain", http.StatusNotFound)
+	waitForHTTPStatus(t, http.DefaultClient, "http://"+cfg.httpAddr+"/drain", http.StatusNotFound)
 	if built.Service.IsDraining() {
 		t.Fatal("normal listener drained the service")
 	}
-	waitForHTTPStatus(t, "http://"+cfg.drainAddr+"/drain", http.StatusOK)
+	waitForHTTPStatus(t, http.DefaultClient, "http://"+cfg.drainAddr+"/drain", http.StatusOK)
 	if !built.Service.IsDraining() {
 		t.Fatal("drain listener did not drain the service")
 	}
@@ -669,11 +669,11 @@ func TestServeWiresSeparateDrainListener(t *testing.T) {
 	}
 }
 
-func waitForHTTPStatus(t *testing.T, url string, want int) {
+func waitForHTTPStatus(t *testing.T, client *http.Client, url string, want int) {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
-		resp, err := http.Get(url)
+		resp, err := client.Get(url)
 		if err == nil {
 			_ = resp.Body.Close()
 			if resp.StatusCode == want {

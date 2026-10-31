@@ -5,12 +5,16 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	refsearch "github.com/stacklok/mecatl/engine/adapter/search"
+	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/adapter/permconfig"
 	"github.com/stacklok/mecatl/internal/adapter/xdgconfig"
 	"github.com/stacklok/mecatl/internal/app"
@@ -55,11 +59,18 @@ func clearProviderEnv(t *testing.T) {
 	t.Setenv(envExaKey, "")
 	t.Setenv(envBraveKey, "")
 	t.Setenv(envWebSearchKey, "")
+	for _, ref := range []string{"exa", "brave", "websearch"} {
+		name := "MECATL_SEARCH_TOKEN_" + strings.ToUpper(ref)
+		t.Setenv(name, "")
+		if err := os.Unsetenv(name); err != nil {
+			t.Fatal(err)
+		}
+	}
 }
 
 func TestSearchCredentialLifecycle(t *testing.T) {
 	clearProviderEnv(t)
-	writeAuthFile(t, "providers:\n  exa:\n    api_key: file-exa-key\n  brave:\n    api_key: file-brave-key\n  websearch:\n    api_key: file-websearch-key\n")
+	writeAuthFile(t, "search:\n  exa:\n    api_key: file-exa-key\n  brave:\n    api_key: file-brave-key\n  websearch:\n    api_key: file-websearch-key\n")
 	pf := RegisterProviderFlags(flag.NewFlagSet("exa", flag.ContinueOnError), ProviderFlagHelp{})
 	keys := pf.Resolve()
 	if keys.Exa != "file-exa-key" || keys.Brave != "file-brave-key" || keys.WebSearch != "file-websearch-key" || keys.Any() || keys.AuthFileWarning != "" {
@@ -89,6 +100,57 @@ func TestSearchCredentialLifecycle(t *testing.T) {
 	}
 }
 
+func TestReadProviderSearchKeysEnvironmentOnly(t *testing.T) {
+	clearProviderEnv(t)
+	writeAuthFile(t, "search:\n  exa:\n    api_key: file-only\n  brave:\n    api_key: file-only\n  websearch:\n    api_key: file-only\n")
+	for _, populated := range []bool{false, true} {
+		want := ""
+		if populated {
+			want = "env-only"
+		}
+		for _, name := range []string{envExaKey, envBraveKey, envWebSearchKey} {
+			t.Setenv(name, want)
+		}
+		keys := ReadProviderKeys()
+		if keys.Exa != want || keys.Brave != want || keys.WebSearch != want || keys.AuthFileWarning != "" || keys.source != nil || keys.Any() {
+			t.Fatal("environment-only helper consulted auth.yaml or changed search semantics")
+		}
+	}
+}
+
+func TestSearchBraveFileKeyReachesCustomHeader(t *testing.T) {
+	const apiKey = "brave-file-key"
+	keys, err := ResolveProviderCredentials(nil, nil, envWithAuth("/config/mecatl/auth.yaml", "search:\n  brave:\n    api_key: "+apiKey+"\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	received := make(chan string, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "" || strings.Contains(r.URL.String(), apiKey) {
+			t.Error("Brave credential used the default header or query string")
+		}
+		received <- r.Header.Get("X-Subscription-Token")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"web":{"results":[]}}`))
+	}))
+	defer server.Close()
+	provider, err := refsearch.NewHTTPProvider(refsearch.HTTPConfig{BaseURL: server.URL, APIKey: keys.Brave, AuthHeader: "X-Subscription-Token"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := provider.Search(t.Context(), tool.SearchQuery{Query: "test query"}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case got := <-received:
+		if got != apiKey {
+			t.Fatal("Brave request did not receive the file credential in its custom header")
+		}
+	default:
+		t.Fatal("Brave request was not made")
+	}
+}
+
 func TestSearchConfiguredCredentialStorePath(t *testing.T) {
 	clearProviderEnv(t)
 	xdgHome := t.TempDir()
@@ -100,7 +162,7 @@ func TestSearchConfiguredCredentialStorePath(t *testing.T) {
 		t.Fatal(err)
 	}
 	path := filepath.Join(t.TempDir(), "operator-auth.yaml")
-	if err := os.WriteFile(path, []byte("providers:\n  exa:\n    api_key: configured-exa-key\n  brave:\n    api_key: configured-brave-key\n"), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte("search:\n  exa:\n    api_key: configured-exa-key\n  brave:\n    api_key: configured-brave-key\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	pf := RegisterProviderFlags(flag.NewFlagSet("exa", flag.ContinueOnError), ProviderFlagHelp{})

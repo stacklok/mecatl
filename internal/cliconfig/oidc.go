@@ -60,9 +60,12 @@ type OIDCConfig struct {
 	// force a startup failure; it is not a deployment extension point.
 	NewValidator func(ctx context.Context, c OIDCConfig) (server.PrincipalValidator, error)
 
-	// httpClient is an in-package test seam for a local TLS issuer's private CA.
-	// Production flag parsing leaves it nil, preserving the hardened client.
-	httpClient *http.Client
+	// HTTPClient, when set, fetches the issuer's discovery document and keys
+	// in place of the hardened client. It is for an issuer this process
+	// serves itself, such as mecak8s's hosted AS-1, reached without a
+	// listener. Flag parsing leaves it nil, and authn/oidc refuses it with
+	// AllowPrivateHTTPSIssuer.
+	HTTPClient *http.Client
 
 	// InsecureAllowPrivateIssuer is the deprecated legacy escape hatch. It permits
 	// BOTH HTTP and private issuer/JWKS addresses; use AllowPrivateHTTPSIssuer

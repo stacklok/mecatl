@@ -52,7 +52,7 @@ func TestMecatuiQuieterToolCalls_Scenario3_ConversationDetailToggle(t *testing.T
 			}
 			m, _ = pressKey(m, f9)
 			after := detailText(m)
-			for _, s := range []string{"reason one full text", "reason two full text", "may not reflect its actual process", "permanent detail hidden", "changed this session", "transient remains visible", "no reasoning answer"} {
+			for _, s := range []string{"reason one full text", "reason two full text", "f9 collapse", "permanent detail hidden", "changed this session", "transient remains visible", "no reasoning answer"} {
 				if !strings.Contains(after, s) {
 					t.Errorf("missing %q in expanded view", s)
 				}
@@ -101,7 +101,7 @@ func TestMecatuiQuieterToolCalls_Scenario3_ConversationDetailToggle(t *testing.T
 			t.Fatalf("streaming summary not collapsed: %q", before)
 		}
 		m, _ = pressKey(m, f9)
-		if after := detailText(m); !strings.Contains(after, "streamed summary content") || !strings.Contains(after, reasoningCaveat) {
+		if after := detailText(m); !strings.Contains(after, "streamed summary content") || !strings.Contains(after, "reasoning summary · 1 line · f9 collapse") {
 			t.Fatalf("streaming summary not expanded: %q", after)
 		}
 		m, _ = pressKey(m, f9)

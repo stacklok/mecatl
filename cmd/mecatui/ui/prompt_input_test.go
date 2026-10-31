@@ -148,7 +148,7 @@ func TestPromptMousePressRespectsBodyOwners(t *testing.T) {
 		name  string
 		setup func(*Model)
 	}{
-		{"schedule", func(m *Model) { m.schedule.view = schedulePanel }},
+		{"schedule", func(m *Model) { m.modal = &scheduleState{deps: m.surfaceDeps()} }},
 		{"session details", func(m *Model) { m.sessionDetailsOpen = true }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -189,11 +189,11 @@ func TestSelectableMatchesAllBodyOwners(t *testing.T) {
 		{"agents inventory", func(m *Model) { m.agentsInv.view = agentsInvPanel }, false},
 		{"modal surface", func(m *Model) { m.modal = &bodyOwnerTestSurface{} }, false},
 		{"user model", func(m *Model) { m.modal = &userModelState{view: userModelPanel} }, false},
-		{"reflections", func(m *Model) { m.reflections.view = reflectionsList }, false},
+		{"reflections", func(m *Model) { m.modal = &reflectionsState{deps: m.surfaceDeps()} }, false},
 		{"dream", func(m *Model) { m.modal = &dreamState{view: dreamTargets} }, false},
 		{"effort", func(m *Model) { m.caps.ModelSelection = true; mm, _ := m.runEffort(); *m = mm.(Model) }, false},
 		{"worktrees", func(m *Model) { m.modal = &worktreesState{deps: m.surfaceDeps()} }, false},
-		{"schedule", func(m *Model) { m.schedule.view = schedulePanel }, false},
+		{"schedule", func(m *Model) { m.modal = &scheduleState{deps: m.surfaceDeps()} }, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got := m

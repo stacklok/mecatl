@@ -8,8 +8,10 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	otlpmetrics "go.opentelemetry.io/proto/otlp/collector/metrics/v1"
@@ -17,40 +19,23 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"github.com/stacklok/mecatl/engine/session"
+	"github.com/stacklok/mecatl/internal/cliconfig"
 )
 
 // fakeMetricsCollector is a minimal httptest server that accepts the OTLP/HTTP
 // protobuf POST (/v1/metrics) and records the raw ExportMetricsServiceRequest
 // bodies. It keeps the test OFFLINE (no real collector). Shared shape with
 // internal/adapter/telemetry/otlp_metrics_test.go's collector.
-//
-// stall, when > 0, makes the handler sleep this long before responding so a
-// timeout-bound flush can be exercised — it respects the request context so an
-// exporter cancel (the caller's Shutdown ctx) returns promptly rather than
-// blocking t.Cleanup's server Close.
 type fakeMetricsCollector struct {
 	mu       sync.Mutex
 	requests []*otlpmetrics.ExportMetricsServiceRequest
 	srv      *httptest.Server
-	stall    time.Duration
 }
 
 func newFakeMetricsCollector(t *testing.T) *fakeMetricsCollector {
-	return newFakeMetricsCollectorWithStall(t, 0)
-}
-
-func newFakeMetricsCollectorWithStall(t *testing.T, stall time.Duration) *fakeMetricsCollector {
 	t.Helper()
-	c := &fakeMetricsCollector{stall: stall}
+	c := &fakeMetricsCollector{}
 	c.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if c.stall > 0 {
-			timer := time.NewTimer(c.stall)
-			defer timer.Stop()
-			select {
-			case <-timer.C:
-			case <-r.Context().Done():
-			}
-		}
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
@@ -203,54 +188,110 @@ func TestTelemetryPushesRunMetricsOnExit(t *testing.T) {
 	}
 }
 
-// TestTelemetryShutdownTimeoutBounded asserts a tight --otlp-shutdown-timeout
-// bounds the flush against a STALLING collector (one that accepts the connection
-// then sleeps). It drives the WHOLE realMain defer chain so the bound is
-// exercised at the seam a real exit uses (flushTelemetry via the LIFO defer).
-//
-// The previous shape pointed at 127.0.0.1:1, which on Linux yields an INSTANT
-// ECONNREFUSED — the test passed in ~5ms regardless of whether the bound worked.
-// The stalling collector (mirroring internal/adapter/telemetry's
-// TestSetupOTLPMetricsShutdownBoundedByContext) accepts the connection and sleeps
-// PAST the guard bound, so the test FAILS if the bound is removed (realMain would
-// block ~ the stall, tripping the guard) while staying comfortably under the guard
-// when the bound holds (~ the configured timeout).
+// TestTelemetryShutdownTimeoutBounded observes cancellation of a real export
+// through realMain's exit defer, without charging startup and Git work against
+// the shutdown timeout. The collector never responds until cleanup releases it.
 func TestTelemetryShutdownTimeoutBounded(t *testing.T) {
-	const (
-		shutdownTimeout = 150 * time.Millisecond
-		// The stall MUST exceed the guard so an UNBOUNDED flush (bound removed) trips
-		// the guard: unblocked, realMain blocks ~ stall.
-		stall = 1200 * time.Millisecond
-		// Guard bound: comfortably above the configured timeout (so scheduler/exporter
-		// slack does not flake) but comfortably below the stall (so a missing bound is
-		// caught). Bounded: ~shutdownTimeout (~170ms). Unbounded: ~stall (1.2s) → trips.
-		guard = 600 * time.Millisecond
-	)
-	// A stalling collector: accepts the connection, then sleeps past the guard.
-	coll := newFakeMetricsCollectorWithStall(t, stall)
+	// Keep exporter/reader fallback timeouts beyond the diagnostic watchdog, so
+	// they cannot substitute for the command's shutdown bound.
+	t.Setenv("OTEL_EXPORTER_OTLP_METRICS_TIMEOUT", "60000")
+	t.Setenv("OTEL_METRIC_EXPORT_TIMEOUT", "60000")
+	t.Setenv("OTEL_METRIC_EXPORT_INTERVAL", "60000")
+	const watchdog = 30 * time.Second
+	started := make(chan struct{}, 1)
+	canceled := make(chan struct{}, 1)
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		// Drain the body so net/http can observe the client's disconnect while
+		// the handler is blocked waiting to respond.
+		if _, err := io.Copy(io.Discard, r.Body); err != nil {
+			t.Errorf("read export: %v", err)
+			return
+		}
+		started <- struct{}{}
+		select {
+		case <-r.Context().Done():
+			canceled <- struct{}{}
+		case <-release:
+		}
+	}))
+	t.Cleanup(srv.Close)
 	repo := t.TempDir()
 	initTestRepo(t, repo)
 
 	var stdout, stderr bytes.Buffer
-	start := time.Now()
-	code := realMain([]string{
+	args := []string{
 		"--prompt", "summarise the repo",
 		"--mock",
 		"--workspace", repo,
 		"--out-summary", filepath.Join(t.TempDir(), "summary.json"),
-		"--otlp-metrics-endpoint", coll.addr(),
+		"--otlp-metrics-endpoint", srv.Listener.Addr().String(),
 		"--otlp-metrics-protocol", "http",
 		"--otlp-insecure",
-		"--otlp-shutdown-timeout", shutdownTimeout.String(),
-	}, &stdout, &stderr)
-	elapsed := time.Since(start)
+		"--otlp-shutdown-timeout", "1s",
+	}
+	done := make(chan struct{})
+	var code int
+	go func() {
+		defer close(done)
+		code = realMain(args, &stdout, &stderr)
+	}()
+	t.Cleanup(func() {
+		close(release)
+		select {
+		case <-done:
+		case <-time.After(watchdog):
+			t.Error("realMain did not stop after releasing the collector")
+		}
+	})
+
+	select {
+	case <-started:
+	case <-time.After(watchdog):
+		t.Fatal("exit flush never reached the collector")
+	}
+	select {
+	case <-canceled:
+	case <-time.After(watchdog):
+		t.Fatal("exit flush did not cancel the blocked export")
+	}
+	select {
+	case <-done:
+	case <-time.After(watchdog):
+		t.Fatal("realMain did not return after export cancellation")
+	}
 	if code != 0 {
 		t.Fatalf("realMain = %d, want 0\nstderr=%s", code, stderr.String())
 	}
-	if elapsed > guard {
-		t.Errorf("realMain against a stalling collector took %v; the %v --otlp-shutdown-timeout bound should keep it under %v (stall=%v)\nstderr=%s",
-			elapsed, shutdownTimeout, guard, stall, stderr.String())
+	if _, flushErr, ok := strings.Cut(stderr.String(), "mecatequi: telemetry flush: "); !ok || !strings.Contains(flushErr, "context deadline exceeded") {
+		t.Fatalf("missing shutdown deadline diagnostic\nstderr=%s", stderr.String())
 	}
+}
+
+// The exact timeout belongs to flushTelemetry, not a stopwatch around realMain.
+func TestFlushTelemetryShutdownDeadline(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		const timeout = 150 * time.Millisecond
+		start := time.Now()
+		obs := observability{HeadlessTelemetryHandles: cliconfig.HeadlessTelemetryHandles{
+			Shutdown: func(ctx context.Context) error {
+				deadline, ok := ctx.Deadline()
+				if !ok || !deadline.Equal(start.Add(timeout)) {
+					t.Fatalf("shutdown deadline = (%v, %v), want %v", deadline, ok, start.Add(timeout))
+				}
+				<-ctx.Done()
+				return ctx.Err()
+			},
+		}}
+		var stderr bytes.Buffer
+		flushTelemetry(&stderr, obs, timeout)
+		if elapsed := time.Since(start); elapsed != timeout {
+			t.Fatalf("flush took %v, want %v", elapsed, timeout)
+		}
+		if got, want := stderr.String(), "mecatequi: telemetry flush: context deadline exceeded\n"; got != want {
+			t.Fatalf("stderr = %q, want %q", got, want)
+		}
+	})
 }
 
 // Ensure the os import is referenced (filepath used above; os via t.TempDir).

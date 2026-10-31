@@ -18,6 +18,7 @@ import (
 
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
+	"github.com/stacklok/mecatl/internal/app"
 )
 
 // fakeMetricsCollector is a minimal httptest server that accepts the OTLP/HTTP
@@ -224,14 +225,12 @@ func TestTelemetryMetricsAddrServesPrometheus(t *testing.T) {
 	}
 	defer mr.Close()
 
-	// A fixed free loopback port so the scrape target is deterministic.
-	free := freeLoopbackPort(t)
 	cfg, err := parseFlags([]string{
 		"--mock",                                     // offline: no provider key in CI
 		"--permission-mode=yolo", "--guardrails=off", // unchecked allow-all is yolo
 		"--redis-url", mr.Addr(),
 		"--redis-allow-plaintext", // disposable miniredis fixture
-		"--metrics-addr", free,
+		"--metrics-addr", "127.0.0.1:0",
 		"--grpc-addr", "127.0.0.1:0",
 		"--http-addr", "127.0.0.1:0",
 		"--drain-addr", "127.0.0.1:0",
@@ -269,45 +268,111 @@ func TestTelemetryMetricsAddrServesPrometheus(t *testing.T) {
 	}
 	built.Service.FinishRun(sess.ID, run)
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	serveErr := make(chan error, 1)
+	ctx, cancel := context.WithCancel(t.Context())
+	metricsListening := make(chan net.Addr, 1)
+	serveDone := make(chan struct{})
+	var serveErr error
 	go func() {
-		serveErr <- serve(ctx, cfg, built.Service, obs, built.MCPBrokerHandlers, built.MCPBrokerCallbackPath)
+		defer close(serveDone)
+		defer cancel()
+		serveErr = serveWithHooks(ctx, cfg, built.Service, obs, time.Sleep, func(addr net.Addr) {
+			metricsListening <- addr
+		}, builtServing{brokerHandlers: built.MCPBrokerHandlers, brokerCallbackPath: built.MCPBrokerCallbackPath})
+	}()
+	defer func() {
+		cancel()
+		select {
+		case <-serveDone:
+			if serveErr != nil {
+				t.Errorf("serve: %v", serveErr)
+			}
+		case <-time.After(10 * time.Second):
+			t.Error("serve did not return within 10s of ctx cancel")
+		}
 	}()
 
-	// Wait for /metrics to respond, then assert it carries a mecatl series.
-	var body string
-	deadline := time.Now().Add(5 * time.Second)
-	url := "http://" + free + "/metrics"
-	for time.Now().Before(deadline) {
-		resp, gerr := http.Get(url)
-		if gerr == nil && resp.StatusCode == http.StatusOK {
-			b, _ := io.ReadAll(resp.Body)
-			_ = resp.Body.Close()
-			body = string(b)
-			break
-		}
-		if gerr == nil {
-			_ = resp.Body.Close()
-		}
-		time.Sleep(50 * time.Millisecond)
+	var addr net.Addr
+	select {
+	case addr = <-metricsListening:
+	case <-serveDone:
+		t.Fatalf("serve exited before metrics listener startup: %v", serveErr)
+	case <-time.After(5 * time.Second):
+		t.Fatal("metrics listener did not start within 5s")
 	}
-	if body == "" {
-		t.Fatalf("/metrics never responded on %s", free)
+
+	// The listener is already bound; the request can wait for Serve to accept it.
+	scrapeCtx, scrapeCancel := context.WithTimeout(ctx, 5*time.Second)
+	defer scrapeCancel()
+	req, err := http.NewRequestWithContext(scrapeCtx, http.MethodGet, "http://"+addr.String()+"/metrics", nil)
+	if err != nil {
+		t.Fatalf("metrics request: %v", err)
+	}
+	client := &http.Client{Transport: &http.Transport{Proxy: nil}}
+	defer client.CloseIdleConnections()
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("scrape /metrics: %v", err)
+	}
+	defer resp.Body.Close()
+	b, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read /metrics: %v", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("/metrics status = %d, want 200; body: %s", resp.StatusCode, b)
 	}
 	// The prometheus exposition renders a mecatl_* series (the domain instruments
 	// — e.g. mecatl_runs_total — recorded by the run above).
-	if !strings.Contains(body, "mecatl_") {
-		t.Errorf("/metrics body missing any mecatl_ series; got:\n%s", body)
+	if !strings.Contains(string(b), "mecatl_") {
+		t.Errorf("/metrics body missing any mecatl_ series; got:\n%s", b)
 	}
+}
 
-	// SIGTERM: cancel ctx → boundedShutdown returns cleanly.
-	cancel()
-	select {
-	case <-serveErr:
-	case <-time.After(10 * time.Second):
-		t.Fatal("serve did not return within 10s of SIGTERM (ctx cancel)")
+func TestTelemetryMetricsAddrBindFailure(t *testing.T) {
+	occupied, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer occupied.Close()
+	addr := occupied.Addr().String()
+	cfg, err := parseFlags([]string{
+		"--metrics-addr", addr,
+		"--grpc-addr", "127.0.0.1:0",
+		"--http-addr", "127.0.0.1:0",
+		"--drain-addr", "127.0.0.1:0",
+		"--product-metrics=false",
+	})
+	if err != nil {
+		t.Fatalf("parseFlags: %v", err)
+	}
+	obs, err := buildObservability(t.Context(), cfg, port.NopDiagnostics{})
+	if err != nil {
+		t.Fatalf("buildObservability: %v", err)
+	}
+	defer obs.Shutdown(context.Background())
+	built, err := buildIsolated(t, t.Context(), app.Config{
+		Workspace:   t.TempDir(),
+		UseMock:     true,
+		NoSoul:      true,
+		NoUserModel: true,
+		Diagnostics: port.NopDiagnostics{},
+	})
+	if err != nil {
+		t.Fatalf("app.Build: %v", err)
+	}
+	defer built.Close()
+
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	listening := false
+	err = serveWithHooks(ctx, cfg, built.Service, obs, time.Sleep, func(net.Addr) {
+		listening = true
+	}, builtServing{brokerHandlers: built.MCPBrokerHandlers, brokerCallbackPath: built.MCPBrokerCallbackPath})
+	if err == nil || !strings.Contains(err.Error(), "listen metrics") || !strings.Contains(err.Error(), addr) {
+		t.Fatalf("serve with occupied metrics address = %v, want listen metrics error naming %s", err, addr)
+	}
+	if listening {
+		t.Fatal("metrics listener reported startup despite bind failure")
 	}
 }
 
@@ -394,7 +459,7 @@ func TestTelemetryPushesRunMetricsOnExit(t *testing.T) {
 	defer cancel()
 	serveErr := make(chan error, 1)
 	go func() {
-		serveErr <- serve(ctx, cfg, built.Service, obs, built.MCPBrokerHandlers, built.MCPBrokerCallbackPath)
+		serveErr <- serve(ctx, cfg, built.Service, obs, builtServing{brokerHandlers: built.MCPBrokerHandlers, brokerCallbackPath: built.MCPBrokerCallbackPath})
 	}()
 	cancel()
 	select {

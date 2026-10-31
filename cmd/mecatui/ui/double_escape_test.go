@@ -301,12 +301,12 @@ func TestDoubleEscapeAllEscapeOwnersSuppressGesture(t *testing.T) {
 			m.modal = &userModelState{view: userModelPanel, deps: (&m).surfaceDeps(), list: new(bounded.List), viewport: new(bounded.Viewport)}
 			return m
 		}},
-		{"reflections", func(m Model) Model { m.reflections.view = reflectionsList; return m }},
+		{"reflections", func(m Model) Model { m.modal = &reflectionsState{deps: (&m).surfaceDeps()}; return m }},
 		{"dream", func(m Model) Model { m.modal = &dreamState{view: dreamGenerating}; return m }},
 		{"connect", func(m Model) Model { m.connect.open = true; return m }},
 		{"effort", func(m Model) Model { m.caps.ModelSelection = true; mm, _ := m.runEffort(); return mm.(Model) }},
 		{"worktrees", func(m Model) Model { m.modal = &worktreesState{deps: (&m).surfaceDeps()}; return m }},
-		{"schedule", func(m Model) Model { m.schedule.view = schedulePanel; return m }},
+		{"schedule", func(m Model) Model { m.modal = &scheduleState{deps: (&m).surfaceDeps()}; return m }},
 		{"running turn", func(m Model) Model { m.phase = phaseRunning; return m }},
 	}
 	for _, tc := range owners {

@@ -116,7 +116,7 @@ func commandTest(dir string, args ...string) Command {
 	case "tick":
 		script = `read input; printf '<status><footer><text>tick</text></footer></status>'`
 	case "latest":
-		script = `read input; case "$input" in *latest*) printf '<status><footer><text>latest</text></footer></status>' ;; *) sleep 5; printf '<status><footer><text>stale</text></footer></status>' ;; esac`
+		script = `read input; case "$input" in *latest*) printf '<status><footer><text>latest</text></footer></status>' ;; *) ( exec 3> "$1"; printf x >&3; read ignored < "$2" ) & wait; printf '<status><footer><text>stale</text></footer></status>' ;; esac`
 	case "fail":
 		script = `read input; if test -f "$1"; then printf 'status-command-secret' >&2; exit 1; fi; : > "$1"; printf '<status><footer><text>good</text></footer></status>'`
 	default:

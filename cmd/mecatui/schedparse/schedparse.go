@@ -1,13 +1,6 @@
-// Package schedparse is a small client-side natural-language → trigger
-// compiler for the mecatui /schedule overlay's Create form.
-//
-// It is a small pattern table for common scheduling phrases, NOT a full NLP
-// engine: a handful of ordered regexes, first-match-wins. A phrase that does
-// not match any pattern returns ok=false, and the caller falls back to
-// treating the input verbatim as a raw cron expression.
-//
-// The package is stdlib-only (regexp + time) and depends on nothing in
-// engine/ or internal/ — it is a pure leaf that runs client-side.
+// Package schedparse compiles finite scheduling phrases and validates client-side
+// cron previews. Compile retains the legacy phrase-only interface; Validate is
+// the timezone-aware validation boundary for preview and submission.
 package schedparse
 
 import (
@@ -26,8 +19,8 @@ type Result struct {
 	OneShot time.Time // a wall-clock instant, set when the phrase is a one-shot (zero otherwise)
 }
 
-// weekday map: mon=1 … sun=7 (cron's DOW convention, where 0 and 7 are both
-// Sunday; we use 1-7 with mon=1 to match the pattern table's promise).
+// weekdayNum uses 1=Monday … 7=Sunday for calendar calculations.
+// Recurring output maps Sunday to 0, as required by the backend cron parser.
 var weekdayNum = map[string]int{
 	"mon": 1, "tue": 2, "wed": 3, "thu": 4,
 	"fri": 5, "sat": 6, "sun": 7,
@@ -49,6 +42,9 @@ func parseClock(hourStr, minStr, meridian string) (hour, minute int, ok bool) {
 		}
 	}
 	if meridian != "" {
+		if h < 1 || h > 12 {
+			return 0, 0, false
+		}
 		// 12-hour clock: normalize 12 → 0 then add 12 for pm.
 		switch strings.ToLower(meridian) {
 		case "am":
@@ -140,7 +136,7 @@ var table = []pattern{
 	},
 	// daily at H[:MM] [am|pm] → M H * * *
 	{
-		compilePattern(`daily at (\d{1,2})(?::(\d{2}))?\s*(am|pm)?`),
+		compilePattern(`(?:daily|every day|everyday) at (\d{1,2})(?::(\d{2}))?\s*(am|pm)?`),
 		func(_ time.Time, m []string) (Result, bool) {
 			h, mm, ok := parseClock(m[1], m[2], m[3])
 			if !ok {
@@ -172,7 +168,7 @@ var table = []pattern{
 			if !ok {
 				return Result{}, false
 			}
-			return Result{Cron: fmt.Sprintf("%d %d * * %d", mm, h, d)}, true
+			return Result{Cron: fmt.Sprintf("%d %d * * %d", mm, h, d%7)}, true
 		},
 	},
 	// next <dow> H[:MM] [am|pm] → one-shot
@@ -198,20 +194,27 @@ var table = []pattern{
 			if err != nil || n <= 0 {
 				return Result{}, false
 			}
-			var dur time.Duration
-			switch m[2] {
-			case "minute", "minutes":
-				dur = time.Duration(n) * time.Minute
-			case "hour", "hours":
-				dur = time.Duration(n) * time.Hour
-			case "day", "days":
-				dur = time.Duration(n) * 24 * time.Hour
-			case "week", "weeks":
-				dur = time.Duration(n) * 7 * 24 * time.Hour
+			var unit time.Duration
+			switch strings.ToLower(m[2]) {
+			case "minute":
+				unit = time.Minute
+			case "hour":
+				unit = time.Hour
+			case "day":
+				unit = 24 * time.Hour
+			case "week":
+				unit = 7 * 24 * time.Hour
 			default:
 				return Result{}, false
 			}
-			return Result{OneShot: now.Add(dur)}, true
+			if int64(n) > int64(1<<63-1)/int64(unit) {
+				return Result{}, false
+			}
+			next := now.Add(time.Duration(n) * unit)
+			if !next.After(now) {
+				return Result{}, false
+			}
+			return Result{OneShot: next}, true
 		},
 	},
 	// tomorrow at H[:MM] [am|pm] → one-shot (tomorrow at the given time)
@@ -235,10 +238,13 @@ var table = []pattern{
 // treat the input verbatim as a raw cron expression.
 //
 // now is the reference instant for the one-shot patterns ("next monday 9am",
-// "in 30 minutes", "tomorrow at noon"); it is ignored by the recurring (cron)
+// "in 30 minutes", "tomorrow at 9am"); it is ignored by the recurring (cron)
 // patterns.
 func Compile(nl string, now time.Time) (Result, bool) {
 	nl = strings.TrimSpace(nl)
+	if strings.HasPrefix(strings.ToLower(nl), "run ") {
+		nl = strings.TrimSpace(nl[4:])
+	}
 	if nl == "" {
 		return Result{}, false
 	}

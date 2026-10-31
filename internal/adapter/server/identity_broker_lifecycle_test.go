@@ -174,8 +174,8 @@ func TestIdentityBrokerSessionOwnedByAnotherUserStopsTheRun(t *testing.T) {
 	}
 	closesBefore := broker.closeCount()
 	err = runToEnd(ctx, t, svc, sess.ID)
-	if !errors.Is(err, server.ErrInternal) || errors.Is(err, server.ErrIdentityBrokerUnavailable) {
-		t.Fatalf("run against another owner's broker session: %v, want ErrInternal", err)
+	if !errors.Is(err, server.ErrIdentityBrokerSessionRefused) || errors.Is(err, server.ErrIdentityBrokerUnavailable) {
+		t.Fatalf("run against another owner's broker session: %v, want ErrIdentityBrokerSessionRefused", err)
 	}
 	if n := llm.Calls(); n != 0 {
 		t.Fatalf("the agent ran without its broker session: %d model requests", n)

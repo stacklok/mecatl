@@ -347,8 +347,8 @@ func TestSDKTypescriptRelease_Scenario11_GenerationCleanlinessGate(t *testing.T)
 	clean := verify.Steps[cleanIndex].Run
 	for _, proof := range []string{
 		"task generate",
-		"git diff --exit-code -- contracts/gen sdk/typescript/src/gen sdk/typescript/pnpm-lock.yaml",
-		"git status --porcelain --untracked-files=all -- contracts/gen sdk/typescript/src/gen sdk/typescript/pnpm-lock.yaml",
+		"git diff --exit-code -- contracts/gen sdk/typescript/src/gen sdk/typescript/pnpm-lock.yaml cmd/mecatui/internal/timezones/zones.json",
+		"git status --porcelain --untracked-files=all -- contracts/gen sdk/typescript/src/gen sdk/typescript/pnpm-lock.yaml cmd/mecatui/internal/timezones/zones.json",
 	} {
 		if !strings.Contains(clean, proof) {
 			t.Errorf("generation cleanliness gate is missing %q", proof)

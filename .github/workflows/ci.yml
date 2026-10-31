@@ -51,7 +51,7 @@ jobs:
     outputs:
       docs_only: ${{ steps.classify.outputs.docs_only }}
       # macOS runners cost ~10x a Linux minute. These flags gate the three
-      # macos-14 jobs: they default to true (RUN) and flip to false only when the
+      # macos-26 jobs: they default to true (RUN) and flip to false only when the
       # trusted base-ref classifier proves the change cannot affect that category.
       macos_go: ${{ steps.classify.outputs.macos_go }}
       macos_sdk: ${{ steps.classify.outputs.macos_sdk }}
@@ -185,6 +185,7 @@ jobs:
           bash .github/scripts/relevant-changes_test.sh
           bash .github/scripts/relevant-changes-workflow_test.sh
           python3 .github/scripts/playwright-ci_test.py
+          python3 .github/scripts/ci-gate_test.py
 
   sdk:
     name: TypeScript SDK (Node ${{ matrix.node-version }})
@@ -354,7 +355,7 @@ jobs:
       - name: Verify generated contracts are fresh
         run: |
           task generate
-          git diff --exit-code -- contracts/gen sdk/typescript/src/gen
+          git diff --exit-code -- contracts/gen sdk/typescript/src/gen cmd/mecatui/internal/timezones/zones.json
 
       - name: Run offline SDK e2e against same-checkout mecated
         run: task sdk:e2e
@@ -494,7 +495,7 @@ jobs:
           if-no-files-found: ignore
 
   sdk-macos-spawn:
-    name: TypeScript SDK macOS spawn (macos-14, Node 22)
+    name: TypeScript SDK macOS spawn (macos-26, Node 22)
     needs: changes
     # macOS is ~10x a Linux minute. The SDK spawns mecated, so both Go and
     # sdk/typescript changes are relevant (macos_sdk); skip on docs/site-only
@@ -503,7 +504,7 @@ jobs:
       needs.changes.outputs.docs_only != 'true'
       && needs.changes.outputs.macos_sdk == 'true'
       && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
-    runs-on: macos-14
+    runs-on: macos-26
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -516,7 +517,7 @@ jobs:
           run_install: false
 
       # setup-node and setup-go include runner OS and architecture in their cache
-      # keys, so this macos-14 job cannot restore either Linux cache family.
+      # keys, so this macos-26 job cannot restore either Linux cache family.
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '22.x'
@@ -1075,7 +1076,7 @@ jobs:
       needs.changes.outputs.docs_only != 'true'
       && needs.changes.outputs.macos_go == 'true'
       && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
-    runs-on: macos-14
+    runs-on: macos-26
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -1133,7 +1134,7 @@ jobs:
       needs.changes.outputs.docs_only != 'true'
       && needs.changes.outputs.macos_go == 'true'
       && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
-    runs-on: macos-14
+    runs-on: macos-26
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -1275,7 +1276,7 @@ jobs:
       # message, so every other `uses:` error still fails the build.
       - name: Lint GitHub Actions
         run: |
-          go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7 \
+          go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12 \
             -ignore 'specifying action "\$/.*" in invalid format'
 
       # Reject a LIVE empty ${{ }} expression in a PARSED field of any workflow/action manifest
@@ -1916,3 +1917,90 @@ jobs:
           files: docs/architecture/mecatl.modelith.yaml
           completeness: error
           check-rendered: true
+
+  # One stable required check for this workflow, including legitimate path/draft
+  # skips. Keep every other job in needs; ci-gate_test.py guards that coverage.
+  ci-gate:
+    name: CI gate
+    needs:
+      - changes
+      - sdk
+      - mecated
+      - sdk-integration
+      - sdk-deno
+      - sdk-browser
+      - sdk-macos-spawn
+      - slack-bot-example
+      - studio
+      - studio-browser
+      - studio-gate
+      - build
+      - smoke-darwin-arm64
+      - managed-temp-macos
+      - test
+      - analysis
+      - module-lint
+      - action-scripts
+      - lint
+      - fuzz-smoke
+      - api-compat
+      - vuln
+      - docs
+      - user-docs
+      - user-docs-gate
+      - domain-model
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Require all applicable CI coverage
+        shell: python
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
+          EVENT_NAME: ${{ github.event_name }}
+          PR_DRAFT: ${{ github.event.pull_request.draft }}
+        run: |
+          import json
+          import os
+          import sys
+
+          needs = json.loads(os.environ["NEEDS_JSON"])
+          if needs.get("changes", {}).get("result") != "success":
+              sys.exit("Change classification did not succeed")
+          flags = needs["changes"]["outputs"]
+          flag_names = "docs_only go_relevant sdk_relevant studio_relevant site_relevant macos_go macos_sdk".split()
+          if any(flags.get(name) not in ("true", "false") for name in flag_names):
+              sys.exit("Missing or invalid change-classification flags")
+          code = flags["docs_only"] != "true"
+          go = flags["go_relevant"] == "true"
+          sdk = flags["sdk_relevant"] == "true"
+          studio = flags["studio_relevant"] == "true"
+          event = os.environ["EVENT_NAME"]
+          draft = os.environ["PR_DRAFT"]
+          if event == "pull_request" and draft not in ("true", "false"):
+              sys.exit("Missing or invalid pull-request draft state")
+          ready = event != "pull_request" or draft == "false"
+          groups = [
+              (True, "changes test lint studio-gate user-docs-gate docs domain-model"),
+              (code and go, "build analysis module-lint action-scripts fuzz-smoke api-compat vuln"),
+              (sdk, "sdk"),
+              (code and (go or sdk), "sdk-integration sdk-deno sdk-browser slack-bot-example"),
+              (code and (go or sdk or studio), "mecated"),
+              (code and (go or studio), "studio studio-browser"),
+              (flags["site_relevant"] == "true", "user-docs"),
+              (code and ready and flags["macos_go"] == "true", "smoke-darwin-arm64 managed-temp-macos"),
+              (code and ready and flags["macos_sdk"] == "true", "sdk-macos-spawn"),
+          ]
+          expected = {
+              job: "success" if required else "skipped"
+              for required, jobs in groups for job in jobs.split()
+          }
+          if needs.keys() != expected.keys():
+              sys.exit("CI gate dependencies do not match the checked jobs")
+          failed = False
+          for job, result in expected.items():
+              actual = needs[job].get("result")
+              if actual != result:
+                  print(f"{job}: expected {result}, got {actual}", file=sys.stderr)
+                  failed = True
+          sys.exit(1 if failed else 0)

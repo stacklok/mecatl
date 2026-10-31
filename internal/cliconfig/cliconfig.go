@@ -33,10 +33,9 @@ import (
 	"github.com/stacklok/mecatl/internal/app"
 )
 
-// knownAuthProviders is the closed set of provider names an auth.yaml entry
-// may use — passed into authfile.Load so that package stays agnostic of which
-// providers mecatl specifically knows about.
-var knownAuthProviders = []string{"anthropic", "openai", "openrouter", "opencode", "openai-codex", "brave", "exa", "websearch"}
+// knownAuthProviders contains the built-in LLM provider names. Final validation
+// also includes operator-defined providers.
+var knownAuthProviders = []string{"anthropic", "openai", "openrouter", "opencode", "openai-codex"}
 
 // Provider credential / base-URL environment variables. These are the SECRET-shaped
 // inputs the cmd layer reads on the operator's behalf (the registry also auto-detects
@@ -74,7 +73,7 @@ var DefaultProviderFlagHelp = ProviderFlagHelp{
 	OpenRouterBaseURL: "override the OpenRouter API base URL (default https://openrouter.ai/api/v1; key from OPENROUTER_API_KEY)",
 	AnthropicBaseURL:  "override the native Anthropic API base URL (compatible/proxy endpoints; key from ANTHROPIC_API_KEY)",
 	OpenCodeBaseURL:   "override the OpenCode Go API base URL (default https://opencode.ai/zen/go/v1; key from OPENCODE_API_KEY)",
-	AuthFile:          "provider and MCP credentials YAML path (default: $XDG_CONFIG_HOME/mecatl/auth.yaml); provider environment credentials take precedence",
+	AuthFile:          "provider, search, and MCP credentials YAML path (default: $XDG_CONFIG_HOME/mecatl/auth.yaml); provider and search environment credentials take precedence",
 }
 
 // ProviderFlags holds the values bound by RegisterProviderFlags. The base-URL fields
@@ -133,9 +132,11 @@ func (pf *ProviderFlags) Resolve() ResolvedCredentials {
 }
 
 func (pf *ProviderFlags) resolve(env xdgconfig.ResolveEnv, now time.Time) ResolvedCredentials {
-	keys := readProviderKeys(env.Getenv)
-
 	source := newCredentialSource(pf, env)
+	source.mu.Lock()
+	defer source.mu.Unlock()
+	lookup := source.providerLookupLocked()
+	keys := readProviderKeys(lookup.env)
 	source.acquire()
 	af, warning, path := source.file, source.warning, source.path
 	keys.source = source
@@ -144,9 +145,11 @@ func (pf *ProviderFlags) resolve(env xdgconfig.ResolveEnv, now time.Time) Resolv
 	keys.OpenRouter = cmp.Or(keys.OpenRouter, af.APIKey("openrouter"))
 	keys.Anthropic = cmp.Or(keys.Anthropic, af.APIKey("anthropic"))
 	keys.OpenCode = cmp.Or(keys.OpenCode, af.APIKey("opencode"))
-	keys.Exa = cmp.Or(keys.Exa, af.APIKey("exa"))
-	keys.Brave = cmp.Or(keys.Brave, af.APIKey("brave"))
-	keys.WebSearch = cmp.Or(keys.WebSearch, af.APIKey("websearch"))
+	var exaErr, braveErr, webSearchErr error
+	keys.Exa, exaErr = lookup.lookupLocked(SearchAPIKeySecret, "exa")
+	keys.Brave, braveErr = lookup.lookupLocked(SearchAPIKeySecret, "brave")
+	keys.WebSearch, webSearchErr = lookup.lookupLocked(SearchAPIKeySecret, "websearch")
+	keys.searchErr = cmp.Or(exaErr, braveErr, webSearchErr)
 	loadCodexCredential(&keys, af, path, now)
 	return keys
 }
@@ -194,7 +197,8 @@ func (s *CredentialSource) ResolveProviders(definitions permconfig.ProviderDefin
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.finalized = true
-	keys := readProviderKeys(s.env.Getenv)
+	lookup := s.providerLookupLocked()
+	keys := readProviderKeys(lookup.env)
 	keys.source = s
 	known := append([]string{}, knownAuthProviders...)
 	for id := range definitions {
@@ -214,9 +218,10 @@ func (s *CredentialSource) ResolveProviders(definitions permconfig.ProviderDefin
 	keys.OpenRouter = cmp.Or(keys.OpenRouter, file.APIKey("openrouter"))
 	keys.Anthropic = cmp.Or(keys.Anthropic, file.APIKey("anthropic"))
 	keys.OpenCode = cmp.Or(keys.OpenCode, file.APIKey("opencode"))
-	keys.Exa = cmp.Or(keys.Exa, file.APIKey("exa"))
-	keys.Brave = cmp.Or(keys.Brave, file.APIKey("brave"))
-	keys.WebSearch = cmp.Or(keys.WebSearch, file.APIKey("websearch"))
+	// Source failures were checked above; absent search credentials are optional.
+	keys.Exa, _ = lookup.lookupLocked(SearchAPIKeySecret, "exa")
+	keys.Brave, _ = lookup.lookupLocked(SearchAPIKeySecret, "brave")
+	keys.WebSearch, _ = lookup.lookupLocked(SearchAPIKeySecret, "websearch")
 	loadCodexCredential(&keys, file, path, time.Now())
 	keys.customAPIKeys = make(map[string]string, len(definitions))
 	keys.customMethods = make(map[string]string, len(definitions))
@@ -282,24 +287,32 @@ func (pf *ProviderFlags) EndpointOverrides() permconfig.ProviderOverrides {
 	return overrides
 }
 
-// ReadProviderKeys reads provider credentials from the environment alone
-// (no auth.yaml). It is the SINGLE definition of which env vars hold which credential.
+// ReadProviderKeys reads model-provider and search credentials from the environment
+// alone, without consulting auth.yaml.
 // A caller that must account for auth.yaml should call ProviderFlags.Resolve instead.
 // The values are SECRET-shaped; callers must not log or print them.
 func ReadProviderKeys() ResolvedKeys {
-	return readProviderKeys(os.Getenv)
+	return readProviderKeys(os.LookupEnv)
 }
 
-func readProviderKeys(getenv func(string) string) ResolvedCredentials {
+func readProviderKeys(lookupEnv func(string) (string, bool)) ResolvedCredentials {
+	getenv := func(name string) string {
+		value, _ := lookupEnv(name)
+		return value
+	}
+	searchKey := func(ref string) string {
+		key, _ := lookupSecretEnv(SearchAPIKeySecret, ref, lookupEnv)
+		return key
+	}
 	return ResolvedCredentials{
 		OpenAI:     getenv(envOpenAIKey),
 		OpenRouter: getenv(envOpenRouterKey),
 		Anthropic:  getenv(envAnthropicKey),
 		OpenCode:   getenv(envOpenCodeKey),
 		Typesafe:   getenv(envTypesafeKey),
-		Exa:        getenv(envExaKey),
-		Brave:      getenv(envBraveKey),
-		WebSearch:  getenv(envWebSearchKey),
+		Exa:        searchKey("exa"),
+		Brave:      searchKey("brave"),
+		WebSearch:  searchKey("websearch"),
 	}
 }
 
@@ -308,6 +321,7 @@ func readProviderKeys(getenv func(string) string) ResolvedCredentials {
 // must not log or print them.
 type ResolvedCredentials struct {
 	source     *CredentialSource
+	searchErr  error
 	OpenAI     string
 	OpenRouter string
 	Anthropic  string

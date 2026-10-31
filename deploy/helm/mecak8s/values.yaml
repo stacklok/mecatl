@@ -279,12 +279,61 @@ oidc:
   # identifier). sub_id requires RFC 9068 access tokens (typ at+jwt) whose
   # client_id is listed in acceptedClientIDs; other tokens are rejected. It
   # requires oidc.enabled and at least one acceptedClientIDs entry. The identity
-  # broker (--enable-identity-broker in extraArgs) requires sub_id when OIDC is on.
+  # broker (identityBroker.enabled) requires sub_id when OIDC is on.
   ownerIdentity: ""
   # acceptedClientIDs are the OAuth clients (for example the TUI and Studio)
   # whose access tokens ownerIdentity sub_id accepts. When clientID is set it must be
   # listed here.
   acceptedClientIDs: []
+
+# The experimental agent identity broker. enabled renders --enable-identity-broker
+# and requires oidc.ownerIdentity=sub_id when oidc.enabled, replicaCount: 1 (broker
+# state is process-local; the Deployment then rolls out with Recreate), and no shell
+# in the process: add --no-shell to extraArgs, or --shell= with execution.enabled to
+# keep the remote Shell (redis.filesystem.enabled also has no shell). The chart
+# refuses to render without one of these rather than let the pod crash-loop.
+# enabled is the only way to turn the broker on: the chart refuses
+# --enable-identity-broker in extraArgs, which would skip the single replica and
+# Recreate rollout. With enabled, the chart also owns the other identity broker
+# flags and refuses them in extraArgs.
+identityBroker:
+  enabled: false
+  # Upstream ID-token claim that names the company identity, required with
+  # as1.issuer and allowed only with it. It must identify a user the same way in
+  # every IdP application the identity broker uses: oid for Microsoft Entra ID,
+  # whose sub differs per application; sub for an IdP whose sub is the same
+  # across applications.
+  subjectClaim: ""
+  # as1 hosts AS-1, Mecatl's sign-in authorization server in front of the company
+  # identity provider, on mecak8s's HTTP listener under the issuer URL's path. A
+  # non-empty issuer turns it on and requires oidc.enabled, oidc.audience, and
+  # oidc.resource; oidc.jwksURI must stay empty.
+  # oidc.issuer, oidc.clientID, and oidc.acceptedClientIDs may stay empty: the chart
+  # renders them as issuer, tuiClientID, and [tuiClientID]. When set, oidc.issuer
+  # must equal issuer, oidc.clientID must equal tuiClientID, and
+  # oidc.acceptedClientIDs must include tuiClientID. AS-1 keeps users, sign-ins, and
+  # refresh tokens in memory, so a restart signs everyone out.
+  as1:
+    # HTTPS issuer URL. Do not change it once users have signed in.
+    issuer: ""
+    # OAuth client ID of mecatui at AS-1 (a public client).
+    tuiClientID: ""
+    # Optional existing Secret key holding AS-1's PEM signing key (EC P-256 or
+    # RSA), mounted read-only. Empty generates a key at startup, so access tokens
+    # stop verifying when the pod restarts.
+    signingKey:
+      secretName: ""
+      key: ""
+    # The company identity provider. Register AS-1 there as a web application with
+    # the redirect URI <issuer>/oauth/callback.
+    upstream:
+      issuer: ""
+      clientID: ""
+      # Optional existing Secret key holding AS-1's client secret at the upstream,
+      # mounted read-only. Empty makes AS-1 a public client there.
+      clientSecret:
+        secretName: ""
+        key: ""
 
 tls:
   # Server TLS is optional for mock and explicit unsafe-bypass profiles, but

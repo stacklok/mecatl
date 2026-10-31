@@ -81,6 +81,10 @@ func newIdP(t testing.TB, opts Options) *IdP {
 // Issuer is the IdP's issuer, which AS-1 access tokens carry as sub_id.iss.
 func (p *IdP) Issuer() string { return p.server.URL }
 
+// OID is the stable object ID the IdP's ID tokens carry for subject in the
+// oid claim, as Entra ID does. It differs from subject.
+func OID(subject string) string { return "oid-" + subject }
+
 // AddUser lets the IdP sign in subject.
 func (p *IdP) AddUser(subject string) {
 	p.mu.Lock()
@@ -229,6 +233,7 @@ func (p *IdP) token(w http.ResponseWriter, r *http.Request) {
 		"iss": p.server.URL, "sub": code.subject, "aud": clientID,
 		"iat": now.Unix(), "exp": now.Add(idpIDTokenLife).Unix(),
 		"email": code.subject + "@example.com",
+		"oid":   OID(code.subject),
 	}
 	if code.nonce != "" {
 		claims["nonce"] = code.nonce

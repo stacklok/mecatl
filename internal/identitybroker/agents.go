@@ -203,6 +203,7 @@ func (b *Broker) VerifyCredential(_ context.Context, req VerifyCredentialRequest
 	var closed Reason
 	s, ok := t.byID[req.SessionID]
 	if ok {
+		t.expireLocked(s)
 		closed = s.closed
 	}
 	open := current && ok && closed == ""
