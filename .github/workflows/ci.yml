@@ -51,7 +51,7 @@ jobs:
     outputs:
       docs_only: ${{ steps.classify.outputs.docs_only }}
       # macOS runners cost ~10x a Linux minute. These flags gate the three
-      # macos-14 jobs: they default to true (RUN) and flip to false only when the
+      # macos-15 jobs: they default to true (RUN) and flip to false only when the
       # trusted base-ref classifier proves the change cannot affect that category.
       macos_go: ${{ steps.classify.outputs.macos_go }}
       macos_sdk: ${{ steps.classify.outputs.macos_sdk }}
@@ -495,7 +495,7 @@ jobs:
           if-no-files-found: ignore
 
   sdk-macos-spawn:
-    name: TypeScript SDK macOS spawn (macos-14, Node 22)
+    name: TypeScript SDK macOS spawn (macos-15, Node 22)
     needs: changes
     # macOS is ~10x a Linux minute. The SDK spawns mecated, so both Go and
     # sdk/typescript changes are relevant (macos_sdk); skip on docs/site-only
@@ -504,7 +504,7 @@ jobs:
       needs.changes.outputs.docs_only != 'true'
       && needs.changes.outputs.macos_sdk == 'true'
       && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
-    runs-on: macos-14
+    runs-on: macos-15
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -517,7 +517,7 @@ jobs:
           run_install: false
 
       # setup-node and setup-go include runner OS and architecture in their cache
-      # keys, so this macos-14 job cannot restore either Linux cache family.
+      # keys, so this macos-15 job cannot restore either Linux cache family.
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '22.x'
@@ -1076,7 +1076,7 @@ jobs:
       needs.changes.outputs.docs_only != 'true'
       && needs.changes.outputs.macos_go == 'true'
       && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
-    runs-on: macos-14
+    runs-on: macos-15
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -1134,7 +1134,7 @@ jobs:
       needs.changes.outputs.docs_only != 'true'
       && needs.changes.outputs.macos_go == 'true'
       && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
-    runs-on: macos-14
+    runs-on: macos-15
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
