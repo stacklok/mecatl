@@ -12,6 +12,12 @@ API snapshots live in [`engine/api/`](./api/).
 
 ### Added
 
+- **History content identifiers**: adds opaque, comparable `kernel/history/format.CID`
+  values with strict `ParseCID` and canonical `String` text. The supported profile
+  is CIDv1, DAG-CBOR, and SHA-256 with lowercase, unpadded base32 multibase text.
+  Parsing checks the identifier only, not commit validity or acceptance. No
+  production wire or stored-data behavior changes. Added (minor).
+
 - **Typed resource and history IDs** — adds `engine/id` with registered kinds,
   secure uniform generation, strict parsing, and comparable opaque `ID` values.
   Adds `kernel/history.HistoryID`, a distinct history-only wrapper. History IDs

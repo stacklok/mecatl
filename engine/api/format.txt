@@ -1,0 +1,3 @@
+    method func (CID).String() string
+func ParseCID(s string) (CID, error)
+type CID struct{}

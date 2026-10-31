@@ -14,6 +14,7 @@ const modulePrefix = "github.com/stacklok/mecatl/"
 var CorePackages = []string{
 	modulePrefix + "engine/id",
 	modulePrefix + "engine/kernel/history",
+	modulePrefix + "engine/kernel/history/format",
 	modulePrefix + "engine/kernel/history/id",
 	modulePrefix + "engine/session",
 	modulePrefix + "engine/governance",
