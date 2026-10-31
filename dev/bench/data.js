@@ -353740,6 +353740,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1793477721824,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "9da89759fb246fe37c34b20da94500e7dca802e1",
+          "message": "test(mecatequi): observe telemetry shutdown cancellation (#2634)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-31T21:06:20Z",
+          "tree_id": "ca3e1388a986323ec1a51181202b6d717c24209f",
+          "url": "https://github.com/stacklok/mecatl/commit/9da89759fb246fe37c34b20da94500e7dca802e1"
+        },
+        "date": 1793481502042,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -511178,6 +511212,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1793481498845,
+  "lastUpdate": 1793481502788,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
