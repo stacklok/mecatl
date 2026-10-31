@@ -108,7 +108,7 @@ client IDs from it; the chart renders the same derived values.
 {{- if not (or $noShell $emptyShell .Values.redis.filesystem.enabled) -}}{{ fail "identityBroker.enabled requires no shell in the mecak8s process: add --no-shell to extraArgs, or --shell= with execution.enabled to keep the remote Shell" }}{{- end -}}
 {{- end -}}
 {{- if and $broker.subjectClaim (not $as1.issuer) -}}{{ fail "identityBroker.subjectClaim requires identityBroker.as1.issuer" }}{{- end -}}
-{{- $as1Set := or $as1.tuiClientID $as1.signingKey.secretName $as1.signingKey.key $as1.upstream.issuer $as1.upstream.clientID $as1.upstream.clientSecret.secretName $as1.upstream.clientSecret.key -}}
+{{- $as1Set := or $as1.tuiClientID $as1.signingKey.secretName $as1.signingKey.key $as1.upstream.issuer $as1.upstream.clientID $as1.upstream.clientSecret.secretName $as1.upstream.clientSecret.key $as1.upstream.caSecret.secretName $as1.upstream.caSecret.key $as1.upstream.allowPrivateAddresses -}}
 {{- if and $as1Set (not $as1.issuer) -}}{{ fail "identityBroker.as1 values require identityBroker.as1.issuer" }}{{- end -}}
 {{- if $as1.issuer -}}
 {{- if not $broker.enabled -}}{{ fail "identityBroker.as1.issuer requires identityBroker.enabled=true" }}{{- end -}}
@@ -120,7 +120,9 @@ client IDs from it; the chart renders the same derived values.
 {{- range $name, $url := dict "identityBroker.as1.issuer" $as1.issuer "identityBroker.as1.upstream.issuer" $as1.upstream.issuer -}}
 {{- if not (regexMatch "^https://[^/?#@[:space:]]+(/[^?#[:space:]]*)?$" $url) -}}{{ fail (printf "%s must be an https URL with a host and no credentials, query, or fragment" $name) }}{{- end -}}
 {{- end -}}
+{{- if and $as1.upstream.allowPrivateAddresses (not $as1.upstream.caSecret.secretName) -}}{{ fail "identityBroker.as1.upstream.allowPrivateAddresses requires identityBroker.as1.upstream.caSecret" }}{{- end -}}
 {{- $_ := required "oidc.audience is required with identityBroker.as1.issuer: it is the Mecatl API audience AS-1 issues access tokens for" .Values.oidc.audience -}}
+{{- if not (regexMatch "^https?://[^/?#[:space:]]+[^#[:space:]]*$" .Values.oidc.audience) -}}{{ fail "oidc.audience must be an absolute http or https URL with a host and no fragment when identityBroker.as1.issuer is set: AS-1 refuses any other audience" }}{{- end -}}
 {{- $_ := required "oidc.resource is required with identityBroker.as1.issuer: mecatui finds AS-1 through the protected-resource metadata" .Values.oidc.resource -}}
 {{- if .Values.oidc.allowPrivateHTTPSIssuer -}}{{ fail "oidc.allowPrivateHTTPSIssuer cannot be used with identityBroker.as1.issuer: mecak8s reaches the AS-1 it hosts without the network" }}{{- end -}}
 {{- if .Values.oidc.jwksURI -}}{{ fail "oidc.jwksURI cannot be used with identityBroker.as1.issuer: AS-1's discovery document supplies its keys" }}{{- end -}}
@@ -128,7 +130,7 @@ client IDs from it; the chart renders the same derived values.
 {{- if and .Values.oidc.clientID (ne .Values.oidc.clientID $as1.tuiClientID) -}}{{ fail "oidc.clientID must be empty or equal identityBroker.as1.tuiClientID" }}{{- end -}}
 {{- if and .Values.oidc.acceptedClientIDs (not (has $as1.tuiClientID .Values.oidc.acceptedClientIDs)) -}}{{ fail "oidc.acceptedClientIDs must include identityBroker.as1.tuiClientID" }}{{- end -}}
 {{- end -}}
-{{- range $name, $ref := dict "identityBroker.as1.signingKey" $as1.signingKey "identityBroker.as1.upstream.clientSecret" $as1.upstream.clientSecret -}}
+{{- range $name, $ref := dict "identityBroker.as1.signingKey" $as1.signingKey "identityBroker.as1.upstream.clientSecret" $as1.upstream.clientSecret "identityBroker.as1.upstream.caSecret" $as1.upstream.caSecret -}}
 {{- if or $ref.secretName $ref.key -}}
 {{- $_ := required (printf "%s.secretName is required when %s.key is set" $name $name) $ref.secretName -}}
 {{- $_ := required (printf "%s.key is required when %s.secretName is set" $name $name) $ref.key -}}

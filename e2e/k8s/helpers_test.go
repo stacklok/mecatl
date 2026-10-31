@@ -733,10 +733,16 @@ func portForwardPort(podName string, targetPort int) (addr string, stop func()) 
 // / stop call.
 func portForwardResource(resource string, targetPort int) (addr string, stop func()) {
 	ginkgo.GinkgoHelper()
+	return portForwardResourceIn(k8sNamespace, resource, targetPort)
+}
+
+// portForwardResourceIn is portForwardResource for a resource in namespace.
+func portForwardResourceIn(namespace, resource string, targetPort int) (addr string, stop func()) {
+	ginkgo.GinkgoHelper()
 	port := freeLocalPort()
 	ctx, cancel := context.WithCancel(ginkgoSuiteCtx())
 	cmd := exec.CommandContext(ctx, "kubectl", "port-forward",
-		"-n", k8sNamespace,
+		"-n", namespace,
 		resource,
 		fmt.Sprintf("%d:%d", port, targetPort))
 	// port-forward writes progress to stderr; capture it for failure diagnosis.

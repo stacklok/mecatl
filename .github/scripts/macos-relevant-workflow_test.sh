@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Offline contract test for the macOS-runner cost gating in ci.yml. The macos-14
+# Offline contract test for the macOS-runner cost gating in ci.yml. The macos-15
 # jobs cost ~10x a Linux minute, so each must be gated on (a) not docs-only, (b)
 # its path-relevance flag, and (c) not a draft PR — and the flags must be computed
 # fail-closed from the trusted base-ref classifier.
@@ -47,24 +47,24 @@ if [[ -z "$validate_line" || -z "$extract_line" || "$extract_line" -le "$validat
 fi
 
 # --- per-job gating ------------------------------------------------------------
-# Each macos-14 job needs the docs-only guard, its path flag, and the draft gate.
+# Each macos-15 job needs the docs-only guard, its path flag, and the draft gate.
 draft_gate="&& (github.event_name != 'pull_request' || github.event.pull_request.draft == false)"
 
-# Count macos-14 jobs so the assertions below cannot silently pass if a job is
+# Count macos-15 jobs so the assertions below cannot silently pass if a job is
 # renamed or a fourth is added without gating.
-macos_jobs="$(grep -cE '^ +runs-on: macos-14$' "$workflow" || true)"
+macos_jobs="$(grep -cE '^ +runs-on: macos-15$' "$workflow" || true)"
 if [[ "$macos_jobs" -ne 3 ]]; then
-  fail "expected 3 macos-14 jobs, found $macos_jobs — new macOS jobs must be cost-gated"
+  fail "expected 3 macos-15 jobs, found $macos_jobs — new macOS jobs must be cost-gated"
 fi
 
 # Both Go smokes gate on macos_go; the SDK spawn gates on macos_sdk. Assert both
-# flags are referenced and the draft gate appears for every macos-14 job.
+# flags are referenced and the draft gate appears for every macos-15 job.
 require "needs.changes.outputs.macos_go == 'true'" 'the Go macOS smokes must gate on macos_go'
 require "needs.changes.outputs.macos_sdk == 'true'" 'the SDK macOS spawn must gate on macos_sdk'
 
 draft_gates="$(grep -cF "$draft_gate" "$workflow" || true)"
 if [[ "$draft_gates" -lt 3 ]]; then
-  fail "expected the draft gate on all 3 macos-14 jobs, found $draft_gates occurrence(s)"
+  fail "expected the draft gate on all 3 macos-15 jobs, found $draft_gates occurrence(s)"
 fi
 
 # --- closure drift guard wiring ------------------------------------------------

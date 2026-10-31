@@ -37,6 +37,9 @@ includes:
   mecak8s-vmcp:
     taskfile: deploy/mecak8s-vmcp/Taskfile.yml
     dir: .
+  mecak8s-idbroker:
+    taskfile: deploy/mecak8s-idbroker/Taskfile.yml
+    dir: .
 
 vars:
   GO_MODULES:
