@@ -206,10 +206,25 @@ func TestBuiltSchedulerBorrowsNativeOriginAndPublishesEachFire(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create during origin run: %v", err)
 	}
-	busyCtx, cancel := context.WithTimeout(ctx, time.Second)
+	busyCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	if got, err := built.Service.FireNow(busyCtx, sched.Spec.Name); !errors.Is(err, server.ErrPlacementChanged) {
-		t.Fatalf("busy manual fire=%+v %v", got, err)
+	// Build starts leadership acquisition asynchronously. Wait only for that
+	// gate; once admitted, the busy origin must still refuse the fire.
+	retry := time.NewTicker(time.Millisecond)
+	defer retry.Stop()
+	for {
+		got, err := built.Service.FireNow(busyCtx, sched.Spec.Name)
+		if !errors.Is(err, server.ErrScheduleNotLeader) {
+			if !errors.Is(err, server.ErrPlacementChanged) {
+				t.Fatalf("busy manual fire=%+v %v", got, err)
+			}
+			break
+		}
+		select {
+		case <-retry.C:
+		case <-busyCtx.Done():
+			t.Fatalf("scheduler leadership not ready: %v (last fire error: %v)", busyCtx.Err(), err)
+		}
 	}
 	busyCalls := llm.Calls()
 	for range run.Events() {
