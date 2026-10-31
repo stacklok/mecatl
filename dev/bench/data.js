@@ -391647,6 +391647,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1793476921468,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "43f621da765e0659b8bd20afb73283a4f7a4e33a",
+          "message": "test(mecatui): replace lifecycle sleeps with observed barriers (#2630)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-31T20:00:03Z",
+          "tree_id": "d0c84c63bdbc411aecbad5e1380cf0d559518c1c",
+          "url": "https://github.com/stacklok/mecatl/commit/43f621da765e0659b8bd20afb73283a4f7a4e33a"
+        },
+        "date": 1793477726565,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 16148,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12911,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 794,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -510701,6 +510740,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1793477722902,
+  "lastUpdate": 1793477727625,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
