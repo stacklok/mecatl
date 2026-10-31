@@ -352666,6 +352666,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1793386512731,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "396e618f23a53d568ab364bdde46260cb3e2c268",
+          "message": "ci: migrate standard macOS jobs to macOS 26 (#2632)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-31T12:37:40-07:00",
+          "tree_id": "0054f956e14aa57c71f7b48c61dd053ec9e8dad1",
+          "url": "https://github.com/stacklok/mecatl/commit/396e618f23a53d568ab364bdde46260cb3e2c268"
+        },
+        "date": 1793476172376,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -509645,6 +509679,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1793476169729,
+  "lastUpdate": 1793476173149,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
