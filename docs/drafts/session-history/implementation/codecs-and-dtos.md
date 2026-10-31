@@ -95,10 +95,16 @@ weakening the field to a string. Moving the defining type changes its Go
 package/reflection identity while preserving ordinary source use and the text
 contract.
 
-Working-state types remain separate from persistence DTOs. Higher-level history
-code depends on the format contract rather than on whether codecs are
-handwritten or generated. Internal packages are useful where they establish a
-real dependency boundary, not as a requirement to create one package per file.
+Working-state types remain separate from mutable persistence DTOs. `Commit` and
+`Record` expose concrete `Clone` and `Equal` methods: cloning detaches all nested
+mutable storage, while equality compares fields and ordered opaque payload bytes,
+with nil and empty slices equivalent. Neither operation validates the format or
+freezes its values. Marker interfaces establish none of these guarantees; concrete
+methods make the operations discoverable without requiring a shared interface.
+Higher-level history code depends on the format contract rather than on whether
+codecs are handwritten or generated. Internal packages are useful where they
+establish a real dependency boundary, not as a requirement to create one package
+per file.
 
 ### Owning operations detach storage
 
@@ -116,13 +122,14 @@ weakening of owning decoding.
 
 ### Why package functions leave room for generation
 
-Package-level functions avoid requiring codec methods on DTOs. Future public
-DTO names can alias suitable generated structs because callers need not depend
-on methods added locally. Go cannot attach methods to an alias of a type
-defined in another package, and a type alias cannot substitute individual
-field types inside a generated struct. A generator-specific CID field can still
-require generator customization, DTO conversion, or an explicit Go API change.
-Source compatibility with an arbitrary future generated schema is not promised.
+Package-level encode/decode functions avoid coupling DTOs to codec methods.
+Concrete `Clone` and `Equal` methods favor discoverability over unrestricted
+future aliases to generated structs. Go cannot attach methods to an alias of a
+type defined in another package, so a generated replacement must supply compatible
+methods or retain Mecatl-defined DTOs with explicit conversion. Aliases also
+cannot substitute individual generated field types. Generator customization,
+conversion, or an explicit Go API change may therefore be necessary; source
+compatibility with an arbitrary future generated schema is not promised.
 
 Lexicon can generate typed Go records, JSON/CBOR methods, unions, and client
 functions. A schema could also support documentation, structural validation,

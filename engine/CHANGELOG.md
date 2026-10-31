@@ -12,6 +12,13 @@ API snapshots live in [`engine/api/`](./api/).
 
 ### Added
 
+- **History persistence DTOs**: adds `kernel/history/format.Commit` and `Record`
+  with strongly typed root/history linkage, envelope and kind versions, ordered
+  records, and opaque payload bytes. Concrete `Clone` methods detach nested
+  mutable storage; `Equal` methods compare fields and ordered bytes, treating nil
+  and empty slices equally. These methods neither validate nor freeze the DTOs.
+  No codec, production wire, or stored-data behavior changes. Added (minor).
+
 - **History content identifiers**: adds opaque, comparable `kernel/history/format.CID`
   values with strict `ParseCID` and canonical `String` text. The supported profile
   is CIDv1, DAG-CBOR, and SHA-256 with lowercase, unpadded base32 multibase text.

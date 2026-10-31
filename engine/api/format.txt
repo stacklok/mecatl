@@ -1,3 +1,9 @@
     method func (CID).String() string
+    method func (Commit).Clone() Commit
+    method func (Commit).Equal(other Commit) bool
+    method func (Record).Clone() Record
+    method func (Record).Equal(other Record) bool
 func ParseCID(s string) (CID, error)
 type CID struct{}
+type Commit struct{FormatVersion int64; HistoryID id.HistoryID; Parent CID; Records []Record}
+type Record struct{Kind string; KindVersion int64; Payload []byte}

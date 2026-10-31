@@ -90,10 +90,11 @@ var coreImportRules = []coreImportRule{
 		desc: "history identity values may import only resource ID values + stdlib, never history or formats",
 	},
 	{
-		pkg:             modulePrefix + "engine/kernel/history/format",
-		allowedCore:     map[string]bool{},
-		allowedExternal: map[string]bool{},
-		desc:            "history format CID values may import stdlib only",
+		pkg: modulePrefix + "engine/kernel/history/format",
+		allowedCore: map[string]bool{
+			modulePrefix + "engine/kernel/history/id": true,
+		},
+		desc: "history format values may import only history identity values + stdlib, never higher-level history contracts",
 	},
 	{
 		pkg: modulePrefix + "engine/kernel/history",

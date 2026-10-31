@@ -137,6 +137,7 @@ linters:
             - '!$test'
           allow:
             - $gostd
+            - github.com/stacklok/mecatl/engine/kernel/history/id$
           deny:
             - pkg: os
               desc: 'history formats must not access host state'

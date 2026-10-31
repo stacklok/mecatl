@@ -1,5 +1,3 @@
-// Package format owns the isolated kernel's persistence representation and
-// content identities. It does not establish history membership or acceptance.
 package format
 
 import (
