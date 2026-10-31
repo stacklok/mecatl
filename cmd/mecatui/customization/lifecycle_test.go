@@ -2,11 +2,10 @@ package customization
 
 import (
 	"context"
-	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 )
 
@@ -197,71 +196,53 @@ func TestStatusLine_Scenario4_OptionalInterval(t *testing.T) {
 	}
 }
 
-func TestStatusLine_Scenario4_ProcessLifecycleAndGenerationGuard(t *testing.T) {
-	dir := t.TempDir()
-	started := filepath.Join(dir, "started")
-	command := commandTest(dir, "latest", started)
-	source := NewCommandSource(command)
-	t.Cleanup(func() {
-		if err := source.Close(context.Background()); err != nil {
-			t.Errorf("close command source: %v", err)
+func TestStatusLineReplacementWaitsForRenderJoin(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		started := make(chan string, 2)
+		cancelled := make(chan struct{})
+		release := make(chan struct{})
+		unblock := sync.OnceFunc(func() { close(release) })
+		source := newSourceWithOptions(nil, func(ctx context.Context, input Input) renderedStatusLine {
+			started <- input.Session.Title
+			if input.Session.Title == "first" {
+				<-ctx.Done()
+				close(cancelled)
+				<-release
+			}
+			return renderedStatusLine{line: Result{Footer: Surface{Present: true, Spans: []Span{{Text: input.Session.Title}}}}}
+		}, false, commandDebounce, 0)
+		t.Cleanup(func() {
+			unblock()
+			if err := source.Close(context.Background()); err != nil {
+				t.Errorf("close source: %v", err)
+			}
+		})
+
+		source.Submit(Input{Session: Session{Title: "first"}})
+		if got := <-started; got != "first" {
+			t.Fatalf("started %q, want first", got)
+		}
+		source.Submit(Input{Session: Session{Title: "latest"}})
+		<-cancelled
+		// Advance fake time past replacement readiness, then settle all goroutines
+		// while the cancelled renderer remains deliberately unjoined.
+		time.Sleep(2 * commandDebounce)
+		synctest.Wait()
+		select {
+		case got := <-started:
+			t.Fatalf("replacement %q started before the first renderer joined", got)
+		default:
+		}
+
+		unblock()
+		if got := <-started; got != "latest" {
+			t.Fatalf("started %q after join, want latest", got)
+		}
+		waitStatusChange(t, source)
+		if got := statusSurfaceText(source.Latest().Footer); got != "latest" {
+			t.Fatalf("stale command completion won: footer = %q", got)
 		}
 	})
-
-	status := source.(commandSource).status
-	// Replacement must cancel the command; its normal deadline must not rescue it.
-	status.invocationTimeout = 0
-	firstContext := make(chan context.Context, 1)
-	firstJoined := make(chan struct{})
-	render := status.render
-	status.render = func(ctx context.Context, input Input) renderedStatusLine {
-		if input.Session.Title == "first" {
-			firstContext <- ctx
-			defer close(firstJoined)
-		} else {
-			select {
-			case <-firstJoined:
-			default:
-				t.Error("replacement started before the older command joined")
-			}
-		}
-		return render(ctx, input)
-	}
-
-	source.Submit(Input{Session: Session{Title: "first"}, Terminal: Terminal{FooterAvailCols: 80}})
-	// The child writes this marker only after the debounced command tree starts.
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	poll := time.NewTicker(time.Millisecond)
-	defer poll.Stop()
-waitForChild:
-	for {
-		if _, err := os.Stat(started); err == nil {
-			break waitForChild
-		} else if !os.IsNotExist(err) {
-			t.Fatalf("stat command marker: %v", err)
-		}
-		select {
-		case <-poll.C:
-		case <-ctx.Done():
-			t.Fatal("first command tree never started")
-		}
-	}
-	firstCtx := <-firstContext
-	source.Submit(Input{Session: Session{Title: "latest"}, Terminal: Terminal{FooterAvailCols: 80}})
-	select {
-	case <-firstCtx.Done():
-	case <-ctx.Done():
-		t.Fatal("replacement did not cancel the older command")
-	}
-	select {
-	case <-source.Changed():
-	case <-ctx.Done():
-		t.Fatal("replacement did not cancel and join the older command tree")
-	}
-	if got := statusSurfaceText(source.Latest().Footer); got != "latest" {
-		t.Fatalf("stale command completion won: footer = %q", got)
-	}
 }
 
 func TestStatusLine_Scenario4_FailureDegradesWithoutLeakage(t *testing.T) {
