@@ -393235,6 +393235,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1793487702986,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "2c64407db3826296650b0aa9bba4472cfa4124d9",
+          "message": "test(sdk): stabilize steering and isolate wire-test environments (#2637)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-31T18:10:37-07:00",
+          "tree_id": "b45abfbb4ce40f97eb8e07ddbdb69e15fc7961a8",
+          "url": "https://github.com/stacklok/mecatl/commit/2c64407db3826296650b0aa9bba4472cfa4124d9"
+        },
+        "date": 1793496176242,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 16138,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12904,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 794,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -512745,6 +512784,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1793496173017,
+  "lastUpdate": 1793496177004,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
