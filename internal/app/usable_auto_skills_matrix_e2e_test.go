@@ -17,6 +17,7 @@ import (
 	"github.com/stacklok/mecatl/engine/learning"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
+	"github.com/stacklok/mecatl/internal/adapter/attemptstore"
 )
 
 type stockSkillEvaluator struct {
@@ -45,6 +46,7 @@ func TestUsableAutoSkillsStockBuildPolicyMatrix(t *testing.T) {
 		wantActivity      learning.ActivityKind
 		wantActivityCount int
 		wantPublished     bool
+		delayTerminal     bool
 	}{
 		{name: "omitted validated nil evaluator", mode: learning.Auto, trustProject: true, wantState: learning.SkillActive, wantOperation: "activate_validated", wantActivity: learning.ActivitySkillActivatedValidated, wantPublished: true},
 		{name: "explicit abstain", mode: learning.Auto, policy: learning.SkillActivationValidated, evaluator: stockSkillEvaluator{verdict: learning.EvaluationAbstain}, trustProject: true, wantState: learning.SkillActive, wantOperation: "activate_validated", wantActivity: learning.ActivitySkillActivatedValidated, wantPublished: true},
@@ -52,6 +54,7 @@ func TestUsableAutoSkillsStockBuildPolicyMatrix(t *testing.T) {
 		{name: "explicit fail", mode: learning.Auto, policy: learning.SkillActivationValidated, evaluator: stockSkillEvaluator{verdict: learning.EvaluationFail}, trustProject: true, wantState: learning.SkillRejected, wantOperation: "record_evaluation", wantActivity: learning.ActivitySkillRejected},
 		{name: "evaluator error retry", mode: learning.Auto, policy: learning.SkillActivationValidated, evaluator: stockSkillEvaluator{err: secretErr}, trustProject: true, wantState: learning.SkillRejected, wantOperation: "record_evaluation", wantActivity: learning.ActivityFailed, wantActivityCount: 1},
 		{name: "explicit evaluated", mode: learning.Auto, policy: learning.SkillActivationEvaluated, trustProject: true, wantState: learning.SkillStaged, wantOperation: "stage", wantActivity: learning.ActivitySkillStaged},
+		{name: "explicit evaluated delayed terminal", mode: learning.Auto, policy: learning.SkillActivationEvaluated, trustProject: true, wantState: learning.SkillStaged, wantOperation: "stage", wantActivity: learning.ActivitySkillStaged, delayTerminal: true},
 		{name: "review", mode: learning.Review, policy: learning.SkillActivationValidated, trustProject: true, wantState: learning.SkillStaged, wantOperation: "stage", wantActivity: learning.ActivitySkillStaged},
 		{name: "off", mode: learning.Off, trustProject: true},
 		{name: "trusted project tighten", mode: learning.Auto, policy: learning.SkillActivationValidated, projectPolicy: true, trustProject: true, wantState: learning.SkillStaged, wantOperation: "stage", wantActivity: learning.ActivitySkillStaged},
@@ -60,11 +63,10 @@ func TestUsableAutoSkillsStockBuildPolicyMatrix(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
-				if tc.projectPolicy {
-					t.Setenv("XDG_CONFIG_HOME", t.TempDir())
-				}
+				t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 				workspace := osfsWSForTest(t, t.TempDir()).Root()
 				storeDir := t.TempDir()
+				userModelDir := t.TempDir()
 				if tc.projectPolicy {
 					if err := os.MkdirAll(filepath.Join(workspace, ".mecatl"), 0o700); err != nil {
 						t.Fatal(err)
@@ -88,7 +90,7 @@ func TestUsableAutoSkillsStockBuildPolicyMatrix(t *testing.T) {
 				built, err := buildIsolated(t, context.Background(), Config{
 					Model: "test-model", Workspace: workspace, TrustProject: tc.trustProject, Headless: !tc.trustProject, PermissionsConventional: tc.projectPolicy,
 					LearningMode: tc.mode, SkillActivationPolicy: tc.policy, SkillEvaluator: tc.evaluator,
-					UserModelDir: t.TempDir(), MemoryDir: t.TempDir(), Diagnostics: diag, StoreDir: storeDir,
+					UserModelDir: userModelDir, MemoryDir: t.TempDir(), Diagnostics: diag, StoreDir: storeDir,
 					LearningMetricsEmitter: func(activity learning.Activity) {
 						metricsMu.Lock()
 						activities = append(activities, activity)
@@ -116,6 +118,14 @@ func TestUsableAutoSkillsStockBuildPolicyMatrix(t *testing.T) {
 					t.Fatal(err)
 				}
 				for event := range run.Events() {
+					if tc.delayTerminal && event.Type == session.EvResult {
+						// Make recovery observe the admitted attempt before terminal evidence
+						// is durable, rather than relying on a lucky startup interleaving.
+						awaitMatrixEvidenceBackoff(ctx, t, userModelDir, sess.Owner)
+						if provider.Calls() != 1 {
+							t.Fatal("reflection ran before terminal evidence was durable")
+						}
+					}
 					if err := log.Append(ctx, sess.ID, event); err != nil {
 						t.Fatal(err)
 					}
@@ -128,7 +138,9 @@ func TestUsableAutoSkillsStockBuildPolicyMatrix(t *testing.T) {
 				}
 
 				var listed *mecatlv1.ListLearnedSkillsResponse
-				deadline := time.Now().Add(3 * time.Second)
+				// Admission can precede terminal event persistence. Allow the first
+				// evidence-not-ready backoff and rediscovery; this is fake time.
+				deadline := time.Now().Add(defaultAttemptSetupRetryBase + 3*defaultAttemptDiscoveryInterval)
 				for time.Now().Before(deadline) {
 					listed, err = built.Service.ListLearnedSkills(ctx, &mecatlv1.ListLearnedSkillsRequest{Project: workspace})
 					if err != nil {
@@ -236,4 +248,33 @@ func TestUsableAutoSkillsStockBuildPolicyMatrix(t *testing.T) {
 			})
 		})
 	}
+}
+
+func awaitMatrixEvidenceBackoff(ctx context.Context, t *testing.T, userModelDir string, owner *session.Principal) {
+	t.Helper()
+	attempts, err := attemptstore.New(filepath.Join(userModelDir, "learning-attempts"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	partition, err := learning.DeriveAttemptPartition(reflectionPrincipal(owner))
+	if err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(2 * defaultAttemptDiscoveryInterval)
+	for time.Now().Before(deadline) {
+		page, err := attempts.List(ctx, partition, learning.AttemptList{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(page.Records) == 1 {
+			record := page.Records[0]
+			remaining := time.Until(record.ClaimExpiresAt)
+			if record.State == learning.AttemptRunning && record.ClaimGeneration == 1 &&
+				record.CheckpointStage == learning.AttemptCheckpointNone && remaining > 0 && remaining <= defaultAttemptSetupRetryBase {
+				return
+			}
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("recovery did not persist the first evidence-not-ready backoff")
 }
