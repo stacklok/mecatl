@@ -233,12 +233,14 @@ identityBroker:
 |-|-|-|
 |`identityBroker.enabled`|`--enable-identity-broker`|Starts the identity broker. Requires `replicaCount: 1`, `oidc.ownerIdentity: sub_id` when OIDC is enabled, and no shell in the process: `--no-shell` in `extraArgs`, or `--shell=` with `execution.enabled` to keep the remote Shell. The chart refuses to render without one. The Deployment rolls out with `Recreate`. This value is the only way to start the broker: the chart refuses `--enable-identity-broker` in `extraArgs`.|
 |`identityBroker.subjectClaim`|`--identity-broker-subject-claim`|The company IdP's ID-token claim that names each user. Required with `identityBroker.as1.issuer`, and allowed only with it.|
-|`identityBroker.as1.issuer`|`--identity-broker-as1-issuer`|AS-1's HTTPS issuer URL. Setting it hosts AS-1 and requires `oidc.enabled`, `oidc.audience`, and `oidc.resource`.|
+|`identityBroker.as1.issuer`|`--identity-broker-as1-issuer`|AS-1's HTTPS issuer URL. Setting it hosts AS-1 and requires `oidc.enabled`, `oidc.audience`, and `oidc.resource`. AS-1 accepts only an absolute `http` or `https` URL with a host and no fragment as the audience, such as `https://mecatl.example.com/api`.|
 |`identityBroker.as1.tuiClientID`|`--identity-broker-as1-tui-client-id`|The client ID `mecatui` uses at AS-1.|
 |`identityBroker.as1.signingKey`|`--identity-broker-as1-signing-key-file`|_Optional._ Secret key holding AS-1's PEM signing key (EC P-256 or RSA).|
 |`identityBroker.as1.upstream.issuer`|`--identity-broker-as1-upstream-issuer`|The company IdP's HTTPS issuer URL.|
 |`identityBroker.as1.upstream.clientID`|`--identity-broker-as1-upstream-client-id`|AS-1's client ID at the company IdP.|
 |`identityBroker.as1.upstream.clientSecret`|`--identity-broker-as1-upstream-client-secret-file`|_Optional._ Secret key holding AS-1's client secret at the company IdP. Without it, AS-1 is a public client there.|
+|`identityBroker.as1.upstream.caSecret`|`--identity-broker-as1-upstream-ca-file`|_Optional._ Secret key holding a PEM CA bundle AS-1 trusts for the company IdP's certificate, beside the system roots. It does not admit a private address. Required with `identityBroker.as1.upstream.allowPrivateAddresses`.|
+|`identityBroker.as1.upstream.allowPrivateAddresses`|`--identity-broker-as1-upstream-allow-private-addresses`|_Optional._ Lets AS-1 reach a company IdP at a private or link-local address, such as an in-cluster Service. It applies to every request AS-1 makes to the company IdP, including discovery, the endpoints discovery returns, and redirects, not just the issuer host. Requires `identityBroker.as1.upstream.caSecret`.|
 
 Create the Secret before installing; the chart mounts each key read-only. Leave
 `oidc.issuer`, `oidc.clientID`, and `oidc.acceptedClientIDs` empty: the chart

@@ -82,6 +82,12 @@ Without the Keycloak layer, connect directly:
 ./bin/mecatui connect 127.0.0.1:18080
 ```
 
+For identity broker or hosted AS-1 work, use the separate `mecatl-idbroker`
+profile instead (Dex upstream, `mecatui login` through AS-1; runs alongside
+`mecatl-dev`): `task mecak8s-idbroker:kind-setup`, then
+`task mecak8s-idbroker:image-refresh` to iterate. See
+`deploy/mecak8s-idbroker/README.md`.
+
 ## Iterating
 
 Repeat Step 1 (`task mecak8s:image-refresh`) after each code change, then

@@ -361,6 +361,8 @@ type as1Flags struct {
 	upstreamIssuer           string
 	upstreamClientID         string
 	upstreamClientSecretFile string
+	upstreamCAFile           string
+	upstreamAllowPrivate     bool
 }
 
 // stringList is a repeatable string flag.Value, preserving order across
@@ -554,6 +556,8 @@ func parseFlags(argv []string) (config, error) {
 	fs.StringVar(&cfg.as1.upstreamIssuer, "identity-broker-as1-upstream-issuer", "", "HTTPS issuer URL of the OIDC identity provider users sign in at through AS-1. Required with --identity-broker-as1-issuer")
 	fs.StringVar(&cfg.as1.upstreamClientID, "identity-broker-as1-upstream-client-id", "", "AS-1's client ID at the upstream identity provider, registered with the redirect URI ISSUER/oauth/callback. Required with --identity-broker-as1-issuer")
 	fs.StringVar(&cfg.as1.upstreamClientSecretFile, "identity-broker-as1-upstream-client-secret-file", "", "File holding AS-1's client secret at the upstream identity provider. Empty makes AS-1 a public client there")
+	fs.StringVar(&cfg.as1.upstreamCAFile, "identity-broker-as1-upstream-ca-file", "", "PEM CA bundle AS-1 trusts, beside the system roots, for the upstream identity provider's TLS certificate. Does not admit private addresses; see --identity-broker-as1-upstream-allow-private-addresses")
+	fs.BoolVar(&cfg.as1.upstreamAllowPrivate, "identity-broker-as1-upstream-allow-private-addresses", false, "Let AS-1 reach an upstream identity provider at a private or link-local address, such as an in-cluster Service. Applies to every request AS-1 makes to the upstream identity provider (discovery, the endpoints it discovers, and redirects), not just the issuer host. Requires --identity-broker-as1-upstream-ca-file")
 	fs.StringVar(&cfg.identityBrokerSubjectClaim, "identity-broker-subject-claim", "", "Upstream identity provider ID-token claim that names the company identity, the same for a user in every application: oid for Entra ID, whose sub differs per application, or sub for a provider whose sub does not. Required with, and only allowed with, --identity-broker-as1-issuer")
 
 	// Headless telemetry (issue #343): OPT-IN. --metrics-addr mounts a
@@ -773,8 +777,12 @@ func resolveAS1Flags(cfg *config) error {
 		return errors.New("--identity-broker-as1-issuer must be an https URL with a host and no credentials, query, or fragment")
 	case !strings.HasPrefix(as1.upstreamIssuer, "https://") || !validIssuerIdentifier(as1.upstreamIssuer):
 		return errors.New("--identity-broker-as1-upstream-issuer must be an https URL with a host and no credentials, query, or fragment")
+	case as1.upstreamAllowPrivate && as1.upstreamCAFile == "":
+		return errors.New("--identity-broker-as1-upstream-allow-private-addresses requires --identity-broker-as1-upstream-ca-file")
 	case oidc.Audience == "":
 		return errors.New("--identity-broker-as1-issuer requires --oidc-audience, the Mecatl API audience AS-1 issues access tokens for")
+	case !as1AudienceURI(oidc.Audience):
+		return errors.New("--oidc-audience must be an absolute http or https URL with a host and no fragment when --identity-broker-as1-issuer is set: AS-1 refuses any other audience")
 	case oidc.Resource == "":
 		return errors.New("--identity-broker-as1-issuer requires --oidc-resource: mecatui finds AS-1 through the protected-resource metadata")
 	case oidc.AllowPrivateHTTPSIssuer:
@@ -795,6 +803,13 @@ func resolveAS1Flags(cfg *config) error {
 	return nil
 }
 
+// as1AudienceURI reports whether audience is one AS-1 accepts: ToolHive
+// requires an absolute http or https URI with a host and no fragment.
+func as1AudienceURI(audience string) bool {
+	u, err := url.Parse(audience)
+	return err == nil && u.IsAbs() && u.Host != "" && u.Fragment == "" && (u.Scheme == "http" || u.Scheme == "https")
+}
+
 // identityBrokerAS1Config is AS-1's composition configuration, or nil when
 // AS-1 is not hosted.
 func identityBrokerAS1Config(cfg config) *app.IdentityBrokerAS1Config {
@@ -806,6 +821,7 @@ func identityBrokerAS1Config(cfg config) *app.IdentityBrokerAS1Config {
 		PublicClients:  []app.IdentityBrokerAS1PublicClient{{ID: cfg.as1.tuiClientID, RedirectURIs: []string{oauthlogin.ExactRedirectURL}}},
 		UpstreamIssuer: cfg.as1.upstreamIssuer, UpstreamClientID: cfg.as1.upstreamClientID,
 		UpstreamClientSecretFile: cfg.as1.upstreamClientSecretFile, SubjectClaim: cfg.identityBrokerSubjectClaim,
+		UpstreamCAFile: cfg.as1.upstreamCAFile, UpstreamAllowPrivateAddresses: cfg.as1.upstreamAllowPrivate,
 	}
 }
 
