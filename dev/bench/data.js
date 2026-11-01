@@ -393632,6 +393632,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1793496176242,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "c3adf8f7a3a1b2886668160f6275425d7a97873c",
+          "message": "fix(server): synchronize relay completion with run admission (#2638)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-11-01T08:21:34-08:00",
+          "tree_id": "ea77e9f0cd8da1b55f1ebb2ec998d93891a0f130",
+          "url": "https://github.com/stacklok/mecatl/commit/c3adf8f7a3a1b2886668160f6275425d7a97873c"
+        },
+        "date": 1793550840048,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 16130,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12894,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 794,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -513256,6 +513295,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1793550836723,
+  "lastUpdate": 1793550841175,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
