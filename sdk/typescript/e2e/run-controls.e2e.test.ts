@@ -192,6 +192,10 @@ async function exerciseLiveControls(testCase: WireCase, daemon: Daemon): Promise
 
     const steerSession = await client.sessions.create({});
     const steerRun = await steerSession.run("hold for steering");
+    // Keep the run at an unresolved ask so no turn boundary can drain the
+    // pending steer between the append and retract assertions.
+    const steerAsk = await nextAsk(steerRun);
+    expect(steerAsk.tool).toBe("Write");
     const steerControls = steerSession.controls(steerRun.id);
     await expect(
       steerControls.steer("inspect the media", { messageId: "text-1" }),
@@ -220,9 +224,11 @@ async function exerciseLiveControls(testCase: WireCase, daemon: Daemon): Promise
       runId: steerRun.id,
     });
     await steerControls.cancel();
-    for await (const _event of steerRun) {
-      // Drain the owned stream so the next scripted run starts after cancellation.
-    }
+    expect(await finishRun(steerAsk.iterator, steerAsk.events)).toMatchObject({
+      kind: "result",
+      payload: { stop: "cancelled" },
+      runId: steerRun.id,
+    });
     await steerSession.delete();
 
     const staleSession = await client.sessions.create({});
