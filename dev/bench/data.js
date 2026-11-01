@@ -355530,6 +355530,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1793550835606,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "31aedf2ec7986ef5b1c1053adeff3d744858ae3d",
+          "message": "feat(engine): add isolated kernel history foundation (#2639)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-11-01T09:51:05-08:00",
+          "tree_id": "acb1aebb0c23f438aa4d7e2d7e2092c606c5755c",
+          "url": "https://github.com/stacklok/mecatl/commit/31aedf2ec7986ef5b1c1053adeff3d744858ae3d"
+        },
+        "date": 1793556209543,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -513733,6 +513767,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1793556206668,
+  "lastUpdate": 1793556210358,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
