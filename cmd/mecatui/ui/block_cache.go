@@ -13,6 +13,9 @@ type mdEntry struct {
 // renderContextKey is the shared comparable presentation identity for every
 // whole-block render. Keep all view/presentation cache axes here so cache
 // admission remains one comparison rather than a collection of partial guards.
+// An entry whose output does not read the expand axis declares so with
+// blockEntry.expandInvariant; renderedBlock masks that axis on the probe, so
+// admission is still one comparison.
 type renderContextKey struct {
 	width    int
 	expanded bool
@@ -31,13 +34,18 @@ type blockEntry struct {
 	key  blockRenderKey
 	out  string
 	rows []renderedRow
+	// expandInvariant marks output that is identical at either expand state, so
+	// the entry stays valid across a conversation-detail flip.
+	expandInvariant bool
 }
 
 // blockRenderOutput is the cache-output protocol for a freshly rendered card.
-// It carries only rendered text and lockstep structural provenance.
+// It carries only rendered text, lockstep structural provenance, and whether
+// the output depends on the expand state.
 type blockRenderOutput struct {
-	text string
-	rows []renderedRow
+	text            string
+	rows            []renderedRow
+	expandInvariant bool
 }
 
 // renderPass is the renderer-owned handoff from cache lookup to frame assembly.
@@ -52,7 +60,7 @@ type renderPass struct {
 }
 
 // joinPrefixState is the validity key of the cached incremental-join prefix.
-// Width and expand are the global presentation axes that change every block's
+// Width and expand are the global presentation axes that can change any block's
 // render. Per-block revisions are unnecessary because a prefix contains only
 // blocks that did not re-render in the current frame.
 type joinPrefixState struct {
@@ -66,8 +74,9 @@ type joinPrefixState struct {
 // an index for unrelated content. It is renderer-private and used only on the
 // Bubble Tea update goroutine.
 //
-// Whole-block entries are valid only when their blockRenderKey matches. Markdown
-// entries are valid only when source and width match. Frame-row entries use the
+// Whole-block entries are valid only when their blockRenderKey matches, with the
+// expand axis masked for an expand-invariant entry. The single markdown entry is
+// valid only when index, source, and width match. Frame-row entries use the
 // same whole-block key. The incremental prefix is valid only when its coverage
 // count and joinPrefixState match. Storing a whole-block entry at an index inside
 // that prefix invalidates it: both string and frame render paths share the cache,
@@ -76,8 +85,10 @@ type blockRenderCache struct {
 	// rendered holds complete block output and any structured-card provenance,
 	// keyed by the stable conversation index and validated by blockEntry.key.
 	rendered map[int]blockEntry
-	// markdown holds assistant glamour output, keyed by conversation index and
-	// validated by mdEntry.src and mdEntry.width.
+	// markdown holds the assistant glamour output of at most one block, keyed by
+	// conversation index and validated by mdEntry.src and mdEntry.width. Only the
+	// final card can still change, so the one entry worth keeping is the live
+	// tail's; a settled block is served by its whole-block entry instead.
 	markdown map[int]mdEntry
 	// prefixLines, prefixN, and prefixKey cache the unchanged prefix for
 	// incremental frame assembly. A live-tail re-render rebuilds only the suffix.
@@ -103,9 +114,13 @@ type blockRenderCache struct {
 }
 
 // renderedBlock returns a whole-block entry only when its complete validity key
-// matches the caller's current block revision and presentation context.
+// matches the caller's current block revision and presentation context. An
+// expand-invariant entry matches at either expand state.
 func (c *blockRenderCache) renderedBlock(index int, key blockRenderKey) (blockEntry, bool) {
 	entry, ok := c.rendered[index]
+	if entry.expandInvariant {
+		key.context.expanded = entry.key.context.expanded
+	}
 	return entry, ok && entry.key == key
 }
 
@@ -128,12 +143,15 @@ func (c *blockRenderCache) markdownBlock(index int, src string, width int) (stri
 	return entry.out, ok && entry.src == src && entry.width == width
 }
 
-// storeMarkdown replaces the one assistant markdown entry for an index. A live
-// growing assistant block overwrites its bucket instead of retaining every delta.
+// storeMarkdown replaces the assistant markdown entry, dropping any entry for
+// another index. A live growing assistant block overwrites its bucket instead of
+// retaining every delta, and a settled block's glamour output is released once
+// a later block renders instead of being held for the whole session.
 func (c *blockRenderCache) storeMarkdown(index int, entry mdEntry) {
 	if c.markdown == nil {
 		c.markdown = map[int]mdEntry{}
 	}
+	clear(c.markdown)
 	c.markdown[index] = entry
 }
 
@@ -206,7 +224,7 @@ func (r *renderer) renderCachedSnapshot(index int, id uint64, revision int, expa
 		return entry.out
 	}
 	output := fresh(id)
-	r.blocks.storeRendered(index, blockEntry{key: key, out: output.text, rows: output.rows})
+	r.blocks.storeRendered(index, blockEntry{key: key, out: output.text, rows: output.rows, expandInvariant: output.expandInvariant})
 	r.blockRenders++
 	return output.text
 }
