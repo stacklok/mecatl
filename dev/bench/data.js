@@ -356246,6 +356246,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1793556960561,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "29541485+ChrisJBurns@users.noreply.github.com",
+            "name": "Chris Burns",
+            "username": "ChrisJBurns"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "868334ac8abf6d5c7b9b851c50b746914c65b8f9",
+          "message": "test(e2e): sign in through hosted AS-1 with Dex, plus a local Kind profile (#2622)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-11-01T20:27:16+01:00",
+          "tree_id": "ba4c2370ec45806434038955cbf615f3b6d312d3",
+          "url": "https://github.com/stacklok/mecatl/commit/868334ac8abf6d5c7b9b851c50b746914c65b8f9"
+        },
+        "date": 1793561968773,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -514755,6 +514789,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1793561965781,
+  "lastUpdate": 1793561969537,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
