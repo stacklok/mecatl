@@ -1,6 +1,6 @@
 module github.com/stacklok/mecatl/environment/microvm
 
-go 1.27
+go 1.27.3
 
 replace github.com/stacklok/mecatl/engine => ../../engine
 

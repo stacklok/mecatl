@@ -1,0 +1,7 @@
+    method func (ID).Kind() Kind
+    method func (ID).String() string
+const History Kind = "HST"
+func New(kind Kind) ID
+func Parse(s string) (ID, error)
+type ID struct{}
+type Kind string

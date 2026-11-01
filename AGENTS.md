@@ -1,6 +1,6 @@
 # AGENTS.md: Mecatl
 
-Coding-agent instructions for this harness, built in Go 1.27. `CLAUDE.md` is a
+Coding-agent instructions for this harness, built in Go 1.27.3 minimum. `CLAUDE.md` is a
 symlink; edit this file, never the symlink.
 
 ## Build and test

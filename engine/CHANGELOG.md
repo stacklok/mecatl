@@ -5,13 +5,40 @@ format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); changes
 are classified per [COMPATIBILITY.md](./COMPATIBILITY.md) (Added = minor;
 Changed/Deprecated/Removed = breaking, pre-v1 a minor bump).
 
-The covered surface is the eight core packages (`session`, `governance`, `learning`, `tool`,
-`prompt`, `port`, `team`, `agent`); their committed API snapshots live in
-[`engine/api/`](./api/).
+The covered surface is listed in [COMPATIBILITY.md](./COMPATIBILITY.md); its committed
+API snapshots live in [`engine/api/`](./api/).
 
 ## [Unreleased]
 
 ### Added
+
+- **Canonical history commit codec**: adds `kernel/history/format.EncodeCommit`,
+  `DecodeCommit`, and explicit positive per-operation `Limits`. The v1 closed
+  DAG-CBOR envelope preserves opaque record payloads and rejects noncanonical
+  input. Both operations return independently owned data and the CID of the
+  exact encoded bytes. Adds budget-independent `Commit.Validate` and
+  `Record.Validate` methods. No production runtime, wire, or storage integration.
+  Added (minor).
+
+- **History persistence DTOs**: adds `kernel/history/format.Commit` and `Record`
+  with strongly typed root/history linkage, envelope and kind versions, ordered
+  records, and opaque payload bytes. Concrete `Clone` methods detach nested
+  mutable storage; `Equal` methods compare fields and ordered bytes, treating nil
+  and empty slices equally. These methods neither validate nor freeze the DTOs.
+  No codec, production wire, or stored-data behavior changes. Added (minor).
+
+- **History content identifiers**: adds opaque, comparable `kernel/history/format.CID`
+  values with strict `ParseCID` and canonical `String` text. The supported profile
+  is CIDv1, DAG-CBOR, and SHA-256 with lowercase, unpadded base32 multibase text.
+  Parsing checks the identifier only, not commit validity or acceptance. No
+  production wire or stored-data behavior changes. Added (minor).
+
+- **Typed resource and history IDs** — adds `engine/id` with registered kinds,
+  secure uniform generation, strict parsing, and comparable opaque `ID` values.
+  Adds `kernel/history.HistoryID`, a distinct history-only wrapper. History IDs
+  are `HST` plus 22 random Bitcoin-base58-alphabet characters. These additive
+  packages do not change existing session IDs or activate the isolated kernel.
+  Added (minor).
 
 - **Yolo advisory review opt-in** — adds `agent.YoloReviewPolicyProvider`. A
   `ToolReviewer` that implements it and returns true from `GuardrailYoloReviews`
@@ -466,6 +493,19 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 - **`port.SessionLease.Renew` doc comment narrowed (issue #1333)** — clarifies that bare expiry of the caller's own owner/token, with nothing else having taken the lease over, is not by itself one of the definitive-loss conditions `ErrLeaseHeld` documents; loss is specifically a holder or token change. An implementation that can prove no one else could have raced it (e.g. a single-host backend re-checking its own durable record under its stable transition lock) may reclaim instead of declaring loss — `internal/adapter/flocklease.Lease.Renew` now does exactly this. This narrows, never widens, when `ErrLeaseHeld` may be returned, so it is a documentation clarification, not a contract change; no exported signature changed. No `task api:update` needed.
 
 ### Changed
+
+- **Minimum Go toolchain**: the engine now requires Go 1.27.3, inherited from
+  Atmos v0.8.0. This minimum applies to every engine consumer, including those
+  that do not import the isolated history codec. Consumers using older
+  toolchains must upgrade. Changed (breaking, pre-v1 minor).
+
+- **History identity package** — moves the defining `HistoryID` type to
+  `kernel/history/id` so persistence formats can use it without importing the
+  higher-level history package. `kernel/history.HistoryID` is a type alias and
+  its constructor/parser remain available; ordinary Go source usage, ID text,
+  equality, and zero-value behavior are preserved. The defining package and
+  reflection identity change. Changed (breaking, pre-v1 minor); no production
+  wire or stored-data change.
 
 - **Yolo-mode sessions skip contextual review by default** — a yolo-mode session
   no longer calls the `ToolReviewer` for action or inbound review unless the
