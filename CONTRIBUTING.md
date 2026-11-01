@@ -12,6 +12,7 @@ the linked user and operator documentation.
 - [How to contribute](#how-to-contribute)
   - [Using GitHub Issues](#using-github-issues)
   - [Claiming an issue](#claiming-an-issue)
+  - [Development tool versions](#development-tool-versions)
   - [Development workflow](#development-workflow)
 
 ## Code of conduct
@@ -40,6 +41,41 @@ Before starting work on an existing issue, leave a comment saying that you
 would like to work on it and wait for a maintainer to assign it. This avoids
 duplicated effort. If you open an issue that you plan to implement, say so in
 the issue description.
+
+### Development tool versions
+
+Use these versions to align your development environment with
+[CI](.github/workflows/ci.yml). The SDK's supported runtime minimums are separate
+from these contributor test targets.
+
+| Tool | Suggested version | Needed for |
+| --- | --- | --- |
+| Go | Current stable, at least 1.27 | Go builds and tests; CI selects `stable` |
+| Task | 3.54.0 | Repository build and test commands |
+| Node.js (SDK and docs) | 24.x | TypeScript SDK and documentation tooling |
+| Node.js (Studio) | 26.x | Studio, selected by [`apps/.node-version`](apps/.node-version) |
+| pnpm | 12.15.0 | TypeScript SDK and Studio dependencies |
+| Bun | 1.4.4 | Node/Bun offline SDK wire tests (`task sdk:e2e`) |
+| Deno | 2.9.3 | Deno SDK checks (`task sdk:deno`); CI also tests current 2.x |
+| Buf | 1.75.0 | Protocol contract generation (`task generate`) |
+
+The [Go module](go.mod) owns the Go language minimum. Each workspace's
+`packageManager` field owns its pnpm version: [SDK](sdk/typescript/package.json)
+and [Studio](apps/package.json). Update this table when changing the corresponding
+CI or package declarations.
+
+With [mise](https://mise.jdx.dev/), you can select the SDK runtimes for one command
+without changing your defaults:
+
+```sh
+mise exec node@24 pnpm@12.15.0 bun@1.4.4 -- task sdk:e2e
+```
+
+To make Bun your personal default, use `mise use --global bun@1.4.4`.
+`mise use` installs and selects a tool; `mise install` alone only installs it.
+Check `node --version`, `pnpm --version`, and `bun --version` in the checkout
+before running the gates. A runtime-manager shim on `PATH` does not by itself
+mean a version is selected.
 
 ### Development workflow
 
