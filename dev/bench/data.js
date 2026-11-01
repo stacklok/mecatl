@@ -355172,6 +355172,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1793496172217,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "c3adf8f7a3a1b2886668160f6275425d7a97873c",
+          "message": "fix(server): synchronize relay completion with run admission (#2638)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-11-01T08:21:34-08:00",
+          "tree_id": "ea77e9f0cd8da1b55f1ebb2ec998d93891a0f130",
+          "url": "https://github.com/stacklok/mecatl/commit/c3adf8f7a3a1b2886668160f6275425d7a97873c"
+        },
+        "date": 1793550835606,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -513222,6 +513256,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1793550832398,
+  "lastUpdate": 1793550836723,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
