@@ -115,6 +115,10 @@ type renderer struct {
 	mu    sync.Mutex
 	cache map[int]*glamour.TermRenderer
 
+	// stream renders the live assistant block's markdown incrementally; see
+	// streamMarkdown.
+	stream streamMarkdown
+
 	// blocks owns every cross-frame conversation-block cache: whole rendered
 	// blocks, assistant markdown, fallback frame rows, and the incremental prefix.
 	// It is reset when a conversation is rebuilt because its buckets use conversation
@@ -361,18 +365,7 @@ func (r *renderer) markdownWidth(src string, w int) string {
 	// cluster so WcWidth == GraphemeWidth for every cluster — the two layers then
 	// agree without depending on the terminal upgrading the renderer.
 	src = normalizeEmojiWidth(src)
-	if w <= 0 {
-		w = 80
-	}
-	// Reserve the terminal's FINAL column: word-wrap one column short of the
-	// viewport width. Retained as harmless hygiene (and to mirror the two-column
-	// inset tool cards get from Width(r.width-2)), NOT as the scramble fix — the
-	// width-method disagreement above, not a last-column pending-wrap, is the root
-	// cause, and normalizeEmojiWidth is what closes it. trimTrailingSpaces likewise
-	// just drops glamour's styled right-padding so rows sit at their natural width.
-	if w > 1 {
-		w--
-	}
+	w = glamourWrapWidth(w)
 	r.mu.Lock()
 	if r.cache == nil {
 		// Zero-value safety: a bare &renderer{th: th} (see the renderBlock comment)
@@ -406,6 +399,24 @@ func (r *renderer) markdownWidth(src string, w int) string {
 	return trimTrailingSpaces(strings.TrimRight(out, "\n"))
 }
 
+// glamourWrapWidth turns a caller's layout width into glamour's word-wrap width.
+// When w <= 0 it floors at 80. It reserves the terminal's FINAL column: word-wrap
+// one column short of the viewport width. Retained as harmless hygiene (and to
+// mirror the two-column inset tool cards get from Width(r.width-2)), NOT as the
+// scramble fix — the width-method disagreement described on markdownWidth, not a
+// last-column pending-wrap, is the root cause, and normalizeEmojiWidth is what
+// closes it. trimTrailingSpaces likewise just drops glamour's styled right-padding
+// so rows sit at their natural width.
+func glamourWrapWidth(w int) int {
+	if w <= 0 {
+		w = 80
+	}
+	if w > 1 {
+		w--
+	}
+	return w
+}
+
 // markdown renders src to ANSI through a width-cached glamour renderer at the
 // assistant body's wrap budget (content width minus the body hang). It delegates
 // to markdownWidth with the caller-independent width already computed.
@@ -427,7 +438,7 @@ func (r *renderer) markdownAt(idx int, src string) string {
 	if out, ok := r.blocks.markdownBlock(idx, src, r.width); ok {
 		return out
 	}
-	out := r.markdown(src)
+	out := r.markdownStreamed(idx, src)
 	r.blocks.storeMarkdown(idx, mdEntry{src: src, width: r.width, out: out})
 	return out
 }
