@@ -1,4 +1,4 @@
-import { copyFile, mkdir, mkdtemp, readdir, readFile, rm } from "node:fs/promises";
+import { copyFile, mkdtemp, readdir, readFile, rm } from "node:fs/promises";
 import { createConnection } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -22,6 +22,7 @@ const DEFAULT_HTTP_PORT = 8081;
 it("the spawned daemon opens no tcp port", async () => {
   const instance = await spawnProductFixture("query-retention.json");
   try {
+    expect(dirname(instance.root)).toBe(tmpdir());
     const ready = JSON.parse(
       await readFile(join(dirname(instance.client.daemon.socketPath), "ready.json"), "utf8"),
     ) as Record<string, unknown>;
@@ -37,6 +38,7 @@ it("the spawned daemon opens no tcp port", async () => {
   } finally {
     await instance.close();
   }
+  await expect(readdir(instance.root)).rejects.toMatchObject({ code: "ENOENT" });
 });
 
 it("close stops the daemon and removes its runtime directory", async () => {
@@ -58,6 +60,7 @@ it("a killed parent stops the daemon through the lifetime pipe", async () => {
   for (const runtime of ["node", "bun"] as const) {
     const helper = await startRuntimeHelper(runtime, "hold");
     try {
+      expect(dirname(helper.root)).toBe(tmpdir());
       expect(processAlive(helper.record.daemonPid), `${runtime} daemon did not start`).toBe(true);
       helper.child.kill("SIGKILL");
       await childExit(helper.child);
@@ -73,6 +76,7 @@ it("a killed parent stops the daemon through the lifetime pipe", async () => {
       }
       await rm(helper.record.runtimeDirectory, { force: true, recursive: true });
     }
+    await expect(readdir(helper.root)).rejects.toMatchObject({ code: "ENOENT" });
   }
 });
 
@@ -107,9 +111,7 @@ it("a real startup failure is typed with a redacted tail and no orphan", async (
     spawn({ binaryPath: join(repositoryRoot, ".scratch", "missing-mecated") }),
   ).rejects.toMatchObject({ code: "spawn_failed", transport: "local" });
 
-  const scratch = join(repositoryRoot, ".scratch");
-  await mkdir(scratch, { recursive: true });
-  const root = await mkdtemp(join(scratch, "sdk-startup-e2e-"));
+  const root = await mkdtemp(join(tmpdir(), "sdk-startup-e2e-"));
   const secret = "sk-e2e-startup-secret";
   const invalidScript = join(root, `OPENAI_API_KEY=${secret}.json`);
   await copyFile(fixture("startup-invalid.json"), invalidScript);

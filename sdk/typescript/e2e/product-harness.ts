@@ -1,5 +1,6 @@
 import { type ChildProcess, execFileSync, spawn as spawnChild } from "node:child_process";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
 
@@ -43,7 +44,7 @@ export async function spawnProductFixture(
   script: string,
   options: ProductFixtureOptions = {},
 ): Promise<ProductFixture> {
-  const root = await createScratchRoot();
+  const root = await createTempRoot();
   const workspace = join(root, "workspace");
   await mkdir(workspace);
   try {
@@ -84,7 +85,7 @@ export async function startRuntimeHelper(
           encoding: "utf8",
           timeout: 10_000,
         }).trim();
-  const root = await createScratchRoot();
+  const root = await createTempRoot();
   const workspace = join(root, "workspace");
   await mkdir(workspace);
   const child = spawnChild(
@@ -156,10 +157,8 @@ function daemonArguments(
   ];
 }
 
-async function createScratchRoot(): Promise<string> {
-  const scratch = join(repositoryRoot, ".scratch");
-  await mkdir(scratch, { recursive: true });
-  return mkdtemp(join(scratch, "sdk-product-e2e-"));
+async function createTempRoot(): Promise<string> {
+  return mkdtemp(join(tmpdir(), "sdk-product-e2e-"));
 }
 
 export function isolatedEnvironment(root: string): NodeJS.ProcessEnv {
