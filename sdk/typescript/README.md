@@ -182,6 +182,10 @@ The resumed result always comes first. `continuation` exists only when the resum
 
 ## Development
 
+Match the [contributor tool versions](../../CONTRIBUTING.md#development-tool-versions)
+before running SDK gates. The offline wire suite requires both Node.js and Bun;
+the Deno gate requires Deno.
+
 Run the SDK gates from the repository root:
 
 ```sh
@@ -190,6 +194,7 @@ task sdk:lint
 task sdk:typecheck
 task sdk:test
 task sdk:build
+task sdk:e2e
 task sdk:api:check
 task sdk:pack
 task sdk:deno
