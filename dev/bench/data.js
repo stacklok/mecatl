@@ -394823,6 +394823,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1793556964624,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "29541485+ChrisJBurns@users.noreply.github.com",
+            "name": "Chris Burns",
+            "username": "ChrisJBurns"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "868334ac8abf6d5c7b9b851c50b746914c65b8f9",
+          "message": "test(e2e): sign in through hosted AS-1 with Dex, plus a local Kind profile (#2622)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-11-01T20:27:16+01:00",
+          "tree_id": "ba4c2370ec45806434038955cbf615f3b6d312d3",
+          "url": "https://github.com/stacklok/mecatl/commit/868334ac8abf6d5c7b9b851c50b746914c65b8f9"
+        },
+        "date": 1793561972759,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 16142,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12907,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 794,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -514789,6 +514828,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1793561969537,
+  "lastUpdate": 1793561973511,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
