@@ -124,7 +124,8 @@ The table distinguishes those existing boundaries from changed responsibilities 
 Today, persistence has several callers rather than one application coordinator.
 The engine's [`save`](../../../engine/agent/loop.go) writes snapshots best-effort, and [`SubagentTool.persistChild`](../../../engine/agent/subagent.go) has its own child-save path.
 Server [`RunEventRecorder`](../../../internal/adapter/server/event_recorder.go) records activity separately.
-All of these writers must enter the required commit boundary in the redesign; the table does not move every write into the host or make the engine depend on concrete storage adapters.
+All of these paths must propose changes through kernel-owned coordination in the redesign; sharing a commit boundary alone does not establish one mutation owner.
+The kernel owns canonical session state and application of accepted transitions, rather than leaving the engine and server as independent mutators with a common persistence helper.
 
 Here, *host* or *server* means the application layer that wires the core engine to adapters and exposes the API.
 The kernel comprises the coupled `loop`, `coordinator`, and `session` responsibilities in the [shared vocabulary](vocabulary.md#kernel-and-driver-vocabulary).
@@ -191,7 +192,7 @@ This proposal does not assume that those values share one ID or encoding.
 
 ### Persistence layer
 
-The engine and host submit private, versioned transitions through a commit boundary; the storage adapter assigns one session-wide position and rejects stale writers.
+The kernel coordinator submits private, versioned session transitions for storage acceptance; the storage adapter assigns one session-wide position and rejects stale writers.
 `CommittedHistory` supplies both continuation state and retained history; no second best-effort event log decides what is true.
 A storage adapter may partition records across files, tables, or runs, but exposes one ordered view per `Session`.
 Storage errors and ambiguous commits remain explicit caller outcomes; the coordinator resolves ambiguity against history before reporting confirmation.
@@ -200,7 +201,7 @@ Records cover session creation and controls, run boundaries, completed model tur
 A tool *request* records the model-requested tool call; an *intent* records the effective authorized tool call after trusted rewrites and readiness to dispatch it; a *result* records its established outcome or an explicit recovery outcome.
 These are distinct transitions, with dispatch gated by intent and dependent model continuation gated by result.
 Records include private continuation material where needed; record types are distinct from public event types.
-Every writer, including title generation, approvals, compaction, and scheduler work, uses this boundary.
+Every producer, including title generation, approvals, compaction, and scheduler work, proposes session changes through kernel-owned coordination.
 The adapter's backend head checks or fencing order competing replicas; an in-process mutex alone cannot.
 
 #### Complete logical model inputs and transformation evidence
@@ -436,6 +437,44 @@ A result-release ask instead depends on live memory-only bytes.
 Unloading or owner movement cannot reconstruct those bytes from durable ask metadata; if the hold is lost, close the ask as unavailable without tool reexecution.
 Independent runnable background work keeps the root claim active while another member waits for approval.
 Read-only clients can remain attached to committed history without pinning the owner.
+
+#### Canonical session mutation ownership
+
+The kernel owns canonical session state and application of accepted transitions, including changes made while no execution loop is running.
+The loop, host/API handlers, background workers, authorization callbacks, and drivers are producers of proposed changes, not independent owners of the session aggregate.
+They receive stable read views and explicit proposal capabilities rather than a shared mutable canonical session or authority to save snapshots.
+A common append function is insufficient if those producers can still change accepted state independently.
+
+The flow for a session change is:
+
+```text
+loop / API control / worker / callback / driver
+    -> propose change with its target and relevant state preconditions
+    -> kernel coordination validates and orders against accepted session state
+    -> history/storage establishes acceptance (or an explicit failure/uncertainty)
+    -> kernel applies accepted facts to canonical in-memory session state
+    -> authorized projections and relays deliver observations
+```
+
+The session's transition rules define legal changes; the coordinator governs when they are admitted, committed, and applied.
+A proposal prepared from an older view must be checked against current accepted state before acceptance; storage head CAS alone cannot validate its domain preconditions.
+An unresolved append blocks dependent advancement until resolved, and an accepted transition must be applied or reconstructed before the next dependent transition.
+Private candidate computation and prompt cancellation signaling can proceed separately under their existing contracts, but neither changes the accepted-state view before commitment.
+
+This path includes explicit renames, generated titles, permission-mode changes, authorization answers and resulting session grants, session enrollment/initialization, recovery dispositions, and shutdown settlement.
+For example, a title worker submits a candidate with enough provenance and preconditions for the kernel to reject a stale result that would overwrite an explicit rename; it does not mutate a cached session and save it.
+An authorization callback proposes the answer for its exact pending action; the kernel checks eligibility and establishes its accepted disposition before dependent execution.
+Recovery reconstructs from accepted history and submits any new recovery facts through the same coordination, rather than saving a repaired authoritative snapshot.
+Shutdown signals local interruption promptly and submits durable settlement through that path; a final snapshot save cannot substitute for missing accepted facts.
+
+Storage adapters enforce atomic acceptance and their declared durability contract; they do not own session transition semantics.
+The kernel coordinator arranges checkpoint writes from a known accepted prefix, while projection/index builders can persist rebuildable views at their consumed positions.
+Neither kind of derived writer can establish session facts, advance canonical state, or save an authoritative session snapshot.
+Relays deliver observations after acceptance; disconnecting or disabling a relay must not prevent state application or durable recovery.
+
+Catalog creation, publication, and deletion retain their [separate owning scope](#session-catalog); a host initiates those operations through catalog coordination rather than bypassing it with session snapshot writes.
+Memory, skill, and external-resource stores retain their own subsystem contracts; kernel ownership here concerns canonical session facts, not every storage operation in the application.
+One mutation authority is a responsibility boundary, not a requirement for one goroutine, one Go object, a public coordinator interface, or a generic command framework.
 
 #### Storage access and commit coordination
 

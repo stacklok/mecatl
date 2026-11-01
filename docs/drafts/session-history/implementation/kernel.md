@@ -50,6 +50,9 @@ Other session histories can commit independently; already-admitted tools can run
 A slow read-only tool does not reserve an append slot: another read-only tool's permitted result can become ready and commit first.
 This preserves existing concurrent read-only dispatch and mutate-serial barriers without speculative append pipelines.
 
+The kernel owns canonical session state and applies accepted transitions through that coordination, including non-loop changes proposed by host controls, callbacks, and background workers.
+Those producers do not independently mutate a shared canonical session or save authoritative snapshots; the [mutation-ownership contract](../session-commit-history.md#canonical-session-mutation-ownership) defines the common flow and derived-storage boundaries.
+
 The default state-update discipline is to check a proposed change against accepted state, establish commitment, then reflect those facts in memory.
 These are ordering requirements, not mandatory `Validate`/`Apply` interfaces or a generic transaction framework.
 Accepted facts cannot be abandoned after commitment; a crash before their in-memory application is repaired by reconstruction, not rollback.
