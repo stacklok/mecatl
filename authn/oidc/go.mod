@@ -5,7 +5,7 @@ go 1.27
 require (
 	github.com/lestrrat-go/jwx/v4 v4.6.0
 	github.com/stacklok/mecatl/engine v0.14.0
-	github.com/stacklok/toolhive-core v0.0.57
+	github.com/stacklok/toolhive-core v0.0.58
 )
 
 require (
