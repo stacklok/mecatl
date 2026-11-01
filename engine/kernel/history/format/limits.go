@@ -16,8 +16,9 @@ type Limits struct {
 	MaxPayloadBytes int
 }
 
-// validate rejects incomplete policies before either codec examines content.
-func (l Limits) validate() error {
+// Validate rejects incomplete codec policies before either codec examines
+// content. It does not mutate Limits.
+func (l Limits) Validate() error {
 	if l.MaxCommitBytes <= 0 || l.MaxRecords <= 0 || l.MaxKindBytes <= 0 || l.MaxPayloadBytes <= 0 {
 		return errors.New("all codec limits must be positive")
 	}

@@ -91,7 +91,7 @@ func (c Commit) Validate() error {
 // call. Errors return nil bytes and an unset CID. Success establishes no ancestry,
 // membership, acceptance, authorization, or payload schema validity.
 func EncodeCommit(c Commit, limits Limits) ([]byte, CID, error) {
-	if err := limits.validate(); err != nil {
+	if err := limits.Validate(); err != nil {
 		return nil, CID{}, err
 	}
 	if err := c.Validate(); err != nil {
@@ -181,7 +181,7 @@ func (c Commit) encodedSize(l Limits) (int, error) {
 // error returns a zero Commit and CID. Success establishes no ancestry, membership,
 // acceptance, authorization, or payload schema validity.
 func DecodeCommit(data []byte, limits Limits) (Commit, CID, error) {
-	if err := limits.validate(); err != nil {
+	if err := limits.Validate(); err != nil {
 		return Commit{}, CID{}, err
 	}
 	if len(data) > limits.MaxCommitBytes {

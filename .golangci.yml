@@ -127,6 +127,7 @@ linters:
           allow:
             - $gostd
             - github.com/stacklok/mecatl/engine/kernel/history/id$
+            - github.com/stacklok/mecatl/engine/kernel/history/format$
           deny:
             - pkg: os
               desc: 'history values must not access host state'
@@ -317,6 +318,28 @@ linters:
           deny:
             - pkg: os
               desc: 'memproposal is the process-local proposal reference store; it must not touch the real OS'
+        engine-adapter-history-conformance:
+          list-mode: strict
+          files:
+            - '**/engine/adapter/history/conformance/**.go'
+          allow:
+            - $gostd
+            - github.com/stacklok/mecatl/engine/kernel/history$
+            - github.com/stacklok/mecatl/engine/kernel/history/format$
+          deny:
+            - pkg: os
+              desc: 'history conformance exercises the DTO-facing core over byte backends without host state'
+        engine-adapter-history-mem:
+          list-mode: strict
+          files:
+            - '**/engine/adapter/history/mem/**.go'
+            - '!$test'
+          allow:
+            - $gostd
+            - github.com/stacklok/mecatl/engine/kernel/history$
+          deny:
+            - pkg: os
+              desc: 'history mem is the process-local byte backend; it must not touch the real OS'
         engine-adapter-memskill:
           list-mode: strict
           files:
@@ -1082,7 +1105,8 @@ linters:
         path: (.+)_test\.go
       # fsconformance/memconformance/storeconformance/sourceconformance/
       # eventlogconformance/leaseconformance/scheduleconformance and
-      # credentialstore/conformance are shared test-helper packages (importing
+      # credentialstore/conformance and history/conformance are shared test-helper
+      # packages (importing
       # "testing" in a non-_test.go file, the conventional Go pattern à la
       # testing/fstest). Their conformance tables are dense like tests, so apply
       # the same relaxations.
@@ -1100,6 +1124,13 @@ linters:
           - goconst
           - unparam
         path: engine/adapter/ledgerconformance/
+      - linters:
+          - gocyclo
+          - errcheck
+          - gosec
+          - goconst
+          - unparam
+        path: engine/adapter/history/conformance/
       - linters:
           - gocyclo
           - errcheck

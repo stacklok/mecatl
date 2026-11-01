@@ -1,5 +1,3 @@
-// Package history defines the public vocabulary of committed kernel history.
-// It does not implement storage or execute models and tools.
 package history
 
 import historyid "github.com/stacklok/mecatl/engine/kernel/history/id"

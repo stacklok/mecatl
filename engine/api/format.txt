@@ -2,6 +2,7 @@
     method func (Commit).Clone() Commit
     method func (Commit).Equal(other Commit) bool
     method func (Commit).Validate() error
+    method func (Limits).Validate() error
     method func (Record).Clone() Record
     method func (Record).Equal(other Record) bool
     method func (Record).Validate() error
