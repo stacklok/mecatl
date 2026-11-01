@@ -106,11 +106,12 @@ func apiDir(t *testing.T) string {
 	return dir
 }
 
-// loadPackages loads the guarded packages with full type information under the
-// workspace. Offline: no build, no network — go/packages reads types only.
+// loadPackages loads the guarded packages from the engine module so standalone
+// checks use its dependency metadata rather than the root tooling module's.
 func loadPackages(t *testing.T) map[string]*packages.Package {
 	t.Helper()
 	cfg := &packages.Config{
+		Dir: filepath.Dir(apiDir(t)),
 		Mode: packages.NeedName |
 			packages.NeedTypes |
 			packages.NeedTypesInfo |
@@ -135,7 +136,7 @@ func loadPackages(t *testing.T) map[string]*packages.Package {
 	}
 	for _, want := range guardedPackages {
 		if byPath[want] == nil {
-			t.Fatalf("guarded package %q did not load — is the go.work workspace intact?", want)
+			t.Fatalf("guarded package %q did not load from the engine module", want)
 		}
 	}
 	return byPath
