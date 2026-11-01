@@ -133,7 +133,7 @@ func TestTranscriptAutoDetectRenderedLightAndCaches(t *testing.T) {
 			dark := m.rend
 			_ = m.View()
 			_ = m.conversationContent()
-			if len(dark.blocks.rendered) == 0 || len(dark.blocks.markdown) == 0 || dark.blocks.prefixN == 0 || len(dark.cache) == 0 {
+			if len(dark.blocks.rendered) == 0 || len(dark.blocks.markdown) == 0 || dark.blocks.prefixN == 0 || dark.stream.md == nil {
 				t.Fatal("dark block/markdown/join/glamour caches were not primed")
 			}
 			before := m.conv.testBlocks()
@@ -202,7 +202,7 @@ func TestTranscriptAutoDetectRetainsAnchoredSelection(t *testing.T) {
 	dark := m.rend
 	darkBG := selectionBgSGR(t, m)
 	if !strings.Contains(m.View().Content, openSelectionSGR(t, m)+text) ||
-		len(dark.blocks.rendered) == 0 || len(dark.blocks.markdown) == 0 || dark.blocks.prefixN == 0 || len(dark.cache) == 0 {
+		len(dark.blocks.rendered) == 0 || len(dark.blocks.markdown) == 0 || dark.blocks.prefixN == 0 || dark.stream.md == nil {
 		t.Fatal("dark selection and block/markdown/join/glamour caches were not primed")
 	}
 	m = applyAll(m, tea.BackgroundColorMsg{Color: color.White})

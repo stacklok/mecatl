@@ -178,10 +178,12 @@ func (c *blockRenderCache) reset() {
 }
 
 // resetBlockCaches is the renderer lifecycle hook for a rebuilt conversation.
-// The block cache owns all cross-frame conversation state; the renderer retains
-// ownership of its independent viewport-output cache.
+// It resets the block cache and forgets the stream's and rail's progress; the
+// renderer retains ownership of its independent viewport-output cache.
 func (r *renderer) resetBlockCaches() {
 	r.blocks.reset()
+	r.stream.forget()
+	r.rail.forget()
 	// Drop the viewport-output memo too (defense-in-depth): every CURRENT resetSession
 	// caller calls refreshView() afterwards (which invalidateVPView()s), but clearing it
 	// here makes that ordering non-load-bearing — a future caller that forgets refreshView
