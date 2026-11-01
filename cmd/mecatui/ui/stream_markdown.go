@@ -2,6 +2,7 @@ package ui
 
 import (
 	"bytes"
+	"slices"
 	"strings"
 
 	"charm.land/glamour/v2/ansi"
@@ -14,16 +15,20 @@ import (
 	"github.com/yuin/goldmark/util"
 )
 
-// streamMarkdown renders the live (streaming) assistant block's markdown
-// incrementally. Re-rendering the whole growing answer through glamour on every
+// streamMarkdown renders conversation assistant markdown, incrementally while a
+// block streams. Re-rendering the whole growing answer through glamour on every
 // flushed delta made each delta cost more than the last; here the answer's
 // finished top-level blocks are rendered once and only the still-open tail is
-// re-rendered.
+// re-rendered. A block's first render is a full one, so every assistant answer's
+// markdown goes through this type; glamour.TermRenderer still serves the plan
+// modal and the fallback path.
 //
 // It drives glamour's own ANSI renderer over a goldmark document it parses itself
 // with the same extensions and options glamour.NewTermRenderer uses, so the
 // output is byte-identical to a full markdownWidth render (the property test in
-// stream_markdown_test.go pins this). Splitting relies on three facts about
+// stream_markdown_test.go pins this). A glamour upgrade must re-check
+// newStreamMarkdownRenderer against NewTermRenderer: the test only catches
+// drift for syntax its corpus covers. Splitting relies on three facts about
 // glamour's renderer:
 //
 //   - A top-level block's output depends only on its own subtree and on whether it
@@ -45,7 +50,8 @@ import (
 //     defines any is always rendered in full.
 //
 // State belongs to one block (idx) at one wrap width; a different block or width
-// starts over with a full render. It is used only on the update goroutine.
+// starts over with a full render, and a conversation rebuild forgets it. It is
+// used only on the update goroutine.
 type streamMarkdown struct {
 	md    goldmark.Markdown
 	width int // glamour wrap width md renders at; 0 until first use
@@ -54,12 +60,27 @@ type streamMarkdown struct {
 	idx     int
 	started bool // a full render of idx has seeded this state
 
+	// rendered counts top-level blocks rendered. It is the test seam proving a
+	// streamed frame renders only its tail once the finished blocks have settled.
+	rendered int
+
 	// src is the normalized source before the split; settled describes the
 	// prefix's top-level blocks, and out is their post-processed output. out ends
 	// in a newline whenever settled is non-empty.
 	src     string
 	settled []mdBlockSpan
 	out     string
+}
+
+// endsMidLine holds the top-level block kinds whose glamour output ends without a
+// newline: the next block terminates their last line, so a split right after one
+// is never valid.
+var endsMidLine = map[ast.NodeKind]bool{
+	ast.KindHeading:         true,
+	ast.KindFencedCodeBlock: true,
+	ast.KindCodeBlock:       true,
+	ast.KindHTMLBlock:       true,
+	ast.KindThematicBreak:   true,
 }
 
 // mdBlockSpan identifies a parsed top-level block: its kind plus the first and
@@ -139,27 +160,29 @@ func (s *streamMarkdown) render(idx int, norm string, w int) (string, bool) {
 	}
 
 	// Settle finished blocks: every block but the last can join the prefix, at a
-	// split point where the next block's source position is known and the
-	// prefix's raw output ends in a bare newline.
+	// split point where the next block's source position is known and the run's
+	// raw output ends in a bare newline. A run ends the way its last block does,
+	// so a split after a block of an endsMidLine kind is skipped without
+	// rendering, and each run renders once, when it settles. A run that still ends
+	// mid-line stops settling for this frame, so a frame renders at most the tail
+	// plus one run.
 	k := len(s.settled)
-	var pending []ast.Node
 	for j := k; j < len(blocks)-1; j++ {
-		pending = append(pending, blocks[j])
 		split := spans[j+1].first
-		if split < 0 {
+		if split < 0 || endsMidLine[blocks[j].Kind()] {
 			continue
 		}
-		raw, ok := s.renderBlocks(pending, source, k > 0)
+		raw, ok := s.renderBlocks(blocks[k:j+1], source, k > 0)
 		if !ok {
 			return "", false
 		}
 		if !strings.HasSuffix(raw, "\n") {
-			continue
+			break
 		}
 		s.out += trimTrailingSpaces(raw)
 		s.settled = append(s.settled, spans[k:j+1]...)
 		s.src = norm[:split]
-		k, pending = j+1, nil
+		k = j + 1
 	}
 
 	raw, ok := s.renderBlocks(blocks[k:], source, k > 0)
@@ -183,16 +206,20 @@ func (s *streamMarkdown) prefixHolds(norm string, spans []mdBlockSpan) bool {
 	if len(spans) <= k || !strings.HasPrefix(norm, s.src) {
 		return false
 	}
-	for i := range k {
-		if spans[i] != s.settled[i] {
-			return false
-		}
-	}
-	return true
+	return slices.Equal(spans[:k], s.settled)
 }
 
 func (s *streamMarkdown) resetPrefix() {
 	s.src, s.settled, s.out = "", s.settled[:0], ""
+}
+
+// forget drops the per-block progress, so the next render of any block is a
+// full one. The goldmark instance, its width, and the style are kept. It runs
+// with resetBlockCaches when a conversation is rebuilt, because a rebuilt
+// conversation can reuse an index for an unrelated block.
+func (s *streamMarkdown) forget() {
+	s.started = false
+	s.resetPrefix()
 }
 
 // renderAll renders norm as one document.
@@ -203,6 +230,7 @@ func (s *streamMarkdown) renderAll(norm string) (string, bool) {
 
 // renderDoc renders a whole document with markdownWidth's post-processing.
 func (s *streamMarkdown) renderDoc(doc ast.Node, source []byte) (string, bool) {
+	s.rendered += doc.ChildCount()
 	var buf bytes.Buffer
 	if err := s.md.Renderer().Render(&buf, source, doc); err != nil {
 		return "", false
@@ -213,8 +241,8 @@ func (s *streamMarkdown) renderDoc(doc ast.Node, source []byte) (string, bool) {
 // renderBlocks moves blocks into a fresh document and returns its raw glamour
 // output. afterPrefix prepends an empty paragraph so the first block renders as
 // it does after a previous sibling. The moved blocks leave the parsed document;
-// callers render each block at most once per parse, except that a pending run
-// rejected as a split point is moved again, with more blocks, on the next try.
+// callers render each block at most once per parse, except that a run rejected
+// as a split point is moved again into the tail.
 func (s *streamMarkdown) renderBlocks(blocks []ast.Node, source []byte, afterPrefix bool) (string, bool) {
 	doc := ast.NewDocument()
 	if afterPrefix {
@@ -223,6 +251,7 @@ func (s *streamMarkdown) renderBlocks(blocks []ast.Node, source []byte, afterPre
 	for _, b := range blocks {
 		doc.AppendChild(doc, b)
 	}
+	s.rendered += len(blocks)
 	var buf bytes.Buffer
 	if err := s.md.Renderer().Render(&buf, source, doc); err != nil {
 		return "", false

@@ -2,8 +2,10 @@ package ui
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -60,7 +62,7 @@ func Handle(ctx context.Context, req *Request) (*Response, error) {
 
 `
 
-// streamAnswer returns a ~9 KB markdown answer built from repeated sections so
+// streamAnswer returns a ~7 KB markdown answer built from repeated sections so
 // the streaming benchmark grows the live block the way a long real answer does.
 func streamAnswer() string {
 	return strings.Repeat(streamAnswerSection, 6) + "That's everything; run `task test` to verify.\n"
@@ -71,7 +73,7 @@ func streamChunks(s string, n int) []string {
 	var out []string
 	for len(s) > 0 {
 		end := min(n, len(s))
-		for end < len(s) && end > 0 && !utf8RuneStart(s[end]) {
+		for end < len(s) && end > 0 && !utf8.RuneStart(s[end]) {
 			end++
 		}
 		out = append(out, s[:end])
@@ -80,7 +82,16 @@ func streamChunks(s string, n int) []string {
 	return out
 }
 
-func utf8RuneStart(b byte) bool { return b&0xC0 != 0x80 }
+// headingRunsAnswer is a step-by-step answer of n headings, each followed by a
+// fenced block and no prose. No block in it can end a settled prefix, so every
+// frame renders the whole answer; the benchmark keeps that case linear.
+func headingRunsAnswer(n int) string {
+	var b strings.Builder
+	for i := range n {
+		fmt.Fprintf(&b, "## Step %d\n\n```bash\necho step %d\n```\n\n", i, i)
+	}
+	return b.String()
+}
 
 // newStreamBenchModel returns a connected, sized Model with an open assistant
 // block ready to receive streamed deltas.
@@ -109,6 +120,22 @@ func newStreamBenchModel(tb testing.TB) Model {
 // response.
 func BenchmarkStreamMarkdownAnswer(b *testing.B) {
 	chunks := streamChunks(streamAnswer(), 32)
+	b.ReportAllocs()
+	for b.Loop() {
+		b.StopTimer()
+		m := newStreamBenchModel(b)
+		b.StartTimer()
+		for _, chunk := range chunks {
+			m.conv.appendAssistant(chunk)
+			m.refreshView()
+		}
+	}
+}
+
+// BenchmarkStreamMarkdownHeadingRuns streams headingRunsAnswer(40) the same way
+// as BenchmarkStreamMarkdownAnswer.
+func BenchmarkStreamMarkdownHeadingRuns(b *testing.B) {
+	chunks := streamChunks(headingRunsAnswer(40), 32)
 	b.ReportAllocs()
 	for b.Loop() {
 		b.StopTimer()

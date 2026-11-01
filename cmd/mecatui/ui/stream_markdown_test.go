@@ -4,8 +4,9 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
-	"github.com/stacklok/mecatl/cmd/mecatui/theme"
+	tea "charm.land/bubbletea/v2"
 )
 
 // streamMarkdownCorpus covers the markdown shapes whose rendering can change as
@@ -35,11 +36,14 @@ var streamMarkdownCorpus = map[string]string{
 	"heading runs":                "# One\n## Two\n### Three\nText after headings.\n# Four\n",
 	"task list and strikethrough": "- [x] done item\n- [ ] open item\n\n~~struck~~ text and www.example.com autolink.\n",
 	"crlf":                        "Line one\r\nline two\r\n\r\n- item\r\n- item two\r\n\r\nEnd.\r\n",
+	"code in lists and quotes": "1. Run the build:\n\n   ```sh\n   task build\n   ```\n\n2. Then check:\n\n   | a | b |\n   |---|---|\n   | 1 | 2 |\n\n" +
+		"> A quote with code:\n>\n> ```go\n> x := 1\n> ```\n\nAfter.\n",
+	"heading and fence runs": headingRunsAnswer(4) + "Closing paragraph.\n\nOne more line.\n",
 }
 
 // newStreamTestRenderer returns a renderer whose assistant body wraps at width.
 func newStreamTestRenderer(width int) *renderer {
-	r := newRenderer(theme.New("aztec", theme.AztecPalette()), defaultHelpKeys())
+	r := newTestRenderer()
 	r.setWidth(width)
 	return r
 }
@@ -74,9 +78,39 @@ func assertStreamFrames(t *testing.T, name, src string, width int, ends []int, c
 func runeEnds(s string) []int {
 	var ends []int
 	for end := 1; end <= len(s); end++ {
-		if end == len(s) || utf8RuneStart(s[end]) {
+		if end == len(s) || utf8.RuneStart(s[end]) {
 			ends = append(ends, end)
 		}
+	}
+	return ends
+}
+
+// lineEnds returns the prefix lengths after each line of s, so one frame can add
+// a whole line, as a coalesced frame does.
+func lineEnds(s string) []int {
+	var ends []int
+	for i := range len(s) {
+		if s[i] == '\n' {
+			ends = append(ends, i+1)
+		}
+	}
+	if len(ends) == 0 || ends[len(ends)-1] != len(s) {
+		ends = append(ends, len(s))
+	}
+	return ends
+}
+
+// unevenEnds returns prefix lengths for deltas of cycling uneven sizes, so a
+// frame can add several lines at once and rewrite a block that had settled.
+func unevenEnds(s string) []int {
+	sizes := []int{1, 7, 19, 43, 3, 61, 11, 97}
+	var ends []int
+	for end, i := 0, 0; end < len(s); i++ {
+		end = min(end+sizes[i%len(sizes)], len(s))
+		for end < len(s) && !utf8.RuneStart(s[end]) {
+			end++
+		}
+		ends = append(ends, end)
 	}
 	return ends
 }
@@ -129,6 +163,8 @@ func TestStreamMarkdownMatchesFullRender(t *testing.T) {
 				if settled == 0 && name != "link references" && name != "unclosed fence" {
 					t.Errorf("width %d never settled a block; the incremental path was not exercised", width)
 				}
+				assertStreamFrames(t, name+" by line", src, width, lineEnds(src), 1)
+				assertStreamFrames(t, name+" in uneven deltas", src, width, unevenEnds(src), 1)
 			}
 		})
 	}
@@ -156,6 +192,9 @@ func TestStreamMarkdownResetsOnRevision(t *testing.T) {
 	}{
 		{1, 80, "# Title\n\nFirst paragraph.\n\nSecond"},
 		{1, 80, "# Title\n\nFirst paragraph.\n\nSecond paragraph.\n\n- a"},
+		// Same length, so every settled block keeps its span; only the source
+		// check can tell the settled heading changed.
+		{1, 80, "# Tilte\n\nFirst paragraph.\n\nSecond paragraph.\n\n- a\n- b"},
 		{1, 80, "# Retitled\n\nFirst paragraph.\n\nSecond paragraph.\n\n- a\n- b"},
 		{1, 80, "# Retitled\n\nShort."},
 		{2, 80, "Another block.\n\nWith two paragraphs."},
@@ -169,6 +208,31 @@ func TestStreamMarkdownResetsOnRevision(t *testing.T) {
 		want := maskChromaColours(full.markdown(step.src))
 		if got != want {
 			t.Fatalf("step %d: incremental %q, full %q", i, got, want)
+		}
+		if i == 1 && len(r.stream.settled) == 0 {
+			t.Fatal("precondition: the heading must have settled before it is rewritten")
+		}
+	}
+}
+
+// TestStreamMarkdownCoalescedRewriteOfSettledBlock: one frame can add enough
+// lines to turn a settled paragraph into a definition-list term while the block
+// count also grows. The source before the split is unchanged, so only the block
+// spans show the prefix no longer holds.
+func TestStreamMarkdownCoalescedRewriteOfSettledBlock(t *testing.T) {
+	r := newStreamTestRenderer(80)
+	full := newStreamTestRenderer(80)
+	frames := []string{
+		"Intro.\n\nTerm\n\nx",
+		"Intro.\n\nTerm\n\nx more",
+		"Intro.\n\nTerm\n\n: a definition\n\nNext para.\n",
+	}
+	for i, src := range frames {
+		if got, want := r.markdownStreamed(1, src), full.markdown(src); got != want {
+			t.Fatalf("frame %d: incremental %q, full %q", i, got, want)
+		}
+		if i == 1 && len(r.stream.settled) != 2 {
+			t.Fatalf("precondition: want 2 settled blocks before the rewrite, got %d", len(r.stream.settled))
 		}
 	}
 }
@@ -184,9 +248,79 @@ func TestStreamMarkdownSettlesFinishedBlocks(t *testing.T) {
 	if got := len(r.stream.settled); got != 5 {
 		t.Fatalf("settled blocks = %d, want 5", got)
 	}
-	settledOut := r.stream.out
+	base := r.stream.rendered
 	r.markdownStreamed(1, answer+" grows again")
-	if r.stream.out != settledOut || len(r.stream.settled) != 5 {
-		t.Fatal("settled prefix was rebuilt for a tail-only delta")
+	if n := r.stream.rendered - base; n != 1 || len(r.stream.settled) != 5 {
+		t.Fatalf("a tail-only delta must render only the tail block, rendered %d blocks", n)
 	}
+}
+
+// TestStreamMarkdownHeadingRunsStayLinear: headings and fenced blocks end
+// mid-line, so a run of them never settles. A frame must still render each block
+// a bounded number of times, not once per rejected split point.
+func TestStreamMarkdownHeadingRunsStayLinear(t *testing.T) {
+	r := newStreamTestRenderer(100)
+	answer := headingRunsAnswer(50)
+	for _, end := range lineEnds(answer) {
+		base := r.stream.rendered
+		r.markdownStreamed(1, answer[:end])
+		blocks := 2 * strings.Count(answer[:end], "## Step")
+		if n := r.stream.rendered - base; n > blocks+2 {
+			t.Fatalf("prefix %d/%d: rendered %d blocks for a %d-block answer", end, len(answer), n, blocks)
+		}
+	}
+}
+
+// streamIntoModel appends src to the open assistant block in deltas of n bytes,
+// flushing a frame after each one.
+func streamIntoModel(m *Model, src string, n int) {
+	for _, chunk := range streamChunks(src, n) {
+		m.conv.appendAssistant(chunk)
+		m.refreshView()
+	}
+}
+
+// assertConversationMatchesFresh compares m's cached conversation render with a
+// fresh renderer's at the same width.
+func assertConversationMatchesFresh(t *testing.T, m Model) {
+	t.Helper()
+	got := maskChromaColours(m.rend.renderConversation(&m.conv, false))
+	want := maskChromaColours(freshConvString(m.rend.th, m.rend.width, &m.conv, false))
+	if got != want {
+		at := commonPrefixLen(got, want)
+		t.Fatalf("cached render differs from fresh at byte %d\ncached: …%q\nfresh:  …%q", at, clip(got, at), clip(want, at))
+	}
+}
+
+// TestStreamMarkdownWidthChangeMidStream: a resize while an answer streams
+// renders the rest at the new width; nothing settled at the old width survives.
+func TestStreamMarkdownWidthChangeMidStream(t *testing.T) {
+	m := newStreamBenchModel(t)
+	answer := streamAnswer()
+	streamIntoModel(&m, answer[:len(answer)/2], 64)
+	if len(m.rend.stream.settled) == 0 {
+		t.Fatal("precondition: blocks must settle before the resize")
+	}
+	m = applyAll(m, tea.WindowSizeMsg{Width: 70, Height: 40})
+	streamIntoModel(&m, answer[len(answer)/2:], 64)
+	assertConversationMatchesFresh(t, m)
+}
+
+// TestStreamMarkdownForgottenOnRebuild: a rebuilt conversation can reuse the
+// streaming block's index, so resetSession forgets the stream's progress and an
+// answer of the same shape at that index renders from its own source.
+func TestStreamMarkdownForgottenOnRebuild(t *testing.T) {
+	m := newStreamBenchModel(t)
+	streamIntoModel(&m, "# Title\n\nFirst paragraph.\n\nSecond paragraph.\n\nTail", 8)
+	if len(m.rend.stream.settled) == 0 {
+		t.Fatal("precondition: blocks must settle before the rebuild")
+	}
+	m = m.resetSession()
+	if m.rend.stream.started || len(m.rend.stream.settled) != 0 {
+		t.Fatal("resetSession must forget the stream's progress")
+	}
+	m.conv.addUser("Explain the change.")
+	m.conv.startAssistant()
+	streamIntoModel(&m, "# Tilte\n\nFirst paragraph.\n\nSecond paragraph.\n\nTail", 8)
+	assertConversationMatchesFresh(t, m)
 }

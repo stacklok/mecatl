@@ -14,21 +14,22 @@ import (
 // rendered.
 //
 // The rail style has no width, background, or right border, so lipgloss renders
-// a multi-line body as each line rendered alone, padded with spaces to the
-// widest line. render reproduces that exactly (assistant_rail_test.go pins it).
-// A railed line is a pure function of its text and the rail style, and the style
-// is fixed for a renderer's lifetime (switchTheme builds a new renderer), so a
-// reused line is never stale, whichever block it came from. It is used only on
-// the update goroutine.
+// a multi-line body (after turning CRLF into LF, as here) as each line rendered
+// alone, padded with spaces to the widest line. render reproduces that exactly
+// (assistant_rail_test.go pins it). A railed line is a pure function of its text
+// and the rail's own style, which is set once, so a reused line is never stale,
+// whichever block it came from. It is used only on the update goroutine.
 type assistantRail struct {
+	style  lipgloss.Style
+	styled bool     // style has been set
 	lines  []string // body lines of the previous render
-	railed []string // each line rendered alone through the rail style
+	railed []string // each line rendered alone through style
 	widths []int    // cell width of each railed line
 }
 
-// render returns style.Render(body).
-func (a *assistantRail) render(style lipgloss.Style, body string) string {
-	lines := strings.Split(body, "\n")
+// render returns a.style.Render(body).
+func (a *assistantRail) render(body string) string {
+	lines := strings.Split(strings.ReplaceAll(body, "\r\n", "\n"), "\n")
 	keep := 0
 	for keep < len(lines) && keep < len(a.lines) && lines[keep] == a.lines[keep] {
 		keep++
@@ -36,7 +37,7 @@ func (a *assistantRail) render(style lipgloss.Style, body string) string {
 	a.lines = lines
 	a.railed, a.widths = a.railed[:keep], a.widths[:keep]
 	for _, line := range lines[keep:] {
-		out := style.Render(line)
+		out := a.style.Render(line)
 		a.railed = append(a.railed, out)
 		a.widths = append(a.widths, ansi.StringWidth(out))
 	}
@@ -60,4 +61,11 @@ func (a *assistantRail) render(style lipgloss.Style, body string) string {
 		}
 	}
 	return b.String()
+}
+
+// forget drops the reused lines, keeping the style. It runs with
+// resetBlockCaches so a rebuilt conversation doesn't keep the old answer's
+// lines alive.
+func (a *assistantRail) forget() {
+	a.lines, a.railed, a.widths = nil, nil, nil
 }

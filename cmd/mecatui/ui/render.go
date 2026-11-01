@@ -115,22 +115,23 @@ type renderer struct {
 	mu    sync.Mutex
 	cache map[int]*glamour.TermRenderer
 
-	// stream renders the live assistant block's markdown incrementally; see
-	// streamMarkdown.
+	// stream renders conversation assistant markdown, incrementally while a block
+	// streams; see streamMarkdown.
 	stream streamMarkdown
 
 	// rail draws assistant bodies' left rail, re-rendering only changed lines;
 	// see assistantRail.
 	rail assistantRail
 
-	// blocks owns every cross-frame conversation-block cache: whole rendered
-	// blocks, assistant markdown, fallback frame rows, and the incremental prefix.
-	// It is reset when a conversation is rebuilt because its buckets use conversation
-	// indices that a fresh conversation can reuse.
+	// blocks owns the cross-frame conversation-block caches keyed by conversation
+	// index: whole rendered blocks, assistant markdown, fallback frame rows, and the
+	// incremental prefix. It is reset, together with stream's and rail's progress,
+	// when a conversation is rebuilt because a fresh conversation can reuse indices.
 	blocks blockRenderCache
 
-	// mdRenders counts REAL glamour invocations (cache misses) — incremented at the
-	// tr.Render call site in markdown(), not in markdownAt's hit path. It is the test
+	// mdRenders counts REAL markdown renders (cache misses) — incremented once per
+	// render by markdownStreamed or at markdownWidth's tr.Render call site, never in
+	// markdownAt's hit path. It is the test
 	// seam proving the delta-coalescing actually elides per-token renders: N streamed
 	// deltas with no frame flush leave it unchanged, and one flush bumps it by exactly
 	// one (the live block re-renders once). Touched only on the update goroutine.
@@ -336,9 +337,11 @@ func (r *renderer) vpView(vp viewport.Model) string {
 // On any glamour error it falls back to the raw text so the stream is never lost.
 // MUST be called only on the update goroutine.
 //
-// markdownWidth is the single glamour-render entry-point shared by the
-// conversation markdown path (via markdown) and the plan-approval modal — the
-// plan modal wraps at the card's content width rather than the transcript budget.
+// markdownWidth is the glamour TermRenderer entry-point for the plan-approval
+// modal and for conversation markdown when streamMarkdown falls back; otherwise
+// conversation markdown renders through streamMarkdown, which produces the same
+// bytes. The plan modal wraps at the card's content width rather than the
+// transcript budget.
 // The glamour cache is width-keyed, so each distinct caller width gets its own
 // renderer entry.
 func (r *renderer) markdownWidth(src string, w int) string {
@@ -436,8 +439,9 @@ func (r *renderer) markdown(src string) string {
 // block on each streamed delta — and otherwise renders fresh and stores the
 // result, overwriting the index's entry in place (so the live, growing block
 // keeps exactly one entry rather than accumulating one per token). Correctness
-// rests on markdown() being pure in (src, width, theme) with a fixed theme; the
-// cache therefore can never return a stale render. Update-goroutine-only.
+// rests on markdownStreamed producing exactly markdown(src), which is pure in
+// (src, width, theme) with a fixed theme; the cache therefore can never return a
+// stale render. Update-goroutine-only.
 func (r *renderer) markdownAt(idx int, src string) string {
 	if out, ok := r.blocks.markdownBlock(idx, src, r.width); ok {
 		return out
@@ -719,7 +723,10 @@ func (r *renderer) renderAssistantSnapshotFresh(idx int, p scrollback.AssistantC
 		body = reasoning + body
 	}
 	label := r.th.Style("transcriptLLMMarker").Render(theme.TranscriptLLMGlyph) + r.th.Style("transcriptLLMHeading").Render(" mecatl")
-	return label + "\n" + r.rail.render(r.assistantRailStyle(), body)
+	if !r.rail.styled {
+		r.rail.style, r.rail.styled = r.assistantRailStyle(), true
+	}
+	return label + "\n" + r.rail.render(body)
 }
 
 // assistantRailStyle is the left rail drawn beside an assistant body.
