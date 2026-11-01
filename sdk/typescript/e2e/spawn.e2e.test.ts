@@ -11,6 +11,7 @@ import { fixture, repositoryRoot } from "./harness.js";
 import {
   binaryPath,
   childExit,
+  isolatedEnvironment,
   spawnProductFixture,
   startRuntimeHelper,
 } from "./product-harness.js";
@@ -119,6 +120,7 @@ it("a real startup failure is typed with a redacted tail and no orphan", async (
       await spawn({
         args: ["--mock-script", invalidScript, "--workspace", root],
         binaryPath: binaryPath(),
+        env: isolatedEnvironment(root),
       });
     } catch (error) {
       failure = error as MecatlError & { exitCode?: number | null; stderrTail?: string };
