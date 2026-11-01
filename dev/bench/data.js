@@ -394426,6 +394426,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1793556213351,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "b78d227d3cb177b9e26f94eae6f3771a9948b424",
+          "message": "test(app): allow durable learning evidence retry in policy matrix (#2640)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-11-01T09:52:40-08:00",
+          "tree_id": "00d2e23c896a1871fefd1e9716183a567b7f0af3",
+          "url": "https://github.com/stacklok/mecatl/commit/b78d227d3cb177b9e26f94eae6f3771a9948b424"
+        },
+        "date": 1793556964624,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 16143,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12908,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 794,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -514278,6 +514317,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1793556961337,
+  "lastUpdate": 1793556965380,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
