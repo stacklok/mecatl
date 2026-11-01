@@ -119,6 +119,10 @@ type renderer struct {
 	// streamMarkdown.
 	stream streamMarkdown
 
+	// rail draws assistant bodies' left rail, re-rendering only changed lines;
+	// see assistantRail.
+	rail assistantRail
+
 	// blocks owns every cross-frame conversation-block cache: whole rendered
 	// blocks, assistant markdown, fallback frame rows, and the incremental prefix.
 	// It is reset when a conversation is rebuilt because its buckets use conversation
@@ -715,12 +719,16 @@ func (r *renderer) renderAssistantSnapshotFresh(idx int, p scrollback.AssistantC
 		body = reasoning + body
 	}
 	label := r.th.Style("transcriptLLMMarker").Render(theme.TranscriptLLMGlyph) + r.th.Style("transcriptLLMHeading").Render(" mecatl")
-	rail := lipgloss.NewStyle().
+	return label + "\n" + r.rail.render(r.assistantRailStyle(), body)
+}
+
+// assistantRailStyle is the left rail drawn beside an assistant body.
+func (r *renderer) assistantRailStyle() lipgloss.Style {
+	return lipgloss.NewStyle().
 		BorderStyle(lipgloss.NormalBorder()).
 		BorderLeft(true).
 		BorderForeground(r.th.Style("transcriptLLMRail").GetForeground()).
 		PaddingLeft(1)
-	return label + "\n" + rail.Render(body)
 }
 
 func (r *renderer) renderConversationLines(c *scrollback.Conversation, expand bool) []string {
