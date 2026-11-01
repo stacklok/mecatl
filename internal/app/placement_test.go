@@ -191,8 +191,8 @@ func TestInvariant_selected_successor_reattaches_after_restart(t *testing.T) {
 }
 
 // TestInvariant_worktree_ref_survives_head_move pins issue #1797: a commit in
-// the bound worktree must not strand the session, while a removed worktree and
-// an unrecognized revision still fail closed.
+// the bound worktree must not strand the session, while a removed worktree
+// still fails closed.
 func TestInvariant_worktree_ref_survives_head_move(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")
@@ -272,7 +272,7 @@ func TestInvariant_worktree_ref_survives_head_move(t *testing.T) {
 func TestWorktreeReattachRejectsUnknownRevision(t *testing.T) {
 	choice := server.Worktree{Path: "/private/worktree", Branch: "refs/heads/feature", Head: "head-1"}
 	provider := &localPlacementProvider{scope: "test", root: t.TempDir(), worktrees: &scriptedWorktreeLister{responses: [][]server.Worktree{{choice}}}, workspace: func(root string) tool.Workspace { return memfs.NewWorkspace(root) }}
-	for _, revision := range []string{"", "head-1", "worktree-v2", strings.Repeat("A", 40), strings.Repeat("a", 39), strings.Repeat("a", 41), strings.Repeat("a", 65)} {
+	for _, revision := range []string{"", "head-1", "worktree-v2", strings.Repeat("A", 40), strings.Repeat("g", 40), strings.Repeat("z", 64), strings.Repeat("a", 39), strings.Repeat("a", 41), strings.Repeat("a", 65)} {
 		ref := session.EnvironmentRef{Kind: session.EnvKindLocal, ID: choice.Path, Revision: revision}
 		if _, err := provider.Reattach(context.Background(), server.PlacementReattachRequest{Ref: ref, Scope: "test"}); !errors.Is(err, server.ErrPlacementNotFound) {
 			t.Fatalf("revision %q reattach = %v, want not found", revision, err)
@@ -288,6 +288,25 @@ func TestWorktreeReattachRejectsUnknownRevision(t *testing.T) {
 	unlisted := session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/private/other", Revision: localWorktreePlacementRevision}
 	if _, err := provider.Reattach(context.Background(), server.PlacementReattachRequest{Ref: unlisted, Scope: "test"}); !errors.Is(err, server.ErrPlacementNotFound) {
 		t.Fatalf("unlisted path reattach = %v, want not found", err)
+	}
+}
+
+func TestWorktreePlacementRejectsBareRepositoryEntry(t *testing.T) {
+	root := t.TempDir()
+	bare := server.Worktree{Path: "/private/repo.git", Bare: true}
+	issuer, _ := server.NewWorktreeSelectorIssuer(make([]byte, 32))
+	provider := &localPlacementProvider{scope: "test", root: root, selectors: issuer, worktrees: &scriptedWorktreeLister{responses: [][]server.Worktree{{bare}}}, workspace: func(root string) tool.Workspace { return memfs.NewWorkspace(root) }}
+	sourceRef := configuredLocalPlacementRef(root)
+	listed, err := provider.ListWorktrees(context.Background(), server.PlacementDiscoveryRequest{Source: "source", SourceRef: sourceRef, Scope: "test"})
+	if err != nil || len(listed) != 1 || !listed[0].Bare {
+		t.Fatalf("ListWorktrees = %+v, %v", listed, err)
+	}
+	if _, err := provider.Bind(context.Background(), server.PlacementBindRequest{Selector: server.SelectWorktree("source", sourceRef, listed[0].Selector), Scope: "test", Operation: server.PlacementOperationSuccessor}); !errors.Is(err, server.ErrPlacementNotFound) {
+		t.Fatalf("bare entry bind = %v, want not found", err)
+	}
+	ref := session.EnvironmentRef{Kind: session.EnvKindLocal, ID: bare.Path, Revision: localWorktreePlacementRevision}
+	if _, err := provider.Reattach(context.Background(), server.PlacementReattachRequest{Ref: ref, Scope: "test"}); !errors.Is(err, server.ErrPlacementNotFound) {
+		t.Fatalf("bare entry reattach = %v, want not found", err)
 	}
 }
 

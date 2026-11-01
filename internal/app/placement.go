@@ -192,7 +192,7 @@ func (p *localPlacementProvider) Reattach(ctx context.Context, req server.Placem
 		return p.bindNoFS()
 	}
 	if choice, ok := p.currentWorktree(ctx, req.Ref); ok {
-		return p.bindWorktree(choice, req.Ref)
+		return p.bindWorktree(choice, req.Ref.Revision)
 	}
 	return server.PlacementBinding{}, server.ErrPlacementNotFound
 }
@@ -248,7 +248,11 @@ func (p *localPlacementProvider) bindSelectedWorktree(ctx context.Context, req s
 	if !matched {
 		return server.PlacementBinding{}, server.ErrPlacementChanged
 	}
-	return p.bindWorktree(choice, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: choice.Path, Revision: localWorktreePlacementRevision})
+	// A bare repository entry is a git directory, not a working tree.
+	if choice.Bare {
+		return server.PlacementBinding{}, server.ErrPlacementNotFound
+	}
+	return p.bindWorktree(choice, localWorktreePlacementRevision)
 }
 
 func (p *localPlacementProvider) authorizedSource(ctx context.Context, ref session.EnvironmentRef) bool {
@@ -268,16 +272,18 @@ func (p *localPlacementProvider) currentWorktree(ctx context.Context, ref sessio
 		return server.Worktree{}, false
 	}
 	for _, choice := range current {
-		if choice.Path == ref.ID {
+		if choice.Path == ref.ID && !choice.Bare {
 			return choice, true
 		}
 	}
 	return server.Worktree{}, false
 }
 
-// bindWorktree returns ref unchanged so reattach preserves the persisted
-// identity exactly, including legacy refs whose revision is a bind-time HEAD.
-func (p *localPlacementProvider) bindWorktree(choice server.Worktree, ref session.EnvironmentRef) (server.PlacementBinding, error) {
+// bindWorktree binds choice under revision unchanged so reattach preserves the
+// persisted identity exactly, including legacy refs whose revision is a
+// bind-time HEAD.
+func (p *localPlacementProvider) bindWorktree(choice server.Worktree, revision string) (server.PlacementBinding, error) {
+	ref := session.EnvironmentRef{Kind: session.EnvKindLocal, ID: choice.Path, Revision: revision}
 	ws := p.workspace(choice.Path)
 	if ws == nil {
 		return server.PlacementBinding{}, server.ErrPlacementUnavailable
@@ -302,8 +308,8 @@ func displayBranch(ref string) string {
 	return strings.TrimPrefix(ref, "refs/heads/")
 }
 
-// isGitObjectID reports whether s is a full SHA-1 or SHA-256 object name.
-// Worktree refs persisted before localWorktreePlacementRevision carry one.
+// isGitObjectID reports whether s is a full lowercase SHA-1 or SHA-256 object
+// name, as git prints it. Legacy worktree refs carry the bind-time HEAD.
 func isGitObjectID(s string) bool {
 	if len(s) != 40 && len(s) != 64 {
 		return false
