@@ -6,8 +6,8 @@ github.com/bmatcuk/doublestar/v4 v4.10.4 h1:oTKkRmRuOsKMqFe1AQazd9gGBFNEpOmgKp/x
 github.com/bmatcuk/doublestar/v4 v4.10.4/go.mod h1:xBQ8jztBU6kakFMg+8WGxn0c6z1fTSPVIjEY1Wr7jzc=
 github.com/coder/websocket v1.8.15 h1:6B2JPeOGlpff2Uz6vOEH1Vzpi0iUz20A+lPVhPHtNUA=
 github.com/coder/websocket v1.8.15/go.mod h1:NX3SzP+inril6yawo5CQXx8+fk145lPDC6pumgx0mVg=
-github.com/openai/openai-go/v3 v3.86.0 h1:OBq62xi3tSI9zMTm++XifNnfHKMpWfPKomS+Butvxyg=
-github.com/openai/openai-go/v3 v3.86.0/go.mod h1:i+lM+NFmWP+Yd+fYKEaPxUINBx+vZtRmY5gaszSfsiQ=
+github.com/openai/openai-go/v3 v3.91.1 h1:DMahxwjH/lteKlr3yoicxRDbMp6B7WkyBUP1yBUwbJY=
+github.com/openai/openai-go/v3 v3.91.1/go.mod h1:TQHvyB61TWJ7oEf7wnq4NAM/TatuqnUCJ+qbKj8POsE=
 github.com/stacklok/mecatl/engine v0.18.1 h1:dGKlKAoyiNdKBakwx1BUY7aCy58LviRy4tao2cMwGs8=
 github.com/stacklok/mecatl/engine v0.18.1/go.mod h1:q94lElMGyPgwvp9h8bHjyWn7N88jup+SXiL/nEAp04M=
 github.com/stacklok/mecatl/provider/ssefilter v0.1.0 h1:At26rvktMkZNGL2kyZYJkBh/n6PAXAg7DwlneCt8r94=

@@ -2,7 +2,7 @@ module github.com/stacklok/mecatl/provider/ssefilter
 
 go 1.27
 
-require github.com/openai/openai-go/v3 v3.86.0
+require github.com/openai/openai-go/v3 v3.91.1
 
 require (
 	github.com/coder/websocket v1.8.15 // indirect
