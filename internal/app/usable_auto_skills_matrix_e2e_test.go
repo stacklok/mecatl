@@ -144,7 +144,7 @@ func TestUsableAutoSkillsStockBuildPolicyMatrix(t *testing.T) {
 				for time.Now().Before(deadline) {
 					listed, err = built.Service.ListLearnedSkills(ctx, &mecatlv1.ListLearnedSkillsRequest{Project: workspace})
 					if err != nil {
-						t.Fatal(err)
+						t.Fatalf("list learned skills: %v diagnostics=%v", err, diag.capturedStrings())
 					}
 					if tc.wantState == "" {
 						time.Sleep(100 * time.Millisecond)
@@ -237,7 +237,7 @@ func TestUsableAutoSkillsStockBuildPolicyMatrix(t *testing.T) {
 				if tc.name == "evaluator error retry" {
 					retried, listErr := built.Service.ListLearnedSkills(ctx, &mecatlv1.ListLearnedSkillsRequest{Project: workspace})
 					if listErr != nil || len(retried.GetSkills()) != 1 || retried.GetSkills()[0].GetState() != string(learning.SkillRejected) || retried.GetSkills()[0].GetEvaluations()[0].GetVerdict() != string(learning.EvaluationError) {
-						t.Fatalf("durable evaluator-error retry = %+v err=%v", retried, listErr)
+						t.Fatalf("durable evaluator-error retry = %+v err=%v diagnostics=%v", retried, listErr, diag.capturedStrings())
 					}
 					for _, line := range diag.capturedStrings() {
 						if strings.Contains(line, secretErr.Error()) {
