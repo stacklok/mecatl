@@ -355888,6 +355888,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1793556209543,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "b78d227d3cb177b9e26f94eae6f3771a9948b424",
+          "message": "test(app): allow durable learning evidence retry in policy matrix (#2640)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-11-01T09:52:40-08:00",
+          "tree_id": "00d2e23c896a1871fefd1e9716183a567b7f0af3",
+          "url": "https://github.com/stacklok/mecatl/commit/b78d227d3cb177b9e26f94eae6f3771a9948b424"
+        },
+        "date": 1793556960561,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -514244,6 +514278,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1793556957456,
+  "lastUpdate": 1793556961337,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
