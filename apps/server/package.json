@@ -17,13 +17,13 @@
     "@hono/node-server": "2.1.5",
     "@hono/zod-openapi": "1.6.3",
     "@stacklok-oss/mecatl-sdk": "file:../../sdk/typescript",
-    "hono": "4.13.13",
+    "hono": "4.13.14",
     "openid-client": "6.8.8",
     "zod": "4.6.7"
   },
   "devDependencies": {
     "@mecatl-studio/contracts": "workspace:*",
-    "@types/node": "26.6.5",
+    "@types/node": "26.6.6",
     "esbuild": "0.28.2",
     "tsx": "4.23.15",
     "typescript": "7.0.2",
