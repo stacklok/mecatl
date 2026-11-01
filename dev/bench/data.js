@@ -394029,6 +394029,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1793550840048,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "31aedf2ec7986ef5b1c1053adeff3d744858ae3d",
+          "message": "feat(engine): add isolated kernel history foundation (#2639)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-11-01T09:51:05-08:00",
+          "tree_id": "acb1aebb0c23f438aa4d7e2d7e2092c606c5755c",
+          "url": "https://github.com/stacklok/mecatl/commit/31aedf2ec7986ef5b1c1053adeff3d744858ae3d"
+        },
+        "date": 1793556213351,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 16115,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12879,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 794,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -513767,6 +513806,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1793556210358,
+  "lastUpdate": 1793556214140,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
