@@ -982,13 +982,13 @@ type Config struct {
 	// configuration in tests.
 	identityBrokerConfig *identitybroker.Config
 	// IdentityBrokerAS1 connects the real identity broker's session open to an
-	// AS-1, where it converts users' access tokens. No flag sets it yet: #2607
-	// fills it for AS-1 hosted in mecak8s. Nil, as in every deployment until
-	// then, converts no access tokens.
+	// AS-1, where it converts users' access tokens. No flag sets it; with a
+	// hosted AS-1, Build fills it for that AS-1. Only an offline harness test
+	// sets it directly, pointing the broker at an external AS-1.
 	IdentityBrokerAS1 *IdentityBrokerAS1
 	// IdentityBrokerHostedAS1 hosts AS-1 beside the identity broker; nil hosts
-	// none. Only mecak8s sets it. Hosting AS-1 does not connect session open
-	// to it: IdentityBrokerAS1 stays nil until #2607.
+	// none. Only mecak8s sets it. Build points session open at the hosted AS-1,
+	// registering the broker client key there as the confidential delegate.
 	IdentityBrokerHostedAS1 *IdentityBrokerAS1Config
 	// MCPProfileLoader resolves operator-tier profiles with the same permission
 	// resolver Build already owns. Command roots install it so settings are not

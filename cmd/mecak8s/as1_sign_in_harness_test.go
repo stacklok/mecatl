@@ -288,8 +288,10 @@ func TestHostedAS1RateLimitsAreGlobalPerSurface(t *testing.T) {
 // its upstream, and signs the TUI's real client code in there: mecak8s's
 // protected-resource metadata names AS-1, the token AS-1 issues passes
 // mecak8s's sub_id checks for each session create, each with a refreshed
-// token, and session open converts nothing at AS-1. With a signing key file,
-// a token AS-1 issued before a restart still passes after it.
+// token, and session open converts each one at the hosted AS-1 in process, so
+// the broker session holds a refresh token. With a signing key file, a token
+// AS-1 issued before a restart still passes after it, and the next session
+// create opens a new broker session that converts it.
 func TestHostedAS1SignsTheTUIIn(t *testing.T) {
 	h := identityharness.New(t, identityharness.Options{})
 	dir := t.TempDir()
@@ -438,10 +440,10 @@ func TestHostedAS1SignsTheTUIIn(t *testing.T) {
 		if err != nil || !ok || brokerSession.Owner != aliceCompany {
 			t.Fatalf("session %s broker session: found=%v err=%v owner=%+v; want one owned by %+v", id, ok, err, brokerSession.Owner, aliceCompany)
 		}
-		// Session open is unchanged: the broker is not pointed at the hosted
-		// AS-1, so it converts no token and holds no refresh token.
-		if brokerSession.HoldsRefreshToken {
-			t.Fatalf("session %s broker session holds a refresh token; session open must not convert at the hosted AS-1", id)
+		// Session open converts the request's access token at the hosted AS-1 in
+		// process, so the broker session holds the refresh token AS-1 issued.
+		if !brokerSession.HoldsRefreshToken {
+			t.Fatalf("session %s broker session holds no refresh token; session open must convert at the hosted AS-1", id)
 		}
 	}
 	for range 2 {
@@ -464,12 +466,17 @@ func TestHostedAS1SignsTheTUIIn(t *testing.T) {
 	as1Mu.Lock()
 	reachedAS1 := maps.Clone(as1Grants)
 	as1Mu.Unlock()
+	// The broker's session-open token exchange runs through the in-process
+	// client, not the public listener, so only the TUI's code exchange reaches
+	// recordGrants.
 	if reachedAS1["authorization_code"] != 1 || reachedAS1[tokenExchangeGrant] != 0 {
-		t.Fatalf("token requests at the hosted AS-1 by grant = %v, want the code exchange and no token exchange", reachedAS1)
+		t.Fatalf("token requests at the hosted AS-1 listener by grant = %v, want the code exchange and no token exchange over the listener", reachedAS1)
 	}
 
-	// A token AS-1 issued before a restart, never presented, still passes
-	// after it: the signing key comes from the file.
+	// A token AS-1 issued before a restart, never presented, still passes after
+	// it: the signing key comes from the file. The restart builds a fresh broker
+	// client key and a hosted AS-1 that registers it, so the next create opens a
+	// new broker session and converts the token there.
 	beforeRestart, err := source.Refresh(t.Context())
 	if err != nil {
 		t.Fatalf("Refresh: %v", err)
@@ -492,7 +499,7 @@ func TestHostedAS1SignsTheTUIIn(t *testing.T) {
 	as1Mu.Lock()
 	defer as1Mu.Unlock()
 	if as1Grants[tokenExchangeGrant] != 0 {
-		t.Fatalf("token requests at the hosted AS-1 by grant = %v after restart, want no token exchange", as1Grants)
+		t.Fatalf("token requests at the hosted AS-1 listener by grant = %v after restart, want no token exchange over the listener", as1Grants)
 	}
 }
 

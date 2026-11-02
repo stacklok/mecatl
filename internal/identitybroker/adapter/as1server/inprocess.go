@@ -12,7 +12,10 @@ import (
 // InProcessClient returns a client that serves requests for AS-1's issuer
 // straight from Handler, without a network listener, so a validator in the
 // same process can fetch discovery and keys before listeners start. It
-// refuses any request outside the issuer's scheme, host, and path.
+// refuses any request outside the issuer's scheme, host, and path. A request
+// whose context ends before the handler finishes returns the context's error,
+// so a client Timeout bounds the call; the abandoned handler finishes into its
+// own buffer.
 func (s *Server) InProcessClient() *http.Client {
 	return &http.Client{
 		Transport:     inProcessTransport{server: s},
@@ -23,23 +26,43 @@ func (s *Server) InProcessClient() *http.Client {
 type inProcessTransport struct{ server *Server }
 
 func (t inProcessTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	if req.Body != nil {
-		defer func() { _ = req.Body.Close() }()
-	}
 	issuer := t.server.issuer
 	p := req.URL.Path
 	if req.URL.Scheme != issuer.Scheme || req.URL.Host != issuer.Host || req.URL.User != nil ||
 		path.Clean(p) != p || !strings.HasPrefix(p, issuer.Path+"/") {
+		if req.Body != nil {
+			_ = req.Body.Close()
+		}
 		return nil, fmt.Errorf("as1server: in-process client refuses %s://%s%s: outside the issuer", req.URL.Scheme, req.URL.Host, p)
 	}
-	inner := req.Clone(req.Context())
+	ctx := req.Context()
+	inner := req.Clone(ctx)
 	inner.RequestURI = req.URL.RequestURI()
 	inner.Host = issuer.Host
 	if inner.Body == nil {
 		inner.Body = http.NoBody
 	}
+	// The handler runs in its own goroutine so the caller can stop waiting
+	// when ctx ends. Only that goroutine touches recorded until done closes,
+	// and it closes the body, which RoundTrip may leave to it.
 	recorded := &bufferedResponse{header: make(http.Header)}
-	t.server.handler.ServeHTTP(recorded, inner)
+	done := make(chan struct{})
+	var panicked any
+	go func() {
+		defer close(done)
+		defer func() { _ = inner.Body.Close() }()
+		defer func() { panicked = recover() }()
+		t.server.handler.ServeHTTP(recorded, inner)
+	}()
+	select {
+	case <-done:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	if panicked != nil {
+		// As when the handler ran on the caller's goroutine.
+		panic(panicked)
+	}
 	if recorded.status == 0 {
 		recorded.status = http.StatusOK
 	}

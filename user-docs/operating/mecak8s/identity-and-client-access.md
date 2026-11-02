@@ -291,7 +291,10 @@ ownership still keys on the access token's `sub_id`.
 
 Users approve a consent page at AS-1 when they sign in. AS-1 keeps its users,
 pending sign-ins, and refresh tokens in memory, so every pod restart or rollout
-signs all users out of AS-1 and they run `mecatui login` again. With
+signs all users out of AS-1 and they run `mecatui login` again. The broker's
+sessions and the key its client uses at AS-1 live in the same memory, so a
+restart drops them too: the broker generates a fresh client key at startup, and
+each signed-in user's next request opens a new broker session. With
 `signingKey`, access tokens issued before a restart keep verifying until they
 expire. Without it, AS-1 generates a key at startup and those tokens stop
 verifying immediately.
