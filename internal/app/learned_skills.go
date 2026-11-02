@@ -2,7 +2,6 @@ package app
 
 import (
 	"context"
-	"errors"
 	"sync"
 	"time"
 
@@ -14,6 +13,7 @@ import (
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
+	"github.com/stacklok/mecatl/internal/adapter/server"
 )
 
 func learnedSkillPartitions(ctx context.Context, workspace string, cfg Config) []learning.SkillPartition {
@@ -69,8 +69,6 @@ func (t hydratingSkillTool) Execute(ctx context.Context, call session.ToolCall, 
 	return t.live.Execute(ctx, call, env)
 }
 
-var errLearnedSkillGenerationChanged = errors.New("learned skill partition generation changed during hydration")
-
 func listActiveLearnedSkillsAtGeneration(ctx context.Context, repository learning.SkillRepository, partition learning.SkillPartition, owner string) ([]learning.SkillVersion, learning.SkillGeneration, error) {
 	var out []learning.SkillVersion
 	var after learning.SkillID
@@ -84,7 +82,7 @@ func listActiveLearnedSkillsAtGeneration(ctx context.Context, repository learnin
 		if first {
 			generation, first = page.Generation, false
 		} else if page.Generation != generation {
-			return nil, page.Generation, errLearnedSkillGenerationChanged
+			return nil, page.Generation, server.ErrLearnedSkillGenerationChanged
 		}
 		out = append(out, page.Versions...)
 		if page.Next == "" {
@@ -93,7 +91,7 @@ func listActiveLearnedSkillsAtGeneration(ctx context.Context, repository learnin
 				return nil, generation, generationErr
 			}
 			if current != generation {
-				return nil, current, errLearnedSkillGenerationChanged
+				return nil, current, server.ErrLearnedSkillGenerationChanged
 			}
 			return out, generation, nil
 		}
@@ -214,7 +212,7 @@ func buildProcedureProcessor(cfg Config, assets catalogAssets) func(context.Cont
 		// RollbackLearnedSkill) must be excluded across the WHOLE sequence — an
 		// unlocked write let a concurrent listActiveLearnedSkillsAtGeneration
 		// observe the partition's generation change mid-read and fail with
-		// errLearnedSkillGenerationChanged (the flaky
+		// server.ErrLearnedSkillGenerationChanged (the flaky
 		// TestUsableAutoSkillsStockBuildPolicyMatrix/untrusted_project_ignored,
 		// reproduced under `-race -count=30`; pinned deterministically by
 		// TestBuildProcedureProcessorHoldsPublicationLockForNonPublishablePartition).

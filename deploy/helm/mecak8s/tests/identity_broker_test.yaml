@@ -12,7 +12,7 @@ set:
   replicaCount: 1
   extraArgs: [--no-shell]
   oidc.enabled: true
-  oidc.audience: mecatl
+  oidc.audience: https://mecatl.example.com/api
   oidc.ownerIdentity: sub_id
   oidc.resource: https://mecatl.example.com
   identityBroker.enabled: true
@@ -87,6 +87,49 @@ tests:
       - equal:
           path: spec.template.spec.containers[0].volumeMounts[?(@.name == "as1-upstream-client-secret")].readOnly
           value: true
+
+  - it: trusts a private upstream CA and admits private addresses only when asked
+    set:
+      identityBroker.as1.upstream.caSecret.secretName: as1-upstream-ca
+      identityBroker.as1.upstream.caSecret.key: ca.crt
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --identity-broker-as1-upstream-ca-file=/var/run/secrets/as1-upstream-ca/ca.crt
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: --identity-broker-as1-upstream-allow-private-addresses
+      - equal:
+          path: spec.template.spec.volumes[?(@.name == "as1-upstream-ca")].secret
+          value:
+            secretName: as1-upstream-ca
+            defaultMode: 288
+            items:
+              - key: ca.crt
+                path: ca.crt
+      - equal:
+          path: spec.template.spec.containers[0].volumeMounts[?(@.name == "as1-upstream-ca")].readOnly
+          value: true
+
+  - it: admits a private upstream address with its CA
+    set:
+      identityBroker.as1.upstream.caSecret.secretName: as1-upstream-ca
+      identityBroker.as1.upstream.caSecret.key: ca.crt
+      identityBroker.as1.upstream.allowPrivateAddresses: true
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --identity-broker-as1-upstream-allow-private-addresses
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --identity-broker-as1-upstream-ca-file=/var/run/secrets/as1-upstream-ca/ca.crt
+
+  - it: rejects private upstream addresses without the upstream CA
+    set:
+      identityBroker.as1.upstream.allowPrivateAddresses: true
+    asserts:
+      - failedTemplate:
+          errorMessage: identityBroker.as1.upstream.allowPrivateAddresses requires identityBroker.as1.upstream.caSecret
 
   - it: rejects the identity broker without the sub_id owner identity
     set:
@@ -247,6 +290,32 @@ tests:
       - failedTemplate:
           errorMessage: identityBroker.as1 values require identityBroker.as1.issuer
 
+  - it: rejects private upstream settings without the AS-1 issuer
+    set:
+      identityBroker.subjectClaim: ""
+      identityBroker.as1.issuer: ""
+      identityBroker.as1.tuiClientID: ""
+      identityBroker.as1.upstream.issuer: ""
+      identityBroker.as1.upstream.clientID: ""
+      identityBroker.as1.upstream.allowPrivateAddresses: true
+    asserts:
+      - failedTemplate:
+          errorMessage: identityBroker.as1 values require identityBroker.as1.issuer
+
+  - it: rejects an upstream CA Secret without a key
+    set:
+      identityBroker.as1.upstream.caSecret.secretName: as1-upstream-ca
+    asserts:
+      - failedTemplate:
+          errorMessage: identityBroker.as1.upstream.caSecret.key is required when identityBroker.as1.upstream.caSecret.secretName is set
+
+  - it: rejects an upstream CA key without a Secret
+    set:
+      identityBroker.as1.upstream.caSecret.key: ca.crt
+    asserts:
+      - failedTemplate:
+          errorMessage: identityBroker.as1.upstream.caSecret.secretName is required when identityBroker.as1.upstream.caSecret.key is set
+
   - it: requires the TUI client ID
     set:
       identityBroker.as1.tuiClientID: ""
@@ -281,6 +350,13 @@ tests:
     asserts:
       - failedTemplate:
           errorPattern: oidc.audience is required with identityBroker.as1.issuer
+
+  - it: requires a URL audience for AS-1
+    set:
+      oidc.audience: mecatl
+    asserts:
+      - failedTemplate:
+          errorPattern: oidc.audience must be an absolute http or https URL
 
   - it: requires the protected-resource identifier
     set:

@@ -9,16 +9,42 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"syscall"
 	"time"
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
 	"github.com/stacklok/mecatl/engine/learning"
+	"github.com/stacklok/mecatl/engine/port"
 )
 
 const (
 	maxLearnedSkillDiffBytes = 32 << 10
 	skillPublicationTimeout  = 5 * time.Second
 )
+
+// ErrLearnedSkillGenerationChanged identifies an inconsistent publication read.
+// PublishLearnedSkills callbacks may return it; clients still receive ErrInternal.
+var ErrLearnedSkillGenerationChanged = errors.New("learned skill partition generation changed during hydration")
+
+func (s *Service) logLearnedSkillListFailure(ctx context.Context, operation string, err error) {
+	if s.cfg.Diagnostics == nil {
+		return
+	}
+	category := "unclassified"
+	switch {
+	case errors.Is(err, ErrLearnedSkillGenerationChanged):
+		category = "generation_changed"
+	case errors.Is(err, context.DeadlineExceeded):
+		category = "deadline_exceeded"
+	case errors.Is(err, context.Canceled):
+		category = "canceled"
+	case errors.Is(err, syscall.ENOSPC):
+		category = "no_space"
+	case errors.Is(err, syscall.EDQUOT):
+		category = "quota_exceeded"
+	}
+	s.cfg.Diagnostics.Log(ctx, port.LevelWarn, "learned-skill list failed", "operation", operation, "category", category)
+}
 
 func (s *Service) liveSkillGeneration(ctx context.Context, project string) uint64 {
 	if s.cfg.LiveSkillGeneration == nil {
@@ -76,6 +102,7 @@ func (s *Service) ListLearnedSkills(ctx context.Context, request *mecatlv1.ListL
 		publishErr := s.cfg.PublishLearnedSkills(publishCtx, partition)
 		cancel()
 		if publishErr != nil {
+			s.logLearnedSkillListFailure(ctx, "publish", publishErr)
 			return nil, skillServiceError(publishErr)
 		}
 	}
@@ -85,6 +112,7 @@ func (s *Service) ListLearnedSkills(ctx context.Context, request *mecatlv1.ListL
 	}
 	page, err := s.cfg.LearnedSkills.List(ctx, partition, learning.SkillList{After: learning.SkillID(request.GetCursor()), Limit: limit, State: state, OwnerAgent: request.GetOwnerAgent()})
 	if err != nil {
+		s.logLearnedSkillListFailure(ctx, "list", err)
 		return nil, skillServiceError(err)
 	}
 	out := make([]*mecatlv1.LearnedSkillVersion, len(page.Versions))

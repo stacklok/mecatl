@@ -36,7 +36,12 @@ type responseSnapshot struct {
 
 func request(t *testing.T, req *http.Request) responseSnapshot {
 	t.Helper()
-	resp, err := loopbackClient().Do(req)
+	return requestWithClient(t, loopbackClient(), req)
+}
+
+func requestWithClient(t *testing.T, client *http.Client, req *http.Request) responseSnapshot {
+	t.Helper()
+	resp, err := client.Do(req)
 	if err != nil {
 		t.Fatalf("callback request: %v", err)
 	}
@@ -515,6 +520,10 @@ func TestRequestAttemptBudget(t *testing.T) {
 }
 
 func TestUnauthenticatedProbeFloodDoesNotAbortValidCallback(t *testing.T) {
+	// Reuse one connection: reading a response does not establish that the
+	// server has closed a non-keepalive connection and released its limiter slot.
+	client := &http.Client{Transport: &http.Transport{Proxy: nil}, Timeout: 2 * time.Second}
+	t.Cleanup(client.CloseIdleConnections)
 	var redirect string
 	launcher := launcherFunc(func(_ context.Context, _ string) error {
 		parsed, err := url.Parse(redirect)
@@ -525,18 +534,18 @@ func TestUnauthenticatedProbeFloodDoesNotAbortValidCallback(t *testing.T) {
 		// loopback traffic, not authorization attempts.
 		for range 2 * maxRequestAttempts {
 			wrongPath, _ := http.NewRequest(http.MethodGet, "http://"+parsed.Host+"/probe", nil)
-			if got := request(t, wrongPath).status; got != http.StatusNotFound {
+			if got := requestWithClient(t, client, wrongPath).status; got != http.StatusNotFound {
 				t.Fatalf("wrong-path status = %d", got)
 			}
 
 			wrongHost, _ := http.NewRequest(http.MethodGet, callbackURL(redirect, "probe", "s", testIssuer), nil)
 			wrongHost.Host = "localhost"
-			if got := request(t, wrongHost).status; got != http.StatusNotFound {
+			if got := requestWithClient(t, client, wrongHost).status; got != http.StatusNotFound {
 				t.Fatalf("wrong-host status = %d", got)
 			}
 		}
 		valid, _ := http.NewRequest(http.MethodGet, callbackURL(redirect, "good", "s", testIssuer), nil)
-		if got := request(t, valid).status; got != http.StatusOK {
+		if got := requestWithClient(t, client, valid).status; got != http.StatusOK {
 			t.Fatalf("valid status after probe flood = %d", got)
 		}
 		return nil

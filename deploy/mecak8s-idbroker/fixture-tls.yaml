@@ -1,0 +1,62 @@
+# Fixture-local CA and leaf certificates for mecak8s (gRPC, HTTPS, AS-1) and
+# Dex. cert-manager generates every Secret at runtime; no key or certificate
+# value belongs in Git. Each leaf name is the in-cluster Service name, which
+# the hosts-add task also aliases to 127.0.0.1 on the host.
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: fixture-ca-bootstrap
+spec:
+  selfSigned: {}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: fixture-ca
+spec:
+  isCA: true
+  commonName: mecatl-idbroker-fixture-ca
+  secretName: fixture-ca
+  issuerRef:
+    name: fixture-ca-bootstrap
+    kind: Issuer
+---
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: fixture-ca
+spec:
+  ca:
+    secretName: fixture-ca
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: mecak8s-tls
+spec:
+  secretName: mecak8s-tls
+  commonName: mecak8s-mecak8s.mecatl-idbroker.svc.cluster.local
+  dnsNames:
+    - mecak8s-mecak8s.mecatl-idbroker.svc.cluster.local
+    - localhost
+  ipAddresses:
+    - 127.0.0.1
+  issuerRef:
+    name: fixture-ca
+    kind: Issuer
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: dex-tls
+spec:
+  secretName: dex-tls
+  commonName: dex.mecatl-idbroker.svc.cluster.local
+  dnsNames:
+    - dex.mecatl-idbroker.svc.cluster.local
+    - localhost
+  ipAddresses:
+    - 127.0.0.1
+  issuerRef:
+    name: fixture-ca
+    kind: Issuer

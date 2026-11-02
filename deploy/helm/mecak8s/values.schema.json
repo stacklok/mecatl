@@ -80,11 +80,13 @@
             "upstream": {
               "type": "object",
               "additionalProperties": false,
-              "required": ["issuer", "clientID", "clientSecret"],
+              "required": ["issuer", "clientID", "clientSecret", "caSecret", "allowPrivateAddresses"],
               "properties": {
                 "issuer": {"type": "string"},
                 "clientID": {"type": "string"},
-                "clientSecret": {"$ref": "#/definitions/optionalSecretKey"}
+                "clientSecret": {"$ref": "#/definitions/optionalSecretKey"},
+                "caSecret": {"$ref": "#/definitions/optionalSecretKey"},
+                "allowPrivateAddresses": {"type": "boolean"}
               }
             }
           }

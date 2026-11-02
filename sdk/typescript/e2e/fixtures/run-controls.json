@@ -32,7 +32,15 @@
     { "text": "child continued after approval" },
     { "text": "parent observed the child result" },
     { "delay_ms": 2000, "text": "cancel should interrupt this turn" },
-    { "delay_ms": 2000, "text": "steer should remain pending until retracted" },
+    {
+      "tool_calls": [
+        {
+          "id": "steer-write",
+          "name": "Write",
+          "args": { "path": "steer-pending.txt", "content": "await steering\n" }
+        }
+      ]
+    },
     { "text": "addressed run ended" },
     { "delay_ms": 2000, "text": "replacement remained active" },
     {

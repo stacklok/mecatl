@@ -224,6 +224,12 @@ spec:
             {{- if .signingKey.secretName }}
             - {{ printf "--identity-broker-as1-signing-key-file=/var/run/secrets/as1-signing-key/%s" .signingKey.key | quote }}
             {{- end }}
+            {{- if .upstream.caSecret.secretName }}
+            - {{ printf "--identity-broker-as1-upstream-ca-file=/var/run/secrets/as1-upstream-ca/%s" .upstream.caSecret.key | quote }}
+            {{- end }}
+            {{- if .upstream.allowPrivateAddresses }}
+            - --identity-broker-as1-upstream-allow-private-addresses
+            {{- end }}
             {{- end }}
             {{- end }}
             {{- with .Values.identityBroker.subjectClaim }}
@@ -351,6 +357,9 @@ spec:
             {{- if .Values.identityBroker.as1.upstream.clientSecret.secretName }}
             - {name: as1-upstream-client-secret, mountPath: /var/run/secrets/as1-upstream-client-secret, readOnly: true}
             {{- end }}
+            {{- if .Values.identityBroker.as1.upstream.caSecret.secretName }}
+            - {name: as1-upstream-ca, mountPath: /var/run/secrets/as1-upstream-ca, readOnly: true}
+            {{- end }}
             {{- if .Values.execution.enabled }}
             - {name: execution-mtls, mountPath: /var/run/secrets/execution, readOnly: true}
             {{- end }}
@@ -415,6 +424,16 @@ spec:
         {{- with .Values.identityBroker.as1.upstream.clientSecret }}
         {{- if .secretName }}
         - name: as1-upstream-client-secret
+          secret:
+            secretName: {{ .secretName }}
+            defaultMode: 0440
+            items:
+              - {key: {{ .key | quote }}, path: {{ .key | quote }}}
+        {{- end }}
+        {{- end }}
+        {{- with .Values.identityBroker.as1.upstream.caSecret }}
+        {{- if .secretName }}
+        - name: as1-upstream-ca
           secret:
             secretName: {{ .secretName }}
             defaultMode: 0440

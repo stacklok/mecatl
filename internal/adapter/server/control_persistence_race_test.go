@@ -4,6 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"runtime"
+	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -182,6 +185,227 @@ func TestPermissionAskPersistenceSerializesLiveControls(t *testing.T) {
 			}
 			run.Cancel()
 			for range run.Events() {
+			}
+		})
+	}
+}
+
+// waitCompleteRelayMutex observes the actual mutex wait, not just goroutine
+// startup, so registry changes cannot win before completeRelay captures its entry.
+func waitCompleteRelayMutex(t *testing.T) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	buf := make([]byte, 64<<10)
+	for {
+		n := runtime.Stack(buf, true)
+		for _, stack := range strings.Split(string(buf[:n]), "\n\n") {
+			if strings.Contains(stack, "[sync.Mutex.Lock") && strings.Contains(stack, "(*Service).completeRelay(") {
+				return
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("completeRelay did not reach its mutex barrier:\n%s", buf[:n])
+		}
+		runtime.Gosched()
+	}
+}
+
+func TestCompleteRelayRejectsReplacedRunAfterPersistenceBarrier(t *testing.T) {
+	for _, replacement := range []bool{false, true} {
+		name := "deregistered"
+		if replacement {
+			name = "replaced"
+		}
+		t.Run(name, func(t *testing.T) {
+			id := session.SessionID("relay-" + name)
+			sess := awaitingControlSession(t, id)
+			store := memstore.New()
+			if err := store.Save(t.Context(), sess); err != nil {
+				t.Fatal(err)
+			}
+			if err := sess.Complete(); err != nil {
+				t.Fatal(err)
+			}
+			run := completedControlRun(t)
+			st := &runState{run: run, sess: sess}
+			svc := &Service{
+				cfg:  Config{Store: store, MutationCapability: NewSessionMutationCapability(false)},
+				runs: map[session.SessionID]*runState{id: st},
+			}
+			st.persistMu.Lock()
+			unlock := sync.OnceFunc(st.persistMu.Unlock)
+			done := make(chan struct{})
+			go func() {
+				svc.completeRelay(t.Context(), id, run)
+				close(done)
+			}()
+			defer func() { unlock(); <-done }()
+			waitCompleteRelayMutex(t)
+
+			svc.mu.Lock()
+			delete(svc.runs, id)
+			if replacement {
+				// A provisional successor has no run yet and owns mutable state.
+				svc.runs[id] = &runState{sess: awaitingControlSession(t, id)}
+			}
+			svc.mu.Unlock()
+			unlock()
+			<-done
+			got, err := store.Load(t.Context(), id)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.State != session.StateAwaiting {
+				t.Fatalf("stale relay persisted %s over durable awaiting snapshot", got.State)
+			}
+		})
+	}
+}
+
+func TestCompleteRelayRejectsSuccessorDuringPromotion(t *testing.T) {
+	id := session.SessionID("relay-promotion")
+	oldRun, nextRun := completedControlRun(t), completedControlRun(t)
+	sess := awaitingControlSession(t, id)
+	st := &runState{sess: sess}
+	svc := &Service{runs: map[session.SessionID]*runState{id: st}}
+	entered, release := make(chan struct{}), make(chan struct{})
+	unblock := sync.OnceFunc(func() { close(release) })
+	promoted := make(chan error, 1)
+	go func() {
+		_, err := svc.promoteRunAdmission(id, st, nil, func() *agent.Run {
+			close(entered)
+			<-release
+			// Engine launch may mutate the successor before promotion publishes run.
+			if _, err := sess.ResumeWith(); err != nil {
+				t.Error(err)
+			}
+			return nextRun
+		})
+		promoted <- err
+	}()
+	defer unblock()
+	<-entered
+	done := make(chan struct{})
+	go func() {
+		svc.completeRelay(t.Context(), id, oldRun)
+		close(done)
+	}()
+	defer func() { unblock(); <-done }()
+	waitCompleteRelayMutex(t)
+	unblock()
+	if err := <-promoted; err != nil {
+		t.Fatal(err)
+	}
+	<-done
+	if st.run != nextRun || sess.State != session.StateRunning {
+		t.Fatal("stale relay changed the promoted successor")
+	}
+}
+
+func TestCompleteRelayConcurrentAdmission(t *testing.T) {
+	id := session.SessionID("relay-concurrent-admission")
+	oldRun, nextRun := completedControlRun(t), completedControlRun(t)
+	sess := awaitingControlSession(t, id)
+	svc := &Service{runs: make(map[session.SessionID]*runState)}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for range 10000 {
+			svc.completeRelay(t.Context(), id, oldRun)
+		}
+	}()
+	defer func() { <-done }()
+	for range 10000 {
+		st := &runState{sess: sess}
+		svc.mu.Lock()
+		svc.runs[id] = st
+		svc.mu.Unlock()
+		if _, err := svc.promoteRunAdmission(id, st, nil, func() *agent.Run { return nextRun }); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestCompleteRelayTerminalPersistence(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		state    session.State
+		settle   func(*session.Session) error
+		preserve bool
+		save     bool
+	}{
+		{name: "completed", state: session.StateCompleted, settle: (*session.Session).Complete, save: true},
+		{name: "cancelled", state: session.StateCancelled, settle: (*session.Session).Cancel, save: true},
+		{name: "failed", state: session.StateFailed, settle: (*session.Session).Fail, save: true},
+		{name: "awaiting", state: session.StateAwaiting},
+		{name: "preserved", state: session.StateCancelled, settle: (*session.Session).Cancel, preserve: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			id := session.SessionID("relay-terminal-" + tc.name)
+			sess := awaitingControlSession(t, id)
+			base := memstore.New()
+			if err := base.Save(t.Context(), sess); err != nil {
+				t.Fatal(err)
+			}
+			if tc.settle != nil {
+				if err := tc.settle(sess); err != nil {
+					t.Fatal(err)
+				}
+			}
+			store := &controlPersistBarrierStore{Store: base, entered: make(chan struct{}), release: make(chan struct{})}
+			run := completedControlRun(t)
+			st := &runState{run: run, sess: sess}
+			st.preserveDurable.Store(tc.preserve)
+			svc := &Service{
+				cfg:  Config{Store: store, MutationCapability: NewSessionMutationCapability(false)},
+				runs: map[session.SessionID]*runState{id: st},
+			}
+			done := make(chan struct{})
+			go func() {
+				svc.completeRelay(t.Context(), id, run)
+				close(done)
+			}()
+			unblock := sync.OnceFunc(func() { close(store.release) })
+			defer func() { unblock(); <-done }()
+			select {
+			case <-store.entered:
+				if !tc.save {
+					t.Fatal("relay attempted to overwrite a nonterminal or preserved snapshot")
+				}
+				// Store I/O must not hold the global registry mutex.
+				locked := make(chan struct{})
+				go func() {
+					svc.mu.Lock()
+					current := svc.runs[id]
+					svc.mu.Unlock()
+					if current != st {
+						t.Error("relay changed the registry during Store.Save")
+					}
+					close(locked)
+				}()
+				defer func() { unblock(); <-locked }()
+				select {
+				case <-locked:
+				case <-time.After(5 * time.Second):
+					t.Fatal("relay held the registry mutex during Store.Save")
+				}
+			case <-done:
+				if tc.save {
+					t.Fatal("matching terminal relay did not persist")
+				}
+			}
+			unblock()
+			<-done
+			got, err := base.Load(t.Context(), id)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := session.StateAwaiting
+			if tc.save {
+				want = tc.state
+			}
+			if got.State != want {
+				t.Fatalf("durable state = %s, want %s", got.State, want)
 			}
 		})
 	}

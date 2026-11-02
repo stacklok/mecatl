@@ -1557,7 +1557,7 @@ type sessionEngine struct {
 // see Persist's doc). A fire-driven run (no wire relay) never marks it and has no
 // durable awaiting snapshot to preserve.
 type runState struct {
-	run  *agent.Run
+	run  *agent.Run // guarded by Service.mu; nil until admission promotion
 	sess *session.Session
 	// cancelling is guarded by Service.mu. Clear marks the exact registered
 	// lifecycle before signalling cancellation so no approval, steer, or admission
@@ -8381,14 +8381,22 @@ func (s *Service) persistRun(ctx context.Context, id session.SessionID, st *runS
 // principal.
 func (s *Service) completeRelay(ctx context.Context, id session.SessionID, run *agent.Run) {
 	s.mu.Lock()
-	st, ok := s.runs[id]
+	st := s.runs[id]
+	matches := st != nil && st.run == run
 	s.mu.Unlock()
-	if ok && st.run == run && (st.sess.State == session.StateCompleted || st.sess.State == session.StateCancelled || st.sess.State == session.StateFailed) {
-		st.persistMu.Lock()
-		defer st.persistMu.Unlock()
-		if st.preserveDurable.Load() {
-			return
-		}
+	if !matches {
+		return
+	}
+	st.persistMu.Lock()
+	defer st.persistMu.Unlock()
+	s.mu.Lock()
+	current := s.runs[id] == st && st.run == run
+	s.mu.Unlock()
+	// A delayed relay must not inspect or persist a successor's live session.
+	if !current || st.preserveDurable.Load() {
+		return
+	}
+	if st.sess.State == session.StateCompleted || st.sess.State == session.StateCancelled || st.sess.State == session.StateFailed {
 		s.persistRun(ctx, id, st)
 	}
 }

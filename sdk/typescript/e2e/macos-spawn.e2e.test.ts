@@ -1,13 +1,23 @@
-import { stat } from "node:fs/promises";
+import { mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
-import { expect, it } from "vitest";
+import { afterEach, beforeEach, expect, it } from "vitest";
 
 import { spawn } from "../src/node.js";
 import { fixture, repositoryRoot } from "./harness.js";
+import { isolatedEnvironment } from "./product-harness.js";
 
 const DARWIN_SUN_PATH_BYTES = 104;
+let root: string;
+
+beforeEach(async () => {
+  root = await mkdtemp(join(tmpdir(), "mecatl-sdk-macos-spawn-"));
+});
+
+afterEach(async () => {
+  await rm(root, { force: true, recursive: true });
+});
 
 function processAlive(pid: number): boolean {
   try {
@@ -25,6 +35,7 @@ it.skipIf(process.platform !== "darwin")("macOS spawns over UDS and exits cleanl
   const client = await spawn({
     args: ["--mock-script", fixture("attach.json")],
     binaryPath: join(repositoryRoot, "bin", "mecated"),
+    env: isolatedEnvironment(root),
   });
   const { pid, socketPath } = client.daemon;
   const runtimeDirectory = dirname(socketPath);

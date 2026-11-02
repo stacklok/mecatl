@@ -1,0 +1,12 @@
+# Real-provider overlay, applied only when OPENROUTER_API_KEY is exported. The
+# Secret is created by deploy/mecak8s-idbroker/Taskfile.yml from standard
+# input; its credential is never a chart value. TLS and OIDC are on in this
+# profile, so no unsafe real-provider opt-in is needed.
+mockProvider: false
+model: openai/gpt-6-sol
+extraEnv:
+  - name: OPENROUTER_API_KEY
+    valueFrom:
+      secretKeyRef:
+        name: mecak8s-openrouter
+        key: OPENROUTER_API_KEY

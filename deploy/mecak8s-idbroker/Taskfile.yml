@@ -1,0 +1,341 @@
+version: '3'
+
+# Disposable Kind profile: mecak8s with the identity broker and hosted AS-1,
+# Dex as AS-1's upstream IdP, ready for `mecatui login`. It owns only the
+# mecatl-idbroker cluster and its state, so it runs beside the other Kind
+# fixtures.
+vars:
+  CLUSTER: mecatl-idbroker
+  CONTEXT: kind-mecatl-idbroker
+  NAMESPACE: mecatl-idbroker
+  RELEASE: mecak8s
+  STATE: .scratch/kind/mecatl-idbroker
+  KUBECONFIG: .scratch/kind/mecatl-idbroker/kconfig.yaml
+  SETUP_LOCK: .scratch/kind/mecatl-idbroker.setup-lock
+  IMAGE_TAG: idbroker
+  IMAGE: ko.local/mecak8s:idbroker
+  PROVIDER_SECRET: mecak8s-openrouter
+  # Host names are the in-cluster Service names; hosts-add aliases them to
+  # 127.0.0.1 so issuer URLs are identical inside and outside the cluster.
+  MECAK8S_HOST: mecak8s-mecak8s.mecatl-idbroker.svc.cluster.local
+  DEX_HOST: dex.mecatl-idbroker.svc.cluster.local
+  AS1_ISSUER: https://mecak8s-mecak8s.mecatl-idbroker.svc.cluster.local:18091/as1
+  AS1_AUDIENCE: https://mecak8s-mecak8s.mecatl-idbroker.svc.cluster.local:18091/api
+  TUI_CLIENT: mecatui
+  HOSTS_MARK: '# mecatl-idbroker'
+
+tasks:
+  kind-setup:
+    desc: >-
+      Recreate the mecatl-idbroker Kind cluster with mecak8s (identity broker +
+      hosted AS-1), Dex, and local Redis. Export OPENROUTER_API_KEY first for a
+      real provider instead of the mock.
+    cmds:
+      - task: reset-state
+      - task: cluster-create
+      - task: namespace-apply
+      - task: cert-manager-install
+      - task: certificate-apply
+      - task: image-load
+        vars: {CLEANUP: 'true'}
+      - task: secrets-apply
+      - task: dex-apply
+      - task: chart-apply
+      - task: ca-refresh
+      - silent: true
+        cmd: |
+          printf '\nmecatl-idbroker is ready. Next steps:\n\n'
+          printf '  task mecak8s-idbroker:hosts-add   # once; sudo; aliases %s and %s to 127.0.0.1\n' '{{.MECAK8S_HOST}}' '{{.DEX_HOST}}'
+          printf '  task build                        # builds ./bin/mecatui\n'
+          printf '  task mecak8s-idbroker:login       # browser: approve AS-1 consent, then sign in to Dex as dev@example.com / password\n'
+          printf '  task mecak8s-idbroker:connect\n\n'
+          printf 'The browser does not trust the fixture CA (%s); accept its warning or trust that CA.\n' '{{.STATE}}/fixture-ca.crt'
+
+  image-refresh:
+    desc: >-
+      Rebuild the mecak8s image from the current tree, load it into
+      mecatl-idbroker, and restart mecak8s (no cluster reset). The restart
+      signs everyone out of AS-1; access tokens keep verifying until they expire.
+    cmds:
+      - task: image-load
+      - kubectl --kubeconfig={{.KUBECONFIG}} --context={{.CONTEXT}} --namespace={{.NAMESPACE}} rollout restart deployment/{{.RELEASE}}-mecak8s
+      - kubectl --kubeconfig={{.KUBECONFIG}} --context={{.CONTEXT}} --namespace={{.NAMESPACE}} rollout status deployment/{{.RELEASE}}-mecak8s --timeout=240s
+
+  login:
+    desc: >-
+      Add the /etc/hosts aliases (sudo when missing), refresh the fixture CA,
+      and run `mecatui login` against AS-1. Requires kind-setup and
+      ./bin/mecatui (task build).
+    preconditions:
+      - sh: test -x ./bin/mecatui
+        msg: ./bin/mecatui not found — run `task build` first
+    cmds:
+      - task: hosts-add
+      - task: ca-refresh
+      - ./bin/mecatui login {{.MECAK8S_HOST}}:18090 --issuer {{.AS1_ISSUER}} --client-id {{.TUI_CLIENT}} --audience {{.AS1_AUDIENCE}} --tls-ca {{.STATE}}/fixture-ca.crt --private-issuer --scopes openid,profile,offline_access
+
+  connect:
+    desc: >-
+      Add the /etc/hosts aliases (sudo when missing), refresh the fixture CA,
+      and run `mecatui connect`. Run login first.
+    preconditions:
+      - sh: test -x ./bin/mecatui
+        msg: ./bin/mecatui not found — run `task build` first
+    cmds:
+      - task: hosts-add
+      - task: ca-refresh
+      - ./bin/mecatui connect {{.MECAK8S_HOST}}:18090 --tls --tls-ca {{.STATE}}/fixture-ca.crt
+
+  status:
+    desc: Show the mecatl-idbroker profile
+    cmds:
+      - task: cluster-ready
+      - kubectl --kubeconfig={{.KUBECONFIG}} --context={{.CONTEXT}} --namespace={{.NAMESPACE}} get pods,services,statefulsets
+      - helm status {{.RELEASE}} --namespace={{.NAMESPACE}} --kubeconfig={{.KUBECONFIG}} --kube-context={{.CONTEXT}}
+      - task: hosts-status
+
+  hosts-status:
+    desc: Show whether this profile's loopback aliases are in /etc/hosts
+    cmds:
+      - cmd: |
+          for host in {{.MECAK8S_HOST}} {{.DEX_HOST}}; do
+            entry="127.0.0.1 $host {{.HOSTS_MARK}}"
+            if grep -Fqx "$entry" /etc/hosts; then echo "present: $entry"; else echo "missing: $entry"; fi
+          done
+
+  hosts-add:
+    desc: Add this profile's aliases to /etc/hosts (loopback only; sudo only when one is missing)
+    cmds:
+      - cmd: |
+          set -eu
+          # mecatui treats a localhost target as co-located and sends its own
+          # cwd as the workspace, which this deployment refuses; the mecak8s
+          # alias avoids that, and both aliases keep the issuers' host names.
+          for host in {{.MECAK8S_HOST}} {{.DEX_HOST}}; do
+            entry="127.0.0.1 $host {{.HOSTS_MARK}}"
+            grep -Fqx "$entry" /etc/hosts || sudo sh -c 'grep -Fqx "$1" /etc/hosts || printf "%s\\n" "$1" >> /etc/hosts' sh "$entry"
+          done
+      - task: hosts-status
+
+  hosts-remove:
+    desc: Remove only this profile's marked aliases from /etc/hosts
+    cmds:
+      - cmd: |
+          set -eu
+          # A profile-specific backup never overwrites the base fixture's
+          # /etc/hosts.bak; the attached suffix works with GNU and BSD sed.
+          sudo sed -i.mecatl-idbroker.bak \
+            -e '\|^127\.0\.0\.1 mecak8s-mecak8s\.mecatl-idbroker\.svc\.cluster\.local # mecatl-idbroker$|d' \
+            -e '\|^127\.0\.0\.1 dex\.mecatl-idbroker\.svc\.cluster\.local # mecatl-idbroker$|d' \
+            /etc/hosts
+          echo 'Removed the marked mecatl-idbroker entries (backup: /etc/hosts.mecatl-idbroker.bak).'
+
+  destroy:
+    desc: Delete only the mecatl-idbroker Kind cluster and its local state
+    cmds:
+      - kind delete cluster --name={{.CLUSTER}} --kubeconfig={{.KUBECONFIG}}
+      - rm -rf {{.STATE}}
+      - rm -f {{.SETUP_LOCK}}
+
+  # ca-refresh waits for the three loopback mappings and (re)writes
+  # fixture-ca.crt from the cluster's CURRENT fixture-ca Secret: every
+  # kind-setup mints a new CA, and a stale file fails TLS verification.
+  ca-refresh:
+    internal: true
+    preconditions:
+      - sh: command -v nc >/dev/null 2>&1
+        msg: nc is required to wait for the loopback mappings
+    cmds:
+      - task: cluster-ready
+      - cmd: |
+          # A real bash subprocess: Task's embedded shell rejects trap signals
+          # other than EXIT.
+          bash <<'BASHEOF'
+          set -eu
+          state={{.STATE}}
+          ca="$state/fixture-ca.crt"
+          encoded="$state/fixture-ca.b64.$$"
+          decoded="$ca.tmp.$$"
+          mkdir -p "$state"
+          trap 'rm -f "$encoded" "$decoded"' EXIT
+
+          wait_port() {
+            name=$1
+            port=$2
+            attempt=0
+            while [ "$attempt" -lt 30 ]; do
+              if nc -z 127.0.0.1 "$port"; then
+                return 0
+              fi
+              attempt=$((attempt + 1))
+              sleep 1
+            done
+            echo "$name loopback mapping did not accept connections" >&2
+            return 1
+          }
+
+          wait_port mecak8s-gRPC 18090
+          wait_port mecak8s-HTTPS 18091
+          wait_port Dex 5557
+          kubectl --kubeconfig={{.KUBECONFIG}} --context={{.CONTEXT}} --namespace={{.NAMESPACE}} get secret fixture-ca -o jsonpath='{.data.tls\.crt}' >"$encoded"
+          # BSD/macOS base64 rejects a positional file; stdin works for both.
+          if base64 -d <"$encoded" >"$decoded" 2>/dev/null; then
+            :
+          elif base64 -D <"$encoded" >"$decoded" 2>/dev/null; then
+            :
+          else
+            echo "failed to decode fixture CA" >&2
+            exit 1
+          fi
+          chmod 0600 "$decoded"
+          mv -f "$decoded" "$ca"
+          BASHEOF
+
+  reset-state:
+    internal: true
+    preconditions:
+      - sh: command -v kind >/dev/null 2>&1
+        msg: kind is required
+    cmds:
+      - cmd: |
+          set -eu
+          kind delete cluster --name={{.CLUSTER}} --kubeconfig={{.KUBECONFIG}} 2>/dev/null || true
+          rm -rf {{.STATE}}
+          rm -f {{.SETUP_LOCK}}
+          mkdir -p .scratch/kind
+          : > {{.SETUP_LOCK}}
+
+  cluster-ready:
+    internal: true
+    preconditions:
+      - sh: command -v kind >/dev/null 2>&1
+        msg: kind is required
+      - sh: command -v kubectl >/dev/null 2>&1
+        msg: kubectl is required
+    cmds:
+      - cmd: |
+          set -eu
+          kind get clusters 2>/dev/null | grep -Fxq '{{.CLUSTER}}' || { echo "cluster {{.CLUSTER}} not found; run task mecak8s-idbroker:kind-setup"; exit 1; }
+          [ -f {{.KUBECONFIG}} ] || { echo "kubeconfig {{.KUBECONFIG}} not found"; exit 1; }
+          [ "$(kubectl --kubeconfig={{.KUBECONFIG}} config current-context)" = '{{.CONTEXT}}' ] || { echo "kubeconfig context mismatch"; exit 1; }
+
+  cluster-create:
+    internal: true
+    preconditions:
+      - sh: command -v kubectl >/dev/null 2>&1
+        msg: kubectl is required
+    cmds:
+      - cmd: |
+          set -eu
+          trap 'status=$?; deploy/mecak8s-idbroker/cleanup-on-failure.sh "$status"' EXIT
+          mkdir -p {{.STATE}}
+          chmod 0700 {{.STATE}}
+          # --kubeconfig keeps the ambient kubeconfig and its current context untouched.
+          kind create cluster --name={{.CLUSTER}} --config=deploy/mecak8s-idbroker/kind-config.yaml --kubeconfig={{.KUBECONFIG}}.tmp
+          chmod 0600 {{.KUBECONFIG}}.tmp
+          mv -f {{.KUBECONFIG}}.tmp {{.KUBECONFIG}}
+
+  namespace-apply:
+    internal: true
+    cmds:
+      - task: cluster-ready
+      - kubectl --kubeconfig={{.KUBECONFIG}} --context={{.CONTEXT}} create namespace {{.NAMESPACE}} --dry-run=client -o yaml | kubectl --kubeconfig={{.KUBECONFIG}} --context={{.CONTEXT}} apply -f -
+      - kubectl --kubeconfig={{.KUBECONFIG}} --context={{.CONTEXT}} label namespace {{.NAMESPACE}} pod-security.kubernetes.io/enforce=restricted pod-security.kubernetes.io/audit=restricted pod-security.kubernetes.io/warn=restricted --overwrite
+
+  cert-manager-install:
+    internal: true
+    preconditions:
+      - sh: command -v helm >/dev/null 2>&1
+        msg: helm is required
+    cmds:
+      - task: cluster-ready
+      - cmd: |
+          set -eu
+          trap 'status=$?; deploy/mecak8s-idbroker/cleanup-on-failure.sh "$status"' EXIT
+          helm upgrade --install cert-manager oci://quay.io/jetstack/charts/cert-manager --version=v1.17.2 --namespace=cert-manager --create-namespace --set crds.enabled=true --kubeconfig={{.KUBECONFIG}} --kube-context={{.CONTEXT}} --wait --timeout=4m
+
+  certificate-apply:
+    internal: true
+    cmds:
+      - task: cluster-ready
+      - cmd: |
+          set -eu
+          trap 'status=$?; deploy/mecak8s-idbroker/cleanup-on-failure.sh "$status"' EXIT
+          k='kubectl --kubeconfig={{.KUBECONFIG}} --context={{.CONTEXT}} --namespace={{.NAMESPACE}}'
+          $k apply -f deploy/mecak8s-idbroker/fixture-tls.yaml
+          for cert in fixture-ca mecak8s-tls dex-tls; do
+            $k wait --for=condition=Ready "certificate/$cert" --timeout=120s
+          done
+
+  # image-load builds the image with ko and loads it into the node. With
+  # CLEANUP set (kind-setup), a failure deletes the half-built cluster.
+  image-load:
+    internal: true
+    preconditions:
+      - sh: command -v ko >/dev/null 2>&1
+        msg: ko is required
+    cmds:
+      - task: cluster-ready
+      - cmd: |
+          set -eu
+          {{if .CLEANUP}}trap 'status=$?; deploy/mecak8s-idbroker/cleanup-on-failure.sh "$status"' EXIT{{end}}
+          runtime=docker
+          [ "${KIND_EXPERIMENTAL_PROVIDER:-}" != podman ] || runtime=podman
+          command -v "$runtime" >/dev/null 2>&1 || { echo "$runtime is required"; exit 1; }
+          KO_DOCKER_REPO=ko.local/mecak8s ko build --local --bare --tags={{.IMAGE_TAG}} ./cmd/mecak8s >/dev/null
+          archive={{.STATE}}/mecak8s.tar
+          "$runtime" save {{.IMAGE}} -o "$archive"
+          kind load image-archive "$archive" --name={{.CLUSTER}}
+          rm -f "$archive"
+
+  # secrets-apply creates the profile's generated Secrets without putting a
+  # value on a command line, and keeps existing ones so re-running does not
+  # rotate AS-1's signing key.
+  secrets-apply:
+    internal: true
+    preconditions:
+      - sh: command -v openssl >/dev/null 2>&1
+        msg: openssl is required
+    cmds:
+      - task: cluster-ready
+      - cmd: |
+          set -eu
+          trap 'status=$?; deploy/mecak8s-idbroker/cleanup-on-failure.sh "$status"' EXIT
+          k='kubectl --kubeconfig={{.KUBECONFIG}} --context={{.CONTEXT}} --namespace={{.NAMESPACE}}'
+          $k get secret as1-signing-key >/dev/null 2>&1 || openssl ecparam -name prime256v1 -genkey -noout | $k create secret generic as1-signing-key --from-file=signing-key.pem=/dev/stdin >/dev/null
+          $k get secret dex-as1-client >/dev/null 2>&1 || openssl rand -hex 32 | tr -d '\n' | $k create secret generic dex-as1-client --from-file=client-secret=/dev/stdin >/dev/null
+          if [ -n "${OPENROUTER_API_KEY:-}" ]; then
+            printf '%s' "$OPENROUTER_API_KEY" | $k create secret generic {{.PROVIDER_SECRET}} --from-file=OPENROUTER_API_KEY=/dev/stdin --dry-run=client -o yaml | $k apply -f - >/dev/null
+          else
+            $k delete secret {{.PROVIDER_SECRET}} --ignore-not-found
+          fi
+          echo 'Secrets present: as1-signing-key dex-as1-client (values not printed)'
+
+  dex-apply:
+    internal: true
+    cmds:
+      - task: cluster-ready
+      - cmd: |
+          set -eu
+          trap 'status=$?; deploy/mecak8s-idbroker/cleanup-on-failure.sh "$status"' EXIT
+          k='kubectl --kubeconfig={{.KUBECONFIG}} --context={{.CONTEXT}} --namespace={{.NAMESPACE}}'
+          $k apply -f deploy/mecak8s-idbroker/dex.yaml
+          $k rollout status deployment/dex --timeout=240s
+
+  chart-apply:
+    internal: true
+    preconditions:
+      - sh: command -v helm >/dev/null 2>&1
+        msg: helm is required
+    cmds:
+      - task: cluster-ready
+      - cmd: |
+          set -eu
+          trap 'status=$?; deploy/mecak8s-idbroker/cleanup-on-failure.sh "$status"' EXIT
+          set -- helm upgrade --install {{.RELEASE}} deploy/helm/mecak8s --namespace={{.NAMESPACE}} --kubeconfig={{.KUBECONFIG}} --kube-context={{.CONTEXT}} --values=deploy/helm/mecak8s/values-kind.yaml --values=deploy/helm/mecak8s/values-kind-idbroker.yaml
+          if [ -n "${OPENROUTER_API_KEY:-}" ]; then
+            set -- "$@" --values=deploy/mecak8s-idbroker/provider-real.yaml
+          fi
+          "$@" --wait --timeout=4m
+          kubectl --kubeconfig={{.KUBECONFIG}} --context={{.CONTEXT}} --namespace={{.NAMESPACE}} rollout status statefulset/redis --timeout=240s
+          kubectl --kubeconfig={{.KUBECONFIG}} --context={{.CONTEXT}} --namespace={{.NAMESPACE}} rollout status deployment/{{.RELEASE}}-mecak8s --timeout=240s

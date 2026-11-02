@@ -41,21 +41,33 @@ func TestRedisFollowCapacity_Scenario1_Go127DependencyFloor(t *testing.T) {
 	if len(manifests) < 2 {
 		t.Fatalf("found %d Go manifests, want every committed module plus go.work", len(manifests))
 	}
-	// Manifests declare the Go 1.27 language floor, not a patch floor or toolchain.
+	// Only the codec module and its local consumers require the Go 1.27.3 patch
+	// floor; other modules retain their existing Go 1.27 language floor.
+	patchFloors := map[string]struct{}{
+		"go.mod":                     {},
+		"go.work":                    {},
+		"engine/go.mod":              {},
+		"environment/microvm/go.mod": {},
+		"integration/microvm/go.mod": {},
+	}
 	for _, manifest := range manifests {
 		body, err := os.ReadFile(manifest)
 		if err != nil {
 			t.Fatal(err)
 		}
 		scanner := bufio.NewScanner(bytes.NewReader(body))
-		name := strings.TrimPrefix(manifest, root+string(filepath.Separator))
+		name := filepath.ToSlash(strings.TrimPrefix(manifest, root+string(filepath.Separator)))
 		found := false
 		for scanner.Scan() {
 			line := scanner.Text()
 			if strings.HasPrefix(line, "go ") {
 				found = true
-				if line != "go 1.27" {
-					t.Errorf("%s declares %q, want \"go 1.27\"", name, line)
+				want := "go 1.27"
+				if _, ok := patchFloors[name]; ok {
+					want = "go 1.27.3"
+				}
+				if line != want {
+					t.Errorf("%s declares %q, want %q", name, line, want)
 				}
 			}
 			if strings.HasPrefix(line, "toolchain ") {
@@ -101,11 +113,11 @@ func TestRedisFollowCapacity_Scenario4_Go127SourceBuildSurfaces(t *testing.T) {
 	}
 	root := filepath.Clean(filepath.Join(filepath.Dir(source), "..", ".."))
 	for name, want := range map[string]string{
-		"AGENTS.md":    "in Go 1.27",
-		"Taskfile.yml": "go            >= 1.27 ",
-		"user-docs/_partials/release-archives-and-source.mdx":         "requires Go 1.27 or later",
-		"user-docs/building/go/demo.md":                               "**Go 1.27 or newer**",
-		"user-docs/building/go/first-agent.md":                        "Go 1.27 or newer",
+		"AGENTS.md":    "in Go 1.27.3 minimum",
+		"Taskfile.yml": "go            >= 1.27.3 ",
+		"user-docs/_partials/release-archives-and-source.mdx":         "requires Go 1.27.3 or later",
+		"user-docs/building/go/demo.md":                               "**Go 1.27.3 or newer**",
+		"user-docs/building/go/first-agent.md":                        "Go 1.27.3 or newer",
 		"sdk/typescript/examples/slack-bot/docker/mecated.Dockerfile": "FROM golang:1.27.3-bookworm@sha256:",
 	} {
 		body, err := os.ReadFile(filepath.Join(root, name))
@@ -113,7 +125,7 @@ func TestRedisFollowCapacity_Scenario4_Go127SourceBuildSurfaces(t *testing.T) {
 			t.Fatal(err)
 		}
 		if !strings.Contains(string(body), want) {
-			t.Errorf("%s does not declare the Go 1.27 source-build floor; want %q", name, want)
+			t.Errorf("%s does not declare the Go 1.27.3 source-build floor; want %q", name, want)
 		}
 	}
 }

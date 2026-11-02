@@ -1,4 +1,9 @@
-import { expect, it } from "vitest";
+import { execFileSync } from "node:child_process";
+import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+import { expect, it, vi } from "vitest";
 
 import type { DiagnosticRecord, Event, EventOf } from "../src/index.js";
 import { query } from "../src/node.js";
@@ -52,19 +57,47 @@ it("a scripted turn calls an sdk tool and receives its result", async () => {
   }
 });
 
-it("the tool round trip passes on bun", async () => {
-  const helper = await startRuntimeHelper("bun", "roundtrip");
+it("the tool round trip passes on bun through a caller-configured runtime shim", async () => {
+  const bun = execFileSync(process.env.BUN_BIN ?? "bun", ["-p", "process.execPath"], {
+    encoding: "utf8",
+    timeout: 10_000,
+  }).trim();
+  const root = await mkdtemp(join(tmpdir(), "mecatl-sdk-bun-shim-"));
   try {
-    await childExit(helper.child);
-    expect(helper.child.exitCode, helper.stderr()).toBe(0);
-    expect(helper.record).toMatchObject({
-      content: "bun lookup: aztec calendar",
-      invoked: true,
-      runtimeRemoved: true,
-      stop: "end_turn",
-    });
+    const shim = join(root, "bun.cjs");
+    await writeFile(
+      shim,
+      `#!${process.execPath}
+const { spawnSync } = require("node:child_process");
+if (process.env.HOME !== ${JSON.stringify(root)} || process.env.XDG_CONFIG_HOME !== ${JSON.stringify(root)}) {
+  process.stderr.write("runtime shim lost caller configuration\\n");
+  process.exit(1);
+}
+const result = spawnSync(${JSON.stringify(bun)}, process.argv.slice(2), { stdio: "inherit" });
+process.exit(result.status ?? 1);
+`,
+    );
+    await chmod(shim, 0o700);
+    vi.stubEnv("BUN_BIN", shim);
+    vi.stubEnv("HOME", root);
+    vi.stubEnv("XDG_CONFIG_HOME", root);
+
+    const helper = await startRuntimeHelper("bun", "roundtrip");
+    try {
+      await childExit(helper.child);
+      expect(helper.child.exitCode, helper.stderr()).toBe(0);
+      expect(helper.record).toMatchObject({
+        content: "bun lookup: aztec calendar",
+        invoked: true,
+        runtimeRemoved: true,
+        stop: "end_turn",
+      });
+    } finally {
+      await helper.cleanup();
+    }
   } finally {
-    await helper.cleanup();
+    vi.unstubAllEnvs();
+    await rm(root, { force: true, recursive: true });
   }
 });
 

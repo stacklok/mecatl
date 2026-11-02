@@ -1,5 +1,6 @@
-import { type ChildProcess, spawn as spawnChild } from "node:child_process";
+import { type ChildProcess, execFileSync, spawn as spawnChild } from "node:child_process";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
 
@@ -43,7 +44,7 @@ export async function spawnProductFixture(
   script: string,
   options: ProductFixtureOptions = {},
 ): Promise<ProductFixture> {
-  const root = await createScratchRoot();
+  const root = await createTempRoot();
   const workspace = join(root, "workspace");
   await mkdir(workspace);
   try {
@@ -75,10 +76,18 @@ export async function startRuntimeHelper(
   runtime: "bun" | "node",
   mode: "hold" | "roundtrip",
 ): Promise<RunningRuntimeHelper> {
-  const root = await createScratchRoot();
+  // Resolve wrappers such as mise while they can still see the caller's
+  // tool configuration, then launch the runtime with isolated operator state.
+  const executable =
+    runtime === "node"
+      ? process.execPath
+      : execFileSync(process.env.BUN_BIN ?? "bun", ["-p", "process.execPath"], {
+          encoding: "utf8",
+          timeout: 10_000,
+        }).trim();
+  const root = await createTempRoot();
   const workspace = join(root, "workspace");
   await mkdir(workspace);
-  const executable = runtime === "node" ? process.execPath : (process.env.BUN_BIN ?? "bun");
   const child = spawnChild(
     executable,
     [runtimeHelper, mode, mecatedBinary, fixture("tool-lookup.json"), workspace],
@@ -148,14 +157,13 @@ function daemonArguments(
   ];
 }
 
-async function createScratchRoot(): Promise<string> {
-  const scratch = join(repositoryRoot, ".scratch");
-  await mkdir(scratch, { recursive: true });
-  return mkdtemp(join(scratch, "sdk-product-e2e-"));
+async function createTempRoot(): Promise<string> {
+  return mkdtemp(join(tmpdir(), "sdk-product-e2e-"));
 }
 
-function isolatedEnvironment(root: string): NodeJS.ProcessEnv {
+export function isolatedEnvironment(root: string): NodeJS.ProcessEnv {
   return {
+    HOME: root,
     XDG_CACHE_HOME: join(root, "cache"),
     XDG_CONFIG_HOME: join(root, "config"),
     XDG_DATA_HOME: join(root, "data"),

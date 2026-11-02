@@ -21,7 +21,7 @@ import (
 	"testing"
 )
 
-// corePackages is the seven-package clean core whose inward-only dependency rule
+// corePackages is the clean core whose inward-only dependency rule
 // these tests enforce. It is an alias for the package-exported CorePackages
 // (surface.go) — the SINGLE source of truth shared with internal/apicheck's
 // public-API gate — so the layering tests and the gate can never drift.
@@ -71,11 +71,42 @@ type coreImportRule struct {
 	desc            string          // human rule cited on failure
 }
 
-// coreImportRules is the direction table covering ALL seven tiers. Governance
+// coreImportRules is the direction table covering all core tiers. Governance
 // remains session-free; session may carry governance capability values. Every
 // higher tier names only the lower tiers it legitimately depends on — never
 // sideways, never upward.
 var coreImportRules = []coreImportRule{
+	{
+		pkg:             modulePrefix + "engine/id",
+		allowedCore:     map[string]bool{},
+		allowedExternal: map[string]bool{},
+		desc:            "ID values may import stdlib only",
+	},
+	{
+		pkg: modulePrefix + "engine/kernel/history/id",
+		allowedCore: map[string]bool{
+			modulePrefix + "engine/id": true,
+		},
+		desc: "history identity values may import only resource ID values + stdlib, never history or formats",
+	},
+	{
+		pkg: modulePrefix + "engine/kernel/history/format",
+		allowedCore: map[string]bool{
+			modulePrefix + "engine/kernel/history/id": true,
+		},
+		allowedExternal: map[string]bool{
+			"github.com/jcalabro/atmos/cbor": true,
+		},
+		desc: "history format values may import only history identity values, the Atmos CBOR codec, and stdlib, never higher-level history contracts",
+	},
+	{
+		pkg: modulePrefix + "engine/kernel/history",
+		allowedCore: map[string]bool{
+			modulePrefix + "engine/kernel/history/id":     true,
+			modulePrefix + "engine/kernel/history/format": true,
+		},
+		desc: "kernel history may import only history identity and format values + stdlib, never the legacy aggregate",
+	},
 	{
 		pkg: modulePrefix + "engine/session",
 		allowedCore: map[string]bool{
@@ -201,8 +232,20 @@ func TestTablesNonEmpty(t *testing.T) {
 		t.Fatal("forbiddenPrefixes is empty: TestNoCoreImportsAdapter would never fire — restore the adapter/SDK/grpc prefixes")
 	}
 	if len(coreImportRules) != len(corePackages) {
-		t.Fatalf("coreImportRules covers %d tiers but corePackages has %d: the direction table must cover ALL seven core tiers",
+		t.Fatalf("coreImportRules covers %d tiers but corePackages has %d: the direction table must cover all core packages",
 			len(coreImportRules), len(corePackages))
+	}
+	covered := make(map[string]bool, len(coreImportRules))
+	for _, rule := range coreImportRules {
+		if covered[rule.pkg] {
+			t.Errorf("duplicate direction rule for %s", rule.pkg)
+		}
+		covered[rule.pkg] = true
+	}
+	for _, pkg := range corePackages {
+		if !covered[pkg] {
+			t.Errorf("missing direction rule for %s", pkg)
+		}
 	}
 }
 
@@ -321,7 +364,7 @@ func TestShellCompatibilityDiagnostic(t *testing.T) {
 }
 
 // TestCoreImportDirection is the SYMMETRIC direction check: for every one of the
-// seven core tiers, its DIRECT non-test imports must be a subset of that tier's
+// core tiers, its DIRECT non-test imports must be a subset of that tier's
 // exact allow-set (table above). This closes the gap that TestNoCoreImportsAdapter
 // + TestNoCyclesAmongCore leave open — a wrong-direction but non-cyclic,
 // non-adapter intra-core edge (session→tool, tool→prompt backwards, …) is neither
@@ -360,7 +403,7 @@ func TestViolatesSelfContainmentSynthetic(t *testing.T) {
 	}
 }
 
-// TestNoCyclesAmongCore builds the directed import graph RESTRICTED to the seven
+// TestNoCyclesAmongCore builds the directed import graph restricted to the
 // core packages and asserts it is acyclic. This is precisely the property the
 // per-file depguard rules CANNOT express: depguard sees each file in isolation,
 // so it can never observe that A -> B -> A closes a loop. A cycle here would mean

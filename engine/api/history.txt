@@ -1,0 +1,38 @@
+    ifacemethod func (Backend).Append(context.Context, HistoryID, CommitRef, ByteCommit) (Observation, error)
+    ifacemethod func (Backend).Observe(context.Context, HistoryID, int64) (Observation, error)
+    ifacemethod func (Backend).Read(context.Context, HistoryID, ByteReadRequest) ([]ByteCommit, error)
+    method func (*History).Append(ctx context.Context, id HistoryID, commit format.Commit) (Resolution, error)
+    method func (*History).Head(ctx context.Context, id HistoryID) (CommitRef, error)
+    method func (*History).Identify(id HistoryID, commit format.Commit) (CommitRef, error)
+    method func (*History).Read(ctx context.Context, id HistoryID, request ReadRequest) (Page, error)
+    method func (*History).Resolve(ctx context.Context, id HistoryID, proposal CommitRef) (Resolution, error)
+    method func (CommitRef).Validate() error
+    method func (PageTooSmallError).Error() string
+    method func (PageTooSmallError).Unwrap() error
+    method func (Policy).Validate() error
+    method func (ReadRequest).Validate(policy Policy) error
+const StatusAccepted Status = 1
+const StatusConflict Status = 2
+const StatusNotObserved Status = 0
+const StatusRetryExpired Status = 3
+func New(backend Backend, policy Policy) (*History, error)
+func NewHistoryID() HistoryID
+func ParseHistoryID(s string) (HistoryID, error)
+type Backend interface{Append(context.Context, HistoryID, CommitRef, ByteCommit) (Observation, error); Observe(context.Context, HistoryID, int64) (Observation, error); Read(context.Context, HistoryID, ByteReadRequest) ([]ByteCommit, error)}
+type ByteCommit struct{Ref CommitRef; Bytes []byte}
+type ByteReadRequest struct{ReadRequest; MaxBytes int; MaxCommitBytes int}
+type Commit struct{Ref CommitRef; Commit format.Commit}
+type CommitRef struct{Sequence int64; CID format.CID}
+type History struct{}
+type HistoryID = id.HistoryID
+type Observation struct{Head CommitRef; Commit CommitRef}
+type Page struct{Commits []Commit; Next CommitRef}
+type PageTooSmallError struct{RequiredBytes int}
+type Policy struct{CommitLimits format.Limits; RetryWindow int64; MaxPageBytes int; MaxPageCommits int}
+type ReadRequest struct{After CommitRef; Through CommitRef; MaxCommits int}
+type Resolution struct{Status Status; Proposal CommitRef; Head CommitRef}
+type Status uint8
+var ErrCorrupt error
+var ErrInvalid error
+var ErrNotFound error
+var ErrPageTooSmall error

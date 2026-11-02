@@ -1,7 +1,7 @@
 # Taskfile for mecatl (https://taskfile.dev).
 #
 # Required tools (assumed on PATH; install commands below):
-#   - go            >= 1.27     (the toolchain)
+#   - go            >= 1.27.3   (the toolchain)
 #   - golangci-lint (version in scripts/install-golangci-lint.sh)
 #                               task tools:golangci-lint (installs the CI-matching
 #                               official release binary into .tools/bin)
@@ -36,6 +36,9 @@ includes:
     dir: .
   mecak8s-vmcp:
     taskfile: deploy/mecak8s-vmcp/Taskfile.yml
+    dir: .
+  mecak8s-idbroker:
+    taskfile: deploy/mecak8s-idbroker/Taskfile.yml
     dir: .
 
 vars:
@@ -1171,7 +1174,7 @@ tasks:
       # ref as "invalid format". Upstream request: rhysd/actionlint#711. Drop the flag
       # when it lands — it is scoped to that one message, so every other `uses:` error
       # still fails the build.
-      - go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7 -ignore 'specifying action "\$/.*" in invalid format'
+      - go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12 -ignore 'specifying action "\$/.*" in invalid format'
       - task: lint:action-templates
       - task: test:workspace-infrastructure
       - bash .github/scripts/ensure-perf-dashboard-noindex_test.sh

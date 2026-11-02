@@ -334,6 +334,17 @@ identityBroker:
       clientSecret:
         secretName: ""
         key: ""
+      # Optional existing Secret key holding a PEM CA bundle AS-1 trusts, beside
+      # the system roots, for the upstream's TLS certificate; mounted read-only.
+      # It does not admit a private address: see allowPrivateAddresses.
+      caSecret:
+        secretName: ""
+        key: ""
+      # Let AS-1 reach an upstream at a private or link-local address, such as an
+      # in-cluster Service. Applies to every request AS-1 makes to the upstream
+      # (discovery, the endpoints it discovers, and redirects), not just the
+      # issuer host. Requires caSecret.
+      allowPrivateAddresses: false
 
 tls:
   # Server TLS is optional for mock and explicit unsafe-bypass profiles, but
