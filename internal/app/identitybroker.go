@@ -172,6 +172,9 @@ type IdentityBrokerAS1 struct {
 	// ClientKey replaces the generated broker client key, so a test can
 	// register its public key at AS-1 before the broker is built.
 	ClientKey *ecdsa.PrivateKey
+	// Now replaces the clock of the broker and its client assertions, so a
+	// test can move past a broker session's hard expiry. Nil selects time.Now.
+	Now func() time.Time
 }
 
 // newIdentityBroker constructs the real identity broker with the interim
@@ -210,12 +213,15 @@ func newIdentityBroker(cfg Config) (identityBroker, error) {
 	var opts []identitybroker.Option
 	if as1 != nil {
 		as1Client, err := authserverclient.New(authserverclient.Config{
-			Issuer: as1.Issuer, TokenEndpoint: as1.TokenEndpoint, Assertions: client, HTTPClient: as1.HTTPClient,
+			Issuer: as1.Issuer, TokenEndpoint: as1.TokenEndpoint, Assertions: client, HTTPClient: as1.HTTPClient, Now: as1.Now,
 		})
 		if err != nil {
 			return identityBroker{}, fmt.Errorf("AS-1 client: %w", err)
 		}
 		opts = append(opts, identitybroker.WithAuthServer(as1Client))
+		if as1.Now != nil {
+			opts = append(opts, identitybroker.WithClock(as1.Now))
+		}
 	}
 	core, err := identitybroker.New(config, nil, key, opts...)
 	if err != nil {
