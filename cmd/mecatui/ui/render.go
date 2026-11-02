@@ -417,12 +417,13 @@ func (r *renderer) markdown(src string) string {
 // markdownAt is the memoized form of markdown used by the conversation render
 // path. idx is the block's stable conversation index (blocks are append-only, so
 // an index always denotes the same logical block). It returns the cached render
-// when the block's (src, width) are unchanged — the common case for every SETTLED
-// block on each streamed delta — and otherwise renders fresh and stores the
-// result, overwriting the index's entry in place (so the live, growing block
-// keeps exactly one entry rather than accumulating one per token). Correctness
-// rests on markdown() being pure in (src, width, theme) with a fixed theme; the
-// cache therefore can never return a stale render. Update-goroutine-only.
+// when the block's (src, width) are unchanged — a re-render of the live block
+// that did not change its text, such as the end of its reasoning stream — and
+// otherwise renders fresh and stores the result, replacing the single entry (so
+// the live, growing block keeps exactly one entry rather than one per token, and
+// settled blocks keep none). Correctness rests on markdown() being pure in (src,
+// width, theme) with a fixed theme; the cache therefore can never return a stale
+// render. Update-goroutine-only.
 func (r *renderer) markdownAt(idx int, src string) string {
 	if out, ok := r.blocks.markdownBlock(idx, src, r.width); ok {
 		return out
@@ -589,10 +590,12 @@ func stripVS16(s string) string {
 // blockRenderCache.prefix reuses the cached leading range ONLY when it covers
 // EXACTLY [0, prefixN) at the SAME (width, expand). Its prefix coverage check is
 // the load-bearing guard: a NON-TAIL mutation lowers firstChanged (→ prefixN), a
-// block-count shrink lowers prefixN, and a width/expand change re-renders EVERY
-// block so firstChanged drops to 0 (→ prefixN). Those paths make the requested
-// coverage or joinPrefixState differ; storeRendered independently clears a prefix
-// when a freshly rendered block was already covered by it.
+// block-count shrink lowers prefixN, and a width change re-renders EVERY block so
+// firstChanged drops to 0 (→ prefixN). An expand change re-renders only the
+// expand-sensitive blocks, but it changes joinPrefixState, so the prefix is
+// rebuilt from the passes. Those paths make the requested coverage or
+// joinPrefixState differ; storeRendered independently clears a prefix when a
+// freshly rendered block was already covered by it.
 //
 // The returned slice is freshly allocated EACH call (cached prefix lines appended
 // into a new backing array, then suffix lines), so vp.SetContentLines — which
@@ -680,14 +683,18 @@ func (r *renderer) renderSnapshot(idx int, s scrollback.BlockSnapshot, expand bo
 
 func (r *renderer) renderAssistantSnapshot(idx int, s scrollback.BlockSnapshot, p scrollback.AssistantCardSnapshot, expand bool) string {
 	return r.renderCachedSnapshot(idx, uint64(s.ID), rendererRevision(s.Revision), expand, func(blockID uint64) blockRenderOutput {
-		if strings.TrimSpace(p.Text) == "" && strings.TrimSpace(p.Reasoning) == "" {
-			return blockRenderOutput{}
+		// Expand only changes the reasoning summary, so an answer without one keeps
+		// its entry across a detail flip and never needs its markdown re-rendered.
+		noReasoning := strings.TrimSpace(p.Reasoning) == ""
+		if strings.TrimSpace(p.Text) == "" && noReasoning {
+			return blockRenderOutput{expandInvariant: true}
 		}
 		out := r.renderAssistantSnapshotFresh(idx, p, expand)
 		out = r.indentLines(out)
 		return blockRenderOutput{
-			text: out,
-			rows: r.assistantProvenanceRows(blockID, p, out, expand),
+			text:            out,
+			rows:            r.assistantProvenanceRows(blockID, p, out, expand),
+			expandInvariant: noReasoning,
 		}
 	})
 }

@@ -496,6 +496,61 @@ func TestBlockCacheInvalidatesOnExpandToggle(t *testing.T) {
 	}
 }
 
+// TestSettledAssistantMarkdownIsReleased: the markdown cache keeps only the
+// most recently rendered assistant block. A settled answer is served by its
+// whole-block entry, so holding its glamour output too would grow memory with
+// every turn of the session.
+func TestSettledAssistantMarkdownIsReleased(t *testing.T) {
+	c := &conversation{}
+	r := newCacheRenderer()
+	for i := range 5 {
+		c.addUser("question " + strconv.Itoa(i))
+		c.appendAssistant("answer **" + strconv.Itoa(i) + "**\n\n- one\n- two\n")
+		r.renderConversation(c, false)
+	}
+	if len(r.blocks.markdown) != 1 {
+		t.Fatalf("markdown cache must hold only the live block, got %d entries", len(r.blocks.markdown))
+	}
+	if _, ok := r.blocks.markdown[c.scrollback.Len()-1]; !ok {
+		t.Errorf("the one markdown entry must belong to the tail block, got %v", r.blocks.markdown)
+	}
+}
+
+// TestExpandToggleKeepsAnswersWithoutReasoning: an answer without reasoning
+// renders the same at either expand state, so a detail flip reuses its entry
+// (it has no markdown left to reuse). A settled answer with reasoning
+// re-renders, and because its markdown was released, glamour runs again for
+// it. Both directions match a fresh render.
+func TestExpandToggleKeepsAnswersWithoutReasoning(t *testing.T) {
+	c := &conversation{}
+	c.addUser("first")
+	c.appendReasoning("weighing the options\n")
+	c.appendAssistant("an answer with reasoning\n")
+	c.addUser("second")
+	c.appendAssistant("a plain **answer**\n")
+	r := newCacheRenderer()
+	r.renderConversation(c, false)
+
+	for i, expand := range []bool{true, false} {
+		base, mdBase := r.blockRenders, r.mdRenders
+		got := r.renderConversation(c, expand)
+		// The two user prompts and the answer with reasoning re-render; the plain
+		// answer does not.
+		if n := r.blockRenders - base; n != 3 {
+			t.Errorf("expand=%v: want 3 re-rendered blocks, got %d", expand, n)
+		}
+		// The first flip re-renders the released markdown; the flip back finds it
+		// in the single entry the first flip stored.
+		if n := r.mdRenders - mdBase; i == 0 && n != 1 {
+			t.Errorf("expand=%v: want 1 glamour render for the settled answer with reasoning, got %d", expand, n)
+		}
+		if want := freshConvString(r.th, r.width, c, expand); got != want {
+			t.Errorf("expand=%v: cached render diverged from fresh:\n got %q\nwant %q",
+				expand, stripANSIstr(got), stripANSIstr(want))
+		}
+	}
+}
+
 // TestNonTailMutationInvalidatesOnlyThatBlock: resolving a tool whose block has
 // later blocks appended after it (the backward-scan resolveTool case) re-renders
 // ONLY that block, and the output matches a fresh render.
