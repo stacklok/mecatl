@@ -395220,6 +395220,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1793561972759,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "da8c09e896605e193090b7e8038106e71aa18e4a",
+          "message": "fix(server): diagnose learned-skill listing failures (#2644)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-11-01T17:30:47-08:00",
+          "tree_id": "ae5532b6f6899c6a20f28ef1b6e8d04e7a9c8328",
+          "url": "https://github.com/stacklok/mecatl/commit/da8c09e896605e193090b7e8038106e71aa18e4a"
+        },
+        "date": 1793583796662,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 16141,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12905.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 794,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -515300,6 +515339,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1793583793286,
+  "lastUpdate": 1793583797844,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
