@@ -1,0 +1,24 @@
+    method func (*Budget).CheckArray(length int, depth int, fieldMax int) error
+    method func (*Budget).CheckBytes(length int, depth int, fieldMax int) error
+    method func (*Budget).CheckMap(length int, depth int, fieldMax int) error
+    method func (*Budget).CheckScalar(depth int) error
+    method func (*Budget).CheckString(value string, depth int, fieldMax int) error
+    method func (*Budget).EstimatedBytes() int
+    method func (*Reader).Array(depth int, fieldMax int) (int, error)
+    method func (*Reader).Bool(depth int) (bool, error)
+    method func (*Reader).Bytes(depth int, fieldMax int) ([]byte, error)
+    method func (*Reader).Done() error
+    method func (*Reader).FixedBytes(depth int, fieldMax int, length int) ([]byte, error)
+    method func (*Reader).Int(depth int) (int64, error)
+    method func (*Reader).Map(depth int, fieldMax int) (int, error)
+    method func (*Reader).String(depth int, fieldMax int) (string, error)
+    method func (*Reader).Uint(depth int) (uint64, error)
+    method func (Limits).NamedLimit(name string) (int, error)
+func NewBudget(limits Limits) (Budget, error)
+func NewReader(data []byte, limits Limits) (Reader, error)
+type Budget struct{}
+type Limits struct{MaxBytes int; MaxStringBytes int; MaxByteStringBytes int; MaxArrayElements int; MaxMapPairs int; MaxDepth int; MaxNodes int; MaxCollectionElements int; Named map[string]int}
+type Reader struct{}
+var ErrInvalidData error
+var ErrInvalidLimits error
+var ErrLimitExceeded error

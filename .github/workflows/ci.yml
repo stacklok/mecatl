@@ -354,6 +354,7 @@ jobs:
 
       - name: Verify generated contracts are fresh
         run: |
+          task generate:codecs:check
           task generate
           git diff --exit-code -- contracts/gen sdk/typescript/src/gen cmd/mecatui/internal/timezones/zones.json
 

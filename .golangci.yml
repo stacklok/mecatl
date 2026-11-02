@@ -117,6 +117,29 @@ linters:
           deny:
             - pkg: os
               desc: 'ID generation uses crypto/rand; host state belongs in composition'
+        core-kernel-codec:
+          list-mode: strict
+          files:
+            - '**/engine/kernel/codec/**.go'
+            # DTO fixtures exercise owner-package imports, not the runtime leaf.
+            - '!**/engine/kernel/codec/internal/fixture/**.go'
+            - '!$test'
+          allow:
+            - $gostd
+            - github.com/jcalabro/atmos/cbor$
+          deny:
+            - pkg: os
+              desc: 'codec runtime must not access host state'
+        core-kernel-contentid:
+          list-mode: strict
+          files:
+            - '**/engine/kernel/contentid/**.go'
+            - '!$test'
+          allow:
+            - $gostd
+          deny:
+            - pkg: os
+              desc: 'content identity values must not access host state'
         core-kernel-history:
           list-mode: strict
           files:
@@ -138,6 +161,7 @@ linters:
             - '!$test'
           allow:
             - $gostd
+            - github.com/stacklok/mecatl/engine/kernel/contentid$
             - github.com/stacklok/mecatl/engine/kernel/history/id$
             - github.com/jcalabro/atmos/cbor$
           deny:

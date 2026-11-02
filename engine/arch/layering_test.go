@@ -83,6 +83,20 @@ var coreImportRules = []coreImportRule{
 		desc:            "ID values may import stdlib only",
 	},
 	{
+		pkg:         modulePrefix + "engine/kernel/codec",
+		allowedCore: map[string]bool{},
+		allowedExternal: map[string]bool{
+			"github.com/jcalabro/atmos/cbor": true,
+		},
+		desc: "codec runtime may import only Atmos CBOR primitives and stdlib, never domain or host code",
+	},
+	{
+		pkg:             modulePrefix + "engine/kernel/contentid",
+		allowedCore:     map[string]bool{},
+		allowedExternal: map[string]bool{},
+		desc:            "content identity values may import stdlib only, never codec, history, or host code",
+	},
+	{
 		pkg: modulePrefix + "engine/kernel/history/id",
 		allowedCore: map[string]bool{
 			modulePrefix + "engine/id": true,
@@ -92,12 +106,13 @@ var coreImportRules = []coreImportRule{
 	{
 		pkg: modulePrefix + "engine/kernel/history/format",
 		allowedCore: map[string]bool{
+			modulePrefix + "engine/kernel/contentid":  true,
 			modulePrefix + "engine/kernel/history/id": true,
 		},
 		allowedExternal: map[string]bool{
 			"github.com/jcalabro/atmos/cbor": true,
 		},
-		desc: "history format values may import only history identity values, the Atmos CBOR codec, and stdlib, never higher-level history contracts",
+		desc: "history format values may import only content identity, history identity values, the Atmos CBOR codec, and stdlib, never higher-level history contracts",
 	},
 	{
 		pkg: modulePrefix + "engine/kernel/history",

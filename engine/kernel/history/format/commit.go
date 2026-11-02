@@ -115,7 +115,8 @@ func EncodeCommit(c Commit, limits Limits) ([]byte, CID, error) {
 		out = cbor.AppendText(out, "p")
 		out = append(out, 0xd8, 0x2a)
 		var link [37]byte
-		copy(link[1:], c.Parent.binary[:])
+		binary := c.Parent.value.Binary()
+		copy(link[1:], binary[:])
 		out = cbor.AppendBytes(out, link[:])
 	}
 	out = cbor.AppendText(out, "r")

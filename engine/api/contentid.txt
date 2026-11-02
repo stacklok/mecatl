@@ -1,0 +1,9 @@
+    method func (CID).Binary() [36]byte
+    method func (CID).String() string
+func Parse(s string) (CID, error)
+func ParseBinary(data []byte) (CID, error)
+func Sum(data []byte) CID
+func Verify(data []byte, expected CID) error
+type CID struct{}
+var ErrInvalidExpected error
+var ErrMismatch error

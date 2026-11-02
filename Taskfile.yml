@@ -1248,9 +1248,20 @@ tasks:
       # The catalog contains names, not the runtime's DST rules.
       - GOWORK=off go run ./internal/timezonegen/cmd/timezonegen --output cmd/mecatui/internal/timezones/zones.json
 
-  generate:
-    desc: Regenerate Go and TypeScript contracts and configuration reference
+  generate:codecs:
+    desc: Regenerate isolated kernel persistence codec fixtures
     cmds:
+      - GOWORK=off go run ./internal/cborgen/cmd/cborgen -repo .
+
+  generate:codecs:check:
+    desc: Check codec inventory and bytes without modifying generated files
+    cmds:
+      - GOWORK=off go run ./internal/cborgen/cmd/cborgen -repo . -check
+
+  generate:
+    desc: Regenerate contracts, codec fixtures and configuration reference
+    cmds:
+      - task: generate:codecs
       # Regenerates the gRPC contracts — the harness API (contracts/proto/
       # mecatl/v1) AND the store-driver protocol (contracts/proto/mecatl/
       # driver/v1) — into contracts/gen (never hand-edit the output). The buf
