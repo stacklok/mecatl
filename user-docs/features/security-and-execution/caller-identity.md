@@ -121,7 +121,7 @@ mecated serve \
   --oidc-issuer https://auth.example.com/as \
   --oidc-audience https://mecatl.example.com/api \
   --oidc-owner-identity=sub_id \
-  --oidc-accepted-client-ids mecatui,studio \
+  --oidc-accepted-client-ids mecatui \
   --workspace /srv/mecatl/workspace
 ```
 
