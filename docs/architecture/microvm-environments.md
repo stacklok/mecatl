@@ -58,9 +58,10 @@ Switching to another Git worktree requires an owned source session. `ListWorktre
 reattaches the source and returns display metadata plus an opaque selector: an HMAC over
 caller, source session, and choice, keyed by a random per-process key. `ClearSession` and
 `ForkSession` accept that selector. The provider re-enumerates before binding and reports
-"changed" if the choice moved. Selectors are never persisted, so clients relist after a
-restart. Only the local provider offers discovery; the microVM provider rejects worktree
-selectors.
+"changed" if the choice moved. Once bound, the session reattaches to whatever worktree
+the repository lists at that path, so later commits or branch switches do not strand
+it. Selectors are never persisted, so clients relist after a restart. Only the local
+provider offers discovery; the microVM provider rejects worktree selectors.
 
 Schedules persist a resolved ref plus scope, and every fire reauthorizes it. Native
 Kubernetes fires reserve a distinct successor reference against the exact origin,
