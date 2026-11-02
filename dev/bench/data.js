@@ -359468,6 +359468,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1793654617950,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "0dde05a06c484d31cafca9c838dd2f1ad17dc35a",
+          "message": "feat(engine): add generated persistence codecs and content IDs (#2651)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-11-02T21:16:31Z",
+          "tree_id": "e7973d0a27e62609ac7445260c210be7abd180a0",
+          "url": "https://github.com/stacklok/mecatl/commit/0dde05a06c484d31cafca9c838dd2f1ad17dc35a"
+        },
+        "date": 1793655373343,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -519354,6 +519388,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1793655369960,
+  "lastUpdate": 1793655374107,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
