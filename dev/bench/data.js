@@ -358394,6 +358394,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1793651274777,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "29541485+ChrisJBurns@users.noreply.github.com",
+            "name": "Chris Burns",
+            "username": "ChrisJBurns"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "bfd42a423903fa4d8b20254fc6b1126bbeeed34d",
+          "message": "fix(server): return the saved state explicitly from successor creation (#2649)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-11-02T20:23:34Z",
+          "tree_id": "d610bf8c374f294f261f6ab6a3a23728cac7dabb",
+          "url": "https://github.com/stacklok/mecatl/commit/bfd42a423903fa4d8b20254fc6b1126bbeeed34d"
+        },
+        "date": 1793652032951,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -517821,6 +517855,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1793652029584,
+  "lastUpdate": 1793652033988,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
