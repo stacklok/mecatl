@@ -397205,6 +397205,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1793651280335,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "29541485+ChrisJBurns@users.noreply.github.com",
+            "name": "Chris Burns",
+            "username": "ChrisJBurns"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "bfd42a423903fa4d8b20254fc6b1126bbeeed34d",
+          "message": "fix(server): return the saved state explicitly from successor creation (#2649)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-11-02T20:23:34Z",
+          "tree_id": "d610bf8c374f294f261f6ab6a3a23728cac7dabb",
+          "url": "https://github.com/stacklok/mecatl/commit/bfd42a423903fa4d8b20254fc6b1126bbeeed34d"
+        },
+        "date": 1793652037705,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 16146,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12907,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 794,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -517855,6 +517894,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1793652033988,
+  "lastUpdate": 1793652038753,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
