@@ -176,12 +176,15 @@ oidc:
   issuer: https://auth.example.com/as
   audience: https://mecatl.example.com/api
   ownerIdentity: sub_id
-  acceptedClientIDs: [mecatui, studio]
+  acceptedClientIDs: [mecatui]
 ```
 
 `oidc.ownerIdentity` sets `--oidc-owner-identity` and accepts only `sub_id` or
 the default empty string. `oidc.acceptedClientIDs` sets
-`--oidc-accepted-client-ids`; the chart rejects one without the other. The
+`--oidc-accepted-client-ids`; the chart rejects one without the other, except
+that a [hosted AS-1](#host-as-1-in-mecak8s) supplies its TUI client ID when
+`oidc.acceptedClientIDs` is unset. Studio does not support this setting; see
+[Mecatl Studio](/operating/studio.md). The
 experimental identity broker requires this setting: with
 `--enable-identity-broker` and OIDC enabled, `mecak8s` refuses to start without
 it, and the chart refuses `identityBroker.enabled` without it. When `oidc.clientID` is set, the chart requires it in

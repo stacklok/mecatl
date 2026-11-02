@@ -208,16 +208,13 @@ you signed in before the server published it, run `mecatui login` again
 (switching to the identity broker changes the issuer, which requires a new login
 anyway).
 
-When the identity broker is configured to exchange access tokens at AS-1, the
-server refuses a token that was already used, or whose subject AS-1 does not
-accept, before the request changes anything. It answers with `bearer_rejected`
-(HTTP 401 with an `invalid_token` challenge), and `mecatui` refreshes its access
-token and resends the request once. If your sign-in was revoked, the server
-answers `sign_in_required` instead, and `mecatui` asks you to sign in again. A
-token for a different user than the session's owner gets
-`identity_broker_session_refused` (HTTP 403); retrying does not help. If the
-broker is unreachable, the server answers `identity_broker_unavailable` (HTTP
-503) and saves nothing, so you can retry.
+The identity broker does not exchange access tokens at AS-1 when it opens a
+session, so it never refuses a token as already used or revoked. A request for
+another user's session gets `session_not_found` (HTTP 404), as for any session
+you do not own. If the session ID is already paired with another user's broker
+session, the server answers `identity_broker_session_refused` (HTTP 403);
+retrying does not help. If the broker is unreachable, the server answers
+`identity_broker_unavailable` (HTTP 503) and saves nothing, so you can retry.
 
 Discovery rejects a `--scopes` override. Configure advertised scopes through
 `oidc.scopes`; explicit `mecatui login --issuer ...` still accepts `--scopes`.

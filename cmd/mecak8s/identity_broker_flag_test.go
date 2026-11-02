@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/internal/adapter/server"
 	"github.com/stacklok/mecatl/internal/app"
 	"github.com/stacklok/mecatl/internal/cliconfig"
@@ -189,6 +190,31 @@ func TestIdentityBrokerAS1FlagRules(t *testing.T) {
 		if got := appConfig(cfg, nil, observability{}).IdentityBrokerHostedAS1; got.UpstreamCAFile != c.wantCA || got.UpstreamAllowPrivateAddresses != c.wantPrivate {
 			t.Fatalf("%v: upstream CA %q, private addresses %v; want %q, %v", c.args, got.UpstreamCAFile, got.UpstreamAllowPrivateAddresses, c.wantCA, c.wantPrivate)
 		}
+	}
+}
+
+// TestHostedAS1EnablesExecutionWithoutOIDCIssuer pins that the caller identity
+// a hosted AS-1 derives satisfies remote execution's ownership requirement, as
+// --identity-broker-as1-issuer documents for an unset --oidc-issuer.
+func TestHostedAS1EnablesExecutionWithoutOIDCIssuer(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	cfg, err := parseFlags(slices.Concat(as1Args, []string{
+		"--execution-enabled", "--execution-endpoint=127.0.0.1:1", "--execution-template-id=go",
+		"--execution-template-revision=v1-" + strings.Repeat("a", 64),
+		"--execution-tls-ca=unused", "--execution-tls-cert=unused", "--execution-tls-key=unused",
+		"--execution-allowed-principal=https://idp.example|alice",
+	}))
+	if err != nil {
+		t.Fatalf("parseFlags: %v", err)
+	}
+	if cfg.oidc.Issuer != "https://mecatl.example/as1" {
+		t.Fatalf("oidc issuer = %q, want AS-1's", cfg.oidc.Issuer)
+	}
+	built := appConfig(cfg, nil, observability{})
+	alice := &session.Principal{Issuer: "https://idp.example", Subject: "alice", GrantType: session.GrantTypeUser}
+	if !built.ExecutionOwnerAllowed(alice) || !built.ExecutionTemplateAllowed(alice, "go", cfg.executionTemplateRevision) {
+		t.Fatal("allowlisted principal refused")
 	}
 }
 

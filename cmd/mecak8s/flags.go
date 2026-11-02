@@ -699,6 +699,11 @@ func parseFlags(argv []string) (config, error) {
 	if cfg.workspace != "" && (!filepath.IsAbs(cfg.workspace) || filepath.Clean(cfg.workspace) != cfg.workspace) {
 		return config{}, fmt.Errorf("--workspace %q must be a clean absolute path (a mounted filesystem root); leave it empty for a file-less deployment", cfg.workspace)
 	}
+	// Resolve AS-1 first: it fills in the caller identity the execution checks
+	// below require.
+	if err := resolveAS1Flags(&cfg); err != nil {
+		return config{}, err
+	}
 	if cfg.executionEnabled {
 		if cfg.executionEndpoint == "" || cfg.executionTemplateID == "" || cfg.executionTemplateRevision == "" || (cfg.executionAllowedSubjects == "" && len(cfg.executionAllowedPrincipals) == 0) || cfg.executionTLSCA == "" || cfg.executionTLSCert == "" || cfg.executionTLSKey == "" {
 			return config{}, errors.New("--execution-enabled requires --execution-endpoint, --execution-template-id, --execution-template-revision, --execution-allowed-principal, --execution-tls-ca, --execution-tls-cert, and --execution-tls-key")
@@ -715,9 +720,6 @@ func parseFlags(argv []string) (config, error) {
 		if cfg.enableParallel || cfg.enableTeams {
 			return config{}, errors.New("remote execution does not support --enable-parallel or --enable-teams")
 		}
-	}
-	if err := resolveAS1Flags(&cfg); err != nil {
-		return config{}, err
 	}
 	// The broker's owner is the company identity AS-1 witnessed in sub_id;
 	// without this it would be AS-1's own issuer and pseudonymous subject.
