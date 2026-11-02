@@ -14,9 +14,9 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/server"
 )
 
-// bearerRejectedTag reports whether err carries the authenticator's
-// bearer_rejected ErrorInfo, the only Unauthenticated a client may refresh and
-// retry on.
+// bearerRejectedTag reports whether err carries the server's bearer_rejected
+// ErrorInfo (authenticator or identity broker), the only Unauthenticated a
+// client may refresh and retry on.
 func bearerRejectedTag(err error) bool {
 	for _, detail := range status.Convert(err).Details() {
 		if info, ok := detail.(*errdetails.ErrorInfo); ok && info.GetDomain() == "mecatl.stacklok.com" && info.GetReason() == "bearer_rejected" {

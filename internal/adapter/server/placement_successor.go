@@ -79,19 +79,19 @@ func (s *Service) ClearSessionSuccessor(ctx context.Context, source session.Sess
 	if preset.brokerSessionID, err = s.preOpenIdentityBrokerSession(ctx, probe); err != nil {
 		return "", err
 	}
-	// The broker session opened here is Clear's to close unless the successor
-	// was saved, which only a successor ID tells: createPlacedSuccessorLocked
-	// returns one, error or not, exactly when it saved the successor.
-	var successor session.SessionID
+	// The broker session opened here is Clear's to close unless
+	// createPlacedSuccessorLocked reports it saved the successor, error or not.
+	saved := false
 	defer func() {
-		if successor == "" {
+		if !saved {
 			s.closePreOpenedBrokerSession(ctx, string(preset.id), preset.brokerSessionID)
 		}
 	}()
 	if err := s.cancelAndAwaitClearSource(ctx, source); err != nil {
 		return "", err
 	}
-	successor, err = s.createPlacedSuccessorLocked(ctx, req, false, true, &preset)
+	var successor session.SessionID
+	successor, saved, err = s.createPlacedSuccessorLocked(ctx, req, false, true, &preset)
 	if err != nil {
 		return successor, err
 	}
@@ -159,7 +159,8 @@ func (s *Service) createPlacedSuccessor(ctx context.Context, req ForkSuccessorRe
 	if _, absent, err = s.managementTarget(ctx, req.Source, false); err != nil || absent {
 		return "", err
 	}
-	return s.createPlacedSuccessorLocked(ctx, req, copyHistory, false, nil)
+	id, _, err := s.createPlacedSuccessorLocked(ctx, req, copyHistory, false, nil)
+	return id, err
 }
 
 // presetSuccessor fixes a successor's ID and incarnation before it is built,
@@ -174,14 +175,16 @@ type presetSuccessor struct {
 // createPlacedSuccessorLocked builds and saves a successor of req.Source. With
 // preset nil it mints the successor's ID and opens its identity broker session
 // before saving, and closes that broker session if the successor is then not
-// saved; with preset, the caller did both and owns that close. It returns the
-// successor's ID, with or without an error, exactly when it saved it.
+// saved; with preset, the caller did both and owns that close. saved reports
+// whether it saved the successor, with or without an error; id is the
+// successor's ID exactly when saved. Every return passes saved through, so the
+// deferred close and the caller see the same answer.
 //
 //nolint:gocyclo // Successor creation keeps validation, exact placement, engine setup, and publication atomic.
-func (s *Service) createPlacedSuccessorLocked(ctx context.Context, req ForkSuccessorRequest, copyHistory, clearSource bool, preset *presetSuccessor) (session.SessionID, error) {
+func (s *Service) createPlacedSuccessorLocked(ctx context.Context, req ForkSuccessorRequest, copyHistory, clearSource bool, preset *presetSuccessor) (id session.SessionID, saved bool, err error) {
 	release, err := s.acquireMutationLease(ctx, req.Source)
 	if err != nil {
-		return "", err
+		return "", saved, err
 	}
 	defer release()
 	mutationCtx, stopMutation, stillHeld := s.mutationLeaseContext(ctx, req.Source)
@@ -196,16 +199,25 @@ func (s *Service) createPlacedSuccessorLocked(ctx context.Context, req ForkSucce
 		source, absent, err = s.managementTarget(mutationCtx, req.Source, false)
 	}
 	if err != nil || absent {
-		return "", err
+		return "", saved, err
+	}
+	if preset != nil {
+		// The broker session was opened for the owner Clear loaded before this
+		// reload; a source that changed owner since must not be cancelled below.
+		want, _ := identityBrokerOwner(preset.owner)
+		got, _ := identityBrokerOwner(source.Owner)
+		if want != got {
+			return "", saved, fmt.Errorf("%w: the clear source's owner changed", ErrInternal)
+		}
 	}
 	// The successor inherits source.Mode, so it must be admissible under the
 	// current deployment before anything (including clearing the source) happens.
 	if err := s.admitStoredMode(source); err != nil {
-		return "", err
+		return "", saved, err
 	}
 	if copyHistory {
 		if err := s.attachLiveInstructions(source, false); err != nil {
-			return "", err
+			return "", saved, err
 		}
 	}
 	var destinationID session.SessionID
@@ -217,27 +229,26 @@ func (s *Service) createPlacedSuccessorLocked(ctx context.Context, req ForkSucce
 	} else {
 		destinationID = s.cfg.NewID()
 	}
-	saved := false
 	defer func() {
 		if !saved {
 			s.closePreOpenedBrokerSession(ctx, string(destinationID), preOpened)
 		}
 	}()
 	if s.cfg.MCPBroker != nil && !brokercontract.ValidLogicalSessionID(destinationID) {
-		return "", fmt.Errorf("%w: session id is not admissible for broker", ErrInvalidArgument)
+		return "", saved, fmt.Errorf("%w: session id is not admissible for broker", ErrInvalidArgument)
 	}
 	releaseDestination, reserveErr := s.reserveGeneratedSessionID(mutationCtx, destinationID)
 	if reserveErr != nil {
-		return "", reserveErr
+		return "", saved, reserveErr
 	}
 	defer releaseDestination()
 	selector, err := successorProviderSelector(source, req)
 	if err != nil {
-		return "", err
+		return "", saved, err
 	}
 	binding, err := s.successorPlacement(mutationCtx, source, req.Placement, destinationID)
 	if err != nil {
-		return "", err
+		return "", saved, err
 	}
 	publishedPlacement := false
 	defer func() {
@@ -253,17 +264,17 @@ func (s *Service) createPlacedSuccessorLocked(ctx context.Context, req ForkSucce
 	// mutation lease, so a failed successor cannot consume the pending ask.
 	if clearSource && (source.State == session.StateRunning || source.State == session.StateAwaiting) {
 		if err := source.Cancel(); err != nil {
-			return "", fmt.Errorf("server: cancel clear source: %w", err)
+			return "", saved, fmt.Errorf("server: cancel clear source: %w", err)
 		}
 		if err := s.saveSession(mutationCtx, source); err != nil {
-			return "", fmt.Errorf("server: persist cancelled clear source: %w", err)
+			return "", saved, fmt.Errorf("server: persist cancelled clear source: %w", err)
 		}
 	}
 
 	created := session.New(destinationID, source.Mode, binding.Ref, source.Limits, s.cfg.Now())
 	if preset != nil {
 		if err := created.RestoreIncarnation(preset.incarnation); err != nil {
-			return "", fmt.Errorf("%w: successor incarnation: %v", ErrInternal, err)
+			return "", saved, fmt.Errorf("%w: successor incarnation: %v", ErrInternal, err)
 		}
 	}
 	created.Placement = canonicalPlacementMetadata(binding)
@@ -280,7 +291,7 @@ func (s *Service) createPlacedSuccessorLocked(ctx context.Context, req ForkSucce
 	// directly here instead.
 	created.AgentDefinitionName = source.AgentDefinitionName
 	if err := setSessionLabels(created, selector, profileForSession(source), source.Owner, authority, brokerKeys, brokerKeysPresent); err != nil {
-		return "", err
+		return "", saved, err
 	}
 	if preset != nil {
 		// The broker session was opened for the owner the source had before
@@ -288,14 +299,14 @@ func (s *Service) createPlacedSuccessorLocked(ctx context.Context, req ForkSucce
 		want, _ := identityBrokerOwner(preset.owner)
 		got, _ := identityBrokerOwner(created.Owner)
 		if want != got {
-			return "", fmt.Errorf("%w: the clear source's owner changed", ErrInternal)
+			return "", saved, fmt.Errorf("%w: the clear source's owner changed", ErrInternal)
 		}
 	}
 	created.ExecutionTemplateID, created.ExecutionTemplateRevision = source.ExecutionTemplateID, source.ExecutionTemplateRevision
 	created.EnvironmentRef = binding.Ref
 	if copyHistory {
 		if err := created.SeedHistory(s.providerCarryoverSnapshot(source, selector.ProviderID)); err != nil {
-			return "", fmt.Errorf("server: seed fork history: %w", err)
+			return "", saved, fmt.Errorf("server: seed fork history: %w", err)
 		}
 		if req.Title == "" {
 			created.Title, created.TitleProvenance = source.Title, source.TitleProvenance
@@ -303,7 +314,7 @@ func (s *Service) createPlacedSuccessorLocked(ctx context.Context, req ForkSucce
 	}
 	if req.Title != "" {
 		if err := created.RenameTitle(req.Title); err != nil {
-			return "", fmt.Errorf("%w: %v", ErrInvalidArgument, err)
+			return "", saved, fmt.Errorf("%w: %v", ErrInvalidArgument, err)
 		}
 	}
 	// A fork opens its successor's identity broker session here, before the
@@ -312,7 +323,7 @@ func (s *Service) createPlacedSuccessorLocked(ctx context.Context, req ForkSucce
 	// cancelling the source (preset).
 	if preset == nil {
 		if preOpened, err = s.preOpenIdentityBrokerSession(mutationCtx, created); err != nil {
-			return "", err
+			return "", saved, err
 		}
 	}
 	// A same-placement fork starts with the source's live examined guidance, not
@@ -325,11 +336,11 @@ func (s *Service) createPlacedSuccessorLocked(ctx context.Context, req ForkSucce
 			s.mu.Lock()
 			if s.draining.Load() {
 				s.mu.Unlock()
-				return "", ErrUnavailable
+				return "", saved, ErrUnavailable
 			}
 			if len(s.instructionSnapshots) >= s.cfg.MaxSessionEngines {
 				s.mu.Unlock()
-				return "", fmt.Errorf("%w: live instruction capacity %d", ErrTooManySessionEngines, s.cfg.MaxSessionEngines)
+				return "", saved, fmt.Errorf("%w: live instruction capacity %d", ErrTooManySessionEngines, s.cfg.MaxSessionEngines)
 			}
 			created.ReplaceInstructionSnapshot(snap)
 			inheritedSource = source.ID
@@ -363,14 +374,14 @@ func (s *Service) createPlacedSuccessorLocked(ctx context.Context, req ForkSucce
 	if s.cfg.MCPBroker != nil && !agentBound {
 		broker, err = s.openBrokerAttachment(mutationCtx, created.ID, "", false)
 		if err != nil {
-			return "", err
+			return "", saved, err
 		}
 		defer s.finalizeBrokerAttachment(broker, &brokerCommitted)
 		created.ExternalBinding = broker.attachment.Binding()
 	}
 	governanceRoot, err := PlacementGovernanceRoot(binding)
 	if err != nil {
-		return "", err
+		return "", saved, err
 	}
 	// An agent-bound successor ALWAYS needs its own per-session engine rebuild
 	// (mirroring createSession's definitelyPerSession/needPerSession checks),
@@ -383,11 +394,11 @@ func (s *Service) createPlacedSuccessorLocked(ctx context.Context, req ForkSucce
 		switch {
 		case agentBound:
 			if s.cfg.AgentDefSessionEngine == nil {
-				return "", fmt.Errorf("%w: session-scoped agent identity is not supported (no agent-def session-engine factory configured)", ErrInvalidArgument)
+				return "", saved, fmt.Errorf("%w: session-scoped agent identity is not supported (no agent-def session-engine factory configured)", ErrInvalidArgument)
 			}
 		default:
 			if s.cfg.MCPBroker == nil && s.cfg.SessionEngine == nil {
-				return "", fmt.Errorf("%w: per-session engine not supported (no session-engine factory configured)", ErrInvalidArgument)
+				return "", saved, fmt.Errorf("%w: per-session engine not supported (no session-engine factory configured)", ErrInvalidArgument)
 			}
 		}
 		if broker != nil {
@@ -396,7 +407,7 @@ func (s *Service) createPlacedSuccessorLocked(ctx context.Context, req ForkSucce
 			builtEngine, err = s.buildAndRegisterSessionEngine(mutationCtx, created, selector, profile, created.Mode, false, inheritedSource)
 		}
 		if err != nil {
-			return "", err
+			return "", saved, err
 		}
 	}
 	cleanupEngine := func() {
@@ -419,7 +430,7 @@ func (s *Service) createPlacedSuccessorLocked(ctx context.Context, req ForkSucce
 	// closing this residual window requires a new token-fenced store seam.
 	if !stillHeld() {
 		cleanupEngine()
-		return "", ErrSessionLeasedElsewhere
+		return "", saved, ErrSessionLeasedElsewhere
 	}
 	engine := s.cfg.Engine
 	if builtEngine != nil {
@@ -429,10 +440,10 @@ func (s *Service) createPlacedSuccessorLocked(ctx context.Context, req ForkSucce
 	if err := s.persistNewSession(mutationCtx, created); err != nil {
 		cleanupEngine()
 		if errors.Is(err, port.ErrSessionAlreadyExists) {
-			return "", err
+			return "", saved, err
 		}
 		s.logDiscoveryError(ctx, "persist successor placement", err)
-		return "", fmt.Errorf("%w: placement storage failed", ErrInternal)
+		return "", saved, fmt.Errorf("%w: placement storage failed", ErrInternal)
 	}
 	saved = true
 	if binding.Commit != nil {
@@ -442,7 +453,7 @@ func (s *Service) createPlacedSuccessorLocked(ctx context.Context, req ForkSucce
 		if commitErr != nil {
 			publishedPlacement = true
 			s.logPlacementProviderError(ctx, "commit successor reference", commitErr)
-			return created.ID, fmt.Errorf("%w: session %q persisted but reference publication must be retried", ErrInternal, created.ID)
+			return created.ID, saved, fmt.Errorf("%w: session %q persisted but reference publication must be retried", ErrInternal, created.ID)
 		}
 	}
 	s.installSessionPlacement(created.ID, binding, false)
@@ -455,7 +466,7 @@ func (s *Service) createPlacedSuccessorLocked(ctx context.Context, req ForkSucce
 			cleanupEngine()
 			// Saved already: report the ID with the error, as the reference
 			// commit failure above does.
-			return created.ID, fmt.Errorf("%w: %v", ErrInternal, commitErr)
+			return created.ID, saved, fmt.Errorf("%w: %v", ErrInternal, commitErr)
 		}
 		brokerCommitted = true
 	}
@@ -470,7 +481,7 @@ func (s *Service) createPlacedSuccessorLocked(ctx context.Context, req ForkSucce
 	openCtx, cancelOpen := context.WithTimeout(context.WithoutCancel(mutationCtx), engineCloseTimeout)
 	_ = s.openSavedIdentityBrokerSession(openCtx, created.ID)
 	cancelOpen()
-	return created.ID, nil
+	return created.ID, saved, nil
 }
 
 func successorProviderSelector(source *session.Session, req ForkSuccessorRequest) (ProviderSelector, error) {
