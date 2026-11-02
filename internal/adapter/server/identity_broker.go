@@ -188,18 +188,11 @@ func (s *Service) openIdentityBrokerSessionOnce(ctx context.Context, sess *sessi
 	// session holds is refused before saving (preOpenIdentityBrokerSession).
 	opened, err := broker.OpenSession(ctx, identitybroker.OpenSessionRequest{HostSessionID: host, Incarnation: incarnation, Owner: owner, AccessToken: token})
 	if err != nil {
-		closed := errors.Is(err, identitybroker.ReasonError(identitybroker.ReasonSessionClosed, ""))
 		err = s.identityBrokerFailure(ctx, "open", host, "", err)
-		switch {
-		case token.IsZero() && errors.Is(err, ErrBearerRejected):
+		if token.IsZero() && errors.Is(err, ErrBearerRejected) {
 			// The tag says "this request's token was refused before anything
 			// happened"; an open that presented no token cannot mean that.
 			err = fmt.Errorf("%w: identity broker refused an access token this open did not present", ErrInternal)
-		case !token.IsZero() && closed:
-			// The broker session closed while this open converted the request's
-			// token, and a token converts once: fail as for a refused token. This
-			// is the request's first presenting open, made before any change.
-			err = errBrokerSessionClosedAfterToken
 		}
 		return identitybroker.Session{}, false, err
 	}
@@ -261,13 +254,7 @@ func (s *Service) preOpenIdentityBrokerSession(ctx context.Context, sess *sessio
 			// created it, and the session it belongs to will not be saved.
 			s.closeUnsavedPairing(ctx, host, incarnation, owner)
 		}
-		closed := errors.Is(err, identitybroker.ReasonError(identitybroker.ReasonSessionClosed, ""))
-		err = s.identityBrokerFailure(ctx, "open", host, "", err)
-		if closed {
-			// As in openIdentityBrokerSessionOnce: this open presented the token.
-			err = errBrokerSessionClosedAfterToken
-		}
-		return "", err
+		return "", s.identityBrokerFailure(ctx, "open", host, "", err)
 	}
 	s.logIdentityBroker(ctx, "opened broker session before saving", host, opened.ID)
 	if found {
@@ -564,6 +551,11 @@ func (s *Service) identityBrokerFailure(ctx context.Context, call, host, brokerS
 		return fmt.Errorf("%w: sign in again", ErrSignInRequired)
 	case reason == identitybroker.ReasonOwnerMismatch, reason == identitybroker.ReasonSessionOwned:
 		return fmt.Errorf("%w: identity broker refused the session", ErrIdentityBrokerSessionRefused)
+	case reason == identitybroker.ReasonSessionClosed:
+		// The broker session closed while the open converted the request's
+		// token, and a token converts once: fail as for a refused token. A
+		// tokenless open's caller turns the tag into ErrInternal.
+		return errBrokerSessionClosedAfterToken
 	}
 	if code == identitybroker.CodeUnavailable {
 		return ErrIdentityBrokerUnavailable
