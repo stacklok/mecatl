@@ -152,23 +152,25 @@ func executableFixture(t *testing.T, source string) LoadConfig {
 	t.Helper()
 	cfg := moduleFixture(t, source)
 	module := filepath.Dir(cfg.Dir)
-	runtimeDir, err := filepath.Abs("../../engine/kernel/codec")
-	if err != nil {
-		t.Fatal(err)
-	}
-	entries, err := os.ReadDir(runtimeDir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".go") || strings.HasSuffix(entry.Name(), "_test.go") {
-			continue
-		}
-		data, err := os.ReadFile(filepath.Join(runtimeDir, entry.Name()))
+	for _, pkg := range []string{"codec", "contentid"} {
+		runtimeDir, err := filepath.Abs("../../engine/kernel/" + pkg)
 		if err != nil {
 			t.Fatal(err)
 		}
-		writeFixture(t, filepath.Join(module, "kernel/codec", entry.Name()), string(data))
+		entries, err := os.ReadDir(runtimeDir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, entry := range entries {
+			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".go") || strings.HasSuffix(entry.Name(), "_test.go") {
+				continue
+			}
+			data, err := os.ReadFile(filepath.Join(runtimeDir, entry.Name()))
+			if err != nil {
+				t.Fatal(err)
+			}
+			writeFixture(t, filepath.Join(module, "kernel", pkg, entry.Name()), string(data))
+		}
 	}
 	writeFixture(t, filepath.Join(module, "go.mod"), "module github.com/stacklok/mecatl/engine\n\ngo 1.27.3\n\nrequire github.com/jcalabro/atmos v0.8.0\n")
 	sum, err := os.ReadFile("../../engine/go.sum")

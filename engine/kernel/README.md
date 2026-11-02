@@ -32,8 +32,9 @@ entry points continue to use the existing engine.
 `history` imports both `history/format` and `history/id`; the remaining dependency
 direction is `history/format` → `history/id` → `engine/id`. Format also delegates
 fixed-profile CID operations to the standard-library-only `contentid` leaf while
-retaining its distinct public `format.CID` type. Format and `codec` use Atmos's
-`cbor` primitives; their imported dependency closures are standard-library-only.
+retaining its distinct public `format.CID` type. `codec` also imports `contentid`
+for fixed-profile DAG-CBOR links. Format and `codec` use Atmos's `cbor` primitives;
+their imported dependency closures are standard-library-only.
 The history identity leaf supplies strongly typed history identities to format
 DTOs without importing higher-level history contracts. These packages do
 not depend on the legacy session aggregate, model providers, or host composition.

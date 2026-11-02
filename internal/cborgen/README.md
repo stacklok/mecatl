@@ -23,7 +23,7 @@ Put a literal `go:generate` directive in a handwritten Go source file in that
 package. The fixture package has this working declaration:
 
 ```go
-//go:generate go -C ../../../../.. run ./internal/cborgen/cmd/cborgen -dir engine/kernel/codec/internal/fixture -types Catalog,Sample -out zz_cbor_generated.go
+//go:generate go -C ../../../../.. run ./internal/cborgen/cmd/cborgen -dir engine/kernel/codec/internal/fixture -types Catalog,Sample,Link,Links -out zz_cbor_generated.go
 ```
 
 For another package, adjust `-C` to reach the repository root, `-dir` to its
@@ -77,15 +77,29 @@ not traverse directory symlinks.
 | `int8`, `int16`, `int32`, `int64` | Minimal signed integer, checked against destination range |
 | `uint8`, `uint16`, `uint32`, `uint64` | Minimal unsigned integer, checked against destination range |
 | `[]byte`, `[N]byte` | Byte string; fixed array requires exact length |
+| `contentid.CID` | Fixed-profile DAG-CBOR CID link (tag 42) |
 | Other slices | Ordered arrays |
 | Structs | Maps with explicitly tagged text keys |
 | Maps with string-underlying keys | Text-key maps with supported values |
 | Pointers | Indirection to a supported nonpointer value |
 
-Named equivalents and reachable aliases are supported. Byte-string elements can
-have a named `uint8`-underlying type. Reachable imported DTOs are supported when
-every field needed for whole-value cloning and equality is accessible. Imported
-or alias roots cannot receive generated owner methods and are rejected.
+Named equivalents and reachable aliases are supported, except that CID support
+requires the exact [`contentid.CID`](../../engine/kernel/contentid/cid.go) type or
+an alias to it. Distinct defined types and wrappers follow ordinary struct rules.
+Byte-string elements can have a named `uint8`-underlying type. Reachable imported
+DTOs are supported when every field needed for whole-value cloning and equality
+is accessible. Imported or alias roots cannot receive generated owner methods
+and are rejected.
+
+A CID link is canonical tag 42 followed by a 37-byte byte string: a zero prefix
+and the fixed CIDv1/DAG-CBOR/SHA-256 binary CID. Required CIDs and present optional
+`*contentid.CID` values must be nonzero; nil optional pointers are omitted.
+Decoding validates the exact profile and copies the CID into owned fixed-size
+storage. Clone and Equal copy and compare CIDs as values, including zero and
+excluded values, without validation. Link accounting uses two nodes, at the tag's
+depth and one level deeper, and 55 estimated bytes for the 41-byte encoding.
+`MaxByteStringBytes` applies to all 37 content bytes; the tag consumes no
+collection-element declaration. See the [runtime accounting contract](../../engine/kernel/codec/doc.go).
 
 Generation rejects machine-sized integers (`int`, `uint`, `uintptr`), floats,
 interfaces, functions, channels, nonbyte fixed arrays, nonstring map keys,
@@ -153,7 +167,7 @@ are rejected.
 | `bytes` | UTF-8 text byte length, byte-slice length, or fixed byte-array length |
 | `items` | Nonbyte slice element count or map pair count |
 
-Structs, scalar numbers, booleans, and excluded fields cannot carry these caps.
+Structs, CIDs, scalar numbers, booleans, and excluded fields cannot carry these caps.
 The cap applies only to that field's immediate length/count, not its subtree or
 each element. Global and aggregate limits still apply and cannot be relaxed by
 a field cap. A literal is built into generated code; `@name` resolves an exact,
@@ -199,8 +213,9 @@ for conservative size estimates, allocation admission, and input lifetimes.
 Encoding uses definite lengths, shortest headers, and text keys sorted by UTF-8
 byte length then lexical bytes. Decoding rejects duplicates, unordered keys,
 unknown/missing fields, malformed/nonminimal input, invalid UTF-8, integer
-overflow, null, trailing data, floats, tags/CIDs, indefinite forms, and unsupported
-simple values. Opaque byte contents remain uninterpreted. This strict subset is
+overflow, null, trailing data, floats, indefinite forms, and unsupported simple
+values. Tags are accepted only for fixed-profile links at `contentid.CID`
+positions. Opaque byte contents remain uninterpreted. This strict subset is
 not unrestricted DAG-CBOR or a drop-in reflective serializer. Changes to tags,
 field presence, or accepted types require a stored-data compatibility assessment;
 adding a field is not automatically compatible with existing strict decoders.

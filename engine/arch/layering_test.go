@@ -83,12 +83,14 @@ var coreImportRules = []coreImportRule{
 		desc:            "ID values may import stdlib only",
 	},
 	{
-		pkg:         modulePrefix + "engine/kernel/codec",
-		allowedCore: map[string]bool{},
+		pkg: modulePrefix + "engine/kernel/codec",
+		allowedCore: map[string]bool{
+			modulePrefix + "engine/kernel/contentid": true,
+		},
 		allowedExternal: map[string]bool{
 			"github.com/jcalabro/atmos/cbor": true,
 		},
-		desc: "codec runtime may import only Atmos CBOR primitives and stdlib, never domain or host code",
+		desc: "codec runtime may import only content identity, Atmos CBOR primitives, and stdlib, never domain or host code",
 	},
 	{
 		pkg:             modulePrefix + "engine/kernel/contentid",

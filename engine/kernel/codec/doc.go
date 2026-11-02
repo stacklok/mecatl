@@ -3,7 +3,9 @@
 // It has no schema, domain-validation hooks, reflection, or storage behavior.
 // Generated callers own required/optional presence, exact field names, canonical
 // text-key ordering (byte length, then lexical order), and integer narrowing.
-// Null, floats, tags, indefinite forms, and nonminimal headers are unsupported.
+// Null, floats, indefinite forms, and nonminimal headers are unsupported. The
+// only tag exception is the fixed-profile DAG-CBOR CID link exposed by CID;
+// callers cannot use tags generally.
 //
 // Each operation first validates global Limits and resolves every schema-known
 // Named reference, even for absent optional fields, before inspecting its input.
@@ -15,10 +17,12 @@
 // A fresh Budget traverses exactly one wire value, root depth zero. Call one Check
 // method per node; pointers are not nodes. A container check reserves all immediate
 // child nodes (including map keys) and declarations before allocation or sorting.
-// Visit children at depth+1. The conservative estimate is nine bytes per node plus
-// string/byte-string contents, on both Check and Decode. Thus even canonical input
-// smaller than MaxBytes may be rejected. This bounds traversal and declarations,
-// not exact heap usage, process-wide concurrency, or excluded in-memory fields.
+// CheckCID is the fixed tag exception: it counts the tag at depth d, reserves and
+// visits its byte-string child at d+1, and charges no collection declaration.
+// The conservative estimate is nine bytes per node plus string/byte-string
+// contents, on both Check and Decode. Thus even canonical input smaller than
+// MaxBytes may be rejected. This bounds traversal and declarations, not exact heap
+// usage, process-wide concurrency, or excluded in-memory fields.
 //
 // Reader combines the same accounting with strict owning scalar reads. Generated
 // decoders check schema/presence/order and destination ranges before narrowing,

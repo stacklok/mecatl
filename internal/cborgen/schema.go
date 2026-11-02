@@ -32,6 +32,7 @@ const (
 	shapeBytesArray
 	shapeMap
 	shapeStruct
+	shapeCID
 )
 
 // shape owns one concrete helper type and its supported underlying vocabulary.
@@ -101,6 +102,14 @@ func (s *schema) visit(t types.Type, active map[types.Type]bool) (*shape, error)
 	n := &shape{typ: t, id: len(s.nodes)}
 	s.nodes = append(s.nodes, n)
 	s.byType[t] = n
+	// Recognize the exact opaque leaf before inspecting its private storage.
+	if named, ok := t.(*types.Named); ok {
+		obj := named.Obj()
+		if obj.Pkg() != nil && obj.Pkg().Path() == "github.com/stacklok/mecatl/engine/kernel/contentid" && obj.Name() == "CID" {
+			n.kind = shapeCID
+			return n, nil
+		}
+	}
 	active[t] = true
 	defer delete(active, t)
 	child := func(t types.Type) (*shape, error) { return s.visit(t, active) }

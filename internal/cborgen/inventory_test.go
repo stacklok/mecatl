@@ -36,7 +36,7 @@ func copiedRepository(t *testing.T) string {
 		copyFile(path)
 	}
 	copyTaskfiles(t, source, root)
-	for _, dir := range []string{"internal/cborgen", "engine/kernel/codec"} {
+	for _, dir := range []string{"internal/cborgen", "engine/kernel/codec", "engine/kernel/contentid"} {
 		err := filepath.WalkDir(filepath.Join(source, dir), func(path string, entry fs.DirEntry, err error) error {
 			if err != nil {
 				return err
@@ -330,10 +330,13 @@ func roundtrip(v Sample, l codec.Limits) (Sample,error) {
 		t.Fatal(err)
 	}
 	writeFixture(t, filepath.Join(owner, "generated_test.go"), `package fixture
-import("testing";"github.com/stacklok/mecatl/engine/kernel/codec")
+import("testing";"github.com/stacklok/mecatl/engine/kernel/codec";"github.com/stacklok/mecatl/engine/kernel/contentid")
 func TestGeneratedTaskOutput(t *testing.T){
  l:=codec.Limits{MaxBytes:10000,MaxStringBytes:100,MaxByteStringBytes:100,MaxArrayElements:100,MaxMapPairs:100,MaxDepth:20,MaxNodes:1000,MaxCollectionElements:1000}
  if _,err:=roundtrip(Sample{Label:"task"},l);err!=nil{t.Fatal(err)}
+ c:=contentid.Sum([]byte("task"));v:=Link{Value:c}
+ b,err:=EncodeLink(v.Clone(),l);if err!=nil||CheckLink(v,l)!=nil{t.Fatal("CID encode/check",err)}
+ w,err:=DecodeLink(b,l);if err!=nil||!v.Equal(w){t.Fatal("CID decode/equal",err)}
  if !Authored{t.Fatal("authored sibling lost")}
 }
 `)

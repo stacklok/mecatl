@@ -319,6 +319,8 @@ func (e *emitter) check(n *shape) {
 	switch n.kind {
 	case shapeBool, shapeInt, shapeUint:
 		e.line("return b.CheckScalar(d)")
+	case shapeCID:
+		e.line("return b.CheckCID(v,d)")
 	case shapeString:
 		e.line("return b.CheckString(string(v),d,cap)")
 	case shapeBytes, shapeBytesArray:
@@ -367,6 +369,9 @@ func (e *emitter) count(fields []field, v string) {
 func (e *emitter) appendValue(n *shape) {
 	e.line("func (h %s) append%d(out []byte,v %s) []byte {", implementationType, n.id, e.valueType(n))
 	switch n.kind {
+	case shapeCID:
+		e.line("// Encode completed CheckCID for this stable value, so AppendCID cannot fail.")
+		e.line("out,_=cborgenCodec.AppendCID(out,v);return out")
 	case shapeBool:
 		e.line("return cborgenCBOR.AppendBool(out,bool(v))")
 	case shapeInt:
@@ -408,6 +413,8 @@ func (e *emitter) decode(n *shape) {
 	t := e.valueType(n)
 	e.line("func (h %s) read%d(r *cborgenCodec.Reader,p %sPolicy,d,cap int) (v %s,err error) {", implementationType, n.id, implementationType, t)
 	switch n.kind {
+	case shapeCID:
+		e.line("return r.CID(d)")
 	case shapeBool, shapeString, shapeInt, shapeUint:
 		method := map[shapeKind]string{shapeBool: "Bool", shapeString: "String", shapeInt: "Int", shapeUint: "Uint"}[n.kind]
 		args := "d"
