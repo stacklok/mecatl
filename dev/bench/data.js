@@ -395617,6 +395617,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1793583796662,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "peppescg@gmail.com",
+            "name": "Giuseppe Scuglia",
+            "username": "peppescg"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "3a67c2e0e9ac52fdc0f15b567b400256df105611",
+          "message": "perf(mecatui): release settled answers' markdown from the render cache (#2641)\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-02T09:54:11+01:00",
+          "tree_id": "a838de481a792df9008c508c74a8b8d12ab5e4ef",
+          "url": "https://github.com/stacklok/mecatl/commit/3a67c2e0e9ac52fdc0f15b567b400256df105611"
+        },
+        "date": 1793610443516,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 16148,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12910.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 795,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -515811,6 +515850,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1793610439923,
+  "lastUpdate": 1793610444262,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
