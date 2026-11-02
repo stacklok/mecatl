@@ -14,7 +14,6 @@ import (
 	"github.com/anthropics/anthropic-sdk-go/v2/option"
 
 	"github.com/stacklok/mecatl/engine/port"
-	"github.com/stacklok/mecatl/engine/session"
 )
 
 type providerMetadataCarrier interface {
@@ -120,7 +119,7 @@ func TestProviderErrorMetadataHTTPPreservesSDKError(t *testing.T) {
 	defer srv.Close()
 
 	provider := New(WithAPIKey("test-key"), WithBaseURL(srv.URL+"/private/..?token=must-not-leak#fragment"), WithRequestOption(option.WithMaxRetries(0)))
-	seq, err := provider.Stream(context.Background(), port.LLMRequest{Model: "test-model", Messages: []session.Message{session.NewUserMessage("hi")}})
+	seq, err := provider.Stream(context.Background(), port.LLMRequest{Model: "test-model", Messages: []port.LLMMessage{userMessage("hi")}})
 	if err != nil {
 		t.Fatalf("Stream: %v", err)
 	}
@@ -165,7 +164,7 @@ func TestProviderHTTPErrorOmitsInvalidRequestIDFromDisplay(t *testing.T) {
 	defer srv.Close()
 
 	provider := New(WithAPIKey("test-key"), WithBaseURL(srv.URL), WithRequestOption(option.WithMaxRetries(0)))
-	seq, err := provider.Stream(context.Background(), port.LLMRequest{Model: "test-model", Messages: []session.Message{session.NewUserMessage("hi")}})
+	seq, err := provider.Stream(context.Background(), port.LLMRequest{Model: "test-model", Messages: []port.LLMMessage{userMessage("hi")}})
 	if err != nil {
 		t.Fatalf("Stream: %v", err)
 	}

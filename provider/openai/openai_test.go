@@ -64,7 +64,7 @@ func TestTranslateTextTurn(t *testing.T) {
 func TestTranslateFunctionCallTurn(t *testing.T) {
 	got := decodeFixture(t, "function_call_turn.sse")
 	want := []port.Chunk{
-		{Kind: port.ChunkToolCall, ToolCall: &session.ToolCall{
+		{Kind: port.ChunkToolCall, ToolCall: &port.LLMToolCall{
 			ID:     "call_abc",
 			Name:   "read_file",
 			Args:   json.RawMessage(`{"path":"main.go"}`),
@@ -232,9 +232,9 @@ func TestTranslateReasoningTurnWithCachedTokens(t *testing.T) {
 		{Kind: port.ChunkText, Text: "Answer."},
 		// The turn's reasoning items, packed into ONE replay blob at the terminal
 		// event: each encrypted_content paired with the item id it is bound to
-		// (see reasoning.go). ReasoningItemID is empty on the chunk — the ids
-		// travel inside the envelope, because a turn may carry several.
-		{Kind: port.ChunkReasoningItem, Text: packReasoningItems([]reasoningItem{{ID: "rs_1", Blob: "ENCRYPTED_BLOB"}})},
+		// (see reasoning.go). IDs travel inside ChunkReplay's envelope because
+		// a turn may carry several reasoning items.
+		{Kind: port.ChunkReplay, Replay: packReplay(responsesReplay{Reasoning: []reasoningItem{{ID: "rs_1", Blob: "ENCRYPTED_BLOB"}}}), ReplayIsOutput: true},
 		{Kind: port.ChunkUsage, Usage: &session.Usage{InputTokens: 100, OutputTokens: 50, CacheReadTokens: 80, ReasoningTokens: 40}},
 		{Kind: port.ChunkDone, Stop: session.StopEndTurn},
 	}
@@ -311,7 +311,7 @@ func TestUsageReasoningSubsetOfOutput(t *testing.T) {
 //  1. The reasoning REPLAY item carries the opaque encrypted_content BLOB, NOT the
 //     human-readable summary. The fixture's summary ("Let me think"/" about this.")
 //     and its encrypted_content ("ENCRYPTED_BLOB") are deliberately DISTINCT, so an
-//     assertion that the ChunkReasoningItem equals the blob (and the ChunkReasoning
+//     assertion that ChunkReplay's envelope contains the blob (and ChunkReasoning
 //     deltas equal the summary) catches any swap of one for the other.
 //  2. The request asks the API to RETURN that blob via
 //     Include=[reasoning.encrypted_content] with Store=false. If a future provider
@@ -322,18 +322,19 @@ func TestReasoningReplayUsesRealBlobNotSummary(t *testing.T) {
 	// The replay chunk carries the packed envelope, so the blob is read back out
 	// of it (unpacking is the same path replay itself takes).
 	got := decodeFixture(t, "reasoning_turn.sse")
-	var summary, packed string
+	var summary string
+	var replay *session.ProviderReplay
 	for _, c := range got {
 		switch c.Kind {
 		case port.ChunkReasoning:
 			summary += c.Text
-		case port.ChunkReasoningItem:
-			packed += c.Text
+		case port.ChunkReplay:
+			replay = c.Replay
 		}
 	}
-	items := unpackReasoningItems(packed)
+	items := replayReasoning(replay)
 	if len(items) != 1 {
-		t.Fatalf("unpacked %d reasoning items, want 1; packed=%q", len(items), packed)
+		t.Fatalf("unpacked %d reasoning items, want 1", len(items))
 	}
 	blob := items[0].Blob
 	if blob != "ENCRYPTED_BLOB" {
@@ -351,7 +352,7 @@ func TestReasoningReplayUsesRealBlobNotSummary(t *testing.T) {
 	req := port.LLMRequest{
 		Model:    "gpt-5.2",
 		System:   prompt.Layered{StablePrefix: "You are a coding agent."},
-		Messages: []session.Message{session.NewUserMessage("hi")},
+		Messages: []port.LLMMessage{userMessage("hi")},
 	}
 	params, err := buildParams(req)
 	if err != nil {
@@ -394,11 +395,11 @@ func TestPhaseCapturedAndReplayed(t *testing.T) {
 	// assistant message item with "phase":"final_answer".
 	req := port.LLMRequest{
 		Model: "gpt-5.5",
-		Messages: []session.Message{
-			session.NewUserMessage("hi"),
-			func() session.Message {
-				m := session.NewAssistantMessage("Done.", "", nil)
-				m.ProviderPhase = "final_answer"
+		Messages: []port.LLMMessage{
+			userMessage("hi"),
+			func() port.LLMMessage {
+				m := assistantMessage("Done.", "", nil)
+				setReplayPhase(&m, "final_answer")
 				return m
 			}(),
 		},
@@ -419,9 +420,9 @@ func TestPhaseCapturedAndReplayed(t *testing.T) {
 	// key (EasyInputMessagePhase is json:"phase,omitzero", so empty is wire-omitted).
 	reqNoPhase := port.LLMRequest{
 		Model: "gpt-5.5",
-		Messages: []session.Message{
-			session.NewUserMessage("hi"),
-			session.NewAssistantMessage("Done.", "", nil),
+		Messages: []port.LLMMessage{
+			userMessage("hi"),
+			assistantMessage("Done.", "", nil),
 		},
 	}
 	paramsNoPhase, err := buildParams(reqNoPhase)
@@ -448,11 +449,11 @@ func TestPhaseUnknownValueReplaysVerbatim(t *testing.T) {
 	const novel = "some_future_phase_v2"
 	req := port.LLMRequest{
 		Model: "gpt-5.5",
-		Messages: []session.Message{
-			session.NewUserMessage("hi"),
-			func() session.Message {
-				m := session.NewAssistantMessage("Done.", "", nil)
-				m.ProviderPhase = novel
+		Messages: []port.LLMMessage{
+			userMessage("hi"),
+			func() port.LLMMessage {
+				m := assistantMessage("Done.", "", nil)
+				setReplayPhase(&m, novel)
 				return m
 			}(),
 		},
@@ -478,13 +479,13 @@ func TestPhaseUnknownValueReplaysVerbatim(t *testing.T) {
 // guards the otherwise-untested branch: a Phase + Text=="" + tool-call message must
 // emit a function_call item with NO leaked "phase" key.
 func TestPhaseDroppedOnTextlessAssistantTurn(t *testing.T) {
-	m := session.NewAssistantMessage("", "", []session.ToolCall{
-		session.NewToolCall("call_1", "read_file", json.RawMessage(`{"path":"main.go"}`)),
+	m := assistantMessage("", "", []port.LLMToolCall{
+		toolCall("call_1", "read_file", json.RawMessage(`{"path":"main.go"}`)),
 	})
-	m.ProviderPhase = "final_answer" // set, but there is no message item to carry it
+	setReplayPhase(&m, "final_answer") // set, but there is no message item to carry it
 	req := port.LLMRequest{
 		Model:    "gpt-5.5",
-		Messages: []session.Message{session.NewUserMessage("open main.go"), m},
+		Messages: []port.LLMMessage{userMessage("open main.go"), m},
 	}
 	params, err := buildParams(req)
 	if err != nil {
@@ -628,7 +629,7 @@ func TestInvalidEncryptedContentFallbackUsesUnwrapDiagnostic(t *testing.T) {
 	defer srv.Close()
 
 	err := collectStreamError(t, New(WithAPIKey("test-key"), WithBaseURL(srv.URL+"/v1"), WithRequestOption(option.WithMaxRetries(0))),
-		port.LLMRequest{Model: "gpt-test", Messages: []session.Message{session.NewUserMessage("hi")}})
+		port.LLMRequest{Model: "gpt-test", Messages: []port.LLMMessage{userMessage("hi")}})
 	if got, want := err.Error(), "provider request failed (400 Bad Request) (target: "+srv.URL+"/v1/responses)"; got != want {
 		t.Fatalf("safe display error = %q, want %q", got, want)
 	}
@@ -648,7 +649,7 @@ func TestHTTPErrorMetadataPreservesSDKError(t *testing.T) {
 	defer srv.Close()
 
 	err := collectStreamError(t, New(WithAPIKey("test-key"), WithBaseURL(srv.URL+"/private/../v1?token=must-not-leak#fragment"), WithRequestOption(option.WithMaxRetries(0))),
-		port.LLMRequest{Model: "gpt-test", Messages: []session.Message{session.NewUserMessage("prompt secret must-not-leak")}})
+		port.LLMRequest{Model: "gpt-test", Messages: []port.LLMMessage{userMessage("prompt secret must-not-leak")}})
 	if err == nil {
 		t.Fatal("expected HTTP error")
 	}
@@ -684,7 +685,7 @@ func TestHTTPErrorDisplayOmitsInvalidRequestID(t *testing.T) {
 	defer srv.Close()
 
 	err := collectStreamError(t, New(WithAPIKey("test-key"), WithBaseURL(srv.URL+"/v1"), WithRequestOption(option.WithMaxRetries(0))),
-		port.LLMRequest{Model: "gpt-test", Messages: []session.Message{session.NewUserMessage("hi")}})
+		port.LLMRequest{Model: "gpt-test", Messages: []port.LLMMessage{userMessage("hi")}})
 	if err == nil {
 		t.Fatal("expected SDK HTTP error")
 	}
@@ -1077,8 +1078,10 @@ func assertChunks(t *testing.T, got, want []port.Chunk) {
 		} else if w.Usage != nil && *g.Usage != *w.Usage {
 			t.Errorf("chunk %d usage = %+v, want %+v", i, *g.Usage, *w.Usage)
 		}
-		if g.ReasoningItemID != w.ReasoningItemID {
-			t.Errorf("chunk %d reasoning_item_id = %q, want %q", i, g.ReasoningItemID, w.ReasoningItemID)
+		if (g.Replay == nil) != (w.Replay == nil) || g.ReplayIsOutput != w.ReplayIsOutput {
+			t.Errorf("chunk %d replay presence/output mismatch", i)
+		} else if w.Replay != nil && (g.Replay.Format != w.Replay.Format || g.Replay.Version != w.Replay.Version || !bytes.Equal(g.Replay.Data, w.Replay.Data)) {
+			t.Errorf("chunk %d replay envelope mismatch", i)
 		}
 	}
 }
@@ -1091,15 +1094,15 @@ func TestBuildParams(t *testing.T) {
 		Tools: []tool.ToolSpec{
 			{Name: "read_file", Description: "Read a file.", Schema: schema},
 		},
-		Messages: []session.Message{
-			session.NewUserMessage("open main.go"),
-			func() session.Message {
-				return session.NewAssistantMessage("", packReasoningItems([]reasoningItem{{ID: "rs_1", Blob: "REASONING_BLOB"}}), []session.ToolCall{
-					session.NewToolCall("call_1", "read_file", json.RawMessage(`{"path":"main.go"}`)),
+		Messages: []port.LLMMessage{
+			userMessage("open main.go"),
+			func() port.LLMMessage {
+				return assistantMessage("", packReasoningItems([]reasoningItem{{ID: "rs_1", Blob: "REASONING_BLOB"}}), []port.LLMToolCall{
+					toolCall("call_1", "read_file", json.RawMessage(`{"path":"main.go"}`)),
 				})
 			}(),
-			session.NewToolMessage(session.NewToolResult("call_1", "package main")),
-			session.NewAssistantMessage("done", "", nil),
+			toolMessage(toolResult("call_1", "package main")),
+			assistantMessage("done", "", nil),
 		},
 	}
 	params, err := buildParams(req)
@@ -1150,9 +1153,7 @@ func TestBuildParams(t *testing.T) {
 			return m["type"] == "reasoning" && m["encrypted_content"] == "REASONING_BLOB"
 		},
 		func(m map[string]any) bool {
-			// NewToolCall leaves ItemID empty → no "id" key must appear in wire JSON.
-			_, hasID := m["id"]
-			return m["type"] == "function_call" && m["call_id"] == "call_1" && !hasID
+			return m["type"] == "function_call" && m["call_id"] == "call_1" && m["id"] == "fc_mecatl_0964629c8b97b99dacc4b521be8d51fdf6ab8555"
 		},
 		func(m map[string]any) bool { return m["type"] == "function_call_output" && m["call_id"] == "call_1" },
 		func(m map[string]any) bool { return m["role"] == "assistant" },
@@ -1164,25 +1165,20 @@ func TestBuildParams(t *testing.T) {
 	}
 }
 
-// TestItemIDRoundTrip verifies that a ToolCall carrying a non-empty ItemID has
-// its item id forwarded as the "id" field in the wire JSON, and that a ToolCall
-// with an empty ItemID omits the "id" key entirely. This pins the fix for the
-// "Duplicate item found with id fc_N" error from Azure GPT-5.x with store:false:
-// without the ItemID round-trip, each replayed function_call item has no "id",
-// causing the provider to auto-assign sequential fc_N values that can collide
-// with items from the current response.
+// TestItemIDRoundTrip preserves captured item IDs and deterministically supplies
+// valid target item IDs for replay-free history. Pairing call_id stays untouched.
 func TestItemIDRoundTrip(t *testing.T) {
 	// Part 1: non-empty ItemID is forwarded as "id" in the wire JSON.
 	req := port.LLMRequest{
 		Model: "gpt-5.5",
-		Messages: []session.Message{
-			session.NewUserMessage("do stuff"),
-			session.NewAssistantMessage("", "", []session.ToolCall{
+		Messages: []port.LLMMessage{
+			userMessage("do stuff"),
+			assistantMessage("", "", []port.LLMToolCall{
 				{ID: "call_abc", Name: "read_file",
 					Args: json.RawMessage(`{"path":"a.go"}`), ItemID: "fc_3"},
 			}),
-			session.NewToolMessage(session.NewToolResult("call_abc", "content of a")),
-			session.NewAssistantMessage("done", "", nil),
+			toolMessage(toolResult("call_abc", "content of a")),
+			assistantMessage("done", "", nil),
 		},
 	}
 	params, err := buildParams(req)
@@ -1214,16 +1210,16 @@ func TestItemIDRoundTrip(t *testing.T) {
 		t.Errorf("function_call item[call_id] = %v, want %q", got, "call_abc")
 	}
 
-	// Part 2: empty ItemID (via NewToolCall) omits the "id" key entirely.
+	// Part 2: replay-free history gets a valid deterministic target item ID.
 	req2 := port.LLMRequest{
 		Model: "gpt-5.5",
-		Messages: []session.Message{
-			session.NewUserMessage("do stuff"),
-			session.NewAssistantMessage("", "", []session.ToolCall{
-				session.NewToolCall("call_xyz", "write_file", json.RawMessage(`{"path":"b.go"}`)),
+		Messages: []port.LLMMessage{
+			userMessage("do stuff"),
+			assistantMessage("", "", []port.LLMToolCall{
+				toolCall("call_xyz", "write_file", json.RawMessage(`{"path":"b.go"}`)),
 			}),
-			session.NewToolMessage(session.NewToolResult("call_xyz", "ok")),
-			session.NewAssistantMessage("done", "", nil),
+			toolMessage(toolResult("call_xyz", "ok")),
+			assistantMessage("done", "", nil),
 		},
 	}
 	params2, err := buildParams(req2)
@@ -1240,8 +1236,8 @@ func TestItemIDRoundTrip(t *testing.T) {
 	}
 	for _, it := range items2 {
 		if it["type"] == "function_call" {
-			if _, hasID := it["id"]; hasID {
-				t.Errorf("empty ItemID must not produce an id key; got item: %v", it)
+			if got := it["id"]; got != "fc_mecatl_81193b5d0772b436c79b1c778a25b2e96304dca7" {
+				t.Errorf("empty ItemID must receive a deterministic target item ID; got item: %v", it)
 			}
 		}
 	}
@@ -1260,21 +1256,21 @@ func TestItemIDRoundTrip(t *testing.T) {
 func TestItemIDMultiTurnRoundTrip(t *testing.T) {
 	req := port.LLMRequest{
 		Model: "gpt-5.5",
-		Messages: []session.Message{
-			session.NewUserMessage("do two things"),
+		Messages: []port.LLMMessage{
+			userMessage("do two things"),
 			// Turn 1: ItemID "fc_1" (e.g. first response, counter reset to 1)
-			session.NewAssistantMessage("", "", []session.ToolCall{
+			assistantMessage("", "", []port.LLMToolCall{
 				{ID: "call_t1", Name: "read_file",
 					Args: json.RawMessage(`{"path":"a.go"}`), ItemID: "fc_1"},
 			}),
-			session.NewToolMessage(session.NewToolResult("call_t1", "content of a")),
+			toolMessage(toolResult("call_t1", "content of a")),
 			// Turn 2: ALSO ItemID "fc_1" — the Azure counter resets per response
-			session.NewAssistantMessage("", "", []session.ToolCall{
+			assistantMessage("", "", []port.LLMToolCall{
 				{ID: "call_t2", Name: "read_file",
 					Args: json.RawMessage(`{"path":"b.go"}`), ItemID: "fc_1"},
 			}),
-			session.NewToolMessage(session.NewToolResult("call_t2", "content of b")),
-			session.NewAssistantMessage("done", "", nil),
+			toolMessage(toolResult("call_t2", "content of b")),
+			assistantMessage("done", "", nil),
 		},
 	}
 	params, err := buildParams(req)
@@ -1350,33 +1346,16 @@ func TestBuildToolsStrictOff(t *testing.T) {
 	}
 }
 
-// TestRequestNoOrphanedFunctionCallAfterInterrupt drives a session to a cancelled
-// turn (assistant function_call with no output), recovers it via Interrupt (which
-// closes out the orphan), and asserts the built request has a matching
-// function_call_output for every function_call — no orphan that OpenAI would
-// reject.
-func TestRequestNoOrphanedFunctionCallAfterInterrupt(t *testing.T) {
-	sess := &session.Session{ID: "s1", Mode: session.ModeDefault, State: session.StateIdle, Conversation: &session.Conversation{}}
-	if err := sess.RecordUserPrompt("read the file", nil); err != nil {
-		t.Fatalf("RecordUserPrompt: %v", err)
-	}
-	if err := sess.BeginTurn(); err != nil {
-		t.Fatalf("BeginTurn: %v", err)
-	}
-	calls := []session.ToolCall{session.NewToolCall("call_1", "read_file", json.RawMessage(`{"path":"x"}`))}
-	if err := sess.RecordAssistant(session.NewAssistantMessage("", "", calls)); err != nil {
-		t.Fatalf("RecordAssistant: %v", err)
-	}
-	if err := sess.Cancel(); err != nil {
-		t.Fatalf("Cancel: %v", err)
-	}
-	if err := sess.Interrupt(); err != nil {
-		t.Fatalf("Interrupt: %v", err)
-	}
-
+// TestRequestInterruptedToolPair verifies the adapter's interrupted-result DTO
+// pairing. Session interruption and canonical acceptance are engine concerns.
+func TestRequestInterruptedToolPair(t *testing.T) {
 	params, err := buildParams(port.LLMRequest{
-		Model:    "gpt-5.2",
-		Messages: sess.Conversation.Messages,
+		Model: "gpt-5.2",
+		Messages: []port.LLMMessage{
+			userMessage("read the file"),
+			assistantMessage("", "", []port.LLMToolCall{toolCall("call_provider", "read_file", json.RawMessage(`{"path":"x"}`))}),
+			toolMessage(toolResult("call_provider", "interrupted")),
+		},
 	})
 	if err != nil {
 		t.Fatalf("buildParams: %v", err)
@@ -1454,7 +1433,7 @@ func TestStreamContextCancel(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	seq, err := p.Stream(ctx, port.LLMRequest{Model: "m", Messages: []session.Message{session.NewUserMessage("hi")}})
+	seq, err := p.Stream(ctx, port.LLMRequest{Model: "m", Messages: []port.LLMMessage{userMessage("hi")}})
 	if err != nil {
 		t.Fatalf("Stream returned outer error: %v", err)
 	}
@@ -1514,19 +1493,15 @@ func TestStreamRecoversInvalidEncryptedContent(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	assistant := session.NewAssistantMessage("", packReasoningItems([]reasoningItem{{ID: "rs_bad", Blob: "opaque-blob"}}), []session.ToolCall{{
+	assistant := assistantMessage("", packReasoningItems([]reasoningItem{{ID: "rs_bad", Blob: "opaque-blob"}}), []port.LLMToolCall{{
 		ID: "call_1", Name: "Read", Args: json.RawMessage(`{"path":"README.md"}`), ItemID: "fc_keep",
 	}})
-	assistant.ReasoningItemID = "rs_bad"
 	assistant.Text = "visible assistant text"
-	assistant.ProviderPhase = "commentary"
-	req := port.LLMRequest{Model: "gpt-5.6-terra", Messages: []session.Message{
-		session.NewUserMessage("inspect"),
+	setReplayPhase(&assistant, "commentary")
+	req := port.LLMRequest{Model: "gpt-5.6-terra", Messages: []port.LLMMessage{
+		userMessage("inspect"),
 		assistant,
-		{Role: session.RoleTool, ToolResult: func() *session.ToolResult {
-			result := session.NewToolResult("call_1", "ok")
-			return &result
-		}()},
+		toolMessage(toolResult("call_1", "ok")),
 	}}
 	p := New(WithAPIKey("test-key"), WithBaseURL(srv.URL+"/v1"))
 	ctx := port.WithSessionID(context.Background(), "fallback-session")
@@ -1590,7 +1565,7 @@ func TestStreamRecoversInvalidEncryptedContent(t *testing.T) {
 	if keptID != "fc_keep" {
 		t.Fatalf("fallback function-call item id = %q, want fc_keep", keptID)
 	}
-	if req.Messages[1].Reasoning != packReasoningItems([]reasoningItem{{ID: "rs_bad", Blob: "opaque-blob"}}) || req.Messages[1].ReasoningItemID != "rs_bad" {
+	if !bytes.Equal(req.Messages[1].Replay.Data, assistant.Replay.Data) || len(replayReasoning(req.Messages[1].Replay)) != 1 {
 		t.Fatal("recovery mutated the caller's request")
 	}
 }
@@ -1621,9 +1596,8 @@ func TestStreamEncryptedReasoningRecoveryBoundary(t *testing.T) {
 			}))
 			defer srv.Close()
 
-			assistant := session.NewAssistantMessage("visible", tt.reasoning, nil)
-			assistant.ReasoningItemID = tt.itemID
-			req := port.LLMRequest{Model: "gpt-test", Messages: []session.Message{assistant}}
+			assistant := assistantMessage("visible", tt.reasoning, nil)
+			req := port.LLMRequest{Model: "gpt-test", Messages: []port.LLMMessage{assistant}}
 			err := collectStreamError(t, New(WithAPIKey("test-key"), WithBaseURL(srv.URL+"/v1")), req)
 			if err == nil {
 				t.Fatal("stream error = nil, want rejected request")
@@ -1657,10 +1631,9 @@ func TestStreamDoesNotRepairPreChunkSSEError(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	assistant := session.NewAssistantMessage("", packReasoningItems([]reasoningItem{{ID: "rs_1", Blob: "blob"}}), nil)
-	assistant.ReasoningItemID = "rs_1"
+	assistant := assistantMessage("", packReasoningItems([]reasoningItem{{ID: "rs_1", Blob: "blob"}}), nil)
 	err := collectStreamError(t, New(WithAPIKey("test-key"), WithBaseURL(srv.URL+"/v1"), WithRequestOption(option.WithMaxRetries(0))),
-		port.LLMRequest{Model: "gpt-test", Messages: []session.Message{assistant}})
+		port.LLMRequest{Model: "gpt-test", Messages: []port.LLMMessage{assistant}})
 	if err == nil {
 		t.Fatal("stream error = nil, want pre-chunk SSE rejection")
 	}
@@ -1682,10 +1655,9 @@ func TestStreamDoesNotRepairAfterNeutralChunk(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	assistant := session.NewAssistantMessage("", packReasoningItems([]reasoningItem{{ID: "rs_1", Blob: "blob"}}), nil)
-	assistant.ReasoningItemID = "rs_1"
+	assistant := assistantMessage("", packReasoningItems([]reasoningItem{{ID: "rs_1", Blob: "blob"}}), nil)
 	err := collectStreamError(t, New(WithAPIKey("test-key"), WithBaseURL(srv.URL+"/v1"), WithRequestOption(option.WithMaxRetries(0))),
-		port.LLMRequest{Model: "gpt-test", Messages: []session.Message{assistant}})
+		port.LLMRequest{Model: "gpt-test", Messages: []port.LLMMessage{assistant}})
 	if err == nil {
 		t.Fatal("stream error = nil, want invalid encrypted-content event")
 	}
@@ -1709,10 +1681,9 @@ func TestStreamFailedEncryptedReasoningFallbackIsNonRetryableAndCausal(t *testin
 	}))
 	defer srv.Close()
 
-	assistant := session.NewAssistantMessage("", packReasoningItems([]reasoningItem{{ID: "rs_1", Blob: "blob"}}), nil)
-	assistant.ReasoningItemID = "rs_1"
+	assistant := assistantMessage("", packReasoningItems([]reasoningItem{{ID: "rs_1", Blob: "blob"}}), nil)
 	err := collectStreamError(t, New(WithAPIKey("test-key"), WithBaseURL(srv.URL+"/v1"), WithRequestOption(option.WithMaxRetries(0))),
-		port.LLMRequest{Model: "gpt-test", Messages: []session.Message{assistant}})
+		port.LLMRequest{Model: "gpt-test", Messages: []port.LLMMessage{assistant}})
 	if calls != 2 {
 		t.Fatalf("request count = %d, want initial request plus exactly one cleaned fallback", calls)
 	}
@@ -1769,7 +1740,7 @@ func TestHTTPClientIsFinalAfterGenericRequestOptions(t *testing.T) {
 		WithRequestOption(option.WithHTTPClient(bypass)),
 		WithMaxRetries(0),
 	)
-	if err := collectStreamError(t, provider, port.LLMRequest{Model: "gpt-test", Messages: []session.Message{session.NewUserMessage("hello")}}); err != nil {
+	if err := collectStreamError(t, provider, port.LLMRequest{Model: "gpt-test", Messages: []port.LLMMessage{userMessage("hello")}}); err != nil {
 		t.Fatalf("stream: %v", err)
 	}
 	if guardedCalls != 1 || bypassCalls != 0 {
@@ -1835,15 +1806,13 @@ func TestResponseStreamErrorSafeCategory(t *testing.T) {
 
 // TestCurrentReasoningEnvelopeStampedExactly asserts that a current envelope
 // produces a reasoning input item whose opaque id and encrypted content are
-// forwarded verbatim. Message.ReasoningItemID is deliberately stale: replay must
-// derive identity only from the current envelope.
+// forwarded verbatim. Replay derives identity only from the opaque envelope.
 func TestCurrentReasoningEnvelopeStampedExactly(t *testing.T) {
-	m := session.NewAssistantMessage("", packReasoningItems([]reasoningItem{{ID: "rs_x", Blob: "REASONING_BLOB"}}), nil)
-	m.ReasoningItemID = "rs_stale"
+	m := assistantMessage("", packReasoningItems([]reasoningItem{{ID: "rs_x", Blob: "REASONING_BLOB"}}), nil)
 	req := port.LLMRequest{
 		Model: "gpt-5.2",
-		Messages: []session.Message{
-			session.NewUserMessage("hi"),
+		Messages: []port.LLMMessage{
+			userMessage("hi"),
 			m,
 		},
 	}
@@ -1877,16 +1846,14 @@ func TestCurrentReasoningEnvelopeStampedExactly(t *testing.T) {
 	}
 }
 
-// TestBareHistoricalReasoningIsNotReplayed asserts the removed compatibility
-// path cannot be revived by the vestigial Message.ReasoningItemID field. Bare
-// ciphertext is unsupported and must never be reinterpreted as a current item.
+// TestBareHistoricalReasoningIsNotReplayed asserts that bare ciphertext is
+// unsupported and must never be reinterpreted as a current replay item.
 func TestBareHistoricalReasoningIsNotReplayed(t *testing.T) {
-	m := session.NewAssistantMessage("", "REASONING_BLOB", nil)
-	m.ReasoningItemID = "rs_legacy"
+	m := assistantMessage("", "REASONING_BLOB", nil)
 	req := port.LLMRequest{
 		Model: "gpt-5.2",
-		Messages: []session.Message{
-			session.NewUserMessage("hi"),
+		Messages: []port.LLMMessage{
+			userMessage("hi"),
 			m,
 		},
 	}
@@ -1982,7 +1949,7 @@ func TestStreamStampsProviderBodyAndHeader(t *testing.T) {
 		t.Helper()
 		seq, err := p.Stream(context.Background(), port.LLMRequest{
 			Model:    "anthropic/claude-sonnet-4-6",
-			Messages: []session.Message{session.NewUserMessage("hi")},
+			Messages: []port.LLMMessage{userMessage("hi")},
 		})
 		if err != nil {
 			t.Fatalf("Stream outer error: %v", err)

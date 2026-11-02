@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 
+	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/prompt"
 	"github.com/stacklok/mecatl/engine/session"
 )
@@ -28,7 +29,7 @@ type prefixMemo struct {
 // (prefix half buckets by system/tools prefix; anchor half makes the key
 // PER-CONVERSATION so concurrent Subagent children sharing the same prefix
 // don't collide on one routing lane).
-func (p *Provider) promptCacheKey(stablePrefix string, msgs []session.Message) string {
+func (p *Provider) promptCacheKey(stablePrefix string, msgs []port.LLMMessage) string {
 	prefixHash := p.prefixHash(stablePrefix)
 	anchorSum := sha256.Sum256([]byte(anchorText(msgs)))
 	return "mecatl-" + prefixHash[:12] + "-" + hex.EncodeToString(anchorSum[:])[:8]
@@ -56,7 +57,7 @@ func (p *Provider) prefixHash(prefix string) string {
 // Duplicated from provider/openai/cachekey.go (not exported from
 // engine/prompt) — separate Go modules, same discipline as
 // isContextOverflowMessage; keep the two in lockstep by hand.
-func anchorText(msgs []session.Message) string {
+func anchorText(msgs []port.LLMMessage) string {
 	for _, m := range msgs {
 		if m.Role == session.RoleUser && prompt.IsInjectedTurn0Fragment(m.Text) {
 			continue

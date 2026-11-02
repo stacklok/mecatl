@@ -8,7 +8,6 @@ import (
 
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/prompt"
-	"github.com/stacklok/mecatl/engine/session"
 )
 
 // keyFrom marshals a request through the live buildParams path and extracts the
@@ -102,8 +101,8 @@ func TestUnifiedPromptCache_Scenario3_KeyStableAcrossTurnsAndCompaction(t *testi
 	// the key must not move. This also exercises the memo hit.
 	grown := cacheReq("gpt-5.2")
 	grown.Messages = append(grown.Messages,
-		session.NewUserMessage("and now the next step"),
-		session.NewAssistantMessage("on it", "", nil),
+		userMessage("and now the next step"),
+		assistantMessage("on it", "", nil),
 	)
 	if got := keyFrom(t, p, grown); got != first {
 		t.Errorf("key moved across turns: %q then %q", first, got)
@@ -112,10 +111,10 @@ func TestUnifiedPromptCache_Scenario3_KeyStableAcrossTurnsAndCompaction(t *testi
 	// Compaction rewrites the tail but preserves the first genuine user turn, so
 	// the anchor — and therefore the key — survives.
 	compacted := cacheReq("gpt-5.2")
-	compacted.Messages = []session.Message{
-		session.NewUserMessage("Project instructions (AGENTS.md):\nfollow the layering rules"),
-		session.NewUserMessage("Please summarise the architecture."),
-		session.NewAssistantMessage("a summary of everything so far", "", nil),
+	compacted.Messages = []port.LLMMessage{
+		userMessage("Project instructions (AGENTS.md):\nfollow the layering rules"),
+		userMessage("Please summarise the architecture."),
+		assistantMessage("a summary of everything so far", "", nil),
 	}
 	if got := keyFrom(t, p, compacted); got != first {
 		t.Errorf("key moved across compaction: %q then %q", first, got)
@@ -123,7 +122,7 @@ func TestUnifiedPromptCache_Scenario3_KeyStableAcrossTurnsAndCompaction(t *testi
 
 	// A different conversation on the same prefix must still separate.
 	child := cacheReq("gpt-5.2")
-	child.Messages = []session.Message{session.NewUserMessage("a totally different child task")}
+	child.Messages = []port.LLMMessage{userMessage("a totally different child task")}
 	if got := keyFrom(t, p, child); got == first {
 		t.Error("a different conversation shares a key — per-conversation separation lost")
 	}

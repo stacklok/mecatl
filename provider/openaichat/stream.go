@@ -35,7 +35,7 @@ const maxToolArgsBytes = 8 << 20
 // arrives on (or alongside) the finish chunk; it is captured whenever seen so a
 // finish chunk that also carries usage emits it before the terminal ChunkDone.
 type streamState struct {
-	toolCalls    map[int64]*session.ToolCall // partial calls, keyed by delta index
+	toolCalls    map[int64]*port.LLMToolCall // partial calls, keyed by delta index
 	order        []int64                     // index arrival order, for deterministic flush
 	argBytes     int                         // running total of accumulated tool-arg bytes (bounded by maxToolArgsBytes)
 	usage        session.Usage
@@ -143,16 +143,16 @@ func finalize(st *streamState) []port.Chunk {
 // multi-fragment streaming.)
 func (st *streamState) mergeToolCall(tc oai.ChatCompletionChunkChoiceDeltaToolCall) error {
 	if st.toolCalls == nil {
-		st.toolCalls = make(map[int64]*session.ToolCall)
+		st.toolCalls = make(map[int64]*port.LLMToolCall)
 	}
 	call, ok := st.toolCalls[tc.Index]
 	if !ok {
-		call = &session.ToolCall{}
+		call = &port.LLMToolCall{}
 		st.toolCalls[tc.Index] = call
 		st.order = append(st.order, tc.Index)
 	}
 	if tc.ID != "" {
-		call.ID = session.ToolCallID(tc.ID)
+		call.ID = session.ProviderCallID(tc.ID)
 	}
 	if tc.Function.Name != "" {
 		call.Name = tc.Function.Name

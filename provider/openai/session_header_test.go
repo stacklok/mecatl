@@ -20,7 +20,7 @@ const completedResponseSSE = "event: response.completed\n" +
 
 func drainSessionHeaderStream(ctx context.Context, t *testing.T, p *Provider, model string) {
 	t.Helper()
-	seq, err := p.Stream(ctx, port.LLMRequest{Model: model, Messages: []session.Message{session.NewUserMessage("hi")}})
+	seq, err := p.Stream(ctx, port.LLMRequest{Model: model, Messages: []port.LLMMessage{userMessage("hi")}})
 	if err != nil {
 		t.Fatalf("Stream: %v", err)
 	}
@@ -69,9 +69,8 @@ func TestSessionHeaderLegalValueParity(t *testing.T) {
 }
 
 func sessionHeaderFallbackRequest(model string) port.LLMRequest {
-	assistant := session.NewAssistantMessage("", packReasoningItems([]reasoningItem{{ID: "rs_bad", Blob: "opaque-blob"}}), nil)
-	assistant.ReasoningItemID = "rs_bad"
-	return port.LLMRequest{Model: model, Messages: []session.Message{session.NewUserMessage("hi"), assistant}}
+	assistant := assistantMessage("", packReasoningItems([]reasoningItem{{ID: "rs_bad", Blob: "opaque-blob"}}), nil)
+	return port.LLMRequest{Model: model, Messages: []port.LLMMessage{userMessage("hi"), assistant}}
 }
 
 func drainSessionHeaderFallbackStream(ctx context.Context, t *testing.T, p *Provider, model string) {

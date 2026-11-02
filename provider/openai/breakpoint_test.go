@@ -13,7 +13,7 @@ import (
 // has no later call to read what it would write).
 func multiTurnReq(model string) port.LLMRequest {
 	req := cacheReq(model)
-	req.Messages = append(req.Messages, session.NewUserMessage("now fix the bug"))
+	req.Messages = append(req.Messages, userMessage("now fix the bug"))
 	return req
 }
 
@@ -82,7 +82,7 @@ func TestNoBreakpointWithoutAPreviousTurn(t *testing.T) {
 	req := cacheReq("anthropic/claude-opus-4.8")
 	// cacheReq's fixture ends on an assistant message; strip it to model a
 	// genuine first call (fragments + prompt, nothing answered yet).
-	var firstCall []session.Message
+	var firstCall []port.LLMMessage
 	for _, m := range req.Messages {
 		if m.Role == session.RoleAssistant {
 			continue
@@ -169,7 +169,7 @@ func TestNoPromptCacheSuppressesBreakpoint(t *testing.T) {
 func TestBreakpointMarksMultimodalTextBlock(t *testing.T) {
 	req := multiTurnReq("anthropic/claude-opus-4.8")
 	last := len(req.Messages) - 1
-	req.Messages[last] = session.Message{
+	req.Messages[last] = port.LLMMessage{
 		Role:  session.RoleUser,
 		Text:  "look at this",
 		Parts: []session.Content{{Kind: session.MediaImage, URL: "https://example.test/x.png"}},
@@ -180,7 +180,7 @@ func TestBreakpointMarksMultimodalTextBlock(t *testing.T) {
 	}
 
 	// Image-only: no text block exists, so nothing is marked and no error.
-	req.Messages[last] = session.Message{
+	req.Messages[last] = port.LLMMessage{
 		Role:  session.RoleUser,
 		Parts: []session.Content{{Kind: session.MediaImage, URL: "https://example.test/x.png"}},
 	}

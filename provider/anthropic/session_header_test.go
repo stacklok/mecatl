@@ -24,7 +24,7 @@ const completedMessageSSE = "event: message_start\n" +
 
 func drainSessionHeaderStream(ctx context.Context, t *testing.T, p *Provider, model string) {
 	t.Helper()
-	seq, err := p.Stream(ctx, port.LLMRequest{Model: model, Messages: []session.Message{session.NewUserMessage("hi")}})
+	seq, err := p.Stream(ctx, port.LLMRequest{Model: model, Messages: []port.LLMMessage{userMessage("hi")}})
 	if err != nil {
 		t.Fatalf("Stream: %v", err)
 	}
