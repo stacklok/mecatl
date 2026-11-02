@@ -832,45 +832,52 @@ func TestIdentityBrokerReopenNeverRepresentsAConvertedToken(t *testing.T) {
 	}
 }
 
-// TestIdentityBrokerRefusalAfterAResponseIsNotTagged proves a token reason
-// from the broker on an open made after the stream answered is never
+// TestIdentityBrokerRefusalAfterAResponseIsNotTagged proves a reason the
+// server tags bearer_rejected (token_used, session_closed) on an open made
+// after the stream answered is never
 // reported with the bearer_rejected tag: the client could not replay it.
 func TestIdentityBrokerRefusalAfterAResponseIsNotTagged(t *testing.T) {
-	broker := newRecordingBroker()
-	svc := newIdentityBrokerService(t, broker, mockllm.New(mockllm.TextTurn("must not run")))
-	auth := server.NewAuthenticator(server.SecurityConfig{Validator: brokerTokenValidator()})
-	sess, err := svc.CreateSession(aliceContext(t), session.ModeDefault, session.Limits{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	lost := wantBrokerSession(t, broker, sess)
-	if err := broker.inner.CloseSession(t.Context(), identitybroker.CloseSessionRequest{SessionID: lost.ID, Reason: identitybroker.ReasonSessionClosed}); err != nil {
-		t.Fatal(err)
-	}
-	broker.set(func(b *recordingBroker) {
-		b.openErr = identitybroker.ReasonError(identitybroker.ReasonTokenUsed, "test broker refuses the token")
-	})
-	ctx := metadata.NewIncomingContext(t.Context(), metadata.Pairs("authorization", "Bearer "+userBearer))
-	var runErr error
-	err = auth.StreamInterceptor()(nil, fakeServerStream{ctx: ctx}, &grpc.StreamServerInfo{FullMethod: "/mecatl.v1.HarnessService/Converse"},
-		func(_ any, ss grpc.ServerStream) error {
-			if err := ss.SendMsg(&mecatlv1.ConverseResponse{}); err != nil {
-				return err
+	// session_closed tags an open that converted the token; a late open
+	// presented none, so it must not carry the tag either.
+	for _, reason := range []identitybroker.Reason{identitybroker.ReasonTokenUsed, identitybroker.ReasonSessionClosed} {
+		t.Run(string(reason), func(t *testing.T) {
+			broker := newRecordingBroker()
+			svc := newIdentityBrokerService(t, broker, mockllm.New(mockllm.TextTurn("must not run")))
+			auth := server.NewAuthenticator(server.SecurityConfig{Validator: brokerTokenValidator()})
+			sess, err := svc.CreateSession(aliceContext(t), session.ModeDefault, session.Limits{})
+			if err != nil {
+				t.Fatal(err)
 			}
-			runErr = runToEnd(ss.Context(), t, svc, sess.ID)
-			return nil
+			lost := wantBrokerSession(t, broker, sess)
+			if err := broker.inner.CloseSession(t.Context(), identitybroker.CloseSessionRequest{SessionID: lost.ID, Reason: identitybroker.ReasonSessionClosed}); err != nil {
+				t.Fatal(err)
+			}
+			broker.set(func(b *recordingBroker) {
+				b.openErr = identitybroker.ReasonError(reason, "test broker refuses the open")
+			})
+			ctx := metadata.NewIncomingContext(t.Context(), metadata.Pairs("authorization", "Bearer "+userBearer))
+			var runErr error
+			err = auth.StreamInterceptor()(nil, fakeServerStream{ctx: ctx}, &grpc.StreamServerInfo{FullMethod: "/mecatl.v1.HarnessService/Converse"},
+				func(_ any, ss grpc.ServerStream) error {
+					if err := ss.SendMsg(&mecatlv1.ConverseResponse{}); err != nil {
+						return err
+					}
+					runErr = runToEnd(ss.Context(), t, svc, sess.ID)
+					return nil
+				})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !errors.Is(runErr, server.ErrInternal) || errors.Is(runErr, server.ErrBearerRejected) {
+				t.Fatalf("open refused with %s after the stream answered: %v; want ErrInternal without the bearer_rejected tag", reason, runErr)
+			}
+			// The create's open, then the run's, which came after the answer and so
+			// presented nothing.
+			if opens := broker.openRequests(); len(opens) != 2 || !opens[1].AccessToken.IsZero() {
+				t.Fatalf("opens = %d (late open presented a token: %t), want 2 with the late one presenting none",
+					len(opens), len(opens) == 2 && !opens[1].AccessToken.IsZero())
+			}
 		})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !errors.Is(runErr, server.ErrInternal) || errors.Is(runErr, server.ErrBearerRejected) {
-		t.Fatalf("open refused for a token after the stream answered: %v; want ErrInternal without the bearer_rejected tag", runErr)
-	}
-	// The create's open, then the run's, which came after the answer and so
-	// presented nothing.
-	if opens := broker.openRequests(); len(opens) != 2 || !opens[1].AccessToken.IsZero() {
-		t.Fatalf("opens = %d (late open presented a token: %t), want 2 with the late one presenting none",
-			len(opens), len(opens) == 2 && !opens[1].AccessToken.IsZero())
 	}
 }
 
