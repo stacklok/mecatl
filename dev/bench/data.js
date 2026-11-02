@@ -357320,6 +357320,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1793610439127,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "peppescg@gmail.com",
+            "name": "Giuseppe Scuglia",
+            "username": "peppescg"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "9bfaa27d9b1dbc1485da7d2f42e582cf7464ba4b",
+          "message": "perf(mecatui): render the streaming answer's markdown incrementally (#2642)\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-02T10:50:37+01:00",
+          "tree_id": "49a81d537257fe6ed32c93bf129b895dd95f9493",
+          "url": "https://github.com/stacklok/mecatl/commit/9bfaa27d9b1dbc1485da7d2f42e582cf7464ba4b"
+        },
+        "date": 1793613820025,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -516288,6 +516322,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1793613815806,
+  "lastUpdate": 1793613821231,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
