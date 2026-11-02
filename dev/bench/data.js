@@ -398396,6 +398396,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1793654621806,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "0dde05a06c484d31cafca9c838dd2f1ad17dc35a",
+          "message": "feat(engine): add generated persistence codecs and content IDs (#2651)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-11-02T21:16:31Z",
+          "tree_id": "e7973d0a27e62609ac7445260c210be7abd180a0",
+          "url": "https://github.com/stacklok/mecatl/commit/0dde05a06c484d31cafca9c838dd2f1ad17dc35a"
+        },
+        "date": 1793655377094,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 16112.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12874.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 794,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -519388,6 +519427,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1793655374107,
+  "lastUpdate": 1793655377956,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
