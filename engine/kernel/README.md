@@ -30,14 +30,35 @@ operation and ownership semantics. There is no execution facade here; production
 entry points continue to use the existing engine.
 
 `history` imports both `history/format` and `history/id`; the remaining dependency
-direction is `history/format` → `history/id` → `engine/id`. Format also imports
-Atmos's `cbor` package; its imported dependency closure is standard-library-only.
-The identity leaf supplies strongly typed history identities to format DTOs
-without importing higher-level history contracts. These packages do
+direction is `history/format` → `history/id` → `engine/id`. Format also delegates
+fixed-profile CID operations to the standard-library-only `contentid` leaf while
+retaining its distinct public `format.CID` type. Format and `codec` use Atmos's
+`cbor` primitives; their imported dependency closures are standard-library-only.
+The history identity leaf supplies strongly typed history identities to format
+DTOs without importing higher-level history contracts. These packages do
 not depend on the legacy session aggregate, model providers, or host composition.
 The [kernel design note](../../docs/drafts/session-history/implementation/kernel.md)
 provides historical design context. Follow the scoped
 [implementation guidance](AGENTS.md) when changing this directory.
+
+## Persistence codec tooling
+
+`codec` supplies explicit operational budgets and strict owning CBOR primitives
+for generated DTO codecs. `contentid` derives and verifies fixed-profile CIDs
+from exact bytes. The existing history envelope remains handwritten; neither
+package integrates the isolated kernel into production execution.
+
+The [generator guide](../../internal/cborgen/README.md) owns supported Go types,
+`cbor`/`cborlimit` tags, source-local `go:generate` declarations, generated APIs,
+and semantic/identity composition. The [runtime package contract](codec/doc.go)
+owns accounting and input/output lifetimes. From the repository root:
+
+```sh
+task generate:codecs
+task generate:codecs:check
+```
+
+## Focused checks
 
 Run the focused offline checks from the repository root:
 
