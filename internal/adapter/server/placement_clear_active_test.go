@@ -207,7 +207,10 @@ func TestClearSessionCancelsDurableAwaitingSource(t *testing.T) {
 	if err := source.BeginTurn(); err != nil {
 		t.Fatal(err)
 	}
-	if err := source.PauseForApproval(session.PendingAsk{AskID: "ask-1"}); err != nil {
+	if err := source.RecordAssistant(session.NewAssistantMessage("", []session.ToolCall{session.NewToolCall("pending-call", "Write", nil)})); err != nil {
+		t.Fatal(err)
+	}
+	if err := source.PauseForApproval(session.PendingAsk{AskID: "ask-1", Tool: "Write", Call: "pending-call"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.Save(t.Context(), source); err != nil {
@@ -335,7 +338,7 @@ func TestClearSessionExcludesStaleAwaitingResume(t *testing.T) {
 	if err := source.BeginTurn(); err != nil {
 		t.Fatal(err)
 	}
-	if err := source.RecordAssistant(session.NewAssistantMessage("", "", []session.ToolCall{call})); err != nil {
+	if err := source.RecordAssistant(session.NewAssistantMessage("", []session.ToolCall{call})); err != nil {
 		t.Fatal(err)
 	}
 	const askID = "ask-1"
@@ -440,7 +443,10 @@ func TestClearSessionSuccessorPersistenceFailureKeepsCancellationBoundary(t *tes
 	if err := source.BeginTurn(); err != nil {
 		t.Fatal(err)
 	}
-	if err := source.PauseForApproval(session.PendingAsk{AskID: "ask-1"}); err != nil {
+	if err := source.RecordAssistant(session.NewAssistantMessage("", []session.ToolCall{session.NewToolCall("pending-call", "Write", nil)})); err != nil {
+		t.Fatal(err)
+	}
+	if err := source.PauseForApproval(session.PendingAsk{AskID: "ask-1", Tool: "Write", Call: "pending-call"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.Save(t.Context(), source); err != nil {
@@ -565,7 +571,7 @@ func TestClearGenerationRejectsQueuedPlanApprovalContinuation(t *testing.T) {
 	if err := source.BeginTurn(); err != nil {
 		t.Fatal(err)
 	}
-	if err := source.RecordAssistant(session.NewAssistantMessage("", "", []session.ToolCall{call})); err != nil {
+	if err := source.RecordAssistant(session.NewAssistantMessage("", []session.ToolCall{call})); err != nil {
 		t.Fatal(err)
 	}
 	if err := source.PauseForApproval(session.PendingAsk{

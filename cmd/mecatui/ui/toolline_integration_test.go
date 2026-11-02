@@ -97,12 +97,12 @@ func TestToolLineEventToUISurfaces(t *testing.T) {
 	})
 	t.Run("TruncatedAndHostile", func(t *testing.T) {
 		trace := traceAppendTool(nil, "bad", "Read", `{"path":"never-completed`)
-		trace = traceMarkToolResult(trace, "bad", "Read", result, false)
+		trace = traceMarkToolResult(trace, "bad", result, false)
 		if trace[0].intent != "Read" || strings.Contains(ansi.Strip(newTestRenderer().renderTrace(trace)), "RESULT BODY") {
 			t.Fatalf("truncated arguments fabricated intent: %+v", trace)
 		}
 		trace = traceAppendTool(nil, "hostile", "Read", `{"path":"src/\u001b[2Jauth.go"}`)
-		trace = traceMarkToolResult(trace, "hostile", "Read", result, true)
+		trace = traceMarkToolResult(trace, "hostile", result, true)
 		plain := ansi.Strip(newTestRenderer().renderTrace(trace))
 		if !strings.Contains(plain, "✗ Read · src/[2Jauth.go · failed") || strings.Contains(plain, "\x1b[2J") || strings.Contains(plain, "RESULT BODY") {
 			t.Fatalf("hostile call or result escaped: %q", plain)
@@ -110,7 +110,7 @@ func TestToolLineEventToUISurfaces(t *testing.T) {
 		t.Run("CallIntentBeyondVisualPreview", func(t *testing.T) {
 			path := strings.Repeat("p", maxTraceMessageLen-len(`{"path":""}`))
 			trace := traceAppendTool(nil, "long", "Read", `{"path":"`+path+`"}`)
-			trace = traceMarkToolResult(trace, "long", "Read", result, false)
+			trace = traceMarkToolResult(trace, "long", result, false)
 			if got := trace[0].intent; !strings.HasPrefix(got, strings.Repeat("p", 70)) || len([]rune(got)) != maxTraceDetailLen || strings.Contains(ansi.Strip(newTestRenderer().renderTrace(trace)), "RESULT BODY") {
 				t.Fatalf("bounded call-side intent lost behind 80-rune visual preview: %+v", trace)
 			}

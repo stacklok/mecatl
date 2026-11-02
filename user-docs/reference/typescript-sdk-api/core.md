@@ -949,18 +949,6 @@ readonly parts: readonly EventContent[];
 readonly providerPhase: string;
 ```
 
-<Heading as="h4" id="api-archivedconversationmessage-reasoning-propertysignature"><code>ArchivedConversationMessage.reasoning</code></Heading>
-
-```ts
-readonly reasoning: string;
-```
-
-<Heading as="h4" id="api-archivedconversationmessage-reasoningitemid-propertysignature"><code>ArchivedConversationMessage.reasoningItemId</code></Heading>
-
-```ts
-readonly reasoningItemId: string;
-```
-
 <Heading as="h4" id="api-archivedconversationmessage-role-propertysignature"><code>ArchivedConversationMessage.role</code></Heading>
 
 ```ts
@@ -5662,6 +5650,12 @@ export interface SessionTranscriptMessage
 readonly parts: readonly EventContent[];
 ```
 
+<Heading as="h4" id="api-sessiontranscriptmessage-providerphase-propertysignature"><code>SessionTranscriptMessage.providerPhase</code></Heading>
+
+```ts
+readonly providerPhase: string;
+```
+
 <Heading as="h4" id="api-sessiontranscriptmessage-role-propertysignature"><code>SessionTranscriptMessage.role</code></Heading>
 
 ```ts
@@ -6623,6 +6617,8 @@ readonly args: string;
 
 <Heading as="h4" id="api-toolcalleventpayload-id-propertysignature"><code>ToolCallEventPayload.id</code></Heading>
 
+Opaque canonical engine identity; never a provider pairing key.
+
 ```ts
 readonly id: string;
 ```
@@ -7564,7 +7560,7 @@ StreamProgress: {
 The API major implemented by this SDK.
 
 ```ts
-SUPPORTED_API_MAJOR = 1
+SUPPORTED_API_MAJOR = 2
 ```
 
 <Heading as="h3" id="api-workspaceenrollmentstatus-variable"><code>WorkspaceEnrollmentStatus</code></Heading>

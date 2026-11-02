@@ -25,3 +25,16 @@ const denoInjected: mecatlDeno.DenoConnectOptions = {
 };
 void denoSocket;
 void denoInjected;
+
+const wireMajor: 2 = mecatl.SUPPORTED_API_MAJOR;
+void wireMajor;
+function displayArchive(archive: mecatl.ArchivedConversationMessage): void {
+  // @ts-expect-error Archives expose ordinary messages, not a historical side channel.
+  void archive.historical;
+  void archive.providerPhase;
+  // @ts-expect-error Opaque provider replay is not part of the public archive.
+  void archive.reasoning;
+  // @ts-expect-error Provider item identity is not part of the public archive.
+  void archive.reasoningItemId;
+}
+void displayArchive;

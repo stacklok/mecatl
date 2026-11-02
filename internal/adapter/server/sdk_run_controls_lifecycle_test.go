@@ -63,7 +63,7 @@ func makePlanControlSession(t *testing.T, id session.SessionID) *session.Session
 		t.Fatal(err)
 	}
 	call := session.NewToolCall("plan-call", "PresentPlan", []byte(`{"plan":"one"}`))
-	if err := sess.RecordAssistant(session.NewAssistantMessage("", "", []session.ToolCall{call})); err != nil {
+	if err := sess.RecordAssistant(session.NewAssistantMessage("", []session.ToolCall{call})); err != nil {
 		t.Fatal(err)
 	}
 	if err := sess.PauseForApproval(session.PendingAsk{
@@ -83,7 +83,7 @@ func makePersistedControlSession(t *testing.T, id session.SessionID) (*session.S
 		t.Fatal(err)
 	}
 	call := session.NewToolCall("durable-call", "Write", []byte(`{}`))
-	if err := sess.RecordAssistant(session.NewAssistantMessage("", "", []session.ToolCall{call})); err != nil {
+	if err := sess.RecordAssistant(session.NewAssistantMessage("", []session.ToolCall{call})); err != nil {
 		t.Fatal(err)
 	}
 	ask := session.PendingAsk{AskID: "durable-ask", Tool: "Write", Call: call.ID, Origin: session.ApprovalOriginPermission}

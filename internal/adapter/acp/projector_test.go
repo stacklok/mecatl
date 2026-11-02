@@ -612,12 +612,12 @@ func TestApprovalFor(t *testing.T) {
 }
 
 func TestPermissionRequestFor(t *testing.T) {
-	ask := session.PendingAsk{AskID: "ask-1", Tool: "Shell", Args: json.RawMessage(`{"cmd":"ls"}`), Reason: "mutating"}
+	ask := session.PendingAsk{AskID: "ask-1", Call: "call-1", Tool: "Shell", Args: json.RawMessage(`{"cmd":"ls"}`), Reason: "mutating"}
 	req := permissionRequestFor("sess-1", ask)
 	if req.SessionID != "sess-1" {
 		t.Errorf("sessionId = %q", req.SessionID)
 	}
-	if req.ToolCall.ToolCallID != "ask-1" || req.ToolCall.Title != "Shell" || req.ToolCall.Kind != "execute" {
+	if req.ToolCall.ToolCallID != "call-1" || req.ToolCall.Title != "Shell" || req.ToolCall.Kind != "execute" {
 		t.Errorf("toolCall = %+v", req.ToolCall)
 	}
 	if len(req.Options) != 4 {

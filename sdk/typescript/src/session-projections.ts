@@ -180,6 +180,7 @@ export interface SessionContextOccupancy {
 
 /** One human-displayable message in the authoritative session transcript. @public */
 export interface SessionTranscriptMessage {
+  readonly providerPhase: string;
   readonly role: string;
   readonly text: string;
   readonly toolCalls: readonly ToolCallEventPayload[];
@@ -348,6 +349,7 @@ function content(value: Content): EventContent {
 function transcriptMessage(value: ConversationMessage): SessionTranscriptMessage {
   return {
     parts: value.parts.map(content),
+    providerPhase: value.providerPhase,
     role: value.role,
     text: value.text,
     toolCalls: value.toolCalls.map(toolCall),

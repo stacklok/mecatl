@@ -6,6 +6,7 @@ import (
 	"io"
 	"iter"
 	"net"
+	"reflect"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -265,8 +266,12 @@ func TestGRPCConverseInvalidUTF8ToolResult(t *testing.T) {
 
 	// The tool.result event crossed the wire with its text repaired.
 	var tr *mecatlv1.ToolResult
+	var callID string
 	for _, e := range events {
-		if e.GetType() == "tool.result" && e.GetToolResult().GetCallId() == "c1" {
+		if e.GetToolCall() != nil {
+			callID = e.GetToolCall().GetId()
+		}
+		if e.GetType() == "tool.result" && callID != "" && callID != "c1" && e.GetToolResult().GetCallId() == callID {
 			tr = e.GetToolResult()
 			break
 		}
@@ -827,9 +832,8 @@ func TestGRPCCreateSessionCrossProviderCarryover(t *testing.T) {
 		t.Fatalf("new session rehydration selector = %+v, want %+v", got, newSel)
 	}
 
-	// Assert the seeded history: blobs CLEARED, text/tool-call/tool-result
-	// content PRESERVED. OpenAI destination → ToolCall ItemIDs are SYNTHESISED
-	// (carryover_item_ prefix, NOT fc_). Load both directly from the store.
+	// Assert stripped canonical history directly. Target provider item identity
+	// is reconstructed by the adapter, never persisted by the host.
 	srcSnap, err := store.Load(ctx, "grpc-src-cross")
 	if err != nil {
 		t.Fatalf("Load src: %v", err)
@@ -842,7 +846,9 @@ func TestGRPCCreateSessionCrossProviderCarryover(t *testing.T) {
 		t.Fatalf("seeded history len = %d, want source's %d", got, want)
 	}
 	var sawAssistantText, sawToolCall, sawToolResult, sawReasoning, sawPhase bool
-	seenIDs := make(map[string]int) // id → msg index
+	if !reflect.DeepEqual(newSnap.Conversation.Messages, session.StripProviderState(srcSnap.Conversation.Messages)) {
+		t.Fatal("host changed canonical history or synthesized provider state")
+	}
 	for i, sm := range srcSnap.Conversation.Messages {
 		nm := newSnap.Conversation.Messages[i]
 		if nm.Role != sm.Role {
@@ -862,35 +868,18 @@ func TestGRPCCreateSessionCrossProviderCarryover(t *testing.T) {
 			}
 			sawToolResult = true
 		}
-		if nm.Reasoning != "" {
+		if nm.Replay != nil {
 			sawReasoning = true
 		}
 		if nm.ProviderPhase != "" {
 			sawPhase = true
 		}
 		for j, c := range nm.ToolCalls {
-			// OpenAI destination: ItemIDs are synthesised.
-			if c.ItemID == "" {
-				t.Fatalf("msg %d call %d: ItemID is empty — want a synthesised id (cross-provider to openai must synthesise)", i, j)
-			}
-			if !strings.HasPrefix(c.ItemID, "carryover_item_") {
-				t.Fatalf("msg %d call %d: ItemID = %q, want carryover_item_ prefix", i, j, c.ItemID)
-			}
-			if strings.HasPrefix(c.ItemID, "fc_") {
-				t.Fatalf("msg %d call %d: ItemID = %q, must NOT use fc_ prefix (collision risk)", i, j, c.ItemID)
-			}
-			if prevIdx, dup := seenIDs[c.ItemID]; dup {
-				t.Fatalf("msg %d call %d: duplicate ItemID %q (first seen at msg %d)", i, j, c.ItemID, prevIdx)
-			}
-			seenIDs[c.ItemID] = i
 			// Preserve caller identity.
 			if c.ID != session.ToolCallID("c1") || c.Name != "Read" || string(c.Args) != `{"path":"f.go"}` {
 				t.Fatalf("msg %d call %d: tool-call identity/args drifted (ID=%q Name=%q Args=%s)", i, j, c.ID, c.Name, c.Args)
 			}
 		}
-	}
-	if len(seenIDs) == 0 {
-		t.Fatalf("no tool calls to synthesise ItemIDs for — source fixture missing tool calls")
 	}
 	// Pin the provider-neutral content survived and the provider-private blobs stripped.
 	for _, m := range newSnap.Conversation.Messages {

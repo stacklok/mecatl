@@ -125,7 +125,13 @@ func awaitLivePlanAsk(t *testing.T, r *agent.Run, wantCall session.ToolCallID, w
 			continue
 		}
 		ask := ev.Ask
-		if ask.Tool != "PresentPlan" || ask.Call != wantCall || ask.Origin != session.ApprovalOriginPlan {
+		var acceptedCall session.ToolCallID
+		for _, prior := range seen {
+			if prior.ToolCall != nil && prior.ToolCall.Name == "PresentPlan" {
+				acceptedCall = prior.ToolCall.ID
+			}
+		}
+		if ask.Tool != "PresentPlan" || acceptedCall == "" || ask.Call != acceptedCall || ask.Call == wantCall || ask.Origin != session.ApprovalOriginPlan {
 			t.Fatalf("fresh plan ask = %+v, want Tool=PresentPlan Call=%q Origin=AskOriginPlan", ask, wantCall)
 		}
 		var args struct {
@@ -323,6 +329,15 @@ func TestApprovePlanDenyIterates(t *testing.T) {
 	}
 	firstAskID, finishParked := parkPlanAsk(t, svc, sess.ID)
 	defer finishParked()
+	parked, err := svc.GetSession(context.Background(), sess.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstPending, ok := parked.PendingAsk()
+	if !ok {
+		t.Fatal("parked plan has no pending ask")
+	}
+	firstCall := firstPending.Call
 
 	events, err := svc.ApprovePlan(context.Background(), sess.ID, session.ModePlan, "")
 	if err != nil {
@@ -357,7 +372,7 @@ func TestApprovePlanDenyIterates(t *testing.T) {
 	foundDeny := false
 	for _, msg := range sess.Conversation.Messages {
 		if msg.Role == session.RoleTool && msg.ToolResult != nil &&
-			msg.ToolResult.CallID == "c1" &&
+			msg.ToolResult.CallID == firstCall &&
 			msg.ToolResult.IsError && strings.Contains(msg.ToolResult.Content, "denied") {
 			foundDeny = true
 			break
@@ -428,6 +443,7 @@ func TestCancelledPlanReviewRecoversAndRequiresFreshAsk(t *testing.T) {
 	}
 	firstCleanup := cleanupStartedRun(t, svc, sess.ID, first)
 	firstAskID, firstEvs := awaitLivePlanAsk(t, first, "c1", "original")
+	firstCall := firstEvs[len(firstEvs)-1].Ask.Call
 	first.Cancel()
 	firstEvs = append(firstEvs, drainApprovedEvents(t, first.Events())...)
 	firstCleanup()
@@ -438,7 +454,7 @@ func TestCancelledPlanReviewRecoversAndRequiresFreshAsk(t *testing.T) {
 	for _, ev := range firstEvs {
 		switch ev.Type {
 		case session.EvPermissionAsk:
-			if ev.Ask != nil && ev.Ask.Origin == session.ApprovalOriginPlan && ev.Ask.Call == "c1" {
+			if ev.Ask != nil && ev.Ask.Origin == session.ApprovalOriginPlan && ev.Ask.Call == firstCall {
 				planAsks++
 			}
 		case session.EvApproval:
@@ -497,7 +513,7 @@ func TestCancelledPlanReviewRecoversAndRequiresFreshAsk(t *testing.T) {
 	}
 	foundInterrupted := false
 	for _, msg := range prior {
-		if msg.Role != session.RoleTool || msg.ToolResult == nil || msg.ToolResult.CallID != "c1" {
+		if msg.Role != session.RoleTool || msg.ToolResult == nil || msg.ToolResult.CallID != firstCall {
 			continue
 		}
 		foundInterrupted = true

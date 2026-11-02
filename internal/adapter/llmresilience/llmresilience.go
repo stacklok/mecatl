@@ -619,7 +619,7 @@ func advancesVisible(chunk port.Chunk) bool {
 	switch chunk.Kind {
 	case port.ChunkText:
 		return strings.TrimSpace(chunk.Text) != ""
-	case port.ChunkReasoning, port.ChunkReasoningItem, port.ChunkToolCall,
+	case port.ChunkReasoning, port.ChunkReplay, port.ChunkToolCall,
 		port.ChunkUsage, port.ChunkPhase, port.ChunkProviderRoute, port.ChunkDone:
 		return false
 	default:
@@ -1019,7 +1019,7 @@ func (p *resilientProvider) pumpAttempt(
 			return result, nil
 		}
 		if !advancesVisible(chunk) {
-			result.buffered = append(result.buffered, chunk)
+			result.buffered = append(result.buffered, ownRetainedChunk(chunk))
 			result.progress = session.StreamProgressPrecommit
 			continue
 		}
@@ -1229,6 +1229,7 @@ func wrapAttempt(result *attemptResult, diagnostic attemptDiagnostic) iter.Seq2[
 			defer result.cancel()
 		}
 		cleanupRemaining := result.cleanupRemaining
+		terminal := bufferedTerminalChunks(result)
 		if !flushBufferedAttempt(diagnostic.ctx, result, yield, cleanupRemaining) {
 			return
 		}
@@ -1237,49 +1238,98 @@ func wrapAttempt(result *attemptResult, diagnostic attemptDiagnostic) iter.Seq2[
 			if diagnostic.ctx.Err() == nil {
 				diagnostic.lease.finish(breakerSuccess)
 			}
-			return
 		case session.StreamProgressVisible:
-			if !yield(result.chunk, nil) {
-				cleanupRemaining()
-				return
-			}
-			if err := diagnostic.ctx.Err(); err != nil {
-				cleanupRemaining()
-				yield(port.Chunk{}, err)
-				return
-			}
-			if result.remaining == nil {
-				if diagnostic.ctx.Err() == nil {
-					diagnostic.lease.finish(breakerSuccess)
-				}
-				return
-			}
-			clean := true
-			consumed := true
-			result.remaining(func(chunk port.Chunk, err error) bool {
-				if err != nil {
-					clean = false
-					if diagnostic.ctx.Err() == nil && isTransientForBreaker(err) {
-						diagnostic.lease.finish(breakerFailure)
-					}
-				}
-				if !yield(chunk, err) {
-					consumed = false
-					return false
-				}
-				if diagnostic.ctx.Err() != nil {
-					consumed = false
-					return false
-				}
-				return err == nil
-			})
-			if clean && consumed && diagnostic.ctx.Err() == nil {
-				diagnostic.lease.finish(breakerSuccess)
-			}
+			relayVisibleAttempt(result, diagnostic, yield, cleanupRemaining, terminal)
 		case session.StreamProgressUnknown, session.StreamProgressPrecommit:
 			cleanupRemaining()
 		}
 	}
+}
+
+func bufferedTerminalChunks(result *attemptResult) []port.Chunk {
+	if result.progress != session.StreamProgressVisible {
+		return nil
+	}
+	var terminal []port.Chunk
+	for _, chunk := range result.buffered {
+		if chunk.Kind == port.ChunkReplay {
+			terminal = append(terminal, chunk)
+		}
+	}
+	return terminal
+}
+
+func relayVisibleAttempt(result *attemptResult, diagnostic attemptDiagnostic, yield func(port.Chunk, error) bool, cleanupRemaining func(), terminal []port.Chunk) {
+	if !yield(result.chunk, nil) {
+		cleanupRemaining()
+		return
+	}
+	if err := diagnostic.ctx.Err(); err != nil {
+		cleanupRemaining()
+		yield(port.Chunk{}, err)
+		return
+	}
+	if result.remaining == nil {
+		if diagnostic.ctx.Err() == nil {
+			diagnostic.lease.finish(breakerSuccess)
+		}
+		return
+	}
+	clean, consumed := relayAttemptRemaining(result.remaining, diagnostic, yield, &terminal)
+	if clean && consumed && diagnostic.ctx.Err() == nil {
+		for _, chunk := range terminal {
+			if diagnostic.ctx.Err() != nil || !yield(chunk, nil) {
+				return
+			}
+		}
+		diagnostic.lease.finish(breakerSuccess)
+	}
+}
+
+// ownRetainedChunk detaches borrowed provider storage before advancing its stream.
+func ownRetainedChunk(chunk port.Chunk) port.Chunk {
+	if chunk.ToolCall != nil {
+		call := *chunk.ToolCall
+		call.Args = append(json.RawMessage(nil), call.Args...)
+		chunk.ToolCall = &call
+	}
+	if chunk.Replay != nil {
+		replay := *chunk.Replay
+		replay.Data = append([]byte(nil), replay.Data...)
+		chunk.Replay = &replay
+	}
+	return chunk
+}
+
+func relayAttemptRemaining(remaining iter.Seq2[port.Chunk, error], diagnostic attemptDiagnostic, yield func(port.Chunk, error) bool, terminal *[]port.Chunk) (clean, consumed bool) {
+	clean, consumed = true, true
+	remaining(func(chunk port.Chunk, err error) bool {
+		// Private replay never certifies a visible but failed attempt. Hold it
+		// and the terminal stop until the continuation completes successfully.
+		if err == nil && (chunk.Kind == port.ChunkReplay || chunk.Kind == port.ChunkDone) {
+			*terminal = append(*terminal, ownRetainedChunk(chunk))
+			return diagnostic.ctx.Err() == nil
+		}
+		if err != nil {
+			if chunk.Kind == port.ChunkReplay {
+				chunk = port.Chunk{}
+			}
+			clean = false
+			if diagnostic.ctx.Err() == nil && isTransientForBreaker(err) {
+				diagnostic.lease.finish(breakerFailure)
+			}
+		}
+		if !yield(chunk, err) {
+			consumed = false
+			return false
+		}
+		if diagnostic.ctx.Err() != nil {
+			consumed = false
+			return false
+		}
+		return err == nil
+	})
+	return clean, consumed
 }
 
 func (result *attemptResult) cleanupRemaining() {
@@ -1308,6 +1358,9 @@ func flushBufferedAttempt(ctx context.Context, result *attemptResult, yield func
 		}
 		if buffered.Kind == port.ChunkUsage {
 			continue // already included in the accounting prefix
+		}
+		if buffered.Kind == port.ChunkReplay && result.progress == session.StreamProgressVisible {
+			continue // private replay waits for successful completion, not first text
 		}
 		if !yield(buffered, nil) {
 			cleanupRemaining()

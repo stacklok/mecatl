@@ -41,7 +41,7 @@ describe("session lifecycle", () => {
     const transport = createRouterTransport((router) => {
       router.service(HarnessService, {
         getCompatibilityInfo: () => ({
-          apiMajor: 1,
+          apiMajor: 2,
           features: ["execution_templates"],
           capabilities: { executionTemplates: true },
         }),
@@ -91,9 +91,9 @@ describe("session lifecycle", () => {
 
   it("never sends explicit execution selection to an old server", async () => {
     for (const compatibility of [
-      { apiMajor: 1, features: ["legacy_feature"], capabilities: { executionTemplates: false } },
+      { apiMajor: 2, features: ["legacy_feature"], capabilities: { executionTemplates: false } },
       {
-        apiMajor: 1,
+        apiMajor: 2,
         features: [ServerFeature.ExecutionTemplates],
         capabilities: { executionTemplates: false },
       },
@@ -151,7 +151,7 @@ describe("session lifecycle", () => {
           sessions.add("forked");
           return { sessionId: "forked" };
         },
-        getCompatibilityInfo: () => ({ apiMajor: 1, capabilities: {}, features: ["server_info"] }),
+        getCompatibilityInfo: () => ({ apiMajor: 2, capabilities: {}, features: ["server_info"] }),
         getSession: (request) => {
           calls.push(`get:${request.sessionId}`);
           if (!sessions.has(request.sessionId)) throw notFound();
@@ -194,7 +194,7 @@ describe("session lifecycle", () => {
         createSession: () => ({ sessionId: "session" }),
         getCompatibilityInfo: () => {
           compatibilityCalls += 1;
-          return { apiMajor: 1, capabilities: {}, features: ["server_info"] };
+          return { apiMajor: 2, capabilities: {}, features: ["server_info"] };
         },
       });
     });
@@ -213,7 +213,7 @@ describe("session lifecycle", () => {
     const ownedTransport = createRouterTransport((router) => {
       router.service(HarnessService, {
         createSession: () => ({ sessionId: "owned-session" }),
-        getCompatibilityInfo: () => ({ apiMajor: 1, capabilities: {}, features: ["server_info"] }),
+        getCompatibilityInfo: () => ({ apiMajor: 2, capabilities: {}, features: ["server_info"] }),
       });
     }) as ReturnType<typeof createRouterTransport> & AsyncDisposable;
     ownedTransport[Symbol.asyncDispose] = dispose;
@@ -240,7 +240,7 @@ describe("session lifecycle", () => {
           sessionCapabilities: { audio: false, image: false },
           sessionId: "session",
         }),
-        getCompatibilityInfo: () => ({ apiMajor: 1, capabilities: {}, features: ["server_info"] }),
+        getCompatibilityInfo: () => ({ apiMajor: 2, capabilities: {}, features: ["server_info"] }),
         renameSession: (request) => {
           calls.push(`rename:${request.sessionId}:${request.title}`);
           return {
@@ -327,7 +327,7 @@ describe("session lifecycle", () => {
           observe("delete", context);
           return {};
         },
-        getCompatibilityInfo: () => ({ apiMajor: 1, capabilities: {}, features: ["server_info"] }),
+        getCompatibilityInfo: () => ({ apiMajor: 2, capabilities: {}, features: ["server_info"] }),
         getSession: (request, context) => {
           observe("snapshot", context);
           return { session: { mode: SessionMode.Default, sessionId: request.sessionId } };
@@ -403,7 +403,7 @@ describe("session lifecycle", () => {
         },
         createSession: () => ({ sessionId: "source" }),
         forkSession: () => ({ sessionId: "forked" }),
-        getCompatibilityInfo: () => ({ apiMajor: 1, capabilities: {}, features: ["server_info"] }),
+        getCompatibilityInfo: () => ({ apiMajor: 2, capabilities: {}, features: ["server_info"] }),
         getSession: (request) => ({
           session: { mode: SessionMode.Default, sessionId: request.sessionId },
         }),
@@ -438,7 +438,7 @@ describe("session lifecycle", () => {
           captured.push(request);
           return { sessionId: "forked" };
         },
-        getCompatibilityInfo: () => ({ apiMajor: 1, capabilities: {}, features: ["server_info"] }),
+        getCompatibilityInfo: () => ({ apiMajor: 2, capabilities: {}, features: ["server_info"] }),
       });
     });
     const client = connect({ transport });
@@ -483,7 +483,7 @@ describe("session lifecycle", () => {
           seen.push(`fork:${context.requestHeader.get("x-caller")}`);
           return { sessionId: forkId };
         },
-        getCompatibilityInfo: () => ({ apiMajor: 1, capabilities: {}, features: ["server_info"] }),
+        getCompatibilityInfo: () => ({ apiMajor: 2, capabilities: {}, features: ["server_info"] }),
         getSession: (_request, context) => {
           seen.push(`get:${context.requestHeader.get("x-caller")}`);
           return {

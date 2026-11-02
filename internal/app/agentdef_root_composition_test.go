@@ -186,10 +186,10 @@ func TestAgentDefRootPlacementPostureAndPolicy(t *testing.T) {
 			var requests []port.LLMRequest
 			turns := []mockllm.Turn{mockllm.TextTurn("done")}
 			if posture == "remote" {
-				turns = []mockllm.Turn{mockllm.ToolCallTurn(
-					session.NewToolCall("denied", "Shell", json.RawMessage(`{"command":"echo denied"}`)),
-					session.NewToolCall("asked", "Shell", json.RawMessage(`{"command":"echo asked"}`)),
-					session.NewToolCall("allowed", "Shell", json.RawMessage(`{"command":"echo allowed"}`)),
+				turns = []mockllm.Turn{mockllm.LLMToolCallTurn(
+					port.LLMToolCall{ID: "denied", Name: "Shell", Args: json.RawMessage(`{"command":"echo denied"}`)},
+					port.LLMToolCall{ID: "asked", Name: "Shell", Args: json.RawMessage(`{"command":"echo asked"}`)},
+					port.LLMToolCall{ID: "allowed", Name: "Shell", Args: json.RawMessage(`{"command":"echo allowed"}`)},
 				), mockllm.TextTurn("done")}
 			}
 			llm := mockllm.NewWith([]mockllm.Option{mockllm.WithRequestObserver(func(req port.LLMRequest) { requests = append(requests, req) })}, turns...)
@@ -224,12 +224,23 @@ func TestAgentDefRootPlacementPostureAndPolicy(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			asks := 0
+			var asks []session.PendingAsk
 			results := map[session.ToolCallID]session.ToolResult{}
+			canonical := make(map[session.ProviderCallID]session.ToolCallID)
 			for ev := range run.Events() {
+				if ev.Type == session.EvToolCall && ev.ToolCall != nil {
+					switch string(ev.ToolCall.Args) {
+					case `{"command":"echo denied"}`:
+						canonical["denied"] = ev.ToolCall.ID
+					case `{"command":"echo asked"}`:
+						canonical["asked"] = ev.ToolCall.ID
+					case `{"command":"echo allowed"}`:
+						canonical["allowed"] = ev.ToolCall.ID
+					}
+				}
 				if ev.Ask != nil {
-					asks++
-					if ev.Ask.Call != "asked" || ev.Ask.AskProvenance != governance.AskProvenanceConfigured {
+					asks = append(asks, *ev.Ask)
+					if ev.Ask.AskProvenance != governance.AskProvenanceConfigured {
 						t.Errorf("unexpected ask: %+v", ev.Ask)
 					}
 					if _, err := built.Service.ApproveRun(ctx, sess.ID, ev.Ask.AskID, session.VerdictDeny, ""); err != nil {
@@ -239,6 +250,9 @@ func TestAgentDefRootPlacementPostureAndPolicy(t *testing.T) {
 				if ev.ToolResult != nil {
 					results[ev.ToolResult.CallID] = *ev.ToolResult
 				}
+			}
+			if posture == "remote" && (len(asks) != 1 || canonical["asked"] == "" || asks[0].Call != canonical["asked"]) {
+				t.Errorf("unexpected asks: %+v", asks)
 			}
 			built.Service.FinishRun(sess.ID, run)
 			if len(requests) == 0 {
@@ -275,14 +289,15 @@ func TestAgentDefRootPlacementPostureAndPolicy(t *testing.T) {
 				if !strings.Contains(text, remoteExecutionPostureNote) || !strings.Contains(text, "cwd: /workspace") {
 					t.Fatal("missing remote posture")
 				}
-				if asks != 1 {
-					t.Fatalf("configured asks=%d", asks)
+				if len(asks) != 1 {
+					t.Fatalf("configured asks=%d", len(asks))
 				}
-				for _, id := range []session.ToolCallID{"denied", "asked", "allowed"} {
-					result, ok := results[id]
-					blocked := id != "allowed"
-					if !ok || result.IsError != blocked || strings.Contains(result.Content, "REMOTE-EXECUTED") == blocked {
-						t.Errorf("result %s=%+v", id, result)
+				for _, providerID := range []session.ProviderCallID{"denied", "asked", "allowed"} {
+					id, ok := canonical[providerID]
+					result, got := results[id]
+					blocked := providerID != "allowed"
+					if !ok || !got || result.IsError != blocked || strings.Contains(result.Content, "REMOTE-EXECUTED") == blocked {
+						t.Errorf("result %s=%+v", providerID, result)
 					}
 				}
 			}

@@ -48,7 +48,7 @@ published file means the parent can dial the daemon:
   "transport": "unix",
   "grpc_address": "<RUNTIME_DIR>/mecated.sock",
   "socket_path": "<RUNTIME_DIR>/mecated.sock",
-  "api_major": 1,
+  "api_major": 2,
   "features": ["mcp_servers_on_create", "server_info"],
   "deployment": "eu-west-1 staging"
 }

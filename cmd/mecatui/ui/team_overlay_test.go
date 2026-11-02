@@ -288,8 +288,8 @@ func TestAgentsSelectionAndFocus(t *testing.T) {
 	m = seedTeam(m, func(c *conversation) {
 		c.startTeamCard("t1", "", roster())
 		c.updateTeamCardMember(member("scout", "message.delta", client.TeamMsg{Text: "searching the codebase"}))
-		c.updateTeamCardMember(member("scout", "tool.call", client.TeamMsg{ToolName: "Grep", Detail: "pattern: handleErr"}))
-		c.updateTeamCardMember(member("scout", "tool.result", client.TeamMsg{ToolName: "Grep", Detail: "3 matches"}))
+		c.updateTeamCardMember(member("scout", "tool.call", client.TeamMsg{ChildToolCallID: "scout-grep", ToolName: "Grep", Detail: "pattern: handleErr"}))
+		c.updateTeamCardMember(member("scout", "tool.result", client.TeamMsg{ChildToolCallID: "scout-grep", ToolName: "Grep", Detail: "3 matches"}))
 	})
 	mm, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyF6})
 	m = mm.(Model)
@@ -1384,8 +1384,8 @@ func agentsGoldenTeam(c *conversation) {
 		{Name: "tester", Role: "verifier", Mutating: true},
 	})
 	c.updateTeamCardMember(member("scout", "message.delta", client.TeamMsg{Text: "searching for the failing path"}))
-	c.updateTeamCardMember(member("scout", "tool.call", client.TeamMsg{ToolName: "Grep", Detail: "pattern: handleErr"}))
-	c.updateTeamCardMember(member("scout", "tool.result", client.TeamMsg{ToolName: "Grep", Detail: "3 matches in dispatch.go"}))
+	c.updateTeamCardMember(member("scout", "tool.call", client.TeamMsg{ChildToolCallID: "scout-grep", ToolName: "Grep", Detail: "pattern: handleErr"}))
+	c.updateTeamCardMember(member("scout", "tool.result", client.TeamMsg{ChildToolCallID: "scout-grep", ToolName: "Grep", Detail: "3 matches in dispatch.go"}))
 	c.updateTeamCardMember(member("scout", "turn.end", client.TeamMsg{Usage: client.Usage{InputTokens: 1200, OutputTokens: 80}}))
 	c.updateTeamCardMember(member("builder", "tool.call", client.TeamMsg{ToolName: "Edit"}))
 	c.updateTeamCardMember(member("builder", "turn.end", client.TeamMsg{Usage: client.Usage{InputTokens: 3400, OutputTokens: 220}}))
@@ -1414,7 +1414,7 @@ func TestAgentsRosterGolden(t *testing.T) {
 // This is the human-visible proof the idle state renders distinctly mid-run.
 func agentsIdleTeam(c *conversation) {
 	c.startTeamCard("t1", "", roster()) // lead (mutating) + scout (read-only)
-	c.updateTeamCardMember(member("scout", "tool.call", client.TeamMsg{ToolName: "Grep", Detail: "pattern: handleErr"}))
+	c.updateTeamCardMember(member("scout", "tool.call", client.TeamMsg{ChildToolCallID: "scout-grep", ToolName: "Grep", Detail: "pattern: handleErr"}))
 	c.updateTeamCardMember(member("scout", "turn.end", client.TeamMsg{Usage: client.Usage{InputTokens: 1200, OutputTokens: 80}}))
 	c.updateTeamCardMember(member("scout", "result", client.TeamMsg{})) // scout finished round 0 → IDLE
 	c.updateTeamCardMember(member("lead", "tool.call", client.TeamMsg{ToolName: "Edit"}))
@@ -1523,11 +1523,13 @@ func verboseFocusTeam(c *conversation) {
 	c.updateTeamCardMember(member("scout", "message.delta", client.TeamMsg{Text: "investigating the whole subsystem"}))
 	for i := 0; i < maxTeamTrace; i++ {
 		c.updateTeamCardMember(member("scout", "tool.call", client.TeamMsg{
-			ToolName: "Read", Detail: fmt.Sprintf("file-%02d.go", i),
+			ChildToolCallID: fmt.Sprintf("scout-read-%d", i), ToolName: "Read", Detail: fmt.Sprintf("file-%02d.go", i),
 		}))
-		c.updateTeamCardMember(member("scout", "tool.result", client.TeamMsg{
-			ToolName: "Read", Detail: fmt.Sprintf("%d lines", 100+i),
-		}))
+		if i == 0 {
+			c.updateTeamCardMember(member("scout", "tool.result", client.TeamMsg{
+				ChildToolCallID: "scout-read-0", ToolName: "Read", Detail: "100 lines",
+			}))
+		}
 	}
 }
 

@@ -94,7 +94,7 @@ func cloneManifest(m learning.MaterializationManifest) learning.MaterializationM
 
 //nolint:gocyclo // complete manifest/citation binding validation stays at the persistence boundary
 func validateManifestCitations(manifest learning.MaterializationManifest, candidates []learning.Candidate) error {
-	if manifest.Protocol != learning.ReflectionEvidenceV1 || manifest.Source.Domain != learning.ReflectionEvidenceSourceV1 || manifest.Source.Value == "" || !learning.ValidSHA256(manifest.Digest) || len(manifest.Entries) == 0 {
+	if !learning.ManifestProtocolSupported(manifest.Protocol, manifest.Source.Domain) || manifest.Source.Value == "" || !learning.ValidSHA256(manifest.Digest) || len(manifest.Entries) == 0 {
 		return learning.ErrInvalidProposal
 	}
 	for _, candidate := range candidates {

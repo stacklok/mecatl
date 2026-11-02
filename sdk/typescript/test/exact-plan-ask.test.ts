@@ -38,7 +38,7 @@ describe("exact plan ask SDK control", () => {
       transport: createRouterTransport((router) => {
         router.service(HarnessService, {
           getCompatibilityInfo: () => ({
-            apiMajor: 1,
+            apiMajor: 2,
             capabilities: {},
             features: [ServerFeature.ExactPlanAskControl],
           }),
@@ -72,7 +72,7 @@ describe("exact plan ask SDK control", () => {
           const path = new URL(String(input)).pathname;
           if (path === "/v1/compatibility") {
             return Response.json({
-              api_major: 1,
+              api_major: 2,
               capabilities: {},
               features: [ServerFeature.ExactPlanAskControl],
             });
@@ -110,7 +110,7 @@ describe("exact plan ask SDK control", () => {
       transport: createRouterTransport((router) => {
         router.service(HarnessService, {
           getCompatibilityInfo: () => ({
-            apiMajor: 1,
+            apiMajor: 2,
             capabilities: {},
             features: [ServerFeature.ExactPlanAskControl],
           }),
@@ -137,7 +137,7 @@ describe("exact plan ask SDK control", () => {
       transport: createRouterTransport((router) => {
         router.service(HarnessService, {
           getCompatibilityInfo: () => ({
-            apiMajor: 1,
+            apiMajor: 2,
             capabilities: {},
             features: ["other_feature"],
           }),

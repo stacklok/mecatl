@@ -6,6 +6,7 @@ package scrollback
 // collapsed.
 type NoticeCardSnapshot struct {
 	Text            string
+	Artifacts       []Artifact
 	Recover         bool
 	BenignGuardrail bool
 }
@@ -56,6 +57,11 @@ func (c *Conversation) Notices() PlainCards { return PlainCards{conversation: c}
 // AddNotice appends a normal notice and returns its new, stable block ID.
 func (p PlainCards) AddNotice(text string) BlockID {
 	return p.conversation.append(NoticeCardSnapshot{Text: text})
+}
+
+// AddNoticeWithArtifacts retains standalone media without creating a tool target.
+func (p PlainCards) AddNoticeWithArtifacts(text string, artifacts []Artifact) BlockID {
+	return p.conversation.append(NoticeCardSnapshot{Text: text, Artifacts: cloneArtifacts(artifacts)})
 }
 
 // UpdateNotice replaces a notice without changing its identity or position.

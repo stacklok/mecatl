@@ -64,9 +64,11 @@ Consumers of the durable log all live in composition. Approval replay
 Compaction archives keep pre-compaction history recoverable, and the debug
 `InspectSession` tool reads archives and delegation lineage. For hosts whose system
 of record is an event log, `engine/adapter/eventsource.Fold` rebuilds a session
-from events. Provider-private replay fields such as reasoning blobs never cross
-the event stream, so a folded session replays byte-identically only for providers
-that do not use them; Mecatl's own stores load from snapshots, which carry them.
+from events. Ordinary execution events do not carry active provider-private replay,
+so a pure fold cannot recover missing replay bytes. Mecatl's stores load snapshots,
+which carry replay atomically with history; internal compaction archives also retain
+private replay for archived inspection/reconstruction. Public archive projections
+strip it.
 
 ## Telemetry
 
@@ -146,9 +148,20 @@ URLs share one connection. See the
 and [`adapters/COMPATIBILITY.md`](../../adapters/COMPATIBILITY.md). A driver is
 trusted like a store directory, but never trusted to sanitize:
 
-- Snapshots cross as an opaque `sessnap-json/1` envelope the driver stores
-  verbatim. An unknown tag or a mis-keyed session is an infrastructure error,
-  never "not found". Drivers must accept up to `grpcdriver.MaxSnapshotBytes`.
+- Snapshot writers use `sessnap-json/2`; event writers use `eventlog-json/2`.
+  Typed readers accept `/1` and `/2`, checking that `/2` carries `identity_schema: 2`
+  and `/1` carries no discriminator. Contradictory or unknown versions fail closed.
+  An opaque driver preserves the outer tag and payload bytes verbatim; a decoding
+  Go wrapper restores typed values and emits the newest encoding on reads. An
+  unknown tag or mis-keyed session is an infrastructure error, never "not found".
+  Drivers must accept up to `grpcdriver.MaxSnapshotBytes`.
+- `session-store/1` is the unchanged opaque-envelope capability marker, not format
+  negotiation. Snapshot format checks happen per operation; event drivers have no
+  startup handshake. Upgrade both independently configured decoding drivers before
+  the harness. Local JSONL snapshot envelopes and Redis's `redisstore-eventlog/1`
+  outer tag do not protect against old readers ignoring the inner identity schema.
+  The coordinated rollout and no-old-reader constraints apply locally too; see
+  [the API-major-2 storage upgrade procedure](../../user-docs/operating/session-storage-operations.md#upgrade-to-api-major-2).
 - Skills cross as path-free logical bundles, so a driver cannot widen the
   workspace. A driver soul body is re-validated client-side.
 - Agent definitions are read once at build, because each bakes a child engine.

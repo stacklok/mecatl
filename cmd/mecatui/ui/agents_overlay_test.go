@@ -44,6 +44,7 @@ func endSub(parent, child string, in, out int64, count int, stop string) client.
 func toolSubPreview(parent, child, innerKind, tool, content string, count int) client.SubagentMsg {
 	msg := toolSub(parent, child, tool, false, count)
 	msg.InnerKind = innerKind
+	msg.ChildToolCallID = child + ":call:" + strconv.Itoa(count)
 	if innerKind == "message.delta" {
 		msg.Text = content
 	} else {

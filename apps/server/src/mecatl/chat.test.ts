@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import { sessionDetailResponseSchema } from "@mecatl-studio/contracts";
+import {
+  sessionDetailResponseSchema,
+  sessionTranscriptResponseSchema,
+} from "@mecatl-studio/contracts";
 import {
   type Client,
   type Event,
@@ -40,6 +43,31 @@ describe("Mecatl chat event serialization", () => {
 });
 
 describe("Mecatl chat sessions", () => {
+  it("preserves ordinary output and phase without private replay serializer aliases", async () => {
+    const message = {
+      role: "assistant",
+      text: "Old output",
+      providerPhase: "commentary",
+      parts: [],
+      toolCalls: [],
+      reasoning: "PRIVATE",
+      reasoningItemId: "provider-private",
+      replay: "PRIVATE",
+    };
+    const service = createMecatlChatService({
+      sessions: {
+        get: async () => ({
+          transcript: async () => ({ complete: true, sessionId: "s", messages: [message] }),
+        }),
+      },
+    } as unknown as Client);
+    const projected = sessionTranscriptResponseSchema.parse(await service.transcript("s"));
+    expect(projected.messages[0]).toMatchObject({
+      providerPhase: "commentary",
+      toolCalls: [],
+    });
+    expect(JSON.stringify(projected)).not.toMatch(/PRIVATE|reasoningItemId|replay/);
+  });
   it("projects inspect only sessions without chat controls", async () => {
     const row = (
       id: string,

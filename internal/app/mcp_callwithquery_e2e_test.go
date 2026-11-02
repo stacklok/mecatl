@@ -159,7 +159,7 @@ func TestCallMcpWithQueryE2EFailClosedThenRecovery(t *testing.T) {
 
 	// (1) FAIL-CLOSED: the direct bigjson call surfaced the actionable error, not a
 	// truncated JSON blob.
-	big, ok := results["c1"]
+	big, ok := results[string(boundCallID(t, sess, "c1"))]
 	if !ok {
 		t.Fatalf("no EvToolResult for the direct bigjson call c1; saw %v", keysOfResults(results))
 	}
@@ -177,7 +177,7 @@ func TestCallMcpWithQueryE2EFailClosedThenRecovery(t *testing.T) {
 	}
 
 	// (2) RECOVERY: CallMcpWithQuery returned the small filtered subset, not an error.
-	q, ok := results["c2"]
+	q, ok := results[string(boundCallID(t, sess, "c2"))]
 	if !ok {
 		t.Fatalf("no EvToolResult for the CallMcpWithQuery call c2; saw %v", keysOfResults(results))
 	}

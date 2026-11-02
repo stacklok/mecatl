@@ -20,12 +20,12 @@ func TestDelegationTraceRejectsMalformedIDsPerLane(t *testing.T) {
 	trace = traceAppendTool(trace, valid, "Read", "b", "b")
 	for _, id := range []string{"bad\xff", strings.Repeat("x", 257)} {
 		trace = traceAppendTool(trace, id, "Read", "must not retain", "a")
-		trace = traceMarkToolResult(trace, id, "Read", "must not resolve", true, "a")
+		trace = traceMarkToolResult(trace, id, "must not resolve", true, "a")
 	}
 	if len(trace) != 2 || trace[0].id != valid || trace[1].id != valid || trace[0].resolved || trace[1].resolved {
 		t.Fatalf("malformed ID retained: %+v", trace)
 	}
-	trace = traceMarkToolResult(trace, valid, "Read", "done", false, "b")
+	trace = traceMarkToolResult(trace, valid, "done", false, "b")
 	if trace[0].resolved || !trace[1].resolved || trace[0].detail != "a" {
 		t.Fatalf("lane correlation lost: %+v", trace)
 	}
@@ -50,13 +50,13 @@ func TestDelegationTraceRetentionAndPairing(t *testing.T) {
 		t.Fatalf("retention: calls=%d messages=%d first=%+v", calls, messages, trace[0])
 	}
 	before := len(trace)
-	trace = traceMarkToolResult(trace, "0", "Read", "evicted", false)
-	trace = traceMarkToolResult(trace, "missing", "Read", "orphan", false)
-	trace = traceMarkToolResult(trace, "", "Read", "legacy", false)
+	trace = traceMarkToolResult(trace, "0", "evicted", false)
+	trace = traceMarkToolResult(trace, "missing", "orphan", false)
+	trace = traceMarkToolResult(trace, "", "legacy", false)
 	if len(trace) != before {
 		t.Fatal("result fabricated a row")
 	}
-	trace = traceMarkToolResult(trace, "128", "Read", "resolved", true)
+	trace = traceMarkToolResult(trace, "128", "resolved", true)
 	for _, row := range trace {
 		if row.kind != teamTraceTool {
 			continue
@@ -69,20 +69,20 @@ func TestDelegationTraceRetentionAndPairing(t *testing.T) {
 			t.Fatalf("other call resolved: %+v", row)
 		}
 	}
-	trace = traceMarkToolResult(trace, "128", "Read", "duplicate", false)
+	trace = traceMarkToolResult(trace, "128", "duplicate", false)
 	if trace[len(trace)-2].detail == "duplicate" {
 		t.Fatal("duplicate result changed status")
 	}
 }
 
 func TestDelegationOutOfOrderAndDuplicateCalls(t *testing.T) {
-	trace := traceMarkToolResult(nil, "id", "Read", "early", false)
+	trace := traceMarkToolResult(nil, "id", "early", false)
 	trace = traceAppendTool(trace, "id", "Read", "args")
 	trace = traceAppendTool(trace, "id", "Read", "replayed args")
 	if len(trace) != 1 || trace[0].resolved || trace[0].detail != "args" {
 		t.Fatalf("out of order or replay fabricated a call: %+v", trace)
 	}
-	trace = traceMarkToolResult(trace, "id", "Read", "done", false)
+	trace = traceMarkToolResult(trace, "id", "done", false)
 	trace = traceAppendTool(trace, "id", "Read", "late replay")
 	if len(trace) != 1 || !trace[0].resolved || trace[0].detail != "done" || trace[0].intent != "Read" {
 		t.Fatalf("late replay changed call: %+v", trace)
@@ -91,33 +91,33 @@ func TestDelegationOutOfOrderAndDuplicateCalls(t *testing.T) {
 
 func TestDelegationLegacyPairingAndLaneScoping(t *testing.T) {
 	trace := traceAppendTool(nil, "", "Read", "legacy")
-	trace = traceMarkToolResult(trace, "", "Read", "legacy result", false)
+	trace = traceMarkToolResult(trace, "", "legacy result", false)
 	trace = traceAppendTool(trace, "id", "Read", "identified")
-	if !trace[0].resolved || trace[1].resolved {
-		t.Fatalf("legacy matched ID call: %+v", trace)
+	if trace[0].resolved || trace[1].resolved {
+		t.Fatalf("ID-less result guessed a name match: %+v", trace)
 	}
-	trace = traceMarkToolResult(trace, "", "Read", "again", true)
-	if trace[0].isError || trace[0].detail != "legacy result" {
+	trace = traceMarkToolResult(trace, "", "again", true)
+	if trace[0].isError || trace[0].detail != "legacy" {
 		t.Fatalf("duplicate changed legacy: %+v", trace)
 	}
-	trace = traceMarkToolResult(trace, "id", "Read", "identified result", true)
+	trace = traceMarkToolResult(trace, "id", "identified result", true)
 	if !trace[1].resolved || !trace[1].isError {
 		t.Fatalf("ID result: %+v", trace)
 	}
 	mixed := traceAppendTool(traceAppendTool(nil, "", "Read", "legacy"), "id", "Read", "identified")
-	mixed = traceMarkToolResult(mixed, "", "Read", "uncertain", false)
+	mixed = traceMarkToolResult(mixed, "", "uncertain", false)
 	if mixed[0].resolved || mixed[1].resolved {
 		t.Fatalf("mixed IDs guessed legacy: %+v", mixed)
 	}
 	ambiguous := traceAppendTool(traceAppendTool(nil, "", "Read", "a"), "", "Read", "b")
-	ambiguous = traceMarkToolResult(ambiguous, "", "Read", "ambiguous", false)
+	ambiguous = traceMarkToolResult(ambiguous, "", "ambiguous", false)
 	if len(ambiguous) != 2 || ambiguous[0].resolved || ambiguous[1].resolved {
 		t.Fatalf("ambiguous legacy: %+v", ambiguous)
 	}
 	for i := 0; i < maxTraceEntries; i++ {
 		ambiguous = traceAppendTool(ambiguous, fmt.Sprint(i), "Read", "next")
 	}
-	ambiguous = traceMarkToolResult(ambiguous, "", "Read", "late", false)
+	ambiguous = traceMarkToolResult(ambiguous, "", "late", false)
 	if ambiguous[len(ambiguous)-1].resolved {
 		t.Fatal("legacy result after eviction guessed status")
 	}
@@ -265,8 +265,8 @@ func TestSubagentSharedParentLegacyBlockIsPerChild(t *testing.T) {
 	send("a", "tool.result", "", "must not guess")
 	card, _ := m.conv.subagentCard("parent")
 	for _, row := range card.Update.Trace {
-		if row.Lane == "b" && (!row.Resolved || row.Detail != "b result") {
-			t.Fatalf("other lane blocked legacy: %+v", row)
+		if row.Lane == "b" && (row.Resolved || row.Detail != "b legacy") {
+			t.Fatalf("ID-less result guessed an attachment: %+v", row)
 		}
 		if row.Lane == "a" && row.ID == "" && row.Resolved {
 			t.Fatalf("evicted legacy matched new call: %+v", row)
@@ -525,8 +525,8 @@ func TestDelegationIDLessResultRequiresToolName(t *testing.T) {
 				}
 			}
 			send("tool.result", "Read", "matched")
-			if got := trace(); len(got) != 1 || !got[0].resolved || got[0].detail != "matched" {
-				t.Fatalf("unique named legacy result not paired: %+v", got)
+			if got := trace(); len(got) != 1 || got[0].resolved || got[0].detail != "args" {
+				t.Fatalf("ID-less result guessed a named attachment: %+v", got)
 			}
 		})
 	}

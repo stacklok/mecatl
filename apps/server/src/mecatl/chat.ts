@@ -548,6 +548,7 @@ export function createMecatlChatService(
                 },
               ];
             }),
+            ...(message.providerPhase ? { providerPhase: message.providerPhase } : {}),
             role: message.role,
             text: note?.text ?? message.text,
             toolCalls: message.toolCalls.map((call) => ({

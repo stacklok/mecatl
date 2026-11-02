@@ -150,25 +150,25 @@ describe("authorization review", () => {
     }
   });
 
-  it("attaches a handoff only to the exact run and call row", () => {
+  it("attaches snapshot handoffs by canonical call, leaving missing targets standalone", () => {
     const messages = [
       {
         content: "Old",
         id: "old",
         role: "assistant",
-        tools: [{ args: "{}", id: "call-7", name: "Old", runId: "run-old" }],
+        tools: [{ args: "{}", id: "call-old", name: "Old", runId: "run-old" }],
       },
       {
         content: "Unknown",
         id: "unknown",
         role: "assistant",
-        tools: [{ args: "{}", id: "call-7", name: "Unknown" }],
+        tools: [{ args: "{}", id: "call-unknown", name: "Unknown" }],
       },
       {
         content: "Current",
         id: "current",
         role: "assistant",
-        tools: [{ args: "{}", id: "call-7", name: "Current", runId: "run-3" }],
+        tools: [{ args: "{}", id: "call-7", name: "Current" }],
       },
     ];
     const event = {
@@ -181,7 +181,7 @@ describe("authorization review", () => {
       },
       runId: "run-3",
     };
-    const exact = recordAuthorizationEvent(messages, event, "session-2", "current");
+    const exact = recordAuthorizationEvent(messages, event, "session-2", "unknown");
     expect(exact[0]?.authorizations).toBeUndefined();
     expect(exact[1]?.authorizations).toBeUndefined();
     expect(exact[2]?.authorizations).toEqual([pending]);
@@ -193,7 +193,9 @@ describe("authorization review", () => {
       "unknown",
     );
     expect(unprovable[0]?.authorizations).toBeUndefined();
-    expect(unprovable[1]?.authorizations).toEqual([pending]);
+    expect(unprovable[1]?.authorizations).toBeUndefined();
+    expect(unprovable[2]?.authorizations).toEqual([pending]);
+    expect(new Set(unprovable.map((message) => message.id)).size).toBe(3);
     const view = render(<ChatTranscript messages={unprovable} showToolCalls />);
     const unknownRow = screen.getByText("Tool: Unknown").closest("li");
     if (!unknownRow) throw new Error("The unknown row is missing");

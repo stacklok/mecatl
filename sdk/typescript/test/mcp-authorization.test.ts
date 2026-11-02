@@ -105,7 +105,7 @@ class AuthorizationTransport implements Transport {
     let value: Record<string, unknown>;
     switch (method.name) {
       case "GetCompatibilityInfo":
-        value = { apiMajor: 1, capabilities: {}, features: ["prompt_free_controls"] };
+        value = { apiMajor: 2, capabilities: {}, features: ["prompt_free_controls"] };
         break;
       case "GetSession":
         value = { session: { sessionId } };
@@ -194,7 +194,7 @@ function httpClient(
     requests.push({ body: init?.body, path });
     if (path === "/v1/compatibility") {
       return Response.json({
-        api_major: 1,
+        api_major: 2,
         capabilities: {},
         features: ["prompt_free_controls"],
       });

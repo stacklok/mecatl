@@ -46,8 +46,11 @@ func TestMecatuiToolcallsInspector_Scenario1_StreamingThroughOpenModel(t *testin
 	}
 	deliver(result("older", "canonical", "tool.result"))
 	deliver(result("reused", "old result", "tool.result"))
-	deliver(call("reused", "Write"))
-	deliver(result("reused", "new result", "tool.result"))
+	// A later accepted occurrence can have identical name/args, but a distinct
+	// canonical ID. No provider-era presentation matching is necessary.
+	deliver(call("canonical-next", "Edit"))
+	deliver(result("canonical-next", "new result", "tool.result"))
+	deliver(result("canonical-next", "new result", "tool.result")) // repeated final delivery
 	if s.selected != 0 || len(s.entries) != 3 || s.detailEntry == nil || s.detailEntry.callID != "older" {
 		t.Fatalf("live selection changed: %#v", s)
 	}
@@ -56,6 +59,9 @@ func TestMecatuiToolcallsInspector_Scenario1_StreamingThroughOpenModel(t *testin
 	}
 	for i, want := range []string{"canonical", "old result", "new result"} {
 		snap := m.conv.scrollback.SnapshotAt(s.entries[i].index)
+		if i == 2 && snap.Revision != 1 {
+			t.Fatalf("repeated final delivery mutated the settled row: %#v", snap)
+		}
 		if body := snap.Payload.(scrollback.ToolCardSnapshot).Result.Body; body != want {
 			t.Fatalf("scrollback %d = %q, want %q", i, body, want)
 		}

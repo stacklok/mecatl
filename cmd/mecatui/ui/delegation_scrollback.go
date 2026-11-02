@@ -168,7 +168,7 @@ func applyTeamMemberUpdate(update *scrollback.TeamUpdate, msg client.TeamMsg) {
 		lane.Idle, lane.Current, lane.ToolCount = false, msg.ToolName, lane.ToolCount+1
 		lane.Trace = scrollTrace(traceAppendTool(traceFromScroll(lane.Trace), msg.ChildToolCallID, msg.ToolName, msg.Detail))
 	case "tool.result", "tool.result.available":
-		lane.Trace = scrollTrace(traceSetToolResult(traceFromScroll(lane.Trace), msg.ChildToolCallID, msg.ToolName, msg.Detail, msg.IsError, msg.InnerKind == "tool.result.available"))
+		lane.Trace = scrollTrace(traceSetToolResult(traceFromScroll(lane.Trace), msg.ChildToolCallID, msg.Detail, msg.IsError, msg.InnerKind == "tool.result.available"))
 	case "turn.end":
 		lane.Idle, lane.Usage, lane.ContextUsed = false, sumScrollUsage(lane.Usage, msg.Usage), msg.Usage.InputTokens
 		if msg.ContextWindow > 0 {

@@ -24,7 +24,7 @@ export function recordAuthorizationEvent(
   messages: ChatMessage[],
   event: { kind: string; payload?: unknown; runId: string },
   sessionId: string,
-  activeAssistantId: string,
+  _activeAssistantId: string,
 ): ChatMessage[] {
   if (event.kind !== "authorization.required" && event.kind !== "authorization.resolved") {
     return messages;
@@ -83,16 +83,20 @@ export function recordAuthorizationEvent(
   };
   let target = -1;
   for (let index = messages.length - 1; index >= 0; index -= 1) {
-    if (messages[index]?.tools?.some((tool) => tool.id === callId && tool.runId === event.runId)) {
+    if (messages[index]?.tools?.some((tool) => tool.id === callId)) {
       target = index;
       break;
     }
   }
-  if (target < 0) target = messages.findIndex((message) => message.id === activeAssistantId);
   if (target < 0) {
     return [
       ...messages,
-      { authorizations: [handoff], content: "", id: activeAssistantId, role: "assistant" },
+      {
+        authorizations: [handoff],
+        content: "",
+        id: `authorization-${JSON.stringify([sessionId, authorizationId])}`,
+        role: "assistant",
+      },
     ];
   }
   return messages.map((message, index) =>

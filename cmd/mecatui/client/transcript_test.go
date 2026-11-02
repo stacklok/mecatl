@@ -25,7 +25,7 @@ func TestGetSessionTranscriptMapsProtoFreeAuthoritativeData(t *testing.T) {
 		Complete: true,
 		Activity: &mecatlv1.ActivityReplayStatus{Available: true},
 		Messages: []*mecatlv1.ConversationMessage{{
-			Role: "assistant", Text: "visible", Reasoning: "must-not-cross-client-boundary",
+			Role: "assistant", Text: "visible", ProviderPhase: "commentary",
 			ToolCalls: []*mecatlv1.ToolCall{{Id: "call-1", Name: "Read", Args: `{"path":"x"}`}},
 		}},
 	}}
@@ -44,7 +44,7 @@ func TestGetSessionTranscriptMapsProtoFreeAuthoritativeData(t *testing.T) {
 	if len(got.Messages) != 1 || got.Messages[0].Text != "visible" || len(got.Messages[0].ToolCalls) != 1 {
 		t.Fatalf("messages = %+v", got.Messages)
 	}
-	if got.Messages[0].Reasoning != "" || got.Messages[0].ProviderPhase != "" || got.Messages[0].ReasoningItemID != "" {
-		t.Fatalf("provider-private state entered transcript client: %+v", got.Messages[0])
+	if got.Messages[0].ProviderPhase != "commentary" {
+		t.Fatalf("public provider phase lost: %+v", got.Messages[0])
 	}
 }

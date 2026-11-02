@@ -15,6 +15,41 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/server"
 )
 
+type countingPublicationEvaluator struct{ calls int }
+
+func (e *countingPublicationEvaluator) Evaluate(context.Context, learning.SkillEvaluationRequest) (learning.SkillEvaluation, error) {
+	e.calls++
+	return learning.SkillEvaluation{Verdict: learning.EvaluationPass, FixtureIDs: []string{"publication-proof"}}, nil
+}
+
+func TestBuildProcedureProcessorRejectsExcludedSourceBeforeEffects(t *testing.T) {
+	input, outcome, digest := reflectionOutcomeFixture(t, learning.CandidateProcedure)
+	sources := currentTestSourceStore(t, input.Trajectory)
+	source, err := sources.Load(t.Context(), input.Trajectory.SessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	source.ExcludeFromLearning()
+	if err := sources.Save(t.Context(), source); err != nil {
+		t.Fatal(err)
+	}
+	proposals, skills := memproposal.New(), memskill.New()
+	part := learning.ProposalPartition{Principal: "principal", Project: input.Trajectory.Workspace}
+	records, err := proposals.StageBatch(t.Context(), part, digest, outcome.Candidates, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	evaluator := &countingPublicationEvaluator{}
+	processor := buildProcedureProcessor(Config{LearningMode: learning.Auto, learningSourceStore: sources, SkillEvaluator: evaluator}, catalogAssets{reflectionRepository: proposals, learnedSkills: skills, skillOwner: "reflection"})
+	if err := processor(t.Context(), records[0], learning.Auto); !errors.Is(err, learning.ErrInvalidEvidence) {
+		t.Fatalf("excluded procedure accepted: %v", err)
+	}
+	page, err := skills.List(t.Context(), learning.SkillPartition(part), learning.SkillList{})
+	if err != nil || len(page.Versions) != 0 || evaluator.calls != 0 {
+		t.Fatalf("excluded procedure caused effects: versions=%d model=%d err=%v", len(page.Versions), evaluator.calls, err)
+	}
+}
+
 // blockingWriteSkillRepository pauses the FIRST mutating call — CreateDraft,
 // which skillmaterialize.Materialize issues to create the draft version,
 // BEFORE skilllifecycle.Pipeline.Process ever runs — until release is
@@ -61,7 +96,7 @@ func TestBuildProcedureProcessorHoldsPublicationLockForNonPublishablePartition(t
 	// partition NON-publishable (the exact "untrusted_project_ignored" shape):
 	// publishable := partition.Project=="" || (partition.Project==cfg.Workspace && projectIngestionAdmitted(cfg))
 	// both disjuncts are false here.
-	cfg := Config{LearningMode: learning.Auto, Workspace: input.Trajectory.Workspace, TrustProject: false}
+	cfg := Config{learningSourceStore: currentTestSourceStore(t, input.Trajectory), LearningMode: learning.Auto, Workspace: input.Trajectory.Workspace, TrustProject: false}
 	processor := buildProcedureProcessor(cfg, assets)
 	if processor == nil {
 		t.Fatal("buildProcedureProcessor returned nil")

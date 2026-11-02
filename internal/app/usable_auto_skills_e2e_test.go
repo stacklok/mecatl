@@ -99,11 +99,15 @@ func TestUsableAutoSkillsStockBuildPublishesReflectedProcedure(t *testing.T) {
 		t.Fatal(err)
 	}
 	var toolResult, finalResponse, secondRunErr string
+	var skillID session.ToolCallID
 	for event := range secondRun.Events() {
+		if event.ToolCall != nil && event.ToolCall.Name == "Skill" {
+			skillID = event.ToolCall.ID
+		}
 		if event.Type == session.EvPermissionAsk && event.Ask != nil {
 			secondRun.Approve(event.Ask.AskID, session.VerdictAllowOnce)
 		}
-		if event.Type == session.EvToolResult && event.ToolResult != nil && event.ToolResult.CallID == "use-skill" {
+		if event.Type == session.EvToolResult && event.ToolResult != nil && event.ToolResult.CallID == skillID {
 			toolResult = event.ToolResult.Content
 		}
 		if event.Type == session.EvResult && event.Result != nil {

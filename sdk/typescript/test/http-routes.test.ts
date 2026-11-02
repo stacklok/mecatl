@@ -69,7 +69,7 @@ class RecordingTransport implements Transport {
     const message = create(
       method.output,
       (method.name === "GetCompatibilityInfo"
-        ? { apiMajor: 1, capabilities: {}, features: ["server_info"] }
+        ? { apiMajor: 2, capabilities: {}, features: ["server_info"] }
         : {}) as MessageInitShape<O>,
     );
     return {
@@ -251,7 +251,7 @@ describe("complete HTTP route transport", () => {
       const fetch: typeof globalThis.fetch = async (input) => {
         const path = new URL(String(input)).pathname;
         if (path === "/v1/compatibility")
-          return Response.json({ api_major: 1, capabilities: {}, features: ["server_info"] });
+          return Response.json({ api_major: 2, capabilities: {}, features: ["server_info"] });
         streamRequested = true;
         const body = new ReadableStream<Uint8Array>({
           start(controller) {
@@ -309,7 +309,7 @@ describe("complete HTTP route transport", () => {
         signal: init?.signal !== undefined && init.signal !== null,
       });
       if (url.pathname === "/v1/compatibility")
-        return Response.json({ api_major: 1, capabilities: {}, features: ["server_info"] });
+        return Response.json({ api_major: 2, capabilities: {}, features: ["server_info"] });
       if (sseRoutePatterns.some((pattern) => pattern.test(url.pathname))) {
         return new Response("data: {}\n\n", {
           headers: { "content-type": "text/event-stream" },
@@ -359,7 +359,7 @@ describe("complete HTTP route transport", () => {
         fetch: async () => {
           if (!compatible) {
             compatible = true;
-            return Response.json({ api_major: 1, capabilities: {}, features: ["server_info"] });
+            return Response.json({ api_major: 2, capabilities: {}, features: ["server_info"] });
           }
           return Response.json(
             { code: "management_unauthorized", detail: "denied" },

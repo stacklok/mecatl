@@ -129,7 +129,7 @@ func harnessRequestText(request port.LLMRequest) string {
 }
 
 func TestHarnessContext_HelpdeskDeploymentAndServiceSources(t *testing.T) {
-	var contexts [][]session.Message
+	var contexts [][]port.LLMMessage
 	for _, transport := range []string{"file", "service"} {
 		t.Run(transport, func(t *testing.T) {
 			cfg, _ := harnessHybridConfig(t, false, "combine")
@@ -155,7 +155,7 @@ func TestHarnessContext_HelpdeskDeploymentAndServiceSources(t *testing.T) {
 			events := harnessRun(t, b, t.Context(), sess.ID, "helpdesk task")
 			var activated bool
 			for _, ev := range events {
-				if ev.ToolResult != nil && ev.ToolResult.CallID == "skill" {
+				if ev.ToolResult != nil && ev.ToolResult.CallID == eventCallID(t, events, "Skill", 0) {
 					activated = !ev.ToolResult.IsError && strings.Contains(ev.ToolResult.Content, "ORGANIZATION-SKILL")
 				}
 			}
@@ -208,13 +208,13 @@ func TestHarnessContext_HybridCodingContext(t *testing.T) {
 			results[ev.ToolResult.CallID] = *ev.ToolResult
 		}
 	}
-	for _, call := range []session.ToolCallID{"read", "shell"} {
+	for _, call := range []session.ToolCallID{eventCallID(t, events, "Read", 0), eventCallID(t, events, "Shell", 0)} {
 		result, ok := results[call]
 		if !ok || result.IsError || !strings.Contains(result.Content, "REPOSITORY-DATA") {
 			t.Fatalf("%s did not use coherent repository execution: %+v", call, result)
 		}
 	}
-	skill, ok := results["skill"]
+	skill, ok := results[eventCallID(t, events, "Skill", 0)]
 	if !ok || skill.IsError || !strings.Contains(skill.Content, "REPOSITORY-SKILL") || strings.Contains(skill.Content, "references/checklist") {
 		t.Fatalf("skill override merged/leaked organization bundle: %+v", skill)
 	}
@@ -252,7 +252,7 @@ func TestHarnessContext_CombineExcludeAndDisableRepositoryContext(t *testing.T) 
 			events := harnessRun(t, b, t.Context(), id, "task")
 			var read bool
 			for _, ev := range events {
-				if ev.ToolResult != nil && ev.ToolResult.CallID == "read" {
+				if ev.ToolResult != nil && ev.ToolResult.CallID == eventCallID(t, events, "Read", 0) {
 					read = !ev.ToolResult.IsError && strings.Contains(ev.ToolResult.Content, "REPOSITORY-DATA")
 				}
 			}

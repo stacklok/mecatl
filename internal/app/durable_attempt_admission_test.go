@@ -16,7 +16,7 @@ import (
 
 func durableAdmissionTrajectory(runID string) learning.Trajectory {
 	messages := []session.Message{session.NewUserMessage("Create a skill from this verified workflow")}
-	trajectory := learning.NewTrajectory("source-session", "/workspace", session.StopEndTurn, session.Usage{}, messages)
+	trajectory := currentTestTrajectory("source-session", "/workspace", session.StopEndTurn, session.Usage{}, messages)
 	trajectory.RunID = runID
 	trajectory.Kind = session.SessionKindMain
 	trajectory.Current = learning.MessageSpan{Start: 0, End: len(messages)}
