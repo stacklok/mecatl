@@ -356604,6 +356604,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1793561968773,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "da8c09e896605e193090b7e8038106e71aa18e4a",
+          "message": "fix(server): diagnose learned-skill listing failures (#2644)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-11-01T17:30:47-08:00",
+          "tree_id": "ae5532b6f6899c6a20f28ef1b6e8d04e7a9c8328",
+          "url": "https://github.com/stacklok/mecatl/commit/da8c09e896605e193090b7e8038106e71aa18e4a"
+        },
+        "date": 1793583792090,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -515266,6 +515300,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1793583788781,
+  "lastUpdate": 1793583793286,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
