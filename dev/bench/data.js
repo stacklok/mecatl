@@ -397602,6 +397602,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1793652037705,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "29541485+ChrisJBurns@users.noreply.github.com",
+            "name": "Chris Burns",
+            "username": "ChrisJBurns"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "994d72cd2d7bb7be77e9291e047ae2ee8092697d",
+          "message": "refactor(server): map an open's session_closed in identityBrokerFailure (#2652)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-11-02T20:40:27Z",
+          "tree_id": "872d46cc13a77e559a86a1b1132e3e3e45276429",
+          "url": "https://github.com/stacklok/mecatl/commit/994d72cd2d7bb7be77e9291e047ae2ee8092697d"
+        },
+        "date": 1793652796982,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 16151,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12909.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 794,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -518366,6 +518405,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1793652793200,
+  "lastUpdate": 1793652798100,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
