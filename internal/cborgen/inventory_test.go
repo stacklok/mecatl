@@ -31,13 +31,11 @@ func copiedRepository(t *testing.T) string {
 		writeFixture(t, filepath.Join(root, path), string(data))
 	}
 	for _, path := range []string{
-		"go.mod", "go.sum", "engine/go.mod", "engine/go.sum", "Taskfile.yml",
-		"website/Taskfile.yml", "sdk/typescript/Taskfile.yml",
-		"sdk/typescript/examples/slack-bot/Taskfile.yml", "apps/Taskfile.yml",
-		"deploy/mecak8s-kind/Taskfile.yml", "deploy/mecak8s-vmcp/Taskfile.yml",
+		"go.mod", "go.sum", "engine/go.mod", "engine/go.sum",
 	} {
 		copyFile(path)
 	}
+	copyTaskfiles(t, source, root)
 	for _, dir := range []string{"internal/cborgen", "engine/kernel/codec"} {
 		err := filepath.WalkDir(filepath.Join(source, dir), func(path string, entry fs.DirEntry, err error) error {
 			if err != nil {
@@ -57,6 +55,76 @@ func copiedRepository(t *testing.T) string {
 		}
 	}
 	return root
+}
+
+// copyTaskfiles follows the source tree rather than duplicating the root include
+// list, which can grow independently when CI merges the branch with main.
+func copyTaskfiles(t *testing.T, source, destination string) {
+	t.Helper()
+	err := filepath.WalkDir(source, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() {
+			switch entry.Name() {
+			case ".git", ".scratch", ".tools", "node_modules", "vendor":
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if entry.Name() != "Taskfile.yml" && entry.Name() != "Taskfile.yaml" {
+			return nil
+		}
+		rel, err := filepath.Rel(source, path)
+		if err != nil {
+			return err
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		writeFixture(t, filepath.Join(destination, rel), string(data))
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCopiedTaskfilesIncludeNewTargets(t *testing.T) {
+	task, err := exec.LookPath("task")
+	if err != nil {
+		t.Skip("task executable required for Taskfile integration")
+	}
+	source, destination := t.TempDir(), t.TempDir()
+	writeFixture(t, filepath.Join(source, "Taskfile.yml"), `version: '3'
+includes:
+  idbroker: deploy/mecak8s-idbroker/Taskfile.yml
+tasks:
+  probe:
+    cmds:
+      - task: idbroker:probe
+`)
+	writeFixture(t, filepath.Join(source, "deploy/mecak8s-idbroker/Taskfile.yml"), `version: '3'
+includes:
+  nested: nested/Taskfile.yml
+tasks:
+  probe:
+    cmds:
+      - task: nested:probe
+`)
+	writeFixture(t, filepath.Join(source, "deploy/mecak8s-idbroker/nested/Taskfile.yml"), `version: '3'
+tasks:
+  probe:
+    cmds:
+      - echo copied-includes-executed
+`)
+	copyTaskfiles(t, source, destination)
+	cmd := exec.Command(task, "--dir", destination, "probe")
+	cmd.Dir = t.TempDir()
+	if out, err := cmd.CombinedOutput(); err != nil || !strings.Contains(string(out), "copied-includes-executed") {
+		t.Fatalf("execute copied Taskfile includes: %s %v", out, err)
+	}
 }
 
 type fileState struct {
