@@ -41,9 +41,18 @@ type fakeAS1 struct {
 	mu     sync.Mutex
 	refuse error
 	calls  int
+	// during, when set, runs inside each exchange without a.mu held, as
+	// something landing while AS-1 answers.
+	during func()
 }
 
 func (a *fakeAS1) Exchange(_ context.Context, req identitybroker.TokenExchange) (identitybroker.TokenExchangeResult, error) {
+	a.mu.Lock()
+	during := a.during
+	a.mu.Unlock()
+	if during != nil {
+		during()
+	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.calls++
@@ -74,6 +83,26 @@ func (a *fakeAS1) setRefusal(err error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.refuse = err
+}
+
+// closeDuringExchange makes each later exchange close the broker session of
+// the host session the latest open named, as a CloseSession landing while
+// AS-1 converts the token.
+func (f *sessionOpenFixture) closeDuringExchange(t *testing.T) {
+	f.as1.mu.Lock()
+	defer f.as1.mu.Unlock()
+	f.as1.during = func() {
+		opens := f.broker.openRequests()
+		host := session.SessionID(opens[len(opens)-1].HostSessionID)
+		open, ok, err := f.broker.inner.FindSession(context.Background(), identitybroker.FindSessionRequest{RootHostSessionID: string(host)})
+		if err != nil || !ok {
+			t.Errorf("no broker session to close during the exchange (%v)", err)
+			return
+		}
+		if err := f.broker.inner.CloseSession(context.Background(), identitybroker.CloseSessionRequest{SessionID: open.ID, Reason: identitybroker.ReasonSessionClosed}); err != nil {
+			t.Error(err)
+		}
+	}
 }
 
 func (a *fakeAS1) exchanges() int {
@@ -217,7 +246,9 @@ func TestIdentityBrokerOpenRefusalMapping(t *testing.T) {
 		// ownedByBob runs a prompt on a session whose broker session belongs
 		// to another user, instead of a create.
 		ownedByBob bool
-		want       error
+		// closeDuring closes the broker session while AS-1 converts the token.
+		closeDuring bool
+		want        error
 		// as1Called is whether AS-1 sees the token; the broker's own checks
 		// refuse without calling it.
 		as1Called bool
@@ -238,6 +269,9 @@ func TestIdentityBrokerOpenRefusalMapping(t *testing.T) {
 		{name: "invalid_client", refuse: func(a *fakeAS1) {
 			a.setRefusal(identitybroker.NewServerRefusal(http.StatusUnauthorized, "invalid_client", ""))
 		}, want: server.ErrInternal, as1Called: true},
+		// The design fails a request whose broker session closed after its
+		// token was converted as for a refused token.
+		{name: "session_closed during exchange", refuse: func(*fakeAS1) {}, closeDuring: true, want: server.ErrBearerRejected, as1Called: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			llm := mockllm.New(mockllm.TextTurn("must not run"))
@@ -266,6 +300,9 @@ func TestIdentityBrokerOpenRefusalMapping(t *testing.T) {
 				}
 			}
 			tc.refuse(f.as1)
+			if tc.closeDuring {
+				f.closeDuringExchange(t)
+			}
 			bearer := f.token()
 			if tc.otherSubID {
 				bearer = accessTokenFor(&session.Principal{Issuer: brokerAlice.Issuer, Subject: "bob-117"}, "jti-mismatch")
@@ -721,6 +758,33 @@ func TestIdentityBrokerConvertsATokenForASessionHoldingNone(t *testing.T) {
 	}
 	if got, ok := f.broker.find(t, sess.ID); !ok || !got.HoldsRefreshToken || f.as1.exchanges() != 1 {
 		t.Fatalf("after a run with a token: broker session %+v (%v), %d exchanges; want it holding the run's", got, ok, f.as1.exchanges())
+	}
+}
+
+// TestIdentityBrokerCloseDuringConversionRejectsTheToken proves a run whose
+// broker session closes while its token is converted fails as for a refused
+// token, having changed nothing.
+func TestIdentityBrokerCloseDuringConversionRejectsTheToken(t *testing.T) {
+	llm := mockllm.New(mockllm.TextTurn("must not run"))
+	f := newSessionOpenFixture(t, llm)
+	sess, err := f.svc.CreateSession(aliceContext(t), session.ModeDefault, session.Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.closeDuringExchange(t)
+	before := f.state(t)
+	f.within(t, func(ctx context.Context) { err = runToEnd(ctx, t, f.svc, sess.ID) })
+	if !errors.Is(err, server.ErrBearerRejected) {
+		t.Fatalf("run whose broker session closed during the conversion: %v, want ErrBearerRejected", err)
+	}
+	if n := f.as1.exchanges(); n != 1 {
+		t.Fatalf("exchanges = %d, want 1", n)
+	}
+	if after := f.state(t); after != before {
+		t.Fatalf("the refused run changed state:\nbefore:\n%s\nafter:\n%s", before, after)
+	}
+	if llm.Calls() != 0 {
+		t.Fatal("the agent ran")
 	}
 }
 
