@@ -12,6 +12,7 @@ import (
 	"github.com/stacklok/mecatl/engine/adapter/skillfs"
 	"github.com/stacklok/mecatl/engine/learning"
 	"github.com/stacklok/mecatl/engine/tool"
+	"github.com/stacklok/mecatl/internal/adapter/server"
 )
 
 // blockingWriteSkillRepository pauses the FIRST mutating call — CreateDraft,
@@ -43,7 +44,7 @@ func (r *blockingWriteSkillRepository) CreateDraft(ctx context.Context, partitio
 // branch. Before the fix, a non-publishable write acquired no lock at all, so
 // a concurrent reader (ListLearnedSkills's own publishPartition, guarded by
 // the SAME assets.skillPublication instance) could observe the partition's
-// generation change mid-read and fail with errLearnedSkillGenerationChanged.
+// generation change mid-read and fail with server.ErrLearnedSkillGenerationChanged.
 // This test proves the lock, deterministically: it forces the processor's
 // write to pause mid-flight and asserts a concurrent lock() attempt on the
 // SAME partition blocks until the write finishes, rather than relying on the
@@ -276,7 +277,7 @@ func TestDelayedPublicationCannotRevokeNewerGeneration(t *testing.T) {
 	}
 
 	close(barrier.releases[0])
-	if err := <-oldDone; !errors.Is(err, errLearnedSkillGenerationChanged) {
+	if err := <-oldDone; !errors.Is(err, server.ErrLearnedSkillGenerationChanged) {
 		t.Fatalf("stale publisher error=%v", err)
 	}
 	view := catalog.View(partition)
