@@ -358752,6 +358752,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1793652032951,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "29541485+ChrisJBurns@users.noreply.github.com",
+            "name": "Chris Burns",
+            "username": "ChrisJBurns"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "994d72cd2d7bb7be77e9291e047ae2ee8092697d",
+          "message": "refactor(server): map an open's session_closed in identityBrokerFailure (#2652)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-11-02T20:40:27Z",
+          "tree_id": "872d46cc13a77e559a86a1b1132e3e3e45276429",
+          "url": "https://github.com/stacklok/mecatl/commit/994d72cd2d7bb7be77e9291e047ae2ee8092697d"
+        },
+        "date": 1793652792070,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -518332,6 +518366,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1793652788170,
+  "lastUpdate": 1793652793200,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
