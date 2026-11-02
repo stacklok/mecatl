@@ -359110,6 +359110,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1793652792070,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "tgrunnagle@gmail.com",
+            "name": "Trey",
+            "username": "tgrunnagle"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "7d74f30262415f703cacf7f1248e108ccfaae127",
+          "message": "fix(placement): reattach worktree sessions after HEAD moves (#2624)\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-02T13:10:43-08:00",
+          "tree_id": "593a166732834a04ee0db47e3614281ec668889c",
+          "url": "https://github.com/stacklok/mecatl/commit/7d74f30262415f703cacf7f1248e108ccfaae127"
+        },
+        "date": 1793654617950,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -518843,6 +518877,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1793654614949,
+  "lastUpdate": 1793654618797,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
