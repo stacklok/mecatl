@@ -211,6 +211,16 @@ var _ = ginkgo.Describe("hosted AS-1 signs mecatui in through Dex", ginkgo.Seria
 		expectAS1Owner(ctx, client, signedIn.AccessToken, aliceSession, subID)
 	})
 
+	ginkgo.It("converts the sign-in at AS-1 when the session opens: a second session with the same access token is refused", func() {
+		ctx, cancel := shortCtx(60 * time.Second)
+		defer cancel()
+		// AS-1 converts each access token once (its jti is single use), so the
+		// refusal proves the first open exchanged the token at the real AS-1.
+		expectAS1SessionOpenRefused(ctx, client, signedIn.AccessToken, "bearer_rejected")
+		gomega.Expect(as1ListSessions(ctx, client, signedIn.AccessToken)).To(gomega.ContainElement(aliceSession),
+			"the refused open must leave the first session in place")
+	})
+
 	ginkgo.It("keeps bob, signed in through AS-1 and Dex, out of alice's session", func() {
 		ctx, cancel := shortCtx(90 * time.Second)
 		defer cancel()
@@ -332,6 +342,10 @@ var _ = ginkgo.Describe("hosted AS-1 signs mecatui in through Dex", ginkgo.Seria
 		gomega.Expect(status).To(gomega.Equal(http.StatusCreated),
 			"an access token AS-1 issued before the restart was refused after it; the signing key comes from the Secret")
 		expectAS1Owner(reqCtx, client, beforeRestart, sessionID, subID)
+		// The restart dropped AS-1's state and the broker's key, so that open
+		// converted at the new AS-1 with the new key; a second open with the same
+		// token proves it did.
+		expectAS1SessionOpenRefused(reqCtx, client, beforeRestart, "bearer_rejected")
 
 		status, raw := as1Do(reqCtx, client, http.MethodPost, as1Issuer+"/oauth/token", "", url.Values{
 			"grant_type": {"refresh_token"}, "refresh_token": {refreshBeforeRestart},
@@ -424,6 +438,19 @@ func expectAS1AccessToken(raw string) as1SubjectID {
 }
 
 // as1CreateSession creates a session over HTTPS with bearer.
+// expectAS1SessionOpenRefused asserts that opening a session with bearer is
+// refused with 401 and the problem code want.
+func expectAS1SessionOpenRefused(ctx context.Context, client *http.Client, bearer, want string) {
+	ginkgo.GinkgoHelper()
+	status, raw := as1Do(ctx, client, http.MethodPost, as1Resource+"/v1/sessions", bearer, defaultSessionCreateBody())
+	gomega.Expect(status).To(gomega.Equal(http.StatusUnauthorized), "POST /v1/sessions: %s", formatBody(raw))
+	var problem struct {
+		Code string `json:"code"`
+	}
+	gomega.Expect(json.Unmarshal(raw, &problem)).To(gomega.Succeed(), "decode %s", formatBody(raw))
+	gomega.Expect(problem.Code).To(gomega.Equal(want), "POST /v1/sessions: %s", formatBody(raw))
+}
+
 func as1CreateSession(ctx context.Context, client *http.Client, bearer string) (int, string) {
 	ginkgo.GinkgoHelper()
 	status, raw := as1Do(ctx, client, http.MethodPost, as1Resource+"/v1/sessions", bearer, defaultSessionCreateBody())
