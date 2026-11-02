@@ -358036,6 +358036,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1793649013825,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "29541485+ChrisJBurns@users.noreply.github.com",
+            "name": "Chris Burns",
+            "username": "ChrisJBurns"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "2b43b448953a0cf9ebceaa098a71fe32c6d48785",
+          "message": "feat(identitybroker): prove reopen after hard expiry; reject a token whose session closed mid-conversion (#2648)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-11-02T20:15:32Z",
+          "tree_id": "41565406f4cbf1ef9d9e607e97673005503ecad4",
+          "url": "https://github.com/stacklok/mecatl/commit/2b43b448953a0cf9ebceaa098a71fe32c6d48785"
+        },
+        "date": 1793651274777,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -517310,6 +517344,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1793651270312,
+  "lastUpdate": 1793651275636,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
