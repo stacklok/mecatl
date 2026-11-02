@@ -25,6 +25,10 @@ type assistantRail struct {
 	lines  []string // body lines of the previous render
 	railed []string // each line rendered alone through style
 	widths []int    // cell width of each railed line
+
+	// rendered counts lines rendered through style. It is the test seam proving
+	// a frame that changes one line renders only that line.
+	rendered int
 }
 
 // render returns a.style.Render(body).
@@ -38,6 +42,7 @@ func (a *assistantRail) render(body string) string {
 	a.railed, a.widths = a.railed[:keep], a.widths[:keep]
 	for _, line := range lines[keep:] {
 		out := a.style.Render(line)
+		a.rendered++
 		a.railed = append(a.railed, out)
 		a.widths = append(a.widths, ansi.StringWidth(out))
 	}

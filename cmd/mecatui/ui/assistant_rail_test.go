@@ -55,10 +55,10 @@ func TestAssistantRailMatchesLipgloss(t *testing.T) {
 func TestAssistantRailReusesUnchangedLines(t *testing.T) {
 	rail := newTestRail(newStreamTestRenderer(60))
 	rail.render("first line\nsecond line\nthird")
-	first := rail.railed[0]
+	base := rail.rendered
 	rail.render("first line\nsecond line\nthird line grows")
-	if len(rail.railed) != 3 || rail.railed[0] != first {
-		t.Fatalf("unchanged lines must be reused, got %q", rail.railed)
+	if n := rail.rendered - base; n != 1 || len(rail.railed) != 3 {
+		t.Fatalf("growing the last line must render only that line, rendered %d of %d", n, len(rail.railed))
 	}
 	if want := rail.style.Render("third line grows"); rail.railed[2] != want {
 		t.Errorf("changed line must be re-rendered: got %q, want %q", rail.railed[2], want)

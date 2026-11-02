@@ -215,6 +215,27 @@ func TestStreamMarkdownResetsOnRevision(t *testing.T) {
 	}
 }
 
+// TestStreamMarkdownReusesRendererSetup: the goldmark parser and ANSI renderer
+// are built once per wrap width. Deltas, a switch to another block, and a
+// conversation rebuild reuse them; only a width change builds a new one.
+func TestStreamMarkdownReusesRendererSetup(t *testing.T) {
+	r := newStreamTestRenderer(80)
+	r.markdownStreamed(1, "First paragraph.\n\nSecond")
+	md := r.stream.md
+	r.markdownStreamed(1, "First paragraph.\n\nSecond paragraph.\n\nThird")
+	r.markdownStreamed(2, "Another block.")
+	r.resetBlockCaches()
+	r.markdownStreamed(1, "A rebuilt conversation's answer.")
+	if r.stream.md != md {
+		t.Fatal("same-width deltas, a block change, and a rebuild must reuse the renderer")
+	}
+	r.setWidth(60)
+	r.markdownStreamed(1, "A rebuilt conversation's answer, narrower.")
+	if r.stream.md == md {
+		t.Fatal("a width change must build a renderer for the new width")
+	}
+}
+
 // TestStreamMarkdownCoalescedRewriteOfSettledBlock: one frame can add enough
 // lines to turn a settled paragraph into a definition-list term while the block
 // count also grows. The source before the split is unchanged, so only the block
