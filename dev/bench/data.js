@@ -357678,6 +357678,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1793613820025,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "29541485+ChrisJBurns@users.noreply.github.com",
+            "name": "Chris Burns",
+            "username": "ChrisJBurns"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "762eb04b9a0a1c6399a1b432fe47a689b858cbee",
+          "message": "fix(mecak8s): resolve hosted AS-1 before the execution checks; correct identity docs (#2647)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-11-02T19:36:59Z",
+          "tree_id": "45f2c619e466f01c302c6bcf96f9ec7c65bebfcb",
+          "url": "https://github.com/stacklok/mecatl/commit/762eb04b9a0a1c6399a1b432fe47a689b858cbee"
+        },
+        "date": 1793649013825,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -516799,6 +516833,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1793649010249,
+  "lastUpdate": 1793649014612,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
