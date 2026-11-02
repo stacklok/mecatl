@@ -396411,6 +396411,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1793613824843,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "29541485+ChrisJBurns@users.noreply.github.com",
+            "name": "Chris Burns",
+            "username": "ChrisJBurns"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "762eb04b9a0a1c6399a1b432fe47a689b858cbee",
+          "message": "fix(mecak8s): resolve hosted AS-1 before the execution checks; correct identity docs (#2647)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-11-02T19:36:59Z",
+          "tree_id": "45f2c619e466f01c302c6bcf96f9ec7c65bebfcb",
+          "url": "https://github.com/stacklok/mecatl/commit/762eb04b9a0a1c6399a1b432fe47a689b858cbee"
+        },
+        "date": 1793649019144,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 16149,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12909,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 794,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -516833,6 +516872,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1793649014612,
+  "lastUpdate": 1793649020939,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
