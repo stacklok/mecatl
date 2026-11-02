@@ -111,7 +111,7 @@ func convTopRow(m Model) int {
 func bodyOwnerOpen(m Model) bool {
 	return m.sessionDetailsOpen || m.team.view != teamNone ||
 		m.agentsInv.view != agentsInvNone || m.modal != nil ||
-		m.connect.open || m.executionPicker.open
+		m.executionPicker.open
 }
 
 // selectable reports whether a left-click may START a selection right now. It is

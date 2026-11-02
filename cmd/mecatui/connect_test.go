@@ -114,6 +114,8 @@ func TestCanonicalSavedTargetFlowsThroughRecoveryRestart(t *testing.T) {
 	})
 	model, _ := m.Update(m.Init()())
 	m = model.(ui.Model)
+	model, _ = m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = model.(ui.Model)
 	model, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = model.(ui.Model)
 	model, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
@@ -965,6 +967,8 @@ func TestRecoveryRestartFailureClearsStaleAuthRecovery(t *testing.T) {
 			m := ui.New(ui.Deps{Connect: staticConnectController{target: target}, ConnectOpen: true, ConnectReason: reopened.connectReason, ConnectTarget: reopened.connectTarget, ConnectResumeSessionID: reopened.connectResumeSessionID, Theme: theme.New("aztec", theme.AztecPalette()), Ctx: t.Context(), NoAltScreen: true})
 			model, _ := m.Update(m.Init()())
 			m = model.(ui.Model)
+			model, _ = m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+			m = model.(ui.Model)
 			model, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 			m = model.(ui.Model)
 			model, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
@@ -1052,6 +1056,7 @@ func TestConnectRestartCompatibilityFailureReopensSafeRecovery(t *testing.T) {
 				}
 				model := ui.New(ui.Deps{Connect: staticConnectController{target: target}, ConnectOpen: true, ConnectError: recovery.connectError, ConnectReason: recovery.connectReason, ConnectTarget: recovery.connectTarget, ConnectResumeSessionID: recovery.connectResumeSessionID, Theme: theme.New("aztec", theme.AztecPalette()), Ctx: t.Context(), NoAltScreen: true})
 				updated, _ := model.Update(model.Init()())
+				updated, _ = updated.(ui.Model).Update(tea.WindowSizeMsg{Width: 160, Height: 48})
 				view := updated.(ui.Model).View().Content
 				if !strings.Contains(view, tc.want) || (tc.noRemote != "" && strings.Contains(view, tc.noRemote)) || strings.Contains(view, "Authentication needs attention.") {
 					t.Fatalf("recovery UI = %q", view)

@@ -42,8 +42,10 @@ func TestMecatuiCardLayout_Scenario3_DynamicDetailsFitWidth(t *testing.T) {
 		assertFits(t, "agents", renderAgentsInvPanel(th, agentsInvState{agents: []client.Agent{{Name: long, Description: long, Model: long, PermissionMode: long, Tools: []string{long}}}}, client.Capabilities{Agents: true}, hk, width))
 	})
 	t.Run("connect and session details", func(t *testing.T) {
-		m := Model{width: width, connect: connectState{open: true, targets: []ConnectTarget{{Target: long, Issuer: long, ClientID: long, Audience: long}}}}
-		assertFits(t, "connect", m.renderConnectOverlay(th))
+		s := &connectState{deps: surfaceDeps{theme: th, marks: hk}, targets: []ConnectTarget{{Target: long, Issuer: long, ClientID: long, Audience: long}}}
+		s.syncItems()
+		body, _ := s.Render(width, 40)
+		assertFits(t, "connect", body)
 		assertFits(t, "session details", renderSessionDetails(th, sessionDetailsView{ID: long, Title: long, State: long, Connection: long, Placement: client.Placement{Label: long}, ProviderID: long, ModelID: long}, hk, width, 40))
 	})
 	t.Run("dream reflections soul and user model", func(t *testing.T) {
