@@ -38,7 +38,7 @@ func (p *correlationProvider) Stream(ctx context.Context, _ port.LLMRequest) (it
 	call := len(p.turns)
 	return func(yield func(port.Chunk, error) bool) {
 		if call == 1 {
-			yield(port.Chunk{Kind: port.ChunkToolCall, ToolCall: &session.ToolCall{ID: "c1", Name: "Echo", Args: json.RawMessage(`{}`)}}, nil)
+			yield(port.Chunk{Kind: port.ChunkToolCall, ToolCall: &port.LLMToolCall{ID: "c1", Name: "Echo", Args: json.RawMessage(`{}`)}}, nil)
 		} else {
 			yield(port.Chunk{Kind: port.ChunkText, Text: "done"}, nil)
 		}

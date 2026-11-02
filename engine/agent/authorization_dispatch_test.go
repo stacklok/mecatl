@@ -393,7 +393,7 @@ func TestGenericAuthorizationRecordsEarlierAndDefersLaterSerially(t *testing.T) 
 		t.Fatalf("executed = %s", got)
 	}
 	pending, ok := sess.PendingAuthorization()
-	if !ok || len(pending.Deferred) != 1 || pending.Deferred[0].ID != "later-call" {
+	if !ok || len(pending.Deferred) != 1 || pending.Deferred[0].ID != boundCallID(t, sess, "later-call") {
 		t.Fatalf("pending = %#v, %v", pending, ok)
 	}
 	loaded, err := store.Load(context.Background(), sess.ID)
@@ -405,7 +405,7 @@ func TestGenericAuthorizationRecordsEarlierAndDefersLaterSerially(t *testing.T) 
 	}
 	foundFirst := false
 	for _, message := range loaded.Conversation.Messages {
-		foundFirst = foundFirst || (message.ToolResult != nil && message.ToolResult.CallID == "first-call")
+		foundFirst = foundFirst || (message.ToolResult != nil && message.ToolResult.CallID == boundCallID(t, loaded, "first-call"))
 	}
 	if !foundFirst {
 		t.Fatal("earlier completed sibling result was not saved")

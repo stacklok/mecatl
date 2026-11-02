@@ -9,16 +9,17 @@ import (
 
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/agent"
+	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 )
 
 // availabilityBatch starts two real read-only siblings; the test controls each
 // completion independently instead of waiting for wall-clock execution delays.
-func availabilityBatch(t *testing.T) (*agent.Run, *session.Session, <-chan session.ToolCallID, map[session.ToolCallID]chan struct{}) {
+func availabilityBatch(t *testing.T) (*agent.Run, *session.Session, <-chan session.ToolCallID, map[string]chan struct{}) {
 	t.Helper()
 	started := make(chan session.ToolCallID, 2)
-	gates := map[session.ToolCallID]chan struct{}{
+	gates := map[string]chan struct{}{
 		"slow": make(chan struct{}),
 		"fast": make(chan struct{}),
 	}
@@ -32,19 +33,30 @@ func availabilityBatch(t *testing.T) (*agent.Run, *session.Session, <-chan sessi
 		}
 	})
 	read := &fakeTool{name: "Read", readOnly: true, exec: func(ctx context.Context, call session.ToolCall, _ tool.Workspace) (session.ToolResult, error) {
+		label := fixtureLabel(t, call)
 		started <- call.ID
 		select {
-		case <-gates[call.ID]:
-			return session.NewToolResultWithParts(call.ID, "result "+string(call.ID), []session.Content{
-				session.NewTextBlock("typed " + string(call.ID)),
+		case <-gates[label]:
+			return session.NewToolResultWithParts(call.ID, "result "+label, []session.Content{
+				session.NewTextBlock("typed " + label),
 				session.NewStructuredContentBlock(`{"safe":true}`),
 			}), nil
 		case <-ctx.Done():
 			return session.NewToolError(call.ID, "cancelled"), nil
 		}
 	}}
-	llm := mockllm.New(
-		mockllm.ToolCallTurn(toolCall("slow", "Read", `{}`), toolCall("fast", "Read", `{}`)),
+	llm := mockllm.NewWith([]mockllm.Option{mockllm.WithRequestObserver(func(request port.LLMRequest) {
+		var ids []session.ProviderCallID
+		for _, message := range request.Messages {
+			if message.ToolResult != nil {
+				ids = append(ids, message.ToolResult.CallID)
+			}
+		}
+		if len(ids) > 0 && !reflect.DeepEqual(ids, []session.ProviderCallID{"slow", "fast"}) {
+			t.Errorf("model results out of call order: %v", ids)
+		}
+	})},
+		mockllm.ToolCallTurn(fixtureCall("slow", "Read"), fixtureCall("fast", "Read")),
 		mockllm.TextTurn("done"),
 	)
 	sess := newSession(t, session.Limits{})
@@ -78,7 +90,7 @@ func simultaneousAvailabilityBatch(t *testing.T) (*agent.Run, <-chan session.Too
 		}
 	}}
 	llm := mockllm.New(
-		mockllm.ToolCallTurn(toolCall("slow", "Read", `{}`), toolCall("fast", "Read", `{}`)),
+		mockllm.ToolCallTurn(fixtureCall("slow", "Read"), fixtureCall("fast", "Read")),
 		mockllm.TextTurn("done"),
 	)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -120,10 +132,10 @@ func awaitBatchEvent(t *testing.T, r *agent.Run, kind session.EventType, id sess
 }
 
 func TestToolResultAvailability_FastSiblingAvailableBeforeSlowSibling(t *testing.T) {
-	r, _, started, gates := availabilityBatch(t)
+	r, sess, started, gates := availabilityBatch(t)
 	awaitAvailabilityBatchStart(t, started)
 	close(gates["fast"])
-	events := awaitBatchEvent(t, r, session.EvToolResultAvailable, "fast")
+	events := awaitBatchEvent(t, r, session.EvToolResultAvailable, boundCallID(t, sess, "fast"))
 	cards := map[session.ToolCallID]bool{}
 	for _, ev := range events {
 		if ev.Type == session.EvToolCall && ev.ToolCall != nil {
@@ -132,11 +144,11 @@ func TestToolResultAvailability_FastSiblingAvailableBeforeSlowSibling(t *testing
 		if ev.Type == session.EvToolResult && ev.ToolResult != nil {
 			t.Fatalf("canonical result before slow sibling finishes: %s", ev.ToolResult.CallID)
 		}
-		if ev.Type == session.EvToolResultAvailable && ev.ToolResult != nil && ev.ToolResult.CallID != "fast" {
+		if ev.Type == session.EvToolResultAvailable && ev.ToolResult != nil && ev.ToolResult.CallID != boundCallID(t, sess, "fast") {
 			t.Fatalf("slow sibling settled while blocked: %s", ev.ToolResult.CallID)
 		}
 	}
-	if !cards["slow"] || !cards["fast"] || events[len(events)-1].ToolResult.Content != "result fast" ||
+	if !cards[boundCallID(t, sess, "slow")] || !cards[boundCallID(t, sess, "fast")] || events[len(events)-1].ToolResult.Content != "result fast" ||
 		!reflect.DeepEqual(events[len(events)-1].ToolResult.Parts, []session.Content{
 			session.NewTextBlock("typed fast"), session.NewStructuredContentBlock(`{"safe":true}`),
 		}) {
@@ -156,7 +168,7 @@ func TestToolResultAvailability_PresentationAndCanonicalOrdering(t *testing.T) {
 	r, sess, started, gates := availabilityBatch(t)
 	awaitAvailabilityBatchStart(t, started)
 	close(gates["fast"])
-	events := awaitBatchEvent(t, r, session.EvToolResultAvailable, "fast")
+	events := awaitBatchEvent(t, r, session.EvToolResultAvailable, boundCallID(t, sess, "fast"))
 	for _, ev := range events {
 		if ev.Type == session.EvToolResult {
 			t.Fatalf("canonical event escaped incomplete batch: %+v", ev)
@@ -193,11 +205,23 @@ func TestToolResultAvailability_PresentationAndCanonicalOrdering(t *testing.T) {
 			}
 		}
 	}
-	if !reflect.DeepEqual(available, []session.ToolCallID{"fast", "slow"}) || !reflect.DeepEqual(canonical, []session.ToolCallID{"slow", "fast"}) {
+	if !reflect.DeepEqual(available, []session.ToolCallID{boundCallID(t, sess, "fast"), boundCallID(t, sess, "slow")}) || !reflect.DeepEqual(canonical, []session.ToolCallID{boundCallID(t, sess, "slow"), boundCallID(t, sess, "fast")}) {
 		t.Fatalf("availability=%v canonical=%v; want completion order and call order", available, canonical)
 	}
 	if sess.Counters.ToolCalls != 2 {
 		t.Fatalf("canonical result accounting: %+v", sess.Counters)
+	}
+	var recorded []session.ToolCallID
+	for _, message := range sess.Conversation.Messages {
+		if message.ToolResult != nil {
+			recorded = append(recorded, message.ToolResult.CallID)
+		}
+	}
+	if !reflect.DeepEqual(recorded, canonical) {
+		t.Fatalf("history order differs from final publication: %v / %v", recorded, canonical)
+	}
+	if err := session.ValidateToolPairing(sess.Conversation.Messages); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -212,17 +236,26 @@ func TestToolResultAvailability_SerializedPublication(t *testing.T) {
 
 			var previous int64
 			available := map[session.ToolCallID]int{}
+			calls := map[session.ToolCallID]bool{}
 			for ev := range r.Events() {
 				if ev.Seq <= previous {
 					t.Errorf("channel observation seq %d after %d", ev.Seq, previous)
 				}
 				previous = ev.Seq
+				if ev.Type == session.EvToolCall && ev.ToolCall != nil {
+					calls[ev.ToolCall.ID] = true
+				}
 				if ev.Type == session.EvToolResultAvailable && ev.ToolResult != nil {
 					available[ev.ToolResult.CallID]++
 				}
 			}
-			if available["fast"] != 1 || available["slow"] != 1 || len(available) != 2 {
-				t.Errorf("availability by call = %v, want exactly one each", available)
+			if len(calls) != 2 || len(available) != 2 {
+				t.Errorf("availability by call = %v, calls=%v, want exactly two", available, calls)
+			}
+			for id := range calls {
+				if available[id] != 1 {
+					t.Errorf("availability for accepted call %q = %d, want exactly one", id, available[id])
+				}
 			}
 		})
 	}

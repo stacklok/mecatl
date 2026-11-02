@@ -3,6 +3,7 @@ package agent
 import (
 	"strconv"
 
+	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/prompt"
 	"github.com/stacklok/mecatl/engine/session"
 )
@@ -132,10 +133,18 @@ func (h HeuristicTokenCounter) CountMessages(msgs []session.Message) int {
 	total := 0
 	for _, m := range msgs {
 		total += perMessageOverhead
-		total += (len(m.Text) + len(m.Reasoning) + len(m.ProviderPhase) + len(m.ReasoningItemID)) / cpt
+		total += (len(m.Text) + len(m.ProviderPhase)) / cpt
+		if m.Replay != nil {
+			for _, binding := range m.Replay.Bindings {
+				total += (len(binding.PairingID) + len(binding.ItemID)) / cpt
+			}
+			if replay := m.Replay.Provider; replay != nil {
+				total += (len(replay.Format) + len(replay.Data)) / cpt
+			}
+		}
 		for _, c := range m.ToolCalls {
 			total += perToolCallOverhead
-			total += (len(c.ID) + len(c.Name) + len(c.Args) + len(c.ItemID)) / cpt
+			total += (len(c.ID) + len(c.Name) + len(c.Args)) / cpt
 		}
 		if m.ToolResult != nil {
 			total += len(m.ToolResult.CallID) / cpt
@@ -144,6 +153,55 @@ func (h HeuristicTokenCounter) CountMessages(msgs []session.Message) int {
 			total += max(contentTokens, partsTokens)
 		}
 		total += heuristicContentParts(m.Parts, cpt)
+	}
+	return total
+}
+
+// countLLMMessages estimates the transmitted DTOs, not canonical engine IDs.
+// Existing injected counters still own display text/media and message framing;
+// replay and provider tool envelopes are counted separately without interpreting them.
+func countLLMMessages(counter TokenCounter, msgs []port.LLMMessage) int {
+	if len(msgs) == 0 {
+		return 0
+	}
+	if c, ok := counter.(interface{ countLLMMessages([]port.LLMMessage) int }); ok {
+		return c.countLLMMessages(msgs)
+	}
+	display := make([]session.Message, len(msgs))
+	total := 0
+	for i, m := range msgs {
+		display[i] = session.Message{Role: m.Role, Text: m.Text, Parts: m.Parts, ProviderPhase: m.ProviderPhase}
+		for _, call := range m.ToolCalls {
+			total += perToolCallOverhead + counter.Count(string(call.ID)+call.Name+string(call.Args)+string(call.ItemID))
+		}
+		if result := m.ToolResult; result != nil {
+			display[i].ToolResult = &session.ToolResult{Content: result.Content, IsError: result.IsError, Parts: result.Parts}
+			total += counter.Count(string(result.CallID))
+		}
+		if m.Replay != nil {
+			total += counter.Count(m.Replay.Format) + countBytes(counter, m.Replay.Data)
+		}
+	}
+	return total + counter.CountMessages(display)
+}
+
+// countLLMMessages estimates provider-facing message payloads without allocating
+// executable domain calls or interpreting the adapter-owned replay envelope.
+func (h HeuristicTokenCounter) countLLMMessages(msgs []port.LLMMessage) int {
+	cpt := h.charsPerToken()
+	total := 0
+	for _, m := range msgs {
+		total += perMessageOverhead + (len(m.Text)+len(m.ProviderPhase))/cpt
+		for _, call := range m.ToolCalls {
+			total += perToolCallOverhead + (len(call.ID)+len(call.Name)+len(call.Args)+len(call.ItemID))/cpt
+		}
+		if result := m.ToolResult; result != nil {
+			total += len(result.CallID)/cpt + max(len(result.Content)/cpt, heuristicContentParts(result.Parts, cpt))
+		}
+		total += heuristicContentParts(m.Parts, cpt)
+		if m.Replay != nil {
+			total += (len(m.Replay.Format) + len(m.Replay.Data)) / cpt
+		}
 	}
 	return total
 }

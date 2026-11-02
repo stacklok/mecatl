@@ -4,9 +4,11 @@
 // The Session aggregate exposes its lifecycle data through exported fields
 // (ID, State, Mode, Conversation, Limits, Counters, EnvironmentRef, CreatedAt) and
 // through the PendingAsk, PendingAuthorization, and PendingWorkspaceEnrollment
-// accessors. Four pieces of its state are unexported and not directly
-// addressable from outside the session package:
+// accessors. Private lifecycle state is not directly addressable from outside
+// the session package:
 //
+//   - learningEligible — captured through LearningEligible and restored through
+//     ExcludeFromLearning; missing persisted eligibility is conservative.
 //   - pending *PendingAsk — readable via Session.PendingAsk() (only while
 //     StateAwaiting) and restorable via Session.PauseForApproval() (only from
 //     StateRunning). The snapshot round-trips it for the awaiting case.
@@ -35,20 +37,23 @@ import (
 	"github.com/stacklok/mecatl/engine/session"
 )
 
-// Snapshot is the on-the-wire form of a session.Session. It is a plain data
-// struct with JSON tags so it serializes deterministically regardless of the
-// (untagged) layout of the domain types.
+// Snapshot is the current-schema on-the-wire form of a session.Session. JSON
+// decoding normalizes supported older snapshots into this schema before Restore.
+// Explicit tags keep serialization independent of the domain types' layout.
 type Snapshot struct {
-	ID              session.SessionID       `json:"id"`
-	State           session.State           `json:"state"`
-	Mode            session.PermissionMode  `json:"mode"`
-	Limits          session.Limits          `json:"limits"`
-	Counters        session.Counters        `json:"counters"`
-	ExternalBinding session.ExternalBinding `json:"external_binding,omitempty"`
-	CreatedAt       time.Time               `json:"created_at"`
-	Incarnation     session.IncarnationID   `json:"incarnation,omitempty"`
-	Messages        []messageDTO            `json:"messages"`
-	Pending         *session.PendingAsk     `json:"pending,omitempty"`
+	// LearningEligible requires positive persisted eligibility; absence excludes.
+	LearningEligible bool                    `json:"learning_eligible"`
+	IdentitySchema   int                     `json:"identity_schema,omitempty"`
+	ID               session.SessionID       `json:"id"`
+	State            session.State           `json:"state"`
+	Mode             session.PermissionMode  `json:"mode"`
+	Limits           session.Limits          `json:"limits"`
+	Counters         session.Counters        `json:"counters"`
+	ExternalBinding  session.ExternalBinding `json:"external_binding,omitempty"`
+	CreatedAt        time.Time               `json:"created_at"`
+	Incarnation      session.IncarnationID   `json:"incarnation,omitempty"`
+	Messages         []messageDTO            `json:"messages"`
+	Pending          *session.PendingAsk     `json:"pending,omitempty"`
 	// PendingAuthorization is present exactly while StateAuthorizing. Its private
 	// DTO base64-encodes tool arguments so JSON normalization cannot change bytes.
 	PendingAuthorization *pendingAuthorizationDTO `json:"pending_authorization,omitempty"`
@@ -177,22 +182,16 @@ type messageDTO struct {
 	Text       string              `json:"text,omitempty"`
 	ToolCalls  []session.ToolCall  `json:"tool_calls,omitempty"`
 	ToolResult *session.ToolResult `json:"tool_result,omitempty"`
-	Reasoning  string              `json:"reasoning,omitempty"`
 	// ProviderPhase carries the OpenAI Responses opaque phase marker on an assistant
 	// message. omitempty keeps a v1 snapshot with no "phase" key decoding to the
 	// empty string ("no phase") — purely additive, no version bump. The json tag
 	// stays "phase" so the persisted wire format is unchanged across the rename.
 	ProviderPhase string `json:"phase,omitempty"`
-	// ReasoningItemID carries the OpenAI Responses opaque reasoning-item id on an
-	// assistant message (the reasoning item's provider-assigned id, replayed
-	// verbatim on subsequent stateless turns). omitempty keeps a v1 snapshot with
-	// no "reasoning_item_id" key decoding to the empty string — purely additive, no
-	// version bump (the same precedent as ProviderPhase / Parts).
-	ReasoningItemID string `json:"reasoning_item_id,omitempty"`
 	// Parts carries non-text media on a user message. It is omitempty so a v1
 	// snapshot with no "parts" key decodes to nil Parts — a text-only message,
 	// exactly correct; the field is purely additive and needs no version bump.
-	Parts []contentDTO `json:"parts,omitempty"`
+	Parts  []contentDTO           `json:"parts,omitempty"`
+	Replay *session.MessageReplay `json:"replay,omitempty"`
 	// UserPromptProvenance is additive; absent legacy snapshots remain unknown.
 	UserPromptProvenance session.UserPromptProvenance `json:"user_prompt_provenance,omitempty"`
 }
@@ -224,10 +223,9 @@ type externalAuthorizationDTO struct {
 }
 
 type authorizationCallDTO struct {
-	ID     session.ToolCallID `json:"id"`
-	Name   string             `json:"name"`
-	Args   []byte             `json:"args,omitempty"`
-	ItemID string             `json:"item_id,omitempty"`
+	ID   session.ToolCallID `json:"id"`
+	Name string             `json:"name"`
+	Args []byte             `json:"args,omitempty"`
 }
 
 func toPendingAuthorizationDTO(p session.PendingAuthorization) *pendingAuthorizationDTO {
@@ -249,10 +247,9 @@ func toPendingAuthorizationDTO(p session.PendingAuthorization) *pendingAuthoriza
 
 func toAuthorizationCallDTO(call session.ToolCall) authorizationCallDTO {
 	return authorizationCallDTO{
-		ID:     call.ID,
-		Name:   call.Name,
-		Args:   append([]byte(nil), call.Args...),
-		ItemID: call.ItemID,
+		ID:   call.ID,
+		Name: call.Name,
+		Args: append([]byte(nil), call.Args...),
 	}
 }
 
@@ -278,10 +275,9 @@ func fromPendingAuthorizationDTO(dto *pendingAuthorizationDTO) *session.PendingA
 
 func fromAuthorizationCallDTO(dto authorizationCallDTO) session.ToolCall {
 	return session.ToolCall{
-		ID:     dto.ID,
-		Name:   dto.Name,
-		Args:   append([]byte(nil), dto.Args...),
-		ItemID: dto.ItemID,
+		ID:   dto.ID,
+		Name: dto.Name,
+		Args: append([]byte(nil), dto.Args...),
 	}
 }
 
@@ -294,15 +290,13 @@ func Of(s *session.Session) (Snapshot, error) {
 	if s == nil {
 		return Snapshot{}, ErrNilSession
 	}
-	if err := s.ValidateAuthorizationState(); err != nil {
+	if err := s.ValidateIdentityPersistence(); err != nil {
 		return Snapshot{}, fmt.Errorf("sessnap: validate authorization state: %w", err)
 	}
-	relationship := s.Relationship
-	if relationship.BranchIndex != nil {
-		branchIndex := *relationship.BranchIndex
-		relationship.BranchIndex = &branchIndex
-	}
+	relationship := session.CloneSessionRelationship(s.Relationship)
 	snap := Snapshot{
+		IdentitySchema:            2,
+		LearningEligible:          s.LearningEligible(),
 		ID:                        s.ID,
 		State:                     s.State,
 		Mode:                      s.Mode,
@@ -350,12 +344,12 @@ func Of(s *session.Session) (Snapshot, error) {
 	snap.WorkspaceEnrollmentBrokerKeys, snap.WorkspaceEnrollmentBrokerKeysPresent = s.WorkspaceEnrollmentBrokerKeys()
 	if s.Conversation != nil {
 		snap.Messages = make([]messageDTO, len(s.Conversation.Messages))
-		for i, m := range s.Conversation.Messages {
+		for i, m := range session.CloneMessages(s.Conversation.Messages) {
 			snap.Messages[i] = toDTO(m)
 		}
 	}
 	if ask, ok := s.PendingAsk(); ok {
-		a := ask
+		a := clonePendingAsk(ask)
 		snap.Pending = &a
 	}
 	if pending, ok := s.PendingAuthorization(); ok {
@@ -376,6 +370,9 @@ func Of(s *session.Session) (Snapshot, error) {
 	snap.RetryPendingDisposition, snap.RetryPendingProgress, snap.RetryPending = pendingRetry.Disposition, pendingRetry.Progress, pending
 	snap.LastError = s.LastError()
 	snap.RunID = s.RunID()
+	if err := validateRestorePendingState(s, snap.State, snap.Pending, fromPendingAuthorizationDTO(snap.PendingAuthorization)); err != nil {
+		return Snapshot{}, err
+	}
 	return snap, nil
 }
 
@@ -383,10 +380,16 @@ func Of(s *session.Session) (Snapshot, error) {
 // machine through its public constructors and transitions, so all invariants
 // hold on the rebuilt aggregate.
 func (s Snapshot) Restore() (*session.Session, error) {
+	if s.IdentitySchema != 2 {
+		return nil, fmt.Errorf("sessnap: unknown identity schema %d", s.IdentitySchema)
+	}
 	if !s.EnvironmentRef.Valid() {
 		return nil, errors.New("sessnap: missing or invalid environment_ref")
 	}
 	restored := session.New(s.ID, s.Mode, s.EnvironmentRef, s.Limits, s.CreatedAt)
+	if !s.LearningEligible {
+		restored.ExcludeFromLearning()
+	}
 	if err := restored.RestoreSessionMetadata(s.Kind, s.Relationship); err != nil {
 		return nil, fmt.Errorf("sessnap: restore session metadata: %w", err)
 	}
@@ -406,7 +409,13 @@ func (s Snapshot) Restore() (*session.Session, error) {
 		return nil, fmt.Errorf("sessnap: restore workspace enrollment broker keys: %w", err)
 	}
 
-	// Rebuild the conversation history verbatim.
+	if err := restored.RestoreLabels(s.Owner, session.Authority{}); err != nil {
+		return nil, fmt.Errorf("sessnap: restore labels: %w", err)
+	}
+	if err := restored.RestoreIncarnation(s.Incarnation); err != nil {
+		return nil, fmt.Errorf("sessnap: restore incarnation: %w", err)
+	}
+	// Rebuild the conversation history with independently owned provenance.
 	for _, dto := range s.Messages {
 		restored.Conversation.Append(fromDTO(dto))
 	}
@@ -432,16 +441,25 @@ func (s Snapshot) Restore() (*session.Session, error) {
 	// RestoreState's state-machine parameter list.
 	restored.BeginRun(s.RunID)
 	restored.RestoreTitleMetadata(s.Title, s.TitleProvenance, s.TitleRevision, s.TitleGeneration, s.TitleSourcePrompts, s.TitleAttempts)
-	// The identity labels go through the WRITE-ONCE aggregate method rather than a
-	// field poke (Session is an aggregate) and rather than a RestoreState
-	// parameter (that widening is Changed/breaking; this stays Added/minor).
-	if err := restored.RestoreLabels(s.Owner, session.Authority{}); err != nil {
-		return nil, fmt.Errorf("sessnap: restore labels: %w", err)
-	}
-	if err := restored.RestoreIncarnation(s.Incarnation); err != nil {
-		return nil, fmt.Errorf("sessnap: restore incarnation: %w", err)
-	}
 
+	if err := s.restoreLifecycle(restored); err != nil {
+		return nil, err
+	}
+	if s.LatestContextOccupancy != nil {
+		restored.RecordLatestContextOccupancy(*s.LatestContextOccupancy)
+	}
+	if s.PendingWorkspaceEnrollment != nil {
+		if err := restored.BeginWorkspaceEnrollment(*s.PendingWorkspaceEnrollment); err != nil {
+			return nil, fmt.Errorf("sessnap: restore workspace enrollment: %w", err)
+		}
+	}
+	if err := restored.ValidateIdentityPersistence(); err != nil {
+		return nil, fmt.Errorf("sessnap: invalid restored identity: %w", err)
+	}
+	return restored, nil
+}
+
+func (s Snapshot) restoreLifecycle(restored *session.Session) error {
 	pendingAuthorization := fromPendingAuthorizationDTO(s.PendingAuthorization)
 	data := RestoreData{
 		State:                s.State,
@@ -455,18 +473,7 @@ func (s Snapshot) Restore() (*session.Session, error) {
 		Retry:                session.RetryMetadata{Disposition: s.RetryPendingDisposition, Progress: s.RetryPendingProgress},
 		LastError:            s.LastError,
 	}
-	if err := RestoreState(restored, data); err != nil {
-		return nil, err
-	}
-	if s.LatestContextOccupancy != nil {
-		restored.RecordLatestContextOccupancy(*s.LatestContextOccupancy)
-	}
-	if s.PendingWorkspaceEnrollment != nil {
-		if err := restored.BeginWorkspaceEnrollment(*s.PendingWorkspaceEnrollment); err != nil {
-			return nil, fmt.Errorf("sessnap: restore workspace enrollment: %w", err)
-		}
-	}
-	return restored, nil
+	return RestoreState(restored, data)
 }
 
 func restoreAuthority(s *session.Session, authority *session.Authority) error {
@@ -534,7 +541,8 @@ func RestoreState(s *session.Session, data RestoreData) error {
 		if err := beginTurnPreservingCounters(s, data.Counters); err != nil {
 			return err
 		}
-		if err := s.PauseForApproval(*data.Pending); err != nil {
+		ask := clonePendingAsk(*data.Pending)
+		if err := s.PauseForApproval(ask); err != nil {
 			return fmt.Errorf("sessnap: restore awaiting: %w", err)
 		}
 	case session.StateAuthorizing:
@@ -739,16 +747,24 @@ func validateAuthorityWireClaim(raw json.RawMessage) error {
 	return nil
 }
 
+func clonePendingAsk(ask session.PendingAsk) session.PendingAsk {
+	ask.Args = append([]byte(nil), ask.Args...)
+	if ask.Guardrail != nil {
+		guardrail := *ask.Guardrail
+		ask.Guardrail = &guardrail
+	}
+	return ask
+}
+
 func toDTO(m session.Message) messageDTO {
 	return messageDTO{
 		Role:                 m.Role,
 		Text:                 m.Text,
 		ToolCalls:            m.ToolCalls,
 		ToolResult:           m.ToolResult,
-		Reasoning:            m.Reasoning,
 		ProviderPhase:        m.ProviderPhase,
-		ReasoningItemID:      m.ReasoningItemID,
 		Parts:                contentToDTO(m.Parts),
+		Replay:               m.Replay,
 		UserPromptProvenance: m.UserPromptProvenance,
 	}
 }
@@ -759,10 +775,9 @@ func fromDTO(dto messageDTO) session.Message {
 		Text:                 dto.Text,
 		ToolCalls:            dto.ToolCalls,
 		ToolResult:           dto.ToolResult,
-		Reasoning:            dto.Reasoning,
 		ProviderPhase:        dto.ProviderPhase,
-		ReasoningItemID:      dto.ReasoningItemID,
 		Parts:                contentFromDTO(dto.Parts),
+		Replay:               dto.Replay,
 		UserPromptProvenance: dto.UserPromptProvenance,
 	}
 }

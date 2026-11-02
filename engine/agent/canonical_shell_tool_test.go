@@ -95,7 +95,7 @@ func TestCanonicalShellTool_Scenario2_LegacyPendingCallRejected(t *testing.T) {
 	if err := sess.BeginTurn(); err != nil {
 		t.Fatalf("BeginTurn: %v", err)
 	}
-	if err := sess.RecordAssistant(session.NewAssistantMessage("", "", []session.ToolCall{legacy})); err != nil {
+	if err := sess.RecordAssistant(session.NewAssistantMessage("", []session.ToolCall{legacy})); err != nil {
 		t.Fatalf("RecordAssistant: %v", err)
 	}
 	const askID = "legacy-pending:0:legacy:r1"

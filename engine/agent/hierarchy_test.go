@@ -112,7 +112,7 @@ func TestHierarchySameDiscoveryKeepsGoodScopesOnLaterFault(t *testing.T) {
 			warnings++
 		}
 	}
-	if warnings != 1 || toolResultError(events, "g") || toolResultError(events, "b") || toolResultError(events, "b2") {
+	if warnings != 1 || toolResultError(events, boundCallID(t, sess, "g")) || toolResultError(events, boundCallID(t, sess, "b")) || toolResultError(events, boundCallID(t, sess, "b2")) {
 		t.Fatalf("warnings=%d tool result lost", warnings)
 	}
 	assertNoOrphanedToolCalls(t, sess.Conversation.Messages)
@@ -728,7 +728,7 @@ func TestHierarchyRealReadRejectsEscapedTargetsAndAdmitsInRootControls(t *testin
 			llm := mockllm.NewWith([]mockllm.Option{mockllm.WithRequestObserver(func(r port.LLMRequest) { requests = append(requests, r) })}, mockllm.ToolCallTurn(toolCall("read", "Read", fmt.Sprintf(`{"path":%q}`, tc.path))), mockllm.TextTurn("done"))
 			engine := newEngine(agent.Deps{LLM: llm, Catalog: catalogWith(t, fstools.ReadTool{}), Instructions: prompt.RootAssembler{Source: ws, SourceID: "ws", SourcePrefix: "."}})
 			events := drain(engine.Run(t.Context(), newSession(t, session.Limits{}), agent.EnvForWS(ws, nil), agent.RunRequest{Text: tc.name}))
-			if lastResult(t, events).Stop != session.StopEndTurn || len(requests) != 2 || requestHasHierarchyText(requests[1], tc.reject) || (tc.want != "" && !requestHasHierarchyText(requests[1], tc.want)) || (tc.want == "" && !toolResultError(events, "read")) {
+			if lastResult(t, events).Stop != session.StopEndTurn || len(requests) != 2 || requestHasHierarchyText(requests[1], tc.reject) || (tc.want != "" && !requestHasHierarchyText(requests[1], tc.want)) || (tc.want == "" && !toolResultError(events, eventCallID(t, events, "Read", 0))) {
 				t.Fatalf("events=%v requests=%v", typesOf(events), requests)
 			}
 		})
@@ -783,7 +783,7 @@ func TestHierarchyDiscoveryDoesNotBypassPermissionsOrCreateReadEvidence(t *testi
 	engine := newEngine(agent.Deps{LLM: llm, Catalog: catalogWith(t, fstools.ReadTool{}, fstools.WriteTool{}, fstools.EditTool{}), Policy: policy, Instructions: prompt.RootAssembler{Source: ws, SourceID: "ws", SourcePrefix: "."}})
 	run := engine.Run(t.Context(), newSession(t, session.Limits{}), agent.EnvForWS(ws, nil), agent.RunRequest{Text: "permission and discovery"})
 	events := drainApproving(run, session.VerdictAllowOnce, nil)
-	if len(requests) != 4 || !toolResultError(events, "denied") || !requestHasHierarchyText(requests[2], "nested") || !requestHasHierarchyText(requests[3], "nested") {
+	if len(requests) != 4 || !toolResultError(events, eventCallID(t, events, "Write", 0)) || !requestHasHierarchyText(requests[2], "nested") || !requestHasHierarchyText(requests[3], "nested") {
 		t.Fatalf("events=%v requests=%v", typesOf(events), requests)
 	}
 	if _, err := ws.Read(t.Context(), "nested/denied.txt"); err == nil {
@@ -821,7 +821,7 @@ func TestHierarchyDiscoveryDoesNotCreateReadEvidenceAndStaleReadsCannotEdit(t *t
 			})}, mockllm.ToolCallTurn(toolCall("first", tc.firstName, tc.firstArgs)), mockllm.ToolCallTurn(toolCall("edit", "Edit", tc.editArgs)), mockllm.TextTurn("done"))
 			engine := newEngine(agent.Deps{LLM: llm, Catalog: catalogWith(t, fstools.ReadTool{}, fstools.WriteTool{}, fstools.EditTool{}), Instructions: prompt.RootAssembler{Source: ws, SourceID: "ws", SourcePrefix: "."}})
 			events := drain(engine.Run(t.Context(), newSession(t, session.Limits{}), agent.EnvForWS(ws, nil), agent.RunRequest{Text: tc.name}))
-			if len(requests) != 3 || !requestHasHierarchyText(requests[1], "nested") || !toolResultError(events, "edit") {
+			if len(requests) != 3 || !requestHasHierarchyText(requests[1], "nested") || !toolResultError(events, eventCallID(t, events, "Edit", 0)) {
 				t.Fatalf("events=%v requests=%v", typesOf(events), requests)
 			}
 			data, err := ws.Read(t.Context(), "nested/file.txt")

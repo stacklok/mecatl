@@ -143,8 +143,10 @@ func Run(t *testing.T, newStore func(t *testing.T) port.SessionStore) {
 				AskID:  "ask-1",
 				Tool:   "Shell",
 				Args:   json.RawMessage(`{"command":"true"}`),
+				Call:   session.NewToolCallID(),
 				Reason: "mutating command",
 			}
+			mustOK(t, "RecordAssistant", s.RecordAssistant(session.NewAssistantMessage("", []session.ToolCall{session.NewToolCall(ask.Call, ask.Tool, ask.Args)})))
 			mustOK(t, "PauseForApproval", s.PauseForApproval(ask))
 			got := roundTrip(t, st, s)
 			if got.State != session.StateAwaiting {
@@ -704,7 +706,7 @@ func authorizingSession(t *testing.T, id session.SessionID) *session.Session {
 		session.NewToolCall("parked", "external_create", json.RawMessage(`{"title":"review"}`)),
 		session.NewToolCall("later", "external_list", json.RawMessage(`{"after":"today"}`)),
 	}
-	mustOK(t, "RecordAssistant", s.RecordAssistant(session.NewAssistantMessage("", "", calls)))
+	mustOK(t, "RecordAssistant", s.RecordAssistant(session.NewAssistantMessage("", calls)))
 	mustOK(t, "RecordToolResults", s.RecordToolResults([]session.ToolResult{session.NewToolResult("done", "ok")}))
 	effectiveCall := calls[1]
 	effectiveCall.Args = json.RawMessage(`{ "effective" : true }`)
@@ -773,8 +775,12 @@ func representativeSession(t *testing.T, id session.SessionID) *session.Session 
 		session.NewToolCall("call-1", "Read", json.RawMessage(`{"path":"a.txt"}`)),
 		session.NewToolCall("call-2", "Grep", json.RawMessage(`{"pattern":"TODO"}`)),
 	}
-	mustOK(t, "RecordAssistant", s.RecordAssistant(session.NewAssistantMessage(
-		"reading two files", "opaque-reasoning-replay-blob", calls)))
+	message := session.NewAssistantMessage("reading two files", calls)
+	message.Replay = &session.MessageReplay{
+		Bindings: []session.ToolCallBinding{{CallID: "call-1", PairingID: "provider-1"}, {CallID: "call-2", PairingID: "provider-2"}},
+		Provider: &session.ProviderReplay{Format: "fixture", Version: 1, Data: []byte("opaque-reasoning-replay-blob")},
+	}
+	mustOK(t, "RecordAssistant", s.RecordAssistant(message))
 	mustOK(t, "RecordToolResults", s.RecordToolResults([]session.ToolResult{
 		session.NewToolResult("call-1", "contents of a.txt"),
 		session.NewToolError("call-2", "grep failed: no matches"),

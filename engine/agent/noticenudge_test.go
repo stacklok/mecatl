@@ -85,13 +85,13 @@ func TestBackgroundNoticeInjectedAtNextBoundary(t *testing.T) {
 	childLLM := mockllm.New(mockllm.TextTurn("CHILD FINDINGS: the notice path works"))
 	task := agent.NewSubagentTool(childEngineWith(childLLM, catalogWith(t)))
 
-	parentLLM := mockllm.New(
+	parentLLM := newScriptedLLM(
 		mockllm.ToolCallTurn(toolCall("p1", "Subagent", `{"prompt":"investigate","background":true}`)),
 		// Any-child wait (ROSTER — does not collect): parks until the child's
 		// terminal lands in the registry, so the next boundary deterministically
 		// sees a finished, uncollected background child.
 		mockllm.ToolCallTurn(toolCall("p2", "SubagentStatus", `{"wait_ms":30000}`)),
-		mockllm.ToolCallTurn(toolCall("p3", "SubagentStatus", `{"agent_id":"subagent-s1-p1"}`)),
+		handleTurn(t, "p1", toolCall("p3", "SubagentStatus", `{}`), "agent_id"),
 		mockllm.TextTurn("parent done"),
 	)
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, task, agent.NewSubagentStatusTool())})
@@ -101,7 +101,7 @@ func TestBackgroundNoticeInjectedAtNextBoundary(t *testing.T) {
 
 	// EXACT notice text: ids + stop labels only, one message (A2/A9). Exact
 	// equality also proves nothing child-authored (no goal, no findings) leaked.
-	wantNotice := "[harness note: 1 background subagent(s) finished: subagent-s1-p1 (end_turn). " +
+	wantNotice := "[harness note: 1 background subagent(s) finished: " + eventSubagentID(t, evs, 0) + " (end_turn). " +
 		"Collect each result with SubagentStatus before relying on it.]"
 	noticeIdx := userMessageEqual(sess.Conversation.Messages, wantNotice)
 	if len(noticeIdx) != 1 {
@@ -114,13 +114,13 @@ func TestBackgroundNoticeInjectedAtNextBoundary(t *testing.T) {
 		t.Fatalf("the notice must never repeat; found %d harness notes", len(all))
 	}
 	// The notice precedes the model's collection turn (it is what prompts it).
-	collectIdx := assistantWithCall(sess.Conversation.Messages, "p3")
+	collectIdx := assistantWithCall(sess.Conversation.Messages, boundCallID(t, sess, "p3"))
 	if collectIdx == -1 || noticeIdx[0] > collectIdx {
 		t.Fatalf("notice (idx %d) must precede the collection turn (idx %d)", noticeIdx[0], collectIdx)
 	}
 
 	// noticed ≠ delivered: collection AFTER the notice still returns the body.
-	collected := resultByCallID(evs)["p3"]
+	collected := resultByCallID(evs)[boundCallID(t, sess, "p3")]
 	if collected == nil || collected.IsError || !strings.Contains(collected.Content, "CHILD FINDINGS: the notice path works") {
 		t.Fatalf("collection after the notice must still deliver the body, got %+v", collected)
 	}
@@ -151,9 +151,9 @@ func TestBackgroundNoticeSkipsDeliveredResult(t *testing.T) {
 	)
 	task := agent.NewSubagentTool(childEngineWith(childLLM, catalogWith(t, gate)))
 
-	parentLLM := mockllm.New(
+	parentLLM := newScriptedLLM(
 		mockllm.ToolCallTurn(toolCall("p1", "Subagent", `{"prompt":"x","background":true}`)),
-		mockllm.ToolCallTurn(toolCall("p2", "SubagentStatus", `{"agent_id":"subagent-s1-p1","wait_ms":30000}`)),
+		handleTurn(t, "p1", toolCall("p2", "SubagentStatus", `{"wait_ms":30000}`), "agent_id"),
 		mockllm.TextTurn("parent done"),
 	)
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, task, agent.NewSubagentStatusTool())})
@@ -164,12 +164,12 @@ func TestBackgroundNoticeSkipsDeliveredResult(t *testing.T) {
 		// Release the child only once the COLLECTING wait is dispatched, so the
 		// boundary BEFORE it deterministically saw a still-running child (no
 		// notice could have fired first).
-		if ev.Type == session.EvToolCall && ev.ToolCall != nil && ev.ToolCall.ID == "p2" {
+		if ev.Type == session.EvToolCall && ev.ToolCall != nil && ev.ToolCall.Name == "SubagentStatus" {
 			gate.releaseOnce()
 		}
 	})
 
-	if collected := resultByCallID(evs)["p2"]; collected == nil || !strings.Contains(collected.Content, "CHILD FINDINGS: collected directly") {
+	if collected := resultByCallID(evs)[boundCallID(t, sess, "p2")]; collected == nil || !strings.Contains(collected.Content, "CHILD FINDINGS: collected directly") {
 		t.Fatalf("direct collection must deliver, got %+v", collected)
 	}
 	if notes := userMessagesContaining(sess.Conversation.Messages, harnessNoteMarker); len(notes) != 0 {
@@ -194,13 +194,13 @@ func TestBackgroundPendingNudgeOneMoreTurn(t *testing.T) {
 	)
 	task := agent.NewSubagentTool(childEngineWith(childLLM, catalogWith(t, gate)))
 
-	parentLLM := mockllm.New(
+	parentLLM := newScriptedLLM(
 		mockllm.ToolCallTurn(
 			toolCall("p1", "Subagent", `{"prompt":"x","background":true}`),
 			toolCall("pw", "AwaitChild", `{}`), // child is genuinely mid-flight at the clean end
 		),
 		mockllm.TextTurn("interim answer"), // would-be clean end → nudge
-		mockllm.ToolCallTurn(toolCall("p3", "SubagentStatus", `{"agent_id":"subagent-s1-p1","wait_ms":30000}`)),
+		handleTurn(t, "p1", toolCall("p3", "SubagentStatus", `{"wait_ms":30000}`), "agent_id"),
 		mockllm.TextTurn("final answer"),
 	)
 	cat := catalogWith(t, task, agent.NewSubagentStatusTool(), &awaitSignalTool{ch: gate.started})
@@ -209,12 +209,12 @@ func TestBackgroundPendingNudgeOneMoreTurn(t *testing.T) {
 	r := e.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
 
 	evs := drainObserving(t, r, func(ev session.Event) {
-		if ev.Type == session.EvToolCall && ev.ToolCall != nil && ev.ToolCall.ID == "p3" {
+		if ev.Type == session.EvToolCall && ev.ToolCall != nil && ev.ToolCall.Name == "SubagentStatus" {
 			gate.releaseOnce()
 		}
 	})
 
-	wantNudge := "[harness note: 1 background subagent(s) still running: subagent-s1-p1. " +
+	wantNudge := "[harness note: 1 background subagent(s) still running: " + eventSubagentID(t, evs, 0) + ". " +
 		"Collect or wait for them with SubagentStatus, cancel them, or finish — " +
 		"anything still running when you finish will be cancelled.]"
 	nudgeIdx := userMessageEqual(sess.Conversation.Messages, wantNudge)
@@ -228,11 +228,11 @@ func TestBackgroundPendingNudgeOneMoreTurn(t *testing.T) {
 		t.Fatalf("expected only the pending nudge in history, found %d harness notes", len(all))
 	}
 	// Ordering: the nudge follows the interim answer and precedes the collection.
-	collectIdx := assistantWithCall(sess.Conversation.Messages, "p3")
+	collectIdx := assistantWithCall(sess.Conversation.Messages, boundCallID(t, sess, "p3"))
 	if collectIdx == -1 || nudgeIdx[0] > collectIdx {
 		t.Fatalf("nudge (idx %d) must precede the collection turn (idx %d)", nudgeIdx[0], collectIdx)
 	}
-	if collected := resultByCallID(evs)["p3"]; collected == nil || !strings.Contains(collected.Content, "CHILD FINDINGS: collected after the nudge") {
+	if collected := resultByCallID(evs)[boundCallID(t, sess, "p3")]; collected == nil || !strings.Contains(collected.Content, "CHILD FINDINGS: collected after the nudge") {
 		t.Fatalf("the nudged continuation must be able to collect, got %+v", collected)
 	}
 	if n := countEvents(evs, session.EvNoProgress); n != 0 {
@@ -294,7 +294,7 @@ func TestBackgroundPendingNudgeIgnoredThenCancelledAtRunEnd(t *testing.T) {
 		t.Fatalf("ignored child must be drain-cancelled before the terminal (end idx %d stop %q, result idx %d)",
 			endIdx, endStop, resultIdx)
 	}
-	saved, err := store.Load(context.Background(), "subagent-s1-p1")
+	saved, err := store.Load(context.Background(), session.SessionID(eventSubagentID(t, evs, 0)))
 	if err != nil || saved == nil || saved.State != session.StateCancelled {
 		t.Fatalf("ignored child must persist cancelled, got %v (err %v)", saved, err)
 	}
@@ -515,10 +515,10 @@ func TestBackgroundNoticeDurableAcrossSave(t *testing.T) {
 	childLLM := mockllm.New(mockllm.TextTurn("CHILD FINDINGS: durable"))
 	task := agent.NewSubagentTool(childEngineWith(childLLM, catalogWith(t)))
 
-	parentLLM := mockllm.New(
+	parentLLM := newScriptedLLM(
 		mockllm.ToolCallTurn(toolCall("p1", "Subagent", `{"prompt":"x","background":true}`)),
 		mockllm.ToolCallTurn(toolCall("p2", "SubagentStatus", `{"wait_ms":30000}`)),
-		mockllm.ToolCallTurn(toolCall("p3", "SubagentStatus", `{"agent_id":"subagent-s1-p1"}`)),
+		handleTurn(t, "p1", toolCall("p3", "SubagentStatus", `{}`), "agent_id"),
 		mockllm.TextTurn("parent done"),
 	)
 	spy := &noticeSpyStore{inner: memstore.New()}

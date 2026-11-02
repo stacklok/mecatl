@@ -325,9 +325,13 @@ func (c CascadeCompactor) summarize(ctx context.Context, head, middle []session.
 	reqMsgs = append(reqMsgs, deMediaMessages(middle)...)
 	reqMsgs = append(reqMsgs, instruction)
 
+	projected, err := port.ProjectMessages(reqMsgs)
+	if err != nil {
+		return "", session.AuxiliaryUsage{}, fmt.Errorf("summariser project history: %w", err)
+	}
 	seq, err := c.LLM.Stream(ctx, port.LLMRequest{
 		System:   prompt.Layered{StablePrefix: summarizerSystemPrompt},
-		Messages: reqMsgs,
+		Messages: projected,
 		Model:    c.Model,
 	})
 	if err != nil {

@@ -308,7 +308,8 @@ func TestContextualGuardrails_ConcurrentActionReviews(t *testing.T) {
 		LLM: mockllm.New(mockllm.ToolCallTurn(calls...), mockllm.TextTurn("done")), Catalog: cat,
 		Policy: staticAllowPolicy{}, ToolReviewer: reviewer, Interactive: true,
 	})
-	run := eng.Run(context.Background(), newSession(t, session.Limits{}), agent.MemEnv("/ws"), agent.RunRequest{Text: "inspect both"})
+	sess := newSession(t, session.Limits{})
+	run := eng.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "inspect both"})
 
 	firstReview := <-reviewEntered
 	secondReview := <-reviewEntered
@@ -332,14 +333,15 @@ func TestContextualGuardrails_ConcurrentActionReviews(t *testing.T) {
 		}
 	}
 	<-executionsOverlapped
-	if want := []session.ToolCallID{"call-1", "call-2"}; !reflect.DeepEqual(askOrder, want) {
+	if want := []session.ToolCallID{boundCallID(t, sess, "call-1"), boundCallID(t, sess, "call-2")}; !reflect.DeepEqual(askOrder, want) {
 		t.Fatalf("action ask order = %v, want %v", askOrder, want)
 	}
 	execMu.Lock()
 	defer execMu.Unlock()
 	for _, call := range calls {
-		if executions[call.ID] != 1 {
-			t.Fatalf("tool %s executed %d times, want exactly once", call.ID, executions[call.ID])
+		id := boundCallID(t, sess, session.ProviderCallID(call.ID))
+		if executions[id] != 1 {
+			t.Fatalf("tool %s executed %d times, want exactly once", id, executions[id])
 		}
 	}
 }

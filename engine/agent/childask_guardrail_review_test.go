@@ -182,12 +182,14 @@ type permissionReviewHook struct {
 	entered chan struct{}
 	release chan struct{}
 	mutated []byte
+	callID  session.ToolCallID
 }
 
 func (h *permissionReviewHook) Run(ctx context.Context, ev governance.HookEvent) (governance.HookOutcome, error) {
-	if ev.Phase != governance.PhasePreToolUse || ev.CallID != "c1" {
+	if ev.Phase != governance.PhasePreToolUse || h.callID != "" {
 		return governance.HookOutcome{}, nil
 	}
+	h.callID = session.ToolCallID(ev.CallID)
 	close(h.entered)
 	select {
 	case <-h.release:
@@ -269,7 +271,7 @@ func TestPermissionReviewFreshnessAtExecutionAdmission(t *testing.T) {
 						} else if len(tasks) != 1 || tasks[0] != "changed task" {
 							t.Fatalf("%s review did not see advanced root: %v", req.Job, tasks)
 						}
-						if hook.mutated != nil && req.EffectiveCall.ID == "c1" && (req.Job == agent.ReviewJobAction || permissions == 2) && string(req.EffectiveCall.Args) != string(hook.mutated) {
+						if hook.mutated != nil && req.EffectiveCall.ID == hook.callID && (req.Job == agent.ReviewJobAction || permissions == 2) && string(req.EffectiveCall.Args) != string(hook.mutated) {
 							t.Fatalf("renewed review did not bind effective args: %+v", req)
 						}
 					}
@@ -285,7 +287,7 @@ func TestPermissionReviewFreshnessAtExecutionAdmission(t *testing.T) {
 						if ev.Type == session.EvPermissionAsk {
 							t.Fatal("unexpected ordinary permission ask")
 						}
-						if ev.Type == session.EvToolResult && ev.ToolResult != nil && ev.ToolResult.CallID == "c1" && ev.ToolResult.IsError && strings.Contains(ev.ToolResult.Content, "review context changed") {
+						if ev.Type == session.EvToolResult && ev.ToolResult != nil && ev.ToolResult.CallID == hook.callID && ev.ToolResult.IsError && strings.Contains(ev.ToolResult.Content, "review context changed") {
 							stale++
 						}
 						if ev.Hook != nil && ev.Hook.Guardrail != nil && ev.Hook.Guardrail.Disposition == "pass_advisory" {

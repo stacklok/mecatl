@@ -278,7 +278,7 @@ func TestParallelJudgeUsageReadBatchDrainsInCallOrder(t *testing.T) {
 	close(release)
 	<-done
 
-	if !reflect.DeepEqual(recorder.calls, []session.ToolCallID{"first", "second"}) {
+	if !reflect.DeepEqual(recorder.calls, acceptedCallIDs(sess)) {
 		t.Fatalf("drain order = %v, want first then second", recorder.calls)
 	}
 	if len(recorder.snapshots) != 2 || recorder.snapshots[0] != usage || recorder.snapshots[1] != usage.Add(usage) {
@@ -848,7 +848,7 @@ func TestUtilityEngineUsageReturnsActualTier4CompactionToCallerOwner(t *testing.
 	for i := range 10 {
 		history = append(history,
 			session.NewUserMessage(strings.Repeat("old utility request ", 12)),
-			session.NewAssistantMessage(strings.Repeat("old utility answer ", 12)+string(rune('a'+i)), "", nil),
+			session.NewAssistantMessage(strings.Repeat("old utility answer ", 12)+string(rune('a'+i)), nil),
 		)
 	}
 	if err := utility.SeedHistory(history); err != nil {
@@ -958,6 +958,9 @@ func TestAuxiliaryTokenUsage_Scenario3_ParallelJudgeRecordsInheritedModel(t *tes
 			parent := session.New(session.SessionID("parallel-parent-"+join), session.ModeDefault, judgeEnvironment.Ref(), session.Limits{}, time.Unix(1, 0))
 			var result session.ToolResult
 			for ev := range owner.Run(t.Context(), parent, judgeEnvironment, RunRequest{Text: "compare branches"}).Events() {
+				if ev.Type == session.EvToolCall && ev.ToolCall != nil {
+					call.ID = ev.ToolCall.ID
+				}
 				if ev.Type == session.EvToolResult && ev.ToolResult != nil && ev.ToolResult.CallID == call.ID {
 					result = *ev.ToolResult
 				}

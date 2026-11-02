@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -476,6 +477,8 @@ type Session struct {
 	// incarnation is minted once by New and replaced only while idle during
 	// restoration of persisted creation metadata.
 	incarnation IncarnationID
+	// learningEligible is lifetime state, never reset between runs.
+	learningEligible bool
 
 	// authorityBound records that Authority was stamped through BindAuthority.
 	// A zero Authority with this marker is impossible: BindAuthority validates the
@@ -566,19 +569,26 @@ func New(id SessionID, mode PermissionMode, ref EnvironmentRef, limits Limits, c
 		panic("session: New requires a valid environment ref")
 	}
 	return &Session{
-		ID:              id,
-		State:           StateIdle,
-		Mode:            mode,
-		Conversation:    &Conversation{},
-		Limits:          limits,
-		tokenUsage:      make(map[UsageKind]TokenUsage),
-		EnvironmentRef:  ref,
-		Kind:            SessionKindMain,
-		TitleGeneration: TitleGenerationDisabled,
-		CreatedAt:       createdAt,
-		incarnation:     NewIncarnationID(),
+		ID:               id,
+		State:            StateIdle,
+		Mode:             mode,
+		Conversation:     &Conversation{},
+		Limits:           limits,
+		tokenUsage:       make(map[UsageKind]TokenUsage),
+		EnvironmentRef:   ref,
+		Kind:             SessionKindMain,
+		TitleGeneration:  TitleGenerationDisabled,
+		CreatedAt:        createdAt,
+		incarnation:      NewIncarnationID(),
+		learningEligible: true,
 	}
 }
+
+// LearningEligible reports whether this session may supply learning evidence.
+func (s *Session) LearningEligible() bool { return s.learningEligible }
+
+// ExcludeFromLearning permanently excludes this session from learning evidence.
+func (s *Session) ExcludeFromLearning() { s.learningEligible = false }
 
 // BeginTurn transitions the session into StateRunning at the start of a model
 // call. It is legal from StateIdle (first turn) or StateRunning (a follow-up
@@ -597,26 +607,42 @@ func (s *Session) BeginTurn() error {
 	return nil
 }
 
-// RecordAssistant appends the assistant message produced by a model call to the
-// conversation. It is legal only while running.
+// RecordAssistant is the aggregate acceptance seam between a completed model turn
+// and the session's in-memory canonical history. It appends independently owned
+// message and carrier storage only after validating canonical history and replay
+// bindings; it is legal only while running and does not itself persist the session.
 func (s *Session) RecordAssistant(m Message) error {
 	if s.State != StateRunning {
 		return fmt.Errorf("%w: RecordAssistant from %q", ErrIllegalTransition, s.State)
+	}
+	if m.Role != RoleAssistant {
+		return fmt.Errorf("RecordAssistant: assistant role required")
+	}
+	if _, err := validateToolHistory(slices.Concat(s.Conversation.Messages, []Message{m})); err != nil {
+		return fmt.Errorf("RecordAssistant: %w", err)
 	}
 	s.Conversation.Append(m)
 	return nil
 }
 
-// RecordToolResults appends tool-result messages to the conversation and updates
-// the tool-call and consecutive-failure counters. It is legal only while
-// running. Any successful result resets the consecutive-failure run; each error
-// result extends it.
+// RecordToolResults appends a validated result batch and then updates the
+// tool-call and consecutive-failure counters. It is legal only while running.
+// The entire batch must answer distinct outstanding canonical calls before history
+// or counters change; unanswered siblings may remain pending.
+// Any successful result resets the consecutive-failure run; each error extends it.
 func (s *Session) RecordToolResults(results []ToolResult) error {
 	if s.State != StateRunning {
 		return fmt.Errorf("%w: RecordToolResults from %q", ErrIllegalTransition, s.State)
 	}
-	for _, r := range results {
-		s.Conversation.Append(NewToolMessage(r))
+	messages := make([]Message, len(results))
+	for i, result := range results {
+		messages[i] = NewToolMessage(result)
+	}
+	if _, err := validateToolHistory(slices.Concat(s.Conversation.Messages, messages)); err != nil {
+		return fmt.Errorf("RecordToolResults: %w", err)
+	}
+	for i, r := range results {
+		s.Conversation.Append(messages[i])
 		s.Counters.ToolCalls++
 		if r.IsError {
 			s.Counters.ConsecutiveFailures++
@@ -723,7 +749,7 @@ func (s *Session) ReplaceHistory(messages []Message) error {
 	if err := ValidateToolPairing(messages); err != nil {
 		return fmt.Errorf("ReplaceHistory: %w", err)
 	}
-	s.Conversation.Messages = messages
+	s.Conversation.Messages = CloneMessages(messages)
 	return nil
 }
 
@@ -746,7 +772,7 @@ func (s *Session) ReplaceHistoryAtBoundary(messages []Message) error {
 	if err := ValidateToolPairing(messages); err != nil {
 		return fmt.Errorf("ReplaceHistoryAtBoundary: %w", err)
 	}
-	s.Conversation.Messages = messages
+	s.Conversation.Messages = CloneMessages(messages)
 	return nil
 }
 
@@ -775,7 +801,7 @@ func (s *Session) SeedHistory(messages []Message) error {
 	if err := ValidateToolPairing(messages); err != nil {
 		return fmt.Errorf("SeedHistory: %w", err)
 	}
-	s.Conversation.Messages = messages
+	s.Conversation.Messages = CloneMessages(messages)
 	return nil
 }
 
@@ -810,6 +836,9 @@ func (s *Session) PendingAsk() (PendingAsk, bool) {
 func (s *Session) ResumeWith() (PendingAsk, error) {
 	if s.State != StateAwaiting || s.pending == nil {
 		return PendingAsk{}, ErrNoPendingAsk
+	}
+	if err := validatePendingApproval(s.Conversation.Messages, *s.pending); err != nil {
+		return PendingAsk{}, err
 	}
 	ask := *s.pending
 	s.pending = nil

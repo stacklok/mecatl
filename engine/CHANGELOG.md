@@ -81,6 +81,30 @@ API snapshots live in [`engine/api/`](./api/).
   yolo 5; unknown 0). `Session.TightenConfiguration` now ranks auto and yolo, so an
   auto or yolo successor can keep or narrow its source's mode instead of being
   rejected. Added (minor).
+- **Canonical invocation and replay APIs (issue #2117)** — adds
+  `session.NewToolCallID`, distinct `ProviderCallID`/`ProviderItemID` types,
+  `ProviderReplay`, `ToolCallBinding`, `MessageReplay`, and
+  `ValidateMessageReplay`. Adds provider-facing `port.LLMMessage`,
+  `LLMToolCall`, `LLMToolResult`, `ProjectMessages`, and `ChunkReplay`.
+  Opaque payload contents are adapter-owned; occurrence bindings and copied
+  replay storage belong to the Session. Added (minor).
+
+- **Canonical learning evidence (issue #2117)** — adds
+  `learning.ReflectionEvidenceV2`, `EvidenceCitation`, evidence protocol,
+  coordinate, and digest fields on current driver evidence, and
+  `NewSessionTrajectory` and `ValidateSkillActivationProvenance`.
+  `NewSessionTrajectory` is the authoritative learning
+  trajectory producer: it carries the Session's durable eligibility into learning.
+  `Session.LearningEligible` and `Session.ExcludeFromLearning` provide the
+  irreversible aggregate-level eligibility control. Current evidence is verified
+  with canonical identities and digests; public citations expose only current
+  protocol data. Added (minor).
+
+- **Claimed authorization continuation validation** — adds
+  `Session.ValidateAuthorizationContinuation` to check exact outstanding canonical
+  identity and the ordered deferred suffix before execution preparation. Effective
+  arguments remain the retained private bytes, not the approval projection.
+  Added (minor).
 
 - **Schedule-store claim and retry conformance** — adds
   `scheduleconformance.RunClaimAndRetryConformance` with the complete shared
@@ -552,6 +576,75 @@ API snapshots live in [`engine/api/`](./api/).
   a yolo parent stays advisory while its narrower child keeps an enforcing
   checker. A reviewer that already demoted for yolo is unaffected. Changed
   (breaking, pre-v1 minor); no signature changes.
+- **Canonical invocation acceptance (issue #2117)** — `session.ToolCallID`
+  denotes globally unique engine identity instead of a provider pairing key.
+  `NewAssistantMessage` takes `(text string, calls []ToolCall)`.
+  `RecordAssistant`, `RecordToolResults`, history replacement/seeding, and
+  `ValidateToolPairing` reject empty/repeated canonical occurrences and duplicate
+  final results before mutation. Pending approval/authorization resumes require
+  the exact outstanding canonical occurrence; invalid direct resume attempts
+  leave pending state unchanged. `CloneMessages`, history acceptance,
+  and `Conversation.Append` now own nested storage, including replay. Repeated
+  delivery of a current invocation retains its identity, so clients must still be
+  idempotent. Changed (breaking behavioral/source contract, pre-v1 minor).
+
+- **Provider DTO boundary (issue #2117)** — `port.LLMRequest.Messages` becomes
+  `[]LLMMessage`, and `Chunk.ToolCall` becomes `*LLMToolCall`. `Chunk` gains
+  `Replay`/`ReplayIsOutput`; existing chunk-kind numeric values change after
+  removal of `ChunkReasoningItem` (chunks are in-process, not persisted enums).
+  `RouteToolResultParts` accepts `[]session.Content` instead of a domain result.
+  `Message` gains `Replay`; `ProviderPhase` is display metadata, with exact replay
+  phase in the opaque payload. Delegation payload `ParentCallID` fields become
+  `ToolCallID`. Changed (breaking signatures, field types, and struct additions,
+  pre-v1 minor).
+
+- **Legacy snapshot and event policy (issue #2117)** — `/1` snapshots in
+  awaiting/authorizing state, with pending ask or authorization data, or with any
+  `identity_hold` key are unloadable. Straightforward nonpending `/1` history can
+  convert to the current snapshot representation, but is permanently excluded from
+  learning. Current `/2` pending approvals and private authorizations are
+  unchanged. Unsupported old event invocation, control, delegation, and archive
+  records are omitted; cursor readers retain their physical positions. Changed
+  (breaking, pre-v1 minor); part of the coordinated Harness major 2 upgrade.
+
+- **Learning eligibility and current evidence (issue #2117)** — only
+  `reflection-evidence/v2` is accepted for learning. `NewSessionTrajectory` is
+  the authoritative producer of a learning trajectory and copies the Session's
+  durable, irreversible eligibility. Generic `Session.LearningEligible` and
+  `Session.ExcludeFromLearning` replace historical provenance as the learning
+  boundary. A `/1`-derived session, a current snapshot without positive
+  `learning_eligible`, and frozen older evidence are ineligible or unavailable;
+  eligibility cannot be recovered by saving, restarting, or later runs. Current
+  public driver evidence carries protocol, coordinates, and digests for source
+  verification. Ordinary and validated learned-skill activation reject candidates
+  with missing or unsupported evidence protocols, including evidence retained in
+  signals; evidence-free candidates require the explicit legacy-model origin.
+  Persisted history and already-active skills remain readable, and rollback of a
+  previously active version is unchanged. Changed (breaking struct/behavioral
+  contract, pre-v1 minor).
+
+- **Wire and storage compatibility assessment (issue #2117)** — separate from
+  engine Go versioning, the approved Harness API major is 2. Server, `mecatui`,
+  SDK, and Studio upgrade together; discovery/routes and `mecatl.v1` remain
+  reachable, with no public v1 identity alias. Software SDK versioning remains
+  independent. Snapshot/event writers use `sessnap-json/2`/`eventlog-json/2`;
+  new readers accept consistent `/1` and `/2` encodings. Drain active writers,
+  upgrade both decoding drivers, then harness/clients. Upgraded wrappers can
+  emit `/2` to old readers; rejection is per operation, not startup negotiation.
+  Local JSONL snapshot envelopes and Redis's unchanged outer event tag do not
+  protect old local readers. No mixed writers or rollback after new-format
+  writes; opaque drivers preserve tag/bytes and `session-store/1` is unchanged.
+  Valid simple nonpending `/1` snapshot history remains readable but is
+  permanently learning-ineligible; a current `/2` snapshot needs positive
+  `learning_eligible` to remain eligible. `/1` snapshots awaiting approval or
+  authorization, those with pending payloads, and any `identity_hold` key reject.
+  Snapshot/archive conversion rejects ambiguous, orphaned, wrong-role, or
+  unprovable call/result and parent-call relationships. Recognized unsupported
+  legacy event invocation, control, delegation, and archive records are omitted;
+  cursor readers advance through their physical positions without making them
+  executable evidence. This does not redesign save timing or promise
+  durable-save-before-effects. See the
+  [upgrade procedure](../user-docs/operating/session-storage-operations.md#upgrade-to-api-major-2).
 
 - **Atomic one-shot retry eligibility (issue #2273)** —
   `port.ScheduleOneShotReArmer.ReArmOneShot` now requires store-side atomic
@@ -652,9 +745,8 @@ API snapshots live in [`engine/api/`](./api/).
 - **Exact Team parent-call correlation** — Team-tool member relationships now
   populate the existing `session.SessionRelationship.CallID`; validation permits
   that optional value only with a valid parent lifetime. The exported
-  `session.NewTeamMember` signature and relationship shape are unchanged, and
-  historical relationships without a call ID remain loadable but uncorrelated.
-  Older engine binaries may reject newly populated Team-member relationships because
+  `session.NewTeamMember` signature and relationship shape are unchanged. Older
+  engine binaries may reject newly populated Team-member relationships because
   their validation forbade this existing field for that kind. Changed (breaking,
   pre-v1 minor).
 
@@ -726,7 +818,18 @@ API snapshots live in [`engine/api/`](./api/).
 
 - **Child workspace-view options** (repair-wave task 05) — `agent.WithSharedChildWorkspace`, `agent.WithTeamSharedBaseWorkspace`, and `agent.WithTeamToolSharedBaseWorkspace` now accept `func(tool.Workspace) tool.Workspace` rather than a root-to-Workspace factory. Base-sharing/direct-write children therefore retain the exact parent content backend through a potentially stricter authority view instead of reconstructing storage from `Workspace.Root()`; composition uses that view to preserve child path-escape containment while the independent read-ledger factory supplies fresh evidence. Changed/breaking (pre-v1 a minor bump).
 
-- **Versioned bounded reflection evidence materialization (ADR 0300)** — `learning.Input` now carries its aggregate `MaterializationManifest`; `learning.EvidenceRef` now carries the explicit protocol, manifest index, durable original coordinate, and aggregate digest needed to distinguish `reflection-evidence/v1` references from historical input-local `reflection-evidence/legacy-v0` ordinals; and `learning.MaterializeEvidence` now accepts a `context.Context` plus an optional streaming event source so full message/event scans are cancellable and selected-event limits apply after source ranking. `learning.AdmissionPolicy.Decide` now accepts a context and borrowed `Trajectory` request rather than a full `Input`, allowing cancellation without constructing an unbounded admission input. Adding fields to these exported structs and changing the function and interface signatures break external callers and unkeyed literals, so this is Changed/breaking (pre-v1 a minor bump).
+- **Versioned bounded reflection evidence materialization (ADR 0300)** —
+  `learning.Input` carries its aggregate `MaterializationManifest`, and
+  `learning.EvidenceRef` carries the current evidence protocol, manifest index,
+  original coordinate, and aggregate digest for source verification.
+  `learning.MaterializeEvidence` accepts a `context.Context` plus an optional
+  streaming event source so full message/event scans are cancellable and
+  selected-event limits apply after source ranking. `learning.AdmissionPolicy.Decide`
+  accepts a context and borrowed `Trajectory` request rather than a full `Input`,
+  allowing cancellation without constructing an unbounded admission input. Adding
+  fields to these exported structs and changing the function and interface
+  signatures break external callers and unkeyed literals, so this is Changed/
+  breaking (pre-v1 a minor bump).
 
 - **`Engine.PrepareAuthorizationContinuation` and `Engine.PrepareAfterAuthorization` require `session.AuthorizationResolution` and return an error** — callers must construct a validated terminal outcome before preparing a continuation; pending, zero, and unknown statuses are rejected before run construction or session mutation. Changed/breaking (pre-v1 a minor bump).
 
@@ -790,6 +893,38 @@ API snapshots live in [`engine/api/`](./api/).
   breaking under `COMPATIBILITY.md` (pre-v1 a minor bump).
 
 ### Removed
+
+- **Historical identity and compatibility APIs (issue #2117)** — removes
+  `HistoricalRecord`, `EvHistorical`, historical projection and identity helpers,
+  legacy identity carrier accessors, `ValidateIdentityPersistence`,
+  `CloneEventIdentity`, `IdentityMigrationHold`,
+  `ErrMigrationHeld`, `CheckIdentityReady`, `IdentityHoldSummary`,
+  `IdentityHoldSnapshot`, `RestoreIdentityMigrationHold`, and legacy learning
+  evidence verification/projection APIs. Public clients receive current protocol
+  events only; unsupported recognized legacy records are omitted rather than
+  represented as historical payloads. Removed (breaking, pre-v1 minor), as part
+  of the coordinated Harness API major 2 and SDK 0.5 transition.
+
+- **Redundant learning compatibility facades (issue #2117)** — removes
+  `SourceEventOrdinal`, `SourceMessageIndex`, `ProjectVerifiedInput`, and
+  `EvidenceRef.ResolvedProtocol`, and the unused adapter
+  `sessnap.DecodeLegacyArchive`. Use original source coordinates, `ProjectInput`,
+  and `EvidenceRef.Protocol` directly. `RematerializeEvidence` and
+  `VerifyEvidenceSource` no longer accept an unused incarnation argument;
+  protocol, coordinate, eligibility, and digest validation remain mandatory.
+  `session.CloneSessionRelationship` remains available. Removed/Changed
+  (breaking, pre-v1 minor).
+
+- **Domain/provider replay fields (issue #2117)** — removes
+  `session.Message.Reasoning`, `Message.ReasoningItemID`, `ToolCall.ItemID`,
+  `port.Chunk.ReasoningItemID`, and `ChunkReasoningItem`. Use Session-owned
+  `Message.Replay` and provider-facing DTOs/`ChunkReplay`; no deprecated
+  competing identity fields or `InvocationID` alias remain. Public
+  `ConversationMessage.reasoning` (5) and `reasoning_item_id` (8) are removed
+  and reserved under wire major 2. Readable reasoning, text/media, and
+  `provider_phase` remain public; internal archives retain private replay.
+  Removed (breaking Go source contract, pre-v1 minor); wire major assessed
+  separately above.
 
 - **Redundant delegation selector APIs** — removes `WithParallelTargetEngineFactory`,
   `WithSubagentTargetEngineFactory`, `WithWritableTargetEngineFactory`,

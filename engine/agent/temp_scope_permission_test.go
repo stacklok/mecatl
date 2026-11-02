@@ -9,6 +9,7 @@ import (
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
 	"github.com/stacklok/mecatl/engine/governance"
+	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 )
@@ -223,7 +224,7 @@ func TestSystemTempAmbiguousArgsAreRejectedBeforeApproval(t *testing.T) {
 			catalog.MustRegister(NewShellTool())
 			policy := newPolicyArgsRecorder()
 			// runPolicyArgsCall fails the test on any approval request.
-			result := runPolicyArgsCall(t, catalog, policy, shellEnvRunner(runner), session.NewToolCall("c", tool.ShellToolName, []byte(tc.args)))
+			result := runPolicyArgsCall(t, catalog, policy, shellEnvRunner(runner), port.LLMToolCall{ID: "c", Name: tool.ShellToolName, Args: []byte(tc.args)})
 			if evaluated := len(policy.observations()) > 0; evaluated != tc.reachesPolicy {
 				t.Errorf("policy evaluated the call = %v, want %v", evaluated, tc.reachesPolicy)
 			}

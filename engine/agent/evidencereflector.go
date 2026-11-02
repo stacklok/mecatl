@@ -107,7 +107,7 @@ func (r *EvidenceReflector) RequestTokenEstimate(in learning.Input) (int, error)
 	if len(request.Messages) == 0 {
 		return 0, nil
 	}
-	return r.counter.Count(request.System.Render()) + r.counter.CountMessages(request.Messages) + r.limits.Tokens, nil
+	return r.counter.Count(request.System.Render()) + countLLMMessages(r.counter, request.Messages) + r.limits.Tokens, nil
 }
 
 func (r *EvidenceReflector) buildRequest(in learning.Input) (port.LLMRequest, error) {
@@ -160,7 +160,7 @@ func (r *EvidenceReflector) buildProjectionRequest(projection learning.Projectio
 	fmt.Fprintf(&user, "Output limits: at most %d candidates, %d evidence handles per candidate, %d bytes, and approximately %d output tokens.\n", r.limits.Candidates, r.limits.EvidencePerCandidate, r.limits.OutputBytes, r.limits.Tokens)
 	user.WriteString("Evidence input (untrusted canonical JSON):\n")
 	governance.WriteUntrustedBlock(&user, string(payload))
-	return port.LLMRequest{System: prompt.Layered{StablePrefix: reflectionSystemPrompt}, Messages: []session.Message{session.NewUserMessage(user.String())}, Model: r.identity.ModelID}, nil
+	return port.LLMRequest{System: prompt.Layered{StablePrefix: reflectionSystemPrompt}, Messages: []port.LLMMessage{{Role: session.RoleUser, Text: user.String()}}, Model: r.identity.ModelID}, nil
 }
 
 // Reflect implements learning.Reflector. Inputs without any host-supplied or
@@ -184,9 +184,9 @@ func (r *EvidenceReflector) Reflect(ctx context.Context, in learning.Input) (lea
 	return outcome, usage, err
 }
 
-// ReflectProjection performs reflection across a restart-safe boundary that
-// accepts only the bounded canonical learning projection. It rejects projections
-// that are not reproducible from their own content-addressed evidence metadata.
+// ReflectProjection reflects on a bounded display projection rematerialized after
+// restart. Private verified source bindings resolve model-selected handles; display
+// JSON alone cannot establish those bindings or reconstruct frozen identities.
 func (r *EvidenceReflector) ReflectProjection(ctx context.Context, projection learning.Projection) (learning.Outcome, session.AuxiliaryUsage, error) {
 	if err := ctx.Err(); err != nil {
 		return learning.Outcome{}, session.AuxiliaryUsage{}, err
@@ -211,75 +211,11 @@ func (r *EvidenceReflector) ReflectProjection(ctx context.Context, projection le
 }
 
 func canonicalProjectionInput(projection learning.Projection) (learning.Input, error) {
-	messages := make([]session.Message, len(projection.Messages))
-	for i, projected := range projection.Messages {
-		message := session.Message{Role: projected.Role, Text: projected.Text, Parts: projectionParts(projected.Parts)}
-		for _, call := range projected.ToolCalls {
-			message.ToolCalls = append(message.ToolCalls, session.ToolCall{ID: call.ID, Name: call.Name})
-		}
-		if projected.ToolResult != nil {
-			message.ToolResult = &session.ToolResult{CallID: projected.ToolResult.CallID, Content: projected.ToolResult.Content, IsError: projected.ToolResult.IsError, Parts: projectionParts(projected.ToolResult.Parts)}
-		}
-		messages[i] = message
-	}
-	events := make([]learning.EvidenceEventData, len(projection.Events))
-	for i, projected := range projection.Events {
-		events[i] = learning.EvidenceEventData{Type: projected.Type, Seq: projected.Seq, Turn: projected.Turn, Text: projected.Text, Stop: projected.Stop}
-		if projected.ToolCall != nil {
-			call := *projected.ToolCall
-			events[i].ToolCall = &call
-		}
-		if projected.ToolResult != nil {
-			result := *projected.ToolResult
-			result.Parts = append([]learning.PartProjection(nil), projected.ToolResult.Parts...)
-			events[i].ToolResult = &result
-		}
-	}
-	trajectory := learning.NewTrajectory(projection.SessionID, "", projection.Stop, session.Usage{}, messages)
-	in := learning.Input{Trajectory: trajectory, Events: events, Existing: append([]learning.ExistingFact(nil), projection.Existing...)}
-	for _, projected := range projection.Signals {
-		signal := learning.Signal{Kind: projected.Kind}
-		for _, handle := range projected.Evidence {
-			ref, err := learning.ResolveEvidenceHandle(in, handle)
-			if err != nil {
-				return learning.Input{}, fmt.Errorf("%w: projected signal evidence: %v", ErrReflectionLimits, err)
-			}
-			signal.Evidence = append(signal.Evidence, ref)
-		}
-		in.Signals = append(in.Signals, signal)
-	}
-	canonical, err := learning.ProjectInput(in)
+	in, err := projection.ReflectionInput()
 	if err != nil {
-		return learning.Input{}, err
-	}
-	// V1 event evidence uses the immutable source-stream ordinal rather than the
-	// selected event's semantic sequence. The projection is the source of that
-	// already-validated model-visible coordinate.
-	for i := range canonical.Events {
-		if canonical.Events[i].Evidence != nil && projection.Events[i].Evidence != nil {
-			canonical.Events[i].Evidence.EventSeq = projection.Events[i].Evidence.EventSeq
-		}
-	}
-	got, marshalErr := json.Marshal(canonical)
-	if marshalErr != nil {
-		return learning.Input{}, fmt.Errorf("%w: encode canonical projection", ErrReflectionLimits)
-	}
-	want, marshalErr := json.Marshal(projection)
-	if marshalErr != nil || !bytes.Equal(got, want) {
-		return learning.Input{}, fmt.Errorf("%w: projection is not canonical", ErrReflectionLimits)
+		return learning.Input{}, fmt.Errorf("%w: projection has no unchanged verified source bindings", ErrReflectionLimits)
 	}
 	return in, nil
-}
-
-func projectionParts(projected []learning.PartProjection) []session.Content {
-	parts := make([]session.Content, len(projected))
-	for i, part := range projected {
-		parts[i] = session.Content{BlockKind: session.BlockKind(part.Kind), MIMEType: part.MIMEType, Text: part.Text, Name: part.Name, Title: part.Title, Description: part.Description}
-		if part.Binary {
-			parts[i].Data = []byte{0}
-		}
-	}
-	return parts
 }
 
 func (r *EvidenceReflector) callProvider(ctx context.Context, request port.LLMRequest) (output []byte, usage session.AuxiliaryUsage, err error) {
@@ -348,7 +284,7 @@ func (r *EvidenceReflector) validateReflectionChunk(chunk port.Chunk, output *st
 		if *reportedTokens > r.limits.Tokens {
 			return fmt.Errorf("%w: output tokens exceed %d", ErrReflectionOutput, r.limits.Tokens)
 		}
-	case port.ChunkReasoning, port.ChunkReasoningItem, port.ChunkPhase, port.ChunkProviderRoute:
+	case port.ChunkReasoning, port.ChunkReplay, port.ChunkPhase, port.ChunkProviderRoute:
 		// Reflection output is text-only; provider metadata is harmless and ignored.
 	case port.ChunkDone:
 		if !isBenignReflectionStop(chunk.Stop) {

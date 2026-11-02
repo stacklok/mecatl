@@ -1,0 +1,16 @@
+[
+  {"Type":"user_prompt","Seq":1,"UserPrompt":{"Text":"legacy prompt"}},
+  {"Type":"turn.start","Seq":2,"Turn":0},
+  {"Type":"tool.call","Seq":3,"Turn":0,"ToolCall":{"ID":"provider-call-reused","Name":"Read","Args":{"path":"first.txt"},"item_id":"fc_item_legacy_1"}},
+  {"Type":"tool.result","Seq":4,"Turn":0,"ToolResult":{"CallID":"provider-call-reused","Content":"first result"}},
+  {"Type":"turn.start","Seq":5,"Turn":1},
+  {"Type":"tool.call","Seq":6,"Turn":1,"ToolCall":{"ID":"provider-call-reused","Name":"Read","Args":{"path":"second.txt"},"item_id":"fc_item_legacy_2"}},
+  {"Type":"tool.result","Seq":7,"Turn":1,"ToolResult":{"CallID":"provider-call-reused","Content":"second result"}},
+  {"Type":"hook","Seq":8,"Turn":1,"Hook":{"Phase":"PreToolUse","Tool":"Plan","Decision":"blocked","CallID":"provider-plan-call","Guardrail":{"ReviewID":"review-legacy","Job":"plan","Assessment":"needs review","Inspection":"static","Disposition":"ask","ReasonCode":"legacy","RuleID":"rule-1","RuleOrigin":"config","CheckerProviderID":"provider-legacy","CheckerModelID":"model-legacy"}}},
+  {"Type":"permission.ask","Seq":9,"Turn":1,"Ask":{"AskID":"ask-plan-legacy","Tool":"Plan","Args":{"goal":"review"},"Reason":"plan approval","Call":"provider-plan-call"}},
+  {"Type":"approval","Seq":10,"Turn":1,"Approval":{"AskID":"ask-plan-legacy","Verdict":"allow_once","Tool":"Plan","Call":"provider-plan-call","Origin":"permission"}},
+  {"Type":"authorization.required","Seq":11,"Turn":1,"Authorization":{"AuthorizationID":"auth-legacy-1","DisplayName":"Legacy OAuth","Call":"provider-auth-call","ExpiresAt":"2025-01-03T03:04:05Z","Status":"pending"}},
+  {"Type":"authorization.resolved","Seq":12,"Turn":1,"Authorization":{"AuthorizationID":"auth-legacy-1","DisplayName":"Legacy OAuth","Call":"provider-auth-call","ExpiresAt":"2025-01-03T03:04:05Z","Status":"granted"}},
+  {"Type":"plan.continuation_failed","Seq":13,"Turn":1,"PlanContinuationFailure":{"PlanRunID":"plan-run-legacy","AskID":"ask-plan-legacy"}},
+  {"Type":"model.retry","Seq":14,"Turn":1,"ModelRetry":{"Disposition":1,"Progress":2}}
+]

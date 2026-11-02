@@ -2,6 +2,7 @@ package sessnap_test
 
 import (
 	"encoding/json"
+	"os"
 	"reflect"
 	"strings"
 	"testing"
@@ -37,9 +38,15 @@ func runningSession(t *testing.T) *session.Session {
 	}); err != nil {
 		t.Fatalf("RecordUsage: %v", err)
 	}
-	if err := s.RecordAssistant(session.NewAssistantMessage("thinking", "rsn", []session.ToolCall{
+	message := session.NewAssistantMessage("thinking", []session.ToolCall{
 		session.NewToolCall("c1", "Edit", json.RawMessage(`{"path":"x"}`)),
-	})); err != nil {
+		session.NewToolCall("c2", "Read", json.RawMessage(`{"path":"y"}`)),
+	})
+	message.Replay = &session.MessageReplay{
+		Bindings: []session.ToolCallBinding{{CallID: "c1", PairingID: "provider-c1"}, {CallID: "c2", PairingID: "provider-c2"}},
+		Provider: &session.ProviderReplay{Format: "test", Version: 1, Data: []byte("rsn")},
+	}
+	if err := s.RecordAssistant(message); err != nil {
 		t.Fatalf("RecordAssistant: %v", err)
 	}
 	if err := s.RecordToolResults([]session.ToolResult{
@@ -129,6 +136,9 @@ func TestRoundTripAwaitingPreservesPendingAsk(t *testing.T) {
 		Args:   json.RawMessage(`{"cmd":"rm -rf /"}`),
 		Reason: "destructive",
 		Call:   "call-1",
+	}
+	if err := want.RecordAssistant(session.NewAssistantMessage("", []session.ToolCall{session.NewToolCall(ask.Call, ask.Tool, ask.Args)})); err != nil {
+		t.Fatal(err)
 	}
 	if err := want.PauseForApproval(ask); err != nil {
 		t.Fatalf("PauseForApproval: %v", err)
@@ -278,7 +288,7 @@ func TestSnapshotRoundTripsPhase(t *testing.T) {
 	if err := s.BeginTurn(); err != nil {
 		t.Fatalf("BeginTurn: %v", err)
 	}
-	m := session.NewAssistantMessage("Done.", "", nil)
+	m := session.NewAssistantMessage("Done.", nil)
 	m.ProviderPhase = novel
 	if err := s.RecordAssistant(m); err != nil {
 		t.Fatalf("RecordAssistant: %v", err)
@@ -305,7 +315,7 @@ func TestSnapshotRoundTripsPhase(t *testing.T) {
 	if err := s2.BeginTurn(); err != nil {
 		t.Fatalf("BeginTurn: %v", err)
 	}
-	if err := s2.RecordAssistant(session.NewAssistantMessage("plain", "", nil)); err != nil {
+	if err := s2.RecordAssistant(session.NewAssistantMessage("plain", nil)); err != nil {
 		t.Fatalf("RecordAssistant: %v", err)
 	}
 	line2, err := sessnap.Marshal(s2)
@@ -317,20 +327,16 @@ func TestSnapshotRoundTripsPhase(t *testing.T) {
 	}
 }
 
-// TestSnapshotRoundTripsReasoningItemID asserts the OpenAI Responses
-// reasoning-item id (Message.ReasoningItemID) survives Marshal -> Unmarshal so a
-// restarted process can replay the provider-assigned reasoning-item id on
-// subsequent stateless turns (prevents the "id":"""" -> 400 replay bug). The DTO
-// field is omitempty, so an empty id is wire-omitted and an old snapshot still
-// decodes. Mirrors TestSnapshotRoundTripsPhase's shape.
+// Opaque reasoning payloads, including item identity, survive privately and
+// byte-exactly. The snapshot codec does not parse provider-owned JSON.
 func TestSnapshotRoundTripsReasoningItemID(t *testing.T) {
 	const id = "rs_x"
 	s := session.New("rid1", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1700000000, 0).UTC())
 	if err := s.BeginTurn(); err != nil {
 		t.Fatalf("BeginTurn: %v", err)
 	}
-	m := session.NewAssistantMessage("thinking blob", "rsn", nil)
-	m.ReasoningItemID = id
+	m := session.NewAssistantMessage("thinking blob", nil)
+	m.Replay = &session.MessageReplay{Provider: &session.ProviderReplay{Format: "openai.responses", Version: 1, Data: []byte(`{"reasoning":[{"i":"` + id + `","e":"rsn","n":0}]}`)}}
 	if err := s.RecordAssistant(m); err != nil {
 		t.Fatalf("RecordAssistant: %v", err)
 	}
@@ -339,16 +345,16 @@ func TestSnapshotRoundTripsReasoningItemID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Marshal: %v", err)
 	}
-	if !strings.Contains(string(line), `"reasoning_item_id":"`+id+`"`) {
-		t.Fatalf("snapshot JSON missing reasoning_item_id key with value %q; got:\n%s", id, line)
+	if strings.Contains(string(line), `"reasoning_item_id"`) || strings.Contains(string(line), `"rsn"`) {
+		t.Fatal("snapshot exposed opaque replay outside base64 carrier")
 	}
 	got, err := sessnap.Unmarshal(line)
 	if err != nil {
 		t.Fatalf("Unmarshal: %v", err)
 	}
 	gm := got.Conversation.Messages[0]
-	if gm.ReasoningItemID != id {
-		t.Fatalf("restored ReasoningItemID = %q, want %q", gm.ReasoningItemID, id)
+	if !reflect.DeepEqual(gm.Replay, m.Replay) {
+		t.Fatal("private reasoning/item payload changed")
 	}
 
 	// An empty ReasoningItemID assistant message must wire-omit the key (additive, no bump).
@@ -356,7 +362,7 @@ func TestSnapshotRoundTripsReasoningItemID(t *testing.T) {
 	if err := s2.BeginTurn(); err != nil {
 		t.Fatalf("BeginTurn: %v", err)
 	}
-	if err := s2.RecordAssistant(session.NewAssistantMessage("plain", "rsn", nil)); err != nil {
+	if err := s2.RecordAssistant(session.NewAssistantMessage("plain", nil)); err != nil {
 		t.Fatalf("RecordAssistant: %v", err)
 	}
 	line2, err := sessnap.Marshal(s2)
@@ -368,16 +374,8 @@ func TestSnapshotRoundTripsReasoningItemID(t *testing.T) {
 	}
 }
 
-// TestSnapshotRoundTripsItemID asserts that a ToolCall carrying a non-empty
-// ItemID survives a Marshal -> Unmarshal round-trip with the value intact, and
-// that the wire JSON contains the "item_id" key (not a vacuous no-op).
-//
-// This pins the fix for the "Duplicate item found with id fc_N" error from Azure
-// GPT-5.x: the ToolCall.ItemID field must survive snapshot persistence so that a
-// restarted process can still replay the provider-assigned item id on subsequent
-// stateless turns. It also verifies backward compat: an old snapshot with no
-// "item_id" key decodes with ItemID == "" (the zero value, wire-omitted on
-// replay — safe, non-OpenAI providers / pre-fix captures stay unchanged).
+// Provider item identity persists only in the private occurrence binding. An old
+// snapshot with no item identity still migrates to a canonical call and binding.
 func TestSnapshotRoundTripsItemID(t *testing.T) {
 	const itemID = "fc_7"
 	s := session.New("itm1", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1700000000, 0).UTC())
@@ -385,12 +383,13 @@ func TestSnapshotRoundTripsItemID(t *testing.T) {
 		t.Fatalf("BeginTurn: %v", err)
 	}
 	call := session.ToolCall{
-		ID:     "call_abc",
-		Name:   "read_file",
-		Args:   json.RawMessage(`{"path":"a.go"}`),
-		ItemID: itemID,
+		ID:   "call_abc",
+		Name: "read_file",
+		Args: json.RawMessage(`{"path":"a.go"}`),
 	}
-	if err := s.RecordAssistant(session.NewAssistantMessage("", "", []session.ToolCall{call})); err != nil {
+	m := session.NewAssistantMessage("", []session.ToolCall{call})
+	m.Replay = &session.MessageReplay{Bindings: []session.ToolCallBinding{{CallID: call.ID, PairingID: "provider-call", ItemID: itemID}}}
+	if err := s.RecordAssistant(m); err != nil {
 		t.Fatalf("RecordAssistant: %v", err)
 	}
 
@@ -399,8 +398,8 @@ func TestSnapshotRoundTripsItemID(t *testing.T) {
 		t.Fatalf("Marshal: %v", err)
 	}
 	// The item_id key must be present in the wire JSON (non-vacuous round-trip).
-	if !strings.Contains(string(line), `"item_id":"`+itemID+`"`) {
-		t.Fatalf("snapshot JSON missing item_id key with value %q; got:\n%s", itemID, line)
+	if !strings.Contains(string(line), `"ItemID":"`+itemID+`"`) {
+		t.Fatal("snapshot JSON missing private replay item binding")
 	}
 
 	got, err := sessnap.Unmarshal(line)
@@ -423,15 +422,15 @@ func TestSnapshotRoundTripsItemID(t *testing.T) {
 		t.Fatalf("restored conversation has no ToolCalls in any message")
 		return
 	}
-	if restoredCall.ItemID != itemID {
-		t.Fatalf("restored ItemID = %q, want %q", restoredCall.ItemID, itemID)
+	if restoredCall.ID != call.ID || msgs[0].Replay.Bindings[0].ItemID != itemID || msgs[0].Replay.Bindings[0].PairingID != "provider-call" {
+		t.Fatal("provider item escaped replay binding or canonical identity changed")
 	}
 
 	// Backward-compat: an old snapshot without an "item_id" key decodes with
 	// ItemID == "" (wire-omit safe — replaying without an id is the pre-fix behavior).
 	oldSnap := `{"id":"old2","state":"idle","mode":"default","limits":{},"counters":{},"token_usage":{},` +
 		`"environment_ref":{"Kind":"local","ID":"/ws","Revision":"in-tree-v1"},"created_at":"2023-11-14T22:13:20Z",` +
-		`"messages":[{"role":"assistant","tool_calls":[{"ID":"call_x","Name":"read_file","Args":{"path":"z.go"}}]}]}`
+		`"messages":[{"role":"assistant","tool_calls":[{"ID":"call_x","Name":"read_file","Args":{"path":"z.go"}}]},{"role":"tool","tool_result":{"CallID":"call_x","Content":"done"}}]}`
 	got2, err := sessnap.Unmarshal([]byte(oldSnap))
 	if err != nil {
 		t.Fatalf("Unmarshal old snapshot: %v", err)
@@ -439,9 +438,8 @@ func TestSnapshotRoundTripsItemID(t *testing.T) {
 	if len(got2.Conversation.Messages) == 0 || len(got2.Conversation.Messages[0].ToolCalls) == 0 {
 		t.Fatalf("old snapshot has no tool calls after unmarshal")
 	}
-	if got2.Conversation.Messages[0].ToolCalls[0].ItemID != "" {
-		t.Fatalf("old snapshot (no item_id key) decoded ItemID = %q, want empty",
-			got2.Conversation.Messages[0].ToolCalls[0].ItemID)
+	if call := got2.Conversation.Messages[0].ToolCalls[0]; call.ID == "call_x" || got2.Conversation.Messages[0].Replay.Bindings[0].PairingID != "call_x" || got2.Conversation.Messages[0].Replay.Bindings[0].ItemID != "" {
+		t.Fatal("old provider call was not separated from canonical identity")
 	}
 }
 
@@ -777,6 +775,23 @@ func TestSnapshotEnvironmentRefForwardCompat(t *testing.T) {
 	want := session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}
 	if got.EnvironmentRef != want {
 		t.Fatalf("forward EnvironmentRef = %+v, want %+v", got.EnvironmentRef, want)
+	}
+}
+
+// These frozen inputs were captured from the pre-canonical-identity sessnap wire
+// format. They are intentionally hand-held testdata, not Marshal output generated
+// during a test, so a later schema migration must continue to read the old bytes.
+func TestLegacySnapshotFixturesDecode(t *testing.T) {
+	retryBytes, err := os.ReadFile("testdata/legacy-retry.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	retrySession, err := sessnap.Unmarshal(retryBytes)
+	if err != nil {
+		t.Fatalf("Unmarshal retry fixture: %v", err)
+	}
+	if retry := retrySession.FailureMetadata(); retry != (session.RetryMetadata{Disposition: session.RetryDispositionRetryable, Progress: session.StreamProgressVisible}) || retrySession.LastError() != "legacy retryable stream failure" {
+		t.Fatalf("retry metadata = %+v, last error = %q", retry, retrySession.LastError())
 	}
 }
 

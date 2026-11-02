@@ -545,6 +545,7 @@ linters:
           allow:
             - $gostd
             - github.com/stacklok/mecatl/engine/session
+            - github.com/stacklok/mecatl/engine/adapter/eventcodec
             - github.com/stacklok/mecatl/engine/adapter/sessnap
           deny:
             - pkg: os

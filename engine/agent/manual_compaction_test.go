@@ -40,7 +40,7 @@ func manualSession(t *testing.T) *session.Session {
 	sess := session.New("manual", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0))
 	if err := sess.SeedHistory([]session.Message{
 		session.NewUserMessage("a long original user instruction"),
-		session.NewAssistantMessage("a long original assistant response", "", nil),
+		session.NewAssistantMessage("a long original assistant response", nil),
 	}); err != nil {
 		t.Fatalf("SeedHistory: %v", err)
 	}

@@ -20,7 +20,7 @@ func driven(t *testing.T) *session.Session {
 		MaxTurns: 5, MaxToolCalls: 9, MaxConsecutiveFailures: 2,
 	}, time.Unix(1700000000, 0).UTC())
 	_ = s.BeginTurn()
-	_ = s.RecordAssistant(session.NewAssistantMessage("hi", "", []session.ToolCall{
+	_ = s.RecordAssistant(session.NewAssistantMessage("hi", []session.ToolCall{
 		session.NewToolCall("c1", "Read", json.RawMessage(`{"path":"a"}`)),
 	}))
 	_ = s.RecordToolResults([]session.ToolResult{session.NewToolResult("c1", "data")})
@@ -156,7 +156,7 @@ func sessionWithTranscript(t testing.TB, id session.SessionID, messages int, tex
 		t.Fatal(err)
 	}
 	for range messages {
-		if err := s.RecordAssistant(session.NewAssistantMessage(text, "", nil)); err != nil {
+		if err := s.RecordAssistant(session.NewAssistantMessage(text, nil)); err != nil {
 			t.Fatal(err)
 		}
 	}

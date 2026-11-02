@@ -175,7 +175,7 @@ func TestSurfacedChildAcceptedVerdictSurvivesCancelledAwait(t *testing.T) {
 			parent.children.retractAsksVia(parent.unregisterChildAsk, []string{ask.AskID})
 			if len(emitted) != 1 || emitted[0].Type != session.EvApproval || emitted[0].Turn != 7 ||
 				emitted[0].Approval == nil || emitted[0].Approval.AskID != ask.AskID ||
-				emitted[0].Approval.Verdict != session.VerdictString(tc.verdict) || emitted[0].Approval.Call != "" {
+				emitted[0].Approval.Verdict != session.VerdictString(tc.verdict) || emitted[0].Approval.Call != ask.Call {
 				t.Fatalf("terminal child events = %+v, want one safe parent approval", emitted)
 			}
 		})
