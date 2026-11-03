@@ -360542,6 +360542,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1793714782825,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "0c7308afdf0e30296265e87aed45b61dac5543da",
+          "message": "feat(kernel): compose generated history codecs and CID links (#2660)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-11-03T17:04:12Z",
+          "tree_id": "8bda5c0b6ededece765aa8694de1507074f60a80",
+          "url": "https://github.com/stacklok/mecatl/commit/0c7308afdf0e30296265e87aed45b61dac5543da"
+        },
+        "date": 1793726306252,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -520887,6 +520921,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1793726300807,
+  "lastUpdate": 1793726308588,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
