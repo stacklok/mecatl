@@ -361616,6 +361616,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1793729413652,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "29541485+ChrisJBurns@users.noreply.github.com",
+            "name": "Chris Burns",
+            "username": "ChrisJBurns"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "dc3b06582c847d90b2745a49a2d4831d72a54c0a",
+          "message": "feat(identitybroker): bump ToolHive to v0.61.0 and close the delegate's access-token path (#2675)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-11-03T20:52:47Z",
+          "tree_id": "9acb66c4c244781971e54f292df0da3df7154e56",
+          "url": "https://github.com/stacklok/mecatl/commit/dc3b06582c847d90b2745a49a2d4831d72a54c0a"
+        },
+        "date": 1793740196692,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -522420,6 +522454,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1793740186385,
+  "lastUpdate": 1793740209975,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
