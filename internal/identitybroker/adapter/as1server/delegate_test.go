@@ -213,67 +213,59 @@ func TestDelegateRefusesBadAssertions(t *testing.T) {
 	tooLong := base()
 	tooLong["exp"] = time.Now().Add(10 * time.Minute).Unix()
 
-	// Each case asserts the security invariant — a bad assertion issues no
-	// token — because ToolHive does not answer them all with one code. A wrong
-	// audience or an unregistered key is 401 invalid_client (pinned below); but
-	// an expired assertion, or one whose lifetime exceeds its five-minute
-	// maximum, is HTTP 500 (fosite maps those to server_error, not
-	// invalid_client), and a replayed jti is 400 jti_known.
-	for name, claims := range map[string]jwt.MapClaims{
-		"expired":               expired,
-		"exp over five minutes": tooLong,
-	} {
-		t.Run(name, func(t *testing.T) {
-			status, errCode := postToken(t, f.server, exchangeForm(signAssertion(t, key, kid, claims), f.signIn(t, testAudience).AccessToken))
-			if status == http.StatusOK {
-				t.Fatalf("a %s assertion authenticated: status %d error %q", name, status, errCode)
-			}
-		})
+	// Every failed client assertion is 401 invalid_client (the design's step
+	// (5), and ToolHive since v0.61.0).
+	wantInvalidClient := func(t *testing.T, assertion string) {
+		t.Helper()
+		status, errCode := postToken(t, f.server, exchangeForm(assertion, f.signIn(t, testAudience).AccessToken))
+		if status != http.StatusUnauthorized || errCode != "invalid_client" {
+			t.Fatalf("status %d error %q, want 401 invalid_client", status, errCode)
+		}
 	}
-
-	t.Run("wrong audience", func(t *testing.T) {
-		status, errCode := postToken(t, f.server, exchangeForm(signAssertion(t, key, kid, foreignAud), f.signIn(t, testAudience).AccessToken))
-		if status != http.StatusUnauthorized || errCode != "invalid_client" {
-			t.Fatalf("status %d error %q, want 401 invalid_client", status, errCode)
-		}
-	})
-
-	t.Run("key not registered", func(t *testing.T) {
-		status, errCode := postToken(t, f.server, exchangeForm(signAssertion(t, unregistered, kid, base()), f.signIn(t, testAudience).AccessToken))
-		if status != http.StatusUnauthorized || errCode != "invalid_client" {
-			t.Fatalf("status %d error %q, want 401 invalid_client", status, errCode)
-		}
-	})
+	for name, assertion := range map[string]func() string{
+		"expired":               func() string { return signAssertion(t, key, kid, expired) },
+		"exp over five minutes": func() string { return signAssertion(t, key, kid, tooLong) },
+		"wrong audience":        func() string { return signAssertion(t, key, kid, foreignAud) },
+		"key not registered":    func() string { return signAssertion(t, unregistered, kid, base()) },
+	} {
+		t.Run(name, func(t *testing.T) { wantInvalidClient(t, assertion()) })
+	}
 
 	t.Run("reused jti", func(t *testing.T) {
 		assertion := signAssertion(t, key, kid, base())
 		if status, errCode := postToken(t, f.server, exchangeForm(assertion, f.signIn(t, testAudience).AccessToken)); status != http.StatusOK {
 			t.Fatalf("first use status %d error %q, want 200", status, errCode)
 		}
-		if status, errCode := postToken(t, f.server, exchangeForm(assertion, f.signIn(t, testAudience).AccessToken)); status == http.StatusOK {
-			t.Fatalf("a replayed assertion authenticated: status %d error %q", status, errCode)
-		}
+		wantInvalidClient(t, assertion)
 	})
 }
 
 func TestDelegateCannotObtainAPIAccessTokens(t *testing.T) {
-	t.Skip("waits for stacklok/toolhive#7026: a delegate with api_audience can obtain API access tokens")
 	h := identityharness.New(t, identityharness.Options{})
 	f, signer, _ := startDelegateAS1(t, h, nil)
 
-	assertion, err := signer.ClientAssertion(f.server.Issuer(), time.Now())
-	if err != nil {
-		t.Fatalf("ClientAssertion: %v", err)
-	}
-	form := exchangeForm(assertion.Value(), f.signIn(t, testAudience).AccessToken)
-	form.Set("requested_token_type", tokenTypeAccessToken)
-	if status, errCode := postToken(t, f.server, form); status == http.StatusOK {
-		t.Fatalf("the delegate obtained an access token: status %d error %q", status, errCode)
+	// A plain RFC 8693 request for an access token, with and without naming
+	// AS-1's audience: neither may succeed (stacklok/toolhive#7026).
+	for name, audience := range map[string]string{"default audience": "", "AS-1's audience": testAudience} {
+		t.Run(name, func(t *testing.T) {
+			assertion, err := signer.ClientAssertion(f.server.Issuer(), time.Now())
+			if err != nil {
+				t.Fatalf("ClientAssertion: %v", err)
+			}
+			form := exchangeForm(assertion.Value(), f.signIn(t, testAudience).AccessToken)
+			form.Del("authorization_details")
+			form.Set("requested_token_type", tokenTypeAccessToken)
+			if audience != "" {
+				form.Set("audience", audience)
+			}
+			if status, errCode := postToken(t, f.server, form); status == http.StatusOK {
+				t.Fatalf("the delegate obtained an access token: status %d error %q", status, errCode)
+			}
+		})
 	}
 }
 
 func TestDelegateRequiresOfflineAccess(t *testing.T) {
-	t.Skip("unenforced: ToolHive v0.60.0 does not require offline_access on the subject token")
 	h := identityharness.New(t, identityharness.Options{})
 	f, signer, _ := startDelegateAS1(t, h, nil)
 	c := delegateClient(t, f, signer)

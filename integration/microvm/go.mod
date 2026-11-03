@@ -180,7 +180,7 @@ require (
 	github.com/pandatix/go-abnf v0.5.3 // indirect
 	github.com/pb33f/ordered-map/v2 v2.3.1 // indirect
 	github.com/pelletier/go-toml/v2 v2.4.3 // indirect
-	github.com/pierrec/lz4/v4 v4.1.27 // indirect
+	github.com/pierrec/lz4/v4 v4.1.33 // indirect
 	github.com/pjbgf/sha1cd v0.7.0 // indirect
 	github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c // indirect
 	github.com/pkg/errors v0.9.1 // indirect
@@ -223,7 +223,7 @@ require (
 	github.com/stacklok/mecatl/provider/openai v0.0.0-00010101000000-000000000000 // indirect
 	github.com/stacklok/mecatl/provider/openaichat v0.0.0-00010101000000-000000000000 // indirect
 	github.com/stacklok/mecatl/provider/ssefilter v0.1.0 // indirect
-	github.com/stacklok/toolhive v0.60.0 // indirect
+	github.com/stacklok/toolhive v0.61.0 // indirect
 	github.com/stacklok/toolhive-core v0.0.58 // indirect
 	github.com/stacklok/toolhive-core/redisconn v0.0.58 // indirect
 	github.com/stacklok/typesafe-go v0.1.0 // indirect
