@@ -121,10 +121,7 @@ func commitFixture(t *testing.T) format.Commit {
 	if err != nil {
 		t.Fatal(err)
 	}
-	parent, err := contentid.Parse(emptyDigestCID)
-	if err != nil {
-		t.Fatal(err)
-	}
+	parent := contentid.Sum(nil)
 	return format.Commit{
 		FormatVersion: 1,
 		Sequence:      2,

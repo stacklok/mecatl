@@ -3,6 +3,7 @@ package history_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math"
 	"reflect"
 	"testing"
@@ -159,6 +160,52 @@ func TestIdentifyAndAppendRejectInputsWithoutBackendCalls(t *testing.T) {
 	h := newHistory(t, scriptedBackend{}, corePolicy())
 	if got, err := h.Append(ctx, id, dto(id, history.CommitRef{}, "root")); !errors.Is(err, context.Canceled) || got != (history.Resolution{}) {
 		t.Fatalf("canceled Append = %+v, %v", got, err)
+	}
+}
+
+func TestReadCancellationAfterBackendReturn(t *testing.T) {
+	id := history.NewHistoryID()
+	root := byteCommit(t, dto(id, history.CommitRef{}, "root"))
+	for _, empty := range []bool{false, true} {
+		for _, canceled := range []bool{false, true} {
+			t.Run(fmt.Sprintf("empty=%t/canceled=%t", empty, canceled), func(t *testing.T) {
+				ctx, cancel := context.WithCancel(context.Background())
+				defer cancel()
+				request := history.ReadRequest{Through: root.Ref, MaxCommits: 1}
+				commits := []history.ByteCommit{root}
+				if empty {
+					request.After = root.Ref
+					commits = nil
+				}
+				calls := 0
+				h := newHistory(t, scriptedBackend{read: func(ctx context.Context, _ history.HistoryID, _ history.ByteReadRequest) ([]history.ByteCommit, error) {
+					calls++
+					if err := ctx.Err(); err != nil {
+						t.Fatalf("canceled before backend read: %v", err)
+					}
+					if canceled {
+						cancel()
+					}
+					return commits, nil
+				}}, corePolicy())
+				got, err := h.Read(ctx, id, request)
+				if calls != 1 {
+					t.Fatalf("backend reads = %d; want 1", calls)
+				}
+				if canceled {
+					if !errors.Is(err, context.Canceled) || !reflect.DeepEqual(got, history.Page{}) {
+						t.Fatalf("canceled Read = %+v, %v; want zero page and context.Canceled", got, err)
+					}
+					return
+				}
+				if err != nil || got.Next != root.Ref || len(got.Commits) != len(commits) {
+					t.Fatalf("Read = %+v, %v; want %d commits through %+v", got, err, len(commits), root.Ref)
+				}
+				if !empty && !got.Commits[0].Commit.Equal(dto(id, history.CommitRef{}, "root")) {
+					t.Fatal("successful read changed commit")
+				}
+			})
+		}
 	}
 }
 

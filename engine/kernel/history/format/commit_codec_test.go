@@ -3,9 +3,11 @@ package format_test
 import (
 	"bytes"
 	"crypto/sha256"
+	"encoding/base32"
 	"encoding/hex"
 	"math"
 	"reflect"
+	"strings"
 	"sync"
 	"testing"
 
@@ -39,7 +41,7 @@ func wireFixtures(t testing.TB) (root, successor []byte) {
 func assertContentCID(t testing.TB, data []byte, cid contentid.CID) {
 	t.Helper()
 	digest := sha256.Sum256(data)
-	want := cidText(append([]byte{1, 0x71, 0x12, 32}, digest[:]...))
+	want := "b" + strings.ToLower(base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(append([]byte{1, 0x71, 0x12, 32}, digest[:]...)))
 	if cid.String() != want {
 		t.Fatalf("CID = %s; want %s", cid, want)
 	}
@@ -329,7 +331,7 @@ func TestCodecConcurrency(t *testing.T) {
 	wg.Wait()
 }
 
-func FuzzDecodeCommit(f *testing.F) {
+func FuzzCommitDecode(f *testing.F) {
 	root, successor := wireFixtures(f)
 	for _, seed := range [][]byte{nil, root, successor, {0xff}, root[:len(root)-1], append(bytes.Clone(root), 0)} {
 		f.Add(seed)

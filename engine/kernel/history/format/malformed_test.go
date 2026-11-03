@@ -19,7 +19,7 @@ func replaceWire(t testing.TB, wire []byte, old, replacement string) []byte {
 	return bytes.Replace(wire, []byte(old), []byte(replacement), 1)
 }
 
-func TestDecodeCommitMalformed(t *testing.T) {
+func TestCommitDecodeMalformed(t *testing.T) {
 	root, successor := wireFixtures(t)
 	prefix := "\xa4\x61h\x78\x19HST1111111111111111111111\x61r"
 	record := "\xa3\x61k\x61x\x61p\x42\xff\x00\x61v\x01"
@@ -131,7 +131,7 @@ func TestDecodeCommitMalformed(t *testing.T) {
 	}
 }
 
-func TestDecodeCommitRejectsCIDAlternatives(t *testing.T) {
+func TestCommitDecodeRejectsCIDAlternatives(t *testing.T) {
 	_, successor := wireFixtures(t)
 	binary := bytes.Clone(successor[8:44])
 	for name, link := range map[string][]byte{

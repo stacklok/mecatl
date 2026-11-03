@@ -59,6 +59,7 @@ func TestSchemaRejections(t *testing.T) {
 		{"generic alias reachable", "type Child[T any] = []T;type Record struct { V Child[bool] `cbor:\"v\"` }", "generic types"},
 		{"generic alias chain", "type Generic[T any] = []T;type Plain = Generic[bool];type Record struct { V Plain `cbor:\"v\"` }", "generic types"},
 		{"shadowed primitive", "type string uint64;type Record struct{}", "shadows predeclared string"},
+		{"shadowed machine word", "type uint uint8;type Record struct { V string `cbor:\"v\"` }", "shadows predeclared uint"},
 		{"shadowed builtin", "func len(any) int {panic(\"must never run\")};type Record struct{}", "shadows predeclared len"},
 		{"private implementation collision", "type Record struct{};var cborgen int", "collides with generated cborgen"},
 		{"private alias collision", "type v []byte;type Record struct { V v `cbor:\"v\"` };var cborgenValue1 int", "collides with generated cborgenValue1"},

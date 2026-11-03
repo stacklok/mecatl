@@ -23,10 +23,7 @@ func validRoot(t testing.TB) format.Commit {
 
 func TestCommitValidate(t *testing.T) {
 	root := validRoot(t)
-	parent, err := contentid.Parse(emptyDigestCID)
-	if err != nil {
-		t.Fatal(err)
-	}
+	parent := contentid.Sum(nil)
 	successor := root.Clone()
 	successor.HistoryID = nil
 	successor.Sequence = 2

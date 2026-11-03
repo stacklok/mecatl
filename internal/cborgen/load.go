@@ -266,7 +266,7 @@ func checkDeclarations(files []string, out string, roots []string) error {
 	reserved := make(map[string]bool, 3*len(roots))
 	// Generated code must use actual language primitives, never owner hooks or
 	// shadowed scalar names. Check before loading the public-entry-point stubs.
-	for _, name := range []string{"append", "bool", "byte", "error", "false", "int", "int8", "int16", "int32", "int64", "len", "make", "min", "nil", "panic", "string", "true", "uint8", "uint16", "uint32", "uint64"} {
+	for _, name := range []string{"append", "bool", "byte", "error", "false", "int", "int8", "int16", "int32", "int64", "len", "make", "min", "nil", "panic", "string", "true", "uint", "uint8", "uint16", "uint32", "uint64"} {
 		reserved[name] = true
 	}
 	for _, root := range roots {
@@ -291,10 +291,10 @@ func checkDeclarations(files []string, out string, roots []string) error {
 			return fmt.Errorf("root %s is not a locally declared type", root)
 		}
 		if spec.Assign.IsValid() {
-			return fmt.Errorf("root %s is an alias; select a locally defined struct", root)
+			return fmt.Errorf("root %s is an alias; select a locally defined type", root)
 		}
 		if spec.TypeParams != nil {
-			return fmt.Errorf("root %s is generic; select a nongeneric struct", root)
+			return fmt.Errorf("root %s is generic; select a nongeneric type", root)
 		}
 		if structure, ok := spec.Type.(*ast.StructType); ok {
 			for _, field := range structure.Fields.List {
