@@ -13,7 +13,7 @@ Records must distinguish verified facts from trusted reports. Qualify subjects b
 | Evidence | Source and what it establishes | Limit |
 | --- | --- | --- |
 | Authenticated workload and instance | Broker validation of workload credentials and the instance JWT-SVID, with the registered session association | Does not authenticate the human or prove a task-specific delegation. |
-| Definition source, admitted revision, and ceilings | For global definitions, the broker's definition loader, which read them from configured sources at startup. How other definitions are loaded is not yet decided. | Records what the loader read and resolved. It does not show which loaded definition mecak8s selected for a session. |
+| Definition source, admitted revision, and ceilings | For global definitions, the broker's definition loader, which read them from configured sources at startup. **Open.** How other definitions are loaded. | Records what the loader read and resolved. It does not show which loaded definition mecak8s selected for a session. |
 | Definition selection and instance ancestry | Workload-authenticated mecak8s lifecycle registration, validated and retained by the broker | A trusted lifecycle assertion, not a fact carried by the SVID or proof of same-process isolation. |
 | Initiating user and session ownership | AS-1 ran the sign-in through the company IdP and issued an access token for the Mecatl API. mecak8s records that it validated the token for its API audience and checked that the company identity in the token's `sub_id` owns the host session. The record keeps both the owner (company identity) and the AS-1 subject. | Establishes that AS-1 authenticated the user at sign-in and that the user currently owns the session. It does not establish fresh human action for each call, task-specific delegation, or reported run context. |
 | Session authority | AS-1 records the one-time conversion at `OpenSession`: client `mecatl` authenticated with `private_key_jwt`, user, source access-token `jti`, and hard expiry. The broker records the open: broker session, the owner match, and the same `jti` | Shows that the broker held a valid AS-1 token for that user when the session opened. The session reference is broker-asserted. The conversion does not show that the user approved any later call. |
@@ -24,7 +24,7 @@ Records must distinguish verified facts from trusted reports. Qualify subjects b
 | vMCP decision | vMCP records its decision with the access-token reference `(iss, jti)`, native user, actor, tool, outcome, and the propagated operation ID | The gateway sees only the current actor in `act.sub`, not who delegated the task. The operation ID is reported, unverified trace context, as is other forwarded context unless independently verified. |
 | Observed result and provider correlation | The response received by the recording component and safe provider references, when available | A broker-observed MCP response is not independent proof of provider-side effects. |
 
-AS-1 and AS-2 must produce the records above, following the [AuditEvent profile](#auditevent-profile); ToolHive's authorization server records no audit events today, so this is new work.
+AS-1 and AS-2 must produce the records above, following the [AuditEvent profile](#auditevent-profile). The [ToolHive work list](implementation.md#toolhive-work-list) has the rows.
 
 ## AuditEvent profile
 
@@ -106,7 +106,7 @@ Use operation and attempt references to connect the evidence; individual events 
 
 Correctly shaped records are not enough if they can be lost, rewritten, or never compared.
 
-**Emission and destination.** Every component records through the toolhive-core audit logger: mecak8s, the broker, AS-1, AS-2, and the vMCP. The logger's sink already writes to standard output or an HTTP endpoint, so each deployment chooses where records go. ToolHive's authorization server records no audit events today; adding them, including sign-in and token issuance, is in the [ToolHive ledger](implementation.md#toolhive-work-list).
+**Emission and destination.** Every component records through the toolhive-core audit logger: mecak8s, the broker, AS-1, AS-2, and the vMCP. The logger's sink already writes to standard output or an HTTP endpoint, so each deployment chooses where records go. AS-1's and AS-2's events, including sign-in and token issuance, are in the [ToolHive work list](implementation.md#toolhive-work-list).
 
 **Protection.** The deployment points every component's sink at a store that mecak8s cannot write to or delete from, such as an append-only collector or object storage with retention locks. This protects records already delivered even while the broker runs inside mecak8s: a compromise can forge or suppress records from then on, but cannot rewrite earlier ones. Investigators get read-only access to the store.
 

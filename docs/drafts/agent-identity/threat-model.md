@@ -13,6 +13,7 @@ The broker starts as modules inside the mecak8s process: broker core, AS-1, the 
 Some protections do not depend on where the broker runs:
 
 - **Hostile workspace code** runs in executor Pods, behind the execution provider. In both deployments, executors get no broker credentials, no database credentials, and no network path to mecak8s internals or the key management service (KMS).
+- **Anonymous traffic at AS-1.** AS-1's sign-in and discovery routes are reachable before sign-in. AS-1 serves and advertises only the endpoints sign-in needs, with no dynamic client registration. It rate-limits its anonymous routes with global limits, one for the token endpoint and one for the rest, because behind an ingress every user shares one peer address. Per-client limits belong at the ingress.
 - **A prompt-injected agent** never sees or chooses credentials. Harness code attaches them, and the model supplies only tool names and arguments.
 - **The user comes from a sign-in at AS-1**, not from a mecak8s report. mecak8s passes on the AS-1-signed access token once, AS-1 converts each token at most once, and every ID-JAG names the user from AS-1's record. Correct mecak8s code cannot name a user who did not sign in. An attacker running code in the process that holds AS-1's keys can, and while the broker runs inside mecak8s that process is mecak8s; see the first row of the table below.
 

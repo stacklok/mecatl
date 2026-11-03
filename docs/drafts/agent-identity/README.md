@@ -107,7 +107,7 @@ flowchart LR
 
 AS-1 sits on two boundaries: it signs Alice in at boundary 1 and signs the ID-JAG that AS-2 checks at boundary 3. The agent trust domain is not a boundary; it names agents for attribution, inside mecak8s.
 
-The diagram shows the intended deployment. Today the broker runs inside mecak8s, so credential custody is a module seam and an attacker with code execution in mecak8s holds AS-1's key; and an embedded gateway shares Mecatl's administrative domain, so gateway entry there is a protocol boundary, not a security one. The [threat model](threat-model.md#a-compromised-mecak8s) says what each deployment closes.
+The diagram shows the intended deployment. When the broker runs inside mecak8s, credential custody is a module seam and an attacker with code execution in mecak8s holds AS-1's key; and an embedded gateway shares Mecatl's administrative domain, so gateway entry there is a protocol boundary, not a security one. The [threat model](threat-model.md#a-compromised-mecak8s) says what each deployment closes.
 
 This design scopes broker authorization to MCP tools. Local deployments can keep direct tool access, and none of these guarantees apply to them. Extending the boundary to filesystem operations, Shell, and agent spawning is a [future direction](all-tool-mediation.md). The broker does not decide whether agents start or whether runs execute; mecak8s owns agent lifecycle and run execution, and registering an instance records its identity without granting permission to run.
 
