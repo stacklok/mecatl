@@ -400381,6 +400381,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1793727329899,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "29541485+ChrisJBurns@users.noreply.github.com",
+            "name": "Chris Burns",
+            "username": "ChrisJBurns"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "40a8e5e9bc28391e007e2978da818a1f826d6673",
+          "message": "fix(identitybroker): count a session's hard expiry one clock skew early (#2658)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-11-03T17:57:37Z",
+          "tree_id": "5e92dcf0829b078144cffb0e7245288b20d31b12",
+          "url": "https://github.com/stacklok/mecatl/commit/40a8e5e9bc28391e007e2978da818a1f826d6673"
+        },
+        "date": 1793729418701,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 16146.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12907,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 794,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -521943,6 +521982,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1793729414876,
+  "lastUpdate": 1793729419814,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
