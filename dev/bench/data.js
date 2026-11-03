@@ -399587,6 +399587,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1793714787651,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "0c7308afdf0e30296265e87aed45b61dac5543da",
+          "message": "feat(kernel): compose generated history codecs and CID links (#2660)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-11-03T17:04:12Z",
+          "tree_id": "8bda5c0b6ededece765aa8694de1507074f60a80",
+          "url": "https://github.com/stacklok/mecatl/commit/0c7308afdf0e30296265e87aed45b61dac5543da"
+        },
+        "date": 1793726314501,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 16150,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12911,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 795,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -520921,6 +520960,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1793726308588,
+  "lastUpdate": 1793726318006,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
