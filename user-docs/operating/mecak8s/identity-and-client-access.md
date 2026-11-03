@@ -161,7 +161,10 @@ oidc:
 ```
 
 The chart rejects partial profiles and never derives the public resource URL
-from pod addresses. Metadata discovery is anonymous HTTPS and remains separate
+from pod addresses. With hosted AS-1, a `scopes` list must include
+`offline_access`, or `mecak8s` refuses to start: `mecatui` requests the listed
+scopes exactly, and the identity broker can convert only a sign-in that
+includes `offline_access`. Metadata discovery is anonymous HTTPS and remains separate
 from authenticated gRPC transport.
 
 ## Own sessions by the company identity

@@ -138,6 +138,8 @@ func TestIdentityBrokerAS1FlagRules(t *testing.T) {
 		{name: "another client ID", args: with("--oidc-client-id=studio"), want: "--oidc-client-id must be unset or equal"},
 		{name: "accepted client IDs without the TUI", args: with("--oidc-accepted-client-ids=studio"), want: "--oidc-accepted-client-ids must include"},
 		{name: "without owner identity sub_id", args: without("--oidc-owner-identity"), want: "requires --oidc-owner-identity=sub_id"},
+		{name: "scopes without offline_access", args: with("--oidc-scopes=openid,profile"), want: "--oidc-scopes must include offline_access"},
+		{name: "scopes with offline_access", args: with("--oidc-scopes=openid,offline_access")},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			cfg, err := parseFlags(c.args)
