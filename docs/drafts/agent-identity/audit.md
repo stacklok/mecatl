@@ -24,7 +24,7 @@ Records must distinguish verified facts from trusted reports. Qualify subjects b
 | vMCP decision | vMCP records its decision with the access-token reference `(iss, jti)`, native user, actor, tool, outcome, and the propagated operation ID | The gateway sees only the current actor in `act.sub`, not who delegated the task. The operation ID is reported, unverified trace context, as is other forwarded context unless independently verified. |
 | Observed result and provider correlation | The response received by the recording component and safe provider references, when available | A broker-observed MCP response is not independent proof of provider-side effects. |
 
-AS-1 and AS-2 must produce the records above, following the [AuditEvent profile](#auditevent-profile); These are listed in the [ToolHive work list](implementation.md#toolhive-work-list).
+AS-1 and AS-2 must produce the records above, following the [AuditEvent profile](#auditevent-profile). The [ToolHive work list](implementation.md#toolhive-work-list) has the rows.
 
 ## AuditEvent profile
 

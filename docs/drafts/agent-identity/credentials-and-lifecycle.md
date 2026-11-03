@@ -194,7 +194,7 @@ The client receives an access token for the Mecatl API and keeps its own refresh
 
 **Checks, at mecak8s** (RFC 9068 §4):
 
-1. The header `typ` is `at+jwt` or `application/at+jwt`, and `alg` is on a fixed allowlist of asymmetric algorithms (RS, PS, and ES families), which excludes `none` and every symmetric algorithm.
+1. The header `typ` is `at+jwt` or `application/at+jwt`, and `alg` is on a fixed allowlist of asymmetric algorithms (RS, PS, and ES families) enforced by the token validator (toolhive-core `authn`), which excludes `none` and every symmetric algorithm.
 2. `kid` selects a key from AS-1's configured JWKS, and the signature verifies. A token never chooses where keys come from.
 3. `iss` is exactly AS-1's issuer.
 4. `exp` has not passed and `iat` is not in the future, each allowing the configured clock skew.
