@@ -8,6 +8,7 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
+	"strings"
 	"testing"
 	"time"
 
@@ -46,16 +47,24 @@ func exchangeForm(assertion, subject string) url.Values {
 // status and the response's error code.
 func postToken(t *testing.T, server *Server, form url.Values) (int, string) {
 	t.Helper()
+	status, code, _ := postTokenDescribed(t, server, form)
+	return status, code
+}
+
+// postTokenDescribed is postToken that also returns the error description.
+func postTokenDescribed(t *testing.T, server *Server, form url.Values) (status int, code, description string) {
+	t.Helper()
 	resp, err := server.InProcessClient().PostForm(server.TokenEndpoint(), form)
 	if err != nil {
 		t.Fatalf("token POST: %v", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	var body struct {
-		Error string `json:"error"`
+		Error       string `json:"error"`
+		Description string `json:"error_description"`
 	}
 	_ = json.NewDecoder(resp.Body).Decode(&body)
-	return resp.StatusCode, body.Error
+	return resp.StatusCode, body.Error, body.Description
 }
 
 // signAssertion signs claims as a client assertion with key, naming kid.
@@ -244,24 +253,58 @@ func TestDelegateCannotObtainAPIAccessTokens(t *testing.T) {
 	h := identityharness.New(t, identityharness.Options{})
 	f, signer, _ := startDelegateAS1(t, h, nil)
 
-	// A plain RFC 8693 request for an access token, with and without naming
-	// AS-1's audience: neither may succeed (stacklok/toolhive#7026).
-	for name, audience := range map[string]string{"default audience": "", "AS-1's audience": testAudience} {
+	form := func(t *testing.T) url.Values {
+		t.Helper()
+		assertion, err := signer.ClientAssertion(f.server.Issuer(), time.Now())
+		if err != nil {
+			t.Fatalf("ClientAssertion: %v", err)
+		}
+		return exchangeForm(assertion.Value(), f.signIn(t, testAudience).AccessToken)
+	}
+
+	// Control: the same client, assertion, and kind of subject token convert
+	// with the session-open form, so the refusals below come from the policy.
+	t.Run("control", func(t *testing.T) {
+		if status, errCode := postToken(t, f.server, form(t)); status != http.StatusOK {
+			t.Fatalf("session-open form status %d error %q, want 200", status, errCode)
+		}
+	})
+
+	// A plain RFC 8693 request for an access token is refused because the
+	// delegate has no output audience (stacklok/toolhive#7026): with no
+	// audience there is no default to issue for, and AS-1's audience is not
+	// one the client may receive.
+	for name, c := range map[string]struct{ audience, want string }{
+		"default audience": {"", "no unambiguous default audience is configured"},
+		"AS-1's audience":  {testAudience, "has not been whitelisted by the OAuth 2.0 Client"},
+	} {
 		t.Run(name, func(t *testing.T) {
-			assertion, err := signer.ClientAssertion(f.server.Issuer(), time.Now())
-			if err != nil {
-				t.Fatalf("ClientAssertion: %v", err)
+			req := form(t)
+			req.Del("authorization_details")
+			req.Set("requested_token_type", tokenTypeAccessToken)
+			if c.audience != "" {
+				req.Set("audience", c.audience)
 			}
-			form := exchangeForm(assertion.Value(), f.signIn(t, testAudience).AccessToken)
-			form.Del("authorization_details")
-			form.Set("requested_token_type", tokenTypeAccessToken)
-			if audience != "" {
-				form.Set("audience", audience)
-			}
-			if status, errCode := postToken(t, f.server, form); status == http.StatusOK {
-				t.Fatalf("the delegate obtained an access token: status %d error %q", status, errCode)
+			status, code, description := postTokenDescribed(t, f.server, req)
+			if status != http.StatusBadRequest || code != "invalid_request" || !strings.Contains(description, c.want) {
+				t.Fatalf("status %d error %q description %q, want 400 invalid_request mentioning %q", status, code, description, c.want)
 			}
 		})
+	}
+}
+
+func TestDelegateRefusesAForeignAudienceSubjectToken(t *testing.T) {
+	h := identityharness.New(t, identityharness.Options{})
+	f, signer, _ := startDelegateAS1(t, h, nil)
+	c := delegateClient(t, f, signer)
+
+	// otherAudience is one AS-1 issues for, but not the delegate's
+	// subject_token_audiences.
+	access := f.signIn(t, otherAudience).AccessToken
+	_, err := c.Exchange(t.Context(), identitybroker.TokenExchange{SubjectToken: identitybroker.NewToken(access), Grant: idjagGrant()})
+	var refusal *identitybroker.ServerRefusal
+	if !errors.As(err, &refusal) || refusal.Reason != "subject_token_audience" {
+		t.Fatalf("Exchange = %v, want a refusal with subject_token_audience", err)
 	}
 }
 
@@ -273,7 +316,7 @@ func TestDelegateRequiresOfflineAccess(t *testing.T) {
 	access := f.signInWithScope(t, PublicClient{ID: testClientID, RedirectURIs: []string{testRedirect}}, testAudience, "openid").AccessToken
 	_, err := c.Exchange(t.Context(), identitybroker.TokenExchange{SubjectToken: identitybroker.NewToken(access), Grant: idjagGrant()})
 	var refusal *identitybroker.ServerRefusal
-	if !errors.As(err, &refusal) {
-		t.Fatalf("Exchange = %v, want a refusal for a subject token without offline_access", err)
+	if !errors.As(err, &refusal) || refusal.Reason != "subject_token_offline_access" {
+		t.Fatalf("Exchange = %v, want a refusal with subject_token_offline_access", err)
 	}
 }
