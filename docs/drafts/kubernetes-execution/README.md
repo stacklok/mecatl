@@ -327,7 +327,7 @@ These chapters will describe each part of the design in detail. They are planned
 | --- | --- |
 | [Admission and session binding](admission.md) | How the agent loop requests capabilities and the trusted service admits them and binds the session. |
 | [Executor protocol](executor-protocol.md) | The RPC server the executor exposes for file operations and commands, and how the trusted service reaches them. |
-| Storage and recovery | Retained storage identity, executor replacement, and reattachment. |
+| [Storage and recovery](storage-and-recovery.md) | Retained storage identity, executor replacement, and reattachment. |
 | Withdrawal | How revoked authority and cancelled tasks stop file access and running commands. |
 | Local execution | Running the executor on a developer machine without the trusted service. |
 | Threat model | The co-located helper, untrusted shell programs, and what each component can reach. |
