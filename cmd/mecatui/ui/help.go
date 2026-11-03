@@ -234,6 +234,7 @@ func helpBodyFor(th theme.Theme, caps client.Capabilities, hk helpKeys, embedded
 		helpRow{key: "/connect", action: "sign in or connect to a remote server"},
 		helpRow{key: hk.modeSwitch, action: "change permission mode (unavailable while filling an MCP prompt)"},
 		helpRow{key: hk.toolcallsFull, action: "open tool calls"},
+		helpRow{key: hk.workspaceFull + " · /workspace", action: "inspect a workspace snapshot and observed Edit/Write paths (also during a run)"},
 	)
 	writeHelpRows(&b, th, inspectRows)
 
@@ -244,7 +245,7 @@ func helpBodyFor(th theme.Theme, caps client.Capabilities, hk helpKeys, embedded
 		{key: hk.selectAll, action: "select all prompt text"},
 		{key: hk.copySelection, action: "copy selected prompt or conversation text"},
 		{key: hk.scroll, action: "scroll the conversation; the header shows your position"},
-		{key: hk.expandConversationFull, action: "expand turn details (speaker, usage, reasoning, errors, changed files)"},
+		{key: hk.expandConversationFull, action: "expand turn details (speaker, usage, reasoning, errors)"},
 		{key: hk.jump, action: "jump to top or bottom; " + hk.scrollBottom + " resumes automatic scrolling"},
 		{key: "wheel", action: "scroll with the mouse (alternate screen only)"},
 		{key: "drag", action: "select and copy conversation text; dragging past an edge scrolls"},
@@ -405,6 +406,8 @@ type helpKeys struct {
 	modeSwitch             string // ModeSwitch
 	toolcalls              string // Toolcalls
 	toolcallsFull          string // Toolcalls — all chords in help
+	workspace              string // Workspace — compact inspector invitation
+	workspaceFull          string // Workspace — all chords in help
 	expandConversation     string // ExpandConversation
 	expandConversationFull string // ExpandConversation — all chords in help
 	scroll                 string // ScrollU/ScrollD — platform-adaptive on the default, "<up>/<down>" once remapped
@@ -524,6 +527,8 @@ func keyMarkingsWithScroll(km keyMap, defaultScrollMarking string) helpKeys {
 		modeSwitch:             firstKey(km.ModeSwitch, "shift+tab"),
 		toolcalls:              firstKey(km.Toolcalls, "ctrl+t"),
 		toolcallsFull:          strings.Join(km.Toolcalls.Keys(), "/"),
+		workspace:              firstKey(km.Workspace, "f10"),
+		workspaceFull:          strings.Join(km.Workspace.Keys(), "/"),
 		expandConversation:     firstKey(km.ExpandConversation, "f9"),
 		expandConversationFull: strings.Join(km.ExpandConversation.Keys(), "/"),
 		scroll:                 scrollMarking(km, defaultScrollMarking),

@@ -276,6 +276,9 @@ type Deps struct {
 	// LocalSessionContext optionally resolves the privileged local session root.
 	// The root is used only as a direct status-command CWD, never UI state.
 	LocalSessionContext client.LocalSessionContextGetter
+	// WorkspaceSnapshot is composed only for an explicitly owned embedded server.
+	// Unlike LocalSessionContext, it never falls back to the client directory.
+	WorkspaceSnapshot WorkspaceSnapshotFunc
 
 	// Presentation capability probes are package-private test seams. New replaces
 	// nil values with the production environment detectors.
@@ -935,7 +938,7 @@ type Model struct {
 	contextUnknown   bool
 	contextEstimated bool
 
-	// expandConversation reveals turn headings/stats, full reasoning, errors, and changed files.
+	// expandConversation reveals turn headings/stats, full reasoning, errors, and the workspace invitation.
 	expandConversation bool
 
 	// Changed-file membership and the synthetic appendix identity belong to conv.

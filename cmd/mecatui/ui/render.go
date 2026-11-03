@@ -1718,21 +1718,15 @@ func wrapResultDisplayLines(lines []toolResultLine, bodyWidth int) []toolResultL
 	return wrapped
 }
 
-// renderChangedFiles renders the session's changed-files summary as a muted,
-// insertion-ordered list under a "✎ N files this session" header — revealed by
-// ExpandConversation. Returns "" for an empty set. Paths are terminal-sanitized.
-func (r *renderer) renderChangedFiles(paths []string) string {
-	if len(paths) == 0 {
+// renderWorkspaceInvite is a bounded pointer to the inspector, never a path list
+// or a trigger for workspace inspection. The caller owns observation provenance.
+func (r *renderer) renderWorkspaceInvite() string {
+	if r.width <= 0 {
 		return ""
 	}
-	style := r.th.Style("muted")
-	var b strings.Builder
-	b.WriteString(style.Render("✎ " + plural(len(paths), "file") + " changed this session"))
-	for _, p := range paths {
-		b.WriteString("\n")
-		b.WriteString(style.Render("  " + terminaltext.Sanitize(p)))
-	}
-	return b.String()
+	text := r.marks.workspace + " · /workspace — observed Edit/Write paths"
+	text = terminaltext.ExpandStyleTabs(terminaltext.SanitizeSingleLine(text), r.th.Style("muted"))
+	return r.th.Style("muted").Render(ansi.TruncateWc(text, r.width, "…"))
 }
 
 // mutatedPath returns the workspace path a file-MUTATING tool call touches, and

@@ -34,9 +34,11 @@ longer than 256 bytes are omitted; child execution and the parent session
 are unaffected.
 
 Press `f9` to reveal conversation details, including reasoning summaries,
-per-turn usage, permanent error details, changed files, and individual settled
-tool-call summaries in source order. Use `ctrl+t` to inspect a call's arguments
-and results. Both shortcuts can be [remapped](./keybindings.md#remap-actions).
+per-turn usage, permanent error details, and individual settled tool-call
+summaries in source order. When `mecatui` has observed Edit or Write calls, the
+expanded view includes a brief pointer to the workspace inspector. Use `ctrl+t`
+to inspect a call's arguments and results. Both shortcuts can be
+[remapped](./keybindings.md#remap-actions).
 
 In the default conversation view, adjacent completed tool, Subagent, and Team
 calls share one summary, including failures. Calls still in progress remain as
@@ -48,6 +50,33 @@ replayed conversations. These are completed, acceptable checks that allowed an
 action or released a result; findings, failures, unresolved reviews, and
 approvals remain visible. To keep benign notices visible, configure
 [`hook_notices.show_benign`](./customization.md#show-benign-guardrail-notices).
+
+## Inspect a workspace snapshot
+
+Press `f10` or enter `/workspace` to open a read-only snapshot while a session
+is idle or running. The snapshot captures the current session identity and the
+observed Edit/Write paths retained by this client view. It stays open when a run
+finishes; press `esc` to close it without cancelling the run.
+
+Observed paths record announced Edit and Write calls, not confirmed changes or
+ownership of the current Git diff. They exclude Shell changes, delegated work,
+and paths reconstructed when you resume a session. Git rows that match an
+observed path are marked, while unmatched paths can be clean, committed,
+removed, ignored, or outside the repository.
+
+When `mecatui` runs an embedded server and the active session resolves to a
+trusted local execution directory, the snapshot also samples Git. It uses only
+locally available data and refs, and does not fetch or contact the network.
+Connected, remote, nonlocal, file-less, or untrusted sessions still show their
+known identity and observed paths, but do not inspect the client's current
+directory as a substitute.
+
+Git status is a non-atomic, static sample. It does not update while the
+inspector is open and has no refresh action; close and reopen it to take another
+sample. A file can count as both staged and unstaged. The inspector does not
+inspect submodule working trees. If local Git inspection is unavailable, the
+view reports that state instead of treating the workspace as clean. Repositories
+with configured clean or process filters report Git inspection as unavailable.
 
 ## Start a session with an execution choice
 

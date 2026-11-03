@@ -27,7 +27,7 @@ func TestMecatuiQuieterToolCalls_Scenario3_ConversationDetailToggle(t *testing.T
 			m.phase = ph.phase
 			m.refreshView()
 			before := detailText(m)
-			if !strings.Contains(before, "f9 expand") || !strings.Contains(before, "f9 shows details") || strings.Contains(before, "reason one full text") || strings.Contains(before, "permanent detail hidden") || strings.Contains(before, "changed this session") {
+			if !strings.Contains(before, "f9 expand") || !strings.Contains(before, "f9 shows details") || strings.Contains(before, "reason one full text") || strings.Contains(before, "permanent detail hidden") || strings.Contains(before, "observed Edit/Write paths") {
 				t.Fatalf("bad collapsed view: %q", before)
 			}
 			seen := map[scrollback.Kind]int{}
@@ -52,7 +52,7 @@ func TestMecatuiQuieterToolCalls_Scenario3_ConversationDetailToggle(t *testing.T
 			}
 			m, _ = pressKey(m, f9)
 			after := detailText(m)
-			for _, s := range []string{"reason one full text", "reason two full text", "f9 collapse", "permanent detail hidden", "changed this session", "transient remains visible", "no reasoning answer"} {
+			for _, s := range []string{"reason one full text", "reason two full text", "f9 collapse", "permanent detail hidden", "observed Edit/Write paths", "transient remains visible", "no reasoning answer"} {
 				if !strings.Contains(after, s) {
 					t.Errorf("missing %q in expanded view", s)
 				}
@@ -144,14 +144,14 @@ func TestConversationDetailToggleShowsTurnChromeOnlyOnF9(t *testing.T) {
 			t.Errorf("normal conversation lacks %q: %q", want, collapsed)
 		}
 	}
-	for _, hidden := range []string{"↑1.2K ↓100", "↑1.3K ↓110", "4.1s", "3.1s", "why this tool is needed", "changed this session", "appendix-only.go"} {
+	for _, hidden := range []string{"↑1.2K ↓100", "↑1.3K ↓110", "4.1s", "3.1s", "why this tool is needed", "observed Edit/Write paths", "appendix-only.go"} {
 		if strings.Contains(collapsed, hidden) {
 			t.Errorf("normal conversation shows hidden detail %q: %q", hidden, collapsed)
 		}
 	}
 	m, _ = pressKey(m, f9)
 	expanded := detailText(m)
-	for _, want := range []string{"◀ mecatl", "↑1.2K ↓100 · 4.1s", "↑1.3K ↓110 · 3.1s", "why this tool is needed", "changed this session", "  appendix-only.go", "I will inspect them.", "notice stays visible", "✓ Read", "✓ Grep"} {
+	for _, want := range []string{"◀ mecatl", "↑1.2K ↓100 · 4.1s", "↑1.3K ↓110 · 3.1s", "why this tool is needed", "observed Edit/Write paths", "f10 · /workspace", "I will inspect them.", "notice stays visible", "✓ Read", "✓ Grep"} {
 		if !strings.Contains(expanded, want) {
 			t.Errorf("F9 view lacks %q: %q", want, expanded)
 		}

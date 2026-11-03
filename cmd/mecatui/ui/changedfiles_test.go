@@ -1,7 +1,7 @@
 package ui
 
-// Tests for FEATURE 1: the "files changed this session" summary — a pure-ui
-// feature derived from observed tool.call events (no proto/server change).
+// Tests for observed Edit/Write paths: accumulation, header count, and the
+// bounded F9 invitation to the workspace inspector (no proto/server change).
 
 import (
 	"fmt"
@@ -98,18 +98,19 @@ func TestChangedFilesIndicator(t *testing.T) {
 	}
 }
 
-// TestRenderChangedFiles covers the ctrl+t expansion list.
-func TestRenderChangedFiles(t *testing.T) {
+// TestRenderWorkspaceInvite covers the bounded, remap-aware inspector invitation.
+func TestRenderWorkspaceInvite(t *testing.T) {
 	r := newTestRenderer()
-	if out := r.renderChangedFiles(nil); out != "" {
-		t.Errorf("empty list should render nothing, got %q", out)
-	}
-	out := stripANSIstr(r.renderChangedFiles([]string{"a.go", "dir/b.txt"}))
-	if !strings.Contains(out, "✎ 2 files changed this session") {
-		t.Errorf("missing header, got %q", out)
-	}
-	if !strings.Contains(out, "a.go") || !strings.Contains(out, "dir/b.txt") {
-		t.Errorf("missing paths, got %q", out)
+	r.marks = keyMarkings(applyKeyOverrides(defaultKeys(), map[string][]string{"Workspace": {"ctrl+f12", "ctrl+f13"}}))
+	for _, width := range []int{0, 1, 8, 40, 100} {
+		r.setWidth(width)
+		out := stripANSIstr(r.renderWorkspaceInvite())
+		if lipgloss.Width(out) > width || strings.Contains(out, "\n") {
+			t.Fatalf("width %d invite = %q", width, out)
+		}
+		if width == 100 && (!strings.Contains(out, "ctrl+f12 · /workspace") || strings.Contains(out, "f10")) {
+			t.Fatalf("missing effective key and fallback: %q", out)
+		}
 	}
 }
 
@@ -138,9 +139,8 @@ func TestStatusLineHeaderReservationOnlyAddsGapForSystemLane(t *testing.T) {
 	}
 }
 
-// TestChangedFilesHeaderShowsIndicator drives a full render and asserts the
-// header carries the indicator once an Edit is observed, and the ctrl+t-expanded
-// view folds in the path list.
+// TestChangedFilesHeaderShowsIndicator keeps the count in the header and the
+// inspector invitation in F9's expanded projection.
 func TestChangedFilesHeaderShowsIndicator(t *testing.T) {
 	m, _, _ := newTestModel(t, theme.New("aztec", theme.AztecPalette()))
 	m = applyAll(m, tea.WindowSizeMsg{Width: 100, Height: 30}, client.SessionReadyMsg{SessionID: "sess-test-0001"})
@@ -152,15 +152,15 @@ func TestChangedFilesHeaderShowsIndicator(t *testing.T) {
 		t.Errorf("header missing changed-files indicator: %q", header)
 	}
 
-	// Collapsed body must NOT list the path; expanded (ctrl+t) must.
+	// Collapsed body must not advertise the observation appendix; F9 must.
 	collapsed := stripANSIstr(m.vp.View())
-	if strings.Contains(collapsed, "changed this session") {
-		t.Errorf("collapsed view should not show the changed-files list")
+	if strings.Contains(collapsed, "/workspace") {
+		t.Errorf("collapsed view should not advertise the observation appendix")
 	}
 	m.expandConversation = true
 	m.refreshView()
 	expanded := stripANSIstr(m.vp.View())
-	if !strings.Contains(expanded, "out.txt") || !strings.Contains(expanded, "changed this session") {
-		t.Errorf("expanded view should fold in the changed-files list, got %q", expanded)
+	if !strings.Contains(expanded, "out.txt") || !strings.Contains(expanded, "/workspace") {
+		t.Errorf("expanded view should include the workspace invitation, got %q", expanded)
 	}
 }

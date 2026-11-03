@@ -1827,7 +1827,7 @@ func (m Model) applyResult(msg client.ResultMsg) (tea.Model, tea.Cmd) {
 		return m, m.refreshCmd()
 	}
 	retryDeferred := m.failedStepRetryRun && !m.failedStepRetryAuthoritative
-	m = m.endRun(msg.Stop)
+	m = m.endRunState(msg.Stop, true)
 	m.failedStepRetryRun = false
 	m.failedStepRetryAuthoritative = false
 	if retryDeferred {
@@ -2283,6 +2283,10 @@ func (m Model) onKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	// switch (and before the ctrl+t toggle, so esc/enter belong to the overlay).
 	if mm, cmd, handled := m.onOverlayKey(msg); handled {
 		return mm, cmd
+	}
+
+	if key.Matches(msg, m.keys.Workspace) {
+		return m.openWorkspace()
 	}
 
 	// Toolcalls opens the current session's inspector while idle or running. In
@@ -4255,6 +4259,12 @@ func (Model) refreshCmd() tea.Cmd { return tea.ClearScreen }
 // endRun tears down the current run: clears the stream/channel/cancel, returns to
 // idle, and re-focuses input. The stop reason updates the status line.
 func (m Model) endRun(stop string) Model {
+	return m.endRunState(stop, false)
+}
+
+// endRunState permits opt-in snapshot lifetimes only for server run results;
+// teardown callers use endRun and always close the modal.
+func (m Model) endRunState(stop string, completed bool) Model {
 	m.settlePendingApproval()
 	m.admissionSubmission = nil
 	if m.cancelRun != nil {
@@ -4265,7 +4275,13 @@ func (m Model) endRun(stop string) Model {
 	m.streamCh = nil
 	m.streamGen++ // invalidate any reader still bound to the torn-down run's channel
 	m.activeTool = ""
-	m.closeModal()
+	keepModal := false
+	if survivor, ok := m.modal.(runCompletionSurface); ok && completed {
+		keepModal = survivor.survivesRunCompletion()
+	}
+	if !keepModal {
+		m.closeModal()
+	}
 	// The run is terminal: its steer inbox is closed, so any in-flight steer state is
 	// over. A pending/sent (un-drained, un-acked) steer simply clears — it is lost
 	// with the run (the honest best-effort contract); a promoted/retracted terminal
@@ -4278,7 +4294,11 @@ func (m Model) endRun(stop string) Model {
 	// it still matters as the single re-focus point after a blur the run may have
 	// crossed (e.g. an overlay that blurred the textarea). Focus() returns a
 	// cursor-blink cmd we don't thread back here; the next keypress re-arms the blink.
-	_ = m.prompt.Focus()
+	if keepModal {
+		m.prompt.Blur()
+	} else {
+		_ = m.prompt.Focus()
+	}
 	if stop != "" {
 		text, slot := renderfmt.StopReasonLabel(stop)
 		m.statusMsg = m.deps.Theme.Style(slot).Render(text)
@@ -4888,19 +4908,23 @@ func (m Model) onScrollKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-// conversationContent produces the complete current projection, including the expanded
-// changed-files appendix which is outside the conversation renderer's block rows.
+// conversationContent produces the complete current projection, including the
+// observation-backed workspace invitation outside the renderer's block rows.
 func (m *Model) conversationContent() string {
-	frame := m.rend.renderConversationFrame(&m.conv.scrollback, m.expandConversation)
-	content := strings.Join(frame.lines, "\n")
+	frame := m.withWorkspaceInvite(m.rend.renderConversationFrame(&m.conv.scrollback, m.expandConversation))
+	return strings.Join(frame.lines, "\n")
+}
+
+func (m *Model) withWorkspaceInvite(frame renderedFrame) renderedFrame {
 	if m.expandConversation {
 		if appendix, ok := m.conv.scrollback.AppendixSnapshot(); ok {
-			if list := m.rend.renderChangedFiles(appendix.Files); list != "" {
-				content += "\n" + list
+			if invite := m.rend.renderWorkspaceInvite(); invite != "" {
+				content := strings.Join(frame.lines, "\n") + "\n" + invite
+				return frameWithAppendix(frame, content, uint64(appendix.ID))
 			}
 		}
 	}
-	return content
+	return frame
 }
 
 // refreshView re-renders the conversation into the viewport, keeping the view
@@ -4924,7 +4948,7 @@ func (m *Model) refreshView() {
 	m.rend.invalidateVPView()
 	frame := m.rend.renderConversationFrame(&m.conv.scrollback, m.expandConversation)
 	// FAST PATH: the line-slice handoff. When no selection is active AND the
-	// changed-files footer is not in play (it renders only under the conversation detail
+	// workspace invitation is not in play (it renders only under the conversation detail
 	// toggle), feed vp.SetContentLines directly with the incrementally-joined line
 	// slice — reusing the cached prefix of settled blocks and only building the
 	// changed suffix. This skips the O(scrollback) Builder copy + strings.Split that
@@ -4936,15 +4960,8 @@ func (m *Model) refreshView() {
 		m.conversationView.replace(&m.vp, frame)
 		return
 	}
+	frame = m.withWorkspaceInvite(frame)
 	content := strings.Join(frame.lines, "\n")
-	if m.expandConversation {
-		if appendix, ok := m.conv.scrollback.AppendixSnapshot(); ok {
-			if list := m.rend.renderChangedFiles(appendix.Files); list != "" {
-				content += "\n" + list
-				frame = frameWithAppendix(frame, content, uint64(appendix.ID))
-			}
-		}
-	}
 	// An active text selection is now rendered by US (styleSelection splices the
 	// selection style into the content lines) rather than the viewport's native
 	// SetHighlights — which mis-placed the highlight on ANSI-styled (glamour) content

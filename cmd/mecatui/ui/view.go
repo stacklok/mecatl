@@ -332,11 +332,9 @@ func (m Model) scrollIndicator() string {
 }
 
 // changedFilesIndicator returns the muted "✎ N files" header indicator
-// summarising how many distinct workspace files file-mutating tools have touched
-// this session, or "" when none have. The "✎" (pencil = "edited") is coherent
-// with the hook-modified glyph and avoids "Δ" colliding with the Edit/Write
-// "+N/-N" diff size signals. It is a compact count; the full path list is
-// revealed under ctrl+t (see renderChangedFiles).
+// summarising distinct paths observed in announced Edit/Write calls in this client
+// view, or "" when none have. It is a compact count; /workspace shows the captured
+// observations, not a complete history or attribution of current Git changes.
 const changedFilesIndicatorLimit = 999
 
 func (m Model) changedFilesIndicator() string {

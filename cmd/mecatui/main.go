@@ -443,6 +443,7 @@ func runWithOptions(argv []string, options runOptions) error {
 			return ""
 		},
 		LocalSessionContext: cl,
+		WorkspaceSnapshot:   workspaceSnapshotForConfig(cfg, cl, cl),
 		Server:              target,
 		ConnectionMode:      connectionMode,
 		ClientBuild:         buildinfo.BuildID,
