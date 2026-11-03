@@ -3,7 +3,8 @@
 // upstream OIDC IdP and issues RFC 9068 (typ at+jwt) access tokens for the
 // Mecatl API audience that carry the company identity as the RFC 9493 sub_id
 // claim. Its clients are the configured public clients, which sign in with
-// PKCE.
+// PKCE, and optionally one confidential delegate client, the identity
+// broker's, which exchanges their access tokens for refresh tokens.
 //
 // The server keeps its own in-memory storage, so pending sign-ins and refresh
 // tokens do not survive a restart, and caps the sign-ins pending there. Its
@@ -56,6 +57,10 @@ type Config struct {
 	// PublicClients are the sign-in clients AS-1 registers. At least one is
 	// required.
 	PublicClients []PublicClient
+	// Delegate is the one pre-provisioned confidential client, the identity
+	// broker's, that exchanges the public clients' access tokens. Nil
+	// registers none.
+	Delegate *DelegateClient
 	// Upstream is the IdP users sign in at.
 	Upstream UpstreamConfig
 }
@@ -95,10 +100,12 @@ type UpstreamConfig struct {
 
 // Server is a running AS-1. Close releases it.
 type Server struct {
-	issuer  *url.URL
-	routes  []string
-	handler http.Handler
-	auth    *runner.EmbeddedAuthServer
+	// issuerID is the configured issuer, byte for byte as ToolHive uses it.
+	issuerID string
+	issuer   *url.URL
+	routes   []string
+	handler  http.Handler
+	auth     *runner.EmbeddedAuthServer
 }
 
 // options are test-only construction settings.
@@ -151,6 +158,21 @@ func newServer(ctx context.Context, cfg Config, opts options) (*Server, error) {
 		AllowedAudiences: audiences,
 		Upstreams:        []authserver.UpstreamRunConfig{{Type: authserver.UpstreamProviderTypeOIDC, OIDCConfig: cfg.upstreamRunConfig()}},
 	}
+	if cfg.Delegate != nil {
+		jwksFile, removeKeySet, err := writeKeySet(cfg.Delegate.KeySet)
+		if err != nil {
+			_ = store.Close()
+			return nil, err
+		}
+		defer removeKeySet()
+		// Setting only TokenExchange leaves ToolHive's JWT-bearer inbound grant
+		// disabled.
+		runConfig.InboundGrants = &authserver.InboundGrantsRunConfig{
+			TokenExchange: &authserver.TokenExchangeInboundGrantRunConfig{
+				DelegateClients: []authserver.DelegateClientRunConfig{delegateRunConfig(*cfg.Delegate, jwksFile, cfg.Audience)},
+			},
+		}
+	}
 	if cfg.SigningKeyFile != "" {
 		runConfig.SigningKeyConfig = &authserver.SigningKeyRunConfig{
 			KeyDir: filepath.Dir(cfg.SigningKeyFile), SigningKeyFile: filepath.Base(cfg.SigningKeyFile),
@@ -163,7 +185,7 @@ func newServer(ctx context.Context, cfg Config, opts options) (*Server, error) {
 	if err != nil {
 		return nil, fmt.Errorf("as1server: create authorization server: %w", err)
 	}
-	s := &Server{issuer: issuer, auth: auth}
+	s := &Server{issuerID: cfg.Issuer, issuer: issuer, auth: auth}
 	s.routes, s.handler = signInRoutes(issuer, auth.Handler())
 	return s, nil
 }
@@ -239,8 +261,25 @@ func (cfg Config) validate() (*url.URL, error) {
 	case cfg.Upstream.ClientID == "":
 		return nil, fmt.Errorf("%w: upstream client ID is required", ErrInvalidConfig)
 	}
-	seen := make(map[string]bool, len(cfg.PublicClients))
-	for _, pc := range cfg.PublicClients {
+	seen, err := validatePublicClients(cfg.PublicClients)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := httpsURL("upstream issuer", cfg.Upstream.Issuer); err != nil {
+		return nil, err
+	}
+	if cfg.Delegate != nil {
+		if err := cfg.Delegate.validate(seen); err != nil {
+			return nil, err
+		}
+	}
+	return issuer, nil
+}
+
+// validatePublicClients checks clients and returns the set of their IDs.
+func validatePublicClients(clients []PublicClient) (map[string]bool, error) {
+	seen := make(map[string]bool, len(clients))
+	for _, pc := range clients {
 		switch {
 		case pc.ID == "":
 			return nil, fmt.Errorf("%w: public client ID is required", ErrInvalidConfig)
@@ -256,10 +295,7 @@ func (cfg Config) validate() (*url.URL, error) {
 			}
 		}
 	}
-	if _, err := httpsURL("upstream issuer", cfg.Upstream.Issuer); err != nil {
-		return nil, err
-	}
-	return issuer, nil
+	return seen, nil
 }
 
 // httpsURL parses an issuer-style URL: https, with a host, and without
@@ -338,8 +374,12 @@ func withoutUnroutedEndpoints(next http.Handler, routed map[string]bool) http.Ha
 	})
 }
 
-// Issuer is AS-1's issuer URL.
-func (s *Server) Issuer() string { return s.issuer.String() }
+// Issuer is AS-1's issuer URL, byte for byte as configured: the audience a
+// delegate client's assertions name.
+func (s *Server) Issuer() string { return s.issuerID }
+
+// TokenEndpoint is AS-1's token endpoint.
+func (s *Server) TokenEndpoint() string { return s.issuerID + "/oauth/token" }
 
 // Routes are the exact paths Handler serves, for the caller to mount on its
 // mux after checking they collide with nothing already there.

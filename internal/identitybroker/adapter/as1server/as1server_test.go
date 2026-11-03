@@ -25,6 +25,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/stacklok/toolhive/pkg/authserver/storage"
 
+	"github.com/stacklok/mecatl/internal/identitybroker"
 	"github.com/stacklok/mecatl/internal/testutil/identityharness"
 )
 
@@ -143,7 +144,17 @@ func (f *fixture) signIn(t *testing.T, resource string) tokenResponse {
 // signInAs is signIn as client, at its first redirect URI.
 func (f *fixture) signInAs(t *testing.T, client PublicClient, resource string) tokenResponse {
 	t.Helper()
+	return f.signInWithScope(t, client, resource, defaultScope)
+}
+
+// defaultScope is the scope sign-ins ask for.
+const defaultScope = "openid offline_access"
+
+// signInWithScope is signInAs asking for scope.
+func (f *fixture) signInWithScope(t *testing.T, client PublicClient, resource, scope string) tokenResponse {
+	t.Helper()
 	q, verifier := authorizationRequest(client, resource)
+	q.Set("scope", scope)
 	state := q.Get("state")
 	back, err := f.h.AuthorizeWithConsent(t.Context(), f.issuer+"/oauth/authorize?"+q.Encode())
 	if err != nil {
@@ -175,7 +186,7 @@ func authorizationRequest(client PublicClient, resource string) (url.Values, str
 		"response_type":         {"code"},
 		"client_id":             {client.ID},
 		"redirect_uri":          {client.RedirectURIs[0]},
-		"scope":                 {"openid offline_access"},
+		"scope":                 {defaultScope},
 		"state":                 {rand.Text()},
 		"code_challenge":        {base64.RawURLEncoding.EncodeToString(sum[:])},
 		"code_challenge_method": {"S256"},
@@ -803,6 +814,16 @@ func TestConfigValidation(t *testing.T) {
 		"empty upstream client":   func(c *Config) { c.Upstream.ClientID = "" },
 		"upstream issuer query":   func(c *Config) { c.Upstream.Issuer = "https://idp.example?x=1" },
 		"upstream issuer no host": func(c *Config) { c.Upstream.Issuer = "https:///tenant" },
+		"delegate without ID":     withDelegate(func(d *DelegateClient) { d.ID = "" }),
+		"delegate is public":      withDelegate(func(d *DelegateClient) { d.ID = testClientID }),
+		"delegate without keys":   withDelegate(func(d *DelegateClient) { d.KeySet = []byte(`{"keys":[]}`) }),
+		"delegate bad key set":    withDelegate(func(d *DelegateClient) { d.KeySet = []byte("not json") }),
+		"delegate without source": withDelegate(func(d *DelegateClient) { d.AllowedSourceClients = nil }),
+		"delegate unknown source": withDelegate(func(d *DelegateClient) { d.AllowedSourceClients = []string{testClientID, "web"} }),
+		"delegate zero lifetime":  withDelegate(func(d *DelegateClient) { d.IDJAGMaxLifetime = 0 }),
+		"delegate negative life":  withDelegate(func(d *DelegateClient) { d.IDJAGMaxLifetime = -time.Hour }),
+		"delegate sub-second":     withDelegate(func(d *DelegateClient) { d.IDJAGMaxLifetime = time.Second / 2 }),
+		"delegate over 720h":      withDelegate(func(d *DelegateClient) { d.IDJAGMaxLifetime = 721 * time.Hour }),
 	} {
 		t.Run(name, func(t *testing.T) {
 			cfg := valid
@@ -816,5 +837,27 @@ func TestConfigValidation(t *testing.T) {
 				t.Errorf("New: %v, want ErrInvalidConfig", err)
 			}
 		})
+	}
+	t.Run("valid delegate", func(t *testing.T) {
+		cfg := valid
+		cfg.PublicClients = []PublicClient{client}
+		withDelegate(func(*DelegateClient) {})(&cfg)
+		if _, err := cfg.validate(); err != nil {
+			t.Errorf("validate: %v", err)
+		}
+	})
+}
+
+// withDelegate is a Config edit that adds a valid delegate client after edit.
+func withDelegate(edit func(*DelegateClient)) func(*Config) {
+	return func(c *Config) {
+		d := DelegateClient{
+			ID:                   identitybroker.BrokerClientID,
+			KeySet:               []byte(`{"keys":[{"kty":"EC","crv":"P-256","kid":"k"}]}`),
+			AllowedSourceClients: []string{testClientID},
+			IDJAGMaxLifetime:     time.Hour,
+		}
+		edit(&d)
+		c.Delegate = &d
 	}
 }
