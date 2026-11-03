@@ -361974,6 +361974,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1793740196692,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "6d76b8b9727f15e3757cc978ef20eca1baf81b4c",
+          "message": "feat(mecatui): add workspace snapshot inspector (#2676)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-11-03T23:18:14Z",
+          "tree_id": "5c52bd00aa6165038d0d0d203266f28123ae28eb",
+          "url": "https://github.com/stacklok/mecatl/commit/6d76b8b9727f15e3757cc978ef20eca1baf81b4c"
+        },
+        "date": 1793748586318,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -522931,6 +522965,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1793748583044,
+  "lastUpdate": 1793748587312,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
