@@ -7,6 +7,8 @@ import (
 	"unicode/utf8"
 
 	tea "charm.land/bubbletea/v2"
+	uv "github.com/charmbracelet/ultraviolet"
+	"github.com/charmbracelet/x/ansi"
 )
 
 // streamMarkdownCorpus covers the markdown shapes whose rendering can change as
@@ -59,12 +61,12 @@ func assertStreamFrames(t *testing.T, name, src string, width int, ends []int, c
 	maxSettled := 0
 	for i, end := range ends {
 		prefix := src[:end]
-		got := maskChromaColours(inc.markdownStreamed(1, prefix))
+		got := normalizeMarkdownANSI(inc.markdownStreamed(1, prefix))
 		maxSettled = max(maxSettled, len(inc.stream.settled))
 		if i%compareEvery != 0 && i != len(ends)-1 {
 			continue
 		}
-		want := maskChromaColours(full.markdown(prefix))
+		want := normalizeMarkdownANSI(full.markdown(prefix))
 		if got != want {
 			at := commonPrefixLen(got, want)
 			t.Fatalf("%s at width %d, prefix %d/%d bytes %q: outputs differ at byte %d\nincremental: …%q\nfull:        …%q",
@@ -130,12 +132,38 @@ func chunkEnds(chunks []string) []int {
 // formatter emits for fenced code. glamour's own styles use 24-bit colour.
 var chromaColour = regexp.MustCompile(`\x1b\[38;5;\d+m`)
 
-// maskChromaColours hides chroma's palette index. Its nearest-colour search
-// breaks distance ties by map iteration order, so two full renders of the same
-// code block can pick different indexes (the aztec string colour is one such
-// tie). Text, layout, padding, and glamour's styles are still compared exactly.
-func maskChromaColours(s string) string {
-	return chromaColour.ReplaceAllString(s, "\x1b[38;5;?m")
+// normalizeMarkdownANSI compares effective styles rather than SGR run boundaries.
+// Chroma's palette search breaks ties by map order; its lexer also silently skips
+// regex matches that time out under load. The latter can merge a builtin token
+// with adjacent text (#2661), even between two full renders. Once their foreground
+// colours are masked, those differently grouped runs have the same style.
+// Keep text, whitespace, other colours, attributes, and non-SGR escapes intact.
+func normalizeMarkdownANSI(s string) string {
+	s = chromaColour.ReplaceAllString(s, "\x1b[38;5;0m")
+	p := ansi.NewParser()
+	p.SetParamsSize(32)
+	var state byte
+	var pen, emitted uv.Style
+	var out strings.Builder
+	flushStyle := func() {
+		if !pen.Equal(&emitted) {
+			out.WriteString("\x1b[0m")
+			out.WriteString(pen.String())
+			emitted = pen
+		}
+	}
+	for len(s) > 0 {
+		seq, _, n, next := ansi.DecodeSequence(s, state, p)
+		state, s = next, s[n:]
+		if strings.HasPrefix(seq, "\x1b[") && p.Command() == 'm' {
+			uv.ReadStyle(p.Params(), &pen)
+			continue
+		}
+		flushStyle()
+		out.WriteString(seq)
+	}
+	flushStyle()
+	return out.String()
 }
 
 func commonPrefixLen(a, b string) int {
@@ -151,9 +179,9 @@ func clip(s string, at int) string {
 	return s[max(0, at-60):min(len(s), at+120)]
 }
 
-// TestStreamMarkdownMatchesFullRender is the byte-identity property: streaming
-// any corpus answer one rune at a time renders exactly what a full render of the
-// same prefix produces, at several widths.
+// TestStreamMarkdownMatchesFullRender is the styled-output parity property:
+// streaming any corpus answer one rune at a time renders what a full render of
+// the same prefix produces, at several widths, modulo normalizeMarkdownANSI.
 func TestStreamMarkdownMatchesFullRender(t *testing.T) {
 	for name, src := range streamMarkdownCorpus {
 		t.Run(name, func(t *testing.T) {
@@ -204,8 +232,8 @@ func TestStreamMarkdownResetsOnRevision(t *testing.T) {
 	for i, step := range steps {
 		r.setWidth(step.width)
 		full.setWidth(step.width)
-		got := maskChromaColours(r.markdownStreamed(step.idx, step.src))
-		want := maskChromaColours(full.markdown(step.src))
+		got := normalizeMarkdownANSI(r.markdownStreamed(step.idx, step.src))
+		want := normalizeMarkdownANSI(full.markdown(step.src))
 		if got != want {
 			t.Fatalf("step %d: incremental %q, full %q", i, got, want)
 		}
@@ -305,8 +333,8 @@ func streamIntoModel(m *Model, src string, n int) {
 // fresh renderer's at the same width.
 func assertConversationMatchesFresh(t *testing.T, m Model) {
 	t.Helper()
-	got := maskChromaColours(m.rend.renderConversation(&m.conv, false))
-	want := maskChromaColours(freshConvString(m.rend.th, m.rend.width, &m.conv, false))
+	got := normalizeMarkdownANSI(m.rend.renderConversation(&m.conv, false))
+	want := normalizeMarkdownANSI(freshConvString(m.rend.th, m.rend.width, &m.conv, false))
 	if got != want {
 		at := commonPrefixLen(got, want)
 		t.Fatalf("cached render differs from fresh at byte %d\ncached: …%q\nfresh:  …%q", at, clip(got, at), clip(want, at))
