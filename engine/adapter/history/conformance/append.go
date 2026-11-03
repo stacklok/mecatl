@@ -9,6 +9,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/stacklok/mecatl/engine/kernel/codec"
 	"github.com/stacklok/mecatl/engine/kernel/history"
 	"github.com/stacklok/mecatl/engine/kernel/history/format"
 )
@@ -17,28 +18,28 @@ func appendLimits(t *testing.T, factory historyFactory) {
 	for _, name := range []string{"bytes", "records", "kind", "payload", "version", "sequence", "empty-records"} {
 		t.Run(name, func(t *testing.T) {
 			id := history.NewHistoryID()
-			commit := format.Commit{FormatVersion: 1, HistoryID: id, Sequence: 1,
+			commit := format.Commit{FormatVersion: 1, HistoryID: &id, Sequence: 1,
 				Records: []format.Record{
-					{Kind: opaqueKind, KindVersion: 7, Payload: []byte("private-payload")},
+					{Kind: "opaque-kind-longer-than-history", KindVersion: 7, Payload: []byte("private-payload")},
 					{Kind: opaqueKind, KindVersion: 7},
 				},
 			}
 			// Encode under larger limits first: each resource rejection belongs
 			// to Append, not to fixture construction or another exceeded bound.
-			b, _, err := format.EncodeCommit(commit, policy().CommitLimits)
+			b, err := codec.Encode(commit, policy().CommitLimits)
 			if err != nil {
 				t.Fatal(err)
 			}
 			p := policy()
 			switch name {
 			case "bytes":
-				p.CommitLimits.MaxCommitBytes = len(b) - 1
+				p.CommitLimits.MaxBytes = len(b) - 1
 			case "records":
-				p.CommitLimits.MaxRecords = 1
+				p.CommitLimits.MaxArrayElements = 1
 			case "kind":
-				p.CommitLimits.MaxKindBytes = len("opaque") - 1
+				p.CommitLimits.MaxStringBytes = len(commit.Records[0].Kind) - 1
 			case "payload":
-				p.CommitLimits.MaxPayloadBytes = len("private-payload") - 1
+				p.CommitLimits.MaxByteStringBytes = len("private-payload") - 1
 			case "version":
 				commit.FormatVersion = 2
 			case "sequence":
@@ -79,15 +80,14 @@ func totalAlloc(t *testing.T, operation func()) uint64 {
 
 func appendLargeLimitRejections(t *testing.T, factory historyFactory) {
 	const inputMarker = "conformance-private-input"
-	large := format.Limits{
-		MaxCommitBytes:  2 << 20,
-		MaxRecords:      9000,
-		MaxKindBytes:    600 << 10,
-		MaxPayloadBytes: 600 << 10,
+	large := codec.Limits{
+		MaxBytes: 2 << 20, MaxArrayElements: 9000, MaxStringBytes: 600 << 10,
+		MaxByteStringBytes: 600 << 10, MaxMapPairs: 8, MaxDepth: 8,
+		MaxNodes: 100000, MaxCollectionElements: 40000,
 	}
 	id := history.NewHistoryID()
 	fixture := func(records []format.Record) format.Commit {
-		return format.Commit{FormatVersion: 1, HistoryID: id, Sequence: 1, Records: records}
+		return format.Commit{FormatVersion: 1, HistoryID: &id, Sequence: 1, Records: records}
 	}
 	largePayload := func() []byte {
 		return append([]byte(inputMarker), bytes.Repeat([]byte{'p'}, largeInputBytes-len(inputMarker))...)
@@ -101,10 +101,10 @@ func appendLargeLimitRejections(t *testing.T, factory historyFactory) {
 		input  format.Commit
 		adjust func(*history.Policy)
 	}{
-		{"bytes", fixture([]format.Record{{Kind: opaqueKind, KindVersion: 1, Payload: largePayload()}}), func(p *history.Policy) { p.CommitLimits.MaxCommitBytes = 1024 }},
-		{"records", fixture(records), func(p *history.Policy) { p.CommitLimits.MaxRecords = len(records) - 1 }},
-		{"kind", fixture([]format.Record{{Kind: string(largePayload()), KindVersion: 1}}), func(p *history.Policy) { p.CommitLimits.MaxKindBytes = 32 }},
-		{"payload", fixture([]format.Record{{Kind: opaqueKind, KindVersion: 1, Payload: largePayload()}}), func(p *history.Policy) { p.CommitLimits.MaxPayloadBytes = 32 }},
+		{"bytes", fixture([]format.Record{{Kind: opaqueKind, KindVersion: 1, Payload: largePayload()}}), func(p *history.Policy) { p.CommitLimits.MaxBytes = 1024 }},
+		{"records", fixture(records), func(p *history.Policy) { p.CommitLimits.MaxArrayElements = len(records) - 1 }},
+		{"kind", fixture([]format.Record{{Kind: string(largePayload()), KindVersion: 1}}), func(p *history.Policy) { p.CommitLimits.MaxStringBytes = 32 }},
+		{"payload", fixture([]format.Record{{Kind: opaqueKind, KindVersion: 1, Payload: largePayload()}}), func(p *history.Policy) { p.CommitLimits.MaxByteStringBytes = 32 }},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			p := policy()

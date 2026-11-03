@@ -17,7 +17,7 @@ import (
 )
 
 func generatedLimits() codec.Limits {
-	return codec.Limits{MaxBytes: 1 << 20, MaxStringBytes: 1024, MaxByteStringBytes: 4096, MaxArrayElements: 128, MaxMapPairs: 128, MaxDepth: 20, MaxNodes: 10000, MaxCollectionElements: 10000, Named: map[string]int{"entries": 16, "payload": 4096, "optional": 4, "detail": 4096}}
+	return codec.Limits{MaxBytes: 1 << 20, MaxStringBytes: 1024, MaxByteStringBytes: 4096, MaxArrayElements: 128, MaxMapPairs: 128, MaxDepth: 20, MaxNodes: 10000, MaxCollectionElements: 10000}
 }
 func unhex(t *testing.T, s string) []byte {
 	t.Helper()
@@ -47,14 +47,14 @@ func TestGeneratedCanonicalGoldens(t *testing.T) {
 	}{{"zero", fixture.Sample{}, sampleZeroHex}, {"extrema", extrema, sampleExtremaHex}, {"max signed", fixture.Sample{I8: math.MaxInt8, I16: math.MaxInt16, I32: math.MaxInt32, I64: math.MaxInt64}, sampleMaxSignedHex}} {
 		t.Run(tt.name, func(t *testing.T) {
 			want := unhex(t, tt.hex)
-			if err := fixture.CheckSample(tt.v, l); err != nil {
+			if err := codec.Check[fixture.Sample](tt.v, l); err != nil {
 				t.Fatal(err)
 			}
-			got, err := fixture.EncodeSample(tt.v, l)
+			got, err := codec.Encode[fixture.Sample](tt.v, l)
 			if err != nil || !bytes.Equal(got, want) {
 				t.Fatalf("got %x, %v; want %x", got, err, want)
 			}
-			v, err := fixture.DecodeSample(want, l)
+			v, err := codec.Decode[fixture.Sample](want, l)
 			if err != nil || !v.Equal(tt.v) {
 				t.Fatalf("decode %v, %v", v, err)
 			}
@@ -62,12 +62,12 @@ func TestGeneratedCanonicalGoldens(t *testing.T) {
 	}
 	var required value.Blob
 	v := fixture.Catalog{Required: &required}
-	got, err := fixture.EncodeCatalog(v, l)
+	got, err := codec.Encode[fixture.Catalog](v, l)
 	want := unhex(t, catalogEmptyHex)
 	if err != nil || !bytes.Equal(got, want) {
 		t.Fatalf("catalog %x %v; want %x", got, err, want)
 	}
-	decoded, err := fixture.DecodeCatalog(want, l)
+	decoded, err := codec.Decode[fixture.Catalog](want, l)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,22 +76,22 @@ func TestGeneratedCanonicalGoldens(t *testing.T) {
 	}
 	optional := []string(nil)
 	v.Optional = &optional
-	got, err = fixture.EncodeCatalog(v, l)
+	got, err = codec.Encode[fixture.Catalog](v, l)
 	if err != nil || bytes.Equal(got, want) {
 		t.Fatalf("present-empty optional lost: %x %v", got, err)
 	}
-	decoded, err = fixture.DecodeCatalog(got, l)
+	decoded, err = codec.Decode[fixture.Catalog](got, l)
 	if err != nil || !v.Equal(decoded) || decoded.Optional == nil || *decoded.Optional == nil {
 		t.Fatal("pointer-to-empty presence", decoded, err)
 	}
 	v = richCatalog()
 	v.Cache = nil
-	got, err = fixture.EncodeCatalog(v, l)
+	got, err = codec.Encode[fixture.Catalog](v, l)
 	want = unhex(t, catalogNestedHex)
 	if err != nil || !bytes.Equal(got, want) {
 		t.Fatalf("nested catalog %x %v; want %x", got, err, want)
 	}
-	decoded, err = fixture.DecodeCatalog(want, l)
+	decoded, err = codec.Decode[fixture.Catalog](want, l)
 	if err != nil || !decoded.Equal(v) {
 		t.Fatal("nested catalog decode", decoded, err)
 	}
@@ -110,11 +110,11 @@ func TestGeneratedMapCanonicalOrder(t *testing.T) {
 		for _, j := range rng.Perm(len(keys)) {
 			v.Entries[keys[j]] = nil
 		}
-		got, err := fixture.EncodeCatalog(v, generatedLimits())
+		got, err := codec.Encode[fixture.Catalog](v, generatedLimits())
 		if err != nil || !bytes.Equal(got, want) {
 			t.Fatalf("canonical map %x %v", got, err)
 		}
-		decoded, err := fixture.DecodeCatalog(got, generatedLimits())
+		decoded, err := codec.Decode[fixture.Catalog](got, generatedLimits())
 		if err != nil || !v.Equal(decoded) {
 			t.Fatal(decoded, err)
 		}
@@ -164,14 +164,14 @@ func TestGeneratedStrictDecodeZeroOutput(t *testing.T) {
 	}
 	for name, data := range cases {
 		t.Run(name, func(t *testing.T) {
-			got, err := fixture.DecodeSample(data, generatedLimits())
+			got, err := codec.Decode[fixture.Sample](data, generatedLimits())
 			if !errors.Is(err, codec.ErrInvalidData) || !reflect.DeepEqual(got, fixture.Sample{}) {
 				t.Fatalf("got %#v, %v", got, err)
 			}
 		})
 	}
 	for i := 0; i < len(valid); i++ {
-		got, err := fixture.DecodeSample(valid[:i], generatedLimits())
+		got, err := codec.Decode[fixture.Sample](valid[:i], generatedLimits())
 		if err == nil || !reflect.DeepEqual(got, fixture.Sample{}) {
 			t.Fatalf("truncate %d: %#v %v", i, got, err)
 		}
@@ -180,7 +180,7 @@ func TestGeneratedStrictDecodeZeroOutput(t *testing.T) {
 	// unordered data keys and null elements without retaining a partial Catalog.
 	for _, middle := range []string{"a2617a80616180", "a2616180616180", "a1616181f6", "a1616181a16464617461f6"} {
 		data := unhex(t, "a4656e616d65738067656e7472696573"+middle+"677061796c6f61644068726571756972656440")
-		got, err := fixture.DecodeCatalog(data, generatedLimits())
+		got, err := codec.Decode[fixture.Catalog](data, generatedLimits())
 		if !errors.Is(err, codec.ErrInvalidData) || !reflect.DeepEqual(got, fixture.Catalog{}) {
 			t.Fatalf("catalog %x: %#v %v", data, got, err)
 		}
@@ -309,7 +309,7 @@ func TestGeneratedWholeValueMethods(t *testing.T) {
 	if !a.Equal(a.Clone()) {
 		t.Fatal("invalid-but-supported value clone")
 	}
-	if fixture.CheckCatalog(a, generatedLimits()) == nil {
+	if codec.Check[fixture.Catalog](a, generatedLimits()) == nil {
 		t.Fatal("invalid codec value accepted")
 	}
 	n := int64(0)
@@ -323,7 +323,7 @@ func TestGeneratedWholeValueMethods(t *testing.T) {
 func TestGeneratedOwningRoundtripAndSemantics(t *testing.T) {
 	v := richCatalog()
 	v.Cache = nil
-	data, err := fixture.EncodeCatalog(v, generatedLimits())
+	data, err := codec.Encode[fixture.Catalog](v, generatedLimits())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -333,7 +333,7 @@ func TestGeneratedOwningRoundtripAndSemantics(t *testing.T) {
 	if !bytes.Equal(data, original) {
 		t.Fatal("encoded bytes alias DTO")
 	}
-	got, err := fixture.DecodeCatalog(data, generatedLimits())
+	got, err := codec.Decode[fixture.Catalog](data, generatedLimits())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -353,7 +353,7 @@ func TestGeneratedOwningRoundtripAndSemantics(t *testing.T) {
 	}
 	// Mutating an owning decode must also leave its still-live input unchanged.
 	live := bytes.Clone(original)
-	owned, err := fixture.DecodeCatalog(live, generatedLimits())
+	owned, err := codec.Decode[fixture.Catalog](live, generatedLimits())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -365,16 +365,16 @@ func TestGeneratedOwningRoundtripAndSemantics(t *testing.T) {
 	}
 	v = richCatalog()
 	v.Cache = map[string]*fixture.CacheEntry{"excluded": {Bytes: []byte{1}}}
-	data, err = fixture.EncodeCatalog(v, generatedLimits())
+	data, err = codec.Encode[fixture.Catalog](v, generatedLimits())
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, err = fixture.DecodeCatalog(data, generatedLimits())
+	got, err = codec.Decode[fixture.Catalog](data, generatedLimits())
 	if err != nil || got.Cache != nil {
 		t.Fatal("excluded persistence", got, err)
 	}
 	// Structural success is deliberately independent from owner semantic rejection.
-	structural, err := fixture.DecodeSample(unhex(t, sampleZeroHex), generatedLimits())
+	structural, err := codec.Decode[fixture.Sample](unhex(t, sampleZeroHex), generatedLimits())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -391,13 +391,13 @@ func TestGeneratedOwningRoundtripAndSemantics(t *testing.T) {
 		t.Fatal("owner semantics unexpectedly accepted")
 	}
 	ownerEncode := func(s fixture.Sample, l codec.Limits) ([]byte, error) {
-		if err := fixture.CheckSample(s, l); err != nil {
+		if err := codec.Check[fixture.Sample](s, l); err != nil {
 			return nil, err
 		}
 		if err := semantics(s); err != nil {
 			return nil, err
 		}
-		return fixture.EncodeSample(s, l)
+		return codec.Encode[fixture.Sample](s, l)
 	}
 	before := semanticCalls
 	if b, err := ownerEncode(fixture.Sample{Label: strings.Repeat("x", 33)}, generatedLimits()); b != nil || !errors.Is(err, codec.ErrLimitExceeded) || semanticCalls != before {
@@ -410,7 +410,7 @@ func TestGeneratedOwningRoundtripAndSemantics(t *testing.T) {
 		t.Fatal("explicit owner acceptance", err)
 	}
 	// Planted Sample.Validate panics if a generated operation invokes it.
-	if err := fixture.CheckSample(structural, generatedLimits()); err != nil {
+	if err := codec.Check[fixture.Sample](structural, generatedLimits()); err != nil {
 		t.Fatal(err)
 	}
 	_ = structural.Clone().Equal(structural)
@@ -420,7 +420,7 @@ func TestGeneratedConcurrentReadOnlyCalls(t *testing.T) {
 	l := generatedLimits()
 	v := richCatalog()
 	v.Cache = nil
-	expected, err := fixture.EncodeCatalog(v, l)
+	expected, err := codec.Encode[fixture.Catalog](v, l)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -432,16 +432,16 @@ func TestGeneratedConcurrentReadOnlyCalls(t *testing.T) {
 					t.Error("shared-input value methods")
 					return
 				}
-				if err := fixture.CheckCatalog(v, l); err != nil {
+				if err := codec.Check[fixture.Catalog](v, l); err != nil {
 					t.Error(err)
 					return
 				}
-				b, err := fixture.EncodeCatalog(v, l)
+				b, err := codec.Encode[fixture.Catalog](v, l)
 				if err != nil || !bytes.Equal(b, expected) {
 					t.Error("encode", err)
 					return
 				}
-				w, err := fixture.DecodeCatalog(b, l)
+				w, err := codec.Decode[fixture.Catalog](b, l)
 				if err != nil || !w.Equal(v) || !w.Clone().Equal(v) {
 					t.Error("decode/value methods", err)
 					return

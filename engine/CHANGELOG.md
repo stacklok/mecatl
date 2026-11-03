@@ -12,6 +12,12 @@ API snapshots live in [`engine/api/`](./api/).
 
 ### Added
 
+- **Generated resource-ID persistence methods**: adds `id.ID.CheckCBOR`,
+  `AppendCBOR`, `ReadCBOR`, `Clone`, and `Equal` for compositional persistence
+  codecs. The methods validate the existing ID contract when checking and
+  reading, and they do not activate the isolated kernel or change production
+  wire behavior. Added (minor).
+
 - **Canonical history commit codec**: adds `kernel/history/format.EncodeCommit`,
   `DecodeCommit`, and explicit positive per-operation `Limits`. The v1 closed
   DAG-CBOR envelope preserves opaque record payloads and rejects noncanonical

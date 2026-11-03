@@ -8,13 +8,15 @@ import (
 
 	"github.com/stacklok/mecatl/engine/adapter/history/conformance"
 	"github.com/stacklok/mecatl/engine/adapter/history/mem"
+	"github.com/stacklok/mecatl/engine/kernel/codec"
+	"github.com/stacklok/mecatl/engine/kernel/contentid"
 	"github.com/stacklok/mecatl/engine/kernel/history"
 	"github.com/stacklok/mecatl/engine/kernel/history/format"
 )
 
 func policy() history.Policy {
 	return history.Policy{
-		CommitLimits: format.Limits{MaxCommitBytes: 4096, MaxRecords: 4, MaxKindBytes: 32, MaxPayloadBytes: 2048},
+		CommitLimits: codec.Limits{MaxBytes: 4096, MaxArrayElements: 4, MaxStringBytes: 32, MaxByteStringBytes: 2048, MaxMapPairs: 8, MaxDepth: 8, MaxNodes: 128, MaxCollectionElements: 64},
 		RetryWindow:  2, MaxPageBytes: 16384, MaxPageCommits: 16,
 	}
 }
@@ -27,10 +29,10 @@ func TestAllocationChecks(t *testing.T) { conformance.RunAllocationChecks(t, new
 
 func TestPolicyValidationAndCopy(t *testing.T) {
 	for _, mutate := range []func(*history.Policy){
-		func(p *history.Policy) { p.CommitLimits.MaxCommitBytes = 0 },
-		func(p *history.Policy) { p.CommitLimits.MaxRecords = -1 },
-		func(p *history.Policy) { p.CommitLimits.MaxKindBytes = 0 },
-		func(p *history.Policy) { p.CommitLimits.MaxPayloadBytes = 0 },
+		func(p *history.Policy) { p.CommitLimits.MaxBytes = 0 },
+		func(p *history.Policy) { p.CommitLimits.MaxArrayElements = -1 },
+		func(p *history.Policy) { p.CommitLimits.MaxStringBytes = 0 },
+		func(p *history.Policy) { p.CommitLimits.MaxByteStringBytes = 0 },
 		func(p *history.Policy) { p.RetryWindow = 0 },
 		func(p *history.Policy) { p.MaxPageBytes = 0 },
 		func(p *history.Policy) { p.MaxPageCommits = -1 },
@@ -50,17 +52,17 @@ func TestPolicyValidationAndCopy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	p.CommitLimits.MaxCommitBytes = 1
+	p.CommitLimits.MaxBytes = 1
 	p.MaxPageBytes, p.MaxPageCommits, p.RetryWindow = 1, 1, 1
 	id := history.NewHistoryID()
-	c := format.Commit{FormatVersion: 1, HistoryID: id, Sequence: 1,
+	c := format.Commit{FormatVersion: 1, HistoryID: &id, Sequence: 1,
 		Records: []format.Record{{Kind: "opaque", KindVersion: 7, Payload: []byte("tiny")}},
 	}
-	_, cid, err := format.EncodeCommit(c, policy().CommitLimits)
+	data, err := codec.Encode(c, policy().CommitLimits)
 	if err != nil {
 		t.Fatal(err)
 	}
-	ref := history.CommitRef{Sequence: 1, CID: cid}
+	ref := history.CommitRef{Sequence: 1, CID: contentid.Sum(data)}
 	got, err := s.Append(context.Background(), id, c)
 	if err != nil || got != (history.Resolution{Status: history.StatusAccepted, Proposal: ref, Head: ref}) {
 		t.Fatalf("append with copied policy = %+v, %v", got, err)

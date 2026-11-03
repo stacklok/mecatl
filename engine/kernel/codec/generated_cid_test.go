@@ -33,19 +33,19 @@ func TestGeneratedCIDGoldenAndOwnership(t *testing.T) {
 	l := generatedLimits()
 	v := fixture.Link{Value: c}
 	want := unhex(t, generatedLinkHex)
-	if err := fixture.CheckLink(v, l); err != nil {
+	if err := codec.Check[fixture.Link](v, l); err != nil {
 		t.Fatal(err)
 	}
-	got, err := fixture.EncodeLink(v, l)
+	got, err := codec.Encode[fixture.Link](v, l)
 	if err != nil || !bytes.Equal(got, want) {
 		t.Fatalf("golden %x, %v; want %x", got, err, want)
 	}
 	identity := contentid.Sum(want)
-	decoded, err := fixture.DecodeLink(want, l)
+	decoded, err := codec.Decode[fixture.Link](want, l)
 	if err != nil || !v.Equal(decoded) || contentid.Verify(got, identity) != nil {
 		t.Fatal("exact byte identity/decoding", err)
 	}
-	reencoded, err := fixture.EncodeLink(decoded, l)
+	reencoded, err := codec.Encode[fixture.Link](decoded, l)
 	if err != nil || !bytes.Equal(reencoded, want) {
 		t.Fatal("reencoding changed canonical input", err)
 	}
@@ -63,11 +63,11 @@ func TestGeneratedCIDGoldenAndOwnership(t *testing.T) {
 		// Link-like bytes remain an opaque byte string, not a schema link.
 		{fixture.Links{Required: &c, Opaque: unhex(t, generatedCIDHex)}, "a361625829" + generatedCIDHex + "616ea06172" + generatedCIDHex},
 	} {
-		b, err := fixture.EncodeLinks(tt.v, l)
-		if err != nil || !bytes.Equal(b, unhex(t, tt.wire)) || fixture.CheckLinks(tt.v, l) != nil {
+		b, err := codec.Encode[fixture.Links](tt.v, l)
+		if err != nil || !bytes.Equal(b, unhex(t, tt.wire)) || codec.Check[fixture.Links](tt.v, l) != nil {
 			t.Fatalf("container golden %x, %v; want %s", b, err, tt.wire)
 		}
-		w, err := fixture.DecodeLinks(b, l)
+		w, err := codec.Decode[fixture.Links](b, l)
 		if err != nil || !w.Equal(tt.v) || w.Nested == nil || w.Opaque == nil {
 			t.Fatal("container roundtrip/normalization", err)
 		}
@@ -77,10 +77,10 @@ func TestGeneratedCIDGoldenAndOwnership(t *testing.T) {
 func TestGeneratedCIDPresenceCloneAndExcluded(t *testing.T) {
 	c, z := generatedCID(t), contentid.CID{}
 	l := generatedLimits()
-	if err := fixture.CheckLink(fixture.Link{}, l); !errors.Is(err, codec.ErrInvalidData) {
+	if err := codec.Check[fixture.Link](fixture.Link{}, l); !errors.Is(err, codec.ErrInvalidData) {
 		t.Fatal("required zero", err)
 	}
-	if b, err := fixture.EncodeLink(fixture.Link{}, l); b != nil || !errors.Is(err, codec.ErrInvalidData) {
+	if b, err := codec.Encode[fixture.Link](fixture.Link{}, l); b != nil || !errors.Is(err, codec.ErrInvalidData) {
 		t.Fatal("required zero encode", err)
 	}
 	for _, v := range []fixture.Links{
@@ -88,10 +88,10 @@ func TestGeneratedCIDPresenceCloneAndExcluded(t *testing.T) {
 		{Required: &c, Nested: map[string][]*fixture.CIDAlias{"x": {nil}}},
 		{Required: &c, Nested: map[string][]*fixture.CIDAlias{"x": {&z}}},
 	} {
-		if err := fixture.CheckLinks(v, l); !errors.Is(err, codec.ErrInvalidData) {
+		if err := codec.Check[fixture.Links](v, l); !errors.Is(err, codec.ErrInvalidData) {
 			t.Fatal("invalid presence accepted by Check", err)
 		}
-		if b, err := fixture.EncodeLinks(v, l); b != nil || !errors.Is(err, codec.ErrInvalidData) {
+		if b, err := codec.Encode[fixture.Links](v, l); b != nil || !errors.Is(err, codec.ErrInvalidData) {
 			t.Fatal("invalid presence accepted by Encode", err)
 		}
 		if !v.Equal(v.Clone()) {
@@ -117,11 +117,11 @@ func TestGeneratedCIDPresenceCloneAndExcluded(t *testing.T) {
 	if v.Equal(w) {
 		t.Fatal("Equal ignored excluded present zero pointer")
 	}
-	wire, err := fixture.EncodeLinks(v, l)
+	wire, err := codec.Encode[fixture.Links](v, l)
 	if err != nil {
 		t.Fatal(err)
 	}
-	w, err = fixture.DecodeLinks(wire, l)
+	w, err = codec.Decode[fixture.Links](wire, l)
 	if err != nil || w.Excluded != z || w.Cache != nil {
 		t.Fatal("excluded CID persisted", err)
 	}
@@ -164,7 +164,7 @@ func TestGeneratedCIDMalformedInputs(t *testing.T) {
 	for name, bad := range cases {
 		t.Run(name, func(t *testing.T) {
 			data := append(unhex(t, "a16176"), bad...)
-			v, err := fixture.DecodeLink(data, generatedLimits())
+			v, err := codec.Decode[fixture.Link](data, generatedLimits())
 			if !errors.Is(err, codec.ErrInvalidData) || v != (fixture.Link{}) {
 				t.Fatalf("malformed link accepted or partial output: %v", err)
 			}
@@ -172,12 +172,12 @@ func TestGeneratedCIDMalformedInputs(t *testing.T) {
 	}
 	wire := unhex(t, generatedLinkHex)
 	for end := range len(wire) {
-		v, err := fixture.DecodeLink(wire[:end], generatedLimits())
+		v, err := codec.Decode[fixture.Link](wire[:end], generatedLimits())
 		if !errors.Is(err, codec.ErrInvalidData) || v != (fixture.Link{}) {
 			t.Fatalf("truncated prefix %d: %v", end, err)
 		}
 	}
-	if v, err := fixture.DecodeLink(append(bytes.Clone(wire), 0), generatedLimits()); !errors.Is(err, codec.ErrInvalidData) || v != (fixture.Link{}) {
+	if v, err := codec.Decode[fixture.Link](append(bytes.Clone(wire), 0), generatedLimits()); !errors.Is(err, codec.ErrInvalidData) || v != (fixture.Link{}) {
 		t.Fatal("trailing bytes", err)
 	}
 	for _, wire := range []string{
@@ -187,7 +187,7 @@ func TestGeneratedCIDMalformedInputs(t *testing.T) {
 		"a36162" + generatedCIDHex + "616ea06172" + generatedCIDHex, // tag at opaque bytes
 		"a3616240616e" + generatedCIDHex + "6172" + generatedCIDHex, // tag at map
 	} {
-		v, err := fixture.DecodeLinks(unhex(t, wire), generatedLimits())
+		v, err := codec.Decode[fixture.Links](unhex(t, wire), generatedLimits())
 		if !errors.Is(err, codec.ErrInvalidData) || !reflect.DeepEqual(v, fixture.Links{}) {
 			t.Fatal("null/non-CID tag accepted or partial output", err)
 		}
@@ -219,9 +219,9 @@ func TestGeneratedCIDPolicyParity(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			l := boundary
 			tt.edit(&l)
-			check := fixture.CheckLink(v, l)
-			b, enc := fixture.EncodeLink(v, l)
-			w, dec := fixture.DecodeLink(wire, l)
+			check := codec.Check[fixture.Link](v, l)
+			b, enc := codec.Encode[fixture.Link](v, l)
+			w, dec := codec.Decode[fixture.Link](wire, l)
 			for _, err := range []error{check, enc, dec} {
 				if !errors.Is(err, tt.want) {
 					t.Fatalf("policy disagreement: check=%v encode=%v decode=%v", check, enc, dec)
@@ -234,7 +234,7 @@ func TestGeneratedCIDPolicyParity(t *testing.T) {
 				t.Fatal("boundary changed value/bytes")
 			}
 			if tt.want == codec.ErrInvalidLimits {
-				if _, err := fixture.DecodeLink(nil, l); !errors.Is(err, codec.ErrInvalidLimits) {
+				if _, err := codec.Decode[fixture.Link](nil, l); !errors.Is(err, codec.ErrInvalidLimits) {
 					t.Fatal("policy not checked before input", err)
 				}
 			}
@@ -253,9 +253,9 @@ func TestGeneratedCIDPolicyParity(t *testing.T) {
 	} {
 		p := l
 		edit(&p)
-		check := fixture.CheckLinks(nested, p)
-		b, enc := fixture.EncodeLinks(nested, p)
-		w, dec := fixture.DecodeLinks(unhex(t, generatedNestedLinksHex), p)
+		check := codec.Check[fixture.Links](nested, p)
+		b, enc := codec.Encode[fixture.Links](nested, p)
+		w, dec := codec.Decode[fixture.Links](unhex(t, generatedNestedLinksHex), p)
 		want := error(nil)
 		if i != 0 {
 			want = codec.ErrLimitExceeded
@@ -283,16 +283,16 @@ func TestGeneratedCIDRejectsBeforeCopy(t *testing.T) {
 			if err != nil {
 				return err
 			}
-			v, err := r.CID(0)
-			if v != (contentid.CID{}) {
-				return errors.New("partial CID output")
+			v, err := r.CIDLink(0)
+			if v != ([36]byte{}) {
+				return errors.New("partial raw CID output")
 			}
 			return err
 		}, codec.ErrInvalidData)
 	})
 	t.Run("Generated", func(t *testing.T) {
 		requireAllocatedBytes(t, 2048, func() error {
-			v, err := fixture.DecodeLink(wire, l)
+			v, err := codec.Decode[fixture.Link](wire, l)
 			if v != (fixture.Link{}) {
 				return errors.New("partial decoded output")
 			}
@@ -305,7 +305,7 @@ func FuzzLinkPersistence(f *testing.F) {
 	seedQualification(f, generatedLinkHex,
 		"a16176d82a5bffffffffffffffff", "a16176d82a5826008100711220", "a16176d82a58250002711220")
 	f.Fuzz(func(t *testing.T, data []byte, mode uint8) {
-		fuzzQualification(t, data, mode, fixture.DecodeLink, fixture.CheckLink, fixture.EncodeLink, fixture.Link.Clone, fixture.Link.Equal)
+		fuzzQualification(t, data, mode, codec.Decode[fixture.Link], codec.Check[fixture.Link], codec.Encode[fixture.Link], fixture.Link.Clone, fixture.Link.Equal)
 	})
 }
 
@@ -314,6 +314,6 @@ func FuzzLinksPersistence(f *testing.F) {
 		"a3616240616ea161789bffffffffffffffff6172"+generatedCIDHex,
 		"a36162d82a5825616ea06172"+generatedCIDHex)
 	f.Fuzz(func(t *testing.T, data []byte, mode uint8) {
-		fuzzQualification(t, data, mode, fixture.DecodeLinks, fixture.CheckLinks, fixture.EncodeLinks, fixture.Links.Clone, fixture.Links.Equal)
+		fuzzQualification(t, data, mode, codec.Decode[fixture.Links], codec.Check[fixture.Links], codec.Encode[fixture.Links], fixture.Links.Clone, fixture.Links.Equal)
 	})
 }

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/stacklok/mecatl/engine/kernel/history/format"
+	"github.com/stacklok/mecatl/engine/kernel/contentid"
 )
 
 // emptyDigestCID carries SHA-256 of empty bytes. Parsing an identifier does not
@@ -14,24 +14,24 @@ import (
 const emptyDigestCID = "bafyreihdwdcefgh4dqkjv67uzcmw7ojee6xedzdetojuzjevtenxquvyku"
 
 func TestCID(t *testing.T) {
-	v, err := format.ParseCID(emptyDigestCID)
+	v, err := contentid.Parse(emptyDigestCID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if v == (format.CID{}) || v.String() != emptyDigestCID {
+	if v == (contentid.CID{}) || v.String() != emptyDigestCID {
 		t.Fatalf("parsed CID = %q; want %q and nonzero value", v, emptyDigestCID)
 	}
-	parsed, err := format.ParseCID(v.String())
+	parsed, err := contentid.Parse(v.String())
 	if err != nil || parsed != v {
 		t.Fatalf("round trip = %v, %v; want %v", parsed, err, v)
 	}
-	if got := map[format.CID]bool{v: true}; !got[parsed] {
+	if got := map[contentid.CID]bool{v: true}; !got[parsed] {
 		t.Fatal("equal CIDs must be interchangeable map keys")
 	}
 	if got := fmt.Sprint(v); got != emptyDigestCID {
 		t.Fatalf("debug text = %q; want %q", got, emptyDigestCID)
 	}
-	var zero format.CID
+	var zero contentid.CID
 	if zero.String() != "" {
 		t.Fatalf("zero CID = %q; want empty text", zero)
 	}
@@ -64,11 +64,11 @@ func TestParseCIDProfile(t *testing.T) {
 	// The binary CID consists of four single-byte varints followed by a digest.
 	binary := append([]byte{1, 0x71, 0x12, 32}, make([]byte, 32)...)
 	text := cidText(binary)
-	zeroDigest, err := format.ParseCID(text)
-	if err != nil || zeroDigest == (format.CID{}) || zeroDigest.String() != text {
+	zeroDigest, err := contentid.Parse(text)
+	if err != nil || zeroDigest == (contentid.CID{}) || zeroDigest.String() != text {
 		t.Fatalf("all-zero digest = %v, %v; want valid, set CID", zeroDigest, err)
 	}
-	other, err := format.ParseCID(emptyDigestCID)
+	other, err := contentid.Parse(emptyDigestCID)
 	if err != nil || other == zeroDigest {
 		t.Fatalf("different digests must differ: %v, %v", other, err)
 	}
@@ -96,17 +96,17 @@ func FuzzParseCID(f *testing.F) {
 		f.Add(text)
 	}
 	f.Fuzz(func(t *testing.T, text string) {
-		v, err := format.ParseCID(text)
+		v, err := contentid.Parse(text)
 		if err != nil {
-			if v != (format.CID{}) {
+			if v != (contentid.CID{}) {
 				t.Fatal("failed parse returned a set CID")
 			}
 			return
 		}
-		if v == (format.CID{}) || v.String() != text {
+		if v == (contentid.CID{}) || v.String() != text {
 			t.Fatalf("successful parse changed text %q to %q", text, v)
 		}
-		parsed, err := format.ParseCID(v.String())
+		parsed, err := contentid.Parse(v.String())
 		if err != nil || parsed != v {
 			t.Fatalf("round trip = %v, %v; want %v", parsed, err, v)
 		}
@@ -115,8 +115,8 @@ func FuzzParseCID(f *testing.F) {
 
 func assertInvalidCID(t *testing.T, text string) {
 	t.Helper()
-	v, err := format.ParseCID(text)
-	if err == nil || v != (format.CID{}) {
+	v, err := contentid.Parse(text)
+	if err == nil || v != (contentid.CID{}) {
 		t.Fatalf("ParseCID(%q) = %v, %v; want zero CID and error", text, v, err)
 	}
 }

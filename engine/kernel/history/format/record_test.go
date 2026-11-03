@@ -1,10 +1,13 @@
 package format_test
 
 import (
+	"bytes"
+	"errors"
 	"math"
 	"reflect"
 	"testing"
 
+	"github.com/stacklok/mecatl/engine/kernel/codec"
 	"github.com/stacklok/mecatl/engine/kernel/history/format"
 )
 
@@ -52,6 +55,51 @@ func TestRecordEqual(t *testing.T) {
 	// Opaque payload equality is byte equality, not decoded JSON equivalence.
 	if (format.Record{Payload: []byte(`{"a":1}`)}).Equal(format.Record{Payload: []byte(`{ "a": 1 }`)}) {
 		t.Fatal("differently spelled opaque payloads compared equal")
+	}
+}
+
+func TestRecordReadCBORPreservesReceiver(t *testing.T) {
+	valid := []byte("\xa3\x61k\x61x\x61p\x42\xff\x00\x61v\x01")
+	limited := testLimits()
+	limited.MaxByteStringBytes = 1
+	for _, test := range []struct {
+		wire     []byte
+		limits   codec.Limits
+		category error
+	}{
+		{valid[:len(valid)-1], testLimits(), codec.ErrInvalidData},
+		{[]byte("\xa3\x61k\x61x\x61p\x42\xff\x00\x61v\x00"), testLimits(), codec.ErrInvalidData},
+		{valid, limited, codec.ErrLimitExceeded},
+	} {
+		r := format.Record{Kind: "previous", KindVersion: 7, Payload: []byte("previous payload")}
+		before := r.Clone()
+		wire := bytes.Clone(test.wire)
+		reader, err := codec.NewReader(wire, test.limits)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := r.ReadCBOR(&reader, 0, math.MaxInt); !errors.Is(err, test.category) {
+			t.Fatalf("ReadCBOR: %v", err)
+		}
+		if !reflect.DeepEqual(r, before) || !bytes.Equal(wire, test.wire) {
+			t.Fatal("failure changed receiver or input")
+		}
+		got, err := codec.Decode[format.Record](wire, test.limits)
+		if !errors.Is(err, test.category) || !reflect.DeepEqual(got, format.Record{}) {
+			t.Fatalf("root failure returned partial record: %v", err)
+		}
+	}
+	var r format.Record
+	reader, err := codec.NewReader(valid, testLimits())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := r.ReadCBOR(&reader, 0, math.MaxInt); err != nil {
+		t.Fatal(err)
+	}
+	clear(valid)
+	if r.Kind != "x" || r.KindVersion != 1 || !bytes.Equal(r.Payload, []byte{0xff, 0}) {
+		t.Fatal("successful read borrowed input")
 	}
 }
 

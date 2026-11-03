@@ -1,29 +1,15 @@
 package codec
 
-import "github.com/stacklok/mecatl/engine/kernel/contentid"
-
 const (
 	cidTag        = 42
 	cidLinkLength = 37
 )
 
-// CheckCID validates and accounts one fixed-profile DAG-CBOR CID link at depth.
-// The link is tag 42 and its 37-byte byte-string child, so it consumes two nodes,
-// 55 estimated bytes, and no collection-element declaration. The zero CID is
-// invalid. Pointers are not nodes; generated callers pass the tag's wire depth.
-func (b *Budget) CheckCID(value contentid.CID, depth int) error {
-	if !validCID(value) {
-		return ErrInvalidData
-	}
-	return b.checkCID(depth)
-}
-
-// checkCID accounts the fixed tag and its byte-string child. The reader calls it
-// before inspecting wire contents so policy rejection precedes content access.
-func (b *Budget) checkCID(depth int) error {
-	if depth < 0 {
-		return ErrInvalidData
-	}
+// CheckCIDLink accounts the fixed DAG-CBOR link framing at depth: tag 42 and
+// its 37-byte byte-string child consume two nodes, 55 estimated bytes, and no
+// collection declaration. It does not inspect identity bytes or validate a CID
+// profile; the owner must do that separately after successful accounting.
+func (b *Budget) CheckCIDLink(depth int) error {
 	if err := b.visit(depth); err != nil {
 		return err
 	}
@@ -38,53 +24,39 @@ func (b *Budget) checkCID(depth int) error {
 	return b.scalar(cidLinkLength, depth+1, cidLinkLength, b.limits.MaxByteStringBytes)
 }
 
-// CID reads one canonical fixed-profile DAG-CBOR CID link at depth. It accepts
-// only tag 42 followed by a minimally headed 37-byte string whose first byte is
-// zero and whose remaining bytes pass contentid.ParseBinary. The returned CID
-// owns its storage; failure returns an unset CID. Call Done after the enclosing
-// generated value to reject trailing input.
-func (r *Reader) CID(depth int) (contentid.CID, error) {
-	if err := r.budget.checkCID(depth); err != nil {
-		return contentid.CID{}, err
+// CIDLink reads raw identity bytes from one canonical DAG-CBOR link at depth.
+// It accepts only tag 42, a minimal 37-byte string, and a zero prefix. Exact
+// length is checked before copying into the allocation-free, owning result.
+// The owner must validate the CID profile. Failure returns a zero array; only
+// the root operation calls Done to reject trailing input.
+func (r *Reader) CIDLink(depth int) ([36]byte, error) {
+	if r == nil {
+		return [36]byte{}, ErrInvalidLimits
+	}
+	if err := r.budget.CheckCIDLink(depth); err != nil {
+		return [36]byte{}, err
 	}
 	tag, err := r.typedHeader(6)
 	if err != nil || tag != cidTag {
-		return contentid.CID{}, ErrInvalidData
+		return [36]byte{}, ErrInvalidData
 	}
 	length, err := r.typedHeader(2)
 	if err != nil || length != cidLinkLength {
-		return contentid.CID{}, ErrInvalidData
+		return [36]byte{}, ErrInvalidData
 	}
-	if cidLinkLength > len(r.data)-r.pos {
-		return contentid.CID{}, ErrInvalidData
+	if cidLinkLength > len(r.data)-r.pos || r.data[r.pos] != 0 {
+		return [36]byte{}, ErrInvalidData
 	}
-	if r.data[r.pos] != 0 {
-		return contentid.CID{}, ErrInvalidData
-	}
-	value, err := contentid.ParseBinary(r.data[r.pos+1 : r.pos+cidLinkLength])
-	if err != nil {
-		return contentid.CID{}, ErrInvalidData
-	}
+	var value [36]byte
+	copy(value[:], r.data[r.pos+1:r.pos+cidLinkLength])
 	r.pos += cidLinkLength
 	return value, nil
 }
 
-// AppendCID appends the canonical 41-byte fixed-profile DAG-CBOR CID link for
-// value. An unset or invalid value returns ErrInvalidData and leaves dst
-// unchanged. Callers must have accounted the value separately with CheckCID.
-func AppendCID(dst []byte, value contentid.CID) ([]byte, error) {
-	if !validCID(value) {
-		return dst, ErrInvalidData
-	}
-	binary := value.Binary()
+// AppendCIDLink appends the canonical 41-byte DAG-CBOR link framing and raw
+// identity bytes. It performs no admission or profile validation: the caller
+// must have checked the same stable value and accounted it with CheckCIDLink.
+func AppendCIDLink(dst []byte, value [36]byte) []byte {
 	dst = append(dst, 0xd8, cidTag, 0x58, cidLinkLength, 0)
-	dst = append(dst, binary[:]...)
-	return dst, nil
-}
-
-// validCID delegates fixed-profile validation to contentid's profile authority.
-func validCID(value contentid.CID) bool {
-	binary := value.Binary()
-	_, err := contentid.ParseBinary(binary[:])
-	return err == nil
+	return append(dst, value[:]...)
 }

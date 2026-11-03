@@ -14,8 +14,6 @@ var ErrInvalidData = errors.New("invalid codec data")
 // Limits is explicit operational policy, separate from schema/domain validity.
 // Every numeric field must be positive; there are no defaults or unlimited values.
 // Tightening policy can reject previously accepted values without changing bytes.
-// Named and input data must remain stable during a call. Operations never mutate,
-// retain, copy, or globally cache the dictionary; concurrent read-only reuse is safe.
 type Limits struct {
 	// MaxBytes bounds complete input and the conservative output estimate.
 	MaxBytes int
@@ -33,25 +31,9 @@ type Limits struct {
 	MaxNodes int
 	// MaxCollectionElements bounds aggregate declared array elements and map pairs.
 	MaxCollectionElements int
-	// Named supplies schema-referenced positive field maxima. Unreferenced entries
-	// are ignored; a nil dictionary is valid when no references are needed.
-	Named map[string]int
 }
 
-// NamedLimit resolves one schema-known name without scanning the dictionary.
-// Generated entry points resolve their finite reference set once, before input
-// inspection, including references on absent optional fields. The returned value
-// must supplement, never replace, the corresponding global cap. Schema generation
-// validates identifier spelling; this lookup requires only an exact positive entry.
-func (l Limits) NamedLimit(name string) (int, error) {
-	n := l.Named[name]
-	if n <= 0 {
-		return 0, ErrInvalidLimits
-	}
-	return n, nil
-}
-
-// validate checks globals only; generated code knows which Named entries apply.
+// validate checks all global policy once per operation.
 func (l Limits) validate() error {
 	if l.MaxBytes <= 0 || l.MaxStringBytes <= 0 || l.MaxByteStringBytes <= 0 ||
 		l.MaxArrayElements <= 0 || l.MaxMapPairs <= 0 || l.MaxDepth <= 0 ||

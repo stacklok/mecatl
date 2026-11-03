@@ -16,7 +16,7 @@ func TestOwnerExactByteIdentityAndSemantics(t *testing.T) {
 	// The owner opts into identity independently of the generated codec. Verify
 	// ORIGINAL bytes, never reencode the decoded value to check its identity.
 	accept := func(original []byte, expected contentid.CID) (fixture.Sample, error) {
-		v, err := fixture.DecodeSample(original, generatedLimits())
+		v, err := codec.Decode[fixture.Sample](original, generatedLimits())
 		if err != nil {
 			return fixture.Sample{}, err
 		}
@@ -30,7 +30,7 @@ func TestOwnerExactByteIdentityAndSemantics(t *testing.T) {
 		return v, nil
 	}
 	v := fixture.Sample{Label: "v1"}
-	encoded, err := fixture.EncodeSample(v, generatedLimits())
+	encoded, err := codec.Encode[fixture.Sample](v, generatedLimits())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -39,7 +39,7 @@ func TestOwnerExactByteIdentityAndSemantics(t *testing.T) {
 	if err != nil || !accepted.Equal(v) || semanticCalls != 1 {
 		t.Fatalf("accept = %#v, %v; semantic calls %d", accepted, err, semanticCalls)
 	}
-	future, err := fixture.EncodeSample(fixture.Sample{Label: "v2"}, generatedLimits())
+	future, err := codec.Encode[fixture.Sample](fixture.Sample{Label: "v2"}, generatedLimits())
 	if err != nil {
 		t.Fatal(err)
 	}

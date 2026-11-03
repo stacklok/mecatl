@@ -2,7 +2,7 @@ package fixture
 
 import "github.com/stacklok/mecatl/engine/kernel/contentid"
 
-// CIDAlias proves aliases retain the opaque leaf's identity.
+// CIDAlias proves aliases use their production owner's methods.
 type CIDAlias = contentid.CID
 
 // Link isolates a required link for exact wire and budget qualification.

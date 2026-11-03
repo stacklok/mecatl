@@ -114,6 +114,7 @@ linters:
             - '!$test'
           allow:
             - $gostd
+            - github.com/stacklok/mecatl/engine/kernel/codec$
           deny:
             - pkg: os
               desc: 'ID generation uses crypto/rand; host state belongs in composition'
@@ -127,7 +128,6 @@ linters:
           allow:
             - $gostd
             - github.com/jcalabro/atmos/cbor$
-            - github.com/stacklok/mecatl/engine/kernel/contentid$
           deny:
             - pkg: os
               desc: 'codec runtime must not access host state'
@@ -138,6 +138,7 @@ linters:
             - '!$test'
           allow:
             - $gostd
+            - github.com/stacklok/mecatl/engine/kernel/codec$
           deny:
             - pkg: os
               desc: 'content identity values must not access host state'
@@ -152,6 +153,8 @@ linters:
             - $gostd
             - github.com/stacklok/mecatl/engine/kernel/history/id$
             - github.com/stacklok/mecatl/engine/kernel/history/format$
+            - github.com/stacklok/mecatl/engine/kernel/codec$
+            - github.com/stacklok/mecatl/engine/kernel/contentid$
           deny:
             - pkg: os
               desc: 'history values must not access host state'
@@ -164,6 +167,7 @@ linters:
             - $gostd
             - github.com/stacklok/mecatl/engine/kernel/contentid$
             - github.com/stacklok/mecatl/engine/kernel/history/id$
+            - github.com/stacklok/mecatl/engine/kernel/codec$
             - github.com/jcalabro/atmos/cbor$
           deny:
             - pkg: os
@@ -176,6 +180,7 @@ linters:
           allow:
             - $gostd
             - github.com/stacklok/mecatl/engine/id$
+            - github.com/stacklok/mecatl/engine/kernel/codec$
           deny:
             - pkg: os
               desc: 'history identity values must not access host state'
@@ -351,6 +356,8 @@ linters:
             - $gostd
             - github.com/stacklok/mecatl/engine/kernel/history$
             - github.com/stacklok/mecatl/engine/kernel/history/format$
+            - github.com/stacklok/mecatl/engine/kernel/codec$
+            - github.com/stacklok/mecatl/engine/kernel/contentid$
           deny:
             - pkg: os
               desc: 'history conformance exercises the DTO-facing core over byte backends without host state'

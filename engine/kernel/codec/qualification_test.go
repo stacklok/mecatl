@@ -42,7 +42,7 @@ func TestQualificationFixedArrayRejectsBeforeCopy(t *testing.T) {
 	l := generatedLimits()
 	l.MaxByteStringBytes = size
 	requireAllocatedBytes(t, 2048, func() error {
-		v, err := fixture.DecodeSample(data, l)
+		v, err := codec.Decode[fixture.Sample](data, l)
 		if !reflect.DeepEqual(v, fixture.Sample{}) {
 			return errors.New("partial decoded output")
 		}
@@ -69,7 +69,7 @@ func TestQualificationNestedReservationsAllocatedBytes(t *testing.T) {
 				l.MaxDepth = 1
 			}
 			requireAllocatedBytes(t, 2048, func() error {
-				_, err := fixture.DecodeCatalog(data, l)
+				_, err := codec.Decode[fixture.Catalog](data, l)
 				return err
 			}, codec.ErrLimitExceeded)
 		})
@@ -79,9 +79,9 @@ func TestQualificationNestedReservationsAllocatedBytes(t *testing.T) {
 	data = unhex(t, "a4656e616d65738067656e7472696573b91900")
 	data = append(data, make([]byte, 12800)...)
 	l := generatedLimits()
-	l.MaxMapPairs, l.Named["entries"], l.MaxNodes = 10000, 10000, 30
+	l.MaxMapPairs, l.MaxNodes = 10000, 30
 	requireAllocatedBytes(t, 2048, func() error {
-		_, err := fixture.DecodeCatalog(data, l)
+		_, err := codec.Decode[fixture.Catalog](data, l)
 		return err
 	}, codec.ErrLimitExceeded)
 }
@@ -104,10 +104,10 @@ func TestQualificationKnownArrayAdmissionBytes(t *testing.T) {
 		name string
 		call func() error
 	}{
-		{"Check", func() error { return fixture.CheckCatalog(v, l) }},
-		{"Encode", func() error { _, err := fixture.EncodeCatalog(v, l); return err }},
+		{"Check", func() error { return codec.Check[fixture.Catalog](v, l) }},
+		{"Encode", func() error { _, err := codec.Encode[fixture.Catalog](v, l); return err }},
 		{"Decode", func() error {
-			got, err := fixture.DecodeCatalog(data, l)
+			got, err := codec.Decode[fixture.Catalog](data, l)
 			if !reflect.DeepEqual(got, fixture.Catalog{}) {
 				return errors.New("partial decoded output")
 			}
@@ -121,7 +121,7 @@ func TestQualificationKnownArrayAdmissionBytes(t *testing.T) {
 	// Invalid text is a scan sentinel: field admission must reject before UTF-8
 	// traversal, not merely before encoding output or decode allocation.
 	v.Names[0] = "\xff"
-	if err := fixture.CheckCatalog(v, l); !errors.Is(err, codec.ErrLimitExceeded) {
+	if err := codec.Check[fixture.Catalog](v, l); !errors.Is(err, codec.ErrLimitExceeded) {
 		t.Fatalf("literal budget did not precede element scan: %v", err)
 	}
 }
@@ -134,7 +134,7 @@ func TestQualificationNamedMapAdmissionBytes(t *testing.T) {
 		v.Entries[value.Key(fmt.Sprintf("%05d", i))] = nil
 	}
 	l := generatedLimits()
-	// All generic limits admit the collection; only the named field budget is
+	// All generic limits admit the collection; only the literal field budget is
 	// tight. The decode payload supplies every declared pair so rejection cannot
 	// be attributed to truncated input.
 	l.MaxArrayElements = count
@@ -153,10 +153,10 @@ func TestQualificationNamedMapAdmissionBytes(t *testing.T) {
 		name string
 		call func() error
 	}{
-		{"Check", func() error { return fixture.CheckCatalog(v, l) }},
-		{"Encode", func() error { _, err := fixture.EncodeCatalog(v, l); return err }},
+		{"Check", func() error { return codec.Check[fixture.Catalog](v, l) }},
+		{"Encode", func() error { _, err := codec.Encode[fixture.Catalog](v, l); return err }},
 		{"Decode", func() error {
-			got, err := fixture.DecodeCatalog(data, l)
+			got, err := codec.Decode[fixture.Catalog](data, l)
 			if !reflect.DeepEqual(got, fixture.Catalog{}) {
 				return errors.New("partial decoded output")
 			}
@@ -167,17 +167,20 @@ func TestQualificationNamedMapAdmissionBytes(t *testing.T) {
 			requireAllocatedBytes(t, 2048, op.call, codec.ErrLimitExceeded)
 		})
 	}
-	// Raising only the named cap admits the complete DTO and supplied input:
-	// no generic or aggregate rejection can be masking the field-cap controls.
-	l.Named["entries"] = count
-	if err := fixture.CheckCatalog(v, l); err != nil {
-		t.Fatal("admitted named policy Check", err)
+	// Reducing the immediate value to the literal boundary is the positive control.
+	for i := 4096; i < count; i++ {
+		delete(v.Entries, value.Key(fmt.Sprintf("%05d", i)))
 	}
-	if _, err := fixture.EncodeCatalog(v, l); err != nil {
-		t.Fatal("admitted named policy Encode", err)
+	v.Cache = nil
+	data = v.AppendCBOR(nil)
+	if err := codec.Check[fixture.Catalog](v, l); err != nil {
+		t.Fatal("admitted literal policy Check", err)
 	}
-	if _, err := fixture.DecodeCatalog(data, l); err != nil {
-		t.Fatal("admitted named policy Decode", err)
+	if _, err := codec.Encode[fixture.Catalog](v, l); err != nil {
+		t.Fatal("admitted literal policy Encode", err)
+	}
+	if _, err := codec.Decode[fixture.Catalog](data, l); err != nil {
+		t.Fatal("admitted literal policy Decode", err)
 	}
 }
 
@@ -189,13 +192,13 @@ func TestQualificationMapSortingAdmissionBytes(t *testing.T) {
 		v.Entries[value.Key(fmt.Sprintf("long-data-key-%04d", i))] = nil
 	}
 	l := generatedLimits()
-	l.MaxMapPairs, l.Named["entries"] = 4096, 4096
+	l.MaxMapPairs = 4096
 	l.MaxNodes, l.MaxCollectionElements, l.MaxBytes = 30000, 30000, 1<<22
 	// Count is admitted; invalid key byte length must still reject BEFORE
 	// encode output and sorting scratch, not merely before map count admission.
 	l.MaxStringBytes = 8
 	requireAllocatedBytes(t, 2048, func() error {
-		_, err := fixture.EncodeCatalog(v, l)
+		_, err := codec.Encode[fixture.Catalog](v, l)
 		return err
 	}, codec.ErrLimitExceeded)
 	l.MaxStringBytes = 1024
@@ -203,14 +206,14 @@ func TestQualificationMapSortingAdmissionBytes(t *testing.T) {
 	// sorting scratch. This generous fixture-specific bound covers admitted
 	// entries and output; it is not a universal heap/RSS or performance promise.
 	requireAllocatedBytes(t, 1<<20, func() error {
-		_, err := fixture.EncodeCatalog(v, l)
+		_, err := codec.Encode[fixture.Catalog](v, l)
 		return err
 	}, nil)
-	data, err := fixture.EncodeCatalog(v, l)
+	data, err := codec.Encode[fixture.Catalog](v, l)
 	if err != nil {
 		t.Fatal(err)
 	}
-	w, err := fixture.DecodeCatalog(data, l)
+	w, err := codec.Decode[fixture.Catalog](data, l)
 	if err != nil || !w.Equal(v) {
 		t.Fatal("admitted sorting control", err)
 	}
@@ -221,13 +224,13 @@ func TestQualificationTinyStringsOwnNearCapInput(t *testing.T) {
 	v.Cache = nil
 	v.Payload = make(value.Blob, 1<<18)
 	l := generatedLimits()
-	l.MaxByteStringBytes, l.Named["payload"] = len(v.Payload), len(v.Payload)
-	data, err := fixture.EncodeCatalog(v, l)
+	l.MaxByteStringBytes = len(v.Payload)
+	data, err := codec.Encode[fixture.Catalog](v, l)
 	if err != nil {
 		t.Fatal(err)
 	}
 	l.MaxBytes = len(data) + 1024 // near-cap complete input, not a tiny reader prefix
-	w, err := fixture.DecodeCatalog(data, l)
+	w, err := codec.Decode[fixture.Catalog](data, l)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -251,11 +254,11 @@ func TestQualificationLiteralPointerAndOptionalGlobalSymmetry(t *testing.T) {
 	v := richCatalog()
 	v.Cache = nil
 	*v.Required = make(value.Blob, 8)
-	data, err := fixture.EncodeCatalog(v, generatedLimits())
+	data, err := codec.Encode[fixture.Catalog](v, generatedLimits())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := fixture.DecodeCatalog(data, generatedLimits()); err != nil {
+	if _, err := codec.Decode[fixture.Catalog](data, generatedLimits()); err != nil {
 		t.Fatal(err)
 	}
 	*v.Required = make(value.Blob, 9)
@@ -264,11 +267,11 @@ func TestQualificationLiteralPointerAndOptionalGlobalSymmetry(t *testing.T) {
 	v = richCatalog()
 	v.Cache = nil
 	*v.Optional = []string{"a", "b", "c"}
-	data, err = fixture.EncodeCatalog(v, generatedLimits())
+	data, err = codec.Encode[fixture.Catalog](v, generatedLimits())
 	if err != nil {
 		t.Fatal(err)
 	}
 	l := generatedLimits()
-	l.MaxArrayElements = 2 // stricter than optional's named cap of four
+	l.MaxArrayElements = 2 // stricter than optional's literal cap of four
 	assertCatalogRejected(t, v, data, l, codec.ErrLimitExceeded)
 }

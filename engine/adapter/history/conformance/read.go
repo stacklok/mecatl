@@ -7,6 +7,8 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/stacklok/mecatl/engine/kernel/codec"
+	"github.com/stacklok/mecatl/engine/kernel/contentid"
 	"github.com/stacklok/mecatl/engine/kernel/history"
 	"github.com/stacklok/mecatl/engine/kernel/history/format"
 )
@@ -20,7 +22,7 @@ func sameCommits(got []history.Commit, want []format.Commit) bool {
 
 func encodedLen(t *testing.T, c format.Commit) int {
 	t.Helper()
-	b, _, err := format.EncodeCommit(c, policy().CommitLimits)
+	b, err := codec.Encode(c, policy().CommitLimits)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -34,8 +36,8 @@ func wantPage(t *testing.T, page history.Page, err error, next history.CommitRef
 		t.Fatalf("page = %+v, %v; want next %+v, commits %+v", page, err, next, commits)
 	}
 	for i, c := range commits {
-		_, cid, err := format.EncodeCommit(c, policy().CommitLimits)
-		if err != nil || page.Commits[i].Ref != (history.CommitRef{Sequence: c.Sequence, CID: cid}) {
+		data, err := codec.Encode(c, policy().CommitLimits)
+		if err != nil || page.Commits[i].Ref != (history.CommitRef{Sequence: c.Sequence, CID: contentid.Sum(data)}) {
 			t.Fatalf("page reference %d = %+v, %v", i, page.Commits[i].Ref, err)
 		}
 	}
@@ -91,7 +93,7 @@ func readBoundaries(t *testing.T, factory Factory) {
 			// A prefix-only read must still verify the indexed upper boundary.
 			r := history.ReadRequest{After: test.after, Through: test.through, MaxCommits: 1}
 			t.Run("Backend", func(t *testing.T) {
-				page, err := backend.Read(ctx, id, history.ByteReadRequest{ReadRequest: r, MaxBytes: policy().MaxPageBytes, MaxCommitBytes: policy().CommitLimits.MaxCommitBytes})
+				page, err := backend.Read(ctx, id, history.ByteReadRequest{ReadRequest: r, MaxBytes: policy().MaxPageBytes, MaxCommitBytes: policy().CommitLimits.MaxBytes})
 				if !errors.Is(err, history.ErrInvalid) || page != nil {
 					t.Fatalf("invalid boundary byte page = %+v, %v", page, err)
 				}
@@ -147,7 +149,8 @@ func stablePagination(t *testing.T, factory historyFactory) {
 	wantPage(t, page, err, r3, root, second, third)
 	parent := history.CommitRef{}
 	for i, c := range page.Commits {
-		if c.Commit.Sequence != parent.Sequence+1 || c.Commit.Parent != parent.CID || (i == 0 && c.Commit.HistoryID != id) {
+		if c.Commit.Sequence != parent.Sequence+1 || (i == 0 && (c.Commit.Parent != nil || c.Commit.HistoryID == nil || *c.Commit.HistoryID != id)) ||
+			(i > 0 && (c.Commit.Parent == nil || *c.Commit.Parent != parent.CID || c.Commit.HistoryID != nil)) {
 			t.Fatalf("noncontiguous commit %d: %+v", i, c)
 		}
 		parent = c.Ref
@@ -189,23 +192,24 @@ func misalignedReadPolicy(t *testing.T, factory Factory) {
 			}
 			id := history.NewHistoryID()
 			c, _ := encoded(t, id, history.CommitRef{}, "read bounds")
+			c.Records[0].Kind = "opaque-kind-longer-than-history"
 			c.Records = append(c.Records, c.Records[0].Clone())
-			_, cid, err := format.EncodeCommit(c, policy().CommitLimits)
+			data, err := codec.Encode(c, policy().CommitLimits)
 			if err != nil {
 				t.Fatal(err)
 			}
-			ref := history.CommitRef{Sequence: 1, CID: cid}
+			ref := history.CommitRef{Sequence: 1, CID: contentid.Sum(data)}
 			appendAccepted(t, writer, id, c, ref)
 			p := policy()
 			switch bound {
 			case "bytes":
-				p.CommitLimits.MaxCommitBytes = encodedLen(t, c) - 1
+				p.CommitLimits.MaxBytes = encodedLen(t, c) - 1
 			case "records":
-				p.CommitLimits.MaxRecords = 1
+				p.CommitLimits.MaxArrayElements = 1
 			case "kind":
-				p.CommitLimits.MaxKindBytes = len(opaqueKind) - 1
+				p.CommitLimits.MaxStringBytes = len(c.Records[0].Kind) - 1
 			case "payload":
-				p.CommitLimits.MaxPayloadBytes = 1
+				p.CommitLimits.MaxByteStringBytes = 1
 			}
 			reader, err := history.New(backend, p)
 			if err != nil {

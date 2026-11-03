@@ -19,8 +19,17 @@ var cidEncoding = base32.NewEncoding("abcdefghijklmnopqrstuvwxyz234567").WithPad
 // map key. Its zero value is unset, not valid. It owns its fixed-size storage.
 // A valid CID establishes identity only, not validity or authority of content.
 // The DAG-CBOR profile label does not imply that the identified bytes are CBOR.
+// Its CBOR representation is a DAG-CBOR tag-42 link, not text.
+//
+//cborgen:validate validateCBOR
 type CID struct {
-	binary [36]byte
+	binary [36]byte `cbor:",cid"` //nolint:revive // cborgen's fixed CID-link representation, not a standard CBOR tag option.
+}
+
+// validateCBOR reuses the binary parser's fixed-profile authority.
+func (v CID) validateCBOR() error {
+	_, err := ParseBinary(v.binary[:])
+	return err
 }
 
 // Sum identifies the exact supplied bytes, without interpreting or normalizing

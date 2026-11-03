@@ -35,7 +35,11 @@ func assertHelperNamespace(t *testing.T, cfg LoadConfig, wantAliases bool) strin
 				}
 				continue
 			}
-			receiver, ok := decl.Recv.List[0].Type.(*ast.Ident)
+			recv := decl.Recv.List[0].Type
+			if p, ok := recv.(*ast.StarExpr); ok {
+				recv = p.X
+			}
+			receiver, ok := recv.(*ast.Ident)
 			if !ok {
 				t.Fatalf("unexpected receiver %T", decl.Recv.List[0].Type)
 			}
@@ -44,7 +48,7 @@ func assertHelperNamespace(t *testing.T, cfg LoadConfig, wantAliases bool) strin
 				if !numeric.MatchString(decl.Name.Name) {
 					t.Errorf("non-numeric helper %s", decl.Name.Name)
 				}
-			} else if decl.Name.Name != "Clone" && decl.Name.Name != "Equal" {
+			} else if !generatedMethod(decl.Name.Name) {
 				t.Errorf("helper on unexpected receiver %s", receiver.Name)
 			}
 		case *ast.GenDecl:
@@ -91,6 +95,7 @@ type Other struct { V limits `+"`cbor:\"v\"`"+`; T values.Text `+"`cbor:\"t\"`"+
 var cborgenClone0, cborgenCheck0, cborgenValue0 bool
 `)
 	writeFixture(t, filepath.Join(filepath.Dir(cfg.Dir), "values/value.go"), "package values\ntype Text string\n")
+	registerFixtureOwner(t, cfg, "values", "Text")
 	cfg.Types = []string{"Record", "Other"}
 	if err := Generate(context.Background(), cfg); err != nil {
 		t.Fatal(err)
@@ -106,8 +111,8 @@ var cborgenClone0, cborgenCheck0, cborgenValue0 bool
 	}
 	writeFixture(t, filepath.Join(cfg.Dir, "callers.go"), `package owner
 import "github.com/stacklok/mecatl/engine/kernel/codec"
-func roundTrip(v Record,l codec.Limits) bool { b,e:=EncodeRecord(v.Clone(),l);if e!=nil{return false};w,e:=DecodeRecord(b,l);return e==nil&&CheckRecord(w,l)==nil&&v.Equal(w) }
-func (v Other) roundTrip(l codec.Limits) bool {b,e:=EncodeOther(v.Clone(),l);if e!=nil{return false};w,e:=DecodeOther(b,l);return e==nil&&CheckOther(w,l)==nil&&v.Equal(w)}
+func roundTrip(v Record,l codec.Limits) bool { b,e:=codec.Encode(v.Clone(),l);if e!=nil{return false};w,e:=codec.Decode[Record](b,l);return e==nil&&codec.Check(w,l)==nil&&v.Equal(w) }
+func (v Other) roundTrip(l codec.Limits) bool {b,e:=codec.Encode(v.Clone(),l);if e!=nil{return false};w,e:=codec.Decode[Other](b,l);return e==nil&&codec.Check(w,l)==nil&&v.Equal(w)}
 `)
 	writeFixture(t, filepath.Join(cfg.Dir, "owner_test.go"), `package owner
 import("testing";"github.com/stacklok/mecatl/engine/kernel/codec")

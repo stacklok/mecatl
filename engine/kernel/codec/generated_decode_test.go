@@ -17,7 +17,7 @@ func TestGeneratedUntrustedDeclarationsBeforeNarrowing(t *testing.T) {
 		"ab62693800626f6bf4627538006369313600636933320063693634006375313600637533320063753634006566697865645bffffffffffffffff",
 		"ab62693800626f6bf46275380063693136006369333200636936340063753136006375333200637536340065666978656443000000656c6162656c7bffffffffffffffff",
 	} {
-		v, err := fixture.DecodeSample(unhex(t, hex), generatedLimits())
+		v, err := codec.Decode[fixture.Sample](unhex(t, hex), generatedLimits())
 		if !errors.Is(err, codec.ErrLimitExceeded) || !reflect.DeepEqual(v, fixture.Sample{}) {
 			t.Fatalf("%s: %#v %v", hex, v, err)
 		}
@@ -26,7 +26,7 @@ func TestGeneratedUntrustedDeclarationsBeforeNarrowing(t *testing.T) {
 		"a4656e616d65739bffffffffffffffff",
 		"a4656e616d65738067656e7472696573bbffffffffffffffff",
 	} {
-		v, err := fixture.DecodeCatalog(unhex(t, hex), generatedLimits())
+		v, err := codec.Decode[fixture.Catalog](unhex(t, hex), generatedLimits())
 		if !errors.Is(err, codec.ErrLimitExceeded) || !reflect.DeepEqual(v, fixture.Catalog{}) {
 			t.Fatalf("%s: %#v %v", hex, v, err)
 		}

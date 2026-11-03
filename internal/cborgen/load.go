@@ -11,7 +11,6 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"strconv"
 	"strings"
 
 	"golang.org/x/tools/go/packages"
@@ -33,13 +32,17 @@ type LoadConfig struct {
 // The overlay is load-only: it is never written or executed. Schema validation
 // and emission must complete before a caller replaces Output.
 type Loaded struct {
-	Package *packages.Package
-	Roots   []*types.Named // sorted, deduplicated, locally defined nongeneric structs
-	Output  string         // absolute output pathname; Load does not modify it
+	Package       *packages.Package
+	Roots         []*types.Named // sorted, deduplicated local nongeneric roots
+	Output        string         // absolute output pathname; Load does not modify it
+	Owners        map[string]*ownerDeclaration
+	Validators    map[string]string
+	Prerequisites []*Loaded // dependency order, excluding this package
 }
 
 // Load loads from Dir's containing module, independently of any ambient workspace.
-// Only Output is replaced in memory; every other source diagnostic is fatal.
+// Declared owner artifacts are replaced by load-only signatures; handwritten
+// diagnostics remain fatal. Imported families are validated from their sources.
 func Load(ctx context.Context, config LoadConfig) (*Loaded, error) {
 	dir, err := filepath.Abs(config.Dir)
 	if err != nil {
@@ -67,12 +70,24 @@ func Load(ctx context.Context, config LoadConfig) (*Loaded, error) {
 	// Exclude the artifact for metadata discovery, so Go selects the active
 	// handwritten files and package name using the real build context. This pass
 	// cannot type check callers until the artifact's public API has been stubbed.
+	targets, err := ownerTargets(dir, config)
+	if err != nil {
+		return nil, err
+	}
+	overlay := map[string][]byte{}
+	for _, target := range targets {
+		path := filepath.Join(target.Dir, target.Output)
+		if _, err := readOutput(path); err != nil {
+			return nil, err
+		}
+		overlay[path] = []byte("//go:build ignore\n\npackage ignored\n")
+	}
 	cfg := &packages.Config{
 		Context: ctx,
 		Dir:     dir,
 		Env:     loadEnvironment(),
 		Mode:    packages.NeedName | packages.NeedFiles | packages.NeedCompiledGoFiles | packages.NeedModule,
-		Overlay: map[string][]byte{out: []byte("//go:build ignore\n\npackage ignored\n")},
+		Overlay: overlay,
 	}
 	metadata, err := loadOne(cfg)
 	if err != nil {
@@ -84,20 +99,11 @@ func Load(ctx context.Context, config LoadConfig) (*Loaded, error) {
 	if err := checkDeclarations(metadata.CompiledGoFiles, out, names); err != nil {
 		return nil, err
 	}
-	// In-memory function AND method signatures let real callers type check during
-	// regeneration. Only the owned artifact is replaced; all other diagnostics
-	// remain fatal in the typed pass, and none of these bodies can execute.
-	var stub strings.Builder
-	fmt.Fprintf(&stub, "package %s\nimport cborgenCodec %s\n", metadata.Name, strconv.Quote(codecImportPath))
-	for _, name := range names {
-		fmt.Fprintf(&stub, `func Check%s(v %s, limits cborgenCodec.Limits) error { panic("load-only") }
-func Encode%s(v %s, limits cborgenCodec.Limits) ([]byte, error) { panic("load-only") }
-func Decode%s(data []byte, limits cborgenCodec.Limits) (%s, error) { panic("load-only") }
-func (v %s) Clone() %s { panic("load-only") }
-func (v %s) Equal(other %s) bool { panic("load-only") }
-`, name, name, name, name, name, name, name, name, name, name)
+	owners, overlay, err := ownerOverlays(ctx, targets, overlay)
+	if err != nil {
+		return nil, err
 	}
-	cfg.Overlay[out] = []byte(stub.String())
+	cfg.Overlay = overlay
 	cfg.Mode |= packages.NeedTypes | packages.NeedTypesInfo | packages.NeedSyntax | packages.NeedImports | packages.NeedDeps
 	pkg, err := loadOne(cfg)
 	if err != nil {
@@ -106,7 +112,60 @@ func (v %s) Equal(other %s) bool { panic("load-only") }
 	if !slices.Contains(pkg.CompiledGoFiles, out) {
 		return nil, fmt.Errorf("output %s is not an active package Go file", out)
 	}
-	return selectedRoots(pkg, out, names)
+	loaded, err := selectedRoots(pkg, out, names)
+	if err != nil {
+		return nil, err
+	}
+	loaded.Owners = owners
+	loaded.Validators = owners[pkg.PkgPath].Validators
+	if err := loaded.loadPrerequisites(); err != nil {
+		return nil, err
+	}
+	return loaded, nil
+}
+
+// loadPrerequisites validates imported owners against their loaded source and
+// records the actual named wire/value closure in dependency order.
+func (loaded *Loaded) loadPrerequisites() error {
+	pkg, owners := loaded.Package, loaded.Owners
+	var dependencyError error
+	visitDependencies(pkg, func(dependency *packages.Package) {
+		if dependency == pkg || dependencyError != nil {
+			return
+		}
+		owner := owners[dependency.PkgPath]
+		if owner == nil {
+			return
+		}
+		output := filepath.Join(owner.Config.Dir, owner.Config.Output)
+		if !slices.Contains(dependency.CompiledGoFiles, output) {
+			dependencyError = fmt.Errorf("%s: declared owner at %s is not the imported source package; use the owner's module/build context", dependency.PkgPath, owner.Config.Dir)
+			return
+		}
+		child, err := selectedRoots(dependency, output, owner.Config.Types)
+		if err != nil {
+			dependencyError = err
+			return
+		}
+		child.Owners = owners
+		child.Validators = owner.Validators
+		s, err := buildSchema(child)
+		if err != nil {
+			dependencyError = err
+			return
+		}
+		owner.Wire = map[string]bool{}
+		owner.Names = nil
+		for _, n := range s.nodes {
+			if named, ok := n.typ.(*types.Named); ok && named.Obj().Pkg() == dependency.Types {
+				owner.Wire[named.Obj().Name()] = n.wire
+				owner.Names = append(owner.Names, named.Obj().Name())
+			}
+		}
+		slices.Sort(owner.Names)
+		loaded.Prerequisites = append(loaded.Prerequisites, child)
+	})
+	return dependencyError
 }
 
 func validOutputName(name string) bool {
@@ -123,9 +182,6 @@ func selectedRoots(pkg *packages.Package, out string, names []string) (*Loaded, 
 		named, ok := obj.Type().(*types.Named)
 		if !ok || named.Obj().Pkg() != pkg.Types || named.TypeParams().Len() != 0 {
 			return nil, fmt.Errorf("root %s must be locally defined and nongeneric", name)
-		}
-		if _, ok := named.Underlying().(*types.Struct); !ok {
-			return nil, fmt.Errorf("root %s must be a struct", name)
 		}
 		loaded.Roots = append(loaded.Roots, named)
 	}
@@ -189,7 +245,7 @@ func checkFileDeclarations(file *ast.File, fset *token.FileSet, selected map[str
 				if reserved[decl.Name.Name] {
 					return collision(decl.Name)
 				}
-			} else if decl.Name.Name == "Clone" || decl.Name.Name == "Equal" {
+			} else if generatedMethod(decl.Name.Name) {
 				receiver := decl.Recv.List[0].Type
 				if pointer, ok := receiver.(*ast.StarExpr); ok {
 					receiver = pointer.X
@@ -215,9 +271,6 @@ func checkDeclarations(files []string, out string, roots []string) error {
 	}
 	for _, root := range roots {
 		selected[root] = nil
-		for _, prefix := range []string{"Check", "Encode", "Decode"} {
-			reserved[prefix+root] = true
-		}
 	}
 	fset := token.NewFileSet()
 	for _, path := range files {
@@ -246,7 +299,7 @@ func checkDeclarations(files []string, out string, roots []string) error {
 		if structure, ok := spec.Type.(*ast.StructType); ok {
 			for _, field := range structure.Fields.List {
 				for _, name := range field.Names {
-					if name.Name == "Clone" || name.Name == "Equal" {
+					if generatedMethod(name.Name) {
 						return fmt.Errorf("%s: field %s collides with generated method", fset.Position(name.Pos()), name.Name)
 					}
 				}

@@ -62,30 +62,40 @@ func TestLimitsInvalidFirst(t *testing.T) {
 	requireError(t, r.Done(), ErrInvalidLimits)
 }
 
-func TestNamedLimits(t *testing.T) {
-	l := testLimits()
-	for _, named := range []map[string]int{nil, {}, {"cap": 0}, {"cap": -1}, {"Cap": 7}} {
-		l.Named = named
-		_, err := l.NamedLimit("cap")
+func TestNilAndZeroSharedState(t *testing.T) {
+	for _, b := range []*Budget{nil, {}} {
+		requireError(t, b.CheckScalar(0), ErrInvalidLimits)
+		requireError(t, b.CheckString("x", 0, 1), ErrInvalidLimits)
+		requireError(t, b.CheckBytes(0, 0, 1), ErrInvalidLimits)
+		requireError(t, b.CheckArray(0, 0, 1), ErrInvalidLimits)
+		requireError(t, b.CheckMap(0, 0, 1), ErrInvalidLimits)
+		requireError(t, b.CheckCIDLink(0), ErrInvalidLimits)
+		if b.EstimatedBytes() != 0 {
+			t.Fatal("invalid budget has nonzero estimate")
+		}
+	}
+	for _, r := range []*Reader{nil, {}} {
+		b, err := r.Bool(0)
 		requireError(t, err, ErrInvalidLimits)
+		i, err := r.Int(0)
+		requireError(t, err, ErrInvalidLimits)
+		u, err := r.Uint(0)
+		requireError(t, err, ErrInvalidLimits)
+		s, err := r.String(0, 1)
+		requireError(t, err, ErrInvalidLimits)
+		v, err := r.Bytes(0, 1)
+		requireError(t, err, ErrInvalidLimits)
+		f, err := r.FixedBytes(0, 1, 0)
+		requireError(t, err, ErrInvalidLimits)
+		a, err := r.Array(0, 1)
+		requireError(t, err, ErrInvalidLimits)
+		m, err := r.Map(0, 1)
+		requireError(t, err, ErrInvalidLimits)
+		c, err := r.CIDLink(0)
+		requireError(t, err, ErrInvalidLimits)
+		requireError(t, r.Done(), ErrInvalidLimits)
+		if b || i != 0 || u != 0 || s != "" || v != nil || f != nil || a != 0 || m != 0 || c != ([36]byte{}) {
+			t.Fatal("invalid reader returned nonzero output")
+		}
 	}
-	l.Named = map[string]int{"cap": 7, "unreferenced": -10, "": 0}
-	got, err := l.NamedLimit("cap")
-	if err != nil || got != 7 {
-		t.Fatalf("lookup = %d, %v", got, err)
-	}
-	b, err := NewBudget(l)
-	if err != nil || b.limits.Named != nil {
-		t.Fatalf("budget retained dictionary: %v", err)
-	}
-	r, err := NewReader([]byte{0xf4}, l)
-	if err != nil || r.budget.limits.Named != nil {
-		t.Fatalf("reader retained dictionary: %v", err)
-	}
-	if len(l.Named) != 3 || l.Named["cap"] != 7 {
-		t.Fatal("policy mutated")
-	}
-	// Generated callers must do this once even when an optional field is absent.
-	_, err = l.NamedLimit("absent_optional_cap")
-	requireError(t, err, ErrInvalidLimits)
 }

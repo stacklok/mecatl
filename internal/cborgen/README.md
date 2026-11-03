@@ -1,72 +1,65 @@
 # Persistence codec generator
 
-`cborgen` generates typed CBOR codecs and whole-value `Clone`/`Equal` methods
-from Go DTO declarations. This contributor reference owns the supported types,
-struct tags, and generation workflow. The [runtime package](../../engine/kernel/codec/doc.go)
-owns budget accounting and low-level decoding contracts.
+`cborgen` generates compositional, typed CBOR operations and whole-value
+`Clone` and `Equal` methods from Go declarations. This contributor reference
+owns the supported declarations, tags, registry, and generation workflow. The
+[runtime package](../../engine/kernel/codec/doc.go) owns operational accounting,
+input ownership, and low-level CBOR primitives.
 
-## Declare and generate a DTO
+## Declare an owner
 
-Select locally defined, nongeneric struct roots in the package that owns them.
-Every persisted field needs an explicit mapping tag:
-
-```go
-type Document struct {
-    Label string            `cbor:"label" cborlimit:"bytes=256"`
-    Notes []string          `cbor:"notes" cborlimit:"items=@max_notes"`
-    Hint  *string           `cbor:"hint,omitempty"`
-    Cache map[string][]byte `cbor:"-"`
-}
-```
-
-Put a literal `go:generate` directive in a handwritten Go source file in that
-package. The fixture package has this working declaration:
+Each owner package declares one literal `go:generate` command. Its `-types`
+list selects locally defined, nongeneric named roots. Generation emits all five
+methods for each local named type reached through persistence and `Clone`/`Equal`
+for local types reached only through excluded state. An imported named type must
+be selected by its own owner declaration. The generator follows that declared
+owner closure and writes prerequisite artifacts before the requesting package.
+It never treats compatible handwritten methods as an opt-in declaration.
 
 ```go
 //go:generate go -C ../../../../.. run ./internal/cborgen/cmd/cborgen -dir engine/kernel/codec/internal/fixture -types Catalog,Sample,Link,Links -out zz_cbor_generated.go
 ```
 
 For another package, adjust `-C` to reach the repository root, `-dir` to its
-repository-relative directory, and `-types` to its comma-separated roots. `-out`
-is a package-local, non-test `.go` filename, without a leading `.` or `_`.
-Root order and repetitions do not change output. Each package has one generated
-output file containing all selected roots and one private `cborgen` implementation
-type.
+repository-relative directory, `-types` to its comma-separated local roots, and
+`-out` to a package-local, non-test `.go` filename. Root order and repetitions
+do not affect the output. A package has one generated output file, which
+contains its selected local closure.
 
-Declarations use exactly `go -C <repository> run
-./internal/cborgen/cmd/cborgen -dir <package> -types <roots> -out <filename>`.
-Arguments must be literal and unquoted; variable expansion, `-command` aliases,
-and other invocation forms are unsupported by repository discovery. This keeps
-the declaration executable by `go generate` and readable by the freshness check
-without a second target registry.
+Commands use exactly this form:
 
-Run these owning tasks from the repository root:
+```text
+go -C <repository> run ./internal/cborgen/cmd/cborgen -dir <package> -types <roots> -out <filename>
+```
+
+Arguments must be literal and unquoted. Variable expansion, `-command` aliases,
+and other invocation forms are unsupported so that `go generate` and the
+freshness check read the same source registry.
+
+Run the owning tasks from the repository root:
 
 ```sh
 task generate:codecs        # also called by task generate
 task generate:codecs:check  # nonmutating inventory and byte check used by CI
 ```
 
-The Taskfile invokes the root-module generator across source modules. The
-loader uses the declaring package's module with `GOWORK=off`, preserving the
-remaining Go build context, including build flags and checksum verification.
-It reads declarations without executing owner package initialization.
+The loader uses the declaring package's module with `GOWORK=off`. It reads
+source declarations without executing package initialization. A direct
+invocation also discovers and generates declared prerequisite owners. Missing,
+stale, or syntactically broken marked outputs can therefore be regenerated when
+handwritten code already calls generated methods.
 
-Generation validates and formats the complete artifact before replacing it
-with a temporary-file/atomic-rename operation. It refuses existing unmarked,
-symlink, or nonregular output files. Missing, stale, or syntactically broken
-marked output can be regenerated even when handwritten code calls generated
-functions and methods. Handwritten diagnostics still fail generation.
-Concurrent editing or generation of the same artifact is unsupported; the
-generator provides neither filesystem confinement nor crash-durability guarantees.
+Generation formats the complete artifact before atomically replacing it. It
+refuses unmarked, symlink, or nonregular output files. Concurrent editing or
+generation of one artifact is unsupported. The generator does not provide
+filesystem confinement or crash-durability guarantees.
 
-Checking derives targets from the same directives and compares expected bytes
-and inventory, including untracked Go files. Missing or stale outputs and extra
-marker-bearing files fail checking, including artifacts of removed targets.
-Remove obsolete artifacts explicitly when retiring a declaration. Orphan checks
-run only in check mode; they do not block generation of unrelated packages.
-Source discovery skips `.git`, `.scratch`, `node_modules`, and `vendor`, and does
-not traverse directory symlinks.
+Check mode derives targets from the same directives, compares expected bytes,
+and checks the inventory, including untracked Go files. Missing and stale
+outputs, as well as marker-bearing artifacts for removed targets, fail the
+check. Remove obsolete artifacts explicitly when retiring a declaration.
+Source discovery skips `.git`, `.scratch`, `node_modules`, and `vendor`, and
+never traverses directory symlinks.
 
 ## Supported Go types
 
@@ -76,174 +69,181 @@ not traverse directory symlinks.
 | `string` | UTF-8 text string |
 | `int8`, `int16`, `int32`, `int64` | Minimal signed integer, checked against destination range |
 | `uint8`, `uint16`, `uint32`, `uint64` | Minimal unsigned integer, checked against destination range |
-| `[]byte`, `[N]byte` | Byte string; fixed array requires exact length |
-| `contentid.CID` | Fixed-profile DAG-CBOR CID link (tag 42) |
+| `[]byte`, `[N]byte` | Byte string; fixed arrays require an exact length |
 | Other slices | Ordered arrays |
 | Structs | Maps with explicitly tagged text keys |
 | Maps with string-underlying keys | Text-key maps with supported values |
 | Pointers | Indirection to a supported nonpointer value |
 
-Named equivalents and reachable aliases are supported, except that CID support
-requires the exact [`contentid.CID`](../../engine/kernel/contentid/cid.go) type or
-an alias to it. Distinct defined types and wrappers follow ordinary struct rules.
-Byte-string elements can have a named `uint8`-underlying type. Reachable imported
-DTOs are supported when every field needed for whole-value cloning and equality
-is accessible. Imported or alias roots cannot receive generated owner methods
-and are rejected.
-
-A CID link is canonical tag 42 followed by a 37-byte byte string: a zero prefix
-and the fixed CIDv1/DAG-CBOR/SHA-256 binary CID. Required CIDs and present optional
-`*contentid.CID` values must be nonzero; nil optional pointers are omitted.
-Decoding validates the exact profile and copies the CID into owned fixed-size
-storage. Clone and Equal copy and compare CIDs as values, including zero and
-excluded values, without validation. Link accounting uses two nodes, at the tag's
-depth and one level deeper, and 55 estimated bytes for the 41-byte encoding.
-`MaxByteStringBytes` applies to all 37 content bytes; the tag consumes no
-collection-element declaration. See the [runtime accounting contract](../../engine/kernel/codec/doc.go).
+A local defined type may use any supported underlying type. An alias uses its
+underlying owner's generated methods and cannot be a registry root. Imported
+named types compose through their declared owner's methods. Named byte elements
+are supported, except that packed named bytes cannot declare a validator.
 
 Generation rejects machine-sized integers (`int`, `uint`, `uintptr`), floats,
 interfaces, functions, channels, nonbyte fixed arrays, nonstring map keys,
-double pointers, embedding, generic types, and recursive type graphs. These
-restrictions also apply to excluded fields because `Clone` and `Equal` visit
-the whole DTO. Local unexported fields can be excluded; unexported persisted
-fields and inaccessible imported fields are rejected.
+double pointers, embedding, generic types, defined pointer types, and recursive
+type graphs. These restrictions also apply to excluded fields because `Clone`
+and `Equal` visit the complete value. A persisted private field is supported
+only in the package that owns and generates its type. An inaccessible imported
+field is rejected.
 
-Persisted types must not implement custom CBOR, text, or binary serialization
-contracts: `MarshalCBOR`/`UnmarshalCBOR` in byte or streaming form, or
-`MarshalText`/`UnmarshalText` and `MarshalBinary`/`UnmarshalBinary` in byte form.
-Unrelated domain methods with different signatures are allowed. Generated
-operations never invoke `Validate`, custom `Clone`/`Equal`, or other owner hooks.
+Custom CBOR, text, and binary serialization contracts are rejected rather than
+called. This includes byte and streaming `MarshalCBOR`/`UnmarshalCBOR`, byte
+`MarshalText`/`UnmarshalText`, and byte `MarshalBinary`/`UnmarshalBinary`.
+Other domain methods do not affect generation.
 
 ## Tag reference
 
 Tags use Go struct-tag syntax. Duplicate `cbor` or `cborlimit` entries and
-malformed struct tags are rejected. Unrelated tags are allowed but do not affect
-mapping; there is no JSON fallback.
+malformed struct tags are rejected. Unrelated tags do not affect mapping.
 
 ### `cbor`
 
-The complete value grammar is:
+Ordinary struct fields use this grammar:
 
 ```text
 mapping = "-" | name | name ",omitempty"
 ```
 
-`name` is nonempty valid UTF-8, contains no comma, and is not `-`. Names are exact,
-case-sensitive, and unique within the struct. No implicit Go field names apply.
-Unknown or repeated options, empty names, and missing mapping tags are errors.
+`name` is nonempty valid UTF-8, contains no comma, and is neither `-` nor
+implicit. Names are exact, case-sensitive, and unique within an ordinary struct.
 
 | Form | Meaning |
 | --- | --- |
 | `cbor:"name"` | Required field, including zero and empty values |
-| `cbor:"name,omitempty"` | Pointer field only; nil means absent, nonnil zero means present |
-| `cbor:"-"` | Excluded from persistence; decode leaves the field zero |
+| `cbor:"name,omitempty"` | Pointer field only; nil means absent, and nonnil zero means present |
+| `cbor:"-"` | Excluded from persistence; it remains part of `Clone` and `Equal` |
+| `cbor:",value"` | Transparent representation field |
+| `cbor:",cid"` | Fixed DAG-CBOR CID-link representation field |
 
-Required nil pointers, including nil pointer elements in slices/maps, are invalid.
-Required nil slices/maps encode as empty collections; decode initializes empty
-collections. A nonnil pointer to a nil collection encodes a present empty
-collection. Explicit CBOR null is rejected.
+A `,value` type has exactly one persisted representation field. All other
+fields must be explicitly excluded. The wrapper has no map node: generated
+methods compose its represented value at the same depth. A `cborlimit` on that
+field follows the represented string, byte-string, array, or map kind.
 
-Excluded subtrees need no mapping tags, but their storage still participates in
-`Clone` and `Equal`. Budget metadata anywhere in an excluded subtree is rejected
-rather than silently ignored.
+A `,cid` type has exactly one persisted `[36]byte` representation field and no
+field cap. It emits the fixed DAG-CBOR tag-42 link with a zero prefix. The
+runtime accounts the framing and returns raw bytes; the type owner validates the
+CID profile. `,cid` is not a general tag facility.
+
+Required nil pointers, including nil pointer elements in slices or maps, are
+invalid. Optional nil pointers are omitted. Explicit CBOR null is invalid.
+Required nil slices and maps encode as empty collections; decoding initializes
+empty collections. Excluded subtrees need no mapping tags, but their storage
+still participates in `Clone` and `Equal`. A budget tag in an excluded subtree
+is rejected.
 
 ### `cborlimit`
 
-A field may have one immediate resource maximum:
+A persisted field can have one immediate literal resource cap:
 
 ```text
-budget  = ("bytes" | "items") "=" maximum
-maximum = decimal | "@" identifier
-identifier = [a-zA-Z_][a-zA-Z0-9_]*
+budget  = ("bytes" | "items") "=" decimal
+decimal = ASCII digits representing a positive uint64
 ```
 
-`decimal` contains only ASCII digits and must represent a positive `uint64` value.
-Leading zeros are accepted. Signs, whitespace, zero, overflowing literals, empty
-references, expressions, unknown options, and repeated/comma-separated budgets
-are rejected.
-
-| Option | Applicable value, following pointer indirection |
+| Option | Applicable immediate value, after pointer indirection |
 | --- | --- |
 | `bytes` | UTF-8 text byte length, byte-slice length, or fixed byte-array length |
 | `items` | Nonbyte slice element count or map pair count |
 
-Structs, CIDs, scalar numbers, booleans, and excluded fields cannot carry these caps.
-The cap applies only to that field's immediate length/count, not its subtree or
-each element. Global and aggregate limits still apply and cannot be relaxed by
-a field cap. A literal is built into generated code; `@name` resolves an exact,
-case-sensitive key in `codec.Limits.Named`.
+Struct maps, CID links, numeric and Boolean scalars, and excluded fields cannot
+carry a cap. A cap applies only to the immediate representation, not descendants.
+Generated code gives each child its own field cap or the positive machine
+maximum. Runtime global limits still apply to every applicable value.
 
-Every schema-referenced name for the selected root must have a positive runtime
-value, even beneath an absent optional pointer. Each operation resolves its
-finite reference set once before inspecting input. Unreferenced entries are
-ignored. The dictionary must remain stable during the call; generated code does
-not mutate, retain, copy, or globally cache it. Concurrent read-only reuse is safe.
+## Local validation
 
-## Generated API and acceptance
-
-For each selected root `T`, generation adds:
+A named type can declare one local value-receiver validator immediately above
+its type declaration:
 
 ```go
-func CheckT(v T, limits codec.Limits) error
-func EncodeT(v T, limits codec.Limits) ([]byte, error)
-func DecodeT(data []byte, limits codec.Limits) (T, error)
+//cborgen:validate validateCBOR
+type ResourceID struct {
+	value string `cbor:",value" cborlimit:"bytes=25"`
+}
+
+func (v ResourceID) validateCBOR() error {
+	return nil
+}
+```
+
+The method must have signature `func (T) name() error`. It runs after generated
+child traversal on `CheckCBOR`, and after child reads but before `ReadCBOR`
+assigns its receiver. It must be local, pure, non-normalizing, and
+non-recursive. It must not perform CBOR traversal or operational resource
+policy. Generation rejects unknown, duplicate, malformed, or ambiguous
+directives.
+
+## Generated API
+
+For every persisted local named type `T`, the output adds:
+
+```go
+func (v T) CheckCBOR(b *codec.Budget, depth, fieldMax int) error
+func (v T) AppendCBOR(dst []byte) []byte
+func (v *T) ReadCBOR(r *codec.Reader, depth, fieldMax int) error
 func (v T) Clone() T
 func (v T) Equal(other T) bool
 ```
 
-Private helpers are numeric methods on one stateless implementation type per
-output. Type-mapping comments identify the Go values they handle. Handwritten
-collisions with generated entry points, owner methods, implementation names, or
-required import/type identifiers fail generation rather than selecting another
-name.
+`CheckCBOR`, `AppendCBOR`, and `ReadCBOR` compose across owners using one
+shared `Budget`, `Reader`, and output buffer. `fieldMax` is a positive cap for
+the immediate wire value. It does not cap descendants. `CheckCBOR` checks both
+field and global limits before allocation or copying, and then runs the owner's
+local validator. `AppendCBOR` is a prechecked operation: its caller must have
+checked the same stable value. It performs no validation or accounting.
 
-`CheckT` checks structure and operational policy before sorting or output
-allocation. Supply every numeric `codec.Limits` field as positive; there are no
-defaults or unlimited values. Before encoding, compose `CheckT` → owner semantics
-→ `EncodeT`. Encoding repeats its own checks. On input, compose `DecodeT` → owner
-semantics → acceptance. Failure returns nil encoded bytes or a zero DTO. Successful
-results own persisted mutable storage and decoded strings.
+`ReadCBOR` reads into fresh temporary storage and assigns the receiver only
+after structural and local semantic success. On failure, the receiver and its
+reachable storage remain unchanged. The reader's cursor and accounting do not
+roll back, so discard it after an error. Nested reads do not reject trailing
+bytes; root decoding does.
 
-Errors support `errors.Is` with `codec.ErrInvalidLimits`,
-`codec.ErrLimitExceeded`, and `codec.ErrInvalidData`. Operational limits are
-separate from schema and domain validity: tightening a cap can reject existing
-values without changing encoded bytes. See the [runtime accounting contract](../../engine/kernel/codec/doc.go)
-for conservative size estimates, allocation admission, and input lifetimes.
+The whole-value helpers construct and validate shared operation state:
 
-Encoding uses definite lengths, shortest headers, and text keys sorted by UTF-8
-byte length then lexical bytes. Decoding rejects duplicates, unordered keys,
-unknown/missing fields, malformed/nonminimal input, invalid UTF-8, integer
-overflow, null, trailing data, floats, indefinite forms, and unsupported simple
-values. Tags are accepted only for fixed-profile links at `contentid.CID`
-positions. Opaque byte contents remain uninterpreted. This strict subset is
-not unrestricted DAG-CBOR or a drop-in reflective serializer. Changes to tags,
-field presence, or accepted types require a stored-data compatibility assessment;
-adding a field is not automatically compatible with existing strict decoders.
+```go
+encoded, err := codec.Encode(value, limits)
+if err != nil {
+	return err
+}
+decoded, err := codec.Decode[MyType](encoded, limits)
+if err != nil {
+	return err
+}
+```
 
-`Clone` detaches all mutable storage, including excluded fields, while preserving
-nil/empty collections and pointer absence. It does not preserve capacity or
-sharing topology. `Equal` includes excluded fields, compares map membership and
-ordered slices, treats nil/empty collections equally, and distinguishes absent
-pointers from present-zero values. Both operate without validation or limits,
-including on codec-invalid values. `CheckT` ignores excluded storage and does not
-bound a later whole-value clone. Callers own in-memory admission and input stability.
+`codec.Check` validates without allocating output. `codec.Encode` checks once,
+then appends once, returning nil bytes on failure. `codec.Decode[T]` infers
+`*T` as the generated decoding implementation, rejects trailing bytes, and
+returns zero `T` on every failure. All positive `codec.Limits` fields are
+required. Global limits are validated once per whole-value operation.
 
-Content identity is opt-in through [`contentid`](../../engine/kernel/contentid/cid.go).
-Use `contentid.Sum(encoded)` on emitted bytes. On input, compose `DecodeT` →
-`contentid.Verify(original, expected)` → owner semantics → acceptance. Verify the
-original input, never a reencoding; an unset expected CID is an error. The fixed
-CIDv1/DAG-CBOR/SHA-256 helper hashes exact bytes without normalization, CBOR
-validation, or size policy. Bound input first. Matching identity alone proves
-neither semantic validity nor authority. The [compiled owner example](../../engine/kernel/codec/contentid_composition_test.go)
-demonstrates this composition.
+Canonical encoding uses definite lengths, shortest headers, and text keys sorted
+by UTF-8 byte length and then lexical bytes. Decoding rejects duplicates,
+unordered keys, unknown and missing fields, malformed or nonminimal input,
+invalid UTF-8, integer overflow, null, trailing data, floats, indefinite forms,
+and unsupported simple values. Opaque bytes remain uninterpreted.
+
+`Clone` detaches mutable storage, including excluded fields, preserving nil and
+empty collections. `Equal` includes excluded state, compares map membership and
+ordered slices, treats nil and empty collections as equal, and distinguishes
+absent pointers from present zero values. Neither operation validates values or
+uses resource limits.
+
+`contentid.CID` is an owner-generated `,cid` type. Use `contentid.Sum(encoded)`
+for an exact-byte identity. To check bytes against an expected identity, decode
+the original bytes and call `contentid.Verify(encoded, expected)`. Verify does
+not validate CBOR or establish authority.
 
 ## Diagnostics and focused checks
 
-Load errors report Go diagnostics from handwritten sources. Schema errors identify
-the owning type/field and reason, such as a missing mapping tag, unsupported
-integer, invalid field budget, or generated-name collision. Fix the declaration
-and regenerate; do not repair marked output by hand or remove the marker to hide
-staleness. Generation errors preserve prior output bytes.
+Load errors report handwritten Go diagnostics. Schema errors identify the owner,
+type, and field, including missing mapping tags, unsupported shapes, invalid
+literal caps, missing owner declarations, malformed validators, and generated
+name collisions. Fix the declaration and regenerate; do not edit a marked
+output by hand. Generation errors preserve prior output bytes.
 
 From the repository root:
 

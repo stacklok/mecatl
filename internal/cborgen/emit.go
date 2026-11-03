@@ -25,34 +25,16 @@ func emit(s *schema) ([]byte, error) {
 		codecImportPath:                  "cborgenCodec",
 		"github.com/jcalabro/atmos/cbor": "cborgenCBOR",
 	}}
-	// Collect type imports before writing the deterministic import block.
-	for _, n := range s.nodes {
-		e.typeName(n)
-	}
-	hasMap, hasFields := false, false
-	for _, n := range s.nodes {
-		hasMap = hasMap || (n.wire && n.kind == shapeMap)
-		hasFields = hasFields || (n.wire && n.kind == shapeStruct && len(wireFields(n)) > 0)
-	}
-	if hasMap {
-		e.imports["slices"] = "cborgenSlices"
-	}
-	if hasFields {
-		e.imports["fmt"] = "cborgenFmt"
-	}
+	e.collectImports()
 	e.line("// %s groups this output's stateless helpers; policy stays per call.", implementationType)
 	e.line("// Clone/Equal traverse whole values, including excluded fields; codec helpers traverse persisted fields only.")
 	e.line("// Read helpers admit declarations before allocation; public entry points discard partial results on failure.")
 	e.line("type %s struct{}", implementationType)
-	for _, root := range s.roots {
-		e.root(root)
+	for _, n := range s.nodes {
+		if named, ok := n.typ.(*types.Named); ok && named.Obj().Pkg() == s.loaded.Package.Types {
+			e.root(n)
+		}
 	}
-	e.line("// %sPolicy holds resolved limits, never the caller's dictionary.", implementationType)
-	e.line("type %sPolicy struct { limits cborgenCodec.Limits", implementationType)
-	for i, name := range s.names {
-		e.line("named%d int // @%s", i, name)
-	}
-	e.line("}")
 	// Whole-value traversal includes excluded fields so Clone/Equal cannot lose state;
 	// only wire-reachable shapes receive persistence helpers.
 	for _, n := range s.nodes {
@@ -97,9 +79,33 @@ func emit(s *schema) ([]byte, error) {
 	return data, nil
 }
 
+// collectImports preserves type-alias assignment order before deciding which
+// wire helpers need optional imports.
+func (e *emitter) collectImports() {
+	for _, n := range e.s.nodes {
+		e.typeName(n)
+	}
+	hasMap, hasFields := false, false
+	for _, n := range e.s.nodes {
+		hasMap = hasMap || (n.wire && n.kind == shapeMap)
+		hasFields = hasFields || (n.wire && (n.kind == shapeSlice || (n.kind == shapeStruct && n.representation == "" && len(wireFields(n)) > 0)))
+	}
+	if !slices.ContainsFunc(e.s.nodes, func(n *shape) bool {
+		return n.wire && n.kind != shapeOwner && n.kind != shapePointer && n.kind != shapeString && (n.kind != shapeStruct || n.representation == "")
+	}) {
+		delete(e.imports, "github.com/jcalabro/atmos/cbor")
+	}
+	if hasMap {
+		e.imports["slices"] = "cborgenSlices"
+	}
+	if hasFields {
+		e.imports["fmt"] = "cborgenFmt"
+	}
+}
+
 // checkReserved includes package-level declarations and file-local import aliases.
 func (e *emitter) checkReserved() error {
-	reserved := []string{implementationType, implementationType + "Policy"}
+	reserved := []string{implementationType}
 	for _, n := range e.s.nodes {
 		if t := e.valueType(n); t != e.typeName(n) {
 			reserved = append(reserved, t)
@@ -153,29 +159,12 @@ func (e *emitter) valueType(n *shape) string {
 	}
 }
 
-func (e *emitter) cap(n *shape) string {
-	if n.kind == shapePointer {
-		return e.cap(n.elem)
-	}
-	switch n.kind {
-	case shapeString:
-		return "p.limits.MaxStringBytes"
-	case shapeBytes, shapeBytesArray:
-		return "p.limits.MaxByteStringBytes"
-	case shapeSlice:
-		return "p.limits.MaxArrayElements"
-	case shapeMap, shapeStruct:
-		return "p.limits.MaxMapPairs"
-	}
-	return "1"
-}
-func (e *emitter) fieldCap(f field) string {
-	maximum := e.cap(f.value)
+const unconstrainedFieldMax = "int(^uint(0)>>1)"
+
+func fieldCap(f field) string {
+	maximum := unconstrainedFieldMax
 	if f.cap != "" {
 		return "int(min(uint64(" + maximum + "), uint64(" + f.cap + ")))"
-	}
-	if f.ref != "" {
-		return fmt.Sprintf("p.named%d", slices.Index(e.s.names, f.ref))
 	}
 	return maximum
 }
@@ -195,80 +184,21 @@ func wireFields(n *shape) []field {
 	return fields
 }
 
-// references collects just this root's persisted policy names, not sibling roots.
-func references(n *shape, seen map[*shape]bool, names map[string]bool) {
-	if seen[n] {
-		return
-	}
-	seen[n] = true
-	for _, f := range n.fields {
-		if !f.excluded {
-			if f.ref != "" {
-				names[f.ref] = true
-			}
-			references(f.value, seen, names)
-		}
-	}
-	if n.elem != nil {
-		references(n.elem, seen, names)
-	}
-	if n.key != nil {
-		references(n.key, seen, names)
-	}
-}
-
+// root emits the owner methods. Read assigns only after structural and local
+// semantic success; only codec.Decode owns the trailing-data check.
 func (e *emitter) root(n *shape) {
-	t := e.typeName(n)
-	id := n.id
-	names := map[string]bool{}
-	references(n, map[*shape]bool{}, names)
-	// Each entry point resolves once, including Encode's internal Check pass.
-	for _, op := range []string{"Check", "Encode", "Decode"} {
-		zero := ""
-		switch op {
-		case "Check":
-			e.line("// Check%s validates structure and explicit resource policy without sorting or output allocation.\n// Inputs and policy must remain stable; excluded fields and domain methods are not checked.", t)
-			e.line("func Check%s(v %s, limits cborgenCodec.Limits) error {", t, t)
-		case "Encode":
-			e.line("// Encode%s checks structure and policy before emitting owned canonical bytes.\n// Failure returns nil bytes; no domain validation or custom methods are invoked.", t)
-			e.line("func Encode%s(v %s, limits cborgenCodec.Limits) ([]byte,error) {", t, t)
-			zero = "nil, "
-		case "Decode":
-			e.line("// Decode%s strictly decodes one canonical value into owned storage.\n// Required collections normalize to nonnil empty; excluded fields remain zero.\n// Failure returns the zero DTO. Domain semantics remain the caller's responsibility.", t)
-			e.line("func Decode%s(data []byte, limits cborgenCodec.Limits) (%s,error) {", t, t)
-			e.line("var zero %s", e.valueType(n))
-			zero = "zero, "
-		}
-		e.line("b,err:=cborgenCodec.NewBudget(limits);if err!=nil{return %serr}", zero)
-		e.line("// Resolve this root's names even for absent optional branches, so admission does not depend on presence.")
-		e.line("p:=%sPolicy{limits:limits};p.limits.Named=nil", implementationType)
-		e.line("h:=%s{}", implementationType)
-		for i, name := range e.s.names {
-			if names[name] {
-				e.line("p.named%d,err=limits.NamedLimit(%q);if err!=nil{return %serr}", i, name, zero)
-			}
-		}
-		if op == "Decode" {
-			e.line("_ = b")
-			e.line("r,err:=cborgenCodec.NewReader(data,limits);if err!=nil{return zero,err}")
-			e.line("v,err:=h.read%d(&r,p,0,%s);if err!=nil{return zero,err}", id, e.cap(n))
-			e.line("if err=r.Done();err!=nil{return zero,err};return v,nil")
-		} else {
-			if op == "Encode" {
-				e.line("// Complete Check first: rejected values must not allocate output or sorting scratch.")
-			}
-			e.line("if err=h.check%d(v,p,&b,0,%s);err!=nil{return %serr}", id, e.cap(n), zero)
-			if op == "Check" {
-				e.line("return nil")
-			} else {
-				e.line("return h.append%d(make([]byte,0,b.EstimatedBytes()),v),nil", id)
-			}
-		}
-		e.line("}")
+	t, id := e.typeName(n), n.id
+	if n.wire {
+		e.line("// CheckCBOR checks one value using shared operation accounting; fieldMax caps only its immediate representation.")
+		e.line("func (v %s) CheckCBOR(b *cborgenCodec.Budget,depth,fieldMax int) error {if b==nil{return cborgenCodec.ErrInvalidLimits};if fieldMax<=0{return cborgenCodec.ErrInvalidLimits};return (%s{}).check%d(v,b,depth,fieldMax)}", t, implementationType, id)
+		e.line("// AppendCBOR appends a stable value already admitted by CheckCBOR; it does not validate or account again.")
+		e.line("func (v %s) AppendCBOR(dst []byte) []byte {return (%s{}).append%d(dst,v)}", t, implementationType, id)
+		e.line("// ReadCBOR reads one value transactionally. Discard the reader after an error; receiver storage remains unchanged.")
+		e.line("func (v *%s) ReadCBOR(r *cborgenCodec.Reader,depth,fieldMax int) error {if v==nil{return cborgenCodec.ErrInvalidData};if r==nil||fieldMax<=0{return cborgenCodec.ErrInvalidLimits};x,err:=(%s{}).read%d(r,depth,fieldMax);if err!=nil{return err};*v=x;return nil}", t, implementationType, id)
 	}
-	e.line("// Clone returns an independent mutable copy of the whole DTO, including excluded fields.\n// It preserves nil collections and pointer absence, but not sharing topology or capacity.\n// It performs no validation or resource admission; the input must remain stable.")
+	e.line("// Clone detaches mutable state, including excluded fields, without validation; nil collections remain nil.")
 	e.line("func (v %s) Clone() %s {return (%s{}).clone%d(v)}", t, t, implementationType, id)
-	e.line("// Equal compares the whole DTO by value, including excluded fields, without validation.\n// Nil and empty collections compare equally; absent pointers differ from present zero values.\n// Both inputs must remain stable during the call.")
+	e.line("// Equal compares all state without validation; nil and empty collections are equal, absent and present pointers differ.")
 	e.line("func (v %s) Equal(other %s) bool {return (%s{}).equal%d(v,other)}", t, t, implementationType, id)
 }
 
@@ -276,6 +206,8 @@ func (e *emitter) clone(n *shape) {
 	t := e.valueType(n)
 	e.line("func (h %s) clone%d(v %s) %s {", implementationType, n.id, t, t)
 	switch n.kind {
+	case shapeOwner:
+		e.line("return v.Clone()")
 	case shapePointer:
 		e.line("if v==nil{return nil};x:=h.clone%d(*v);return (%s)(&x)", n.elem.id, t)
 	case shapeSlice, shapeBytes:
@@ -297,6 +229,8 @@ func (e *emitter) equal(n *shape) {
 	t := e.valueType(n)
 	e.line("func (h %s) equal%d(v,w %s) bool {", implementationType, n.id, t)
 	switch n.kind {
+	case shapeOwner:
+		e.line("return v.Equal(w)")
 	case shapePointer:
 		e.line("if v==nil||w==nil{return v==nil&&w==nil};return h.equal%d(*v,*w)", n.elem.id)
 	case shapeBytes, shapeBytesArray, shapeSlice:
@@ -315,24 +249,37 @@ func (e *emitter) equal(n *shape) {
 }
 
 func (e *emitter) check(n *shape) {
-	e.line("func (h %s) check%d(v %s,p %sPolicy,b *cborgenCodec.Budget,d,cap int) error {", implementationType, n.id, e.valueType(n), implementationType)
+	e.line("func (h %s) check%d(v %s,b *cborgenCodec.Budget,d,cap int) (err error) {", implementationType, n.id, e.valueType(n))
+	if n.validator != "" {
+		e.line("defer func(){if err==nil && v.%s()!=nil {err=cborgenCodec.ErrInvalidData}}()", n.validator)
+	}
+	if n.representation != "" {
+		f := wireFields(n)[0]
+		if n.representation == "cid" {
+			e.line("return b.CheckCIDLink(d)")
+		} else {
+			e.line("return h.check%d(v.%s,b,d,int(min(uint64(cap),uint64(%s))))", f.value.id, f.name, fieldCap(f))
+		}
+		e.line("}")
+		return
+	}
 	switch n.kind {
+	case shapeOwner:
+		e.line("return v.CheckCBOR(b,d,cap)")
 	case shapeBool, shapeInt, shapeUint:
 		e.line("return b.CheckScalar(d)")
-	case shapeCID:
-		e.line("return b.CheckCID(v,d)")
 	case shapeString:
 		e.line("return b.CheckString(string(v),d,cap)")
 	case shapeBytes, shapeBytesArray:
 		e.line("return b.CheckBytes(len(v),d,cap)")
 	case shapePointer:
-		e.line("if v==nil{return cborgenCodec.ErrInvalidData};return h.check%d(*v,p,b,d,cap)", n.elem.id)
+		e.line("if v==nil{return cborgenCodec.ErrInvalidData};return h.check%d(*v,b,d,cap)", n.elem.id)
 	case shapeSlice:
 		e.line("if err:=b.CheckArray(len(v),d,cap);err!=nil{return err}")
-		e.line("for i,x:=range v{if err:=h.check%d(x,p,b,d+1,%s);err!=nil{return cborgenFmt.Errorf(\"index %%d: %%w\",i,err)}};return nil", n.elem.id, e.cap(n.elem))
+		e.line("for i,x:=range v{if err:=h.check%d(x,b,d+1,%s);err!=nil{return cborgenFmt.Errorf(\"index %%d: %%w\",i,err)}};return nil", n.elem.id, unconstrainedFieldMax)
 	case shapeMap:
 		e.line("if err:=b.CheckMap(len(v),d,cap);err!=nil{return err}")
-		e.line("for k,x:=range v{if err:=b.CheckString(string(k),d+1,p.limits.MaxStringBytes);err!=nil{return err};if err:=h.check%d(x,p,b,d+1,%s);err!=nil{return err}};return nil", n.elem.id, e.cap(n.elem))
+		e.line("for k,x:=range v{if err:=h.check%d(k,b,d+1,%s);err!=nil{return err};if err:=h.check%d(x,b,d+1,%s);err!=nil{return err}};return nil", n.key.id, unconstrainedFieldMax, n.elem.id, unconstrainedFieldMax)
 	case shapeStruct:
 		fields := wireFields(n)
 		e.count(fields, "v")
@@ -341,8 +288,8 @@ func (e *emitter) check(n *shape) {
 			if f.optional {
 				e.line("if v.%s!=nil {", f.name)
 			}
-			e.line("if err:=b.CheckString(%q,d+1,p.limits.MaxStringBytes);err!=nil{return cborgenFmt.Errorf(%q,err)}", f.wireName, f.name+": %w")
-			e.line("if err:=h.check%d(v.%s,p,b,d+1,%s);err!=nil{return cborgenFmt.Errorf(%q,err)}", f.value.id, f.name, e.fieldCap(f), f.name+": %w")
+			e.line("if err:=b.CheckString(%q,d+1,int(^uint(0)>>1));err!=nil{return cborgenFmt.Errorf(%q,err)}", f.wireName, f.name+": %w")
+			e.line("if err:=h.check%d(v.%s,b,d+1,%s);err!=nil{return cborgenFmt.Errorf(%q,err)}", f.value.id, f.name, fieldCap(f), f.name+": %w")
 			if f.optional {
 				e.line("}")
 			}
@@ -368,10 +315,19 @@ func (e *emitter) count(fields []field, v string) {
 
 func (e *emitter) appendValue(n *shape) {
 	e.line("func (h %s) append%d(out []byte,v %s) []byte {", implementationType, n.id, e.valueType(n))
+	if n.representation != "" {
+		f := wireFields(n)[0]
+		if n.representation == "cid" {
+			e.line("return cborgenCodec.AppendCIDLink(out,v.%s)", f.name)
+		} else {
+			e.line("return h.append%d(out,v.%s)", f.value.id, f.name)
+		}
+		e.line("}")
+		return
+	}
 	switch n.kind {
-	case shapeCID:
-		e.line("// Encode completed CheckCID for this stable value, so AppendCID cannot fail.")
-		e.line("out,_=cborgenCodec.AppendCID(out,v);return out")
+	case shapeOwner:
+		e.line("return v.AppendCBOR(out)")
 	case shapeBool:
 		e.line("return cborgenCBOR.AppendBool(out,bool(v))")
 	case shapeInt:
@@ -379,7 +335,7 @@ func (e *emitter) appendValue(n *shape) {
 	case shapeUint:
 		e.line("return cborgenCBOR.AppendUint(out,uint64(v))")
 	case shapeString:
-		e.line("return cborgenCBOR.AppendText(out,string(v))")
+		e.line("return cborgenCodec.AppendString(out,string(v))")
 	case shapeBytes, shapeBytesArray:
 		// []NamedByte cannot convert to []byte. Emit its header and elements directly.
 		e.line("out=cborgenCBOR.AppendBytesHeader(out,uint64(len(v)));for _,x:=range v{out=append(out,byte(x))};return out")
@@ -411,10 +367,18 @@ func (e *emitter) appendValue(n *shape) {
 
 func (e *emitter) decode(n *shape) {
 	t := e.valueType(n)
-	e.line("func (h %s) read%d(r *cborgenCodec.Reader,p %sPolicy,d,cap int) (v %s,err error) {", implementationType, n.id, implementationType, t)
+	e.line("func (h %s) read%d(r *cborgenCodec.Reader,d,cap int) (v %s,err error) {", implementationType, n.id, t)
+	if n.validator != "" {
+		e.line("defer func(){if err==nil && v.%s()!=nil {err=cborgenCodec.ErrInvalidData}}()", n.validator)
+	}
+	if n.representation != "" {
+		e.readRepresentation(n)
+		e.line("}")
+		return
+	}
 	switch n.kind {
-	case shapeCID:
-		e.line("return r.CID(d)")
+	case shapeOwner:
+		e.line("err=v.ReadCBOR(r,d,cap);return v,err")
 	case shapeBool, shapeString, shapeInt, shapeUint:
 		method := map[shapeKind]string{shapeBool: "Bool", shapeString: "String", shapeInt: "Int", shapeUint: "Uint"}[n.kind]
 		args := "d"
@@ -438,26 +402,26 @@ func (e *emitter) decode(n *shape) {
 		}
 		e.line("for i:=range x{v[i]=%s(x[i])};return v,nil", e.valueType(n.elem))
 	case shapePointer:
-		e.line("x,err:=h.read%d(r,p,d,cap);if err!=nil{return v,err};return (%s)(&x),nil", n.elem.id, t)
+		e.line("x,err:=h.read%d(r,d,cap);if err!=nil{return v,err};return (%s)(&x),nil", n.elem.id, t)
 	case shapeSlice:
 		e.line("count,err:=r.Array(d,cap);if err!=nil{return v,err};v=make(%s,count)", t)
-		e.line("for i:=range v{v[i],err=h.read%d(r,p,d+1,%s);if err!=nil{return v,cborgenFmt.Errorf(\"index %%d: %%w\",i,err)}};return v,nil", n.elem.id, e.cap(n.elem))
+		e.line("for i:=range v{v[i],err=h.read%d(r,d+1,%s);if err!=nil{return v,cborgenFmt.Errorf(\"index %%d: %%w\",i,err)}};return v,nil", n.elem.id, unconstrainedFieldMax)
 	case shapeMap:
 		e.line("count,err:=r.Map(d,cap);if err!=nil{return v,err};v=make(%s,count);previous:=\"\"", t)
-		e.line("for i:=0;i<count;i++{key,err:=r.String(d+1,p.limits.MaxStringBytes);if err!=nil{return v,err}")
+		e.line("for i:=0;i<count;i++{k,err:=h.read%d(r,d+1,%s);if err!=nil{return v,err};key:=string(k)", n.key.id, unconstrainedFieldMax)
 		e.order()
-		e.line("x,err:=h.read%d(r,p,d+1,%s);if err!=nil{return v,err};v[%s(key)]=x};return v,nil", n.elem.id, e.cap(n.elem), e.valueType(n.key))
+		e.line("x,err:=h.read%d(r,d+1,%s);if err!=nil{return v,err};v[k]=x};return v,nil", n.elem.id, unconstrainedFieldMax)
 	case shapeStruct:
 		fields := wireFields(n)
 		e.line("count,err:=r.Map(d,cap);if err!=nil{return v,err};previous:=\"\"")
 		if len(fields) > 0 {
 			e.line("var seen [%d]bool", len(fields))
 		}
-		e.line("for i:=0;i<count;i++{key,err:=r.String(d+1,p.limits.MaxStringBytes);if err!=nil{return v,err}")
+		e.line("for i:=0;i<count;i++{key,err:=r.String(d+1,int(^uint(0)>>1));if err!=nil{return v,err}")
 		e.order()
 		e.line("switch key {")
 		for i, f := range fields {
-			e.line("case %q:seen[%d]=true;v.%s,err=h.read%d(r,p,d+1,%s);if err!=nil{return v,cborgenFmt.Errorf(%q,err)}", f.wireName, i, f.name, f.value.id, e.fieldCap(f), f.name+": %w")
+			e.line("case %q:seen[%d]=true;v.%s,err=h.read%d(r,d+1,%s);if err!=nil{return v,cborgenFmt.Errorf(%q,err)}", f.wireName, i, f.name, f.value.id, fieldCap(f), f.name+": %w")
 		}
 		e.line("default:return v,cborgenCodec.ErrInvalidData\n}}")
 		for i, f := range fields {
@@ -469,6 +433,15 @@ func (e *emitter) decode(n *shape) {
 	}
 	e.line("}")
 }
+func (e *emitter) readRepresentation(n *shape) {
+	f := wireFields(n)[0]
+	if n.representation == "cid" {
+		e.line("v.%s,err=r.CIDLink(d);return v,err", f.name)
+	} else {
+		e.line("v.%s,err=h.read%d(r,d,int(min(uint64(cap),uint64(%s))));return v,err", f.name, f.value.id, fieldCap(f))
+	}
+}
+
 func (e *emitter) order() {
 	e.line("// Strict canonical key ordering also rejects duplicates before assignment can overwrite them.")
 	e.line("if i>0&&(len(key)<len(previous)||(len(key)==len(previous)&&key<=previous)){return v,cborgenCodec.ErrInvalidData};previous=key")

@@ -41,7 +41,7 @@ func moduleFixture(t *testing.T, source string) LoadConfig {
 	writeFixture(t, filepath.Join(parent, "go.mod"), "module example.invalid/parent\n\ngo 1.27.3\n")
 	module := filepath.Join(parent, "engine")
 	writeFixture(t, filepath.Join(module, "go.mod"), "module github.com/stacklok/mecatl/engine\n\ngo 1.27.3\n")
-	writeFixture(t, filepath.Join(module, "kernel/codec/limits.go"), "package codec\ntype Limits struct { MaxBytes int }\n")
+	writeFixture(t, filepath.Join(module, "kernel/codec/limits.go"), "package codec\ntype Limits struct { MaxBytes int }\ntype Budget struct{}\ntype Reader struct{}\n")
 	dir := filepath.Join(module, "owner")
 	writeFixture(t, filepath.Join(dir, "owner.go"), "package owner\n"+source)
 	return LoadConfig{Dir: dir, Types: []string{"Record"}, Output: "zz_cbor_generated.go"}
@@ -50,19 +50,18 @@ func moduleFixture(t *testing.T, source string) LoadConfig {
 const callers = `
 import "github.com/stacklok/mecatl/engine/kernel/codec"
 type Record struct { Value string ` + "`cbor:\"value\"`" + ` }
-// Loading must never initialize the owner package.
 func init() { panic("cborgen executed an owner initialization trap") }
-func handwritten(v Record, limits codec.Limits) (Record, error) {
- if err := CheckRecord(v, limits); err != nil { return Record{}, err }
- data, err := EncodeRecord(v.Clone(), limits)
- if err != nil { return Record{}, err }
- other, err := DecodeRecord(data, limits)
+func handwritten(v Record, b *codec.Budget, r *codec.Reader) (Record, error) {
+ if err := v.CheckCBOR(b, 0, 100); err != nil { return Record{}, err }
+ _ = v.Clone().AppendCBOR(nil)
+ var other Record
+ err := other.ReadCBOR(r, 0, 100)
  if !other.Equal(v) { return Record{}, err }
  return other, err
 }
-var _ func(Record, codec.Limits) error = CheckRecord
-var _ func(Record, codec.Limits) ([]byte, error) = EncodeRecord
-var _ func([]byte, codec.Limits) (Record, error) = DecodeRecord
+var _ func(Record, *codec.Budget, int, int) error = Record.CheckCBOR
+var _ func(Record, []byte) []byte = Record.AppendCBOR
+var _ func(*Record, *codec.Reader, int, int) error = (*Record).ReadCBOR
 var _ func(Record) Record = Record.Clone
 var _ func(Record, Record) bool = Record.Equal
 `
@@ -118,9 +117,9 @@ func (v Record) Equal() {}
 			writeFixture(t, out, GeneratedMarker+`
 package owner
 import "github.com/stacklok/mecatl/engine/kernel/codec"
-func CheckRecord(Record, codec.Limits) error { return nil }
-func EncodeRecord(Record, codec.Limits) ([]byte, error) { return nil, nil }
-func DecodeRecord([]byte, codec.Limits) (Record, error) { return Record{}, nil }
+func (v Record) CheckCBOR(*codec.Budget, int, int) error { return nil }
+func (v Record) AppendCBOR(dst []byte) []byte { return dst }
+func (v *Record) ReadCBOR(*codec.Reader, int, int) error { return nil }
 func (v Record) Clone() Record { return v }
 func (v Record) Equal(other Record) bool { return v == other }
 `)
@@ -139,7 +138,7 @@ func TestLoadDoesNotHideHandwrittenErrors(t *testing.T) {
 		{"unrelated function", "func broken() { var n int = \"bad\"; _ = n }", "cannot use"},
 		{"schema field", "", "MissingSchemaType"},
 		{"method caller", "var _ string = Record{}.Clone()", "cannot use"},
-		{"function caller", "var _ = CheckRecord(Record{})", "not enough arguments"},
+		{"function caller", "var _ = Record{}.CheckCBOR(nil)", "not enough arguments"},
 		{"old root caller", "var _ = CheckRemoved", "undefined: CheckRemoved"},
 		{"syntax", "func broken( {", "expected"},
 	} {
@@ -170,10 +169,9 @@ func TestLoadRootGuardsAndCollisions(t *testing.T) {
 		{"alias", "type Local struct{}; type Record = Local", "is an alias"},
 		{"imported alias", "import \"net/url\"; type Record = url.URL", "is an alias"},
 		{"generic", "type Record[T any] struct { Value T }", "is generic"},
-		{"scalar", "type Record uint64", "must be a struct"},
-		{"function", "type Record struct{}; func CheckRecord() {}", "collides with generated CheckRecord"},
-		{"variable name", "type Record struct{}; var EncodeRecord int", "collides with generated EncodeRecord"},
-		{"type name", "type Record struct{}; type DecodeRecord int", "collides with generated DecodeRecord"},
+		{"check", "type Record struct{}; func (Record) CheckCBOR() {}", "collides with generated CheckCBOR"},
+		{"append", "type Record struct{}; func (Record) AppendCBOR() {}", "collides with generated AppendCBOR"},
+		{"read", "type Record struct{}; func (*Record) ReadCBOR() {}", "collides with generated ReadCBOR"},
 		{"clone", "type Record struct{}; func (Record) Clone() Record { return Record{} }", "collides with generated Clone"},
 		{"pointer equal", "type Record struct{}; func (*Record) Equal(Record) bool { return true }", "collides with generated Equal"},
 		{"field clone", "type Record struct { Clone string }", "field Clone collides"},

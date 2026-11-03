@@ -7,6 +7,8 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/stacklok/mecatl/engine/kernel/codec"
+	"github.com/stacklok/mecatl/engine/kernel/contentid"
 	"github.com/stacklok/mecatl/engine/kernel/history"
 	"github.com/stacklok/mecatl/engine/kernel/history/format"
 )
@@ -31,7 +33,7 @@ func (s scriptedBackend) Read(ctx context.Context, id history.HistoryID, r histo
 }
 
 func corePolicy() history.Policy {
-	return history.Policy{CommitLimits: format.Limits{MaxCommitBytes: 4096, MaxRecords: 4, MaxKindBytes: 32, MaxPayloadBytes: 2048},
+	return history.Policy{CommitLimits: codec.Limits{MaxBytes: 4096, MaxArrayElements: 4, MaxStringBytes: 32, MaxByteStringBytes: 2048, MaxMapPairs: 8, MaxDepth: 8, MaxNodes: 128, MaxCollectionElements: 64},
 		RetryWindow: 2, MaxPageBytes: 16384, MaxPageCommits: 16}
 }
 
@@ -48,20 +50,20 @@ func dto(id history.HistoryID, parent history.CommitRef, payload string) format.
 	c := format.Commit{FormatVersion: 1, Sequence: parent.Sequence + 1,
 		Records: []format.Record{{Kind: "opaque", KindVersion: 1, Payload: []byte(payload)}}}
 	if parent.Sequence == 0 {
-		c.HistoryID = id
+		c.HistoryID = &id
 	} else {
-		c.Parent = parent.CID
+		c.Parent = &parent.CID
 	}
 	return c
 }
 
 func byteCommit(t *testing.T, c format.Commit) history.ByteCommit {
 	t.Helper()
-	b, cid, err := format.EncodeCommit(c, corePolicy().CommitLimits)
+	b, err := codec.Encode(c, corePolicy().CommitLimits)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return history.ByteCommit{Ref: history.CommitRef{Sequence: c.Sequence, CID: cid}, Bytes: b}
+	return history.ByteCommit{Ref: history.CommitRef{Sequence: c.Sequence, CID: contentid.Sum(b)}, Bytes: b}
 }
 
 func TestIdentifyIsLocalCanonicalAndTracksMutation(t *testing.T) {
@@ -88,7 +90,7 @@ func TestIdentifyIsLocalCanonicalAndTracksMutation(t *testing.T) {
 			writes++
 			wantParent := history.CommitRef{}
 			if c.Sequence > 1 {
-				wantParent = history.CommitRef{Sequence: c.Sequence - 1, CID: c.Parent}
+				wantParent = history.CommitRef{Sequence: c.Sequence - 1, CID: *c.Parent}
 			}
 			if writes != 1 || gotID != id || expected != wantParent || got.Ref != ref || !reflect.DeepEqual(got.Bytes, byteCommit(t, c).Bytes) {
 				t.Fatal("Identify and Append disagree")
@@ -120,20 +122,25 @@ func TestIdentifyAndAppendRejectInputsWithoutBackendCalls(t *testing.T) {
 		mutate func(*history.HistoryID, *format.Commit, *history.Policy)
 	}{
 		{"missing-scope", func(id *history.HistoryID, _ *format.Commit, _ *history.Policy) { *id = history.HistoryID{} }},
-		{"foreign-root", func(_ *history.HistoryID, c *format.Commit, _ *history.Policy) { c.HistoryID = history.NewHistoryID() }},
+		{"foreign-root", func(_ *history.HistoryID, c *format.Commit, _ *history.Policy) {
+			c.HistoryID = new(history.NewHistoryID())
+		}},
 		{"missing-dto", func(_ *history.HistoryID, c *format.Commit, _ *history.Policy) { *c = format.Commit{} }},
 		{"missing-sequence", func(_ *history.HistoryID, c *format.Commit, _ *history.Policy) { c.Sequence = 0 }},
 		{"negative-sequence", func(_ *history.HistoryID, c *format.Commit, _ *history.Policy) { c.Sequence = -1 }},
 		{"missing-records", func(_ *history.HistoryID, c *format.Commit, _ *history.Policy) { c.Records = nil }},
 		{"invalid-record", func(_ *history.HistoryID, c *format.Commit, _ *history.Policy) { c.Records[0].KindVersion = 0 }},
 		{"version", func(_ *history.HistoryID, c *format.Commit, _ *history.Policy) { c.FormatVersion = 2 }},
-		{"commit-byte-limit", func(_ *history.HistoryID, _ *format.Commit, p *history.Policy) { p.CommitLimits.MaxCommitBytes = 1 }},
+		{"commit-byte-limit", func(_ *history.HistoryID, _ *format.Commit, p *history.Policy) { p.CommitLimits.MaxBytes = 1 }},
 		{"record-count-limit", func(_ *history.HistoryID, c *format.Commit, p *history.Policy) {
 			c.Records = append(c.Records, c.Records[0])
-			p.CommitLimits.MaxRecords = 1
+			p.CommitLimits.MaxArrayElements = 1
 		}},
-		{"kind-byte-limit", func(_ *history.HistoryID, _ *format.Commit, p *history.Policy) { p.CommitLimits.MaxKindBytes = 1 }},
-		{"payload-byte-limit", func(_ *history.HistoryID, _ *format.Commit, p *history.Policy) { p.CommitLimits.MaxPayloadBytes = 1 }},
+		{"kind-byte-limit", func(_ *history.HistoryID, c *format.Commit, p *history.Policy) {
+			c.Records[0].Kind = "opaque-kind-longer-than-history"
+			p.CommitLimits.MaxStringBytes = len(c.Records[0].Kind) - 1
+		}},
+		{"payload-byte-limit", func(_ *history.HistoryID, _ *format.Commit, p *history.Policy) { p.CommitLimits.MaxByteStringBytes = 1 }},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			scope, c, p := id, dto(id, history.CommitRef{}, "root"), corePolicy()
@@ -174,6 +181,9 @@ func TestReadRejectsCorruptBackendResults(t *testing.T) {
 		}},
 		{"trailing", func(b *[]history.ByteCommit, _ *history.ReadRequest, _ *history.Policy) {
 			(*b)[1].Bytes = append((*b)[1].Bytes, 0)
+		}},
+		{"indexed-cid-zero", func(b *[]history.ByteCommit, _ *history.ReadRequest, _ *history.Policy) {
+			(*b)[0].Ref.CID = contentid.CID{}
 		}},
 		{"indexed-cid", func(b *[]history.ByteCommit, _ *history.ReadRequest, _ *history.Policy) {
 			(*b)[0].Ref.CID = second.Ref.CID
@@ -232,10 +242,10 @@ func TestReadRejectsCorruptBackendResults(t *testing.T) {
 			p.MaxPageBytes = len(root.Bytes)
 		}},
 		{"commit-byte-cap", func(_ *[]history.ByteCommit, _ *history.ReadRequest, p *history.Policy) {
-			p.CommitLimits.MaxCommitBytes = len(root.Bytes) - 1
+			p.CommitLimits.MaxBytes = len(root.Bytes) - 1
 		}},
 		{"field-cap", func(_ *[]history.ByteCommit, _ *history.ReadRequest, p *history.Policy) {
-			p.CommitLimits.MaxPayloadBytes = 1
+			p.CommitLimits.MaxByteStringBytes = 1
 		}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -247,7 +257,7 @@ func TestReadRejectsCorruptBackendResults(t *testing.T) {
 			}
 			test.mutate(&b, &r, &p)
 			h := newHistory(t, scriptedBackend{read: func(_ context.Context, gotID history.HistoryID, got history.ByteReadRequest) ([]history.ByteCommit, error) {
-				if gotID != id || got.ReadRequest != r || got.MaxBytes != p.MaxPageBytes || got.MaxCommitBytes != p.CommitLimits.MaxCommitBytes {
+				if gotID != id || got.ReadRequest != r || got.MaxBytes != p.MaxPageBytes || got.MaxCommitBytes != p.CommitLimits.MaxBytes {
 					t.Fatal("core did not pass read bounds")
 				}
 				return b, nil
@@ -463,7 +473,7 @@ func TestMaxSequenceDoesNotWrap(t *testing.T) {
 		writes := 0
 		h := newHistory(t, scriptedBackend{append: func(_ context.Context, _ history.HistoryID, expected history.CommitRef, got history.ByteCommit) (history.Observation, error) {
 			writes++
-			if expected != (history.CommitRef{Sequence: sequence - 1, CID: c.Parent}) || got.Ref != proposal {
+			if expected != (history.CommitRef{Sequence: sequence - 1, CID: *c.Parent}) || got.Ref != proposal {
 				t.Fatal("wrong expected parent or proposal")
 			}
 			return history.Observation{Head: history.CommitRef{Sequence: math.MaxInt64, CID: proposal.CID}, Commit: proposal}, nil
