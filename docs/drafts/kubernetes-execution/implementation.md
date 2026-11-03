@@ -160,9 +160,10 @@ The guest's file API also does less than the current executor: it has no rename,
   clones the source environment's storage, which needs a storage-level copy that the provider does not have.
 - **Run claims.** Whether run claims stay as they are, and whether they stay in the `ExecutionEnvironment` status, which
   costs Kubernetes API writes on every run. No change is needed for this work.
-- **Claim ID and epoch.** `AcquireRun` both generates a claim ID and increments the environment's epoch, and every call
-  is checked against both, so the claim ID may be redundant. Neither is documented outside the code; whichever stays
-  needs documenting.
+- **Claim ID and epoch.** `AcquireRun` both generates a claim ID and gives the environment a new epoch, and every call
+  is checked against both, so the claim ID may be redundant. Every check compares the epoch for equality and none
+  orders it, so an epoch only needs to be unique within its environment: an opaque value would work, and a counter only
+  makes runbooks and logs easier to read. Neither is documented outside the code; whichever stays needs documenting.
 - **Owner attestation.** The provider trusts the calling mecak8s to state the session owner. Whether the owner should be
   verified end to end belongs with the [agent identity](../agent-identity/README.md) work.
 
