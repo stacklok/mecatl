@@ -360900,6 +360900,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1793726306252,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "1c085bbafc9b99e1aac760a7d2004e5c742a3e7d",
+          "message": "test(mecatui): stabilize streaming Markdown ANSI parity (#2673)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-11-03T17:21:52Z",
+          "tree_id": "89de4e6c6afb924d49cf915c802e80842172ee41",
+          "url": "https://github.com/stacklok/mecatl/commit/1c085bbafc9b99e1aac760a7d2004e5c742a3e7d"
+        },
+        "date": 1793727324932,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -521398,6 +521432,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1793727321107,
+  "lastUpdate": 1793727326041,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
