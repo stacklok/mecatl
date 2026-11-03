@@ -97,7 +97,6 @@ func startDelegateAS1(t *testing.T, h *identityharness.Harness, edit func(*Confi
 			ID:                   identitybroker.BrokerClientID,
 			KeySet:               keySet,
 			AllowedSourceClients: []string{testClientID},
-			APIAudience:          testAudience,
 			IDJAGMaxLifetime:     delegateMaxLifetime,
 		}
 		if edit != nil {
@@ -150,8 +149,9 @@ func TestDelegateConvertsASignIn(t *testing.T) {
 		t.Fatalf("echoed %d grants, want 1", len(res.Grants))
 	}
 	exp := res.Grants[0].ExpiresAt
-	if !exp.After(now) || exp.After(now.Add(delegateMaxLifetime+5*time.Second)) {
-		t.Errorf("grant expiry %v, want in (now, now + %v]", exp, delegateMaxLifetime)
+	// The request asks for no expiry, so AS-1 applies the configured cap.
+	if exp.Before(now.Add(delegateMaxLifetime-5*time.Second)) || exp.After(now.Add(delegateMaxLifetime+5*time.Second)) {
+		t.Errorf("grant expiry %v, want now + %v within 5s", exp, delegateMaxLifetime)
 	}
 }
 

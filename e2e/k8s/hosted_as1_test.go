@@ -437,7 +437,6 @@ func expectAS1AccessToken(raw string) as1SubjectID {
 	return subID
 }
 
-// as1CreateSession creates a session over HTTPS with bearer.
 // expectAS1SessionOpenRefused asserts that opening a session with bearer is
 // refused with 401 and the problem code want.
 func expectAS1SessionOpenRefused(ctx context.Context, client *http.Client, bearer, want string) {
@@ -451,6 +450,7 @@ func expectAS1SessionOpenRefused(ctx context.Context, client *http.Client, beare
 	gomega.Expect(problem.Code).To(gomega.Equal(want), "POST /v1/sessions: %s", formatBody(raw))
 }
 
+// as1CreateSession creates a session over HTTPS with bearer.
 func as1CreateSession(ctx context.Context, client *http.Client, bearer string) (int, string) {
 	ginkgo.GinkgoHelper()
 	status, raw := as1Do(ctx, client, http.MethodPost, as1Resource+"/v1/sessions", bearer, defaultSessionCreateBody())

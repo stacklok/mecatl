@@ -13,11 +13,13 @@ import (
 )
 
 // DelegateClient is a pre-provisioned confidential client of the
-// authorization server, such as the identity broker's. It authenticates with private_key_jwt
-// against a configured key set, never jwks_uri, has no secret and no redirect
-// URIs, and may use only the token-exchange grant. Its exchange policy is
-// restricted: it may exchange only access tokens issued to
-// AllowedSourceClients, for refresh tokens that issue ID-JAGs.
+// authorization server, such as the identity broker's. It authenticates with
+// private_key_jwt against a configured key set, never jwks_uri, has no secret
+// and no redirect URIs, and may use only the token-exchange grant. Its
+// exchange policy is restricted: it may exchange only access tokens for AS-1's
+// audience issued to AllowedSourceClients, and is configured to obtain refresh
+// tokens that issue ID-JAGs. ToolHive also lets it exchange those access
+// tokens for access tokens (stacklok/toolhive#7026).
 type DelegateClient struct {
 	// ID is the client ID. It must differ from every public client's.
 	ID string
@@ -27,9 +29,6 @@ type DelegateClient struct {
 	// AllowedSourceClients are the public clients whose users' access tokens
 	// the client may exchange. At least one is required.
 	AllowedSourceClients []string
-	// APIAudience is the client's own API audience: the only audience it may
-	// request, and the one whose access tokens it exchanges.
-	APIAudience string
 	// IDJAGMaxLifetime caps the lifetime of refresh tokens that issue
 	// ID-JAGs (ToolHive's id_jag_max_lifetime): at least a second, as ToolHive
 	// caps in whole seconds, and at most maxIDJAGLifetime.
@@ -45,28 +44,27 @@ const maxIDJAGLifetime = 720 * time.Hour
 var delegateScopes = []string{"openid"}
 
 // delegateRunConfig is ToolHive's configuration of d, whose public key set
-// is in jwksFile.
-func delegateRunConfig(d DelegateClient, jwksFile string) authserver.DelegateClientRunConfig {
+// is in jwksFile, for AS-1's audience.
+func delegateRunConfig(d DelegateClient, jwksFile, audience string) authserver.DelegateClientRunConfig {
 	return authserver.DelegateClientRunConfig{
 		ClientID:                d.ID,
 		TokenEndpointAuthMethod: oauthproto.TokenEndpointAuthMethodPrivateKeyJWT,
 		JWKSFile:                jwksFile,
 		GrantTypes:              []string{oauthproto.GrantTypeTokenExchange},
 		Scopes:                  slices.Clone(delegateScopes),
-		Audiences:               []string{d.APIAudience},
+		Audiences:               []string{audience},
 		TokenExchange: &authserver.DelegateClientTokenExchange{
 			SelfIssuedSubjectTokens: authserver.SelfIssuedSubjectTokensRestricted,
 			AllowedSourceClients:    slices.Clone(d.AllowedSourceClients),
-			APIAudience:             d.APIAudience,
+			APIAudience:             audience,
 			// RefreshTokenMaxLifetime stays unset: no schedule grants yet.
 			ExchangeRefreshTokens: &authserver.DelegateClientExchangeRefreshTokens{IDJAGMaxLifetime: d.IDJAGMaxLifetime.String()},
 		},
 	}
 }
 
-// validate checks d against the public client IDs and AS-1's audience, the
-// only one whose access tokens carry the company identity.
-func (d DelegateClient) validate(publicClients map[string]bool, audience string) error {
+// validate checks d against the public client IDs.
+func (d DelegateClient) validate(publicClients map[string]bool) error {
 	switch {
 	case d.ID == "":
 		return fmt.Errorf("%w: delegate client ID is required", ErrInvalidConfig)
@@ -76,8 +74,6 @@ func (d DelegateClient) validate(publicClients map[string]bool, audience string)
 		return fmt.Errorf("%w: delegate client %q needs a JWK Set with at least one key", ErrInvalidConfig, d.ID)
 	case len(d.AllowedSourceClients) == 0:
 		return fmt.Errorf("%w: delegate client %q needs at least one allowed source client", ErrInvalidConfig, d.ID)
-	case d.APIAudience != audience:
-		return fmt.Errorf("%w: delegate client %q API audience %q is not AS-1's audience %q", ErrInvalidConfig, d.ID, d.APIAudience, audience)
 	case d.IDJAGMaxLifetime < time.Second || d.IDJAGMaxLifetime > maxIDJAGLifetime:
 		return fmt.Errorf("%w: delegate client %q ID-JAG grant lifetime %v is not between 1s and %v", ErrInvalidConfig, d.ID, d.IDJAGMaxLifetime, maxIDJAGLifetime)
 	}

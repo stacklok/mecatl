@@ -165,10 +165,11 @@ func newServer(ctx context.Context, cfg Config, opts options) (*Server, error) {
 			return nil, err
 		}
 		defer removeKeySet()
-		// The canonical form also leaves the JWT-bearer grant off.
+		// Setting only TokenExchange leaves ToolHive's JWT-bearer inbound grant
+		// disabled.
 		runConfig.InboundGrants = &authserver.InboundGrantsRunConfig{
 			TokenExchange: &authserver.TokenExchangeInboundGrantRunConfig{
-				DelegateClients: []authserver.DelegateClientRunConfig{delegateRunConfig(*cfg.Delegate, jwksFile)},
+				DelegateClients: []authserver.DelegateClientRunConfig{delegateRunConfig(*cfg.Delegate, jwksFile, cfg.Audience)},
 			},
 		}
 	}
@@ -268,7 +269,7 @@ func (cfg Config) validate() (*url.URL, error) {
 		return nil, err
 	}
 	if cfg.Delegate != nil {
-		if err := cfg.Delegate.validate(seen, cfg.Audience); err != nil {
+		if err := cfg.Delegate.validate(seen); err != nil {
 			return nil, err
 		}
 	}

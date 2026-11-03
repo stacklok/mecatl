@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -104,6 +105,9 @@ func TestInProcessClientStopsWaitingAtTheDeadline(t *testing.T) {
 
 func TestInProcessClientClosesTheBodyWhenAbandoned(t *testing.T) {
 	release := make(chan struct{})
+	var releaseOnce sync.Once
+	unblock := func() { releaseOnce.Do(func() { close(release) }) }
+	t.Cleanup(unblock)
 	server := stubServer(t, http.HandlerFunc(func(http.ResponseWriter, *http.Request) { <-release }))
 	ctx, cancel := context.WithCancel(t.Context())
 	body := newCloseRecorder("ping")
@@ -115,7 +119,7 @@ func TestInProcessClientClosesTheBodyWhenAbandoned(t *testing.T) {
 	if _, err := server.InProcessClient().Transport.RoundTrip(req); !errors.Is(err, context.Canceled) {
 		t.Fatalf("RoundTrip: %v, want context.Canceled", err)
 	}
-	close(release)
+	unblock()
 	select {
 	case <-body.closed:
 	case <-time.After(5 * time.Second):

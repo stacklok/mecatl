@@ -820,8 +820,6 @@ func TestConfigValidation(t *testing.T) {
 		"delegate bad key set":    withDelegate(func(d *DelegateClient) { d.KeySet = []byte("not json") }),
 		"delegate without source": withDelegate(func(d *DelegateClient) { d.AllowedSourceClients = nil }),
 		"delegate unknown source": withDelegate(func(d *DelegateClient) { d.AllowedSourceClients = []string{testClientID, "web"} }),
-		"delegate no audience":    withDelegate(func(d *DelegateClient) { d.APIAudience = "" }),
-		"delegate other audience": withDelegate(func(d *DelegateClient) { d.APIAudience = otherAudience }),
 		"delegate zero lifetime":  withDelegate(func(d *DelegateClient) { d.IDJAGMaxLifetime = 0 }),
 		"delegate negative life":  withDelegate(func(d *DelegateClient) { d.IDJAGMaxLifetime = -time.Hour }),
 		"delegate sub-second":     withDelegate(func(d *DelegateClient) { d.IDJAGMaxLifetime = time.Second / 2 }),
@@ -857,7 +855,6 @@ func withDelegate(edit func(*DelegateClient)) func(*Config) {
 			ID:                   identitybroker.BrokerClientID,
 			KeySet:               []byte(`{"keys":[{"kty":"EC","crv":"P-256","kid":"k"}]}`),
 			AllowedSourceClients: []string{testClientID},
-			APIAudience:          testAudience,
 			IDJAGMaxLifetime:     time.Hour,
 		}
 		edit(&d)

@@ -97,19 +97,15 @@ var errIdentityBrokerAS1WithoutBroker = errors.New("hosting AS-1 requires the id
 
 // as1RequestTimeout bounds one session-open token exchange the broker makes at
 // a hosted AS-1 in process. Session open holds the host session's open lock
-// while it makes at most two requests, the exchange and one resend, each with a
-// fresh client assertion; two of these stay within a client assertion's
-// MaxClientAssertionLifetime (60s).
-const as1RequestTimeout = 30 * time.Second
+// while it makes at most two requests, the exchange and one resend, so this
+// bounds how long that lock is held. AS-1 answers in process, normally within
+// milliseconds.
+const as1RequestTimeout = 10 * time.Second
 
-// hostedAS1IDJAGMaxLifetime caps the lifetime of the broker refresh tokens the
-// hosted AS-1 issues at session open, which bounds a broker session's hard
-// expiry: how long an agent keeps acting for a user who is not present to send
-// a fresh access token. None of the identity lifetimes is selected
-// (docs/drafts/agent-identity/credentials-and-lifecycle.md, "Configuration":
-// AS-1's maximum for grants that issue ID-JAGs bounds RT-A42's hard expiry).
-// Twelve hours covers an active working session while bounding unattended
-// authority to under a day; #2538 makes it operator-configurable.
+// hostedAS1IDJAGMaxLifetime caps the broker refresh tokens the hosted AS-1
+// issues at session open, and so a broker session's hard expiry. Twelve hours
+// covers a working session while bounding unattended authority; #2538 makes
+// it configurable.
 const hostedAS1IDJAGMaxLifetime = 12 * time.Hour
 
 // buildIdentityBroker returns the identity broker Mecatl calls, the hosted
@@ -189,7 +185,6 @@ func buildBrokerWithHostedAS1(ctx context.Context, cfg Config) (identitybroker.S
 		ID:                   identitybroker.BrokerClientID,
 		KeySet:               keySet,
 		AllowedSourceClients: sources,
-		APIAudience:          as1.Audience,
 		IDJAGMaxLifetime:     hostedAS1IDJAGMaxLifetime,
 	})
 	if err != nil {
@@ -265,8 +260,9 @@ type IdentityBrokerAS1 struct {
 	Issuer        string
 	TokenEndpoint string
 	HTTPClient    *http.Client
-	// ClientKey replaces the generated broker client key, so a test can
-	// register its public key at AS-1 before the broker is built.
+	// ClientKey replaces the generated broker client key, so whoever builds
+	// AS-1 first can register its public key there before the broker is
+	// built: the hosted-AS-1 wiring and tests.
 	ClientKey *ecdsa.PrivateKey
 	// Now replaces the clock of the broker and its client assertions, so a
 	// test can move past a broker session's hard expiry. Nil selects time.Now.

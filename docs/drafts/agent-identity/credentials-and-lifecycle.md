@@ -304,7 +304,7 @@ client_assertion=<private_key_jwt for mecatl>
 }
 ```
 
-`expires_in` is illustrative; the hard expiry is not selected. `RT-A42` is opaque to the broker. Its meaning lives in an AS-1 record, a [grant](#example-nomenclature), that binds it to client `mecatl` and to Alice as `u-alice-91`, with a hard expiry. Every ID-JAG issued from it names that subject.
+`expires_in` is illustrative; while AS-1 is hosted in mecak8s the hard expiry is a fixed 12 hours (see [Configuration](#configuration)). `RT-A42` is opaque to the broker. Its meaning lives in an AS-1 record, a [grant](#example-nomenclature), that binds it to client `mecatl` and to Alice as `u-alice-91`, with a hard expiry. Every ID-JAG issued from it names that subject.
 
 The broker checks that the echoed entry has the type and `issuable_token_types` it sent, and an `expires_at` no later than the one it requested, if any; an echo without `expires_at` does not match. It then stores `RT-A42` under `A42` with the verified owner and the echoed expiry, in its shared session storage, so any replica can use it and run the [run-owner check](#6-per-operation-authorization) without asking AS-1. If the echo does not match, or the response cannot be decoded, the broker revokes `RT-A42` (RFC 7009, or in process while AS-1 is a broker module), which closes `A42`, and fails the open. The existing broker session record under `A42` keeps the workload and host-session binding; the human authority lives in `RT-A42`, not in a broker-local human record. While AS-1 runs in the broker's process (phase 1, hosted in mecak8s), the broker and AS-1 share a clock, so the echo check and the hard expiry take no skew allowance; a separately run AS-1 needs one.
 
@@ -436,7 +436,7 @@ The subject tokens the broker presents are bearer tokens: they prove whose autho
 
 **Why.** It makes "accept only from the broker" enforceable. A leaked `RT-A42` is useless without the key: a refresh token issued to an authenticated confidential client is already sender-constrained (RFC 9449 §5) and usable only by that client (RFC 9700 §4.14.2).
 
-The private key never leaves the broker and can live in a KMS or HSM. In mecak8s the key is held in a Kubernetes Secret, later a KMS. In external mode the gateway administrator registers the broker's public key as a configured key set, and registers it again when the key rotates; ToolHive does not fetch a `jwks_uri`. A `client_secret` is rejected: it is shared, replayable once leaked, and rotated by hand. mTLS client authentication (RFC 8705) is an equivalent alternative.
+The private key never leaves the broker and can live in a KMS or HSM. While AS-1 is hosted in mecak8s, the broker generates the key in memory at startup, never writes it to disk, and registers its public key set at the in-process AS-1; a restart replaces it, which voids every outstanding `RT-A42`. A persisted key (a Kubernetes Secret, later a KMS) is needed once AS-1 runs separately. In external mode the gateway administrator registers the broker's public key as a configured key set, and registers it again when the key rotates; ToolHive does not fetch a `jwks_uri`. A `client_secret` is rejected: it is shared, replayable once leaked, and rotated by hand. mTLS client authentication (RFC 8705) is an equivalent alternative.
 
 One client ID, `mecatl`, is used at both servers, because the ID-JAG's `client_id` must match the client that redeems it at AS-2.
 
@@ -885,7 +885,8 @@ An agent instance keeps its identity across runs. Each credential's lifetime is 
 | Upstream refresh token | IdP expiry or revocation. | At most once per re-check interval, at an ID-JAG exchange or scheduled-run open; one refresh per user at a time. | AS-1 |
 | ID-JAG | Short lifetime. | Never renewed or re-submitted; one per `V`. | Broker |
 | `V` | Short lifetime. | A skew margin before `exp` at the next call, or within the same call after a 401; one exchange per cache key at a time. | Broker, through steps (7) and (8) |
-| Key sets: AS-1's, AS-2's, the agent trust bundle, the cluster JWKS, and the broker client's configured key set (not `jwks_uri`) | Operator rotation; the broker client's key is registered again at each server. | On an unknown `kid`, rate-limited, and periodically. | Each verifier |
+| Key sets: AS-1's, AS-2's, the agent trust bundle, and the cluster JWKS | Operator rotation. | On an unknown `kid`, rate-limited, and periodically. | Each verifier |
+| The broker client's configured key set (not `jwks_uri`) | Operator rotation. | Registered again at each server, which reads it only then; a hosted AS-1 registers it at process start. | Operator, or mecak8s at startup |
 | Consent link | Revocation in the gateway UI or by Mecatl. | The user links again. | Alice |
 | Provider credential | Provider expiry or revocation. | Refresh at the gateway, or the user connects again. | Gateway, or Alice |
 
@@ -975,7 +976,7 @@ On Okta, Google, and Keycloak both claims carry the same value. On Entra they di
 
 ## Configuration
 
-None of these values is selected. Each bounds a risk the operator should know:
+None of these values is selected, except that while AS-1 is hosted in mecak8s its maximum for grants that issue ID-JAGs, and so `RT-A42`'s hard expiry, is a fixed 12 hours until it becomes configurable. Each bounds a risk the operator should know:
 
 - **Lifetimes:** AS-1's maximum for grants that issue ID-JAGs, which bounds `RT-A42`'s hard expiry, and for grants that issue refresh tokens, which bounds a schedule's horizon; the ID-JAG lifetime, and the maximum SVID, workload-credential, and client-assertion lifetimes.
 - **Clock skew**, and the margins derived from it: the `V` skew margin and how long used `jti` values are kept past `exp` where single use is configured.

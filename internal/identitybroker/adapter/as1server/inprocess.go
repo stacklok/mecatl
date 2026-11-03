@@ -57,10 +57,17 @@ func (t inProcessTransport) RoundTrip(req *http.Request) (*http.Response, error)
 	select {
 	case <-done:
 	case <-ctx.Done():
-		return nil, ctx.Err()
+		// A handler that finished as ctx ended still wins: its response may
+		// hold a token that cannot be issued again.
+		select {
+		case <-done:
+		default:
+			return nil, ctx.Err()
+		}
 	}
 	if panicked != nil {
-		// As when the handler ran on the caller's goroutine.
+		// Re-raise the handler's panic on the caller's goroutine, as a
+		// synchronous handler would.
 		panic(panicked)
 	}
 	if recorded.status == 0 {

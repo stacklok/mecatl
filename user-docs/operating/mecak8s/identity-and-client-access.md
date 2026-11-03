@@ -297,7 +297,10 @@ restart drops them too: the broker generates a fresh client key at startup, and
 each signed-in user's next request opens a new broker session. With
 `signingKey`, access tokens issued before a restart keep verifying until they
 expire. Without it, AS-1 generates a key at startup and those tokens stop
-verifying immediately.
+verifying immediately. AS-1 accepts each access token for one session open,
+but it forgets which tokens it has accepted when the pod restarts. A token
+used before a restart can open one more session after it, until the token
+expires.
 
 Turning on `oidc.ownerIdentity: sub_id` for a deployment with existing sessions leaves
 those sessions with their previous owners; see
