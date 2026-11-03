@@ -399190,6 +399190,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1793662480630,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "29541485+ChrisJBurns@users.noreply.github.com",
+            "name": "Chris Burns",
+            "username": "ChrisJBurns"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "67d7781178df51076eb03621d855db0940cca719",
+          "message": "feat(identitybroker): register the broker client at hosted AS-1 (#2653)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-11-03T13:54:07Z",
+          "tree_id": "35c288dc262294ecaf58f0d67e222c7a2a767370",
+          "url": "https://github.com/stacklok/mecatl/commit/67d7781178df51076eb03621d855db0940cca719"
+        },
+        "date": 1793714787651,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 16118.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12880.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 794,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -520410,6 +520449,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1793714783916,
+  "lastUpdate": 1793714788763,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
