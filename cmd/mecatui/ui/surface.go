@@ -94,6 +94,12 @@ type modalPlacementSource interface {
 	modalPlacement() modalPlacement
 }
 
+// runCompletionSurface is an opt-in lifetime capability for read-only snapshots.
+// It applies only to a normal run result, never session/connection teardown.
+type runCompletionSurface interface {
+	survivesRunCompletion() bool
+}
+
 // modalMaxOuterWidthSource caps a parent-framed card without moving framing or
 // centering responsibility into the surface.
 type modalMaxOuterWidthSource interface {

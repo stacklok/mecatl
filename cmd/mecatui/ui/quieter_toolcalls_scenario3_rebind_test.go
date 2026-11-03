@@ -69,7 +69,7 @@ func TestMecatuiQuieterToolCalls_Scenario3_RebindAndLegacyAlias(t *testing.T) {
 	}
 	m, _ = pressKey(m, tea.KeyPressMsg{Code: tea.KeyEsc})
 	m, _ = pressKey(m, tea.KeyPressMsg{Code: tea.KeyF13, Mod: tea.ModCtrl})
-	if expanded := detailText(m); !strings.Contains(expanded, "private error details") || !strings.Contains(expanded, "secret reasoning") || !strings.Contains(expanded, "changed this session") {
+	if expanded := detailText(m); !strings.Contains(expanded, "private error details") || !strings.Contains(expanded, "secret reasoning") || !strings.Contains(expanded, "/workspace") {
 		t.Errorf("second conversation chord did not expand details: %q", expanded)
 	}
 }

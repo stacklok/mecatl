@@ -276,6 +276,12 @@ type Deps struct {
 	// LocalSessionContext optionally resolves the privileged local session root.
 	// The root is used only as a direct status-command CWD, never UI state.
 	LocalSessionContext client.LocalSessionContextGetter
+	// WorkspaceSnapshot is composed only for an explicitly owned embedded server.
+	// Unlike LocalSessionContext, it never falls back to the client directory.
+	WorkspaceSnapshot WorkspaceSnapshotFunc
+	// WorkspaceRepository checks only repository membership at session binding,
+	// under the same embedded-only authority as WorkspaceSnapshot. Errors are unknown.
+	WorkspaceRepository func(context.Context, string) (bool, error)
 
 	// Presentation capability probes are package-private test seams. New replaces
 	// nil values with the production environment detectors.
@@ -719,7 +725,9 @@ type Model struct {
 	providerRoute string
 	// statusContextRoot is the active session's privileged local-context result.
 	// It is supplied only to a direct command input and never reaches rendered UI state.
-	statusContextRoot string
+	statusContextRoot   string
+	workspaceRepository *workspaceRepositoryRequest
+	workspaceInGit      bool
 	// activePlacement is bounded server-authored display metadata for the current
 	// session. It is never interpreted as a path or sent back as authority.
 	activePlacement client.Placement
@@ -935,7 +943,7 @@ type Model struct {
 	contextUnknown   bool
 	contextEstimated bool
 
-	// expandConversation reveals turn headings/stats, full reasoning, errors, and changed files.
+	// expandConversation reveals turn headings/stats, full reasoning, errors, and the workspace invitation.
 	expandConversation bool
 
 	// Changed-file membership and the synthetic appendix identity belong to conv.
@@ -1243,6 +1251,8 @@ func (m Model) resetSession() Model {
 }
 
 func (m Model) resetSessionDerived() Model {
+	m.resetWorkspaceRepository()
+	m.activePlacement = client.Placement{}
 	m.reflectRequest = nil
 	m.settlePendingApproval()
 	(&m).retirePendingApprovalRecovery()

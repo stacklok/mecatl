@@ -50,6 +50,7 @@ const (
 	actionJumpEnd            = "JumpEnd"
 	actionAgents             = "Agents"
 	actionToolcalls          = "Toolcalls"
+	actionWorkspace          = "Workspace"
 	actionExpandConversation = "ExpandConversation"
 	actionNextTab            = "NextTab"
 	actionCancelChild        = "CancelChild"
@@ -69,7 +70,7 @@ var validActions = map[string]struct{}{
 	actionResources: {}, actionPrompts: {}, actionUp: {}, actionDown: {},
 	actionChoose: {}, actionClose: {}, actionRefresh: {}, actionTasks: {},
 	actionFindings: {}, actionJumpTop: {}, actionJumpEnd: {}, actionAgents: {},
-	actionToolcalls: {}, actionExpandConversation: {}, actionNextTab: {},
+	actionToolcalls: {}, actionWorkspace: {}, actionExpandConversation: {}, actionNextTab: {},
 	actionCancelChild: {}, actionHelp: {}, actionEffort: {}, actionSetGlobalDefault: {},
 	actionRawArgs: {},
 }
@@ -82,7 +83,7 @@ var (
 		actionQuit: {}, actionQuitD: {}, actionSuspend: {}, actionScrollU: {},
 		actionScrollD: {}, actionScrollTop: {}, actionScrollBottom: {}, actionModeSwitch: {},
 		actionMCPPanel: {}, actionResources: {}, actionPrompts: {}, actionAgents: {},
-		actionToolcalls: {}, actionExpandConversation: {}, actionHelp: {}, actionEffort: {},
+		actionToolcalls: {}, actionWorkspace: {}, actionExpandConversation: {}, actionHelp: {}, actionEffort: {},
 	}
 	overlayInternal = map[string]struct{}{
 		actionUp: {}, actionDown: {}, actionChoose: {}, actionClose: {}, actionRefresh: {},
@@ -223,9 +224,9 @@ func validateConversationDefaultGlobalCollisions(res Resolved) error {
 		actionScrollU: {"pgup"}, actionScrollD: {"pgdown"}, actionScrollTop: {"home"}, actionScrollBottom: {"end"},
 		actionModeSwitch: {"shift+tab"}, actionMCPPanel: {"ctrl+o"}, actionResources: {"ctrl+r"},
 		actionPrompts: {"f8"}, actionAgents: {"f6"}, actionEffort: {"f7"},
-		actionToolcalls: {"ctrl+t"}, actionExpandConversation: {"f9"}, actionHelp: {"?"},
+		actionToolcalls: {"ctrl+t"}, actionExpandConversation: {"f9"}, actionWorkspace: {"f10"}, actionHelp: {"?"},
 	}
-	for _, action := range []string{actionToolcalls, actionExpandConversation} {
+	for _, action := range []string{actionToolcalls, actionExpandConversation, actionWorkspace} {
 		chords := res.ByAction[action]
 		if len(chords) == 0 {
 			chords = defaults[action]

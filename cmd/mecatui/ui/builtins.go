@@ -167,6 +167,11 @@ func builtinCommands(caps client.Capabilities, w wiredCollaborators) []builtin {
 			desc: "send a concise client and server diagnostics report",
 			run:  Model.runDiagnostics,
 		},
+		{
+			name: "workspace",
+			desc: "inspect a workspace snapshot and observed Edit/Write paths",
+			run:  Model.openWorkspace,
+		},
 	}
 	if w.Execution {
 		out = append(out, builtin{name: "execution", desc: "start a new session with default, none, or an eligible template", run: Model.openExecution})
@@ -721,7 +726,7 @@ type builtinName struct {
 var builtinNameRegistry = []builtinName{
 	{name: "clear", acceptsArgs: false}, {name: "help", acceptsArgs: false}, {name: "quit", acceptsArgs: false}, {name: "title", acceptsArgs: true}, {name: "session", acceptsArgs: false},
 	{name: "queue", acceptsArgs: true}, {name: "steer", acceptsArgs: true},
-	{name: "retry", acceptsArgs: false}, {name: "toolcalls", acceptsArgs: false}, {name: "diagnostics", acceptsArgs: false}, {name: "compact", acceptsArgs: false},
+	{name: "retry", acceptsArgs: false}, {name: "workspace", acceptsArgs: false}, {name: "toolcalls", acceptsArgs: false}, {name: "diagnostics", acceptsArgs: false}, {name: "compact", acceptsArgs: false},
 	{name: "mcp", acceptsArgs: false}, {name: "agents", acceptsArgs: false}, {name: "team", acceptsArgs: false},
 	{name: "skills", acceptsArgs: false}, {name: "soul", acceptsArgs: false}, {name: "memory", acceptsArgs: false},
 	{name: "execution", acceptsArgs: false}, {name: "models", acceptsArgs: false}, {name: "effort", acceptsArgs: false}, {name: "worktrees", acceptsArgs: false},

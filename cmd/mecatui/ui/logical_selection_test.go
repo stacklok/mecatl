@@ -262,7 +262,7 @@ func TestSelectionPreservesLiveStableText(t *testing.T) {
 		m.refreshView()
 		line := -1
 		for i, text := range strings.Split(m.vp.GetContent(), "\n") {
-			if strings.Contains(ansi.Strip(text), path) {
+			if strings.Contains(ansi.Strip(text), "/workspace") {
 				line = i
 			}
 		}
@@ -275,7 +275,7 @@ func TestSelectionPreservesLiveStableText(t *testing.T) {
 		if !m.viewDirty {
 			t.Fatal("precondition: delta must be pending")
 		}
-		col := strings.Index(ansi.Strip(strings.Split(m.vp.GetContent(), "\n")[line]), "DIRTYAPPENDIXMARKER")
+		col := strings.Index(ansi.Strip(strings.Split(m.vp.GetContent(), "\n")[line]), "workspace")
 		m = m.wordSelect(line, col)
 		if !m.viewDirty {
 			t.Fatal("selection must leave the pending delta for its ordinary render tick")
@@ -290,7 +290,7 @@ func TestSelectionPreservesLiveStableText(t *testing.T) {
 			t.Fatal("displayed complete frame was not used for selection projection")
 		}
 		m.refreshView()
-		if !m.sel.active || selectedText(m.vp.GetContent(), m.sel) != "DIRTYAPPENDIXMARKER" {
+		if !m.sel.active || selectedText(m.vp.GetContent(), m.sel) != "workspace" {
 			t.Fatalf("appendix selection after later refresh = %q (active=%t)", selectedText(m.vp.GetContent(), m.sel), m.sel.active)
 		}
 	})

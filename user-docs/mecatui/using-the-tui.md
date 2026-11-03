@@ -34,9 +34,9 @@ longer than 256 bytes are omitted; child execution and the parent session
 are unaffected.
 
 Press `f9` to reveal conversation details, including reasoning summaries,
-per-turn usage, permanent error details, changed files, and individual settled
-tool-call summaries in source order. Use `ctrl+t` to inspect a call's arguments
-and results. Both shortcuts can be [remapped](./keybindings.md#remap-actions).
+per-turn usage, permanent error details, and individual settled tool-call
+summaries in source order. Use `ctrl+t` to inspect a call's arguments and
+results. Both shortcuts can be [remapped](./keybindings.md#remap-actions).
 
 In the default conversation view, adjacent completed tool, Subagent, and Team
 calls share one summary, including failures. Calls still in progress remain as
@@ -48,6 +48,11 @@ replayed conversations. These are completed, acceptable checks that allowed an
 action or released a result; findings, failures, unresolved reviews, and
 approvals remain visible. To keep benign notices visible, configure
 [`hook_notices.show_benign`](./customization.md#show-benign-guardrail-notices).
+
+## Inspect a workspace snapshot
+
+Use `f10` or `/workspace` to inspect workspace status. Git inspection requires
+an embedded server and a trusted local workspace.
 
 ## Start a session with an execution choice
 

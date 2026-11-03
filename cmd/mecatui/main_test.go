@@ -29,6 +29,9 @@ import (
 // TestMain dispatches to the subprocess harnesses when their environment variables
 // are set. Otherwise it runs the normal isolated test suite.
 func TestMain(m *testing.M) {
+	// Run before testhome modifies the child's environment: this helper verifies
+	// the actual allowlisted environment supplied by the workspace adapter.
+	runWorkspaceSnapshotProcessHelper()
 	if os.Getenv("MECATUI_TEST_HANDOFF_COMPOSITION") != "" {
 		os.Exit(runMecatuiTest(m))
 	}

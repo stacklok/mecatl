@@ -29,13 +29,14 @@ type sdkBoundaryRow struct {
 // This test-only inventory classifies the reusable outcome of each TUI builtin.
 // Its SDK names describe a separate client; the TUI never imports the SDK.
 var sdkBoundaryBuiltins = map[string]sdkBoundaryRow{
-	"queue":   {category: applicationOnly, rationale: "The delivery prefix selects the TUI's local follow-up queue, not a new server operation."},
-	"steer":   {category: applicationOnly, rationale: "The delivery prefix selects the existing steer channel or an ordinary idle prompt."},
-	"clear":   {category: sdkBacked, sdkOperation: "Session.clear"},
-	"title":   {category: sdkBacked, sdkOperation: "Session.rename"},
-	"session": {category: sdkBacked, sdkOperation: "Session.snapshot"},
-	"retry":   {category: sdkBacked, sdkOperation: "Session.retry"},
-	"compact": {category: sdkBacked, sdkOperation: "Session.compact"},
+	"workspace": {category: applicationOnly, rationale: "The TUI captures observed paths and optionally inspects a trusted local execution root through its host; no new server operation."},
+	"queue":     {category: applicationOnly, rationale: "The delivery prefix selects the TUI's local follow-up queue, not a new server operation."},
+	"steer":     {category: applicationOnly, rationale: "The delivery prefix selects the existing steer channel or an ordinary idle prompt."},
+	"clear":     {category: sdkBacked, sdkOperation: "Session.clear"},
+	"title":     {category: sdkBacked, sdkOperation: "Session.rename"},
+	"session":   {category: sdkBacked, sdkOperation: "Session.snapshot"},
+	"retry":     {category: sdkBacked, sdkOperation: "Session.retry"},
+	"compact":   {category: sdkBacked, sdkOperation: "Session.compact"},
 	"mcp": {
 		category:               sdkBacked,
 		sdkOperation:           "Client.mcp.listSources",

@@ -146,9 +146,10 @@ type keyMap struct {
 
 	// Toolcalls (ctrl+t) retains the existing details-toggle behavior.
 	Toolcalls key.Binding
-	// ExpandConversation (f9) reserves a separate global conversation-details action.
-	// It is wired by the conversation behavior task.
+	// ExpandConversation (f9) toggles turn details and the workspace invitation.
 	ExpandConversation key.Binding
+	// Workspace (f10) opens a frozen read-only snapshot while idle or running.
+	Workspace key.Binding
 
 	// Help opens the "?" keys-&-features overlay. Unlike the control-modified
 	// open keys, "?" is a PRINTABLE rune, so onIdleKey opens help only when the
@@ -368,6 +369,10 @@ func defaultKeys() keyMap {
 			key.WithKeys("f9"),
 			key.WithHelp("f9", "expand/collapse conversation details"),
 		),
+		Workspace: key.NewBinding(
+			key.WithKeys("f10"),
+			key.WithHelp("f10", "workspace snapshot"),
+		),
 		Help: key.NewBinding(
 			key.WithKeys("?"),
 			key.WithHelp("?", "help"),
@@ -473,6 +478,9 @@ func applyKeyOverrides(km keyMap, ov map[string][]string) keyMap {
 		},
 		"ExpandConversation": func(chords []string) {
 			km.ExpandConversation = key.NewBinding(key.WithKeys(chords...), key.WithHelp(join(chords), km.ExpandConversation.Help().Desc))
+		},
+		"Workspace": func(chords []string) {
+			km.Workspace = key.NewBinding(key.WithKeys(chords...), key.WithHelp(join(chords), km.Workspace.Help().Desc))
 		},
 		"Help": func(chords []string) {
 			km.Help = key.NewBinding(key.WithKeys(chords...), key.WithHelp(join(chords), km.Help.Help().Desc))

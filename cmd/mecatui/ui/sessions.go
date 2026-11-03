@@ -92,6 +92,8 @@ func sessionsSurface(m *Model) *sessionsState {
 }
 
 func (m Model) bindSessionID(id string) Model {
+	m.resetWorkspaceRepository()
+	m.activePlacement = client.Placement{}
 	m.reflectRequest = nil
 	m.settlePendingApproval()
 	if id != m.sessionID {
@@ -334,7 +336,7 @@ func (m Model) adoptAuthoritativeTranscript(row client.SessionListItem, loaded c
 	m.phase = phaseIdle
 	m.statusMsg = "continuing chat " + terminaltext.Sanitize(row.Title) + " — type to add a turn"
 	cmd := m.prompt.Focus()
-	if contextCmd := m.refreshStatusContextCmd(); contextCmd != nil {
+	if contextCmd := m.refreshSessionContextCmd(); contextCmd != nil {
 		cmd = tea.Batch(cmd, contextCmd)
 	}
 	m.refreshView()
