@@ -361258,6 +361258,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1793727324932,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "29541485+ChrisJBurns@users.noreply.github.com",
+            "name": "Chris Burns",
+            "username": "ChrisJBurns"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "40a8e5e9bc28391e007e2978da818a1f826d6673",
+          "message": "fix(identitybroker): count a session's hard expiry one clock skew early (#2658)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-11-03T17:57:37Z",
+          "tree_id": "5e92dcf0829b078144cffb0e7245288b20d31b12",
+          "url": "https://github.com/stacklok/mecatl/commit/40a8e5e9bc28391e007e2978da818a1f826d6673"
+        },
+        "date": 1793729413652,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -521909,6 +521943,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1793729409947,
+  "lastUpdate": 1793729414876,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
