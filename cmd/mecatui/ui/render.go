@@ -1724,7 +1724,7 @@ func (r *renderer) renderWorkspaceInvite() string {
 	if r.width <= 0 {
 		return ""
 	}
-	text := r.marks.workspace + " · /workspace — observed Edit/Write paths"
+	text := r.marks.workspace + " workspace · /workspace — observed Edit/Write paths"
 	text = terminaltext.ExpandStyleTabs(terminaltext.SanitizeSingleLine(text), r.th.Style("muted"))
 	return r.th.Style("muted").Render(ansi.TruncateWc(text, r.width, "…"))
 }

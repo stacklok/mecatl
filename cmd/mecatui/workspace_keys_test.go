@@ -63,7 +63,7 @@ func TestWorkspaceSettingsCLIRegistration(t *testing.T) {
 			}
 			mm, _ := m.Update(key)
 			m = mm.(ui.Model)
-			if view := ansi.Strip(m.View().Content); !strings.Contains(view, "workspace snapshot") || !strings.Contains(view, "workspace-config") {
+			if view := ansi.Strip(m.View().Content); !strings.Contains(view, "Workspace snapshot") || !strings.Contains(view, "workspace-config") {
 				t.Fatalf("production configured key did not open Workspace: %s", view)
 			}
 		})

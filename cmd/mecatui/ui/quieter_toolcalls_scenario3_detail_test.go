@@ -151,7 +151,7 @@ func TestConversationDetailToggleShowsTurnChromeOnlyOnF9(t *testing.T) {
 	}
 	m, _ = pressKey(m, f9)
 	expanded := detailText(m)
-	for _, want := range []string{"◀ mecatl", "↑1.2K ↓100 · 4.1s", "↑1.3K ↓110 · 3.1s", "why this tool is needed", "observed Edit/Write paths", "f10 · /workspace", "I will inspect them.", "notice stays visible", "✓ Read", "✓ Grep"} {
+	for _, want := range []string{"◀ mecatl", "↑1.2K ↓100 · 4.1s", "↑1.3K ↓110 · 3.1s", "why this tool is needed", "observed Edit/Write paths", "f10 workspace · /workspace", "I will inspect them.", "notice stays visible", "✓ Read", "✓ Grep"} {
 		if !strings.Contains(expanded, want) {
 			t.Errorf("F9 view lacks %q: %q", want, expanded)
 		}

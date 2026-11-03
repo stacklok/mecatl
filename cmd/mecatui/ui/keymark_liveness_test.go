@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
@@ -422,6 +423,60 @@ func TestDefaultFooterHelp(t *testing.T) {
 	got = stripANSIstr(m.renderFooter())
 	if !strings.Contains(got, "A approve & run · W auto-accept · D iterate") {
 		t.Errorf("default plan-approval line should be the historical literal, got %q", got)
+	}
+}
+
+func TestFooterExpandedConversationHints(t *testing.T) {
+	for _, rebound := range []bool{false, true} {
+		m, _, _ := newTestModel(t, theme.New("aztec", theme.AztecPalette()))
+		m = applyAll(m, tea.WindowSizeMsg{Width: 180, Height: 30}, client.SessionReadyMsg{SessionID: "session"})
+		keyName, workspaceName := "f9", "f10"
+		toggle := tea.KeyPressMsg{Code: tea.KeyF9}
+		if rebound {
+			m.keys = applyKeyOverrides(defaultKeys(), map[string][]string{
+				"ExpandConversation": {"ctrl+f12"},
+				"Workspace":          {"ctrl+f13", "ctrl+f14"},
+			})
+			keyName, workspaceName = "ctrl+f12", "ctrl+f13"
+			toggle = tea.KeyPressMsg{Code: tea.KeyF12, Mod: tea.ModCtrl}
+		}
+		m.conv.recordFileChange("observed.go")
+		for _, phase := range []phase{phaseIdle, phaseRunning} {
+			m.phase = phase
+			for _, expanded := range []bool{true, false} {
+				m, _ = pressKey(m, toggle)
+				if m.expandConversation != expanded {
+					t.Fatalf("detail toggle: expanded=%v, want %v", m.expandConversation, expanded)
+				}
+				want := keyName + " session details"
+				if m.expandConversation {
+					want = keyName + " hide details"
+				}
+				got := stripANSIstr(m.renderFooter())
+				if !strings.Contains(got, want) || !strings.Contains(got, workspaceName+" workspace") || !strings.HasSuffix(got, "ctrl+c quit") {
+					t.Fatalf("rebound=%v phase=%v expanded=%v: %q", rebound, phase, m.expandConversation, got)
+				}
+				if expanded {
+					width := 80
+					if rebound {
+						width += 25
+					}
+					if phase == phaseRunning {
+						width = 100
+					}
+					if rebound && phase == phaseRunning {
+						width += 25
+					}
+					m = applyAll(m, tea.WindowSizeMsg{Width: width, Height: 30})
+					lines := strings.Split(stripANSIstr(m.renderFooter()), "\n")
+					line := lines[len(lines)-1]
+					if !strings.Contains(line, want) || !strings.Contains(line, workspaceName+" workspace") || !strings.HasSuffix(line, "ctrl+c quit") || lipgloss.Width(line) > width {
+						t.Fatalf("compact F9 hint at %d: %q", width, line)
+					}
+					m = applyAll(m, tea.WindowSizeMsg{Width: 180, Height: 30})
+				}
+			}
+		}
 	}
 }
 

@@ -108,7 +108,7 @@ func TestRenderWorkspaceInvite(t *testing.T) {
 		if lipgloss.Width(out) > width || strings.Contains(out, "\n") {
 			t.Fatalf("width %d invite = %q", width, out)
 		}
-		if width == 100 && (!strings.Contains(out, "ctrl+f12 · /workspace") || strings.Contains(out, "f10")) {
+		if width == 100 && (!strings.Contains(out, "ctrl+f12 workspace · /workspace") || strings.Contains(out, "f10")) {
 			t.Fatalf("missing effective key and fallback: %q", out)
 		}
 	}

@@ -14,6 +14,7 @@ import (
 	"charm.land/lipgloss/v2"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
+	"github.com/stacklok/mecatl/cmd/mecatui/internal/terminaltext"
 )
 
 func openTestWorkspace(t *testing.T, m Model) (Model, *workspaceState, tea.Cmd) {
@@ -83,7 +84,7 @@ func TestWorkspaceFrozenObservationsAndRootStream(t *testing.T) {
 	if body != before || calls != 1 {
 		t.Fatalf("open inspector changed after backing sample/root events: calls=%d\n%s", calls, body)
 	}
-	for _, want := range []string{"/repo-first", "Git: branch-first", `?? "file-first"`, "captured placement", `"A"`, "observed Edit/Write paths", "Announced intent, not success or ownership", "Shell", "delegated", "resumed history", "Non-atomic"} {
+	for _, want := range []string{"/repo-first", "Git: branch-first", `?? "file-first"`, "captured placement", `"A"`, "Observed Edit/Write intentions", "Announced intent, not success or ownership", "Shell", "delegated", "resumed history", "Non-atomic"} {
 		if !strings.Contains(stripANSIstr(body), want) {
 			t.Fatalf("missing %q: %s", want, body)
 		}
@@ -285,6 +286,9 @@ func TestWorkspaceGitMarkersFilteringAndScope(t *testing.T) {
 			t.Fatalf("missing %q:\n%s", want, plain)
 		}
 	}
+	if !strings.Contains(body, m.deps.Theme.Style("toolArgs").Render("RM ")+m.deps.Theme.Style("viewport").Bold(true).Render(`"sub/new name" ← "old name"`)+m.deps.Theme.Style("toolArgs").Render(" [observed]")) {
+		t.Fatal("rename paths must stand out from status and observation markers")
+	}
 	if strings.Contains(plain, `"../old name"`) || strings.Contains(plain, `"./nested/../new name"`) {
 		t.Fatal("matched rename observations also listed as unmatched")
 	}
@@ -297,6 +301,71 @@ func TestWorkspaceGitMarkersFilteringAndScope(t *testing.T) {
 	m = applyAll(m, tea.KeyPressMsg{Code: tea.KeyEscape})
 	if m.modal != nil {
 		t.Fatal("Esc must close rather than clear filter")
+	}
+}
+
+func TestWorkspaceInspectorPresentationRows(t *testing.T) {
+	m, _ := newQueueModel(t)
+	m.activePlacement = client.Placement{Kind: "worktree", Label: "captured"}
+	m.conv.recordFileChange("changed.go")
+	m.conv.recordFileChange("intent-only.go")
+	capturedAt, openedAt := time.Unix(123, 0), time.Unix(456, 0)
+	m.deps.WorkspaceSnapshot = func(context.Context, string) (WorkspaceSnapshot, error) {
+		return WorkspaceSnapshot{
+			Directory: "/repo", CapturedAt: capturedAt,
+			Git: &WorkspaceGitSnapshot{Root: "/repo", Branch: "topic", Files: []WorkspaceGitFile{
+				{Path: "changed.go", Index: 'M', Worktree: ' '},
+				{Path: "conflict.go", Index: 'U', Worktree: 'U', Conflicted: true},
+			}},
+		}, nil
+	}
+	m, s, load := openTestWorkspace(t, m)
+	s.openedAt = openedAt
+	m = applyAll(m, load())
+	body, _ := s.Render(124, 70)
+	plain := stripANSIstr(body)
+	for _, want := range []string{"Session context", "Git state", "Git files", "Observed Edit/Write intentions", "Unmatched observed paths", `M  "changed.go" [observed]`, `UU "conflict.go" [conflicted]`, `"intent-only.go"`} {
+		if !strings.Contains(plain, want) {
+			t.Fatalf("missing %q:\n%s", want, plain)
+		}
+	}
+	gitTime := strings.Index(plain, "Inspection captured: "+capturedAt.Format(time.RFC3339))
+	observedTime := strings.Index(plain, "Captured: "+openedAt.Format(time.RFC3339))
+	if gitTime < 0 || observedTime < 0 ||
+		strings.Index(plain, "Git state") >= strings.Index(plain, "Git files") ||
+		strings.Index(plain, "Git files") >= strings.Index(plain, "Observed Edit/Write intentions") ||
+		gitTime <= strings.Index(plain, "Git state") || gitTime >= strings.Index(plain, "Git files") ||
+		observedTime <= strings.Index(plain, "Observed Edit/Write intentions") {
+		t.Fatalf("sections are not grouped by provenance or retained their distinct timestamps:\n%s", plain)
+	}
+	for _, styled := range []string{
+		m.deps.Theme.Style("toolName").Render("Git state"),
+		m.deps.Theme.Style("toolName").Render("Git: ") + m.deps.Theme.Style("viewport").Render("topic"),
+		m.deps.Theme.Style("warning").Render("Non-atomic snapshot; may already be stale."),
+		m.deps.Theme.Style("viewport").Bold(true).Render(`"changed.go"`),
+		m.deps.Theme.Style("viewport").Bold(true).Render(`"conflict.go"`),
+		m.deps.Theme.Style("viewport").Bold(true).Render(`"intent-only.go"`),
+	} {
+		if !strings.Contains(body, styled) {
+			t.Fatalf("missing semantic style %q in %q", styled, body)
+		}
+	}
+
+	m, _ = newQueueModel(t)
+	m.deps.ConnectionMode = "connect"
+	m.deps.WorkspaceSnapshot = func(context.Context, string) (WorkspaceSnapshot, error) {
+		return WorkspaceSnapshot{Directory: "/remote"}, errors.New("failed\x1b[2J\tinspection")
+	}
+	m, s, load = openTestWorkspace(t, m)
+	m = applyAll(m, load())
+	body, _ = s.Render(30, 24)
+	plain = stripANSIstr(body)
+	if !strings.Contains(plain, "Session context") || !strings.Contains(plain, "Connection: remote") || strings.Contains(body, "\x1b[2J") || strings.Contains(body, "\t") {
+		t.Fatalf("narrow remote rendering lost identity or safety: %q", body)
+	}
+	errorText := terminaltext.ExpandTabs(terminaltext.Sanitize("Local inspection unavailable: failed\x1b[2J\tinspection"), terminaltext.DefaultTabWidth)
+	if !strings.Contains(strings.Join(s.styledRows(s.content(), 100), "\n"), m.deps.Theme.Style("errorText").Render(errorText)) {
+		t.Fatal("inspection error did not retain error styling")
 	}
 }
 
@@ -357,6 +426,9 @@ func TestWorkspaceUnavailableNonRepoAndOpaqueRemote(t *testing.T) {
 					t.Fatalf("unsafe/unauthorized display %q", bad)
 				}
 			}
+			if !strings.Contains(plain, "Captured observed paths") || strings.Contains(plain, "Unmatched observed paths") || strings.Contains(plain, "May be clean, committed") {
+				t.Fatal("uninspected observations were presented as compared with Git")
+			}
 			if tc.name != "nonrepo" && strings.Contains(plain, "Confirmed non-repository") {
 				t.Fatal("unavailable inspection claimed confirmed non-repository")
 			}
@@ -404,9 +476,9 @@ func TestWorkspaceCompactResizeInputAndScrollIsolation(t *testing.T) {
 			t.Fatalf("unsafe render at %v: %dx%d %q", size, lipgloss.Width(body), lipgloss.Height(body), body)
 		}
 	}
-	m = applyAll(m, tea.WindowSizeMsg{Width: 4, Height: 3}, tea.KeyPressMsg{Code: tea.KeyEscape})
+	m = applyAll(m, tea.WindowSizeMsg{Width: 4, Height: 3}, tea.KeyPressMsg{Code: tea.KeyF10})
 	if m.modal != nil || !m.prompt.Focused() || m.prompt.Value() != "untouched" {
-		t.Fatal("compact Esc failed to close safely")
+		t.Fatal("compact F10 failed to close safely")
 	}
 }
 
@@ -426,7 +498,7 @@ func TestWorkspacePendingInspectionCancellation(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("inspection did not start")
 	}
-	m = applyAll(m, tea.KeyPressMsg{Code: tea.KeyEscape})
+	m = applyAll(m, tea.KeyPressMsg{Code: tea.KeyF10})
 	select {
 	case late := <-result:
 		m = applyAll(m, late)

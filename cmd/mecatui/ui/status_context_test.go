@@ -20,12 +20,12 @@ func TestStatusContextDiscardsStaleSessionResult(t *testing.T) {
 	t.Cleanup(func() { _ = source.Close(context.Background()) })
 	getter := statusContextGetter{roots: map[string]string{"first": first, "second": second}}
 	m := New(Deps{Ctx: context.Background(), Theme: theme.New("aztec", theme.AztecPalette()), StatusSource: source, LocalSessionContext: getter})
-	m.activePlacement = client.Placement{Kind: "local", Label: "active-workspace"}
 
 	updated, firstCmd := m.Update(client.SessionReadyMsg{SessionID: "first"})
 	m = updated.(Model)
 	updated, secondCmd := m.Update(client.SessionReadyMsg{SessionID: "second"})
 	m = updated.(Model)
+	m = applyAll(m, client.ResolvedModelMsg{SessionID: "second", Placement: client.Placement{Kind: "local", Label: "active-workspace"}})
 	updated, _ = m.Update(statusContextMessage(t, secondCmd))
 	m = updated.(Model)
 	updated, _ = m.Update(statusContextMessage(t, firstCmd))
@@ -53,11 +53,11 @@ func TestStatusTemplateReceivesEligibleLocalContext(t *testing.T) {
 	}}, 0)
 	t.Cleanup(func() { _ = source.Close(context.Background()) })
 	m := New(Deps{Ctx: context.Background(), Theme: theme.New("aztec", theme.AztecPalette()), StatusSource: source, LocalSessionContext: statusContextGetter{roots: map[string]string{"local": root}}})
-	m.activePlacement = client.Placement{Kind: "local", Label: "active-workspace"}
 	m.width = 200
 
 	updated, contextCmd := m.Update(client.SessionReadyMsg{SessionID: "local"})
 	m = updated.(Model)
+	m = applyAll(m, client.ResolvedModelMsg{SessionID: "local", Placement: client.Placement{Kind: "local", Label: "active-workspace"}})
 	waitStatusSourceChanged(t, source)
 	updated, _ = m.Update(statusContextMessage(t, contextCmd))
 	m = updated.(Model)

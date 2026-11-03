@@ -468,8 +468,13 @@ func (m Model) renderFooter() string {
 	hk := m.helpKeyMarkings()
 	help := hk.help + " help · / commands"
 	if m.pasteGateOpen() {
-		help += " · " + hk.toolcalls + " tool calls · " + hk.expandConversation + " session details"
+		details := "session details"
+		if m.expandConversation {
+			details = "hide details"
+		}
+		help += " · " + hk.toolcalls + " tool calls · " + hk.expandConversation + " " + details
 	}
+	help = m.workspaceFooterHelp(help, hk)
 	help += " · " + hk.quit + " quit"
 	if m.phase == phaseRunning {
 		help = hk.submit + " queue · " + hk.cancel + " cancel · " + help
@@ -497,6 +502,30 @@ func (m Model) renderFooter() string {
 	}
 	footer := m.deps.Theme.Style("footer").Width(width).Render(line)
 	return footer + "\n" + m.deps.Theme.Style("muted").Render(help)
+}
+
+func (m Model) workspaceFooterHelp(help string, hk helpKeys) string {
+	if !m.pasteGateOpen() || !m.workspaceHintAvailable() {
+		return help
+	}
+	suffix := " · " + hk.quit + " quit"
+	if m.phase == phaseRunning {
+		suffix += hk.submit + " queue · " + hk.cancel + " cancel · "
+	}
+	if m.quitArmed {
+		suffix += hk.quit + " again to quit · "
+	}
+	candidates := []string{help + " · " + hk.workspace + " workspace"}
+	if m.expandConversation {
+		candidates = append(candidates, hk.help+" help · "+hk.expandConversation+" hide details · "+hk.workspace+" workspace")
+	}
+	candidates = append(candidates, hk.help+" help · "+hk.workspace+" workspace")
+	for _, candidate := range candidates {
+		if ansi.StringWidth(candidate+suffix) <= m.widthOr() {
+			return candidate
+		}
+	}
+	return help
 }
 
 // idleFooterLeft renders the footer-left for the idle/default phase, extracted

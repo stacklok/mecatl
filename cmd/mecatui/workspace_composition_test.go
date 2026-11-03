@@ -29,8 +29,53 @@ func workspaceCompositionStart(t *testing.T, m ui.Model, embedded bool) ui.Model
 	if !ok || ready.SessionID == "" {
 		t.Fatalf("session creation = %#v", ready)
 	}
-	updated, _ = updated.Update(ready)
+	updated, readyCmd := updated.Update(ready)
+	updated, _ = updated.Update(tea.WindowSizeMsg{Width: 160, Height: 70})
+	m = updated.(ui.Model)
+	if strings.Contains(ansi.Strip(m.View().Content), "f10 workspace") {
+		t.Fatal("workspace hint appeared before repository discovery")
+	}
+	if embedded {
+		// Discovery precedes the heal/live wait commands. Stop as soon as its
+		// result reaches the normal footer; never wait on subscriptions or timers.
+		remaining := 2 // Optional status context, then repository discovery.
+		m = workspaceCompositionDiscover(t, m, readyCmd, &remaining)
+		if !strings.Contains(ansi.Strip(m.View().Content), "f10 workspace") {
+			t.Fatal("clean local Git was not discoverable before F9/F10")
+		}
+	}
+	return m
+}
+
+func workspaceCompositionDiscover(t *testing.T, m ui.Model, cmd tea.Cmd, remaining *int) ui.Model {
+	t.Helper()
+	if cmd == nil || *remaining == 0 {
+		return m
+	}
+	msg := cmd()
+	if batch, ok := msg.(tea.BatchMsg); ok {
+		for _, child := range batch {
+			m = workspaceCompositionDiscover(t, m, child, remaining)
+			if strings.Contains(ansi.Strip(m.View().Content), "f10 workspace") {
+				break
+			}
+		}
+		return m
+	}
+	*remaining--
+	updated, _ := m.Update(msg)
 	return updated.(ui.Model)
+}
+
+func workspaceCompositionUnavailable(t *testing.T, m ui.Model, ready client.SessionReadyMsg) ui.Model {
+	t.Helper()
+	updated, cmd := m.Update(ready)
+	remaining := 2
+	m = workspaceCompositionDiscover(t, updated.(ui.Model), cmd, &remaining)
+	if strings.Contains(ansi.Strip(m.View().Content), "f10 workspace") {
+		t.Fatal("unavailable local context advertised Git membership")
+	}
+	return workspaceCompositionInspect(t, m, true, "Local inspection unavailable: local workspace directory unavailable")
 }
 
 func workspaceCompositionInspect(t *testing.T, m ui.Model, local bool, wants ...string) ui.Model {
@@ -49,7 +94,7 @@ func workspaceCompositionInspect(t *testing.T, m ui.Model, local bool, wants ...
 		updated, _ = updated.Update(batch[0]())
 	}
 	view := ansi.Strip(updated.View().Content)
-	for _, want := range append([]string{"workspace snapshot"}, wants...) {
+	for _, want := range append([]string{"Workspace snapshot"}, wants...) {
 		if !strings.Contains(view, want) {
 			t.Fatalf("workspace missing %q:\n%s", want, view)
 		}
@@ -81,7 +126,7 @@ func TestWorkspaceProductionComposition(t *testing.T) {
 			t.Chdir(decoy)
 			workspace := workspaceTestRepo(t)
 			workspaceTestGit(t, workspace, "branch", "-m", "composition-local")
-			workspaceTestWrite(t, workspace, "local-only-file", "untracked")
+			workspaceTestCommit(t, workspace)
 			argv := []string{"mecatui", "connect", "", "--anonymous", "--theme=aztec"}
 			if transport == "embedded" {
 				workspaceTestWrite(t, os.Getenv("XDG_CONFIG_HOME"), "mecatl/settings.yaml", "execution: {default_placement: "+app.PlacementHostLocal+"}\n")
@@ -89,13 +134,20 @@ func TestWorkspaceProductionComposition(t *testing.T) {
 			} else {
 				argv[2] = startStartupCompatibilityServer(t, &startupCompatibilityServer{major: 1})
 			}
-			ran := false
-			err := runWithOptions(argv, runOptions{runProgram: func(ctx context.Context, m ui.Model) (tea.Model, error) {
+			ran, observedDeps := false, false
+			err := runWithOptions(argv, runOptions{uiDepsReady: func(deps ui.Deps) {
+				observedDeps = true
+				local := transport == "embedded"
+				if (deps.WorkspaceRepository != nil) != local || (deps.WorkspaceSnapshot != nil) != local {
+					t.Fatal("workspace collaborators do not match transport authority")
+				}
+			}, runProgram: func(ctx context.Context, m ui.Model) (tea.Model, error) {
 				ran = true
 				m = workspaceCompositionStart(t, m, transport == "embedded")
 				if transport == "connect" {
 					return workspaceCompositionInspect(t, m, false, "Connection: remote", "Local inspection unavailable"), nil
 				}
+				workspaceTestWrite(t, workspace, "local-only-file", "untracked")
 				m = workspaceCompositionInspect(t, m, true, "Directory: ", filepath.Base(workspace)+`"`, "Git: composition-local", `?? "local-only-file"`)
 				targetID := m.ActiveSessionID()
 				sockets, err := filepath.Glob(filepath.Join(os.Getenv("XDG_RUNTIME_DIR"), "mecatui-*", "mecated.sock"))
@@ -108,23 +160,20 @@ func TestWorkspaceProductionComposition(t *testing.T) {
 				}
 				defer func() { _ = cl.Close() }()
 				// Keep the production collaborator, but resolve a missing session.
-				updated, _ := m.Update(client.SessionReadyMsg{SessionID: "missing-session"})
-				m = workspaceCompositionInspect(t, updated.(ui.Model), true, "Local inspection unavailable: local workspace directory unavailable")
+				m = workspaceCompositionUnavailable(t, m, client.SessionReadyMsg{SessionID: "missing-session"})
 				id, caps, resolved, err := cl.CreateSessionWithExecution(ctx, client.ModeFromString("default"), client.ModelSelection{}, client.ExecutionChoice{None: true})
 				if err != nil {
 					t.Fatal(err)
 				}
-				updated, _ = m.Update(client.SessionReadyMsg{SessionID: id, Capabilities: caps, ResolvedModel: resolved})
-				m = workspaceCompositionInspect(t, updated.(ui.Model), true, "Local inspection unavailable: local workspace directory unavailable")
+				m = workspaceCompositionUnavailable(t, m, client.SessionReadyMsg{SessionID: id, Capabilities: caps, ResolvedModel: resolved})
 				id, _, caps, resolved, err = cl.CreateDebugSession(ctx, targetID, client.ModeFromString("default"), client.ModelSelection{})
 				if err != nil {
 					t.Fatal(err)
 				}
-				updated, _ = m.Update(client.SessionReadyMsg{SessionID: id, Capabilities: caps, ResolvedModel: resolved})
-				return workspaceCompositionInspect(t, updated.(ui.Model), true, "Local inspection unavailable: local workspace directory unavailable"), nil
+				return workspaceCompositionUnavailable(t, m, client.SessionReadyMsg{SessionID: id, Capabilities: caps, ResolvedModel: resolved}), nil
 			}})
-			if err != nil || !ran {
-				t.Fatalf("production startup: %v; program ran=%v", err, ran)
+			if err != nil || !ran || !observedDeps {
+				t.Fatalf("production startup: %v; program ran=%v deps observed=%v", err, ran, observedDeps)
 			}
 		})
 	}

@@ -41,7 +41,7 @@ func TestWorkspaceInviteBoundedProjection(t *testing.T) {
 			if strings.Contains(many, "not-rendered-path") {
 				t.Fatal("F9 enumerated paths")
 			}
-			if width == 100 && !strings.Contains(many, "ctrl+f12 · /workspace") {
+			if width == 100 && !strings.Contains(many, "ctrl+f12 workspace · /workspace") {
 				t.Fatal("missing effective remapped key and command fallback")
 			}
 			frame := m.conversationView.frame

@@ -15,7 +15,7 @@ import (
 func TestWorkspaceEntryPoints(t *testing.T) {
 	for _, running := range []bool{false, true} {
 		for _, steering := range []bool{false, true} {
-			for _, route := range []string{"typed", "palette", "key", "remapped key"} {
+			for _, route := range []string{"typed", "palette", "key", "remapped ctrl+f12", "remapped ctrl+f13"} {
 				for _, serverCommands := range []bool{false, true} {
 					t.Run(fmt.Sprintf("running=%t/steer=%t/%s/server=%t", running, steering, route, serverCommands), func(t *testing.T) {
 						m, send := builtinDispatchModel(t, client.Capabilities{Steer: steering, SlashCommands: serverCommands}, false)
@@ -36,6 +36,7 @@ func TestWorkspaceEntryPoints(t *testing.T) {
 						m.palette.commands = []client.Command{{Name: "workspace", Description: "server collision"}}
 						m.palette.fetched = true
 						var cmd tea.Cmd
+						closeKey := tea.KeyPressMsg{Code: tea.KeyEscape}
 						switch route {
 						case "typed":
 							m.prompt.Rewrite(" /WORKSPACE ")
@@ -46,17 +47,21 @@ func TestWorkspaceEntryPoints(t *testing.T) {
 								t.Fatalf("missing unconditional builtin palette row: %+v", m.palette)
 							}
 							m, cmd = pressEnter(t, m)
-						case "key", "remapped key":
+						case "key", "remapped ctrl+f12", "remapped ctrl+f13":
 							m.prompt.Rewrite("unsent draft")
 							key := tea.KeyPressMsg{Code: tea.KeyF10}
-							if route == "remapped key" {
+							if strings.HasPrefix(route, "remapped") {
 								m.keys = applyKeyOverrides(m.keys, map[string][]string{"Workspace": {"ctrl+f12", "ctrl+f13"}})
 								m, _ = pressKey(m, key)
 								if m.modal != nil {
 									t.Fatal("default key remained active after rebind")
 								}
-								key = tea.KeyPressMsg{Code: tea.KeyF13, Mod: tea.ModCtrl}
+								key = tea.KeyPressMsg{Code: tea.KeyF12, Mod: tea.ModCtrl}
+								if route == "remapped ctrl+f13" {
+									key.Code = tea.KeyF13
+								}
 							}
+							closeKey = key
 							m, cmd = pressKey(m, key)
 						}
 						s, ok := m.modal.(*workspaceState)
@@ -67,7 +72,7 @@ func TestWorkspaceEntryPoints(t *testing.T) {
 							t.Fatal("opening changed run, queue, steer, or prompt ownership")
 						}
 						wantDraft := ""
-						if strings.Contains(route, "key") {
+						if route == "key" || strings.HasPrefix(route, "remapped") {
 							wantDraft = "unsent draft"
 						}
 						if m.prompt.Value() != wantDraft {
@@ -80,7 +85,25 @@ func TestWorkspaceEntryPoints(t *testing.T) {
 						if calls != 1 {
 							t.Fatalf("snapshot calls = %d", calls)
 						}
-						m, _ = pressKey(m, tea.KeyPressMsg{Code: tea.KeyEscape})
+						body, _ := s.Render(120, 60)
+						closeHint := "f10 / esc: close"
+						if strings.HasPrefix(route, "remapped") {
+							closeHint = "ctrl+f12 / esc: close"
+						}
+						if !strings.Contains(stripANSIstr(body), closeHint) {
+							t.Fatalf("workspace footer lacks live toggle/close hint: %q", stripANSIstr(body))
+						}
+						m = applyAll(m, tea.PasteMsg{Content: "nonempty filter"})
+						if s.filter.Value() != "nonempty filter" {
+							t.Fatalf("workspace filter = %q, want nonempty filter", s.filter.Value())
+						}
+						if strings.HasPrefix(route, "remapped") {
+							m, _ = pressKey(m, tea.KeyPressMsg{Code: tea.KeyF10})
+							if m.modal != s {
+								t.Fatal("default key closed workspace after rebind")
+							}
+						}
+						m, _ = pressKey(m, closeKey)
 						if m.modal != nil || !s.closed || m.phase != ph || ctx.Err() != nil || m.prompt.Value() != wantDraft || !m.prompt.Focused() || !reflect.DeepEqual(m.queued, []string{"queued follow-up"}) || m.steer != steer || m.queuePaused != "paused" || len(send.frames()) != 0 {
 							t.Fatal("opening/closing submitted, cancelled, queued, steered, or changed the draft")
 						}

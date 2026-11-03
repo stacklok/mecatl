@@ -66,6 +66,14 @@ func workspaceTestCommit(t *testing.T, dir string) {
 
 func workspaceTestTrusted(context.Context, string, string) bool { return true }
 
+func workspaceSnapshotForConfig(cfg config, getter client.LocalSessionContextGetter, sessions client.SessionGetter) ui.WorkspaceSnapshotFunc {
+	snapshotter := workspaceSnapshotterForConfig(cfg, getter, sessions)
+	if snapshotter == nil {
+		return nil
+	}
+	return snapshotter.snapshot
+}
+
 func workspaceTestSnapshot(t *testing.T, dir string) ui.WorkspaceSnapshot {
 	t.Helper()
 	fn := workspaceSnapshotForConfig(config{transportMode: modeLocal, workspace: dir, trustProject: true}, workspaceRootGetter(func(_ context.Context, id string) (string, error) {
@@ -394,11 +402,14 @@ func TestWorkspaceSnapshotCommandFailures(t *testing.T) {
 							}
 						}()
 					}
+					var start time.Time
 					s.command = func(ctx context.Context, name string, args ...string) *exec.Cmd {
 						invoked = append(invoked, args[1])
 						if args[1] != stage {
 							return workspaceHelperCommand("environment")(ctx, name, args...)
 						}
+						// Bound target cleanup, excluding prerequisite helper startup and race-runtime exits.
+						start = time.Now()
 						if scenario == "missing-git" {
 							return exec.CommandContext(ctx, name, args...)
 						}
@@ -408,7 +419,6 @@ func TestWorkspaceSnapshotCommandFailures(t *testing.T) {
 						}
 						return process
 					}
-					start := time.Now()
 					got, err := s.snapshot(ctx, "captured")
 					if readiness != nil {
 						_ = readyWriter.Close()

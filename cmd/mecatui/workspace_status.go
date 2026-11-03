@@ -30,7 +30,7 @@ var errWorkspaceUntrusted = errors.New("git inspection unavailable: local worksp
 var errWorkspaceFilters = errors.New("git inspection unavailable: repository uses clean/process filters")
 
 // The transport, not the presence of a local-context client, grants this seam.
-func workspaceSnapshotForConfig(cfg config, getter client.LocalSessionContextGetter, sessions client.SessionGetter) ui.WorkspaceSnapshotFunc {
+func workspaceSnapshotterForConfig(cfg config, getter client.LocalSessionContextGetter, sessions client.SessionGetter) *workspaceSnapshotter {
 	if cfg.transportMode != modeLocal {
 		return nil
 	}
@@ -55,7 +55,7 @@ func workspaceSnapshotForConfig(cfg config, getter client.LocalSessionContextGet
 		}
 		return app.ResolveTrust(app.Config{Workspace: dir}).Trusted
 	}
-	return workspaceSnapshotter{getter: getter, trusted: trusted, command: exec.CommandContext}.snapshot
+	return &workspaceSnapshotter{getter: getter, trusted: trusted, command: exec.CommandContext}
 }
 
 type workspaceSnapshotter struct {
@@ -112,25 +112,47 @@ func (s workspaceSnapshotter) checkTrust(ctx context.Context, sessionID, dir str
 	return nil
 }
 
-func (s workspaceSnapshotter) inspectGit(ctx context.Context, dir string) (*ui.WorkspaceGitSnapshot, error) {
+func (s workspaceSnapshotter) repository(ctx context.Context, sessionID string) (bool, error) {
+	ctx, cancel := context.WithTimeout(ctx, workspaceSnapshotTimeout)
+	defer cancel()
+	dir, err := s.directory(ctx, sessionID)
+	if err != nil {
+		return false, err
+	}
+	if err := s.checkTrust(ctx, sessionID, dir); err != nil {
+		return false, err
+	}
+	root, err := s.repositoryRoot(ctx, dir)
+	return root != "" && err == nil, err
+}
+
+func (s workspaceSnapshotter) repositoryRoot(ctx context.Context, dir string) (string, error) {
 	root, stderr, err := s.git(ctx, dir, "--no-optional-locks", "rev-parse", "--show-toplevel")
 	if err != nil {
 		var exit *exec.ExitError
 		// Do not classify permissions, safe.directory, bare repositories, or other
 		// failures as non-repositories. LC_ALL=C makes this one diagnosis stable.
 		if ctx.Err() == nil && errors.As(err, &exit) && exit.ExitCode() == 128 && workspaceNotRepository(string(stderr)) {
-			return nil, nil
+			return "", nil
 		}
-		return nil, workspaceCommandError(ctx, err)
+		return "", workspaceCommandError(ctx, err)
 	}
 	// rev-parse emits the raw path followed by ONE newline, not a quoted line.
 	// TrimSpace would corrupt valid directory names ending in whitespace.
 	if !bytes.HasSuffix(root, []byte{'\n'}) {
-		return nil, errWorkspaceFormat
+		return "", errWorkspaceFormat
 	}
 	repoRoot := string(root[:len(root)-1])
 	if !filepath.IsAbs(repoRoot) || strings.IndexByte(repoRoot, 0) >= 0 {
-		return nil, errWorkspaceFormat
+		return "", errWorkspaceFormat
+	}
+	return repoRoot, nil
+}
+
+func (s workspaceSnapshotter) inspectGit(ctx context.Context, dir string) (*ui.WorkspaceGitSnapshot, error) {
+	repoRoot, err := s.repositoryRoot(ctx, dir)
+	if err != nil || repoRoot == "" {
+		return nil, err
 	}
 	// Status may run clean/process filters while hashing files. Inspect effective
 	// config (including includes/worktree config) without disabling those filters

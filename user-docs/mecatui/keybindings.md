@@ -23,7 +23,7 @@ bindings and dims features that the connected server does not provide.
 |`esc`|Clear an active selection first. While work is running, cancel directly and preserve the draft, queued follow-ups, and steer. While idle with a paused queue, clear that queue but preserve the draft.|
 |`ctrl+t`|Open `/toolcalls` for the current session; approval requests use it for details.|
 |`f9`|Reveal conversation details: reasoning, turn stats, permanent error details, benign guardrail notices, and individual settled tool-call summaries. When observations are available, it points to the workspace inspector. Use `ctrl+t` for tool arguments and results.|
-|`f10` or `/workspace`|Open a read-only workspace snapshot and observed Edit/Write paths. This also works while a run is active; `esc` closes the snapshot without cancelling the run.|
+|`f10` or `/workspace`|Open a read-only workspace snapshot and observed Edit/Write paths. This also works while a run is active; `f10` or `esc` closes the snapshot without cancelling the run.|
 |`shift+tab`|Cycle every permission mode: **default → plan → accept-edits → auto → yolo → default**. A mode above the server's ceiling keeps the current mode and your draft, and the footer says how to make it available. In an MCP prompt argument form, it instead moves to the previous required field.|
 |`ctrl+g`|Select all prompt text.|
 |`ctrl+y`|Copy the active prompt or visible conversation selection.|

@@ -542,7 +542,7 @@ func (m Model) startupResumeRefreshRetryCmd(attempt int) tea.Cmd {
 func (m Model) finishStartupResume() (tea.Model, tea.Cmd) {
 	m.submitStatusLine()
 	cmd := (&m).maybeKittyTransmit()
-	if contextCmd := m.refreshStatusContextCmd(); contextCmd != nil {
+	if contextCmd := m.refreshSessionContextCmd(); contextCmd != nil {
 		cmd = tea.Batch(cmd, contextCmd)
 	}
 	if liveCmd := (&m).armLiveFeed(); liveCmd != nil {
@@ -614,7 +614,7 @@ func (m Model) applySessionReady(msg client.SessionReadyMsg) (tea.Model, tea.Cmd
 	// sibling return operand leaves the copy order UNSPECIFIED (see markDirty's
 	// doc) — the cmd is taken first so the returned model carries the mutation.
 	cmd := (&m).maybeKittyTransmit()
-	if contextCmd := m.refreshStatusContextCmd(); contextCmd != nil {
+	if contextCmd := m.refreshSessionContextCmd(); contextCmd != nil {
 		cmd = tea.Batch(cmd, contextCmd)
 	}
 	// Self-heal the terminal window title on the carryover/fork/adopt paths where
@@ -787,6 +787,11 @@ func (m Model) updateLifecycle(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 		focusCmd := m.prompt.Focus()
 		m.refreshView()
 		return m, tea.Batch(focusCmd, (&m).armLiveFeed()), true
+	case workspaceRepositoryMsg:
+		if msg.owner != nil && msg.owner == m.workspaceRepository && msg.sessionID == m.sessionID && msg.owner.ctx.Err() == nil {
+			m.workspaceInGit = msg.inGit
+		}
+		return m, nil, true
 	case statusContextMsg:
 		if msg.sessionID == m.sessionID {
 			m.statusContextRoot = msg.root
@@ -844,9 +849,9 @@ func (m Model) updateLifecycle(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 			return m, nil, true
 		}
 		m = m.resetSession()
-		m.activePlacement = msg.placement
 		mm, bindCmd, handled := m.applySessionReady(msg.ready)
 		m = mm.(Model)
+		m.activePlacement = msg.placement
 		m.statusMsg = m.deps.Theme.Style("success").Render("worktree switched")
 		m.refreshView()
 		return m, tea.Batch(bindCmd, m.closeSessionCmd(msg.oldID)), handled
@@ -877,9 +882,9 @@ func (m Model) updateLifecycle(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 			m = m.endRun("")
 		}
 		m = m.resetSession()
-		m.activePlacement = msg.placement
 		mm, bindCmd, handled := m.applySessionReady(msg.ready)
 		m = mm.(Model)
+		m.activePlacement = msg.placement
 		m.freshSessionBinding = true
 		m.sessionState = sessionStateIdle
 		// The replacement was created with desiredMode, so its ready echo confirms
@@ -2756,6 +2761,7 @@ func (m Model) retryPendingModeCmd() tea.Cmd {
 // staged input clears it (no arm); a first press on an empty prompt arms the guard,
 // shows the hint, and schedules the timed disarm. See onKey's doc for the rationale.
 func (m Model) quitNow() (tea.Model, tea.Cmd) {
+	m.resetWorkspaceRepository()
 	m.admissionSubmission = nil
 	(&m).retirePendingApprovalRecovery()
 	if m.cancelRun != nil {
