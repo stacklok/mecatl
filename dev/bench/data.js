@@ -401175,6 +401175,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1793740223696,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "6d76b8b9727f15e3757cc978ef20eca1baf81b4c",
+          "message": "feat(mecatui): add workspace snapshot inspector (#2676)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-11-03T23:18:14Z",
+          "tree_id": "5c52bd00aa6165038d0d0d203266f28123ae28eb",
+          "url": "https://github.com/stacklok/mecatl/commit/6d76b8b9727f15e3757cc978ef20eca1baf81b4c"
+        },
+        "date": 1793748591605,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 16137,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12896,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 794,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -522965,6 +523004,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1793748587312,
+  "lastUpdate": 1793748592662,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
