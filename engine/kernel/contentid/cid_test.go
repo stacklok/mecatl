@@ -5,6 +5,7 @@ import (
 	"encoding/base32"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -25,7 +26,7 @@ func TestSumAndVerify(t *testing.T) {
 			data := []byte(tt.data)
 			before := bytes.Clone(data)
 			v := contentid.Sum(data)
-			if v.String() != tt.text {
+			if v.String() != tt.text || fmt.Sprint(v) != tt.text {
 				t.Fatalf("Sum = %s; want %s", v, tt.text)
 			}
 			binary := v.Binary()

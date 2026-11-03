@@ -9,6 +9,8 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/stacklok/mecatl/engine/kernel/codec"
+	"github.com/stacklok/mecatl/engine/kernel/contentid"
 	"github.com/stacklok/mecatl/engine/kernel/history"
 	"github.com/stacklok/mecatl/engine/kernel/history/format"
 )
@@ -17,7 +19,7 @@ const opaqueKind = "opaque"
 
 func policy() history.Policy {
 	return history.Policy{
-		CommitLimits: format.Limits{MaxCommitBytes: 4096, MaxRecords: 4, MaxKindBytes: 32, MaxPayloadBytes: 2048},
+		CommitLimits: codec.Limits{MaxBytes: 4096, MaxArrayElements: 4, MaxStringBytes: 32, MaxByteStringBytes: 2048, MaxMapPairs: 8, MaxDepth: 8, MaxNodes: 128, MaxCollectionElements: 64},
 		RetryWindow:  2, MaxPageBytes: 16384, MaxPageCommits: 16,
 	}
 }
@@ -90,15 +92,15 @@ func encoded(t *testing.T, id history.HistoryID, parent history.CommitRef, paylo
 		Records: []format.Record{{Kind: opaqueKind, KindVersion: 7, Payload: []byte(payload)}},
 	}
 	if parent.Sequence == 0 {
-		c.HistoryID = id
+		c.HistoryID = &id
 	} else {
-		c.Parent = parent.CID
+		c.Parent = new(parent.CID)
 	}
-	_, cid, err := format.EncodeCommit(c, policy().CommitLimits)
+	b, err := codec.Encode(c, policy().CommitLimits)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return c, history.CommitRef{Sequence: c.Sequence, CID: cid}
+	return c, history.CommitRef{Sequence: c.Sequence, CID: contentid.Sum(b)}
 }
 
 func wantResolution(t *testing.T, got history.Resolution, err error, status history.Status, proposal, head history.CommitRef) {
@@ -175,11 +177,11 @@ func appendResolveAndRetryWindow(t *testing.T, factory historyFactory) {
 	wantResolution(t, got, err, history.StatusAccepted, r1, r2)
 	appendAccepted(t, s, id, third, r3)
 	for _, b := range []format.Commit{root, otherRoot} {
-		_, proposal, decodeErr := format.EncodeCommit(b, policy().CommitLimits)
+		data, decodeErr := codec.Encode(b, policy().CommitLimits)
 		if decodeErr != nil {
 			t.Fatal(decodeErr)
 		}
-		ref := history.CommitRef{Sequence: 1, CID: proposal}
+		ref := history.CommitRef{Sequence: 1, CID: contentid.Sum(data)}
 		got, err = s.Append(ctx, id, b)
 		wantResolution(t, got, err, history.StatusRetryExpired, ref, r3)
 		got, err = s.Resolve(ctx, id, ref)
@@ -365,7 +367,7 @@ func invalidInputsAndMissingHistory(t *testing.T, factory historyFactory) {
 		b  format.Commit
 	}{
 		{history.HistoryID{}, b}, {history.NewHistoryID(), b}, {id, format.Commit{}},
-		{id, format.Commit{FormatVersion: 2, HistoryID: id, Sequence: 1, Records: b.Records}},
+		{id, format.Commit{FormatVersion: 2, HistoryID: &id, Sequence: 1, Records: b.Records}},
 	} {
 		got, err := s.Append(ctx, input.id, input.b)
 		if !errors.Is(err, history.ErrInvalid) || got != (history.Resolution{}) || bytes.Contains([]byte(err.Error()), []byte("private-payload")) {
@@ -393,7 +395,7 @@ func invalidInputsAndMissingHistory(t *testing.T, factory historyFactory) {
 		func(r *history.ReadRequest) { r.Through = history.CommitRef{} },
 		func(r *history.ReadRequest) { r.Through.Sequence = 0 },
 		func(r *history.ReadRequest) { r.Through.Sequence = -1 },
-		func(r *history.ReadRequest) { r.Through.CID = format.CID{} },
+		func(r *history.ReadRequest) { r.Through.CID = contentid.CID{} },
 		func(r *history.ReadRequest) { r.Through = foreign },
 		func(r *history.ReadRequest) { r.Through.Sequence = 2 },
 		func(r *history.ReadRequest) { r.MaxCommits = 0 },

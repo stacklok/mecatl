@@ -429,18 +429,13 @@ func TestReaderIndependentOfAtmosGlobals(t *testing.T) {
 
 func TestRuntimeConcurrentReadOnlyPolicy(t *testing.T) {
 	l := testLimits()
-	l.Named = map[string]int{"cap": 1, "ignored": -1}
 	data := []byte{0x61, 'x'}
 	var wg sync.WaitGroup
 	errs := make(chan error, 16)
 	for i := 0; i < cap(errs); i++ {
 		wg.Go(func() {
 			for j := 0; j < 100; j++ {
-				maximum, err := l.NamedLimit("cap")
-				if err != nil {
-					errs <- err
-					return
-				}
+				const maximum = 1
 				b, err := NewBudget(l)
 				if err != nil {
 					errs <- err

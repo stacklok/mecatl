@@ -13,7 +13,8 @@ import (
 // through all reads and Done. Returned strings and bytes own storage. Copying forks
 // its cursor/accounting; pass by pointer inside one operation. Errors are explicit,
 // not sticky; reads return zero results on failure. Discard the reader and partial
-// DTO after any error. No cursor rollback is promised.
+// DTO after any error. No cursor rollback is promised. Reads and Done on a nil
+// or zero Reader return ErrInvalidLimits.
 // Generated callers own schema checks, key ordering, and exact child traversal.
 type Reader struct {
 	data   []byte
@@ -21,11 +22,9 @@ type Reader struct {
 	budget Budget
 }
 
-// NewReader validates numeric globals before checking complete input size. It
-// neither scans nor clones input. Generated callers must resolve all referenced
-// Named caps BEFORE calling this constructor, even for absent optional fields.
-// Input/policy must remain stable; the dictionary is neither retained nor scanned.
-// Failure returns a zero Reader, never partially initialized state.
+// NewReader validates all global policy before checking complete input size. It
+// neither scans nor clones input. Failure returns a zero Reader, never partially
+// initialized state.
 func NewReader(data []byte, limits Limits) (Reader, error) {
 	budget, err := NewBudget(limits)
 	if err != nil {
@@ -40,7 +39,7 @@ func NewReader(data []byte, limits Limits) (Reader, error) {
 // header uses only Atmos's qualified raw header primitive: minimal, definite
 // headers without mutable dependency-global policies or typed integer narrowing.
 func (r *Reader) header() (byte, uint64, error) {
-	if r.budget.limits.MaxBytes == 0 {
+	if r == nil || r.budget.limits.MaxBytes == 0 {
 		return 0, 0, ErrInvalidLimits
 	}
 	major, n, next, err := cbor.ReadHeader(r.data, r.pos)
@@ -65,6 +64,9 @@ func (r *Reader) typedHeader(want byte) (uint64, error) {
 
 // Bool reads exactly canonical false/true and accounts one scalar at depth.
 func (r *Reader) Bool(depth int) (bool, error) {
+	if r == nil {
+		return false, ErrInvalidLimits
+	}
 	if err := r.budget.CheckScalar(depth); err != nil {
 		return false, err
 	}
@@ -112,7 +114,7 @@ func (r *Reader) Uint(depth int) (uint64, error) {
 // length bounds an untrusted declaration before converting it to machine int.
 // Field and global caps are positive. It does not inspect scalar contents.
 func (r *Reader) length(major byte, fieldMax, globalMax int) (int, error) {
-	if fieldMax <= 0 || r.budget.limits.MaxBytes == 0 {
+	if r == nil || fieldMax <= 0 || r.budget.limits.MaxBytes == 0 {
 		return 0, ErrInvalidLimits
 	}
 	n, err := r.typedHeader(major)
@@ -151,6 +153,9 @@ func (r *Reader) scalar(major byte, depth, fieldMax, globalMax, exactLength int)
 // copy. Tiny results do not retain the whole input. fieldMax is positive; pass
 // MaxStringBytes when untagged. This also reads and accounts map/schema keys.
 func (r *Reader) String(depth, fieldMax int) (string, error) {
+	if r == nil {
+		return "", ErrInvalidLimits
+	}
 	v, err := r.scalar(3, depth, fieldMax, r.budget.limits.MaxStringBytes, -1)
 	if err != nil {
 		return "", err
@@ -179,6 +184,9 @@ func (r *Reader) FixedBytes(depth, fieldMax, length int) ([]byte, error) {
 }
 
 func (r *Reader) bytes(depth, fieldMax, exactLength int) ([]byte, error) {
+	if r == nil {
+		return nil, ErrInvalidLimits
+	}
 	v, err := r.scalar(2, depth, fieldMax, r.budget.limits.MaxByteStringBytes, exactLength)
 	if err != nil {
 		return nil, err
@@ -208,6 +216,9 @@ func (r *Reader) collection(major byte, depth, fieldMax, globalMax, nodesPerItem
 // before typed allocation. fieldMax is positive; pass MaxArrayElements when
 // untagged. Read exactly the returned count of elements at depth+1.
 func (r *Reader) Array(depth, fieldMax int) (int, error) {
+	if r == nil {
+		return 0, ErrInvalidLimits
+	}
 	return r.collection(4, depth, fieldMax, r.budget.limits.MaxArrayElements, 1)
 }
 
@@ -216,13 +227,16 @@ func (r *Reader) Array(depth, fieldMax int) (int, error) {
 // MaxMapPairs when untagged. Read exactly count keys and values at depth+1;
 // generated code rejects unknown/missing/duplicate/unordered keys itself.
 func (r *Reader) Map(depth, fieldMax int) (int, error) {
+	if r == nil {
+		return 0, ErrInvalidLimits
+	}
 	return r.collection(5, depth, fieldMax, r.budget.limits.MaxMapPairs, 2)
 }
 
 // Done requires exactly one fully traversed value and no trailing input. It does
 // not prove schema validity or replace generated presence/order/range checks.
 func (r *Reader) Done() error {
-	if r.budget.limits.MaxBytes == 0 {
+	if r == nil || r.budget.limits.MaxBytes == 0 {
 		return ErrInvalidLimits
 	}
 	if r.pos != len(r.data) || r.budget.visited == 0 || r.budget.visited != r.budget.nodes {

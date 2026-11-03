@@ -41,9 +41,9 @@ func fuzzQualification[T any](t *testing.T, data []byte, mode uint8,
 	case 2:
 		l.MaxNodes, l.MaxCollectionElements = 12, 5
 	case 3:
-		l.Named["detail"] = 0 // referenced even when nested entries are absent
+		l.MaxStringBytes = 0 // global policy is validated before reading any input
 	case 4:
-		l.Named["payload"], l.MaxArrayElements, l.MaxByteStringBytes = 1, 1, 3
+		l.MaxArrayElements, l.MaxByteStringBytes = 1, 3
 	case 5:
 		l.MaxDepth = 1
 	}
@@ -93,7 +93,7 @@ func FuzzSamplePersistence(f *testing.F) {
 		"ab6269381800626f6bf46275380063693136006369333200636936340063753136006375333200637536340065666978656443000000656c6162656c60",
 		"ab62693800626f6bf462753800636931360063693332006369363400637531360063753332006375363400656669786564420000656c6162656c60")
 	f.Fuzz(func(t *testing.T, data []byte, mode uint8) {
-		fuzzQualification(t, data, mode, fixture.DecodeSample, fixture.CheckSample, fixture.EncodeSample, fixture.Sample.Clone, fixture.Sample.Equal)
+		fuzzQualification(t, data, mode, codec.Decode[fixture.Sample], codec.Check[fixture.Sample], codec.Encode[fixture.Sample], fixture.Sample.Clone, fixture.Sample.Equal)
 	})
 }
 
@@ -104,6 +104,6 @@ func FuzzCatalogPersistence(f *testing.F) {
 		"a165657874726100",
 		"a4656e616d65738067656e7472696573a1616181f6677061796c6f61644068726571756972656440")
 	f.Fuzz(func(t *testing.T, data []byte, mode uint8) {
-		fuzzQualification(t, data, mode, fixture.DecodeCatalog, fixture.CheckCatalog, fixture.EncodeCatalog, fixture.Catalog.Clone, fixture.Catalog.Equal)
+		fuzzQualification(t, data, mode, codec.Decode[fixture.Catalog], codec.Check[fixture.Catalog], codec.Encode[fixture.Catalog], fixture.Catalog.Clone, fixture.Catalog.Equal)
 	})
 }

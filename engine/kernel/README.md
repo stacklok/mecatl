@@ -3,15 +3,18 @@
 This directory contains the isolated kernel experiment alongside the existing
 runtime. `history/id` supplies the strongly typed `HistoryID` using the shared
 [`id`](../id/id.go) utility. `history` re-exports that type and retains its
-constructor/parser entry points. `history/format` supplies opaque, comparable
-commit CIDs with strict text parsing and formatting, plus mutable `Commit` and
-`Record` persistence DTOs. Their `Clone` methods detach nested mutable storage;
-`Equal` compares data with nil and empty slices equivalent. Neither operation
-validates or freezes the DTOs. `Validate` checks the data contract independently
-of resource policy. `EncodeCommit` and `DecodeCommit` enforce canonical v1
-DAG-CBOR and explicit positive byte/count limits, returning owned data and the
-CID of the exact encoded bytes. Unknown record kind/version payloads remain
-opaque; valid encoding proves neither membership nor acceptance.
+constructor/parser entry points. `contentid` supplies opaque, comparable commit
+CIDs with strict text parsing and formatting. `history/format` supplies mutable
+`Commit` and `Record` persistence DTOs. Their generated `Clone` methods detach
+identity pointers and nested mutable storage; `Equal` compares data with nil and
+empty slices equivalent while distinguishing absent and present pointers. Neither
+operation validates or freezes the DTOs. `Validate` checks the data contract
+independently of resource policy. Shared `codec.Encode` and `codec.Decode` enforce
+canonical v1 DAG-CBOR and explicit positive resource limits; History hashes and
+verifies exact bytes with `contentid`. Roots omit parent; successors omit history
+ID, and present-zero identities and explicit null are invalid. Unknown record
+kind/version payloads remain opaque; valid encoding proves neither membership
+nor acceptance.
 
 `history.History` implements DTO-facing append, retry resolution, and bounded
 reads through an accepted head. `Identify` derives a proposal reference locally
@@ -29,11 +32,11 @@ backend and reusable conformance checks. The owning Go declarations describe
 operation and ownership semantics. There is no execution facade here; production
 entry points continue to use the existing engine.
 
-`history` imports both `history/format` and `history/id`; the remaining dependency
-direction is `history/format` → `history/id` → `engine/id`. Format also delegates
-fixed-profile CID operations to the standard-library-only `contentid` leaf while
-retaining its distinct public `format.CID` type. Format and `codec` use Atmos's
-`cbor` primitives; their imported dependency closures are standard-library-only.
+`history` imports `history/format`, `history/id`, `contentid`, and `codec`;
+format imports the identity owners and composes their generated methods over the
+identity-free `codec` runtime. The history identity depends on `engine/id` and
+`codec`. Format and `codec` use Atmos's `cbor` primitives; the runtime's remaining
+dependency closure is standard-library-only.
 The history identity leaf supplies strongly typed history identities to format
 DTOs without importing higher-level history contracts. These packages do
 not depend on the legacy session aggregate, model providers, or host composition.
@@ -45,8 +48,9 @@ provides historical design context. Follow the scoped
 
 `codec` supplies explicit operational budgets and strict owning CBOR primitives
 for generated DTO codecs. `contentid` derives and verifies fixed-profile CIDs
-from exact bytes. The existing history envelope remains handwritten; neither
-package integrates the isolated kernel into production execution.
+from exact bytes. History's generated envelope composes the same runtime and
+identity-owner methods; none of these packages integrates the isolated kernel
+into production execution.
 
 The [generator guide](../../internal/cborgen/README.md) owns supported Go types,
 `cbor`/`cborlimit` tags, source-local `go:generate` declarations, generated APIs,

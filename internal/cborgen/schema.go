@@ -16,7 +16,6 @@ type schema struct {
 	nodes  []*shape
 	byType map[types.Type]*shape
 	roots  []*shape
-	names  []string
 }
 
 type shapeKind uint8
@@ -32,28 +31,31 @@ const (
 	shapeBytesArray
 	shapeMap
 	shapeStruct
+	shapeOwner
 )
 
 // shape owns one concrete helper type and its supported underlying vocabulary.
 // wire marks nodes reached by persistence; all nodes participate in value methods.
 type shape struct {
-	typ       types.Type
-	id        int
-	kind      shapeKind
-	bits      int
-	length    int64
-	elem, key *shape
-	fields    []field
-	wire      bool
+	typ            types.Type
+	id             int
+	kind           shapeKind
+	bits           int
+	length         int64
+	elem, key      *shape
+	fields         []field
+	wire           bool
+	validator      string
+	representation string
 }
 
 // field keeps declaration order for whole-value helpers, and explicit wire metadata
-// for separately sorted persistence traversal. cap/ref are mutually exclusive.
+// for separately sorted persistence traversal.
 type field struct {
 	name, wireName     string
 	value              *shape
 	optional, excluded bool
-	cap, ref           string
+	cap                string
 }
 
 func buildSchema(loaded *Loaded) (*schema, error) {
@@ -70,8 +72,6 @@ func buildSchema(loaded *Loaded) (*schema, error) {
 			return nil, fmt.Errorf("%s: %w", loaded.Package.Fset.Position(root.typ.(*types.Named).Obj().Pos()), err)
 		}
 	}
-	slices.Sort(s.names)
-	s.names = slices.Compact(s.names)
 	return s, nil
 }
 
@@ -101,6 +101,32 @@ func (s *schema) visit(t types.Type, active map[types.Type]bool) (*shape, error)
 	n := &shape{typ: t, id: len(s.nodes)}
 	s.nodes = append(s.nodes, n)
 	s.byType[t] = n
+	if named, ok := t.(*types.Named); ok {
+		obj := named.Obj()
+		if obj.Pkg() != nil && obj.Pkg() != s.loaded.Package.Types {
+			owner := s.loaded.Owners[obj.Pkg().Path()]
+			if owner == nil || !slices.Contains(owner.Names, obj.Name()) {
+				return nil, fmt.Errorf("%s: imported type requires an owner go:generate declaration selecting its family", t)
+			}
+			n.kind = shapeOwner
+			return n, nil
+		}
+		n.validator = s.loaded.Validators[obj.Name()]
+		if n.validator != "" {
+			m, _, _ := types.LookupFieldOrMethod(named, false, obj.Pkg(), n.validator)
+			fn, ok := m.(*types.Func)
+			if !ok {
+				return nil, fmt.Errorf("%s: validator %s must be a local value receiver method", t, n.validator)
+			}
+			sig := fn.Type().(*types.Signature)
+			if !types.Identical(sig.Recv().Type(), named) || sig.Params().Len() != 0 || !returnsError(sig) {
+				return nil, fmt.Errorf("%s: validator %s must have signature func (T) %s() error", t, n.validator, n.validator)
+			}
+		}
+		if _, ok := named.Underlying().(*types.Pointer); ok {
+			return nil, fmt.Errorf("%s: defined pointer types cannot have receiver methods; use ordinary pointers or aliases", t)
+		}
+	}
 	active[t] = true
 	defer delete(active, t)
 	child := func(t types.Type) (*shape, error) { return s.visit(t, active) }
@@ -196,6 +222,17 @@ func genericAlias(t types.Type) bool {
 	}
 }
 
+func (s *schema) hasValidator(n *shape) bool {
+	if n.validator != "" {
+		return true
+	}
+	if named, ok := n.typ.(*types.Named); ok && named.Obj().Pkg() != nil && named.Obj().Pkg() != s.loaded.Package.Types {
+		owner := s.loaded.Owners[named.Obj().Pkg().Path()]
+		return owner != nil && owner.Validators[named.Obj().Name()] != ""
+	}
+	return false
+}
+
 func isByte(t types.Type) bool {
 	b, ok := types.Unalias(t).Underlying().(*types.Basic)
 	return ok && b.Kind() == types.Uint8
@@ -208,6 +245,16 @@ func (s *schema) persist(n *shape) error {
 		return nil
 	}
 	n.wire = true
+	if (n.kind == shapeBytes || n.kind == shapeBytesArray) && s.hasValidator(n.elem) {
+		return fmt.Errorf("%s: packed named-byte element has a declared validator; use ordinary bytes or unpacked values", n.typ)
+	}
+	if n.kind == shapeOwner {
+		named := n.typ.(*types.Named)
+		if !s.loaded.Owners[named.Obj().Pkg().Path()].Wire[named.Obj().Name()] {
+			return fmt.Errorf("%s: imported type is excluded-only in its owner; select it as a persisted root", n.typ)
+		}
+		return nil
+	}
 	for _, t := range []types.Type{n.typ, types.NewPointer(n.typ)} {
 		ms := types.NewMethodSet(t)
 		for i := 0; i < ms.Len(); i++ {
@@ -252,30 +299,21 @@ func (s *schema) persistStruct(n *shape) error {
 			}
 			continue
 		}
-		if !u.Field(i).Exported() {
-			return fmt.Errorf("%s.%s: unexported persisted field", n.typ, f.name)
-		}
 		if !ok {
 			return fmt.Errorf("%s.%s: missing explicit cbor tag", n.typ, f.name)
 		}
 		parts := strings.Split(mapping, ",")
-		if parts[0] == "" || parts[0] == "-" || !utf8.ValidString(parts[0]) {
-			return fmt.Errorf("%s.%s: invalid wire name", n.typ, f.name)
+		if mapping == ",value" || mapping == ",cid" {
+			if err := s.persistRepresentation(n, f, parts[1], budget, hasBudget); err != nil {
+				return err
+			}
+			continue
 		}
-		if len(parts) > 2 || (len(parts) == 2 && parts[1] != "omitempty") {
-			return fmt.Errorf("%s.%s: unknown or repeated cbor option", n.typ, f.name)
+		if err := mappedField(n, f, parts, seen); err != nil {
+			return err
 		}
-		f.wireName = parts[0]
-		f.optional = len(parts) == 2
-		if f.optional && f.value.kind != shapePointer {
-			return fmt.Errorf("%s.%s: omitempty requires pointer", n.typ, f.name)
-		}
-		if seen[f.wireName] {
-			return fmt.Errorf("%s.%s: duplicate wire name", n.typ, f.name)
-		}
-		seen[f.wireName] = true
 		if hasBudget {
-			if err := s.fieldBudget(f, budget); err != nil {
+			if err := fieldBudget(f, budget); err != nil {
 				return fmt.Errorf("%s.%s: %w", n.typ, f.name, err)
 			}
 		}
@@ -283,7 +321,59 @@ func (s *schema) persistStruct(n *shape) error {
 			return fmt.Errorf("%s.%s: %w", n.typ, f.name, err)
 		}
 	}
+	if n.representation != "" {
+		count := 0
+		for _, f := range n.fields {
+			if !f.excluded {
+				count++
+			}
+		}
+		if count != 1 {
+			return fmt.Errorf("%s: representation requires exactly one persisted field; exclude other fields explicitly", n.typ)
+		}
+	}
 	return nil
+}
+
+// mappedField validates the ordinary struct-map name and presence grammar.
+func mappedField(n *shape, f *field, parts []string, seen map[string]bool) error {
+	if parts[0] == "" || parts[0] == "-" || !utf8.ValidString(parts[0]) {
+		return fmt.Errorf("%s.%s: invalid wire name", n.typ, f.name)
+	}
+	if len(parts) > 2 || (len(parts) == 2 && parts[1] != "omitempty") {
+		return fmt.Errorf("%s.%s: unknown or repeated cbor option", n.typ, f.name)
+	}
+	f.wireName = parts[0]
+	f.optional = len(parts) == 2
+	if f.optional && f.value.kind != shapePointer {
+		return fmt.Errorf("%s.%s: omitempty requires pointer", n.typ, f.name)
+	}
+	if seen[f.wireName] {
+		return fmt.Errorf("%s.%s: duplicate wire name", n.typ, f.name)
+	}
+	seen[f.wireName] = true
+	return nil
+}
+
+// persistRepresentation validates the single transparent or raw CID field.
+func (s *schema) persistRepresentation(n *shape, f *field, representation, budget string, hasBudget bool) error {
+	if n.representation != "" {
+		return fmt.Errorf("%s: exactly one representation field required", n.typ)
+	}
+	n.representation = representation
+	f.wireName = ""
+	if representation == "cid" {
+		if !types.Identical(f.value.typ, types.NewArray(types.Typ[types.Byte], 36)) || hasBudget {
+			return fmt.Errorf("%s.%s: cid requires [36]byte and no cap", n.typ, f.name)
+		}
+		return nil
+	}
+	if hasBudget {
+		if err := fieldBudget(f, budget); err != nil {
+			return fmt.Errorf("%s.%s: %w", n.typ, f.name, err)
+		}
+	}
+	return s.persist(f.value)
 }
 
 // isCustomMarshalContract recognizes only supported serialization interfaces, not
@@ -363,33 +453,18 @@ func excludedBudgets(n *shape, seen map[*shape]bool) error {
 	return nil
 }
 
-func (s *schema) fieldBudget(f *field, text string) error {
+func fieldBudget(f *field, text string) error {
 	key, value, ok := strings.Cut(text, "=")
 	n := f.value
-	if n.kind == shapePointer {
+	for n.kind == shapePointer {
 		n = n.elem
 	}
-	want := ""
-	switch n.kind {
-	case shapeBytes, shapeBytesArray, shapeString:
-		want = "bytes"
-	case shapeSlice, shapeMap:
-		want = "items"
-	}
+	want := budgetKind(n.typ)
 	if !ok || want == "" || key != want {
 		return fmt.Errorf("invalid budget option or shape")
 	}
-	if strings.HasPrefix(value, "@") {
-		name := strings.TrimPrefix(value, "@")
-		if !asciiIdentifier(name) {
-			return fmt.Errorf("invalid budget reference")
-		}
-		f.ref = name
-		s.names = append(s.names, name)
-		return nil
-	}
 	if value == "" || strings.IndexFunc(value, func(r rune) bool { return r < '0' || r > '9' }) >= 0 {
-		return fmt.Errorf("budget must be positive decimal literal or @name")
+		return fmt.Errorf("budget must be positive decimal literal")
 	}
 	v, err := strconv.ParseUint(value, 10, 64)
 	if err != nil || v == 0 {
@@ -399,15 +474,33 @@ func (s *schema) fieldBudget(f *field, text string) error {
 	return nil
 }
 
-func asciiIdentifier(s string) bool {
-	if s == "" {
-		return false
-	}
-	for i, c := range []byte(s) {
-		if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_' || (i > 0 && c >= '0' && c <= '9') {
-			continue
+// budgetKind follows only explicit transparent representations to the immediate wire kind.
+func budgetKind(t types.Type) string {
+	switch u := t.Underlying().(type) {
+	case *types.Pointer:
+		return budgetKind(u.Elem())
+	case *types.Basic:
+		if u.Kind() == types.String {
+			return "bytes"
 		}
-		return false
+	case *types.Array:
+		if isByte(u.Elem()) {
+			return "bytes"
+		}
+	case *types.Slice:
+		if isByte(u.Elem()) {
+			return "bytes"
+		}
+		return "items"
+	case *types.Map:
+		return "items"
+	case *types.Struct:
+		for i := 0; i < u.NumFields(); i++ {
+			tags, err := mappingTags(u.Tag(i))
+			if err == nil && tags["cbor"] == ",value" {
+				return budgetKind(u.Field(i).Type())
+			}
+		}
 	}
-	return true
+	return ""
 }

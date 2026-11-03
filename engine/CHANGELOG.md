@@ -12,26 +12,11 @@ API snapshots live in [`engine/api/`](./api/).
 
 ### Added
 
-- **Canonical history commit codec**: adds `kernel/history/format.EncodeCommit`,
-  `DecodeCommit`, and explicit positive per-operation `Limits`. The v1 closed
-  DAG-CBOR envelope preserves opaque record payloads and rejects noncanonical
-  input. Both operations return independently owned data and the CID of the
-  exact encoded bytes. Adds budget-independent `Commit.Validate` and
-  `Record.Validate` methods. No production runtime, wire, or storage integration.
-  Added (minor).
-
-- **History persistence DTOs**: adds `kernel/history/format.Commit` and `Record`
-  with strongly typed root/history linkage, envelope and kind versions, ordered
-  records, and opaque payload bytes. Concrete `Clone` methods detach nested
-  mutable storage; `Equal` methods compare fields and ordered bytes, treating nil
-  and empty slices equally. These methods neither validate nor freeze the DTOs.
-  No codec, production wire, or stored-data behavior changes. Added (minor).
-
-- **History content identifiers**: adds opaque, comparable `kernel/history/format.CID`
-  values with strict `ParseCID` and canonical `String` text. The supported profile
-  is CIDv1, DAG-CBOR, and SHA-256 with lowercase, unpadded base32 multibase text.
-  Parsing checks the identifier only, not commit validity or acceptance. No
-  production wire or stored-data behavior changes. Added (minor).
+- **Generated resource-ID persistence methods**: adds `id.ID.CheckCBOR`,
+  `AppendCBOR`, `ReadCBOR`, `Clone`, and `Equal` for compositional persistence
+  codecs. The methods validate the existing ID contract when checking and
+  reading, and they do not activate the isolated kernel or change production
+  wire behavior. Added (minor).
 
 - **Typed resource and history IDs** — adds `engine/id` with registered kinds,
   secure uniform generation, strict parsing, and comparable opaque `ID` values.

@@ -36,7 +36,7 @@ func copiedRepository(t *testing.T) string {
 		copyFile(path)
 	}
 	copyTaskfiles(t, source, root)
-	for _, dir := range []string{"internal/cborgen", "engine/kernel/codec"} {
+	for _, dir := range []string{"internal/cborgen", "engine/id", "engine/kernel/codec", "engine/kernel/contentid", "engine/kernel/history/id", "engine/kernel/history/format"} {
 		err := filepath.WalkDir(filepath.Join(source, dir), func(path string, entry fs.DirEntry, err error) error {
 			if err != nil {
 				return err
@@ -206,9 +206,9 @@ func TestTaskGenerationAndFreshness(t *testing.T) {
 	writeFixture(t, filepath.Join(owner, "wrapper.go"), `package fixture
 import "github.com/stacklok/mecatl/engine/kernel/codec"
 func roundtrip(v Sample, l codec.Limits) (Sample,error) {
- if err:=CheckSample(v,l);err!=nil{return Sample{},err}
- b,err:=EncodeSample(v.Clone(),l);if err!=nil{return Sample{},err}
- w,err:=DecodeSample(b,l);if err==nil&&!v.Equal(w){panic("unequal")};return w,err
+ if err:=codec.Check(v,l);err!=nil{return Sample{},err}
+ b,err:=codec.Encode(v.Clone(),l);if err!=nil{return Sample{},err}
+ w,err:=codec.Decode[Sample](b,l);if err==nil&&!v.Equal(w){panic("unequal")};return w,err
 }
 `)
 	trap := filepath.Join(owner, "init_trap.go")
@@ -244,6 +244,43 @@ func roundtrip(v Sample, l codec.Limits) (Sample,error) {
 		t.Fatal("task regeneration is not deterministic", err)
 	}
 	run(t, "generate:codecs:check", "", true)
+
+	// Bootstrap the complete shipped owner graph, not just a synthetic family or
+	// one leaf artifact. Every declared output is absent or corrupt together.
+	targets, err := discoverTargets(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	artifacts := make(map[string]string, len(targets))
+	for _, target := range targets {
+		path := filepath.Join(target.Dir, target.Output)
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		artifacts[path] = string(data)
+	}
+	for _, corrupt := range []bool{false, true} {
+		for path := range artifacts {
+			if corrupt {
+				writeFixture(t, path, GeneratedMarker+"\nnot valid Go")
+			} else if err := os.Remove(path); err != nil {
+				t.Fatal(err)
+			}
+		}
+		want := "missing codec output"
+		if corrupt {
+			want = "stale codec output"
+		}
+		run(t, "generate:codecs:check", want, true)
+		run(t, "generate:codecs", "", false)
+		for path, want := range artifacts {
+			got, err := os.ReadFile(path)
+			if err != nil || string(got) != want {
+				t.Fatalf("whole-owner bootstrap changed %s: %v", path, err)
+			}
+		}
+	}
 
 	for _, tc := range []struct{ name, content string }{
 		{"modified", string(first) + "\n// drift\n"},
@@ -299,7 +336,7 @@ func roundtrip(v Sample, l codec.Limits) (Sample,error) {
 	writeFixture(t, inventory, string(initialInventory))
 	for _, declaration := range []string{
 		"func (*Sample) Clone() Sample { return Sample{} }",
-		"func EncodeSample() {}",
+		"func (Sample) AppendCBOR() {}",
 	} {
 		writeFixture(t, bad, "package fixture\n"+declaration+"\n")
 		run(t, "generate:codecs", "collides with generated", true)
@@ -330,10 +367,13 @@ func roundtrip(v Sample, l codec.Limits) (Sample,error) {
 		t.Fatal(err)
 	}
 	writeFixture(t, filepath.Join(owner, "generated_test.go"), `package fixture
-import("testing";"github.com/stacklok/mecatl/engine/kernel/codec")
+import("testing";"github.com/stacklok/mecatl/engine/kernel/codec";"github.com/stacklok/mecatl/engine/kernel/contentid")
 func TestGeneratedTaskOutput(t *testing.T){
  l:=codec.Limits{MaxBytes:10000,MaxStringBytes:100,MaxByteStringBytes:100,MaxArrayElements:100,MaxMapPairs:100,MaxDepth:20,MaxNodes:1000,MaxCollectionElements:1000}
  if _,err:=roundtrip(Sample{Label:"task"},l);err!=nil{t.Fatal(err)}
+ c:=contentid.Sum([]byte("task"));v:=Link{Value:c}
+ b,err:=codec.Encode(v.Clone(),l);if err!=nil||codec.Check(v,l)!=nil{t.Fatal("CID encode/check",err)}
+ w,err:=codec.Decode[Link](b,l);if err!=nil||!v.Equal(w){t.Fatal("CID decode/equal",err)}
  if !Authored{t.Fatal("authored sibling lost")}
 }
 `)

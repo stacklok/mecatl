@@ -1,6 +1,7 @@
 package cborgen
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
@@ -20,7 +21,28 @@ func Generate(ctx context.Context, config LoadConfig) error {
 	if err != nil {
 		return err
 	}
-	file, err := os.CreateTemp(filepath.Dir(loaded.Output), ".cborgen-*.go")
+	for _, owner := range loaded.Prerequisites {
+		child, err := render(owner)
+		if err != nil {
+			return err
+		}
+		if err := writeArtifact(owner.Output, child); err != nil {
+			return err
+		}
+	}
+	return writeArtifact(loaded.Output, data)
+}
+
+// writeArtifact atomically installs a completely rendered owner artifact.
+func writeArtifact(output string, data []byte) error {
+	prior, err := readOutput(output)
+	if err != nil {
+		return err
+	}
+	if bytes.Equal(prior, data) {
+		return nil
+	}
+	file, err := os.CreateTemp(filepath.Dir(output), ".cborgen-*.go")
 	if err != nil {
 		return err
 	}
@@ -35,7 +57,7 @@ func Generate(ctx context.Context, config LoadConfig) error {
 	if closeErr != nil {
 		return closeErr
 	}
-	return os.Rename(file.Name(), loaded.Output)
+	return os.Rename(file.Name(), output)
 }
 
 // render validates the entire schema and formats complete source before any write.

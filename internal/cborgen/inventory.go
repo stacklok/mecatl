@@ -22,34 +22,13 @@ func GenerateRepository(ctx context.Context, root string, check bool) error {
 	if err != nil {
 		return err
 	}
-	var targets []LoadConfig
-	expected := map[string]bool{}
-	err = walkSource(root, func(path string) error {
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return err
-		}
-		for i, line := range strings.Split(string(data), "\n") {
-			if !strings.HasPrefix(line, "//go:generate ") || !strings.Contains(line, generatorCommand) {
-				continue
-			}
-			target, err := directiveTarget(root, filepath.Dir(path), strings.Fields(strings.TrimPrefix(line, "//go:generate ")))
-			if err != nil {
-				return fmt.Errorf("%s:%d: %w", path, i+1, err)
-			}
-			output := filepath.Join(target.Dir, target.Output)
-			for _, previous := range targets {
-				if previous.Dir == target.Dir {
-					return fmt.Errorf("require one codec output per package: %s", target.Dir)
-				}
-			}
-			expected[output] = true
-			targets = append(targets, target)
-		}
-		return nil
-	})
+	targets, err := discoverTargets(root)
 	if err != nil {
 		return err
+	}
+	expected := map[string]bool{}
+	for _, target := range targets {
+		expected[filepath.Join(target.Dir, target.Output)] = true
 	}
 	if check {
 		if err := checkInventory(root, expected); err != nil {
@@ -83,6 +62,36 @@ func GenerateRepository(ctx context.Context, root string, check bool) error {
 		}
 	}
 	return nil
+}
+
+// discoverTargets is the shared source registry for repository inventory and
+// single-owner bootstrap. Traversal order is stable; dependencies precede owners
+// when Generate installs each selected package's closure.
+func discoverTargets(root string) ([]LoadConfig, error) {
+	var targets []LoadConfig
+	err := walkSource(root, func(path string) error {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		for i, line := range strings.Split(string(data), "\n") {
+			if !strings.HasPrefix(line, "//go:generate ") || !strings.Contains(line, generatorCommand) {
+				continue
+			}
+			target, err := directiveTarget(root, filepath.Dir(path), strings.Fields(strings.TrimPrefix(line, "//go:generate ")))
+			if err != nil {
+				return fmt.Errorf("%s:%d: %w", path, i+1, err)
+			}
+			for _, previous := range targets {
+				if previous.Dir == target.Dir {
+					return fmt.Errorf("require one codec output per package: %s", target.Dir)
+				}
+			}
+			targets = append(targets, target)
+		}
+		return nil
+	})
+	return targets, err
 }
 
 // directiveTarget accepts the literal cborgen invocation used across modules:

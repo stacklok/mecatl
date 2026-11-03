@@ -1,13 +1,13 @@
 package history
 
-import "github.com/stacklok/mecatl/engine/kernel/history/format"
+import "github.com/stacklok/mecatl/engine/kernel/codec"
 
 // Policy fixes the resource and retry bounds for one History. It is immutable for
 // that instance: no field has a default, and all fields must be positive.
 type Policy struct {
 	// CommitLimits bounds canonical encoding and decoded DTO fields/counts.
 	// Its byte cap also applies before backend read materialization.
-	CommitLimits format.Limits
+	CommitLimits codec.Limits
 	// RetryWindow is the count of accepted commit ordinals eligible for idempotent retry.
 	RetryWindow int64
 	// MaxPageBytes caps total canonical bytes in every Read page independently
@@ -21,7 +21,7 @@ type Policy struct {
 // Validate reports whether every configured policy bound is positive. It does
 // not mutate the policy.
 func (p Policy) Validate() error {
-	if err := p.CommitLimits.Validate(); err != nil {
+	if _, err := codec.NewBudget(p.CommitLimits); err != nil {
 		return invalid("commit limits are invalid")
 	}
 	if p.RetryWindow <= 0 {

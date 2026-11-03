@@ -1,5 +1,9 @@
+    ifacemethod func (Marshaler).AppendCBOR(dst []byte) []byte
+    ifacemethod func (Marshaler).CheckCBOR(b *Budget, depth int, fieldMax int) error
+    ifacemethod func (Unmarshaler).ReadCBOR(r *Reader, depth int, fieldMax int) error
     method func (*Budget).CheckArray(length int, depth int, fieldMax int) error
     method func (*Budget).CheckBytes(length int, depth int, fieldMax int) error
+    method func (*Budget).CheckCIDLink(depth int) error
     method func (*Budget).CheckMap(length int, depth int, fieldMax int) error
     method func (*Budget).CheckScalar(depth int) error
     method func (*Budget).CheckString(value string, depth int, fieldMax int) error
@@ -7,18 +11,25 @@
     method func (*Reader).Array(depth int, fieldMax int) (int, error)
     method func (*Reader).Bool(depth int) (bool, error)
     method func (*Reader).Bytes(depth int, fieldMax int) ([]byte, error)
+    method func (*Reader).CIDLink(depth int) ([36]byte, error)
     method func (*Reader).Done() error
     method func (*Reader).FixedBytes(depth int, fieldMax int, length int) ([]byte, error)
     method func (*Reader).Int(depth int) (int64, error)
     method func (*Reader).Map(depth int, fieldMax int) (int, error)
     method func (*Reader).String(depth int, fieldMax int) (string, error)
     method func (*Reader).Uint(depth int) (uint64, error)
-    method func (Limits).NamedLimit(name string) (int, error)
+func AppendCIDLink(dst []byte, value [36]byte) []byte
+func AppendString(dst []byte, value string) []byte
+func Check[T Marshaler](value T, limits Limits) error
+func Decode[T any, P interface{*T; Unmarshaler}](data []byte, limits Limits) (T, error)
+func Encode[T Marshaler](value T, limits Limits) ([]byte, error)
 func NewBudget(limits Limits) (Budget, error)
 func NewReader(data []byte, limits Limits) (Reader, error)
 type Budget struct{}
-type Limits struct{MaxBytes int; MaxStringBytes int; MaxByteStringBytes int; MaxArrayElements int; MaxMapPairs int; MaxDepth int; MaxNodes int; MaxCollectionElements int; Named map[string]int}
+type Limits struct{MaxBytes int; MaxStringBytes int; MaxByteStringBytes int; MaxArrayElements int; MaxMapPairs int; MaxDepth int; MaxNodes int; MaxCollectionElements int}
+type Marshaler interface{AppendCBOR(dst []byte) []byte; CheckCBOR(b *Budget, depth int, fieldMax int) error}
 type Reader struct{}
+type Unmarshaler interface{ReadCBOR(r *Reader, depth int, fieldMax int) error}
 var ErrInvalidData error
 var ErrInvalidLimits error
 var ErrLimitExceeded error

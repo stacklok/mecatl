@@ -2,114 +2,159 @@ package format_test
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"math"
 	"strings"
 	"testing"
 
+	"github.com/stacklok/mecatl/engine/kernel/codec"
+	"github.com/stacklok/mecatl/engine/kernel/contentid"
 	"github.com/stacklok/mecatl/engine/kernel/history/format"
-	historyid "github.com/stacklok/mecatl/engine/kernel/history/id"
 )
+
+func limitFields(l *codec.Limits) []*int {
+	return []*int{&l.MaxBytes, &l.MaxArrayElements, &l.MaxStringBytes, &l.MaxByteStringBytes,
+		&l.MaxMapPairs, &l.MaxDepth, &l.MaxNodes, &l.MaxCollectionElements}
+}
+
+func maximumLimits() codec.Limits {
+	l := testLimits()
+	for _, f := range limitFields(&l) {
+		*f = math.MaxInt
+	}
+	return l
+}
 
 func TestLimits(t *testing.T) {
 	c := validRoot(t)
-	c.Records[0].Kind = "kind"
-	c.Records[0].Payload = []byte{1, 2, 3, 4, 5}
+	c.Records[0].Kind = strings.Repeat("k", 40) // Longer than the history ID.
+	c.Records[0].Payload = bytes.Repeat([]byte{0xff}, 50)
 	c.Records = append(c.Records, c.Records[0].Clone())
-	data, _, err := format.EncodeCommit(c, testLimits())
+	data, err := codec.Encode(c, testLimits())
 	if err != nil {
 		t.Fatal(err)
 	}
-	exact := format.Limits{MaxCommitBytes: len(data), MaxRecords: 2, MaxKindBytes: 4, MaxPayloadBytes: 5}
-	for field := range 4 {
-		for _, delta := range []int{-1, 0, 1} {
-			t.Run(fmt.Sprintf("field-%d/delta-%d", field, delta), func(t *testing.T) {
-				l := exact
-				fields := []*int{&l.MaxCommitBytes, &l.MaxRecords, &l.MaxKindBytes, &l.MaxPayloadBytes}
-				*fields[field] += delta
-				if delta < 0 {
-					assertEncodeError(t, c, l)
-					assertDecodeError(t, data, l)
-					return
+	// Find each tight global bound independently; both passes use conservative
+	// byte accounting in addition to the whole-input size cap.
+	for field := range len(limitFields(new(codec.Limits))) {
+		t.Run(fmt.Sprintf("field-%d", field), func(t *testing.T) {
+			for _, decode := range []bool{false, true} {
+				l := testLimits()
+				bound := *limitFields(&l)[field]
+				found := false
+				for n := 1; n <= bound; n++ {
+					*limitFields(&l)[field] = n
+					var err error
+					if decode {
+						_, err = codec.Decode[format.Commit](data, l)
+					} else {
+						err = codec.Check(c, l)
+					}
+					if err != nil {
+						if !errors.Is(err, codec.ErrLimitExceeded) {
+							t.Fatal(err)
+						}
+						if decode {
+							assertDecodeError(t, data, l)
+						} else {
+							assertEncodeError(t, c, l)
+						}
+						continue
+					}
+					if n == 1 {
+						t.Fatal("fixture did not exercise bound")
+					}
+					if decode {
+						got, err := codec.Decode[format.Commit](data, l)
+						if err != nil || !got.Equal(c) {
+							t.Fatal("tight input bound rejected")
+						}
+					} else {
+						got, err := codec.Encode(c, l)
+						if err != nil || !bytes.Equal(got, data) {
+							t.Fatal("tight admission bound rejected")
+						}
+					}
+					found = true
+					*limitFields(&l)[field] = n + 1
+					if decode {
+						_, err = codec.Decode[format.Commit](data, l)
+					} else {
+						err = codec.Check(c, l)
+					}
+					if err != nil {
+						t.Fatal(err)
+					}
+					break
 				}
-				encoded, cid, err := format.EncodeCommit(c, l)
-				if err != nil {
-					t.Fatal(err)
+				if !found {
+					t.Fatal("fixture never admitted within test policy")
 				}
-				decoded, dcid, err := format.DecodeCommit(data, l)
-				if err != nil || !decoded.Equal(c) || !bytes.Equal(encoded, data) || dcid != cid {
-					t.Fatalf("boundary rejected: %v", err)
+			}
+			for _, bad := range []int{0, -1, math.MinInt} {
+				l := testLimits()
+				*limitFields(&l)[field] = bad
+				before := l
+				assertEncodeError(t, c, l)
+				assertEncodeError(t, format.Commit{}, l)
+				assertDecodeError(t, data, l)
+				assertDecodeError(t, nil, l)
+				if _, err := codec.NewBudget(l); !errors.Is(err, codec.ErrInvalidLimits) || l != before {
+					t.Fatal("invalid policy contract")
 				}
-			})
+			}
+		})
+	}
+}
+
+func TestCodecHeaderTransitions(t *testing.T) {
+	l := maximumLimits()
+	roundtrip := func(c format.Commit) {
+		t.Helper()
+		data, err := codec.Encode(c, l)
+		if err != nil {
+			t.Fatal(err)
 		}
-	}
-	for field := range 4 {
-		for _, bad := range []int{0, -1, math.MinInt} {
-			l := exact
-			fields := []*int{&l.MaxCommitBytes, &l.MaxRecords, &l.MaxKindBytes, &l.MaxPayloadBytes}
-			*fields[field] = bad
-			assertEncodeError(t, c, l)
-			assertEncodeError(t, format.Commit{}, l)
-			assertDecodeError(t, data, l)
-			assertDecodeError(t, nil, l)
+		got, err := codec.Decode[format.Commit](data, l)
+		if err != nil || !got.Equal(c) {
+			t.Fatalf("header transition: %v", err)
 		}
+		short := l
+		short.MaxBytes = len(data) - 1
+		assertEncodeError(t, c, short)
+		assertDecodeError(t, data, short)
+		// Both passes share conservative admission; complete input length is
+		// also bounded, but is not the sole decode resource charge.
+		budget, err := codec.NewBudget(l)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := c.CheckCBOR(&budget, 0, math.MaxInt); err != nil {
+			t.Fatal(err)
+		}
+		exact := l
+		exact.MaxBytes = budget.EstimatedBytes()
+		if got, err := codec.Decode[format.Commit](data, exact); err != nil || !got.Equal(c) {
+			t.Fatalf("exact admission: %v", err)
+		}
+		if got, err := codec.Encode(c, exact); err != nil || !bytes.Equal(got, data) {
+			t.Fatalf("exact encode admission: %v", err)
+		}
+		exact.MaxBytes--
+		assertEncodeError(t, c, exact)
+		assertDecodeError(t, data, exact)
 	}
-	for _, invalid := range []format.Limits{{}, {MaxCommitBytes: -1, MaxRecords: -1, MaxKindBytes: -1, MaxPayloadBytes: -1}} {
-		assertEncodeError(t, c, invalid)
-		assertDecodeError(t, nil, invalid)
-	}
-	unrestrictedLimits := format.Limits{MaxCommitBytes: math.MaxInt, MaxRecords: math.MaxInt, MaxKindBytes: math.MaxInt, MaxPayloadBytes: math.MaxInt}
 	for _, n := range []int{1, 23, 24, 255, 256, 65535, 65536} {
 		wide := validRoot(t)
-		wide.Records[0].Kind = strings.Repeat("k", n)
-		wide.Records[0].Payload = bytes.Repeat([]byte{0xff}, n)
+		wide.Records[0].Kind, wide.Records[0].Payload = strings.Repeat("k", n), bytes.Repeat([]byte{0xff}, n)
 		for _, version := range []int64{1, 23, 24, 255, 256, 65535, 65536, math.MaxUint32, math.MaxUint32 + 1, math.MaxInt64} {
 			wide.Records[0].KindVersion = version
-			encoded, _, err := format.EncodeCommit(wide, unrestrictedLimits)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if len(encoded) != cap(encoded) {
-				t.Fatal("incorrect exact size")
-			}
-			exact := unrestrictedLimits
-			exact.MaxCommitBytes = len(encoded)
-			if _, _, err := format.EncodeCommit(wide, exact); err != nil {
-				t.Fatal(err)
-			}
-			decoded, _, err := format.DecodeCommit(encoded, exact)
-			if err != nil || !decoded.Equal(wide) {
-				t.Fatalf("max limits/size transition: %v", err)
-			}
-			exact.MaxCommitBytes--
-			assertEncodeError(t, wide, exact)
-			assertDecodeError(t, encoded, exact)
+			roundtrip(wide)
 		}
 	}
 	for _, sequence := range []int64{2, 23, 24, 255, 256, 65535, 65536, math.MaxUint32, math.MaxUint32 + 1, math.MaxInt64} {
-		wide := validRoot(t)
-		wide.HistoryID = historyid.HistoryID{}
-		wide.Parent, err = format.ParseCID(emptyDigestCID)
-		if err != nil {
-			t.Fatal(err)
-		}
-		wide.Sequence = sequence
-		encoded, _, err := format.EncodeCommit(wide, unrestrictedLimits)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if len(encoded) != cap(encoded) {
-			t.Fatal("incorrect sequence size")
-		}
-		exact := unrestrictedLimits
-		exact.MaxCommitBytes = len(encoded)
-		decoded, _, err := format.DecodeCommit(encoded, exact)
-		if err != nil || !decoded.Equal(wide) {
-			t.Fatalf("sequence size transition: %v", err)
-		}
-		exact.MaxCommitBytes--
-		assertEncodeError(t, wide, exact)
-		assertDecodeError(t, encoded, exact)
+		roundtrip(successorOf(validRoot(t), contentid.Sum(nil), sequence))
 	}
 	for _, count := range []int{23, 24, 255, 256} {
 		group := validRoot(t)
@@ -117,15 +162,6 @@ func TestLimits(t *testing.T) {
 		for i := range group.Records {
 			group.Records[i] = format.Record{Kind: "x", KindVersion: 1}
 		}
-		encoded, _, err := format.EncodeCommit(group, unrestrictedLimits)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if len(encoded) != cap(encoded) {
-			t.Fatal("incorrect array header sizing")
-		}
-		if decoded, _, err := format.DecodeCommit(encoded, unrestrictedLimits); err != nil || !decoded.Equal(group) {
-			t.Fatalf("array header transition: %v", err)
-		}
+		roundtrip(group)
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/stacklok/mecatl/engine/kernel/contentid"
 	"github.com/stacklok/mecatl/engine/kernel/history/format"
 	historyid "github.com/stacklok/mecatl/engine/kernel/history/id"
 )
@@ -29,6 +30,20 @@ func TestCommitClone(t *testing.T) {
 			t.Fatal("cloned record or nested payload mutation changed source")
 		}
 	}
+	if cloned.HistoryID == source.HistoryID || cloned.Parent == source.Parent {
+		t.Fatal("clone retained identity pointers")
+	}
+	*source.HistoryID = historyid.HistoryID{}
+	*source.Parent = contentid.CID{}
+	if want := commitFixture(t); *cloned.HistoryID != *want.HistoryID || *cloned.Parent != *want.Parent {
+		t.Fatal("source identity mutation changed clone")
+	}
+	want := commitFixture(t)
+	*source.HistoryID, *source.Parent = *want.HistoryID, *want.Parent
+	*cloned.HistoryID, *cloned.Parent = historyid.HistoryID{}, contentid.CID{}
+	if *source.HistoryID != *want.HistoryID || *source.Parent != *want.Parent {
+		t.Fatal("clone identity mutation changed source")
+	}
 }
 
 func TestCommitClonePreservesEmptyAndInvalidValues(t *testing.T) {
@@ -49,7 +64,7 @@ func TestCommitEqual(t *testing.T) {
 	if other := commitFixture(t); !base.Equal(other) || !other.Equal(base) {
 		t.Fatal("independently allocated equal commits compared unequal")
 	}
-	for _, field := range []string{"format version", "sequence", "history", "parent", "record kind", "record version", "record payload", "later record payload", "record order", "record count"} {
+	for _, field := range []string{"format version", "sequence", "history", "parent", "history value", "parent value", "record kind", "record version", "record payload", "later record payload", "record order", "record count"} {
 		t.Run(field, func(t *testing.T) {
 			other := commitFixture(t)
 			switch field {
@@ -58,9 +73,13 @@ func TestCommitEqual(t *testing.T) {
 			case "sequence":
 				other.Sequence++
 			case "history":
-				other.HistoryID = historyid.HistoryID{}
+				other.HistoryID = nil
 			case "parent":
-				other.Parent = format.CID{}
+				other.Parent = nil
+			case "history value":
+				*other.HistoryID = historyid.HistoryID{}
+			case "parent value":
+				*other.Parent = contentid.CID{}
 			case "record kind":
 				other.Records[0].Kind = "changed"
 			case "record version":
@@ -82,6 +101,11 @@ func TestCommitEqual(t *testing.T) {
 	if !(format.Commit{}).Equal(format.Commit{Records: []format.Record{}}) || !(format.Commit{Records: []format.Record{}}).Equal(format.Commit{}) {
 		t.Fatal("nil and empty record groups must compare equal, without validation")
 	}
+	for _, present := range []format.Commit{{HistoryID: new(historyid.HistoryID)}, {Parent: new(contentid.CID)}} {
+		if (format.Commit{}).Equal(present) || present.Equal(format.Commit{}) || !present.Equal(present.Clone()) {
+			t.Fatal("pointer presence lost or present-zero normalized")
+		}
+	}
 	a := format.Commit{Records: []format.Record{{Payload: nil}}}
 	b := format.Commit{Records: []format.Record{{Payload: []byte{}}}}
 	if !a.Equal(b) || !b.Equal(a) {
@@ -97,15 +121,12 @@ func commitFixture(t *testing.T) format.Commit {
 	if err != nil {
 		t.Fatal(err)
 	}
-	parent, err := format.ParseCID(emptyDigestCID)
-	if err != nil {
-		t.Fatal(err)
-	}
+	parent := contentid.Sum(nil)
 	return format.Commit{
 		FormatVersion: 1,
 		Sequence:      2,
-		HistoryID:     h,
-		Parent:        parent,
+		HistoryID:     &h,
+		Parent:        &parent,
 		Records: []format.Record{
 			{Kind: "unknown.first", KindVersion: 2, Payload: []byte{0, 0xff, 'x'}},
 			{Kind: "unknown.second", KindVersion: 3, Payload: []byte{'y'}},

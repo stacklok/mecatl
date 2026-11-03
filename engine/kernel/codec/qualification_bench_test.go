@@ -75,7 +75,7 @@ func benchmarkPersistence[T any](b *testing.B, v T, l codec.Limits,
 func BenchmarkPersistence(b *testing.B) {
 	b.Run("small", func(b *testing.B) {
 		v := fixture.Sample{OK: true, Label: "sample"}
-		benchmarkPersistence(b, v, generatedLimits(), fixture.CheckSample, fixture.EncodeSample, fixture.DecodeSample,
+		benchmarkPersistence(b, v, generatedLimits(), codec.Check[fixture.Sample], codec.Encode[fixture.Sample], codec.Decode[fixture.Sample],
 			fixture.Sample.Clone, fixture.Sample.Equal, func(v fixture.Sample) { qualificationSample = v })
 	})
 	for _, shape := range []string{"nested", "large", "many-small", "map-heavy"} {
@@ -87,7 +87,7 @@ func BenchmarkPersistence(b *testing.B) {
 			switch shape {
 			case "large":
 				v.Payload = make(value.Blob, 1<<18)
-				l.MaxByteStringBytes, l.Named["payload"] = len(v.Payload), len(v.Payload)
+				l.MaxByteStringBytes = len(v.Payload)
 			case "many-small":
 				v.Entries["x"] = make([]*value.Detail, 4096)
 				for i := range v.Entries["x"] {
@@ -99,9 +99,9 @@ func BenchmarkPersistence(b *testing.B) {
 				for i := 0; i < 4096; i++ {
 					v.Entries[value.Key(fmt.Sprintf("key-%04d", i))] = nil
 				}
-				l.MaxMapPairs, l.Named["entries"] = 4096, 4096
+				l.MaxMapPairs = 4096
 			}
-			benchmarkPersistence(b, v, l, fixture.CheckCatalog, fixture.EncodeCatalog, fixture.DecodeCatalog,
+			benchmarkPersistence(b, v, l, codec.Check[fixture.Catalog], codec.Encode[fixture.Catalog], codec.Decode[fixture.Catalog],
 				fixture.Catalog.Clone, fixture.Catalog.Equal, func(v fixture.Catalog) { qualificationCatalog = v })
 		})
 	}

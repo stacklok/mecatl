@@ -1,15 +1,14 @@
-    method func (CID).String() string
+    method func (*Commit).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
+    method func (*Record).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
+    method func (Commit).AppendCBOR(dst []byte) []byte
+    method func (Commit).CheckCBOR(b *codec.Budget, depth int, fieldMax int) error
     method func (Commit).Clone() Commit
     method func (Commit).Equal(other Commit) bool
     method func (Commit).Validate() error
-    method func (Limits).Validate() error
+    method func (Record).AppendCBOR(dst []byte) []byte
+    method func (Record).CheckCBOR(b *codec.Budget, depth int, fieldMax int) error
     method func (Record).Clone() Record
     method func (Record).Equal(other Record) bool
     method func (Record).Validate() error
-func DecodeCommit(data []byte, limits Limits) (Commit, CID, error)
-func EncodeCommit(c Commit, limits Limits) ([]byte, CID, error)
-func ParseCID(s string) (CID, error)
-type CID struct{}
-type Commit struct{FormatVersion int64; HistoryID id.HistoryID; Parent CID; Sequence int64; Records []Record}
-type Limits struct{MaxCommitBytes int; MaxRecords int; MaxKindBytes int; MaxPayloadBytes int}
-type Record struct{Kind string; KindVersion int64; Payload []byte}
+type Commit struct{FormatVersion int64 "cbor:\"v\""; HistoryID *id.HistoryID "cbor:\"h,omitempty\""; Parent *contentid.CID "cbor:\"p,omitempty\""; Sequence int64 "cbor:\"s\""; Records []Record "cbor:\"r\""}
+type Record struct{Kind string "cbor:\"k\""; KindVersion int64 "cbor:\"v\""; Payload []byte "cbor:\"p\""}

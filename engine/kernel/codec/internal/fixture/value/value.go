@@ -11,5 +11,5 @@ type Blob []Octet
 
 // Detail is an imported DTO whose mutable fields remain accessible.
 type Detail struct {
-	Data Blob `cbor:"data" cborlimit:"bytes=@detail"`
+	Data Blob `cbor:"data" cborlimit:"bytes=8"`
 }

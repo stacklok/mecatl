@@ -35,7 +35,6 @@ func TestSchemaRejections(t *testing.T) {
 		{"duplicate budget tag", "type Record struct { V string `cbor:\"x\" cborlimit:\"bytes=1\" cborlimit:\"bytes=2\"` }", "duplicate cborlimit tag"},
 		{"malformed tag", "type Record struct { V string `cbor:x` }", "malformed struct tag"},
 		{"invalid UTF8 name", "type Record struct { V string `cbor:\"\\xff\"` }", "invalid wire name"},
-		{"unexported", "type Record struct { v string `cbor:\"v\"` }", "unexported persisted"},
 		{"optional scalar", "type Record struct { V string `cbor:\"v,omitempty\"` }", "requires pointer"},
 		{"wrong cap", "type Record struct { V string `cbor:\"v\" cborlimit:\"items=1\"` }", "option or shape"},
 		{"struct cap", "type Record struct { V struct{} `cbor:\"v\" cborlimit:\"items=1\"` }", "option or shape"},
@@ -46,8 +45,8 @@ func TestSchemaRejections(t *testing.T) {
 		{"negative cap", "type Record struct { V string `cbor:\"v\" cborlimit:\"bytes=-1\"` }", "positive decimal"},
 		{"overflow cap", "type Record struct { V string `cbor:\"v\" cborlimit:\"bytes=18446744073709551616\"` }", "overflowing"},
 		{"expression", "type Record struct { V string `cbor:\"v\" cborlimit:\"bytes=1+2\"` }", "positive decimal"},
-		{"empty reference", "type Record struct { V string `cbor:\"v\" cborlimit:\"bytes=@\"` }", "invalid budget reference"},
-		{"bad reference", "type Record struct { V string `cbor:\"v\" cborlimit:\"bytes=@x-y\"` }", "invalid budget reference"},
+		{"empty reference", "type Record struct { V string `cbor:\"v\" cborlimit:\"bytes=@\"` }", "positive decimal"},
+		{"bad reference", "type Record struct { V string `cbor:\"v\" cborlimit:\"bytes=@x-y\"` }", "positive decimal"},
 		{"repeated cap", "type Record struct { V string `cbor:\"v\" cborlimit:\"bytes=1,bytes=2\"` }", "positive decimal"},
 		{"marshal", "type Record struct{};func (Record) MarshalCBOR() ([]byte,error) {return nil,nil}", "custom marshal"},
 		{"pointer cbor hook", "type Child string;func (*Child) UnmarshalCBOR([]byte) error{return nil};type Record struct { V Child `cbor:\"v\"` }", "custom marshal"},
@@ -60,9 +59,9 @@ func TestSchemaRejections(t *testing.T) {
 		{"generic alias reachable", "type Child[T any] = []T;type Record struct { V Child[bool] `cbor:\"v\"` }", "generic types"},
 		{"generic alias chain", "type Generic[T any] = []T;type Plain = Generic[bool];type Record struct { V Plain `cbor:\"v\"` }", "generic types"},
 		{"shadowed primitive", "type string uint64;type Record struct{}", "shadows predeclared string"},
+		{"shadowed machine word", "type uint uint8;type Record struct { V string `cbor:\"v\"` }", "shadows predeclared uint"},
 		{"shadowed builtin", "func len(any) int {panic(\"must never run\")};type Record struct{}", "shadows predeclared len"},
 		{"private implementation collision", "type Record struct{};var cborgen int", "collides with generated cborgen"},
-		{"private policy collision", "type Record struct{};var cborgenPolicy int", "collides with generated cborgenPolicy"},
 		{"private alias collision", "type v []byte;type Record struct { V v `cbor:\"v\"` };var cborgenValue1 int", "collides with generated cborgenValue1"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
@@ -141,7 +140,7 @@ func TestGenerateOutputFailurePreservesArtifact(t *testing.T) {
 func TestImportedPrivateFieldRejected(t *testing.T) {
 	cfg := moduleFixture(t, "import \"github.com/stacklok/mecatl/engine/hidden\";type Record struct { V hidden.Value `cbor:\"-\"` }")
 	writeFixture(t, filepath.Join(filepath.Dir(cfg.Dir), "hidden/value.go"), "package hidden\ntype Value struct { private []byte }")
-	if err := Generate(context.Background(), cfg); err == nil || !strings.Contains(err.Error(), "inaccessible field") {
+	if err := Generate(context.Background(), cfg); err == nil || !strings.Contains(err.Error(), "owner go:generate declaration") {
 		t.Fatal(err)
 	}
 }
@@ -152,23 +151,25 @@ func executableFixture(t *testing.T, source string) LoadConfig {
 	t.Helper()
 	cfg := moduleFixture(t, source)
 	module := filepath.Dir(cfg.Dir)
-	runtimeDir, err := filepath.Abs("../../engine/kernel/codec")
-	if err != nil {
-		t.Fatal(err)
-	}
-	entries, err := os.ReadDir(runtimeDir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".go") || strings.HasSuffix(entry.Name(), "_test.go") {
-			continue
-		}
-		data, err := os.ReadFile(filepath.Join(runtimeDir, entry.Name()))
+	for _, pkg := range []string{"codec", "contentid"} {
+		runtimeDir, err := filepath.Abs("../../engine/kernel/" + pkg)
 		if err != nil {
 			t.Fatal(err)
 		}
-		writeFixture(t, filepath.Join(module, "kernel/codec", entry.Name()), string(data))
+		entries, err := os.ReadDir(runtimeDir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, entry := range entries {
+			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".go") || strings.HasSuffix(entry.Name(), "_test.go") {
+				continue
+			}
+			data, err := os.ReadFile(filepath.Join(runtimeDir, entry.Name()))
+			if err != nil {
+				t.Fatal(err)
+			}
+			writeFixture(t, filepath.Join(module, "kernel", pkg, entry.Name()), string(data))
+		}
 	}
 	writeFixture(t, filepath.Join(module, "go.mod"), "module github.com/stacklok/mecatl/engine\n\ngo 1.27.3\n\nrequire github.com/jcalabro/atmos v0.8.0\n")
 	sum, err := os.ReadFile("../../engine/go.sum")
@@ -177,6 +178,31 @@ func executableFixture(t *testing.T, source string) LoadConfig {
 	}
 	writeFixture(t, filepath.Join(module, "go.sum"), string(sum))
 	return cfg
+}
+
+func registerFixtureOwner(t *testing.T, cfg LoadConfig, pkg string, names ...string) LoadConfig {
+	t.Helper()
+	root := filepath.Dir(filepath.Dir(cfg.Dir))
+	dir := filepath.Join(filepath.Dir(cfg.Dir), pkg)
+	rel, err := filepath.Rel(root, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	back, err := filepath.Rel(dir, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "value.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	packageName := strings.Fields(string(data))[1]
+	writeFixture(t, filepath.Join(dir, "registry.go"), "//go:generate go -C "+back+" run "+generatorCommand+" -dir "+rel+" -types "+strings.Join(names, ",")+" -out zz_cbor_generated.go\npackage "+packageName+"\n")
+	owner := LoadConfig{Dir: dir, Types: names, Output: "zz_cbor_generated.go"}
+	if err := Generate(context.Background(), owner); err != nil {
+		t.Fatal(err)
+	}
+	return owner
 }
 
 func runOwner(t *testing.T, cfg LoadConfig, arch string) {
@@ -202,32 +228,29 @@ func TestGenerateExecutableOwnerAndDeterminism(t *testing.T) {
 import "github.com/stacklok/mecatl/engine/kernel/codec"
 type Byte uint8
 type Bytes []Byte
-type Ptr *Bytes
+type Ptr = *Bytes
 type Record struct {
- V map[Key][]*Child `+"`cbor:\"v\" cborlimit:\"items=@cap\"`"+`
+ V map[Key][]*Child `+"`cbor:\"v\" cborlimit:\"items=5\"`"+`
  P Ptr `+"`cbor:\"p\" cborlimit:\"bytes=18446744073709551615\"`"+`
  X struct { Data []byte } `+"`cbor:\"-\"`"+`
 }
 type Key string
-type Child struct { S string `+"`cbor:\"s\" cborlimit:\"bytes=@cap\"`"+` }
+type Child struct { S string `+"`cbor:\"s\" cborlimit:\"bytes=5\"`"+` }
 func (Child) MarshalText(prefix string) string { panic("custom MarshalText invoked") }
-func (Child) Clone() Child { panic("custom Clone invoked") }
-func (Child) Equal(Child) bool { panic("custom Equal invoked") }
 func (Child) Validate() error { panic("custom Validate invoked") }
 type Other struct { V bool `+"`cbor:\"v\"`"+` }
-func wrappers(v Record,l codec.Limits) bool {b,e:=EncodeRecord(v.Clone(),l);if e!=nil{return false};w,e:=DecodeRecord(b,l);return e==nil&&CheckRecord(w,l)==nil&&v.Equal(w)}
+func wrappers(v Record,l codec.Limits) bool {b,e:=codec.Encode(v.Clone(),l);if e!=nil{return false};w,e:=codec.Decode[Record](b,l);return e==nil&&codec.Check(w,l)==nil&&v.Equal(w)}
 `)
 	cfg.Types = []string{"Record", "Other", "Record"}
 	writeFixture(t, filepath.Join(cfg.Dir, "owner_test.go"), `package owner
 import("testing";"github.com/stacklok/mecatl/engine/kernel/codec")
 func TestOwner(t *testing.T){
- l:=codec.Limits{MaxBytes:10000,MaxStringBytes:100,MaxByteStringBytes:100,MaxArrayElements:100,MaxMapPairs:100,MaxDepth:20,MaxNodes:1000,MaxCollectionElements:1000,Named:map[string]int{"cap":5}}
+ l:=codec.Limits{MaxBytes:10000,MaxStringBytes:100,MaxByteStringBytes:100,MaxArrayElements:100,MaxMapPairs:100,MaxDepth:20,MaxNodes:1000,MaxCollectionElements:1000}
  b:=Bytes{1,2};v:=Record{P:&b,V:map[Key][]*Child{"x":{{S:"a"}}}}
  if !wrappers(v,l){t.Fatal("real generated entry points")}
  v.X.Data=[]byte{1};w:=v.Clone();w.X.Data[0]=2;(*w.P)[0]=9;w.V["x"][0].S="b"
  if v.X.Data[0]!=1||(*v.P)[0]!=1||v.V["x"][0].S!="a"||v.Equal(w){t.Fatal("clone alias/equal")}
- if _,e:=EncodeOther(Other{},l);e!=nil{t.Fatal(e)}
- l.Named=nil;if _,e:=EncodeOther(Other{},l);e!=nil{t.Fatal("unrelated references required",e)}
+ if _,e:=codec.Encode(Other{},l);e!=nil{t.Fatal(e)}
 }
 `)
 	if err := Generate(context.Background(), cfg); err != nil {
@@ -238,8 +261,8 @@ func TestOwner(t *testing.T){
 	if err != nil {
 		t.Fatal(err)
 	}
-	if count := strings.Count(string(first), `limits.NamedLimit("cap")`); count != 3 {
-		t.Fatalf("shared reference resolved %d times; want once per public operation", count)
+	if strings.Contains(string(first), "NamedLimit") || strings.Contains(string(first), "func EncodeRecord") {
+		t.Fatal("obsolete root helpers or named policy emitted")
 	}
 	runOwner(t, cfg, "")
 	ownerPath := filepath.Join(cfg.Dir, "owner.go")
