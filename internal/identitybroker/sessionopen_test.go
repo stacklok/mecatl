@@ -693,6 +693,7 @@ func TestSessionOpenMapsAS1Refusals(t *testing.T) {
 		{"subject_token_invalid", identityharness.Fault{Error: "invalid_request", Reason: "subject_token_invalid"}, identitybroker.CodeUnauthenticated, identitybroker.ReasonSubjectInvalid},
 		{"subject_token_audience", identityharness.Fault{Error: "invalid_request", Reason: "subject_token_audience"}, identitybroker.CodeInternal, ""},
 		{"subject_token_source_client", identityharness.Fault{Error: "invalid_request", Reason: "subject_token_source_client"}, identitybroker.CodeInternal, ""},
+		{"subject_token_offline_access", identityharness.Fault{Error: "invalid_request", Reason: "subject_token_offline_access"}, identitybroker.CodeInternal, ""},
 		{"grant_invalid", identityharness.Fault{Error: "invalid_request", Reason: "grant_invalid"}, identitybroker.CodeInternal, ""},
 		{"invalid_request with no reason", identityharness.Fault{Error: "invalid_request"}, identitybroker.CodeInternal, ""},
 		{"subject_invalid from AS-1", identityharness.Fault{Error: "invalid_request", Reason: "subject_invalid"}, identitybroker.CodeInternal, ""},

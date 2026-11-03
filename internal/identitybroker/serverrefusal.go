@@ -28,7 +28,8 @@ var knownErrorCodes = map[string]bool{
 // (docs/drafts/agent-identity/credentials-and-lifecycle.md). AS-1 returns
 // only token_used, revoked, parent_revoked, and not_issuable for grants, and
 // subject_token_invalid, subject_token_audience, subject_token_source_client,
-// and grant_invalid for the tokens a request presents; subject_invalid,
+// subject_token_offline_access, and grant_invalid for the tokens a request
+// presents; subject_invalid,
 // owner_mismatch, session_owned, session_closed, and schedule_ended are the
 // broker's own, kept so a server sending one is not taken for a
 // configuration fault.
@@ -40,14 +41,17 @@ var knownReasons = map[string]bool{
 	"svid_expired": true, "denied": true,
 	"consent_required": true, "invalid_assertion": true,
 	"subject_token_invalid": true, "subject_token_audience": true,
-	"subject_token_source_client": true, "grant_invalid": true,
+	"subject_token_source_client": true, "subject_token_offline_access": true,
+	"grant_invalid": true,
 }
 
 // configurationFaultReasons are the known reasons that still mean a
-// configuration fault or broker bug: a subject token for another audience or
-// from a client AS-1 does not accept, and an unknown or expired grant.
+// configuration fault or broker bug: a subject token for another audience,
+// from a client AS-1 does not accept, or issued without offline_access (the
+// signing-in client did not request it), and an unknown or expired grant.
 var configurationFaultReasons = map[string]bool{
-	"subject_token_audience": true, "subject_token_source_client": true, "grant_invalid": true,
+	"subject_token_audience": true, "subject_token_source_client": true,
+	"subject_token_offline_access": true, "grant_invalid": true,
 }
 
 // transientStatuses are the HTTP statuses ServerRefusal.transient treats as

@@ -17,9 +17,9 @@ import (
 // private_key_jwt against a configured key set, never jwks_uri, has no secret
 // and no redirect URIs, and may use only the token-exchange grant. Its
 // exchange policy is restricted: it may exchange only access tokens for AS-1's
-// audience issued to AllowedSourceClients, and is configured to obtain refresh
-// tokens that issue ID-JAGs. ToolHive also lets it exchange those access
-// tokens for access tokens (stacklok/toolhive#7026).
+// audience issued to AllowedSourceClients, and only for refresh tokens that
+// issue ID-JAGs. It has no output audience, so it can never obtain an access
+// token for AS-1's audience.
 type DelegateClient struct {
 	// ID is the client ID. It must differ from every public client's.
 	ID string
@@ -52,11 +52,12 @@ func delegateRunConfig(d DelegateClient, jwksFile, audience string) authserver.D
 		JWKSFile:                jwksFile,
 		GrantTypes:              []string{oauthproto.GrantTypeTokenExchange},
 		Scopes:                  slices.Clone(delegateScopes),
-		Audiences:               []string{audience},
+		// No Audiences: the client gets only refresh tokens, never an access
+		// token, and ToolHive refuses an output audience covering its input one.
 		TokenExchange: &authserver.DelegateClientTokenExchange{
 			SelfIssuedSubjectTokens: authserver.SelfIssuedSubjectTokensRestricted,
 			AllowedSourceClients:    slices.Clone(d.AllowedSourceClients),
-			APIAudience:             audience,
+			SubjectTokenAudiences:   []string{audience},
 			// RefreshTokenMaxLifetime stays unset: no schedule grants yet.
 			ExchangeRefreshTokens: &authserver.DelegateClientExchangeRefreshTokens{IDJAGMaxLifetime: d.IDJAGMaxLifetime.String()},
 		},

@@ -798,6 +798,12 @@ func resolveAS1Flags(cfg *config) error {
 	case len(oidc.AcceptedClientIDs) != 0 && !slices.Contains(oidc.AcceptedClientIDs, as1.tuiClientID):
 		return errors.New("--oidc-accepted-client-ids must include --identity-broker-as1-tui-client-id")
 	}
+	// mecatui requests an advertised scope list exactly, and AS-1 converts at
+	// session open only an access token issued with offline_access. A parse
+	// error is left to the OIDC profile check.
+	if scopes, err := cliconfig.ParseOIDCScopes(oidc.ScopesCSV); err == nil && len(scopes) != 0 && !slices.Contains(scopes, "offline_access") {
+		return errors.New("--oidc-scopes must include offline_access when --identity-broker-as1-issuer is set: mecatui requests the listed scopes exactly, and AS-1 converts at session open only an access token issued with offline_access")
+	}
 	oidc.Issuer, oidc.ClientID = as1.issuer, as1.tuiClientID
 	if len(oidc.AcceptedClientIDs) == 0 {
 		oidc.AcceptedClientIDs = []string{as1.tuiClientID}
