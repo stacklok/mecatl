@@ -400778,6 +400778,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1793729418701,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "29541485+ChrisJBurns@users.noreply.github.com",
+            "name": "Chris Burns",
+            "username": "ChrisJBurns"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "dc3b06582c847d90b2745a49a2d4831d72a54c0a",
+          "message": "feat(identitybroker): bump ToolHive to v0.61.0 and close the delegate's access-token path (#2675)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-11-03T20:52:47Z",
+          "tree_id": "9acb66c4c244781971e54f292df0da3df7154e56",
+          "url": "https://github.com/stacklok/mecatl/commit/dc3b06582c847d90b2745a49a2d4831d72a54c0a"
+        },
+        "date": 1793740223696,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 16148.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12908,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 794,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -522454,6 +522493,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1793740209975,
+  "lastUpdate": 1793740238283,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
