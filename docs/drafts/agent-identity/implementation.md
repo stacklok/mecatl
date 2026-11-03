@@ -172,6 +172,7 @@ This table is the ledger of ToolHive changes the design needs. Rows link existin
 | Refuse every failed client-assertion check with 401 `invalid_client` | No; an over-long or expired `exp` gets 500 `server_error` and a reused `jti` gets 400 `jti_known`; the accepted `aud` also includes the token-endpoint URL ([#7028](https://github.com/stacklok/toolhive/issues/7028)) | Small | Identity work |
 | Request a refresh token from the upstream IdP at sign-in (`offline_access`, or the IdP's equivalent) | Unknown; verify per IdP | Configuration | Identity work |
 | Reject a token whose upstream session records were deleted | Yes from v0.56.0 ([#6846](https://github.com/stacklok/toolhive/pull/6846)) | None | Identity work |
+| vMCP asks the user to connect a provider through URL elicitation before the call, instead of failing it | No ([#6970](https://github.com/stacklok/toolhive/issues/6970)) | Medium | Identity work |
 | Refresh token bound to the AS-1 login session (`sid`), so that signing out at AS-1 revokes it | No; `tsid` is per authorization request, not per login | Large | Later |
 | Receive logout and account events from the company IdP (OIDC Back-Channel Logout, Okta event hooks, Shared Signals) | No | Large | Later |
 | RFC 9396 `authorization_details` on the refresh grant, embedded in the access token, and a session-bound check at conversion | Unknown | Not sized | Later |
