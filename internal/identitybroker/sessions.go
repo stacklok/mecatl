@@ -141,7 +141,7 @@ func (t *sessionTable) pairLocked(workload Workload, req OpenSessionRequest) (*b
 // viewLocked returns s as callers see it. The caller holds t.mu.
 func (t *sessionTable) viewLocked(s *brokerSession) Session {
 	view := s.Session
-	view.HoldsRefreshToken = s.closed == "" && s.grant != nil && t.now().Before(s.grant.expiresAt)
+	view.HoldsRefreshToken = s.closed == "" && s.grant != nil && !t.pastHardExpiry(s.grant)
 	return view
 }
 
@@ -157,13 +157,21 @@ func (t *sessionTable) closeLocked(s *brokerSession, reason Reason) {
 	delete(t.open, s.HostSessionID)
 }
 
+// pastHardExpiry reports whether g's expiry, the session's hard expiry, has
+// been reached, counting it one clock skew early so the broker never presents
+// a grant AS-1 may already have expired (design step (6), check 2). Skew in
+// either direction fails closed: the session ends early instead.
+func (t *sessionTable) pastHardExpiry(g *heldGrant) bool {
+	return !t.now().Add(credentialClockSkew).Before(g.expiresAt)
+}
+
 // expireLocked closes s with ReasonSessionClosed if it is open and its
-// refresh token has reached its expiry, the session's hard expiry, and
-// reports whether s is closed now. A session that holds no refresh token
+// refresh token has reached the session's hard expiry (see pastHardExpiry),
+// and reports whether s is closed now. A session that holds no refresh token
 // never expires. Every lookup of an open session calls it, so the session
 // stops working at its hard expiry. The caller holds t.mu.
 func (t *sessionTable) expireLocked(s *brokerSession) bool {
-	if s.closed == "" && s.grant != nil && !t.now().Before(s.grant.expiresAt) {
+	if s.closed == "" && s.grant != nil && t.pastHardExpiry(s.grant) {
 		t.closeLocked(s, ReasonSessionClosed)
 	}
 	return s.closed != ""

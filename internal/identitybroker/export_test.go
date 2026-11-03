@@ -2,6 +2,9 @@ package identitybroker
 
 import "time"
 
+// ClockSkew is the interim clock-skew allowance.
+const ClockSkew = credentialClockSkew
+
 // SetClock replaces b's clock. Call it before b is used.
 func SetClock(b *Broker, now func() time.Time) { WithClock(now)(b) }
 
