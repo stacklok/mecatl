@@ -367,7 +367,7 @@ func (r *renderer) markdownWidth(src string, w int) string {
 	// GraphemeWidth 2 / WcWidth 1) every cell to the right is offset — the
 	// scramble ("mecatl" → "mec##atl", "1. ✅" losing its ". "). It PERSISTS after
 	// the stream settles because the renderer's width method is a fixed terminal
-	// property, so the end-of-turn ClearScreen just re-paints the same wrong
+	// property, so even a full repaint reproduces the same wrong
 	// layout. normalizeEmojiWidth strips VS16 and collapses any residual divergent
 	// cluster so WcWidth == GraphemeWidth for every cluster — the two layers then
 	// agree without depending on the terminal upgrading the renderer.

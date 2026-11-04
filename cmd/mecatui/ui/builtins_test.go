@@ -610,8 +610,8 @@ func TestClearPendingBlocksSourceContinuationOnTerminal(t *testing.T) {
 	if m.failedStepRetryRun || m.failedStepRetryAuthoritative {
 		t.Fatal("pending clear retained failed-step retry state after source settlement")
 	}
-	if cmd == nil {
-		t.Fatal("terminal source facts should still request a safe repaint")
+	if cmd != nil {
+		t.Fatal("terminal source settlement under pending clear must not schedule a repaint or continuation")
 	}
 }
 

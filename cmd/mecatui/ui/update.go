@@ -999,9 +999,9 @@ func (m Model) updateLifecycle(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 			m.phase = phaseConnecting
 			if settled, focusCmd, failed := m.settleFailedClearSource(); failed {
 				settled.refreshView()
-				return settled, tea.Batch(settled.refreshCmd(), focusCmd), true
+				return settled, focusCmd, true
 			}
-			return m, m.refreshCmd(), true
+			return m, nil, true
 		}
 		if m.ownsAdmission() && client.IsContextWindowUnavailable(msg.Err) {
 			m = m.rejectAdmission()
@@ -1026,7 +1026,7 @@ func (m Model) updateLifecycle(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 			if len(m.queued) > 0 {
 				m.queuePaused = stopError
 			}
-			return m, tea.Batch(m.refreshCmd(), m.armLiveFeed()), true
+			return m, m.armLiveFeed(), true
 		}
 		// A transport error has no semantic commit fact. Restore only an
 		// unmodified text-only draft; a server-confirmed enrollment rejection is
@@ -1041,7 +1041,7 @@ func (m Model) updateLifecycle(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 		m = m.endRun(stopError)
 		liveCmd := m.armLiveFeed()
 		mm, drainCmd := m.drainQueue(stopError)
-		return mm, tea.Batch(m.refreshCmd(), drainCmd, liveCmd), true
+		return mm, tea.Batch(drainCmd, liveCmd), true
 	case clipboardResultMsg:
 		mm, cmd := m.onClipboardResult(msg)
 		return mm, cmd, true
@@ -1072,9 +1072,9 @@ func (m Model) updateLifecycle(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 			m.phase = phaseConnecting
 			if settled, focusCmd, failed := m.settleFailedClearSource(); failed {
 				settled.refreshView()
-				return settled, tea.Batch(settled.refreshCmd(), focusCmd), true
+				return settled, focusCmd, true
 			}
-			return m, m.refreshCmd(), true
+			return m, nil, true
 		}
 		// Clean close. If a run was still active (no terminal result seen),
 		// finalise it; otherwise it's the expected post-result close (no-op).
@@ -1087,7 +1087,7 @@ func (m Model) updateLifecycle(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 			modeCmd := m.retryPendingModeCmd()
 			liveCmd := m.armLiveFeed()
 			mm, drainCmd := m.drainQueue("closed")
-			return mm, tea.Batch(m.refreshCmd(), modeCmd, drainCmd, liveCmd), true
+			return mm, tea.Batch(modeCmd, drainCmd, liveCmd), true
 		}
 		if m.phase == phaseAuthorizing {
 			// A parked run's Converse stream closes before its authorization
@@ -1827,9 +1827,9 @@ func (m Model) applyResult(msg client.ResultMsg) (tea.Model, tea.Cmd) {
 		m.phase = phaseConnecting
 		if settled, focusCmd, failed := m.settleFailedClearSource(); failed {
 			settled.refreshView()
-			return settled, tea.Batch(settled.refreshCmd(), focusCmd)
+			return settled, focusCmd
 		}
-		return m, m.refreshCmd()
+		return m, nil
 	}
 	retryDeferred := m.failedStepRetryRun && !m.failedStepRetryAuthoritative
 	m = m.endRunState(msg.Stop, true)
@@ -1842,7 +1842,7 @@ func (m Model) applyResult(msg client.ResultMsg) (tea.Model, tea.Cmd) {
 		// A genuine end: the run stopped and waits for a manual /retry.
 		m.notifyHookStop(msg)
 		m.statusMsg = m.deps.Theme.Style("warning").Render("retry stopped before the model was called — adjust configuration and use /retry")
-		return m, tea.Batch(m.refreshCmd(), m.retryPendingModeCmd(), m.armLiveFeed())
+		return m, tea.Batch(m.retryPendingModeCmd(), m.armLiveFeed())
 	}
 	// Every remaining path is a genuine run terminal that returns to idle.
 	m.notifyHookStop(msg)
@@ -1873,14 +1873,14 @@ func (m Model) applyResult(msg client.ResultMsg) (tea.Model, tea.Cmd) {
 		// applies both mode + model from the session snapshot (issue #206).
 		refresh := client.RefreshResolvedModelCmd(m.deps.Ctx, m.deps.Session, m.sessionID)
 		dm, drainCmd := pm.drainQueue(msg.Stop)
-		return dm, tea.Batch(pm.refreshCmd(), modeCmd, proceedCmd, drainCmd, refresh)
+		return dm, tea.Batch(modeCmd, proceedCmd, drainCmd, refresh)
 	}
 	mm, drainCmd := m.drainQueue(msg.Stop)
 	var skillChanges tea.Cmd
 	if lifecycle, ok := m.deps.Skills.(client.LearnedSkillClient); ok {
 		skillChanges = client.ListSkillChangesCmd(m.deps.Ctx, lifecycle, m.deps.Workspace)
 	}
-	return mm, tea.Batch(m.refreshCmd(), modeCmd, drainCmd, m.armLiveFeed(), skillChanges)
+	return mm, tea.Batch(modeCmd, drainCmd, m.armLiveFeed(), skillChanges)
 }
 
 // noticeLine renders the muted-notice text for a transient advisory message
@@ -3943,7 +3943,7 @@ func (m Model) reduceLiveAuthRecovery(reason client.AuthReason) (tea.Model, tea.
 	m.connect.failedTarget = m.deps.Server
 	m.connect.resumeSessionID = m.sessionID
 	mm, cmd := m.openConnect()
-	return mm, tea.Batch(m.refreshCmd(), cmd)
+	return mm, cmd
 }
 
 // updateLiveMsg applies the generation guard for the live feed fan-in, then
@@ -4248,19 +4248,6 @@ func (m Model) onStartupRunEntryKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	}
 	return m, nil
 }
-
-// refreshCmd is the command returned on the run-completion paths, after endRun +
-// refreshView have already settled the final frame. It forces a full repaint
-// (tea.ClearScreen erases and redraws from scratch) so the terminating frame the
-// user is left reading is reconciled cleanly against any genuine diff dirt the
-// differential renderer left behind while diffing a fast, reflowing stream. It does
-// NOT heal the streaming scramble: that is a deterministic width-method layout
-// error (glamour wraps on GraphemeWidth, the renderer paints on WcWidth — see
-// render.go's normalizeEmojiWidth), so a re-paint just reproduces the same wrong
-// layout. The scramble is fixed at the source by normalizeEmojiWidth; this repaint
-// is retained only for ordinary stale cells. It fires once per run end, never per
-// delta, so the cost is a single repaint when a turn settles.
-func (Model) refreshCmd() tea.Cmd { return tea.ClearScreen }
 
 // endRun tears down the current run: clears the stream/channel/cancel, returns to
 // idle, and re-focuses input. The stop reason updates the status line.
