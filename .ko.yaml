@@ -17,7 +17,7 @@
 # Direct ko builds may leave VERSION unset; then runtime uses only embedded VCS metadata.
 # Release workflows set VERSION explicitly.
 
-defaultBaseImage: cgr.dev/chainguard/static@sha256:d6a97eb401cbc7c6d48be76ad81d7899b94303580859d396b52b67bc84ea7345
+defaultBaseImage: cgr.dev/chainguard/static@sha256:fc42af33e643f20d08baf03cddcc1c02ba57052dfb02edb0d79f3fc47bcea8d9
 
 # mecatui needs a full OS base (wolfi) rather than the distroless static base:
 # brood-box connects to the VM via SSH and requires a shell, neither of which
