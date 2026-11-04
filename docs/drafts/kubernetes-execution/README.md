@@ -329,7 +329,7 @@ These chapters will describe each part of the design in detail. They are planned
 | [Executor protocol](executor-protocol.md) | The RPC server the executor exposes for file operations and commands, and how the trusted service reaches them. |
 | [Storage and recovery](storage-and-recovery.md) | Retained storage identity, executor replacement, and reattachment. |
 | [Withdrawal and cancellation](withdrawal-and-cancellation.md) | How revoked authority and cancelled tasks stop file access and running commands. |
-| Local execution | Running the executor on a developer machine without the trusted service. |
+| [Local execution](local-execution.md) | How local placements compare with Kubernetes, and the executor server running inside the microVM. |
 | Threat model | The co-located helper, untrusted shell programs, and what each component can reach. |
 | Alternatives | The filesystem layouts, candidates, and upstream platforms in the appendices below. |
 

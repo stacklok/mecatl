@@ -199,7 +199,7 @@ The work splits into three streams that can proceed in parallel once the executo
 ship on top of the existing mecak8s deployment. This breakdown is preliminary and will be refined with the chapters.
 
 - **Executor:** an RPC server built from the guest agent's services, implementing the shared file and command
-  services; the command-execution switch; a local container mode.
+  services; the command-execution switch; running it as the microVM guest.
 - **Trusted service:** proxy the shared services to the executor server, replacing Pod exec, the per-operation lease,
   and the one-operation limit; capability lists in templates and admission.
 - **Agent loop:** a session-scoped read ledger; capability requests at session creation; a direct client for local

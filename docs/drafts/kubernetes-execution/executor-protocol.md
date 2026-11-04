@@ -121,10 +121,8 @@ are removed in the same change that introduces the server.
 
 ## Local execution
 
-The same server binary can run on a developer machine in a local container, with the workspace mounted at `/workspace`.
-The agent loop then talks to it directly, without the trusted service, through a client that implements `Workspace` and
-`CommandRunner` over the two services. The [local execution](README.md#detailed-chapters) chapter covers authentication
-and lifecycle in that setting.
+The same server runs locally inside the microVM placement, in place of today's guest agent, with no trusted service in
+between. The [local execution](local-execution.md) chapter describes it.
 
 ## Open questions
 
