@@ -401969,6 +401969,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1793816528918,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "1f97fea1d025d6c52700f8c0ba5e5fd8c08e4113",
+          "message": "fix(build): refresh ko static base to resolve critical vulnerability (#2681)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-11-04T21:22:11Z",
+          "tree_id": "a2d99391461e874f0d0dc5b6aa75aea1b9279a42",
+          "url": "https://github.com/stacklok/mecatl/commit/1f97fea1d025d6c52700f8c0ba5e5fd8c08e4113"
+        },
+        "date": 1793828037857,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 16136.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12894,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 794,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -523987,6 +524026,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1793828034490,
+  "lastUpdate": 1793828038713,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
