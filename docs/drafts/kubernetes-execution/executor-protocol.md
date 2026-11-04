@@ -116,8 +116,8 @@ from these implementations; the microVM guest agent's own framing and handshake 
 ## Rollout
 
 The server replaces Pod exec rather than running alongside it: the native Kubernetes execution path is not deployed in
-staging, so there are no users to migrate. The Pod exec transport, the per-operation lease, and the one-operation limit
-are removed in the same change that introduces the server.
+staging, so there are no users to migrate. The Pod exec transport, the per-operation lease, the one-operation limit,
+and the provider's `pods/exec` permission are removed in the same change that introduces the server.
 
 ## Local execution
 
@@ -130,7 +130,7 @@ between. The [local execution](local-execution.md) chapter describes it.
   executor receives its key, and how both are rotated.
 - **Process separation.** The server and shell programs run in the same container as the same user, so a shell program
   can read the server's key or replace the server process. Running the server in a separate container, or as a separate
-  user, would narrow that. The [threat model](README.md#detailed-chapters) chapter decides whether it is required.
+  user, would narrow that. The [threat model](threat-model.md) chapter tracks whether it is required.
 - **Binding to the environment.** Whether the trusted service passes the environment identity and epoch down in the
   opaque context so that the executor can reject calls meant for a previous incarnation, or whether the trusted
   service's own fencing is sufficient.

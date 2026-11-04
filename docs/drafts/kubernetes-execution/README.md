@@ -330,8 +330,7 @@ These chapters will describe each part of the design in detail. They are planned
 | [Storage and recovery](storage-and-recovery.md) | Retained storage identity, executor replacement, and reattachment. |
 | [Withdrawal and cancellation](withdrawal-and-cancellation.md) | How revoked authority and cancelled tasks stop file access and running commands. |
 | [Local execution](local-execution.md) | How local placements compare with Kubernetes, and the executor server running inside the microVM. |
-| Threat model | The co-located helper, untrusted shell programs, and what each component can reach. |
-| Alternatives | The filesystem layouts, candidates, and upstream platforms in the appendices below. |
+| [Threat model](threat-model.md) | The co-located helper, untrusted shell programs, and what each component can reach. |
 
 The [implementation companion](implementation.md) records the gap analysis against the current Kubernetes provider and the work
 breakdown for the agent loop, the trusted service, and the executor.

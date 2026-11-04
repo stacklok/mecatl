@@ -190,8 +190,8 @@ replace them:
   This is a larger decision outside this work.
 - Atomic replacement in `osfs`; `fsync` remains an executor implementation choice.
 - Withdrawal and task cancellation, to be designed in the withdrawal chapter.
-- Owner attestation by the client, the PVC UID missing from `EnvironmentRef`, the provider's namespace-wide `pods/exec`
-  permission, and administrator-only recovery; to be settled in the relevant chapters.
+- Owner attestation by the client, the PVC UID missing from `EnvironmentRef`, and administrator-only recovery; to be
+  settled in the relevant chapters. The provider's namespace-wide `pods/exec` permission goes away with Pod exec.
 
 ## Work breakdown
 
