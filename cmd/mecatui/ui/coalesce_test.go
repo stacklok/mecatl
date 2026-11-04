@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -132,11 +133,20 @@ func TestTailFlushedAtResult(t *testing.T) {
 	m = applyAll(m,
 		client.AssistantDeltaMsg{Turn: 1, Text: "Hello "},
 		client.AssistantDeltaMsg{Turn: 1, Text: "world"},
-		client.ResultMsg{Stop: "end_turn"},
 	)
-	got := stripANSIstr(m.rend.renderConversation(&m.conv, m.expandConversation))
+	model, cmd := m.Update(client.ResultMsg{Stop: "end_turn"})
+	m = model.(Model)
+	for _, msg := range flattenBatch(cmd) {
+		if reflect.TypeOf(msg) == reflect.TypeOf(tea.ClearScreen()) {
+			t.Error("run completion must not force a screen clear")
+		}
+	}
+	got := stripANSIstr(m.vp.GetContent())
 	if !strings.Contains(got, "Hello world") {
 		t.Errorf("result flush lost the tail; want 'Hello world' in:\n%s", got)
+	}
+	if !strings.Contains(stripANSIstr(m.View().Content), "Hello world") {
+		t.Error("completed response must remain visible without a screen clear")
 	}
 	if m.viewDirty {
 		t.Error("expected viewDirty=false after the result force-flush")

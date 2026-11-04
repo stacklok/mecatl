@@ -4249,18 +4249,9 @@ func (m Model) onStartupRunEntryKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// refreshCmd is the command returned on the run-completion paths, after endRun +
-// refreshView have already settled the final frame. It forces a full repaint
-// (tea.ClearScreen erases and redraws from scratch) so the terminating frame the
-// user is left reading is reconciled cleanly against any genuine diff dirt the
-// differential renderer left behind while diffing a fast, reflowing stream. It does
-// NOT heal the streaming scramble: that is a deterministic width-method layout
-// error (glamour wraps on GraphemeWidth, the renderer paints on WcWidth — see
-// render.go's normalizeEmojiWidth), so a re-paint just reproduces the same wrong
-// layout. The scramble is fixed at the source by normalizeEmojiWidth; this repaint
-// is retained only for ordinary stale cells. It fires once per run end, never per
-// delta, so the cost is a single repaint when a turn settles.
-func (Model) refreshCmd() tea.Cmd { return tea.ClearScreen }
+// refreshCmd is a no-op: refreshView has already updated the viewport, and
+// Bubble Tea redraws it normally. An explicit screen clear can flash on completion.
+func (Model) refreshCmd() tea.Cmd { return nil }
 
 // endRun tears down the current run: clears the stream/channel/cancel, returns to
 // idle, and re-focuses input. The stop reason updates the status line.
