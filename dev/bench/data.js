@@ -401572,6 +401572,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1793748591605,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "3bbf5a2fc503518d6ba0c22c2234cedeb26f168d",
+          "message": "fix(mecatui): stop forcing a screen clear on run completion (#2679)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-11-04T10:09:36-08:00",
+          "tree_id": "60d89368391216ebff7e77db563f9681b2529cbd",
+          "url": "https://github.com/stacklok/mecatl/commit/3bbf5a2fc503518d6ba0c22c2234cedeb26f168d"
+        },
+        "date": 1793816528918,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 16135,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12894,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 794,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -523476,6 +523515,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1793816525331,
+  "lastUpdate": 1793816529962,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
