@@ -28,7 +28,8 @@ against the session.
 What they can reach:
 
 - the session's files under `/workspace`, which is the point of the session;
-- the network egress the template allows, and nothing else, because executor Pods deny all other traffic by default;
+- the network egress the template allows, and nothing else, because executor Pods [deny all other
+  traffic][network-limits] by default;
 - the executor server, on `localhost`, because they share the executor Pod's network namespace.
 
 What they cannot reach:
@@ -100,3 +101,5 @@ The design does not defend against compromise of:
 
 - **Process separation.** Whether the executor server must run in a separate container or as a separate user from shell
   programs, so that a shell program cannot read its key or replace it.
+
+[network-limits]: ../../../user-docs/features/security-and-execution/execution-environments.md#network-and-resource-limits

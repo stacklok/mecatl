@@ -19,9 +19,9 @@ in the executor Pod knows what it is running, so none of that is needed.
 
 The executor runs one gRPC server on one port. It registers two services:
 
-- **Files** serves the `Workspace` operations on `/workspace`: versioned read, stat, create-only write, conditional
-  replacement, list, remove, rename, copy, glob, and grep. These match the operations the provider already forwards
-  through `FileRequest` in `execution/v1`.
+- **Files** serves the [`Workspace` operations][workspace-contract] on `/workspace`: versioned read, stat, create-only
+  write, conditional replacement, list, remove, rename, copy, glob, and grep. These match the operations the provider
+  already forwards through `FileRequest` in `execution/v1`.
 - **Commands** runs a command through `/bin/sh -c` in the workspace and streams its output and exit status. Cancelling
   the call kills the command's process group.
 
@@ -136,3 +136,5 @@ between. The [local execution](local-execution.md) chapter describes it.
   service's own fencing is sufficient.
 - **Request context fields.** Whether owner, run, claim, and epoch are all needed, or some can be removed once the
   trusted service is reworked.
+
+[workspace-contract]: ../../architecture/ports.md#environment-workspace-and-the-read-ledger

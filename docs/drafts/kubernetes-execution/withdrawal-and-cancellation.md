@@ -17,13 +17,14 @@ Withdrawal today is enforced by the provider while it relays an operation:
 
 - **A user cancels a task.** The agent loop cancels its call, the provider closes the Pod exec stream, and the executor
   kills the command's process group and every process the command started.
-- **A run claim lapses.** Run claims last at most five minutes and must be renewed; once a claim is no longer current,
-  the provider refuses further calls made with it.
-- **An administrator revokes an environment.** `RevokeEnvironment` gives the environment a new grant generation, and the
-  provider refuses further calls and renewals made under the old one.
-- **A template is revoked.** The provider deletes the executor Pods of every environment that uses it.
-- **The caller's policy changes.** The provider reloads its security manifest, and rechecks it every ten seconds while
-  an operation runs, cancelling the operation if the caller is no longer allowed.
+- **A run claim lapses.** [Run claims][run-fencing] last at most five minutes and must be renewed; once a claim is no
+  longer current, the provider refuses further calls made with it.
+- **An administrator revokes an environment.** [`RevokeEnvironment`][revoke-op] gives the environment a new grant
+  generation, and the provider refuses further calls and renewals made under the old one.
+- **A template is [revoked][template-policy].** The provider deletes the executor Pods of every environment that uses
+  it.
+- **The caller's policy changes.** The provider reloads its [security manifest][policy-rotation], and rechecks it every
+  ten seconds while an operation runs, cancelling the operation if the caller is no longer allowed.
 
 Every one of these depends on the provider being there. If the provider crashes while a command runs, nothing stops the
 command until its own timeout, which can be up to 30 minutes, because the command is tied only to an exec stream that
@@ -74,3 +75,8 @@ Shorter intervals withdraw access faster at the cost of more traffic between the
 
 - **Partial withdrawal.** Whether withdrawal can remove one capability, such as `Shell`, while leaving file access in
   place, or always applies to the whole environment.
+
+[run-fencing]: ../../../user-docs/features/security-and-execution/execution-environments.md#run-ownership-and-fencing
+[revoke-op]: ../../../user-docs/operating/mecak8s/execution-provider-lifecycle.md#revoke-an-environment
+[template-policy]: ../../../user-docs/features/security-and-execution/execution-environments.md#template-policy
+[policy-rotation]: ../../../user-docs/features/security-and-execution/execution-environments.md#policy-rotation-and-readiness

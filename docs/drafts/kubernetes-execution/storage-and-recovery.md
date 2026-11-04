@@ -43,10 +43,10 @@ unknown and does not retry a command.
 A Pod can be evicted, deleted, or fail as a whole while the kubelet still reports its containers as terminated. A new
 executor Pod can then safely use the same PVC.
 
-In the first implementation, an administrator starts the replacement with `ReplaceExecutor`, as today. The replacement
-keeps the PVC, starts a new Pod, and gives the environment a new epoch. The new epoch invalidates the session's current
-run claim, so the current run fails with an error and the next prompt acquires a new claim. The `EnvironmentRef` does
-not change, so the session stays bound to the same environment.
+In the first implementation, an administrator starts the replacement with [`ReplaceExecutor`][replace-op], as today. The
+replacement keeps the PVC, starts a new Pod, and gives the environment a new epoch. The new epoch invalidates the
+session's current run claim, so the current run fails with an error and the next prompt acquires a new claim. The
+`EnvironmentRef` does not change, so the session stays bound to the same environment.
 
 Automatic replacement in this case is a later evolution. It reuses the same replacement sequence, started by the
 controller instead of an administrator, and needs a limit on repeated attempts so that a broken template is not
@@ -60,10 +60,10 @@ running and writing to the PVC, and starting a second executor would put two wri
 `ReadWriteOnce` does not prevent this on its own: it limits a volume to one node, not to one Pod, and a volume attached
 to an unreachable node usually cannot attach elsewhere until it is detached.
 
-The environment stays fenced until an administrator confirms that the old node is dead and fences it externally, for
-example with the `node.kubernetes.io/out-of-service` taint or by deleting the node. Kubernetes then detaches the volume,
-and the administrator replaces the executor onto the same PVC. The storage is not treated as lost: on network-attached
-storage the files survive a node failure.
+The environment stays [fenced][run-fencing] until an administrator confirms that the old node is dead and fences it
+externally, for example with the `node.kubernetes.io/out-of-service` taint or by deleting the node. Kubernetes then
+detaches the volume, and the administrator replaces the executor onto the same PVC. The storage is not treated as lost:
+on network-attached storage the files survive a node failure.
 
 A user who does not want to wait can start a new session, which gets a fresh environment through normal
 [admission](admission.md). The fenced environment stays until it is recovered or deleted.
@@ -122,3 +122,6 @@ documentation describes the current administrative operations.
 - **Automatic replacement.** When to add it, and how many attempts to allow before leaving the environment for an
   administrator.
 - **PVC identity in the reference.** Whether the PVC UID should be part of the `EnvironmentRef`.
+
+[replace-op]: ../../../user-docs/operating/mecak8s/execution-provider-lifecycle.md#replace-or-retire-an-executor
+[run-fencing]: ../../../user-docs/features/security-and-execution/execution-environments.md#run-ownership-and-fencing

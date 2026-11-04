@@ -91,8 +91,8 @@ Other differences remain on purpose:
 - **Isolation.** Each placement keeps its own boundary: none for `host-local`, a VM for `microvm-local`, and a Pod for
   Kubernetes.
 - **Where files live.** The user's checkout, a captured worktree, and a PVC serve different needs and stay as they are.
-- **Project instructions.** Kubernetes still never loads project instructions, because local project trust cannot
-  authorize them for a remote deployment.
+- **Project instructions.** Kubernetes still never loads [project instructions][instruction-sources], because local
+  project trust cannot authorize them for a remote deployment.
 
 One large difference is outside this work: Kubernetes sessions cannot use subagents, teams, or parallel work, because
 remote execution disables them. Closing that gap is a separate decision.
@@ -101,3 +101,5 @@ remote execution disables them. Closing that gap is a separate decision.
 
 - **Guest agent features.** The guest agent's file service lacks rename, list, remove, and copy and caps files at
   512 KiB. Porting these into the shared server also changes what `microvm-local` sessions can do.
+
+[instruction-sources]: ../../../user-docs/features/security-and-execution/execution-environments.md#instructions-and-permission-sources

@@ -64,11 +64,11 @@ are not loaded under remote execution, so the execution template cannot change t
 
 The agent loop still lacks the following:
 
-- **Read ledger scope.** The remote adapter builds a fresh ledger after every `AcquireRun`, so the ledger lasts one run:
-  one user prompt and every turn until the agent answers. The agent must re-read every file before editing it on each
-  prompt. Locally the ledger lasts for the session binding (`internal/app/placement.go`). The ledger only enforces
-  read-before-edit; the executor's conditional replacement still rejects stale writes, so a session-scoped ledger is
-  safe.
+- **Read ledger scope.** The remote adapter builds a fresh [ledger][workspace-contract] after every `AcquireRun`, so the
+  ledger lasts one run: one user prompt and every turn until the agent answers. The agent must re-read every file before
+  editing it on each prompt. Locally the ledger lasts for the session binding (`internal/app/placement.go`). The ledger
+  only enforces read-before-edit; the executor's conditional replacement still rejects stale writes, so a session-scoped
+  ledger is safe.
 - **Capabilities.** `ExecutionCapabilities` is filled in after binding from what the environment offers; it is never
   requested or admitted. `Shell` is always attached. File-only operation exists only as the deployment-wide
   `--no-shell` flag, which Helm values cannot express.
@@ -84,14 +84,15 @@ environment).
 
 The provider still lacks the following:
 
-- **Admission.** Admission is a per-caller template allowlist checked by `EnsureTemplate`. Templates have no
-  capabilities field: capabilities are hard-coded to files and commands, and `StartCommand` checks none.
+- **Admission.** Admission is a per-caller [template][template-config] allowlist checked by `EnsureTemplate`. Templates
+  have no capabilities field: capabilities are hard-coded to files and commands, and `StartCommand` checks none.
 - **One operation per environment.** The store rejects any operation, reads included, while another is active, using a
   lease in the `ExecutionEnvironment` status. The design's visibility requirement does not depend on this: file tools
   and shell programs see the same files because they use one filesystem. The lease exists for the Pod exec model; see
   [Kubernetes API writes](#kubernetes-api-writes).
-- **Withdrawal.** Revocation and policy changes take effect when the provider dispatches or renews an operation. If the
-  provider crashes, a running command continues until its timeout because nothing stops it at the executor.
+- **Withdrawal.** [Revocation][revocation] and policy changes take effect when the provider dispatches or renews an
+  operation. If the provider crashes, a running command continues until its timeout because nothing stops it at the
+  executor.
 
 ### Executor
 
@@ -176,12 +177,16 @@ request context fields are an open question in that chapter.
 The design overview does not describe these provider mechanisms, but the implementation must preserve or deliberately
 replace them:
 
-- run claims (`AcquireRun`, `RenewRun`, `ReleaseRun`) and per-operation leases, fenced by epoch and holder;
+- [run claims][run-fencing] (`AcquireRun`, `RenewRun`, `ReleaseRun`) and per-operation leases, fenced by epoch and
+  holder;
 - the reference lifecycle (`CommitReference`, `AbortReference`, `ReserveSuccessor`, and the delete steps), through which
   an environment outlives the session that created it;
-- template revocation, which force-deletes the executor, and replacement, which requires the retained template revision;
-- administrative operations that compare the expected epoch, Pod UID, and PVC UID, and are idempotent per operation ID;
-- the hot-reloaded security manifest with its generation ledger, and per-client RPC concurrency limits;
+- [template revocation][template-policy], which force-deletes the executor, and replacement, which requires the retained
+  template revision;
+- [administrative operations][admin-ops] that compare the expected epoch, Pod UID, and PVC UID, and are idempotent per
+  operation ID;
+- the hot-reloaded [security manifest][policy-rotation] with its generation ledger, and per-client RPC concurrency
+  limits;
 - per-template capacity quotas.
 
 ## Deferred
@@ -204,3 +209,11 @@ ship on top of the existing mecak8s deployment. This breakdown is preliminary an
   and the one-operation limit; capability lists in templates and admission.
 - **Agent loop:** a session-scoped read ledger; capability requests at session creation; a direct client for local
   execution without the trusted service.
+
+[workspace-contract]: ../../architecture/ports.md#environment-workspace-and-the-read-ledger
+[template-config]: ../../../user-docs/operating/mecak8s/native-execution.md#configure-the-provider-and-execution-templates
+[revocation]: ../../../user-docs/features/security-and-execution/execution-environments.md#revocation
+[run-fencing]: ../../../user-docs/features/security-and-execution/execution-environments.md#run-ownership-and-fencing
+[template-policy]: ../../../user-docs/features/security-and-execution/execution-environments.md#template-policy
+[admin-ops]: ../../../user-docs/operating/mecak8s/execution-provider-lifecycle.md#run-an-administrative-lifecycle-operation
+[policy-rotation]: ../../../user-docs/features/security-and-execution/execution-environments.md#policy-rotation-and-readiness

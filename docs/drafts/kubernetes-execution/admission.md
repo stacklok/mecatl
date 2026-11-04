@@ -29,11 +29,11 @@ sequenceDiagram
     Agent-->>Client: session created
 ```
 
-A session's environment is decided in two places. When the client creates the session, it can name the template it
-wants in `CreateSessionRequest.execution`; if it does not, mecak8s falls back to the default template configured in
-its flags. Before going further, mecak8s makes sure the user is one of the principals allowed to have an execution
-environment at all. It then hands the request to the provider, which decides whether that particular mecak8s may use
-the template, whether the template revision is still eligible rather than deprecated or revoked, and whether the
+A session's environment is decided in two places. When the client creates the session, it can name the template it wants
+in `CreateSessionRequest.execution`; if it does not, mecak8s falls back to the default template configured in its flags.
+Before going further, mecak8s makes sure the user is one of the principals allowed to have an execution environment at
+all. It then hands the request to the provider, which decides whether that particular mecak8s may use the template,
+whether the template revision is still eligible rather than [deprecated or revoked][template-policy], and whether the
 template has room for another environment. Only when all of that holds does the provider create the environment.
 
 mecak8s generates the session ID before it calls `EnsureTemplate` and passes it as the binding ID. The provider keys
@@ -151,3 +151,5 @@ is optional and an empty list means the template's full set, existing clients ke
 
 - **Caller policy.** Whether the trusted service's per-caller policy restricts capabilities, in addition to templates.
 - **Capability transitions.** Whether a running session can ever gain or lose a capability, and how.
+
+[template-policy]: ../../../user-docs/features/security-and-execution/execution-environments.md#template-policy
