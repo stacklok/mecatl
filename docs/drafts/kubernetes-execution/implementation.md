@@ -200,15 +200,82 @@ replace them:
 
 ## Work breakdown
 
-The work splits into three streams that can proceed in parallel once the executor protocol is defined. Each step must
-ship on top of the existing mecak8s deployment. This breakdown is preliminary and will be refined with the chapters.
+The work splits into three streams, one per component, that proceed in parallel once the shared contract exists. Each
+step ships on top of the existing mecak8s deployment unless it is part of the transport switch described below. None of
+the steps changes the engine module: the new client implements the engine's existing `Workspace`, `CommandRunner`, and
+`CommandStreamer` interfaces, and a step that would add a method to them needs revisiting.
 
-- **Executor:** an RPC server built from the guest agent's services, implementing the shared file and command
-  services; the command-execution switch; running it as the microVM guest.
-- **Trusted service:** proxy the shared services to the executor server, replacing Pod exec, the per-operation lease,
-  and the one-operation limit; capability lists in templates and admission.
-- **Agent loop:** a session-scoped read ledger; capability requests at session creation; a direct client for local
-  execution without the trusted service.
+### Shared contract
+
+Defining the contract comes first, because every stream builds against it:
+
+1. Define the file and command services in a new proto package, as described in the
+   [executor protocol](executor-protocol.md#one-interface-several-implementations), with the opaque context and
+   streaming command output.
+2. Move the remaining lifecycle operations of `ExecutionProviderService` into a lifecycle service that only the trusted
+   service implements.
+3. Provide an in-memory implementation of the new services, so each stream can test against it without the others.
+4. Assess the wire API compatibility of the changes to `ExecutionProviderService` and `CreateSessionRequest`, following
+   the [wire API compatibility assessment](../../architecture/api-surface.md#wire-api-compatibility).
+
+### Executor
+
+1. A gRPC server serving the file service, built from the microVM guest agent's workspace service and the current
+   executor's operations: rename, list, remove, and copy are ported, and the 512 KiB file cap is lifted. The service
+   passes the existing `fsconformance` suite.
+2. The command service: streaming output, cancellation when the call closes, and cleanup of the command's process group
+   and every process it started, reporting the outcome as unknown when cleanup cannot be confirmed.
+3. A flag per service, so the command service can be left unregistered.
+4. Cancellation of every call carried by a connection that breaks, with gRPC keepalives to detect an unresponsive one.
+5. Bounded waits on storage and a readiness check that touches `/workspace`.
+6. Mutual TLS that accepts only the trusted service. This depends on how executor certificates are issued, which is
+   still open.
+7. The same server running as the microVM guest, in place of today's guest agent.
+8. An executor image whose entrypoint is the server, replacing the `sleep infinity` the controller injects today.
+
+### Trusted service
+
+1. The file and command services as an authorizing proxy: read the request context from the opaque context, authorize
+   the call, refuse services the session was not admitted for, and forward it to the session's executor. The proxy
+   enforces the template's size limits on streamed output as it flows, and passes the `fsconformance` suite.
+2. Executor Pods that run the server as their main process, restart failed containers, report readiness, admit inbound
+   traffic from the trusted service only, and receive their server certificate. The certificate part depends on the
+   same open question as the executor's mutual TLS.
+3. Removal of Pod exec, the per-operation lease, the one-operation limit, and the `pods/exec` permission.
+4. Capabilities in templates and admission: a capabilities field in the template definition, requested capabilities in
+   `EnsureTemplate`, the admitted set recorded on the environment, and executors started with only the admitted
+   services. `ListExecutionTemplates` and `ValidateTemplate` report capabilities from the template field instead of
+   today's hard-coded list.
+5. Withdrawal through the proxy: closing every forwarded call for an environment when it is revoked, its run claim
+   lapses, its template is revoked, or the caller's policy changes, with configurable intervals.
+6. Fencing an environment whose volume is reported lost, and an environment whose executor reports a command's outcome
+   as unknown.
+7. Chart changes in `mecatl-execution`: the `pods/exec` permission removed, the ingress rule for the executor server
+   added, and the capabilities field added to the template schema.
+
+### Agent loop
+
+1. A client for the new services, used for both the trusted service and a local executor.
+2. A read ledger scoped to the session instead of the run. This step ships independently of the others.
+3. Requested capabilities in `CreateSessionRequest`, passed to `EnsureTemplate`; the admitted set recorded on the
+   session; and only the matching tools registered, with no command runner without `foreground-command`.
+
+### Documentation
+
+User-facing changes update the owning user documentation: the template capabilities field and capability requests, the
+removed `pods/exec` permission and the new ingress rule, and the configurable policy-recheck, keepalive, and run claim
+intervals.
+
+### The transport switch
+
+Moving file and command operations to the new services changes the RPCs mecak8s calls, and the server replaces Pod exec
+rather than running alongside it. The executor's first three steps and its new image, the trusted service's first three
+steps, and the agent loop's first step therefore ship together, as one switch. Everything else lands before or after it:
+
+- before: the shared contract, the session-scoped read ledger, and the executor and trusted-service steps that do not
+  depend on the new transport, such as the template capabilities field;
+- after: withdrawal through the proxy, connection-loss cancellation, the readiness check, capability requests end to
+  end, and the microVM guest.
 
 [workspace-contract]: ../../architecture/ports.md#environment-workspace-and-the-read-ledger
 [template-config]: ../../../user-docs/operating/mecak8s/native-execution.md#configure-the-provider-and-execution-templates
