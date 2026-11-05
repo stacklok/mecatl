@@ -10,7 +10,7 @@ The **run owner** is the person who started a run. mecak8s records it when the r
 
 The identity work adds the run owner as follows:
 
-1. **On every call.** mecak8s sends the run ID and the run owner with each `InvokeTool`, beside the session reference, operation ID, and agent credential. Both become part of the call's [execution context](mcp-authorization.md#authentication-and-execution-context).
+1. **On every call.** mecak8s sends the run ID and the run owner with each `AuthorizeCall`, beside the session reference, operation ID, and agent credential. Both become part of the call's [execution context](mcp-authorization.md#authentication-and-execution-context).
 2. **Checked, never used as a source.** The ID-JAG's `sub` still comes only from the record of the grant the broker uses. The broker checks that the reported run owner equals the owner recorded with that grant, the company identity, not AS-1's subject; today, that is the session owner. A mismatch refuses the call and is recorded as a denial. A run-owner report therefore cannot choose whose credentials are used. The check is a single function, so a later membership check replaces only its body.
 3. **Grants keyed by session and user.** The broker stores the session's broker refresh token under (session, user), with exactly one entry per session for now. The session's creator is recorded as a separate fact rather than as a uniqueness rule on the grant.
 4. **The user in every per-user key.** The broker's cache of `V` and of ID-JAGs, and its store of vMCP session IDs, are keyed by user as well as session, instance, and gateway. The user comes from the grant's record, not from the reported run owner, and revoking a grant drops its entries. The vMCP already binds each session to the user.

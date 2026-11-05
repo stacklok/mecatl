@@ -25,7 +25,7 @@ The human enters the flow once, when Alice signs in through AS-1. AS-1 runs that
 | **Schedule grant** | Alice's delegated authority for one schedule, until its horizon. | AS-1 → broker → AS-1. Bound to client `mecatl` and the user. Accepted only to open a scheduled run's session. | Broker, in shared storage under the schedule. |
 | **Broker client credential** | That the caller at AS-1 and AS-2 is the broker, OAuth client `mecatl`. | Broker's private key; each request carries a short-lived `private_key_jwt` assertion verified by AS-1 and AS-2. | KMS or HSM where available; public key registered at each server as a configured key set (not `jwks_uri`), again on rotation. |
 | **ID-JAG** | Alice and the acting agent, for redemption at AS-2. | AS-1 → broker → AS-2. Short-lived; the broker uses each once. | Broker, from issuance to redemption. |
-| **AS-2 access token (`V`)** | AS-2's native Alice, the acting agent, and client `mecatl`, for the vMCP resource. | AS-2 → broker → vMCP. | Broker cache, per session, instance, gateway, and user; per-call checks still apply. |
+| **AS-2 access token (`V`)** | AS-2's native Alice, the acting agent, and client `mecatl`, for the vMCP resource. | AS-2 → broker → mecak8s's MCP client → vMCP. Bound to one call and accepted for that call only. | Not cached. mecak8s holds each `V` only while it sends the one call it is bound to. |
 | **Provider credential** | Access to Alice's GitHub account. | GitHub → gateway credential store → GitHub. | Gateway credential store, keyed by (gateway, user, provider); never leaves the gateway. |
 | **Signing keys** | Authority to issue credentials. | AS-1, AS-2, and the agent-instance issuer each keep their own key. | Separate keys are not process isolation when components share a process. |
 
@@ -100,22 +100,21 @@ sequenceDiagram
     end
 
     Note over H,G: (6) Main call: pull_request_list
-    H->>B: InvokeTool: workload credential, A42, run R41, run owner Alice,<br/>op-list-prs-001, agentJwtSvid = mainSVID
+    H->>B: AuthorizeCall: workload credential, A42, run R41, run owner Alice,<br/>op-list-prs-001, server, tool, argument hash, agentJwtSvid = mainSVID
     B->>B: Check session, workload, actor, run owner = grant owner, route<br/>(ceiling with the authority work)
-    opt No cached V for (A42, main, gateway, Alice)
-        B->>A1: (7) RFC 8693: subject_token = RT-A42<br/>actor_token = mainSVID<br/>requested_token_type = id-jag, audience = AS-2<br/>(5) client mecatl, private_key_jwt
-        A1->>A1: RT-A42 bound to mecatl, issues id-jag, not revoked or expired<br/>upstream IdP re-checked if due<br/>main's session owned by RT-A42's user, build act (iss = AS-1)
-        A1-->>B: J-main
-        B->>A2: (8) RFC 7523: assertion = J-main, client mecatl
-        A2->>A2: Map AS-1 subject to native user<br/>External mode: require consent link
-        A2-->>B: V-main (sub usr-alice-7c1d, act main, aud vMCP)
-    end
-    B->>V: (9) tools/call pull_request_list + Bearer V-main
-    V->>V: Validate V-main<br/>Load credential (gateway, usr-alice-7c1d, github)
+    B->>A1: (7) RFC 8693: subject_token = RT-A42<br/>actor_token = mainSVID<br/>requested_token_type = id-jag, audience = AS-2<br/>(5) client mecatl, private_key_jwt
+    A1->>A1: RT-A42 bound to mecatl, issues id-jag, not revoked or expired<br/>upstream IdP re-checked if due<br/>main's session owned by RT-A42's user, build act (iss = AS-1)
+    A1-->>B: J-main
+    B->>A2: (8) RFC 7523: assertion = J-main, client mecatl<br/>authorization_details: this call (server, tool, argument hash, op-list-prs-001)
+    A2->>A2: Map AS-1 subject to native user<br/>External mode: require consent link
+    A2-->>B: V-main (sub usr-alice-7c1d, act main, aud vMCP, bound to this call)
+    B-->>H: V-main (decision recorded)
+    H->>V: (9) tools/call pull_request_list + Bearer V-main
+    V->>V: Validate V-main, call matches its binding, jti not used<br/>Load credential (gateway, usr-alice-7c1d, github)
     V->>G: List PRs with Alice's GitHub token
     G-->>V: Result
-    V-->>B: Result
-    B-->>H: Sanitized outcome
+    V-->>H: Result
+    H->>B: Report dispatch and outcome of op-list-prs-001
 
     rect rgb(245, 245, 245)
         Note over H,I: Reviewer bootstrap, after the list succeeds
@@ -129,20 +128,19 @@ sequenceDiagram
         I-->>H: reviewerSVID
     end
 
-    H->>B: InvokeTool: workload credential, A42, run R42 via D42, run owner Alice,<br/>op-pr42-001, agentJwtSvid = reviewerSVID
-    Note over B,G: Same checks and cache-miss path with actor_token = reviewerSVID<br/>J-reviewer and V-reviewer: act = reviewer
-    B-->>H: Sanitized outcome
+    H->>B: AuthorizeCall: workload credential, A42, run R42 via D42, run owner Alice,<br/>op-pr42-001, server, tool, argument hash, agentJwtSvid = reviewerSVID
+    Note over H,G: Same checks and exchanges with actor_token = reviewerSVID<br/>J-reviewer and V-reviewer: act = reviewer, V bound to op-pr42-001<br/>mecak8s sends the call with V-reviewer and reports the outcome
     H-->>U: Review outcome
 ```
 
 The diagram follows the successful path. Other outcomes:
 
-- **No provider credential.** vMCP finds no stored GitHub credential for Alice and answers "needs authorization". The broker returns the existing `mcp_authorization_pending` outcome; the TUI or Studio opens the authorization URL and rechecks, and the parked run resumes.
-- **No consent link (external mode).** AS-2 refuses to redeem the ID-JAG. The broker returns the same pending outcome, and the URL first leads through AS-2's "Allow Mecatl" step.
+- **No provider credential.** vMCP finds no stored GitHub credential for Alice and answers "needs authorization". mecak8s returns the existing `mcp_authorization_pending` outcome; the TUI or Studio opens the authorization URL and rechecks, and the parked run resumes.
+- **No consent link (external mode).** AS-2 refuses to redeem the ID-JAG. The broker refuses the authorization with the same pending outcome, and the URL first leads through AS-2's "Allow Mecatl" step.
 - **Denial or failure.** Any denial before dispatch prevents the provider call. Retrying requires authorization again.
 - **Unknown outcome.** If dispatch may have happened but no completion was observed, the outcome is unknown and is not replayed automatically.
 
-Every later tool call repeats the broker checks, including calls served from the `V` cache. The [failure matrix](#failure-matrix) lists the failures each step returns, and [lifetimes and renewal](#lifetimes-and-renewal) when each credential is replaced.
+The broker decides and issues tokens; it never sends a tool call. mecak8s's MCP client sends each call and holds `V` only for that call. Every later tool call repeats the broker checks and gets its own `V`. The [failure matrix](#failure-matrix) lists the failures each step returns, and [lifetimes and renewal](#lifetimes-and-renewal) when each credential is replaced.
 
 Each step below follows the same shape: what arrives, the checks in the order they run, what is issued, how each failure is reported and whether a retry can succeed, why the step exists, what it does not prove, and what is recorded. The tests for every step are in the [implementation companion](implementation.md#credential-verification), and what a compromised component can still do is in the [threat model](threat-model.md). Checks run in the listed order and stop at the first failure. Error responses never echo a token, an assertion, or a claim value from one. Token-endpoint errors follow RFC 6749 §5.2, RFC 8693 §2.2.2, RFC 7523 §3.1, and RFC 9396 §8; broker calls are gRPC and use gRPC status codes. Where one error code covers several causes, a reason code tells them apart; see [error reasons](#error-reasons).
 
@@ -481,7 +479,7 @@ This makes `RT-A42`, the schedule grant, and the ID-JAG usable only with the bro
 
 Local permissions and hooks run before each call.
 
-**Input.** Trusted harness client code sends `InvokeTool` with the workload credential, `A42`, `call.id=op-pr42-001`, run `R42` with its delegation `D42` and its [run owner](run-owner.md) Alice, and `agentJwtSvid=reviewerSVID`. A root run names no delegation. The model supplies only the tool content:
+**Input.** mecak8s's MCP client sends `AuthorizeCall` with the workload credential, `A42`, `call.id=op-pr42-001`, run `R42` with its delegation `D42` and its [run owner](run-owner.md) Alice, the server, the tool, a hash of the arguments, and `agentJwtSvid=reviewerSVID`. A root run names no delegation. The model supplies only the tool content:
 
 ```json
 {
@@ -500,9 +498,9 @@ Local permissions and hooks run before each call.
 6. A route to the gateway exists for the tool.
 7. Once the authority work is in place, the instance's stored effective ceiling allows this server and tool, with no Cedar evaluation errors.
 
-The broker then looks up `V` under `(A42, reviewer, gateway, Alice)`. A cache hit skips steps (7) and (8), never these checks. Concurrent misses for one key share a single exchange. On a miss, the broker takes `RT-A42` from `A42`'s record only after checks 3 to 5 have passed.
+The broker takes `RT-A42` from `A42`'s record only after checks 3 to 5 have passed, and obtains a `V` for this call through steps (7) and (8).
 
-**Output.** An allowed operation, dispatched in [step (9)](#9-vmcp-decision-and-provider-credential).
+**Output.** An allowed operation and its `V`, which the broker returns to the MCP client after recording its decision. The MCP client dispatches it in [step (9)](#9-vmcp-decision-and-provider-credential).
 
 **Failures.**
 
@@ -622,13 +620,16 @@ AS-1 and AS-2 are separate issuers with separate keys, also in embedded mode. Th
 
 ### (8) AS-2 access token
 
-**Input.** The broker redeems the ID-JAG at AS-2 with the [RFC 7523 JWT-bearer grant](https://www.rfc-editor.org/rfc/rfc7523.html#section-2.1), naming the vMCP with an RFC 8707 `resource`. The parameter comes from RFC 8707, not the ID-JAG profile; without it, AS-2 uses the ID-JAG's `resource` claim:
+**Input.** The broker redeems the ID-JAG at AS-2 with the [RFC 7523 JWT-bearer grant](https://www.rfc-editor.org/rfc/rfc7523.html#section-2.1), naming the vMCP with an RFC 8707 `resource`. The parameter comes from RFC 8707, not the ID-JAG profile; without it, AS-2 uses the ID-JAG's `resource` claim. It restricts `V` to the one call it authorized with an RFC 9396 `authorization_details` entry: the server, the tool, the SHA-256 hash of the arguments in canonical JSON (RFC 8785), and the operation ID. Form encoding is shown decoded:
 
 ```text
 POST https://gateway.example.com/oauth/token
 grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer
 assertion=<J-reviewer>
 resource=https://gateway.example.com/mcp
+authorization_details=[{"type": "https://toolhive.dev/mcp_tool_call",
+  "server": "github", "tool": "pull_request_read",
+  "arguments_sha256": "<hash>", "operation_id": "op-pr42-001"}]
 client_assertion_type=urn:ietf:params:oauth:client-assertion-type:jwt-bearer
 client_assertion=<private_key_jwt for mecatl, aud=https://gateway.example.com>
 ```
@@ -642,12 +643,16 @@ client_assertion=<private_key_jwt for mecatl, aud=https://gateway.example.com>
 5. `jti` has not been redeemed before: the embedded AS-2 is configured for single use for AS-1's issuer and keeps used `jti`s until `exp` plus the clock skew, in storage shared by all its replicas. External gateways are recommended to do the same, which costs Mecatl nothing because the broker never re-submits; a gateway that allows re-submission until `exp` (§4.4.3) still re-checks the approval on every redemption.
 6. The requested `resource` is the ID-JAG's `resource` claim, and this client and this actor's issuer may reach it.
 7. AS-2 maps the ID-JAG's `(iss, sub)` to a native user. It uses the subject mode configured for that issuer; see [how AS-2 resolves the user](mcp-gateway-modes.md#how-as-2-resolves-the-user). AS-2 never maps through `sub_id` alone, email, or display name.
-8. In external mode, an unrevoked approval exists for this gateway, that native user, client `mecatl`, and an `actor_iss` equal to the current actor's issuer. The actor is the top-level `act` only (RFC 8693 §4.1). If that `act` has no `iss`, the actor's issuer is the token's `iss` (a Mecatl rule). If there is no `act`, there is no actor, and an approval that names an actor issuer does not match. Mecatl's approvals name AS-1, because `act.sub` changes with every agent instance and means nothing to AS-2. See [how AS-2 resolves the user](mcp-gateway-modes.md#how-as-2-resolves-the-user).
+8. The `authorization_details` entry is well formed and names exactly one tool call. AS-2 can only narrow `V` with it, never widen it.
+9. In external mode, an unrevoked approval exists for this gateway, that native user, client `mecatl`, and an `actor_iss` equal to the current actor's issuer. The actor is the top-level `act` only (RFC 8693 §4.1). If that `act` has no `iss`, the actor's issuer is the token's `iss` (a Mecatl rule). If there is no `act`, there is no actor, and an approval that names an actor issuer does not match. Mecatl's approvals name AS-1, because `act.sub` changes with every agent instance and means nothing to AS-2. See [how AS-2 resolves the user](mcp-gateway-modes.md#how-as-2-resolves-the-user).
 
 **Output.** A short-lived access token and no refresh token (§4.4.3):
 
 ```json
-{"access_token": "<V-reviewer>", "token_type": "Bearer", "expires_in": 115}
+{"access_token": "<V-reviewer>", "token_type": "Bearer", "expires_in": 30,
+ "authorization_details": [{"type": "https://toolhive.dev/mcp_tool_call",
+   "server": "github", "tool": "pull_request_read",
+   "arguments_sha256": "<hash>", "operation_id": "op-pr42-001"}]}
 ```
 
 `V-reviewer`, decoded:
@@ -660,11 +665,16 @@ client_assertion=<private_key_jwt for mecatl, aud=https://gateway.example.com>
   "act": {"iss": "https://broker.example.com/as", "sub": "ag_7hq2x9"},
   "client_id": "mecatl",
   "aud": "https://gateway.example.com/mcp",
+  "authorization_details": [{"type": "https://toolhive.dev/mcp_tool_call",
+    "server": "github", "tool": "pull_request_read",
+    "arguments_sha256": "<hash>", "operation_id": "op-pr42-001"}],
   "iat": 1800000005,
-  "exp": 1800000120,
+  "exp": 1800000035,
   "jti": "access-pr42-001"
 }
 ```
+
+`V` is bound to one call and is single-use for it. The vMCP accepts it for exactly one `tools/call` whose server, tool, and argument hash match the entry, and records its `jti` so that a second `tools/call` with it is refused. The session handshake and messages that belong to that call, such as cancellation or an elicitation reply, are accepted during `V`'s lifetime. A `V` held by mecak8s can therefore make only the call the broker just approved, once. Whether the restriction lives in `V` or in a separate per-call token is open; see [authorization, credentials, and dispatch](mcp-authorization.md#authorization-credentials-and-dispatch).
 
 `V` also carries a **delegated-access marker**. AS-2 emits this claim only after an approved redemption, on this grant or on RFC 8693 token exchange. A wildcard delegate client or `may_act` never earns it. `V` is terminal. In token exchange, AS-2 refuses a token that carries the marker, as subject token or as actor token. So `V` cannot be exchanged for a native-subject token, and it cannot act as native Alice for someone else. The vMCP reads provider credentials only for a token that carries the marker.
 
@@ -679,7 +689,8 @@ The approval-continuation profile is a convention that AS-2 advertises in its me
 | 1 | 401 `invalid_client` | Call fails; not retryable. |
 | 2–5 | 400 `invalid_grant` (RFC 7523 §3.1) with `invalid_assertion` | Not retryable with the same ID-JAG. |
 | 6 | 400 `invalid_target` | Call fails; a configuration fault. |
-| 7, 8, external | 400 `invalid_grant` with `consent_required` and an `error_uri` for a pending approval, under the approval-continuation profile | The existing `mcp_authorization_pending` outcome, with that link. The broker shows the `error_uri` only if the gateway advertises the profile and the `error_uri` is `https` on AS-2's issuer origin. Otherwise the call ends as pending with Mecatl's own text and no link. |
+| 8 | 400 `invalid_authorization_details` | Call fails; a broker bug. |
+| 7, 9, external | 400 `invalid_grant` with `consent_required` and an `error_uri` for a pending approval, under the approval-continuation profile | The existing `mcp_authorization_pending` outcome, with that link. The broker shows the `error_uri` only if the gateway advertises the profile and the `error_uri` is `https` on AS-2's issuer origin. Otherwise the call ends as pending with Mecatl's own text and no link. |
 | 7, embedded | 400 `invalid_grant` with `invalid_assertion` | A plain failure. |
 | Any `invalid_grant` with no reason code, or with an `error_uri` but no `consent_required` | — | Retry once with a new ID-JAG. If AS-2 refuses again, fail the call as a configuration or gateway error. Show no prompt. |
 | Store unavailable | 503 or `server_error` | A retryable infrastructure failure, never a prompt. |
@@ -687,40 +698,39 @@ The approval-continuation profile is a convention that AS-2 advertises in its me
 
 **Why.** AS-2 sends reason codes in `error_description`, as AS-1 does, so the broker can tell a missing approval from a bad assertion. The broker never re-submits an ID-JAG; it mints a new one. Single use costs nothing, and it turns a stolen ID-JAG redeemed first by a holder of the broker key into a visible failure of the broker's own redemption. RFC 6749 §5.2 defines `error_uri` as human-readable error information, so it means a pending approval only together with `consent_required`, from a gateway that advertises the approval-continuation profile; outages and bugs then never train users to approve. Mapping and approval are separate facts, and the approval stops a compromised AS-1 from using the gateway credentials of a user who never chose Mecatl; see [gateway modes](mcp-gateway-modes.md#how-as-2-resolves-the-user) and the [implementation companion](implementation.md#external-consent-link).
 
-**Does not prove.** Anything about the agent's ceiling: `V` carries no scope for it yet, so a gateway allow says nothing about the ceiling.
+**Does not prove.** That the agent's ceiling allows the call: the broker checked that, and the binding only fixes which call `V` may make.
 
-**Caching.** The broker caches `V-reviewer` under `(A42, reviewer, gateway, Alice)` and treats it as expired a configurable skew margin before `exp`; at startup it checks that the margin is shorter than the `V` lifetime AS-2 issues.
-
-- On a 401 `invalid_token` from the vMCP, the broker drops the cached `V`, but only if it is still the one that failed, and repeats steps (7) and (8) once within the same call.
-- A cache hit still needs a currently valid SVID for the same instance.
+**One `V` per call.** Neither the broker nor mecak8s caches `V`. The broker returns it to mecak8s's MCP client, which sends the one call it is bound to and then discards it. On a 401 `invalid_token` from the vMCP, before the call ran, the MCP client reports the rejection to the broker, which repeats steps (7) and (8) once within the same call. A retry after the call may have run needs a new authorization and is not automatic; see [pauses and restart](#pauses-and-restart).
 
 **Evidence.** AS-2 records the redemption or denial: ID-JAG `jti`, client `mecatl`, native user, actor, resource, and decision.
 
 ### (9) vMCP decision and provider credential
 
-**Input.** `tools/call` with `Authorization: Bearer <V-reviewer>`, the vMCP session ID, and the operation and attempt IDs in the request's `_meta`, under the proposed keys `dev.mecatl/operation` and `dev.mecatl/attempt`. The attempt number increases with each dispatch attempt of the same operation. The run ID travels in trace headers.
+**Input.** From mecak8s's MCP client, `tools/call` with `Authorization: Bearer <V-reviewer>`, the vMCP session ID, and the operation and attempt IDs in the request's `_meta`, under the proposed keys `dev.mecatl/operation` and `dev.mecatl/attempt`. The attempt number increases with each dispatch attempt of the same operation. The run ID travels in trace headers.
 
 **Checks, at the vMCP:**
 
 1. `V`'s `typ` is `at+jwt` or `application/at+jwt`, `iss` is AS-2, the signature verifies, `aud` is this vMCP, and `exp` has not passed (RFC 9068 §4); a request that names a `resource` is checked against it (RFC 8707).
 2. The session ID, if present, is bound to the same `iss`, `sub`, `client_id`, `act.iss`, and `act.sub`, and the delegated-access marker.
-3. Its own operation policy allows the tool.
-4. `V` carries the delegated-access marker from [step (8)](#8-as-2-access-token). A token without it gets no delegated credential lookup.
-5. A provider credential exists under **(gateway, native user, routed provider)**: here `(gateway.example.com, usr-alice-7c1d, github)`. The provider comes from the tool's route, never from the request. The stored row's owner must equal `V`'s native user.
+3. The `tools/call` matches `V`'s `authorization_details` entry: the server, the tool, and the argument hash, which the vMCP computes from the request it received before any routing or rewriting. `V`'s `jti` has not served a `tools/call` before; the vMCP records it until `exp` plus the clock skew, in storage shared by its replicas.
+4. Its own operation policy allows the tool.
+5. `V` carries the delegated-access marker from [step (8)](#8-as-2-access-token). A token without it gets no delegated credential lookup.
+6. A provider credential exists under **(gateway, native user, routed provider)**: here `(gateway.example.com, usr-alice-7c1d, github)`. The provider comes from the tool's route, never from the request. The stored row's owner must equal `V`'s native user.
 
 **Output.** The GitHub call made with Alice's GitHub token, and its result. One credential record exists per user and provider, refreshed as a single row with compare-and-swap; the enterprise connector gateway already stores credentials this way. A delegated `V` comes from no interactive gateway login, so every gateway, including a standalone one, must find the credential from the user alone.
 
 **Failures.**
 
-| Check | Response | Broker outcome and retry |
+| Check | Response | mecak8s outcome and retry |
 | --- | --- | --- |
-| 1 | 401 `invalid_token` | The broker drops `V` and retries once with a new one. |
-| 2 | 404 for the session | The broker opens a new vMCP session and retries once. |
-| 3 | Tool error | Returned as a denial; not retried. |
-| 4 | Tool error | A broker or gateway bug: fail the call, do not retry. |
-| 5, access token expired | — | The gateway refreshes it with the stored refresh token and continues. |
-| 5, no row, or refresh no longer possible | "Needs authorization" | The existing `mcp_authorization_pending` outcome; after Alice connects GitHub, a later call passes every check again. A row owned by another user is refused and recorded. |
-| 5, refresh or storage failure | 5xx | A retryable infrastructure failure. |
+| 1 | 401 `invalid_token` | mecak8s reports the rejection; the broker issues a new `V`, and the call is retried once. |
+| 2 | 404 for the session | mecak8s opens a new vMCP session and retries once with a new `V`. |
+| 3 | 403 `insufficient_scope` | A broker or MCP client bug: fail the call, do not retry. |
+| 4 | Tool error | Returned as a denial; not retried. |
+| 5 | Tool error | A broker or gateway bug: fail the call, do not retry. |
+| 6, access token expired | — | The gateway refreshes it with the stored refresh token and continues. |
+| 6, no row, or refresh no longer possible | "Needs authorization" | The existing `mcp_authorization_pending` outcome; after Alice connects GitHub, a later call passes every check again. A row owned by another user is refused and recorded. |
+| 6, refresh or storage failure | 5xx | A retryable infrastructure failure. |
 
 **Why.** The vMCP is the only component that holds the provider credential, so it makes the last check before the provider call and looks the credential up from the validated user alone. The model cannot select another user's credential by supplying a URL, header, audience, or credential selector. If identity, link, connection, or authorization evidence is missing, stale, or revoked, the call fails closed; it never falls back to a service credential, another user, or a more privileged agent.
 
@@ -728,7 +738,7 @@ The approval-continuation profile is a convention that AS-2 advertises in its me
 
 **Evidence.** vMCP records its decision with the access-token reference `(iss, jti)`, user, actor, tool, outcome, and the reported operation and attempt.
 
-**Correlation.** A cached `V-reviewer` serves several calls, so its `(iss, jti)` leads back through AS-2's redemption record and the ID-JAG `jti` to AS-1's issuance record, but not to one operation. The operation ID in `_meta`, logged by vMCP as reported, unverified trace context, ties a gateway record to a single call. Because `act` names only the reviewer, it is also what lets an investigator reach delegation `D42` from a gateway log. Each recipient records only what it verifies or observes.
+**Correlation.** `V-reviewer` serves one call, so its `(iss, jti)` leads back through AS-2's redemption record and the ID-JAG `jti` to AS-1's issuance record and to the operation ID the broker put in its `authorization_details`. The operation ID in `_meta`, logged by vMCP as reported, unverified trace context, must match it. Because `act` names only the reviewer, it is also what lets an investigator reach delegation `D42` from a gateway log. Each recipient records only what it verifies or observes.
 
 ## Scheduled runs
 
@@ -836,7 +846,8 @@ The failures each step can return: where each is detected, what the user sees, a
 | AS-1 refuses the combination | AS-1 | `invalid_request` with `denied` | Call denied | Nothing |
 | No consent link (external) | AS-2 | `invalid_grant` with `consent_required` | `mcp_authorization_pending` through "Allow Mecatl" | Nothing |
 | ID-JAG reused where the issuer requires single use | AS-2 | `invalid_grant` with `invalid_assertion` | Call fails; a broker bug or a stolen ID-JAG | Nothing |
-| `V` rejected by vMCP | vMCP | 401 `invalid_token` | None: one retry with a new `V` | Cached `V` dropped |
+| `V` rejected by vMCP | vMCP | 401 `invalid_token` | None: mecak8s reports it, and the call is retried once with a new `V` | Nothing |
+| Call does not match `V`'s binding, or `V` already used for a call | vMCP | 403 `insufficient_scope` | Call fails; a broker or MCP client bug, or a stolen `V` | Nothing |
 | vMCP session rejected | vMCP | 404 | None: one retry with a new session | Stored session ID dropped |
 | vMCP policy denies the tool | vMCP | Tool error | Call denied | Nothing |
 | No provider credential | vMCP | "Needs authorization" | `mcp_authorization_pending`; Alice connects GitHub | Nothing |
@@ -886,7 +897,7 @@ An agent instance keeps its identity across runs. Each credential's lifetime is 
 | Schedule grant | Its horizon, schedule deletion, sign out everywhere, or the upstream re-check. | Never extended. Renewal sets up a new grant while Alice is present; the old one runs out. Alice is notified before the horizon. | Alice |
 | Upstream refresh token | IdP expiry or revocation. | At most once per re-check interval, at an ID-JAG exchange or scheduled-run open; one refresh per user at a time. | AS-1 |
 | ID-JAG | Short lifetime. | Never renewed or re-submitted; one per `V`. | Broker |
-| `V` | Short lifetime. | A skew margin before `exp` at the next call, or within the same call after a 401; one exchange per cache key at a time. | Broker, through steps (7) and (8) |
+| `V` | Its one call, or a short lifetime of seconds. | Never renewed; a new `V` for every call, and one more within the same call after a 401. | Broker, through steps (7) and (8) |
 | Key sets: AS-1's, AS-2's, the agent trust bundle, and the cluster JWKS | Operator rotation. | On an unknown `kid`, rate-limited, and periodically. | Each verifier |
 | The broker client's configured key set (not `jwks_uri`) | Operator rotation. | Registered again at each server, which reads it only then; a hosted AS-1 registers it at process start. | Operator, or mecak8s at startup |
 | Consent link | Revocation in the gateway UI or by Mecatl. | The user links again. | Alice |
@@ -894,7 +905,7 @@ An agent instance keeps its identity across runs. Each credential's lifetime is 
 
 When a renewal fails, the credential's users fail closed: a workload credential with `UNAUTHENTICATED`, an agent-instance SVID by failing that instance's calls, `V` with step (7) or (8)'s outcome, and tokens signed with a rotated key are rejected until the verifier's key-set refresh succeeds.
 
-The example times are illustrative, not selected defaults: `J-reviewer` is valid `1800000001..1800000121`, `V-reviewer` `1800000005..1800000120`. `RT-A42`'s hard expiry and a schedule grant's horizon bound how long Mecatl acts without a fresh sign-in; the company IdP administrator should know them.
+The example times are illustrative, not selected defaults: `J-reviewer` is valid `1800000001..1800000121`, `V-reviewer` `1800000005..1800000035`. `RT-A42`'s hard expiry and a schedule grant's horizon bound how long Mecatl acts without a fresh sign-in; the company IdP administrator should know them.
 
 Closing or revoking the session revokes `RT-A42` and drops that session's cached ID-JAGs and `V`. vMCP sessions belong to the instance and user, not the broker session: they survive a replacement broker session and end when the instance ends or the user's grants are revoked. A recipient validating only a self-contained token may still accept an already-issued `V` until it expires.
 
@@ -945,12 +956,12 @@ This works with any IdP that issues refresh tokens and needs no IdP-specific eve
 
 ## Sessions at the vMCP
 
-Each agent instance has its own vMCP session (`Mcp-Session-Id`) for each user it acts for. The broker creates it on the instance's first MCP call and closes it when the instance ends or the user's grants are revoked, so backend state such as an open page or a selected repository carries across that instance's runs.
+Each agent instance has its own vMCP session (`Mcp-Session-Id`) for each user it acts for. mecak8s's MCP client, which sends the calls, creates it on the instance's first MCP call and closes it when the instance ends or the user's grants are revoked, so backend state such as an open page or a selected repository carries across that instance's runs. The session outlives each call's `V`: every `V` for the same user and instance names the same `iss`, `sub`, `client_id`, and `act`.
 
 - Sessions are never shared between instances.
 - The vMCP binds each session to the user and the acting instance: `V`'s `iss`, `sub`, `client_id`, `act.iss`, `act.sub`, and delegated-access marker. A token naming another instance in its `act` cannot use the session.
 - The run is not part of the session or token; the run ID travels in trace headers.
-- The broker stores each session ID under the instance, gateway, and user, not the broker session, so a [shared session](run-owner.md) never hands one user's backend state to another, and a replacement broker session keeps the instance's vMCP sessions. After a restart it reattaches. When the vMCP reports the session gone, the broker creates a new one. A wedged session can be reset explicitly.
+- The MCP client stores each session ID under the instance, gateway, and user, not the broker session, so a [shared session](run-owner.md) never hands one user's backend state to another, and a replacement broker session keeps the instance's vMCP sessions. After a restart it reattaches. When the vMCP reports the session gone, the broker creates a new one. A wedged session can be reset explicitly.
 - An instance has at most one active run at a time; Mecatl rejects a second concurrent run on the same session or child. Runs of one instance therefore never share a vMCP session concurrently. If that rule ever changes, session assignment must be revisited.
 
 ## Pauses and restart
@@ -959,13 +970,13 @@ The broker's session reference is separate from the host session ID. A broker se
 
 Workload-only session access checks the exact authenticated workload and configured deployment. It never takes the owner from a workload's assertion: an owner mecak8s reports is only compared with AS-1's record, and a mismatch refuses. A replacement Pod with the same workload identity can serve the existing partition; a different identity cannot assume access.
 
-An approval wait or provider-connection pause leaves the current run unfinished. Before dispatching the pending operation, the broker checks it against the applicable policy again. Connecting a provider account does not approve the pending operation.
+An approval wait or provider-connection pause leaves the current run unfinished. Before dispatching the pending operation, mecak8s asks the broker to authorize it again, and the broker checks it against the applicable policy. Connecting a provider account does not approve the pending operation.
 
 After restart, recovering credentials is not enough to continue safely. Recovery must restore `A42` and its workload and host binding, find `RT-A42`'s AS-1 record still valid, and reestablish the registered actors and the unfinished execution, including each run's owner. If `RT-A42` has expired or been revoked, tool calls fail closed until a new session open supplies fresh authority. The harness decides whether execution resumes; the broker authorizes subsequent calls.
 
 Under the [identity and selection continuity rules](agent-definitions.md#identity-continuity-across-runs-and-restarts), continuation retains the unfinished run's original bounds. With the authority work in place, the broker rechecks the stored effective ceiling; the harness retains its run and delegation restrictions. Credential renewal does not widen recovered authority.
 
-An operation that may have been dispatched but has no recorded completion has an unknown outcome. Restoring credentials does not make replay safe. Reconciliation requires evidence about the original operation, such as provider status or an idempotency mechanism.
+An operation that may have been dispatched but has no recorded completion has an unknown outcome. Restoring credentials does not make replay safe. mecak8s's MCP client, which sends the calls, records each operation ID and argument hash before its first dispatch attempt, keeps the record across restarts, and never sends a recorded operation again automatically; a single-use `V` makes a replay with the same token fail at the vMCP as well. Reconciliation requires evidence about the original operation, such as provider status or an idempotency mechanism.
 
 ## Identifying claim
 
@@ -980,8 +991,8 @@ On Okta, Google, and Keycloak both claims carry the same value. On Entra they di
 
 None of these values is selected. Each bounds a risk the operator should know:
 
-- **Lifetimes:** AS-1's maximum for grants that issue ID-JAGs, which bounds `RT-A42`'s hard expiry, and for grants that issue refresh tokens, which bounds a schedule's horizon; the ID-JAG lifetime, and the maximum SVID, workload-credential, and client-assertion lifetimes.
-- **Clock skew**, and the margins derived from it: the `V` skew margin and how long used `jti` values are kept past `exp` where single use is configured.
+- **Lifetimes:** AS-1's maximum for grants that issue ID-JAGs, which bounds `RT-A42`'s hard expiry, and for grants that issue refresh tokens, which bounds a schedule's horizon; the ID-JAG lifetime, the `V` lifetime, which bounds how long a `V` taken from mecak8s stays usable, and the maximum SVID, workload-credential, and client-assertion lifetimes.
+- **Clock skew**, and the margins derived from it: how long used ID-JAG and `V` `jti` values are kept past `exp`.
 - **Upstream re-check:** the re-check interval, the maximum upstream refresh-token lifetime per IdP when the IdP sends no `refresh_expires_in`, and the lease timeout for a refresh in flight.
 - **Key refresh:** the rate limit on refreshing a key set after an unknown `kid`.
 - **Closed sessions:** how long the broker keeps closed-session records. Session IDs must be unguessable and never reused, so a record kept for less than forever relies on the ID space alone.

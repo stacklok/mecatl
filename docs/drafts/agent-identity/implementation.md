@@ -91,7 +91,7 @@ Test AS-2 redemption:
 - In embedded mode, AS-2 redeems with no approval record, by configuration.
 - `V` from an approved redemption carries the delegated-access marker; a token from an unapproved RFC 8693 delegate (wildcard client or `may_act`), or one with only `act`, does not; a marked `V` is refused as a token-exchange subject or actor token.
 - Administrator pre-approval is used only when the gateway administrator has turned it on.
-- Approval matching follows check 8 in [step (8)](credentials-and-lifecycle.md#8-as-2-access-token).
+- Approval matching follows check 9 in [step (8)](credentials-and-lifecycle.md#8-as-2-access-token).
 - Embedded AS-2 refuses a second redemption of the same ID-JAG `jti` with `invalid_grant` and `invalid_assertion`, including two concurrent redemptions on different replicas; after a lost response, the broker's new ID-JAG redeems successfully.
 - An `invalid_grant` with no reason code, or with an `error_uri` but no `consent_required`, produces no prompt. A storage outage at AS-2 returns `server_error`, and a `V` already issued still dispatches.
 - Closing a session stops local use at once even when AS-1 is unreachable; termination at AS-1 is retried until confirmed.
@@ -99,13 +99,18 @@ Test AS-2 redemption:
 - After a lost redemption response, the broker mints a new ID-JAG instead of resending the first.
 - A requested `resource` other than the ID-JAG's `resource` claim is refused with `invalid_target`.
 
-Test the `V` cache:
+Test the per-call `V`:
 
-- The broker treats `V` as expired a configured skew margin before `exp`.
-- On a 401 `invalid_token` from the vMCP, the broker drops `V` and repeats the exchange once within the same call; a second 401 fails the call. A 401 for an older `V` does not drop a newer one another call cached.
-- N concurrent calls that miss the cache for one key cause one exchange.
-- Startup fails when the skew margin is not shorter than the `V` lifetime.
+- Every allowed call gets its own `V`, bound to that call's server, tool, argument hash, and operation ID. Neither the broker nor mecak8s caches it, and mecak8s never logs or stores it.
+- AS-2 copies the `authorization_details` entry into `V` unchanged, refuses a malformed entry or one naming more than one call, and never widens `V` beyond it.
+- On a 401 `invalid_token` from the vMCP, before the call ran, mecak8s reports the rejection, the broker repeats the exchange once within the same call, and a second 401 fails the call.
 - The `ag_` identifier in `act` is unchanged after the instance's SVID is renewed.
+
+Test the binding at the vMCP:
+
+- A `tools/call` whose server, tool, or arguments differ from `V`'s entry is refused, including arguments that differ only after the vMCP rewrites the request; the vMCP hashes the request as received.
+- A second `tools/call` with the same `V` is refused, including on another vMCP replica. The session handshake, cancellation, and an elicitation reply for the bound call are accepted during `V`'s lifetime.
+- A vMCP session created with one `V` continues with the next `V` for the same user and instance, and refuses a `V` naming another instance.
 
 Test schedule grants:
 
@@ -123,7 +128,8 @@ Test vMCP and the provider credential:
 - vMCP rejects a `V` with the wrong issuer, audience, `typ`, or expiry.
 - vMCP loads the credential for (gateway, native user, routed provider) only for a `V` that carries the delegated-access marker, and returns "needs authorization" when none exists. A `V` without the marker gets no delegated lookup. A row whose owner differs from `V`'s user is refused. One user's `V` never loads another user's credential.
 - Two agent instances acting for the same user get separate vMCP sessions.
-- vMCP records the operation ID the broker propagated with each request, marked as reported. Two calls served by one cached `V` log different operation IDs.
+- vMCP records the operation ID mecak8s propagated with each request, marked as reported, and it matches the operation ID in `V`'s entry.
+- mecak8s's MCP client records each operation ID and argument hash before the first dispatch attempt, keeps the record across a restart, and never sends a recorded operation again automatically.
 
 Verify that preliminary broker denial, AS-1 denial, AS-2 denial, and vMCP denial each prevent provider dispatch, and that a missing consent link or upstream credential surfaces as `mcp_authorization_pending`. Verify that AS-1 access tokens, broker refresh tokens, ID-JAGs, `V`, and client assertions never reach model or tool content, transcripts, logs, environment variables, or audit records, including errors and diagnostics. The server side never stores the AS-1 access token durably. An expired or revoked broker refresh token denies new ID-JAG issuance; it must not be replaced by a reported issuer/subject pair or a fabricated continuation.
 
@@ -145,6 +151,8 @@ This table is the ledger of ToolHive changes the design needs. Rows link existin
 | Refresh token as `subject_token`: a child grant from a grant that issues refresh tokens, listing one other output and expiring no later than its parent, which is checked on every use; and an ID-JAG from a grant that issues ID-JAGs | No; child grants in progress with the generic grant ([#6897](https://github.com/stacklok/toolhive/issues/6897)); ID-JAGs with ID-JAG issuance ([#6898](https://github.com/stacklok/toolhive/issues/6898)) | Large | Identity work |
 | Single-level `act` from the registered actor input, with `act.iss` set to AS-1's issuer (nesting later, with the chained exchange) | Partly; `buildActClaim` builds `act` from a client or self-issued actor token and nests it | Medium | Identity work |
 | ID-JAG redemption keeps `act`, including `act.iss` | Yes, copied unchanged | None; verify only | Identity work |
+| AS-2 accepts an `authorization_details` entry naming one tool call (server, tool, argument hash, operation ID) on the JWT-bearer grant, only to narrow `V`, and copies it into `V`, with a configurable `V` lifetime per client | No | Medium | Identity work, phase 2; the form is open (see [dispatch](mcp-authorization.md#authorization-credentials-and-dispatch)) |
+| vMCP accepts a `V` for one `tools/call` matching its entry, hashing the request as received, and refuses a second `tools/call` with the same `jti`, in storage shared by its replicas; the session handshake and messages that belong to the call are accepted | No | Medium | Identity work, phase 2 |
 | **M1.** Subject mode per trusted source issuer: namespaced `iss#sub` (default), SSO identity with a configurable claim set (embedded), or approval record (external). One resolution function for both the JWT-bearer and token-exchange grants, failing closed. Per issuer also: `jti` reuse policy, allowed actor issuers per client, and implicit approval per (issuer, client, resource) | No; ID-JAG redemption always issues `iss#sub` (`id_jag_handler.go`), and token exchange passes self-issued subjects through (`tokenexchange/handler.go`); [#6887](https://github.com/stacklok/toolhive/issues/6887) | Medium | Identity work |
 | **M2.** Delegated access approval (gateway, local user, client, `actor_iss`, revoked), checked at redemption; the approval link with `error_uri`, under an approval-continuation profile advertised in AS-2's metadata (RFC 8414); revocation by the owning client. AS-2 returns `server_error` when the store is unavailable | No; `ClientApproval` and remembered consent are the nearest records and lack these fields; [#6887](https://github.com/stacklok/toolhive/issues/6887) | Medium, plus Large for the approval link | Identity work |
 | **M3.** A delegated-access marker in `V` that only an approved redemption emits, on either grant; the gateway reads credentials only for tokens with it, from its own AS-2. | No; `isSessionlessGrant` accepts any `act` chain (`pkg/auth/token.go`); [#6404](https://github.com/stacklok/toolhive/issues/6404) | Medium | Identity work |
@@ -303,15 +311,15 @@ Test the checks at each hop:
 - SVID validation rejects a platform SVID with the broker's audience (wrong trust domain and bundle), a header without `kid`, an `aud` with two values, a disallowed `alg`, and an `exp` beyond the maximum lifetime.
 - Registration rejects names over 63 bytes, nesting past 8 child levels, `.` and `..`, and a parentless registration of a definition that is not root-eligible.
 - An AS-1 503 maps to `UNAVAILABLE` and is reported as a retryable failure, not a denial; `invalid_client` and a bare `invalid_request` map to `INTERNAL`; each reason in [error reasons](credentials-and-lifecycle.md#error-reasons) maps to its gRPC status and mecak8s outcome.
-- Two users' calls through the same instance never share a cached `V`, ID-JAG, or vMCP session ID.
-- Signing out everywhere revokes only that user's grants and cache entries.
+- Two users' calls through the same instance never share a `V`, ID-JAG, or vMCP session ID.
+- Signing out everywhere revokes only that user's grants and drops only that user's vMCP sessions.
 
 ## Sign-out and revocation checks
 
 Verify the behavior in [sign-out and revocation](credentials-and-lifecycle.md#sign-out-and-revocation):
 
 - Signing out of one client revokes only that client's tokens; running agents and schedules continue.
-- Signing out everywhere cancels live runs, parked tool calls, and in-flight tool calls; closes the broker sessions, keeping closed-session records; revokes their refresh tokens and every client's AS-1 refresh tokens at AS-1; drops cached ID-JAGs and `V`; and revokes every schedule grant. Transcripts remain.
+- Signing out everywhere cancels live runs, parked tool calls, and in-flight tool calls; closes the broker sessions, keeping closed-session records; revokes their refresh tokens and every client's AS-1 refresh tokens at AS-1; issues no further `V`; and revokes every schedule grant. Transcripts remain.
 - After it, session open and schedule setup refuse an access token issued before the revocation time, including one opened concurrently with the revocation.
 - It reaches sessions served by another replica.
 - After it, an ID-JAG exchange with any revoked refresh token fails, and each schedule's next run ends with "needs owner action".
@@ -321,7 +329,7 @@ Verify the behavior in [sign-out and revocation](credentials-and-lifecycle.md#si
 - A network error or 5xx fails that exchange and revokes nothing.
 - Concurrent exchanges for one user, across replicas, cause one upstream refresh. When the refresh lease times out, waiting exchanges fail with 503 and revoke nothing.
 - After a lost IdP response or a crash during a refresh, a rotating IdP's `invalid_grant` on the next refresh revokes with reason `owner_action_required`, not `upstream_revoked`.
-- An upstream revocation runs the broker's sign-out-everywhere path: live runs stop, parked and in-flight calls are cancelled, and cached `V` is dropped.
+- An upstream revocation runs the broker's sign-out-everywhere path: live runs stop, parked and in-flight calls are cancelled, and no further `V` is issued.
 - A second sign-in replaces the user's upstream refresh token. A client's own sign-out does not remove it. Re-checks happen at most once per interval.
 
 ## Work breakdown

@@ -96,11 +96,11 @@ The `ag_` identifiers in `act` are opaque on purpose: the SPIFFE path, with its 
 
 ## Decision, dispatch, and observed outcome
 
-The broker records its authorization decision, whether it attempted dispatch, and the outcome it observed as separate facts. If vMCP reports which provider connection it used, the broker records that identifier as observed, not as something the broker authorized. An allow is not a dispatch; a dispatch attempt is not proof of receipt or success. A denial dispatches no backend operation. If completion is missing after possible dispatch, the outcome is unknown, not evidence of nonexecution. Credential recovery cannot justify automatic replay of an unknown operation.
+The broker records its authorization decision. mecak8s's MCP client, which sends the call, reports whether it attempted dispatch and the outcome it observed, and the broker records those as separate facts, marked as reported. If vMCP reports which provider connection it used, the broker records that identifier as observed by vMCP, not as something the broker authorized. An allow is not a dispatch; a dispatch attempt is not proof of receipt or success. A denial dispatches no backend operation. If completion is missing after possible dispatch, the outcome is unknown, not evidence of nonexecution. Credential recovery cannot justify automatic replay of an unknown operation.
 
 Decision, dispatch, and observed-outcome evidence must survive broker restart; [delivery, protection, and reconciliation](#delivery-protection-and-reconciliation) sets the write order and what happens when evidence cannot be delivered. This design does not claim atomicity between an audit write and an external effect.
 
-Use operation and attempt references to connect the evidence; individual events also need their own references. The operation ID, the ID-JAG `jti`, and the AS-2 access token `(iss, jti)` are separate references. A cached access token serves several calls, so its `jti` cannot replace a per-operation reference. To reach one operation from a gateway record, the broker must propagate the operation ID with each MCP request, and vMCP records it as reported, unverified trace context. This propagation is required for correlation. The broker sends the IDs in each MCP request's `_meta` and as request parameters at AS-1; it is not an authenticated propagation contract. Because `act` names only the current actor, this operation ID is what keeps delegation `D42` reachable from a gateway log.
+Use operation and attempt references to connect the evidence; individual events also need their own references. The operation ID, the ID-JAG `jti`, and the AS-2 access token `(iss, jti)` are separate references. Each access token is bound to one call and names its operation ID in its `authorization_details`, so a gateway record leads to one operation through the token AS-2 signed. mecak8s also propagates the operation ID with each MCP request, and vMCP records it as reported, unverified trace context that must match the token. The broker sends the IDs as request parameters at AS-1, and mecak8s sends them in each MCP request's `_meta`; that propagation is not an authenticated contract. Because `act` names only the current actor, this operation ID is what keeps delegation `D42` reachable from a gateway log.
 
 ## Delivery, protection, and reconciliation
 
@@ -114,13 +114,13 @@ Correctly shaped records are not enough if they can be lost, rewritten, or never
 
 | Component | Event families |
 | --- | --- |
-| mecak8s | API requests and session ownership checks |
-| Broker | Definition load, instance registration, delegation, session open and close, sign-out everywhere, and decision, dispatch, and observed outcome for each tool call |
+| mecak8s | API requests and session ownership checks; dispatch attempts and observed outcomes, which it also reports to the broker |
+| Broker | Definition load, instance registration, delegation, session open and close, sign-out everywhere, the decision for each tool call, and the dispatch and outcome mecak8s reports, marked as reported |
 | AS-1 | Sign-in, including the company IdP session and authentication time; access-token issuance; the session-open conversion; ID-JAG issuance and denial; refresh-token revocation; upstream re-check failures |
 | AS-2 | Redemption and denial; consent-link creation and revocation |
 | vMCP | Tool calls |
 
-**Write order and failure.** The broker mints each attempt ID. Before it dispatches a tool call, its decision record must be accepted by the sink; if the broker cannot deliver it, the broker refuses to dispatch. This is the broker's choice, not a library default. A record being accepted by a sink is not the same as durable storage; the deployment's destination provides durability. Delivery failures are reported on a separate channel, as toolhive-core [#343](https://github.com/stacklok/toolhive-core/issues/343) proposes, so a failing destination does not hide its own failure.
+**Write order and failure.** The broker mints each attempt ID. Before it returns an access token for a tool call, its decision record must be accepted by the sink; if the broker cannot deliver it, the broker returns no token, so the call cannot be dispatched. This is the broker's choice, not a library default. A record being accepted by a sink is not the same as durable storage; the deployment's destination provides durability. Delivery failures are reported on a separate channel, as toolhive-core [#343](https://github.com/stacklok/toolhive-core/issues/343) proposes, so a failing destination does not hide its own failure.
 
 **Lossless delivery.** Some deployments, such as those under government compliance regimes, must not lose audit records. There, every component's sink must be one whose acceptance means the record was durably received, for example an HTTP sink pointed at a collector that acknowledges only after a durable write. Standard output read by a log shipper does not qualify, because the shipper can drop records under load or on a crash. When the sink is slow or unavailable, components block or refuse the operation rather than buffer and drop records. The broker's rule above then means that a tool call is dispatched only after its decision record is durably stored.
 
@@ -131,8 +131,8 @@ Correctly shaped records are not enough if they can be lost, rewritten, or never
 | Mismatch | What it can mean |
 | --- | --- |
 | An AS-2 redemption with no matching AS-1 ID-JAG issuance | An ID-JAG minted outside the recorded path |
-| A vMCP tool call with no matching broker dispatch for the same user and actor | An access token used outside the broker |
-| A broker dispatch with no matching vMCP tool call | A record suppressed on one side |
+| A vMCP tool call with no matching broker decision for the same token `jti` and operation | An access token used outside the broker |
+| A reported dispatch with no matching vMCP tool call, or a vMCP tool call with no reported dispatch | A record suppressed or misreported on one side |
 | A session-open conversion whose source token has no AS-1 issuance and sign-in | A user token minted outside the recorded path |
 
 In external mode, the gateway's records belong to its operator, so these checks need the operator's records.
