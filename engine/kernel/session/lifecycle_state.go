@@ -19,7 +19,7 @@ type lifecycleState struct {
 
 // reduce validates one locally valid typed fact before changing the candidate.
 // Failed additions leave all scalars unchanged and consume no ordinal.
-func (s *lifecycleState) reduce(r Record, source func(InputID) (uint64, bool)) error {
+func (s *lifecycleState) reduce(r Record) error {
 	if r.scope != s.activeRun.HistoryID && s.activeRun != (RunID{}) {
 		return ErrIdentity
 	}
@@ -41,7 +41,7 @@ func (s *lifecycleState) reduce(r Record, source func(InputID) (uint64, bool)) e
 			return ErrTransition
 		}
 	case sessionformat.KindEffectiveInput:
-		return s.validateEffectiveInput(r, source)
+		return s.validateEffectiveInput(r)
 	case sessionformat.KindRunInterrupted:
 		if !s.created || s.activeRun == (RunID{}) || r.runInterrupted.ID != s.activeRun {
 			return ErrTransition
@@ -64,27 +64,30 @@ func (s *lifecycleState) startRun(r Record) error {
 	return nil
 }
 
-// validateEffectiveInput checks source admission without changing lifecycle state.
-func (s *lifecycleState) validateEffectiveInput(r Record, source func(InputID) (uint64, bool)) error {
-	if !s.created || s.activeRun == (RunID{}) || r.effectiveInput.RunID != s.activeRun || r.effectiveInput.Ordinal == 0 || r.effectiveInput.Ordinal > s.inputs {
+// validateEffectiveInput checks every source without changing lifecycle state.
+// Inputs are admitted contiguously within each run, so the current ordinal count
+// proves earlier membership, including successful earlier same-batch additions.
+func (s *lifecycleState) validateEffectiveInput(r Record) error {
+	if !s.created || s.activeRun == (RunID{}) || r.effectiveInput.RunID != s.activeRun.Ordinal {
 		return ErrTransition
 	}
-	count, ok := source(r.effectiveInput)
-	if !ok || (r.hasMessage && r.maxMessage >= count) {
-		return ErrTransition
+	for _, in := range r.effectiveInput.Inputs {
+		if in.UserInput != nil && (*in.UserInput == 0 || *in.UserInput > s.inputs) {
+			return ErrTransition
+		}
 	}
 	return nil
 }
 
-// preflight rechecks owned payloads and reduces their metadata without scanning
-// accepted prefixes. Provisional source lookup uses only earlier batch records.
+// preflight rechecks owned payloads and reduces them without scanning accepted
+// prefixes. Ordered scalar admission includes earlier same-batch submissions.
 func (s *Session) preflight(records []Record, ref history.CommitRef, payloadBytes uint64) error {
 	candidate := s.state.view.lifecycle
-	for i, r := range records {
+	for _, r := range records {
 		if err := r.checkPayload(s.policy.PayloadLimits); err != nil {
 			return err
 		}
-		if err := candidate.reduce(r, func(id InputID) (uint64, bool) { return pendingSourceMessages(s.state.view, records[:i], id) }); err != nil {
+		if err := candidate.reduce(r); err != nil {
 			return err
 		}
 	}
@@ -103,17 +106,6 @@ func (s *Session) reserveInterruption(ref history.CommitRef, active RunID, recor
 	}}
 	_, err := next.prepareInterruption()
 	return err
-}
-
-// pendingSourceMessages searches only earlier provisional facts, then the pinned
-// accepted input index. No latest-revision map or mutable candidate index is needed.
-func pendingSourceMessages(v Snapshot, records []Record, id InputID) (uint64, bool) {
-	for i := len(records) - 1; i >= 0; i-- {
-		if records[i].value.Kind == sessionformat.KindUserInput && records[i].userInput == id {
-			return records[i].messageCount, true
-		}
-	}
-	return v.sourceMessages(id)
 }
 
 // nextOrdinal avoids wrapping a provisional identifier before constructor checks.

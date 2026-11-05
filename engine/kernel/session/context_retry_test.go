@@ -18,6 +18,7 @@ func TestContextFrozenRetryAndConcurrentPinnedReads(t *testing.T) {
 	backend := &batchBackend{Backend: mem.New(), fail: cause, accept: true}
 	h := newLifecycleHistory(t, backend)
 	p := sessionPolicy()
+	p.PayloadLimits.MaxDepth = 16
 	p.SoftMaxRetainedRecords = 256
 	p.MaxRetainedRecords = 256
 	s := boundSession(t, h, p)
@@ -25,12 +26,16 @@ func TestContextFrozenRetryAndConcurrentPinnedReads(t *testing.T) {
 	b := beginBatch(t, s)
 	mustBatch(t, b.Create())
 	run := batchRun(t, b)
-	input, err := b.AddInput(session.AddInputRequest{RunID: run, Messages: []session.AuthoredMessage{{Content: session.Content{{Kind: session.ContentText, Text: "/skill example\n"}}}}})
+	input, err := b.AddInput(session.AddInputRequest{RunID: run, Parts: []session.ContentPart{{Kind: session.ContentText, Text: "/skill example\n"}}})
 	mustBatch(t, err)
-	instructions := session.Instructions{HistoryID: scope, Blocks: []session.InstructionBlock{{Content: session.Content{{Kind: session.ContentText, Text: "root"}}, Source: session.ContentSource{Description: "adopted", WorkspaceFile: &session.WorkspaceFileSource{Path: "AGENTS.md"}}}}}
+	instructions := session.Instructions{HistoryID: scope, Blocks: []session.InstructionBlock{{Content: []session.ContentPart{{Kind: session.ContentText, Text: "root"}}, Source: session.ContentSource{Description: "adopted", WorkspaceFile: &session.WorkspaceFileSource{Path: "AGENTS.md"}}}}}
 	catalog := session.ToolCatalog{HistoryID: scope, Tools: []session.ToolDefinition{{Name: "tool", ArgumentSchema: []byte("true")}}}
 	binding := session.ModelBinding{HistoryID: scope, Route: "r", API: "a", Model: "m", Settings: []byte(" { } ")}
-	effective := session.EffectiveInput{InputID: input, Prompts: []session.PreparedPrompt{{AuthoredMessage: new(uint64(0))}}}
+	effective := session.EffectiveInput{RunID: run, Inputs: []session.InputItem{
+		{UserInput: &input},
+		{Inline: &session.AttributedInput{Actor: "extension/example", Purpose: session.PromptContext, Parts: richContent(), Source: session.ContentSource{Description: "prepared reference", WorkspaceFile: &session.WorkspaceFileSource{Path: "docs/design.md"}}}},
+	}}
+	expected := effective.Clone()
 	mustBatch(t, b.ReplaceInstructions(instructions))
 	mustBatch(t, b.ReplaceToolCatalog(catalog))
 	mustBatch(t, b.ReplaceModelBinding(binding))
@@ -41,7 +46,10 @@ func TestContextFrozenRetryAndConcurrentPinnedReads(t *testing.T) {
 	instructions.Blocks[0].Source.WorkspaceFile.Path = "mutated"
 	clear(catalog.Tools[0].ArgumentSchema)
 	clear(binding.Settings)
-	*effective.Prompts[0].AuthoredMessage = 100
+	*effective.Inputs[0].UserInput = session.InputID{}
+	effective.Inputs[1].Inline.Actor = "changed"
+	effective.Inputs[1].Inline.Parts[1].Media.Data[0] = 0
+	effective.Inputs[1].Inline.Source.WorkspaceFile.Path = "changed"
 	if err := b.ReplaceInstructions(instructions); !errors.Is(err, session.ErrBatch) {
 		t.Fatalf("frozen write: %v", err)
 	}
@@ -54,6 +62,9 @@ func TestContextFrozenRetryAndConcurrentPinnedReads(t *testing.T) {
 	tv, _ := old.ToolCatalog()
 	mv, _ := old.ModelBinding()
 	ev, _ := old.RecordAt(6).EffectiveInput()
+	if !ev.Value().Equal(expected) {
+		t.Fatal("frozen retry retained caller mutations")
+	}
 	wantI, wantT, wantM, wantE := iv.Value(), tv.Value(), mv.Value(), ev.Value()
 	var wg sync.WaitGroup
 	for range 4 {
@@ -71,7 +82,7 @@ func TestContextFrozenRetryAndConcurrentPinnedReads(t *testing.T) {
 		mustBatch(t, b.ReplaceInstructions(session.Instructions{HistoryID: scope}))
 		mustBatch(t, b.ReplaceToolCatalog(session.ToolCatalog{HistoryID: scope}))
 		mustBatch(t, b.ReplaceModelBinding(wantM))
-		mustBatch(t, b.AddEffectiveInput(session.EffectiveInput{InputID: input}))
+		mustBatch(t, b.AddEffectiveInput(session.EffectiveInput{RunID: run}))
 		submitBatch(t, s, b)
 	}
 	wg.Wait()

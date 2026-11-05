@@ -80,7 +80,7 @@ func NewToolCatalogRecord(v ToolCatalog, limits codec.Limits) (Record, error) {
 	if err != nil {
 		return Record{}, err
 	}
-	return Record{scope: v.HistoryID, value: format.Record{Kind: sessionformat.KindToolCatalog, KindVersion: sessionformat.ToolCatalogVersion, Payload: payload}}, nil
+	return Record{scope: v.HistoryID, value: format.Record{Kind: sessionformat.KindToolCatalog, KindVersion: sessionformat.Version, Payload: payload}}, nil
 }
 
 // ToolCatalogView is an immutable fixed-size accepted catalog handle. Zero exports

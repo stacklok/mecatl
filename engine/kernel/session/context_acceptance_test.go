@@ -31,15 +31,15 @@ func TestContextIndependentReplacementsAndFixtureFreeLoad(t *testing.T) {
 		mustBatch(t, err)
 		prepared[i] = string(data)
 	}
-	instructions := session.Instructions{HistoryID: scope, Blocks: []session.InstructionBlock{{Content: session.Content{{Kind: session.ContentText, Text: prepared[1]}}, Source: session.ContentSource{Description: "caller adopted root", WorkspaceFile: &session.WorkspaceFileSource{Path: paths[1]}}}}}
+	instructions := session.Instructions{HistoryID: scope, Blocks: []session.InstructionBlock{{Content: []session.ContentPart{{Kind: session.ContentText, Text: prepared[1]}}, Source: session.ContentSource{Description: "caller adopted root", WorkspaceFile: &session.WorkspaceFileSource{Path: paths[1]}}}}}
 	catalog := session.ToolCatalog{HistoryID: scope, Tools: []session.ToolDefinition{{Name: "second", ArgumentSchema: []byte(" {\"z\":1.00, \"a\":true} ")}, {Name: "first", ArgumentSchema: []byte("false")}}}
 	binding := session.ModelBinding{HistoryID: scope, Route: "route", API: "dialect/v1", Model: "alias", Settings: []byte(prepared[2])}
 	b := beginBatch(t, s)
 	mustBatch(t, b.Create())
 	run := batchRun(t, b)
-	input, err := b.AddInput(session.AddInputRequest{RunID: run, Messages: []session.AuthoredMessage{{Content: richContent()}, {}}})
+	input, err := b.AddInput(session.AddInputRequest{RunID: run, Parts: richContent()})
 	mustBatch(t, err)
-	effective := session.EffectiveInput{InputID: input, Prompts: []session.PreparedPrompt{{AuthoredMessage: new(uint64(1))}, {Harness: &session.HarnessPrompt{Purpose: session.PromptInstructions, Content: session.Content{{Kind: session.ContentText, Text: prepared[0]}}, Source: session.ContentSource{Description: "caller expanded skill", WorkspaceFile: &session.WorkspaceFileSource{Path: paths[0]}}}}}}
+	effective := session.EffectiveInput{RunID: run, Inputs: []session.InputItem{{UserInput: &input}, {Inline: &session.AttributedInput{Actor: "skill/example", Purpose: session.PromptInstructions, Parts: []session.ContentPart{{Kind: session.ContentText, Text: prepared[0]}}, Source: session.ContentSource{Description: "caller expanded skill", WorkspaceFile: &session.WorkspaceFileSource{Path: paths[0]}}}}}}
 	mustBatch(t, b.ReplaceInstructions(instructions))
 	mustBatch(t, b.ReplaceToolCatalog(catalog))
 	mustBatch(t, b.ReplaceModelBinding(binding))
@@ -64,11 +64,11 @@ func TestContextIndependentReplacementsAndFixtureFreeLoad(t *testing.T) {
 			mustBatch(t, b.ReplaceInstructions(instructions))
 			instructions = session.Instructions{HistoryID: scope}
 			mustBatch(t, b.ReplaceInstructions(instructions))
-			// Two complete revisions preserve their separate boundaries, including
-			// one harness prompt with empty content versus zero prompts.
-			emptyPrompt := session.EffectiveInput{InputID: input, Prompts: []session.PreparedPrompt{{Harness: &session.HarnessPrompt{Purpose: session.PromptContext, Source: session.ContentSource{Description: "explicit empty context"}}}}}
+			// Two increments preserve their separate boundaries, including
+			// one inline item with empty parts versus zero items.
+			emptyPrompt := session.EffectiveInput{RunID: run, Inputs: []session.InputItem{{Inline: &session.AttributedInput{Actor: "harness", Purpose: session.PromptContext, Source: session.ContentSource{Description: "explicit empty context"}}}}}
 			mustBatch(t, b.AddEffectiveInput(emptyPrompt))
-			mustBatch(t, b.AddEffectiveInput(session.EffectiveInput{InputID: input}))
+			mustBatch(t, b.AddEffectiveInput(session.EffectiveInput{RunID: run}))
 		case 1:
 			mustBatch(t, b.ReplaceToolCatalog(catalog))
 			catalog = session.ToolCatalog{HistoryID: scope}
@@ -100,7 +100,7 @@ func TestContextIndependentReplacementsAndFixtureFreeLoad(t *testing.T) {
 	}
 	oneEmpty, ok := snapshots[1].RecordAt(9).EffectiveInput()
 	noPrompts, okEmpty := snapshots[1].RecordAt(10).EffectiveInput()
-	if !ok || !okEmpty || len(oneEmpty.Value().Prompts) != 1 || len(oneEmpty.Value().Prompts[0].Harness.Content) != 0 || len(noPrompts.Value().Prompts) != 0 || oneEmpty.InputID() != input || noPrompts.InputID() != input {
+	if !ok || !okEmpty || len(oneEmpty.Value().Inputs) != 1 || len(oneEmpty.Value().Inputs[0].Inline.Parts) != 0 || len(noPrompts.Value().Inputs) != 0 || oneEmpty.RunID() != run || noPrompts.RunID() != run {
 		t.Fatal("same-commit effective revisions collapsed")
 	}
 
@@ -121,17 +121,17 @@ func TestContextIndependentReplacementsAndFixtureFreeLoad(t *testing.T) {
 		clear(mv.Value().Settings)
 		clear(mv.Format().Settings)
 		uv, _ := snapshot.RecordAt(2).UserInput()
-		uv.Messages()[0].Content[1].Media.Source.Inline.Data[0] = 0
-		uv.Messages()[0].Content[2].Media.Source.Remote.URI = "urn:changed"
-		uv.Messages()[0].Content[3].Media.Source.Provider.ID = "changed"
-		uv.Messages()[0].Content[5].Media.Source.Inline.Data = []byte("changed")
-		uv.Format().Messages[0].Content[1].Media.Source.Inline.Data[0] = 0
-		uv.Format().Messages[0].Content[2].Media.Source.Remote.URI = "urn:changed"
-		uv.Format().Messages[0].Content[3].Media.Source.Provider.Scope = "changed"
-		uv.Format().Messages[0].Content[5].Media.Source.Inline.Data = []byte("changed")
+		uv.Parts()[1].Media.Data[0] = 0
+		uv.Parts()[2].Media.URI = "urn:changed"
+		uv.Parts()[3].Media.ReferenceID = "changed"
+		uv.Parts()[5].Media.Data = []byte("changed")
+		uv.Format().Parts[1].Media.Data[0] = 0
+		uv.Format().Parts[2].Media.URI = "urn:changed"
+		uv.Format().Parts[3].Media.Scope = "changed"
+		uv.Format().Parts[5].Media.Data = []byte("changed")
 		ev, _ := snapshot.RecordAt(6).EffectiveInput()
-		*ev.Value().Prompts[0].AuthoredMessage = 99
-		ev.Format().Prompts[1].Harness.Content[0].Text = "changed"
+		ev.Value().Inputs[0].UserInput.Ordinal = 99
+		ev.Format().Inputs[1].Inline.Parts[0].Text = "changed"
 	}
 	for i, snapshot := range snapshots {
 		iv, _ := snapshot.Instructions()
@@ -139,7 +139,7 @@ func TestContextIndependentReplacementsAndFixtureFreeLoad(t *testing.T) {
 		mv, _ := snapshot.ModelBinding()
 		uv, _ := snapshot.RecordAt(2).UserInput()
 		ev, _ := snapshot.RecordAt(6).EffectiveInput()
-		if !iv.Value().Equal(wantI[i]) || !tv.Value().Equal(wantT[i]) || !mv.Value().Equal(wantM[i]) || !uv.Messages()[0].Content.Equal(richContent()) || len(uv.Messages()) != 2 || !ev.Value().Equal(effective) {
+		if !iv.Value().Equal(wantI[i]) || !tv.Value().Equal(wantT[i]) || !mv.Value().Equal(wantM[i]) || !(session.UserInput{ID: uv.ID(), Parts: uv.Parts()}).Equal(session.UserInput{ID: uv.ID(), Parts: richContent()}) || !ev.Value().Equal(effective) {
 			t.Fatalf("snapshot %d changed after export mutation", i)
 		}
 	}

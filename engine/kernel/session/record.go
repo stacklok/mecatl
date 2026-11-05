@@ -24,15 +24,12 @@ type Record struct {
 	value format.Record
 
 	// value.Kind selects these constructor-established lifecycle scalars.
-	// Input content exists only in value.
+	// User input content exists only in value.
 	userInput      InputID
 	runStarted     sessionformat.RunStarted
 	runInterrupted RunInterrupted
-	// Constructor-established source metadata contains no borrowed content.
-	messageCount   uint64
-	effectiveInput InputID
-	hasMessage     bool
-	maxMessage     uint64
+	// Constructor-established effective contribution owns all nested storage.
+	effectiveInput sessionformat.EffectiveInput
 }
 
 // Format returns a detached history persistence DTO. Mutating it does not change
@@ -49,22 +46,16 @@ func (r Record) checkPayload(limits codec.Limits) error {
 	return err
 }
 
-// supportedRecord dispatches exact kind/version pairs. In particular, opaque
-// user-input v1 is not silently reinterpreted as rich authored input.
+// supportedRecord dispatches the closed kind set at the single supported version.
 func supportedRecord(kind string, version int64) bool {
+	if version != sessionformat.Version {
+		return false
+	}
 	switch kind {
-	case sessionformat.KindUserInput:
-		return version == sessionformat.UserInputVersion
-	case sessionformat.KindEffectiveInput:
-		return version == sessionformat.EffectiveInputVersion
-	case sessionformat.KindInstructions:
-		return version == sessionformat.InstructionsVersion
-	case sessionformat.KindToolCatalog:
-		return version == sessionformat.ToolCatalogVersion
-	case sessionformat.KindModelBinding:
-		return version == sessionformat.ModelBindingVersion
-	case sessionformat.KindCreated, sessionformat.KindRunStarted, sessionformat.KindRunInterrupted:
-		return version == sessionformat.Version
+	case sessionformat.KindCreated, sessionformat.KindUserInput, sessionformat.KindRunStarted,
+		sessionformat.KindRunInterrupted, sessionformat.KindEffectiveInput, sessionformat.KindInstructions,
+		sessionformat.KindToolCatalog, sessionformat.KindModelBinding:
+		return true
 	default:
 		return false
 	}

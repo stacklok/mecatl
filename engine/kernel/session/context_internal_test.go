@@ -19,19 +19,19 @@ func TestRichConstructorsBudgetBeforeConversion(t *testing.T) {
 	input := InputID{RunID: RunID{HistoryID: scope, Ordinal: 1}, Ordinal: 1}
 	// All values are allocated before measuring construction. Rejected collection
 	// lengths must not allocate DTO slices, or parse their deliberately invalid JSON.
-	messages := make([]AuthoredMessage, limits.MaxArrayElements+1)
+	parts := make([]ContentPart, limits.MaxArrayElements+1)
 	blocks := make([]InstructionBlock, limits.MaxArrayElements+1)
 	tools := make([]ToolDefinition, limits.MaxArrayElements+1)
-	prompts := make([]PreparedPrompt, limits.MaxArrayElements+1)
+	items := make([]InputItem, limits.MaxArrayElements+1)
 	settings := make([]byte, limits.MaxByteStringBytes+1)
-	parts := make(Content, limits.MaxArrayElements+1)
 	oversizeText := string(make([]byte, limits.MaxStringBytes+1))
-	nestedInput := UserInput{ID: input, Messages: []AuthoredMessage{{Content: parts}}}
-	nestedInstructions := Instructions{HistoryID: scope, Blocks: []InstructionBlock{{Content: Content{{Kind: ContentText, Text: oversizeText}}}}}
+	nestedInput := UserInput{ID: input, Parts: []ContentPart{{Kind: ContentText, Text: oversizeText}}}
+	nestedActor := EffectiveInput{RunID: input.RunID, Inputs: []InputItem{{Inline: &AttributedInput{Actor: Actor(oversizeText)}}}}
+	nestedInstructions := Instructions{HistoryID: scope, Blocks: []InstructionBlock{{Content: []ContentPart{{Kind: ContentText, Text: oversizeText}}}}}
 	nestedCatalog := ToolCatalog{HistoryID: scope, Tools: []ToolDefinition{{Name: "tool", ArgumentSchema: settings}}}
-	nestedEffective := EffectiveInput{InputID: input, Prompts: []PreparedPrompt{{Harness: &HarnessPrompt{Content: parts}}}}
+	nestedEffective := EffectiveInput{RunID: input.RunID, Inputs: []InputItem{{Inline: &AttributedInput{Parts: parts}}}}
 	for _, makeRecord := range []func() (Record, error){
-		func() (Record, error) { return NewUserInputRecord(UserInput{ID: input, Messages: messages}, limits) },
+		func() (Record, error) { return NewUserInputRecord(UserInput{ID: input, Parts: parts}, limits) },
 		func() (Record, error) {
 			return NewInstructionsRecord(Instructions{HistoryID: scope, Blocks: blocks}, limits)
 		},
@@ -39,7 +39,7 @@ func TestRichConstructorsBudgetBeforeConversion(t *testing.T) {
 			return NewToolCatalogRecord(ToolCatalog{HistoryID: scope, Tools: tools}, limits)
 		},
 		func() (Record, error) {
-			return NewEffectiveInputRecord(EffectiveInput{InputID: input, Prompts: prompts}, limits)
+			return NewEffectiveInputRecord(EffectiveInput{RunID: input.RunID, Inputs: items}, limits)
 		},
 		func() (Record, error) {
 			return NewModelBindingRecord(ModelBinding{HistoryID: scope, Route: "r", API: "a", Model: "m", Settings: settings}, limits)
@@ -48,6 +48,7 @@ func TestRichConstructorsBudgetBeforeConversion(t *testing.T) {
 		func() (Record, error) { return NewInstructionsRecord(nestedInstructions, limits) },
 		func() (Record, error) { return NewToolCatalogRecord(nestedCatalog, limits) },
 		func() (Record, error) { return NewEffectiveInputRecord(nestedEffective, limits) },
+		func() (Record, error) { return NewEffectiveInputRecord(nestedActor, limits) },
 	} {
 		if r, err := makeRecord(); !errors.Is(err, codec.ErrLimitExceeded) || !reflect.DeepEqual(r, Record{}) {
 			t.Fatalf("bounded failure: %v", err)
@@ -62,19 +63,21 @@ func TestNewRecordMetadataAndGeneratedLimitsAgree(t *testing.T) {
 	s, limits := internalFixture(t)
 	scope := s.Snapshot().HistoryID()
 	input := InputID{RunID: RunID{HistoryID: scope, Ordinal: 1}, Ordinal: 1}
-	index := uint64(0)
-	content := Content{{Kind: ContentText, Text: " exact "}, {Kind: ContentDocument, Media: &MediaContent{MediaType: "raw", Source: MediaSource{Inline: &InlineMedia{Data: []byte{0xff, 0}}}}}}
+	content := []ContentPart{{Kind: ContentText, Text: " exact "}, {Kind: ContentDocument, Media: &Media{MediaType: "raw", Source: MediaInline, Data: []byte{0xff, 0}}}}
 	source := ContentSource{Description: "adopted", WorkspaceFile: &WorkspaceFileSource{Path: "AGENTS.md"}}
-	authored := UserInput{ID: input, Messages: []AuthoredMessage{{Content: content}}}
+	authored := UserInput{ID: input, Parts: content}
 	instructions := Instructions{HistoryID: scope, Blocks: []InstructionBlock{{Content: content, Source: source}}}
 	catalog := ToolCatalog{HistoryID: scope, Tools: []ToolDefinition{{Name: "read", ArgumentSchema: []byte(" true ")}}}
 	binding := ModelBinding{HistoryID: scope, Route: "r", API: "a", Model: "m", Settings: []byte(" {\"x\":1.0} ")}
-	effective := EffectiveInput{InputID: input, Prompts: []PreparedPrompt{{AuthoredMessage: &index}, {Harness: &HarnessPrompt{Purpose: PromptContext, Content: Content{{Kind: ContentText, Text: "supplement"}}, Source: source}}}}
-	manyPrompts := EffectiveInput{InputID: input, Prompts: make([]PreparedPrompt, limits.MaxArrayElements)}
-	for i := range manyPrompts.Prompts {
-		manyPrompts.Prompts[i].AuthoredMessage = &index
+	effective := EffectiveInput{RunID: input.RunID, Inputs: []InputItem{{UserInput: &input}, {Inline: &AttributedInput{Actor: "harness", Purpose: PromptContext, Parts: []ContentPart{{Kind: ContentText, Text: "supplement"}}, Source: source}}}}
+	manyInputs := EffectiveInput{RunID: input.RunID, Inputs: make([]InputItem, limits.MaxArrayElements)}
+	for i := range manyInputs.Inputs {
+		manyInputs.Inputs[i].UserInput = &input
 	}
-	emptyMessages := UserInput{ID: input, Messages: make([]AuthoredMessage, limits.MaxArrayElements)}
+	emptyParts := UserInput{ID: input, Parts: make([]ContentPart, limits.MaxArrayElements)}
+	for i := range emptyParts.Parts {
+		emptyParts.Parts[i].Kind = ContentText
+	}
 	for _, tc := range []struct {
 		name  string
 		make  func(codec.Limits) (Record, error)
@@ -85,8 +88,8 @@ func TestNewRecordMetadataAndGeneratedLimitsAgree(t *testing.T) {
 		{"catalog", func(l codec.Limits) (Record, error) { return NewToolCatalogRecord(catalog, l) }, func(l codec.Limits) ([]byte, error) { return codec.Encode(catalog.toFormat(), l) }},
 		{"binding", func(l codec.Limits) (Record, error) { return NewModelBindingRecord(binding, l) }, func(l codec.Limits) ([]byte, error) { return codec.Encode(binding.toFormat(), l) }},
 		{"effective", func(l codec.Limits) (Record, error) { return NewEffectiveInputRecord(effective, l) }, func(l codec.Limits) ([]byte, error) { return codec.Encode(effective.toFormat(), l) }},
-		{"pointer-heavy", func(l codec.Limits) (Record, error) { return NewEffectiveInputRecord(manyPrompts, l) }, func(l codec.Limits) ([]byte, error) { return codec.Encode(manyPrompts.toFormat(), l) }},
-		{"empty-message-boundaries", func(l codec.Limits) (Record, error) { return NewUserInputRecord(emptyMessages, l) }, func(l codec.Limits) ([]byte, error) { return codec.Encode(emptyMessages.toFormat(), l) }},
+		{"pointer-heavy", func(l codec.Limits) (Record, error) { return NewEffectiveInputRecord(manyInputs, l) }, func(l codec.Limits) ([]byte, error) { return codec.Encode(manyInputs.toFormat(), l) }},
+		{"empty-parts", func(l codec.Limits) (Record, error) { return NewUserInputRecord(emptyParts, l) }, func(l codec.Limits) ([]byte, error) { return codec.Encode(emptyParts.toFormat(), l) }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			original, err := tc.make(limits)
@@ -98,10 +101,10 @@ func TestNewRecordMetadataAndGeneratedLimitsAgree(t *testing.T) {
 				t.Fatal(err)
 			}
 			// Every scalar used by the reducer agrees between construction and decoding.
-			if original.value.Kind == sessionformat.KindUserInput && (original.userInput != decoded.userInput || original.messageCount != decoded.messageCount) {
+			if original.value.Kind == sessionformat.KindUserInput && (original.userInput != decoded.userInput) {
 				t.Fatal("input metadata")
 			}
-			if original.value.Kind == sessionformat.KindEffectiveInput && (original.effectiveInput != decoded.effectiveInput || original.hasMessage != decoded.hasMessage || original.maxMessage != decoded.maxMessage) {
+			if original.value.Kind == sessionformat.KindEffectiveInput && (!original.effectiveInput.Equal(decoded.effectiveInput)) {
 				t.Fatal("effective metadata")
 			}
 			// Find each exact generated admission boundary independently, including
@@ -158,33 +161,6 @@ func TestNewRecordMetadataAndGeneratedLimitsAgree(t *testing.T) {
 	}
 }
 
-func TestEffectiveInputMixedReferenceMetadata(t *testing.T) {
-	s, limits := internalFixture(t)
-	scope := s.Snapshot().HistoryID()
-	input := InputID{RunID: RunID{HistoryID: scope, Ordinal: 1}, Ordinal: 1}
-	for _, indexes := range [][]uint64{{0, 2, 1}, {2, 0, 1}, {0, ^uint64(0)}, {^uint64(0), 0}} {
-		v := EffectiveInput{InputID: input, Prompts: []PreparedPrompt{{Harness: &HarnessPrompt{Purpose: PromptContext, Source: ContentSource{Description: "supplement"}}}}}
-		var maximum uint64
-		for _, index := range indexes {
-			v.Prompts = append(v.Prompts, PreparedPrompt{AuthoredMessage: new(index)})
-			maximum = max(maximum, index)
-		}
-		original, err := NewEffectiveInputRecord(v, limits)
-		if err != nil {
-			t.Fatal(err)
-		}
-		decoded, err := DecodeRecord(scope, original.Format(), limits)
-		if err != nil {
-			t.Fatal(err)
-		}
-		for _, r := range []Record{original, decoded} {
-			if r.effectiveInput != input || !r.hasMessage || r.maxMessage != maximum {
-				t.Errorf("indexes %v: source=%v, hasMessage=%t, maxMessage=%d; want %d", indexes, r.effectiveInput, r.hasMessage, r.maxMessage, maximum)
-			}
-		}
-	}
-}
-
 func TestContextApplyStagesSelectionsAndSourceBounds(t *testing.T) {
 	s, limits := internalFixture(t)
 	scope := s.Snapshot().HistoryID()
@@ -199,7 +175,7 @@ func TestContextApplyStagesSelectionsAndSourceBounds(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	input, err := b.AddInput(AddInputRequest{RunID: run, Messages: []AuthoredMessage{{}}})
+	input, err := b.AddInput(AddInputRequest{RunID: run})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -232,7 +208,7 @@ func TestContextApplyStagesSelectionsAndSourceBounds(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	bad, err := NewEffectiveInputRecord(EffectiveInput{InputID: input, Prompts: []PreparedPrompt{{AuthoredMessage: new(uint64(1))}}}, limits)
+	bad, err := NewEffectiveInputRecord(EffectiveInput{RunID: run, Inputs: []InputItem{{UserInput: &input}, {UserInput: &InputID{RunID: run, Ordinal: 2}}}}, limits)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -276,7 +252,7 @@ func TestContextApplyStagesSelectionsAndSourceBounds(t *testing.T) {
 				case "malformed":
 					last.Payload = []byte{0xff}
 				case "oversize":
-					key := map[string]byte{sessionformat.KindInstructions: 'b', sessionformat.KindToolCatalog: 't', sessionformat.KindModelBinding: 's', sessionformat.KindEffectiveInput: 'p', sessionformat.KindUserInput: 'm'}[last.Kind]
+					key := map[string]byte{sessionformat.KindInstructions: 'b', sessionformat.KindToolCatalog: 't', sessionformat.KindModelBinding: 's', sessionformat.KindEffectiveInput: 'i', sessionformat.KindUserInput: 'p'}[last.Kind]
 					last.Payload = []byte{0xa1, 0x61, key, 0x9b, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff}
 					if last.Kind == sessionformat.KindModelBinding {
 						last.Payload[3] = 0x5b // Declared byte length rather than array count.

@@ -237,9 +237,7 @@ func (s *Session) evaluate(c format.Commit, expected *history.CommitRef) (sessio
 			return sessionState{}, history.CommitRef{}, err
 		}
 		metadata := fact.metadata(candidate.view.historyID)
-		if err := lifecycle.reduce(metadata, func(id InputID) (uint64, bool) {
-			return stagedSourceMessages(candidate.view, staged[:i], id)
-		}); err != nil {
+		if err := lifecycle.reduce(metadata); err != nil {
 			return sessionState{}, history.CommitRef{}, err
 		}
 		staged[i] = fact
@@ -276,18 +274,6 @@ func (s *Session) evaluate(c format.Commit, expected *history.CommitRef) (sessio
 	v.lifecycle = lifecycle
 	v.head = ref
 	return candidate, ref, nil
-}
-
-// stagedSourceMessages checks only already validated new facts, then the pinned
-// accepted input index. It never searches or mutates a published history prefix.
-func stagedSourceMessages(v Snapshot, staged []*acceptedRecord, id InputID) (uint64, bool) {
-	for i := len(staged) - 1; i >= 0; i-- {
-		prior := staged[i]
-		if prior.value.Kind == sessionformat.KindUserInput && prior.input.RunID == id.RunID.Ordinal && prior.input.ID == id.Ordinal {
-			return uint64(len(prior.input.Messages)), true
-		}
-	}
-	return v.sourceMessages(id)
 }
 
 // verifyCommit checks ancestry and bounded canonical envelope identity before

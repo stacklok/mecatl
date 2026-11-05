@@ -58,7 +58,7 @@ func populatedAtomicitySession(t *testing.T) *Session {
 			t.Fatal(err)
 		}
 		for _, content := range []string{"first", "second"} {
-			if _, err := b.AddInput(AddInputRequest{RunID: run, Messages: internalByteMessages([]byte(content))}); err != nil {
+			if _, err := b.AddInput(AddInputRequest{RunID: run, Parts: internalByteParts([]byte(content))}); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -83,7 +83,7 @@ func TestSessionPopulatedApplyRejectionPreservesPrivateState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := b.AddInput(AddInputRequest{RunID: old.ActiveRun(), Messages: internalByteMessages([]byte("third"))}); err != nil {
+	if _, err := b.AddInput(AddInputRequest{RunID: old.ActiveRun(), Parts: internalByteParts([]byte("third"))}); err != nil {
 		t.Fatal(err)
 	}
 	if err := b.Interrupt(); err != nil {
@@ -93,7 +93,7 @@ func TestSessionPopulatedApplyRejectionPreservesPrivateState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := b.AddInput(AddInputRequest{RunID: run, Messages: internalByteMessages([]byte("successor"))}); err != nil {
+	if _, err := b.AddInput(AddInputRequest{RunID: run, Parts: internalByteParts([]byte("successor"))}); err != nil {
 		t.Fatal(err)
 	}
 	records := slices.Clone(b.records)
@@ -140,7 +140,7 @@ func TestDetachedSessionStateOracleDetectsInPlaceMutation(t *testing.T) {
 		mutate func(*sessionState)
 	}{
 		{"encoded bytes", func(s *sessionState) { s.view.records[2].value.Payload[0] ^= 1 }},
-		{"decoded bytes", func(s *sessionState) { s.view.records[2].input.Messages[0].Content[0].Media.Source.Inline.Data[0] ^= 1 }},
+		{"decoded bytes", func(s *sessionState) { s.view.records[2].input.Parts[0].Media.Data[0] ^= 1 }},
 		{"record locator", func(s *sessionState) { s.view.records[2] = s.view.records[3] }},
 		{"input locator", func(s *sessionState) { s.view.inputs[0] = s.view.inputs[1] }},
 		{"run locator", func(s *sessionState) { s.view.runs[0].inputStart++ }},

@@ -47,13 +47,13 @@ type SessionCommit struct { //nolint:revive // Explicit name distinguishes a pro
 	proposal  prepared
 }
 
-// AddInputRequest borrows ordered authored messages only during AddInput.
+// AddInputRequest borrows ordered content only during AddInput.
 // Earlier successful same-batch run IDs are valid owners.
 type AddInputRequest struct {
 	// RunID must identify the active run at this position in the batch.
 	RunID RunID
-	// Messages preserve supplied message boundaries; success eagerly detaches them.
-	Messages []AuthoredMessage
+	// Parts preserves supplied content order; success eagerly detaches it.
+	Parts []ContentPart
 }
 
 // BeginCommit reserves the sole batch slot without creating or persisting facts.
@@ -110,7 +110,7 @@ func (b *SessionCommit) add(r Record, err error) error {
 		return ErrIdentity
 	}
 	candidate := b.lifecycle
-	if err := candidate.reduce(r, func(id InputID) (uint64, bool) { return pendingSourceMessages(b.owner.state.view, b.records, id) }); err != nil {
+	if err := candidate.reduce(r); err != nil {
 		return err
 	}
 	b.records = append(b.records, r)
@@ -142,14 +142,14 @@ func (b *SessionCommit) AddInput(request AddInputRequest) (InputID, error) {
 		return InputID{}, err
 	}
 	id := InputID{RunID: request.RunID, Ordinal: ordinal}
-	if err := b.add(NewUserInputRecord(UserInput{ID: id, Messages: request.Messages}, s.policy.PayloadLimits)); err != nil {
+	if err := b.add(NewUserInputRecord(UserInput{ID: id, Parts: request.Parts}, s.policy.PayloadLimits)); err != nil {
 		return InputID{}, err
 	}
 	return id, nil
 }
 
-// AddEffectiveInput adds a complete revision for an earlier active-run input.
-// Source bounds include earlier same-batch inputs; failure changes no additions.
+// AddEffectiveInput adds an ordered incremental contribution in the active run.
+// References include earlier same-batch inputs; failure changes no additions.
 func (b *SessionCommit) AddEffectiveInput(v EffectiveInput) error {
 	if err := b.check(true); err != nil {
 		return err

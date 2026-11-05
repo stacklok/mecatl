@@ -83,20 +83,6 @@ func (v Snapshot) ModelBinding() (ModelBindingView, bool) {
 	return ModelBindingView{scope: v.historyID, record: v.binding}, true
 }
 
-// sourceMessages uses existing run/input locators, checking uint64 bounds before
-// narrowing. It never resolves content or searches for an effective revision.
-func (v Snapshot) sourceMessages(id InputID) (uint64, bool) {
-	if id.RunID.HistoryID != v.historyID || id.RunID.Ordinal == 0 || id.RunID.Ordinal > uint64(len(v.runs)) || id.Ordinal == 0 {
-		return 0, false
-	}
-	run := v.RunAt(int(id.RunID.Ordinal - 1)) //nolint:gosec // The nonzero ordinal is bounded by len(v.runs) above.
-	if id.Ordinal > uint64(len(run.inputs)) {
-		return 0, false
-	}
-	input := run.InputAt(int(id.Ordinal - 1)) //nolint:gosec // The nonzero ordinal is bounded by len(run.inputs) above.
-	return uint64(len(input.record.input.Messages)), true
-}
-
 // runEntry is immutable. Endpoints derive from the next entry or captured lengths,
 // never a retroactive update when an active run receives another fact.
 type runEntry struct {

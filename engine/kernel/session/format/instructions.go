@@ -4,7 +4,7 @@ package format
 // origin. Its purpose is instructions by construction, not inferred from a file.
 // Assignment shares nested storage; Clone detaches it.
 type InstructionBlock struct {
-	Content Content       `cbor:"c"`
+	Content []ContentPart `cbor:"c"`
 	Source  ContentSource `cbor:"s"`
 }
 

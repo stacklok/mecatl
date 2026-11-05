@@ -10,9 +10,9 @@ import (
 
 func TestInstructions(t *testing.T) {
 	v := format.Instructions{Blocks: []format.InstructionBlock{
-		{Content: format.Content{{Kind: "text", Text: " root\n"}}, Source: format.ContentSource{Description: "adopted workspace instructions", WorkspaceFile: &format.WorkspaceFileSource{Path: "AGENTS.md"}}},
+		{Content: []format.ContentPart{{Kind: "text", Text: " root\n"}}, Source: format.ContentSource{Description: "adopted workspace instructions", WorkspaceFile: &format.WorkspaceFileSource{Path: "AGENTS.md"}}},
 		{Source: format.ContentSource{Description: "explicitly empty contribution"}},
-		{Content: format.Content{{Kind: "image", Media: &format.MediaContent{MediaType: "image/x", Source: format.MediaSource{Inline: &format.InlineMedia{Data: []byte{3, 2, 1}}}}}}, Source: format.ContentSource{Description: "prepared guidance"}},
+		{Content: []format.ContentPart{{Kind: "image", Media: &format.Media{MediaType: "image/x", Source: "inline", Data: []byte{3, 2, 1}}}}, Source: format.ContentSource{Description: "prepared guidance"}},
 	}}
 	before := v.Clone()
 	wire, err := codec.Encode(v, limits())
@@ -25,7 +25,7 @@ func TestInstructions(t *testing.T) {
 	}
 	v.Blocks[0].Content[0].Text = "changed"
 	v.Blocks[0].Source.WorkspaceFile.Path = "changed"
-	v.Blocks[2].Content[0].Media.Source.Inline.Data[0] = 9
+	v.Blocks[2].Content[0].Media.Data[0] = 9
 	clear(wire)
 	if !got.Equal(before) {
 		t.Fatal("instructions storage shared")

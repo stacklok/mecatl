@@ -2,10 +2,6 @@ package session
 
 import sessionformat "github.com/stacklok/mecatl/engine/kernel/session/format"
 
-// Content preserves part order. Nil and empty are equivalent explicit emptiness.
-// Assignment shares storage; Clone detaches all nested storage.
-type Content []ContentPart
-
 // ContentKind is a closed logical variant, not a provider capability.
 type ContentKind string
 
@@ -21,59 +17,14 @@ const (
 )
 
 // ContentPart holds text or media as selected by Kind. Zero is invalid.
+// Assignment shares Media and its bytes; Clone detaches them.
 type ContentPart struct {
 	Kind  ContentKind
 	Text  string
-	Media *MediaContent
+	Media *Media
 }
 
-// Validate checks all parts without operational resource limits.
-func (v Content) Validate() error {
-	for _, part := range v {
-		if err := part.Validate(); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// Clone returns a deeply detached copy, preserving nil slices.
-func (v Content) Clone() Content { return contentFromFormat(v.toFormat().Clone()) }
-
-// Equal compares exact ordered values, treating nil and empty slices alike.
-func (v Content) Equal(other Content) bool { return v.toFormat().Equal(other.toFormat()) }
-
-func (v Content) toFormat() sessionformat.Content {
-	if v == nil {
-		return nil
-	}
-	out := make(sessionformat.Content, len(v))
-	for i := range v {
-		out[i] = v[i].toFormat()
-	}
-	return out
-}
-func contentFromFormat(v sessionformat.Content) Content {
-	if v == nil {
-		return nil
-	}
-	out := make(Content, len(v))
-	for i := range v {
-		out[i] = contentPartFromFormat(v[i])
-	}
-	return out
-}
-func (v Content) checkSize(b *valueBudget) {
-	b.collection(len(v))
-	if b.err != nil {
-		return
-	}
-	for _, part := range v {
-		part.checkSize(b)
-	}
-}
-
-// Validate checks the variant, metadata applicability, and nested source.
+// Validate checks the variant, metadata applicability and nested source.
 func (v ContentPart) Validate() error {
 	if err := v.toFormat().Validate(); err != nil {
 		return err
@@ -100,7 +51,7 @@ func (v ContentPart) toFormat() sessionformat.ContentPart {
 func contentPartFromFormat(v sessionformat.ContentPart) ContentPart {
 	out := ContentPart{Kind: ContentKind(v.Kind), Text: v.Text}
 	if v.Media != nil {
-		m := mediaContentFromFormat(*v.Media)
+		m := mediaFromFormat(*v.Media)
 		out.Media = &m
 	}
 	return out
@@ -111,5 +62,52 @@ func (v ContentPart) checkSize(b *valueBudget) {
 	if v.Media != nil {
 		b.pointer()
 		v.Media.checkSize(b)
+	}
+}
+
+// validateParts checks ordered content without imposing operational policy.
+func validateParts(v []ContentPart) error {
+	for _, p := range v {
+		if err := p.Validate(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// partsToFormat allocates DTO part/media containers but borrows media bytes.
+// Record construction must size first, then encode or clone before retention.
+func partsToFormat(v []ContentPart) []sessionformat.ContentPart {
+	if v == nil {
+		return nil
+	}
+	out := make([]sessionformat.ContentPart, len(v))
+	for i := range v {
+		out[i] = v[i].toFormat()
+	}
+	return out
+}
+
+// partsFromFormat allocates public containers but borrows media bytes from v.
+// Exporting callers supply a cloned DTO so returned storage is independently owned.
+func partsFromFormat(v []sessionformat.ContentPart) []ContentPart {
+	if v == nil {
+		return nil
+	}
+	out := make([]ContentPart, len(v))
+	for i := range v {
+		out[i] = contentPartFromFormat(v[i])
+	}
+	return out
+}
+
+// checkPartsSize bounds collections and nested data before conversion allocates.
+func checkPartsSize(v []ContentPart, b *valueBudget) {
+	b.collection(len(v))
+	if b.err != nil {
+		return
+	}
+	for _, p := range v {
+		p.checkSize(b)
 	}
 }

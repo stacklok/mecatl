@@ -22,7 +22,7 @@ type acceptedRecord struct {
 }
 
 // decodeAccepted decodes once and detaches encoded caller storage. Generated
-// decoding owns Content; neither DTO nor encoded bytes escape without copying.
+// decoding owns nested content; neither DTO nor encoded bytes escape without copying.
 func decodeAccepted(v format.Record, limits codec.Limits) (*acceptedRecord, error) {
 	if !supportedRecord(v.Kind, v.KindVersion) {
 		return nil, ErrUnsupportedRecord
@@ -56,19 +56,14 @@ func decodeAccepted(v format.Record, limits codec.Limits) (*acceptedRecord, erro
 	return r, nil
 }
 
-// metadata projects only the typed scalars needed by the shared lifecycle path.
-// Its encoded bytes already belong to immutable private storage.
+// metadata projects the lifecycle scalars and effective contribution needed by
+// the shared reducer. All backing storage is already private and immutable.
 func (r *acceptedRecord) metadata(scope historyid.HistoryID) Record {
 	out := Record{scope: scope, value: r.value,
-		userInput:    InputID{RunID: RunID{HistoryID: scope, Ordinal: r.input.RunID}, Ordinal: r.input.ID},
-		messageCount: uint64(len(r.input.Messages)), runStarted: r.started,
+		userInput:      InputID{RunID: RunID{HistoryID: scope, Ordinal: r.input.RunID}, Ordinal: r.input.ID},
+		runStarted:     r.started,
 		runInterrupted: RunInterrupted{ID: RunID{HistoryID: scope, Ordinal: r.interrupted.ID}},
-		effectiveInput: InputID{RunID: RunID{HistoryID: scope, Ordinal: r.effective.RunID}, Ordinal: r.effective.InputID},
-	}
-	for _, p := range r.effective.Prompts {
-		if p.AuthoredMessage != nil && (!out.hasMessage || *p.AuthoredMessage > out.maxMessage) {
-			out.hasMessage, out.maxMessage = true, *p.AuthoredMessage
-		}
+		effectiveInput: r.effective,
 	}
 	return out
 }
@@ -160,7 +155,7 @@ func (v RecordView) ModelBinding() (ModelBindingView, bool) {
 	return ModelBindingView(v), true
 }
 
-// EffectiveInput returns a revision handle only for the effective-input kind.
+// EffectiveInput returns an incremental-input handle only for that kind.
 func (v RecordView) EffectiveInput() (EffectiveInputView, bool) {
 	if v.Kind() != sessionformat.KindEffectiveInput {
 		return EffectiveInputView{}, false

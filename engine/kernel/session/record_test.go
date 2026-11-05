@@ -14,7 +14,7 @@ import (
 
 func testLimits() codec.Limits {
 	return codec.Limits{MaxBytes: 4096, MaxStringBytes: 128, MaxByteStringBytes: 1024,
-		MaxArrayElements: 16, MaxMapPairs: 8, MaxDepth: 8, MaxNodes: 512, MaxCollectionElements: 128}
+		MaxArrayElements: 16, MaxMapPairs: 16, MaxDepth: 8, MaxNodes: 512, MaxCollectionElements: 128}
 }
 
 func testHistoryID(t testing.TB) historyid.HistoryID {
@@ -26,7 +26,7 @@ func testHistoryID(t testing.TB) historyid.HistoryID {
 	return id
 }
 
-// recordFixtures pins lifecycle v1 and authored-input v2 independently of generated append helpers.
+// recordFixtures pins session payload schemas independently of generated append helpers.
 func recordFixtures(t testing.TB) []struct {
 	kind string
 	wire []byte
@@ -42,8 +42,8 @@ func recordFixtures(t testing.TB) []struct {
 		{"session.created", []byte("\xa0"), func(l codec.Limits) (session.Record, error) {
 			return session.NewCreatedRecord(session.Created{HistoryID: h}, l)
 		}},
-		{"session.user_input", []byte("\xa3\x61i\x01\x61m\x81\xa1\x61c\x81\xa2\x61k\x64text\x61t\x61x\x61r\x01"), func(l codec.Limits) (session.Record, error) {
-			return session.NewUserInputRecord(session.UserInput{ID: session.InputID{RunID: session.RunID{HistoryID: h, Ordinal: 1}, Ordinal: 1}, Messages: []session.AuthoredMessage{{Content: session.Content{{Kind: session.ContentText, Text: "x"}}}}}, l)
+		{"session.user_input", []byte("\xa3\x61i\x01\x61p\x81\xa2\x61k\x64text\x61t\x61x\x61r\x01"), func(l codec.Limits) (session.Record, error) {
+			return session.NewUserInputRecord(session.UserInput{ID: session.InputID{RunID: session.RunID{HistoryID: h, Ordinal: 1}, Ordinal: 1}, Parts: []session.ContentPart{{Kind: session.ContentText, Text: "x"}}}, l)
 		}},
 		{"session.run_started", []byte("\xa1\x61r\x02"), func(l codec.Limits) (session.Record, error) {
 			return session.NewRunStartedRecord(session.RunStarted{ID: session.RunID{HistoryID: h, Ordinal: 2}}, l)
@@ -65,9 +65,6 @@ func TestRecordSchemasAndOwnership(t *testing.T) {
 				t.Fatal("payload repeats history identity")
 			}
 			version := int64(1)
-			if test.kind == "session.user_input" {
-				version = 2
-			}
 			want := format.Record{Kind: test.kind, KindVersion: version, Payload: test.wire}
 			if !r.Format().Equal(want) {
 				t.Fatal("constructor differs from canonical fixture")
@@ -108,13 +105,10 @@ func TestRecordFailureCategories(t *testing.T) {
 	for _, test := range recordFixtures(t) {
 		t.Run(test.kind, func(t *testing.T) {
 			version := int64(1)
-			if test.kind == "session.user_input" {
-				version = 2
-			}
 			for name, limits := range map[string]codec.Limits{
 				"invalid": {},
 				"limited": {MaxBytes: 1, MaxStringBytes: 128, MaxByteStringBytes: 1024, MaxArrayElements: 16,
-					MaxMapPairs: 8, MaxDepth: 8, MaxNodes: 512, MaxCollectionElements: 128},
+					MaxMapPairs: 16, MaxDepth: 8, MaxNodes: 512, MaxCollectionElements: 128},
 			} {
 				want := codec.ErrLimitExceeded
 				if name == "invalid" {
@@ -155,9 +149,6 @@ func TestRecordMalformedPayloads(t *testing.T) {
 	for _, test := range recordFixtures(t) {
 		t.Run(test.kind, func(t *testing.T) {
 			version := int64(1)
-			if test.kind == "session.user_input" {
-				version = 2
-			}
 			unknown := bytes.Clone(test.wire)
 			unknown[0]++ // Append a new, canonically later map key.
 			unknown = append(unknown, '\x61', 'z', '\x00')
@@ -186,9 +177,6 @@ func FuzzDecodeRecord(f *testing.F) {
 	kinds := []string{"session.created", "session.user_input", "session.run_started", "session.run_interrupted"}
 	f.Fuzz(func(t *testing.T, kind uint8, wire []byte) {
 		dto := format.Record{Kind: kinds[int(kind)%len(kinds)], KindVersion: 1, Payload: wire}
-		if dto.Kind == "session.user_input" {
-			dto.KindVersion = 2
-		}
 		r, err := session.DecodeRecord(testHistoryID(t), dto, testLimits())
 		if err != nil {
 			if !reflect.DeepEqual(r, session.Record{}) {

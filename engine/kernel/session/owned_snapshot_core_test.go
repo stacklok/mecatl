@@ -22,7 +22,7 @@ import (
 func ownedCoreFixture(t *testing.T, maxRecords int) (*session.Session, *history.History, session.Policy, historyid.HistoryID) {
 	t.Helper()
 	limits := codec.Limits{MaxBytes: 8192, MaxStringBytes: 8192, MaxByteStringBytes: 8192,
-		MaxArrayElements: 16, MaxMapPairs: 8, MaxDepth: 8, MaxNodes: 512, MaxCollectionElements: 128}
+		MaxArrayElements: 16, MaxMapPairs: 16, MaxDepth: 8, MaxNodes: 512, MaxCollectionElements: 128}
 	p := session.Policy{CommitLimits: limits, PayloadLimits: limits, MaxRecordsPerCommit: 16,
 		SoftMaxRetainedRecords: maxRecords, SoftMaxPayloadBytes: 1 << 20, SoftMaxDecodedWork: 1 << 30,
 		MaxRetainedRecords: maxRecords, MaxPayloadBytes: 1 << 20, MaxDecodedWork: 1 << 30}
@@ -75,7 +75,7 @@ func TestOwnedCoreLifecycleSnapshotsAndReplay(t *testing.T) {
 		t.Fatal(err)
 	}
 	content := []byte{0xff, 0, 'x'}
-	input, err := b.AddInput(session.AddInputRequest{RunID: run, Messages: byteMessages(content)})
+	input, err := b.AddInput(session.AddInputRequest{RunID: run, Parts: byteParts(content)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -137,7 +137,7 @@ func TestOwnedCoreLifecycleSnapshotsAndReplay(t *testing.T) {
 	}
 	for n := 0; n < 128; n++ {
 		b := ownedCoreBatch(t, s)
-		if _, err := b.AddInput(session.AddInputRequest{RunID: run, Messages: byteMessages([]byte{byte(n)})}); err != nil {
+		if _, err := b.AddInput(session.AddInputRequest{RunID: run, Parts: byteParts([]byte{byte(n)})}); err != nil {
 			t.Fatal(err)
 		}
 		ownedCoreSubmit(t, s, b)
@@ -187,14 +187,10 @@ func TestOwnedCoreLifecycleSnapshotsAndReplay(t *testing.T) {
 func TestOwnedCoreApplyAtomicityAndImportedStorage(t *testing.T) {
 	s, _, p, id := ownedCoreFixture(t, 64)
 	makeRecord := func(kind string, payload []byte) historyformat.Record {
-		version := int64(1)
-		if kind == sessionformat.KindUserInput {
-			version = sessionformat.UserInputVersion
-		}
-		return historyformat.Record{Kind: kind, KindVersion: version, Payload: payload}
+		return historyformat.Record{Kind: kind, KindVersion: sessionformat.Version, Payload: payload}
 	}
 	encodeInput := func(ordinal uint64) []byte {
-		payload, err := codec.Encode(sessionformat.UserInput{RunID: 1, ID: ordinal, Messages: formatByteMessages([]byte("exact"))}, p.PayloadLimits)
+		payload, err := codec.Encode(sessionformat.UserInput{RunID: 1, ID: ordinal, Parts: formatByteParts([]byte("exact"))}, p.PayloadLimits)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -265,7 +261,7 @@ func TestOwnedCoreReserveRejectionAndScopedContracts(t *testing.T) {
 		t.Fatal(err)
 	}
 	inputID.Ordinal = 1
-	r, err := session.NewUserInputRecord(session.UserInput{ID: inputID, Messages: byteMessages([]byte{0xff})}, p.PayloadLimits)
+	r, err := session.NewUserInputRecord(session.UserInput{ID: inputID, Parts: byteParts([]byte{0xff})}, p.PayloadLimits)
 	if err != nil {
 		t.Fatal(err)
 	}

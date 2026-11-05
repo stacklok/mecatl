@@ -11,76 +11,78 @@ import (
 )
 
 func TestContentRoundTrip(t *testing.T) {
-	v := format.Content{
+	v := format.UserInput{RunID: 1, ID: 1, Parts: []format.ContentPart{
 		{Kind: "text", Text: "  e\u0301\n\x00尾 "},
-		{Kind: "image", Media: &format.MediaContent{MediaType: "image/custom", Format: "raw", Source: format.MediaSource{Inline: &format.InlineMedia{Data: []byte{0xff, 0}}}}},
+		{Kind: "image", Media: &format.Media{MediaType: "image/custom", Format: "raw", Source: "inline", Data: []byte{0xff, 0}}},
 		{Kind: "text"},
-		{Kind: "audio", Media: &format.MediaContent{Source: format.MediaSource{Remote: &format.RemoteMedia{URI: "custom:clip%2F1?x=2&x=1#尾"}}}},
-		{Kind: "document", Media: &format.MediaContent{Filename: " e\u0301.pdf ", Title: "Title\n", Source: format.MediaSource{Provider: &format.ProviderMedia{Provider: "p ", Scope: " tenant ", ID: "01"}}}},
-		{Kind: "image", Media: &format.MediaContent{MediaType: "image/empty", Source: format.MediaSource{Inline: &format.InlineMedia{}}}},
-	}
+		{Kind: "audio", Media: &format.Media{Source: "remote", URI: "custom:clip%2F1?x=2&x=1#尾"}},
+		{Kind: "document", Media: &format.Media{Filename: " e\u0301.pdf ", Title: "Title\n", Source: "provider", Provider: "p ", Scope: " tenant ", ReferenceID: "01"}},
+		{Kind: "image", Media: &format.Media{MediaType: "image/empty", Source: "inline"}},
+	}}
 	before := v.Clone()
 	wire, err := codec.Encode(v, limits())
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, err := codec.Decode[format.Content](wire, limits())
+	got, err := codec.Decode[format.UserInput](wire, limits())
 	if err != nil || !got.Equal(v) {
 		t.Fatalf("roundtrip: %v", err)
 	}
-	v[1].Media.Source.Inline.Data[0] = 1
-	v[3].Media.Source.Remote.URI = "changed"
-	v[4].Media.Source.Provider.Scope = "changed"
-	v[4].Media.Title = "changed"
+	v.Parts[1].Media.Data[0] = 1
+	v.Parts[3].Media.URI = "changed"
+	v.Parts[4].Media.Scope = "changed"
+	v.Parts[4].Media.Title = "changed"
 	clear(wire)
 	if !got.Equal(before) {
-		t.Fatal("decode or clone borrowed mutable storage")
+		t.Fatal("decode or clone borrowed storage")
 	}
-	if !(format.Content(nil)).Equal(format.Content{}) {
-		t.Fatal("nil and empty differ")
+	if !(format.UserInput{}).Equal(format.UserInput{Parts: []format.ContentPart{}}) {
+		t.Fatal("nil/empty parts differ")
 	}
-	if (format.MediaSource{}).Equal(format.MediaSource{Inline: &format.InlineMedia{}}) {
-		t.Fatal("empty inline presence lost")
+	if (format.Media{}).Equal(format.Media{Source: "inline"}) {
+		t.Fatal("inline presence lost")
 	}
-	if (format.ContentPart{Kind: "text"}).Equal(format.ContentPart{Kind: "text", Media: &format.MediaContent{}}) {
-		t.Fatal("media pointer presence lost")
+	if (format.ContentPart{Kind: "text"}).Equal(format.ContentPart{Kind: "text", Media: &format.Media{}}) {
+		t.Fatal("pointer presence lost")
 	}
-	if !(format.InlineMedia{}).Equal(format.InlineMedia{Data: []byte{}}) {
-		t.Fatal("nil and empty bytes differ")
+	if !(format.Media{Source: "inline"}).Equal(format.Media{Source: "inline", Data: []byte{}}) {
+		t.Fatal("nil/empty bytes differ")
 	}
-	if !bytes.Equal(got[1].Media.Source.Inline.Data, []byte{0xff, 0}) {
-		t.Fatal("inline bytes changed")
+	if !bytes.Equal(got.Parts[1].Media.Data, []byte{0xff, 0}) {
+		t.Fatal("bytes changed")
 	}
 }
 
 func TestContentMalformed(t *testing.T) {
-	inline := format.MediaSource{Inline: &format.InlineMedia{}}
-	remote := format.MediaSource{Remote: &format.RemoteMedia{URI: "urn:example:item"}}
 	for name, v := range map[string]format.ContentPart{
-		"zero":              {},
-		"unknown":           {Kind: "video"},
-		"text media":        {Kind: "text", Media: &format.MediaContent{Source: remote}},
-		"invalid UTF-8":     {Kind: "text", Text: string([]byte{0xff})},
-		"missing media":     {Kind: "image"},
-		"media text":        {Kind: "audio", Text: "x", Media: &format.MediaContent{Source: remote}},
-		"missing source":    {Kind: "image", Media: &format.MediaContent{}},
-		"multiple sources":  {Kind: "image", Media: &format.MediaContent{MediaType: "image/x", Source: format.MediaSource{Inline: &format.InlineMedia{}, Remote: remote.Remote}}},
-		"all sources":       {Kind: "document", Media: &format.MediaContent{MediaType: "x", Source: format.MediaSource{Inline: &format.InlineMedia{}, Remote: remote.Remote, Provider: &format.ProviderMedia{Provider: "p", Scope: "s", ID: "i"}}}},
-		"inline media type": {Kind: "image", Media: &format.MediaContent{Source: inline}},
-		"image filename":    {Kind: "image", Media: &format.MediaContent{Source: remote, Filename: "file"}},
-		"audio title":       {Kind: "audio", Media: &format.MediaContent{Source: remote, Title: "title"}},
-		"bad format":        {Kind: "document", Media: &format.MediaContent{Source: remote, Format: string([]byte{0xff})}},
-		"relative URI":      {Kind: "audio", Media: &format.MediaContent{Source: format.MediaSource{Remote: &format.RemoteMedia{URI: "relative/path"}}}},
-		"bad escape":        {Kind: "audio", Media: &format.MediaContent{Source: format.MediaSource{Remote: &format.RemoteMedia{URI: "https://example/%xx"}}}},
-		"empty provider":    {Kind: "document", Media: &format.MediaContent{Source: format.MediaSource{Provider: &format.ProviderMedia{Scope: "s", ID: "i"}}}},
-		"empty scope":       {Kind: "document", Media: &format.MediaContent{Source: format.MediaSource{Provider: &format.ProviderMedia{Provider: "p", ID: "i"}}}},
-		"empty reference":   {Kind: "document", Media: &format.MediaContent{Source: format.MediaSource{Provider: &format.ProviderMedia{Provider: "p", Scope: "s"}}}},
+		"zero": {}, "unknown": {Kind: "video"},
+		"text media":            {Kind: "text", Media: &format.Media{Source: "remote", URI: "urn:a"}},
+		"invalid UTF-8":         {Kind: "text", Text: "\xff"},
+		"missing media":         {Kind: "image"},
+		"media text":            {Kind: "audio", Text: "x", Media: &format.Media{Source: "remote", URI: "urn:a"}},
+		"missing source":        {Kind: "image", Media: &format.Media{}},
+		"unknown source":        {Kind: "image", Media: &format.Media{Source: "other"}},
+		"inline URI":            {Kind: "image", Media: &format.Media{MediaType: "x", Source: "inline", URI: "urn:a"}},
+		"inline binding":        {Kind: "image", Media: &format.Media{MediaType: "x", Source: "inline", Provider: "p"}},
+		"inline media type":     {Kind: "image", Media: &format.Media{Source: "inline"}},
+		"image filename":        {Kind: "image", Media: &format.Media{Source: "remote", URI: "urn:a", Filename: "f"}},
+		"audio title":           {Kind: "audio", Media: &format.Media{Source: "remote", URI: "urn:a", Title: "t"}},
+		"bad format":            {Kind: "document", Media: &format.Media{Source: "remote", URI: "urn:a", Format: "\xff"}},
+		"relative URI":          {Kind: "audio", Media: &format.Media{Source: "remote", URI: "relative/path"}},
+		"bad escape":            {Kind: "audio", Media: &format.Media{Source: "remote", URI: "https://example/%xx"}},
+		"remote bytes":          {Kind: "audio", Media: &format.Media{Source: "remote", URI: "urn:a", Data: []byte{1}}},
+		"remote binding":        {Kind: "audio", Media: &format.Media{Source: "remote", URI: "urn:a", Scope: "s"}},
+		"empty provider":        {Kind: "document", Media: &format.Media{Source: "provider", Scope: "s", ReferenceID: "i"}},
+		"empty scope":           {Kind: "document", Media: &format.Media{Source: "provider", Provider: "p", ReferenceID: "i"}},
+		"empty reference":       {Kind: "document", Media: &format.Media{Source: "provider", Provider: "p", Scope: "s"}},
+		"provider bytes":        {Kind: "document", Media: &format.Media{Source: "provider", Provider: "p", Scope: "s", ReferenceID: "i", Data: []byte{1}}},
+		"provider URI":          {Kind: "document", Media: &format.Media{Source: "provider", Provider: "p", Scope: "s", ReferenceID: "i", URI: "urn:a"}},
+		"invalid binding UTF-8": {Kind: "document", Media: &format.Media{Source: "provider", Provider: "p", Scope: "\xff", ReferenceID: "i"}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if wire, err := codec.Encode(v, limits()); !errors.Is(err, codec.ErrInvalidData) || wire != nil {
 				t.Fatalf("encode: %v", err)
 			}
-			// Intentionally bypass CheckCBOR to exercise the independent reader.
 			got, err := codec.Decode[format.ContentPart](v.AppendCBOR(nil), limits())
 			if !errors.Is(err, codec.ErrInvalidData) || !reflect.DeepEqual(got, format.ContentPart{}) {
 				t.Fatalf("decode: %#v, %v", got, err)
@@ -91,12 +93,12 @@ func TestContentMalformed(t *testing.T) {
 
 func TestRemoteMediaSchemes(t *testing.T) {
 	for _, uri := range []string{"urn:example:a", "file:///workspace/a", "data:image/png;base64,", "custom:opaque", "https://example/a%2fb?q=1&q=2"} {
-		v := format.RemoteMedia{URI: uri}
+		v := format.Media{Source: "remote", URI: uri}
 		wire, err := codec.Encode(v, limits())
 		if err != nil {
 			t.Fatalf("%q: %v", uri, err)
 		}
-		got, err := codec.Decode[format.RemoteMedia](wire, limits())
+		got, err := codec.Decode[format.Media](wire, limits())
 		if err != nil || got.URI != uri {
 			t.Fatalf("URI normalized: %q, %v", got.URI, err)
 		}

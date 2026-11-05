@@ -11,13 +11,13 @@ import (
 
 func FuzzEffectiveInputDecode(f *testing.F) {
 	for _, v := range []format.EffectiveInput{
-		{RunID: 1, InputID: 1},
-		{RunID: 1, InputID: 1, Prompts: []format.PreparedPrompt{{AuthoredMessage: new(uint64)}, {Harness: &format.HarnessPrompt{Purpose: "context", Content: format.Content{{Kind: "image", Media: &format.MediaContent{MediaType: "image/x", Source: format.MediaSource{Inline: &format.InlineMedia{Data: []byte{0xff}}}}}}, Source: format.ContentSource{Description: "expanded", WorkspaceFile: &format.WorkspaceFileSource{Path: "skill.md"}}}}}},
+		{RunID: 1},
+		{RunID: 1, Inputs: []format.InputItem{{UserInput: new(uint64(1))}, {Inline: &format.AttributedInput{Actor: "skill", Purpose: "context", Parts: []format.ContentPart{{Kind: "image", Media: &format.Media{MediaType: "image/x", Source: "inline", Data: []byte{0xff}}}}, Source: format.ContentSource{Description: "expanded", WorkspaceFile: &format.WorkspaceFileSource{Path: "skill.md"}}}}}},
 	} {
 		f.Add(v.AppendCBOR(nil))
 	}
 	f.Add([]byte{0xa0})
-	f.Add([]byte{0xa3, 0x61, 'i', 1, 0x61, 'p', 0x9b, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff})
+	f.Add([]byte{0xa2, 0x61, 'i', 0x9b, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff})
 	f.Fuzz(func(t *testing.T, wire []byte) {
 		v, err := codec.Decode[format.EffectiveInput](wire, limits())
 		if err != nil {

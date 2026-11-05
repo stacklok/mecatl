@@ -13,7 +13,7 @@ import (
 
 func ExampleSession() {
 	ctx := context.Background()
-	limits := codec.Limits{MaxBytes: 4096, MaxStringBytes: 128, MaxByteStringBytes: 1024, MaxArrayElements: 16, MaxMapPairs: 8, MaxDepth: 8, MaxNodes: 512, MaxCollectionElements: 128}
+	limits := codec.Limits{MaxBytes: 4096, MaxStringBytes: 128, MaxByteStringBytes: 1024, MaxArrayElements: 16, MaxMapPairs: 16, MaxDepth: 8, MaxNodes: 512, MaxCollectionElements: 128}
 	policy := session.Policy{CommitLimits: limits, PayloadLimits: limits, MaxRecordsPerCommit: 16, SoftMaxRetainedRecords: 128, SoftMaxPayloadBytes: 32768, SoftMaxDecodedWork: 1 << 24, MaxRetainedRecords: 128, MaxPayloadBytes: 32768, MaxDecodedWork: 1 << 24}
 	h, err := history.New(mem.New(), history.Policy{CommitLimits: limits, RetryWindow: 16, MaxPageBytes: limits.MaxBytes, MaxPageCommits: 2})
 	if err != nil {
@@ -45,24 +45,25 @@ func ExampleSession() {
 		fmt.Println(err)
 		return
 	}
-	input, err := b.AddInput(session.AddInputRequest{RunID: run, Messages: []session.AuthoredMessage{{Content: session.Content{{Kind: session.ContentText, Text: "first"}}}}})
+	input, err := b.AddInput(session.AddInputRequest{RunID: run, Parts: []session.ContentPart{{Kind: session.ContentText, Text: "first"}}})
 	if err != nil {
 		fmt.Println(err)
 		return
 	}
 	// Preparation supplies retained values; the kernel never opens this source file.
 	if err := b.ReplaceInstructions(session.Instructions{HistoryID: id, Blocks: []session.InstructionBlock{{
-		Content: session.Content{{Kind: session.ContentText, Text: "Use the project's vocabulary."}},
+		Content: []session.ContentPart{{Kind: session.ContentText, Text: "Use the project's vocabulary."}},
 		Source:  session.ContentSource{Description: "adopted workspace instructions", WorkspaceFile: &session.WorkspaceFileSource{Path: "AGENTS.md"}},
 	}}}); err != nil {
 		fmt.Println(err)
 		return
 	}
-	if err := b.AddEffectiveInput(session.EffectiveInput{InputID: input, Prompts: []session.PreparedPrompt{
-		{AuthoredMessage: new(uint64(0))},
-		{Harness: &session.HarnessPrompt{
+	if err := b.AddEffectiveInput(session.EffectiveInput{RunID: run, Inputs: []session.InputItem{
+		{UserInput: &input},
+		{Inline: &session.AttributedInput{
+			Actor:   "harness",
 			Purpose: session.PromptContext,
-			Content: session.Content{{Kind: session.ContentText, Text: "Retained reference material."}},
+			Parts:   []session.ContentPart{{Kind: session.ContentText, Text: "Retained reference material."}},
 			Source:  session.ContentSource{Description: "prepared workspace reference", WorkspaceFile: &session.WorkspaceFileSource{Path: "docs/design.md"}},
 		}},
 	}}); err != nil {
@@ -87,7 +88,7 @@ func ExampleSession() {
 	instructions, _ := loaded.Snapshot().Instructions()
 	fmt.Printf("instruction source=%s\n", instructions.Value().Blocks[0].Source.WorkspaceFile.Path)
 	effective, _ := loaded.Snapshot().RecordAt(4).EffectiveInput()
-	fmt.Printf("prepared purpose=%s; original=%q\n", effective.Value().Prompts[1].Harness.Purpose, loaded.Snapshot().RunAt(0).InputAt(0).Messages()[0].Content[0].Text)
+	fmt.Printf("prepared purpose=%s; original=%q\n", effective.Value().Inputs[1].Inline.Purpose, loaded.Snapshot().RunAt(0).InputAt(0).Parts()[0].Text)
 
 	// Closing a run is explicit, never a side effect of loading it.
 	closeout, err := loaded.BeginCommit()
@@ -117,7 +118,7 @@ func ExampleSession() {
 		fmt.Println(err)
 		return
 	}
-	second, err := next.AddInput(session.AddInputRequest{RunID: successor, Messages: []session.AuthoredMessage{{Content: session.Content{{Kind: session.ContentText, Text: "second"}}}}})
+	second, err := next.AddInput(session.AddInputRequest{RunID: successor, Parts: []session.ContentPart{{Kind: session.ContentText, Text: "second"}}})
 	if err != nil {
 		fmt.Println(err)
 		return
@@ -135,7 +136,7 @@ func ExampleSession() {
 	v = loaded.Snapshot()
 	fmt.Printf("loaded %s head=%d runs=%d active=%d\n", v.HistoryID(), v.Head().Sequence, v.RunCount(), v.ActiveRun().Ordinal)
 	owner := v.RunAt(1)
-	fmt.Printf("run %d owns input %d: %s\n", owner.ID().Ordinal, owner.InputAt(0).ID().Ordinal, owner.InputAt(0).Messages()[0].Content[0].Text)
+	fmt.Printf("run %d owns input %d: %s\n", owner.ID().Ordinal, owner.InputAt(0).ID().Ordinal, owner.InputAt(0).Parts()[0].Text)
 	fmt.Printf("old snapshot head=%d active=%d\n", old.Head().Sequence, old.ActiveRun().Ordinal)
 	// Output:
 	// provisional input=1 run=1; created=false

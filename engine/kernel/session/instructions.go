@@ -9,9 +9,9 @@ import (
 
 // InstructionBlock preserves an ordered root-instruction contribution and source.
 // Its purpose is instructions by construction. Assignment shares nested storage;
-// Clone detaches it. An empty Content still requires a valid Source.
+// Clone detaches it. Empty Content still requires a valid Source.
 type InstructionBlock struct {
-	Content Content
+	Content []ContentPart
 	Source  ContentSource
 }
 
@@ -25,7 +25,7 @@ type Instructions struct {
 
 // Validate checks retained content and provenance without operational limits.
 func (v InstructionBlock) Validate() error {
-	if err := v.Content.Validate(); err != nil {
+	if err := validateParts(v.Content); err != nil {
 		return err
 	}
 	return v.Source.Validate()
@@ -41,10 +41,10 @@ func (v InstructionBlock) Equal(other InstructionBlock) bool {
 	return v.toFormat().Equal(other.toFormat())
 }
 func (v InstructionBlock) toFormat() sessionformat.InstructionBlock {
-	return sessionformat.InstructionBlock{Content: v.Content.toFormat(), Source: v.Source.toFormat()}
+	return sessionformat.InstructionBlock{Content: partsToFormat(v.Content), Source: v.Source.toFormat()}
 }
 func instructionBlockFromFormat(v sessionformat.InstructionBlock) InstructionBlock {
-	return InstructionBlock{Content: contentFromFormat(v.Content), Source: contentSourceFromFormat(v.Source)}
+	return InstructionBlock{Content: partsFromFormat(v.Content), Source: contentSourceFromFormat(v.Source)}
 }
 
 // Validate checks full history scope and all blocks, not active-run admission.
@@ -100,7 +100,7 @@ func NewInstructionsRecord(v Instructions, limits codec.Limits) (Record, error) 
 	b.collection(len(v.Blocks))
 	if b.err == nil {
 		for _, block := range v.Blocks {
-			block.Content.checkSize(&b)
+			checkPartsSize(block.Content, &b)
 			block.Source.checkSize(&b)
 		}
 	}
@@ -111,7 +111,7 @@ func NewInstructionsRecord(v Instructions, limits codec.Limits) (Record, error) 
 	if err != nil {
 		return Record{}, err
 	}
-	return Record{scope: v.HistoryID, value: format.Record{Kind: sessionformat.KindInstructions, KindVersion: sessionformat.InstructionsVersion, Payload: payload}}, nil
+	return Record{scope: v.HistoryID, value: format.Record{Kind: sessionformat.KindInstructions, KindVersion: sessionformat.Version, Payload: payload}}, nil
 }
 
 // InstructionsView is an immutable fixed-size accepted replacement handle.

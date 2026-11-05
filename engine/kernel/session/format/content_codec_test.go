@@ -12,10 +12,10 @@ import (
 )
 
 func TestContentBoundedTraversal(t *testing.T) {
-	v := format.UserInput{RunID: 1, ID: 1, Messages: []format.AuthoredMessage{{Content: format.Content{
+	v := format.UserInput{RunID: 1, ID: 1, Parts: []format.ContentPart{
 		{Kind: "text", Text: "exact UTF-8 text"},
-		{Kind: "image", Media: &format.MediaContent{MediaType: "image/custom", Source: format.MediaSource{Inline: &format.InlineMedia{Data: bytes.Repeat([]byte{1}, 20)}}}}},
-	}}}
+		{Kind: "image", Media: &format.Media{MediaType: "image/custom", Source: "inline", Data: bytes.Repeat([]byte{1}, 20)}},
+	}}
 	wire, err := codec.Encode(v, limits())
 	if err != nil {
 		t.Fatal(err)
@@ -35,7 +35,7 @@ func TestContentBoundedTraversal(t *testing.T) {
 			case "map":
 				l.MaxMapPairs = 2
 			case "depth":
-				l.MaxDepth = 7
+				l.MaxDepth = 3
 			case "nodes":
 				l.MaxNodes = 10
 			case "collections":
@@ -55,7 +55,7 @@ func TestContentBoundedTraversal(t *testing.T) {
 		{0x9b, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff},
 	} {
 		// Declared counts must fail before any count-based allocation or element read.
-		if got, err := codec.Decode[format.Content](count, limits()); !errors.Is(err, codec.ErrLimitExceeded) || got != nil {
+		if got, err := codec.Decode[format.UserInput](append(append([]byte{0xa3, 0x61, 'i', 1, 0x61, 'p'}, count...), 0x61, 'r', 1), limits()); !errors.Is(err, codec.ErrLimitExceeded) || !reflect.DeepEqual(got, format.UserInput{}) {
 			t.Fatalf("content count: %v", err)
 		}
 		catalog := append([]byte{0xa1, 0x61, 't'}, count...)
@@ -104,49 +104,39 @@ func TestJSONBoundedBeforeValidation(t *testing.T) {
 	}
 }
 
-func TestPreparedPromptWire(t *testing.T) {
-	v := format.PreparedPrompt{AuthoredMessage: new(uint64)}
+func TestInputItemWire(t *testing.T) {
+	v := format.InputItem{UserInput: new(uint64(1))}
 	wire, err := codec.Encode(v, limits())
-	if err != nil || !bytes.Equal(wire, []byte{0xa1, 0x61, 'a', 0}) {
-		t.Fatalf("authored index zero schema: %x, %v", wire, err)
+	if err != nil || !bytes.Equal(wire, []byte{0xa1, 0x61, 'u', 1}) {
+		t.Fatalf("reference schema: %x, %v", wire, err)
 	}
 	for _, bad := range [][]byte{
-		{0xa0},                             // Absent origin.
-		{0xa1, 0x61, 'a', 0xf6},            // Null is not pointer presence.
-		{0xa1, 0x61, 'r', 0},               // No provider role field.
-		{0xa2, 0x61, 'a', 0, 0x61, 'a', 1}, // Duplicate field.
-		append(bytes.Clone(wire), 0),       // Trailing bytes.
+		{0xa0}, {0xa1, 0x61, 'u', 0}, {0xa1, 0x61, 'u', 0xf6}, {0xa1, 0x61, 'r', 1},
+		{0xa2, 0x61, 'u', 1, 0x61, 'u', 1}, append(bytes.Clone(wire), 0),
 	} {
-		if got, err := codec.Decode[format.PreparedPrompt](bad, limits()); !errors.Is(err, codec.ErrInvalidData) || !reflect.DeepEqual(got, format.PreparedPrompt{}) {
-			t.Fatalf("malformed prompt: %v", err)
+		if got, err := codec.Decode[format.InputItem](bad, limits()); !errors.Is(err, codec.ErrInvalidData) || !reflect.DeepEqual(got, format.InputItem{}) {
+			t.Fatalf("malformed item: %v", err)
 		}
 	}
-	input := format.UserInput{RunID: 1, ID: 1}
-	wire, err = codec.Encode(input, limits())
-	if err != nil || !bytes.Equal(wire, []byte{0xa3, 0x61, 'i', 1, 0x61, 'm', 0x80, 0x61, 'r', 1}) {
-		t.Fatalf("authored v2 schema: %x, %v", wire, err)
-	}
-	if format.Version != 1 || format.UserInputVersion != 2 || format.EffectiveInputVersion != 1 || format.InstructionsVersion != 1 || format.ToolCatalogVersion != 1 || format.ModelBindingVersion != 1 {
-		t.Fatal("kind version contract changed")
+	wire, err = codec.Encode(format.UserInput{RunID: 1, ID: 1}, limits())
+	if err != nil || !bytes.Equal(wire, []byte{0xa3, 0x61, 'i', 1, 0x61, 'p', 0x80, 0x61, 'r', 1}) {
+		t.Fatalf("input schema: %x, %v", wire, err)
 	}
 }
 
 func TestFormatValidatorsAreLocal(t *testing.T) {
-	// Invalid descendants are the generated traversal's responsibility. Parent
-	// validators must not recursively parse or traverse unbounded child values.
+	// Generated traversal, not local validation, owns child validity and bounds.
 	for _, err := range []error{
-		(format.UserInput{RunID: 1, ID: 1, Messages: []format.AuthoredMessage{{Content: format.Content{{}}}}}).Validate(),
-		(format.ContentPart{Kind: "image", Media: &format.MediaContent{}}).Validate(),
-		(format.MediaContent{Source: format.MediaSource{}}).Validate(),
-		(format.MediaSource{Remote: &format.RemoteMedia{}}).Validate(),
+		(format.UserInput{RunID: 1, ID: 1, Parts: []format.ContentPart{{}}}).Validate(),
+		(format.ContentPart{Kind: "image", Media: &format.Media{}}).Validate(),
 		(format.ContentSource{Description: "d", WorkspaceFile: &format.WorkspaceFileSource{}}).Validate(),
-		(format.PreparedPrompt{Harness: &format.HarnessPrompt{}}).Validate(),
-		(format.HarnessPrompt{Purpose: "context"}).Validate(),
-		(format.EffectiveInput{RunID: 1, InputID: math.MaxUint64, Prompts: []format.PreparedPrompt{{}}}).Validate(),
+		(format.InputItem{Inline: &format.AttributedInput{}}).Validate(),
+		(format.AttributedInput{Actor: "a", Purpose: "context"}).Validate(),
+		(format.EffectiveInput{RunID: 1, Inputs: []format.InputItem{{UserInput: new(uint64(math.MaxUint64))}, {}}}).Validate(),
 		(format.ToolCatalog{Tools: []format.ToolDefinition{{Name: "a"}}}).Validate(),
 	} {
 		if err != nil {
-			t.Fatalf("validator recursively checked a child: %v", err)
+			t.Fatalf("recursive validator: %v", err)
 		}
 	}
 }

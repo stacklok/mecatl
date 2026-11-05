@@ -10,9 +10,9 @@ import (
 //
 //cborgen:validate Validate
 type ContentPart struct {
-	Kind  string        `cbor:"k"`
-	Text  string        `cbor:"t"`
-	Media *MediaContent `cbor:"m,omitempty"`
+	Kind  string `cbor:"k"`
+	Text  string `cbor:"t"`
+	Media *Media `cbor:"m,omitempty"`
 }
 
 // Validate checks the variant and immediate metadata, not child validity.

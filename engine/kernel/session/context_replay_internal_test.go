@@ -24,7 +24,7 @@ func TestContextHardOnlyReplayDetachedOracle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	input, err := b.AddInput(AddInputRequest{RunID: run, Messages: []AuthoredMessage{{}}})
+	input, err := b.AddInput(AddInputRequest{RunID: run, Parts: []ContentPart{}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -32,7 +32,7 @@ func TestContextHardOnlyReplayDetachedOracle(t *testing.T) {
 		b.ReplaceInstructions(Instructions{HistoryID: scope, Blocks: []InstructionBlock{{Source: ContentSource{Description: "retained root"}}}}),
 		b.ReplaceToolCatalog(ToolCatalog{HistoryID: scope, Tools: []ToolDefinition{{Name: "tool", ArgumentSchema: []byte(" true ")}}}),
 		b.ReplaceModelBinding(ModelBinding{HistoryID: scope, Route: "r", API: "a", Model: "m", Settings: []byte(" { } ")}),
-		b.AddEffectiveInput(EffectiveInput{InputID: input, Prompts: []PreparedPrompt{{AuthoredMessage: new(uint64(0))}}}),
+		b.AddEffectiveInput(EffectiveInput{RunID: run, Inputs: []InputItem{{UserInput: &input}}}),
 	} {
 		if err != nil {
 			t.Fatal(err)

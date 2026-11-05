@@ -86,7 +86,7 @@ func (v EffectiveInput) Clone() EffectiveInput { return (cborgen{}).clone1(v) }
 func (v EffectiveInput) Equal(other EffectiveInput) bool { return (cborgen{}).equal1(v, other) }
 
 // CheckCBOR checks one value using shared operation accounting; fieldMax caps only its immediate representation.
-func (v PreparedPrompt) CheckCBOR(b *cborgenCodec.Budget, depth, fieldMax int) error {
+func (v InputItem) CheckCBOR(b *cborgenCodec.Budget, depth, fieldMax int) error {
 	if b == nil {
 		return cborgenCodec.ErrInvalidLimits
 	}
@@ -97,10 +97,10 @@ func (v PreparedPrompt) CheckCBOR(b *cborgenCodec.Budget, depth, fieldMax int) e
 }
 
 // AppendCBOR appends a stable value already admitted by CheckCBOR; it does not validate or account again.
-func (v PreparedPrompt) AppendCBOR(dst []byte) []byte { return (cborgen{}).append4(dst, v) }
+func (v InputItem) AppendCBOR(dst []byte) []byte { return (cborgen{}).append4(dst, v) }
 
 // ReadCBOR reads one value transactionally. Discard the reader after an error; receiver storage remains unchanged.
-func (v *PreparedPrompt) ReadCBOR(r *cborgenCodec.Reader, depth, fieldMax int) error {
+func (v *InputItem) ReadCBOR(r *cborgenCodec.Reader, depth, fieldMax int) error {
 	if v == nil {
 		return cborgenCodec.ErrInvalidData
 	}
@@ -116,13 +116,13 @@ func (v *PreparedPrompt) ReadCBOR(r *cborgenCodec.Reader, depth, fieldMax int) e
 }
 
 // Clone detaches mutable state, including excluded fields, without validation; nil collections remain nil.
-func (v PreparedPrompt) Clone() PreparedPrompt { return (cborgen{}).clone4(v) }
+func (v InputItem) Clone() InputItem { return (cborgen{}).clone4(v) }
 
 // Equal compares all state without validation; nil and empty collections are equal, absent and present pointers differ.
-func (v PreparedPrompt) Equal(other PreparedPrompt) bool { return (cborgen{}).equal4(v, other) }
+func (v InputItem) Equal(other InputItem) bool { return (cborgen{}).equal4(v, other) }
 
 // CheckCBOR checks one value using shared operation accounting; fieldMax caps only its immediate representation.
-func (v HarnessPrompt) CheckCBOR(b *cborgenCodec.Budget, depth, fieldMax int) error {
+func (v AttributedInput) CheckCBOR(b *cborgenCodec.Budget, depth, fieldMax int) error {
 	if b == nil {
 		return cborgenCodec.ErrInvalidLimits
 	}
@@ -133,10 +133,10 @@ func (v HarnessPrompt) CheckCBOR(b *cborgenCodec.Budget, depth, fieldMax int) er
 }
 
 // AppendCBOR appends a stable value already admitted by CheckCBOR; it does not validate or account again.
-func (v HarnessPrompt) AppendCBOR(dst []byte) []byte { return (cborgen{}).append7(dst, v) }
+func (v AttributedInput) AppendCBOR(dst []byte) []byte { return (cborgen{}).append7(dst, v) }
 
 // ReadCBOR reads one value transactionally. Discard the reader after an error; receiver storage remains unchanged.
-func (v *HarnessPrompt) ReadCBOR(r *cborgenCodec.Reader, depth, fieldMax int) error {
+func (v *AttributedInput) ReadCBOR(r *cborgenCodec.Reader, depth, fieldMax int) error {
 	if v == nil {
 		return cborgenCodec.ErrInvalidData
 	}
@@ -152,13 +152,13 @@ func (v *HarnessPrompt) ReadCBOR(r *cborgenCodec.Reader, depth, fieldMax int) er
 }
 
 // Clone detaches mutable state, including excluded fields, without validation; nil collections remain nil.
-func (v HarnessPrompt) Clone() HarnessPrompt { return (cborgen{}).clone7(v) }
+func (v AttributedInput) Clone() AttributedInput { return (cborgen{}).clone7(v) }
 
 // Equal compares all state without validation; nil and empty collections are equal, absent and present pointers differ.
-func (v HarnessPrompt) Equal(other HarnessPrompt) bool { return (cborgen{}).equal7(v, other) }
+func (v AttributedInput) Equal(other AttributedInput) bool { return (cborgen{}).equal7(v, other) }
 
 // CheckCBOR checks one value using shared operation accounting; fieldMax caps only its immediate representation.
-func (v Content) CheckCBOR(b *cborgenCodec.Budget, depth, fieldMax int) error {
+func (v ContentPart) CheckCBOR(b *cborgenCodec.Budget, depth, fieldMax int) error {
 	if b == nil {
 		return cborgenCodec.ErrInvalidLimits
 	}
@@ -169,10 +169,10 @@ func (v Content) CheckCBOR(b *cborgenCodec.Budget, depth, fieldMax int) error {
 }
 
 // AppendCBOR appends a stable value already admitted by CheckCBOR; it does not validate or account again.
-func (v Content) AppendCBOR(dst []byte) []byte { return (cborgen{}).append9(dst, v) }
+func (v ContentPart) AppendCBOR(dst []byte) []byte { return (cborgen{}).append9(dst, v) }
 
 // ReadCBOR reads one value transactionally. Discard the reader after an error; receiver storage remains unchanged.
-func (v *Content) ReadCBOR(r *cborgenCodec.Reader, depth, fieldMax int) error {
+func (v *ContentPart) ReadCBOR(r *cborgenCodec.Reader, depth, fieldMax int) error {
 	if v == nil {
 		return cborgenCodec.ErrInvalidData
 	}
@@ -188,49 +188,13 @@ func (v *Content) ReadCBOR(r *cborgenCodec.Reader, depth, fieldMax int) error {
 }
 
 // Clone detaches mutable state, including excluded fields, without validation; nil collections remain nil.
-func (v Content) Clone() Content { return (cborgen{}).clone9(v) }
+func (v ContentPart) Clone() ContentPart { return (cborgen{}).clone9(v) }
 
 // Equal compares all state without validation; nil and empty collections are equal, absent and present pointers differ.
-func (v Content) Equal(other Content) bool { return (cborgen{}).equal9(v, other) }
+func (v ContentPart) Equal(other ContentPart) bool { return (cborgen{}).equal9(v, other) }
 
 // CheckCBOR checks one value using shared operation accounting; fieldMax caps only its immediate representation.
-func (v ContentPart) CheckCBOR(b *cborgenCodec.Budget, depth, fieldMax int) error {
-	if b == nil {
-		return cborgenCodec.ErrInvalidLimits
-	}
-	if fieldMax <= 0 {
-		return cborgenCodec.ErrInvalidLimits
-	}
-	return (cborgen{}).check10(v, b, depth, fieldMax)
-}
-
-// AppendCBOR appends a stable value already admitted by CheckCBOR; it does not validate or account again.
-func (v ContentPart) AppendCBOR(dst []byte) []byte { return (cborgen{}).append10(dst, v) }
-
-// ReadCBOR reads one value transactionally. Discard the reader after an error; receiver storage remains unchanged.
-func (v *ContentPart) ReadCBOR(r *cborgenCodec.Reader, depth, fieldMax int) error {
-	if v == nil {
-		return cborgenCodec.ErrInvalidData
-	}
-	if r == nil || fieldMax <= 0 {
-		return cborgenCodec.ErrInvalidLimits
-	}
-	x, err := (cborgen{}).read10(r, depth, fieldMax)
-	if err != nil {
-		return err
-	}
-	*v = x
-	return nil
-}
-
-// Clone detaches mutable state, including excluded fields, without validation; nil collections remain nil.
-func (v ContentPart) Clone() ContentPart { return (cborgen{}).clone10(v) }
-
-// Equal compares all state without validation; nil and empty collections are equal, absent and present pointers differ.
-func (v ContentPart) Equal(other ContentPart) bool { return (cborgen{}).equal10(v, other) }
-
-// CheckCBOR checks one value using shared operation accounting; fieldMax caps only its immediate representation.
-func (v MediaContent) CheckCBOR(b *cborgenCodec.Budget, depth, fieldMax int) error {
+func (v Media) CheckCBOR(b *cborgenCodec.Budget, depth, fieldMax int) error {
 	if b == nil {
 		return cborgenCodec.ErrInvalidLimits
 	}
@@ -241,10 +205,10 @@ func (v MediaContent) CheckCBOR(b *cborgenCodec.Budget, depth, fieldMax int) err
 }
 
 // AppendCBOR appends a stable value already admitted by CheckCBOR; it does not validate or account again.
-func (v MediaContent) AppendCBOR(dst []byte) []byte { return (cborgen{}).append12(dst, v) }
+func (v Media) AppendCBOR(dst []byte) []byte { return (cborgen{}).append12(dst, v) }
 
 // ReadCBOR reads one value transactionally. Discard the reader after an error; receiver storage remains unchanged.
-func (v *MediaContent) ReadCBOR(r *cborgenCodec.Reader, depth, fieldMax int) error {
+func (v *Media) ReadCBOR(r *cborgenCodec.Reader, depth, fieldMax int) error {
 	if v == nil {
 		return cborgenCodec.ErrInvalidData
 	}
@@ -260,49 +224,13 @@ func (v *MediaContent) ReadCBOR(r *cborgenCodec.Reader, depth, fieldMax int) err
 }
 
 // Clone detaches mutable state, including excluded fields, without validation; nil collections remain nil.
-func (v MediaContent) Clone() MediaContent { return (cborgen{}).clone12(v) }
+func (v Media) Clone() Media { return (cborgen{}).clone12(v) }
 
 // Equal compares all state without validation; nil and empty collections are equal, absent and present pointers differ.
-func (v MediaContent) Equal(other MediaContent) bool { return (cborgen{}).equal12(v, other) }
+func (v Media) Equal(other Media) bool { return (cborgen{}).equal12(v, other) }
 
 // CheckCBOR checks one value using shared operation accounting; fieldMax caps only its immediate representation.
-func (v MediaSource) CheckCBOR(b *cborgenCodec.Budget, depth, fieldMax int) error {
-	if b == nil {
-		return cborgenCodec.ErrInvalidLimits
-	}
-	if fieldMax <= 0 {
-		return cborgenCodec.ErrInvalidLimits
-	}
-	return (cborgen{}).check13(v, b, depth, fieldMax)
-}
-
-// AppendCBOR appends a stable value already admitted by CheckCBOR; it does not validate or account again.
-func (v MediaSource) AppendCBOR(dst []byte) []byte { return (cborgen{}).append13(dst, v) }
-
-// ReadCBOR reads one value transactionally. Discard the reader after an error; receiver storage remains unchanged.
-func (v *MediaSource) ReadCBOR(r *cborgenCodec.Reader, depth, fieldMax int) error {
-	if v == nil {
-		return cborgenCodec.ErrInvalidData
-	}
-	if r == nil || fieldMax <= 0 {
-		return cborgenCodec.ErrInvalidLimits
-	}
-	x, err := (cborgen{}).read13(r, depth, fieldMax)
-	if err != nil {
-		return err
-	}
-	*v = x
-	return nil
-}
-
-// Clone detaches mutable state, including excluded fields, without validation; nil collections remain nil.
-func (v MediaSource) Clone() MediaSource { return (cborgen{}).clone13(v) }
-
-// Equal compares all state without validation; nil and empty collections are equal, absent and present pointers differ.
-func (v MediaSource) Equal(other MediaSource) bool { return (cborgen{}).equal13(v, other) }
-
-// CheckCBOR checks one value using shared operation accounting; fieldMax caps only its immediate representation.
-func (v InlineMedia) CheckCBOR(b *cborgenCodec.Budget, depth, fieldMax int) error {
+func (v ContentSource) CheckCBOR(b *cborgenCodec.Budget, depth, fieldMax int) error {
 	if b == nil {
 		return cborgenCodec.ErrInvalidLimits
 	}
@@ -313,10 +241,10 @@ func (v InlineMedia) CheckCBOR(b *cborgenCodec.Budget, depth, fieldMax int) erro
 }
 
 // AppendCBOR appends a stable value already admitted by CheckCBOR; it does not validate or account again.
-func (v InlineMedia) AppendCBOR(dst []byte) []byte { return (cborgen{}).append15(dst, v) }
+func (v ContentSource) AppendCBOR(dst []byte) []byte { return (cborgen{}).append15(dst, v) }
 
 // ReadCBOR reads one value transactionally. Discard the reader after an error; receiver storage remains unchanged.
-func (v *InlineMedia) ReadCBOR(r *cborgenCodec.Reader, depth, fieldMax int) error {
+func (v *ContentSource) ReadCBOR(r *cborgenCodec.Reader, depth, fieldMax int) error {
 	if v == nil {
 		return cborgenCodec.ErrInvalidData
 	}
@@ -332,34 +260,34 @@ func (v *InlineMedia) ReadCBOR(r *cborgenCodec.Reader, depth, fieldMax int) erro
 }
 
 // Clone detaches mutable state, including excluded fields, without validation; nil collections remain nil.
-func (v InlineMedia) Clone() InlineMedia { return (cborgen{}).clone15(v) }
+func (v ContentSource) Clone() ContentSource { return (cborgen{}).clone15(v) }
 
 // Equal compares all state without validation; nil and empty collections are equal, absent and present pointers differ.
-func (v InlineMedia) Equal(other InlineMedia) bool { return (cborgen{}).equal15(v, other) }
+func (v ContentSource) Equal(other ContentSource) bool { return (cborgen{}).equal15(v, other) }
 
 // CheckCBOR checks one value using shared operation accounting; fieldMax caps only its immediate representation.
-func (v RemoteMedia) CheckCBOR(b *cborgenCodec.Budget, depth, fieldMax int) error {
+func (v WorkspaceFileSource) CheckCBOR(b *cborgenCodec.Budget, depth, fieldMax int) error {
 	if b == nil {
 		return cborgenCodec.ErrInvalidLimits
 	}
 	if fieldMax <= 0 {
 		return cborgenCodec.ErrInvalidLimits
 	}
-	return (cborgen{}).check19(v, b, depth, fieldMax)
+	return (cborgen{}).check17(v, b, depth, fieldMax)
 }
 
 // AppendCBOR appends a stable value already admitted by CheckCBOR; it does not validate or account again.
-func (v RemoteMedia) AppendCBOR(dst []byte) []byte { return (cborgen{}).append19(dst, v) }
+func (v WorkspaceFileSource) AppendCBOR(dst []byte) []byte { return (cborgen{}).append17(dst, v) }
 
 // ReadCBOR reads one value transactionally. Discard the reader after an error; receiver storage remains unchanged.
-func (v *RemoteMedia) ReadCBOR(r *cborgenCodec.Reader, depth, fieldMax int) error {
+func (v *WorkspaceFileSource) ReadCBOR(r *cborgenCodec.Reader, depth, fieldMax int) error {
 	if v == nil {
 		return cborgenCodec.ErrInvalidData
 	}
 	if r == nil || fieldMax <= 0 {
 		return cborgenCodec.ErrInvalidLimits
 	}
-	x, err := (cborgen{}).read19(r, depth, fieldMax)
+	x, err := (cborgen{}).read17(r, depth, fieldMax)
 	if err != nil {
 		return err
 	}
@@ -368,34 +296,36 @@ func (v *RemoteMedia) ReadCBOR(r *cborgenCodec.Reader, depth, fieldMax int) erro
 }
 
 // Clone detaches mutable state, including excluded fields, without validation; nil collections remain nil.
-func (v RemoteMedia) Clone() RemoteMedia { return (cborgen{}).clone19(v) }
+func (v WorkspaceFileSource) Clone() WorkspaceFileSource { return (cborgen{}).clone17(v) }
 
 // Equal compares all state without validation; nil and empty collections are equal, absent and present pointers differ.
-func (v RemoteMedia) Equal(other RemoteMedia) bool { return (cborgen{}).equal19(v, other) }
+func (v WorkspaceFileSource) Equal(other WorkspaceFileSource) bool {
+	return (cborgen{}).equal17(v, other)
+}
 
 // CheckCBOR checks one value using shared operation accounting; fieldMax caps only its immediate representation.
-func (v ProviderMedia) CheckCBOR(b *cborgenCodec.Budget, depth, fieldMax int) error {
+func (v Instructions) CheckCBOR(b *cborgenCodec.Budget, depth, fieldMax int) error {
 	if b == nil {
 		return cborgenCodec.ErrInvalidLimits
 	}
 	if fieldMax <= 0 {
 		return cborgenCodec.ErrInvalidLimits
 	}
-	return (cborgen{}).check21(v, b, depth, fieldMax)
+	return (cborgen{}).check18(v, b, depth, fieldMax)
 }
 
 // AppendCBOR appends a stable value already admitted by CheckCBOR; it does not validate or account again.
-func (v ProviderMedia) AppendCBOR(dst []byte) []byte { return (cborgen{}).append21(dst, v) }
+func (v Instructions) AppendCBOR(dst []byte) []byte { return (cborgen{}).append18(dst, v) }
 
 // ReadCBOR reads one value transactionally. Discard the reader after an error; receiver storage remains unchanged.
-func (v *ProviderMedia) ReadCBOR(r *cborgenCodec.Reader, depth, fieldMax int) error {
+func (v *Instructions) ReadCBOR(r *cborgenCodec.Reader, depth, fieldMax int) error {
 	if v == nil {
 		return cborgenCodec.ErrInvalidData
 	}
 	if r == nil || fieldMax <= 0 {
 		return cborgenCodec.ErrInvalidLimits
 	}
-	x, err := (cborgen{}).read21(r, depth, fieldMax)
+	x, err := (cborgen{}).read18(r, depth, fieldMax)
 	if err != nil {
 		return err
 	}
@@ -404,13 +334,49 @@ func (v *ProviderMedia) ReadCBOR(r *cborgenCodec.Reader, depth, fieldMax int) er
 }
 
 // Clone detaches mutable state, including excluded fields, without validation; nil collections remain nil.
-func (v ProviderMedia) Clone() ProviderMedia { return (cborgen{}).clone21(v) }
+func (v Instructions) Clone() Instructions { return (cborgen{}).clone18(v) }
 
 // Equal compares all state without validation; nil and empty collections are equal, absent and present pointers differ.
-func (v ProviderMedia) Equal(other ProviderMedia) bool { return (cborgen{}).equal21(v, other) }
+func (v Instructions) Equal(other Instructions) bool { return (cborgen{}).equal18(v, other) }
 
 // CheckCBOR checks one value using shared operation accounting; fieldMax caps only its immediate representation.
-func (v ContentSource) CheckCBOR(b *cborgenCodec.Budget, depth, fieldMax int) error {
+func (v InstructionBlock) CheckCBOR(b *cborgenCodec.Budget, depth, fieldMax int) error {
+	if b == nil {
+		return cborgenCodec.ErrInvalidLimits
+	}
+	if fieldMax <= 0 {
+		return cborgenCodec.ErrInvalidLimits
+	}
+	return (cborgen{}).check20(v, b, depth, fieldMax)
+}
+
+// AppendCBOR appends a stable value already admitted by CheckCBOR; it does not validate or account again.
+func (v InstructionBlock) AppendCBOR(dst []byte) []byte { return (cborgen{}).append20(dst, v) }
+
+// ReadCBOR reads one value transactionally. Discard the reader after an error; receiver storage remains unchanged.
+func (v *InstructionBlock) ReadCBOR(r *cborgenCodec.Reader, depth, fieldMax int) error {
+	if v == nil {
+		return cborgenCodec.ErrInvalidData
+	}
+	if r == nil || fieldMax <= 0 {
+		return cborgenCodec.ErrInvalidLimits
+	}
+	x, err := (cborgen{}).read20(r, depth, fieldMax)
+	if err != nil {
+		return err
+	}
+	*v = x
+	return nil
+}
+
+// Clone detaches mutable state, including excluded fields, without validation; nil collections remain nil.
+func (v InstructionBlock) Clone() InstructionBlock { return (cborgen{}).clone20(v) }
+
+// Equal compares all state without validation; nil and empty collections are equal, absent and present pointers differ.
+func (v InstructionBlock) Equal(other InstructionBlock) bool { return (cborgen{}).equal20(v, other) }
+
+// CheckCBOR checks one value using shared operation accounting; fieldMax caps only its immediate representation.
+func (v ModelBinding) CheckCBOR(b *cborgenCodec.Budget, depth, fieldMax int) error {
 	if b == nil {
 		return cborgenCodec.ErrInvalidLimits
 	}
@@ -421,10 +387,10 @@ func (v ContentSource) CheckCBOR(b *cborgenCodec.Budget, depth, fieldMax int) er
 }
 
 // AppendCBOR appends a stable value already admitted by CheckCBOR; it does not validate or account again.
-func (v ContentSource) AppendCBOR(dst []byte) []byte { return (cborgen{}).append22(dst, v) }
+func (v ModelBinding) AppendCBOR(dst []byte) []byte { return (cborgen{}).append22(dst, v) }
 
 // ReadCBOR reads one value transactionally. Discard the reader after an error; receiver storage remains unchanged.
-func (v *ContentSource) ReadCBOR(r *cborgenCodec.Reader, depth, fieldMax int) error {
+func (v *ModelBinding) ReadCBOR(r *cborgenCodec.Reader, depth, fieldMax int) error {
 	if v == nil {
 		return cborgenCodec.ErrInvalidData
 	}
@@ -440,13 +406,13 @@ func (v *ContentSource) ReadCBOR(r *cborgenCodec.Reader, depth, fieldMax int) er
 }
 
 // Clone detaches mutable state, including excluded fields, without validation; nil collections remain nil.
-func (v ContentSource) Clone() ContentSource { return (cborgen{}).clone22(v) }
+func (v ModelBinding) Clone() ModelBinding { return (cborgen{}).clone22(v) }
 
 // Equal compares all state without validation; nil and empty collections are equal, absent and present pointers differ.
-func (v ContentSource) Equal(other ContentSource) bool { return (cborgen{}).equal22(v, other) }
+func (v ModelBinding) Equal(other ModelBinding) bool { return (cborgen{}).equal22(v, other) }
 
 // CheckCBOR checks one value using shared operation accounting; fieldMax caps only its immediate representation.
-func (v WorkspaceFileSource) CheckCBOR(b *cborgenCodec.Budget, depth, fieldMax int) error {
+func (v RunInterrupted) CheckCBOR(b *cborgenCodec.Budget, depth, fieldMax int) error {
 	if b == nil {
 		return cborgenCodec.ErrInvalidLimits
 	}
@@ -457,10 +423,10 @@ func (v WorkspaceFileSource) CheckCBOR(b *cborgenCodec.Budget, depth, fieldMax i
 }
 
 // AppendCBOR appends a stable value already admitted by CheckCBOR; it does not validate or account again.
-func (v WorkspaceFileSource) AppendCBOR(dst []byte) []byte { return (cborgen{}).append24(dst, v) }
+func (v RunInterrupted) AppendCBOR(dst []byte) []byte { return (cborgen{}).append24(dst, v) }
 
 // ReadCBOR reads one value transactionally. Discard the reader after an error; receiver storage remains unchanged.
-func (v *WorkspaceFileSource) ReadCBOR(r *cborgenCodec.Reader, depth, fieldMax int) error {
+func (v *RunInterrupted) ReadCBOR(r *cborgenCodec.Reader, depth, fieldMax int) error {
 	if v == nil {
 		return cborgenCodec.ErrInvalidData
 	}
@@ -476,15 +442,13 @@ func (v *WorkspaceFileSource) ReadCBOR(r *cborgenCodec.Reader, depth, fieldMax i
 }
 
 // Clone detaches mutable state, including excluded fields, without validation; nil collections remain nil.
-func (v WorkspaceFileSource) Clone() WorkspaceFileSource { return (cborgen{}).clone24(v) }
+func (v RunInterrupted) Clone() RunInterrupted { return (cborgen{}).clone24(v) }
 
 // Equal compares all state without validation; nil and empty collections are equal, absent and present pointers differ.
-func (v WorkspaceFileSource) Equal(other WorkspaceFileSource) bool {
-	return (cborgen{}).equal24(v, other)
-}
+func (v RunInterrupted) Equal(other RunInterrupted) bool { return (cborgen{}).equal24(v, other) }
 
 // CheckCBOR checks one value using shared operation accounting; fieldMax caps only its immediate representation.
-func (v Instructions) CheckCBOR(b *cborgenCodec.Budget, depth, fieldMax int) error {
+func (v RunStarted) CheckCBOR(b *cborgenCodec.Budget, depth, fieldMax int) error {
 	if b == nil {
 		return cborgenCodec.ErrInvalidLimits
 	}
@@ -495,10 +459,10 @@ func (v Instructions) CheckCBOR(b *cborgenCodec.Budget, depth, fieldMax int) err
 }
 
 // AppendCBOR appends a stable value already admitted by CheckCBOR; it does not validate or account again.
-func (v Instructions) AppendCBOR(dst []byte) []byte { return (cborgen{}).append25(dst, v) }
+func (v RunStarted) AppendCBOR(dst []byte) []byte { return (cborgen{}).append25(dst, v) }
 
 // ReadCBOR reads one value transactionally. Discard the reader after an error; receiver storage remains unchanged.
-func (v *Instructions) ReadCBOR(r *cborgenCodec.Reader, depth, fieldMax int) error {
+func (v *RunStarted) ReadCBOR(r *cborgenCodec.Reader, depth, fieldMax int) error {
 	if v == nil {
 		return cborgenCodec.ErrInvalidData
 	}
@@ -514,34 +478,34 @@ func (v *Instructions) ReadCBOR(r *cborgenCodec.Reader, depth, fieldMax int) err
 }
 
 // Clone detaches mutable state, including excluded fields, without validation; nil collections remain nil.
-func (v Instructions) Clone() Instructions { return (cborgen{}).clone25(v) }
+func (v RunStarted) Clone() RunStarted { return (cborgen{}).clone25(v) }
 
 // Equal compares all state without validation; nil and empty collections are equal, absent and present pointers differ.
-func (v Instructions) Equal(other Instructions) bool { return (cborgen{}).equal25(v, other) }
+func (v RunStarted) Equal(other RunStarted) bool { return (cborgen{}).equal25(v, other) }
 
 // CheckCBOR checks one value using shared operation accounting; fieldMax caps only its immediate representation.
-func (v InstructionBlock) CheckCBOR(b *cborgenCodec.Budget, depth, fieldMax int) error {
+func (v ToolCatalog) CheckCBOR(b *cborgenCodec.Budget, depth, fieldMax int) error {
 	if b == nil {
 		return cborgenCodec.ErrInvalidLimits
 	}
 	if fieldMax <= 0 {
 		return cborgenCodec.ErrInvalidLimits
 	}
-	return (cborgen{}).check27(v, b, depth, fieldMax)
+	return (cborgen{}).check26(v, b, depth, fieldMax)
 }
 
 // AppendCBOR appends a stable value already admitted by CheckCBOR; it does not validate or account again.
-func (v InstructionBlock) AppendCBOR(dst []byte) []byte { return (cborgen{}).append27(dst, v) }
+func (v ToolCatalog) AppendCBOR(dst []byte) []byte { return (cborgen{}).append26(dst, v) }
 
 // ReadCBOR reads one value transactionally. Discard the reader after an error; receiver storage remains unchanged.
-func (v *InstructionBlock) ReadCBOR(r *cborgenCodec.Reader, depth, fieldMax int) error {
+func (v *ToolCatalog) ReadCBOR(r *cborgenCodec.Reader, depth, fieldMax int) error {
 	if v == nil {
 		return cborgenCodec.ErrInvalidData
 	}
 	if r == nil || fieldMax <= 0 {
 		return cborgenCodec.ErrInvalidLimits
 	}
-	x, err := (cborgen{}).read27(r, depth, fieldMax)
+	x, err := (cborgen{}).read26(r, depth, fieldMax)
 	if err != nil {
 		return err
 	}
@@ -550,13 +514,13 @@ func (v *InstructionBlock) ReadCBOR(r *cborgenCodec.Reader, depth, fieldMax int)
 }
 
 // Clone detaches mutable state, including excluded fields, without validation; nil collections remain nil.
-func (v InstructionBlock) Clone() InstructionBlock { return (cborgen{}).clone27(v) }
+func (v ToolCatalog) Clone() ToolCatalog { return (cborgen{}).clone26(v) }
 
 // Equal compares all state without validation; nil and empty collections are equal, absent and present pointers differ.
-func (v InstructionBlock) Equal(other InstructionBlock) bool { return (cborgen{}).equal27(v, other) }
+func (v ToolCatalog) Equal(other ToolCatalog) bool { return (cborgen{}).equal26(v, other) }
 
 // CheckCBOR checks one value using shared operation accounting; fieldMax caps only its immediate representation.
-func (v ModelBinding) CheckCBOR(b *cborgenCodec.Budget, depth, fieldMax int) error {
+func (v ToolDefinition) CheckCBOR(b *cborgenCodec.Budget, depth, fieldMax int) error {
 	if b == nil {
 		return cborgenCodec.ErrInvalidLimits
 	}
@@ -567,10 +531,10 @@ func (v ModelBinding) CheckCBOR(b *cborgenCodec.Budget, depth, fieldMax int) err
 }
 
 // AppendCBOR appends a stable value already admitted by CheckCBOR; it does not validate or account again.
-func (v ModelBinding) AppendCBOR(dst []byte) []byte { return (cborgen{}).append28(dst, v) }
+func (v ToolDefinition) AppendCBOR(dst []byte) []byte { return (cborgen{}).append28(dst, v) }
 
 // ReadCBOR reads one value transactionally. Discard the reader after an error; receiver storage remains unchanged.
-func (v *ModelBinding) ReadCBOR(r *cborgenCodec.Reader, depth, fieldMax int) error {
+func (v *ToolDefinition) ReadCBOR(r *cborgenCodec.Reader, depth, fieldMax int) error {
 	if v == nil {
 		return cborgenCodec.ErrInvalidData
 	}
@@ -586,13 +550,13 @@ func (v *ModelBinding) ReadCBOR(r *cborgenCodec.Reader, depth, fieldMax int) err
 }
 
 // Clone detaches mutable state, including excluded fields, without validation; nil collections remain nil.
-func (v ModelBinding) Clone() ModelBinding { return (cborgen{}).clone28(v) }
+func (v ToolDefinition) Clone() ToolDefinition { return (cborgen{}).clone28(v) }
 
 // Equal compares all state without validation; nil and empty collections are equal, absent and present pointers differ.
-func (v ModelBinding) Equal(other ModelBinding) bool { return (cborgen{}).equal28(v, other) }
+func (v ToolDefinition) Equal(other ToolDefinition) bool { return (cborgen{}).equal28(v, other) }
 
 // CheckCBOR checks one value using shared operation accounting; fieldMax caps only its immediate representation.
-func (v RunInterrupted) CheckCBOR(b *cborgenCodec.Budget, depth, fieldMax int) error {
+func (v UserInput) CheckCBOR(b *cborgenCodec.Budget, depth, fieldMax int) error {
 	if b == nil {
 		return cborgenCodec.ErrInvalidLimits
 	}
@@ -603,10 +567,10 @@ func (v RunInterrupted) CheckCBOR(b *cborgenCodec.Budget, depth, fieldMax int) e
 }
 
 // AppendCBOR appends a stable value already admitted by CheckCBOR; it does not validate or account again.
-func (v RunInterrupted) AppendCBOR(dst []byte) []byte { return (cborgen{}).append30(dst, v) }
+func (v UserInput) AppendCBOR(dst []byte) []byte { return (cborgen{}).append30(dst, v) }
 
 // ReadCBOR reads one value transactionally. Discard the reader after an error; receiver storage remains unchanged.
-func (v *RunInterrupted) ReadCBOR(r *cborgenCodec.Reader, depth, fieldMax int) error {
+func (v *UserInput) ReadCBOR(r *cborgenCodec.Reader, depth, fieldMax int) error {
 	if v == nil {
 		return cborgenCodec.ErrInvalidData
 	}
@@ -622,190 +586,10 @@ func (v *RunInterrupted) ReadCBOR(r *cborgenCodec.Reader, depth, fieldMax int) e
 }
 
 // Clone detaches mutable state, including excluded fields, without validation; nil collections remain nil.
-func (v RunInterrupted) Clone() RunInterrupted { return (cborgen{}).clone30(v) }
+func (v UserInput) Clone() UserInput { return (cborgen{}).clone30(v) }
 
 // Equal compares all state without validation; nil and empty collections are equal, absent and present pointers differ.
-func (v RunInterrupted) Equal(other RunInterrupted) bool { return (cborgen{}).equal30(v, other) }
-
-// CheckCBOR checks one value using shared operation accounting; fieldMax caps only its immediate representation.
-func (v RunStarted) CheckCBOR(b *cborgenCodec.Budget, depth, fieldMax int) error {
-	if b == nil {
-		return cborgenCodec.ErrInvalidLimits
-	}
-	if fieldMax <= 0 {
-		return cborgenCodec.ErrInvalidLimits
-	}
-	return (cborgen{}).check31(v, b, depth, fieldMax)
-}
-
-// AppendCBOR appends a stable value already admitted by CheckCBOR; it does not validate or account again.
-func (v RunStarted) AppendCBOR(dst []byte) []byte { return (cborgen{}).append31(dst, v) }
-
-// ReadCBOR reads one value transactionally. Discard the reader after an error; receiver storage remains unchanged.
-func (v *RunStarted) ReadCBOR(r *cborgenCodec.Reader, depth, fieldMax int) error {
-	if v == nil {
-		return cborgenCodec.ErrInvalidData
-	}
-	if r == nil || fieldMax <= 0 {
-		return cborgenCodec.ErrInvalidLimits
-	}
-	x, err := (cborgen{}).read31(r, depth, fieldMax)
-	if err != nil {
-		return err
-	}
-	*v = x
-	return nil
-}
-
-// Clone detaches mutable state, including excluded fields, without validation; nil collections remain nil.
-func (v RunStarted) Clone() RunStarted { return (cborgen{}).clone31(v) }
-
-// Equal compares all state without validation; nil and empty collections are equal, absent and present pointers differ.
-func (v RunStarted) Equal(other RunStarted) bool { return (cborgen{}).equal31(v, other) }
-
-// CheckCBOR checks one value using shared operation accounting; fieldMax caps only its immediate representation.
-func (v ToolCatalog) CheckCBOR(b *cborgenCodec.Budget, depth, fieldMax int) error {
-	if b == nil {
-		return cborgenCodec.ErrInvalidLimits
-	}
-	if fieldMax <= 0 {
-		return cborgenCodec.ErrInvalidLimits
-	}
-	return (cborgen{}).check32(v, b, depth, fieldMax)
-}
-
-// AppendCBOR appends a stable value already admitted by CheckCBOR; it does not validate or account again.
-func (v ToolCatalog) AppendCBOR(dst []byte) []byte { return (cborgen{}).append32(dst, v) }
-
-// ReadCBOR reads one value transactionally. Discard the reader after an error; receiver storage remains unchanged.
-func (v *ToolCatalog) ReadCBOR(r *cborgenCodec.Reader, depth, fieldMax int) error {
-	if v == nil {
-		return cborgenCodec.ErrInvalidData
-	}
-	if r == nil || fieldMax <= 0 {
-		return cborgenCodec.ErrInvalidLimits
-	}
-	x, err := (cborgen{}).read32(r, depth, fieldMax)
-	if err != nil {
-		return err
-	}
-	*v = x
-	return nil
-}
-
-// Clone detaches mutable state, including excluded fields, without validation; nil collections remain nil.
-func (v ToolCatalog) Clone() ToolCatalog { return (cborgen{}).clone32(v) }
-
-// Equal compares all state without validation; nil and empty collections are equal, absent and present pointers differ.
-func (v ToolCatalog) Equal(other ToolCatalog) bool { return (cborgen{}).equal32(v, other) }
-
-// CheckCBOR checks one value using shared operation accounting; fieldMax caps only its immediate representation.
-func (v ToolDefinition) CheckCBOR(b *cborgenCodec.Budget, depth, fieldMax int) error {
-	if b == nil {
-		return cborgenCodec.ErrInvalidLimits
-	}
-	if fieldMax <= 0 {
-		return cborgenCodec.ErrInvalidLimits
-	}
-	return (cborgen{}).check34(v, b, depth, fieldMax)
-}
-
-// AppendCBOR appends a stable value already admitted by CheckCBOR; it does not validate or account again.
-func (v ToolDefinition) AppendCBOR(dst []byte) []byte { return (cborgen{}).append34(dst, v) }
-
-// ReadCBOR reads one value transactionally. Discard the reader after an error; receiver storage remains unchanged.
-func (v *ToolDefinition) ReadCBOR(r *cborgenCodec.Reader, depth, fieldMax int) error {
-	if v == nil {
-		return cborgenCodec.ErrInvalidData
-	}
-	if r == nil || fieldMax <= 0 {
-		return cborgenCodec.ErrInvalidLimits
-	}
-	x, err := (cborgen{}).read34(r, depth, fieldMax)
-	if err != nil {
-		return err
-	}
-	*v = x
-	return nil
-}
-
-// Clone detaches mutable state, including excluded fields, without validation; nil collections remain nil.
-func (v ToolDefinition) Clone() ToolDefinition { return (cborgen{}).clone34(v) }
-
-// Equal compares all state without validation; nil and empty collections are equal, absent and present pointers differ.
-func (v ToolDefinition) Equal(other ToolDefinition) bool { return (cborgen{}).equal34(v, other) }
-
-// CheckCBOR checks one value using shared operation accounting; fieldMax caps only its immediate representation.
-func (v UserInput) CheckCBOR(b *cborgenCodec.Budget, depth, fieldMax int) error {
-	if b == nil {
-		return cborgenCodec.ErrInvalidLimits
-	}
-	if fieldMax <= 0 {
-		return cborgenCodec.ErrInvalidLimits
-	}
-	return (cborgen{}).check36(v, b, depth, fieldMax)
-}
-
-// AppendCBOR appends a stable value already admitted by CheckCBOR; it does not validate or account again.
-func (v UserInput) AppendCBOR(dst []byte) []byte { return (cborgen{}).append36(dst, v) }
-
-// ReadCBOR reads one value transactionally. Discard the reader after an error; receiver storage remains unchanged.
-func (v *UserInput) ReadCBOR(r *cborgenCodec.Reader, depth, fieldMax int) error {
-	if v == nil {
-		return cborgenCodec.ErrInvalidData
-	}
-	if r == nil || fieldMax <= 0 {
-		return cborgenCodec.ErrInvalidLimits
-	}
-	x, err := (cborgen{}).read36(r, depth, fieldMax)
-	if err != nil {
-		return err
-	}
-	*v = x
-	return nil
-}
-
-// Clone detaches mutable state, including excluded fields, without validation; nil collections remain nil.
-func (v UserInput) Clone() UserInput { return (cborgen{}).clone36(v) }
-
-// Equal compares all state without validation; nil and empty collections are equal, absent and present pointers differ.
-func (v UserInput) Equal(other UserInput) bool { return (cborgen{}).equal36(v, other) }
-
-// CheckCBOR checks one value using shared operation accounting; fieldMax caps only its immediate representation.
-func (v AuthoredMessage) CheckCBOR(b *cborgenCodec.Budget, depth, fieldMax int) error {
-	if b == nil {
-		return cborgenCodec.ErrInvalidLimits
-	}
-	if fieldMax <= 0 {
-		return cborgenCodec.ErrInvalidLimits
-	}
-	return (cborgen{}).check38(v, b, depth, fieldMax)
-}
-
-// AppendCBOR appends a stable value already admitted by CheckCBOR; it does not validate or account again.
-func (v AuthoredMessage) AppendCBOR(dst []byte) []byte { return (cborgen{}).append38(dst, v) }
-
-// ReadCBOR reads one value transactionally. Discard the reader after an error; receiver storage remains unchanged.
-func (v *AuthoredMessage) ReadCBOR(r *cborgenCodec.Reader, depth, fieldMax int) error {
-	if v == nil {
-		return cborgenCodec.ErrInvalidData
-	}
-	if r == nil || fieldMax <= 0 {
-		return cborgenCodec.ErrInvalidLimits
-	}
-	x, err := (cborgen{}).read38(r, depth, fieldMax)
-	if err != nil {
-		return err
-	}
-	*v = x
-	return nil
-}
-
-// Clone detaches mutable state, including excluded fields, without validation; nil collections remain nil.
-func (v AuthoredMessage) Clone() AuthoredMessage { return (cborgen{}).clone38(v) }
-
-// Equal compares all state without validation; nil and empty collections are equal, absent and present pointers differ.
-func (v AuthoredMessage) Equal(other AuthoredMessage) bool { return (cborgen{}).equal38(v, other) }
+func (v UserInput) Equal(other UserInput) bool { return (cborgen{}).equal30(v, other) }
 
 // Helpers 0: Created.
 func (h cborgen) clone0(v Created) Created {
@@ -855,18 +639,14 @@ func (h cborgen) read0(r *cborgenCodec.Reader, d, cap int) (v Created, err error
 func (h cborgen) clone1(v EffectiveInput) EffectiveInput {
 	out := v
 	out.RunID = h.clone2(v.RunID)
-	out.InputID = h.clone2(v.InputID)
-	out.Prompts = h.clone3(v.Prompts)
+	out.Inputs = h.clone3(v.Inputs)
 	return out
 }
 func (h cborgen) equal1(v, w EffectiveInput) bool {
 	if !h.equal2(v.RunID, w.RunID) {
 		return false
 	}
-	if !h.equal2(v.InputID, w.InputID) {
-		return false
-	}
-	if !h.equal3(v.Prompts, w.Prompts) {
+	if !h.equal3(v.Inputs, w.Inputs) {
 		return false
 	}
 	return true
@@ -877,21 +657,15 @@ func (h cborgen) check1(v EffectiveInput, b *cborgenCodec.Budget, d, cap int) (e
 			err = cborgenCodec.ErrInvalidData
 		}
 	}()
-	count := 3
+	count := 2
 	if err := b.CheckMap(count, d, cap); err != nil {
 		return err
 	}
 	if err := b.CheckString("i", d+1, int(^uint(0)>>1)); err != nil {
-		return cborgenFmt.Errorf("InputID: %w", err)
+		return cborgenFmt.Errorf("Inputs: %w", err)
 	}
-	if err := h.check2(v.InputID, b, d+1, int(^uint(0)>>1)); err != nil {
-		return cborgenFmt.Errorf("InputID: %w", err)
-	}
-	if err := b.CheckString("p", d+1, int(^uint(0)>>1)); err != nil {
-		return cborgenFmt.Errorf("Prompts: %w", err)
-	}
-	if err := h.check3(v.Prompts, b, d+1, int(^uint(0)>>1)); err != nil {
-		return cborgenFmt.Errorf("Prompts: %w", err)
+	if err := h.check3(v.Inputs, b, d+1, int(^uint(0)>>1)); err != nil {
+		return cborgenFmt.Errorf("Inputs: %w", err)
 	}
 	if err := b.CheckString("r", d+1, int(^uint(0)>>1)); err != nil {
 		return cborgenFmt.Errorf("RunID: %w", err)
@@ -902,12 +676,10 @@ func (h cborgen) check1(v EffectiveInput, b *cborgenCodec.Budget, d, cap int) (e
 	return nil
 }
 func (h cborgen) append1(out []byte, v EffectiveInput) []byte {
-	count := 3
+	count := 2
 	out = cborgenCBOR.AppendMapHeader(out, uint64(count))
 	out = cborgenCBOR.AppendText(out, "i")
-	out = h.append2(out, v.InputID)
-	out = cborgenCBOR.AppendText(out, "p")
-	out = h.append3(out, v.Prompts)
+	out = h.append3(out, v.Inputs)
 	out = cborgenCBOR.AppendText(out, "r")
 	out = h.append2(out, v.RunID)
 	return out
@@ -923,7 +695,7 @@ func (h cborgen) read1(r *cborgenCodec.Reader, d, cap int) (v EffectiveInput, er
 		return v, err
 	}
 	previous := ""
-	var seen [3]bool
+	var seen [2]bool
 	for i := 0; i < count; i++ {
 		key, err := r.String(d+1, int(^uint(0)>>1))
 		if err != nil {
@@ -937,18 +709,12 @@ func (h cborgen) read1(r *cborgenCodec.Reader, d, cap int) (v EffectiveInput, er
 		switch key {
 		case "i":
 			seen[0] = true
-			v.InputID, err = h.read2(r, d+1, int(^uint(0)>>1))
+			v.Inputs, err = h.read3(r, d+1, int(^uint(0)>>1))
 			if err != nil {
-				return v, cborgenFmt.Errorf("InputID: %w", err)
-			}
-		case "p":
-			seen[1] = true
-			v.Prompts, err = h.read3(r, d+1, int(^uint(0)>>1))
-			if err != nil {
-				return v, cborgenFmt.Errorf("Prompts: %w", err)
+				return v, cborgenFmt.Errorf("Inputs: %w", err)
 			}
 		case "r":
-			seen[2] = true
+			seen[1] = true
 			v.RunID, err = h.read2(r, d+1, int(^uint(0)>>1))
 			if err != nil {
 				return v, cborgenFmt.Errorf("RunID: %w", err)
@@ -961,9 +727,6 @@ func (h cborgen) read1(r *cborgenCodec.Reader, d, cap int) (v EffectiveInput, er
 		return v, cborgenCodec.ErrInvalidData
 	}
 	if !seen[1] {
-		return v, cborgenCodec.ErrInvalidData
-	}
-	if !seen[2] {
 		return v, cborgenCodec.ErrInvalidData
 	}
 	return v, nil
@@ -990,18 +753,18 @@ func (h cborgen) read2(r *cborgenCodec.Reader, d, cap int) (v uint64, err error)
 	return uint64(x), nil
 }
 
-// Helpers 3: []PreparedPrompt.
-func (h cborgen) clone3(v []PreparedPrompt) []PreparedPrompt {
+// Helpers 3: []InputItem.
+func (h cborgen) clone3(v []InputItem) []InputItem {
 	if v == nil {
 		return nil
 	}
-	out := make([]PreparedPrompt, len(v))
+	out := make([]InputItem, len(v))
 	for i := range v {
 		out[i] = h.clone4(v[i])
 	}
 	return out
 }
-func (h cborgen) equal3(v, w []PreparedPrompt) bool {
+func (h cborgen) equal3(v, w []InputItem) bool {
 	if len(v) != len(w) {
 		return false
 	}
@@ -1012,7 +775,7 @@ func (h cborgen) equal3(v, w []PreparedPrompt) bool {
 	}
 	return true
 }
-func (h cborgen) check3(v []PreparedPrompt, b *cborgenCodec.Budget, d, cap int) (err error) {
+func (h cborgen) check3(v []InputItem, b *cborgenCodec.Budget, d, cap int) (err error) {
 	if err := b.CheckArray(len(v), d, cap); err != nil {
 		return err
 	}
@@ -1023,19 +786,19 @@ func (h cborgen) check3(v []PreparedPrompt, b *cborgenCodec.Budget, d, cap int) 
 	}
 	return nil
 }
-func (h cborgen) append3(out []byte, v []PreparedPrompt) []byte {
+func (h cborgen) append3(out []byte, v []InputItem) []byte {
 	out = cborgenCBOR.AppendArrayHeader(out, uint64(len(v)))
 	for _, x := range v {
 		out = h.append4(out, x)
 	}
 	return out
 }
-func (h cborgen) read3(r *cborgenCodec.Reader, d, cap int) (v []PreparedPrompt, err error) {
+func (h cborgen) read3(r *cborgenCodec.Reader, d, cap int) (v []InputItem, err error) {
 	count, err := r.Array(d, cap)
 	if err != nil {
 		return v, err
 	}
-	v = make([]PreparedPrompt, count)
+	v = make([]InputItem, count)
 	for i := range v {
 		v[i], err = h.read4(r, d+1, int(^uint(0)>>1))
 		if err != nil {
@@ -1045,76 +808,76 @@ func (h cborgen) read3(r *cborgenCodec.Reader, d, cap int) (v []PreparedPrompt, 
 	return v, nil
 }
 
-// Helpers 4: PreparedPrompt.
-func (h cborgen) clone4(v PreparedPrompt) PreparedPrompt {
+// Helpers 4: InputItem.
+func (h cborgen) clone4(v InputItem) InputItem {
 	out := v
-	out.AuthoredMessage = h.clone5(v.AuthoredMessage)
-	out.Harness = h.clone6(v.Harness)
+	out.UserInput = h.clone5(v.UserInput)
+	out.Inline = h.clone6(v.Inline)
 	return out
 }
-func (h cborgen) equal4(v, w PreparedPrompt) bool {
-	if !h.equal5(v.AuthoredMessage, w.AuthoredMessage) {
+func (h cborgen) equal4(v, w InputItem) bool {
+	if !h.equal5(v.UserInput, w.UserInput) {
 		return false
 	}
-	if !h.equal6(v.Harness, w.Harness) {
+	if !h.equal6(v.Inline, w.Inline) {
 		return false
 	}
 	return true
 }
-func (h cborgen) check4(v PreparedPrompt, b *cborgenCodec.Budget, d, cap int) (err error) {
+func (h cborgen) check4(v InputItem, b *cborgenCodec.Budget, d, cap int) (err error) {
 	defer func() {
 		if err == nil && v.Validate() != nil {
 			err = cborgenCodec.ErrInvalidData
 		}
 	}()
 	count := 0
-	if v.AuthoredMessage != nil {
+	if v.Inline != nil {
 		count++
 	}
-	if v.Harness != nil {
+	if v.UserInput != nil {
 		count++
 	}
 	if err := b.CheckMap(count, d, cap); err != nil {
 		return err
 	}
-	if v.AuthoredMessage != nil {
-		if err := b.CheckString("a", d+1, int(^uint(0)>>1)); err != nil {
-			return cborgenFmt.Errorf("AuthoredMessage: %w", err)
+	if v.Inline != nil {
+		if err := b.CheckString("i", d+1, int(^uint(0)>>1)); err != nil {
+			return cborgenFmt.Errorf("Inline: %w", err)
 		}
-		if err := h.check5(v.AuthoredMessage, b, d+1, int(^uint(0)>>1)); err != nil {
-			return cborgenFmt.Errorf("AuthoredMessage: %w", err)
+		if err := h.check6(v.Inline, b, d+1, int(^uint(0)>>1)); err != nil {
+			return cborgenFmt.Errorf("Inline: %w", err)
 		}
 	}
-	if v.Harness != nil {
-		if err := b.CheckString("h", d+1, int(^uint(0)>>1)); err != nil {
-			return cborgenFmt.Errorf("Harness: %w", err)
+	if v.UserInput != nil {
+		if err := b.CheckString("u", d+1, int(^uint(0)>>1)); err != nil {
+			return cborgenFmt.Errorf("UserInput: %w", err)
 		}
-		if err := h.check6(v.Harness, b, d+1, int(^uint(0)>>1)); err != nil {
-			return cborgenFmt.Errorf("Harness: %w", err)
+		if err := h.check5(v.UserInput, b, d+1, int(^uint(0)>>1)); err != nil {
+			return cborgenFmt.Errorf("UserInput: %w", err)
 		}
 	}
 	return nil
 }
-func (h cborgen) append4(out []byte, v PreparedPrompt) []byte {
+func (h cborgen) append4(out []byte, v InputItem) []byte {
 	count := 0
-	if v.AuthoredMessage != nil {
+	if v.Inline != nil {
 		count++
 	}
-	if v.Harness != nil {
+	if v.UserInput != nil {
 		count++
 	}
 	out = cborgenCBOR.AppendMapHeader(out, uint64(count))
-	if v.AuthoredMessage != nil {
-		out = cborgenCBOR.AppendText(out, "a")
-		out = h.append5(out, v.AuthoredMessage)
+	if v.Inline != nil {
+		out = cborgenCBOR.AppendText(out, "i")
+		out = h.append6(out, v.Inline)
 	}
-	if v.Harness != nil {
-		out = cborgenCBOR.AppendText(out, "h")
-		out = h.append6(out, v.Harness)
+	if v.UserInput != nil {
+		out = cborgenCBOR.AppendText(out, "u")
+		out = h.append5(out, v.UserInput)
 	}
 	return out
 }
-func (h cborgen) read4(r *cborgenCodec.Reader, d, cap int) (v PreparedPrompt, err error) {
+func (h cborgen) read4(r *cborgenCodec.Reader, d, cap int) (v InputItem, err error) {
 	defer func() {
 		if err == nil && v.Validate() != nil {
 			err = cborgenCodec.ErrInvalidData
@@ -1137,17 +900,17 @@ func (h cborgen) read4(r *cborgenCodec.Reader, d, cap int) (v PreparedPrompt, er
 		}
 		previous = key
 		switch key {
-		case "a":
+		case "i":
 			seen[0] = true
-			v.AuthoredMessage, err = h.read5(r, d+1, int(^uint(0)>>1))
+			v.Inline, err = h.read6(r, d+1, int(^uint(0)>>1))
 			if err != nil {
-				return v, cborgenFmt.Errorf("AuthoredMessage: %w", err)
+				return v, cborgenFmt.Errorf("Inline: %w", err)
 			}
-		case "h":
+		case "u":
 			seen[1] = true
-			v.Harness, err = h.read6(r, d+1, int(^uint(0)>>1))
+			v.UserInput, err = h.read5(r, d+1, int(^uint(0)>>1))
 			if err != nil {
-				return v, cborgenFmt.Errorf("Harness: %w", err)
+				return v, cborgenFmt.Errorf("UserInput: %w", err)
 			}
 		default:
 			return v, cborgenCodec.ErrInvalidData
@@ -1187,1551 +950,62 @@ func (h cborgen) read5(r *cborgenCodec.Reader, d, cap int) (v *uint64, err error
 	return (*uint64)(&x), nil
 }
 
-// Helpers 6: *HarnessPrompt.
-func (h cborgen) clone6(v *HarnessPrompt) *HarnessPrompt {
+// Helpers 6: *AttributedInput.
+func (h cborgen) clone6(v *AttributedInput) *AttributedInput {
 	if v == nil {
 		return nil
 	}
 	x := h.clone7(*v)
-	return (*HarnessPrompt)(&x)
+	return (*AttributedInput)(&x)
 }
-func (h cborgen) equal6(v, w *HarnessPrompt) bool {
+func (h cborgen) equal6(v, w *AttributedInput) bool {
 	if v == nil || w == nil {
 		return v == nil && w == nil
 	}
 	return h.equal7(*v, *w)
 }
-func (h cborgen) check6(v *HarnessPrompt, b *cborgenCodec.Budget, d, cap int) (err error) {
+func (h cborgen) check6(v *AttributedInput, b *cborgenCodec.Budget, d, cap int) (err error) {
 	if v == nil {
 		return cborgenCodec.ErrInvalidData
 	}
 	return h.check7(*v, b, d, cap)
 }
-func (h cborgen) append6(out []byte, v *HarnessPrompt) []byte {
+func (h cborgen) append6(out []byte, v *AttributedInput) []byte {
 	return h.append7(out, *v)
 }
-func (h cborgen) read6(r *cborgenCodec.Reader, d, cap int) (v *HarnessPrompt, err error) {
+func (h cborgen) read6(r *cborgenCodec.Reader, d, cap int) (v *AttributedInput, err error) {
 	x, err := h.read7(r, d, cap)
 	if err != nil {
 		return v, err
 	}
-	return (*HarnessPrompt)(&x), nil
+	return (*AttributedInput)(&x), nil
 }
 
-// Helpers 7: HarnessPrompt.
-func (h cborgen) clone7(v HarnessPrompt) HarnessPrompt {
+// Helpers 7: AttributedInput.
+func (h cborgen) clone7(v AttributedInput) AttributedInput {
 	out := v
-	out.Purpose = h.clone8(v.Purpose)
-	out.Content = h.clone9(v.Content)
-	out.Source = h.clone22(v.Source)
+	out.Parts = h.clone8(v.Parts)
+	out.Actor = h.clone10(v.Actor)
+	out.Purpose = h.clone10(v.Purpose)
+	out.Source = h.clone15(v.Source)
 	return out
 }
-func (h cborgen) equal7(v, w HarnessPrompt) bool {
-	if !h.equal8(v.Purpose, w.Purpose) {
+func (h cborgen) equal7(v, w AttributedInput) bool {
+	if !h.equal8(v.Parts, w.Parts) {
 		return false
 	}
-	if !h.equal9(v.Content, w.Content) {
+	if !h.equal10(v.Actor, w.Actor) {
 		return false
 	}
-	if !h.equal22(v.Source, w.Source) {
+	if !h.equal10(v.Purpose, w.Purpose) {
+		return false
+	}
+	if !h.equal15(v.Source, w.Source) {
 		return false
 	}
 	return true
 }
-func (h cborgen) check7(v HarnessPrompt, b *cborgenCodec.Budget, d, cap int) (err error) {
-	defer func() {
-		if err == nil && v.Validate() != nil {
-			err = cborgenCodec.ErrInvalidData
-		}
-	}()
-	count := 3
-	if err := b.CheckMap(count, d, cap); err != nil {
-		return err
-	}
-	if err := b.CheckString("c", d+1, int(^uint(0)>>1)); err != nil {
-		return cborgenFmt.Errorf("Content: %w", err)
-	}
-	if err := h.check9(v.Content, b, d+1, int(^uint(0)>>1)); err != nil {
-		return cborgenFmt.Errorf("Content: %w", err)
-	}
-	if err := b.CheckString("p", d+1, int(^uint(0)>>1)); err != nil {
-		return cborgenFmt.Errorf("Purpose: %w", err)
-	}
-	if err := h.check8(v.Purpose, b, d+1, int(^uint(0)>>1)); err != nil {
-		return cborgenFmt.Errorf("Purpose: %w", err)
-	}
-	if err := b.CheckString("s", d+1, int(^uint(0)>>1)); err != nil {
-		return cborgenFmt.Errorf("Source: %w", err)
-	}
-	if err := h.check22(v.Source, b, d+1, int(^uint(0)>>1)); err != nil {
-		return cborgenFmt.Errorf("Source: %w", err)
-	}
-	return nil
-}
-func (h cborgen) append7(out []byte, v HarnessPrompt) []byte {
-	count := 3
-	out = cborgenCBOR.AppendMapHeader(out, uint64(count))
-	out = cborgenCBOR.AppendText(out, "c")
-	out = h.append9(out, v.Content)
-	out = cborgenCBOR.AppendText(out, "p")
-	out = h.append8(out, v.Purpose)
-	out = cborgenCBOR.AppendText(out, "s")
-	out = h.append22(out, v.Source)
-	return out
-}
-func (h cborgen) read7(r *cborgenCodec.Reader, d, cap int) (v HarnessPrompt, err error) {
-	defer func() {
-		if err == nil && v.Validate() != nil {
-			err = cborgenCodec.ErrInvalidData
-		}
-	}()
-	count, err := r.Map(d, cap)
-	if err != nil {
-		return v, err
-	}
-	previous := ""
-	var seen [3]bool
-	for i := 0; i < count; i++ {
-		key, err := r.String(d+1, int(^uint(0)>>1))
-		if err != nil {
-			return v, err
-		}
-		// Strict canonical key ordering also rejects duplicates before assignment can overwrite them.
-		if i > 0 && (len(key) < len(previous) || (len(key) == len(previous) && key <= previous)) {
-			return v, cborgenCodec.ErrInvalidData
-		}
-		previous = key
-		switch key {
-		case "c":
-			seen[0] = true
-			v.Content, err = h.read9(r, d+1, int(^uint(0)>>1))
-			if err != nil {
-				return v, cborgenFmt.Errorf("Content: %w", err)
-			}
-		case "p":
-			seen[1] = true
-			v.Purpose, err = h.read8(r, d+1, int(^uint(0)>>1))
-			if err != nil {
-				return v, cborgenFmt.Errorf("Purpose: %w", err)
-			}
-		case "s":
-			seen[2] = true
-			v.Source, err = h.read22(r, d+1, int(^uint(0)>>1))
-			if err != nil {
-				return v, cborgenFmt.Errorf("Source: %w", err)
-			}
-		default:
-			return v, cborgenCodec.ErrInvalidData
-		}
-	}
-	if !seen[0] {
-		return v, cborgenCodec.ErrInvalidData
-	}
-	if !seen[1] {
-		return v, cborgenCodec.ErrInvalidData
-	}
-	if !seen[2] {
-		return v, cborgenCodec.ErrInvalidData
-	}
-	return v, nil
-}
-
-// Helpers 8: string.
-func (h cborgen) clone8(v string) string {
-	return v
-}
-func (h cborgen) equal8(v, w string) bool {
-	return v == w
-}
-func (h cborgen) check8(v string, b *cborgenCodec.Budget, d, cap int) (err error) {
-	return b.CheckString(string(v), d, cap)
-}
-func (h cborgen) append8(out []byte, v string) []byte {
-	return cborgenCodec.AppendString(out, string(v))
-}
-func (h cborgen) read8(r *cborgenCodec.Reader, d, cap int) (v string, err error) {
-	x, err := r.String(d, cap)
-	if err != nil {
-		return v, err
-	}
-	return string(x), nil
-}
-
-// Helpers 9: Content.
-func (h cborgen) clone9(v Content) Content {
-	if v == nil {
-		return nil
-	}
-	out := make(Content, len(v))
-	for i := range v {
-		out[i] = h.clone10(v[i])
-	}
-	return out
-}
-func (h cborgen) equal9(v, w Content) bool {
-	if len(v) != len(w) {
-		return false
-	}
-	for i := range v {
-		if !h.equal10(v[i], w[i]) {
-			return false
-		}
-	}
-	return true
-}
-func (h cborgen) check9(v Content, b *cborgenCodec.Budget, d, cap int) (err error) {
-	if err := b.CheckArray(len(v), d, cap); err != nil {
-		return err
-	}
-	for i, x := range v {
-		if err := h.check10(x, b, d+1, int(^uint(0)>>1)); err != nil {
-			return cborgenFmt.Errorf("index %d: %w", i, err)
-		}
-	}
-	return nil
-}
-func (h cborgen) append9(out []byte, v Content) []byte {
-	out = cborgenCBOR.AppendArrayHeader(out, uint64(len(v)))
-	for _, x := range v {
-		out = h.append10(out, x)
-	}
-	return out
-}
-func (h cborgen) read9(r *cborgenCodec.Reader, d, cap int) (v Content, err error) {
-	count, err := r.Array(d, cap)
-	if err != nil {
-		return v, err
-	}
-	v = make(Content, count)
-	for i := range v {
-		v[i], err = h.read10(r, d+1, int(^uint(0)>>1))
-		if err != nil {
-			return v, cborgenFmt.Errorf("index %d: %w", i, err)
-		}
-	}
-	return v, nil
-}
-
-// Helpers 10: ContentPart.
-func (h cborgen) clone10(v ContentPart) ContentPart {
-	out := v
-	out.Kind = h.clone8(v.Kind)
-	out.Text = h.clone8(v.Text)
-	out.Media = h.clone11(v.Media)
-	return out
-}
-func (h cborgen) equal10(v, w ContentPart) bool {
-	if !h.equal8(v.Kind, w.Kind) {
-		return false
-	}
-	if !h.equal8(v.Text, w.Text) {
-		return false
-	}
-	if !h.equal11(v.Media, w.Media) {
-		return false
-	}
-	return true
-}
-func (h cborgen) check10(v ContentPart, b *cborgenCodec.Budget, d, cap int) (err error) {
-	defer func() {
-		if err == nil && v.Validate() != nil {
-			err = cborgenCodec.ErrInvalidData
-		}
-	}()
-	count := 2
-	if v.Media != nil {
-		count++
-	}
-	if err := b.CheckMap(count, d, cap); err != nil {
-		return err
-	}
-	if err := b.CheckString("k", d+1, int(^uint(0)>>1)); err != nil {
-		return cborgenFmt.Errorf("Kind: %w", err)
-	}
-	if err := h.check8(v.Kind, b, d+1, int(^uint(0)>>1)); err != nil {
-		return cborgenFmt.Errorf("Kind: %w", err)
-	}
-	if v.Media != nil {
-		if err := b.CheckString("m", d+1, int(^uint(0)>>1)); err != nil {
-			return cborgenFmt.Errorf("Media: %w", err)
-		}
-		if err := h.check11(v.Media, b, d+1, int(^uint(0)>>1)); err != nil {
-			return cborgenFmt.Errorf("Media: %w", err)
-		}
-	}
-	if err := b.CheckString("t", d+1, int(^uint(0)>>1)); err != nil {
-		return cborgenFmt.Errorf("Text: %w", err)
-	}
-	if err := h.check8(v.Text, b, d+1, int(^uint(0)>>1)); err != nil {
-		return cborgenFmt.Errorf("Text: %w", err)
-	}
-	return nil
-}
-func (h cborgen) append10(out []byte, v ContentPart) []byte {
-	count := 2
-	if v.Media != nil {
-		count++
-	}
-	out = cborgenCBOR.AppendMapHeader(out, uint64(count))
-	out = cborgenCBOR.AppendText(out, "k")
-	out = h.append8(out, v.Kind)
-	if v.Media != nil {
-		out = cborgenCBOR.AppendText(out, "m")
-		out = h.append11(out, v.Media)
-	}
-	out = cborgenCBOR.AppendText(out, "t")
-	out = h.append8(out, v.Text)
-	return out
-}
-func (h cborgen) read10(r *cborgenCodec.Reader, d, cap int) (v ContentPart, err error) {
-	defer func() {
-		if err == nil && v.Validate() != nil {
-			err = cborgenCodec.ErrInvalidData
-		}
-	}()
-	count, err := r.Map(d, cap)
-	if err != nil {
-		return v, err
-	}
-	previous := ""
-	var seen [3]bool
-	for i := 0; i < count; i++ {
-		key, err := r.String(d+1, int(^uint(0)>>1))
-		if err != nil {
-			return v, err
-		}
-		// Strict canonical key ordering also rejects duplicates before assignment can overwrite them.
-		if i > 0 && (len(key) < len(previous) || (len(key) == len(previous) && key <= previous)) {
-			return v, cborgenCodec.ErrInvalidData
-		}
-		previous = key
-		switch key {
-		case "k":
-			seen[0] = true
-			v.Kind, err = h.read8(r, d+1, int(^uint(0)>>1))
-			if err != nil {
-				return v, cborgenFmt.Errorf("Kind: %w", err)
-			}
-		case "m":
-			seen[1] = true
-			v.Media, err = h.read11(r, d+1, int(^uint(0)>>1))
-			if err != nil {
-				return v, cborgenFmt.Errorf("Media: %w", err)
-			}
-		case "t":
-			seen[2] = true
-			v.Text, err = h.read8(r, d+1, int(^uint(0)>>1))
-			if err != nil {
-				return v, cborgenFmt.Errorf("Text: %w", err)
-			}
-		default:
-			return v, cborgenCodec.ErrInvalidData
-		}
-	}
-	if !seen[0] {
-		return v, cborgenCodec.ErrInvalidData
-	}
-	if !seen[2] {
-		return v, cborgenCodec.ErrInvalidData
-	}
-	return v, nil
-}
-
-// Helpers 11: *MediaContent.
-func (h cborgen) clone11(v *MediaContent) *MediaContent {
-	if v == nil {
-		return nil
-	}
-	x := h.clone12(*v)
-	return (*MediaContent)(&x)
-}
-func (h cborgen) equal11(v, w *MediaContent) bool {
-	if v == nil || w == nil {
-		return v == nil && w == nil
-	}
-	return h.equal12(*v, *w)
-}
-func (h cborgen) check11(v *MediaContent, b *cborgenCodec.Budget, d, cap int) (err error) {
-	if v == nil {
-		return cborgenCodec.ErrInvalidData
-	}
-	return h.check12(*v, b, d, cap)
-}
-func (h cborgen) append11(out []byte, v *MediaContent) []byte {
-	return h.append12(out, *v)
-}
-func (h cborgen) read11(r *cborgenCodec.Reader, d, cap int) (v *MediaContent, err error) {
-	x, err := h.read12(r, d, cap)
-	if err != nil {
-		return v, err
-	}
-	return (*MediaContent)(&x), nil
-}
-
-// Helpers 12: MediaContent.
-func (h cborgen) clone12(v MediaContent) MediaContent {
-	out := v
-	out.Source = h.clone13(v.Source)
-	out.MediaType = h.clone8(v.MediaType)
-	out.Format = h.clone8(v.Format)
-	out.Filename = h.clone8(v.Filename)
-	out.Title = h.clone8(v.Title)
-	return out
-}
-func (h cborgen) equal12(v, w MediaContent) bool {
-	if !h.equal13(v.Source, w.Source) {
-		return false
-	}
-	if !h.equal8(v.MediaType, w.MediaType) {
-		return false
-	}
-	if !h.equal8(v.Format, w.Format) {
-		return false
-	}
-	if !h.equal8(v.Filename, w.Filename) {
-		return false
-	}
-	if !h.equal8(v.Title, w.Title) {
-		return false
-	}
-	return true
-}
-func (h cborgen) check12(v MediaContent, b *cborgenCodec.Budget, d, cap int) (err error) {
-	defer func() {
-		if err == nil && v.Validate() != nil {
-			err = cborgenCodec.ErrInvalidData
-		}
-	}()
-	count := 5
-	if err := b.CheckMap(count, d, cap); err != nil {
-		return err
-	}
-	if err := b.CheckString("f", d+1, int(^uint(0)>>1)); err != nil {
-		return cborgenFmt.Errorf("Format: %w", err)
-	}
-	if err := h.check8(v.Format, b, d+1, int(^uint(0)>>1)); err != nil {
-		return cborgenFmt.Errorf("Format: %w", err)
-	}
-	if err := b.CheckString("m", d+1, int(^uint(0)>>1)); err != nil {
-		return cborgenFmt.Errorf("MediaType: %w", err)
-	}
-	if err := h.check8(v.MediaType, b, d+1, int(^uint(0)>>1)); err != nil {
-		return cborgenFmt.Errorf("MediaType: %w", err)
-	}
-	if err := b.CheckString("n", d+1, int(^uint(0)>>1)); err != nil {
-		return cborgenFmt.Errorf("Filename: %w", err)
-	}
-	if err := h.check8(v.Filename, b, d+1, int(^uint(0)>>1)); err != nil {
-		return cborgenFmt.Errorf("Filename: %w", err)
-	}
-	if err := b.CheckString("s", d+1, int(^uint(0)>>1)); err != nil {
-		return cborgenFmt.Errorf("Source: %w", err)
-	}
-	if err := h.check13(v.Source, b, d+1, int(^uint(0)>>1)); err != nil {
-		return cborgenFmt.Errorf("Source: %w", err)
-	}
-	if err := b.CheckString("t", d+1, int(^uint(0)>>1)); err != nil {
-		return cborgenFmt.Errorf("Title: %w", err)
-	}
-	if err := h.check8(v.Title, b, d+1, int(^uint(0)>>1)); err != nil {
-		return cborgenFmt.Errorf("Title: %w", err)
-	}
-	return nil
-}
-func (h cborgen) append12(out []byte, v MediaContent) []byte {
-	count := 5
-	out = cborgenCBOR.AppendMapHeader(out, uint64(count))
-	out = cborgenCBOR.AppendText(out, "f")
-	out = h.append8(out, v.Format)
-	out = cborgenCBOR.AppendText(out, "m")
-	out = h.append8(out, v.MediaType)
-	out = cborgenCBOR.AppendText(out, "n")
-	out = h.append8(out, v.Filename)
-	out = cborgenCBOR.AppendText(out, "s")
-	out = h.append13(out, v.Source)
-	out = cborgenCBOR.AppendText(out, "t")
-	out = h.append8(out, v.Title)
-	return out
-}
-func (h cborgen) read12(r *cborgenCodec.Reader, d, cap int) (v MediaContent, err error) {
-	defer func() {
-		if err == nil && v.Validate() != nil {
-			err = cborgenCodec.ErrInvalidData
-		}
-	}()
-	count, err := r.Map(d, cap)
-	if err != nil {
-		return v, err
-	}
-	previous := ""
-	var seen [5]bool
-	for i := 0; i < count; i++ {
-		key, err := r.String(d+1, int(^uint(0)>>1))
-		if err != nil {
-			return v, err
-		}
-		// Strict canonical key ordering also rejects duplicates before assignment can overwrite them.
-		if i > 0 && (len(key) < len(previous) || (len(key) == len(previous) && key <= previous)) {
-			return v, cborgenCodec.ErrInvalidData
-		}
-		previous = key
-		switch key {
-		case "f":
-			seen[0] = true
-			v.Format, err = h.read8(r, d+1, int(^uint(0)>>1))
-			if err != nil {
-				return v, cborgenFmt.Errorf("Format: %w", err)
-			}
-		case "m":
-			seen[1] = true
-			v.MediaType, err = h.read8(r, d+1, int(^uint(0)>>1))
-			if err != nil {
-				return v, cborgenFmt.Errorf("MediaType: %w", err)
-			}
-		case "n":
-			seen[2] = true
-			v.Filename, err = h.read8(r, d+1, int(^uint(0)>>1))
-			if err != nil {
-				return v, cborgenFmt.Errorf("Filename: %w", err)
-			}
-		case "s":
-			seen[3] = true
-			v.Source, err = h.read13(r, d+1, int(^uint(0)>>1))
-			if err != nil {
-				return v, cborgenFmt.Errorf("Source: %w", err)
-			}
-		case "t":
-			seen[4] = true
-			v.Title, err = h.read8(r, d+1, int(^uint(0)>>1))
-			if err != nil {
-				return v, cborgenFmt.Errorf("Title: %w", err)
-			}
-		default:
-			return v, cborgenCodec.ErrInvalidData
-		}
-	}
-	if !seen[0] {
-		return v, cborgenCodec.ErrInvalidData
-	}
-	if !seen[1] {
-		return v, cborgenCodec.ErrInvalidData
-	}
-	if !seen[2] {
-		return v, cborgenCodec.ErrInvalidData
-	}
-	if !seen[3] {
-		return v, cborgenCodec.ErrInvalidData
-	}
-	if !seen[4] {
-		return v, cborgenCodec.ErrInvalidData
-	}
-	return v, nil
-}
-
-// Helpers 13: MediaSource.
-func (h cborgen) clone13(v MediaSource) MediaSource {
-	out := v
-	out.Inline = h.clone14(v.Inline)
-	out.Remote = h.clone18(v.Remote)
-	out.Provider = h.clone20(v.Provider)
-	return out
-}
-func (h cborgen) equal13(v, w MediaSource) bool {
-	if !h.equal14(v.Inline, w.Inline) {
-		return false
-	}
-	if !h.equal18(v.Remote, w.Remote) {
-		return false
-	}
-	if !h.equal20(v.Provider, w.Provider) {
-		return false
-	}
-	return true
-}
-func (h cborgen) check13(v MediaSource, b *cborgenCodec.Budget, d, cap int) (err error) {
-	defer func() {
-		if err == nil && v.Validate() != nil {
-			err = cborgenCodec.ErrInvalidData
-		}
-	}()
-	count := 0
-	if v.Inline != nil {
-		count++
-	}
-	if v.Provider != nil {
-		count++
-	}
-	if v.Remote != nil {
-		count++
-	}
-	if err := b.CheckMap(count, d, cap); err != nil {
-		return err
-	}
-	if v.Inline != nil {
-		if err := b.CheckString("i", d+1, int(^uint(0)>>1)); err != nil {
-			return cborgenFmt.Errorf("Inline: %w", err)
-		}
-		if err := h.check14(v.Inline, b, d+1, int(^uint(0)>>1)); err != nil {
-			return cborgenFmt.Errorf("Inline: %w", err)
-		}
-	}
-	if v.Provider != nil {
-		if err := b.CheckString("p", d+1, int(^uint(0)>>1)); err != nil {
-			return cborgenFmt.Errorf("Provider: %w", err)
-		}
-		if err := h.check20(v.Provider, b, d+1, int(^uint(0)>>1)); err != nil {
-			return cborgenFmt.Errorf("Provider: %w", err)
-		}
-	}
-	if v.Remote != nil {
-		if err := b.CheckString("r", d+1, int(^uint(0)>>1)); err != nil {
-			return cborgenFmt.Errorf("Remote: %w", err)
-		}
-		if err := h.check18(v.Remote, b, d+1, int(^uint(0)>>1)); err != nil {
-			return cborgenFmt.Errorf("Remote: %w", err)
-		}
-	}
-	return nil
-}
-func (h cborgen) append13(out []byte, v MediaSource) []byte {
-	count := 0
-	if v.Inline != nil {
-		count++
-	}
-	if v.Provider != nil {
-		count++
-	}
-	if v.Remote != nil {
-		count++
-	}
-	out = cborgenCBOR.AppendMapHeader(out, uint64(count))
-	if v.Inline != nil {
-		out = cborgenCBOR.AppendText(out, "i")
-		out = h.append14(out, v.Inline)
-	}
-	if v.Provider != nil {
-		out = cborgenCBOR.AppendText(out, "p")
-		out = h.append20(out, v.Provider)
-	}
-	if v.Remote != nil {
-		out = cborgenCBOR.AppendText(out, "r")
-		out = h.append18(out, v.Remote)
-	}
-	return out
-}
-func (h cborgen) read13(r *cborgenCodec.Reader, d, cap int) (v MediaSource, err error) {
-	defer func() {
-		if err == nil && v.Validate() != nil {
-			err = cborgenCodec.ErrInvalidData
-		}
-	}()
-	count, err := r.Map(d, cap)
-	if err != nil {
-		return v, err
-	}
-	previous := ""
-	var seen [3]bool
-	for i := 0; i < count; i++ {
-		key, err := r.String(d+1, int(^uint(0)>>1))
-		if err != nil {
-			return v, err
-		}
-		// Strict canonical key ordering also rejects duplicates before assignment can overwrite them.
-		if i > 0 && (len(key) < len(previous) || (len(key) == len(previous) && key <= previous)) {
-			return v, cborgenCodec.ErrInvalidData
-		}
-		previous = key
-		switch key {
-		case "i":
-			seen[0] = true
-			v.Inline, err = h.read14(r, d+1, int(^uint(0)>>1))
-			if err != nil {
-				return v, cborgenFmt.Errorf("Inline: %w", err)
-			}
-		case "p":
-			seen[1] = true
-			v.Provider, err = h.read20(r, d+1, int(^uint(0)>>1))
-			if err != nil {
-				return v, cborgenFmt.Errorf("Provider: %w", err)
-			}
-		case "r":
-			seen[2] = true
-			v.Remote, err = h.read18(r, d+1, int(^uint(0)>>1))
-			if err != nil {
-				return v, cborgenFmt.Errorf("Remote: %w", err)
-			}
-		default:
-			return v, cborgenCodec.ErrInvalidData
-		}
-	}
-	return v, nil
-}
-
-// Helpers 14: *InlineMedia.
-func (h cborgen) clone14(v *InlineMedia) *InlineMedia {
-	if v == nil {
-		return nil
-	}
-	x := h.clone15(*v)
-	return (*InlineMedia)(&x)
-}
-func (h cborgen) equal14(v, w *InlineMedia) bool {
-	if v == nil || w == nil {
-		return v == nil && w == nil
-	}
-	return h.equal15(*v, *w)
-}
-func (h cborgen) check14(v *InlineMedia, b *cborgenCodec.Budget, d, cap int) (err error) {
-	if v == nil {
-		return cborgenCodec.ErrInvalidData
-	}
-	return h.check15(*v, b, d, cap)
-}
-func (h cborgen) append14(out []byte, v *InlineMedia) []byte {
-	return h.append15(out, *v)
-}
-func (h cborgen) read14(r *cborgenCodec.Reader, d, cap int) (v *InlineMedia, err error) {
-	x, err := h.read15(r, d, cap)
-	if err != nil {
-		return v, err
-	}
-	return (*InlineMedia)(&x), nil
-}
-
-// Helpers 15: InlineMedia.
-func (h cborgen) clone15(v InlineMedia) InlineMedia {
-	out := v
-	out.Data = h.clone16(v.Data)
-	return out
-}
-func (h cborgen) equal15(v, w InlineMedia) bool {
-	if !h.equal16(v.Data, w.Data) {
-		return false
-	}
-	return true
-}
-func (h cborgen) check15(v InlineMedia, b *cborgenCodec.Budget, d, cap int) (err error) {
-	count := 1
-	if err := b.CheckMap(count, d, cap); err != nil {
-		return err
-	}
-	if err := b.CheckString("d", d+1, int(^uint(0)>>1)); err != nil {
-		return cborgenFmt.Errorf("Data: %w", err)
-	}
-	if err := h.check16(v.Data, b, d+1, int(^uint(0)>>1)); err != nil {
-		return cborgenFmt.Errorf("Data: %w", err)
-	}
-	return nil
-}
-func (h cborgen) append15(out []byte, v InlineMedia) []byte {
-	count := 1
-	out = cborgenCBOR.AppendMapHeader(out, uint64(count))
-	out = cborgenCBOR.AppendText(out, "d")
-	out = h.append16(out, v.Data)
-	return out
-}
-func (h cborgen) read15(r *cborgenCodec.Reader, d, cap int) (v InlineMedia, err error) {
-	count, err := r.Map(d, cap)
-	if err != nil {
-		return v, err
-	}
-	previous := ""
-	var seen [1]bool
-	for i := 0; i < count; i++ {
-		key, err := r.String(d+1, int(^uint(0)>>1))
-		if err != nil {
-			return v, err
-		}
-		// Strict canonical key ordering also rejects duplicates before assignment can overwrite them.
-		if i > 0 && (len(key) < len(previous) || (len(key) == len(previous) && key <= previous)) {
-			return v, cborgenCodec.ErrInvalidData
-		}
-		previous = key
-		switch key {
-		case "d":
-			seen[0] = true
-			v.Data, err = h.read16(r, d+1, int(^uint(0)>>1))
-			if err != nil {
-				return v, cborgenFmt.Errorf("Data: %w", err)
-			}
-		default:
-			return v, cborgenCodec.ErrInvalidData
-		}
-	}
-	if !seen[0] {
-		return v, cborgenCodec.ErrInvalidData
-	}
-	return v, nil
-}
-
-// Helpers 16: []byte.
-func (h cborgen) clone16(v []byte) []byte {
-	if v == nil {
-		return nil
-	}
-	out := make([]byte, len(v))
-	for i := range v {
-		out[i] = h.clone17(v[i])
-	}
-	return out
-}
-func (h cborgen) equal16(v, w []byte) bool {
-	if len(v) != len(w) {
-		return false
-	}
-	for i := range v {
-		if !h.equal17(v[i], w[i]) {
-			return false
-		}
-	}
-	return true
-}
-func (h cborgen) check16(v []byte, b *cborgenCodec.Budget, d, cap int) (err error) {
-	return b.CheckBytes(len(v), d, cap)
-}
-func (h cborgen) append16(out []byte, v []byte) []byte {
-	out = cborgenCBOR.AppendBytesHeader(out, uint64(len(v)))
-	for _, x := range v {
-		out = append(out, byte(x))
-	}
-	return out
-}
-func (h cborgen) read16(r *cborgenCodec.Reader, d, cap int) (v []byte, err error) {
-	x, err := r.Bytes(d, cap)
-	if err != nil {
-		return v, err
-	}
-	v = make([]byte, len(x))
-	for i := range x {
-		v[i] = byte(x[i])
-	}
-	return v, nil
-}
-
-// Helpers 17: byte.
-func (h cborgen) clone17(v byte) byte {
-	return v
-}
-func (h cborgen) equal17(v, w byte) bool {
-	return v == w
-}
-func (h cborgen) check17(v byte, b *cborgenCodec.Budget, d, cap int) (err error) {
-	return b.CheckScalar(d)
-}
-func (h cborgen) append17(out []byte, v byte) []byte {
-	return cborgenCBOR.AppendUint(out, uint64(v))
-}
-func (h cborgen) read17(r *cborgenCodec.Reader, d, cap int) (v byte, err error) {
-	x, err := r.Uint(d)
-	if err != nil {
-		return v, err
-	}
-	if x > (1<<8)-1 {
-		return v, cborgenCodec.ErrInvalidData
-	}
-	return byte(x), nil
-}
-
-// Helpers 18: *RemoteMedia.
-func (h cborgen) clone18(v *RemoteMedia) *RemoteMedia {
-	if v == nil {
-		return nil
-	}
-	x := h.clone19(*v)
-	return (*RemoteMedia)(&x)
-}
-func (h cborgen) equal18(v, w *RemoteMedia) bool {
-	if v == nil || w == nil {
-		return v == nil && w == nil
-	}
-	return h.equal19(*v, *w)
-}
-func (h cborgen) check18(v *RemoteMedia, b *cborgenCodec.Budget, d, cap int) (err error) {
-	if v == nil {
-		return cborgenCodec.ErrInvalidData
-	}
-	return h.check19(*v, b, d, cap)
-}
-func (h cborgen) append18(out []byte, v *RemoteMedia) []byte {
-	return h.append19(out, *v)
-}
-func (h cborgen) read18(r *cborgenCodec.Reader, d, cap int) (v *RemoteMedia, err error) {
-	x, err := h.read19(r, d, cap)
-	if err != nil {
-		return v, err
-	}
-	return (*RemoteMedia)(&x), nil
-}
-
-// Helpers 19: RemoteMedia.
-func (h cborgen) clone19(v RemoteMedia) RemoteMedia {
-	out := v
-	out.URI = h.clone8(v.URI)
-	return out
-}
-func (h cborgen) equal19(v, w RemoteMedia) bool {
-	if !h.equal8(v.URI, w.URI) {
-		return false
-	}
-	return true
-}
-func (h cborgen) check19(v RemoteMedia, b *cborgenCodec.Budget, d, cap int) (err error) {
-	defer func() {
-		if err == nil && v.Validate() != nil {
-			err = cborgenCodec.ErrInvalidData
-		}
-	}()
-	count := 1
-	if err := b.CheckMap(count, d, cap); err != nil {
-		return err
-	}
-	if err := b.CheckString("u", d+1, int(^uint(0)>>1)); err != nil {
-		return cborgenFmt.Errorf("URI: %w", err)
-	}
-	if err := h.check8(v.URI, b, d+1, int(^uint(0)>>1)); err != nil {
-		return cborgenFmt.Errorf("URI: %w", err)
-	}
-	return nil
-}
-func (h cborgen) append19(out []byte, v RemoteMedia) []byte {
-	count := 1
-	out = cborgenCBOR.AppendMapHeader(out, uint64(count))
-	out = cborgenCBOR.AppendText(out, "u")
-	out = h.append8(out, v.URI)
-	return out
-}
-func (h cborgen) read19(r *cborgenCodec.Reader, d, cap int) (v RemoteMedia, err error) {
-	defer func() {
-		if err == nil && v.Validate() != nil {
-			err = cborgenCodec.ErrInvalidData
-		}
-	}()
-	count, err := r.Map(d, cap)
-	if err != nil {
-		return v, err
-	}
-	previous := ""
-	var seen [1]bool
-	for i := 0; i < count; i++ {
-		key, err := r.String(d+1, int(^uint(0)>>1))
-		if err != nil {
-			return v, err
-		}
-		// Strict canonical key ordering also rejects duplicates before assignment can overwrite them.
-		if i > 0 && (len(key) < len(previous) || (len(key) == len(previous) && key <= previous)) {
-			return v, cborgenCodec.ErrInvalidData
-		}
-		previous = key
-		switch key {
-		case "u":
-			seen[0] = true
-			v.URI, err = h.read8(r, d+1, int(^uint(0)>>1))
-			if err != nil {
-				return v, cborgenFmt.Errorf("URI: %w", err)
-			}
-		default:
-			return v, cborgenCodec.ErrInvalidData
-		}
-	}
-	if !seen[0] {
-		return v, cborgenCodec.ErrInvalidData
-	}
-	return v, nil
-}
-
-// Helpers 20: *ProviderMedia.
-func (h cborgen) clone20(v *ProviderMedia) *ProviderMedia {
-	if v == nil {
-		return nil
-	}
-	x := h.clone21(*v)
-	return (*ProviderMedia)(&x)
-}
-func (h cborgen) equal20(v, w *ProviderMedia) bool {
-	if v == nil || w == nil {
-		return v == nil && w == nil
-	}
-	return h.equal21(*v, *w)
-}
-func (h cborgen) check20(v *ProviderMedia, b *cborgenCodec.Budget, d, cap int) (err error) {
-	if v == nil {
-		return cborgenCodec.ErrInvalidData
-	}
-	return h.check21(*v, b, d, cap)
-}
-func (h cborgen) append20(out []byte, v *ProviderMedia) []byte {
-	return h.append21(out, *v)
-}
-func (h cborgen) read20(r *cborgenCodec.Reader, d, cap int) (v *ProviderMedia, err error) {
-	x, err := h.read21(r, d, cap)
-	if err != nil {
-		return v, err
-	}
-	return (*ProviderMedia)(&x), nil
-}
-
-// Helpers 21: ProviderMedia.
-func (h cborgen) clone21(v ProviderMedia) ProviderMedia {
-	out := v
-	out.Provider = h.clone8(v.Provider)
-	out.Scope = h.clone8(v.Scope)
-	out.ID = h.clone8(v.ID)
-	return out
-}
-func (h cborgen) equal21(v, w ProviderMedia) bool {
-	if !h.equal8(v.Provider, w.Provider) {
-		return false
-	}
-	if !h.equal8(v.Scope, w.Scope) {
-		return false
-	}
-	if !h.equal8(v.ID, w.ID) {
-		return false
-	}
-	return true
-}
-func (h cborgen) check21(v ProviderMedia, b *cborgenCodec.Budget, d, cap int) (err error) {
-	defer func() {
-		if err == nil && v.Validate() != nil {
-			err = cborgenCodec.ErrInvalidData
-		}
-	}()
-	count := 3
-	if err := b.CheckMap(count, d, cap); err != nil {
-		return err
-	}
-	if err := b.CheckString("i", d+1, int(^uint(0)>>1)); err != nil {
-		return cborgenFmt.Errorf("ID: %w", err)
-	}
-	if err := h.check8(v.ID, b, d+1, int(^uint(0)>>1)); err != nil {
-		return cborgenFmt.Errorf("ID: %w", err)
-	}
-	if err := b.CheckString("p", d+1, int(^uint(0)>>1)); err != nil {
-		return cborgenFmt.Errorf("Provider: %w", err)
-	}
-	if err := h.check8(v.Provider, b, d+1, int(^uint(0)>>1)); err != nil {
-		return cborgenFmt.Errorf("Provider: %w", err)
-	}
-	if err := b.CheckString("s", d+1, int(^uint(0)>>1)); err != nil {
-		return cborgenFmt.Errorf("Scope: %w", err)
-	}
-	if err := h.check8(v.Scope, b, d+1, int(^uint(0)>>1)); err != nil {
-		return cborgenFmt.Errorf("Scope: %w", err)
-	}
-	return nil
-}
-func (h cborgen) append21(out []byte, v ProviderMedia) []byte {
-	count := 3
-	out = cborgenCBOR.AppendMapHeader(out, uint64(count))
-	out = cborgenCBOR.AppendText(out, "i")
-	out = h.append8(out, v.ID)
-	out = cborgenCBOR.AppendText(out, "p")
-	out = h.append8(out, v.Provider)
-	out = cborgenCBOR.AppendText(out, "s")
-	out = h.append8(out, v.Scope)
-	return out
-}
-func (h cborgen) read21(r *cborgenCodec.Reader, d, cap int) (v ProviderMedia, err error) {
-	defer func() {
-		if err == nil && v.Validate() != nil {
-			err = cborgenCodec.ErrInvalidData
-		}
-	}()
-	count, err := r.Map(d, cap)
-	if err != nil {
-		return v, err
-	}
-	previous := ""
-	var seen [3]bool
-	for i := 0; i < count; i++ {
-		key, err := r.String(d+1, int(^uint(0)>>1))
-		if err != nil {
-			return v, err
-		}
-		// Strict canonical key ordering also rejects duplicates before assignment can overwrite them.
-		if i > 0 && (len(key) < len(previous) || (len(key) == len(previous) && key <= previous)) {
-			return v, cborgenCodec.ErrInvalidData
-		}
-		previous = key
-		switch key {
-		case "i":
-			seen[0] = true
-			v.ID, err = h.read8(r, d+1, int(^uint(0)>>1))
-			if err != nil {
-				return v, cborgenFmt.Errorf("ID: %w", err)
-			}
-		case "p":
-			seen[1] = true
-			v.Provider, err = h.read8(r, d+1, int(^uint(0)>>1))
-			if err != nil {
-				return v, cborgenFmt.Errorf("Provider: %w", err)
-			}
-		case "s":
-			seen[2] = true
-			v.Scope, err = h.read8(r, d+1, int(^uint(0)>>1))
-			if err != nil {
-				return v, cborgenFmt.Errorf("Scope: %w", err)
-			}
-		default:
-			return v, cborgenCodec.ErrInvalidData
-		}
-	}
-	if !seen[0] {
-		return v, cborgenCodec.ErrInvalidData
-	}
-	if !seen[1] {
-		return v, cborgenCodec.ErrInvalidData
-	}
-	if !seen[2] {
-		return v, cborgenCodec.ErrInvalidData
-	}
-	return v, nil
-}
-
-// Helpers 22: ContentSource.
-func (h cborgen) clone22(v ContentSource) ContentSource {
-	out := v
-	out.Description = h.clone8(v.Description)
-	out.WorkspaceFile = h.clone23(v.WorkspaceFile)
-	return out
-}
-func (h cborgen) equal22(v, w ContentSource) bool {
-	if !h.equal8(v.Description, w.Description) {
-		return false
-	}
-	if !h.equal23(v.WorkspaceFile, w.WorkspaceFile) {
-		return false
-	}
-	return true
-}
-func (h cborgen) check22(v ContentSource, b *cborgenCodec.Budget, d, cap int) (err error) {
-	defer func() {
-		if err == nil && v.Validate() != nil {
-			err = cborgenCodec.ErrInvalidData
-		}
-	}()
-	count := 1
-	if v.WorkspaceFile != nil {
-		count++
-	}
-	if err := b.CheckMap(count, d, cap); err != nil {
-		return err
-	}
-	if err := b.CheckString("d", d+1, int(^uint(0)>>1)); err != nil {
-		return cborgenFmt.Errorf("Description: %w", err)
-	}
-	if err := h.check8(v.Description, b, d+1, int(^uint(0)>>1)); err != nil {
-		return cborgenFmt.Errorf("Description: %w", err)
-	}
-	if v.WorkspaceFile != nil {
-		if err := b.CheckString("w", d+1, int(^uint(0)>>1)); err != nil {
-			return cborgenFmt.Errorf("WorkspaceFile: %w", err)
-		}
-		if err := h.check23(v.WorkspaceFile, b, d+1, int(^uint(0)>>1)); err != nil {
-			return cborgenFmt.Errorf("WorkspaceFile: %w", err)
-		}
-	}
-	return nil
-}
-func (h cborgen) append22(out []byte, v ContentSource) []byte {
-	count := 1
-	if v.WorkspaceFile != nil {
-		count++
-	}
-	out = cborgenCBOR.AppendMapHeader(out, uint64(count))
-	out = cborgenCBOR.AppendText(out, "d")
-	out = h.append8(out, v.Description)
-	if v.WorkspaceFile != nil {
-		out = cborgenCBOR.AppendText(out, "w")
-		out = h.append23(out, v.WorkspaceFile)
-	}
-	return out
-}
-func (h cborgen) read22(r *cborgenCodec.Reader, d, cap int) (v ContentSource, err error) {
-	defer func() {
-		if err == nil && v.Validate() != nil {
-			err = cborgenCodec.ErrInvalidData
-		}
-	}()
-	count, err := r.Map(d, cap)
-	if err != nil {
-		return v, err
-	}
-	previous := ""
-	var seen [2]bool
-	for i := 0; i < count; i++ {
-		key, err := r.String(d+1, int(^uint(0)>>1))
-		if err != nil {
-			return v, err
-		}
-		// Strict canonical key ordering also rejects duplicates before assignment can overwrite them.
-		if i > 0 && (len(key) < len(previous) || (len(key) == len(previous) && key <= previous)) {
-			return v, cborgenCodec.ErrInvalidData
-		}
-		previous = key
-		switch key {
-		case "d":
-			seen[0] = true
-			v.Description, err = h.read8(r, d+1, int(^uint(0)>>1))
-			if err != nil {
-				return v, cborgenFmt.Errorf("Description: %w", err)
-			}
-		case "w":
-			seen[1] = true
-			v.WorkspaceFile, err = h.read23(r, d+1, int(^uint(0)>>1))
-			if err != nil {
-				return v, cborgenFmt.Errorf("WorkspaceFile: %w", err)
-			}
-		default:
-			return v, cborgenCodec.ErrInvalidData
-		}
-	}
-	if !seen[0] {
-		return v, cborgenCodec.ErrInvalidData
-	}
-	return v, nil
-}
-
-// Helpers 23: *WorkspaceFileSource.
-func (h cborgen) clone23(v *WorkspaceFileSource) *WorkspaceFileSource {
-	if v == nil {
-		return nil
-	}
-	x := h.clone24(*v)
-	return (*WorkspaceFileSource)(&x)
-}
-func (h cborgen) equal23(v, w *WorkspaceFileSource) bool {
-	if v == nil || w == nil {
-		return v == nil && w == nil
-	}
-	return h.equal24(*v, *w)
-}
-func (h cborgen) check23(v *WorkspaceFileSource, b *cborgenCodec.Budget, d, cap int) (err error) {
-	if v == nil {
-		return cborgenCodec.ErrInvalidData
-	}
-	return h.check24(*v, b, d, cap)
-}
-func (h cborgen) append23(out []byte, v *WorkspaceFileSource) []byte {
-	return h.append24(out, *v)
-}
-func (h cborgen) read23(r *cborgenCodec.Reader, d, cap int) (v *WorkspaceFileSource, err error) {
-	x, err := h.read24(r, d, cap)
-	if err != nil {
-		return v, err
-	}
-	return (*WorkspaceFileSource)(&x), nil
-}
-
-// Helpers 24: WorkspaceFileSource.
-func (h cborgen) clone24(v WorkspaceFileSource) WorkspaceFileSource {
-	out := v
-	out.Path = h.clone8(v.Path)
-	return out
-}
-func (h cborgen) equal24(v, w WorkspaceFileSource) bool {
-	if !h.equal8(v.Path, w.Path) {
-		return false
-	}
-	return true
-}
-func (h cborgen) check24(v WorkspaceFileSource, b *cborgenCodec.Budget, d, cap int) (err error) {
-	defer func() {
-		if err == nil && v.Validate() != nil {
-			err = cborgenCodec.ErrInvalidData
-		}
-	}()
-	count := 1
-	if err := b.CheckMap(count, d, cap); err != nil {
-		return err
-	}
-	if err := b.CheckString("p", d+1, int(^uint(0)>>1)); err != nil {
-		return cborgenFmt.Errorf("Path: %w", err)
-	}
-	if err := h.check8(v.Path, b, d+1, int(^uint(0)>>1)); err != nil {
-		return cborgenFmt.Errorf("Path: %w", err)
-	}
-	return nil
-}
-func (h cborgen) append24(out []byte, v WorkspaceFileSource) []byte {
-	count := 1
-	out = cborgenCBOR.AppendMapHeader(out, uint64(count))
-	out = cborgenCBOR.AppendText(out, "p")
-	out = h.append8(out, v.Path)
-	return out
-}
-func (h cborgen) read24(r *cborgenCodec.Reader, d, cap int) (v WorkspaceFileSource, err error) {
-	defer func() {
-		if err == nil && v.Validate() != nil {
-			err = cborgenCodec.ErrInvalidData
-		}
-	}()
-	count, err := r.Map(d, cap)
-	if err != nil {
-		return v, err
-	}
-	previous := ""
-	var seen [1]bool
-	for i := 0; i < count; i++ {
-		key, err := r.String(d+1, int(^uint(0)>>1))
-		if err != nil {
-			return v, err
-		}
-		// Strict canonical key ordering also rejects duplicates before assignment can overwrite them.
-		if i > 0 && (len(key) < len(previous) || (len(key) == len(previous) && key <= previous)) {
-			return v, cborgenCodec.ErrInvalidData
-		}
-		previous = key
-		switch key {
-		case "p":
-			seen[0] = true
-			v.Path, err = h.read8(r, d+1, int(^uint(0)>>1))
-			if err != nil {
-				return v, cborgenFmt.Errorf("Path: %w", err)
-			}
-		default:
-			return v, cborgenCodec.ErrInvalidData
-		}
-	}
-	if !seen[0] {
-		return v, cborgenCodec.ErrInvalidData
-	}
-	return v, nil
-}
-
-// Helpers 25: Instructions.
-func (h cborgen) clone25(v Instructions) Instructions {
-	out := v
-	out.Blocks = h.clone26(v.Blocks)
-	return out
-}
-func (h cborgen) equal25(v, w Instructions) bool {
-	if !h.equal26(v.Blocks, w.Blocks) {
-		return false
-	}
-	return true
-}
-func (h cborgen) check25(v Instructions, b *cborgenCodec.Budget, d, cap int) (err error) {
-	count := 1
-	if err := b.CheckMap(count, d, cap); err != nil {
-		return err
-	}
-	if err := b.CheckString("b", d+1, int(^uint(0)>>1)); err != nil {
-		return cborgenFmt.Errorf("Blocks: %w", err)
-	}
-	if err := h.check26(v.Blocks, b, d+1, int(^uint(0)>>1)); err != nil {
-		return cborgenFmt.Errorf("Blocks: %w", err)
-	}
-	return nil
-}
-func (h cborgen) append25(out []byte, v Instructions) []byte {
-	count := 1
-	out = cborgenCBOR.AppendMapHeader(out, uint64(count))
-	out = cborgenCBOR.AppendText(out, "b")
-	out = h.append26(out, v.Blocks)
-	return out
-}
-func (h cborgen) read25(r *cborgenCodec.Reader, d, cap int) (v Instructions, err error) {
-	count, err := r.Map(d, cap)
-	if err != nil {
-		return v, err
-	}
-	previous := ""
-	var seen [1]bool
-	for i := 0; i < count; i++ {
-		key, err := r.String(d+1, int(^uint(0)>>1))
-		if err != nil {
-			return v, err
-		}
-		// Strict canonical key ordering also rejects duplicates before assignment can overwrite them.
-		if i > 0 && (len(key) < len(previous) || (len(key) == len(previous) && key <= previous)) {
-			return v, cborgenCodec.ErrInvalidData
-		}
-		previous = key
-		switch key {
-		case "b":
-			seen[0] = true
-			v.Blocks, err = h.read26(r, d+1, int(^uint(0)>>1))
-			if err != nil {
-				return v, cborgenFmt.Errorf("Blocks: %w", err)
-			}
-		default:
-			return v, cborgenCodec.ErrInvalidData
-		}
-	}
-	if !seen[0] {
-		return v, cborgenCodec.ErrInvalidData
-	}
-	return v, nil
-}
-
-// Helpers 26: []InstructionBlock.
-func (h cborgen) clone26(v []InstructionBlock) []InstructionBlock {
-	if v == nil {
-		return nil
-	}
-	out := make([]InstructionBlock, len(v))
-	for i := range v {
-		out[i] = h.clone27(v[i])
-	}
-	return out
-}
-func (h cborgen) equal26(v, w []InstructionBlock) bool {
-	if len(v) != len(w) {
-		return false
-	}
-	for i := range v {
-		if !h.equal27(v[i], w[i]) {
-			return false
-		}
-	}
-	return true
-}
-func (h cborgen) check26(v []InstructionBlock, b *cborgenCodec.Budget, d, cap int) (err error) {
-	if err := b.CheckArray(len(v), d, cap); err != nil {
-		return err
-	}
-	for i, x := range v {
-		if err := h.check27(x, b, d+1, int(^uint(0)>>1)); err != nil {
-			return cborgenFmt.Errorf("index %d: %w", i, err)
-		}
-	}
-	return nil
-}
-func (h cborgen) append26(out []byte, v []InstructionBlock) []byte {
-	out = cborgenCBOR.AppendArrayHeader(out, uint64(len(v)))
-	for _, x := range v {
-		out = h.append27(out, x)
-	}
-	return out
-}
-func (h cborgen) read26(r *cborgenCodec.Reader, d, cap int) (v []InstructionBlock, err error) {
-	count, err := r.Array(d, cap)
-	if err != nil {
-		return v, err
-	}
-	v = make([]InstructionBlock, count)
-	for i := range v {
-		v[i], err = h.read27(r, d+1, int(^uint(0)>>1))
-		if err != nil {
-			return v, cborgenFmt.Errorf("index %d: %w", i, err)
-		}
-	}
-	return v, nil
-}
-
-// Helpers 27: InstructionBlock.
-func (h cborgen) clone27(v InstructionBlock) InstructionBlock {
-	out := v
-	out.Content = h.clone9(v.Content)
-	out.Source = h.clone22(v.Source)
-	return out
-}
-func (h cborgen) equal27(v, w InstructionBlock) bool {
-	if !h.equal9(v.Content, w.Content) {
-		return false
-	}
-	if !h.equal22(v.Source, w.Source) {
-		return false
-	}
-	return true
-}
-func (h cborgen) check27(v InstructionBlock, b *cborgenCodec.Budget, d, cap int) (err error) {
-	count := 2
-	if err := b.CheckMap(count, d, cap); err != nil {
-		return err
-	}
-	if err := b.CheckString("c", d+1, int(^uint(0)>>1)); err != nil {
-		return cborgenFmt.Errorf("Content: %w", err)
-	}
-	if err := h.check9(v.Content, b, d+1, int(^uint(0)>>1)); err != nil {
-		return cborgenFmt.Errorf("Content: %w", err)
-	}
-	if err := b.CheckString("s", d+1, int(^uint(0)>>1)); err != nil {
-		return cborgenFmt.Errorf("Source: %w", err)
-	}
-	if err := h.check22(v.Source, b, d+1, int(^uint(0)>>1)); err != nil {
-		return cborgenFmt.Errorf("Source: %w", err)
-	}
-	return nil
-}
-func (h cborgen) append27(out []byte, v InstructionBlock) []byte {
-	count := 2
-	out = cborgenCBOR.AppendMapHeader(out, uint64(count))
-	out = cborgenCBOR.AppendText(out, "c")
-	out = h.append9(out, v.Content)
-	out = cborgenCBOR.AppendText(out, "s")
-	out = h.append22(out, v.Source)
-	return out
-}
-func (h cborgen) read27(r *cborgenCodec.Reader, d, cap int) (v InstructionBlock, err error) {
-	count, err := r.Map(d, cap)
-	if err != nil {
-		return v, err
-	}
-	previous := ""
-	var seen [2]bool
-	for i := 0; i < count; i++ {
-		key, err := r.String(d+1, int(^uint(0)>>1))
-		if err != nil {
-			return v, err
-		}
-		// Strict canonical key ordering also rejects duplicates before assignment can overwrite them.
-		if i > 0 && (len(key) < len(previous) || (len(key) == len(previous) && key <= previous)) {
-			return v, cborgenCodec.ErrInvalidData
-		}
-		previous = key
-		switch key {
-		case "c":
-			seen[0] = true
-			v.Content, err = h.read9(r, d+1, int(^uint(0)>>1))
-			if err != nil {
-				return v, cborgenFmt.Errorf("Content: %w", err)
-			}
-		case "s":
-			seen[1] = true
-			v.Source, err = h.read22(r, d+1, int(^uint(0)>>1))
-			if err != nil {
-				return v, cborgenFmt.Errorf("Source: %w", err)
-			}
-		default:
-			return v, cborgenCodec.ErrInvalidData
-		}
-	}
-	if !seen[0] {
-		return v, cborgenCodec.ErrInvalidData
-	}
-	if !seen[1] {
-		return v, cborgenCodec.ErrInvalidData
-	}
-	return v, nil
-}
-
-// Helpers 28: ModelBinding.
-func (h cborgen) clone28(v ModelBinding) ModelBinding {
-	out := v
-	out.Route = h.clone8(v.Route)
-	out.API = h.clone8(v.API)
-	out.Model = h.clone8(v.Model)
-	out.Settings = h.clone29(v.Settings)
-	return out
-}
-func (h cborgen) equal28(v, w ModelBinding) bool {
-	if !h.equal8(v.Route, w.Route) {
-		return false
-	}
-	if !h.equal8(v.API, w.API) {
-		return false
-	}
-	if !h.equal8(v.Model, w.Model) {
-		return false
-	}
-	if !h.equal29(v.Settings, w.Settings) {
-		return false
-	}
-	return true
-}
-func (h cborgen) check28(v ModelBinding, b *cborgenCodec.Budget, d, cap int) (err error) {
+func (h cborgen) check7(v AttributedInput, b *cborgenCodec.Budget, d, cap int) (err error) {
 	defer func() {
 		if err == nil && v.Validate() != nil {
 			err = cborgenCodec.ErrInvalidData
@@ -2742,45 +1016,45 @@ func (h cborgen) check28(v ModelBinding, b *cborgenCodec.Budget, d, cap int) (er
 		return err
 	}
 	if err := b.CheckString("a", d+1, int(^uint(0)>>1)); err != nil {
-		return cborgenFmt.Errorf("API: %w", err)
+		return cborgenFmt.Errorf("Actor: %w", err)
 	}
-	if err := h.check8(v.API, b, d+1, int(^uint(0)>>1)); err != nil {
-		return cborgenFmt.Errorf("API: %w", err)
+	if err := h.check10(v.Actor, b, d+1, int(^uint(0)>>1)); err != nil {
+		return cborgenFmt.Errorf("Actor: %w", err)
 	}
-	if err := b.CheckString("m", d+1, int(^uint(0)>>1)); err != nil {
-		return cborgenFmt.Errorf("Model: %w", err)
+	if err := b.CheckString("c", d+1, int(^uint(0)>>1)); err != nil {
+		return cborgenFmt.Errorf("Parts: %w", err)
 	}
-	if err := h.check8(v.Model, b, d+1, int(^uint(0)>>1)); err != nil {
-		return cborgenFmt.Errorf("Model: %w", err)
+	if err := h.check8(v.Parts, b, d+1, int(^uint(0)>>1)); err != nil {
+		return cborgenFmt.Errorf("Parts: %w", err)
 	}
-	if err := b.CheckString("r", d+1, int(^uint(0)>>1)); err != nil {
-		return cborgenFmt.Errorf("Route: %w", err)
+	if err := b.CheckString("p", d+1, int(^uint(0)>>1)); err != nil {
+		return cborgenFmt.Errorf("Purpose: %w", err)
 	}
-	if err := h.check8(v.Route, b, d+1, int(^uint(0)>>1)); err != nil {
-		return cborgenFmt.Errorf("Route: %w", err)
+	if err := h.check10(v.Purpose, b, d+1, int(^uint(0)>>1)); err != nil {
+		return cborgenFmt.Errorf("Purpose: %w", err)
 	}
 	if err := b.CheckString("s", d+1, int(^uint(0)>>1)); err != nil {
-		return cborgenFmt.Errorf("Settings: %w", err)
+		return cborgenFmt.Errorf("Source: %w", err)
 	}
-	if err := h.check29(v.Settings, b, d+1, int(^uint(0)>>1)); err != nil {
-		return cborgenFmt.Errorf("Settings: %w", err)
+	if err := h.check15(v.Source, b, d+1, int(^uint(0)>>1)); err != nil {
+		return cborgenFmt.Errorf("Source: %w", err)
 	}
 	return nil
 }
-func (h cborgen) append28(out []byte, v ModelBinding) []byte {
+func (h cborgen) append7(out []byte, v AttributedInput) []byte {
 	count := 4
 	out = cborgenCBOR.AppendMapHeader(out, uint64(count))
 	out = cborgenCBOR.AppendText(out, "a")
-	out = h.append8(out, v.API)
-	out = cborgenCBOR.AppendText(out, "m")
-	out = h.append8(out, v.Model)
-	out = cborgenCBOR.AppendText(out, "r")
-	out = h.append8(out, v.Route)
+	out = h.append10(out, v.Actor)
+	out = cborgenCBOR.AppendText(out, "c")
+	out = h.append8(out, v.Parts)
+	out = cborgenCBOR.AppendText(out, "p")
+	out = h.append10(out, v.Purpose)
 	out = cborgenCBOR.AppendText(out, "s")
-	out = h.append29(out, v.Settings)
+	out = h.append15(out, v.Source)
 	return out
 }
-func (h cborgen) read28(r *cborgenCodec.Reader, d, cap int) (v ModelBinding, err error) {
+func (h cborgen) read7(r *cborgenCodec.Reader, d, cap int) (v AttributedInput, err error) {
 	defer func() {
 		if err == nil && v.Validate() != nil {
 			err = cborgenCodec.ErrInvalidData
@@ -2805,25 +1079,1203 @@ func (h cborgen) read28(r *cborgenCodec.Reader, d, cap int) (v ModelBinding, err
 		switch key {
 		case "a":
 			seen[0] = true
-			v.API, err = h.read8(r, d+1, int(^uint(0)>>1))
+			v.Actor, err = h.read10(r, d+1, int(^uint(0)>>1))
+			if err != nil {
+				return v, cborgenFmt.Errorf("Actor: %w", err)
+			}
+		case "c":
+			seen[1] = true
+			v.Parts, err = h.read8(r, d+1, int(^uint(0)>>1))
+			if err != nil {
+				return v, cborgenFmt.Errorf("Parts: %w", err)
+			}
+		case "p":
+			seen[2] = true
+			v.Purpose, err = h.read10(r, d+1, int(^uint(0)>>1))
+			if err != nil {
+				return v, cborgenFmt.Errorf("Purpose: %w", err)
+			}
+		case "s":
+			seen[3] = true
+			v.Source, err = h.read15(r, d+1, int(^uint(0)>>1))
+			if err != nil {
+				return v, cborgenFmt.Errorf("Source: %w", err)
+			}
+		default:
+			return v, cborgenCodec.ErrInvalidData
+		}
+	}
+	if !seen[0] {
+		return v, cborgenCodec.ErrInvalidData
+	}
+	if !seen[1] {
+		return v, cborgenCodec.ErrInvalidData
+	}
+	if !seen[2] {
+		return v, cborgenCodec.ErrInvalidData
+	}
+	if !seen[3] {
+		return v, cborgenCodec.ErrInvalidData
+	}
+	return v, nil
+}
+
+// Helpers 8: []ContentPart.
+func (h cborgen) clone8(v []ContentPart) []ContentPart {
+	if v == nil {
+		return nil
+	}
+	out := make([]ContentPart, len(v))
+	for i := range v {
+		out[i] = h.clone9(v[i])
+	}
+	return out
+}
+func (h cborgen) equal8(v, w []ContentPart) bool {
+	if len(v) != len(w) {
+		return false
+	}
+	for i := range v {
+		if !h.equal9(v[i], w[i]) {
+			return false
+		}
+	}
+	return true
+}
+func (h cborgen) check8(v []ContentPart, b *cborgenCodec.Budget, d, cap int) (err error) {
+	if err := b.CheckArray(len(v), d, cap); err != nil {
+		return err
+	}
+	for i, x := range v {
+		if err := h.check9(x, b, d+1, int(^uint(0)>>1)); err != nil {
+			return cborgenFmt.Errorf("index %d: %w", i, err)
+		}
+	}
+	return nil
+}
+func (h cborgen) append8(out []byte, v []ContentPart) []byte {
+	out = cborgenCBOR.AppendArrayHeader(out, uint64(len(v)))
+	for _, x := range v {
+		out = h.append9(out, x)
+	}
+	return out
+}
+func (h cborgen) read8(r *cborgenCodec.Reader, d, cap int) (v []ContentPart, err error) {
+	count, err := r.Array(d, cap)
+	if err != nil {
+		return v, err
+	}
+	v = make([]ContentPart, count)
+	for i := range v {
+		v[i], err = h.read9(r, d+1, int(^uint(0)>>1))
+		if err != nil {
+			return v, cborgenFmt.Errorf("index %d: %w", i, err)
+		}
+	}
+	return v, nil
+}
+
+// Helpers 9: ContentPart.
+func (h cborgen) clone9(v ContentPart) ContentPart {
+	out := v
+	out.Kind = h.clone10(v.Kind)
+	out.Text = h.clone10(v.Text)
+	out.Media = h.clone11(v.Media)
+	return out
+}
+func (h cborgen) equal9(v, w ContentPart) bool {
+	if !h.equal10(v.Kind, w.Kind) {
+		return false
+	}
+	if !h.equal10(v.Text, w.Text) {
+		return false
+	}
+	if !h.equal11(v.Media, w.Media) {
+		return false
+	}
+	return true
+}
+func (h cborgen) check9(v ContentPart, b *cborgenCodec.Budget, d, cap int) (err error) {
+	defer func() {
+		if err == nil && v.Validate() != nil {
+			err = cborgenCodec.ErrInvalidData
+		}
+	}()
+	count := 2
+	if v.Media != nil {
+		count++
+	}
+	if err := b.CheckMap(count, d, cap); err != nil {
+		return err
+	}
+	if err := b.CheckString("k", d+1, int(^uint(0)>>1)); err != nil {
+		return cborgenFmt.Errorf("Kind: %w", err)
+	}
+	if err := h.check10(v.Kind, b, d+1, int(^uint(0)>>1)); err != nil {
+		return cborgenFmt.Errorf("Kind: %w", err)
+	}
+	if v.Media != nil {
+		if err := b.CheckString("m", d+1, int(^uint(0)>>1)); err != nil {
+			return cborgenFmt.Errorf("Media: %w", err)
+		}
+		if err := h.check11(v.Media, b, d+1, int(^uint(0)>>1)); err != nil {
+			return cborgenFmt.Errorf("Media: %w", err)
+		}
+	}
+	if err := b.CheckString("t", d+1, int(^uint(0)>>1)); err != nil {
+		return cborgenFmt.Errorf("Text: %w", err)
+	}
+	if err := h.check10(v.Text, b, d+1, int(^uint(0)>>1)); err != nil {
+		return cborgenFmt.Errorf("Text: %w", err)
+	}
+	return nil
+}
+func (h cborgen) append9(out []byte, v ContentPart) []byte {
+	count := 2
+	if v.Media != nil {
+		count++
+	}
+	out = cborgenCBOR.AppendMapHeader(out, uint64(count))
+	out = cborgenCBOR.AppendText(out, "k")
+	out = h.append10(out, v.Kind)
+	if v.Media != nil {
+		out = cborgenCBOR.AppendText(out, "m")
+		out = h.append11(out, v.Media)
+	}
+	out = cborgenCBOR.AppendText(out, "t")
+	out = h.append10(out, v.Text)
+	return out
+}
+func (h cborgen) read9(r *cborgenCodec.Reader, d, cap int) (v ContentPart, err error) {
+	defer func() {
+		if err == nil && v.Validate() != nil {
+			err = cborgenCodec.ErrInvalidData
+		}
+	}()
+	count, err := r.Map(d, cap)
+	if err != nil {
+		return v, err
+	}
+	previous := ""
+	var seen [3]bool
+	for i := 0; i < count; i++ {
+		key, err := r.String(d+1, int(^uint(0)>>1))
+		if err != nil {
+			return v, err
+		}
+		// Strict canonical key ordering also rejects duplicates before assignment can overwrite them.
+		if i > 0 && (len(key) < len(previous) || (len(key) == len(previous) && key <= previous)) {
+			return v, cborgenCodec.ErrInvalidData
+		}
+		previous = key
+		switch key {
+		case "k":
+			seen[0] = true
+			v.Kind, err = h.read10(r, d+1, int(^uint(0)>>1))
+			if err != nil {
+				return v, cborgenFmt.Errorf("Kind: %w", err)
+			}
+		case "m":
+			seen[1] = true
+			v.Media, err = h.read11(r, d+1, int(^uint(0)>>1))
+			if err != nil {
+				return v, cborgenFmt.Errorf("Media: %w", err)
+			}
+		case "t":
+			seen[2] = true
+			v.Text, err = h.read10(r, d+1, int(^uint(0)>>1))
+			if err != nil {
+				return v, cborgenFmt.Errorf("Text: %w", err)
+			}
+		default:
+			return v, cborgenCodec.ErrInvalidData
+		}
+	}
+	if !seen[0] {
+		return v, cborgenCodec.ErrInvalidData
+	}
+	if !seen[2] {
+		return v, cborgenCodec.ErrInvalidData
+	}
+	return v, nil
+}
+
+// Helpers 10: string.
+func (h cborgen) clone10(v string) string {
+	return v
+}
+func (h cborgen) equal10(v, w string) bool {
+	return v == w
+}
+func (h cborgen) check10(v string, b *cborgenCodec.Budget, d, cap int) (err error) {
+	return b.CheckString(string(v), d, cap)
+}
+func (h cborgen) append10(out []byte, v string) []byte {
+	return cborgenCodec.AppendString(out, string(v))
+}
+func (h cborgen) read10(r *cborgenCodec.Reader, d, cap int) (v string, err error) {
+	x, err := r.String(d, cap)
+	if err != nil {
+		return v, err
+	}
+	return string(x), nil
+}
+
+// Helpers 11: *Media.
+func (h cborgen) clone11(v *Media) *Media {
+	if v == nil {
+		return nil
+	}
+	x := h.clone12(*v)
+	return (*Media)(&x)
+}
+func (h cborgen) equal11(v, w *Media) bool {
+	if v == nil || w == nil {
+		return v == nil && w == nil
+	}
+	return h.equal12(*v, *w)
+}
+func (h cborgen) check11(v *Media, b *cborgenCodec.Budget, d, cap int) (err error) {
+	if v == nil {
+		return cborgenCodec.ErrInvalidData
+	}
+	return h.check12(*v, b, d, cap)
+}
+func (h cborgen) append11(out []byte, v *Media) []byte {
+	return h.append12(out, *v)
+}
+func (h cborgen) read11(r *cborgenCodec.Reader, d, cap int) (v *Media, err error) {
+	x, err := h.read12(r, d, cap)
+	if err != nil {
+		return v, err
+	}
+	return (*Media)(&x), nil
+}
+
+// Helpers 12: Media.
+func (h cborgen) clone12(v Media) Media {
+	out := v
+	out.MediaType = h.clone10(v.MediaType)
+	out.Format = h.clone10(v.Format)
+	out.Filename = h.clone10(v.Filename)
+	out.Title = h.clone10(v.Title)
+	out.Source = h.clone10(v.Source)
+	out.Data = h.clone13(v.Data)
+	out.URI = h.clone10(v.URI)
+	out.Provider = h.clone10(v.Provider)
+	out.Scope = h.clone10(v.Scope)
+	out.ReferenceID = h.clone10(v.ReferenceID)
+	return out
+}
+func (h cborgen) equal12(v, w Media) bool {
+	if !h.equal10(v.MediaType, w.MediaType) {
+		return false
+	}
+	if !h.equal10(v.Format, w.Format) {
+		return false
+	}
+	if !h.equal10(v.Filename, w.Filename) {
+		return false
+	}
+	if !h.equal10(v.Title, w.Title) {
+		return false
+	}
+	if !h.equal10(v.Source, w.Source) {
+		return false
+	}
+	if !h.equal13(v.Data, w.Data) {
+		return false
+	}
+	if !h.equal10(v.URI, w.URI) {
+		return false
+	}
+	if !h.equal10(v.Provider, w.Provider) {
+		return false
+	}
+	if !h.equal10(v.Scope, w.Scope) {
+		return false
+	}
+	if !h.equal10(v.ReferenceID, w.ReferenceID) {
+		return false
+	}
+	return true
+}
+func (h cborgen) check12(v Media, b *cborgenCodec.Budget, d, cap int) (err error) {
+	defer func() {
+		if err == nil && v.Validate() != nil {
+			err = cborgenCodec.ErrInvalidData
+		}
+	}()
+	count := 10
+	if err := b.CheckMap(count, d, cap); err != nil {
+		return err
+	}
+	if err := b.CheckString("d", d+1, int(^uint(0)>>1)); err != nil {
+		return cborgenFmt.Errorf("Data: %w", err)
+	}
+	if err := h.check13(v.Data, b, d+1, int(^uint(0)>>1)); err != nil {
+		return cborgenFmt.Errorf("Data: %w", err)
+	}
+	if err := b.CheckString("f", d+1, int(^uint(0)>>1)); err != nil {
+		return cborgenFmt.Errorf("Format: %w", err)
+	}
+	if err := h.check10(v.Format, b, d+1, int(^uint(0)>>1)); err != nil {
+		return cborgenFmt.Errorf("Format: %w", err)
+	}
+	if err := b.CheckString("m", d+1, int(^uint(0)>>1)); err != nil {
+		return cborgenFmt.Errorf("MediaType: %w", err)
+	}
+	if err := h.check10(v.MediaType, b, d+1, int(^uint(0)>>1)); err != nil {
+		return cborgenFmt.Errorf("MediaType: %w", err)
+	}
+	if err := b.CheckString("n", d+1, int(^uint(0)>>1)); err != nil {
+		return cborgenFmt.Errorf("Filename: %w", err)
+	}
+	if err := h.check10(v.Filename, b, d+1, int(^uint(0)>>1)); err != nil {
+		return cborgenFmt.Errorf("Filename: %w", err)
+	}
+	if err := b.CheckString("o", d+1, int(^uint(0)>>1)); err != nil {
+		return cborgenFmt.Errorf("Scope: %w", err)
+	}
+	if err := h.check10(v.Scope, b, d+1, int(^uint(0)>>1)); err != nil {
+		return cborgenFmt.Errorf("Scope: %w", err)
+	}
+	if err := b.CheckString("p", d+1, int(^uint(0)>>1)); err != nil {
+		return cborgenFmt.Errorf("Provider: %w", err)
+	}
+	if err := h.check10(v.Provider, b, d+1, int(^uint(0)>>1)); err != nil {
+		return cborgenFmt.Errorf("Provider: %w", err)
+	}
+	if err := b.CheckString("r", d+1, int(^uint(0)>>1)); err != nil {
+		return cborgenFmt.Errorf("ReferenceID: %w", err)
+	}
+	if err := h.check10(v.ReferenceID, b, d+1, int(^uint(0)>>1)); err != nil {
+		return cborgenFmt.Errorf("ReferenceID: %w", err)
+	}
+	if err := b.CheckString("s", d+1, int(^uint(0)>>1)); err != nil {
+		return cborgenFmt.Errorf("Source: %w", err)
+	}
+	if err := h.check10(v.Source, b, d+1, int(^uint(0)>>1)); err != nil {
+		return cborgenFmt.Errorf("Source: %w", err)
+	}
+	if err := b.CheckString("t", d+1, int(^uint(0)>>1)); err != nil {
+		return cborgenFmt.Errorf("Title: %w", err)
+	}
+	if err := h.check10(v.Title, b, d+1, int(^uint(0)>>1)); err != nil {
+		return cborgenFmt.Errorf("Title: %w", err)
+	}
+	if err := b.CheckString("u", d+1, int(^uint(0)>>1)); err != nil {
+		return cborgenFmt.Errorf("URI: %w", err)
+	}
+	if err := h.check10(v.URI, b, d+1, int(^uint(0)>>1)); err != nil {
+		return cborgenFmt.Errorf("URI: %w", err)
+	}
+	return nil
+}
+func (h cborgen) append12(out []byte, v Media) []byte {
+	count := 10
+	out = cborgenCBOR.AppendMapHeader(out, uint64(count))
+	out = cborgenCBOR.AppendText(out, "d")
+	out = h.append13(out, v.Data)
+	out = cborgenCBOR.AppendText(out, "f")
+	out = h.append10(out, v.Format)
+	out = cborgenCBOR.AppendText(out, "m")
+	out = h.append10(out, v.MediaType)
+	out = cborgenCBOR.AppendText(out, "n")
+	out = h.append10(out, v.Filename)
+	out = cborgenCBOR.AppendText(out, "o")
+	out = h.append10(out, v.Scope)
+	out = cborgenCBOR.AppendText(out, "p")
+	out = h.append10(out, v.Provider)
+	out = cborgenCBOR.AppendText(out, "r")
+	out = h.append10(out, v.ReferenceID)
+	out = cborgenCBOR.AppendText(out, "s")
+	out = h.append10(out, v.Source)
+	out = cborgenCBOR.AppendText(out, "t")
+	out = h.append10(out, v.Title)
+	out = cborgenCBOR.AppendText(out, "u")
+	out = h.append10(out, v.URI)
+	return out
+}
+func (h cborgen) read12(r *cborgenCodec.Reader, d, cap int) (v Media, err error) {
+	defer func() {
+		if err == nil && v.Validate() != nil {
+			err = cborgenCodec.ErrInvalidData
+		}
+	}()
+	count, err := r.Map(d, cap)
+	if err != nil {
+		return v, err
+	}
+	previous := ""
+	var seen [10]bool
+	for i := 0; i < count; i++ {
+		key, err := r.String(d+1, int(^uint(0)>>1))
+		if err != nil {
+			return v, err
+		}
+		// Strict canonical key ordering also rejects duplicates before assignment can overwrite them.
+		if i > 0 && (len(key) < len(previous) || (len(key) == len(previous) && key <= previous)) {
+			return v, cborgenCodec.ErrInvalidData
+		}
+		previous = key
+		switch key {
+		case "d":
+			seen[0] = true
+			v.Data, err = h.read13(r, d+1, int(^uint(0)>>1))
+			if err != nil {
+				return v, cborgenFmt.Errorf("Data: %w", err)
+			}
+		case "f":
+			seen[1] = true
+			v.Format, err = h.read10(r, d+1, int(^uint(0)>>1))
+			if err != nil {
+				return v, cborgenFmt.Errorf("Format: %w", err)
+			}
+		case "m":
+			seen[2] = true
+			v.MediaType, err = h.read10(r, d+1, int(^uint(0)>>1))
+			if err != nil {
+				return v, cborgenFmt.Errorf("MediaType: %w", err)
+			}
+		case "n":
+			seen[3] = true
+			v.Filename, err = h.read10(r, d+1, int(^uint(0)>>1))
+			if err != nil {
+				return v, cborgenFmt.Errorf("Filename: %w", err)
+			}
+		case "o":
+			seen[4] = true
+			v.Scope, err = h.read10(r, d+1, int(^uint(0)>>1))
+			if err != nil {
+				return v, cborgenFmt.Errorf("Scope: %w", err)
+			}
+		case "p":
+			seen[5] = true
+			v.Provider, err = h.read10(r, d+1, int(^uint(0)>>1))
+			if err != nil {
+				return v, cborgenFmt.Errorf("Provider: %w", err)
+			}
+		case "r":
+			seen[6] = true
+			v.ReferenceID, err = h.read10(r, d+1, int(^uint(0)>>1))
+			if err != nil {
+				return v, cborgenFmt.Errorf("ReferenceID: %w", err)
+			}
+		case "s":
+			seen[7] = true
+			v.Source, err = h.read10(r, d+1, int(^uint(0)>>1))
+			if err != nil {
+				return v, cborgenFmt.Errorf("Source: %w", err)
+			}
+		case "t":
+			seen[8] = true
+			v.Title, err = h.read10(r, d+1, int(^uint(0)>>1))
+			if err != nil {
+				return v, cborgenFmt.Errorf("Title: %w", err)
+			}
+		case "u":
+			seen[9] = true
+			v.URI, err = h.read10(r, d+1, int(^uint(0)>>1))
+			if err != nil {
+				return v, cborgenFmt.Errorf("URI: %w", err)
+			}
+		default:
+			return v, cborgenCodec.ErrInvalidData
+		}
+	}
+	if !seen[0] {
+		return v, cborgenCodec.ErrInvalidData
+	}
+	if !seen[1] {
+		return v, cborgenCodec.ErrInvalidData
+	}
+	if !seen[2] {
+		return v, cborgenCodec.ErrInvalidData
+	}
+	if !seen[3] {
+		return v, cborgenCodec.ErrInvalidData
+	}
+	if !seen[4] {
+		return v, cborgenCodec.ErrInvalidData
+	}
+	if !seen[5] {
+		return v, cborgenCodec.ErrInvalidData
+	}
+	if !seen[6] {
+		return v, cborgenCodec.ErrInvalidData
+	}
+	if !seen[7] {
+		return v, cborgenCodec.ErrInvalidData
+	}
+	if !seen[8] {
+		return v, cborgenCodec.ErrInvalidData
+	}
+	if !seen[9] {
+		return v, cborgenCodec.ErrInvalidData
+	}
+	return v, nil
+}
+
+// Helpers 13: []byte.
+func (h cborgen) clone13(v []byte) []byte {
+	if v == nil {
+		return nil
+	}
+	out := make([]byte, len(v))
+	for i := range v {
+		out[i] = h.clone14(v[i])
+	}
+	return out
+}
+func (h cborgen) equal13(v, w []byte) bool {
+	if len(v) != len(w) {
+		return false
+	}
+	for i := range v {
+		if !h.equal14(v[i], w[i]) {
+			return false
+		}
+	}
+	return true
+}
+func (h cborgen) check13(v []byte, b *cborgenCodec.Budget, d, cap int) (err error) {
+	return b.CheckBytes(len(v), d, cap)
+}
+func (h cborgen) append13(out []byte, v []byte) []byte {
+	out = cborgenCBOR.AppendBytesHeader(out, uint64(len(v)))
+	for _, x := range v {
+		out = append(out, byte(x))
+	}
+	return out
+}
+func (h cborgen) read13(r *cborgenCodec.Reader, d, cap int) (v []byte, err error) {
+	x, err := r.Bytes(d, cap)
+	if err != nil {
+		return v, err
+	}
+	v = make([]byte, len(x))
+	for i := range x {
+		v[i] = byte(x[i])
+	}
+	return v, nil
+}
+
+// Helpers 14: byte.
+func (h cborgen) clone14(v byte) byte {
+	return v
+}
+func (h cborgen) equal14(v, w byte) bool {
+	return v == w
+}
+func (h cborgen) check14(v byte, b *cborgenCodec.Budget, d, cap int) (err error) {
+	return b.CheckScalar(d)
+}
+func (h cborgen) append14(out []byte, v byte) []byte {
+	return cborgenCBOR.AppendUint(out, uint64(v))
+}
+func (h cborgen) read14(r *cborgenCodec.Reader, d, cap int) (v byte, err error) {
+	x, err := r.Uint(d)
+	if err != nil {
+		return v, err
+	}
+	if x > (1<<8)-1 {
+		return v, cborgenCodec.ErrInvalidData
+	}
+	return byte(x), nil
+}
+
+// Helpers 15: ContentSource.
+func (h cborgen) clone15(v ContentSource) ContentSource {
+	out := v
+	out.Description = h.clone10(v.Description)
+	out.WorkspaceFile = h.clone16(v.WorkspaceFile)
+	return out
+}
+func (h cborgen) equal15(v, w ContentSource) bool {
+	if !h.equal10(v.Description, w.Description) {
+		return false
+	}
+	if !h.equal16(v.WorkspaceFile, w.WorkspaceFile) {
+		return false
+	}
+	return true
+}
+func (h cborgen) check15(v ContentSource, b *cborgenCodec.Budget, d, cap int) (err error) {
+	defer func() {
+		if err == nil && v.Validate() != nil {
+			err = cborgenCodec.ErrInvalidData
+		}
+	}()
+	count := 1
+	if v.WorkspaceFile != nil {
+		count++
+	}
+	if err := b.CheckMap(count, d, cap); err != nil {
+		return err
+	}
+	if err := b.CheckString("d", d+1, int(^uint(0)>>1)); err != nil {
+		return cborgenFmt.Errorf("Description: %w", err)
+	}
+	if err := h.check10(v.Description, b, d+1, int(^uint(0)>>1)); err != nil {
+		return cborgenFmt.Errorf("Description: %w", err)
+	}
+	if v.WorkspaceFile != nil {
+		if err := b.CheckString("w", d+1, int(^uint(0)>>1)); err != nil {
+			return cborgenFmt.Errorf("WorkspaceFile: %w", err)
+		}
+		if err := h.check16(v.WorkspaceFile, b, d+1, int(^uint(0)>>1)); err != nil {
+			return cborgenFmt.Errorf("WorkspaceFile: %w", err)
+		}
+	}
+	return nil
+}
+func (h cborgen) append15(out []byte, v ContentSource) []byte {
+	count := 1
+	if v.WorkspaceFile != nil {
+		count++
+	}
+	out = cborgenCBOR.AppendMapHeader(out, uint64(count))
+	out = cborgenCBOR.AppendText(out, "d")
+	out = h.append10(out, v.Description)
+	if v.WorkspaceFile != nil {
+		out = cborgenCBOR.AppendText(out, "w")
+		out = h.append16(out, v.WorkspaceFile)
+	}
+	return out
+}
+func (h cborgen) read15(r *cborgenCodec.Reader, d, cap int) (v ContentSource, err error) {
+	defer func() {
+		if err == nil && v.Validate() != nil {
+			err = cborgenCodec.ErrInvalidData
+		}
+	}()
+	count, err := r.Map(d, cap)
+	if err != nil {
+		return v, err
+	}
+	previous := ""
+	var seen [2]bool
+	for i := 0; i < count; i++ {
+		key, err := r.String(d+1, int(^uint(0)>>1))
+		if err != nil {
+			return v, err
+		}
+		// Strict canonical key ordering also rejects duplicates before assignment can overwrite them.
+		if i > 0 && (len(key) < len(previous) || (len(key) == len(previous) && key <= previous)) {
+			return v, cborgenCodec.ErrInvalidData
+		}
+		previous = key
+		switch key {
+		case "d":
+			seen[0] = true
+			v.Description, err = h.read10(r, d+1, int(^uint(0)>>1))
+			if err != nil {
+				return v, cborgenFmt.Errorf("Description: %w", err)
+			}
+		case "w":
+			seen[1] = true
+			v.WorkspaceFile, err = h.read16(r, d+1, int(^uint(0)>>1))
+			if err != nil {
+				return v, cborgenFmt.Errorf("WorkspaceFile: %w", err)
+			}
+		default:
+			return v, cborgenCodec.ErrInvalidData
+		}
+	}
+	if !seen[0] {
+		return v, cborgenCodec.ErrInvalidData
+	}
+	return v, nil
+}
+
+// Helpers 16: *WorkspaceFileSource.
+func (h cborgen) clone16(v *WorkspaceFileSource) *WorkspaceFileSource {
+	if v == nil {
+		return nil
+	}
+	x := h.clone17(*v)
+	return (*WorkspaceFileSource)(&x)
+}
+func (h cborgen) equal16(v, w *WorkspaceFileSource) bool {
+	if v == nil || w == nil {
+		return v == nil && w == nil
+	}
+	return h.equal17(*v, *w)
+}
+func (h cborgen) check16(v *WorkspaceFileSource, b *cborgenCodec.Budget, d, cap int) (err error) {
+	if v == nil {
+		return cborgenCodec.ErrInvalidData
+	}
+	return h.check17(*v, b, d, cap)
+}
+func (h cborgen) append16(out []byte, v *WorkspaceFileSource) []byte {
+	return h.append17(out, *v)
+}
+func (h cborgen) read16(r *cborgenCodec.Reader, d, cap int) (v *WorkspaceFileSource, err error) {
+	x, err := h.read17(r, d, cap)
+	if err != nil {
+		return v, err
+	}
+	return (*WorkspaceFileSource)(&x), nil
+}
+
+// Helpers 17: WorkspaceFileSource.
+func (h cborgen) clone17(v WorkspaceFileSource) WorkspaceFileSource {
+	out := v
+	out.Path = h.clone10(v.Path)
+	return out
+}
+func (h cborgen) equal17(v, w WorkspaceFileSource) bool {
+	if !h.equal10(v.Path, w.Path) {
+		return false
+	}
+	return true
+}
+func (h cborgen) check17(v WorkspaceFileSource, b *cborgenCodec.Budget, d, cap int) (err error) {
+	defer func() {
+		if err == nil && v.Validate() != nil {
+			err = cborgenCodec.ErrInvalidData
+		}
+	}()
+	count := 1
+	if err := b.CheckMap(count, d, cap); err != nil {
+		return err
+	}
+	if err := b.CheckString("p", d+1, int(^uint(0)>>1)); err != nil {
+		return cborgenFmt.Errorf("Path: %w", err)
+	}
+	if err := h.check10(v.Path, b, d+1, int(^uint(0)>>1)); err != nil {
+		return cborgenFmt.Errorf("Path: %w", err)
+	}
+	return nil
+}
+func (h cborgen) append17(out []byte, v WorkspaceFileSource) []byte {
+	count := 1
+	out = cborgenCBOR.AppendMapHeader(out, uint64(count))
+	out = cborgenCBOR.AppendText(out, "p")
+	out = h.append10(out, v.Path)
+	return out
+}
+func (h cborgen) read17(r *cborgenCodec.Reader, d, cap int) (v WorkspaceFileSource, err error) {
+	defer func() {
+		if err == nil && v.Validate() != nil {
+			err = cborgenCodec.ErrInvalidData
+		}
+	}()
+	count, err := r.Map(d, cap)
+	if err != nil {
+		return v, err
+	}
+	previous := ""
+	var seen [1]bool
+	for i := 0; i < count; i++ {
+		key, err := r.String(d+1, int(^uint(0)>>1))
+		if err != nil {
+			return v, err
+		}
+		// Strict canonical key ordering also rejects duplicates before assignment can overwrite them.
+		if i > 0 && (len(key) < len(previous) || (len(key) == len(previous) && key <= previous)) {
+			return v, cborgenCodec.ErrInvalidData
+		}
+		previous = key
+		switch key {
+		case "p":
+			seen[0] = true
+			v.Path, err = h.read10(r, d+1, int(^uint(0)>>1))
+			if err != nil {
+				return v, cborgenFmt.Errorf("Path: %w", err)
+			}
+		default:
+			return v, cborgenCodec.ErrInvalidData
+		}
+	}
+	if !seen[0] {
+		return v, cborgenCodec.ErrInvalidData
+	}
+	return v, nil
+}
+
+// Helpers 18: Instructions.
+func (h cborgen) clone18(v Instructions) Instructions {
+	out := v
+	out.Blocks = h.clone19(v.Blocks)
+	return out
+}
+func (h cborgen) equal18(v, w Instructions) bool {
+	if !h.equal19(v.Blocks, w.Blocks) {
+		return false
+	}
+	return true
+}
+func (h cborgen) check18(v Instructions, b *cborgenCodec.Budget, d, cap int) (err error) {
+	count := 1
+	if err := b.CheckMap(count, d, cap); err != nil {
+		return err
+	}
+	if err := b.CheckString("b", d+1, int(^uint(0)>>1)); err != nil {
+		return cborgenFmt.Errorf("Blocks: %w", err)
+	}
+	if err := h.check19(v.Blocks, b, d+1, int(^uint(0)>>1)); err != nil {
+		return cborgenFmt.Errorf("Blocks: %w", err)
+	}
+	return nil
+}
+func (h cborgen) append18(out []byte, v Instructions) []byte {
+	count := 1
+	out = cborgenCBOR.AppendMapHeader(out, uint64(count))
+	out = cborgenCBOR.AppendText(out, "b")
+	out = h.append19(out, v.Blocks)
+	return out
+}
+func (h cborgen) read18(r *cborgenCodec.Reader, d, cap int) (v Instructions, err error) {
+	count, err := r.Map(d, cap)
+	if err != nil {
+		return v, err
+	}
+	previous := ""
+	var seen [1]bool
+	for i := 0; i < count; i++ {
+		key, err := r.String(d+1, int(^uint(0)>>1))
+		if err != nil {
+			return v, err
+		}
+		// Strict canonical key ordering also rejects duplicates before assignment can overwrite them.
+		if i > 0 && (len(key) < len(previous) || (len(key) == len(previous) && key <= previous)) {
+			return v, cborgenCodec.ErrInvalidData
+		}
+		previous = key
+		switch key {
+		case "b":
+			seen[0] = true
+			v.Blocks, err = h.read19(r, d+1, int(^uint(0)>>1))
+			if err != nil {
+				return v, cborgenFmt.Errorf("Blocks: %w", err)
+			}
+		default:
+			return v, cborgenCodec.ErrInvalidData
+		}
+	}
+	if !seen[0] {
+		return v, cborgenCodec.ErrInvalidData
+	}
+	return v, nil
+}
+
+// Helpers 19: []InstructionBlock.
+func (h cborgen) clone19(v []InstructionBlock) []InstructionBlock {
+	if v == nil {
+		return nil
+	}
+	out := make([]InstructionBlock, len(v))
+	for i := range v {
+		out[i] = h.clone20(v[i])
+	}
+	return out
+}
+func (h cborgen) equal19(v, w []InstructionBlock) bool {
+	if len(v) != len(w) {
+		return false
+	}
+	for i := range v {
+		if !h.equal20(v[i], w[i]) {
+			return false
+		}
+	}
+	return true
+}
+func (h cborgen) check19(v []InstructionBlock, b *cborgenCodec.Budget, d, cap int) (err error) {
+	if err := b.CheckArray(len(v), d, cap); err != nil {
+		return err
+	}
+	for i, x := range v {
+		if err := h.check20(x, b, d+1, int(^uint(0)>>1)); err != nil {
+			return cborgenFmt.Errorf("index %d: %w", i, err)
+		}
+	}
+	return nil
+}
+func (h cborgen) append19(out []byte, v []InstructionBlock) []byte {
+	out = cborgenCBOR.AppendArrayHeader(out, uint64(len(v)))
+	for _, x := range v {
+		out = h.append20(out, x)
+	}
+	return out
+}
+func (h cborgen) read19(r *cborgenCodec.Reader, d, cap int) (v []InstructionBlock, err error) {
+	count, err := r.Array(d, cap)
+	if err != nil {
+		return v, err
+	}
+	v = make([]InstructionBlock, count)
+	for i := range v {
+		v[i], err = h.read20(r, d+1, int(^uint(0)>>1))
+		if err != nil {
+			return v, cborgenFmt.Errorf("index %d: %w", i, err)
+		}
+	}
+	return v, nil
+}
+
+// Helpers 20: InstructionBlock.
+func (h cborgen) clone20(v InstructionBlock) InstructionBlock {
+	out := v
+	out.Content = h.clone21(v.Content)
+	out.Source = h.clone15(v.Source)
+	return out
+}
+func (h cborgen) equal20(v, w InstructionBlock) bool {
+	if !h.equal21(v.Content, w.Content) {
+		return false
+	}
+	if !h.equal15(v.Source, w.Source) {
+		return false
+	}
+	return true
+}
+func (h cborgen) check20(v InstructionBlock, b *cborgenCodec.Budget, d, cap int) (err error) {
+	count := 2
+	if err := b.CheckMap(count, d, cap); err != nil {
+		return err
+	}
+	if err := b.CheckString("c", d+1, int(^uint(0)>>1)); err != nil {
+		return cborgenFmt.Errorf("Content: %w", err)
+	}
+	if err := h.check21(v.Content, b, d+1, int(^uint(0)>>1)); err != nil {
+		return cborgenFmt.Errorf("Content: %w", err)
+	}
+	if err := b.CheckString("s", d+1, int(^uint(0)>>1)); err != nil {
+		return cborgenFmt.Errorf("Source: %w", err)
+	}
+	if err := h.check15(v.Source, b, d+1, int(^uint(0)>>1)); err != nil {
+		return cborgenFmt.Errorf("Source: %w", err)
+	}
+	return nil
+}
+func (h cborgen) append20(out []byte, v InstructionBlock) []byte {
+	count := 2
+	out = cborgenCBOR.AppendMapHeader(out, uint64(count))
+	out = cborgenCBOR.AppendText(out, "c")
+	out = h.append21(out, v.Content)
+	out = cborgenCBOR.AppendText(out, "s")
+	out = h.append15(out, v.Source)
+	return out
+}
+func (h cborgen) read20(r *cborgenCodec.Reader, d, cap int) (v InstructionBlock, err error) {
+	count, err := r.Map(d, cap)
+	if err != nil {
+		return v, err
+	}
+	previous := ""
+	var seen [2]bool
+	for i := 0; i < count; i++ {
+		key, err := r.String(d+1, int(^uint(0)>>1))
+		if err != nil {
+			return v, err
+		}
+		// Strict canonical key ordering also rejects duplicates before assignment can overwrite them.
+		if i > 0 && (len(key) < len(previous) || (len(key) == len(previous) && key <= previous)) {
+			return v, cborgenCodec.ErrInvalidData
+		}
+		previous = key
+		switch key {
+		case "c":
+			seen[0] = true
+			v.Content, err = h.read21(r, d+1, int(^uint(0)>>1))
+			if err != nil {
+				return v, cborgenFmt.Errorf("Content: %w", err)
+			}
+		case "s":
+			seen[1] = true
+			v.Source, err = h.read15(r, d+1, int(^uint(0)>>1))
+			if err != nil {
+				return v, cborgenFmt.Errorf("Source: %w", err)
+			}
+		default:
+			return v, cborgenCodec.ErrInvalidData
+		}
+	}
+	if !seen[0] {
+		return v, cborgenCodec.ErrInvalidData
+	}
+	if !seen[1] {
+		return v, cborgenCodec.ErrInvalidData
+	}
+	return v, nil
+}
+
+// Helpers 21: []ContentPart.
+func (h cborgen) clone21(v []ContentPart) []ContentPart {
+	if v == nil {
+		return nil
+	}
+	out := make([]ContentPart, len(v))
+	for i := range v {
+		out[i] = h.clone9(v[i])
+	}
+	return out
+}
+func (h cborgen) equal21(v, w []ContentPart) bool {
+	if len(v) != len(w) {
+		return false
+	}
+	for i := range v {
+		if !h.equal9(v[i], w[i]) {
+			return false
+		}
+	}
+	return true
+}
+func (h cborgen) check21(v []ContentPart, b *cborgenCodec.Budget, d, cap int) (err error) {
+	if err := b.CheckArray(len(v), d, cap); err != nil {
+		return err
+	}
+	for i, x := range v {
+		if err := h.check9(x, b, d+1, int(^uint(0)>>1)); err != nil {
+			return cborgenFmt.Errorf("index %d: %w", i, err)
+		}
+	}
+	return nil
+}
+func (h cborgen) append21(out []byte, v []ContentPart) []byte {
+	out = cborgenCBOR.AppendArrayHeader(out, uint64(len(v)))
+	for _, x := range v {
+		out = h.append9(out, x)
+	}
+	return out
+}
+func (h cborgen) read21(r *cborgenCodec.Reader, d, cap int) (v []ContentPart, err error) {
+	count, err := r.Array(d, cap)
+	if err != nil {
+		return v, err
+	}
+	v = make([]ContentPart, count)
+	for i := range v {
+		v[i], err = h.read9(r, d+1, int(^uint(0)>>1))
+		if err != nil {
+			return v, cborgenFmt.Errorf("index %d: %w", i, err)
+		}
+	}
+	return v, nil
+}
+
+// Helpers 22: ModelBinding.
+func (h cborgen) clone22(v ModelBinding) ModelBinding {
+	out := v
+	out.Route = h.clone10(v.Route)
+	out.API = h.clone10(v.API)
+	out.Model = h.clone10(v.Model)
+	out.Settings = h.clone23(v.Settings)
+	return out
+}
+func (h cborgen) equal22(v, w ModelBinding) bool {
+	if !h.equal10(v.Route, w.Route) {
+		return false
+	}
+	if !h.equal10(v.API, w.API) {
+		return false
+	}
+	if !h.equal10(v.Model, w.Model) {
+		return false
+	}
+	if !h.equal23(v.Settings, w.Settings) {
+		return false
+	}
+	return true
+}
+func (h cborgen) check22(v ModelBinding, b *cborgenCodec.Budget, d, cap int) (err error) {
+	defer func() {
+		if err == nil && v.Validate() != nil {
+			err = cborgenCodec.ErrInvalidData
+		}
+	}()
+	count := 4
+	if err := b.CheckMap(count, d, cap); err != nil {
+		return err
+	}
+	if err := b.CheckString("a", d+1, int(^uint(0)>>1)); err != nil {
+		return cborgenFmt.Errorf("API: %w", err)
+	}
+	if err := h.check10(v.API, b, d+1, int(^uint(0)>>1)); err != nil {
+		return cborgenFmt.Errorf("API: %w", err)
+	}
+	if err := b.CheckString("m", d+1, int(^uint(0)>>1)); err != nil {
+		return cborgenFmt.Errorf("Model: %w", err)
+	}
+	if err := h.check10(v.Model, b, d+1, int(^uint(0)>>1)); err != nil {
+		return cborgenFmt.Errorf("Model: %w", err)
+	}
+	if err := b.CheckString("r", d+1, int(^uint(0)>>1)); err != nil {
+		return cborgenFmt.Errorf("Route: %w", err)
+	}
+	if err := h.check10(v.Route, b, d+1, int(^uint(0)>>1)); err != nil {
+		return cborgenFmt.Errorf("Route: %w", err)
+	}
+	if err := b.CheckString("s", d+1, int(^uint(0)>>1)); err != nil {
+		return cborgenFmt.Errorf("Settings: %w", err)
+	}
+	if err := h.check23(v.Settings, b, d+1, int(^uint(0)>>1)); err != nil {
+		return cborgenFmt.Errorf("Settings: %w", err)
+	}
+	return nil
+}
+func (h cborgen) append22(out []byte, v ModelBinding) []byte {
+	count := 4
+	out = cborgenCBOR.AppendMapHeader(out, uint64(count))
+	out = cborgenCBOR.AppendText(out, "a")
+	out = h.append10(out, v.API)
+	out = cborgenCBOR.AppendText(out, "m")
+	out = h.append10(out, v.Model)
+	out = cborgenCBOR.AppendText(out, "r")
+	out = h.append10(out, v.Route)
+	out = cborgenCBOR.AppendText(out, "s")
+	out = h.append23(out, v.Settings)
+	return out
+}
+func (h cborgen) read22(r *cborgenCodec.Reader, d, cap int) (v ModelBinding, err error) {
+	defer func() {
+		if err == nil && v.Validate() != nil {
+			err = cborgenCodec.ErrInvalidData
+		}
+	}()
+	count, err := r.Map(d, cap)
+	if err != nil {
+		return v, err
+	}
+	previous := ""
+	var seen [4]bool
+	for i := 0; i < count; i++ {
+		key, err := r.String(d+1, int(^uint(0)>>1))
+		if err != nil {
+			return v, err
+		}
+		// Strict canonical key ordering also rejects duplicates before assignment can overwrite them.
+		if i > 0 && (len(key) < len(previous) || (len(key) == len(previous) && key <= previous)) {
+			return v, cborgenCodec.ErrInvalidData
+		}
+		previous = key
+		switch key {
+		case "a":
+			seen[0] = true
+			v.API, err = h.read10(r, d+1, int(^uint(0)>>1))
 			if err != nil {
 				return v, cborgenFmt.Errorf("API: %w", err)
 			}
 		case "m":
 			seen[1] = true
-			v.Model, err = h.read8(r, d+1, int(^uint(0)>>1))
+			v.Model, err = h.read10(r, d+1, int(^uint(0)>>1))
 			if err != nil {
 				return v, cborgenFmt.Errorf("Model: %w", err)
 			}
 		case "r":
 			seen[2] = true
-			v.Route, err = h.read8(r, d+1, int(^uint(0)>>1))
+			v.Route, err = h.read10(r, d+1, int(^uint(0)>>1))
 			if err != nil {
 				return v, cborgenFmt.Errorf("Route: %w", err)
 			}
 		case "s":
 			seen[3] = true
-			v.Settings, err = h.read29(r, d+1, int(^uint(0)>>1))
+			v.Settings, err = h.read23(r, d+1, int(^uint(0)>>1))
 			if err != nil {
 				return v, cborgenFmt.Errorf("Settings: %w", err)
 			}
@@ -2846,6 +2298,451 @@ func (h cborgen) read28(r *cborgenCodec.Reader, d, cap int) (v ModelBinding, err
 	return v, nil
 }
 
+// Helpers 23: []byte.
+func (h cborgen) clone23(v []byte) []byte {
+	if v == nil {
+		return nil
+	}
+	out := make([]byte, len(v))
+	for i := range v {
+		out[i] = h.clone14(v[i])
+	}
+	return out
+}
+func (h cborgen) equal23(v, w []byte) bool {
+	if len(v) != len(w) {
+		return false
+	}
+	for i := range v {
+		if !h.equal14(v[i], w[i]) {
+			return false
+		}
+	}
+	return true
+}
+func (h cborgen) check23(v []byte, b *cborgenCodec.Budget, d, cap int) (err error) {
+	return b.CheckBytes(len(v), d, cap)
+}
+func (h cborgen) append23(out []byte, v []byte) []byte {
+	out = cborgenCBOR.AppendBytesHeader(out, uint64(len(v)))
+	for _, x := range v {
+		out = append(out, byte(x))
+	}
+	return out
+}
+func (h cborgen) read23(r *cborgenCodec.Reader, d, cap int) (v []byte, err error) {
+	x, err := r.Bytes(d, cap)
+	if err != nil {
+		return v, err
+	}
+	v = make([]byte, len(x))
+	for i := range x {
+		v[i] = byte(x[i])
+	}
+	return v, nil
+}
+
+// Helpers 24: RunInterrupted.
+func (h cborgen) clone24(v RunInterrupted) RunInterrupted {
+	out := v
+	out.ID = h.clone2(v.ID)
+	return out
+}
+func (h cborgen) equal24(v, w RunInterrupted) bool {
+	if !h.equal2(v.ID, w.ID) {
+		return false
+	}
+	return true
+}
+func (h cborgen) check24(v RunInterrupted, b *cborgenCodec.Budget, d, cap int) (err error) {
+	defer func() {
+		if err == nil && v.Validate() != nil {
+			err = cborgenCodec.ErrInvalidData
+		}
+	}()
+	count := 1
+	if err := b.CheckMap(count, d, cap); err != nil {
+		return err
+	}
+	if err := b.CheckString("r", d+1, int(^uint(0)>>1)); err != nil {
+		return cborgenFmt.Errorf("ID: %w", err)
+	}
+	if err := h.check2(v.ID, b, d+1, int(^uint(0)>>1)); err != nil {
+		return cborgenFmt.Errorf("ID: %w", err)
+	}
+	return nil
+}
+func (h cborgen) append24(out []byte, v RunInterrupted) []byte {
+	count := 1
+	out = cborgenCBOR.AppendMapHeader(out, uint64(count))
+	out = cborgenCBOR.AppendText(out, "r")
+	out = h.append2(out, v.ID)
+	return out
+}
+func (h cborgen) read24(r *cborgenCodec.Reader, d, cap int) (v RunInterrupted, err error) {
+	defer func() {
+		if err == nil && v.Validate() != nil {
+			err = cborgenCodec.ErrInvalidData
+		}
+	}()
+	count, err := r.Map(d, cap)
+	if err != nil {
+		return v, err
+	}
+	previous := ""
+	var seen [1]bool
+	for i := 0; i < count; i++ {
+		key, err := r.String(d+1, int(^uint(0)>>1))
+		if err != nil {
+			return v, err
+		}
+		// Strict canonical key ordering also rejects duplicates before assignment can overwrite them.
+		if i > 0 && (len(key) < len(previous) || (len(key) == len(previous) && key <= previous)) {
+			return v, cborgenCodec.ErrInvalidData
+		}
+		previous = key
+		switch key {
+		case "r":
+			seen[0] = true
+			v.ID, err = h.read2(r, d+1, int(^uint(0)>>1))
+			if err != nil {
+				return v, cborgenFmt.Errorf("ID: %w", err)
+			}
+		default:
+			return v, cborgenCodec.ErrInvalidData
+		}
+	}
+	if !seen[0] {
+		return v, cborgenCodec.ErrInvalidData
+	}
+	return v, nil
+}
+
+// Helpers 25: RunStarted.
+func (h cborgen) clone25(v RunStarted) RunStarted {
+	out := v
+	out.ID = h.clone2(v.ID)
+	return out
+}
+func (h cborgen) equal25(v, w RunStarted) bool {
+	if !h.equal2(v.ID, w.ID) {
+		return false
+	}
+	return true
+}
+func (h cborgen) check25(v RunStarted, b *cborgenCodec.Budget, d, cap int) (err error) {
+	defer func() {
+		if err == nil && v.Validate() != nil {
+			err = cborgenCodec.ErrInvalidData
+		}
+	}()
+	count := 1
+	if err := b.CheckMap(count, d, cap); err != nil {
+		return err
+	}
+	if err := b.CheckString("r", d+1, int(^uint(0)>>1)); err != nil {
+		return cborgenFmt.Errorf("ID: %w", err)
+	}
+	if err := h.check2(v.ID, b, d+1, int(^uint(0)>>1)); err != nil {
+		return cborgenFmt.Errorf("ID: %w", err)
+	}
+	return nil
+}
+func (h cborgen) append25(out []byte, v RunStarted) []byte {
+	count := 1
+	out = cborgenCBOR.AppendMapHeader(out, uint64(count))
+	out = cborgenCBOR.AppendText(out, "r")
+	out = h.append2(out, v.ID)
+	return out
+}
+func (h cborgen) read25(r *cborgenCodec.Reader, d, cap int) (v RunStarted, err error) {
+	defer func() {
+		if err == nil && v.Validate() != nil {
+			err = cborgenCodec.ErrInvalidData
+		}
+	}()
+	count, err := r.Map(d, cap)
+	if err != nil {
+		return v, err
+	}
+	previous := ""
+	var seen [1]bool
+	for i := 0; i < count; i++ {
+		key, err := r.String(d+1, int(^uint(0)>>1))
+		if err != nil {
+			return v, err
+		}
+		// Strict canonical key ordering also rejects duplicates before assignment can overwrite them.
+		if i > 0 && (len(key) < len(previous) || (len(key) == len(previous) && key <= previous)) {
+			return v, cborgenCodec.ErrInvalidData
+		}
+		previous = key
+		switch key {
+		case "r":
+			seen[0] = true
+			v.ID, err = h.read2(r, d+1, int(^uint(0)>>1))
+			if err != nil {
+				return v, cborgenFmt.Errorf("ID: %w", err)
+			}
+		default:
+			return v, cborgenCodec.ErrInvalidData
+		}
+	}
+	if !seen[0] {
+		return v, cborgenCodec.ErrInvalidData
+	}
+	return v, nil
+}
+
+// Helpers 26: ToolCatalog.
+func (h cborgen) clone26(v ToolCatalog) ToolCatalog {
+	out := v
+	out.Tools = h.clone27(v.Tools)
+	return out
+}
+func (h cborgen) equal26(v, w ToolCatalog) bool {
+	if !h.equal27(v.Tools, w.Tools) {
+		return false
+	}
+	return true
+}
+func (h cborgen) check26(v ToolCatalog, b *cborgenCodec.Budget, d, cap int) (err error) {
+	defer func() {
+		if err == nil && v.Validate() != nil {
+			err = cborgenCodec.ErrInvalidData
+		}
+	}()
+	count := 1
+	if err := b.CheckMap(count, d, cap); err != nil {
+		return err
+	}
+	if err := b.CheckString("t", d+1, int(^uint(0)>>1)); err != nil {
+		return cborgenFmt.Errorf("Tools: %w", err)
+	}
+	if err := h.check27(v.Tools, b, d+1, int(^uint(0)>>1)); err != nil {
+		return cborgenFmt.Errorf("Tools: %w", err)
+	}
+	return nil
+}
+func (h cborgen) append26(out []byte, v ToolCatalog) []byte {
+	count := 1
+	out = cborgenCBOR.AppendMapHeader(out, uint64(count))
+	out = cborgenCBOR.AppendText(out, "t")
+	out = h.append27(out, v.Tools)
+	return out
+}
+func (h cborgen) read26(r *cborgenCodec.Reader, d, cap int) (v ToolCatalog, err error) {
+	defer func() {
+		if err == nil && v.Validate() != nil {
+			err = cborgenCodec.ErrInvalidData
+		}
+	}()
+	count, err := r.Map(d, cap)
+	if err != nil {
+		return v, err
+	}
+	previous := ""
+	var seen [1]bool
+	for i := 0; i < count; i++ {
+		key, err := r.String(d+1, int(^uint(0)>>1))
+		if err != nil {
+			return v, err
+		}
+		// Strict canonical key ordering also rejects duplicates before assignment can overwrite them.
+		if i > 0 && (len(key) < len(previous) || (len(key) == len(previous) && key <= previous)) {
+			return v, cborgenCodec.ErrInvalidData
+		}
+		previous = key
+		switch key {
+		case "t":
+			seen[0] = true
+			v.Tools, err = h.read27(r, d+1, int(^uint(0)>>1))
+			if err != nil {
+				return v, cborgenFmt.Errorf("Tools: %w", err)
+			}
+		default:
+			return v, cborgenCodec.ErrInvalidData
+		}
+	}
+	if !seen[0] {
+		return v, cborgenCodec.ErrInvalidData
+	}
+	return v, nil
+}
+
+// Helpers 27: []ToolDefinition.
+func (h cborgen) clone27(v []ToolDefinition) []ToolDefinition {
+	if v == nil {
+		return nil
+	}
+	out := make([]ToolDefinition, len(v))
+	for i := range v {
+		out[i] = h.clone28(v[i])
+	}
+	return out
+}
+func (h cborgen) equal27(v, w []ToolDefinition) bool {
+	if len(v) != len(w) {
+		return false
+	}
+	for i := range v {
+		if !h.equal28(v[i], w[i]) {
+			return false
+		}
+	}
+	return true
+}
+func (h cborgen) check27(v []ToolDefinition, b *cborgenCodec.Budget, d, cap int) (err error) {
+	if err := b.CheckArray(len(v), d, cap); err != nil {
+		return err
+	}
+	for i, x := range v {
+		if err := h.check28(x, b, d+1, int(^uint(0)>>1)); err != nil {
+			return cborgenFmt.Errorf("index %d: %w", i, err)
+		}
+	}
+	return nil
+}
+func (h cborgen) append27(out []byte, v []ToolDefinition) []byte {
+	out = cborgenCBOR.AppendArrayHeader(out, uint64(len(v)))
+	for _, x := range v {
+		out = h.append28(out, x)
+	}
+	return out
+}
+func (h cborgen) read27(r *cborgenCodec.Reader, d, cap int) (v []ToolDefinition, err error) {
+	count, err := r.Array(d, cap)
+	if err != nil {
+		return v, err
+	}
+	v = make([]ToolDefinition, count)
+	for i := range v {
+		v[i], err = h.read28(r, d+1, int(^uint(0)>>1))
+		if err != nil {
+			return v, cborgenFmt.Errorf("index %d: %w", i, err)
+		}
+	}
+	return v, nil
+}
+
+// Helpers 28: ToolDefinition.
+func (h cborgen) clone28(v ToolDefinition) ToolDefinition {
+	out := v
+	out.Name = h.clone10(v.Name)
+	out.Description = h.clone10(v.Description)
+	out.ArgumentSchema = h.clone29(v.ArgumentSchema)
+	return out
+}
+func (h cborgen) equal28(v, w ToolDefinition) bool {
+	if !h.equal10(v.Name, w.Name) {
+		return false
+	}
+	if !h.equal10(v.Description, w.Description) {
+		return false
+	}
+	if !h.equal29(v.ArgumentSchema, w.ArgumentSchema) {
+		return false
+	}
+	return true
+}
+func (h cborgen) check28(v ToolDefinition, b *cborgenCodec.Budget, d, cap int) (err error) {
+	defer func() {
+		if err == nil && v.Validate() != nil {
+			err = cborgenCodec.ErrInvalidData
+		}
+	}()
+	count := 3
+	if err := b.CheckMap(count, d, cap); err != nil {
+		return err
+	}
+	if err := b.CheckString("d", d+1, int(^uint(0)>>1)); err != nil {
+		return cborgenFmt.Errorf("Description: %w", err)
+	}
+	if err := h.check10(v.Description, b, d+1, int(^uint(0)>>1)); err != nil {
+		return cborgenFmt.Errorf("Description: %w", err)
+	}
+	if err := b.CheckString("n", d+1, int(^uint(0)>>1)); err != nil {
+		return cborgenFmt.Errorf("Name: %w", err)
+	}
+	if err := h.check10(v.Name, b, d+1, int(^uint(0)>>1)); err != nil {
+		return cborgenFmt.Errorf("Name: %w", err)
+	}
+	if err := b.CheckString("s", d+1, int(^uint(0)>>1)); err != nil {
+		return cborgenFmt.Errorf("ArgumentSchema: %w", err)
+	}
+	if err := h.check29(v.ArgumentSchema, b, d+1, int(^uint(0)>>1)); err != nil {
+		return cborgenFmt.Errorf("ArgumentSchema: %w", err)
+	}
+	return nil
+}
+func (h cborgen) append28(out []byte, v ToolDefinition) []byte {
+	count := 3
+	out = cborgenCBOR.AppendMapHeader(out, uint64(count))
+	out = cborgenCBOR.AppendText(out, "d")
+	out = h.append10(out, v.Description)
+	out = cborgenCBOR.AppendText(out, "n")
+	out = h.append10(out, v.Name)
+	out = cborgenCBOR.AppendText(out, "s")
+	out = h.append29(out, v.ArgumentSchema)
+	return out
+}
+func (h cborgen) read28(r *cborgenCodec.Reader, d, cap int) (v ToolDefinition, err error) {
+	defer func() {
+		if err == nil && v.Validate() != nil {
+			err = cborgenCodec.ErrInvalidData
+		}
+	}()
+	count, err := r.Map(d, cap)
+	if err != nil {
+		return v, err
+	}
+	previous := ""
+	var seen [3]bool
+	for i := 0; i < count; i++ {
+		key, err := r.String(d+1, int(^uint(0)>>1))
+		if err != nil {
+			return v, err
+		}
+		// Strict canonical key ordering also rejects duplicates before assignment can overwrite them.
+		if i > 0 && (len(key) < len(previous) || (len(key) == len(previous) && key <= previous)) {
+			return v, cborgenCodec.ErrInvalidData
+		}
+		previous = key
+		switch key {
+		case "d":
+			seen[0] = true
+			v.Description, err = h.read10(r, d+1, int(^uint(0)>>1))
+			if err != nil {
+				return v, cborgenFmt.Errorf("Description: %w", err)
+			}
+		case "n":
+			seen[1] = true
+			v.Name, err = h.read10(r, d+1, int(^uint(0)>>1))
+			if err != nil {
+				return v, cborgenFmt.Errorf("Name: %w", err)
+			}
+		case "s":
+			seen[2] = true
+			v.ArgumentSchema, err = h.read29(r, d+1, int(^uint(0)>>1))
+			if err != nil {
+				return v, cborgenFmt.Errorf("ArgumentSchema: %w", err)
+			}
+		default:
+			return v, cborgenCodec.ErrInvalidData
+		}
+	}
+	if !seen[0] {
+		return v, cborgenCodec.ErrInvalidData
+	}
+	if !seen[1] {
+		return v, cborgenCodec.ErrInvalidData
+	}
+	if !seen[2] {
+		return v, cborgenCodec.ErrInvalidData
+	}
+	return v, nil
+}
+
 // Helpers 29: []byte.
 func (h cborgen) clone29(v []byte) []byte {
 	if v == nil {
@@ -2853,7 +2750,7 @@ func (h cborgen) clone29(v []byte) []byte {
 	}
 	out := make([]byte, len(v))
 	for i := range v {
-		out[i] = h.clone17(v[i])
+		out[i] = h.clone14(v[i])
 	}
 	return out
 }
@@ -2862,7 +2759,7 @@ func (h cborgen) equal29(v, w []byte) bool {
 		return false
 	}
 	for i := range v {
-		if !h.equal17(v[i], w[i]) {
+		if !h.equal14(v[i], w[i]) {
 			return false
 		}
 	}
@@ -2890,472 +2787,27 @@ func (h cborgen) read29(r *cborgenCodec.Reader, d, cap int) (v []byte, err error
 	return v, nil
 }
 
-// Helpers 30: RunInterrupted.
-func (h cborgen) clone30(v RunInterrupted) RunInterrupted {
-	out := v
-	out.ID = h.clone2(v.ID)
-	return out
-}
-func (h cborgen) equal30(v, w RunInterrupted) bool {
-	if !h.equal2(v.ID, w.ID) {
-		return false
-	}
-	return true
-}
-func (h cborgen) check30(v RunInterrupted, b *cborgenCodec.Budget, d, cap int) (err error) {
-	defer func() {
-		if err == nil && v.Validate() != nil {
-			err = cborgenCodec.ErrInvalidData
-		}
-	}()
-	count := 1
-	if err := b.CheckMap(count, d, cap); err != nil {
-		return err
-	}
-	if err := b.CheckString("r", d+1, int(^uint(0)>>1)); err != nil {
-		return cborgenFmt.Errorf("ID: %w", err)
-	}
-	if err := h.check2(v.ID, b, d+1, int(^uint(0)>>1)); err != nil {
-		return cborgenFmt.Errorf("ID: %w", err)
-	}
-	return nil
-}
-func (h cborgen) append30(out []byte, v RunInterrupted) []byte {
-	count := 1
-	out = cborgenCBOR.AppendMapHeader(out, uint64(count))
-	out = cborgenCBOR.AppendText(out, "r")
-	out = h.append2(out, v.ID)
-	return out
-}
-func (h cborgen) read30(r *cborgenCodec.Reader, d, cap int) (v RunInterrupted, err error) {
-	defer func() {
-		if err == nil && v.Validate() != nil {
-			err = cborgenCodec.ErrInvalidData
-		}
-	}()
-	count, err := r.Map(d, cap)
-	if err != nil {
-		return v, err
-	}
-	previous := ""
-	var seen [1]bool
-	for i := 0; i < count; i++ {
-		key, err := r.String(d+1, int(^uint(0)>>1))
-		if err != nil {
-			return v, err
-		}
-		// Strict canonical key ordering also rejects duplicates before assignment can overwrite them.
-		if i > 0 && (len(key) < len(previous) || (len(key) == len(previous) && key <= previous)) {
-			return v, cborgenCodec.ErrInvalidData
-		}
-		previous = key
-		switch key {
-		case "r":
-			seen[0] = true
-			v.ID, err = h.read2(r, d+1, int(^uint(0)>>1))
-			if err != nil {
-				return v, cborgenFmt.Errorf("ID: %w", err)
-			}
-		default:
-			return v, cborgenCodec.ErrInvalidData
-		}
-	}
-	if !seen[0] {
-		return v, cborgenCodec.ErrInvalidData
-	}
-	return v, nil
-}
-
-// Helpers 31: RunStarted.
-func (h cborgen) clone31(v RunStarted) RunStarted {
-	out := v
-	out.ID = h.clone2(v.ID)
-	return out
-}
-func (h cborgen) equal31(v, w RunStarted) bool {
-	if !h.equal2(v.ID, w.ID) {
-		return false
-	}
-	return true
-}
-func (h cborgen) check31(v RunStarted, b *cborgenCodec.Budget, d, cap int) (err error) {
-	defer func() {
-		if err == nil && v.Validate() != nil {
-			err = cborgenCodec.ErrInvalidData
-		}
-	}()
-	count := 1
-	if err := b.CheckMap(count, d, cap); err != nil {
-		return err
-	}
-	if err := b.CheckString("r", d+1, int(^uint(0)>>1)); err != nil {
-		return cborgenFmt.Errorf("ID: %w", err)
-	}
-	if err := h.check2(v.ID, b, d+1, int(^uint(0)>>1)); err != nil {
-		return cborgenFmt.Errorf("ID: %w", err)
-	}
-	return nil
-}
-func (h cborgen) append31(out []byte, v RunStarted) []byte {
-	count := 1
-	out = cborgenCBOR.AppendMapHeader(out, uint64(count))
-	out = cborgenCBOR.AppendText(out, "r")
-	out = h.append2(out, v.ID)
-	return out
-}
-func (h cborgen) read31(r *cborgenCodec.Reader, d, cap int) (v RunStarted, err error) {
-	defer func() {
-		if err == nil && v.Validate() != nil {
-			err = cborgenCodec.ErrInvalidData
-		}
-	}()
-	count, err := r.Map(d, cap)
-	if err != nil {
-		return v, err
-	}
-	previous := ""
-	var seen [1]bool
-	for i := 0; i < count; i++ {
-		key, err := r.String(d+1, int(^uint(0)>>1))
-		if err != nil {
-			return v, err
-		}
-		// Strict canonical key ordering also rejects duplicates before assignment can overwrite them.
-		if i > 0 && (len(key) < len(previous) || (len(key) == len(previous) && key <= previous)) {
-			return v, cborgenCodec.ErrInvalidData
-		}
-		previous = key
-		switch key {
-		case "r":
-			seen[0] = true
-			v.ID, err = h.read2(r, d+1, int(^uint(0)>>1))
-			if err != nil {
-				return v, cborgenFmt.Errorf("ID: %w", err)
-			}
-		default:
-			return v, cborgenCodec.ErrInvalidData
-		}
-	}
-	if !seen[0] {
-		return v, cborgenCodec.ErrInvalidData
-	}
-	return v, nil
-}
-
-// Helpers 32: ToolCatalog.
-func (h cborgen) clone32(v ToolCatalog) ToolCatalog {
-	out := v
-	out.Tools = h.clone33(v.Tools)
-	return out
-}
-func (h cborgen) equal32(v, w ToolCatalog) bool {
-	if !h.equal33(v.Tools, w.Tools) {
-		return false
-	}
-	return true
-}
-func (h cborgen) check32(v ToolCatalog, b *cborgenCodec.Budget, d, cap int) (err error) {
-	defer func() {
-		if err == nil && v.Validate() != nil {
-			err = cborgenCodec.ErrInvalidData
-		}
-	}()
-	count := 1
-	if err := b.CheckMap(count, d, cap); err != nil {
-		return err
-	}
-	if err := b.CheckString("t", d+1, int(^uint(0)>>1)); err != nil {
-		return cborgenFmt.Errorf("Tools: %w", err)
-	}
-	if err := h.check33(v.Tools, b, d+1, int(^uint(0)>>1)); err != nil {
-		return cborgenFmt.Errorf("Tools: %w", err)
-	}
-	return nil
-}
-func (h cborgen) append32(out []byte, v ToolCatalog) []byte {
-	count := 1
-	out = cborgenCBOR.AppendMapHeader(out, uint64(count))
-	out = cborgenCBOR.AppendText(out, "t")
-	out = h.append33(out, v.Tools)
-	return out
-}
-func (h cborgen) read32(r *cborgenCodec.Reader, d, cap int) (v ToolCatalog, err error) {
-	defer func() {
-		if err == nil && v.Validate() != nil {
-			err = cborgenCodec.ErrInvalidData
-		}
-	}()
-	count, err := r.Map(d, cap)
-	if err != nil {
-		return v, err
-	}
-	previous := ""
-	var seen [1]bool
-	for i := 0; i < count; i++ {
-		key, err := r.String(d+1, int(^uint(0)>>1))
-		if err != nil {
-			return v, err
-		}
-		// Strict canonical key ordering also rejects duplicates before assignment can overwrite them.
-		if i > 0 && (len(key) < len(previous) || (len(key) == len(previous) && key <= previous)) {
-			return v, cborgenCodec.ErrInvalidData
-		}
-		previous = key
-		switch key {
-		case "t":
-			seen[0] = true
-			v.Tools, err = h.read33(r, d+1, int(^uint(0)>>1))
-			if err != nil {
-				return v, cborgenFmt.Errorf("Tools: %w", err)
-			}
-		default:
-			return v, cborgenCodec.ErrInvalidData
-		}
-	}
-	if !seen[0] {
-		return v, cborgenCodec.ErrInvalidData
-	}
-	return v, nil
-}
-
-// Helpers 33: []ToolDefinition.
-func (h cborgen) clone33(v []ToolDefinition) []ToolDefinition {
-	if v == nil {
-		return nil
-	}
-	out := make([]ToolDefinition, len(v))
-	for i := range v {
-		out[i] = h.clone34(v[i])
-	}
-	return out
-}
-func (h cborgen) equal33(v, w []ToolDefinition) bool {
-	if len(v) != len(w) {
-		return false
-	}
-	for i := range v {
-		if !h.equal34(v[i], w[i]) {
-			return false
-		}
-	}
-	return true
-}
-func (h cborgen) check33(v []ToolDefinition, b *cborgenCodec.Budget, d, cap int) (err error) {
-	if err := b.CheckArray(len(v), d, cap); err != nil {
-		return err
-	}
-	for i, x := range v {
-		if err := h.check34(x, b, d+1, int(^uint(0)>>1)); err != nil {
-			return cborgenFmt.Errorf("index %d: %w", i, err)
-		}
-	}
-	return nil
-}
-func (h cborgen) append33(out []byte, v []ToolDefinition) []byte {
-	out = cborgenCBOR.AppendArrayHeader(out, uint64(len(v)))
-	for _, x := range v {
-		out = h.append34(out, x)
-	}
-	return out
-}
-func (h cborgen) read33(r *cborgenCodec.Reader, d, cap int) (v []ToolDefinition, err error) {
-	count, err := r.Array(d, cap)
-	if err != nil {
-		return v, err
-	}
-	v = make([]ToolDefinition, count)
-	for i := range v {
-		v[i], err = h.read34(r, d+1, int(^uint(0)>>1))
-		if err != nil {
-			return v, cborgenFmt.Errorf("index %d: %w", i, err)
-		}
-	}
-	return v, nil
-}
-
-// Helpers 34: ToolDefinition.
-func (h cborgen) clone34(v ToolDefinition) ToolDefinition {
-	out := v
-	out.Name = h.clone8(v.Name)
-	out.Description = h.clone8(v.Description)
-	out.ArgumentSchema = h.clone35(v.ArgumentSchema)
-	return out
-}
-func (h cborgen) equal34(v, w ToolDefinition) bool {
-	if !h.equal8(v.Name, w.Name) {
-		return false
-	}
-	if !h.equal8(v.Description, w.Description) {
-		return false
-	}
-	if !h.equal35(v.ArgumentSchema, w.ArgumentSchema) {
-		return false
-	}
-	return true
-}
-func (h cborgen) check34(v ToolDefinition, b *cborgenCodec.Budget, d, cap int) (err error) {
-	defer func() {
-		if err == nil && v.Validate() != nil {
-			err = cborgenCodec.ErrInvalidData
-		}
-	}()
-	count := 3
-	if err := b.CheckMap(count, d, cap); err != nil {
-		return err
-	}
-	if err := b.CheckString("d", d+1, int(^uint(0)>>1)); err != nil {
-		return cborgenFmt.Errorf("Description: %w", err)
-	}
-	if err := h.check8(v.Description, b, d+1, int(^uint(0)>>1)); err != nil {
-		return cborgenFmt.Errorf("Description: %w", err)
-	}
-	if err := b.CheckString("n", d+1, int(^uint(0)>>1)); err != nil {
-		return cborgenFmt.Errorf("Name: %w", err)
-	}
-	if err := h.check8(v.Name, b, d+1, int(^uint(0)>>1)); err != nil {
-		return cborgenFmt.Errorf("Name: %w", err)
-	}
-	if err := b.CheckString("s", d+1, int(^uint(0)>>1)); err != nil {
-		return cborgenFmt.Errorf("ArgumentSchema: %w", err)
-	}
-	if err := h.check35(v.ArgumentSchema, b, d+1, int(^uint(0)>>1)); err != nil {
-		return cborgenFmt.Errorf("ArgumentSchema: %w", err)
-	}
-	return nil
-}
-func (h cborgen) append34(out []byte, v ToolDefinition) []byte {
-	count := 3
-	out = cborgenCBOR.AppendMapHeader(out, uint64(count))
-	out = cborgenCBOR.AppendText(out, "d")
-	out = h.append8(out, v.Description)
-	out = cborgenCBOR.AppendText(out, "n")
-	out = h.append8(out, v.Name)
-	out = cborgenCBOR.AppendText(out, "s")
-	out = h.append35(out, v.ArgumentSchema)
-	return out
-}
-func (h cborgen) read34(r *cborgenCodec.Reader, d, cap int) (v ToolDefinition, err error) {
-	defer func() {
-		if err == nil && v.Validate() != nil {
-			err = cborgenCodec.ErrInvalidData
-		}
-	}()
-	count, err := r.Map(d, cap)
-	if err != nil {
-		return v, err
-	}
-	previous := ""
-	var seen [3]bool
-	for i := 0; i < count; i++ {
-		key, err := r.String(d+1, int(^uint(0)>>1))
-		if err != nil {
-			return v, err
-		}
-		// Strict canonical key ordering also rejects duplicates before assignment can overwrite them.
-		if i > 0 && (len(key) < len(previous) || (len(key) == len(previous) && key <= previous)) {
-			return v, cborgenCodec.ErrInvalidData
-		}
-		previous = key
-		switch key {
-		case "d":
-			seen[0] = true
-			v.Description, err = h.read8(r, d+1, int(^uint(0)>>1))
-			if err != nil {
-				return v, cborgenFmt.Errorf("Description: %w", err)
-			}
-		case "n":
-			seen[1] = true
-			v.Name, err = h.read8(r, d+1, int(^uint(0)>>1))
-			if err != nil {
-				return v, cborgenFmt.Errorf("Name: %w", err)
-			}
-		case "s":
-			seen[2] = true
-			v.ArgumentSchema, err = h.read35(r, d+1, int(^uint(0)>>1))
-			if err != nil {
-				return v, cborgenFmt.Errorf("ArgumentSchema: %w", err)
-			}
-		default:
-			return v, cborgenCodec.ErrInvalidData
-		}
-	}
-	if !seen[0] {
-		return v, cborgenCodec.ErrInvalidData
-	}
-	if !seen[1] {
-		return v, cborgenCodec.ErrInvalidData
-	}
-	if !seen[2] {
-		return v, cborgenCodec.ErrInvalidData
-	}
-	return v, nil
-}
-
-// Helpers 35: []byte.
-func (h cborgen) clone35(v []byte) []byte {
-	if v == nil {
-		return nil
-	}
-	out := make([]byte, len(v))
-	for i := range v {
-		out[i] = h.clone17(v[i])
-	}
-	return out
-}
-func (h cborgen) equal35(v, w []byte) bool {
-	if len(v) != len(w) {
-		return false
-	}
-	for i := range v {
-		if !h.equal17(v[i], w[i]) {
-			return false
-		}
-	}
-	return true
-}
-func (h cborgen) check35(v []byte, b *cborgenCodec.Budget, d, cap int) (err error) {
-	return b.CheckBytes(len(v), d, cap)
-}
-func (h cborgen) append35(out []byte, v []byte) []byte {
-	out = cborgenCBOR.AppendBytesHeader(out, uint64(len(v)))
-	for _, x := range v {
-		out = append(out, byte(x))
-	}
-	return out
-}
-func (h cborgen) read35(r *cborgenCodec.Reader, d, cap int) (v []byte, err error) {
-	x, err := r.Bytes(d, cap)
-	if err != nil {
-		return v, err
-	}
-	v = make([]byte, len(x))
-	for i := range x {
-		v[i] = byte(x[i])
-	}
-	return v, nil
-}
-
-// Helpers 36: UserInput.
-func (h cborgen) clone36(v UserInput) UserInput {
+// Helpers 30: UserInput.
+func (h cborgen) clone30(v UserInput) UserInput {
 	out := v
 	out.RunID = h.clone2(v.RunID)
 	out.ID = h.clone2(v.ID)
-	out.Messages = h.clone37(v.Messages)
+	out.Parts = h.clone31(v.Parts)
 	return out
 }
-func (h cborgen) equal36(v, w UserInput) bool {
+func (h cborgen) equal30(v, w UserInput) bool {
 	if !h.equal2(v.RunID, w.RunID) {
 		return false
 	}
 	if !h.equal2(v.ID, w.ID) {
 		return false
 	}
-	if !h.equal37(v.Messages, w.Messages) {
+	if !h.equal31(v.Parts, w.Parts) {
 		return false
 	}
 	return true
 }
-func (h cborgen) check36(v UserInput, b *cborgenCodec.Budget, d, cap int) (err error) {
+func (h cborgen) check30(v UserInput, b *cborgenCodec.Budget, d, cap int) (err error) {
 	defer func() {
 		if err == nil && v.Validate() != nil {
 			err = cborgenCodec.ErrInvalidData
@@ -3371,11 +2823,11 @@ func (h cborgen) check36(v UserInput, b *cborgenCodec.Budget, d, cap int) (err e
 	if err := h.check2(v.ID, b, d+1, int(^uint(0)>>1)); err != nil {
 		return cborgenFmt.Errorf("ID: %w", err)
 	}
-	if err := b.CheckString("m", d+1, int(^uint(0)>>1)); err != nil {
-		return cborgenFmt.Errorf("Messages: %w", err)
+	if err := b.CheckString("p", d+1, int(^uint(0)>>1)); err != nil {
+		return cborgenFmt.Errorf("Parts: %w", err)
 	}
-	if err := h.check37(v.Messages, b, d+1, int(^uint(0)>>1)); err != nil {
-		return cborgenFmt.Errorf("Messages: %w", err)
+	if err := h.check31(v.Parts, b, d+1, int(^uint(0)>>1)); err != nil {
+		return cborgenFmt.Errorf("Parts: %w", err)
 	}
 	if err := b.CheckString("r", d+1, int(^uint(0)>>1)); err != nil {
 		return cborgenFmt.Errorf("RunID: %w", err)
@@ -3385,18 +2837,18 @@ func (h cborgen) check36(v UserInput, b *cborgenCodec.Budget, d, cap int) (err e
 	}
 	return nil
 }
-func (h cborgen) append36(out []byte, v UserInput) []byte {
+func (h cborgen) append30(out []byte, v UserInput) []byte {
 	count := 3
 	out = cborgenCBOR.AppendMapHeader(out, uint64(count))
 	out = cborgenCBOR.AppendText(out, "i")
 	out = h.append2(out, v.ID)
-	out = cborgenCBOR.AppendText(out, "m")
-	out = h.append37(out, v.Messages)
+	out = cborgenCBOR.AppendText(out, "p")
+	out = h.append31(out, v.Parts)
 	out = cborgenCBOR.AppendText(out, "r")
 	out = h.append2(out, v.RunID)
 	return out
 }
-func (h cborgen) read36(r *cborgenCodec.Reader, d, cap int) (v UserInput, err error) {
+func (h cborgen) read30(r *cborgenCodec.Reader, d, cap int) (v UserInput, err error) {
 	defer func() {
 		if err == nil && v.Validate() != nil {
 			err = cborgenCodec.ErrInvalidData
@@ -3425,11 +2877,11 @@ func (h cborgen) read36(r *cborgenCodec.Reader, d, cap int) (v UserInput, err er
 			if err != nil {
 				return v, cborgenFmt.Errorf("ID: %w", err)
 			}
-		case "m":
+		case "p":
 			seen[1] = true
-			v.Messages, err = h.read37(r, d+1, int(^uint(0)>>1))
+			v.Parts, err = h.read31(r, d+1, int(^uint(0)>>1))
 			if err != nil {
-				return v, cborgenFmt.Errorf("Messages: %w", err)
+				return v, cborgenFmt.Errorf("Parts: %w", err)
 			}
 		case "r":
 			seen[2] = true
@@ -3453,123 +2905,57 @@ func (h cborgen) read36(r *cborgenCodec.Reader, d, cap int) (v UserInput, err er
 	return v, nil
 }
 
-// Helpers 37: []AuthoredMessage.
-func (h cborgen) clone37(v []AuthoredMessage) []AuthoredMessage {
+// Helpers 31: []ContentPart.
+func (h cborgen) clone31(v []ContentPart) []ContentPart {
 	if v == nil {
 		return nil
 	}
-	out := make([]AuthoredMessage, len(v))
+	out := make([]ContentPart, len(v))
 	for i := range v {
-		out[i] = h.clone38(v[i])
+		out[i] = h.clone9(v[i])
 	}
 	return out
 }
-func (h cborgen) equal37(v, w []AuthoredMessage) bool {
+func (h cborgen) equal31(v, w []ContentPart) bool {
 	if len(v) != len(w) {
 		return false
 	}
 	for i := range v {
-		if !h.equal38(v[i], w[i]) {
+		if !h.equal9(v[i], w[i]) {
 			return false
 		}
 	}
 	return true
 }
-func (h cborgen) check37(v []AuthoredMessage, b *cborgenCodec.Budget, d, cap int) (err error) {
+func (h cborgen) check31(v []ContentPart, b *cborgenCodec.Budget, d, cap int) (err error) {
 	if err := b.CheckArray(len(v), d, cap); err != nil {
 		return err
 	}
 	for i, x := range v {
-		if err := h.check38(x, b, d+1, int(^uint(0)>>1)); err != nil {
+		if err := h.check9(x, b, d+1, int(^uint(0)>>1)); err != nil {
 			return cborgenFmt.Errorf("index %d: %w", i, err)
 		}
 	}
 	return nil
 }
-func (h cborgen) append37(out []byte, v []AuthoredMessage) []byte {
+func (h cborgen) append31(out []byte, v []ContentPart) []byte {
 	out = cborgenCBOR.AppendArrayHeader(out, uint64(len(v)))
 	for _, x := range v {
-		out = h.append38(out, x)
+		out = h.append9(out, x)
 	}
 	return out
 }
-func (h cborgen) read37(r *cborgenCodec.Reader, d, cap int) (v []AuthoredMessage, err error) {
+func (h cborgen) read31(r *cborgenCodec.Reader, d, cap int) (v []ContentPart, err error) {
 	count, err := r.Array(d, cap)
 	if err != nil {
 		return v, err
 	}
-	v = make([]AuthoredMessage, count)
+	v = make([]ContentPart, count)
 	for i := range v {
-		v[i], err = h.read38(r, d+1, int(^uint(0)>>1))
+		v[i], err = h.read9(r, d+1, int(^uint(0)>>1))
 		if err != nil {
 			return v, cborgenFmt.Errorf("index %d: %w", i, err)
 		}
-	}
-	return v, nil
-}
-
-// Helpers 38: AuthoredMessage.
-func (h cborgen) clone38(v AuthoredMessage) AuthoredMessage {
-	out := v
-	out.Content = h.clone9(v.Content)
-	return out
-}
-func (h cborgen) equal38(v, w AuthoredMessage) bool {
-	if !h.equal9(v.Content, w.Content) {
-		return false
-	}
-	return true
-}
-func (h cborgen) check38(v AuthoredMessage, b *cborgenCodec.Budget, d, cap int) (err error) {
-	count := 1
-	if err := b.CheckMap(count, d, cap); err != nil {
-		return err
-	}
-	if err := b.CheckString("c", d+1, int(^uint(0)>>1)); err != nil {
-		return cborgenFmt.Errorf("Content: %w", err)
-	}
-	if err := h.check9(v.Content, b, d+1, int(^uint(0)>>1)); err != nil {
-		return cborgenFmt.Errorf("Content: %w", err)
-	}
-	return nil
-}
-func (h cborgen) append38(out []byte, v AuthoredMessage) []byte {
-	count := 1
-	out = cborgenCBOR.AppendMapHeader(out, uint64(count))
-	out = cborgenCBOR.AppendText(out, "c")
-	out = h.append9(out, v.Content)
-	return out
-}
-func (h cborgen) read38(r *cborgenCodec.Reader, d, cap int) (v AuthoredMessage, err error) {
-	count, err := r.Map(d, cap)
-	if err != nil {
-		return v, err
-	}
-	previous := ""
-	var seen [1]bool
-	for i := 0; i < count; i++ {
-		key, err := r.String(d+1, int(^uint(0)>>1))
-		if err != nil {
-			return v, err
-		}
-		// Strict canonical key ordering also rejects duplicates before assignment can overwrite them.
-		if i > 0 && (len(key) < len(previous) || (len(key) == len(previous) && key <= previous)) {
-			return v, cborgenCodec.ErrInvalidData
-		}
-		previous = key
-		switch key {
-		case "c":
-			seen[0] = true
-			v.Content, err = h.read9(r, d+1, int(^uint(0)>>1))
-			if err != nil {
-				return v, cborgenFmt.Errorf("Content: %w", err)
-			}
-		default:
-			return v, cborgenCodec.ErrInvalidData
-		}
-	}
-	if !seen[0] {
-		return v, cborgenCodec.ErrInvalidData
 	}
 	return v, nil
 }

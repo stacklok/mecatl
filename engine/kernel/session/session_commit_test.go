@@ -72,7 +72,7 @@ func mustBatch(t testing.TB, err error) {
 }
 func batchInput(t testing.TB, b *session.SessionCommit, run session.RunID, content []byte) session.InputID {
 	t.Helper()
-	id, err := b.AddInput(session.AddInputRequest{RunID: run, Messages: byteMessages(content)})
+	id, err := b.AddInput(session.AddInputRequest{RunID: run, Parts: byteParts(content)})
 	mustBatch(t, err)
 	return id
 }
@@ -262,7 +262,7 @@ func TestSessionCommitHandlesDiscardAndFailedAdditions(t *testing.T) {
 			t.Fatal("invalid owner")
 		}
 	}
-	if id, err := b.AddInput(session.AddInputRequest{RunID: run, Messages: byteMessages(make([]byte, testLimits().MaxByteStringBytes+1))}); id != (session.InputID{}) || !errors.Is(err, codec.ErrLimitExceeded) {
+	if id, err := b.AddInput(session.AddInputRequest{RunID: run, Parts: byteParts(make([]byte, testLimits().MaxByteStringBytes+1))}); id != (session.InputID{}) || !errors.Is(err, codec.ErrLimitExceeded) {
 		t.Fatalf("oversize: %v", err)
 	}
 	input := batchInput(t, b, run, []byte("discarded"))
@@ -458,7 +458,7 @@ func TestSessionCommitPayloadLimitRejectsBeforeAllocation(t *testing.T) {
 			}
 			before := s.Snapshot()
 			attempts := len(backend.attempts)
-			if id, err := b.AddInput(session.AddInputRequest{RunID: run, Messages: byteMessages(content)}); id != (session.InputID{}) || !errors.Is(err, codec.ErrLimitExceeded) {
+			if id, err := b.AddInput(session.AddInputRequest{RunID: run, Parts: byteParts(content)}); id != (session.InputID{}) || !errors.Is(err, codec.ErrLimitExceeded) {
 				t.Fatalf("payload-local rejection: %v, %v", id, err)
 			}
 			if !reflect.DeepEqual(before, s.Snapshot()) || len(backend.attempts) != attempts {
@@ -472,7 +472,7 @@ func TestSessionCommitPayloadLimitRejectsBeforeAllocation(t *testing.T) {
 			}
 			submitBatch(t, s, b)
 			view := s.Snapshot()
-			seedRecord, err := session.NewUserInputRecord(session.UserInput{ID: session.InputID{RunID: run, Ordinal: 1}, Messages: byteMessages(seed)}, policy.PayloadLimits)
+			seedRecord, err := session.NewUserInputRecord(session.UserInput{ID: session.InputID{RunID: run, Ordinal: 1}, Parts: byteParts(seed)}, policy.PayloadLimits)
 			mustBatch(t, err)
 			emptyRecord, err := session.NewUserInputRecord(session.UserInput{ID: session.InputID{RunID: run, Ordinal: 2}}, policy.PayloadLimits)
 			mustBatch(t, err)
@@ -488,7 +488,7 @@ func TestSessionCommitPayloadLimitRejectsBeforeAllocation(t *testing.T) {
 		})
 	}
 	if n := testing.AllocsPerRun(10, func() {
-		_, err := session.NewUserInputRecord(session.UserInput{ID: session.InputID{RunID: session.RunID{HistoryID: testHistoryID(t), Ordinal: 1}, Ordinal: 2}, Messages: byteMessages(content)}, testLimits())
+		_, err := session.NewUserInputRecord(session.UserInput{ID: session.InputID{RunID: session.RunID{HistoryID: testHistoryID(t), Ordinal: 1}, Ordinal: 2}, Parts: byteParts(content)}, testLimits())
 		mustBatch(t, err)
 	}); n == 0 {
 		t.Fatal("constructor allocation control")

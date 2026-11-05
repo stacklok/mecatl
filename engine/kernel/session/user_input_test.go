@@ -15,7 +15,7 @@ import (
 func TestUserInput(t *testing.T) {
 	id := session.InputID{RunID: session.RunID{HistoryID: testHistoryID(t), Ordinal: 1}, Ordinal: 1}
 	for _, content := range [][]byte{nil, {}, {0xff, 0, 0x9f}, []byte(`{ "not": json }`), []byte(" e\u0301\r\n")} {
-		v := session.UserInput{ID: id, Messages: byteMessages(bytes.Clone(content))}
+		v := session.UserInput{ID: id, Parts: byteParts(bytes.Clone(content))}
 		if err := v.Validate(); err != nil {
 			t.Fatal(err)
 		}
@@ -32,20 +32,20 @@ func TestUserInput(t *testing.T) {
 		if err != nil || decoded.ID != id.Ordinal || !bytes.Equal(dtoInputBytes(decoded), content) {
 			t.Fatalf("round trip: %v", err)
 		}
-		if len(v.Messages) > 0 {
-			clear(v.Messages[0].Content[0].Media.Source.Inline.Data)
+		if len(v.Parts) > 0 {
+			clear(v.Parts[0].Media.Data)
 		}
 		clear(wire)
 		got, err := codec.Decode[sessionformat.UserInput](r.Format().Payload, testLimits())
-		if err != nil || !got.Equal(sessionformat.UserInput{RunID: 1, ID: 1, Messages: formatByteMessages(content)}) || !cloned.Equal(session.UserInput{ID: id, Messages: byteMessages(content)}) {
+		if err != nil || !got.Equal(sessionformat.UserInput{RunID: 1, ID: 1, Parts: formatByteParts(content)}) || !cloned.Equal(session.UserInput{ID: id, Parts: byteParts(content)}) {
 			t.Fatalf("borrowed storage retained: %v", err)
 		}
 	}
-	if !(session.UserInput{ID: id}).Equal(session.UserInput{ID: id, Messages: []session.AuthoredMessage{}}) {
+	if !(session.UserInput{ID: id}).Equal(session.UserInput{ID: id, Parts: []session.ContentPart{}}) {
 		t.Fatal("nil and empty differ")
 	}
-	if (session.UserInput{ID: id}).Equal(session.UserInput{ID: id, Messages: []session.AuthoredMessage{{}}}) {
-		t.Fatal("empty message boundary lost")
+	if (session.UserInput{ID: id}).Equal(session.UserInput{ID: id, Parts: []session.ContentPart{{Kind: session.ContentText}}}) {
+		t.Fatal("empty text part lost")
 	}
 	if (session.UserInput{}).Validate() == nil {
 		t.Fatal("zero input validated")
@@ -53,7 +53,7 @@ func TestUserInput(t *testing.T) {
 	if r, err := session.NewUserInputRecord(session.UserInput{}, testLimits()); !errors.Is(err, codec.ErrInvalidData) || !reflect.DeepEqual(r, session.Record{}) {
 		t.Fatalf("zero input: %v", err)
 	}
-	invalid := session.UserInput{ID: id, Messages: []session.AuthoredMessage{{Content: session.Content{{Kind: session.ContentText, Text: string([]byte{0xff})}}}}}
+	invalid := session.UserInput{ID: id, Parts: []session.ContentPart{{Kind: session.ContentText, Text: string([]byte{0xff})}}}
 	if invalid.Validate() == nil {
 		t.Fatal("non-UTF-8 text validated")
 	}
@@ -63,7 +63,7 @@ func TestUserInput(t *testing.T) {
 }
 
 func TestUserInputLimitsAndTransactionalRead(t *testing.T) {
-	v := session.UserInput{ID: session.InputID{RunID: session.RunID{HistoryID: testHistoryID(t), Ordinal: 1}, Ordinal: 1}, Messages: byteMessages([]byte{1, 2})}
+	v := session.UserInput{ID: session.InputID{RunID: session.RunID{HistoryID: testHistoryID(t), Ordinal: 1}, Ordinal: 1}, Parts: byteParts([]byte{1, 2})}
 	r, err := session.NewUserInputRecord(v, testLimits())
 	if err != nil {
 		t.Fatal(err)
@@ -82,7 +82,7 @@ func TestUserInputLimitsAndTransactionalRead(t *testing.T) {
 		limits   codec.Limits
 		category error
 	}{{wire, limited, codec.ErrLimitExceeded}, {wire[:len(wire)-1], testLimits(), codec.ErrInvalidData}} {
-		before := sessionformat.UserInput{RunID: 1, ID: 1, Messages: formatByteMessages([]byte{1, 2})}
+		before := sessionformat.UserInput{RunID: 1, ID: 1, Parts: formatByteParts([]byte{1, 2})}
 		receiver := before.Clone()
 		reader, err := codec.NewReader(test.wire, test.limits)
 		if err != nil {

@@ -2,21 +2,20 @@ package format
 
 import "errors"
 
-// EffectiveInput retains one complete ordered prepared revision for an earlier
-// authored input. Zero ordinals are invalid. Nil and empty Prompts are equivalent
-// explicit empty revisions. Assignment shares Prompts; Clone detaches them.
+// EffectiveInput is one ordered incremental contribution owned by a run, not a
+// request or replacement. Nil and empty Inputs are equal; duplicates are retained.
+// Assignment shares nested storage; Clone detaches it.
 //
 //cborgen:validate Validate
 type EffectiveInput struct {
-	RunID   uint64           `cbor:"r"`
-	InputID uint64           `cbor:"i"`
-	Prompts []PreparedPrompt `cbor:"p"`
+	RunID  uint64      `cbor:"r"`
+	Inputs []InputItem `cbor:"i"`
 }
 
-// Validate checks local source ordinals, not membership, ordering, or message bounds.
+// Validate checks the local run ordinal, not membership or ordering.
 func (v EffectiveInput) Validate() error {
-	if v.RunID == 0 || v.InputID == 0 {
-		return errors.New("effective input requires positive run and input ordinals")
+	if v.RunID == 0 {
+		return errors.New("effective input requires a positive run ordinal")
 	}
 	return nil
 }

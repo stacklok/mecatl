@@ -63,7 +63,7 @@ func NewModelBindingRecord(v ModelBinding, limits codec.Limits) (Record, error) 
 	if err != nil {
 		return Record{}, err
 	}
-	return Record{scope: v.HistoryID, value: format.Record{Kind: sessionformat.KindModelBinding, KindVersion: sessionformat.ModelBindingVersion, Payload: payload}}, nil
+	return Record{scope: v.HistoryID, value: format.Record{Kind: sessionformat.KindModelBinding, KindVersion: sessionformat.Version, Payload: payload}}, nil
 }
 
 // ModelBindingView is an immutable fixed-size accepted binding handle. Zero exports

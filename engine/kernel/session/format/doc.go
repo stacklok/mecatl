@@ -16,28 +16,15 @@
 // validity proves neither lifecycle legality nor history membership or acceptance.
 package format
 
-// Version is the supported version of unchanged lifecycle payload schemas.
+// Version is the supported version of all session payload schemas.
 const Version int64 = 1
-
-const (
-	// UserInputVersion replaces the opaque v1 payload with authored messages.
-	UserInputVersion int64 = 2
-	// EffectiveInputVersion is the supported prepared-input payload version.
-	EffectiveInputVersion int64 = 1
-	// InstructionsVersion is the supported instruction replacement version.
-	InstructionsVersion int64 = 1
-	// ToolCatalogVersion is the supported advertised catalog replacement version.
-	ToolCatalogVersion int64 = 1
-	// ModelBindingVersion is the supported declared model binding version.
-	ModelBindingVersion int64 = 1
-)
 
 const (
 	// KindCreated identifies the empty session creation payload.
 	KindCreated = "session.created"
-	// KindUserInput identifies ordered authored messages owned by a run.
+	// KindUserInput identifies one authored submission owned by a run.
 	KindUserInput = "session.user_input"
-	// KindEffectiveInput identifies a complete prepared revision of authored input.
+	// KindEffectiveInput identifies an ordered incremental input contribution.
 	KindEffectiveInput = "session.effective_input"
 	// KindInstructions identifies a session-scoped instruction replacement.
 	KindInstructions = "session.instructions"

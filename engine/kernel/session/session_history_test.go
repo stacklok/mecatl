@@ -191,7 +191,7 @@ func TestSessionNavigationIndependentOfCommitGrouping(t *testing.T) {
 				}
 			}
 			for j := 0; j < run.InputCount(); j++ {
-				if run.InputAt(j).ID() != want.InputAt(j).ID() || !reflect.DeepEqual(run.InputAt(j).Messages(), want.InputAt(j).Messages()) {
+				if run.InputAt(j).ID() != want.InputAt(j).ID() || !reflect.DeepEqual(run.InputAt(j).Parts(), want.InputAt(j).Parts()) {
 					t.Fatal("input navigation")
 				}
 			}

@@ -2,9 +2,11 @@
 // for the isolated kernel. It validates and submits ordered batches through a
 // bound History; it does not execute work or resolve retained references.
 //
-// Authored input preserves ordered rich message boundaries. Effective revisions
-// retain whole-message references or harness-prepared content with semantic purpose
-// and provenance, never provider roles. Instructions, tool catalogs, and model
+// UserInput retains one authored submission as ordered parts. Effective inputs
+// append ordered whole-submission references or inline content with logical Actor,
+// Purpose and Source, never provider roles or trust claims. Empty and duplicate
+// contributions are retained without replacement, consumption or fallback.
+// Instructions, tool catalogs, and model
 // bindings are independent history-scoped replacements admitted during active runs;
 // their selected values persist across runs. Snapshots pin these selections.
 //

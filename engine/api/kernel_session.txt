@@ -11,12 +11,9 @@
     method func (*SessionCommit).ReplaceModelBinding(v ModelBinding) error
     method func (*SessionCommit).ReplaceToolCatalog(v ToolCatalog) error
     method func (*SessionCommit).StartRun() (RunID, error)
-    method func (AuthoredMessage).Clone() AuthoredMessage
-    method func (AuthoredMessage).Equal(other AuthoredMessage) bool
-    method func (AuthoredMessage).Validate() error
-    method func (Content).Clone() Content
-    method func (Content).Equal(other Content) bool
-    method func (Content).Validate() error
+    method func (AttributedInput).Clone() AttributedInput
+    method func (AttributedInput).Equal(other AttributedInput) bool
+    method func (AttributedInput).Validate() error
     method func (ContentPart).Clone() ContentPart
     method func (ContentPart).Equal(other ContentPart) bool
     method func (ContentPart).Validate() error
@@ -30,21 +27,18 @@
     method func (EffectiveInput).Equal(other EffectiveInput) bool
     method func (EffectiveInput).Validate() error
     method func (EffectiveInputView).Format() format.EffectiveInput
-    method func (EffectiveInputView).InputID() InputID
+    method func (EffectiveInputView).RunID() RunID
     method func (EffectiveInputView).Value() EffectiveInput
-    method func (HarnessPrompt).Clone() HarnessPrompt
-    method func (HarnessPrompt).Equal(other HarnessPrompt) bool
-    method func (HarnessPrompt).Validate() error
-    method func (InlineMedia).Clone() InlineMedia
-    method func (InlineMedia).Equal(other InlineMedia) bool
-    method func (InlineMedia).Validate() error
     method func (InputID).Clone() InputID
     method func (InputID).Equal(other InputID) bool
     method func (InputID).Next() (InputID, error)
     method func (InputID).Validate() error
+    method func (InputItem).Clone() InputItem
+    method func (InputItem).Equal(other InputItem) bool
+    method func (InputItem).Validate() error
     method func (InputView).Format() format.UserInput
     method func (InputView).ID() InputID
-    method func (InputView).Messages() []AuthoredMessage
+    method func (InputView).Parts() []ContentPart
     method func (InstructionBlock).Clone() InstructionBlock
     method func (InstructionBlock).Equal(other InstructionBlock) bool
     method func (InstructionBlock).Validate() error
@@ -54,12 +48,9 @@
     method func (InstructionsView).Format() format.Instructions
     method func (InstructionsView).HistoryID() id.HistoryID
     method func (InstructionsView).Value() Instructions
-    method func (MediaContent).Clone() MediaContent
-    method func (MediaContent).Equal(other MediaContent) bool
-    method func (MediaContent).Validate() error
-    method func (MediaSource).Clone() MediaSource
-    method func (MediaSource).Equal(other MediaSource) bool
-    method func (MediaSource).Validate() error
+    method func (Media).Clone() Media
+    method func (Media).Equal(other Media) bool
+    method func (Media).Validate() error
     method func (ModelBinding).Clone() ModelBinding
     method func (ModelBinding).Equal(other ModelBinding) bool
     method func (ModelBinding).Validate() error
@@ -67,12 +58,6 @@
     method func (ModelBindingView).HistoryID() id.HistoryID
     method func (ModelBindingView).Value() ModelBinding
     method func (Policy).Validate() error
-    method func (PreparedPrompt).Clone() PreparedPrompt
-    method func (PreparedPrompt).Equal(other PreparedPrompt) bool
-    method func (PreparedPrompt).Validate() error
-    method func (ProviderMedia).Clone() ProviderMedia
-    method func (ProviderMedia).Equal(other ProviderMedia) bool
-    method func (ProviderMedia).Validate() error
     method func (Record).Format() format.Record
     method func (RecordView).Created() (Created, bool)
     method func (RecordView).EffectiveInput() (EffectiveInputView, bool)
@@ -85,9 +70,6 @@
     method func (RecordView).RunStarted() (RunStarted, bool)
     method func (RecordView).ToolCatalog() (ToolCatalogView, bool)
     method func (RecordView).UserInput() (InputView, bool)
-    method func (RemoteMedia).Clone() RemoteMedia
-    method func (RemoteMedia).Equal(other RemoteMedia) bool
-    method func (RemoteMedia).Validate() error
     method func (RunID).Clone() RunID
     method func (RunID).Equal(other RunID) bool
     method func (RunID).Next() (RunID, error)
@@ -133,6 +115,9 @@ const ContentAudio ContentKind = "audio"
 const ContentDocument ContentKind = "document"
 const ContentImage ContentKind = "image"
 const ContentText ContentKind = "text"
+const MediaInline MediaSourceKind = "inline"
+const MediaProvider MediaSourceKind = "provider"
+const MediaRemote MediaSourceKind = "remote"
 const PromptContext PromptPurpose = "context"
 const PromptInstructions PromptPurpose = "instructions"
 func DecodeRecord(scope id.HistoryID, v format.Record, limits codec.Limits) (Record, error)
@@ -146,33 +131,29 @@ func NewRunInterruptedRecord(v RunInterrupted, limits codec.Limits) (Record, err
 func NewRunStartedRecord(v RunStarted, limits codec.Limits) (Record, error)
 func NewToolCatalogRecord(v ToolCatalog, limits codec.Limits) (Record, error)
 func NewUserInputRecord(v UserInput, limits codec.Limits) (Record, error)
-type AddInputRequest struct{RunID RunID; Messages []AuthoredMessage}
-type AuthoredMessage struct{Content Content}
-type Content []ContentPart
+type Actor string
+type AddInputRequest struct{RunID RunID; Parts []ContentPart}
+type AttributedInput struct{Parts []ContentPart; Actor Actor; Purpose PromptPurpose; Source ContentSource}
 type ContentKind string
-type ContentPart struct{Kind ContentKind; Text string; Media *MediaContent}
+type ContentPart struct{Kind ContentKind; Text string; Media *Media}
 type ContentSource struct{Description string; WorkspaceFile *WorkspaceFileSource}
 type Created struct{HistoryID id.HistoryID}
-type EffectiveInput struct{InputID InputID; Prompts []PreparedPrompt}
+type EffectiveInput struct{RunID RunID; Inputs []InputItem}
 type EffectiveInputView struct{}
-type HarnessPrompt struct{Purpose PromptPurpose; Content Content; Source ContentSource}
-type InlineMedia struct{Data []byte}
 type InputID struct{RunID RunID; Ordinal uint64}
+type InputItem struct{UserInput *InputID; Inline *AttributedInput}
 type InputView struct{}
-type InstructionBlock struct{Content Content; Source ContentSource}
+type InstructionBlock struct{Content []ContentPart; Source ContentSource}
 type Instructions struct{HistoryID id.HistoryID; Blocks []InstructionBlock}
 type InstructionsView struct{}
-type MediaContent struct{Source MediaSource; MediaType string; Format string; Filename string; Title string}
-type MediaSource struct{Inline *InlineMedia; Remote *RemoteMedia; Provider *ProviderMedia}
+type Media struct{MediaType string; Format string; Filename string; Title string; Source MediaSourceKind; Data []byte; URI string; Provider string; Scope string; ReferenceID string}
+type MediaSourceKind string
 type ModelBinding struct{HistoryID id.HistoryID; Route string; API string; Model string; Settings []byte}
 type ModelBindingView struct{}
 type Policy struct{CommitLimits codec.Limits; PayloadLimits codec.Limits; MaxRecordsPerCommit int; SoftMaxRetainedRecords int; SoftMaxPayloadBytes uint64; SoftMaxDecodedWork uint64; MaxRetainedRecords int; MaxPayloadBytes uint64; MaxDecodedWork uint64}
-type PreparedPrompt struct{AuthoredMessage *uint64; Harness *HarnessPrompt}
 type PromptPurpose string
-type ProviderMedia struct{Provider string; Scope string; ID string}
 type Record struct{}
 type RecordView struct{}
-type RemoteMedia struct{URI string}
 type RunID struct{HistoryID id.HistoryID; Ordinal uint64}
 type RunInterrupted struct{ID RunID}
 type RunStarted struct{ID RunID}
@@ -183,7 +164,7 @@ type Snapshot struct{}
 type ToolCatalog struct{HistoryID id.HistoryID; Tools []ToolDefinition}
 type ToolCatalogView struct{}
 type ToolDefinition struct{Name string; Description string; ArgumentSchema []byte}
-type UserInput struct{ID InputID; Messages []AuthoredMessage}
+type UserInput struct{ID InputID; Parts []ContentPart}
 type WorkspaceFileSource struct{Path string}
 var ErrAcceptanceUnknown error
 var ErrAcceptedApply error

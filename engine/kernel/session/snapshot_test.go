@@ -18,7 +18,7 @@ func TestSnapshotZeroKindsAndIndexBounds(t *testing.T) {
 	var run session.RunView
 	var input session.InputView
 	var record session.RecordView
-	if run.ID() != (session.RunID{}) || run.RecordCount() != 0 || run.InputCount() != 0 || input.ID() != (session.InputID{}) || input.Messages() != nil || !reflect.DeepEqual(input.Format(), sessionformat.UserInput{}) || record.Kind() != "" || record.KindVersion() != 0 {
+	if run.ID() != (session.RunID{}) || run.RecordCount() != 0 || run.InputCount() != 0 || input.ID() != (session.InputID{}) || input.Parts() != nil || !reflect.DeepEqual(input.Format(), sessionformat.UserInput{}) || record.Kind() != "" || record.KindVersion() != 0 {
 		t.Fatal("zero child handle")
 	}
 	s := newSession(t, sessionPolicy())
@@ -52,9 +52,6 @@ func TestSnapshotZeroKindsAndIndexBounds(t *testing.T) {
 			t.Fatal("interruption scope")
 		}
 		version := int64(1)
-		if u {
-			version = 2
-		}
 		if r.KindVersion() != version {
 			t.Fatal("version")
 		}
