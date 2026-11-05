@@ -73,7 +73,6 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/mcp"
 	mcpsource "github.com/stacklok/mecatl/internal/adapter/mcp/source"
 	"github.com/stacklok/mecatl/internal/adapter/mcpauthority"
-	"github.com/stacklok/mecatl/internal/adapter/mcpbroker"
 	"github.com/stacklok/mecatl/internal/adapter/memory"
 	"github.com/stacklok/mecatl/internal/adapter/microvmmanager"
 	"github.com/stacklok/mecatl/internal/adapter/modelhook"
@@ -93,6 +92,7 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/xdgconfig"
 	"github.com/stacklok/mecatl/internal/buildinfo"
 	"github.com/stacklok/mecatl/internal/identitybroker"
+	brokercontract "github.com/stacklok/mecatl/internal/mcpbroker"
 	"github.com/stacklok/mecatl/internal/syscaller"
 	"github.com/stacklok/mecatl/provider/openai"
 )
@@ -966,13 +966,9 @@ type Config struct {
 
 	// MCP: static servers, the resource meta-tools toggle, the prompt-expander
 	// toggle, and the live ToolHive workload source.
-	MCPServers                []mcp.ServerConfig
-	MCPAuthority              *mcpauthority.Result
-	MCPBrokerDiscovered       []mcpbroker.ToolDefinition
-	MCPBrokerCaller           mcpbroker.Caller
-	MCPBrokerAuthorizedCaller mcpbroker.AuthorizedCaller
-	MCPBrokerQueryCaller      mcpbroker.QueryCaller
-	MCPBrokerOptions          []mcpbroker.Option
+	MCPServers   []mcp.ServerConfig
+	MCPAuthority *mcpauthority.Result
+	ConfiguredMCPBroker
 	// IdentityBroker starts the experimental agent identity broker. Only
 	// mecak8s sets it.
 	IdentityBroker bool
@@ -1548,9 +1544,11 @@ type ProviderCredentials struct {
 // Built is the result of Build: the assembled server.Service plus a Close func
 // that tears down composition-owned resources. Close is always safe to call.
 type Built struct {
-	Service               *server.Service
-	MCPBroker             *mcpbroker.Runtime
-	MCPBrokerHandlers     mcpbroker.HandlerBundle
+	Service *server.Service
+	// MCPBroker is the MCP broker; nil when Build constructed none.
+	MCPBroker brokercontract.Service
+	// MCPBrokerHandlers is the broker's HTTP surface; nil when it has none.
+	MCPBrokerHandlers     brokercontract.HTTPHandlers
 	MCPBrokerCallbackPath string
 	// IdentityBroker is the agent identity broker, as Mecatl calls it; nil when
 	// it is not enabled. Close releases it.
@@ -1567,7 +1565,7 @@ type Built struct {
 // MountMCPBrokerHandlers mounts the complete fixed broker bundle on a
 // process-owned HTTP mux. A build with no broker HTTP surface is a no-op.
 func (b *Built) MountMCPBrokerHandlers(mux *http.ServeMux) error {
-	if b.MCPBrokerHandlers.Empty() {
+	if b.MCPBrokerHandlers == nil {
 		return nil
 	}
 	return b.MCPBrokerHandlers.Mount(mux, b.MCPBrokerCallbackPath)
@@ -2306,96 +2304,25 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		}
 	}()
 
-	var brokerRuntime *mcpbroker.Runtime
-	var brokerProcess *mcpbroker.Process
-	var brokerHandlers mcpbroker.HandlerBundle
-	var brokerCallbackPath string
-	brokerConfigured := len(brokerDeclaration.Routes) != 0 || cfg.MCPBrokerCaller != nil ||
-		cfg.MCPBrokerAuthorizedCaller != nil || cfg.MCPBrokerQueryCaller != nil || len(cfg.MCPBrokerDiscovered) != 0 || len(cfg.MCPBrokerOptions) != 0
-	if brokerSelected && brokerConfigured {
+	var broker mcpBrokerParts
+	if brokerSelected && (len(brokerDeclaration.Routes) != 0 || cfg.selectsConfiguredMCPBroker()) {
 		occupied := make([]string, 0)
 		if assets.rootCatalog != nil {
 			for _, registered := range assets.rootCatalog.Tools() {
 				occupied = append(occupied, registered.Spec().Name)
 			}
 		}
-		if cfg.MCPBrokerCaller == nil && cfg.MCPBrokerAuthorizedCaller == nil && cfg.MCPBrokerQueryCaller == nil && len(cfg.MCPBrokerDiscovered) == 0 && len(cfg.MCPBrokerOptions) == 0 {
-			authRedisClient, authStorageClose, err := buildToolHiveAuthRedisClient(cfg)
-			if err != nil {
-				childLiveness.Close()
-				mcpClose()
-				agentClose()
-				storeClose()
-				commandConnClose()
-				return nil, fmt.Errorf("build bundled MCP broker: %w", err)
-			}
-			brokerProcess, err = mcpbroker.NewToolHiveProcess(ctx, toolHiveBrokerConfig(brokerDeclaration.Routes, brokerDeclaration.CallbackURL, occupied, authRedisClient, cfg.diag()))
-			if err != nil {
-				authStorageClose()
-				childLiveness.Close()
-				mcpClose()
-				agentClose()
-				storeClose()
-				commandConnClose()
-				return nil, fmt.Errorf("build bundled MCP broker: %w", err)
-			}
-			brokerRuntime = brokerProcess.Runtime
-			brokerHandlers = brokerProcess.Handlers
-		} else {
-			catalogue, compileErr := mcpbroker.Compile(brokerDeclaration, cfg.MCPBrokerDiscovered, occupied)
-			if compileErr != nil {
-				childLiveness.Close()
-				mcpClose()
-				agentClose()
-				storeClose()
-				commandConnClose()
-				return nil, fmt.Errorf("build MCP broker catalogue: %w", compileErr)
-			}
-			options := append([]mcpbroker.Option(nil), cfg.MCPBrokerOptions...)
-			if cfg.MCPBrokerAuthorizedCaller != nil {
-				options = append(options, mcpbroker.WithAuthorizedCaller(cfg.MCPBrokerAuthorizedCaller))
-			}
-			if cfg.MCPBrokerQueryCaller != nil {
-				options = append(options, mcpbroker.WithQueryCaller(cfg.MCPBrokerQueryCaller))
-			}
-			brokerRuntime, err = mcpbroker.New(catalogue, cfg.MCPBrokerCaller, options...)
-			if err != nil {
-				childLiveness.Close()
-				mcpClose()
-				agentClose()
-				storeClose()
-				commandConnClose()
-				return nil, fmt.Errorf("build MCP broker: %w", err)
-			}
-		}
-		if brokerDeclaration.CallbackURL != "" {
-			if brokerProcess == nil {
-				brokerHandlers, brokerCallbackPath, err = brokerRuntime.Handlers(brokerDeclaration.CallbackURL)
-			} else {
-				brokerCallbackPath, err = mcpBrokerCallbackPath(brokerDeclaration.CallbackURL)
-			}
-			if err != nil {
-				if brokerProcess != nil {
-					_ = brokerProcess.Close()
-				} else {
-					_ = brokerRuntime.Close()
-				}
-				childLiveness.Close()
-				mcpClose()
-				agentClose()
-				storeClose()
-				commandConnClose()
-				return nil, fmt.Errorf("build MCP broker handlers: %w", err)
-			}
+		broker, err = buildMCPBroker(ctx, cfg, brokerDeclaration, occupied)
+		if err != nil {
+			childLiveness.Close()
+			mcpClose()
+			agentClose()
+			storeClose()
+			commandConnClose()
+			return nil, err
 		}
 	}
-	closeBroker := func() {
-		if brokerProcess != nil {
-			_ = brokerProcess.Close()
-		} else if brokerRuntime != nil {
-			_ = brokerRuntime.Close()
-		}
-	}
+	closeBroker := broker.close
 	defer func() {
 		if !profilesTransferred {
 			childLiveness.Close()
@@ -3018,19 +2945,15 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		PlanModeAutoApprove: cfg.PlanModeAutoApprove,
 		Interactive:         cfg.Interactive,
 	}
-	if brokerRuntime != nil {
-		svcCfg.MCPBroker = brokerRuntime
-	}
+	svcCfg.MCPBroker = broker.service
 	// The session code gets the same boundary Built.IdentityBroker exposes; nil
 	// when the flag is off.
 	svcCfg.IdentityBroker = identityBroker
 	// Workspace enrollment (pre-prompt authenticate-then-discover) applies only
 	// to the bundled ToolHive Process path: a plain Compile-based Runtime has no
 	// live discovery primitive and never satisfies the enrollment boundary.
-	if brokerProcess != nil {
-		svcCfg.MCPConnectorInspector = brokerProcess.Runtime
-	}
-	svcCfg.WorkspaceEnrollment = brokerProcess.WorkspaceEnrollmentRequired()
+	svcCfg.MCPConnectorInspector = broker.inspector
+	svcCfg.WorkspaceEnrollment = broker.workspaceEnrollment
 	if assets.reflectionRepository == nil || provider == nil {
 		svcCfg.ReflectSession = nil
 	}
@@ -3139,7 +3062,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		diag.Log(ctx, port.LevelWarn, "durable automatic reservation reconciliation unavailable")
 	})
 	attempts = startAttemptRecovery(ctx, cfg, reg, store, eventLog, assets.attemptRepository, assets.reflectionRepository, assets, placementProvider, placementScope)
-	return &Built{Service: svc, MCPBroker: brokerRuntime, MCPBrokerHandlers: brokerHandlers, MCPBrokerCallbackPath: brokerCallbackPath, IdentityBroker: identityBroker, IdentityBrokerHostedAS1: identityBrokerAS1, GuardrailsAdvisory: guardrailConfigured && guardrailsDemoted(cfg), Close: closeAll}, nil
+	return &Built{Service: svc, MCPBroker: broker.service, MCPBrokerHandlers: broker.handlers, MCPBrokerCallbackPath: broker.callbackPath, IdentityBroker: identityBroker, IdentityBrokerHostedAS1: identityBrokerAS1, GuardrailsAdvisory: guardrailConfigured && guardrailsDemoted(cfg), Close: closeAll}, nil
 }
 
 // resolveAgentSeam resolves the agent-definition registry from cfg: the

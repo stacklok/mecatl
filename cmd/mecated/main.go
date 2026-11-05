@@ -47,7 +47,6 @@ import (
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/internal/adapter/daemonconfig"
 	"github.com/stacklok/mecatl/internal/adapter/mcpauthority"
-	"github.com/stacklok/mecatl/internal/adapter/mcpbroker"
 	"github.com/stacklok/mecatl/internal/adapter/mcpperf"
 	"github.com/stacklok/mecatl/internal/adapter/microvmmanager"
 	"github.com/stacklok/mecatl/internal/adapter/permconfig"
@@ -61,6 +60,7 @@ import (
 	"github.com/stacklok/mecatl/internal/buildinfo"
 	"github.com/stacklok/mecatl/internal/cliconfig"
 	"github.com/stacklok/mecatl/internal/configgen"
+	brokercontract "github.com/stacklok/mecatl/internal/mcpbroker"
 )
 
 var (
@@ -2175,8 +2175,8 @@ func brokerControlAPIAuthenticated(cfg config, tlsCfg *tls.Config) bool {
 // after the complete mecated mux exists. On non-loopback listeners the separate
 // session-scoped control API must be authenticated; this does not claim its
 // bearer/OIDC middleware authenticates browser or provider callbacks.
-func mountBrokerHandlers(mux *http.ServeMux, addr string, controlAPIAuthenticated bool, handlers mcpbroker.HandlerBundle, callbackPath string) error {
-	if handlers.Empty() {
+func mountBrokerHandlers(mux *http.ServeMux, addr string, controlAPIAuthenticated bool, handlers brokercontract.HTTPHandlers, callbackPath string) error {
+	if handlers == nil {
 		return nil
 	}
 	if !controlAPIAuthenticated && !cliconfig.IsLoopbackAddr(addr) {
@@ -2188,7 +2188,7 @@ func mountBrokerHandlers(mux *http.ServeMux, addr string, controlAPIAuthenticate
 
 // serve retains the established test and non-broker seam.
 func serve(ctx context.Context, cfg config, svc *server.Service, reg *prometheus.Registry, recorder *telemetry.FlightRecorder, slowTurns *telemetry.SlowTurnBuffer) error {
-	return serveWithBroker(ctx, cfg, svc, reg, recorder, slowTurns, false, mcpbroker.HandlerBundle{}, "")
+	return serveWithBroker(ctx, cfg, svc, reg, recorder, slowTurns, false, nil, "")
 }
 
 // serveBuilt is the command-root handoff from app.Build to the network server.
@@ -2217,7 +2217,7 @@ func validateBrokerHosting(cfg config, brokerSelected bool) error {
 // liveness/readiness probes are mounted OUTSIDE the auth/rate-limit layer so
 // orchestrators can probe without credentials. The gRPC health service shares
 // the server-wide interceptors and therefore requires credentials when auth is on.
-func serveWithBroker(ctx context.Context, cfg config, svc *server.Service, reg *prometheus.Registry, recorder *telemetry.FlightRecorder, slowTurns *telemetry.SlowTurnBuffer, brokerSelected bool, brokerHandlers mcpbroker.HandlerBundle, brokerCallbackPath string) error {
+func serveWithBroker(ctx context.Context, cfg config, svc *server.Service, reg *prometheus.Registry, recorder *telemetry.FlightRecorder, slowTurns *telemetry.SlowTurnBuffer, brokerSelected bool, brokerHandlers brokercontract.HTTPHandlers, brokerCallbackPath string) error {
 	if err := validateBrokerHosting(cfg, brokerSelected); err != nil {
 		return err
 	}
@@ -2262,7 +2262,7 @@ func serveWithBroker(ctx context.Context, cfg config, svc *server.Service, reg *
 		httpMux := http.NewServeMux()
 		server.NewHealthHandler(func() bool { return true }).RegisterHealth(httpMux)
 		httpMux.Handle("/", buildAPIHandler(corsPolicy, auth, svc, protectedResourceProfile(cfg.oidc)))
-		// Mount last on the actual, fully-populated mux. HandlerBundle.Mount
+		// Mount last on the actual, fully-populated mux. HTTPHandlers.Mount
 		// preflights every route before registration, so a callback or fixed-route
 		// collision fails startup without a partial broker surface.
 		if err := mountBrokerHandlers(httpMux, cfg.httpAddr, brokerControlAPIAuthenticated(cfg, tlsCfg), brokerHandlers, brokerCallbackPath); err != nil {

@@ -9,6 +9,7 @@ import (
 	"encoding/pem"
 	"math/big"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -191,6 +192,16 @@ func TestBuildTLSConfigRejectsUnsafeStaticClientCAWithoutPathDisclosure(t *testi
 				t.Fatalf("client CA error = %v", err)
 			}
 		})
+	}
+}
+
+func TestNilBrokerHandlersMountNothingWithoutVerifiedIdentity(t *testing.T) {
+	mux := http.NewServeMux()
+	if err := mountBrokerHandlers(mux, "0.0.0.0:8081", false, false, nil, ""); err != nil {
+		t.Fatalf("nil broker handlers = %v, want no-op", err)
+	}
+	if _, pattern := mux.Handler(&http.Request{Method: http.MethodGet, URL: &url.URL{Path: "/v1/mcp/broker/oauth/authorize"}}); pattern != "" {
+		t.Fatalf("nil broker handlers registered %q", pattern)
 	}
 }
 

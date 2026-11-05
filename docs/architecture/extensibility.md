@@ -54,10 +54,13 @@ never mix. A failed cycle keeps the last usable runtime and marks it stale, and
 
 Broker mode (`internal/adapter/mcpbroker`) is one in-process runtime owned by
 `app.Built`, and `app.Build` rejects a configuration that also sets global
-`MCPServers`. ToolHive runs each upstream's OAuth and injects backend tokens;
+`MCPServers`. One composition file constructs the adapter, and depguard keeps
+the rest of composition and the command roots on the `internal/mcpbroker`
+contract. ToolHive runs each upstream's OAuth and injects backend tokens;
 Mecatl holds only an opaque outer broker credential. `mecated` and `mecak8s`
-mount the broker's fixed `HandlerBundle` and an operator-configured callback on
-their primary HTTP mux; see [deployment and hardening](deployment-and-hardening.md).
+mount the broker's fixed HTTP surface (the contract's `HTTPHandlers`) and an
+operator-configured callback on their primary HTTP mux; see
+[deployment and hardening](deployment-and-hardening.md).
 
 A session gets its catalogue one of two ways:
 

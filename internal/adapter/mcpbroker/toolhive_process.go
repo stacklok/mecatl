@@ -52,6 +52,9 @@ type ownedResource struct {
 type Process struct {
 	Runtime  *Runtime
 	Handlers HandlerBundle
+	// CallbackPath is the mount path of Handlers.Callback; empty when the
+	// process has no callback URL.
+	CallbackPath string
 
 	ctx                context.Context
 	cancel             context.CancelFunc
@@ -303,11 +306,12 @@ func newToolHiveProcess(ctx context.Context, config ToolHiveConfig, options tool
 		process.Handlers.ProtectedResource = authInfo
 	}
 	if config.CallbackURL != "" {
-		callbackHandlers, _, handlerErr := runtime.Handlers(config.CallbackURL)
+		callbackHandlers, callbackPath, handlerErr := runtime.Handlers(config.CallbackURL)
 		if handlerErr != nil {
 			return rollback(handlerErr)
 		}
 		process.Handlers.Callback = callbackHandlers.Callback
+		process.CallbackPath = callbackPath
 	}
 	return process, nil
 }

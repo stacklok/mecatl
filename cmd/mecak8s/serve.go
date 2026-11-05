@@ -22,12 +22,12 @@ import (
 	healthpb "google.golang.org/grpc/health/grpc_health_v1"
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
-	"github.com/stacklok/mecatl/internal/adapter/mcpbroker"
 	"github.com/stacklok/mecatl/internal/adapter/server"
 	"github.com/stacklok/mecatl/internal/adapter/telemetry"
 	"github.com/stacklok/mecatl/internal/adapter/tlsreload"
 	"github.com/stacklok/mecatl/internal/app"
 	"github.com/stacklok/mecatl/internal/cliconfig"
+	brokercontract "github.com/stacklok/mecatl/internal/mcpbroker"
 )
 
 // brokerControlVerifiedIdentity reports whether the API verifies the caller,
@@ -44,10 +44,10 @@ func brokerControlVerifiedIdentity(cfg config, tlsCfg *tls.Config) bool {
 // dance itself) unless the deployment either verifies caller identity on its
 // OWN API surface (so at least the rest of the process is not wide open) or is
 // explicitly loopback-only. Mirrors the equivalent guard on the working
-// acc/session-vmcp-authorization branch; this branch's HandlerBundle has no
-// caller-identity concept of its own.
-func validateBrokerControlOwnership(addr string, verifiedIdentity, ownerlessLoopback bool, handlers mcpbroker.HandlerBundle) error {
-	if handlers.Empty() {
+// acc/session-vmcp-authorization branch; the broker's HTTPHandlers have no
+// caller-identity concept of their own.
+func validateBrokerControlOwnership(addr string, verifiedIdentity, ownerlessLoopback bool, handlers brokercontract.HTTPHandlers) error {
+	if handlers == nil {
 		return nil
 	}
 	if verifiedIdentity || ownerlessLoopback && cliconfig.IsLoopbackAddr(addr) {
@@ -58,14 +58,14 @@ func validateBrokerControlOwnership(addr string, verifiedIdentity, ownerlessLoop
 
 // mountBrokerHandlers registers the broker's fixed HTTP surface on mux. It
 // MUST be called AFTER every other route (health/drain/API) is already
-// registered: HandlerBundle.Mount's own registeredHandlerRouteConflict check
+// registered: HTTPHandlers.Mount's own route-conflict check
 // rejects a broker route that would shadow an already-registered one, which is
 // this branch's answer to the reserved-path collision review-P16-FOLLOWUPS.md
 // flagged as still needing a real-mux integration proof — calling Mount last
 // on the SAME mux the rest of serve() just built IS that proof, not a second
 // hand-maintained reserved-path list.
-func mountBrokerHandlers(mux *http.ServeMux, addr string, verifiedIdentity, ownerlessLoopback bool, handlers mcpbroker.HandlerBundle, callbackPath string) error {
-	if handlers.Empty() {
+func mountBrokerHandlers(mux *http.ServeMux, addr string, verifiedIdentity, ownerlessLoopback bool, handlers brokercontract.HTTPHandlers, callbackPath string) error {
+	if handlers == nil {
 		return nil
 	}
 	if err := validateBrokerControlOwnership(addr, verifiedIdentity, ownerlessLoopback, handlers); err != nil {
@@ -116,7 +116,7 @@ func normalHTTPMux(svc *server.Service, auth *server.Authenticator, profile serv
 	server.NewHealthHandler(ready).RegisterHealth(mux)
 	mux.Handle("/", server.WithProtectedResourceMetadata(profile, auth.Middleware(server.NewHTTPHandler(svc))))
 	// Broker routes are mounted LAST, after every other route above, so
-	// HandlerBundle.Mount's own route-conflict check is checked against the
+	// HTTPHandlers.Mount's own route-conflict check is checked against the
 	// real, fully-populated mux — see mountBrokerHandlers' doc comment.
 	if err := mountBrokerHandlers(mux, addr, authed, false, built.brokerHandlers, built.brokerCallbackPath); err != nil {
 		return nil, fmt.Errorf("mount MCP broker handlers: %w", err)
@@ -266,7 +266,7 @@ func startMetricsServer(addr string, obs observability, errCh chan<- error) (*ht
 
 // builtServing is what serve takes from app.Build.
 type builtServing struct {
-	brokerHandlers     mcpbroker.HandlerBundle
+	brokerHandlers     brokercontract.HTTPHandlers
 	brokerCallbackPath string
 	as1                *app.IdentityBrokerAS1Server
 }

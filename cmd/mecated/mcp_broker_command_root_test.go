@@ -54,7 +54,7 @@ func TestMecatedExplicitBrokerAuthorityReachesBuild(t *testing.T) {
 	if built.MCPBroker == nil {
 		t.Fatal("explicit mcp.mode broker did not reach app.Build's broker construction")
 	}
-	if !built.MCPBrokerHandlers.Empty() {
+	if built.MCPBrokerHandlers != nil {
 		t.Fatal("broker without callback unexpectedly exposed an HTTP handler bundle")
 	}
 }
@@ -81,7 +81,7 @@ func TestMecatedOmittedMCPModeDefaultsGlobalWithoutBroker(t *testing.T) {
 		t.Fatalf("app.Build omitted MCP mode: %v", err)
 	}
 	defer built.Close()
-	if built.MCPBroker != nil || !built.MCPBrokerHandlers.Empty() {
+	if built.MCPBroker != nil || built.MCPBrokerHandlers != nil {
 		t.Fatal("omitted MCP mode started a broker")
 	}
 }
@@ -311,6 +311,14 @@ func TestMecatedBrokerProtocolRoutesArePublicNotBearerWrapped(t *testing.T) {
 	unprotected.Handle("/", http.NotFoundHandler())
 	if err := mountBrokerHandlers(unprotected, "0.0.0.0:8081", false, mcpbroker.HandlerBundle{Callback: protocol}, "/callback"); err == nil {
 		t.Fatal("non-loopback broker with an unauthenticated control API was admitted")
+	}
+
+	// No broker surface means nothing to guard: nil mounts nothing, even here.
+	if err := mountBrokerHandlers(unprotected, "0.0.0.0:8081", false, nil, ""); err != nil {
+		t.Fatalf("nil broker handlers = %v, want no-op", err)
+	}
+	if _, pattern := unprotected.Handler(httptest.NewRequest(http.MethodGet, "/callback", nil)); pattern != "/" {
+		t.Fatalf("nil broker handlers registered %q", pattern)
 	}
 }
 
