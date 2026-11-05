@@ -18,6 +18,8 @@ var CorePackages = []string{
 	modulePrefix + "engine/kernel/history",
 	modulePrefix + "engine/kernel/history/format",
 	modulePrefix + "engine/kernel/history/id",
+	modulePrefix + "engine/kernel/session",
+	modulePrefix + "engine/kernel/session/format",
 	modulePrefix + "engine/session",
 	modulePrefix + "engine/governance",
 	modulePrefix + "engine/learning",

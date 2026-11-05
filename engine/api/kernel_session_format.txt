@@ -1,0 +1,32 @@
+    method func (*Created).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
+    method func (*RunInterrupted).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
+    method func (*RunStarted).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
+    method func (*UserInput).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
+    method func (Created).AppendCBOR(dst []byte) []byte
+    method func (Created).CheckCBOR(b *codec.Budget, depth int, fieldMax int) error
+    method func (Created).Clone() Created
+    method func (Created).Equal(other Created) bool
+    method func (RunInterrupted).AppendCBOR(dst []byte) []byte
+    method func (RunInterrupted).CheckCBOR(b *codec.Budget, depth int, fieldMax int) error
+    method func (RunInterrupted).Clone() RunInterrupted
+    method func (RunInterrupted).Equal(other RunInterrupted) bool
+    method func (RunInterrupted).Validate() error
+    method func (RunStarted).AppendCBOR(dst []byte) []byte
+    method func (RunStarted).CheckCBOR(b *codec.Budget, depth int, fieldMax int) error
+    method func (RunStarted).Clone() RunStarted
+    method func (RunStarted).Equal(other RunStarted) bool
+    method func (RunStarted).Validate() error
+    method func (UserInput).AppendCBOR(dst []byte) []byte
+    method func (UserInput).CheckCBOR(b *codec.Budget, depth int, fieldMax int) error
+    method func (UserInput).Clone() UserInput
+    method func (UserInput).Equal(other UserInput) bool
+    method func (UserInput).Validate() error
+const KindCreated untyped string = "session.created"
+const KindRunInterrupted untyped string = "session.run_interrupted"
+const KindRunStarted untyped string = "session.run_started"
+const KindUserInput untyped string = "session.user_input"
+const Version int64 = 1
+type Created struct{}
+type RunInterrupted struct{ID uint64 "cbor:\"r\""}
+type RunStarted struct{ID uint64 "cbor:\"r\""}
+type UserInput struct{RunID uint64 "cbor:\"r\""; ID uint64 "cbor:\"i\""; Content []byte "cbor:\"c\""}

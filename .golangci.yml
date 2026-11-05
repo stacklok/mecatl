@@ -142,6 +142,35 @@ linters:
           deny:
             - pkg: os
               desc: 'content identity values must not access host state'
+        core-kernel-session:
+          list-mode: strict
+          files:
+            - '**/engine/kernel/session/**.go'
+            - '!**/engine/kernel/session/format/**.go'
+            - '!$test'
+          allow:
+            - $gostd
+            - github.com/stacklok/mecatl/engine/kernel/history$
+            - github.com/stacklok/mecatl/engine/kernel/contentid$
+            - github.com/stacklok/mecatl/engine/kernel/history/id$
+            - github.com/stacklok/mecatl/engine/kernel/history/format$
+            - github.com/stacklok/mecatl/engine/kernel/codec$
+            - github.com/stacklok/mecatl/engine/kernel/session/format$
+          deny:
+            - pkg: os
+              desc: 'kernel session values must not access host state'
+        core-kernel-session-format:
+          list-mode: strict
+          files:
+            - '**/engine/kernel/session/format/**.go'
+            - '!$test'
+          allow:
+            - $gostd
+            - github.com/stacklok/mecatl/engine/kernel/codec$
+            - github.com/jcalabro/atmos/cbor$
+          deny:
+            - pkg: os
+              desc: 'session formats must not access host state'
         core-kernel-history:
           list-mode: strict
           files:
