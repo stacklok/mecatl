@@ -404351,6 +404351,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1793896846861,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "841f554c0392dce842604faa22e4c7035438a208",
+          "message": "feat(kernel): add history-backed session lifecycle (#2687)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-11-05T18:33:52Z",
+          "tree_id": "c8ceb61c985ab7690eb4de35e8d9992ad74eb2e1",
+          "url": "https://github.com/stacklok/mecatl/commit/841f554c0392dce842604faa22e4c7035438a208"
+        },
+        "date": 1793904364304,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 16117.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12878.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 794,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -527053,6 +527092,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1793904361147,
+  "lastUpdate": 1793904365086,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
