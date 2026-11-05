@@ -6,7 +6,7 @@ when admitted, its commands. This is the selected design for this proposal, not 
 and their diagrams are retained in the appendices.
 
 The agent loop stays separate from execution, keeping credentials and permission checks outside untrusted shell
-programs. The [cloud-native harness explanation](../../user-docs/cloud-native-harness.md) describes that broader design.
+programs. The [cloud-native harness explanation](../../../user-docs/cloud-native-harness.md) describes that broader design.
 The [agent identity][identity-draft] and [scoped resource grants][grant-draft] drafts describe a possible future identity
 system that takes the delegation chain into account.
 
@@ -219,11 +219,11 @@ writable mappings, cache behavior, and delayed writes remain qualification point
 single transaction; job-start/end snapshots cannot meet live two-way visibility. [inotify][inotify] is not a reliable
 cross-host change feed.
 
-Files that were written and closed must survive the loss of the executor Pod; a write in progress may be lost.
-Sessions regain file access once a
-replacement executor reattaches the same storage. Durability also depends on where the filesystem client runs and on
-node and storage failures. No candidate meets these guarantees until close and `fsync` behavior is tested in that
-deployment.
+Files that were written and closed should survive the loss of the executor Pod; a write in progress may be lost.
+Sessions regain file access once a replacement executor reattaches the same storage. Durability beyond this depends on
+the executor implementation, on where the filesystem client runs, and on node and storage failures. Each executor
+documents its guarantees: `osfs` writes without `fsync`, while another implementation may flush writes before
+acknowledging them.
 
 ### Concurrent edits
 
@@ -318,6 +318,22 @@ settle how the helper coordinates file-tool mutations with shell writers, comman
 placement, and the exact withdrawal cutoff before claiming those guarantees. Qualify file/command visibility in the
 executor, retained-storage recovery, and denial of access outside each admitted scope. Process snapshots and adding
 `Shell` to a running session are not prerequisites for the initial design.
+
+## Detailed chapters
+
+These chapters will describe each part of the design in detail. They are planned and not yet written.
+
+| Chapter | What it will cover |
+| --- | --- |
+| [Admission and session binding](admission.md) | How the agent loop requests capabilities and the trusted service admits them and binds the session. |
+| [Executor protocol](executor-protocol.md) | The RPC server the executor exposes for file operations and commands, and how the trusted service reaches them. |
+| [Storage and recovery](storage-and-recovery.md) | Retained storage identity, executor replacement, and reattachment. |
+| [Withdrawal and cancellation](withdrawal-and-cancellation.md) | How revoked authority and cancelled tasks stop file access and running commands. |
+| [Local execution](local-execution.md) | How local placements compare with Kubernetes, and the executor server running inside the microVM. |
+| [Threat model](threat-model.md) | The co-located helper, untrusted shell programs, and what each component can reach. |
+
+The [implementation companion](implementation.md) records the gap analysis against the current Kubernetes provider and the work
+breakdown for the agent loop, the trusted service, and the executor.
 
 ## Appendix A: Alternative filesystem layouts
 
@@ -704,13 +720,13 @@ do not select one only for its compute lifecycle features.
 [link-18]: https://github.com/e2b-dev/infra/blob/47096f195aca4a545a9079b706efb3a18f51cf3f/packages/orchestrator/pkg/nfsproxy/chroot/nfs.go#L122-L193
 [link-19]: https://github.com/e2b-dev/infra/blob/47096f195aca4a545a9079b706efb3a18f51cf3f/docs/ARCHITECTURE.md#L511-L546
 [link-20]: https://github.com/daytonaio/docs/blob/f6ff62bc27fb7701e04c51a1869aa8d016573cb5/src/content/docs/volumes.mdx#L114-L121
-[context-model]: ../architecture/mecatl.modelith.yaml
-[context-source]: ../../internal/app/harness_context.go
-[context-binding]: ../../internal/app/harness_context_binding.go
-[context-admission]: ../../internal/app/project_ingestion.go
-[context-microvm]: ../../internal/app/execution.go
+[context-model]: ../../architecture/mecatl.modelith.yaml
+[context-source]: ../../../internal/app/harness_context.go
+[context-binding]: ../../../internal/app/harness_context_binding.go
+[context-admission]: ../../../internal/app/project_ingestion.go
+[context-microvm]: ../../../internal/app/execution.go
 [templates]: https://github.com/stacklok/mecatl/issues/2109
-[k8s-lifecycle]: ../../user-docs/features/security-and-execution/execution-environments.md#native-kubernetes-lifecycle-and-retention
+[k8s-lifecycle]: ../../../user-docs/features/security-and-execution/execution-environments.md#native-kubernetes-lifecycle-and-retention
 [inotify]: https://man7.org/linux/man-pages/man7/inotify.7.html
 [nfs]: https://man7.org/linux/man-pages/man5/nfs.5.html#DATA_AND_METADATA_COHERENCE
 [ceph]: https://docs.ceph.com/en/latest/cephfs/posix/
