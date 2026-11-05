@@ -6,6 +6,8 @@ release behavior. This page is only a stable index to operational guidance.
 - [Live end-to-end testing](../../e2e/README.md)
 - [Performance tracking rationale](../../docs/perf-tracking.md)
 - [Deslop advisory duplication analysis](deslop.yml) (not a required CI gate)
+- [CodeQL code scanning](codeql.yml) (Go, JavaScript/TypeScript, Python, and
+  Actions; alerts appear in the repository's Security tab)
 - [Mecatequi CI adoption](../../user-docs/building/ci/mecatequi.md)
 - [microVM environment operations](../../user-docs/operating/microvm-environments.md)
 
