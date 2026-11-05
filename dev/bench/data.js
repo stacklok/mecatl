@@ -364480,6 +364480,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1793883720031,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "29541485+ChrisJBurns@users.noreply.github.com",
+            "name": "Chris Burns",
+            "username": "ChrisJBurns"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "5e3591ede995d3d9f061feaf041d536193b796c9",
+          "message": "refactor(mcpbroker): move authorization orchestration behind the broker contract (#2685)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-11-05T16:27:01Z",
+          "tree_id": "2dc7f280d3708774f5cf460f2e203a967698a184",
+          "url": "https://github.com/stacklok/mecatl/commit/5e3591ede995d3d9f061feaf041d536193b796c9"
+        },
+        "date": 1793896841720,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -526508,6 +526542,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1793896837403,
+  "lastUpdate": 1793896842850,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
