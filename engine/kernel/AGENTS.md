@@ -20,6 +20,12 @@ production entry points unchanged unless Joe explicitly approves integration.
 These conventions apply only to `engine/kernel/`.
 
 - Put the package overview in `doc.go`, not an arbitrary implementation file.
+- Put persistence DTOs, versioned schemas, generated codecs and payload-local
+  validation in the owning layer's `format` subpackage, as in `history/format`
+  and `session/format`. Keep these packages independent of aggregates and their
+  operational policy. Public domain values are separate from DTOs so persistence
+  can omit information supplied by its enclosing context; validate that context
+  at the conversion boundary rather than silently dropping conflicting values.
 - Organize implementation files by owning type: `commit.go`, `record.go`, etc.
   Keep the declaration, methods, and type-specific helpers together, including
   validation, cloning, equality, and encoding/decoding. Avoid capability-wide

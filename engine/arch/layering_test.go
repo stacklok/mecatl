@@ -131,6 +131,29 @@ var coreImportRules = []coreImportRule{
 		desc: "kernel history may import only history identity, format values, codec runtime, content identity and stdlib, never the legacy aggregate",
 	},
 	{
+		pkg: modulePrefix + "engine/kernel/session",
+		allowedCore: map[string]bool{
+			modulePrefix + "engine/kernel/history":        true,
+			modulePrefix + "engine/kernel/contentid":      true,
+			modulePrefix + "engine/kernel/history/id":     true,
+			modulePrefix + "engine/kernel/history/format": true,
+			modulePrefix + "engine/kernel/codec":          true,
+			modulePrefix + "engine/kernel/session/format": true,
+		},
+		allowedExternal: map[string]bool{},
+		desc:            "kernel session may import only history contracts, session format, content identity, the codec runtime and stdlib, never legacy session or execution code",
+	},
+	{
+		pkg: modulePrefix + "engine/kernel/session/format",
+		allowedCore: map[string]bool{
+			modulePrefix + "engine/kernel/codec": true,
+		},
+		allowedExternal: map[string]bool{
+			"github.com/jcalabro/atmos/cbor": true,
+		},
+		desc: "session format may import only the codec runtime, generated Atmos CBOR primitives and stdlib, never aggregates or identity owners",
+	},
+	{
 		pkg: modulePrefix + "engine/session",
 		allowedCore: map[string]bool{
 			modulePrefix + "engine/governance": true,

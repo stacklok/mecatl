@@ -1,0 +1,73 @@
+package session
+
+import (
+	"github.com/stacklok/mecatl/engine/kernel/contentid"
+	"github.com/stacklok/mecatl/engine/kernel/history"
+	historyid "github.com/stacklok/mecatl/engine/kernel/history/id"
+)
+
+// Snapshot is an immutable accepted-state handle, not a restore token. Capture
+// and copying cost O(1). Concurrent readers need no locks, even while the owner
+// appends. Zero is unscoped and empty. Handles may retain extra backing capacity;
+// GC owns their lifetime. Indexed methods panic outside [0, count).
+type Snapshot struct {
+	historyID historyid.HistoryID
+	head      history.CommitRef
+	lifecycle lifecycleState
+	records   []*acceptedRecord
+	runs      []runEntry
+	inputs    []int
+	commits   []commitEntry
+}
+
+// HistoryID returns the scope, including before creation.
+func (v Snapshot) HistoryID() historyid.HistoryID { return v.historyID }
+
+// Head returns the accepted head, or zero before creation.
+func (v Snapshot) Head() history.CommitRef { return v.head }
+
+// Created reports whether explicit creation has been accepted.
+func (v Snapshot) Created() bool { return v.lifecycle.created }
+
+// ActiveRun returns the active identity, or zero while idle.
+func (v Snapshot) ActiveRun() RunID { return v.lifecycle.activeRun }
+
+// RunCount returns the number of accepted runs.
+func (v Snapshot) RunCount() int { return len(v.runs) }
+
+// RecordCount returns the number of accepted chronological facts.
+func (v Snapshot) RecordCount() int { return len(v.records) }
+
+// RecordAt returns a chronological record; out-of-range indices panic.
+func (v Snapshot) RecordAt(i int) RecordView {
+	return RecordView{scope: v.historyID, record: v.records[i]}
+}
+
+// RunAt returns a run with bounds pinned to this snapshot; out-of-range indices panic.
+func (v Snapshot) RunAt(i int) RunView {
+	r := v.runs[i]
+	recordEnd, inputEnd := len(v.records), len(v.inputs)
+	if i+1 < len(v.runs) {
+		recordEnd, inputEnd = v.runs[i+1].recordStart, v.runs[i+1].inputStart
+	}
+	return RunView{id: r.id, scope: v.historyID, records: v.records[r.recordStart:recordEnd:recordEnd], inputs: v.inputs[r.inputStart:inputEnd:inputEnd], allRecords: v.records}
+}
+
+// runEntry is immutable. Endpoints derive from the next entry or captured lengths,
+// never a retroactive update when an active run receives another fact.
+type runEntry struct {
+	id          RunID
+	recordStart int
+	inputStart  int
+}
+
+// commitEntry preserves verified envelope fields and grouping without duplicating
+// record payloads. Pointer envelope fields are copied into scalar values.
+type commitEntry struct {
+	ref           history.CommitRef
+	formatVersion int64
+	historyID     historyid.HistoryID // Nonzero only for genesis.
+	parent        contentid.CID       // Nonzero only for successors.
+	recordStart   int
+	recordCount   int
+}

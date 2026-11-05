@@ -53,19 +53,28 @@ import (
 var guardedPackages = arch.CorePackages
 
 // shortName maps an import path to its baseline filename stem, preserving
-// existing names and disambiguating the history ID leaf from engine/id.
+// existing names and disambiguating kernel packages from legacy names.
 func shortName(importPath string) string {
-	if importPath == "github.com/stacklok/mecatl/engine/kernel/history/id" {
+	switch importPath {
+	case "github.com/stacklok/mecatl/engine/kernel/history/id":
 		return "history_id"
+	case "github.com/stacklok/mecatl/engine/kernel/session/format":
+		return "kernel_session_format"
+	case "github.com/stacklok/mecatl/engine/kernel/session":
+		return "kernel_session"
 	}
 	return importPath[strings.LastIndex(importPath, "/")+1:]
 }
 
 func TestShortName(t *testing.T) {
 	for importPath, want := range map[string]string{
-		"github.com/stacklok/mecatl/engine/id":                "id",
-		"github.com/stacklok/mecatl/engine/kernel/history":    "history",
-		"github.com/stacklok/mecatl/engine/kernel/history/id": "history_id",
+		"github.com/stacklok/mecatl/engine/id":                    "id",
+		"github.com/stacklok/mecatl/engine/kernel/history":        "history",
+		"github.com/stacklok/mecatl/engine/kernel/history/id":     "history_id",
+		"github.com/stacklok/mecatl/engine/kernel/session":        "kernel_session",
+		"github.com/stacklok/mecatl/engine/kernel/history/format": "format",
+		"github.com/stacklok/mecatl/engine/kernel/session/format": "kernel_session_format",
+		"github.com/stacklok/mecatl/engine/session":               "session",
 	} {
 		if got := shortName(importPath); got != want {
 			t.Errorf("shortName(%q) = %q; want %q", importPath, got, want)
