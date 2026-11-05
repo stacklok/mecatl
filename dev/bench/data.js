@@ -403557,6 +403557,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1793877990704,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "radoslav@stacklok.com",
+            "name": "Radoslav Dimitrov",
+            "username": "rdimitrov"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "12907be2e97f3b3add4b6ff0ee81c8f7ed9e9def",
+          "message": "fix: address open code scanning alerts (#2684)\n\nCo-authored-by: Claude <noreply@anthropic.com>",
+          "timestamp": "2026-11-05T07:49:15-05:00",
+          "tree_id": "a2632e79da449d2b66206349884cc3b73efd0d2f",
+          "url": "https://github.com/stacklok/mecatl/commit/12907be2e97f3b3add4b6ff0ee81c8f7ed9e9def"
+        },
+        "date": 1793883724533,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 16150,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12911,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 795,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -526031,6 +526070,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1793883721002,
+  "lastUpdate": 1793883725458,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
