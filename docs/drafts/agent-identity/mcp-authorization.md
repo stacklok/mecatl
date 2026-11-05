@@ -102,11 +102,6 @@ For each call, the broker authenticates to AS-1 as OAuth client `mecatl` with `p
 
 **Tool discovery.** mecak8s's MCP client also lists the gateway's tools, with a `V` the broker issues for that listing after the same session, workload, and actor checks; its entry names the server and the `tools/list` method instead of a tool and argument hash. Listing tools needs no sign-in beyond Alice's sign-in at AS-1.
 
-**Open, decided in phase 2.** Where the per-call restriction lives:
-
-- **In `V`**, as described above. Every call costs an ID-JAG exchange at AS-1 and a redemption at AS-2, and everything stays with the gateway's own AS-2, which suits an external gateway.
-- **In a second token.** `V` is scoped to the acting instance's effective ceiling, through the slot described in [delegated authority](#delegated-authority), and may be cached by the broker per session, instance, gateway, and user. The broker signs a per-call token naming the server, the tool, the argument hash, and a `jti`, valid for seconds, and the vMCP requires both. This saves the round trips per call, but the vMCP must trust the broker's signing key, which an external gateway administers separately. It follows the pattern of OAuth Transaction Tokens, which are meant for one trust domain.
-
-Either form leaves the harness with a credential for only the call the broker approved. Until the ToolHive changes for either land, `V` is fetched per call, kept short, and never cached or stored by mecak8s.
+**Why the binding lives in `V`.** The alternative was two tokens: a `V` scoped to the acting instance's effective ceiling and cached by the broker, plus a per-call token the broker signs, valid for seconds, in the pattern of OAuth Transaction Tokens. That saves the AS-1 exchange and AS-2 redemption on each call, but the vMCP would have to trust the broker's signing key as well as AS-2's. An external gateway administers its own trust, and transaction tokens are meant for one trust domain. Binding `V` keeps every gateway trusting only its own AS-2, and costs two token requests per call, which is small next to model and tool latency.
 
 An allow does not prove dispatch or provider success; the dispatch and outcome come from the MCP client's report. The [audit contract](audit.md#decision-dispatch-and-observed-outcome) owns durable evidence and correlation requirements. The MCP client records each operation before its first dispatch attempt and never replays an unknown outcome automatically, even when credentials were recovered.
