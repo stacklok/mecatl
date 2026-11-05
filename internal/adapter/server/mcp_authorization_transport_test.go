@@ -511,6 +511,9 @@ func TestMCPAuthorizationGRPCControlEOFDoesNotCancelPlanApprovalContinuation(t *
 	f := newInteractiveLifecycleFixtureWithMode(t, session.AuthorizationGranted, nil, time.Now, nil,
 		session.ModePlan, mockllm.ToolCallTurn(planCall))
 	f.attach.refreshTools = []tool.Tool{agent.NewPresentPlanTool()}
+	// The refreshed catalogue lacks the parked tool, so the broker refuses its
+	// arguments and the continuation settles it before the plan turn.
+	f.attach.argumentsErr = errors.New("authenticated replacement tool schema is unavailable")
 	stream := &recheckAuthorizationStream{
 		ctx:         t.Context(),
 		eofAfterAsk: make(chan struct{}),

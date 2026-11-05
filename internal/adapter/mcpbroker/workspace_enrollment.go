@@ -16,8 +16,6 @@ var ErrWorkspaceEnrollmentUnsupported = errors.New("mcpbroker: workspace enrollm
 
 var errWorkspaceEnrollmentAlreadyCompleted = errors.New("mcpbroker: workspace enrollment is already completed")
 
-var _ contract.WorkspaceEnrollmentAttachment = (*Attachment)(nil)
-
 // bundleBackends returns copied enrollment inputs only while the owning
 // infrastructure admits work.
 func (a *Attachment) bundleBackends() ([]string, *oauthRoute) {

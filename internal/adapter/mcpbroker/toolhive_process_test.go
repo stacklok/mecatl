@@ -380,11 +380,7 @@ func TestToolHiveConstructionMapsEveryProtectedProfileInOrder(t *testing.T) {
 		t.Fatalf("AttachSession: %v", err)
 	}
 	t.Cleanup(func() { _, _ = attachment.Close(context.Background()) })
-	enroller, ok := attachment.(contract.WorkspaceEnrollmentAttachment)
-	if !ok {
-		t.Fatal("Attachment does not implement WorkspaceEnrollmentAttachment")
-	}
-	presentation, err := enroller.BeginWorkspaceEnrollment(t.Context())
+	presentation, err := attachment.BeginWorkspaceEnrollment(t.Context())
 	if err != nil {
 		t.Fatalf("BeginWorkspaceEnrollment: %v", err)
 	}

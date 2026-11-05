@@ -65,14 +65,6 @@ func (t lifecycleMarkerTool) Execute(_ context.Context, call session.ToolCall, _
 	return session.NewToolResult(call.ID, t.name), nil
 }
 
-type lifecycleSchemaTool struct{ spec tool.ToolSpec }
-
-func (t lifecycleSchemaTool) Spec() tool.ToolSpec { return t.spec }
-func (lifecycleSchemaTool) ReadOnly() bool        { return true }
-func (lifecycleSchemaTool) Execute(_ context.Context, call session.ToolCall, _ tool.Environment) (session.ToolResult, error) {
-	return session.NewToolResult(call.ID, "ok"), nil
-}
-
 type lifecycleParkingTool struct {
 	*lifecycleTool
 	authorization session.ExternalAuthorization
@@ -103,11 +95,15 @@ type lifecycleAttachment struct {
 	statusHook         func()
 	honorStatusContext bool
 	cancelOutcome      brokercontract.CancelOutcome
+	cancelErr          error
 	refreshTools       []tool.Tool
 	refreshCalls       int
 	// refreshHook, when set, runs as a granted catalogue refresh starts,
 	// without the attachment's lock held.
 	refreshHook func()
+	// argumentsErr is the scripted verdict PrepareGrantedAuthorization returns
+	// for the parked call's arguments.
+	argumentsErr error
 }
 
 func (*lifecycleAttachment) Commit(context.Context) error { return nil }
@@ -155,6 +151,9 @@ func (a *lifecycleAttachment) AuthorizationStatus(ctx context.Context, _ session
 func (a *lifecycleAttachment) CancelAuthorization(context.Context, session.ExternalAuthorization) (brokercontract.CancelOutcome, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	if a.cancelErr != nil {
+		return "", a.cancelErr
+	}
 	if a.cancelOutcome != "" {
 		return a.cancelOutcome, nil
 	}
@@ -169,6 +168,31 @@ func (a *lifecycleAttachment) CancelAuthorization(context.Context, session.Exter
 }
 func (*lifecycleAttachment) Close(context.Context) (brokercontract.CloseOutcome, error) {
 	return brokercontract.CloseClosed, nil
+}
+func (*lifecycleAttachment) CallMcpWithQueryTool() tool.Tool { return nil }
+func (a *lifecycleAttachment) PrepareGrantedAuthorization(ctx context.Context, claimed session.PendingAuthorization) (brokercontract.GrantedAuthorization, error) {
+	tools, err := a.RefreshGrantedAuthorizationCatalogue(ctx, claimed.Authorization)
+	if err != nil {
+		return brokercontract.GrantedAuthorization{}, err
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return brokercontract.GrantedAuthorization{Tools: tools, ArgumentsErr: a.argumentsErr}, nil
+}
+
+var errLifecycleEnrollmentUnsupported = errors.New("lifecycle fixture: workspace enrollment unsupported")
+
+func (*lifecycleAttachment) ResetWorkspaceEnrollment(context.Context) error {
+	return errLifecycleEnrollmentUnsupported
+}
+func (*lifecycleAttachment) BeginWorkspaceEnrollment(context.Context) (brokercontract.WorkspaceEnrollmentPresentation, error) {
+	return brokercontract.WorkspaceEnrollmentPresentation{}, errLifecycleEnrollmentUnsupported
+}
+func (*lifecycleAttachment) ObserveWorkspaceEnrollment(context.Context, brokercontract.WorkspaceEnrollmentRef) (brokercontract.WorkspaceEnrollmentResult, error) {
+	return brokercontract.WorkspaceEnrollmentResult{}, errLifecycleEnrollmentUnsupported
+}
+func (*lifecycleAttachment) CancelWorkspaceEnrollment(context.Context, brokercontract.WorkspaceEnrollmentRef) (brokercontract.WorkspaceEnrollmentResult, error) {
+	return brokercontract.WorkspaceEnrollmentResult{}, errLifecycleEnrollmentUnsupported
 }
 
 type lifecycleBroker struct {
@@ -617,17 +641,22 @@ func TestAuthenticatedMCPMetadataReplacement_PlanModeBlocksMutatingRefresh(t *te
 }
 
 // TestAuthenticatedMCPMetadataReplacement_RejectsParkedArgumentsOutsideReplacementSchema
-// pins the narrow lazy-transition gate: the parked call was valid for its static
-// declaration, but must not execute after authenticated metadata narrows it.
+// pins the narrow lazy-transition gate: when the broker refuses the parked
+// arguments against the authenticated metadata, the host still rebuilds from the
+// granted tools but settles the parked call without executing it.
 func TestAuthenticatedMCPMetadataReplacement_RejectsParkedArgumentsOutsideReplacementSchema(t *testing.T) {
 	f := newLifecycleFixture(t, session.AuthorizationGranted, nil, time.Now, nil)
-	replacement := &lifecycleTool{schema: json.RawMessage(`{"type":"object","required":["title"],"properties":{"title":{"type":"string"}}}`)}
-	f.attach.refreshTools = []tool.Tool{replacement}
+	replacement := &lifecycleTool{}
+	f.attach.refreshTools = []tool.Tool{replacement, lifecycleMarkerTool{name: "refreshed"}}
+	f.attach.argumentsErr = errors.New("parked tool arguments do not conform to authenticated replacement schema")
 
 	control := MCPAuthorizationControl{SessionID: "authorization-session", AuthorizationID: f.pending.Authorization.ID}
 	result, err := f.svc.RecheckMCPAuthorization(t.Context(), control.SessionID, control)
 	if err != nil || result.Run == nil {
 		t.Fatalf("RecheckMCPAuthorization = (%+v, %v)", result, err)
+	}
+	if got := *f.builtTools; len(got) == 0 || !slices.Contains(got[len(got)-1], "refreshed") {
+		t.Fatalf("continuation engine tools = %v, want the granted snapshot rebuilt before the refusal", got)
 	}
 	events := drainLifecycleRun(t, f.svc, result)
 	if got := replacement.calls.Load(); got != 0 {
@@ -647,61 +676,6 @@ func TestAuthenticatedMCPMetadataReplacement_RejectsParkedArgumentsOutsideReplac
 	}
 	if got, ok := results[f.pending.Deferred[0].ID]; !ok || !got.IsError || got.Content != "authorization deferred sibling was not executed" {
 		t.Fatalf("deferred call result = %+v, want paired deferred error", got)
-	}
-}
-
-func TestValidateGrantedAuthorizationArgumentsFailsClosed(t *testing.T) {
-	validSchema := json.RawMessage(`{"type":"object","required":["title"],"properties":{"title":{"type":"string"}}}`)
-	cases := []struct {
-		name   string
-		schema json.RawMessage
-		args   json.RawMessage
-		wantOK bool
-	}{
-		{name: "valid", schema: validSchema, args: json.RawMessage(`{"title":"ok"}`), wantOK: true},
-		{name: "malformed schema", schema: json.RawMessage(`{`), args: json.RawMessage(`{}`)},
-		{name: "non-object schema", schema: json.RawMessage(`true`), args: json.RawMessage(`{}`)},
-		{name: "unresolvable schema", schema: json.RawMessage(`{"$ref":"https://schemas.example/required.json"}`), args: json.RawMessage(`{}`)},
-		{name: "malformed args", schema: validSchema, args: json.RawMessage(`{`)},
-		{name: "non-object args", schema: validSchema, args: json.RawMessage(`[]`)},
-		{name: "schema mismatch", schema: validSchema, args: json.RawMessage(`{"title":1}`)},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			err := validateGrantedAuthorizationArguments([]tool.Tool{&lifecycleTool{schema: tc.schema}}, session.NewToolCall("call", "protected", tc.args))
-			if (err == nil) != tc.wantOK {
-				t.Fatalf("validateGrantedAuthorizationArguments() error = %v, wantOK %v", err, tc.wantOK)
-			}
-		})
-	}
-}
-
-// TestValidateGrantedAuthorizationArgumentsCanonicalizesQueryArgs pins the same
-// JSON-encoded args-object recovery that CallMcpWithQuery applies before invoking a
-// remote protected target. The server transition validates the recovered target
-// against the authenticated target schema, so restart/lazy continuation preserves
-// that execution-compatible input without accepting malformed remote arguments.
-func TestValidateGrantedAuthorizationArgumentsCanonicalizesQueryArgs(t *testing.T) {
-	querySpec := mcp.CallMcpWithQuerySpec()
-	targetSpec := tool.ToolSpec{Name: "mcp__github__create", Schema: json.RawMessage(`{"type":"object","required":["title"],"properties":{"title":{"type":"string"}}}`)}
-	tools := []tool.Tool{lifecycleSchemaTool{spec: querySpec}, lifecycleSchemaTool{spec: targetSpec}}
-	cases := []struct {
-		name string
-		args json.RawMessage
-		want bool
-	}{
-		{name: "encoded object", args: json.RawMessage(`{"server":"github","tool":"create","args":"{\"title\":\"ok\"}","jq_filter":"."}`), want: true},
-		{name: "encoded malformed object", args: json.RawMessage(`{"server":"github","tool":"create","args":"{","jq_filter":"."}`)},
-		{name: "encoded non-object", args: json.RawMessage(`{"server":"github","tool":"create","args":"[]","jq_filter":"."}`)},
-		{name: "authenticated target mismatch", args: json.RawMessage(`{"server":"github","tool":"create","args":"{\"title\":1}","jq_filter":"."}`)},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			err := validateGrantedAuthorizationArguments(tools, session.NewToolCall("query", querySpec.Name, tc.args))
-			if (err == nil) != tc.want {
-				t.Fatalf("validateGrantedAuthorizationArguments() error = %v, want success %v", err, tc.want)
-			}
-		})
 	}
 }
 
@@ -1974,43 +1948,6 @@ func TestMCPAuthorizationAcquiresLeaseBeforeBrokerObservation(t *testing.T) {
 	f.svc.CloseSession(control.SessionID)
 }
 
-func TestReconcileAuthorizationCancellation(t *testing.T) {
-	statusReadErr := errors.New("authoritative status read failed")
-	for _, tc := range []struct {
-		name        string
-		outcome     brokercontract.CancelOutcome
-		freshStatus session.AuthorizationStatus
-		status      session.AuthorizationStatus
-		statusErr   error
-		want        session.AuthorizationStatus
-		wantErr     error
-		exactErr    bool
-	}{
-		{name: "fresh expiry", outcome: brokercontract.CancelCancelled, freshStatus: session.AuthorizationExpired, want: session.AuthorizationExpired},
-		{name: "fresh explicit cancellation", outcome: brokercontract.CancelCancelled, freshStatus: session.AuthorizationCancelled, want: session.AuthorizationCancelled},
-		{name: "already cancelled", outcome: brokercontract.CancelAlreadyCancelled, freshStatus: session.AuthorizationExpired, want: session.AuthorizationCancelled},
-		{name: "already resolved", outcome: brokercontract.CancelAlreadyResolved, status: session.AuthorizationGranted, want: session.AuthorizationGranted},
-		{name: "already resolved remains pending", outcome: brokercontract.CancelAlreadyResolved, status: session.AuthorizationPending, wantErr: ErrFailedPrecondition},
-		{name: "status read error", outcome: brokercontract.CancelAlreadyResolved, statusErr: statusReadErr, wantErr: statusReadErr, exactErr: true},
-		{name: "unknown outcome", outcome: "unknown", wantErr: ErrFailedPrecondition},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			f := newLifecycleFixture(t, tc.status, nil, time.Now, nil)
-			f.attach.statusErr = tc.statusErr
-			got, err := reconcileAuthorizationCancellation(t.Context(), f.attach, f.pending.Authorization, tc.outcome, tc.freshStatus)
-			if !errors.Is(err, tc.wantErr) {
-				t.Fatalf("error = %v, want %v", err, tc.wantErr)
-			}
-			if tc.exactErr && err != tc.wantErr {
-				t.Fatalf("error = %v, want unchanged %v", err, tc.wantErr)
-			}
-			if err == nil && got != tc.want {
-				t.Fatalf("status = %q, want %q", got, tc.want)
-			}
-		})
-	}
-}
-
 func TestCancellationCallersSupplyTheirTerminalStatus(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -2090,6 +2027,135 @@ func TestCancelMCPAuthorizationFailsClosedOnAmbiguousClaim(t *testing.T) {
 				t.Fatalf("state = %q, protected executions = %d", loaded.State, f.attach.tool.calls.Load())
 			}
 		})
+	}
+}
+
+// TestCancelMCPAuthorizationFailedCancellation pins that a cancellation failing
+// on lost broker state resolves the authorization as interrupted without
+// executing, while any other cancellation failure surfaces and leaves it pending.
+func TestCancelMCPAuthorizationFailedCancellation(t *testing.T) {
+	t.Run("lost state interrupts", func(t *testing.T) {
+		f := newLifecycleFixture(t, session.AuthorizationPending, nil, time.Now, nil)
+		f.attach.cancelErr = fmt.Errorf("authorization gone: %w", brokercontract.ErrStateUnavailable)
+		control := MCPAuthorizationControl{SessionID: "authorization-session", AuthorizationID: f.pending.Authorization.ID}
+		result, err := f.svc.CancelMCPAuthorization(t.Context(), control.SessionID, control)
+		if err != nil || result.Status != session.AuthorizationInterrupted {
+			t.Fatalf("result = %+v, err = %v; want interrupted", result, err)
+		}
+		drainLifecycleRun(t, f.svc, result)
+		if f.attach.tool.calls.Load() != 0 {
+			t.Fatal("protected mutation executed after a lost cancellation")
+		}
+		loaded, err := f.store.Load(t.Context(), control.SessionID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, pending := loaded.PendingAuthorization(); pending {
+			t.Fatal("authorization still pending after a lost-state cancellation")
+		}
+	})
+	t.Run("other failure surfaces", func(t *testing.T) {
+		f := newLifecycleFixture(t, session.AuthorizationPending, nil, time.Now, nil)
+		transient := errors.New("broker temporarily unavailable")
+		f.attach.cancelErr = transient
+		control := MCPAuthorizationControl{SessionID: "authorization-session", AuthorizationID: f.pending.Authorization.ID}
+		result, err := f.svc.CancelMCPAuthorization(t.Context(), control.SessionID, control)
+		if !errors.Is(err, transient) || err.Error() != transient.Error() || result.Run != nil {
+			t.Fatalf("result = %+v, err = %v; want the cancellation's error unchanged", result, err)
+		}
+		loaded, err := f.store.Load(t.Context(), control.SessionID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if loaded.State != session.StateAuthorizing {
+			t.Fatalf("state = %q, want the authorization left pending", loaded.State)
+		}
+	})
+}
+
+// TestInvalidCancellationOutcomeIsAFailedPrecondition pins the error every
+// settling path reports when the broker's cancellation outcome leaves the
+// authorization's status untrustworthy.
+func TestInvalidCancellationOutcomeIsAFailedPrecondition(t *testing.T) {
+	callers := []struct {
+		name string
+		call func(*lifecycleFixture, MCPAuthorizationControl) (MCPAuthorizationResult, error)
+	}{
+		{name: "recheck expiry", call: func(f *lifecycleFixture, control MCPAuthorizationControl) (MCPAuthorizationResult, error) {
+			return f.svc.RecheckMCPAuthorization(t.Context(), control.SessionID, control)
+		}},
+		{name: "explicit cancellation", call: func(f *lifecycleFixture, control MCPAuthorizationControl) (MCPAuthorizationResult, error) {
+			return f.svc.CancelMCPAuthorization(t.Context(), control.SessionID, control)
+		}},
+		{name: "timer expiry", call: func(f *lifecycleFixture, _ MCPAuthorizationControl) (MCPAuthorizationResult, error) {
+			loaded, err := f.store.Load(t.Context(), "authorization-session")
+			if err != nil {
+				return MCPAuthorizationResult{}, err
+			}
+			return f.svc.recheckExpiredAuthorizationLocked(t.Context(), loaded, f.pending)
+		}},
+	}
+	outcomes := []struct {
+		outcome brokercontract.CancelOutcome
+		message string
+	}{
+		{outcome: "unknown", message: "server: failed precondition: unknown cancellation outcome"},
+		// The fixture's status stays pending, so the confirming read after an
+		// already-resolved outcome still reports pending.
+		{outcome: brokercontract.CancelAlreadyResolved, message: "server: failed precondition: resolved authorization remained pending"},
+	}
+	for _, caller := range callers {
+		for _, tc := range outcomes {
+			t.Run(caller.name+"/"+string(tc.outcome), func(t *testing.T) {
+				now := time.Now()
+				f := newLifecycleFixture(t, session.AuthorizationPending, nil, func() time.Time { return now }, nil)
+				now = f.pending.Authorization.ExpiresAt
+				f.attach.cancelOutcome = tc.outcome
+				control := MCPAuthorizationControl{SessionID: "authorization-session", AuthorizationID: f.pending.Authorization.ID}
+				result, err := caller.call(&f, control)
+				if !errors.Is(err, ErrFailedPrecondition) || err.Error() != tc.message || result.Run != nil {
+					t.Fatalf("result = %+v, err = %v; want ErrFailedPrecondition %q", result, err, tc.message)
+				}
+				if f.attach.tool.calls.Load() != 0 {
+					t.Fatal("protected mutation executed after an invalid cancellation outcome")
+				}
+			})
+		}
+	}
+}
+
+// TestMCPAuthorizationPresentationRefusesANonPendingAuthorization pins the
+// not-pending refusal when the broker has already resolved the authorization.
+func TestMCPAuthorizationPresentationRefusesANonPendingAuthorization(t *testing.T) {
+	f := newLifecycleFixture(t, session.AuthorizationGranted, nil, time.Now, nil)
+	control := MCPAuthorizationControl{SessionID: "authorization-session", AuthorizationID: f.pending.Authorization.ID}
+	url, err := f.svc.MCPAuthorizationPresentation(t.Context(), control.SessionID, control)
+	if !errors.Is(err, ErrNotFound) || err.Error() != "server: session not found: the MCP authorization is no longer pending" || url != "" {
+		t.Fatalf("presentation = (%q, %v), want the not-pending refusal", url, err)
+	}
+}
+
+// TestCancelMCPAuthorizationSurfacesALostReadAfterTheCancellation pins that only
+// a lost-state cancellation itself resolves as interrupted: when the broker
+// reports the authorization already resolved and then loses the state while the
+// cancel control reads which status it resolved to, the control fails and the
+// authorization stays pending.
+func TestCancelMCPAuthorizationSurfacesALostReadAfterTheCancellation(t *testing.T) {
+	f := newLifecycleFixture(t, session.AuthorizationGranted, nil, time.Now, nil)
+	lost := fmt.Errorf("authorization gone: %w", brokercontract.ErrStateUnavailable)
+	f.attach.cancelOutcome = brokercontract.CancelAlreadyResolved
+	f.attach.statusErr = lost
+	control := MCPAuthorizationControl{SessionID: "authorization-session", AuthorizationID: f.pending.Authorization.ID}
+	result, err := f.svc.CancelMCPAuthorization(t.Context(), control.SessionID, control)
+	if !errors.Is(err, lost) || result.Run != nil {
+		t.Fatalf("result = %+v, err = %v; want the lost read surfaced", result, err)
+	}
+	loaded, err := f.store.Load(t.Context(), control.SessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.State != session.StateAuthorizing {
+		t.Fatalf("state = %q, want the authorization left pending", loaded.State)
 	}
 }
 

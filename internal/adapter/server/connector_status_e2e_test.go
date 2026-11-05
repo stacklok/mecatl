@@ -141,11 +141,7 @@ func TestBrokerMCPStatus_Scenario1_PersistedPendingGate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	enroller, ok := attachment.(brokercontract.WorkspaceEnrollmentAttachment)
-	if !ok {
-		t.Fatal("broker attachment does not support enrollment")
-	}
-	cancelled, err := enroller.CancelWorkspaceEnrollment(ctx, started.Ref)
+	cancelled, err := attachment.CancelWorkspaceEnrollment(ctx, started.Ref)
 	if err != nil || cancelled.Status != brokercontract.WorkspaceEnrollmentCancelled {
 		t.Fatalf("cancelled terminal broker attempt = %#v, %v", cancelled, err)
 	}
