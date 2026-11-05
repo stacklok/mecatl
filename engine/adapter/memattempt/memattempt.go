@@ -112,11 +112,15 @@ func (s *Store) List(ctx context.Context, partition learning.AttemptPartition, q
 		}
 	}
 	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
-	page := learning.AttemptPage{Records: make([]learning.AttemptRecord, 0, min(limit, len(ids)))}
-	for _, id := range ids[:min(limit, len(ids))] {
+	more := len(ids) > limit
+	if more {
+		ids = ids[:limit]
+	}
+	page := learning.AttemptPage{Records: make([]learning.AttemptRecord, 0, len(ids))}
+	for _, id := range ids {
 		page.Records = append(page.Records, s.records[partition][id])
 	}
-	if len(ids) > limit {
+	if more {
 		page.Next = page.Records[len(page.Records)-1].ID
 	}
 	return page, nil

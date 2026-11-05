@@ -3,7 +3,7 @@
 import { X } from "lucide-react";
 import { type ReactNode, useRef, useState } from "react";
 import { Button } from "../../components/ui/button";
-import { scaledAvatarSize } from "./avatar-utils";
+import { safeAvatarSrc, scaledAvatarSize } from "./avatar-utils";
 
 export function AvatarPicker({
   alt,
@@ -18,6 +18,7 @@ export function AvatarPicker({
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [error, setError] = useState<string>();
+  const imageSrc = safeAvatarSrc(avatarUrl);
 
   async function onFileChange(file?: File) {
     if (!file) return;
@@ -38,8 +39,8 @@ export function AvatarPicker({
       <div className="flex flex-wrap items-center gap-4">
         <div className="group relative size-14 shrink-0">
           <div className="flex size-full items-center justify-center overflow-hidden rounded-full bg-muted text-muted-foreground">
-            {avatarUrl ? (
-              <img alt={alt} className="size-full object-cover" src={avatarUrl} />
+            {imageSrc ? (
+              <img alt={alt} className="size-full object-cover" src={imageSrc} />
             ) : (
               fallback
             )}

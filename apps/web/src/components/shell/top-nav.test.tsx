@@ -51,7 +51,7 @@ function links(markup: string) {
   return [...markup.matchAll(/<a\b[^>]*>[\s\S]*?<\/a>/g)].map(([html]) => ({
     html,
     href: html.match(/href="([^"]+)"/)?.[1],
-    name: html.replace(/<[^>]+>/g, "").trim(),
+    name: html.replace(/<[^>]+>/g, "").replace(/[<>]/g, "").trim(),
   }));
 }
 

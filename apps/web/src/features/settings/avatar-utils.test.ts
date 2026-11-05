@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
-import { scaledAvatarSize } from "./avatar-utils";
+import { safeAvatarSrc, scaledAvatarSize } from "./avatar-utils";
 
 describe("scaledAvatarSize", () => {
   it("preserves small images and scales the longest edge", () => {
@@ -12,5 +12,13 @@ describe("scaledAvatarSize", () => {
 
   it("never returns an empty canvas", () => {
     expect(scaledAvatarSize(0, 0)).toEqual({ height: 1, width: 1 });
+  });
+});
+
+describe("safeAvatarSrc", () => {
+  it("keeps inline image data URLs and drops every other scheme", () => {
+    expect(safeAvatarSrc("data:image/jpeg;base64,aA==")).toBe("data:image/jpeg;base64,aA==");
+    expect(safeAvatarSrc("javascript:alert(1)")).toBe("");
+    expect(safeAvatarSrc("https://example.test/a.png")).toBe("");
   });
 });

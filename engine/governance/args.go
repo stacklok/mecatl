@@ -185,7 +185,7 @@ func (f *argFrame) repeats(own [][]byte, key []byte) bool {
 		return false
 	}
 	if f.seen == nil {
-		f.seen = make(map[string]struct{}, 2*len(own))
+		f.seen = make(map[string]struct{}, len(own))
 		for _, prior := range own {
 			f.seen[string(prior)] = struct{}{}
 		}

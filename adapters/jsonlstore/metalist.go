@@ -350,6 +350,10 @@ func (st *Store) readyInventoryCatalog(ctx context.Context, cursor *port.Session
 	return inventoryCatalog{}, fmt.Errorf("jsonlstore: inventory changed repeatedly while preparing catalog")
 }
 
+// maxInventoryPagePrealloc bounds the row slice preallocated for one page so a
+// large caller-supplied limit cannot drive the allocation size.
+const maxInventoryPagePrealloc = 1024
+
 const inventoryContinuationPrefix = "jsonl-v1."
 
 func encodeInventoryContinuation(position int64) string {
@@ -406,6 +410,9 @@ func (st *Store) readInventoryScopePage(ctx context.Context, request port.Sessio
 	capacity := request.Limit
 	if capacity > scope.Count {
 		capacity = scope.Count
+	}
+	if capacity > maxInventoryPagePrealloc {
+		capacity = maxInventoryPagePrealloc
 	}
 	rows := make([]port.SessionDiscoveryMeta, 0, capacity)
 	nextPosition := position

@@ -238,13 +238,18 @@ type authorizationIdentity struct {
 	binding session.AuthorizationBinding
 }
 
+// callbackToken holds the unguessable OAuth state value of one transaction.
+// Its zero value means the state was consumed or never issued, so clearing
+// it never introduces a fixed state string.
+type callbackToken struct{ value string }
+
 type authorizationTransaction struct {
 	identity     authorizationIdentity
 	route        *oauthRoute
 	backend      string
 	callHash     [32]byte
 	callID       session.ToolCallID
-	state        string
+	state        callbackToken
 	verifier     string
 	clientSecret string
 	expiresAt    time.Time
@@ -423,7 +428,7 @@ func (t *protectedSessionTool) RequestAuthorization(ctx context.Context, call se
 	copyRoute := *t.route.oauth
 	transaction := &authorizationTransaction{
 		identity: authorizationIdentity{id: id, binding: session.AuthorizationBinding(binding)}, route: &copyRoute,
-		backend: t.route.backend, callHash: hash, callID: call.ID, state: state, verifier: verifier, clientSecret: secret,
+		backend: t.route.backend, callHash: hash, callID: call.ID, state: callbackToken{value: state}, verifier: verifier, clientSecret: secret,
 		expiresAt: t.attachment.runtime.oauth.now().Add(t.attachment.runtime.oauth.ttl), status: session.AuthorizationPending,
 	}
 	if bundle {
@@ -434,7 +439,7 @@ func (t *protectedSessionTool) RequestAuthorization(ctx context.Context, call se
 		delete(logical.authorizations, transaction.identity)
 		transaction.clientSecret = ""
 		transaction.verifier = ""
-		transaction.state = ""
+		transaction.state = callbackToken{}
 		return session.ExternalAuthorization{}, false, errors.New("create unique callback state")
 	}
 	t.attachment.runtime.logAuthorization(ctx, t.attachment.logical.ref.SessionID(), diagnosticEventAuthorization, diagnosticReasonRequestStarted, port.LevelDebug, "request")
@@ -516,7 +521,7 @@ func (a *Attachment) PresentAuthorization(ctx context.Context, authorization ses
 		return "", contract.ErrAuthorizationNotFound
 	}
 	cfg := transaction.oauthConfig(transaction.clientSecret)
-	return cfg.AuthCodeURL(transaction.state, transaction.authCodeOptions()...), nil
+	return cfg.AuthCodeURL(transaction.state.value, transaction.authCodeOptions()...), nil
 }
 
 // AuthorizationStatus reports the exact transaction's current lifecycle status.
@@ -544,13 +549,13 @@ func (a *Attachment) AuthorizationStatus(ctx context.Context, authorization sess
 func (a *Attachment) expireLocked(transaction *authorizationTransaction) {
 	if transaction.status == session.AuthorizationPending && !a.runtime.oauth.now().Before(transaction.expiresAt) {
 		transaction.status = session.AuthorizationExpired
-		a.runtime.removeCallbackState(transaction.state, transaction)
+		a.runtime.removeCallbackState(transaction.state.value, transaction)
 		if transaction.cancel != nil {
 			transaction.cancel()
 		}
 		transaction.clientSecret = ""
 		transaction.verifier = ""
-		transaction.state = ""
+		transaction.state = callbackToken{}
 	}
 }
 
@@ -576,13 +581,13 @@ func (a *Attachment) CancelAuthorization(ctx context.Context, authorization sess
 	switch transaction.status {
 	case session.AuthorizationPending:
 		transaction.status = session.AuthorizationCancelled
-		a.runtime.removeCallbackState(transaction.state, transaction)
+		a.runtime.removeCallbackState(transaction.state.value, transaction)
 		if transaction.cancel != nil {
 			transaction.cancel()
 		}
 		transaction.clientSecret = ""
 		transaction.verifier = ""
-		transaction.state = ""
+		transaction.state = callbackToken{}
 		return contract.CancelCancelled, nil
 	case session.AuthorizationCancelled:
 		return contract.CancelAlreadyCancelled, nil
@@ -690,7 +695,7 @@ func (r *Runtime) handleCallbackError(state, oauthError string) error {
 	}
 	transaction.clientSecret = ""
 	transaction.verifier = ""
-	transaction.state = ""
+	transaction.state = callbackToken{}
 	return nil
 }
 
@@ -718,7 +723,7 @@ func (r *Runtime) handleCallback(ctx context.Context, code, state string) error 
 		transaction.status = session.AuthorizationExpired
 		transaction.clientSecret = ""
 		transaction.verifier = ""
-		transaction.state = ""
+		transaction.state = callbackToken{}
 		logical.mu.Unlock()
 		r.logAuthorization(ctx, logical.ref.SessionID(), diagnosticEventAuthorization, diagnosticReasonCallbackExpired, port.LevelInfo, "callback")
 		return contract.ErrAuthorizationNotFound
@@ -730,7 +735,7 @@ func (r *Runtime) handleCallback(ctx context.Context, code, state string) error 
 	verifier := transaction.verifier
 	transaction.clientSecret = ""
 	transaction.verifier = ""
-	transaction.state = ""
+	transaction.state = callbackToken{}
 	logical.mu.Unlock()
 
 	exchangeCtx = context.WithValue(exchangeCtx, oauth2.HTTPClient, r.oauth.httpClient)
@@ -1095,7 +1100,7 @@ func (l *logicalSession) clearSecretsLocked(runtime *Runtime, status session.Aut
 	}
 	l.cleaned = true
 	for _, transaction := range l.authorizations {
-		runtime.removeCallbackState(transaction.state, transaction)
+		runtime.removeCallbackState(transaction.state.value, transaction)
 		if transaction.status == session.AuthorizationPending {
 			transaction.status = status
 		}
@@ -1104,7 +1109,7 @@ func (l *logicalSession) clearSecretsLocked(runtime *Runtime, status session.Aut
 		}
 		transaction.clientSecret = ""
 		transaction.verifier = ""
-		transaction.state = ""
+		transaction.state = callbackToken{}
 	}
 	for _, grant := range l.grants {
 		clearGrantToken(grant)

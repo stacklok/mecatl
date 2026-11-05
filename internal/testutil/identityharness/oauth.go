@@ -58,9 +58,16 @@ func redirectWithError(w http.ResponseWriter, r *http.Request, redirectURI, stat
 }
 
 // redirect sends the user agent to redirectURI with q. Every caller passes a
-// redirect URI that exactly matches one the client registered.
+// redirect URI that exactly matches one the client registered; redirect also
+// refuses anything that is not an absolute http(s) URL without credentials, so
+// a registration mistake cannot become a scheme or userinfo redirect.
 func redirect(w http.ResponseWriter, r *http.Request, redirectURI string, q url.Values) {
-	http.Redirect(w, r, withQuery(redirectURI, q), http.StatusFound) //nolint:gosec // G710: callers pass only exact-matched registered redirect URIs.
+	target, err := url.Parse(redirectURI)
+	if err != nil || (target.Scheme != "http" && target.Scheme != "https") || target.Host == "" || target.User != nil {
+		http.Error(w, "invalid redirect_uri", http.StatusBadRequest)
+		return
+	}
+	http.Redirect(w, r, withQuery(target.String(), q), http.StatusFound) //nolint:gosec // G710: callers pass only exact-matched registered redirect URIs.
 }
 
 func withQuery(base string, q url.Values) string {

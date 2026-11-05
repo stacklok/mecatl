@@ -14,6 +14,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -371,11 +372,11 @@ func marshalDataJS(root map[string]any) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("encode data.js: %w", err)
 	}
-	out := make([]byte, 0, len(dataJSPrefix)+len(b)+1)
-	out = append(out, dataJSPrefix...)
-	out = append(out, b...)
-	out = append(out, '\n')
-	return out, nil
+	var out bytes.Buffer
+	out.WriteString(dataJSPrefix)
+	out.Write(b)
+	out.WriteByte('\n')
+	return out.Bytes(), nil
 }
 
 type pointGroup struct {
