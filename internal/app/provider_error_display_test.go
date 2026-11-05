@@ -159,7 +159,7 @@ func TestProviderStreamErrorBreakerNeutral(t *testing.T) {
 			entry := newOpenAICompatEntry(Config{
 				LLMMaxAttempts: 2, LLMBreakerThreshold: 3, LLMBreakerCooldown: time.Hour,
 			}, providerOpenAI, "synthetic", upstream.URL)
-			req := port.LLMRequest{Model: "test", Messages: []session.Message{session.NewUserMessage("hi")}}
+			req := port.LLMRequest{Model: "test", Messages: []port.LLMMessage{{Role: session.RoleUser, Text: "hi"}}}
 			// Exceed the threshold on the SAME wrapper, then send a valid request.
 			for i := int32(1); i <= 5; i++ {
 				seq, err := entry.provider.Stream(t.Context(), req)
@@ -292,7 +292,7 @@ func TestProviderErrorDisplayThroughAttemptExhaustion(t *testing.T) {
 				}
 			}
 			// The composed error must also retain the exhaustion and causal SDK chain.
-			seq, err := entry.provider.Stream(context.Background(), port.LLMRequest{Model: "test-model", Messages: []session.Message{session.NewUserMessage("hi")}})
+			seq, err := entry.provider.Stream(context.Background(), port.LLMRequest{Model: "test-model", Messages: []port.LLMMessage{{Role: session.RoleUser, Text: "hi"}}})
 			if err == nil {
 				for _, streamErr := range seq {
 					if streamErr != nil {

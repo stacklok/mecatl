@@ -358,11 +358,15 @@ func TestServerProviderRecovery_Scenario1_RootAndDirectWriteChildRecoverBeforeTe
 		t.Fatal(err)
 	}
 	results := 0
+	var acceptedID session.ToolCallID
 	var final string
 	for ev := range run.Events() {
+		if ev.ToolCall != nil && ev.ToolCall.Name == "Subagent" {
+			acceptedID = ev.ToolCall.ID
+		}
 		if ev.Type == session.EvToolResult && ev.ToolResult != nil {
 			results++
-			if ev.ToolResult.CallID != "delegate" || ev.ToolResult.IsError || !strings.Contains(ev.ToolResult.Content, "child recovered") {
+			if acceptedID == "" || ev.ToolResult.CallID != acceptedID || ev.ToolResult.IsError || !strings.Contains(ev.ToolResult.Content, "child recovered") {
 				t.Errorf("early or mismatched parent tool result: %+v", ev.ToolResult)
 			}
 		}
@@ -380,7 +384,7 @@ func TestServerProviderRecovery_Scenario1_RootAndDirectWriteChildRecoverBeforeTe
 	built.Close()
 	mu.Lock()
 	defer mu.Unlock()
-	wantChild := "subagent-" + string(parent.ID) + "-delegate"
+	wantChild := "subagent-" + string(parent.ID) + "-" + string(acceptedID)
 	if rootID != string(parent.ID) || childID != wantChild || len(calls) != 2 || calls[rootID] != 3 || calls[childID] != 3 {
 		t.Fatalf("origin/call accounting: root=%q child=%q calls=%v", rootID, childID, calls)
 	}

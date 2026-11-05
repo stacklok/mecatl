@@ -197,6 +197,28 @@ malformed or expired cursors. A backend follow-capacity error currently crosses
 the server wrapper as gRPC `Internal`; its local sentinel classification does
 not survive the transport.
 
+### Preserve identity and replay encodings
+
+Snapshot and event writers use `sessnap-json/2` and `eventlog-json/2`; typed
+readers convert straightforward `/1` records and read `/2` records. A `/1`
+conversion produces current snapshot data but permanently excludes the session
+from learning. A current `/2` snapshot remains eligible only when it stores a
+positive `learning_eligible` value. Opaque drivers preserve the format tag and
+payload bytes exactly. Decoding wrappers restore typed values and emit the newest
+encoding, so an upgraded wrapper is not compatible with an old harness reader.
+The `session-store/1` capability marker does not negotiate these formats, and
+event drivers have no startup format handshake.
+
+Store private message replay and occurrence bindings with the aggregate. Keep
+opaque provider bytes and unknown private replay versions intact; never expose them
+through public transcript projections. A `/1` snapshot converts only when its
+history has unambiguous, correctly ordered call/result pairs and provable parent
+calls. Awaiting or authorizing `/1` snapshots, pending payloads, and any
+`identity_hold` key reject. A converted session remains permanently excluded from
+learning. Use the coordinated
+[API-major-2 upgrade procedure](/operating/session-storage-operations.md#upgrade-to-api-major-2)
+for decoding drivers and local stores.
+
 ### Serve a backend
 
 Register the wrappers with the generated driver package. The import path remains
@@ -419,19 +441,17 @@ the same conversation either way.
 
 ### Replay-fidelity limitation
 
-The event stream does not contain three provider-private replay fields:
+The event stream omits `Message.Replay`, which holds occurrence-specific provider
+pairing/item bindings and opaque adapter payloads, and `Message.ProviderPhase`
+display metadata. `EvReasoningDelta` contains readable reasoning and cannot
+substitute for signed or encrypted replay data.
 
-- `Message.Reasoning`, the provider reasoning replay blob
-- `Message.ProviderPhase`, the OpenAI Responses phase marker
-- `ToolCall.ItemID`, the provider-assigned item ID
-
-`EvReasoningDelta` contains a readable summary, not the opaque replay value. A
-fold must not place it in `Message.Reasoning`.
-
-A folded session provides byte-identical replay only for providers that do not
-use these fields. Mecatl resumes its own sessions from snapshots, which retain
-them. Event-log systems that need reasoning-provider replay must store the
-opaque values in a richer event schema.
+A fold reconstructs structural history. `port.ProjectMessages` can construct
+provider-facing messages using synthesized pairing tokens, but this does not
+prove byte-identical replay of the original request. Mecatl resumes its own
+sessions from snapshots, which retain the private replay state. Event-sourced
+hosts that need exact provider replay must retain equivalent private state in
+their storage.
 
 ## Run the conformance suites
 

@@ -69,6 +69,7 @@ export interface EventUsage {
 /** The payload of a `tool.call` event. @public */
 export interface ToolCallEventPayload {
   readonly args: string;
+  /** Opaque canonical engine identity; never a provider pairing key. */
   readonly id: string;
   readonly name: string;
 }
@@ -232,8 +233,6 @@ export interface SessionTitleEventPayload {
 export interface ArchivedConversationMessage {
   readonly parts: readonly EventContent[];
   readonly providerPhase: string;
-  readonly reasoning: string;
-  readonly reasoningItemId: string;
   readonly role: string;
   readonly text: string;
   readonly toolCalls: readonly ToolCallEventPayload[];

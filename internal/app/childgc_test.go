@@ -446,7 +446,11 @@ func TestChildGCUnknownAndActiveStatesAreProtected(t *testing.T) {
 	if err := awaiting.BeginTurn(); err != nil {
 		t.Fatalf("BeginTurn(awaiting): %v", err)
 	}
-	if err := awaiting.PauseForApproval(session.PendingAsk{}); err != nil {
+	call := session.NewToolCall("awaiting-call", "Write", nil)
+	if err := awaiting.RecordAssistant(session.NewAssistantMessage("", []session.ToolCall{call})); err != nil {
+		t.Fatal(err)
+	}
+	if err := awaiting.PauseForApproval(session.PendingAsk{AskID: "awaiting-ask", Tool: call.Name, Call: call.ID}); err != nil {
 		t.Fatalf("PauseForApproval: %v", err)
 	}
 	if err := f.store.Save(context.Background(), awaiting); err != nil {

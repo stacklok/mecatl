@@ -17,8 +17,9 @@ func automaticTrajectoryDigest(in learning.Input) (string, error) {
 	if tr.Current.Valid(len(messages)) {
 		messages = messages[tr.Current.Start:tr.Current.End]
 	}
-	canonical := learning.NewTrajectory(tr.SessionID, "", tr.Stop, tr.Usage, messages)
-	canonical.Kind, canonical.Counters = tr.Kind, tr.Counters
+	canonical := tr
+	canonical.Workspace, canonical.Principal = "", nil
+	canonical.Messages = messages
 	canonical.Current = learning.MessageSpan{Start: 0, End: len(messages)}
 	projected, err := learning.ProjectInput(learning.NewInput(canonical, nil, nil, nil))
 	if err != nil {

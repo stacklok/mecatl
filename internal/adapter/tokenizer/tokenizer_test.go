@@ -114,17 +114,18 @@ func TestCounterCountsReplayIdentifiersAndBase64Projection(t *testing.T) {
 		t.Fatalf("New: %v", err)
 	}
 	call := session.NewToolCall("distinct-call-id", "Read", []byte(`{}`))
-	call.ItemID = "fc_provider_item"
-	message := session.NewAssistantMessage("", "opaque reasoning", []session.ToolCall{call})
+	message := session.NewAssistantMessage("", []session.ToolCall{call})
 	message.ProviderPhase = "commentary"
-	message.ReasoningItemID = "rs_provider_item"
+	message.Replay = &session.MessageReplay{
+		Bindings: []session.ToolCallBinding{{CallID: call.ID, PairingID: "provider-pairing", ItemID: "fc_provider_item"}},
+		Provider: &session.ProviderReplay{Format: "private-format", Version: 1, Data: []byte("opaque reasoning\xff rs_provider_item")},
+	}
 	result := session.NewToolResult(call.ID, "result")
 	got := c.CountMessages([]session.Message{message, session.NewToolMessage(result)})
 
-	call.ID, call.ItemID = "", ""
-	baseline := session.NewAssistantMessage("", "opaque reasoning", []session.ToolCall{call})
-	wantDelta := c.Count("distinct-call-id")*2 + c.Count("fc_provider_item") + c.Count("commentary") + c.Count("rs_provider_item")
-	base := c.CountMessages([]session.Message{baseline, session.NewToolMessage(session.NewToolResult("", "result"))})
+	baseline := session.NewAssistantMessage("", []session.ToolCall{call})
+	wantDelta := c.Count("provider-pairing") + c.Count("fc_provider_item") + c.Count("commentary") + c.Count(message.Replay.Provider.Format) + c.Count(string(message.Replay.Provider.Data))
+	base := c.CountMessages([]session.Message{baseline, session.NewToolMessage(result)})
 	if got-base != wantDelta {
 		t.Fatalf("replay identifier delta = %d, want %d", got-base, wantDelta)
 	}

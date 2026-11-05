@@ -72,7 +72,7 @@ func saveSessionWithPrompt(ctx context.Context, t *testing.T, st port.SessionSto
 	if seedTitle {
 		s.SetTitle(promptText)
 	}
-	if err := s.RecordAssistant(session.NewAssistantMessage("ok", "", nil)); err != nil {
+	if err := s.RecordAssistant(session.NewAssistantMessage("ok", nil)); err != nil {
 		t.Fatalf("RecordAssistant: %v", err)
 	}
 	if err := s.Complete(); err != nil {
@@ -153,7 +153,7 @@ func TestDeriveTitleSkipsSynthesisedSummary(t *testing.T) {
 	if err := s.RecordUserPrompt("the real task", nil); err != nil {
 		t.Fatalf("RecordUserPrompt real: %v", err)
 	}
-	if err := s.RecordAssistant(session.NewAssistantMessage("ok", "", nil)); err != nil {
+	if err := s.RecordAssistant(session.NewAssistantMessage("ok", nil)); err != nil {
 		t.Fatalf("RecordAssistant: %v", err)
 	}
 	if err := s.Complete(); err != nil {
@@ -189,7 +189,7 @@ func TestDeriveTitleEmptyForCompacted(t *testing.T) {
 	if err := s.RecordUserPrompt(session.Tier4SummaryMarker+"\n…", nil); err != nil {
 		t.Fatalf("RecordUserPrompt tier4: %v", err)
 	}
-	if err := s.RecordAssistant(session.NewAssistantMessage("ok", "", nil)); err != nil {
+	if err := s.RecordAssistant(session.NewAssistantMessage("ok", nil)); err != nil {
 		t.Fatalf("RecordAssistant: %v", err)
 	}
 	if err := s.Complete(); err != nil {

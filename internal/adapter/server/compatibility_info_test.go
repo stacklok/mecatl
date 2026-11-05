@@ -52,7 +52,7 @@ func compatibilityInfoService(t *testing.T, deployment string, caps port.Provide
 
 // TestSDKServerEnablers_Scenario1_CompatibilityInfoMatchesCapabilities is AC1.1.
 //
-// GetCompatibilityInfo reports api_major 1 and the SAME ServerCapabilities projection a
+// GetCompatibilityInfo reports api_major 2 and the SAME ServerCapabilities projection a
 // CreateSession echo carries for the same build — and does so WITHOUT creating a
 // session. The no-session half is the point of the RPC: before it existed,
 // discovering a server's capabilities cost a probe session that then had to be
@@ -69,8 +69,8 @@ func TestSDKServerEnablers_Scenario1_CompatibilityInfoMatchesCapabilities(t *tes
 	if err != nil {
 		t.Fatalf("GetCompatibilityInfo: %v", err)
 	}
-	if got := info.GetApiMajor(); got != 1 {
-		t.Fatalf("api_major = %d, want 1 (it bumps only on a genuine break; additions ride features)", got)
+	if got := info.GetApiMajor(); got != 2 {
+		t.Fatalf("api_major = %d, want 2 (canonical invocation identity and private replay withdrawal)", got)
 	}
 	if info.GetCapabilities() == nil {
 		t.Fatal("capabilities is nil: a client cannot distinguish 'nothing enabled' from 'server did not answer'")
@@ -399,7 +399,7 @@ func TestSDKServerEnablers_Scenario1_CompatibilityInfoRequiresAuth(t *testing.T)
 	if err != nil {
 		t.Fatalf("GetCompatibilityInfo with a valid token: %v", err)
 	}
-	if info.GetApiMajor() != 1 {
-		t.Errorf("api_major = %d, want 1", info.GetApiMajor())
+	if info.GetApiMajor() != 2 {
+		t.Errorf("api_major = %d, want 2", info.GetApiMajor())
 	}
 }

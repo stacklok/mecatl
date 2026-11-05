@@ -3,6 +3,7 @@ package ui
 import (
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -37,7 +38,7 @@ func TestGuardrailInboundOutcomeAfterApproval(t *testing.T) {
 							t.Fatal("pending explanation was reported as expired")
 						}
 						m = applyAll(m, delayed, failure)
-						if m.conv.scrollback.SnapshotAt(0) != before {
+						if !reflect.DeepEqual(m.conv.scrollback.SnapshotAt(0), before) {
 							t.Fatal("closed prompt reply changed the receipt before the final hook")
 						}
 						final := guardrailTestHook("result", inspection, "prohibited", "release_result")
@@ -63,7 +64,7 @@ func TestGuardrailInboundOutcomeAfterApproval(t *testing.T) {
 						}
 						m = applyAll(m, delayed, failure)
 						updateGuardrail(&m, final)
-						if got := m.conv.scrollback.SnapshotAt(0); got != after || r.calls != 2 {
+						if got := m.conv.scrollback.SnapshotAt(0); !reflect.DeepEqual(got, after) || r.calls != 2 {
 							t.Fatalf("stale reply or duplicate final hook changed pending receipt: %+v calls=%d", got, r.calls)
 						}
 						m = applyAll(m, fresh[0])
@@ -81,7 +82,7 @@ func TestGuardrailInboundOutcomeAfterApproval(t *testing.T) {
 						}
 						m = applyAll(m, delayed, failure, fresh[0])
 						updateGuardrail(&m, final)
-						if got := m.conv.scrollback.SnapshotAt(0); got != updated || r.calls != 2 {
+						if got := m.conv.scrollback.SnapshotAt(0); !reflect.DeepEqual(got, updated) || r.calls != 2 {
 							t.Fatalf("completed receipt changed on stale/duplicate reply: %+v calls=%d", got, r.calls)
 						}
 						if debug != strings.Contains(text, "checker provider/model") {
@@ -121,7 +122,7 @@ func TestGuardrailFinalHookSkipsUnneededDetailFetch(t *testing.T) {
 				t.Fatal("existing explanation was lost")
 			}
 			m = applyAll(m, original)
-			if m.conv.scrollback.SnapshotAt(0) != after {
+			if !reflect.DeepEqual(m.conv.scrollback.SnapshotAt(0), after) {
 				t.Fatal("closed prompt request was reused")
 			}
 		}
@@ -148,11 +149,11 @@ func TestGuardrailEmptyReviewIDsStayIndependent(t *testing.T) {
 	}
 	firstReceipt := m.conv.scrollback.SnapshotAt(2)
 	m = applyAll(m, tea.KeyPressMsg{Code: tea.KeyEnter})
-	if m.conv.scrollback.Len() != 4 || m.conv.scrollback.SnapshotAt(2) != firstReceipt || len(m.conv.guardrailReviews) != 0 {
+	if m.conv.scrollback.Len() != 4 || !reflect.DeepEqual(m.conv.scrollback.SnapshotAt(2), firstReceipt) || len(m.conv.guardrailReviews) != 0 {
 		t.Fatal("unidentified receipts merged or changed each other")
 	}
 	m = applyAll(m, guardrailTestHook("", "operational_failure", "unresolved", "release_result"))
-	if m.conv.scrollback.Len() != 5 || m.conv.scrollback.SnapshotAt(2) != firstReceipt || r.calls != 0 {
+	if m.conv.scrollback.Len() != 5 || !reflect.DeepEqual(m.conv.scrollback.SnapshotAt(2), firstReceipt) || r.calls != 0 {
 		t.Fatal("unidentified final hook overwrote a receipt or fetched detail")
 	}
 }
@@ -168,7 +169,7 @@ func TestGuardrailRefusedSendRestoresAskWithoutRemovingOtherReceipts(t *testing.
 	if !m.restoreControlRefused(client.ControlRefusedMsg{AskID: "second", Text: "rejected"}) {
 		t.Fatal("rejected approval was not restored")
 	}
-	if m.conv.scrollback.Len() != 1 || m.conv.scrollback.SnapshotAt(0) != firstReceipt || approvalSurfaceOf(t, m).ask.AskID != "second" {
+	if m.conv.scrollback.Len() != 1 || !reflect.DeepEqual(m.conv.scrollback.SnapshotAt(0), firstReceipt) || approvalSurfaceOf(t, m).ask.AskID != "second" {
 		t.Fatal("rejected send removed the wrong receipt or did not restore its ask")
 	}
 }
@@ -218,7 +219,7 @@ func TestGuardrailAbandonedApprovalCannotRestoreIntoReplacementDocument(t *testi
 				before := m.conv.scrollback.SnapshotAt(0)
 				m.prompt.Rewrite("replacement draft")
 				m = applyAll(m, delayed)
-				if m.conv.scrollback.Len() == 0 || m.conv.scrollback.SnapshotAt(0) != before {
+				if m.conv.scrollback.Len() == 0 || !reflect.DeepEqual(m.conv.scrollback.SnapshotAt(0), before) {
 					t.Fatal("delayed failure removed or changed the replacement notice")
 				}
 				if approvalSurfaceFor(&m) != nil || m.phase == phaseAwaitingApproval || m.prompt.Value() != "replacement draft" {
@@ -259,7 +260,7 @@ func TestGuardrailHookWhileApprovalActive(t *testing.T) {
 		t.Fatalf("resolved action lost warning or retained stale outcome: %q", text)
 	}
 	m = applyAll(m, hook)
-	if got := m.conv.scrollback.SnapshotAt(0); got != before {
+	if got := m.conv.scrollback.SnapshotAt(0); !reflect.DeepEqual(got, before) {
 		t.Fatalf("repeated pending hook overwrote resolution: %+v", got)
 	}
 }

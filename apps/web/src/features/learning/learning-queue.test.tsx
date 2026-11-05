@@ -54,6 +54,8 @@ function proposal(id: string, overrides: Partial<Proposal> = {}): Proposal {
 
 function evidence(overrides: Partial<Evidence> = {}): Evidence {
   return {
+    attachmentUnavailable: true,
+    protocol: "v1",
     availability: "available",
     available: true,
     digest: "sha256:aaa",
@@ -62,7 +64,6 @@ function evidence(overrides: Partial<Evidence> = {}): Evidence {
     ordinal: 1,
     preview: "",
     sessionId: "session-1",
-    toolCallId: "",
     ...overrides,
   };
 }
@@ -329,6 +330,14 @@ describe("learning queue rows", () => {
       evidence: [
         evidence({ preview: '<img src=x onerror="alert(1)"> keep it short' }),
         evidence({
+          attachmentUnavailable: false,
+          digest: "sha256:attached",
+          ordinal: 2,
+          protocol: "v2",
+          toolCallId: "engine-a",
+          preview: "Attached verified excerpt",
+        }),
+        evidence({
           availability: "evidence changed",
           available: false,
           digest: "sha256:bbb",
@@ -351,10 +360,28 @@ describe("learning queue rows", () => {
       "PRE",
     );
     expect(region.querySelector("img")).toBeNull();
-    expect(sources.getByRole("link", { name: "View chat" }).getAttribute("href")).toBe(
+    expect(sources.getAllByRole("link", { name: "View chat" })[0]?.getAttribute("href")).toBe(
       "/workspace/chat?sessionId=session-1",
     );
-    expect(sources.getByText("Available")).toBeTruthy();
+    const unattachedRow = sources
+      .getByText('<img src=x onerror="alert(1)"> keep it short')
+      .closest("li");
+    const attachedRow = sources.getByText("Attached verified excerpt").closest("li");
+    if (!unattachedRow || !attachedRow) throw new Error("Missing evidence row");
+    for (const [element, protocol] of [
+      [unattachedRow, "v1"],
+      [attachedRow, "v2"],
+    ] as const) {
+      const citation = within(element);
+      expect(citation.getByText("Available")).toBeTruthy();
+      expect(citation.getByText(`Evidence protocol: ${protocol}`)).toBeTruthy();
+      expect(citation.getAllByRole("link").map((link) => link.getAttribute("href"))).toEqual([
+        "/workspace/chat?sessionId=session-1",
+      ]);
+      expect(citation.queryByRole("button", { name: /tool/i })).toBeNull();
+    }
+    expect(within(unattachedRow).getByText("Tool association unavailable")).toBeTruthy();
+    expect(within(attachedRow).queryByText("Tool association unavailable")).toBeNull();
     expect(sources.getByText("Unavailable (evidence changed)")).toBeTruthy();
     expect(sources.getByText("From a chat")).toBeTruthy();
     expect(sources.getByRole("link", { name: "View learned skill" }).getAttribute("href")).toBe(

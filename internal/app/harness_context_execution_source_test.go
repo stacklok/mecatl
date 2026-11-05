@@ -250,8 +250,21 @@ func TestHarnessPublishedCloseRequiresExplicitLoad(t *testing.T) {
 	if binds.Load() != before {
 		t.Errorf("retired source rebound: before=%d after=%d", before, binds.Load())
 	}
+	provider.mu.Lock()
+	beforeReattach := len(provider.reattaches)
+	provider.mu.Unlock()
 	if _, err := built.Service.LoadSession(ctx, sess.ID); err != nil {
 		t.Fatal(err)
+	}
+	provider.mu.Lock()
+	afterReattach := len(provider.reattaches)
+	provider.mu.Unlock()
+	if binds.Load() != before || afterReattach != beforeReattach {
+		t.Fatalf("pure reload bound or activated execution source: binds=%d reattaches=%d", binds.Load()-before, afterReattach-beforeReattach)
+	}
+	commands, err := built.Service.ListCommandsForSession(ctx, sess.ID)
+	if err != nil || len(commands) != 1 || binds.Load() != before+1 {
+		t.Fatalf("explicit discovery did not bind a fresh generation: commands=%v err=%v binds=%d", commands, err, binds.Load())
 	}
 	harnessRun(t, built, ctx, sess.ID, "/which")
 	if len(requests) != 1 || !strings.Contains(harnessRequestText(requests[0]), "EXACT-COMMAND") {

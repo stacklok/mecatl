@@ -79,7 +79,7 @@ function withoutSessionAffinity(options?: CallOptions): CallOptions | undefined 
 }
 
 /** The API major implemented by this SDK. @public */
-export const SUPPORTED_API_MAJOR = 1;
+export const SUPPORTED_API_MAJOR = 2;
 
 const transportKinds = new WeakMap<Transport, TransportKind>();
 const transportOperations = new WeakMap<Transport, TransportOperations>();

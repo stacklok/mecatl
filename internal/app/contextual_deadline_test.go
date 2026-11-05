@@ -23,7 +23,7 @@ type firstTimeoutReviewPreparer struct {
 }
 
 func (p firstTimeoutReviewPreparer) PrepareReviewEvidence(ctx context.Context, req agent.ReviewEvidencePreparation) (agent.PreparedReviewEvidence, error) {
-	if req.Request.EffectiveCall.ID == "first" {
+	if string(req.Request.EffectiveCall.Args) == `{"first":true}` {
 		<-ctx.Done()
 		return agent.PreparedReviewEvidence{}, ctx.Err()
 	}
@@ -52,26 +52,34 @@ func TestReadBatchPreparationFailureDoesNotOverwriteLaterRouteHealth(t *testing.
 		catalog := tool.NewCatalog()
 		executed := make(chan session.ToolCallID, 2)
 		catalog.MustRegister(healthOrderReadTool{stubTool: stubTool{name: "Inspect"}, executed: executed})
-		calls := []session.ToolCall{session.NewToolCall("first", "Inspect", []byte(`{}`)), session.NewToolCall("second", "Inspect", []byte(`{}`))}
+		calls := []session.ToolCall{session.NewToolCall("first", "Inspect", []byte(`{"first":true}`)), session.NewToolCall("second", "Inspect", []byte(`{}`))}
 		engine := agent.NewEngine(agent.Deps{LLM: mockllm.New(mockllm.ToolCallTurn(calls...), mockllm.TextTurn("done")), Catalog: catalog, Policy: permpolicy.NewPolicy([]governance.Rule{{Effect: governance.Allow}}, nil), ToolReviewer: reviewer, ReviewEvidencePreparer: firstTimeoutReviewPreparer{reviewer: reviewer}})
 		env := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindMem, ID: "health-order", Revision: "r1"}, memfs.NewWorkspace("/ws"), reviewerReadLedger{}, nil)
 		sess := session.New("health-order", session.ModeDefault, env.Ref(), session.Limits{}, time.Now())
 		timeouts, denied, succeeded := 0, 0, 0
+		var firstID, secondID session.ToolCallID
 		for ev := range engine.Run(context.Background(), sess, env, agent.RunRequest{Text: "inspect"}).Events() {
+			if ev.ToolCall != nil && ev.ToolCall.Name == "Inspect" {
+				if string(ev.ToolCall.Args) == `{"first":true}` {
+					firstID = ev.ToolCall.ID
+				} else {
+					secondID = ev.ToolCall.ID
+				}
+			}
 			if ev.Type == session.EvPermissionAsk {
 				t.Error("unexpected approval ask")
 			}
 			if ev.Hook != nil && ev.Hook.Guardrail != nil && ev.Hook.Guardrail.ReasonCode == string(agent.ReviewFailureTimeout) {
 				timeouts++
-				if ev.Hook.CallID != "first" || ev.Hook.Guardrail.Disposition != "deny" {
+				if ev.Hook.CallID != firstID || ev.Hook.Guardrail.Disposition != "deny" {
 					t.Errorf("timeout enforcement=%+v", ev.Hook)
 				}
 			}
 			if ev.Type == session.EvToolResult && ev.ToolResult != nil {
-				if ev.ToolResult.CallID == "first" && ev.ToolResult.IsError {
+				if ev.ToolResult.CallID == firstID && ev.ToolResult.IsError {
 					denied++
 				}
-				if ev.ToolResult.CallID == "second" && !ev.ToolResult.IsError {
+				if ev.ToolResult.CallID == secondID && !ev.ToolResult.IsError {
 					succeeded++
 				}
 			}
@@ -82,7 +90,7 @@ func TestReadBatchPreparationFailureDoesNotOverwriteLaterRouteHealth(t *testing.
 		if len(executed) != 1 {
 			t.Fatalf("executed %d calls, want only second sibling", len(executed))
 		}
-		if got := <-executed; got != "second" {
+		if got := <-executed; got != secondID {
 			t.Fatalf("executed %s, want second sibling", got)
 		}
 		if seen, inspection, assessment, code := health.snapshot(); !seen || inspection != "complete" || assessment != "acceptable" || code != "" {

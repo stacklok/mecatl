@@ -197,7 +197,7 @@ func TestCloseGRPCAndHTTPPreservePersistedAwaitingResumePoint(t *testing.T) {
 				t.Fatal(err)
 			}
 			call := session.NewToolCall("durable-call", "Write", json.RawMessage(`{"path":"f.go"}`))
-			if err := persisted.RecordAssistant(session.NewAssistantMessage("", "", []session.ToolCall{call})); err != nil {
+			if err := persisted.RecordAssistant(session.NewAssistantMessage("", []session.ToolCall{call})); err != nil {
 				t.Fatal(err)
 			}
 			wantAsk := session.PendingAsk{AskID: "durable-ask", Tool: "Write", Call: call.ID}

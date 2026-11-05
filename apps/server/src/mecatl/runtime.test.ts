@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
+import { connect, IncompatibleServerError } from "@stacklok-oss/mecatl-sdk";
 import { describe, expect, it } from "vitest";
 import { bootstrap } from "../bootstrap.js";
 import { ConfigurationError } from "../config.js";
@@ -8,6 +9,36 @@ import { fakeClient, memoryLogger } from "../testing/fakes.js";
 import { runtimeConfigFromEnvironment, startMecatlRuntime } from "./runtime.js";
 
 describe("mecatl runtime", () => {
+  it("refuses API1 through the checkout SDK before any BFF application mutation", async () => {
+    const paths: string[] = [];
+    const runtime = await startMecatlRuntime(
+      { source: "external", baseUrl: "http://127.0.0.1", resourceUrl: "http://127.0.0.1" },
+      {
+        createClient: async () =>
+          connect({
+            baseUrl: "http://127.0.0.1",
+            fetch: async (input) => {
+              const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
+              paths.push(path);
+              return new Response(JSON.stringify({ apiMajor: 1, capabilities: {}, features: [] }), {
+                headers: { "content-type": "application/json" },
+              });
+            },
+          }),
+      },
+    );
+    try {
+      await expect(runtime.ready()).rejects.toBeInstanceOf(IncompatibleServerError);
+      await expect(runtime.client.sessions.create({})).rejects.toMatchObject({
+        code: "incompatible_server",
+        message: expect.stringContaining("update server"),
+      });
+      expect(paths.length).toBeGreaterThan(0);
+      expect(paths.every((path) => path === "/v1/compatibility")).toBe(true);
+    } finally {
+      await runtime.close();
+    }
+  });
   it("MECATL_BASE_URL selects external mode and rejects MECATL_DEV_MOCK", () => {
     expect(runtimeConfigFromEnvironment({})).toEqual({ mock: false, source: "local" });
     expect(runtimeConfigFromEnvironment({ MECATL_DEV_MOCK: "1" })).toEqual({

@@ -23,7 +23,7 @@ import (
 func TestLearningProposalOwnershipAndEvidenceResolution(t *testing.T) {
 	alice := &session.Principal{Issuer: "issuer", Subject: "alice", GrantType: session.GrantTypeUser}
 	bob := &session.Principal{Issuer: "issuer", Subject: "bob", GrantType: session.GrantTypeUser}
-	trajectory := learning.NewTrajectory("source", "", session.StopEndTurn, session.Usage{}, []session.Message{session.NewUserMessage("Remember concise output")})
+	trajectory := currentTestTrajectory("source", "", session.StopEndTurn, session.Usage{}, []session.Message{session.NewUserMessage("Remember concise output")})
 	evidenceEvent := session.Event{Type: session.EvToolCall, Seq: 7, Turn: 1, ToolCall: &session.ToolCall{ID: "call-1", Name: "Read"}}
 	input := learning.NewInput(trajectory, []session.Event{evidenceEvent}, nil, nil)
 	ref, err := learning.MessageEvidenceRef(input, 0, "")

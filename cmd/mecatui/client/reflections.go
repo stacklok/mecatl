@@ -58,10 +58,11 @@ type ReflectionReceipt struct {
 }
 
 type LearningEvidence struct {
-	SessionID, Locator, ToolCallID, Digest, Availability, Preview string
-	Ordinal                                                       int
-	EventSeq                                                      int64
-	Available                                                     bool
+	SessionID, Locator, ToolCallID, Digest, Availability, Preview, Protocol string
+	Ordinal                                                                 int
+	EventSeq                                                                int64
+	Available                                                               bool
+	AttachmentUnavailable                                                   bool
 }
 
 type LearningDecision struct {
@@ -218,7 +219,7 @@ func mapLearningProposal(p *mecatlv1.LearningProposal) LearningProposal {
 		out.UpdatedAt = t.AsTime()
 	}
 	for _, e := range p.GetEvidence() {
-		out.Evidence = append(out.Evidence, LearningEvidence{SessionID: safeReflectionText(e.GetSessionId()), Locator: safeReflectionText(e.GetLocator()), Ordinal: int(e.GetOrdinal()), EventSeq: e.GetEventSeq(), ToolCallID: safeReflectionText(e.GetToolCallId()), Digest: safeReflectionText(e.GetDigest()), Available: e.GetAvailable(), Availability: safeReflectionText(e.GetAvailability()), Preview: boundedReflectionPreview(e.GetPreview())})
+		out.Evidence = append(out.Evidence, LearningEvidence{SessionID: safeReflectionText(e.GetSessionId()), Locator: safeReflectionText(e.GetLocator()), Ordinal: int(e.GetOrdinal()), EventSeq: e.GetEventSeq(), ToolCallID: safeReflectionText(e.GetToolCallId()), Digest: safeReflectionText(e.GetDigest()), Available: e.GetAvailable(), Availability: safeReflectionText(e.GetAvailability()), Preview: boundedReflectionPreview(e.GetPreview()), Protocol: safeReflectionText(e.GetProtocol()), AttachmentUnavailable: e.GetAttachmentUnavailable()})
 	}
 	for _, d := range p.GetDecisions() {
 		x := LearningDecision{Kind: safeReflectionText(d.GetKind()), Actor: safeReflectionText(d.GetActor()), Reason: safeReflectionText(d.GetReason())}

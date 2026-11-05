@@ -742,7 +742,7 @@ type llmPlanner struct {
 func (l *llmPlanner) Plan(ctx context.Context, entries []tool.MemoryEntry) ([]supersession, error) {
 	req := port.LLMRequest{
 		System:   prompt.Layered{StablePrefix: systemPrompt},
-		Messages: []session.Message{session.NewUserMessage(renderEntries(entries))},
+		Messages: []port.LLMMessage{{Role: session.RoleUser, Text: renderEntries(entries)}},
 		Model:    l.model,
 	}
 	seq, err := l.llm.Stream(ctx, req)

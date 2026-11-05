@@ -440,7 +440,7 @@ func TestDefMemoryAddsNoWriteTools(t *testing.T) {
 	eng := buildSubagentEngineForMemoryTest(t, cfg, prov, def)
 
 	events := drainEngine(t, eng)
-	if !unknownToolResult(events, "r1") {
+	if !unknownToolResult(events, "RememberUser") {
 		t.Fatal("memory-bearing def must NOT gain a write tool (RememberUser); v1 is read-only (injection only)")
 	}
 }

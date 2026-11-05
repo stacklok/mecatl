@@ -262,8 +262,7 @@ func (c *reflectionCoordinator) nextAttemptIDLocked(key string) string {
 
 func selectedEvidenceIdentity(in learning.Input) (string, string, error) {
 	manifest := in.Manifest
-	if manifest == nil || manifest.Protocol != learning.ReflectionEvidenceV1 ||
-		manifest.Source.Domain != learning.ReflectionEvidenceSourceV1 ||
+	if manifest == nil || !learning.ManifestProtocolSupported(manifest.Protocol, manifest.Source.Domain) ||
 		manifest.Source.Value != in.Trajectory.SessionID || !learning.ValidSHA256(manifest.Digest) {
 		return "", "", errors.New("reflection job has invalid selected-evidence identity")
 	}

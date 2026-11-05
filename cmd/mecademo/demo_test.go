@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -98,22 +99,39 @@ func TestRunTeamScenarioOffline(t *testing.T) {
 func TestRunBackgroundScenarioOffline(t *testing.T) {
 	events, notes := RunBackgroundScenario(context.Background())
 
-	var startedResult, collected string
+	var startedResult, collected, childID string
+	var startID, collectID session.ToolCallID
 	var sawBackgroundStart bool
 	for _, ev := range events {
 		switch ev.Type {
+		case session.EvToolCall:
+			if ev.ToolCall != nil && ev.ToolCall.Name == "SubagentStatus" {
+				var args struct {
+					AgentID string `json:"agent_id"`
+				}
+				if err := json.Unmarshal(ev.ToolCall.Args, &args); err != nil {
+					t.Fatal(err)
+				}
+				if args.AgentID != "" {
+					if args.AgentID != childID {
+						t.Fatal("collection did not use the runtime child handle")
+					}
+					collectID = ev.ToolCall.ID
+				}
+			}
 		case session.EvSubagentStart:
 			if ev.Subagent != nil && ev.Subagent.Background {
 				sawBackgroundStart = true
+				childID, startID = ev.Subagent.ChildID, ev.Subagent.ParentCallID
 			}
 		case session.EvToolResult:
 			if ev.ToolResult == nil {
 				continue
 			}
 			switch ev.ToolResult.CallID {
-			case "call-bg-1":
+			case startID:
 				startedResult = ev.ToolResult.Content
-			case "call-bg-collect":
+			case collectID:
 				collected = ev.ToolResult.Content
 			}
 		}
@@ -122,14 +140,14 @@ func TestRunBackgroundScenarioOffline(t *testing.T) {
 		t.Error("no subagent.start with background=true was emitted")
 	}
 	if !strings.Contains(startedResult, "started in the background") ||
-		!strings.HasPrefix(startedResult, "agentId: "+demoBackgroundChildID) {
+		!strings.HasPrefix(startedResult, "agentId: "+childID) {
 		t.Errorf("Subagent call must return the immediate started-result with the agentId trailer first, got %q", startedResult)
 	}
 	if !strings.Contains(collected, "Background check complete") {
 		t.Errorf("SubagentStatus collection must deliver the child's body, got %q", collected)
 	}
 
-	wantNote := "[harness note: 1 background subagent(s) finished: " + demoBackgroundChildID +
+	wantNote := "[harness note: 1 background subagent(s) finished: " + childID +
 		" (end_turn). Collect each result with SubagentStatus before relying on it.]"
 	if len(notes) != 1 || notes[0] != wantNote {
 		t.Errorf("expected exactly one injected notice %q, got %v", wantNote, notes)

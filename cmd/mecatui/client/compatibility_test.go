@@ -128,7 +128,8 @@ func TestCheckCompatibility(t *testing.T) {
 		response *mecatlv1.GetCompatibilityInfoResponse
 		want     string
 	}{
-		{name: "server newer", response: &mecatlv1.GetCompatibilityInfoResponse{ApiMajor: int32(SupportedAPIMajor) + 1}, want: "server API is newer than this mecatui (expected major 1, observed 2); update mecatui"},
+		{name: "server newer", response: &mecatlv1.GetCompatibilityInfoResponse{ApiMajor: 3}, want: "server API is newer than this mecatui (expected major 2, observed 3); update mecatui"},
+		{name: "server older", response: &mecatlv1.GetCompatibilityInfoResponse{ApiMajor: 1}, want: "server API is older than this mecatui (expected major 2, observed 1); update server"},
 		{name: "zero is invalid", response: &mecatlv1.GetCompatibilityInfoResponse{}, want: "server returned invalid compatibility information"},
 		{name: "negative is invalid", response: &mecatlv1.GetCompatibilityInfoResponse{ApiMajor: -1}, want: "server returned invalid compatibility information"},
 	} {

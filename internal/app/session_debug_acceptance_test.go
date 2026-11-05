@@ -94,6 +94,7 @@ func converseDebugAcceptance(t *testing.T, client mecatlv1.HarnessServiceClient,
 		t.Fatal(err)
 	}
 	results := map[string]string{}
+	calls := map[string]string{}
 	asks := 0
 	for {
 		response, err := stream.Recv()
@@ -104,8 +105,15 @@ func converseDebugAcceptance(t *testing.T, client mecatlv1.HarnessServiceClient,
 			t.Fatal(err)
 		}
 		ev := response.GetEvent()
+		if call := ev.GetToolCall(); call != nil {
+			calls[call.GetId()] = call.GetArgs()
+		}
 		if result := ev.GetToolResult(); result != nil {
-			results[result.GetCallId()] = result.GetContent()
+			args, ok := calls[result.GetCallId()]
+			if !ok {
+				t.Fatalf("result %q has no preceding canonical call", result.GetCallId())
+			}
+			results[args] = result.GetContent()
 		}
 		if ask := ev.GetAsk(); ask != nil {
 			asks++
@@ -161,7 +169,7 @@ func TestSessionDebuggerCrossBoundaryAcceptance(t *testing.T) {
 	if err := target.BeginTurn(); err != nil {
 		t.Fatal(err)
 	}
-	if err := target.RecordAssistant(session.NewAssistantMessage("", "", []session.ToolCall{session.NewToolCall("team-call", "Team", json.RawMessage(`{}`))})); err != nil {
+	if err := target.RecordAssistant(session.NewAssistantMessage("", []session.ToolCall{session.NewToolCall("team-call", "Team", json.RawMessage(`{}`))})); err != nil {
 		t.Fatal(err)
 	}
 	if err := target.RecordToolResults([]session.ToolResult{session.NewToolResult("team-call", "done")}); err != nil {
@@ -268,30 +276,34 @@ func TestSessionDebuggerCrossBoundaryAcceptance(t *testing.T) {
 		"manifest":   {`"provider":"mock"`, `"model":"acceptance"`, `"message_count":2`, `"message_bytes":42`, `"Glob"`},
 		"network":    {`"failure_class":"timeout"`, `"successful_attempts_timed":false`},
 	} {
+		args := `{"view":"` + call + `"}`
 		for _, want := range wants {
-			if !strings.Contains(root[call], want) {
-				t.Fatalf("%s evidence missing %q: %s", call, want, root[call])
+			if !strings.Contains(root[args], want) {
+				t.Fatalf("%s evidence missing %q: %s", call, want, root[args])
 			}
 		}
 	}
-	handleMatch := regexp.MustCompile(`"scope_handle":"([^"]+)","kind":"subagent"`).FindStringSubmatch(root["related"])
+	handleMatch := regexp.MustCompile(`"scope_handle":"([^"]+)","kind":"subagent"`).FindStringSubmatch(root[`{"view":"related"}`])
 	if len(handleMatch) != 2 {
-		t.Fatalf("retained child handle missing: %s", root["related"])
+		t.Fatalf("retained child handle missing: %s", root[`{"view":"related"}`])
 	}
-	historyMatch := regexp.MustCompile(`"history_handle":"([^"]+)"`).FindStringSubmatch(root["history"])
+	historyMatch := regexp.MustCompile(`"history_handle":"([^"]+)"`).FindStringSubmatch(root[`{"view":"history"}`])
 	if len(historyMatch) != 2 {
-		t.Fatalf("history handle missing: %s", root["history"])
+		t.Fatalf("history handle missing: %s", root[`{"view":"history"}`])
 	}
+	childArgs := fmt.Sprintf(`{"view":"transcript","scope_handle":%q}`, handleMatch[1])
+	historyArgs := fmt.Sprintf(`{"view":"history","history_handle":%q,"limit":1}`, historyMatch[1])
+	const probeArgs = `{"view":"status","scope_handle":"unrelated-secret"}`
 	debugProvider.enqueue(
 		mockllm.ToolCallTurn(
-			session.NewToolCall("child", "InspectSession", json.RawMessage(fmt.Sprintf(`{"view":"transcript","scope_handle":%q}`, handleMatch[1]))),
-			session.NewToolCall("history-page", "InspectSession", json.RawMessage(fmt.Sprintf(`{"view":"history","history_handle":%q,"limit":1}`, historyMatch[1]))),
-			session.NewToolCall("probe", "InspectSession", json.RawMessage(`{"view":"status","scope_handle":"unrelated-secret"}`)),
+			session.NewToolCall("child", "InspectSession", json.RawMessage(childArgs)),
+			session.NewToolCall("history-page", "InspectSession", json.RawMessage(historyArgs)),
+			session.NewToolCall("probe", "InspectSession", json.RawMessage(probeArgs)),
 		),
 		mockllm.TextTurn("child evidence checked"),
 	)
 	scoped, _ := converseDebugAcceptance(t, client, debugID, "Inspect the retained child and verify isolation.", mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_UNSPECIFIED)
-	if !strings.Contains(scoped["child"], "retained child finding") || !strings.Contains(scoped["history-page"], `"view":"transcript"`) || !strings.Contains(scoped["probe"], "scope handle is unsupported, malformed, or stale") {
+	if !strings.Contains(scoped[childArgs], "retained child finding") || !strings.Contains(scoped[historyArgs], `"view":"transcript"`) || !strings.Contains(scoped[probeArgs], "scope handle is unsupported, malformed, or stale") {
 		t.Fatalf("scoped evidence/isolation failed: %+v", scoped)
 	}
 

@@ -40,7 +40,7 @@ func newAdmittedObserver(inner learning.Observer, admission *learningAdmissionGa
 }
 
 func (o *admittedObserver) Observe(ctx context.Context, tr learning.Trajectory) error {
-	if !o.admission.admit() {
+	if !tr.LearningEligible() || !o.admission.admit() {
 		return nil
 	}
 	return o.inner.Observe(ctx, tr)

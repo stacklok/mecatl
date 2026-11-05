@@ -111,7 +111,7 @@ func TestRootSessionProviderCorrelation_Scenario2_ProviderAttemptsCarryBothIDs(t
 				defer srv.Close()
 				ctx := port.WithRootSessionID(port.WithSessionID(context.Background(), session.SessionID(correlation.active)), session.SessionID(correlation.root))
 				seq, _ := provider.entry(srv.URL).provider.Stream(ctx, port.LLMRequest{
-					Model: provider.model, Messages: []session.Message{session.NewUserMessage("hello")},
+					Model: provider.model, Messages: []port.LLMMessage{{Role: session.RoleUser, Text: "hello"}},
 				})
 				if seq != nil {
 					for range seq {
@@ -228,7 +228,7 @@ func TestRootSessionProviderCorrelation_Scenario2_ConcurrentProviderIsolation(t 
 					active, root := fmt.Sprintf("active-%d", i), fmt.Sprintf("root-%d", i)
 					requestCtx := port.WithRootSessionID(port.WithSessionID(ctx, session.SessionID(active)), session.SessionID(root))
 					seq, err := provider.Stream(requestCtx, port.LLMRequest{
-						Model: tc.model, Messages: []session.Message{session.NewUserMessage(fmt.Sprintf("payload-%d", i))},
+						Model: tc.model, Messages: []port.LLMMessage{{Role: session.RoleUser, Text: fmt.Sprintf("payload-%d", i)}},
 					})
 					if err == nil && seq != nil {
 						for _, streamErr := range seq {
@@ -303,10 +303,10 @@ func TestRootSessionProviderCorrelation_OpenAIEncryptedContentFallback(t *testin
 
 	entry := newOpenAICompatEntry(Config{LLMMaxAttempts: 1}, providerOpenAI, "test", srv.URL,
 		openairesponse.WithMaxRetries(0))
-	assistant := session.NewAssistantMessage("visible history", `{"v":1,"items":[{"i":"rs_bad","e":"opaque-blob"}]}`, nil)
+	assistant := port.LLMMessage{Role: session.RoleAssistant, Text: "visible history", Replay: &session.ProviderReplay{Format: "openai.responses", Version: 1, Data: []byte(`{"reasoning":[{"i":"rs_bad","e":"opaque-blob"}]}`)}}
 	ctx := port.WithRootSessionID(port.WithSessionID(context.Background(), "active-session"), "root-session")
-	seq, err := entry.provider.Stream(ctx, port.LLMRequest{Model: "gpt-5", Messages: []session.Message{
-		session.NewUserMessage("recover"), assistant,
+	seq, err := entry.provider.Stream(ctx, port.LLMRequest{Model: "gpt-5", Messages: []port.LLMMessage{
+		{Role: session.RoleUser, Text: "recover"}, assistant,
 	}})
 	if err != nil {
 		t.Fatalf("Stream: %v", err)
@@ -361,7 +361,7 @@ func TestRootSessionProviderCorrelation_Scenario2_OpenCodeRefusesRedirects(t *te
 
 	provider := newOpenCodeEntry(Config{LLMMaxAttempts: 1}, providerOpenCode, "test", source.URL).provider
 	ctx := port.WithRootSessionID(port.WithSessionID(context.Background(), "active"), "root")
-	seq, _ := provider.Stream(ctx, port.LLMRequest{Model: "test", Messages: []session.Message{session.NewUserMessage("hello")}})
+	seq, _ := provider.Stream(ctx, port.LLMRequest{Model: "test", Messages: []port.LLMMessage{{Role: session.RoleUser, Text: "hello"}}})
 	if seq != nil {
 		for range seq {
 		}
@@ -713,7 +713,7 @@ func TestRootSessionProviderCorrelation_Scenario2_EveryEntryCarriesBothIDs(t *te
 
 			ctx := port.WithRootSessionID(port.WithSessionID(context.Background(), active), root)
 			seq, _ := tc.entry(t, srv.URL+"/v1", capture).provider.Stream(ctx, port.LLMRequest{
-				Model: tc.model, Messages: []session.Message{session.NewUserMessage("hello")},
+				Model: tc.model, Messages: []port.LLMMessage{{Role: session.RoleUser, Text: "hello"}},
 			})
 			if seq != nil {
 				for range seq {

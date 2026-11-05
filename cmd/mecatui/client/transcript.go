@@ -52,7 +52,7 @@ func (c *Client) GetSessionTranscript(ctx context.Context, id string) (SessionTr
 	}
 	return SessionTranscript{
 		SessionID: resp.GetSessionId(),
-		Messages:  transcriptMessagesFromProto(resp.GetMessages()),
+		Messages:  conversationMessagesFromProto(resp.GetMessages()),
 		Complete:  resp.GetComplete(),
 		Kind:      SessionKind(resp.GetKind()),
 		Relationship: SessionRelationship{
@@ -66,16 +66,6 @@ func (c *Client) GetSessionTranscript(ctx context.Context, id string) (SessionTr
 			Authoritative: activity.GetAuthoritative(),
 		},
 	}, nil
-}
-
-func transcriptMessagesFromProto(in []*mecatlv1.ConversationMessage) []ConversationMessage {
-	messages := conversationMessagesFromProto(in)
-	for i := range messages {
-		messages[i].Reasoning = ""
-		messages[i].ProviderPhase = ""
-		messages[i].ReasoningItemID = ""
-	}
-	return messages
 }
 
 // SessionTranscripter is the authoritative snapshot-derived conversation seam

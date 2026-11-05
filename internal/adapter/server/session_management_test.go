@@ -638,7 +638,7 @@ func TestSessionManagementRejectsKindAwaitingAndLive(t *testing.T) {
 		t.Fatalf("BeginTurn: %v", err)
 	}
 	call := session.NewToolCall("c1", "Write", json.RawMessage(`{"path":"f"}`))
-	if err := awaiting.RecordAssistant(session.NewAssistantMessage("", "", []session.ToolCall{call})); err != nil {
+	if err := awaiting.RecordAssistant(session.NewAssistantMessage("", []session.ToolCall{call})); err != nil {
 		t.Fatalf("RecordAssistant: %v", err)
 	}
 	if err := awaiting.PauseForApproval(session.PendingAsk{AskID: "a1", Tool: "Write", Call: call.ID}); err != nil {

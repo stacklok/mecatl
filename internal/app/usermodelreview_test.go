@@ -63,7 +63,7 @@ func TestLearningAdmissionIsGlobalAcrossConcurrentProviderObservers(t *testing.T
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			if err := observers[i%len(observers)].Observe(context.Background(), learning.Trajectory{}); err != nil {
+			if err := observers[i%len(observers)].Observe(context.Background(), currentTestTrajectory("admission", "", session.StopEndTurn, session.Usage{}, nil)); err != nil {
 				t.Errorf("Observe: %v", err)
 			}
 		}(i)
@@ -541,7 +541,7 @@ func TestServiceExplicitReflectionReceiptsMatchReviewAndAutoPolicy(t *testing.T)
 			repository := memproposal.New()
 			memory := memmemory.New()
 			observer := buildExplicitReflectionObserver(cfg, provider, testProviderModel(cfg.Model), memory, nil, repository, nil)
-			trajectory := learning.NewTrajectory("explicit-policy", workspace, session.StopEndTurn, session.Usage{}, []session.Message{session.NewUserMessage("Remember that I prefer concise output")})
+			trajectory := currentTestTrajectory("explicit-policy", workspace, session.StopEndTurn, session.Usage{}, []session.Message{session.NewUserMessage("Remember that I prefer concise output")})
 			trajectory.Current = learning.MessageSpan{Start: 0, End: 1}
 			receipt, err := observer.Reflect(context.Background(), trajectory, false)
 			if err != nil || receipt.Staged != 1 || receipt.Promoted != tc.wantPromoted {
@@ -580,9 +580,7 @@ func TestLearningObserverUsesSelectedProviderAndModelWindow(t *testing.T) {
 	if observer == nil {
 		t.Fatal("auto observer is nil")
 	}
-	if err := observer.Observe(context.Background(), learning.Trajectory{
-		SessionID: "s", Workspace: "/ws", Messages: []session.Message{session.NewUserMessage("I prefer concise answers")},
-	}); err != nil {
+	if err := observer.Observe(context.Background(), currentTestTrajectory("s", "/ws", session.StopEndTurn, session.Usage{}, []session.Message{session.NewUserMessage("I prefer concise answers")})); err != nil {
 		t.Fatal(err)
 	}
 	if defaultProvider.Calls() != 0 || selectedProvider.Calls() != 1 {
@@ -628,9 +626,7 @@ func TestLearningCompositionModesAndAutoWrite(t *testing.T) {
 	)
 	cfg := Config{LearningMode: learning.Auto, Model: "model"}
 	observer := buildLearningObserver(cfg, regForTest(provider, providerMock, cfg.Model), providerMock, provider, userStore, newLearningAdmissionGate(1))
-	if err := observer.Observe(context.Background(), learning.Trajectory{
-		SessionID: "s", Workspace: "/ws", Messages: []session.Message{session.NewUserMessage("I prefer concise answers")},
-	}); err != nil {
+	if err := observer.Observe(context.Background(), currentTestTrajectory("s", "/ws", session.StopEndTurn, session.Usage{}, []session.Message{session.NewUserMessage("I prefer concise answers")})); err != nil {
 		t.Fatal(err)
 	}
 	if _, ok, err := userStore.Recall(context.Background(), "user/communication"); err != nil || !ok {
@@ -651,9 +647,7 @@ func TestUserModelReviewEngineCatalogIsReduced(t *testing.T) {
 	cfg := Config{Model: "review-model"}
 	engine := buildUserModelReviewEngine(cfg, regForTest(provider, providerMock, cfg.Model), providerMock, provider, userStore)
 	reviewer := agent.NewUserModelReviewer(memstore.New(), engine)
-	if err := reviewer.Observe(context.Background(), learning.Trajectory{
-		SessionID: "s", Messages: []session.Message{session.NewUserMessage("I prefer concise answers")},
-	}); err != nil {
+	if err := reviewer.Observe(context.Background(), currentTestTrajectory("s", "", session.StopEndTurn, session.Usage{}, []session.Message{session.NewUserMessage("I prefer concise answers")})); err != nil {
 		t.Fatal(err)
 	}
 	if len(request.Tools) != 1 || request.Tools[0].Name != memory.RememberUserToolName {

@@ -227,12 +227,6 @@ func RunTeamScenario(ctx context.Context) (agent.TeamOutcome, error) {
 	return sup.Run(ctx, nil), nil
 }
 
-// demoBackgroundChildID is the deterministic child session id of the background
-// scenario's subagent ("subagent-<parentSessionID>-<callID>" — namespaced by
-// the parent session id, review finding 2/issue #368), used by the scripted
-// collection turn and asserted by the e2e test.
-const demoBackgroundChildID = "subagent-demo-background-session-call-bg-1"
-
 // RunBackgroundScenario drives the fully-offline background-subagent flow
 // (BACKGROUND-SUBAGENTS I3a+I3b) through a real agent.Engine: the model starts a
 // Subagent with background:true and gets the immediate started-result, a
@@ -259,7 +253,20 @@ func RunBackgroundScenario(ctx context.Context) ([]session.Event, []string) {
 	// The parent: start the child in the background, wait for any child to
 	// finish (the roster wait — it does NOT collect, so the next boundary's
 	// notice fires), then collect the body after the notice prompts it.
-	parentLLM := mockllm.New(
+	collectChunk := mockllm.ToolCallChunk(session.NewToolCall("call-bg-collect", "SubagentStatus", nil))
+	parentLLM := mockllm.NewWith([]mockllm.Option{mockllm.WithRequestObserver(func(req port.LLMRequest) {
+		for _, message := range req.Messages {
+			if result := message.ToolResult; result != nil && result.CallID == "call-bg-1" {
+				for _, line := range strings.Split(result.Content, "\n") {
+					if childID, ok := strings.CutPrefix(line, "agentId: "); ok {
+						collectChunk.ToolCall.Args, _ = json.Marshal(struct {
+							AgentID string `json:"agent_id"`
+						}{AgentID: strings.TrimSpace(childID)})
+					}
+				}
+			}
+		}
+	})},
 		mockllm.ChunksTurn(
 			mockllm.TextChunk("I'll start a background subagent to verify the greeting while I keep this turn."),
 			mockllm.ToolCallChunk(session.NewToolCall("call-bg-1", "Subagent",
@@ -274,8 +281,7 @@ func RunBackgroundScenario(ctx context.Context) ([]session.Event, []string) {
 		),
 		mockllm.ChunksTurn(
 			mockllm.TextChunk("The harness notice says it finished — collecting its result."),
-			mockllm.ToolCallChunk(session.NewToolCall("call-bg-collect", "SubagentStatus",
-				json.RawMessage(`{"agent_id":"`+demoBackgroundChildID+`"}`))),
+			collectChunk,
 			mockllm.DoneChunk(session.StopEndTurn),
 		),
 		mockllm.ChunksTurn(

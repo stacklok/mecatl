@@ -63,7 +63,7 @@ func (*testReflector) RequestTokenEstimate(learning.Input) (int, error) {
 }
 
 func selectedTestJob(p, id, text string, r learning.Reflector) reflectionJob {
-	tr := learning.NewTrajectory(session.SessionID(id), "/w", session.StopEndTurn, session.Usage{}, []session.Message{session.NewUserMessage(text)})
+	tr := currentTestTrajectory(session.SessionID(id), "/w", session.StopEndTurn, session.Usage{}, []session.Message{session.NewUserMessage(text)})
 	materialized, err := learning.MaterializeEvidence(context.Background(), learning.MaterializationRequest{Trajectory: tr, Explicit: true})
 	if err != nil || materialized.Disposition != learning.MaterializationSelected {
 		panic("test reflection evidence did not materialize")
@@ -315,7 +315,7 @@ func TestReflectionObserverSelectsMediaHeavyInputWithoutQueueGrowth(t *testing.T
 	t.Cleanup(c.Close)
 	reflector := &testReflector{}
 	observer := &reflectionObserver{coordinator: c, reflector: reflector, repository: memproposal.New(), operatorMemory: memmemory.New(), mode: learning.Review}
-	trajectory := learning.NewTrajectory("media", "/w", session.StopEndTurn, session.Usage{}, []session.Message{
+	trajectory := currentTestTrajectory("media", "/w", session.StopEndTurn, session.Usage{}, []session.Message{
 		session.NewUserMessageWithParts("remember this", []session.Content{{Kind: session.MediaImage, Data: make([]byte, defaultReflectionJobBytes+1)}}),
 	})
 	receipt, err := observer.Reflect(context.Background(), trajectory, false)

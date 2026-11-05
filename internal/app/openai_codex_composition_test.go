@@ -563,7 +563,7 @@ func TestOpenAICodexSecretSentinels(t *testing.T) {
 	}
 	entry := newOpenAICompatEntry(Config{LLMMaxAttempts: 1}, providerOpenAICodex, "policy-owned", openaicodex.BaseURL,
 		codexPolicyOptions(policy)...)
-	_, rejectedErr := collectCodexChunks(ctx, t, entry.provider, []session.Message{session.NewUserMessage("reject offline")})
+	_, rejectedErr := collectCodexChunks(ctx, t, entry.provider, []port.LLMMessage{{Role: session.RoleUser, Text: "reject offline"}})
 	if rejectedErr == nil {
 		t.Fatal("offline 401 request returned nil error")
 	}

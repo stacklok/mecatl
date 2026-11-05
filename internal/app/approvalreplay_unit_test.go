@@ -48,7 +48,7 @@ func seedReplayFixture(t *testing.T, callID session.ToolCallID, inHistory bool) 
 		if err := sess.BeginTurn(); err != nil {
 			t.Fatalf("BeginTurn: %v", err)
 		}
-		if err := sess.RecordAssistant(session.NewAssistantMessage("", "", []session.ToolCall{call})); err != nil {
+		if err := sess.RecordAssistant(session.NewAssistantMessage("", []session.ToolCall{call})); err != nil {
 			t.Fatalf("RecordAssistant: %v", err)
 		}
 	}
@@ -108,6 +108,30 @@ func TestReplayApprovalsLearnsPresentCall(t *testing.T) {
 // is safe to re-run. The Service gates it to once-per-id, but a double-run must learn
 // the SAME single rule, never a duplicate — verified through the REAL permstore-backed
 // policy (permstore.Record de-dups identical rules).
+func TestReplayApprovalsRejectsAmbiguousAndLegacyAssociation(t *testing.T) {
+	for _, name := range []string{"duplicate", "wrong-tool", "legacy-event", "unattached"} {
+		t.Run(name, func(t *testing.T) {
+			replay, sess, spy := seedReplayFixture(t, "exact-call", true)
+			switch name {
+			case "duplicate":
+				call := sess.Conversation.Messages[0].ToolCalls[0]
+				call.Args = json.RawMessage(`{"path":"other"}`)
+				sess.Conversation.Messages[0].ToolCalls = append(sess.Conversation.Messages[0].ToolCalls, call)
+			case "wrong-tool":
+				sess.Conversation.Messages[0].ToolCalls[0].Name = "Shell"
+			case "legacy-event":
+				sess.Conversation.Messages[0].ToolCalls[0].ID = "migrated-canonical"
+			case "unattached":
+				sess.Conversation.Messages[0].ToolCalls = nil
+			}
+			replay(t.Context(), sess)
+			if len(spy.learned) != 0 {
+				t.Fatal("unproven approval restored a rule")
+			}
+		})
+	}
+}
+
 func TestReplayApprovalsIdempotent(t *testing.T) {
 	log := memstore.NewEventLog()
 	store := permstore.New()
@@ -119,7 +143,7 @@ func TestReplayApprovalsIdempotent(t *testing.T) {
 	if err := sess.BeginTurn(); err != nil {
 		t.Fatalf("BeginTurn: %v", err)
 	}
-	if err := sess.RecordAssistant(session.NewAssistantMessage("", "", []session.ToolCall{call})); err != nil {
+	if err := sess.RecordAssistant(session.NewAssistantMessage("", []session.ToolCall{call})); err != nil {
 		t.Fatalf("RecordAssistant: %v", err)
 	}
 	if err := log.Append(context.Background(), sess.ID, session.Event{Type: session.EvApproval, Approval: &session.ApprovalPayload{

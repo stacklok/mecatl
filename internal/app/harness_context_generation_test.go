@@ -839,6 +839,64 @@ func TestHarnessGenerationActivationRechecksScopeAndAuthorization(t *testing.T) 
 	}
 }
 
+func TestHarnessGenerationResumeIsLazyAndScopeBound(t *testing.T) {
+	owner := &session.Principal{Issuer: "issuer", Subject: "owner"}
+	var binds, closes atomic.Int32
+	reg := HarnessSourceRegistration[server.CommandSourceBinding]{ID: "a", Scope: HarnessSourceScopePrincipal, Bind: func(context.Context, HarnessSourceScope) (server.CommandSourceBinding, func() error, error) {
+		binds.Add(1)
+		return &hcCommands{values: map[string]string{"x": "allowed"}}, func() error { closes.Add(1); return nil }, nil
+	}}
+	r, err := newHarnessCommandResolver(t.Context(), harnessKindPolicy{sources: []HarnessSourceID{"a"}, mode: harnessModeCombine}, []HarnessSourceRegistration[server.CommandSourceBinding]{reg})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	_, releaseOld, err := r.Borrow(t.Context(), "s", owner, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer releaseOld()
+	r.Retire("s")
+	for _, scope := range []struct {
+		owner   *session.Principal
+		profile string
+	}{{&session.Principal{Issuer: "issuer", Subject: "foreign"}, ""}, {owner, "no-fs"}} {
+		if err := r.Resume(t.Context(), "s", scope.owner, scope.profile); err == nil {
+			t.Fatal("mismatched scope resumed retired source")
+		}
+	}
+	cancelled, cancel := context.WithCancel(t.Context())
+	cancel()
+	if err := r.Resume(cancelled, "s", owner, ""); !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled resume: %v", err)
+	}
+	if _, _, err := r.Borrow(t.Context(), "s", owner, ""); !errors.Is(err, server.ErrCommandBindingRetired) {
+		t.Fatalf("failed resume removed retirement: %v", err)
+	}
+	if err := r.Resume(t.Context(), "s", owner, ""); err != nil {
+		t.Fatal(err)
+	}
+	if binds.Load() != 1 || closes.Load() != 0 {
+		t.Fatal("resume bound a source or closed a borrowed generation")
+	}
+	_, releaseNew, err := r.Borrow(t.Context(), "s", owner, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	releaseNew()
+	if binds.Load() != 2 || closes.Load() != 0 {
+		t.Fatal("lazy borrow reused or closed the old generation")
+	}
+	releaseOld()
+	if closes.Load() != 1 {
+		t.Fatal("old generation did not drain independently")
+	}
+	r.Close()
+	if err := r.Resume(t.Context(), "s", owner, ""); err == nil {
+		t.Fatal("resume reopened a closed resolver")
+	}
+}
+
 func TestHarnessGenerationServiceReloadOwnerAuthorization(t *testing.T) {
 	source := memfs.NewWorkspace("/logical")
 	if _, err := source.CreateFile(t.Context(), ".mecatl/commands/x.md", []byte("selected")); err != nil {

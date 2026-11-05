@@ -54,8 +54,12 @@ func TestCallMcpWithQueryBrokerSupport_AuthorityUnchanged(t *testing.T) {
 				t.Fatal(err)
 			}
 			result := ""
+			var acceptedID session.ToolCallID
 			for ev := range eng.Run(t.Context(), sess, placement.Environment, agent.RunRequest{Text: "query", CanPresentAuthorization: true}).Events() {
-				if ev.ToolResult != nil && ev.ToolResult.CallID == call.ID {
+				if ev.ToolCall != nil && ev.ToolCall.Name == call.Name {
+					acceptedID = ev.ToolCall.ID
+				}
+				if ev.ToolResult != nil && acceptedID != "" && ev.ToolResult.CallID == acceptedID {
 					result = ev.ToolResult.Content
 				}
 			}

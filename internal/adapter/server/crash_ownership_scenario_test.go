@@ -465,7 +465,7 @@ func (f *crashOwnershipFixture) seedCrashOrphanWithRedisSidecars(t *testing.T) {
 	t.Helper()
 	persisted := f.waitRedisState(t, session.StateRunning)
 	call := session.NewToolCall(crashOrphanCallID, "ExternalWrite", nil)
-	if err := persisted.RecordAssistant(session.NewAssistantMessage("", "", []session.ToolCall{call})); err != nil {
+	if err := persisted.RecordAssistant(session.NewAssistantMessage("", []session.ToolCall{call})); err != nil {
 		t.Fatalf("record crash-orphaned tool call: %v", err)
 	}
 	if err := f.ownerStore.Save(context.Background(), persisted); err != nil {

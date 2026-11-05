@@ -82,7 +82,7 @@ func TestScalableReflectionEvidence_Scenario5_ExplicitClosedAbstentionReasons(t 
 		want       learning.MaterializationReason
 		maxBytes   int
 	}{
-		{"no eligible evidence", automaticTrajectory("empty", []session.Message{session.NewAssistantMessage("", "reasoning", nil)}, learning.MessageSpan{}), learning.MaterializationNoEligibleEvidence, defaultReflectionJobBytes},
+		{"no eligible evidence", automaticTrajectory("empty", []session.Message{assistantWithReplay("", "reasoning", nil)}, learning.MessageSpan{}), learning.MaterializationNoEligibleEvidence, defaultReflectionJobBytes},
 		{"mandatory span exceeds bounds", automaticTrajectory("mandatory", []session.Message{session.NewUserMessage("required evidence")}, learning.MessageSpan{Start: 0, End: 1}), learning.MaterializationMandatorySpanExceedsBounds, 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -98,7 +98,7 @@ func TestScalableReflectionEvidence_Scenario5_ExplicitClosedAbstentionReasons(t 
 
 	reflector := &automaticCaptureReflector{called: make(chan learning.Input, 1)}
 	observer, coordinator := newExplicitTestObserver(t, reflector)
-	receipt, err := observer.Reflect(context.Background(), automaticTrajectory("closed", []session.Message{session.NewAssistantMessage("", "reasoning", nil)}, learning.MessageSpan{}), false)
+	receipt, err := observer.Reflect(context.Background(), automaticTrajectory("closed", []session.Message{assistantWithReplay("", "reasoning", nil)}, learning.MessageSpan{}), false)
 	if err != nil || !receipt.Abstained {
 		t.Fatalf("closed explicit result = %+v, err=%v", receipt, err)
 	}

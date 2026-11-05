@@ -443,10 +443,12 @@ func (p *semanticToolProvider) Stream(_ context.Context, _ port.LLMRequest) (ite
 	return func(yield func(port.Chunk, error) bool) {
 		switch attempt {
 		case 1:
-			yield(port.Chunk{Kind: port.ChunkToolCall, ToolCall: &session.ToolCall{ID: "failed", Name: "Count", Args: json.RawMessage(`{}`)}}, nil)
+			yield(port.Chunk{Kind: port.ChunkReplay, Replay: &session.ProviderReplay{Format: "test", Version: 1, Data: []byte(`"failed"`)}, ReplayIsOutput: true}, nil)
+			yield(port.Chunk{Kind: port.ChunkToolCall, ToolCall: &port.LLMToolCall{ID: "failed", Name: "Count", Args: json.RawMessage(`{}`)}}, nil)
 			yield(port.Chunk{}, &streamStatusError{msg: "server_error: 503", status: 503})
 		case 2:
-			if !yield(port.Chunk{Kind: port.ChunkToolCall, ToolCall: &session.ToolCall{ID: "successful", Name: "Count", Args: json.RawMessage(`{}`)}}, nil) {
+			yield(port.Chunk{Kind: port.ChunkReplay, Replay: &session.ProviderReplay{Format: "test", Version: 1, Data: []byte(`"successful"`)}}, nil)
+			if !yield(port.Chunk{Kind: port.ChunkToolCall, ToolCall: &port.LLMToolCall{ID: "successful", Name: "Count", Args: json.RawMessage(`{}`)}}, nil) {
 				return
 			}
 			yield(port.Chunk{Kind: port.ChunkDone, Stop: session.StopEndTurn}, nil)
@@ -479,25 +481,46 @@ func TestLoopDiscardsFailedTentativeToolCallAndDispatchesSuccessfulRetryOnce(t *
 	e := newEngine(agent.Deps{LLM: llm, Catalog: catalogWith(t, counter)})
 	ws := memfs.NewWorkspace("/ws")
 	env := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindMem, ID: "/ws", Revision: "v1"}, ws, memledger.New(), nil)
-	events := drain(e.Run(context.Background(), newSession(t, session.Limits{}), env, agent.RunRequest{Text: "go"}))
+	sess := newSession(t, session.Limits{})
+	events := drain(e.Run(context.Background(), sess, env, agent.RunRequest{Text: "go"}))
 
 	if got := counter.executions.Load(); got != 1 {
 		t.Fatalf("tool executions = %d, want 1", got)
 	}
 	var calls, results int
+	var acceptedID session.ToolCallID
 	for _, event := range events {
 		switch event.Type {
+		case session.EvPermissionAsk:
+			t.Fatal("rejected attempt surfaced an ask")
 		case session.EvToolCall:
 			calls++
-			if event.ToolCall == nil || event.ToolCall.ID != "successful" {
-				t.Fatalf("escaped tentative tool-call event: %+v", event.ToolCall)
+			if event.ToolCall == nil || event.ToolCall.Name != "Count" || event.ToolCall.ID == "successful" || event.ToolCall.ID == "failed" {
+				t.Fatalf("expected accepted canonical tool-call event: %+v", event.ToolCall)
 			}
+			acceptedID = event.ToolCall.ID
 		case session.EvToolResult:
 			results++
+			if event.ToolResult == nil || event.ToolResult.CallID != acceptedID {
+				t.Fatal("tool result did not correlate to accepted canonical call")
+			}
 		}
 	}
 	if calls != 1 || results != 1 {
 		t.Fatalf("tool events: calls=%d results=%d, want 1 each", calls, results)
+	}
+	var historyCalls int
+	for _, message := range sess.Conversation.Messages {
+		historyCalls += len(message.ToolCalls)
+		if len(message.ToolCalls) == 0 {
+			continue
+		}
+		if message.ToolCalls[0].ID != acceptedID || message.Replay == nil || message.Replay.Provider == nil || string(message.Replay.Provider.Data) != `"successful"` || len(message.Replay.Bindings) != 1 || message.Replay.Bindings[0].PairingID != "successful" {
+			t.Fatal("history contains rejected replay or incorrect canonical binding")
+		}
+	}
+	if historyCalls != 1 {
+		t.Fatalf("history calls = %d, want one accepted occurrence", historyCalls)
 	}
 	res := lastResult(t, events)
 	if res.Stop != session.StopEndTurn {
@@ -563,7 +586,7 @@ func (p *semanticUsageBudgetProvider) Stream(_ context.Context, _ port.LLMReques
 		}
 		u := session.Usage{InputTokens: 4, OutputTokens: 2}
 		yield(port.Chunk{Kind: port.ChunkUsage, Usage: &u}, nil)
-		yield(port.Chunk{Kind: port.ChunkToolCall, ToolCall: &session.ToolCall{ID: "successful", Name: "Count", Args: json.RawMessage(`{}`)}}, nil)
+		yield(port.Chunk{Kind: port.ChunkToolCall, ToolCall: &port.LLMToolCall{ID: "successful", Name: "Count", Args: json.RawMessage(`{}`)}}, nil)
 		yield(port.Chunk{Kind: port.ChunkDone, Stop: session.StopEndTurn}, nil)
 	}, nil
 }
@@ -609,7 +632,7 @@ func TestServerProviderRecovery_Scenario1_CanceledBufferedUsageReachesEngineExac
 		t.Run(tc.name, func(t *testing.T) {
 			a := session.Usage{InputTokens: 5, OutputTokens: 1}
 			b := session.Usage{InputTokens: 7, OutputTokens: 3}
-			call := session.ToolCall{ID: "buffered", Name: "Count", Args: json.RawMessage(`{}`)}
+			call := port.LLMToolCall{ID: "buffered", Name: "Count", Args: json.RawMessage(`{}`)}
 			inner := mockllm.New(
 				mockllm.Turn{Chunks: []port.Chunk{{Kind: port.ChunkUsage, Usage: &a}}, Err: &streamStatusError{msg: "retry", status: 503}},
 				mockllm.Turn{Chunks: []port.Chunk{
@@ -662,7 +685,10 @@ func (*cancelTentativeToolProvider) Capabilities() port.ProviderCapabilities {
 
 func (p *cancelTentativeToolProvider) Stream(ctx context.Context, _ port.LLMRequest) (iter.Seq2[port.Chunk, error], error) {
 	return func(yield func(port.Chunk, error) bool) {
-		if !yield(port.Chunk{Kind: port.ChunkToolCall, ToolCall: &session.ToolCall{ID: "cancelled", Name: "Count", Args: json.RawMessage(`{}`)}}, nil) {
+		if !yield(port.Chunk{Kind: port.ChunkReplay, Replay: &session.ProviderReplay{Format: "test", Version: 1, Data: []byte(`"cancelled"`)}, ReplayIsOutput: true}, nil) {
+			return
+		}
+		if !yield(port.Chunk{Kind: port.ChunkToolCall, ToolCall: &port.LLMToolCall{ID: "cancelled", Name: "Count", Args: json.RawMessage(`{}`)}}, nil) {
 			return
 		}
 		p.once.Do(func() { close(p.started) })
@@ -678,7 +704,8 @@ func TestLoopCancellationAfterTentativeToolCallStopsCancelledWithoutDispatch(t *
 	ws := memfs.NewWorkspace("/ws")
 	env := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindMem, ID: "/ws", Revision: "v1"}, ws, memledger.New(), nil)
 	ctx, cancel := context.WithCancel(context.Background())
-	run := e.Run(ctx, newSession(t, session.Limits{}), env, agent.RunRequest{Text: "go"})
+	sess := newSession(t, session.Limits{})
+	run := e.Run(ctx, sess, env, agent.RunRequest{Text: "go"})
 	<-inner.started
 	cancel()
 	events := drain(run)
@@ -687,8 +714,13 @@ func TestLoopCancellationAfterTentativeToolCallStopsCancelledWithoutDispatch(t *
 		t.Fatalf("tool executions = %d, want 0", got)
 	}
 	for _, event := range events {
-		if event.Type == session.EvToolCall || event.Type == session.EvToolResult {
+		if event.Type == session.EvToolCall || event.Type == session.EvToolResult || event.Type == session.EvPermissionAsk {
 			t.Fatalf("tentative tool activity escaped as %s", event.Type)
+		}
+	}
+	for _, message := range sess.Conversation.Messages {
+		if message.Replay != nil || len(message.ToolCalls) != 0 {
+			t.Fatal("cancelled attempt left replay or canonical IDs in history")
 		}
 	}
 	if stop := lastResult(t, events).Stop; stop != session.StopCancelled {

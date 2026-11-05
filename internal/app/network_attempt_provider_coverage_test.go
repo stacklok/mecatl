@@ -59,7 +59,7 @@ func TestProductionProviderEntriesShareNetworkAttemptObservation(t *testing.T) {
 				func(observation session.NetworkAttemptPayload) { observations = append(observations, observation) },
 			)
 			seq, err := test.entry().provider.Stream(ctx, port.LLMRequest{
-				Model: test.model, Messages: []session.Message{session.NewUserMessage("hello")},
+				Model: test.model, Messages: []port.LLMMessage{{Role: session.RoleUser, Text: "hello"}},
 			})
 			if err == nil && seq != nil {
 				for _, streamErr := range seq {

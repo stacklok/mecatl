@@ -39,7 +39,7 @@ func terminalSSEHandler(hit *atomic.Int32) http.HandlerFunc {
 func driveStream(p port.LLMProvider) (chunks int, err error) {
 	seq, err := p.Stream(context.Background(), port.LLMRequest{
 		Model:    "m",
-		Messages: []session.Message{session.NewUserMessage("hi")},
+		Messages: []port.LLMMessage{{Role: session.RoleUser, Text: "hi"}},
 	})
 	if err != nil {
 		return 0, err

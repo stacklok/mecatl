@@ -111,13 +111,14 @@ func TestPreToolUseHookBlocks(t *testing.T) {
 	evs := drain(r)
 
 	var hookEv, blockRes bool
-	var hookCallID session.ToolCallID
+	var hookCallID, callID, resultID session.ToolCallID
 	// Indices of the three c1 events, to assert ordering: the card must open BEFORE
 	// the veto (issue #6 — otherwise the failed update keys an unopened card).
 	cardIdx, hookIdx, resultIdx := -1, -1, -1
 	for i, ev := range evs {
 		switch {
-		case ev.Type == session.EvToolCall && ev.ToolCall != nil && ev.ToolCall.ID == "c1":
+		case ev.Type == session.EvToolCall && ev.ToolCall != nil && ev.ToolCall.Name == "Write":
+			callID = ev.ToolCall.ID
 			if cardIdx == -1 {
 				cardIdx = i
 			}
@@ -130,6 +131,7 @@ func TestPreToolUseHookBlocks(t *testing.T) {
 		case ev.Type == session.EvToolResult && ev.ToolResult.IsError &&
 			strings.Contains(ev.ToolResult.Content, "blocked-by-policy"):
 			blockRes = true
+			resultID = ev.ToolResult.CallID
 			resultIdx = i
 		}
 	}
@@ -141,8 +143,8 @@ func TestPreToolUseHookBlocks(t *testing.T) {
 	}
 	// The blocked EvHook must carry the originating tool-call id so a client can
 	// address the veto to the exact tool card (issue #6).
-	if hookCallID != "c1" {
-		t.Fatalf("blocked hook CallID = %q, want c1", hookCallID)
+	if callID == "" || callID == "c1" || hookCallID != callID || resultID != callID {
+		t.Fatalf("canonical correlation: call=%q hook=%q result=%q", callID, hookCallID, resultID)
 	}
 	if !blockRes {
 		t.Fatalf("block message not fed to the model as a tool result")

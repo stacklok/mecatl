@@ -306,8 +306,12 @@ func TestDebugSessionRestartRehydratesBoundEngine(t *testing.T) {
 		t.Fatalf("StartRun after restart: %v", err)
 	}
 	var final, statusEvidence string
+	var callID session.ToolCallID
 	for ev := range run.Events() {
-		if ev.Type == session.EvToolResult && ev.ToolResult != nil && ev.ToolResult.CallID == "status" {
+		if ev.ToolCall != nil && ev.ToolCall.Name == "InspectSession" {
+			callID = ev.ToolCall.ID
+		}
+		if ev.Type == session.EvToolResult && ev.ToolResult != nil && ev.ToolResult.CallID == callID {
 			statusEvidence = ev.ToolResult.Content
 		}
 		if ev.Type == session.EvResult && ev.Result != nil {
@@ -437,12 +441,16 @@ func TestDebugSessionConverseAdvertisesAndExecutesInspectSession(t *testing.T) {
 					results[result.GetCallId()] = result.GetContent()
 				}
 			}
+			loaded, err := built.Service.GetSession(ctx, session.SessionID(debug.GetSessionId()))
+			if err != nil {
+				t.Fatal(err)
+			}
 			for callID, evidence := range map[string][]string{
 				"status":     {`"view":"status"`, target.GetSessionId()},
 				"transcript": {`"view":"transcript"`, `"authoritative":true`},
 				"network":    {`"view":"network"`, `"successful_attempts_timed":false`},
 			} {
-				got, ok := results[callID]
+				got, ok := results[string(boundCallID(t, loaded, session.ProviderCallID(callID)))]
 				if !ok {
 					t.Fatalf("missing %s InspectSession result; got calls %v", callID, results)
 				}

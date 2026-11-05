@@ -142,7 +142,7 @@ func TestListSessionsOverJsonlstore(t *testing.T) {
 		// Bump the turn counter by recording assistant turns.
 		for i := 0; i < turns; i++ {
 			s.BeginTurn()
-			s.RecordAssistant(session.NewAssistantMessage("ok", "", nil))
+			s.RecordAssistant(session.NewAssistantMessage("ok", nil))
 		}
 		if err := s.Complete(); err != nil {
 			t.Fatalf("Complete %s: %v", id, err)

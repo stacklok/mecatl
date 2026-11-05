@@ -49,7 +49,7 @@ func TestSessionTitleGeneratorIgnoresNonTextMetadataChunks(t *testing.T) {
 
 	generator, err := NewSessionTitleGenerator(mockllm.New(mockllm.ChunksTurn(
 		mockllm.ReasoningChunk("display-only reasoning"),
-		mockllm.ReasoningItemChunkWithID("opaque replay blob", "rs_123"),
+		port.Chunk{Kind: port.ChunkReplay, Replay: &session.ProviderReplay{Format: "test", Version: 1, Data: []byte(`"opaque replay blob"`)}},
 		mockllm.PhaseChunk("final_answer"),
 		port.Chunk{Kind: port.ChunkProviderRoute, Text: "routed provider"},
 		mockllm.TextChunk(`{"title":"Metadata-safe title"}`),

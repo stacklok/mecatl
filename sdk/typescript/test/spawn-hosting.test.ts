@@ -46,7 +46,7 @@ function argumentValue(args: readonly string[], flag: string): string {
 function routerTransport(): Transport {
   return createRouterTransport((router) => {
     router.service(HarnessService, {
-      getCompatibilityInfo: () => ({ apiMajor: 1, capabilities: {}, features: ["server_info"] }),
+      getCompatibilityInfo: () => ({ apiMajor: 2, capabilities: {}, features: ["server_info"] }),
     });
   });
 }
@@ -58,7 +58,7 @@ function readyDocument(socketPath: string, overrides: Record<string, unknown> = 
     transport: "unix",
     grpc_address: socketPath,
     socket_path: socketPath,
-    api_major: 1,
+    api_major: 2,
     features: ["mcp_servers_on_create"],
     deployment: "test",
     ...overrides,
@@ -189,7 +189,7 @@ writeFileSync(value("--ready-file"), JSON.stringify({
   transport: "unix",
   grpc_address: value("--grpc-unix-socket"),
   socket_path: value("--grpc-unix-socket"),
-  api_major: 1,
+  api_major: 2,
   features: ["mcp_servers_on_create"],
 }));
 setInterval(() => {}, 1_000);

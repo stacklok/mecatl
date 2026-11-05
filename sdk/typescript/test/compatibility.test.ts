@@ -22,7 +22,7 @@ describe("compatibility floor", () => {
         router.service(HarnessService, {
           getCompatibilityInfo: (_request, context) => {
             grpcHeaders.push(new Headers(context.requestHeader));
-            return { apiMajor: 1, capabilities: {}, features: ["server_info"] };
+            return { apiMajor: 2, capabilities: {}, features: ["server_info"] };
           },
           getSession: (_request, context) => {
             grpcHeaders.push(new Headers(context.requestHeader));
@@ -128,7 +128,7 @@ describe("compatibility floor", () => {
           incompatibleCreated += 1;
           return { sessionId: "must-not-exist" };
         },
-        getCompatibilityInfo: () => ({ apiMajor: 2 }),
+        getCompatibilityInfo: () => ({ apiMajor: 3 }),
       });
     });
 
@@ -242,12 +242,14 @@ describe("compatibility floor", () => {
     },
   );
 
-  // Major 1 has no valid positive lower major. Add that SDK case when SUPPORTED_API_MAJOR rises;
-  // the private diagnostic helper is tied to that constant, not an injectable comparison function.
   it.each([
     {
-      apiMajor: 2,
-      message: "server API is newer than this SDK (expected major 1, observed 2); update SDK",
+      apiMajor: 1,
+      message: "server API is older than this SDK (expected major 2, observed 1); update server",
+    },
+    {
+      apiMajor: 3,
+      message: "server API is newer than this SDK (expected major 2, observed 3); update SDK",
     },
     { apiMajor: 0, message: "server returned invalid compatibility information" },
     { apiMajor: -1, message: "server returned invalid compatibility information" },
@@ -380,7 +382,7 @@ describe("compatibility floor", () => {
                   getCompatibilityInfo: () => {
                     probes += 1;
                     if (probes % 2 === 1) throw grpcCause;
-                    return { apiMajor: 1 };
+                    return { apiMajor: 2 };
                   },
                   getSession: () => {
                     requested += 1;
@@ -466,7 +468,7 @@ describe("compatibility floor", () => {
             if (new URL(String(input)).pathname === "/v1/compatibility") {
               probes += 1;
               if (probes % 2 === 1) {
-                const response = Response.json({ api_major: 1 });
+                const response = Response.json({ api_major: 2 });
                 vi.spyOn(response, "text").mockRejectedValue(cause);
                 return response;
               }
@@ -504,7 +506,7 @@ describe("compatibility floor", () => {
           getCompatibilityInfo: () => {
             probes += 1;
             if (probes === 1) throw new ConnectError("temporarily unavailable", Code.Unavailable);
-            return { apiMajor: 1, capabilities: {}, features: ["future_feature"] };
+            return { apiMajor: 2, capabilities: {}, features: ["future_feature"] };
           },
           getSession: () => {
             requested += 1;

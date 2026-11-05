@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/stacklok/mecatl/engine/adapter/eventcodec"
 	"github.com/stacklok/mecatl/engine/adapter/eventsource"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
@@ -389,6 +390,29 @@ type lifetimeEvidence struct {
 	Error             string        `json:"error,omitempty"`
 }
 
+func recordLifetimeEvent(out *lifetimeEvidence, ev session.Event, legacyOpen bool) bool {
+	switch ev.Type {
+	case session.EvTurnEnd:
+		if ev.TurnEnd != nil {
+			out.Turns++
+			out.Usage = out.Usage.Add(ev.TurnEnd.Usage)
+		}
+	case session.EvToolCall:
+		out.ToolCalls++
+	case session.EvToolResult:
+		out.ToolResults++
+		if ev.ToolResult != nil && ev.ToolResult.IsError {
+			out.ToolFailures++
+		}
+	case session.EvResult:
+		if ev.RunID == "" && legacyOpen {
+			out.Runs++
+			return false
+		}
+	}
+	return legacyOpen
+}
+
 func (t *inspectTool) lifetimeView(ctx context.Context, id session.SessionID) lifetimeEvidence {
 	out := lifetimeEvidence{Available: t.log != nil}
 	if t.log == nil {
@@ -415,25 +439,7 @@ func (t *inspectTool) lifetimeView(ctx context.Context, id session.SessionID) li
 		} else if ev.Schedule == nil {
 			legacyOpen = true
 		}
-		switch ev.Type {
-		case session.EvTurnEnd:
-			if ev.TurnEnd != nil {
-				out.Turns++
-				out.Usage = out.Usage.Add(ev.TurnEnd.Usage)
-			}
-		case session.EvToolCall:
-			out.ToolCalls++
-		case session.EvToolResult:
-			out.ToolResults++
-			if ev.ToolResult != nil && ev.ToolResult.IsError {
-				out.ToolFailures++
-			}
-		case session.EvResult:
-			if ev.RunID == "" && legacyOpen {
-				out.Runs++
-				legacyOpen = false
-			}
-		}
+		legacyOpen = recordLifetimeEvent(&out, ev, legacyOpen)
 	}
 	if legacyOpen {
 		out.Runs++
@@ -470,7 +476,7 @@ func (t *inspectTool) historyView(ctx context.Context, s *session.Session, scope
 	}{{"current_snapshot", s.Conversation.Messages, true, true}}
 	complete := true
 	errText := ""
-	if t.log != nil {
+	if t.log != nil && s.LearningEligible() {
 		events, err := readEvents(ctx, t.log, s.ID, maxPerformanceScan)
 		if err != nil {
 			complete = false
@@ -486,7 +492,7 @@ func (t *inspectTool) historyView(ctx context.Context, s *session.Session, scope
 					}{"compaction_archive", ev.CompactionArchive.Replaced, true, true})
 				}
 			}
-			folded, foldErr := eventsource.Fold(eventsource.SessionMeta{ID: s.ID, Mode: s.Mode, EnvironmentRef: s.EnvironmentRef, Limits: s.Limits, CreatedAt: s.CreatedAt, Kind: s.Kind, Relationship: s.Relationship}, seqEvents(events))
+			folded, foldErr := eventsource.Fold(eventsource.SessionMeta{LearningEligible: s.LearningEligible(), Incarnation: s.Incarnation(), ID: s.ID, Mode: s.Mode, EnvironmentRef: s.EnvironmentRef, Limits: s.Limits, CreatedAt: s.CreatedAt, Kind: s.Kind, Relationship: s.Relationship}, seqEvents(events))
 			if foldErr == nil {
 				sources = append(sources, struct {
 					name          string
@@ -500,7 +506,7 @@ func (t *inspectTool) historyView(ctx context.Context, s *session.Session, scope
 					messages      []session.Message
 					authoritative bool
 					projection    bool
-				}{"retained_event_history", nil, true, false})
+				}{"retained_event_history", nil, false, false})
 				complete = false
 				if errText == "" {
 					errText = "retained events do not form a complete replay"
@@ -510,6 +516,9 @@ func (t *inspectTool) historyView(ctx context.Context, s *session.Session, scope
 	} else {
 		complete = false
 		errText = errLogNotConfigured
+		if t.log != nil {
+			errText = "retained event history is unavailable for legacy sessions"
+		}
 	}
 	catalog := historyCatalog{View: "history", Scope: scope, Authoritative: true, ScanComplete: complete, RetentionComplete: false, ProjectionComplete: true, Error: errText, Sources: []historySource{}}
 	for i, src := range sources {
@@ -544,16 +553,39 @@ func transcriptFromMessages(messages []session.Message, offset, limit int) trans
 
 func readEvents(ctx context.Context, log port.EventLog, id session.SessionID, scanLimit int) ([]session.Event, error) {
 	out := []session.Event{}
-	for ev, err := range log.Read(ctx, id) {
+	remaining := 16 << 20
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	cursorLog, ok := log.(port.CursorEventLog)
+	if !ok {
+		return nil, errors.New("event log cannot prove complete history")
+	}
+	for record, err := range cursorLog.ReadAfter(ctx, id, "", port.ReadOptions{Limit: scanLimit + 1}) {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return out, ctxErr
+		}
 		if err != nil {
 			return out, err
 		}
+		if record.Kind != port.LogRecordEvent {
+			return out, errors.New("event history contains a gap")
+		}
+		ev := record.Event
 		if len(out) == scanLimit {
 			return out, errors.New("event scan bound reached")
 		}
+		encoded, err := eventcodec.Marshal(ev)
+		if err != nil {
+			return out, err
+		}
+		if len(encoded) > remaining {
+			return out, errors.New("event scan byte bound reached")
+		}
+		remaining -= len(encoded)
 		out = append(out, ev)
 	}
-	return out, nil
+	return out, ctx.Err()
 }
 func seqEvents(events []session.Event) iter.Seq2[session.Event, error] {
 	return func(yield func(session.Event, error) bool) {

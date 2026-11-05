@@ -369,6 +369,8 @@ function EvidenceRow({ evidence }: { evidence: Evidence }) {
         ) : (
           <span>From a chat</span>
         )}
+        {evidence.protocol && <span>Evidence protocol: {evidence.protocol}</span>}
+        {evidence.attachmentUnavailable && <span>Tool association unavailable</span>}
         <Badge variant={evidence.available ? "success" : "warning"}>
           {evidence.available ? "Available" : "Unavailable"}
           {!evidence.available && evidence.availability ? ` (${evidence.availability})` : ""}

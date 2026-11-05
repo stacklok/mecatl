@@ -49,7 +49,7 @@ class RecordingTransport implements Transport {
           outcome: SteerOutcome.RETRACTED,
           runId,
         }),
-        getCompatibilityInfo: () => ({ apiMajor: 1, capabilities: {}, features: [feature] }),
+        getCompatibilityInfo: () => ({ apiMajor: 2, capabilities: {}, features: [feature] }),
         getSession: () => ({
           session: { sessionCapabilities: { audio: true, image: true }, sessionId },
         }),
@@ -166,7 +166,7 @@ describe("run control transports", () => {
         const response = (() => {
           switch (path) {
             case "/v1/compatibility":
-              return { api_major: 1, capabilities: {}, features: [feature] };
+              return { api_major: 2, capabilities: {}, features: [feature] };
             case `/v1/sessions/${sessionId}/controls/resolve-ask`:
               return { ask_id: "ask-1", run_id: runId };
             case `/v1/sessions/${sessionId}/controls/cancel`:
@@ -241,7 +241,7 @@ describe("run control transports", () => {
               return { messageId: "", outcome: SteerOutcome.NONE_PENDING, runId };
             },
             getCompatibilityInfo: () => ({
-              apiMajor: 1,
+              apiMajor: 2,
               capabilities: { shell: true },
               features: ["unrelated_feature"],
             }),
@@ -270,7 +270,7 @@ describe("run control transports", () => {
     const noHandlers = connect({
       transport: createRouterTransport((router) => {
         router.service(HarnessService, {
-          getCompatibilityInfo: () => ({ apiMajor: 1, capabilities: {}, features: [feature] }),
+          getCompatibilityInfo: () => ({ apiMajor: 2, capabilities: {}, features: [feature] }),
           getSession: () => ({ session: { sessionId } }),
         });
       }),
@@ -290,7 +290,7 @@ describe("run control transports", () => {
     const mediaClient = connect({
       transport: createRouterTransport((router) => {
         router.service(HarnessService, {
-          getCompatibilityInfo: () => ({ apiMajor: 1, capabilities: {}, features: [feature] }),
+          getCompatibilityInfo: () => ({ apiMajor: 2, capabilities: {}, features: [feature] }),
           getSession: () => ({
             session: { sessionCapabilities: { audio: false, image: false }, sessionId },
           }),
@@ -334,7 +334,7 @@ describe("run control transports", () => {
       const client = connect({
         transport: createRouterTransport((router) => {
           router.service(HarnessService, {
-            getCompatibilityInfo: () => ({ apiMajor: 1, capabilities: {}, features: [feature] }),
+            getCompatibilityInfo: () => ({ apiMajor: 2, capabilities: {}, features: [feature] }),
             getSession: () => ({ session: { sessionId } }),
             steerRun: () => response as never,
           });
@@ -362,7 +362,7 @@ describe("run control transports", () => {
         transport: createRouterTransport((router) => {
           router.service(HarnessService, {
             cancelRunSteer: () => response as never,
-            getCompatibilityInfo: () => ({ apiMajor: 1, capabilities: {}, features: [feature] }),
+            getCompatibilityInfo: () => ({ apiMajor: 2, capabilities: {}, features: [feature] }),
             getSession: () => ({ session: { sessionId } }),
           });
         }),

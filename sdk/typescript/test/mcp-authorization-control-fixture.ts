@@ -89,7 +89,7 @@ export class LifecycleTransport implements Transport {
     if (value === undefined) {
       switch (method.name) {
         case "GetCompatibilityInfo":
-          value = { apiMajor: 1, capabilities: {}, features: [...this.#features] };
+          value = { apiMajor: 2, capabilities: {}, features: [...this.#features] };
           break;
         case "GetSession":
           value = {
@@ -207,7 +207,7 @@ export async function httpHarness(events: readonly Record<string, unknown>[]): P
     });
     if (path === "/v1/compatibility") {
       return Response.json({
-        api_major: 1,
+        api_major: 2,
         capabilities: {},
         features: ["prompt_free_controls", "watch_session_events"],
       });

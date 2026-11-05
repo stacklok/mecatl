@@ -84,17 +84,17 @@ func TestUntrustedSubagentChildCatalogHasNoShell(t *testing.T) {
 	untrusted := untrustedTeamCfg(t)
 	eng := buildChildEngine(untrusted, nil, shellThenEdit(), "", untrusted.Model, buildSandboxedCommandRunner(untrusted))
 	events := drainEngine(t, eng)
-	if !unknownToolResult(events, "b1") {
+	if !unknownToolResult(events, "Shell") {
 		t.Error("untrusted: the default Subagent explorer dispatched Shell; the trust gate must leave it shell-less")
 	}
-	if !unknownToolResult(events, "e1") {
+	if !unknownToolResult(events, "Edit") {
 		t.Error("untrusted: the explorer got Edit; it must stay a read-only explorer")
 	}
 
 	trusted := teamCfg(t)
 	engTrusted := buildChildEngine(trusted, nil, shellThenEdit(), "", trusted.Model, buildSandboxedCommandRunner(trusted))
 	eventsTrusted := drainEngine(t, engTrusted)
-	if !sawDispatchedTool(eventsTrusted, "b1") {
+	if !sawDispatchedTool(eventsTrusted, "Shell") {
 		t.Error("trusted: the explorer must keep its worktree shell (the gate must not over-fire)")
 	}
 }
@@ -192,7 +192,7 @@ func TestUntrustedReadOnlyMemberHasNoShell(t *testing.T) {
 		t.Error("untrusted read-only member must NOT be IsolateReadOnly (no shell ⇒ base-share)")
 	}
 	events := drainEngine(t, build.Engine)
-	if !unknownToolResult(events, "b1") {
+	if !unknownToolResult(events, "Shell") {
 		t.Error("untrusted: a read-only member dispatched Shell; the trust gate must withhold the worktree shell")
 	}
 }
@@ -212,10 +212,10 @@ func TestUntrustedMutatingMemberKeepsShell(t *testing.T) {
 		t.Fatal("factory returned a nil engine")
 	}
 	events := drainEngine(t, build.Engine)
-	if !sawDispatchedTool(events, "b1") {
+	if !sawDispatchedTool(events, "Shell") {
 		t.Error("untrusted: a MUTATING member lost Shell; the trust gate must withhold only the WORKTREE shell (force-copy forks keep theirs)")
 	}
-	if !sawDispatchedTool(events, "e1") {
+	if !sawDispatchedTool(events, "Edit") {
 		t.Error("untrusted: a MUTATING member lost Edit; untrust must not strip the mutating fork toolset")
 	}
 }
@@ -374,10 +374,10 @@ func TestUntrustedMutatingDefMemberKeepsShell(t *testing.T) {
 		t.Fatal("factory returned a nil engine")
 	}
 	events := drainEngine(t, build.Engine)
-	if !sawDispatchedTool(events, "b1") {
+	if !sawDispatchedTool(events, "Shell") {
 		t.Error("untrusted: a MUTATING per-def member lost Shell; the def base re-add (spec.Mutating && mutatingRunner != nil) must restore the ungated force-copy shell")
 	}
-	if !sawDispatchedTool(events, "e1") {
+	if !sawDispatchedTool(events, "Edit") {
 		t.Error("untrusted: a MUTATING per-def member lost Edit; the def allowlist must keep mutating tools for a Mutating member")
 	}
 }
@@ -467,8 +467,12 @@ func TestUntrustedWorkspaceSubagentRunsShellless(t *testing.T) {
 	sess := session.New("parent", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: cfg.Workspace, Revision: "in-tree-v1"}, session.Limits{MaxTurns: 5}, time.Now())
 	run := parentEng.Run(context.Background(), sess, parentEnv, agent.RunRequest{Text: "go"})
 	var sawResult bool
+	var callID session.ToolCallID
 	for ev := range run.Events() {
-		if ev.Type == session.EvToolResult && ev.ToolResult != nil && ev.ToolResult.CallID == "t1" {
+		if ev.ToolCall != nil && ev.ToolCall.Name == "Subagent" {
+			callID = ev.ToolCall.ID
+		}
+		if ev.Type == session.EvToolResult && ev.ToolResult != nil && ev.ToolResult.CallID == callID {
 			sawResult = true
 			if ev.ToolResult.IsError {
 				t.Fatalf("Subagent must complete degraded, not error: %q", ev.ToolResult.Content)

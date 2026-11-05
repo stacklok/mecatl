@@ -283,10 +283,7 @@ function TranscriptRow({
         {message.authorizations
           ?.filter(
             (authorization) =>
-              !showToolCalls ||
-              !message.tools?.some(
-                (tool) => tool.id === authorization.callId && tool.runId === authorization.runId,
-              ),
+              !showToolCalls || !message.tools?.some((tool) => tool.id === authorization.callId),
           )
           .map((authorization) => (
             <AuthorizationReviewTrigger

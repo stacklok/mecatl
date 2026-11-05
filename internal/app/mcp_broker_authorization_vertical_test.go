@@ -40,12 +40,7 @@ func TestSessionMCPAuthorization_GrantRegressionParksAndResumes(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
 	defer cancel()
 
-	const (
-		call1    = "protected-call-1"
-		call2    = "protected-call-2"
-		call3    = "protected-call-3"
-		toolName = "mcp__github__protected"
-	)
+	const toolName = "mcp__github__protected"
 
 	callbackMux := http.NewServeMux()
 	callbackServer := httptest.NewUnstartedServer(callbackMux)
@@ -58,10 +53,10 @@ func TestSessionMCPAuthorization_GrantRegressionParksAndResumes(t *testing.T) {
 	roots.AddCert(fixture.mcp.Certificate())
 
 	provider := mockllm.New(
-		mockllm.ToolCallTurn(session.NewToolCall(call1, toolName, json.RawMessage(`{"request":"first"}`))),
+		mockllm.ToolCallTurn(session.NewToolCall("protected-call-1", toolName, json.RawMessage(`{"request":"first"}`))),
 		mockllm.TextTurn("first continuation complete"),
-		mockllm.ToolCallTurn(session.NewToolCall(call2, toolName, json.RawMessage(`{"request":"regressed"}`))),
-		mockllm.ToolCallTurn(session.NewToolCall(call3, toolName, json.RawMessage(`{"request":"retry"}`))),
+		mockllm.ToolCallTurn(session.NewToolCall("protected-call-2", toolName, json.RawMessage(`{"request":"regressed"}`))),
+		mockllm.ToolCallTurn(session.NewToolCall("protected-call-3", toolName, json.RawMessage(`{"request":"retry"}`))),
 		mockllm.TextTurn("second continuation complete"),
 	)
 	declaration := mcpauthority.NewBroker(mcpauthority.BrokerConfig{
@@ -132,6 +127,15 @@ func TestSessionMCPAuthorization_GrantRegressionParksAndResumes(t *testing.T) {
 	if got := fixture.backendCalls.Load(); got != 0 {
 		t.Fatalf("backend calls before authorization = %d, want 0", got)
 	}
+	var call1 session.ToolCallID
+	for _, event := range firstEvents {
+		if event.ToolCall != nil && event.ToolCall.Name == toolName {
+			if call1 != "" {
+				t.Fatal("first authorization accepted multiple calls")
+			}
+			call1 = event.ToolCall.ID
+		}
+	}
 	firstPending := requiredAuthorization(t, firstEvents, call1)
 	assertDurablePending(ownerCtx, t, built.Service, sess.ID, call1, firstPending.AuthorizationID)
 	firstControl := server.MCPAuthorizationControl{SessionID: sess.ID, AuthorizationID: firstPending.AuthorizationID}
@@ -155,6 +159,16 @@ func TestSessionMCPAuthorization_GrantRegressionParksAndResumes(t *testing.T) {
 	// Switching the fixture to invalid_grant therefore needs no wall-clock sleep.
 	fixture.rejectRefresh.Store(true)
 	secondEvents, secondRun := runAndDrain(ownerCtx, t, built.Service, sess.ID, "read after credential regression")
+	var regressedCalls []session.ToolCallID
+	for _, event := range secondEvents {
+		if event.ToolCall != nil && event.ToolCall.Name == toolName {
+			regressedCalls = append(regressedCalls, event.ToolCall.ID)
+		}
+	}
+	if len(regressedCalls) != 2 {
+		t.Fatalf("regressed accepted calls = %v, want exactly two", regressedCalls)
+	}
+	call2, call3 := regressedCalls[0], regressedCalls[1]
 	if secondRun.Outcome() != agent.RunOutcomeAuthorizationPending {
 		t.Fatalf("regression run outcome = %v, want authorization pending", secondRun.Outcome())
 	}

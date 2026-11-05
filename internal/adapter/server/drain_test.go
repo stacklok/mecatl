@@ -521,7 +521,7 @@ func makeAwaitingSession(t *testing.T, id session.SessionID) (*session.Session, 
 		t.Fatal(err)
 	}
 	call := session.NewToolCall("durable-call", "Write", json.RawMessage(`{"path":"f.go"}`))
-	if err := sess.RecordAssistant(session.NewAssistantMessage("", "", []session.ToolCall{call})); err != nil {
+	if err := sess.RecordAssistant(session.NewAssistantMessage("", []session.ToolCall{call})); err != nil {
 		t.Fatal(err)
 	}
 	ask := session.PendingAsk{AskID: "durable-ask", Tool: "Write", Call: call.ID}

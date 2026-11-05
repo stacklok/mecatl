@@ -1,11 +1,15 @@
 package server
 
 import (
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"os"
 	"path/filepath"
 	"regexp"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -154,22 +158,70 @@ func sdkTypescriptEventParityPaths(t *testing.T) eventParityPaths {
 	}
 }
 
+func TestSessionEventKindsCollectsTypedConstantsAcrossFiles(t *testing.T) {
+	dir := t.TempDir()
+	for name, source := range map[string]string{
+		"event.go":      "package session\ntype EventType string\nconst EvInitial EventType = \"initial\"\nconst EvUnrelated string = \"unrelated\"\n",
+		"extra.go":      "package session\nconst EvExtra EventType = \"extra\"\n",
+		"extra_test.go": "package session\nconst EvTestOnly EventType = \"test.only\"\n",
+	} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(source), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	byName, byKind := sessionEventKinds(t, filepath.Join(dir, "event.go"))
+	if len(byName) != 2 || len(byKind) != 2 || byName["EvInitial"] != "initial" || byName["EvExtra"] != "extra" {
+		t.Fatalf("event inventory = %v / %v", byName, byKind)
+	}
+}
+
 func sessionEventKinds(t *testing.T, path string) (map[string]string, map[string]struct{}) {
 	t.Helper()
-	source := readParitySource(t, path)
-	constant := regexp.MustCompile(`(?m)^\s*(Ev[A-Za-z0-9]+)\s+EventType\s+=\s+"([a-z0-9_.]+)"`)
-	matches := constant.FindAllStringSubmatch(source, -1)
-	if len(matches) == 0 {
-		t.Fatalf("find session.EventType constants in %s", path)
+	paths, err := filepath.Glob(filepath.Join(filepath.Dir(path), "*.go"))
+	if err != nil {
+		t.Fatal(err)
 	}
-	byName := make(map[string]string, len(matches))
-	byKind := make(map[string]struct{}, len(matches))
-	for _, match := range matches {
-		if _, duplicate := byKind[match[2]]; duplicate {
-			t.Fatalf("duplicate session event kind %q", match[2])
+	byName := make(map[string]string)
+	byKind := make(map[string]struct{})
+	for _, source := range paths {
+		if strings.HasSuffix(source, "_test.go") {
+			continue
 		}
-		byName[match[1]] = match[2]
-		byKind[match[2]] = struct{}{}
+		file, err := parser.ParseFile(token.NewFileSet(), source, nil, 0)
+		if err != nil {
+			t.Fatalf("parse session event constants: %v", err)
+		}
+		for _, decl := range file.Decls {
+			group, ok := decl.(*ast.GenDecl)
+			if !ok || group.Tok != token.CONST {
+				continue
+			}
+			for _, spec := range group.Specs {
+				value := spec.(*ast.ValueSpec)
+				typ, ok := value.Type.(*ast.Ident)
+				if !ok || typ.Name != "EventType" {
+					continue
+				}
+				for i, name := range value.Names {
+					literal, ok := value.Values[i].(*ast.BasicLit)
+					if !ok || literal.Kind != token.STRING {
+						t.Fatalf("event kind %s must have a string constant value", name.Name)
+					}
+					kind, err := strconv.Unquote(literal.Value)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if _, duplicate := byKind[kind]; duplicate {
+						t.Fatalf("duplicate session event kind %q", kind)
+					}
+					byName[name.Name] = kind
+					byKind[kind] = struct{}{}
+				}
+			}
+		}
+	}
+	if len(byName) == 0 {
+		t.Fatalf("find session.EventType constants in %s", filepath.Dir(path))
 	}
 	return byName, byKind
 }

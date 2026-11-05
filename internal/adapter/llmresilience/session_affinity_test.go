@@ -2,6 +2,7 @@ package llmresilience
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -21,6 +22,18 @@ func TestProviderSessionHeaderRetryWrapper(t *testing.T) {
 		headers []string
 	)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request struct {
+			Model string `json:"model"`
+			Input []struct {
+				Role    string `json:"role"`
+				Content string `json:"content"`
+			} `json:"input"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Error(err)
+		} else if request.Model != "model" || len(request.Input) != 1 || request.Input[0].Role != "user" || request.Input[0].Content != "hello" {
+			t.Error("retry wrapper changed the factory-selected model or DTO input")
+		}
 		mu.Lock()
 		headers = append(headers, r.Header.Get(sessionaffinity.HeaderName))
 		attempt := len(headers)
@@ -37,7 +50,7 @@ func TestProviderSessionHeaderRetryWrapper(t *testing.T) {
 
 	provider := Wrap(openai.New(openai.WithAPIKey("test"), openai.WithBaseURL(srv.URL+"/v1"), openai.WithMaxRetries(0)), Config{MaxAttempts: 2})
 	ctx := port.WithSessionID(context.Background(), sessionID)
-	seq, err := provider.Stream(ctx, port.LLMRequest{Model: "model", Messages: []session.Message{session.NewUserMessage("hello")}})
+	seq, err := provider.Stream(ctx, port.LLMRequest{Model: "model", Messages: []port.LLMMessage{{Role: session.RoleUser, Text: "hello"}}})
 	if err != nil {
 		t.Fatal(err)
 	}

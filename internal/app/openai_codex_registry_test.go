@@ -225,7 +225,7 @@ func streamCodexTestRequest(t *testing.T, provider port.LLMProvider) {
 	ctx := port.WithRootSessionID(port.WithSessionID(context.Background(), "active-session"), "root-session")
 	stream, err := provider.Stream(ctx, port.LLMRequest{
 		Model:    "gpt-5",
-		Messages: []session.Message{session.NewUserMessage("hello")},
+		Messages: []port.LLMMessage{{Role: session.RoleUser, Text: "hello"}},
 	})
 	if err != nil {
 		t.Fatalf("Stream: %v", err)

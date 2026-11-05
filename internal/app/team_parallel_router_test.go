@@ -727,7 +727,7 @@ func TestBuiltCloseReapsPreservedParallelWinner(t *testing.T) {
 	}
 	var result string
 	for _, message := range stored.Conversation.Messages {
-		if message.Role == session.RoleTool && message.ToolResult != nil && message.ToolResult.CallID == "c1" {
+		if message.Role == session.RoleTool && message.ToolResult != nil && message.ToolResult.CallID == boundCallID(t, stored, "c1") {
 			result = message.ToolResult.Content
 			break
 		}

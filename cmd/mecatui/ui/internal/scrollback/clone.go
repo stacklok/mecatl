@@ -125,6 +125,7 @@ func clonePayload(in PayloadSnapshot) PayloadSnapshot {
 		payload.Update = cloneTeamUpdate(payload.Update)
 		return payload
 	case NoticeCardSnapshot:
+		payload.Artifacts = cloneArtifacts(payload.Artifacts)
 		return payload
 	case TurnStatCardSnapshot:
 		return payload

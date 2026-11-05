@@ -19,7 +19,11 @@ func TestCanonicalHarnessProtocolReservations(t *testing.T) {
 	assertReservedFields(t, messages.ByName("ResumeApproval"), map[protoreflect.FieldNumber]protoreflect.Name{2: "allow"})
 	assertReservedFields(t, messages.ByName("Approval"), map[protoreflect.FieldNumber]protoreflect.Name{5: "allow_always"})
 	assertReservedFields(t, messages.ByName("Result"), map[protoreflect.FieldNumber]protoreflect.Name{5: "permanent"})
-	assertReservedFields(t, messages.ByName("Event"), map[protoreflect.FieldNumber]protoreflect.Name{9: "usage"})
+	assertReservedFields(t, messages.ByName("Event"), map[protoreflect.FieldNumber]protoreflect.Name{9: "usage", 27: "historical"})
+	assertReservedFields(t, messages.ByName("ConversationMessage"), map[protoreflect.FieldNumber]protoreflect.Name{9: "historical"})
+	if messages.ByName("HistoricalRecord") != nil {
+		t.Fatal("historical display payload remains public")
+	}
 
 	approval := messages.ByName("Approval")
 	if field := approval.Fields().ByName("verdict"); field == nil || field.Number() != 6 || field.Kind() != protoreflect.EnumKind || field.Enum().FullName() != "mecatl.v1.ApprovalVerdict" {

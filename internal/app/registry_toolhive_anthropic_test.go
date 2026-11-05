@@ -122,7 +122,7 @@ func TestProtocolSpecificWireRouting(t *testing.T) {
 	}
 	seq, err := native.provider.Stream(context.Background(), port.LLMRequest{
 		Model:    "claude-sonnet-4-6",
-		Messages: []session.Message{session.NewUserMessage("hi")},
+		Messages: []port.LLMMessage{{Role: session.RoleUser, Text: "hi"}},
 	})
 	if err != nil {
 		t.Fatalf("construct native Anthropic stream: %v", err)

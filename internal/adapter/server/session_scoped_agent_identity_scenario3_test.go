@@ -151,7 +151,7 @@ func TestSessionScopedAgentIdentity_Scenario3_BrokerAuthorizationAndWorkspaceEnr
 		sess := session.New("agent-bound-authz", session.ModeDefault,
 			session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/workspace", Revision: "in-tree-v1"}, session.Limits{}, now)
 		sess.AgentDefinitionName = "release-reviewer"
-		call := session.NewToolCall("protected-call", "protected", []byte(`{}`))
+		call := session.NewToolCall(session.NewToolCallID(), "protected", []byte(`{}`))
 		pending := session.PendingAuthorization{
 			Authorization: session.ExternalAuthorization{ID: "authorization:1", Binding: "opaque-binding", ExpiresAt: now.Add(time.Hour)},
 			Call:          call,
@@ -159,7 +159,7 @@ func TestSessionScopedAgentIdentity_Scenario3_BrokerAuthorizationAndWorkspaceEnr
 		if err := sess.BeginTurn(); err != nil {
 			t.Fatalf("BeginTurn: %v", err)
 		}
-		if err := sess.RecordAssistant(session.NewAssistantMessage("", "", []session.ToolCall{call})); err != nil {
+		if err := sess.RecordAssistant(session.NewAssistantMessage("", []session.ToolCall{call})); err != nil {
 			t.Fatalf("RecordAssistant: %v", err)
 		}
 		if err := sess.PauseForAuthorization(pending); err != nil {
@@ -269,7 +269,11 @@ func TestSessionScopedAgentIdentity_Scenario3_RestartFailsClosedOnBoringConfig(t
 		if err := sess.BeginTurn(); err != nil {
 			t.Fatalf("BeginTurn: %v", err)
 		}
-		if err := sess.PauseForApproval(session.PendingAsk{AskID: "ask-1", Tool: "Write", Origin: session.ApprovalOriginPermission}); err != nil {
+		call := session.NewToolCall(session.NewToolCallID(), "Write", []byte(`{"path":"note.txt","content":"hi"}`))
+		if err := sess.RecordAssistant(session.NewAssistantMessage("", []session.ToolCall{call})); err != nil {
+			t.Fatalf("RecordAssistant: %v", err)
+		}
+		if err := sess.PauseForApproval(session.PendingAsk{AskID: "ask-1", Call: call.ID, Tool: call.Name, Args: call.Args, Origin: session.ApprovalOriginPermission}); err != nil {
 			t.Fatalf("PauseForApproval: %v", err)
 		}
 		if err := store.Save(context.Background(), sess); err != nil {
