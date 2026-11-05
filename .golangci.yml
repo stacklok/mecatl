@@ -946,6 +946,18 @@ linters:
           deny:
             - pkg: github.com/stacklok/mecatl/internal/identitybroker/adapter
               desc: 'only internal/app wires the identity broker adapters; use the broker boundary instead'
+        # Composition and the command roots use the MCP broker contract
+        # (internal/mcpbroker); one file constructs the adapter.
+        internal-adapter-mcpbroker-importers:
+          list-mode: lax
+          files:
+            - '**/internal/app/**.go'
+            - '**/cmd/**.go'
+            - '!**/internal/app/mcp_broker_construction.go'
+            - '!$test'
+          deny:
+            - pkg: github.com/stacklok/mecatl/internal/adapter/mcpbroker
+              desc: 'only internal/app/mcp_broker_construction.go constructs the MCP broker adapter; depend on internal/mcpbroker'
         # learning: reflection domain; reuses governance's canonical untrusted
         # framing and tool's canonical memory security helpers.
         core-learning:

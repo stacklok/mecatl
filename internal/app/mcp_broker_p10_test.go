@@ -244,7 +244,7 @@ func TestEmptyBrokerAuthoritySkipsUnconfiguredRuntime(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(built.Close)
-	if built.MCPBroker != nil || !built.MCPBrokerHandlers.Empty() {
+	if built.MCPBroker != nil || built.MCPBrokerHandlers != nil {
 		t.Fatal("empty broker authority constructed broker resources")
 	}
 }

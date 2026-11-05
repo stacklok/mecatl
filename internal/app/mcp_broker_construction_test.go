@@ -1,15 +1,233 @@
 package app
 
 import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/url"
 	"reflect"
 	"strconv"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/alicebob/miniredis/v2"
+	"golang.org/x/oauth2"
 
+	"github.com/stacklok/mecatl/engine/session"
+	"github.com/stacklok/mecatl/internal/adapter/mcpauthority"
 	"github.com/stacklok/mecatl/internal/adapter/mcpbroker"
 	"github.com/stacklok/mecatl/internal/adapter/permconfig"
 )
+
+func unusedBrokerCaller(context.Context, mcpbroker.SessionRef, string, session.ToolCall) (session.ToolResult, error) {
+	return session.ToolResult{}, nil
+}
+
+func TestConfiguredMCPBrokerSelectsConfiguredPath(t *testing.T) {
+	for name, configured := range map[string]ConfiguredMCPBroker{
+		"discovered": {MCPBrokerDiscovered: []mcpbroker.ToolDefinition{{Backend: "b", Name: "mcp__b__t", Schema: json.RawMessage(`{"type":"object"}`)}}},
+		"caller":     {MCPBrokerCaller: unusedBrokerCaller},
+		"authorized caller": {MCPBrokerAuthorizedCaller: func(context.Context, mcpbroker.SessionRef, string, session.ToolCall, oauth2.TokenSource) (session.ToolResult, error) {
+			return session.ToolResult{}, nil
+		}},
+		"query caller": {MCPBrokerQueryCaller: func(context.Context, mcpbroker.SessionRef, string, session.ToolCall, oauth2.TokenSource, string) (session.ToolResult, error) {
+			return session.ToolResult{}, nil
+		}},
+		"options": {MCPBrokerOptions: []mcpbroker.Option{mcpbroker.WithOAuthLimits(0, 0)}},
+	} {
+		if !configured.selectsConfiguredMCPBroker() {
+			t.Errorf("%s alone did not select the configured MCP broker path", name)
+		}
+	}
+	if (ConfiguredMCPBroker{}).selectsConfiguredMCPBroker() {
+		t.Error("empty ConfiguredMCPBroker selected the configured MCP broker path")
+	}
+}
+
+const (
+	brokerTestCallbackURL  = "https://broker.example/oauth/callback"
+	brokerTestCallbackPath = "/oauth/callback"
+	brokerAuthorizePath    = "/v1/mcp/broker/oauth/authorize"
+)
+
+// mountedBrokerRoutes mounts built's broker surface and reports whether the
+// bundled authorization route and the callback route were registered.
+func mountedBrokerRoutes(t *testing.T, built *Built) (authorize, callback bool) {
+	t.Helper()
+	mux := http.NewServeMux()
+	if err := built.MountMCPBrokerHandlers(mux); err != nil {
+		t.Fatalf("MountMCPBrokerHandlers: %v", err)
+	}
+	registered := func(path string) bool {
+		_, pattern := mux.Handler(&http.Request{Method: http.MethodGet, URL: &url.URL{Path: path}})
+		return pattern != ""
+	}
+	return registered(brokerAuthorizePath), registered(brokerTestCallbackPath)
+}
+
+// The two tests below pin that enabling the identity broker leaves the MCP
+// broker path unchanged: only ConfiguredMCPBroker selects it. #2536 passes the
+// identity broker into buildMCPBroker on both paths; both tests must keep
+// passing with it.
+
+func TestBuildKeepsBundledMCPBrokerWithIdentityBroker(t *testing.T) {
+	built, err := buildIsolated(t, t.Context(), Config{
+		Workspace: t.TempDir(), UseMock: true, NoSoul: true,
+		IdentityBroker: true, identityBrokerCore: newClosableCore(t),
+		MCPAuthority: mcpauthority.NewBroker(mcpauthority.BrokerConfig{CallbackURL: brokerTestCallbackURL, Routes: []permconfig.MCPServerProfile{protectedToolHiveRoute("calendar")}}),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(built.Close)
+	if built.MCPBroker == nil || built.IdentityBroker == nil {
+		t.Fatalf("broker=%v identity broker=%v, want both", built.MCPBroker != nil, built.IdentityBroker != nil)
+	}
+	if built.MCPBrokerCallbackPath != brokerTestCallbackPath {
+		t.Fatalf("callback path = %q, want %q", built.MCPBrokerCallbackPath, brokerTestCallbackPath)
+	}
+	if authorize, callback := mountedBrokerRoutes(t, built); !authorize || !callback {
+		t.Fatalf("bundled routes: authorize=%v callback=%v, want both", authorize, callback)
+	}
+	built.Close()
+	if _, _, err := built.MCPBroker.AttachSession(context.Background(), "after-shutdown"); err == nil {
+		t.Fatal("bundled broker accepted attachment after Built.Close")
+	}
+}
+
+func TestBuildKeepsConfiguredMCPBrokerWithIdentityBroker(t *testing.T) {
+	cfg := Config{
+		Workspace: t.TempDir(), UseMock: true, NoSoul: true,
+		IdentityBroker: true, identityBrokerCore: newClosableCore(t),
+		MCPAuthority: mcpauthority.NewBroker(mcpauthority.BrokerConfig{CallbackURL: brokerTestCallbackURL}),
+	}
+	cfg.MCPBrokerCaller = unusedBrokerCaller
+	built, err := buildIsolated(t, t.Context(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(built.Close)
+	if built.MCPBroker == nil || built.IdentityBroker == nil {
+		t.Fatalf("broker=%v identity broker=%v, want both", built.MCPBroker != nil, built.IdentityBroker != nil)
+	}
+	if authorize, callback := mountedBrokerRoutes(t, built); authorize || !callback {
+		t.Fatalf("configured routes: authorize=%v callback=%v, want callback only", authorize, callback)
+	}
+}
+
+// TestConfiguredMCPBrokerWithoutBrokerAuthorityBuildsNoBroker pins that
+// ConfiguredMCPBroker only chooses a path: without broker MCP authority, Build
+// constructs no broker at all.
+func TestConfiguredMCPBrokerWithoutBrokerAuthorityBuildsNoBroker(t *testing.T) {
+	cfg := Config{Workspace: t.TempDir(), UseMock: true, NoSoul: true}
+	cfg.MCPBrokerCaller = unusedBrokerCaller
+	built, err := buildIsolated(t, t.Context(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(built.Close)
+	if built.MCPBroker != nil || built.MCPBrokerHandlers != nil {
+		t.Fatal("ConfiguredMCPBroker built a broker without broker MCP authority")
+	}
+}
+
+func TestBuildMCPBrokerFailuresKeepTheirErrors(t *testing.T) {
+	configured := Config{}
+	configured.MCPBrokerCaller = unusedBrokerCaller
+	collision := configured
+	collision.MCPBrokerDiscovered = []mcpbroker.ToolDefinition{{Backend: "calendar", Name: "Read", Schema: json.RawMessage(`{"type":"object"}`)}}
+	for _, tc := range []struct {
+		name        string
+		cfg         Config
+		declaration mcpauthority.BrokerConfig
+		occupied    []string
+		want        string
+	}{
+		{name: "configured catalogue", cfg: collision, declaration: mcpauthority.BrokerConfig{Routes: []permconfig.MCPServerProfile{{Name: "calendar", Auth: permconfig.MCPAuthProfile{Mode: "none"}}}}, occupied: []string{"Read"}, want: "build MCP broker catalogue: "},
+		{name: "configured callback", cfg: configured, declaration: mcpauthority.BrokerConfig{CallbackURL: brokerTestCallbackURL + "?x=1"}, want: "build MCP broker handlers: "},
+		{name: "bundled callback", declaration: mcpauthority.BrokerConfig{CallbackURL: brokerTestCallbackURL + "?x=1"}, want: "build bundled MCP broker: "},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			parts, err := buildMCPBroker(t.Context(), tc.cfg, tc.declaration, tc.occupied)
+			if err == nil || !strings.HasPrefix(err.Error(), tc.want) {
+				parts.close()
+				t.Fatalf("buildMCPBroker error = %v, want prefix %q", err, tc.want)
+			}
+			if parts.service != nil || parts.closer != nil {
+				t.Fatalf("failed construction returned broker parts: %+v", parts)
+			}
+		})
+	}
+}
+
+// TestBuildMCPBrokerHandsOffPathSpecificParts pins what each path hands to
+// the server: only the bundled process inspects connectors and may require
+// workspace enrollment, and a broker without an HTTP surface hands over nil
+// handlers, which the command roots treat as nothing to mount.
+func TestBuildMCPBrokerHandsOffPathSpecificParts(t *testing.T) {
+	configured := Config{}
+	configured.MCPBrokerCaller = unusedBrokerCaller
+	protected := mcpauthority.BrokerConfig{CallbackURL: brokerTestCallbackURL, Routes: []permconfig.MCPServerProfile{protectedToolHiveRoute("calendar")}}
+	for _, tc := range []struct {
+		name                       string
+		cfg                        Config
+		declaration                mcpauthority.BrokerConfig
+		inspector, enrollment, web bool
+	}{
+		{name: "bundled without surface", inspector: true},
+		{name: "bundled protected", declaration: protected, inspector: true, enrollment: true, web: true},
+		{name: "configured without callback", cfg: configured},
+		{name: "configured with callback", cfg: configured, declaration: mcpauthority.BrokerConfig{CallbackURL: brokerTestCallbackURL}, web: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			parts, err := buildMCPBroker(t.Context(), tc.cfg, tc.declaration, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(parts.close)
+			if parts.service == nil {
+				t.Fatal("no broker service")
+			}
+			if got := parts.inspector != nil; got != tc.inspector {
+				t.Errorf("connector inspector = %v, want %v", got, tc.inspector)
+			}
+			if parts.workspaceEnrollment != tc.enrollment {
+				t.Errorf("workspace enrollment = %v, want %v", parts.workspaceEnrollment, tc.enrollment)
+			}
+			if got := parts.handlers != nil; got != tc.web {
+				t.Errorf("HTTP handlers = %v, want %v", got, tc.web)
+			}
+		})
+	}
+}
+
+// TestBundledMCPBrokerClosesUnusedAuthRedisClient covers an anonymous-only
+// bundled broker: the process never uses the auth Redis client, so closing
+// the broker must still close it.
+func TestBundledMCPBrokerClosesUnusedAuthRedisClient(t *testing.T) {
+	mr, err := miniredis.Run()
+	if err != nil {
+		t.Fatalf("miniredis: %v", err)
+	}
+	t.Cleanup(mr.Close)
+	parts, err := buildMCPBroker(t.Context(), Config{RedisURL: mr.Addr(), RedisAllowPlaintext: true}, mcpauthority.BrokerConfig{}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mr.CurrentConnectionCount() == 0 {
+		parts.close()
+		t.Fatal("auth Redis client never connected; the test cannot observe its close")
+	}
+	parts.close()
+	deadline := time.Now().Add(5 * time.Second)
+	for mr.CurrentConnectionCount() != 0 {
+		if time.Now().After(deadline) {
+			t.Fatalf("auth Redis client still holds %d connections after close", mr.CurrentConnectionCount())
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
 
 func TestToolHiveBrokerConfigCopiesParsedOperatorValues(t *testing.T) {
 	routes := []permconfig.MCPServerProfile{{

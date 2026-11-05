@@ -7,7 +7,11 @@ import (
 	"net/url"
 	"path"
 	"strings"
+
+	contract "github.com/stacklok/mecatl/internal/mcpbroker"
 )
+
+var _ contract.HTTPHandlers = HandlerBundle{}
 
 // HandlerBundle is the fixed process-owned HTTP surface of an in-process broker.
 // Command roots choose the listener, but the adapter owns the exact route set.
