@@ -363048,6 +363048,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1793828033612,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "radoslav@stacklok.com",
+            "name": "Radoslav Dimitrov",
+            "username": "rdimitrov"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "293564d755a56d915f39b6f5163aad28a63575f5",
+          "message": "ci: add CodeQL code scanning workflow (#2683)\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-05T05:48:40-05:00",
+          "tree_id": "8f3119d1dfbd2c3fa68c05c3d92cc3b08cc38e90",
+          "url": "https://github.com/stacklok/mecatl/commit/293564d755a56d915f39b6f5163aad28a63575f5"
+        },
+        "date": 1793876464965,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -524464,6 +524498,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1793876461711,
+  "lastUpdate": 1793876466077,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
