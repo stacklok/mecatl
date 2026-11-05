@@ -151,6 +151,8 @@ func (p *IdP) authorize(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unknown client or redirect_uri", http.StatusBadRequest)
 		return
 	}
+	// Redirect to the registered value, not the request's copy of it.
+	redirectURI = client.redirectURI
 	if fault, ok := p.faults.pop("authorize"); ok {
 		redirectWithError(w, r, redirectURI, state, fault.Error)
 		return
