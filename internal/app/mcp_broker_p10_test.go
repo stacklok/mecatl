@@ -19,7 +19,6 @@ import (
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/prompt"
 	"github.com/stacklok/mecatl/engine/session"
-	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/adapter/hookexec"
 	"github.com/stacklok/mecatl/internal/adapter/mcp"
 	"github.com/stacklok/mecatl/internal/adapter/mcpauthority"
@@ -53,12 +52,7 @@ func TestCallMcpWithQueryBrokerSupport_Scenario1_BrokerOnlyFactory(t *testing.T)
 	provider := mockllm.NewWith([]mockllm.Option{mockllm.WithRequestObserver(func(req port.LLMRequest) { request = req })}, mockllm.TextTurn("done"))
 	reg := regForTest(provider, providerOpenAI, "test-model")
 	factory := sessionEngineFactoryWithTools(Config{Model: "test-model"}, reg, provider, memstore.New(), permpolicy.NewPolicy(defaultRules(), nil), hookexec.New(nil), nil, prompt.RootAssembler{}, catalogAssets{}, nil)
-	tools := attachment.Tools()
-	queryAttachment, ok := attachment.(interface{ CallMcpWithQueryTool() tool.Tool })
-	if !ok {
-		t.Fatal("broker attachment does not expose query wrapper")
-	}
-	tools = append(tools, queryAttachment.CallMcpWithQueryTool())
+	tools := append(attachment.Tools(), attachment.CallMcpWithQueryTool())
 	result, err := factory(context.Background(), server.ProviderSelector{}, nil, server.ProfileDefault, "/workspace", session.ModeDefault, tools, nil)
 	if err != nil {
 		t.Fatal(err)

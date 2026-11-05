@@ -259,12 +259,7 @@ func (s *Service) workspaceEnrollmentTarget(ctx context.Context, id session.Sess
 			return sess, nil, nil, err
 		}
 	}
-	enroller, ok := local.attachment.(brokercontract.WorkspaceEnrollmentAttachment)
-	if !ok {
-		brokerUnlock()
-		return nil, nil, nil, fmt.Errorf("%w: workspace services are not configured", ErrFailedPrecondition)
-	}
-	return sess, enroller, brokerUnlock, nil
+	return sess, local.attachment, brokerUnlock, nil
 }
 
 // withdrawBrokerEngine removes only the broker-bearing session engine. It is

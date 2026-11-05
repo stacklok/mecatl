@@ -308,8 +308,8 @@ func (r WorkspaceEnrollmentResult) Valid() bool {
 	return r.Catalogue != nil && r.Catalogue.Ref() == r.Ref && r.Catalogue.Valid()
 }
 
-// WorkspaceEnrollmentAttachment is the optional enrollment capability of an
-// Attachment. Callers may begin, observe, cancel, or explicitly reset broker-
+// WorkspaceEnrollmentAttachment is the enrollment capability every Attachment
+// provides. Callers may begin, observe, cancel, or explicitly reset broker-
 // owned state, but can never submit status, discovered definitions, authority,
 // or success.
 type WorkspaceEnrollmentAttachment interface {
@@ -346,6 +346,7 @@ type Service interface {
 // metadata and must not participate in lookup equality. Implementations must not
 // infer a transaction from only the session or authorization ID.
 type Attachment interface {
+	WorkspaceEnrollmentAttachment
 	// Commit publishes a newly created logical session after its host session is
 	// durable. It is idempotent. On a reattached handle it is a no-op. The
 	// implementation keeps any creation token private so remote brokers can provide
@@ -361,19 +362,27 @@ type Attachment interface {
 	Binding() session.ExternalBinding
 	// Tools returns independently owned wrappers bound to this session handle.
 	Tools() []tool.Tool
-	// RefreshGrantedAuthorizationCatalogue atomically replaces static protected
-	// declarations with authenticated metadata after the exact bundle grant. A
-	// valid non-bundle grant returns the unchanged catalogue. The returned snapshot
-	// is independently owned for the host's model-visible catalog.
-	RefreshGrantedAuthorizationCatalogue(context.Context, session.ExternalAuthorization) ([]tool.Tool, error)
+	// CallMcpWithQueryTool returns the CallMcpWithQuery wrapper bound to this
+	// session handle, or nil when the handle has no eligible routes. Tools does not
+	// include it; a host building a catalogue from Tools adds it separately.
+	CallMcpWithQueryTool() tool.Tool
+	// PrepareGrantedAuthorization publishes the catalogue for the exact granted
+	// authorization of a parked call and returns the tools the host rebuilds the
+	// parked session from, with the broker's verdict on the parked arguments. A
+	// non-nil GrantedAuthorization.ArgumentsErr means the host must not execute
+	// the parked call.
+	PrepareGrantedAuthorization(context.Context, session.PendingAuthorization) (GrantedAuthorization, error)
 	// PresentAuthorization returns the live presentation URL for the exact
 	// authorization. The URL is deliberately an ephemeral return value: it is not
 	// part of ExternalAuthorization or any broker reference intended for storage.
+	// PresentPendingAuthorization composes it with a pending check.
 	PresentAuthorization(context.Context, session.ExternalAuthorization) (string, error)
 	// AuthorizationStatus queries the exact authorization and remains available
 	// after closing an old session handle and reattaching to the logical session.
 	AuthorizationStatus(context.Context, session.ExternalAuthorization) (session.AuthorizationStatus, error)
 	// CancelAuthorization precisely cancels the exact authorization reference.
+	// SettleAuthorization and ExpireAuthorization reconcile its outcome into a
+	// terminal status.
 	CancelAuthorization(context.Context, session.ExternalAuthorization) (CancelOutcome, error)
 	// Close releases only this local session handle and is idempotent. It never
 	// deletes logical broker state.

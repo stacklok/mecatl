@@ -67,6 +67,7 @@ type fakeLogicalSession struct {
 }
 
 type fakeAttachment struct {
+	enrollmentAttachmentFake
 	service    *fakeService
 	id         session.SessionID
 	generation uint64
@@ -150,9 +151,10 @@ func (a *fakeAttachment) Abort(_ context.Context) error {
 func (a *fakeAttachment) Binding() session.ExternalBinding {
 	return session.ExternalBinding(fmt.Sprintf("%s/%d", a.id, a.generation))
 }
-func (*fakeAttachment) Tools() []tool.Tool { return nil }
-func (*fakeAttachment) RefreshGrantedAuthorizationCatalogue(context.Context, session.ExternalAuthorization) ([]tool.Tool, error) {
-	return nil, nil
+func (*fakeAttachment) Tools() []tool.Tool              { return nil }
+func (*fakeAttachment) CallMcpWithQueryTool() tool.Tool { return nil }
+func (*fakeAttachment) PrepareGrantedAuthorization(context.Context, session.PendingAuthorization) (mcpbroker.GrantedAuthorization, error) {
+	return mcpbroker.GrantedAuthorization{}, nil
 }
 
 func (a *fakeAttachment) PresentAuthorization(_ context.Context, authorization session.ExternalAuthorization) (string, error) {

@@ -2,20 +2,15 @@ package server
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
 	"sync"
 	"time"
-
-	"github.com/google/jsonschema-go/jsonschema"
 
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
-	"github.com/stacklok/mecatl/internal/adapter/mcp"
 	"github.com/stacklok/mecatl/internal/adapter/memory"
 	brokercontract "github.com/stacklok/mecatl/internal/mcpbroker"
 )
@@ -92,14 +87,10 @@ func (s *Service) MCPAuthorizationPresentation(ctx context.Context, id session.S
 		return "", err
 	}
 	defer release()
-	status, err := attachment.AuthorizationStatus(ctx, pending.Authorization)
-	if err != nil {
-		return "", err
-	}
-	if status != session.AuthorizationPending {
+	url, err := brokercontract.PresentPendingAuthorization(ctx, attachment, pending.Authorization)
+	if errors.Is(err, brokercontract.ErrAuthorizationNotPending) {
 		return "", errAuthorizationNotPending
 	}
-	url, err := attachment.PresentAuthorization(ctx, pending.Authorization)
 	if err != nil {
 		return "", err
 	}
@@ -173,16 +164,13 @@ func (s *Service) RecheckMCPAuthorization(ctx context.Context, id session.Sessio
 	if expired {
 		s.cfg.Diagnostics.Log(ctx, port.LevelDebug, "MCP authorization recheck: pending authorization expired locally, cancelling",
 			"session", string(id), "authorization", pending.Authorization.ID)
-		outcome, cancelErr := attachment.CancelAuthorization(ctx, pending.Authorization)
-		if cancelErr != nil {
-			release()
-			return MCPAuthorizationResult{}, cancelErr
-		}
-		status, statusErr = reconcileAuthorizationCancellation(ctx, attachment, pending.Authorization, outcome, session.AuthorizationExpired)
+		// Not ExpireAuthorization: the identity broker session must open between
+		// the status read above and this settlement.
+		status, statusErr = brokercontract.SettleAuthorization(ctx, attachment, pending.Authorization, session.AuthorizationExpired)
 	}
 	release()
 	if statusErr != nil {
-		return MCPAuthorizationResult{}, statusErr
+		return MCPAuthorizationResult{}, authorizationOutcomeError(statusErr)
 	}
 	result, err := s.applyAuthorizationStatusLocked(ctx, sess, pending, status)
 	s.cfg.Diagnostics.Log(ctx, port.LevelDebug, "MCP authorization recheck: complete",
@@ -232,20 +220,28 @@ func (s *Service) CancelMCPAuthorization(ctx context.Context, id session.Session
 		release()
 		return MCPAuthorizationResult{}, err
 	}
-	outcome, cancelErr := attachment.CancelAuthorization(ctx, pending.Authorization)
-	if cancelErr != nil {
-		release()
-		if brokerStateLost(cancelErr) {
-			return s.resolveAuthorizationWithoutContinuationLocked(ctx, sess, pending)
-		}
-		return MCPAuthorizationResult{}, cancelErr
-	}
-	status, cancelErr := reconcileAuthorizationCancellation(ctx, attachment, pending.Authorization, outcome, session.AuthorizationCancelled)
+	status, cancelErr := brokercontract.SettleAuthorization(ctx, attachment, pending.Authorization, session.AuthorizationCancelled)
 	release()
 	if cancelErr != nil {
-		return MCPAuthorizationResult{}, cancelErr
+		// Only a failed cancellation on lost state resolves as interrupted; a
+		// failed status read after an already-resolved cancellation surfaces.
+		var cancelFailed *brokercontract.CancelFailedError
+		if errors.As(cancelErr, &cancelFailed) && brokerStateLost(cancelErr) {
+			return s.resolveAuthorizationWithoutContinuationLocked(ctx, sess, pending)
+		}
+		return MCPAuthorizationResult{}, authorizationOutcomeError(cancelErr)
 	}
 	return s.applyAuthorizationStatusLocked(ctx, sess, pending, status)
+}
+
+// authorizationOutcomeError reports a broker's invalid cancellation outcome as
+// a precondition failure.
+func authorizationOutcomeError(err error) error {
+	var invalid *brokercontract.InvalidAuthorizationOutcomeError
+	if errors.As(err, &invalid) {
+		return fmt.Errorf("%w: %s", ErrFailedPrecondition, invalid.Reason)
+	}
+	return err
 }
 
 func mcpAuthorizationResult(pending session.PendingAuthorization, status session.AuthorizationStatus, run *agent.Run) MCPAuthorizationResult {
@@ -307,42 +303,15 @@ func (s *Service) recheckExpiredAuthorizationLocked(ctx context.Context, sess *s
 		}
 		return MCPAuthorizationResult{}, err
 	}
-	status, err := attachment.AuthorizationStatus(ctx, pending.Authorization)
-	if err == nil && status == session.AuthorizationPending {
-		outcome, cancelErr := attachment.CancelAuthorization(ctx, pending.Authorization)
-		err = cancelErr
-		if err == nil {
-			status, err = reconcileAuthorizationCancellation(ctx, attachment, pending.Authorization, outcome, session.AuthorizationExpired)
-		}
-	}
+	status, err := brokercontract.ExpireAuthorization(ctx, attachment, pending.Authorization)
 	release()
 	if err != nil {
 		if brokerStateLost(err) {
 			return s.resolveAuthorizationWithoutContinuationLocked(ctx, sess, pending)
 		}
-		return MCPAuthorizationResult{}, err
+		return MCPAuthorizationResult{}, authorizationOutcomeError(err)
 	}
 	return s.applyAuthorizationStatusLocked(ctx, sess, pending, status)
-}
-
-func reconcileAuthorizationCancellation(ctx context.Context, attachment brokercontract.Attachment, authorization session.ExternalAuthorization, outcome brokercontract.CancelOutcome, freshStatus session.AuthorizationStatus) (session.AuthorizationStatus, error) {
-	switch outcome {
-	case brokercontract.CancelCancelled:
-		return freshStatus, nil
-	case brokercontract.CancelAlreadyCancelled:
-		return session.AuthorizationCancelled, nil
-	case brokercontract.CancelAlreadyResolved:
-		status, err := attachment.AuthorizationStatus(ctx, authorization)
-		if err != nil {
-			return "", err
-		}
-		if status == session.AuthorizationPending {
-			return "", fmt.Errorf("%w: resolved authorization remained pending", ErrFailedPrecondition)
-		}
-		return status, nil
-	default:
-		return "", fmt.Errorf("%w: unknown cancellation outcome", ErrFailedPrecondition)
-	}
 }
 
 // authorizationAttachment returns a committed exact-binding attachment while
@@ -422,10 +391,7 @@ func (s *Service) continueGrantedAuthorizationLocked(ctx context.Context, sess *
 		}
 		return MCPAuthorizationResult{}, fmt.Errorf("%w: continuation attachment", ErrInternal)
 	}
-	exactTools, refreshErr := attachment.RefreshGrantedAuthorizationCatalogue(ctx, claimed.Authorization)
-	if refreshErr == nil {
-		exactTools = withAttachmentQueryTool(attachment, exactTools)
-	}
+	granted, refreshErr := attachment.PrepareGrantedAuthorization(ctx, claimed)
 	release()
 	if refreshErr != nil {
 		if restoreErr := s.restoreAuthorizationClaimOrSettle(ctx, sess.ID, sess, claimed); restoreErr != nil {
@@ -433,10 +399,10 @@ func (s *Service) continueGrantedAuthorizationLocked(ctx context.Context, sess *
 		}
 		return MCPAuthorizationResult{}, fmt.Errorf("%w: refresh granted authorization catalogue", ErrInternal)
 	}
-	if err := s.rebuildGrantedAuthorizationEngine(ctx, sess, claimed, exactTools); err != nil {
+	if err := s.rebuildGrantedAuthorizationEngine(ctx, sess, claimed, granted.Tools); err != nil {
 		return MCPAuthorizationResult{}, err
 	}
-	if err := validateGrantedAuthorizationArguments(exactTools, claimed.Call); err != nil {
+	if err := granted.ArgumentsErr; err != nil {
 		if restoreErr := s.restoreAuthorizationClaimOrSettle(ctx, sess.ID, sess, claimed); restoreErr != nil {
 			return MCPAuthorizationResult{}, fmt.Errorf("%w: reject authorization continuation arguments: %v; restore claim: %v", ErrInternal, err, restoreErr)
 		}
@@ -496,91 +462,6 @@ func (s *Service) rebuildGrantedAuthorizationEngine(ctx context.Context, sess *s
 			return fmt.Errorf("%w: rebuild session engine with authenticated tools: %v; restore claim: %v", ErrInternal, err, restoreErr)
 		}
 		return fmt.Errorf("%w: rebuild session engine with authenticated tools", ErrInternal)
-	}
-	return nil
-}
-
-// validateGrantedAuthorizationArguments is deliberately scoped to the lazy
-// granted-authorization replacement transition. Unlike ordinary tool dispatch, this
-// boundary must fail closed: it receives the authenticated schema after a parked call
-// was authored against the static declaration.
-func validateGrantedAuthorizationArguments(tools []tool.Tool, call session.ToolCall) error {
-	if call.Name != mcp.CallMcpWithQuerySpec().Name {
-		return validateAuthenticatedToolArguments(tools, call)
-	}
-	canonical, target, err := canonicalizeQueryAuthorizationCall(call)
-	if err != nil {
-		return err
-	}
-	if err := validateAuthenticatedToolArguments(tools, canonical); err != nil {
-		return err
-	}
-	return validateAuthenticatedToolArguments(tools, target)
-}
-
-func canonicalizeQueryAuthorizationCall(call session.ToolCall) (session.ToolCall, session.ToolCall, error) {
-	var envelope map[string]json.RawMessage
-	if err := json.Unmarshal(call.Args, &envelope); err != nil || envelope == nil {
-		return session.ToolCall{}, session.ToolCall{}, errors.New("parked CallMcpWithQuery arguments are not a JSON object")
-	}
-	var query struct {
-		Server string          `json:"server"`
-		Tool   string          `json:"tool"`
-		Args   json.RawMessage `json:"args"`
-	}
-	if err := json.Unmarshal(call.Args, &query); err != nil {
-		return session.ToolCall{}, session.ToolCall{}, errors.New("parked CallMcpWithQuery arguments are malformed")
-	}
-	remoteArgs, message := mcp.NormalizeRemoteArgs(query.Args)
-	if message != "" {
-		return session.ToolCall{}, session.ToolCall{}, errors.New("parked CallMcpWithQuery remote arguments are not a JSON object")
-	}
-	if len(remoteArgs) == 0 {
-		remoteArgs = json.RawMessage(`{}`)
-	}
-	envelope["args"] = remoteArgs
-	canonicalArgs, err := json.Marshal(envelope)
-	if err != nil {
-		return session.ToolCall{}, session.ToolCall{}, errors.New("parked CallMcpWithQuery arguments cannot be canonicalized")
-	}
-	server, toolName := strings.TrimSpace(query.Server), strings.TrimSpace(query.Tool)
-	if server == "" || toolName == "" || strings.Contains(server, "__") || strings.Contains(toolName, "__") {
-		return session.ToolCall{}, session.ToolCall{}, errors.New("parked CallMcpWithQuery target is invalid")
-	}
-	return session.NewToolCall(call.ID, call.Name, canonicalArgs), session.NewToolCall(call.ID, "mcp__"+server+"__"+toolName, remoteArgs), nil
-}
-
-func validateAuthenticatedToolArguments(tools []tool.Tool, call session.ToolCall) error {
-	var schemaRaw json.RawMessage
-	for _, candidate := range tools {
-		if candidate != nil && candidate.Spec().Name == call.Name {
-			if schemaRaw != nil {
-				return errors.New("ambiguous authenticated replacement tool")
-			}
-			schemaRaw = candidate.Spec().Schema
-		}
-	}
-	if len(schemaRaw) == 0 {
-		return errors.New("authenticated replacement tool schema is unavailable")
-	}
-	var schemaObject map[string]json.RawMessage
-	if err := json.Unmarshal(schemaRaw, &schemaObject); err != nil || schemaObject == nil {
-		return errors.New("authenticated replacement tool schema is not a JSON object")
-	}
-	var schema jsonschema.Schema
-	if err := json.Unmarshal(schemaRaw, &schema); err != nil {
-		return errors.New("authenticated replacement tool schema is malformed")
-	}
-	resolved, err := schema.Resolve(nil)
-	if err != nil {
-		return errors.New("authenticated replacement tool schema cannot be resolved")
-	}
-	var args map[string]any
-	if err := json.Unmarshal(call.Args, &args); err != nil || args == nil {
-		return errors.New("parked tool arguments are not a JSON object")
-	}
-	if err := resolved.Validate(args); err != nil {
-		return errors.New("parked tool arguments do not conform to authenticated replacement schema")
 	}
 	return nil
 }

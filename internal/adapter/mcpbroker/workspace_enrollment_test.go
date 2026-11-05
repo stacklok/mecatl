@@ -71,12 +71,8 @@ func TestOpaqueBrokerCredentialIsNotDecodedOrCopied(t *testing.T) {
 		t.Fatal(err)
 	}
 	attachment := attached.(*Attachment)
-	enroller, ok := attached.(contract.WorkspaceEnrollmentAttachment)
-	if !ok {
-		t.Fatal("Attachment does not implement WorkspaceEnrollmentAttachment")
-	}
 
-	presentation, err := enroller.BeginWorkspaceEnrollment(t.Context())
+	presentation, err := attached.BeginWorkspaceEnrollment(t.Context())
 	if err != nil || !presentation.Valid() {
 		t.Fatalf("BeginWorkspaceEnrollment = (%+v, %v)", presentation, err)
 	}
@@ -89,12 +85,12 @@ func TestOpaqueBrokerCredentialIsNotDecodedOrCopied(t *testing.T) {
 	}
 
 	// Idempotent re-begin while pending returns the same reference.
-	again, err := enroller.BeginWorkspaceEnrollment(t.Context())
+	again, err := attached.BeginWorkspaceEnrollment(t.Context())
 	if err != nil || again.Ref.ID != presentation.Ref.ID {
 		t.Fatalf("re-begin = (%+v, %v), want same ref as %+v", again, err, presentation.Ref)
 	}
 
-	pending, err := enroller.ObserveWorkspaceEnrollment(t.Context(), presentation.Ref)
+	pending, err := attached.ObserveWorkspaceEnrollment(t.Context(), presentation.Ref)
 	if err != nil || pending.Status != contract.WorkspaceEnrollmentPending {
 		t.Fatalf("observe before callback = (%+v, %v)", pending, err)
 	}
@@ -103,7 +99,7 @@ func TestOpaqueBrokerCredentialIsNotDecodedOrCopied(t *testing.T) {
 		t.Fatalf("handleCallback direct: %v", err)
 	}
 
-	connected, err := enroller.ObserveWorkspaceEnrollment(t.Context(), presentation.Ref)
+	connected, err := attached.ObserveWorkspaceEnrollment(t.Context(), presentation.Ref)
 	if err != nil || !connected.Valid() || connected.Status != contract.WorkspaceEnrollmentConnected {
 		t.Fatalf("observe after grant = (%+v, %v)", connected, err)
 	}
@@ -349,11 +345,7 @@ func TestWorkspaceEnrollmentUnsupportedWithoutDynamicBackend(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	enroller, ok := attached.(contract.WorkspaceEnrollmentAttachment)
-	if !ok {
-		t.Fatal("Attachment does not implement WorkspaceEnrollmentAttachment")
-	}
-	if _, err := enroller.BeginWorkspaceEnrollment(t.Context()); !errors.Is(err, ErrWorkspaceEnrollmentUnsupported) {
+	if _, err := attached.BeginWorkspaceEnrollment(t.Context()); !errors.Is(err, ErrWorkspaceEnrollmentUnsupported) {
 		t.Fatalf("begin without process = %v, want ErrWorkspaceEnrollmentUnsupported", err)
 	}
 }
