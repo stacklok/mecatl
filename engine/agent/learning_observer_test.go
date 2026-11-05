@@ -90,7 +90,7 @@ func (o *nestedMutatingObserver) Observe(ctx context.Context, tr learning.Trajec
 
 func TestLearningTrajectoryNestedMutationCannotChangeLiveOrPersistedHistory(t *testing.T) {
 	seed := []session.Message{
-		session.NewAssistantMessage("assistant", "reasoning", []session.ToolCall{session.NewToolCall("call", "Tool", json.RawMessage(`{"key":"value"}`))}),
+		{Role: session.RoleAssistant, Text: "assistant", ToolCalls: []session.ToolCall{session.NewToolCall("call", "Tool", json.RawMessage(`{"key":"value"}`))}, Replay: &session.MessageReplay{Bindings: []session.ToolCallBinding{{CallID: "call", PairingID: "provider-call"}}, Provider: &session.ProviderReplay{Format: "test", Version: 1, Data: []byte("reasoning")}}},
 		session.NewToolMessage(session.NewToolResultWithParts("call", "result", []session.Content{{Data: []byte("result-data"), Audience: []string{"result-audience"}}})),
 		session.NewUserMessageWithParts("user", []session.Content{{Data: []byte("user-data"), Audience: []string{"user-audience"}}}),
 	}

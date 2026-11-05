@@ -28,8 +28,8 @@ import (
 // is proved against Redis and JSONL instead.
 //
 // It does NOT round-trip through a serialization (the relay already hands it a
-// value Event and the loop never mutates a past event), so the recorded events
-// are stored by value directly.
+// value Event and the loop never mutates a past event). Immutable payloads are
+// stored by value; compaction archives own a copy of their message storage.
 type EventLog struct {
 	mu   sync.Mutex
 	logs map[session.SessionID]*memLog
@@ -82,10 +82,21 @@ func (l *EventLog) appendRecord(id session.SessionID, rec port.LogRecord) port.C
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	lg := l.ensureLocked(id)
+	rec.Event = cloneArchive(rec.Event)
 	lg.records = append(lg.records, rec)
 	close(lg.changed)
 	lg.changed = make(chan struct{})
 	return port.EncodeCursor(id, lg.generation, strconv.Itoa(len(lg.records)))
+}
+
+// Archives own mutable message storage, unlike the other immutable event payloads.
+func cloneArchive(e session.Event) session.Event {
+	if e.CompactionArchive != nil {
+		archive := *e.CompactionArchive
+		archive.Replaced = session.CloneMessages(archive.Replaced)
+		e.CompactionArchive = &archive
+	}
+	return e
 }
 
 // Read yields the EVENTS recorded under id in append order. A miss (no events)
@@ -109,7 +120,7 @@ func (l *EventLog) Read(_ context.Context, id session.SessionID) iter.Seq2[sessi
 			if rec.Kind != port.LogRecordEvent {
 				continue
 			}
-			if !yield(rec.Event, nil) {
+			if !yield(cloneArchive(rec.Event), nil) {
 				return
 			}
 		}
@@ -143,6 +154,7 @@ func (l *EventLog) ReadAfter(ctx context.Context, id session.SessionID, after po
 				next++
 				rec.Cursor = port.EncodeCursor(id, gen, strconv.Itoa(next))
 				rec.Live = live
+				rec.Event = cloneArchive(rec.Event)
 				if !yield(rec, nil) {
 					return
 				}

@@ -108,7 +108,7 @@ func TestSubagentForkChildSeesParentHistory(t *testing.T) {
 	const sentinel = "PARENT_SENTINEL_42"
 
 	var mu sync.Mutex
-	var childReqMsgs []session.Message
+	var childReqMsgs []port.LLMMessage
 	obs := func(req port.LLMRequest) {
 		mu.Lock()
 		defer mu.Unlock()
@@ -132,7 +132,7 @@ func TestSubagentForkChildSeesParentHistory(t *testing.T) {
 		exec: func(_ context.Context, in session.ToolCall, _ tool.Workspace) (session.ToolResult, error) {
 			return session.NewToolResult(in.ID, "noted"), nil
 		}}
-	parentLLM := mockllm.New(
+	parentLLM := newScriptedLLM(
 		// Turn 1: assistant text carries the sentinel + a tool call (keeps the loop going).
 		mockllm.ChunksTurn(
 			mockllm.TextChunk("noting the "+sentinel+" for later"),
@@ -148,7 +148,7 @@ func TestSubagentForkChildSeesParentHistory(t *testing.T) {
 	evs := drain(r)
 	var results []*session.ToolResult
 	for _, ev := range evs {
-		if ev.Type == session.EvToolResult && ev.ToolResult != nil && ev.ToolResult.CallID == "p1" {
+		if ev.Type == session.EvToolResult && ev.ToolResult != nil && ev.ToolResult.CallID == eventCallID(t, evs, "Subagent", 0) {
 			results = append(results, ev.ToolResult)
 		}
 	}
@@ -206,7 +206,7 @@ func TestSubagentForkBackgroundChildSeesParentHistory(t *testing.T) {
 	const sentinel = "PARENT_SENTINEL_BG_77"
 
 	var mu sync.Mutex
-	var childReqMsgs []session.Message
+	var childReqMsgs []port.LLMMessage
 	obs := func(req port.LLMRequest) {
 		mu.Lock()
 		defer mu.Unlock()
@@ -228,7 +228,7 @@ func TestSubagentForkBackgroundChildSeesParentHistory(t *testing.T) {
 		exec: func(_ context.Context, in session.ToolCall, _ tool.Workspace) (session.ToolResult, error) {
 			return session.NewToolResult(in.ID, "noted"), nil
 		}}
-	parentLLM := mockllm.New(
+	parentLLM := newScriptedLLM(
 		// Turn 1: assistant text carries the sentinel + a tool call (keeps the loop going).
 		mockllm.ChunksTurn(
 			mockllm.TextChunk("noting the "+sentinel+" for later"),
@@ -238,7 +238,7 @@ func TestSubagentForkBackgroundChildSeesParentHistory(t *testing.T) {
 		// Turn 2: fork the child IN THE BACKGROUND (returns immediately with the started-result).
 		mockllm.ToolCallTurn(toolCall("p1", "Subagent", `{"prompt":"continue in the background","fork":true,"background":true}`)),
 		// Turn 3: collect the detached child's result.
-		mockllm.ToolCallTurn(toolCall("p2", "SubagentStatus", `{"agent_id":"subagent-s1-p1","wait_ms":30000}`)),
+		handleTurn(t, "p1", toolCall("p2", "SubagentStatus", `{"wait_ms":30000}`), "agent_id"),
 		mockllm.TextTurn("parent done"),
 	)
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, task, agent.NewSubagentStatusTool(), note)})
@@ -256,7 +256,7 @@ func TestSubagentForkBackgroundChildSeesParentHistory(t *testing.T) {
 	results := resultByCallID(evs)
 
 	// The fork+background call returned immediately with the started-result + agentId.
-	started := results["p1"]
+	started := results[eventCallID(t, evs, "Subagent", 0)]
 	if started == nil || started.IsError {
 		t.Fatalf("fork+background Subagent call must return a non-error started-result, got %+v", started)
 	}
@@ -266,7 +266,7 @@ func TestSubagentForkBackgroundChildSeesParentHistory(t *testing.T) {
 	}
 
 	// SubagentStatus collected the detached child's body, with its own agentId trailer.
-	collected := results["p2"]
+	collected := results[eventCallID(t, evs, "SubagentStatus", 0)]
 	if collected == nil || collected.IsError {
 		t.Fatalf("SubagentStatus collection of the detached fork child must succeed, got %+v", collected)
 	}

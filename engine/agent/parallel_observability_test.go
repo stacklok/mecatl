@@ -65,7 +65,7 @@ func TestParallelEmitsObservabilityStreamAll(t *testing.T) {
 		switch ev.Type {
 		case session.EvParallelStart:
 			starts++
-			if ev.Parallel.ParentCallID != "p1" {
+			if ev.Parallel.ParentCallID != eventCallID(t, evs, "Parallel", 0) {
 				t.Fatalf("start parentCallID=%q want p1", ev.Parallel.ParentCallID)
 			}
 			if ev.Parallel.Join != "all" || ev.Parallel.BranchCount != 3 {
@@ -253,7 +253,7 @@ func (p *canaryProvider) Stream(ctx context.Context, req port.LLMRequest) (iter.
 		// args carry the canary too — the tool.call args must never be forwarded.
 		call := toolCall("k", "Read", `{"path":"`+p.canary+`"}`)
 		chunks = []port.Chunk{
-			{Kind: port.ChunkToolCall, ToolCall: &call},
+			mockllm.ToolCallChunk(call),
 			{Kind: port.ChunkUsage, Usage: &session.Usage{}},
 			{Kind: port.ChunkDone, Stop: session.StopEndTurn},
 		}
@@ -530,7 +530,7 @@ func TestParallelBranchCancelledBeforeStartRepresented(t *testing.T) {
 		// Even a never-started branch carries its deterministic D16 child id on both
 		// bracketing events (cancelledBeforeStart now sets childID: be.branchChildID(i)),
 		// so a client can still address it for cancel/inspect.
-		wantID := fmt.Sprintf("parallel-s1-p1-%d", i)
+		wantID := fmt.Sprintf("parallel-s1-%s-%d", eventCallID(t, evs, "Parallel", 0), i)
 		if end.ChildID != wantID {
 			t.Errorf("branch %d: branch_end ChildID = %q, want %q (deterministic even when never started)", i, end.ChildID, wantID)
 		}

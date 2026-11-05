@@ -59,9 +59,9 @@ func (p *policyArgsRecorder) observations() []policyArgsObservation {
 	return append([]policyArgsObservation(nil), p.evaluated...)
 }
 
-func runPolicyArgsCall(t *testing.T, catalog *tool.Catalog, policy port.PermissionPolicy, env tool.Environment, call session.ToolCall) session.ToolResult {
+func runPolicyArgsCall(t *testing.T, catalog *tool.Catalog, policy port.PermissionPolicy, env tool.Environment, call port.LLMToolCall) session.ToolResult {
 	t.Helper()
-	eng := NewEngine(Deps{LLM: mockllm.New(mockllm.ToolCallTurn(call), mockllm.TextTurn("done")), Catalog: catalog, Policy: policy})
+	eng := NewEngine(Deps{LLM: mockllm.New(mockllm.LLMToolCallTurn(call), mockllm.TextTurn("done")), Catalog: catalog, Policy: policy})
 	sess := session.New("policy-args", session.ModeDefault, env.Ref(), session.Limits{MaxTurns: 3}, time.Now())
 	run := eng.Run(context.Background(), sess, env, RunRequest{Text: "run"})
 	var result session.ToolResult
@@ -73,13 +73,30 @@ func runPolicyArgsCall(t *testing.T, catalog *tool.Catalog, policy port.Permissi
 			run.Cancel()
 			t.Errorf("unexpected permission ask: %+v", event.Ask)
 		}
-		if event.Type == session.EvToolResult && event.ToolResult != nil && event.ToolResult.CallID == call.ID {
+		if event.Type == session.EvToolResult && event.ToolResult != nil {
+			if seen {
+				t.Fatalf("multiple tool results for provider call %q", call.ID)
+			}
 			result = *event.ToolResult
 			seen = true
 		}
 	}
 	if !seen {
-		t.Fatalf("no tool result for %s", call.ID)
+		t.Fatalf("no tool result for provider call %q", call.ID)
+	}
+	var canonical session.ToolCallID
+	for _, message := range sess.Conversation.Messages {
+		if message.Replay == nil {
+			continue
+		}
+		for _, binding := range message.Replay.Bindings {
+			if binding.PairingID == call.ID {
+				canonical = binding.CallID
+			}
+		}
+	}
+	if canonical == "" || result.CallID != canonical {
+		t.Fatalf("provider call %q result ID = %q, want canonical ID %q", call.ID, result.CallID, canonical)
 	}
 	return result
 }
@@ -113,7 +130,7 @@ func TestShellPolicyEvaluatesTheExecutedCommand(t *testing.T) {
 			catalog := tool.NewCatalog()
 			catalog.MustRegister(NewShellTool())
 			policy := newPolicyArgsRecorder()
-			result := runPolicyArgsCall(t, catalog, policy, shellEnvRunner(runner), session.NewToolCall("c", tool.ShellToolName, []byte(tc.args)))
+			result := runPolicyArgsCall(t, catalog, policy, shellEnvRunner(runner), port.LLMToolCall{ID: "c", Name: tool.ShellToolName, Args: []byte(tc.args)})
 
 			runner.mu.Lock()
 			executed := runner.command
@@ -192,7 +209,7 @@ func TestFileToolPolicyEvaluatesTheExecutedPath(t *testing.T) {
 			catalog.MustRegister(tc.tool)
 			policy := newPolicyArgsRecorder()
 			name := tc.tool.Spec().Name
-			result := runPolicyArgsCall(t, catalog, policy, testEnvironment(ws, nil), session.NewToolCall("c", name, []byte(tc.args)))
+			result := runPolicyArgsCall(t, catalog, policy, testEnvironment(ws, nil), port.LLMToolCall{ID: "c", Name: name, Args: []byte(tc.args)})
 			observed := policy.observations()
 
 			if tc.ambiguous {
@@ -256,7 +273,7 @@ func TestArgumentDecodeRejectsAmbiguityBeforeEveryTool(t *testing.T) {
 			catalog.MustRegister(stub)
 			policy := newPolicyArgsRecorder()
 			args := `{"url":"https://one.example","URL":"https://two.example","query":"q"}`
-			result := runPolicyArgsCall(t, catalog, policy, memEnv("/ws"), session.NewToolCall("c", name, []byte(args)))
+			result := runPolicyArgsCall(t, catalog, policy, memEnv("/ws"), port.LLMToolCall{ID: "c", Name: name, Args: []byte(args)})
 			if observed := policy.observations(); len(observed) != 0 {
 				t.Errorf("ambiguous arguments reached policy evaluation: %+v", observed)
 			}
@@ -297,9 +314,9 @@ func (s *argsRecordingTool) calls() int {
 
 // runDenyingAsks runs one call, refusing every approval request, and reports the
 // call's result and whether approval was requested.
-func runDenyingAsks(t *testing.T, catalog *tool.Catalog, policy port.PermissionPolicy, env tool.Environment, call session.ToolCall) (result session.ToolResult, asked bool) {
+func runDenyingAsks(t *testing.T, catalog *tool.Catalog, policy port.PermissionPolicy, env tool.Environment, call port.LLMToolCall) (result session.ToolResult, asked bool) {
 	t.Helper()
-	eng := NewEngine(Deps{LLM: mockllm.New(mockllm.ToolCallTurn(call), mockllm.TextTurn("done")), Catalog: catalog, Policy: policy})
+	eng := NewEngine(Deps{LLM: mockllm.New(mockllm.LLMToolCallTurn(call), mockllm.TextTurn("done")), Catalog: catalog, Policy: policy})
 	sess := session.New("policy-args", session.ModeDefault, env.Ref(), session.Limits{MaxTurns: 3}, time.Now())
 	run := eng.Run(context.Background(), sess, env, RunRequest{Text: "run"})
 	seen := false
@@ -308,12 +325,29 @@ func runDenyingAsks(t *testing.T, catalog *tool.Catalog, policy port.PermissionP
 			asked = true
 			run.Approve(event.Ask.AskID, session.VerdictDeny)
 		}
-		if event.Type == session.EvToolResult && event.ToolResult != nil && event.ToolResult.CallID == call.ID {
+		if event.Type == session.EvToolResult && event.ToolResult != nil {
+			if seen {
+				t.Fatalf("multiple tool results for provider call %q", call.ID)
+			}
 			result, seen = *event.ToolResult, true
 		}
 	}
 	if !seen {
-		t.Fatalf("no tool result for %s", call.ID)
+		t.Fatalf("no tool result for provider call %q", call.ID)
+	}
+	var canonical session.ToolCallID
+	for _, message := range sess.Conversation.Messages {
+		if message.Replay == nil {
+			continue
+		}
+		for _, binding := range message.Replay.Bindings {
+			if binding.PairingID == call.ID {
+				canonical = binding.CallID
+			}
+		}
+	}
+	if canonical == "" || result.CallID != canonical {
+		t.Fatalf("provider call %q result ID = %q, want canonical ID %q", call.ID, result.CallID, canonical)
 	}
 	return result, asked
 }
@@ -406,7 +440,7 @@ func TestBuiltinToolDenyMatchesTheExecutedOperand(t *testing.T) {
 				provider := &recordingSearchProvider{}
 				catalog := tool.NewCatalog()
 				catalog.MustRegister(tc.tool(provider))
-				result, asked := runDenyingAsks(t, catalog, permpolicy.NewPolicy(rules, nil), testEnvironment(ws, nil), session.NewToolCall("c", tc.name, []byte(args)))
+				result, asked := runDenyingAsks(t, catalog, permpolicy.NewPolicy(rules, nil), testEnvironment(ws, nil), port.LLMToolCall{ID: "c", Name: tc.name, Args: []byte(args)})
 				return result, asked, provider
 			}
 

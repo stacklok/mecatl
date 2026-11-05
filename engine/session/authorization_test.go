@@ -52,9 +52,7 @@ func TestNewAuthorizationResolutionAcceptsOnlyTerminalStatuses(t *testing.T) {
 
 func authorizationPending() PendingAuthorization {
 	call := NewToolCall("call-2", "external_create", json.RawMessage(`{"title":"review"}`))
-	call.ItemID = "provider-item-2"
 	deferred := NewToolCall("call-3", "external_list", json.RawMessage(`{"after":"today"}`))
-	deferred.ItemID = "provider-item-3"
 	return PendingAuthorization{
 		Authorization: ExternalAuthorization{
 			ID:          "authorization-1",
@@ -77,7 +75,7 @@ func authorizationSession(t *testing.T) *Session {
 	originalCall := pending.Call
 	originalCall.Args = json.RawMessage(`{"title":"original"}`)
 	originalDeferred := pending.Deferred[0]
-	mustOK(t, s.RecordAssistant(NewAssistantMessage("", "", []ToolCall{
+	mustOK(t, s.RecordAssistant(NewAssistantMessage("", []ToolCall{
 		NewToolCall("call-1", "Read", json.RawMessage(`{"path":"a"}`)),
 		originalCall,
 		originalDeferred,
@@ -150,7 +148,6 @@ func TestExternalAuthorizationValidation(t *testing.T) {
 		{"zero expiry", func(p *PendingAuthorization) { p.Authorization.ExpiresAt = time.Time{} }},
 		{"mismatched call ID", func(p *PendingAuthorization) { p.Call.ID = "other" }},
 		{"mismatched call name", func(p *PendingAuthorization) { p.Call.Name = "other" }},
-		{"mismatched provider item", func(p *PendingAuthorization) { p.Call.ItemID = "other" }},
 		{"mismatched deferred args", func(p *PendingAuthorization) {
 			p.Deferred[0].Args = json.RawMessage(`{"after":"modified"}`)
 		}},
@@ -176,8 +173,7 @@ func TestAuthorizationSoleCallAcceptsNilAndEmptyDeferred(t *testing.T) {
 		s := newTestSession(Limits{})
 		mustOK(t, s.BeginTurn())
 		original := NewToolCall("only", "external_read", json.RawMessage(`{"source":"model"}`))
-		original.ItemID = "provider-only"
-		mustOK(t, s.RecordAssistant(NewAssistantMessage("", "", []ToolCall{original})))
+		mustOK(t, s.RecordAssistant(NewAssistantMessage("", []ToolCall{original})))
 		effective := original
 		effective.Args = json.RawMessage(`{"source":"effective"}`)
 		mustOK(t, s.PauseForAuthorization(PendingAuthorization{
@@ -199,7 +195,7 @@ func TestAuthorizingRejectsConflictingMutations(t *testing.T) {
 	before := CloneMessages(s.Conversation.Messages)
 	for name, op := range map[string]func() error{
 		"prompt":    func() error { return s.RecordUserPrompt("new", nil) },
-		"assistant": func() error { return s.RecordAssistant(NewAssistantMessage("new", "", nil)) },
+		"assistant": func() error { return s.RecordAssistant(NewAssistantMessage("new", nil)) },
 		"results":   func() error { return s.RecordToolResults(nil) },
 		"usage":     func() error { return s.RecordUsage(Usage{InputTokens: 1}) },
 		"replace":   func() error { return s.ReplaceHistory(nil) },

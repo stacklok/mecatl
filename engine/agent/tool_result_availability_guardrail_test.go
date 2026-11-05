@@ -40,7 +40,7 @@ func testAvailabilityAfterUTF8Repair(t *testing.T) {
 	sess := newSession(t, session.Limits{})
 	events := drain(agent.NewEngine(agent.Deps{LLM: mockllm.New(mockllm.ToolCallTurn(toolCall("one", "Read", `{}`)), mockllm.TextTurn("done")), Catalog: catalogWith(t, read), Policy: staticAllowPolicy{}, ToolCallRecorder: recorder}).Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "read"}))
 
-	available, canonical := availabilityAndCanonical(t, events, "one")
+	available, canonical := availabilityAndCanonical(t, events, eventCallID(t, events, "Read", 0))
 	for _, result := range []session.ToolResult{available, canonical, recorder.results[0]} {
 		if !utf8.ValidString(result.Content) || !strings.ContainsRune(result.Content, '�') || strings.Contains(result.Content, invalidUTF8) || !strings.Contains(result.Content, "result ") {
 			t.Fatalf("result was not repaired effective payload: %+v", result)
@@ -77,7 +77,7 @@ func testAvailabilityAfterStalePrincipalRevision(t *testing.T) {
 	close(reviewRelease)
 	events := drain(run)
 
-	available, canonical := availabilityAndCanonical(t, events, "one")
+	available, canonical := availabilityAndCanonical(t, events, eventCallID(t, events, "Read", 0))
 	if !available.IsError || !strings.Contains(available.Content, "root instructions changed during review") || !reflect.DeepEqual(available, canonical) || len(recorder.results) != 1 || !reflect.DeepEqual(available, recorder.results[0]) {
 		t.Fatalf("stale revision must produce only the synthetic safe result: available=%+v canonical=%+v recorder=%+v", available, canonical, recorder.results)
 	}
@@ -135,7 +135,7 @@ func TestToolResultAvailability_StaleInboundSuppressesPostHookAnnotations(t *tes
 			}
 			close(release)
 			events := drain(run)
-			available, canonical := availabilityAndCanonical(t, events, "one")
+			available, canonical := availabilityAndCanonical(t, events, eventCallID(t, events, name, 0))
 			if !reflect.DeepEqual(available, canonical) || available.IsError != tc.stale {
 				t.Fatalf("unexpected effective result: available=%+v canonical=%+v", available, canonical)
 			}
@@ -215,7 +215,7 @@ func testAvailabilityReleasedEffectivePayload(t *testing.T) {
 		if ev.Type == session.EvToolResultAvailable || ev.Type == session.EvToolResult || strings.Contains(ev.Text, raw) || strings.Contains(ev.Text, "HELD_EFFECTIVE") || (ev.ToolResult != nil && (strings.Contains(fmt.Sprint(*ev.ToolResult), raw) || strings.Contains(fmt.Sprint(*ev.ToolResult), "HELD_EFFECTIVE"))) {
 			t.Fatalf("held result escaped before release: %+v", ev)
 		}
-		if ev.Hook != nil && ev.Hook.CallID == "one" && ev.Hook.Guardrail == nil && ev.Hook.Phase == string(governance.PhasePostToolUse) {
+		if ev.Hook != nil && ev.Hook.CallID == boundCallID(t, sess, "one") && ev.Hook.Guardrail == nil && ev.Hook.Phase == string(governance.PhasePostToolUse) {
 			t.Fatalf("held PostToolUse annotation escaped: %+v", ev)
 		}
 	}
@@ -239,7 +239,7 @@ func testAvailabilityReleasedEffectivePayload(t *testing.T) {
 	var available, canonical *session.ToolResult
 	var inboundIndex, availableIndex, canonicalIndex = -1, -1, -1
 	for i, ev := range events {
-		if ev.Hook != nil && ev.Hook.Guardrail != nil && ev.Hook.CallID == "one" {
+		if ev.Hook != nil && ev.Hook.Guardrail != nil && ev.Hook.CallID == boundCallID(t, sess, "one") {
 			inboundIndex = i
 		}
 		if ev.Type == session.EvToolResultAvailable {
@@ -296,13 +296,16 @@ func testAvailabilityUnattendedHold(t *testing.T) {
 	}
 }
 
-type selectiveAvailabilityReviewer struct{ usage session.AuxiliaryUsage }
+type selectiveAvailabilityReviewer struct {
+	t     *testing.T
+	usage session.AuxiliaryUsage
+}
 
 func (selectiveAvailabilityReviewer) GuardrailReviewPolicy(_ string, job agent.ReviewJob, _ bool) (bool, bool) {
 	return job == agent.ReviewJobInbound, true
 }
 func (reviewer selectiveAvailabilityReviewer) Review(_ context.Context, req agent.ToolReviewRequest, _ agent.ReviewEvidenceSource) (agent.ToolReviewResult, session.AuxiliaryUsage, error) {
-	if req.EffectiveCall.ID == "clean" {
+	if fixtureLabel(reviewer.t, req.EffectiveCall) == "clean" {
 		return agent.ToolReviewResult{Assessment: agent.ReviewAcceptable}, reviewer.usage, nil
 	}
 	return agent.ToolReviewResult{Assessment: agent.ReviewProhibited}, reviewer.usage, nil
@@ -324,8 +327,9 @@ func TestToolResultAvailability_ExactRelease(t *testing.T) {
 			reviewer := &inboundReviewer{}
 			recorder := &resultRecorder{}
 			payload := session.NewToolResultWithParts("one", private, []session.Content{session.NewTextBlock("PRIVATE_TYPED"), session.NewStructuredContentBlock(`{"private":true}`)})
-			read := &fakeTool{name: "Read", readOnly: true, exec: func(_ context.Context, _ session.ToolCall, _ tool.Workspace) (session.ToolResult, error) {
+			read := &fakeTool{name: "Read", readOnly: true, exec: func(_ context.Context, call session.ToolCall, _ tool.Workspace) (session.ToolResult, error) {
 				executions++
+				payload.CallID = call.ID
 				return payload, nil
 			}}
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -387,7 +391,7 @@ func TestToolResultAvailability_ExactRelease(t *testing.T) {
 func TestToolResultAvailability_CanonicalCancellationReplacement(t *testing.T) {
 	const private = "PRIVATE_HELD_RESULT"
 	read := &fakeTool{name: "Read", readOnly: true, exec: func(_ context.Context, c session.ToolCall, _ tool.Workspace) (session.ToolResult, error) {
-		if c.ID == "held" {
+		if fixtureLabel(t, c) == "held" {
 			return session.NewToolResult(c.ID, private), nil
 		}
 		return session.NewToolResult(c.ID, "public success"), nil
@@ -395,7 +399,7 @@ func TestToolResultAvailability_CanonicalCancellationReplacement(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	sess := newSession(t, session.Limits{})
-	run := agent.NewEngine(agent.Deps{LLM: mockllm.New(mockllm.ToolCallTurn(toolCall("held", "Read", `{}`), toolCall("clean", "Read", `{}`)), mockllm.TextTurn("done")), Catalog: catalogWith(t, read), Policy: staticAllowPolicy{}, ToolReviewer: selectiveAvailabilityReviewer{}, Interactive: true}).Run(ctx, sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "read"})
+	run := agent.NewEngine(agent.Deps{LLM: mockllm.New(mockllm.ToolCallTurn(fixtureCall("held", "Read"), fixtureCall("clean", "Read")), mockllm.TextTurn("done")), Catalog: catalogWith(t, read), Policy: staticAllowPolicy{}, ToolReviewer: selectiveAvailabilityReviewer{t: t}, Interactive: true}).Run(ctx, sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "read"})
 	var events []session.Event
 	for {
 		select {
@@ -405,7 +409,7 @@ func TestToolResultAvailability_CanonicalCancellationReplacement(t *testing.T) {
 			}
 			events = append(events, ev)
 			if ev.Type == session.EvPermissionAsk {
-				if ev.Ask.Call != "held" {
+				if ev.Ask.Call != boundCallID(t, sess, "held") {
 					t.Fatalf("unexpected ask: %+v", ev.Ask)
 				}
 				goto cancelRun
@@ -417,10 +421,10 @@ func TestToolResultAvailability_CanonicalCancellationReplacement(t *testing.T) {
 cancelRun:
 	cleanAvailable := 0
 	for _, ev := range events {
-		if ev.Type == session.EvToolResultAvailable && ev.ToolResult.CallID == "clean" {
+		if ev.Type == session.EvToolResultAvailable && ev.ToolResult.CallID == boundCallID(t, sess, "clean") {
 			cleanAvailable++
 		}
-		if ev.Type == session.EvToolResult || ev.Type == session.EvToolResultAvailable && ev.ToolResult.CallID == "held" || ev.ToolResult != nil && strings.Contains(fmt.Sprint(*ev.ToolResult), private) {
+		if ev.Type == session.EvToolResult || ev.Type == session.EvToolResultAvailable && ev.ToolResult.CallID == boundCallID(t, sess, "held") || ev.ToolResult != nil && strings.Contains(fmt.Sprint(*ev.ToolResult), private) {
 			t.Fatalf("held bytes or canonical escaped before cancellation: type=%s result=%+v events=%v", ev.Type, ev.ToolResult, typesOf(events))
 		}
 	}
@@ -447,20 +451,20 @@ cancelRun:
 		case session.EvToolResult:
 			canonical[ev.ToolResult.CallID] = append(canonical[ev.ToolResult.CallID], *ev.ToolResult)
 			order = append(order, ev.ToolResult.CallID)
-			if ev.ToolResult.CallID == "held" && len(available["held"]) != 1 {
+			if ev.ToolResult.CallID == boundCallID(t, sess, "held") && len(available[boundCallID(t, sess, "held")]) != 1 {
 				t.Fatal("held canonical error arrived before safe availability")
 			}
 		}
 	}
-	if len(canonical["held"]) != 1 || len(canonical["clean"]) != 1 || len(available["clean"]) != 1 || len(available["held"]) != 1 || available["clean"][0].Content != "public success" || !available["held"][0].IsError || !reflect.DeepEqual(available["held"][0], canonical["held"][0]) || !canonical["clean"][0].IsError || canonical["clean"][0].Content == available["clean"][0].Content || !strings.Contains(canonical["held"][0].Content, "release decision was cancelled") || len(canonical["held"][0].Parts) != 0 || !reflect.DeepEqual(order, []session.ToolCallID{"held", "clean"}) {
+	if len(canonical[boundCallID(t, sess, "held")]) != 1 || len(canonical[boundCallID(t, sess, "clean")]) != 1 || len(available[boundCallID(t, sess, "clean")]) != 1 || len(available[boundCallID(t, sess, "held")]) != 1 || available[boundCallID(t, sess, "clean")][0].Content != "public success" || !available[boundCallID(t, sess, "held")][0].IsError || !reflect.DeepEqual(available[boundCallID(t, sess, "held")][0], canonical[boundCallID(t, sess, "held")][0]) || !canonical[boundCallID(t, sess, "clean")][0].IsError || canonical[boundCallID(t, sess, "clean")][0].Content == available[boundCallID(t, sess, "clean")][0].Content || !strings.Contains(canonical[boundCallID(t, sess, "held")][0].Content, "release decision was cancelled") || len(canonical[boundCallID(t, sess, "held")][0].Parts) != 0 || !reflect.DeepEqual(order, []session.ToolCallID{boundCallID(t, sess, "held"), boundCallID(t, sess, "clean")}) {
 		t.Fatalf("available=%+v canonical=%+v order=%v", available, canonical, order)
 	}
 
 	// A sibling still running at cancellation has no prior availability either.
-	batch, _, started, gates := availabilityBatch(t)
+	batch, batchSession, started, gates := availabilityBatch(t)
 	awaitAvailabilityBatchStart(t, started)
 	close(gates["fast"])
-	batchEvents := awaitBatchEvent(t, batch, session.EvToolResultAvailable, "fast")
+	batchEvents := awaitBatchEvent(t, batch, session.EvToolResultAvailable, boundCallID(t, batchSession, "fast"))
 	batch.Cancel()
 	for ev := range batch.Events() {
 		batchEvents = append(batchEvents, ev)
@@ -476,12 +480,12 @@ cancelRun:
 		switch ev.Type {
 		case session.EvToolResultAvailable:
 			seen[ev.ToolResult.CallID]++
-			if ev.ToolResult.CallID == "slow" {
+			if ev.ToolResult.CallID == boundCallID(t, batchSession, "slow") {
 				slowAvailable = *ev.ToolResult
 			}
 		case session.EvToolResult:
-			if ev.ToolResult.CallID == "slow" {
-				if seen["slow"] != 1 {
+			if ev.ToolResult.CallID == boundCallID(t, batchSession, "slow") {
+				if seen[boundCallID(t, batchSession, "slow")] != 1 {
 					t.Fatal("slow canonical result arrived before synthetic availability")
 				}
 				slowCanonical = *ev.ToolResult
@@ -490,18 +494,18 @@ cancelRun:
 			}
 		}
 	}
-	if seen["fast"] != 1 || seen["slow"] != 1 || !slowAvailable.IsError || !reflect.DeepEqual(slowAvailable, slowCanonical) || !fastCanonical.IsError {
+	if seen[boundCallID(t, batchSession, "fast")] != 1 || seen[boundCallID(t, batchSession, "slow")] != 1 || !slowAvailable.IsError || !reflect.DeepEqual(slowAvailable, slowCanonical) || !fastCanonical.IsError {
 		t.Fatalf("running sibling cancellation: availability=%v slow=%+v/%+v fast=%+v", seen, slowAvailable, slowCanonical, fastCanonical)
 	}
 }
 
 func TestToolResultAvailability_CleanSiblingBypassesHeldPresentation(t *testing.T) {
 	started := make(chan session.ToolCallID, 3)
-	gates := map[session.ToolCallID]chan struct{}{"held-one": make(chan struct{}), "clean": make(chan struct{}), "held-two": make(chan struct{})}
+	gates := map[string]chan struct{}{"held-one": make(chan struct{}), "clean": make(chan struct{}), "held-two": make(chan struct{})}
 	read := &fakeTool{name: "Read", readOnly: true, exec: func(ctx context.Context, c session.ToolCall, _ tool.Workspace) (session.ToolResult, error) {
 		started <- c.ID
 		select {
-		case <-gates[c.ID]:
+		case <-gates[fixtureLabel(t, c)]:
 			return session.NewToolResult(c.ID, "payload-"+string(c.ID)), nil
 		case <-ctx.Done():
 			return session.NewToolError(c.ID, "cancelled"), nil
@@ -520,10 +524,10 @@ func TestToolResultAvailability_CleanSiblingBypassesHeldPresentation(t *testing.
 	}()
 	sess := newSession(t, session.Limits{})
 	reviewUsage := session.Usage{InputTokens: 3, OutputTokens: 1}
-	reviewer := selectiveAvailabilityReviewer{usage: session.AuxiliaryUsage{Buckets: map[session.UsageKind]session.TokenUsage{
+	reviewer := selectiveAvailabilityReviewer{t: t, usage: session.AuxiliaryUsage{Buckets: map[session.UsageKind]session.TokenUsage{
 		session.UsageKindGuardrail: {Models: map[string]session.Usage{"provider/model": reviewUsage}},
 	}}}
-	run := agent.NewEngine(agent.Deps{LLM: mockllm.New(mockllm.ToolCallTurn(toolCall("held-one", "Read", `{}`), toolCall("clean", "Read", `{}`), toolCall("held-two", "Read", `{}`)), mockllm.TextTurn("done")), Catalog: catalogWith(t, read), Policy: staticAllowPolicy{}, ToolReviewer: reviewer, Interactive: true}).Run(ctx, sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "read"})
+	run := agent.NewEngine(agent.Deps{LLM: mockllm.New(mockllm.ToolCallTurn(fixtureCall("held-one", "Read"), fixtureCall("clean", "Read"), fixtureCall("held-two", "Read")), mockllm.TextTurn("done")), Catalog: catalogWith(t, read), Policy: staticAllowPolicy{}, ToolReviewer: reviewer, Interactive: true}).Run(ctx, sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "read"})
 	for range 3 {
 		select {
 		case <-started:
@@ -531,28 +535,32 @@ func TestToolResultAvailability_CleanSiblingBypassesHeldPresentation(t *testing.
 			t.Fatal("siblings failed to start")
 		}
 	}
+	// Capture accepted identities while every worker is gated, before history can advance.
+	heldOneID := boundCallID(t, sess, "held-one")
+	cleanID := boundCallID(t, sess, "clean")
+	heldTwoID := boundCallID(t, sess, "held-two")
 	close(gates["clean"])
-	events := awaitBatchEvent(t, run, session.EvToolResultAvailable, "clean")
+	events := awaitBatchEvent(t, run, session.EvToolResultAvailable, cleanID)
 	if got := sess.UsageFor(session.UsageKindGuardrail); got != (session.Usage{}) {
 		t.Fatalf("early availability accounted out of order: %+v", got)
 	}
 	for _, ev := range events {
-		if ev.Type == session.EvPermissionAsk || ev.Type == session.EvToolResult || ev.Type == session.EvToolResultAvailable && ev.ToolResult.CallID != "clean" {
+		if ev.Type == session.EvPermissionAsk || ev.Type == session.EvToolResult || ev.Type == session.EvToolResultAvailable && ev.ToolResult.CallID != cleanID {
 			t.Fatalf("premature sibling decision: %+v", ev)
 		}
 	}
 	close(gates["held-one"])
 	close(gates["held-two"])
 	var asks, canonical []session.ToolCallID
-	available := map[session.ToolCallID]int{"clean": 1}
+	available := map[session.ToolCallID]int{cleanID: 1}
 	for ev := range run.Events() {
 		switch ev.Type {
 		case session.EvPermissionAsk:
 			asks = append(asks, ev.Ask.Call)
-			if len(asks) == 1 && ev.Ask.Call != "held-one" {
+			if len(asks) == 1 && ev.Ask.Call != heldOneID {
 				t.Fatalf("first release ask: %+v", ev.Ask)
 			}
-			if len(asks) == 2 && ev.Ask.Call != "held-two" {
+			if len(asks) == 2 && ev.Ask.Call != heldTwoID {
 				t.Fatalf("second release ask: %+v", ev.Ask)
 			}
 			if err := resolveScoped(t, run, ev.Ask, session.VerdictAllowOnce); err != nil {
@@ -560,14 +568,14 @@ func TestToolResultAvailability_CleanSiblingBypassesHeldPresentation(t *testing.
 			}
 		case session.EvToolResultAvailable:
 			available[ev.ToolResult.CallID]++
-			if ev.ToolResult.CallID == "held-two" && len(asks) < 2 {
+			if ev.ToolResult.CallID == heldTwoID && len(asks) < 2 {
 				t.Fatal("second held result available before its release")
 			}
 		case session.EvToolResult:
 			canonical = append(canonical, ev.ToolResult.CallID)
 		}
 	}
-	if !reflect.DeepEqual(asks, []session.ToolCallID{"held-one", "held-two"}) || !reflect.DeepEqual(canonical, []session.ToolCallID{"held-one", "clean", "held-two"}) || available["held-one"] != 1 || available["held-two"] != 1 || available["clean"] != 1 {
+	if !reflect.DeepEqual(asks, []session.ToolCallID{heldOneID, heldTwoID}) || !reflect.DeepEqual(canonical, []session.ToolCallID{heldOneID, cleanID, heldTwoID}) || available[heldOneID] != 1 || available[heldTwoID] != 1 || available[cleanID] != 1 {
 		t.Fatalf("asks=%v canonical=%v available=%v", asks, canonical, available)
 	}
 	if want, got := reviewUsage.Add(reviewUsage).Add(reviewUsage), sess.UsageFor(session.UsageKindGuardrail); got != want {

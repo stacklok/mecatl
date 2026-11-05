@@ -48,7 +48,7 @@ func seedFailedChildWithOrphanedToolCall(t *testing.T, store port.SessionStore, 
 		t.Fatalf("seed BeginTurn: %v", err)
 	}
 	call := session.NewToolCall(orphanID, "Read", json.RawMessage(`{"path":"a.go"}`))
-	if err := seed.RecordAssistant(session.NewAssistantMessage("let me read that file", "", []session.ToolCall{call})); err != nil {
+	if err := seed.RecordAssistant(session.NewAssistantMessage("let me read that file", []session.ToolCall{call})); err != nil {
 		t.Fatalf("seed RecordAssistant: %v", err)
 	}
 	// No RecordToolResults: the turn failed before the result was recorded.
@@ -73,7 +73,7 @@ func TestSubagentResumeFailedRepairsOrphanedToolCall(t *testing.T) {
 	orphanID := seedFailedChildWithOrphanedToolCall(t, store, "subagent-p1", "audit the ORIGINAL_TASK")
 
 	var mu sync.Mutex
-	var replayed []session.Message
+	var replayed []port.LLMMessage
 	obs := func(req port.LLMRequest) {
 		mu.Lock()
 		defer mu.Unlock()
@@ -100,17 +100,12 @@ func TestSubagentResumeFailedRepairsOrphanedToolCall(t *testing.T) {
 	if len(msgs) == 0 {
 		t.Fatal("child provider never received a request")
 	}
-	// (a) The replayed history is provider-valid — the domain's own bidirectional
-	//     pairing validator, not a hand-rolled approximation.
-	if err := session.ValidateToolPairing(msgs); err != nil {
-		t.Fatalf("recovered child replays an unpaired history (a provider 400): %v\nmsgs=%+v", err, msgs)
-	}
-	assertNoOrphanedToolCalls(t, msgs)
+	assertLLMToolPairing(t, msgs)
 
 	// (b) The synthetic result answers the ORPHANED call with the FAILURE wording.
-	var synthetic *session.ToolResult
+	var synthetic *port.LLMToolResult
 	for _, m := range msgs {
-		if m.Role == session.RoleTool && m.ToolResult != nil && m.ToolResult.CallID == orphanID {
+		if m.Role == session.RoleTool && m.ToolResult != nil && m.ToolResult.CallID == session.ProviderCallID("engine_"+string(orphanID)) {
 			synthetic = m.ToolResult
 		}
 	}
@@ -241,11 +236,10 @@ func TestParentResumesFailedSubagentByTrailerID(t *testing.T) {
 	subTool := agent.NewSubagentTool(childEngineWith(childLLM, catalogWith(t)),
 		agent.WithSubagentStore(store))
 
-	parentLLM := mockllm.New(
+	parentLLM := newScriptedLLM(
 		mockllm.ToolCallTurn(session.NewToolCall("p1", "Subagent",
 			json.RawMessage(`{"prompt":"trace the FIRST code path"}`))),
-		mockllm.ToolCallTurn(session.NewToolCall("p2", "Subagent",
-			json.RawMessage(`{"resume":"subagent-s1-p1","prompt":"continue"}`))),
+		handleTurn(t, "p1", toolCall("p2", "Subagent", `{"prompt":"continue"}`), "resume"),
 		mockllm.TextTurn("parent done"),
 	)
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, subTool)})
@@ -264,8 +258,8 @@ func TestParentResumesFailedSubagentByTrailerID(t *testing.T) {
 		t.Fatalf("the first delegation must fail: %+v", results[0])
 	}
 	failedID := extractAgentID(t, results[0].Content)
-	if failedID != "subagent-s1-p1" {
-		t.Fatalf("failed trailer id = %q, want subagent-s1-p1", failedID)
+	if failedID != eventSubagentID(t, evs, 0) {
+		t.Fatalf("failed trailer id = %q, want the actual accepted delegation's child %q", failedID, eventSubagentID(t, evs, 0))
 	}
 	if results[1].IsError {
 		t.Fatalf("resuming the failed child must succeed (issue #318), got: %q", results[1].Content)
@@ -379,7 +373,7 @@ func seedFailedChildInForkRoot(t *testing.T, store port.SessionStore, id session
 	if err := seed.BeginTurn(); err != nil {
 		t.Fatalf("seed BeginTurn: %v", err)
 	}
-	if err := seed.RecordAssistant(session.NewAssistantMessage("patched it with a shell one-liner", "", nil)); err != nil {
+	if err := seed.RecordAssistant(session.NewAssistantMessage("patched it with a shell one-liner", nil)); err != nil {
 		t.Fatalf("seed RecordAssistant: %v", err)
 	}
 	if err := seed.Fail(); err != nil {

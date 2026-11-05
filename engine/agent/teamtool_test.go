@@ -717,7 +717,7 @@ func TestMemberSessionIDRoundTripsTeamToolPath(t *testing.T) {
 		if got.ID != id {
 			t.Errorf("loaded session id = %q, want %q", got.ID, id)
 		}
-		wantRelationship := session.SessionRelationship{TeamID: publishedTeamID, MemberName: name, ParentSessionID: sess.ID, ParentIncarnation: sess.Incarnation(), CallID: "p1"}
+		wantRelationship := session.SessionRelationship{TeamID: publishedTeamID, MemberName: name, ParentSessionID: sess.ID, ParentIncarnation: sess.Incarnation(), CallID: boundCallID(t, sess, "p1")}
 		if got.Kind != session.SessionKindTeamMember || got.Relationship != wantRelationship {
 			t.Errorf("member metadata = (%q, %+v), want (%q, %+v)", got.Kind, got.Relationship, session.SessionKindTeamMember, wantRelationship)
 		}
@@ -744,13 +744,13 @@ func TestTeamToolMemberRelationshipsBindExactParentCall(t *testing.T) {
 		context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "run both teams"},
 	))
 
-	starts := map[string]*session.TeamPayload{}
+	starts := map[session.ToolCallID]*session.TeamPayload{}
 	for _, ev := range evs {
 		if ev.Type == session.EvTeamStart && ev.Team != nil {
 			starts[ev.Team.ParentCallID] = ev.Team
 		}
 	}
-	for _, callID := range []string{"team-a", "team-b"} {
+	for _, callID := range []session.ToolCallID{boundCallID(t, sess, "team-a"), boundCallID(t, sess, "team-b")} {
 		start := starts[callID]
 		if start == nil {
 			t.Fatalf("missing team.start for %q", callID)
@@ -760,12 +760,12 @@ func TestTeamToolMemberRelationshipsBindExactParentCall(t *testing.T) {
 			if err != nil {
 				t.Fatalf("load %s/%s: %v", callID, member.Name, err)
 			}
-			if got.Relationship.CallID != session.ToolCallID(callID) {
+			if got.Relationship.CallID != callID {
 				t.Fatalf("%s/%s relationship call = %q, want %q", callID, member.Name, got.Relationship.CallID, callID)
 			}
 		}
 	}
-	if starts["team-a"].Roster[0].MemberSessionID == starts["team-b"].Roster[0].MemberSessionID {
+	if starts[boundCallID(t, sess, "team-a")].Roster[0].MemberSessionID == starts[boundCallID(t, sess, "team-b")].Roster[0].MemberSessionID {
 		t.Fatal("two real Team calls reused a member identity")
 	}
 }

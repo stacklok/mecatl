@@ -14,6 +14,18 @@ type exactStringCounter struct{}
 func (exactStringCounter) Count(text string) int               { return len(text) }
 func (exactStringCounter) CountMessages([]session.Message) int { return 0 }
 
+func TestRequestTokenEstimateCountsProviderTokensAndOpaqueReplay(t *testing.T) {
+	counter := HeuristicTokenCounter{CharsPerToken: 1}
+	req := port.LLMRequest{Messages: []port.LLMMessage{
+		{Role: session.RoleAssistant, ToolCalls: []port.LLMToolCall{{ID: "pair", ItemID: "item", Name: "Read", Args: []byte(`{}`)}}, Replay: &session.ProviderReplay{Format: "opaque", Version: 3, Data: []byte{0, 255, 1}}},
+		{Role: session.RoleTool, ToolResult: &port.LLMToolResult{CallID: "pair", Content: "body"}},
+	}}
+	want := 2*perMessageOverhead + perToolCallOverhead + len("pairitemRead{}") + len("opaque") + 3 + len("pairbody")
+	if got := estimateRequestTokens(counter, req); got != want {
+		t.Fatalf("DTO estimate=%d, want %d", got, want)
+	}
+}
+
 func TestEstimateRequestTokensOptimizedCountersPreserveAccounting(t *testing.T) {
 	req := port.LLMRequest{
 		System: prompt.Layered{StablePrefix: "stable", VolatileSuffix: "volatile"},

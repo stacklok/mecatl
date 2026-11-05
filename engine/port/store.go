@@ -52,13 +52,13 @@ var (
 //   - Run-scoped: Counters reflect only the LATEST run segment (they reset on Reopen);
 //     the run plumbing (diagnostics binding, askID serials) is rebuilt fresh.
 //
-// REPLAY-FIDELITY LIMITATION (the one residual gap): the opaque assistant-message replay
-// fields — Message.Reasoning, Message.ProviderPhase, ToolCall.ItemID — are NOT carried on
-// the event stream (they reach the conversation only via Session.RecordAssistant), so a
-// pure event fold is byte-identical-replay faithful ONLY for providers that leave them
-// empty (plain chat). A host that needs byte-identical replay for a reasoning provider
-// must carry those fields in its OWN richer event schema. See engine/COMPATIBILITY.md
-// ("Session reconstruction contract").
+// REPLAY-FIDELITY LIMITATION: ordinary execution events omit Message.Replay
+// (occurrence-specific provider pairing/item bindings and opaque adapter payloads)
+// and Message.ProviderPhase. A pure event fold reconstructs structural history;
+// ProjectMessages can synthesize provider pairing tokens, but this does not prove
+// byte-identical replay of the original request. A host that needs exact replay
+// must retain equivalent private state in snapshots or its own richer event schema.
+// See engine/COMPATIBILITY.md ("Session reconstruction contract").
 type SessionStore interface {
 	// Save persists the current state of s.
 	Save(ctx context.Context, s *session.Session) error

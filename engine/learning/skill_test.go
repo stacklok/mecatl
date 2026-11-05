@@ -3,6 +3,7 @@ package learning_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -51,6 +52,31 @@ func TestSkillProvenanceAndEvaluationBounds(t *testing.T) {
 	}
 	if err := learning.ValidateSkillEvaluation(learning.SkillEvaluation{Verdict: learning.EvaluationPass}); !errors.Is(err, learning.ErrInvalidSkill) {
 		t.Fatalf("fixture-free pass=%v", err)
+	}
+}
+
+func TestSkillActivationProvenanceDoesNotRestrictHistoricalReads(t *testing.T) {
+	for _, protocol := range []learning.EvidenceProtocol{"", "reflection-evidence/v1", "unknown", learning.ReflectionEvidenceV2} {
+		for _, nested := range []bool{false, true} {
+			t.Run(string(protocol)+"/nested="+fmt.Sprint(nested), func(t *testing.T) {
+				ref := learning.EvidenceRef{Protocol: protocol, SessionID: "s", Locator: learning.EvidenceMessage, Digest: strings.Repeat("a", 64)}
+				prov := learning.SkillProvenance{EvidenceRefs: []learning.EvidenceRef{ref}}
+				if nested {
+					prov = learning.SkillProvenance{Signals: []learning.Signal{{Kind: learning.SignalExplicitRemember, Evidence: []learning.EvidenceRef{ref}}}}
+				}
+				if err := learning.ValidateSkillProvenance(prov); err != nil {
+					t.Fatalf("historical provenance unreadable: %v", err)
+				}
+				err := learning.ValidateSkillActivationProvenance(prov)
+				if protocol == learning.ReflectionEvidenceV2 {
+					if err != nil {
+						t.Fatal(err)
+					}
+				} else if !errors.Is(err, learning.ErrSkillTransition) {
+					t.Fatalf("retired evidence activation=%v", err)
+				}
+			})
+		}
 	}
 }
 

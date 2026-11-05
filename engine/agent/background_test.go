@@ -3,6 +3,7 @@ package agent_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -11,6 +12,7 @@ import (
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/agent"
+	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 )
@@ -114,16 +116,17 @@ func TestBackgroundSubagentHappyPath(t *testing.T) {
 	)
 	task := agent.NewSubagentTool(childEngineWith(childLLM, catalogWith(t, gate)))
 
-	parentLLM := mockllm.New(
+	parentLLM := newScriptedLLM(
 		mockllm.ToolCallTurn(
 			toolCall("p1", "Subagent", `{"prompt":"investigate","background":true}`),
 			toolCall("p2", "Probe", `{}`),
 		),
-		mockllm.ToolCallTurn(toolCall("p3", "SubagentStatus", `{"agent_id":"subagent-s1-p1","wait_ms":30000}`)),
+		handleTurn(t, "p1", toolCall("p3", "SubagentStatus", `{"wait_ms":30000}`), "agent_id"),
 		mockllm.TextTurn("parent done"),
 	)
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, task, agent.NewSubagentStatusTool(), &probeTool{})})
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
+	sess := newSession(t, session.Limits{})
+	r := e.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
 
 	var sawBackgroundStart bool
 	var sawEnd bool
@@ -149,11 +152,11 @@ func TestBackgroundSubagentHappyPath(t *testing.T) {
 	// The Subagent call returned IMMEDIATELY with the started-result: agentId
 	// trailer on the FIRST line (the existing trailer convention), the amended D7
 	// body, and NO child findings (the body has exactly one channel).
-	started := results["p1"]
+	started := results[boundCallID(t, sess, "p1")]
 	if started == nil || started.IsError {
 		t.Fatalf("background Subagent call must return a non-error started-result, got %+v", started)
 	}
-	if !strings.HasPrefix(started.Content, "agentId: subagent-s1-p1") {
+	if !strings.HasPrefix(started.Content, "agentId: "+eventSubagentID(t, evs, 0)) {
 		t.Fatalf("started-result must lead with the agentId trailer line, got %q", started.Content)
 	}
 	for _, want := range []string{"started in the background", "SubagentStatus", "wait_ms", "cancelled if it is still running when this run ends"} {
@@ -166,20 +169,20 @@ func TestBackgroundSubagentHappyPath(t *testing.T) {
 	}
 
 	// The same-turn second tool call ran (the model kept working).
-	if probe := results["p2"]; probe == nil || !strings.Contains(probe.Content, "probe-ok") {
+	if probe := results[boundCallID(t, sess, "p2")]; probe == nil || !strings.Contains(probe.Content, "probe-ok") {
 		t.Fatalf("the same-turn Probe call must have run alongside the background start, got %+v", probe)
 	}
 
 	// SubagentStatus collected the rendered body (with its own agentId trailer,
 	// via renderSubagentResult — the foreground-identical rendering).
-	collected := results["p3"]
+	collected := results[boundCallID(t, sess, "p3")]
 	if collected == nil || collected.IsError {
 		t.Fatalf("SubagentStatus collection must succeed, got %+v", collected)
 	}
 	if !strings.Contains(collected.Content, "CHILD FINDINGS: the bug is in parser.go") {
 		t.Fatalf("collected body must carry the child's findings, got %q", collected.Content)
 	}
-	if !strings.Contains(collected.Content, "agentId: subagent-s1-p1") {
+	if !strings.Contains(collected.Content, "agentId: "+eventSubagentID(t, evs, 0)) {
 		t.Fatalf("collected body must keep the agentId trailer, got %q", collected.Content)
 	}
 
@@ -195,7 +198,7 @@ func TestBackgroundSubagentHappyPath(t *testing.T) {
 		switch {
 		case startIdx == -1 && ev.Type == session.EvSubagentStart && ev.Subagent != nil && ev.Subagent.Background:
 			startIdx = i
-		case startedIdx == -1 && ev.Type == session.EvToolResult && ev.ToolResult != nil && ev.ToolResult.CallID == "p1":
+		case startedIdx == -1 && ev.Type == session.EvToolResult && ev.ToolResult != nil && ev.ToolResult.CallID == boundCallID(t, sess, "p1"):
 			startedIdx = i
 		}
 	}
@@ -220,26 +223,27 @@ func TestBackgroundSubagentAlreadyDelivered(t *testing.T) {
 	)
 	task := agent.NewSubagentTool(childEngineWith(childLLM, catalogWith(t, gate)))
 
-	parentLLM := mockllm.New(
+	parentLLM := newScriptedLLM(
 		mockllm.ToolCallTurn(toolCall("p1", "Subagent", `{"prompt":"x","background":true}`)),
-		mockllm.ToolCallTurn(toolCall("p2", "SubagentStatus", `{"agent_id":"subagent-s1-p1","wait_ms":30000}`)),
-		mockllm.ToolCallTurn(toolCall("p3", "SubagentStatus", `{"agent_id":"subagent-s1-p1"}`)),
+		handleTurn(t, "p1", toolCall("p2", "SubagentStatus", `{"wait_ms":30000}`), "agent_id"),
+		handleTurn(t, "p1", toolCall("p3", "SubagentStatus", `{}`), "agent_id"),
 		mockllm.TextTurn("parent done"),
 	)
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, task, agent.NewSubagentStatusTool())})
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
+	sess := newSession(t, session.Limits{})
+	r := e.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
 	evs := drainObserving(t, r, nil)
 	results := resultByCallID(evs)
 
-	first := results["p2"]
+	first := results[boundCallID(t, sess, "p2")]
 	if first == nil || !strings.Contains(first.Content, "CHILD FINDINGS: once only") {
 		t.Fatalf("first collection must deliver the body, got %+v", first)
 	}
-	second := results["p3"]
+	second := results[boundCallID(t, sess, "p3")]
 	if second == nil {
 		t.Fatalf("no result for the second collection")
 	}
-	if !strings.Contains(second.Content, "already delivered") || !strings.Contains(second.Content, "subagent-s1-p1") {
+	if !strings.Contains(second.Content, "already delivered") || !strings.Contains(second.Content, eventSubagentID(t, evs, 0)) {
 		t.Fatalf("second collection must report already-delivered with the id, got %q", second.Content)
 	}
 	if strings.Contains(second.Content, "CHILD FINDINGS") {
@@ -258,29 +262,34 @@ func TestSubagentStatusPollBeforeDone(t *testing.T) {
 	)
 	task := agent.NewSubagentTool(childEngineWith(childLLM, catalogWith(t, gate)))
 
-	parentLLM := mockllm.New(
+	parentLLM := newScriptedLLM(
 		mockllm.ToolCallTurn(toolCall("p1", "Subagent", `{"prompt":"x","background":true}`)),
 		mockllm.ToolCallTurn(toolCall("p2", "SubagentStatus", `{}`)),
-		mockllm.ToolCallTurn(toolCall("p3", "SubagentStatus", `{"agent_id":"subagent-s1-p1","wait_ms":30000}`)),
+		handleTurn(t, "p1", toolCall("p3", "SubagentStatus", `{"wait_ms":30000}`), "agent_id"),
 		mockllm.TextTurn("parent done"),
 	)
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, task, agent.NewSubagentStatusTool())})
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
+	sess := newSession(t, session.Limits{})
+	r := e.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
 
+	var pollID session.ToolCallID
 	evs := drainObserving(t, r, func(ev session.Event) {
+		if ev.Type == session.EvToolCall && ev.ToolCall != nil && ev.ToolCall.Name == "SubagentStatus" && pollID == "" {
+			pollID = ev.ToolCall.ID
+		}
 		// Release the child only AFTER the roster poll (p2) has produced its result,
 		// so the roster deterministically observed a RUNNING child.
-		if ev.Type == session.EvToolResult && ev.ToolResult != nil && ev.ToolResult.CallID == "p2" {
+		if ev.Type == session.EvToolResult && ev.ToolResult != nil && ev.ToolResult.CallID == pollID {
 			gate.releaseOnce()
 		}
 	})
 	results := resultByCallID(evs)
 
-	roster := results["p2"]
+	roster := results[boundCallID(t, sess, "p2")]
 	if roster == nil || roster.IsError {
 		t.Fatalf("roster poll must succeed, got %+v", roster)
 	}
-	if !strings.Contains(roster.Content, "subagent-s1-p1") || !strings.Contains(roster.Content, "running") {
+	if !strings.Contains(roster.Content, eventSubagentID(t, evs, 0)) || !strings.Contains(roster.Content, "running") {
 		t.Fatalf("roster must list the running child by id, got %q", roster.Content)
 	}
 	if !strings.Contains(roster.Content, "background") {
@@ -290,7 +299,7 @@ func TestSubagentStatusPollBeforeDone(t *testing.T) {
 		t.Fatalf("a running child has no body to show; roster leaked %q", roster.Content)
 	}
 	// And the later collection still works.
-	if collected := results["p3"]; collected == nil || !strings.Contains(collected.Content, "CHILD FINDINGS: too early") {
+	if collected := results[boundCallID(t, sess, "p3")]; collected == nil || !strings.Contains(collected.Content, "CHILD FINDINGS: too early") {
 		t.Fatalf("post-roster collection must deliver the body, got %+v", collected)
 	}
 }
@@ -311,7 +320,7 @@ func TestBackgroundChildCancelledAtRunEnd(t *testing.T) {
 	task := agent.NewSubagentTool(childEngineWith(childLLM, catalogWith(t, gate)),
 		agent.WithSubagentStore(store))
 
-	parentLLM := mockllm.New(
+	parentLLM := newScriptedLLM(
 		mockllm.ToolCallTurn(toolCall("p1", "Subagent", `{"prompt":"x","background":true}`)),
 		// Deterministic anchor: the parent's next turn parks until the child has
 		// genuinely consumed its first model turn and is parked inside Gate — so
@@ -322,7 +331,8 @@ func TestBackgroundChildCancelledAtRunEnd(t *testing.T) {
 	)
 	cat := catalogWith(t, task, agent.NewSubagentStatusTool(), &awaitSignalTool{ch: gate.started})
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: cat})
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
+	sess := newSession(t, session.Limits{})
+	r := e.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
 	evs := drainObserving(t, r, nil)
 
 	// The run completed CLEANLY despite the live child (cancelled at end, not an
@@ -351,7 +361,7 @@ func TestBackgroundChildCancelledAtRunEnd(t *testing.T) {
 	}
 
 	// Persisted cancelled — the loss mitigation.
-	saved, err := store.Load(context.Background(), "subagent-s1-p1")
+	saved, err := store.Load(context.Background(), session.SessionID(eventSubagentID(t, evs, 0)))
 	if err != nil || saved == nil {
 		t.Fatalf("run-end-cancelled background child must be persisted: %v", err)
 	}
@@ -361,14 +371,14 @@ func TestBackgroundChildCancelledAtRunEnd(t *testing.T) {
 
 	// Resumable in a NEW run (cancelled→Interrupt recovery).
 	parent2 := mockllm.New(
-		mockllm.ToolCallTurn(toolCall("q1", "Subagent", `{"prompt":"continue","resume":"subagent-s1-p1"}`)),
+		mockllm.ToolCallTurn(toolCall("q1", "Subagent", resumeArgs(eventSubagentID(t, evs, 0), "continue"))),
 		mockllm.TextTurn("parent 2 done"),
 	)
 	e2 := newEngine(agent.Deps{LLM: parent2, Catalog: cat})
 	sess2 := session.New("s2", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0))
 	r2 := e2.Run(context.Background(), sess2, agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
 	evs2 := drainObserving(t, r2, nil)
-	resumed := resultByCallID(evs2)["q1"]
+	resumed := resultByCallID(evs2)[boundCallID(t, sess2, "q1")]
 	if resumed == nil || resumed.IsError || !strings.Contains(resumed.Content, "resumed fine") {
 		t.Fatalf("run-end-cancelled child must be resumable in a new run, got %+v", resumed)
 	}
@@ -388,13 +398,14 @@ func TestBackgroundChildSurfacedAskAnsweredMidRun(t *testing.T) {
 	task := agent.NewSubagentTool(shellChildEngine(childLLM, bash),
 		agent.WithChildForker(&recordingSubagentForker{}))
 
-	parentLLM := mockllm.New(
+	parentLLM := newScriptedLLM(
 		mockllm.ToolCallTurn(toolCall("p1", "Subagent", `{"prompt":"run it","background":true}`)),
-		mockllm.ToolCallTurn(toolCall("p2", "SubagentStatus", `{"agent_id":"subagent-s1-p1","wait_ms":30000}`)),
+		handleTurn(t, "p1", toolCall("p2", "SubagentStatus", `{"wait_ms":30000}`), "agent_id"),
 		mockllm.TextTurn("parent done"),
 	)
 	e := interactiveEngine(t, agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, task, agent.NewSubagentStatusTool())})
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
+	sess := newSession(t, session.Limits{})
+	r := e.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
 
 	var surfaced bool
 	evs := drainObserving(t, r, func(ev session.Event) {
@@ -409,7 +420,7 @@ func TestBackgroundChildSurfacedAskAnsweredMidRun(t *testing.T) {
 	if got := bash.ran(); len(got) != 1 || !strings.Contains(got[0], "cat") {
 		t.Fatalf("the approved command must have run in the child, got %v", got)
 	}
-	collected := resultByCallID(evs)["p2"]
+	collected := resultByCallID(evs)[boundCallID(t, sess, "p2")]
 	if collected == nil || collected.IsError || !strings.Contains(collected.Content, "child: bash done") {
 		t.Fatalf("collection after the late-answered ask must deliver the body, got %+v", collected)
 	}
@@ -435,19 +446,23 @@ func TestBackgroundChildCancelledWhileParkedOnAsk(t *testing.T) {
 	task := agent.NewSubagentTool(shellChildEngine(childLLM, bash),
 		agent.WithChildForker(&recordingSubagentForker{}))
 
-	parentLLM := mockllm.New(
+	parentLLM := newScriptedLLM(
 		mockllm.ToolCallTurn(toolCall("p1", "Subagent", `{"prompt":"run it","background":true}`)),
-		mockllm.ToolCallTurn(toolCall("p2", "SubagentStatus", `{"agent_id":"subagent-s1-p1","wait_ms":30000}`)),
+		handleTurn(t, "p1", toolCall("p2", "SubagentStatus", `{"wait_ms":30000}`), "agent_id"),
 		mockllm.TextTurn("parent done"),
 	)
 	e := interactiveEngine(t, agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, task, agent.NewSubagentStatusTool())})
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
+	sess := newSession(t, session.Limits{})
+	r := e.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
 
+	var childID string
 	var retracts []string
 	evs := drainObserving(t, r, func(ev session.Event) {
 		switch {
+		case ev.Type == session.EvSubagentStart && ev.Subagent != nil:
+			childID = ev.Subagent.ChildID
 		case ev.Type == session.EvPermissionAsk && ev.Ask != nil:
-			r.CancelChild("subagent-s1-p1")
+			r.CancelChild(childID)
 		case ev.Type == session.EvPermissionRetract && ev.Ask != nil:
 			retracts = append(retracts, ev.Ask.AskID)
 		}
@@ -458,13 +473,13 @@ func TestBackgroundChildCancelledWhileParkedOnAsk(t *testing.T) {
 	if got := bash.ran(); len(got) != 0 {
 		t.Fatalf("the cancelled command must never run, got %v", got)
 	}
-	collected := resultByCallID(evs)["p2"]
+	collected := resultByCallID(evs)[boundCallID(t, sess, "p2")]
 	if collected == nil || collected.IsError {
 		t.Fatalf("a client-cancelled background child must still be collectible as a success-with-note, got %+v", collected)
 	}
 	if !strings.Contains(collected.Content, "[subagent cancelled by user]") ||
 		!strings.Contains(collected.Content, "partial findings") ||
-		!strings.Contains(collected.Content, "agentId: subagent-s1-p1") {
+		!strings.Contains(collected.Content, "agentId: "+eventSubagentID(t, evs, 0)) {
 		t.Fatalf("collected cancel note/partial text/trailer missing: %q", collected.Content)
 	}
 }
@@ -494,7 +509,7 @@ func TestRunEndDrainRetractsParkedAsk(t *testing.T) {
 	// has genuinely SURFACED on the parent stream, so the clean ends below always
 	// catch a child parked on its ask.
 	askSeen := make(chan struct{})
-	parentLLM := mockllm.New(
+	parentLLM := newScriptedLLM(
 		mockllm.ToolCallTurn(toolCall("p1", "Subagent", `{"prompt":"run it","background":true}`)),
 		mockllm.ToolCallTurn(toolCall("pw", "AwaitChild", `{}`)),
 		mockllm.TextTurn("parent done"),
@@ -502,7 +517,8 @@ func TestRunEndDrainRetractsParkedAsk(t *testing.T) {
 	)
 	cat := catalogWith(t, task, agent.NewSubagentStatusTool(), &awaitSignalTool{ch: askSeen})
 	e := interactiveEngine(t, agent.Deps{LLM: parentLLM, Catalog: cat})
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
+	sess := newSession(t, session.Limits{})
+	r := e.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
 
 	var askID string
 	var askOnce sync.Once
@@ -550,7 +566,7 @@ func TestRunEndDrainRetractsParkedAsk(t *testing.T) {
 	}
 
 	// Persisted cancelled + resumable (the loss mitigation).
-	saved, err := store.Load(context.Background(), "subagent-s1-p1")
+	saved, err := store.Load(context.Background(), session.SessionID(eventSubagentID(t, evs, 0)))
 	if err != nil || saved == nil {
 		t.Fatalf("run-end-cancelled child must be persisted: %v", err)
 	}
@@ -558,14 +574,14 @@ func TestRunEndDrainRetractsParkedAsk(t *testing.T) {
 		t.Fatalf("persisted child state = %q, want cancelled", saved.State)
 	}
 	parent2 := mockllm.New(
-		mockllm.ToolCallTurn(toolCall("q1", "Subagent", `{"prompt":"continue","resume":"subagent-s1-p1"}`)),
+		mockllm.ToolCallTurn(toolCall("q1", "Subagent", resumeArgs(eventSubagentID(t, evs, 0), "continue"))),
 		mockllm.TextTurn("parent 2 done"),
 	)
 	e2 := newEngine(agent.Deps{LLM: parent2, Catalog: cat})
 	sess2 := session.New("s2", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0))
 	r2 := e2.Run(context.Background(), sess2, agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
 	evs2 := drainObserving(t, r2, nil)
-	resumed := resultByCallID(evs2)["q1"]
+	resumed := resultByCallID(evs2)[boundCallID(t, sess2, "q1")]
 	if resumed == nil || resumed.IsError || !strings.Contains(resumed.Content, "child resumed fine") {
 		t.Fatalf("run-end-cancelled child must be resumable in a new run, got %+v", resumed)
 	}
@@ -584,7 +600,7 @@ func TestBackgroundGateFullFailFast(t *testing.T) {
 	task := agent.NewSubagentTool(childEngineWith(childLLM, catalogWith(t, gate)),
 		agent.WithMaxConcurrentChildren(1))
 
-	parentLLM := mockllm.New(
+	parentLLM := newScriptedLLM(
 		mockllm.ToolCallTurn(toolCall("p1", "Subagent", `{"prompt":"first","background":true}`)),
 		mockllm.ToolCallTurn(toolCall("p2", "Subagent", `{"prompt":"second","background":true}`)),
 		mockllm.ToolCallTurn(toolCall("p3", "SubagentStatus", `{}`)),
@@ -594,31 +610,32 @@ func TestBackgroundGateFullFailFast(t *testing.T) {
 		mockllm.TextTurn("parent really done"),
 	)
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, task, agent.NewSubagentStatusTool())})
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
+	sess := newSession(t, session.Limits{})
+	r := e.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
 	evs := drainObserving(t, r, nil)
 	results := resultByCallID(evs)
 
-	failed := results["p2"]
+	failed := results[boundCallID(t, sess, "p2")]
 	if failed == nil || !failed.IsError {
 		t.Fatalf("gate-full background start must be a fail-fast tool error, got %+v", failed)
 	}
-	if !strings.Contains(failed.Content, "concurrency limit") || !strings.Contains(failed.Content, "subagent-s1-p1") {
+	if !strings.Contains(failed.Content, "concurrency limit") || !strings.Contains(failed.Content, eventSubagentID(t, evs, 0)) {
 		t.Fatalf("gate-full error must name the limit and list the live background ids, got %q", failed.Content)
 	}
 	// The failing call's OWN id (subagent-p2) must be ABSENT from the error: its
 	// pre-gate registration is aborted BEFORE the live-ids read, so the error
 	// never claims the child that just failed to start is "currently running".
-	if strings.Contains(failed.Content, "subagent-p2") {
+	if strings.Contains(failed.Content, "subagent-"+string(sess.ID)+"-"+string(boundCallID(t, sess, "p2"))) {
 		t.Fatalf("gate-full error must not list the failing call's own id, got %q", failed.Content)
 	}
 	if !strings.Contains(failed.Content, "SubagentStatus") {
 		t.Fatalf("gate-full error must point at the recoverable action, got %q", failed.Content)
 	}
-	roster := results["p3"]
-	if roster == nil || !strings.Contains(roster.Content, "subagent-s1-p1") {
+	roster := results[boundCallID(t, sess, "p3")]
+	if roster == nil || !strings.Contains(roster.Content, eventSubagentID(t, evs, 0)) {
 		t.Fatalf("roster must list the live child, got %+v", roster)
 	}
-	if strings.Contains(roster.Content, "subagent-p2") {
+	if strings.Contains(roster.Content, "subagent-"+string(sess.ID)+"-"+string(boundCallID(t, sess, "p2"))) {
 		t.Fatalf("the failed-fast registration must be REMOVED (A5) — roster leaked the phantom: %q", roster.Content)
 	}
 	if got := lastResult(t, evs); got.Stop != session.StopEndTurn {
@@ -636,21 +653,22 @@ func TestBackgroundStructuredOutput(t *testing.T) {
 	)
 	task := agent.NewSubagentTool(childEngineWith(childLLM, catalogWith(t)))
 
-	parentLLM := mockllm.New(
+	parentLLM := newScriptedLLM(
 		mockllm.ToolCallTurn(toolCall("p1", "Subagent",
 			`{"prompt":"extract","background":true,"output_schema":{"type":"object","properties":{"name":{"type":"string"},"age":{"type":"integer"}},"required":["name","age"]}}`)),
-		mockllm.ToolCallTurn(toolCall("p2", "SubagentStatus", `{"agent_id":"subagent-s1-p1","wait_ms":30000}`)),
+		handleTurn(t, "p1", toolCall("p2", "SubagentStatus", `{"wait_ms":30000}`), "agent_id"),
 		mockllm.TextTurn("parent done"),
 	)
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, task, agent.NewSubagentStatusTool())})
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
+	sess := newSession(t, session.Limits{})
+	r := e.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
 	evs := drainObserving(t, r, nil)
 
-	collected := resultByCallID(evs)["p2"]
+	collected := resultByCallID(evs)[boundCallID(t, sess, "p2")]
 	if collected == nil || collected.IsError {
 		t.Fatalf("structured background collection must succeed, got %+v", collected)
 	}
-	if !strings.Contains(collected.Content, `"Ada"`) || !strings.Contains(collected.Content, "agentId: subagent-s1-p1") {
+	if !strings.Contains(collected.Content, `"Ada"`) || !strings.Contains(collected.Content, "agentId: "+eventSubagentID(t, evs, 0)) {
 		t.Fatalf("collected result must be the validated payload + trailer, got %q", collected.Content)
 	}
 }
@@ -668,11 +686,17 @@ func TestCompactionDuringLiveBackgroundChild(t *testing.T) {
 	task := agent.NewSubagentTool(childEngineWith(childLLM, catalogWith(t, gate)))
 
 	big := strings.Repeat("filler output ", 100) // ~1400 chars ⇒ blows past the tiny window below
-	parentLLM := mockllm.New(
+	var childID string
+	parentLLM := newScriptedLLM(
 		mockllm.ToolCallTurn(toolCall("p1", "Subagent", `{"prompt":"x","background":true}`)),
-		mockllm.ToolCallTurn(toolCall("p2", "Probe", `{}`)),
+		func(req port.LLMRequest) mockllm.Turn {
+			childID = resultHandle(t, req, "p1")
+			return mockllm.ToolCallTurn(toolCall("p2", "Probe", `{}`))
+		},
 		mockllm.ToolCallTurn(toolCall("p3", "Probe", `{}`)),
-		mockllm.ToolCallTurn(toolCall("p4", "SubagentStatus", `{"agent_id":"subagent-s1-p1","wait_ms":30000}`)),
+		func(port.LLMRequest) mockllm.Turn {
+			return mockllm.ToolCallTurn(toolCall("p4", "SubagentStatus", fmt.Sprintf(`{"agent_id":%q,"wait_ms":30000}`, childID)))
+		},
 		mockllm.TextTurn("parent done"),
 	)
 	e := newEngine(agent.Deps{
@@ -689,7 +713,7 @@ func TestCompactionDuringLiveBackgroundChild(t *testing.T) {
 		switch {
 		case ev.Type == session.EvCompaction:
 			sawCompaction = true
-		case ev.Type == session.EvToolCall && ev.ToolCall != nil && ev.ToolCall.ID == "p4":
+		case ev.Type == session.EvToolCall && ev.ToolCall != nil && ev.ToolCall.Name == "SubagentStatus":
 			gate.releaseOnce()
 		}
 	})
@@ -699,7 +723,7 @@ func TestCompactionDuringLiveBackgroundChild(t *testing.T) {
 	if sess.State == session.StateFailed {
 		t.Fatalf("compaction during a live background child must not fail the run")
 	}
-	collected := resultByCallID(evs)["p4"]
+	collected := resultByCallID(evs)[boundCallID(t, sess, "p4")]
 	if collected == nil || collected.IsError || !strings.Contains(collected.Content, "CHILD FINDINGS: post-compaction") {
 		t.Fatalf("collection after compaction must still deliver, got %+v", collected)
 	}
@@ -719,16 +743,17 @@ func TestSubagentStatusWaitRespectsRunCancel(t *testing.T) {
 	)
 	task := agent.NewSubagentTool(childEngineWith(childLLM, catalogWith(t, gate)))
 
-	parentLLM := mockllm.New(
+	parentLLM := newScriptedLLM(
 		mockllm.ToolCallTurn(toolCall("p1", "Subagent", `{"prompt":"x","background":true}`)),
-		mockllm.ToolCallTurn(toolCall("p2", "SubagentStatus", `{"agent_id":"subagent-s1-p1","wait_ms":120000}`)),
+		handleTurn(t, "p1", toolCall("p2", "SubagentStatus", `{"wait_ms":120000}`), "agent_id"),
 		mockllm.TextTurn("never reached"),
 	)
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, task, agent.NewSubagentStatusTool())})
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
+	sess := newSession(t, session.Limits{})
+	r := e.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
 
 	evs := drainObserving(t, r, func(ev session.Event) {
-		if ev.Type == session.EvToolCall && ev.ToolCall != nil && ev.ToolCall.ID == "p2" {
+		if ev.Type == session.EvToolCall && ev.ToolCall != nil && ev.ToolCall.Name == "SubagentStatus" {
 			r.Cancel() // cancel the whole run while the status tool is parked
 		}
 	})
@@ -751,21 +776,22 @@ func TestBackgroundComposesWithResume(t *testing.T) {
 	task := agent.NewSubagentTool(childEngineWith(childLLM, catalogWith(t)),
 		agent.WithSubagentStore(store))
 
-	parentLLM := mockllm.New(
+	parentLLM := newScriptedLLM(
 		mockllm.ToolCallTurn(toolCall("p1", "Subagent", `{"prompt":"first"}`)),
-		mockllm.ToolCallTurn(toolCall("p2", "Subagent", `{"prompt":"go deeper","resume":"subagent-s1-p1","background":true}`)),
-		mockllm.ToolCallTurn(toolCall("p3", "SubagentStatus", `{"agent_id":"subagent-s1-p1","wait_ms":30000}`)),
+		handleTurn(t, "p1", toolCall("p2", "Subagent", `{"prompt":"go deeper","background":true}`), "resume"),
+		handleTurn(t, "p1", toolCall("p3", "SubagentStatus", `{"wait_ms":30000}`), "agent_id"),
 		mockllm.TextTurn("parent done"),
 	)
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, task, agent.NewSubagentStatusTool())})
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
+	sess := newSession(t, session.Limits{})
+	r := e.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
 	evs := drainObserving(t, r, nil)
 	results := resultByCallID(evs)
 
-	if first := results["p1"]; first == nil || !strings.Contains(first.Content, "first pass done") {
+	if first := results[boundCallID(t, sess, "p1")]; first == nil || !strings.Contains(first.Content, "first pass done") {
 		t.Fatalf("foreground first pass must succeed, got %+v", first)
 	}
-	collected := results["p3"]
+	collected := results[boundCallID(t, sess, "p3")]
 	if collected == nil || collected.IsError || !strings.Contains(collected.Content, "second pass done") {
 		t.Fatalf("background resume must be collectible, got %+v", collected)
 	}
@@ -807,13 +833,14 @@ func TestBackgroundSubagentFailureCarriesCause(t *testing.T) {
 		chattyThenBrokenChild(chatter, errors.New(causeText)),
 		catalogWith(t, failureCauseReadTool())))
 
-	parentLLM := mockllm.New(
+	parentLLM := newScriptedLLM(
 		mockllm.ToolCallTurn(toolCall("p1", "Subagent", `{"prompt":"investigate","background":true}`)),
-		mockllm.ToolCallTurn(toolCall("p2", "SubagentStatus", `{"agent_id":"subagent-s1-p1","wait_ms":30000}`)),
+		handleTurn(t, "p1", toolCall("p2", "SubagentStatus", `{"wait_ms":30000}`), "agent_id"),
 		mockllm.TextTurn("parent done"),
 	)
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, task, agent.NewSubagentStatusTool())})
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
+	sess := newSession(t, session.Limits{})
+	r := e.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
 	evs := drainObserving(t, r, nil)
 
 	// (a) The OBSERVABILITY channel: exactly one subagent.end, carrying the stop AND the why.
@@ -840,7 +867,7 @@ func TestBackgroundSubagentFailureCarriesCause(t *testing.T) {
 
 	// (b) The MODEL channel: the SubagentStatus-collected body leads with the cause, and
 	//     never presents the child's chat line as the failure reason.
-	collected := resultByCallID(evs)["p2"]
+	collected := resultByCallID(evs)[boundCallID(t, sess, "p2")]
 	if collected == nil {
 		t.Fatalf("SubagentStatus produced no result: %v", typesOf(evs))
 	}
@@ -865,16 +892,17 @@ func TestBackgroundSubagentFailureAdvertisesResume(t *testing.T) {
 		childEngineWith(mockllm.New(mockllm.ErrorTurn(errors.New(causeText), mockllm.TextChunk("x"))), catalogWith(t)),
 		agent.WithSubagentStore(memstore.New()))
 
-	parentLLM := mockllm.New(
+	parentLLM := newScriptedLLM(
 		mockllm.ToolCallTurn(toolCall("p1", "Subagent", `{"prompt":"investigate","background":true}`)),
-		mockllm.ToolCallTurn(toolCall("p2", "SubagentStatus", `{"agent_id":"subagent-s1-p1","wait_ms":30000}`)),
+		handleTurn(t, "p1", toolCall("p2", "SubagentStatus", `{"wait_ms":30000}`), "agent_id"),
 		mockllm.TextTurn("parent done"),
 	)
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, task, agent.NewSubagentStatusTool())})
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
+	sess := newSession(t, session.Limits{})
+	r := e.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
 	evs := drainObserving(t, r, nil)
 
-	collected := resultByCallID(evs)["p2"]
+	collected := resultByCallID(evs)[boundCallID(t, sess, "p2")]
 	if collected == nil {
 		t.Fatalf("SubagentStatus produced no result: %v", typesOf(evs))
 	}

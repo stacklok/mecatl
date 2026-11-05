@@ -7,7 +7,6 @@ import (
 
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/agent"
-	"github.com/stacklok/mecatl/engine/learning"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 )
@@ -55,7 +54,7 @@ func TestNewUserModelReviewerNilArgsPanic(t *testing.T) {
 func TestUserModelObserverNeedsNoSessionStore(t *testing.T) {
 	llm := mockllm.New(mockllm.TextTurn("done"))
 	reviewer := agent.NewUserModelObserver(newEngine(agent.Deps{LLM: llm, Catalog: tool.NewCatalog()}))
-	if err := reviewer.Observe(context.Background(), learning.NewTrajectory(
+	if err := reviewer.Observe(context.Background(), currentLearningTrajectory(t,
 		"completed", "/workspace", session.StopEndTurn, session.Usage{},
 		[]session.Message{session.NewUserMessage("I prefer concise answers")},
 	)); err != nil {

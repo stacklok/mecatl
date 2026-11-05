@@ -185,31 +185,35 @@ func TestBackgroundShellHappyPath(t *testing.T) {
 	runner := newFakeShellStreamer()
 	cat := shellCatalogFor(t, &awaitSignalTool{ch: runner.started})
 
-	llm := mockllm.New(
+	llm := newScriptedLLM(
 		mockllm.ToolCallTurn(toolCall("b1", "Shell", `{"command":"build","background":true}`)),
 		// Park until the streaming invocation is genuinely live, so the poll
 		// below deterministically observes a RUNNING job.
 		mockllm.ToolCallTurn(toolCall("pw", "AwaitChild", `{}`)),
-		mockllm.ToolCallTurn(toolCall("b2", "ShellStatus", `{"job_id":"bashcmd-b1"}`)),
+		handleTurn(t, "b1", toolCall("b2", "ShellStatus", `{}`), "job_id"),
 		// Roster wait (no job_id): parks until the job's terminal lands in the
 		// registry but does NOT collect, so the NEXT turn boundary sees a
 		// finished, uncollected job and injects the harness note.
 		mockllm.ToolCallTurn(toolCall("b4", "ShellStatus", `{"wait_ms":30000}`)),
 		// Collect the finished result (exactly once)...
-		mockllm.ToolCallTurn(toolCall("b5", "ShellStatus", `{"job_id":"bashcmd-b1"}`)),
+		handleTurn(t, "b1", toolCall("b5", "ShellStatus", `{}`), "job_id"),
 		// ...and a second collect reports already-delivered.
-		mockllm.ToolCallTurn(toolCall("b6", "ShellStatus", `{"job_id":"bashcmd-b1"}`)),
+		handleTurn(t, "b1", toolCall("b6", "ShellStatus", `{}`), "job_id"),
 		mockllm.TextTurn("parent done"),
 	)
 	e := newEngine(agent.Deps{LLM: llm, Catalog: cat})
 	sess := newSession(t, session.Limits{})
 	r := e.Run(context.Background(), sess, agent.MemEnvRunner("/ws", runner), agent.RunRequest{Text: "go"})
 
+	var pollID session.ToolCallID
 	evs := drainObserving(t, r, func(ev session.Event) {
+		if ev.Type == session.EvToolCall && ev.ToolCall != nil && ev.ToolCall.Name == "ShellStatus" && pollID == "" {
+			pollID = ev.ToolCall.ID
+		}
 		// Release the job only once the RUNNING poll's result has been recorded:
 		// the roster wait (b4) then parks on a job that can finish, and the
 		// boundary after b4 deterministically sees it done and uncollected.
-		if ev.Type == session.EvToolResult && ev.ToolResult != nil && ev.ToolResult.CallID == "b2" {
+		if ev.Type == session.EvToolResult && ev.ToolResult != nil && ev.ToolResult.CallID == pollID {
 			runner.releaseOnce()
 		}
 	})
@@ -217,22 +221,22 @@ func TestBackgroundShellHappyPath(t *testing.T) {
 
 	// The background call returned IMMEDIATELY with the started-result naming
 	// the bashcmd- job id and the ShellStatus channel.
-	started := results["b1"]
+	started := results[boundCallID(t, sess, "b1")]
 	if started == nil || started.IsError {
 		t.Fatalf("background Shell call must return a non-error started-result, got %+v", started)
 	}
-	for _, want := range []string{"job id: bashcmd-b1", "ShellStatus", "cancelled if it is still running when this run ends"} {
+	for _, want := range []string{"job id: bashcmd-" + string(boundCallID(t, sess, "b1")), "ShellStatus", "cancelled if it is still running when this run ends"} {
 		if !strings.Contains(started.Content, want) {
 			t.Fatalf("started-result must mention %q, got %q", want, started.Content)
 		}
 	}
 
 	// The RUNNING poll: state + command + live tail peek, NOT marked delivered.
-	running := results["b2"]
+	running := results[boundCallID(t, sess, "b2")]
 	if running == nil || running.IsError {
 		t.Fatalf("running poll must succeed, got %+v", running)
 	}
-	for _, want := range []string{"bashcmd-b1", "running", "command: build"} {
+	for _, want := range []string{"bashcmd-" + string(boundCallID(t, sess, "b1")), "running", "command: build"} {
 		if !strings.Contains(running.Content, want) {
 			t.Fatalf("running poll must mention %q, got %q", want, running.Content)
 		}
@@ -240,7 +244,7 @@ func TestBackgroundShellHappyPath(t *testing.T) {
 
 	// The turn-boundary harness note: EXACTLY ONE message, the bash clause
 	// naming the job id + its stop label, and no delegation clause.
-	wantNotice := "[harness note: 1 background command(s) finished: bashcmd-b1 (end_turn). " +
+	wantNotice := "[harness note: 1 background command(s) finished: bashcmd-" + string(boundCallID(t, sess, "b1")) + " (end_turn). " +
 		"Collect each output with ShellStatus before relying on it.]"
 	noticeIdx := userMessageEqual(sess.Conversation.Messages, wantNotice)
 	if len(noticeIdx) != 1 {
@@ -251,21 +255,21 @@ func TestBackgroundShellHappyPath(t *testing.T) {
 		t.Fatalf("the notice must never repeat; found %d harness notes", len(all))
 	}
 	// The notice precedes the model's collection turn (it is what prompts it).
-	collectIdx := assistantWithCall(sess.Conversation.Messages, "b5")
+	collectIdx := assistantWithCall(sess.Conversation.Messages, boundCallID(t, sess, "b5"))
 	if collectIdx == -1 || noticeIdx[0] > collectIdx {
 		t.Fatalf("notice (idx %d) must precede the collection turn (idx %d)", noticeIdx[0], collectIdx)
 	}
 
 	// Collection delivers the retained tail + the exit line, exactly once.
-	collected := results["b5"]
+	collected := results[boundCallID(t, sess, "b5")]
 	if collected == nil || collected.IsError {
 		t.Fatalf("collection must succeed, got %+v", collected)
 	}
 	if !strings.Contains(collected.Content, "output of: build") || !strings.Contains(collected.Content, "[exit code: 0]") {
 		t.Fatalf("collected result must carry the tail + exit line, got %q", collected.Content)
 	}
-	second := results["b6"]
-	if second == nil || !strings.Contains(second.Content, "already delivered") || !strings.Contains(second.Content, "bashcmd-b1") {
+	second := results[boundCallID(t, sess, "b6")]
+	if second == nil || !strings.Contains(second.Content, "already delivered") || !strings.Contains(second.Content, "bashcmd-"+string(boundCallID(t, sess, "b1"))) {
 		t.Fatalf("second collection must report already-delivered with the id, got %+v", second)
 	}
 	if strings.Contains(second.Content, "output of: build") {
@@ -288,12 +292,12 @@ func TestBackgroundShellCancel(t *testing.T) {
 	runner := newFakeShellStreamer()
 	cat := shellCatalogFor(t, &awaitSignalTool{ch: runner.started})
 
-	llm := mockllm.New(
+	llm := newScriptedLLM(
 		mockllm.ToolCallTurn(toolCall("b1", "Shell", `{"command":"slow","background":true}`)),
 		mockllm.ToolCallTurn(toolCall("pw", "AwaitChild", `{}`)),
-		mockllm.ToolCallTurn(toolCall("b2", "ShellStatus", `{"cancel":"bashcmd-b1"}`)),
+		handleTurn(t, "b1", toolCall("b2", "ShellStatus", `{}`), "cancel"),
 		// Wait for the cancellation to land in the registry, then collect.
-		mockllm.ToolCallTurn(toolCall("b3", "ShellStatus", `{"job_id":"bashcmd-b1","wait_ms":30000}`)),
+		handleTurn(t, "b1", toolCall("b3", "ShellStatus", `{"wait_ms":30000}`), "job_id"),
 		mockllm.TextTurn("parent done"),
 	)
 	e := newEngine(agent.Deps{LLM: llm, Catalog: cat})
@@ -303,7 +307,7 @@ func TestBackgroundShellCancel(t *testing.T) {
 	results := resultByCallID(evs)
 
 	// The cancel confirmation names the job and does not wait for the terminal.
-	confirm := results["b2"]
+	confirm := results[boundCallID(t, sess, "b2")]
 	if confirm == nil || confirm.IsError || !strings.Contains(confirm.Content, "cancellation requested") {
 		t.Fatalf("cancel must return a non-error confirmation, got %+v", confirm)
 	}
@@ -317,7 +321,7 @@ func TestBackgroundShellCancel(t *testing.T) {
 
 	// The job collected as cancelled (notice was delivered-skip: the collecting
 	// wait consumed the terminal before any boundary saw it).
-	collected := results["b3"]
+	collected := results[boundCallID(t, sess, "b3")]
 	if collected == nil || !strings.Contains(collected.Content, "canceled") {
 		t.Fatalf("collected cancelled job must report the cancellation, got %+v", collected)
 	}
@@ -337,7 +341,7 @@ func TestBackgroundShellRunEndDrain(t *testing.T) {
 	runner := newFakeShellStreamer() // never released: the job outlives every parent turn
 	cat := shellCatalogFor(t, &awaitSignalTool{ch: runner.started})
 
-	llm := mockllm.New(
+	llm := newScriptedLLM(
 		mockllm.ToolCallTurn(
 			toolCall("b1", "Shell", `{"command":"watch","background":true}`),
 			toolCall("pw", "AwaitChild", `{}`), // job genuinely mid-flight at the clean end
@@ -351,7 +355,7 @@ func TestBackgroundShellRunEndDrain(t *testing.T) {
 	evs := drainObserving(t, r, nil)
 
 	// The pending nudge fired EXACTLY ONCE, the bash clause naming the job id.
-	wantNudge := "[harness note: 1 background command(s) still running: bashcmd-b1. " +
+	wantNudge := "[harness note: 1 background command(s) still running: bashcmd-" + string(boundCallID(t, sess, "b1")) + ". " +
 		"Collect or wait for them with ShellStatus, cancel them, or finish — " +
 		"anything still running when you finish will be cancelled.]"
 	if nudgeIdx := userMessageEqual(sess.Conversation.Messages, wantNudge); len(nudgeIdx) != 1 {
@@ -384,12 +388,12 @@ func TestBackgroundShellPermissionGate(t *testing.T) {
 	// that start and releases it — so by turn 2 the job is finishing, and b2's
 	// wait collects a real terminal. The release is script-driven (inside
 	// dispatch), never keyed on the event stream, so it cannot miss a park.
-	llm := mockllm.New(
+	llm := newScriptedLLM(
 		mockllm.ToolCallTurn(
 			toolCall("b1", "Shell", `{"command":"build","background":true}`),
 			toolCall("rel", "StartThenRelease", `{}`),
 		),
-		mockllm.ToolCallTurn(toolCall("b2", "ShellStatus", `{"job_id":"bashcmd-b1","wait_ms":30000}`)),
+		handleTurn(t, "b1", toolCall("b2", "ShellStatus", `{"wait_ms":30000}`), "job_id"),
 		mockllm.TextTurn("parent done"),
 	)
 	e := newEngine(agent.Deps{LLM: llm, Catalog: cat, Policy: policy})
@@ -401,7 +405,7 @@ func TestBackgroundShellPermissionGate(t *testing.T) {
 		if ev.Type == session.EvPermissionAsk && ev.Ask != nil {
 			// Correlate the ask to the BASH call via its structured Call field
 			// (grammar-free); before the verdict the command must not have run.
-			if ev.Ask.Call == "b1" {
+			if ev.Ask.Call == boundCallID(t, sess, "b1") {
 				sawShellAsk = true
 				if got := runner.streamingCalls(); got != 0 {
 					t.Errorf("runner must have ZERO invocations before the Allow verdict, got %d", got)
@@ -419,7 +423,7 @@ func TestBackgroundShellPermissionGate(t *testing.T) {
 		t.Fatalf("exactly one streaming invocation after Allow, got %d", got)
 	}
 	runner.releaseOnce()
-	collected := resultByCallID(evs)["b2"]
+	collected := resultByCallID(evs)[boundCallID(t, sess, "b2")]
 	if collected == nil || collected.IsError || !strings.Contains(collected.Content, "output of: build") {
 		t.Fatalf("the approved job must be collectable, got %+v", collected)
 	}
@@ -436,7 +440,7 @@ func TestBackgroundShellForegroundParity(t *testing.T) {
 	runner := newFakeShellStreamer()
 	cat := shellCatalogFor(t)
 
-	llm := mockllm.New(
+	llm := newScriptedLLM(
 		mockllm.ToolCallTurn(toolCall("b1", "Shell", `{"command":"echo hi"}`)),
 		mockllm.ToolCallTurn(toolCall("b2", "ShellStatus", `{}`)),
 		mockllm.TextTurn("parent done"),
@@ -447,7 +451,7 @@ func TestBackgroundShellForegroundParity(t *testing.T) {
 	evs := drainObserving(t, r, nil)
 	results := resultByCallID(evs)
 
-	fg := results["b1"]
+	fg := results[boundCallID(t, sess, "b1")]
 	if fg == nil || fg.IsError || !strings.Contains(fg.Content, "fg: echo hi") || !strings.Contains(fg.Content, "[exit code: 0]") {
 		t.Fatalf("foreground Shell must return the ordinary synchronous result, got %+v", fg)
 	}
@@ -458,7 +462,7 @@ func TestBackgroundShellForegroundParity(t *testing.T) {
 		t.Fatalf("a foreground call must never reach the streaming seam, got %d", got)
 	}
 
-	roster := results["b2"]
+	roster := results[boundCallID(t, sess, "b2")]
 	if roster == nil || roster.IsError || !strings.Contains(roster.Content, "No background commands") {
 		t.Fatalf("the roster must be empty after a foreground-only run, got %+v", roster)
 	}

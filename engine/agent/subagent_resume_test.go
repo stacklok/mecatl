@@ -33,7 +33,7 @@ func TestSubagentResumeContinuesPriorConversation(t *testing.T) {
 
 	// Capture the SECOND child run's replayed history (the resume's first request).
 	var mu sync.Mutex
-	var resumeReqMsgs []session.Message
+	var resumeReqMsgs []port.LLMMessage
 	var childRun int
 	obs := func(req port.LLMRequest) {
 		mu.Lock()
@@ -226,7 +226,7 @@ func TestSubagentResumeCancelledInterrupts(t *testing.T) {
 	store := memstore.New()
 
 	var mu sync.Mutex
-	var resumeReqMsgs []session.Message
+	var resumeReqMsgs []port.LLMMessage
 	var childRun int
 	obs := func(req port.LLMRequest) {
 		mu.Lock()
@@ -272,7 +272,7 @@ func TestSubagentResumeCancelledInterrupts(t *testing.T) {
 	mu.Lock()
 	msgs := resumeReqMsgs
 	mu.Unlock()
-	assertNoOrphanedToolCalls(t, msgs)
+	assertLLMToolPairing(t, msgs)
 }
 
 // TestSubagentResumeFailedRecovers is the #318 core contract, the inverse of the
@@ -283,7 +283,7 @@ func TestSubagentResumeFailedRecovers(t *testing.T) {
 	store := memstore.New()
 
 	var mu sync.Mutex
-	var resumeReqMsgs []session.Message
+	var resumeReqMsgs []port.LLMMessage
 	var childRun int
 	obs := func(req port.LLMRequest) {
 		mu.Lock()
@@ -337,7 +337,7 @@ func TestSubagentResumeFailedRecovers(t *testing.T) {
 	if !sawOrig {
 		t.Fatalf("recovered child did not replay its prior conversation: %+v", msgs)
 	}
-	assertNoOrphanedToolCalls(t, msgs)
+	assertLLMToolPairing(t, msgs)
 
 	// And the continuation is re-persisted as a normal (idle-recovered, then completed)
 	// session, not left failed.
@@ -363,7 +363,7 @@ func TestSubagentResumeFailedTightensLimits(t *testing.T) {
 	if err := seed.BeginTurn(); err != nil {
 		t.Fatalf("seed BeginTurn: %v", err)
 	}
-	if err := seed.RecordAssistant(session.NewAssistantMessage("seed answer", "", nil)); err != nil {
+	if err := seed.RecordAssistant(session.NewAssistantMessage("seed answer", nil)); err != nil {
 		t.Fatalf("seed RecordAssistant: %v", err)
 	}
 	if err := seed.Fail(); err != nil {
@@ -476,7 +476,7 @@ func TestSubagentConcurrentResumeGuard(t *testing.T) {
 	if err := seed.BeginTurn(); err != nil {
 		t.Fatalf("seed BeginTurn: %v", err)
 	}
-	if err := seed.RecordAssistant(session.NewAssistantMessage("seed answer", "", nil)); err != nil {
+	if err := seed.RecordAssistant(session.NewAssistantMessage("seed answer", nil)); err != nil {
 		t.Fatalf("seed RecordAssistant: %v", err)
 	}
 	if err := seed.Complete(); err != nil {
@@ -542,7 +542,7 @@ func TestSubagentResumeBudgetTightenOnly(t *testing.T) {
 	// Seed a completed child.
 	seed := session.New("subagent-p1", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Now())
 	_ = seed.BeginTurn()
-	_ = seed.RecordAssistant(session.NewAssistantMessage("seed", "", nil))
+	_ = seed.RecordAssistant(session.NewAssistantMessage("seed", nil))
 	_ = seed.Complete()
 	if err := store.Save(context.Background(), seed); err != nil {
 		t.Fatalf("seed save: %v", err)
@@ -577,7 +577,7 @@ func TestSubagentResumeStructuredOutput(t *testing.T) {
 	// Seed a completed child.
 	seed := session.New("subagent-p1", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Now())
 	_ = seed.BeginTurn()
-	_ = seed.RecordAssistant(session.NewAssistantMessage("seed", "", nil))
+	_ = seed.RecordAssistant(session.NewAssistantMessage("seed", nil))
 	_ = seed.Complete()
 	if err := store.Save(context.Background(), seed); err != nil {
 		t.Fatalf("seed save: %v", err)
@@ -629,7 +629,7 @@ func TestSubagentResumeTeamMemberIDRejected(t *testing.T) {
 	store := memstore.New()
 	member := session.New("team-p1-worker", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Now())
 	_ = member.BeginTurn()
-	_ = member.RecordAssistant(session.NewAssistantMessage("member work", "", nil))
+	_ = member.RecordAssistant(session.NewAssistantMessage("member work", nil))
 	_ = member.Complete()
 	if err := store.Save(context.Background(), member); err != nil {
 		t.Fatalf("seed member: %v", err)
@@ -662,7 +662,7 @@ func TestParentResumesSubagentByTrailerID(t *testing.T) {
 	store := memstore.New()
 
 	var mu sync.Mutex
-	var resumeReqMsgs []session.Message
+	var resumeReqMsgs []port.LLMMessage
 	var childRun int
 	obs := func(req port.LLMRequest) {
 		mu.Lock()
@@ -681,11 +681,10 @@ func TestParentResumesSubagentByTrailerID(t *testing.T) {
 	subTool := agent.NewSubagentTool(childEngine, agent.WithSubagentStore(store))
 	parentCat := catalogWith(t, subTool)
 
-	parentLLM := mockllm.New(
+	parentLLM := newScriptedLLM(
 		mockllm.ToolCallTurn(session.NewToolCall("p1", "Subagent",
 			json.RawMessage(`{"prompt":"trace the FIRST code path"}`))),
-		mockllm.ToolCallTurn(session.NewToolCall("p2", "Subagent",
-			json.RawMessage(`{"resume":"subagent-s1-p1","prompt":"continue"}`))),
+		handleTurn(t, "p1", toolCall("p2", "Subagent", `{"prompt":"continue"}`), "resume"),
 		mockllm.TextTurn("parent done"),
 	)
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: parentCat})
@@ -705,8 +704,8 @@ func TestParentResumesSubagentByTrailerID(t *testing.T) {
 	}
 	firstID := extractAgentID(t, subResults[0].Content)
 	secondID := extractAgentID(t, subResults[1].Content)
-	if firstID != "subagent-s1-p1" {
-		t.Fatalf("first trailer id = %q, want subagent-s1-p1", firstID)
+	if firstID != eventSubagentID(t, evs, 0) {
+		t.Fatalf("first trailer id = %q, want the actual accepted delegation's child %q", firstID, eventSubagentID(t, evs, 0))
 	}
 	if secondID != firstID {
 		t.Fatalf("second trailer id = %q, want byte-identical to the first %q", secondID, firstID)
@@ -750,7 +749,7 @@ func TestSubagentResumeForkerRehomesAndFailsFast(t *testing.T) {
 	// Seed a completed child whose recorded workspace is the (now-dead) original root.
 	seed := session.New("subagent-p1", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/dead/original-worktree", Revision: "in-tree-v1"}, session.Limits{}, time.Now())
 	_ = seed.BeginTurn()
-	_ = seed.RecordAssistant(session.NewAssistantMessage("seed answer", "", nil))
+	_ = seed.RecordAssistant(session.NewAssistantMessage("seed answer", nil))
 	_ = seed.Complete()
 	if err := store.Save(context.Background(), seed); err != nil {
 		t.Fatalf("seed save: %v", err)
@@ -861,7 +860,7 @@ func TestSubagentResumePreservesStoredLimits(t *testing.T) {
 	seed := session.New("subagent-p1", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"},
 		session.Limits{MaxTurns: 12, MaxToolCalls: 1, MaxConsecutiveFailures: 3}, time.Now())
 	_ = seed.BeginTurn()
-	_ = seed.RecordAssistant(session.NewAssistantMessage("seed", "", nil))
+	_ = seed.RecordAssistant(session.NewAssistantMessage("seed", nil))
 	_ = seed.Complete()
 	if err := store.Save(context.Background(), seed); err != nil {
 		t.Fatalf("seed save: %v", err)
@@ -915,7 +914,7 @@ func TestSubagentResumeBudgetCarriesPriorSpend(t *testing.T) {
 	}{
 		{"BeginTurn", prior.BeginTurn()},
 		{"RecordUsage", prior.RecordUsage(session.Usage{InputTokens: 250, OutputTokens: 150})},
-		{"RecordAssistant", prior.RecordAssistant(session.NewAssistantMessage("prior work", "", nil))},
+		{"RecordAssistant", prior.RecordAssistant(session.NewAssistantMessage("prior work", nil))},
 		{"Complete", prior.Complete()},
 	} {
 		if step.err != nil {

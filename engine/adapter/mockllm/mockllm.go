@@ -215,7 +215,7 @@ func ReasoningOnlyTurn(displaySummary, replayBlob string) Turn {
 		chunks = append(chunks, port.Chunk{Kind: port.ChunkReasoning, Text: displaySummary})
 	}
 	if replayBlob != "" {
-		chunks = append(chunks, port.Chunk{Kind: port.ChunkReasoningItem, Text: replayBlob})
+		chunks = append(chunks, port.Chunk{Kind: port.ChunkReplay, Replay: &session.ProviderReplay{Format: "mockllm", Version: 1, Data: []byte(replayBlob)}, ReplayIsOutput: true})
 	}
 	chunks = append(chunks,
 		port.Chunk{Kind: port.ChunkUsage, Usage: &session.Usage{}},
@@ -224,10 +224,9 @@ func ReasoningOnlyTurn(displaySummary, replayBlob string) Turn {
 	return Turn{Chunks: chunks}
 }
 
-// ToolCallTurn builds a turn that emits one or more fully-assembled tool calls,
-// then a usage chunk (zero usage) and a ChunkDone carrying StopEndTurn (the loop
-// continues because tool calls were produced). At least one call is expected;
-// calling it with none yields a turn that just stops.
+// ToolCallTurn accepts provider-era scripted fixtures and emits live LLM DTOs.
+// Fixture IDs are provider pairing tokens, never accepted engine identities.
+// For new scripts use LLMToolCallTurn. A zero-call script simply stops.
 //
 // The call NAME is NOT validated against any catalog: a test can script a
 // wrong/unknown tool name (e.g. session.NewToolCall("c1", "Nonexistent", nil)) to
@@ -236,13 +235,29 @@ func ReasoningOnlyTurn(displaySummary, replayBlob string) Turn {
 func ToolCallTurn(calls ...session.ToolCall) Turn {
 	chunks := make([]port.Chunk, 0, len(calls)+2)
 	for i := range calls {
-		c := calls[i]
+		c := LLMCall(calls[i])
 		chunks = append(chunks, port.Chunk{Kind: port.ChunkToolCall, ToolCall: &c})
 	}
 	chunks = append(chunks,
 		port.Chunk{Kind: port.ChunkUsage, Usage: &session.Usage{}},
 		port.Chunk{Kind: port.ChunkDone, Stop: session.StopEndTurn},
 	)
+	return Turn{Chunks: chunks}
+}
+
+// LLMCall converts an old scripted fixture's provider-era keys to live DTOs.
+// This is a test-script convenience, never a canonical history projection.
+func LLMCall(call session.ToolCall) port.LLMToolCall {
+	return port.LLMToolCall{ID: session.ProviderCallID(call.ID), Name: call.Name, Args: append([]byte(nil), call.Args...)}
+}
+
+// LLMToolCallTurn scripts provider-facing calls directly.
+func LLMToolCallTurn(calls ...port.LLMToolCall) Turn {
+	chunks := make([]port.Chunk, 0, len(calls)+2)
+	for _, call := range calls {
+		chunks = append(chunks, port.Chunk{Kind: port.ChunkToolCall, ToolCall: &call})
+	}
+	chunks = append(chunks, port.Chunk{Kind: port.ChunkUsage, Usage: &session.Usage{}}, port.Chunk{Kind: port.ChunkDone, Stop: session.StopEndTurn})
 	return Turn{Chunks: chunks}
 }
 
@@ -271,16 +286,10 @@ func ReasoningChunk(text string) port.Chunk {
 	return port.Chunk{Kind: port.ChunkReasoning, Text: text}
 }
 
-// ReasoningItemChunk builds a ChunkReasoningItem carrying the opaque REPLAY blob
-// (the analogue of OpenAI's reasoning-item encrypted_content).
-func ReasoningItemChunk(blob string) port.Chunk {
-	return port.Chunk{Kind: port.ChunkReasoningItem, Text: blob}
-}
-
-// ReasoningItemChunkWithID builds a ChunkReasoningItem carrying both the REPLAY
-// blob and the provider's per-item id (stored on Message.ReasoningItemID).
-func ReasoningItemChunkWithID(blob, id string) port.Chunk {
-	return port.Chunk{Kind: port.ChunkReasoningItem, Text: blob, ReasoningItemID: id}
+// ReplayChunk builds a ChunkReplay carrying a mock-owned opaque blob.
+// The engine never interprets the mockllm format.
+func ReplayChunk(blob string) port.Chunk {
+	return port.Chunk{Kind: port.ChunkReplay, Replay: &session.ProviderReplay{Format: "mockllm", Version: 1, Data: []byte(blob)}, ReplayIsOutput: true}
 }
 
 // PhaseChunk builds a ChunkPhase carrying the opaque phase marker (the analogue
@@ -293,7 +302,8 @@ func PhaseChunk(phase string) port.Chunk {
 
 // ToolCallChunk builds a ChunkToolCall.
 func ToolCallChunk(call session.ToolCall) port.Chunk {
-	return port.Chunk{Kind: port.ChunkToolCall, ToolCall: &call}
+	c := LLMCall(call)
+	return port.Chunk{Kind: port.ChunkToolCall, ToolCall: &c}
 }
 
 // UsageChunk builds a ChunkUsage.

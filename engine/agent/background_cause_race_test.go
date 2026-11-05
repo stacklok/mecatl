@@ -46,7 +46,7 @@ func TestBackgroundSubagentCauseSurvivesPostSealEmitRace(t *testing.T) {
 	task := NewSubagentTool(childEngine, WithSubagentStore(store))
 
 	holder := &noticeRunHolder{ready: make(chan struct{})}
-	await := &awaitChildrenDoneTool{holder: holder, ids: []string{"subagent-bg-cause-race-p1"}}
+	await := &awaitChildrenDoneTool{holder: holder, want: 1}
 
 	mkCall := func(id, args string) session.ToolCall {
 		return session.NewToolCall(session.ToolCallID(id), "Subagent", json.RawMessage(args))
@@ -116,7 +116,7 @@ func TestBackgroundSubagentCauseSurvivesPostSealEmitRace(t *testing.T) {
 	// (b) The child snapshot carries the cause — the mutation-kill. Removing the
 	// RecordLastError call in driveBackground empties this while (a) still passes
 	// (the event is independent of the snapshot field).
-	saved, err := store.Load(context.Background(), "subagent-bg-cause-race-p1")
+	saved, err := store.Load(context.Background(), session.SessionID(await.ids[0]))
 	if err != nil || saved == nil {
 		t.Fatalf("background child must be persisted: %v", err)
 	}
@@ -191,6 +191,7 @@ func TestForegroundSubagentCauseAlsoPersistedOnSnapshot(t *testing.T) {
 	sess := session.New("fg-cause-snap", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0))
 	r := e.Run(context.Background(), sess, memEnv("/ws"), RunRequest{Text: "go"})
 
+	var childID session.SessionID
 	var endCause string
 	deadline := time.After(15 * time.Second)
 	for {
@@ -201,6 +202,7 @@ func TestForegroundSubagentCauseAlsoPersistedOnSnapshot(t *testing.T) {
 				stop = true
 			} else if ev.Type == session.EvSubagentEnd && ev.Subagent != nil {
 				endCause = ev.Subagent.Cause
+				childID = session.SessionID(ev.Subagent.ChildID)
 			}
 		case <-deadline:
 			r.Cancel()
@@ -218,7 +220,7 @@ func TestForegroundSubagentCauseAlsoPersistedOnSnapshot(t *testing.T) {
 
 	// (b) The loaded child snapshot ALSO carries the cause (issue #332 — the
 	// snapshot is the single durable cause source regardless of path).
-	saved, err := store.Load(context.Background(), "subagent-fg-cause-snap-p1")
+	saved, err := store.Load(context.Background(), childID)
 	if err != nil || saved == nil {
 		t.Fatalf("foreground child must be persisted: %v", err)
 	}

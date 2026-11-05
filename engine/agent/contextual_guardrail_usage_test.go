@@ -161,19 +161,19 @@ func TestContextualGuardrailUsage_Scenario2_CancellationDrainsCompletedUsage(t *
 		assessment: ReviewProhibited,
 		entered:    make(chan struct{}, 2),
 		usageFor: func(req ToolReviewRequest) session.AuxiliaryUsage {
-			if req.Event.CallID == "first" {
+			if req.EffectiveCall.Name == "Read" {
 				return testGuardrailUsage(2)
 			}
 			return testGuardrailUsage(7)
 		},
 		releaseFor: func(req ToolReviewRequest) <-chan struct{} {
-			if req.Event.CallID == "first" {
+			if req.EffectiveCall.Name == "Read" {
 				return firstRelease
 			}
 			return secondRelease
 		},
 		after: func(req ToolReviewRequest) {
-			if req.Event.CallID == "second" {
+			if req.EffectiveCall.Name == "Grep" {
 				close(secondReturned)
 			}
 		},

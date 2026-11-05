@@ -26,9 +26,13 @@ func authorizingSnapshotSession(t *testing.T) *session.Session {
 		session.NewToolCall("parked", "external_create", json.RawMessage(`{"title":"model review"}`)),
 		session.NewToolCall("later", "external_list", append(json.RawMessage(nil), deferredArgs...)),
 	}
-	calls[1].ItemID = "provider-item-parked"
-	calls[2].ItemID = "provider-item-later"
-	if err := s.RecordAssistant(session.NewAssistantMessage("", "", calls)); err != nil {
+	message := session.NewAssistantMessage("", calls)
+	message.Replay = &session.MessageReplay{Bindings: []session.ToolCallBinding{
+		{CallID: "done", PairingID: "provider-done"},
+		{CallID: "parked", PairingID: "provider-parked", ItemID: "provider-item-parked"},
+		{CallID: "later", PairingID: "provider-later", ItemID: "provider-item-later"},
+	}}
+	if err := s.RecordAssistant(message); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.RecordToolResults([]session.ToolResult{session.NewToolResult("done", "ok")}); err != nil {
@@ -60,6 +64,9 @@ func TestAuthorizingSnapshotRoundTrip(t *testing.T) {
 	if got.State != session.StateAuthorizing || !ok {
 		t.Fatalf("round trip = state %q pending %+v, %v", got.State, pending, ok)
 	}
+	if replay := got.Conversation.Messages[0].Replay; replay == nil || len(replay.Bindings) != 3 || replay.Bindings[1].ItemID != "provider-item-parked" || replay.Bindings[2].ItemID != "provider-item-later" {
+		t.Fatal("authorization message lost replay bindings")
+	}
 	wantExpiry := time.Unix(1_800_000_000, 0)
 	if pending.Authorization.DisplayName != "GitHub Enterprise" {
 		t.Fatalf("DisplayName = %q", pending.Authorization.DisplayName)
@@ -67,7 +74,7 @@ func TestAuthorizingSnapshotRoundTrip(t *testing.T) {
 	if pending.Authorization.Binding != "opaque/binding value\nwith separator" {
 		t.Fatalf("Binding = %q", pending.Authorization.Binding)
 	}
-	if pending.Authorization.ID != "authorization-1" || !pending.Authorization.ExpiresAt.Equal(wantExpiry) || pending.Call.ID != "parked" || pending.Call.ItemID != "provider-item-parked" || len(pending.Deferred) != 1 || pending.Deferred[0].ID != "later" || pending.Deferred[0].ItemID != "provider-item-later" {
+	if pending.Authorization.ID != "authorization-1" || !pending.Authorization.ExpiresAt.Equal(wantExpiry) || pending.Call.ID != "parked" || len(pending.Deferred) != 1 || pending.Deferred[0].ID != "later" {
 		t.Fatalf("PendingAuthorization = %+v", pending)
 	}
 	if !bytes.Equal(pending.Call.Args, effectiveCallArgs) || !bytes.Equal(pending.Deferred[0].Args, deferredArgs) {

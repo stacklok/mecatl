@@ -392,7 +392,10 @@ func TestSubmitResultOverlayWinsAndIsAdvertised(t *testing.T) {
 
 	// (b) buildRequest advertises the OVERLAY's spec for the colliding name, exactly once.
 	sess := session.New("s1", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Now())
-	req := engine.buildRequest(context.Background(), r, sess, memEnv("/ws"))
+	req, err := engine.buildRequest(context.Background(), r, sess, memEnv("/ws"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	count, sawOverlay := 0, false
 	for _, spec := range req.Tools {
 		if spec.Name == submitResultToolName {

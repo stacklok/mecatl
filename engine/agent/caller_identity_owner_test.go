@@ -42,8 +42,6 @@ var (
 func TestCallerIdentity_Scenario3_ForkInheritsSourceOwner(t *testing.T) {
 	for _, path := range []struct {
 		name string
-		// childID is the persisted child session id the delegation path mints.
-		childID session.SessionID
 		// register wires the delegation tool onto the parent catalog, persisting
 		// its children into store.
 		register func(t *testing.T, cat *tool.Catalog, store port.SessionStore)
@@ -51,8 +49,7 @@ func TestCallerIdentity_Scenario3_ForkInheritsSourceOwner(t *testing.T) {
 		call session.ToolCall
 	}{
 		{
-			name:    "subagent",
-			childID: "subagent-owner-parent-p1",
+			name: "subagent",
 			register: func(t *testing.T, cat *tool.Catalog, store port.SessionStore) {
 				t.Helper()
 				cat.MustRegister(NewSubagentTool(childEngineForOwnerTest(t), WithSubagentStore(store)))
@@ -60,8 +57,7 @@ func TestCallerIdentity_Scenario3_ForkInheritsSourceOwner(t *testing.T) {
 			call: session.NewToolCall("p1", "Subagent", json.RawMessage(`{"prompt":"investigate"}`)),
 		},
 		{
-			name:    "parallel branch",
-			childID: "parallel-owner-parent-p1-0",
+			name: "parallel branch",
 			register: func(t *testing.T, cat *tool.Catalog, store port.SessionStore) {
 				t.Helper()
 				cat.MustRegister(NewParallelTool(childEngineForOwnerTest(t), ownerTestForker{},
@@ -70,8 +66,7 @@ func TestCallerIdentity_Scenario3_ForkInheritsSourceOwner(t *testing.T) {
 			call: session.NewToolCall("p1", "Parallel", json.RawMessage(`{"tasks":["one"]}`)),
 		},
 		{
-			name:    "team member",
-			childID: MemberSessionID("owner-parent-p1", "worker"),
+			name: "team member",
 			register: func(t *testing.T, cat *tool.Catalog, store port.SessionStore) {
 				t.Helper()
 				cat.MustRegister(NewTeamTool(ownerTestMemberFactory(t),
@@ -111,9 +106,22 @@ func TestCallerIdentity_Scenario3_ForkInheritsSourceOwner(t *testing.T) {
 				r := e.Run(ctx, sess, memEnv("/ws"), RunRequest{Text: "go"})
 				drainRunEvents(t, r)
 
-				child, err := store.Load(context.Background(), path.childID)
+				ids := acceptedCallIDs(sess)
+				if len(ids) != 1 {
+					t.Fatalf("accepted calls=%v, want one delegation", ids)
+				}
+				var childID session.SessionID
+				switch path.call.Name {
+				case "Subagent":
+					childID = session.SessionID("subagent-" + string(sess.ID) + "-" + string(ids[0]))
+				case "Parallel":
+					childID = session.SessionID("parallel-" + string(sess.ID) + "-" + string(ids[0]) + "-0")
+				case "Team":
+					childID = MemberSessionID(string(sess.ID)+"-"+string(ids[0]), "worker")
+				}
+				child, err := store.Load(context.Background(), childID)
 				if err != nil || child == nil {
-					t.Fatalf("child %q must be persisted: %v", path.childID, err)
+					t.Fatalf("child %q must be persisted: %v", childID, err)
 				}
 				switch {
 				case tc.parentOwner == nil:

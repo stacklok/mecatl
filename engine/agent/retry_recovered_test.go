@@ -43,14 +43,14 @@ func TestRetryFailedStepSkipsOnlyFirstBoundaryInjections(t *testing.T) {
 	var requests []port.LLMRequest
 	llm := mockllm.NewWith([]mockllm.Option{mockllm.WithRequestObserver(func(req port.LLMRequest) {
 		clone := req
-		clone.Messages = session.CloneMessages(req.Messages)
+		clone.Messages = append([]port.LLMMessage(nil), req.Messages...)
 		requests = append(requests, clone)
 	})},
 		mockllm.ToolCallTurn(session.ToolCall{ID: "read", Name: "Read", Args: []byte(`{"path":"a"}`)}),
 		mockllm.TextTurn("done"),
 	)
-	cat := catalogWith(t, &fakeTool{name: "Read", readOnly: true, exec: func(context.Context, session.ToolCall, tool.Workspace) (session.ToolResult, error) {
-		return session.NewToolResult("read", "body"), nil
+	cat := catalogWith(t, &fakeTool{name: "Read", readOnly: true, exec: func(_ context.Context, call session.ToolCall, _ tool.Workspace) (session.ToolResult, error) {
+		return session.NewToolResult(call.ID, "body"), nil
 	}})
 	eng := newEngine(agent.Deps{LLM: llm, Catalog: cat, DeliveryQueue: queue})
 	sess := newSession(t, session.Limits{})
@@ -145,6 +145,7 @@ func TestRetryFailedStepRepeatsOnlyFailedModelStep(t *testing.T) {
 	env := agent.EnvForWS(memfs.NewWorkspace("/ws"), nil)
 
 	firstEvents := drain(eng.Run(context.Background(), sess, env, agent.RunRequest{Text: "one prompt"}))
+	call.ID = eventCallID(t, firstEvents, "Read", 0)
 	if got := lastResult(t, firstEvents).Stop; got != session.StopError {
 		t.Fatalf("first stop = %q, want error", got)
 	}

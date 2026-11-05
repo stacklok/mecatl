@@ -444,7 +444,7 @@ func (t *TeamTool) run(ctx context.Context, call session.ToolCall, env tool.Envi
 			}
 		}
 		emit(session.Event{Type: session.EvTeamStart, Team: &session.TeamPayload{
-			ParentCallID: string(call.ID),
+			ParentCallID: call.ID,
 			TeamID:       teamID,
 			Roster:       roster,
 		}})
@@ -464,7 +464,7 @@ func (t *TeamTool) run(ctx context.Context, call session.ToolCall, env tool.Envi
 		if emit == nil {
 			return
 		}
-		if ev, ok := projectTeamEvent(string(call.ID), teamID, te); ok {
+		if ev, ok := projectTeamEvent(call.ID, teamID, te); ok {
 			emit(ev)
 		}
 		// Project the shared task list as a first-class team.tasks event, but only
@@ -475,7 +475,7 @@ func (t *TeamTool) run(ctx context.Context, call session.ToolCall, env tool.Envi
 		snap := projectTeamTasksSnapshot(tm.Tasks())
 		if !tasksEqual(snap, lastTasks) {
 			lastTasks = snap
-			emit(projectTeamTasks(string(call.ID), teamID, snap))
+			emit(projectTeamTasks(call.ID, teamID, snap))
 		}
 		// Mirror the task de-dup for the findings ledger: emit a first-class
 		// team.findings event only when the ledger CHANGED (findings only ever grow,
@@ -484,7 +484,7 @@ func (t *TeamTool) run(ctx context.Context, call session.ToolCall, env tool.Envi
 		fsnap := projectTeamFindingsSnapshot(tm.Findings())
 		if !findingsEqual(fsnap, lastFindings) {
 			lastFindings = fsnap
-			emit(projectTeamFindings(string(call.ID), teamID, fsnap))
+			emit(projectTeamFindings(call.ID, teamID, fsnap))
 		}
 	}
 
@@ -495,7 +495,7 @@ func (t *TeamTool) run(ctx context.Context, call session.ToolCall, env tool.Envi
 
 	if emit != nil {
 		emit(session.Event{Type: session.EvTeamEnd, Team: &session.TeamPayload{
-			ParentCallID: string(call.ID),
+			ParentCallID: call.ID,
 			TeamID:       teamID,
 			Rounds:       outcome.Rounds,
 			Stop:         teamStop(outcome),
@@ -646,7 +646,7 @@ func teamRoster(members []TeamMemberArg) []session.TeamMemberSpec {
 //
 // It NEVER copies a raw args blob or result body unbounded — every text/preview
 // passes through clampPreview.
-func projectTeamEvent(parentCallID, teamID string, te TeamEvent) (session.Event, bool) {
+func projectTeamEvent(parentCallID session.ToolCallID, teamID string, te TeamEvent) (session.Event, bool) {
 	ev := te.Event
 	base := &session.TeamPayload{
 		ParentCallID:      parentCallID,
@@ -809,7 +809,7 @@ func projectTeamTasksSnapshot(tasks []team.Task) []session.TeamTaskSnapshot {
 // team-WIDE projection the client routes to the f6 task sub-view. It carries no
 // Member (the task list is team-wide, not per-member), so it does not borrow the
 // per-member EvTeamMember envelope.
-func projectTeamTasks(parentCallID, teamID string, tasks []session.TeamTaskSnapshot) session.Event {
+func projectTeamTasks(parentCallID session.ToolCallID, teamID string, tasks []session.TeamTaskSnapshot) session.Event {
 	return session.Event{Type: session.EvTeamTasks, Team: &session.TeamPayload{
 		ParentCallID: parentCallID,
 		TeamID:       teamID,
@@ -881,7 +881,7 @@ func projectTeamDispositions(members []MemberOutcome) []session.TeamMemberDispos
 // — the team-WIDE projection mirroring EvTeamTasks. It carries no Member (the ledger
 // is team-wide, not per-member), so it does not borrow the per-member EvTeamMember
 // envelope.
-func projectTeamFindings(parentCallID, teamID string, findings []session.TeamFindingSnapshot) session.Event {
+func projectTeamFindings(parentCallID session.ToolCallID, teamID string, findings []session.TeamFindingSnapshot) session.Event {
 	return session.Event{Type: session.EvTeamFindings, Team: &session.TeamPayload{
 		ParentCallID: parentCallID,
 		TeamID:       teamID,
