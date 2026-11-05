@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"time"
 
 	"google.golang.org/grpc"
@@ -54,8 +55,11 @@ func (r *AttemptRepository) Get(ctx context.Context, partition learning.AttemptP
 }
 
 func (r *AttemptRepository) List(ctx context.Context, partition learning.AttemptPartition, query learning.AttemptList) (learning.AttemptPage, error) {
+	if query.Limit < 0 || query.Limit > math.MaxInt32 {
+		return learning.AttemptPage{}, learning.ErrInvalidAttempt
+	}
 	resp, err := r.client.ListAttempts(ctx, &driverv1.ListAttemptsRequest{
-		Partition: string(partition), After: string(query.After), Limit: int32(query.Limit), State: string(query.State), // #nosec G115 -- domain limit is <= 200
+		Partition: string(partition), After: string(query.After), Limit: int32(query.Limit), State: string(query.State),
 	})
 	if err != nil {
 		return learning.AttemptPage{}, attemptStatusToErr(ctx, err)

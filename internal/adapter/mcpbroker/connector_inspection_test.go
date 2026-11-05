@@ -163,7 +163,7 @@ func TestBrokerMCPStatus_Scenario1_EnrollmentStates(t *testing.T) {
 				t.Fatalf("expired status %s: %+v", status, got)
 			}
 			a.logical.mu.RLock()
-			unchanged := tx.status == status && tx.state != "" && len(a.logical.authorizations) == 1
+			unchanged := tx.status == status && tx.state.value != "" && len(a.logical.authorizations) == 1
 			a.logical.mu.RUnlock()
 			if !unchanged || requests.Load() != 0 || queries.calls != 0 {
 				t.Fatal("inspection settled transaction or performed I/O")

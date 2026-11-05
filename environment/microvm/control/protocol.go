@@ -108,9 +108,7 @@ func (c Codec) Write(dst io.Writer, value any) error {
 	var header [4]byte
 	// The payload was bounded by a uint32-valued maximum above.
 	binary.BigEndian.PutUint32(header[:], uint32(len(payload))) //nolint:gosec // proven in the preceding check
-	frame := make([]byte, len(header)+len(payload))
-	copy(frame, header[:])
-	copy(frame[len(header):], payload)
+	frame := append(header[:], payload...)
 	if err := writeFull(dst, frame); err != nil {
 		return fmt.Errorf("write microvm protocol frame: %w", err)
 	}

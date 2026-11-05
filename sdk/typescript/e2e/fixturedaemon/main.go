@@ -210,8 +210,16 @@ func run() error {
 		}
 		query := presentation.Query()
 		query.Set("fixture_decision", request.Decision)
-		presentation.RawQuery = query.Encode()
-		response, err := browserClient.Get(presentation.String())
+		// Rebuild the target from the fixture's own authority so only the query
+		// string comes from the request.
+		target, err := url.Parse(oauthServer.URL)
+		if err != nil {
+			http.Error(w, "fixture authority is unavailable", http.StatusInternalServerError)
+			return
+		}
+		target.Path = "/authorize"
+		target.RawQuery = query.Encode()
+		response, err := browserClient.Get(target.String())
 		if err != nil {
 			http.Error(w, "authorization completion failed", http.StatusBadGateway)
 			return

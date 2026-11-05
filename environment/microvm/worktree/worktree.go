@@ -1173,6 +1173,13 @@ func extractArchive(archivePath, root string, entriesLeft int) error {
 		return err
 	}
 	defer func() { _ = archive.Close() }()
+	// Every entry is created through an os.Root so a symlink extracted earlier
+	// in the archive can never redirect a later entry outside the worktree.
+	treeRoot, err := os.OpenRoot(root)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = treeRoot.Close() }()
 	tr := tar.NewReader(archive)
 	for {
 		hdr, err := tr.Next()
@@ -1186,13 +1193,13 @@ func extractArchive(archivePath, root string, entriesLeft int) error {
 			return errCaptureLimit
 		}
 		entriesLeft--
-		if err := extractArchiveEntry(tr, hdr, root); err != nil {
+		if err := extractArchiveEntry(tr, hdr, treeRoot); err != nil {
 			return err
 		}
 	}
 }
 
-func extractArchiveEntry(tr *tar.Reader, hdr *tar.Header, root string) error {
+func extractArchiveEntry(tr *tar.Reader, hdr *tar.Header, root *os.Root) error {
 	name := filepath.ToSlash(hdr.Name)
 	if hdr.Typeflag == tar.TypeDir {
 		name = strings.TrimSuffix(name, "/")
@@ -1204,14 +1211,14 @@ func extractArchiveEntry(tr *tar.Reader, hdr *tar.Header, root string) error {
 	if err != nil {
 		return fmt.Errorf("archive entry %q: %w", name, err)
 	}
-	path := filepath.Join(root, filepath.FromSlash(name))
+	path := filepath.FromSlash(name)
 	switch hdr.Typeflag {
 	case tar.TypeDir:
-		return extractArchiveDirectory(hdr, path, mode, name)
+		return extractArchiveDirectory(root, hdr, path, mode, name)
 	case tar.TypeReg:
-		return extractArchiveRegular(tr, hdr, path, mode)
+		return extractArchiveRegular(root, tr, hdr, path, mode)
 	case tar.TypeSymlink:
-		return extractArchiveSymlink(hdr, path, name)
+		return extractArchiveSymlink(root, hdr, path, name)
 	case tar.TypeXGlobalHeader, tar.TypeXHeader:
 		return nil
 	default:
@@ -1219,21 +1226,21 @@ func extractArchiveEntry(tr *tar.Reader, hdr *tar.Header, root string) error {
 	}
 }
 
-func extractArchiveDirectory(hdr *tar.Header, path string, mode fs.FileMode, name string) error {
+func extractArchiveDirectory(root *os.Root, hdr *tar.Header, path string, mode fs.FileMode, name string) error {
 	if hdr.Size != 0 {
 		return fmt.Errorf("archive directory %q has content", name)
 	}
-	return os.MkdirAll(path, mode)
+	return root.MkdirAll(path, mode)
 }
 
-func extractArchiveRegular(tr *tar.Reader, hdr *tar.Header, path string, mode fs.FileMode) error {
+func extractArchiveRegular(root *os.Root, tr *tar.Reader, hdr *tar.Header, path string, mode fs.FileMode) error {
 	if hdr.Size < 0 || hdr.Size > captureByteLimit {
 		return errCaptureLimit
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := root.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	output, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode)
+	output, err := root.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode)
 	if err != nil {
 		return err
 	}
@@ -1245,14 +1252,14 @@ func extractArchiveRegular(tr *tar.Reader, hdr *tar.Header, path string, mode fs
 	return closeErr
 }
 
-func extractArchiveSymlink(hdr *tar.Header, path, name string) error {
+func extractArchiveSymlink(root *os.Root, hdr *tar.Header, path, name string) error {
 	if hdr.Size != 0 {
 		return fmt.Errorf("archive symlink %q has content", name)
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := root.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	return os.Symlink(hdr.Linkname, path)
+	return root.Symlink(hdr.Linkname, path)
 }
 
 func safeArchiveMode(raw int64) (fs.FileMode, error) {

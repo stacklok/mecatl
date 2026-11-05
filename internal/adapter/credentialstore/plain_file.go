@@ -24,6 +24,9 @@ func sealPlainRecord(namespace, recordKey, value []byte, random io.Reader) ([]by
 	if random == nil {
 		random = rand.Reader
 	}
+	if len(value) > MaxValueBytes {
+		return nil, Version{}, ErrTooLarge
+	}
 	out := make([]byte, plainHeaderBytes+plainGenerationBytes+len(value))
 	copy(out[:8], plainMagic[:])
 	out[8] = plainVersion

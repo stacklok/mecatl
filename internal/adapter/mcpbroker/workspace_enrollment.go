@@ -197,7 +197,7 @@ func (a *Attachment) BeginWorkspaceEnrollment(ctx context.Context) (contract.Wor
 		identity:       authorizationIdentity{id: id, binding: session.AuthorizationBinding(binding)},
 		route:          target,
 		bundleBackends: backends,
-		state:          state,
+		state:          callbackToken{value: state},
 		verifier:       verifier,
 		clientSecret:   secret,
 		expiresAt:      a.runtime.oauth.now().Add(a.runtime.oauth.ttl),
@@ -342,8 +342,8 @@ func (a *Attachment) ObserveWorkspaceEnrollment(ctx context.Context, ref contrac
 		logical.completedEnrollment = &completedWorkspaceEnrollment{ref: ref, routes: routes}
 		a.catalogue = candidate
 		delete(logical.authorizations, transaction.identity)
-		state = transaction.state
-		transaction.clientSecret, transaction.verifier, transaction.state = "", "", ""
+		state = transaction.state.value
+		transaction.clientSecret, transaction.verifier, transaction.state = "", "", callbackToken{}
 		return nil
 	})
 	a.mu.Unlock()
@@ -402,12 +402,12 @@ func (a *Attachment) failWorkspaceTransaction(logical *logicalSession, transacti
 // result after a host save failure; the next Begin removes the tombstone once
 // the aggregate has acknowledged it by clearing its pending record.
 func (a *Attachment) observeTerminalWorkspaceTransactionLocked(logical *logicalSession, transaction *authorizationTransaction, status contract.WorkspaceEnrollmentStatus) contract.WorkspaceEnrollmentResult {
-	a.runtime.removeCallbackState(transaction.state, transaction)
+	a.runtime.removeCallbackState(transaction.state.value, transaction)
 	if transaction.cancel != nil {
 		transaction.cancel()
 		transaction.cancel = nil
 	}
-	transaction.clientSecret, transaction.verifier, transaction.state = "", "", ""
+	transaction.clientSecret, transaction.verifier, transaction.state = "", "", callbackToken{}
 	clearWorkspaceCredentialLocked(logical)
 	return contract.WorkspaceEnrollmentResult{Ref: workspaceEnrollmentRef(transaction), Status: status}
 }
@@ -415,11 +415,11 @@ func (a *Attachment) observeTerminalWorkspaceTransactionLocked(logical *logicalS
 // terminateWorkspaceTransactionLocked clears the aggregate broker credential and
 // transaction record, and must be called with logical.mu held.
 func (a *Attachment) terminateWorkspaceTransactionLocked(logical *logicalSession, transaction *authorizationTransaction, status contract.WorkspaceEnrollmentStatus) contract.WorkspaceEnrollmentResult {
-	a.runtime.removeCallbackState(transaction.state, transaction)
+	a.runtime.removeCallbackState(transaction.state.value, transaction)
 	if transaction.cancel != nil {
 		transaction.cancel()
 	}
-	transaction.clientSecret, transaction.verifier, transaction.state = "", "", ""
+	transaction.clientSecret, transaction.verifier, transaction.state = "", "", callbackToken{}
 	clearWorkspaceCredentialLocked(logical)
 	delete(logical.authorizations, transaction.identity)
 	return contract.WorkspaceEnrollmentResult{Ref: workspaceEnrollmentRef(transaction), Status: status}
@@ -454,5 +454,5 @@ func workspaceEnrollmentRef(transaction *authorizationTransaction) contract.Work
 
 func presentWorkspaceTransaction(transaction *authorizationTransaction) string {
 	cfg := transaction.oauthConfig(transaction.clientSecret)
-	return cfg.AuthCodeURL(transaction.state, transaction.authCodeOptions()...)
+	return cfg.AuthCodeURL(transaction.state.value, transaction.authCodeOptions()...)
 }

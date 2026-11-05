@@ -47,11 +47,22 @@ async function renderNav(
   );
 }
 
+function textContent(html: string) {
+  let text = "";
+  let inTag = false;
+  for (const char of html) {
+    if (char === "<") inTag = true;
+    else if (char === ">") inTag = false;
+    else if (!inTag) text += char;
+  }
+  return text.trim();
+}
+
 function links(markup: string) {
   return [...markup.matchAll(/<a\b[^>]*>[\s\S]*?<\/a>/g)].map(([html]) => ({
     html,
     href: html.match(/href="([^"]+)"/)?.[1],
-    name: html.replace(/<[^>]+>/g, "").trim(),
+    name: textContent(html),
   }));
 }
 

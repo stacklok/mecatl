@@ -328,10 +328,16 @@ func (a *AS1) authorize(w http.ResponseWriter, r *http.Request) {
 	a.mu.Unlock()
 	// An unknown client or redirect URI is never redirected to (RFC 6749
 	// §4.1.2.1).
-	if !ok || !slices.Contains(client.RedirectURIs, redirectURI) {
+	registered := -1
+	if ok {
+		registered = slices.Index(client.RedirectURIs, redirectURI)
+	}
+	if registered < 0 {
 		http.Error(w, "unknown client or redirect_uri", http.StatusBadRequest)
 		return
 	}
+	// Redirect to the registered value, not the request's copy of it.
+	redirectURI = client.RedirectURIs[registered]
 	if fault, ok := a.faults.pop("authorize"); ok {
 		redirectWithError(w, r, redirectURI, state, fault.Error)
 		return
