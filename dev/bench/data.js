@@ -364838,6 +364838,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1793896841720,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "841f554c0392dce842604faa22e4c7035438a208",
+          "message": "feat(kernel): add history-backed session lifecycle (#2687)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-11-05T18:33:52Z",
+          "tree_id": "c8ceb61c985ab7690eb4de35e8d9992ad74eb2e1",
+          "url": "https://github.com/stacklok/mecatl/commit/841f554c0392dce842604faa22e4c7035438a208"
+        },
+        "date": 1793904360270,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -527019,6 +527053,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1793904356638,
+  "lastUpdate": 1793904361147,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
