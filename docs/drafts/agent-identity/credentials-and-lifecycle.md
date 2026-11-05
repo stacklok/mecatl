@@ -135,7 +135,7 @@ sequenceDiagram
 
 The diagram follows the successful path. Other outcomes:
 
-- **No provider credential.** vMCP finds no stored GitHub credential for Alice and answers "needs authorization". mecak8s returns the existing `mcp_authorization_pending` outcome; the TUI or Studio opens the authorization URL and rechecks, and the parked run resumes.
+- **No provider credential.** vMCP finds no stored GitHub credential for Alice and answers with an MCP URL-mode elicitation carrying its connect link. mecak8s's MCP client returns it as the existing `mcp_authorization_pending` outcome; the TUI or Studio opens the link and rechecks, and the parked run resumes.
 - **No consent link (external mode).** AS-2 refuses to redeem the ID-JAG. The broker refuses the authorization with the same pending outcome, and the URL first leads through AS-2's "Allow Mecatl" step.
 - **Denial or failure.** Any denial before dispatch prevents the provider call. Retrying requires authorization again.
 - **Unknown outcome.** If dispatch may have happened but no completion was observed, the outcome is unknown and is not replayed automatically.
@@ -731,7 +731,7 @@ The approval-continuation profile is a convention that AS-2 advertises in its me
 | 4 | Tool error | Returned as a denial; not retried. |
 | 5 | Tool error | A broker or gateway bug: fail the call, do not retry. |
 | 6, access token expired | — | The gateway refreshes it with the stored refresh token and continues. |
-| 6, no row, or refresh no longer possible | "Needs authorization" | The existing `mcp_authorization_pending` outcome; after Alice connects GitHub, a later call passes every check again. A row owned by another user is refused and recorded. |
+| 6, no row, or refresh no longer possible | An MCP URL-mode elicitation with the gateway's connect link | The existing `mcp_authorization_pending` outcome with that link. If the vMCP refused before running the call, the call was not sent; after Alice connects GitHub, it runs again with a new authorization and passes every check again. A row owned by another user is refused and recorded. |
 | 6, refresh or storage failure | 5xx | A retryable infrastructure failure. |
 
 **Why.** The vMCP is the only component that holds the provider credential, so it makes the last check before the provider call and looks the credential up from the validated user alone. The model cannot select another user's credential by supplying a URL, header, audience, or credential selector. If identity, link, connection, or authorization evidence is missing, stale, or revoked, the call fails closed; it never falls back to a service credential, another user, or a more privileged agent.
@@ -852,7 +852,7 @@ The failures each step can return: where each is detected, what the user sees, a
 | Call does not match `V`'s binding, or `V` already used for a call | vMCP | 403 `insufficient_scope` | Call fails; a broker or MCP client bug, or a stolen `V` | Nothing |
 | vMCP session rejected | vMCP | 404 | None: one retry with a new session | Stored session ID dropped |
 | vMCP policy denies the tool | vMCP | Tool error | Call denied | Nothing |
-| No provider credential | vMCP | "Needs authorization" | `mcp_authorization_pending`; Alice connects GitHub | Nothing |
+| No provider credential | vMCP | MCP URL-mode elicitation with the connect link | `mcp_authorization_pending`; Alice connects GitHub | Nothing |
 | Dispatch happened, no completion observed | Broker | Unknown outcome | Reported as unknown; not replayed | Nothing |
 
 ## Error reasons
