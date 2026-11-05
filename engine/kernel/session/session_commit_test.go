@@ -72,7 +72,7 @@ func mustBatch(t testing.TB, err error) {
 }
 func batchInput(t testing.TB, b *session.SessionCommit, run session.RunID, content []byte) session.InputID {
 	t.Helper()
-	id, err := b.AddInput(session.AddInputRequest{RunID: run, Content: content})
+	id, err := b.AddInput(session.AddInputRequest{RunID: run, Messages: byteMessages(content)})
 	mustBatch(t, err)
 	return id
 }
@@ -112,7 +112,7 @@ func TestSessionCommitHappyPathOwnershipAndNumbering(t *testing.T) {
 	}
 	root := submitBatch(t, s, b)
 	v := s.Snapshot()
-	if v.Head() != root || v.ActiveRun() != run || !bytes.Equal(v.RunAt(0).InputAt(0).Content(), []byte{0xff, 0, 'x'}) || v.RunAt(0).InputAt(0).ID() != input {
+	if v.Head() != root || v.ActiveRun() != run || !bytes.Equal(inputBytes(v.RunAt(0).InputAt(0)), []byte{0xff, 0, 'x'}) || v.RunAt(0).InputAt(0).ID() != input {
 		t.Fatal("accepted facts")
 	}
 	page, err := h.Read(context.Background(), testHistoryID(t), history.ReadRequest{Through: root, MaxCommits: 1})
@@ -122,9 +122,9 @@ func TestSessionCommitHappyPathOwnershipAndNumbering(t *testing.T) {
 	if !fact.Format().Equal(inputRecord(t, 1).Format()) {
 		t.Fatal("stored input aliases caller")
 	}
-	clear(v.RunAt(0).InputAt(0).Content())
+	clear(inputBytes(v.RunAt(0).InputAt(0)))
 	dto := v.RunAt(0).InputAt(0).Format()
-	clear(dto.Content)
+	clear(dtoInputBytes(dto))
 	clear(page.Commits[0].Commit.Records[2].Payload)
 	next := beginBatch(t, s)
 	mustBatch(t, b.Discard())
@@ -138,7 +138,7 @@ func TestSessionCommitHappyPathOwnershipAndNumbering(t *testing.T) {
 		t.Fatal("run-relative numbering")
 	}
 	submitBatch(t, s, next)
-	if got := s.Snapshot(); got.RunCount() != 2 || got.ActiveRun() != secondRun || !bytes.Equal(got.RunAt(0).InputAt(0).Content(), []byte{0xff, 0, 'x'}) {
+	if got := s.Snapshot(); got.RunCount() != 2 || got.ActiveRun() != secondRun || !bytes.Equal(inputBytes(got.RunAt(0).InputAt(0)), []byte{0xff, 0, 'x'}) {
 		t.Fatal("old content or successor lost")
 	}
 	reuse := beginBatch(t, s)
@@ -262,7 +262,7 @@ func TestSessionCommitHandlesDiscardAndFailedAdditions(t *testing.T) {
 			t.Fatal("invalid owner")
 		}
 	}
-	if id, err := b.AddInput(session.AddInputRequest{RunID: run, Content: make([]byte, testLimits().MaxByteStringBytes+1)}); id != (session.InputID{}) || !errors.Is(err, codec.ErrLimitExceeded) {
+	if id, err := b.AddInput(session.AddInputRequest{RunID: run, Messages: byteMessages(make([]byte, testLimits().MaxByteStringBytes+1))}); id != (session.InputID{}) || !errors.Is(err, codec.ErrLimitExceeded) {
 		t.Fatalf("oversize: %v", err)
 	}
 	input := batchInput(t, b, run, []byte("discarded"))
@@ -373,7 +373,7 @@ func TestSessionCommitUncertainIdenticalExplicitRetry(t *testing.T) {
 			if len(backend.attempts) != 2 || !reflect.DeepEqual(backend.attempts[0], backend.attempts[1]) || ref != backend.attempts[0].commit.Ref {
 				t.Fatal("retry changed identity/bytes/parent")
 			}
-			if got := s.Snapshot(); got.RunCount() != 1 || got.RunAt(0).InputCount() != 1 || string(got.RunAt(0).InputAt(0).Content()) != "original" {
+			if got := s.Snapshot(); got.RunCount() != 1 || got.RunAt(0).InputCount() != 1 || string(inputBytes(got.RunAt(0).InputAt(0))) != "original" {
 				t.Fatal("retry not exactly once")
 			}
 			if _, err := s.SubmitCommit(context.Background(), b); !errors.Is(err, session.ErrBatch) || len(backend.attempts) != 2 {
@@ -426,7 +426,7 @@ func TestSessionCommitUncertainSuccessorIdenticalExplicitRetry(t *testing.T) {
 				t.Fatal("successor retry bytes/parent")
 			}
 			got := s.Snapshot()
-			if got.Head() != original.commit.Ref || got.ActiveRun() != run || got.RunCount() != 2 || got.RunAt(1).InputCount() != 1 || got.RunAt(1).InputAt(0).ID() != input || string(got.RunAt(1).InputAt(0).Content()) != "second" || parent.RunCount() != 1 {
+			if got.Head() != original.commit.Ref || got.ActiveRun() != run || got.RunCount() != 2 || got.RunAt(1).InputCount() != 1 || got.RunAt(1).InputAt(0).ID() != input || string(inputBytes(got.RunAt(1).InputAt(0))) != "second" || parent.RunCount() != 1 {
 				t.Fatal("successor exactly once or old snapshot")
 			}
 			if _, err := s.SubmitCommit(context.Background(), next); !errors.Is(err, session.ErrBatch) || len(backend.attempts) != 4 {
@@ -458,7 +458,7 @@ func TestSessionCommitPayloadLimitRejectsBeforeAllocation(t *testing.T) {
 			}
 			before := s.Snapshot()
 			attempts := len(backend.attempts)
-			if id, err := b.AddInput(session.AddInputRequest{RunID: run, Content: content}); id != (session.InputID{}) || !errors.Is(err, codec.ErrLimitExceeded) {
+			if id, err := b.AddInput(session.AddInputRequest{RunID: run, Messages: byteMessages(content)}); id != (session.InputID{}) || !errors.Is(err, codec.ErrLimitExceeded) {
 				t.Fatalf("payload-local rejection: %v, %v", id, err)
 			}
 			if !reflect.DeepEqual(before, s.Snapshot()) || len(backend.attempts) != attempts {
@@ -472,7 +472,7 @@ func TestSessionCommitPayloadLimitRejectsBeforeAllocation(t *testing.T) {
 			}
 			submitBatch(t, s, b)
 			view := s.Snapshot()
-			seedRecord, err := session.NewUserInputRecord(session.UserInput{ID: session.InputID{RunID: run, Ordinal: 1}, Content: seed}, policy.PayloadLimits)
+			seedRecord, err := session.NewUserInputRecord(session.UserInput{ID: session.InputID{RunID: run, Ordinal: 1}, Messages: byteMessages(seed)}, policy.PayloadLimits)
 			mustBatch(t, err)
 			emptyRecord, err := session.NewUserInputRecord(session.UserInput{ID: session.InputID{RunID: run, Ordinal: 2}}, policy.PayloadLimits)
 			mustBatch(t, err)
@@ -488,7 +488,7 @@ func TestSessionCommitPayloadLimitRejectsBeforeAllocation(t *testing.T) {
 		})
 	}
 	if n := testing.AllocsPerRun(10, func() {
-		_, err := session.NewUserInputRecord(session.UserInput{ID: session.InputID{RunID: session.RunID{HistoryID: testHistoryID(t), Ordinal: 1}, Ordinal: 2}, Content: content}, testLimits())
+		_, err := session.NewUserInputRecord(session.UserInput{ID: session.InputID{RunID: session.RunID{HistoryID: testHistoryID(t), Ordinal: 1}, Ordinal: 2}, Messages: byteMessages(content)}, testLimits())
 		mustBatch(t, err)
 	}); n == 0 {
 		t.Fatal("constructor allocation control")

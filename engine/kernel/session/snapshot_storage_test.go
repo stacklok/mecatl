@@ -54,7 +54,7 @@ func TestSnapshotConstantCaptureAndAmortizedAppendStorage(t *testing.T) {
 					t.Fatal(err)
 				}
 			case 1:
-				if _, err := b.AddInput(AddInputRequest{RunID: before.ActiveRun(), Content: []byte{0xff, 0, 'x'}}); err != nil {
+				if _, err := b.AddInput(AddInputRequest{RunID: before.ActiveRun(), Messages: internalByteMessages([]byte{0xff, 0, 'x'})}); err != nil {
 					t.Fatal(err)
 				}
 			case 2:
@@ -120,7 +120,7 @@ func TestSnapshotChildBoundsAcrossSpareCapacityAndGrowth(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := b.AddInput(AddInputRequest{RunID: run, Content: []byte("first")}); err != nil {
+	if _, err := b.AddInput(AddInputRequest{RunID: run, Messages: internalByteMessages([]byte("first"))}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.SubmitCommit(context.Background(), b); err != nil {
@@ -137,7 +137,7 @@ func TestSnapshotChildBoundsAcrossSpareCapacityAndGrowth(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := b.AddInput(AddInputRequest{RunID: run, Content: []byte("later")}); err != nil {
+		if _, err := b.AddInput(AddInputRequest{RunID: run, Messages: internalByteMessages([]byte("later"))}); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := s.SubmitCommit(context.Background(), b); err != nil {
@@ -149,11 +149,11 @@ func TestSnapshotChildBoundsAcrossSpareCapacityAndGrowth(t *testing.T) {
 		} else {
 			sawGrowth = true
 		}
-		if old.RecordCount() != before || oldRun.RecordCount() != before-1 || oldRun.InputCount() != before-2 || oldInput.ID().Ordinal != 1 || string(oldInput.Content()) != "first" {
+		if old.RecordCount() != before || oldRun.RecordCount() != before-1 || oldRun.InputCount() != before-2 || oldInput.ID().Ordinal != 1 || string(internalInputBytes(oldInput)) != "first" {
 			t.Fatal("old snapshot/run/input changed")
 		}
 		input, ok := oldRecord.UserInput()
-		if !ok || string(input.Content()) != "first" || oldRecord.record != next.records[2] {
+		if !ok || string(internalInputBytes(input)) != "first" || oldRecord.record != next.records[2] {
 			t.Fatal("old record handle changed")
 		}
 	}

@@ -10,17 +10,21 @@ import (
 // acceptedRecord owns the encoded envelope record and exactly one decoded DTO.
 // It is never mutated after staging; indexes reference this same backing fact.
 type acceptedRecord struct {
-	value       format.Record
-	created     sessionformat.Created
-	input       sessionformat.UserInput
-	started     sessionformat.RunStarted
-	interrupted sessionformat.RunInterrupted
+	value        format.Record
+	created      sessionformat.Created
+	input        sessionformat.UserInput
+	started      sessionformat.RunStarted
+	interrupted  sessionformat.RunInterrupted
+	instructions sessionformat.Instructions
+	catalog      sessionformat.ToolCatalog
+	binding      sessionformat.ModelBinding
+	effective    sessionformat.EffectiveInput
 }
 
 // decodeAccepted decodes once and detaches encoded caller storage. Generated
 // decoding owns Content; neither DTO nor encoded bytes escape without copying.
 func decodeAccepted(v format.Record, limits codec.Limits) (*acceptedRecord, error) {
-	if v.KindVersion != sessionformat.Version {
+	if !supportedRecord(v.Kind, v.KindVersion) {
 		return nil, ErrUnsupportedRecord
 	}
 	r := &acceptedRecord{}
@@ -30,6 +34,14 @@ func decodeAccepted(v format.Record, limits codec.Limits) (*acceptedRecord, erro
 		r.created, err = codec.Decode[sessionformat.Created](v.Payload, limits)
 	case sessionformat.KindUserInput:
 		r.input, err = codec.Decode[sessionformat.UserInput](v.Payload, limits)
+	case sessionformat.KindEffectiveInput:
+		r.effective, err = codec.Decode[sessionformat.EffectiveInput](v.Payload, limits)
+	case sessionformat.KindInstructions:
+		r.instructions, err = codec.Decode[sessionformat.Instructions](v.Payload, limits)
+	case sessionformat.KindToolCatalog:
+		r.catalog, err = codec.Decode[sessionformat.ToolCatalog](v.Payload, limits)
+	case sessionformat.KindModelBinding:
+		r.binding, err = codec.Decode[sessionformat.ModelBinding](v.Payload, limits)
 	case sessionformat.KindRunStarted:
 		r.started, err = codec.Decode[sessionformat.RunStarted](v.Payload, limits)
 	case sessionformat.KindRunInterrupted:
@@ -47,11 +59,18 @@ func decodeAccepted(v format.Record, limits codec.Limits) (*acceptedRecord, erro
 // metadata projects only the typed scalars needed by the shared lifecycle path.
 // Its encoded bytes already belong to immutable private storage.
 func (r *acceptedRecord) metadata(scope historyid.HistoryID) Record {
-	return Record{scope: scope, value: r.value,
-		userInput:  InputID{RunID: RunID{HistoryID: scope, Ordinal: r.input.RunID}, Ordinal: r.input.ID},
-		inputBytes: len(r.input.Content), runStarted: r.started,
+	out := Record{scope: scope, value: r.value,
+		userInput:    InputID{RunID: RunID{HistoryID: scope, Ordinal: r.input.RunID}, Ordinal: r.input.ID},
+		messageCount: uint64(len(r.input.Messages)), runStarted: r.started,
 		runInterrupted: RunInterrupted{ID: RunID{HistoryID: scope, Ordinal: r.interrupted.ID}},
+		effectiveInput: InputID{RunID: RunID{HistoryID: scope, Ordinal: r.effective.RunID}, Ordinal: r.effective.InputID},
 	}
+	for _, p := range r.effective.Prompts {
+		if p.AuthoredMessage != nil && (!out.hasMessage || *p.AuthoredMessage > out.maxMessage) {
+			out.hasMessage, out.maxMessage = true, *p.AuthoredMessage
+		}
+	}
+	return out
 }
 
 // RecordView is an immutable accepted fact. Zero has no kind; all typed accesses
@@ -115,4 +134,36 @@ func (v RecordView) RunInterrupted() (RunInterrupted, bool) {
 		return RunInterrupted{}, false
 	}
 	return RunInterrupted{ID: RunID{HistoryID: v.scope, Ordinal: v.record.interrupted.ID}}, true
+}
+
+// Instructions returns a replacement handle only for the instructions kind.
+func (v RecordView) Instructions() (InstructionsView, bool) {
+	if v.Kind() != sessionformat.KindInstructions {
+		return InstructionsView{}, false
+	}
+	return InstructionsView(v), true
+}
+
+// ToolCatalog returns a replacement handle only for the catalog kind.
+func (v RecordView) ToolCatalog() (ToolCatalogView, bool) {
+	if v.Kind() != sessionformat.KindToolCatalog {
+		return ToolCatalogView{}, false
+	}
+	return ToolCatalogView(v), true
+}
+
+// ModelBinding returns a replacement handle only for the binding kind.
+func (v RecordView) ModelBinding() (ModelBindingView, bool) {
+	if v.Kind() != sessionformat.KindModelBinding {
+		return ModelBindingView{}, false
+	}
+	return ModelBindingView(v), true
+}
+
+// EffectiveInput returns a revision handle only for the effective-input kind.
+func (v RecordView) EffectiveInput() (EffectiveInputView, bool) {
+	if v.Kind() != sessionformat.KindEffectiveInput {
+		return EffectiveInputView{}, false
+	}
+	return EffectiveInputView(v), true
 }

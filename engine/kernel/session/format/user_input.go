@@ -2,8 +2,9 @@ package format
 
 import "errors"
 
-// UserInput preserves one input's exact opaque bytes. Zero is invalid. Assignment
-// shares Content; Clone detaches it. Nil and empty content are equivalent.
+// UserInput preserves ordered authored message boundaries. Zero ordinals are
+// invalid. Assignment shares Messages and its children; Clone detaches them.
+// Nil and empty messages are equivalent, but differ from one empty message.
 //
 //cborgen:validate Validate
 type UserInput struct {
@@ -11,8 +12,8 @@ type UserInput struct {
 	RunID uint64 `cbor:"r"`
 	// ID is the nonzero input ordinal within the owning run.
 	ID uint64 `cbor:"i"`
-	// Content is uninterpreted, including invalid UTF-8 and empty content.
-	Content []byte `cbor:"c"`
+	// Messages retains exact content order and supplied message boundaries.
+	Messages []AuthoredMessage `cbor:"m"`
 }
 
 // Validate checks both local ordinals, without mutation or resource policy.

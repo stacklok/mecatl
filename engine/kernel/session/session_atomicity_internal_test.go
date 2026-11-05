@@ -21,6 +21,19 @@ func detachedSessionState(state sessionState) sessionState {
 		owned := *r
 		owned.value = r.value.Clone()
 		owned.input = r.input.Clone()
+		owned.instructions = r.instructions.Clone()
+		owned.catalog = r.catalog.Clone()
+		owned.binding = r.binding.Clone()
+		owned.effective = r.effective.Clone()
+		if v.instructions == r {
+			v.instructions = &owned
+		}
+		if v.catalog == r {
+			v.catalog = &owned
+		}
+		if v.binding == r {
+			v.binding = &owned
+		}
 		v.records[i] = &owned
 	}
 	v.runs = slices.Clone(v.runs)
@@ -45,7 +58,7 @@ func populatedAtomicitySession(t *testing.T) *Session {
 			t.Fatal(err)
 		}
 		for _, content := range []string{"first", "second"} {
-			if _, err := b.AddInput(AddInputRequest{RunID: run, Content: []byte(content)}); err != nil {
+			if _, err := b.AddInput(AddInputRequest{RunID: run, Messages: internalByteMessages([]byte(content))}); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -70,7 +83,7 @@ func TestSessionPopulatedApplyRejectionPreservesPrivateState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := b.AddInput(AddInputRequest{RunID: old.ActiveRun(), Content: []byte("third")}); err != nil {
+	if _, err := b.AddInput(AddInputRequest{RunID: old.ActiveRun(), Messages: internalByteMessages([]byte("third"))}); err != nil {
 		t.Fatal(err)
 	}
 	if err := b.Interrupt(); err != nil {
@@ -80,7 +93,7 @@ func TestSessionPopulatedApplyRejectionPreservesPrivateState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := b.AddInput(AddInputRequest{RunID: run, Content: []byte("successor")}); err != nil {
+	if _, err := b.AddInput(AddInputRequest{RunID: run, Messages: internalByteMessages([]byte("successor"))}); err != nil {
 		t.Fatal(err)
 	}
 	records := slices.Clone(b.records)
@@ -113,7 +126,7 @@ func TestSessionPopulatedApplyRejectionPreservesPrivateState(t *testing.T) {
 	if !reflect.DeepEqual(before, detachedSessionState(oldState)) {
 		t.Fatal("rejected prefix corrupted an old snapshot")
 	}
-	if oldRun.InputCount() != 2 || oldRun.RecordCount() != 3 || string(oldInput.Content()) != "first" || !oldRecord.Format().Equal(before.view.records[2].value) {
+	if oldRun.InputCount() != 2 || oldRun.RecordCount() != 3 || string(internalInputBytes(oldInput)) != "first" || !oldRecord.Format().Equal(before.view.records[2].value) {
 		t.Fatal("rejection changed independent child handles")
 	}
 	if err := s.Apply(history.Commit{Ref: good.ref, Commit: good.commit}); err != nil {
@@ -127,7 +140,7 @@ func TestDetachedSessionStateOracleDetectsInPlaceMutation(t *testing.T) {
 		mutate func(*sessionState)
 	}{
 		{"encoded bytes", func(s *sessionState) { s.view.records[2].value.Payload[0] ^= 1 }},
-		{"decoded bytes", func(s *sessionState) { s.view.records[2].input.Content[0] ^= 1 }},
+		{"decoded bytes", func(s *sessionState) { s.view.records[2].input.Messages[0].Content[0].Media.Source.Inline.Data[0] ^= 1 }},
 		{"record locator", func(s *sessionState) { s.view.records[2] = s.view.records[3] }},
 		{"input locator", func(s *sessionState) { s.view.inputs[0] = s.view.inputs[1] }},
 		{"run locator", func(s *sessionState) { s.view.runs[0].inputStart++ }},

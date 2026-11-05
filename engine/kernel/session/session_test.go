@@ -45,7 +45,7 @@ func inputRecord(t testing.TB, ordinal uint64) session.Record {
 }
 func runInputRecord(t testing.TB, run, ordinal uint64) session.Record {
 	t.Helper()
-	r, err := session.NewUserInputRecord(session.UserInput{ID: session.InputID{RunID: session.RunID{HistoryID: testHistoryID(t), Ordinal: run}, Ordinal: ordinal}, Content: []byte{0xff, 0, 'x'}}, testLimits())
+	r, err := session.NewUserInputRecord(session.UserInput{ID: session.InputID{RunID: session.RunID{HistoryID: testHistoryID(t), Ordinal: run}, Ordinal: ordinal}, Messages: byteMessages([]byte{0xff, 0, 'x'})}, testLimits())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -132,7 +132,7 @@ func captureRejectedSnapshot(v session.Snapshot) rejectedSnapshotFacts {
 		}
 		for j := 0; j < run.InputCount(); j++ {
 			input := run.InputAt(j)
-			f.inputs = append(f.inputs, session.UserInput{ID: input.ID(), Content: input.Content()}.Clone())
+			f.inputs = append(f.inputs, session.UserInput{ID: input.ID(), Messages: input.Messages()}.Clone())
 		}
 		facts.runs = append(facts.runs, f)
 	}
@@ -206,8 +206,8 @@ func TestSessionAtomicRejection(t *testing.T) {
 		{"wrong owner", runInputRecord(t, 2, 2).Format(), session.ErrTransition},
 		{"wrong interruption", closeoutRecord(t, 2).Format(), session.ErrTransition},
 		{"unsupported kind", format.Record{Kind: "session.model_request", KindVersion: 1, Payload: []byte{0xa0}}, session.ErrUnsupportedRecord},
-		{"unsupported version", format.Record{Kind: "session.user_input", KindVersion: 2, Payload: []byte{0xa0}}, session.ErrUnsupportedRecord},
-		{"malformed payload", format.Record{Kind: "session.user_input", KindVersion: 1, Payload: []byte{0xff}}, codec.ErrInvalidData},
+		{"unsupported version", format.Record{Kind: "session.user_input", KindVersion: 1, Payload: []byte{0xa0}}, session.ErrUnsupportedRecord},
+		{"malformed payload", format.Record{Kind: "session.user_input", KindVersion: 2, Payload: []byte{0xff}}, codec.ErrInvalidData},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			prefix := []session.Record{createdRecord(t), startRecord(t, 1), inputRecord(t, 1), inputRecord(t, 2), closeoutRecord(t, 1), startRecord(t, 2), runInputRecord(t, 2, 1), closeoutRecord(t, 2)}
@@ -291,13 +291,13 @@ func TestSessionApplyOwnership(t *testing.T) {
 	successor := applyRecords(t, s, inputRecord(t, 2))
 	clear(successor.Commit.Records[0].Payload)
 	*successor.Commit.Parent = contentid.CID{}
-	content := old.Content()
+	content := inputBytes(old)
 	clear(content)
 	dto := old.Format()
-	clear(dto.Content)
+	clear(dtoInputBytes(dto))
 	raw := before.RecordAt(2).Format()
 	clear(raw.Payload)
-	if got := old.Content(); !reflect.DeepEqual(got, []byte{0xff, 0, 'x'}) || before.RunAt(0).InputCount() != 1 {
+	if got := inputBytes(old); !reflect.DeepEqual(got, []byte{0xff, 0, 'x'}) || before.RunAt(0).InputCount() != 1 {
 		t.Fatal("accepted DTO/export aliases")
 	}
 }

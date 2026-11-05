@@ -12,7 +12,7 @@ import (
 
 func limits() codec.Limits {
 	return codec.Limits{MaxBytes: 4096, MaxStringBytes: 128, MaxByteStringBytes: 1024,
-		MaxArrayElements: 16, MaxMapPairs: 8, MaxDepth: 8, MaxNodes: 512, MaxCollectionElements: 128}
+		MaxArrayElements: 16, MaxMapPairs: 8, MaxDepth: 16, MaxNodes: 512, MaxCollectionElements: 128}
 }
 
 func TestRunStarted(t *testing.T) {

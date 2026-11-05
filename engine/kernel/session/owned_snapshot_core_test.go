@@ -75,7 +75,7 @@ func TestOwnedCoreLifecycleSnapshotsAndReplay(t *testing.T) {
 		t.Fatal(err)
 	}
 	content := []byte{0xff, 0, 'x'}
-	input, err := b.AddInput(session.AddInputRequest{RunID: run, Content: content})
+	input, err := b.AddInput(session.AddInputRequest{RunID: run, Messages: byteMessages(content)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,13 +99,13 @@ func TestOwnedCoreLifecycleSnapshotsAndReplay(t *testing.T) {
 	if _, ok := (session.RecordView{}).Created(); ok {
 		t.Fatal("zero kind")
 	}
-	if got := oldInput.Content(); !bytes.Equal(got, []byte{0xff, 0, 'x'}) {
+	if got := inputBytes(oldInput); !bytes.Equal(got, []byte{0xff, 0, 'x'}) {
 		t.Fatal("content not owned")
 	}
-	got := oldInput.Content()
+	got := inputBytes(oldInput)
 	got[0] = 0
 	dto := oldInput.Format()
-	dto.Content[0] = 0
+	dtoInputBytes(dto)[0] = 0
 	raw := old.RecordAt(2).Format()
 	raw.Payload[0] = 0
 
@@ -113,7 +113,7 @@ func TestOwnedCoreLifecycleSnapshotsAndReplay(t *testing.T) {
 	for range 4 {
 		wg.Go(func() {
 			for range 4000 {
-				if old.RecordCount() != 3 || oldRun.RecordCount() != 2 || oldRun.InputCount() != 1 || oldInput.Content()[0] != 0xff {
+				if old.RecordCount() != 3 || oldRun.RecordCount() != 2 || oldRun.InputCount() != 1 || inputBytes(oldInput)[0] != 0xff {
 					t.Error("old handle changed")
 					return
 				}
@@ -122,7 +122,7 @@ func TestOwnedCoreLifecycleSnapshotsAndReplay(t *testing.T) {
 					return
 				}
 				fact, ok := oldRecord.UserInput()
-				if !ok || fact.ID() != input || !bytes.Equal(fact.Content(), []byte{0xff, 0, 'x'}) {
+				if !ok || fact.ID() != input || !bytes.Equal(inputBytes(fact), []byte{0xff, 0, 'x'}) {
 					t.Error("independent record handle changed")
 					return
 				}
@@ -137,7 +137,7 @@ func TestOwnedCoreLifecycleSnapshotsAndReplay(t *testing.T) {
 	}
 	for n := 0; n < 128; n++ {
 		b := ownedCoreBatch(t, s)
-		if _, err := b.AddInput(session.AddInputRequest{RunID: run, Content: []byte{byte(n)}}); err != nil {
+		if _, err := b.AddInput(session.AddInputRequest{RunID: run, Messages: byteMessages([]byte{byte(n)})}); err != nil {
 			t.Fatal(err)
 		}
 		ownedCoreSubmit(t, s, b)
@@ -187,10 +187,14 @@ func TestOwnedCoreLifecycleSnapshotsAndReplay(t *testing.T) {
 func TestOwnedCoreApplyAtomicityAndImportedStorage(t *testing.T) {
 	s, _, p, id := ownedCoreFixture(t, 64)
 	makeRecord := func(kind string, payload []byte) historyformat.Record {
-		return historyformat.Record{Kind: kind, KindVersion: 1, Payload: payload}
+		version := int64(1)
+		if kind == sessionformat.KindUserInput {
+			version = sessionformat.UserInputVersion
+		}
+		return historyformat.Record{Kind: kind, KindVersion: version, Payload: payload}
 	}
 	encodeInput := func(ordinal uint64) []byte {
-		payload, err := codec.Encode(sessionformat.UserInput{RunID: 1, ID: ordinal, Content: []byte("exact")}, p.PayloadLimits)
+		payload, err := codec.Encode(sessionformat.UserInput{RunID: 1, ID: ordinal, Messages: formatByteMessages([]byte("exact"))}, p.PayloadLimits)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -227,7 +231,7 @@ func TestOwnedCoreApplyAtomicityAndImportedStorage(t *testing.T) {
 	for _, r := range c.Records {
 		clear(r.Payload)
 	}
-	if string(s.Snapshot().RunAt(0).InputAt(0).Content()) != "exact" {
+	if string(inputBytes(s.Snapshot().RunAt(0).InputAt(0))) != "exact" {
 		t.Fatal("imported payload alias")
 	}
 }
@@ -261,12 +265,12 @@ func TestOwnedCoreReserveRejectionAndScopedContracts(t *testing.T) {
 		t.Fatal(err)
 	}
 	inputID.Ordinal = 1
-	r, err := session.NewUserInputRecord(session.UserInput{ID: inputID, Content: []byte{0xff}}, p.PayloadLimits)
+	r, err := session.NewUserInputRecord(session.UserInput{ID: inputID, Messages: byteMessages([]byte{0xff})}, p.PayloadLimits)
 	if err != nil {
 		t.Fatal(err)
 	}
 	dto, err := codec.Decode[sessionformat.UserInput](r.Format().Payload, p.PayloadLimits)
-	if err != nil || dto.RunID != 2 || dto.ID != 1 || dto.Content[0] != 0xff {
+	if err != nil || dto.RunID != 2 || dto.ID != 1 || dtoInputBytes(dto)[0] != 0xff {
 		t.Fatalf("scoped DTO: %v", err)
 	}
 	if _, err := codec.Encode(sessionformat.UserInput{ID: 1}, p.PayloadLimits); !errors.Is(err, codec.ErrInvalidData) {

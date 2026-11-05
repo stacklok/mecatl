@@ -139,7 +139,7 @@ func TestSessionRealHistoryCompetingStarts(t *testing.T) {
 		t.Fatal("loser published")
 	}
 	assertHistoryHead(t, h, accepted)
-	if got := s.Snapshot(); got.ActiveRun() != run || got.RunCount() != 1 || string(got.RunAt(0).InputAt(0).Content()) != "first" {
+	if got := s.Snapshot(); got.ActiveRun() != run || got.RunCount() != 1 || string(inputBytes(got.RunAt(0).InputAt(0))) != "first" {
 		t.Fatal("winner facts")
 	}
 }
@@ -191,7 +191,7 @@ func TestSessionNavigationIndependentOfCommitGrouping(t *testing.T) {
 				}
 			}
 			for j := 0; j < run.InputCount(); j++ {
-				if run.InputAt(j).ID() != want.InputAt(j).ID() || !reflect.DeepEqual(run.InputAt(j).Content(), want.InputAt(j).Content()) {
+				if run.InputAt(j).ID() != want.InputAt(j).ID() || !reflect.DeepEqual(run.InputAt(j).Messages(), want.InputAt(j).Messages()) {
 					t.Fatal("input navigation")
 				}
 			}

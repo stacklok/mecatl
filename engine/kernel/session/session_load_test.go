@@ -84,9 +84,9 @@ func TestLoadLifecycleAndOwnership(t *testing.T) {
 				}
 			}
 			v := loaded.Snapshot()
-			clear(v.RunAt(0).InputAt(0).Content())
+			clear(inputBytes(v.RunAt(0).InputAt(0)))
 			dto := v.RunAt(0).InputAt(0).Format()
-			clear(dto.Content)
+			clear(dtoInputBytes(dto))
 			raw := v.RecordAt(2).Format()
 			clear(raw.Payload)
 			if !reflect.DeepEqual(loaded.Snapshot(), want) || !reflect.DeepEqual(s.Snapshot(), want) {
@@ -167,7 +167,7 @@ func TestLoadAfterAcceptedBeforeLocalApply(t *testing.T) {
 	loaded, err := session.Load(context.Background(), readOnly, testHistoryID(t), sessionPolicy())
 	mustBatch(t, err)
 	v := loaded.Snapshot()
-	if v.Head() != backend.attempts[0].commit.Ref || !v.Created() || v.ActiveRun() != run || v.RunCount() != 1 || v.RunAt(0).InputCount() != 1 || v.RunAt(0).InputAt(0).ID() != input || string(v.RunAt(0).InputAt(0).Content()) != "accepted" || !reflect.DeepEqual(s.Snapshot(), before) || len(backend.attempts) != 1 {
+	if v.Head() != backend.attempts[0].commit.Ref || !v.Created() || v.ActiveRun() != run || v.RunCount() != 1 || v.RunAt(0).InputCount() != 1 || v.RunAt(0).InputAt(0).ID() != input || string(inputBytes(v.RunAt(0).InputAt(0))) != "accepted" || !reflect.DeepEqual(s.Snapshot(), before) || len(backend.attempts) != 1 {
 		t.Fatal("crash recovery lost facts or changed abandoned object")
 	}
 	if _, err := s.BeginCommit(); !errors.Is(err, session.ErrBatch) {

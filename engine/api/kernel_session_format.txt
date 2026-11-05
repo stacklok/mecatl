@@ -1,11 +1,99 @@
+    method func (*AuthoredMessage).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
+    method func (*Content).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
+    method func (*ContentPart).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
+    method func (*ContentSource).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
     method func (*Created).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
+    method func (*EffectiveInput).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
+    method func (*HarnessPrompt).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
+    method func (*InlineMedia).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
+    method func (*InstructionBlock).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
+    method func (*Instructions).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
+    method func (*MediaContent).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
+    method func (*MediaSource).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
+    method func (*ModelBinding).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
+    method func (*PreparedPrompt).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
+    method func (*ProviderMedia).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
+    method func (*RemoteMedia).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
     method func (*RunInterrupted).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
     method func (*RunStarted).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
+    method func (*ToolCatalog).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
+    method func (*ToolDefinition).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
     method func (*UserInput).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
+    method func (*WorkspaceFileSource).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
+    method func (AuthoredMessage).AppendCBOR(dst []byte) []byte
+    method func (AuthoredMessage).CheckCBOR(b *codec.Budget, depth int, fieldMax int) error
+    method func (AuthoredMessage).Clone() AuthoredMessage
+    method func (AuthoredMessage).Equal(other AuthoredMessage) bool
+    method func (Content).AppendCBOR(dst []byte) []byte
+    method func (Content).CheckCBOR(b *codec.Budget, depth int, fieldMax int) error
+    method func (Content).Clone() Content
+    method func (Content).Equal(other Content) bool
+    method func (ContentPart).AppendCBOR(dst []byte) []byte
+    method func (ContentPart).CheckCBOR(b *codec.Budget, depth int, fieldMax int) error
+    method func (ContentPart).Clone() ContentPart
+    method func (ContentPart).Equal(other ContentPart) bool
+    method func (ContentPart).Validate() error
+    method func (ContentSource).AppendCBOR(dst []byte) []byte
+    method func (ContentSource).CheckCBOR(b *codec.Budget, depth int, fieldMax int) error
+    method func (ContentSource).Clone() ContentSource
+    method func (ContentSource).Equal(other ContentSource) bool
+    method func (ContentSource).Validate() error
     method func (Created).AppendCBOR(dst []byte) []byte
     method func (Created).CheckCBOR(b *codec.Budget, depth int, fieldMax int) error
     method func (Created).Clone() Created
     method func (Created).Equal(other Created) bool
+    method func (EffectiveInput).AppendCBOR(dst []byte) []byte
+    method func (EffectiveInput).CheckCBOR(b *codec.Budget, depth int, fieldMax int) error
+    method func (EffectiveInput).Clone() EffectiveInput
+    method func (EffectiveInput).Equal(other EffectiveInput) bool
+    method func (EffectiveInput).Validate() error
+    method func (HarnessPrompt).AppendCBOR(dst []byte) []byte
+    method func (HarnessPrompt).CheckCBOR(b *codec.Budget, depth int, fieldMax int) error
+    method func (HarnessPrompt).Clone() HarnessPrompt
+    method func (HarnessPrompt).Equal(other HarnessPrompt) bool
+    method func (HarnessPrompt).Validate() error
+    method func (InlineMedia).AppendCBOR(dst []byte) []byte
+    method func (InlineMedia).CheckCBOR(b *codec.Budget, depth int, fieldMax int) error
+    method func (InlineMedia).Clone() InlineMedia
+    method func (InlineMedia).Equal(other InlineMedia) bool
+    method func (InstructionBlock).AppendCBOR(dst []byte) []byte
+    method func (InstructionBlock).CheckCBOR(b *codec.Budget, depth int, fieldMax int) error
+    method func (InstructionBlock).Clone() InstructionBlock
+    method func (InstructionBlock).Equal(other InstructionBlock) bool
+    method func (Instructions).AppendCBOR(dst []byte) []byte
+    method func (Instructions).CheckCBOR(b *codec.Budget, depth int, fieldMax int) error
+    method func (Instructions).Clone() Instructions
+    method func (Instructions).Equal(other Instructions) bool
+    method func (MediaContent).AppendCBOR(dst []byte) []byte
+    method func (MediaContent).CheckCBOR(b *codec.Budget, depth int, fieldMax int) error
+    method func (MediaContent).Clone() MediaContent
+    method func (MediaContent).Equal(other MediaContent) bool
+    method func (MediaContent).Validate() error
+    method func (MediaSource).AppendCBOR(dst []byte) []byte
+    method func (MediaSource).CheckCBOR(b *codec.Budget, depth int, fieldMax int) error
+    method func (MediaSource).Clone() MediaSource
+    method func (MediaSource).Equal(other MediaSource) bool
+    method func (MediaSource).Validate() error
+    method func (ModelBinding).AppendCBOR(dst []byte) []byte
+    method func (ModelBinding).CheckCBOR(b *codec.Budget, depth int, fieldMax int) error
+    method func (ModelBinding).Clone() ModelBinding
+    method func (ModelBinding).Equal(other ModelBinding) bool
+    method func (ModelBinding).Validate() error
+    method func (PreparedPrompt).AppendCBOR(dst []byte) []byte
+    method func (PreparedPrompt).CheckCBOR(b *codec.Budget, depth int, fieldMax int) error
+    method func (PreparedPrompt).Clone() PreparedPrompt
+    method func (PreparedPrompt).Equal(other PreparedPrompt) bool
+    method func (PreparedPrompt).Validate() error
+    method func (ProviderMedia).AppendCBOR(dst []byte) []byte
+    method func (ProviderMedia).CheckCBOR(b *codec.Budget, depth int, fieldMax int) error
+    method func (ProviderMedia).Clone() ProviderMedia
+    method func (ProviderMedia).Equal(other ProviderMedia) bool
+    method func (ProviderMedia).Validate() error
+    method func (RemoteMedia).AppendCBOR(dst []byte) []byte
+    method func (RemoteMedia).CheckCBOR(b *codec.Budget, depth int, fieldMax int) error
+    method func (RemoteMedia).Clone() RemoteMedia
+    method func (RemoteMedia).Equal(other RemoteMedia) bool
+    method func (RemoteMedia).Validate() error
     method func (RunInterrupted).AppendCBOR(dst []byte) []byte
     method func (RunInterrupted).CheckCBOR(b *codec.Budget, depth int, fieldMax int) error
     method func (RunInterrupted).Clone() RunInterrupted
@@ -16,17 +104,59 @@
     method func (RunStarted).Clone() RunStarted
     method func (RunStarted).Equal(other RunStarted) bool
     method func (RunStarted).Validate() error
+    method func (ToolCatalog).AppendCBOR(dst []byte) []byte
+    method func (ToolCatalog).CheckCBOR(b *codec.Budget, depth int, fieldMax int) error
+    method func (ToolCatalog).Clone() ToolCatalog
+    method func (ToolCatalog).Equal(other ToolCatalog) bool
+    method func (ToolCatalog).Validate() error
+    method func (ToolDefinition).AppendCBOR(dst []byte) []byte
+    method func (ToolDefinition).CheckCBOR(b *codec.Budget, depth int, fieldMax int) error
+    method func (ToolDefinition).Clone() ToolDefinition
+    method func (ToolDefinition).Equal(other ToolDefinition) bool
+    method func (ToolDefinition).Validate() error
     method func (UserInput).AppendCBOR(dst []byte) []byte
     method func (UserInput).CheckCBOR(b *codec.Budget, depth int, fieldMax int) error
     method func (UserInput).Clone() UserInput
     method func (UserInput).Equal(other UserInput) bool
     method func (UserInput).Validate() error
+    method func (WorkspaceFileSource).AppendCBOR(dst []byte) []byte
+    method func (WorkspaceFileSource).CheckCBOR(b *codec.Budget, depth int, fieldMax int) error
+    method func (WorkspaceFileSource).Clone() WorkspaceFileSource
+    method func (WorkspaceFileSource).Equal(other WorkspaceFileSource) bool
+    method func (WorkspaceFileSource).Validate() error
+const EffectiveInputVersion int64 = 1
+const InstructionsVersion int64 = 1
 const KindCreated untyped string = "session.created"
+const KindEffectiveInput untyped string = "session.effective_input"
+const KindInstructions untyped string = "session.instructions"
+const KindModelBinding untyped string = "session.model_binding"
 const KindRunInterrupted untyped string = "session.run_interrupted"
 const KindRunStarted untyped string = "session.run_started"
+const KindToolCatalog untyped string = "session.tool_catalog"
 const KindUserInput untyped string = "session.user_input"
+const ModelBindingVersion int64 = 1
+const ToolCatalogVersion int64 = 1
+const UserInputVersion int64 = 2
 const Version int64 = 1
+type AuthoredMessage struct{Content Content "cbor:\"c\""}
+type Content []ContentPart
+type ContentPart struct{Kind string "cbor:\"k\""; Text string "cbor:\"t\""; Media *MediaContent "cbor:\"m,omitempty\""}
+type ContentSource struct{Description string "cbor:\"d\""; WorkspaceFile *WorkspaceFileSource "cbor:\"w,omitempty\""}
 type Created struct{}
+type EffectiveInput struct{RunID uint64 "cbor:\"r\""; InputID uint64 "cbor:\"i\""; Prompts []PreparedPrompt "cbor:\"p\""}
+type HarnessPrompt struct{Purpose string "cbor:\"p\""; Content Content "cbor:\"c\""; Source ContentSource "cbor:\"s\""}
+type InlineMedia struct{Data []byte "cbor:\"d\""}
+type InstructionBlock struct{Content Content "cbor:\"c\""; Source ContentSource "cbor:\"s\""}
+type Instructions struct{Blocks []InstructionBlock "cbor:\"b\""}
+type MediaContent struct{Source MediaSource "cbor:\"s\""; MediaType string "cbor:\"m\""; Format string "cbor:\"f\""; Filename string "cbor:\"n\""; Title string "cbor:\"t\""}
+type MediaSource struct{Inline *InlineMedia "cbor:\"i,omitempty\""; Remote *RemoteMedia "cbor:\"r,omitempty\""; Provider *ProviderMedia "cbor:\"p,omitempty\""}
+type ModelBinding struct{Route string "cbor:\"r\""; API string "cbor:\"a\""; Model string "cbor:\"m\""; Settings []byte "cbor:\"s\""}
+type PreparedPrompt struct{AuthoredMessage *uint64 "cbor:\"a,omitempty\""; Harness *HarnessPrompt "cbor:\"h,omitempty\""}
+type ProviderMedia struct{Provider string "cbor:\"p\""; Scope string "cbor:\"s\""; ID string "cbor:\"i\""}
+type RemoteMedia struct{URI string "cbor:\"u\""}
 type RunInterrupted struct{ID uint64 "cbor:\"r\""}
 type RunStarted struct{ID uint64 "cbor:\"r\""}
-type UserInput struct{RunID uint64 "cbor:\"r\""; ID uint64 "cbor:\"i\""; Content []byte "cbor:\"c\""}
+type ToolCatalog struct{Tools []ToolDefinition "cbor:\"t\""}
+type ToolDefinition struct{Name string "cbor:\"n\""; Description string "cbor:\"d\""; ArgumentSchema []byte "cbor:\"s\""}
+type UserInput struct{RunID uint64 "cbor:\"r\""; ID uint64 "cbor:\"i\""; Messages []AuthoredMessage "cbor:\"m\""}
+type WorkspaceFileSource struct{Path string "cbor:\"p\""}

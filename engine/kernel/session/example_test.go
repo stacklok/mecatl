@@ -45,8 +45,27 @@ func ExampleSession() {
 		fmt.Println(err)
 		return
 	}
-	input, err := b.AddInput(session.AddInputRequest{RunID: run, Content: []byte("first")})
+	input, err := b.AddInput(session.AddInputRequest{RunID: run, Messages: []session.AuthoredMessage{{Content: session.Content{{Kind: session.ContentText, Text: "first"}}}}})
 	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	// Preparation supplies retained values; the kernel never opens this source file.
+	if err := b.ReplaceInstructions(session.Instructions{HistoryID: id, Blocks: []session.InstructionBlock{{
+		Content: session.Content{{Kind: session.ContentText, Text: "Use the project's vocabulary."}},
+		Source:  session.ContentSource{Description: "adopted workspace instructions", WorkspaceFile: &session.WorkspaceFileSource{Path: "AGENTS.md"}},
+	}}}); err != nil {
+		fmt.Println(err)
+		return
+	}
+	if err := b.AddEffectiveInput(session.EffectiveInput{InputID: input, Prompts: []session.PreparedPrompt{
+		{AuthoredMessage: new(uint64(0))},
+		{Harness: &session.HarnessPrompt{
+			Purpose: session.PromptContext,
+			Content: session.Content{{Kind: session.ContentText, Text: "Retained reference material."}},
+			Source:  session.ContentSource{Description: "prepared workspace reference", WorkspaceFile: &session.WorkspaceFileSource{Path: "docs/design.md"}},
+		}},
+	}}); err != nil {
 		fmt.Println(err)
 		return
 	}
@@ -65,6 +84,10 @@ func ExampleSession() {
 		return
 	}
 	fmt.Printf("loaded active=%d inputs=%d\n", loaded.Snapshot().ActiveRun().Ordinal, loaded.Snapshot().RunAt(0).InputCount())
+	instructions, _ := loaded.Snapshot().Instructions()
+	fmt.Printf("instruction source=%s\n", instructions.Value().Blocks[0].Source.WorkspaceFile.Path)
+	effective, _ := loaded.Snapshot().RecordAt(4).EffectiveInput()
+	fmt.Printf("prepared purpose=%s; original=%q\n", effective.Value().Prompts[1].Harness.Purpose, loaded.Snapshot().RunAt(0).InputAt(0).Messages()[0].Content[0].Text)
 
 	// Closing a run is explicit, never a side effect of loading it.
 	closeout, err := loaded.BeginCommit()
@@ -94,7 +117,7 @@ func ExampleSession() {
 		fmt.Println(err)
 		return
 	}
-	second, err := next.AddInput(session.AddInputRequest{RunID: successor, Content: []byte("second")})
+	second, err := next.AddInput(session.AddInputRequest{RunID: successor, Messages: []session.AuthoredMessage{{Content: session.Content{{Kind: session.ContentText, Text: "second"}}}}})
 	if err != nil {
 		fmt.Println(err)
 		return
@@ -112,12 +135,14 @@ func ExampleSession() {
 	v = loaded.Snapshot()
 	fmt.Printf("loaded %s head=%d runs=%d active=%d\n", v.HistoryID(), v.Head().Sequence, v.RunCount(), v.ActiveRun().Ordinal)
 	owner := v.RunAt(1)
-	fmt.Printf("run %d owns input %d: %s\n", owner.ID().Ordinal, owner.InputAt(0).ID().Ordinal, owner.InputAt(0).Content())
+	fmt.Printf("run %d owns input %d: %s\n", owner.ID().Ordinal, owner.InputAt(0).ID().Ordinal, owner.InputAt(0).Messages()[0].Content[0].Text)
 	fmt.Printf("old snapshot head=%d active=%d\n", old.Head().Sequence, old.ActiveRun().Ordinal)
 	// Output:
 	// provisional input=1 run=1; created=false
 	// accepted head=1 active=1
 	// loaded active=1 inputs=1
+	// instruction source=AGENTS.md
+	// prepared purpose=context; original="first"
 	// interrupted head=2 idle=true
 	// successor input=1 run=2
 	// loaded HST1111111111111111111111 head=3 runs=2 active=2

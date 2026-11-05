@@ -11,13 +11,16 @@ import (
 // appends. Zero is unscoped and empty. Handles may retain extra backing capacity;
 // GC owns their lifetime. Indexed methods panic outside [0, count).
 type Snapshot struct {
-	historyID historyid.HistoryID
-	head      history.CommitRef
-	lifecycle lifecycleState
-	records   []*acceptedRecord
-	runs      []runEntry
-	inputs    []int
-	commits   []commitEntry
+	historyID    historyid.HistoryID
+	head         history.CommitRef
+	lifecycle    lifecycleState
+	records      []*acceptedRecord
+	runs         []runEntry
+	inputs       []int
+	commits      []commitEntry
+	instructions *acceptedRecord
+	catalog      *acceptedRecord
+	binding      *acceptedRecord
 }
 
 // HistoryID returns the scope, including before creation.
@@ -51,6 +54,47 @@ func (v Snapshot) RunAt(i int) RunView {
 		recordEnd, inputEnd = v.runs[i+1].recordStart, v.runs[i+1].inputStart
 	}
 	return RunView{id: r.id, scope: v.historyID, records: v.records[r.recordStart:recordEnd:recordEnd], inputs: v.inputs[r.inputStart:inputEnd:inputEnd], allRecords: v.records}
+}
+
+// Instructions returns the latest accepted replacement at this head, including
+// explicit emptiness. Before any replacement it returns zero, false in O(1).
+func (v Snapshot) Instructions() (InstructionsView, bool) {
+	if v.instructions == nil {
+		return InstructionsView{}, false
+	}
+	return InstructionsView{scope: v.historyID, record: v.instructions}, true
+}
+
+// ToolCatalog returns the latest accepted replacement at this head in O(1).
+// Explicit emptiness is present; no retained fact returns zero, false.
+func (v Snapshot) ToolCatalog() (ToolCatalogView, bool) {
+	if v.catalog == nil {
+		return ToolCatalogView{}, false
+	}
+	return ToolCatalogView{scope: v.historyID, record: v.catalog}, true
+}
+
+// ModelBinding returns the latest accepted replacement at this head in O(1), or
+// zero, false before any replacement. Handles remain pinned after later writes.
+func (v Snapshot) ModelBinding() (ModelBindingView, bool) {
+	if v.binding == nil {
+		return ModelBindingView{}, false
+	}
+	return ModelBindingView{scope: v.historyID, record: v.binding}, true
+}
+
+// sourceMessages uses existing run/input locators, checking uint64 bounds before
+// narrowing. It never resolves content or searches for an effective revision.
+func (v Snapshot) sourceMessages(id InputID) (uint64, bool) {
+	if id.RunID.HistoryID != v.historyID || id.RunID.Ordinal == 0 || id.RunID.Ordinal > uint64(len(v.runs)) || id.Ordinal == 0 {
+		return 0, false
+	}
+	run := v.RunAt(int(id.RunID.Ordinal - 1)) //nolint:gosec // The nonzero ordinal is bounded by len(v.runs) above.
+	if id.Ordinal > uint64(len(run.inputs)) {
+		return 0, false
+	}
+	input := run.InputAt(int(id.Ordinal - 1)) //nolint:gosec // The nonzero ordinal is bounded by len(run.inputs) above.
+	return uint64(len(input.record.input.Messages)), true
 }
 
 // runEntry is immutable. Endpoints derive from the next entry or captured lengths,

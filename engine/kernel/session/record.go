@@ -13,7 +13,7 @@ import (
 // History may preserve such records as opaque payloads.
 var ErrUnsupportedRecord = errors.New("unsupported session record kind or version")
 
-// Record is an owned, locally validated canonical lifecycle record for typed
+// Record is an owned, locally validated canonical session record for typed
 // preparation. Typed constructors and DecodeRecord create usable records. Zero is
 // unusable. Copies may share private immutable storage; no method
 // exposes that storage. It proves neither transition legality nor acceptance.
@@ -28,9 +28,11 @@ type Record struct {
 	userInput      InputID
 	runStarted     sessionformat.RunStarted
 	runInterrupted RunInterrupted
-	// inputBytes is payload accounting, not retained input content. It permits
-	// generated policy checks under a stricter policy without decoding Content.
-	inputBytes int
+	// Constructor-established source metadata contains no borrowed content.
+	messageCount   uint64
+	effectiveInput InputID
+	hasMessage     bool
+	maxMessage     uint64
 }
 
 // Format returns a detached history persistence DTO. Mutating it does not change
@@ -39,24 +41,32 @@ type Record struct {
 // a zero, invalid DTO.
 func (r Record) Format() format.Record { return r.value.Clone() }
 
-// checkPayload rechecks constructor-owned facts under the session's policy.
-// Content is opaque: generated input checks inspect only its length, so an
-// equally sized view of the owned payload avoids decoding or retaining it twice.
+// checkPayload rechecks the complete rich payload under the current policy.
+// Bounded generated decoding is required: metadata alone cannot validate nested
+// strings, collection counts, JSON, or variants under stricter limits.
 func (r Record) checkPayload(limits codec.Limits) error {
-	if r.value.KindVersion != sessionformat.Version {
-		return ErrUnsupportedRecord
-	}
-	switch r.value.Kind {
-	case sessionformat.KindCreated:
-		return codec.Check(sessionformat.Created{}, limits)
+	_, err := decodeAccepted(r.value, limits)
+	return err
+}
+
+// supportedRecord dispatches exact kind/version pairs. In particular, opaque
+// user-input v1 is not silently reinterpreted as rich authored input.
+func supportedRecord(kind string, version int64) bool {
+	switch kind {
 	case sessionformat.KindUserInput:
-		return codec.Check(sessionformat.UserInput{RunID: r.userInput.RunID.Ordinal, ID: r.userInput.Ordinal, Content: r.value.Payload[:r.inputBytes]}, limits)
-	case sessionformat.KindRunStarted:
-		return codec.Check(r.runStarted, limits)
-	case sessionformat.KindRunInterrupted:
-		return codec.Check(sessionformat.RunInterrupted{ID: r.runInterrupted.ID.Ordinal}, limits)
+		return version == sessionformat.UserInputVersion
+	case sessionformat.KindEffectiveInput:
+		return version == sessionformat.EffectiveInputVersion
+	case sessionformat.KindInstructions:
+		return version == sessionformat.InstructionsVersion
+	case sessionformat.KindToolCatalog:
+		return version == sessionformat.ToolCatalogVersion
+	case sessionformat.KindModelBinding:
+		return version == sessionformat.ModelBindingVersion
+	case sessionformat.KindCreated, sessionformat.KindRunStarted, sessionformat.KindRunInterrupted:
+		return version == sessionformat.Version
 	default:
-		return ErrUnsupportedRecord
+		return false
 	}
 }
 
@@ -76,7 +86,7 @@ func DecodeRecord(scope historyid.HistoryID, v format.Record, limits codec.Limit
 	if err := v.Validate(); err != nil {
 		return Record{}, codec.ErrInvalidData
 	}
-	if v.KindVersion != sessionformat.Version {
+	if !supportedRecord(v.Kind, v.KindVersion) {
 		return Record{}, ErrUnsupportedRecord
 	}
 	fact, err := decodeAccepted(v, limits)

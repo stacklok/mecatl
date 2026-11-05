@@ -18,7 +18,7 @@ func TestSnapshotZeroKindsAndIndexBounds(t *testing.T) {
 	var run session.RunView
 	var input session.InputView
 	var record session.RecordView
-	if run.ID() != (session.RunID{}) || run.RecordCount() != 0 || run.InputCount() != 0 || input.ID() != (session.InputID{}) || input.Content() != nil || !reflect.DeepEqual(input.Format(), sessionformat.UserInput{}) || record.Kind() != "" || record.KindVersion() != 0 {
+	if run.ID() != (session.RunID{}) || run.RecordCount() != 0 || run.InputCount() != 0 || input.ID() != (session.InputID{}) || input.Messages() != nil || !reflect.DeepEqual(input.Format(), sessionformat.UserInput{}) || record.Kind() != "" || record.KindVersion() != 0 {
 		t.Fatal("zero child handle")
 	}
 	s := newSession(t, sessionPolicy())
@@ -51,7 +51,11 @@ func TestSnapshotZeroKindsAndIndexBounds(t *testing.T) {
 		if in && interrupted.ID != v.RunAt(0).ID() {
 			t.Fatal("interruption scope")
 		}
-		if r.KindVersion() != 1 {
+		version := int64(1)
+		if u {
+			version = 2
+		}
+		if r.KindVersion() != version {
 			t.Fatal("version")
 		}
 		want := r.Format()
@@ -59,7 +63,7 @@ func TestSnapshotZeroKindsAndIndexBounds(t *testing.T) {
 		clear(dto.Payload)
 		dto.Kind = "changed"
 		dto.KindVersion = 9
-		if !v.RecordAt(i).Format().Equal(want) || v.RecordAt(i).KindVersion() != 1 {
+		if !v.RecordAt(i).Format().Equal(want) || v.RecordAt(i).KindVersion() != version {
 			t.Fatal("raw export aliases")
 		}
 	}

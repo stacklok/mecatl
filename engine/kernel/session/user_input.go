@@ -1,62 +1,78 @@
 package session
 
 import (
-	"bytes"
-
 	"github.com/stacklok/mecatl/engine/kernel/codec"
 	"github.com/stacklok/mecatl/engine/kernel/history/format"
 	historyid "github.com/stacklok/mecatl/engine/kernel/history/id"
 	sessionformat "github.com/stacklok/mecatl/engine/kernel/session/format"
 )
 
-// UserInput is one public input fact owned by the active run. Zero is invalid.
-// Assignment shares Content; Clone detaches it.
-// The kernel does not interpret, normalize, or require UTF-8/JSON in Content.
+// UserInput is an ordered authored input owned by an active run. Zero ID is
+// invalid. Nil and empty Messages mean explicitly empty input; one empty message
+// is distinct. Assignment shares storage; Clone deeply detaches it.
 type UserInput struct {
-	// ID is the run-scoped occurrence, independent of content equality.
-	ID InputID
-	// Content is exact caller-approved input bytes. Nil and empty both mean
-	// empty content; there is no separate absent-content state. The caller owns
-	// its interpretation and must not supply credentials or unsafe config dumps.
-	Content []byte
+	ID       InputID
+	Messages []AuthoredMessage
 }
 
-// Validate checks the occurrence identity without mutation or resource limits.
-// It does not establish active-run acceptance.
-func (v UserInput) Validate() error { return v.ID.Validate() }
+// Validate checks full identity and content, not membership or active-run admission.
+func (v UserInput) Validate() error {
+	if err := v.ID.Validate(); err != nil {
+		return err
+	}
+	for _, m := range v.Messages {
+		if err := m.Validate(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
 
-// Clone returns an independently owned copy, preserving nil and empty storage.
+// Clone returns independently owned messages.
 func (v UserInput) Clone() UserInput {
-	v.Content = bytes.Clone(v.Content)
+	v.Messages = messagesFromFormat(v.toFormat().Clone().Messages)
 	return v
 }
 
-// Equal compares identity and exact content; nil and empty content are equivalent.
+// Equal compares identity and ordered messages; nil and empty slices are equal.
 func (v UserInput) Equal(other UserInput) bool {
-	return v.ID == other.ID && bytes.Equal(v.Content, other.Content)
+	return v.ID == other.ID && v.toFormat().Equal(other.toFormat())
+}
+func (v UserInput) toFormat() sessionformat.UserInput {
+	return sessionformat.UserInput{RunID: v.ID.RunID.Ordinal, ID: v.ID.Ordinal, Messages: messagesToFormat(v.Messages)}
 }
 
-// NewUserInputRecord encodes an owned v1 input record using explicit payload
-// limits. Failure returns zero. It neither accepts input nor allocates its ID.
+// NewUserInputRecord encodes an owned v2 rich input under explicit limits. Failure
+// returns zero; construction does not allocate identity or establish acceptance.
 func NewUserInputRecord(v UserInput, limits codec.Limits) (Record, error) {
-	if err := v.Validate(); err != nil {
+	if err := v.ID.Validate(); err != nil {
 		return Record{}, codec.ErrInvalidData
 	}
-	payload, err := codec.Encode(sessionformat.UserInput{RunID: v.ID.RunID.Ordinal, ID: v.ID.Ordinal, Content: v.Content}, limits)
+	b := newValueBudget(limits)
+	b.collection(len(v.Messages))
+	if b.err == nil {
+		for _, m := range v.Messages {
+			m.Content.checkSize(&b)
+		}
+	}
+	if b.err != nil {
+		return Record{}, b.err
+	}
+	payload, err := codec.Encode(v.toFormat(), limits)
 	if err != nil {
 		return Record{}, err
 	}
-	return Record{scope: v.ID.RunID.HistoryID, userInput: v.ID, inputBytes: len(v.Content), value: format.Record{Kind: sessionformat.KindUserInput, KindVersion: sessionformat.Version, Payload: payload}}, nil
+	return Record{scope: v.ID.RunID.HistoryID, userInput: v.ID, messageCount: uint64(len(v.Messages)), value: format.Record{Kind: sessionformat.KindUserInput, KindVersion: sessionformat.UserInputVersion, Payload: payload}}, nil
 }
 
-// InputView is an immutable input handle. Zero has zero ID and nil content.
-// Byte and DTO exports always detach storage; copying the handle costs O(1).
+// InputView is an immutable input handle. Zero has zero ID and nil messages.
+// Exports detach mutable storage; copying the handle costs O(1).
 type InputView struct {
 	scope  historyid.HistoryID
 	record *acceptedRecord
 }
 
-// ID returns the run-scoped occurrence identity, or zero for zero.
+// ID returns the scoped occurrence, or zero for zero.
 func (v InputView) ID() InputID {
 	if v.record == nil {
 		return InputID{}
@@ -64,15 +80,15 @@ func (v InputView) ID() InputID {
 	return InputID{RunID: RunID{HistoryID: v.scope, Ordinal: v.record.input.RunID}, Ordinal: v.record.input.ID}
 }
 
-// Content returns an owned copy of the exact opaque bytes, or nil for zero.
-func (v InputView) Content() []byte {
+// Messages returns deeply detached authored messages, or nil for zero.
+func (v InputView) Messages() []AuthoredMessage {
 	if v.record == nil {
 		return nil
 	}
-	return bytes.Clone(v.record.input.Content)
+	return messagesFromFormat(v.record.input.Clone().Messages)
 }
 
-// Format returns a detached input DTO, or zero for zero.
+// Format returns a detached DTO, or zero for zero.
 func (v InputView) Format() sessionformat.UserInput {
 	if v.record == nil {
 		return sessionformat.UserInput{}
