@@ -493,7 +493,7 @@ Local permissions and hooks run before each call.
 **Checks, at the broker,** before any exchange or dispatch:
 
 1. The workload is authenticated ([step (2)](#2-workload-credential)).
-2. Session `A42` is open and bound to that workload, and `RT-A42`'s hard expiry, stored at open, is more than the clock skew away, so the broker never presents a token AS-1 considers expired.
+2. Session `A42` is open, bound to that workload, and holds a refresh token, and `RT-A42`'s hard expiry, stored at open, is more than the clock skew away, so the broker never presents a token AS-1 considers expired.
 3. The SVID passes the [SVID checks](#4-agent-instance-jwt-svid).
 4. The run belongs to `A42` and is bound to the SVID's instance. The broker keeps a run record of session, run, instance, owner, and delegation, created the first time the run appears and compared on every later call; two replicas racing to create it keep one and compare against it. A new run naming no delegation is a root run and needs a root instance, one with no parent. A run naming a delegation needs that delegation already [reported](#delegation-report) in `A42`, with this run and the SVID's instance as its receiving run and instance.
 5. The reported run owner equals the run record's owner and the grant's recorded owner, the company identity `(https://login.example.com, alice-204)` the broker stored with `RT-A42`, not AS-1's subject `u-alice-91`. The run owner never selects the grant.
@@ -510,6 +510,7 @@ The broker then looks up `V` under `(A42, reviewer, gateway, Alice)`. A cache hi
 | --- | --- | --- |
 | 1 | Step (2)'s codes | Only an expired workload credential. |
 | 2, session closed | The closing reason the broker recorded, with that reason's status from [error reasons](#error-reasons) | mecak8s acts on the reason; see [error reasons](#error-reasons). |
+| 2, no refresh token | `FAILED_PRECONDITION` with `no_grant` | No. The session gets a refresh token when a request carrying the user's access token opens it again ([step (3)](#3-session-open-and-the-broker-refresh-token)). |
 | 2, other workload | `PERMISSION_DENIED` | No. |
 | 3, expired | `UNAUTHENTICATED` with `svid_expired` | mecak8s renews and retries once. |
 | 3 otherwise, 4–7 | `PERMISSION_DENIED`, recorded; nothing is dispatched | No; retrying requires authorization again. |
@@ -854,6 +855,7 @@ RFC 8693 §2.2.2 requires `invalid_request` for any subject or actor token that 
 | `owner_mismatch` | Broker, session open | `PERMISSION_DENIED` | Fail the open with 403 and the client code `identity_broker_session_refused`; a mecak8s pairing bug. |
 | `session_owned` | Broker, session open | `PERMISSION_DENIED` | Fail the open with 403 and the client code `identity_broker_session_refused`; a mecak8s pairing bug or a closed session ID reused. A create naming an explicit session ID that another owner's broker session holds is refused before saving, as for an ID that is taken. |
 | `session_closed` | Broker | `FAILED_PRECONDITION` | Open a new broker session on the user's next request. |
+| `no_grant` | Broker | `FAILED_PRECONDITION` | Fail the call: the session was opened without the user's access token. The user's next request that carries one opens it again and converts the token. |
 | `signed_out` | AS-1, broker | `FAILED_PRECONDITION` | Stop the run; the client shows the user as signed out. At session open: 401, and the client signs in again. |
 | `upstream_revoked` | AS-1, broker | `PERMISSION_DENIED` | Stop the run; the client shows the user as signed out. At session open: 401, and the client signs in again. |
 | `schedule_ended` | Broker | `FAILED_PRECONDITION` | The schedule was deleted; its run does not start. |
