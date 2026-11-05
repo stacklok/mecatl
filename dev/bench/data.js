@@ -363764,6 +363764,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1793877230449,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "41898282+github-actions[bot]@users.noreply.github.com",
+            "name": "github-actions[bot]",
+            "username": "github-actions[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "2343770c21efcc3d9262cad5134c33d6dc66ca0e",
+          "message": "chore(catalog): refresh models.dev curated subset (#2646)\n\nCo-authored-by: github-actions[bot] <github-actions[bot]@users.noreply.github.com>\nCo-authored-by: Radoslav Dimitrov <radoslav@stacklok.com>",
+          "timestamp": "2026-11-05T06:09:46-05:00",
+          "tree_id": "b719246902d835034f48dcf1c4a86624ab56aa8e",
+          "url": "https://github.com/stacklok/mecatl/commit/2343770c21efcc3d9262cad5134c33d6dc66ca0e"
+        },
+        "date": 1793877985775,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -525486,6 +525520,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1793877981951,
+  "lastUpdate": 1793877986780,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
