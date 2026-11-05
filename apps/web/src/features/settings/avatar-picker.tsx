@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { X } from "lucide-react";
-import { type ReactNode, useRef, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import { Button } from "../../components/ui/button";
-import { safeAvatarSrc, scaledAvatarSize } from "./avatar-utils";
+import { avatarImageBlob, scaledAvatarSize } from "./avatar-utils";
 
 export function AvatarPicker({
   alt,
@@ -18,7 +18,7 @@ export function AvatarPicker({
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [error, setError] = useState<string>();
-  const imageSrc = safeAvatarSrc(avatarUrl);
+  const imageSrc = useAvatarObjectUrl(avatarUrl);
 
   async function onFileChange(file?: File) {
     if (!file) return;
@@ -80,6 +80,22 @@ export function AvatarPicker({
       {error && <p className="mt-2 text-xs text-destructive">{error}</p>}
     </div>
   );
+}
+
+/** Serves the stored avatar's image bytes from a revocable blob: URL. */
+function useAvatarObjectUrl(avatarUrl: string) {
+  const [objectUrl, setObjectUrl] = useState<string>();
+  useEffect(() => {
+    const blob = avatarImageBlob(avatarUrl);
+    if (!blob) {
+      setObjectUrl(undefined);
+      return;
+    }
+    const url = URL.createObjectURL(blob);
+    setObjectUrl(url);
+    return () => URL.revokeObjectURL(url);
+  }, [avatarUrl]);
+  return objectUrl;
 }
 
 async function downscaleAvatar(file: File): Promise<string> {
