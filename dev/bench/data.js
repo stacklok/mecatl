@@ -365196,6 +365196,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1793904360270,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "29541485+ChrisJBurns@users.noreply.github.com",
+            "name": "Chris Burns",
+            "username": "ChrisJBurns"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "835163b85394911a449eca44230a2ef8bff91e87",
+          "message": "refactor(app): construct the MCP broker in one place behind its contract (#2686)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-11-05T20:56:13Z",
+          "tree_id": "83e6cac2b3aa2d7ead9e034baceaa4171e92502c",
+          "url": "https://github.com/stacklok/mecatl/commit/835163b85394911a449eca44230a2ef8bff91e87"
+        },
+        "date": 1793912922103,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -527530,6 +527564,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1793912918897,
+  "lastUpdate": 1793912922950,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
