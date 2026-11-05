@@ -21,13 +21,12 @@
 // encrypted full thinking). Because interleaved thinking can produce SEVERAL
 // thinking blocks per assistant turn — plus redacted_thinking blocks that must
 // also round-trip — the adapter packs the ordered LIST of {thinking,signature}
-// and {redacted_thinking data} blocks into the existing opaque
-// session.Message.Reasoning STRING as a versioned JSON envelope (reasoning.go),
-// and unpacks it to reconstruct the thinking/redacted_thinking content blocks
-// BEFORE the tool_use blocks on the next turn. Omitting or misordering them on a
-// tool-bearing assistant turn 400s — this round-trip is the load-bearing
-// correctness item. session.Message.Reasoning stays a bare string: the
-// abstraction holds.
+// and {redacted_thinking data} blocks into an opaque ProviderReplay with format
+// anthropic.messages and version 1 (reasoning.go), and unpacks it to reconstruct
+// the thinking/redacted_thinking content blocks BEFORE the tool_use blocks on
+// the next turn. Omitting or misordering them on a tool-bearing assistant turn
+// 400s — this round-trip is the load-bearing correctness item. The engine
+// transports these bytes without interpreting signatures or redacted data.
 //
 // The streaming SSE events are translated into provider-neutral port.Chunk
 // values by the pure translate function, exercised directly from recorded

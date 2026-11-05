@@ -72,7 +72,7 @@ func TestSDKInBandErrorRetainsSafeCategory(t *testing.T) {
 
 func displayStreamError(t *testing.T, p *Provider) error {
 	t.Helper()
-	seq, err := p.Stream(context.Background(), port.LLMRequest{Model: "test", Messages: []session.Message{session.NewUserMessage("hi")}})
+	seq, err := p.Stream(context.Background(), port.LLMRequest{Model: "test", Messages: []port.LLMMessage{userMessage("hi")}})
 	if err != nil {
 		return err
 	}
@@ -117,7 +117,7 @@ func TestHTTPErrorDisplayPreservesRawClassification(t *testing.T) {
 func TestResponseBodyErrorDisplayPreservesCause(t *testing.T) {
 	cause := &displayVetoError{}
 	p := New(WithAPIKey("synthetic"), WithBaseURL("https://fixture.invalid"), WithRequestOption(option.WithHTTPClient(&http.Client{Transport: displayBodyTransport{cause}})))
-	seq, err := p.Stream(context.Background(), port.LLMRequest{Model: "test", Messages: []session.Message{session.NewUserMessage("hi")}})
+	seq, err := p.Stream(context.Background(), port.LLMRequest{Model: "test", Messages: []port.LLMMessage{userMessage("hi")}})
 	if err != nil {
 		t.Fatalf("stream establishment failed: %v", err)
 	}

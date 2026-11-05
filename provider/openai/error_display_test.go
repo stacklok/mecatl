@@ -54,7 +54,7 @@ func TestSDKStreamErrorProjection(t *testing.T) {
 				fmt.Fprintf(w, "event: %s\ndata: %s\n\n", canary, tc.payload)
 			}))
 			defer srv.Close()
-			err := collectStreamError(t, New(WithAPIKey("synthetic"), WithBaseURL(srv.URL)), port.LLMRequest{Model: "test", Messages: []session.Message{session.NewUserMessage("hi")}})
+			err := collectStreamError(t, New(WithAPIKey("synthetic"), WithBaseURL(srv.URL)), port.LLMRequest{Model: "test", Messages: []port.LLMMessage{{Role: session.RoleUser, Text: "hi"}}})
 			var sdkErr *ssestream.StreamError
 			var classified *responseStreamError
 			if !errors.As(err, &sdkErr) || !errors.Is(err, sdkErr) {
@@ -96,7 +96,7 @@ func TestSDKJSONFailureDisplay(t *testing.T) {
 				fmt.Fprintf(w, "data: %s\n\n", tc.payload)
 			}))
 			defer srv.Close()
-			err := collectStreamError(t, New(WithAPIKey("synthetic"), WithBaseURL(srv.URL)), port.LLMRequest{Model: "test", Messages: []session.Message{session.NewUserMessage("hi")}})
+			err := collectStreamError(t, New(WithAPIKey("synthetic"), WithBaseURL(srv.URL)), port.LLMRequest{Model: "test", Messages: []port.LLMMessage{{Role: session.RoleUser, Text: "hi"}}})
 			if !strings.Contains(err.Error(), tc.display) || strings.Contains(err.Error(), "synthetic-json-canary") {
 				t.Fatalf("decode display = %v", err)
 			}
@@ -156,7 +156,7 @@ func TestProviderErrorDisplayIsClosed(t *testing.T) {
 				}
 			}))
 			defer srv.Close()
-			err := collectStreamError(t, New(WithAPIKey("synthetic"), WithBaseURL(srv.URL)), port.LLMRequest{Model: "test", Messages: []session.Message{session.NewUserMessage("hi")}})
+			err := collectStreamError(t, New(WithAPIKey("synthetic"), WithBaseURL(srv.URL)), port.LLMRequest{Model: "test", Messages: []port.LLMMessage{userMessage("hi")}})
 			for _, text := range []string{err.Error(), fmt.Sprintf("%v", err), fmt.Sprintf("%+v", fmt.Errorf("terminal: %w", err))} {
 				if strings.Contains(text, canary) {
 					t.Errorf("unsafe display: %s", text)
@@ -223,7 +223,7 @@ func TestInBandErrorDisplayPreservesRawClassification(t *testing.T) {
 					}
 				}))
 				defer srv.Close()
-				err := collectStreamError(t, New(WithAPIKey("synthetic"), WithBaseURL(srv.URL)), port.LLMRequest{Model: "test", Messages: []session.Message{session.NewUserMessage("hi")}})
+				err := collectStreamError(t, New(WithAPIKey("synthetic"), WithBaseURL(srv.URL)), port.LLMRequest{Model: "test", Messages: []port.LLMMessage{userMessage("hi")}})
 				var classified *responseStreamError
 				if !errors.As(err, &classified) || classified.RetryDisposition() != tc.want || classified.StatusCode() != tc.status || classified.ProviderHTTPStatus() != 0 || classified.ProviderInBandStatus() != providerErrorStatus(tc.code, tc.message) {
 					t.Fatalf("classification lost: %v", err)
@@ -239,7 +239,7 @@ func TestInBandErrorDisplayPreservesRawClassification(t *testing.T) {
 func TestResponseBodyErrorDisplayPreservesCause(t *testing.T) {
 	cause := &displayVetoError{}
 	p := New(WithAPIKey("synthetic"), WithBaseURL("https://fixture.invalid"), WithHTTPClient(&http.Client{Transport: displayBodyTransport{cause}}))
-	seq, err := p.Stream(context.Background(), port.LLMRequest{Model: "test", Messages: []session.Message{session.NewUserMessage("hi")}})
+	seq, err := p.Stream(context.Background(), port.LLMRequest{Model: "test", Messages: []port.LLMMessage{userMessage("hi")}})
 	if err != nil {
 		t.Fatalf("stream establishment failed: %v", err)
 	}
@@ -285,7 +285,7 @@ func (r displayTransport) RoundTrip(*http.Request) (*http.Response, error) { ret
 func TestTransportErrorDisplayPreservesCause(t *testing.T) {
 	cause := &displayVetoError{}
 	p := New(WithAPIKey("synthetic"), WithBaseURL("https://fixture.invalid"), WithHTTPClient(&http.Client{Transport: displayTransport{cause}}))
-	err := collectStreamError(t, p, port.LLMRequest{Model: "test", Messages: []session.Message{session.NewUserMessage("hi")}})
+	err := collectStreamError(t, p, port.LLMRequest{Model: "test", Messages: []port.LLMMessage{userMessage("hi")}})
 	var veto interface{ Retryable() bool }
 	if !errors.As(err, &veto) || veto.Retryable() {
 		t.Fatal("explicit retry veto lost")

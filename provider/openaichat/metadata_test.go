@@ -59,7 +59,7 @@ func TestProviderErrorMetadataHTTPPreservesSDKError(t *testing.T) {
 		WithRequestOption(option.WithMaxRetries(0)),
 	)
 	seq, err := provider.Stream(context.Background(), port.LLMRequest{
-		Model: "test-model", Messages: []session.Message{session.NewUserMessage("hi")},
+		Model: "test-model", Messages: []port.LLMMessage{{Role: session.RoleUser, Text: "hi"}},
 	})
 	if err != nil {
 		t.Fatalf("Stream: %v", err)
@@ -107,7 +107,7 @@ func TestProviderHTTPErrorOmitsInvalidRequestIDFromDisplay(t *testing.T) {
 	defer srv.Close()
 
 	provider := New(WithAPIKey("test-key"), WithBaseURL(srv.URL+"/v1"), WithRequestOption(option.WithMaxRetries(0)))
-	seq, err := provider.Stream(context.Background(), port.LLMRequest{Model: "test-model", Messages: []session.Message{session.NewUserMessage("hi")}})
+	seq, err := provider.Stream(context.Background(), port.LLMRequest{Model: "test-model", Messages: []port.LLMMessage{{Role: session.RoleUser, Text: "hi"}}})
 	if err != nil {
 		t.Fatalf("Stream: %v", err)
 	}

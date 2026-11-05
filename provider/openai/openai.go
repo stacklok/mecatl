@@ -423,18 +423,19 @@ func (p *Provider) streamAttempt(ctx context.Context, params responses.ResponseN
 // that carried no reasoning envelope cannot unlock a hidden retry.
 // "Carried one" is decided by the SAME unpack the wire projection uses
 // (assistantItems), so the two can never disagree about whether an envelope
-// exists — only a complete current envelope is replayable. Bare legacy
-// ciphertext and malformed/unsupported envelopes are intentionally omitted.
+// exists. Malformed compatible envelopes fail request construction; incompatible
+// namespaces and versions never participate in replay or recovery.
 func withoutEncryptedReasoning(req port.LLMRequest) (port.LLMRequest, bool) {
 	messages := slices.Clone(req.Messages)
 	found := false
 	for i := range messages {
-		if len(unpackReasoningItems(messages[i].Reasoning)) == 0 {
+		env, err := unpackReplay(messages[i].Replay)
+		if err != nil || len(env.Reasoning) == 0 {
 			continue
 		}
 		found = true
-		messages[i].Reasoning = ""
-		messages[i].ReasoningItemID = ""
+		env.Reasoning = nil
+		messages[i].Replay = packReplay(env)
 	}
 	if !found {
 		return req, false

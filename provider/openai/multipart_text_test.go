@@ -32,7 +32,7 @@ func TestInterleavedPhaseReasoningAndToolCallPreserveChunkSemantics(t *testing.T
 		port.ChunkToolCall,
 		port.ChunkText,
 		port.ChunkPhase,
-		port.ChunkReasoningItem,
+		port.ChunkReplay,
 		port.ChunkUsage,
 		port.ChunkDone,
 	}
@@ -51,7 +51,7 @@ func TestInterleavedPhaseReasoningAndToolCallPreserveChunkSemantics(t *testing.T
 	if got[4].Text != "future_phase" {
 		t.Fatalf("phase = %q, want opaque future_phase", got[4].Text)
 	}
-	items := unpackReasoningItems(got[5].Text)
+	items := replayReasoning(got[5].Replay)
 	if len(items) != 1 || items[0].ID != "rs_1" || items[0].Blob != "OPAQUE_REASONING" || items[0].After != 0 {
 		t.Fatalf("reasoning replay = %q (%+v), want rs_1 opaque item before call", got[5].Text, items)
 	}

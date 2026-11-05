@@ -212,7 +212,7 @@ func TestTextThenPingThenEOFTruncates(t *testing.T) {
 	p := New(WithAPIKey("test-key"), WithBaseURL(srv.URL+"/v1"))
 	seq, err := p.Stream(context.Background(), port.LLMRequest{
 		Model:    "gpt-5.2",
-		Messages: []session.Message{{Role: session.RoleUser, Text: "hi"}},
+		Messages: []port.LLMMessage{{Role: session.RoleUser, Text: "hi"}},
 	})
 	if err != nil {
 		t.Fatalf("Stream: %v", err)
@@ -259,7 +259,7 @@ func TestNewInstallsKeepaliveFilter(t *testing.T) {
 	p := New(WithAPIKey("test-key"), WithBaseURL(srv.URL+"/v1"))
 	seq, err := p.Stream(context.Background(), port.LLMRequest{
 		Model:    "gpt-5.2",
-		Messages: []session.Message{{Role: session.RoleUser, Text: "hi"}},
+		Messages: []port.LLMMessage{{Role: session.RoleUser, Text: "hi"}},
 	})
 	if err != nil {
 		t.Fatalf("Stream: %v", err)
