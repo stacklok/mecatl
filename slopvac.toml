@@ -1,0 +1,91 @@
+# slopvac prose-lint configuration (https://github.com/srobroek/slopvac).
+# Trial scope: user-docs/. Mecatl follows user-docs/_STYLE.md (Google developer
+# style), so only the parts of ASD-STE100 that agree with it are enabled.
+#
+# Inspect what applies to a file:  slopvac lint --explain-config <file>
+# Understand one rule:             slopvac explain <category>.<rule>
+#
+# The judgement checklist (`slopvac rules --kind judgement`, used by
+# `slopvac prime review`) does not yet honor the category exclusions below:
+# https://github.com/srobroek/slopvac/issues/252. Skip those categories by hand.
+profile = "normal"
+
+# Top-level keys must stay above the first [table] header. Globs are relative to
+# this file.
+exclude = [
+  "**/node_modules/**",
+  # Not published: docusaurus.config.ts excludes _* files and AGENTS/CLAUDE.md.
+  "user-docs/**/_*.md",
+  "user-docs/**/_*.mdx",
+  "user-docs/**/AGENTS.md",
+  "user-docs/**/CLAUDE.md",
+  # Generated: fix prose at the source (flag help, proto comments, config
+  # schema, TSDoc), then regenerate.
+  "user-docs/reference/server-cli.md",
+  "user-docs/reference/grpc-schema.md",
+  "user-docs/reference/configuration.md",
+  "user-docs/reference/typescript-sdk-api/**",
+]
+
+[thresholds]
+max_errors = 0
+
+[locale]
+default = "en-US"
+allow = ["mecatui", "mecated", "mecak8s", "mecatequi", "Mecatl"]
+
+# --- STE categories that conflict with _STYLE.md ------------------------------
+[categories.ste-punctuation]
+severity = "off"      # semicolons are fine in Google style
+[categories.ste-sentences]
+severity = "off"      # the vertical-list rule contradicts the Listitis anti-pattern
+[categories.ste-practices]
+severity = "off"
+[categories.ste-words]
+severity = "off"      # a controlled vocabulary does not fit software docs
+[categories.ste-safety]
+severity = "off"
+
+# --- STE rules kept ------------------------------------------------------------
+# Metric thresholds are fixed at 25 (descriptive) and 20 (procedural) words.
+[rules."ste-descriptive.sentence-too-long-descriptive"]
+severity = "warning"
+[rules."ste-procedural.sentence-too-long-procedural"]
+severity = "warning"
+[rules."ste-procedural.instruction-not-imperative"]
+severity = "warning"
+# Low precision on headings, table cells, and descriptive text:
+# https://github.com/srobroek/slopvac/issues/254
+[rules."ste-procedural.condition-after-command"]
+severity = "suggestion"
+[rules."ste-procedural.multiple-instructions-per-sentence"]
+severity = "suggestion"
+[rules."ste-verbs.passive-voice"]
+severity = "suggestion"  # _STYLE.md prefers active voice
+[rules."ste-verbs.complex-tense"]
+severity = "off"
+[rules."ste-verbs.nominalized-action"]
+severity = "off"
+[rules."ste-verbs.auxiliary-stacking"]
+severity = "off"
+[rules."ste-verbs.verb-form-not-listed"]
+severity = "off"
+[rules."ste-nouns.multiword-noun-too-long"]
+severity = "suggestion"
+
+# --- Other tuning ----------------------------------------------------------------
+[rules."ai-tells-structure.contrastive-inversion-frames"]
+severity = "warning"  # many hits are real requirements ("directories, not symlinks")
+# Misfires on proper nouns in sentence-case headings:
+# https://github.com/srobroek/slopvac/issues/257
+[rules."ai-tells-formatting.title-case-heading"]
+severity = "off"
+
+# "X never ..." states a security or API invariant on these pages.
+[[overrides]]
+files = ["user-docs/features/security-and-execution/**", "user-docs/reference/**"]
+[overrides.rules."ai-tells-structure.negative-guarantee-core"]
+severity = "off"
+
+[vale]
+enabled = true
