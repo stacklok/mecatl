@@ -90,7 +90,7 @@ Embedded mode is outside the cross-domain scope that ID-JAG §9.3 states, becaus
 ## Outside this chapter
 
 - **Revocation.** Sign-out and account revocation are covered in [credentials and lifecycle](credentials-and-lifecycle.md#sign-out-and-revocation). Issued ID-JAGs and access tokens are not revoked; they expire.
-- **Structured gateway outcomes.** How an external gateway reports "needs authorization" or "consent required" to the broker as a structured outcome remains open. So does whether the "Allow Mecatl" step and the provider's consent screen can be one redirect chain.
+- **Structured gateway outcomes.** A missing provider connection ("needs authorization") is reported with MCP URL-mode elicitation by every gateway. How an external gateway's AS-2 reports "consent required" as a structured outcome remains open. So does whether the "Allow Mecatl" step and the provider's consent screen can be one redirect chain.
 - **Gateway authorization on `act`**, such as Cedar policies that consider the acting agent. Until the agent ceiling is carried in the ID-JAG and `V` as scope or `authorization_details` (RFC 9396), the broker alone enforces it; the gateway enforces user and connection.
 
 ## Integration requirements and evidence limits

@@ -48,7 +48,7 @@ The flow has four integration points: AS-1 sign-in, the session-open exchange, t
 | Expiry | | The `expires_at` AS-1 echoed; the broker does not use a grant past it. |
 | Revocation reason | | Set when the broker revokes it: `session_closed`, `signed_out`, `upstream_revoked`, `owner_action_required`, or, for a schedule grant, `schedule_ended`. |
 
-**Open.** The persistence ordering of the correlation records. Whether external gateways adopt the AS-2 reason codes in `error_description`; until one does, the broker follows step (8). No callback or private mapping-response fields are specified. How an external gateway that does not send reason codes reports "needs authorization" or "consent required" as a structured outcome is also open; candidates include an AS-2 login chain through AS-1, MCP URL elicitation, and the connector gateway's connect and status APIs. So is whether the "Allow Mecatl" step and the provider's consent screen can be one redirect chain.
+**Open.** The persistence ordering of the correlation records. Whether external gateways adopt the AS-2 reason codes in `error_description`; until one does, the broker follows step (8). No callback or private mapping-response fields are specified. Every gateway reports a missing provider connection ("needs authorization") with MCP URL-mode elicitation. How an external AS-2 that does not send reason codes reports "consent required" as a structured outcome is also open; candidates include an AS-2 login chain through AS-1, MCP URL elicitation, and the connector gateway's connect and status APIs. So is whether the "Allow Mecatl" step and the provider's consent screen can be one redirect chain.
 
 ## Credential verification
 
@@ -129,7 +129,7 @@ Test schedule grants:
 Test vMCP and the provider credential:
 
 - vMCP rejects a `V` with the wrong issuer, audience, `typ`, or expiry.
-- vMCP loads the credential for (gateway, native user, routed provider) only for a `V` that carries the delegated-access marker, and returns "needs authorization" when none exists. A `V` without the marker gets no delegated lookup. A row whose owner differs from `V`'s user is refused. One user's `V` never loads another user's credential.
+- vMCP loads the credential for (gateway, native user, routed provider) only for a `V` that carries the delegated-access marker, and answers with an MCP URL-mode elicitation carrying the connect link when none exists; the MCP client passes it through as `mcp_authorization_pending`, and a call the vMCP refused before running is not counted as sent. A `V` without the marker gets no delegated lookup. A row whose owner differs from `V`'s user is refused. One user's `V` never loads another user's credential.
 - Two agent instances acting for the same user get separate vMCP sessions.
 - vMCP records the operation ID mecak8s propagated with each request, marked as reported, and it matches the operation ID in `V`'s entry.
 - mecak8s's MCP client records each operation ID and argument hash before the first dispatch attempt, keeps the record across a restart, and never sends a recorded operation again automatically.
