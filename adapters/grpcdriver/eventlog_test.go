@@ -14,6 +14,7 @@ import (
 
 	"github.com/stacklok/mecatl/adapters/jsonlstore"
 	driverv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/driver/v1"
+	"github.com/stacklok/mecatl/engine/adapter/eventcodec"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
@@ -211,7 +212,7 @@ func (s badEnvelopeServer) Read(_ *driverv1.ReadRequest, stream grpc.ServerStrea
 // Append validation: a blank session_id, a missing/empty/wrong-format/
 // undecodable envelope are all INVALID_ARGUMENT before the backend is touched.
 func TestEventLogAppendServerRejectsBadEnvelope(t *testing.T) {
-	goodPayload, err := json.Marshal(session.Event{Type: session.EvMessageDelta, Seq: 1})
+	goodPayload, err := eventcodec.Marshal(session.Event{Type: session.EvMessageDelta, Seq: 1})
 	if err != nil {
 		t.Fatalf("marshal event: %v", err)
 	}
@@ -240,10 +241,7 @@ func TestEventLogAppendServerRejectsBadEnvelope(t *testing.T) {
 	}
 }
 
-// TestEventLogFormatMatchesJSONLStore pins SHOULD-ADD 4 (codec drift): the gRPC
-// wire format tag and the jsonlstore on-disk record tag are TWO hand-maintained
-// "eventlog-json/1" constants — a bump on one side silently makes a local log
-// unreadable by the driver. Assert they are equal so the drift fails the build.
+// TestEventLogFormatMatchesJSONLStore pins the wire/file one-codec format claim.
 func TestEventLogFormatMatchesJSONLStore(t *testing.T) {
 	if EventLogFormat != jsonlstore.EventLogFormat {
 		t.Fatalf("grpcdriver.EventLogFormat %q != jsonlstore.EventLogFormat %q: the wire and the on-disk record must version the ONE event codec",

@@ -2,7 +2,6 @@ package grpcdriver
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -13,26 +12,14 @@ import (
 	"google.golang.org/grpc/status"
 
 	driverv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/driver/v1"
+	"github.com/stacklok/mecatl/engine/adapter/eventcodec"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 )
 
-// EventLogFormat is the event-log envelope format tag this client writes on
-// Append and accepts on Read: the payload is exactly json.Marshal of a
-// session.Event (one event per message). It is the SAME tag the local
-// jsonlstore writes inside its {"v":...,"ev":...} on-disk record
-// (jsonlstore.eventLogFormat) — the wire and the file version the SAME event
-// encoding, so a log written by one and read by the other agrees. The driver
-// round-trips the tag verbatim; it changes only if the event encoding itself
-// is replaced (session.Event's own schema evolution is additive and needs no
-// bump). Read rejects any other tag as an infrastructure fault — a
-// forward-incompatible log must fail loud, never silently skip.
-//
-// SIGNPOST — a future format bump MUST be read-set-accept / write-newest: the
-// readers (this client's Read, the server wrapper's Append decode-or-passthrough)
-// must keep ACCEPTING every previously-shipped tag while Append WRITES only the
-// newest. The driver round-trips envelopes verbatim and cannot migrate them.
-const EventLogFormat = "eventlog-json/1"
+// EventLogFormat is the newest identity-aware event envelope written by clients
+// and decoding wrappers. Readers accept /1 and /2, checking the local schema.
+const EventLogFormat = eventcodec.Format
 
 // EventLog is a port.EventLog over a remote EventLogService driver. Encode
 // (session.Event → JSON) happens HERE on Append and decode (JSON →
@@ -56,7 +43,7 @@ func NewEventLog(conn grpc.ClientConnInterface) *EventLog {
 // driver, in append order. A marshal failure is a client-side error (no RPC).
 // The relay treats any non-nil error as "not recorded" and WARNs.
 func (l *EventLog) Append(ctx context.Context, id session.SessionID, ev session.Event) error {
-	payload, err := json.Marshal(ev)
+	payload, err := eventcodec.Marshal(ev)
 	if err != nil {
 		return fmt.Errorf("grpcdriver: marshal event: %w", err)
 	}
@@ -75,7 +62,8 @@ func (l *EventLog) Append(ctx context.Context, id session.SessionID, ev session.
 // data, never an error. A mid-stream fault — an unknown envelope format, a
 // payload that fails to decode, or an RPC/stream error — yields
 // (session.Event{}, err) and then stops, honouring the port.EventLog contract
-// (Read yields no further events after an error).
+// (Read yields no further events after an error). Recognized unsupported legacy
+// records are omitted; ReadAfter exposes them as gaps at their original cursors.
 func (l *EventLog) Read(ctx context.Context, id session.SessionID) iter.Seq2[session.Event, error] {
 	return func(yield func(session.Event, error) bool) {
 		// A child context cancelled on early break releases the stream's
@@ -98,12 +86,11 @@ func (l *EventLog) Read(ctx context.Context, id session.SessionID) iter.Seq2[ses
 				return
 			}
 			env := resp.GetEvent()
-			if got := env.GetFormat(); got != EventLogFormat {
-				yield(session.Event{}, fmt.Errorf("grpcdriver: read events %q: unknown event format %q (this client speaks %q)", id, got, EventLogFormat))
-				return
+			ev, err := eventcodec.UnmarshalFormat(env.GetPayload(), env.GetFormat())
+			if errors.Is(err, eventcodec.ErrSkipLegacyRecord) {
+				continue
 			}
-			var ev session.Event
-			if err := json.Unmarshal(env.GetPayload(), &ev); err != nil {
+			if err != nil {
 				yield(session.Event{}, fmt.Errorf("grpcdriver: read events %q: decode event: %w", id, err))
 				return
 			}
@@ -117,13 +104,9 @@ func (l *EventLog) Read(ctx context.Context, id session.SessionID) iter.Seq2[ses
 // eventLogServer adapts a port.EventLog to EventLogServiceServer. It confines
 // all proto/status translation — the wrapped backend speaks only the port.
 //
-// The wrapper round-trips the OPAQUE envelope: Append stores (format, payload)
-// verbatim by re-decoding the payload into a session.Event for the backend's
-// value-typed port (the wire carries bytes; the port carries a value), and
-// Read re-encodes each backend event into the same envelope. The wrapped
-// backend NEVER sees the wire bytes — exactly the SessionStore server
-// posture, which decodes the snapshot into a *session.Session for its
-// value-typed port.
+// This is a decoding wrapper, not an opaque driver: Append accepts /1 or /2
+// after validating the local schema, and Read re-encodes backend events as /2.
+// Provider-private bytes inside the typed event survive that codec round trip.
 type eventLogServer struct {
 	driverv1.UnimplementedEventLogServiceServer
 	log port.EventLog
@@ -134,9 +117,9 @@ func NewEventLogServer(log port.EventLog) driverv1.EventLogServiceServer {
 	return &eventLogServer{log: log}
 }
 
-// Append validates the envelope (rejecting a blank session_id, a missing
-// envelope, a non-EventLogFormat tag, or an empty/undecodable payload — all
-// INVALID_ARGUMENT) and records the restored event in the wrapped log.
+// Append validates the /1 or /2 envelope and local schema (rejecting a blank
+// session_id, missing envelope, unsupported format, or empty/undecodable payload
+// with INVALID_ARGUMENT) before recording the restored event in the wrapped log.
 func (s *eventLogServer) Append(ctx context.Context, req *driverv1.AppendRequest) (*driverv1.AppendResponse, error) {
 	if req.GetSessionId() == "" {
 		return nil, status.Error(codes.InvalidArgument, "session_id is required")
@@ -145,14 +128,8 @@ func (s *eventLogServer) Append(ctx context.Context, req *driverv1.AppendRequest
 	if env == nil {
 		return nil, status.Error(codes.InvalidArgument, "event is required")
 	}
-	if got := env.GetFormat(); got != EventLogFormat {
-		return nil, status.Errorf(codes.InvalidArgument, "unknown event format %q (this server speaks %q)", got, EventLogFormat)
-	}
-	if len(env.GetPayload()) == 0 {
-		return nil, status.Error(codes.InvalidArgument, "event payload is empty")
-	}
-	var ev session.Event
-	if err := json.Unmarshal(env.GetPayload(), &ev); err != nil {
+	ev, err := eventcodec.UnmarshalFormat(env.GetPayload(), env.GetFormat())
+	if err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "decode event: %v", err)
 	}
 	id := session.SessionID(req.GetSessionId())
@@ -191,7 +168,7 @@ func (s *eventLogServer) Read(req *driverv1.ReadRequest, stream grpc.ServerStrea
 		if err != nil {
 			return eventLogStatus(err)
 		}
-		payload, merr := json.Marshal(ev)
+		payload, merr := eventcodec.Marshal(ev)
 		if merr != nil {
 			return status.Errorf(codes.Internal, "encode event: %v", merr)
 		}

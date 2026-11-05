@@ -40,5 +40,6 @@ func TestValidatedSkillRepositoryDriverConforms(t *testing.T) {
 		return NewValidatedSkillRepository(conn)
 	}
 
+	skillconformance.Run(t, factory)
 	skillconformance.RunValidatedActivation(t, factory)
 }

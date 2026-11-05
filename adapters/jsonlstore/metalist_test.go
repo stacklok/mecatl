@@ -32,7 +32,7 @@ func TestMetaListProjectsSnapshotFields(t *testing.T) {
 	s.SetTitle("the real title")
 	for i := 0; i < 3; i++ {
 		_ = s.BeginTurn()
-		_ = s.RecordAssistant(session.NewAssistantMessage("ok", "", nil))
+		_ = s.RecordAssistant(session.NewAssistantMessage("ok", nil))
 	}
 	if err := s.Complete(); err != nil {
 		t.Fatalf("Complete: %v", err)
@@ -113,7 +113,7 @@ func TestMetaListSkipsConversation(t *testing.T) {
 	big := strings.Repeat("x", 200_000)
 	for i := 0; i < 5; i++ {
 		_ = s.BeginTurn()
-		_ = s.RecordAssistant(session.NewAssistantMessage(big, "", nil))
+		_ = s.RecordAssistant(session.NewAssistantMessage(big, nil))
 	}
 	if err := s.Complete(); err != nil {
 		t.Fatalf("Complete: %v", err)
@@ -149,7 +149,7 @@ func TestMetaListMultiSnapshotLatestWins(t *testing.T) {
 	s := session.New("multi", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1700000000, 0).UTC())
 	s.SetTitle("first")
 	_ = s.BeginTurn()
-	_ = s.RecordAssistant(session.NewAssistantMessage("a", "", nil))
+	_ = s.RecordAssistant(session.NewAssistantMessage("a", nil))
 	if err := st.Save(ctx, s); err != nil {
 		t.Fatalf("Save 1: %v", err)
 	}
@@ -157,7 +157,7 @@ func TestMetaListMultiSnapshotLatestWins(t *testing.T) {
 	// can't change the title; bump turns instead to prove latest-wins).
 	s.SetTitle("second") // no-op: SetTitle is set-once
 	_ = s.BeginTurn()
-	_ = s.RecordAssistant(session.NewAssistantMessage("b", "", nil))
+	_ = s.RecordAssistant(session.NewAssistantMessage("b", nil))
 	if err := s.Complete(); err != nil {
 		t.Fatalf("Complete: %v", err)
 	}
