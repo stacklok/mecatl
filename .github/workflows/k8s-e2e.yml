@@ -50,6 +50,7 @@ on:
       - go.work.sum
       - internal/identitybroker/**
       - internal/app/identitybroker.go
+      - internal/app/build.go
       - internal/adapter/clientauth/**
       - internal/adapter/server/**
       - authn/oidc/**
@@ -85,6 +86,7 @@ on:
       - go.work
       - internal/identitybroker/**
       - internal/app/identitybroker.go
+      - internal/app/build.go
       - internal/adapter/clientauth/**
       - internal/adapter/server/**
       - authn/oidc/**

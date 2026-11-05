@@ -6,8 +6,8 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/stacklok/mecatl/engine/kernel/contentid"
 	"github.com/stacklok/mecatl/engine/kernel/history"
-	"github.com/stacklok/mecatl/engine/kernel/history/format"
 )
 
 // precheckedContext snapshots the initial backend context check before signaling.
@@ -26,12 +26,8 @@ func (c *precheckedContext) Err() error {
 
 func TestCancellationAfterInitialBackendCheck(t *testing.T) {
 	id := history.NewHistoryID()
-	c := format.Commit{FormatVersion: 1, HistoryID: id, Sequence: 1,
-		Records: []format.Record{{Kind: "opaque", KindVersion: 1}}}
-	encoded, cid, err := format.EncodeCommit(c, format.Limits{MaxCommitBytes: 1024, MaxRecords: 1, MaxKindBytes: 8, MaxPayloadBytes: 8})
-	if err != nil {
-		t.Fatal(err)
-	}
+	encoded := []byte{0xff, 0, 1} // Backend storage is schema-opaque.
+	cid := contentid.Sum(encoded)
 	root := history.ByteCommit{Ref: history.CommitRef{Sequence: 1, CID: cid}, Bytes: encoded}
 	// Backend bytes are opaque; only the successor's index metadata matters here.
 	second := history.ByteCommit{Ref: history.CommitRef{Sequence: 2, CID: cid}, Bytes: []byte{1}}

@@ -699,6 +699,11 @@ func parseFlags(argv []string) (config, error) {
 	if cfg.workspace != "" && (!filepath.IsAbs(cfg.workspace) || filepath.Clean(cfg.workspace) != cfg.workspace) {
 		return config{}, fmt.Errorf("--workspace %q must be a clean absolute path (a mounted filesystem root); leave it empty for a file-less deployment", cfg.workspace)
 	}
+	// Resolve AS-1 first: it fills in the caller identity the execution checks
+	// below require.
+	if err := resolveAS1Flags(&cfg); err != nil {
+		return config{}, err
+	}
 	if cfg.executionEnabled {
 		if cfg.executionEndpoint == "" || cfg.executionTemplateID == "" || cfg.executionTemplateRevision == "" || (cfg.executionAllowedSubjects == "" && len(cfg.executionAllowedPrincipals) == 0) || cfg.executionTLSCA == "" || cfg.executionTLSCert == "" || cfg.executionTLSKey == "" {
 			return config{}, errors.New("--execution-enabled requires --execution-endpoint, --execution-template-id, --execution-template-revision, --execution-allowed-principal, --execution-tls-ca, --execution-tls-cert, and --execution-tls-key")
@@ -715,9 +720,6 @@ func parseFlags(argv []string) (config, error) {
 		if cfg.enableParallel || cfg.enableTeams {
 			return config{}, errors.New("remote execution does not support --enable-parallel or --enable-teams")
 		}
-	}
-	if err := resolveAS1Flags(&cfg); err != nil {
-		return config{}, err
 	}
 	// The broker's owner is the company identity AS-1 witnessed in sub_id;
 	// without this it would be AS-1's own issuer and pseudonymous subject.
@@ -795,6 +797,12 @@ func resolveAS1Flags(cfg *config) error {
 		return errors.New("--oidc-client-id must be unset or equal --identity-broker-as1-tui-client-id")
 	case len(oidc.AcceptedClientIDs) != 0 && !slices.Contains(oidc.AcceptedClientIDs, as1.tuiClientID):
 		return errors.New("--oidc-accepted-client-ids must include --identity-broker-as1-tui-client-id")
+	}
+	// mecatui requests an advertised scope list exactly, and AS-1 converts at
+	// session open only an access token issued with offline_access. A parse
+	// error is left to the OIDC profile check.
+	if scopes, err := cliconfig.ParseOIDCScopes(oidc.ScopesCSV); err == nil && len(scopes) != 0 && !slices.Contains(scopes, "offline_access") {
+		return errors.New("--oidc-scopes must include offline_access when --identity-broker-as1-issuer is set: mecatui requests the listed scopes exactly, and AS-1 converts at session open only an access token issued with offline_access")
 	}
 	oidc.Issuer, oidc.ClientID = as1.issuer, as1.tuiClientID
 	if len(oidc.AcceptedClientIDs) == 0 {

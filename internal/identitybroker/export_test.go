@@ -2,8 +2,11 @@ package identitybroker
 
 import "time"
 
+// ClockSkew is the interim clock-skew allowance.
+const ClockSkew = credentialClockSkew
+
 // SetClock replaces b's clock. Call it before b is used.
-func SetClock(b *Broker, now func() time.Time) { b.sessions.now = now }
+func SetClock(b *Broker, now func() time.Time) { WithClock(now)(b) }
 
 // HostLockRefs returns how many opens hold or wait for host's open lock, and
 // whether the lock has an entry at all.

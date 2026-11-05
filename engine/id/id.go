@@ -1,3 +1,5 @@
+//go:generate go -C ../.. run ./internal/cborgen/cmd/cborgen -dir engine/id -types ID -out zz_cbor_generated.go
+
 // Package id provides typed, fixed-length Mecatl resource identifiers.
 // IDs contain a three-character kind prefix and 22 independent, uniformly random
 // characters from the Bitcoin base58 alphabet. They are case-sensitive and have
@@ -26,9 +28,17 @@ type Kind string
 const History Kind = "HST"
 
 // ID is a validated resource identifier. Its zero value is unset, not valid.
-// IDs are comparable and may be used as map keys.
+// IDs are comparable and may be used as map keys. CBOR is the validated ID text.
+//
+//cborgen:validate validateCBOR
 type ID struct {
-	value string
+	value string `cbor:",value" cborlimit:"bytes=25"` //nolint:revive // cborgen's explicit transparent representation, not a standard CBOR tag option.
+}
+
+// validateCBOR uses the parser as the authority for persisted ID validity.
+func (v ID) validateCBOR() error {
+	_, err := Parse(v.value)
+	return err
 }
 
 // New generates an ID of the given kind using secure, unbiased randomness.

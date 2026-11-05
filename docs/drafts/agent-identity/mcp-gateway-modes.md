@@ -48,7 +48,7 @@ The per-call flow, with every request, token, and check, is in [credentials and 
 | Embedded | ID-JAG as specified. AS-1 and AS-2 both sign users in through the same company IdP, so AS-2 trusts that IdP for sign-in and resolves the subject through it (§4.1): it finds the local user from the ID-JAG's `upstream_subject`. `u-alice-91` resolves to native user `usr-alice-7c1d`. Approval is implicit, set by deployment configuration: AS-1, AS-2, and the credential store share one administrative domain. AS-1 and AS-2 are distinct issuers with distinct keys, so no issuer redeems its own ID-JAG. |
 | External | Identity chaining across administrative domains ([chaining §§2.1, 2.5](https://www.ietf.org/archive/id/draft-ietf-oauth-identity-chaining-17.html#section-2.1)) using the ID-JAG token profile. AS-2's users log in through the gateway's own IdP, so the §4.1 precondition, that the resource AS already trusts the IdP for SSO, does not hold, and its consent waiver does not apply. AS-2 trusts AS-1 only as an assertion issuer. It redeems only when the local user found from the ID-JAG's `upstream_subject` holds an unrevoked approval for its `client_id` and the actor's issuer (chaining §2.2, deployment-specific resolution). No just-in-time provisioning. |
 
-Two separate facts decide redemption. The first is which native user the AS-1 subject is (mapping). The second is whether client `mecatl` may use that user's connections at this gateway (approval). A valid mapping is not an approval. In embedded mode, both follow from configuration: AS-2 trusts AS-1 as its SSO IdP, and approval is implicit. In external mode, AS-2 looks up both in one approval record:
+Two separate facts decide redemption. The first is which native user the AS-1 subject is (mapping). The second is whether client `mecatl` may use that user's connections at this gateway (approval). A valid mapping is not an approval. In embedded mode, both follow from configuration: AS-2 trusts AS-1 as an ID-JAG issuer and resolves the user through the company IdP they share, and approval is implicit. In external mode, AS-2 looks up both in one approval record:
 
 ```text
 (gateway, local user, client, actor_iss, revoked)
@@ -73,11 +73,11 @@ In external mode, the gateway administrator configures AS-2 with:
 - permitted actors and allowed vMCP resources;
 - ID-JAG lifetime, and single use for AS-1's issuer (recommended; Mecatl never re-submits an ID-JAG).
 
-Mecatl's operator configures AS-1 with the `mecatl` client, the accepted agent trust domain and audience, and the allowed AS-2 targets. Embedded mode uses the same roles and checks with local configuration, and AS-2 trusts AS-1 as its SSO IdP. Co-location does not create isolation.
+Mecatl's operator configures AS-1 with the `mecatl` client, the accepted agent trust domain and audience, and the allowed AS-2 targets. Embedded mode uses the same roles and checks with local configuration, and AS-2 trusts AS-1 as an ID-JAG issuer, and both sign users in through the same company IdP. Co-location does not create isolation.
 
 ## Sessions at the vMCP
 
-Each agent instance has its own vMCP session per user, bound to `V`'s `iss`, `sub`, and `act.sub`; see [sessions at the vMCP](credentials-and-lifecycle.md#sessions-at-the-vmcp).
+Each agent instance has its own vMCP session per user, bound to the user and the acting instance as [sessions at the vMCP](credentials-and-lifecycle.md#sessions-at-the-vmcp) lists.
 
 ## Embedded mode
 

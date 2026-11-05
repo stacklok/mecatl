@@ -187,6 +187,7 @@ type runOptions struct {
 	beforeEmbeddedStart    func(app.Config) error
 	wrapTransportCleanup   func(func()) func()
 	statusSourceStarted    func(customization.Source)
+	uiDepsReady            func(ui.Deps)
 	// Fault injection after the real preflight succeeds; never replaces the RPC.
 	afterCompatibilityCheck func() error
 	runProgram              func(context.Context, ui.Model) (tea.Model, error)
@@ -481,6 +482,10 @@ func runWithOptions(argv []string, options runOptions) error {
 		DebugTarget:   cfg.debugTarget,
 		DebugMCP:      append([]string(nil), cfg.debugMCP...),
 	})
+	if workspace := workspaceSnapshotterForConfig(cfg, cl, cl); workspace != nil {
+		deps.WorkspaceSnapshot = workspace.snapshot
+		deps.WorkspaceRepository = workspace.repository
+	}
 	applyDebugConfig(cfg, &deps)
 	deps.ServerImpl = mecatuiServerImplementation
 	wireManualCompaction(&deps, cl)
@@ -495,6 +500,9 @@ func runWithOptions(argv []string, options runOptions) error {
 			return context.Canceled
 		}
 		return err
+	}
+	if options.uiDepsReady != nil {
+		options.uiDepsReady(deps)
 	}
 
 	var finalModel tea.Model

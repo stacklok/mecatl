@@ -88,8 +88,8 @@ func TestRedisFollowCapacity_Scenario1_Go127DependencyFloor(t *testing.T) {
 	}
 	text := string(rootMod)
 	for module, version := range map[string]string{
-		"github.com/stacklok/toolhive-core":           "v0.0.57",
-		"github.com/stacklok/toolhive-core/redisconn": "v0.0.57",
+		"github.com/stacklok/toolhive-core":           "v0.0.58",
+		"github.com/stacklok/toolhive-core/redisconn": "v0.0.58",
 	} {
 		if !strings.Contains(text, module+" "+version) {
 			t.Errorf("root go.mod does not pin %s %s", module, version)

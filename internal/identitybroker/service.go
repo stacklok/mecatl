@@ -71,6 +71,10 @@ import (
 //     CodeUnavailable, and any other failure with CodeInternal. A failed
 //     exchange leaves the session paired, with any refresh token it held; an
 //     answer that does not match the request or cannot be decoded closes it.
+//     When the session closes while AS-1 converts the token, the open fails
+//     with CodeFailedPrecondition and ReasonSessionClosed and the session
+//     keeps no refresh token; the token has been spent, so the client
+//     refreshes it before opening again.
 //   - Closes a session with ReasonSessionClosed when its refresh token's
 //     expiry, the session's hard expiry, passes: from then on every call
 //     finds it closed, and the next OpenSession for its host session opens a

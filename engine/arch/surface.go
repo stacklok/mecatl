@@ -13,6 +13,8 @@ const modulePrefix = "github.com/stacklok/mecatl/"
 // exactly this set. See engine/COMPATIBILITY.md for the compatibility policy.
 var CorePackages = []string{
 	modulePrefix + "engine/id",
+	modulePrefix + "engine/kernel/codec",
+	modulePrefix + "engine/kernel/contentid",
 	modulePrefix + "engine/kernel/history",
 	modulePrefix + "engine/kernel/history/format",
 	modulePrefix + "engine/kernel/history/id",

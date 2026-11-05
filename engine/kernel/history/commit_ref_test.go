@@ -4,15 +4,15 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/stacklok/mecatl/engine/kernel/contentid"
 	"github.com/stacklok/mecatl/engine/kernel/history"
-	"github.com/stacklok/mecatl/engine/kernel/history/format"
 )
 
 const testCID = "bafyreihdwdcefgh4dqkjv67uzcmw7ojee6xedzdetojuzjevtenxquvyku"
 
 func commitRef(t *testing.T, sequence int64) history.CommitRef {
 	t.Helper()
-	cid, err := format.ParseCID(testCID)
+	cid, err := contentid.Parse(testCID)
 	if err != nil {
 		t.Fatal(err)
 	}

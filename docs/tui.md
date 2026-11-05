@@ -118,6 +118,24 @@ spacing, but reduce decoration before useful content in small terminals. Inline
 search pickers need several visible choices plus overflow indicators; a six-row
 window keeps multiple matches visible with both indicators present.
 
+### Read-only data inspectors
+
+Use a centered, bounded inspector for a captured data view. Keep the title,
+immediately useful identity, and filter or close control outside the scrolling
+region. Group the body by provenance or capture state so readers can tell which
+facts came from each source.
+
+| Element | Convention |
+|---|---|
+| Section | Bold semantic heading with a blank row between groups |
+| Field | Bold label and normal readable value |
+| Note or limitation | Muted text beneath the related source or capture state |
+| Status | Semantic warning or error styling only for an actual warning or error; text and markers remain meaningful without color |
+
+Sanitize and expand tabs in source text before styling, measuring, wrapping, or
+clipping it. Keep file and status rows readable without relying on color, and
+budget headings and blank rows before the scrollable body.
+
 ### Forms
 
 Keep fields together in traversal order, followed directly by Cancel and explicit

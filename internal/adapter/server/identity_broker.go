@@ -89,7 +89,7 @@ func (s *Service) openIdentityBrokerSession(ctx context.Context, sess *session.S
 				// before it changes anything, so the client may refresh and
 				// retry as if nothing happened.
 				s.logIdentityBroker(ctx, "broker session closed after its open converted the request's token", string(sess.ID), brokerSession.ID)
-				return fmt.Errorf("%w: the broker session closed after the access token was used", ErrBearerRejected)
+				return errBrokerSessionClosedAfterToken
 			}
 			if attempt == 0 {
 				continue
@@ -296,6 +296,11 @@ func (s *Service) closeUnsavedPairing(ctx context.Context, host, incarnation str
 		s.closePreOpenedBrokerSession(ctx, host, open.ID)
 	}
 }
+
+// errBrokerSessionClosedAfterToken is an open's error when the broker session
+// closed while the open converted the request's token (design: the request
+// fails as for a refused token).
+var errBrokerSessionClosedAfterToken = fmt.Errorf("%w: the broker session closed after the access token was used", ErrBearerRejected)
 
 // errIdentityBrokerSessionClosed marks a registration refused because the
 // broker session closed, so openIdentityBrokerSession opens a new one.
@@ -546,6 +551,11 @@ func (s *Service) identityBrokerFailure(ctx context.Context, call, host, brokerS
 		return fmt.Errorf("%w: sign in again", ErrSignInRequired)
 	case reason == identitybroker.ReasonOwnerMismatch, reason == identitybroker.ReasonSessionOwned:
 		return fmt.Errorf("%w: identity broker refused the session", ErrIdentityBrokerSessionRefused)
+	case reason == identitybroker.ReasonSessionClosed:
+		// The broker session closed while the open converted the request's
+		// token, and a token converts once: fail as for a refused token. A
+		// tokenless open's caller turns the tag into ErrInternal.
+		return errBrokerSessionClosedAfterToken
 	}
 	if code == identitybroker.CodeUnavailable {
 		return ErrIdentityBrokerUnavailable

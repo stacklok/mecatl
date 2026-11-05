@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stacklok/mecatl/engine/kernel/codec"
+	"github.com/stacklok/mecatl/engine/kernel/contentid"
 	"github.com/stacklok/mecatl/engine/kernel/history/format"
 	historyid "github.com/stacklok/mecatl/engine/kernel/history/id"
 )
@@ -16,19 +18,16 @@ func validRoot(t testing.TB) format.Commit {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return format.Commit{FormatVersion: 1, Sequence: 1, HistoryID: h, Records: []format.Record{{Kind: "x", KindVersion: 1, Payload: []byte{0xff, 0}}}}
+	return format.Commit{FormatVersion: 1, Sequence: 1, HistoryID: &h, Records: []format.Record{{Kind: "x", KindVersion: 1, Payload: []byte{0xff, 0}}}}
 }
 
 func TestCommitValidate(t *testing.T) {
 	root := validRoot(t)
-	parent, err := format.ParseCID(emptyDigestCID)
-	if err != nil {
-		t.Fatal(err)
-	}
+	parent := contentid.Sum(nil)
 	successor := root.Clone()
-	successor.HistoryID = historyid.HistoryID{}
+	successor.HistoryID = nil
 	successor.Sequence = 2
-	successor.Parent = parent
+	successor.Parent = &parent
 	for _, c := range []format.Commit{root, successor} {
 		before := c.Clone()
 		if err := c.Validate(); err != nil {
@@ -52,8 +51,10 @@ func TestCommitValidate(t *testing.T) {
 		func(c *format.Commit) { c.Sequence = 0 },
 		func(c *format.Commit) { c.Sequence = -1 },
 		func(c *format.Commit) { c.Sequence = 2 },
-		func(c *format.Commit) { c.HistoryID = historyid.HistoryID{} },
-		func(c *format.Commit) { c.Parent = parent },
+		func(c *format.Commit) { c.HistoryID = nil },
+		func(c *format.Commit) { c.HistoryID = new(historyid.HistoryID) },
+		func(c *format.Commit) { c.Parent = &parent },
+		func(c *format.Commit) { c.HistoryID = nil; c.Parent = new(contentid.CID); c.Sequence = 2 },
 		func(c *format.Commit) { c.Records = nil },
 		func(c *format.Commit) { c.Records = []format.Record{} },
 		func(c *format.Commit) {
@@ -86,14 +87,14 @@ func TestCommitValidate(t *testing.T) {
 }
 
 func TestCodecEntryPoints(t *testing.T) {
-	limits := format.Limits{MaxCommitBytes: 1024, MaxRecords: 10, MaxKindBytes: 128, MaxPayloadBytes: 128}
+	limits := testLimits()
 	c := validRoot(t)
-	data, cid, err := format.EncodeCommit(c, limits)
+	data, err := codec.Encode(c, limits)
 	if err != nil {
 		t.Fatal(err)
 	}
-	decoded, gotCID, err := format.DecodeCommit(data, limits)
-	if err != nil || !decoded.Equal(c) || cid != gotCID {
+	decoded, err := codec.Decode[format.Commit](data, limits)
+	if err != nil || !decoded.Equal(c) {
 		t.Fatalf("round trip failed: %v", err)
 	}
 }

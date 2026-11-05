@@ -332,11 +332,9 @@ func (m Model) scrollIndicator() string {
 }
 
 // changedFilesIndicator returns the muted "✎ N files" header indicator
-// summarising how many distinct workspace files file-mutating tools have touched
-// this session, or "" when none have. The "✎" (pencil = "edited") is coherent
-// with the hook-modified glyph and avoids "Δ" colliding with the Edit/Write
-// "+N/-N" diff size signals. It is a compact count; the full path list is
-// revealed under ctrl+t (see renderChangedFiles).
+// summarising distinct paths observed in announced Edit/Write calls in this client
+// view, or "" when none have. It is a compact count; /workspace shows the captured
+// observations, not a complete history or attribution of current Git changes.
 const changedFilesIndicatorLimit = 999
 
 func (m Model) changedFilesIndicator() string {
@@ -470,8 +468,13 @@ func (m Model) renderFooter() string {
 	hk := m.helpKeyMarkings()
 	help := hk.help + " help · / commands"
 	if m.pasteGateOpen() {
-		help += " · " + hk.toolcalls + " tool calls · " + hk.expandConversation + " session details"
+		details := "session details"
+		if m.expandConversation {
+			details = "hide details"
+		}
+		help += " · " + hk.toolcalls + " tool calls · " + hk.expandConversation + " " + details
 	}
+	help = m.workspaceFooterHelp(help, hk)
 	help += " · " + hk.quit + " quit"
 	if m.phase == phaseRunning {
 		help = hk.submit + " queue · " + hk.cancel + " cancel · " + help
@@ -499,6 +502,30 @@ func (m Model) renderFooter() string {
 	}
 	footer := m.deps.Theme.Style("footer").Width(width).Render(line)
 	return footer + "\n" + m.deps.Theme.Style("muted").Render(help)
+}
+
+func (m Model) workspaceFooterHelp(help string, hk helpKeys) string {
+	if !m.pasteGateOpen() || !m.workspaceHintAvailable() {
+		return help
+	}
+	suffix := " · " + hk.quit + " quit"
+	if m.phase == phaseRunning {
+		suffix += hk.submit + " queue · " + hk.cancel + " cancel · "
+	}
+	if m.quitArmed {
+		suffix += hk.quit + " again to quit · "
+	}
+	candidates := []string{help + " · " + hk.workspace + " workspace"}
+	if m.expandConversation {
+		candidates = append(candidates, hk.help+" help · "+hk.expandConversation+" hide details · "+hk.workspace+" workspace")
+	}
+	candidates = append(candidates, hk.help+" help · "+hk.workspace+" workspace")
+	for _, candidate := range candidates {
+		if ansi.StringWidth(candidate+suffix) <= m.widthOr() {
+			return candidate
+		}
+	}
+	return help
 }
 
 // idleFooterLeft renders the footer-left for the idle/default phase, extracted

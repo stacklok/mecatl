@@ -4,13 +4,13 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/stacklok/mecatl/engine/kernel/codec"
 	"github.com/stacklok/mecatl/engine/kernel/history"
-	"github.com/stacklok/mecatl/engine/kernel/history/format"
 )
 
 func TestReadRequestValidate(t *testing.T) {
 	policy := history.Policy{
-		CommitLimits: format.Limits{MaxCommitBytes: 1, MaxRecords: 1, MaxKindBytes: 1, MaxPayloadBytes: 1},
+		CommitLimits: codec.Limits{MaxBytes: 1, MaxArrayElements: 1, MaxStringBytes: 1, MaxByteStringBytes: 1, MaxMapPairs: 1, MaxDepth: 1, MaxNodes: 1, MaxCollectionElements: 1},
 		RetryWindow:  1, MaxPageBytes: 10, MaxPageCommits: 2,
 	}
 	valid := history.ReadRequest{Through: commitRef(t, 1), MaxCommits: 2}

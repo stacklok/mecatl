@@ -22,13 +22,13 @@ type Backend interface{Append(context.Context, HistoryID, CommitRef, ByteCommit)
 type ByteCommit struct{Ref CommitRef; Bytes []byte}
 type ByteReadRequest struct{ReadRequest; MaxBytes int; MaxCommitBytes int}
 type Commit struct{Ref CommitRef; Commit format.Commit}
-type CommitRef struct{Sequence int64; CID format.CID}
+type CommitRef struct{Sequence int64; CID contentid.CID}
 type History struct{}
 type HistoryID = id.HistoryID
 type Observation struct{Head CommitRef; Commit CommitRef}
 type Page struct{Commits []Commit; Next CommitRef}
 type PageTooSmallError struct{RequiredBytes int}
-type Policy struct{CommitLimits format.Limits; RetryWindow int64; MaxPageBytes int; MaxPageCommits int}
+type Policy struct{CommitLimits codec.Limits; RetryWindow int64; MaxPageBytes int; MaxPageCommits int}
 type ReadRequest struct{After CommitRef; Through CommitRef; MaxCommits int}
 type Resolution struct{Status Status; Proposal CommitRef; Head CommitRef}
 type Status uint8

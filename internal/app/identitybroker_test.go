@@ -421,9 +421,10 @@ func as1StorageRunning() bool {
 }
 
 // TestIdentityBrokerHostsAS1 builds a hosted AS-1 beside the broker, serving
-// its routes under the issuer path and reachable in process, releases it with
-// the broker, and leaves session open unchanged: the broker converts no token
-// at it.
+// its routes under the issuer path and reachable in process, points session
+// open at it, and releases it with the broker. A tokenless open pairs a session
+// holding no refresh token; TestHostedAS1SignsTheTUIIn proves the conversion of
+// a real sign-in.
 func TestIdentityBrokerHostsAS1(t *testing.T) {
 	h := identityharness.New(t, identityharness.Options{})
 	const issuer = "https://mecatl.test/as1"
@@ -456,11 +457,10 @@ func TestIdentityBrokerHostsAS1(t *testing.T) {
 	alice := h.Owner(identityharness.Alice)
 	opened, err := built.IdentityBroker.OpenSession(t.Context(), identitybroker.OpenSessionRequest{
 		HostSessionID: "hostS42", Incarnation: string(session.NewIncarnationID()),
-		Owner:       identitybroker.Owner{Issuer: alice.Issuer, Subject: alice.Subject},
-		AccessToken: identitybroker.NewToken(h.AS1.MintAccessToken(identityharness.AccessTokenSpec{User: identityharness.Alice})),
+		Owner: identitybroker.Owner{Issuer: alice.Issuer, Subject: alice.Subject},
 	})
 	if err != nil || opened.HoldsRefreshToken {
-		t.Fatalf("OpenSession with an access token = %+v, %v; want a session holding no refresh token", opened, err)
+		t.Fatalf("tokenless OpenSession = %+v, %v; want a session holding no refresh token", opened, err)
 	}
 	if !as1StorageRunning() {
 		t.Fatal("the hosted AS-1's storage is not running")

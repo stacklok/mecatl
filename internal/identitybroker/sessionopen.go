@@ -75,6 +75,13 @@ func WithAuthServer(as1 AuthServer) Option {
 	return func(b *Broker) { b.as1 = as1 }
 }
 
+// WithClock replaces the broker's clock, which times session hard expiry,
+// converted-token memory, and agent credentials, so a test can move past a
+// session's hard expiry. Without it the broker uses time.Now.
+func WithClock(now func() time.Time) Option {
+	return func(b *Broker) { b.sessions.now = now }
+}
+
 // heldGrant is the refresh token a broker session holds, with what the broker
 // keeps about it (design "Broker grant record"). The token's value never
 // leaves the broker through Session.

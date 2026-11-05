@@ -3,6 +3,8 @@ package history
 import (
 	"context"
 
+	"github.com/stacklok/mecatl/engine/kernel/codec"
+	"github.com/stacklok/mecatl/engine/kernel/contentid"
 	"github.com/stacklok/mecatl/engine/kernel/history/format"
 )
 
@@ -73,14 +75,14 @@ func (h *History) encode(id HistoryID, commit format.Commit) ([]byte, CommitRef,
 	if id == (HistoryID{}) {
 		return nil, CommitRef{}, invalid("history ID must be set")
 	}
-	if commit.Sequence == 1 && commit.HistoryID != id {
-		return nil, CommitRef{}, invalid("root history ID does not match scope")
-	}
-	canonical, cid, err := format.EncodeCommit(commit, h.policy.CommitLimits)
+	canonical, err := codec.Encode(commit, h.policy.CommitLimits)
 	if err != nil {
 		return nil, CommitRef{}, invalid("commit is invalid or exceeds policy")
 	}
-	return canonical, CommitRef{Sequence: commit.Sequence, CID: cid}, nil
+	if commit.HistoryID != nil && *commit.HistoryID != id {
+		return nil, CommitRef{}, invalid("root history ID does not match scope")
+	}
+	return canonical, CommitRef{Sequence: commit.Sequence, CID: contentid.Sum(canonical)}, nil
 }
 
 // Append validates and canonically encodes a DTO, derives its identity and
@@ -100,7 +102,7 @@ func (h *History) Append(ctx context.Context, id HistoryID, commit format.Commit
 	}
 	expected := CommitRef{}
 	if commit.Sequence > 1 {
-		expected = CommitRef{Sequence: commit.Sequence - 1, CID: commit.Parent}
+		expected = CommitRef{Sequence: commit.Sequence - 1, CID: *commit.Parent}
 	}
 	if err := ctx.Err(); err != nil {
 		return Resolution{}, err
@@ -173,7 +175,7 @@ func (h *History) Read(ctx context.Context, id HistoryID, request ReadRequest) (
 	if err := request.Validate(h.policy); err != nil {
 		return Page{}, err
 	}
-	r := ByteReadRequest{ReadRequest: request, MaxBytes: h.policy.MaxPageBytes, MaxCommitBytes: h.policy.CommitLimits.MaxCommitBytes}
+	r := ByteReadRequest{ReadRequest: request, MaxBytes: h.policy.MaxPageBytes, MaxCommitBytes: h.policy.CommitLimits.MaxBytes}
 	b, err := h.backend.Read(ctx, id, r)
 	if err != nil {
 		return Page{}, err
@@ -190,9 +192,13 @@ func (h *History) Read(ctx context.Context, id HistoryID, request ReadRequest) (
 		if err := ctx.Err(); err != nil {
 			return Page{}, err
 		}
-		c, cid, err := format.DecodeCommit(e.Bytes, h.policy.CommitLimits)
-		if err != nil || cid != e.Ref.CID || c.Sequence != e.Ref.Sequence || c.Sequence != parent.Sequence+1 || c.Parent != parent.CID ||
-			(c.Sequence == 1 && c.HistoryID != id) || (c.Sequence == request.Through.Sequence && e.Ref != request.Through) {
+		c, err := codec.Decode[format.Commit](e.Bytes, h.policy.CommitLimits)
+		if err != nil || contentid.Verify(e.Bytes, e.Ref.CID) != nil {
+			return Page{}, ErrCorrupt
+		}
+		if c.Sequence != e.Ref.Sequence || c.Sequence != parent.Sequence+1 ||
+			(c.Parent != nil && *c.Parent != parent.CID) ||
+			(c.HistoryID != nil && *c.HistoryID != id) || (c.Sequence == request.Through.Sequence && e.Ref != request.Through) {
 			return Page{}, ErrCorrupt
 		}
 		page.Commits[i] = Commit{Ref: e.Ref, Commit: c}

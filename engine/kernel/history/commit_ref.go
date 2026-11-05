@@ -1,6 +1,6 @@
 package history
 
-import "github.com/stacklok/mecatl/engine/kernel/history/format"
+import "github.com/stacklok/mecatl/engine/kernel/contentid"
 
 // CommitRef identifies a proposed or accepted commit in one history. It proves
 // neither the commit's validity nor acceptance. Its zero value is unset, except
@@ -10,7 +10,7 @@ type CommitRef struct {
 	// Sequence is the positive, one-based commit ordinal.
 	Sequence int64
 	// CID is the nonzero canonical content identity of the commit.
-	CID format.CID
+	CID contentid.CID
 }
 
 // Validate reports whether the reference has a positive sequence and a set CID.
@@ -18,7 +18,7 @@ func (r CommitRef) Validate() error {
 	if r.Sequence <= 0 {
 		return invalid("commit sequence must be positive")
 	}
-	if r.CID == (format.CID{}) {
+	if r.CID == (contentid.CID{}) {
 		return invalid("commit CID must be set")
 	}
 	return nil

@@ -29,6 +29,8 @@ func TestToolHiveImportsStayBehindApprovedAdapterLeaves(t *testing.T) {
 		"internal/adapter/resourceurl/resourceurl.go": true,
 		// AS-1, hosted on ToolHive's embedded authorization server (#2490).
 		"internal/identitybroker/adapter/as1server/as1server.go": true,
+		// The identity broker's delegate client at AS-1 (#2607).
+		"internal/identitybroker/adapter/as1server/delegate.go": true,
 	}
 	const toolHiveModule = "github.com/stacklok/toolhive"
 	if err := filepath.WalkDir(root, func(sourcePath string, entry fs.DirEntry, walkErr error) error {

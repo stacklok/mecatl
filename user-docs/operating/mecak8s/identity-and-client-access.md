@@ -161,7 +161,10 @@ oidc:
 ```
 
 The chart rejects partial profiles and never derives the public resource URL
-from pod addresses. Metadata discovery is anonymous HTTPS and remains separate
+from pod addresses. With hosted AS-1, a `scopes` list must include
+`offline_access`, or `mecak8s` refuses to start: `mecatui` requests the listed
+scopes exactly, and the identity broker can convert only a sign-in that
+includes `offline_access`. Metadata discovery is anonymous HTTPS and remains separate
 from authenticated gRPC transport.
 
 ## Own sessions by the company identity
@@ -176,12 +179,15 @@ oidc:
   issuer: https://auth.example.com/as
   audience: https://mecatl.example.com/api
   ownerIdentity: sub_id
-  acceptedClientIDs: [mecatui, studio]
+  acceptedClientIDs: [mecatui]
 ```
 
 `oidc.ownerIdentity` sets `--oidc-owner-identity` and accepts only `sub_id` or
 the default empty string. `oidc.acceptedClientIDs` sets
-`--oidc-accepted-client-ids`; the chart rejects one without the other. The
+`--oidc-accepted-client-ids`; the chart rejects one without the other, except
+that a [hosted AS-1](#host-as-1-in-mecak8s) supplies its TUI client ID when
+`oidc.acceptedClientIDs` is unset. Studio does not support this setting; see
+[Mecatl Studio](/operating/studio.md). The
 experimental identity broker requires this setting: with
 `--enable-identity-broker` and OIDC enabled, `mecak8s` refuses to start without
 it, and the chart refuses `identityBroker.enabled` without it. When `oidc.clientID` is set, the chart requires it in
@@ -288,10 +294,16 @@ ownership still keys on the access token's `sub_id`.
 
 Users approve a consent page at AS-1 when they sign in. AS-1 keeps its users,
 pending sign-ins, and refresh tokens in memory, so every pod restart or rollout
-signs all users out of AS-1 and they run `mecatui login` again. With
+signs all users out of AS-1 and they run `mecatui login` again. The broker's
+sessions and the key its client uses at AS-1 live in the same memory, so a
+restart drops them too: the broker generates a fresh client key at startup, and
+each signed-in user's next request opens a new broker session. With
 `signingKey`, access tokens issued before a restart keep verifying until they
 expire. Without it, AS-1 generates a key at startup and those tokens stop
-verifying immediately.
+verifying immediately. AS-1 accepts each access token for one session open,
+but it forgets which tokens it has accepted when the pod restarts. A token
+used before a restart can open one more session after it, until the token
+expires.
 
 Turning on `oidc.ownerIdentity: sub_id` for a deployment with existing sessions leaves
 those sessions with their previous owners; see

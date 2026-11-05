@@ -1,0 +1,83 @@
+# CodeQL code scanning for mecatl. Results upload to the repository's Security
+# tab as code scanning alerts and annotate pull requests.
+#
+# This complements, and does not replace, the CI gates in ci.yml: govulncheck
+# (known-vulnerable dependencies) and gosec via golangci-lint (Go security lint)
+# fail a PR outright, while CodeQL does inter-procedural dataflow analysis
+# (injection, path traversal, SSRF, unsafe workflow expressions) across every
+# language in the repository and keeps alert history over time.
+#
+# Uses `pull_request` (NOT `pull_request_target`) for the same reason as ci.yml:
+# the analysis builds untrusted PR code, so it must run without repo secrets.
+# GitHub accepts SARIF uploads from fork PRs with the read-only token.
+#
+# All actions are SHA-pinned with a # vX.Y.Z comment, matching ci.yml.
+name: CodeQL
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Weekly re-scan of main so newly published queries flag existing code even
+    # in weeks with no pushes.
+    - cron: '23 4 * * 1'
+  workflow_dispatch:
+
+# Deny-all default; the analyze job grants only what it needs.
+permissions: {}
+
+concurrency:
+  group: codeql-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GOTOOLCHAIN: local
+  GOFLAGS: -mod=readonly
+  GOPROXY: https://proxy.golang.org|direct
+
+jobs:
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      # Upload SARIF results as code scanning alerts.
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Go is compiled, so CodeQL traces a build. Autobuild discovers the
+          # go.work workspace and every module under it.
+          - language: go
+            build-mode: autobuild
+          # Interpreted languages are extracted from source without a build.
+          - language: javascript-typescript
+            build-mode: none
+          - language: python
+            build-mode: none
+          # GitHub Actions workflows and composite actions (expression
+          # injection, excessive permissions, untrusted checkout).
+          - language: actions
+            build-mode: none
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - if: matrix.language == 'go'
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: 'stable'
+
+      - uses: github/codeql-action/init@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
+
+      - uses: github/codeql-action/analyze@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+        with:
+          category: /language:${{ matrix.language }}

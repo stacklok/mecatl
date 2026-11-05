@@ -377,8 +377,8 @@ func TestRejectedBearerRetriesOnceWithAFreshToken(t *testing.T) {
 	}
 }
 
-// TestUntaggedUnauthenticatedIsNotRetried: only the authenticator's tagged
-// bearer rejection is retried; a bare Unauthenticated is surfaced as the
+// TestUntaggedUnauthenticatedIsNotRetried: only the server's tagged bearer
+// rejection (authenticator or identity broker) is retried; a bare Unauthenticated is surfaced as the
 // rejected-bearer failure after one attempt and no refresh.
 func TestUntaggedUnauthenticatedIsNotRetried(t *testing.T) {
 	fake := &bearerServer{untagged: true}

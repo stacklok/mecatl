@@ -6,9 +6,11 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -39,8 +41,16 @@ func TestIdentityBrokerAgainstOfflineHarness(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// AS-1 and the broker share one clock, which the test moves past the
+	// sessions' hard expiry; AS-1 checks the broker's client assertions
+	// against it, so the broker's AS-1 client uses it too.
+	var clockOffset atomic.Int64
+	now := func() time.Time { return time.Now().Add(time.Duration(clockOffset.Load())) }
+	const grantMaxLifetime = 5 * time.Minute
 	h := identityharness.New(t, identityharness.Options{
-		BrokerKeys: []identityharness.BrokerKey{{KeyID: signer.JWKS().Keys[0].KeyID, Public: &clientKey.PublicKey}},
+		BrokerKeys:       []identityharness.BrokerKey{{KeyID: signer.JWKS().Keys[0].KeyID, Public: &clientKey.PublicKey}},
+		Now:              now,
+		GrantMaxLifetime: grantMaxLifetime,
 	})
 	cfg, err := parseFlags([]string{
 		"--mock",
@@ -65,7 +75,7 @@ func TestIdentityBrokerAgainstOfflineHarness(t *testing.T) {
 	// No flag sets AS-1's endpoints yet (#2490); the test points the broker at
 	// the harness's AS-1 directly.
 	appCfg.IdentityBrokerAS1 = &app.IdentityBrokerAS1{
-		Issuer: h.AS1.Issuer(), TokenEndpoint: h.AS1.TokenEndpoint(), HTTPClient: h.HTTPClient(), ClientKey: clientKey,
+		Issuer: h.AS1.Issuer(), TokenEndpoint: h.AS1.TokenEndpoint(), HTTPClient: h.HTTPClient(), ClientKey: clientKey, Now: now,
 	}
 	built, err := buildIsolated(t, context.Background(), appCfg)
 	if err != nil {
@@ -288,6 +298,64 @@ func TestIdentityBrokerAgainstOfflineHarness(t *testing.T) {
 	}
 	if status, _ := apiCall(t, http.MethodGet, api+"/v1/sessions/"+string(legacy.ID), bob.AccessToken, ""); status != http.StatusNotFound {
 		t.Errorf("Bob gets Alice's pre-AS-1 session: status %d, want 404", status)
+	}
+
+	// Hard expiry: a broker session holding a refresh token closes when the
+	// grant expires, and the user's next request opens a new one for the same
+	// agent. The fork and Bob's session each converted a token, so each has a
+	// hard expiry.
+	expiring, ok := findBrokerSession(forked.ID)
+	if !ok || !expiring.HoldsRefreshToken {
+		t.Fatalf("fork's broker session = %+v, %v; want one holding a refresh token", expiring, ok)
+	}
+	bobsExpiring, ok := findBrokerSession(bobCreated.ID)
+	if !ok || !bobsExpiring.HoldsRefreshToken {
+		t.Fatalf("Bob's broker session = %+v, %v; want one holding a refresh token", bobsExpiring, ok)
+	}
+	registerMain := func(brokerSession string) (identitybroker.Registration, error) {
+		return built.IdentityBroker.RegisterAgent(t.Context(), identitybroker.RegisterAgentRequest{
+			SessionID: brokerSession, HostSessionID: forked.ID, Owner: aliceCompany, Incarnation: expiring.Incarnation,
+			Definition: identitybroker.DefinitionRef{Source: "system", Name: "main"},
+		})
+	}
+	before, err := registerMain(expiring.ID)
+	if err != nil {
+		t.Fatalf("register the fork's main agent: %v", err)
+	}
+	clockOffset.Store(int64(grantMaxLifetime + time.Second))
+	closed := identitybroker.ReasonError(identitybroker.ReasonSessionClosed, "")
+	if _, err := registerMain(expiring.ID); !errors.Is(err, closed) {
+		t.Errorf("register in the expired broker session = %v, want %v", err, closed)
+	}
+	if _, err := built.IdentityBroker.AuthorizeCall(t.Context(), identitybroker.AuthorizeCallRequest{
+		SessionID: expiring.ID, Credential: before.Credential, OperationID: "op-1", Target: "gateway", Tool: "search",
+	}); !errors.Is(err, closed) {
+		t.Errorf("authorize in the expired broker session = %v, want %v", err, closed)
+	}
+	// A fresh token is issued now by the API's clock, which the test did not
+	// move; it is still live on AS-1's, as the move is shorter than its
+	// lifetime.
+	fresh := h.AS1.MintAccessToken(identityharness.AccessTokenSpec{User: identityharness.Alice, IssuedAt: time.Now()})
+	if status, body := apiCall(t, http.MethodPost, api+"/v1/sessions/"+forked.ID+"/prompt", fresh, `{"text":"after expiry"}`); status != http.StatusOK {
+		t.Fatalf("Alice prompts her fork after its broker session expired: status %d: %s", status, body)
+	}
+	reopened, ok := findBrokerSession(forked.ID)
+	if !ok || reopened.ID == expiring.ID || !reopened.HoldsRefreshToken {
+		t.Fatalf("fork's broker session after expiry = %+v, %v; want a new one holding a refresh token", reopened, ok)
+	}
+	// The 200 means the prompt's run entry registered the main agent in the
+	// new broker session (TestIdentityBrokerRegistersAgainInAReopenedBrokerSession
+	// pins that at the server); registering again here returns its agent.
+	if after, err := registerMain(reopened.ID); err != nil || after.Agent != before.Agent {
+		t.Errorf("register in the new broker session = %+v, %v; want agent %+v", after.Agent, err, before.Agent)
+	}
+	// A tokenless open after the expiry pairs a new session that holds no
+	// refresh token.
+	bobsReopened, err := built.IdentityBroker.OpenSession(t.Context(), identitybroker.OpenSessionRequest{
+		HostSessionID: bobCreated.ID, Incarnation: bobsExpiring.Incarnation, Owner: bobCompany,
+	})
+	if err != nil || bobsReopened.ID == bobsExpiring.ID || bobsReopened.HoldsRefreshToken {
+		t.Errorf("Bob's tokenless open after expiry = %+v, %v; want a new broker session holding no refresh token", bobsReopened, err)
 	}
 
 	cancel()

@@ -31,6 +31,7 @@ func openApprovalSurface(m *Model) *approvalSurface {
 	if s := approvalSurfaceFor(m); s != nil {
 		return s
 	}
+	m.closeModal()
 	s := &approvalSurface{
 		deps:         m.surfaceDeps(),
 		sessionID:    m.sessionID,

@@ -437,6 +437,34 @@ func TestSessionOpenFailedReplaceKeepsTheHeldToken(t *testing.T) {
 	}
 }
 
+// TestSessionHardExpiryCountsOneSkewEarly: the broker counts the hard expiry
+// as reached one clock skew before the held refresh token's expiry, so it
+// never presents a grant AS-1 may already have expired.
+func TestSessionHardExpiryCountsOneSkewEarly(t *testing.T) {
+	f := newOpenFixture(t)
+	old, err := f.open(openHost, f.owner(identityharness.Alice), f.token(identityharness.Alice))
+	if err != nil {
+		t.Fatal(err)
+	}
+	held, ok := identitybroker.SessionGrant(f.b, old.ID)
+	if !ok {
+		t.Fatal("the session holds no refresh token")
+	}
+
+	f.clock.Advance(held.ExpiresAt.Sub(f.clock.Now()) - identitybroker.ClockSkew - time.Second)
+	if s, ok := f.find(t, openHost); !ok || s.ID != old.ID || !s.HoldsRefreshToken {
+		t.Fatalf("one second before the skew margin: FindSession = %+v, %v; want the session, holding its refresh token", s, ok)
+	}
+
+	f.clock.Advance(time.Second)
+	if s, ok := f.find(t, openHost); ok {
+		t.Fatalf("at the skew margin, before the token's own expiry: FindSession = %+v, want none", s)
+	}
+	if _, ok := identitybroker.SessionGrant(f.b, old.ID); ok {
+		t.Fatal("the expired session still holds a refresh token")
+	}
+}
+
 // TestSessionHardExpiryClosesTheSession: once the held refresh token's
 // expiry passes, every lookup finds the session closed, and the next open
 // pairs a new broker session.
@@ -665,6 +693,7 @@ func TestSessionOpenMapsAS1Refusals(t *testing.T) {
 		{"subject_token_invalid", identityharness.Fault{Error: "invalid_request", Reason: "subject_token_invalid"}, identitybroker.CodeUnauthenticated, identitybroker.ReasonSubjectInvalid},
 		{"subject_token_audience", identityharness.Fault{Error: "invalid_request", Reason: "subject_token_audience"}, identitybroker.CodeInternal, ""},
 		{"subject_token_source_client", identityharness.Fault{Error: "invalid_request", Reason: "subject_token_source_client"}, identitybroker.CodeInternal, ""},
+		{"subject_token_offline_access", identityharness.Fault{Error: "invalid_request", Reason: "subject_token_offline_access"}, identitybroker.CodeInternal, ""},
 		{"grant_invalid", identityharness.Fault{Error: "invalid_request", Reason: "grant_invalid"}, identitybroker.CodeInternal, ""},
 		{"invalid_request with no reason", identityharness.Fault{Error: "invalid_request"}, identitybroker.CodeInternal, ""},
 		{"subject_invalid from AS-1", identityharness.Fault{Error: "invalid_request", Reason: "subject_invalid"}, identitybroker.CodeInternal, ""},

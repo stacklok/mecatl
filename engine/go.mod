@@ -13,4 +13,8 @@ require (
 	mvdan.cc/sh/v3 v3.14.1
 )
 
-require github.com/stretchr/testify v1.12.1 // indirect
+require (
+	github.com/rogpeppe/go-internal v1.16.0 // indirect
+	github.com/stretchr/testify v1.12.1 // indirect
+	go.yaml.in/yaml/v3 v3.0.6 // indirect
+)

@@ -6,8 +6,9 @@ production entry points unchanged unless Joe explicitly approves integration.
 ## Boundaries
 
 - `history` owns public history values and persistence vocabulary, not execution
-  or a storage backend. It imports the `history/id` identity leaf, which depends
-  only on the shared `engine/id` utility and the standard library.
+  or a storage backend. Its `history/id` values depend on the shared `engine/id`
+  utility and the identity-free `codec` runtime. Resource and content identity
+  owners may import `codec`, never the reverse.
 - Do not wrap, embed, alias, or import the legacy `session.Session` aggregate.
 - Review new public contracts in coherent, useful slices before adding consumers.
 - Keep model/provider, host, learning, and delegation machinery out of this slice.
@@ -46,10 +47,9 @@ These conventions apply only to `engine/kernel/`.
   Validate lengths and counts before the allocations or conversions they govern;
   use overflow-safe arithmetic. Do not rely on mutable dependency-global limits.
 - Preserve opaque payloads without interpreting schemas owned elsewhere.
-- Keep handwritten codecs bounded to the small schemas they serve; document
-  interim limitations in code rather than silently copying the pattern to more
-  persisted types. Preserve canonical bytes and trust-boundary checks when
-  replacing the implementation.
+- Keep generated persistence codecs bounded to their supported schemas. Preserve
+  canonical bytes and trust-boundary checks when changing generator or runtime
+  behavior.
 - Prefer the simplest bounded implementation. An inexpensive sizing pass can be
   clearer than buffer-growth machinery; optimize demonstrated costs, not the
   number of loops in isolation.

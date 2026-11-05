@@ -7,8 +7,8 @@ import (
 	"math"
 	"testing"
 
+	"github.com/stacklok/mecatl/engine/kernel/contentid"
 	"github.com/stacklok/mecatl/engine/kernel/history"
-	"github.com/stacklok/mecatl/engine/kernel/history/format"
 )
 
 // backendContract checks the byte seam independently of History's protocol and
@@ -129,7 +129,7 @@ func backendContract(t *testing.T, factory Factory) {
 // backendAppendSequences checks index validation without History or commit codecs.
 // Even a speculative expected head at MaxInt64 must fail before a CAS verdict.
 func backendAppendSequences(t *testing.T, factory Factory) {
-	cid, err := format.ParseCID("bafyreihdwdcefgh4dqkjv67uzcmw7ojee6xedzdetojuzjevtenxquvyku")
+	cid, err := contentid.Parse("bafyreihdwdcefgh4dqkjv67uzcmw7ojee6xedzdetojuzjevtenxquvyku")
 	if err != nil {
 		t.Fatal(err)
 	}

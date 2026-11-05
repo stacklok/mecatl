@@ -115,14 +115,23 @@ type renderer struct {
 	mu    sync.Mutex
 	cache map[int]*glamour.TermRenderer
 
-	// blocks owns every cross-frame conversation-block cache: whole rendered
-	// blocks, assistant markdown, fallback frame rows, and the incremental prefix.
-	// It is reset when a conversation is rebuilt because its buckets use conversation
-	// indices that a fresh conversation can reuse.
+	// stream renders conversation assistant markdown, incrementally while a block
+	// streams; see streamMarkdown.
+	stream streamMarkdown
+
+	// rail draws assistant bodies' left rail, re-rendering only changed lines;
+	// see assistantRail.
+	rail assistantRail
+
+	// blocks owns the cross-frame conversation-block caches keyed by conversation
+	// index: whole rendered blocks, assistant markdown, fallback frame rows, and the
+	// incremental prefix. It is reset, together with stream's and rail's progress,
+	// when a conversation is rebuilt because a fresh conversation can reuse indices.
 	blocks blockRenderCache
 
-	// mdRenders counts REAL glamour invocations (cache misses) — incremented at the
-	// tr.Render call site in markdown(), not in markdownAt's hit path. It is the test
+	// mdRenders counts REAL markdown renders (cache misses) — incremented once per
+	// render by markdownStreamed or at markdownWidth's tr.Render call site, never in
+	// markdownAt's hit path. It is the test
 	// seam proving the delta-coalescing actually elides per-token renders: N streamed
 	// deltas with no frame flush leave it unchanged, and one flush bumps it by exactly
 	// one (the live block re-renders once). Touched only on the update goroutine.
@@ -328,9 +337,11 @@ func (r *renderer) vpView(vp viewport.Model) string {
 // On any glamour error it falls back to the raw text so the stream is never lost.
 // MUST be called only on the update goroutine.
 //
-// markdownWidth is the single glamour-render entry-point shared by the
-// conversation markdown path (via markdown) and the plan-approval modal — the
-// plan modal wraps at the card's content width rather than the transcript budget.
+// markdownWidth is the glamour TermRenderer entry-point for the plan-approval
+// modal and for conversation markdown when streamMarkdown falls back; otherwise
+// conversation markdown renders through streamMarkdown, which produces the same
+// bytes. The plan modal wraps at the card's content width rather than the
+// transcript budget.
 // The glamour cache is width-keyed, so each distinct caller width gets its own
 // renderer entry.
 func (r *renderer) markdownWidth(src string, w int) string {
@@ -356,23 +367,12 @@ func (r *renderer) markdownWidth(src string, w int) string {
 	// GraphemeWidth 2 / WcWidth 1) every cell to the right is offset — the
 	// scramble ("mecatl" → "mec##atl", "1. ✅" losing its ". "). It PERSISTS after
 	// the stream settles because the renderer's width method is a fixed terminal
-	// property, so the end-of-turn ClearScreen just re-paints the same wrong
+	// property, so even a full repaint reproduces the same wrong
 	// layout. normalizeEmojiWidth strips VS16 and collapses any residual divergent
 	// cluster so WcWidth == GraphemeWidth for every cluster — the two layers then
 	// agree without depending on the terminal upgrading the renderer.
 	src = normalizeEmojiWidth(src)
-	if w <= 0 {
-		w = 80
-	}
-	// Reserve the terminal's FINAL column: word-wrap one column short of the
-	// viewport width. Retained as harmless hygiene (and to mirror the two-column
-	// inset tool cards get from Width(r.width-2)), NOT as the scramble fix — the
-	// width-method disagreement above, not a last-column pending-wrap, is the root
-	// cause, and normalizeEmojiWidth is what closes it. trimTrailingSpaces likewise
-	// just drops glamour's styled right-padding so rows sit at their natural width.
-	if w > 1 {
-		w--
-	}
+	w = glamourWrapWidth(w)
 	r.mu.Lock()
 	if r.cache == nil {
 		// Zero-value safety: a bare &renderer{th: th} (see the renderBlock comment)
@@ -406,6 +406,24 @@ func (r *renderer) markdownWidth(src string, w int) string {
 	return trimTrailingSpaces(strings.TrimRight(out, "\n"))
 }
 
+// glamourWrapWidth turns a caller's layout width into glamour's word-wrap width.
+// When w <= 0 it floors at 80. It reserves the terminal's FINAL column: word-wrap
+// one column short of the viewport width. Retained as harmless hygiene (and to
+// mirror the two-column inset tool cards get from Width(r.width-2)), NOT as the
+// scramble fix — the width-method disagreement described on markdownWidth, not a
+// last-column pending-wrap, is the root cause, and normalizeEmojiWidth is what
+// closes it. trimTrailingSpaces likewise just drops glamour's styled right-padding
+// so rows sit at their natural width.
+func glamourWrapWidth(w int) int {
+	if w <= 0 {
+		w = 80
+	}
+	if w > 1 {
+		w--
+	}
+	return w
+}
+
 // markdown renders src to ANSI through a width-cached glamour renderer at the
 // assistant body's wrap budget (content width minus the body hang). It delegates
 // to markdownWidth with the caller-independent width already computed.
@@ -417,17 +435,18 @@ func (r *renderer) markdown(src string) string {
 // markdownAt is the memoized form of markdown used by the conversation render
 // path. idx is the block's stable conversation index (blocks are append-only, so
 // an index always denotes the same logical block). It returns the cached render
-// when the block's (src, width) are unchanged — the common case for every SETTLED
-// block on each streamed delta — and otherwise renders fresh and stores the
-// result, overwriting the index's entry in place (so the live, growing block
-// keeps exactly one entry rather than accumulating one per token). Correctness
-// rests on markdown() being pure in (src, width, theme) with a fixed theme; the
-// cache therefore can never return a stale render. Update-goroutine-only.
+// when the block's (src, width) are unchanged — a re-render of the live block
+// that did not change its text, such as the end of its reasoning stream — and
+// otherwise renders fresh and stores the result, replacing the single entry (so
+// the live, growing block keeps exactly one entry rather than one per token, and
+// settled blocks keep none). Correctness rests on markdownStreamed producing
+// exactly markdown(src), which is pure in (src, width, theme) with a fixed theme;
+// the cache therefore can never return a stale render. Update-goroutine-only.
 func (r *renderer) markdownAt(idx int, src string) string {
 	if out, ok := r.blocks.markdownBlock(idx, src, r.width); ok {
 		return out
 	}
-	out := r.markdown(src)
+	out := r.markdownStreamed(idx, src)
 	r.blocks.storeMarkdown(idx, mdEntry{src: src, width: r.width, out: out})
 	return out
 }
@@ -589,10 +608,12 @@ func stripVS16(s string) string {
 // blockRenderCache.prefix reuses the cached leading range ONLY when it covers
 // EXACTLY [0, prefixN) at the SAME (width, expand). Its prefix coverage check is
 // the load-bearing guard: a NON-TAIL mutation lowers firstChanged (→ prefixN), a
-// block-count shrink lowers prefixN, and a width/expand change re-renders EVERY
-// block so firstChanged drops to 0 (→ prefixN). Those paths make the requested
-// coverage or joinPrefixState differ; storeRendered independently clears a prefix
-// when a freshly rendered block was already covered by it.
+// block-count shrink lowers prefixN, and a width change re-renders EVERY block so
+// firstChanged drops to 0 (→ prefixN). An expand change re-renders only the
+// expand-sensitive blocks, but it changes joinPrefixState, so the prefix is
+// rebuilt from the passes. Those paths make the requested coverage or
+// joinPrefixState differ; storeRendered independently clears a prefix when a
+// freshly rendered block was already covered by it.
 //
 // The returned slice is freshly allocated EACH call (cached prefix lines appended
 // into a new backing array, then suffix lines), so vp.SetContentLines — which
@@ -680,14 +701,18 @@ func (r *renderer) renderSnapshot(idx int, s scrollback.BlockSnapshot, expand bo
 
 func (r *renderer) renderAssistantSnapshot(idx int, s scrollback.BlockSnapshot, p scrollback.AssistantCardSnapshot, expand bool) string {
 	return r.renderCachedSnapshot(idx, uint64(s.ID), rendererRevision(s.Revision), expand, func(blockID uint64) blockRenderOutput {
-		if strings.TrimSpace(p.Text) == "" && strings.TrimSpace(p.Reasoning) == "" {
-			return blockRenderOutput{}
+		// Expand only changes the reasoning summary, so an answer without one keeps
+		// its entry across a detail flip and never needs its markdown re-rendered.
+		noReasoning := strings.TrimSpace(p.Reasoning) == ""
+		if strings.TrimSpace(p.Text) == "" && noReasoning {
+			return blockRenderOutput{expandInvariant: true}
 		}
 		out := r.renderAssistantSnapshotFresh(idx, p, expand)
 		out = r.indentLines(out)
 		return blockRenderOutput{
-			text: out,
-			rows: r.assistantProvenanceRows(blockID, p, out, expand),
+			text:            out,
+			rows:            r.assistantProvenanceRows(blockID, p, out, expand),
+			expandInvariant: noReasoning,
 		}
 	})
 }
@@ -704,12 +729,19 @@ func (r *renderer) renderAssistantSnapshotFresh(idx int, p scrollback.AssistantC
 		body = reasoning + body
 	}
 	label := r.th.Style("transcriptLLMMarker").Render(theme.TranscriptLLMGlyph) + r.th.Style("transcriptLLMHeading").Render(" mecatl")
-	rail := lipgloss.NewStyle().
+	if !r.rail.styled {
+		r.rail.style, r.rail.styled = r.assistantRailStyle(), true
+	}
+	return label + "\n" + r.rail.render(body)
+}
+
+// assistantRailStyle is the left rail drawn beside an assistant body.
+func (r *renderer) assistantRailStyle() lipgloss.Style {
+	return lipgloss.NewStyle().
 		BorderStyle(lipgloss.NormalBorder()).
 		BorderLeft(true).
 		BorderForeground(r.th.Style("transcriptLLMRail").GetForeground()).
 		PaddingLeft(1)
-	return label + "\n" + rail.Render(body)
 }
 
 func (r *renderer) renderConversationLines(c *scrollback.Conversation, expand bool) []string {
@@ -1686,21 +1718,15 @@ func wrapResultDisplayLines(lines []toolResultLine, bodyWidth int) []toolResultL
 	return wrapped
 }
 
-// renderChangedFiles renders the session's changed-files summary as a muted,
-// insertion-ordered list under a "✎ N files this session" header — revealed by
-// ExpandConversation. Returns "" for an empty set. Paths are terminal-sanitized.
-func (r *renderer) renderChangedFiles(paths []string) string {
-	if len(paths) == 0 {
+// renderWorkspaceInvite is a bounded pointer to the inspector, never a path list
+// or a trigger for workspace inspection. The caller owns observation provenance.
+func (r *renderer) renderWorkspaceInvite() string {
+	if r.width <= 0 {
 		return ""
 	}
-	style := r.th.Style("muted")
-	var b strings.Builder
-	b.WriteString(style.Render("✎ " + plural(len(paths), "file") + " changed this session"))
-	for _, p := range paths {
-		b.WriteString("\n")
-		b.WriteString(style.Render("  " + terminaltext.Sanitize(p)))
-	}
-	return b.String()
+	text := r.marks.workspace + " workspace · /workspace — observed Edit/Write paths"
+	text = terminaltext.ExpandStyleTabs(terminaltext.SanitizeSingleLine(text), r.th.Style("muted"))
+	return r.th.Style("muted").Render(ansi.TruncateWc(text, r.width, "…"))
 }
 
 // mutatedPath returns the workspace path a file-MUTATING tool call touches, and
