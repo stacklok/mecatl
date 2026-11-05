@@ -24,6 +24,10 @@ import (
 // broker path, embedded in Config. Any non-empty field selects that path
 // instead of the bundled ToolHive process. Inputs passed to buildMCPBroker
 // outside ConfiguredMCPBroker never change the selected path.
+//
+// It is a seam for tests and test fixtures, which inject callers and
+// discovered tools; its fields name adapter types, so command roots (kept off
+// the adapter by depguard) never set it and always get the bundled process.
 type ConfiguredMCPBroker struct {
 	MCPBrokerDiscovered       []mcpbroker.ToolDefinition
 	MCPBrokerCaller           mcpbroker.Caller
@@ -84,7 +88,14 @@ func buildBundledMCPBroker(ctx context.Context, cfg Config, declaration mcpautho
 		inspector:           process.Runtime,
 		workspaceEnrollment: process.WorkspaceEnrollmentRequired(),
 		callbackPath:        process.CallbackPath,
-		closer:              process.Close,
+		// The process closes the Redis client only through its embedded auth
+		// server, which exists only for protected upstreams. Close it here too;
+		// go-redis Close is idempotent.
+		closer: func() error {
+			err := process.Close()
+			authStorageClose()
+			return err
+		},
 	}
 	if !process.Handlers.Empty() {
 		parts.handlers = process.Handlers

@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/alicebob/miniredis/v2"
 	"golang.org/x/oauth2"
@@ -157,6 +158,74 @@ func TestBuildMCPBrokerFailuresKeepTheirErrors(t *testing.T) {
 				t.Fatalf("failed construction returned broker parts: %+v", parts)
 			}
 		})
+	}
+}
+
+// TestBuildMCPBrokerHandsOffPathSpecificParts pins what each path hands to
+// the server: only the bundled process inspects connectors and may require
+// workspace enrollment, and a broker without an HTTP surface hands over nil
+// handlers, which the command roots treat as nothing to mount.
+func TestBuildMCPBrokerHandsOffPathSpecificParts(t *testing.T) {
+	configured := Config{}
+	configured.MCPBrokerCaller = unusedBrokerCaller
+	protected := mcpauthority.BrokerConfig{CallbackURL: brokerTestCallbackURL, Routes: []permconfig.MCPServerProfile{protectedToolHiveRoute("calendar")}}
+	for _, tc := range []struct {
+		name                       string
+		cfg                        Config
+		declaration                mcpauthority.BrokerConfig
+		inspector, enrollment, web bool
+	}{
+		{name: "bundled without surface", inspector: true},
+		{name: "bundled protected", declaration: protected, inspector: true, enrollment: true, web: true},
+		{name: "configured without callback", cfg: configured},
+		{name: "configured with callback", cfg: configured, declaration: mcpauthority.BrokerConfig{CallbackURL: brokerTestCallbackURL}, web: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			parts, err := buildMCPBroker(t.Context(), tc.cfg, tc.declaration, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(parts.close)
+			if parts.service == nil {
+				t.Fatal("no broker service")
+			}
+			if got := parts.inspector != nil; got != tc.inspector {
+				t.Errorf("connector inspector = %v, want %v", got, tc.inspector)
+			}
+			if parts.workspaceEnrollment != tc.enrollment {
+				t.Errorf("workspace enrollment = %v, want %v", parts.workspaceEnrollment, tc.enrollment)
+			}
+			if got := parts.handlers != nil; got != tc.web {
+				t.Errorf("HTTP handlers = %v, want %v", got, tc.web)
+			}
+		})
+	}
+}
+
+// TestBundledMCPBrokerClosesUnusedAuthRedisClient covers an anonymous-only
+// bundled broker: the process never uses the auth Redis client, so closing
+// the broker must still close it.
+func TestBundledMCPBrokerClosesUnusedAuthRedisClient(t *testing.T) {
+	mr, err := miniredis.Run()
+	if err != nil {
+		t.Fatalf("miniredis: %v", err)
+	}
+	t.Cleanup(mr.Close)
+	parts, err := buildMCPBroker(t.Context(), Config{RedisURL: mr.Addr(), RedisAllowPlaintext: true}, mcpauthority.BrokerConfig{}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mr.CurrentConnectionCount() == 0 {
+		parts.close()
+		t.Fatal("auth Redis client never connected; the test cannot observe its close")
+	}
+	parts.close()
+	deadline := time.Now().Add(5 * time.Second)
+	for mr.CurrentConnectionCount() != 0 {
+		if time.Now().After(deadline) {
+			t.Fatalf("auth Redis client still holds %d connections after close", mr.CurrentConnectionCount())
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
 
