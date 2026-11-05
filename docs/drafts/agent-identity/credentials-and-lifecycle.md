@@ -620,7 +620,9 @@ AS-1 and AS-2 are separate issuers with separate keys, also in embedded mode. Th
 
 ### (8) AS-2 access token
 
-**Input.** The broker redeems the ID-JAG at AS-2 with the [RFC 7523 JWT-bearer grant](https://www.rfc-editor.org/rfc/rfc7523.html#section-2.1), naming the vMCP with an RFC 8707 `resource`. The parameter comes from RFC 8707, not the ID-JAG profile; without it, AS-2 uses the ID-JAG's `resource` claim. It restricts `V` to the one call it authorized with an RFC 9396 `authorization_details` entry: the server, the tool, the SHA-256 hash of the arguments in canonical JSON (RFC 8785), and the operation ID. Form encoding is shown decoded:
+**Input.** The broker redeems the ID-JAG at AS-2 with the [RFC 7523 JWT-bearer grant](https://www.rfc-editor.org/rfc/rfc7523.html#section-2.1), naming the vMCP with an RFC 8707 `resource`. The parameter comes from RFC 8707, not the ID-JAG profile; without it, AS-2 uses the ID-JAG's `resource` claim. It restricts `V` to the one call it authorized with an RFC 9396 `authorization_details` entry: the server, the tool, the argument hash, and the operation ID. Form encoding is shown decoded.
+
+**The argument hash** is the lowercase hex SHA-256 of the RFC 8785 (JCS) serialization of the `tools/call` request's `params.arguments` object, or of `{}` when `arguments` is absent. The `tool` is the name the vMCP routes by, as sent in `params.name`. The MCP client computes the hash over exactly the `arguments` value it sends, and the vMCP over the value it received, before any routing or rewriting. JCS needs I-JSON (RFC 7493), so the MCP client refuses, before asking for authorization, arguments it cannot represent that way, such as integers beyond ±2^53 or invalid Unicode, rather than letting the two sides disagree. Both sides are tested against one shared set of test vectors covering number formatting, large and negative numbers, Unicode escapes, key order, and nesting.
 
 ```text
 POST https://gateway.example.com/oauth/token
@@ -674,7 +676,7 @@ client_assertion=<private_key_jwt for mecatl, aud=https://gateway.example.com>
 }
 ```
 
-`V` is bound to one call and is single-use for it. The vMCP accepts it for exactly one `tools/call` whose server, tool, and argument hash match the entry, and records its `jti` so that a second `tools/call` with it is refused. The session handshake and messages that belong to that call, such as cancellation or an elicitation reply, are accepted during `V`'s lifetime. A `V` held by mecak8s can therefore make only the call the broker just approved, once. For why the binding lives in `V` rather than a second token, see [authorization, credentials, and dispatch](mcp-authorization.md#authorization-credentials-and-dispatch).
+`V` is bound to one call and is single-use for it. The vMCP accepts it for exactly one `tools/call` whose server, tool, and argument hash match the entry, and records its `jti` so that a second `tools/call` with it is refused. `V`'s expiry limits only when the call can start. The session handshake before it is accepted during `V`'s lifetime, and messages that belong to the call, such as cancellation, progress, or an elicitation reply, are accepted for as long as the call is open, even after `V` expires, up to a configured maximum call duration. A user can take a minute to answer an elicitation, and a cancel can reach a long-running tool, without a new `V`. A `V` held by mecak8s can therefore make only the call the broker just approved, once. For why the binding lives in `V` rather than a second token, see [authorization, credentials, and dispatch](mcp-authorization.md#authorization-credentials-and-dispatch).
 
 `V` also carries a **delegated-access marker**. AS-2 emits this claim only after an approved redemption, on this grant or on RFC 8693 token exchange. A wildcard delegate client or `may_act` never earns it. `V` is terminal. In token exchange, AS-2 refuses a token that carries the marker, as subject token or as actor token. So `V` cannot be exchanged for a native-subject token, and it cannot act as native Alice for someone else. The vMCP reads provider credentials only for a token that carries the marker.
 
@@ -710,9 +712,9 @@ The approval-continuation profile is a convention that AS-2 advertises in its me
 
 **Checks, at the vMCP:**
 
-1. `V`'s `typ` is `at+jwt` or `application/at+jwt`, `iss` is AS-2, the signature verifies, `aud` is this vMCP, and `exp` has not passed (RFC 9068 §4); a request that names a `resource` is checked against it (RFC 8707).
+1. `V`'s `typ` is `at+jwt` or `application/at+jwt`, `iss` is AS-2, the signature verifies, `aud` is this vMCP, and `exp` has not passed (RFC 9068 §4); a request that names a `resource` is checked against it (RFC 8707). A message that belongs to a call this `V` already started, such as a cancellation or an elicitation reply, is accepted after `exp` while the call is open, up to the configured maximum call duration.
 2. The session ID, if present, is bound to the same `iss`, `sub`, `client_id`, `act.iss`, and `act.sub`, and the delegated-access marker.
-3. The `tools/call` matches `V`'s `authorization_details` entry: the server, the tool, and the argument hash, which the vMCP computes from the request it received before any routing or rewriting. `V`'s `jti` has not served a `tools/call` before; the vMCP records it until `exp` plus the clock skew, in storage shared by its replicas.
+3. The request matches `V`'s `authorization_details` entry. For a `tools/call`: the server, the tool, and the [argument hash](#8-as-2-access-token), which the vMCP computes from the request it received before any routing or rewriting. For a `V` issued to list tools: the server and the list method, so a listing `V` cannot start a `tools/call`. `V`'s `jti` has not served a call before; the vMCP records it until `exp` plus the clock skew, in storage shared by its replicas.
 4. Its own operation policy allows the tool.
 5. `V` carries the delegated-access marker from [step (8)](#8-as-2-access-token). A token without it gets no delegated credential lookup.
 6. A provider credential exists under **(gateway, native user, routed provider)**: here `(gateway.example.com, usr-alice-7c1d, github)`. The provider comes from the tool's route, never from the request. The stored row's owner must equal `V`'s native user.
@@ -961,7 +963,7 @@ Each agent instance has its own vMCP session (`Mcp-Session-Id`) for each user it
 - Sessions are never shared between instances.
 - The vMCP binds each session to the user and the acting instance: `V`'s `iss`, `sub`, `client_id`, `act.iss`, `act.sub`, and delegated-access marker. A token naming another instance in its `act` cannot use the session.
 - The run is not part of the session or token; the run ID travels in trace headers.
-- The MCP client stores each session ID under the instance, gateway, and user, not the broker session, so a [shared session](run-owner.md) never hands one user's backend state to another, and a replacement broker session keeps the instance's vMCP sessions. After a restart it reattaches. When the vMCP reports the session gone, the broker creates a new one. A wedged session can be reset explicitly.
+- The MCP client stores each session ID under the instance, gateway, and user, not the broker session, so a [shared session](run-owner.md) never hands one user's backend state to another, and a replacement broker session keeps the instance's vMCP sessions. After a restart it reattaches. When the vMCP reports the session gone, the MCP client creates a new one. A wedged session can be reset explicitly.
 - An instance has at most one active run at a time; Mecatl rejects a second concurrent run on the same session or child. Runs of one instance therefore never share a vMCP session concurrently. If that rule ever changes, session assignment must be revisited.
 
 ## Pauses and restart
@@ -991,7 +993,7 @@ On Okta, Google, and Keycloak both claims carry the same value. On Entra they di
 
 None of these values is selected. Each bounds a risk the operator should know:
 
-- **Lifetimes:** AS-1's maximum for grants that issue ID-JAGs, which bounds `RT-A42`'s hard expiry, and for grants that issue refresh tokens, which bounds a schedule's horizon; the ID-JAG lifetime, the `V` lifetime, which bounds how long a `V` taken from mecak8s stays usable, and the maximum SVID, workload-credential, and client-assertion lifetimes.
+- **Lifetimes:** AS-1's maximum for grants that issue ID-JAGs, which bounds `RT-A42`'s hard expiry, and for grants that issue refresh tokens, which bounds a schedule's horizon; the ID-JAG lifetime, the `V` lifetime, which bounds how long a `V` taken from mecak8s stays usable, the maximum call duration, which bounds how long the vMCP accepts messages for a call after its `V` expires, and the maximum SVID, workload-credential, and client-assertion lifetimes.
 - **Clock skew**, and the margins derived from it: how long used ID-JAG and `V` `jti` values are kept past `exp`.
 - **Upstream re-check:** the re-check interval, the maximum upstream refresh-token lifetime per IdP when the IdP sends no `refresh_expires_in`, and the lease timeout for a refresh in flight.
 - **Key refresh:** the rate limit on refreshing a key set after an unknown `kid`.
