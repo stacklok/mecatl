@@ -402366,6 +402366,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1793828037857,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "radoslav@stacklok.com",
+            "name": "Radoslav Dimitrov",
+            "username": "rdimitrov"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "293564d755a56d915f39b6f5163aad28a63575f5",
+          "message": "ci: add CodeQL code scanning workflow (#2683)\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-05T05:48:40-05:00",
+          "tree_id": "8f3119d1dfbd2c3fa68c05c3d92cc3b08cc38e90",
+          "url": "https://github.com/stacklok/mecatl/commit/293564d755a56d915f39b6f5163aad28a63575f5"
+        },
+        "date": 1793876469339,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 16134,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12893.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 794,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -524498,6 +524537,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1793876466077,
+  "lastUpdate": 1793876470389,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
