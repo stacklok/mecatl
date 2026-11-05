@@ -403954,6 +403954,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1793883724533,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "29541485+ChrisJBurns@users.noreply.github.com",
+            "name": "Chris Burns",
+            "username": "ChrisJBurns"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "5e3591ede995d3d9f061feaf041d536193b796c9",
+          "message": "refactor(mcpbroker): move authorization orchestration behind the broker contract (#2685)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-11-05T16:27:01Z",
+          "tree_id": "2dc7f280d3708774f5cf460f2e203a967698a184",
+          "url": "https://github.com/stacklok/mecatl/commit/5e3591ede995d3d9f061feaf041d536193b796c9"
+        },
+        "date": 1793896846861,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 16151,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12909.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 795,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -526542,6 +526581,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1793896842850,
+  "lastUpdate": 1793896848019,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
