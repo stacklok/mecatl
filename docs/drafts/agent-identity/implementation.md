@@ -109,7 +109,7 @@ Test the per-call `V`:
 Test the binding at the vMCP:
 
 - A `tools/call` whose server, tool, or arguments differ from `V`'s entry is refused, including arguments that differ only after the vMCP rewrites the request; the vMCP hashes the request as received.
-- A second `tools/call` with the same `V` is refused, including on another vMCP replica. The session handshake, cancellation, and an elicitation reply for the bound call are accepted during `V`'s lifetime.
+- A second `tools/call` with the same `V` is refused, including on another vMCP replica. The session handshake for the bound call is accepted during `V`'s lifetime, and its cancellation and elicitation replies while the call is open.
 - A vMCP session created with one `V` continues with the next `V` for the same user and instance, and refuses a `V` naming another instance.
 - A cancellation or an elicitation reply for an open call is accepted after its `V` has expired, and refused once the call has ended or passed the maximum call duration.
 - A `V` issued for a list call cannot start a `tools/call`.
