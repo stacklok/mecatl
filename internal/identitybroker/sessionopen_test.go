@@ -536,7 +536,9 @@ func TestSessionHardExpiryClosesTheSession(t *testing.T) {
 		}},
 		{"a token-bearing open", true, func(t *testing.T, f *openFixture, old identitybroker.Session, _ identitybroker.Token) {
 			// AS-1's own expiry is on wall time, which the broker's clock has
-			// passed, so the echo expires an hour after the broker's now.
+			// passed, so the wrapper replaces AS-1's echo with a made-up one
+			// expiring an hour after the broker's now. The reopens after the
+			// clock reset in the other rows check AS-1's real echo.
 			f.as1.Faults.ReplaceNextExchangeEcho(idjagEcho(f.clock.Now().Add(time.Hour)))
 			conversions := f.as1.Faults.Conversions()
 			next, err := f.open(openHost, old.Owner, f.token(t, identityharness.Alice))
@@ -745,7 +747,7 @@ func TestSessionOpenResendsOnceAfterALostResponse(t *testing.T) {
 			a.FailNextExchange(as1servertest.Fault{Status: 502})
 			a.FailNextExchange(as1servertest.Fault{Status: 502})
 		}, code: identitybroker.CodeUnavailable, attempts: 2},
-		{name: "two lost responses", fault: func(a *as1servertest.FaultTransport) { a.DropNextExchange(); a.DropNextExchange() },
+		{name: "two dropped requests", fault: func(a *as1servertest.FaultTransport) { a.DropNextExchange(); a.DropNextExchange() },
 			code: identitybroker.CodeUnavailable, attempts: 2},
 		{name: "503 is not resent", fault: func(a *as1servertest.FaultTransport) {
 			a.FailNextExchange(as1servertest.Fault{Status: 503})
@@ -921,7 +923,7 @@ func TestSessionOpenReportsAS1sOwnRefusals(t *testing.T) {
 			wantNoVerifiedOwner(t, f.b, s.ID)
 		})
 	}
-	t.Run("a token converted for another session: token_used", func(t *testing.T) {
+	t.Run("a token converted for another session: token_used without asking AS-1", func(t *testing.T) {
 		f := newOpenFixture(t)
 		token := f.token(t, identityharness.Alice)
 		if _, err := f.open(openHost, f.owner(identityharness.Alice), token); err != nil {
@@ -929,8 +931,8 @@ func TestSessionOpenReportsAS1sOwnRefusals(t *testing.T) {
 		}
 		_, err := f.open("hostS43", f.owner(identityharness.Alice), token)
 		wantError(t, err, identitybroker.CodeUnauthenticated, identitybroker.ReasonTokenUsed, token)
-		if f.as1.Faults.Conversions() != 1 {
-			t.Fatalf("AS-1 converted %d tokens, want 1", f.as1.Faults.Conversions())
+		if f.as1.Faults.Conversions() != 1 || f.attempts() != 1 {
+			t.Fatalf("AS-1 converted %d tokens from %d requests, want 1 from 1: the broker refuses a token it remembers", f.as1.Faults.Conversions(), f.attempts())
 		}
 	})
 }

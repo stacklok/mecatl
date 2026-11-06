@@ -78,7 +78,7 @@ func TestSessionOpenWithATokenForAnotherAudience(t *testing.T) {
 			t.Fatalf("error = %v, want %s %q", err, code, reason)
 		}
 		if strings.Contains(err.Error(), token.Value()) {
-			t.Fatalf("error %q discloses the access token", err)
+			t.Fatal("the error discloses the access token")
 		}
 	}
 

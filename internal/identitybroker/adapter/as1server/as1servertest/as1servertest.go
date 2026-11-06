@@ -101,6 +101,7 @@ func Start(t testing.TB, h *identityharness.Harness, edit func(*as1server.Config
 	if err != nil {
 		t.Fatalf("as1servertest: listen: %v", err)
 	}
+	t.Cleanup(func() { _ = ln.Close() })
 	issuer := "https://" + ln.Addr().String() + IssuerPath
 	cfg := config(t, h, issuer)
 	delegate := as1server.DelegateClient{

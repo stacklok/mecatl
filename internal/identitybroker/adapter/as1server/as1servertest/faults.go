@@ -224,10 +224,12 @@ func (f *FaultTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	}
 	answer, err := io.ReadAll(resp.Body)
 	_ = resp.Body.Close()
+	rec.Reached, rec.Status = true, resp.StatusCode
 	if err != nil {
+		rec.Fault = FaultNone
+		f.record(rec)
 		return nil, err
 	}
-	rec.Reached, rec.Status = true, resp.StatusCode
 	var oauth struct {
 		Error       string `json:"error"`
 		Description string `json:"error_description"`
