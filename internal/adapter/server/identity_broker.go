@@ -446,10 +446,14 @@ func (s *Service) openTeamRootIdentityBrokerSession(ctx context.Context, root se
 	// Load and register under the root's runEntryMu, as run entry does: a
 	// delete of the root then either finishes first, so the load fails, or
 	// waits, so it cannot close the broker session mid-registration and have
-	// it reopened for a deleted session.
+	// it reopened for a deleted session. A root deleted first is not found, not
+	// a server fault.
 	unlock := s.runEntryMu.lock(root)
 	defer unlock()
 	sess, err := s.cfg.Store.Load(ctx, root)
+	if errors.Is(err, port.ErrSessionNotFound) {
+		return fmt.Errorf("%w: team root session %q", ErrNotFound, root)
+	}
 	if err != nil {
 		return fmt.Errorf("%w: load team root session: %v", ErrInternal, err)
 	}
