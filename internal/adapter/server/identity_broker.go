@@ -395,8 +395,9 @@ func (s *Service) registerIdentityAgent(ctx context.Context, sess *session.Sessi
 // registers its agent, as create, fork, and clear do after saving it. It loads
 // the session under id's runEntryMu, as run entry does, so a delete that won
 // the lock first leaves nothing to open instead of a broker session that no
-// delete will close. Every failure is logged, broker failures where they
-// happen; callers discard the error, as registration is retried at run entry.
+// delete will close. Every failure but that expected one, a session already
+// deleted, is logged, broker failures where they happen; callers discard the
+// error, as registration is retried at run entry.
 func (s *Service) openSavedIdentityBrokerSession(ctx context.Context, id session.SessionID) error {
 	if s.cfg.IdentityBroker == nil {
 		return nil
@@ -405,7 +406,10 @@ func (s *Service) openSavedIdentityBrokerSession(ctx context.Context, id session
 	defer unlock()
 	sess, err := s.cfg.Store.Load(ctx, id)
 	if err != nil {
-		s.cfg.Diagnostics.Log(context.WithoutCancel(ctx), port.LevelWarn, "identity broker registration could not load the session", "session", string(id))
+		if !errors.Is(err, port.ErrSessionNotFound) {
+			s.cfg.Diagnostics.Log(context.WithoutCancel(ctx), port.LevelWarn, "identity broker registration could not load the session",
+				"session", string(id), "err", err.Error(), "class", port.ClassifySessionLoadFailure(err).String())
+		}
 		return err
 	}
 	err = s.openIdentityBrokerSession(ctx, sess)

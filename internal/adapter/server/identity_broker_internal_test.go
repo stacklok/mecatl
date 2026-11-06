@@ -6,11 +6,14 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"errors"
+	"fmt"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
+	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/internal/identitybroker"
 )
@@ -263,16 +266,53 @@ func TestSavedRegistrationWaitsForRunEntry(t *testing.T) {
 	}
 }
 
+const savedRegistrationLoadFailed = "identity broker registration could not load the session"
+
+func TestSavedRegistrationForADeletedSessionIsSilent(t *testing.T) {
+	diag := &learnedSkillDiagnostics{}
+	svc, sess := newRegisteringService(t, func(cfg *Config) { cfg.Diagnostics = diag })
+	// A session that is gone from the store, as a delete that won run entry's
+	// lock leaves it: an expected race, not an operator fact.
+	if err := svc.openSavedIdentityBrokerSession(t.Context(), sess.ID); !errors.Is(err, port.ErrSessionNotFound) {
+		t.Fatalf("registration for a deleted session = %v, want ErrSessionNotFound", err)
+	}
+	for _, r := range diag.records {
+		if r.message == savedRegistrationLoadFailed {
+			t.Fatalf("a deleted session was logged as a load failure: %+v", r)
+		}
+	}
+}
+
+func TestSavedRegistrationLogsAStoreFailure(t *testing.T) {
+	diag := &learnedSkillDiagnostics{}
+	store := &oneSessionFailsStore{Store: memstore.New()}
+	svc, sess := newRegisteringService(t, func(cfg *Config) {
+		cfg.Diagnostics = diag
+		cfg.Store = store
+	})
+	store.failID = sess.ID
+	if err := svc.openSavedIdentityBrokerSession(t.Context(), sess.ID); err == nil || err.Error() != "simulated transient load failure" {
+		t.Fatalf("registration with a failing store = %v, want the store's error unchanged", err)
+	}
+	var warned []learnedSkillDiagnostic
+	for _, r := range diag.records {
+		if r.message == savedRegistrationLoadFailed {
+			warned = append(warned, r)
+		}
+	}
+	if len(warned) != 1 || warned[0].level != port.LevelWarn {
+		t.Fatalf("store failure records = %+v, want exactly one warning", warned)
+	}
+	fields := warned[0].fields
+	i := slices.Index(fields, any("err"))
+	if i < 0 || i+1 >= len(fields) || !strings.Contains(fmt.Sprint(fields[i+1]), "simulated transient load failure") {
+		t.Fatalf("store failure fields = %v, want err carrying the store's error", fields)
+	}
+}
+
 func TestSavedRegistrationLogsWhatItsCallersDiscard(t *testing.T) {
 	diag := &attemptRecordingDiagnostics{}
 	svc, sess := newRegisteringService(t, func(cfg *Config) { cfg.Diagnostics = diag })
-	// A session that is gone from the store, as a racing delete leaves it.
-	if err := svc.openSavedIdentityBrokerSession(t.Context(), sess.ID); err == nil {
-		t.Fatal("registration for an unsaved session succeeded")
-	}
-	if !slices.Contains(diag.entries, "identity broker registration could not load the session") {
-		t.Fatalf("a failed load was not logged: %q", diag.entries)
-	}
 	if err := svc.cfg.Store.Save(t.Context(), sess); err != nil {
 		t.Fatal(err)
 	}
