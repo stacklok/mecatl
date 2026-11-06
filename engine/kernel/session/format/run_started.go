@@ -6,7 +6,9 @@ import "errors"
 //
 //cborgen:validate Validate
 type RunStarted struct {
-	// ID is the nonzero run ordinal within the owning history.
+	// ID is the required one-based run ordinal within the enclosing history.
+	// Conversion restores the history identity from the envelope. Local validation
+	// checks positivity; the aggregate checks contiguous allocation and admission.
 	ID uint64 `cbor:"r"`
 }
 

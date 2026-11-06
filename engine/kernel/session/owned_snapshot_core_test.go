@@ -22,7 +22,7 @@ import (
 func ownedCoreFixture(t *testing.T, maxRecords int) (*session.Session, *history.History, session.Policy, historyid.HistoryID) {
 	t.Helper()
 	limits := codec.Limits{MaxBytes: 8192, MaxStringBytes: 8192, MaxByteStringBytes: 8192,
-		MaxArrayElements: 16, MaxMapPairs: 8, MaxDepth: 8, MaxNodes: 512, MaxCollectionElements: 128}
+		MaxArrayElements: 16, MaxMapPairs: 16, MaxDepth: 8, MaxNodes: 512, MaxCollectionElements: 128}
 	p := session.Policy{CommitLimits: limits, PayloadLimits: limits, MaxRecordsPerCommit: 16,
 		SoftMaxRetainedRecords: maxRecords, SoftMaxPayloadBytes: 1 << 20, SoftMaxDecodedWork: 1 << 30,
 		MaxRetainedRecords: maxRecords, MaxPayloadBytes: 1 << 20, MaxDecodedWork: 1 << 30}
@@ -64,7 +64,7 @@ func TestOwnedCoreLifecycleSnapshotsAndReplay(t *testing.T) {
 		t.Fatal("new scope")
 	}
 	b := ownedCoreBatch(t, s)
-	if _, err := b.AddInput(session.AddInputRequest{}); !errors.Is(err, session.ErrTransition) {
+	if _, err := b.AddUserInput(session.AddUserInputRequest{}); !errors.Is(err, session.ErrTransition) {
 		t.Fatal(err)
 	}
 	if err := b.Create(); err != nil {
@@ -75,7 +75,7 @@ func TestOwnedCoreLifecycleSnapshotsAndReplay(t *testing.T) {
 		t.Fatal(err)
 	}
 	content := []byte{0xff, 0, 'x'}
-	input, err := b.AddInput(session.AddInputRequest{RunID: run, Content: content})
+	input, err := b.AddUserInput(session.AddUserInputRequest{RunID: run, Parts: byteParts(content)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,7 +88,7 @@ func TestOwnedCoreLifecycleSnapshotsAndReplay(t *testing.T) {
 	}
 	ownedCoreSubmit(t, s, b)
 	old := s.Snapshot()
-	oldRun, oldInput := old.RunAt(0), old.RunAt(0).InputAt(0)
+	oldRun, oldInput := old.RunAt(0), lookupInput(t, old, run, input.Ordinal)
 	oldRecord := oldRun.RecordAt(1)
 	if _, ok := old.RecordAt(0).Created(); !ok {
 		t.Fatal("creation kind")
@@ -99,13 +99,11 @@ func TestOwnedCoreLifecycleSnapshotsAndReplay(t *testing.T) {
 	if _, ok := (session.RecordView{}).Created(); ok {
 		t.Fatal("zero kind")
 	}
-	if got := oldInput.Content(); !bytes.Equal(got, []byte{0xff, 0, 'x'}) {
+	if got := inputBytes(oldInput); !bytes.Equal(got, []byte{0xff, 0, 'x'}) {
 		t.Fatal("content not owned")
 	}
-	got := oldInput.Content()
+	got := inputBytes(oldInput)
 	got[0] = 0
-	dto := oldInput.Format()
-	dto.Content[0] = 0
 	raw := old.RecordAt(2).Format()
 	raw.Payload[0] = 0
 
@@ -113,16 +111,16 @@ func TestOwnedCoreLifecycleSnapshotsAndReplay(t *testing.T) {
 	for range 4 {
 		wg.Go(func() {
 			for range 4000 {
-				if old.RecordCount() != 3 || oldRun.RecordCount() != 2 || oldRun.InputCount() != 1 || oldInput.Content()[0] != 0xff {
+				if old.RecordCount() != 3 || oldRun.RecordCount() != 2 || !userInputsMatch(old, run, 1) || inputBytes(oldInput)[0] != 0xff {
 					t.Error("old handle changed")
 					return
 				}
-				if old.RunAt(0).InputAt(0).ID() != input {
+				if got, ok := old.UserInputByID(input); !ok || got.ID() != input {
 					t.Error("navigation changed")
 					return
 				}
 				fact, ok := oldRecord.UserInput()
-				if !ok || fact.ID() != input || !bytes.Equal(fact.Content(), []byte{0xff, 0, 'x'}) {
+				if !ok || fact.ID() != input || !bytes.Equal(inputBytes(fact), []byte{0xff, 0, 'x'}) {
 					t.Error("independent record handle changed")
 					return
 				}
@@ -137,7 +135,7 @@ func TestOwnedCoreLifecycleSnapshotsAndReplay(t *testing.T) {
 	}
 	for n := 0; n < 128; n++ {
 		b := ownedCoreBatch(t, s)
-		if _, err := b.AddInput(session.AddInputRequest{RunID: run, Content: []byte{byte(n)}}); err != nil {
+		if _, err := b.AddUserInput(session.AddUserInputRequest{RunID: run, Parts: byteParts([]byte{byte(n)})}); err != nil {
 			t.Fatal(err)
 		}
 		ownedCoreSubmit(t, s, b)
@@ -150,17 +148,17 @@ func TestOwnedCoreLifecycleSnapshotsAndReplay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := b.AddInput(session.AddInputRequest{RunID: run}); !errors.Is(err, session.ErrTransition) {
+	if _, err := b.AddUserInput(session.AddUserInputRequest{RunID: run}); !errors.Is(err, session.ErrTransition) {
 		t.Fatal(err)
 	}
-	nextInput, err := b.AddInput(session.AddInputRequest{RunID: next})
+	nextInput, err := b.AddUserInput(session.AddUserInputRequest{RunID: next})
 	if err != nil || nextInput.Ordinal != 1 {
 		t.Fatalf("new run numbering: %v", err)
 	}
 	ownedCoreSubmit(t, s, b)
 	wg.Wait()
 	v := s.Snapshot()
-	if v.RunAt(0).RecordCount() != 131 || v.RunAt(0).InputCount() != 129 || v.RunAt(1).RecordCount() != 2 {
+	if v.RunAt(0).RecordCount() != 131 || !userInputsMatch(v, run, 129) || v.RunAt(1).RecordCount() != 2 {
 		t.Fatal("run endpoints")
 	}
 	if oldRun.RecordCount() != 2 || old.RecordCount() != 3 {
@@ -187,10 +185,10 @@ func TestOwnedCoreLifecycleSnapshotsAndReplay(t *testing.T) {
 func TestOwnedCoreApplyAtomicityAndImportedStorage(t *testing.T) {
 	s, _, p, id := ownedCoreFixture(t, 64)
 	makeRecord := func(kind string, payload []byte) historyformat.Record {
-		return historyformat.Record{Kind: kind, KindVersion: 1, Payload: payload}
+		return historyformat.Record{Kind: kind, KindVersion: sessionformat.Version, Payload: payload}
 	}
 	encodeInput := func(ordinal uint64) []byte {
-		payload, err := codec.Encode(sessionformat.UserInput{RunID: 1, ID: ordinal, Content: []byte("exact")}, p.PayloadLimits)
+		payload, err := codec.Encode(sessionformat.UserInput{RunID: 1, ID: ordinal, Parts: formatByteParts([]byte("exact"))}, p.PayloadLimits)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -227,7 +225,7 @@ func TestOwnedCoreApplyAtomicityAndImportedStorage(t *testing.T) {
 	for _, r := range c.Records {
 		clear(r.Payload)
 	}
-	if string(s.Snapshot().RunAt(0).InputAt(0).Content()) != "exact" {
+	if string(inputBytes(lookupInput(t, s.Snapshot(), session.RunID{HistoryID: id, Ordinal: 1}, 1))) != "exact" {
 		t.Fatal("imported payload alias")
 	}
 }
@@ -256,17 +254,17 @@ func TestOwnedCoreReserveRejectionAndScopedContracts(t *testing.T) {
 	if first.Ordinal != 1 {
 		t.Fatal("provisional run")
 	}
-	inputID := session.InputID{RunID: session.RunID{HistoryID: id, Ordinal: 2}, Ordinal: math.MaxUint64}
+	inputID := session.UserInputID{RunID: session.RunID{HistoryID: id, Ordinal: 2}, Ordinal: math.MaxUint64}
 	if _, err := inputID.Next(); !errors.Is(err, session.ErrOrdinalExhausted) {
 		t.Fatal(err)
 	}
 	inputID.Ordinal = 1
-	r, err := session.NewUserInputRecord(session.UserInput{ID: inputID, Content: []byte{0xff}}, p.PayloadLimits)
+	r, err := session.NewUserInputRecord(session.UserInput{ID: inputID, Parts: byteParts([]byte{0xff})}, p.PayloadLimits)
 	if err != nil {
 		t.Fatal(err)
 	}
 	dto, err := codec.Decode[sessionformat.UserInput](r.Format().Payload, p.PayloadLimits)
-	if err != nil || dto.RunID != 2 || dto.ID != 1 || dto.Content[0] != 0xff {
+	if err != nil || dto.RunID != 2 || dto.ID != 1 || dtoInputBytes(dto)[0] != 0xff {
 		t.Fatalf("scoped DTO: %v", err)
 	}
 	if _, err := codec.Encode(sessionformat.UserInput{ID: 1}, p.PayloadLimits); !errors.Is(err, codec.ErrInvalidData) {

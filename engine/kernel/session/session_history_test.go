@@ -139,7 +139,7 @@ func TestSessionRealHistoryCompetingStarts(t *testing.T) {
 		t.Fatal("loser published")
 	}
 	assertHistoryHead(t, h, accepted)
-	if got := s.Snapshot(); got.ActiveRun() != run || got.RunCount() != 1 || string(got.RunAt(0).InputAt(0).Content()) != "first" {
+	if got := s.Snapshot(); got.ActiveRun() != run || got.RunCount() != 1 || string(inputBytes(lookupInput(t, got, run, 1))) != "first" {
 		t.Fatal("winner facts")
 	}
 }
@@ -182,21 +182,23 @@ func TestSessionNavigationIndependentOfCommitGrouping(t *testing.T) {
 		}
 		for i := 0; i < v.RunCount(); i++ {
 			run, want := v.RunAt(i), base.RunAt(i)
-			if run.ID() != want.ID() || run.RecordCount() != want.RecordCount() || run.InputCount() != want.InputCount() {
+			if run.ID() != want.ID() || run.RecordCount() != want.RecordCount() || !userInputsMatch(v, run.ID(), []uint64{2, 0, 1}[i]) || !userInputsMatch(base, want.ID(), []uint64{2, 0, 1}[i]) {
 				t.Fatal("run bounds depend on commits")
 			}
 			for j := 0; j < run.RecordCount(); j++ {
 				if !run.RecordAt(j).Format().Equal(want.RecordAt(j).Format()) {
 					t.Fatal("run chronology")
 				}
-			}
-			for j := 0; j < run.InputCount(); j++ {
-				if run.InputAt(j).ID() != want.InputAt(j).ID() || !reflect.DeepEqual(run.InputAt(j).Content(), want.InputAt(j).Content()) {
-					t.Fatal("input navigation")
+				if input, ok := run.RecordAt(j).UserInput(); ok {
+					got := lookupInput(t, v, input.ID().RunID, input.ID().Ordinal)
+					wantInput := lookupInput(t, base, input.ID().RunID, input.ID().Ordinal)
+					if got.ID() != wantInput.ID() || got.PartCount() != wantInput.PartCount() || !reflect.DeepEqual(inputBytes(got), inputBytes(wantInput)) {
+						t.Fatal("input navigation")
+					}
 				}
 			}
 		}
-		if v.RunAt(1).InputCount() != 0 || v.RunAt(1).RecordCount() != 2 {
+		if !userInputsMatch(v, v.RunAt(1).ID(), 0) || v.RunAt(1).RecordCount() != 2 {
 			t.Fatal("input-free run lost")
 		}
 	}

@@ -26,7 +26,7 @@ func TestSessionMetadataAndDecodedLegalityAgree(t *testing.T) {
 		return r
 	}
 	input := func(run, n uint64) Record {
-		r, e := NewUserInputRecord(UserInput{ID: InputID{RunID: RunID{HistoryID: id, Ordinal: run}, Ordinal: n}, Content: []byte{0xff, 0, 'x'}}, limits)
+		r, e := NewUserInputRecord(UserInput{ID: UserInputID{RunID: RunID{HistoryID: id, Ordinal: run}, Ordinal: n}, Parts: internalByteParts([]byte{0xff, 0, 'x'})}, limits)
 		if e != nil {
 			t.Fatal(e)
 		}
@@ -126,7 +126,7 @@ func TestSessionMetadataPreservesOrderedFailure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	input, err := NewUserInputRecord(UserInput{ID: InputID{RunID: RunID{HistoryID: id, Ordinal: 1}, Ordinal: 1}, Content: []byte("too long")}, limits)
+	input, err := NewUserInputRecord(UserInput{ID: UserInputID{RunID: RunID{HistoryID: id, Ordinal: 1}, Ordinal: 1}, Parts: internalByteParts([]byte("too long"))}, limits)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -157,7 +157,7 @@ func TestSessionMetadataAndDecodedPayloadLimitsAgree(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := b.AddInput(AddInputRequest{RunID: run, Content: []byte{0xff, 0, 'x'}}); err != nil {
+	if _, err := b.AddUserInput(AddUserInputRequest{RunID: run, Parts: internalByteParts([]byte{0xff, 0, 'x'})}); err != nil {
 		t.Fatal(err)
 	}
 	batch := append([]Record{}, b.records...)

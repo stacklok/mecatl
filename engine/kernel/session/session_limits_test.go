@@ -208,7 +208,7 @@ func TestSessionAdmissionAndUncertaintyShareCauseNotOutcome(t *testing.T) {
 						t.Fatal("uncertain proposal allowed discard")
 					}
 					submitBatch(t, s, b)
-					if len(backend.attempts) != 3 || !reflect.DeepEqual(backend.attempts[1], backend.attempts[2]) || s.Snapshot().RunAt(0).InputAt(0).ID() != id {
+					if len(backend.attempts) != 3 || !reflect.DeepEqual(backend.attempts[1], backend.attempts[2]) || lookupInput(t, s.Snapshot(), id.RunID, id.Ordinal).ID() != id {
 						t.Fatal("uncertain retry changed identity or bytes")
 					}
 				} else {
@@ -218,7 +218,7 @@ func TestSessionAdmissionAndUncertaintyShareCauseNotOutcome(t *testing.T) {
 					b = beginBatch(t, s)
 					mustBatch(t, b.Interrupt())
 					submitBatch(t, s, b)
-					if s.Snapshot().RunAt(0).InputCount() != 0 {
+					if !userInputsMatch(s.Snapshot(), run, 0) {
 						t.Fatal("rejected input leaked into cleanup")
 					}
 				}

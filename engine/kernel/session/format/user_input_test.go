@@ -12,7 +12,11 @@ import (
 )
 
 func TestUserInput(t *testing.T) {
-	v := format.UserInput{RunID: 1, ID: 1, Content: []byte{0xff, 0, 'x'}}
+	v := format.UserInput{RunID: 1, ID: 1, Parts: []format.ContentPart{
+		{Text: new(" /skill e\u0301  \n")},
+		{Media: &format.Media{Kind: "image", MIMEType: "image/png", Source: "inline", InlineData: []byte{0xff, 0, 'x'}}},
+		{Text: new("尾\n")},
+	}}
 	cloned := v.Clone()
 	wire, err := codec.Encode(v, limits())
 	if err != nil {
@@ -22,37 +26,35 @@ func TestUserInput(t *testing.T) {
 	if err != nil || !got.Equal(v) {
 		t.Fatalf("roundtrip: %v", err)
 	}
-	clear(v.Content)
+	clear(v.Parts[1].Media.InlineData)
+	*v.Parts[0].Text = "changed"
 	clear(wire)
-	if !got.Equal(cloned) || !bytes.Equal(got.Content, []byte{0xff, 0, 'x'}) {
-		t.Fatal("clone or decoder retained content storage")
+	if !got.Equal(cloned) || !bytes.Equal(got.Parts[1].Media.InlineData, []byte{0xff, 0, 'x'}) {
+		t.Fatal("clone or decoder retained storage")
 	}
-	if !(format.UserInput{RunID: 1, ID: 1}).Equal(format.UserInput{RunID: 1, ID: 1, Content: []byte{}}) {
-		t.Fatal("nil and empty content differ")
+	if !(format.UserInput{RunID: 1, ID: 1}).Equal(format.UserInput{RunID: 1, ID: 1, Parts: []format.ContentPart{}}) {
+		t.Fatal("nil and empty parts differ")
 	}
-	invalid := format.UserInput{Content: []byte("opaque")}
+	invalid := format.UserInput{Parts: cloned.Parts}
 	if invalid.Validate() == nil {
 		t.Fatal("zero ordinal validated")
 	}
 	if wire, err := codec.Encode(invalid, limits()); !errors.Is(err, codec.ErrInvalidData) || wire != nil {
 		t.Fatalf("invalid encode: %v", err)
 	}
-	// Deliberately bypass prechecking so the decoder first reads populated
-	// mutable content, then discards its temporary value on local validation.
-	invalidWire := format.UserInput{Content: []byte("opaque")}.AppendCBOR(nil)
+	invalidWire := invalid.AppendCBOR(nil)
 	got, err = codec.Decode[format.UserInput](invalidWire, limits())
 	if !errors.Is(err, codec.ErrInvalidData) || !reflect.DeepEqual(got, format.UserInput{}) {
-		t.Fatalf("invalid decode returned nonzero value: %v", err)
+		t.Fatalf("invalid decode: %v", err)
 	}
-	receiver := format.UserInput{RunID: 1, ID: 7, Content: []byte("retain")}
+	receiver := cloned.Clone()
 	before := receiver.Clone()
-	storage := receiver.Content
+	storage := receiver.Parts
 	reader, err := codec.NewReader(invalidWire, limits())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := receiver.ReadCBOR(&reader, 0, math.MaxInt); !errors.Is(err, codec.ErrInvalidData) ||
-		!receiver.Equal(before) || &receiver.Content[0] != &storage[0] || !bytes.Equal(storage, before.Content) {
-		t.Fatalf("invalid local decode changed receiver or storage: %v", err)
+	if err := receiver.ReadCBOR(&reader, 0, math.MaxInt); !errors.Is(err, codec.ErrInvalidData) || !receiver.Equal(before) || &receiver.Parts[0] != &storage[0] {
+		t.Fatalf("failed read mutated receiver: %v", err)
 	}
 }

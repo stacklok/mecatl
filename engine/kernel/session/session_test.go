@@ -16,6 +16,36 @@ import (
 	"github.com/stacklok/mecatl/engine/kernel/session"
 )
 
+func lookupInput(t testing.TB, v session.Snapshot, run session.RunID, ordinal uint64) session.UserInputView {
+	t.Helper()
+	id := session.UserInputID{RunID: run, Ordinal: ordinal}
+	input, ok := v.UserInputByID(id)
+	if !ok || input.ID() != id {
+		t.Fatalf("missing input %v", id)
+	}
+	return input
+}
+
+// userInputsMatch checks exact expected identity membership through both the
+// chronological facts and the lookup, including the first absent successor.
+func userInputsMatch(v session.Snapshot, run session.RunID, count uint64) bool {
+	var seen uint64
+	for i := 0; i < v.RecordCount(); i++ {
+		input, ok := v.RecordAt(i).UserInput()
+		if !ok || input.ID().RunID != run {
+			continue
+		}
+		seen++
+		id := session.UserInputID{RunID: run, Ordinal: seen}
+		got, present := v.UserInputByID(id)
+		if !present || input.ID() != id || got.ID() != id || got != input {
+			return false
+		}
+	}
+	_, extra := v.UserInputByID(session.UserInputID{RunID: run, Ordinal: count + 1})
+	return seen == count && !extra
+}
+
 func sessionPolicy() session.Policy {
 	return session.Policy{CommitLimits: testLimits(), PayloadLimits: testLimits(), MaxRecordsPerCommit: 16, SoftMaxRetainedRecords: 128, SoftMaxPayloadBytes: 32768, SoftMaxDecodedWork: 1 << 24, MaxRetainedRecords: 128, MaxPayloadBytes: 32768, MaxDecodedWork: 1 << 24}
 }
@@ -45,7 +75,7 @@ func inputRecord(t testing.TB, ordinal uint64) session.Record {
 }
 func runInputRecord(t testing.TB, run, ordinal uint64) session.Record {
 	t.Helper()
-	r, err := session.NewUserInputRecord(session.UserInput{ID: session.InputID{RunID: session.RunID{HistoryID: testHistoryID(t), Ordinal: run}, Ordinal: ordinal}, Content: []byte{0xff, 0, 'x'}}, testLimits())
+	r, err := session.NewUserInputRecord(session.UserInput{ID: session.UserInputID{RunID: session.RunID{HistoryID: testHistoryID(t), Ordinal: run}, Ordinal: ordinal}, Parts: byteParts([]byte{0xff, 0, 'x'})}, testLimits())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -114,9 +144,10 @@ type rejectedSnapshotFacts struct {
 }
 
 type rejectedRunFacts struct {
-	id      session.RunID
-	records []format.Record
-	inputs  []session.UserInput
+	id         session.RunID
+	records    []format.Record
+	inputs     []session.UserInputID
+	partCounts []int
 }
 
 func captureRejectedSnapshot(v session.Snapshot) rejectedSnapshotFacts {
@@ -129,10 +160,11 @@ func captureRejectedSnapshot(v session.Snapshot) rejectedSnapshotFacts {
 		f := rejectedRunFacts{id: run.ID()}
 		for j := 0; j < run.RecordCount(); j++ {
 			f.records = append(f.records, run.RecordAt(j).Format().Clone())
-		}
-		for j := 0; j < run.InputCount(); j++ {
-			input := run.InputAt(j)
-			f.inputs = append(f.inputs, session.UserInput{ID: input.ID(), Content: input.Content()}.Clone())
+			if input, ok := run.RecordAt(j).UserInput(); ok {
+				located, _ := v.UserInputByID(input.ID())
+				f.inputs = append(f.inputs, located.ID())
+				f.partCounts = append(f.partCounts, located.PartCount())
+			}
 		}
 		facts.runs = append(facts.runs, f)
 	}
@@ -220,7 +252,7 @@ func TestSessionAtomicRejection(t *testing.T) {
 			assertRejected(t, s, identify(t, dto), tc.want)
 			mustBatch(t, s.Apply(good))
 			applyRecords(t, s, continuation[2])
-			if v := s.Snapshot(); v.RunCount() != 3 || v.RunAt(0).InputCount() != 2 || v.RunAt(1).InputCount() != 1 || v.RunAt(2).InputCount() != 1 || v.ActiveRun() != (session.RunID{}) {
+			if v := s.Snapshot(); v.RunCount() != 3 || !userInputsMatch(v, v.RunAt(0).ID(), 2) || !userInputsMatch(v, v.RunAt(1).ID(), 1) || !userInputsMatch(v, v.RunAt(2).ID(), 1) || v.ActiveRun() != (session.RunID{}) {
 				t.Fatal("failed batch leaked locators or admission budget")
 			}
 		})
@@ -287,17 +319,15 @@ func TestSessionApplyOwnership(t *testing.T) {
 	clear(c.Commit.Records[2].Payload)
 	*c.Commit.HistoryID = historyid.HistoryID{}
 	before := s.Snapshot()
-	old := before.RunAt(0).InputAt(0)
+	old := lookupInput(t, before, before.RunAt(0).ID(), 1)
 	successor := applyRecords(t, s, inputRecord(t, 2))
 	clear(successor.Commit.Records[0].Payload)
 	*successor.Commit.Parent = contentid.CID{}
-	content := old.Content()
+	content := inputBytes(old)
 	clear(content)
-	dto := old.Format()
-	clear(dto.Content)
 	raw := before.RecordAt(2).Format()
 	clear(raw.Payload)
-	if got := old.Content(); !reflect.DeepEqual(got, []byte{0xff, 0, 'x'}) || before.RunAt(0).InputCount() != 1 {
+	if got := inputBytes(old); !reflect.DeepEqual(got, []byte{0xff, 0, 'x'}) || !userInputsMatch(before, old.ID().RunID, 1) {
 		t.Fatal("accepted DTO/export aliases")
 	}
 }

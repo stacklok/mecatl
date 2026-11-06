@@ -22,6 +22,13 @@ design material, not documentation of shipped runtime or storage behavior. The
   format boundary, handwritten Atmos codecs, strict validation, ownership,
   future generation tradeoffs, and the limits of the codec experiments.
 
+## Capture parity before cutover
+
+- [Legacy capture parity](capture-parity.md) compares the implemented isolated
+  facts with the legacy persisted snapshot and event log. Revisit attribution,
+  timestamps, request evidence, and adjacent host metadata as their owning
+  contracts develop; the inventory does not expand the current slice.
+
 ## Execution and extensions
 
 - [Extensions and execution policy boundaries](components.md) applies these

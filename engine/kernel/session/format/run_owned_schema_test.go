@@ -12,7 +12,7 @@ import (
 func TestRunOwnedSchema(t *testing.T) {
 	limits := codec.Limits{MaxBytes: 8192, MaxStringBytes: 8192, MaxByteStringBytes: 8192,
 		MaxArrayElements: 16, MaxMapPairs: 8, MaxDepth: 8, MaxNodes: 512, MaxCollectionElements: 128}
-	input := format.UserInput{RunID: 24, ID: 1, Content: []byte{0xff, 0, 'x'}}
+	input := format.UserInput{RunID: 24, ID: 1, Parts: []format.ContentPart{{Text: new("exact text")}}}
 	wire, err := codec.Encode(input, limits)
 	if err != nil {
 		t.Fatal(err)
@@ -22,11 +22,11 @@ func TestRunOwnedSchema(t *testing.T) {
 		t.Fatalf("round trip: %v", err)
 	}
 	clear(wire)
-	if !bytes.Equal(decoded.Content, input.Content) {
+	if !decoded.Equal(input) {
 		t.Fatal("decode borrows encoded data")
 	}
 	clone := decoded.Clone()
-	clear(clone.Content)
+	*clone.Parts[0].Text = "changed"
 	if !decoded.Equal(input) {
 		t.Fatal("clone aliases content")
 	}
@@ -36,8 +36,8 @@ func TestRunOwnedSchema(t *testing.T) {
 		}
 	}
 	for _, malformed := range [][]byte{
-		{0xa2, 0x61, 'c', 0x40, 0x61, 'i', 1}, // Old input schema lacks owner.
-		{0xa3, 0x61, 'c', 0x40, 0x61, 'i', 1, 0x61, 'r', 0},
+		{0xa2, 0x61, 'i', 1, 0x61, 'p', 0x80},               // Missing owning run.
+		{0xa3, 0x61, 'i', 1, 0x61, 'p', 0x80, 0x61, 'r', 0}, // Zero owning run.
 	} {
 		if _, err := codec.Decode[format.UserInput](malformed, limits); !errors.Is(err, codec.ErrInvalidData) {
 			t.Fatal(err)

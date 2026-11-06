@@ -47,13 +47,13 @@ type SessionCommit struct { //nolint:revive // Explicit name distinguishes a pro
 	proposal  prepared
 }
 
-// AddInputRequest carries the explicit active owner and opaque bytes borrowed
-// only during AddInput. Earlier successful same-batch run IDs are valid owners.
-type AddInputRequest struct {
+// AddUserInputRequest borrows ordered content only during AddUserInput.
+// Earlier successful same-batch run IDs are valid owners.
+type AddUserInputRequest struct {
 	// RunID must identify the active run at this position in the batch.
 	RunID RunID
-	// Content is exact opaque input, owned by the batch after successful addition.
-	Content []byte
+	// Parts preserves supplied content order; success eagerly detaches it.
+	Parts []ContentPart
 }
 
 // BeginCommit reserves the sole batch slot without creating or persisting facts.
@@ -106,6 +106,9 @@ func (b *SessionCommit) add(r Record, err error) error {
 	if len(b.records) == math.MaxInt {
 		return codec.ErrLimitExceeded
 	}
+	if r.scope != b.owner.state.view.historyID {
+		return ErrIdentity
+	}
 	candidate := b.lifecycle
 	if err := candidate.reduce(r); err != nil {
 		return err
@@ -124,25 +127,61 @@ func (b *SessionCommit) Create() error {
 	return b.add(NewCreatedRecord(Created{HistoryID: b.owner.state.view.historyID}, b.owner.policy.PayloadLimits))
 }
 
-// AddInput assigns the next provisional ordinal in the explicitly named active
+// AddUserInput assigns the next provisional ordinal in the explicitly named active
 // run. It owns encoded content before returning; failure consumes no ID or slot.
-func (b *SessionCommit) AddInput(request AddInputRequest) (InputID, error) {
+func (b *SessionCommit) AddUserInput(request AddUserInputRequest) (UserInputID, error) {
 	if err := b.check(true); err != nil {
-		return InputID{}, err
+		return UserInputID{}, err
 	}
 	if request.RunID == (RunID{}) || request.RunID != b.lifecycle.activeRun {
-		return InputID{}, ErrTransition
+		return UserInputID{}, ErrTransition
 	}
 	s := b.owner
 	ordinal, err := nextOrdinal(b.lifecycle.inputs)
 	if err != nil {
-		return InputID{}, err
+		return UserInputID{}, err
 	}
-	id := InputID{RunID: request.RunID, Ordinal: ordinal}
-	if err := b.add(NewUserInputRecord(UserInput{ID: id, Content: request.Content}, s.policy.PayloadLimits)); err != nil {
-		return InputID{}, err
+	id := UserInputID{RunID: request.RunID, Ordinal: ordinal}
+	if err := b.add(NewUserInputRecord(UserInput{ID: id, Parts: request.Parts}, s.policy.PayloadLimits)); err != nil {
+		return UserInputID{}, err
 	}
 	return id, nil
+}
+
+// AddEffectiveInput adds an ordered incremental contribution in the active run.
+// References include earlier same-batch inputs; failure changes no additions.
+func (b *SessionCommit) AddEffectiveInput(v EffectiveInput) error {
+	if err := b.check(true); err != nil {
+		return err
+	}
+	return b.add(NewEffectiveInputRecord(v, b.owner.policy.PayloadLimits))
+}
+
+// ReplaceInstructions adds a history-scoped complete replacement during an active
+// run. Its applicability survives the admitting run; failure changes nothing.
+func (b *SessionCommit) ReplaceInstructions(v Instructions) error {
+	if err := b.check(true); err != nil {
+		return err
+	}
+	return b.add(NewInstructionsRecord(v, b.owner.policy.PayloadLimits))
+}
+
+// ReplaceToolCatalog adds a complete history-scoped advertised catalog replacement.
+// An active run is required; failure preserves earlier additions.
+func (b *SessionCommit) ReplaceToolCatalog(v ToolCatalog) error {
+	if err := b.check(true); err != nil {
+		return err
+	}
+	return b.add(NewToolCatalogRecord(v, b.owner.policy.PayloadLimits))
+}
+
+// ReplaceModelBinding adds complete history-scoped preparation choices during an
+// active run. It performs no resolution; failure preserves earlier additions.
+func (b *SessionCommit) ReplaceModelBinding(v ModelBinding) error {
+	if err := b.check(true); err != nil {
+		return err
+	}
+	return b.add(NewModelBindingRecord(v, b.owner.policy.PayloadLimits))
 }
 
 // StartRun assigns the next provisional history-relative run ID. Input-free runs

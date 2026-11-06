@@ -10,10 +10,13 @@ It treats record payloads as opaque; the [`Backend`](history/backend.go) contrac
 supplies atomic conditional storage. The [history adapters](../adapter/history/README.md)
 provide a memory backend and reusable conformance checks.
 
-[`session`](session/doc.go) interprets accepted history as lifecycle state. It
-validates ordered batches before submission and updates accepted state only after
-storage acceptance. Immutable snapshots expose that state. Loading reconstructs
-state through the same application path. The [session example](session/example_test.go)
+[`session`](session/doc.go) interprets accepted history as lifecycle state and
+retained context. It preserves rich authored input separately from prepared content
+and its provenance. Instructions, advertised tool catalogs, and model bindings are
+independent session-scoped replacements. It validates ordered batches before
+submission and updates accepted state only after storage acceptance. Immutable
+snapshots pin state and context selections; loading reconstructs them without
+resolving source files or media references. The [session example](session/example_test.go)
 shows submission, snapshot access, and reconstruction.
 
 Each layer's `format` package owns its mutable persistence DTOs, generated codecs,

@@ -48,7 +48,7 @@ func closeoutWidthPrefix(t *testing.T) (*Session, *closeoutEnvelopeBackend) {
 		case sequence == 1:
 			err = b.Create()
 		case sequence == 3:
-			_, err = b.AddInput(AddInputRequest{RunID: s.Snapshot().ActiveRun()})
+			_, err = b.AddUserInput(AddUserInputRequest{RunID: s.Snapshot().ActiveRun()})
 		case s.Snapshot().ActiveRun() == (RunID{}):
 			_, err = b.StartRun()
 		default:

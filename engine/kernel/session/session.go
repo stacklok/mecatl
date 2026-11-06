@@ -247,6 +247,12 @@ func (s *Session) evaluate(c format.Commit, expected *history.CommitRef) (sessio
 			runs = append(runs, runEntry{id: lifecycle.activeRun, recordStart: position, inputStart: len(candidate.view.inputs) + len(inputs)})
 		case sessionformat.KindUserInput:
 			inputs = append(inputs, position)
+		case sessionformat.KindInstructions:
+			candidate.view.instructions = fact
+		case sessionformat.KindToolCatalog:
+			candidate.view.catalog = fact
+		case sessionformat.KindModelBinding:
+			candidate.view.binding = fact
 		}
 	}
 	candidate.records += len(c.Records)

@@ -13,7 +13,7 @@ import (
 // History may preserve such records as opaque payloads.
 var ErrUnsupportedRecord = errors.New("unsupported session record kind or version")
 
-// Record is an owned, locally validated canonical lifecycle record for typed
+// Record is an owned, locally validated canonical session record for typed
 // preparation. Typed constructors and DecodeRecord create usable records. Zero is
 // unusable. Copies may share private immutable storage; no method
 // exposes that storage. It proves neither transition legality nor acceptance.
@@ -24,13 +24,12 @@ type Record struct {
 	value format.Record
 
 	// value.Kind selects these constructor-established lifecycle scalars.
-	// Input content exists only in value.
-	userInput      InputID
+	// User input content exists only in value.
+	userInput      UserInputID
 	runStarted     sessionformat.RunStarted
 	runInterrupted RunInterrupted
-	// inputBytes is payload accounting, not retained input content. It permits
-	// generated policy checks under a stricter policy without decoding Content.
-	inputBytes int
+	// Constructor-established effective contribution owns all nested storage.
+	effectiveInput sessionformat.EffectiveInput
 }
 
 // Format returns a detached history persistence DTO. Mutating it does not change
@@ -39,24 +38,26 @@ type Record struct {
 // a zero, invalid DTO.
 func (r Record) Format() format.Record { return r.value.Clone() }
 
-// checkPayload rechecks constructor-owned facts under the session's policy.
-// Content is opaque: generated input checks inspect only its length, so an
-// equally sized view of the owned payload avoids decoding or retaining it twice.
+// checkPayload rechecks the complete rich payload under the current policy.
+// Bounded generated decoding is required: metadata alone cannot validate nested
+// strings, collection counts, JSON, or variants under stricter limits.
 func (r Record) checkPayload(limits codec.Limits) error {
-	if r.value.KindVersion != sessionformat.Version {
-		return ErrUnsupportedRecord
+	_, err := decodeAccepted(r.value, limits)
+	return err
+}
+
+// supportedRecord dispatches the closed kind set at the single supported version.
+func supportedRecord(kind string, version int64) bool {
+	if version != sessionformat.Version {
+		return false
 	}
-	switch r.value.Kind {
-	case sessionformat.KindCreated:
-		return codec.Check(sessionformat.Created{}, limits)
-	case sessionformat.KindUserInput:
-		return codec.Check(sessionformat.UserInput{RunID: r.userInput.RunID.Ordinal, ID: r.userInput.Ordinal, Content: r.value.Payload[:r.inputBytes]}, limits)
-	case sessionformat.KindRunStarted:
-		return codec.Check(r.runStarted, limits)
-	case sessionformat.KindRunInterrupted:
-		return codec.Check(sessionformat.RunInterrupted{ID: r.runInterrupted.ID.Ordinal}, limits)
+	switch kind {
+	case sessionformat.KindCreated, sessionformat.KindUserInput, sessionformat.KindRunStarted,
+		sessionformat.KindRunInterrupted, sessionformat.KindEffectiveInput, sessionformat.KindInstructions,
+		sessionformat.KindToolCatalog, sessionformat.KindModelBinding:
+		return true
 	default:
-		return ErrUnsupportedRecord
+		return false
 	}
 }
 
@@ -76,7 +77,7 @@ func DecodeRecord(scope historyid.HistoryID, v format.Record, limits codec.Limit
 	if err := v.Validate(); err != nil {
 		return Record{}, codec.ErrInvalidData
 	}
-	if v.KindVersion != sessionformat.Version {
+	if !supportedRecord(v.Kind, v.KindVersion) {
 		return Record{}, ErrUnsupportedRecord
 	}
 	fact, err := decodeAccepted(v, limits)

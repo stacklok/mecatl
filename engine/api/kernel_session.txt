@@ -2,30 +2,98 @@
     method func (*Session).BeginCommit() (*SessionCommit, error)
     method func (*Session).Snapshot() Snapshot
     method func (*Session).SubmitCommit(ctx context.Context, b *SessionCommit) (history.CommitRef, error)
-    method func (*SessionCommit).AddInput(request AddInputRequest) (InputID, error)
+    method func (*SessionCommit).AddEffectiveInput(v EffectiveInput) error
+    method func (*SessionCommit).AddUserInput(request AddUserInputRequest) (UserInputID, error)
     method func (*SessionCommit).Create() error
     method func (*SessionCommit).Discard() error
     method func (*SessionCommit).Interrupt() error
+    method func (*SessionCommit).ReplaceInstructions(v Instructions) error
+    method func (*SessionCommit).ReplaceModelBinding(v ModelBinding) error
+    method func (*SessionCommit).ReplaceToolCatalog(v ToolCatalog) error
     method func (*SessionCommit).StartRun() (RunID, error)
+    method func (AttributedInput).Clone() AttributedInput
+    method func (AttributedInput).Equal(other AttributedInput) bool
+    method func (AttributedInput).Validate() error
+    method func (AttributedInputView).Actor() Actor
+    method func (AttributedInputView).PartAt(i int) ContentPartView
+    method func (AttributedInputView).PartCount() int
+    method func (AttributedInputView).Parts() iter.Seq[ContentPartView]
+    method func (AttributedInputView).Purpose() PromptPurpose
+    method func (AttributedInputView).Source() ContentSourceView
+    method func (ContentPart).Clone() ContentPart
+    method func (ContentPart).Equal(other ContentPart) bool
+    method func (ContentPart).Validate() error
+    method func (ContentPartView).Media() (MediaView, bool)
+    method func (ContentPartView).Text() (string, bool)
+    method func (ContentSource).Clone() ContentSource
+    method func (ContentSource).Equal(other ContentSource) bool
+    method func (ContentSource).Validate() error
+    method func (ContentSourceView).Description() string
+    method func (ContentSourceView).WorkspaceFile() (WorkspaceFileSourceView, bool)
     method func (Created).Clone() Created
     method func (Created).Equal(other Created) bool
     method func (Created).Validate() error
-    method func (InputID).Clone() InputID
-    method func (InputID).Equal(other InputID) bool
-    method func (InputID).Next() (InputID, error)
-    method func (InputID).Validate() error
-    method func (InputView).Content() []byte
-    method func (InputView).Format() format.UserInput
-    method func (InputView).ID() InputID
+    method func (EffectiveInput).Clone() EffectiveInput
+    method func (EffectiveInput).Equal(other EffectiveInput) bool
+    method func (EffectiveInput).Validate() error
+    method func (EffectiveInputView).InputAt(i int) InputItemView
+    method func (EffectiveInputView).InputCount() int
+    method func (EffectiveInputView).Inputs() iter.Seq[InputItemView]
+    method func (EffectiveInputView).RunID() RunID
+    method func (InputItem).Clone() InputItem
+    method func (InputItem).Equal(other InputItem) bool
+    method func (InputItem).Validate() error
+    method func (InputItemView).Inline() (AttributedInputView, bool)
+    method func (InputItemView).UserInput() (UserInputID, bool)
+    method func (InstructionBlock).Clone() InstructionBlock
+    method func (InstructionBlock).Equal(other InstructionBlock) bool
+    method func (InstructionBlock).Validate() error
+    method func (InstructionBlockView).PartAt(i int) ContentPartView
+    method func (InstructionBlockView).PartCount() int
+    method func (InstructionBlockView).Parts() iter.Seq[ContentPartView]
+    method func (InstructionBlockView).Source() ContentSourceView
+    method func (Instructions).Clone() Instructions
+    method func (Instructions).Equal(other Instructions) bool
+    method func (Instructions).Validate() error
+    method func (InstructionsView).BlockAt(i int) InstructionBlockView
+    method func (InstructionsView).BlockCount() int
+    method func (InstructionsView).Blocks() iter.Seq[InstructionBlockView]
+    method func (InstructionsView).HistoryID() id.HistoryID
+    method func (Media).Clone() Media
+    method func (Media).Equal(other Media) bool
+    method func (Media).Validate() error
+    method func (MediaView).Filename() string
+    method func (MediaView).FormatHint() string
+    method func (MediaView).InlineData() ([]byte, bool)
+    method func (MediaView).Kind() MediaKind
+    method func (MediaView).MIMEType() string
+    method func (MediaView).ProviderName() (string, bool)
+    method func (MediaView).ProviderReferenceID() (string, bool)
+    method func (MediaView).ProviderScope() (string, bool)
+    method func (MediaView).RemoteURI() (string, bool)
+    method func (MediaView).Source() MediaSourceKind
+    method func (MediaView).Title() string
+    method func (ModelBinding).Clone() ModelBinding
+    method func (ModelBinding).Equal(other ModelBinding) bool
+    method func (ModelBinding).Validate() error
+    method func (ModelBindingView).API() string
+    method func (ModelBindingView).HistoryID() id.HistoryID
+    method func (ModelBindingView).Model() string
+    method func (ModelBindingView).Route() string
+    method func (ModelBindingView).Settings() []byte
     method func (Policy).Validate() error
     method func (Record).Format() format.Record
     method func (RecordView).Created() (Created, bool)
+    method func (RecordView).EffectiveInput() (EffectiveInputView, bool)
     method func (RecordView).Format() format.Record
+    method func (RecordView).Instructions() (InstructionsView, bool)
     method func (RecordView).Kind() string
     method func (RecordView).KindVersion() int64
+    method func (RecordView).ModelBinding() (ModelBindingView, bool)
     method func (RecordView).RunInterrupted() (RunInterrupted, bool)
     method func (RecordView).RunStarted() (RunStarted, bool)
-    method func (RecordView).UserInput() (InputView, bool)
+    method func (RecordView).ToolCatalog() (ToolCatalogView, bool)
+    method func (RecordView).UserInput() (UserInputView, bool)
     method func (RunID).Clone() RunID
     method func (RunID).Equal(other RunID) bool
     method func (RunID).Next() (RunID, error)
@@ -37,33 +105,95 @@
     method func (RunStarted).Equal(other RunStarted) bool
     method func (RunStarted).Validate() error
     method func (RunView).ID() RunID
-    method func (RunView).InputAt(i int) InputView
-    method func (RunView).InputCount() int
     method func (RunView).RecordAt(i int) RecordView
     method func (RunView).RecordCount() int
+    method func (RunView).Records() iter.Seq[RecordView]
     method func (Snapshot).ActiveRun() RunID
     method func (Snapshot).Created() bool
     method func (Snapshot).Head() history.CommitRef
     method func (Snapshot).HistoryID() id.HistoryID
+    method func (Snapshot).Instructions() (InstructionsView, bool)
+    method func (Snapshot).ModelBinding() (ModelBindingView, bool)
     method func (Snapshot).RecordAt(i int) RecordView
     method func (Snapshot).RecordCount() int
+    method func (Snapshot).Records() iter.Seq[RecordView]
     method func (Snapshot).RunAt(i int) RunView
     method func (Snapshot).RunCount() int
+    method func (Snapshot).Runs() iter.Seq[RunView]
+    method func (Snapshot).ToolCatalog() (ToolCatalogView, bool)
+    method func (Snapshot).UserInputByID(id UserInputID) (UserInputView, bool)
+    method func (ToolCatalog).Clone() ToolCatalog
+    method func (ToolCatalog).Equal(other ToolCatalog) bool
+    method func (ToolCatalog).Validate() error
+    method func (ToolCatalogView).HistoryID() id.HistoryID
+    method func (ToolCatalogView).ToolAt(i int) ToolDefinitionView
+    method func (ToolCatalogView).ToolCount() int
+    method func (ToolCatalogView).Tools() iter.Seq[ToolDefinitionView]
+    method func (ToolDefinition).Clone() ToolDefinition
+    method func (ToolDefinition).Equal(other ToolDefinition) bool
+    method func (ToolDefinition).Validate() error
+    method func (ToolDefinitionView).ArgumentSchema() []byte
+    method func (ToolDefinitionView).Description() string
+    method func (ToolDefinitionView).Name() string
     method func (UserInput).Clone() UserInput
     method func (UserInput).Equal(other UserInput) bool
     method func (UserInput).Validate() error
+    method func (UserInputID).Clone() UserInputID
+    method func (UserInputID).Equal(other UserInputID) bool
+    method func (UserInputID).Next() (UserInputID, error)
+    method func (UserInputID).Validate() error
+    method func (UserInputView).ID() UserInputID
+    method func (UserInputView).PartAt(i int) ContentPartView
+    method func (UserInputView).PartCount() int
+    method func (UserInputView).Parts() iter.Seq[ContentPartView]
+    method func (WorkspaceFileSource).Clone() WorkspaceFileSource
+    method func (WorkspaceFileSource).Equal(other WorkspaceFileSource) bool
+    method func (WorkspaceFileSource).Validate() error
+    method func (WorkspaceFileSourceView).Path() string
+const MediaKindAudio MediaKind = "audio"
+const MediaKindDocument MediaKind = "document"
+const MediaKindImage MediaKind = "image"
+const MediaSourceInline MediaSourceKind = "inline"
+const MediaSourceProvider MediaSourceKind = "provider"
+const MediaSourceRemote MediaSourceKind = "remote"
+const PromptContext PromptPurpose = "context"
+const PromptInstructions PromptPurpose = "instructions"
 func DecodeRecord(scope id.HistoryID, v format.Record, limits codec.Limits) (Record, error)
 func Load(ctx context.Context, h *history.History, id id.HistoryID, policy Policy) (*Session, error)
 func New(h *history.History, id id.HistoryID, policy Policy) (*Session, error)
 func NewCreatedRecord(v Created, limits codec.Limits) (Record, error)
+func NewEffectiveInputRecord(v EffectiveInput, limits codec.Limits) (Record, error)
+func NewInstructionsRecord(v Instructions, limits codec.Limits) (Record, error)
+func NewModelBindingRecord(v ModelBinding, limits codec.Limits) (Record, error)
 func NewRunInterruptedRecord(v RunInterrupted, limits codec.Limits) (Record, error)
 func NewRunStartedRecord(v RunStarted, limits codec.Limits) (Record, error)
+func NewToolCatalogRecord(v ToolCatalog, limits codec.Limits) (Record, error)
 func NewUserInputRecord(v UserInput, limits codec.Limits) (Record, error)
-type AddInputRequest struct{RunID RunID; Content []byte}
+type Actor string
+type AddUserInputRequest struct{RunID RunID; Parts []ContentPart}
+type AttributedInput struct{Parts []ContentPart; Actor Actor; Purpose PromptPurpose; Source ContentSource}
+type AttributedInputView struct{}
+type ContentPart struct{Text *string; Media *Media}
+type ContentPartView struct{}
+type ContentSource struct{Description string; WorkspaceFile *WorkspaceFileSource}
+type ContentSourceView struct{}
 type Created struct{HistoryID id.HistoryID}
-type InputID struct{RunID RunID; Ordinal uint64}
-type InputView struct{}
+type EffectiveInput struct{RunID RunID; Inputs []InputItem}
+type EffectiveInputView struct{}
+type InputItem struct{UserInput *UserInputID; Inline *AttributedInput}
+type InputItemView struct{}
+type InstructionBlock struct{Parts []ContentPart; Source ContentSource}
+type InstructionBlockView struct{}
+type Instructions struct{HistoryID id.HistoryID; Blocks []InstructionBlock}
+type InstructionsView struct{}
+type Media struct{Kind MediaKind; Source MediaSourceKind; InlineData []byte; RemoteURI string; ProviderName string; ProviderScope string; ProviderReferenceID string; MIMEType string; FormatHint string; Filename string; Title string}
+type MediaKind string
+type MediaSourceKind string
+type MediaView struct{}
+type ModelBinding struct{HistoryID id.HistoryID; Route string; API string; Model string; Settings []byte}
+type ModelBindingView struct{}
 type Policy struct{CommitLimits codec.Limits; PayloadLimits codec.Limits; MaxRecordsPerCommit int; SoftMaxRetainedRecords int; SoftMaxPayloadBytes uint64; SoftMaxDecodedWork uint64; MaxRetainedRecords int; MaxPayloadBytes uint64; MaxDecodedWork uint64}
+type PromptPurpose string
 type Record struct{}
 type RecordView struct{}
 type RunID struct{HistoryID id.HistoryID; Ordinal uint64}
@@ -73,7 +203,15 @@ type RunView struct{}
 type Session struct{}
 type SessionCommit struct{}
 type Snapshot struct{}
-type UserInput struct{ID InputID; Content []byte}
+type ToolCatalog struct{HistoryID id.HistoryID; Tools []ToolDefinition}
+type ToolCatalogView struct{}
+type ToolDefinition struct{Name string; Description string; ArgumentSchema []byte}
+type ToolDefinitionView struct{}
+type UserInput struct{ID UserInputID; Parts []ContentPart}
+type UserInputID struct{RunID RunID; Ordinal uint64}
+type UserInputView struct{}
+type WorkspaceFileSource struct{Path string}
+type WorkspaceFileSourceView struct{}
 var ErrAcceptanceUnknown error
 var ErrAcceptedApply error
 var ErrBatch error

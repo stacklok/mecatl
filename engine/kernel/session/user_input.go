@@ -1,7 +1,7 @@
 package session
 
 import (
-	"bytes"
+	"iter"
 
 	"github.com/stacklok/mecatl/engine/kernel/codec"
 	"github.com/stacklok/mecatl/engine/kernel/history/format"
@@ -9,73 +9,92 @@ import (
 	sessionformat "github.com/stacklok/mecatl/engine/kernel/session/format"
 )
 
-// UserInput is one public input fact owned by the active run. Zero is invalid.
-// Assignment shares Content; Clone detaches it.
-// The kernel does not interpret, normalize, or require UTF-8/JSON in Content.
+// UserInput is one authored submission owned by an active run. Zero ID is invalid.
+// Empty Parts contributes no content; nil and empty are equivalent. Assignment
+// shares storage; Clone detaches it.
 type UserInput struct {
-	// ID is the run-scoped occurrence, independent of content equality.
-	ID InputID
-	// Content is exact caller-approved input bytes. Nil and empty both mean
-	// empty content; there is no separate absent-content state. The caller owns
-	// its interpretation and must not supply credentials or unsafe config dumps.
-	Content []byte
+	// ID is the required run-scoped submission identity.
+	ID UserInputID
+	// Parts is the ordered authored content; assignment borrows nested storage.
+	Parts []ContentPart
 }
 
-// Validate checks the occurrence identity without mutation or resource limits.
-// It does not establish active-run acceptance.
-func (v UserInput) Validate() error { return v.ID.Validate() }
+// Validate checks full identity and content, not active-run admission.
+func (v UserInput) Validate() error {
+	if err := v.ID.Validate(); err != nil {
+		return err
+	}
+	return validateParts(v.Parts)
+}
 
-// Clone returns an independently owned copy, preserving nil and empty storage.
+// Clone returns independently owned parts.
 func (v UserInput) Clone() UserInput {
-	v.Content = bytes.Clone(v.Content)
+	v.Parts = partsFromFormat(v.toFormat().Clone().Parts)
 	return v
 }
 
-// Equal compares identity and exact content; nil and empty content are equivalent.
+// Equal compares identity and ordered parts; nil and empty slices are equal.
 func (v UserInput) Equal(other UserInput) bool {
-	return v.ID == other.ID && bytes.Equal(v.Content, other.Content)
+	return v.ID == other.ID && v.toFormat().Equal(other.toFormat())
+}
+func (v UserInput) toFormat() sessionformat.UserInput {
+	return sessionformat.UserInput{RunID: v.ID.RunID.Ordinal, ID: v.ID.Ordinal, Parts: partsToFormat(v.Parts)}
 }
 
-// NewUserInputRecord encodes an owned v1 input record using explicit payload
-// limits. Failure returns zero. It neither accepts input nor allocates its ID.
+// NewUserInputRecord encodes an owned submission under explicit limits. Failure
+// returns zero; construction neither allocates identity nor establishes acceptance.
 func NewUserInputRecord(v UserInput, limits codec.Limits) (Record, error) {
-	if err := v.Validate(); err != nil {
+	if err := v.ID.Validate(); err != nil {
 		return Record{}, codec.ErrInvalidData
 	}
-	payload, err := codec.Encode(sessionformat.UserInput{RunID: v.ID.RunID.Ordinal, ID: v.ID.Ordinal, Content: v.Content}, limits)
+	b := newValueBudget(limits)
+	checkPartsSize(v.Parts, &b)
+	if b.err != nil {
+		return Record{}, b.err
+	}
+	payload, err := codec.Encode(v.toFormat(), limits)
 	if err != nil {
 		return Record{}, err
 	}
-	return Record{scope: v.ID.RunID.HistoryID, userInput: v.ID, inputBytes: len(v.Content), value: format.Record{Kind: sessionformat.KindUserInput, KindVersion: sessionformat.Version, Payload: payload}}, nil
+	return Record{scope: v.ID.RunID.HistoryID, userInput: v.ID, value: format.Record{Kind: sessionformat.KindUserInput, KindVersion: sessionformat.Version, Payload: payload}}, nil
 }
 
-// InputView is an immutable input handle. Zero has zero ID and nil content.
-// Byte and DTO exports always detach storage; copying the handle costs O(1).
-type InputView struct {
-	scope  historyid.HistoryID
-	record *acceptedRecord
+// UserInputView retains immutable accepted backing storage, including its record.
+// Copying or navigating a handle costs O(1). Zero has zero ID and no parts.
+type UserInputView struct {
+	scope historyid.HistoryID
+	value *sessionformat.UserInput
 }
 
-// ID returns the run-scoped occurrence identity, or zero for zero.
-func (v InputView) ID() InputID {
-	if v.record == nil {
-		return InputID{}
+// ID returns the scoped occurrence, or zero for zero.
+func (v UserInputView) ID() UserInputID {
+	if v.value == nil {
+		return UserInputID{}
 	}
-	return InputID{RunID: RunID{HistoryID: v.scope, Ordinal: v.record.input.RunID}, Ordinal: v.record.input.ID}
+	return UserInputID{RunID: RunID{HistoryID: v.scope, Ordinal: v.value.RunID}, Ordinal: v.value.ID}
 }
 
-// Content returns an owned copy of the exact opaque bytes, or nil for zero.
-func (v InputView) Content() []byte {
-	if v.record == nil {
-		return nil
+// PartCount returns the number of ordered parts, or zero for zero.
+func (v UserInputView) PartCount() int {
+	if v.value == nil {
+		return 0
 	}
-	return bytes.Clone(v.record.input.Content)
+	return len(v.value.Parts)
 }
 
-// Format returns a detached input DTO, or zero for zero.
-func (v InputView) Format() sessionformat.UserInput {
-	if v.record == nil {
-		return sessionformat.UserInput{}
+// Parts returns a repeatable sequence of immutable parts in authored order.
+// Zero yields nothing. The sequence stays pinned to this view's accepted storage.
+func (v UserInputView) Parts() iter.Seq[ContentPartView] {
+	return func(yield func(ContentPartView) bool) {
+		for i := 0; i < v.PartCount(); i++ {
+			if !yield(v.PartAt(i)) {
+				return
+			}
+		}
 	}
-	return v.record.input.Clone()
+}
+
+// PartAt returns an immutable part. It panics outside [0, PartCount()).
+func (v UserInputView) PartAt(i int) ContentPartView {
+	return ContentPartView{value: &v.value.Parts[i]}
 }

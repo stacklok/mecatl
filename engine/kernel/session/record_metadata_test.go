@@ -25,7 +25,7 @@ func internalFixture(t testing.TB) (*Session, codec.Limits) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	limits := codec.Limits{MaxBytes: 4096, MaxStringBytes: 128, MaxByteStringBytes: 1024, MaxArrayElements: 16, MaxMapPairs: 8, MaxDepth: 8, MaxNodes: 512, MaxCollectionElements: 128}
+	limits := codec.Limits{MaxBytes: 4096, MaxStringBytes: 128, MaxByteStringBytes: 1024, MaxArrayElements: 16, MaxMapPairs: 16, MaxDepth: 8, MaxNodes: 512, MaxCollectionElements: 128}
 	s, err := New(internalTestHistory(t, limits), id, Policy{CommitLimits: limits, PayloadLimits: limits, MaxRecordsPerCommit: 16, SoftMaxRetainedRecords: 32768, SoftMaxPayloadBytes: 1 << 24, SoftMaxDecodedWork: 1 << 32, MaxRetainedRecords: 32768, MaxPayloadBytes: 1 << 24, MaxDecodedWork: 1 << 32})
 	if err != nil {
 		t.Fatal(err)
@@ -47,7 +47,7 @@ func TestRecordMetadataAgreementAndOwnership(t *testing.T) {
 	s, limits := internalFixture(t)
 	id := s.Snapshot().HistoryID()
 	run := RunStarted{ID: RunID{HistoryID: id, Ordinal: 24}}
-	input := UserInput{ID: InputID{RunID: run.ID, Ordinal: 24}, Content: []byte{0xff, 0, 'x'}}
+	input := UserInput{ID: UserInputID{RunID: run.ID, Ordinal: 24}, Parts: internalByteParts([]byte{0xff, 0, 'x'})}
 	constructors := []struct {
 		name string
 		make func() (Record, error)
@@ -68,7 +68,7 @@ func TestRecordMetadataAgreementAndOwnership(t *testing.T) {
 			}
 			switch tc.name {
 			case "input":
-				if r.userInput != input.ID || r.inputBytes != len(input.Content) {
+				if r.userInput != input.ID {
 					t.Fatal("input accounting")
 				}
 			case "start":
@@ -87,7 +87,7 @@ func TestRecordMetadataAgreementAndOwnership(t *testing.T) {
 			}
 			switch tc.name {
 			case "input":
-				if decoded.userInput != r.userInput || decoded.inputBytes != r.inputBytes {
+				if decoded.userInput != r.userInput {
 					t.Fatal("imported input metadata")
 				}
 			case "start":
@@ -101,7 +101,7 @@ func TestRecordMetadataAgreementAndOwnership(t *testing.T) {
 			}
 			want := dto.Clone()
 			content := input.Clone()
-			clear(input.Content)
+			clear(input.Parts[0].Media.InlineData)
 			clear(dto.Payload)
 			if !r.Format().Equal(want) || !decoded.Format().Equal(want) {
 				t.Fatal("caller mutation changed bytes")
@@ -113,7 +113,7 @@ func TestRecordMetadataAgreementAndOwnership(t *testing.T) {
 		})
 	}
 }
-func TestMetadataPreflightDoesNotDecodeOrCloneContent(t *testing.T) {
+func TestMetadataPreflightBoundedDecodeDoesNotPublish(t *testing.T) {
 	s, limits := internalFixture(t)
 	id := s.Snapshot().HistoryID()
 	run := RunID{HistoryID: id, Ordinal: 1}
@@ -125,12 +125,12 @@ func TestMetadataPreflightDoesNotDecodeOrCloneContent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	first, err := NewUserInputRecord(UserInput{ID: InputID{RunID: run, Ordinal: 1}, Content: make([]byte, 512)}, limits)
+	first, err := NewUserInputRecord(UserInput{ID: UserInputID{RunID: run, Ordinal: 1}, Parts: internalByteParts(make([]byte, 512))}, limits)
 	if err != nil {
 		t.Fatal(err)
 	}
 	p := internalApply(t, s, created, start, first)
-	second, err := NewUserInputRecord(UserInput{ID: InputID{RunID: run, Ordinal: 2}, Content: make([]byte, 512)}, limits)
+	second, err := NewUserInputRecord(UserInput{ID: UserInputID{RunID: run, Ordinal: 2}, Parts: internalByteParts(make([]byte, 512))}, limits)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -142,17 +142,10 @@ func TestMetadataPreflightDoesNotDecodeOrCloneContent(t *testing.T) {
 	// which intentionally encodes its own small proposal.
 	records := []Record{second, closeout}
 	before := s.Snapshot()
-	allocs := testing.AllocsPerRun(10, func() {
-		if err := s.preflight(records, p.ref, uint64(len(second.value.Payload)+len(closeout.value.Payload))); err != nil {
-			panic(err)
-		}
-	})
-	// Two codec.Check interface values may escape. Decoding either input or
-	// copying its content/accepted prefix requires additional allocations.
-	if allocs > 2 {
-		t.Fatalf("preflight allocations: %g", allocs)
+	if err := s.preflight(records, p.ref, uint64(len(second.value.Payload)+len(closeout.value.Payload))); err != nil {
+		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(before, s.Snapshot()) || s.Snapshot().RunAt(0).InputCount() != 1 {
+	if !reflect.DeepEqual(before, s.Snapshot()) || !internalUserInputsMatch(s.Snapshot(), run, 1) {
 		t.Fatal("preflight published")
 	}
 }
@@ -172,7 +165,7 @@ func TestPreparationRetainsOriginatingScope(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	input, err := NewUserInputRecord(UserInput{ID: InputID{RunID: run, Ordinal: 1}}, limits)
+	input, err := NewUserInputRecord(UserInput{ID: UserInputID{RunID: run, Ordinal: 1}}, limits)
 	if err != nil {
 		t.Fatal(err)
 	}

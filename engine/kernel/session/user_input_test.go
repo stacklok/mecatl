@@ -13,15 +13,15 @@ import (
 )
 
 func TestUserInput(t *testing.T) {
-	id := session.InputID{RunID: session.RunID{HistoryID: testHistoryID(t), Ordinal: 1}, Ordinal: 1}
+	id := session.UserInputID{RunID: session.RunID{HistoryID: testHistoryID(t), Ordinal: 1}, Ordinal: 1}
 	for _, content := range [][]byte{nil, {}, {0xff, 0, 0x9f}, []byte(`{ "not": json }`), []byte(" e\u0301\r\n")} {
-		v := session.UserInput{ID: id, Content: bytes.Clone(content)}
+		v := session.UserInput{ID: id, Parts: byteParts(bytes.Clone(content))}
 		if err := v.Validate(); err != nil {
 			t.Fatal(err)
 		}
 		cloned := v.Clone()
 		if !reflect.DeepEqual(cloned, v) {
-			t.Fatal("clone did not preserve nil/empty and exact bytes")
+			t.Fatal("clone changed storage shape or bytes")
 		}
 		r, err := session.NewUserInputRecord(v, testLimits())
 		if err != nil {
@@ -29,33 +29,41 @@ func TestUserInput(t *testing.T) {
 		}
 		wire := r.Format().Payload
 		decoded, err := codec.Decode[sessionformat.UserInput](wire, testLimits())
-		if err != nil || decoded.ID != id.Ordinal || !bytes.Equal(decoded.Content, content) {
-			t.Fatalf("input roundtrip: %v", err)
+		if err != nil || decoded.ID != id.Ordinal || !bytes.Equal(dtoInputBytes(decoded), content) {
+			t.Fatalf("round trip: %v", err)
 		}
-		clear(v.Content)
+		if len(v.Parts) > 0 {
+			clear(v.Parts[0].Media.InlineData)
+		}
 		clear(wire)
-		if !bytes.Equal(cloned.Content, content) || !bytes.Equal(decoded.Content, content) {
-			t.Fatal("clone or decoder retained borrowed storage")
-		}
 		got, err := codec.Decode[sessionformat.UserInput](r.Format().Payload, testLimits())
-		if err != nil || !got.Equal(sessionformat.UserInput{RunID: 1, ID: cloned.ID.Ordinal, Content: cloned.Content}) {
-			t.Fatalf("constructor retained input storage: %v", err)
+		if err != nil || !got.Equal(sessionformat.UserInput{RunID: 1, ID: 1, Parts: formatByteParts(content)}) || !cloned.Equal(session.UserInput{ID: id, Parts: byteParts(content)}) {
+			t.Fatalf("borrowed storage retained: %v", err)
 		}
 	}
-	if !(session.UserInput{ID: id}).Equal(session.UserInput{ID: id, Content: []byte{}}) {
-		t.Fatal("nil and empty input must be equivalent")
+	if !(session.UserInput{ID: id}).Equal(session.UserInput{ID: id, Parts: []session.ContentPart{}}) {
+		t.Fatal("nil and empty differ")
+	}
+	if (session.UserInput{ID: id}).Equal(session.UserInput{ID: id, Parts: []session.ContentPart{{Text: new("")}}}) {
+		t.Fatal("empty text part lost")
 	}
 	if (session.UserInput{}).Validate() == nil {
 		t.Fatal("zero input validated")
 	}
-	r, err := session.NewUserInputRecord(session.UserInput{}, testLimits())
-	if !errors.Is(err, codec.ErrInvalidData) || !reflect.DeepEqual(r, session.Record{}) {
-		t.Fatalf("zero input record: %v", err)
+	if r, err := session.NewUserInputRecord(session.UserInput{}, testLimits()); !errors.Is(err, codec.ErrInvalidData) || !reflect.DeepEqual(r, session.Record{}) {
+		t.Fatalf("zero input: %v", err)
+	}
+	invalid := session.UserInput{ID: id, Parts: []session.ContentPart{{Text: new(string([]byte{0xff}))}}}
+	if invalid.Validate() == nil {
+		t.Fatal("non-UTF-8 text validated")
+	}
+	if _, err := session.NewUserInputRecord(invalid, testLimits()); !errors.Is(err, codec.ErrInvalidData) {
+		t.Fatalf("invalid text: %v", err)
 	}
 }
 
 func TestUserInputLimitsAndTransactionalRead(t *testing.T) {
-	v := session.UserInput{ID: session.InputID{RunID: session.RunID{HistoryID: testHistoryID(t), Ordinal: 1}, Ordinal: 1}, Content: []byte{1, 2}}
+	v := session.UserInput{ID: session.UserInputID{RunID: session.RunID{HistoryID: testHistoryID(t), Ordinal: 1}, Ordinal: 1}, Parts: byteParts([]byte{1, 2})}
 	r, err := session.NewUserInputRecord(v, testLimits())
 	if err != nil {
 		t.Fatal(err)
@@ -64,31 +72,28 @@ func TestUserInputLimitsAndTransactionalRead(t *testing.T) {
 	limited := testLimits()
 	limited.MaxByteStringBytes = 1
 	if err := v.Validate(); err != nil {
-		t.Fatal("local validation must not apply codec limits")
+		t.Fatal(err)
 	}
 	if r, err := session.NewUserInputRecord(v, limited); !errors.Is(err, codec.ErrLimitExceeded) || !reflect.DeepEqual(r, session.Record{}) {
-		t.Fatalf("content limit: %v", err)
+		t.Fatalf("limit: %v", err)
 	}
 	for _, test := range []struct {
 		wire     []byte
 		limits   codec.Limits
 		category error
-	}{
-		{wire, limited, codec.ErrLimitExceeded},
-		{wire[:len(wire)-1], testLimits(), codec.ErrInvalidData},
-	} {
-		before := sessionformat.UserInput{RunID: 1, ID: v.ID.Ordinal, Content: bytes.Clone(v.Content)}
+	}{{wire, limited, codec.ErrLimitExceeded}, {wire[:len(wire)-1], testLimits(), codec.ErrInvalidData}} {
+		before := sessionformat.UserInput{RunID: 1, ID: 1, Parts: formatByteParts([]byte{1, 2})}
 		receiver := before.Clone()
 		reader, err := codec.NewReader(test.wire, test.limits)
 		if err != nil {
 			t.Fatal(err)
 		}
 		if err := receiver.ReadCBOR(&reader, 0, math.MaxInt); !errors.Is(err, test.category) || !reflect.DeepEqual(receiver, before) {
-			t.Fatalf("failed read mutated receiver: %v", err)
+			t.Fatalf("transactional read: %v", err)
 		}
 		got, err := codec.Decode[sessionformat.UserInput](test.wire, test.limits)
 		if !errors.Is(err, test.category) || !reflect.DeepEqual(got, sessionformat.UserInput{}) {
-			t.Fatalf("decode failure returned partial input: %v", err)
+			t.Fatalf("partial decode: %v", err)
 		}
 	}
 }
