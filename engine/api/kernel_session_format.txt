@@ -91,10 +91,6 @@
     method func (WorkspaceFileSource).Clone() WorkspaceFileSource
     method func (WorkspaceFileSource).Equal(other WorkspaceFileSource) bool
     method func (WorkspaceFileSource).Validate() error
-const ContentAudio untyped string = "audio"
-const ContentDocument untyped string = "document"
-const ContentImage untyped string = "image"
-const ContentText untyped string = "text"
 const KindCreated untyped string = "session.created"
 const KindEffectiveInput untyped string = "session.effective_input"
 const KindInstructions untyped string = "session.instructions"
@@ -103,21 +99,24 @@ const KindRunInterrupted untyped string = "session.run_interrupted"
 const KindRunStarted untyped string = "session.run_started"
 const KindToolCatalog untyped string = "session.tool_catalog"
 const KindUserInput untyped string = "session.user_input"
-const MediaInline untyped string = "inline"
-const MediaProvider untyped string = "provider"
-const MediaRemote untyped string = "remote"
+const MediaKindAudio untyped string = "audio"
+const MediaKindDocument untyped string = "document"
+const MediaKindImage untyped string = "image"
+const MediaSourceInline untyped string = "inline"
+const MediaSourceProvider untyped string = "provider"
+const MediaSourceRemote untyped string = "remote"
 const PromptContext untyped string = "context"
 const PromptInstructions untyped string = "instructions"
 const Version int64 = 1
 type AttributedInput struct{Parts []ContentPart "cbor:\"c\""; Actor string "cbor:\"a\""; Purpose string "cbor:\"p\""; Source ContentSource "cbor:\"s\""}
-type ContentPart struct{Kind string "cbor:\"k\""; Text string "cbor:\"t\""; Media *Media "cbor:\"m,omitempty\""}
+type ContentPart struct{Text *string "cbor:\"t,omitempty\""; Media *Media "cbor:\"m,omitempty\""}
 type ContentSource struct{Description string "cbor:\"d\""; WorkspaceFile *WorkspaceFileSource "cbor:\"w,omitempty\""}
 type Created struct{}
 type EffectiveInput struct{RunID uint64 "cbor:\"r\""; Inputs []InputItem "cbor:\"i\""}
 type InputItem struct{UserInput *uint64 "cbor:\"u,omitempty\""; Inline *AttributedInput "cbor:\"i,omitempty\""}
 type InstructionBlock struct{Parts []ContentPart "cbor:\"c\""; Source ContentSource "cbor:\"s\""}
 type Instructions struct{Blocks []InstructionBlock "cbor:\"b\""}
-type Media struct{MediaType string "cbor:\"m\""; Format string "cbor:\"f\""; Filename string "cbor:\"n\""; Title string "cbor:\"t\""; Source string "cbor:\"s\""; Data []byte "cbor:\"d\""; URI string "cbor:\"u\""; Provider string "cbor:\"p\""; Scope string "cbor:\"o\""; ReferenceID string "cbor:\"r\""}
+type Media struct{Kind string "cbor:\"k\""; Source string "cbor:\"s\""; InlineData []byte "cbor:\"d\""; RemoteURI string "cbor:\"u\""; ProviderName string "cbor:\"p\""; ProviderScope string "cbor:\"o\""; ProviderReferenceID string "cbor:\"r\""; MIMEType string "cbor:\"m\""; FormatHint string "cbor:\"f\""; Filename string "cbor:\"n\""; Title string "cbor:\"t\""}
 type ModelBinding struct{Route string "cbor:\"r\""; API string "cbor:\"a\""; Model string "cbor:\"m\""; Settings []byte "cbor:\"s\""}
 type RunInterrupted struct{ID uint64 "cbor:\"r\""}
 type RunStarted struct{ID uint64 "cbor:\"r\""}

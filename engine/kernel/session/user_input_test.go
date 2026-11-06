@@ -33,7 +33,7 @@ func TestUserInput(t *testing.T) {
 			t.Fatalf("round trip: %v", err)
 		}
 		if len(v.Parts) > 0 {
-			clear(v.Parts[0].Media.Data)
+			clear(v.Parts[0].Media.InlineData)
 		}
 		clear(wire)
 		got, err := codec.Decode[sessionformat.UserInput](r.Format().Payload, testLimits())
@@ -44,7 +44,7 @@ func TestUserInput(t *testing.T) {
 	if !(session.UserInput{ID: id}).Equal(session.UserInput{ID: id, Parts: []session.ContentPart{}}) {
 		t.Fatal("nil and empty differ")
 	}
-	if (session.UserInput{ID: id}).Equal(session.UserInput{ID: id, Parts: []session.ContentPart{{Kind: session.ContentText}}}) {
+	if (session.UserInput{ID: id}).Equal(session.UserInput{ID: id, Parts: []session.ContentPart{{Text: new("")}}}) {
 		t.Fatal("empty text part lost")
 	}
 	if (session.UserInput{}).Validate() == nil {
@@ -53,7 +53,7 @@ func TestUserInput(t *testing.T) {
 	if r, err := session.NewUserInputRecord(session.UserInput{}, testLimits()); !errors.Is(err, codec.ErrInvalidData) || !reflect.DeepEqual(r, session.Record{}) {
 		t.Fatalf("zero input: %v", err)
 	}
-	invalid := session.UserInput{ID: id, Parts: []session.ContentPart{{Kind: session.ContentText, Text: string([]byte{0xff})}}}
+	invalid := session.UserInput{ID: id, Parts: []session.ContentPart{{Text: new(string([]byte{0xff}))}}}
 	if invalid.Validate() == nil {
 		t.Fatal("non-UTF-8 text validated")
 	}

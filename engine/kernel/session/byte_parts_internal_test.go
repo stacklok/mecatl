@@ -35,13 +35,13 @@ func internalByteParts(data []byte) []ContentPart {
 	if len(data) == 0 {
 		return nil
 	}
-	return []ContentPart{{Kind: ContentDocument, Media: &Media{MediaType: "application/octet-stream", Source: MediaInline, Data: data}}}
+	return []ContentPart{{Media: &Media{Kind: MediaKindDocument, MIMEType: "application/octet-stream", Source: MediaSourceInline, InlineData: data}}}
 }
 func internalInputBytes(v UserInputView) []byte {
 	if v.PartCount() == 0 {
 		return nil
 	}
 	media, _ := v.PartAt(0).Media()
-	data, _ := media.Data()
+	data, _ := media.InlineData()
 	return data
 }

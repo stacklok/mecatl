@@ -1,6 +1,8 @@
 package session_test
 
 import (
+	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/stacklok/mecatl/engine/kernel/session"
@@ -28,9 +30,6 @@ func TestRecursiveViewsZero(t *testing.T) {
 		t.Fatal("zero required children")
 	}
 	var part session.ContentPartView
-	if part.Kind() != "" {
-		t.Fatal("zero content kind")
-	}
 	if text, ok := part.Text(); ok || text != "" {
 		t.Fatal("zero text branch")
 	}
@@ -38,13 +37,13 @@ func TestRecursiveViewsZero(t *testing.T) {
 		t.Fatal("zero media branch")
 	}
 	var media session.MediaView
-	if media.MediaType() != "" || media.Format() != "" || media.Filename() != "" || media.Title() != "" || media.Source() != "" {
+	if media.Kind() != "" || media.MIMEType() != "" || media.FormatHint() != "" || media.Filename() != "" || media.Title() != "" || media.Source() != "" {
 		t.Fatal("zero media metadata")
 	}
-	if data, ok := media.Data(); ok || data != nil {
+	if data, ok := media.InlineData(); ok || data != nil {
 		t.Fatal("zero inline data")
 	}
-	for name, get := range map[string]func() (string, bool){"URI": media.URI, "Provider": media.Provider, "Scope": media.Scope, "ReferenceID": media.ReferenceID} {
+	for name, get := range map[string]func() (string, bool){"RemoteURI": media.RemoteURI, "ProviderName": media.ProviderName, "ProviderScope": media.ProviderScope, "ProviderReferenceID": media.ProviderReferenceID} {
 		if value, ok := get(); ok || value != "" {
 			t.Errorf("zero media %s", name)
 		}
@@ -78,7 +77,7 @@ func TestRecursiveViewsPresenceBytesAndBounds(t *testing.T) {
 	id, err := b.AddUserInput(session.AddUserInputRequest{RunID: run, Parts: richContent()})
 	mustBatch(t, err)
 	mustBatch(t, b.ReplaceInstructions(session.Instructions{HistoryID: scope, Blocks: []session.InstructionBlock{
-		{Parts: []session.ContentPart{{Kind: session.ContentText}}, Source: session.ContentSource{Description: "empty text"}},
+		{Parts: []session.ContentPart{{Text: new("")}}, Source: session.ContentSource{Description: "empty text"}},
 		{Source: session.ContentSource{Description: "empty block"}},
 	}}))
 	mustBatch(t, b.ReplaceToolCatalog(session.ToolCatalog{HistoryID: scope, Tools: []session.ToolDefinition{{Name: "tool", ArgumentSchema: []byte(" false ")}}}))
@@ -115,29 +114,51 @@ func TestRecursiveViewsPresenceBytesAndBounds(t *testing.T) {
 	if text, ok := textPart.Text(); !ok || text != "" {
 		t.Fatal("empty text lost presence")
 	}
+	for _, part := range []session.ContentPartView{textPart, user.PartAt(0)} {
+		want, present := part.Text()
+		var text string
+		var ok bool
+		if n := testing.AllocsPerRun(100, func() {
+			text, ok = part.Text()
+		}); n != 0 {
+			t.Fatalf("text navigation allocated %g times", n)
+		}
+		if !present || !ok || text != want {
+			t.Fatal("text navigation changed")
+		}
+		if want != "" {
+			if n := testing.AllocsPerRun(10, func() {
+				value, _ := part.Text()
+				text = strings.Clone(value)
+			}); n == 0 {
+				t.Fatal("text-copy control was optimized away")
+			}
+			runtime.KeepAlive(text)
+		}
+	}
 	if media, ok := textPart.Media(); ok || media != (session.MediaView{}) {
 		t.Fatal("text exposed media")
 	}
 	if text, ok := user.PartAt(1).Text(); ok || text != "" {
 		t.Fatal("media exposed text")
 	}
-	if data, ok := mediaAt(t, user.PartAt(5)).Data(); !ok || len(data) != 0 {
+	if data, ok := mediaAt(t, user.PartAt(5)).InlineData(); !ok || len(data) != 0 {
 		t.Fatal("empty inline bytes lost presence")
 	}
 	remote := mediaAt(t, user.PartAt(2))
-	if data, ok := remote.Data(); ok || data != nil {
+	if data, ok := remote.InlineData(); ok || data != nil {
 		t.Fatal("remote exposed inline bytes")
 	}
-	if provider, ok := remote.Provider(); ok || provider != "" {
+	if provider, ok := remote.ProviderName(); ok || provider != "" {
 		t.Fatal("remote exposed provider")
 	}
 	provider := mediaAt(t, user.PartAt(3))
-	if uri, ok := provider.URI(); ok || uri != "" {
+	if uri, ok := provider.RemoteURI(); ok || uri != "" {
 		t.Fatal("provider exposed URI")
 	}
 	media := mediaAt(t, user.PartAt(1))
-	data, _ := media.Data()
-	other, _ := media.Data()
+	data, _ := media.InlineData()
+	other, _ := media.InlineData()
 	data[0] = 0
 	if other[0] != 0xff {
 		t.Fatal("byte exports share storage")
@@ -145,7 +166,7 @@ func TestRecursiveViewsPresenceBytesAndBounds(t *testing.T) {
 	mutateMediaBytes(t, user.PartAt(1))
 	clear(catalog.ToolAt(0).ArgumentSchema())
 	clear(binding.Settings())
-	if !mediaMatches(media, session.Media{MediaType: "application/octet-stream", Format: "raw", Filename: "notes.bin", Title: "Notes", Source: session.MediaInline, Data: []byte{0xff, 0, 'x'}}) || string(catalog.ToolAt(0).ArgumentSchema()) != " false " || string(binding.Settings()) != " {\"n\":1.00} " {
+	if !mediaMatches(media, session.Media{Kind: session.MediaKindDocument, MIMEType: "application/octet-stream", FormatHint: "raw", Filename: "notes.bin", Title: "Notes", Source: session.MediaSourceInline, InlineData: []byte{0xff, 0, 'x'}}) || string(catalog.ToolAt(0).ArgumentSchema()) != " false " || string(binding.Settings()) != " {\"n\":1.00} " {
 		t.Fatal("byte getter exposed accepted storage")
 	}
 

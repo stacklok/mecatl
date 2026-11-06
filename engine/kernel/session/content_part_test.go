@@ -8,12 +8,12 @@ import (
 
 func richContent() []session.ContentPart {
 	return []session.ContentPart{
-		{Kind: session.ContentText, Text: " /skill example\r\ne\u0301 "},
-		{Kind: session.ContentDocument, Media: &session.Media{MediaType: "application/octet-stream", Format: "raw", Filename: "notes.bin", Title: "Notes", Source: session.MediaInline, Data: []byte{0xff, 0, 'x'}}},
-		{Kind: session.ContentImage, Media: &session.Media{Source: session.MediaRemote, URI: "https://example.invalid/a%2Fb?q=x"}},
-		{Kind: session.ContentAudio, Media: &session.Media{Format: "wav", Source: session.MediaProvider, Provider: "provider", Scope: "tenant", ReferenceID: "reference"}},
-		{Kind: session.ContentText, Text: "\ntrailing"},
-		{Kind: session.ContentImage, Media: &session.Media{MediaType: "image/empty", Source: session.MediaInline}},
+		{Text: new(" /skill example\r\ne\u0301 ")},
+		{Media: &session.Media{Kind: session.MediaKindDocument, MIMEType: "application/octet-stream", FormatHint: "raw", Filename: "notes.bin", Title: "Notes", Source: session.MediaSourceInline, InlineData: []byte{0xff, 0, 'x'}}},
+		{Media: &session.Media{Kind: session.MediaKindImage, Source: session.MediaSourceRemote, RemoteURI: "https://example.invalid/a%2Fb?q=x"}},
+		{Media: &session.Media{Kind: session.MediaKindAudio, FormatHint: "wav", Source: session.MediaSourceProvider, ProviderName: "provider", ProviderScope: "tenant", ProviderReferenceID: "reference"}},
+		{Text: new("")},
+		{Media: &session.Media{Kind: session.MediaKindImage, MIMEType: "image/empty", Source: session.MediaSourceInline}},
 	}
 }
 func TestContentOwnedValues(t *testing.T) {
@@ -22,38 +22,44 @@ func TestContentOwnedValues(t *testing.T) {
 		t.Fatal(err)
 	}
 	cloned := v.Clone()
-	v.Parts[1].Media.Data[0] = 0
-	v.Parts[2].Media.URI = "urn:changed"
-	v.Parts[3].Media.Scope = "changed"
-	v.Parts[4].Text = "changed"
+	v.Parts[1].Media.InlineData[0] = 0
+	v.Parts[2].Media.RemoteURI = "urn:changed"
+	v.Parts[3].Media.ProviderScope = "changed"
+	*v.Parts[4].Text = "changed"
 	if !cloned.Equal(session.UserInput{ID: v.ID, Parts: richContent()}) {
 		t.Fatal("clone retained storage")
 	}
 	for _, part := range richContent() {
-		if !part.Clone().Equal(part) {
+		clone := part.Clone()
+		if !clone.Equal(part) {
 			t.Fatal("part clone")
+		}
+		if part.Text != nil {
+			*part.Text = "changed"
+			if *clone.Text == "changed" {
+				t.Fatal("part clone retained text pointer")
+			}
 		}
 		if part.Media != nil && !part.Media.Clone().Equal(*part.Media) {
 			t.Fatal("media clone")
 		}
 	}
-	empty := session.Media{Source: session.MediaInline, MediaType: "image/x"}
+	empty := session.Media{Kind: session.MediaKindImage, Source: session.MediaSourceInline, MIMEType: "image/x"}
 	if empty.Validate() != nil || empty.Equal(session.Media{}) {
 		t.Fatal("inline presence lost")
 	}
 	for name, part := range map[string]session.ContentPart{
-		"zero": {}, "unknown": {Kind: "video"},
-		"invalid text":               {Kind: session.ContentText, Text: "\xff"},
-		"text media":                 {Kind: session.ContentText, Media: &session.Media{}},
-		"missing media":              {Kind: session.ContentImage},
-		"media text":                 {Kind: session.ContentDocument, Text: "text", Media: &empty},
-		"no source":                  {Kind: session.ContentImage, Media: &session.Media{}},
-		"foreign fields":             {Kind: session.ContentImage, Media: &session.Media{Source: session.MediaInline, MediaType: "image/x", URI: "urn:a"}},
-		"missing MIME":               {Kind: session.ContentImage, Media: &session.Media{Source: session.MediaInline}},
-		"document metadata on image": {Kind: session.ContentImage, Media: &session.Media{Source: session.MediaRemote, URI: "urn:a", Filename: "x"}},
-		"bad metadata":               {Kind: session.ContentImage, Media: &session.Media{Source: session.MediaRemote, URI: "urn:a", MediaType: "\xff"}},
-		"relative URI":               {Kind: session.ContentImage, Media: &session.Media{Source: session.MediaRemote, URI: "a/b"}},
-		"empty provider scope":       {Kind: session.ContentImage, Media: &session.Media{Source: session.MediaProvider, Provider: "p", ReferenceID: "i"}},
+		"zero": {}, "unknown media": {Media: &session.Media{Kind: "video", Source: session.MediaSourceRemote, RemoteURI: "urn:a"}},
+		"invalid text":               {Text: new("\xff")},
+		"empty text and media":       {Text: new(""), Media: &empty},
+		"media text":                 {Text: new("text"), Media: &empty},
+		"no source":                  {Media: &session.Media{Kind: session.MediaKindImage}},
+		"foreign fields":             {Media: &session.Media{Kind: session.MediaKindImage, Source: session.MediaSourceInline, MIMEType: "image/x", RemoteURI: "urn:a"}},
+		"missing MIME":               {Media: &session.Media{Kind: session.MediaKindImage, Source: session.MediaSourceInline}},
+		"document metadata on image": {Media: &session.Media{Kind: session.MediaKindImage, Source: session.MediaSourceRemote, RemoteURI: "urn:a", Filename: "x"}},
+		"bad metadata":               {Media: &session.Media{Kind: session.MediaKindImage, Source: session.MediaSourceRemote, RemoteURI: "urn:a", MIMEType: "\xff"}},
+		"relative URI":               {Media: &session.Media{Kind: session.MediaKindImage, Source: session.MediaSourceRemote, RemoteURI: "a/b"}},
+		"empty provider scope":       {Media: &session.Media{Kind: session.MediaKindImage, Source: session.MediaSourceProvider, ProviderName: "p", ProviderReferenceID: "i"}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if part.Validate() == nil {
@@ -87,7 +93,7 @@ func TestContentSourceAndAttributedOwnedValues(t *testing.T) {
 	}
 	p := session.InputItem{Inline: &h}
 	pc := p.Clone()
-	h.Parts[1].Media.Data[0] = 0
+	h.Parts[1].Media.InlineData[0] = 0
 	h.Source.WorkspaceFile.Path = "changed"
 	if pc.Equal(p) || pc.Validate() != nil {
 		t.Fatal("inline clone aliases")

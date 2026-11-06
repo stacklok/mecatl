@@ -31,7 +31,7 @@ func TestContextIndependentReplacementsAndFixtureFreeLoad(t *testing.T) {
 		mustBatch(t, err)
 		prepared[i] = string(data)
 	}
-	instructions := session.Instructions{HistoryID: scope, Blocks: []session.InstructionBlock{{Parts: []session.ContentPart{{Kind: session.ContentText, Text: prepared[1]}}, Source: session.ContentSource{Description: "caller adopted root", WorkspaceFile: &session.WorkspaceFileSource{Path: paths[1]}}}}}
+	instructions := session.Instructions{HistoryID: scope, Blocks: []session.InstructionBlock{{Parts: []session.ContentPart{{Text: new(prepared[1])}}, Source: session.ContentSource{Description: "caller adopted root", WorkspaceFile: &session.WorkspaceFileSource{Path: paths[1]}}}}}
 	catalog := session.ToolCatalog{HistoryID: scope, Tools: []session.ToolDefinition{{Name: "second", ArgumentSchema: []byte(" {\"z\":1.00, \"a\":true} ")}, {Name: "first", ArgumentSchema: []byte("false")}}}
 	binding := session.ModelBinding{HistoryID: scope, Route: "route", API: "dialect/v1", Model: "alias", Settings: []byte(prepared[2])}
 	b := beginBatch(t, s)
@@ -39,7 +39,7 @@ func TestContextIndependentReplacementsAndFixtureFreeLoad(t *testing.T) {
 	run := batchRun(t, b)
 	input, err := b.AddUserInput(session.AddUserInputRequest{RunID: run, Parts: richContent()})
 	mustBatch(t, err)
-	effective := session.EffectiveInput{RunID: run, Inputs: []session.InputItem{{UserInput: &input}, {Inline: &session.AttributedInput{Actor: "skill/example", Purpose: session.PromptInstructions, Parts: []session.ContentPart{{Kind: session.ContentText, Text: prepared[0]}}, Source: session.ContentSource{Description: "caller expanded skill", WorkspaceFile: &session.WorkspaceFileSource{Path: paths[0]}}}}}}
+	effective := session.EffectiveInput{RunID: run, Inputs: []session.InputItem{{UserInput: &input}, {Inline: &session.AttributedInput{Actor: "skill/example", Purpose: session.PromptInstructions, Parts: []session.ContentPart{{Text: new(prepared[0])}}, Source: session.ContentSource{Description: "caller expanded skill", WorkspaceFile: &session.WorkspaceFileSource{Path: paths[0]}}}}}}
 	mustBatch(t, b.ReplaceInstructions(instructions))
 	mustBatch(t, b.ReplaceToolCatalog(catalog))
 	mustBatch(t, b.ReplaceModelBinding(binding))

@@ -42,8 +42,8 @@ func recordFixtures(t testing.TB) []struct {
 		{"session.created", []byte("\xa0"), func(l codec.Limits) (session.Record, error) {
 			return session.NewCreatedRecord(session.Created{HistoryID: h}, l)
 		}},
-		{"session.user_input", []byte("\xa3\x61i\x01\x61p\x81\xa2\x61k\x64text\x61t\x61x\x61r\x01"), func(l codec.Limits) (session.Record, error) {
-			return session.NewUserInputRecord(session.UserInput{ID: session.UserInputID{RunID: session.RunID{HistoryID: h, Ordinal: 1}, Ordinal: 1}, Parts: []session.ContentPart{{Kind: session.ContentText, Text: "x"}}}, l)
+		{"session.user_input", []byte("\xa3\x61i\x01\x61p\x81\xa1\x61t\x61x\x61r\x01"), func(l codec.Limits) (session.Record, error) {
+			return session.NewUserInputRecord(session.UserInput{ID: session.UserInputID{RunID: session.RunID{HistoryID: h, Ordinal: 1}, Ordinal: 1}, Parts: []session.ContentPart{{Text: new("x")}}}, l)
 		}},
 		{"session.run_started", []byte("\xa1\x61r\x02"), func(l codec.Limits) (session.Record, error) {
 			return session.NewRunStartedRecord(session.RunStarted{ID: session.RunID{HistoryID: h, Ordinal: 2}}, l)

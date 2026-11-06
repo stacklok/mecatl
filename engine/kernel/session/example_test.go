@@ -45,14 +45,14 @@ func ExampleSession() {
 		fmt.Println(err)
 		return
 	}
-	input, err := b.AddUserInput(session.AddUserInputRequest{RunID: run, Parts: []session.ContentPart{{Kind: session.ContentText, Text: "first"}}})
+	input, err := b.AddUserInput(session.AddUserInputRequest{RunID: run, Parts: []session.ContentPart{{Text: new("first")}}})
 	if err != nil {
 		fmt.Println(err)
 		return
 	}
 	// Preparation supplies retained values; the kernel never opens this source file.
 	if err := b.ReplaceInstructions(session.Instructions{HistoryID: id, Blocks: []session.InstructionBlock{{
-		Parts:  []session.ContentPart{{Kind: session.ContentText, Text: "Use the project's vocabulary."}},
+		Parts:  []session.ContentPart{{Text: new("Use the project's vocabulary.")}},
 		Source: session.ContentSource{Description: "adopted workspace instructions", WorkspaceFile: &session.WorkspaceFileSource{Path: "AGENTS.md"}},
 	}}}); err != nil {
 		fmt.Println(err)
@@ -63,7 +63,7 @@ func ExampleSession() {
 		{Inline: &session.AttributedInput{
 			Actor:   "harness",
 			Purpose: session.PromptContext,
-			Parts:   []session.ContentPart{{Kind: session.ContentText, Text: "Retained reference material."}},
+			Parts:   []session.ContentPart{{Text: new("Retained reference material.")}},
 			Source:  session.ContentSource{Description: "prepared workspace reference", WorkspaceFile: &session.WorkspaceFileSource{Path: "docs/design.md"}},
 		}},
 	}}); err != nil {
@@ -133,7 +133,7 @@ func ExampleSession() {
 		fmt.Println(err)
 		return
 	}
-	second, err := next.AddUserInput(session.AddUserInputRequest{RunID: successor, Parts: []session.ContentPart{{Kind: session.ContentText, Text: "second"}}})
+	second, err := next.AddUserInput(session.AddUserInputRequest{RunID: successor, Parts: []session.ContentPart{{Text: new("second")}}})
 	if err != nil {
 		fmt.Println(err)
 		return

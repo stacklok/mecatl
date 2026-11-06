@@ -6,45 +6,63 @@ import (
 	sessionformat "github.com/stacklok/mecatl/engine/kernel/session/format"
 )
 
+// MediaKind is a closed content category, not a provider capability.
+type MediaKind string
+
+const (
+	// MediaKindImage selects image media.
+	MediaKindImage MediaKind = sessionformat.MediaKindImage
+	// MediaKindAudio selects audio media.
+	MediaKindAudio MediaKind = sessionformat.MediaKindAudio
+	// MediaKindDocument selects document media, permitting Filename and Title.
+	MediaKindDocument MediaKind = sessionformat.MediaKindDocument
+)
+
 // MediaSourceKind selects a closed storage variant, not an access capability.
 type MediaSourceKind string
 
 const (
-	// MediaInline retains bytes, including explicitly empty bytes.
-	MediaInline MediaSourceKind = sessionformat.MediaInline
-	// MediaRemote retains an absolute URI without dereferencing it.
-	MediaRemote MediaSourceKind = sessionformat.MediaRemote
-	// MediaProvider retains a complete logical provider storage binding.
-	MediaProvider MediaSourceKind = sessionformat.MediaProvider
+	// MediaSourceInline retains bytes, including explicitly empty bytes.
+	MediaSourceInline MediaSourceKind = sessionformat.MediaSourceInline
+	// MediaSourceRemote retains an absolute URI without dereferencing it.
+	MediaSourceRemote MediaSourceKind = sessionformat.MediaSourceRemote
+	// MediaSourceProvider retains a complete logical provider storage binding.
+	MediaSourceProvider MediaSourceKind = sessionformat.MediaSourceProvider
 )
 
 // Media retains exact metadata and a tagged source. Filename and Title are
-// document-only; inline media requires MediaType. Assignment shares Data;
+// document-only; inline media requires MIMEType. Assignment shares InlineData;
 // Clone detaches it. References grant no access or dereference authority.
 type Media struct {
-	// MediaType is the MIME type; it is required for inline media.
-	MediaType string
-	// Format is an optional exact media-format hint.
-	Format string
+	// Kind selects the required media category.
+	Kind MediaKind
+	// Source selects the required storage variant.
+	Source MediaSourceKind
+
+	// InlineData holds inline bytes only; assignment borrows the slice.
+	InlineData []byte
+
+	// RemoteURI is the required absolute locator for remote media.
+	RemoteURI string
+
+	// ProviderName is the provider name for provider-backed media.
+	ProviderName string
+	// ProviderScope is the required provider-local storage scope.
+	ProviderScope string
+	// ProviderReferenceID is the required provider-local media reference.
+	ProviderReferenceID string
+
+	// MIMEType is the MIME type; it is required for inline media.
+	MIMEType string
+	// FormatHint is an optional exact media-format hint.
+	FormatHint string
 	// Filename is an optional document-only filename.
 	Filename string
 	// Title is an optional document-only title.
 	Title string
-	// Source selects the required storage variant.
-	Source MediaSourceKind
-	// Data holds inline bytes only; assignment borrows the slice.
-	Data []byte
-	// URI is the required absolute locator for remote media.
-	URI string
-	// Provider is the provider name for provider-backed media.
-	Provider string
-	// Scope is the required provider-local storage scope.
-	Scope string
-	// ReferenceID is the required provider-local media reference.
-	ReferenceID string
 }
 
-// Validate checks metadata and source syntax without resolving references.
+// Validate checks kind, metadata and source syntax without resolving references.
 func (v Media) Validate() error { return v.toFormat().Validate() }
 
 // Clone returns independently owned media.
@@ -53,30 +71,38 @@ func (v Media) Clone() Media { return mediaFromFormat(v.toFormat().Clone()) }
 // Equal compares exact fields, treating nil and empty bytes alike.
 func (v Media) Equal(other Media) bool { return v.toFormat().Equal(other.toFormat()) }
 func (v Media) toFormat() sessionformat.Media {
-	return sessionformat.Media{MediaType: v.MediaType, Format: v.Format, Filename: v.Filename, Title: v.Title, Source: string(v.Source), Data: v.Data, URI: v.URI, Provider: v.Provider, Scope: v.Scope, ReferenceID: v.ReferenceID}
+	return sessionformat.Media{Kind: string(v.Kind), Source: string(v.Source), InlineData: v.InlineData, RemoteURI: v.RemoteURI, ProviderName: v.ProviderName, ProviderScope: v.ProviderScope, ProviderReferenceID: v.ProviderReferenceID, MIMEType: v.MIMEType, FormatHint: v.FormatHint, Filename: v.Filename, Title: v.Title}
 }
 func mediaFromFormat(v sessionformat.Media) Media {
-	return Media{MediaType: v.MediaType, Format: v.Format, Filename: v.Filename, Title: v.Title, Source: MediaSourceKind(v.Source), Data: v.Data, URI: v.URI, Provider: v.Provider, Scope: v.Scope, ReferenceID: v.ReferenceID}
+	return Media{Kind: MediaKind(v.Kind), Source: MediaSourceKind(v.Source), InlineData: v.InlineData, RemoteURI: v.RemoteURI, ProviderName: v.ProviderName, ProviderScope: v.ProviderScope, ProviderReferenceID: v.ProviderReferenceID, MIMEType: v.MIMEType, FormatHint: v.FormatHint, Filename: v.Filename, Title: v.Title}
 }
 
 // MediaView retains immutable backing storage, including inline bytes. Capture
 // and metadata navigation cost O(1). Zero has empty metadata and no source branch.
 type MediaView struct{ value *sessionformat.Media }
 
-// MediaType returns the MIME type, or empty for zero.
-func (v MediaView) MediaType() string {
+// Kind returns the media category, or empty for zero.
+func (v MediaView) Kind() MediaKind {
 	if v.value == nil {
 		return ""
 	}
-	return v.value.MediaType
+	return MediaKind(v.value.Kind)
 }
 
-// Format returns the exact format hint, or empty for zero.
-func (v MediaView) Format() string {
+// MIMEType returns the MIME type, or empty for zero.
+func (v MediaView) MIMEType() string {
 	if v.value == nil {
 		return ""
 	}
-	return v.value.Format
+	return v.value.MIMEType
+}
+
+// FormatHint returns the exact format hint, or empty for zero.
+func (v MediaView) FormatHint() string {
+	if v.value == nil {
+		return ""
+	}
+	return v.value.FormatHint
 }
 
 // Filename returns the document filename, or empty for zero.
@@ -103,56 +129,57 @@ func (v MediaView) Source() MediaSourceKind {
 	return MediaSourceKind(v.value.Source)
 }
 
-// Data returns independently owned bytes only for inline media. Empty inline
+// InlineData returns independently owned bytes only for inline media. Empty inline
 // data is present. It copies only this field, never sibling metadata or content.
-func (v MediaView) Data() ([]byte, bool) {
-	if v.Source() != MediaInline {
+func (v MediaView) InlineData() ([]byte, bool) {
+	if v.Source() != MediaSourceInline {
 		return nil, false
 	}
-	return bytes.Clone(v.value.Data), true
+	return bytes.Clone(v.value.InlineData), true
 }
 
-// URI returns the retained URI only for remote media; no access is granted.
-func (v MediaView) URI() (string, bool) {
-	if v.Source() != MediaRemote {
+// RemoteURI returns the retained URI only for remote media; no access is granted.
+func (v MediaView) RemoteURI() (string, bool) {
+	if v.Source() != MediaSourceRemote {
 		return "", false
 	}
-	return v.value.URI, true
+	return v.value.RemoteURI, true
 }
 
-// Provider returns the logical provider only for provider-backed media.
-func (v MediaView) Provider() (string, bool) {
-	if v.Source() != MediaProvider {
+// ProviderName returns the logical provider only for provider-backed media.
+func (v MediaView) ProviderName() (string, bool) {
+	if v.Source() != MediaSourceProvider {
 		return "", false
 	}
-	return v.value.Provider, true
+	return v.value.ProviderName, true
 }
 
-// Scope returns the logical storage scope only for provider-backed media.
-func (v MediaView) Scope() (string, bool) {
-	if v.Source() != MediaProvider {
+// ProviderScope returns the logical storage scope only for provider-backed media.
+func (v MediaView) ProviderScope() (string, bool) {
+	if v.Source() != MediaSourceProvider {
 		return "", false
 	}
-	return v.value.Scope, true
+	return v.value.ProviderScope, true
 }
 
-// ReferenceID returns the retained reference only for provider-backed media.
-func (v MediaView) ReferenceID() (string, bool) {
-	if v.Source() != MediaProvider {
+// ProviderReferenceID returns the retained reference only for provider-backed media.
+func (v MediaView) ProviderReferenceID() (string, bool) {
+	if v.Source() != MediaSourceProvider {
 		return "", false
 	}
-	return v.value.ReferenceID, true
+	return v.value.ProviderReferenceID, true
 }
 
 func (v Media) checkSize(b *valueBudget) {
-	b.text(v.MediaType)
-	b.text(v.Format)
+	b.text(string(v.Kind))
+	b.text(string(v.Source))
+	b.bytes(len(v.InlineData))
+	b.text(v.RemoteURI)
+	b.text(v.ProviderName)
+	b.text(v.ProviderScope)
+	b.text(v.ProviderReferenceID)
+	b.text(v.MIMEType)
+	b.text(v.FormatHint)
 	b.text(v.Filename)
 	b.text(v.Title)
-	b.text(string(v.Source))
-	b.bytes(len(v.Data))
-	b.text(v.URI)
-	b.text(v.Provider)
-	b.text(v.Scope)
-	b.text(v.ReferenceID)
 }

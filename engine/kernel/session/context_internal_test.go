@@ -25,9 +25,10 @@ func TestRichConstructorsBudgetBeforeConversion(t *testing.T) {
 	items := make([]InputItem, limits.MaxArrayElements+1)
 	settings := make([]byte, limits.MaxByteStringBytes+1)
 	oversizeText := string(make([]byte, limits.MaxStringBytes+1))
-	nestedInput := UserInput{ID: input, Parts: []ContentPart{{Kind: ContentText, Text: oversizeText}}}
+	nestedInput := UserInput{ID: input, Parts: []ContentPart{{Text: new(oversizeText)}}}
+	nestedMedia := UserInput{ID: input, Parts: []ContentPart{{Media: &Media{Kind: MediaKind(oversizeText)}}}}
 	nestedActor := EffectiveInput{RunID: input.RunID, Inputs: []InputItem{{Inline: &AttributedInput{Actor: Actor(oversizeText)}}}}
-	nestedInstructions := Instructions{HistoryID: scope, Blocks: []InstructionBlock{{Parts: []ContentPart{{Kind: ContentText, Text: oversizeText}}}}}
+	nestedInstructions := Instructions{HistoryID: scope, Blocks: []InstructionBlock{{Parts: []ContentPart{{Text: new(oversizeText)}}}}}
 	nestedCatalog := ToolCatalog{HistoryID: scope, Tools: []ToolDefinition{{Name: "tool", ArgumentSchema: settings}}}
 	nestedEffective := EffectiveInput{RunID: input.RunID, Inputs: []InputItem{{Inline: &AttributedInput{Parts: parts}}}}
 	for _, makeRecord := range []func() (Record, error){
@@ -45,6 +46,7 @@ func TestRichConstructorsBudgetBeforeConversion(t *testing.T) {
 			return NewModelBindingRecord(ModelBinding{HistoryID: scope, Route: "r", API: "a", Model: "m", Settings: settings}, limits)
 		},
 		func() (Record, error) { return NewUserInputRecord(nestedInput, limits) },
+		func() (Record, error) { return NewUserInputRecord(nestedMedia, limits) },
 		func() (Record, error) { return NewInstructionsRecord(nestedInstructions, limits) },
 		func() (Record, error) { return NewToolCatalogRecord(nestedCatalog, limits) },
 		func() (Record, error) { return NewEffectiveInputRecord(nestedEffective, limits) },
@@ -63,20 +65,20 @@ func TestNewRecordMetadataAndGeneratedLimitsAgree(t *testing.T) {
 	s, limits := internalFixture(t)
 	scope := s.Snapshot().HistoryID()
 	input := UserInputID{RunID: RunID{HistoryID: scope, Ordinal: 1}, Ordinal: 1}
-	content := []ContentPart{{Kind: ContentText, Text: " exact "}, {Kind: ContentDocument, Media: &Media{MediaType: "raw", Source: MediaInline, Data: []byte{0xff, 0}}}}
+	content := []ContentPart{{Text: new(" exact ")}, {Media: &Media{Kind: MediaKindDocument, MIMEType: "raw", Source: MediaSourceInline, InlineData: []byte{0xff, 0}}}}
 	source := ContentSource{Description: "adopted", WorkspaceFile: &WorkspaceFileSource{Path: "AGENTS.md"}}
 	authored := UserInput{ID: input, Parts: content}
 	instructions := Instructions{HistoryID: scope, Blocks: []InstructionBlock{{Parts: content, Source: source}}}
 	catalog := ToolCatalog{HistoryID: scope, Tools: []ToolDefinition{{Name: "read", ArgumentSchema: []byte(" true ")}}}
 	binding := ModelBinding{HistoryID: scope, Route: "r", API: "a", Model: "m", Settings: []byte(" {\"x\":1.0} ")}
-	effective := EffectiveInput{RunID: input.RunID, Inputs: []InputItem{{UserInput: &input}, {Inline: &AttributedInput{Actor: "harness", Purpose: PromptContext, Parts: []ContentPart{{Kind: ContentText, Text: "supplement"}}, Source: source}}}}
+	effective := EffectiveInput{RunID: input.RunID, Inputs: []InputItem{{UserInput: &input}, {Inline: &AttributedInput{Actor: "harness", Purpose: PromptContext, Parts: []ContentPart{{Text: new("supplement")}}, Source: source}}}}
 	manyInputs := EffectiveInput{RunID: input.RunID, Inputs: make([]InputItem, limits.MaxArrayElements)}
 	for i := range manyInputs.Inputs {
 		manyInputs.Inputs[i].UserInput = &input
 	}
 	emptyParts := UserInput{ID: input, Parts: make([]ContentPart, limits.MaxArrayElements)}
 	for i := range emptyParts.Parts {
-		emptyParts.Parts[i].Kind = ContentText
+		emptyParts.Parts[i].Text = new("")
 	}
 	for _, tc := range []struct {
 		name  string

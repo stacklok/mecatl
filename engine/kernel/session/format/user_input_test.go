@@ -13,9 +13,9 @@ import (
 
 func TestUserInput(t *testing.T) {
 	v := format.UserInput{RunID: 1, ID: 1, Parts: []format.ContentPart{
-		{Kind: "text", Text: " /skill e\u0301  \n"},
-		{Kind: "image", Media: &format.Media{MediaType: "image/png", Source: "inline", Data: []byte{0xff, 0, 'x'}}},
-		{Kind: "text", Text: "尾\n"},
+		{Text: new(" /skill e\u0301  \n")},
+		{Media: &format.Media{Kind: "image", MIMEType: "image/png", Source: "inline", InlineData: []byte{0xff, 0, 'x'}}},
+		{Text: new("尾\n")},
 	}}
 	cloned := v.Clone()
 	wire, err := codec.Encode(v, limits())
@@ -26,10 +26,10 @@ func TestUserInput(t *testing.T) {
 	if err != nil || !got.Equal(v) {
 		t.Fatalf("roundtrip: %v", err)
 	}
-	clear(v.Parts[1].Media.Data)
-	v.Parts[0].Text = "changed"
+	clear(v.Parts[1].Media.InlineData)
+	*v.Parts[0].Text = "changed"
 	clear(wire)
-	if !got.Equal(cloned) || !bytes.Equal(got.Parts[1].Media.Data, []byte{0xff, 0, 'x'}) {
+	if !got.Equal(cloned) || !bytes.Equal(got.Parts[1].Media.InlineData, []byte{0xff, 0, 'x'}) {
 		t.Fatal("clone or decoder retained storage")
 	}
 	if !(format.UserInput{RunID: 1, ID: 1}).Equal(format.UserInput{RunID: 1, ID: 1, Parts: []format.ContentPart{}}) {

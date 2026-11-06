@@ -39,7 +39,7 @@ func TestContextValuesIntegrationAndPinnedViews(t *testing.T) {
 		t.Fatal("absent binding present")
 	}
 	source := session.ContentSource{Description: "adopted workspace instructions", WorkspaceFile: &session.WorkspaceFileSource{Path: "AGENTS.md"}}
-	instructions := session.Instructions{HistoryID: scope, Blocks: []session.InstructionBlock{{Parts: []session.ContentPart{{Kind: session.ContentText, Text: "root\n"}}, Source: source}}}
+	instructions := session.Instructions{HistoryID: scope, Blocks: []session.InstructionBlock{{Parts: []session.ContentPart{{Text: new("root\n")}}, Source: source}}}
 	catalog := session.ToolCatalog{HistoryID: scope, Tools: []session.ToolDefinition{{Name: "read", Description: "read file", ArgumentSchema: []byte(" {\"type\": \"object\"} ")}, {Name: "noop", ArgumentSchema: []byte("true")}}}
 	binding := session.ModelBinding{HistoryID: scope, Route: "route", API: "dialect/v1", Model: "alias", Settings: []byte(" {\"temperature\": 1.00} ")}
 	wantI, wantT, wantM := instructions.Clone(), catalog.Clone(), binding.Clone()
@@ -58,7 +58,7 @@ func TestContextValuesIntegrationAndPinnedViews(t *testing.T) {
 	parts := richContent()
 	input, err := b.AddUserInput(session.AddUserInputRequest{RunID: run, Parts: parts})
 	mustBatch(t, err)
-	second, err := b.AddUserInput(session.AddUserInputRequest{RunID: run, Parts: []session.ContentPart{{Kind: session.ContentText, Text: "second submission"}}})
+	second, err := b.AddUserInput(session.AddUserInputRequest{RunID: run, Parts: []session.ContentPart{{Text: new("second submission")}}})
 	mustBatch(t, err)
 	authored := session.UserInput{ID: input, Parts: parts}.Clone()
 	mustBatch(t, b.ReplaceInstructions(instructions))
@@ -68,30 +68,31 @@ func TestContextValuesIntegrationAndPinnedViews(t *testing.T) {
 		{UserInput: &input},
 		{Inline: &session.AttributedInput{Actor: "skill/example", Purpose: session.PromptInstructions, Parts: richContent(), Source: session.ContentSource{Description: "skill expansion", WorkspaceFile: &session.WorkspaceFileSource{Path: "skills/example.md"}}}},
 		{UserInput: &second}, {UserInput: &input},
-		{Inline: &session.AttributedInput{Actor: " \textension/尾 e\u0301\r\n ", Purpose: session.PromptContext, Parts: []session.ContentPart{{Kind: session.ContentText, Text: "context data"}}, Source: session.ContentSource{Description: "workspace reference", WorkspaceFile: &session.WorkspaceFileSource{Path: "docs/design.md"}}}},
+		{Inline: &session.AttributedInput{Actor: " \textension/尾 e\u0301\r\n ", Purpose: session.PromptContext, Parts: []session.ContentPart{{Text: new("context data")}}, Source: session.ContentSource{Description: "workspace reference", WorkspaceFile: &session.WorkspaceFileSource{Path: "docs/design.md"}}}},
 	}}
 	wantE := effective.Clone()
 	if effective.Validate() != nil || !effective.Clone().Equal(effective) {
 		t.Fatal("effective value")
 	}
 	mustBatch(t, b.AddEffectiveInput(effective))
-	parts[1].Media.Data[0] = 0
-	parts[1].Media.Format = "changed"
+	parts[1].Media.InlineData[0] = 0
+	parts[1].Media.FormatHint = "changed"
 	parts[1].Media.Filename = "changed"
 	parts[1].Media.Title = "changed"
-	parts[0].Text = "changed"
-	parts[2].Media.URI = "urn:changed"
-	parts[3].Media.Scope = "changed"
-	parts[5].Media.Data = []byte("not empty")
+	*parts[0].Text = "changed"
+	*parts[4].Text = "no longer empty"
+	parts[2].Media.RemoteURI = "urn:changed"
+	parts[3].Media.ProviderScope = "changed"
+	parts[5].Media.InlineData = []byte("not empty")
 	instructions.Blocks[0].Source.WorkspaceFile.Path = "changed"
-	instructions.Blocks[0].Parts[0].Text = "changed"
+	*instructions.Blocks[0].Parts[0].Text = "changed"
 	clear(catalog.Tools[0].ArgumentSchema)
 	catalog.Tools[1].Name = "changed"
 	clear(binding.Settings)
 	effective.Inputs[0].UserInput.Ordinal = math.MaxUint64
-	effective.Inputs[1].Inline.Parts[1].Media.Data[0] = 0
+	effective.Inputs[1].Inline.Parts[1].Media.InlineData[0] = 0
 	effective.Inputs[1].Inline.Source.WorkspaceFile.Path = "changed"
-	effective.Inputs[4].Inline.Parts[0].Text = "changed"
+	*effective.Inputs[4].Inline.Parts[0].Text = "changed"
 	effective.Inputs[4].Inline.Actor = "changed"
 	submitBatch(t, s, b)
 	old := s.Snapshot()
@@ -147,14 +148,17 @@ func TestContextValuesIntegrationAndPinnedViews(t *testing.T) {
 			if !textOK || text != " /skill example\r\ne\u0301 " {
 				t.Fatalf("exact text = %q", text)
 			}
+			if text, ok := parts.at(4).Text(); !ok || text != "" {
+				t.Fatal("explicit empty text lost")
+			}
 			for _, expected := range []struct {
 				index int
 				media session.Media
 			}{
-				{1, session.Media{MediaType: "application/octet-stream", Format: "raw", Filename: "notes.bin", Title: "Notes", Source: "inline", Data: []byte{0xff, 0, 'x'}}},
-				{2, session.Media{Source: "remote", URI: "https://example.invalid/a%2Fb?q=x"}},
-				{3, session.Media{Format: "wav", Source: "provider", Provider: "provider", Scope: "tenant", ReferenceID: "reference"}},
-				{5, session.Media{MediaType: "image/empty", Source: "inline"}},
+				{1, session.Media{Kind: session.MediaKindDocument, MIMEType: "application/octet-stream", FormatHint: "raw", Filename: "notes.bin", Title: "Notes", Source: "inline", InlineData: []byte{0xff, 0, 'x'}}},
+				{2, session.Media{Kind: session.MediaKindImage, Source: "remote", RemoteURI: "https://example.invalid/a%2Fb?q=x"}},
+				{3, session.Media{Kind: session.MediaKindAudio, FormatHint: "wav", Source: "provider", ProviderName: "provider", ProviderScope: "tenant", ProviderReferenceID: "reference"}},
+				{5, session.Media{Kind: session.MediaKindImage, MIMEType: "image/empty", Source: "inline"}},
 			} {
 				if !mediaMatches(mediaAt(t, parts.at(expected.index)), expected.media) {
 					t.Fatalf("part %d media changed", expected.index)
@@ -163,6 +167,18 @@ func TestContextValuesIntegrationAndPinnedViews(t *testing.T) {
 		}
 	}
 	assertExactContent(old)
+	page, err := h.Read(context.Background(), scope, history.ReadRequest{Through: old.Head(), MaxCommits: 1})
+	mustBatch(t, err)
+	if len(page.Commits) != 1 {
+		t.Fatal("missing accepted fixture commit")
+	}
+	applied := boundSession(t, h, p)
+	mustBatch(t, applied.Apply(page.Commits[0]))
+	assertExactContent(applied.Snapshot())
+	for _, record := range page.Commits[0].Commit.Records {
+		clear(record.Payload)
+	}
+	assertExactContent(applied.Snapshot())
 	clear(tv.ToolAt(0).ArgumentSchema())
 	clear(mv.Settings())
 	ref, _ := ev.InputAt(0).UserInput()
@@ -239,7 +255,7 @@ func TestContextAdmissionSourceBoundsAndScopes(t *testing.T) {
 	}
 	// Generic inline-only contributions need neither a submission nor a special actor.
 	inline := session.EffectiveInput{RunID: run, Inputs: []session.InputItem{
-		{Inline: &session.AttributedInput{Actor: "messages/arbitrary origin", Purpose: session.PromptContext, Parts: []session.ContentPart{{Kind: session.ContentText, Text: "retained"}}, Source: session.ContentSource{Description: "prepared elsewhere"}}},
+		{Inline: &session.AttributedInput{Actor: "messages/arbitrary origin", Purpose: session.PromptContext, Parts: []session.ContentPart{{Text: new("retained")}}, Source: session.ContentSource{Description: "prepared elsewhere"}}},
 		{Inline: &session.AttributedInput{Actor: "harness", Purpose: session.PromptInstructions, Parts: []session.ContentPart{}, Source: session.ContentSource{Description: "empty contribution"}}},
 	}}
 	mustBatch(t, b.AddEffectiveInput(inline))
@@ -433,7 +449,7 @@ func TestContextForwardReferenceExternalApplyAndLoad(t *testing.T) {
 			b := beginBatch(t, s)
 			mustBatch(t, b.Create())
 			run := batchRun(t, b)
-			mustBatch(t, b.ReplaceInstructions(session.Instructions{HistoryID: run.HistoryID, Blocks: []session.InstructionBlock{{Parts: []session.ContentPart{{Kind: session.ContentText, Text: "accepted root"}}, Source: session.ContentSource{Description: "accepted"}}}}))
+			mustBatch(t, b.ReplaceInstructions(session.Instructions{HistoryID: run.HistoryID, Blocks: []session.InstructionBlock{{Parts: []session.ContentPart{{Text: new("accepted root")}}, Source: session.ContentSource{Description: "accepted"}}}}))
 			submitBatch(t, s, b)
 			old := s.Snapshot()
 			before := captureRejectedSnapshot(old)
@@ -447,7 +463,7 @@ func TestContextForwardReferenceExternalApplyAndLoad(t *testing.T) {
 			input := session.UserInputID{RunID: run, Ordinal: 1}
 			effective, err := session.NewEffectiveInputRecord(session.EffectiveInput{RunID: run, Inputs: []session.InputItem{{UserInput: &input}}}, testLimits())
 			mustBatch(t, err)
-			user, err := session.NewUserInputRecord(session.UserInput{ID: input, Parts: []session.ContentPart{{Kind: session.ContentText, Text: "later source"}}}, testLimits())
+			user, err := session.NewUserInputRecord(session.UserInput{ID: input, Parts: []session.ContentPart{{Text: new("later source")}}}, testLimits())
 			mustBatch(t, err)
 			// Reordering exactly these facts is valid: rejection must depend on
 			// the source being later, not on an invalid prefix or source payload.

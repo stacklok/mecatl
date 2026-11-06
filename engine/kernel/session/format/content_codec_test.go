@@ -13,8 +13,8 @@ import (
 
 func TestContentBoundedTraversal(t *testing.T) {
 	v := format.UserInput{RunID: 1, ID: 1, Parts: []format.ContentPart{
-		{Kind: "text", Text: "exact UTF-8 text"},
-		{Kind: "image", Media: &format.Media{MediaType: "image/custom", Source: "inline", Data: bytes.Repeat([]byte{1}, 20)}},
+		{Text: new("exact UTF-8 text")},
+		{Media: &format.Media{Kind: "image", MIMEType: "image/custom", Source: "inline", InlineData: bytes.Repeat([]byte{1}, 20)}},
 	}}
 	wire, err := codec.Encode(v, limits())
 	if err != nil {
@@ -128,7 +128,7 @@ func TestFormatValidatorsAreLocal(t *testing.T) {
 	// Generated traversal, not local validation, owns child validity and bounds.
 	for _, err := range []error{
 		(format.UserInput{RunID: 1, ID: 1, Parts: []format.ContentPart{{}}}).Validate(),
-		(format.ContentPart{Kind: "image", Media: &format.Media{}}).Validate(),
+		(format.ContentPart{Media: &format.Media{}}).Validate(),
 		(format.ContentSource{Description: "d", WorkspaceFile: &format.WorkspaceFileSource{}}).Validate(),
 		(format.InputItem{Inline: &format.AttributedInput{}}).Validate(),
 		(format.AttributedInput{Actor: "a", Purpose: "context"}).Validate(),

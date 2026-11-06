@@ -101,7 +101,7 @@ func TestRecordMetadataAgreementAndOwnership(t *testing.T) {
 			}
 			want := dto.Clone()
 			content := input.Clone()
-			clear(input.Parts[0].Media.Data)
+			clear(input.Parts[0].Media.InlineData)
 			clear(dto.Payload)
 			if !r.Format().Equal(want) || !decoded.Format().Equal(want) {
 				t.Fatal("caller mutation changed bytes")

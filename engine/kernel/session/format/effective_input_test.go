@@ -14,8 +14,8 @@ func TestEffectiveInput(t *testing.T) {
 	first, last := uint64(1), uint64(math.MaxUint64)
 	v := format.EffectiveInput{RunID: 1, Inputs: []format.InputItem{
 		{UserInput: &first},
-		{Inline: &format.AttributedInput{Actor: "skill/example", Purpose: "instructions", Parts: []format.ContentPart{{Kind: "text", Text: "expanded\n"}}, Source: format.ContentSource{Description: "skill expansion", WorkspaceFile: &format.WorkspaceFileSource{Path: "skills/example.md"}}}},
-		{Inline: &format.AttributedInput{Actor: "extension/尾", Purpose: "context", Parts: []format.ContentPart{{Kind: "document", Media: &format.Media{MediaType: "application/pdf", Source: "inline", Data: []byte{1, 2}}}}, Source: format.ContentSource{Description: "supplement"}}},
+		{Inline: &format.AttributedInput{Actor: "skill/example", Purpose: "instructions", Parts: []format.ContentPart{{Text: new("expanded\n")}}, Source: format.ContentSource{Description: "skill expansion", WorkspaceFile: &format.WorkspaceFileSource{Path: "skills/example.md"}}}},
+		{Inline: &format.AttributedInput{Actor: "extension/尾", Purpose: "context", Parts: []format.ContentPart{{Media: &format.Media{Kind: "document", MIMEType: "application/pdf", Source: "inline", InlineData: []byte{1, 2}}}}, Source: format.ContentSource{Description: "supplement"}}},
 		{UserInput: &last}, // Aggregate admission owns membership and ordering.
 	}}
 	before := v.Clone()
@@ -30,8 +30,8 @@ func TestEffectiveInput(t *testing.T) {
 	first = 3
 	last = 0
 	v.Inputs[1].Inline.Source.WorkspaceFile.Path = "changed"
-	v.Inputs[1].Inline.Parts[0].Text = "changed"
-	v.Inputs[2].Inline.Parts[0].Media.Data[0] = 9
+	*v.Inputs[1].Inline.Parts[0].Text = "changed"
+	v.Inputs[2].Inline.Parts[0].Media.InlineData[0] = 9
 	clear(wire)
 	if !got.Equal(before) {
 		t.Fatal("effective input storage shared")

@@ -37,9 +37,9 @@ func allocationViewFixture(t *testing.T, fieldBytes, siblingBytes, count int) ma
 		if i == 0 {
 			size = fieldBytes
 		}
-		parts[i] = session.ContentPart{Kind: session.ContentDocument, Media: &session.Media{
-			MediaType: "application/octet-stream", Format: "raw", Filename: "notes.bin", Title: strings.Repeat("m", siblingBytes),
-			Source: session.MediaInline, Data: bytes.Repeat([]byte{0xa5}, size)}}
+		parts[i] = session.ContentPart{Media: &session.Media{
+			Kind: session.MediaKindDocument, MIMEType: "application/octet-stream", FormatHint: "raw", Filename: "notes.bin", Title: strings.Repeat("m", siblingBytes),
+			Source: session.MediaSourceInline, InlineData: bytes.Repeat([]byte{0xa5}, size)}}
 	}
 	input, err := b.AddUserInput(session.AddUserInputRequest{RunID: run, Parts: parts})
 	mustBatch(t, err)
@@ -134,7 +134,7 @@ func TestViewNavigationAllocations(t *testing.T) {
 						definition = catalog.ToolAt(catalog.ToolCount() - 1)
 						count = effective.InputCount() + inline.PartCount() + input.PartCount() + instructions.BlockCount() + block.PartCount() + catalog.ToolCount()
 						text = string(inline.Actor())
-						if !instructionMediaOK || instructionMedia.Filename() != "notes.bin" || part.Kind() != session.ContentDocument || inline.Purpose() != session.PromptContext || inline.Source().Description() != "prepared reference" || file.Path() != "docs/design.md" || block.Source().Description() != "prepared reference" || media.MediaType() != "application/octet-stream" || media.Format() != "raw" || media.Filename() != "notes.bin" || media.Source() != session.MediaInline || definition.Name() == "" || definition.Description() == "" || binding.Route() == "" || binding.API() != "dialect/v1" || binding.Model() != "alias" {
+						if !instructionMediaOK || instructionMedia.Filename() != "notes.bin" || media.Kind() != session.MediaKindDocument || inline.Purpose() != session.PromptContext || inline.Source().Description() != "prepared reference" || file.Path() != "docs/design.md" || block.Source().Description() != "prepared reference" || media.MIMEType() != "application/octet-stream" || media.FormatHint() != "raw" || media.Filename() != "notes.bin" || media.Source() != session.MediaSourceInline || definition.Name() == "" || definition.Description() == "" || binding.Route() == "" || binding.API() != "dialect/v1" || binding.Model() != "alias" {
 							t.Fatal("lost nested metadata")
 						}
 					}
@@ -205,7 +205,7 @@ func TestViewByteExportsCopyOnlyRequestedField(t *testing.T) {
 					instructions, _ := v.Instructions()
 					instructionMedia, _ := instructions.BlockAt(0).PartAt(0).Media()
 					data := func(m session.MediaView) func() []byte {
-						return func() []byte { b, _ := m.Data(); return b }
+						return func() []byte { b, _ := m.InlineData(); return b }
 					}
 					for _, field := range []struct {
 						name   string
@@ -270,7 +270,7 @@ func TestViewPinnedReferenceChildrenAcrossReplacement(t *testing.T) {
 			<-start
 			for range 1000 {
 				resolved, ok := old.UserInputByID(ref)
-				data, present := media.Data()
+				data, present := media.InlineData()
 				if !ok || !present || resolved != input || input.PartAt(0) != part || media.Title() != "mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm" || len(data) != 32 || data[0] != 0xa5 || old.RecordCount() != 7 {
 					t.Error("pinned reference child changed")
 					return

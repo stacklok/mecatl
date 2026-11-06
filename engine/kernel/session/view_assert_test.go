@@ -14,21 +14,21 @@ func sourceMatches(v session.ContentSourceView, want session.ContentSource) bool
 }
 
 func mediaMatches(v session.MediaView, want session.Media) bool {
-	data, inline := v.Data()
-	uri, remote := v.URI()
-	provider, bound := v.Provider()
-	scope, scopeOK := v.Scope()
-	ref, refOK := v.ReferenceID()
-	return v.MediaType() == want.MediaType && v.Format() == want.Format && v.Filename() == want.Filename && v.Title() == want.Title && v.Source() == want.Source &&
-		inline == (want.Source == session.MediaInline) && bytes.Equal(data, want.Data) &&
-		remote == (want.Source == session.MediaRemote) && uri == want.URI &&
-		bound == (want.Source == session.MediaProvider) && scopeOK == bound && refOK == bound && provider == want.Provider && scope == want.Scope && ref == want.ReferenceID
+	data, inline := v.InlineData()
+	uri, remote := v.RemoteURI()
+	provider, bound := v.ProviderName()
+	scope, scopeOK := v.ProviderScope()
+	ref, refOK := v.ProviderReferenceID()
+	return v.Kind() == want.Kind && v.MIMEType() == want.MIMEType && v.FormatHint() == want.FormatHint && v.Filename() == want.Filename && v.Title() == want.Title && v.Source() == want.Source &&
+		inline == (want.Source == session.MediaSourceInline) && bytes.Equal(data, want.InlineData) &&
+		remote == (want.Source == session.MediaSourceRemote) && uri == want.RemoteURI &&
+		bound == (want.Source == session.MediaSourceProvider) && scopeOK == bound && refOK == bound && provider == want.ProviderName && scope == want.ProviderScope && ref == want.ProviderReferenceID
 }
 
 func partMatches(v session.ContentPartView, want session.ContentPart) bool {
 	text, textOK := v.Text()
 	media, mediaOK := v.Media()
-	return v.Kind() == want.Kind && textOK == (want.Kind == session.ContentText) && text == want.Text && mediaOK == (want.Media != nil) && (!mediaOK || mediaMatches(media, *want.Media))
+	return textOK == (want.Text != nil) && (!textOK || text == *want.Text) && mediaOK == (want.Media != nil) && (!mediaOK || mediaMatches(media, *want.Media))
 }
 
 func userInputMatches(v session.UserInputView, want session.UserInput) bool {
@@ -125,7 +125,7 @@ func mediaAt(t *testing.T, part session.ContentPartView) session.MediaView {
 
 func mutateMediaBytes(t *testing.T, part session.ContentPartView) {
 	t.Helper()
-	data, ok := mediaAt(t, part).Data()
+	data, ok := mediaAt(t, part).InlineData()
 	if !ok {
 		t.Fatal("missing inline media")
 	}

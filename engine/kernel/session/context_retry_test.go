@@ -26,9 +26,9 @@ func TestContextFrozenRetryAndConcurrentPinnedReads(t *testing.T) {
 	b := beginBatch(t, s)
 	mustBatch(t, b.Create())
 	run := batchRun(t, b)
-	input, err := b.AddUserInput(session.AddUserInputRequest{RunID: run, Parts: []session.ContentPart{{Kind: session.ContentText, Text: "/skill example\n"}}})
+	input, err := b.AddUserInput(session.AddUserInputRequest{RunID: run, Parts: []session.ContentPart{{Text: new("/skill example\n")}}})
 	mustBatch(t, err)
-	instructions := session.Instructions{HistoryID: scope, Blocks: []session.InstructionBlock{{Parts: []session.ContentPart{{Kind: session.ContentText, Text: "root"}}, Source: session.ContentSource{Description: "adopted", WorkspaceFile: &session.WorkspaceFileSource{Path: "AGENTS.md"}}}}}
+	instructions := session.Instructions{HistoryID: scope, Blocks: []session.InstructionBlock{{Parts: []session.ContentPart{{Text: new("root")}}, Source: session.ContentSource{Description: "adopted", WorkspaceFile: &session.WorkspaceFileSource{Path: "AGENTS.md"}}}}}
 	catalog := session.ToolCatalog{HistoryID: scope, Tools: []session.ToolDefinition{{Name: "tool", ArgumentSchema: []byte("true")}}}
 	binding := session.ModelBinding{HistoryID: scope, Route: "r", API: "a", Model: "m", Settings: []byte(" { } ")}
 	effective := session.EffectiveInput{RunID: run, Inputs: []session.InputItem{
@@ -48,7 +48,9 @@ func TestContextFrozenRetryAndConcurrentPinnedReads(t *testing.T) {
 	clear(binding.Settings)
 	*effective.Inputs[0].UserInput = session.UserInputID{}
 	effective.Inputs[1].Inline.Actor = "changed"
-	effective.Inputs[1].Inline.Parts[1].Media.Data[0] = 0
+	effective.Inputs[1].Inline.Parts[1].Media.InlineData[0] = 0
+	*effective.Inputs[1].Inline.Parts[0].Text = "changed"
+	*instructions.Blocks[0].Parts[0].Text = "changed"
 	effective.Inputs[1].Inline.Source.WorkspaceFile.Path = "changed"
 	if err := b.ReplaceInstructions(instructions); !errors.Is(err, session.ErrBatch) {
 		t.Fatalf("frozen write: %v", err)
@@ -65,7 +67,7 @@ func TestContextFrozenRetryAndConcurrentPinnedReads(t *testing.T) {
 	if !effectiveMatches(ev, expected) {
 		t.Fatal("frozen retry retained caller mutations")
 	}
-	wantI := session.Instructions{HistoryID: scope, Blocks: []session.InstructionBlock{{Parts: []session.ContentPart{{Kind: session.ContentText, Text: "root"}}, Source: session.ContentSource{Description: "adopted", WorkspaceFile: &session.WorkspaceFileSource{Path: "AGENTS.md"}}}}}
+	wantI := session.Instructions{HistoryID: scope, Blocks: []session.InstructionBlock{{Parts: []session.ContentPart{{Text: new("root")}}, Source: session.ContentSource{Description: "adopted", WorkspaceFile: &session.WorkspaceFileSource{Path: "AGENTS.md"}}}}}
 	wantT := session.ToolCatalog{HistoryID: scope, Tools: []session.ToolDefinition{{Name: "tool", ArgumentSchema: []byte("true")}}}
 	wantM := session.ModelBinding{HistoryID: scope, Route: "r", API: "a", Model: "m", Settings: []byte(" { } ")}
 	wantE := expected

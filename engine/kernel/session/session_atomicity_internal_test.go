@@ -140,7 +140,7 @@ func TestDetachedSessionStateOracleDetectsInPlaceMutation(t *testing.T) {
 		mutate func(*sessionState)
 	}{
 		{"encoded bytes", func(s *sessionState) { s.view.records[2].value.Payload[0] ^= 1 }},
-		{"decoded bytes", func(s *sessionState) { s.view.records[2].input.Parts[0].Media.Data[0] ^= 1 }},
+		{"decoded bytes", func(s *sessionState) { s.view.records[2].input.Parts[0].Media.InlineData[0] ^= 1 }},
 		{"record locator", func(s *sessionState) { s.view.records[2] = s.view.records[3] }},
 		{"input locator", func(s *sessionState) { s.view.inputs[0] = s.view.inputs[1] }},
 		{"run locator", func(s *sessionState) { s.view.runs[0].inputStart++ }},
