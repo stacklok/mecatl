@@ -31,7 +31,7 @@ func (c *clock) Advance(d time.Duration) {
 }
 
 // runCredentials checks the credentials registration issues with the
-// CredentialVerifier, the check AS-1 makes in process.
+// CredentialVerifier's session-keyed form, the broker's per-operation check.
 //
 //nolint:gocyclo // One flat subtest per contract case; splitting would scatter the shared fixture.
 func runCredentials(t *testing.T, factory Factory) {

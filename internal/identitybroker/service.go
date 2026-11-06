@@ -297,6 +297,15 @@ func (r VerifyCredentialRequest) Validate() error {
 	return nil
 }
 
+// VerifyCredentialForOwnerRequest asks whether an agent credential is valid
+// for use under a grant of Owner, whichever of the owner's broker sessions
+// the agent is registered to. AS-1's actor-token validator sends it, with
+// Owner read from the grant's sub_id.
+type VerifyCredentialForOwnerRequest struct {
+	Owner      Owner
+	Credential Token
+}
+
 // VerifiedAgent is the agent a valid credential identifies.
 type VerifiedAgent struct {
 	Agent AgentRef

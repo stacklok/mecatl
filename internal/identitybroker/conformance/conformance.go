@@ -23,7 +23,7 @@ import (
 )
 
 // Implementation is an identity broker under test: the Core Mecatl's calls
-// reach and the CredentialVerifier AS-1 calls.
+// reach and the CredentialVerifier the broker's own checks and AS-1 call.
 type Implementation interface {
 	identitybroker.Core
 	identitybroker.CredentialVerifier
@@ -48,6 +48,7 @@ func Run(t *testing.T, factory Factory) {
 	t.Run("closed sessions", func(t *testing.T) { runClosedSessions(t, service) })
 	t.Run("agents", func(t *testing.T) { runAgents(t, service) })
 	t.Run("credentials", func(t *testing.T) { runCredentials(t, factory) })
+	t.Run("credentials for an owner", func(t *testing.T) { runOwnerCredentials(t, factory) })
 	t.Run("invalid requests", func(t *testing.T) { runInvalidRequests(t, service) })
 	t.Run("workloads", func(t *testing.T) { runWorkloads(t, core) })
 }
