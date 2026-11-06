@@ -4,8 +4,12 @@ package format
 // origin. Its purpose is instructions by construction, not inferred from a file.
 // Assignment shares nested storage; Clone detaches it.
 type InstructionBlock struct {
-	Content []ContentPart `cbor:"c"`
-	Source  ContentSource `cbor:"s"`
+	// Parts preserves exact instruction order, including duplicates. Nil and empty
+	// are equivalent valid empty contributions; codec traversal validates children.
+	Parts []ContentPart `cbor:"c"`
+	// Source is required provenance even for an empty block; it does not confer
+	// authority. Codec traversal validates the source and its children.
+	Source ContentSource `cbor:"s"`
 }
 
 // Instructions is a complete session-scoped ordered root-instruction replacement.
@@ -13,5 +17,9 @@ type InstructionBlock struct {
 // block is distinct and still needs provenance. Assignment shares Blocks and
 // children; Clone detaches them. History scope comes from the enclosing envelope.
 type Instructions struct {
+	// Blocks preserves instruction contribution order and boundaries, including
+	// duplicates and empty blocks. Nil and empty explicitly clear root instructions.
+	// Codec traversal validates children; history identity is omitted here and
+	// restored from the enclosing envelope at the domain conversion boundary.
 	Blocks []InstructionBlock `cbor:"b"`
 }

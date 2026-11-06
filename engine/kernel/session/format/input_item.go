@@ -3,13 +3,20 @@ package format
 import "errors"
 
 // InputItem selects a whole user submission or inline attributed content.
-// UserInput is a positive ordinal in the enclosing batch's run. Assignment
+// UserInput is a positive ordinal in the enclosing EffectiveInput's run. Assignment
 // shares pointers and children; Clone detaches them.
 //
 //cborgen:validate Validate
 type InputItem struct {
-	UserInput *uint64          `cbor:"u,omitempty"`
-	Inline    *AttributedInput `cbor:"i,omitempty"`
+	// UserInput optionally references a whole submission by its required positive
+	// ordinal. The enclosing EffectiveInput supplies run scope, and its history
+	// envelope supplies history scope; conversion restores both. Inline must be nil.
+	// Validate checks positivity/exclusivity, not earlier same-run membership.
+	UserInput *uint64 `cbor:"u,omitempty"`
+	// Inline optionally retains attributed content, including an empty contribution.
+	// UserInput must be nil. Codec traversal validates a present child; neither
+	// branch may be absent together, and both may not be present together.
+	Inline *AttributedInput `cbor:"i,omitempty"`
 }
 
 // Validate checks variant exclusivity and the local reference, not membership.

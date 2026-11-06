@@ -14,7 +14,9 @@ import (
 // neither clear context nor request generation.
 // Assignment shares nested storage; Clone detaches it. Zero RunID is invalid.
 type EffectiveInput struct {
-	RunID  RunID
+	// RunID identifies the required active run that owns this increment.
+	RunID RunID
+	// Inputs is the ordered contribution; assignment borrows nested storage.
 	Inputs []InputItem
 }
 
@@ -72,19 +74,6 @@ func (v EffectiveInput) toFormat() sessionformat.EffectiveInput {
 	return out
 }
 
-// effectiveInputFromFormat restores enclosing scope without resolving references.
-// The DTO must already be detached before exporting its nested storage.
-func effectiveInputFromFormat(scope historyid.HistoryID, v sessionformat.EffectiveInput) EffectiveInput {
-	out := EffectiveInput{RunID: RunID{HistoryID: scope, Ordinal: v.RunID}}
-	if v.Inputs != nil {
-		out.Inputs = make([]InputItem, len(v.Inputs))
-		for i := range v.Inputs {
-			out.Inputs[i] = inputItemFromFormat(out.RunID, v.Inputs[i])
-		}
-	}
-	return out
-}
-
 // NewEffectiveInputRecord encodes an owned increment under explicit limits.
 // Failure returns zero. Construction checks full reference scope but does not
 // prove membership or order; aggregate admission validates every reference.
@@ -113,33 +102,30 @@ func NewEffectiveInputRecord(v EffectiveInput, limits codec.Limits) (Record, err
 	return Record{scope: v.RunID.HistoryID, effectiveInput: fact.Clone(), value: format.Record{Kind: sessionformat.KindEffectiveInput, KindVersion: sessionformat.Version, Payload: payload}}, nil
 }
 
-// EffectiveInputView is an immutable fixed-size incremental-input handle. Zero
-// exports zero values; all mutable exports detach storage.
+// EffectiveInputView retains immutable accepted backing storage, including its
+// record. Capture and navigation cost O(1); zero has no run or items.
 type EffectiveInputView struct {
-	scope  historyid.HistoryID
-	record *acceptedRecord
+	scope historyid.HistoryID
+	value *sessionformat.EffectiveInput
 }
 
 // RunID returns the admitting run, or zero for zero.
 func (v EffectiveInputView) RunID() RunID {
-	if v.record == nil {
+	if v.value == nil {
 		return RunID{}
 	}
-	return RunID{HistoryID: v.scope, Ordinal: v.record.effective.RunID}
+	return RunID{HistoryID: v.scope, Ordinal: v.value.RunID}
 }
 
-// Value returns an independently owned public value, or zero for zero.
-func (v EffectiveInputView) Value() EffectiveInput {
-	if v.record == nil {
-		return EffectiveInput{}
+// InputCount returns the number of ordered items, or zero for zero.
+func (v EffectiveInputView) InputCount() int {
+	if v.value == nil {
+		return 0
 	}
-	return effectiveInputFromFormat(v.scope, v.record.effective.Clone())
+	return len(v.value.Inputs)
 }
 
-// Format returns a detached DTO, or zero for zero.
-func (v EffectiveInputView) Format() sessionformat.EffectiveInput {
-	if v.record == nil {
-		return sessionformat.EffectiveInput{}
-	}
-	return v.record.effective.Clone()
+// InputAt returns an immutable item. It panics outside [0, InputCount()).
+func (v EffectiveInputView) InputAt(i int) InputItemView {
+	return InputItemView{run: v.RunID(), value: &v.value.Inputs[i]}
 }

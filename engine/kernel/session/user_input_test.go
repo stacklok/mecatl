@@ -13,7 +13,7 @@ import (
 )
 
 func TestUserInput(t *testing.T) {
-	id := session.InputID{RunID: session.RunID{HistoryID: testHistoryID(t), Ordinal: 1}, Ordinal: 1}
+	id := session.UserInputID{RunID: session.RunID{HistoryID: testHistoryID(t), Ordinal: 1}, Ordinal: 1}
 	for _, content := range [][]byte{nil, {}, {0xff, 0, 0x9f}, []byte(`{ "not": json }`), []byte(" e\u0301\r\n")} {
 		v := session.UserInput{ID: id, Parts: byteParts(bytes.Clone(content))}
 		if err := v.Validate(); err != nil {
@@ -63,7 +63,7 @@ func TestUserInput(t *testing.T) {
 }
 
 func TestUserInputLimitsAndTransactionalRead(t *testing.T) {
-	v := session.UserInput{ID: session.InputID{RunID: session.RunID{HistoryID: testHistoryID(t), Ordinal: 1}, Ordinal: 1}, Parts: byteParts([]byte{1, 2})}
+	v := session.UserInput{ID: session.UserInputID{RunID: session.RunID{HistoryID: testHistoryID(t), Ordinal: 1}, Ordinal: 1}, Parts: byteParts([]byte{1, 2})}
 	r, err := session.NewUserInputRecord(v, testLimits())
 	if err != nil {
 		t.Fatal(err)

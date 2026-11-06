@@ -12,8 +12,13 @@ import (
 //
 //cborgen:validate Validate
 type ToolDefinition struct {
-	Name           string `cbor:"n"`
-	Description    string `cbor:"d"`
+	// Name is the required nonempty exact UTF-8 advertised tool name, not an
+	// implementation identity. The enclosing ToolCatalog checks name uniqueness.
+	Name string `cbor:"n"`
+	// Description is exact UTF-8 model-facing descriptive text; empty is valid.
+	Description string `cbor:"d"`
+	// ArgumentSchema is required explicit valid JSON, including boolean schemas.
+	// Bytes are preserved exactly; Validate checks JSON syntax, not schema semantics.
 	ArgumentSchema []byte `cbor:"s"`
 }
 

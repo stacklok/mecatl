@@ -64,7 +64,7 @@ func TestOwnedCoreLifecycleSnapshotsAndReplay(t *testing.T) {
 		t.Fatal("new scope")
 	}
 	b := ownedCoreBatch(t, s)
-	if _, err := b.AddInput(session.AddInputRequest{}); !errors.Is(err, session.ErrTransition) {
+	if _, err := b.AddUserInput(session.AddUserInputRequest{}); !errors.Is(err, session.ErrTransition) {
 		t.Fatal(err)
 	}
 	if err := b.Create(); err != nil {
@@ -75,7 +75,7 @@ func TestOwnedCoreLifecycleSnapshotsAndReplay(t *testing.T) {
 		t.Fatal(err)
 	}
 	content := []byte{0xff, 0, 'x'}
-	input, err := b.AddInput(session.AddInputRequest{RunID: run, Parts: byteParts(content)})
+	input, err := b.AddUserInput(session.AddUserInputRequest{RunID: run, Parts: byteParts(content)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,7 +88,7 @@ func TestOwnedCoreLifecycleSnapshotsAndReplay(t *testing.T) {
 	}
 	ownedCoreSubmit(t, s, b)
 	old := s.Snapshot()
-	oldRun, oldInput := old.RunAt(0), old.RunAt(0).InputAt(0)
+	oldRun, oldInput := old.RunAt(0), lookupInput(t, old, run, input.Ordinal)
 	oldRecord := oldRun.RecordAt(1)
 	if _, ok := old.RecordAt(0).Created(); !ok {
 		t.Fatal("creation kind")
@@ -104,8 +104,6 @@ func TestOwnedCoreLifecycleSnapshotsAndReplay(t *testing.T) {
 	}
 	got := inputBytes(oldInput)
 	got[0] = 0
-	dto := oldInput.Format()
-	dtoInputBytes(dto)[0] = 0
 	raw := old.RecordAt(2).Format()
 	raw.Payload[0] = 0
 
@@ -113,11 +111,11 @@ func TestOwnedCoreLifecycleSnapshotsAndReplay(t *testing.T) {
 	for range 4 {
 		wg.Go(func() {
 			for range 4000 {
-				if old.RecordCount() != 3 || oldRun.RecordCount() != 2 || oldRun.InputCount() != 1 || inputBytes(oldInput)[0] != 0xff {
+				if old.RecordCount() != 3 || oldRun.RecordCount() != 2 || !userInputsMatch(old, run, 1) || inputBytes(oldInput)[0] != 0xff {
 					t.Error("old handle changed")
 					return
 				}
-				if old.RunAt(0).InputAt(0).ID() != input {
+				if got, ok := old.UserInputByID(input); !ok || got.ID() != input {
 					t.Error("navigation changed")
 					return
 				}
@@ -137,7 +135,7 @@ func TestOwnedCoreLifecycleSnapshotsAndReplay(t *testing.T) {
 	}
 	for n := 0; n < 128; n++ {
 		b := ownedCoreBatch(t, s)
-		if _, err := b.AddInput(session.AddInputRequest{RunID: run, Parts: byteParts([]byte{byte(n)})}); err != nil {
+		if _, err := b.AddUserInput(session.AddUserInputRequest{RunID: run, Parts: byteParts([]byte{byte(n)})}); err != nil {
 			t.Fatal(err)
 		}
 		ownedCoreSubmit(t, s, b)
@@ -150,17 +148,17 @@ func TestOwnedCoreLifecycleSnapshotsAndReplay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := b.AddInput(session.AddInputRequest{RunID: run}); !errors.Is(err, session.ErrTransition) {
+	if _, err := b.AddUserInput(session.AddUserInputRequest{RunID: run}); !errors.Is(err, session.ErrTransition) {
 		t.Fatal(err)
 	}
-	nextInput, err := b.AddInput(session.AddInputRequest{RunID: next})
+	nextInput, err := b.AddUserInput(session.AddUserInputRequest{RunID: next})
 	if err != nil || nextInput.Ordinal != 1 {
 		t.Fatalf("new run numbering: %v", err)
 	}
 	ownedCoreSubmit(t, s, b)
 	wg.Wait()
 	v := s.Snapshot()
-	if v.RunAt(0).RecordCount() != 131 || v.RunAt(0).InputCount() != 129 || v.RunAt(1).RecordCount() != 2 {
+	if v.RunAt(0).RecordCount() != 131 || !userInputsMatch(v, run, 129) || v.RunAt(1).RecordCount() != 2 {
 		t.Fatal("run endpoints")
 	}
 	if oldRun.RecordCount() != 2 || old.RecordCount() != 3 {
@@ -227,7 +225,7 @@ func TestOwnedCoreApplyAtomicityAndImportedStorage(t *testing.T) {
 	for _, r := range c.Records {
 		clear(r.Payload)
 	}
-	if string(inputBytes(s.Snapshot().RunAt(0).InputAt(0))) != "exact" {
+	if string(inputBytes(lookupInput(t, s.Snapshot(), session.RunID{HistoryID: id, Ordinal: 1}, 1))) != "exact" {
 		t.Fatal("imported payload alias")
 	}
 }
@@ -256,7 +254,7 @@ func TestOwnedCoreReserveRejectionAndScopedContracts(t *testing.T) {
 	if first.Ordinal != 1 {
 		t.Fatal("provisional run")
 	}
-	inputID := session.InputID{RunID: session.RunID{HistoryID: id, Ordinal: 2}, Ordinal: math.MaxUint64}
+	inputID := session.UserInputID{RunID: session.RunID{HistoryID: id, Ordinal: 2}, Ordinal: math.MaxUint64}
 	if _, err := inputID.Next(); !errors.Is(err, session.ErrOrdinalExhausted) {
 		t.Fatal(err)
 	}

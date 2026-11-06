@@ -47,7 +47,7 @@ func TestRecordMetadataAgreementAndOwnership(t *testing.T) {
 	s, limits := internalFixture(t)
 	id := s.Snapshot().HistoryID()
 	run := RunStarted{ID: RunID{HistoryID: id, Ordinal: 24}}
-	input := UserInput{ID: InputID{RunID: run.ID, Ordinal: 24}, Parts: internalByteParts([]byte{0xff, 0, 'x'})}
+	input := UserInput{ID: UserInputID{RunID: run.ID, Ordinal: 24}, Parts: internalByteParts([]byte{0xff, 0, 'x'})}
 	constructors := []struct {
 		name string
 		make func() (Record, error)
@@ -125,12 +125,12 @@ func TestMetadataPreflightBoundedDecodeDoesNotPublish(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	first, err := NewUserInputRecord(UserInput{ID: InputID{RunID: run, Ordinal: 1}, Parts: internalByteParts(make([]byte, 512))}, limits)
+	first, err := NewUserInputRecord(UserInput{ID: UserInputID{RunID: run, Ordinal: 1}, Parts: internalByteParts(make([]byte, 512))}, limits)
 	if err != nil {
 		t.Fatal(err)
 	}
 	p := internalApply(t, s, created, start, first)
-	second, err := NewUserInputRecord(UserInput{ID: InputID{RunID: run, Ordinal: 2}, Parts: internalByteParts(make([]byte, 512))}, limits)
+	second, err := NewUserInputRecord(UserInput{ID: UserInputID{RunID: run, Ordinal: 2}, Parts: internalByteParts(make([]byte, 512))}, limits)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -145,7 +145,7 @@ func TestMetadataPreflightBoundedDecodeDoesNotPublish(t *testing.T) {
 	if err := s.preflight(records, p.ref, uint64(len(second.value.Payload)+len(closeout.value.Payload))); err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(before, s.Snapshot()) || s.Snapshot().RunAt(0).InputCount() != 1 {
+	if !reflect.DeepEqual(before, s.Snapshot()) || !internalUserInputsMatch(s.Snapshot(), run, 1) {
 		t.Fatal("preflight published")
 	}
 }
@@ -165,7 +165,7 @@ func TestPreparationRetainsOriginatingScope(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	input, err := NewUserInputRecord(UserInput{ID: InputID{RunID: run, Ordinal: 1}}, limits)
+	input, err := NewUserInputRecord(UserInput{ID: UserInputID{RunID: run, Ordinal: 1}}, limits)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -60,7 +60,7 @@ func decodeAccepted(v format.Record, limits codec.Limits) (*acceptedRecord, erro
 // the shared reducer. All backing storage is already private and immutable.
 func (r *acceptedRecord) metadata(scope historyid.HistoryID) Record {
 	out := Record{scope: scope, value: r.value,
-		userInput:      InputID{RunID: RunID{HistoryID: scope, Ordinal: r.input.RunID}, Ordinal: r.input.ID},
+		userInput:      UserInputID{RunID: RunID{HistoryID: scope, Ordinal: r.input.RunID}, Ordinal: r.input.ID},
 		runStarted:     r.started,
 		runInterrupted: RunInterrupted{ID: RunID{HistoryID: scope, Ordinal: r.interrupted.ID}},
 		effectiveInput: r.effective,
@@ -107,12 +107,12 @@ func (v RecordView) Created() (Created, bool) {
 	return Created{HistoryID: v.scope}, true
 }
 
-// UserInput returns an immutable input handle only for the input kind.
-func (v RecordView) UserInput() (InputView, bool) {
+// UserInput returns an immutable user-submission handle only for that kind.
+func (v RecordView) UserInput() (UserInputView, bool) {
 	if v.Kind() != sessionformat.KindUserInput {
-		return InputView{}, false
+		return UserInputView{}, false
 	}
-	return InputView(v), true
+	return UserInputView{scope: v.scope, value: &v.record.input}, true
 }
 
 // RunStarted returns the scoped start fact only for the start kind.
@@ -136,7 +136,7 @@ func (v RecordView) Instructions() (InstructionsView, bool) {
 	if v.Kind() != sessionformat.KindInstructions {
 		return InstructionsView{}, false
 	}
-	return InstructionsView(v), true
+	return InstructionsView{scope: v.scope, value: &v.record.instructions}, true
 }
 
 // ToolCatalog returns a replacement handle only for the catalog kind.
@@ -144,7 +144,7 @@ func (v RecordView) ToolCatalog() (ToolCatalogView, bool) {
 	if v.Kind() != sessionformat.KindToolCatalog {
 		return ToolCatalogView{}, false
 	}
-	return ToolCatalogView(v), true
+	return ToolCatalogView{scope: v.scope, value: &v.record.catalog}, true
 }
 
 // ModelBinding returns a replacement handle only for the binding kind.
@@ -152,7 +152,7 @@ func (v RecordView) ModelBinding() (ModelBindingView, bool) {
 	if v.Kind() != sessionformat.KindModelBinding {
 		return ModelBindingView{}, false
 	}
-	return ModelBindingView(v), true
+	return ModelBindingView{scope: v.scope, value: &v.record.binding}, true
 }
 
 // EffectiveInput returns an incremental-input handle only for that kind.
@@ -160,5 +160,5 @@ func (v RecordView) EffectiveInput() (EffectiveInputView, bool) {
 	if v.Kind() != sessionformat.KindEffectiveInput {
 		return EffectiveInputView{}, false
 	}
-	return EffectiveInputView(v), true
+	return EffectiveInputView{scope: v.scope, value: &v.record.effective}, true
 }

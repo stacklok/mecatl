@@ -25,7 +25,7 @@ type Record struct {
 
 	// value.Kind selects these constructor-established lifecycle scalars.
 	// User input content exists only in value.
-	userInput      InputID
+	userInput      UserInputID
 	runStarted     sessionformat.RunStarted
 	runInterrupted RunInterrupted
 	// Constructor-established effective contribution owns all nested storage.

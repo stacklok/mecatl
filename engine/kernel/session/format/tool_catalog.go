@@ -4,10 +4,14 @@ import "errors"
 
 // ToolCatalog is a complete session-scoped ordered advertised catalog replacement.
 // Nil and empty Tools are equivalent explicit empty replacements. Assignment shares
-// Tools and schema bytes; Clone detaches them. History scope is supplied externally.
+// Tools and schema bytes; Clone detaches them. History identity is omitted here
+// and restored from the enclosing envelope at the domain conversion boundary.
 //
 //cborgen:validate Validate
 type ToolCatalog struct {
+	// Tools preserves advertised order. Names must be unique within this replacement
+	// (checked locally); codec traversal validates each definition. Nil and empty
+	// explicitly replace the catalog with no tools, without granting execution rights.
 	Tools []ToolDefinition `cbor:"t"`
 }
 

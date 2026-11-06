@@ -7,11 +7,15 @@ import "errors"
 //
 //cborgen:validate Validate
 type UserInput struct {
-	// RunID is the nonzero owning run ordinal within the history.
+	// RunID is the required one-based owning run ordinal within the enclosing
+	// history. Conversion restores history scope from the envelope; the aggregate
+	// checks active-run membership, not this payload's local validator.
 	RunID uint64 `cbor:"r"`
-	// ID is the nonzero input ordinal within the owning run.
+	// ID is the required one-based user-submission ordinal within RunID. Local
+	// validation checks positivity; the aggregate checks contiguous allocation.
 	ID uint64 `cbor:"i"`
-	// Parts preserves exact content order.
+	// Parts preserves exact submission order, including duplicates. Nil and empty
+	// are equivalent valid empty submissions; codec traversal validates children.
 	Parts []ContentPart `cbor:"p"`
 }
 

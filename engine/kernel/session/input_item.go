@@ -9,8 +9,10 @@ import (
 // References inherit original user authorship without an actor override.
 // Assignment shares pointers and children; Clone detaches them. Zero is invalid.
 type InputItem struct {
-	UserInput *InputID
-	Inline    *AttributedInput
+	// UserInput is the whole-submission reference branch.
+	UserInput *UserInputID
+	// Inline is the attributed inline-contribution branch.
+	Inline *AttributedInput
 }
 
 // Validate checks variant and full reference identity, not aggregate membership.
@@ -62,19 +64,30 @@ func (v InputItem) toFormat() sessionformat.InputItem {
 	return out
 }
 
-// inputItemFromFormat restores full reference scope from the enclosing run.
-// Inline bytes and provenance are borrowed; exported callers supply a cloned DTO.
-func inputItemFromFormat(run RunID, v sessionformat.InputItem) InputItem {
-	out := InputItem{}
-	if v.UserInput != nil {
-		out.UserInput = &InputID{RunID: run, Ordinal: *v.UserInput}
-	}
-	if v.Inline != nil {
-		in := attributedInputFromFormat(*v.Inline)
-		out.Inline = &in
-	}
-	return out
+// InputItemView retains immutable backing storage and its enclosing run scope.
+// Capture and navigation cost O(1); neither branch is present on zero.
+type InputItemView struct {
+	run   RunID
+	value *sessionformat.InputItem
 }
+
+// UserInput returns the whole-submission reference with its full enclosing scope.
+// The inline branch and zero return zero,false.
+func (v InputItemView) UserInput() (UserInputID, bool) {
+	if v.value == nil || v.value.UserInput == nil {
+		return UserInputID{}, false
+	}
+	return UserInputID{RunID: v.run, Ordinal: *v.value.UserInput}, true
+}
+
+// Inline returns the inline contribution; the reference branch and zero return zero,false.
+func (v InputItemView) Inline() (AttributedInputView, bool) {
+	if v.value == nil || v.value.Inline == nil {
+		return AttributedInputView{}, false
+	}
+	return AttributedInputView{value: v.value.Inline}, true
+}
+
 func (v InputItem) checkSize(b *valueBudget) {
 	if v.UserInput != nil {
 		b.pointer()

@@ -49,11 +49,37 @@ func (v Snapshot) RecordAt(i int) RecordView {
 // RunAt returns a run with bounds pinned to this snapshot; out-of-range indices panic.
 func (v Snapshot) RunAt(i int) RunView {
 	r := v.runs[i]
-	recordEnd, inputEnd := len(v.records), len(v.inputs)
+	recordEnd := len(v.records)
 	if i+1 < len(v.runs) {
-		recordEnd, inputEnd = v.runs[i+1].recordStart, v.runs[i+1].inputStart
+		recordEnd = v.runs[i+1].recordStart
 	}
-	return RunView{id: r.id, scope: v.historyID, records: v.records[r.recordStart:recordEnd:recordEnd], inputs: v.inputs[r.inputStart:inputEnd:inputEnd], allRecords: v.records}
+	return RunView{id: r.id, scope: v.historyID, records: v.records[r.recordStart:recordEnd:recordEnd]}
+}
+
+// UserInputByID returns an accepted submission in O(1), with bounds pinned to this
+// snapshot. Invalid, foreign or absent identities return zero, false. An accepted
+// empty submission is present, including after its run is interrupted.
+func (v Snapshot) UserInputByID(id UserInputID) (UserInputView, bool) {
+	if id.RunID.HistoryID != v.historyID || id.RunID.Ordinal == 0 || id.RunID.Ordinal > uint64(len(v.runs)) || id.Ordinal == 0 {
+		return UserInputView{}, false
+	}
+	i := int(id.RunID.Ordinal - 1) //nolint:gosec // Positive ordinal is bounded by len(v.runs) above.
+	r := v.runs[i]
+	if r.id != id.RunID {
+		return UserInputView{}, false
+	}
+	end := len(v.inputs)
+	if i+1 < len(v.runs) {
+		end = v.runs[i+1].inputStart
+	}
+	if id.Ordinal > uint64(end-r.inputStart) { //nolint:gosec // Accepted run locators are monotonic and within pinned input bounds.
+		return UserInputView{}, false
+	}
+	record := v.records[v.inputs[r.inputStart+int(id.Ordinal-1)]] //nolint:gosec // Positive ordinal is bounded by the int-sized run span above.
+	if record.input.RunID != id.RunID.Ordinal || record.input.ID != id.Ordinal {
+		return UserInputView{}, false
+	}
+	return UserInputView{scope: v.historyID, value: &record.input}, true
 }
 
 // Instructions returns the latest accepted replacement at this head, including
@@ -62,7 +88,7 @@ func (v Snapshot) Instructions() (InstructionsView, bool) {
 	if v.instructions == nil {
 		return InstructionsView{}, false
 	}
-	return InstructionsView{scope: v.historyID, record: v.instructions}, true
+	return InstructionsView{scope: v.historyID, value: &v.instructions.instructions}, true
 }
 
 // ToolCatalog returns the latest accepted replacement at this head in O(1).
@@ -71,7 +97,7 @@ func (v Snapshot) ToolCatalog() (ToolCatalogView, bool) {
 	if v.catalog == nil {
 		return ToolCatalogView{}, false
 	}
-	return ToolCatalogView{scope: v.historyID, record: v.catalog}, true
+	return ToolCatalogView{scope: v.historyID, value: &v.catalog.catalog}, true
 }
 
 // ModelBinding returns the latest accepted replacement at this head in O(1), or
@@ -80,7 +106,7 @@ func (v Snapshot) ModelBinding() (ModelBindingView, bool) {
 	if v.binding == nil {
 		return ModelBindingView{}, false
 	}
-	return ModelBindingView{scope: v.historyID, record: v.binding}, true
+	return ModelBindingView{scope: v.historyID, value: &v.binding.binding}, true
 }
 
 // runEntry is immutable. Endpoints derive from the next entry or captured lengths,

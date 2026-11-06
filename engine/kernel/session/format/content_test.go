@@ -10,6 +10,24 @@ import (
 	"github.com/stacklok/mecatl/engine/kernel/session/format"
 )
 
+func TestContentVocabulary(t *testing.T) {
+	for _, pair := range [][2]string{
+		{format.ContentText, "text"},
+		{format.ContentImage, "image"},
+		{format.ContentAudio, "audio"},
+		{format.ContentDocument, "document"},
+		{format.MediaInline, "inline"},
+		{format.MediaRemote, "remote"},
+		{format.MediaProvider, "provider"},
+		{format.PromptInstructions, "instructions"},
+		{format.PromptContext, "context"},
+	} {
+		if pair[0] != pair[1] {
+			t.Errorf("persisted vocabulary = %q, want %q", pair[0], pair[1])
+		}
+	}
+}
+
 func TestContentRoundTrip(t *testing.T) {
 	v := format.UserInput{RunID: 1, ID: 1, Parts: []format.ContentPart{
 		{Kind: "text", Text: "  e\u0301\n\x00尾 "},

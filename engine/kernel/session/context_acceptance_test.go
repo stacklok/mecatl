@@ -31,13 +31,13 @@ func TestContextIndependentReplacementsAndFixtureFreeLoad(t *testing.T) {
 		mustBatch(t, err)
 		prepared[i] = string(data)
 	}
-	instructions := session.Instructions{HistoryID: scope, Blocks: []session.InstructionBlock{{Content: []session.ContentPart{{Kind: session.ContentText, Text: prepared[1]}}, Source: session.ContentSource{Description: "caller adopted root", WorkspaceFile: &session.WorkspaceFileSource{Path: paths[1]}}}}}
+	instructions := session.Instructions{HistoryID: scope, Blocks: []session.InstructionBlock{{Parts: []session.ContentPart{{Kind: session.ContentText, Text: prepared[1]}}, Source: session.ContentSource{Description: "caller adopted root", WorkspaceFile: &session.WorkspaceFileSource{Path: paths[1]}}}}}
 	catalog := session.ToolCatalog{HistoryID: scope, Tools: []session.ToolDefinition{{Name: "second", ArgumentSchema: []byte(" {\"z\":1.00, \"a\":true} ")}, {Name: "first", ArgumentSchema: []byte("false")}}}
 	binding := session.ModelBinding{HistoryID: scope, Route: "route", API: "dialect/v1", Model: "alias", Settings: []byte(prepared[2])}
 	b := beginBatch(t, s)
 	mustBatch(t, b.Create())
 	run := batchRun(t, b)
-	input, err := b.AddInput(session.AddInputRequest{RunID: run, Parts: richContent()})
+	input, err := b.AddUserInput(session.AddUserInputRequest{RunID: run, Parts: richContent()})
 	mustBatch(t, err)
 	effective := session.EffectiveInput{RunID: run, Inputs: []session.InputItem{{UserInput: &input}, {Inline: &session.AttributedInput{Actor: "skill/example", Purpose: session.PromptInstructions, Parts: []session.ContentPart{{Kind: session.ContentText, Text: prepared[0]}}, Source: session.ContentSource{Description: "caller expanded skill", WorkspaceFile: &session.WorkspaceFileSource{Path: paths[0]}}}}}}
 	mustBatch(t, b.ReplaceInstructions(instructions))
@@ -100,38 +100,22 @@ func TestContextIndependentReplacementsAndFixtureFreeLoad(t *testing.T) {
 	}
 	oneEmpty, ok := snapshots[1].RecordAt(9).EffectiveInput()
 	noPrompts, okEmpty := snapshots[1].RecordAt(10).EffectiveInput()
-	if !ok || !okEmpty || len(oneEmpty.Value().Inputs) != 1 || len(oneEmpty.Value().Inputs[0].Inline.Parts) != 0 || len(noPrompts.Value().Inputs) != 0 || oneEmpty.RunID() != run || noPrompts.RunID() != run {
+	if !ok || !okEmpty || oneEmpty.InputCount() != 1 || inlineAt(t, oneEmpty, 0).PartCount() != 0 || noPrompts.InputCount() != 0 || oneEmpty.RunID() != run || noPrompts.RunID() != run {
 		t.Fatal("same-commit effective revisions collapsed")
 	}
 
 	// Mutate every mutable export at every captured head, then recheck all heads.
 	// In particular, exports from the newest snapshot cannot corrupt old handles.
 	for _, snapshot := range snapshots {
-		iv, _ := snapshot.Instructions()
-		if len(iv.Value().Blocks) != 0 {
-			iv.Value().Blocks[0].Content[0].Text = "export changed"
-			iv.Format().Blocks[0].Source.WorkspaceFile.Path = "changed"
-		}
 		tv, _ := snapshot.ToolCatalog()
-		if len(tv.Value().Tools) != 0 {
-			clear(tv.Value().Tools[0].ArgumentSchema)
-			clear(tv.Format().Tools[0].ArgumentSchema)
+		if tv.ToolCount() != 0 {
+			clear(tv.ToolAt(0).ArgumentSchema())
 		}
 		mv, _ := snapshot.ModelBinding()
-		clear(mv.Value().Settings)
-		clear(mv.Format().Settings)
+		clear(mv.Settings())
 		uv, _ := snapshot.RecordAt(2).UserInput()
-		uv.Parts()[1].Media.Data[0] = 0
-		uv.Parts()[2].Media.URI = "urn:changed"
-		uv.Parts()[3].Media.ReferenceID = "changed"
-		uv.Parts()[5].Media.Data = []byte("changed")
-		uv.Format().Parts[1].Media.Data[0] = 0
-		uv.Format().Parts[2].Media.URI = "urn:changed"
-		uv.Format().Parts[3].Media.Scope = "changed"
-		uv.Format().Parts[5].Media.Data = []byte("changed")
-		ev, _ := snapshot.RecordAt(6).EffectiveInput()
-		ev.Value().Inputs[0].UserInput.Ordinal = 99
-		ev.Format().Inputs[1].Inline.Parts[0].Text = "changed"
+		mutateMediaBytes(t, uv.PartAt(1))
+		clear(snapshot.RecordAt(6).Format().Payload)
 	}
 	for i, snapshot := range snapshots {
 		iv, _ := snapshot.Instructions()
@@ -139,7 +123,7 @@ func TestContextIndependentReplacementsAndFixtureFreeLoad(t *testing.T) {
 		mv, _ := snapshot.ModelBinding()
 		uv, _ := snapshot.RecordAt(2).UserInput()
 		ev, _ := snapshot.RecordAt(6).EffectiveInput()
-		if !iv.Value().Equal(wantI[i]) || !tv.Value().Equal(wantT[i]) || !mv.Value().Equal(wantM[i]) || !(session.UserInput{ID: uv.ID(), Parts: uv.Parts()}).Equal(session.UserInput{ID: uv.ID(), Parts: richContent()}) || !ev.Value().Equal(effective) {
+		if !instructionsMatch(iv, wantI[i]) || !catalogMatches(tv, wantT[i]) || !bindingMatches(mv, wantM[i]) || !userInputMatches(uv, session.UserInput{ID: uv.ID(), Parts: richContent()}) || !effectiveMatches(ev, effective) {
 			t.Fatalf("snapshot %d changed after export mutation", i)
 		}
 	}
@@ -196,7 +180,7 @@ func TestContextIndependentReplacementDoesNotMergeStaleHead(t *testing.T) {
 	loaded, err := session.Load(context.Background(), h, scope, sessionPolicy())
 	mustBatch(t, err)
 	iv, ok := loaded.Snapshot().Instructions()
-	if !ok || !iv.Value().Equal(instructions) || loaded.Snapshot().Head() != head {
+	if !ok || !instructionsMatch(iv, instructions) || loaded.Snapshot().Head() != head {
 		t.Fatal("fresh load lost the winning independent component")
 	}
 	if _, present := loaded.Snapshot().ToolCatalog(); present {

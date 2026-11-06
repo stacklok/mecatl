@@ -2020,12 +2020,12 @@ func (h cborgen) read19(r *cborgenCodec.Reader, d, cap int) (v []InstructionBloc
 // Helpers 20: InstructionBlock.
 func (h cborgen) clone20(v InstructionBlock) InstructionBlock {
 	out := v
-	out.Content = h.clone21(v.Content)
+	out.Parts = h.clone21(v.Parts)
 	out.Source = h.clone15(v.Source)
 	return out
 }
 func (h cborgen) equal20(v, w InstructionBlock) bool {
-	if !h.equal21(v.Content, w.Content) {
+	if !h.equal21(v.Parts, w.Parts) {
 		return false
 	}
 	if !h.equal15(v.Source, w.Source) {
@@ -2039,10 +2039,10 @@ func (h cborgen) check20(v InstructionBlock, b *cborgenCodec.Budget, d, cap int)
 		return err
 	}
 	if err := b.CheckString("c", d+1, int(^uint(0)>>1)); err != nil {
-		return cborgenFmt.Errorf("Content: %w", err)
+		return cborgenFmt.Errorf("Parts: %w", err)
 	}
-	if err := h.check21(v.Content, b, d+1, int(^uint(0)>>1)); err != nil {
-		return cborgenFmt.Errorf("Content: %w", err)
+	if err := h.check21(v.Parts, b, d+1, int(^uint(0)>>1)); err != nil {
+		return cborgenFmt.Errorf("Parts: %w", err)
 	}
 	if err := b.CheckString("s", d+1, int(^uint(0)>>1)); err != nil {
 		return cborgenFmt.Errorf("Source: %w", err)
@@ -2056,7 +2056,7 @@ func (h cborgen) append20(out []byte, v InstructionBlock) []byte {
 	count := 2
 	out = cborgenCBOR.AppendMapHeader(out, uint64(count))
 	out = cborgenCBOR.AppendText(out, "c")
-	out = h.append21(out, v.Content)
+	out = h.append21(out, v.Parts)
 	out = cborgenCBOR.AppendText(out, "s")
 	out = h.append15(out, v.Source)
 	return out
@@ -2081,9 +2081,9 @@ func (h cborgen) read20(r *cborgenCodec.Reader, d, cap int) (v InstructionBlock,
 		switch key {
 		case "c":
 			seen[0] = true
-			v.Content, err = h.read21(r, d+1, int(^uint(0)>>1))
+			v.Parts, err = h.read21(r, d+1, int(^uint(0)>>1))
 			if err != nil {
-				return v, cborgenFmt.Errorf("Content: %w", err)
+				return v, cborgenFmt.Errorf("Parts: %w", err)
 			}
 		case "s":
 			seen[1] = true

@@ -16,11 +16,17 @@ import (
 // Assignment shares Settings; Clone detaches it. Zero is invalid. The caller owns
 // retention safety and completeness; this passive value certifies neither.
 type ModelBinding struct {
+	// HistoryID is the required scope of this replacement.
 	HistoryID historyid.HistoryID
-	Route     string
-	API       string
-	Model     string
-	Settings  []byte
+	// Route is a logical provider/route name relative to the preparing harness's
+	// configuration, not a global provider identity or observed upstream endpoint.
+	Route string
+	// API is the required declared API dialect and version.
+	API string
+	// Model is the required declared model name or alias.
+	Model string
+	// Settings is exact explicit JSON; assignment borrows the bytes.
+	Settings []byte
 }
 
 // Validate checks scope, binding strings and JSON syntax without resource limits.
@@ -40,9 +46,6 @@ func (v ModelBinding) Equal(other ModelBinding) bool {
 }
 func (v ModelBinding) toFormat() sessionformat.ModelBinding {
 	return sessionformat.ModelBinding{Route: v.Route, API: v.API, Model: v.Model, Settings: v.Settings}
-}
-func modelBindingFromFormat(scope historyid.HistoryID, v sessionformat.ModelBinding) ModelBinding {
-	return ModelBinding{HistoryID: scope, Route: v.Route, API: v.API, Model: v.Model, Settings: v.Settings}
 }
 
 // NewModelBindingRecord encodes an owned scoped replacement under explicit limits.
@@ -66,28 +69,45 @@ func NewModelBindingRecord(v ModelBinding, limits codec.Limits) (Record, error) 
 	return Record{scope: v.HistoryID, value: format.Record{Kind: sessionformat.KindModelBinding, KindVersion: sessionformat.Version, Payload: payload}}, nil
 }
 
-// ModelBindingView is an immutable fixed-size accepted binding handle. Zero exports
-// zero values; mutable exports detach storage.
+// ModelBindingView retains immutable accepted backing storage, including its
+// record. Capture and scalar navigation cost O(1); zero has empty fields.
 type ModelBindingView struct {
-	scope  historyid.HistoryID
-	record *acceptedRecord
+	scope historyid.HistoryID
+	value *sessionformat.ModelBinding
 }
 
 // HistoryID returns retained scope, or zero for zero.
 func (v ModelBindingView) HistoryID() historyid.HistoryID { return v.scope }
 
-// Value returns an independently owned public value, or zero for zero.
-func (v ModelBindingView) Value() ModelBinding {
-	if v.record == nil {
-		return ModelBinding{}
+// Route returns the harness-relative logical route, or empty for zero.
+func (v ModelBindingView) Route() string {
+	if v.value == nil {
+		return ""
 	}
-	return modelBindingFromFormat(v.scope, v.record.binding.Clone())
+	return v.value.Route
 }
 
-// Format returns a detached DTO, or zero for zero.
-func (v ModelBindingView) Format() sessionformat.ModelBinding {
-	if v.record == nil {
-		return sessionformat.ModelBinding{}
+// API returns the declared API, or empty for zero.
+func (v ModelBindingView) API() string {
+	if v.value == nil {
+		return ""
 	}
-	return v.record.binding.Clone()
+	return v.value.API
+}
+
+// Model returns the declared model, or empty for zero.
+func (v ModelBindingView) Model() string {
+	if v.value == nil {
+		return ""
+	}
+	return v.value.Model
+}
+
+// Settings returns independently owned exact JSON bytes, or nil for zero.
+// It copies only this field, never other accepted content.
+func (v ModelBindingView) Settings() []byte {
+	if v.value == nil {
+		return nil
+	}
+	return bytes.Clone(v.value.Settings)
 }

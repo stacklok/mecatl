@@ -1,13 +1,11 @@
 package session_test
 
 import (
-	"reflect"
 	"testing"
 
 	"github.com/stacklok/mecatl/engine/kernel/history"
 	historyid "github.com/stacklok/mecatl/engine/kernel/history/id"
 	"github.com/stacklok/mecatl/engine/kernel/session"
-	sessionformat "github.com/stacklok/mecatl/engine/kernel/session/format"
 )
 
 func TestSnapshotZeroKindsAndIndexBounds(t *testing.T) {
@@ -16,9 +14,9 @@ func TestSnapshotZeroKindsAndIndexBounds(t *testing.T) {
 		t.Fatal("zero snapshot")
 	}
 	var run session.RunView
-	var input session.InputView
+	var input session.UserInputView
 	var record session.RecordView
-	if run.ID() != (session.RunID{}) || run.RecordCount() != 0 || run.InputCount() != 0 || input.ID() != (session.InputID{}) || input.Parts() != nil || !reflect.DeepEqual(input.Format(), sessionformat.UserInput{}) || record.Kind() != "" || record.KindVersion() != 0 {
+	if run.ID() != (session.RunID{}) || run.RecordCount() != 0 || input.ID() != (session.UserInputID{}) || input.PartCount() != 0 || record.Kind() != "" || record.KindVersion() != 0 {
 		t.Fatal("zero child handle")
 	}
 	s := newSession(t, sessionPolicy())
@@ -45,7 +43,7 @@ func TestSnapshotZeroKindsAndIndexBounds(t *testing.T) {
 				t.Fatal("start scope")
 			}
 		}
-		if u && user.ID() != v.RunAt(0).InputAt(0).ID() {
+		if u && user.ID() != lookupInput(t, v, v.RunAt(0).ID(), 1).ID() {
 			t.Fatal("typed input identity")
 		}
 		if in && interrupted.ID != v.RunAt(0).ID() {
@@ -76,12 +74,12 @@ func TestSnapshotZeroKindsAndIndexBounds(t *testing.T) {
 	if _, ok := record.RunInterrupted(); ok {
 		t.Fatal("zero interruption")
 	}
-	if v.RunAt(1).InputCount() != 0 || v.RunAt(1).RecordCount() != 1 {
+	if !userInputsMatch(v, v.RunAt(1).ID(), 0) || v.RunAt(1).RecordCount() != 1 {
 		t.Fatal("zero-input active run")
 	}
 	emptyRun := v.RunAt(1)
 	applyRecords(t, s, runInputRecord(t, 2, 1), closeoutRecord(t, 2), startRecord(t, 3))
-	if emptyRun.InputCount() != 0 || emptyRun.RecordCount() != 1 || v.RunAt(1).InputCount() != 0 || v.ActiveRun() != emptyRun.ID() {
+	if !userInputsMatch(v, emptyRun.ID(), 0) || emptyRun.RecordCount() != 1 || !userInputsMatch(v, v.RunAt(1).ID(), 0) || v.ActiveRun() != emptyRun.ID() {
 		t.Fatal("old zero-input active handle changed after later input/closeout/successor")
 	}
 	for name, access := range map[string]func(){
@@ -89,8 +87,7 @@ func TestSnapshotZeroKindsAndIndexBounds(t *testing.T) {
 		"negative run": func() { v.RunAt(-1) }, "run end": func() { v.RunAt(v.RunCount()) },
 		"negative record": func() { v.RecordAt(-1) }, "record end": func() { v.RecordAt(v.RecordCount()) },
 		"negative run record": func() { v.RunAt(0).RecordAt(-1) }, "run record end": func() { v.RunAt(0).RecordAt(v.RunAt(0).RecordCount()) },
-		"negative input": func() { v.RunAt(0).InputAt(-1) }, "input end": func() { v.RunAt(0).InputAt(v.RunAt(0).InputCount()) },
-		"zero-input run": func() { v.RunAt(1).InputAt(0) }, "zero run record": func() { run.RecordAt(0) }, "zero run input": func() { run.InputAt(0) },
+		"zero run record": func() { run.RecordAt(0) },
 	} {
 		t.Run(name, func(t *testing.T) {
 			defer func() {

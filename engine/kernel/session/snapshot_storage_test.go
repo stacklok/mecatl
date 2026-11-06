@@ -54,7 +54,7 @@ func TestSnapshotConstantCaptureAndAmortizedAppendStorage(t *testing.T) {
 					t.Fatal(err)
 				}
 			case 1:
-				if _, err := b.AddInput(AddInputRequest{RunID: before.ActiveRun(), Parts: internalByteParts([]byte{0xff, 0, 'x'})}); err != nil {
+				if _, err := b.AddUserInput(AddUserInputRequest{RunID: before.ActiveRun(), Parts: internalByteParts([]byte{0xff, 0, 'x'})}); err != nil {
 					t.Fatal(err)
 				}
 			case 2:
@@ -120,7 +120,7 @@ func TestSnapshotChildBoundsAcrossSpareCapacityAndGrowth(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := b.AddInput(AddInputRequest{RunID: run, Parts: internalByteParts([]byte("first"))}); err != nil {
+	if _, err := b.AddUserInput(AddUserInputRequest{RunID: run, Parts: internalByteParts([]byte("first"))}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.SubmitCommit(context.Background(), b); err != nil {
@@ -130,14 +130,14 @@ func TestSnapshotChildBoundsAcrossSpareCapacityAndGrowth(t *testing.T) {
 	for n := 0; n < 128; n++ {
 		old := s.Snapshot()
 		oldRun := old.RunAt(0)
-		oldInput := oldRun.InputAt(0)
+		oldInput := lookupInternalInput(t, old, run, 1)
 		oldRecord := oldRun.RecordAt(1)
 		before := old.RecordCount()
 		b, err := s.BeginCommit()
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := b.AddInput(AddInputRequest{RunID: run, Parts: internalByteParts([]byte("later"))}); err != nil {
+		if _, err := b.AddUserInput(AddUserInputRequest{RunID: run, Parts: internalByteParts([]byte("later"))}); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := s.SubmitCommit(context.Background(), b); err != nil {
@@ -149,7 +149,7 @@ func TestSnapshotChildBoundsAcrossSpareCapacityAndGrowth(t *testing.T) {
 		} else {
 			sawGrowth = true
 		}
-		if old.RecordCount() != before || oldRun.RecordCount() != before-1 || oldRun.InputCount() != before-2 || oldInput.ID().Ordinal != 1 || string(internalInputBytes(oldInput)) != "first" {
+		if old.RecordCount() != before || oldRun.RecordCount() != before-1 || !internalUserInputsMatch(old, run, uint64(before-2)) || oldInput.ID().Ordinal != 1 || string(internalInputBytes(oldInput)) != "first" {
 			t.Fatal("old snapshot/run/input changed")
 		}
 		input, ok := oldRecord.UserInput()

@@ -26,9 +26,9 @@ func TestContextFrozenRetryAndConcurrentPinnedReads(t *testing.T) {
 	b := beginBatch(t, s)
 	mustBatch(t, b.Create())
 	run := batchRun(t, b)
-	input, err := b.AddInput(session.AddInputRequest{RunID: run, Parts: []session.ContentPart{{Kind: session.ContentText, Text: "/skill example\n"}}})
+	input, err := b.AddUserInput(session.AddUserInputRequest{RunID: run, Parts: []session.ContentPart{{Kind: session.ContentText, Text: "/skill example\n"}}})
 	mustBatch(t, err)
-	instructions := session.Instructions{HistoryID: scope, Blocks: []session.InstructionBlock{{Content: []session.ContentPart{{Kind: session.ContentText, Text: "root"}}, Source: session.ContentSource{Description: "adopted", WorkspaceFile: &session.WorkspaceFileSource{Path: "AGENTS.md"}}}}}
+	instructions := session.Instructions{HistoryID: scope, Blocks: []session.InstructionBlock{{Parts: []session.ContentPart{{Kind: session.ContentText, Text: "root"}}, Source: session.ContentSource{Description: "adopted", WorkspaceFile: &session.WorkspaceFileSource{Path: "AGENTS.md"}}}}}
 	catalog := session.ToolCatalog{HistoryID: scope, Tools: []session.ToolDefinition{{Name: "tool", ArgumentSchema: []byte("true")}}}
 	binding := session.ModelBinding{HistoryID: scope, Route: "r", API: "a", Model: "m", Settings: []byte(" { } ")}
 	effective := session.EffectiveInput{RunID: run, Inputs: []session.InputItem{
@@ -46,7 +46,7 @@ func TestContextFrozenRetryAndConcurrentPinnedReads(t *testing.T) {
 	instructions.Blocks[0].Source.WorkspaceFile.Path = "mutated"
 	clear(catalog.Tools[0].ArgumentSchema)
 	clear(binding.Settings)
-	*effective.Inputs[0].UserInput = session.InputID{}
+	*effective.Inputs[0].UserInput = session.UserInputID{}
 	effective.Inputs[1].Inline.Actor = "changed"
 	effective.Inputs[1].Inline.Parts[1].Media.Data[0] = 0
 	effective.Inputs[1].Inline.Source.WorkspaceFile.Path = "changed"
@@ -62,15 +62,30 @@ func TestContextFrozenRetryAndConcurrentPinnedReads(t *testing.T) {
 	tv, _ := old.ToolCatalog()
 	mv, _ := old.ModelBinding()
 	ev, _ := old.RecordAt(6).EffectiveInput()
-	if !ev.Value().Equal(expected) {
+	if !effectiveMatches(ev, expected) {
 		t.Fatal("frozen retry retained caller mutations")
 	}
-	wantI, wantT, wantM, wantE := iv.Value(), tv.Value(), mv.Value(), ev.Value()
+	wantI := session.Instructions{HistoryID: scope, Blocks: []session.InstructionBlock{{Parts: []session.ContentPart{{Kind: session.ContentText, Text: "root"}}, Source: session.ContentSource{Description: "adopted", WorkspaceFile: &session.WorkspaceFileSource{Path: "AGENTS.md"}}}}}
+	wantT := session.ToolCatalog{HistoryID: scope, Tools: []session.ToolDefinition{{Name: "tool", ArgumentSchema: []byte("true")}}}
+	wantM := session.ModelBinding{HistoryID: scope, Route: "r", API: "a", Model: "m", Settings: []byte(" { } ")}
+	wantE := expected
+	// Child handles captured independently retain their own immutable backing.
+	inline := inlineAt(t, ev, 1)
+	media := mediaAt(t, inline.PartAt(1))
+	file, present := inline.Source().WorkspaceFile()
+	if !present {
+		t.Fatal("missing pinned file label")
+	}
+	block, definition := iv.BlockAt(0), tv.ToolAt(0)
 	var wg sync.WaitGroup
 	for range 4 {
 		wg.Go(func() {
 			for range 1000 {
-				if !iv.Value().Equal(wantI) || !tv.Value().Equal(wantT) || !mv.Value().Equal(wantM) || !ev.Value().Equal(wantE) || old.RecordCount() != 7 {
+				if inline.Actor() != "extension/example" || media.Title() != "Notes" || file.Path() != "docs/design.md" || block.Source().Description() != "adopted" || definition.Name() != "tool" {
+					t.Error("pinned child mutated")
+					return
+				}
+				if !instructionsMatch(iv, wantI) || !catalogMatches(tv, wantT) || !bindingMatches(mv, wantM) || !effectiveMatches(ev, wantE) || old.RecordCount() != 7 {
 					t.Error("pinned context mutated")
 					return
 				}

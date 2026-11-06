@@ -58,7 +58,7 @@ func populatedAtomicitySession(t *testing.T) *Session {
 			t.Fatal(err)
 		}
 		for _, content := range []string{"first", "second"} {
-			if _, err := b.AddInput(AddInputRequest{RunID: run, Parts: internalByteParts([]byte(content))}); err != nil {
+			if _, err := b.AddUserInput(AddUserInputRequest{RunID: run, Parts: internalByteParts([]byte(content))}); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -77,13 +77,13 @@ func populatedAtomicitySession(t *testing.T) *Session {
 func TestSessionPopulatedApplyRejectionPreservesPrivateState(t *testing.T) {
 	s := populatedAtomicitySession(t)
 	old := s.Snapshot()
-	oldRun, oldInput, oldRecord := old.RunAt(1), old.RunAt(1).InputAt(0), old.RecordAt(2)
+	oldRun, oldInput, oldRecord := old.RunAt(1), lookupInternalInput(t, old, old.ActiveRun(), 1), old.RecordAt(2)
 	before := detachedSessionState(s.state)
 	b, err := s.BeginCommit()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := b.AddInput(AddInputRequest{RunID: old.ActiveRun(), Parts: internalByteParts([]byte("third"))}); err != nil {
+	if _, err := b.AddUserInput(AddUserInputRequest{RunID: old.ActiveRun(), Parts: internalByteParts([]byte("third"))}); err != nil {
 		t.Fatal(err)
 	}
 	if err := b.Interrupt(); err != nil {
@@ -93,7 +93,7 @@ func TestSessionPopulatedApplyRejectionPreservesPrivateState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := b.AddInput(AddInputRequest{RunID: run, Parts: internalByteParts([]byte("successor"))}); err != nil {
+	if _, err := b.AddUserInput(AddUserInputRequest{RunID: run, Parts: internalByteParts([]byte("successor"))}); err != nil {
 		t.Fatal(err)
 	}
 	records := slices.Clone(b.records)
@@ -126,7 +126,7 @@ func TestSessionPopulatedApplyRejectionPreservesPrivateState(t *testing.T) {
 	if !reflect.DeepEqual(before, detachedSessionState(oldState)) {
 		t.Fatal("rejected prefix corrupted an old snapshot")
 	}
-	if oldRun.InputCount() != 2 || oldRun.RecordCount() != 3 || string(internalInputBytes(oldInput)) != "first" || !oldRecord.Format().Equal(before.view.records[2].value) {
+	if !internalUserInputsMatch(old, oldRun.ID(), 2) || oldRun.RecordCount() != 3 || string(internalInputBytes(oldInput)) != "first" || !oldRecord.Format().Equal(before.view.records[2].value) {
 		t.Fatal("rejection changed independent child handles")
 	}
 	if err := s.Apply(history.Commit{Ref: good.ref, Commit: good.commit}); err != nil {

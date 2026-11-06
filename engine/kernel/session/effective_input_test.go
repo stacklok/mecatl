@@ -17,7 +17,7 @@ func TestEffectiveInputScopeConversion(t *testing.T) {
 	run := session.RunID{HistoryID: testHistoryID(t), Ordinal: 1}
 	foreign, err := historyid.ParseHistoryID("HST2222222222222222222222")
 	mustBatch(t, err)
-	for _, id := range []session.InputID{
+	for _, id := range []session.UserInputID{
 		{RunID: session.RunID{HistoryID: foreign, Ordinal: 1}, Ordinal: 1},
 		{RunID: session.RunID{HistoryID: run.HistoryID, Ordinal: 2}, Ordinal: 1}, {},
 	} {
@@ -75,7 +75,7 @@ func TestEffectiveInputExternalRunAdmission(t *testing.T) {
 			if state == "active" {
 				mustBatch(t, err)
 				got, ok := s.Snapshot().RecordAt(2).EffectiveInput()
-				if !ok || !got.Value().Equal(v) {
+				if !ok || !effectiveMatches(got, v) {
 					t.Fatal("inline-only Apply changed contribution")
 				}
 			} else if !errors.Is(err, session.ErrTransition) || !reflect.DeepEqual(before, captureRejectedSnapshot(s.Snapshot())) {

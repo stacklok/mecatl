@@ -18,5 +18,9 @@
 // Apply, and Load share the decoded application path, publishing accepted state.
 // Session operations must be caller-serialized; captured snapshots and their
 // child handles support concurrent readers independently of the session owner.
+// Views retain immutable backing storage for their lifetime, potentially including
+// the enclosing accepted record. Capture and child navigation cost O(1), without
+// copying payloads. Byte getters return independent field-only copies; Record and
+// RecordView.Format explicitly copy encoded history records for transport.
 // See [SessionCommit], [Policy], and [Snapshot] for admission and ownership contracts.
 package session

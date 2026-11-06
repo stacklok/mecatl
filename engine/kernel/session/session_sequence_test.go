@@ -28,7 +28,7 @@ func TestSessionCommitOrdinalExhaustion(t *testing.T) {
 			}
 			before := b.lifecycle
 			if input {
-				if id, err := b.AddInput(AddInputRequest{RunID: run}); id != (InputID{}) || !errors.Is(err, codec.ErrLimitExceeded) {
+				if id, err := b.AddUserInput(AddUserInputRequest{RunID: run}); id != (UserInputID{}) || !errors.Is(err, codec.ErrLimitExceeded) {
 					t.Fatalf("input overflow: %v, %v", id, err)
 				}
 			} else {

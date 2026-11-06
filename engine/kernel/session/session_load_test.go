@@ -84,9 +84,7 @@ func TestLoadLifecycleAndOwnership(t *testing.T) {
 				}
 			}
 			v := loaded.Snapshot()
-			clear(inputBytes(v.RunAt(0).InputAt(0)))
-			dto := v.RunAt(0).InputAt(0).Format()
-			clear(dtoInputBytes(dto))
+			clear(inputBytes(lookupInput(t, v, input.RunID, input.Ordinal)))
 			raw := v.RecordAt(2).Format()
 			clear(raw.Payload)
 			if !reflect.DeepEqual(loaded.Snapshot(), want) || !reflect.DeepEqual(s.Snapshot(), want) {
@@ -114,7 +112,7 @@ func TestLoadLifecycleAndOwnership(t *testing.T) {
 	}
 	// Loading restores owner legality, not just visible facts.
 	b = beginBatch(t, s)
-	if _, err := b.AddInput(session.AddInputRequest{RunID: input.RunID}); !errors.Is(err, session.ErrTransition) {
+	if _, err := b.AddUserInput(session.AddUserInputRequest{RunID: input.RunID}); !errors.Is(err, session.ErrTransition) {
 		t.Fatal("reload forgot closed owner")
 	}
 	mustBatch(t, b.Discard())
@@ -167,7 +165,7 @@ func TestLoadAfterAcceptedBeforeLocalApply(t *testing.T) {
 	loaded, err := session.Load(context.Background(), readOnly, testHistoryID(t), sessionPolicy())
 	mustBatch(t, err)
 	v := loaded.Snapshot()
-	if v.Head() != backend.attempts[0].commit.Ref || !v.Created() || v.ActiveRun() != run || v.RunCount() != 1 || v.RunAt(0).InputCount() != 1 || v.RunAt(0).InputAt(0).ID() != input || string(inputBytes(v.RunAt(0).InputAt(0))) != "accepted" || !reflect.DeepEqual(s.Snapshot(), before) || len(backend.attempts) != 1 {
+	if v.Head() != backend.attempts[0].commit.Ref || !v.Created() || v.ActiveRun() != run || v.RunCount() != 1 || !userInputsMatch(v, run, 1) || lookupInput(t, v, input.RunID, input.Ordinal).ID() != input || string(inputBytes(lookupInput(t, v, input.RunID, input.Ordinal))) != "accepted" || !reflect.DeepEqual(s.Snapshot(), before) || len(backend.attempts) != 1 {
 		t.Fatal("crash recovery lost facts or changed abandoned object")
 	}
 	if _, err := s.BeginCommit(); !errors.Is(err, session.ErrBatch) {

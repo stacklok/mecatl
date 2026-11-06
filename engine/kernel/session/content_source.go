@@ -6,13 +6,18 @@ import sessionformat "github.com/stacklok/mecatl/engine/kernel/session/format"
 // workspace-file label, not proof of trust or exact copying. Assignment shares
 // WorkspaceFile; Clone detaches it. Zero is invalid.
 type ContentSource struct {
-	Description   string
+	// Description is the required safe explanation of the contribution's origin.
+	Description string
+	// WorkspaceFile is an optional originating workspace-file label; assignment borrows it.
 	WorkspaceFile *WorkspaceFileSource
 }
 
 // WorkspaceFileSource labels a file relative to its originating workspace.
 // The slash-separated path is not a global locator or permission to read it.
-type WorkspaceFileSource struct{ Path string }
+type WorkspaceFileSource struct {
+	// Path is the required slash-separated path relative to the originating workspace.
+	Path string
+}
 
 // Validate checks the explanation and optional relative file label.
 func (v ContentSource) Validate() error {
@@ -52,6 +57,40 @@ func (v ContentSource) checkSize(b *valueBudget) {
 		b.pointer()
 		b.text(v.WorkspaceFile.Path)
 	}
+}
+
+// ContentSourceView retains immutable backing storage. Capture and navigation
+// cost O(1); zero has an empty description and no workspace-file label.
+type ContentSourceView struct{ value *sessionformat.ContentSource }
+
+// Description returns the exact explanation, or empty for zero.
+func (v ContentSourceView) Description() string {
+	if v.value == nil {
+		return ""
+	}
+	return v.value.Description
+}
+
+// WorkspaceFile returns the optional file label, or zero,false when absent.
+func (v ContentSourceView) WorkspaceFile() (WorkspaceFileSourceView, bool) {
+	if v.value == nil || v.value.WorkspaceFile == nil {
+		return WorkspaceFileSourceView{}, false
+	}
+	return WorkspaceFileSourceView{value: v.value.WorkspaceFile}, true
+}
+
+// WorkspaceFileSourceView retains an immutable file label's backing storage.
+// Copying it costs O(1); zero has an empty path.
+type WorkspaceFileSourceView struct {
+	value *sessionformat.WorkspaceFileSource
+}
+
+// Path returns the exact workspace-relative label, or empty for zero.
+func (v WorkspaceFileSourceView) Path() string {
+	if v.value == nil {
+		return ""
+	}
+	return v.value.Path
 }
 
 // Validate checks a nonempty UTF-8 relative path without dot components or I/O.

@@ -9,13 +9,23 @@ import (
 // ModelBinding retains declared logical preparation choices, not observed upstream
 // identity or compatibility. Settings is exact explicit JSON supplied by the caller,
 // never resolved defaults or credentials. Assignment shares Settings; Clone detaches
-// it. Zero is invalid; history scope comes from the enclosing envelope.
+// it. Zero is invalid. History identity is omitted here and restored from the
+// enclosing envelope at the domain conversion boundary.
 //
 //cborgen:validate Validate
 type ModelBinding struct {
-	Route    string `cbor:"r"`
-	API      string `cbor:"a"`
-	Model    string `cbor:"m"`
+	// Route is a required nonempty exact UTF-8 logical provider/route name interpreted
+	// relative to the preparing harness's configuration, not a global provider
+	// identity or an observed upstream endpoint. Loading does not resolve it.
+	Route string `cbor:"r"`
+	// API is the required nonempty exact UTF-8 declared API name, not a compatibility
+	// assertion. Validate checks syntax only, without provider interpretation.
+	API string `cbor:"a"`
+	// Model is the required nonempty exact UTF-8 declared model name, not an observed
+	// upstream model identity. Loading does not resolve or verify it.
+	Model string `cbor:"m"`
+	// Settings is required explicit valid JSON, preserved byte-for-byte, not resolved
+	// defaults or credentials. Validate checks JSON syntax, not provider policy.
 	Settings []byte `cbor:"s"`
 }
 

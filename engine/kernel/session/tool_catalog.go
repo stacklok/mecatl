@@ -11,8 +11,10 @@ import (
 // empty Tools mean explicit emptiness; zero HistoryID is invalid. Assignment
 // shares storage; Clone detaches it. Tools are declarations, not executables.
 type ToolCatalog struct {
+	// HistoryID is the required scope of this replacement.
 	HistoryID historyid.HistoryID
-	Tools     []ToolDefinition
+	// Tools is the complete ordered catalog; assignment borrows nested storage.
+	Tools []ToolDefinition
 }
 
 // Validate checks full scope, tool validity and unique names without limits.
@@ -83,28 +85,25 @@ func NewToolCatalogRecord(v ToolCatalog, limits codec.Limits) (Record, error) {
 	return Record{scope: v.HistoryID, value: format.Record{Kind: sessionformat.KindToolCatalog, KindVersion: sessionformat.Version, Payload: payload}}, nil
 }
 
-// ToolCatalogView is an immutable fixed-size accepted catalog handle. Zero exports
-// zero values; all mutable exports detach storage.
+// ToolCatalogView retains immutable accepted backing storage, including its
+// record. Capture and navigation cost O(1); zero has no history or definitions.
 type ToolCatalogView struct {
-	scope  historyid.HistoryID
-	record *acceptedRecord
+	scope historyid.HistoryID
+	value *sessionformat.ToolCatalog
 }
 
 // HistoryID returns the retained scope, or zero for zero.
 func (v ToolCatalogView) HistoryID() historyid.HistoryID { return v.scope }
 
-// Value returns an independently owned public value, or zero for zero.
-func (v ToolCatalogView) Value() ToolCatalog {
-	if v.record == nil {
-		return ToolCatalog{}
+// ToolCount returns the number of ordered definitions, or zero for zero.
+func (v ToolCatalogView) ToolCount() int {
+	if v.value == nil {
+		return 0
 	}
-	return toolCatalogFromFormat(v.scope, v.record.catalog.Clone())
+	return len(v.value.Tools)
 }
 
-// Format returns a detached DTO, or zero for zero.
-func (v ToolCatalogView) Format() sessionformat.ToolCatalog {
-	if v.record == nil {
-		return sessionformat.ToolCatalog{}
-	}
-	return v.record.catalog.Clone()
+// ToolAt returns an immutable definition. It panics outside [0, ToolCount()).
+func (v ToolCatalogView) ToolAt(i int) ToolDefinitionView {
+	return ToolDefinitionView{value: &v.value.Tools[i]}
 }

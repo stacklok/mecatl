@@ -7,20 +7,23 @@ type ContentKind string
 
 const (
 	// ContentText selects exact UTF-8 text.
-	ContentText ContentKind = "text"
+	ContentText ContentKind = sessionformat.ContentText
 	// ContentImage selects image media.
-	ContentImage ContentKind = "image"
+	ContentImage ContentKind = sessionformat.ContentImage
 	// ContentAudio selects audio media.
-	ContentAudio ContentKind = "audio"
+	ContentAudio ContentKind = sessionformat.ContentAudio
 	// ContentDocument selects document media.
-	ContentDocument ContentKind = "document"
+	ContentDocument ContentKind = sessionformat.ContentDocument
 )
 
 // ContentPart holds text or media as selected by Kind. Zero is invalid.
 // Assignment shares Media and its bytes; Clone detaches them.
 type ContentPart struct {
-	Kind  ContentKind
-	Text  string
+	// Kind selects the required text or media union branch.
+	Kind ContentKind
+	// Text is the exact text for the ContentText branch only.
+	Text string
+	// Media is the required media value for media branches; assignment borrows it.
 	Media *Media
 }
 
@@ -99,6 +102,37 @@ func partsFromFormat(v []sessionformat.ContentPart) []ContentPart {
 		out[i] = contentPartFromFormat(v[i])
 	}
 	return out
+}
+
+// ContentPartView retains immutable backing storage. Capture and navigation cost
+// O(1); zero has no kind and neither union branch is present.
+type ContentPartView struct{ value *sessionformat.ContentPart }
+
+// Kind returns the selected variant, or empty for zero.
+func (v ContentPartView) Kind() ContentKind {
+	if v.value == nil {
+		return ""
+	}
+	return ContentKind(v.value.Kind)
+}
+
+// Text returns exact text only for the text variant, including empty text.
+func (v ContentPartView) Text() (string, bool) {
+	if v.Kind() != ContentText {
+		return "", false
+	}
+	return v.value.Text, true
+}
+
+// Media returns media only for a media variant; zero and text return zero,false.
+func (v ContentPartView) Media() (MediaView, bool) {
+	switch v.Kind() {
+	case ContentImage, ContentAudio, ContentDocument:
+		if v.value.Media != nil {
+			return MediaView{value: v.value.Media}, true
+		}
+	}
+	return MediaView{}, false
 }
 
 // checkPartsSize bounds collections and nested data before conversion allocates.

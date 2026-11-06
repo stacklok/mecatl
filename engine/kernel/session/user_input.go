@@ -11,7 +11,9 @@ import (
 // Empty Parts contributes no content; nil and empty are equivalent. Assignment
 // shares storage; Clone detaches it.
 type UserInput struct {
-	ID    InputID
+	// ID is the required run-scoped submission identity.
+	ID UserInputID
+	// Parts is the ordered authored content; assignment borrows nested storage.
 	Parts []ContentPart
 }
 
@@ -55,33 +57,30 @@ func NewUserInputRecord(v UserInput, limits codec.Limits) (Record, error) {
 	return Record{scope: v.ID.RunID.HistoryID, userInput: v.ID, value: format.Record{Kind: sessionformat.KindUserInput, KindVersion: sessionformat.Version, Payload: payload}}, nil
 }
 
-// InputView is an immutable input handle. Zero has zero ID and nil parts.
-// Exports detach mutable storage; copying the handle costs O(1).
-type InputView struct {
-	scope  historyid.HistoryID
-	record *acceptedRecord
+// UserInputView retains immutable accepted backing storage, including its record.
+// Copying or navigating a handle costs O(1). Zero has zero ID and no parts.
+type UserInputView struct {
+	scope historyid.HistoryID
+	value *sessionformat.UserInput
 }
 
 // ID returns the scoped occurrence, or zero for zero.
-func (v InputView) ID() InputID {
-	if v.record == nil {
-		return InputID{}
+func (v UserInputView) ID() UserInputID {
+	if v.value == nil {
+		return UserInputID{}
 	}
-	return InputID{RunID: RunID{HistoryID: v.scope, Ordinal: v.record.input.RunID}, Ordinal: v.record.input.ID}
+	return UserInputID{RunID: RunID{HistoryID: v.scope, Ordinal: v.value.RunID}, Ordinal: v.value.ID}
 }
 
-// Parts returns deeply detached content, or nil for zero.
-func (v InputView) Parts() []ContentPart {
-	if v.record == nil {
-		return nil
+// PartCount returns the number of ordered parts, or zero for zero.
+func (v UserInputView) PartCount() int {
+	if v.value == nil {
+		return 0
 	}
-	return partsFromFormat(v.record.input.Clone().Parts)
+	return len(v.value.Parts)
 }
 
-// Format returns a detached DTO, or zero for zero.
-func (v InputView) Format() sessionformat.UserInput {
-	if v.record == nil {
-		return sessionformat.UserInput{}
-	}
-	return v.record.input.Clone()
+// PartAt returns an immutable part. It panics outside [0, PartCount()).
+func (v UserInputView) PartAt(i int) ContentPartView {
+	return ContentPartView{value: &v.value.Parts[i]}
 }

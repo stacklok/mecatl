@@ -7,7 +7,10 @@ import "errors"
 //
 //cborgen:validate Validate
 type RunInterrupted struct {
-	// ID is the nonzero ordinal of the interrupted run, not a new occurrence.
+	// ID is the required one-based ordinal of the interrupted run within the
+	// enclosing history, not a new occurrence. Conversion restores history scope
+	// from the envelope. Local validation checks positivity; the aggregate checks
+	// that this names the active run.
 	ID uint64 `cbor:"r"`
 }
 

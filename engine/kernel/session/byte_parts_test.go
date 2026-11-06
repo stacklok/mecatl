@@ -18,12 +18,13 @@ func formatByteParts(data []byte) []sessionformat.ContentPart {
 	}
 	return []sessionformat.ContentPart{{Kind: "document", Media: &sessionformat.Media{MediaType: "application/octet-stream", Source: "inline", Data: data}}}
 }
-func inputBytes(v session.InputView) []byte {
-	p := v.Parts()
-	if len(p) == 0 {
+func inputBytes(v session.UserInputView) []byte {
+	if v.PartCount() == 0 {
 		return nil
 	}
-	return p[0].Media.Data
+	media, _ := v.PartAt(0).Media()
+	data, _ := media.Data()
+	return data
 }
 func dtoInputBytes(v sessionformat.UserInput) []byte {
 	if len(v.Parts) == 0 {

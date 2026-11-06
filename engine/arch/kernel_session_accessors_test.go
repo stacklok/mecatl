@@ -9,9 +9,9 @@ import (
 	"testing"
 )
 
-// TestKernelSessionConstantTimeAccessors protects capture and selected-context
-// lookup independently of allocation counts: a nonallocating history scan is still
-// O(n). These four accessors own direct handle reads, not traversal or delegation.
+// TestKernelSessionConstantTimeAccessors protects capture, selected-context and
+// identity lookup independently of allocation counts: a nonallocating history scan
+// is still O(n). These accessors own direct handle reads, not traversal or delegation.
 // Keep this guard scoped to their owning files; it is not a call-graph analyzer.
 func TestKernelSessionConstantTimeAccessors(t *testing.T) {
 	for _, owner := range []struct {
@@ -19,7 +19,7 @@ func TestKernelSessionConstantTimeAccessors(t *testing.T) {
 		methods        []string
 	}{
 		{"session.go", "Session", []string{"Snapshot"}},
-		{"snapshot.go", "Snapshot", []string{"Instructions", "ToolCatalog", "ModelBinding"}},
+		{"snapshot.go", "Snapshot", []string{"Instructions", "ToolCatalog", "ModelBinding", "UserInputByID"}},
 	} {
 		t.Run(owner.file, func(t *testing.T) {
 			path := filepath.Join("..", "kernel", "session", owner.file)
@@ -35,9 +35,10 @@ func TestKernelSessionConstantTimeAccessors(t *testing.T) {
 }
 
 // kernelAccessorViolations requires each named concrete method exactly once and
-// rejects loops and all calls in its body. Fields, conditionals and handle literals
-// remain unrestricted; even a helper call must be reviewed as a boundary change
-// because it could hide traversal. Other methods are intentionally outside scope.
+// rejects loops and calls in its body, except len and integer conversions in the
+// identity lookup. Fields, conditionals and handle literals remain unrestricted;
+// helper calls require review because they could hide traversal. Other methods
+// are intentionally outside scope.
 func kernelAccessorViolations(f *ast.File, receiver string, methods ...string) []string {
 	counts := make(map[string]int, len(methods))
 	for _, method := range methods {
@@ -66,6 +67,11 @@ func kernelAccessorViolations(f *ast.File, receiver string, methods ...string) [
 			continue
 		}
 		ast.Inspect(method.Body, func(n ast.Node) bool {
+			if call, ok := n.(*ast.CallExpr); ok && receiver == "Snapshot" && method.Name.Name == "UserInputByID" {
+				if name, ok := call.Fun.(*ast.Ident); ok && (name.Name == "len" || name.Name == "int" || name.Name == "uint64") {
+					return true
+				}
+			}
 			switch n.(type) {
 			case *ast.ForStmt, *ast.RangeStmt, *ast.CallExpr:
 				violations = append(violations, fmt.Sprintf("%s.%s: %T violates direct constant-time handle access", receiver, method.Name.Name, n))
@@ -102,6 +108,19 @@ func TestKernelSessionConstantTimeAccessorGuardControls(t *testing.T) {
 			return InstructionsView{record: v.instructions}, true
 		}`, 1},
 		{"delegated traversal", "Snapshot", "Instructions", `func (v Snapshot) Instructions() (InstructionsView, bool) { return v.scanInstructions() }`, 1},
+		{"bounded identity lookup", "Snapshot", "UserInputByID", `func (v Snapshot) UserInputByID(id UserInputID) (UserInputView, bool) {
+			if id.Ordinal == 0 || id.Ordinal > uint64(len(v.inputs)) { return UserInputView{}, false }
+			return UserInputView{record: v.records[v.inputs[int(id.Ordinal-1)]]}, true
+		}`, 0},
+		{"identity scan", "Snapshot", "UserInputByID", `func (v Snapshot) UserInputByID(id UserInputID) (UserInputView, bool) {
+			for _, r := range v.records { _ = r }
+			return UserInputView{}, false
+		}`, 1},
+		{"delegated identity lookup", "Snapshot", "UserInputByID", `func (v Snapshot) UserInputByID(id UserInputID) (UserInputView, bool) { return v.findInput(id) }`, 1},
+		{"identity map allocation", "Snapshot", "UserInputByID", `func (v Snapshot) UserInputByID(id UserInputID) (UserInputView, bool) {
+			_ = make(map[UserInputID]int)
+			return UserInputView{}, false
+		}`, 1},
 		{"missing method", "Session", "Snapshot", `func (s *Session) other() {}`, 1},
 		{"wrong owner", "Session", "Snapshot", `func (s *Other) Snapshot() Snapshot { return s.view }`, 1},
 		{"duplicate method", "Session", "Snapshot", `func (s *Session) Snapshot() Snapshot { return s.state.view }

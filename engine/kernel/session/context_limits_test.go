@@ -15,7 +15,7 @@ import (
 
 func TestContextActualReserveAndSoftBounds(t *testing.T) {
 	scope := testHistoryID(t)
-	instructions := session.Instructions{HistoryID: scope, Blocks: []session.InstructionBlock{{Content: []session.ContentPart{{Kind: session.ContentText, Text: "retained context payload"}}, Source: session.ContentSource{Description: "caller prepared"}}}}
+	instructions := session.Instructions{HistoryID: scope, Blocks: []session.InstructionBlock{{Parts: []session.ContentPart{{Kind: session.ContentText, Text: "retained context payload"}}, Source: session.ContentSource{Description: "caller prepared"}}}}
 	contextRecord, err := session.NewInstructionsRecord(instructions, testLimits())
 	mustBatch(t, err)
 	initial := []session.Record{createdRecord(t), startRecord(t, 1), contextRecord}

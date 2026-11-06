@@ -47,9 +47,9 @@ type SessionCommit struct { //nolint:revive // Explicit name distinguishes a pro
 	proposal  prepared
 }
 
-// AddInputRequest borrows ordered content only during AddInput.
+// AddUserInputRequest borrows ordered content only during AddUserInput.
 // Earlier successful same-batch run IDs are valid owners.
-type AddInputRequest struct {
+type AddUserInputRequest struct {
 	// RunID must identify the active run at this position in the batch.
 	RunID RunID
 	// Parts preserves supplied content order; success eagerly detaches it.
@@ -127,23 +127,23 @@ func (b *SessionCommit) Create() error {
 	return b.add(NewCreatedRecord(Created{HistoryID: b.owner.state.view.historyID}, b.owner.policy.PayloadLimits))
 }
 
-// AddInput assigns the next provisional ordinal in the explicitly named active
+// AddUserInput assigns the next provisional ordinal in the explicitly named active
 // run. It owns encoded content before returning; failure consumes no ID or slot.
-func (b *SessionCommit) AddInput(request AddInputRequest) (InputID, error) {
+func (b *SessionCommit) AddUserInput(request AddUserInputRequest) (UserInputID, error) {
 	if err := b.check(true); err != nil {
-		return InputID{}, err
+		return UserInputID{}, err
 	}
 	if request.RunID == (RunID{}) || request.RunID != b.lifecycle.activeRun {
-		return InputID{}, ErrTransition
+		return UserInputID{}, ErrTransition
 	}
 	s := b.owner
 	ordinal, err := nextOrdinal(b.lifecycle.inputs)
 	if err != nil {
-		return InputID{}, err
+		return UserInputID{}, err
 	}
-	id := InputID{RunID: request.RunID, Ordinal: ordinal}
+	id := UserInputID{RunID: request.RunID, Ordinal: ordinal}
 	if err := b.add(NewUserInputRecord(UserInput{ID: id, Parts: request.Parts}, s.policy.PayloadLimits)); err != nil {
-		return InputID{}, err
+		return UserInputID{}, err
 	}
 	return id, nil
 }

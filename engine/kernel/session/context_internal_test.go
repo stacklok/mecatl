@@ -16,7 +16,7 @@ import (
 func TestRichConstructorsBudgetBeforeConversion(t *testing.T) {
 	s, limits := internalFixture(t)
 	scope := s.Snapshot().HistoryID()
-	input := InputID{RunID: RunID{HistoryID: scope, Ordinal: 1}, Ordinal: 1}
+	input := UserInputID{RunID: RunID{HistoryID: scope, Ordinal: 1}, Ordinal: 1}
 	// All values are allocated before measuring construction. Rejected collection
 	// lengths must not allocate DTO slices, or parse their deliberately invalid JSON.
 	parts := make([]ContentPart, limits.MaxArrayElements+1)
@@ -27,7 +27,7 @@ func TestRichConstructorsBudgetBeforeConversion(t *testing.T) {
 	oversizeText := string(make([]byte, limits.MaxStringBytes+1))
 	nestedInput := UserInput{ID: input, Parts: []ContentPart{{Kind: ContentText, Text: oversizeText}}}
 	nestedActor := EffectiveInput{RunID: input.RunID, Inputs: []InputItem{{Inline: &AttributedInput{Actor: Actor(oversizeText)}}}}
-	nestedInstructions := Instructions{HistoryID: scope, Blocks: []InstructionBlock{{Content: []ContentPart{{Kind: ContentText, Text: oversizeText}}}}}
+	nestedInstructions := Instructions{HistoryID: scope, Blocks: []InstructionBlock{{Parts: []ContentPart{{Kind: ContentText, Text: oversizeText}}}}}
 	nestedCatalog := ToolCatalog{HistoryID: scope, Tools: []ToolDefinition{{Name: "tool", ArgumentSchema: settings}}}
 	nestedEffective := EffectiveInput{RunID: input.RunID, Inputs: []InputItem{{Inline: &AttributedInput{Parts: parts}}}}
 	for _, makeRecord := range []func() (Record, error){
@@ -62,11 +62,11 @@ func TestRichConstructorsBudgetBeforeConversion(t *testing.T) {
 func TestNewRecordMetadataAndGeneratedLimitsAgree(t *testing.T) {
 	s, limits := internalFixture(t)
 	scope := s.Snapshot().HistoryID()
-	input := InputID{RunID: RunID{HistoryID: scope, Ordinal: 1}, Ordinal: 1}
+	input := UserInputID{RunID: RunID{HistoryID: scope, Ordinal: 1}, Ordinal: 1}
 	content := []ContentPart{{Kind: ContentText, Text: " exact "}, {Kind: ContentDocument, Media: &Media{MediaType: "raw", Source: MediaInline, Data: []byte{0xff, 0}}}}
 	source := ContentSource{Description: "adopted", WorkspaceFile: &WorkspaceFileSource{Path: "AGENTS.md"}}
 	authored := UserInput{ID: input, Parts: content}
-	instructions := Instructions{HistoryID: scope, Blocks: []InstructionBlock{{Content: content, Source: source}}}
+	instructions := Instructions{HistoryID: scope, Blocks: []InstructionBlock{{Parts: content, Source: source}}}
 	catalog := ToolCatalog{HistoryID: scope, Tools: []ToolDefinition{{Name: "read", ArgumentSchema: []byte(" true ")}}}
 	binding := ModelBinding{HistoryID: scope, Route: "r", API: "a", Model: "m", Settings: []byte(" {\"x\":1.0} ")}
 	effective := EffectiveInput{RunID: input.RunID, Inputs: []InputItem{{UserInput: &input}, {Inline: &AttributedInput{Actor: "harness", Purpose: PromptContext, Parts: []ContentPart{{Kind: ContentText, Text: "supplement"}}, Source: source}}}}
@@ -175,7 +175,7 @@ func TestContextApplyStagesSelectionsAndSourceBounds(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	input, err := b.AddInput(AddInputRequest{RunID: run})
+	input, err := b.AddUserInput(AddUserInputRequest{RunID: run})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -208,7 +208,7 @@ func TestContextApplyStagesSelectionsAndSourceBounds(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	bad, err := NewEffectiveInputRecord(EffectiveInput{RunID: run, Inputs: []InputItem{{UserInput: &input}, {UserInput: &InputID{RunID: run, Ordinal: 2}}}}, limits)
+	bad, err := NewEffectiveInputRecord(EffectiveInput{RunID: run, Inputs: []InputItem{{UserInput: &input}, {UserInput: &UserInputID{RunID: run, Ordinal: 2}}}}, limits)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -226,13 +226,13 @@ func TestContextApplyStagesSelectionsAndSourceBounds(t *testing.T) {
 		t.Fatal("failed final source published selections/counters/storage")
 	}
 	iv, ok := old.Instructions()
-	if !ok || !iv.Value().Equal(instructions) {
+	if !ok || iv.HistoryID() != scope || iv.BlockCount() != 1 || iv.BlockAt(0).PartCount() != 0 || iv.BlockAt(0).Source().Description() != "root" {
 		t.Fatal("old selection changed")
 	}
-	if tv, ok := s.Snapshot().ToolCatalog(); !ok || !tv.Value().Equal(originalCatalog) {
+	if tv, ok := s.Snapshot().ToolCatalog(); !ok || tv.HistoryID() != scope || tv.ToolCount() != 1 || tv.ToolAt(0).Name() != "original" || string(tv.ToolAt(0).ArgumentSchema()) != "true" {
 		t.Fatal("catalog partially published")
 	}
-	if mv, ok := s.Snapshot().ModelBinding(); !ok || !mv.Value().Equal(originalBinding) {
+	if mv, ok := s.Snapshot().ModelBinding(); !ok || mv.HistoryID() != scope || mv.Route() != "original" || mv.API() != "a" || mv.Model() != "m" || string(mv.Settings()) != " true " {
 		t.Fatal("binding partially published")
 	}
 	user, err := NewUserInputRecord(UserInput{ID: input}, limits)
