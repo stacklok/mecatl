@@ -91,7 +91,7 @@ RUN pnpm install --prod --frozen-lockfile
 # ---------------------------------------------------------------------------
 # Multi-arch index digest of `latest` (linux/amd64 + linux/arm64); the digest is
 # what is pulled. Its Node major is checked against `engines` in CI, not here.
-FROM cgr.dev/chainguard/node:latest@sha256:88c4f6e6941bdd4fb9039d98ad05384e1bfe5693dd31ccc8eb2f0c8522bdb40e
+FROM cgr.dev/chainguard/node:latest@sha256:23b71e5423b7267348e64207c88223f4388fb483aa38b7dbf6356da0d02cd1f8
 
 # A fresh root-owned directory: the base image's /app is world-writable, which
 # would let the non-root server replace its own code. WORKDIR creates the
