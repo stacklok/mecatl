@@ -406336,6 +406336,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1793986702512,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "29541485+ChrisJBurns@users.noreply.github.com",
+            "name": "Chris Burns",
+            "username": "ChrisJBurns"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "e07d61e4ab033f6e09cbd4f0f355f863588bbc32",
+          "message": "fix(identity-broker): report a deleted team root as not found (#2742)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-11-06T17:34:12Z",
+          "tree_id": "70d2e45d24049479237d913718a863e7516cb1ff",
+          "url": "https://github.com/stacklok/mecatl/commit/e07d61e4ab033f6e09cbd4f0f355f863588bbc32"
+        },
+        "date": 1793987520886,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 16150,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12910.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 795,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -529608,6 +529647,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1793987516206,
+  "lastUpdate": 1793987521956,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
