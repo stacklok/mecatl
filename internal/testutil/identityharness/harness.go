@@ -15,28 +15,25 @@
 //     and sub, aud equal to AS-1's issuer, exp and iat with
 //     ClientAssertionClockSkew allowed, exp - iat, and a jti used once and
 //     kept until exp plus the skew; a client secret is refused (clientauth.go);
-//   - AS-1's side of session open, design step (3): the RFC 8693 exchange of
-//     an AS-1 access token for a non-rotating refresh token of a generic
-//     grant (stacklok/toolhive#6897). The grant names the client and the
-//     user, never a Mecatl session or owner, and issues only ID-JAGs. The
-//     request carries one exchange-grant entry whose optional expires_at AS-1
-//     caps at its maximum and echoes. Checks 1 to 5 apply, with one
-//     conversion per access-token jti and no retry exception; a refused
-//     access token gets subject_token_invalid, whatever check 4 found. The
-//     harness never sends ToolHive's configuration-fault reasons
-//     subject_token_audience or subject_token_source_client, even for a token
-//     for another audience or client; the broker's own tests cover them. A
-//     reused jti is refused with token_used
-//     but does not revoke the grant it created: replay-revoke
-//     (stacklok/toolhive#6973) is phase 2. The grant's refresh token is
-//     refused at the refresh-token grant (sessionopen.go);
-//   - RFC 7009 revocation of grant refresh tokens (revoke.go);
-//   - injected faults: one-shot errors such as a 503, a lost response, a
-//     request dropped before AS-1 processes it, a mismatched echo, and a
-//     forced grant expiry; and ScriptedBroker, a
-//     hand-driven caller holding the broker's credentials for exercising
-//     AS-1 directly (broker.go). Production code under test uses its own
-//     client, not ScriptedBroker;
+//   - AS-1's conversion of a sign-in at session open, design step (3), kept
+//     only as the grant fixture for ID-JAG tests until ToolHive's AS-1 issues
+//     ID-JAGs (stacklok/toolhive#6898, stacklok/toolhive#6899). Session-open
+//     behaviour itself, including refusals and faults, is tested against the
+//     real AS-1 (as1servertest). The RFC 8693 exchange turns an AS-1 access
+//     token into a non-rotating refresh token of a generic grant
+//     (stacklok/toolhive#6897) that names the client and the user, never a
+//     Mecatl session or owner, and issues only ID-JAGs. The request carries
+//     one exchange-grant entry whose optional expires_at AS-1 caps at its
+//     maximum and echoes. Each access-token jti converts once; a refused
+//     access token gets subject_token_invalid, not the real AS-1's reasons.
+//     The grant's refresh token is refused at the refresh-token grant
+//     (sessionopen.go);
+//   - RFC 7009 revocation of grant refresh tokens, until
+//     stacklok/toolhive#6966 and stacklok/toolhive#6972 (revoke.go);
+//   - ScriptedBroker, a hand-driven caller holding the broker's credentials
+//     for exercising AS-1 directly (broker.go). Production code under test
+//     uses its own client, not ScriptedBroker;
+//   - one-shot IdP faults for sign-in (idp.go);
 //   - a browser for tests hosting the real AS-1, which keeps cookies and
 //     approves ToolHive's consent page (browser.go).
 //
@@ -59,8 +56,6 @@
 //     untyped one is accepted; only ES256 is accepted. Because the harness
 //     accepts JWT, the production broker's own tests must check the typ it
 //     emits.
-//   - A refused exchange is recorded for checks 4 and 5, which concern the
-//     user's token; malformed requests are not recorded.
 //
 // Everything runs on loopback TLS servers that close when the test ends. The
 // harness is test code; production packages never import it.
@@ -73,12 +68,15 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/pem"
+	"maps"
 	"net/http"
 	"os"
 	"path/filepath"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/golang-jwt/jwt/v5"
 )
 
 // Defaults used when Options leaves a field empty.
@@ -229,6 +227,54 @@ func (*Harness) WriteSigningKey(t testing.TB, dir string) string {
 	return path
 }
 
+// ResignAccessToken returns token, a JWT signed with the key WriteSigningKey
+// wrote to keyFile, with its claims changed by edit and signed again with that
+// key under the same header, so its issuer verifies it and judges it by the
+// changed claims.
+func ResignAccessToken(t testing.TB, keyFile, token string, edit func(jwt.MapClaims)) string {
+	t.Helper()
+	claims := jwt.MapClaims{}
+	parsed, _, err := jwt.NewParser().ParseUnverified(token, claims)
+	if err != nil {
+		t.Fatalf("identityharness: parse access token: %v", err)
+	}
+	edit(claims)
+	raw, err := os.ReadFile(keyFile)
+	if err != nil {
+		t.Fatalf("identityharness: read signing key: %v", err)
+	}
+	block, _ := pem.Decode(raw)
+	if block == nil {
+		t.Fatal("identityharness: the signing key file holds no PEM block")
+	}
+	key, err := x509.ParseECPrivateKey(block.Bytes)
+	if err != nil {
+		t.Fatalf("identityharness: parse signing key: %v", err)
+	}
+	resigned := jwt.NewWithClaims(jwt.SigningMethodES256, claims)
+	resigned.Header = maps.Clone(parsed.Header)
+	signed, err := resigned.SignedString(key)
+	if err != nil {
+		t.Fatalf("identityharness: sign access token: %v", err)
+	}
+	return signed
+}
+
+// RegisterAS1Upstream registers a real AS-1 at as1Issuer as the upstream
+// client clientID at the IdP with a fresh secret, and writes the secret to a
+// file in dir, returning its path for AS-1's upstream client secret file.
+// Registering clientID again replaces its secret.
+func (h *Harness) RegisterAS1Upstream(t testing.TB, dir, clientID, as1Issuer string) (secretFile string) {
+	t.Helper()
+	secret := rand.Text()
+	secretFile = filepath.Join(dir, "upstream-client-secret")
+	if err := os.WriteFile(secretFile, []byte(secret), 0o600); err != nil {
+		t.Fatalf("identityharness: write upstream client secret: %v", err)
+	}
+	h.IdP.RegisterClient(clientID, secret, as1Issuer+"/oauth/callback")
+	return secretFile
+}
+
 // WriteServerKeyPair writes the stand-ins' loopback TLS certificate and its
 // private key to files in dir and returns their paths, so a server under test
 // (such as mecak8s with --tls-cert and --tls-key) is trusted wherever the
@@ -249,13 +295,13 @@ func (h *Harness) WriteServerKeyPair(t testing.TB, dir string) (certFile, keyFil
 	return certFile, keyFile
 }
 
-// faults holds one-shot failures a test forces on a stand-in endpoint.
+// faults holds one-shot failures a test forces on an IdP endpoint.
 type faults struct {
 	mu      sync.Mutex
 	pending map[string][]Fault
 }
 
-// Fault is a failure a stand-in returns once instead of its normal response.
+// Fault is a failure the IdP returns once instead of its normal response.
 type Fault struct {
 	// Status is the HTTP status for a token endpoint fault. Zero selects 400.
 	Status int

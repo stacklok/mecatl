@@ -19,6 +19,8 @@ import (
 	"time"
 
 	"github.com/stacklok/mecatl/internal/identitybroker"
+	"github.com/stacklok/mecatl/internal/identitybroker/adapter/as1server"
+	"github.com/stacklok/mecatl/internal/identitybroker/adapter/as1server/as1servertest"
 	"github.com/stacklok/mecatl/internal/identitybroker/adapter/authserverclient"
 	"github.com/stacklok/mecatl/internal/testutil/identityharness"
 )
@@ -26,73 +28,66 @@ import (
 const (
 	openHost        = "hostS42"
 	openIncarnation = "inc_abcdefghijklmnopqrstuvwxya"
-	// harnessRefreshPrefix starts every refresh token the harness AS-1
-	// issues, so an error can be checked for one the test never saw.
-	harnessRefreshPrefix = "as1-grant-rt-"
+	// as1RefreshPrefix starts every refresh token AS-1 issues, so an error
+	// can be checked for one the test never saw.
+	as1RefreshPrefix = "ory_rt_"
 	// waitLimit bounds every wait on another goroutine.
 	waitLimit = 10 * time.Second
 )
 
-// openClock is a settable clock safe to read from the harness's goroutines.
-type openClock struct {
-	mu  sync.Mutex
-	now time.Time
-}
+// brokerClock is the broker's clock: wall time, which AS-1 stamps expiries
+// with, plus an offset a test sets to move the broker past a session's hard
+// expiry. It is safe for concurrent use.
+type brokerClock struct{ offset atomic.Int64 }
 
-func (c *openClock) Now() time.Time {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.now
-}
+func (c *brokerClock) Now() time.Time { return time.Now().Add(time.Duration(c.offset.Load())) }
 
-func (c *openClock) Advance(d time.Duration) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.now = c.now.Add(d)
-}
+// Set moves the clock so it reads at, and runs on from there.
+func (c *brokerClock) Set(at time.Time) { c.offset.Store(int64(time.Until(at))) }
 
-// openFixture is a broker that converts access tokens at the harness AS-1
-// through the real adapter, on one clock.
+// Reset puts the clock back on wall time, so the broker accepts the expiries
+// AS-1 stamps again.
+func (c *brokerClock) Reset() { c.offset.Store(0) }
+
+// openFixture is a broker that converts access tokens at the real AS-1
+// through the real adapter and the fault transport.
 type openFixture struct {
-	h     *identityharness.Harness
-	clock *openClock
+	as1   *as1servertest.AS1
+	clock *brokerClock
 	b     *identitybroker.Broker
 }
 
 func newOpenFixture(t *testing.T) *openFixture {
 	t.Helper()
-	clientKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-	signer, err := identitybroker.NewClientAssertionSigner(clientKey, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	clock := &openClock{now: time.Unix(1_800_000_000, 0)}
-	h := identityharness.New(t, identityharness.Options{
-		Now:        clock.Now,
-		BrokerKeys: []identityharness.BrokerKey{{KeyID: signer.JWKS().Keys[0].KeyID, Public: &clientKey.PublicKey}},
-	})
-	as1, err := authserverclient.New(authserverclient.Config{
-		Issuer: h.AS1.Issuer(), TokenEndpoint: h.AS1.TokenEndpoint(), Assertions: signer,
-		HTTPClient: h.HTTPClient(), Now: clock.Now,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	b := newBroker(t, identitybroker.WithAuthServer(as1))
+	return newOpenFixtureWith(t, nil)
+}
+
+// newOpenFixtureWith is newOpenFixture with AS-1's configuration changed by
+// edit.
+func newOpenFixtureWith(t *testing.T, edit func(*as1server.Config, *as1server.DelegateClient)) *openFixture {
+	t.Helper()
+	a := as1servertest.Start(t, identityharness.New(t, identityharness.Options{}), edit)
+	clock := &brokerClock{}
+	b := newBroker(t, identitybroker.WithAuthServer(a.Client(t)))
 	identitybroker.SetClock(b, clock.Now)
-	return &openFixture{h: h, clock: clock, b: b}
+	return &openFixture{as1: a, clock: clock, b: b}
 }
 
 func (f *openFixture) owner(user string) identitybroker.Owner {
-	o := f.h.Owner(user)
+	o := f.as1.Harness.Owner(user)
 	return identitybroker.Owner{Issuer: o.Issuer, Subject: o.Subject}
 }
 
-func (f *openFixture) token(user string) identitybroker.Token {
-	return identitybroker.NewToken(f.h.AS1.MintAccessToken(identityharness.AccessTokenSpec{User: user}))
+// token signs user in at AS-1 and returns their access token.
+func (f *openFixture) token(t *testing.T, user string) identitybroker.Token {
+	t.Helper()
+	return f.as1.SignIn(t, as1servertest.SignIn{User: user})
+}
+
+// crafted mints an access token at the harness's AS-1 as spec describes, for
+// checks that refuse it before AS-1 is called.
+func (f *openFixture) crafted(spec identityharness.AccessTokenSpec) identitybroker.Token {
+	return identitybroker.NewToken(f.as1.Harness.AS1.MintAccessToken(spec))
 }
 
 func (f *openFixture) open(host string, owner identitybroker.Owner, token identitybroker.Token) (identitybroker.Session, error) {
@@ -115,14 +110,35 @@ func findSession(t *testing.T, b *identitybroker.Broker, host string) (identityb
 	return s, ok
 }
 
-// attempts is how many requests reached AS-1's token endpoint.
-func (f *openFixture) attempts() int { return len(f.h.AS1.ReceivedClientAssertions()) }
+// attempts is how many requests the broker sent AS-1's token endpoint,
+// whether or not they reached AS-1.
+func (f *openFixture) attempts() int { return len(f.as1.Faults.Requests()) }
 
 // asCalled is a snapshot of what AS-1 saw, to show a call did not reach it.
-type asCalled struct{ requests, grants, refusals int }
+type asCalled struct{ requests, conversions, refusals int }
 
 func (f *openFixture) called() asCalled {
-	return asCalled{f.attempts(), f.h.AS1.GrantsIssued(), len(f.h.AS1.ExchangeRefusals())}
+	return asCalled{f.attempts(), f.as1.Faults.Conversions(), len(f.as1.Faults.Refusals())}
+}
+
+// expire moves the broker's clock a second past the expiry of the grant
+// session id holds.
+func (f *openFixture) expire(t *testing.T, id string) identitybroker.HeldGrant {
+	t.Helper()
+	held, ok := identitybroker.SessionGrant(f.b, id)
+	if !ok {
+		t.Fatal("the session holds no refresh token")
+	}
+	f.clock.Set(held.ExpiresAt.Add(time.Second))
+	return held
+}
+
+// waitPastMaximum waits until a grant AS-1 converts at its maximum lifetime
+// expires at least a second after expiresAt, so a test tells the maximum
+// apart from a requested expiry. AS-1 stamps expiries with wall time, which
+// only waiting moves.
+func waitPastMaximum(expiresAt time.Time) {
+	time.Sleep(time.Until(expiresAt.Add(time.Second - as1servertest.IDJAGMaxLifetime)))
 }
 
 // wantNoVerifiedOwner fails t if session id has a verified owner.
@@ -133,31 +149,53 @@ func wantNoVerifiedOwner(t *testing.T, b *identitybroker.Broker, id string) {
 	}
 }
 
-// jti reads an access token's jti.
-func jti(t *testing.T, token identitybroker.Token) string {
+// wantAS1Refused fails t unless the last request reached AS-1 and AS-1
+// refused it with code and, unless reason is empty, reason. ToolHive
+// describes some refusals, such as invalid_client, in prose with no reason
+// code.
+func (f *openFixture) wantAS1Refused(t *testing.T, code, reason string) {
+	t.Helper()
+	reqs := f.as1.Faults.Requests()
+	if len(reqs) == 0 {
+		t.Fatal("no request reached AS-1")
+	}
+	if last := reqs[len(reqs)-1]; !last.Refused() || last.Fault != as1servertest.FaultNone || last.Code != code || reason != "" && last.Reason != reason {
+		t.Fatalf("AS-1's answer: reached %v, status %d, %q (%q), fault %q; want its own refusal %q (%q)",
+			last.Reached, last.Status, last.Code, last.Reason, last.Fault, code, reason)
+	}
+}
+
+// accessClaims are the access-token claims the tests read.
+type accessClaims struct {
+	JTI string `json:"jti"`
+	Exp int64  `json:"exp"`
+}
+
+func readClaims(t *testing.T, token identitybroker.Token) accessClaims {
 	t.Helper()
 	raw, err := base64.RawURLEncoding.DecodeString(strings.Split(token.Value(), ".")[1])
 	if err != nil {
 		t.Fatal(err)
 	}
-	var c struct {
-		JTI string `json:"jti"`
-	}
+	var c accessClaims
 	if err := json.Unmarshal(raw, &c); err != nil {
 		t.Fatal(err)
 	}
-	return c.JTI
+	return c
 }
 
+// jti reads an access token's jti.
+func jti(t *testing.T, token identitybroker.Token) string { return readClaims(t, token).JTI }
+
 // wantError fails t unless err is an *identitybroker.Error with code and
-// reason, and carries none of secrets and no harness refresh token.
+// reason, and carries none of secrets and no AS-1 refresh token.
 func wantError(t *testing.T, err error, code identitybroker.Code, reason identitybroker.Reason, secrets ...identitybroker.Token) {
 	t.Helper()
 	var e *identitybroker.Error
 	if !errors.As(err, &e) || e.Code != code || e.Reason != reason {
 		t.Fatalf("error = %v, want %s %q", err, code, reason)
 	}
-	if strings.Contains(err.Error(), harnessRefreshPrefix) {
+	if strings.Contains(err.Error(), as1RefreshPrefix) {
 		t.Fatalf("error %q discloses a refresh token", err)
 	}
 	for _, s := range secrets {
@@ -192,35 +230,39 @@ func send[T any](t *testing.T, ch chan<- T, v T) {
 func TestSessionOpenConvertsTheAccessToken(t *testing.T) {
 	f := newOpenFixture(t)
 	alice := f.owner(identityharness.Alice)
-	token := f.token(identityharness.Alice)
+	token := f.token(t, identityharness.Alice)
+	before := time.Now()
 	s, err := f.open(openHost, alice, token)
+	after := time.Now()
 	if err != nil {
 		t.Fatalf("OpenSession: %v", err)
 	}
 	if !s.HoldsRefreshToken || s.Owner != alice {
 		t.Fatalf("session = %+v, want Alice's, holding a refresh token", s)
 	}
-	if got := f.h.AS1.GrantsIssued(); got != 1 {
-		t.Fatalf("AS-1 issued %d grants, want 1", got)
+	if got := f.as1.Faults.Conversions(); got != 1 {
+		t.Fatalf("AS-1 converted %d tokens, want 1", got)
 	}
 	held, ok := identitybroker.SessionGrant(f.b, s.ID)
 	if !ok || held.VerifiedOwner != alice || held.SourceJTI != jti(t, token) {
 		t.Fatalf("held grant: ok %v, verified owner %+v, source jti matches %v; want Alice's grant from the token", ok, held.VerifiedOwner, held.SourceJTI == jti(t, token))
 	}
-	grant, ok := f.h.AS1.Grant(held.RefreshToken.Value())
+	if !strings.HasPrefix(held.RefreshToken.Value(), as1RefreshPrefix) {
+		t.Fatalf("the held refresh token does not start with %q", as1RefreshPrefix)
+	}
 	// No stored expiry yet: expires_at is left out and AS-1 applies its
-	// maximum, which the broker stores.
-	wantExpiry := f.clock.Now().Add(identityharness.DefaultGrantMaxLifetime)
-	if !ok || !grant.Active || grant.SourceJTI != jti(t, token) || !grant.ExpiresAt.Equal(wantExpiry) || !held.ExpiresAt.Equal(wantExpiry) {
-		t.Fatalf("AS-1 grant %+v (%v), held expiry %v; want an active grant for the token expiring at %v", grant, ok, held.ExpiresAt, wantExpiry)
+	// maximum, in whole seconds of wall time, which the broker stores.
+	earliest, latest := before.Add(as1servertest.IDJAGMaxLifetime).Truncate(time.Second), after.Add(as1servertest.IDJAGMaxLifetime+time.Second)
+	if held.ExpiresAt.Before(earliest) || held.ExpiresAt.After(latest) {
+		t.Fatalf("held expiry %v, want AS-1's maximum, between %v and %v", held.ExpiresAt, earliest, latest)
 	}
 	if found, ok := f.find(t, openHost); !ok || found != s {
 		t.Fatalf("FindSession = %+v, %v; want %+v", found, ok, s)
 	}
 	// A later open without a token returns the session, still holding it.
 	again, err := f.open(openHost, alice, identitybroker.Token{})
-	if err != nil || again != s || f.h.AS1.GrantsIssued() != 1 {
-		t.Fatalf("tokenless reopen = %+v, %v (%d grants); want %+v and no new grant", again, err, f.h.AS1.GrantsIssued(), s)
+	if err != nil || again != s || f.attempts() != 1 {
+		t.Fatalf("tokenless reopen = %+v, %v (%d requests to AS-1); want %+v and no new request", again, err, f.attempts(), s)
 	}
 }
 
@@ -230,28 +272,28 @@ func TestSessionOpenConvertsTheAccessToken(t *testing.T) {
 func TestSessionOpenNeverRepresentsAConvertedToken(t *testing.T) {
 	f := newOpenFixture(t)
 	alice := f.owner(identityharness.Alice)
-	token := f.token(identityharness.Alice)
+	token := f.token(t, identityharness.Alice)
 	s, err := f.open(openHost, alice, token)
 	if err != nil {
 		t.Fatal(err)
 	}
+	first, _ := identitybroker.SessionGrant(f.b, s.ID)
 	again, err := f.open(openHost, alice, token)
 	if err != nil || again != s || !again.HoldsRefreshToken {
 		t.Fatalf("repeated open = %+v, %v; want %+v", again, err, s)
 	}
-	if f.attempts() != 1 || f.h.AS1.GrantsIssued() != 1 || len(f.h.AS1.ExchangeRefusals()) != 0 {
-		t.Fatalf("AS-1 saw %d requests, issued %d grants, refused %d; want the one conversion", f.attempts(), f.h.AS1.GrantsIssued(), len(f.h.AS1.ExchangeRefusals()))
+	if got := f.called(); got != (asCalled{requests: 1, conversions: 1}) {
+		t.Fatalf("AS-1 saw %+v; want the one conversion", got)
 	}
-	held, _ := identitybroker.SessionGrant(f.b, s.ID)
-	if grant, ok := f.h.AS1.Grant(held.RefreshToken.Value()); !ok || !grant.Active {
-		t.Fatalf("first grant = %+v, %v; want it still active and held", grant, ok)
+	if held, ok := identitybroker.SessionGrant(f.b, s.ID); !ok || held.RefreshToken != first.RefreshToken {
+		t.Fatal("the session no longer holds the first grant")
 	}
 }
 
 func TestConcurrentSessionOpensWithOneTokenExchangeOnce(t *testing.T) {
 	f := newOpenFixture(t)
 	alice := f.owner(identityharness.Alice)
-	token := f.token(identityharness.Alice)
+	token := f.token(t, identityharness.Alice)
 	results := make(chan openResult, 2)
 	for range 2 {
 		go func() {
@@ -263,8 +305,8 @@ func TestConcurrentSessionOpensWithOneTokenExchangeOnce(t *testing.T) {
 	if r1.err != nil || r2.err != nil || r1.s != r2.s || !r1.s.HoldsRefreshToken {
 		t.Fatalf("concurrent opens = %+v, %v and %+v, %v; want one session holding a refresh token", r1.s, r1.err, r2.s, r2.err)
 	}
-	if f.attempts() != 1 || f.h.AS1.GrantsIssued() != 1 {
-		t.Fatalf("AS-1 saw %d requests and issued %d grants, want one exchange", f.attempts(), f.h.AS1.GrantsIssued())
+	if f.attempts() != 1 || f.as1.Faults.Conversions() != 1 {
+		t.Fatalf("AS-1 saw %d requests and converted %d tokens, want one exchange", f.attempts(), f.as1.Faults.Conversions())
 	}
 }
 
@@ -285,37 +327,39 @@ func TestSessionOpenIgnoresTokensWithoutAnAuthServer(t *testing.T) {
 	b := newBroker(t) // no WithAuthServer
 	s, err := b.OpenSession(context.Background(), testWorkload, identitybroker.OpenSessionRequest{
 		HostSessionID: openHost, Incarnation: openIncarnation, Owner: f.owner(identityharness.Bob),
-		AccessToken: f.token(identityharness.Alice), // even a mismatched one
+		AccessToken: f.token(t, identityharness.Alice), // even a mismatched one
 	})
 	if err != nil || s.HoldsRefreshToken || f.attempts() != 0 {
 		t.Fatalf("OpenSession = %+v, %v, %d exchanges; want a paired session and no exchange", s, err, f.attempts())
 	}
 }
 
+// TestSessionOpenBrokerCheck1RefusesWithoutCallingAS1 crafts the malformed
+// tokens at the harness's AS-1: the broker refuses them before AS-1 is called.
 func TestSessionOpenBrokerCheck1RefusesWithoutCallingAS1(t *testing.T) {
-	subID := func(members map[string]string) func(*openFixture) identitybroker.Token {
-		return func(f *openFixture) identitybroker.Token {
+	subID := func(members map[string]string) func(*testing.T, *openFixture) identitybroker.Token {
+		return func(_ *testing.T, f *openFixture) identitybroker.Token {
 			for k, v := range members {
 				if v == "IDP" {
-					members[k] = f.h.IdP.Issuer()
+					members[k] = f.as1.Harness.IdP.Issuer()
 				}
 			}
-			return identitybroker.NewToken(f.h.AS1.MintAccessToken(identityharness.AccessTokenSpec{SubID: members}))
+			return f.crafted(identityharness.AccessTokenSpec{SubID: members})
 		}
 	}
 	tests := []struct {
 		name   string
-		token  func(*openFixture) identitybroker.Token
+		token  func(*testing.T, *openFixture) identitybroker.Token
 		code   identitybroker.Code
 		reason identitybroker.Reason
 	}{
-		{"another user's token", func(f *openFixture) identitybroker.Token { return f.token(identityharness.Bob) },
+		{"another user's token", func(t *testing.T, f *openFixture) identitybroker.Token { return f.token(t, identityharness.Bob) },
 			identitybroker.CodePermissionDenied, identitybroker.ReasonOwnerMismatch},
-		{"no sub_id", func(f *openFixture) identitybroker.Token {
-			return identitybroker.NewToken(f.h.AS1.MintAccessToken(identityharness.AccessTokenSpec{OmitSubID: true}))
+		{"no sub_id", func(_ *testing.T, f *openFixture) identitybroker.Token {
+			return f.crafted(identityharness.AccessTokenSpec{OmitSubID: true})
 		}, identitybroker.CodeUnauthenticated, identitybroker.ReasonSubjectInvalid},
-		{"sub_id as a string", func(f *openFixture) identitybroker.Token {
-			return identitybroker.NewToken(f.h.AS1.MintAccessToken(identityharness.AccessTokenSpec{SubID: identityharness.Alice}))
+		{"sub_id as a string", func(_ *testing.T, f *openFixture) identitybroker.Token {
+			return f.crafted(identityharness.AccessTokenSpec{SubID: identityharness.Alice})
 		}, identitybroker.CodeUnauthenticated, identitybroker.ReasonSubjectInvalid},
 		{"sub_id of another format", subID(map[string]string{"format": "email", "iss": "IDP", "sub": identityharness.Alice}),
 			identitybroker.CodeUnauthenticated, identitybroker.ReasonSubjectInvalid},
@@ -323,15 +367,17 @@ func TestSessionOpenBrokerCheck1RefusesWithoutCallingAS1(t *testing.T) {
 			identitybroker.CodeUnauthenticated, identitybroker.ReasonSubjectInvalid},
 		{"sub_id without iss", subID(map[string]string{"format": "iss_sub", "sub": identityharness.Alice}),
 			identitybroker.CodeUnauthenticated, identitybroker.ReasonSubjectInvalid},
-		{"not a JWT", func(*openFixture) identitybroker.Token { return identitybroker.NewToken("garbage-secret-value") },
+		{"not a JWT", func(*testing.T, *openFixture) identitybroker.Token {
+			return identitybroker.NewToken("garbage-secret-value")
+		},
 			identitybroker.CodeUnauthenticated, identitybroker.ReasonSubjectInvalid},
-		{"payload not base64", func(*openFixture) identitybroker.Token { return identitybroker.NewToken("a.!!!.c") },
+		{"payload not base64", func(*testing.T, *openFixture) identitybroker.Token { return identitybroker.NewToken("a.!!!.c") },
 			identitybroker.CodeUnauthenticated, identitybroker.ReasonSubjectInvalid},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			f := newOpenFixture(t)
-			token := tt.token(f)
+			token := tt.token(t, f)
 			_, err := f.open(openHost, f.owner(identityharness.Alice), token)
 			wantError(t, err, tt.code, tt.reason, token)
 			if got := f.called(); got != (asCalled{}) {
@@ -351,11 +397,11 @@ func TestSessionOpenBrokerCheck1RefusesWithoutCallingAS1(t *testing.T) {
 func TestSessionOpenBrokerCheck2RefusesAnotherVerifiedOwner(t *testing.T) {
 	t.Run("another reported owner", func(t *testing.T) {
 		f := newOpenFixture(t)
-		if _, err := f.open(openHost, f.owner(identityharness.Alice), f.token(identityharness.Alice)); err != nil {
+		if _, err := f.open(openHost, f.owner(identityharness.Alice), f.token(t, identityharness.Alice)); err != nil {
 			t.Fatal(err)
 		}
 		before := f.called()
-		bobToken := f.token(identityharness.Bob)
+		bobToken := f.token(t, identityharness.Bob)
 		_, err := f.open(openHost, f.owner(identityharness.Bob), bobToken)
 		wantError(t, err, identitybroker.CodePermissionDenied, identitybroker.ReasonSessionOwned, bobToken)
 		if got := f.called(); got != before {
@@ -371,7 +417,7 @@ func TestSessionOpenBrokerCheck2RefusesAnotherVerifiedOwner(t *testing.T) {
 		// Unreachable through the public calls: the verified owner is only
 		// recorded from a token matching the reported owner.
 		identitybroker.SetVerifiedOwner(f.b, s.ID, f.owner(identityharness.Bob))
-		token := f.token(identityharness.Alice)
+		token := f.token(t, identityharness.Alice)
 		_, err = f.open(openHost, f.owner(identityharness.Alice), token)
 		wantError(t, err, identitybroker.CodePermissionDenied, identitybroker.ReasonSessionOwned, token)
 		if got := f.called(); got != (asCalled{}) {
@@ -386,47 +432,48 @@ func TestSessionOpenBrokerCheck2RefusesAnotherVerifiedOwner(t *testing.T) {
 func TestSessionOpenReplacesAndNeverExtends(t *testing.T) {
 	f := newOpenFixture(t)
 	alice := f.owner(identityharness.Alice)
-	s, err := f.open(openHost, alice, f.token(identityharness.Alice))
+	s, err := f.open(openHost, alice, f.token(t, identityharness.Alice))
 	if err != nil {
 		t.Fatal(err)
 	}
 	first, _ := identitybroker.SessionGrant(f.b, s.ID)
-	f.clock.Advance(time.Hour)
-	second := f.token(identityharness.Alice)
+	// AS-1's maximum for the second token now ends after the first grant.
+	waitPastMaximum(first.ExpiresAt)
+	second := f.token(t, identityharness.Alice)
 	if _, err := f.open(openHost, alice, second); err != nil {
 		t.Fatalf("second open: %v", err)
 	}
 	held, ok := identitybroker.SessionGrant(f.b, s.ID)
-	if !ok || held.SourceJTI != jti(t, second) || held.RefreshToken.Value() == first.RefreshToken.Value() {
+	if !ok || held.SourceJTI != jti(t, second) || held.RefreshToken == first.RefreshToken {
 		t.Fatal("the session does not hold the second token's refresh token")
 	}
-	grant, _ := f.h.AS1.Grant(held.RefreshToken.Value())
-	// AS-1 grants the requested expires_at: the first grant's expiry.
-	if !grant.ExpiresAt.Equal(first.ExpiresAt) || !held.ExpiresAt.Equal(first.ExpiresAt) {
-		t.Fatalf("second grant expires %v (held %v), want the session's hard expiry %v", grant.ExpiresAt, held.ExpiresAt, first.ExpiresAt)
+	// AS-1 grants the requested expires_at, the first grant's expiry, and
+	// the broker checks its echo against it.
+	if !held.ExpiresAt.Equal(first.ExpiresAt) {
+		t.Fatalf("second grant expires %v, want the session's hard expiry %v", held.ExpiresAt, first.ExpiresAt)
 	}
-	if f.h.AS1.GrantsIssued() != 2 {
-		t.Fatalf("AS-1 issued %d grants, want 2", f.h.AS1.GrantsIssued())
+	if f.as1.Faults.Conversions() != 2 {
+		t.Fatalf("AS-1 converted %d tokens, want 2", f.as1.Faults.Conversions())
 	}
 }
 
 // TestSessionOpenFailedReplaceKeepsTheHeldToken: a replacing open that fails
 // leaves the session's refresh token as it was.
 func TestSessionOpenFailedReplaceKeepsTheHeldToken(t *testing.T) {
-	for name, fault := range map[string]identityharness.Fault{
+	for name, fault := range map[string]as1servertest.Fault{
 		"503":        {Status: 503},
 		"token_used": {Error: "invalid_request", Reason: "token_used"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			f := newOpenFixture(t)
 			alice := f.owner(identityharness.Alice)
-			first := f.token(identityharness.Alice)
+			first := f.token(t, identityharness.Alice)
 			s, err := f.open(openHost, alice, first)
 			if err != nil {
 				t.Fatal(err)
 			}
-			f.h.AS1.FailNextExchange(fault)
-			if _, err := f.open(openHost, alice, f.token(identityharness.Alice)); err == nil {
+			f.as1.Faults.FailNextExchange(fault)
+			if _, err := f.open(openHost, alice, f.token(t, identityharness.Alice)); err == nil {
 				t.Fatal("the replacing open succeeded")
 			}
 			held, ok := identitybroker.SessionGrant(f.b, s.ID)
@@ -442,7 +489,7 @@ func TestSessionOpenFailedReplaceKeepsTheHeldToken(t *testing.T) {
 // never presents a grant AS-1 may already have expired.
 func TestSessionHardExpiryCountsOneSkewEarly(t *testing.T) {
 	f := newOpenFixture(t)
-	old, err := f.open(openHost, f.owner(identityharness.Alice), f.token(identityharness.Alice))
+	old, err := f.open(openHost, f.owner(identityharness.Alice), f.token(t, identityharness.Alice))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -451,12 +498,12 @@ func TestSessionHardExpiryCountsOneSkewEarly(t *testing.T) {
 		t.Fatal("the session holds no refresh token")
 	}
 
-	f.clock.Advance(held.ExpiresAt.Sub(f.clock.Now()) - identitybroker.ClockSkew - time.Second)
+	f.clock.Set(held.ExpiresAt.Add(-identitybroker.ClockSkew - time.Second))
 	if s, ok := f.find(t, openHost); !ok || s.ID != old.ID || !s.HoldsRefreshToken {
 		t.Fatalf("one second before the skew margin: FindSession = %+v, %v; want the session, holding its refresh token", s, ok)
 	}
 
-	f.clock.Advance(time.Second)
+	f.clock.Set(held.ExpiresAt.Add(-identitybroker.ClockSkew))
 	if s, ok := f.find(t, openHost); ok {
 		t.Fatalf("at the skew margin, before the token's own expiry: FindSession = %+v, want none", s)
 	}
@@ -467,69 +514,82 @@ func TestSessionHardExpiryCountsOneSkewEarly(t *testing.T) {
 
 // TestSessionHardExpiryClosesTheSession: once the held refresh token's
 // expiry passes, every lookup finds the session closed, and the next open
-// pairs a new broker session.
+// pairs a new broker session. AS-1 stamps expiries with wall time, so the
+// broker's clock moves past the expiry for the lookups, none of which
+// reaches AS-1, and back to wall time for the token-bearing open. A
+// token-bearing open as the first call stays on the moved clock instead.
 func TestSessionHardExpiryClosesTheSession(t *testing.T) {
 	ctx := context.Background()
 	tests := []struct {
 		name string
+		// converts reports that lookup is itself the token-bearing open, which
+		// converts at AS-1, so no reopen follows it.
+		converts bool
 		// lookup is the first call after the expiry.
 		lookup func(t *testing.T, f *openFixture, old identitybroker.Session, cred identitybroker.Token)
 	}{
-		{"a token-bearing open", func(t *testing.T, f *openFixture, old identitybroker.Session, _ identitybroker.Token) {
-			next, err := f.open(openHost, old.Owner, f.token(identityharness.Alice))
-			if err != nil || next.ID == old.ID || !next.HoldsRefreshToken {
-				t.Fatalf("open = %+v, %v; want a new session holding a refresh token", next, err)
-			}
-			// The new session has no hard expiry yet: AS-1 applies its maximum.
-			held, _ := identitybroker.SessionGrant(f.b, next.ID)
-			if want := f.clock.Now().Add(identityharness.DefaultGrantMaxLifetime); !held.ExpiresAt.Equal(want) {
-				t.Fatalf("new grant expires %v, want %v", held.ExpiresAt, want)
-			}
-		}},
-		{"a tokenless open", func(t *testing.T, f *openFixture, old identitybroker.Session, _ identitybroker.Token) {
+		{"a tokenless open", false, func(t *testing.T, f *openFixture, old identitybroker.Session, _ identitybroker.Token) {
 			next, err := f.open(openHost, old.Owner, identitybroker.Token{})
 			if err != nil || next.ID == old.ID || next.HoldsRefreshToken {
 				t.Fatalf("open = %+v, %v; want a new paired session", next, err)
 			}
 		}},
-		{"FindSession", func(t *testing.T, f *openFixture, _ identitybroker.Session, _ identitybroker.Token) {
+		{"a token-bearing open", true, func(t *testing.T, f *openFixture, old identitybroker.Session, _ identitybroker.Token) {
+			// AS-1's own expiry is on wall time, which the broker's clock has
+			// passed, so the wrapper replaces AS-1's echo with a made-up one
+			// expiring an hour after the broker's now. The reopens after the
+			// clock reset in the other rows check AS-1's real echo.
+			f.as1.Faults.ReplaceNextExchangeEcho(idjagEcho(f.clock.Now().Add(time.Hour)))
+			conversions := f.as1.Faults.Conversions()
+			next, err := f.open(openHost, old.Owner, f.token(t, identityharness.Alice))
+			if err != nil || next.ID == old.ID || !next.HoldsRefreshToken {
+				t.Fatalf("token-bearing open = %+v, %v; want a new session holding a refresh token", next, err)
+			}
+			if got := f.as1.Faults.Conversions(); got != conversions+1 {
+				t.Fatalf("AS-1 converted %d tokens for the open, want 1", got-conversions)
+			}
+		}},
+		{"FindSession", false, func(t *testing.T, f *openFixture, _ identitybroker.Session, _ identitybroker.Token) {
 			if s, ok := f.find(t, openHost); ok {
 				t.Fatalf("FindSession = %+v, want none", s)
 			}
 		}},
-		{"RegisterAgent", func(t *testing.T, f *openFixture, old identitybroker.Session, _ identitybroker.Token) {
+		{"RegisterAgent", false, func(t *testing.T, f *openFixture, old identitybroker.Session, _ identitybroker.Token) {
 			_, err := f.b.RegisterAgent(ctx, testWorkload, mainAgent(old))
 			wantError(t, err, identitybroker.CodeFailedPrecondition, identitybroker.ReasonSessionClosed)
 		}},
-		{"AuthorizeCall", func(t *testing.T, f *openFixture, old identitybroker.Session, cred identitybroker.Token) {
+		{"AuthorizeCall", false, func(t *testing.T, f *openFixture, old identitybroker.Session, cred identitybroker.Token) {
 			_, err := f.b.AuthorizeCall(ctx, testWorkload, identitybroker.AuthorizeCallRequest{
 				SessionID: old.ID, Credential: cred, OperationID: "op-1", Target: "gateway", Tool: "search",
 			})
 			wantError(t, err, identitybroker.CodeFailedPrecondition, identitybroker.ReasonSessionClosed, cred)
 		}},
-		{"VerifyCredential", func(t *testing.T, f *openFixture, old identitybroker.Session, cred identitybroker.Token) {
+		{"VerifyCredential", false, func(t *testing.T, f *openFixture, old identitybroker.Session, cred identitybroker.Token) {
 			_, err := f.b.VerifyCredential(ctx, identitybroker.VerifyCredentialRequest{SessionID: old.ID, Credential: cred})
 			wantError(t, err, identitybroker.CodeFailedPrecondition, identitybroker.ReasonSessionClosed, cred)
 		}},
-		{"VerifyCredentialForOwner", func(t *testing.T, f *openFixture, old identitybroker.Session, cred identitybroker.Token) {
+		{"VerifyCredentialForOwner", false, func(t *testing.T, f *openFixture, old identitybroker.Session, cred identitybroker.Token) {
 			_, err := f.b.VerifyCredentialForOwner(ctx, identitybroker.VerifyCredentialForOwnerRequest{Owner: old.Owner, Credential: cred})
 			wantError(t, err, identitybroker.CodePermissionDenied, identitybroker.ReasonDenied, cred)
 		}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel() // each waits up to a second for AS-1's wall clock
 			f := newOpenFixture(t)
-			old, err := f.open(openHost, f.owner(identityharness.Alice), f.token(identityharness.Alice))
+			old, err := f.open(openHost, f.owner(identityharness.Alice), f.token(t, identityharness.Alice))
 			if err != nil {
 				t.Fatal(err)
 			}
+			oldGrant, _ := identitybroker.SessionGrant(f.b, old.ID)
 			// Register just before the expiry, so the credential outlives it.
-			f.clock.Advance(identityharness.DefaultGrantMaxLifetime - 2*time.Minute)
+			f.clock.Set(oldGrant.ExpiresAt.Add(-identitybroker.ClockSkew - 2*time.Minute))
 			reg, err := f.b.RegisterAgent(ctx, testWorkload, mainAgent(old))
 			if err != nil {
 				t.Fatalf("RegisterAgent before the expiry: %v", err)
 			}
-			f.clock.Advance(2 * time.Minute)
+			f.expire(t, old.ID)
+			before := f.called()
 
 			tt.lookup(t, f, old, reg.Credential)
 
@@ -538,6 +598,25 @@ func TestSessionHardExpiryClosesTheSession(t *testing.T) {
 			}
 			_, err = f.b.RegisterAgent(ctx, testWorkload, mainAgent(old))
 			wantError(t, err, identitybroker.CodeFailedPrecondition, identitybroker.ReasonSessionClosed)
+			if tt.converts {
+				return
+			}
+			if got := f.called(); got != before {
+				t.Fatalf("AS-1 was called after the expiry: %+v, before %+v", got, before)
+			}
+
+			// Reopen on wall time, once AS-1's maximum ends after the old grant.
+			f.clock.Reset()
+			waitPastMaximum(oldGrant.ExpiresAt)
+			next, err := f.open(openHost, old.Owner, f.token(t, identityharness.Alice))
+			if err != nil || next.ID == old.ID || !next.HoldsRefreshToken {
+				t.Fatalf("token-bearing open = %+v, %v; want a new session holding a refresh token", next, err)
+			}
+			// The new session has no hard expiry yet: it asks for none, and AS-1
+			// applies its maximum, beyond the closed session's.
+			if held, _ := identitybroker.SessionGrant(f.b, next.ID); !held.ExpiresAt.After(oldGrant.ExpiresAt) {
+				t.Fatalf("new grant expires %v, want after the closed session's %v", held.ExpiresAt, oldGrant.ExpiresAt)
+			}
 		})
 	}
 }
@@ -550,7 +629,7 @@ func TestSessionWithoutARefreshTokenDoesNotExpire(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.clock.Advance(10 * identityharness.DefaultGrantMaxLifetime)
+	f.clock.Set(time.Now().Add(10 * as1servertest.IDJAGMaxLifetime))
 	if found, ok := f.find(t, openHost); !ok || found.ID != s.ID {
 		t.Fatalf("FindSession = %+v, %v; want %+v", found, ok, s)
 	}
@@ -567,47 +646,73 @@ func mainAgent(s identitybroker.Session) identitybroker.RegisterAgentRequest {
 	}
 }
 
+// idjagEcho is an echoed exchange grant issuing only ID-JAGs, expiring at
+// expiresAt (left out when zero).
+func idjagEcho(expiresAt time.Time) as1servertest.ExchangeGrant {
+	g := as1servertest.ExchangeGrant{Type: identitybroker.ExchangeGrantType, IssuableTokenTypes: []string{identitybroker.TokenTypeIDJAG}}
+	if !expiresAt.IsZero() {
+		g.ExpiresAt = expiresAt.Unix()
+	}
+	return g
+}
+
+// TestSessionOpenEchoMismatchClosesTheSession: AS-1 converts the token, and
+// the fault transport alters or removes the grant it echoes.
 func TestSessionOpenEchoMismatchClosesTheSession(t *testing.T) {
 	tests := []struct {
 		name string
 		// held converts a token first, so the open requests an expiry.
 		held bool
-		echo func(f *openFixture) identityharness.ExchangeGrant
+		// echo replaces AS-1's echo; none removes it. requested is the
+		// session's hard expiry, zero unless held.
+		echo func(now, requested time.Time) []as1servertest.ExchangeGrant
 	}{
-		{name: "refresh-token output", echo: func(f *openFixture) identityharness.ExchangeGrant {
-			return identityharness.ExchangeGrant{Type: identityharness.ExchangeGrantType, IssuableTokenTypes: []string{identitybroker.TokenTypeRefreshToken}, ExpiresAt: f.clock.Now().Add(time.Hour).Unix()}
+		{name: "refresh-token output", echo: func(now, _ time.Time) []as1servertest.ExchangeGrant {
+			g := idjagEcho(now.Add(time.Hour))
+			g.IssuableTokenTypes = []string{identitybroker.TokenTypeRefreshToken}
+			return []as1servertest.ExchangeGrant{g}
 		}},
-		{name: "another type", echo: func(f *openFixture) identityharness.ExchangeGrant {
-			return identityharness.ExchangeGrant{Type: "https://example.com/other", IssuableTokenTypes: []string{identityharness.TokenTypeIDJAG}, ExpiresAt: f.clock.Now().Add(time.Hour).Unix()}
+		{name: "another type", echo: func(now, _ time.Time) []as1servertest.ExchangeGrant {
+			g := idjagEcho(now.Add(time.Hour))
+			g.Type = "https://example.com/other"
+			return []as1servertest.ExchangeGrant{g}
 		}},
-		{name: "no expires_at", echo: func(*openFixture) identityharness.ExchangeGrant {
-			return identityharness.ExchangeGrant{Type: identityharness.ExchangeGrantType, IssuableTokenTypes: []string{identityharness.TokenTypeIDJAG}}
+		{name: "no expires_at", echo: func(time.Time, time.Time) []as1servertest.ExchangeGrant {
+			return []as1servertest.ExchangeGrant{idjagEcho(time.Time{})}
 		}},
-		{name: "expires_at already passed", echo: func(f *openFixture) identityharness.ExchangeGrant {
-			return identityharness.ExchangeGrant{Type: identityharness.ExchangeGrantType, IssuableTokenTypes: []string{identityharness.TokenTypeIDJAG}, ExpiresAt: f.clock.Now().Unix()}
+		{name: "expires_at already passed", echo: func(now, _ time.Time) []as1servertest.ExchangeGrant {
+			return []as1servertest.ExchangeGrant{idjagEcho(now)}
 		}},
-		{name: "expires_at later than requested", held: true, echo: func(f *openFixture) identityharness.ExchangeGrant {
-			return identityharness.ExchangeGrant{Type: identityharness.ExchangeGrantType, IssuableTokenTypes: []string{identityharness.TokenTypeIDJAG}, ExpiresAt: f.clock.Now().Add(identityharness.DefaultGrantMaxLifetime).Unix()}
+		{name: "expires_at later than requested", held: true, echo: func(_, requested time.Time) []as1servertest.ExchangeGrant {
+			return []as1servertest.ExchangeGrant{idjagEcho(requested.Add(time.Hour))}
 		}},
+		{name: "two grants", echo: func(now, _ time.Time) []as1servertest.ExchangeGrant {
+			return []as1servertest.ExchangeGrant{idjagEcho(now.Add(time.Hour)), idjagEcho(now.Add(time.Hour))}
+		}},
+		{name: "no echo", echo: func(time.Time, time.Time) []as1servertest.ExchangeGrant { return nil }},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			f := newOpenFixture(t)
 			alice := f.owner(identityharness.Alice)
 			if tt.held {
-				if _, err := f.open(openHost, alice, f.token(identityharness.Alice)); err != nil {
+				if _, err := f.open(openHost, alice, f.token(t, identityharness.Alice)); err != nil {
 					t.Fatal(err)
 				}
-				f.clock.Advance(time.Hour)
 			}
 			s, err := f.open(openHost, alice, identitybroker.Token{})
 			if err != nil {
 				t.Fatal(err)
 			}
-			f.h.AS1.MismatchNextExchangeEcho(tt.echo(f))
-			token := f.token(identityharness.Alice)
+			requested, _ := identitybroker.SessionGrant(f.b, s.ID)
+			f.as1.Faults.ReplaceNextExchangeEcho(tt.echo(f.clock.Now(), requested.ExpiresAt)...)
+			token := f.token(t, identityharness.Alice)
+			conversions := f.as1.Faults.Conversions()
 			_, err = f.open(openHost, alice, token)
 			wantError(t, err, identitybroker.CodeInternal, "", token)
+			if f.as1.Faults.Conversions() != conversions+1 {
+				t.Fatal("AS-1 did not convert the token whose echo was altered")
+			}
 			if _, ok := f.find(t, openHost); ok {
 				t.Fatal("the session is still open after a mismatched echo")
 			}
@@ -626,34 +731,33 @@ func TestSessionOpenEchoMismatchClosesTheSession(t *testing.T) {
 func TestSessionOpenResendsOnceAfterALostResponse(t *testing.T) {
 	tests := []struct {
 		name   string
-		fault  func(*identityharness.AS1)
+		fault  func(*as1servertest.FaultTransport)
 		code   identitybroker.Code
 		reason identitybroker.Reason
-		// attempts is how many requests reach AS-1.
+		// attempts is how many requests the broker sends AS-1.
 		attempts int
 		holds    bool
 	}{
-		{name: "processed, response lost: token_used", fault: (*identityharness.AS1).LoseNextExchangeResponse,
+		{name: "processed, response lost: token_used", fault: (*as1servertest.FaultTransport).LoseNextExchangeResponse,
 			code: identitybroker.CodeUnauthenticated, reason: identitybroker.ReasonTokenUsed, attempts: 2},
-		{name: "dropped before processing", fault: (*identityharness.AS1).DropNextExchange, attempts: 2, holds: true},
-		{name: "502", fault: func(a *identityharness.AS1) { a.FailNextExchange(identityharness.Fault{Status: 502}) }, attempts: 2, holds: true},
-		{name: "504", fault: func(a *identityharness.AS1) { a.FailNextExchange(identityharness.Fault{Status: 504}) }, attempts: 2, holds: true},
-		{name: "two 502s", fault: func(a *identityharness.AS1) {
-			a.FailNextExchange(identityharness.Fault{Status: 502})
-			a.FailNextExchange(identityharness.Fault{Status: 502})
+		{name: "dropped before processing", fault: (*as1servertest.FaultTransport).DropNextExchange, attempts: 2, holds: true},
+		{name: "502", fault: func(a *as1servertest.FaultTransport) { a.FailNextExchange(as1servertest.Fault{Status: 502}) }, attempts: 2, holds: true},
+		{name: "504", fault: func(a *as1servertest.FaultTransport) { a.FailNextExchange(as1servertest.Fault{Status: 504}) }, attempts: 2, holds: true},
+		{name: "two 502s", fault: func(a *as1servertest.FaultTransport) {
+			a.FailNextExchange(as1servertest.Fault{Status: 502})
+			a.FailNextExchange(as1servertest.Fault{Status: 502})
 		}, code: identitybroker.CodeUnavailable, attempts: 2},
-		{name: "two lost responses", fault: func(a *identityharness.AS1) { a.DropNextExchange(); a.DropNextExchange() },
+		{name: "two dropped requests", fault: func(a *as1servertest.FaultTransport) { a.DropNextExchange(); a.DropNextExchange() },
 			code: identitybroker.CodeUnavailable, attempts: 2},
-		{name: "503 is not resent", fault: func(a *identityharness.AS1) {
-			a.FailNextExchange(identityharness.Fault{Status: 503})
-			a.FailNextExchange(identityharness.Fault{Status: 503})
-		}, code: identitybroker.CodeUnavailable, attempts: 1},
+		// A resend would reach AS-1, so attempts would be 2.
+		{name: "503 is not resent", fault: func(a *as1servertest.FaultTransport) { a.FailNextExchange(as1servertest.Fault{Status: 503}) },
+			code: identitybroker.CodeUnavailable, attempts: 1},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			f := newOpenFixture(t)
-			tt.fault(f.h.AS1)
-			token := f.token(identityharness.Alice)
+			tt.fault(f.as1.Faults)
+			token := f.token(t, identityharness.Alice)
 			s, err := f.open(openHost, f.owner(identityharness.Alice), token)
 			if tt.code == "" {
 				if err != nil {
@@ -662,11 +766,11 @@ func TestSessionOpenResendsOnceAfterALostResponse(t *testing.T) {
 			} else {
 				wantError(t, err, tt.code, tt.reason, token)
 			}
-			assertions := f.h.AS1.ReceivedClientAssertions()
-			if len(assertions) != tt.attempts {
-				t.Fatalf("%d requests reached AS-1, want %d", len(assertions), tt.attempts)
+			reqs := f.as1.Faults.Requests()
+			if len(reqs) != tt.attempts {
+				t.Fatalf("the broker sent AS-1 %d requests, want %d", len(reqs), tt.attempts)
 			}
-			if len(assertions) == 2 && assertions[0] == assertions[1] {
+			if len(reqs) == 2 && reqs[0].ClientAssertion == reqs[1].ClientAssertion {
 				t.Fatal("the resend reused the first client assertion")
 			}
 			found, ok := f.find(t, openHost)
@@ -683,44 +787,46 @@ func TestSessionOpenResendsOnceAfterALostResponse(t *testing.T) {
 	}
 }
 
+// TestSessionOpenMapsAS1Refusals maps every answer the fault transport gives
+// in AS-1's place, without AS-1 seeing the request.
 func TestSessionOpenMapsAS1Refusals(t *testing.T) {
 	tests := []struct {
 		name   string
-		fault  identityharness.Fault
+		fault  as1servertest.Fault
 		code   identitybroker.Code
 		reason identitybroker.Reason
 	}{
-		{"token_used", identityharness.Fault{Error: "invalid_request", Reason: "token_used"}, identitybroker.CodeUnauthenticated, identitybroker.ReasonTokenUsed},
-		{"signed_out", identityharness.Fault{Error: "invalid_request", Reason: "signed_out"}, identitybroker.ReasonSignedOut.Code(), identitybroker.ReasonSignedOut},
-		{"upstream_revoked", identityharness.Fault{Error: "invalid_request", Reason: "upstream_revoked"}, identitybroker.ReasonUpstreamRevoked.Code(), identitybroker.ReasonUpstreamRevoked},
-		{"owner_action_required", identityharness.Fault{Error: "invalid_request", Reason: "owner_action_required"}, identitybroker.ReasonOwnerActionRequired.Code(), identitybroker.ReasonOwnerActionRequired},
-		{"subject_token_invalid", identityharness.Fault{Error: "invalid_request", Reason: "subject_token_invalid"}, identitybroker.CodeUnauthenticated, identitybroker.ReasonSubjectInvalid},
-		{"subject_token_audience", identityharness.Fault{Error: "invalid_request", Reason: "subject_token_audience"}, identitybroker.CodeInternal, ""},
-		{"subject_token_source_client", identityharness.Fault{Error: "invalid_request", Reason: "subject_token_source_client"}, identitybroker.CodeInternal, ""},
-		{"subject_token_offline_access", identityharness.Fault{Error: "invalid_request", Reason: "subject_token_offline_access"}, identitybroker.CodeInternal, ""},
-		{"grant_invalid", identityharness.Fault{Error: "invalid_request", Reason: "grant_invalid"}, identitybroker.CodeInternal, ""},
-		{"invalid_request with no reason", identityharness.Fault{Error: "invalid_request"}, identitybroker.CodeInternal, ""},
-		{"subject_invalid from AS-1", identityharness.Fault{Error: "invalid_request", Reason: "subject_invalid"}, identitybroker.CodeInternal, ""},
-		{"503", identityharness.Fault{Status: 503}, identitybroker.CodeUnavailable, ""},
-		{"429", identityharness.Fault{Status: 429}, identitybroker.CodeUnavailable, ""},
-		{"server_error", identityharness.Fault{Status: 500, Error: "server_error"}, identitybroker.CodeUnavailable, ""},
-		{"temporarily_unavailable", identityharness.Fault{Error: "temporarily_unavailable"}, identitybroker.CodeUnavailable, ""},
-		{"invalid_client", identityharness.Fault{Status: 401, Error: "invalid_client"}, identitybroker.CodeInternal, ""},
-		{"unauthorized_client", identityharness.Fault{Error: "unauthorized_client"}, identitybroker.CodeInternal, ""},
-		{"invalid_scope", identityharness.Fault{Error: "invalid_scope"}, identitybroker.CodeInternal, ""},
-		{"invalid_target", identityharness.Fault{Error: "invalid_target"}, identitybroker.CodeInternal, ""},
-		{"invalid_authorization_details", identityharness.Fault{Error: "invalid_authorization_details", Reason: "malformed_entry"}, identitybroker.CodeInternal, ""},
-		{"unknown error", identityharness.Fault{Error: "made_up"}, identitybroker.CodeInternal, ""},
+		{"token_used", as1servertest.Fault{Error: "invalid_request", Reason: "token_used"}, identitybroker.CodeUnauthenticated, identitybroker.ReasonTokenUsed},
+		{"signed_out", as1servertest.Fault{Error: "invalid_request", Reason: "signed_out"}, identitybroker.ReasonSignedOut.Code(), identitybroker.ReasonSignedOut},
+		{"upstream_revoked", as1servertest.Fault{Error: "invalid_request", Reason: "upstream_revoked"}, identitybroker.ReasonUpstreamRevoked.Code(), identitybroker.ReasonUpstreamRevoked},
+		{"owner_action_required", as1servertest.Fault{Error: "invalid_request", Reason: "owner_action_required"}, identitybroker.ReasonOwnerActionRequired.Code(), identitybroker.ReasonOwnerActionRequired},
+		{"subject_token_invalid", as1servertest.Fault{Error: "invalid_request", Reason: "subject_token_invalid"}, identitybroker.CodeUnauthenticated, identitybroker.ReasonSubjectInvalid},
+		{"subject_token_audience", as1servertest.Fault{Error: "invalid_request", Reason: "subject_token_audience"}, identitybroker.CodeInternal, ""},
+		{"subject_token_source_client", as1servertest.Fault{Error: "invalid_request", Reason: "subject_token_source_client"}, identitybroker.CodeInternal, ""},
+		{"subject_token_offline_access", as1servertest.Fault{Error: "invalid_request", Reason: "subject_token_offline_access"}, identitybroker.CodeInternal, ""},
+		{"grant_invalid", as1servertest.Fault{Error: "invalid_request", Reason: "grant_invalid"}, identitybroker.CodeInternal, ""},
+		{"invalid_request with no reason", as1servertest.Fault{Error: "invalid_request"}, identitybroker.CodeInternal, ""},
+		{"subject_invalid from AS-1", as1servertest.Fault{Error: "invalid_request", Reason: "subject_invalid"}, identitybroker.CodeInternal, ""},
+		{"503", as1servertest.Fault{Status: 503}, identitybroker.CodeUnavailable, ""},
+		{"429", as1servertest.Fault{Status: 429}, identitybroker.CodeUnavailable, ""},
+		{"server_error", as1servertest.Fault{Status: 500, Error: "server_error"}, identitybroker.CodeUnavailable, ""},
+		{"temporarily_unavailable", as1servertest.Fault{Error: "temporarily_unavailable"}, identitybroker.CodeUnavailable, ""},
+		{"invalid_client", as1servertest.Fault{Status: 401, Error: "invalid_client"}, identitybroker.CodeInternal, ""},
+		{"unauthorized_client", as1servertest.Fault{Error: "unauthorized_client"}, identitybroker.CodeInternal, ""},
+		{"invalid_scope", as1servertest.Fault{Error: "invalid_scope"}, identitybroker.CodeInternal, ""},
+		{"invalid_target", as1servertest.Fault{Error: "invalid_target"}, identitybroker.CodeInternal, ""},
+		{"invalid_authorization_details", as1servertest.Fault{Error: "invalid_authorization_details", Reason: "malformed_entry"}, identitybroker.CodeInternal, ""},
+		{"unknown error", as1servertest.Fault{Error: "made_up"}, identitybroker.CodeInternal, ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			f := newOpenFixture(t)
-			f.h.AS1.FailNextExchange(tt.fault)
-			token := f.token(identityharness.Alice)
+			f.as1.Faults.FailNextExchange(tt.fault)
+			token := f.token(t, identityharness.Alice)
 			_, err := f.open(openHost, f.owner(identityharness.Alice), token)
 			wantError(t, err, tt.code, tt.reason, token)
-			if f.attempts() != 1 {
-				t.Fatalf("%d requests reached AS-1, want 1", f.attempts())
+			if reqs := f.as1.Faults.Requests(); len(reqs) != 1 || reqs[0].Fault != as1servertest.FaultAnswered || reqs[0].Reached {
+				t.Fatalf("requests %+v, want one, answered in AS-1's place", reqs)
 			}
 			s, ok := f.find(t, openHost)
 			if !ok || s.HoldsRefreshToken {
@@ -731,32 +837,127 @@ func TestSessionOpenMapsAS1Refusals(t *testing.T) {
 	}
 }
 
-// TestSessionOpenReportsAS1sOwnRefusals runs AS-1's real checks 4 and 5.
+// TestSessionOpenReportsAS1sOwnRefusals runs AS-1's real checks of the
+// subject token and the client assertion. A token for another audience
+// carries no sub_id, so the broker refuses it before AS-1; AS-1's
+// subject_token_audience is driven in package as1server, which can have AS-1
+// issue for another audience.
 func TestSessionOpenReportsAS1sOwnRefusals(t *testing.T) {
-	t.Run("a token AS-1 did not sign: subject_token_invalid is subject_invalid", func(t *testing.T) {
+	studio := as1server.PublicClient{ID: "studio", RedirectURIs: []string{"http://127.0.0.1:18474/callback"}}
+	otherKeys := otherKeySet(t)
+	tests := []struct {
+		name string
+		edit func(*as1server.Config, *as1server.DelegateClient)
+		// token is the access token Alice opens with.
+		token func(*testing.T, *openFixture) identitybroker.Token
+		// as1Code and as1Reason are AS-1's refusal; an empty as1Reason is
+		// not checked.
+		as1Code, as1Reason string
+		code               identitybroker.Code
+		reason             identitybroker.Reason
+	}{
+		{
+			name: "a token AS-1 did not sign: subject_token_invalid is subject_invalid",
+			token: func(_ *testing.T, f *openFixture) identitybroker.Token {
+				return f.crafted(identityharness.AccessTokenSpec{ForeignKey: true, Issuer: f.as1.Issuer()})
+			},
+			as1Code: "invalid_request", as1Reason: "subject_token_invalid",
+			code: identitybroker.CodeUnauthenticated, reason: identitybroker.ReasonSubjectInvalid,
+		},
+		{
+			name: "an expired token: subject_token_invalid is subject_invalid",
+			token: func(t *testing.T, f *openFixture) identitybroker.Token {
+				return f.as1.ExpiredAccessToken(t, f.token(t, identityharness.Alice))
+			},
+			as1Code: "invalid_request", as1Reason: "subject_token_invalid",
+			code: identitybroker.CodeUnauthenticated, reason: identitybroker.ReasonSubjectInvalid,
+		},
+		{
+			name: "a token from an unlisted client: subject_token_source_client is a configuration fault",
+			edit: func(c *as1server.Config, _ *as1server.DelegateClient) {
+				c.PublicClients = append(c.PublicClients, studio)
+			},
+			token: func(t *testing.T, f *openFixture) identitybroker.Token {
+				return f.as1.SignIn(t, as1servertest.SignIn{Client: studio})
+			},
+			as1Code: "invalid_request", as1Reason: "subject_token_source_client",
+			code: identitybroker.CodeInternal,
+		},
+		{
+			name: "a token without offline_access: subject_token_offline_access is a configuration fault",
+			token: func(t *testing.T, f *openFixture) identitybroker.Token {
+				return f.as1.SignIn(t, as1servertest.SignIn{Scope: "openid"})
+			},
+			as1Code: "invalid_request", as1Reason: "subject_token_offline_access",
+			code: identitybroker.CodeInternal,
+		},
+		{
+			name: "a failed client assertion: invalid_client is a configuration fault",
+			edit: func(_ *as1server.Config, d *as1server.DelegateClient) {
+				// AS-1 knows the delegate by another key than the broker's.
+				d.KeySet = otherKeys
+			},
+			token:   func(t *testing.T, f *openFixture) identitybroker.Token { return f.token(t, identityharness.Alice) },
+			as1Code: "invalid_client",
+			code:    identitybroker.CodeInternal,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newOpenFixtureWith(t, tt.edit)
+			token := tt.token(t, f)
+			_, err := f.open(openHost, f.owner(identityharness.Alice), token)
+			wantError(t, err, tt.code, tt.reason, token)
+			f.wantAS1Refused(t, tt.as1Code, tt.as1Reason)
+			if f.attempts() != 1 {
+				t.Fatalf("the broker sent AS-1 %d requests, want 1", f.attempts())
+			}
+			if n := identitybroker.ConvertedTokens(f.b); n != 0 {
+				t.Fatalf("%d converted tokens remembered, want 0", n)
+			}
+			s, ok := f.find(t, openHost)
+			if !ok || s.HoldsRefreshToken {
+				t.Fatalf("FindSession = %+v, %v; want the session paired without a refresh token", s, ok)
+			}
+			wantNoVerifiedOwner(t, f.b, s.ID)
+		})
+	}
+	t.Run("a token converted for another session: token_used without asking AS-1", func(t *testing.T) {
 		f := newOpenFixture(t)
-		token := identitybroker.NewToken(f.h.AS1.MintAccessToken(identityharness.AccessTokenSpec{ForeignKey: true}))
-		_, err := f.open(openHost, f.owner(identityharness.Alice), token)
-		wantError(t, err, identitybroker.CodeUnauthenticated, identitybroker.ReasonSubjectInvalid, token)
-	})
-	t.Run("a token converted for another session: token_used", func(t *testing.T) {
-		f := newOpenFixture(t)
-		token := f.token(identityharness.Alice)
+		token := f.token(t, identityharness.Alice)
 		if _, err := f.open(openHost, f.owner(identityharness.Alice), token); err != nil {
 			t.Fatal(err)
 		}
 		_, err := f.open("hostS43", f.owner(identityharness.Alice), token)
 		wantError(t, err, identitybroker.CodeUnauthenticated, identitybroker.ReasonTokenUsed, token)
-		if f.h.AS1.GrantsIssued() != 1 {
-			t.Fatalf("AS-1 issued %d grants, want 1", f.h.AS1.GrantsIssued())
+		if f.as1.Faults.Conversions() != 1 || f.attempts() != 1 {
+			t.Fatalf("AS-1 converted %d tokens from %d requests, want 1 from 1: the broker refuses a token it remembers", f.as1.Faults.Conversions(), f.attempts())
 		}
 	})
+}
+
+// otherKeySet is the JWK Set of a fresh key that is not the broker's.
+func otherKeySet(t *testing.T) []byte {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	signer, err := identitybroker.NewClientAssertionSigner(key, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	set, err := json.Marshal(signer.JWKS())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return set
 }
 
 func TestSessionCloseDiscardsTheRefreshToken(t *testing.T) {
 	f := newOpenFixture(t)
 	alice := f.owner(identityharness.Alice)
-	s, err := f.open(openHost, alice, f.token(identityharness.Alice))
+	s, err := f.open(openHost, alice, f.token(t, identityharness.Alice))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -766,7 +967,7 @@ func TestSessionCloseDiscardsTheRefreshToken(t *testing.T) {
 	if _, ok := identitybroker.SessionGrant(f.b, s.ID); ok {
 		t.Fatal("the closed session still holds a refresh token")
 	}
-	next, err := f.open(openHost, alice, f.token(identityharness.Alice))
+	next, err := f.open(openHost, alice, f.token(t, identityharness.Alice))
 	if err != nil || next.ID == s.ID || !next.HoldsRefreshToken {
 		t.Fatalf("open after close = %+v, %v; want a new session holding a refresh token", next, err)
 	}
@@ -824,9 +1025,10 @@ func openWithFake(t *testing.T, as1 identitybroker.AuthServer) (*identitybroker.
 	return b, token, err
 }
 
-// TestSessionOpenClosesOnAnAnswerItCannotUse covers answers the harness AS-1
-// cannot be made to give: the session closes, and the refresh token, if
-// any, is neither kept nor disclosed.
+// TestSessionOpenClosesOnAnAnswerItCannotUse covers unusable answers from a
+// fake AuthServer, including ones AS-1 and the fault transport cannot be made
+// to give: the session closes, and the refresh token, if any, is neither kept
+// nor disclosed.
 func TestSessionOpenClosesOnAnAnswerItCannotUse(t *testing.T) {
 	const refresh = "rt-fake-secret"
 	tests := map[string]func() (identitybroker.TokenExchangeResult, error){
@@ -1189,7 +1391,7 @@ func TestSessionOpenNeverRepresentsATokenConvertedBefore(t *testing.T) {
 	t.Run("A, B, then A in one session", func(t *testing.T) {
 		f := newOpenFixture(t)
 		alice := f.owner(identityharness.Alice)
-		a, b := f.token(identityharness.Alice), f.token(identityharness.Alice)
+		a, b := f.token(t, identityharness.Alice), f.token(t, identityharness.Alice)
 		s, err := f.open(openHost, alice, a)
 		if err != nil {
 			t.Fatal(err)
@@ -1209,14 +1411,21 @@ func TestSessionOpenNeverRepresentsATokenConvertedBefore(t *testing.T) {
 	t.Run("A, expiry, B in a new session, then A", func(t *testing.T) {
 		f := newOpenFixture(t)
 		alice := f.owner(identityharness.Alice)
-		// A outlives the first session's grant.
-		a := identitybroker.NewToken(f.h.AS1.MintAccessToken(identityharness.AccessTokenSpec{User: identityharness.Alice, Lifetime: 24 * time.Hour}))
+		a := f.token(t, identityharness.Alice)
 		first, err := f.open(openHost, alice, a)
 		if err != nil {
 			t.Fatal(err)
 		}
-		f.clock.Advance(identityharness.DefaultGrantMaxLifetime)
-		second, err := f.open(openHost, alice, f.token(identityharness.Alice))
+		held := f.expire(t, first.ID)
+		// A outlives the first session's grant.
+		if aExp := time.Unix(readClaims(t, a).Exp, 0); !f.clock.Now().Before(aExp.Add(5 * time.Minute)) {
+			t.Fatalf("A expires at %v, which the broker forgets before the grant expiring at %v", aExp, held.ExpiresAt)
+		}
+		if s, ok := f.find(t, openHost); ok {
+			t.Fatalf("FindSession after the expiry = %+v, want none", s)
+		}
+		f.clock.Reset()
+		second, err := f.open(openHost, alice, f.token(t, identityharness.Alice))
 		if err != nil || second.ID == first.ID {
 			t.Fatalf("open with B = %+v, %v; want a new session", second, err)
 		}
@@ -1228,8 +1437,10 @@ func TestSessionOpenNeverRepresentsATokenConvertedBefore(t *testing.T) {
 	t.Run("A with a mismatched echo, then A in a new session", func(t *testing.T) {
 		f := newOpenFixture(t)
 		alice := f.owner(identityharness.Alice)
-		f.h.AS1.MismatchNextExchangeEcho(identityharness.ExchangeGrant{Type: "https://example.com/other", IssuableTokenTypes: []string{identityharness.TokenTypeIDJAG}})
-		a := f.token(identityharness.Alice)
+		other := idjagEcho(time.Time{})
+		other.Type = "https://example.com/other"
+		f.as1.Faults.ReplaceNextExchangeEcho(other)
+		a := f.token(t, identityharness.Alice)
 		if _, err := f.open(openHost, alice, a); err == nil {
 			t.Fatal("the mismatched open succeeded")
 		}
@@ -1245,20 +1456,22 @@ func TestSessionOpenNeverRepresentsATokenConvertedBefore(t *testing.T) {
 	t.Run("A is forgotten after its exp plus the skew", func(t *testing.T) {
 		f := newOpenFixture(t)
 		alice := f.owner(identityharness.Alice)
-		a := f.token(identityharness.Alice)
+		a := f.token(t, identityharness.Alice)
 		if _, err := f.open(openHost, alice, a); err != nil {
 			t.Fatal(err)
 		}
 		if n := identitybroker.ConvertedTokens(f.b); n != 1 {
 			t.Fatalf("%d converted tokens remembered, want 1", n)
 		}
-		f.clock.Advance(identityharness.DefaultAccessTokenLifetime + 5*time.Minute)
+		f.clock.Set(time.Unix(readClaims(t, a).Exp, 0).Add(5 * time.Minute))
 		if n := identitybroker.ConvertedTokens(f.b); n != 0 {
 			t.Fatalf("%d converted tokens remembered past exp plus the skew, want 0", n)
 		}
-		// AS-1 is asked again, and refuses the expired token itself.
+		// AS-1 is asked again. AS-1's clock is wall time, on which A has not
+		// expired, so AS-1 refuses it as spent rather than as expired.
 		_, err := f.open(openHost, alice, a)
-		wantError(t, err, identitybroker.CodeUnauthenticated, identitybroker.ReasonSubjectInvalid, a)
+		wantError(t, err, identitybroker.CodeUnauthenticated, identitybroker.ReasonTokenUsed, a)
+		f.wantAS1Refused(t, "invalid_request", "token_used")
 		if f.attempts() != 2 {
 			t.Fatalf("%d requests reached AS-1, want 2", f.attempts())
 		}
@@ -1271,29 +1484,31 @@ func TestSessionOpenNeverRepresentsATokenConvertedBefore(t *testing.T) {
 func TestSessionOpenRemembersTokensAS1MayHaveConverted(t *testing.T) {
 	tests := []struct {
 		name  string
-		fault func(*identityharness.AS1)
+		fault func(*as1servertest.FaultTransport)
 		want  int
 	}{
-		{"converted", func(*identityharness.AS1) {}, 1},
-		{"token_used", func(a *identityharness.AS1) {
-			a.FailNextExchange(identityharness.Fault{Error: "invalid_request", Reason: "token_used"})
+		{"converted", func(*as1servertest.FaultTransport) {}, 1},
+		{"token_used", func(a *as1servertest.FaultTransport) {
+			a.FailNextExchange(as1servertest.Fault{Error: "invalid_request", Reason: "token_used"})
 		}, 1},
-		{"lost response", (*identityharness.AS1).LoseNextExchangeResponse, 1},
-		{"two lost responses", func(a *identityharness.AS1) { a.DropNextExchange(); a.DropNextExchange() }, 1},
-		{"503", func(a *identityharness.AS1) { a.FailNextExchange(identityharness.Fault{Status: 503}) }, 0},
-		{"invalid_client", func(a *identityharness.AS1) {
-			a.FailNextExchange(identityharness.Fault{Status: 401, Error: "invalid_client"})
+		{"lost response", (*as1servertest.FaultTransport).LoseNextExchangeResponse, 1},
+		{"two lost responses", func(a *as1servertest.FaultTransport) { a.DropNextExchange(); a.DropNextExchange() }, 1},
+		{"503", func(a *as1servertest.FaultTransport) { a.FailNextExchange(as1servertest.Fault{Status: 503}) }, 0},
+		{"invalid_client", func(a *as1servertest.FaultTransport) {
+			a.FailNextExchange(as1servertest.Fault{Status: 401, Error: "invalid_client"})
 		}, 0},
-		{"the token refused", func(a *identityharness.AS1) {
-			a.FailNextExchange(identityharness.Fault{Error: "invalid_request", Reason: "subject_token_invalid"})
+		{"the token refused", func(a *as1servertest.FaultTransport) {
+			a.FailNextExchange(as1servertest.Fault{Error: "invalid_request", Reason: "subject_token_invalid"})
 		}, 0},
-		{"invalid_request with no reason", func(a *identityharness.AS1) { a.FailNextExchange(identityharness.Fault{Error: "invalid_request"}) }, 0},
+		{"invalid_request with no reason", func(a *as1servertest.FaultTransport) {
+			a.FailNextExchange(as1servertest.Fault{Error: "invalid_request"})
+		}, 0},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			f := newOpenFixture(t)
-			tt.fault(f.h.AS1)
-			_, _ = f.open(openHost, f.owner(identityharness.Alice), f.token(identityharness.Alice))
+			tt.fault(f.as1.Faults)
+			_, _ = f.open(openHost, f.owner(identityharness.Alice), f.token(t, identityharness.Alice))
 			if n := identitybroker.ConvertedTokens(f.b); n != tt.want {
 				t.Fatalf("%d converted tokens remembered, want %d", n, tt.want)
 			}

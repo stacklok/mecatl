@@ -926,6 +926,7 @@ linters:
           list-mode: strict
           files:
             - '**/internal/identitybroker/adapter/as1server/**.go'
+            - '!**/internal/identitybroker/adapter/as1server/as1servertest/**.go'
             - '!$test'
           allow:
             - $gostd
@@ -934,6 +935,21 @@ linters:
             - github.com/stacklok/toolhive/pkg/authserver/server/registration$
             - github.com/stacklok/toolhive/pkg/authserver/storage$
             - github.com/stacklok/toolhive/pkg/oauthproto$
+        # The real-AS-1 test fixture shared by the broker, authserverclient,
+        # app, and mecak8s tests. It reaches AS-1 only through as1server's
+        # exported API and never ToolHive directly.
+        internal-identitybroker-adapter-as1server-as1servertest:
+          list-mode: strict
+          files:
+            - '**/internal/identitybroker/adapter/as1server/as1servertest/**.go'
+            - '!$test'
+          allow:
+            - $gostd
+            - github.com/golang-jwt/jwt/v5$
+            - github.com/stacklok/mecatl/internal/identitybroker$
+            - github.com/stacklok/mecatl/internal/identitybroker/adapter/as1server$
+            - github.com/stacklok/mecatl/internal/identitybroker/adapter/authserverclient$
+            - github.com/stacklok/mecatl/internal/testutil/identityharness$
         # Only the composition root wires the identity broker's adapters; the
         # rest of Mecatl reaches the broker through its authentication boundary.
         internal-identitybroker-adapter-importers:
@@ -946,6 +962,16 @@ linters:
           deny:
             - pkg: github.com/stacklok/mecatl/internal/identitybroker/adapter
               desc: 'only internal/app wires the identity broker adapters; use the broker boundary instead'
+        # as1servertest is a test fixture; production code never imports it.
+        internal-identitybroker-as1servertest-importers:
+          list-mode: lax
+          files:
+            - '**/internal/app/**.go'
+            - '**/cmd/**.go'
+            - '!$test'
+          deny:
+            - pkg: github.com/stacklok/mecatl/internal/identitybroker/adapter/as1server/as1servertest
+              desc: 'test fixture; production code never imports it'
         # Composition and the command roots use the MCP broker contract
         # (internal/mcpbroker); one file constructs the adapter.
         internal-adapter-mcpbroker-importers:

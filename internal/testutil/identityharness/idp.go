@@ -28,9 +28,9 @@ const (
 // refresh token only when the client asks for offline access the way OIDC
 // Core §11 requires: the offline_access scope together with prompt=consent.
 //
-// Sign-in is headless. The user is the one named by login_hint, or the
-// default user when login_hint is absent; an unknown user is refused with
-// access_denied.
+// Sign-in is headless. The user is the one SignInNextAs selected, else the
+// one named by login_hint, else the default user; an unknown user is refused
+// with access_denied.
 type IdP struct {
 	server *httptest.Server
 	key    *rsa.PrivateKey
@@ -39,6 +39,7 @@ type IdP struct {
 
 	mu      sync.Mutex
 	users   []string
+	next    []string // users SignInNextAs selected, oldest first
 	clients map[string]idpClient
 	codes   map[string]idpCode
 	offline map[string]int // refresh tokens issued, by subject
@@ -101,6 +102,27 @@ func (p *IdP) RegisterClient(id, secret, redirectURI string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.clients[id] = idpClient{secret: secret, redirectURI: redirectURI}
+}
+
+// SignInNextAs makes the next authorization request that signs a user in
+// sign in user instead of the one its login_hint names or the default user,
+// for a client such as the real AS-1 that does not forward login_hint. Calls
+// queue, one authorization each. The queue is a FIFO bound to no request:
+// whichever authorization reaches the IdP next takes the oldest selection, so
+// it is unsafe for concurrent sign-ins on one IdP.
+func (p *IdP) SignInNextAs(user string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.next = append(p.next, user)
+}
+
+// ClearSignInNextAs drops every selection SignInNextAs queued that no
+// authorization has taken, such as after a sign-in that failed before
+// reaching the IdP.
+func (p *IdP) ClearSignInNextAs() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.next = nil
 }
 
 // FailNextAuthorization makes the next authorization request redirect back
@@ -170,7 +192,7 @@ func (p *IdP) authorize(w http.ResponseWriter, r *http.Request) {
 		redirectWithError(w, r, redirectURI, state, "invalid_request")
 		return
 	}
-	subject, ok := p.user(q.Get("login_hint"))
+	subject, ok := p.signInUser(q.Get("login_hint"))
 	if !ok {
 		redirectWithError(w, r, redirectURI, state, "access_denied")
 		return
@@ -189,6 +211,18 @@ func (p *IdP) authorize(w http.ResponseWriter, r *http.Request) {
 		back.Set("state", state)
 	}
 	redirect(w, r, redirectURI, back)
+}
+
+// signInUser is the user an authorization with login_hint hint signs in: the
+// next one SignInNextAs selected, which it consumes, or user(hint).
+func (p *IdP) signInUser(hint string) (string, bool) {
+	p.mu.Lock()
+	if len(p.next) > 0 {
+		hint = p.next[0]
+		p.next = p.next[1:]
+	}
+	p.mu.Unlock()
+	return p.user(hint)
 }
 
 func (p *IdP) user(hint string) (string, bool) {

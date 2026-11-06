@@ -6,7 +6,6 @@ import (
 	"maps"
 	"net/http"
 	"net/url"
-	"slices"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -79,13 +78,6 @@ type Grant struct {
 	Reason string
 }
 
-// Refusal is a refused exchange AS-1 recorded: its OAuth error code and its
-// reason, empty when it has none.
-type Refusal struct {
-	Code   string
-	Reason string
-}
-
 type as1Grant struct {
 	clientID, subject, sourceJTI, output string
 	subID                                Owner
@@ -93,48 +85,7 @@ type as1Grant struct {
 	revoked                              bool
 }
 
-// FailNextExchange makes the next token exchange from an authenticated
-// broker fail with fault before any other check, for a 503 or any other
-// injected error.
-func (a *AS1) FailNextExchange(fault Fault) { a.faults.push("exchange", fault) }
-
-// LoseNextExchangeResponse makes AS-1 process the next token exchange in
-// full and then drop the connection without a response, as a lost response.
-func (a *AS1) LoseNextExchangeResponse() { a.faults.push("exchange-lost", Fault{}) }
-
-// DropNextExchange makes AS-1 drop the connection of the next token exchange
-// without processing it, as a request lost on its way. Client authentication
-// has already run, which is harmless: a resend carries a new assertion.
-func (a *AS1) DropNextExchange() { a.faults.push("exchange-dropped", Fault{}) }
-
-// MismatchNextExchangeEcho makes the next successful token exchange echo
-// echo instead of the entry it granted. The grant is still the one granted.
-func (a *AS1) MismatchNextExchangeEcho(echo ExchangeGrant) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	a.echoes = append(a.echoes, echo)
-}
-
-// ExpireGrant forces the grant of refresh token past its expiry, as if the
-// clock had passed it.
-func (a *AS1) ExpireGrant(token string) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	if g, ok := a.grants[token]; ok {
-		g.expiresAt = a.now()
-	}
-}
-
-// ExchangeRefusals returns the refused exchanges AS-1 recorded, oldest
-// first.
-func (a *AS1) ExchangeRefusals() []Refusal {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	return slices.Clone(a.refusals)
-}
-
-// GrantsIssued returns how many grants AS-1 has issued, including any a lost
-// response orphaned.
+// GrantsIssued returns how many grants AS-1 has issued.
 func (a *AS1) GrantsIssued() int {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -166,14 +117,12 @@ func (a *AS1) Grant(token string) (Grant, bool) {
 // exchange of an access token for a grant that issues only ID-JAGs, for an
 // authenticated broker. Check 1 (client authentication) and check 2 (the
 // broker may use this grant) have passed.
+//
+// It is kept as the grant fixture for ID-JAG tests until ToolHive's AS-1
+// issues ID-JAGs (stacklok/toolhive#6898, stacklok/toolhive#6899): the
+// harness can redeem only refresh tokens it issued. Session-open behaviour
+// itself is tested against the real AS-1 (as1servertest).
 func (a *AS1) exchange(w http.ResponseWriter, r *http.Request) {
-	if _, dropped := a.faults.pop("exchange-dropped"); dropped {
-		panic(http.ErrAbortHandler) // closes the connection with no response
-	}
-	if fault, ok := a.faults.pop("exchange"); ok {
-		writeOAuthError(w, fault.Status, fault.Error, fault.Reason)
-		return
-	}
 	now := a.now()
 	entry, code, reason := checkExchangeForm(r.PostForm, now)
 	if code != "" {
@@ -181,29 +130,19 @@ func (a *AS1) exchange(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Check 4: the subject token is a live AS-1 access token for the Mecatl
-	// API, issued to a public client. A refused token gets
-	// subject_token_invalid whatever the failure (see the package doc).
+	// API, issued to a public client. Unlike the real AS-1, a refused token
+	// gets subject_token_invalid whatever the failure.
 	subject, ok := a.verifySubjectToken(r.PostForm.Get("subject_token"))
 	if !ok {
-		a.refuse(w, "invalid_request", reasonSubjectTokenInvalid)
+		writeOAuthError(w, http.StatusBadRequest, "invalid_request", reasonSubjectTokenInvalid)
 		return
 	}
 	refresh, granted, ok := a.convert(subject, entry, now)
 	if !ok {
-		a.refuse(w, "invalid_request", reasonTokenUsed)
+		writeOAuthError(w, http.StatusBadRequest, "invalid_request", reasonTokenUsed)
 		return
 	}
 	echo := ExchangeGrant{Type: ExchangeGrantType, IssuableTokenTypes: entry.IssuableTokenTypes, ExpiresAt: granted.Unix()}
-	a.mu.Lock()
-	if len(a.echoes) > 0 {
-		echo = a.echoes[0]
-		a.echoes = a.echoes[1:]
-	}
-	a.mu.Unlock()
-
-	if _, lost := a.faults.pop("exchange-lost"); lost {
-		panic(http.ErrAbortHandler) // closes the connection with no response
-	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"access_token":      refresh,
 		"issued_token_type": tokenTypeRefresh,
@@ -389,15 +328,4 @@ func (a *AS1) verifySubjectToken(token string) (as1Subject, bool) {
 		return as1Subject{}, false
 	}
 	return as1Subject{sub: claims.Subject, jti: claims.ID, owner: claims.SubID.Owner, expires: claims.ExpiresAt.Time}, true
-}
-
-// refuse records a refused exchange and writes the error.
-//
-// Guess: checks 4 and 5 are recorded, since they concern the user's token;
-// malformed requests are not.
-func (a *AS1) refuse(w http.ResponseWriter, code, reason string) {
-	a.mu.Lock()
-	a.refusals = append(a.refusals, Refusal{Code: code, Reason: reason})
-	a.mu.Unlock()
-	writeOAuthError(w, http.StatusBadRequest, code, reason)
 }

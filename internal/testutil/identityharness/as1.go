@@ -55,7 +55,6 @@ type AS1 struct {
 	lifetime time.Duration
 	idp      *IdP
 	secret   string
-	faults   faults
 	http     *http.Client
 
 	brokerKey    *ecdsa.PrivateKey
@@ -74,10 +73,6 @@ type AS1 struct {
 	assertionJTIs map[string]time.Time        // used client assertion jti, kept until
 	grants        map[string]*as1Grant        // by refresh token
 	conversions   map[string]time.Time        // converted access token jti, kept until
-	refusals      []Refusal                   // refused exchanges, oldest first
-	echoes        []ExchangeGrant             // forced mismatched echoes
-	// receivedAssertions are the client assertions received, oldest first.
-	receivedAssertions []string
 }
 
 type as1Pending struct {
@@ -177,14 +172,6 @@ func (a *AS1) HasUpstreamRefreshToken(user string) bool {
 	defer a.mu.Unlock()
 	return a.upstream[user] != ""
 }
-
-// FailNextAuthorization makes the next authorization request redirect back
-// with fault.Error instead of signing the user in.
-func (a *AS1) FailNextAuthorization(fault Fault) { a.faults.push("authorize", fault) }
-
-// FailNextToken makes the next token request from a registered client fail
-// with fault.
-func (a *AS1) FailNextToken(fault Fault) { a.faults.push("token", fault) }
 
 // AccessTokenSpec describes an AS-1 access token for MintAccessToken. Fields
 // left empty take the values a real sign-in produces, so a test changes only
@@ -338,10 +325,6 @@ func (a *AS1) authorize(w http.ResponseWriter, r *http.Request) {
 	}
 	// Redirect to the registered value, not the request's copy of it.
 	redirectURI = client.RedirectURIs[registered]
-	if fault, ok := a.faults.pop("authorize"); ok {
-		redirectWithError(w, r, redirectURI, state, fault.Error)
-		return
-	}
 	if q.Get("response_type") != responseTypeCode {
 		redirectWithError(w, r, redirectURI, state, "unsupported_response_type")
 		return
@@ -513,10 +496,6 @@ func (a *AS1) token(w http.ResponseWriter, r *http.Request) {
 	}
 	if confidential {
 		a.brokerToken(w, r)
-		return
-	}
-	if fault, ok := a.faults.pop("token"); ok {
-		writeOAuthError(w, fault.Status, fault.Error, fault.Reason)
 		return
 	}
 	if !a.validResource(r.PostForm) {

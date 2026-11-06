@@ -30,6 +30,12 @@ import (
 // issue are refused. Session open converts each user's access token at AS-1
 // into a refresh token the broker holds for the session. Later identity work
 // extends this test as it adds steps.
+//
+// It stays on the harness's AS-1, not the real one, because later steps add
+// gateway calls that need ID-JAGs, which ToolHive's AS-1 does not issue yet:
+// retired by stacklok/toolhive#6898 (and stacklok/toolhive#6899).
+// TestIdentityBrokerAgainstRealAS1 proves the session close and hard-expiry
+// reopen against the real AS-1.
 func TestIdentityBrokerAgainstOfflineHarness(t *testing.T) {
 	// The broker authenticates to AS-1 with its client key, which AS-1 holds
 	// registered for the broker's client.
@@ -52,48 +58,12 @@ func TestIdentityBrokerAgainstOfflineHarness(t *testing.T) {
 		Now:              now,
 		GrantMaxLifetime: grantMaxLifetime,
 	})
-	cfg, err := parseFlags([]string{
-		"--mock",
-		"--enable-identity-broker", "--no-shell", // the identity broker refuses to run beside a shell
-		"--permission-mode=yolo", "--guardrails=off", // unchecked allow-all is yolo
-		"--grpc-addr", freeLoopbackPort(t),
-		"--http-addr", freeLoopbackPort(t),
-		"--drain-addr", freeLoopbackPort(t),
-		"--session-lease-k8s-namespace", "",
-		"--oidc-issuer", h.AS1.Issuer(),
-		"--oidc-audience", h.AS1.Audience(),
-		"--oidc-allow-private-https-issuer",
-		"--oidc-ca-cert-file", h.WriteCACert(t, t.TempDir()),
-		"--oidc-owner-identity=sub_id",
-		"--oidc-accepted-client-ids", identityharness.DefaultClientID + ",studio",
+	api, built := serveIdentityBroker(t, identityBrokerAS1Tokens{
+		issuer: h.AS1.Issuer(), audience: h.AS1.Audience(), caFile: h.WriteCACert(t, t.TempDir()),
+		clientIDs: identityharness.DefaultClientID + ",studio",
+	}, &app.IdentityBrokerAS1{
+		Issuer: h.AS1.Issuer(), TokenEndpoint: h.AS1.TokenEndpoint(), HTTPClient: h.HTTPClient(), ClientKey: clientKey, Now: now, AssertionNow: now,
 	})
-	if err != nil {
-		t.Fatalf("parseFlags: %v", err)
-	}
-	cfg.diagnostics = port.NopDiagnostics{}
-	appCfg := appConfig(cfg, port.NopDiagnostics{}, observability{})
-	// No flag sets AS-1's endpoints yet (#2490); the test points the broker at
-	// the harness's AS-1 directly.
-	appCfg.IdentityBrokerAS1 = &app.IdentityBrokerAS1{
-		Issuer: h.AS1.Issuer(), TokenEndpoint: h.AS1.TokenEndpoint(), HTTPClient: h.HTTPClient(), ClientKey: clientKey, Now: now,
-	}
-	built, err := buildIsolated(t, context.Background(), appCfg)
-	if err != nil {
-		t.Fatalf("app.Build: %v", err)
-	}
-	defer built.Close()
-	if built.IdentityBroker == nil {
-		t.Fatal("--enable-identity-broker built no identity broker")
-	}
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	serveErr := make(chan error, 1)
-	go func() {
-		serveErr <- serveWithDrainWait(ctx, cfg, built.Service, observability{}, func(time.Duration) {}, builtServing{brokerHandlers: built.MCPBrokerHandlers, brokerCallbackPath: built.MCPBrokerCallbackPath})
-	}()
-	api := "http://" + cfg.httpAddr
-	waitForHTTPStatus(t, http.DefaultClient, api+"/readyz", http.StatusOK)
 
 	alice, err := h.SignIn(t.Context(), identityharness.SignInRequest{User: identityharness.Alice})
 	if err != nil {
@@ -357,16 +327,73 @@ func TestIdentityBrokerAgainstOfflineHarness(t *testing.T) {
 	if err != nil || bobsReopened.ID == bobsExpiring.ID || bobsReopened.HoldsRefreshToken {
 		t.Errorf("Bob's tokenless open after expiry = %+v, %v; want a new broker session holding no refresh token", bobsReopened, err)
 	}
+}
 
-	cancel()
-	select {
-	case err := <-serveErr:
-		if err != nil {
-			t.Fatalf("serve: %v", err)
-		}
-	case <-time.After(10 * time.Second):
-		t.Fatal("serve did not stop after cancellation")
+// identityBrokerAS1Tokens is the AS-1 whose access tokens mecak8s accepts:
+// its issuer and audience, a CA file trusted for its TLS certificate, and the
+// accepted client IDs, comma-separated.
+type identityBrokerAS1Tokens struct {
+	issuer, audience, caFile, clientIDs string
+}
+
+// serveIdentityBroker builds and serves mecak8s with the identity broker on,
+// accepting access tokens with sub_id owners from the AS-1 that tokens
+// describes, and its session open converting at as1. No flag sets AS-1's
+// endpoints yet (#2490), so the test points the broker at as1 directly. It
+// returns the HTTP API's base URL and the built application; both stop when
+// t ends.
+func serveIdentityBroker(t *testing.T, tokens identityBrokerAS1Tokens, as1 *app.IdentityBrokerAS1) (string, *app.Built) {
+	t.Helper()
+	cfg, err := parseFlags([]string{
+		"--mock",
+		"--enable-identity-broker", "--no-shell", // the identity broker refuses to run beside a shell
+		"--permission-mode=yolo", "--guardrails=off", // unchecked allow-all is yolo
+		"--grpc-addr", freeLoopbackPort(t),
+		"--http-addr", freeLoopbackPort(t),
+		"--drain-addr", freeLoopbackPort(t),
+		"--session-lease-k8s-namespace", "",
+		"--oidc-issuer", tokens.issuer,
+		"--oidc-audience", tokens.audience,
+		"--oidc-allow-private-https-issuer",
+		"--oidc-ca-cert-file", tokens.caFile,
+		"--oidc-owner-identity=sub_id",
+		"--oidc-accepted-client-ids", tokens.clientIDs,
+	})
+	if err != nil {
+		t.Fatalf("parseFlags: %v", err)
 	}
+	cfg.diagnostics = port.NopDiagnostics{}
+	appCfg := appConfig(cfg, port.NopDiagnostics{}, observability{})
+	appCfg.IdentityBrokerAS1 = as1
+	built, err := buildIsolated(t, context.Background(), appCfg)
+	if err != nil {
+		t.Fatalf("app.Build: %v", err)
+	}
+	t.Cleanup(built.Close)
+	if built.IdentityBroker == nil {
+		t.Fatal("--enable-identity-broker built no identity broker")
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	serveErr := make(chan error, 1)
+	go func() {
+		serveErr <- serveWithDrainWait(ctx, cfg, built.Service, observability{}, func(time.Duration) {}, builtServing{brokerHandlers: built.MCPBrokerHandlers, brokerCallbackPath: built.MCPBrokerCallbackPath})
+	}()
+	// Runs before built.Close: serving stops first.
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case err := <-serveErr:
+			if err != nil {
+				t.Errorf("serve: %v", err)
+			}
+		case <-time.After(10 * time.Second):
+			t.Error("serve did not stop after cancellation")
+		}
+	})
+	api := "http://" + cfg.httpAddr
+	waitForHTTPStatus(t, http.DefaultClient, api+"/readyz", http.StatusOK)
+	return api, built
 }
 
 func apiCall(t *testing.T, method, url, token, body string) (int, string) {

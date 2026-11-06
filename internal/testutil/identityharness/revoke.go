@@ -5,7 +5,9 @@ import "net/http"
 // RevocationEndpoint is AS-1's RFC 7009 revocation endpoint.
 func (a *AS1) RevocationEndpoint() string { return a.Issuer() + "/revoke" }
 
-// revoke is an RFC 7009 revocation endpoint for grant refresh tokens.
+// revoke is an RFC 7009 revocation endpoint for grant refresh tokens. It is
+// kept until stacklok/toolhive#6966 and stacklok/toolhive#6972 retire it
+// (mecatl #2568).
 //
 // Guess: only the authenticated broker may call it. Revoking a grant's
 // refresh token revokes the grant, so a later use gets revoked; any other
