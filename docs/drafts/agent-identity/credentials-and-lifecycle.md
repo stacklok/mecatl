@@ -375,7 +375,7 @@ mecak8s checks that the returned subject is the registered instance. The harness
 5. `aud` is exactly the broker's audience, as its only value. JWT-SVID §3.2 only requires the verifier's own value to be present; the single value is Mecatl policy.
 6. `exp` has not passed, allowing the clock skew, and is no further in the future than the configured maximum SVID lifetime.
 7. `sub` matches the full canonical subject of a registered instance byte for byte.
-8. At the broker, the instance is registered to the session in use, `A42` from the request. At AS-1, which does not know sessions, the instance's session is owned by the user of the grant in use: its owner equals the `sub_id` from `RT-A42`'s record. The SVID was issued while the instance was registered to that session, so an SVID issued before a session closed does not verify in the session that replaces it.
+8. At the broker, the instance is registered to the session in use, `A42` from the request. At AS-1, which does not know sessions, the instance's session is open and owned by the user of the grant in use: its owner equals the `sub_id` from `RT-A42`'s record. The SVID was issued while the instance was registered to that session, so an SVID issued before a session closed does not verify in the session that replaces it.
 
 **Failures.**
 
@@ -552,7 +552,7 @@ ID-JAG makes a refresh token as subject token optional (§4.3: an IdP "MAY addit
 6. The SVID passes the [SVID checks](#4-agent-instance-jwt-svid).
 7. AS-1 authorizes the combination of client, subject, actor, and target.
 
-**How AS-1 runs check 6.** AS-1 does not know Mecatl's instance registry. For client `mecatl`, AS-1 calls its pluggable actor-token validator ([stacklok/toolhive#6899](https://github.com/stacklok/toolhive/issues/6899)). AS-1 passes the SVID, the client, and the grant's user: `sub` and `sub_id` from `RT-A42`'s record. Mecatl's validator runs in the broker. It runs the SVID checks, and check 8 compares the owner of the instance's session with that `sub_id`. It returns the `ag_` identifier, the SPIFFE ID, and the SVID's `exp`. AS-1 puts the identifier in `act.sub` and caps the ID-JAG's `exp` at the SVID's `exp`. AS-1 never falls back to its built-in actor-token handling.
+**How AS-1 runs check 6.** AS-1 does not know Mecatl's instance registry. For client `mecatl`, AS-1 calls its pluggable actor-token validator ([stacklok/toolhive#6899](https://github.com/stacklok/toolhive/issues/6899)). AS-1 passes the SVID, the client, and the grant's user: `sub` and `sub_id` from `RT-A42`'s record. Mecatl's validator runs in the broker. It runs the SVID checks, and check 8 checks that the instance's session is open and compares its owner with that `sub_id`. It returns the `ag_` identifier, the SPIFFE ID, and the SVID's `exp`. AS-1 puts the identifier in `act.sub` and caps the ID-JAG's `exp` at the SVID's `exp`. AS-1 never falls back to its built-in actor-token handling.
 
 **Output.**
 
