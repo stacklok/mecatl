@@ -405145,6 +405145,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1793912926164,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "29541485+ChrisJBurns@users.noreply.github.com",
+            "name": "Chris Burns",
+            "username": "ChrisJBurns"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "d2bea0535e28bb578a7ea732779d665463433af2",
+          "message": "ci: give the macOS CLI smoke test time to build with a cold cache (#2739)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-11-06T15:07:39Z",
+          "tree_id": "06d6e32bc90f069f9fbef9fa81f2f9e512a72faa",
+          "url": "https://github.com/stacklok/mecatl/commit/d2bea0535e28bb578a7ea732779d665463433af2"
+        },
+        "date": 1793978407300,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 16156,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12916,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 795,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -528075,6 +528114,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1793978403416,
+  "lastUpdate": 1793978408382,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
