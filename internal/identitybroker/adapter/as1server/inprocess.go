@@ -15,7 +15,7 @@ import (
 // refuses any request outside the issuer's scheme, host, and path. A request
 // whose context ends before the handler finishes returns the context's error,
 // so a client Timeout bounds the call; the abandoned handler finishes into its
-// own buffer.
+// own buffer. Its twin is mcpbroker's AS2.InProcessClient: fix both together.
 func (s *Server) InProcessClient() *http.Client {
 	return &http.Client{
 		Transport:     inProcessTransport{server: s},
