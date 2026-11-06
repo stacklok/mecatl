@@ -1,6 +1,10 @@
 package session
 
-import sessionformat "github.com/stacklok/mecatl/engine/kernel/session/format"
+import (
+	"iter"
+
+	sessionformat "github.com/stacklok/mecatl/engine/kernel/session/format"
+)
 
 // Actor is a nonempty UTF-8 logical-origin label, preserved exactly. It is not
 // a provider role, identity registry, authentication, permission or trust claim.
@@ -69,6 +73,18 @@ func (v AttributedInputView) PartCount() int {
 		return 0
 	}
 	return len(v.value.Parts)
+}
+
+// Parts returns a repeatable sequence of immutable parts in contribution order.
+// Zero yields nothing. The sequence stays pinned to this view's accepted storage.
+func (v AttributedInputView) Parts() iter.Seq[ContentPartView] {
+	return func(yield func(ContentPartView) bool) {
+		for i := 0; i < v.PartCount(); i++ {
+			if !yield(v.PartAt(i)) {
+				return
+			}
+		}
+	}
 }
 
 // PartAt returns an immutable part. It panics outside [0, PartCount()).

@@ -1,6 +1,8 @@
 package session
 
 import (
+	"iter"
+
 	"github.com/stacklok/mecatl/engine/kernel/contentid"
 	"github.com/stacklok/mecatl/engine/kernel/history"
 	historyid "github.com/stacklok/mecatl/engine/kernel/history/id"
@@ -40,6 +42,30 @@ func (v Snapshot) RunCount() int { return len(v.runs) }
 
 // RecordCount returns the number of accepted chronological facts.
 func (v Snapshot) RecordCount() int { return len(v.records) }
+
+// Records returns a repeatable sequence of immutable records in chronological order.
+// Zero yields nothing. The sequence stays pinned to this snapshot's bounds.
+func (v Snapshot) Records() iter.Seq[RecordView] {
+	return func(yield func(RecordView) bool) {
+		for i := 0; i < v.RecordCount(); i++ {
+			if !yield(v.RecordAt(i)) {
+				return
+			}
+		}
+	}
+}
+
+// Runs returns a repeatable sequence of immutable runs in chronological order.
+// Zero yields nothing. The runs and sequence stay pinned to this snapshot's bounds.
+func (v Snapshot) Runs() iter.Seq[RunView] {
+	return func(yield func(RunView) bool) {
+		for i := 0; i < v.RunCount(); i++ {
+			if !yield(v.RunAt(i)) {
+				return
+			}
+		}
+	}
+}
 
 // RecordAt returns a chronological record; out-of-range indices panic.
 func (v Snapshot) RecordAt(i int) RecordView {

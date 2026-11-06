@@ -1,6 +1,8 @@
 package session
 
 import (
+	"iter"
+
 	"github.com/stacklok/mecatl/engine/kernel/codec"
 	"github.com/stacklok/mecatl/engine/kernel/history/format"
 	historyid "github.com/stacklok/mecatl/engine/kernel/history/id"
@@ -78,6 +80,18 @@ func (v UserInputView) PartCount() int {
 		return 0
 	}
 	return len(v.value.Parts)
+}
+
+// Parts returns a repeatable sequence of immutable parts in authored order.
+// Zero yields nothing. The sequence stays pinned to this view's accepted storage.
+func (v UserInputView) Parts() iter.Seq[ContentPartView] {
+	return func(yield func(ContentPartView) bool) {
+		for i := 0; i < v.PartCount(); i++ {
+			if !yield(v.PartAt(i)) {
+				return
+			}
+		}
+	}
 }
 
 // PartAt returns an immutable part. It panics outside [0, PartCount()).

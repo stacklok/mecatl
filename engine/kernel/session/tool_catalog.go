@@ -1,6 +1,8 @@
 package session
 
 import (
+	"iter"
+
 	"github.com/stacklok/mecatl/engine/kernel/codec"
 	"github.com/stacklok/mecatl/engine/kernel/history/format"
 	historyid "github.com/stacklok/mecatl/engine/kernel/history/id"
@@ -101,6 +103,18 @@ func (v ToolCatalogView) ToolCount() int {
 		return 0
 	}
 	return len(v.value.Tools)
+}
+
+// Tools returns a repeatable sequence of immutable definitions in catalog order.
+// Zero yields nothing. The sequence stays pinned to this view's accepted storage.
+func (v ToolCatalogView) Tools() iter.Seq[ToolDefinitionView] {
+	return func(yield func(ToolDefinitionView) bool) {
+		for i := 0; i < v.ToolCount(); i++ {
+			if !yield(v.ToolAt(i)) {
+				return
+			}
+		}
+	}
 }
 
 // ToolAt returns an immutable definition. It panics outside [0, ToolCount()).

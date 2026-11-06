@@ -1,6 +1,8 @@
 package session
 
 import (
+	"iter"
+
 	"github.com/stacklok/mecatl/engine/kernel/codec"
 	"github.com/stacklok/mecatl/engine/kernel/history/format"
 	historyid "github.com/stacklok/mecatl/engine/kernel/history/id"
@@ -123,6 +125,18 @@ func (v EffectiveInputView) InputCount() int {
 		return 0
 	}
 	return len(v.value.Inputs)
+}
+
+// Inputs returns a repeatable sequence of immutable items in contribution order.
+// Zero yields nothing. The sequence stays pinned to this view's accepted storage.
+func (v EffectiveInputView) Inputs() iter.Seq[InputItemView] {
+	return func(yield func(InputItemView) bool) {
+		for i := 0; i < v.InputCount(); i++ {
+			if !yield(v.InputAt(i)) {
+				return
+			}
+		}
+	}
 }
 
 // InputAt returns an immutable item. It panics outside [0, InputCount()).

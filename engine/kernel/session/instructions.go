@@ -1,6 +1,8 @@
 package session
 
 import (
+	"iter"
+
 	"github.com/stacklok/mecatl/engine/kernel/codec"
 	"github.com/stacklok/mecatl/engine/kernel/history/format"
 	historyid "github.com/stacklok/mecatl/engine/kernel/history/id"
@@ -136,6 +138,18 @@ func (v InstructionsView) BlockCount() int {
 	return len(v.value.Blocks)
 }
 
+// Blocks returns a repeatable sequence of immutable blocks in instruction order.
+// Zero yields nothing. The sequence stays pinned to this view's accepted storage.
+func (v InstructionsView) Blocks() iter.Seq[InstructionBlockView] {
+	return func(yield func(InstructionBlockView) bool) {
+		for i := 0; i < v.BlockCount(); i++ {
+			if !yield(v.BlockAt(i)) {
+				return
+			}
+		}
+	}
+}
+
 // BlockAt returns an immutable block. It panics outside [0, BlockCount()).
 func (v InstructionsView) BlockAt(i int) InstructionBlockView {
 	return InstructionBlockView{value: &v.value.Blocks[i]}
@@ -153,6 +167,18 @@ func (v InstructionBlockView) PartCount() int {
 		return 0
 	}
 	return len(v.value.Parts)
+}
+
+// Parts returns a repeatable sequence of immutable parts in block order.
+// Zero yields nothing. The sequence stays pinned to this view's accepted storage.
+func (v InstructionBlockView) Parts() iter.Seq[ContentPartView] {
+	return func(yield func(ContentPartView) bool) {
+		for i := 0; i < v.PartCount(); i++ {
+			if !yield(v.PartAt(i)) {
+				return
+			}
+		}
+	}
 }
 
 // PartAt returns an immutable part. It panics outside [0, PartCount()).

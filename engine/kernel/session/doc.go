@@ -22,5 +22,12 @@
 // the enclosing accepted record. Capture and child navigation cost O(1), without
 // copying payloads. Byte getters return independent field-only copies; Record and
 // RecordView.Format explicitly copy encoded history records for transport.
+//
+// View sequences are immutable, ordered and repeatable, and retain their captured
+// views' backing storage and bounds without copying it. Retention is not a payload
+// copy. Direct traversal can avoid allocations, but opaque iterator consumption
+// may allocate per traversal, accumulating per block in nested consumers. Indexed
+// access remains available for strict allocation budgets; collecting sequences
+// and exporting owned byte fields allocate independently of traversal.
 // See [SessionCommit], [Policy], and [Snapshot] for admission and ownership contracts.
 package session
