@@ -511,6 +511,10 @@ func TestSessionHardExpiryClosesTheSession(t *testing.T) {
 			_, err := f.b.VerifyCredential(ctx, identitybroker.VerifyCredentialRequest{SessionID: old.ID, Credential: cred})
 			wantError(t, err, identitybroker.CodeFailedPrecondition, identitybroker.ReasonSessionClosed, cred)
 		}},
+		{"VerifyCredentialForOwner", func(t *testing.T, f *openFixture, old identitybroker.Session, cred identitybroker.Token) {
+			_, err := f.b.VerifyCredentialForOwner(ctx, identitybroker.VerifyCredentialForOwnerRequest{Owner: old.Owner, Credential: cred})
+			wantError(t, err, identitybroker.CodePermissionDenied, identitybroker.ReasonDenied, cred)
+		}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

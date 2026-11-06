@@ -394,7 +394,7 @@ mecak8s checks that the returned subject is the registered instance. The harness
 
 **Signing keys.** The agent-instance issuer and the broker client `mecatl` each use their own key ([one key per role](implementation.md#modulith-constraints)). Where SPIFFE client authentication is enabled, no client's registered SPIFFE ID may fall in `agents.example.com`, or an SVID could pass as a client assertion.
 
-The SVID carries a single audience, the broker's, as JWT-SVID §7.2 recommends. AS-1 does not validate the SVID itself. Mecatl's actor-token validator, a broker component, runs the checks and accepts the broker's audience. An AS-1 outside the broker needs SVIDs with its own audience. It also needs a way to run check 8's owner comparison without the broker's registry: a remote registry call, or a claim in the SVID ([later work](#later-work)).
+The SVID carries a single audience, the broker's, as JWT-SVID §7.2 recommends. AS-1 does not validate the SVID itself. Mecatl's actor-token validator, a broker component, runs the checks and accepts the broker's audience. An AS-1 outside the broker needs SVIDs with its own audience. It also needs a way to run check 8 without the broker's registry: a remote registry call, or a claim in the SVID ([later work](#later-work)).
 
 JWT-SVID requires `sub`, `aud`, and `exp`, but not `iss` or `jti`. The agent-instance issuer and its trust domain are distinct from OAuth AS-1 and AS-2.
 
@@ -834,7 +834,7 @@ The failures each step can return: where each is detected, what the user sees, a
 | Root registration of a non-root-eligible definition | Agent-instance issuer | `PERMISSION_DENIED` | Session cannot start with that definition | Nothing |
 | Definition name or depth beyond the caps | Agent-instance issuer | `INVALID_ARGUMENT` | Child agent cannot start | Nothing |
 | SVID expired | Broker, AS-1 | `UNAUTHENTICATED`, `invalid_request` with `svid_expired` | None: renewed and retried once | Nothing |
-| SVID invalid, instance not registered to the session, or its session owned by another user than the grant's | Broker, AS-1 | `PERMISSION_DENIED`, `invalid_request` with `denied` | Call denied | Nothing |
+| SVID invalid, instance not registered to the session, or its session closed or owned by another user than the grant's | Broker, AS-1 | `PERMISSION_DENIED`, `invalid_request` with `denied` | Call denied | Nothing |
 | Run bound to another instance, a root run from a child instance, or delegation not reported | Broker | `PERMISSION_DENIED` | Call denied | Nothing |
 | Run owner differs from the grant's recorded owner | Broker | `PERMISSION_DENIED`, recorded | Call denied | Nothing |
 | No route, or ceiling denies the tool | Broker | `PERMISSION_DENIED` | Call denied | Nothing |
@@ -1015,7 +1015,7 @@ These are not part of the identity work. Run grants and the agent ceiling at the
 
 **Stronger agent-instance SVIDs.** Two strengthenings:
 
-- **Owner claim.** The SVID names the owner of the session it was issued for, and the `ag_` identifier, so AS-1 can compare the owner with the grant's `sub_id` without asking the broker's registry. AS-1 still does not learn the session. It is still issued on mecak8s's word. Deregistration then takes effect only at the SVID's `exp`.
+- **Owner claim.** The SVID names the owner of the session it was issued for, and the `ag_` identifier, so AS-1 can compare the owner with the grant's `sub_id` without asking the broker's registry. AS-1 still does not learn the session. It is still issued on mecak8s's word. Deregistration and closing the session then take effect only at the SVID's `exp`.
 - **Key binding.** The SVID carries a `cnf` key, and the presenter proves possession, so a stolen SVID is useless without the private key. Inside one process, the key proves the process, not the agent.
 
 **Per-agent attestation.** Attesting each agent's identity needs agents in their own pod, sandbox, or Kubernetes object, for example attested through the [SPIFFE Broker API](https://github.com/spiffe/spiffe/pull/340). That is out of scope for this design.

@@ -51,10 +51,13 @@ type Core interface {
 	AuthorizeCall(ctx context.Context, workload Workload, req AuthorizeCallRequest) (Authorization, error)
 }
 
-// CredentialVerifier is the check AS-1 makes on each grant. AS-1 is a module
-// of the broker and calls it in process, so it takes no workload, and Mecatl
-// never calls it. It is apart from Core so that a transport serving Core cannot
-// publish an unauthenticated credential check by accident.
+// CredentialVerifier checks agent credentials inside the broker, in two
+// forms: one keyed by broker session, for the broker's own per-operation
+// checks, and one keyed by owner, for AS-1's actor-token validator. Its
+// callers run in process with the broker, so it takes no workload, and Mecatl
+// never calls it. It is apart from Core so that a transport serving Core
+// cannot publish an unauthenticated credential check by accident; AS-1's
+// wiring takes a CredentialVerifier, never a Core.
 type CredentialVerifier interface {
 	// VerifyCredential checks an agent credential for use in a broker
 	// session: the design's credential checks, in order, then that the agent
@@ -66,6 +69,19 @@ type CredentialVerifier interface {
 	// closing reason, such as ReasonSessionClosed; every other failure with
 	// CodePermissionDenied and ReasonDenied.
 	VerifyCredential(ctx context.Context, req VerifyCredentialRequest) (VerifiedAgent, error)
+	// VerifyCredentialForOwner checks an agent credential for use under a
+	// grant of req.Owner, as AS-1 does before issuing an ID-JAG: the design's
+	// credential checks, in order, then that the agent's present broker
+	// session is open and owned by req.Owner, and the credential was issued
+	// since the agent moved there. Which of the owner's sessions the call is
+	// for is not checked here; the broker's per-operation checks do that. It
+	// returns what VerifyCredential does. It refuses only with
+	// CodeUnauthenticated and ReasonSVIDExpired for an expired credential, and
+	// CodePermissionDenied and ReasonDenied for anything else, a malformed
+	// request and a closed session included, so no closing reason reaches
+	// AS-1. Any other error means the check could not be made, which AS-1
+	// treats as retryable.
+	VerifyCredentialForOwner(ctx context.Context, req VerifyCredentialForOwnerRequest) (VerifiedAgent, error)
 }
 
 // Authenticator decides which workload is calling. A failure is an *Error,

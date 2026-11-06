@@ -286,18 +286,33 @@ func TestVerifyCredentialChecks(t *testing.T) {
 			return f.forge(t, f.validHeader(), c, nil)
 		}, denied},
 	}
-	for name, tc := range cases {
-		t.Run(name, func(t *testing.T) {
-			f := newCredentialFixture(t)
-			got, err := f.verify(f.session.ID, tc.credential(t, f))
-			var brokerErr *Error
-			if !errors.As(err, &brokerErr) || brokerErr.Code != tc.want.Code || brokerErr.Reason != tc.want.Reason {
-				t.Fatalf("VerifyCredential error = %v, want %s %s", err, tc.want.Code, tc.want.Reason)
+	// The owner-keyed form runs the same checks 1 to 7; only "registered to
+	// another session" differs, since that session has the same owner.
+	forms := map[string]func(f *credentialFixture, credential Token) (VerifiedAgent, error){
+		"VerifyCredential": func(f *credentialFixture, credential Token) (VerifiedAgent, error) {
+			return f.verify(f.session.ID, credential)
+		},
+		"VerifyCredentialForOwner": func(f *credentialFixture, credential Token) (VerifiedAgent, error) {
+			return f.broker.VerifyCredentialForOwner(context.Background(), VerifyCredentialForOwnerRequest{Owner: f.session.Owner, Credential: credential})
+		},
+	}
+	for form, verify := range forms {
+		for name, tc := range cases {
+			if form == "VerifyCredentialForOwner" && name == "registered to another session" {
+				continue
 			}
-			if got != (VerifiedAgent{}) {
-				t.Fatalf("a failed VerifyCredential returned %+v", got)
-			}
-		})
+			t.Run(form+"/"+name, func(t *testing.T) {
+				f := newCredentialFixture(t)
+				got, err := verify(f, tc.credential(t, f))
+				var brokerErr *Error
+				if !errors.As(err, &brokerErr) || brokerErr.Code != tc.want.Code || brokerErr.Reason != tc.want.Reason {
+					t.Fatalf("%s error = %v, want %s %s", form, err, tc.want.Code, tc.want.Reason)
+				}
+				if got != (VerifiedAgent{}) {
+					t.Fatalf("a failed %s returned %+v", form, got)
+				}
+			})
+		}
 	}
 }
 

@@ -182,7 +182,7 @@ var _ CredentialVerifier = (*Broker)(nil)
 // this session verifies, so reopening a session does not revive credentials
 // issued before it closed. Per-instance subjects are what bind a credential to
 // one session, with no session claim. It does not check which workload opened
-// the session: AS-1 checks that from its refresh token's record.
+// the session; the broker's per-operation checks do.
 func (b *Broker) VerifyCredential(_ context.Context, req VerifyCredentialRequest) (VerifiedAgent, error) {
 	if err := req.Validate(); err != nil {
 		return VerifiedAgent{}, err
@@ -221,6 +221,44 @@ func (b *Broker) VerifyCredential(_ context.Context, req VerifyCredentialRequest
 		return VerifiedAgent{}, ReasonError(closed, "the broker session is closed")
 	case !open:
 		return VerifiedAgent{}, credentialDenied("the broker session is closed")
+	}
+	return VerifiedAgent{Agent: AgentRef{Subject: cred.subject}, AgentID: b.agentID, ExpiresAt: cred.expiresAt}, nil
+}
+
+// VerifyCredentialForOwner implements CredentialVerifier. After the
+// credential's own checks, its subject must be a registered instance whose
+// present session is open and owned by req.Owner, and the credential must
+// have been issued since the instance moved to that session, so a credential
+// from before a session closed does not verify once the instance registers
+// into the session that replaces it. The owner compared is the session's
+// Owner, which its registrations are checked against, not its verified
+// owner: the broker's per-operation checks put the agent in the session whose
+// refresh token AS-1 exchanges, and that session's verified owner equals its
+// Owner. Every refusal after the credential's own checks has the same detail,
+// so an error passed on whole tells AS-1 nothing about the session's state.
+func (b *Broker) VerifyCredentialForOwner(_ context.Context, req VerifyCredentialForOwnerRequest) (VerifiedAgent, error) {
+	if req.Credential.IsZero() || req.Owner.validate() != nil {
+		return VerifiedAgent{}, credentialDenied("the request has no credential or no valid owner")
+	}
+	t := b.sessions
+	cred, err := b.issuer.verify(req.Credential, t.now())
+	if err != nil {
+		return VerifiedAgent{}, err
+	}
+	t.mu.Lock()
+	rec, registered := t.agents[cred.subject]
+	var current, open, owned bool
+	if registered {
+		_, current = rec.credentials[credentialHash(req.Credential)]
+		if s, ok := t.byID[rec.sessionID]; ok {
+			t.expireLocked(s)
+			open = s.closed == ""
+			owned = s.Owner == req.Owner
+		}
+	}
+	t.mu.Unlock()
+	if !registered || !owned || !current || !open {
+		return VerifiedAgent{}, credentialDenied("the credential is not current for an open broker session of the owner")
 	}
 	return VerifiedAgent{Agent: AgentRef{Subject: cred.subject}, AgentID: b.agentID, ExpiresAt: cred.expiresAt}, nil
 }
