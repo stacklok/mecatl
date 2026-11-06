@@ -16,11 +16,21 @@ design material, not documentation of shipped runtime or storage behavior. The
 
 ## Representation ownership and codec choice
 
+- [Content-part and media cleanup](content-and-media.md) records the approved
+  next slice: explicit text/media branches, media-owned classification, and clear
+  source-specific field names. It is a pending design, not current behavior.
 - [Snapshots, ownership, and cloning](ownership.md) distinguishes stable views
   from read-only references and describes detached copies and publication.
 - [Persistence codecs and DTO ownership](codecs-and-dtos.md) explains the public
   format boundary, handwritten Atmos codecs, strict validation, ownership,
   future generation tradeoffs, and the limits of the codec experiments.
+
+## Capture parity before cutover
+
+- [Legacy capture parity](capture-parity.md) compares the implemented isolated
+  facts with the legacy persisted snapshot and event log. Revisit attribution,
+  timestamps, request evidence, and adjacent host metadata as their owning
+  contracts develop; the inventory does not expand the current slice.
 
 ## Execution and extensions
 
