@@ -521,9 +521,9 @@ The broker takes `RT-A42` from `A42`'s record only after checks 3 to 5 have pass
 
 ### (7) ID-JAG from AS-1
 
-On a cache miss, the broker asks AS-1 for an ID-JAG ([draft-ietf-oauth-identity-assertion-authz-grant-04](https://datatracker.ietf.org/doc/draft-ietf-oauth-identity-assertion-authz-grant/)).
+For each call, the broker asks AS-1 for an ID-JAG ([draft-ietf-oauth-identity-assertion-authz-grant-04](https://datatracker.ietf.org/doc/draft-ietf-oauth-identity-assertion-authz-grant/)).
 
-**Input.** An RFC 8693 token exchange with `RT-A42` as subject token, `reviewerSVID` as actor token, AS-2 as audience, and the vMCP as `resource`. The ID of the operation whose cache miss caused the exchange travels as a request parameter for AS-1's record, as reported trace context. Concurrent misses share one exchange, so it names the first of them:
+**Input.** An RFC 8693 token exchange with `RT-A42` as subject token, `reviewerSVID` as actor token, AS-2 as audience, and the vMCP as `resource`. The ID of the operation that caused the exchange travels as a request parameter for AS-1's record, as reported trace context:
 
 ```text
 POST https://broker.example.com/as/oauth/token
@@ -708,7 +708,7 @@ The approval-continuation profile is a convention that AS-2 advertises in its me
 
 ### (9) vMCP decision and provider credential
 
-**Input.** From mecak8s's MCP client, `tools/call` with `Authorization: Bearer <V-reviewer>`, the vMCP session ID, and the operation and attempt IDs in the request's `_meta`, under the proposed keys `dev.mecatl/operation` and `dev.mecatl/attempt`. The attempt number increases with each dispatch attempt of the same operation. The run ID travels in trace headers.
+**Input.** From mecak8s's MCP client, `tools/call` with `Authorization: Bearer <V-reviewer>`, the vMCP session ID, and the operation and attempt IDs in the request's `_meta`, under the proposed keys `dev.mecatl/operation` and `dev.mecatl/attempt`. The broker mints the attempt ID with each authorization and returns it with `V` ([audit](audit.md#delivery-protection-and-reconciliation)); the MCP client only passes it on. The run ID travels in trace headers.
 
 **Checks, at the vMCP:**
 
@@ -791,7 +791,7 @@ client_assertion=<private_key_jwt for mecatl>
 3. The subject token resolves to a grant for `mecatl` that lists `refresh_token`, is not revoked, and has not expired. A grant that is itself a child, such as a session's refresh token, is refused here.
 4. Alice's upstream refresh token passes the [upstream re-check](#upstream-re-check), as in step (7) check 5.
 
-**Output.** A broker refresh token for `A57`, with the same response shape as session open. It expires no later than the schedule grant, and it names the schedule grant as its parent. AS-1 checks the parent on every use, so revoking the schedule grant stops the run's refresh token too. The broker stores it under `A57`. From here the run is an ordinary session: instances register to `A57`, and steps (6) to (9) apply unchanged, including the `V` cache key. When the run ends, mecak8s closes `A57`, which revokes its refresh token.
+**Output.** A broker refresh token for `A57`, with the same response shape as session open. It expires no later than the schedule grant, and it names the schedule grant as its parent. AS-1 checks the parent on every use, so revoking the schedule grant stops the run's refresh token too. The broker stores it under `A57`. From here the run is an ordinary session: instances register to `A57`, and steps (6) to (9) apply unchanged. When the run ends, mecak8s closes `A57`, which revokes its refresh token.
 
 **Failures.**
 
@@ -909,7 +909,7 @@ When a renewal fails, the credential's users fail closed: a workload credential 
 
 The example times are illustrative, not selected defaults: `J-reviewer` is valid `1800000001..1800000121`, `V-reviewer` `1800000005..1800000035`. `RT-A42`'s hard expiry and a schedule grant's horizon bound how long Mecatl acts without a fresh sign-in; the company IdP administrator should know them.
 
-Closing or revoking the session revokes `RT-A42` and drops that session's cached ID-JAGs and `V`. vMCP sessions belong to the instance and user, not the broker session: they survive a replacement broker session and end when the instance ends or the user's grants are revoked. A recipient validating only a self-contained token may still accept an already-issued `V` until it expires.
+Closing or revoking the session revokes `RT-A42`, and the broker issues no further ID-JAG or `V` for it. vMCP sessions belong to the instance and user, not the broker session: they survive a replacement broker session and end when the instance ends or the user's grants are revoked. A recipient validating only a self-contained token may still accept an already-issued `V` until it expires.
 
 ## Sign-out and revocation
 
@@ -926,7 +926,7 @@ Signing out of one client and stopping Mecatl's agents are different actions.
 **Sign out everywhere.** The steps, whether the client starts them or AS-1 does:
 
 1. The broker revokes every grant it holds for Alice, her sessions' refresh tokens and her schedule grants, and records the reason with each. AS-1 records Alice's revocation time and reason, revokes every client's AS-1 refresh tokens, and ends her AS-1 login sessions, all in one transaction. From then on, AS-1 refuses any of her grants created no later than that time, which also ends grants the broker no longer holds, such as an orphan from a lost response. Session open and schedule setup refuse any access token whose `iat` is not later than that time. Issued access tokens still authenticate API requests until they expire, but can no longer open sessions or set up schedules. For `upstream_revoked` and `owner_action_required`, the next sign-in must go through the company IdP and bring a new upstream refresh token.
-2. The broker cancels the in-flight tool calls of Alice's sessions and drops her cached ID-JAGs, `V`, and vMCP session IDs.
+2. The broker issues no further ID-JAG or `V` for Alice, and mecak8s cancels the in-flight tool calls of her sessions and drops her vMCP session IDs.
 3. mecak8s cancels each session's live run and any tool call parked for authorization. When the client starts sign-out, it calls Mecatl before clearing its own tokens. When AS-1 starts it, the broker tells mecak8s: in process while the broker is a modulith, through a revocation event once it is a separate service.
 
 Today every session has one owner, so this ends each of her broker sessions. Revocation is by user, so a later [shared session](run-owner.md) would keep running for its other members. Runs and broker state can live on different replicas, so the revocation must reach every replica that serves one of Alice's sessions. Whether a durable revocation marker checked when a session lease is renewed, or shared broker state, does this is an implementation choice.
