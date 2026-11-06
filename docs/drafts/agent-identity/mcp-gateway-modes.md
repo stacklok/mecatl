@@ -28,7 +28,7 @@ Mecatl uses two authorization servers so that it can work with an MCP gateway it
 
 **AS-2** is the gateway's authorization server. The vMCP accepts only access tokens AS-2 issued. On each MCP request, the vMCP validates the token and loads the user's provider credential.
 
-Between them, per call and on a cache miss, the broker runs two steps, detailed in [credentials and lifecycle](credentials-and-lifecycle.md#7-id-jag-from-as-1):
+Between them, for each call, the broker runs two steps, detailed in [credentials and lifecycle](credentials-and-lifecycle.md#7-id-jag-from-as-1):
 
 1. It exchanges `RT-A42` at AS-1 (RFC 8693), with the agent-instance JWT-SVID as `actor_token`, and receives an **ID-JAG** ([draft-ietf-oauth-identity-assertion-authz-grant-04](https://datatracker.ietf.org/doc/draft-ietf-oauth-identity-assertion-authz-grant/)) addressed to AS-2.
 2. It redeems the ID-JAG at AS-2 with the RFC 7523 JWT-bearer grant and receives the AS-2 access token `V`.
@@ -81,7 +81,7 @@ Each agent instance has its own vMCP session per user, bound to the user and the
 
 ## Embedded mode
 
-Embedded mode runs AS-1, AS-2, and the vMCP in one deployment. It uses the same ID-JAG exchange at AS-1 and RFC 7523 redemption at AS-2, with the same token formats, validation, and client authentication as external mode. Only approval differs: it is implicit. AS-2 resolves the user as in external mode, from the ID-JAG's `upstream_subject` through the shared company IdP. AS-1 is not AS-2's sign-in provider: ToolHive's authorization server issues no ID tokens and has no userinfo endpoint, so it cannot sign users in to another server. Implementations can co-locate protocol handlers or reuse them as libraries; the design does not require a separate network service or a private issuance interface. The two authorization servers keep separate issuer URLs, signing keys, and storage namespaces.
+Embedded mode runs AS-1, AS-2, and the vMCP inside the Mecatl deployment. While the broker runs inside mecak8s, they can share one process. Once the broker is its own service, the embedded gateway (AS-2, its credential store, and the vMCP) is its own deployment with its own storage credentials, so a compromised mecak8s cannot read users' provider tokens; see [what the split requires](threat-model.md#what-the-split-requires). It uses the same ID-JAG exchange at AS-1 and RFC 7523 redemption at AS-2, with the same token formats, validation, and client authentication as external mode. Only approval differs: it is implicit. AS-2 resolves the user as in external mode, from the ID-JAG's `upstream_subject` through the shared company IdP. AS-1 is not AS-2's sign-in provider: ToolHive's authorization server issues no ID tokens and has no userinfo endpoint, so it cannot sign users in to another server. Implementations can co-locate protocol handlers or reuse them as libraries; the design does not require a separate network service or a private issuance interface. The two authorization servers keep separate issuer URLs, signing keys, and storage namespaces.
 
 This keeps one protocol path for both modes. It does not add isolation: anyone who compromises the process holds both keys.
 
@@ -90,7 +90,7 @@ Embedded mode is outside the cross-domain scope that ID-JAG §9.3 states, becaus
 ## Outside this chapter
 
 - **Revocation.** Sign-out and account revocation are covered in [credentials and lifecycle](credentials-and-lifecycle.md#sign-out-and-revocation). Issued ID-JAGs and access tokens are not revoked; they expire.
-- **Structured gateway outcomes.** How an external gateway reports "needs authorization" or "consent required" to the broker as a structured outcome remains open. So does whether the "Allow Mecatl" step and the provider's consent screen can be one redirect chain.
+- **Structured gateway outcomes.** A missing provider connection ("needs authorization") is reported with MCP URL-mode elicitation by every gateway. How an external gateway's AS-2 reports "consent required" as a structured outcome remains open. So does whether the "Allow Mecatl" step and the provider's consent screen can be one redirect chain.
 - **Gateway authorization on `act`**, such as Cedar policies that consider the acting agent. Until the agent ceiling is carried in the ID-JAG and `V` as scope or `authorization_details` (RFC 9396), the broker alone enforces it; the gateway enforces user and connection.
 
 ## Integration requirements and evidence limits

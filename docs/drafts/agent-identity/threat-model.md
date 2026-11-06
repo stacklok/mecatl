@@ -15,6 +15,7 @@ Some protections do not depend on where the broker runs:
 - **Hostile workspace code** runs in executor Pods, behind the execution provider. In both deployments, executors get no broker credentials, no database credentials, and no network path to mecak8s internals or the key management service (KMS).
 - **Anonymous traffic at AS-1.** AS-1's sign-in and discovery routes are reachable before sign-in. AS-1 serves and advertises only the endpoints sign-in needs, with no dynamic client registration. It rate-limits its anonymous routes with global limits, one for the token endpoint and one for the rest, because behind an ingress every user shares one peer address. Per-client limits belong at the ingress.
 - **A prompt-injected agent** never sees or chooses credentials. Harness code attaches them, and the model supplies only tool names and arguments.
+- **The harness holds no reusable gateway credential.** mecak8s's MCP client sends tool calls, but each access token the broker gives it is bound to one call the broker approved and is usable once. mecak8s holds no signing keys, refresh tokens, or provider credentials.
 - **The user comes from a sign-in at AS-1**, not from a mecak8s report. mecak8s passes on the AS-1-signed access token once, AS-1 converts each token at most once, and every ID-JAG names the user from AS-1's record. Correct mecak8s code cannot name a user who did not sign in. An attacker running code in the process that holds AS-1's keys can, and while the broker runs inside mecak8s that process is mecak8s; see the first row of the table below.
 
 ## A compromised mecak8s
@@ -28,6 +29,8 @@ Where the broker runs matters against one attacker: someone with code execution 
 | Read users' provider tokens in embedded mode | Attack works, if the gateway store shares storage credentials with mecak8s. | Attack blocked, if the embedded gateway is its own deployment with its own credentials. |
 | Tamper with broker and AS-1 audit records | Attack partly blocked. Records that are already in an external append-only store survive. From then on, the compromised process can forge or suppress its own records. | Attack blocked for broker and AS-1 records, because mecak8s does not write them. This holds if the records go to an append-only store that mecak8s cannot write. |
 | Report a false agent, parent, run, or root | Attack works. An attacker in the process can bypass the broker's checks and its records. | Attack limited. The report still cannot be verified, but it must pass the broker's consistency checks, is recorded where mecak8s cannot erase it, and must name a root-eligible definition. Once the authority work is in place, it cannot exceed the widest root-eligible ceiling. |
+| Reuse a gateway access token for another call | Attack works, because the process holds AS-1's and the broker's keys and can obtain any token. | Attack blocked where the gateway enforces the per-call binding: a `V` serves only the call it names, once. A gateway that cannot enforce it accepts the `V` for any call until it expires, so its lifetime is kept to seconds. |
+| Misreport a call's dispatch or outcome | Attack works. | Attack limited. The broker records the report as reported, and the vMCP's own record of each call, with the token's `jti` and operation ID, is the check on it. |
 
 ## What mecak8s reports
 
