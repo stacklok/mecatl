@@ -152,6 +152,18 @@ func (f *FaultTransport) pop() fault {
 	return q
 }
 
+// Pending returns the kinds of the queued faults no token exchange has
+// used yet, in the order queued.
+func (f *FaultTransport) Pending() []FaultKind {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	kinds := make([]FaultKind, 0, len(f.queue))
+	for _, q := range f.queue {
+		kinds = append(kinds, q.kind)
+	}
+	return kinds
+}
+
 // Requests returns the requests for the token endpoint, oldest first.
 func (f *FaultTransport) Requests() []Request {
 	f.mu.Lock()

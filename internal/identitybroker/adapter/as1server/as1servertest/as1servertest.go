@@ -81,7 +81,8 @@ type AS1 struct {
 // a signing key Start writes to a file, and the delegate client
 // identitybroker.BrokerClientID keyed by a fresh broker key, allowing
 // PublicClientID with IDJAGMaxLifetime. edit, when set, changes the Config
-// and the DelegateClient before AS-1 is built. AS-1 stops when t ends.
+// and the DelegateClient before AS-1 is built. AS-1 stops when t ends, and t
+// fails then if Faults still holds queued faults.
 func Start(t testing.TB, h *identityharness.Harness, edit func(*as1server.Config, *as1server.DelegateClient)) *AS1 {
 	t.Helper()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -127,9 +128,17 @@ func Start(t testing.TB, h *identityharness.Harness, edit func(*as1server.Config
 	ts := &httptest.Server{Listener: ln, Config: &http.Server{Handler: server.Handler(), ReadHeaderTimeout: 10 * time.Second}}
 	ts.StartTLS()
 	t.Cleanup(ts.Close)
+	faults := newFaultTransport(server)
+	// Cleanups run after the test body and its subtests, so a fault queued
+	// and never used means the exchange it was for did not happen.
+	t.Cleanup(func() {
+		if pending := faults.Pending(); len(pending) > 0 {
+			t.Errorf("as1servertest: %d queued fault(s) no token exchange used, in queue order: %q", len(pending), pending)
+		}
+	})
 	return &AS1{
 		Harness: h, Server: server, Key: key, Signer: signer,
-		Faults:         newFaultTransport(server),
+		Faults:         faults,
 		signingKeyFile: cfg.SigningKeyFile,
 	}
 }
@@ -159,6 +168,7 @@ func (a *AS1) Issuer() string { return a.Server.Issuer() }
 // and does not follow redirects, for wiring that takes an *http.Client.
 func (a *AS1) HTTPClient() *http.Client {
 	return &http.Client{
+		Timeout:       10 * time.Second,
 		Transport:     a.Faults,
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}
@@ -228,10 +238,15 @@ func (a *AS1) SignIn(t testing.TB, req SignIn) identitybroker.Token {
 		"resource":              {resource},
 	}
 	if req.User != "" {
-		// AS-1 does not forward login_hint to the IdP.
+		// AS-1 does not forward login_hint to the IdP. The selection is a FIFO
+		// on the IdP, so concurrent sign-ins on one harness must not select.
 		a.Harness.IdP.SignInNextAs(req.User)
 	}
 	back, err := a.Harness.AuthorizeWithConsent(t.Context(), a.Issuer()+"/oauth/authorize?"+q.Encode())
+	if err != nil || back.Get("error") != "" || back.Get("state") != state || back.Get("code") == "" {
+		// A failure before the IdP leaves the selection for the next sign-in.
+		a.Harness.IdP.ClearSignInNextAs()
+	}
 	if err != nil {
 		t.Fatalf("as1servertest: authorize: %v", err)
 	}
@@ -261,7 +276,26 @@ func (a *AS1) SignIn(t testing.TB, req SignIn) identitybroker.Token {
 	if resp.StatusCode != http.StatusOK || tokens.AccessToken == "" {
 		t.Fatalf("as1servertest: code exchange: status %d error %q", resp.StatusCode, tokens.Error)
 	}
-	return identitybroker.NewToken(tokens.AccessToken)
+	token := identitybroker.NewToken(tokens.AccessToken)
+	if req.User != "" {
+		if got := SignedInUser(t, token); got != req.User {
+			t.Fatalf("as1servertest: signed in %q, want %q", got, req.User)
+		}
+	}
+	return token
+}
+
+// SignedInUser returns the company subject in the sub_id of accessToken, an
+// access token AS-1 issued, without verifying it.
+func SignedInUser(t testing.TB, accessToken identitybroker.Token) string {
+	t.Helper()
+	claims := jwt.MapClaims{}
+	if _, _, err := jwt.NewParser().ParseUnverified(accessToken.Value(), claims); err != nil {
+		t.Fatalf("as1servertest: parse access token: %v", err)
+	}
+	subID, _ := claims["sub_id"].(map[string]any)
+	user, _ := subID["sub"].(string)
+	return user
 }
 
 // ExpiredAccessToken returns accessToken, an access token AS-1 issued, with

@@ -192,7 +192,8 @@ func buildBrokerWithHostedAS1(ctx context.Context, cfg Config) (identitybroker.S
 	}
 	httpClient := server.InProcessClient()
 	httpClient.Timeout = as1RequestTimeout
-	// Now stays nil: production uses time.Now for the broker and its assertions.
+	// Now and AssertionNow stay nil: production uses time.Now for the broker
+	// and its assertions.
 	cfg.IdentityBrokerAS1 = &IdentityBrokerAS1{
 		Issuer: server.Issuer(), TokenEndpoint: server.TokenEndpoint(), HTTPClient: httpClient, ClientKey: clientKey,
 	}
@@ -264,9 +265,14 @@ type IdentityBrokerAS1 struct {
 	// AS-1 first can register its public key there before the broker is
 	// built: the hosted-AS-1 wiring and tests.
 	ClientKey *ecdsa.PrivateKey
-	// Now replaces the clock of the broker and its client assertions, so a
-	// test can move past a broker session's hard expiry. Nil selects time.Now.
+	// Now replaces the broker's clock, so a test can move past a broker
+	// session's hard expiry. It does not date client assertions. Nil selects
+	// time.Now.
 	Now func() time.Time
+	// AssertionNow replaces the clock that dates the broker's client
+	// assertions at AS-1, for a test whose AS-1 checks them against a moved
+	// clock. Nil selects time.Now.
+	AssertionNow func() time.Time
 }
 
 // newIdentityBroker constructs the real identity broker with the interim
@@ -305,7 +311,7 @@ func newIdentityBroker(cfg Config) (identityBroker, error) {
 	var opts []identitybroker.Option
 	if as1 != nil {
 		as1Client, err := authserverclient.New(authserverclient.Config{
-			Issuer: as1.Issuer, TokenEndpoint: as1.TokenEndpoint, Assertions: client, HTTPClient: as1.HTTPClient, Now: as1.Now,
+			Issuer: as1.Issuer, TokenEndpoint: as1.TokenEndpoint, Assertions: client, HTTPClient: as1.HTTPClient, Now: as1.AssertionNow,
 		})
 		if err != nil {
 			return identityBroker{}, fmt.Errorf("AS-1 client: %w", err)

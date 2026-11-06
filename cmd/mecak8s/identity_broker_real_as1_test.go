@@ -25,7 +25,8 @@ import (
 func TestIdentityBrokerAgainstRealAS1(t *testing.T) {
 	h := identityharness.New(t, identityharness.Options{})
 	a := as1servertest.Start(t, h, nil)
-	// The broker's clock, and its assertions', is wall time plus an offset.
+	// The broker's clock is wall time plus an offset. Its client assertions
+	// stay on wall time, which AS-1 checks them against.
 	var clockOffset atomic.Int64
 	now := func() time.Time { return time.Now().Add(time.Duration(clockOffset.Load())) }
 	api, built := serveIdentityBroker(t, identityBrokerAS1Tokens{
@@ -33,8 +34,6 @@ func TestIdentityBrokerAgainstRealAS1(t *testing.T) {
 		clientIDs: as1servertest.PublicClientID,
 	}, &app.IdentityBrokerAS1{
 		Issuer: a.Issuer(), TokenEndpoint: a.Server.TokenEndpoint(), HTTPClient: a.HTTPClient(), ClientKey: a.Key,
-		// now also dates client assertions, so no AS-1 request is sent while
-		// the offset is set, and it is reset before the session reopens.
 		Now: now,
 	})
 

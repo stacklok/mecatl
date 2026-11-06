@@ -41,18 +41,6 @@ func wantRefusal(t *testing.T, err error, status int, code, reason string) {
 	}
 }
 
-// signedInUser reads the company subject in an access token's sub_id.
-func signedInUser(t *testing.T, token identitybroker.Token) string {
-	t.Helper()
-	claims := jwt.MapClaims{}
-	if _, _, err := jwt.NewParser().ParseUnverified(token.Value(), claims); err != nil {
-		t.Fatalf("parse access token: %v", err)
-	}
-	subID, _ := claims["sub_id"].(map[string]any)
-	user, _ := subID["sub"].(string)
-	return user
-}
-
 func TestStartConvertsASignInThroughTheBrokerClient(t *testing.T) {
 	a := start(t)
 	c := a.Client(t)
@@ -89,11 +77,11 @@ func TestSignInSelectsUserScopeAndClient(t *testing.T) {
 
 	t.Run("user", func(t *testing.T) {
 		bob := a.SignIn(t, as1servertest.SignIn{User: identityharness.Bob})
-		if got := signedInUser(t, bob); got != identityharness.Bob {
+		if got := as1servertest.SignedInUser(t, bob); got != identityharness.Bob {
 			t.Fatalf("signed in %q, want %q", got, identityharness.Bob)
 		}
 		alice := a.SignIn(t, as1servertest.SignIn{})
-		if got := signedInUser(t, alice); got != identityharness.Alice {
+		if got := as1servertest.SignedInUser(t, alice); got != identityharness.Alice {
 			t.Fatalf("the next sign-in signed in %q, want the default user %q", got, identityharness.Alice)
 		}
 		for _, token := range []identitybroker.Token{bob, alice} {

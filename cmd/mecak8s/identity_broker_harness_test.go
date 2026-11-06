@@ -62,7 +62,7 @@ func TestIdentityBrokerAgainstOfflineHarness(t *testing.T) {
 		issuer: h.AS1.Issuer(), audience: h.AS1.Audience(), caFile: h.WriteCACert(t, t.TempDir()),
 		clientIDs: identityharness.DefaultClientID + ",studio",
 	}, &app.IdentityBrokerAS1{
-		Issuer: h.AS1.Issuer(), TokenEndpoint: h.AS1.TokenEndpoint(), HTTPClient: h.HTTPClient(), ClientKey: clientKey, Now: now,
+		Issuer: h.AS1.Issuer(), TokenEndpoint: h.AS1.TokenEndpoint(), HTTPClient: h.HTTPClient(), ClientKey: clientKey, Now: now, AssertionNow: now,
 	})
 
 	alice, err := h.SignIn(t.Context(), identityharness.SignInRequest{User: identityharness.Alice})

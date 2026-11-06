@@ -568,7 +568,7 @@ func TestSessionHardExpiryClosesTheSession(t *testing.T) {
 			_, err := f.b.VerifyCredential(ctx, identitybroker.VerifyCredentialRequest{SessionID: old.ID, Credential: cred})
 			wantError(t, err, identitybroker.CodeFailedPrecondition, identitybroker.ReasonSessionClosed, cred)
 		}},
-		{"VerifyCredentialForOwner", func(t *testing.T, f *openFixture, old identitybroker.Session, cred identitybroker.Token) {
+		{"VerifyCredentialForOwner", false, func(t *testing.T, f *openFixture, old identitybroker.Session, cred identitybroker.Token) {
 			_, err := f.b.VerifyCredentialForOwner(ctx, identitybroker.VerifyCredentialForOwnerRequest{Owner: old.Owner, Credential: cred})
 			wantError(t, err, identitybroker.CodePermissionDenied, identitybroker.ReasonDenied, cred)
 		}},
@@ -749,10 +749,9 @@ func TestSessionOpenResendsOnceAfterALostResponse(t *testing.T) {
 		}, code: identitybroker.CodeUnavailable, attempts: 2},
 		{name: "two dropped requests", fault: func(a *as1servertest.FaultTransport) { a.DropNextExchange(); a.DropNextExchange() },
 			code: identitybroker.CodeUnavailable, attempts: 2},
-		{name: "503 is not resent", fault: func(a *as1servertest.FaultTransport) {
-			a.FailNextExchange(as1servertest.Fault{Status: 503})
-			a.FailNextExchange(as1servertest.Fault{Status: 503})
-		}, code: identitybroker.CodeUnavailable, attempts: 1},
+		// A resend would reach AS-1, so attempts would be 2.
+		{name: "503 is not resent", fault: func(a *as1servertest.FaultTransport) { a.FailNextExchange(as1servertest.Fault{Status: 503}) },
+			code: identitybroker.CodeUnavailable, attempts: 1},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

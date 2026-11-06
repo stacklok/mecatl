@@ -107,11 +107,22 @@ func (p *IdP) RegisterClient(id, secret, redirectURI string) {
 // SignInNextAs makes the next authorization request that signs a user in
 // sign in user instead of the one its login_hint names or the default user,
 // for a client such as the real AS-1 that does not forward login_hint. Calls
-// queue, one authorization each.
+// queue, one authorization each. The queue is a FIFO bound to no request:
+// whichever authorization reaches the IdP next takes the oldest selection, so
+// it is unsafe for concurrent sign-ins on one IdP.
 func (p *IdP) SignInNextAs(user string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.next = append(p.next, user)
+}
+
+// ClearSignInNextAs drops every selection SignInNextAs queued that no
+// authorization has taken, such as after a sign-in that failed before
+// reaching the IdP.
+func (p *IdP) ClearSignInNextAs() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.next = nil
 }
 
 // FailNextAuthorization makes the next authorization request redirect back
