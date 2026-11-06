@@ -12,6 +12,7 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/mcpauthority"
 	"github.com/stacklok/mecatl/internal/adapter/mcpbroker"
 	"github.com/stacklok/mecatl/internal/adapter/permconfig"
+	"github.com/stacklok/mecatl/internal/identitybroker"
 	brokercontract "github.com/stacklok/mecatl/internal/mcpbroker"
 )
 
@@ -54,7 +55,21 @@ type mcpBrokerParts struct {
 	// handlers is nil when the broker exposes no HTTP surface.
 	handlers     brokercontract.HTTPHandlers
 	callbackPath string
-	closer       func() error
+	// as2 is set only when the bundled process set up AS-2.
+	as2    *identityBrokerAS2
+	closer func() error
+}
+
+// mcpBrokerIdentity is what the identity broker gives the MCP broker; the
+// zero value is no identity broker.
+type mcpBrokerIdentity struct {
+	// clientKeySet is the broker client's public JWK Set. With a protected
+	// route, the bundled process registers the broker client with it at its
+	// authorization server, which becomes AS-2. Nil sets up no AS-2.
+	clientKeySet []byte
+	// as1Issuer is AS-1's issuer, which AS-2's must differ from; empty when
+	// the identity broker has no AS-1.
+	as1Issuer string
 }
 
 func (p mcpBrokerParts) close() {
@@ -66,28 +81,44 @@ func (p mcpBrokerParts) close() {
 // buildMCPBroker constructs the bundled ToolHive process or, when
 // cfg.ConfiguredMCPBroker is selected, a broker Runtime over the configured
 // callers. On error it has already released everything it built.
-func buildMCPBroker(ctx context.Context, cfg Config, declaration mcpauthority.BrokerConfig, occupied []string) (mcpBrokerParts, error) {
+func buildMCPBroker(ctx context.Context, cfg Config, declaration mcpauthority.BrokerConfig, occupied []string, identity mcpBrokerIdentity) (mcpBrokerParts, error) {
 	if !cfg.selectsConfiguredMCPBroker() {
-		return buildBundledMCPBroker(ctx, cfg, declaration, occupied)
+		return buildBundledMCPBroker(ctx, cfg, declaration, occupied, identity)
 	}
 	return buildConfiguredMCPBroker(cfg.ConfiguredMCPBroker, declaration, occupied)
 }
 
-func buildBundledMCPBroker(ctx context.Context, cfg Config, declaration mcpauthority.BrokerConfig, occupied []string) (mcpBrokerParts, error) {
+func buildBundledMCPBroker(ctx context.Context, cfg Config, declaration mcpauthority.BrokerConfig, occupied []string, identity mcpBrokerIdentity) (mcpBrokerParts, error) {
 	authRedisClient, authStorageClose, err := buildToolHiveAuthRedisClient(cfg)
 	if err != nil {
 		return mcpBrokerParts{}, fmt.Errorf("build bundled MCP broker: %w", err)
 	}
-	process, err := mcpbroker.NewToolHiveProcess(ctx, toolHiveBrokerConfig(declaration.Routes, declaration.CallbackURL, occupied, authRedisClient, cfg.diag()))
+	config := toolHiveBrokerConfig(declaration.Routes, declaration.CallbackURL, occupied, authRedisClient, cfg.diag())
+	if identity.clientKeySet != nil {
+		config.BrokerClient = &mcpbroker.ToolHiveBrokerClient{ID: identitybroker.BrokerClientID, KeySet: identity.clientKeySet}
+	}
+	process, err := mcpbroker.NewToolHiveProcess(ctx, config)
 	if err != nil {
 		authStorageClose()
 		return mcpBrokerParts{}, fmt.Errorf("build bundled MCP broker: %w", err)
+	}
+	var as2 *identityBrokerAS2
+	if process.AS2 != nil {
+		if process.AS2.Issuer == identity.as1Issuer {
+			_ = process.Close()
+			authStorageClose()
+			return mcpBrokerParts{}, fmt.Errorf("build bundled MCP broker: %w: %s", errAS2IssuerIsAS1s, identity.as1Issuer)
+		}
+		httpClient := process.AS2.InProcessClient()
+		httpClient.Timeout = as2RequestTimeout
+		as2 = &identityBrokerAS2{Issuer: process.AS2.Issuer, TokenEndpoint: process.AS2.TokenEndpoint, Resource: process.AS2.Resource, HTTPClient: httpClient}
 	}
 	parts := mcpBrokerParts{
 		service:             process.Runtime,
 		inspector:           process.Runtime,
 		workspaceEnrollment: process.WorkspaceEnrollmentRequired(),
 		callbackPath:        process.CallbackPath,
+		as2:                 as2,
 		// The process closes the Redis client only through its embedded auth
 		// server, which exists only for protected upstreams. Close it here too;
 		// go-redis Close is idempotent.

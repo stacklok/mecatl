@@ -102,6 +102,30 @@ var errIdentityBrokerAS1WithoutBroker = errors.New("hosting AS-1 requires the id
 // milliseconds.
 const as1RequestTimeout = 10 * time.Second
 
+// as2RequestTimeout bounds one call the identity broker makes at AS-2, which
+// answers in process like a hosted AS-1.
+const as2RequestTimeout = as1RequestTimeout
+
+// identityBrokerAS2 is the embedded MCP gateway's authorization server as the
+// identity broker reaches it as AS-2. Startup records it when the identity
+// broker has a broker client key and the bundled MCP broker has a protected
+// route; #2535 hands it to the broker.
+type identityBrokerAS2 struct {
+	// Issuer is AS-2's issuer: the client-assertion audience and an ID-JAG's
+	// aud.
+	Issuer string
+	// TokenEndpoint is AS-2's token endpoint.
+	TokenEndpoint string
+	// Resource is the gateway's vMCP resource, an ID-JAG's resource.
+	Resource string
+	// HTTPClient serves AS-2's token endpoint in process, each call bounded
+	// by as2RequestTimeout.
+	HTTPClient *http.Client
+}
+
+// errAS2IssuerIsAS1s refuses an AS-2 that would share AS-1's issuer.
+var errAS2IssuerIsAS1s = errors.New("the MCP gateway's authorization server (AS-2) would have the same issuer as AS-1")
+
 // hostedAS1IDJAGMaxLifetime caps the broker refresh tokens the hosted AS-1
 // issues at session open, and so a broker session's hard expiry. Twelve hours
 // covers a working session while bounding unattended authority; #2538 makes
@@ -109,23 +133,25 @@ const as1RequestTimeout = 10 * time.Second
 const hostedAS1IDJAGMaxLifetime = 12 * time.Hour
 
 // buildIdentityBroker returns the identity broker Mecatl calls, the hosted
-// AS-1 when configured, and a function that releases both. All are nil or
-// no-ops when the broker is not enabled. Mecatl gets only the authentication
+// AS-1 when configured, the broker client's public key set as a JSON JWK Set,
+// and a function that releases the broker and AS-1. All are nil or no-ops
+// when the broker is not enabled. Mecatl gets only the authentication
 // boundary, never the core behind it. A construction failure fails startup,
-// as does a configuration that gives sessions a shell.
+// as does a configuration that gives sessions a shell. An injected test core
+// has no broker client key, so its key set is nil.
 //
 // With a hosted AS-1 and no test override, session open converts users' access
 // tokens at that AS-1 in process: buildBrokerWithHostedAS1 creates the broker
 // client key first and registers it there as the confidential delegate.
-func buildIdentityBroker(ctx context.Context, cfg Config) (identitybroker.Service, *IdentityBrokerAS1Server, func(), error) {
+func buildIdentityBroker(ctx context.Context, cfg Config) (identitybroker.Service, *IdentityBrokerAS1Server, []byte, func(), error) {
 	if !cfg.IdentityBroker {
 		if cfg.IdentityBrokerHostedAS1 != nil {
-			return nil, nil, nil, errIdentityBrokerAS1WithoutBroker
+			return nil, nil, nil, nil, errIdentityBrokerAS1WithoutBroker
 		}
-		return nil, nil, func() {}, nil
+		return nil, nil, nil, func() {}, nil
 	}
 	if shellAvailable(cfg) {
-		return nil, nil, nil, errIdentityBrokerWithShell
+		return nil, nil, nil, nil, errIdentityBrokerWithShell
 	}
 	// Production wiring: build the broker client key, host AS-1 with it as the
 	// delegate, then point the broker's session open at that AS-1. A test that
@@ -135,10 +161,14 @@ func buildIdentityBroker(ctx context.Context, cfg Config) (identitybroker.Servic
 		return buildBrokerWithHostedAS1(ctx, cfg)
 	}
 	core := cfg.identityBrokerCore
+	var keySet []byte
 	if core == nil {
 		broker, err := newIdentityBroker(cfg)
 		if err != nil {
-			return nil, nil, nil, fmt.Errorf("build identity broker: %w", err)
+			return nil, nil, nil, nil, fmt.Errorf("build identity broker: %w", err)
+		}
+		if keySet, err = json.Marshal(broker.client.JWKS()); err != nil {
+			return nil, nil, nil, nil, fmt.Errorf("encode the broker client key set: %w", err)
 		}
 		core = broker.core
 	}
@@ -151,31 +181,31 @@ func buildIdentityBroker(ctx context.Context, cfg Config) (identitybroker.Servic
 		server, err := buildHostedAS1(ctx, as1, nil)
 		if err != nil {
 			release()
-			return nil, nil, nil, err
+			return nil, nil, nil, nil, err
 		}
 		hosted = newHostedAS1Server(server)
 		release = releaseServerThen(server, release)
 	}
-	return identitybroker.NewInProcess(identitybroker.UnverifiedAuthenticator{Name: identityBrokerWorkload}, core), hosted, release, nil
+	return identitybroker.NewInProcess(identitybroker.UnverifiedAuthenticator{Name: identityBrokerWorkload}, core), hosted, keySet, release, nil
 }
 
 // buildBrokerWithHostedAS1 is the production path when the broker and a hosted
 // AS-1 are both enabled: it creates the broker client key, hosts AS-1 with that
 // key as the confidential delegate client identitybroker.BrokerClientID, and
 // builds the broker with its session open pointed at that AS-1 in process.
-func buildBrokerWithHostedAS1(ctx context.Context, cfg Config) (identitybroker.Service, *IdentityBrokerAS1Server, func(), error) {
+func buildBrokerWithHostedAS1(ctx context.Context, cfg Config) (identitybroker.Service, *IdentityBrokerAS1Server, []byte, func(), error) {
 	as1 := cfg.IdentityBrokerHostedAS1
 	clientKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("generate broker client key: %w", err)
+		return nil, nil, nil, nil, fmt.Errorf("generate broker client key: %w", err)
 	}
 	signer, err := identitybroker.NewClientAssertionSigner(clientKey, 0)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 	keySet, err := json.Marshal(signer.JWKS())
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("encode the broker client key set: %w", err)
+		return nil, nil, nil, nil, fmt.Errorf("encode the broker client key set: %w", err)
 	}
 	sources := make([]string, len(as1.PublicClients))
 	for i, c := range as1.PublicClients {
@@ -188,7 +218,7 @@ func buildBrokerWithHostedAS1(ctx context.Context, cfg Config) (identitybroker.S
 		IDJAGMaxLifetime:     hostedAS1IDJAGMaxLifetime,
 	})
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 	httpClient := server.InProcessClient()
 	httpClient.Timeout = as1RequestTimeout
@@ -200,14 +230,14 @@ func buildBrokerWithHostedAS1(ctx context.Context, cfg Config) (identitybroker.S
 	broker, err := newIdentityBroker(cfg)
 	if err != nil {
 		_ = server.Close()
-		return nil, nil, nil, fmt.Errorf("build identity broker: %w", err)
+		return nil, nil, nil, nil, fmt.Errorf("build identity broker: %w", err)
 	}
 	var core identitybroker.Core = broker.core
 	release := releaseServerThen(server, func() {})
 	if closer, ok := core.(io.Closer); ok {
 		release = releaseServerThen(server, func() { _ = closer.Close() })
 	}
-	return identitybroker.NewInProcess(identitybroker.UnverifiedAuthenticator{Name: identityBrokerWorkload}, core), newHostedAS1Server(server), release, nil
+	return identitybroker.NewInProcess(identitybroker.UnverifiedAuthenticator{Name: identityBrokerWorkload}, core), newHostedAS1Server(server), keySet, release, nil
 }
 
 // buildHostedAS1 constructs the hosted AS-1 from as1, optionally registering

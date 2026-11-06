@@ -1556,6 +1556,10 @@ type Built struct {
 	// IdentityBrokerHostedAS1 is the hosted AS-1; nil when
 	// Config.IdentityBrokerHostedAS1 is. Close releases it.
 	IdentityBrokerHostedAS1 *IdentityBrokerAS1Server
+	// identityBrokerAS2 is the MCP gateway's authorization server as the
+	// identity broker's AS-2; nil when startup set none up. Close releases it
+	// with the MCP broker.
+	identityBrokerAS2 *identityBrokerAS2
 	// GuardrailsAdvisory reports a configured checker demoted to advisory for
 	// sessions in the server's default mode (yolo); other modes keep it enforcing.
 	GuardrailsAdvisory bool
@@ -2289,7 +2293,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 
 	// The identity broker is released after the MCP broker, on startup failure
 	// and on shutdown.
-	identityBroker, identityBrokerAS1, releaseIdentityBroker, err := buildIdentityBroker(ctx, cfg)
+	identityBroker, identityBrokerAS1, brokerClientKeySet, releaseIdentityBroker, err := buildIdentityBroker(ctx, cfg)
 	if err != nil {
 		childLiveness.Close()
 		mcpClose()
@@ -2312,7 +2316,14 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 				occupied = append(occupied, registered.Spec().Name)
 			}
 		}
-		broker, err = buildMCPBroker(ctx, cfg, brokerDeclaration, occupied)
+		identity := mcpBrokerIdentity{clientKeySet: brokerClientKeySet}
+		switch {
+		case identityBrokerAS1 != nil:
+			identity.as1Issuer = identityBrokerAS1.Issuer
+		case cfg.IdentityBrokerAS1 != nil:
+			identity.as1Issuer = cfg.IdentityBrokerAS1.Issuer
+		}
+		broker, err = buildMCPBroker(ctx, cfg, brokerDeclaration, occupied, identity)
 		if err != nil {
 			childLiveness.Close()
 			mcpClose()
@@ -3062,7 +3073,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		diag.Log(ctx, port.LevelWarn, "durable automatic reservation reconciliation unavailable")
 	})
 	attempts = startAttemptRecovery(ctx, cfg, reg, store, eventLog, assets.attemptRepository, assets.reflectionRepository, assets, placementProvider, placementScope)
-	return &Built{Service: svc, MCPBroker: broker.service, MCPBrokerHandlers: broker.handlers, MCPBrokerCallbackPath: broker.callbackPath, IdentityBroker: identityBroker, IdentityBrokerHostedAS1: identityBrokerAS1, GuardrailsAdvisory: guardrailConfigured && guardrailsDemoted(cfg), Close: closeAll}, nil
+	return &Built{Service: svc, MCPBroker: broker.service, MCPBrokerHandlers: broker.handlers, MCPBrokerCallbackPath: broker.callbackPath, IdentityBroker: identityBroker, IdentityBrokerHostedAS1: identityBrokerAS1, identityBrokerAS2: broker.as2, GuardrailsAdvisory: guardrailConfigured && guardrailsDemoted(cfg), Close: closeAll}, nil
 }
 
 // resolveAgentSeam resolves the agent-definition registry from cfg: the

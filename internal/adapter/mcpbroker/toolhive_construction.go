@@ -4,10 +4,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/redis/go-redis/v9"
 	"github.com/stacklok/toolhive/pkg/authserver"
+	"github.com/stacklok/toolhive/pkg/authserver/server/tokenexchange"
 	"github.com/stacklok/toolhive/pkg/authserver/storage"
+	"github.com/stacklok/toolhive/pkg/oauthproto"
 	"github.com/stacklok/toolhive/pkg/vmcp"
 	authtypes "github.com/stacklok/toolhive/pkg/vmcp/auth/types"
 
@@ -56,6 +59,67 @@ type ToolHiveConfig struct {
 	// backend name) — see stageAuthenticatedRoutes. A nil value defaults to
 	// port.NopDiagnostics{}, matching every other nil-safe Diagnostics consumer.
 	Diagnostics port.Diagnostics
+	// BrokerClient, with at least one protected upstream, sets the embedded
+	// authorization server up as the identity broker's AS-2 (Process.AS2):
+	// it registers the broker client, and the vMCP's resource becomes its
+	// endpoint instead of the issuer. Nil, or no protected upstream, leaves the
+	// embedded server as it is.
+	BrokerClient *ToolHiveBrokerClient
+}
+
+// ToolHiveBrokerClient is the identity broker's client at AS-2.
+type ToolHiveBrokerClient struct {
+	// ID is the client ID.
+	ID string
+	// KeySet is the client's public signing keys as a JSON JWK Set (RFC 7517
+	// section 5). It is written to a private temporary file ToolHive reads
+	// once, at construction, and removed after.
+	KeySet []byte
+}
+
+// as2DelegateClient is ToolHive's configuration of the broker client, whose
+// public key set is in jwksFile, at AS-2 with the vMCP resource. Restricted
+// with no source clients, it can exchange only tokens issued to itself, never
+// a user's gateway login token.
+func as2DelegateClient(client ToolHiveBrokerClient, jwksFile, resource string) authserver.DelegateClientRunConfig {
+	return authserver.DelegateClientRunConfig{
+		ClientID:                client.ID,
+		TokenEndpointAuthMethod: oauthproto.TokenEndpointAuthMethodPrivateKeyJWT,
+		JWKSFile:                jwksFile,
+		GrantTypes:              []string{oauthproto.GrantTypeTokenExchange, oauthproto.GrantTypeJWTBearer},
+		Scopes:                  []string{"openid"},
+		Audiences:               []string{resource},
+		TokenExchange:           &authserver.DelegateClientTokenExchange{SelfIssuedSubjectTokens: authserver.SelfIssuedSubjectTokensRestricted},
+	}
+}
+
+// as2Trust is an ID-JAG issuer AS-2 trusts for the listed subjects only, with
+// its keys fetched from jwksURL over a private address, trusting caFile.
+// Production configures none until ToolHive can trust AS-1 for every subject
+// (stacklok/toolhive#6887); only tests set it, through toolHiveProcessOptions.
+type as2Trust struct {
+	issuer, jwksURL, caFile string
+	subjects                []string
+	maxAssertionAge         time.Duration
+}
+
+// as2TrustRef names the trusted issuer for its JWT-bearer policy.
+const as2TrustRef = "as1"
+
+// runConfig is ToolHive's configuration of t at AS-2: ID-JAGs for issuer that
+// may obtain only resource.
+func (t *as2Trust) runConfig(issuer, resource string) ([]tokenexchange.TrustedIssuer, *authserver.JWTBearerInboundGrantRunConfig) {
+	bindings := make([]tokenexchange.JWTBearerSubjectBinding, len(t.subjects))
+	for i, subject := range t.subjects {
+		bindings[i] = tokenexchange.JWTBearerSubjectBinding{Subject: subject, AllowedResources: []string{resource}}
+	}
+	trusted := []tokenexchange.TrustedIssuer{{
+		Name: as2TrustRef, IssuerURL: t.issuer, JWKSURL: t.jwksURL, CAFilePath: t.caFile, AllowPrivateIPs: true,
+	}}
+	return trusted, &authserver.JWTBearerInboundGrantRunConfig{IssuerPolicies: []authserver.JWTBearerIssuerPolicyRunConfig{{
+		IssuerRef: as2TrustRef, MaxAssertionAge: t.maxAssertionAge.String(),
+		SubjectBindings: bindings, AcceptedAudiences: []string{issuer},
+	}}}
 }
 
 // ToolHiveProfile is one configured Streamable HTTP upstream.
