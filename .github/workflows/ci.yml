@@ -1072,13 +1072,14 @@ jobs:
     needs: changes
     # macOS is ~10x a Linux minute. This is a native Go build/run smoke, so gate
     # on Go relevance (macos_go — skips docs/site/SDK-frontend-only changes) and
-    # on drafts.
+    # on drafts. A cold Go cache (PRs never save one, and main's can be evicted)
+    # takes about 10 minutes to build before the tests start.
     if: >-
       needs.changes.outputs.docs_only != 'true'
       && needs.changes.outputs.macos_go == 'true'
       && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
     runs-on: macos-26
-    timeout-minutes: 15
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
