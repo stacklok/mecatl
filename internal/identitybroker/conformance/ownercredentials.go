@@ -79,13 +79,21 @@ func runOwnerCredentials(t *testing.T, factory Factory) {
 		mustOpen(t, f.svc, openRequest("hostS43", bob))
 		got, err := verify(f.core, bob, f.reg.Credential)
 		wantDenied(t, "VerifyCredentialForOwner for another owner", got, err)
+		// Owners compare exactly.
+		upper := identitybroker.Owner{Issuer: alice.Issuer, Subject: strings.ToUpper(alice.Subject)}
+		got, err = verify(f.core, upper, f.reg.Credential)
+		wantDenied(t, "VerifyCredentialForOwner for an owner differing in case", got, err)
 	})
 
-	t.Run("a credential of a closed session is denied, with no closing reason", func(t *testing.T) {
+	t.Run("a credential of a closed session is denied, as for another owner", func(t *testing.T) {
+		// AS-1 must not learn that the session closed: not from the reason,
+		// and not from the error's text.
 		f := setup(t)
+		_, otherOwner := verify(f.core, bob, f.reg.Credential)
 		mustClose(t, f.svc, f.session.ID)
 		got, err := verify(f.core, alice, f.reg.Credential)
 		wantDenied(t, "VerifyCredentialForOwner in a closed session", got, err)
+		sameError(t, "VerifyCredentialForOwner in a closed session and for another owner", err, otherOwner)
 	})
 
 	t.Run("a credential from before a close is denied after the agent registers into the replacement session", func(t *testing.T) {
@@ -151,15 +159,17 @@ func runOwnerCredentials(t *testing.T, factory Factory) {
 
 	t.Run("malformed requests are denied", func(t *testing.T) {
 		// AS-1 passes on what its client sent, so a malformed request is a
-		// refusal, not a failure to answer.
+		// refusal, not a failure to answer. The credential has expired, so
+		// an invalid owner is denied only if the request is checked before
+		// the credential, which would otherwise answer svid_expired.
 		f := setup(t)
+		f.clock.Advance(f.reg.ExpiresAt.Sub(f.clock.Now()) + time.Hour)
 		for name, req := range map[string]identitybroker.VerifyCredentialForOwnerRequest{
-			"malformed credential":    {Owner: alice, Credential: identitybroker.NewToken("not-a-credential")},
-			"no credential":           {Owner: alice},
-			"no owner":                {Credential: f.reg.Credential},
-			"owner with no subject":   {Owner: identitybroker.Owner{Issuer: alice.Issuer}, Credential: f.reg.Credential},
-			"owner with a space":      {Owner: identitybroker.Owner{Issuer: alice.Issuer, Subject: "alice 204"}, Credential: f.reg.Credential},
-			"owner differing in case": {Owner: identitybroker.Owner{Issuer: alice.Issuer, Subject: strings.ToUpper(alice.Subject)}, Credential: f.reg.Credential},
+			"malformed credential":  {Owner: alice, Credential: identitybroker.NewToken("not-a-credential")},
+			"no credential":         {Owner: alice},
+			"no owner":              {Credential: f.reg.Credential},
+			"owner with no subject": {Owner: identitybroker.Owner{Issuer: alice.Issuer}, Credential: f.reg.Credential},
+			"owner with a space":    {Owner: identitybroker.Owner{Issuer: alice.Issuer, Subject: "alice 204"}, Credential: f.reg.Credential},
 		} {
 			got, err := f.core.VerifyCredentialForOwner(ctx, req)
 			wantDenied(t, "VerifyCredentialForOwner with "+name, got, err)

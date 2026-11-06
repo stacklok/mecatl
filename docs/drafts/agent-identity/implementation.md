@@ -76,7 +76,7 @@ Test the session-open exchange:
 Test ID-JAG issuance:
 
 - AS-1 rejects an expired, revoked, or foreign-client refresh token, a schedule grant, and a run's refresh token whose schedule grant is revoked.
-- AS-1 rejects an untrusted or expired SVID, an SVID with an audience not accepted by both AS-1 and the broker, and an instance whose session is owned by a user other than the grant's. The broker rejects an instance not registered to the session before it calls AS-1.
+- AS-1 rejects an untrusted or expired SVID, an SVID with an audience not accepted by both AS-1 and the broker, and an instance whose session is closed or owned by a user other than the grant's, with `denied` in both cases. The broker rejects an instance not registered to the session before it calls AS-1.
 - The broker records each ID-JAG `jti` with its session, run, instance, and operation.
 - The issued ID-JAG has `typ=oauth-id-jag+jwt`, the `sub` from the refresh token record, `client_id=mecatl`, AS-2 `aud`, a fresh `jti`, and an `act` with exactly one level, whose `sub` is the opaque `ag_` identifier of the validated actor and which has no nested `act` and has `act.iss` set to AS-1's issuer. A caller cannot change `sub` or `act` through request parameters. The ID-JAG carries the requested `resource`.
 - Each refusal carries the reason code in `error_description` that [error reasons](credentials-and-lifecycle.md#error-reasons) assigns, and the broker maps it to the listed gRPC status and mecak8s outcome, including `mcp_owner_action_required`.

@@ -234,8 +234,8 @@ func (b *Broker) VerifyCredential(_ context.Context, req VerifyCredentialRequest
 // Owner, which its registrations are checked against, not its verified
 // owner: the broker's per-operation checks put the agent in the session whose
 // refresh token AS-1 exchanges, and that session's verified owner equals its
-// Owner. A scheduled run's session, opened from a schedule grant rather than
-// a sign-in, will have no verified owner to compare.
+// Owner. Every refusal after the credential's own checks has the same detail,
+// so an error passed on whole tells AS-1 nothing about the session's state.
 func (b *Broker) VerifyCredentialForOwner(_ context.Context, req VerifyCredentialForOwnerRequest) (VerifiedAgent, error) {
 	if req.Credential.IsZero() || req.Owner.validate() != nil {
 		return VerifiedAgent{}, credentialDenied("the request has no credential or no valid owner")
@@ -257,15 +257,8 @@ func (b *Broker) VerifyCredentialForOwner(_ context.Context, req VerifyCredentia
 		}
 	}
 	t.mu.Unlock()
-	switch {
-	case !registered:
-		return VerifiedAgent{}, credentialDenied("the credential's subject is not a registered agent")
-	case !owned:
-		return VerifiedAgent{}, credentialDenied("the agent's broker session is not the owner's")
-	case !current:
-		return VerifiedAgent{}, credentialDenied("the credential was not issued since the agent moved to its broker session")
-	case !open:
-		return VerifiedAgent{}, credentialDenied("the agent's broker session is closed")
+	if !registered || !owned || !current || !open {
+		return VerifiedAgent{}, credentialDenied("the credential is not current for an open broker session of the owner")
 	}
 	return VerifiedAgent{Agent: AgentRef{Subject: cred.subject}, AgentID: b.agentID, ExpiresAt: cred.expiresAt}, nil
 }
