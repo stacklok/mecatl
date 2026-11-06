@@ -407130,6 +407130,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1793991037133,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "a5322b5231a970fd21744d3484bd87090c1bf43b",
+          "message": "feat(kernel): retain reusable context and rich content facts (#2725)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-11-06T20:09:01Z",
+          "tree_id": "c4118981670e7b9deb59cd1efda71b7fb2c5fd6a",
+          "url": "https://github.com/stacklok/mecatl/commit/a5322b5231a970fd21744d3484bd87090c1bf43b"
+        },
+        "date": 1793996566475,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 16152,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12910,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 795,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -530630,6 +530669,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1793996562197,
+  "lastUpdate": 1793996567519,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
