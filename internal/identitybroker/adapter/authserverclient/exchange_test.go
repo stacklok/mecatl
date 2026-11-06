@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/stacklok/mecatl/internal/identitybroker"
-	"github.com/stacklok/mecatl/internal/testutil/identityharness"
+	"github.com/stacklok/mecatl/internal/identitybroker/adapter/as1server/as1servertest"
 )
 
 // sessionGrant is the entry the broker core sends at session open.
@@ -21,30 +21,38 @@ func sessionGrant(expiresAt time.Time) identitybroker.ExchangeGrant {
 }
 
 func TestExchangeConvertsAtAS1(t *testing.T) {
-	for name, expiresAt := range map[string]time.Duration{"no expires_at": 0, "expires_at": time.Hour} {
+	for name, expiresAt := range map[string]time.Duration{"no expires_at": 0, "expires_at": as1servertest.IDJAGMaxLifetime / 2} {
 		t.Run(name, func(t *testing.T) {
-			f := newFixture(t, fixtureOptions{})
-			c := f.client(t, &recorder{}, nil)
-			req := identitybroker.TokenExchange{SubjectToken: identitybroker.NewToken(f.aliceToken()), Grant: sessionGrant(time.Time{})}
-			wantExpiry := f.clock.Now().Add(identityharness.DefaultGrantMaxLifetime)
+			a := startAS1(t)
+			c := as1Client(t, a, &recorder{}, nil)
+			req := identitybroker.TokenExchange{SubjectToken: identitybroker.NewToken(aliceSignsIn(t, a)), Grant: sessionGrant(time.Time{})}
+			before := time.Now()
 			if expiresAt != 0 {
-				req.Grant.ExpiresAt = f.clock.Now().Add(expiresAt)
-				wantExpiry = req.Grant.ExpiresAt
+				req.Grant.ExpiresAt = before.Add(expiresAt).Truncate(time.Second)
 			}
 			res, err := c.Exchange(t.Context(), req)
+			after := time.Now()
 			if err != nil {
 				t.Fatalf("Exchange: %v", err)
 			}
-			if res.IssuedTokenType != identitybroker.TokenTypeRefreshToken || len(res.Grants) != 1 {
+			if res.RefreshToken.IsZero() || res.IssuedTokenType != identitybroker.TokenTypeRefreshToken || len(res.Grants) != 1 {
 				t.Fatalf("result type %q with %d grants, want a refresh token and one echoed entry", res.IssuedTokenType, len(res.Grants))
 			}
 			g := res.Grants[0]
-			if g.Type != identitybroker.ExchangeGrantType || !slices.Equal(g.IssuableTokenTypes, []string{identitybroker.TokenTypeIDJAG}) || !g.ExpiresAt.Equal(wantExpiry) {
-				t.Fatalf("echo = %+v, want the exchange grant for id-jag expiring at %v", g, wantExpiry)
+			if g.Type != identitybroker.ExchangeGrantType || !slices.Equal(g.IssuableTokenTypes, []string{identitybroker.TokenTypeIDJAG}) {
+				t.Fatalf("echo = %+v, want the exchange grant for id-jag", g)
 			}
-			grant, ok := f.h.AS1.Grant(res.RefreshToken.Value())
-			if !ok || !grant.Active || !grant.ExpiresAt.Equal(wantExpiry) {
-				t.Fatalf("AS-1 grant = %+v, %v; want an active grant expiring at %v", grant, ok, wantExpiry)
+			if expiresAt != 0 {
+				if !g.ExpiresAt.Equal(req.Grant.ExpiresAt) {
+					t.Fatalf("echoed expiry %v, want the requested %v", g.ExpiresAt, req.Grant.ExpiresAt)
+				}
+				return
+			}
+			// No expires_at: AS-1 applies its maximum to its wall clock, in
+			// whole seconds.
+			earliest, latest := before.Add(as1servertest.IDJAGMaxLifetime).Truncate(time.Second), after.Add(as1servertest.IDJAGMaxLifetime+time.Second)
+			if g.ExpiresAt.Before(earliest) || g.ExpiresAt.After(latest) {
+				t.Fatalf("echoed expiry %v, want AS-1's maximum, between %v and %v", g.ExpiresAt, earliest, latest)
 			}
 		})
 	}
@@ -140,11 +148,11 @@ func TestExchangeMalformedSuccessIsAConfigurationFault(t *testing.T) {
 }
 
 func TestExchangeReturnsAS1Refusals(t *testing.T) {
-	f := newFixture(t, fixtureOptions{})
+	a := startAS1(t)
 	r := &recorder{}
-	c := f.client(t, r, nil)
-	f.h.AS1.FailNextExchange(identityharness.Fault{Status: http.StatusServiceUnavailable})
-	token := f.aliceToken()
+	c := as1Client(t, a, r, nil)
+	a.Faults.FailNextExchange(as1servertest.Fault{Status: http.StatusServiceUnavailable})
+	token := aliceSignsIn(t, a)
 	_, err := c.Exchange(t.Context(), identitybroker.TokenExchange{SubjectToken: identitybroker.NewToken(token), Grant: sessionGrant(time.Time{})})
 	var refusal *identitybroker.ServerRefusal
 	if !errors.As(err, &refusal) || refusal.Status != http.StatusServiceUnavailable || !identitybroker.IsUnavailable(err) {

@@ -20,7 +20,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/golang-jwt/jwt/v5"
+
 	"github.com/stacklok/mecatl/internal/identitybroker"
+	"github.com/stacklok/mecatl/internal/identitybroker/adapter/as1server/as1servertest"
 	"github.com/stacklok/mecatl/internal/identitybroker/adapter/authserverclient"
 	"github.com/stacklok/mecatl/internal/testutil/identityharness"
 )
@@ -31,28 +34,10 @@ const (
 	tokenTypeRefresh   = "urn:ietf:params:oauth:token-type:refresh_token"
 )
 
-// testClock is a settable clock safe to read from server goroutines.
-type testClock struct {
-	mu  sync.Mutex
-	now time.Time
-}
-
-func (c *testClock) Now() time.Time {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.now
-}
-
-func (c *testClock) Advance(d time.Duration) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.now = c.now.Add(d)
-}
-
 // recorder records every assertion it mints; with replay set it returns the
 // first one again instead of minting.
 type recorder struct {
-	signer *identitybroker.ClientAssertionSigner
+	signer authserverclient.Assertions
 	replay bool
 
 	mu     sync.Mutex
@@ -78,20 +63,53 @@ func (r *recorder) all() []identitybroker.Token {
 	return append([]identitybroker.Token(nil), r.minted...)
 }
 
+// startAS1 runs the real AS-1 with the harness IdP as its upstream, for the
+// session-open tests.
+func startAS1(t *testing.T) *as1servertest.AS1 {
+	t.Helper()
+	return as1servertest.Start(t, identityharness.New(t, identityharness.Options{}), nil)
+}
+
+// as1Client returns a client for the real AS-1 a, reaching it through a's
+// fault transport, whose assertions r records, after edit changes its
+// configuration. r mints with a's registered broker key unless it already
+// has a signer.
+func as1Client(t *testing.T, a *as1servertest.AS1, r *recorder, edit func(*authserverclient.Config)) *authserverclient.Client {
+	t.Helper()
+	if r.signer == nil {
+		r.signer = a.Signer
+	}
+	cfg := authserverclient.Config{
+		Issuer:        a.Issuer(),
+		TokenEndpoint: a.Server.TokenEndpoint(),
+		Assertions:    r,
+		HTTPClient:    a.HTTPClient(),
+	}
+	if edit != nil {
+		edit(&cfg)
+	}
+	c, err := authserverclient.New(cfg)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	return c
+}
+
+// aliceSignsIn signs Alice in at the real AS-1 a and returns her access token.
+func aliceSignsIn(t *testing.T, a *as1servertest.AS1) string {
+	t.Helper()
+	return a.SignIn(t, as1servertest.SignIn{User: identityharness.Alice}).Value()
+}
+
+// fixture is the harness's AS-1, kept for revocation, which the real AS-1
+// does not serve yet: retired by stacklok/toolhive#6966 and
+// stacklok/toolhive#6972 (mecatl #2568).
 type fixture struct {
 	h      *identityharness.Harness
-	clock  *testClock
 	signer *identitybroker.ClientAssertionSigner
 }
 
-type fixtureOptions struct {
-	// unregistered leaves the broker client key out of AS-1's registration.
-	unregistered bool
-	// maxLifetime is AS-1's largest accepted exp - iat.
-	maxLifetime time.Duration
-}
-
-func newFixture(t *testing.T, opts fixtureOptions) *fixture {
+func newFixture(t *testing.T) *fixture {
 	t.Helper()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -101,13 +119,9 @@ func newFixture(t *testing.T, opts fixtureOptions) *fixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	clock := &testClock{now: time.Unix(1_800_000_000, 0)}
-	hopts := identityharness.Options{Now: clock.Now, ClientAssertionMaxLifetime: opts.maxLifetime}
-	if !opts.unregistered {
-		// Register the key as a server would: from the published JWKS.
-		hopts.BrokerKeys = []identityharness.BrokerKey{jwksKey(t, signer.JWKS())}
-	}
-	return &fixture{h: identityharness.New(t, hopts), clock: clock, signer: signer}
+	// Register the key as a server would: from the published JWKS.
+	h := identityharness.New(t, identityharness.Options{BrokerKeys: []identityharness.BrokerKey{jwksKey(t, signer.JWKS())}})
+	return &fixture{h: h, signer: signer}
 }
 
 func jwksKey(t *testing.T, set identitybroker.JWKSet) identityharness.BrokerKey {
@@ -139,7 +153,6 @@ func (f *fixture) client(t *testing.T, r *recorder, edit func(*authserverclient.
 		RevocationEndpoint: f.h.AS1.RevocationEndpoint(),
 		Assertions:         r,
 		HTTPClient:         f.h.HTTPClient(),
-		Now:                f.clock.Now,
 	}
 	if edit != nil {
 		edit(&cfg)
@@ -153,10 +166,10 @@ func (f *fixture) client(t *testing.T, r *recorder, edit func(*authserverclient.
 
 // sessionOpenForm is a session-open exchange (design step (3)): one
 // exchange-grant entry listing only id-jag, without client authentication.
-func (*fixture) sessionOpenForm(t *testing.T, accessToken string) url.Values {
+func sessionOpenForm(t *testing.T, accessToken string) url.Values {
 	t.Helper()
-	details, err := json.Marshal([]identityharness.ExchangeGrant{{
-		Type: identityharness.ExchangeGrantType, IssuableTokenTypes: []string{identityharness.TokenTypeIDJAG},
+	details, err := json.Marshal([]as1servertest.ExchangeGrant{{
+		Type: identitybroker.ExchangeGrantType, IssuableTokenTypes: []string{identitybroker.TokenTypeIDJAG},
 	}})
 	if err != nil {
 		t.Fatal(err)
@@ -214,43 +227,45 @@ func segment(t *testing.T, a identitybroker.Token, i int) map[string]any {
 }
 
 func TestSessionOpenAuthenticatesWithTheBrokerKey(t *testing.T) {
-	f := newFixture(t, fixtureOptions{})
-	c := f.client(t, &recorder{}, nil)
+	a := startAS1(t)
+	c := as1Client(t, a, &recorder{}, nil)
 	var res sessionOpenResult
-	if err := c.Token(t.Context(), f.sessionOpenForm(t, f.aliceToken()), &res); err != nil {
+	if err := c.Token(t.Context(), sessionOpenForm(t, aliceSignsIn(t, a)), &res); err != nil {
 		t.Fatalf("Token: %v", err)
 	}
 	if res.RefreshToken == "" || res.IssuedTokenType != tokenTypeRefresh {
-		t.Fatalf("result = %+v, want a grant refresh token", res)
+		t.Fatalf("result refresh token present %v, type %q; want a grant refresh token", res.RefreshToken != "", res.IssuedTokenType)
 	}
-	grant, ok := f.h.AS1.Grant(res.RefreshToken)
-	if !ok || grant.ClientID != identityharness.BrokerClientID || grant.Output != identityharness.TokenTypeIDJAG || !grant.Active {
-		t.Fatalf("grant = %+v, %v; want an active id-jag grant to %s", grant, ok, identityharness.BrokerClientID)
+	if got := a.Faults.Conversions(); got != 1 {
+		t.Fatalf("AS-1 converted %d tokens, want 1", got)
 	}
 	// Check what AS-1 received, not the signer's output.
-	received := f.h.AS1.ReceivedClientAssertions()
-	if len(received) != 1 {
-		t.Fatalf("AS-1 received %d assertions, want 1", len(received))
+	received := a.Faults.Requests()
+	if len(received) != 1 || received[0].ClientAssertion.IsZero() {
+		t.Fatalf("AS-1 received %d requests, want 1 with a client assertion", len(received))
 	}
-	sent := identitybroker.NewToken(received[0])
-	wantKID := f.signer.JWKS().Keys[0].KeyID
+	sent := received[0].ClientAssertion
+	wantKID := a.Signer.JWKS().Keys[0].KeyID
 	if header := segment(t, sent, 0); len(header) != 3 || header["typ"] != "client-authentication+jwt" ||
 		header["alg"] != "ES256" || header["kid"] != wantKID {
 		t.Fatalf("assertion header = %v, want exactly typ client-authentication+jwt, alg ES256, and kid %q", header, wantKID)
 	}
 	got := claims(t, sent)
 	jti, _ := got["jti"].(string)
-	if got["iss"] != "mecatl" || got["sub"] != "mecatl" || got["aud"] != f.h.AS1.Issuer() ||
+	if got["iss"] != "mecatl" || got["sub"] != "mecatl" || got["aud"] != a.Issuer() ||
 		got["exp"].(float64)-got["iat"].(float64) != 60 || jti == "" {
 		t.Fatalf("assertion claims = %v, want iss and sub mecatl, aud AS-1's issuer, a 60s lifetime, and a jti string", got)
 	}
 }
 
+// TestRevocationAuthenticates stays on the harness's AS-1, as the real AS-1
+// serves no revocation yet: retired by stacklok/toolhive#6966 and
+// stacklok/toolhive#6972 (mecatl #2568).
 func TestRevocationAuthenticates(t *testing.T) {
-	f := newFixture(t, fixtureOptions{})
+	f := newFixture(t)
 	c := f.client(t, &recorder{}, nil)
 	var res sessionOpenResult
-	if err := c.Token(t.Context(), f.sessionOpenForm(t, f.aliceToken()), &res); err != nil {
+	if err := c.Token(t.Context(), sessionOpenForm(t, f.aliceToken()), &res); err != nil {
 		t.Fatalf("Token: %v", err)
 	}
 	if err := c.Revoke(t.Context(), url.Values{"token": {res.RefreshToken}, "token_type_hint": {"refresh_token"}}); err != nil {
@@ -261,41 +276,72 @@ func TestRevocationAuthenticates(t *testing.T) {
 	}
 }
 
+// overLongAssertions mints assertions with the registered broker key that
+// live ten minutes, past the five minutes AS-1 accepts; the broker's own
+// signer cannot mint them.
+type overLongAssertions struct {
+	key *ecdsa.PrivateKey
+	kid string
+}
+
+func (o overLongAssertions) ClientAssertion(audience string, now time.Time) (identitybroker.Token, error) {
+	token := jwt.NewWithClaims(jwt.SigningMethodES256, jwt.MapClaims{
+		"iss": identitybroker.BrokerClientID, "sub": identitybroker.BrokerClientID, "aud": audience,
+		"iat": now.Unix(), "exp": now.Add(10 * time.Minute).Unix(), "jti": rand.Text(),
+	})
+	token.Header["typ"], token.Header["kid"] = "client-authentication+jwt", o.kid
+	signed, err := token.SignedString(o.key)
+	return identitybroker.NewToken(signed), err
+}
+
 func TestClientAuthenticationRefusals(t *testing.T) {
+	unregistered, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	unregisteredSigner, err := identitybroker.NewClientAssertionSigner(unregistered, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
 	tests := []struct {
 		name string
-		opts fixtureOptions
+		// signer replaces the registered broker key's signer.
+		signer func(*as1servertest.AS1) authserverclient.Assertions
 		// edit changes the client; replay sends the first assertion twice.
-		edit   func(*fixture, *authserverclient.Config)
+		edit   func(*as1servertest.AS1, *authserverclient.Config)
 		replay bool
 	}{
-		{name: "wrong audience: the token endpoint", edit: func(f *fixture, c *authserverclient.Config) { c.Issuer = f.h.AS1.TokenEndpoint() }},
-		{name: "expired, past the skew", edit: func(f *fixture, c *authserverclient.Config) {
-			c.Now = func() time.Time {
-				return f.clock.Now().Add(-identitybroker.MaxClientAssertionLifetime - identityharness.ClientAssertionClockSkew - time.Second)
-			}
+		// AS-1 also accepts its token endpoint as the audience (RFC 7523).
+		{name: "wrong audience", edit: func(_ *as1servertest.AS1, c *authserverclient.Config) { c.Issuer = "https://not-as1.example" }},
+		{name: "expired", edit: func(_ *as1servertest.AS1, c *authserverclient.Config) {
+			c.Now = func() time.Time { return time.Now().Add(-10 * time.Minute) }
 		}},
-		{name: "over-long", opts: fixtureOptions{maxLifetime: 30 * time.Second}},
+		{name: "over-long", signer: func(a *as1servertest.AS1) authserverclient.Assertions {
+			return overLongAssertions{key: a.Key, kid: a.Signer.JWKS().Keys[0].KeyID}
+		}},
 		{name: "reused jti", replay: true},
-		{name: "unregistered key", opts: fixtureOptions{unregistered: true}},
+		{name: "unregistered key", signer: func(*as1servertest.AS1) authserverclient.Assertions { return unregisteredSigner }},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			f := newFixture(t, tt.opts)
+			a := startAS1(t)
 			r := &recorder{replay: tt.replay}
-			c := f.client(t, r, func(cfg *authserverclient.Config) {
+			if tt.signer != nil {
+				r.signer = tt.signer(a)
+			}
+			c := as1Client(t, a, r, func(cfg *authserverclient.Config) {
 				if tt.edit != nil {
-					tt.edit(f, cfg)
+					tt.edit(a, cfg)
 				}
 			})
-			token := f.aliceToken()
 			if tt.replay {
 				// The first use authenticates; its replay must not.
-				if err := c.Revoke(t.Context(), url.Values{"token": {"unknown"}}); err != nil {
+				if err := c.Token(t.Context(), sessionOpenForm(t, aliceSignsIn(t, a)), &sessionOpenResult{}); err != nil {
 					t.Fatalf("first use: %v", err)
 				}
 			}
-			err := c.Token(t.Context(), f.sessionOpenForm(t, token), &sessionOpenResult{})
+			token := aliceSignsIn(t, a)
+			err := c.Token(t.Context(), sessionOpenForm(t, token), &sessionOpenResult{})
 			var oe *identitybroker.ServerRefusal
 			if !errors.As(err, &oe) || oe.Status != http.StatusUnauthorized || oe.Code != "invalid_client" {
 				t.Fatalf("Token = %v, want 401 invalid_client", err)
@@ -305,6 +351,9 @@ func TestClientAuthenticationRefusals(t *testing.T) {
 					identitybroker.IsConfigurationFault(err), identitybroker.IsUnavailable(err))
 			}
 			assertNoSecrets(t, err, append(values(r.all()), token)...)
+			if last := a.Faults.Requests(); !last[len(last)-1].Refused() {
+				t.Fatal("the refusal is not AS-1's own")
+			}
 		})
 	}
 }
@@ -313,16 +362,26 @@ func TestClientAuthenticationRefusals(t *testing.T) {
 // access token at the session-open exchange with no client authentication,
 // and claiming to be the broker.
 func TestLeakedAccessTokenWithoutTheBrokerKeyIsRefused(t *testing.T) {
-	f := newFixture(t, fixtureOptions{})
-	for name, edit := range map[string]func(url.Values){
-		"no client":   func(url.Values) {},
-		"as mecatl":   func(form url.Values) { form.Set("client_id", identityharness.BrokerClientID) },
-		"public user": func(form url.Values) { form.Set("client_id", identityharness.DefaultClientID) },
+	a := startAS1(t)
+	// Without a client_id AS-1 answers invalid_request; claiming the broker
+	// without its assertion fails client authentication. A zero want only
+	// requires a refusal.
+	type want struct {
+		status int
+		code   string
+	}
+	for name, tt := range map[string]struct {
+		edit func(url.Values)
+		want want
+	}{
+		"no client":   {func(url.Values) {}, want{http.StatusBadRequest, "invalid_request"}},
+		"as mecatl":   {func(form url.Values) { form.Set("client_id", identitybroker.BrokerClientID) }, want{http.StatusUnauthorized, "invalid_client"}},
+		"public user": {func(form url.Values) { form.Set("client_id", as1servertest.PublicClientID) }, want{}},
 	} {
 		t.Run(name, func(t *testing.T) {
-			form := f.sessionOpenForm(t, f.aliceToken())
-			edit(form)
-			resp, err := f.h.HTTPClient().PostForm(f.h.AS1.TokenEndpoint(), form)
+			form := sessionOpenForm(t, aliceSignsIn(t, a))
+			tt.edit(form)
+			resp, err := a.HTTPClient().PostForm(a.Server.TokenEndpoint(), form)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -334,13 +393,13 @@ func TestLeakedAccessTokenWithoutTheBrokerKeyIsRefused(t *testing.T) {
 			if resp.StatusCode == http.StatusOK {
 				t.Fatalf("the leaked token opened a session")
 			}
-			if name != "public user" && (resp.StatusCode != http.StatusUnauthorized || body.Error != "invalid_client") {
-				t.Fatalf("status %d %q, want 401 invalid_client", resp.StatusCode, body.Error)
+			if tt.want != (want{}) && (resp.StatusCode != tt.want.status || body.Error != tt.want.code) {
+				t.Fatalf("status %d %q, want %d %s", resp.StatusCode, body.Error, tt.want.status, tt.want.code)
 			}
 		})
 	}
-	if f.h.AS1.GrantsIssued() != 0 {
-		t.Fatal("AS-1 issued a grant for a leaked access token")
+	if a.Faults.Conversions() != 0 {
+		t.Fatal("AS-1 converted a leaked access token")
 	}
 }
 
@@ -349,11 +408,11 @@ func TestLeakedAccessTokenWithoutTheBrokerKeyIsRefused(t *testing.T) {
 // is refused with token_used, and a retry with a fresh access token converts.
 // Every attempt carries a new assertion and jti.
 func TestResendAfterProcessedRequestGetsTokenUsed(t *testing.T) {
-	f := newFixture(t, fixtureOptions{})
+	a := startAS1(t)
 	r := &recorder{}
-	c := f.client(t, r, nil)
-	form := f.sessionOpenForm(t, f.aliceToken())
-	f.h.AS1.LoseNextExchangeResponse()
+	c := as1Client(t, a, r, nil)
+	form := sessionOpenForm(t, aliceSignsIn(t, a))
+	a.Faults.LoseNextExchangeResponse()
 	err := c.Token(t.Context(), form, &sessionOpenResult{})
 	if !errors.Is(err, identitybroker.ErrNoResponse) || !identitybroker.IsUnavailable(err) || identitybroker.IsConfigurationFault(err) {
 		t.Fatalf("lost response: %v, want ErrNoResponse classified unavailable", err)
@@ -370,7 +429,7 @@ func TestResendAfterProcessedRequestGetsTokenUsed(t *testing.T) {
 	}
 
 	var res sessionOpenResult
-	if err := c.Token(t.Context(), f.sessionOpenForm(t, f.aliceToken()), &res); err != nil {
+	if err := c.Token(t.Context(), sessionOpenForm(t, aliceSignsIn(t, a)), &res); err != nil {
 		t.Fatalf("retry with a fresh access token: %v", err)
 	}
 	minted := r.all()
@@ -378,14 +437,15 @@ func TestResendAfterProcessedRequestGetsTokenUsed(t *testing.T) {
 		t.Fatalf("minted %d assertions, want one per attempt", len(minted))
 	}
 	jtis := map[any]bool{}
-	for _, a := range minted {
-		jtis[claims(t, a)["jti"]] = true
+	for _, m := range minted {
+		jtis[claims(t, m)["jti"]] = true
 	}
 	if len(jtis) != 3 {
 		t.Fatal("the attempts did not each send a new assertion with a new jti")
 	}
-	if grant, ok := f.h.AS1.Grant(res.RefreshToken); !ok || !grant.Active || f.h.AS1.GrantsIssued() != 2 {
-		t.Fatalf("retry grant = %+v, %v, %d issued; want an active grant beside the orphan", grant, ok, f.h.AS1.GrantsIssued())
+	// The lost response's conversion is an orphan beside the retry's.
+	if res.RefreshToken == "" || a.Faults.Conversions() != 2 {
+		t.Fatalf("retry refresh token present %v, %d conversions; want the retry's grant beside the orphan", res.RefreshToken != "", a.Faults.Conversions())
 	}
 }
 
@@ -393,11 +453,11 @@ func TestResendAfterProcessedRequestGetsTokenUsed(t *testing.T) {
 // processed it is resent once with the same access token and a new
 // assertion, and converts.
 func TestResendAfterUnprocessedRequestSucceeds(t *testing.T) {
-	f := newFixture(t, fixtureOptions{})
+	a := startAS1(t)
 	r := &recorder{}
-	c := f.client(t, r, nil)
-	form := f.sessionOpenForm(t, f.aliceToken())
-	f.h.AS1.DropNextExchange()
+	c := as1Client(t, a, r, nil)
+	form := sessionOpenForm(t, aliceSignsIn(t, a))
+	a.Faults.DropNextExchange()
 	err := c.Token(t.Context(), form, &sessionOpenResult{})
 	if !errors.Is(err, identitybroker.ErrNoResponse) || !identitybroker.IsUnavailable(err) {
 		t.Fatalf("dropped request: %v, want ErrNoResponse classified unavailable", err)
@@ -410,51 +470,25 @@ func TestResendAfterUnprocessedRequestSucceeds(t *testing.T) {
 	if len(minted) != 2 || claims(t, minted[0])["jti"] == claims(t, minted[1])["jti"] {
 		t.Fatal("the resend did not send a new assertion with a new jti")
 	}
-	if grant, ok := f.h.AS1.Grant(res.RefreshToken); !ok || !grant.Active || f.h.AS1.GrantsIssued() != 1 {
-		t.Fatalf("resend grant = %+v, %v, %d issued; want one active grant", grant, ok, f.h.AS1.GrantsIssued())
-	}
-}
-
-// TestAssertionReplayedAfterExpiryWithinSkewIsRefused replays a used
-// assertion after its exp but within the clock skew AS-1 allows, where only
-// the retained jti refuses it: a fresh assertion equally far past its exp is
-// accepted.
-func TestAssertionReplayedAfterExpiryWithinSkewIsRefused(t *testing.T) {
-	f := newFixture(t, fixtureOptions{})
-	replayed := f.client(t, &recorder{replay: true}, nil)
-	if err := replayed.Revoke(t.Context(), url.Values{"token": {"unknown"}}); err != nil {
-		t.Fatalf("first use: %v", err)
-	}
-	pastExp := identitybroker.MaxClientAssertionLifetime + identityharness.ClientAssertionClockSkew/2
-	f.clock.Advance(pastExp)
-
-	// Positive control: a fresh jti, the same distance past exp.
-	fresh := f.client(t, &recorder{}, func(c *authserverclient.Config) {
-		c.Now = func() time.Time { return f.clock.Now().Add(-pastExp) }
-	})
-	if err := fresh.Revoke(t.Context(), url.Values{"token": {"unknown"}}); err != nil {
-		t.Fatalf("fresh assertion past exp within the skew: %v, want accepted", err)
-	}
-
-	err := replayed.Revoke(t.Context(), url.Values{"token": {"unknown"}})
-	var refusal *identitybroker.ServerRefusal
-	if !errors.As(err, &refusal) || refusal.Code != "invalid_client" || !identitybroker.IsConfigurationFault(err) {
-		t.Fatalf("replay = %v, want invalid_client", err)
+	if res.RefreshToken == "" || a.Faults.Conversions() != 1 {
+		t.Fatalf("resend refresh token present %v, %d conversions; want the one grant", res.RefreshToken != "", a.Faults.Conversions())
 	}
 }
 
 func TestServerErrorsAreClassified(t *testing.T) {
-	f := newFixture(t, fixtureOptions{})
-	c := f.client(t, &recorder{}, nil)
+	a := startAS1(t)
+	c := as1Client(t, a, &recorder{}, nil)
 
-	f.h.AS1.FailNextExchange(identityharness.Fault{Status: http.StatusServiceUnavailable, Error: "temporarily_unavailable"})
-	err := c.Token(t.Context(), f.sessionOpenForm(t, f.aliceToken()), &sessionOpenResult{})
+	// The fault transport answers these instead of AS-1, so their subject
+	// token is never sent.
+	a.Faults.FailNextExchange(as1servertest.Fault{Status: http.StatusServiceUnavailable, Error: "temporarily_unavailable"})
+	err := c.Token(t.Context(), sessionOpenForm(t, "never-sent"), &sessionOpenResult{})
 	if !identitybroker.IsUnavailable(err) || identitybroker.IsConfigurationFault(err) {
 		t.Fatalf("503 = %v, want unavailable only", err)
 	}
 
-	f.h.AS1.FailNextExchange(identityharness.Fault{Error: "invalid_request", Reason: "revoked"})
-	err = c.Token(t.Context(), f.sessionOpenForm(t, f.aliceToken()), &sessionOpenResult{})
+	a.Faults.FailNextExchange(as1servertest.Fault{Error: "invalid_request", Reason: "revoked"})
+	err = c.Token(t.Context(), sessionOpenForm(t, "never-sent"), &sessionOpenResult{})
 	var oe *identitybroker.ServerRefusal
 	if !errors.As(err, &oe) || *oe != (identitybroker.ServerRefusal{Status: http.StatusBadRequest, Code: "invalid_request", Reason: "revoked"}) {
 		t.Fatalf("refusal = %#v, want 400 invalid_request revoked", err)
@@ -466,7 +500,7 @@ func TestServerErrorsAreClassified(t *testing.T) {
 	// A real refusal from AS-1's own checks: a token that is not AS-1's gets
 	// invalid_request with subject_token_invalid, a reason for the caller,
 	// which session open maps to subject_invalid.
-	err = c.Token(t.Context(), f.sessionOpenForm(t, "not-a-token"), &sessionOpenResult{})
+	err = c.Token(t.Context(), sessionOpenForm(t, "not-a-token"), &sessionOpenResult{})
 	if !errors.As(err, &oe) || *oe != (identitybroker.ServerRefusal{Status: http.StatusBadRequest, Code: "invalid_request", Reason: "subject_token_invalid"}) {
 		t.Fatalf("refusal = %v, want 400 invalid_request subject_token_invalid", err)
 	}
@@ -475,22 +509,22 @@ func TestServerErrorsAreClassified(t *testing.T) {
 	}
 
 	for _, tt := range []struct {
-		fault               identityharness.Fault
+		fault               as1servertest.Fault
 		config, unavailable bool
 	}{
-		{identityharness.Fault{Error: "invalid_request"}, true, false},
-		{identityharness.Fault{Status: http.StatusUnauthorized, Error: "invalid_client", Reason: "denied"}, true, false},
-		{identityharness.Fault{Error: "unauthorized_client", Reason: "denied"}, true, false},
-		{identityharness.Fault{Error: "invalid_request", Reason: "parent_revoked"}, false, false},
-		{identityharness.Fault{Error: "invalid_request", Reason: "not_issuable"}, false, false},
-		{identityharness.Fault{Error: "invalid_request", Reason: "superseded"}, true, false},
-		{identityharness.Fault{Error: "invalid_request", Reason: "subject_token_audience"}, true, false},
-		{identityharness.Fault{Error: "invalid_request", Reason: "subject_token_source_client"}, true, false},
-		{identityharness.Fault{Error: "invalid_request", Reason: "grant_invalid"}, true, false},
-		{identityharness.Fault{Status: http.StatusServiceUnavailable, Error: "invalid_client"}, false, true},
+		{as1servertest.Fault{Error: "invalid_request"}, true, false},
+		{as1servertest.Fault{Status: http.StatusUnauthorized, Error: "invalid_client", Reason: "denied"}, true, false},
+		{as1servertest.Fault{Error: "unauthorized_client", Reason: "denied"}, true, false},
+		{as1servertest.Fault{Error: "invalid_request", Reason: "parent_revoked"}, false, false},
+		{as1servertest.Fault{Error: "invalid_request", Reason: "not_issuable"}, false, false},
+		{as1servertest.Fault{Error: "invalid_request", Reason: "superseded"}, true, false},
+		{as1servertest.Fault{Error: "invalid_request", Reason: "subject_token_audience"}, true, false},
+		{as1servertest.Fault{Error: "invalid_request", Reason: "subject_token_source_client"}, true, false},
+		{as1servertest.Fault{Error: "invalid_request", Reason: "grant_invalid"}, true, false},
+		{as1servertest.Fault{Status: http.StatusServiceUnavailable, Error: "invalid_client"}, false, true},
 	} {
-		f.h.AS1.FailNextExchange(tt.fault)
-		err = c.Token(t.Context(), f.sessionOpenForm(t, f.aliceToken()), &sessionOpenResult{})
+		a.Faults.FailNextExchange(tt.fault)
+		err = c.Token(t.Context(), sessionOpenForm(t, "never-sent"), &sessionOpenResult{})
 		if !errors.As(err, &oe) || identitybroker.IsConfigurationFault(err) != tt.config || identitybroker.IsUnavailable(err) != tt.unavailable {
 			t.Errorf("%+v: %v; want configuration fault %v, unavailable %v", tt.fault, err, tt.config, tt.unavailable)
 		}
@@ -579,8 +613,10 @@ func newStubClient(t *testing.T, base string, hc *http.Client) *authserverclient
 	return c
 }
 
+// TestFormMustNotCarryClientCredentials revokes, so it stays on the harness's
+// AS-1: retired by stacklok/toolhive#6966 and stacklok/toolhive#6972.
 func TestFormMustNotCarryClientCredentials(t *testing.T) {
-	f := newFixture(t, fixtureOptions{})
+	f := newFixture(t)
 	r := &recorder{}
 	c := f.client(t, r, nil)
 	for _, name := range []string{"client_secret", "client_id", "client_assertion", "client_assertion_type"} {

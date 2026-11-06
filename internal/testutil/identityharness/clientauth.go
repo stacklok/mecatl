@@ -5,7 +5,6 @@ import (
 	"crypto/elliptic"
 	"maps"
 	"net/http"
-	"slices"
 	"testing"
 	"time"
 
@@ -118,15 +117,6 @@ func (a *AS1) signAssertion(spec ClientAssertionSpec) string {
 	return signed
 }
 
-// ReceivedClientAssertions returns every client assertion AS-1's token and
-// revocation endpoints received, accepted or not, oldest first, so a test can
-// inspect what a production client actually sent.
-func (a *AS1) ReceivedClientAssertions() []string {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	return slices.Clone(a.receivedAssertions)
-}
-
 // authenticateClient identifies the token or revocation endpoint caller. The
 // broker authenticates with private_key_jwt; public clients name themselves
 // with client_id and no credential. A client secret, in the form or in Basic
@@ -138,9 +128,6 @@ func (a *AS1) authenticateClient(r *http.Request) (clientID string, confidential
 		return "", false, false
 	}
 	if form.Has("client_assertion") || form.Has("client_assertion_type") {
-		a.mu.Lock()
-		a.receivedAssertions = append(a.receivedAssertions, form.Get("client_assertion"))
-		a.mu.Unlock()
 		if form.Get("client_assertion_type") != clientAssertionTypeJWT ||
 			(form.Has(paramClientID) && form.Get(paramClientID) != BrokerClientID) ||
 			!a.verifyAssertion(form.Get("client_assertion")) {

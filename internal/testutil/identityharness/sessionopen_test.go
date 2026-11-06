@@ -218,33 +218,6 @@ func TestSessionOpenRefusals(t *testing.T) {
 			assertReason(t, err, http.StatusBadRequest, c.code, c.reason)
 		})
 	}
-	if got := h.AS1.ExchangeRefusals(); len(got) != 0 {
-		t.Fatalf("malformed requests were recorded: %v", got)
-	}
-
-	for name, token := range map[string]string{
-		"garbage":         "not-a-jwt",
-		"expired":         h.AS1.MintAccessToken(identityharness.AccessTokenSpec{Lifetime: -time.Minute}),
-		"foreign key":     h.AS1.MintAccessToken(identityharness.AccessTokenSpec{ForeignKey: true}),
-		"other audience":  h.AS1.MintAccessToken(identityharness.AccessTokenSpec{Audience: "https://other.test/api"}),
-		"other issuer":    h.AS1.MintAccessToken(identityharness.AccessTokenSpec{Issuer: h.IdP.Issuer()}),
-		"typ JWT":         h.AS1.MintAccessToken(identityharness.AccessTokenSpec{Type: "JWT"}),
-		"no typ":          h.AS1.MintAccessToken(identityharness.AccessTokenSpec{OmitType: true}),
-		"other client":    h.AS1.MintAccessToken(identityharness.AccessTokenSpec{ClientID: "rogue"}),
-		"broker's client": h.AS1.MintAccessToken(identityharness.AccessTokenSpec{ClientID: identityharness.BrokerClientID}),
-		"no sub_id":       h.AS1.MintAccessToken(identityharness.AccessTokenSpec{OmitSubID: true}),
-		"sub_id string":   h.AS1.MintAccessToken(identityharness.AccessTokenSpec{SubID: identityharness.Alice}),
-		"sub_id format":   h.AS1.MintAccessToken(identityharness.AccessTokenSpec{SubID: map[string]string{"format": "email", "iss": h.IdP.Issuer(), "sub": identityharness.Alice}}),
-	} {
-		t.Run("check 4: "+name, func(t *testing.T) {
-			before := len(h.AS1.ExchangeRefusals())
-			_, err := b.OpenSession(t.Context(), openReq(token))
-			assertReason(t, err, http.StatusBadRequest, "invalid_request", "subject_token_invalid")
-			if got := h.AS1.ExchangeRefusals()[before:]; !slices.Equal(got, []identityharness.Refusal{{Code: "invalid_request", Reason: "subject_token_invalid"}}) {
-				t.Errorf("recorded refusals = %v, want one invalid_request with subject_token_invalid", got)
-			}
-		})
-	}
 	// RFC 9068's media-type form of typ is accepted.
 	if _, err := b.OpenSession(t.Context(), openReq(h.AS1.MintAccessToken(identityharness.AccessTokenSpec{Type: "application/at+jwt"}))); err != nil {
 		t.Errorf("application/at+jwt subject token: %v", err)
@@ -255,73 +228,14 @@ func TestSessionOpenRefusals(t *testing.T) {
 		if _, err := b.OpenSession(t.Context(), openReq(token)); err != nil {
 			t.Fatalf("first exchange: %v", err)
 		}
-		issued, before := h.AS1.GrantsIssued(), len(h.AS1.ExchangeRefusals())
+		issued := h.AS1.GrantsIssued()
 		// A later expires_at makes the request differ; the jti still decides.
 		_, err := b.OpenSession(t.Context(), identityharness.SessionOpenExchange{SubjectToken: token, ExpiresAt: clock.Now().Add(time.Hour).Unix()})
 		assertReason(t, err, http.StatusBadRequest, "invalid_request", "token_used")
 		if h.AS1.GrantsIssued() != issued {
 			t.Error("a used token was converted again")
 		}
-		if got := h.AS1.ExchangeRefusals()[before:]; !slices.Equal(got, []identityharness.Refusal{{Code: "invalid_request", Reason: "token_used"}}) {
-			t.Errorf("recorded refusals = %v, want token_used", got)
-		}
 	})
-}
-
-// TestSessionOpenResendAfterProcessedRequest: AS-1 converts the token but the
-// broker never sees the response. The one resend of the same request, with a
-// new assertion, is refused with token_used, and a fresh access token
-// converts. Until replay-revoke (stacklok/toolhive#6973) the orphan grant
-// stays valid.
-func TestSessionOpenResendAfterProcessedRequest(t *testing.T) {
-	h := identityharness.New(t, identityharness.Options{})
-	b := h.ScriptedBroker()
-	token := aliceToken(h)
-	h.AS1.LoseNextExchangeResponse()
-	_, err := b.OpenSession(t.Context(), openReq(token))
-	var oauthErr *identityharness.OAuthError
-	if err == nil || errors.As(err, &oauthErr) {
-		t.Fatalf("OpenSession = %v, want a lost response", err)
-	}
-	if h.AS1.GrantsIssued() != 1 {
-		t.Fatal("AS-1 did not process the lost exchange")
-	}
-	_, err = b.OpenSession(t.Context(), openReq(token))
-	assertReason(t, err, http.StatusBadRequest, "invalid_request", "token_used")
-	if h.AS1.GrantsIssued() != 1 {
-		t.Fatal("the resend with the same token was converted")
-	}
-	resp, err := b.OpenSession(t.Context(), openReq(aliceToken(h)))
-	if err != nil {
-		t.Fatalf("exchange with a fresh token: %v", err)
-	}
-	if grant, _ := h.AS1.Grant(resp.RefreshToken); !grant.Active || h.AS1.GrantsIssued() != 2 {
-		t.Errorf("after a fresh token: grant %+v, %d issued; want a second active grant beside the orphan", grant, h.AS1.GrantsIssued())
-	}
-}
-
-// TestSessionOpenResendAfterUnprocessedRequest: the request never reaches
-// AS-1's checks, so the one resend of the same access token converts it.
-func TestSessionOpenResendAfterUnprocessedRequest(t *testing.T) {
-	h := identityharness.New(t, identityharness.Options{})
-	b := h.ScriptedBroker()
-	token := aliceToken(h)
-	h.AS1.DropNextExchange()
-	_, err := b.OpenSession(t.Context(), openReq(token))
-	var oauthErr *identityharness.OAuthError
-	if err == nil || errors.As(err, &oauthErr) {
-		t.Fatalf("OpenSession = %v, want no response", err)
-	}
-	if h.AS1.GrantsIssued() != 0 || len(h.AS1.ExchangeRefusals()) != 0 {
-		t.Fatal("AS-1 processed the dropped exchange")
-	}
-	resp, err := b.OpenSession(t.Context(), openReq(token))
-	if err != nil {
-		t.Fatalf("resend: %v", err)
-	}
-	if grant, _ := h.AS1.Grant(resp.RefreshToken); !grant.Active || h.AS1.GrantsIssued() != 1 {
-		t.Errorf("after the resend: grant %+v, %d issued; want one active grant", grant, h.AS1.GrantsIssued())
-	}
 }
 
 // TestLaterExchangeDoesNotTouchEarlierGrants: AS-1 keeps no per-session
@@ -413,64 +327,18 @@ func TestGrantExpiry(t *testing.T) {
 	b := h.ScriptedBroker()
 	byClock, err := b.OpenSession(t.Context(), openReq(aliceToken(h)))
 	if err != nil {
-		t.Fatalf("first exchange: %v", err)
-	}
-	forced, err := b.OpenSession(t.Context(), openReq(aliceToken(h)))
-	if err != nil {
-		t.Fatalf("second exchange: %v", err)
+		t.Fatalf("exchange: %v", err)
 	}
 	if byClock.ExpiresIn != 3600 {
 		t.Errorf("expires_in = %d, want the configured maximum 3600", byClock.ExpiresIn)
 	}
 
-	h.AS1.ExpireGrant(forced.RefreshToken)
-	if grant, _ := h.AS1.Grant(forced.RefreshToken); grant.Active || grant.Reason != "" {
-		t.Errorf("forced expiry: grant %+v, want inactive with no reason", grant)
-	}
 	if grant, _ := h.AS1.Grant(byClock.RefreshToken); !grant.Active {
 		t.Fatalf("grant %+v before its expiry, want active", grant)
 	}
 	clock.Advance(time.Hour)
 	if grant, _ := h.AS1.Grant(byClock.RefreshToken); grant.Active || grant.Reason != "" {
 		t.Errorf("at its expiry: grant %+v, want inactive with no reason", grant)
-	}
-}
-
-func TestSessionOpenFaults(t *testing.T) {
-	h := identityharness.New(t, identityharness.Options{})
-	b := h.ScriptedBroker()
-
-	h.AS1.FailNextExchange(identityharness.Fault{Status: http.StatusServiceUnavailable, Error: "temporarily_unavailable"})
-	_, err := b.OpenSession(t.Context(), openReq(aliceToken(h)))
-	assertReason(t, err, http.StatusServiceUnavailable, "temporarily_unavailable", "")
-	if h.AS1.GrantsIssued() != 0 {
-		t.Fatal("a failed exchange issued a grant")
-	}
-
-	// Each fault fires once.
-	if _, err := b.OpenSession(t.Context(), openReq(aliceToken(h))); err != nil {
-		t.Fatalf("exchange after the faults: %v", err)
-	}
-
-	// A mismatched echo does not change the grant, which the broker then
-	// revokes.
-	wrong := identityharness.ExchangeGrant{Type: exchangeGrantType, IssuableTokenTypes: []string{tokenTypeRefresh}}
-	h.AS1.MismatchNextExchangeEcho(wrong)
-	resp, err := b.OpenSession(t.Context(), openReq(aliceToken(h)))
-	if err != nil {
-		t.Fatalf("exchange with mismatched echo: %v", err)
-	}
-	if !reflect.DeepEqual(resp.AuthorizationDetails, []identityharness.ExchangeGrant{wrong}) {
-		t.Fatalf("echo = %+v, want the forced mismatch", resp.AuthorizationDetails)
-	}
-	if grant, _ := h.AS1.Grant(resp.RefreshToken); grant.Output != tokenTypeIDJAG || !grant.Active {
-		t.Errorf("grant = %+v, want an active id-jag grant", grant)
-	}
-	if err := b.Revoke(t.Context(), resp.RefreshToken); err != nil {
-		t.Fatalf("Revoke: %v", err)
-	}
-	if grant, _ := h.AS1.Grant(resp.RefreshToken); grant.Reason != "revoked" {
-		t.Errorf("after revocation: grant %+v, want revoked", grant)
 	}
 }
 

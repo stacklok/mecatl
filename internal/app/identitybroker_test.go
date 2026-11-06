@@ -2,15 +2,10 @@ package app
 
 import (
 	"context"
-	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"net/http"
-	"os"
-	"path/filepath"
 	"runtime"
 	"slices"
 	"strings"
@@ -34,6 +29,7 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/server"
 	"github.com/stacklok/mecatl/internal/identitybroker"
 	"github.com/stacklok/mecatl/internal/identitybroker/adapter/as1server"
+	"github.com/stacklok/mecatl/internal/identitybroker/adapter/as1server/as1servertest"
 	"github.com/stacklok/mecatl/internal/syscaller"
 	"github.com/stacklok/mecatl/internal/testutil/identityharness"
 )
@@ -306,43 +302,37 @@ func TestIdentityBrokerKeysAreSeparatePerRole(t *testing.T) {
 // broker's session open converts the access token there, authenticating with
 // the broker client key.
 func TestIdentityBrokerWiringConvertsAtAS1(t *testing.T) {
-	clientKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-	signer, err := identitybroker.NewClientAssertionSigner(clientKey, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	h := identityharness.New(t, identityharness.Options{
-		BrokerKeys: []identityharness.BrokerKey{{KeyID: signer.JWKS().Keys[0].KeyID, Public: &clientKey.PublicKey}},
-	})
+	a := as1servertest.Start(t, identityharness.New(t, identityharness.Options{}), nil)
 	broker, err := newIdentityBroker(Config{IdentityBrokerAS1: &IdentityBrokerAS1{
-		Issuer: h.AS1.Issuer(), TokenEndpoint: h.AS1.TokenEndpoint(), HTTPClient: h.HTTPClient(), ClientKey: clientKey,
+		Issuer: a.Issuer(), TokenEndpoint: a.Server.TokenEndpoint(), HTTPClient: a.HTTPClient(), ClientKey: a.Key,
 	}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	workload := identitybroker.Workload{Name: identityBrokerWorkload}
-	alice := h.Owner(identityharness.Alice)
+	alice := a.Harness.Owner(identityharness.Alice)
 	req := identitybroker.OpenSessionRequest{
 		HostSessionID: "hostS42", Incarnation: string(session.NewIncarnationID()),
 		Owner:       identitybroker.Owner{Issuer: alice.Issuer, Subject: alice.Subject},
-		AccessToken: identitybroker.NewToken(h.AS1.MintAccessToken(identityharness.AccessTokenSpec{User: identityharness.Alice})),
+		AccessToken: a.SignIn(t, as1servertest.SignIn{User: identityharness.Alice}),
 	}
 	opened, err := broker.core.OpenSession(t.Context(), workload, req)
 	if err != nil {
 		t.Fatalf("OpenSession: %v", err)
 	}
-	if !opened.HoldsRefreshToken || h.AS1.GrantsIssued() != 1 {
-		t.Fatalf("session %+v after %d grants; want it holding the one grant AS-1 issued", opened, h.AS1.GrantsIssued())
+	if !opened.HoldsRefreshToken || a.Faults.Conversions() != 1 {
+		t.Fatalf("session %+v after %d conversions; want it holding the one grant AS-1 issued", opened, a.Faults.Conversions())
+	}
+	// The broker authenticated with the client key registered at AS-1.
+	if reqs := a.Faults.Requests(); len(reqs) != 1 || reqs[0].ClientAssertion.IsZero() {
+		t.Fatalf("AS-1 saw %d requests, want the one exchange with a client assertion", len(reqs))
 	}
 	// A reopen without a token, as mecak8s sends to a session holding a
 	// refresh token, spends nothing.
 	req.AccessToken = identitybroker.Token{}
 	again, err := broker.core.OpenSession(t.Context(), workload, req)
-	if err != nil || again != opened || h.AS1.GrantsIssued() != 1 {
-		t.Fatalf("reopen = %+v, %v after %d grants; want %+v and no new grant", again, err, h.AS1.GrantsIssued(), opened)
+	if err != nil || again != opened || len(a.Faults.Requests()) != 1 {
+		t.Fatalf("reopen = %+v, %v after %d requests to AS-1; want %+v and no new request", again, err, len(a.Faults.Requests()), opened)
 	}
 }
 
@@ -393,12 +383,7 @@ func TestIdentityBrokerSessionsRegisterTheirAgent(t *testing.T) {
 func hostedAS1Config(t *testing.T, h *identityharness.Harness, issuer string) *IdentityBrokerAS1Config {
 	t.Helper()
 	dir := t.TempDir()
-	secret := rand.Text()
-	secretFile := filepath.Join(dir, "upstream-client-secret")
-	if err := os.WriteFile(secretFile, []byte(secret), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	h.IdP.RegisterClient("hosted-as1", secret, issuer+"/oauth/callback")
+	secretFile := h.RegisterAS1Upstream(t, dir, "hosted-as1", issuer)
 	return &IdentityBrokerAS1Config{
 		Issuer: issuer, Audience: identityharness.DefaultAudience,
 		PublicClients:  []IdentityBrokerAS1PublicClient{{ID: identityharness.DefaultClientID, RedirectURIs: []string{identityharness.DefaultRedirectURI}}},

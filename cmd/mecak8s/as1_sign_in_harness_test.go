@@ -3,15 +3,12 @@ package main
 import (
 	"bytes"
 	"context"
-	"crypto/rand"
 	"errors"
 	"io"
 	"maps"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -299,12 +296,7 @@ func TestHostedAS1SignsTheTUIIn(t *testing.T) {
 	caFile := h.WriteCACert(t, dir)
 	httpAddr := freeLoopbackPort(t)
 	issuer := "https://" + httpAddr + "/as1"
-	secret := rand.Text()
-	secretFile := filepath.Join(dir, "upstream-client-secret")
-	if err := os.WriteFile(secretFile, []byte(secret), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	h.IdP.RegisterClient("mecak8s-as1", secret, issuer+"/oauth/callback")
+	secretFile := h.RegisterAS1Upstream(t, dir, "mecak8s-as1", issuer)
 	cfg, err := parseFlags([]string{
 		"--mock",
 		"--enable-identity-broker", "--no-shell",

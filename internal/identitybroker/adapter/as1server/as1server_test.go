@@ -13,8 +13,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"os"
-	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -83,17 +81,11 @@ func testConfig(t *testing.T, h *identityharness.Harness, issuer string) Config 
 	t.Helper()
 	dir := t.TempDir()
 	clientID := "as1-" + strings.NewReplacer(":", "-", "/", "-", ".", "-").Replace(strings.TrimPrefix(issuer, "https://"))
-	secret := rand.Text()
-	secretFile := filepath.Join(dir, "upstream-client-secret")
-	if err := os.WriteFile(secretFile, []byte(secret), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	h.IdP.RegisterClient(clientID, secret, issuer+"/oauth/callback")
 	return Config{
 		Issuer: issuer, Audience: testAudience,
 		PublicClients: []PublicClient{{ID: testClientID, RedirectURIs: []string{testRedirect}}},
 		Upstream: UpstreamConfig{
-			Issuer: h.IdP.Issuer(), ClientID: clientID, ClientSecretFile: secretFile,
+			Issuer: h.IdP.Issuer(), ClientID: clientID, ClientSecretFile: h.RegisterAS1Upstream(t, dir, clientID, issuer),
 			CAFile: h.WriteCACert(t, dir), AllowPrivateAddresses: true,
 		},
 	}

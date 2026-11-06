@@ -105,6 +105,46 @@ func TestSignInAsksUpstreamForOfflineAccess(t *testing.T) {
 	}
 }
 
+// TestSignInNextAsSelectsTheNextSignInOnly: the IdP signs in the selected
+// user once, over login_hint, and then falls back to login_hint or the
+// default user; an unknown selection is refused.
+func TestSignInNextAsSelectsTheNextSignInOnly(t *testing.T) {
+	h := identityharness.New(t, identityharness.Options{})
+	signedIn := func(t *testing.T, req identityharness.SignInRequest) string {
+		t.Helper()
+		tokens, err := h.SignIn(t.Context(), req)
+		if err != nil {
+			t.Fatalf("SignIn: %v", err)
+		}
+		_, claims := verify(t, h, tokens.AccessToken)
+		subID, _ := claims["sub_id"].(map[string]any)
+		user, _ := subID["sub"].(string)
+		return user
+	}
+
+	h.IdP.SignInNextAs(identityharness.Bob)
+	if got := signedIn(t, identityharness.SignInRequest{}); got != identityharness.Bob {
+		t.Fatalf("selected sign-in signed in %q, want %q", got, identityharness.Bob)
+	}
+	if got := signedIn(t, identityharness.SignInRequest{}); got != identityharness.Alice {
+		t.Fatalf("the next sign-in signed in %q, want the default user %q", got, identityharness.Alice)
+	}
+	h.IdP.SignInNextAs(identityharness.Bob)
+	if got := signedIn(t, identityharness.SignInRequest{User: identityharness.Alice}); got != identityharness.Bob {
+		t.Fatalf("selected sign-in with login_hint signed in %q, want %q", got, identityharness.Bob)
+	}
+	if got := signedIn(t, identityharness.SignInRequest{User: identityharness.Bob}); got != identityharness.Bob {
+		t.Fatalf("login_hint sign-in signed in %q, want %q", got, identityharness.Bob)
+	}
+
+	h.IdP.SignInNextAs("mallory-404")
+	_, err := h.SignIn(t.Context(), identityharness.SignInRequest{})
+	var oauthErr *identityharness.OAuthError
+	if !errors.As(err, &oauthErr) || oauthErr.Code != "access_denied" {
+		t.Fatalf("SignIn as an unknown selected user = %v, want access_denied", err)
+	}
+}
+
 func TestRefreshRenewsForTheSameUserAndClient(t *testing.T) {
 	h := identityharness.New(t, identityharness.Options{Clients: []identityharness.Client{
 		{ID: "mecatui", RedirectURIs: []string{identityharness.DefaultRedirectURI}},
@@ -225,12 +265,6 @@ func TestSignInFailures(t *testing.T) {
 			h.IdP.FailNextToken(identityharness.Fault{Status: http.StatusServiceUnavailable, Error: "temporarily_unavailable"})
 		}, "", "server_error"},
 		{"unknown company user", func(*identityharness.Harness) {}, "mallory", "access_denied"},
-		{"AS-1 refuses authorization", func(h *identityharness.Harness) {
-			h.AS1.FailNextAuthorization(identityharness.Fault{Error: "access_denied"})
-		}, "", "access_denied"},
-		{"AS-1 token endpoint refuses", func(h *identityharness.Harness) {
-			h.AS1.FailNextToken(identityharness.Fault{Error: "invalid_grant", Reason: "token_used"})
-		}, "", "invalid_grant"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			h := identityharness.New(t, identityharness.Options{})
@@ -242,16 +276,6 @@ func TestSignInFailures(t *testing.T) {
 				t.Fatalf("SignIn after the fault: %v", err)
 			}
 		})
-	}
-}
-
-func TestTokenEndpointReasonStartsDescription(t *testing.T) {
-	h := identityharness.New(t, identityharness.Options{})
-	h.AS1.FailNextToken(identityharness.Fault{Error: "invalid_request", Reason: "token_used"})
-	_, err := h.SignIn(t.Context(), identityharness.SignInRequest{})
-	var oauthErr *identityharness.OAuthError
-	if !errors.As(err, &oauthErr) || oauthErr.Code != "invalid_request" || oauthErr.Description != "token_used" {
-		t.Fatalf("SignIn = %v, want invalid_request with description token_used", err)
 	}
 }
 
