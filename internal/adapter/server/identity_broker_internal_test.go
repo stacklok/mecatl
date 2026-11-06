@@ -214,6 +214,26 @@ func TestTeamRootRegistrationWaitsForRunEntry(t *testing.T) {
 	}
 }
 
+func TestTeamRootRegistrationForADeletedRootIsNotFound(t *testing.T) {
+	svc, sess := newRegisteringService(t)
+	// The root is gone from the store, as a delete that won run entry's lock
+	// leaves it: the team run is refused as not found, not as a server fault.
+	err := svc.openTeamRootIdentityBrokerSession(t.Context(), sess.ID)
+	if !errors.Is(err, ErrNotFound) || errors.Is(err, ErrInternal) {
+		t.Fatalf("team root registration for a deleted root = %v, want ErrNotFound", err)
+	}
+}
+
+func TestTeamRootRegistrationReportsAStoreFailureAsInternal(t *testing.T) {
+	store := &oneSessionFailsStore{Store: memstore.New()}
+	svc, sess := newRegisteringService(t, func(cfg *Config) { cfg.Store = store })
+	store.failID = sess.ID
+	err := svc.openTeamRootIdentityBrokerSession(t.Context(), sess.ID)
+	if !errors.Is(err, ErrInternal) || errors.Is(err, ErrNotFound) {
+		t.Fatalf("team root registration with a failing store = %v, want ErrInternal", err)
+	}
+}
+
 // hookedBroker wraps a broker: beforeRegister runs before each RegisterAgent,
 // and stallFind makes FindSession wait for its context, as a hung remote
 // broker would.
