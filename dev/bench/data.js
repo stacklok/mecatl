@@ -405542,6 +405542,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1793978407300,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "29541485+ChrisJBurns@users.noreply.github.com",
+            "name": "Chris Burns",
+            "username": "ChrisJBurns"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "87a1a21ca1a8fd73f0bb96b2aebcf5700e1a9f8d",
+          "message": "fix(identity-broker): log why a saved session's broker open cannot load it (#2740)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-11-06T16:21:39Z",
+          "tree_id": "61ec6092bdd4f4884b7168a01d2ff82340a6b5db",
+          "url": "https://github.com/stacklok/mecatl/commit/87a1a21ca1a8fd73f0bb96b2aebcf5700e1a9f8d"
+        },
+        "date": 1793982924574,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 16150,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12909.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 795,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -528586,6 +528625,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1793982921003,
+  "lastUpdate": 1793982925759,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
