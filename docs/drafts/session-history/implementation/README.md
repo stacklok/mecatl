@@ -16,9 +16,6 @@ design material, not documentation of shipped runtime or storage behavior. The
 
 ## Representation ownership and codec choice
 
-- [Content-part and media cleanup](content-and-media.md) records the approved
-  next slice: explicit text/media branches, media-owned classification, and clear
-  source-specific field names. It is a pending design, not current behavior.
 - [Snapshots, ownership, and cloning](ownership.md) distinguishes stable views
   from read-only references and describes detached copies and publication.
 - [Persistence codecs and DTO ownership](codecs-and-dtos.md) explains the public
