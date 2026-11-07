@@ -59,7 +59,7 @@
 # ---------------------------------------------------------------------------
 # Stage 1: build (Node 26 — matches apps/package.json `engines` and .node-version)
 # ---------------------------------------------------------------------------
-FROM --platform=$BUILDPLATFORM node:26-slim@sha256:36793bcbb160a6a16cede1e62b93f84e26b78a972a8a4c0b879c1c12f22761ec AS build
+FROM --platform=$BUILDPLATFORM node:26-slim@sha256:5adad64f9a1fca2d51972caa65983634c8a774eb300d72b20f7f2a0f60368072 AS build
 ARG STUDIO_BUILD_ID=""
 ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0 \
     CI=1
