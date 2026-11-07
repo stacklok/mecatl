@@ -53,9 +53,9 @@ required is an open question.
 
 If an attacker controls the executor itself, through a vulnerability in the server or by replacing it as above, it
 reaches what the executor Pod reaches: its own environment's files and network egress, its own server certificate, and
-nothing that would let it act on other environments. Whether the trusted service can tell one executor from another by
-its certificate depends on how executor certificates are issued, which is still an open question in the
-[executor protocol](executor-protocol.md#open-questions).
+nothing that would let it act on other environments. Its certificate is pinned to its own environment and Pod (see
+[transport and authentication](executor-protocol.md#transport-and-authentication)), so it cannot pass for another
+executor.
 
 Escaping the container to the node is the container runtime's responsibility. Templates select a RuntimeClass for this
 reason: a runtime such as gVisor or Kata Containers adds a boundary that a standard container runtime does not. Mecatl
@@ -72,12 +72,12 @@ can act for any user within it. Whether the owner should be verified end to end 
 
 ## A compromised trusted service
 
-The trusted service holds the most authority in the design: it can create and delete executor Pods and PVCs, it is
-expected to issue the certificates executors use, and it decides which calls reach which executor. An attacker who
+The trusted service holds the most authority in the design: it can create and delete executor Pods and PVCs, it
+generates the certificates executors use, and it decides which calls reach which executor. An attacker who
 controls it controls every environment it manages.
 
 The design treats the trusted service as trusted and limits what it holds. It needs rights over executor Pods and PVCs
-in its namespace, and a way to issue executor certificates, but no access to the users' credentials, and it never runs
+and Secrets in its namespace, but no signing key and no access to the users' credentials, and it never runs
 user commands itself. It also gives up the `pods/exec` permission it holds today: that permission exists only for the
 Pod exec transport, and it lets the provider run any command in any Pod in its namespace. Replacing Pod exec with the
 executor server removes the need for it.
