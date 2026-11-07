@@ -14,14 +14,14 @@ import (
 )
 
 func TestEffectiveInputScopeConversion(t *testing.T) {
-	run := session.RunID{HistoryID: testHistoryID(t), Ordinal: 1}
+	run := allocatedRun(t, testHistoryID(t), 1)
 	foreign, err := historyid.ParseHistoryID("HST2222222222222222222222")
 	mustBatch(t, err)
 	for _, id := range []session.UserInputID{
-		{RunID: session.RunID{HistoryID: foreign, Ordinal: 1}, Ordinal: 1},
-		{RunID: session.RunID{HistoryID: run.HistoryID, Ordinal: 2}, Ordinal: 1}, {},
+		allocatedInput(t, allocatedRun(t, foreign, 1), 1),
+		allocatedInput(t, allocatedRun(t, run.HistoryID(), 2), 1), {},
 	} {
-		v := session.EffectiveInput{RunID: run, Inputs: []session.InputItem{{UserInput: &id}}}
+		v := session.EffectiveInput{RunID: run, Inputs: []session.InputItem{{UserInputID: &id}}}
 		if v.Validate() == nil {
 			t.Fatal("conflicting full scope validated")
 		}
@@ -30,7 +30,7 @@ func TestEffectiveInputScopeConversion(t *testing.T) {
 			t.Fatal("clone silently discarded scope")
 		}
 		other := v.Clone()
-		other.Inputs[0].UserInput.RunID = run
+		*other.Inputs[0].UserInputID = allocatedInput(t, run, 1)
 		if v.Equal(other) {
 			t.Fatal("equality discarded reference scope")
 		}
@@ -46,7 +46,7 @@ func TestEffectiveInputExternalRunAdmission(t *testing.T) {
 			backend := &batchBackend{Backend: mem.New()}
 			h := newLifecycleHistory(t, backend)
 			s := boundSession(t, h, sessionPolicy())
-			run := session.RunID{HistoryID: s.Snapshot().HistoryID(), Ordinal: 1}
+			run := allocatedRun(t, s.Snapshot().HistoryID(), 1)
 			if state != "uncreated" {
 				b := beginBatch(t, s)
 				mustBatch(t, b.Create())
@@ -66,7 +66,7 @@ func TestEffectiveInputExternalRunAdmission(t *testing.T) {
 			v := session.EffectiveInput{RunID: run, Inputs: []session.InputItem{{Inline: &session.AttributedInput{Actor: "arbitrary origin", Purpose: session.PromptContext, Source: session.ContentSource{Description: "explicit empty contribution"}}}}}
 			r, err := session.NewEffectiveInputRecord(v, testLimits())
 			mustBatch(t, err)
-			r, err = session.DecodeRecord(run.HistoryID, r.Format(), testLimits())
+			r, err = session.DecodeRecord(run.HistoryID(), r.Format(), testLimits())
 			mustBatch(t, err)
 			c := proposedCommit(t, s, r)
 			before := captureRejectedSnapshot(s.Snapshot())
@@ -84,12 +84,12 @@ func TestEffectiveInputExternalRunAdmission(t *testing.T) {
 			if len(backend.attempts) != attempts {
 				t.Fatal("Apply appended")
 			}
-			result, err := h.Append(context.Background(), run.HistoryID, c.Commit)
+			result, err := h.Append(context.Background(), run.HistoryID(), c.Commit)
 			mustBatch(t, err)
 			if result.Status != history.StatusAccepted {
 				t.Fatal("external append")
 			}
-			loaded, err := session.Load(context.Background(), h, run.HistoryID, sessionPolicy())
+			loaded, err := session.Load(context.Background(), h, run.HistoryID(), sessionPolicy())
 			if state == "active" {
 				mustBatch(t, err)
 				if !reflect.DeepEqual(s.Snapshot(), loaded.Snapshot()) {

@@ -54,7 +54,7 @@
     method func (InputItem).Equal(other InputItem) bool
     method func (InputItem).Validate() error
     method func (InputItemView).Inline() (AttributedInputView, bool)
-    method func (InputItemView).UserInput() (UserInputID, bool)
+    method func (InputItemView).UserInputID() (UserInputID, bool)
     method func (InstructionBlock).Clone() InstructionBlock
     method func (InstructionBlock).Equal(other InstructionBlock) bool
     method func (InstructionBlock).Validate() error
@@ -105,9 +105,8 @@
     method func (ModelRequest).Clone() ModelRequest
     method func (ModelRequest).Equal(other ModelRequest) bool
     method func (ModelRequest).Validate() error
-    method func (ModelRequestID).Clone() ModelRequestID
     method func (ModelRequestID).Equal(other ModelRequestID) bool
-    method func (ModelRequestID).Next() (ModelRequestID, error)
+    method func (ModelRequestID).RunID() RunID
     method func (ModelRequestID).Validate() error
     method func (ModelRequestView).ID() ModelRequestID
     method func (ModelRequestView).Recipe() ConstructionRecipe
@@ -124,7 +123,7 @@
     method func (ModelResponseView).ItemCount() int
     method func (ModelResponseView).Items() iter.Seq[ResponseItemView]
     method func (ModelResponseView).Private() (OpaqueProviderData, bool)
-    method func (ModelResponseView).ProviderReason() (string, bool)
+    method func (ModelResponseView).ProviderStopReason() (string, bool)
     method func (ModelResponseView).RequestID() ModelRequestID
     method func (ModelResponseView).Terminal() ResponseTerminalClass
     method func (ModelResponseView).Usage() (InvocationUsage, bool)
@@ -153,8 +152,8 @@
     method func (RequestedCall).Clone() RequestedCall
     method func (RequestedCall).Equal(other RequestedCall) bool
     method func (RequestedCall).Validate() error
-    method func (RequestedCallID).Clone() RequestedCallID
     method func (RequestedCallID).Equal(other RequestedCallID) bool
+    method func (RequestedCallID).RequestID() ModelRequestID
     method func (RequestedCallID).Validate() error
     method func (RequestedCallView).Arguments() []byte
     method func (RequestedCallView).ID() RequestedCallID
@@ -178,9 +177,8 @@
     method func (RunEndedView).Explanation() (string, bool)
     method func (RunEndedView).Reason() RunEndedReason
     method func (RunEndedView).RunID() RunID
-    method func (RunID).Clone() RunID
     method func (RunID).Equal(other RunID) bool
-    method func (RunID).Next() (RunID, error)
+    method func (RunID).HistoryID() id.HistoryID
     method func (RunID).Validate() error
     method func (RunStarted).Clone() RunStarted
     method func (RunStarted).Equal(other RunStarted) bool
@@ -222,9 +220,8 @@
     method func (UserInput).Clone() UserInput
     method func (UserInput).Equal(other UserInput) bool
     method func (UserInput).Validate() error
-    method func (UserInputID).Clone() UserInputID
     method func (UserInputID).Equal(other UserInputID) bool
-    method func (UserInputID).Next() (UserInputID, error)
+    method func (UserInputID).RunID() RunID
     method func (UserInputID).Validate() error
     method func (UserInputView).ID() UserInputID
     method func (UserInputView).PartAt(i int) ContentPartView
@@ -255,12 +252,11 @@ const ResponseTerminalLimit ResponseTerminalClass = "limit"
 const ResponseTerminalNormal ResponseTerminalClass = "normal"
 const ResponseTerminalOther ResponseTerminalClass = "other"
 const ResponseTerminalRefusal ResponseTerminalClass = "refusal"
-const RunEndedCancelled RunEndedReason = 4
-const RunEndedCaptureFailed RunEndedReason = 6
-const RunEndedCompleted RunEndedReason = 1
-const RunEndedError RunEndedReason = 2
-const RunEndedInterrupted RunEndedReason = 5
-const RunEndedLimit RunEndedReason = 3
+const RunEndedCaptureFailed RunEndedReason = "capture-failed"
+const RunEndedCompleted RunEndedReason = "completed"
+const RunEndedError RunEndedReason = "error"
+const RunEndedInterrupted RunEndedReason = "interrupted"
+const RunEndedLimit RunEndedReason = "limit"
 func DecodeRecord(scope id.HistoryID, v format.Record, limits codec.Limits) (Record, error)
 func Load(ctx context.Context, h *history.History, id id.HistoryID, policy Policy) (*Session, error)
 func New(h *history.History, id id.HistoryID, policy Policy) (*Session, error)
@@ -289,7 +285,7 @@ type ContentSourceView struct{}
 type Created struct{HistoryID id.HistoryID}
 type EffectiveInput struct{RunID RunID; Inputs []InputItem}
 type EffectiveInputView struct{}
-type InputItem struct{UserInput *UserInputID; Inline *AttributedInput}
+type InputItem struct{UserInputID *UserInputID; Inline *AttributedInput}
 type InputItemView struct{}
 type InstructionBlock struct{Parts []ContentPart; Source ContentSource}
 type InstructionBlockView struct{}
@@ -306,9 +302,9 @@ type MediaView struct{}
 type ModelBinding struct{HistoryID id.HistoryID; Route string; API string; Model string; Settings []byte}
 type ModelBindingView struct{}
 type ModelRequest struct{ID ModelRequestID; Source SourceHead; Recipe ConstructionRecipe; RetryOf *ModelRequestID}
-type ModelRequestID struct{RunID RunID; Ordinal uint64}
+type ModelRequestID struct{}
 type ModelRequestView struct{}
-type ModelResponse struct{RequestID ModelRequestID; Terminal ResponseTerminalClass; ProviderReason *string; Items []ResponseItem; Evidence *ObservedEvidence; Usage *InvocationUsage; Private *OpaqueProviderData}
+type ModelResponse struct{RequestID ModelRequestID; Terminal ResponseTerminalClass; ProviderStopReason *string; Items []ResponseItem; Evidence *ObservedEvidence; Usage *InvocationUsage; Private *OpaqueProviderData}
 type ModelResponseView struct{}
 type ObservedEvidence struct{Detail *string; Correlation *string}
 type OpaqueProviderData struct{Producer string; Format string; Version int64; Data []byte}
@@ -317,7 +313,7 @@ type PromptPurpose string
 type Record struct{}
 type RecordView struct{}
 type RequestedCall struct{Name string; Arguments []byte}
-type RequestedCallID struct{RequestID ModelRequestID; Ordinal uint64}
+type RequestedCallID struct{}
 type RequestedCallView struct{}
 type ResponseContent struct{Kind ResponseContentKind; Parts []ContentPart}
 type ResponseContentKind string
@@ -326,9 +322,9 @@ type ResponseItem struct{Content *ResponseContent; Call *RequestedCall}
 type ResponseItemView struct{}
 type ResponseTerminalClass string
 type RunEnded struct{RunID RunID; Reason RunEndedReason; Explanation *string; Capture *CaptureFailureEvidence}
-type RunEndedReason uint64
+type RunEndedReason string
 type RunEndedView struct{}
-type RunID struct{HistoryID id.HistoryID; Ordinal uint64}
+type RunID struct{}
 type RunStarted struct{ID RunID}
 type RunView struct{}
 type Session struct{}
@@ -340,7 +336,7 @@ type ToolCatalogView struct{}
 type ToolDefinition struct{Name string; Description string; ArgumentSchema []byte}
 type ToolDefinitionView struct{}
 type UserInput struct{ID UserInputID; Parts []ContentPart}
-type UserInputID struct{RunID RunID; Ordinal uint64}
+type UserInputID struct{}
 type UserInputView struct{}
 type WorkspaceFileSource struct{Path string}
 type WorkspaceFileSourceView struct{}
@@ -350,7 +346,6 @@ var ErrBatch error
 var ErrConflict error
 var ErrIdentity error
 var ErrInvalidPolicy error
-var ErrOrdinalExhausted error
 var ErrReloadRequired error
 var ErrRetryExpired error
 var ErrTransition error

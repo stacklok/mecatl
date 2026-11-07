@@ -110,8 +110,8 @@ func TestKernelSessionConstantTimeAccessorGuardControls(t *testing.T) {
 		}`, 1},
 		{"delegated traversal", "Snapshot", "Instructions", `func (v Snapshot) Instructions() (InstructionsView, bool) { return v.scanInstructions() }`, 1},
 		{"bounded identity lookup", "Snapshot", "UserInputByID", `func (v Snapshot) UserInputByID(id UserInputID) (UserInputView, bool) {
-			if id.Ordinal == 0 || id.Ordinal > uint64(len(v.inputs)) { return UserInputView{}, false }
-			return UserInputView{record: v.records[v.inputs[int(id.Ordinal-1)]]}, true
+			if id.ordinal == 0 || id.ordinal > uint64(len(v.inputs)) { return UserInputView{}, false }
+			return UserInputView{record: v.records[v.inputs[int(id.ordinal-1)]]}, true
 		}`, 0},
 		{"identity scan", "Snapshot", "UserInputByID", `func (v Snapshot) UserInputByID(id UserInputID) (UserInputView, bool) {
 			for _, r := range v.records { _ = r }

@@ -5,35 +5,47 @@ import (
 	"unicode/utf8"
 )
 
+// RunEnded.Reason values form a closed vocabulary; empty and unknown labels are
+// rejected along with labels exceeding MaxRunEndedReasonBytes.
 const (
 	// RunEndedCompleted encodes clean completed termination.
-	RunEndedCompleted = 1
+	RunEndedCompleted = "completed"
 	// RunEndedError encodes owner-selected error termination.
-	RunEndedError = 2
+	RunEndedError = "error"
 	// RunEndedLimit encodes owner-selected limit termination.
-	RunEndedLimit = 3
-	// RunEndedCancelled encodes owner-selected cancellation termination.
-	RunEndedCancelled = 4
-	// RunEndedInterrupted encodes owner-selected interrupted termination.
-	RunEndedInterrupted = 5
+	RunEndedLimit = "limit"
+	// RunEndedInterrupted encodes explicit cancellation or execution interruption.
+	// It does not prove remote cancellation or absence of processing or spend.
+	RunEndedInterrupted = "interrupted"
 	// RunEndedCaptureFailed encodes inability to capture a complete response.
-	RunEndedCaptureFailed = 6
+	RunEndedCaptureFailed = "capture-failed"
 )
 
-// CaptureFailureEvidence is ending-owned evidence for a request whose complete
-// response could not be captured. It has no response body or private envelope.
-// Assignment shares nested storage; Clone detaches it.
+// MaxRunEndedReasonBytes bounds the UTF-8 byte length of every ending label.
+// Closed-vocabulary validation also enforces this bound on future additions.
+const MaxRunEndedReasonBytes = 32
+
+// CaptureFailureEvidence is ending-owned evidence for an accepted pending request
+// whose complete response could not be captured. It has no response body or private
+// envelope. Assignment shares nested storage; Clone detaches it.
 //
 //cborgen:validate Validate
 type CaptureFailureEvidence struct {
-	RequestOrdinal uint64            `cbor:"q"`
-	Evidence       *ObservedEvidence `cbor:"e,omitempty"`
-	Usage          *InvocationUsage  `cbor:"u,omitempty"`
+	// RequestID is the required positive numeric request component within the
+	// enclosing RunEnded's run. Its history envelope supplies history scope.
+	// Local validation checks positivity, not pending request membership.
+	RequestID uint64 `cbor:"q"`
+	// Evidence is optional diagnostic observation for the uncaptured response. Nil
+	// omits it; codec traversal validates only its local UTF-8 shape.
+	Evidence *ObservedEvidence `cbor:"e,omitempty"`
+	// Usage is optional provider-reported usage for the uncaptured response. Nil
+	// omits it; codec traversal validates local counters and opaque metadata.
+	Usage *InvocationUsage `cbor:"u,omitempty"`
 }
 
 // Validate checks only the local request reference shape.
 func (v CaptureFailureEvidence) Validate() error {
-	if v.RequestOrdinal == 0 {
+	if v.RequestID == 0 {
 		return errors.New("capture failure evidence requires a positive request ordinal")
 	}
 	return nil
@@ -45,10 +57,22 @@ func (v CaptureFailureEvidence) Validate() error {
 //
 //cborgen:validate Validate
 type RunEnded struct {
-	RunID       uint64                  `cbor:"r"`
-	Reason      uint64                  `cbor:"e"`
-	Explanation *string                 `cbor:"x,omitempty"`
-	Capture     *CaptureFailureEvidence `cbor:"c,omitempty"`
+	// RunID is the required positive numeric run component within the history
+	// supplied by the enclosing envelope. The aggregate checks active ownership.
+	RunID uint64 `cbor:"r"`
+	// Reason is required and uses the closed RunEnded vocabulary; empty and
+	// unknown labels are rejected. Labels must be valid UTF-8, at most
+	// MaxRunEndedReasonBytes bytes. Earlier experimental numeric codes reject.
+	// The taxonomy is provisional: revisit the combined interruption category
+	// only if usage establishes a useful cancellation/interruption distinction.
+	Reason string `cbor:"e"`
+	// Explanation is optional UTF-8 owner-provided human-readable ending detail.
+	// Nil omits it; non-nil empty is retained. Validation is not disclosure sanitization.
+	Explanation *string `cbor:"x,omitempty"`
+	// Capture is optional uncaptured-response evidence. Nil omits it; it is allowed
+	// only when Reason is RunEndedCaptureFailed, while aggregate admission checks
+	// that its request is accepted and pending in RunID.
+	Capture *CaptureFailureEvidence `cbor:"c,omitempty"`
 }
 
 // Validate checks the local run and reason shape, including capture evidence use.
@@ -56,8 +80,11 @@ func (v RunEnded) Validate() error {
 	if v.RunID == 0 {
 		return errors.New("run ending requires a positive run ordinal")
 	}
+	if len(v.Reason) > MaxRunEndedReasonBytes || !utf8.ValidString(v.Reason) {
+		return errors.New("run ending reason must be UTF-8 and at most 32 bytes")
+	}
 	switch v.Reason {
-	case RunEndedCompleted, RunEndedError, RunEndedLimit, RunEndedCancelled, RunEndedInterrupted, RunEndedCaptureFailed:
+	case RunEndedCompleted, RunEndedError, RunEndedLimit, RunEndedInterrupted, RunEndedCaptureFailed:
 	default:
 		return errors.New("unknown run ending reason")
 	}

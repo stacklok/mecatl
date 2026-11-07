@@ -16,7 +16,7 @@ import (
 func TestRichConstructorsBudgetBeforeConversion(t *testing.T) {
 	s, limits := internalFixture(t)
 	scope := s.Snapshot().HistoryID()
-	input := UserInputID{RunID: RunID{HistoryID: scope, Ordinal: 1}, Ordinal: 1}
+	input := UserInputID{runID: RunID{historyID: scope, ordinal: 1}, ordinal: 1}
 	// All values are allocated before measuring construction. Rejected collection
 	// lengths must not allocate DTO slices, or parse their deliberately invalid JSON.
 	parts := make([]ContentPart, limits.MaxArrayElements+1)
@@ -27,18 +27,18 @@ func TestRichConstructorsBudgetBeforeConversion(t *testing.T) {
 	oversizeText := string(make([]byte, limits.MaxStringBytes+1))
 	nestedInput := UserInput{ID: input, Parts: []ContentPart{{Text: new(oversizeText)}}}
 	nestedMedia := UserInput{ID: input, Parts: []ContentPart{{Media: &Media{Kind: MediaKind(oversizeText)}}}}
-	nestedActor := EffectiveInput{RunID: input.RunID, Inputs: []InputItem{{Inline: &AttributedInput{Actor: Actor(oversizeText)}}}}
+	nestedActor := EffectiveInput{RunID: input.runID, Inputs: []InputItem{{Inline: &AttributedInput{Actor: Actor(oversizeText)}}}}
 	nestedInstructions := Instructions{HistoryID: scope, Blocks: []InstructionBlock{{Parts: []ContentPart{{Text: new(oversizeText)}}}}}
 	nestedCatalog := ToolCatalog{HistoryID: scope, Tools: []ToolDefinition{{Name: "tool", ArgumentSchema: settings}}}
-	nestedEffective := EffectiveInput{RunID: input.RunID, Inputs: []InputItem{{Inline: &AttributedInput{Parts: parts}}}}
-	requestID := ModelRequestID{RunID: input.RunID, Ordinal: 1}
+	nestedEffective := EffectiveInput{RunID: input.runID, Inputs: []InputItem{{Inline: &AttributedInput{Parts: parts}}}}
+	requestID := ModelRequestID{runID: input.runID, requestOrdinal: 1}
 	oversizeResponse := ModelResponse{RequestID: requestID, Items: make([]ResponseItem, limits.MaxArrayElements+1)}
 	privateResponse := ModelResponse{RequestID: requestID, Private: &OpaqueProviderData{Data: settings}}
 	evidenceResponse := ModelResponse{RequestID: requestID, Evidence: &ObservedEvidence{Correlation: &oversizeText}}
 	usageResponse := ModelResponse{RequestID: requestID, Usage: &InvocationUsage{Raw: &OpaqueProviderData{Data: settings}}}
 	nestedResponse := ModelResponse{RequestID: requestID, Items: []ResponseItem{{Content: &ResponseContent{Parts: parts}}}}
 	failure := InvocationFailure{RequestID: requestID, Usage: usageResponse.Usage}
-	ending := RunEnded{RunID: input.RunID, Reason: RunEndedCaptureFailed, Capture: &CaptureFailureEvidence{RequestID: requestID, Usage: usageResponse.Usage}}
+	ending := RunEnded{RunID: input.runID, Reason: RunEndedCaptureFailed, Capture: &CaptureFailureEvidence{RequestID: requestID, Usage: usageResponse.Usage}}
 	request := ModelRequest{ID: requestID, Recipe: ConstructionRecipe{Parameters: settings}}
 	for _, makeRecord := range []func() (Record, error){
 		func() (Record, error) { return NewUserInputRecord(UserInput{ID: input, Parts: parts}, limits) },
@@ -49,7 +49,7 @@ func TestRichConstructorsBudgetBeforeConversion(t *testing.T) {
 			return NewToolCatalogRecord(ToolCatalog{HistoryID: scope, Tools: tools}, limits)
 		},
 		func() (Record, error) {
-			return NewEffectiveInputRecord(EffectiveInput{RunID: input.RunID, Inputs: items}, limits)
+			return NewEffectiveInputRecord(EffectiveInput{RunID: input.runID, Inputs: items}, limits)
 		},
 		func() (Record, error) {
 			return NewModelBindingRecord(ModelBinding{HistoryID: scope, Route: "r", API: "a", Model: "m", Settings: settings}, limits)
@@ -81,28 +81,28 @@ func TestRichConstructorsBudgetBeforeConversion(t *testing.T) {
 func TestNewRecordMetadataAndGeneratedLimitsAgree(t *testing.T) {
 	s, limits := internalFixture(t)
 	scope := s.Snapshot().HistoryID()
-	input := UserInputID{RunID: RunID{HistoryID: scope, Ordinal: 1}, Ordinal: 1}
+	input := UserInputID{runID: RunID{historyID: scope, ordinal: 1}, ordinal: 1}
 	content := []ContentPart{{Text: new(" exact ")}, {Media: &Media{Kind: MediaKindDocument, MIMEType: "raw", Source: MediaSourceInline, InlineData: []byte{0xff, 0}}}}
 	source := ContentSource{Description: "adopted", WorkspaceFile: &WorkspaceFileSource{Path: "AGENTS.md"}}
 	authored := UserInput{ID: input, Parts: content}
 	instructions := Instructions{HistoryID: scope, Blocks: []InstructionBlock{{Parts: content, Source: source}}}
 	catalog := ToolCatalog{HistoryID: scope, Tools: []ToolDefinition{{Name: "read", ArgumentSchema: []byte(" true ")}}}
 	binding := ModelBinding{HistoryID: scope, Route: "r", API: "a", Model: "m", Settings: []byte(" {\"x\":1.0} ")}
-	effective := EffectiveInput{RunID: input.RunID, Inputs: []InputItem{{UserInput: &input}, {Inline: &AttributedInput{Actor: "harness", Purpose: PromptContext, Parts: []ContentPart{{Text: new("supplement")}}, Source: source}}}}
-	manyInputs := EffectiveInput{RunID: input.RunID, Inputs: make([]InputItem, limits.MaxArrayElements)}
+	effective := EffectiveInput{RunID: input.runID, Inputs: []InputItem{{UserInputID: &input}, {Inline: &AttributedInput{Actor: "harness", Purpose: PromptContext, Parts: []ContentPart{{Text: new("supplement")}}, Source: source}}}}
+	manyInputs := EffectiveInput{RunID: input.runID, Inputs: make([]InputItem, limits.MaxArrayElements)}
 	for i := range manyInputs.Inputs {
-		manyInputs.Inputs[i].UserInput = &input
+		manyInputs.Inputs[i].UserInputID = &input
 	}
 	emptyParts := UserInput{ID: input, Parts: make([]ContentPart, limits.MaxArrayElements)}
 	for i := range emptyParts.Parts {
 		emptyParts.Parts[i].Text = new("")
 	}
-	requestID := ModelRequestID{RunID: input.RunID, Ordinal: 1}
+	requestID := ModelRequestID{runID: input.runID, requestOrdinal: 1}
 	request := ModelRequest{ID: requestID, Source: SourceHead{Sequence: 1, CID: contentid.Sum([]byte("source"))}, Recipe: ConstructionRecipe{Algorithm: "a", Version: 1, Parameters: []byte{0xff}, Check: []byte{0}}, RetryOf: &requestID}
 	usage := &InvocationUsage{Input: new(int64(0)), Output: new(int64(3)), Raw: &OpaqueProviderData{Producer: "p", Format: "usage", Version: 1, Data: []byte{0xff}}}
-	response := ModelResponse{RequestID: requestID, Terminal: ResponseTerminalOther, ProviderReason: new(""), Items: []ResponseItem{{Content: &ResponseContent{Kind: ResponseContentOutput, Parts: content}}, {Call: &RequestedCall{Name: "", Arguments: []byte{0xff}}}}, Evidence: &ObservedEvidence{Correlation: new("")}, Usage: usage, Private: &OpaqueProviderData{Producer: "p", Format: "f", Version: 1, Data: []byte{0xff}}}
+	response := ModelResponse{RequestID: requestID, Terminal: ResponseTerminalOther, ProviderStopReason: new(""), Items: []ResponseItem{{Content: &ResponseContent{Kind: ResponseContentOutput, Parts: content}}, {Call: &RequestedCall{Name: "", Arguments: []byte{0xff}}}}, Evidence: &ObservedEvidence{Correlation: new("")}, Usage: usage, Private: &OpaqueProviderData{Producer: "p", Format: "f", Version: 1, Data: []byte{0xff}}}
 	failure := InvocationFailure{RequestID: requestID, Class: InvocationFailureTransport, Usage: usage, Evidence: response.Evidence, Explanation: new("")}
-	ending := RunEnded{RunID: input.RunID, Reason: RunEndedCaptureFailed, Capture: &CaptureFailureEvidence{RequestID: requestID, Evidence: response.Evidence, Usage: usage}}
+	ending := RunEnded{RunID: input.runID, Reason: RunEndedCaptureFailed, Capture: &CaptureFailureEvidence{RequestID: requestID, Evidence: response.Evidence, Usage: usage}}
 	for _, tc := range []struct {
 		name  string
 		make  func(codec.Limits) (Record, error)
@@ -244,7 +244,7 @@ func TestContextApplyStagesSelectionsAndSourceBounds(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	bad, err := NewEffectiveInputRecord(EffectiveInput{RunID: run, Inputs: []InputItem{{UserInput: &input}, {UserInput: &UserInputID{RunID: run, Ordinal: 2}}}}, limits)
+	bad, err := NewEffectiveInputRecord(EffectiveInput{RunID: run, Inputs: []InputItem{{UserInputID: &input}, {UserInputID: &UserInputID{runID: run, ordinal: 2}}}}, limits)
 	if err != nil {
 		t.Fatal(err)
 	}

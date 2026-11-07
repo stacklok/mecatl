@@ -33,7 +33,7 @@ func TestModelInteractionUnknownAcceptanceFreezesExactProposal(t *testing.T) {
 			b := beginBatch(t, s)
 			mustBatch(t, b.Create())
 			run := batchRun(t, b)
-			mustBatch(t, b.ReplaceModelBinding(session.ModelBinding{HistoryID: run.HistoryID, Route: "r", API: "a", Model: "m", Settings: []byte("{}")}))
+			mustBatch(t, b.ReplaceModelBinding(session.ModelBinding{HistoryID: run.HistoryID(), Route: "r", API: "a", Model: "m", Settings: []byte("{}")}))
 			submitBatch(t, s, b)
 			head := s.Snapshot().Head()
 			b = beginBatch(t, s)
@@ -45,7 +45,7 @@ func TestModelInteractionUnknownAcceptanceFreezesExactProposal(t *testing.T) {
 			}
 			id, err := b.AddModelRequest(add)
 			mustBatch(t, err)
-			if id.Ordinal != 1 {
+			if id != allocatedRequest(t, run, 1) {
 				t.Fatal("failed addition consumed identity")
 			}
 			if outcome {
@@ -89,7 +89,7 @@ func TestModelInteractionZeroViews(t *testing.T) {
 	var response session.ModelResponseView
 	var failure session.InvocationFailureView
 	var ending session.RunEndedView
-	if request.ID() != (session.ModelRequestID{}) || request.Source() != (session.SourceHead{}) || request.Recipe().Algorithm != "" || response.ItemCount() != 0 || response.CallCount() != 0 || response.RequestID() != (session.ModelRequestID{}) || failure.RequestID() != (session.ModelRequestID{}) || ending.RunID() != (session.RunID{}) || ending.Reason() != 0 {
+	if request.ID() != (session.ModelRequestID{}) || request.Source() != (session.SourceHead{}) || request.Recipe().Algorithm != "" || response.ItemCount() != 0 || response.CallCount() != 0 || response.RequestID() != (session.ModelRequestID{}) || failure.RequestID() != (session.ModelRequestID{}) || ending.RunID() != (session.RunID{}) || ending.Reason() != "" {
 		t.Fatal("zero view scalars")
 	}
 	if _, ok := request.RetryOf(); ok {
@@ -158,14 +158,14 @@ func TestModelInteractionAcceptedViewsAndReplay(t *testing.T) {
 	*usage.Input = 42
 	clear(usage.Raw.Data)
 	second := addInteractionRequest(t, s, run, &first, []byte("changed recipe"))
-	if second.Ordinal != 2 || second.RunID != first.RunID {
+	if second == first || second.RunID() != first.RunID() {
 		t.Fatal("retry identity")
 	}
 	retry, _ := s.Snapshot().RecordAt(8).ModelRequest()
 	if got, ok := retry.RetryOf(); !ok || got != first || string(retry.Recipe().Parameters) != "changed recipe" {
 		t.Fatal("retry correlation/recipe")
 	}
-	response := session.ModelResponse{RequestID: second, Terminal: session.ResponseTerminalError, ProviderReason: new("unknown/provider/reason"),
+	response := session.ModelResponse{RequestID: second, Terminal: session.ResponseTerminalError, ProviderStopReason: new("unknown/provider/reason"),
 		Items: []session.ResponseItem{
 			{Content: &session.ResponseContent{Kind: session.ResponseContentReasoning, Parts: []session.ContentPart{{Text: new("")}, {Media: &session.Media{Kind: session.MediaKindImage, MIMEType: "image/example", Source: session.MediaSourceInline, InlineData: []byte{0xff, 0}}}}}},
 			{Call: &session.RequestedCall{Name: "", Arguments: []byte("not JSON")}},
@@ -186,7 +186,7 @@ func TestModelInteractionAcceptedViewsAndReplay(t *testing.T) {
 	}
 	if n := testing.AllocsPerRun(100, func() {
 		r, ok := accepted.RecordAt(9).ModelResponse()
-		if !ok || r.ItemCount() != 5 || r.CallCount() != 2 || r.CallAt(0).ID().Ordinal != 1 || r.ItemAt(0) != view.ItemAt(0) {
+		if !ok || r.ItemCount() != 5 || r.CallCount() != 2 || r.CallAt(0).ID() != view.CallAt(0).ID() || r.CallAt(0).ID().RequestID() != second || r.CallAt(0).ID().RequestID().RunID().HistoryID() != scope || r.ItemAt(0) != view.ItemAt(0) {
 			panic("direct response navigation")
 		}
 		c, ok := r.ItemAt(0).Content()
@@ -199,7 +199,7 @@ func TestModelInteractionAcceptedViewsAndReplay(t *testing.T) {
 	}
 	items := slices.Collect(view.Items())
 	calls := slices.Collect(view.Calls())
-	if len(items) != 5 || len(calls) != 2 || calls[0].ID().RequestID != second || calls[0].ID().Ordinal != 1 || calls[1].ID().Ordinal != 2 || calls[0].Name() != "" || string(calls[0].Arguments()) != "not JSON" {
+	if len(items) != 5 || len(calls) != 2 || calls[0].ID().RequestID() != second || calls[0].ID() == calls[1].ID() || calls[1].ID().RequestID() != second || calls[0].Name() != "" || string(calls[0].Arguments()) != "not JSON" {
 		t.Fatal("canonical call ordinals or bytes")
 	}
 	if view.CallAt(1) != calls[1] {
@@ -256,7 +256,7 @@ func TestModelInteractionAcceptedViewsAndReplay(t *testing.T) {
 	next := batchRun(t, b)
 	submitBatch(t, s, b)
 	third := addInteractionRequest(t, s, next, nil, nil)
-	if third.Ordinal != 1 || third.RunID == run {
+	if third == first || third.RunID() != next || third.RunID() == run {
 		t.Fatal("successor did not reset request counter")
 	}
 	b = beginBatch(t, s)

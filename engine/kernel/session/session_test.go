@@ -14,36 +14,45 @@ import (
 	"github.com/stacklok/mecatl/engine/kernel/history/format"
 	historyid "github.com/stacklok/mecatl/engine/kernel/history/id"
 	"github.com/stacklok/mecatl/engine/kernel/session"
+	sessionformat "github.com/stacklok/mecatl/engine/kernel/session/format"
 )
 
 func lookupInput(t testing.TB, v session.Snapshot, run session.RunID, ordinal uint64) session.UserInputView {
 	t.Helper()
-	id := session.UserInputID{RunID: run, Ordinal: ordinal}
-	input, ok := v.UserInputByID(id)
-	if !ok || input.ID() != id {
-		t.Fatalf("missing input %v", id)
+	var seen uint64
+	for record := range v.Records() {
+		input, ok := record.UserInput()
+		if !ok || input.ID().RunID() != run {
+			continue
+		}
+		seen++
+		if seen == ordinal {
+			located, present := v.UserInputByID(input.ID())
+			if !present || located != input {
+				t.Fatal("input lookup differs from inspection")
+			}
+			return located
+		}
 	}
-	return input
+	t.Fatalf("missing input at fixture position %d", ordinal)
+	return session.UserInputView{}
 }
 
-// userInputsMatch checks exact expected identity membership through both the
-// chronological facts and the lookup, including the first absent successor.
+// userInputsMatch checks expected membership through chronological facts and lookup.
 func userInputsMatch(v session.Snapshot, run session.RunID, count uint64) bool {
 	var seen uint64
 	for i := 0; i < v.RecordCount(); i++ {
 		input, ok := v.RecordAt(i).UserInput()
-		if !ok || input.ID().RunID != run {
+		if !ok || input.ID().RunID() != run {
 			continue
 		}
 		seen++
-		id := session.UserInputID{RunID: run, Ordinal: seen}
-		got, present := v.UserInputByID(id)
-		if !present || input.ID() != id || got.ID() != id || got != input {
+		got, present := v.UserInputByID(input.ID())
+		if !present || got.ID() != input.ID() || got != input {
 			return false
 		}
 	}
-	_, extra := v.UserInputByID(session.UserInputID{RunID: run, Ordinal: count + 1})
-	return seen == count && !extra
+	return seen == count
 }
 
 func sessionPolicy() session.Policy {
@@ -75,7 +84,7 @@ func inputRecord(t testing.TB, ordinal uint64) session.Record {
 }
 func runInputRecord(t testing.TB, run, ordinal uint64) session.Record {
 	t.Helper()
-	r, err := session.NewUserInputRecord(session.UserInput{ID: session.UserInputID{RunID: session.RunID{HistoryID: testHistoryID(t), Ordinal: run}, Ordinal: ordinal}, Parts: byteParts([]byte{0xff, 0, 'x'})}, testLimits())
+	r, err := session.NewUserInputRecord(session.UserInput{ID: allocatedInput(t, allocatedRun(t, testHistoryID(t), run), ordinal), Parts: byteParts([]byte{0xff, 0, 'x'})}, testLimits())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -83,7 +92,7 @@ func runInputRecord(t testing.TB, run, ordinal uint64) session.Record {
 }
 func startRecord(t testing.TB, ordinal uint64) session.Record {
 	t.Helper()
-	r, err := session.NewRunStartedRecord(session.RunStarted{ID: session.RunID{HistoryID: testHistoryID(t), Ordinal: ordinal}}, testLimits())
+	r, err := session.NewRunStartedRecord(session.RunStarted{ID: allocatedRun(t, testHistoryID(t), ordinal)}, testLimits())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,7 +100,7 @@ func startRecord(t testing.TB, ordinal uint64) session.Record {
 }
 func closeoutRecord(t testing.TB, ordinal uint64) session.Record {
 	t.Helper()
-	r, err := session.NewRunEndedRecord(session.RunEnded{RunID: session.RunID{HistoryID: testHistoryID(t), Ordinal: ordinal}, Reason: session.RunEndedInterrupted}, testLimits())
+	r, err := session.NewRunEndedRecord(session.RunEnded{RunID: allocatedRun(t, testHistoryID(t), ordinal), Reason: session.RunEndedInterrupted}, testLimits())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -201,7 +210,7 @@ func TestSessionLifecycleAndReplay(t *testing.T) {
 	for _, c := range commits {
 		mustBatch(t, replay.Apply(c))
 	}
-	if !reflect.DeepEqual(replay.Snapshot(), s.Snapshot()) || replay.Snapshot().ActiveRun().Ordinal != 2 {
+	if !reflect.DeepEqual(replay.Snapshot(), s.Snapshot()) || replay.Snapshot().ActiveRun() != allocatedRun(t, testHistoryID(t), 2) {
 		t.Fatal("successor replay differs")
 	}
 }
@@ -224,6 +233,10 @@ func TestSessionCompetingStartsAndStaleProposals(t *testing.T) {
 }
 
 func TestSessionAtomicRejection(t *testing.T) {
+	maxInput, err := codec.Encode(sessionformat.UserInput{RunID: 3, ID: math.MaxUint64}, testLimits())
+	mustBatch(t, err)
+	maxRun, err := codec.Encode(sessionformat.RunStarted{ID: math.MaxUint64}, testLimits())
+	mustBatch(t, err)
 	for _, tc := range []struct {
 		name string
 		last format.Record
@@ -231,8 +244,8 @@ func TestSessionAtomicRejection(t *testing.T) {
 	}{
 		{"duplicate creation", createdRecord(t).Format(), session.ErrTransition},
 		{"skipped input", runInputRecord(t, 3, 3).Format(), session.ErrTransition},
-		{"maximum input ordinal", runInputRecord(t, 3, math.MaxUint64).Format(), session.ErrTransition},
-		{"maximum run ordinal", startRecord(t, math.MaxUint64).Format(), session.ErrTransition},
+		{"maximum input ordinal", format.Record{Kind: sessionformat.KindUserInput, KindVersion: 1, Payload: maxInput}, session.ErrTransition},
+		{"maximum run ordinal", format.Record{Kind: sessionformat.KindRunStarted, KindVersion: 1, Payload: maxRun}, session.ErrTransition},
 		{"repeated input", runInputRecord(t, 3, 1).Format(), session.ErrTransition},
 		{"duplicate active start", startRecord(t, 4).Format(), session.ErrTransition},
 		{"wrong owner", runInputRecord(t, 2, 2).Format(), session.ErrTransition},
@@ -327,7 +340,7 @@ func TestSessionApplyOwnership(t *testing.T) {
 	clear(content)
 	raw := before.RecordAt(2).Format()
 	clear(raw.Payload)
-	if got := inputBytes(old); !reflect.DeepEqual(got, []byte{0xff, 0, 'x'}) || !userInputsMatch(before, old.ID().RunID, 1) {
+	if got := inputBytes(old); !reflect.DeepEqual(got, []byte{0xff, 0, 'x'}) || !userInputsMatch(before, old.ID().RunID(), 1) {
 		t.Fatal("accepted DTO/export aliases")
 	}
 }
@@ -433,6 +446,10 @@ func TestSessionRun24CloseoutCapacity(t *testing.T) {
 	for n := uint64(1); n <= 24; n++ {
 		all = append(all, startRecord(t, n), runInputRecord(t, n, 1), closeoutRecord(t, n))
 	}
+	// The final active prefix must reserve the largest supported minimal ending.
+	lastEnding, err := session.NewRunEndedRecord(session.RunEnded{RunID: allocatedRun(t, testHistoryID(t), 24), Reason: session.RunEndedCaptureFailed}, testLimits())
+	mustBatch(t, err)
+	all[len(all)-1] = lastEnding
 	var exactBytes uint64
 	for _, r := range all {
 		exactBytes += uint64(len(r.Format().Payload))
@@ -445,7 +462,7 @@ func TestSessionRun24CloseoutCapacity(t *testing.T) {
 		for n := uint64(1); n <= 23; n++ {
 			b = beginBatch(t, s)
 			run := batchRun(t, b)
-			if run.Ordinal != n {
+			if run != allocatedRun(t, testHistoryID(t), n) {
 				t.Fatal("prefix run ordinal")
 			}
 			batchInput(t, b, run, []byte{0xff, 0, 'x'})
@@ -462,7 +479,7 @@ func TestSessionRun24CloseoutCapacity(t *testing.T) {
 	b := beginBatch(t, short)
 	run := batchRun(t, b)
 	batchInput(t, b, run, []byte{0xff, 0, 'x'})
-	if run.Ordinal != 24 {
+	if run != allocatedRun(t, testHistoryID(t), 24) {
 		t.Fatal("width-boundary provisional run")
 	}
 	if ref, err := short.SubmitCommit(context.Background(), b); ref != (history.CommitRef{}) || !errors.Is(err, codec.ErrLimitExceeded) || !reflect.DeepEqual(before, captureRejectedSnapshot(short.Snapshot())) {
@@ -487,7 +504,7 @@ func TestSessionRun24CloseoutCapacity(t *testing.T) {
 	}
 	wantClose := proposedCommit(t, exact, all[72])
 	b = beginBatch(t, exact)
-	mustBatch(t, b.EndRun(session.RunEndedInterrupted))
+	mustBatch(t, b.EndRun(session.RunEndedCaptureFailed))
 	if ref := submitBatch(t, exact, b); ref != wantClose.Ref || len(backend.attempts) != attempts+2 {
 		t.Fatal("exact-fit boundary writer did not append canonical interruption")
 	}

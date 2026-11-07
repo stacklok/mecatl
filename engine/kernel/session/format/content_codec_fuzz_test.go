@@ -12,7 +12,7 @@ import (
 func FuzzEffectiveInputDecode(f *testing.F) {
 	for _, v := range []format.EffectiveInput{
 		{RunID: 1},
-		{RunID: 1, Inputs: []format.InputItem{{UserInput: new(uint64(1))}, {Inline: &format.AttributedInput{Actor: "skill", Purpose: "context", Parts: []format.ContentPart{{Media: &format.Media{Kind: "image", MIMEType: "image/x", Source: "inline", InlineData: []byte{0xff}}}}, Source: format.ContentSource{Description: "expanded", WorkspaceFile: &format.WorkspaceFileSource{Path: "skill.md"}}}}}},
+		{RunID: 1, Inputs: []format.InputItem{{UserInputID: new(uint64(1))}, {Inline: &format.AttributedInput{Actor: "skill", Purpose: "context", Parts: []format.ContentPart{{Media: &format.Media{Kind: "image", MIMEType: "image/x", Source: "inline", InlineData: []byte{0xff}}}}, Source: format.ContentSource{Description: "expanded", WorkspaceFile: &format.WorkspaceFileSource{Path: "skill.md"}}}}}},
 	} {
 		f.Add(v.AppendCBOR(nil))
 	}

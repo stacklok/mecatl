@@ -32,7 +32,7 @@ func (v EffectiveInput) Validate() error {
 		if err := in.Validate(); err != nil {
 			return err
 		}
-		if in.UserInput != nil && in.UserInput.RunID != v.RunID {
+		if in.UserInputID != nil && in.UserInputID.runID != v.RunID {
 			return codec.ErrInvalidData
 		}
 	}
@@ -66,7 +66,7 @@ func (v EffectiveInput) Equal(other EffectiveInput) bool {
 
 // toFormat requires validated same-run references before omitting their scope.
 func (v EffectiveInput) toFormat() sessionformat.EffectiveInput {
-	out := sessionformat.EffectiveInput{RunID: v.RunID.Ordinal}
+	out := sessionformat.EffectiveInput{RunID: v.RunID.ordinal}
 	if v.Inputs != nil {
 		out.Inputs = make([]sessionformat.InputItem, len(v.Inputs))
 		for i := range v.Inputs {
@@ -101,7 +101,7 @@ func NewEffectiveInputRecord(v EffectiveInput, limits codec.Limits) (Record, err
 	if err != nil {
 		return Record{}, err
 	}
-	return Record{scope: v.RunID.HistoryID, effectiveInput: fact.Clone(), value: format.Record{Kind: sessionformat.KindEffectiveInput, KindVersion: sessionformat.Version, Payload: payload}}, nil
+	return Record{scope: v.RunID.historyID, effectiveInput: fact.Clone(), value: format.Record{Kind: sessionformat.KindEffectiveInput, KindVersion: sessionformat.Version, Payload: payload}}, nil
 }
 
 // EffectiveInputView retains immutable accepted backing storage, including its
@@ -116,7 +116,7 @@ func (v EffectiveInputView) RunID() RunID {
 	if v.value == nil {
 		return RunID{}
 	}
-	return RunID{HistoryID: v.scope, Ordinal: v.value.RunID}
+	return RunID{historyID: v.scope, ordinal: v.value.RunID}
 }
 
 // InputCount returns the number of ordered items, or zero for zero.

@@ -80,7 +80,7 @@ func (v ModelRequest) Validate() error {
 	if err := v.Recipe.Validate(); err != nil {
 		return err
 	}
-	if v.RetryOf != nil && v.RetryOf.RunID != v.ID.RunID {
+	if v.RetryOf != nil && v.RetryOf.runID != v.ID.runID {
 		return codec.ErrInvalidData
 	}
 	if v.RetryOf != nil {
@@ -106,9 +106,9 @@ func (v ModelRequest) Equal(other ModelRequest) bool {
 
 // toFormat omits history scope only after Validate has checked retry scope.
 func (v ModelRequest) toFormat() sessionformat.ModelRequest {
-	out := sessionformat.ModelRequest{RunID: v.ID.RunID.Ordinal, Ordinal: v.ID.Ordinal, Source: v.Source.toFormat(), Recipe: v.Recipe.toFormat()}
+	out := sessionformat.ModelRequest{RunID: v.ID.runID.ordinal, ID: v.ID.requestOrdinal, Source: v.Source.toFormat(), Recipe: v.Recipe.toFormat()}
 	if v.RetryOf != nil {
-		out.RetryOf = new(v.RetryOf.Ordinal)
+		out.RetryOf = new(v.RetryOf.requestOrdinal)
 	}
 	return out
 }
@@ -139,14 +139,14 @@ func NewModelRequestRecord(v ModelRequest, limits codec.Limits) (Record, error) 
 	if v.RetryOf != nil {
 		metadata.RetryOf = new(*v.RetryOf)
 	}
-	return Record{scope: v.ID.RunID.HistoryID, modelRequest: metadata, value: format.Record{Kind: sessionformat.KindModelRequest, KindVersion: sessionformat.Version, Payload: payload}}, nil
+	return Record{scope: v.ID.runID.historyID, modelRequest: metadata, value: format.Record{Kind: sessionformat.KindModelRequest, KindVersion: sessionformat.Version, Payload: payload}}, nil
 }
 
 func requestID(scope historyid.HistoryID, run, ordinal uint64) ModelRequestID {
-	return ModelRequestID{RunID: RunID{HistoryID: scope, Ordinal: run}, Ordinal: ordinal}
+	return ModelRequestID{runID: RunID{historyID: scope, ordinal: run}, requestOrdinal: ordinal}
 }
 func requestFromFormat(scope historyid.HistoryID, v sessionformat.ModelRequest) ModelRequest {
-	out := ModelRequest{ID: requestID(scope, v.RunID, v.Ordinal), Source: SourceHead{Sequence: v.Source.Sequence, CID: v.Source.CID}, Recipe: ConstructionRecipe{Algorithm: v.Recipe.Algorithm, Version: v.Recipe.Version, Parameters: v.Recipe.Parameters, Check: v.Recipe.Check}}
+	out := ModelRequest{ID: requestID(scope, v.RunID, v.ID), Source: SourceHead{Sequence: v.Source.Sequence, CID: v.Source.CID}, Recipe: ConstructionRecipe{Algorithm: v.Recipe.Algorithm, Version: v.Recipe.Version, Parameters: v.Recipe.Parameters, Check: v.Recipe.Check}}
 	if v.RetryOf != nil {
 		id := requestID(scope, v.RunID, *v.RetryOf)
 		out.RetryOf = &id
@@ -166,7 +166,7 @@ func (v ModelRequestView) ID() ModelRequestID {
 	if v.value == nil {
 		return ModelRequestID{}
 	}
-	return requestID(v.scope, v.value.RunID, v.value.Ordinal)
+	return requestID(v.scope, v.value.RunID, v.value.ID)
 }
 
 // Source returns the exact pinned accepted source, or zero for zero.

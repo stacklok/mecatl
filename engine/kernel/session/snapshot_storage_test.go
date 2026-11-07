@@ -149,7 +149,7 @@ func TestSnapshotChildBoundsAcrossSpareCapacityAndGrowth(t *testing.T) {
 		} else {
 			sawGrowth = true
 		}
-		if old.RecordCount() != before || oldRun.RecordCount() != before-1 || !internalUserInputsMatch(old, run, uint64(before-2)) || oldInput.ID().Ordinal != 1 || string(internalInputBytes(oldInput)) != "first" {
+		if old.RecordCount() != before || oldRun.RecordCount() != before-1 || !internalUserInputsMatch(old, run, uint64(before-2)) || oldInput.ID().ordinal != 1 || string(internalInputBytes(oldInput)) != "first" {
 			t.Fatal("old snapshot/run/input changed")
 		}
 		input, ok := oldRecord.UserInput()

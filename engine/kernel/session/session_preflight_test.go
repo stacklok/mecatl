@@ -19,21 +19,21 @@ func TestSessionMetadataAndDecodedLegalityAgree(t *testing.T) {
 		t.Fatal(e)
 	}
 	start := func(n uint64) Record {
-		r, e := NewRunStartedRecord(RunStarted{ID: RunID{HistoryID: id, Ordinal: n}}, limits)
+		r, e := NewRunStartedRecord(RunStarted{ID: RunID{historyID: id, ordinal: n}}, limits)
 		if e != nil {
 			t.Fatal(e)
 		}
 		return r
 	}
 	input := func(run, n uint64) Record {
-		r, e := NewUserInputRecord(UserInput{ID: UserInputID{RunID: RunID{HistoryID: id, Ordinal: run}, Ordinal: n}, Parts: internalByteParts([]byte{0xff, 0, 'x'})}, limits)
+		r, e := NewUserInputRecord(UserInput{ID: UserInputID{runID: RunID{historyID: id, ordinal: run}, ordinal: n}, Parts: internalByteParts([]byte{0xff, 0, 'x'})}, limits)
 		if e != nil {
 			t.Fatal(e)
 		}
 		return r
 	}
 	closeout := func(n uint64) Record {
-		r, e := NewRunEndedRecord(RunEnded{RunID: RunID{HistoryID: id, Ordinal: n}, Reason: RunEndedInterrupted}, limits)
+		r, e := NewRunEndedRecord(RunEnded{RunID: RunID{historyID: id, ordinal: n}, Reason: RunEndedInterrupted}, limits)
 		if e != nil {
 			t.Fatal(e)
 		}
@@ -122,11 +122,11 @@ func TestSessionMetadataPreservesOrderedFailure(t *testing.T) {
 	s, limits := internalFixture(t)
 	id := s.Snapshot().HistoryID()
 	s.policy.PayloadLimits.MaxByteStringBytes = 1
-	start, err := NewRunStartedRecord(RunStarted{ID: RunID{HistoryID: id, Ordinal: 1}}, limits)
+	start, err := NewRunStartedRecord(RunStarted{ID: RunID{historyID: id, ordinal: 1}}, limits)
 	if err != nil {
 		t.Fatal(err)
 	}
-	input, err := NewUserInputRecord(UserInput{ID: UserInputID{RunID: RunID{HistoryID: id, Ordinal: 1}, Ordinal: 1}, Parts: internalByteParts([]byte("too long"))}, limits)
+	input, err := NewUserInputRecord(UserInput{ID: UserInputID{runID: RunID{historyID: id, ordinal: 1}, ordinal: 1}, Parts: internalByteParts([]byte("too long"))}, limits)
 	if err != nil {
 		t.Fatal(err)
 	}

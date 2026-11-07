@@ -32,7 +32,7 @@ func TestContextFrozenRetryAndConcurrentPinnedReads(t *testing.T) {
 	catalog := session.ToolCatalog{HistoryID: scope, Tools: []session.ToolDefinition{{Name: "tool", ArgumentSchema: []byte("true")}}}
 	binding := session.ModelBinding{HistoryID: scope, Route: "r", API: "a", Model: "m", Settings: []byte(" { } ")}
 	effective := session.EffectiveInput{RunID: run, Inputs: []session.InputItem{
-		{UserInput: &input},
+		{UserInputID: &input},
 		{Inline: &session.AttributedInput{Actor: "extension/example", Purpose: session.PromptContext, Parts: richContent(), Source: session.ContentSource{Description: "prepared reference", WorkspaceFile: &session.WorkspaceFileSource{Path: "docs/design.md"}}}},
 	}}
 	expected := effective.Clone()
@@ -46,7 +46,7 @@ func TestContextFrozenRetryAndConcurrentPinnedReads(t *testing.T) {
 	instructions.Blocks[0].Source.WorkspaceFile.Path = "mutated"
 	clear(catalog.Tools[0].ArgumentSchema)
 	clear(binding.Settings)
-	*effective.Inputs[0].UserInput = session.UserInputID{}
+	*effective.Inputs[0].UserInputID = session.UserInputID{}
 	effective.Inputs[1].Inline.Actor = "changed"
 	effective.Inputs[1].Inline.Parts[1].Media.InlineData[0] = 0
 	*effective.Inputs[1].Inline.Parts[0].Text = "changed"

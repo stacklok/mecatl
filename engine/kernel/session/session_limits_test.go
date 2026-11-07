@@ -60,7 +60,7 @@ func TestSessionSoftAdmissionAndCleanupBoundaries(t *testing.T) {
 				old := s.Snapshot()
 				before := captureRejectedSnapshot(old)
 				b = beginBatch(t, s)
-				if id := batchInput(t, b, run, nil); id.Ordinal != 2 {
+				if id := batchInput(t, b, run, nil); id != allocatedInput(t, run, 2) {
 					t.Fatal("provisional ordinal")
 				}
 				if mixed {
@@ -208,7 +208,7 @@ func TestSessionAdmissionAndUncertaintyShareCauseNotOutcome(t *testing.T) {
 						t.Fatal("uncertain proposal allowed discard")
 					}
 					submitBatch(t, s, b)
-					if len(backend.attempts) != 3 || !reflect.DeepEqual(backend.attempts[1], backend.attempts[2]) || lookupInput(t, s.Snapshot(), id.RunID, id.Ordinal).ID() != id {
+					if len(backend.attempts) != 3 || !reflect.DeepEqual(backend.attempts[1], backend.attempts[2]) || lookupInput(t, s.Snapshot(), id.RunID(), 1).ID() != id {
 						t.Fatal("uncertain retry changed identity or bytes")
 					}
 				} else {

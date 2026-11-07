@@ -19,7 +19,7 @@ func TestInvocationEvidenceViewsOwnEveryMutableField(t *testing.T) {
 			if kind == "failure" {
 				interactionCheck(t, b.AddInvocationFailure(InvocationFailure{RequestID: id, Class: InvocationFailureLocal, Explanation: &explanation, Evidence: evidence, Usage: usage}))
 			} else {
-				interactionCheck(t, b.AddRunEnded(RunEnded{RunID: id.RunID, Reason: RunEndedCaptureFailed, Explanation: &explanation, Capture: &CaptureFailureEvidence{RequestID: id, Evidence: evidence, Usage: usage}}))
+				interactionCheck(t, b.AddRunEnded(RunEnded{RunID: id.runID, Reason: RunEndedCaptureFailed, Explanation: &explanation, Capture: &CaptureFailureEvidence{RequestID: id, Evidence: evidence, Usage: usage}}))
 			}
 			explanation = "changed"
 			*evidence.Detail = "changed"

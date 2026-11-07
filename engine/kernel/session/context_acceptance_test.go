@@ -39,7 +39,7 @@ func TestContextIndependentReplacementsAndFixtureFreeLoad(t *testing.T) {
 	run := batchRun(t, b)
 	input, err := b.AddUserInput(session.AddUserInputRequest{RunID: run, Parts: richContent()})
 	mustBatch(t, err)
-	effective := session.EffectiveInput{RunID: run, Inputs: []session.InputItem{{UserInput: &input}, {Inline: &session.AttributedInput{Actor: "skill/example", Purpose: session.PromptInstructions, Parts: []session.ContentPart{{Text: new(prepared[0])}}, Source: session.ContentSource{Description: "caller expanded skill", WorkspaceFile: &session.WorkspaceFileSource{Path: paths[0]}}}}}}
+	effective := session.EffectiveInput{RunID: run, Inputs: []session.InputItem{{UserInputID: &input}, {Inline: &session.AttributedInput{Actor: "skill/example", Purpose: session.PromptInstructions, Parts: []session.ContentPart{{Text: new(prepared[0])}}, Source: session.ContentSource{Description: "caller expanded skill", WorkspaceFile: &session.WorkspaceFileSource{Path: paths[0]}}}}}}
 	mustBatch(t, b.ReplaceInstructions(instructions))
 	mustBatch(t, b.ReplaceToolCatalog(catalog))
 	mustBatch(t, b.ReplaceModelBinding(binding))

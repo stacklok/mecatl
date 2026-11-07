@@ -20,7 +20,7 @@ func TestInteractionResponsePayloadPolicyBoundaries(t *testing.T) {
 				t.Run(fmt.Sprintf("%s/short=%t/%s", name, short, path), func(t *testing.T) {
 					s := interactionFixture(t, "pending")
 					id := s.state.view.lifecycle.pending
-					response := ModelResponse{RequestID: id, Terminal: ResponseTerminalOther, ProviderReason: new(string(make([]byte, 120))), Evidence: &ObservedEvidence{Detail: new(""), Correlation: new("")}, Usage: &InvocationUsage{Input: new(int64(0)), Output: new(int64(0)), CacheRead: new(int64(0)), CacheWrite: new(int64(0)), Reasoning: new(int64(0)), Raw: &OpaqueProviderData{Producer: "p", Format: "u", Version: 1, Data: make([]byte, 128)}}, Private: &OpaqueProviderData{Producer: "p", Format: "private", Version: 1, Data: make([]byte, 128)}, Items: []ResponseItem{{Content: &ResponseContent{Kind: ResponseContentOutput, Parts: []ContentPart{{Text: new("")}, {Media: &Media{Kind: MediaKindImage, MIMEType: "image/x", Source: MediaSourceInline, InlineData: make([]byte, 128)}}}}}}}
+					response := ModelResponse{RequestID: id, Terminal: ResponseTerminalOther, ProviderStopReason: new(string(make([]byte, 120))), Evidence: &ObservedEvidence{Detail: new(""), Correlation: new("")}, Usage: &InvocationUsage{Input: new(int64(0)), Output: new(int64(0)), CacheRead: new(int64(0)), CacheWrite: new(int64(0)), Reasoning: new(int64(0)), Raw: &OpaqueProviderData{Producer: "p", Format: "u", Version: 1, Data: make([]byte, 128)}}, Private: &OpaqueProviderData{Producer: "p", Format: "private", Version: 1, Data: make([]byte, 128)}, Items: []ResponseItem{{Content: &ResponseContent{Kind: ResponseContentOutput, Parts: []ContentPart{{Text: new("")}, {Media: &Media{Kind: MediaKindImage, MIMEType: "image/x", Source: MediaSourceInline, InlineData: make([]byte, 128)}}}}}}}
 					for range 8 {
 						response.Items = append(response.Items, ResponseItem{Call: &RequestedCall{Arguments: []byte{0xff}}})
 					}
@@ -45,7 +45,7 @@ func TestInteractionResponsePayloadPolicyBoundaries(t *testing.T) {
 					s.policy.PayloadLimits = limits
 					// Prove a Load rejection is caused by this response, not an earlier
 					// fact made inadmissible by the deliberately tighter payload policy.
-					_, err := Load(context.Background(), s.history, id.RunID.HistoryID, s.policy)
+					_, err := Load(context.Background(), s.history, id.runID.historyID, s.policy)
 					interactionCheck(t, err)
 					before := detachedSessionState(s.state)
 					switch path {
@@ -61,12 +61,12 @@ func TestInteractionResponsePayloadPolicyBoundaries(t *testing.T) {
 					case "apply":
 						err = s.Apply(c)
 					case "load":
-						result, e := s.history.Append(context.Background(), id.RunID.HistoryID, c.Commit)
+						result, e := s.history.Append(context.Background(), id.runID.historyID, c.Commit)
 						interactionCheck(t, e)
 						if result.Status != history.StatusAccepted {
 							t.Fatal("History response admission")
 						}
-						_, err = Load(context.Background(), s.history, id.RunID.HistoryID, s.policy)
+						_, err = Load(context.Background(), s.history, id.runID.historyID, s.policy)
 					}
 					if short {
 						if !errors.Is(err, codec.ErrLimitExceeded) || !reflect.DeepEqual(before, detachedSessionState(s.state)) {
@@ -101,7 +101,7 @@ func TestInteractionOutcomePolicyBoundaries(t *testing.T) {
 					id := s.state.view.lifecycle.pending
 					records := []Record{
 						interactionRecord(t)(NewModelResponseRecord(ModelResponse{RequestID: id, Terminal: ResponseTerminalNormal, Private: &OpaqueProviderData{Producer: "p", Format: "f", Version: 1, Data: []byte{0xff}}}, s.policy.PayloadLimits)),
-						interactionRecord(t)(NewRunEndedRecord(RunEnded{RunID: id.RunID, Reason: RunEndedCompleted}, s.policy.PayloadLimits)),
+						interactionRecord(t)(NewRunEndedRecord(RunEnded{RunID: id.runID, Reason: RunEndedCompleted}, s.policy.PayloadLimits)),
 					}
 					c := interactionCommit(t, s, records)
 					p := s.policy
@@ -144,13 +144,13 @@ func TestInteractionOutcomePolicyBoundaries(t *testing.T) {
 					case "apply":
 						err = s.Apply(c)
 					case "load":
-						result, e := s.history.Append(context.Background(), id.RunID.HistoryID, c.Commit)
+						result, e := s.history.Append(context.Background(), id.runID.historyID, c.Commit)
 						interactionCheck(t, e)
 						if result.Status != history.StatusAccepted {
 							t.Fatal("memory History acceptance")
 						}
 						var loaded *Session
-						loaded, err = Load(context.Background(), s.history, id.RunID.HistoryID, p)
+						loaded, err = Load(context.Background(), s.history, id.runID.historyID, p)
 						if err != nil && loaded != nil {
 							t.Fatal("failed load published partial state")
 						}
@@ -179,7 +179,7 @@ func TestInteractionMinimalEndingEnvelopeWidths(t *testing.T) {
 					interactionCheck(t, b.ReplaceInstructions(Instructions{HistoryID: s.Snapshot().HistoryID()}))
 				})
 			}
-			for _, reason := range []RunEndedReason{RunEndedError, RunEndedLimit, RunEndedCancelled, RunEndedInterrupted, RunEndedCaptureFailed} {
+			for _, reason := range []RunEndedReason{RunEndedError, RunEndedLimit, RunEndedInterrupted, RunEndedCaptureFailed} {
 				ending, err := s.prepareEnding(reason)
 				interactionCheck(t, err)
 				if ending.commit.Sequence != next {

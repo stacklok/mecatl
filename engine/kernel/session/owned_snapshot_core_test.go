@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"math"
 	"sync"
 	"testing"
 
@@ -80,7 +79,7 @@ func TestOwnedCoreLifecycleSnapshotsAndReplay(t *testing.T) {
 		t.Fatal(err)
 	}
 	content[0] = 0
-	if input.RunID != run || input.Ordinal != 1 {
+	if input.RunID() != run || input.Validate() != nil {
 		t.Fatal("input identity")
 	}
 	if s.Snapshot().RecordCount() != 0 {
@@ -88,7 +87,7 @@ func TestOwnedCoreLifecycleSnapshotsAndReplay(t *testing.T) {
 	}
 	ownedCoreSubmit(t, s, b)
 	old := s.Snapshot()
-	oldRun, oldInput := old.RunAt(0), lookupInput(t, old, run, input.Ordinal)
+	oldRun, oldInput := old.RunAt(0), lookupInput(t, old, run, 1)
 	oldRecord := oldRun.RecordAt(1)
 	if _, ok := old.RecordAt(0).Created(); !ok {
 		t.Fatal("creation kind")
@@ -152,7 +151,7 @@ func TestOwnedCoreLifecycleSnapshotsAndReplay(t *testing.T) {
 		t.Fatal(err)
 	}
 	nextInput, err := b.AddUserInput(session.AddUserInputRequest{RunID: next})
-	if err != nil || nextInput.Ordinal != 1 {
+	if err != nil || nextInput.RunID() != next {
 		t.Fatalf("new run numbering: %v", err)
 	}
 	ownedCoreSubmit(t, s, b)
@@ -225,7 +224,7 @@ func TestOwnedCoreApplyAtomicityAndImportedStorage(t *testing.T) {
 	for _, r := range c.Records {
 		clear(r.Payload)
 	}
-	if string(inputBytes(lookupInput(t, s.Snapshot(), session.RunID{HistoryID: id, Ordinal: 1}, 1))) != "exact" {
+	if string(inputBytes(lookupInput(t, s.Snapshot(), s.Snapshot().ActiveRun(), 1))) != "exact" {
 		t.Fatal("imported payload alias")
 	}
 }
@@ -251,14 +250,10 @@ func TestOwnedCoreReserveRejectionAndScopedContracts(t *testing.T) {
 		t.Fatal(err)
 	}
 	ownedCoreSubmit(t, s, b)
-	if first.Ordinal != 1 {
+	if first != allocatedRun(t, id, 1) {
 		t.Fatal("provisional run")
 	}
-	inputID := session.UserInputID{RunID: session.RunID{HistoryID: id, Ordinal: 2}, Ordinal: math.MaxUint64}
-	if _, err := inputID.Next(); !errors.Is(err, session.ErrOrdinalExhausted) {
-		t.Fatal(err)
-	}
-	inputID.Ordinal = 1
+	inputID := allocatedInput(t, allocatedRun(t, id, 2), 1)
 	r, err := session.NewUserInputRecord(session.UserInput{ID: inputID, Parts: byteParts([]byte{0xff})}, p.PayloadLimits)
 	if err != nil {
 		t.Fatal(err)

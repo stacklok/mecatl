@@ -28,10 +28,10 @@ func NewRunStartedRecord(v RunStarted, limits codec.Limits) (Record, error) {
 	if err := v.Validate(); err != nil {
 		return Record{}, codec.ErrInvalidData
 	}
-	fact := sessionformat.RunStarted{ID: v.ID.Ordinal}
+	fact := sessionformat.RunStarted{ID: v.ID.ordinal}
 	payload, err := codec.Encode(fact, limits)
 	if err != nil {
 		return Record{}, err
 	}
-	return Record{scope: v.ID.HistoryID, runStarted: fact, value: format.Record{Kind: sessionformat.KindRunStarted, KindVersion: sessionformat.Version, Payload: payload}}, nil
+	return Record{scope: v.ID.historyID, runStarted: fact, value: format.Record{Kind: sessionformat.KindRunStarted, KindVersion: sessionformat.Version, Payload: payload}}, nil
 }

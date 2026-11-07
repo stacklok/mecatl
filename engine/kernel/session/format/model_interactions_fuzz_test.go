@@ -15,21 +15,21 @@ import (
 // ReadCBOR must reject without replacing an existing receiver, independently of
 // the allocating Decode entry point.
 func FuzzModelInteractionDecode(f *testing.F) {
-	request := format.ModelRequest{RunID: 1, Ordinal: 2, Source: format.SourceHead{Sequence: 24, CID: contentid.Sum([]byte("head"))}, Recipe: format.ConstructionRecipe{Algorithm: "unknown", Version: 19, Parameters: []byte{0xff}, Check: []byte{0}}, RetryOf: new(uint64(1))}
+	request := format.ModelRequest{RunID: 1, ID: 2, Source: format.SourceHead{Sequence: 24, CID: contentid.Sum([]byte("head"))}, Recipe: format.ConstructionRecipe{Algorithm: "unknown", Version: 19, Parameters: []byte{0xff}, Check: []byte{0}}, RetryOf: new(uint64(1))}
 	usage := &format.InvocationUsage{Input: new(int64(0)), Output: new(int64(math.MaxInt64)), CacheRead: new(int64(2)), CacheWrite: new(int64(3)), Reasoning: new(int64(4)), Raw: &format.OpaqueProviderData{Producer: "p", Format: "usage", Version: 1, Data: []byte{0xff}}}
-	response := format.ModelResponse{RunID: 1, RequestOrdinal: 2, Terminal: format.ResponseTerminalOther, ProviderReason: new(""), Items: []format.ResponseItem{{Content: &format.ResponseContent{Kind: format.ResponseContentReasoning, Parts: []format.ContentPart{{Text: new("")}}}}, {Call: &format.RequestedCall{Name: "", Arguments: []byte{0xff}}}, {Content: &format.ResponseContent{Kind: format.ResponseContentRefusal}}}, Evidence: &format.ObservedEvidence{Correlation: new("")}, Usage: usage, Private: &format.OpaqueProviderData{Producer: "p", Format: "unknown", Version: 7, Data: []byte{0, 0xff}}}
-	failure := format.InvocationFailure{RunID: 1, RequestOrdinal: 2, Class: format.InvocationFailureTransport, Explanation: new(""), Usage: usage}
-	ending := format.RunEnded{RunID: 1, Reason: format.RunEndedCaptureFailed, Capture: &format.CaptureFailureEvidence{RequestOrdinal: 2, Usage: usage, Evidence: &format.ObservedEvidence{Detail: new("")}}}
+	response := format.ModelResponse{RunID: 1, RequestID: 2, Terminal: format.ResponseTerminalOther, ProviderStopReason: new(""), Items: []format.ResponseItem{{Content: &format.ResponseContent{Kind: format.ResponseContentReasoning, Parts: []format.ContentPart{{Text: new("")}}}}, {Call: &format.RequestedCall{Name: "", Arguments: []byte{0xff}}}, {Content: &format.ResponseContent{Kind: format.ResponseContentRefusal}}}, Evidence: &format.ObservedEvidence{Correlation: new("")}, Usage: usage, Private: &format.OpaqueProviderData{Producer: "p", Format: "unknown", Version: 7, Data: []byte{0, 0xff}}}
+	failure := format.InvocationFailure{RunID: 1, RequestID: 2, Class: format.InvocationFailureTransport, Explanation: new(""), Usage: usage}
+	ending := format.RunEnded{RunID: 1, Reason: format.RunEndedCaptureFailed, Capture: &format.CaptureFailureEvidence{RequestID: 2, Usage: usage, Evidence: &format.ObservedEvidence{Detail: new("")}}}
 	for kind, root := range []codec.Marshaler{request, response, failure, ending} {
 		f.Add(uint8(kind), root.AppendCBOR(nil))
 	}
 	for _, root := range []format.ModelResponse{
-		{RunID: 1, RequestOrdinal: 1, Terminal: format.ResponseTerminalNormal},
-		{RunID: 1, RequestOrdinal: 1, Terminal: format.ResponseTerminalError, Private: response.Private},
-		{RunID: 1, RequestOrdinal: 1, Terminal: format.ResponseTerminalNormal, Items: []format.ResponseItem{{}}},
-		{RunID: 1, RequestOrdinal: 1, Terminal: format.ResponseTerminalNormal, Items: []format.ResponseItem{{Content: &format.ResponseContent{Kind: format.ResponseContentOutput}, Call: &format.RequestedCall{}}}},
-		{RunID: 1, RequestOrdinal: 1, Terminal: format.ResponseTerminalNormal, Usage: &format.InvocationUsage{Input: new(int64(-1))}},
-		{RunID: 1, RequestOrdinal: 1, Terminal: format.ResponseTerminalNormal, Private: &format.OpaqueProviderData{Producer: "p", Format: "f", Version: 0}},
+		{RunID: 1, RequestID: 1, Terminal: format.ResponseTerminalNormal},
+		{RunID: 1, RequestID: 1, Terminal: format.ResponseTerminalError, Private: response.Private},
+		{RunID: 1, RequestID: 1, Terminal: format.ResponseTerminalNormal, Items: []format.ResponseItem{{}}},
+		{RunID: 1, RequestID: 1, Terminal: format.ResponseTerminalNormal, Items: []format.ResponseItem{{Content: &format.ResponseContent{Kind: format.ResponseContentOutput}, Call: &format.RequestedCall{}}}},
+		{RunID: 1, RequestID: 1, Terminal: format.ResponseTerminalNormal, Usage: &format.InvocationUsage{Input: new(int64(-1))}},
+		{RunID: 1, RequestID: 1, Terminal: format.ResponseTerminalNormal, Private: &format.OpaqueProviderData{Producer: "p", Format: "f", Version: 0}},
 	} {
 		f.Add(uint8(1), root.AppendCBOR(nil))
 	}

@@ -127,7 +127,7 @@ func (b *SessionCommit) Create() error {
 	return b.add(NewCreatedRecord(Created{HistoryID: b.owner.state.view.historyID}, b.owner.policy.PayloadLimits))
 }
 
-// AddUserInput assigns the next provisional ordinal in the explicitly named active
+// AddUserInput allocates a provisional identity in the explicitly named active
 // run. It owns encoded content before returning; failure consumes no ID or slot.
 func (b *SessionCommit) AddUserInput(request AddUserInputRequest) (UserInputID, error) {
 	if err := b.check(true); err != nil {
@@ -141,7 +141,7 @@ func (b *SessionCommit) AddUserInput(request AddUserInputRequest) (UserInputID, 
 	if err != nil {
 		return UserInputID{}, err
 	}
-	id := UserInputID{RunID: request.RunID, Ordinal: ordinal}
+	id := UserInputID{runID: request.RunID, ordinal: ordinal}
 	if err := b.add(NewUserInputRecord(UserInput{ID: id, Parts: request.Parts}, s.policy.PayloadLimits)); err != nil {
 		return UserInputID{}, err
 	}
@@ -184,7 +184,7 @@ func (b *SessionCommit) ReplaceModelBinding(v ModelBinding) error {
 	return b.add(NewModelBindingRecord(v, b.owner.policy.PayloadLimits))
 }
 
-// StartRun assigns the next provisional history-relative run ID. Input-free runs
+// StartRun allocates a provisional history-scoped run identity. Input-free runs
 // are legal. Failed additions consume neither IDs nor batch space.
 func (b *SessionCommit) StartRun() (RunID, error) {
 	if err := b.check(true); err != nil {
@@ -195,7 +195,7 @@ func (b *SessionCommit) StartRun() (RunID, error) {
 	if err != nil {
 		return RunID{}, err
 	}
-	id := RunID{HistoryID: s.state.view.historyID, Ordinal: ordinal}
+	id := RunID{historyID: s.state.view.historyID, ordinal: ordinal}
 	if err := b.add(NewRunStartedRecord(RunStarted{ID: id}, s.policy.PayloadLimits)); err != nil {
 		return RunID{}, err
 	}
@@ -232,7 +232,7 @@ type AddModelRequestRequest struct {
 	RetryOf *ModelRequestID
 }
 
-// AddModelRequest assigns the next provisional same-run invocation identity.
+// AddModelRequest allocates a provisional same-run invocation identity.
 // Failure consumes no identity. Prerequisites come from the pinned accepted source.
 func (b *SessionCommit) AddModelRequest(v AddModelRequestRequest) (ModelRequestID, error) {
 	if err := b.check(true); err != nil {
@@ -245,7 +245,7 @@ func (b *SessionCommit) AddModelRequest(v AddModelRequestRequest) (ModelRequestI
 	if err != nil {
 		return ModelRequestID{}, err
 	}
-	id := ModelRequestID{RunID: v.RunID, Ordinal: ordinal}
+	id := ModelRequestID{runID: v.RunID, requestOrdinal: ordinal}
 	if err := b.add(NewModelRequestRecord(ModelRequest{ID: id, Source: v.Source, Recipe: v.Recipe, RetryOf: v.RetryOf}, b.owner.policy.PayloadLimits)); err != nil {
 		return ModelRequestID{}, err
 	}

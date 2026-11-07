@@ -19,7 +19,9 @@ func TestContextActualReserveAndSoftBounds(t *testing.T) {
 	contextRecord, err := session.NewInstructionsRecord(instructions, testLimits())
 	mustBatch(t, err)
 	initial := []session.Record{createdRecord(t), startRecord(t, 1), contextRecord}
-	closed := append(append([]session.Record{}, initial...), closeoutRecord(t, 1))
+	largestEnding, err := session.NewRunEndedRecord(session.RunEnded{RunID: allocatedRun(t, scope, 1), Reason: session.RunEndedCaptureFailed}, testLimits())
+	mustBatch(t, err)
+	closed := append(append([]session.Record{}, initial...), largestEnding)
 	for _, dimension := range []string{"records", "bytes", "work"} {
 		for _, mode := range []string{"exact", "one-short", "soft-ordinary", "soft-mixed"} {
 			t.Run(fmt.Sprintf("%s/%s", dimension, mode), func(t *testing.T) {

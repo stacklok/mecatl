@@ -5,6 +5,8 @@ import (
 	"unicode/utf8"
 )
 
+// ResponseContent.Kind values form a closed vocabulary; empty and unknown kinds
+// are rejected.
 const (
 	// ResponseContentOutput encodes ordinary model output.
 	ResponseContentOutput = "output"
@@ -12,6 +14,11 @@ const (
 	ResponseContentReasoning = "reasoning"
 	// ResponseContentRefusal encodes a model refusal.
 	ResponseContentRefusal = "refusal"
+)
+
+// Normalized ModelResponse.Terminal classes form a closed vocabulary. Empty and
+// unknown classes are rejected; ProviderStopReason remains provider-owned.
+const (
 	// ResponseTerminalNormal encodes a normal terminal response.
 	ResponseTerminalNormal = "normal"
 	// ResponseTerminalLimit encodes a provider limit terminal response.
@@ -26,76 +33,17 @@ const (
 	ResponseTerminalOther = "other"
 )
 
-// OpaqueProviderData retains producer-owned exact bytes. The session does not
-// interpret the format or payload. Assignment shares Data; Clone detaches it.
-//
-//cborgen:validate Validate
-type OpaqueProviderData struct {
-	Producer string `cbor:"p"`
-	Format   string `cbor:"f"`
-	Version  int64  `cbor:"v"`
-	Data     []byte `cbor:"d"`
-}
-
-// Validate checks identifiers and version, not payload semantics.
-func (v OpaqueProviderData) Validate() error {
-	if v.Producer == "" || v.Format == "" || !utf8.ValidString(v.Producer) || !utf8.ValidString(v.Format) || v.Version <= 0 {
-		return errors.New("opaque provider data requires UTF-8 producer, format, and positive version")
-	}
-	return nil
-}
-
-// InvocationUsage retains optional reported counters and optional usage-only raw
-// evidence. Input and Output are inclusive counts; CacheRead, CacheWrite, and
-// Reasoning are breakdowns rather than additional spend. Nil counters are absent
-// and distinct from reported zero.
-//
-//cborgen:validate Validate
-type InvocationUsage struct {
-	Input      *int64              `cbor:"i,omitempty"`
-	Output     *int64              `cbor:"o,omitempty"`
-	CacheRead  *int64              `cbor:"r,omitempty"`
-	CacheWrite *int64              `cbor:"w,omitempty"`
-	Reasoning  *int64              `cbor:"n,omitempty"`
-	Raw        *OpaqueProviderData `cbor:"x,omitempty"`
-}
-
-// Validate checks nonnegative reported counters, not accounting equations.
-func (v InvocationUsage) Validate() error {
-	for _, n := range []*int64{v.Input, v.Output, v.CacheRead, v.CacheWrite, v.Reasoning} {
-		if n != nil && *n < 0 {
-			return errors.New("usage count must be nonnegative")
-		}
-	}
-	return nil
-}
-
-// ObservedEvidence retains optional safe observed detail and correlation without
-// asserting remote effects. Nil is absent; non-nil empty strings are preserved.
-//
-//cborgen:validate Validate
-type ObservedEvidence struct {
-	Detail      *string `cbor:"d,omitempty"`
-	Correlation *string `cbor:"c,omitempty"`
-}
-
-// Validate checks UTF-8 only; callers are responsible for disclosure safety.
-func (v ObservedEvidence) Validate() error {
-	for _, s := range []*string{v.Detail, v.Correlation} {
-		if s != nil && !utf8.ValidString(*s) {
-			return errors.New("observed evidence must be UTF-8")
-		}
-	}
-	return nil
-}
-
-// RequestedCall retains one complete requested-call occurrence. Name and arguments
-// are exact opaque adapter output: empty names and invalid or empty JSON are valid.
-// Assignment shares Arguments; Clone detaches them.
+// RequestedCall retains one complete requested-call occurrence in response order.
+// Name and Arguments are exact opaque adapter output: empty names and invalid or
+// empty JSON are valid. Arguments may be nil or empty, which are equivalent empty
+// bytes. Assignment shares Arguments; Clone detaches them.
 //
 //cborgen:validate Validate
 type RequestedCall struct {
-	Name      string `cbor:"n"`
+	// Name is UTF-8 adapter output. It may be empty or unknown to the session.
+	Name string `cbor:"n"`
+	// Arguments are opaque adapter output and are not required to be JSON. Nil and
+	// empty are equivalent empty bytes; validation does not interpret them.
 	Arguments []byte `cbor:"a"`
 }
 
@@ -107,12 +55,17 @@ func (v RequestedCall) Validate() error {
 	return nil
 }
 
-// ResponseContent is one content branch. Parts preserves order; nil and empty are
-// valid explicitly empty content. Assignment shares parts; Clone detaches them.
+// ResponseContent is one ordered content branch. Kind selects a closed content
+// meaning; Parts preserves order, duplicates, and boundaries. Parts may be nil or
+// empty, which are equivalent explicitly empty content. Assignment shares parts;
+// Clone detaches them.
 //
 //cborgen:validate Validate
 type ResponseContent struct {
-	Kind  string        `cbor:"k"`
+	// Kind is required and must be a ResponseContent closed-vocabulary value.
+	Kind string `cbor:"k"`
+	// Parts are ordered content parts for Kind. Nil and empty are equivalent empty
+	// content; codec traversal validates each part.
 	Parts []ContentPart `cbor:"p"`
 }
 
@@ -127,12 +80,16 @@ func (v ResponseContent) Validate() error {
 }
 
 // ResponseItem preserves one ordered response occurrence. Exactly one branch is
-// required. Assignment shares children; Clone detaches them.
+// required; assignment shares its selected child and Clone detaches it.
 //
 //cborgen:validate Validate
 type ResponseItem struct {
+	// Content is the optional content branch. It is mutually exclusive with Call;
+	// codec traversal validates it when present.
 	Content *ResponseContent `cbor:"c,omitempty"`
-	Call    *RequestedCall   `cbor:"a,omitempty"`
+	// Call is the optional requested-call branch. It is mutually exclusive with
+	// Content; codec traversal validates it when present.
+	Call *RequestedCall `cbor:"a,omitempty"`
 }
 
 // Validate checks branch exclusivity only; codec traversal validates the child.
@@ -149,19 +106,36 @@ func (v ResponseItem) Validate() error {
 //
 //cborgen:validate Validate
 type ModelResponse struct {
-	RunID          uint64              `cbor:"r"`
-	RequestOrdinal uint64              `cbor:"q"`
-	Terminal       string              `cbor:"t"`
-	ProviderReason *string             `cbor:"p,omitempty"`
-	Items          []ResponseItem      `cbor:"i"`
-	Evidence       *ObservedEvidence   `cbor:"e,omitempty"`
-	Usage          *InvocationUsage    `cbor:"u,omitempty"`
-	Private        *OpaqueProviderData `cbor:"x,omitempty"`
+	// RunID is the required positive numeric run component within the history
+	// supplied by the enclosing envelope.
+	RunID uint64 `cbor:"r"`
+	// RequestID is the required positive numeric request component within RunID.
+	// Payload validation checks positivity, not accepted request membership.
+	RequestID uint64 `cbor:"q"`
+	// Terminal is a required normalized ResponseTerminal class; empty and unknown
+	// classes are rejected independently of the original provider stop reason.
+	Terminal string `cbor:"t"`
+	// ProviderStopReason retains the provider's original stop/finish reason, not
+	// reasoning content or a reasoning summary. The vocabulary is provider-owned
+	// and open; any UTF-8 string is allowed. Nil omits key p; non-nil empty is retained.
+	ProviderStopReason *string `cbor:"p,omitempty"`
+	// Items preserve complete response order, including content/call interleaving.
+	// Nil and empty are equivalent empty responses; codec traversal validates items.
+	Items []ResponseItem `cbor:"i"`
+	// Evidence is optional diagnostic observation. Nil omits it; traversal validates
+	// only its local UTF-8 contract, not disclosure safety or remote effects.
+	Evidence *ObservedEvidence `cbor:"e,omitempty"`
+	// Usage is optional provider-reported usage. Nil omits it; traversal validates
+	// its local counters and optional opaque metadata.
+	Usage *InvocationUsage `cbor:"u,omitempty"`
+	// Private is optional response-wide opaque provider data, not per-item identity.
+	// Nil omits it; traversal validates metadata but does not interpret its bytes.
+	Private *OpaqueProviderData `cbor:"x,omitempty"`
 }
 
 // Validate checks local identity, terminal class and optional UTF-8 reason.
 func (v ModelResponse) Validate() error {
-	if v.RunID == 0 || v.RequestOrdinal == 0 {
+	if v.RunID == 0 || v.RequestID == 0 {
 		return errors.New("response requires positive run and request ordinals")
 	}
 	switch v.Terminal {
@@ -169,8 +143,8 @@ func (v ModelResponse) Validate() error {
 	default:
 		return errors.New("unknown response terminal class")
 	}
-	if v.ProviderReason != nil && !utf8.ValidString(*v.ProviderReason) {
-		return errors.New("provider reason must be UTF-8")
+	if v.ProviderStopReason != nil && !utf8.ValidString(*v.ProviderStopReason) {
+		return errors.New("provider stop reason must be UTF-8")
 	}
 	return nil
 }

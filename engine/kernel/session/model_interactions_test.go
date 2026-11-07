@@ -13,8 +13,8 @@ import (
 
 func TestModelInteractionValuesCloneAndScope(t *testing.T) {
 	historyID := testHistoryID(t)
-	run := session.RunID{HistoryID: historyID, Ordinal: 1}
-	request := session.ModelRequest{ID: session.ModelRequestID{RunID: run, Ordinal: 2}, Source: session.SourceHead{Sequence: 1, CID: contentid.Sum([]byte("head"))}, Recipe: session.ConstructionRecipe{Algorithm: "example/v1", Version: 1, Parameters: []byte{}, Check: []byte("check")}}
+	run := allocatedRun(t, historyID, 1)
+	request := session.ModelRequest{ID: allocatedRequest(t, run, 2), Source: session.SourceHead{Sequence: 1, CID: contentid.Sum([]byte("head"))}, Recipe: session.ConstructionRecipe{Algorithm: "example/v1", Version: 1, Parameters: []byte{}, Check: []byte("check")}}
 	if err := request.Validate(); err != nil {
 		t.Fatal(err)
 	}
@@ -24,14 +24,14 @@ func TestModelInteractionValuesCloneAndScope(t *testing.T) {
 		t.Fatal("request clone shares check bytes")
 	}
 	foreign := requestCopy
-	foreign.RetryOf = &session.ModelRequestID{RunID: session.RunID{HistoryID: historyID, Ordinal: 2}, Ordinal: 1}
+	foreign.RetryOf = new(allocatedRequest(t, allocatedRun(t, historyID, 2), 1))
 	if !errors.Is(foreign.Validate(), codec.ErrInvalidData) {
 		t.Fatal("foreign retry scope validated")
 	}
 
 	zero := int64(0)
 	empty := ""
-	response := session.ModelResponse{RequestID: requestCopy.ID, Terminal: session.ResponseTerminalNormal, ProviderReason: &empty, Items: []session.ResponseItem{{Content: &session.ResponseContent{Kind: session.ResponseContentOutput, Parts: []session.ContentPart{{Text: &empty}}}}, {Call: &session.RequestedCall{Name: "", Arguments: []byte("not json")}}}, Usage: &session.InvocationUsage{Input: &zero}, Private: &session.OpaqueProviderData{Producer: "provider", Format: "raw", Version: 1, Data: []byte{1}}}
+	response := session.ModelResponse{RequestID: requestCopy.ID, Terminal: session.ResponseTerminalNormal, ProviderStopReason: &empty, Items: []session.ResponseItem{{Content: &session.ResponseContent{Kind: session.ResponseContentOutput, Parts: []session.ContentPart{{Text: &empty}}}}, {Call: &session.RequestedCall{Name: "", Arguments: []byte("not json")}}}, Usage: &session.InvocationUsage{Input: &zero}, Private: &session.OpaqueProviderData{Producer: "provider", Format: "raw", Version: 1, Data: []byte{1}}}
 	if err := response.Validate(); err != nil {
 		t.Fatal(err)
 	}
@@ -41,21 +41,21 @@ func TestModelInteractionValuesCloneAndScope(t *testing.T) {
 	if !bytes.Equal(clone.Items[1].Call.Arguments, []byte("not json")) || clone.Private.Data[0] != 1 || clone.Usage.Input == response.Usage.Input {
 		t.Fatal("response clone aliases mutable storage")
 	}
-	if clone.Usage.Input == nil || *clone.Usage.Input != 0 || clone.ProviderReason == nil || *clone.ProviderReason != "" {
+	if clone.Usage.Input == nil || *clone.Usage.Input != 0 || clone.ProviderStopReason == nil || *clone.ProviderStopReason != "" {
 		t.Fatal("zero or explicit empty was lost")
 	}
 }
 
 func TestRunEndedEqualPreservesCaptureRequestScope(t *testing.T) {
-	run := session.RunID{HistoryID: testHistoryID(t), Ordinal: 1}
-	ending := session.RunEnded{RunID: run, Reason: session.RunEndedCaptureFailed, Capture: &session.CaptureFailureEvidence{RequestID: session.ModelRequestID{RunID: run, Ordinal: 1}}}
+	run := allocatedRun(t, testHistoryID(t), 1)
+	ending := session.RunEnded{RunID: run, Reason: session.RunEndedCaptureFailed, Capture: &session.CaptureFailureEvidence{RequestID: allocatedRequest(t, run, 1)}}
 	for name, requestRun := range map[string]session.RunID{
-		"ordinal":    {HistoryID: run.HistoryID, Ordinal: 2},
-		"history ID": {HistoryID: historyid.NewHistoryID(), Ordinal: run.Ordinal},
+		"run":        allocatedRun(t, run.HistoryID(), 2),
+		"history ID": allocatedRun(t, historyid.NewHistoryID(), 1),
 	} {
 		t.Run(name, func(t *testing.T) {
 			other := ending.Clone()
-			other.Capture.RequestID.RunID = requestRun
+			other.Capture.RequestID = allocatedRequest(t, requestRun, 1)
 			if ending.Equal(other) || other.Equal(ending) {
 				t.Fatal("ending equality erased capture request scope")
 			}
@@ -64,8 +64,8 @@ func TestRunEndedEqualPreservesCaptureRequestScope(t *testing.T) {
 }
 
 func TestInteractionFailuresAndEndingScope(t *testing.T) {
-	run := session.RunID{HistoryID: testHistoryID(t), Ordinal: 1}
-	request := session.ModelRequestID{RunID: run, Ordinal: 1}
+	run := allocatedRun(t, testHistoryID(t), 1)
+	request := allocatedRequest(t, run, 1)
 	failure := session.InvocationFailure{RequestID: request, Class: session.InvocationFailureTransport}
 	if err := failure.Validate(); err != nil {
 		t.Fatal(err)
@@ -79,7 +79,7 @@ func TestInteractionFailuresAndEndingScope(t *testing.T) {
 		t.Fatal("capture evidence accepted for non-capture ending")
 	}
 	ending.Reason = session.RunEndedCaptureFailed
-	ending.Capture.RequestID.RunID.Ordinal = 2
+	ending.Capture.RequestID = allocatedRequest(t, allocatedRun(t, run.HistoryID(), 2), 1)
 	if !errors.Is(ending.Validate(), codec.ErrInvalidData) {
 		t.Fatal("foreign capture request scope validated")
 	}

@@ -36,7 +36,7 @@ func TestRecordOriginatingScope(t *testing.T) {
 			applyRecords(t, s, decoded)
 		}
 		v := s.Snapshot()
-		if v.RunAt(0).ID().HistoryID != id || lookupInput(t, v, session.RunID{HistoryID: id, Ordinal: 1}, 1).ID().RunID.HistoryID != id {
+		if v.RunAt(0).ID().HistoryID() != id || lookupInput(t, v, v.RunAt(0).ID(), 1).ID().RunID().HistoryID() != id {
 			t.Fatal("decoded scope lost")
 		}
 	}
@@ -54,8 +54,8 @@ func TestSessionLocalOrdinalsBindToVerifiedChain(t *testing.T) {
 	mustBatch(t, err)
 	mustBatch(t, other.Apply(accepted))
 	got := other.Snapshot()
-	run := session.RunID{HistoryID: foreign, Ordinal: 1}
-	if got.HistoryID() != foreign || got.ActiveRun() != run || got.RunAt(0).ID() != run || lookupInput(t, got, run, 1).ID() != (session.UserInputID{RunID: run, Ordinal: 1}) {
+	run := allocatedRun(t, foreign, 1)
+	if got.HistoryID() != foreign || got.ActiveRun() != run || got.RunAt(0).ID() != run || lookupInput(t, got, run, 1).ID() != allocatedInput(t, run, 1) {
 		t.Fatal("local ordinals not scoped to verified chain")
 	}
 	assertRejected(t, local, accepted, session.ErrIdentity)

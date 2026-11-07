@@ -69,7 +69,7 @@ func decodeAccepted(v format.Record, limits codec.Limits) (*acceptedRecord, erro
 // the shared reducer. All backing storage is already private and immutable.
 func (r *acceptedRecord) metadata(scope historyid.HistoryID) Record {
 	out := Record{scope: scope, value: r.value,
-		userInput:      UserInputID{RunID: RunID{HistoryID: scope, Ordinal: r.input.RunID}, Ordinal: r.input.ID},
+		userInput:      UserInputID{runID: RunID{historyID: scope, ordinal: r.input.RunID}, ordinal: r.input.ID},
 		runStarted:     r.started,
 		runEnded:       endedFromFormat(scope, r.ended),
 		modelRequest:   requestFromFormat(scope, r.request),
@@ -77,14 +77,14 @@ func (r *acceptedRecord) metadata(scope historyid.HistoryID) Record {
 	}
 	switch r.value.Kind {
 	case sessionformat.KindModelResponse:
-		out.outcome = requestID(scope, r.response.RunID, r.response.RequestOrdinal)
+		out.outcome = requestID(scope, r.response.RunID, r.response.RequestID)
 		for _, item := range r.response.Items {
 			if item.Call != nil {
 				out.calls++
 			}
 		}
 	case sessionformat.KindInvocationFailure:
-		out.outcome = requestID(scope, r.failure.RunID, r.failure.RequestOrdinal)
+		out.outcome = requestID(scope, r.failure.RunID, r.failure.RequestID)
 	}
 	return out
 }
@@ -141,7 +141,7 @@ func (v RecordView) RunStarted() (RunStarted, bool) {
 	if v.Kind() != sessionformat.KindRunStarted {
 		return RunStarted{}, false
 	}
-	return RunStarted{ID: RunID{HistoryID: v.scope, Ordinal: v.record.started.ID}}, true
+	return RunStarted{ID: RunID{historyID: v.scope, ordinal: v.record.started.ID}}, true
 }
 
 // RunEnded returns an immutable ending handle only for the ending kind.

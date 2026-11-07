@@ -43,13 +43,13 @@ func recordFixtures(t testing.TB) []struct {
 			return session.NewCreatedRecord(session.Created{HistoryID: h}, l)
 		}},
 		{"session.user_input", []byte("\xa3\x61i\x01\x61p\x81\xa1\x61t\x61x\x61r\x01"), func(l codec.Limits) (session.Record, error) {
-			return session.NewUserInputRecord(session.UserInput{ID: session.UserInputID{RunID: session.RunID{HistoryID: h, Ordinal: 1}, Ordinal: 1}, Parts: []session.ContentPart{{Text: new("x")}}}, l)
+			return session.NewUserInputRecord(session.UserInput{ID: allocatedInput(t, allocatedRun(t, h, 1), 1), Parts: []session.ContentPart{{Text: new("x")}}}, l)
 		}},
 		{"session.run_started", []byte("\xa1\x61r\x02"), func(l codec.Limits) (session.Record, error) {
-			return session.NewRunStartedRecord(session.RunStarted{ID: session.RunID{HistoryID: h, Ordinal: 2}}, l)
+			return session.NewRunStartedRecord(session.RunStarted{ID: allocatedRun(t, h, 2)}, l)
 		}},
-		{"session.run_ended", []byte("\xa2\x61e\x05\x61r\x02"), func(l codec.Limits) (session.Record, error) {
-			return session.NewRunEndedRecord(session.RunEnded{RunID: session.RunID{HistoryID: h, Ordinal: 2}, Reason: session.RunEndedInterrupted}, l)
+		{"session.run_ended", []byte("\xa2\x61e\x6binterrupted\x61r\x02"), func(l codec.Limits) (session.Record, error) {
+			return session.NewRunEndedRecord(session.RunEnded{RunID: allocatedRun(t, h, 2), Reason: session.RunEndedInterrupted}, l)
 		}},
 	}
 }

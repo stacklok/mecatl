@@ -38,7 +38,7 @@ func TestModelResponseViewEmptyAndFailureOutputs(t *testing.T) {
 	if response.Terminal() != "" || content.Kind() != "" || content.PartCount() != 0 || call.ID() != (RequestedCallID{}) || call.Name() != "" || call.Arguments() != nil || failure.Class() != "" {
 		t.Fatal("zero scalars")
 	}
-	if got, ok := response.ProviderReason(); ok || got != "" {
+	if got, ok := response.ProviderStopReason(); ok || got != "" {
 		t.Fatal("zero reason")
 	}
 	if got, ok := response.Evidence(); ok || !reflect.DeepEqual(got, ObservedEvidence{}) {
@@ -91,7 +91,7 @@ func TestModelResponseViewRepresentationOwnershipAndShortCircuit(t *testing.T) {
 	s := interactionFixture(t, "pending")
 	id := s.state.view.lifecycle.pending
 	usage := &InvocationUsage{Input: new(int64(0)), Output: new(int64(1)), CacheRead: new(int64(2)), CacheWrite: new(int64(3)), Reasoning: new(int64(4)), Raw: &OpaqueProviderData{Producer: "p", Format: "usage", Version: 1, Data: []byte{0xff, 0}}}
-	response := ModelResponse{RequestID: id, Terminal: ResponseTerminalOther, ProviderReason: new(""), Evidence: &ObservedEvidence{Detail: new(""), Correlation: new("opaque")}, Usage: usage, Private: &OpaqueProviderData{Producer: "p", Format: "unknown", Version: 19, Data: []byte{0xff, 0, 1}}, Items: []ResponseItem{
+	response := ModelResponse{RequestID: id, Terminal: ResponseTerminalOther, ProviderStopReason: new(""), Evidence: &ObservedEvidence{Detail: new(""), Correlation: new("opaque")}, Usage: usage, Private: &OpaqueProviderData{Producer: "p", Format: "unknown", Version: 19, Data: []byte{0xff, 0, 1}}, Items: []ResponseItem{
 		{Content: &ResponseContent{Kind: ResponseContentOutput, Parts: []ContentPart{{Text: new("")}, {Text: new("  exact\n")}, {Media: &Media{Kind: MediaKindImage, MIMEType: "image/unknown", Source: MediaSourceInline, InlineData: []byte{0xff, 0}}}}}},
 		{Call: &RequestedCall{Name: "", Arguments: []byte{}}},
 		{Content: &ResponseContent{Kind: ResponseContentReasoning}},
@@ -102,7 +102,7 @@ func TestModelResponseViewRepresentationOwnershipAndShortCircuit(t *testing.T) {
 	r := interactionRecord(t)(NewModelResponseRecord(response, s.policy.PayloadLimits))
 	// Mutation controls: each operation changes its own representation, but must
 	// not change the constructor's captured bytes or any accepted view.
-	*response.ProviderReason = "changed"
+	*response.ProviderStopReason = "changed"
 	*response.Evidence.Detail = "changed"
 	*response.Evidence.Correlation = "changed"
 	*response.Items[0].Content.Parts[0].Text = "changed"
@@ -131,7 +131,7 @@ func TestModelResponseViewRepresentationOwnershipAndShortCircuit(t *testing.T) {
 	if _, ok := record.RunEnded(); ok {
 		t.Fatal("wrong-kind ending")
 	}
-	if got, ok := view.ProviderReason(); !ok || got != "" {
+	if got, ok := view.ProviderStopReason(); !ok || got != "" {
 		t.Fatal("explicit empty reason")
 	}
 	evidence, _ := view.Evidence()
@@ -209,7 +209,7 @@ func TestModelResponseViewRepresentationOwnershipAndShortCircuit(t *testing.T) {
 	visits = 0
 	view.Calls()(func(v RequestedCallView) bool {
 		visits++
-		if v.ID().Ordinal != 1 {
+		if v.ID().ordinal != 1 {
 			t.Fatal("call ordinal")
 		}
 		return false

@@ -1033,13 +1033,13 @@ func (v UserInput) Equal(other UserInput) bool { return (cborgen{}).equal73(v, o
 // Helpers 0: CaptureFailureEvidence.
 func (h cborgen) clone0(v CaptureFailureEvidence) CaptureFailureEvidence {
 	out := v
-	out.RequestOrdinal = h.clone1(v.RequestOrdinal)
+	out.RequestID = h.clone1(v.RequestID)
 	out.Evidence = h.clone2(v.Evidence)
 	out.Usage = h.clone7(v.Usage)
 	return out
 }
 func (h cborgen) equal0(v, w CaptureFailureEvidence) bool {
-	if !h.equal1(v.RequestOrdinal, w.RequestOrdinal) {
+	if !h.equal1(v.RequestID, w.RequestID) {
 		return false
 	}
 	if !h.equal2(v.Evidence, w.Evidence) {
@@ -1075,10 +1075,10 @@ func (h cborgen) check0(v CaptureFailureEvidence, b *cborgenCodec.Budget, d, cap
 		}
 	}
 	if err := b.CheckString("q", d+1, int(^uint(0)>>1)); err != nil {
-		return cborgenFmt.Errorf("RequestOrdinal: %w", err)
+		return cborgenFmt.Errorf("RequestID: %w", err)
 	}
-	if err := h.check1(v.RequestOrdinal, b, d+1, int(^uint(0)>>1)); err != nil {
-		return cborgenFmt.Errorf("RequestOrdinal: %w", err)
+	if err := h.check1(v.RequestID, b, d+1, int(^uint(0)>>1)); err != nil {
+		return cborgenFmt.Errorf("RequestID: %w", err)
 	}
 	if v.Usage != nil {
 		if err := b.CheckString("u", d+1, int(^uint(0)>>1)); err != nil {
@@ -1104,7 +1104,7 @@ func (h cborgen) append0(out []byte, v CaptureFailureEvidence) []byte {
 		out = h.append2(out, v.Evidence)
 	}
 	out = cborgenCBOR.AppendText(out, "q")
-	out = h.append1(out, v.RequestOrdinal)
+	out = h.append1(out, v.RequestID)
 	if v.Usage != nil {
 		out = cborgenCBOR.AppendText(out, "u")
 		out = h.append7(out, v.Usage)
@@ -1142,9 +1142,9 @@ func (h cborgen) read0(r *cborgenCodec.Reader, d, cap int) (v CaptureFailureEvid
 			}
 		case "q":
 			seen[1] = true
-			v.RequestOrdinal, err = h.read1(r, d+1, int(^uint(0)>>1))
+			v.RequestID, err = h.read1(r, d+1, int(^uint(0)>>1))
 			if err != nil {
-				return v, cborgenFmt.Errorf("RequestOrdinal: %w", err)
+				return v, cborgenFmt.Errorf("RequestID: %w", err)
 			}
 		case "u":
 			seen[2] = true
@@ -2502,12 +2502,12 @@ func (h cborgen) read24(r *cborgenCodec.Reader, d, cap int) (v []InputItem, err 
 // Helpers 25: InputItem.
 func (h cborgen) clone25(v InputItem) InputItem {
 	out := v
-	out.UserInput = h.clone26(v.UserInput)
+	out.UserInputID = h.clone26(v.UserInputID)
 	out.Inline = h.clone27(v.Inline)
 	return out
 }
 func (h cborgen) equal25(v, w InputItem) bool {
-	if !h.equal26(v.UserInput, w.UserInput) {
+	if !h.equal26(v.UserInputID, w.UserInputID) {
 		return false
 	}
 	if !h.equal27(v.Inline, w.Inline) {
@@ -2525,7 +2525,7 @@ func (h cborgen) check25(v InputItem, b *cborgenCodec.Budget, d, cap int) (err e
 	if v.Inline != nil {
 		count++
 	}
-	if v.UserInput != nil {
+	if v.UserInputID != nil {
 		count++
 	}
 	if err := b.CheckMap(count, d, cap); err != nil {
@@ -2539,12 +2539,12 @@ func (h cborgen) check25(v InputItem, b *cborgenCodec.Budget, d, cap int) (err e
 			return cborgenFmt.Errorf("Inline: %w", err)
 		}
 	}
-	if v.UserInput != nil {
+	if v.UserInputID != nil {
 		if err := b.CheckString("u", d+1, int(^uint(0)>>1)); err != nil {
-			return cborgenFmt.Errorf("UserInput: %w", err)
+			return cborgenFmt.Errorf("UserInputID: %w", err)
 		}
-		if err := h.check26(v.UserInput, b, d+1, int(^uint(0)>>1)); err != nil {
-			return cborgenFmt.Errorf("UserInput: %w", err)
+		if err := h.check26(v.UserInputID, b, d+1, int(^uint(0)>>1)); err != nil {
+			return cborgenFmt.Errorf("UserInputID: %w", err)
 		}
 	}
 	return nil
@@ -2554,7 +2554,7 @@ func (h cborgen) append25(out []byte, v InputItem) []byte {
 	if v.Inline != nil {
 		count++
 	}
-	if v.UserInput != nil {
+	if v.UserInputID != nil {
 		count++
 	}
 	out = cborgenCBOR.AppendMapHeader(out, uint64(count))
@@ -2562,9 +2562,9 @@ func (h cborgen) append25(out []byte, v InputItem) []byte {
 		out = cborgenCBOR.AppendText(out, "i")
 		out = h.append27(out, v.Inline)
 	}
-	if v.UserInput != nil {
+	if v.UserInputID != nil {
 		out = cborgenCBOR.AppendText(out, "u")
-		out = h.append26(out, v.UserInput)
+		out = h.append26(out, v.UserInputID)
 	}
 	return out
 }
@@ -2599,9 +2599,9 @@ func (h cborgen) read25(r *cborgenCodec.Reader, d, cap int) (v InputItem, err er
 			}
 		case "u":
 			seen[1] = true
-			v.UserInput, err = h.read26(r, d+1, int(^uint(0)>>1))
+			v.UserInputID, err = h.read26(r, d+1, int(^uint(0)>>1))
 			if err != nil {
-				return v, cborgenFmt.Errorf("UserInput: %w", err)
+				return v, cborgenFmt.Errorf("UserInputID: %w", err)
 			}
 		default:
 			return v, cborgenCodec.ErrInvalidData
@@ -3847,7 +3847,7 @@ func (h cborgen) read41(r *cborgenCodec.Reader, d, cap int) (v []ContentPart, er
 func (h cborgen) clone42(v InvocationFailure) InvocationFailure {
 	out := v
 	out.RunID = h.clone1(v.RunID)
-	out.RequestOrdinal = h.clone1(v.RequestOrdinal)
+	out.RequestID = h.clone1(v.RequestID)
 	out.Class = h.clone5(v.Class)
 	out.Explanation = h.clone43(v.Explanation)
 	out.Evidence = h.clone44(v.Evidence)
@@ -3858,7 +3858,7 @@ func (h cborgen) equal42(v, w InvocationFailure) bool {
 	if !h.equal1(v.RunID, w.RunID) {
 		return false
 	}
-	if !h.equal1(v.RequestOrdinal, w.RequestOrdinal) {
+	if !h.equal1(v.RequestID, w.RequestID) {
 		return false
 	}
 	if !h.equal5(v.Class, w.Class) {
@@ -3909,10 +3909,10 @@ func (h cborgen) check42(v InvocationFailure, b *cborgenCodec.Budget, d, cap int
 		}
 	}
 	if err := b.CheckString("q", d+1, int(^uint(0)>>1)); err != nil {
-		return cborgenFmt.Errorf("RequestOrdinal: %w", err)
+		return cborgenFmt.Errorf("RequestID: %w", err)
 	}
-	if err := h.check1(v.RequestOrdinal, b, d+1, int(^uint(0)>>1)); err != nil {
-		return cborgenFmt.Errorf("RequestOrdinal: %w", err)
+	if err := h.check1(v.RequestID, b, d+1, int(^uint(0)>>1)); err != nil {
+		return cborgenFmt.Errorf("RequestID: %w", err)
 	}
 	if err := b.CheckString("r", d+1, int(^uint(0)>>1)); err != nil {
 		return cborgenFmt.Errorf("RunID: %w", err)
@@ -3957,7 +3957,7 @@ func (h cborgen) append42(out []byte, v InvocationFailure) []byte {
 		out = h.append43(out, v.Explanation)
 	}
 	out = cborgenCBOR.AppendText(out, "q")
-	out = h.append1(out, v.RequestOrdinal)
+	out = h.append1(out, v.RequestID)
 	out = cborgenCBOR.AppendText(out, "r")
 	out = h.append1(out, v.RunID)
 	if v.Usage != nil {
@@ -4007,9 +4007,9 @@ func (h cborgen) read42(r *cborgenCodec.Reader, d, cap int) (v InvocationFailure
 			}
 		case "q":
 			seen[2] = true
-			v.RequestOrdinal, err = h.read1(r, d+1, int(^uint(0)>>1))
+			v.RequestID, err = h.read1(r, d+1, int(^uint(0)>>1))
 			if err != nil {
-				return v, cborgenFmt.Errorf("RequestOrdinal: %w", err)
+				return v, cborgenFmt.Errorf("RequestID: %w", err)
 			}
 		case "r":
 			seen[3] = true
@@ -4325,7 +4325,7 @@ func (h cborgen) read47(r *cborgenCodec.Reader, d, cap int) (v []byte, err error
 func (h cborgen) clone48(v ModelRequest) ModelRequest {
 	out := v
 	out.RunID = h.clone1(v.RunID)
-	out.Ordinal = h.clone1(v.Ordinal)
+	out.ID = h.clone1(v.ID)
 	out.Source = h.clone49(v.Source)
 	out.Recipe = h.clone19(v.Recipe)
 	out.RetryOf = h.clone51(v.RetryOf)
@@ -4335,7 +4335,7 @@ func (h cborgen) equal48(v, w ModelRequest) bool {
 	if !h.equal1(v.RunID, w.RunID) {
 		return false
 	}
-	if !h.equal1(v.Ordinal, w.Ordinal) {
+	if !h.equal1(v.ID, w.ID) {
 		return false
 	}
 	if !h.equal49(v.Source, w.Source) {
@@ -4369,10 +4369,10 @@ func (h cborgen) check48(v ModelRequest, b *cborgenCodec.Budget, d, cap int) (er
 		return cborgenFmt.Errorf("Recipe: %w", err)
 	}
 	if err := b.CheckString("o", d+1, int(^uint(0)>>1)); err != nil {
-		return cborgenFmt.Errorf("Ordinal: %w", err)
+		return cborgenFmt.Errorf("ID: %w", err)
 	}
-	if err := h.check1(v.Ordinal, b, d+1, int(^uint(0)>>1)); err != nil {
-		return cborgenFmt.Errorf("Ordinal: %w", err)
+	if err := h.check1(v.ID, b, d+1, int(^uint(0)>>1)); err != nil {
+		return cborgenFmt.Errorf("ID: %w", err)
 	}
 	if err := b.CheckString("r", d+1, int(^uint(0)>>1)); err != nil {
 		return cborgenFmt.Errorf("RunID: %w", err)
@@ -4405,7 +4405,7 @@ func (h cborgen) append48(out []byte, v ModelRequest) []byte {
 	out = cborgenCBOR.AppendText(out, "c")
 	out = h.append19(out, v.Recipe)
 	out = cborgenCBOR.AppendText(out, "o")
-	out = h.append1(out, v.Ordinal)
+	out = h.append1(out, v.ID)
 	out = cborgenCBOR.AppendText(out, "r")
 	out = h.append1(out, v.RunID)
 	out = cborgenCBOR.AppendText(out, "s")
@@ -4447,9 +4447,9 @@ func (h cborgen) read48(r *cborgenCodec.Reader, d, cap int) (v ModelRequest, err
 			}
 		case "o":
 			seen[1] = true
-			v.Ordinal, err = h.read1(r, d+1, int(^uint(0)>>1))
+			v.ID, err = h.read1(r, d+1, int(^uint(0)>>1))
 			if err != nil {
-				return v, cborgenFmt.Errorf("Ordinal: %w", err)
+				return v, cborgenFmt.Errorf("ID: %w", err)
 			}
 		case "r":
 			seen[2] = true
@@ -4638,9 +4638,9 @@ func (h cborgen) read51(r *cborgenCodec.Reader, d, cap int) (v *uint64, err erro
 func (h cborgen) clone52(v ModelResponse) ModelResponse {
 	out := v
 	out.RunID = h.clone1(v.RunID)
-	out.RequestOrdinal = h.clone1(v.RequestOrdinal)
+	out.RequestID = h.clone1(v.RequestID)
 	out.Terminal = h.clone5(v.Terminal)
-	out.ProviderReason = h.clone53(v.ProviderReason)
+	out.ProviderStopReason = h.clone53(v.ProviderStopReason)
 	out.Items = h.clone54(v.Items)
 	out.Evidence = h.clone62(v.Evidence)
 	out.Usage = h.clone63(v.Usage)
@@ -4651,13 +4651,13 @@ func (h cborgen) equal52(v, w ModelResponse) bool {
 	if !h.equal1(v.RunID, w.RunID) {
 		return false
 	}
-	if !h.equal1(v.RequestOrdinal, w.RequestOrdinal) {
+	if !h.equal1(v.RequestID, w.RequestID) {
 		return false
 	}
 	if !h.equal5(v.Terminal, w.Terminal) {
 		return false
 	}
-	if !h.equal53(v.ProviderReason, w.ProviderReason) {
+	if !h.equal53(v.ProviderStopReason, w.ProviderStopReason) {
 		return false
 	}
 	if !h.equal54(v.Items, w.Items) {
@@ -4684,7 +4684,7 @@ func (h cborgen) check52(v ModelResponse, b *cborgenCodec.Budget, d, cap int) (e
 	if v.Evidence != nil {
 		count++
 	}
-	if v.ProviderReason != nil {
+	if v.ProviderStopReason != nil {
 		count++
 	}
 	if v.Usage != nil {
@@ -4710,19 +4710,19 @@ func (h cborgen) check52(v ModelResponse, b *cborgenCodec.Budget, d, cap int) (e
 	if err := h.check54(v.Items, b, d+1, int(^uint(0)>>1)); err != nil {
 		return cborgenFmt.Errorf("Items: %w", err)
 	}
-	if v.ProviderReason != nil {
+	if v.ProviderStopReason != nil {
 		if err := b.CheckString("p", d+1, int(^uint(0)>>1)); err != nil {
-			return cborgenFmt.Errorf("ProviderReason: %w", err)
+			return cborgenFmt.Errorf("ProviderStopReason: %w", err)
 		}
-		if err := h.check53(v.ProviderReason, b, d+1, int(^uint(0)>>1)); err != nil {
-			return cborgenFmt.Errorf("ProviderReason: %w", err)
+		if err := h.check53(v.ProviderStopReason, b, d+1, int(^uint(0)>>1)); err != nil {
+			return cborgenFmt.Errorf("ProviderStopReason: %w", err)
 		}
 	}
 	if err := b.CheckString("q", d+1, int(^uint(0)>>1)); err != nil {
-		return cborgenFmt.Errorf("RequestOrdinal: %w", err)
+		return cborgenFmt.Errorf("RequestID: %w", err)
 	}
-	if err := h.check1(v.RequestOrdinal, b, d+1, int(^uint(0)>>1)); err != nil {
-		return cborgenFmt.Errorf("RequestOrdinal: %w", err)
+	if err := h.check1(v.RequestID, b, d+1, int(^uint(0)>>1)); err != nil {
+		return cborgenFmt.Errorf("RequestID: %w", err)
 	}
 	if err := b.CheckString("r", d+1, int(^uint(0)>>1)); err != nil {
 		return cborgenFmt.Errorf("RunID: %w", err)
@@ -4759,7 +4759,7 @@ func (h cborgen) append52(out []byte, v ModelResponse) []byte {
 	if v.Evidence != nil {
 		count++
 	}
-	if v.ProviderReason != nil {
+	if v.ProviderStopReason != nil {
 		count++
 	}
 	if v.Usage != nil {
@@ -4775,12 +4775,12 @@ func (h cborgen) append52(out []byte, v ModelResponse) []byte {
 	}
 	out = cborgenCBOR.AppendText(out, "i")
 	out = h.append54(out, v.Items)
-	if v.ProviderReason != nil {
+	if v.ProviderStopReason != nil {
 		out = cborgenCBOR.AppendText(out, "p")
-		out = h.append53(out, v.ProviderReason)
+		out = h.append53(out, v.ProviderStopReason)
 	}
 	out = cborgenCBOR.AppendText(out, "q")
-	out = h.append1(out, v.RequestOrdinal)
+	out = h.append1(out, v.RequestID)
 	out = cborgenCBOR.AppendText(out, "r")
 	out = h.append1(out, v.RunID)
 	out = cborgenCBOR.AppendText(out, "t")
@@ -4832,15 +4832,15 @@ func (h cborgen) read52(r *cborgenCodec.Reader, d, cap int) (v ModelResponse, er
 			}
 		case "p":
 			seen[2] = true
-			v.ProviderReason, err = h.read53(r, d+1, int(^uint(0)>>1))
+			v.ProviderStopReason, err = h.read53(r, d+1, int(^uint(0)>>1))
 			if err != nil {
-				return v, cborgenFmt.Errorf("ProviderReason: %w", err)
+				return v, cborgenFmt.Errorf("ProviderStopReason: %w", err)
 			}
 		case "q":
 			seen[3] = true
-			v.RequestOrdinal, err = h.read1(r, d+1, int(^uint(0)>>1))
+			v.RequestID, err = h.read1(r, d+1, int(^uint(0)>>1))
 			if err != nil {
-				return v, cborgenFmt.Errorf("RequestOrdinal: %w", err)
+				return v, cborgenFmt.Errorf("RequestID: %w", err)
 			}
 		case "r":
 			seen[4] = true
@@ -5534,7 +5534,7 @@ func (h cborgen) read64(r *cborgenCodec.Reader, d, cap int) (v *OpaqueProviderDa
 func (h cborgen) clone65(v RunEnded) RunEnded {
 	out := v
 	out.RunID = h.clone1(v.RunID)
-	out.Reason = h.clone1(v.Reason)
+	out.Reason = h.clone5(v.Reason)
 	out.Explanation = h.clone66(v.Explanation)
 	out.Capture = h.clone67(v.Capture)
 	return out
@@ -5543,7 +5543,7 @@ func (h cborgen) equal65(v, w RunEnded) bool {
 	if !h.equal1(v.RunID, w.RunID) {
 		return false
 	}
-	if !h.equal1(v.Reason, w.Reason) {
+	if !h.equal5(v.Reason, w.Reason) {
 		return false
 	}
 	if !h.equal66(v.Explanation, w.Explanation) {
@@ -5581,7 +5581,7 @@ func (h cborgen) check65(v RunEnded, b *cborgenCodec.Budget, d, cap int) (err er
 	if err := b.CheckString("e", d+1, int(^uint(0)>>1)); err != nil {
 		return cborgenFmt.Errorf("Reason: %w", err)
 	}
-	if err := h.check1(v.Reason, b, d+1, int(^uint(0)>>1)); err != nil {
+	if err := h.check5(v.Reason, b, d+1, int(^uint(0)>>1)); err != nil {
 		return cborgenFmt.Errorf("Reason: %w", err)
 	}
 	if err := b.CheckString("r", d+1, int(^uint(0)>>1)); err != nil {
@@ -5614,7 +5614,7 @@ func (h cborgen) append65(out []byte, v RunEnded) []byte {
 		out = h.append67(out, v.Capture)
 	}
 	out = cborgenCBOR.AppendText(out, "e")
-	out = h.append1(out, v.Reason)
+	out = h.append5(out, v.Reason)
 	out = cborgenCBOR.AppendText(out, "r")
 	out = h.append1(out, v.RunID)
 	if v.Explanation != nil {
@@ -5654,7 +5654,7 @@ func (h cborgen) read65(r *cborgenCodec.Reader, d, cap int) (v RunEnded, err err
 			}
 		case "e":
 			seen[1] = true
-			v.Reason, err = h.read1(r, d+1, int(^uint(0)>>1))
+			v.Reason, err = h.read5(r, d+1, int(^uint(0)>>1))
 			if err != nil {
 				return v, cborgenFmt.Errorf("Reason: %w", err)
 			}

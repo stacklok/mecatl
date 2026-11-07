@@ -1,38 +1,19 @@
 package session_test
 
 import (
-	"errors"
-	"math"
 	"testing"
 
 	"github.com/stacklok/mecatl/engine/kernel/session"
 )
 
 func TestUserInputID(t *testing.T) {
-	h := testHistoryID(t)
-	for _, ordinal := range []uint64{1, 2, math.MaxUint64} {
-		v := session.UserInputID{RunID: session.RunID{HistoryID: h, Ordinal: 1}, Ordinal: ordinal}
-		if err := v.Validate(); err != nil {
-			t.Fatal(err)
-		}
-		if !v.Equal(v.Clone()) {
-			t.Fatal("identity clone changed value")
-		}
-		next, err := v.Next()
-		if ordinal == math.MaxUint64 {
-			if !errors.Is(err, session.ErrOrdinalExhausted) || next != (session.UserInputID{}) {
-				t.Fatal("ordinal overflow must fail with zero output")
-			}
-		} else if err != nil || next.RunID != v.RunID || next.Ordinal != ordinal+1 {
-			t.Fatalf("next ordinal: %v", err)
-		}
+	run := allocatedRun(t, testHistoryID(t), 1)
+	first, second := allocatedInput(t, run, 1), allocatedInput(t, run, 2)
+	copied := first
+	if first.Validate() != nil || first.RunID() != run || !first.Equal(copied) || first == second {
+		t.Fatal("allocated input identity or scope")
 	}
-	for _, v := range []session.UserInputID{{}, {RunID: session.RunID{HistoryID: h, Ordinal: 1}}, {Ordinal: 1}, {RunID: session.RunID{HistoryID: h}, Ordinal: 1}, {RunID: session.RunID{Ordinal: 1}, Ordinal: 1}} {
-		if v.Validate() == nil {
-			t.Fatal("invalid input identity validated")
-		}
-		if next, err := v.Next(); err == nil || next != (session.UserInputID{}) {
-			t.Fatal("invalid identity advanced")
-		}
+	if (session.UserInputID{}).Validate() == nil {
+		t.Fatal("zero input identity validated")
 	}
 }

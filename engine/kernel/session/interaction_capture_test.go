@@ -34,9 +34,9 @@ func TestInteractionOversizeCaptureFallback(t *testing.T) {
 				if !reflect.DeepEqual(before, detachedSessionState(s.state)) {
 					t.Fatal("capture rejection resolved request")
 				}
-				ending := RunEnded{RunID: pending.RunID, Reason: RunEndedCaptureFailed, Explanation: new("capture exceeded local bounds"), Capture: &CaptureFailureEvidence{RequestID: pending, Evidence: &ObservedEvidence{Correlation: new("observed")}, Usage: response.Usage}}
+				ending := RunEnded{RunID: pending.runID, Reason: RunEndedCaptureFailed, Explanation: new("capture exceeded local bounds"), Capture: &CaptureFailureEvidence{RequestID: pending, Evidence: &ObservedEvidence{Correlation: new("observed")}, Usage: response.Usage}}
 				if !detailedFits {
-					minimal := interactionRecord(t)(NewRunEndedRecord(RunEnded{RunID: pending.RunID, Reason: RunEndedCaptureFailed}, s.policy.PayloadLimits))
+					minimal := interactionRecord(t)(NewRunEndedRecord(RunEnded{RunID: pending.runID, Reason: RunEndedCaptureFailed}, s.policy.PayloadLimits))
 					s.policy.SoftMaxPayloadBytes = s.state.payloadBytes + uint64(len(minimal.value.Payload))
 				}
 				b, err = s.BeginCommit()

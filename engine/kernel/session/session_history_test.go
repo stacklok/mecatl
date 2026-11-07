@@ -190,8 +190,8 @@ func TestSessionNavigationIndependentOfCommitGrouping(t *testing.T) {
 					t.Fatal("run chronology")
 				}
 				if input, ok := run.RecordAt(j).UserInput(); ok {
-					got := lookupInput(t, v, input.ID().RunID, input.ID().Ordinal)
-					wantInput := lookupInput(t, base, input.ID().RunID, input.ID().Ordinal)
+					got, _ := v.UserInputByID(input.ID())
+					wantInput, _ := base.UserInputByID(input.ID())
 					if got.ID() != wantInput.ID() || got.PartCount() != wantInput.PartCount() || !reflect.DeepEqual(inputBytes(got), inputBytes(wantInput)) {
 						t.Fatal("input navigation")
 					}

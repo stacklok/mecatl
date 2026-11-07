@@ -73,7 +73,7 @@ func TestSessionFutureCloseoutEnvelopeSequenceWidth(t *testing.T) {
 			t.Run(map[bool]string{false: "one byte short", true: "exact fit"}[exact]+"/"+path, func(t *testing.T) {
 				prefix, backend := closeoutWidthPrefix(t)
 				id := prefix.Snapshot().HistoryID()
-				run := RunID{HistoryID: id, Ordinal: uint64(prefix.Snapshot().RunCount()) + 1}
+				run := RunID{historyID: id, ordinal: uint64(prefix.Snapshot().RunCount()) + 1}
 				start, err := NewRunStartedRecord(RunStarted{ID: run}, prefix.policy.PayloadLimits)
 				if err != nil {
 					t.Fatal(err)
@@ -82,7 +82,7 @@ func TestSessionFutureCloseoutEnvelopeSequenceWidth(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				interruption, err := NewRunEndedRecord(RunEnded{RunID: run, Reason: RunEndedInterrupted}, prefix.policy.PayloadLimits)
+				interruption, err := NewRunEndedRecord(RunEnded{RunID: run, Reason: RunEndedCaptureFailed}, prefix.policy.PayloadLimits)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -189,7 +189,7 @@ func TestSessionFutureCloseoutEnvelopeSequenceWidth(t *testing.T) {
 					if backend.appends != attempts || s.Snapshot().Head() != candidate.ref || s.Snapshot().ActiveRun() != run {
 						t.Fatal("hard-valid Apply failed to publish without I/O")
 					}
-					if _, err := s.prepareEnding(RunEndedInterrupted); !errors.Is(err, codec.ErrLimitExceeded) {
+					if _, err := s.prepareEnding(RunEndedCaptureFailed); !errors.Is(err, codec.ErrLimitExceeded) {
 						t.Fatalf("readable active prefix unexpectedly has write headroom: %v", err)
 					}
 					return
@@ -224,7 +224,7 @@ func TestSessionFutureCloseoutEnvelopeSequenceWidth(t *testing.T) {
 				} else if path == "apply" && backend.appends != attempts {
 					t.Fatal("Apply performed I/O")
 				}
-				p, err := s.prepareEnding(RunEndedInterrupted)
+				p, err := s.prepareEnding(RunEndedCaptureFailed)
 				if err != nil || !p.commit.Equal(closeout) {
 					t.Fatalf("actual exact-fit closeout: %v", err)
 				}
@@ -236,7 +236,7 @@ func TestSessionFutureCloseoutEnvelopeSequenceWidth(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				if err := b.EndRun(RunEndedInterrupted); err != nil {
+				if err := b.EndRun(RunEndedCaptureFailed); err != nil {
 					t.Fatal(err)
 				}
 				ref, err = s.SubmitCommit(context.Background(), b)

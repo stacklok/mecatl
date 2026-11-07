@@ -46,8 +46,8 @@ func internalApply(t testing.TB, s *Session, records ...Record) prepared {
 func TestRecordMetadataAgreementAndOwnership(t *testing.T) {
 	s, limits := internalFixture(t)
 	id := s.Snapshot().HistoryID()
-	run := RunStarted{ID: RunID{HistoryID: id, Ordinal: 24}}
-	input := UserInput{ID: UserInputID{RunID: run.ID, Ordinal: 24}, Parts: internalByteParts([]byte{0xff, 0, 'x'})}
+	run := RunStarted{ID: RunID{historyID: id, ordinal: 24}}
+	input := UserInput{ID: UserInputID{runID: run.ID, ordinal: 24}, Parts: internalByteParts([]byte{0xff, 0, 'x'})}
 	constructors := []struct {
 		name string
 		make func() (Record, error)
@@ -74,7 +74,7 @@ func TestRecordMetadataAgreementAndOwnership(t *testing.T) {
 					t.Fatal("input accounting")
 				}
 			case "start":
-				if r.runStarted.ID != run.ID.Ordinal {
+				if r.runStarted.ID != run.ID.ordinal {
 					t.Fatal("start metadata")
 				}
 			case "interruption":
@@ -118,7 +118,7 @@ func TestRecordMetadataAgreementAndOwnership(t *testing.T) {
 func TestMetadataPreflightBoundedDecodeDoesNotPublish(t *testing.T) {
 	s, limits := internalFixture(t)
 	id := s.Snapshot().HistoryID()
-	run := RunID{HistoryID: id, Ordinal: 1}
+	run := RunID{historyID: id, ordinal: 1}
 	created, err := NewCreatedRecord(Created{HistoryID: id}, limits)
 	if err != nil {
 		t.Fatal(err)
@@ -127,12 +127,12 @@ func TestMetadataPreflightBoundedDecodeDoesNotPublish(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	first, err := NewUserInputRecord(UserInput{ID: UserInputID{RunID: run, Ordinal: 1}, Parts: internalByteParts(make([]byte, 512))}, limits)
+	first, err := NewUserInputRecord(UserInput{ID: UserInputID{runID: run, ordinal: 1}, Parts: internalByteParts(make([]byte, 512))}, limits)
 	if err != nil {
 		t.Fatal(err)
 	}
 	p := internalApply(t, s, created, start, first)
-	second, err := NewUserInputRecord(UserInput{ID: UserInputID{RunID: run, Ordinal: 2}, Parts: internalByteParts(make([]byte, 512))}, limits)
+	second, err := NewUserInputRecord(UserInput{ID: UserInputID{runID: run, ordinal: 2}, Parts: internalByteParts(make([]byte, 512))}, limits)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -158,7 +158,7 @@ func TestPreparationRetainsOriginatingScope(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	run := RunID{HistoryID: foreign, Ordinal: 1}
+	run := RunID{historyID: foreign, ordinal: 1}
 	created, err := NewCreatedRecord(Created{HistoryID: foreign}, limits)
 	if err != nil {
 		t.Fatal(err)
@@ -167,7 +167,7 @@ func TestPreparationRetainsOriginatingScope(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	input, err := NewUserInputRecord(UserInput{ID: UserInputID{RunID: run, Ordinal: 1}}, limits)
+	input, err := NewUserInputRecord(UserInput{ID: UserInputID{runID: run, ordinal: 1}}, limits)
 	if err != nil {
 		t.Fatal(err)
 	}

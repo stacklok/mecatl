@@ -14,8 +14,8 @@ func TestContentTextRecordOwnership(t *testing.T) {
 		t.Run(text, func(t *testing.T) {
 			s, limits := internalFixture(t)
 			scope := s.Snapshot().HistoryID()
-			run := RunID{HistoryID: scope, Ordinal: 1}
-			input := UserInputID{RunID: run, Ordinal: 1}
+			run := RunID{historyID: scope, ordinal: 1}
+			input := UserInputID{runID: run, ordinal: 1}
 			callerText := text
 			parts := []ContentPart{{Text: &callerText}}
 			source := ContentSource{Description: "retained"}
@@ -72,7 +72,7 @@ func TestContentTextRecordOwnership(t *testing.T) {
 
 func TestContentTextBudgetBeforeConversion(t *testing.T) {
 	s, limits := internalFixture(t)
-	id := UserInputID{RunID: RunID{HistoryID: s.Snapshot().HistoryID(), Ordinal: 1}, Ordinal: 1}
+	id := UserInputID{runID: RunID{historyID: s.Snapshot().HistoryID(), ordinal: 1}, ordinal: 1}
 	input := UserInput{ID: id, Parts: make([]ContentPart, 8)}
 	for i := range input.Parts {
 		input.Parts[i].Text = new("")
@@ -128,7 +128,7 @@ func TestContentBranchAdmissionIsAtomic(t *testing.T) {
 		if id, err := b.AddUserInput(AddUserInputRequest{RunID: run, Parts: parts}); !errors.Is(err, codec.ErrInvalidData) || id != (UserInputID{}) {
 			t.Fatalf("invalid user content: %v, %v", id, err)
 		}
-		if err := b.ReplaceInstructions(Instructions{HistoryID: run.HistoryID, Blocks: []InstructionBlock{{Parts: parts, Source: ContentSource{Description: "source"}}}}); !errors.Is(err, codec.ErrInvalidData) {
+		if err := b.ReplaceInstructions(Instructions{HistoryID: run.historyID, Blocks: []InstructionBlock{{Parts: parts, Source: ContentSource{Description: "source"}}}}); !errors.Is(err, codec.ErrInvalidData) {
 			t.Fatalf("invalid instructions: %v", err)
 		}
 		if err := b.AddEffectiveInput(EffectiveInput{RunID: run, Inputs: []InputItem{{Inline: &AttributedInput{Actor: "harness", Purpose: PromptContext, Parts: parts, Source: ContentSource{Description: "source"}}}}}); !errors.Is(err, codec.ErrInvalidData) {
@@ -139,7 +139,7 @@ func TestContentBranchAdmissionIsAtomic(t *testing.T) {
 		}
 	}
 	id, err := b.AddUserInput(AddUserInputRequest{RunID: run, Parts: []ContentPart{{Text: new("")}}})
-	if err != nil || id.Ordinal != 1 {
+	if err != nil || id.ordinal != 1 {
 		t.Fatalf("rejection consumed input ordinal: %v, %v", id, err)
 	}
 	if err := b.Discard(); err != nil {

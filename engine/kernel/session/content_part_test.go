@@ -17,7 +17,7 @@ func richContent() []session.ContentPart {
 	}
 }
 func TestContentOwnedValues(t *testing.T) {
-	v := session.UserInput{ID: session.UserInputID{RunID: session.RunID{HistoryID: testHistoryID(t), Ordinal: 1}, Ordinal: 1}, Parts: richContent()}
+	v := session.UserInput{ID: allocatedInput(t, allocatedRun(t, testHistoryID(t), 1), 1), Parts: richContent()}
 	if err := v.Validate(); err != nil {
 		t.Fatal(err)
 	}
@@ -98,14 +98,14 @@ func TestContentSourceAndAttributedOwnedValues(t *testing.T) {
 	if pc.Equal(p) || pc.Validate() != nil {
 		t.Fatal("inline clone aliases")
 	}
-	id := session.UserInputID{RunID: session.RunID{HistoryID: testHistoryID(t), Ordinal: 1}, Ordinal: 1}
-	ref := session.InputItem{UserInput: &id}
+	id := allocatedInput(t, allocatedRun(t, testHistoryID(t), 1), 1)
+	ref := session.InputItem{UserInputID: &id}
 	rc := ref.Clone()
-	id.Ordinal = 2
-	if rc.Equal(ref) || rc.Validate() != nil || rc.UserInput.Ordinal != 1 {
+	id = session.UserInputID{}
+	if rc.Equal(ref) || rc.Validate() != nil || *rc.UserInputID == (session.UserInputID{}) {
 		t.Fatal("reference clone")
 	}
-	for _, p := range []session.InputItem{{}, {UserInput: &id, Inline: &h}, {UserInput: new(session.UserInputID)},
+	for _, p := range []session.InputItem{{}, {UserInputID: &id, Inline: &h}, {UserInputID: new(session.UserInputID)},
 		{Inline: &session.AttributedInput{Actor: "a", Purpose: "system", Source: clone}},
 		{Inline: &session.AttributedInput{Purpose: session.PromptContext, Source: clone}},
 		{Inline: &session.AttributedInput{Actor: "\xff", Purpose: session.PromptContext, Source: clone}},

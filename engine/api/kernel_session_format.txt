@@ -178,6 +178,7 @@ const KindRunEnded untyped string = "session.run_ended"
 const KindRunStarted untyped string = "session.run_started"
 const KindToolCatalog untyped string = "session.tool_catalog"
 const KindUserInput untyped string = "session.user_input"
+const MaxRunEndedReasonBytes untyped int = 32
 const MediaKindAudio untyped string = "audio"
 const MediaKindDocument untyped string = "document"
 const MediaKindImage untyped string = "image"
@@ -195,35 +196,34 @@ const ResponseTerminalLimit untyped string = "limit"
 const ResponseTerminalNormal untyped string = "normal"
 const ResponseTerminalOther untyped string = "other"
 const ResponseTerminalRefusal untyped string = "refusal"
-const RunEndedCancelled untyped int = 4
-const RunEndedCaptureFailed untyped int = 6
-const RunEndedCompleted untyped int = 1
-const RunEndedError untyped int = 2
-const RunEndedInterrupted untyped int = 5
-const RunEndedLimit untyped int = 3
+const RunEndedCaptureFailed untyped string = "capture-failed"
+const RunEndedCompleted untyped string = "completed"
+const RunEndedError untyped string = "error"
+const RunEndedInterrupted untyped string = "interrupted"
+const RunEndedLimit untyped string = "limit"
 const Version int64 = 1
 type AttributedInput struct{Parts []ContentPart "cbor:\"c\""; Actor string "cbor:\"a\""; Purpose string "cbor:\"p\""; Source ContentSource "cbor:\"s\""}
-type CaptureFailureEvidence struct{RequestOrdinal uint64 "cbor:\"q\""; Evidence *ObservedEvidence "cbor:\"e,omitempty\""; Usage *InvocationUsage "cbor:\"u,omitempty\""}
+type CaptureFailureEvidence struct{RequestID uint64 "cbor:\"q\""; Evidence *ObservedEvidence "cbor:\"e,omitempty\""; Usage *InvocationUsage "cbor:\"u,omitempty\""}
 type ConstructionRecipe struct{Algorithm string "cbor:\"a\""; Version int64 "cbor:\"v\""; Parameters []byte "cbor:\"p\""; Check []byte "cbor:\"c\""}
 type ContentPart struct{Text *string "cbor:\"t,omitempty\""; Media *Media "cbor:\"m,omitempty\""}
 type ContentSource struct{Description string "cbor:\"d\""; WorkspaceFile *WorkspaceFileSource "cbor:\"w,omitempty\""}
 type Created struct{}
 type EffectiveInput struct{RunID uint64 "cbor:\"r\""; Inputs []InputItem "cbor:\"i\""}
-type InputItem struct{UserInput *uint64 "cbor:\"u,omitempty\""; Inline *AttributedInput "cbor:\"i,omitempty\""}
+type InputItem struct{UserInputID *uint64 "cbor:\"u,omitempty\""; Inline *AttributedInput "cbor:\"i,omitempty\""}
 type InstructionBlock struct{Parts []ContentPart "cbor:\"c\""; Source ContentSource "cbor:\"s\""}
 type Instructions struct{Blocks []InstructionBlock "cbor:\"b\""}
-type InvocationFailure struct{RunID uint64 "cbor:\"r\""; RequestOrdinal uint64 "cbor:\"q\""; Class string "cbor:\"c\""; Explanation *string "cbor:\"e,omitempty\""; Evidence *ObservedEvidence "cbor:\"v,omitempty\""; Usage *InvocationUsage "cbor:\"u,omitempty\""}
+type InvocationFailure struct{RunID uint64 "cbor:\"r\""; RequestID uint64 "cbor:\"q\""; Class string "cbor:\"c\""; Explanation *string "cbor:\"e,omitempty\""; Evidence *ObservedEvidence "cbor:\"v,omitempty\""; Usage *InvocationUsage "cbor:\"u,omitempty\""}
 type InvocationUsage struct{Input *int64 "cbor:\"i,omitempty\""; Output *int64 "cbor:\"o,omitempty\""; CacheRead *int64 "cbor:\"r,omitempty\""; CacheWrite *int64 "cbor:\"w,omitempty\""; Reasoning *int64 "cbor:\"n,omitempty\""; Raw *OpaqueProviderData "cbor:\"x,omitempty\""}
 type Media struct{Kind string "cbor:\"k\""; Source string "cbor:\"s\""; InlineData []byte "cbor:\"d\""; RemoteURI string "cbor:\"u\""; ProviderName string "cbor:\"p\""; ProviderScope string "cbor:\"o\""; ProviderReferenceID string "cbor:\"r\""; MIMEType string "cbor:\"m\""; FormatHint string "cbor:\"f\""; Filename string "cbor:\"n\""; Title string "cbor:\"t\""}
 type ModelBinding struct{Route string "cbor:\"r\""; API string "cbor:\"a\""; Model string "cbor:\"m\""; Settings []byte "cbor:\"s\""}
-type ModelRequest struct{RunID uint64 "cbor:\"r\""; Ordinal uint64 "cbor:\"o\""; Source SourceHead "cbor:\"s\""; Recipe ConstructionRecipe "cbor:\"c\""; RetryOf *uint64 "cbor:\"x,omitempty\""}
-type ModelResponse struct{RunID uint64 "cbor:\"r\""; RequestOrdinal uint64 "cbor:\"q\""; Terminal string "cbor:\"t\""; ProviderReason *string "cbor:\"p,omitempty\""; Items []ResponseItem "cbor:\"i\""; Evidence *ObservedEvidence "cbor:\"e,omitempty\""; Usage *InvocationUsage "cbor:\"u,omitempty\""; Private *OpaqueProviderData "cbor:\"x,omitempty\""}
+type ModelRequest struct{RunID uint64 "cbor:\"r\""; ID uint64 "cbor:\"o\""; Source SourceHead "cbor:\"s\""; Recipe ConstructionRecipe "cbor:\"c\""; RetryOf *uint64 "cbor:\"x,omitempty\""}
+type ModelResponse struct{RunID uint64 "cbor:\"r\""; RequestID uint64 "cbor:\"q\""; Terminal string "cbor:\"t\""; ProviderStopReason *string "cbor:\"p,omitempty\""; Items []ResponseItem "cbor:\"i\""; Evidence *ObservedEvidence "cbor:\"e,omitempty\""; Usage *InvocationUsage "cbor:\"u,omitempty\""; Private *OpaqueProviderData "cbor:\"x,omitempty\""}
 type ObservedEvidence struct{Detail *string "cbor:\"d,omitempty\""; Correlation *string "cbor:\"c,omitempty\""}
 type OpaqueProviderData struct{Producer string "cbor:\"p\""; Format string "cbor:\"f\""; Version int64 "cbor:\"v\""; Data []byte "cbor:\"d\""}
 type RequestedCall struct{Name string "cbor:\"n\""; Arguments []byte "cbor:\"a\""}
 type ResponseContent struct{Kind string "cbor:\"k\""; Parts []ContentPart "cbor:\"p\""}
 type ResponseItem struct{Content *ResponseContent "cbor:\"c,omitempty\""; Call *RequestedCall "cbor:\"a,omitempty\""}
-type RunEnded struct{RunID uint64 "cbor:\"r\""; Reason uint64 "cbor:\"e\""; Explanation *string "cbor:\"x,omitempty\""; Capture *CaptureFailureEvidence "cbor:\"c,omitempty\""}
+type RunEnded struct{RunID uint64 "cbor:\"r\""; Reason string "cbor:\"e\""; Explanation *string "cbor:\"x,omitempty\""; Capture *CaptureFailureEvidence "cbor:\"c,omitempty\""}
 type RunStarted struct{ID uint64 "cbor:\"r\""}
 type SourceHead struct{Sequence int64 "cbor:\"s\""; CID contentid.CID "cbor:\"c\""}
 type ToolCatalog struct{Tools []ToolDefinition "cbor:\"t\""}

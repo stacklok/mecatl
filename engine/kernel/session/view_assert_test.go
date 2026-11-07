@@ -61,9 +61,9 @@ func effectiveMatches(v session.EffectiveInputView, want session.EffectiveInput)
 	}
 	for i, item := range want.Inputs {
 		got := v.InputAt(i)
-		id, refOK := got.UserInput()
+		id, refOK := got.UserInputID()
 		inline, inlineOK := got.Inline()
-		if refOK != (item.UserInput != nil) || inlineOK != (item.Inline != nil) || (refOK && id != *item.UserInput) || (inlineOK && !attributedMatches(inline, *item.Inline)) {
+		if refOK != (item.UserInputID != nil) || inlineOK != (item.Inline != nil) || (refOK && id != *item.UserInputID) || (inlineOK && !attributedMatches(inline, *item.Inline)) {
 			return false
 		}
 	}

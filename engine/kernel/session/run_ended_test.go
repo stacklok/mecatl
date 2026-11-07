@@ -11,7 +11,7 @@ import (
 )
 
 func TestRunEnded(t *testing.T) {
-	v := session.RunEnded{RunID: session.RunID{HistoryID: testHistoryID(t), Ordinal: 1}, Reason: session.RunEndedInterrupted}
+	v := session.RunEnded{RunID: allocatedRun(t, testHistoryID(t), 1), Reason: session.RunEndedInterrupted}
 	if err := v.Validate(); err != nil {
 		t.Fatal(err)
 	}
@@ -20,7 +20,7 @@ func TestRunEnded(t *testing.T) {
 		t.Fatal(err)
 	}
 	got, err := codec.Decode[sessionformat.RunEnded](r.Format().Payload, testLimits())
-	if err != nil || got.RunID != v.RunID.Ordinal || !v.Equal(v.Clone()) {
+	if err != nil || got.RunID != 1 || !v.Equal(v.Clone()) {
 		t.Fatalf("interruption roundtrip: %v", err)
 	}
 	if (session.RunEnded{}).Validate() == nil {

@@ -11,7 +11,7 @@ import (
 )
 
 func TestRunStarted(t *testing.T) {
-	v := session.RunStarted{ID: session.RunID{HistoryID: testHistoryID(t), Ordinal: 1}}
+	v := session.RunStarted{ID: allocatedRun(t, testHistoryID(t), 1)}
 	if err := v.Validate(); err != nil {
 		t.Fatal(err)
 	}
@@ -25,19 +25,19 @@ func TestRunStarted(t *testing.T) {
 	if err != nil || !got.Equal(sessionformat.RunStarted{ID: 1}) {
 		t.Fatalf("roundtrip: %v", err)
 	}
-	v.ID.Ordinal = 42
+	v.ID = session.RunID{}
 	clear(wire)
-	if cloned.ID.Ordinal != 1 || got.ID != 1 {
+	if cloned.ID.Validate() != nil || got.ID != 1 {
 		t.Fatal("value or export aliases")
 	}
 	got, err = codec.Decode[sessionformat.RunStarted](r.Format().Payload, testLimits())
-	if err != nil || got.ID != cloned.ID.Ordinal {
+	if err != nil || got.ID != 1 {
 		t.Fatalf("record export aliases: %v", err)
 	}
 }
 
 func TestRunStartedInvalid(t *testing.T) {
-	for _, id := range []session.RunID{{}, {Ordinal: 1}, {HistoryID: testHistoryID(t)}} {
+	for _, id := range []session.RunID{{}} {
 		v := session.RunStarted{ID: id}
 		if v.Validate() == nil {
 			t.Fatal("invalid run validated")
@@ -48,7 +48,7 @@ func TestRunStartedInvalid(t *testing.T) {
 	}
 	limited := testLimits()
 	limited.MaxBytes = 1
-	if r, err := session.NewRunStartedRecord(session.RunStarted{ID: session.RunID{HistoryID: testHistoryID(t), Ordinal: 1}}, limited); !errors.Is(err, codec.ErrLimitExceeded) || !reflect.DeepEqual(r, session.Record{}) {
+	if r, err := session.NewRunStartedRecord(session.RunStarted{ID: allocatedRun(t, testHistoryID(t), 1)}, limited); !errors.Is(err, codec.ErrLimitExceeded) || !reflect.DeepEqual(r, session.Record{}) {
 		t.Fatalf("payload limit: %v", err)
 	}
 }

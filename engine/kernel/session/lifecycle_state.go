@@ -36,7 +36,7 @@ func newAdmission(v Snapshot) admissionContext {
 // candidate. No error changes scalars; outcomes account only their captured frontier.
 func (a *admissionContext) reduce(r Record) error {
 	s := &a.candidate
-	if r.scope != s.activeRun.HistoryID && s.activeRun != (RunID{}) {
+	if r.scope != s.activeRun.historyID && s.activeRun != (RunID{}) {
 		return ErrIdentity
 	}
 	switch r.value.Kind {
@@ -76,7 +76,7 @@ func (s *lifecycleState) startRun(r Record) error {
 		return ErrTransition
 	}
 	s.runs++
-	s.activeRun = RunID{HistoryID: r.scope, Ordinal: r.runStarted.ID}
+	s.activeRun = RunID{historyID: r.scope, ordinal: r.runStarted.ID}
 	s.inputs, s.requests, s.frontier, s.accounted, s.captured, s.calls = 0, 0, 0, 0, 0, 0
 	s.pending = ModelRequestID{}
 	return nil
@@ -85,7 +85,7 @@ func (s *lifecycleState) startRun(r Record) error {
 // admitUserInput advances authored identity and coverage together, even for empty
 // submissions. All eligibility and overflow checks precede scalar changes.
 func (s *lifecycleState) admitUserInput(id UserInputID) error {
-	if !s.inputEligible() || id.RunID != s.activeRun || s.inputs == math.MaxUint64 || id.Ordinal != s.inputs+1 {
+	if !s.inputEligible() || id.runID != s.activeRun || s.inputs == math.MaxUint64 || id.ordinal != s.inputs+1 {
 		return ErrTransition
 	}
 	if s.frontier == math.MaxUint64 {
@@ -99,11 +99,11 @@ func (s *lifecycleState) admitUserInput(id UserInputID) error {
 // admitEffectiveInput checks earlier input membership before advancing coverage.
 // Empty contributions are retained without changing the frontier.
 func (s *lifecycleState) admitEffectiveInput(v sessionformat.EffectiveInput) error {
-	if !s.inputEligible() || v.RunID != s.activeRun.Ordinal {
+	if !s.inputEligible() || v.RunID != s.activeRun.ordinal {
 		return ErrTransition
 	}
 	for _, in := range v.Inputs {
-		if in.UserInput != nil && (*in.UserInput == 0 || *in.UserInput > s.inputs) {
+		if in.UserInputID != nil && (*in.UserInputID == 0 || *in.UserInputID > s.inputs) {
 			return ErrTransition
 		}
 	}
@@ -121,13 +121,13 @@ func (s *lifecycleState) admitEffectiveInput(v sessionformat.EffectiveInput) err
 func (a *admissionContext) admitRequest(v ModelRequest) error {
 	s := &a.candidate
 	src := a.source
-	if !s.inputEligible() || src.activeRun != s.activeRun || !src.binding || src.pending != (ModelRequestID{}) || src.calls != 0 || s.frontier != src.frontier || v.ID.RunID != s.activeRun || s.requests == math.MaxUint64 || v.ID.Ordinal != s.requests+1 {
+	if !s.inputEligible() || src.activeRun != s.activeRun || !src.binding || src.pending != (ModelRequestID{}) || src.calls != 0 || s.frontier != src.frontier || v.ID.runID != s.activeRun || s.requests == math.MaxUint64 || v.ID.requestOrdinal != s.requests+1 {
 		return ErrTransition
 	}
 	if v.Source.Sequence != a.head.Sequence || v.Source.CID != a.head.CID {
 		return ErrIdentity
 	}
-	if v.RetryOf != nil && (v.RetryOf.RunID != s.activeRun || v.RetryOf.Ordinal == 0 || v.RetryOf.Ordinal > src.requests) {
+	if v.RetryOf != nil && (v.RetryOf.runID != s.activeRun || v.RetryOf.requestOrdinal == 0 || v.RetryOf.requestOrdinal > src.requests) {
 		return ErrTransition
 	}
 	s.requests++
@@ -140,7 +140,7 @@ func (a *admissionContext) admitRequest(v ModelRequest) error {
 // commit. Duplicate or same-batch outcomes cannot change coverage or obligations.
 func (a *admissionContext) admitOutcome(id ModelRequestID, calls uint64) error {
 	s := &a.candidate
-	if !s.created || s.activeRun == (RunID{}) || id.RunID != s.activeRun || id != s.pending || id != a.source.pending {
+	if !s.created || s.activeRun == (RunID{}) || id.runID != s.activeRun || id != s.pending || id != a.source.pending {
 		return ErrTransition
 	}
 	s.pending = ModelRequestID{}
@@ -185,7 +185,9 @@ func (s *Session) preflight(records []Record, ref history.CommitRef, payloadByte
 }
 
 // reserveEnding prepares every promised emergency reason against the actual next
-// envelope and both encoding policies. Terminal candidates cannot recurse.
+// envelope and both encoding policies, covering the largest supported encoded
+// shape in each dimension despite unequal label lengths. Terminal candidates
+// cannot recurse.
 func (s *Session) reserveEnding(ref history.CommitRef, state lifecycleState, records int, payloadBytes uint64) error {
 	if state.activeRun == (RunID{}) {
 		return nil
@@ -193,7 +195,7 @@ func (s *Session) reserveEnding(ref history.CommitRef, state lifecycleState, rec
 	next := Session{history: s.history, policy: s.policy, state: sessionState{
 		view: Snapshot{historyID: s.state.view.historyID, head: ref, lifecycle: state}, records: records, payloadBytes: payloadBytes,
 	}}
-	for _, reason := range []RunEndedReason{RunEndedError, RunEndedLimit, RunEndedCancelled, RunEndedInterrupted, RunEndedCaptureFailed} {
+	for _, reason := range []RunEndedReason{RunEndedError, RunEndedLimit, RunEndedInterrupted, RunEndedCaptureFailed} {
 		if _, err := next.prepareEnding(reason); err != nil {
 			return err
 		}

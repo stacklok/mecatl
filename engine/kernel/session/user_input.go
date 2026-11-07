@@ -38,7 +38,7 @@ func (v UserInput) Equal(other UserInput) bool {
 	return v.ID == other.ID && v.toFormat().Equal(other.toFormat())
 }
 func (v UserInput) toFormat() sessionformat.UserInput {
-	return sessionformat.UserInput{RunID: v.ID.RunID.Ordinal, ID: v.ID.Ordinal, Parts: partsToFormat(v.Parts)}
+	return sessionformat.UserInput{RunID: v.ID.runID.ordinal, ID: v.ID.ordinal, Parts: partsToFormat(v.Parts)}
 }
 
 // NewUserInputRecord encodes an owned submission under explicit limits. Failure
@@ -56,7 +56,7 @@ func NewUserInputRecord(v UserInput, limits codec.Limits) (Record, error) {
 	if err != nil {
 		return Record{}, err
 	}
-	return Record{scope: v.ID.RunID.HistoryID, userInput: v.ID, value: format.Record{Kind: sessionformat.KindUserInput, KindVersion: sessionformat.Version, Payload: payload}}, nil
+	return Record{scope: v.ID.runID.historyID, userInput: v.ID, value: format.Record{Kind: sessionformat.KindUserInput, KindVersion: sessionformat.Version, Payload: payload}}, nil
 }
 
 // UserInputView retains immutable accepted backing storage, including its record.
@@ -71,7 +71,7 @@ func (v UserInputView) ID() UserInputID {
 	if v.value == nil {
 		return UserInputID{}
 	}
-	return UserInputID{RunID: RunID{HistoryID: v.scope, Ordinal: v.value.RunID}, Ordinal: v.value.ID}
+	return UserInputID{runID: RunID{historyID: v.scope, ordinal: v.value.RunID}, ordinal: v.value.ID}
 }
 
 // PartCount returns the number of ordered parts, or zero for zero.

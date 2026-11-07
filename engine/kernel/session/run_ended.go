@@ -7,9 +7,12 @@ import (
 	sessionformat "github.com/stacklok/mecatl/engine/kernel/session/format"
 )
 
-// RunEndedReason is a closed owner-selected terminal run category. All defined
-// reasons use one-byte CBOR unsigned codes, keeping minimal ending shapes equal.
-type RunEndedReason uint64
+// RunEndedReason is a closed owner-selected terminal run category, encoded as a
+// UTF-8 string of at most 32 bytes. Empty and unknown values are rejected.
+// The taxonomy is provisional: revisit the combined interruption category only
+// if usage establishes a useful distinction between cancellation and interruption.
+// No reason proves remote cancellation or absence of processing or spend.
+type RunEndedReason string
 
 const (
 	// RunEndedCompleted records clean completed termination.
@@ -18,9 +21,8 @@ const (
 	RunEndedError RunEndedReason = sessionformat.RunEndedError
 	// RunEndedLimit records owner-selected limit termination.
 	RunEndedLimit RunEndedReason = sessionformat.RunEndedLimit
-	// RunEndedCancelled records owner-selected cancellation termination.
-	RunEndedCancelled RunEndedReason = sessionformat.RunEndedCancelled
-	// RunEndedInterrupted records owner-selected interrupted termination.
+	// RunEndedInterrupted records explicit cancellation or execution interruption.
+	// It does not assert remote cancellation or absence of processing or spend.
 	RunEndedInterrupted RunEndedReason = sessionformat.RunEndedInterrupted
 	// RunEndedCaptureFailed records inability to capture a complete response.
 	RunEndedCaptureFailed RunEndedReason = sessionformat.RunEndedCaptureFailed
@@ -73,7 +75,7 @@ func (v CaptureFailureEvidence) Equal(other CaptureFailureEvidence) bool {
 	return v.RequestID == other.RequestID && v.toFormat().Equal(other.toFormat())
 }
 func (v CaptureFailureEvidence) toFormat() sessionformat.CaptureFailureEvidence {
-	return sessionformat.CaptureFailureEvidence{RequestOrdinal: v.RequestID.Ordinal, Evidence: evidenceToFormat(v.Evidence), Usage: usageToFormat(v.Usage)}
+	return sessionformat.CaptureFailureEvidence{RequestID: v.RequestID.requestOrdinal, Evidence: evidenceToFormat(v.Evidence), Usage: usageToFormat(v.Usage)}
 }
 
 // RunEnded is the unified explicit terminal fact. It neither fabricates an outcome
@@ -94,7 +96,7 @@ func (v RunEnded) Validate() error {
 	if err := v.RunID.Validate(); err != nil {
 		return err
 	}
-	if v.Capture != nil && v.Capture.RequestID.RunID != v.RunID {
+	if v.Capture != nil && v.Capture.RequestID.runID != v.RunID {
 		return codec.ErrInvalidData
 	}
 	if err := v.toFormat().Validate(); err != nil {
@@ -131,7 +133,7 @@ func (v RunEnded) Equal(other RunEnded) bool {
 	return v.Capture == nil || v.Capture.Equal(*other.Capture)
 }
 func (v RunEnded) toFormat() sessionformat.RunEnded {
-	out := sessionformat.RunEnded{RunID: v.RunID.Ordinal, Reason: uint64(v.Reason), Explanation: v.Explanation}
+	out := sessionformat.RunEnded{RunID: v.RunID.ordinal, Reason: string(v.Reason), Explanation: v.Explanation}
 	if v.Capture != nil {
 		x := v.Capture.toFormat()
 		out.Capture = &x
@@ -139,6 +141,7 @@ func (v RunEnded) toFormat() sessionformat.RunEnded {
 	return out
 }
 func (v RunEnded) checkSize(b *valueBudget) {
+	b.text(string(v.Reason))
 	if v.Explanation != nil {
 		b.pointer()
 		b.text(*v.Explanation)
@@ -173,25 +176,25 @@ func NewRunEndedRecord(v RunEnded, limits codec.Limits) (Record, error) {
 	if v.Capture != nil {
 		metadata.Capture = &CaptureFailureEvidence{RequestID: v.Capture.RequestID}
 	}
-	return Record{scope: v.RunID.HistoryID, runEnded: metadata, value: format.Record{Kind: sessionformat.KindRunEnded, KindVersion: sessionformat.Version, Payload: payload}}, nil
+	return Record{scope: v.RunID.historyID, runEnded: metadata, value: format.Record{Kind: sessionformat.KindRunEnded, KindVersion: sessionformat.Version, Payload: payload}}, nil
 }
 
-// minimalEnding admits only an exact one-fact fixed-shape ending as cleanup.
+// minimalEnding admits only an exact one-fact bounded-shape ending as cleanup.
 func (r Record) minimalEnding() bool {
 	return r.value.Kind == sessionformat.KindRunEnded && r.runEnded.Explanation == nil && r.runEnded.Capture == nil
 }
 
 func endedFromFormat(scope historyid.HistoryID, v sessionformat.RunEnded) RunEnded {
-	run := RunID{HistoryID: scope, Ordinal: v.RunID}
+	run := RunID{historyID: scope, ordinal: v.RunID}
 	out := RunEnded{RunID: run, Reason: RunEndedReason(v.Reason), Explanation: v.Explanation}
 	if v.Capture != nil {
-		out.Capture = &CaptureFailureEvidence{RequestID: ModelRequestID{RunID: run, Ordinal: v.Capture.RequestOrdinal}}
+		out.Capture = &CaptureFailureEvidence{RequestID: ModelRequestID{runID: run, requestOrdinal: v.Capture.RequestID}}
 	}
 	return out
 }
 
-// RunEndedView is an immutable terminal fact. Zero has zero run/reason and no
-// optional evidence. Scalar reads are O(1); evidence exports detach storage.
+// RunEndedView is an immutable terminal fact. Zero has zero run, empty reason and
+// no optional evidence. Scalar reads are O(1); evidence exports detach storage.
 type RunEndedView struct {
 	scope historyid.HistoryID
 	value *sessionformat.RunEnded
@@ -202,13 +205,13 @@ func (v RunEndedView) RunID() RunID {
 	if v.value == nil {
 		return RunID{}
 	}
-	return RunID{HistoryID: v.scope, Ordinal: v.value.RunID}
+	return RunID{historyID: v.scope, ordinal: v.value.RunID}
 }
 
-// Reason returns the owner-selected terminal category, or zero for zero.
+// Reason returns the owner-selected terminal category, or empty for zero.
 func (v RunEndedView) Reason() RunEndedReason {
 	if v.value == nil {
-		return 0
+		return ""
 	}
 	return RunEndedReason(v.value.Reason)
 }
@@ -228,5 +231,5 @@ func (v RunEndedView) Capture() (CaptureFailureEvidence, bool) {
 		return CaptureFailureEvidence{}, false
 	}
 	c := v.value.Capture
-	return (CaptureFailureEvidence{RequestID: ModelRequestID{RunID: v.RunID(), Ordinal: c.RequestOrdinal}, Evidence: evidenceFromFormat(c.Evidence), Usage: usageFromFormat(c.Usage)}).Clone(), true
+	return (CaptureFailureEvidence{RequestID: ModelRequestID{runID: v.RunID(), requestOrdinal: c.RequestID}, Evidence: evidenceFromFormat(c.Evidence), Usage: usageFromFormat(c.Usage)}).Clone(), true
 }

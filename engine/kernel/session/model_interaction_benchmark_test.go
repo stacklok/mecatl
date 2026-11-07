@@ -41,7 +41,7 @@ func BenchmarkModelInteractionCompleteTraversal(b *testing.B) {
 			next := interactionRequest(s, 2)
 			next.RetryOf = &req.ID
 			interactionSubmit(b, s, func(c *SessionCommit) { interactionCheck(b, c.add(NewModelRequestRecord(next, limits))) })
-			response := ModelResponse{RequestID: next.ID, Terminal: ResponseTerminalOther, ProviderReason: new(""), Usage: usage, Private: usage.Raw, Evidence: &ObservedEvidence{Detail: new("")}}
+			response := ModelResponse{RequestID: next.ID, Terminal: ResponseTerminalOther, ProviderStopReason: new(""), Usage: usage, Private: usage.Raw, Evidence: &ObservedEvidence{Detail: new("")}}
 			for range axis.count {
 				response.Items = append(response.Items, ResponseItem{Content: &ResponseContent{Kind: ResponseContentReasoning, Parts: []ContentPart{{Text: new(strings.Repeat("x", axis.payload))}, {Media: &Media{Kind: MediaKindImage, MIMEType: "image/x", Source: MediaSourceInline, InlineData: bytes.Repeat([]byte{0xff}, axis.payload)}}}}}, ResponseItem{Call: &RequestedCall{Name: "", Arguments: bytes.Repeat([]byte{0xff}, axis.payload)}})
 			}
@@ -51,10 +51,10 @@ func BenchmarkModelInteractionCompleteTraversal(b *testing.B) {
 			})
 			interactionSubmit(b, s, func(c *SessionCommit) { _, err := c.StartRun(); interactionCheck(b, err) })
 			pending := interactionRequest(s, 1)
-			pending.ID.RunID = s.Snapshot().ActiveRun()
+			pending.ID.runID = s.Snapshot().ActiveRun()
 			interactionSubmit(b, s, func(c *SessionCommit) { interactionCheck(b, c.add(NewModelRequestRecord(pending, limits))) })
 			interactionSubmit(b, s, func(c *SessionCommit) {
-				interactionCheck(b, c.AddRunEnded(RunEnded{RunID: pending.ID.RunID, Reason: RunEndedCaptureFailed, Explanation: new(""), Capture: &CaptureFailureEvidence{RequestID: pending.ID, Usage: usage, Evidence: &ObservedEvidence{Correlation: new("")}}}))
+				interactionCheck(b, c.AddRunEnded(RunEnded{RunID: pending.ID.runID, Reason: RunEndedCaptureFailed, Explanation: new(""), Capture: &CaptureFailureEvidence{RequestID: pending.ID, Usage: usage, Evidence: &ObservedEvidence{Correlation: new("")}}}))
 			})
 			snap := s.Snapshot()
 			for _, exports := range []bool{false, true} {
@@ -64,9 +64,9 @@ func BenchmarkModelInteractionCompleteTraversal(b *testing.B) {
 						var sum uint64
 						for record := range snap.Records() {
 							if v, ok := record.ModelRequest(); ok {
-								sum += v.ID().Ordinal + uint64(v.Source().Sequence)
+								sum += v.ID().requestOrdinal + uint64(v.Source().Sequence)
 								if retry, ok := v.RetryOf(); ok {
-									sum += retry.Ordinal
+									sum += retry.requestOrdinal
 								}
 								if exports {
 									recipe := v.Recipe()
@@ -74,7 +74,7 @@ func BenchmarkModelInteractionCompleteTraversal(b *testing.B) {
 								}
 							}
 							if v, ok := record.InvocationFailure(); ok {
-								sum += v.RequestID().Ordinal + uint64(len(v.Class()))
+								sum += v.RequestID().requestOrdinal + uint64(len(v.Class()))
 								detail, _ := v.Explanation()
 								sum += uint64(len(detail))
 								if exports {
@@ -87,8 +87,8 @@ func BenchmarkModelInteractionCompleteTraversal(b *testing.B) {
 								}
 							}
 							if v, ok := record.ModelResponse(); ok {
-								sum += v.RequestID().Ordinal + uint64(len(v.Terminal())+v.ItemCount()+v.CallCount())
-								reason, _ := v.ProviderReason()
+								sum += v.RequestID().requestOrdinal + uint64(len(v.Terminal())+v.ItemCount()+v.CallCount())
+								reason, _ := v.ProviderStopReason()
 								sum += uint64(len(reason))
 								for item := range v.Items() {
 									if c, ok := item.Content(); ok {
@@ -111,7 +111,7 @@ func BenchmarkModelInteractionCompleteTraversal(b *testing.B) {
 									}
 								}
 								for call := range v.Calls() {
-									sum += call.ID().Ordinal + uint64(len(call.Name()))
+									sum += call.ID().ordinal + uint64(len(call.Name()))
 									if exports {
 										sum += uint64(len(call.Arguments()))
 									}
@@ -127,12 +127,12 @@ func BenchmarkModelInteractionCompleteTraversal(b *testing.B) {
 								}
 							}
 							if v, ok := record.RunEnded(); ok {
-								sum += v.RunID().Ordinal + uint64(v.Reason())
+								sum += v.RunID().ordinal + uint64(len(v.Reason()))
 								detail, _ := v.Explanation()
 								sum += uint64(len(detail))
 								if exports {
 									if capture, ok := v.Capture(); ok {
-										sum += capture.RequestID.Ordinal + uint64(len(capture.Usage.Raw.Data))
+										sum += capture.RequestID.requestOrdinal + uint64(len(capture.Usage.Raw.Data))
 										if capture.Evidence.Correlation != nil {
 											sum += uint64(len(*capture.Evidence.Correlation))
 										}

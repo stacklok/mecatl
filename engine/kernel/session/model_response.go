@@ -10,7 +10,8 @@ import (
 	sessionformat "github.com/stacklok/mecatl/engine/kernel/session/format"
 )
 
-// ResponseContentKind selects one canonical content meaning.
+// ResponseContentKind selects one canonical content meaning. Empty and unknown
+// values are rejected.
 type ResponseContentKind string
 
 const (
@@ -22,7 +23,8 @@ const (
 	ResponseContentRefusal ResponseContentKind = sessionformat.ResponseContentRefusal
 )
 
-// ResponseTerminalClass is the normalized terminal provider class.
+// ResponseTerminalClass is the closed normalized terminal provider class. Empty
+// and unknown values are rejected, unlike the provider-owned stop reason.
 type ResponseTerminalClass string
 
 const (
@@ -39,101 +41,6 @@ const (
 	// ResponseTerminalOther identifies another terminal response.
 	ResponseTerminalOther ResponseTerminalClass = sessionformat.ResponseTerminalOther
 )
-
-// OpaqueProviderData retains exact provider-owned bytes. Producer and Format name
-// the owner schema; Version is positive. Assignment borrows Data; Clone detaches it.
-type OpaqueProviderData struct {
-	Producer, Format string
-	Version          int64
-	Data             []byte
-}
-
-// Validate checks the local provider-data shape.
-func (v OpaqueProviderData) Validate() error { return v.toFormat().Validate() }
-
-// Clone detaches provider-owned bytes.
-func (v OpaqueProviderData) Clone() OpaqueProviderData { v.Data = bytes.Clone(v.Data); return v }
-
-// Equal compares exact provider-data values.
-func (v OpaqueProviderData) Equal(other OpaqueProviderData) bool {
-	return v.toFormat().Equal(other.toFormat())
-}
-func (v OpaqueProviderData) toFormat() sessionformat.OpaqueProviderData {
-	return sessionformat.OpaqueProviderData{Producer: v.Producer, Format: v.Format, Version: v.Version, Data: v.Data}
-}
-
-// InvocationUsage retains optional per-invocation reported counters. Input and
-// Output are inclusive counts; CacheRead, CacheWrite, and Reasoning are breakdowns
-// that do not add to spend. Nil is absent and distinct from reported zero. Raw
-// contains usage-only provider evidence, never a response body. Assignment borrows
-// pointers and data; Clone detaches all storage.
-type InvocationUsage struct {
-	Input, Output, CacheRead, CacheWrite, Reasoning *int64
-	Raw                                             *OpaqueProviderData
-}
-
-// Validate checks counter nonnegativity and raw evidence structure.
-func (v InvocationUsage) Validate() error {
-	if err := v.toFormat().Validate(); err != nil {
-		return err
-	}
-	if v.Raw != nil {
-		return v.Raw.Validate()
-	}
-	return nil
-}
-
-// Clone detaches counters and raw evidence.
-func (v InvocationUsage) Clone() InvocationUsage {
-	out := v
-	for _, p := range []*(*int64){&out.Input, &out.Output, &out.CacheRead, &out.CacheWrite, &out.Reasoning} {
-		if *p != nil {
-			n := **p
-			*p = &n
-		}
-	}
-	if out.Raw != nil {
-		raw := out.Raw.Clone()
-		out.Raw = &raw
-	}
-	return out
-}
-
-// Equal compares optional counter presence and raw evidence exactly.
-func (v InvocationUsage) Equal(other InvocationUsage) bool {
-	return v.toFormat().Equal(other.toFormat())
-}
-func (v InvocationUsage) toFormat() sessionformat.InvocationUsage {
-	return sessionformat.InvocationUsage{Input: v.Input, Output: v.Output, CacheRead: v.CacheRead, CacheWrite: v.CacheWrite, Reasoning: v.Reasoning, Raw: opaqueToFormat(v.Raw)}
-}
-
-// ObservedEvidence retains safe observed detail and correlation only. Nil is absent;
-// non-nil empty values are preserved. Assignment borrows pointers; Clone detaches them.
-type ObservedEvidence struct{ Detail, Correlation *string }
-
-// Validate checks UTF-8 evidence fields.
-func (v ObservedEvidence) Validate() error { return v.toFormat().Validate() }
-
-// Clone detaches optional evidence strings.
-func (v ObservedEvidence) Clone() ObservedEvidence {
-	if v.Detail != nil {
-		s := *v.Detail
-		v.Detail = &s
-	}
-	if v.Correlation != nil {
-		s := *v.Correlation
-		v.Correlation = &s
-	}
-	return v
-}
-
-// Equal compares optional evidence presence and exact strings.
-func (v ObservedEvidence) Equal(other ObservedEvidence) bool {
-	return v.toFormat().Equal(other.toFormat())
-}
-func (v ObservedEvidence) toFormat() sessionformat.ObservedEvidence {
-	return sessionformat.ObservedEvidence{Detail: v.Detail, Correlation: v.Correlation}
-}
 
 // RequestedCall is one complete requested call. Name and Arguments are retained
 // exactly: empty/unknown names and invalid/empty JSON are valid. Clone detaches bytes.
@@ -233,15 +140,18 @@ func (v ResponseItem) toFormat() sessionformat.ResponseItem {
 
 // ModelResponse is one atomic terminal response for RequestID. Items may be empty;
 // Private is one response-wide provider envelope. Assignment borrows nested storage;
-// Clone detaches it. ProviderReason nil is absent and distinct from explicit empty.
+// Clone detaches it. ProviderStopReason nil is absent and distinct from explicit empty.
 type ModelResponse struct {
-	RequestID      ModelRequestID
-	Terminal       ResponseTerminalClass
-	ProviderReason *string
-	Items          []ResponseItem
-	Evidence       *ObservedEvidence
-	Usage          *InvocationUsage
-	Private        *OpaqueProviderData
+	RequestID ModelRequestID
+	Terminal  ResponseTerminalClass
+	// ProviderStopReason retains the provider's original stop/finish reason, not
+	// reasoning content or a reasoning summary. Any UTF-8 value is allowed; nil
+	// is absent and differs from an explicitly empty string.
+	ProviderStopReason *string
+	Items              []ResponseItem
+	Evidence           *ObservedEvidence
+	Usage              *InvocationUsage
+	Private            *OpaqueProviderData
 }
 
 // Validate checks local response structure without acceptance lookup.
@@ -276,9 +186,9 @@ func (v ModelResponse) Validate() error {
 // Clone detaches every mutable response field.
 func (v ModelResponse) Clone() ModelResponse {
 	out := v
-	if v.ProviderReason != nil {
-		s := *v.ProviderReason
-		out.ProviderReason = &s
+	if v.ProviderStopReason != nil {
+		s := *v.ProviderStopReason
+		out.ProviderStopReason = &s
 	}
 	if v.Items != nil {
 		out.Items = make([]ResponseItem, len(v.Items))
@@ -306,7 +216,7 @@ func (v ModelResponse) Equal(other ModelResponse) bool {
 	return v.RequestID == other.RequestID && v.toFormat().Equal(other.toFormat())
 }
 func (v ModelResponse) toFormat() sessionformat.ModelResponse {
-	out := sessionformat.ModelResponse{RunID: v.RequestID.RunID.Ordinal, RequestOrdinal: v.RequestID.Ordinal, Terminal: string(v.Terminal), ProviderReason: v.ProviderReason, Items: responseItemsToFormat(v.Items), Evidence: evidenceToFormat(v.Evidence), Usage: usageToFormat(v.Usage), Private: opaqueToFormat(v.Private)}
+	out := sessionformat.ModelResponse{RunID: v.RequestID.runID.ordinal, RequestID: v.RequestID.requestOrdinal, Terminal: string(v.Terminal), ProviderStopReason: v.ProviderStopReason, Items: responseItemsToFormat(v.Items), Evidence: evidenceToFormat(v.Evidence), Usage: usageToFormat(v.Usage), Private: opaqueToFormat(v.Private)}
 	return out
 }
 func responseItemsToFormat(v []ResponseItem) []sessionformat.ResponseItem {
@@ -319,35 +229,14 @@ func responseItemsToFormat(v []ResponseItem) []sessionformat.ResponseItem {
 	}
 	return out
 }
-func opaqueToFormat(v *OpaqueProviderData) *sessionformat.OpaqueProviderData {
-	if v == nil {
-		return nil
-	}
-	x := v.toFormat()
-	return &x
-}
-func evidenceToFormat(v *ObservedEvidence) *sessionformat.ObservedEvidence {
-	if v == nil {
-		return nil
-	}
-	x := v.toFormat()
-	return &x
-}
-func usageToFormat(v *InvocationUsage) *sessionformat.InvocationUsage {
-	if v == nil {
-		return nil
-	}
-	x := v.toFormat()
-	return &x
-}
 func (v ModelResponse) checkSize(b *valueBudget) {
 	b.text(string(v.Terminal))
 	checkEvidenceSize(v.Evidence, b)
 	checkUsageSize(v.Usage, b)
 	checkOpaqueSize(v.Private, b)
-	if v.ProviderReason != nil {
+	if v.ProviderStopReason != nil {
 		b.pointer()
-		b.text(*v.ProviderReason)
+		b.text(*v.ProviderStopReason)
 	}
 	b.collection(len(v.Items))
 	if b.err != nil {
@@ -365,60 +254,6 @@ func (v ModelResponse) checkSize(b *valueBudget) {
 			b.bytes(len(item.Call.Arguments))
 		}
 	}
-}
-
-func checkOpaqueSize(v *OpaqueProviderData, b *valueBudget) {
-	if v == nil {
-		return
-	}
-	b.pointer()
-	b.text(v.Producer)
-	b.text(v.Format)
-	b.bytes(len(v.Data))
-}
-func checkEvidenceSize(v *ObservedEvidence, b *valueBudget) {
-	if v == nil {
-		return
-	}
-	b.pointer()
-	if v.Detail != nil {
-		b.pointer()
-		b.text(*v.Detail)
-	}
-	if v.Correlation != nil {
-		b.pointer()
-		b.text(*v.Correlation)
-	}
-}
-func checkUsageSize(v *InvocationUsage, b *valueBudget) {
-	if v == nil {
-		return
-	}
-	b.pointer()
-	for _, p := range []*int64{v.Input, v.Output, v.CacheRead, v.CacheWrite, v.Reasoning} {
-		if p != nil {
-			b.pointer()
-		}
-	}
-	checkOpaqueSize(v.Raw, b)
-}
-func opaqueFromFormat(v *sessionformat.OpaqueProviderData) *OpaqueProviderData {
-	if v == nil {
-		return nil
-	}
-	return &OpaqueProviderData{Producer: v.Producer, Format: v.Format, Version: v.Version, Data: v.Data}
-}
-func evidenceFromFormat(v *sessionformat.ObservedEvidence) *ObservedEvidence {
-	if v == nil {
-		return nil
-	}
-	return &ObservedEvidence{Detail: v.Detail, Correlation: v.Correlation}
-}
-func usageFromFormat(v *sessionformat.InvocationUsage) *InvocationUsage {
-	if v == nil {
-		return nil
-	}
-	return &InvocationUsage{Input: v.Input, Output: v.Output, CacheRead: v.CacheRead, CacheWrite: v.CacheWrite, Reasoning: v.Reasoning, Raw: opaqueFromFormat(v.Raw)}
 }
 
 // NewModelResponseRecord owns a complete response, never a truncated subset.
@@ -442,7 +277,7 @@ func NewModelResponseRecord(v ModelResponse, limits codec.Limits) (Record, error
 			calls++
 		}
 	}
-	return Record{scope: v.RequestID.RunID.HistoryID, outcome: v.RequestID, calls: calls, value: format.Record{Kind: sessionformat.KindModelResponse, KindVersion: sessionformat.Version, Payload: payload}}, nil
+	return Record{scope: v.RequestID.runID.historyID, outcome: v.RequestID, calls: calls, value: format.Record{Kind: sessionformat.KindModelResponse, KindVersion: sessionformat.Version, Payload: payload}}, nil
 }
 
 // ModelResponseView is an immutable complete response. Zero has no identity or
@@ -458,7 +293,7 @@ func (v ModelResponseView) RequestID() ModelRequestID {
 	if v.value == nil {
 		return ModelRequestID{}
 	}
-	return requestID(v.scope, v.value.RunID, v.value.RequestOrdinal)
+	return requestID(v.scope, v.value.RunID, v.value.RequestID)
 }
 
 // Terminal returns the normalized provider terminal class, or empty for zero.
@@ -469,12 +304,13 @@ func (v ModelResponseView) Terminal() ResponseTerminalClass {
 	return ResponseTerminalClass(v.value.Terminal)
 }
 
-// ProviderReason preserves absent versus explicitly empty provider reasons.
-func (v ModelResponseView) ProviderReason() (string, bool) {
-	if v.value == nil || v.value.ProviderReason == nil {
+// ProviderStopReason returns the original provider-owned stop/finish reason, not
+// reasoning content. It preserves absence versus explicitly empty.
+func (v ModelResponseView) ProviderStopReason() (string, bool) {
+	if v.value == nil || v.value.ProviderStopReason == nil {
 		return "", false
 	}
-	return *v.value.ProviderReason, true
+	return *v.value.ProviderStopReason, true
 }
 
 // Evidence returns detached safe observed evidence, preserving optional presence.
@@ -545,7 +381,7 @@ func (v ModelResponseView) CallAt(i int) RequestedCallView {
 		for j := 0; j < v.ItemCount(); j++ {
 			if c := v.value.Items[j].Call; c != nil {
 				if n == i {
-					return RequestedCallView{id: RequestedCallID{RequestID: v.RequestID(), Ordinal: uint64(n) + 1}, value: c}
+					return RequestedCallView{id: RequestedCallID{requestID: v.RequestID(), ordinal: uint64(n) + 1}, value: c}
 				}
 				n++
 			}
@@ -561,7 +397,7 @@ func (v ModelResponseView) Calls() iter.Seq[RequestedCallView] {
 		for i := 0; i < v.ItemCount(); i++ {
 			if c := v.value.Items[i].Call; c != nil {
 				ordinal++
-				if !yield(RequestedCallView{id: RequestedCallID{RequestID: v.RequestID(), Ordinal: ordinal}, value: c}) {
+				if !yield(RequestedCallView{id: RequestedCallID{requestID: v.RequestID(), ordinal: ordinal}, value: c}) {
 					return
 				}
 			}

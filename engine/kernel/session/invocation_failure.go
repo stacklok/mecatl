@@ -7,7 +7,8 @@ import (
 	sessionformat "github.com/stacklok/mecatl/engine/kernel/session/format"
 )
 
-// InvocationFailureClass classifies a locally observed invocation or delivery failure.
+// InvocationFailureClass is a closed classification of locally observed invocation
+// or delivery failure. Empty and unknown values are rejected.
 type InvocationFailureClass string
 
 const (
@@ -74,7 +75,7 @@ func (v InvocationFailure) Equal(other InvocationFailure) bool {
 	return v.RequestID == other.RequestID && v.toFormat().Equal(other.toFormat())
 }
 func (v InvocationFailure) toFormat() sessionformat.InvocationFailure {
-	return sessionformat.InvocationFailure{RunID: v.RequestID.RunID.Ordinal, RequestOrdinal: v.RequestID.Ordinal, Class: string(v.Class), Explanation: v.Explanation, Evidence: evidenceToFormat(v.Evidence), Usage: usageToFormat(v.Usage)}
+	return sessionformat.InvocationFailure{RunID: v.RequestID.runID.ordinal, RequestID: v.RequestID.requestOrdinal, Class: string(v.Class), Explanation: v.Explanation, Evidence: evidenceToFormat(v.Evidence), Usage: usageToFormat(v.Usage)}
 }
 func (v InvocationFailure) checkSize(b *valueBudget) {
 	b.text(string(v.Class))
@@ -102,7 +103,7 @@ func NewInvocationFailureRecord(v InvocationFailure, limits codec.Limits) (Recor
 	if err != nil {
 		return Record{}, err
 	}
-	return Record{scope: v.RequestID.RunID.HistoryID, outcome: v.RequestID, value: format.Record{Kind: sessionformat.KindInvocationFailure, KindVersion: sessionformat.Version, Payload: payload}}, nil
+	return Record{scope: v.RequestID.runID.historyID, outcome: v.RequestID, value: format.Record{Kind: sessionformat.KindInvocationFailure, KindVersion: sessionformat.Version, Payload: payload}}, nil
 }
 
 // InvocationFailureView is an immutable observed outcome. Zero has zero request
@@ -117,7 +118,7 @@ func (v InvocationFailureView) RequestID() ModelRequestID {
 	if v.value == nil {
 		return ModelRequestID{}
 	}
-	return requestID(v.scope, v.value.RunID, v.value.RequestOrdinal)
+	return requestID(v.scope, v.value.RunID, v.value.RequestID)
 }
 
 // Class returns the observed failure classification, or empty for zero.

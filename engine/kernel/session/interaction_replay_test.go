@@ -47,7 +47,7 @@ func TestInteractionSuccessorScopeAndFutureReferences(t *testing.T) {
 					interactionSubmit(t, s, func(b *SessionCommit) { _, err := b.StartRun(); interactionCheck(t, err) })
 					run := s.Snapshot().ActiveRun()
 					first := interactionRequest(s, 1)
-					first.ID.RunID = run
+					first.ID.runID = run
 					interactionSubmit(t, s, func(b *SessionCommit) {
 						interactionCheck(t, b.add(NewModelRequestRecord(first, s.policy.PayloadLimits)))
 					})
@@ -59,11 +59,11 @@ func TestInteractionSuccessorScopeAndFutureReferences(t *testing.T) {
 					id := first.ID
 					switch reference {
 					case "old run":
-						id.RunID.Ordinal--
+						id.runID.ordinal--
 					case "future run":
-						id.RunID.Ordinal++
+						id.runID.ordinal++
 					case "future request":
-						id.Ordinal += 2
+						id.requestOrdinal += 2
 					}
 					// Forge locally valid DTOs directly: these do not obtain the builder's
 					// accepted-membership guarantees. Retry DTOs are implicitly same-run.
@@ -71,7 +71,7 @@ func TestInteractionSuccessorScopeAndFutureReferences(t *testing.T) {
 					var add func(*SessionCommit) error
 					switch fact {
 					case "response":
-						v := sessionformat.ModelResponse{RunID: id.RunID.Ordinal, RequestOrdinal: id.Ordinal, Terminal: sessionformat.ResponseTerminalNormal}
+						v := sessionformat.ModelResponse{RunID: id.runID.ordinal, RequestID: id.requestOrdinal, Terminal: sessionformat.ResponseTerminalNormal}
 						wire, err := codec.Encode(v, s.policy.PayloadLimits)
 						interactionCheck(t, err)
 						dto = historyformat.Record{Kind: sessionformat.KindModelResponse, KindVersion: 1, Payload: wire}
@@ -79,7 +79,7 @@ func TestInteractionSuccessorScopeAndFutureReferences(t *testing.T) {
 							return b.AddModelResponse(ModelResponse{RequestID: id, Terminal: ResponseTerminalNormal})
 						}
 					case "failure":
-						v := sessionformat.InvocationFailure{RunID: id.RunID.Ordinal, RequestOrdinal: id.Ordinal, Class: sessionformat.InvocationFailureTransport}
+						v := sessionformat.InvocationFailure{RunID: id.runID.ordinal, RequestID: id.requestOrdinal, Class: sessionformat.InvocationFailureTransport}
 						wire, err := codec.Encode(v, s.policy.PayloadLimits)
 						interactionCheck(t, err)
 						dto = historyformat.Record{Kind: sessionformat.KindInvocationFailure, KindVersion: 1, Payload: wire}
@@ -87,20 +87,20 @@ func TestInteractionSuccessorScopeAndFutureReferences(t *testing.T) {
 							return b.AddInvocationFailure(InvocationFailure{RequestID: id, Class: InvocationFailureTransport})
 						}
 					case "capture":
-						v := sessionformat.RunEnded{RunID: id.RunID.Ordinal, Reason: sessionformat.RunEndedCaptureFailed, Capture: &sessionformat.CaptureFailureEvidence{RequestOrdinal: id.Ordinal}}
+						v := sessionformat.RunEnded{RunID: id.runID.ordinal, Reason: sessionformat.RunEndedCaptureFailed, Capture: &sessionformat.CaptureFailureEvidence{RequestID: id.requestOrdinal}}
 						wire, err := codec.Encode(v, s.policy.PayloadLimits)
 						interactionCheck(t, err)
 						dto = historyformat.Record{Kind: sessionformat.KindRunEnded, KindVersion: 1, Payload: wire}
 						add = func(b *SessionCommit) error {
-							return b.AddRunEnded(RunEnded{RunID: id.RunID, Reason: RunEndedCaptureFailed, Capture: &CaptureFailureEvidence{RequestID: id}})
+							return b.AddRunEnded(RunEnded{RunID: id.runID, Reason: RunEndedCaptureFailed, Capture: &CaptureFailureEvidence{RequestID: id}})
 						}
 					case "retry":
 						next := interactionRequest(s, 2)
-						next.ID.RunID = run
+						next.ID.runID = run
 						next.RetryOf = &id
 						v := next.toFormat()
 						if reference == "old run" || reference == "future run" {
-							v.RunID = id.RunID.Ordinal
+							v.RunID = id.runID.ordinal
 						}
 						wire, err := codec.Encode(v, s.policy.PayloadLimits)
 						interactionCheck(t, err)
@@ -124,17 +124,17 @@ func TestInteractionSuccessorScopeAndFutureReferences(t *testing.T) {
 					} else {
 						head := s.Snapshot().Head()
 						c := historyformat.Commit{FormatVersion: 1, Sequence: head.Sequence + 1, Parent: new(head.CID), Records: []historyformat.Record{dto}}
-						ref, e := s.history.Identify(run.HistoryID, c)
+						ref, e := s.history.Identify(run.historyID, c)
 						interactionCheck(t, e)
 						if path == "apply" {
 							err = s.Apply(history.Commit{Ref: ref, Commit: c})
 						} else {
-							result, e := s.history.Append(context.Background(), run.HistoryID, c)
+							result, e := s.history.Append(context.Background(), run.historyID, c)
 							interactionCheck(t, e)
 							if result.Status != history.StatusAccepted {
 								t.Fatal("History rejected locally valid DTO")
 							}
-							loaded, e := Load(context.Background(), s.history, run.HistoryID, s.policy)
+							loaded, e := Load(context.Background(), s.history, run.historyID, s.policy)
 							err = e
 							if err != nil && loaded != nil {
 								t.Fatal("failed Load published partial state")
@@ -160,7 +160,7 @@ func TestInteractionSuccessorScopeAndFutureReferences(t *testing.T) {
 	// the public conversion boundary instead of silently omitting its scope.
 	s := interactionFixture(t, "responded")
 	id := interactionRequest(s, 1).ID
-	id.RunID.HistoryID = historyid.NewHistoryID()
+	id.runID.historyID = historyid.NewHistoryID()
 	b, err := s.BeginCommit()
 	interactionCheck(t, err)
 	if _, err = b.AddModelRequest(AddModelRequestRequest{RunID: s.Snapshot().ActiveRun(), Source: interactionRequest(s, 2).Source, Recipe: interactionRequest(s, 2).Recipe, RetryOf: &id}); !errors.Is(err, codec.ErrInvalidData) {
@@ -170,6 +170,45 @@ func TestInteractionSuccessorScopeAndFutureReferences(t *testing.T) {
 		t.Fatalf("foreign outcome: %v", err)
 	}
 	interactionCheck(t, b.Discard())
+}
+
+func TestInteractionNumericEndingEncodingRejectedOnReplay(t *testing.T) {
+	for _, path := range []string{"decode", "apply", "load"} {
+		t.Run(path, func(t *testing.T) {
+			s := interactionFixture(t, "pending")
+			before := detachedSessionState(s.state)
+			// Former experimental code 5 (interrupted) for run 1. History retains
+			// opaque payload bytes, but Session must not convert the numeric reason.
+			dto := historyformat.Record{Kind: sessionformat.KindRunEnded, KindVersion: 1, Payload: []byte("\xa2\x61e\x05\x61r\x01")}
+			var err error
+			if path == "decode" {
+				var r Record
+				r, err = DecodeRecord(s.Snapshot().HistoryID(), dto, s.policy.PayloadLimits)
+				if !reflect.DeepEqual(r, Record{}) {
+					t.Fatal("failed decode returned a partial record")
+				}
+			} else {
+				head := s.Snapshot().Head()
+				c := historyformat.Commit{FormatVersion: 1, Sequence: head.Sequence + 1, Parent: new(head.CID), Records: []historyformat.Record{dto}}
+				ref, e := s.history.Identify(s.Snapshot().HistoryID(), c)
+				interactionCheck(t, e)
+				if path == "apply" {
+					err = s.Apply(history.Commit{Ref: ref, Commit: c})
+				} else {
+					_, e = s.history.Append(context.Background(), s.Snapshot().HistoryID(), c)
+					interactionCheck(t, e)
+					var loaded *Session
+					loaded, err = Load(context.Background(), s.history, s.Snapshot().HistoryID(), s.policy)
+					if loaded != nil {
+						t.Fatal("failed Load returned a partial session")
+					}
+				}
+			}
+			if !errors.Is(err, codec.ErrInvalidData) || !reflect.DeepEqual(before, detachedSessionState(s.state)) {
+				t.Fatalf("numeric ending admission: %v", err)
+			}
+		})
+	}
 }
 
 func TestInteractionUnknownKindAndVersionFailClosed(t *testing.T) {
