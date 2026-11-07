@@ -1,99 +1,16 @@
 package session
 
 import (
-	"github.com/stacklok/mecatl/engine/kernel/codec"
 	"github.com/stacklok/mecatl/engine/kernel/history/format"
 	historyid "github.com/stacklok/mecatl/engine/kernel/history/id"
 	sessionformat "github.com/stacklok/mecatl/engine/kernel/session/format"
 )
 
-// acceptedRecord owns the encoded envelope record and exactly one decoded DTO.
-// It is never mutated after staging; indexes reference this same backing fact.
-type acceptedRecord struct {
-	value        format.Record
-	created      sessionformat.Created
-	input        sessionformat.UserInput
-	started      sessionformat.RunStarted
-	ended        sessionformat.RunEnded
-	request      sessionformat.ModelRequest
-	response     sessionformat.ModelResponse
-	failure      sessionformat.InvocationFailure
-	instructions sessionformat.Instructions
-	catalog      sessionformat.ToolCatalog
-	binding      sessionformat.ModelBinding
-	effective    sessionformat.EffectiveInput
-}
-
-// decodeAccepted decodes once and detaches encoded caller storage. Generated
-// decoding owns nested content; neither DTO nor encoded bytes escape without copying.
-func decodeAccepted(v format.Record, limits codec.Limits) (*acceptedRecord, error) {
-	if !supportedRecord(v.Kind, v.KindVersion) {
-		return nil, ErrUnsupportedRecord
-	}
-	r := &acceptedRecord{}
-	var err error
-	switch v.Kind {
-	case sessionformat.KindCreated:
-		r.created, err = codec.Decode[sessionformat.Created](v.Payload, limits)
-	case sessionformat.KindUserInput:
-		r.input, err = codec.Decode[sessionformat.UserInput](v.Payload, limits)
-	case sessionformat.KindEffectiveInput:
-		r.effective, err = codec.Decode[sessionformat.EffectiveInput](v.Payload, limits)
-	case sessionformat.KindInstructions:
-		r.instructions, err = codec.Decode[sessionformat.Instructions](v.Payload, limits)
-	case sessionformat.KindToolCatalog:
-		r.catalog, err = codec.Decode[sessionformat.ToolCatalog](v.Payload, limits)
-	case sessionformat.KindModelBinding:
-		r.binding, err = codec.Decode[sessionformat.ModelBinding](v.Payload, limits)
-	case sessionformat.KindRunStarted:
-		r.started, err = codec.Decode[sessionformat.RunStarted](v.Payload, limits)
-	case sessionformat.KindRunEnded:
-		r.ended, err = codec.Decode[sessionformat.RunEnded](v.Payload, limits)
-	case sessionformat.KindModelRequest:
-		r.request, err = codec.Decode[sessionformat.ModelRequest](v.Payload, limits)
-	case sessionformat.KindModelResponse:
-		r.response, err = codec.Decode[sessionformat.ModelResponse](v.Payload, limits)
-	case sessionformat.KindInvocationFailure:
-		r.failure, err = codec.Decode[sessionformat.InvocationFailure](v.Payload, limits)
-	default:
-		return nil, ErrUnsupportedRecord
-	}
-	if err != nil {
-		return nil, err
-	}
-	r.value = v.Clone()
-	return r, nil
-}
-
-// metadata projects the lifecycle scalars and effective contribution needed by
-// the shared reducer. All backing storage is already private and immutable.
-func (r *acceptedRecord) metadata(scope historyid.HistoryID) Record {
-	out := Record{scope: scope, value: r.value,
-		userInput:      UserInputID{runID: RunID{historyID: scope, ordinal: r.input.RunID}, ordinal: r.input.ID},
-		runStarted:     r.started,
-		runEnded:       endedFromFormat(scope, r.ended),
-		modelRequest:   requestFromFormat(scope, r.request),
-		effectiveInput: r.effective,
-	}
-	switch r.value.Kind {
-	case sessionformat.KindModelResponse:
-		out.outcome = requestID(scope, r.response.RunID, r.response.RequestID)
-		for _, item := range r.response.Items {
-			if item.Call != nil {
-				out.calls++
-			}
-		}
-	case sessionformat.KindInvocationFailure:
-		out.outcome = requestID(scope, r.failure.RunID, r.failure.RequestID)
-	}
-	return out
-}
-
 // RecordView is an immutable accepted fact. Zero has no kind; all typed accesses
 // return false. Wrong-kind access is distinct from a valid zero-field Created DTO.
 type RecordView struct {
 	scope  historyid.HistoryID
-	record *acceptedRecord
+	record *materializedRecord
 }
 
 // Kind returns the record kind, or empty for zero.

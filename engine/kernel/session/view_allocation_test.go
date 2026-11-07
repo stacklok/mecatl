@@ -41,7 +41,7 @@ func allocationViewFixture(t *testing.T, fieldBytes, siblingBytes, count int) ma
 			Kind: session.MediaKindDocument, MIMEType: "application/octet-stream", FormatHint: "raw", Filename: "notes.bin", Title: strings.Repeat("m", siblingBytes),
 			Source: session.MediaSourceInline, InlineData: bytes.Repeat([]byte{0xa5}, size)}}
 	}
-	input, err := b.AddUserInput(session.AddUserInputRequest{RunID: run, Parts: parts})
+	input, err := b.AddUserInput(session.UserInput{RunID: run, Parts: parts})
 	mustBatch(t, err)
 	source := session.ContentSource{Description: "prepared reference", WorkspaceFile: &session.WorkspaceFileSource{Path: "docs/design.md"}}
 	blocks := make([]session.InstructionBlock, count)
@@ -63,18 +63,9 @@ func allocationViewFixture(t *testing.T, fieldBytes, siblingBytes, count int) ma
 	mustBatch(t, b.AddEffectiveInput(session.EffectiveInput{RunID: run, Inputs: items}))
 	submitBatch(t, s, b)
 
-	// Exercise the same proof against both accepted-record construction paths and
-	// real history reconstruction, without synthetic or bypassed aggregate state.
-	applied := boundSession(t, h, p)
-	page, err := h.Read(context.Background(), scope, history.ReadRequest{Through: s.Snapshot().Head(), MaxCommits: 1})
-	mustBatch(t, err)
-	if len(page.Commits) != 1 {
-		t.Fatal("missing fixture commit")
-	}
-	mustBatch(t, applied.Apply(page.Commits[0]))
 	loaded, err := session.Load(context.Background(), h, scope, p)
 	mustBatch(t, err)
-	return map[string]*session.Session{"Submit": s, "Apply": applied, "Load": loaded}
+	return map[string]*session.Session{"Submit": s, "Load": loaded}
 }
 
 func TestViewNavigationAllocations(t *testing.T) {
@@ -282,7 +273,7 @@ func TestViewPinnedReferenceChildrenAcrossReplacement(t *testing.T) {
 	close(start)
 	for range 32 {
 		b := beginBatch(t, s)
-		_, err := b.AddUserInput(session.AddUserInputRequest{RunID: old.ActiveRun(), Parts: byteParts([]byte("later"))})
+		_, err := b.AddUserInput(session.UserInput{RunID: old.ActiveRun(), Parts: byteParts([]byte("later"))})
 		mustBatch(t, err)
 		mustBatch(t, b.ReplaceInstructions(session.Instructions{HistoryID: old.HistoryID()}))
 		mustBatch(t, b.ReplaceToolCatalog(session.ToolCatalog{HistoryID: old.HistoryID()}))

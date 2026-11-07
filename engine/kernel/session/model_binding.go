@@ -48,11 +48,11 @@ func (v ModelBinding) toFormat() sessionformat.ModelBinding {
 	return sessionformat.ModelBinding{Route: v.Route, API: v.API, Model: v.Model, Settings: v.Settings}
 }
 
-// NewModelBindingRecord encodes an owned scoped replacement under explicit limits.
+// newModelBindingRecord encodes an owned scoped replacement under explicit limits.
 // Failure returns zero; construction proves no active-run admission.
-func NewModelBindingRecord(v ModelBinding, limits codec.Limits) (Record, error) {
+func newModelBindingRecord(v ModelBinding, limits codec.Limits) (proposedRecord, error) {
 	if err := (Created{HistoryID: v.HistoryID}).Validate(); err != nil {
-		return Record{}, codec.ErrInvalidData
+		return proposedRecord{}, codec.ErrInvalidData
 	}
 	b := newValueBudget(limits)
 	b.text(v.Route)
@@ -60,13 +60,13 @@ func NewModelBindingRecord(v ModelBinding, limits codec.Limits) (Record, error) 
 	b.text(v.Model)
 	b.bytes(len(v.Settings))
 	if b.err != nil {
-		return Record{}, b.err
+		return proposedRecord{}, b.err
 	}
 	payload, err := codec.Encode(v.toFormat(), limits)
 	if err != nil {
-		return Record{}, err
+		return proposedRecord{}, err
 	}
-	return Record{scope: v.HistoryID, value: format.Record{Kind: sessionformat.KindModelBinding, KindVersion: sessionformat.Version, Payload: payload}}, nil
+	return decodeRecord(v.HistoryID, format.Record{Kind: sessionformat.KindModelBinding, KindVersion: sessionformat.Version, Payload: payload}, limits)
 }
 
 // ModelBindingView retains immutable accepted backing storage, including its

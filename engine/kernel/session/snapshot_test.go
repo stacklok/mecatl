@@ -19,8 +19,9 @@ func TestSnapshotZeroKindsAndIndexBounds(t *testing.T) {
 	if run.ID() != (session.RunID{}) || run.RecordCount() != 0 || input.ID() != (session.UserInputID{}) || input.PartCount() != 0 || record.Kind() != "" || record.KindVersion() != 0 {
 		t.Fatal("zero child handle")
 	}
-	s := newSession(t, sessionPolicy())
-	applyRecords(t, s, createdRecord(t), startRecord(t, 1), inputRecord(t, 1), closeoutRecord(t, 1), startRecord(t, 2))
+	h := newSessionHistory(t)
+	s := boundSession(t, h, sessionPolicy())
+	s = loadRecords(t, h, s, createdRecord(t), startRecord(t, 1), inputRecord(t, 1), closeoutRecord(t, 1), startRecord(t, 2))
 	v := s.Snapshot()
 	for i := 0; i < v.RecordCount(); i++ {
 		r := v.RecordAt(i)
@@ -78,7 +79,15 @@ func TestSnapshotZeroKindsAndIndexBounds(t *testing.T) {
 		t.Fatal("zero-input active run")
 	}
 	emptyRun := v.RunAt(1)
-	applyRecords(t, s, runInputRecord(t, 2, 1), closeoutRecord(t, 2), startRecord(t, 3))
+	b := beginBatch(t, s)
+	added := batchInput(t, b, emptyRun.ID(), []byte{0xff, 0, 'x'})
+	mustBatch(t, b.EndRun(session.RunEndedInterrupted))
+	successor := batchRun(t, b)
+	submitBatch(t, s, b)
+	latest := s.Snapshot()
+	if added != allocatedInput(t, emptyRun.ID(), 1) || latest.RecordCount() != v.RecordCount()+3 || latest.ActiveRun() != successor || !userInputsMatch(latest, emptyRun.ID(), 1) || latest.RunAt(latest.RunCount()-1).ID() != successor {
+		t.Fatal("same-owner append did not publish input/closeout/successor")
+	}
 	if !userInputsMatch(v, emptyRun.ID(), 0) || emptyRun.RecordCount() != 1 || !userInputsMatch(v, v.RunAt(1).ID(), 0) || v.ActiveRun() != emptyRun.ID() {
 		t.Fatal("old zero-input active handle changed after later input/closeout/successor")
 	}

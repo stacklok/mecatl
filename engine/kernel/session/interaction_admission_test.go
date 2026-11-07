@@ -30,12 +30,12 @@ func interactionCheck(t testing.TB, err error) {
 		t.Fatal(err)
 	}
 }
-func interactionRecord(t testing.TB) func(Record, error) Record {
-	return func(r Record, err error) Record { t.Helper(); interactionCheck(t, err); return r }
+func interactionRecord(t testing.TB) func(proposedRecord, error) proposedRecord {
+	return func(r proposedRecord, err error) proposedRecord { t.Helper(); interactionCheck(t, err); return r }
 }
-func interactionRequest(s *Session, ordinal uint64) ModelRequest {
+func interactionRequest(s *Session, ordinal uint64) identifiedRequest {
 	head := s.Snapshot().Head()
-	return ModelRequest{ID: ModelRequestID{runID: RunID{historyID: s.Snapshot().HistoryID(), ordinal: 1}, requestOrdinal: ordinal}, Source: SourceHead{Sequence: head.Sequence, CID: head.CID}, Recipe: ConstructionRecipe{Algorithm: "unknown/construction", Version: 9, Parameters: []byte{0xff, 0}, Check: []byte{1}}}
+	return identifiedRequest{ID: ModelRequestID{runID: RunID{historyID: s.Snapshot().HistoryID(), ordinal: 1}, requestOrdinal: ordinal}, Source: SourceHead{Sequence: head.Sequence, CID: head.CID}, Recipe: ConstructionRecipe{Algorithm: "unknown/construction", Version: 9, Parameters: []byte{0xff, 0}, Check: []byte{1}}}
 }
 func interactionFixture(t testing.TB, stage string) *Session {
 	t.Helper()
@@ -52,7 +52,7 @@ func interactionFixture(t testing.TB, stage string) *Session {
 	})
 	if stage == "pending" || stage == "responded" || stage == "calls" || stage == "ended" {
 		req := interactionRequest(s, 1)
-		interactionSubmit(t, s, func(b *SessionCommit) { interactionCheck(t, b.add(NewModelRequestRecord(req, s.policy.PayloadLimits))) })
+		interactionSubmit(t, s, func(b *SessionCommit) { interactionCheck(t, b.add(makeRequestRecord(req, s.policy.PayloadLimits))) })
 		if stage == "responded" || stage == "calls" {
 			response := ModelResponse{RequestID: req.ID, Terminal: ResponseTerminalError}
 			if stage == "calls" {
@@ -69,12 +69,12 @@ func interactionFixture(t testing.TB, stage string) *Session {
 
 // This oracle bypasses the builder and session preparation when asserting replay
 // acceptance. History deliberately knows nothing about session lifecycle gates.
-func interactionCommit(t testing.TB, s *Session, records []Record) history.Commit {
+func interactionCommit(t testing.TB, s *Session, records []proposedRecord) history.Commit {
 	t.Helper()
 	head := s.Snapshot().Head()
 	c := format.Commit{FormatVersion: 1, Sequence: head.Sequence + 1, Parent: new(head.CID)}
 	for _, r := range records {
-		c.Records = append(c.Records, r.Format())
+		c.Records = append(c.Records, r.format())
 	}
 	ref, err := s.history.Identify(s.Snapshot().HistoryID(), c)
 	interactionCheck(t, err)
@@ -82,16 +82,16 @@ func interactionCommit(t testing.TB, s *Session, records []Record) history.Commi
 }
 
 // interactionForgedEffectiveReferenceRecord constructs an independently valid DTO
-// without the public record constructor or commit builder. Replay must enforce the
+// without the typed record constructor or commit builder. Replay must enforce the
 // same contribution frontier when it decodes these bytes.
-func interactionForgedEffectiveReferenceRecord(t testing.TB, s *Session, run RunID, input UserInputID) Record {
+func interactionForgedEffectiveReferenceRecord(t testing.TB, s *Session, run RunID, input UserInputID) proposedRecord {
 	t.Helper()
 	payload, err := codec.Encode(sessionformat.EffectiveInput{
 		RunID:  run.ordinal,
 		Inputs: []sessionformat.InputItem{{UserInputID: new(input.ordinal)}},
 	}, s.policy.PayloadLimits)
 	interactionCheck(t, err)
-	r, err := DecodeRecord(s.Snapshot().HistoryID(), format.Record{
+	r, err := decodeRecord(s.Snapshot().HistoryID(), format.Record{
 		Kind:        sessionformat.KindEffectiveInput,
 		KindVersion: sessionformat.Version,
 		Payload:     payload,
@@ -102,13 +102,13 @@ func interactionForgedEffectiveReferenceRecord(t testing.TB, s *Session, run Run
 
 // interactionPendingAfterEffectiveReference accepts an empty authored submission
 // and a nonempty reference contribution before requesting an invocation.
-func interactionPendingAfterEffectiveReference(t testing.TB) (*Session, RunID, UserInputID, ModelRequest) {
+func interactionPendingAfterEffectiveReference(t testing.TB) (*Session, RunID, UserInputID, identifiedRequest) {
 	t.Helper()
 	s := interactionFixture(t, "active")
 	run := s.Snapshot().ActiveRun()
 	var input UserInputID
 	interactionSubmit(t, s, func(b *SessionCommit) {
-		id, err := b.AddUserInput(AddUserInputRequest{RunID: run})
+		id, err := b.AddUserInput(UserInput{RunID: run})
 		interactionCheck(t, err)
 		input = id
 	})
@@ -117,7 +117,7 @@ func interactionPendingAfterEffectiveReference(t testing.TB) (*Session, RunID, U
 
 	request := interactionRequest(s, 1)
 	interactionSubmit(t, s, func(b *SessionCommit) {
-		interactionCheck(t, b.add(NewModelRequestRecord(request, s.policy.PayloadLimits)))
+		interactionCheck(t, b.add(makeRequestRecord(request, s.policy.PayloadLimits)))
 	})
 	return s, run, input, request
 }
@@ -149,7 +149,7 @@ func TestInteractionEffectiveContributionFrontier(t *testing.T) {
 		b, err = s.BeginCommit()
 		interactionCheck(t, err)
 		interactionCheck(t, b.AddEffectiveInput(contribution))
-		second, err := b.AddModelRequest(AddModelRequestRequest{RunID: run, Source: interactionRequest(s, 2).Source, Recipe: interactionRequest(s, 2).Recipe})
+		second, err := b.AddModelRequest(ModelRequest{RunID: run, Source: interactionRequest(s, 2).Source, Recipe: interactionRequest(s, 2).Recipe})
 		if second != (ModelRequestID{}) || !errors.Is(err, ErrTransition) {
 			t.Fatalf("same-batch contribution/request: %v, %v", second, err)
 		}
@@ -162,7 +162,7 @@ func TestInteractionEffectiveContributionFrontier(t *testing.T) {
 		// though its referenced authored submission was empty.
 		interactionSubmit(t, s, func(b *SessionCommit) { interactionCheck(t, b.AddEffectiveInput(contribution)) })
 		interactionSubmit(t, s, func(b *SessionCommit) {
-			id, err := b.AddModelRequest(AddModelRequestRequest{RunID: run, Source: interactionRequest(s, 2).Source, Recipe: interactionRequest(s, 2).Recipe})
+			id, err := b.AddModelRequest(ModelRequest{RunID: run, Source: interactionRequest(s, 2).Source, Recipe: interactionRequest(s, 2).Recipe})
 			interactionCheck(t, err)
 			second = id
 		})
@@ -182,8 +182,8 @@ func TestInteractionEffectiveContributionFrontier(t *testing.T) {
 				interactionCheck(t, b.AddModelResponse(ModelResponse{RequestID: first.ID, Terminal: ResponseTerminalNormal}))
 			})
 			contribution := interactionForgedEffectiveReferenceRecord(t, s, run, input)
-			request := interactionRecord(t)(NewModelRequestRecord(interactionRequest(s, 2), s.policy.PayloadLimits))
-			records := []Record{contribution, request}
+			request := interactionRecord(t)(makeRequestRecord(interactionRequest(s, 2), s.policy.PayloadLimits))
+			records := []proposedRecord{contribution, request}
 			before := s.Snapshot()
 
 			var err error
@@ -191,7 +191,7 @@ func TestInteractionEffectiveContributionFrontier(t *testing.T) {
 			case "preflight":
 				_, err = s.prepare(records)
 			case "apply":
-				err = s.Apply(interactionCommit(t, s, records))
+				err = s.apply(interactionCommit(t, s, records))
 			case "load":
 				commit := interactionCommit(t, s, records)
 				result, appendErr := s.history.Append(context.Background(), s.Snapshot().HistoryID(), commit.Commit)
@@ -218,70 +218,72 @@ func TestInteractionEffectiveContributionFrontier(t *testing.T) {
 func TestInteractionAdmissionAllPaths(t *testing.T) {
 	type testCase struct {
 		name, stage string
-		build       func(*Session) []Record
+		build       func(*Session) []proposedRecord
 		want        error
 	}
-	request := func(s *Session) Record {
+	request := func(s *Session) proposedRecord {
 		v := interactionRequest(s, s.state.view.lifecycle.requests+1)
-		return interactionRecord(t)(NewModelRequestRecord(v, s.policy.PayloadLimits))
+		return interactionRecord(t)(makeRequestRecord(v, s.policy.PayloadLimits))
 	}
-	response := func(s *Session) Record {
-		return interactionRecord(t)(NewModelResponseRecord(ModelResponse{RequestID: interactionRequest(s, 1).ID, Terminal: ResponseTerminalNormal}, s.policy.PayloadLimits))
+	response := func(s *Session) proposedRecord {
+		return interactionRecord(t)(newModelResponseRecord(ModelResponse{RequestID: interactionRequest(s, 1).ID, Terminal: ResponseTerminalNormal}, s.policy.PayloadLimits))
 	}
-	failure := func(s *Session) Record {
-		return interactionRecord(t)(NewInvocationFailureRecord(InvocationFailure{RequestID: interactionRequest(s, 1).ID, Class: InvocationFailureTransport}, s.policy.PayloadLimits))
+	failure := func(s *Session) proposedRecord {
+		return interactionRecord(t)(newInvocationFailureRecord(InvocationFailure{RequestID: interactionRequest(s, 1).ID, Class: InvocationFailureTransport}, s.policy.PayloadLimits))
 	}
-	end := func(s *Session, reason RunEndedReason) Record {
-		return interactionRecord(t)(NewRunEndedRecord(RunEnded{RunID: interactionRequest(s, 1).ID.runID, Reason: reason}, s.policy.PayloadLimits))
+	end := func(s *Session, reason RunEndedReason) proposedRecord {
+		return interactionRecord(t)(newRunEndedRecord(RunEnded{RunID: interactionRequest(s, 1).ID.runID, Reason: reason}, s.policy.PayloadLimits))
 	}
-	input := func(s *Session) Record {
-		return interactionRecord(t)(NewUserInputRecord(UserInput{ID: UserInputID{runID: interactionRequest(s, 1).ID.runID, ordinal: s.state.view.lifecycle.inputs + 1}}, s.policy.PayloadLimits))
+	input := func(s *Session) proposedRecord {
+		return interactionRecord(t)(makeInputRecord(identifiedInput{ID: UserInputID{runID: interactionRequest(s, 1).ID.runID, ordinal: s.state.view.lifecycle.inputs + 1}}, s.policy.PayloadLimits))
 	}
-	effective := func(s *Session, nonempty bool) Record {
+	effective := func(s *Session, nonempty bool) proposedRecord {
 		v := EffectiveInput{RunID: interactionRequest(s, 1).ID.runID}
 		if nonempty {
 			v.Inputs = []InputItem{{Inline: &AttributedInput{Actor: "harness", Purpose: PromptContext, Source: ContentSource{Description: "prepared"}}}}
 		}
-		return interactionRecord(t)(NewEffectiveInputRecord(v, s.policy.PayloadLimits))
+		return interactionRecord(t)(newEffectiveInputRecord(v, s.policy.PayloadLimits))
 	}
-	contextRecord := func(s *Session) Record {
-		return interactionRecord(t)(NewModelBindingRecord(ModelBinding{HistoryID: s.Snapshot().HistoryID(), Route: "new", API: "a", Model: "new", Settings: []byte("{}")}, s.policy.PayloadLimits))
+	contextRecord := func(s *Session) proposedRecord {
+		return interactionRecord(t)(newModelBindingRecord(ModelBinding{HistoryID: s.Snapshot().HistoryID(), Route: "new", API: "a", Model: "new", Settings: []byte("{}")}, s.policy.PayloadLimits))
 	}
 	cases := []testCase{
-		{"valid request", "active", func(s *Session) []Record { return []Record{request(s)} }, nil},
-		{"source needs active run", "idle", func(s *Session) []Record {
-			return []Record{interactionRecord(t)(NewRunStartedRecord(RunStarted{ID: interactionRequest(s, 1).ID.runID}, s.policy.PayloadLimits)), contextRecord(s), request(s)}
+		{"valid request", "active", func(s *Session) []proposedRecord { return []proposedRecord{request(s)} }, nil},
+		{"source needs active run", "idle", func(s *Session) []proposedRecord {
+			return []proposedRecord{interactionRecord(t)(newRunStartedRecord(RunStarted{ID: interactionRequest(s, 1).ID.runID}, s.policy.PayloadLimits)), contextRecord(s), request(s)}
 		}, ErrTransition},
-		{"provisional binding insufficient", "unbound", func(s *Session) []Record { return []Record{contextRecord(s), request(s)} }, ErrTransition},
-		{"context before and after prospective", "active", func(s *Session) []Record { return []Record{contextRecord(s), request(s), contextRecord(s)} }, nil},
-		{"new authored input even empty", "active", func(s *Session) []Record { return []Record{input(s), request(s)} }, ErrTransition},
-		{"new effective input", "active", func(s *Session) []Record { return []Record{effective(s, true), request(s)} }, ErrTransition},
-		{"empty effective input unchanged", "active", func(s *Session) []Record { return []Record{effective(s, false), request(s)} }, nil},
-		{"request then response", "active", func(s *Session) []Record { return []Record{request(s), response(s)} }, ErrTransition},
-		{"request then failure", "active", func(s *Session) []Record { return []Record{request(s), failure(s)} }, ErrTransition},
-		{"outcome then request", "pending", func(s *Session) []Record { return []Record{response(s), request(s)} }, ErrTransition},
-		{"failure then request", "pending", func(s *Session) []Record { return []Record{failure(s), request(s)} }, ErrTransition},
-		{"response and clean end", "pending", func(s *Session) []Record { return []Record{response(s), end(s, RunEndedCompleted)} }, nil},
-		{"failure and error end", "pending", func(s *Session) []Record { return []Record{failure(s), end(s, RunEndedError)} }, nil},
-		{"duplicate response", "pending", func(s *Session) []Record { return []Record{response(s), response(s)} }, ErrTransition},
-		{"response then failure", "pending", func(s *Session) []Record { return []Record{response(s), failure(s)} }, ErrTransition},
-		{"failure then response", "pending", func(s *Session) []Record { return []Record{failure(s), response(s)} }, ErrTransition},
-		{"input while pending", "pending", func(s *Session) []Record { return []Record{input(s)} }, ErrTransition},
-		{"request while pending", "pending", func(s *Session) []Record { return []Record{request(s)} }, ErrTransition},
-		{"clean end while pending", "pending", func(s *Session) []Record { return []Record{end(s, RunEndedCompleted)} }, ErrTransition},
-		{"uncertain end while pending", "pending", func(s *Session) []Record { return []Record{end(s, RunEndedCaptureFailed)} }, nil},
-		{"input while calls unresolved", "calls", func(s *Session) []Record { return []Record{input(s)} }, ErrTransition},
-		{"effective while calls unresolved", "calls", func(s *Session) []Record { return []Record{effective(s, false)} }, ErrTransition},
-		{"request while calls unresolved", "calls", func(s *Session) []Record { return []Record{request(s)} }, ErrTransition},
-		{"clean end while calls unresolved", "calls", func(s *Session) []Record { return []Record{end(s, RunEndedCompleted)} }, ErrTransition},
-		{"uncertain end preserves calls", "calls", func(s *Session) []Record { return []Record{end(s, RunEndedInterrupted)} }, nil},
-		{"late response", "ended", func(s *Session) []Record { return []Record{response(s)} }, ErrTransition},
-		{"duplicate ending", "ended", func(s *Session) []Record { return []Record{end(s, RunEndedError)} }, ErrTransition},
-		{"new input after outcome not covered", "responded", func(s *Session) []Record { return []Record{input(s), end(s, RunEndedCompleted)} }, ErrTransition},
-		{"new input may remain uncertain", "responded", func(s *Session) []Record { return []Record{input(s), end(s, RunEndedError)} }, nil},
+		{"provisional binding insufficient", "unbound", func(s *Session) []proposedRecord { return []proposedRecord{contextRecord(s), request(s)} }, ErrTransition},
+		{"context before and after prospective", "active", func(s *Session) []proposedRecord {
+			return []proposedRecord{contextRecord(s), request(s), contextRecord(s)}
+		}, nil},
+		{"new authored input even empty", "active", func(s *Session) []proposedRecord { return []proposedRecord{input(s), request(s)} }, ErrTransition},
+		{"new effective input", "active", func(s *Session) []proposedRecord { return []proposedRecord{effective(s, true), request(s)} }, ErrTransition},
+		{"empty effective input unchanged", "active", func(s *Session) []proposedRecord { return []proposedRecord{effective(s, false), request(s)} }, nil},
+		{"request then response", "active", func(s *Session) []proposedRecord { return []proposedRecord{request(s), response(s)} }, ErrTransition},
+		{"request then failure", "active", func(s *Session) []proposedRecord { return []proposedRecord{request(s), failure(s)} }, ErrTransition},
+		{"outcome then request", "pending", func(s *Session) []proposedRecord { return []proposedRecord{response(s), request(s)} }, ErrTransition},
+		{"failure then request", "pending", func(s *Session) []proposedRecord { return []proposedRecord{failure(s), request(s)} }, ErrTransition},
+		{"response and clean end", "pending", func(s *Session) []proposedRecord { return []proposedRecord{response(s), end(s, RunEndedCompleted)} }, nil},
+		{"failure and error end", "pending", func(s *Session) []proposedRecord { return []proposedRecord{failure(s), end(s, RunEndedError)} }, nil},
+		{"duplicate response", "pending", func(s *Session) []proposedRecord { return []proposedRecord{response(s), response(s)} }, ErrTransition},
+		{"response then failure", "pending", func(s *Session) []proposedRecord { return []proposedRecord{response(s), failure(s)} }, ErrTransition},
+		{"failure then response", "pending", func(s *Session) []proposedRecord { return []proposedRecord{failure(s), response(s)} }, ErrTransition},
+		{"input while pending", "pending", func(s *Session) []proposedRecord { return []proposedRecord{input(s)} }, ErrTransition},
+		{"request while pending", "pending", func(s *Session) []proposedRecord { return []proposedRecord{request(s)} }, ErrTransition},
+		{"clean end while pending", "pending", func(s *Session) []proposedRecord { return []proposedRecord{end(s, RunEndedCompleted)} }, ErrTransition},
+		{"uncertain end while pending", "pending", func(s *Session) []proposedRecord { return []proposedRecord{end(s, RunEndedCaptureFailed)} }, nil},
+		{"input while calls unresolved", "calls", func(s *Session) []proposedRecord { return []proposedRecord{input(s)} }, ErrTransition},
+		{"effective while calls unresolved", "calls", func(s *Session) []proposedRecord { return []proposedRecord{effective(s, false)} }, ErrTransition},
+		{"request while calls unresolved", "calls", func(s *Session) []proposedRecord { return []proposedRecord{request(s)} }, ErrTransition},
+		{"clean end while calls unresolved", "calls", func(s *Session) []proposedRecord { return []proposedRecord{end(s, RunEndedCompleted)} }, ErrTransition},
+		{"uncertain end preserves calls", "calls", func(s *Session) []proposedRecord { return []proposedRecord{end(s, RunEndedInterrupted)} }, nil},
+		{"late response", "ended", func(s *Session) []proposedRecord { return []proposedRecord{response(s)} }, ErrTransition},
+		{"duplicate ending", "ended", func(s *Session) []proposedRecord { return []proposedRecord{end(s, RunEndedError)} }, ErrTransition},
+		{"new input after outcome not covered", "responded", func(s *Session) []proposedRecord { return []proposedRecord{input(s), end(s, RunEndedCompleted)} }, ErrTransition},
+		{"new input may remain uncertain", "responded", func(s *Session) []proposedRecord { return []proposedRecord{input(s), end(s, RunEndedError)} }, nil},
 	}
 	for _, field := range []string{"sequence", "CID", "retry", "ordinal"} {
-		cases = append(cases, testCase{"invalid " + field, "active", func(s *Session) []Record {
+		cases = append(cases, testCase{"invalid " + field, "active", func(s *Session) []proposedRecord {
 			v := interactionRequest(s, 1)
 			switch field {
 			case "sequence":
@@ -293,7 +295,7 @@ func TestInteractionAdmissionAllPaths(t *testing.T) {
 			case "ordinal":
 				v.ID.requestOrdinal++
 			}
-			return []Record{interactionRecord(t)(NewModelRequestRecord(v, s.policy.PayloadLimits))}
+			return []proposedRecord{interactionRecord(t)(makeRequestRecord(v, s.policy.PayloadLimits))}
 		}, map[string]error{"sequence": ErrIdentity, "CID": ErrIdentity, "retry": ErrTransition, "ordinal": ErrTransition}[field]})
 	}
 	for _, tc := range cases {
@@ -323,7 +325,7 @@ func TestInteractionAdmissionAllPaths(t *testing.T) {
 					case "preflight":
 						_, err = s.prepare(records)
 					case "apply":
-						err = s.Apply(interactionCommit(t, s, records))
+						err = s.apply(interactionCommit(t, s, records))
 					case "load":
 						c := interactionCommit(t, s, records)
 						result, e := s.history.Append(context.Background(), s.Snapshot().HistoryID(), c.Commit)
@@ -345,7 +347,7 @@ func TestInteractionAdmissionAllPaths(t *testing.T) {
 	}
 }
 
-func TestInteractionOverflowAndMetadataAgreement(t *testing.T) {
+func TestInteractionOverflowAndMaterializationAgreement(t *testing.T) {
 	for _, field := range []string{"requests", "authored frontier", "effective frontier"} {
 		t.Run(field, func(t *testing.T) {
 			s := interactionFixture(t, "active")
@@ -360,9 +362,9 @@ func TestInteractionOverflowAndMetadataAgreement(t *testing.T) {
 			before := b.admission
 			switch field {
 			case "requests":
-				_, err = b.AddModelRequest(AddModelRequestRequest{RunID: run, Source: interactionRequest(s, 1).Source, Recipe: interactionRequest(s, 1).Recipe})
+				_, err = b.AddModelRequest(ModelRequest{RunID: run, Source: interactionRequest(s, 1).Source, Recipe: interactionRequest(s, 1).Recipe})
 			case "authored frontier":
-				_, err = b.AddUserInput(AddUserInputRequest{RunID: run})
+				_, err = b.AddUserInput(UserInput{RunID: run})
 			case "effective frontier":
 				err = b.AddEffectiveInput(EffectiveInput{RunID: run, Inputs: []InputItem{{Inline: &AttributedInput{Actor: "harness", Purpose: PromptContext, Source: ContentSource{Description: "prepared"}}}}})
 			}
@@ -375,21 +377,21 @@ func TestInteractionOverflowAndMetadataAgreement(t *testing.T) {
 	s := interactionFixture(t, "pending")
 	req := interactionRequest(s, 2)
 	req.RetryOf = new(interactionRequest(s, 1).ID)
-	records := []Record{
-		interactionRecord(t)(NewModelRequestRecord(req, s.policy.PayloadLimits)),
-		interactionRecord(t)(NewModelResponseRecord(ModelResponse{RequestID: *req.RetryOf, Terminal: ResponseTerminalNormal, Items: []ResponseItem{{Call: &RequestedCall{}}}}, s.policy.PayloadLimits)),
-		interactionRecord(t)(NewInvocationFailureRecord(InvocationFailure{RequestID: *req.RetryOf, Class: InvocationFailureTimeout}, s.policy.PayloadLimits)),
-		interactionRecord(t)(NewRunEndedRecord(RunEnded{RunID: req.ID.runID, Reason: RunEndedCaptureFailed, Capture: &CaptureFailureEvidence{RequestID: *req.RetryOf}}, s.policy.PayloadLimits)),
+	records := []proposedRecord{
+		interactionRecord(t)(makeRequestRecord(req, s.policy.PayloadLimits)),
+		interactionRecord(t)(newModelResponseRecord(ModelResponse{RequestID: *req.RetryOf, Terminal: ResponseTerminalNormal, Items: []ResponseItem{{Call: &RequestedCall{}}}}, s.policy.PayloadLimits)),
+		interactionRecord(t)(newInvocationFailureRecord(InvocationFailure{RequestID: *req.RetryOf, Class: InvocationFailureTimeout}, s.policy.PayloadLimits)),
+		interactionRecord(t)(newRunEndedRecord(RunEnded{RunID: req.ID.runID, Reason: RunEndedCaptureFailed, Capture: &CaptureFailureEvidence{RequestID: *req.RetryOf}}, s.policy.PayloadLimits)),
 	}
 	for _, r := range records {
-		imported, err := DecodeRecord(s.Snapshot().HistoryID(), r.Format(), s.policy.PayloadLimits)
+		imported, err := decodeRecord(s.Snapshot().HistoryID(), r.format(), s.policy.PayloadLimits)
 		interactionCheck(t, err)
 		a, b := newAdmission(s.state.view), newAdmission(s.state.view)
-		x, y := a.reduce(r), b.reduce(imported)
+		x, y := a.reduce(r.scope, r.record), b.reduce(imported.scope, imported.record)
 		if !errors.Is(x, y) || a.candidate != b.candidate {
-			t.Fatalf("metadata and decoded gates disagree for %s: %v/%v", r.value.Kind, x, y)
+			t.Fatalf("constructed and decoded gates disagree for %s: %v/%v", r.record.value.Kind, x, y)
 		}
-		if !supportedRecord(r.value.Kind, sessionformat.Version) {
+		if !supportedRecord(r.record.value.Kind, sessionformat.Version) {
 			t.Fatal("new kind not in closed dispatch")
 		}
 	}

@@ -117,15 +117,15 @@ func (s *Session) prepareEnding(reason RunEndedReason) (prepared, error) {
 	if s.state.view.lifecycle.activeRun == (RunID{}) {
 		return prepared{}, nil
 	}
-	r, err := NewRunEndedRecord(RunEnded{RunID: s.state.view.lifecycle.activeRun, Reason: reason}, s.policy.PayloadLimits)
+	r, err := newRunEndedRecord(RunEnded{RunID: s.state.view.lifecycle.activeRun, Reason: reason}, s.policy.PayloadLimits)
 	if err != nil {
 		return prepared{}, err
 	}
-	return s.prepare([]Record{r})
+	return s.prepare([]proposedRecord{r})
 }
 
 // prepare is also used by submission while its own batch holds the write slot.
-func (s *Session) prepare(records []Record) (prepared, error) {
+func (s *Session) prepare(records []proposedRecord) (prepared, error) {
 	if err := s.policy.Validate(); err != nil {
 		return prepared{}, err
 	}
@@ -135,16 +135,16 @@ func (s *Session) prepare(records []Record) (prepared, error) {
 	}
 	var total uint64
 	for _, r := range records {
-		if r.scope == (historyid.HistoryID{}) {
+		if r.scope == (historyid.HistoryID{}) || r.record == nil {
 			return prepared{}, codec.ErrInvalidData
 		}
 		if r.scope != s.state.view.historyID {
 			return prepared{}, ErrIdentity
 		}
-		if uint64(len(r.value.Payload)) > s.policy.MaxPayloadBytes-total || len(r.value.Payload) > s.policy.PayloadLimits.MaxBytes {
+		if uint64(len(r.record.value.Payload)) > s.policy.MaxPayloadBytes-total || len(r.record.value.Payload) > s.policy.PayloadLimits.MaxBytes {
 			return prepared{}, codec.ErrLimitExceeded
 		}
-		total += uint64(len(r.value.Payload))
+		total += uint64(len(r.record.value.Payload))
 	}
 	if err := s.admit(len(records), total, ordinary); err != nil {
 		return prepared{}, err
@@ -160,7 +160,7 @@ func (s *Session) prepare(records []Record) (prepared, error) {
 		c.Parent = new(v.head.CID)
 	}
 	for i, r := range records {
-		c.Records[i] = r.value
+		c.Records[i] = r.record.value
 	}
 	ref, err := s.verifyCommit(c, nil)
 	if err != nil {
@@ -177,25 +177,11 @@ func (s *Session) prepare(records []Record) (prepared, error) {
 	return prepared{commit: c, ref: ref}, nil
 }
 
-// Apply atomically publishes a fully verified accepted commit and its head.
-// The caller must establish storage acceptance first; supplying a Commit is an
-// assertion, not an unforgeable receipt. Mutable DTOs are canonically re-encoded
-// and CID-verified. Any error preserves all prior state. Failure categories are
-// ErrInvalidPolicy, ErrIdentity, ErrTransition, ErrUnsupportedRecord, ErrBatch,
-// ErrReloadRequired, and codec's ErrInvalidData/ErrLimitExceeded. Errors never
-// include payloads or external errors.
-// Feed genesis-to-pinned-endpoint commits through this same method for replay;
-// the caller checks that the pinned endpoint was actually reached. Open batches
-// and reload-required sessions reject this low-level path. Hard bounds apply, but
-// soft write admission and reservation for hypothetical future writes do not.
-func (s *Session) Apply(accepted history.Commit) error {
-	if err := s.writeBarrier(); err != nil {
-		return err
-	}
-	return s.apply(accepted)
-}
-
-// apply is the common decoded publication path for submit and fresh replay.
+// apply is the common verified publication path for submit and fresh replay.
+// Callers establish storage acceptance and own batch-slot coordination. Canonical
+// ancestry, hard limits, payloads and transitions are rechecked without I/O; any
+// failure preserves prior state. Replay needs no soft admission or future ending
+// headroom. Publication occurs only after complete candidate validation.
 func (s *Session) apply(accepted history.Commit) error {
 	if err := s.policy.Validate(); err != nil {
 		return err
@@ -230,16 +216,15 @@ func (s *Session) evaluate(c format.Commit, expected *history.CommitRef) (sessio
 	}
 	candidate := s.state
 	admission := newAdmission(candidate.view)
-	staged := make([]*acceptedRecord, len(c.Records))
+	staged := make([]*materializedRecord, len(c.Records))
 	var runs []runEntry
 	var inputs []int
 	for i, r := range c.Records {
-		fact, err := decodeAccepted(r, s.policy.PayloadLimits)
+		fact, err := decodeMaterialized(r, s.policy.PayloadLimits)
 		if err != nil {
 			return sessionState{}, history.CommitRef{}, err
 		}
-		metadata := fact.metadata(candidate.view.historyID)
-		if err := admission.reduce(metadata); err != nil {
+		if err := admission.reduce(candidate.view.historyID, fact); err != nil {
 			return sessionState{}, history.CommitRef{}, err
 		}
 		staged[i] = fact
@@ -279,7 +264,7 @@ func (s *Session) evaluate(c format.Commit, expected *history.CommitRef) (sessio
 }
 
 // verifyCommit checks ancestry and bounded canonical envelope identity before
-// either metadata analysis or decoded application allocates candidate storage.
+// decoding or allocating candidate storage.
 func (s *Session) verifyCommit(c format.Commit, expected *history.CommitRef) (history.CommitRef, error) {
 	if err := s.checkAncestry(c, expected); err != nil {
 		return history.CommitRef{}, err

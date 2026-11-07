@@ -1,13 +1,12 @@
-    method func (*Session).Apply(accepted history.Commit) error
     method func (*Session).BeginCommit() (*SessionCommit, error)
     method func (*Session).Snapshot() Snapshot
     method func (*Session).SubmitCommit(ctx context.Context, b *SessionCommit) (history.CommitRef, error)
     method func (*SessionCommit).AddEffectiveInput(v EffectiveInput) error
     method func (*SessionCommit).AddInvocationFailure(v InvocationFailure) error
-    method func (*SessionCommit).AddModelRequest(v AddModelRequestRequest) (ModelRequestID, error)
+    method func (*SessionCommit).AddModelRequest(v ModelRequest) (ModelRequestID, error)
     method func (*SessionCommit).AddModelResponse(v ModelResponse) error
     method func (*SessionCommit).AddRunEnded(v RunEnded) error
-    method func (*SessionCommit).AddUserInput(request AddUserInputRequest) (UserInputID, error)
+    method func (*SessionCommit).AddUserInput(request UserInput) (UserInputID, error)
     method func (*SessionCommit).Create() error
     method func (*SessionCommit).Discard() error
     method func (*SessionCommit).EndRun(reason RunEndedReason) error
@@ -134,7 +133,6 @@
     method func (OpaqueProviderData).Equal(other OpaqueProviderData) bool
     method func (OpaqueProviderData).Validate() error
     method func (Policy).Validate() error
-    method func (Record).Format() format.Record
     method func (RecordView).Created() (Created, bool)
     method func (RecordView).EffectiveInput() (EffectiveInputView, bool)
     method func (RecordView).Format() format.Record
@@ -257,23 +255,9 @@ const RunEndedCompleted RunEndedReason = "completed"
 const RunEndedError RunEndedReason = "error"
 const RunEndedInterrupted RunEndedReason = "interrupted"
 const RunEndedLimit RunEndedReason = "limit"
-func DecodeRecord(scope id.HistoryID, v format.Record, limits codec.Limits) (Record, error)
 func Load(ctx context.Context, h *history.History, id id.HistoryID, policy Policy) (*Session, error)
 func New(h *history.History, id id.HistoryID, policy Policy) (*Session, error)
-func NewCreatedRecord(v Created, limits codec.Limits) (Record, error)
-func NewEffectiveInputRecord(v EffectiveInput, limits codec.Limits) (Record, error)
-func NewInstructionsRecord(v Instructions, limits codec.Limits) (Record, error)
-func NewInvocationFailureRecord(v InvocationFailure, limits codec.Limits) (Record, error)
-func NewModelBindingRecord(v ModelBinding, limits codec.Limits) (Record, error)
-func NewModelRequestRecord(v ModelRequest, limits codec.Limits) (Record, error)
-func NewModelResponseRecord(v ModelResponse, limits codec.Limits) (Record, error)
-func NewRunEndedRecord(v RunEnded, limits codec.Limits) (Record, error)
-func NewRunStartedRecord(v RunStarted, limits codec.Limits) (Record, error)
-func NewToolCatalogRecord(v ToolCatalog, limits codec.Limits) (Record, error)
-func NewUserInputRecord(v UserInput, limits codec.Limits) (Record, error)
 type Actor string
-type AddModelRequestRequest struct{RunID RunID; Source SourceHead; Recipe ConstructionRecipe; RetryOf *ModelRequestID}
-type AddUserInputRequest struct{RunID RunID; Parts []ContentPart}
 type AttributedInput struct{Parts []ContentPart; Actor Actor; Purpose PromptPurpose; Source ContentSource}
 type AttributedInputView struct{}
 type CaptureFailureEvidence struct{RequestID ModelRequestID; Evidence *ObservedEvidence; Usage *InvocationUsage}
@@ -301,7 +285,7 @@ type MediaSourceKind string
 type MediaView struct{}
 type ModelBinding struct{HistoryID id.HistoryID; Route string; API string; Model string; Settings []byte}
 type ModelBindingView struct{}
-type ModelRequest struct{ID ModelRequestID; Source SourceHead; Recipe ConstructionRecipe; RetryOf *ModelRequestID}
+type ModelRequest struct{RunID RunID; Source SourceHead; Recipe ConstructionRecipe; RetryOf *ModelRequestID}
 type ModelRequestID struct{}
 type ModelRequestView struct{}
 type ModelResponse struct{RequestID ModelRequestID; Terminal ResponseTerminalClass; ProviderStopReason *string; Items []ResponseItem; Evidence *ObservedEvidence; Usage *InvocationUsage; Private *OpaqueProviderData}
@@ -310,7 +294,6 @@ type ObservedEvidence struct{Detail *string; Correlation *string}
 type OpaqueProviderData struct{Producer string; Format string; Version int64; Data []byte}
 type Policy struct{CommitLimits codec.Limits; PayloadLimits codec.Limits; MaxRecordsPerCommit int; SoftMaxRetainedRecords int; SoftMaxPayloadBytes uint64; SoftMaxDecodedWork uint64; MaxRetainedRecords int; MaxPayloadBytes uint64; MaxDecodedWork uint64}
 type PromptPurpose string
-type Record struct{}
 type RecordView struct{}
 type RequestedCall struct{Name string; Arguments []byte}
 type RequestedCallID struct{}
@@ -335,7 +318,7 @@ type ToolCatalog struct{HistoryID id.HistoryID; Tools []ToolDefinition}
 type ToolCatalogView struct{}
 type ToolDefinition struct{Name string; Description string; ArgumentSchema []byte}
 type ToolDefinitionView struct{}
-type UserInput struct{ID UserInputID; Parts []ContentPart}
+type UserInput struct{RunID RunID; Parts []ContentPart}
 type UserInputID struct{}
 type UserInputView struct{}
 type WorkspaceFileSource struct{Path string}

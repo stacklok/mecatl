@@ -21,16 +21,17 @@
 // context supplied by verified history ancestry. Payload-local validation and
 // aggregate lifecycle legality are separate responsibilities.
 //
-// SessionCommit collects provisional facts for [Session.SubmitCommit]. Submission,
-// Apply, and Load share the decoded application path, publishing accepted state.
+// SessionCommit collects provisional facts for [Session.SubmitCommit], allocating
+// scoped identities for authored user inputs and model requests. Submission and
+// storage-backed [Load] share private verified application and publish accepted
+// state atomically; arbitrary records cannot be applied through the public API.
 // Session operations must be caller-serialized; captured snapshots and their
 // child handles support concurrent readers independently of the session owner.
 // Views retain immutable backing storage for their lifetime, potentially including
 // the enclosing accepted record. Capture and direct item/part navigation cost O(1),
 // without copying payloads. CallCount and CallAt derive call order by scanning the
 // response; Calls traverses it once. Byte getters return independent field-only
-// copies; Record and
-// RecordView.Format explicitly copy encoded history records for transport.
+// copies; RecordView.Format explicitly copies encoded history records for transport.
 //
 // View sequences are immutable, ordered and repeatable, and retain their captured
 // views' backing storage and bounds without copying it. Retention is not a payload

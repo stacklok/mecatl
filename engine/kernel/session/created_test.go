@@ -1,4 +1,4 @@
-package session_test
+package session
 
 import (
 	"errors"
@@ -6,28 +6,27 @@ import (
 	"testing"
 
 	"github.com/stacklok/mecatl/engine/kernel/codec"
-	"github.com/stacklok/mecatl/engine/kernel/session"
 	sessionformat "github.com/stacklok/mecatl/engine/kernel/session/format"
 )
 
 func TestCreated(t *testing.T) {
-	v := session.Created{HistoryID: testHistoryID(t)}
+	v := Created{HistoryID: testHistoryID(t)}
 	if err := v.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	r, err := session.NewCreatedRecord(v, testLimits())
+	r, err := newCreatedRecord(v, testLimits())
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = codec.Decode[sessionformat.Created](r.Format().Payload, testLimits())
+	_, err = codec.Decode[sessionformat.Created](r.format().Payload, testLimits())
 	if err != nil || !v.Clone().Equal(v) {
 		t.Fatalf("creation roundtrip: %v", err)
 	}
-	if (session.Created{}).Validate() == nil {
+	if (Created{}).Validate() == nil {
 		t.Fatal("zero creation validated")
 	}
-	r, err = session.NewCreatedRecord(session.Created{}, testLimits())
-	if !errors.Is(err, codec.ErrInvalidData) || !reflect.DeepEqual(r, session.Record{}) {
+	r, err = newCreatedRecord(Created{}, testLimits())
+	if !errors.Is(err, codec.ErrInvalidData) || !reflect.DeepEqual(r, proposedRecord{}) {
 		t.Fatalf("zero creation record: %v", err)
 	}
 }

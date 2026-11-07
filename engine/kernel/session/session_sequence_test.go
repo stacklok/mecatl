@@ -28,7 +28,7 @@ func TestSessionCommitOrdinalExhaustion(t *testing.T) {
 			}
 			before := b.admission.candidate
 			if input {
-				if id, err := b.AddUserInput(AddUserInputRequest{RunID: run}); id != (UserInputID{}) || !errors.Is(err, codec.ErrLimitExceeded) {
+				if id, err := b.AddUserInput(UserInput{RunID: run}); id != (UserInputID{}) || !errors.Is(err, codec.ErrLimitExceeded) {
 					t.Fatalf("input overflow: %v, %v", id, err)
 				}
 			} else {
@@ -53,15 +53,15 @@ func TestSessionSequenceExhaustion(t *testing.T) {
 			s, limits := internalFixture(t)
 			id := s.Snapshot().HistoryID()
 			run := RunID{historyID: id, ordinal: 1}
-			created, err := NewCreatedRecord(Created{HistoryID: id}, limits)
+			created, err := newCreatedRecord(Created{HistoryID: id}, limits)
 			if err != nil {
 				t.Fatal(err)
 			}
-			start, err := NewRunStartedRecord(RunStarted{ID: run}, limits)
+			start, err := newRunStartedRecord(RunStarted{ID: run}, limits)
 			if err != nil {
 				t.Fatal(err)
 			}
-			records := []Record{created}
+			records := []proposedRecord{created}
 			if active {
 				records = append(records, start)
 			}
@@ -73,19 +73,19 @@ func TestSessionSequenceExhaustion(t *testing.T) {
 				if err != nil || p.ref.Sequence != math.MaxInt64 {
 					t.Fatalf("last interruption: %v", err)
 				}
-				if err := s.Apply(history.Commit{Ref: p.ref, Commit: p.commit}); err != nil {
+				if err := s.apply(history.Commit{Ref: p.ref, Commit: p.commit}); err != nil {
 					t.Fatal(err)
 				}
 			} else {
-				if p, err := s.prepare([]Record{start}); !errors.Is(err, codec.ErrLimitExceeded) || !reflect.DeepEqual(p, prepared{}) {
+				if p, err := s.prepare([]proposedRecord{start}); !errors.Is(err, codec.ErrLimitExceeded) || !reflect.DeepEqual(p, prepared{}) {
 					t.Fatalf("stranding preparation: %v", err)
 				}
-				dto := format.Commit{FormatVersion: 1, Sequence: math.MaxInt64, Parent: new(before.Head().CID), Records: []format.Record{start.Format()}}
+				dto := format.Commit{FormatVersion: 1, Sequence: math.MaxInt64, Parent: new(before.Head().CID), Records: []format.Record{start.format()}}
 				wire, err := codec.Encode(dto, limits)
 				if err != nil {
 					t.Fatal(err)
 				}
-				if err := s.Apply(history.Commit{Ref: history.CommitRef{Sequence: dto.Sequence, CID: contentid.Sum(wire)}, Commit: dto}); err != nil {
+				if err := s.apply(history.Commit{Ref: history.CommitRef{Sequence: dto.Sequence, CID: contentid.Sum(wire)}, Commit: dto}); err != nil {
 					t.Fatalf("hard-valid Apply must not reserve future sequence: %v", err)
 				}
 				if s.Snapshot().ActiveRun() != run || s.Snapshot().Head().Sequence != math.MaxInt64 {
@@ -94,10 +94,10 @@ func TestSessionSequenceExhaustion(t *testing.T) {
 				s.state.view.head.Sequence = math.MaxInt64
 			}
 			before = s.Snapshot()
-			if p, err := s.prepare([]Record{start}); !errors.Is(err, codec.ErrLimitExceeded) || !reflect.DeepEqual(p, prepared{}) {
+			if p, err := s.prepare([]proposedRecord{start}); !errors.Is(err, codec.ErrLimitExceeded) || !reflect.DeepEqual(p, prepared{}) {
 				t.Fatalf("exhausted preparation: %v", err)
 			}
-			if err := s.Apply(history.Commit{Commit: format.Commit{Records: []format.Record{start.Format()}}}); !errors.Is(err, codec.ErrLimitExceeded) {
+			if err := s.apply(history.Commit{Commit: format.Commit{Records: []format.Record{start.format()}}}); !errors.Is(err, codec.ErrLimitExceeded) {
 				t.Fatalf("exhausted Apply: %v", err)
 			}
 			if !reflect.DeepEqual(before, s.Snapshot()) {

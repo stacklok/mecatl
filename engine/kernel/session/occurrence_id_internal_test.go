@@ -60,7 +60,7 @@ func TestSnapshotUserInputByIDMalformedComponents(t *testing.T) {
 		var err error
 		run, err = b.StartRun()
 		interactionCheck(t, err)
-		_, err = b.AddUserInput(AddUserInputRequest{RunID: run})
+		_, err = b.AddUserInput(UserInput{RunID: run})
 		interactionCheck(t, err)
 	})
 	for _, n := range []uint64{0, 1<<32 + 1, 1<<32 + 2, 1<<63 + 1, math.MaxUint64} {
@@ -90,7 +90,7 @@ func TestEffectiveInputExtremeReferenceAllPaths(t *testing.T) {
 					run := s.Snapshot().ActiveRun()
 					b, err := s.BeginCommit()
 					interactionCheck(t, err)
-					first, err := b.AddUserInput(AddUserInputRequest{RunID: run})
+					first, err := b.AddUserInput(UserInput{RunID: run})
 					interactionCheck(t, err)
 					if accepted {
 						_, err = s.SubmitCommit(context.Background(), b)
@@ -113,14 +113,14 @@ func TestEffectiveInputExtremeReferenceAllPaths(t *testing.T) {
 						}
 						interactionCheck(t, b.Discard())
 					} else {
-						records := append([]Record(nil), b.records...)
+						records := append([]proposedRecord(nil), b.records...)
 						interactionCheck(t, b.Discard())
-						r := interactionRecord(t)(NewEffectiveInputRecord(v, s.policy.PayloadLimits))
-						r, err = DecodeRecord(run.historyID, r.Format(), s.policy.PayloadLimits)
+						r := interactionRecord(t)(newEffectiveInputRecord(v, s.policy.PayloadLimits))
+						r, err = decodeRecord(run.historyID, r.format(), s.policy.PayloadLimits)
 						interactionCheck(t, err)
 						c := interactionCommit(t, s, append(records, r))
 						if path == "apply" {
-							err = s.Apply(c)
+							err = s.apply(c)
 						} else {
 							result, appendErr := s.history.Append(context.Background(), run.historyID, c.Commit)
 							interactionCheck(t, appendErr)

@@ -45,7 +45,7 @@ func ExampleSession() {
 		fmt.Println(err)
 		return
 	}
-	input, err := b.AddUserInput(session.AddUserInputRequest{RunID: run, Parts: []session.ContentPart{{Text: new("first")}}})
+	input, err := b.AddUserInput(session.UserInput{RunID: run, Parts: []session.ContentPart{{Text: new("first")}}})
 	if err != nil {
 		fmt.Println(err)
 		return
@@ -133,7 +133,7 @@ func ExampleSession() {
 		fmt.Println(err)
 		return
 	}
-	second, err := next.AddUserInput(session.AddUserInputRequest{RunID: successor, Parts: []session.ContentPart{{Text: new("second")}}})
+	second, err := next.AddUserInput(session.UserInput{RunID: successor, Parts: []session.ContentPart{{Text: new("second")}}})
 	if err != nil {
 		fmt.Println(err)
 		return

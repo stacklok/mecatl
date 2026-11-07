@@ -25,9 +25,9 @@ func TestInteractionEveryMinimalEndingReservation(t *testing.T) {
 					t.Run(fmt.Sprintf("%s/%s/%s/short=%t", stage, reason, dimension, short), func(t *testing.T) {
 						s := interactionFixture(t, stage)
 						run := s.Snapshot().ActiveRun()
-						contextRecord := interactionRecord(t)(NewInstructionsRecord(Instructions{HistoryID: run.historyID}, s.policy.PayloadLimits))
-						ending := interactionRecord(t)(NewRunEndedRecord(RunEnded{RunID: run, Reason: reason}, s.policy.PayloadLimits))
-						largest := interactionRecord(t)(NewRunEndedRecord(RunEnded{RunID: run, Reason: RunEndedCaptureFailed}, s.policy.PayloadLimits))
+						contextRecord := interactionRecord(t)(newInstructionsRecord(Instructions{HistoryID: run.historyID}, s.policy.PayloadLimits))
+						ending := interactionRecord(t)(newRunEndedRecord(RunEnded{RunID: run, Reason: reason}, s.policy.PayloadLimits))
+						largest := interactionRecord(t)(newRunEndedRecord(RunEnded{RunID: run, Reason: RunEndedCaptureFailed}, s.policy.PayloadLimits))
 						p := s.policy
 						switch dimension {
 						case "records":
@@ -37,8 +37,8 @@ func TestInteractionEveryMinimalEndingReservation(t *testing.T) {
 								p.MaxRetainedRecords--
 							}
 						case "bytes":
-							p.SoftMaxPayloadBytes = s.state.payloadBytes + uint64(len(contextRecord.value.Payload))
-							p.MaxPayloadBytes = p.SoftMaxPayloadBytes + uint64(len(largest.value.Payload))
+							p.SoftMaxPayloadBytes = s.state.payloadBytes + uint64(len(contextRecord.record.value.Payload))
+							p.MaxPayloadBytes = p.SoftMaxPayloadBytes + uint64(len(largest.record.value.Payload))
 							if short {
 								p.MaxPayloadBytes--
 							}
@@ -66,7 +66,7 @@ func TestInteractionEveryMinimalEndingReservation(t *testing.T) {
 						active := s.state.view.lifecycle
 						prepared, err := s.prepareEnding(reason)
 						interactionCheck(t, err)
-						if len(prepared.commit.Records) != 1 || !prepared.commit.Records[0].Equal(ending.Format()) {
+						if len(prepared.commit.Records) != 1 || !prepared.commit.Records[0].Equal(ending.format()) {
 							t.Fatal("reservation not actual minimal ending")
 						}
 						b, err = s.BeginCommit()
@@ -92,13 +92,13 @@ func TestInteractionEveryMinimalEndingReservation(t *testing.T) {
 	for _, ordinal := range []uint64{1, 23, 24, 255, 256, math.MaxUint64} {
 		s, _ := internalFixture(t)
 		run := RunID{historyID: s.Snapshot().HistoryID(), ordinal: ordinal}
-		largest := interactionRecord(t)(NewRunEndedRecord(RunEnded{RunID: run, Reason: RunEndedCaptureFailed}, s.policy.PayloadLimits))
+		largest := interactionRecord(t)(newRunEndedRecord(RunEnded{RunID: run, Reason: RunEndedCaptureFailed}, s.policy.PayloadLimits))
 		for _, reason := range reasons {
-			r := interactionRecord(t)(NewRunEndedRecord(RunEnded{RunID: run, Reason: reason}, s.policy.PayloadLimits))
-			if len(r.value.Payload) > len(largest.value.Payload) {
+			r := interactionRecord(t)(newRunEndedRecord(RunEnded{RunID: run, Reason: reason}, s.policy.PayloadLimits))
+			if len(r.record.value.Payload) > len(largest.record.value.Payload) {
 				t.Fatalf("%s exceeds reserved minimal shape", reason)
 			}
-			if reason == RunEndedError && len(r.value.Payload) == len(largest.value.Payload) {
+			if reason == RunEndedError && len(r.record.value.Payload) == len(largest.record.value.Payload) {
 				t.Fatal("fixture must exercise unequal label lengths")
 			}
 		}
@@ -111,7 +111,7 @@ func TestInteractionMinimalEndingExactHardBounds(t *testing.T) {
 			for _, short := range []bool{false, true} {
 				t.Run(fmt.Sprintf("%s/%s/short=%t", reason, dimension, short), func(t *testing.T) {
 					s := interactionFixture(t, "bound")
-					r := interactionRecord(t)(NewRunEndedRecord(RunEnded{RunID: s.Snapshot().ActiveRun(), Reason: reason}, s.policy.PayloadLimits))
+					r := interactionRecord(t)(newRunEndedRecord(RunEnded{RunID: s.Snapshot().ActiveRun(), Reason: reason}, s.policy.PayloadLimits))
 					switch dimension {
 					case "records":
 						s.policy.SoftMaxRetainedRecords = s.state.records
@@ -121,7 +121,7 @@ func TestInteractionMinimalEndingExactHardBounds(t *testing.T) {
 						}
 					case "bytes":
 						s.policy.SoftMaxPayloadBytes = s.state.payloadBytes
-						s.policy.MaxPayloadBytes = s.state.payloadBytes + uint64(len(r.value.Payload))
+						s.policy.MaxPayloadBytes = s.state.payloadBytes + uint64(len(r.record.value.Payload))
 						if short {
 							s.policy.MaxPayloadBytes--
 						}
@@ -254,11 +254,11 @@ func TestInteractionHistoryPolicyReservesExactNextEndingWithoutIO(t *testing.T) 
 		t.Run(fmt.Sprint(short), func(t *testing.T) {
 			s, backend := closeoutWidthPrefix(t)
 			run := RunID{historyID: s.Snapshot().HistoryID(), ordinal: uint64(s.Snapshot().RunCount()) + 1}
-			start := interactionRecord(t)(NewRunStartedRecord(RunStarted{ID: run}, s.policy.PayloadLimits))
-			candidate, err := s.prepare([]Record{start})
+			start := interactionRecord(t)(newRunStartedRecord(RunStarted{ID: run}, s.policy.PayloadLimits))
+			candidate, err := s.prepare([]proposedRecord{start})
 			interactionCheck(t, err)
-			ending := interactionRecord(t)(NewRunEndedRecord(RunEnded{RunID: run, Reason: RunEndedCaptureFailed}, s.policy.PayloadLimits))
-			next := format.Commit{FormatVersion: 1, Sequence: 24, Parent: new(candidate.ref.CID), Records: []format.Record{ending.Format()}}
+			ending := interactionRecord(t)(newRunEndedRecord(RunEnded{RunID: run, Reason: RunEndedCaptureFailed}, s.policy.PayloadLimits))
+			next := format.Commit{FormatVersion: 1, Sequence: 24, Parent: new(candidate.ref.CID), Records: []format.Record{ending.format()}}
 			budget, err := codec.NewBudget(s.policy.CommitLimits)
 			interactionCheck(t, err)
 			interactionCheck(t, next.CheckCBOR(&budget, 0, math.MaxInt))
@@ -275,7 +275,7 @@ func TestInteractionHistoryPolicyReservesExactNextEndingWithoutIO(t *testing.T) 
 				t.Fatalf("candidate itself must fit tighter history: %v", err)
 			}
 			attempts := backend.appends
-			_, err = s.prepare([]Record{start})
+			_, err = s.prepare([]proposedRecord{start})
 			if backend.appends != attempts {
 				t.Fatal("Identify reservation did I/O")
 			}
@@ -308,8 +308,8 @@ func TestInteractionCaptureEvidenceMembershipAndPreservation(t *testing.T) {
 				capture.RequestID.requestOrdinal++
 			}
 			ending := RunEnded{RunID: pending.runID, Reason: RunEndedCaptureFailed, Capture: &capture}
-			r := interactionRecord(t)(NewRunEndedRecord(ending, s.policy.PayloadLimits))
-			c := interactionCommit(t, s, []Record{r})
+			r := interactionRecord(t)(newRunEndedRecord(ending, s.policy.PayloadLimits))
+			c := interactionCommit(t, s, []proposedRecord{r})
 			before := detachedSessionState(s.state)
 			b, err := s.BeginCommit()
 			interactionCheck(t, err)
@@ -319,7 +319,7 @@ func TestInteractionCaptureEvidenceMembershipAndPreservation(t *testing.T) {
 					t.Fatal("foreign pending capture admitted")
 				}
 				interactionCheck(t, b.Discard())
-				if err = s.Apply(c); !errors.Is(err, ErrTransition) || !reflect.DeepEqual(before, detachedSessionState(s.state)) {
+				if err = s.apply(c); !errors.Is(err, ErrTransition) || !reflect.DeepEqual(before, detachedSessionState(s.state)) {
 					t.Fatalf("decoded capture membership: %v", err)
 				}
 				return

@@ -59,19 +59,25 @@ func (v ConstructionRecipe) toFormat() sessionformat.ConstructionRecipe {
 	return sessionformat.ConstructionRecipe{Algorithm: v.Algorithm, Version: v.Version, Parameters: v.Parameters, Check: v.Check}
 }
 
-// ModelRequest is one invocation commitment. Source is the exact accepted head;
-// RetryOf is optional same-run correlation only. Assignment shares nested bytes and
-// pointer storage; Clone detaches them. Zero ID is invalid.
+// ModelRequest authors one invocation commitment in RunID. Source asserts the exact
+// accepted construction head, never an earlier same-batch fact. RetryOf is optional
+// same-run correlation only. Assignment shares nested bytes and pointer storage;
+// Clone detaches them. Zero RunID is invalid; AddModelRequest allocates identity.
 type ModelRequest struct {
-	ID      ModelRequestID
-	Source  SourceHead
-	Recipe  ConstructionRecipe
+	// RunID must identify the active run; AddModelRequest allocates its request ID.
+	RunID RunID
+	// Source is the exact accepted head used for request construction.
+	Source SourceHead
+	// Recipe describes construction; assignment borrows its nested bytes.
+	Recipe ConstructionRecipe
+	// RetryOf optionally names an earlier accepted request in RunID. It is
+	// correlation only; assignment borrows the pointer and each add gets a new ID.
 	RetryOf *ModelRequestID
 }
 
 // Validate checks local values and full retry scope, not accepted membership/order.
 func (v ModelRequest) Validate() error {
-	if err := v.ID.Validate(); err != nil {
+	if err := v.RunID.Validate(); err != nil {
 		return err
 	}
 	if err := v.Source.Validate(); err != nil {
@@ -80,7 +86,7 @@ func (v ModelRequest) Validate() error {
 	if err := v.Recipe.Validate(); err != nil {
 		return err
 	}
-	if v.RetryOf != nil && v.RetryOf.runID != v.ID.runID {
+	if v.RetryOf != nil && v.RetryOf.runID != v.RunID {
 		return codec.ErrInvalidData
 	}
 	if v.RetryOf != nil {
@@ -99,14 +105,15 @@ func (v ModelRequest) Clone() ModelRequest {
 	return v
 }
 
-// Equal compares exact scoped identity, source, recipe and retry presence.
+// Equal compares full run scope, source, recipe and retry presence.
 func (v ModelRequest) Equal(other ModelRequest) bool {
-	return v.ID == other.ID && v.Source == other.Source && v.Recipe.Equal(other.Recipe) && ((v.RetryOf == nil && other.RetryOf == nil) || (v.RetryOf != nil && other.RetryOf != nil && *v.RetryOf == *other.RetryOf))
+	return v.RunID == other.RunID && v.Source == other.Source && v.Recipe.Equal(other.Recipe) && ((v.RetryOf == nil && other.RetryOf == nil) || (v.RetryOf != nil && other.RetryOf != nil && *v.RetryOf == *other.RetryOf))
 }
 
-// toFormat omits history scope only after Validate has checked retry scope.
-func (v ModelRequest) toFormat() sessionformat.ModelRequest {
-	out := sessionformat.ModelRequest{RunID: v.ID.runID.ordinal, ID: v.ID.requestOrdinal, Source: v.Source.toFormat(), Recipe: v.Recipe.toFormat()}
+// toFormat omits history scope only after Validate has checked retry scope and
+// the constructor has checked the allocated identity against RunID.
+func (v ModelRequest) toFormat(id ModelRequestID) sessionformat.ModelRequest {
+	out := sessionformat.ModelRequest{RunID: v.RunID.ordinal, ID: id.requestOrdinal, Source: v.Source.toFormat(), Recipe: v.Recipe.toFormat()}
 	if v.RetryOf != nil {
 		out.RetryOf = new(v.RetryOf.requestOrdinal)
 	}
@@ -119,39 +126,30 @@ func (v ModelRequest) checkSize(b *valueBudget) {
 	b.bytes(len(v.Recipe.Check))
 }
 
-// NewModelRequestRecord owns one invocation commitment. It sizes before DTO
+// newModelRequestRecord owns one invocation commitment. It sizes before DTO
 // conversion and checks full public scope before omitting enclosing identities.
 // Failure returns zero; accepted source membership is checked by the aggregate.
-func NewModelRequestRecord(v ModelRequest, limits codec.Limits) (Record, error) {
+func newModelRequestRecord(v ModelRequest, id ModelRequestID, limits codec.Limits) (proposedRecord, error) {
+	if err := id.Validate(); err != nil || id.runID != v.RunID {
+		return proposedRecord{}, codec.ErrInvalidData
+	}
 	b := newValueBudget(limits)
 	v.checkSize(&b)
 	if b.err != nil {
-		return Record{}, b.err
+		return proposedRecord{}, b.err
 	}
 	if err := v.Validate(); err != nil {
-		return Record{}, codec.ErrInvalidData
+		return proposedRecord{}, codec.ErrInvalidData
 	}
-	payload, err := codec.Encode(v.toFormat(), limits)
+	payload, err := codec.Encode(v.toFormat(id), limits)
 	if err != nil {
-		return Record{}, err
+		return proposedRecord{}, err
 	}
-	metadata := ModelRequest{ID: v.ID, Source: v.Source}
-	if v.RetryOf != nil {
-		metadata.RetryOf = new(*v.RetryOf)
-	}
-	return Record{scope: v.ID.runID.historyID, modelRequest: metadata, value: format.Record{Kind: sessionformat.KindModelRequest, KindVersion: sessionformat.Version, Payload: payload}}, nil
+	return decodeRecord(v.RunID.historyID, format.Record{Kind: sessionformat.KindModelRequest, KindVersion: sessionformat.Version, Payload: payload}, limits)
 }
 
 func requestID(scope historyid.HistoryID, run, ordinal uint64) ModelRequestID {
 	return ModelRequestID{runID: RunID{historyID: scope, ordinal: run}, requestOrdinal: ordinal}
-}
-func requestFromFormat(scope historyid.HistoryID, v sessionformat.ModelRequest) ModelRequest {
-	out := ModelRequest{ID: requestID(scope, v.RunID, v.ID), Source: SourceHead{Sequence: v.Source.Sequence, CID: v.Source.CID}, Recipe: ConstructionRecipe{Algorithm: v.Recipe.Algorithm, Version: v.Recipe.Version, Parameters: v.Recipe.Parameters, Check: v.Recipe.Check}}
-	if v.RetryOf != nil {
-		id := requestID(scope, v.RunID, *v.RetryOf)
-		out.RetryOf = &id
-	}
-	return out
 }
 
 // ModelRequestView is an immutable accepted commitment. Zero has zero identity;

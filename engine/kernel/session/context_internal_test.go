@@ -25,8 +25,8 @@ func TestRichConstructorsBudgetBeforeConversion(t *testing.T) {
 	items := make([]InputItem, limits.MaxArrayElements+1)
 	settings := make([]byte, limits.MaxByteStringBytes+1)
 	oversizeText := string(make([]byte, limits.MaxStringBytes+1))
-	nestedInput := UserInput{ID: input, Parts: []ContentPart{{Text: new(oversizeText)}}}
-	nestedMedia := UserInput{ID: input, Parts: []ContentPart{{Media: &Media{Kind: MediaKind(oversizeText)}}}}
+	nestedInput := identifiedInput{ID: input, Parts: []ContentPart{{Text: new(oversizeText)}}}
+	nestedMedia := identifiedInput{ID: input, Parts: []ContentPart{{Media: &Media{Kind: MediaKind(oversizeText)}}}}
 	nestedActor := EffectiveInput{RunID: input.runID, Inputs: []InputItem{{Inline: &AttributedInput{Actor: Actor(oversizeText)}}}}
 	nestedInstructions := Instructions{HistoryID: scope, Blocks: []InstructionBlock{{Parts: []ContentPart{{Text: new(oversizeText)}}}}}
 	nestedCatalog := ToolCatalog{HistoryID: scope, Tools: []ToolDefinition{{Name: "tool", ArgumentSchema: settings}}}
@@ -39,37 +39,39 @@ func TestRichConstructorsBudgetBeforeConversion(t *testing.T) {
 	nestedResponse := ModelResponse{RequestID: requestID, Items: []ResponseItem{{Content: &ResponseContent{Parts: parts}}}}
 	failure := InvocationFailure{RequestID: requestID, Usage: usageResponse.Usage}
 	ending := RunEnded{RunID: input.runID, Reason: RunEndedCaptureFailed, Capture: &CaptureFailureEvidence{RequestID: requestID, Usage: usageResponse.Usage}}
-	request := ModelRequest{ID: requestID, Recipe: ConstructionRecipe{Parameters: settings}}
-	for _, makeRecord := range []func() (Record, error){
-		func() (Record, error) { return NewUserInputRecord(UserInput{ID: input, Parts: parts}, limits) },
-		func() (Record, error) {
-			return NewInstructionsRecord(Instructions{HistoryID: scope, Blocks: blocks}, limits)
+	request := identifiedRequest{ID: requestID, Recipe: ConstructionRecipe{Parameters: settings}}
+	for _, makeRecord := range []func() (proposedRecord, error){
+		func() (proposedRecord, error) {
+			return makeInputRecord(identifiedInput{ID: input, Parts: parts}, limits)
 		},
-		func() (Record, error) {
-			return NewToolCatalogRecord(ToolCatalog{HistoryID: scope, Tools: tools}, limits)
+		func() (proposedRecord, error) {
+			return newInstructionsRecord(Instructions{HistoryID: scope, Blocks: blocks}, limits)
 		},
-		func() (Record, error) {
-			return NewEffectiveInputRecord(EffectiveInput{RunID: input.runID, Inputs: items}, limits)
+		func() (proposedRecord, error) {
+			return newToolCatalogRecord(ToolCatalog{HistoryID: scope, Tools: tools}, limits)
 		},
-		func() (Record, error) {
-			return NewModelBindingRecord(ModelBinding{HistoryID: scope, Route: "r", API: "a", Model: "m", Settings: settings}, limits)
+		func() (proposedRecord, error) {
+			return newEffectiveInputRecord(EffectiveInput{RunID: input.runID, Inputs: items}, limits)
 		},
-		func() (Record, error) { return NewUserInputRecord(nestedInput, limits) },
-		func() (Record, error) { return NewUserInputRecord(nestedMedia, limits) },
-		func() (Record, error) { return NewInstructionsRecord(nestedInstructions, limits) },
-		func() (Record, error) { return NewToolCatalogRecord(nestedCatalog, limits) },
-		func() (Record, error) { return NewEffectiveInputRecord(nestedEffective, limits) },
-		func() (Record, error) { return NewEffectiveInputRecord(nestedActor, limits) },
-		func() (Record, error) { return NewModelRequestRecord(request, limits) },
-		func() (Record, error) { return NewModelResponseRecord(oversizeResponse, limits) },
-		func() (Record, error) { return NewModelResponseRecord(privateResponse, limits) },
-		func() (Record, error) { return NewModelResponseRecord(evidenceResponse, limits) },
-		func() (Record, error) { return NewModelResponseRecord(usageResponse, limits) },
-		func() (Record, error) { return NewModelResponseRecord(nestedResponse, limits) },
-		func() (Record, error) { return NewInvocationFailureRecord(failure, limits) },
-		func() (Record, error) { return NewRunEndedRecord(ending, limits) },
+		func() (proposedRecord, error) {
+			return newModelBindingRecord(ModelBinding{HistoryID: scope, Route: "r", API: "a", Model: "m", Settings: settings}, limits)
+		},
+		func() (proposedRecord, error) { return makeInputRecord(nestedInput, limits) },
+		func() (proposedRecord, error) { return makeInputRecord(nestedMedia, limits) },
+		func() (proposedRecord, error) { return newInstructionsRecord(nestedInstructions, limits) },
+		func() (proposedRecord, error) { return newToolCatalogRecord(nestedCatalog, limits) },
+		func() (proposedRecord, error) { return newEffectiveInputRecord(nestedEffective, limits) },
+		func() (proposedRecord, error) { return newEffectiveInputRecord(nestedActor, limits) },
+		func() (proposedRecord, error) { return makeRequestRecord(request, limits) },
+		func() (proposedRecord, error) { return newModelResponseRecord(oversizeResponse, limits) },
+		func() (proposedRecord, error) { return newModelResponseRecord(privateResponse, limits) },
+		func() (proposedRecord, error) { return newModelResponseRecord(evidenceResponse, limits) },
+		func() (proposedRecord, error) { return newModelResponseRecord(usageResponse, limits) },
+		func() (proposedRecord, error) { return newModelResponseRecord(nestedResponse, limits) },
+		func() (proposedRecord, error) { return newInvocationFailureRecord(failure, limits) },
+		func() (proposedRecord, error) { return newRunEndedRecord(ending, limits) },
 	} {
-		if r, err := makeRecord(); !errors.Is(err, codec.ErrLimitExceeded) || !reflect.DeepEqual(r, Record{}) {
+		if r, err := makeRecord(); !errors.Is(err, codec.ErrLimitExceeded) || !reflect.DeepEqual(r, proposedRecord{}) {
 			t.Fatalf("bounded failure: %v", err)
 		}
 		if n := testing.AllocsPerRun(10, func() { _, _ = makeRecord() }); n != 0 {
@@ -78,13 +80,13 @@ func TestRichConstructorsBudgetBeforeConversion(t *testing.T) {
 	}
 }
 
-func TestNewRecordMetadataAndGeneratedLimitsAgree(t *testing.T) {
+func TestNewRecordMaterializationAndGeneratedLimitsAgree(t *testing.T) {
 	s, limits := internalFixture(t)
 	scope := s.Snapshot().HistoryID()
 	input := UserInputID{runID: RunID{historyID: scope, ordinal: 1}, ordinal: 1}
 	content := []ContentPart{{Text: new(" exact ")}, {Media: &Media{Kind: MediaKindDocument, MIMEType: "raw", Source: MediaSourceInline, InlineData: []byte{0xff, 0}}}}
 	source := ContentSource{Description: "adopted", WorkspaceFile: &WorkspaceFileSource{Path: "AGENTS.md"}}
-	authored := UserInput{ID: input, Parts: content}
+	authored := identifiedInput{ID: input, Parts: content}
 	instructions := Instructions{HistoryID: scope, Blocks: []InstructionBlock{{Parts: content, Source: source}}}
 	catalog := ToolCatalog{HistoryID: scope, Tools: []ToolDefinition{{Name: "read", ArgumentSchema: []byte(" true ")}}}
 	binding := ModelBinding{HistoryID: scope, Route: "r", API: "a", Model: "m", Settings: []byte(" {\"x\":1.0} ")}
@@ -93,48 +95,73 @@ func TestNewRecordMetadataAndGeneratedLimitsAgree(t *testing.T) {
 	for i := range manyInputs.Inputs {
 		manyInputs.Inputs[i].UserInputID = &input
 	}
-	emptyParts := UserInput{ID: input, Parts: make([]ContentPart, limits.MaxArrayElements)}
+	emptyParts := identifiedInput{ID: input, Parts: make([]ContentPart, limits.MaxArrayElements)}
 	for i := range emptyParts.Parts {
 		emptyParts.Parts[i].Text = new("")
 	}
 	requestID := ModelRequestID{runID: input.runID, requestOrdinal: 1}
-	request := ModelRequest{ID: requestID, Source: SourceHead{Sequence: 1, CID: contentid.Sum([]byte("source"))}, Recipe: ConstructionRecipe{Algorithm: "a", Version: 1, Parameters: []byte{0xff}, Check: []byte{0}}, RetryOf: &requestID}
+	request := identifiedRequest{ID: requestID, Source: SourceHead{Sequence: 1, CID: contentid.Sum([]byte("source"))}, Recipe: ConstructionRecipe{Algorithm: "a", Version: 1, Parameters: []byte{0xff}, Check: []byte{0}}, RetryOf: &requestID}
 	usage := &InvocationUsage{Input: new(int64(0)), Output: new(int64(3)), Raw: &OpaqueProviderData{Producer: "p", Format: "usage", Version: 1, Data: []byte{0xff}}}
 	response := ModelResponse{RequestID: requestID, Terminal: ResponseTerminalOther, ProviderStopReason: new(""), Items: []ResponseItem{{Content: &ResponseContent{Kind: ResponseContentOutput, Parts: content}}, {Call: &RequestedCall{Name: "", Arguments: []byte{0xff}}}}, Evidence: &ObservedEvidence{Correlation: new("")}, Usage: usage, Private: &OpaqueProviderData{Producer: "p", Format: "f", Version: 1, Data: []byte{0xff}}}
 	failure := InvocationFailure{RequestID: requestID, Class: InvocationFailureTransport, Usage: usage, Evidence: response.Evidence, Explanation: new("")}
 	ending := RunEnded{RunID: input.runID, Reason: RunEndedCaptureFailed, Capture: &CaptureFailureEvidence{RequestID: requestID, Evidence: response.Evidence, Usage: usage}}
 	for _, tc := range []struct {
 		name  string
-		make  func(codec.Limits) (Record, error)
+		make  func(codec.Limits) (proposedRecord, error)
 		check func(codec.Limits) ([]byte, error)
 	}{
-		{"request", func(l codec.Limits) (Record, error) { return NewModelRequestRecord(request, l) }, func(l codec.Limits) ([]byte, error) { return codec.Encode(request.toFormat(), l) }},
-		{"response", func(l codec.Limits) (Record, error) { return NewModelResponseRecord(response, l) }, func(l codec.Limits) ([]byte, error) { return codec.Encode(response.toFormat(), l) }},
-		{"failure", func(l codec.Limits) (Record, error) { return NewInvocationFailureRecord(failure, l) }, func(l codec.Limits) ([]byte, error) { return codec.Encode(failure.toFormat(), l) }},
-		{"ending", func(l codec.Limits) (Record, error) { return NewRunEndedRecord(ending, l) }, func(l codec.Limits) ([]byte, error) { return codec.Encode(ending.toFormat(), l) }},
-		{"input", func(l codec.Limits) (Record, error) { return NewUserInputRecord(authored, l) }, func(l codec.Limits) ([]byte, error) { return codec.Encode(authored.toFormat(), l) }},
-		{"instructions", func(l codec.Limits) (Record, error) { return NewInstructionsRecord(instructions, l) }, func(l codec.Limits) ([]byte, error) { return codec.Encode(instructions.toFormat(), l) }},
-		{"catalog", func(l codec.Limits) (Record, error) { return NewToolCatalogRecord(catalog, l) }, func(l codec.Limits) ([]byte, error) { return codec.Encode(catalog.toFormat(), l) }},
-		{"binding", func(l codec.Limits) (Record, error) { return NewModelBindingRecord(binding, l) }, func(l codec.Limits) ([]byte, error) { return codec.Encode(binding.toFormat(), l) }},
-		{"effective", func(l codec.Limits) (Record, error) { return NewEffectiveInputRecord(effective, l) }, func(l codec.Limits) ([]byte, error) { return codec.Encode(effective.toFormat(), l) }},
-		{"pointer-heavy", func(l codec.Limits) (Record, error) { return NewEffectiveInputRecord(manyInputs, l) }, func(l codec.Limits) ([]byte, error) { return codec.Encode(manyInputs.toFormat(), l) }},
-		{"empty-parts", func(l codec.Limits) (Record, error) { return NewUserInputRecord(emptyParts, l) }, func(l codec.Limits) ([]byte, error) { return codec.Encode(emptyParts.toFormat(), l) }},
+		{"request", func(l codec.Limits) (proposedRecord, error) { return makeRequestRecord(request, l) }, func(l codec.Limits) ([]byte, error) { return codec.Encode(request.toFormat(), l) }},
+		{"response", func(l codec.Limits) (proposedRecord, error) { return newModelResponseRecord(response, l) }, func(l codec.Limits) ([]byte, error) { return codec.Encode(response.toFormat(), l) }},
+		{"failure", func(l codec.Limits) (proposedRecord, error) { return newInvocationFailureRecord(failure, l) }, func(l codec.Limits) ([]byte, error) { return codec.Encode(failure.toFormat(), l) }},
+		{"ending", func(l codec.Limits) (proposedRecord, error) { return newRunEndedRecord(ending, l) }, func(l codec.Limits) ([]byte, error) { return codec.Encode(ending.toFormat(), l) }},
+		{"input", func(l codec.Limits) (proposedRecord, error) { return makeInputRecord(authored, l) }, func(l codec.Limits) ([]byte, error) { return codec.Encode(authored.toFormat(), l) }},
+		{"instructions", func(l codec.Limits) (proposedRecord, error) { return newInstructionsRecord(instructions, l) }, func(l codec.Limits) ([]byte, error) { return codec.Encode(instructions.toFormat(), l) }},
+		{"catalog", func(l codec.Limits) (proposedRecord, error) { return newToolCatalogRecord(catalog, l) }, func(l codec.Limits) ([]byte, error) { return codec.Encode(catalog.toFormat(), l) }},
+		{"binding", func(l codec.Limits) (proposedRecord, error) { return newModelBindingRecord(binding, l) }, func(l codec.Limits) ([]byte, error) { return codec.Encode(binding.toFormat(), l) }},
+		{"effective", func(l codec.Limits) (proposedRecord, error) { return newEffectiveInputRecord(effective, l) }, func(l codec.Limits) ([]byte, error) { return codec.Encode(effective.toFormat(), l) }},
+		{"pointer-heavy", func(l codec.Limits) (proposedRecord, error) { return newEffectiveInputRecord(manyInputs, l) }, func(l codec.Limits) ([]byte, error) { return codec.Encode(manyInputs.toFormat(), l) }},
+		{"empty-parts", func(l codec.Limits) (proposedRecord, error) { return makeInputRecord(emptyParts, l) }, func(l codec.Limits) ([]byte, error) { return codec.Encode(emptyParts.toFormat(), l) }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			original, err := tc.make(limits)
 			if err != nil {
 				t.Fatal(err)
 			}
-			decoded, err := DecodeRecord(scope, original.Format(), limits)
+			want := materializedRecord{value: original.format()}
+			switch tc.name {
+			case "request":
+				want.request = request.toFormat()
+			case "response":
+				want.response = response.toFormat()
+			case "failure":
+				want.failure = failure.toFormat()
+			case "ending":
+				want.ended = ending.toFormat()
+			case "input":
+				want.input = authored.toFormat()
+			case "instructions":
+				want.instructions = instructions.toFormat()
+			case "catalog":
+				want.catalog = catalog.toFormat()
+			case "binding":
+				want.binding = binding.toFormat()
+			case "effective":
+				want.effective = effective.toFormat()
+			case "pointer-heavy":
+				want.effective = manyInputs.toFormat()
+			case "empty-parts":
+				want.input = emptyParts.toFormat()
+			}
+			if !reflect.DeepEqual(*original.record, want) {
+				t.Fatal("backing must contain the complete selected DTO and zero inactive variants")
+			}
+			decoded, err := decodeRecord(scope, original.format(), limits)
 			if err != nil {
 				t.Fatal(err)
 			}
-			// Every scalar used by the reducer agrees between construction and decoding.
-			if original.value.Kind == sessionformat.KindUserInput && (original.userInput != decoded.userInput) {
-				t.Fatal("input metadata")
-			}
-			if original.value.Kind == sessionformat.KindEffectiveInput && (!original.effectiveInput.Equal(decoded.effectiveInput)) {
-				t.Fatal("effective metadata")
+			// Complete materialization agrees, not just reducer-relevant scalars.
+			if !reflect.DeepEqual(original, decoded) {
+				t.Fatal("constructed and decoded backing differ")
 			}
 			// Find each exact generated admission boundary independently, including
 			// MaxBytes' conservative nine-byte node estimate, not just wire length.
@@ -175,20 +202,20 @@ func TestNewRecordMetadataAndGeneratedLimitsAgree(t *testing.T) {
 						t.Fatalf("constructor %s=%d: %v; codec.Encode: %v", reflect.TypeOf(l).Field(i).Name, ceiling, gotErr, wantErr)
 					}
 					if wantErr == nil {
-						if !reflect.DeepEqual(got.Format().Payload, want) {
+						if !reflect.DeepEqual(got.format().Payload, want) {
 							t.Fatal("admitted constructor changed canonical payload")
 						}
-					} else if !reflect.DeepEqual(got, Record{}) {
+					} else if !reflect.DeepEqual(got, proposedRecord{}) {
 						t.Fatal("rejected constructor returned partial record")
 					}
 					if err := original.checkPayload(l); !errors.Is(err, wantErr) {
 						t.Fatalf("preflight %s=%d: %v; want %v", reflect.TypeOf(l).Field(i).Name, ceiling, err, wantErr)
 					}
-					imported, decodeErr := DecodeRecord(scope, original.Format(), l)
+					imported, decodeErr := decodeRecord(scope, original.format(), l)
 					if !errors.Is(decodeErr, wantErr) {
 						t.Fatalf("decode %s=%d: %v; want %v", reflect.TypeOf(l).Field(i).Name, ceiling, decodeErr, wantErr)
 					}
-					if decodeErr != nil && !reflect.DeepEqual(imported, Record{}) {
+					if decodeErr != nil && !reflect.DeepEqual(imported, proposedRecord{}) {
 						t.Fatal("bounded decode returned partial record")
 					}
 				}
@@ -211,7 +238,7 @@ func TestContextApplyStagesSelectionsAndSourceBounds(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	input, err := b.AddUserInput(AddUserInputRequest{RunID: run})
+	input, err := b.AddUserInput(UserInput{RunID: run})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -232,30 +259,30 @@ func TestContextApplyStagesSelectionsAndSourceBounds(t *testing.T) {
 	}
 	before := detachedSessionState(s.state)
 	old := s.Snapshot()
-	replacement, err := NewInstructionsRecord(Instructions{HistoryID: scope}, limits)
+	replacement, err := newInstructionsRecord(Instructions{HistoryID: scope}, limits)
 	if err != nil {
 		t.Fatal(err)
 	}
-	catalog, err := NewToolCatalogRecord(ToolCatalog{HistoryID: scope}, limits)
+	catalog, err := newToolCatalogRecord(ToolCatalog{HistoryID: scope}, limits)
 	if err != nil {
 		t.Fatal(err)
 	}
-	binding, err := NewModelBindingRecord(ModelBinding{HistoryID: scope, Route: "r", API: "a", Model: "m", Settings: []byte("{}")}, limits)
+	binding, err := newModelBindingRecord(ModelBinding{HistoryID: scope, Route: "r", API: "a", Model: "m", Settings: []byte("{}")}, limits)
 	if err != nil {
 		t.Fatal(err)
 	}
-	bad, err := NewEffectiveInputRecord(EffectiveInput{RunID: run, Inputs: []InputItem{{UserInputID: &input}, {UserInputID: &UserInputID{runID: run, ordinal: 2}}}}, limits)
+	bad, err := newEffectiveInputRecord(EffectiveInput{RunID: run, Inputs: []InputItem{{UserInputID: &input}, {UserInputID: &UserInputID{runID: run, ordinal: 2}}}}, limits)
 	if err != nil {
 		t.Fatal(err)
 	}
 	// Construct an external accepted assertion independently of local preflight.
-	c := history.Commit{Commit: historyformat.Commit{FormatVersion: 1, Parent: new(old.Head().CID), Sequence: old.Head().Sequence + 1, Records: []historyformat.Record{replacement.Format(), catalog.Format(), binding.Format(), bad.Format()}}}
+	c := history.Commit{Commit: historyformat.Commit{FormatVersion: 1, Parent: new(old.Head().CID), Sequence: old.Head().Sequence + 1, Records: []historyformat.Record{replacement.format(), catalog.format(), binding.format(), bad.format()}}}
 	wire, err := codec.Encode(c.Commit, limits)
 	if err != nil {
 		t.Fatal(err)
 	}
 	c.Ref = history.CommitRef{Sequence: c.Commit.Sequence, CID: contentid.Sum(wire)}
-	if err := s.Apply(c); !errors.Is(err, ErrTransition) {
+	if err := s.apply(c); !errors.Is(err, ErrTransition) {
 		t.Fatalf("source bound: %v", err)
 	}
 	if !reflect.DeepEqual(before, detachedSessionState(s.state)) {
@@ -271,15 +298,15 @@ func TestContextApplyStagesSelectionsAndSourceBounds(t *testing.T) {
 	if mv, ok := s.Snapshot().ModelBinding(); !ok || mv.HistoryID() != scope || mv.Route() != "original" || mv.API() != "a" || mv.Model() != "m" || string(mv.Settings()) != " true " {
 		t.Fatal("binding partially published")
 	}
-	user, err := NewUserInputRecord(UserInput{ID: input}, limits)
+	user, err := makeInputRecord(identifiedInput{ID: input}, limits)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, record := range []Record{replacement, catalog, binding, bad, user} {
+	for _, record := range []proposedRecord{replacement, catalog, binding, bad, user} {
 		for _, failure := range []string{"malformed", "version", "oversize"} {
-			t.Run(record.value.Kind+"/"+failure, func(t *testing.T) {
+			t.Run(record.record.value.Kind+"/"+failure, func(t *testing.T) {
 				external := c.Commit.Clone()
-				last := record.Format()
+				last := record.format()
 				wantErr := codec.ErrInvalidData
 				switch failure {
 				case "version":
@@ -301,7 +328,7 @@ func TestContextApplyStagesSelectionsAndSourceBounds(t *testing.T) {
 					t.Fatal(err)
 				}
 				accepted := history.Commit{Commit: external, Ref: history.CommitRef{Sequence: external.Sequence, CID: contentid.Sum(wire)}}
-				if err := s.Apply(accepted); !errors.Is(err, wantErr) {
+				if err := s.apply(accepted); !errors.Is(err, wantErr) {
 					t.Fatalf("external final record: %v; want %v", err, wantErr)
 				}
 				oldState := before

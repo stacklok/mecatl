@@ -54,7 +54,7 @@ func TestSnapshotConstantCaptureAndAmortizedAppendStorage(t *testing.T) {
 					t.Fatal(err)
 				}
 			case 1:
-				if _, err := b.AddUserInput(AddUserInputRequest{RunID: before.ActiveRun(), Parts: internalByteParts([]byte{0xff, 0, 'x'})}); err != nil {
+				if _, err := b.AddUserInput(UserInput{RunID: before.ActiveRun(), Parts: internalByteParts([]byte{0xff, 0, 'x'})}); err != nil {
 					t.Fatal(err)
 				}
 			case 2:
@@ -120,7 +120,7 @@ func TestSnapshotChildBoundsAcrossSpareCapacityAndGrowth(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := b.AddUserInput(AddUserInputRequest{RunID: run, Parts: internalByteParts([]byte("first"))}); err != nil {
+	if _, err := b.AddUserInput(UserInput{RunID: run, Parts: internalByteParts([]byte("first"))}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.SubmitCommit(context.Background(), b); err != nil {
@@ -137,7 +137,7 @@ func TestSnapshotChildBoundsAcrossSpareCapacityAndGrowth(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := b.AddUserInput(AddUserInputRequest{RunID: run, Parts: internalByteParts([]byte("later"))}); err != nil {
+		if _, err := b.AddUserInput(UserInput{RunID: run, Parts: internalByteParts([]byte("later"))}); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := s.SubmitCommit(context.Background(), b); err != nil {

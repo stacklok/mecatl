@@ -19,7 +19,7 @@ func addInteractionRequest(t testing.TB, s *session.Session, run session.RunID, 
 	t.Helper()
 	head := s.Snapshot().Head()
 	b := beginBatch(t, s)
-	id, err := b.AddModelRequest(session.AddModelRequestRequest{RunID: run, Source: session.SourceHead{Sequence: head.Sequence, CID: head.CID}, Recipe: session.ConstructionRecipe{Algorithm: "future/algorithm", Version: 17, Parameters: parameters, Check: []byte{0xff, 0, 1}}, RetryOf: retry})
+	id, err := b.AddModelRequest(session.ModelRequest{RunID: run, Source: session.SourceHead{Sequence: head.Sequence, CID: head.CID}, Recipe: session.ConstructionRecipe{Algorithm: "future/algorithm", Version: 17, Parameters: parameters, Check: []byte{0xff, 0, 1}}, RetryOf: retry})
 	mustBatch(t, err)
 	submitBatch(t, s, b)
 	return id
@@ -37,7 +37,7 @@ func TestModelInteractionUnknownAcceptanceFreezesExactProposal(t *testing.T) {
 			submitBatch(t, s, b)
 			head := s.Snapshot().Head()
 			b = beginBatch(t, s)
-			add := session.AddModelRequestRequest{RunID: run, Source: session.SourceHead{Sequence: head.Sequence, CID: head.CID}, Recipe: session.ConstructionRecipe{Algorithm: "a", Version: 1, Parameters: []byte("original"), Check: []byte{1}}}
+			add := session.ModelRequest{RunID: run, Source: session.SourceHead{Sequence: head.Sequence, CID: head.CID}, Recipe: session.ConstructionRecipe{Algorithm: "a", Version: 1, Parameters: []byte("original"), Check: []byte{1}}}
 			stale := add
 			stale.Source.Sequence++
 			if id, err := b.AddModelRequest(stale); id != (session.ModelRequestID{}) || !errors.Is(err, session.ErrIdentity) {
@@ -124,7 +124,7 @@ func TestModelInteractionAcceptedViewsAndReplay(t *testing.T) {
 	submitBatch(t, s, b)
 	b = beginBatch(t, s)
 	run := batchRun(t, b)
-	_, err := b.AddUserInput(session.AddUserInputRequest{RunID: run})
+	_, err := b.AddUserInput(session.UserInput{RunID: run})
 	mustBatch(t, err)
 	submitBatch(t, s, b)
 	params := []byte{0, 0xff}
@@ -228,7 +228,7 @@ func TestModelInteractionAcceptedViewsAndReplay(t *testing.T) {
 	oldCalls := view.Calls()
 	oldParts := content.Parts()
 	b = beginBatch(t, s)
-	if _, err := b.AddUserInput(session.AddUserInputRequest{RunID: run}); !errors.Is(err, session.ErrTransition) {
+	if _, err := b.AddUserInput(session.UserInput{RunID: run}); !errors.Is(err, session.ErrTransition) {
 		t.Fatal("unresolved calls admitted input")
 	}
 	if err := b.EndRun(session.RunEndedCompleted); !errors.Is(err, session.ErrTransition) {
@@ -271,26 +271,6 @@ func TestModelInteractionAcceptedViewsAndReplay(t *testing.T) {
 	mustBatch(t, err)
 	if !reflect.DeepEqual(loaded.Snapshot(), s.Snapshot()) {
 		t.Fatal("Submit and Load differ")
-	}
-	applied := boundSession(t, h, p)
-	head := s.Snapshot().Head()
-	page, err := h.Read(context.Background(), scope, history.ReadRequest{Through: head, MaxCommits: 1})
-	mustBatch(t, err)
-	// Read policies may cap pages, so continue through the accepted endpoint.
-	for {
-		for _, c := range page.Commits {
-			mustBatch(t, applied.Apply(c))
-		}
-		if page.Next == head {
-			break
-		}
-		request := history.ReadRequest{Through: head, MaxCommits: 1}
-		request.After = page.Next
-		page, err = h.Read(context.Background(), scope, request)
-		mustBatch(t, err)
-	}
-	if !reflect.DeepEqual(applied.Snapshot(), s.Snapshot()) {
-		t.Fatal("Apply and Submit differ")
 	}
 	for _, access := range []func(){func() { view.ItemAt(-1) }, func() { view.ItemAt(view.ItemCount()) }, func() { view.CallAt(-1) }, func() { view.CallAt(2) }, func() { content.PartAt(2) }} {
 		func() {

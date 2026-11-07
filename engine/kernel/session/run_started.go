@@ -22,16 +22,16 @@ func (v RunStarted) Clone() RunStarted { return v }
 // Equal compares run identities.
 func (v RunStarted) Equal(other RunStarted) bool { return v == other }
 
-// NewRunStartedRecord encodes an owned v1 run-start record using explicit limits.
+// newRunStartedRecord encodes an owned v1 run-start record using explicit limits.
 // Failure returns zero. It neither accepts nor allocates a run.
-func NewRunStartedRecord(v RunStarted, limits codec.Limits) (Record, error) {
+func newRunStartedRecord(v RunStarted, limits codec.Limits) (proposedRecord, error) {
 	if err := v.Validate(); err != nil {
-		return Record{}, codec.ErrInvalidData
+		return proposedRecord{}, codec.ErrInvalidData
 	}
 	fact := sessionformat.RunStarted{ID: v.ID.ordinal}
 	payload, err := codec.Encode(fact, limits)
 	if err != nil {
-		return Record{}, err
+		return proposedRecord{}, err
 	}
-	return Record{scope: v.ID.historyID, runStarted: fact, value: format.Record{Kind: sessionformat.KindRunStarted, KindVersion: sessionformat.Version, Payload: payload}}, nil
+	return decodeRecord(v.ID.historyID, format.Record{Kind: sessionformat.KindRunStarted, KindVersion: sessionformat.Version, Payload: payload}, limits)
 }

@@ -63,7 +63,7 @@ func iteratorFixture(t testing.TB, count, payloadBytes int) map[string]*session.
 		blocks[0].Parts = parts
 		items[0].Inline.Parts = parts
 	}
-	_, err := b.AddUserInput(session.AddUserInputRequest{RunID: run, Parts: parts})
+	_, err := b.AddUserInput(session.UserInput{RunID: run, Parts: parts})
 	mustBatch(t, err)
 	mustBatch(t, b.ReplaceInstructions(session.Instructions{HistoryID: scope, Blocks: blocks}))
 	mustBatch(t, b.ReplaceToolCatalog(session.ToolCatalog{HistoryID: scope, Tools: tools}))
@@ -87,18 +87,9 @@ func iteratorFixture(t testing.TB, count, payloadBytes int) map[string]*session.
 func iteratorSessions(t testing.TB, h *history.History, s *session.Session, p session.Policy) map[string]*session.Session {
 	t.Helper()
 	scope := s.Snapshot().HistoryID()
-	applied := boundSession(t, h, p)
-	page, err := h.Read(context.Background(), scope, history.ReadRequest{Through: s.Snapshot().Head(), MaxCommits: 2})
-	mustBatch(t, err)
-	if len(page.Commits) == 0 || len(page.Commits) != int(s.Snapshot().Head().Sequence) {
-		t.Fatal("missing iterator fixture commits")
-	}
-	for _, commit := range page.Commits {
-		mustBatch(t, applied.Apply(commit))
-	}
 	loaded, err := session.Load(context.Background(), h, scope, p)
 	mustBatch(t, err)
-	return map[string]*session.Session{"Submit": s, "Apply": applied, "Load": loaded}
+	return map[string]*session.Session{"Submit": s, "Load": loaded}
 }
 
 // iteratorRecordFixture isolates record counts from run/context collection sizes.
@@ -281,7 +272,7 @@ func TestViewIteratorsContract(t *testing.T) {
 }
 
 func TestViewIteratorsPinnedConcurrentReaders(t *testing.T) {
-	for _, seam := range []string{"Submit", "Apply", "Load"} {
+	for _, seam := range []string{"Submit", "Load"} {
 		t.Run(seam, func(t *testing.T) {
 			s := iteratorFixture(t, 3, 32)[seam]
 			old := iteratorViewSet(t, s)
@@ -301,7 +292,7 @@ func TestViewIteratorsPinnedConcurrentReaders(t *testing.T) {
 			close(start)
 			for range 16 {
 				b := beginBatch(t, s)
-				_, err := b.AddUserInput(session.AddUserInputRequest{RunID: old.run.ID(), Parts: byteParts([]byte("later"))})
+				_, err := b.AddUserInput(session.UserInput{RunID: old.run.ID(), Parts: byteParts([]byte("later"))})
 				mustBatch(t, err)
 				mustBatch(t, b.ReplaceInstructions(session.Instructions{HistoryID: old.snapshot.HistoryID()}))
 				mustBatch(t, b.ReplaceToolCatalog(session.ToolCatalog{HistoryID: old.snapshot.HistoryID()}))
@@ -311,7 +302,7 @@ func TestViewIteratorsPinnedConcurrentReaders(t *testing.T) {
 			b := beginBatch(t, s)
 			mustBatch(t, b.EndRun(session.RunEndedInterrupted))
 			newRun := batchRun(t, b)
-			_, err := b.AddUserInput(session.AddUserInputRequest{RunID: newRun})
+			_, err := b.AddUserInput(session.UserInput{RunID: newRun})
 			mustBatch(t, err)
 			submitBatch(t, s, b)
 			wg.Wait()

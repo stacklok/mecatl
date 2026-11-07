@@ -48,7 +48,7 @@ func allocatedInput(t testing.TB, run session.RunID, count uint64) session.UserI
 	var id session.UserInputID
 	for range count {
 		var err error
-		id, err = b.AddUserInput(session.AddUserInputRequest{RunID: run})
+		id, err = b.AddUserInput(session.UserInput{RunID: run})
 		mustBatch(t, err)
 	}
 	return id
@@ -64,7 +64,7 @@ func allocatedRequest(t testing.TB, run session.RunID, count uint64) session.Mod
 		b = beginBatch(t, s)
 		head := s.Snapshot().Head()
 		var err error
-		id, err = b.AddModelRequest(session.AddModelRequestRequest{RunID: run, Source: session.SourceHead{Sequence: head.Sequence, CID: head.CID}, Recipe: session.ConstructionRecipe{Algorithm: "fixture", Version: 1, Check: []byte{1}}})
+		id, err = b.AddModelRequest(session.ModelRequest{RunID: run, Source: session.SourceHead{Sequence: head.Sequence, CID: head.CID}, Recipe: session.ConstructionRecipe{Algorithm: "fixture", Version: 1, Check: []byte{1}}})
 		mustBatch(t, err)
 		submitBatch(t, s, b)
 		b = beginBatch(t, s)

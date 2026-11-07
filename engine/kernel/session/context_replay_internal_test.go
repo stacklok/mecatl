@@ -24,7 +24,7 @@ func TestContextHardOnlyReplayDetachedOracle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	input, err := b.AddUserInput(AddUserInputRequest{RunID: run, Parts: []ContentPart{}})
+	input, err := b.AddUserInput(UserInput{RunID: run, Parts: []ContentPart{}})
 	if err != nil {
 		t.Fatal(err)
 	}

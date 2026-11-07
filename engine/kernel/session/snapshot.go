@@ -16,13 +16,13 @@ type Snapshot struct {
 	historyID    historyid.HistoryID
 	head         history.CommitRef
 	lifecycle    lifecycleState
-	records      []*acceptedRecord
+	records      []*materializedRecord
 	runs         []runEntry
 	inputs       []int
 	commits      []commitEntry
-	instructions *acceptedRecord
-	catalog      *acceptedRecord
-	binding      *acceptedRecord
+	instructions *materializedRecord
+	catalog      *materializedRecord
+	binding      *materializedRecord
 }
 
 // HistoryID returns the scope, including before creation.

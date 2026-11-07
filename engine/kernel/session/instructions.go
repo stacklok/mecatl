@@ -96,11 +96,11 @@ func instructionsFromFormat(scope historyid.HistoryID, v sessionformat.Instructi
 	return out
 }
 
-// NewInstructionsRecord encodes an owned replacement under explicit limits.
+// newInstructionsRecord encodes an owned replacement under explicit limits.
 // It retains full scope privately; failure returns zero and admits nothing.
-func NewInstructionsRecord(v Instructions, limits codec.Limits) (Record, error) {
+func newInstructionsRecord(v Instructions, limits codec.Limits) (proposedRecord, error) {
 	if err := (Created{HistoryID: v.HistoryID}).Validate(); err != nil {
-		return Record{}, codec.ErrInvalidData
+		return proposedRecord{}, codec.ErrInvalidData
 	}
 	b := newValueBudget(limits)
 	b.collection(len(v.Blocks))
@@ -111,13 +111,13 @@ func NewInstructionsRecord(v Instructions, limits codec.Limits) (Record, error) 
 		}
 	}
 	if b.err != nil {
-		return Record{}, b.err
+		return proposedRecord{}, b.err
 	}
 	payload, err := codec.Encode(v.toFormat(), limits)
 	if err != nil {
-		return Record{}, err
+		return proposedRecord{}, err
 	}
-	return Record{scope: v.HistoryID, value: format.Record{Kind: sessionformat.KindInstructions, KindVersion: sessionformat.Version, Payload: payload}}, nil
+	return decodeRecord(v.HistoryID, format.Record{Kind: sessionformat.KindInstructions, KindVersion: sessionformat.Version, Payload: payload}, limits)
 }
 
 // InstructionsView retains immutable accepted backing storage, including its

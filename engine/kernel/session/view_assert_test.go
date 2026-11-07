@@ -32,7 +32,7 @@ func partMatches(v session.ContentPartView, want session.ContentPart) bool {
 }
 
 func userInputMatches(v session.UserInputView, want session.UserInput) bool {
-	if v.ID() != want.ID || v.PartCount() != len(want.Parts) {
+	if v.ID().RunID() != want.RunID || v.PartCount() != len(want.Parts) {
 		return false
 	}
 	for i, part := range want.Parts {

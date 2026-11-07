@@ -11,7 +11,7 @@ import (
 type RunView struct {
 	id      RunID
 	scope   historyid.HistoryID
-	records []*acceptedRecord
+	records []*materializedRecord
 }
 
 // ID returns the scoped run identity, or zero for a zero handle.

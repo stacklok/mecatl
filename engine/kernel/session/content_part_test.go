@@ -17,7 +17,7 @@ func richContent() []session.ContentPart {
 	}
 }
 func TestContentOwnedValues(t *testing.T) {
-	v := session.UserInput{ID: allocatedInput(t, allocatedRun(t, testHistoryID(t), 1), 1), Parts: richContent()}
+	v := session.UserInput{RunID: allocatedInput(t, allocatedRun(t, testHistoryID(t), 1), 1).RunID(), Parts: richContent()}
 	if err := v.Validate(); err != nil {
 		t.Fatal(err)
 	}
@@ -26,7 +26,7 @@ func TestContentOwnedValues(t *testing.T) {
 	v.Parts[2].Media.RemoteURI = "urn:changed"
 	v.Parts[3].Media.ProviderScope = "changed"
 	*v.Parts[4].Text = "changed"
-	if !cloned.Equal(session.UserInput{ID: v.ID, Parts: richContent()}) {
+	if !cloned.Equal(session.UserInput{RunID: v.RunID, Parts: richContent()}) {
 		t.Fatal("clone retained storage")
 	}
 	for _, part := range richContent() {

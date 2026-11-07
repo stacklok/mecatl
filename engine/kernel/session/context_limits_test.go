@@ -11,24 +11,23 @@ import (
 	"github.com/stacklok/mecatl/engine/kernel/codec"
 	"github.com/stacklok/mecatl/engine/kernel/history"
 	"github.com/stacklok/mecatl/engine/kernel/session"
+	sessionformat "github.com/stacklok/mecatl/engine/kernel/session/format"
 )
 
 func TestContextActualReserveAndSoftBounds(t *testing.T) {
 	scope := testHistoryID(t)
 	instructions := session.Instructions{HistoryID: scope, Blocks: []session.InstructionBlock{{Parts: []session.ContentPart{{Text: new("retained context payload")}}, Source: session.ContentSource{Description: "caller prepared"}}}}
-	contextRecord, err := session.NewInstructionsRecord(instructions, testLimits())
-	mustBatch(t, err)
-	initial := []session.Record{createdRecord(t), startRecord(t, 1), contextRecord}
-	largestEnding, err := session.NewRunEndedRecord(session.RunEnded{RunID: allocatedRun(t, scope, 1), Reason: session.RunEndedCaptureFailed}, testLimits())
-	mustBatch(t, err)
-	closed := append(append([]session.Record{}, initial...), largestEnding)
+	contextRecord := encodeFixture(t, sessionformat.KindInstructions, sessionformat.Instructions{Blocks: []sessionformat.InstructionBlock{{Parts: []sessionformat.ContentPart{{Text: new("retained context payload")}}, Source: sessionformat.ContentSource{Description: "caller prepared"}}}})
+	initial := []fixtureRecord{createdRecord(t), startRecord(t, 1), contextRecord}
+	largestEnding := encodeFixture(t, sessionformat.KindRunEnded, sessionformat.RunEnded{RunID: 1, Reason: sessionformat.RunEndedCaptureFailed})
+	closed := append(append([]fixtureRecord{}, initial...), largestEnding)
 	for _, dimension := range []string{"records", "bytes", "work"} {
 		for _, mode := range []string{"exact", "one-short", "soft-ordinary", "soft-mixed"} {
 			t.Run(fmt.Sprintf("%s/%s", dimension, mode), func(t *testing.T) {
 				p := limitPolicy(t, dimension, initial, closed)
 				if mode == "soft-ordinary" || mode == "soft-mixed" {
 					// Only soft may reject; both mixed closeout and future reserve fit hard.
-					p = limitPolicy(t, dimension, initial, append(append([]session.Record{}, closed...), contextRecord))
+					p = limitPolicy(t, dimension, initial, append(append([]fixtureRecord{}, closed...), contextRecord))
 				}
 				if mode == "one-short" {
 					switch dimension {

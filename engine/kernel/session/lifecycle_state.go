@@ -5,6 +5,7 @@ import (
 
 	"github.com/stacklok/mecatl/engine/kernel/codec"
 	"github.com/stacklok/mecatl/engine/kernel/history"
+	historyid "github.com/stacklok/mecatl/engine/kernel/history/id"
 	sessionformat "github.com/stacklok/mecatl/engine/kernel/session/format"
 )
 
@@ -32,11 +33,12 @@ func newAdmission(v Snapshot) admissionContext {
 	return admissionContext{head: v.head, source: v.lifecycle, candidate: v.lifecycle}
 }
 
-// reduce validates a locally valid fact against the pinned source and ordered
-// candidate. No error changes scalars; outcomes account only their captured frontier.
-func (a *admissionContext) reduce(r Record) error {
+// reduce validates a complete locally valid fact in explicit history scope against
+// the pinned source and ordered candidate. No error changes scalars; outcomes
+// account only their captured frontier. Materialization alone is not acceptance.
+func (a *admissionContext) reduce(scope historyid.HistoryID, r *materializedRecord) error {
 	s := &a.candidate
-	if r.scope != s.activeRun.historyID && s.activeRun != (RunID{}) {
+	if scope != s.activeRun.historyID && s.activeRun != (RunID{}) {
 		return ErrIdentity
 	}
 	switch r.value.Kind {
@@ -46,9 +48,9 @@ func (a *admissionContext) reduce(r Record) error {
 		}
 		s.created = true
 	case sessionformat.KindRunStarted:
-		return s.startRun(r)
+		return s.startRun(scope, r.started)
 	case sessionformat.KindUserInput:
-		return s.admitUserInput(r.userInput)
+		return s.admitUserInput(UserInputID{runID: RunID{historyID: scope, ordinal: r.input.RunID}, ordinal: r.input.ID})
 	case sessionformat.KindInstructions, sessionformat.KindToolCatalog, sessionformat.KindModelBinding:
 		if !s.created {
 			return ErrTransition
@@ -57,13 +59,21 @@ func (a *admissionContext) reduce(r Record) error {
 			s.binding = true
 		}
 	case sessionformat.KindEffectiveInput:
-		return s.admitEffectiveInput(r.effectiveInput)
+		return s.admitEffectiveInput(r.effective)
 	case sessionformat.KindModelRequest:
-		return a.admitRequest(r.modelRequest)
-	case sessionformat.KindModelResponse, sessionformat.KindInvocationFailure:
-		return a.admitOutcome(r.outcome, r.calls)
+		return a.admitRequest(scope, r.request)
+	case sessionformat.KindModelResponse:
+		var calls uint64
+		for _, item := range r.response.Items {
+			if item.Call != nil {
+				calls++
+			}
+		}
+		return a.admitOutcome(requestID(scope, r.response.RunID, r.response.RequestID), calls)
+	case sessionformat.KindInvocationFailure:
+		return a.admitOutcome(requestID(scope, r.failure.RunID, r.failure.RequestID), 0)
 	case sessionformat.KindRunEnded:
-		return a.endRun(r.runEnded)
+		return a.endRun(scope, r.ended)
 	default:
 		return ErrUnsupportedRecord
 	}
@@ -71,12 +81,12 @@ func (a *admissionContext) reduce(r Record) error {
 }
 
 // startRun resets only active-run counters after proving the next run identity.
-func (s *lifecycleState) startRun(r Record) error {
-	if !s.created || s.activeRun != (RunID{}) || s.runs == math.MaxUint64 || r.runStarted.ID != s.runs+1 {
+func (s *lifecycleState) startRun(scope historyid.HistoryID, v sessionformat.RunStarted) error {
+	if !s.created || s.activeRun != (RunID{}) || s.runs == math.MaxUint64 || v.ID != s.runs+1 {
 		return ErrTransition
 	}
 	s.runs++
-	s.activeRun = RunID{historyID: r.scope, ordinal: r.runStarted.ID}
+	s.activeRun = RunID{historyID: scope, ordinal: v.ID}
 	s.inputs, s.requests, s.frontier, s.accounted, s.captured, s.calls = 0, 0, 0, 0, 0, 0
 	s.pending = ModelRequestID{}
 	return nil
@@ -118,20 +128,21 @@ func (s *lifecycleState) admitEffectiveInput(v sessionformat.EffectiveInput) err
 
 // admitRequest pins eligibility and coverage to the accepted source, independently
 // of prospective context replacements. Failure consumes no request ordinal.
-func (a *admissionContext) admitRequest(v ModelRequest) error {
+func (a *admissionContext) admitRequest(scope historyid.HistoryID, v sessionformat.ModelRequest) error {
 	s := &a.candidate
 	src := a.source
-	if !s.inputEligible() || src.activeRun != s.activeRun || !src.binding || src.pending != (ModelRequestID{}) || src.calls != 0 || s.frontier != src.frontier || v.ID.runID != s.activeRun || s.requests == math.MaxUint64 || v.ID.requestOrdinal != s.requests+1 {
+	id := requestID(scope, v.RunID, v.ID)
+	if !s.inputEligible() || src.activeRun != s.activeRun || !src.binding || src.pending != (ModelRequestID{}) || src.calls != 0 || s.frontier != src.frontier || id.runID != s.activeRun || s.requests == math.MaxUint64 || v.ID != s.requests+1 {
 		return ErrTransition
 	}
 	if v.Source.Sequence != a.head.Sequence || v.Source.CID != a.head.CID {
 		return ErrIdentity
 	}
-	if v.RetryOf != nil && (v.RetryOf.runID != s.activeRun || v.RetryOf.requestOrdinal == 0 || v.RetryOf.requestOrdinal > src.requests) {
+	if v.RetryOf != nil && (*v.RetryOf == 0 || *v.RetryOf > src.requests) {
 		return ErrTransition
 	}
 	s.requests++
-	s.pending = v.ID
+	s.pending = id
 	s.captured = src.frontier
 	return nil
 }
@@ -151,16 +162,19 @@ func (a *admissionContext) admitOutcome(id ModelRequestID, calls uint64) error {
 
 // endRun checks clean coverage and capture membership before ending ownership.
 // Explicit uncertain endings preserve all pending and unresolved scalars.
-func (a *admissionContext) endRun(v RunEnded) error {
+func (a *admissionContext) endRun(scope historyid.HistoryID, v sessionformat.RunEnded) error {
 	s := &a.candidate
-	if !s.created || s.activeRun == (RunID{}) || v.RunID != s.activeRun {
+	if !s.created || s.activeRun == (RunID{}) || (RunID{historyID: scope, ordinal: v.RunID}) != s.activeRun {
 		return ErrTransition
 	}
-	if v.Reason == RunEndedCompleted && (s.pending != (ModelRequestID{}) || s.calls != 0 || s.accounted != s.frontier) {
+	if v.Reason == sessionformat.RunEndedCompleted && (s.pending != (ModelRequestID{}) || s.calls != 0 || s.accounted != s.frontier) {
 		return ErrTransition
 	}
-	if v.Capture != nil && (v.Capture.RequestID != s.pending || v.Capture.RequestID != a.source.pending) {
-		return ErrTransition
+	if v.Capture != nil {
+		id := requestID(scope, v.RunID, v.Capture.RequestID)
+		if id != s.pending || id != a.source.pending {
+			return ErrTransition
+		}
 	}
 	s.activeRun = RunID{}
 	return nil
@@ -171,13 +185,13 @@ func (s lifecycleState) inputEligible() bool {
 }
 
 // preflight uses the same pinned-source reducer as builder additions and replay.
-func (s *Session) preflight(records []Record, ref history.CommitRef, payloadBytes uint64) error {
+func (s *Session) preflight(records []proposedRecord, ref history.CommitRef, payloadBytes uint64) error {
 	a := newAdmission(s.state.view)
 	for _, r := range records {
 		if err := r.checkPayload(s.policy.PayloadLimits); err != nil {
 			return err
 		}
-		if err := a.reduce(r); err != nil {
+		if err := a.reduce(r.scope, r.record); err != nil {
 			return err
 		}
 	}

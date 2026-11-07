@@ -14,56 +14,56 @@ import (
 func TestSessionMetadataAndDecodedLegalityAgree(t *testing.T) {
 	fixture, limits := internalFixture(t)
 	id := fixture.Snapshot().HistoryID()
-	created, e := NewCreatedRecord(Created{HistoryID: id}, limits)
+	created, e := newCreatedRecord(Created{HistoryID: id}, limits)
 	if e != nil {
 		t.Fatal(e)
 	}
-	start := func(n uint64) Record {
-		r, e := NewRunStartedRecord(RunStarted{ID: RunID{historyID: id, ordinal: n}}, limits)
+	start := func(n uint64) proposedRecord {
+		r, e := newRunStartedRecord(RunStarted{ID: RunID{historyID: id, ordinal: n}}, limits)
 		if e != nil {
 			t.Fatal(e)
 		}
 		return r
 	}
-	input := func(run, n uint64) Record {
-		r, e := NewUserInputRecord(UserInput{ID: UserInputID{runID: RunID{historyID: id, ordinal: run}, ordinal: n}, Parts: internalByteParts([]byte{0xff, 0, 'x'})}, limits)
+	input := func(run, n uint64) proposedRecord {
+		r, e := makeInputRecord(identifiedInput{ID: UserInputID{runID: RunID{historyID: id, ordinal: run}, ordinal: n}, Parts: internalByteParts([]byte{0xff, 0, 'x'})}, limits)
 		if e != nil {
 			t.Fatal(e)
 		}
 		return r
 	}
-	closeout := func(n uint64) Record {
-		r, e := NewRunEndedRecord(RunEnded{RunID: RunID{historyID: id, ordinal: n}, Reason: RunEndedInterrupted}, limits)
+	closeout := func(n uint64) proposedRecord {
+		r, e := newRunEndedRecord(RunEnded{RunID: RunID{historyID: id, ordinal: n}, Reason: RunEndedInterrupted}, limits)
 		if e != nil {
 			t.Fatal(e)
 		}
 		return r
 	}
-	idle := []Record{created}
-	active := []Record{created, start(1), input(1, 1), input(1, 2)}
-	closed := append(append([]Record{}, active...), closeout(1))
+	idle := []proposedRecord{created}
+	active := []proposedRecord{created, start(1), input(1, 1), input(1, 2)}
+	closed := append(append([]proposedRecord{}, active...), closeout(1))
 	for _, tc := range []struct {
 		name          string
-		prefix, batch []Record
+		prefix, batch []proposedRecord
 		want          error
 	}{
-		{"complete", nil, append(append([]Record{}, closed...), start(2), input(2, 1)), nil},
-		{"input before creation", nil, []Record{input(1, 1)}, ErrTransition},
-		{"start before creation", nil, []Record{start(1)}, ErrTransition},
-		{"interrupt before creation", nil, []Record{closeout(1)}, ErrTransition},
-		{"duplicate creation", idle, []Record{created}, ErrTransition},
-		{"input before start", idle, []Record{input(1, 1)}, ErrTransition},
-		{"run gap", idle, []Record{start(2)}, ErrTransition},
-		{"input gap", active, []Record{input(1, 4)}, ErrTransition},
-		{"input duplicate", active, []Record{input(1, 2)}, ErrTransition},
-		{"later input", active, []Record{input(1, 3)}, nil},
-		{"active start", active, []Record{start(2)}, ErrTransition},
-		{"wrong interruption", active, []Record{closeout(2)}, ErrTransition},
-		{"idle interruption", closed, []Record{closeout(1)}, ErrTransition},
-		{"closed owner", closed, []Record{input(1, 3)}, ErrTransition},
-		{"zero input successor", closed, []Record{start(2)}, nil},
-		{"valid successor", closed, []Record{start(2), input(2, 1)}, nil},
-		{"invalid final owner", closed, []Record{start(2), input(1, 3)}, ErrTransition},
+		{"complete", nil, append(append([]proposedRecord{}, closed...), start(2), input(2, 1)), nil},
+		{"input before creation", nil, []proposedRecord{input(1, 1)}, ErrTransition},
+		{"start before creation", nil, []proposedRecord{start(1)}, ErrTransition},
+		{"interrupt before creation", nil, []proposedRecord{closeout(1)}, ErrTransition},
+		{"duplicate creation", idle, []proposedRecord{created}, ErrTransition},
+		{"input before start", idle, []proposedRecord{input(1, 1)}, ErrTransition},
+		{"run gap", idle, []proposedRecord{start(2)}, ErrTransition},
+		{"input gap", active, []proposedRecord{input(1, 4)}, ErrTransition},
+		{"input duplicate", active, []proposedRecord{input(1, 2)}, ErrTransition},
+		{"later input", active, []proposedRecord{input(1, 3)}, nil},
+		{"active start", active, []proposedRecord{start(2)}, ErrTransition},
+		{"wrong interruption", active, []proposedRecord{closeout(2)}, ErrTransition},
+		{"idle interruption", closed, []proposedRecord{closeout(1)}, ErrTransition},
+		{"closed owner", closed, []proposedRecord{input(1, 3)}, ErrTransition},
+		{"zero input successor", closed, []proposedRecord{start(2)}, nil},
+		{"valid successor", closed, []proposedRecord{start(2), input(2, 1)}, nil},
+		{"invalid final owner", closed, []proposedRecord{start(2), input(1, 3)}, ErrTransition},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			for _, imported := range []bool{false, true} {
@@ -71,11 +71,11 @@ func TestSessionMetadataAndDecodedLegalityAgree(t *testing.T) {
 				if len(tc.prefix) > 0 {
 					internalApply(t, s, tc.prefix...)
 				}
-				batch := append([]Record{}, tc.batch...)
+				batch := append([]proposedRecord{}, tc.batch...)
 				if imported {
 					for i, r := range batch {
 						var err error
-						batch[i], err = DecodeRecord(id, r.Format(), limits)
+						batch[i], err = decodeRecord(id, r.format(), limits)
 						if err != nil {
 							t.Fatal(err)
 						}
@@ -96,14 +96,14 @@ func TestSessionMetadataAndDecodedLegalityAgree(t *testing.T) {
 					dto.Parent = new(before.Head().CID)
 				}
 				for _, r := range batch {
-					dto.Records = append(dto.Records, r.Format())
+					dto.Records = append(dto.Records, r.format())
 				}
 				wire, err := codec.Encode(dto, limits)
 				if err != nil {
 					t.Fatal(err)
 				}
 				ref := history.CommitRef{Sequence: dto.Sequence, CID: contentid.Sum(wire)}
-				if err := s.Apply(history.Commit{Ref: ref, Commit: dto}); !errors.Is(err, tc.want) {
+				if err := s.apply(history.Commit{Ref: ref, Commit: dto}); !errors.Is(err, tc.want) {
 					t.Fatalf("decoded: %v; want %v", err, tc.want)
 				}
 				if tc.want != nil {
@@ -122,24 +122,24 @@ func TestSessionMetadataPreservesOrderedFailure(t *testing.T) {
 	s, limits := internalFixture(t)
 	id := s.Snapshot().HistoryID()
 	s.policy.PayloadLimits.MaxByteStringBytes = 1
-	start, err := NewRunStartedRecord(RunStarted{ID: RunID{historyID: id, ordinal: 1}}, limits)
+	start, err := newRunStartedRecord(RunStarted{ID: RunID{historyID: id, ordinal: 1}}, limits)
 	if err != nil {
 		t.Fatal(err)
 	}
-	input, err := NewUserInputRecord(UserInput{ID: UserInputID{runID: RunID{historyID: id, ordinal: 1}, ordinal: 1}, Parts: internalByteParts([]byte("too long"))}, limits)
+	input, err := makeInputRecord(identifiedInput{ID: UserInputID{runID: RunID{historyID: id, ordinal: 1}, ordinal: 1}, Parts: internalByteParts([]byte("too long"))}, limits)
 	if err != nil {
 		t.Fatal(err)
 	}
 	// A later payload limit must not mask the earlier lifecycle violation.
-	if _, err := s.prepare([]Record{start, input}); !errors.Is(err, ErrTransition) {
+	if _, err := s.prepare([]proposedRecord{start, input}); !errors.Is(err, ErrTransition) {
 		t.Fatalf("metadata: %v", err)
 	}
-	dto := format.Commit{FormatVersion: 1, HistoryID: new(id), Sequence: 1, Records: []format.Record{start.Format(), input.Format()}}
+	dto := format.Commit{FormatVersion: 1, HistoryID: new(id), Sequence: 1, Records: []format.Record{start.format(), input.format()}}
 	wire, err := codec.Encode(dto, limits)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.Apply(history.Commit{Ref: history.CommitRef{Sequence: 1, CID: contentid.Sum(wire)}, Commit: dto}); !errors.Is(err, ErrTransition) {
+	if err := s.apply(history.Commit{Ref: history.CommitRef{Sequence: 1, CID: contentid.Sum(wire)}, Commit: dto}); !errors.Is(err, ErrTransition) {
 		t.Fatalf("decoded: %v", err)
 	}
 }
@@ -157,10 +157,10 @@ func TestSessionMetadataAndDecodedPayloadLimitsAgree(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := b.AddUserInput(AddUserInputRequest{RunID: run, Parts: internalByteParts([]byte{0xff, 0, 'x'})}); err != nil {
+	if _, err := b.AddUserInput(UserInput{RunID: run, Parts: internalByteParts([]byte{0xff, 0, 'x'})}); err != nil {
 		t.Fatal(err)
 	}
-	batch := append([]Record{}, b.records...)
+	batch := append([]proposedRecord{}, b.records...)
 	if err := b.Discard(); err != nil {
 		t.Fatal(err)
 	}
@@ -174,7 +174,7 @@ func TestSessionMetadataAndDecodedPayloadLimitsAgree(t *testing.T) {
 			reflect.ValueOf(&s.policy.PayloadLimits).Elem().Field(i).SetInt(1)
 			before := s.Snapshot()
 			_, prepareErr := s.prepare(batch)
-			applyErr := s.Apply(history.Commit{Ref: p.ref, Commit: p.commit})
+			applyErr := s.apply(history.Commit{Ref: p.ref, Commit: p.commit})
 			var want error
 			if applyErr != nil {
 				want = codec.ErrLimitExceeded
@@ -192,11 +192,11 @@ func TestSessionMetadataAndDecodedPayloadLimitsAgree(t *testing.T) {
 func TestPrivatePreparationAdmissionAndBarriers(t *testing.T) {
 	s, limits := internalFixture(t)
 	id := s.Snapshot().HistoryID()
-	created, err := NewCreatedRecord(Created{HistoryID: id}, limits)
+	created, err := newCreatedRecord(Created{HistoryID: id}, limits)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, records := range [][]Record{nil, {{}}} {
+	for _, records := range [][]proposedRecord{nil, {{}}} {
 		if p, err := s.prepare(records); !errors.Is(err, codec.ErrInvalidData) || !reflect.DeepEqual(p, prepared{}) {
 			t.Fatalf("invalid preparation: %v", err)
 		}
@@ -223,7 +223,7 @@ func TestPrivatePreparationAdmissionAndBarriers(t *testing.T) {
 	s.policy.SoftMaxDecodedWork = 1
 	before := s.Snapshot()
 	if n := testing.AllocsPerRun(10, func() {
-		p, err := s.prepare([]Record{created})
+		p, err := s.prepare([]proposedRecord{created})
 		if !errors.Is(err, codec.ErrLimitExceeded) || p.ref != (history.CommitRef{}) || p.commit.Records != nil {
 			panic("admission")
 		}

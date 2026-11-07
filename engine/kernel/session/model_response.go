@@ -256,28 +256,22 @@ func (v ModelResponse) checkSize(b *valueBudget) {
 	}
 }
 
-// NewModelResponseRecord owns a complete response, never a truncated subset.
+// newModelResponseRecord owns a complete response, never a truncated subset.
 // Sizing precedes item/part conversion and allocation; failure returns zero.
-func NewModelResponseRecord(v ModelResponse, limits codec.Limits) (Record, error) {
+func newModelResponseRecord(v ModelResponse, limits codec.Limits) (proposedRecord, error) {
 	if err := v.RequestID.Validate(); err != nil {
-		return Record{}, codec.ErrInvalidData
+		return proposedRecord{}, codec.ErrInvalidData
 	}
 	b := newValueBudget(limits)
 	v.checkSize(&b)
 	if b.err != nil {
-		return Record{}, b.err
+		return proposedRecord{}, b.err
 	}
 	payload, err := codec.Encode(v.toFormat(), limits)
 	if err != nil {
-		return Record{}, err
+		return proposedRecord{}, err
 	}
-	var calls uint64
-	for _, item := range v.Items {
-		if item.Call != nil {
-			calls++
-		}
-	}
-	return Record{scope: v.RequestID.runID.historyID, outcome: v.RequestID, calls: calls, value: format.Record{Kind: sessionformat.KindModelResponse, KindVersion: sessionformat.Version, Payload: payload}}, nil
+	return decodeRecord(v.RequestID.runID.historyID, format.Record{Kind: sessionformat.KindModelResponse, KindVersion: sessionformat.Version, Payload: payload}, limits)
 }
 
 // ModelResponseView is an immutable complete response. Zero has no identity or

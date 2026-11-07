@@ -26,7 +26,7 @@ func interactionReplay(t testing.TB, s *Session) {
 		page, err := s.history.Read(context.Background(), s.Snapshot().HistoryID(), request)
 		interactionCheck(t, err)
 		for _, c := range page.Commits {
-			interactionCheck(t, applied.Apply(c))
+			interactionCheck(t, applied.apply(c))
 		}
 		request.After = page.Next
 	}
@@ -49,7 +49,7 @@ func TestInteractionSuccessorScopeAndFutureReferences(t *testing.T) {
 					first := interactionRequest(s, 1)
 					first.ID.runID = run
 					interactionSubmit(t, s, func(b *SessionCommit) {
-						interactionCheck(t, b.add(NewModelRequestRecord(first, s.policy.PayloadLimits)))
+						interactionCheck(t, b.add(makeRequestRecord(first, s.policy.PayloadLimits)))
 					})
 					if fact == "retry" {
 						interactionSubmit(t, s, func(b *SessionCommit) {
@@ -106,7 +106,7 @@ func TestInteractionSuccessorScopeAndFutureReferences(t *testing.T) {
 						interactionCheck(t, err)
 						dto = historyformat.Record{Kind: sessionformat.KindModelRequest, KindVersion: 1, Payload: wire}
 						add = func(b *SessionCommit) error {
-							_, err := b.AddModelRequest(AddModelRequestRequest{RunID: run, Source: next.Source, Recipe: next.Recipe, RetryOf: &id})
+							_, err := b.AddModelRequest(ModelRequest{RunID: run, Source: next.Source, Recipe: next.Recipe, RetryOf: &id})
 							return err
 						}
 					}
@@ -127,7 +127,7 @@ func TestInteractionSuccessorScopeAndFutureReferences(t *testing.T) {
 						ref, e := s.history.Identify(run.historyID, c)
 						interactionCheck(t, e)
 						if path == "apply" {
-							err = s.Apply(history.Commit{Ref: ref, Commit: c})
+							err = s.apply(history.Commit{Ref: ref, Commit: c})
 						} else {
 							result, e := s.history.Append(context.Background(), run.historyID, c)
 							interactionCheck(t, e)
@@ -163,7 +163,7 @@ func TestInteractionSuccessorScopeAndFutureReferences(t *testing.T) {
 	id.runID.historyID = historyid.NewHistoryID()
 	b, err := s.BeginCommit()
 	interactionCheck(t, err)
-	if _, err = b.AddModelRequest(AddModelRequestRequest{RunID: s.Snapshot().ActiveRun(), Source: interactionRequest(s, 2).Source, Recipe: interactionRequest(s, 2).Recipe, RetryOf: &id}); !errors.Is(err, codec.ErrInvalidData) {
+	if _, err = b.AddModelRequest(ModelRequest{RunID: s.Snapshot().ActiveRun(), Source: interactionRequest(s, 2).Source, Recipe: interactionRequest(s, 2).Recipe, RetryOf: &id}); !errors.Is(err, codec.ErrInvalidData) {
 		t.Fatalf("foreign retry: %v", err)
 	}
 	if err = b.AddModelResponse(ModelResponse{RequestID: id, Terminal: ResponseTerminalNormal}); !errors.Is(err, ErrIdentity) {
@@ -182,9 +182,9 @@ func TestInteractionNumericEndingEncodingRejectedOnReplay(t *testing.T) {
 			dto := historyformat.Record{Kind: sessionformat.KindRunEnded, KindVersion: 1, Payload: []byte("\xa2\x61e\x05\x61r\x01")}
 			var err error
 			if path == "decode" {
-				var r Record
-				r, err = DecodeRecord(s.Snapshot().HistoryID(), dto, s.policy.PayloadLimits)
-				if !reflect.DeepEqual(r, Record{}) {
+				var r proposedRecord
+				r, err = decodeRecord(s.Snapshot().HistoryID(), dto, s.policy.PayloadLimits)
+				if !reflect.DeepEqual(r, proposedRecord{}) {
 					t.Fatal("failed decode returned a partial record")
 				}
 			} else {
@@ -193,7 +193,7 @@ func TestInteractionNumericEndingEncodingRejectedOnReplay(t *testing.T) {
 				ref, e := s.history.Identify(s.Snapshot().HistoryID(), c)
 				interactionCheck(t, e)
 				if path == "apply" {
-					err = s.Apply(history.Commit{Ref: ref, Commit: c})
+					err = s.apply(history.Commit{Ref: ref, Commit: c})
 				} else {
 					_, e = s.history.Append(context.Background(), s.Snapshot().HistoryID(), c)
 					interactionCheck(t, e)
@@ -223,9 +223,9 @@ func TestInteractionUnknownKindAndVersionFailClosed(t *testing.T) {
 				before := detachedSessionState(s.state)
 				var err error
 				if path == "decode" {
-					var r Record
-					r, err = DecodeRecord(s.Snapshot().HistoryID(), dto, s.policy.PayloadLimits)
-					if !reflect.DeepEqual(r, Record{}) {
+					var r proposedRecord
+					r, err = decodeRecord(s.Snapshot().HistoryID(), dto, s.policy.PayloadLimits)
+					if !reflect.DeepEqual(r, proposedRecord{}) {
 						t.Fatal("failed decode returned record")
 					}
 				} else {
@@ -234,7 +234,7 @@ func TestInteractionUnknownKindAndVersionFailClosed(t *testing.T) {
 					ref, e := s.history.Identify(s.Snapshot().HistoryID(), c)
 					interactionCheck(t, e)
 					if path == "apply" {
-						err = s.Apply(history.Commit{Ref: ref, Commit: c})
+						err = s.apply(history.Commit{Ref: ref, Commit: c})
 					} else {
 						_, e = s.history.Append(context.Background(), s.Snapshot().HistoryID(), c)
 						interactionCheck(t, e)

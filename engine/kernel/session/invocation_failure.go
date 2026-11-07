@@ -87,23 +87,23 @@ func (v InvocationFailure) checkSize(b *valueBudget) {
 	}
 }
 
-// NewInvocationFailureRecord owns one observed terminal invocation failure.
+// newInvocationFailureRecord owns one observed terminal invocation failure.
 // Sizing precedes conversion; full request scope is validated before omission.
 // Failure returns zero and never resolves a request by itself.
-func NewInvocationFailureRecord(v InvocationFailure, limits codec.Limits) (Record, error) {
+func newInvocationFailureRecord(v InvocationFailure, limits codec.Limits) (proposedRecord, error) {
 	if err := v.RequestID.Validate(); err != nil {
-		return Record{}, codec.ErrInvalidData
+		return proposedRecord{}, codec.ErrInvalidData
 	}
 	b := newValueBudget(limits)
 	v.checkSize(&b)
 	if b.err != nil {
-		return Record{}, b.err
+		return proposedRecord{}, b.err
 	}
 	payload, err := codec.Encode(v.toFormat(), limits)
 	if err != nil {
-		return Record{}, err
+		return proposedRecord{}, err
 	}
-	return Record{scope: v.RequestID.runID.historyID, outcome: v.RequestID, value: format.Record{Kind: sessionformat.KindInvocationFailure, KindVersion: sessionformat.Version, Payload: payload}}, nil
+	return decodeRecord(v.RequestID.runID.historyID, format.Record{Kind: sessionformat.KindInvocationFailure, KindVersion: sessionformat.Version, Payload: payload}, limits)
 }
 
 // InvocationFailureView is an immutable observed outcome. Zero has zero request

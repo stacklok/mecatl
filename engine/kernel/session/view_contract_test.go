@@ -74,7 +74,7 @@ func TestRecursiveViewsPresenceBytesAndBounds(t *testing.T) {
 	b := beginBatch(t, s)
 	mustBatch(t, b.Create())
 	run := batchRun(t, b)
-	id, err := b.AddUserInput(session.AddUserInputRequest{RunID: run, Parts: richContent()})
+	id, err := b.AddUserInput(session.UserInput{RunID: run, Parts: richContent()})
 	mustBatch(t, err)
 	mustBatch(t, b.ReplaceInstructions(session.Instructions{HistoryID: scope, Blocks: []session.InstructionBlock{
 		{Parts: []session.ContentPart{{Text: new("")}}, Source: session.ContentSource{Description: "empty text"}},

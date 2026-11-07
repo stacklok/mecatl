@@ -16,10 +16,10 @@ import (
 
 // limitPolicy sets one cumulative dimension from actual encoded facts. The other
 // dimensions remain wide, so each boundary has an independent rejection oracle.
-func limitPolicy(t *testing.T, dimension string, softRecords, hardRecords []session.Record) session.Policy {
+func limitPolicy(t *testing.T, dimension string, softRecords, hardRecords []fixtureRecord) session.Policy {
 	t.Helper()
 	p := sessionPolicy()
-	sum := func(records []session.Record) uint64 {
+	sum := func(records []fixtureRecord) uint64 {
 		var n uint64
 		for _, r := range records {
 			n += uint64(len(r.Format().Payload))
@@ -41,14 +41,14 @@ func limitPolicy(t *testing.T, dimension string, softRecords, hardRecords []sess
 }
 
 func TestSessionSoftAdmissionAndCleanupBoundaries(t *testing.T) {
-	initial := []session.Record{createdRecord(t), startRecord(t, 1), inputRecord(t, 1)}
-	closed := append(append([]session.Record{}, initial...), closeoutRecord(t, 1))
+	initial := []fixtureRecord{createdRecord(t), startRecord(t, 1), inputRecord(t, 1)}
+	closed := append(append([]fixtureRecord{}, initial...), closeoutRecord(t, 1))
 	for _, dimension := range []string{"records", "bytes", "work"} {
 		for _, mixed := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/mixed=%t", dimension, mixed), func(t *testing.T) {
 				// Both the ordinary input plus a subsequent interruption, and the
 				// entire idle mixed result fit hard. Only soft can reject either.
-				p := limitPolicy(t, dimension, initial, append(append([]session.Record{}, closed...), inputRecord(t, 2)))
+				p := limitPolicy(t, dimension, initial, append(append([]fixtureRecord{}, closed...), inputRecord(t, 2)))
 				backend := &batchBackend{Backend: mem.New()}
 				h := newLifecycleHistory(t, backend)
 				s := boundSession(t, h, p)
@@ -89,8 +89,8 @@ func TestSessionSoftAdmissionAndCleanupBoundaries(t *testing.T) {
 }
 
 func TestSessionHardReplayWithoutFutureWriteCapacity(t *testing.T) {
-	initial := []session.Record{createdRecord(t), startRecord(t, 1), inputRecord(t, 1)}
-	closed := append(append([]session.Record{}, initial...), closeoutRecord(t, 1))
+	initial := []fixtureRecord{createdRecord(t), startRecord(t, 1), inputRecord(t, 1)}
+	closed := append(append([]fixtureRecord{}, initial...), closeoutRecord(t, 1))
 	for _, dimension := range []string{"records", "bytes", "work"} {
 		for _, headroom := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/headroom=%t", dimension, headroom), func(t *testing.T) {
@@ -109,9 +109,8 @@ func TestSessionHardReplayWithoutFutureWriteCapacity(t *testing.T) {
 				p := limitPolicy(t, dimension, initial[:2], hard)
 				loaded, err := session.Load(context.Background(), h, testHistoryID(t), p)
 				mustBatch(t, err)
-				asserted := boundSession(t, h, p)
-				accepted := proposedCommit(t, asserted, initial...)
-				mustBatch(t, asserted.Apply(accepted))
+				asserted, err := session.Load(context.Background(), h, testHistoryID(t), p)
+				mustBatch(t, err)
 				if !reflect.DeepEqual(captureRejectedSnapshot(loaded.Snapshot()), captureRejectedSnapshot(wide.Snapshot())) || !reflect.DeepEqual(captureRejectedSnapshot(asserted.Snapshot()), captureRejectedSnapshot(wide.Snapshot())) || len(backend.attempts) != 1 {
 					t.Fatal("hard-valid above-soft active replay changed state or wrote")
 				}
@@ -138,8 +137,8 @@ func TestSessionHardReplayWithoutFutureWriteCapacity(t *testing.T) {
 }
 
 func TestSessionWriteReservesActualHardCloseout(t *testing.T) {
-	initial := []session.Record{createdRecord(t), startRecord(t, 1), inputRecord(t, 1)}
-	closed := append(append([]session.Record{}, initial...), closeoutRecord(t, 1))
+	initial := []fixtureRecord{createdRecord(t), startRecord(t, 1), inputRecord(t, 1)}
+	closed := append(append([]fixtureRecord{}, initial...), closeoutRecord(t, 1))
 	for _, dimension := range []string{"records", "bytes", "work"} {
 		t.Run(dimension, func(t *testing.T) {
 			p := limitPolicy(t, dimension, initial, closed)

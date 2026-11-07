@@ -37,7 +37,7 @@ func TestContextIndependentReplacementsAndFixtureFreeLoad(t *testing.T) {
 	b := beginBatch(t, s)
 	mustBatch(t, b.Create())
 	run := batchRun(t, b)
-	input, err := b.AddUserInput(session.AddUserInputRequest{RunID: run, Parts: richContent()})
+	input, err := b.AddUserInput(session.UserInput{RunID: run, Parts: richContent()})
 	mustBatch(t, err)
 	effective := session.EffectiveInput{RunID: run, Inputs: []session.InputItem{{UserInputID: &input}, {Inline: &session.AttributedInput{Actor: "skill/example", Purpose: session.PromptInstructions, Parts: []session.ContentPart{{Text: new(prepared[0])}}, Source: session.ContentSource{Description: "caller expanded skill", WorkspaceFile: &session.WorkspaceFileSource{Path: paths[0]}}}}}}
 	mustBatch(t, b.ReplaceInstructions(instructions))
@@ -123,7 +123,7 @@ func TestContextIndependentReplacementsAndFixtureFreeLoad(t *testing.T) {
 		mv, _ := snapshot.ModelBinding()
 		uv, _ := snapshot.RecordAt(2).UserInput()
 		ev, _ := snapshot.RecordAt(6).EffectiveInput()
-		if !instructionsMatch(iv, wantI[i]) || !catalogMatches(tv, wantT[i]) || !bindingMatches(mv, wantM[i]) || !userInputMatches(uv, session.UserInput{ID: uv.ID(), Parts: richContent()}) || !effectiveMatches(ev, effective) {
+		if !instructionsMatch(iv, wantI[i]) || !catalogMatches(tv, wantT[i]) || !bindingMatches(mv, wantM[i]) || !userInputMatches(uv, session.UserInput{RunID: uv.ID().RunID(), Parts: richContent()}) || !effectiveMatches(ev, effective) {
 			t.Fatalf("snapshot %d changed after export mutation", i)
 		}
 	}

@@ -153,44 +153,27 @@ func (v RunEnded) checkSize(b *valueBudget) {
 	}
 }
 
-// NewRunEndedRecord encodes a unified ending after sizing all retained evidence.
+// newRunEndedRecord encodes a unified ending after sizing all retained evidence.
 // Invalid full capture scope is rejected before DTO scope omission. Failure is zero.
-func NewRunEndedRecord(v RunEnded, limits codec.Limits) (Record, error) {
+func newRunEndedRecord(v RunEnded, limits codec.Limits) (proposedRecord, error) {
 	b := newValueBudget(limits)
 	v.checkSize(&b)
 	if b.err != nil {
-		return Record{}, b.err
+		return proposedRecord{}, b.err
 	}
 	if err := v.Validate(); err != nil {
-		return Record{}, codec.ErrInvalidData
+		return proposedRecord{}, codec.ErrInvalidData
 	}
 	payload, err := codec.Encode(v.toFormat(), limits)
 	if err != nil {
-		return Record{}, err
+		return proposedRecord{}, err
 	}
-	metadata := RunEnded{RunID: v.RunID, Reason: v.Reason}
-	// Presence, not the explanation bytes, determines minimal-ending eligibility.
-	if v.Explanation != nil {
-		metadata.Explanation = new("")
-	}
-	if v.Capture != nil {
-		metadata.Capture = &CaptureFailureEvidence{RequestID: v.Capture.RequestID}
-	}
-	return Record{scope: v.RunID.historyID, runEnded: metadata, value: format.Record{Kind: sessionformat.KindRunEnded, KindVersion: sessionformat.Version, Payload: payload}}, nil
+	return decodeRecord(v.RunID.historyID, format.Record{Kind: sessionformat.KindRunEnded, KindVersion: sessionformat.Version, Payload: payload}, limits)
 }
 
 // minimalEnding admits only an exact one-fact bounded-shape ending as cleanup.
-func (r Record) minimalEnding() bool {
-	return r.value.Kind == sessionformat.KindRunEnded && r.runEnded.Explanation == nil && r.runEnded.Capture == nil
-}
-
-func endedFromFormat(scope historyid.HistoryID, v sessionformat.RunEnded) RunEnded {
-	run := RunID{historyID: scope, ordinal: v.RunID}
-	out := RunEnded{RunID: run, Reason: RunEndedReason(v.Reason), Explanation: v.Explanation}
-	if v.Capture != nil {
-		out.Capture = &CaptureFailureEvidence{RequestID: ModelRequestID{runID: run, requestOrdinal: v.Capture.RequestID}}
-	}
-	return out
+func (r proposedRecord) minimalEnding() bool {
+	return r.record != nil && r.record.value.Kind == sessionformat.KindRunEnded && r.record.ended.Explanation == nil && r.record.ended.Capture == nil
 }
 
 // RunEndedView is an immutable terminal fact. Zero has zero run, empty reason and

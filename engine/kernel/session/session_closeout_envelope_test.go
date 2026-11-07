@@ -48,7 +48,7 @@ func closeoutWidthPrefix(t *testing.T) (*Session, *closeoutEnvelopeBackend) {
 		case sequence == 1:
 			err = b.Create()
 		case sequence == 3:
-			_, err = b.AddUserInput(AddUserInputRequest{RunID: s.Snapshot().ActiveRun()})
+			_, err = b.AddUserInput(UserInput{RunID: s.Snapshot().ActiveRun()})
 		case s.Snapshot().ActiveRun() == (RunID{}):
 			_, err = b.StartRun()
 		default:
@@ -74,19 +74,19 @@ func TestSessionFutureCloseoutEnvelopeSequenceWidth(t *testing.T) {
 				prefix, backend := closeoutWidthPrefix(t)
 				id := prefix.Snapshot().HistoryID()
 				run := RunID{historyID: id, ordinal: uint64(prefix.Snapshot().RunCount()) + 1}
-				start, err := NewRunStartedRecord(RunStarted{ID: run}, prefix.policy.PayloadLimits)
+				start, err := newRunStartedRecord(RunStarted{ID: run}, prefix.policy.PayloadLimits)
 				if err != nil {
 					t.Fatal(err)
 				}
-				candidate, err := prefix.prepare([]Record{start})
+				candidate, err := prefix.prepare([]proposedRecord{start})
 				if err != nil {
 					t.Fatal(err)
 				}
-				interruption, err := NewRunEndedRecord(RunEnded{RunID: run, Reason: RunEndedCaptureFailed}, prefix.policy.PayloadLimits)
+				interruption, err := newRunEndedRecord(RunEnded{RunID: run, Reason: RunEndedCaptureFailed}, prefix.policy.PayloadLimits)
 				if err != nil {
 					t.Fatal(err)
 				}
-				closeout := format.Commit{FormatVersion: 1, Sequence: 24, Parent: new(candidate.ref.CID), Records: []format.Record{interruption.Format()}}
+				closeout := format.Commit{FormatVersion: 1, Sequence: 24, Parent: new(candidate.ref.CID), Records: []format.Record{interruption.format()}}
 				wire, err := codec.Encode(closeout, prefix.policy.CommitLimits)
 				if err != nil {
 					t.Fatal(err)
@@ -152,7 +152,7 @@ func TestSessionFutureCloseoutEnvelopeSequenceWidth(t *testing.T) {
 				switch path {
 				case "prepare":
 					var p prepared
-					p, err = s.prepare([]Record{start})
+					p, err = s.prepare([]proposedRecord{start})
 					if !exact && !reflect.DeepEqual(p, prepared{}) {
 						t.Fatal("failed prepare returned a proposal")
 					}
@@ -180,7 +180,7 @@ func TestSessionFutureCloseoutEnvelopeSequenceWidth(t *testing.T) {
 						t.Fatalf("asserted acceptance: %v", appendErr)
 					}
 					attempts = backend.appends
-					err = s.Apply(history.Commit{Ref: candidate.ref, Commit: candidate.commit})
+					err = s.apply(history.Commit{Ref: candidate.ref, Commit: candidate.commit})
 				}
 				if !errors.Is(err, want) {
 					t.Fatalf("%s: %v; want %v", path, err, want)
@@ -218,7 +218,7 @@ func TestSessionFutureCloseoutEnvelopeSequenceWidth(t *testing.T) {
 					if err != nil || result.Status != history.StatusAccepted {
 						t.Fatalf("accept prepared: %v", err)
 					}
-					if err := s.Apply(history.Commit{Ref: candidate.ref, Commit: candidate.commit}); err != nil {
+					if err := s.apply(history.Commit{Ref: candidate.ref, Commit: candidate.commit}); err != nil {
 						t.Fatal(err)
 					}
 				} else if path == "apply" && backend.appends != attempts {

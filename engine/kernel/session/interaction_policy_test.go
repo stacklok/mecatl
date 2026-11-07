@@ -24,8 +24,8 @@ func TestInteractionResponsePayloadPolicyBoundaries(t *testing.T) {
 					for range 8 {
 						response.Items = append(response.Items, ResponseItem{Call: &RequestedCall{Arguments: []byte{0xff}}})
 					}
-					r := interactionRecord(t)(NewModelResponseRecord(response, s.policy.PayloadLimits))
-					c := interactionCommit(t, s, []Record{r})
+					r := interactionRecord(t)(newModelResponseRecord(response, s.policy.PayloadLimits))
+					c := interactionCommit(t, s, []proposedRecord{r})
 					limits := s.policy.PayloadLimits
 					lo, hi := 1, int(reflect.ValueOf(limits).Field(field).Int())
 					for lo < hi {
@@ -59,7 +59,7 @@ func TestInteractionResponsePayloadPolicyBoundaries(t *testing.T) {
 							interactionCheck(t, b.Discard())
 						}
 					case "apply":
-						err = s.Apply(c)
+						err = s.apply(c)
 					case "load":
 						result, e := s.history.Append(context.Background(), id.runID.historyID, c.Commit)
 						interactionCheck(t, e)
@@ -96,12 +96,12 @@ func TestInteractionOutcomePolicyBoundaries(t *testing.T) {
 					interactionSubmit(t, s, func(b *SessionCommit) { _, err := b.StartRun(); interactionCheck(t, err) })
 					request := interactionRequest(s, 1)
 					interactionSubmit(t, s, func(b *SessionCommit) {
-						interactionCheck(t, b.add(NewModelRequestRecord(request, s.policy.PayloadLimits)))
+						interactionCheck(t, b.add(makeRequestRecord(request, s.policy.PayloadLimits)))
 					})
 					id := s.state.view.lifecycle.pending
-					records := []Record{
-						interactionRecord(t)(NewModelResponseRecord(ModelResponse{RequestID: id, Terminal: ResponseTerminalNormal, Private: &OpaqueProviderData{Producer: "p", Format: "f", Version: 1, Data: []byte{0xff}}}, s.policy.PayloadLimits)),
-						interactionRecord(t)(NewRunEndedRecord(RunEnded{RunID: id.runID, Reason: RunEndedCompleted}, s.policy.PayloadLimits)),
+					records := []proposedRecord{
+						interactionRecord(t)(newModelResponseRecord(ModelResponse{RequestID: id, Terminal: ResponseTerminalNormal, Private: &OpaqueProviderData{Producer: "p", Format: "f", Version: 1, Data: []byte{0xff}}}, s.policy.PayloadLimits)),
+						interactionRecord(t)(newRunEndedRecord(RunEnded{RunID: id.runID, Reason: RunEndedCompleted}, s.policy.PayloadLimits)),
 					}
 					c := interactionCommit(t, s, records)
 					p := s.policy
@@ -118,7 +118,7 @@ func TestInteractionOutcomePolicyBoundaries(t *testing.T) {
 						}
 						p.SoftMaxRetainedRecords = p.MaxRetainedRecords
 					case "payload bytes":
-						p.MaxPayloadBytes = s.state.payloadBytes + uint64(len(records[0].value.Payload)+len(records[1].value.Payload))
+						p.MaxPayloadBytes = s.state.payloadBytes + uint64(len(records[0].record.value.Payload)+len(records[1].record.value.Payload))
 						if short {
 							p.MaxPayloadBytes--
 						}
@@ -142,7 +142,7 @@ func TestInteractionOutcomePolicyBoundaries(t *testing.T) {
 						}
 						_, err = s.SubmitCommit(context.Background(), b)
 					case "apply":
-						err = s.Apply(c)
+						err = s.apply(c)
 					case "load":
 						result, e := s.history.Append(context.Background(), id.runID.historyID, c.Commit)
 						interactionCheck(t, e)

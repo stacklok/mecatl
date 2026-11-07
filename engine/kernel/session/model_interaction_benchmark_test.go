@@ -33,14 +33,14 @@ func BenchmarkModelInteractionCompleteTraversal(b *testing.B) {
 			})
 			req := interactionRequest(s, 1)
 			req.Recipe.Parameters = bytes.Repeat([]byte{0xff}, axis.payload)
-			interactionSubmit(b, s, func(c *SessionCommit) { interactionCheck(b, c.add(NewModelRequestRecord(req, limits))) })
+			interactionSubmit(b, s, func(c *SessionCommit) { interactionCheck(b, c.add(makeRequestRecord(req, limits))) })
 			usage := &InvocationUsage{Input: new(int64(0)), Raw: &OpaqueProviderData{Producer: "p", Format: "u", Version: 1, Data: bytes.Repeat([]byte{0xff}, axis.payload)}}
 			interactionSubmit(b, s, func(c *SessionCommit) {
 				interactionCheck(b, c.AddInvocationFailure(InvocationFailure{RequestID: req.ID, Class: InvocationFailureTransport, Explanation: new(""), Usage: usage, Evidence: &ObservedEvidence{Correlation: new("")}}))
 			})
 			next := interactionRequest(s, 2)
 			next.RetryOf = &req.ID
-			interactionSubmit(b, s, func(c *SessionCommit) { interactionCheck(b, c.add(NewModelRequestRecord(next, limits))) })
+			interactionSubmit(b, s, func(c *SessionCommit) { interactionCheck(b, c.add(makeRequestRecord(next, limits))) })
 			response := ModelResponse{RequestID: next.ID, Terminal: ResponseTerminalOther, ProviderStopReason: new(""), Usage: usage, Private: usage.Raw, Evidence: &ObservedEvidence{Detail: new("")}}
 			for range axis.count {
 				response.Items = append(response.Items, ResponseItem{Content: &ResponseContent{Kind: ResponseContentReasoning, Parts: []ContentPart{{Text: new(strings.Repeat("x", axis.payload))}, {Media: &Media{Kind: MediaKindImage, MIMEType: "image/x", Source: MediaSourceInline, InlineData: bytes.Repeat([]byte{0xff}, axis.payload)}}}}}, ResponseItem{Call: &RequestedCall{Name: "", Arguments: bytes.Repeat([]byte{0xff}, axis.payload)}})
@@ -52,7 +52,7 @@ func BenchmarkModelInteractionCompleteTraversal(b *testing.B) {
 			interactionSubmit(b, s, func(c *SessionCommit) { _, err := c.StartRun(); interactionCheck(b, err) })
 			pending := interactionRequest(s, 1)
 			pending.ID.runID = s.Snapshot().ActiveRun()
-			interactionSubmit(b, s, func(c *SessionCommit) { interactionCheck(b, c.add(NewModelRequestRecord(pending, limits))) })
+			interactionSubmit(b, s, func(c *SessionCommit) { interactionCheck(b, c.add(makeRequestRecord(pending, limits))) })
 			interactionSubmit(b, s, func(c *SessionCommit) {
 				interactionCheck(b, c.AddRunEnded(RunEnded{RunID: pending.ID.runID, Reason: RunEndedCaptureFailed, Explanation: new(""), Capture: &CaptureFailureEvidence{RequestID: pending.ID, Usage: usage, Evidence: &ObservedEvidence{Correlation: new("")}}}))
 			})

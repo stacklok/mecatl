@@ -19,29 +19,29 @@ func TestContentTextRecordOwnership(t *testing.T) {
 			callerText := text
 			parts := []ContentPart{{Text: &callerText}}
 			source := ContentSource{Description: "retained"}
-			created, err := NewCreatedRecord(Created{HistoryID: scope}, limits)
+			created, err := newCreatedRecord(Created{HistoryID: scope}, limits)
 			if err != nil {
 				t.Fatal(err)
 			}
-			started, err := NewRunStartedRecord(RunStarted{ID: run}, limits)
+			started, err := newRunStartedRecord(RunStarted{ID: run}, limits)
 			if err != nil {
 				t.Fatal(err)
 			}
-			authored, err := NewUserInputRecord(UserInput{ID: input, Parts: parts}, limits)
+			authored, err := makeInputRecord(identifiedInput{ID: input, Parts: parts}, limits)
 			if err != nil {
 				t.Fatal(err)
 			}
-			instructions, err := NewInstructionsRecord(Instructions{HistoryID: scope, Blocks: []InstructionBlock{{Parts: parts, Source: source}}}, limits)
+			instructions, err := newInstructionsRecord(Instructions{HistoryID: scope, Blocks: []InstructionBlock{{Parts: parts, Source: source}}}, limits)
 			if err != nil {
 				t.Fatal(err)
 			}
-			effective, err := NewEffectiveInputRecord(EffectiveInput{RunID: run, Inputs: []InputItem{{Inline: &AttributedInput{Actor: "harness", Purpose: PromptContext, Parts: parts, Source: source}}}}, limits)
+			effective, err := newEffectiveInputRecord(EffectiveInput{RunID: run, Inputs: []InputItem{{Inline: &AttributedInput{Actor: "harness", Purpose: PromptContext, Parts: parts, Source: source}}}}, limits)
 			if err != nil {
 				t.Fatal(err)
 			}
 			callerText = "mutated after record construction"
-			if effective.effectiveInput.Inputs[0].Inline.Parts[0].Text == &callerText || *effective.effectiveInput.Inputs[0].Inline.Parts[0].Text != text {
-				t.Fatal("record metadata retained caller text pointer")
+			if effective.record.effective.Inputs[0].Inline.Parts[0].Text == &callerText || *effective.record.effective.Inputs[0].Inline.Parts[0].Text != text {
+				t.Fatal("record backing retained caller text pointer")
 			}
 			internalApply(t, s, created, started, authored, instructions, effective)
 			view := s.Snapshot()
@@ -73,11 +73,11 @@ func TestContentTextRecordOwnership(t *testing.T) {
 func TestContentTextBudgetBeforeConversion(t *testing.T) {
 	s, limits := internalFixture(t)
 	id := UserInputID{runID: RunID{historyID: s.Snapshot().HistoryID(), ordinal: 1}, ordinal: 1}
-	input := UserInput{ID: id, Parts: make([]ContentPart, 8)}
+	input := identifiedInput{ID: id, Parts: make([]ContentPart, 8)}
 	for i := range input.Parts {
 		input.Parts[i].Text = new("")
 	}
-	if _, err := NewUserInputRecord(input, limits); err != nil {
+	if _, err := makeInputRecord(input, limits); err != nil {
 		t.Fatalf("positive control: %v", err)
 	}
 	for _, axis := range []string{"nodes", "bytes"} {
@@ -88,14 +88,14 @@ func TestContentTextBudgetBeforeConversion(t *testing.T) {
 			} else {
 				bounded.MaxBytes = 9 * len(input.Parts)
 			}
-			var record Record
+			var record proposedRecord
 			var err error
 			if n := testing.AllocsPerRun(10, func() {
-				record, err = NewUserInputRecord(input, bounded)
+				record, err = makeInputRecord(input, bounded)
 			}); n != 0 {
 				t.Fatalf("text-pointer rejection allocated %g times", n)
 			}
-			if !errors.Is(err, codec.ErrLimitExceeded) || !reflect.DeepEqual(record, Record{}) {
+			if !errors.Is(err, codec.ErrLimitExceeded) || !reflect.DeepEqual(record, proposedRecord{}) {
 				t.Fatalf("bounded failure: %#v, %v", record, err)
 			}
 			// Bypassing preflight still rejects, but only after allocating DTOs.
@@ -125,7 +125,7 @@ func TestContentBranchAdmissionIsAtomic(t *testing.T) {
 	for _, part := range []ContentPart{{}, {Text: new(""), Media: &Media{Kind: MediaKindImage, Source: MediaSourceRemote, RemoteURI: "urn:a"}}} {
 		parts := []ContentPart{part}
 		count := len(b.records)
-		if id, err := b.AddUserInput(AddUserInputRequest{RunID: run, Parts: parts}); !errors.Is(err, codec.ErrInvalidData) || id != (UserInputID{}) {
+		if id, err := b.AddUserInput(UserInput{RunID: run, Parts: parts}); !errors.Is(err, codec.ErrInvalidData) || id != (UserInputID{}) {
 			t.Fatalf("invalid user content: %v, %v", id, err)
 		}
 		if err := b.ReplaceInstructions(Instructions{HistoryID: run.historyID, Blocks: []InstructionBlock{{Parts: parts, Source: ContentSource{Description: "source"}}}}); !errors.Is(err, codec.ErrInvalidData) {
@@ -138,7 +138,7 @@ func TestContentBranchAdmissionIsAtomic(t *testing.T) {
 			t.Fatal("invalid branches changed staged records or accepted state")
 		}
 	}
-	id, err := b.AddUserInput(AddUserInputRequest{RunID: run, Parts: []ContentPart{{Text: new("")}}})
+	id, err := b.AddUserInput(UserInput{RunID: run, Parts: []ContentPart{{Text: new("")}}})
 	if err != nil || id.ordinal != 1 {
 		t.Fatalf("rejection consumed input ordinal: %v, %v", id, err)
 	}

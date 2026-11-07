@@ -14,7 +14,8 @@ import (
 func TestModelInteractionValuesCloneAndScope(t *testing.T) {
 	historyID := testHistoryID(t)
 	run := allocatedRun(t, historyID, 1)
-	request := session.ModelRequest{ID: allocatedRequest(t, run, 2), Source: session.SourceHead{Sequence: 1, CID: contentid.Sum([]byte("head"))}, Recipe: session.ConstructionRecipe{Algorithm: "example/v1", Version: 1, Parameters: []byte{}, Check: []byte("check")}}
+	requestID := allocatedRequest(t, run, 2)
+	request := session.ModelRequest{RunID: run, Source: session.SourceHead{Sequence: 1, CID: contentid.Sum([]byte("head"))}, Recipe: session.ConstructionRecipe{Algorithm: "example/v1", Version: 1, Parameters: []byte{}, Check: []byte("check")}}
 	if err := request.Validate(); err != nil {
 		t.Fatal(err)
 	}
@@ -31,7 +32,7 @@ func TestModelInteractionValuesCloneAndScope(t *testing.T) {
 
 	zero := int64(0)
 	empty := ""
-	response := session.ModelResponse{RequestID: requestCopy.ID, Terminal: session.ResponseTerminalNormal, ProviderStopReason: &empty, Items: []session.ResponseItem{{Content: &session.ResponseContent{Kind: session.ResponseContentOutput, Parts: []session.ContentPart{{Text: &empty}}}}, {Call: &session.RequestedCall{Name: "", Arguments: []byte("not json")}}}, Usage: &session.InvocationUsage{Input: &zero}, Private: &session.OpaqueProviderData{Producer: "provider", Format: "raw", Version: 1, Data: []byte{1}}}
+	response := session.ModelResponse{RequestID: requestID, Terminal: session.ResponseTerminalNormal, ProviderStopReason: &empty, Items: []session.ResponseItem{{Content: &session.ResponseContent{Kind: session.ResponseContentOutput, Parts: []session.ContentPart{{Text: &empty}}}}, {Call: &session.RequestedCall{Name: "", Arguments: []byte("not json")}}}, Usage: &session.InvocationUsage{Input: &zero}, Private: &session.OpaqueProviderData{Producer: "provider", Format: "raw", Version: 1, Data: []byte{1}}}
 	if err := response.Validate(); err != nil {
 		t.Fatal(err)
 	}
@@ -43,6 +44,50 @@ func TestModelInteractionValuesCloneAndScope(t *testing.T) {
 	}
 	if clone.Usage.Input == nil || *clone.Usage.Input != 0 || clone.ProviderStopReason == nil || *clone.ProviderStopReason != "" {
 		t.Fatal("zero or explicit empty was lost")
+	}
+}
+
+func TestModelRequestAuthoringScopeAndOwnership(t *testing.T) {
+	run := allocatedRun(t, testHistoryID(t), 1)
+	retry := allocatedRequest(t, run, 1)
+	v := session.ModelRequest{RunID: run, Source: session.SourceHead{Sequence: 1, CID: contentid.Sum([]byte("source"))}, Recipe: session.ConstructionRecipe{Algorithm: "a", Version: 1, Parameters: []byte{1}, Check: []byte{2}}, RetryOf: &retry}
+	clone := v.Clone()
+	if v.Validate() != nil || !v.Equal(clone) || !clone.Equal(v) || clone.RetryOf == v.RetryOf {
+		t.Fatal("authoring clone changed values or borrowed retry storage")
+	}
+	v.Recipe.Parameters[0], v.Recipe.Check[0] = 3, 4
+	*v.RetryOf = session.ModelRequestID{}
+	if clone.Recipe.Parameters[0] != 1 || clone.Recipe.Check[0] != 2 || clone.RetryOf.Validate() != nil || v.Equal(clone) {
+		t.Fatal("authoring clone borrowed nested storage")
+	}
+	foreign, err := historyid.ParseHistoryID("HST2222222222222222222222")
+	mustBatch(t, err)
+	for name, edit := range map[string]func(*session.ModelRequest){
+		"run":           func(v *session.ModelRequest) { v.RunID = allocatedRun(t, run.HistoryID(), 2) },
+		"history":       func(v *session.ModelRequest) { v.RunID = allocatedRun(t, foreign, 1) },
+		"source":        func(v *session.ModelRequest) { v.Source.CID = contentid.Sum([]byte("different")) },
+		"recipe":        func(v *session.ModelRequest) { v.Recipe.Check[0]++ },
+		"retry absence": func(v *session.ModelRequest) { v.RetryOf = nil },
+		"retry run": func(v *session.ModelRequest) {
+			v.RetryOf = new(allocatedRequest(t, allocatedRun(t, run.HistoryID(), 2), 1))
+		},
+		"retry history": func(v *session.ModelRequest) { v.RetryOf = new(allocatedRequest(t, allocatedRun(t, foreign, 1), 1)) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			other := clone.Clone()
+			edit(&other)
+			if clone.Equal(other) || other.Equal(clone) {
+				t.Fatal("equality lost an authoring field or full retry scope")
+			}
+			if (name == "run" || name == "history" || name == "retry run" || name == "retry history") && other.Validate() == nil {
+				t.Fatal("conflicting full retry scope validated")
+			}
+		})
+	}
+	for _, invalid := range []session.ModelRequest{{}, {RunID: run}, {RunID: run, Source: clone.Source}, {RunID: run, Source: clone.Source, Recipe: clone.Recipe, RetryOf: new(session.ModelRequestID)}} {
+		if invalid.Validate() == nil {
+			t.Fatal("invalid authoring value validated")
+		}
 	}
 }
 

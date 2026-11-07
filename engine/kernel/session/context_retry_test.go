@@ -26,7 +26,7 @@ func TestContextFrozenRetryAndConcurrentPinnedReads(t *testing.T) {
 	b := beginBatch(t, s)
 	mustBatch(t, b.Create())
 	run := batchRun(t, b)
-	input, err := b.AddUserInput(session.AddUserInputRequest{RunID: run, Parts: []session.ContentPart{{Text: new("/skill example\n")}}})
+	input, err := b.AddUserInput(session.UserInput{RunID: run, Parts: []session.ContentPart{{Text: new("/skill example\n")}}})
 	mustBatch(t, err)
 	instructions := session.Instructions{HistoryID: scope, Blocks: []session.InstructionBlock{{Parts: []session.ContentPart{{Text: new("root")}}, Source: session.ContentSource{Description: "adopted", WorkspaceFile: &session.WorkspaceFileSource{Path: "AGENTS.md"}}}}}
 	catalog := session.ToolCatalog{HistoryID: scope, Tools: []session.ToolDefinition{{Name: "tool", ArgumentSchema: []byte("true")}}}

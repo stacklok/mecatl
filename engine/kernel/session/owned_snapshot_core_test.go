@@ -63,7 +63,7 @@ func TestOwnedCoreLifecycleSnapshotsAndReplay(t *testing.T) {
 		t.Fatal("new scope")
 	}
 	b := ownedCoreBatch(t, s)
-	if _, err := b.AddUserInput(session.AddUserInputRequest{}); !errors.Is(err, session.ErrTransition) {
+	if _, err := b.AddUserInput(session.UserInput{}); !errors.Is(err, session.ErrTransition) {
 		t.Fatal(err)
 	}
 	if err := b.Create(); err != nil {
@@ -74,7 +74,7 @@ func TestOwnedCoreLifecycleSnapshotsAndReplay(t *testing.T) {
 		t.Fatal(err)
 	}
 	content := []byte{0xff, 0, 'x'}
-	input, err := b.AddUserInput(session.AddUserInputRequest{RunID: run, Parts: byteParts(content)})
+	input, err := b.AddUserInput(session.UserInput{RunID: run, Parts: byteParts(content)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -134,7 +134,7 @@ func TestOwnedCoreLifecycleSnapshotsAndReplay(t *testing.T) {
 	}
 	for n := 0; n < 128; n++ {
 		b := ownedCoreBatch(t, s)
-		if _, err := b.AddUserInput(session.AddUserInputRequest{RunID: run, Parts: byteParts([]byte{byte(n)})}); err != nil {
+		if _, err := b.AddUserInput(session.UserInput{RunID: run, Parts: byteParts([]byte{byte(n)})}); err != nil {
 			t.Fatal(err)
 		}
 		ownedCoreSubmit(t, s, b)
@@ -147,10 +147,10 @@ func TestOwnedCoreLifecycleSnapshotsAndReplay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := b.AddUserInput(session.AddUserInputRequest{RunID: run}); !errors.Is(err, session.ErrTransition) {
+	if _, err := b.AddUserInput(session.UserInput{RunID: run}); !errors.Is(err, session.ErrTransition) {
 		t.Fatal(err)
 	}
-	nextInput, err := b.AddUserInput(session.AddUserInputRequest{RunID: next})
+	nextInput, err := b.AddUserInput(session.UserInput{RunID: next})
 	if err != nil || nextInput.RunID() != next {
 		t.Fatalf("new run numbering: %v", err)
 	}
@@ -181,8 +181,8 @@ func TestOwnedCoreLifecycleSnapshotsAndReplay(t *testing.T) {
 	}
 }
 
-func TestOwnedCoreApplyAtomicityAndImportedStorage(t *testing.T) {
-	s, _, p, id := ownedCoreFixture(t, 64)
+func TestOwnedCoreLoadRejectionAndImportedStorage(t *testing.T) {
+	s, h, p, id := ownedCoreFixture(t, 64)
 	makeRecord := func(kind string, payload []byte) historyformat.Record {
 		return historyformat.Record{Kind: kind, KindVersion: sessionformat.Version, Payload: payload}
 	}
@@ -211,16 +211,15 @@ func TestOwnedCoreApplyAtomicityAndImportedStorage(t *testing.T) {
 		}
 		return history.Commit{Ref: history.CommitRef{Sequence: c.Sequence, CID: contentid.Sum(wire)}, Commit: c}
 	}
-	if err := s.Apply(identify(c)); !errors.Is(err, session.ErrTransition) {
-		t.Fatal(err)
+	if loaded, err := loadFixtureCommit(t, h, s, identify(c), p); loaded != nil || !errors.Is(err, session.ErrTransition) {
+		t.Fatalf("invalid history Load: %v, %v", loaded, err)
 	}
 	if v := s.Snapshot(); v.Created() || v.RecordCount() != 0 || v.RunCount() != 0 {
 		t.Fatal("partial apply")
 	}
 	c.Records = c.Records[:3]
-	if err := s.Apply(identify(c)); err != nil {
-		t.Fatal(err)
-	}
+	s, err = loadFixtureCommit(t, h, s, identify(c), p)
+	mustBatch(t, err)
 	for _, r := range c.Records {
 		clear(r.Payload)
 	}
@@ -254,10 +253,13 @@ func TestOwnedCoreReserveRejectionAndScopedContracts(t *testing.T) {
 		t.Fatal("provisional run")
 	}
 	inputID := allocatedInput(t, allocatedRun(t, id, 2), 1)
-	r, err := session.NewUserInputRecord(session.UserInput{ID: inputID, Parts: byteParts([]byte{0xff})}, p.PayloadLimits)
-	if err != nil {
-		t.Fatal(err)
+	authored, b := allocationBatch(t, inputID.RunID())
+	gotID, err := b.AddUserInput(session.UserInput{RunID: inputID.RunID(), Parts: byteParts([]byte{0xff})})
+	if err != nil || gotID != inputID {
+		t.Fatalf("scoped authoring: %v, %v", gotID, err)
 	}
+	submitBatch(t, authored, b)
+	r := authored.Snapshot().RecordAt(authored.Snapshot().RecordCount() - 1)
 	dto, err := codec.Decode[sessionformat.UserInput](r.Format().Payload, p.PayloadLimits)
 	if err != nil || dto.RunID != 2 || dto.ID != 1 || dtoInputBytes(dto)[0] != 0xff {
 		t.Fatalf("scoped DTO: %v", err)
