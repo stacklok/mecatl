@@ -64,7 +64,7 @@ func TestSessionSoftAdmissionAndCleanupBoundaries(t *testing.T) {
 					t.Fatal("provisional ordinal")
 				}
 				if mixed {
-					mustBatch(t, b.Interrupt()) // Ending idle must not bypass soft.
+					mustBatch(t, b.EndRun(session.RunEndedInterrupted)) // Ending idle must not bypass soft.
 				}
 				if ref, err := s.SubmitCommit(context.Background(), b); ref != (history.CommitRef{}) || !errors.Is(err, codec.ErrLimitExceeded) || errors.Is(err, session.ErrAcceptanceUnknown) {
 					t.Fatalf("ordinary soft rejection: %v, %v", ref, err)
@@ -73,7 +73,7 @@ func TestSessionSoftAdmissionAndCleanupBoundaries(t *testing.T) {
 					t.Fatal("soft rejection appended or mutated accepted views")
 				}
 				b = beginBatch(t, s)
-				mustBatch(t, b.Interrupt())
+				mustBatch(t, b.EndRun(session.RunEndedInterrupted))
 				submitBatch(t, s, b) // Above soft, within hard.
 				if s.Snapshot().ActiveRun() != (session.RunID{}) || s.Snapshot().RecordCount() != 4 || len(backend.attempts) != 2 {
 					t.Fatal("cleanup did not consume only its own reserved fact")
@@ -122,7 +122,7 @@ func TestSessionHardReplayWithoutFutureWriteCapacity(t *testing.T) {
 					t.Fatalf("above-soft ordinary write: %v", err)
 				}
 				b = beginBatch(t, loaded)
-				mustBatch(t, b.Interrupt())
+				mustBatch(t, b.EndRun(session.RunEndedInterrupted))
 				ref, err := loaded.SubmitCommit(context.Background(), b)
 				if headroom {
 					mustBatch(t, err)
@@ -216,7 +216,7 @@ func TestSessionAdmissionAndUncertaintyShareCauseNotOutcome(t *testing.T) {
 						t.Fatal("local rejection attempted storage")
 					}
 					b = beginBatch(t, s)
-					mustBatch(t, b.Interrupt())
+					mustBatch(t, b.EndRun(session.RunEndedInterrupted))
 					submitBatch(t, s, b)
 					if !userInputsMatch(s.Snapshot(), run, 0) {
 						t.Fatal("rejected input leaked into cleanup")

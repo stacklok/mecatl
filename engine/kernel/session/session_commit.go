@@ -41,7 +41,7 @@ var ErrAcceptedApply = errors.New("session commit accepted but local application
 type SessionCommit struct { //nolint:revive // Explicit name distinguishes a provisional session batch from history.Commit.
 	owner     *Session
 	records   []Record
-	lifecycle lifecycleState
+	admission admissionContext
 	frozen    bool
 	completed bool
 	proposal  prepared
@@ -69,7 +69,7 @@ func (s *Session) BeginCommit() (*SessionCommit, error) {
 	if s.history == nil {
 		return nil, ErrIdentity
 	}
-	b := &SessionCommit{owner: s, lifecycle: s.state.view.lifecycle}
+	b := &SessionCommit{owner: s, admission: newAdmission(s.state.view)}
 	s.batch = b
 	return b, nil
 }
@@ -109,12 +109,12 @@ func (b *SessionCommit) add(r Record, err error) error {
 	if r.scope != b.owner.state.view.historyID {
 		return ErrIdentity
 	}
-	candidate := b.lifecycle
+	candidate := b.admission
 	if err := candidate.reduce(r); err != nil {
 		return err
 	}
 	b.records = append(b.records, r)
-	b.lifecycle = candidate
+	b.admission = candidate
 	return nil
 }
 
@@ -133,11 +133,11 @@ func (b *SessionCommit) AddUserInput(request AddUserInputRequest) (UserInputID, 
 	if err := b.check(true); err != nil {
 		return UserInputID{}, err
 	}
-	if request.RunID == (RunID{}) || request.RunID != b.lifecycle.activeRun {
+	if request.RunID == (RunID{}) || request.RunID != b.admission.candidate.activeRun {
 		return UserInputID{}, ErrTransition
 	}
 	s := b.owner
-	ordinal, err := nextOrdinal(b.lifecycle.inputs)
+	ordinal, err := nextOrdinal(b.admission.candidate.inputs)
 	if err != nil {
 		return UserInputID{}, err
 	}
@@ -157,8 +157,8 @@ func (b *SessionCommit) AddEffectiveInput(v EffectiveInput) error {
 	return b.add(NewEffectiveInputRecord(v, b.owner.policy.PayloadLimits))
 }
 
-// ReplaceInstructions adds a history-scoped complete replacement during an active
-// run. Its applicability survives the admitting run; failure changes nothing.
+// ReplaceInstructions adds a complete history-scoped replacement after creation,
+// including while idle. Applicability survives runs; failure changes nothing.
 func (b *SessionCommit) ReplaceInstructions(v Instructions) error {
 	if err := b.check(true); err != nil {
 		return err
@@ -167,7 +167,7 @@ func (b *SessionCommit) ReplaceInstructions(v Instructions) error {
 }
 
 // ReplaceToolCatalog adds a complete history-scoped advertised catalog replacement.
-// An active run is required; failure preserves earlier additions.
+// Creation is required, not an active run; failure preserves earlier additions.
 func (b *SessionCommit) ReplaceToolCatalog(v ToolCatalog) error {
 	if err := b.check(true); err != nil {
 		return err
@@ -175,8 +175,8 @@ func (b *SessionCommit) ReplaceToolCatalog(v ToolCatalog) error {
 	return b.add(NewToolCatalogRecord(v, b.owner.policy.PayloadLimits))
 }
 
-// ReplaceModelBinding adds complete history-scoped preparation choices during an
-// active run. It performs no resolution; failure preserves earlier additions.
+// ReplaceModelBinding adds complete history-scoped preparation choices after
+// creation, including while idle. It performs no resolution; failure changes nothing.
 func (b *SessionCommit) ReplaceModelBinding(v ModelBinding) error {
 	if err := b.check(true); err != nil {
 		return err
@@ -191,7 +191,7 @@ func (b *SessionCommit) StartRun() (RunID, error) {
 		return RunID{}, err
 	}
 	s := b.owner
-	ordinal, err := nextOrdinal(b.lifecycle.runs)
+	ordinal, err := nextOrdinal(b.admission.candidate.runs)
 	if err != nil {
 		return RunID{}, err
 	}
@@ -202,16 +202,70 @@ func (b *SessionCommit) StartRun() (RunID, error) {
 	return id, nil
 }
 
-// Interrupt adds explicit closeout of the provisional active run. It grants no
-// outside-world cancellation and starts no successor. Idle returns ErrTransition.
-func (b *SessionCommit) Interrupt() error {
+// AddRunEnded records explicit terminal ownership. Completed requires accounted
+// inputs and no pending outcome or calls; other reasons preserve unresolved facts.
+func (b *SessionCommit) AddRunEnded(v RunEnded) error {
 	if err := b.check(true); err != nil {
 		return err
 	}
-	if b.lifecycle.activeRun == (RunID{}) {
+	return b.add(NewRunEndedRecord(v, b.owner.policy.PayloadLimits))
+}
+
+// EndRun adds a minimal ending for the provisional active run. It is the fixed
+// shape used for terminal escape; callers needing evidence use AddRunEnded.
+func (b *SessionCommit) EndRun(reason RunEndedReason) error {
+	if err := b.check(true); err != nil {
+		return err
+	}
+	if b.admission.candidate.activeRun == (RunID{}) {
 		return ErrTransition
 	}
-	return b.add(NewRunInterruptedRecord(RunInterrupted{ID: b.lifecycle.activeRun}, b.owner.policy.PayloadLimits))
+	return b.AddRunEnded(RunEnded{RunID: b.admission.candidate.activeRun, Reason: reason})
+}
+
+// AddModelRequestRequest borrows recipe and retry metadata during AddModelRequest.
+// Source must name the exact accepted head, not an earlier same-batch fact.
+type AddModelRequestRequest struct {
+	RunID   RunID
+	Source  SourceHead
+	Recipe  ConstructionRecipe
+	RetryOf *ModelRequestID
+}
+
+// AddModelRequest assigns the next provisional same-run invocation identity.
+// Failure consumes no identity. Prerequisites come from the pinned accepted source.
+func (b *SessionCommit) AddModelRequest(v AddModelRequestRequest) (ModelRequestID, error) {
+	if err := b.check(true); err != nil {
+		return ModelRequestID{}, err
+	}
+	if v.RunID == (RunID{}) || v.RunID != b.admission.candidate.activeRun {
+		return ModelRequestID{}, ErrTransition
+	}
+	ordinal, err := nextOrdinal(b.admission.candidate.requests)
+	if err != nil {
+		return ModelRequestID{}, err
+	}
+	id := ModelRequestID{RunID: v.RunID, Ordinal: ordinal}
+	if err := b.add(NewModelRequestRecord(ModelRequest{ID: id, Source: v.Source, Recipe: v.Recipe, RetryOf: v.RetryOf}, b.owner.policy.PayloadLimits)); err != nil {
+		return ModelRequestID{}, err
+	}
+	return id, nil
+}
+
+// AddModelResponse records one complete response for an earlier accepted request.
+func (b *SessionCommit) AddModelResponse(v ModelResponse) error {
+	if err := b.check(true); err != nil {
+		return err
+	}
+	return b.add(NewModelResponseRecord(v, b.owner.policy.PayloadLimits))
+}
+
+// AddInvocationFailure records an observed failure, not a fabricated response.
+func (b *SessionCommit) AddInvocationFailure(v InvocationFailure) error {
+	if err := b.check(true); err != nil {
+		return err
+	}
+	return b.add(NewInvocationFailureRecord(v, b.owner.policy.PayloadLimits))
 }
 
 // Discard releases an unsubmitted batch without consuming IDs. Frozen uncertain

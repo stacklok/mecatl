@@ -31,6 +31,15 @@ func TestRichConstructorsBudgetBeforeConversion(t *testing.T) {
 	nestedInstructions := Instructions{HistoryID: scope, Blocks: []InstructionBlock{{Parts: []ContentPart{{Text: new(oversizeText)}}}}}
 	nestedCatalog := ToolCatalog{HistoryID: scope, Tools: []ToolDefinition{{Name: "tool", ArgumentSchema: settings}}}
 	nestedEffective := EffectiveInput{RunID: input.RunID, Inputs: []InputItem{{Inline: &AttributedInput{Parts: parts}}}}
+	requestID := ModelRequestID{RunID: input.RunID, Ordinal: 1}
+	oversizeResponse := ModelResponse{RequestID: requestID, Items: make([]ResponseItem, limits.MaxArrayElements+1)}
+	privateResponse := ModelResponse{RequestID: requestID, Private: &OpaqueProviderData{Data: settings}}
+	evidenceResponse := ModelResponse{RequestID: requestID, Evidence: &ObservedEvidence{Correlation: &oversizeText}}
+	usageResponse := ModelResponse{RequestID: requestID, Usage: &InvocationUsage{Raw: &OpaqueProviderData{Data: settings}}}
+	nestedResponse := ModelResponse{RequestID: requestID, Items: []ResponseItem{{Content: &ResponseContent{Parts: parts}}}}
+	failure := InvocationFailure{RequestID: requestID, Usage: usageResponse.Usage}
+	ending := RunEnded{RunID: input.RunID, Reason: RunEndedCaptureFailed, Capture: &CaptureFailureEvidence{RequestID: requestID, Usage: usageResponse.Usage}}
+	request := ModelRequest{ID: requestID, Recipe: ConstructionRecipe{Parameters: settings}}
 	for _, makeRecord := range []func() (Record, error){
 		func() (Record, error) { return NewUserInputRecord(UserInput{ID: input, Parts: parts}, limits) },
 		func() (Record, error) {
@@ -51,6 +60,14 @@ func TestRichConstructorsBudgetBeforeConversion(t *testing.T) {
 		func() (Record, error) { return NewToolCatalogRecord(nestedCatalog, limits) },
 		func() (Record, error) { return NewEffectiveInputRecord(nestedEffective, limits) },
 		func() (Record, error) { return NewEffectiveInputRecord(nestedActor, limits) },
+		func() (Record, error) { return NewModelRequestRecord(request, limits) },
+		func() (Record, error) { return NewModelResponseRecord(oversizeResponse, limits) },
+		func() (Record, error) { return NewModelResponseRecord(privateResponse, limits) },
+		func() (Record, error) { return NewModelResponseRecord(evidenceResponse, limits) },
+		func() (Record, error) { return NewModelResponseRecord(usageResponse, limits) },
+		func() (Record, error) { return NewModelResponseRecord(nestedResponse, limits) },
+		func() (Record, error) { return NewInvocationFailureRecord(failure, limits) },
+		func() (Record, error) { return NewRunEndedRecord(ending, limits) },
 	} {
 		if r, err := makeRecord(); !errors.Is(err, codec.ErrLimitExceeded) || !reflect.DeepEqual(r, Record{}) {
 			t.Fatalf("bounded failure: %v", err)
@@ -80,11 +97,21 @@ func TestNewRecordMetadataAndGeneratedLimitsAgree(t *testing.T) {
 	for i := range emptyParts.Parts {
 		emptyParts.Parts[i].Text = new("")
 	}
+	requestID := ModelRequestID{RunID: input.RunID, Ordinal: 1}
+	request := ModelRequest{ID: requestID, Source: SourceHead{Sequence: 1, CID: contentid.Sum([]byte("source"))}, Recipe: ConstructionRecipe{Algorithm: "a", Version: 1, Parameters: []byte{0xff}, Check: []byte{0}}, RetryOf: &requestID}
+	usage := &InvocationUsage{Input: new(int64(0)), Output: new(int64(3)), Raw: &OpaqueProviderData{Producer: "p", Format: "usage", Version: 1, Data: []byte{0xff}}}
+	response := ModelResponse{RequestID: requestID, Terminal: ResponseTerminalOther, ProviderReason: new(""), Items: []ResponseItem{{Content: &ResponseContent{Kind: ResponseContentOutput, Parts: content}}, {Call: &RequestedCall{Name: "", Arguments: []byte{0xff}}}}, Evidence: &ObservedEvidence{Correlation: new("")}, Usage: usage, Private: &OpaqueProviderData{Producer: "p", Format: "f", Version: 1, Data: []byte{0xff}}}
+	failure := InvocationFailure{RequestID: requestID, Class: InvocationFailureTransport, Usage: usage, Evidence: response.Evidence, Explanation: new("")}
+	ending := RunEnded{RunID: input.RunID, Reason: RunEndedCaptureFailed, Capture: &CaptureFailureEvidence{RequestID: requestID, Evidence: response.Evidence, Usage: usage}}
 	for _, tc := range []struct {
 		name  string
 		make  func(codec.Limits) (Record, error)
 		check func(codec.Limits) ([]byte, error)
 	}{
+		{"request", func(l codec.Limits) (Record, error) { return NewModelRequestRecord(request, l) }, func(l codec.Limits) ([]byte, error) { return codec.Encode(request.toFormat(), l) }},
+		{"response", func(l codec.Limits) (Record, error) { return NewModelResponseRecord(response, l) }, func(l codec.Limits) ([]byte, error) { return codec.Encode(response.toFormat(), l) }},
+		{"failure", func(l codec.Limits) (Record, error) { return NewInvocationFailureRecord(failure, l) }, func(l codec.Limits) ([]byte, error) { return codec.Encode(failure.toFormat(), l) }},
+		{"ending", func(l codec.Limits) (Record, error) { return NewRunEndedRecord(ending, l) }, func(l codec.Limits) ([]byte, error) { return codec.Encode(ending.toFormat(), l) }},
 		{"input", func(l codec.Limits) (Record, error) { return NewUserInputRecord(authored, l) }, func(l codec.Limits) ([]byte, error) { return codec.Encode(authored.toFormat(), l) }},
 		{"instructions", func(l codec.Limits) (Record, error) { return NewInstructionsRecord(instructions, l) }, func(l codec.Limits) ([]byte, error) { return codec.Encode(instructions.toFormat(), l) }},
 		{"catalog", func(l codec.Limits) (Record, error) { return NewToolCatalogRecord(catalog, l) }, func(l codec.Limits) ([]byte, error) { return codec.Encode(catalog.toFormat(), l) }},
@@ -156,6 +183,13 @@ func TestNewRecordMetadataAndGeneratedLimitsAgree(t *testing.T) {
 					}
 					if err := original.checkPayload(l); !errors.Is(err, wantErr) {
 						t.Fatalf("preflight %s=%d: %v; want %v", reflect.TypeOf(l).Field(i).Name, ceiling, err, wantErr)
+					}
+					imported, decodeErr := DecodeRecord(scope, original.Format(), l)
+					if !errors.Is(decodeErr, wantErr) {
+						t.Fatalf("decode %s=%d: %v; want %v", reflect.TypeOf(l).Field(i).Name, ceiling, decodeErr, wantErr)
+					}
+					if decodeErr != nil && !reflect.DeepEqual(imported, Record{}) {
+						t.Fatal("bounded decode returned partial record")
 					}
 				}
 			}

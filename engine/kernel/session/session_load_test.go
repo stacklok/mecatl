@@ -100,7 +100,7 @@ func TestLoadLifecycleAndOwnership(t *testing.T) {
 		}
 		next := beginBatch(t, s)
 		if stage == "active" {
-			mustBatch(t, next.Interrupt())
+			mustBatch(t, next.EndRun(session.RunEndedInterrupted))
 		} else {
 			nextRun := batchRun(t, next)
 			second := batchInput(t, next, nextRun, []byte("second"))

@@ -25,6 +25,10 @@ func detachedSessionState(state sessionState) sessionState {
 		owned.catalog = r.catalog.Clone()
 		owned.binding = r.binding.Clone()
 		owned.effective = r.effective.Clone()
+		owned.request = r.request.Clone()
+		owned.response = r.response.Clone()
+		owned.failure = r.failure.Clone()
+		owned.ended = r.ended.Clone()
 		if v.instructions == r {
 			v.instructions = &owned
 		}
@@ -63,7 +67,7 @@ func populatedAtomicitySession(t *testing.T) *Session {
 			}
 		}
 		if n == 0 {
-			if err := b.Interrupt(); err != nil {
+			if err := b.EndRun(RunEndedInterrupted); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -86,7 +90,7 @@ func TestSessionPopulatedApplyRejectionPreservesPrivateState(t *testing.T) {
 	if _, err := b.AddUserInput(AddUserInputRequest{RunID: old.ActiveRun(), Parts: internalByteParts([]byte("third"))}); err != nil {
 		t.Fatal(err)
 	}
-	if err := b.Interrupt(); err != nil {
+	if err := b.EndRun(RunEndedInterrupted); err != nil {
 		t.Fatal(err)
 	}
 	run, err := b.StartRun()
@@ -105,7 +109,7 @@ func TestSessionPopulatedApplyRejectionPreservesPrivateState(t *testing.T) {
 		t.Fatal(err)
 	}
 	bad := good.commit.Clone()
-	wrongCloseout, err := NewRunInterruptedRecord(RunInterrupted{ID: old.ActiveRun()}, s.policy.PayloadLimits)
+	wrongCloseout, err := NewRunEndedRecord(RunEnded{RunID: old.ActiveRun(), Reason: RunEndedInterrupted}, s.policy.PayloadLimits)
 	if err != nil {
 		t.Fatal(err)
 	}

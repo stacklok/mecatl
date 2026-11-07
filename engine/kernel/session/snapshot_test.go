@@ -27,7 +27,7 @@ func TestSnapshotZeroKindsAndIndexBounds(t *testing.T) {
 		created, c := r.Created()
 		started, st := r.RunStarted()
 		user, u := r.UserInput()
-		interrupted, in := r.RunInterrupted()
+		interrupted, in := r.RunEnded()
 		if c != (i == 0) || st != (i == 1 || i == 4) || u != (i == 2) || in != (i == 3) {
 			t.Fatal("wrong-kind access indistinguishable")
 		}
@@ -46,7 +46,7 @@ func TestSnapshotZeroKindsAndIndexBounds(t *testing.T) {
 		if u && user.ID() != lookupInput(t, v, v.RunAt(0).ID(), 1).ID() {
 			t.Fatal("typed input identity")
 		}
-		if in && interrupted.ID != v.RunAt(0).ID() {
+		if in && interrupted.RunID() != v.RunAt(0).ID() {
 			t.Fatal("interruption scope")
 		}
 		version := int64(1)
@@ -71,7 +71,7 @@ func TestSnapshotZeroKindsAndIndexBounds(t *testing.T) {
 	if _, ok := record.RunStarted(); ok {
 		t.Fatal("zero start")
 	}
-	if _, ok := record.RunInterrupted(); ok {
+	if _, ok := record.RunEnded(); ok {
 		t.Fatal("zero interruption")
 	}
 	if !userInputsMatch(v, v.RunAt(1).ID(), 0) || v.RunAt(1).RecordCount() != 1 {

@@ -7,8 +7,15 @@
 // Purpose and Source, never provider roles or trust claims. Empty and duplicate
 // contributions are retained without replacement, consumption or fallback.
 // Instructions, tool catalogs, and model
-// bindings are independent history-scoped replacements admitted during active runs;
-// their selected values persist across runs. Snapshots pin these selections.
+// bindings are independent history-scoped replacements admitted after creation,
+// including while idle; their selected values persist across runs.
+//
+// Model requests pin an already accepted source, construction recipe and optional
+// retry correlation. Their complete response or observed failure must be a later
+// commit. Ordered responses retain content and complete requested calls; unresolved
+// outcomes/calls block new input and requests. Explicit endings preserve uncertainty;
+// only completed endings require accounted input and no outstanding obligations.
+// The kernel does not construct requests, invoke models/tools or aggregate usage.
 //
 // Public values carry history scope. Persistence DTOs in session/format omit
 // context supplied by verified history ancestry. Payload-local validation and
@@ -19,8 +26,10 @@
 // Session operations must be caller-serialized; captured snapshots and their
 // child handles support concurrent readers independently of the session owner.
 // Views retain immutable backing storage for their lifetime, potentially including
-// the enclosing accepted record. Capture and child navigation cost O(1), without
-// copying payloads. Byte getters return independent field-only copies; Record and
+// the enclosing accepted record. Capture and direct item/part navigation cost O(1),
+// without copying payloads. CallCount and CallAt derive call order by scanning the
+// response; Calls traverses it once. Byte getters return independent field-only
+// copies; Record and
 // RecordView.Format explicitly copy encoded history records for transport.
 //
 // View sequences are immutable, ordered and repeatable, and retain their captured

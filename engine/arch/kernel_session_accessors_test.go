@@ -19,6 +19,7 @@ func TestKernelSessionConstantTimeAccessors(t *testing.T) {
 		methods        []string
 	}{
 		{"session.go", "Session", []string{"Snapshot"}},
+		{"record_view.go", "RecordView", []string{"ModelRequest", "ModelResponse", "InvocationFailure", "RunEnded"}},
 		{"snapshot.go", "Snapshot", []string{"Instructions", "ToolCatalog", "ModelBinding", "UserInputByID"}},
 	} {
 		t.Run(owner.file, func(t *testing.T) {

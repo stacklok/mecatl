@@ -120,7 +120,7 @@ func TestContextSoftAdmissionAndActualInterruptionReserve(t *testing.T) {
 		mustBatch(t, b.ReplaceInstructions(session.Instructions{HistoryID: s.Snapshot().HistoryID()}))
 		if mixedCloseout {
 			// A mixed context+interruption batch is ordinary admission, not cleanup.
-			mustBatch(t, b.Interrupt())
+			mustBatch(t, b.EndRun(session.RunEndedInterrupted))
 			if _, err := s.SubmitCommit(context.Background(), b); !errors.Is(err, codec.ErrLimitExceeded) {
 				t.Fatalf("mixed soft admission: %v", err)
 			}
@@ -131,7 +131,7 @@ func TestContextSoftAdmissionAndActualInterruptionReserve(t *testing.T) {
 			submitBatch(t, s, b)
 			// The selected context write leaves exactly the actual closeout record room.
 			b = beginBatch(t, s)
-			mustBatch(t, b.Interrupt())
+			mustBatch(t, b.EndRun(session.RunEndedInterrupted))
 			submitBatch(t, s, b)
 			if s.Snapshot().RecordCount() != 4 || s.Snapshot().ActiveRun() != (session.RunID{}) {
 				t.Fatal("reserved actual interruption did not fit")

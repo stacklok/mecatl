@@ -55,7 +55,9 @@ func TestRecordMetadataAgreementAndOwnership(t *testing.T) {
 		{"created", func() (Record, error) { return NewCreatedRecord(Created{HistoryID: id}, limits) }},
 		{"input", func() (Record, error) { return NewUserInputRecord(input, limits) }},
 		{"start", func() (Record, error) { return NewRunStartedRecord(run, limits) }},
-		{"interruption", func() (Record, error) { return NewRunInterruptedRecord(RunInterrupted(run), limits) }},
+		{"interruption", func() (Record, error) {
+			return NewRunEndedRecord(RunEnded{RunID: run.ID, Reason: RunEndedInterrupted}, limits)
+		}},
 	}
 	for _, tc := range constructors {
 		t.Run(tc.name, func(t *testing.T) {
@@ -76,7 +78,7 @@ func TestRecordMetadataAgreementAndOwnership(t *testing.T) {
 					t.Fatal("start metadata")
 				}
 			case "interruption":
-				if r.runInterrupted.ID != run.ID {
+				if r.runEnded.RunID != run.ID {
 					t.Fatal("interruption metadata")
 				}
 			}
@@ -95,7 +97,7 @@ func TestRecordMetadataAgreementAndOwnership(t *testing.T) {
 					t.Fatal("imported start metadata")
 				}
 			case "interruption":
-				if decoded.runInterrupted != r.runInterrupted {
+				if !decoded.runEnded.Equal(r.runEnded) {
 					t.Fatal("imported interruption metadata")
 				}
 			}
@@ -134,7 +136,7 @@ func TestMetadataPreflightBoundedDecodeDoesNotPublish(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	closeout, err := NewRunInterruptedRecord(RunInterrupted{ID: run}, limits)
+	closeout, err := NewRunEndedRecord(RunEnded{RunID: run, Reason: RunEndedInterrupted}, limits)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -169,7 +171,7 @@ func TestPreparationRetainsOriginatingScope(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	closeout, err := NewRunInterruptedRecord(RunInterrupted{ID: run}, limits)
+	closeout, err := NewRunEndedRecord(RunEnded{RunID: run, Reason: RunEndedInterrupted}, limits)
 	if err != nil {
 		t.Fatal(err)
 	}

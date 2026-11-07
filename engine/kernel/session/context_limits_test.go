@@ -58,14 +58,14 @@ func TestContextActualReserveAndSoftBounds(t *testing.T) {
 					b = beginBatch(t, s)
 					mustBatch(t, b.ReplaceInstructions(instructions))
 					if mode == "soft-mixed" {
-						mustBatch(t, b.Interrupt())
+						mustBatch(t, b.EndRun(session.RunEndedInterrupted))
 					}
 					if ref, err := s.SubmitCommit(context.Background(), b); ref != (history.CommitRef{}) || !errors.Is(err, codec.ErrLimitExceeded) || errors.Is(err, session.ErrAcceptanceUnknown) || len(backend.attempts) != 1 || !reflect.DeepEqual(before, captureRejectedSnapshot(s.Snapshot())) {
 						t.Fatalf("context soft rejection: %v, %v", ref, err)
 					}
 				}
 				b = beginBatch(t, s)
-				mustBatch(t, b.Interrupt())
+				mustBatch(t, b.EndRun(session.RunEndedInterrupted))
 				submitBatch(t, s, b)
 				if s.Snapshot().ActiveRun() != (session.RunID{}) || len(backend.attempts) != 2 {
 					t.Fatal("actual reserved interruption did not fit")

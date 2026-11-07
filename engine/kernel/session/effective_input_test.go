@@ -55,7 +55,7 @@ func TestEffectiveInputExternalRunAdmission(t *testing.T) {
 						t.Fatal("run identity")
 					}
 					if state == "interrupted" || state == "successor" {
-						mustBatch(t, b.Interrupt())
+						mustBatch(t, b.EndRun(session.RunEndedInterrupted))
 					}
 					if state == "successor" {
 						batchRun(t, b)

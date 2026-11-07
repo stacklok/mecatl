@@ -52,7 +52,7 @@ func closeoutWidthPrefix(t *testing.T) (*Session, *closeoutEnvelopeBackend) {
 		case s.Snapshot().ActiveRun() == (RunID{}):
 			_, err = b.StartRun()
 		default:
-			err = b.Interrupt()
+			err = b.EndRun(RunEndedInterrupted)
 		}
 		if err != nil {
 			t.Fatal(err)
@@ -82,7 +82,7 @@ func TestSessionFutureCloseoutEnvelopeSequenceWidth(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				interruption, err := NewRunInterruptedRecord(RunInterrupted{ID: run}, prefix.policy.PayloadLimits)
+				interruption, err := NewRunEndedRecord(RunEnded{RunID: run, Reason: RunEndedInterrupted}, prefix.policy.PayloadLimits)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -189,7 +189,7 @@ func TestSessionFutureCloseoutEnvelopeSequenceWidth(t *testing.T) {
 					if backend.appends != attempts || s.Snapshot().Head() != candidate.ref || s.Snapshot().ActiveRun() != run {
 						t.Fatal("hard-valid Apply failed to publish without I/O")
 					}
-					if _, err := s.prepareInterruption(); !errors.Is(err, codec.ErrLimitExceeded) {
+					if _, err := s.prepareEnding(RunEndedInterrupted); !errors.Is(err, codec.ErrLimitExceeded) {
 						t.Fatalf("readable active prefix unexpectedly has write headroom: %v", err)
 					}
 					return
@@ -224,7 +224,7 @@ func TestSessionFutureCloseoutEnvelopeSequenceWidth(t *testing.T) {
 				} else if path == "apply" && backend.appends != attempts {
 					t.Fatal("Apply performed I/O")
 				}
-				p, err := s.prepareInterruption()
+				p, err := s.prepareEnding(RunEndedInterrupted)
 				if err != nil || !p.commit.Equal(closeout) {
 					t.Fatalf("actual exact-fit closeout: %v", err)
 				}
@@ -236,7 +236,7 @@ func TestSessionFutureCloseoutEnvelopeSequenceWidth(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				if err := b.Interrupt(); err != nil {
+				if err := b.EndRun(RunEndedInterrupted); err != nil {
 					t.Fatal(err)
 				}
 				ref, err = s.SubmitCommit(context.Background(), b)

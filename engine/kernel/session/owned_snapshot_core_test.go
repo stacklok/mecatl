@@ -141,7 +141,7 @@ func TestOwnedCoreLifecycleSnapshotsAndReplay(t *testing.T) {
 		ownedCoreSubmit(t, s, b)
 	}
 	b = ownedCoreBatch(t, s)
-	if err := b.Interrupt(); err != nil {
+	if err := b.EndRun(session.RunEndedInterrupted); err != nil {
 		t.Fatal(err)
 	}
 	next, err := b.StartRun()

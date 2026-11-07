@@ -67,7 +67,7 @@ func TestContextHardOnlyReplayDetachedOracle(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := b.Interrupt(); err != nil {
+			if err := b.EndRun(RunEndedInterrupted); err != nil {
 				t.Fatal(err)
 			}
 			if ref, err := loaded.SubmitCommit(context.Background(), b); ref != (history.CommitRef{}) || !errors.Is(err, codec.ErrLimitExceeded) || errors.Is(err, ErrAcceptanceUnknown) {

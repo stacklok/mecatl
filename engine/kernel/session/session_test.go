@@ -91,7 +91,7 @@ func startRecord(t testing.TB, ordinal uint64) session.Record {
 }
 func closeoutRecord(t testing.TB, ordinal uint64) session.Record {
 	t.Helper()
-	r, err := session.NewRunInterruptedRecord(session.RunInterrupted{ID: session.RunID{HistoryID: testHistoryID(t), Ordinal: ordinal}}, testLimits())
+	r, err := session.NewRunEndedRecord(session.RunEnded{RunID: session.RunID{HistoryID: testHistoryID(t), Ordinal: ordinal}, Reason: session.RunEndedInterrupted}, testLimits())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -237,7 +237,7 @@ func TestSessionAtomicRejection(t *testing.T) {
 		{"duplicate active start", startRecord(t, 4).Format(), session.ErrTransition},
 		{"wrong owner", runInputRecord(t, 2, 2).Format(), session.ErrTransition},
 		{"wrong interruption", closeoutRecord(t, 2).Format(), session.ErrTransition},
-		{"unsupported kind", format.Record{Kind: "session.model_request", KindVersion: 1, Payload: []byte{0xa0}}, session.ErrUnsupportedRecord},
+		{"unsupported kind", format.Record{Kind: "session.future_request", KindVersion: 1, Payload: []byte{0xa0}}, session.ErrUnsupportedRecord},
 		{"unsupported version", format.Record{Kind: "session.user_input", KindVersion: 2, Payload: []byte{0xa0}}, session.ErrUnsupportedRecord},
 		{"malformed payload", format.Record{Kind: "session.user_input", KindVersion: 1, Payload: []byte{0xff}}, codec.ErrInvalidData},
 	} {
@@ -449,7 +449,7 @@ func TestSessionRun24CloseoutCapacity(t *testing.T) {
 				t.Fatal("prefix run ordinal")
 			}
 			batchInput(t, b, run, []byte{0xff, 0, 'x'})
-			mustBatch(t, b.Interrupt())
+			mustBatch(t, b.EndRun(session.RunEndedInterrupted))
 			submitBatch(t, s, b)
 		}
 	}
@@ -487,7 +487,7 @@ func TestSessionRun24CloseoutCapacity(t *testing.T) {
 	}
 	wantClose := proposedCommit(t, exact, all[72])
 	b = beginBatch(t, exact)
-	mustBatch(t, b.Interrupt())
+	mustBatch(t, b.EndRun(session.RunEndedInterrupted))
 	if ref := submitBatch(t, exact, b); ref != wantClose.Ref || len(backend.attempts) != attempts+2 {
 		t.Fatal("exact-fit boundary writer did not append canonical interruption")
 	}
@@ -555,7 +555,7 @@ func FuzzSessionApplyMalformed(f *testing.F) {
 		s := newSession(t, sessionPolicy())
 		applyRecords(t, s, createdRecord(t), startRecord(t, 1))
 		dto := proposedCommit(t, s, inputRecord(t, 1)).Commit
-		kind := []string{"session.user_input", "session.run_started", "session.run_interrupted", "session.created", "unknown"}[int(variant)%5]
+		kind := []string{"session.user_input", "session.run_started", "session.run_ended", "session.created", "unknown"}[int(variant)%5]
 		dto.Records = append(dto.Records, format.Record{Kind: kind, KindVersion: 1, Payload: payload})
 		c := identify(t, dto)
 		before := s.Snapshot()

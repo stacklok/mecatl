@@ -129,7 +129,7 @@ func TestSessionCommitHappyPathOwnershipAndNumbering(t *testing.T) {
 	if _, err := s.BeginCommit(); !errors.Is(err, session.ErrBatch) {
 		t.Fatal("stale cleanup released slot")
 	}
-	mustBatch(t, next.Interrupt())
+	mustBatch(t, next.EndRun(session.RunEndedInterrupted))
 	secondRun := batchRun(t, next)
 	second := batchInput(t, next, secondRun, []byte("second"))
 	if second.Ordinal != 1 || secondRun.Ordinal != 2 {
@@ -140,7 +140,7 @@ func TestSessionCommitHappyPathOwnershipAndNumbering(t *testing.T) {
 		t.Fatal("old content or successor lost")
 	}
 	reuse := beginBatch(t, s)
-	mustBatch(t, reuse.Interrupt())
+	mustBatch(t, reuse.EndRun(session.RunEndedInterrupted))
 	third := batchRun(t, reuse)
 	if _, err := reuse.AddUserInput(session.AddUserInputRequest{RunID: run}); !errors.Is(err, session.ErrTransition) {
 		t.Fatal("closed owner accepted")
@@ -158,8 +158,8 @@ func TestSessionCommitOrderedProvisionalInterruption(t *testing.T) {
 	mustBatch(t, b.Create())
 	first := batchRun(t, b)
 	batchInput(t, b, first, []byte("first"))
-	mustBatch(t, b.Interrupt())
-	if err := b.Interrupt(); !errors.Is(err, session.ErrTransition) {
+	mustBatch(t, b.EndRun(session.RunEndedInterrupted))
+	if err := b.EndRun(session.RunEndedInterrupted); !errors.Is(err, session.ErrTransition) {
 		t.Fatal("idle interruption added")
 	}
 	run := batchRun(t, b)
@@ -361,7 +361,7 @@ func TestSessionCommitUncertainIdenticalExplicitRetry(t *testing.T) {
 			if _, err := b.AddUserInput(session.AddUserInputRequest{}); !errors.Is(err, session.ErrBatch) {
 				t.Fatal("frozen add")
 			}
-			if err := b.Interrupt(); !errors.Is(err, session.ErrBatch) {
+			if err := b.EndRun(session.RunEndedInterrupted); !errors.Is(err, session.ErrBatch) {
 				t.Fatal("frozen interruption")
 			}
 			if err := s.Apply(history.Commit{}); !errors.Is(err, session.ErrBatch) {
@@ -393,7 +393,7 @@ func TestSessionCommitUncertainSuccessorIdenticalExplicitRetry(t *testing.T) {
 			batchInput(t, first, firstRun, []byte("first"))
 			submitBatch(t, s, first)
 			closeout := beginBatch(t, s)
-			mustBatch(t, closeout.Interrupt())
+			mustBatch(t, closeout.EndRun(session.RunEndedInterrupted))
 			submitBatch(t, s, closeout)
 			parent := s.Snapshot()
 			if parent.Head().Sequence == 0 || parent.ActiveRun() != (session.RunID{}) || parent.RunCount() != 1 {

@@ -64,7 +64,7 @@ Evidence: [snapshot fields](../../../../engine/adapter/sessnap/sessnap.go),
 [server actor stamping](../../../../internal/adapter/server/service.go),
 [kernel creation](../../../../engine/kernel/session/created.go),
 [kernel logical actors](../../../../engine/kernel/session/attributed_input.go), and
-[kernel interruption](../../../../engine/kernel/session/run_interrupted.go).
+[kernel interruption at the assessment revision](https://github.com/stacklok/mecatl/blob/b40c45289e8f7bbec8d1826f50896b8e735c2021/engine/kernel/session/run_interrupted.go).
 
 The legacy general `Event` has no occurrence timestamp. Its creation timestamp,
 specialized durations, and backend modification times are separate facts; do not

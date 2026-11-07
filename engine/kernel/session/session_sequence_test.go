@@ -26,7 +26,7 @@ func TestSessionCommitOrdinalExhaustion(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			before := b.lifecycle
+			before := b.admission.candidate
 			if input {
 				if id, err := b.AddUserInput(AddUserInputRequest{RunID: run}); id != (UserInputID{}) || !errors.Is(err, codec.ErrLimitExceeded) {
 					t.Fatalf("input overflow: %v, %v", id, err)
@@ -36,7 +36,7 @@ func TestSessionCommitOrdinalExhaustion(t *testing.T) {
 					t.Fatalf("run overflow: %v, %v", id, err)
 				}
 			}
-			if b.lifecycle != before || len(b.records) != 0 {
+			if b.admission.candidate != before || len(b.records) != 0 {
 				t.Fatal("overflow changed batch")
 			}
 			if err := b.Discard(); err != nil {
@@ -69,7 +69,7 @@ func TestSessionSequenceExhaustion(t *testing.T) {
 			s.state.view.head.Sequence = math.MaxInt64 - 1
 			before := s.Snapshot()
 			if active {
-				p, err := s.prepareInterruption()
+				p, err := s.prepareEnding(RunEndedInterrupted)
 				if err != nil || p.ref.Sequence != math.MaxInt64 {
 					t.Fatalf("last interruption: %v", err)
 				}

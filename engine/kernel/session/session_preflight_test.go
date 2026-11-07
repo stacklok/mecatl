@@ -33,7 +33,7 @@ func TestSessionMetadataAndDecodedLegalityAgree(t *testing.T) {
 		return r
 	}
 	closeout := func(n uint64) Record {
-		r, e := NewRunInterruptedRecord(RunInterrupted{ID: RunID{HistoryID: id, Ordinal: n}}, limits)
+		r, e := NewRunEndedRecord(RunEnded{RunID: RunID{HistoryID: id, Ordinal: n}, Reason: RunEndedInterrupted}, limits)
 		if e != nil {
 			t.Fatal(e)
 		}
@@ -201,18 +201,18 @@ func TestPrivatePreparationAdmissionAndBarriers(t *testing.T) {
 			t.Fatalf("invalid preparation: %v", err)
 		}
 	}
-	if p, err := s.prepareInterruption(); err != nil || !reflect.DeepEqual(p, prepared{}) {
+	if p, err := s.prepareEnding(RunEndedInterrupted); err != nil || !reflect.DeepEqual(p, prepared{}) {
 		t.Fatalf("uncreated interruption: %v", err)
 	}
 	internalApply(t, s, created)
-	if p, err := s.prepareInterruption(); err != nil || !reflect.DeepEqual(p, prepared{}) {
+	if p, err := s.prepareEnding(RunEndedInterrupted); err != nil || !reflect.DeepEqual(p, prepared{}) {
 		t.Fatalf("idle interruption: %v", err)
 	}
 	b, err := s.BeginCommit()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.prepareInterruption(); !errors.Is(err, ErrBatch) {
+	if _, err := s.prepareEnding(RunEndedInterrupted); !errors.Is(err, ErrBatch) {
 		t.Fatal("private closeout bypassed slot")
 	}
 	if err := b.Discard(); err != nil {

@@ -14,7 +14,10 @@ type acceptedRecord struct {
 	created      sessionformat.Created
 	input        sessionformat.UserInput
 	started      sessionformat.RunStarted
-	interrupted  sessionformat.RunInterrupted
+	ended        sessionformat.RunEnded
+	request      sessionformat.ModelRequest
+	response     sessionformat.ModelResponse
+	failure      sessionformat.InvocationFailure
 	instructions sessionformat.Instructions
 	catalog      sessionformat.ToolCatalog
 	binding      sessionformat.ModelBinding
@@ -44,8 +47,14 @@ func decodeAccepted(v format.Record, limits codec.Limits) (*acceptedRecord, erro
 		r.binding, err = codec.Decode[sessionformat.ModelBinding](v.Payload, limits)
 	case sessionformat.KindRunStarted:
 		r.started, err = codec.Decode[sessionformat.RunStarted](v.Payload, limits)
-	case sessionformat.KindRunInterrupted:
-		r.interrupted, err = codec.Decode[sessionformat.RunInterrupted](v.Payload, limits)
+	case sessionformat.KindRunEnded:
+		r.ended, err = codec.Decode[sessionformat.RunEnded](v.Payload, limits)
+	case sessionformat.KindModelRequest:
+		r.request, err = codec.Decode[sessionformat.ModelRequest](v.Payload, limits)
+	case sessionformat.KindModelResponse:
+		r.response, err = codec.Decode[sessionformat.ModelResponse](v.Payload, limits)
+	case sessionformat.KindInvocationFailure:
+		r.failure, err = codec.Decode[sessionformat.InvocationFailure](v.Payload, limits)
 	default:
 		return nil, ErrUnsupportedRecord
 	}
@@ -62,8 +71,20 @@ func (r *acceptedRecord) metadata(scope historyid.HistoryID) Record {
 	out := Record{scope: scope, value: r.value,
 		userInput:      UserInputID{RunID: RunID{HistoryID: scope, Ordinal: r.input.RunID}, Ordinal: r.input.ID},
 		runStarted:     r.started,
-		runInterrupted: RunInterrupted{ID: RunID{HistoryID: scope, Ordinal: r.interrupted.ID}},
+		runEnded:       endedFromFormat(scope, r.ended),
+		modelRequest:   requestFromFormat(scope, r.request),
 		effectiveInput: r.effective,
+	}
+	switch r.value.Kind {
+	case sessionformat.KindModelResponse:
+		out.outcome = requestID(scope, r.response.RunID, r.response.RequestOrdinal)
+		for _, item := range r.response.Items {
+			if item.Call != nil {
+				out.calls++
+			}
+		}
+	case sessionformat.KindInvocationFailure:
+		out.outcome = requestID(scope, r.failure.RunID, r.failure.RequestOrdinal)
 	}
 	return out
 }
@@ -123,12 +144,36 @@ func (v RecordView) RunStarted() (RunStarted, bool) {
 	return RunStarted{ID: RunID{HistoryID: v.scope, Ordinal: v.record.started.ID}}, true
 }
 
-// RunInterrupted returns the scoped interruption only for the interruption kind.
-func (v RecordView) RunInterrupted() (RunInterrupted, bool) {
-	if v.Kind() != sessionformat.KindRunInterrupted {
-		return RunInterrupted{}, false
+// RunEnded returns an immutable ending handle only for the ending kind.
+func (v RecordView) RunEnded() (RunEndedView, bool) {
+	if v.record == nil || v.record.value.Kind != sessionformat.KindRunEnded {
+		return RunEndedView{}, false
 	}
-	return RunInterrupted{ID: RunID{HistoryID: v.scope, Ordinal: v.record.interrupted.ID}}, true
+	return RunEndedView{scope: v.scope, value: &v.record.ended}, true
+}
+
+// ModelRequest returns an immutable invocation commitment handle for that kind.
+func (v RecordView) ModelRequest() (ModelRequestView, bool) {
+	if v.record == nil || v.record.value.Kind != sessionformat.KindModelRequest {
+		return ModelRequestView{}, false
+	}
+	return ModelRequestView{scope: v.scope, value: &v.record.request}, true
+}
+
+// ModelResponse returns an immutable complete-response handle for that kind.
+func (v RecordView) ModelResponse() (ModelResponseView, bool) {
+	if v.record == nil || v.record.value.Kind != sessionformat.KindModelResponse {
+		return ModelResponseView{}, false
+	}
+	return ModelResponseView{scope: v.scope, value: &v.record.response}, true
+}
+
+// InvocationFailure returns an immutable observed-failure handle for that kind.
+func (v RecordView) InvocationFailure() (InvocationFailureView, bool) {
+	if v.record == nil || v.record.value.Kind != sessionformat.KindInvocationFailure {
+		return InvocationFailureView{}, false
+	}
+	return InvocationFailureView{scope: v.scope, value: &v.record.failure}, true
 }
 
 // Instructions returns a replacement handle only for the instructions kind.

@@ -86,7 +86,7 @@ func TestSessionRealHistoryLifecycleAndReplay(t *testing.T) {
 	recovered, err = session.Load(context.Background(), h, testHistoryID(t), sessionPolicy())
 	mustBatch(t, err)
 	b = beginBatch(t, recovered)
-	mustBatch(t, b.Interrupt())
+	mustBatch(t, b.EndRun(session.RunEndedInterrupted))
 	submitBatch(t, recovered, b)
 	if got := recovered.Snapshot(); got.ActiveRun() != (session.RunID{}) || got.RunCount() != 1 {
 		t.Fatal("explicit closeout")

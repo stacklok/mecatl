@@ -10,23 +10,23 @@ import (
 	sessionformat "github.com/stacklok/mecatl/engine/kernel/session/format"
 )
 
-func TestRunInterrupted(t *testing.T) {
-	v := session.RunInterrupted{ID: session.RunID{HistoryID: testHistoryID(t), Ordinal: 1}}
+func TestRunEnded(t *testing.T) {
+	v := session.RunEnded{RunID: session.RunID{HistoryID: testHistoryID(t), Ordinal: 1}, Reason: session.RunEndedInterrupted}
 	if err := v.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	r, err := session.NewRunInterruptedRecord(v, testLimits())
+	r, err := session.NewRunEndedRecord(v, testLimits())
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, err := codec.Decode[sessionformat.RunInterrupted](r.Format().Payload, testLimits())
-	if err != nil || got.ID != v.ID.Ordinal || !v.Equal(v.Clone()) {
+	got, err := codec.Decode[sessionformat.RunEnded](r.Format().Payload, testLimits())
+	if err != nil || got.RunID != v.RunID.Ordinal || !v.Equal(v.Clone()) {
 		t.Fatalf("interruption roundtrip: %v", err)
 	}
-	if (session.RunInterrupted{}).Validate() == nil {
+	if (session.RunEnded{}).Validate() == nil {
 		t.Fatal("zero interruption validated")
 	}
-	r, err = session.NewRunInterruptedRecord(session.RunInterrupted{}, testLimits())
+	r, err = session.NewRunEndedRecord(session.RunEnded{}, testLimits())
 	if !errors.Is(err, codec.ErrInvalidData) || !reflect.DeepEqual(r, session.Record{}) {
 		t.Fatalf("zero interruption record: %v", err)
 	}

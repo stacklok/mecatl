@@ -58,7 +58,7 @@ func TestSnapshotConstantCaptureAndAmortizedAppendStorage(t *testing.T) {
 					t.Fatal(err)
 				}
 			case 2:
-				if err := b.Interrupt(); err != nil {
+				if err := b.EndRun(RunEndedInterrupted); err != nil {
 					t.Fatal(err)
 				}
 			}

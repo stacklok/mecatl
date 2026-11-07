@@ -25,9 +25,12 @@ type Record struct {
 
 	// value.Kind selects these constructor-established lifecycle scalars.
 	// User input content exists only in value.
-	userInput      UserInputID
-	runStarted     sessionformat.RunStarted
-	runInterrupted RunInterrupted
+	userInput    UserInputID
+	runStarted   sessionformat.RunStarted
+	modelRequest ModelRequest
+	outcome      ModelRequestID
+	calls        uint64
+	runEnded     RunEnded
 	// Constructor-established effective contribution owns all nested storage.
 	effectiveInput sessionformat.EffectiveInput
 }
@@ -53,7 +56,7 @@ func supportedRecord(kind string, version int64) bool {
 	}
 	switch kind {
 	case sessionformat.KindCreated, sessionformat.KindUserInput, sessionformat.KindRunStarted,
-		sessionformat.KindRunInterrupted, sessionformat.KindEffectiveInput, sessionformat.KindInstructions,
+		sessionformat.KindRunEnded, sessionformat.KindModelRequest, sessionformat.KindModelResponse, sessionformat.KindInvocationFailure, sessionformat.KindEffectiveInput, sessionformat.KindInstructions,
 		sessionformat.KindToolCatalog, sessionformat.KindModelBinding:
 		return true
 	default:

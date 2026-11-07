@@ -51,9 +51,6 @@ func TestContextValuesIntegrationAndPinnedViews(t *testing.T) {
 		t.Fatalf("before creation: %v", err)
 	}
 	mustBatch(t, b.Create())
-	if err := b.ReplaceToolCatalog(catalog); !errors.Is(err, session.ErrTransition) {
-		t.Fatalf("idle catalog: %v", err)
-	}
 	run := batchRun(t, b)
 	parts := richContent()
 	input, err := b.AddUserInput(session.AddUserInputRequest{RunID: run, Parts: parts})
@@ -195,7 +192,7 @@ func TestContextValuesIntegrationAndPinnedViews(t *testing.T) {
 	b = beginBatch(t, s)
 	mustBatch(t, b.ReplaceInstructions(session.Instructions{HistoryID: scope}))
 	mustBatch(t, b.AddEffectiveInput(session.EffectiveInput{RunID: run}))
-	mustBatch(t, b.Interrupt())
+	mustBatch(t, b.EndRun(session.RunEndedInterrupted))
 	batchRun(t, b)
 	submitBatch(t, s, b)
 	next := s.Snapshot()
@@ -283,7 +280,7 @@ func TestContextAdmissionSourceBoundsAndScopes(t *testing.T) {
 	old := s.Snapshot()
 	b = beginBatch(t, s)
 	mustBatch(t, b.AddEffectiveInput(refs)) // Repeated across commits is not consumed.
-	mustBatch(t, b.Interrupt())
+	mustBatch(t, b.EndRun(session.RunEndedInterrupted))
 	if err := b.AddEffectiveInput(inline); !errors.Is(err, session.ErrTransition) {
 		t.Fatalf("inactive batch: %v", err)
 	}

@@ -1,0 +1,153 @@
+package session
+
+import (
+	"github.com/stacklok/mecatl/engine/kernel/codec"
+	"github.com/stacklok/mecatl/engine/kernel/history/format"
+	historyid "github.com/stacklok/mecatl/engine/kernel/history/id"
+	sessionformat "github.com/stacklok/mecatl/engine/kernel/session/format"
+)
+
+// InvocationFailureClass classifies a locally observed invocation or delivery failure.
+type InvocationFailureClass string
+
+const (
+	// InvocationFailureTransport identifies an observed transport failure.
+	InvocationFailureTransport InvocationFailureClass = sessionformat.InvocationFailureTransport
+	// InvocationFailureTimeout identifies an observed timeout.
+	InvocationFailureTimeout InvocationFailureClass = sessionformat.InvocationFailureTimeout
+	// InvocationFailureLocal identifies a local invocation failure.
+	InvocationFailureLocal InvocationFailureClass = sessionformat.InvocationFailureLocal
+	// InvocationFailureOther identifies another observed failure.
+	InvocationFailureOther InvocationFailureClass = sessionformat.InvocationFailureOther
+)
+
+// InvocationFailure records an observed failure for RequestID without fabricating a
+// response or asserting no remote processing or charge. Assignment borrows nested
+// storage; Clone detaches it. Explanation nil is absent and distinct from empty.
+type InvocationFailure struct {
+	RequestID   ModelRequestID
+	Class       InvocationFailureClass
+	Explanation *string
+	Evidence    *ObservedEvidence
+	Usage       *InvocationUsage
+}
+
+// Validate checks local values without proving acceptance or remote effects.
+func (v InvocationFailure) Validate() error {
+	if err := v.RequestID.Validate(); err != nil {
+		return err
+	}
+	if err := v.toFormat().Validate(); err != nil {
+		return err
+	}
+	if v.Evidence != nil {
+		if err := v.Evidence.Validate(); err != nil {
+			return err
+		}
+	}
+	if v.Usage != nil {
+		return v.Usage.Validate()
+	}
+	return nil
+}
+
+// Clone detaches all mutable nested storage.
+func (v InvocationFailure) Clone() InvocationFailure {
+	out := v
+	if v.Explanation != nil {
+		s := *v.Explanation
+		out.Explanation = &s
+	}
+	if v.Evidence != nil {
+		x := v.Evidence.Clone()
+		out.Evidence = &x
+	}
+	if v.Usage != nil {
+		x := v.Usage.Clone()
+		out.Usage = &x
+	}
+	return out
+}
+
+// Equal compares exact scoped identity, optional fields, and retained evidence.
+func (v InvocationFailure) Equal(other InvocationFailure) bool {
+	return v.RequestID == other.RequestID && v.toFormat().Equal(other.toFormat())
+}
+func (v InvocationFailure) toFormat() sessionformat.InvocationFailure {
+	return sessionformat.InvocationFailure{RunID: v.RequestID.RunID.Ordinal, RequestOrdinal: v.RequestID.Ordinal, Class: string(v.Class), Explanation: v.Explanation, Evidence: evidenceToFormat(v.Evidence), Usage: usageToFormat(v.Usage)}
+}
+func (v InvocationFailure) checkSize(b *valueBudget) {
+	b.text(string(v.Class))
+	checkEvidenceSize(v.Evidence, b)
+	checkUsageSize(v.Usage, b)
+	if v.Explanation != nil {
+		b.pointer()
+		b.text(*v.Explanation)
+	}
+}
+
+// NewInvocationFailureRecord owns one observed terminal invocation failure.
+// Sizing precedes conversion; full request scope is validated before omission.
+// Failure returns zero and never resolves a request by itself.
+func NewInvocationFailureRecord(v InvocationFailure, limits codec.Limits) (Record, error) {
+	if err := v.RequestID.Validate(); err != nil {
+		return Record{}, codec.ErrInvalidData
+	}
+	b := newValueBudget(limits)
+	v.checkSize(&b)
+	if b.err != nil {
+		return Record{}, b.err
+	}
+	payload, err := codec.Encode(v.toFormat(), limits)
+	if err != nil {
+		return Record{}, err
+	}
+	return Record{scope: v.RequestID.RunID.HistoryID, outcome: v.RequestID, value: format.Record{Kind: sessionformat.KindInvocationFailure, KindVersion: sessionformat.Version, Payload: payload}}, nil
+}
+
+// InvocationFailureView is an immutable observed outcome. Zero has zero request
+// and empty class. Evidence and usage exports detach all mutable storage.
+type InvocationFailureView struct {
+	scope historyid.HistoryID
+	value *sessionformat.InvocationFailure
+}
+
+// RequestID returns the full accepted request reference, or zero for zero.
+func (v InvocationFailureView) RequestID() ModelRequestID {
+	if v.value == nil {
+		return ModelRequestID{}
+	}
+	return requestID(v.scope, v.value.RunID, v.value.RequestOrdinal)
+}
+
+// Class returns the observed failure classification, or empty for zero.
+func (v InvocationFailureView) Class() InvocationFailureClass {
+	if v.value == nil {
+		return ""
+	}
+	return InvocationFailureClass(v.value.Class)
+}
+
+// Explanation preserves absent versus explicitly empty safe detail.
+func (v InvocationFailureView) Explanation() (string, bool) {
+	if v.value == nil || v.value.Explanation == nil {
+		return "", false
+	}
+	return *v.value.Explanation, true
+}
+
+// Evidence returns detached safe observed detail and correlation.
+func (v InvocationFailureView) Evidence() (ObservedEvidence, bool) {
+	if v.value == nil || v.value.Evidence == nil {
+		return ObservedEvidence{}, false
+	}
+	return evidenceFromFormat(v.value.Evidence).Clone(), true
+}
+
+// Usage returns detached reported counters and raw usage-only evidence.
+func (v InvocationFailureView) Usage() (InvocationUsage, bool) {
+	if v.value == nil || v.value.Usage == nil {
+		return InvocationUsage{}, false
+	}
+	return usageFromFormat(v.value.Usage).Clone(), true
+}

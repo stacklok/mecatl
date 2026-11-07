@@ -1,4 +1,4 @@
-//go:generate go -C ../../../.. run ./internal/cborgen/cmd/cborgen -dir engine/kernel/session/format -types Created,UserInput,RunStarted,RunInterrupted,EffectiveInput,Instructions,ToolCatalog,ModelBinding -out zz_cbor_generated.go
+//go:generate go -C ../../../.. run ./internal/cborgen/cmd/cborgen -dir engine/kernel/session/format -types Created,UserInput,RunStarted,EffectiveInput,Instructions,ToolCatalog,ModelBinding,SourceHead,ConstructionRecipe,ModelRequest,OpaqueProviderData,InvocationUsage,ObservedEvidence,RequestedCall,ResponseContent,ResponseItem,ModelResponse,InvocationFailure,CaptureFailureEvidence,RunEnded -out zz_cbor_generated.go
 
 // Package format owns the isolated session's mutable persistence DTOs and
 // payload-local validation. Generated CBOR operations enforce canonical encoding
@@ -34,6 +34,12 @@ const (
 	KindModelBinding = "session.model_binding"
 	// KindRunStarted identifies a run start, independently of input facts.
 	KindRunStarted = "session.run_started"
-	// KindRunInterrupted identifies an explicit run interruption.
-	KindRunInterrupted = "session.run_interrupted"
+	// KindRunEnded identifies explicit terminal run ownership.
+	KindRunEnded = "session.run_ended"
+	// KindModelRequest identifies an invocation commitment.
+	KindModelRequest = "session.model_request"
+	// KindModelResponse identifies a complete terminal response.
+	KindModelResponse = "session.model_response"
+	// KindInvocationFailure identifies an observed invocation failure.
+	KindInvocationFailure = "session.invocation_failure"
 )

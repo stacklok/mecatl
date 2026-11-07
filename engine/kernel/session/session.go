@@ -105,12 +105,9 @@ func Load(ctx context.Context, h *history.History, id historyid.HistoryID, polic
 // A zero Session returns the zero handle.
 func (s *Session) Snapshot() Snapshot { return s.state.view }
 
-// prepareInterruption prepares the actual one-record closeout of the active run,
-// without applying, persisting, cancelling work or starting a successor. Idle
-// (including uncreated) returns zero, nil: there is nothing to append.
-// Errors return zero. The same builder and admission path reserves closeout
-// capacity for every candidate that would leave a run active.
-func (s *Session) prepareInterruption() (prepared, error) {
+// prepareEnding prepares an actual minimal terminal envelope without I/O. Idle
+// returns zero. The same path reserves every noncompleted reason.
+func (s *Session) prepareEnding(reason RunEndedReason) (prepared, error) {
 	if err := s.writeBarrier(); err != nil {
 		return prepared{}, err
 	}
@@ -120,7 +117,7 @@ func (s *Session) prepareInterruption() (prepared, error) {
 	if s.state.view.lifecycle.activeRun == (RunID{}) {
 		return prepared{}, nil
 	}
-	r, err := NewRunInterruptedRecord(RunInterrupted{ID: s.state.view.lifecycle.activeRun}, s.policy.PayloadLimits)
+	r, err := NewRunEndedRecord(RunEnded{RunID: s.state.view.lifecycle.activeRun, Reason: reason}, s.policy.PayloadLimits)
 	if err != nil {
 		return prepared{}, err
 	}
@@ -132,7 +129,7 @@ func (s *Session) prepare(records []Record) (prepared, error) {
 	if err := s.policy.Validate(); err != nil {
 		return prepared{}, err
 	}
-	ordinary := len(records) != 1 || records[0].value.Kind != sessionformat.KindRunInterrupted
+	ordinary := len(records) != 1 || !records[0].minimalEnding()
 	if err := s.admit(len(records), 0, ordinary); err != nil {
 		return prepared{}, err
 	}
@@ -168,6 +165,11 @@ func (s *Session) prepare(records []Record) (prepared, error) {
 	ref, err := s.verifyCommit(c, nil)
 	if err != nil {
 		return prepared{}, err
+	}
+	if s.history != nil {
+		if _, err := s.history.Identify(v.historyID, c); err != nil {
+			return prepared{}, err
+		}
 	}
 	if err := s.preflight(records, ref, total); err != nil {
 		return prepared{}, err
@@ -227,7 +229,7 @@ func (s *Session) evaluate(c format.Commit, expected *history.CommitRef) (sessio
 		return sessionState{}, history.CommitRef{}, err
 	}
 	candidate := s.state
-	lifecycle := candidate.view.lifecycle
+	admission := newAdmission(candidate.view)
 	staged := make([]*acceptedRecord, len(c.Records))
 	var runs []runEntry
 	var inputs []int
@@ -237,14 +239,14 @@ func (s *Session) evaluate(c format.Commit, expected *history.CommitRef) (sessio
 			return sessionState{}, history.CommitRef{}, err
 		}
 		metadata := fact.metadata(candidate.view.historyID)
-		if err := lifecycle.reduce(metadata); err != nil {
+		if err := admission.reduce(metadata); err != nil {
 			return sessionState{}, history.CommitRef{}, err
 		}
 		staged[i] = fact
 		position := len(candidate.view.records) + i
 		switch r.Kind {
 		case sessionformat.KindRunStarted:
-			runs = append(runs, runEntry{id: lifecycle.activeRun, recordStart: position, inputStart: len(candidate.view.inputs) + len(inputs)})
+			runs = append(runs, runEntry{id: admission.candidate.activeRun, recordStart: position, inputStart: len(candidate.view.inputs) + len(inputs)})
 		case sessionformat.KindUserInput:
 			inputs = append(inputs, position)
 		case sessionformat.KindInstructions:
@@ -271,7 +273,7 @@ func (s *Session) evaluate(c format.Commit, expected *history.CommitRef) (sessio
 	v.records = append(v.records, staged...)
 	v.runs = append(v.runs, runs...)
 	v.inputs = append(v.inputs, inputs...)
-	v.lifecycle = lifecycle
+	v.lifecycle = admission.candidate
 	v.head = ref
 	return candidate, ref, nil
 }

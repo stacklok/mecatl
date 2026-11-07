@@ -48,8 +48,8 @@ func recordFixtures(t testing.TB) []struct {
 		{"session.run_started", []byte("\xa1\x61r\x02"), func(l codec.Limits) (session.Record, error) {
 			return session.NewRunStartedRecord(session.RunStarted{ID: session.RunID{HistoryID: h, Ordinal: 2}}, l)
 		}},
-		{"session.run_interrupted", []byte("\xa1\x61r\x02"), func(l codec.Limits) (session.Record, error) {
-			return session.NewRunInterruptedRecord(session.RunInterrupted{ID: session.RunID{HistoryID: h, Ordinal: 2}}, l)
+		{"session.run_ended", []byte("\xa2\x61e\x05\x61r\x02"), func(l codec.Limits) (session.Record, error) {
+			return session.NewRunEndedRecord(session.RunEnded{RunID: session.RunID{HistoryID: h, Ordinal: 2}, Reason: session.RunEndedInterrupted}, l)
 		}},
 	}
 }
@@ -131,7 +131,7 @@ func TestRecordFailureCategories(t *testing.T) {
 			}
 		})
 	}
-	for _, kind := range []string{"session.model_request", "session.run_completed", "other"} {
+	for _, kind := range []string{"session.future_request", "session.run_interrupted", "other"} {
 		r, err := session.DecodeRecord(testHistoryID(t), format.Record{Kind: kind, KindVersion: 1, Payload: []byte{0xa0}}, testLimits())
 		if !errors.Is(err, session.ErrUnsupportedRecord) || !reflect.DeepEqual(r, session.Record{}) {
 			t.Fatalf("unsupported kind: %v", err)
@@ -174,7 +174,7 @@ func FuzzDecodeRecord(f *testing.F) {
 	for i, test := range recordFixtures(f) {
 		f.Add(uint8(i), test.wire)
 	}
-	kinds := []string{"session.created", "session.user_input", "session.run_started", "session.run_interrupted"}
+	kinds := []string{"session.created", "session.user_input", "session.run_started", "session.run_ended"}
 	f.Fuzz(func(t *testing.T, kind uint8, wire []byte) {
 		dto := format.Record{Kind: kinds[int(kind)%len(kinds)], KindVersion: 1, Payload: wire}
 		r, err := session.DecodeRecord(testHistoryID(t), dto, testLimits())

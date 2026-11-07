@@ -42,7 +42,7 @@ func iteratorFixture(t testing.TB, count, payloadBytes int) map[string]*session.
 	mustBatch(t, b.Create())
 	for i := 1; i < count; i++ {
 		batchRun(t, b)
-		mustBatch(t, b.Interrupt())
+		mustBatch(t, b.EndRun(session.RunEndedInterrupted))
 	}
 	run := batchRun(t, b)
 	parts := make([]session.ContentPart, count)
@@ -309,7 +309,7 @@ func TestViewIteratorsPinnedConcurrentReaders(t *testing.T) {
 				submitBatch(t, s, b)
 			}
 			b := beginBatch(t, s)
-			mustBatch(t, b.Interrupt())
+			mustBatch(t, b.EndRun(session.RunEndedInterrupted))
 			newRun := batchRun(t, b)
 			_, err := b.AddUserInput(session.AddUserInputRequest{RunID: newRun})
 			mustBatch(t, err)

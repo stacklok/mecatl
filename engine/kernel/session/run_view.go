@@ -17,7 +17,8 @@ type RunView struct {
 // ID returns the scoped run identity, or zero for a zero handle.
 func (v RunView) ID() RunID { return v.id }
 
-// RecordCount includes the start and any explicit interruption in this snapshot.
+// RecordCount includes the start, ending, and any following idle context in this
+// snapshot's chronological span, until the next run starts.
 func (v RunView) RecordCount() int { return len(v.records) }
 
 // Records returns a repeatable sequence of immutable records in chronological order.

@@ -13,11 +13,16 @@ provide a memory backend and reusable conformance checks.
 [`session`](session/doc.go) interprets accepted history as lifecycle state and
 retained context. It preserves rich authored input separately from prepared content
 and its provenance. Instructions, advertised tool catalogs, and model bindings are
-independent session-scoped replacements. It validates ordered batches before
-submission and updates accepted state only after storage acceptance. Immutable
+independent session-scoped replacements. Model requests commit to an accepted
+source and construction recipe. Atomic responses retain ordered output, requested
+calls, and private provider data; responses and observed invocation failures can
+carry reported usage and safe correlation evidence. Explicit run endings preserve
+unresolved work. The session validates ordered batches
+before submission and updates accepted state only after storage acceptance. Immutable
 snapshots pin state and context selections; loading reconstructs them without
-resolving source files or media references. The [session example](session/example_test.go)
-shows submission, snapshot access, and reconstruction.
+resolving source files or media references, invoking models, or executing tools.
+The [session example](session/example_test.go) shows submission, snapshot access,
+and reconstruction.
 
 Each layer's `format` package owns its mutable persistence DTOs, generated codecs,
 and payload-local validation. The aggregate owns cross-record legality; valid

@@ -112,7 +112,7 @@ func ExampleSession() {
 		return
 	}
 	defer closeout.Discard()
-	if err := closeout.Interrupt(); err != nil {
+	if err := closeout.EndRun(session.RunEndedInterrupted); err != nil {
 		fmt.Println(err)
 		return
 	}
