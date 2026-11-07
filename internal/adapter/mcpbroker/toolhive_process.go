@@ -124,6 +124,9 @@ func newToolHiveProcess(ctx context.Context, config ToolHiveConfig, options tool
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	if client := config.BrokerClient; client != nil && (client.ID == "" || !hasKeys(client.KeySet)) {
+		return nil, fmt.Errorf("%w: broker client needs an ID and a JWK Set with at least one key", ErrInvalidCatalogue)
+	}
 	diag := config.Diagnostics
 	if diag == nil {
 		diag = port.NopDiagnostics{}

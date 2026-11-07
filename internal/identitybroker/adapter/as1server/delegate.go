@@ -97,8 +97,8 @@ func hasKeys(raw []byte) bool {
 // writeKeySet writes the key set raw to a new file in a new private temporary
 // directory, as ToolHive reads a delegate client's keys only from a file, and
 // returns its path and a function that removes the directory. ToolHive reads
-// the file once, at construction. Its twin is mcpbroker's writeKeySet: fix both
-// together.
+// the file once, at construction. hasKeys and writeKeySet are copied in the
+// MCP broker adapter (internal/adapter/mcpbroker/as2.go); fix both together.
 func writeKeySet(raw []byte) (string, func(), error) {
 	dir, err := os.MkdirTemp("", "as1-delegate-")
 	if err != nil {

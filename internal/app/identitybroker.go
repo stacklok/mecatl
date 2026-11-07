@@ -133,17 +133,17 @@ var errAS2IssuerIsAS1s = errors.New("the MCP gateway's authorization server (AS-
 const hostedAS1IDJAGMaxLifetime = 12 * time.Hour
 
 // buildIdentityBroker returns the identity broker Mecatl calls, the hosted
-// AS-1 when configured, the broker client's public key set as a JSON JWK Set,
-// and a function that releases the broker and AS-1. All are nil or no-ops
-// when the broker is not enabled. Mecatl gets only the authentication
-// boundary, never the core behind it. A construction failure fails startup,
-// as does a configuration that gives sessions a shell. An injected test core
-// has no broker client key, so its key set is nil.
+// AS-1 when configured, the broker client's assertion signer, and a function
+// that releases the broker and AS-1. All are nil or no-ops when the broker is
+// not enabled. Mecatl gets only the authentication boundary, never the core
+// behind it. A construction failure fails startup, as does a configuration
+// that gives sessions a shell. An injected test core has no broker client
+// key, so its signer is nil.
 //
 // With a hosted AS-1 and no test override, session open converts users' access
 // tokens at that AS-1 in process: buildBrokerWithHostedAS1 creates the broker
 // client key first and registers it there as the confidential delegate.
-func buildIdentityBroker(ctx context.Context, cfg Config) (identitybroker.Service, *IdentityBrokerAS1Server, []byte, func(), error) {
+func buildIdentityBroker(ctx context.Context, cfg Config) (identitybroker.Service, *IdentityBrokerAS1Server, *identitybroker.ClientAssertionSigner, func(), error) {
 	if !cfg.IdentityBroker {
 		if cfg.IdentityBrokerHostedAS1 != nil {
 			return nil, nil, nil, nil, errIdentityBrokerAS1WithoutBroker
@@ -161,16 +161,13 @@ func buildIdentityBroker(ctx context.Context, cfg Config) (identitybroker.Servic
 		return buildBrokerWithHostedAS1(ctx, cfg)
 	}
 	core := cfg.identityBrokerCore
-	var keySet []byte
+	var client *identitybroker.ClientAssertionSigner
 	if core == nil {
 		broker, err := newIdentityBroker(cfg)
 		if err != nil {
 			return nil, nil, nil, nil, fmt.Errorf("build identity broker: %w", err)
 		}
-		if keySet, err = json.Marshal(broker.client.JWKS()); err != nil {
-			return nil, nil, nil, nil, fmt.Errorf("encode the broker client key set: %w", err)
-		}
-		core = broker.core
+		core, client = broker.core, broker.client
 	}
 	release := func() {}
 	if closer, ok := core.(io.Closer); ok {
@@ -186,14 +183,14 @@ func buildIdentityBroker(ctx context.Context, cfg Config) (identitybroker.Servic
 		hosted = newHostedAS1Server(server)
 		release = releaseServerThen(server, release)
 	}
-	return identitybroker.NewInProcess(identitybroker.UnverifiedAuthenticator{Name: identityBrokerWorkload}, core), hosted, keySet, release, nil
+	return identitybroker.NewInProcess(identitybroker.UnverifiedAuthenticator{Name: identityBrokerWorkload}, core), hosted, client, release, nil
 }
 
 // buildBrokerWithHostedAS1 is the production path when the broker and a hosted
 // AS-1 are both enabled: it creates the broker client key, hosts AS-1 with that
 // key as the confidential delegate client identitybroker.BrokerClientID, and
 // builds the broker with its session open pointed at that AS-1 in process.
-func buildBrokerWithHostedAS1(ctx context.Context, cfg Config) (identitybroker.Service, *IdentityBrokerAS1Server, []byte, func(), error) {
+func buildBrokerWithHostedAS1(ctx context.Context, cfg Config) (identitybroker.Service, *IdentityBrokerAS1Server, *identitybroker.ClientAssertionSigner, func(), error) {
 	as1 := cfg.IdentityBrokerHostedAS1
 	clientKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -237,7 +234,7 @@ func buildBrokerWithHostedAS1(ctx context.Context, cfg Config) (identitybroker.S
 	if closer, ok := core.(io.Closer); ok {
 		release = releaseServerThen(server, func() { _ = closer.Close() })
 	}
-	return identitybroker.NewInProcess(identitybroker.UnverifiedAuthenticator{Name: identityBrokerWorkload}, core), newHostedAS1Server(server), keySet, release, nil
+	return identitybroker.NewInProcess(identitybroker.UnverifiedAuthenticator{Name: identityBrokerWorkload}, core), newHostedAS1Server(server), broker.client, release, nil
 }
 
 // buildHostedAS1 constructs the hosted AS-1 from as1, optionally registering

@@ -230,38 +230,85 @@ func TestAS2RegistersTheBrokerClientWithTheVMCPResource(t *testing.T) {
 	}
 }
 
-func TestAS2InProcessClientReturnsWhenTheContextEnds(t *testing.T) {
-	started := make(chan struct{})
-	release := make(chan struct{})
-	defer close(release)
-	endpoint := as2TestIssuer + "/oauth/token"
-	as2 := &AS2{TokenEndpoint: endpoint, token: mustParseURL(t, endpoint), handler: http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
-		close(started)
-		<-release
-	})}
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader("grant_type=x"))
-	if err != nil {
-		t.Fatal(err)
+func TestAS2RefusesAnInvalidBrokerClientBeforeConstruction(t *testing.T) {
+	t.Setenv("MECATL_TEST_CLIENT_SECRET", "construction-only-secret")
+	valid := newAS2BrokerClient(t).config
+	for name, client := range map[string]*ToolHiveBrokerClient{
+		"empty ID":       {KeySet: valid.KeySet},
+		"no key set":     {ID: valid.ID},
+		"not a JWK Set":  {ID: valid.ID, KeySet: []byte(`[]`)},
+		"empty JWK Set":  {ID: valid.ID, KeySet: []byte(`{"keys":[]}`)},
+		"malformed JSON": {ID: valid.ID, KeySet: []byte(`{"keys":`)},
+	} {
+		t.Run(name, func(t *testing.T) {
+			tmp := t.TempDir()
+			t.Setenv("TMPDIR", tmp)
+			var requests atomic.Int32
+			anonymous := toolHiveDiscoveryServer(t, "get_status", &requests)
+			spy := newRegisterClientSpy()
+			process, err := NewToolHiveProcess(t.Context(), ToolHiveConfig{
+				CallbackURL: as2TestCallbackURL, AuthStorage: spy, BrokerClient: client,
+				Profiles: []ToolHiveProfile{staticProtectedProfile("private"), {Name: "status", URL: anonymous.URL, Auth: authNone}},
+			})
+			if err == nil {
+				_ = process.Close()
+			}
+			if !errors.Is(err, ErrInvalidCatalogue) {
+				t.Fatalf("NewToolHiveProcess = %v, want ErrInvalidCatalogue", err)
+			}
+			if requests.Load() != 0 || spy.registered.Load() {
+				t.Errorf("construction ran before refusing: %d discovery requests, storage written %v", requests.Load(), spy.registered.Load())
+			}
+			if left, err := os.ReadDir(tmp); err != nil || len(left) != 0 {
+				t.Errorf("TMPDIR = %v, %v; want empty", left, err)
+			}
+		})
 	}
-	errs := make(chan error, 1)
-	go func() {
-		resp, err := as2.InProcessClient().Do(req)
-		if err == nil {
-			_ = resp.Body.Close()
-		}
-		errs <- err
-	}()
-	<-started
-	cancel()
-	select {
-	case err := <-errs:
-		if !errors.Is(err, context.Canceled) {
-			t.Fatalf("call with a cancelled context = %v, want context.Canceled", err)
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("call did not return when its context was cancelled")
+}
+
+// closeSpy is a registerClientSpy that records its Close.
+type closeSpy struct {
+	*registerClientSpy
+	closed atomic.Bool
+}
+
+func (s *closeSpy) Close() error {
+	s.closed.Store(true)
+	return s.registerClientSpy.Close()
+}
+
+func TestAS2RemovesTheKeySetFileWhenConstructionFails(t *testing.T) {
+	t.Setenv("MECATL_TEST_CLIENT_SECRET", "construction-only-secret")
+	valid := newAS2BrokerClient(t).config
+	for name, test := range map[string]struct {
+		client *ToolHiveBrokerClient
+		trust  *as2Trust
+	}{
+		"key set ToolHive rejects": {client: &ToolHiveBrokerClient{ID: valid.ID, KeySet: []byte(`{"keys":[{"kty":"none"}]}`)}},
+		"invalid ID-JAG trust":     {client: valid, trust: &as2Trust{}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			tmp := t.TempDir()
+			t.Setenv("TMPDIR", tmp)
+			spy := &closeSpy{registerClientSpy: newRegisterClientSpy()}
+			process, err := newToolHiveProcess(t.Context(), ToolHiveConfig{
+				CallbackURL: as2TestCallbackURL, Profiles: []ToolHiveProfile{staticProtectedProfile("private")}, AuthStorage: spy,
+				BrokerClient: test.client,
+			}, toolHiveProcessOptions{as2TrustForTest: test.trust})
+			if err == nil {
+				_ = process.Close()
+				t.Fatal("NewToolHiveProcess succeeded, want a construction failure")
+			}
+			if !strings.Contains(err.Error(), "create embedded auth server") {
+				t.Fatalf("NewToolHiveProcess = %v, want an embedded auth server failure", err)
+			}
+			if left, err := os.ReadDir(tmp); err != nil || len(left) != 0 {
+				t.Errorf("TMPDIR after a failed construction = %v, %v; want empty", left, err)
+			}
+			if !spy.closed.Load() {
+				t.Error("the configured auth storage was not closed after a failed construction")
+			}
+		})
 	}
 }
 

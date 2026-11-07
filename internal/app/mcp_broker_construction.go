@@ -65,7 +65,7 @@ type mcpBrokerParts struct {
 type mcpBrokerIdentity struct {
 	// clientKeySet is the broker client's public JWK Set. With a protected
 	// route, the bundled process registers the broker client with it at its
-	// authorization server, which becomes AS-2. Nil sets up no AS-2.
+	// authorization server, which becomes AS-2. Empty sets up no AS-2.
 	clientKeySet []byte
 	// as1Issuer is AS-1's issuer, which AS-2's must differ from; empty when
 	// the identity broker has no AS-1.
@@ -94,7 +94,7 @@ func buildBundledMCPBroker(ctx context.Context, cfg Config, declaration mcpautho
 		return mcpBrokerParts{}, fmt.Errorf("build bundled MCP broker: %w", err)
 	}
 	config := toolHiveBrokerConfig(declaration.Routes, declaration.CallbackURL, occupied, authRedisClient, cfg.diag())
-	if identity.clientKeySet != nil {
+	if len(identity.clientKeySet) != 0 {
 		config.BrokerClient = &mcpbroker.ToolHiveBrokerClient{ID: identitybroker.BrokerClientID, KeySet: identity.clientKeySet}
 	}
 	process, err := mcpbroker.NewToolHiveProcess(ctx, config)

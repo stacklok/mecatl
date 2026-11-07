@@ -935,6 +935,16 @@ linters:
             - github.com/stacklok/toolhive/pkg/authserver/server/registration$
             - github.com/stacklok/toolhive/pkg/authserver/storage$
             - github.com/stacklok/toolhive/pkg/oauthproto$
+            - github.com/stacklok/mecatl/internal/inprocesshttp$
+        # The in-process HTTP client shared by AS-1 and the MCP broker's AS-2
+        # depends only on the standard library.
+        internal-inprocesshttp:
+          list-mode: strict
+          files:
+            - '**/internal/inprocesshttp/**.go'
+            - '!$test'
+          allow:
+            - $gostd
         # The real-AS-1 test fixture shared by the broker, authserverclient,
         # app, and mecak8s tests. It reaches AS-1 only through as1server's
         # exported API and never ToolHive directly.

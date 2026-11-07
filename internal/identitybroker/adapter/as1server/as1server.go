@@ -15,6 +15,7 @@
 package as1server
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -372,6 +373,26 @@ func withoutUnroutedEndpoints(next http.Handler, routed map[string]bool) http.Ha
 		w.WriteHeader(recorded.status)
 		_, _ = w.Write(body)
 	})
+}
+
+// bufferedResponse collects a handler's response in memory.
+type bufferedResponse struct {
+	header http.Header
+	status int
+	body   bytes.Buffer
+}
+
+func (b *bufferedResponse) Header() http.Header { return b.header }
+
+func (b *bufferedResponse) WriteHeader(status int) {
+	if b.status == 0 {
+		b.status = status
+	}
+}
+
+func (b *bufferedResponse) Write(p []byte) (int, error) {
+	b.WriteHeader(http.StatusOK)
+	return b.body.Write(p)
 }
 
 // Issuer is AS-1's issuer URL, byte for byte as configured: the audience a

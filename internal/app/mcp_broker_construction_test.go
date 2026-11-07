@@ -144,66 +144,89 @@ func newBrokerClientKey(t *testing.T) *ecdsa.PrivateKey {
 	return key
 }
 
-// TestBuildRecordsAS2 sets AS-2 up with the identity broker on, a broker
-// client key, and a protected route: startup records AS-2's issuer, token
-// endpoint, resource, and an in-process client, and AS-2 knows the broker
-// client's keys.
+// TestBuildRecordsAS2 sets AS-2 up with the identity broker on and a
+// protected route, for each AS-1 the broker may have: startup records AS-2's
+// issuer, token endpoint, resource, and an in-process client, and AS-2 knows
+// the key the broker signs its client assertions with.
 func TestBuildRecordsAS2(t *testing.T) {
-	clientKey := newBrokerClientKey(t)
-	built, err := buildIsolated(t, t.Context(), Config{
-		Workspace: t.TempDir(), UseMock: true, NoSoul: true,
-		IdentityBroker: true, IdentityBrokerAS1: unusedAS1("https://as1.example", clientKey),
-		MCPAuthority: protectedBrokerAuthority(),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(built.Close)
-	as2 := built.identityBrokerAS2
-	if as2 == nil {
-		t.Fatal("startup recorded no AS-2")
-	}
-	if as2.Issuer != as2TestIssuer || as2.TokenEndpoint != as2TestIssuer+"/oauth/token" || as2.Resource != as2TestIssuer+"/mcp" {
-		t.Fatalf("AS-2 = issuer %q, token endpoint %q, resource %q", as2.Issuer, as2.TokenEndpoint, as2.Resource)
-	}
-	if as2.HTTPClient == nil || as2.HTTPClient.Timeout != as2RequestTimeout {
-		t.Fatalf("AS-2 client = %+v, want one bounded by %v", as2.HTTPClient, as2RequestTimeout)
-	}
-	// An exchange of a bogus token authenticates the broker client first, so
-	// its key decides between invalid_client and a refused grant.
-	exchange := func(key *ecdsa.PrivateKey) (int, string) {
-		t.Helper()
-		signer, err := identitybroker.NewClientAssertionSigner(key, 0)
-		if err != nil {
-			t.Fatal(err)
-		}
-		assertion, err := signer.ClientAssertion(as2.Issuer, time.Now())
-		if err != nil {
-			t.Fatal(err)
-		}
-		resp, err := as2.HTTPClient.PostForm(as2.TokenEndpoint, url.Values{
-			"grant_type":            {"urn:ietf:params:oauth:grant-type:token-exchange"},
-			"subject_token":         {"not-a-token"},
-			"subject_token_type":    {"urn:ietf:params:oauth:token-type:access_token"},
-			"resource":              {as2.Resource},
-			"client_assertion_type": {"urn:ietf:params:oauth:client-assertion-type:jwt-bearer"},
-			"client_assertion":      {assertion.Value()},
+	h := identityharness.New(t, identityharness.Options{})
+	for name, cfg := range map[string]Config{
+		"external AS-1": {IdentityBrokerAS1: unusedAS1("https://as1.example", nil)},
+		"hosted AS-1":   {IdentityBrokerHostedAS1: hostedAS1Config(t, h, "https://as1.mecatl.test/as1")},
+		"no AS-1":       {},
+	} {
+		t.Run(name, func(t *testing.T) {
+			cfg.Workspace, cfg.UseMock, cfg.NoSoul = t.TempDir(), true, true
+			cfg.IdentityBroker, cfg.MCPAuthority = true, protectedBrokerAuthority()
+			built, err := buildIsolated(t, t.Context(), cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(built.Close)
+			as2 := built.identityBrokerAS2
+			if as2 == nil {
+				t.Fatal("startup recorded no AS-2")
+			}
+			if as2.Issuer != as2TestIssuer || as2.TokenEndpoint != as2TestIssuer+"/oauth/token" || as2.Resource != as2TestIssuer+"/mcp" {
+				t.Fatalf("AS-2 = issuer %q, token endpoint %q, resource %q", as2.Issuer, as2.TokenEndpoint, as2.Resource)
+			}
+			if as2.HTTPClient == nil || as2.HTTPClient.Timeout != as2RequestTimeout {
+				t.Fatalf("AS-2 client = %+v, want one bounded by %v", as2.HTTPClient, as2RequestTimeout)
+			}
+			if built.identityBrokerClient == nil {
+				t.Fatal("startup recorded no broker client signer")
+			}
+			// An exchange of a bogus token authenticates the broker client
+			// first, so its key decides between invalid_client and a refused
+			// grant.
+			exchange := func(signer *identitybroker.ClientAssertionSigner) (int, string) {
+				t.Helper()
+				assertion, err := signer.ClientAssertion(as2.Issuer, time.Now())
+				if err != nil {
+					t.Fatal(err)
+				}
+				resp, err := as2.HTTPClient.PostForm(as2.TokenEndpoint, url.Values{
+					"grant_type":            {"urn:ietf:params:oauth:grant-type:token-exchange"},
+					"subject_token":         {"not-a-token"},
+					"subject_token_type":    {"urn:ietf:params:oauth:token-type:access_token"},
+					"resource":              {as2.Resource},
+					"client_assertion_type": {"urn:ietf:params:oauth:client-assertion-type:jwt-bearer"},
+					"client_assertion":      {assertion.Value()},
+				})
+				if err != nil {
+					t.Fatalf("AS-2 token request: %v", err)
+				}
+				defer func() { _ = resp.Body.Close() }()
+				var body struct {
+					Error string `json:"error"`
+				}
+				_ = json.NewDecoder(resp.Body).Decode(&body)
+				return resp.StatusCode, body.Error
+			}
+			if status, code := exchange(built.identityBrokerClient); status == http.StatusUnauthorized || code == "invalid_client" || code == "" {
+				t.Fatalf("the broker client key does not authenticate at AS-2: %d %q", status, code)
+			}
+			other, err := identitybroker.NewClientAssertionSigner(newBrokerClientKey(t), 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if status, code := exchange(other); status != http.StatusUnauthorized || code != "invalid_client" {
+				t.Fatalf("another key at AS-2: %d %q, want 401 invalid_client", status, code)
+			}
 		})
-		if err != nil {
-			t.Fatalf("AS-2 token request: %v", err)
-		}
-		defer func() { _ = resp.Body.Close() }()
-		var body struct {
-			Error string `json:"error"`
-		}
-		_ = json.NewDecoder(resp.Body).Decode(&body)
-		return resp.StatusCode, body.Error
 	}
-	if status, code := exchange(clientKey); status == http.StatusUnauthorized || code == "invalid_client" || code == "" {
-		t.Fatalf("the broker client key does not authenticate at AS-2: %d %q", status, code)
+}
+
+// TestBuildMCPBrokerSetsNoAS2ForAnEmptyKeySet pins that an empty broker
+// client key set, like a nil one, sets up no AS-2.
+func TestBuildMCPBrokerSetsNoAS2ForAnEmptyKeySet(t *testing.T) {
+	parts, err := buildMCPBroker(t.Context(), Config{}, mcpauthority.BrokerConfig{CallbackURL: brokerTestCallbackURL, Routes: []permconfig.MCPServerProfile{protectedToolHiveRoute("calendar")}}, nil, mcpBrokerIdentity{clientKeySet: []byte{}})
+	if err != nil {
+		t.Fatalf("buildMCPBroker: %v", err)
 	}
-	if status, code := exchange(newBrokerClientKey(t)); status != http.StatusUnauthorized || code != "invalid_client" {
-		t.Fatalf("another key at AS-2: %d %q, want 401 invalid_client", status, code)
+	t.Cleanup(parts.close)
+	if parts.as2 != nil {
+		t.Fatalf("an empty broker client key set set up AS-2 %+v", parts.as2)
 	}
 }
 
