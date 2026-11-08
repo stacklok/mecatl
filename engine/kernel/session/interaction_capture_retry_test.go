@@ -98,7 +98,11 @@ func TestModelInteractionUncertainDetailedCaptureCannotBecomeMinimal(t *testing.
 			if !ok {
 				t.Fatal("ending missing")
 			}
-			if capture, ok := ending.Capture(); !ok || capture.RequestID != id || capture.Usage.Output == nil || *capture.Usage.Output != 0 {
+			if capture, ok := ending.Capture(); !ok || capture.RequestID() != id || func() bool {
+				usage, present := capture.Usage()
+				output, outputPresent := usage.Output()
+				return !present || !outputPresent || output != 0
+			}() {
 				t.Fatal("retry dropped detailed evidence")
 			}
 			loaded, err := session.Load(context.Background(), h, run.HistoryID(), sessionPolicy())

@@ -3,7 +3,6 @@ package session
 import (
 	"bytes"
 	"math"
-	"reflect"
 	"testing"
 
 	"github.com/stacklok/mecatl/engine/kernel/contentid"
@@ -20,20 +19,20 @@ func FuzzModelInteractionConstructors(f *testing.F) {
 		id := ModelRequestID{runID: RunID{historyID: fixture.Snapshot().HistoryID(), ordinal: ordinal}, requestOrdinal: ordinal}
 		usage := &InvocationUsage{Input: &count, CacheRead: new(int64(0)), Raw: &OpaqueProviderData{Producer: name, Format: "usage", Version: version, Data: data}}
 		evidence := &ObservedEvidence{Detail: &name, Correlation: new("")}
-		var r proposedRecord
+		var r *materializedRecord
 		var err error
 		switch kind % 4 {
 		case 0:
 			r, err = makeRequestRecord(identifiedRequest{ID: id, Source: SourceHead{Sequence: version, CID: contentid.Sum([]byte("source"))}, Recipe: ConstructionRecipe{Algorithm: name, Version: version, Parameters: data, Check: data}, RetryOf: &id}, limits)
 		case 1:
-			r, err = newModelResponseRecord(ModelResponse{RequestID: id, Terminal: ResponseTerminalOther, ProviderStopReason: &name, Items: []ResponseItem{{Content: &ResponseContent{Kind: ResponseContentOutput, Parts: []ContentPart{{Text: &name}}}}, {Call: &RequestedCall{Name: name, Arguments: data}}}, Evidence: evidence, Usage: usage, Private: &OpaqueProviderData{Producer: name, Format: "unknown", Version: version, Data: data}}, limits)
+			r, err = newModelResponseRecord(fixture.Snapshot().HistoryID(), ModelResponse{RequestID: id, Terminal: ResponseTerminalOther, ProviderStopReason: &name, Items: []ResponseItem{{Content: &ResponseContent{Kind: ResponseContentOutput, Parts: []ContentPart{{Text: &name}}}}, {Call: &RequestedCall{Name: name, Arguments: data}}}, Evidence: evidence, Usage: usage, Private: &OpaqueProviderData{Producer: name, Format: "unknown", Version: version, Data: data}}, limits)
 		case 2:
-			r, err = newInvocationFailureRecord(InvocationFailure{RequestID: id, Class: InvocationFailureOther, Explanation: &name, Evidence: evidence, Usage: usage}, limits)
+			r, err = newInvocationFailureRecord(fixture.Snapshot().HistoryID(), InvocationFailure{RequestID: id, Class: InvocationFailureOther, Explanation: &name, Evidence: evidence, Usage: usage}, limits)
 		case 3:
-			r, err = newRunEndedRecord(RunEnded{RunID: id.runID, Reason: RunEndedCaptureFailed, Explanation: &name, Capture: &CaptureFailureEvidence{RequestID: id, Evidence: evidence, Usage: usage}}, limits)
+			r, err = newRunEndedRecord(fixture.Snapshot().HistoryID(), RunEnded{RunID: id.runID, Reason: RunEndedCaptureFailed, Explanation: &name, Capture: &CaptureFailureEvidence{RequestID: id, Evidence: evidence, Usage: usage}}, limits)
 		}
 		if err != nil {
-			if !reflect.DeepEqual(r, proposedRecord{}) {
+			if r != nil {
 				t.Fatal("failed constructor returned partial record")
 			}
 			return
@@ -45,7 +44,7 @@ func FuzzModelInteractionConstructors(f *testing.F) {
 		if !r.format().Equal(captured) {
 			t.Fatal("constructor borrowed input storage")
 		}
-		imported, err := decodeRecord(id.runID.historyID, captured, limits)
+		imported, err := decodeMaterialized(captured, limits)
 		interactionCheck(t, err)
 		if !imported.format().Equal(captured) {
 			t.Fatal("constructor/decode canonical mismatch")

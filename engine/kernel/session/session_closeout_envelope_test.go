@@ -74,15 +74,15 @@ func TestSessionFutureCloseoutEnvelopeSequenceWidth(t *testing.T) {
 				prefix, backend := closeoutWidthPrefix(t)
 				id := prefix.Snapshot().HistoryID()
 				run := RunID{historyID: id, ordinal: uint64(prefix.Snapshot().RunCount()) + 1}
-				start, err := newRunStartedRecord(RunStarted{ID: run}, prefix.policy.PayloadLimits)
+				start, err := newRunStartedRecord(id, RunStarted{ID: run}, prefix.policy.PayloadLimits)
 				if err != nil {
 					t.Fatal(err)
 				}
-				candidate, err := prefix.prepare([]proposedRecord{start})
+				candidate, err := prefix.prepare([]*materializedRecord{start})
 				if err != nil {
 					t.Fatal(err)
 				}
-				interruption, err := newRunEndedRecord(RunEnded{RunID: run, Reason: RunEndedCaptureFailed}, prefix.policy.PayloadLimits)
+				interruption, err := newRunEndedRecord(id, RunEnded{RunID: run, Reason: RunEndedCaptureFailed}, prefix.policy.PayloadLimits)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -152,7 +152,7 @@ func TestSessionFutureCloseoutEnvelopeSequenceWidth(t *testing.T) {
 				switch path {
 				case "prepare":
 					var p prepared
-					p, err = s.prepare([]proposedRecord{start})
+					p, err = s.prepare([]*materializedRecord{start})
 					if !exact && !reflect.DeepEqual(p, prepared{}) {
 						t.Fatal("failed prepare returned a proposal")
 					}

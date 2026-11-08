@@ -3,7 +3,6 @@ package session
 import (
 	"bytes"
 	"errors"
-	"reflect"
 	"testing"
 
 	"github.com/stacklok/mecatl/engine/kernel/codec"
@@ -29,26 +28,26 @@ func testHistoryID(t testing.TB) historyid.HistoryID {
 func recordFixtures(t testing.TB) []struct {
 	kind string
 	wire []byte
-	make func(codec.Limits) (proposedRecord, error)
+	make func(codec.Limits) (*materializedRecord, error)
 } {
 	t.Helper()
 	h := testHistoryID(t)
 	return []struct {
 		kind string
 		wire []byte
-		make func(codec.Limits) (proposedRecord, error)
+		make func(codec.Limits) (*materializedRecord, error)
 	}{
-		{"session.created", []byte("\xa0"), func(l codec.Limits) (proposedRecord, error) {
-			return newCreatedRecord(Created{HistoryID: h}, l)
+		{"session.created", []byte("\xa0"), func(l codec.Limits) (*materializedRecord, error) {
+			return newCreatedRecord(h, Created{HistoryID: h}, l)
 		}},
-		{"session.user_input", []byte("\xa3\x61i\x01\x61p\x81\xa1\x61t\x61x\x61r\x01"), func(l codec.Limits) (proposedRecord, error) {
+		{"session.user_input", []byte("\xa3\x61i\x01\x61p\x81\xa1\x61t\x61x\x61r\x01"), func(l codec.Limits) (*materializedRecord, error) {
 			return makeInputRecord(identifiedInput{ID: allocatedInput(t, allocatedRun(t, h, 1), 1), Parts: []ContentPart{{Text: new("x")}}}, l)
 		}},
-		{"session.run_started", []byte("\xa1\x61r\x02"), func(l codec.Limits) (proposedRecord, error) {
-			return newRunStartedRecord(RunStarted{ID: allocatedRun(t, h, 2)}, l)
+		{"session.run_started", []byte("\xa1\x61r\x02"), func(l codec.Limits) (*materializedRecord, error) {
+			return newRunStartedRecord(h, RunStarted{ID: allocatedRun(t, h, 2)}, l)
 		}},
-		{"session.run_ended", []byte("\xa2\x61e\x6binterrupted\x61r\x02"), func(l codec.Limits) (proposedRecord, error) {
-			return newRunEndedRecord(RunEnded{RunID: allocatedRun(t, h, 2), Reason: RunEndedInterrupted}, l)
+		{"session.run_ended", []byte("\xa2\x61e\x6binterrupted\x61r\x02"), func(l codec.Limits) (*materializedRecord, error) {
+			return newRunEndedRecord(h, RunEnded{RunID: allocatedRun(t, h, 2), Reason: RunEndedInterrupted}, l)
 		}},
 	}
 }
@@ -69,7 +68,7 @@ func TestRecordSchemasAndOwnership(t *testing.T) {
 				t.Fatal("constructor differs from canonical fixture")
 			}
 			dto := r.format()
-			decoded, err := decodeRecord(testHistoryID(t), dto, testLimits())
+			decoded, err := decodeMaterialized(dto, testLimits())
 			if err != nil || !decoded.format().Equal(want) {
 				t.Fatalf("decode: %v", err)
 			}
@@ -95,9 +94,6 @@ func TestRecordSchemasAndOwnership(t *testing.T) {
 			}
 		})
 	}
-	if !(proposedRecord{}).format().Equal(format.Record{}) {
-		t.Fatal("zero record must yield unusable zero DTO")
-	}
 }
 
 func TestRecordFailureCategories(t *testing.T) {
@@ -114,31 +110,31 @@ func TestRecordFailureCategories(t *testing.T) {
 					want = codec.ErrInvalidLimits
 				}
 				r, err := test.make(limits)
-				if !errors.Is(err, want) || !reflect.DeepEqual(r, proposedRecord{}) {
+				if !errors.Is(err, want) || r != nil {
 					t.Fatalf("constructor %s: %v", name, err)
 				}
-				r, err = decodeRecord(testHistoryID(t), format.Record{Kind: test.kind, KindVersion: version, Payload: test.wire}, limits)
-				if !errors.Is(err, want) || !reflect.DeepEqual(r, proposedRecord{}) {
+				r, err = decodeMaterialized(format.Record{Kind: test.kind, KindVersion: version, Payload: test.wire}, limits)
+				if !errors.Is(err, want) || r != nil {
 					t.Fatalf("decode %s: %v", name, err)
 				}
 			}
 			for _, version := range []int64{3, 99} {
-				r, err := decodeRecord(testHistoryID(t), format.Record{Kind: test.kind, KindVersion: version, Payload: test.wire}, testLimits())
-				if !errors.Is(err, ErrUnsupportedRecord) || !reflect.DeepEqual(r, proposedRecord{}) {
+				r, err := decodeMaterialized(format.Record{Kind: test.kind, KindVersion: version, Payload: test.wire}, testLimits())
+				if !errors.Is(err, ErrUnsupportedRecord) || r != nil {
 					t.Fatalf("future version: %v", err)
 				}
 			}
 		})
 	}
 	for _, kind := range []string{"session.future_request", "session.run_interrupted", "other"} {
-		r, err := decodeRecord(testHistoryID(t), format.Record{Kind: kind, KindVersion: 1, Payload: []byte{0xa0}}, testLimits())
-		if !errors.Is(err, ErrUnsupportedRecord) || !reflect.DeepEqual(r, proposedRecord{}) {
+		r, err := decodeMaterialized(format.Record{Kind: kind, KindVersion: 1, Payload: []byte{0xa0}}, testLimits())
+		if !errors.Is(err, ErrUnsupportedRecord) || r != nil {
 			t.Fatalf("unsupported kind: %v", err)
 		}
 	}
 	for _, dto := range []format.Record{{}, {Kind: "session.created", KindVersion: 0}, {Kind: "\xff", KindVersion: 1}} {
-		r, err := decodeRecord(testHistoryID(t), dto, testLimits())
-		if !errors.Is(err, codec.ErrInvalidData) || !reflect.DeepEqual(r, proposedRecord{}) {
+		r, err := decodeMaterialized(dto, testLimits())
+		if !errors.Is(err, codec.ErrInvalidData) || r != nil {
 			t.Fatalf("invalid envelope: %v", err)
 		}
 	}
@@ -160,8 +156,8 @@ func TestRecordMalformedPayloads(t *testing.T) {
 			}
 			for _, wire := range wires {
 				before := bytes.Clone(wire)
-				r, err := decodeRecord(testHistoryID(t), format.Record{Kind: test.kind, KindVersion: version, Payload: wire}, testLimits())
-				if !errors.Is(err, codec.ErrInvalidData) || !reflect.DeepEqual(r, proposedRecord{}) || !bytes.Equal(wire, before) {
+				r, err := decodeMaterialized(format.Record{Kind: test.kind, KindVersion: version, Payload: wire}, testLimits())
+				if !errors.Is(err, codec.ErrInvalidData) || r != nil || !bytes.Equal(wire, before) {
 					t.Fatalf("malformed payload: %v", err)
 				}
 			}
@@ -176,9 +172,9 @@ func FuzzDecodeRecord(f *testing.F) {
 	kinds := []string{"session.created", "session.user_input", "session.run_started", "session.run_ended"}
 	f.Fuzz(func(t *testing.T, kind uint8, wire []byte) {
 		dto := format.Record{Kind: kinds[int(kind)%len(kinds)], KindVersion: 1, Payload: wire}
-		r, err := decodeRecord(testHistoryID(t), dto, testLimits())
+		r, err := decodeMaterialized(dto, testLimits())
 		if err != nil {
-			if !reflect.DeepEqual(r, proposedRecord{}) {
+			if r != nil {
 				t.Fatal("failed decoding returned usable record")
 			}
 			return

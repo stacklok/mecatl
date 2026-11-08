@@ -15,22 +15,22 @@ func TestModelResponseViewEmptyAndFailureOutputs(t *testing.T) {
 	var failure InvocationFailureView
 	var ending RunEndedView
 	var request ModelRequestView
-	if !reflect.DeepEqual(request.Recipe(), ConstructionRecipe{}) {
+	if !reflect.DeepEqual(request.Recipe(), ConstructionRecipeView{}) {
 		t.Fatal("zero recipe")
 	}
 	if got, ok := request.RetryOf(); ok || got != (ModelRequestID{}) {
 		t.Fatal("zero retry")
 	}
-	if got, ok := response.Usage(); ok || !reflect.DeepEqual(got, InvocationUsage{}) {
+	if got, ok := response.Usage(); ok || got != (InvocationUsageView{}) {
 		t.Fatal("zero response usage")
 	}
-	if got, ok := response.Private(); ok || !reflect.DeepEqual(got, OpaqueProviderData{}) {
+	if got, ok := response.Private(); ok || got != (OpaqueProviderDataView{}) {
 		t.Fatal("zero response private")
 	}
-	if got, ok := failure.Evidence(); ok || !reflect.DeepEqual(got, ObservedEvidence{}) {
+	if got, ok := failure.Evidence(); ok || got != (ObservedEvidenceView{}) {
 		t.Fatal("zero failure evidence")
 	}
-	if got, ok := ending.Capture(); ok || !reflect.DeepEqual(got, CaptureFailureEvidence{}) {
+	if got, ok := ending.Capture(); ok || !reflect.DeepEqual(got, CaptureFailureEvidenceView{}) {
 		t.Fatal("zero capture")
 	}
 	response.Items()(func(ResponseItemView) bool { t.Fatal("zero Items yielded"); return true })
@@ -41,13 +41,13 @@ func TestModelResponseViewEmptyAndFailureOutputs(t *testing.T) {
 	if got, ok := response.ProviderStopReason(); ok || got != "" {
 		t.Fatal("zero reason")
 	}
-	if got, ok := response.Evidence(); ok || !reflect.DeepEqual(got, ObservedEvidence{}) {
+	if got, ok := response.Evidence(); ok || got != (ObservedEvidenceView{}) {
 		t.Fatal("zero evidence")
 	}
 	if got, ok := failure.Explanation(); ok || got != "" {
 		t.Fatal("zero explanation")
 	}
-	if got, ok := failure.Usage(); ok || !reflect.DeepEqual(got, InvocationUsage{}) {
+	if got, ok := failure.Usage(); ok || got != (InvocationUsageView{}) {
 		t.Fatal("zero usage")
 	}
 	if got, ok := ending.Explanation(); ok || got != "" {
@@ -56,7 +56,7 @@ func TestModelResponseViewEmptyAndFailureOutputs(t *testing.T) {
 	if got, ok := item.Content(); ok || got != (ResponseContentView{}) {
 		t.Fatal("zero content branch")
 	}
-	if got, ok := item.Call(); ok || !reflect.DeepEqual(got, RequestedCall{}) {
+	if got, ok := item.Call(); ok || !reflect.DeepEqual(got, RequestedCallDataView{}) {
 		t.Fatal("zero call branch")
 	}
 	if slices.Collect(content.Parts()) != nil {
@@ -99,7 +99,7 @@ func TestModelResponseViewRepresentationOwnershipAndShortCircuit(t *testing.T) {
 		{Content: &ResponseContent{Kind: ResponseContentRefusal, Parts: []ContentPart{}}},
 	}}
 	expected := response.Clone()
-	r := interactionRecord(t)(newModelResponseRecord(response, s.policy.PayloadLimits))
+	r := interactionRecord(t)(newModelResponseRecord(s.Snapshot().HistoryID(), response, s.policy.PayloadLimits))
 	// Mutation controls: each operation changes its own representation, but must
 	// not change the constructor's captured bytes or any accepted view.
 	*response.ProviderStopReason = "changed"
@@ -131,41 +131,92 @@ func TestModelResponseViewRepresentationOwnershipAndShortCircuit(t *testing.T) {
 	if _, ok := record.RunEnded(); ok {
 		t.Fatal("wrong-kind ending")
 	}
+	if n := testing.AllocsPerRun(100, func() {
+		usage, ok := view.Usage()
+		if !ok {
+			panic("missing usage")
+		}
+		for _, counter := range []func() (int64, bool){usage.Input, usage.Output, usage.CacheRead, usage.CacheWrite, usage.Reasoning} {
+			if _, ok := counter(); !ok {
+				panic("missing usage counter")
+			}
+		}
+		raw, ok := usage.Raw()
+		if !ok || raw.Producer() != "p" || raw.Format() != "usage" || raw.Version() != 1 {
+			panic("missing raw usage")
+		}
+		evidence, ok := view.Evidence()
+		if !ok {
+			panic("missing evidence")
+		}
+		if _, ok := evidence.Detail(); !ok {
+			panic("missing detail")
+		}
+		if _, ok := evidence.Correlation(); !ok {
+			panic("missing correlation")
+		}
+		private, ok := view.Private()
+		if !ok || private.Producer() != "p" || private.Format() != "unknown" || private.Version() != 19 {
+			panic("missing private")
+		}
+	}); n != 0 {
+		t.Fatalf("scalar evidence inspection allocated: %g", n)
+	}
 	if got, ok := view.ProviderStopReason(); !ok || got != "" {
 		t.Fatal("explicit empty reason")
 	}
 	evidence, _ := view.Evidence()
-	if !evidence.Equal(*expected.Evidence) {
-		t.Fatal("evidence changed")
+	if detail, ok := evidence.Detail(); !ok || detail != "" {
+		t.Fatal("evidence detail changed")
 	}
-	*evidence.Detail = "mutated"
-	*evidence.Correlation = "mutated"
-	exported, _ := view.Usage()
-	if !exported.Equal(*expected.Usage) {
-		t.Fatal("usage changed")
+	if correlation, ok := evidence.Correlation(); !ok || correlation != "opaque" {
+		t.Fatal("evidence correlation changed")
 	}
-	for _, p := range []*int64{exported.Input, exported.Output, exported.CacheRead, exported.CacheWrite, exported.Reasoning} {
-		*p = 99
+	usageView, _ := view.Usage()
+	for _, counter := range []struct {
+		name string
+		get  func() (int64, bool)
+		want int64
+	}{
+		{"input", usageView.Input, 0},
+		{"output", usageView.Output, 1},
+		{"cache read", usageView.CacheRead, 2},
+		{"cache write", usageView.CacheWrite, 3},
+		{"reasoning", usageView.Reasoning, 4},
+	} {
+		if got, ok := counter.get(); !ok || got != counter.want {
+			t.Fatalf("usage %s = %d, %t", counter.name, got, ok)
+		}
 	}
-	clear(exported.Raw.Data)
+	raw, ok := usageView.Raw()
+	if !ok || raw.Producer() != "p" || raw.Format() != "usage" || raw.Version() != 1 || !bytes.Equal(raw.Data(), []byte{0xff, 0}) {
+		t.Fatal("usage raw changed")
+	}
 	private, _ := view.Private()
-	clear(private.Data)
+	if private.Producer() != "p" || private.Format() != "unknown" || private.Version() != 19 || !bytes.Equal(private.Data(), expected.Private.Data) {
+		t.Fatal("private changed")
+	}
+	data := raw.Data()
+	clear(data)
+	data = private.Data()
+	clear(data)
 	dto := record.Format()
 	clear(dto.Payload)
 	callValue, _ := view.ItemAt(3).Call()
-	clear(callValue.Arguments)
+	clear(callValue.Arguments())
 	clear(view.CallAt(1).Arguments())
 	again, _ := view.Usage()
-	if !again.Equal(*expected.Usage) {
-		t.Fatal("usage export aliases")
+	raw, _ = again.Raw()
+	if !bytes.Equal(raw.Data(), expected.Usage.Raw.Data) {
+		t.Fatal("usage byte export aliases")
 	}
 	evidence, _ = view.Evidence()
-	if !evidence.Equal(*expected.Evidence) {
-		t.Fatal("evidence export aliases")
+	if detail, ok := evidence.Detail(); !ok || detail != "" {
+		t.Fatal("evidence view changed")
 	}
 	private, _ = view.Private()
-	if !private.Equal(*expected.Private) {
-		t.Fatal("private export aliases")
+	if !bytes.Equal(private.Data(), expected.Private.Data) {
+		t.Fatal("private byte export aliases")
 	}
 	if !bytes.Equal(view.CallAt(1).Arguments(), expected.Items[3].Call.Arguments) {
 		t.Fatal("argument export aliases")
@@ -178,13 +229,13 @@ func TestModelResponseViewRepresentationOwnershipAndShortCircuit(t *testing.T) {
 		t.Fatal("text normalized")
 	}
 	media, _ := c.PartAt(2).Media()
-	data, _ := media.InlineData()
+	data, _ = media.InlineData()
 	clear(data)
 	data, _ = media.InlineData()
 	if !bytes.Equal(data, []byte{0xff, 0}) {
 		t.Fatal("media export aliases")
 	}
-	if got, ok := view.ItemAt(0).Call(); ok || !reflect.DeepEqual(got, RequestedCall{}) {
+	if got, ok := view.ItemAt(0).Call(); ok || !reflect.DeepEqual(got, RequestedCallDataView{}) {
 		t.Fatal("content returned call")
 	}
 	if got, ok := view.ItemAt(1).Content(); ok || got != (ResponseContentView{}) {
@@ -196,7 +247,7 @@ func TestModelResponseViewRepresentationOwnershipAndShortCircuit(t *testing.T) {
 			t.Fatal("empty content conflated")
 		}
 	}
-	if got, ok := view.ItemAt(1).Call(); !ok || len(got.Arguments) != 0 {
+	if got, ok := view.ItemAt(1).Call(); !ok || len(got.Arguments()) != 0 {
 		t.Fatal("empty call arguments")
 	}
 	// Invoke the sequence directly: a range-break-only check could conceal a

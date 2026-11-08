@@ -117,15 +117,16 @@ func (s *Session) prepareEnding(reason RunEndedReason) (prepared, error) {
 	if s.state.view.lifecycle.activeRun == (RunID{}) {
 		return prepared{}, nil
 	}
-	r, err := newRunEndedRecord(RunEnded{RunID: s.state.view.lifecycle.activeRun, Reason: reason}, s.policy.PayloadLimits)
+	r, err := newRunEndedRecord(s.state.view.historyID, RunEnded{RunID: s.state.view.lifecycle.activeRun, Reason: reason}, s.policy.PayloadLimits)
 	if err != nil {
 		return prepared{}, err
 	}
-	return s.prepare([]proposedRecord{r})
+	return s.prepare([]*materializedRecord{r})
 }
 
-// prepare is also used by submission while its own batch holds the write slot.
-func (s *Session) prepare(records []proposedRecord) (prepared, error) {
+// prepare uses owner-validated immutable backing, also while submission holds
+// its own batch's write slot. It supplies enclosing scope, not erased provenance.
+func (s *Session) prepare(records []*materializedRecord) (prepared, error) {
 	if err := s.policy.Validate(); err != nil {
 		return prepared{}, err
 	}
@@ -135,16 +136,13 @@ func (s *Session) prepare(records []proposedRecord) (prepared, error) {
 	}
 	var total uint64
 	for _, r := range records {
-		if r.scope == (historyid.HistoryID{}) || r.record == nil {
+		if r == nil {
 			return prepared{}, codec.ErrInvalidData
 		}
-		if r.scope != s.state.view.historyID {
-			return prepared{}, ErrIdentity
-		}
-		if uint64(len(r.record.value.Payload)) > s.policy.MaxPayloadBytes-total || len(r.record.value.Payload) > s.policy.PayloadLimits.MaxBytes {
+		if uint64(len(r.value.Payload)) > s.policy.MaxPayloadBytes-total || len(r.value.Payload) > s.policy.PayloadLimits.MaxBytes {
 			return prepared{}, codec.ErrLimitExceeded
 		}
-		total += uint64(len(r.record.value.Payload))
+		total += uint64(len(r.value.Payload))
 	}
 	if err := s.admit(len(records), total, ordinary); err != nil {
 		return prepared{}, err
@@ -160,7 +158,7 @@ func (s *Session) prepare(records []proposedRecord) (prepared, error) {
 		c.Parent = new(v.head.CID)
 	}
 	for i, r := range records {
-		c.Records[i] = r.record.value
+		c.Records[i] = r.value
 	}
 	ref, err := s.verifyCommit(c, nil)
 	if err != nil {
@@ -224,7 +222,7 @@ func (s *Session) evaluate(c format.Commit, expected *history.CommitRef) (sessio
 		if err != nil {
 			return sessionState{}, history.CommitRef{}, err
 		}
-		if err := admission.reduce(candidate.view.historyID, fact); err != nil {
+		if err := admission.admit(candidate.view.historyID, fact); err != nil {
 			return sessionState{}, history.CommitRef{}, err
 		}
 		staged[i] = fact

@@ -154,30 +154,66 @@ func (v RunEnded) checkSize(b *valueBudget) {
 }
 
 // newRunEndedRecord encodes a unified ending after sizing all retained evidence.
-// Invalid full capture scope is rejected before DTO scope omission. Failure is zero.
-func newRunEndedRecord(v RunEnded, limits codec.Limits) (proposedRecord, error) {
+// Target history and full capture scope are checked before omission. Failure is nil.
+func newRunEndedRecord(scope historyid.HistoryID, v RunEnded, limits codec.Limits) (*materializedRecord, error) {
 	b := newValueBudget(limits)
 	v.checkSize(&b)
 	if b.err != nil {
-		return proposedRecord{}, b.err
+		return nil, b.err
 	}
 	if err := v.Validate(); err != nil {
-		return proposedRecord{}, codec.ErrInvalidData
+		return nil, codec.ErrInvalidData
+	}
+	if scope != v.RunID.historyID {
+		return nil, ErrIdentity
 	}
 	payload, err := codec.Encode(v.toFormat(), limits)
 	if err != nil {
-		return proposedRecord{}, err
+		return nil, err
 	}
-	return decodeRecord(v.RunID.historyID, format.Record{Kind: sessionformat.KindRunEnded, KindVersion: sessionformat.Version, Payload: payload}, limits)
+	return decodeMaterialized(format.Record{Kind: sessionformat.KindRunEnded, KindVersion: sessionformat.Version, Payload: payload}, limits)
 }
 
 // minimalEnding admits only an exact one-fact bounded-shape ending as cleanup.
-func (r proposedRecord) minimalEnding() bool {
-	return r.record != nil && r.record.value.Kind == sessionformat.KindRunEnded && r.record.ended.Explanation == nil && r.record.ended.Capture == nil
+func (r *materializedRecord) minimalEnding() bool {
+	return r != nil && r.value.Kind == sessionformat.KindRunEnded && r.ended.Explanation == nil && r.ended.Capture == nil
+}
+
+// CaptureFailureEvidenceView is immutable bounded evidence for a failed capture.
+// RequestID reconstructs the full history and run scope retained by its enclosing
+// ending. Zero has a zero request and no optional children; child access is O(1).
+type CaptureFailureEvidenceView struct {
+	runID RunID
+	value *sessionformat.CaptureFailureEvidence
+}
+
+// RequestID returns the full scoped captured request identity, or zero for zero.
+func (v CaptureFailureEvidenceView) RequestID() ModelRequestID {
+	if v.value == nil {
+		return ModelRequestID{}
+	}
+	return requestID(v.runID.historyID, v.runID.ordinal, v.value.RequestID)
+}
+
+// Evidence returns pinned observed evidence when it was retained.
+func (v CaptureFailureEvidenceView) Evidence() (ObservedEvidenceView, bool) {
+	if v.value == nil || v.value.Evidence == nil {
+		return ObservedEvidenceView{}, false
+	}
+	return ObservedEvidenceView{value: v.value.Evidence}, true
+}
+
+// Usage returns pinned reported usage when it was retained.
+func (v CaptureFailureEvidenceView) Usage() (InvocationUsageView, bool) {
+	if v.value == nil || v.value.Usage == nil {
+		return InvocationUsageView{}, false
+	}
+	return InvocationUsageView{value: v.value.Usage}, true
 }
 
 // RunEndedView is an immutable terminal fact. Zero has zero run, empty reason and
-// no optional evidence. Scalar reads are O(1); evidence exports detach storage.
+// no optional evidence. Scalar and pinned structured-child reads are O(1); byte
+// leaves returned by those children detach only their own storage.
 type RunEndedView struct {
 	scope historyid.HistoryID
 	value *sessionformat.RunEnded
@@ -207,12 +243,11 @@ func (v RunEndedView) Explanation() (string, bool) {
 	return *v.value.Explanation, true
 }
 
-// Capture returns detached capture-failure evidence. It does not resolve the
-// referenced request or certify remote failure.
-func (v RunEndedView) Capture() (CaptureFailureEvidence, bool) {
+// Capture returns a pinned capture-failure evidence view when present. It does not
+// resolve the referenced request or certify remote failure.
+func (v RunEndedView) Capture() (CaptureFailureEvidenceView, bool) {
 	if v.value == nil || v.value.Capture == nil {
-		return CaptureFailureEvidence{}, false
+		return CaptureFailureEvidenceView{}, false
 	}
-	c := v.value.Capture
-	return (CaptureFailureEvidence{RequestID: ModelRequestID{runID: v.RunID(), requestOrdinal: c.RequestID}, Evidence: evidenceFromFormat(c.Evidence), Usage: usageFromFormat(c.Usage)}).Clone(), true
+	return CaptureFailureEvidenceView{runID: v.RunID(), value: v.value.Capture}, true
 }

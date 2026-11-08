@@ -88,26 +88,29 @@ func (v InvocationFailure) checkSize(b *valueBudget) {
 }
 
 // newInvocationFailureRecord owns one observed terminal invocation failure.
-// Sizing precedes conversion; full request scope is validated before omission.
-// Failure returns zero and never resolves a request by itself.
-func newInvocationFailureRecord(v InvocationFailure, limits codec.Limits) (proposedRecord, error) {
+// Sizing precedes conversion; target history and full request scope are checked
+// before omission. Failure returns nil and never resolves a request by itself.
+func newInvocationFailureRecord(scope historyid.HistoryID, v InvocationFailure, limits codec.Limits) (*materializedRecord, error) {
 	if err := v.RequestID.Validate(); err != nil {
-		return proposedRecord{}, codec.ErrInvalidData
+		return nil, codec.ErrInvalidData
+	}
+	if scope != v.RequestID.runID.historyID {
+		return nil, ErrIdentity
 	}
 	b := newValueBudget(limits)
 	v.checkSize(&b)
 	if b.err != nil {
-		return proposedRecord{}, b.err
+		return nil, b.err
 	}
 	payload, err := codec.Encode(v.toFormat(), limits)
 	if err != nil {
-		return proposedRecord{}, err
+		return nil, err
 	}
-	return decodeRecord(v.RequestID.runID.historyID, format.Record{Kind: sessionformat.KindInvocationFailure, KindVersion: sessionformat.Version, Payload: payload}, limits)
+	return decodeMaterialized(format.Record{Kind: sessionformat.KindInvocationFailure, KindVersion: sessionformat.Version, Payload: payload}, limits)
 }
 
 // InvocationFailureView is an immutable observed outcome. Zero has zero request
-// and empty class. Evidence and usage exports detach all mutable storage.
+// and empty class. Structured-child access is O(1); byte leaves detach.
 type InvocationFailureView struct {
 	scope historyid.HistoryID
 	value *sessionformat.InvocationFailure
@@ -137,18 +140,18 @@ func (v InvocationFailureView) Explanation() (string, bool) {
 	return *v.value.Explanation, true
 }
 
-// Evidence returns detached safe observed detail and correlation.
-func (v InvocationFailureView) Evidence() (ObservedEvidence, bool) {
+// Evidence returns a pinned immutable view of observed detail and correlation.
+func (v InvocationFailureView) Evidence() (ObservedEvidenceView, bool) {
 	if v.value == nil || v.value.Evidence == nil {
-		return ObservedEvidence{}, false
+		return ObservedEvidenceView{}, false
 	}
-	return evidenceFromFormat(v.value.Evidence).Clone(), true
+	return ObservedEvidenceView{value: v.value.Evidence}, true
 }
 
-// Usage returns detached reported counters and raw usage-only evidence.
-func (v InvocationFailureView) Usage() (InvocationUsage, bool) {
+// Usage returns a pinned immutable view of reported counters and raw usage-only evidence.
+func (v InvocationFailureView) Usage() (InvocationUsageView, bool) {
 	if v.value == nil || v.value.Usage == nil {
-		return InvocationUsage{}, false
+		return InvocationUsageView{}, false
 	}
-	return usageFromFormat(v.value.Usage).Clone(), true
+	return InvocationUsageView{value: v.value.Usage}, true
 }

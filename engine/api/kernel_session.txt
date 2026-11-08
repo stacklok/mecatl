@@ -26,9 +26,16 @@
     method func (CaptureFailureEvidence).Clone() CaptureFailureEvidence
     method func (CaptureFailureEvidence).Equal(other CaptureFailureEvidence) bool
     method func (CaptureFailureEvidence).Validate() error
+    method func (CaptureFailureEvidenceView).Evidence() (ObservedEvidenceView, bool)
+    method func (CaptureFailureEvidenceView).RequestID() ModelRequestID
+    method func (CaptureFailureEvidenceView).Usage() (InvocationUsageView, bool)
     method func (ConstructionRecipe).Clone() ConstructionRecipe
     method func (ConstructionRecipe).Equal(other ConstructionRecipe) bool
     method func (ConstructionRecipe).Validate() error
+    method func (ConstructionRecipeView).Algorithm() string
+    method func (ConstructionRecipeView).Check() []byte
+    method func (ConstructionRecipeView).Parameters() []byte
+    method func (ConstructionRecipeView).Version() int64
     method func (ContentPart).Clone() ContentPart
     method func (ContentPart).Equal(other ContentPart) bool
     method func (ContentPart).Validate() error
@@ -72,13 +79,19 @@
     method func (InvocationFailure).Equal(other InvocationFailure) bool
     method func (InvocationFailure).Validate() error
     method func (InvocationFailureView).Class() InvocationFailureClass
-    method func (InvocationFailureView).Evidence() (ObservedEvidence, bool)
+    method func (InvocationFailureView).Evidence() (ObservedEvidenceView, bool)
     method func (InvocationFailureView).Explanation() (string, bool)
     method func (InvocationFailureView).RequestID() ModelRequestID
-    method func (InvocationFailureView).Usage() (InvocationUsage, bool)
+    method func (InvocationFailureView).Usage() (InvocationUsageView, bool)
     method func (InvocationUsage).Clone() InvocationUsage
     method func (InvocationUsage).Equal(other InvocationUsage) bool
     method func (InvocationUsage).Validate() error
+    method func (InvocationUsageView).CacheRead() (int64, bool)
+    method func (InvocationUsageView).CacheWrite() (int64, bool)
+    method func (InvocationUsageView).Input() (int64, bool)
+    method func (InvocationUsageView).Output() (int64, bool)
+    method func (InvocationUsageView).Raw() (OpaqueProviderDataView, bool)
+    method func (InvocationUsageView).Reasoning() (int64, bool)
     method func (Media).Clone() Media
     method func (Media).Equal(other Media) bool
     method func (Media).Validate() error
@@ -108,7 +121,7 @@
     method func (ModelRequestID).RunID() RunID
     method func (ModelRequestID).Validate() error
     method func (ModelRequestView).ID() ModelRequestID
-    method func (ModelRequestView).Recipe() ConstructionRecipe
+    method func (ModelRequestView).Recipe() ConstructionRecipeView
     method func (ModelRequestView).RetryOf() (ModelRequestID, bool)
     method func (ModelRequestView).Source() SourceHead
     method func (ModelResponse).Clone() ModelResponse
@@ -117,21 +130,27 @@
     method func (ModelResponseView).CallAt(i int) RequestedCallView
     method func (ModelResponseView).CallCount() int
     method func (ModelResponseView).Calls() iter.Seq[RequestedCallView]
-    method func (ModelResponseView).Evidence() (ObservedEvidence, bool)
+    method func (ModelResponseView).Evidence() (ObservedEvidenceView, bool)
     method func (ModelResponseView).ItemAt(i int) ResponseItemView
     method func (ModelResponseView).ItemCount() int
     method func (ModelResponseView).Items() iter.Seq[ResponseItemView]
-    method func (ModelResponseView).Private() (OpaqueProviderData, bool)
+    method func (ModelResponseView).Private() (OpaqueProviderDataView, bool)
     method func (ModelResponseView).ProviderStopReason() (string, bool)
     method func (ModelResponseView).RequestID() ModelRequestID
     method func (ModelResponseView).Terminal() ResponseTerminalClass
-    method func (ModelResponseView).Usage() (InvocationUsage, bool)
+    method func (ModelResponseView).Usage() (InvocationUsageView, bool)
     method func (ObservedEvidence).Clone() ObservedEvidence
     method func (ObservedEvidence).Equal(other ObservedEvidence) bool
     method func (ObservedEvidence).Validate() error
+    method func (ObservedEvidenceView).Correlation() (string, bool)
+    method func (ObservedEvidenceView).Detail() (string, bool)
     method func (OpaqueProviderData).Clone() OpaqueProviderData
     method func (OpaqueProviderData).Equal(other OpaqueProviderData) bool
     method func (OpaqueProviderData).Validate() error
+    method func (OpaqueProviderDataView).Data() []byte
+    method func (OpaqueProviderDataView).Format() string
+    method func (OpaqueProviderDataView).Producer() string
+    method func (OpaqueProviderDataView).Version() int64
     method func (Policy).Validate() error
     method func (RecordView).Created() (Created, bool)
     method func (RecordView).EffectiveInput() (EffectiveInputView, bool)
@@ -150,6 +169,8 @@
     method func (RequestedCall).Clone() RequestedCall
     method func (RequestedCall).Equal(other RequestedCall) bool
     method func (RequestedCall).Validate() error
+    method func (RequestedCallDataView).Arguments() []byte
+    method func (RequestedCallDataView).Name() string
     method func (RequestedCallID).Equal(other RequestedCallID) bool
     method func (RequestedCallID).RequestID() ModelRequestID
     method func (RequestedCallID).Validate() error
@@ -166,12 +187,12 @@
     method func (ResponseItem).Clone() ResponseItem
     method func (ResponseItem).Equal(other ResponseItem) bool
     method func (ResponseItem).Validate() error
-    method func (ResponseItemView).Call() (RequestedCall, bool)
+    method func (ResponseItemView).Call() (RequestedCallDataView, bool)
     method func (ResponseItemView).Content() (ResponseContentView, bool)
     method func (RunEnded).Clone() RunEnded
     method func (RunEnded).Equal(other RunEnded) bool
     method func (RunEnded).Validate() error
-    method func (RunEndedView).Capture() (CaptureFailureEvidence, bool)
+    method func (RunEndedView).Capture() (CaptureFailureEvidenceView, bool)
     method func (RunEndedView).Explanation() (string, bool)
     method func (RunEndedView).Reason() RunEndedReason
     method func (RunEndedView).RunID() RunID
@@ -261,7 +282,9 @@ type Actor string
 type AttributedInput struct{Parts []ContentPart; Actor Actor; Purpose PromptPurpose; Source ContentSource}
 type AttributedInputView struct{}
 type CaptureFailureEvidence struct{RequestID ModelRequestID; Evidence *ObservedEvidence; Usage *InvocationUsage}
+type CaptureFailureEvidenceView struct{}
 type ConstructionRecipe struct{Algorithm string; Version int64; Parameters []byte; Check []byte}
+type ConstructionRecipeView struct{}
 type ContentPart struct{Text *string; Media *Media}
 type ContentPartView struct{}
 type ContentSource struct{Description string; WorkspaceFile *WorkspaceFileSource}
@@ -279,6 +302,7 @@ type InvocationFailure struct{RequestID ModelRequestID; Class InvocationFailureC
 type InvocationFailureClass string
 type InvocationFailureView struct{}
 type InvocationUsage struct{Input *int64; Output *int64; CacheRead *int64; CacheWrite *int64; Reasoning *int64; Raw *OpaqueProviderData}
+type InvocationUsageView struct{}
 type Media struct{Kind MediaKind; Source MediaSourceKind; InlineData []byte; RemoteURI string; ProviderName string; ProviderScope string; ProviderReferenceID string; MIMEType string; FormatHint string; Filename string; Title string}
 type MediaKind string
 type MediaSourceKind string
@@ -291,11 +315,14 @@ type ModelRequestView struct{}
 type ModelResponse struct{RequestID ModelRequestID; Terminal ResponseTerminalClass; ProviderStopReason *string; Items []ResponseItem; Evidence *ObservedEvidence; Usage *InvocationUsage; Private *OpaqueProviderData}
 type ModelResponseView struct{}
 type ObservedEvidence struct{Detail *string; Correlation *string}
+type ObservedEvidenceView struct{}
 type OpaqueProviderData struct{Producer string; Format string; Version int64; Data []byte}
+type OpaqueProviderDataView struct{}
 type Policy struct{CommitLimits codec.Limits; PayloadLimits codec.Limits; MaxRecordsPerCommit int; SoftMaxRetainedRecords int; SoftMaxPayloadBytes uint64; SoftMaxDecodedWork uint64; MaxRetainedRecords int; MaxPayloadBytes uint64; MaxDecodedWork uint64}
 type PromptPurpose string
 type RecordView struct{}
 type RequestedCall struct{Name string; Arguments []byte}
+type RequestedCallDataView struct{}
 type RequestedCallID struct{}
 type RequestedCallView struct{}
 type ResponseContent struct{Kind ResponseContentKind; Parts []ContentPart}

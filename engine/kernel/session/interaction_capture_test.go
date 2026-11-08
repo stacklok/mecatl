@@ -36,8 +36,8 @@ func TestInteractionOversizeCaptureFallback(t *testing.T) {
 				}
 				ending := RunEnded{RunID: pending.runID, Reason: RunEndedCaptureFailed, Explanation: new("capture exceeded local bounds"), Capture: &CaptureFailureEvidence{RequestID: pending, Evidence: &ObservedEvidence{Correlation: new("observed")}, Usage: response.Usage}}
 				if !detailedFits {
-					minimal := interactionRecord(t)(newRunEndedRecord(RunEnded{RunID: pending.runID, Reason: RunEndedCaptureFailed}, s.policy.PayloadLimits))
-					s.policy.SoftMaxPayloadBytes = s.state.payloadBytes + uint64(len(minimal.record.value.Payload))
+					minimal := interactionRecord(t)(newRunEndedRecord(s.Snapshot().HistoryID(), RunEnded{RunID: pending.runID, Reason: RunEndedCaptureFailed}, s.policy.PayloadLimits))
+					s.policy.SoftMaxPayloadBytes = s.state.payloadBytes + uint64(len(minimal.value.Payload))
 				}
 				b, err = s.BeginCommit()
 				interactionCheck(t, err)
@@ -64,8 +64,14 @@ func TestInteractionOversizeCaptureFallback(t *testing.T) {
 				if present != detailedFits {
 					t.Fatal("capture presence")
 				}
-				if detailedFits && (capture.RequestID != pending || capture.Usage.Output == nil || *capture.Usage.Output != 0 || *capture.Evidence.Correlation != "observed") {
-					t.Fatal("optional evidence lost")
+				if detailedFits {
+					usage, usagePresent := capture.Usage()
+					evidence, evidencePresent := capture.Evidence()
+					output, outputPresent := usage.Output()
+					correlation, correlationPresent := evidence.Correlation()
+					if capture.RequestID() != pending || !usagePresent || !evidencePresent || !outputPresent || output != 0 || !correlationPresent || correlation != "observed" {
+						t.Fatal("optional evidence lost")
+					}
 				}
 				if _, present := v.Explanation(); present != detailedFits {
 					t.Fatal("minimal fallback kept detail")

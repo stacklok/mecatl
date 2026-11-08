@@ -21,8 +21,29 @@ type lifecycleState struct {
 	calls                         uint64
 }
 
-// admissionContext pins the accepted source independently of the ordered candidate.
-// It is copied before an addition, so failure consumes neither state nor IDs.
+// admissionContext pins the accepted source and head independently of the ordered
+// candidate. Pinning the source makes construction reproducible and requires
+// accepted prerequisites; same-batch facts cannot manufacture them. The candidate
+// tracks prospective order. Callers copy this context before admitting an addition,
+// so a rejected fact consumes neither state nor IDs.
+//
+// frontier is the admitted contribution coverage; a request captures the accepted
+// frontier, and its outcome accounts that captured value. For example, input
+// advances frontier, a request captures it, an outcome accounts it, then later
+// input advances frontier again: the older outcome cannot justify a completed end.
+// This coverage is structural lifecycle bookkeeping, not evidence that a model
+// understood input, that work was fulfilled, or that usage was billed. An empty
+// authored submission advances frontier; an empty effective contribution does not.
+// Input gating is a chosen admission policy: pending outcomes or unresolved calls
+// prevent new input. Queues and steering live above this boundary. The pinned source
+// rule is also an accepted-prerequisite policy: same-batch facts cannot provide it.
+// Those choices differ from structural integrity, which requires valid scoped
+// identity, membership, and fact pairing. Policy separately controls capacity.
+// Uncertain endings intentionally retain pending and unresolved coverage; ending
+// local ownership does not assert that external processing or spend has ceased.
+// Ordinary writes must fit soft limits and reserve each actual minimal emergency
+// ending at the resulting candidate under both the hard Session policy and the
+// History policy; replay uses only hard retained limits.
 type admissionContext struct {
 	head      history.CommitRef
 	source    lifecycleState
@@ -33,10 +54,12 @@ func newAdmission(v Snapshot) admissionContext {
 	return admissionContext{head: v.head, source: v.lifecycle, candidate: v.lifecycle}
 }
 
-// reduce validates a complete locally valid fact in explicit history scope against
-// the pinned source and ordered candidate. No error changes scalars; outcomes
-// account only their captured frontier. Materialization alone is not acceptance.
-func (a *admissionContext) reduce(scope historyid.HistoryID, r *materializedRecord) error {
+// admit validates a complete locally valid fact in explicit history scope against
+// the pinned source and ordered candidate. On success it mutates only the
+// receiver's candidate; on error it leaves the entire context unchanged, including
+// its pinned accepted source and head. It establishes neither persistence, storage
+// acceptance, nor publication. Outcomes account only their captured frontier.
+func (a *admissionContext) admit(scope historyid.HistoryID, r *materializedRecord) error {
 	s := &a.candidate
 	if scope != s.activeRun.historyID && s.activeRun != (RunID{}) {
 		return ErrIdentity
@@ -184,24 +207,26 @@ func (s lifecycleState) inputEligible() bool {
 	return s.created && s.activeRun != (RunID{}) && s.pending == (ModelRequestID{}) && s.calls == 0
 }
 
-// preflight uses the same pinned-source reducer as builder additions and replay.
-func (s *Session) preflight(records []proposedRecord, ref history.CommitRef, payloadBytes uint64) error {
+// preflight revalidates owner-validated backing under current limits and supplies
+// enclosing scope to the same pinned-source admission used by additions and replay.
+func (s *Session) preflight(records []*materializedRecord, ref history.CommitRef, payloadBytes uint64) error {
 	a := newAdmission(s.state.view)
 	for _, r := range records {
 		if err := r.checkPayload(s.policy.PayloadLimits); err != nil {
 			return err
 		}
-		if err := a.reduce(r.scope, r.record); err != nil {
+		if err := a.admit(s.state.view.historyID, r); err != nil {
 			return err
 		}
 	}
 	return s.reserveEnding(ref, a.candidate, s.state.records+len(records), s.state.payloadBytes+payloadBytes)
 }
 
-// reserveEnding prepares every promised emergency reason against the actual next
-// envelope and both encoding policies, covering the largest supported encoded
-// shape in each dimension despite unequal label lengths. Terminal candidates
-// cannot recurse.
+// reserveEnding prepares every actual minimal emergency ending after the ordinary
+// candidate has passed soft limits. Each ending must fit the resulting state under
+// the hard Session capacity policy and the History encoding policy, covering the
+// largest supported encoded shape in each dimension despite unequal label lengths.
+// Terminal candidates cannot recurse.
 func (s *Session) reserveEnding(ref history.CommitRef, state lifecycleState, records int, payloadBytes uint64) error {
 	if state.activeRun == (RunID{}) {
 		return nil

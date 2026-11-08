@@ -32,6 +32,44 @@ func (v OpaqueProviderData) Validate() error { return v.toFormat().Validate() }
 // Clone detaches provider-owned bytes.
 func (v OpaqueProviderData) Clone() OpaqueProviderData { v.Data = bytes.Clone(v.Data); return v }
 
+// OpaqueProviderDataView is immutable provider-owned metadata. Zero returns empty
+// scalar values and nil Data. Scalar reads are O(1); Data copies only its byte leaf.
+type OpaqueProviderDataView struct {
+	value *sessionformat.OpaqueProviderData
+}
+
+// Producer returns the provider that owns the opaque data, or empty for zero.
+func (v OpaqueProviderDataView) Producer() string {
+	if v.value == nil {
+		return ""
+	}
+	return v.value.Producer
+}
+
+// Format returns the provider-owned data schema name, or empty for zero.
+func (v OpaqueProviderDataView) Format() string {
+	if v.value == nil {
+		return ""
+	}
+	return v.value.Format
+}
+
+// Version returns the provider-defined schema revision, or zero for zero.
+func (v OpaqueProviderDataView) Version() int64 {
+	if v.value == nil {
+		return 0
+	}
+	return v.value.Version
+}
+
+// Data returns detached opaque provider bytes. Nil and empty remain equivalent.
+func (v OpaqueProviderDataView) Data() []byte {
+	if v.value == nil {
+		return nil
+	}
+	return bytes.Clone(v.value.Data)
+}
+
 // Equal compares exact provider-data values.
 func (v OpaqueProviderData) Equal(other OpaqueProviderData) bool {
 	return v.toFormat().Equal(other.toFormat())
@@ -81,6 +119,62 @@ func (v InvocationUsage) Clone() InvocationUsage {
 func (v InvocationUsage) Equal(other InvocationUsage) bool {
 	return v.toFormat().Equal(other.toFormat())
 }
+
+// InvocationUsageView is immutable reported invocation usage. Zero and absent
+// counters return zero, false; Raw returns a zero view, false when absent. All reads
+// are O(1), and Raw shares no mutable access with callers.
+type InvocationUsageView struct {
+	value *sessionformat.InvocationUsage
+}
+
+// Input returns the inclusive input count when reported.
+func (v InvocationUsageView) Input() (int64, bool) {
+	if v.value == nil || v.value.Input == nil {
+		return 0, false
+	}
+	return *v.value.Input, true
+}
+
+// Output returns the inclusive output count when reported.
+func (v InvocationUsageView) Output() (int64, bool) {
+	if v.value == nil || v.value.Output == nil {
+		return 0, false
+	}
+	return *v.value.Output, true
+}
+
+// CacheRead returns the cache-read breakdown when reported.
+func (v InvocationUsageView) CacheRead() (int64, bool) {
+	if v.value == nil || v.value.CacheRead == nil {
+		return 0, false
+	}
+	return *v.value.CacheRead, true
+}
+
+// CacheWrite returns the cache-write breakdown when reported.
+func (v InvocationUsageView) CacheWrite() (int64, bool) {
+	if v.value == nil || v.value.CacheWrite == nil {
+		return 0, false
+	}
+	return *v.value.CacheWrite, true
+}
+
+// Reasoning returns the reasoning breakdown when reported.
+func (v InvocationUsageView) Reasoning() (int64, bool) {
+	if v.value == nil || v.value.Reasoning == nil {
+		return 0, false
+	}
+	return *v.value.Reasoning, true
+}
+
+// Raw returns pinned usage-only provider evidence when present.
+func (v InvocationUsageView) Raw() (OpaqueProviderDataView, bool) {
+	if v.value == nil || v.value.Raw == nil {
+		return OpaqueProviderDataView{}, false
+	}
+	return OpaqueProviderDataView{value: v.value.Raw}, true
+}
+
 func (v InvocationUsage) toFormat() sessionformat.InvocationUsage {
 	return sessionformat.InvocationUsage{Input: v.Input, Output: v.Output, CacheRead: v.CacheRead, CacheWrite: v.CacheWrite, Reasoning: v.Reasoning, Raw: opaqueToFormat(v.Raw)}
 }
@@ -126,6 +220,30 @@ func (v ObservedEvidence) Clone() ObservedEvidence {
 func (v ObservedEvidence) Equal(other ObservedEvidence) bool {
 	return v.toFormat().Equal(other.toFormat())
 }
+
+// ObservedEvidenceView is immutable invocation evidence. Zero and absent fields
+// return an empty string, false, preserving explicitly present empty strings. Reads
+// are O(1) and expose no mutable storage.
+type ObservedEvidenceView struct {
+	value *sessionformat.ObservedEvidence
+}
+
+// Detail returns diagnostic context when present.
+func (v ObservedEvidenceView) Detail() (string, bool) {
+	if v.value == nil || v.value.Detail == nil {
+		return "", false
+	}
+	return *v.value.Detail, true
+}
+
+// Correlation returns the provider diagnostic identifier when present.
+func (v ObservedEvidenceView) Correlation() (string, bool) {
+	if v.value == nil || v.value.Correlation == nil {
+		return "", false
+	}
+	return *v.value.Correlation, true
+}
+
 func (v ObservedEvidence) toFormat() sessionformat.ObservedEvidence {
 	return sessionformat.ObservedEvidence{Detail: v.Detail, Correlation: v.Correlation}
 }
@@ -186,22 +304,4 @@ func checkUsageSize(v *InvocationUsage, b *valueBudget) {
 		}
 	}
 	checkOpaqueSize(v.Raw, b)
-}
-func opaqueFromFormat(v *sessionformat.OpaqueProviderData) *OpaqueProviderData {
-	if v == nil {
-		return nil
-	}
-	return &OpaqueProviderData{Producer: v.Producer, Format: v.Format, Version: v.Version, Data: v.Data}
-}
-func evidenceFromFormat(v *sessionformat.ObservedEvidence) *ObservedEvidence {
-	if v == nil {
-		return nil
-	}
-	return &ObservedEvidence{Detail: v.Detail, Correlation: v.Correlation}
-}
-func usageFromFormat(v *sessionformat.InvocationUsage) *InvocationUsage {
-	if v == nil {
-		return nil
-	}
-	return &InvocationUsage{Input: v.Input, Output: v.Output, CacheRead: v.CacheRead, CacheWrite: v.CacheWrite, Reasoning: v.Reasoning, Raw: opaqueFromFormat(v.Raw)}
 }

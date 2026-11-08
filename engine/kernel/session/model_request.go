@@ -127,29 +127,72 @@ func (v ModelRequest) checkSize(b *valueBudget) {
 }
 
 // newModelRequestRecord owns one invocation commitment. It sizes before DTO
-// conversion and checks full public scope before omitting enclosing identities.
-// Failure returns zero; accepted source membership is checked by the aggregate.
-func newModelRequestRecord(v ModelRequest, id ModelRequestID, limits codec.Limits) (proposedRecord, error) {
+// conversion and checks target history and full public scope before omission.
+// Failure returns nil; accepted source membership is checked by the aggregate.
+func newModelRequestRecord(scope historyid.HistoryID, v ModelRequest, id ModelRequestID, limits codec.Limits) (*materializedRecord, error) {
 	if err := id.Validate(); err != nil || id.runID != v.RunID {
-		return proposedRecord{}, codec.ErrInvalidData
+		return nil, codec.ErrInvalidData
 	}
 	b := newValueBudget(limits)
 	v.checkSize(&b)
 	if b.err != nil {
-		return proposedRecord{}, b.err
+		return nil, b.err
 	}
 	if err := v.Validate(); err != nil {
-		return proposedRecord{}, codec.ErrInvalidData
+		return nil, codec.ErrInvalidData
+	}
+	if scope != v.RunID.historyID {
+		return nil, ErrIdentity
 	}
 	payload, err := codec.Encode(v.toFormat(id), limits)
 	if err != nil {
-		return proposedRecord{}, err
+		return nil, err
 	}
-	return decodeRecord(v.RunID.historyID, format.Record{Kind: sessionformat.KindModelRequest, KindVersion: sessionformat.Version, Payload: payload}, limits)
+	return decodeMaterialized(format.Record{Kind: sessionformat.KindModelRequest, KindVersion: sessionformat.Version, Payload: payload}, limits)
 }
 
 func requestID(scope historyid.HistoryID, run, ordinal uint64) ModelRequestID {
 	return ModelRequestID{runID: RunID{historyID: scope, ordinal: run}, requestOrdinal: ordinal}
+}
+
+// ConstructionRecipeView is an immutable construction recipe. Zero returns empty
+// scalars and nil byte leaves. Scalar reads are O(1); Parameters and Check each
+// detach only their own bytes.
+type ConstructionRecipeView struct {
+	value *sessionformat.ConstructionRecipe
+}
+
+// Algorithm returns the construction algorithm identifier, or empty for zero.
+func (v ConstructionRecipeView) Algorithm() string {
+	if v.value == nil {
+		return ""
+	}
+	return v.value.Algorithm
+}
+
+// Version returns the construction algorithm revision, or zero for zero.
+func (v ConstructionRecipeView) Version() int64 {
+	if v.value == nil {
+		return 0
+	}
+	return v.value.Version
+}
+
+// Parameters returns detached algorithm-owned parameter bytes. Nil and empty remain
+// equivalent.
+func (v ConstructionRecipeView) Parameters() []byte {
+	if v.value == nil {
+		return nil
+	}
+	return bytes.Clone(v.value.Parameters)
+}
+
+// Check returns detached required algorithm-owned check bytes.
+func (v ConstructionRecipeView) Check() []byte {
+	if v.value == nil {
+		return nil
+	}
+	return bytes.Clone(v.value.Check)
 }
 
 // ModelRequestView is an immutable accepted commitment. Zero has zero identity;
@@ -175,13 +218,13 @@ func (v ModelRequestView) Source() SourceHead {
 	return SourceHead{Sequence: v.value.Source.Sequence, CID: v.value.Source.CID}
 }
 
-// Recipe returns detached construction bytes, or zero for zero.
-func (v ModelRequestView) Recipe() ConstructionRecipe {
+// Recipe returns a pinned immutable construction recipe. It returns a zero child
+// view for a zero request.
+func (v ModelRequestView) Recipe() ConstructionRecipeView {
 	if v.value == nil {
-		return ConstructionRecipe{}
+		return ConstructionRecipeView{}
 	}
-	r := v.value.Recipe
-	return ConstructionRecipe{Algorithm: r.Algorithm, Version: r.Version, Parameters: bytes.Clone(r.Parameters), Check: bytes.Clone(r.Check)}
+	return ConstructionRecipeView{value: &v.value.Recipe}
 }
 
 // RetryOf returns optional same-run correlation, never a mutable pointer.

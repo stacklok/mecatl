@@ -2,7 +2,6 @@ package session
 
 import (
 	"errors"
-	"reflect"
 	"testing"
 
 	"github.com/stacklok/mecatl/engine/kernel/codec"
@@ -14,7 +13,7 @@ func TestCreated(t *testing.T) {
 	if err := v.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	r, err := newCreatedRecord(v, testLimits())
+	r, err := newCreatedRecord(testHistoryID(t), v, testLimits())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -25,8 +24,8 @@ func TestCreated(t *testing.T) {
 	if (Created{}).Validate() == nil {
 		t.Fatal("zero creation validated")
 	}
-	r, err = newCreatedRecord(Created{}, testLimits())
-	if !errors.Is(err, codec.ErrInvalidData) || !reflect.DeepEqual(r, proposedRecord{}) {
+	r, err = newCreatedRecord(testHistoryID(t), Created{}, testLimits())
+	if !errors.Is(err, codec.ErrInvalidData) || r != nil {
 		t.Fatalf("zero creation record: %v", err)
 	}
 }

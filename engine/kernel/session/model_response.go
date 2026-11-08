@@ -257,26 +257,30 @@ func (v ModelResponse) checkSize(b *valueBudget) {
 }
 
 // newModelResponseRecord owns a complete response, never a truncated subset.
-// Sizing precedes item/part conversion and allocation; failure returns zero.
-func newModelResponseRecord(v ModelResponse, limits codec.Limits) (proposedRecord, error) {
+// Sizing precedes item/part conversion and allocation; target history is checked
+// before scope omission. Failure returns nil.
+func newModelResponseRecord(scope historyid.HistoryID, v ModelResponse, limits codec.Limits) (*materializedRecord, error) {
 	if err := v.RequestID.Validate(); err != nil {
-		return proposedRecord{}, codec.ErrInvalidData
+		return nil, codec.ErrInvalidData
+	}
+	if scope != v.RequestID.runID.historyID {
+		return nil, ErrIdentity
 	}
 	b := newValueBudget(limits)
 	v.checkSize(&b)
 	if b.err != nil {
-		return proposedRecord{}, b.err
+		return nil, b.err
 	}
 	payload, err := codec.Encode(v.toFormat(), limits)
 	if err != nil {
-		return proposedRecord{}, err
+		return nil, err
 	}
-	return decodeRecord(v.RequestID.runID.historyID, format.Record{Kind: sessionformat.KindModelResponse, KindVersion: sessionformat.Version, Payload: payload}, limits)
+	return decodeMaterialized(format.Record{Kind: sessionformat.KindModelResponse, KindVersion: sessionformat.Version, Payload: payload}, limits)
 }
 
 // ModelResponseView is an immutable complete response. Zero has no identity or
-// items. Item navigation is constant-time; call lookup scans response order.
-// Evidence and byte exports detach storage.
+// items. Item navigation and structured-child access are O(1); call lookup scans
+// response order, and byte leaves detach.
 type ModelResponseView struct {
 	scope historyid.HistoryID
 	value *sessionformat.ModelResponse
@@ -307,28 +311,28 @@ func (v ModelResponseView) ProviderStopReason() (string, bool) {
 	return *v.value.ProviderStopReason, true
 }
 
-// Evidence returns detached safe observed evidence, preserving optional presence.
-func (v ModelResponseView) Evidence() (ObservedEvidence, bool) {
+// Evidence returns a pinned immutable view, preserving optional presence.
+func (v ModelResponseView) Evidence() (ObservedEvidenceView, bool) {
 	if v.value == nil || v.value.Evidence == nil {
-		return ObservedEvidence{}, false
+		return ObservedEvidenceView{}, false
 	}
-	return evidenceFromFormat(v.value.Evidence).Clone(), true
+	return ObservedEvidenceView{value: v.value.Evidence}, true
 }
 
-// Usage returns detached reported counters and raw usage-only evidence.
-func (v ModelResponseView) Usage() (InvocationUsage, bool) {
+// Usage returns a pinned immutable view of reported counters and raw usage-only evidence.
+func (v ModelResponseView) Usage() (InvocationUsageView, bool) {
 	if v.value == nil || v.value.Usage == nil {
-		return InvocationUsage{}, false
+		return InvocationUsageView{}, false
 	}
-	return usageFromFormat(v.value.Usage).Clone(), true
+	return InvocationUsageView{value: v.value.Usage}, true
 }
 
-// Private returns detached response-wide private evidence, not interpretation.
-func (v ModelResponseView) Private() (OpaqueProviderData, bool) {
+// Private returns a pinned immutable view of response-wide private evidence.
+func (v ModelResponseView) Private() (OpaqueProviderDataView, bool) {
 	if v.value == nil || v.value.Private == nil {
-		return OpaqueProviderData{}, false
+		return OpaqueProviderDataView{}, false
 	}
-	return opaqueFromFormat(v.value.Private).Clone(), true
+	return OpaqueProviderDataView{value: v.value.Private}, true
 }
 
 // ItemCount returns the ordered canonical item count, or zero for zero.
@@ -399,7 +403,32 @@ func (v ModelResponseView) Calls() iter.Seq[RequestedCallView] {
 	}
 }
 
-// ResponseItemView is a pinned union handle. Zero has neither branch.
+// RequestedCallDataView is immutable identity-free requested-call data. Zero
+// returns an empty name and nil arguments. Name is O(1); Arguments detaches only
+// its byte leaf. Occurrence identity is deliberately available only through
+// ModelResponseView.Calls and CallAt.
+type RequestedCallDataView struct {
+	value *sessionformat.RequestedCall
+}
+
+// Name returns the exact UTF-8 name, including empty and unknown names.
+func (v RequestedCallDataView) Name() string {
+	if v.value == nil {
+		return ""
+	}
+	return v.value.Name
+}
+
+// Arguments returns detached exact argument bytes, including invalid JSON.
+func (v RequestedCallDataView) Arguments() []byte {
+	if v.value == nil {
+		return nil
+	}
+	return bytes.Clone(v.value.Arguments)
+}
+
+// ResponseItemView is a pinned union handle. Zero has neither branch. Branch
+// navigation is O(1); Items and Calls traverse their ordered DTOs linearly.
 type ResponseItemView struct{ value *sessionformat.ResponseItem }
 
 // Content returns a pinned content branch only when present.
@@ -410,13 +439,14 @@ func (v ResponseItemView) Content() (ResponseContentView, bool) {
 	return ResponseContentView{value: v.value.Content}, true
 }
 
-// Call returns detached call data only when present. Scoped identities are exposed
-// by ModelResponseView.Calls, whose ordinal counts calls rather than items.
-func (v ResponseItemView) Call() (RequestedCall, bool) {
+// Call returns identity-free pinned call data only when the call branch is present.
+// Scoped occurrence identities are exposed by ModelResponseView.Calls and CallAt,
+// whose ordinals count calls rather than items.
+func (v ResponseItemView) Call() (RequestedCallDataView, bool) {
 	if v.value == nil || v.value.Call == nil {
-		return RequestedCall{}, false
+		return RequestedCallDataView{}, false
 	}
-	return RequestedCall{Name: v.value.Call.Name, Arguments: bytes.Clone(v.value.Call.Arguments)}, true
+	return RequestedCallDataView{value: v.value.Call}, true
 }
 
 // ResponseContentView is immutable content with ordered parts. Zero is empty.

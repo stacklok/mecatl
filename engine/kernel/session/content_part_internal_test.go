@@ -19,11 +19,11 @@ func TestContentTextRecordOwnership(t *testing.T) {
 			callerText := text
 			parts := []ContentPart{{Text: &callerText}}
 			source := ContentSource{Description: "retained"}
-			created, err := newCreatedRecord(Created{HistoryID: scope}, limits)
+			created, err := newCreatedRecord(scope, Created{HistoryID: scope}, limits)
 			if err != nil {
 				t.Fatal(err)
 			}
-			started, err := newRunStartedRecord(RunStarted{ID: run}, limits)
+			started, err := newRunStartedRecord(scope, RunStarted{ID: run}, limits)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -31,16 +31,16 @@ func TestContentTextRecordOwnership(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			instructions, err := newInstructionsRecord(Instructions{HistoryID: scope, Blocks: []InstructionBlock{{Parts: parts, Source: source}}}, limits)
+			instructions, err := newInstructionsRecord(scope, Instructions{HistoryID: scope, Blocks: []InstructionBlock{{Parts: parts, Source: source}}}, limits)
 			if err != nil {
 				t.Fatal(err)
 			}
-			effective, err := newEffectiveInputRecord(EffectiveInput{RunID: run, Inputs: []InputItem{{Inline: &AttributedInput{Actor: "harness", Purpose: PromptContext, Parts: parts, Source: source}}}}, limits)
+			effective, err := newEffectiveInputRecord(scope, EffectiveInput{RunID: run, Inputs: []InputItem{{Inline: &AttributedInput{Actor: "harness", Purpose: PromptContext, Parts: parts, Source: source}}}}, limits)
 			if err != nil {
 				t.Fatal(err)
 			}
 			callerText = "mutated after record construction"
-			if effective.record.effective.Inputs[0].Inline.Parts[0].Text == &callerText || *effective.record.effective.Inputs[0].Inline.Parts[0].Text != text {
+			if effective.effective.Inputs[0].Inline.Parts[0].Text == &callerText || *effective.effective.Inputs[0].Inline.Parts[0].Text != text {
 				t.Fatal("record backing retained caller text pointer")
 			}
 			internalApply(t, s, created, started, authored, instructions, effective)
@@ -88,14 +88,14 @@ func TestContentTextBudgetBeforeConversion(t *testing.T) {
 			} else {
 				bounded.MaxBytes = 9 * len(input.Parts)
 			}
-			var record proposedRecord
+			var record *materializedRecord
 			var err error
 			if n := testing.AllocsPerRun(10, func() {
 				record, err = makeInputRecord(input, bounded)
 			}); n != 0 {
 				t.Fatalf("text-pointer rejection allocated %g times", n)
 			}
-			if !errors.Is(err, codec.ErrLimitExceeded) || !reflect.DeepEqual(record, proposedRecord{}) {
+			if !errors.Is(err, codec.ErrLimitExceeded) || record != nil {
 				t.Fatalf("bounded failure: %#v, %v", record, err)
 			}
 			// Bypassing preflight still rejects, but only after allocating DTOs.

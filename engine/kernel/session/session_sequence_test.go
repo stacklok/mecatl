@@ -53,15 +53,15 @@ func TestSessionSequenceExhaustion(t *testing.T) {
 			s, limits := internalFixture(t)
 			id := s.Snapshot().HistoryID()
 			run := RunID{historyID: id, ordinal: 1}
-			created, err := newCreatedRecord(Created{HistoryID: id}, limits)
+			created, err := newCreatedRecord(id, Created{HistoryID: id}, limits)
 			if err != nil {
 				t.Fatal(err)
 			}
-			start, err := newRunStartedRecord(RunStarted{ID: run}, limits)
+			start, err := newRunStartedRecord(id, RunStarted{ID: run}, limits)
 			if err != nil {
 				t.Fatal(err)
 			}
-			records := []proposedRecord{created}
+			records := []*materializedRecord{created}
 			if active {
 				records = append(records, start)
 			}
@@ -77,7 +77,7 @@ func TestSessionSequenceExhaustion(t *testing.T) {
 					t.Fatal(err)
 				}
 			} else {
-				if p, err := s.prepare([]proposedRecord{start}); !errors.Is(err, codec.ErrLimitExceeded) || !reflect.DeepEqual(p, prepared{}) {
+				if p, err := s.prepare([]*materializedRecord{start}); !errors.Is(err, codec.ErrLimitExceeded) || !reflect.DeepEqual(p, prepared{}) {
 					t.Fatalf("stranding preparation: %v", err)
 				}
 				dto := format.Commit{FormatVersion: 1, Sequence: math.MaxInt64, Parent: new(before.Head().CID), Records: []format.Record{start.format()}}
@@ -94,7 +94,7 @@ func TestSessionSequenceExhaustion(t *testing.T) {
 				s.state.view.head.Sequence = math.MaxInt64
 			}
 			before = s.Snapshot()
-			if p, err := s.prepare([]proposedRecord{start}); !errors.Is(err, codec.ErrLimitExceeded) || !reflect.DeepEqual(p, prepared{}) {
+			if p, err := s.prepare([]*materializedRecord{start}); !errors.Is(err, codec.ErrLimitExceeded) || !reflect.DeepEqual(p, prepared{}) {
 				t.Fatalf("exhausted preparation: %v", err)
 			}
 			if err := s.apply(history.Commit{Commit: format.Commit{Records: []format.Record{start.format()}}}); !errors.Is(err, codec.ErrLimitExceeded) {

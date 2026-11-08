@@ -33,7 +33,7 @@ func internalFixture(t testing.TB) (*Session, codec.Limits) {
 	}
 	return s, limits
 }
-func internalApply(t testing.TB, s *Session, records ...proposedRecord) prepared {
+func internalApply(t testing.TB, s *Session, records ...*materializedRecord) prepared {
 	t.Helper()
 	p, err := s.prepare(records)
 	if err != nil {
@@ -51,13 +51,13 @@ func TestRecordMaterializationAgreementAndOwnership(t *testing.T) {
 	input := identifiedInput{ID: UserInputID{runID: run.ID, ordinal: 24}, Parts: internalByteParts([]byte{0xff, 0, 'x'})}
 	constructors := []struct {
 		name string
-		make func() (proposedRecord, error)
+		make func() (*materializedRecord, error)
 	}{
-		{"created", func() (proposedRecord, error) { return newCreatedRecord(Created{HistoryID: id}, limits) }},
-		{"input", func() (proposedRecord, error) { return makeInputRecord(input, limits) }},
-		{"start", func() (proposedRecord, error) { return newRunStartedRecord(run, limits) }},
-		{"interruption", func() (proposedRecord, error) {
-			return newRunEndedRecord(RunEnded{RunID: run.ID, Reason: RunEndedInterrupted}, limits)
+		{"created", func() (*materializedRecord, error) { return newCreatedRecord(id, Created{HistoryID: id}, limits) }},
+		{"input", func() (*materializedRecord, error) { return makeInputRecord(input, limits) }},
+		{"start", func() (*materializedRecord, error) { return newRunStartedRecord(s.Snapshot().HistoryID(), run, limits) }},
+		{"interruption", func() (*materializedRecord, error) {
+			return newRunEndedRecord(s.Snapshot().HistoryID(), RunEnded{RunID: run.ID, Reason: RunEndedInterrupted}, limits)
 		}},
 	}
 	for _, tc := range constructors {
@@ -66,25 +66,22 @@ func TestRecordMaterializationAgreementAndOwnership(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if r.scope != id {
-				t.Fatal("missing scope")
-			}
 			switch tc.name {
 			case "input":
-				if !r.record.input.Equal(input.toFormat()) {
+				if !r.input.Equal(input.toFormat()) {
 					t.Fatal("input materialization")
 				}
 			case "start":
-				if r.record.started.ID != run.ID.ordinal {
+				if r.started.ID != run.ID.ordinal {
 					t.Fatal("start materialization")
 				}
 			case "interruption":
-				if r.record.ended.RunID != run.ID.ordinal || r.record.ended.Reason != string(RunEndedInterrupted) {
+				if r.ended.RunID != run.ID.ordinal || r.ended.Reason != string(RunEndedInterrupted) {
 					t.Fatal("interruption materialization")
 				}
 			}
 			dto := r.format()
-			decoded, err := decodeRecord(id, dto, limits)
+			decoded, err := decodeMaterialized(dto, limits)
 			if err != nil || !reflect.DeepEqual(decoded, r) {
 				t.Fatalf("materialization differs: %v", err)
 			}
@@ -111,7 +108,7 @@ func TestRequestAndEndingMaterializationOwnsCompleteValues(t *testing.T) {
 	ending := RunEnded{RunID: run, Reason: RunEndedCaptureFailed, Explanation: new("retained detail"), Capture: &CaptureFailureEvidence{RequestID: id, Evidence: &ObservedEvidence{Correlation: new("retained correlation")}, Usage: &InvocationUsage{Input: new(int64(0)), Raw: &OpaqueProviderData{Producer: "p", Format: "usage", Version: 1, Data: []byte{0xff}}}}}
 	wantRequest, wantEnding := request.toFormat().Clone(), ending.toFormat().Clone()
 	r := interactionRecord(t)(makeRequestRecord(request, limits))
-	e := interactionRecord(t)(newRunEndedRecord(ending, limits))
+	e := interactionRecord(t)(newRunEndedRecord(s.Snapshot().HistoryID(), ending, limits))
 	request.Recipe.Parameters[0] = 0
 	request.Recipe.Check[0] = 0
 	retry = id
@@ -119,21 +116,21 @@ func TestRequestAndEndingMaterializationOwnsCompleteValues(t *testing.T) {
 	*ending.Capture.Evidence.Correlation = "changed"
 	*ending.Capture.Usage.Input = 99
 	ending.Capture.Usage.Raw.Data[0] = 0
-	if !r.record.request.Equal(wantRequest) || !e.record.ended.Equal(wantEnding) {
+	if !r.request.Equal(wantRequest) || !e.ended.Equal(wantEnding) {
 		t.Fatal("proposal backing lost full values or retained caller storage")
 	}
-	for _, original := range []proposedRecord{r, e} {
+	for _, original := range []*materializedRecord{r, e} {
 		dto := original.format()
-		decoded, err := decodeRecord(run.historyID, dto, limits)
+		decoded, err := decodeMaterialized(dto, limits)
 		if err != nil {
 			t.Fatal(err)
 		}
 		clear(dto.Payload)
-		if original.record == decoded.record || !reflect.DeepEqual(original, decoded) {
+		if original == decoded || !reflect.DeepEqual(original, decoded) {
 			t.Fatal("decoded backing must be detached and equivalent")
 		}
 	}
-	if (proposedRecord{}).minimalEnding() || r.minimalEnding() || e.minimalEnding() {
+	if ((*materializedRecord)(nil)).minimalEnding() || r.minimalEnding() || e.minimalEnding() {
 		t.Fatal("zero, wrong kind or detailed ending classified as minimal")
 	}
 }
@@ -142,11 +139,11 @@ func TestMaterializedPreflightBoundedDecodeDoesNotPublish(t *testing.T) {
 	s, limits := internalFixture(t)
 	id := s.Snapshot().HistoryID()
 	run := RunID{historyID: id, ordinal: 1}
-	created, err := newCreatedRecord(Created{HistoryID: id}, limits)
+	created, err := newCreatedRecord(id, Created{HistoryID: id}, limits)
 	if err != nil {
 		t.Fatal(err)
 	}
-	start, err := newRunStartedRecord(RunStarted{ID: run}, limits)
+	start, err := newRunStartedRecord(s.Snapshot().HistoryID(), RunStarted{ID: run}, limits)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -159,15 +156,15 @@ func TestMaterializedPreflightBoundedDecodeDoesNotPublish(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	closeout, err := newRunEndedRecord(RunEnded{RunID: run, Reason: RunEndedInterrupted}, limits)
+	closeout, err := newRunEndedRecord(s.Snapshot().HistoryID(), RunEnded{RunID: run, Reason: RunEndedInterrupted}, limits)
 	if err != nil {
 		t.Fatal(err)
 	}
 	// Ending idle isolates record accounting from the real closeout reservation,
 	// which intentionally encodes its own small proposal.
-	records := []proposedRecord{second, closeout}
+	records := []*materializedRecord{second, closeout}
 	before := s.Snapshot()
-	if err := s.preflight(records, p.ref, uint64(len(second.record.value.Payload)+len(closeout.record.value.Payload))); err != nil {
+	if err := s.preflight(records, p.ref, uint64(len(second.value.Payload)+len(closeout.value.Payload))); err != nil {
 		t.Fatal(err)
 	}
 	if !reflect.DeepEqual(before, s.Snapshot()) || !internalUserInputsMatch(s.Snapshot(), run, 1) {
@@ -175,42 +172,58 @@ func TestMaterializedPreflightBoundedDecodeDoesNotPublish(t *testing.T) {
 	}
 }
 
-func TestPreparationRetainsOriginatingScope(t *testing.T) {
+func TestTypedConstructionChecksTargetHistory(t *testing.T) {
 	s, limits := internalFixture(t)
+	owner := s.Snapshot().HistoryID()
 	foreign, err := historyid.ParseHistoryID("HST2222222222222222222222")
-	if err != nil {
-		t.Fatal(err)
-	}
+	interactionCheck(t, err)
 	run := RunID{historyID: foreign, ordinal: 1}
-	created, err := newCreatedRecord(Created{HistoryID: foreign}, limits)
-	if err != nil {
-		t.Fatal(err)
-	}
-	start, err := newRunStartedRecord(RunStarted{ID: run}, limits)
-	if err != nil {
-		t.Fatal(err)
-	}
-	input, err := makeInputRecord(identifiedInput{ID: UserInputID{runID: run, ordinal: 1}}, limits)
-	if err != nil {
-		t.Fatal(err)
-	}
-	closeout, err := newRunEndedRecord(RunEnded{RunID: run, Reason: RunEndedInterrupted}, limits)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, original := range []proposedRecord{created, start, input, closeout} {
-		rebound, err := decodeRecord(foreign, original.format(), limits)
-		if err != nil {
-			t.Fatal(err)
-		}
-		for _, r := range []proposedRecord{original, rebound} {
-			before := s.Snapshot()
-			if p, err := s.prepare([]proposedRecord{r}); !errors.Is(err, ErrIdentity) || !reflect.DeepEqual(p, prepared{}) {
-				t.Fatalf("foreign preparation: %v", err)
+	input := UserInputID{runID: run, ordinal: 1}
+	request := requestID(foreign, 1, 1)
+	for name, makeRecord := range map[string]func(historyid.HistoryID) (*materializedRecord, error){
+		"created": func(scope historyid.HistoryID) (*materializedRecord, error) {
+			return newCreatedRecord(scope, Created{HistoryID: foreign}, limits)
+		},
+		"start": func(scope historyid.HistoryID) (*materializedRecord, error) {
+			return newRunStartedRecord(scope, RunStarted{ID: run}, limits)
+		},
+		"input": func(scope historyid.HistoryID) (*materializedRecord, error) {
+			return newUserInputRecord(scope, UserInput{RunID: run}, input, limits)
+		},
+		"instructions": func(scope historyid.HistoryID) (*materializedRecord, error) {
+			return newInstructionsRecord(scope, Instructions{HistoryID: foreign}, limits)
+		},
+		"catalog": func(scope historyid.HistoryID) (*materializedRecord, error) {
+			return newToolCatalogRecord(scope, ToolCatalog{HistoryID: foreign}, limits)
+		},
+		"binding": func(scope historyid.HistoryID) (*materializedRecord, error) {
+			return newModelBindingRecord(scope, ModelBinding{HistoryID: foreign, Route: "r", API: "a", Model: "m", Settings: []byte("{}")}, limits)
+		},
+		"effective": func(scope historyid.HistoryID) (*materializedRecord, error) {
+			return newEffectiveInputRecord(scope, EffectiveInput{RunID: run, Inputs: []InputItem{{UserInputID: &input}}}, limits)
+		},
+		"request": func(scope historyid.HistoryID) (*materializedRecord, error) {
+			return newModelRequestRecord(scope, ModelRequest{RunID: run, Source: SourceHead{Sequence: 1, CID: contentid.Sum([]byte("source"))}, Recipe: ConstructionRecipe{Algorithm: "a", Version: 1, Check: []byte{1}}, RetryOf: &request}, request, limits)
+		},
+		"response": func(scope historyid.HistoryID) (*materializedRecord, error) {
+			return newModelResponseRecord(scope, ModelResponse{RequestID: request, Terminal: ResponseTerminalNormal}, limits)
+		},
+		"failure": func(scope historyid.HistoryID) (*materializedRecord, error) {
+			return newInvocationFailureRecord(scope, InvocationFailure{RequestID: request, Class: InvocationFailureTransport}, limits)
+		},
+		"ending": func(scope historyid.HistoryID) (*materializedRecord, error) {
+			return newRunEndedRecord(scope, RunEnded{RunID: run, Reason: RunEndedCaptureFailed, Capture: &CaptureFailureEvidence{RequestID: request}}, limits)
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			for _, scope := range []historyid.HistoryID{owner, {}} {
+				if r, err := makeRecord(scope); !errors.Is(err, ErrIdentity) || r != nil {
+					t.Fatalf("foreign or zero target construction: %v, %v", r, err)
+				}
 			}
-			if !reflect.DeepEqual(before, s.Snapshot()) {
-				t.Fatal("foreign preparation mutation")
+			if r, err := makeRecord(foreign); err != nil || r == nil {
+				t.Fatalf("owner construction: %v", err)
 			}
-		}
+		})
 	}
 }

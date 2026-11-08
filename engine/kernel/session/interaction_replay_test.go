@@ -182,9 +182,9 @@ func TestInteractionNumericEndingEncodingRejectedOnReplay(t *testing.T) {
 			dto := historyformat.Record{Kind: sessionformat.KindRunEnded, KindVersion: 1, Payload: []byte("\xa2\x61e\x05\x61r\x01")}
 			var err error
 			if path == "decode" {
-				var r proposedRecord
-				r, err = decodeRecord(s.Snapshot().HistoryID(), dto, s.policy.PayloadLimits)
-				if !reflect.DeepEqual(r, proposedRecord{}) {
+				var r *materializedRecord
+				r, err = decodeMaterialized(dto, s.policy.PayloadLimits)
+				if r != nil {
 					t.Fatal("failed decode returned a partial record")
 				}
 			} else {
@@ -223,9 +223,9 @@ func TestInteractionUnknownKindAndVersionFailClosed(t *testing.T) {
 				before := detachedSessionState(s.state)
 				var err error
 				if path == "decode" {
-					var r proposedRecord
-					r, err = decodeRecord(s.Snapshot().HistoryID(), dto, s.policy.PayloadLimits)
-					if !reflect.DeepEqual(r, proposedRecord{}) {
+					var r *materializedRecord
+					r, err = decodeMaterialized(dto, s.policy.PayloadLimits)
+					if r != nil {
 						t.Fatal("failed decode returned record")
 					}
 				} else {

@@ -70,6 +70,13 @@ patterns here as they emerge; keep unrelated legacy cleanup out of scope.
 - Make mutable-storage ownership, aliasing, zero values, and failure outputs
   explicit where relevant. Prefer concrete type methods over speculative shared
   marker, cloning, or freezing interfaces.
+- Use concrete immutable DTO-backed views for nested inspection. Scalar/presence
+  reads must not clone sibling payloads; byte getters detach only their own field.
+  Make zero views safe, return `(View, bool)` for optional children and
+  `(value, bool)` for optional scalars, and preserve present-empty values. Document
+  retained backing, lifetime and navigation complexity. Test complete scalar
+  traversal and leaf-only copying through Submit and storage-backed Load with
+  nonempty siblings; allocation-free traversal that skips subtrees is not evidence.
 - Keep data-contract validation distinct from operational resource policy.
   Validate lengths and counts before the allocations or conversions they govern;
   use overflow-safe arithmetic. Do not rely on mutable dependency-global limits.

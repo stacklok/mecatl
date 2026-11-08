@@ -77,11 +77,11 @@ func (v EffectiveInput) toFormat() sessionformat.EffectiveInput {
 }
 
 // newEffectiveInputRecord encodes an owned increment under explicit limits.
-// Failure returns zero. Construction checks full reference scope but does not
-// prove membership or order; aggregate admission validates every reference.
-func newEffectiveInputRecord(v EffectiveInput, limits codec.Limits) (proposedRecord, error) {
+// Failure returns nil. Construction checks target history and full reference scope
+// before omission but does not prove membership or order; admission checks those.
+func newEffectiveInputRecord(scope historyid.HistoryID, v EffectiveInput, limits codec.Limits) (*materializedRecord, error) {
 	if err := v.RunID.Validate(); err != nil {
-		return proposedRecord{}, codec.ErrInvalidData
+		return nil, codec.ErrInvalidData
 	}
 	b := newValueBudget(limits)
 	b.collection(len(v.Inputs))
@@ -91,17 +91,20 @@ func newEffectiveInputRecord(v EffectiveInput, limits codec.Limits) (proposedRec
 		}
 	}
 	if b.err != nil {
-		return proposedRecord{}, b.err
+		return nil, b.err
 	}
 	if err := v.Validate(); err != nil {
-		return proposedRecord{}, codec.ErrInvalidData
+		return nil, codec.ErrInvalidData
+	}
+	if scope != v.RunID.historyID {
+		return nil, ErrIdentity
 	}
 	fact := v.toFormat()
 	payload, err := codec.Encode(fact, limits)
 	if err != nil {
-		return proposedRecord{}, err
+		return nil, err
 	}
-	return decodeRecord(v.RunID.historyID, format.Record{Kind: sessionformat.KindEffectiveInput, KindVersion: sessionformat.Version, Payload: payload}, limits)
+	return decodeMaterialized(format.Record{Kind: sessionformat.KindEffectiveInput, KindVersion: sessionformat.Version, Payload: payload}, limits)
 }
 
 // EffectiveInputView retains immutable accepted backing storage, including its

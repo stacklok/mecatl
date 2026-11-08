@@ -69,19 +69,19 @@ func newSession(t testing.TB, p Policy) *Session {
 	}
 	return s
 }
-func createdRecord(t testing.TB) proposedRecord {
+func createdRecord(t testing.TB) *materializedRecord {
 	t.Helper()
-	r, err := newCreatedRecord(Created{HistoryID: testHistoryID(t)}, testLimits())
+	r, err := newCreatedRecord(testHistoryID(t), Created{HistoryID: testHistoryID(t)}, testLimits())
 	if err != nil {
 		t.Fatal(err)
 	}
 	return r
 }
-func inputRecord(t testing.TB, ordinal uint64) proposedRecord {
+func inputRecord(t testing.TB, ordinal uint64) *materializedRecord {
 	t.Helper()
 	return runInputRecord(t, 1, ordinal)
 }
-func runInputRecord(t testing.TB, run, ordinal uint64) proposedRecord {
+func runInputRecord(t testing.TB, run, ordinal uint64) *materializedRecord {
 	t.Helper()
 	r, err := makeInputRecord(identifiedInput{ID: allocatedInput(t, allocatedRun(t, testHistoryID(t), run), ordinal), Parts: internalByteParts([]byte{0xff, 0, 'x'})}, testLimits())
 	if err != nil {
@@ -89,17 +89,17 @@ func runInputRecord(t testing.TB, run, ordinal uint64) proposedRecord {
 	}
 	return r
 }
-func startRecord(t testing.TB, ordinal uint64) proposedRecord {
+func startRecord(t testing.TB, ordinal uint64) *materializedRecord {
 	t.Helper()
-	r, err := newRunStartedRecord(RunStarted{ID: allocatedRun(t, testHistoryID(t), ordinal)}, testLimits())
+	r, err := newRunStartedRecord(testHistoryID(t), RunStarted{ID: allocatedRun(t, testHistoryID(t), ordinal)}, testLimits())
 	if err != nil {
 		t.Fatal(err)
 	}
 	return r
 }
-func closeoutRecord(t testing.TB, ordinal uint64) proposedRecord {
+func closeoutRecord(t testing.TB, ordinal uint64) *materializedRecord {
 	t.Helper()
-	r, err := newRunEndedRecord(RunEnded{RunID: allocatedRun(t, testHistoryID(t), ordinal), Reason: RunEndedInterrupted}, testLimits())
+	r, err := newRunEndedRecord(testHistoryID(t), RunEnded{RunID: allocatedRun(t, testHistoryID(t), ordinal), Reason: RunEndedInterrupted}, testLimits())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -108,7 +108,7 @@ func closeoutRecord(t testing.TB, ordinal uint64) proposedRecord {
 
 // proposedCommit constructs a canonical assertion independently of the reducer.
 // It intentionally does not validate lifecycle legality or claim storage acceptance.
-func proposedCommit(t testing.TB, s *Session, records ...proposedRecord) history.Commit {
+func proposedCommit(t testing.TB, s *Session, records ...*materializedRecord) history.Commit {
 	t.Helper()
 	v := s.Snapshot()
 	dto := format.Commit{FormatVersion: 1, Sequence: v.Head().Sequence + 1}
@@ -122,7 +122,7 @@ func proposedCommit(t testing.TB, s *Session, records ...proposedRecord) history
 	}
 	return identify(t, dto)
 }
-func applyRecords(t testing.TB, s *Session, records ...proposedRecord) history.Commit {
+func applyRecords(t testing.TB, s *Session, records ...*materializedRecord) history.Commit {
 	t.Helper()
 	c := proposedCommit(t, s, records...)
 	// This low-level caller asserts acceptance. Real storage is exercised separately.
@@ -254,8 +254,8 @@ func TestSessionAtomicRejection(t *testing.T) {
 		{"malformed payload", format.Record{Kind: "session.user_input", KindVersion: 1, Payload: []byte{0xff}}, codec.ErrInvalidData},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			prefix := []proposedRecord{createdRecord(t), startRecord(t, 1), inputRecord(t, 1), inputRecord(t, 2), closeoutRecord(t, 1), startRecord(t, 2), runInputRecord(t, 2, 1), closeoutRecord(t, 2)}
-			continuation := []proposedRecord{startRecord(t, 3), runInputRecord(t, 3, 1), closeoutRecord(t, 3)}
+			prefix := []*materializedRecord{createdRecord(t), startRecord(t, 1), inputRecord(t, 1), inputRecord(t, 2), closeoutRecord(t, 1), startRecord(t, 2), runInputRecord(t, 2, 1), closeoutRecord(t, 2)}
+			continuation := []*materializedRecord{startRecord(t, 3), runInputRecord(t, 3, 1), closeoutRecord(t, 3)}
 			s := newSession(t, sessionPolicy())
 			applyRecords(t, s, prefix...)
 			good := proposedCommit(t, s, continuation[:2]...)
@@ -269,13 +269,13 @@ func TestSessionAtomicRejection(t *testing.T) {
 			}
 		})
 	}
-	for _, records := range [][]proposedRecord{{inputRecord(t, 1)}, {startRecord(t, 1)}, {closeoutRecord(t, 1)}} {
+	for _, records := range [][]*materializedRecord{{inputRecord(t, 1)}, {startRecord(t, 1)}, {closeoutRecord(t, 1)}} {
 		s := newSession(t, sessionPolicy())
 		assertRejected(t, s, proposedCommit(t, s, records...), ErrTransition)
 	}
 	s := newSession(t, sessionPolicy())
 	applyRecords(t, s, createdRecord(t))
-	for _, r := range []proposedRecord{inputRecord(t, 1), startRecord(t, 2), closeoutRecord(t, 1)} {
+	for _, r := range []*materializedRecord{inputRecord(t, 1), startRecord(t, 2), closeoutRecord(t, 1)} {
 		assertRejected(t, s, proposedCommit(t, s, r), ErrTransition)
 	}
 	applyRecords(t, s, startRecord(t, 1), inputRecord(t, 1), closeoutRecord(t, 1))
@@ -385,7 +385,7 @@ func TestSessionPolicyAndZero(t *testing.T) {
 }
 
 func TestSessionAdmissionAndCloseoutBounds(t *testing.T) {
-	initial := []proposedRecord{createdRecord(t), startRecord(t, 1), inputRecord(t, 1)}
+	initial := []*materializedRecord{createdRecord(t), startRecord(t, 1), inputRecord(t, 1)}
 	var initialBytes uint64
 	for _, r := range initial {
 		initialBytes += uint64(len(r.format().Payload))
@@ -441,12 +441,12 @@ func TestSessionAdmissionAndCloseoutBounds(t *testing.T) {
 }
 
 func TestSessionRun24CloseoutCapacity(t *testing.T) {
-	all := []proposedRecord{createdRecord(t)}
+	all := []*materializedRecord{createdRecord(t)}
 	for n := uint64(1); n <= 24; n++ {
 		all = append(all, startRecord(t, n), runInputRecord(t, n, 1), closeoutRecord(t, n))
 	}
 	// The final active prefix must reserve the largest supported minimal ending.
-	lastEnding, err := newRunEndedRecord(RunEnded{RunID: allocatedRun(t, testHistoryID(t), 24), Reason: RunEndedCaptureFailed}, testLimits())
+	lastEnding, err := newRunEndedRecord(testHistoryID(t), RunEnded{RunID: allocatedRun(t, testHistoryID(t), 24), Reason: RunEndedCaptureFailed}, testLimits())
 	mustBatch(t, err)
 	all[len(all)-1] = lastEnding
 	var exactBytes uint64
@@ -514,7 +514,7 @@ func TestSessionRun24CloseoutCapacity(t *testing.T) {
 }
 
 func TestSessionAdmissionBeforeDecodeOrClone(t *testing.T) {
-	records := []proposedRecord{createdRecord(t), startRecord(t, 1), inputRecord(t, 1)}
+	records := []*materializedRecord{createdRecord(t), startRecord(t, 1), inputRecord(t, 1)}
 	wide := sessionPolicy()
 	source := newSession(t, wide)
 	accepted := proposedCommit(t, source, records...)

@@ -33,14 +33,18 @@ func (v Created) Clone() Created { return v }
 func (v Created) Equal(other Created) bool { return v == other }
 
 // newCreatedRecord encodes an owned v1 creation record using explicit payload
-// limits. Failure returns zero; it does not establish first/unique creation.
-func newCreatedRecord(v Created, limits codec.Limits) (proposedRecord, error) {
+// limits. Target history is checked before scope omission. Failure returns nil;
+// construction does not establish first/unique creation.
+func newCreatedRecord(scope historyid.HistoryID, v Created, limits codec.Limits) (*materializedRecord, error) {
 	if err := v.Validate(); err != nil {
-		return proposedRecord{}, codec.ErrInvalidData
+		return nil, codec.ErrInvalidData
+	}
+	if scope != v.HistoryID {
+		return nil, ErrIdentity
 	}
 	payload, err := codec.Encode(sessionformat.Created{}, limits)
 	if err != nil {
-		return proposedRecord{}, err
+		return nil, err
 	}
-	return decodeRecord(v.HistoryID, format.Record{Kind: sessionformat.KindCreated, KindVersion: sessionformat.Version, Payload: payload}, limits)
+	return decodeMaterialized(format.Record{Kind: sessionformat.KindCreated, KindVersion: sessionformat.Version, Payload: payload}, limits)
 }

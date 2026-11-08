@@ -51,27 +51,31 @@ func (v UserInput) toFormat(id UserInputID) sessionformat.UserInput {
 }
 
 // newUserInputRecord encodes an owned submission under explicit limits. Failure
-// returns zero; construction neither allocates identity nor establishes acceptance.
-func newUserInputRecord(v UserInput, id UserInputID, limits codec.Limits) (proposedRecord, error) {
+// returns nil; target history and allocated identity are checked before scope
+// omission. Construction neither allocates identity nor establishes acceptance.
+func newUserInputRecord(scope historyid.HistoryID, v UserInput, id UserInputID, limits codec.Limits) (*materializedRecord, error) {
 	if err := v.RunID.Validate(); err != nil {
-		return proposedRecord{}, codec.ErrInvalidData
+		return nil, codec.ErrInvalidData
 	}
 	if err := id.Validate(); err != nil || id.runID != v.RunID {
-		return proposedRecord{}, codec.ErrInvalidData
+		return nil, codec.ErrInvalidData
 	}
 	b := newValueBudget(limits)
 	checkPartsSize(v.Parts, &b)
 	if b.err != nil {
-		return proposedRecord{}, b.err
+		return nil, b.err
 	}
 	if err := v.Validate(); err != nil {
-		return proposedRecord{}, codec.ErrInvalidData
+		return nil, codec.ErrInvalidData
+	}
+	if scope != v.RunID.historyID {
+		return nil, ErrIdentity
 	}
 	payload, err := codec.Encode(v.toFormat(id), limits)
 	if err != nil {
-		return proposedRecord{}, err
+		return nil, err
 	}
-	return decodeRecord(v.RunID.historyID, format.Record{Kind: sessionformat.KindUserInput, KindVersion: sessionformat.Version, Payload: payload}, limits)
+	return decodeMaterialized(format.Record{Kind: sessionformat.KindUserInput, KindVersion: sessionformat.Version, Payload: payload}, limits)
 }
 
 // UserInputView retains immutable accepted backing storage, including its record.
