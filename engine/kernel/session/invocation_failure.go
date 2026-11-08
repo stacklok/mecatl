@@ -88,14 +88,10 @@ func (v InvocationFailure) checkSize(b *valueBudget) {
 }
 
 // newInvocationFailureRecord owns one observed terminal invocation failure.
-// Sizing precedes conversion; target history and full request scope are checked
-// before omission. Failure returns nil and never resolves a request by itself.
-func newInvocationFailureRecord(scope historyid.HistoryID, v InvocationFailure, limits codec.Limits) (*materializedRecord, error) {
+// Sizing precedes conversion. Failure returns nil and never resolves a request by itself.
+func newInvocationFailureRecord(v InvocationFailure, limits codec.Limits) (*materializedRecord, error) {
 	if err := v.RequestID.Validate(); err != nil {
 		return nil, codec.ErrInvalidData
-	}
-	if scope != v.RequestID.runID.historyID {
-		return nil, ErrIdentity
 	}
 	b := newValueBudget(limits)
 	v.checkSize(&b)

@@ -257,14 +257,10 @@ func (v ModelResponse) checkSize(b *valueBudget) {
 }
 
 // newModelResponseRecord owns a complete response, never a truncated subset.
-// Sizing precedes item/part conversion and allocation; target history is checked
-// before scope omission. Failure returns nil.
-func newModelResponseRecord(scope historyid.HistoryID, v ModelResponse, limits codec.Limits) (*materializedRecord, error) {
+// Sizing precedes item/part conversion and allocation. Failure returns nil.
+func newModelResponseRecord(v ModelResponse, limits codec.Limits) (*materializedRecord, error) {
 	if err := v.RequestID.Validate(); err != nil {
 		return nil, codec.ErrInvalidData
-	}
-	if scope != v.RequestID.runID.historyID {
-		return nil, ErrIdentity
 	}
 	b := newValueBudget(limits)
 	v.checkSize(&b)

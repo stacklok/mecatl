@@ -14,7 +14,7 @@ func TestRunStarted(t *testing.T) {
 		t.Fatal(err)
 	}
 	cloned := v.Clone()
-	r, err := newRunStartedRecord(testHistoryID(t), v, testLimits())
+	r, err := newRunStartedRecord(v, testLimits())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -40,13 +40,13 @@ func TestRunStartedInvalid(t *testing.T) {
 		if v.Validate() == nil {
 			t.Fatal("invalid run validated")
 		}
-		if r, err := newRunStartedRecord(testHistoryID(t), v, testLimits()); !errors.Is(err, codec.ErrInvalidData) || r != nil {
+		if r, err := newRunStartedRecord(v, testLimits()); !errors.Is(err, codec.ErrInvalidData) || r != nil {
 			t.Fatalf("invalid record: %v", err)
 		}
 	}
 	limited := testLimits()
 	limited.MaxBytes = 1
-	if r, err := newRunStartedRecord(testHistoryID(t), RunStarted{ID: allocatedRun(t, testHistoryID(t), 1)}, limited); !errors.Is(err, codec.ErrLimitExceeded) || r != nil {
+	if r, err := newRunStartedRecord(RunStarted{ID: allocatedRun(t, testHistoryID(t), 1)}, limited); !errors.Is(err, codec.ErrLimitExceeded) || r != nil {
 		t.Fatalf("payload limit: %v", err)
 	}
 }

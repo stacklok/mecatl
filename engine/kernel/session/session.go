@@ -39,6 +39,14 @@ type sessionState struct {
 	payloadBytes uint64
 }
 
+// validateHistoryID checks the session's history identity grammar.
+func validateHistoryID(id historyid.HistoryID) error {
+	if _, err := historyid.ParseHistoryID(id.String()); err != nil {
+		return errors.New("invalid session history ID")
+	}
+	return nil
+}
+
 // New binds a History and scope with a copied explicit policy, without I/O.
 // Invalid policy returns nil, ErrInvalidPolicy; nil History or invalid scope
 // returns nil, ErrIdentity. Creation must be explicitly added to the first batch.
@@ -49,7 +57,7 @@ func New(h *history.History, id historyid.HistoryID, policy Policy) (*Session, e
 	if h == nil {
 		return nil, ErrIdentity
 	}
-	if err := (Created{HistoryID: id}).Validate(); err != nil {
+	if err := validateHistoryID(id); err != nil {
 		return nil, ErrIdentity
 	}
 	return &Session{history: h, policy: policy, state: sessionState{view: Snapshot{historyID: id}}}, nil
@@ -117,7 +125,7 @@ func (s *Session) prepareEnding(reason RunEndedReason) (prepared, error) {
 	if s.state.view.lifecycle.activeRun == (RunID{}) {
 		return prepared{}, nil
 	}
-	r, err := newRunEndedRecord(s.state.view.historyID, RunEnded{RunID: s.state.view.lifecycle.activeRun, Reason: reason}, s.policy.PayloadLimits)
+	r, err := newRunEndedRecord(RunEnded{RunID: s.state.view.lifecycle.activeRun, Reason: reason}, s.policy.PayloadLimits)
 	if err != nil {
 		return prepared{}, err
 	}

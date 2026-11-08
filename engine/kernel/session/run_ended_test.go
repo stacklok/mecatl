@@ -14,7 +14,7 @@ func TestRunEnded(t *testing.T) {
 	if err := v.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	r, err := newRunEndedRecord(testHistoryID(t), v, testLimits())
+	r, err := newRunEndedRecord(v, testLimits())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -25,7 +25,7 @@ func TestRunEnded(t *testing.T) {
 	if (RunEnded{}).Validate() == nil {
 		t.Fatal("zero interruption validated")
 	}
-	r, err = newRunEndedRecord(testHistoryID(t), RunEnded{}, testLimits())
+	r, err = newRunEndedRecord(RunEnded{}, testLimits())
 	if !errors.Is(err, codec.ErrInvalidData) || r != nil {
 		t.Fatalf("zero interruption record: %v", err)
 	}

@@ -24,7 +24,7 @@ func TestInteractionResponsePayloadPolicyBoundaries(t *testing.T) {
 					for range 8 {
 						response.Items = append(response.Items, ResponseItem{Call: &RequestedCall{Arguments: []byte{0xff}}})
 					}
-					r := interactionRecord(t)(newModelResponseRecord(s.Snapshot().HistoryID(), response, s.policy.PayloadLimits))
+					r := interactionRecord(t)(newModelResponseRecord(response, s.policy.PayloadLimits))
 					c := interactionCommit(t, s, []*materializedRecord{r})
 					limits := s.policy.PayloadLimits
 					lo, hi := 1, int(reflect.ValueOf(limits).Field(field).Int())
@@ -100,8 +100,8 @@ func TestInteractionOutcomePolicyBoundaries(t *testing.T) {
 					})
 					id := s.state.view.lifecycle.pending
 					records := []*materializedRecord{
-						interactionRecord(t)(newModelResponseRecord(s.Snapshot().HistoryID(), ModelResponse{RequestID: id, Terminal: ResponseTerminalNormal, Private: &OpaqueProviderData{Producer: "p", Format: "f", Version: 1, Data: []byte{0xff}}}, s.policy.PayloadLimits)),
-						interactionRecord(t)(newRunEndedRecord(s.Snapshot().HistoryID(), RunEnded{RunID: id.runID, Reason: RunEndedCompleted}, s.policy.PayloadLimits)),
+						interactionRecord(t)(newModelResponseRecord(ModelResponse{RequestID: id, Terminal: ResponseTerminalNormal, Private: &OpaqueProviderData{Producer: "p", Format: "f", Version: 1, Data: []byte{0xff}}}, s.policy.PayloadLimits)),
+						interactionRecord(t)(newRunEndedRecord(RunEnded{RunID: id.runID, Reason: RunEndedCompleted}, s.policy.PayloadLimits)),
 					}
 					c := interactionCommit(t, s, records)
 					p := s.policy

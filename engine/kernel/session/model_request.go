@@ -127,9 +127,9 @@ func (v ModelRequest) checkSize(b *valueBudget) {
 }
 
 // newModelRequestRecord owns one invocation commitment. It sizes before DTO
-// conversion and checks target history and full public scope before omission.
+// conversion and checks full reference scope before omission.
 // Failure returns nil; accepted source membership is checked by the aggregate.
-func newModelRequestRecord(scope historyid.HistoryID, v ModelRequest, id ModelRequestID, limits codec.Limits) (*materializedRecord, error) {
+func newModelRequestRecord(v ModelRequest, id ModelRequestID, limits codec.Limits) (*materializedRecord, error) {
 	if err := id.Validate(); err != nil || id.runID != v.RunID {
 		return nil, codec.ErrInvalidData
 	}
@@ -140,9 +140,6 @@ func newModelRequestRecord(scope historyid.HistoryID, v ModelRequest, id ModelRe
 	}
 	if err := v.Validate(); err != nil {
 		return nil, codec.ErrInvalidData
-	}
-	if scope != v.RunID.historyID {
-		return nil, ErrIdentity
 	}
 	payload, err := codec.Encode(v.toFormat(id), limits)
 	if err != nil {

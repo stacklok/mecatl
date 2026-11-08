@@ -77,9 +77,9 @@ func (v EffectiveInput) toFormat() sessionformat.EffectiveInput {
 }
 
 // newEffectiveInputRecord encodes an owned increment under explicit limits.
-// Failure returns nil. Construction checks target history and full reference scope
-// before omission but does not prove membership or order; admission checks those.
-func newEffectiveInputRecord(scope historyid.HistoryID, v EffectiveInput, limits codec.Limits) (*materializedRecord, error) {
+// Failure returns nil. Construction checks full reference scope before omission
+// but does not prove membership or order; admission checks those.
+func newEffectiveInputRecord(v EffectiveInput, limits codec.Limits) (*materializedRecord, error) {
 	if err := v.RunID.Validate(); err != nil {
 		return nil, codec.ErrInvalidData
 	}
@@ -95,9 +95,6 @@ func newEffectiveInputRecord(scope historyid.HistoryID, v EffectiveInput, limits
 	}
 	if err := v.Validate(); err != nil {
 		return nil, codec.ErrInvalidData
-	}
-	if scope != v.RunID.historyID {
-		return nil, ErrIdentity
 	}
 	fact := v.toFormat()
 	payload, err := codec.Encode(fact, limits)

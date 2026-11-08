@@ -147,7 +147,7 @@ func TestAdmissionFailureAtomicity(t *testing.T) {
 			name:  "completed pending ending",
 			stage: "pending",
 			make: func(s *Session) *materializedRecord {
-				return interactionRecord(t)(newRunEndedRecord(s.Snapshot().HistoryID(), RunEnded{RunID: s.Snapshot().ActiveRun(), Reason: RunEndedCompleted}, s.policy.PayloadLimits))
+				return interactionRecord(t)(newRunEndedRecord(RunEnded{RunID: s.Snapshot().ActiveRun(), Reason: RunEndedCompleted}, s.policy.PayloadLimits))
 			},
 			want: ErrTransition,
 		},
@@ -278,13 +278,13 @@ func TestInteractionAdmissionAllPaths(t *testing.T) {
 		return interactionRecord(t)(makeRequestRecord(v, s.policy.PayloadLimits))
 	}
 	response := func(s *Session) *materializedRecord {
-		return interactionRecord(t)(newModelResponseRecord(s.Snapshot().HistoryID(), ModelResponse{RequestID: interactionRequest(s, 1).ID, Terminal: ResponseTerminalNormal}, s.policy.PayloadLimits))
+		return interactionRecord(t)(newModelResponseRecord(ModelResponse{RequestID: interactionRequest(s, 1).ID, Terminal: ResponseTerminalNormal}, s.policy.PayloadLimits))
 	}
 	failure := func(s *Session) *materializedRecord {
-		return interactionRecord(t)(newInvocationFailureRecord(s.Snapshot().HistoryID(), InvocationFailure{RequestID: interactionRequest(s, 1).ID, Class: InvocationFailureTransport}, s.policy.PayloadLimits))
+		return interactionRecord(t)(newInvocationFailureRecord(InvocationFailure{RequestID: interactionRequest(s, 1).ID, Class: InvocationFailureTransport}, s.policy.PayloadLimits))
 	}
 	end := func(s *Session, reason RunEndedReason) *materializedRecord {
-		return interactionRecord(t)(newRunEndedRecord(s.Snapshot().HistoryID(), RunEnded{RunID: interactionRequest(s, 1).ID.runID, Reason: reason}, s.policy.PayloadLimits))
+		return interactionRecord(t)(newRunEndedRecord(RunEnded{RunID: interactionRequest(s, 1).ID.runID, Reason: reason}, s.policy.PayloadLimits))
 	}
 	input := func(s *Session) *materializedRecord {
 		return interactionRecord(t)(makeInputRecord(identifiedInput{ID: UserInputID{runID: interactionRequest(s, 1).ID.runID, ordinal: s.state.view.lifecycle.inputs + 1}}, s.policy.PayloadLimits))
@@ -294,15 +294,15 @@ func TestInteractionAdmissionAllPaths(t *testing.T) {
 		if nonempty {
 			v.Inputs = []InputItem{{Inline: &AttributedInput{Actor: "harness", Purpose: PromptContext, Source: ContentSource{Description: "prepared"}}}}
 		}
-		return interactionRecord(t)(newEffectiveInputRecord(s.Snapshot().HistoryID(), v, s.policy.PayloadLimits))
+		return interactionRecord(t)(newEffectiveInputRecord(v, s.policy.PayloadLimits))
 	}
 	contextRecord := func(s *Session) *materializedRecord {
-		return interactionRecord(t)(newModelBindingRecord(s.Snapshot().HistoryID(), ModelBinding{HistoryID: s.Snapshot().HistoryID(), Route: "new", API: "a", Model: "new", Settings: []byte("{}")}, s.policy.PayloadLimits))
+		return interactionRecord(t)(newModelBindingRecord(ModelBinding{HistoryID: s.Snapshot().HistoryID(), Route: "new", API: "a", Model: "new", Settings: []byte("{}")}, s.policy.PayloadLimits))
 	}
 	cases := []testCase{
 		{"valid request", "active", func(s *Session) []*materializedRecord { return []*materializedRecord{request(s)} }, nil},
 		{"source needs active run", "idle", func(s *Session) []*materializedRecord {
-			return []*materializedRecord{interactionRecord(t)(newRunStartedRecord(s.Snapshot().HistoryID(), RunStarted{ID: interactionRequest(s, 1).ID.runID}, s.policy.PayloadLimits)), contextRecord(s), request(s)}
+			return []*materializedRecord{interactionRecord(t)(newRunStartedRecord(RunStarted{ID: interactionRequest(s, 1).ID.runID}, s.policy.PayloadLimits)), contextRecord(s), request(s)}
 		}, ErrTransition},
 		{"provisional binding insufficient", "unbound", func(s *Session) []*materializedRecord { return []*materializedRecord{contextRecord(s), request(s)} }, ErrTransition},
 		{"context before and after prospective", "active", func(s *Session) []*materializedRecord {
@@ -437,9 +437,9 @@ func TestInteractionOverflowAndMaterializationAgreement(t *testing.T) {
 	req.RetryOf = new(interactionRequest(s, 1).ID)
 	records := []*materializedRecord{
 		interactionRecord(t)(makeRequestRecord(req, s.policy.PayloadLimits)),
-		interactionRecord(t)(newModelResponseRecord(s.Snapshot().HistoryID(), ModelResponse{RequestID: *req.RetryOf, Terminal: ResponseTerminalNormal, Items: []ResponseItem{{Call: &RequestedCall{}}}}, s.policy.PayloadLimits)),
-		interactionRecord(t)(newInvocationFailureRecord(s.Snapshot().HistoryID(), InvocationFailure{RequestID: *req.RetryOf, Class: InvocationFailureTimeout}, s.policy.PayloadLimits)),
-		interactionRecord(t)(newRunEndedRecord(s.Snapshot().HistoryID(), RunEnded{RunID: req.ID.runID, Reason: RunEndedCaptureFailed, Capture: &CaptureFailureEvidence{RequestID: *req.RetryOf}}, s.policy.PayloadLimits)),
+		interactionRecord(t)(newModelResponseRecord(ModelResponse{RequestID: *req.RetryOf, Terminal: ResponseTerminalNormal, Items: []ResponseItem{{Call: &RequestedCall{}}}}, s.policy.PayloadLimits)),
+		interactionRecord(t)(newInvocationFailureRecord(InvocationFailure{RequestID: *req.RetryOf, Class: InvocationFailureTimeout}, s.policy.PayloadLimits)),
+		interactionRecord(t)(newRunEndedRecord(RunEnded{RunID: req.ID.runID, Reason: RunEndedCaptureFailed, Capture: &CaptureFailureEvidence{RequestID: *req.RetryOf}}, s.policy.PayloadLimits)),
 	}
 	for _, r := range records {
 		imported, err := decodeMaterialized(r.format(), s.policy.PayloadLimits)

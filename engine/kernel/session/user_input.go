@@ -51,9 +51,9 @@ func (v UserInput) toFormat(id UserInputID) sessionformat.UserInput {
 }
 
 // newUserInputRecord encodes an owned submission under explicit limits. Failure
-// returns nil; target history and allocated identity are checked before scope
-// omission. Construction neither allocates identity nor establishes acceptance.
-func newUserInputRecord(scope historyid.HistoryID, v UserInput, id UserInputID, limits codec.Limits) (*materializedRecord, error) {
+// returns nil; allocated identity is checked before scope omission. Construction
+// neither allocates identity nor establishes acceptance.
+func newUserInputRecord(v UserInput, id UserInputID, limits codec.Limits) (*materializedRecord, error) {
 	if err := v.RunID.Validate(); err != nil {
 		return nil, codec.ErrInvalidData
 	}
@@ -67,9 +67,6 @@ func newUserInputRecord(scope historyid.HistoryID, v UserInput, id UserInputID, 
 	}
 	if err := v.Validate(); err != nil {
 		return nil, codec.ErrInvalidData
-	}
-	if scope != v.RunID.historyID {
-		return nil, ErrIdentity
 	}
 	payload, err := codec.Encode(v.toFormat(id), limits)
 	if err != nil {

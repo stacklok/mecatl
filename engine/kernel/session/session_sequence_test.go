@@ -53,11 +53,11 @@ func TestSessionSequenceExhaustion(t *testing.T) {
 			s, limits := internalFixture(t)
 			id := s.Snapshot().HistoryID()
 			run := RunID{historyID: id, ordinal: 1}
-			created, err := newCreatedRecord(id, Created{HistoryID: id}, limits)
+			created, err := newCreatedRecord(Created{HistoryID: id}, limits)
 			if err != nil {
 				t.Fatal(err)
 			}
-			start, err := newRunStartedRecord(id, RunStarted{ID: run}, limits)
+			start, err := newRunStartedRecord(RunStarted{ID: run}, limits)
 			if err != nil {
 				t.Fatal(err)
 			}

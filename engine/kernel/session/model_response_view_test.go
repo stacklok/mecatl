@@ -99,7 +99,7 @@ func TestModelResponseViewRepresentationOwnershipAndShortCircuit(t *testing.T) {
 		{Content: &ResponseContent{Kind: ResponseContentRefusal, Parts: []ContentPart{}}},
 	}}
 	expected := response.Clone()
-	r := interactionRecord(t)(newModelResponseRecord(s.Snapshot().HistoryID(), response, s.policy.PayloadLimits))
+	r := interactionRecord(t)(newModelResponseRecord(response, s.policy.PayloadLimits))
 	// Mutation controls: each operation changes its own representation, but must
 	// not change the constructor's captured bytes or any accepted view.
 	*response.ProviderStopReason = "changed"

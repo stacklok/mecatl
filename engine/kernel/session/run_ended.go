@@ -154,8 +154,8 @@ func (v RunEnded) checkSize(b *valueBudget) {
 }
 
 // newRunEndedRecord encodes a unified ending after sizing all retained evidence.
-// Target history and full capture scope are checked before omission. Failure is nil.
-func newRunEndedRecord(scope historyid.HistoryID, v RunEnded, limits codec.Limits) (*materializedRecord, error) {
+// Full capture scope is checked before omission. Failure returns nil.
+func newRunEndedRecord(v RunEnded, limits codec.Limits) (*materializedRecord, error) {
 	b := newValueBudget(limits)
 	v.checkSize(&b)
 	if b.err != nil {
@@ -163,9 +163,6 @@ func newRunEndedRecord(scope historyid.HistoryID, v RunEnded, limits codec.Limit
 	}
 	if err := v.Validate(); err != nil {
 		return nil, codec.ErrInvalidData
-	}
-	if scope != v.RunID.historyID {
-		return nil, ErrIdentity
 	}
 	payload, err := codec.Encode(v.toFormat(), limits)
 	if err != nil {

@@ -71,7 +71,7 @@ func newSession(t testing.TB, p Policy) *Session {
 }
 func createdRecord(t testing.TB) *materializedRecord {
 	t.Helper()
-	r, err := newCreatedRecord(testHistoryID(t), Created{HistoryID: testHistoryID(t)}, testLimits())
+	r, err := newCreatedRecord(Created{HistoryID: testHistoryID(t)}, testLimits())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,7 +91,7 @@ func runInputRecord(t testing.TB, run, ordinal uint64) *materializedRecord {
 }
 func startRecord(t testing.TB, ordinal uint64) *materializedRecord {
 	t.Helper()
-	r, err := newRunStartedRecord(testHistoryID(t), RunStarted{ID: allocatedRun(t, testHistoryID(t), ordinal)}, testLimits())
+	r, err := newRunStartedRecord(RunStarted{ID: allocatedRun(t, testHistoryID(t), ordinal)}, testLimits())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,7 +99,7 @@ func startRecord(t testing.TB, ordinal uint64) *materializedRecord {
 }
 func closeoutRecord(t testing.TB, ordinal uint64) *materializedRecord {
 	t.Helper()
-	r, err := newRunEndedRecord(testHistoryID(t), RunEnded{RunID: allocatedRun(t, testHistoryID(t), ordinal), Reason: RunEndedInterrupted}, testLimits())
+	r, err := newRunEndedRecord(RunEnded{RunID: allocatedRun(t, testHistoryID(t), ordinal), Reason: RunEndedInterrupted}, testLimits())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -446,7 +446,7 @@ func TestSessionRun24CloseoutCapacity(t *testing.T) {
 		all = append(all, startRecord(t, n), runInputRecord(t, n, 1), closeoutRecord(t, n))
 	}
 	// The final active prefix must reserve the largest supported minimal ending.
-	lastEnding, err := newRunEndedRecord(testHistoryID(t), RunEnded{RunID: allocatedRun(t, testHistoryID(t), 24), Reason: RunEndedCaptureFailed}, testLimits())
+	lastEnding, err := newRunEndedRecord(RunEnded{RunID: allocatedRun(t, testHistoryID(t), 24), Reason: RunEndedCaptureFailed}, testLimits())
 	mustBatch(t, err)
 	all[len(all)-1] = lastEnding
 	var exactBytes uint64

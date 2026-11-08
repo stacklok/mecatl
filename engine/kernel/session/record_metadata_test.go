@@ -1,7 +1,6 @@
 package session
 
 import (
-	"errors"
 	"reflect"
 	"testing"
 
@@ -53,11 +52,11 @@ func TestRecordMaterializationAgreementAndOwnership(t *testing.T) {
 		name string
 		make func() (*materializedRecord, error)
 	}{
-		{"created", func() (*materializedRecord, error) { return newCreatedRecord(id, Created{HistoryID: id}, limits) }},
+		{"created", func() (*materializedRecord, error) { return newCreatedRecord(Created{HistoryID: id}, limits) }},
 		{"input", func() (*materializedRecord, error) { return makeInputRecord(input, limits) }},
-		{"start", func() (*materializedRecord, error) { return newRunStartedRecord(s.Snapshot().HistoryID(), run, limits) }},
+		{"start", func() (*materializedRecord, error) { return newRunStartedRecord(run, limits) }},
 		{"interruption", func() (*materializedRecord, error) {
-			return newRunEndedRecord(s.Snapshot().HistoryID(), RunEnded{RunID: run.ID, Reason: RunEndedInterrupted}, limits)
+			return newRunEndedRecord(RunEnded{RunID: run.ID, Reason: RunEndedInterrupted}, limits)
 		}},
 	}
 	for _, tc := range constructors {
@@ -108,7 +107,7 @@ func TestRequestAndEndingMaterializationOwnsCompleteValues(t *testing.T) {
 	ending := RunEnded{RunID: run, Reason: RunEndedCaptureFailed, Explanation: new("retained detail"), Capture: &CaptureFailureEvidence{RequestID: id, Evidence: &ObservedEvidence{Correlation: new("retained correlation")}, Usage: &InvocationUsage{Input: new(int64(0)), Raw: &OpaqueProviderData{Producer: "p", Format: "usage", Version: 1, Data: []byte{0xff}}}}}
 	wantRequest, wantEnding := request.toFormat().Clone(), ending.toFormat().Clone()
 	r := interactionRecord(t)(makeRequestRecord(request, limits))
-	e := interactionRecord(t)(newRunEndedRecord(s.Snapshot().HistoryID(), ending, limits))
+	e := interactionRecord(t)(newRunEndedRecord(ending, limits))
 	request.Recipe.Parameters[0] = 0
 	request.Recipe.Check[0] = 0
 	retry = id
@@ -139,11 +138,11 @@ func TestMaterializedPreflightBoundedDecodeDoesNotPublish(t *testing.T) {
 	s, limits := internalFixture(t)
 	id := s.Snapshot().HistoryID()
 	run := RunID{historyID: id, ordinal: 1}
-	created, err := newCreatedRecord(id, Created{HistoryID: id}, limits)
+	created, err := newCreatedRecord(Created{HistoryID: id}, limits)
 	if err != nil {
 		t.Fatal(err)
 	}
-	start, err := newRunStartedRecord(s.Snapshot().HistoryID(), RunStarted{ID: run}, limits)
+	start, err := newRunStartedRecord(RunStarted{ID: run}, limits)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -156,7 +155,7 @@ func TestMaterializedPreflightBoundedDecodeDoesNotPublish(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	closeout, err := newRunEndedRecord(s.Snapshot().HistoryID(), RunEnded{RunID: run, Reason: RunEndedInterrupted}, limits)
+	closeout, err := newRunEndedRecord(RunEnded{RunID: run, Reason: RunEndedInterrupted}, limits)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -169,61 +168,5 @@ func TestMaterializedPreflightBoundedDecodeDoesNotPublish(t *testing.T) {
 	}
 	if !reflect.DeepEqual(before, s.Snapshot()) || !internalUserInputsMatch(s.Snapshot(), run, 1) {
 		t.Fatal("preflight published")
-	}
-}
-
-func TestTypedConstructionChecksTargetHistory(t *testing.T) {
-	s, limits := internalFixture(t)
-	owner := s.Snapshot().HistoryID()
-	foreign, err := historyid.ParseHistoryID("HST2222222222222222222222")
-	interactionCheck(t, err)
-	run := RunID{historyID: foreign, ordinal: 1}
-	input := UserInputID{runID: run, ordinal: 1}
-	request := requestID(foreign, 1, 1)
-	for name, makeRecord := range map[string]func(historyid.HistoryID) (*materializedRecord, error){
-		"created": func(scope historyid.HistoryID) (*materializedRecord, error) {
-			return newCreatedRecord(scope, Created{HistoryID: foreign}, limits)
-		},
-		"start": func(scope historyid.HistoryID) (*materializedRecord, error) {
-			return newRunStartedRecord(scope, RunStarted{ID: run}, limits)
-		},
-		"input": func(scope historyid.HistoryID) (*materializedRecord, error) {
-			return newUserInputRecord(scope, UserInput{RunID: run}, input, limits)
-		},
-		"instructions": func(scope historyid.HistoryID) (*materializedRecord, error) {
-			return newInstructionsRecord(scope, Instructions{HistoryID: foreign}, limits)
-		},
-		"catalog": func(scope historyid.HistoryID) (*materializedRecord, error) {
-			return newToolCatalogRecord(scope, ToolCatalog{HistoryID: foreign}, limits)
-		},
-		"binding": func(scope historyid.HistoryID) (*materializedRecord, error) {
-			return newModelBindingRecord(scope, ModelBinding{HistoryID: foreign, Route: "r", API: "a", Model: "m", Settings: []byte("{}")}, limits)
-		},
-		"effective": func(scope historyid.HistoryID) (*materializedRecord, error) {
-			return newEffectiveInputRecord(scope, EffectiveInput{RunID: run, Inputs: []InputItem{{UserInputID: &input}}}, limits)
-		},
-		"request": func(scope historyid.HistoryID) (*materializedRecord, error) {
-			return newModelRequestRecord(scope, ModelRequest{RunID: run, Source: SourceHead{Sequence: 1, CID: contentid.Sum([]byte("source"))}, Recipe: ConstructionRecipe{Algorithm: "a", Version: 1, Check: []byte{1}}, RetryOf: &request}, request, limits)
-		},
-		"response": func(scope historyid.HistoryID) (*materializedRecord, error) {
-			return newModelResponseRecord(scope, ModelResponse{RequestID: request, Terminal: ResponseTerminalNormal}, limits)
-		},
-		"failure": func(scope historyid.HistoryID) (*materializedRecord, error) {
-			return newInvocationFailureRecord(scope, InvocationFailure{RequestID: request, Class: InvocationFailureTransport}, limits)
-		},
-		"ending": func(scope historyid.HistoryID) (*materializedRecord, error) {
-			return newRunEndedRecord(scope, RunEnded{RunID: run, Reason: RunEndedCaptureFailed, Capture: &CaptureFailureEvidence{RequestID: request}}, limits)
-		},
-	} {
-		t.Run(name, func(t *testing.T) {
-			for _, scope := range []historyid.HistoryID{owner, {}} {
-				if r, err := makeRecord(scope); !errors.Is(err, ErrIdentity) || r != nil {
-					t.Fatalf("foreign or zero target construction: %v, %v", r, err)
-				}
-			}
-			if r, err := makeRecord(foreign); err != nil || r == nil {
-				t.Fatalf("owner construction: %v", err)
-			}
-		})
 	}
 }

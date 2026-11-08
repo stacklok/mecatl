@@ -37,12 +37,12 @@ func TestAllocatedAuthoringScopeBeforePersistenceConversion(t *testing.T) {
 	mustBatch(t, err)
 	for _, owner := range []RunID{{}, {historyID: run.historyID, ordinal: 2}, {historyID: foreign, ordinal: 1}} {
 		inputID := UserInputID{runID: owner, ordinal: 1}
-		if r, err := newUserInputRecord(run.historyID, UserInput{RunID: run}, inputID, limits); !errors.Is(err, codec.ErrInvalidData) || r != nil {
+		if r, err := newUserInputRecord(UserInput{RunID: run}, inputID, limits); !errors.Is(err, codec.ErrInvalidData) || r != nil {
 			t.Fatalf("input identity lost scope before conversion: %v", err)
 		}
 		requestID := ModelRequestID{runID: owner, requestOrdinal: 1}
 		v := ModelRequest{RunID: run, Source: SourceHead{Sequence: 1, CID: contentid.Sum([]byte("source"))}, Recipe: ConstructionRecipe{Algorithm: "a", Version: 1, Check: []byte{1}}}
-		if r, err := newModelRequestRecord(run.historyID, v, requestID, limits); !errors.Is(err, codec.ErrInvalidData) || r != nil {
+		if r, err := newModelRequestRecord(v, requestID, limits); !errors.Is(err, codec.ErrInvalidData) || r != nil {
 			t.Fatalf("request identity lost scope before conversion: %v", err)
 		}
 	}
@@ -83,11 +83,16 @@ func TestIdleContextReplacementHistoryScope(t *testing.T) {
 				},
 			} {
 				count, admission := len(b.records), b.admission
-				if err := replace(foreign); !errors.Is(err, ErrIdentity) {
-					t.Fatalf("foreign idle replacement: %v", err)
-				}
-				if len(b.records) != count || b.admission != admission || !reflect.DeepEqual(before, detachedSessionState(s.state)) {
-					t.Fatal("foreign replacement changed batch or accepted state")
+				for _, invalid := range []struct {
+					scope historyid.HistoryID
+					want  error
+				}{{foreign, ErrIdentity}, {historyid.HistoryID{}, codec.ErrInvalidData}} {
+					if err := replace(invalid.scope); !errors.Is(err, invalid.want) {
+						t.Fatalf("invalid idle replacement: %v; want %v", err, invalid.want)
+					}
+					if len(b.records) != count || b.admission != admission || !reflect.DeepEqual(before, detachedSessionState(s.state)) {
+						t.Fatal("invalid replacement changed batch or accepted state")
+					}
 				}
 				interactionCheck(t, replace(s.Snapshot().HistoryID()))
 			}
@@ -169,8 +174,7 @@ func TestForeignOutcomeAndEndingHistoryScope(t *testing.T) {
 			s := interactionFixture(t, "pending")
 			b, err := s.BeginCommit()
 			interactionCheck(t, err)
-			add := func(scope historyid.HistoryID) error {
-				id := requestID(scope, 1, 1)
+			add := func(id ModelRequestID) error {
 				switch kind {
 				case "response":
 					return b.AddModelResponse(ModelResponse{RequestID: id, Terminal: ResponseTerminalNormal})
@@ -181,19 +185,208 @@ func TestForeignOutcomeAndEndingHistoryScope(t *testing.T) {
 				}
 			}
 			before, admission := detachedSessionState(s.state), b.admission
-			if err := add(foreign); !errors.Is(err, ErrIdentity) {
-				t.Fatalf("foreign history with equal ordinals: %v", err)
+			for _, invalid := range []struct {
+				id   ModelRequestID
+				want error
+			}{
+				{requestID(foreign, 1, 1), ErrIdentity},
+				{ModelRequestID{}, codec.ErrInvalidData},
+				{requestID(historyid.HistoryID{}, 1, 1), codec.ErrInvalidData},
+				{requestID(foreign, 0, 1), codec.ErrInvalidData},
+			} {
+				if err := add(invalid.id); !errors.Is(err, invalid.want) {
+					t.Fatalf("invalid outcome/ending identity: %v; want %v", err, invalid.want)
+				}
+				if len(b.records) != 0 || b.admission != admission || !reflect.DeepEqual(before, detachedSessionState(s.state)) {
+					t.Fatal("invalid outcome/ending changed batch or accepted state")
+				}
 			}
-			if len(b.records) != 0 || b.admission != admission || !reflect.DeepEqual(before, detachedSessionState(s.state)) {
-				t.Fatal("foreign outcome/ending changed batch or accepted state")
+			if kind != "ending" {
+				if err := add(requestID(foreign, 1, 0)); !errors.Is(err, codec.ErrInvalidData) {
+					t.Fatalf("invalid request ordinal in foreign history: %v", err)
+				}
+				if len(b.records) != 0 || b.admission != admission || !reflect.DeepEqual(before, detachedSessionState(s.state)) {
+					t.Fatal("invalid request ordinal changed batch or accepted state")
+				}
 			}
-			interactionCheck(t, add(s.Snapshot().HistoryID()))
+			interactionCheck(t, add(requestID(s.Snapshot().HistoryID(), 1, 1)))
 			_, err = s.SubmitCommit(context.Background(), b)
 			interactionCheck(t, err)
 			if s.Snapshot().RecordCount() != before.records+1 {
 				t.Fatal("failed outcome/ending retained")
 			}
 			interactionReplay(t, s)
+		})
+	}
+}
+
+func TestPublicRunAuthoringScope(t *testing.T) {
+	foreign, err := historyid.ParseHistoryID("HST2222222222222222222222")
+	interactionCheck(t, err)
+	for _, kind := range []string{"effective", "input", "request"} {
+		t.Run(kind, func(t *testing.T) {
+			s := interactionFixture(t, "active")
+			run := s.Snapshot().ActiveRun()
+			b, err := s.BeginCommit()
+			interactionCheck(t, err)
+			add := func(owner RunID) error {
+				switch kind {
+				case "effective":
+					return b.AddEffectiveInput(EffectiveInput{RunID: owner})
+				case "input":
+					id, err := b.AddUserInput(UserInput{RunID: owner})
+					if err != nil && id != (UserInputID{}) {
+						t.Fatal("failed input returned identity")
+					}
+					if err == nil && id != (UserInputID{runID: run, ordinal: 1}) {
+						t.Fatal("failed input consumed identity")
+					}
+					return err
+				default:
+					v := interactionRequest(s, 1).authoring()
+					v.RunID = owner
+					id, err := b.AddModelRequest(v)
+					if err != nil && id != (ModelRequestID{}) {
+						t.Fatal("failed request returned identity")
+					}
+					if err == nil && id != requestID(run.historyID, run.ordinal, 1) {
+						t.Fatal("failed request consumed identity")
+					}
+					return err
+				}
+			}
+			before, admission := detachedSessionState(s.state), b.admission
+			for _, owner := range []RunID{{}, {ordinal: 1}, {historyID: run.historyID}, {historyID: foreign, ordinal: 1}, {historyID: foreign}, {historyID: run.historyID, ordinal: 2}} {
+				want := ErrTransition
+				if kind == "effective" {
+					if owner.Validate() != nil {
+						want = codec.ErrInvalidData
+					} else if owner.historyID != run.historyID {
+						want = ErrIdentity
+					}
+				}
+				if err := add(owner); !errors.Is(err, want) {
+					t.Fatalf("invalid run ownership: %v; want %v", err, want)
+				}
+				if len(b.records) != 0 || b.admission != admission || !reflect.DeepEqual(before, detachedSessionState(s.state)) {
+					t.Fatal("failed authoring changed batch or accepted state")
+				}
+			}
+			interactionCheck(t, add(run))
+			_, err = s.SubmitCommit(context.Background(), b)
+			interactionCheck(t, err)
+			if s.Snapshot().RecordCount() != before.records+1 {
+				t.Fatal("failed authoring retained facts")
+			}
+			interactionReplay(t, s)
+		})
+	}
+}
+
+func TestPublicOwnerCheckPrecedesOversizedPayload(t *testing.T) {
+	foreign, err := historyid.ParseHistoryID("HST2222222222222222222222")
+	interactionCheck(t, err)
+	for name, add := range map[string]func(*SessionCommit, historyid.HistoryID) error{
+		"instructions": func(b *SessionCommit, scope historyid.HistoryID) error {
+			return b.ReplaceInstructions(Instructions{HistoryID: scope})
+		},
+		"catalog": func(b *SessionCommit, scope historyid.HistoryID) error {
+			return b.ReplaceToolCatalog(ToolCatalog{HistoryID: scope})
+		},
+		"binding": func(b *SessionCommit, scope historyid.HistoryID) error {
+			return b.ReplaceModelBinding(ModelBinding{HistoryID: scope, Route: "r", API: "a", Model: "m", Settings: []byte("{}")})
+		},
+		"effective": func(b *SessionCommit, scope historyid.HistoryID) error {
+			return b.AddEffectiveInput(EffectiveInput{RunID: RunID{historyID: scope, ordinal: 1}})
+		},
+		"response": func(b *SessionCommit, scope historyid.HistoryID) error {
+			return b.AddModelResponse(ModelResponse{RequestID: requestID(scope, 1, 1), Terminal: ResponseTerminalError})
+		},
+		"failure": func(b *SessionCommit, scope historyid.HistoryID) error {
+			return b.AddInvocationFailure(InvocationFailure{RequestID: requestID(scope, 1, 1), Class: InvocationFailureLocal})
+		},
+		"ending": func(b *SessionCommit, scope historyid.HistoryID) error {
+			return b.AddRunEnded(RunEnded{RunID: RunID{historyID: scope, ordinal: 1}, Reason: RunEndedInterrupted})
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			stage := "pending"
+			if name == "effective" {
+				stage = "active"
+			}
+			s := interactionFixture(t, stage)
+			control, err := s.BeginCommit()
+			interactionCheck(t, err)
+			if name == "effective" {
+				_, err := control.AddUserInput(UserInput{RunID: s.Snapshot().ActiveRun()})
+				interactionCheck(t, err)
+			}
+			interactionCheck(t, add(control, s.Snapshot().HistoryID()))
+			interactionCheck(t, control.Discard())
+
+			s.policy.PayloadLimits.MaxBytes = 1
+			b, err := s.BeginCommit()
+			interactionCheck(t, err)
+			before, admission := detachedSessionState(s.state), b.admission
+			for _, invalid := range []struct {
+				scope historyid.HistoryID
+				want  error
+			}{{foreign, ErrIdentity}, {historyid.HistoryID{}, codec.ErrInvalidData}, {s.Snapshot().HistoryID(), codec.ErrLimitExceeded}} {
+				if err := add(b, invalid.scope); !errors.Is(err, invalid.want) {
+					t.Fatalf("owner/payload precedence: %v; want %v", err, invalid.want)
+				}
+				if len(b.records) != 0 || b.admission != admission || !reflect.DeepEqual(before, detachedSessionState(s.state)) {
+					t.Fatal("failed owner/payload validation changed batch or accepted state")
+				}
+			}
+			interactionCheck(t, b.Discard())
+		})
+	}
+}
+
+func TestPublicOwnerCheckPrecedesPayloadValidation(t *testing.T) {
+	foreign, err := historyid.ParseHistoryID("HST2222222222222222222222")
+	interactionCheck(t, err)
+	for name, add := range map[string]func(*SessionCommit, historyid.HistoryID) error{
+		"instructions": func(b *SessionCommit, scope historyid.HistoryID) error {
+			return b.ReplaceInstructions(Instructions{HistoryID: scope, Blocks: []InstructionBlock{{}}})
+		},
+		"catalog": func(b *SessionCommit, scope historyid.HistoryID) error {
+			return b.ReplaceToolCatalog(ToolCatalog{HistoryID: scope, Tools: []ToolDefinition{{}}})
+		},
+		"binding": func(b *SessionCommit, scope historyid.HistoryID) error {
+			return b.ReplaceModelBinding(ModelBinding{HistoryID: scope})
+		},
+		"effective": func(b *SessionCommit, scope historyid.HistoryID) error {
+			return b.AddEffectiveInput(EffectiveInput{RunID: RunID{historyID: scope, ordinal: 1}, Inputs: []InputItem{{}}})
+		},
+		"response": func(b *SessionCommit, scope historyid.HistoryID) error {
+			return b.AddModelResponse(ModelResponse{RequestID: requestID(scope, 1, 1)})
+		},
+		"failure": func(b *SessionCommit, scope historyid.HistoryID) error {
+			return b.AddInvocationFailure(InvocationFailure{RequestID: requestID(scope, 1, 1)})
+		},
+		"ending": func(b *SessionCommit, scope historyid.HistoryID) error {
+			return b.AddRunEnded(RunEnded{RunID: RunID{historyID: scope, ordinal: 1}})
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			s := interactionFixture(t, "pending")
+			b, err := s.BeginCommit()
+			interactionCheck(t, err)
+			before, admission := detachedSessionState(s.state), b.admission
+			for _, invalid := range []struct {
+				scope historyid.HistoryID
+				want  error
+			}{{foreign, ErrIdentity}, {historyid.HistoryID{}, codec.ErrInvalidData}, {s.Snapshot().HistoryID(), codec.ErrInvalidData}} {
+				if err := add(b, invalid.scope); !errors.Is(err, invalid.want) {
+					t.Fatalf("owner/payload precedence: %v; want %v", err, invalid.want)
+				}
+				if len(b.records) != 0 || b.admission != admission || !reflect.DeepEqual(before, detachedSessionState(s.state)) {
+					t.Fatal("failed owner/payload validation changed batch or accepted state")
+				}
+			}
+			interactionCheck(t, b.Discard())
 		})
 	}
 }
