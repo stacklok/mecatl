@@ -407527,6 +407527,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1793996566475,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "8c1276a7da77eca4ce31f3e7c44023464aeb0994",
+          "message": "feat(kernel): retain passive model interactions and run endings (#2746)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-11-07T18:19:10-08:00",
+          "tree_id": "a9d6b7b2164ea703fd4b67d7bab0f27cf67c330b",
+          "url": "https://github.com/stacklok/mecatl/commit/8c1276a7da77eca4ce31f3e7c44023464aeb0994"
+        },
+        "date": 1794105046279,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 16137.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12897,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 794,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -531141,6 +531180,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1794105043215,
+  "lastUpdate": 1794105047147,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
