@@ -32,7 +32,7 @@ func (v EffectiveInput) Validate() error {
 		if err := in.Validate(); err != nil {
 			return err
 		}
-		if in.UserInput != nil && in.UserInput.RunID != v.RunID {
+		if in.UserInputID != nil && in.UserInputID.runID != v.RunID {
 			return codec.ErrInvalidData
 		}
 	}
@@ -66,7 +66,7 @@ func (v EffectiveInput) Equal(other EffectiveInput) bool {
 
 // toFormat requires validated same-run references before omitting their scope.
 func (v EffectiveInput) toFormat() sessionformat.EffectiveInput {
-	out := sessionformat.EffectiveInput{RunID: v.RunID.Ordinal}
+	out := sessionformat.EffectiveInput{RunID: v.RunID.ordinal}
 	if v.Inputs != nil {
 		out.Inputs = make([]sessionformat.InputItem, len(v.Inputs))
 		for i := range v.Inputs {
@@ -76,12 +76,12 @@ func (v EffectiveInput) toFormat() sessionformat.EffectiveInput {
 	return out
 }
 
-// NewEffectiveInputRecord encodes an owned increment under explicit limits.
-// Failure returns zero. Construction checks full reference scope but does not
-// prove membership or order; aggregate admission validates every reference.
-func NewEffectiveInputRecord(v EffectiveInput, limits codec.Limits) (Record, error) {
+// newEffectiveInputRecord encodes an owned increment under explicit limits.
+// Failure returns nil. Construction checks target history and full reference scope
+// before omission but does not prove membership or order; admission checks those.
+func newEffectiveInputRecord(scope historyid.HistoryID, v EffectiveInput, limits codec.Limits) (*materializedRecord, error) {
 	if err := v.RunID.Validate(); err != nil {
-		return Record{}, codec.ErrInvalidData
+		return nil, codec.ErrInvalidData
 	}
 	b := newValueBudget(limits)
 	b.collection(len(v.Inputs))
@@ -91,17 +91,20 @@ func NewEffectiveInputRecord(v EffectiveInput, limits codec.Limits) (Record, err
 		}
 	}
 	if b.err != nil {
-		return Record{}, b.err
+		return nil, b.err
 	}
 	if err := v.Validate(); err != nil {
-		return Record{}, codec.ErrInvalidData
+		return nil, codec.ErrInvalidData
+	}
+	if scope != v.RunID.historyID {
+		return nil, ErrIdentity
 	}
 	fact := v.toFormat()
 	payload, err := codec.Encode(fact, limits)
 	if err != nil {
-		return Record{}, err
+		return nil, err
 	}
-	return Record{scope: v.RunID.HistoryID, effectiveInput: fact.Clone(), value: format.Record{Kind: sessionformat.KindEffectiveInput, KindVersion: sessionformat.Version, Payload: payload}}, nil
+	return decodeMaterialized(format.Record{Kind: sessionformat.KindEffectiveInput, KindVersion: sessionformat.Version, Payload: payload}, limits)
 }
 
 // EffectiveInputView retains immutable accepted backing storage, including its
@@ -116,7 +119,7 @@ func (v EffectiveInputView) RunID() RunID {
 	if v.value == nil {
 		return RunID{}
 	}
-	return RunID{HistoryID: v.scope, Ordinal: v.value.RunID}
+	return RunID{historyID: v.scope, ordinal: v.value.RunID}
 }
 
 // InputCount returns the number of ordered items, or zero for zero.

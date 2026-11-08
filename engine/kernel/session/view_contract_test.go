@@ -18,7 +18,7 @@ func TestRecursiveViewsZero(t *testing.T) {
 		t.Fatal("zero root view")
 	}
 	var item session.InputItemView
-	if id, ok := item.UserInput(); ok || id != (session.UserInputID{}) {
+	if id, ok := item.UserInputID(); ok || id != (session.UserInputID{}) {
 		t.Fatal("zero reference branch")
 	}
 	if inline, ok := item.Inline(); ok || inline != (session.AttributedInputView{}) {
@@ -74,7 +74,7 @@ func TestRecursiveViewsPresenceBytesAndBounds(t *testing.T) {
 	b := beginBatch(t, s)
 	mustBatch(t, b.Create())
 	run := batchRun(t, b)
-	id, err := b.AddUserInput(session.AddUserInputRequest{RunID: run, Parts: richContent()})
+	id, err := b.AddUserInput(session.UserInput{RunID: run, Parts: richContent()})
 	mustBatch(t, err)
 	mustBatch(t, b.ReplaceInstructions(session.Instructions{HistoryID: scope, Blocks: []session.InstructionBlock{
 		{Parts: []session.ContentPart{{Text: new("")}}, Source: session.ContentSource{Description: "empty text"}},
@@ -83,25 +83,25 @@ func TestRecursiveViewsPresenceBytesAndBounds(t *testing.T) {
 	mustBatch(t, b.ReplaceToolCatalog(session.ToolCatalog{HistoryID: scope, Tools: []session.ToolDefinition{{Name: "tool", ArgumentSchema: []byte(" false ")}}}))
 	mustBatch(t, b.ReplaceModelBinding(session.ModelBinding{HistoryID: scope, Route: "route", API: "api", Model: "model", Settings: []byte(" {\"n\":1.00} ")}))
 	mustBatch(t, b.AddEffectiveInput(session.EffectiveInput{RunID: run, Inputs: []session.InputItem{
-		{UserInput: &id},
+		{UserInputID: &id},
 		{Inline: &session.AttributedInput{Actor: " actor/尾\n ", Purpose: session.PromptContext, Source: session.ContentSource{Description: "present empty"}}},
 		{Inline: &session.AttributedInput{Actor: "harness", Purpose: session.PromptInstructions, Parts: richContent(), Source: session.ContentSource{Description: "rich"}}},
 	}}))
 	submitBatch(t, s, b)
 	v := s.Snapshot()
-	user := lookupInput(t, v, run, id.Ordinal)
+	user := lookupInput(t, v, run, 1)
 	instructions, _ := v.Instructions()
 	catalog, _ := v.ToolCatalog()
 	binding, _ := v.ModelBinding()
 	effective, _ := v.RecordAt(6).EffectiveInput()
-	if ref, ok := effective.InputAt(0).UserInput(); !ok || ref != id {
+	if ref, ok := effective.InputAt(0).UserInputID(); !ok || ref != id {
 		t.Fatal("reference lost scope")
 	}
 	if inline, ok := effective.InputAt(0).Inline(); ok || inline != (session.AttributedInputView{}) {
 		t.Fatal("reference exposed inline")
 	}
 	empty := inlineAt(t, effective, 1)
-	if ref, ok := effective.InputAt(1).UserInput(); ok || ref != (session.UserInputID{}) {
+	if ref, ok := effective.InputAt(1).UserInputID(); ok || ref != (session.UserInputID{}) {
 		t.Fatal("inline exposed reference")
 	}
 	if empty.PartCount() != 0 || empty.Actor() != " actor/尾\n " || empty.Purpose() != session.PromptContext || empty.Source().Description() != "present empty" {

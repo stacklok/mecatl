@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"math"
 	"reflect"
 	"testing"
 
@@ -13,6 +12,7 @@ import (
 	"github.com/stacklok/mecatl/engine/kernel/history"
 	historyid "github.com/stacklok/mecatl/engine/kernel/history/id"
 	"github.com/stacklok/mecatl/engine/kernel/session"
+	sessionformat "github.com/stacklok/mecatl/engine/kernel/session/format"
 )
 
 func TestContextValuesIntegrationAndPinnedViews(t *testing.T) {
@@ -51,23 +51,21 @@ func TestContextValuesIntegrationAndPinnedViews(t *testing.T) {
 		t.Fatalf("before creation: %v", err)
 	}
 	mustBatch(t, b.Create())
-	if err := b.ReplaceToolCatalog(catalog); !errors.Is(err, session.ErrTransition) {
-		t.Fatalf("idle catalog: %v", err)
-	}
 	run := batchRun(t, b)
 	parts := richContent()
-	input, err := b.AddUserInput(session.AddUserInputRequest{RunID: run, Parts: parts})
+	input, err := b.AddUserInput(session.UserInput{RunID: run, Parts: parts})
 	mustBatch(t, err)
-	second, err := b.AddUserInput(session.AddUserInputRequest{RunID: run, Parts: []session.ContentPart{{Text: new("second submission")}}})
+	second, err := b.AddUserInput(session.UserInput{RunID: run, Parts: []session.ContentPart{{Text: new("second submission")}}})
 	mustBatch(t, err)
-	authored := session.UserInput{ID: input, Parts: parts}.Clone()
+	authoredID := input
+	authored := session.UserInput{RunID: input.RunID(), Parts: parts}.Clone()
 	mustBatch(t, b.ReplaceInstructions(instructions))
 	mustBatch(t, b.ReplaceToolCatalog(catalog))
 	mustBatch(t, b.ReplaceModelBinding(binding))
 	effective := session.EffectiveInput{RunID: run, Inputs: []session.InputItem{
-		{UserInput: &input},
+		{UserInputID: &input},
 		{Inline: &session.AttributedInput{Actor: "skill/example", Purpose: session.PromptInstructions, Parts: richContent(), Source: session.ContentSource{Description: "skill expansion", WorkspaceFile: &session.WorkspaceFileSource{Path: "skills/example.md"}}}},
-		{UserInput: &second}, {UserInput: &input},
+		{UserInputID: &second}, {UserInputID: &input},
 		{Inline: &session.AttributedInput{Actor: " \textension/尾 e\u0301\r\n ", Purpose: session.PromptContext, Parts: []session.ContentPart{{Text: new("context data")}}, Source: session.ContentSource{Description: "workspace reference", WorkspaceFile: &session.WorkspaceFileSource{Path: "docs/design.md"}}}},
 	}}
 	wantE := effective.Clone()
@@ -89,7 +87,7 @@ func TestContextValuesIntegrationAndPinnedViews(t *testing.T) {
 	clear(catalog.Tools[0].ArgumentSchema)
 	catalog.Tools[1].Name = "changed"
 	clear(binding.Settings)
-	effective.Inputs[0].UserInput.Ordinal = math.MaxUint64
+	*effective.Inputs[0].UserInputID = session.UserInputID{}
 	effective.Inputs[1].Inline.Parts[1].Media.InlineData[0] = 0
 	effective.Inputs[1].Inline.Source.WorkspaceFile.Path = "changed"
 	*effective.Inputs[4].Inline.Parts[0].Text = "changed"
@@ -112,7 +110,7 @@ func TestContextValuesIntegrationAndPinnedViews(t *testing.T) {
 	if !ok || ev.RunID() != run || !effectiveMatches(ev, wantE) {
 		t.Fatal("effective view")
 	}
-	uv := lookupInput(t, old, authored.ID.RunID, authored.ID.Ordinal)
+	uv := lookupInput(t, old, authored.RunID, 1)
 	if !userInputMatches(uv, authored) {
 		t.Fatal("authored rich data changed")
 	}
@@ -120,7 +118,7 @@ func TestContextValuesIntegrationAndPinnedViews(t *testing.T) {
 	// that same conversion. Recheck public exports at each real acceptance seam.
 	assertExactContent := func(snapshot session.Snapshot) {
 		t.Helper()
-		input := lookupInput(t, snapshot, authored.ID.RunID, authored.ID.Ordinal)
+		input := lookupInput(t, snapshot, authored.RunID, 1)
 		increment, ok := snapshot.RecordAt(7).EffectiveInput()
 		if !ok {
 			t.Fatal("missing effective input")
@@ -132,7 +130,7 @@ func TestContextValuesIntegrationAndPinnedViews(t *testing.T) {
 		if skill.Actor() != "skill/example" || contextInput.Actor() != " \textension/尾 e\u0301\r\n " {
 			t.Fatalf("actors changed: %q, %q", skill.Actor(), contextInput.Actor())
 		}
-		ref, present := increment.InputAt(0).UserInput()
+		ref, present := increment.InputAt(0).UserInputID()
 		resolved, found := snapshot.UserInputByID(ref)
 		if !present || !found || resolved.ID() != input.ID() {
 			t.Fatal("reference did not resolve in pinned snapshot")
@@ -172,8 +170,8 @@ func TestContextValuesIntegrationAndPinnedViews(t *testing.T) {
 	if len(page.Commits) != 1 {
 		t.Fatal("missing accepted fixture commit")
 	}
-	applied := boundSession(t, h, p)
-	mustBatch(t, applied.Apply(page.Commits[0]))
+	applied, err := session.Load(context.Background(), h, scope, p)
+	mustBatch(t, err)
 	assertExactContent(applied.Snapshot())
 	for _, record := range page.Commits[0].Commit.Records {
 		clear(record.Payload)
@@ -181,8 +179,14 @@ func TestContextValuesIntegrationAndPinnedViews(t *testing.T) {
 	assertExactContent(applied.Snapshot())
 	clear(tv.ToolAt(0).ArgumentSchema())
 	clear(mv.Settings())
-	ref, _ := ev.InputAt(0).UserInput()
-	ref.Ordinal = 99 // Returned identities are independent immutable values.
+	ref, ok := ev.InputAt(0).UserInputID()
+	if !ok || ref != authoredID {
+		t.Fatal("missing authored identity")
+	}
+	ref = session.UserInputID{} // Replacing a returned identity cannot change the view.
+	if ref == authoredID {
+		t.Fatal("identity replacement")
+	}
 	mutateMediaBytes(t, inlineAt(t, ev, 1).PartAt(1))
 	mutateMediaBytes(t, uv.PartAt(1))
 	// Encoded transport remains an explicit independently owned export.
@@ -195,7 +199,7 @@ func TestContextValuesIntegrationAndPinnedViews(t *testing.T) {
 	b = beginBatch(t, s)
 	mustBatch(t, b.ReplaceInstructions(session.Instructions{HistoryID: scope}))
 	mustBatch(t, b.AddEffectiveInput(session.EffectiveInput{RunID: run}))
-	mustBatch(t, b.Interrupt())
+	mustBatch(t, b.EndRun(session.RunEndedInterrupted))
 	batchRun(t, b)
 	submitBatch(t, s, b)
 	next := s.Snapshot()
@@ -224,7 +228,7 @@ func TestContextValuesIntegrationAndPinnedViews(t *testing.T) {
 	loaded, err := session.Load(context.Background(), h, scope, p)
 	mustBatch(t, err)
 	assertExactContent(loaded.Snapshot())
-	loadedInput := lookupInput(t, loaded.Snapshot(), authored.ID.RunID, authored.ID.Ordinal)
+	loadedInput := lookupInput(t, loaded.Snapshot(), authored.RunID, 1)
 	loadedEffective, ok := loaded.Snapshot().RecordAt(7).EffectiveInput()
 	if !ok {
 		t.Fatal("missing loaded effective input")
@@ -249,8 +253,8 @@ func TestContextAdmissionSourceBoundsAndScopes(t *testing.T) {
 	if err := b.ReplaceInstructions(session.Instructions{HistoryID: foreign}); !errors.Is(err, session.ErrIdentity) {
 		t.Fatalf("foreign context: %v", err)
 	}
-	forward := session.UserInputID{RunID: run, Ordinal: 1}
-	if err := b.AddEffectiveInput(session.EffectiveInput{RunID: run, Inputs: []session.InputItem{{UserInput: &forward}}}); !errors.Is(err, session.ErrTransition) {
+	forward := allocatedInput(t, run, 1)
+	if err := b.AddEffectiveInput(session.EffectiveInput{RunID: run, Inputs: []session.InputItem{{UserInputID: &forward}}}); !errors.Is(err, session.ErrTransition) {
 		t.Fatalf("forward source: %v", err)
 	}
 	// Generic inline-only contributions need neither a submission nor a special actor.
@@ -260,22 +264,22 @@ func TestContextAdmissionSourceBoundsAndScopes(t *testing.T) {
 	}}
 	mustBatch(t, b.AddEffectiveInput(inline))
 	mustBatch(t, b.AddEffectiveInput(session.EffectiveInput{RunID: run, Inputs: []session.InputItem{}}))
-	input, err := b.AddUserInput(session.AddUserInputRequest{RunID: run, Parts: []session.ContentPart{}})
+	input, err := b.AddUserInput(session.UserInput{RunID: run, Parts: []session.ContentPart{}})
 	mustBatch(t, err)
-	refs := session.EffectiveInput{RunID: run, Inputs: []session.InputItem{{UserInput: &input}, {UserInput: &input}}}
+	refs := session.EffectiveInput{RunID: run, Inputs: []session.InputItem{{UserInputID: &input}, {UserInputID: &input}}}
 	mustBatch(t, b.AddEffectiveInput(refs))
 	mustBatch(t, b.AddEffectiveInput(refs))
-	for _, ordinal := range []uint64{2, 99, math.MaxUint64} {
-		id := session.UserInputID{RunID: run, Ordinal: ordinal}
-		if err := b.AddEffectiveInput(session.EffectiveInput{RunID: run, Inputs: []session.InputItem{{UserInput: &input}, {UserInput: &id}}}); !errors.Is(err, session.ErrTransition) {
+	for _, ordinal := range []uint64{2, 99} {
+		id := allocatedInput(t, run, ordinal)
+		if err := b.AddEffectiveInput(session.EffectiveInput{RunID: run, Inputs: []session.InputItem{{UserInputID: &input}, {UserInputID: &id}}}); !errors.Is(err, session.ErrTransition) {
 			t.Fatalf("nonexistent source: %v", err)
 		}
 	}
-	foreignRun := session.RunID{HistoryID: foreign, Ordinal: 1}
+	foreignRun := allocatedRun(t, foreign, 1)
 	if err := b.AddEffectiveInput(session.EffectiveInput{RunID: foreignRun}); !errors.Is(err, session.ErrIdentity) {
 		t.Fatalf("foreign batch: %v", err)
 	}
-	wrongRun := session.RunID{HistoryID: scope, Ordinal: 2}
+	wrongRun := allocatedRun(t, scope, 2)
 	if err := b.AddEffectiveInput(session.EffectiveInput{RunID: wrongRun}); !errors.Is(err, session.ErrTransition) {
 		t.Fatalf("wrong run: %v", err)
 	}
@@ -283,7 +287,7 @@ func TestContextAdmissionSourceBoundsAndScopes(t *testing.T) {
 	old := s.Snapshot()
 	b = beginBatch(t, s)
 	mustBatch(t, b.AddEffectiveInput(refs)) // Repeated across commits is not consumed.
-	mustBatch(t, b.Interrupt())
+	mustBatch(t, b.EndRun(session.RunEndedInterrupted))
 	if err := b.AddEffectiveInput(inline); !errors.Is(err, session.ErrTransition) {
 		t.Fatalf("inactive batch: %v", err)
 	}
@@ -291,16 +295,16 @@ func TestContextAdmissionSourceBoundsAndScopes(t *testing.T) {
 	if err := b.AddEffectiveInput(refs); !errors.Is(err, session.ErrTransition) {
 		t.Fatalf("old run: %v", err)
 	}
-	if err := b.AddEffectiveInput(session.EffectiveInput{RunID: successor, Inputs: []session.InputItem{{UserInput: &input}}}); !errors.Is(err, codec.ErrInvalidData) {
+	if err := b.AddEffectiveInput(session.EffectiveInput{RunID: successor, Inputs: []session.InputItem{{UserInputID: &input}}}); !errors.Is(err, codec.ErrInvalidData) {
 		t.Fatalf("old source in new run: %v", err)
 	}
-	empty, err := b.AddUserInput(session.AddUserInputRequest{RunID: successor})
+	empty, err := b.AddUserInput(session.UserInput{RunID: successor})
 	mustBatch(t, err)
-	mustBatch(t, b.AddEffectiveInput(session.EffectiveInput{RunID: successor, Inputs: []session.InputItem{{UserInput: &empty}}}))
+	mustBatch(t, b.AddEffectiveInput(session.EffectiveInput{RunID: successor, Inputs: []session.InputItem{{UserInputID: &empty}}}))
 	submitBatch(t, s, b)
 	loaded, err := session.Load(context.Background(), h, scope, sessionPolicy())
 	mustBatch(t, err)
-	if !reflect.DeepEqual(s.Snapshot(), loaded.Snapshot()) || old.RecordCount() != 7 || lookupInput(t, loaded.Snapshot(), input.RunID, input.Ordinal).PartCount() != 0 || lookupInput(t, loaded.Snapshot(), empty.RunID, empty.Ordinal).PartCount() != 0 {
+	if !reflect.DeepEqual(s.Snapshot(), loaded.Snapshot()) || old.RecordCount() != 7 || lookupInput(t, loaded.Snapshot(), input.RunID(), 1).PartCount() != 0 || lookupInput(t, loaded.Snapshot(), empty.RunID(), 1).PartCount() != 0 {
 		t.Fatal("empty/duplicate facts lost or rejection leaked")
 	}
 	got, _ := loaded.Snapshot().RecordAt(2).EffectiveInput()
@@ -311,7 +315,7 @@ func TestContextAdmissionSourceBoundsAndScopes(t *testing.T) {
 
 func TestContextMixedReferenceBoundsBeforeAppend(t *testing.T) {
 	for _, accepted := range []bool{false, true} {
-		for _, ordinals := range [][]uint64{{1, 2}, {2, 1}, {1, math.MaxUint64}, {math.MaxUint64, 1}} {
+		for _, ordinals := range [][]uint64{{1, 2}, {2, 1}} {
 			t.Run(fmt.Sprintf("accepted=%t/refs=%v", accepted, ordinals), func(t *testing.T) {
 				backend := &batchBackend{Backend: mem.New()}
 				h := newLifecycleHistory(t, backend)
@@ -321,7 +325,7 @@ func TestContextMixedReferenceBoundsBeforeAppend(t *testing.T) {
 				run := batchRun(t, b)
 				submitBatch(t, s, b)
 				b = beginBatch(t, s)
-				input, err := b.AddUserInput(session.AddUserInputRequest{RunID: run})
+				input, err := b.AddUserInput(session.UserInput{RunID: run})
 				mustBatch(t, err)
 				if accepted {
 					submitBatch(t, s, b)
@@ -329,11 +333,11 @@ func TestContextMixedReferenceBoundsBeforeAppend(t *testing.T) {
 				}
 				before := captureRejectedSnapshot(s.Snapshot())
 				attempts := len(backend.attempts)
-				valid := session.EffectiveInput{RunID: run, Inputs: []session.InputItem{{UserInput: &input}, {UserInput: &input}}}
+				valid := session.EffectiveInput{RunID: run, Inputs: []session.InputItem{{UserInputID: &input}, {UserInputID: &input}}}
 				mustBatch(t, b.AddEffectiveInput(valid))
 				invalid := session.EffectiveInput{RunID: run}
 				for _, n := range ordinals {
-					invalid.Inputs = append(invalid.Inputs, session.InputItem{UserInput: &session.UserInputID{RunID: run, Ordinal: n}})
+					invalid.Inputs = append(invalid.Inputs, session.InputItem{UserInputID: new(allocatedInput(t, run, n))})
 				}
 				if err := b.AddEffectiveInput(invalid); !errors.Is(err, session.ErrTransition) {
 					t.Fatalf("late reference: %v", err)
@@ -350,7 +354,7 @@ func TestContextMixedReferenceBoundsBeforeAppend(t *testing.T) {
 				if !effectiveMatches(got, valid) {
 					t.Fatal("prior contribution changed")
 				}
-				loaded, err := session.Load(context.Background(), h, run.HistoryID, sessionPolicy())
+				loaded, err := session.Load(context.Background(), h, run.HistoryID(), sessionPolicy())
 				mustBatch(t, err)
 				if !reflect.DeepEqual(s.Snapshot(), loaded.Snapshot()) {
 					t.Fatal("replay rejects submitted contribution")
@@ -360,9 +364,9 @@ func TestContextMixedReferenceBoundsBeforeAppend(t *testing.T) {
 	}
 }
 
-func TestContextMixedReferenceBoundsExternalApplyAndLoad(t *testing.T) {
+func TestContextMixedReferenceBoundsExternalLoad(t *testing.T) {
 	for _, accepted := range []bool{false, true} {
-		for _, ordinals := range [][]uint64{{1, 1}, {1, 2}, {2, 1}, {1, math.MaxUint64}, {math.MaxUint64, 1}} {
+		for _, ordinals := range [][]uint64{{1, 1}, {1, 2}, {2, 1}} {
 			t.Run(fmt.Sprintf("accepted=%t/refs=%v", accepted, ordinals), func(t *testing.T) {
 				backend := &batchBackend{Backend: mem.New()}
 				h := newLifecycleHistory(t, backend)
@@ -370,63 +374,53 @@ func TestContextMixedReferenceBoundsExternalApplyAndLoad(t *testing.T) {
 				b := beginBatch(t, s)
 				mustBatch(t, b.Create())
 				run := batchRun(t, b)
-				input := session.UserInput{ID: session.UserInputID{RunID: run, Ordinal: 1}}
+				input := allocatedInput(t, run, 1)
 				if accepted {
-					id, err := b.AddUserInput(session.AddUserInputRequest{RunID: run})
+					id, err := b.AddUserInput(session.UserInput{RunID: run})
 					mustBatch(t, err)
-					if id != input.ID {
+					if id != input {
 						t.Fatal("source identity")
 					}
 				}
 				submitBatch(t, s, b)
-				var records []session.Record
+				var records []fixtureRecord
 				if !accepted {
-					r, err := session.NewUserInputRecord(input, testLimits())
-					mustBatch(t, err)
-					records = append(records, r)
+					records = append(records, encodeFixture(t, sessionformat.KindUserInput, sessionformat.UserInput{RunID: 1, ID: 1}))
 				}
-				prior := session.EffectiveInput{RunID: run, Inputs: []session.InputItem{{UserInput: &input.ID}}}
-				r, err := session.NewEffectiveInputRecord(prior, testLimits())
-				mustBatch(t, err)
-				records = append(records, r)
+				records = append(records, effectiveReferenceRecord(t, 1, 1))
 				effective := session.EffectiveInput{RunID: run}
 				valid := true
 				for _, n := range ordinals {
-					effective.Inputs = append(effective.Inputs, session.InputItem{UserInput: &session.UserInputID{RunID: run, Ordinal: n}})
+					effective.Inputs = append(effective.Inputs, session.InputItem{UserInputID: new(allocatedInput(t, run, n))})
 					valid = valid && n == 1
 				}
-				r, err = session.NewEffectiveInputRecord(effective, testLimits())
-				mustBatch(t, err)
-				// Exercise externally decoded metadata as well as the independent Apply path.
-				r, err = session.DecodeRecord(run.HistoryID, r.Format(), testLimits())
-				mustBatch(t, err)
-				records = append(records, r)
+				records = append(records, effectiveReferenceRecord(t, 1, ordinals...))
 				c := proposedCommit(t, s, records...)
 				before := captureRejectedSnapshot(s.Snapshot())
 				attempts := len(backend.attempts)
-				err = s.Apply(c)
+				independent, err := loadFixtureCommit(t, h, s, c, sessionPolicy())
 				if valid {
 					mustBatch(t, err)
-					got, _ := s.Snapshot().RecordAt(4).EffectiveInput()
+					got, _ := independent.Snapshot().RecordAt(4).EffectiveInput()
 					if !effectiveMatches(got, effective) {
 						t.Fatal("valid references changed")
 					}
-				} else if !errors.Is(err, session.ErrTransition) || !reflect.DeepEqual(before, captureRejectedSnapshot(s.Snapshot())) {
-					t.Fatalf("invalid Apply published: %v", err)
+				} else if independent != nil || !errors.Is(err, session.ErrTransition) {
+					t.Fatalf("invalid prefix Load: %v", err)
 				}
-				if len(backend.attempts) != attempts {
-					t.Fatal("Apply appended")
+				if !reflect.DeepEqual(before, captureRejectedSnapshot(s.Snapshot())) || len(backend.attempts) != attempts {
+					t.Fatal("independent Load changed the source session or storage")
 				}
-				result, err := h.Append(context.Background(), run.HistoryID, c.Commit)
+				result, err := h.Append(context.Background(), run.HistoryID(), c.Commit)
 				mustBatch(t, err)
 				if result.Status != history.StatusAccepted || result.Proposal != c.Ref {
 					t.Fatal("external append")
 				}
 				reader := &loadBackend{Backend: readOnlyHistoryBackend{Backend: backend, t: t}}
-				loaded, err := session.Load(context.Background(), newLifecycleHistory(t, reader), run.HistoryID, sessionPolicy())
+				loaded, err := session.Load(context.Background(), newLifecycleHistory(t, reader), run.HistoryID(), sessionPolicy())
 				if valid {
 					mustBatch(t, err)
-					if !reflect.DeepEqual(s.Snapshot(), loaded.Snapshot()) {
+					if !reflect.DeepEqual(independent.Snapshot(), loaded.Snapshot()) {
 						t.Fatal("valid replay differs")
 					}
 				} else if loaded != nil || !errors.Is(err, session.ErrTransition) {
@@ -440,8 +434,8 @@ func TestContextMixedReferenceBoundsExternalApplyAndLoad(t *testing.T) {
 	}
 }
 
-func TestContextForwardReferenceExternalApplyAndLoad(t *testing.T) {
-	for _, path := range []string{"Apply", "Load"} {
+func TestContextForwardReferenceExternalLoad(t *testing.T) {
+	for _, path := range []string{"independent prefix", "read-only storage"} {
 		t.Run(path, func(t *testing.T) {
 			backend := &batchBackend{Backend: mem.New()}
 			h := newLifecycleHistory(t, backend)
@@ -449,7 +443,7 @@ func TestContextForwardReferenceExternalApplyAndLoad(t *testing.T) {
 			b := beginBatch(t, s)
 			mustBatch(t, b.Create())
 			run := batchRun(t, b)
-			mustBatch(t, b.ReplaceInstructions(session.Instructions{HistoryID: run.HistoryID, Blocks: []session.InstructionBlock{{Parts: []session.ContentPart{{Text: new("accepted root")}}, Source: session.ContentSource{Description: "accepted"}}}}))
+			mustBatch(t, b.ReplaceInstructions(session.Instructions{HistoryID: run.HistoryID(), Blocks: []session.InstructionBlock{{Parts: []session.ContentPart{{Text: new("accepted root")}}, Source: session.ContentSource{Description: "accepted"}}}}))
 			submitBatch(t, s, b)
 			old := s.Snapshot()
 			before := captureRejectedSnapshot(old)
@@ -458,41 +452,38 @@ func TestContextForwardReferenceExternalApplyAndLoad(t *testing.T) {
 				t.Fatal("missing initial instructions")
 			}
 
-			prefix, err := session.NewInstructionsRecord(session.Instructions{HistoryID: run.HistoryID}, testLimits())
-			mustBatch(t, err)
-			input := session.UserInputID{RunID: run, Ordinal: 1}
-			effective, err := session.NewEffectiveInputRecord(session.EffectiveInput{RunID: run, Inputs: []session.InputItem{{UserInput: &input}}}, testLimits())
-			mustBatch(t, err)
-			user, err := session.NewUserInputRecord(session.UserInput{ID: input, Parts: []session.ContentPart{{Text: new("later source")}}}, testLimits())
-			mustBatch(t, err)
+			prefix := encodeFixture(t, sessionformat.KindInstructions, sessionformat.Instructions{})
+			input := allocatedInput(t, run, 1)
+			effective := effectiveReferenceRecord(t, 1, 1)
+			user := encodeFixture(t, sessionformat.KindUserInput, sessionformat.UserInput{RunID: 1, ID: 1, Parts: []sessionformat.ContentPart{{Text: new("later source")}}})
 			// Reordering exactly these facts is valid: rejection must depend on
 			// the source being later, not on an invalid prefix or source payload.
-			control, err := session.Load(context.Background(), h, run.HistoryID, sessionPolicy())
+			control, err := loadFixtureCommit(t, h, s, proposedCommit(t, s, prefix, user, effective), sessionPolicy())
 			mustBatch(t, err)
-			mustBatch(t, control.Apply(proposedCommit(t, control, prefix, user, effective)))
-			if !userInputsMatch(control.Snapshot(), input.RunID, 1) {
+			if !userInputsMatch(control.Snapshot(), input.RunID(), 1) {
 				t.Fatal("ordered control lost the source")
 			}
 			c := proposedCommit(t, s, prefix, effective, user)
 			attempts := len(backend.attempts)
-			if path == "Apply" {
-				if err := s.Apply(c); !errors.Is(err, session.ErrTransition) {
-					t.Fatalf("forward reference Apply = %v; want ErrTransition", err)
+			if path == "independent prefix" {
+				loaded, err := loadFixtureCommit(t, h, s, c, sessionPolicy())
+				if loaded != nil || !errors.Is(err, session.ErrTransition) {
+					t.Fatalf("forward reference Load = %v, %v; want nil, ErrTransition", loaded, err)
 				}
 				if len(backend.attempts) != attempts {
-					t.Fatal("Apply appended")
+					t.Fatal("independent replay changed source storage")
 				}
 				assertHistoryHead(t, h, old.Head())
 			} else {
 				// History accepts the complete external commit opaquely. Load must
 				// reject its ordering even though the source exists by commit end.
-				result, err := h.Append(context.Background(), run.HistoryID, c.Commit)
+				result, err := h.Append(context.Background(), run.HistoryID(), c.Commit)
 				mustBatch(t, err)
 				if result.Status != history.StatusAccepted || result.Proposal != c.Ref {
 					t.Fatal("external append")
 				}
 				reader := &loadBackend{Backend: readOnlyHistoryBackend{Backend: backend, t: t}}
-				loaded, err := session.Load(context.Background(), newLifecycleHistory(t, reader), run.HistoryID, sessionPolicy())
+				loaded, err := session.Load(context.Background(), newLifecycleHistory(t, reader), run.HistoryID(), sessionPolicy())
 				if loaded != nil || !errors.Is(err, session.ErrTransition) {
 					t.Fatalf("forward reference Load = %v, %v; want nil, ErrTransition", loaded, err)
 				}
@@ -510,37 +501,24 @@ func TestContextForwardReferenceExternalApplyAndLoad(t *testing.T) {
 }
 
 func TestNewRecordExactVersionsAndZeroViews(t *testing.T) {
-	scope := testHistoryID(t)
-	run := session.RunID{HistoryID: scope, Ordinal: 1}
-	for _, makeRecord := range []func() (session.Record, error){
-		func() (session.Record, error) {
-			return session.NewInstructionsRecord(session.Instructions{HistoryID: scope}, testLimits())
-		},
-		func() (session.Record, error) {
-			return session.NewToolCatalogRecord(session.ToolCatalog{HistoryID: scope}, testLimits())
-		},
-		func() (session.Record, error) {
-			return session.NewModelBindingRecord(session.ModelBinding{HistoryID: scope, Route: "r", API: "a", Model: "m", Settings: []byte("{}")}, testLimits())
-		},
-		func() (session.Record, error) {
-			return session.NewEffectiveInputRecord(session.EffectiveInput{RunID: run}, testLimits())
-		},
-		func() (session.Record, error) {
-			return session.NewUserInputRecord(session.UserInput{ID: session.UserInputID{RunID: run, Ordinal: 1}}, testLimits())
-		},
+	h := newSessionHistory(t)
+	s := loadRecords(t, h, boundSession(t, h, sessionPolicy()), createdRecord(t), startRecord(t, 1))
+	for _, r := range []fixtureRecord{
+		encodeFixture(t, sessionformat.KindInstructions, sessionformat.Instructions{}),
+		encodeFixture(t, sessionformat.KindToolCatalog, sessionformat.ToolCatalog{}),
+		encodeFixture(t, sessionformat.KindModelBinding, sessionformat.ModelBinding{Route: "r", API: "a", Model: "m", Settings: []byte("{}")}),
+		effectiveReferenceRecord(t, 1),
+		encodeFixture(t, sessionformat.KindUserInput, sessionformat.UserInput{RunID: 1, ID: 1}),
 	} {
-		r, err := makeRecord()
+		loaded, err := loadFixtureCommit(t, h, s, proposedCommit(t, s, r), sessionPolicy())
 		mustBatch(t, err)
-		got, err := session.DecodeRecord(scope, r.Format(), testLimits())
-		mustBatch(t, err)
-		if r.Format().KindVersion != 1 || !got.Format().Equal(r.Format()) {
+		got := loaded.Snapshot().RecordAt(2).Format()
+		if got.KindVersion != 1 || !got.Equal(r.Format()) {
 			t.Fatal("record roundtrip/version")
 		}
 		dto := r.Format()
 		dto.KindVersion++
-		if got, err := session.DecodeRecord(scope, dto, testLimits()); !errors.Is(err, session.ErrUnsupportedRecord) || !reflect.DeepEqual(got, session.Record{}) {
-			t.Fatalf("unsupported version: %v", err)
-		}
+		assertRejected(t, h, s, proposedCommit(t, s, fixtureRecord{dto}), session.ErrUnsupportedRecord)
 	}
 	var r session.RecordView
 	if v, ok := r.Instructions(); ok || v.HistoryID() != (historyid.HistoryID{}) || v.BlockCount() != 0 {

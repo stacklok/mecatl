@@ -1,12 +1,15 @@
-    method func (*Session).Apply(accepted history.Commit) error
     method func (*Session).BeginCommit() (*SessionCommit, error)
     method func (*Session).Snapshot() Snapshot
     method func (*Session).SubmitCommit(ctx context.Context, b *SessionCommit) (history.CommitRef, error)
     method func (*SessionCommit).AddEffectiveInput(v EffectiveInput) error
-    method func (*SessionCommit).AddUserInput(request AddUserInputRequest) (UserInputID, error)
+    method func (*SessionCommit).AddInvocationFailure(v InvocationFailure) error
+    method func (*SessionCommit).AddModelRequest(v ModelRequest) (ModelRequestID, error)
+    method func (*SessionCommit).AddModelResponse(v ModelResponse) error
+    method func (*SessionCommit).AddRunEnded(v RunEnded) error
+    method func (*SessionCommit).AddUserInput(request UserInput) (UserInputID, error)
     method func (*SessionCommit).Create() error
     method func (*SessionCommit).Discard() error
-    method func (*SessionCommit).Interrupt() error
+    method func (*SessionCommit).EndRun(reason RunEndedReason) error
     method func (*SessionCommit).ReplaceInstructions(v Instructions) error
     method func (*SessionCommit).ReplaceModelBinding(v ModelBinding) error
     method func (*SessionCommit).ReplaceToolCatalog(v ToolCatalog) error
@@ -20,6 +23,19 @@
     method func (AttributedInputView).Parts() iter.Seq[ContentPartView]
     method func (AttributedInputView).Purpose() PromptPurpose
     method func (AttributedInputView).Source() ContentSourceView
+    method func (CaptureFailureEvidence).Clone() CaptureFailureEvidence
+    method func (CaptureFailureEvidence).Equal(other CaptureFailureEvidence) bool
+    method func (CaptureFailureEvidence).Validate() error
+    method func (CaptureFailureEvidenceView).Evidence() (ObservedEvidenceView, bool)
+    method func (CaptureFailureEvidenceView).RequestID() ModelRequestID
+    method func (CaptureFailureEvidenceView).Usage() (InvocationUsageView, bool)
+    method func (ConstructionRecipe).Clone() ConstructionRecipe
+    method func (ConstructionRecipe).Equal(other ConstructionRecipe) bool
+    method func (ConstructionRecipe).Validate() error
+    method func (ConstructionRecipeView).Algorithm() string
+    method func (ConstructionRecipeView).Check() []byte
+    method func (ConstructionRecipeView).Parameters() []byte
+    method func (ConstructionRecipeView).Version() int64
     method func (ContentPart).Clone() ContentPart
     method func (ContentPart).Equal(other ContentPart) bool
     method func (ContentPart).Validate() error
@@ -44,7 +60,7 @@
     method func (InputItem).Equal(other InputItem) bool
     method func (InputItem).Validate() error
     method func (InputItemView).Inline() (AttributedInputView, bool)
-    method func (InputItemView).UserInput() (UserInputID, bool)
+    method func (InputItemView).UserInputID() (UserInputID, bool)
     method func (InstructionBlock).Clone() InstructionBlock
     method func (InstructionBlock).Equal(other InstructionBlock) bool
     method func (InstructionBlock).Validate() error
@@ -59,6 +75,23 @@
     method func (InstructionsView).BlockCount() int
     method func (InstructionsView).Blocks() iter.Seq[InstructionBlockView]
     method func (InstructionsView).HistoryID() id.HistoryID
+    method func (InvocationFailure).Clone() InvocationFailure
+    method func (InvocationFailure).Equal(other InvocationFailure) bool
+    method func (InvocationFailure).Validate() error
+    method func (InvocationFailureView).Class() InvocationFailureClass
+    method func (InvocationFailureView).Evidence() (ObservedEvidenceView, bool)
+    method func (InvocationFailureView).Explanation() (string, bool)
+    method func (InvocationFailureView).RequestID() ModelRequestID
+    method func (InvocationFailureView).Usage() (InvocationUsageView, bool)
+    method func (InvocationUsage).Clone() InvocationUsage
+    method func (InvocationUsage).Equal(other InvocationUsage) bool
+    method func (InvocationUsage).Validate() error
+    method func (InvocationUsageView).CacheRead() (int64, bool)
+    method func (InvocationUsageView).CacheWrite() (int64, bool)
+    method func (InvocationUsageView).Input() (int64, bool)
+    method func (InvocationUsageView).Output() (int64, bool)
+    method func (InvocationUsageView).Raw() (OpaqueProviderDataView, bool)
+    method func (InvocationUsageView).Reasoning() (int64, bool)
     method func (Media).Clone() Media
     method func (Media).Equal(other Media) bool
     method func (Media).Validate() error
@@ -81,26 +114,91 @@
     method func (ModelBindingView).Model() string
     method func (ModelBindingView).Route() string
     method func (ModelBindingView).Settings() []byte
+    method func (ModelRequest).Clone() ModelRequest
+    method func (ModelRequest).Equal(other ModelRequest) bool
+    method func (ModelRequest).Validate() error
+    method func (ModelRequestID).Equal(other ModelRequestID) bool
+    method func (ModelRequestID).RunID() RunID
+    method func (ModelRequestID).Validate() error
+    method func (ModelRequestView).ID() ModelRequestID
+    method func (ModelRequestView).Recipe() ConstructionRecipeView
+    method func (ModelRequestView).RetryOf() (ModelRequestID, bool)
+    method func (ModelRequestView).Source() SourceHead
+    method func (ModelResponse).Clone() ModelResponse
+    method func (ModelResponse).Equal(other ModelResponse) bool
+    method func (ModelResponse).Validate() error
+    method func (ModelResponseView).CallAt(i int) RequestedCallView
+    method func (ModelResponseView).CallCount() int
+    method func (ModelResponseView).Calls() iter.Seq[RequestedCallView]
+    method func (ModelResponseView).Evidence() (ObservedEvidenceView, bool)
+    method func (ModelResponseView).ItemAt(i int) ResponseItemView
+    method func (ModelResponseView).ItemCount() int
+    method func (ModelResponseView).Items() iter.Seq[ResponseItemView]
+    method func (ModelResponseView).Private() (OpaqueProviderDataView, bool)
+    method func (ModelResponseView).ProviderStopReason() (string, bool)
+    method func (ModelResponseView).RequestID() ModelRequestID
+    method func (ModelResponseView).Terminal() ResponseTerminalClass
+    method func (ModelResponseView).Usage() (InvocationUsageView, bool)
+    method func (ObservedEvidence).Clone() ObservedEvidence
+    method func (ObservedEvidence).Equal(other ObservedEvidence) bool
+    method func (ObservedEvidence).Validate() error
+    method func (ObservedEvidenceView).Correlation() (string, bool)
+    method func (ObservedEvidenceView).Detail() (string, bool)
+    method func (OpaqueProviderData).Clone() OpaqueProviderData
+    method func (OpaqueProviderData).Equal(other OpaqueProviderData) bool
+    method func (OpaqueProviderData).Validate() error
+    method func (OpaqueProviderDataView).Data() []byte
+    method func (OpaqueProviderDataView).Format() string
+    method func (OpaqueProviderDataView).Producer() string
+    method func (OpaqueProviderDataView).Version() int64
     method func (Policy).Validate() error
-    method func (Record).Format() format.Record
     method func (RecordView).Created() (Created, bool)
     method func (RecordView).EffectiveInput() (EffectiveInputView, bool)
     method func (RecordView).Format() format.Record
     method func (RecordView).Instructions() (InstructionsView, bool)
+    method func (RecordView).InvocationFailure() (InvocationFailureView, bool)
     method func (RecordView).Kind() string
     method func (RecordView).KindVersion() int64
     method func (RecordView).ModelBinding() (ModelBindingView, bool)
-    method func (RecordView).RunInterrupted() (RunInterrupted, bool)
+    method func (RecordView).ModelRequest() (ModelRequestView, bool)
+    method func (RecordView).ModelResponse() (ModelResponseView, bool)
+    method func (RecordView).RunEnded() (RunEndedView, bool)
     method func (RecordView).RunStarted() (RunStarted, bool)
     method func (RecordView).ToolCatalog() (ToolCatalogView, bool)
     method func (RecordView).UserInput() (UserInputView, bool)
-    method func (RunID).Clone() RunID
+    method func (RequestedCall).Clone() RequestedCall
+    method func (RequestedCall).Equal(other RequestedCall) bool
+    method func (RequestedCall).Validate() error
+    method func (RequestedCallDataView).Arguments() []byte
+    method func (RequestedCallDataView).Name() string
+    method func (RequestedCallID).Equal(other RequestedCallID) bool
+    method func (RequestedCallID).RequestID() ModelRequestID
+    method func (RequestedCallID).Validate() error
+    method func (RequestedCallView).Arguments() []byte
+    method func (RequestedCallView).ID() RequestedCallID
+    method func (RequestedCallView).Name() string
+    method func (ResponseContent).Clone() ResponseContent
+    method func (ResponseContent).Equal(other ResponseContent) bool
+    method func (ResponseContent).Validate() error
+    method func (ResponseContentView).Kind() ResponseContentKind
+    method func (ResponseContentView).PartAt(i int) ContentPartView
+    method func (ResponseContentView).PartCount() int
+    method func (ResponseContentView).Parts() iter.Seq[ContentPartView]
+    method func (ResponseItem).Clone() ResponseItem
+    method func (ResponseItem).Equal(other ResponseItem) bool
+    method func (ResponseItem).Validate() error
+    method func (ResponseItemView).Call() (RequestedCallDataView, bool)
+    method func (ResponseItemView).Content() (ResponseContentView, bool)
+    method func (RunEnded).Clone() RunEnded
+    method func (RunEnded).Equal(other RunEnded) bool
+    method func (RunEnded).Validate() error
+    method func (RunEndedView).Capture() (CaptureFailureEvidenceView, bool)
+    method func (RunEndedView).Explanation() (string, bool)
+    method func (RunEndedView).Reason() RunEndedReason
+    method func (RunEndedView).RunID() RunID
     method func (RunID).Equal(other RunID) bool
-    method func (RunID).Next() (RunID, error)
+    method func (RunID).HistoryID() id.HistoryID
     method func (RunID).Validate() error
-    method func (RunInterrupted).Clone() RunInterrupted
-    method func (RunInterrupted).Equal(other RunInterrupted) bool
-    method func (RunInterrupted).Validate() error
     method func (RunStarted).Clone() RunStarted
     method func (RunStarted).Equal(other RunStarted) bool
     method func (RunStarted).Validate() error
@@ -122,6 +220,9 @@
     method func (Snapshot).Runs() iter.Seq[RunView]
     method func (Snapshot).ToolCatalog() (ToolCatalogView, bool)
     method func (Snapshot).UserInputByID(id UserInputID) (UserInputView, bool)
+    method func (SourceHead).Clone() SourceHead
+    method func (SourceHead).Equal(other SourceHead) bool
+    method func (SourceHead).Validate() error
     method func (ToolCatalog).Clone() ToolCatalog
     method func (ToolCatalog).Equal(other ToolCatalog) bool
     method func (ToolCatalog).Validate() error
@@ -138,9 +239,8 @@
     method func (UserInput).Clone() UserInput
     method func (UserInput).Equal(other UserInput) bool
     method func (UserInput).Validate() error
-    method func (UserInputID).Clone() UserInputID
     method func (UserInputID).Equal(other UserInputID) bool
-    method func (UserInputID).Next() (UserInputID, error)
+    method func (UserInputID).RunID() RunID
     method func (UserInputID).Validate() error
     method func (UserInputView).ID() UserInputID
     method func (UserInputView).PartAt(i int) ContentPartView
@@ -150,6 +250,10 @@
     method func (WorkspaceFileSource).Equal(other WorkspaceFileSource) bool
     method func (WorkspaceFileSource).Validate() error
     method func (WorkspaceFileSourceView).Path() string
+const InvocationFailureLocal InvocationFailureClass = "local"
+const InvocationFailureOther InvocationFailureClass = "other"
+const InvocationFailureTimeout InvocationFailureClass = "timeout"
+const InvocationFailureTransport InvocationFailureClass = "transport"
 const MediaKindAudio MediaKind = "audio"
 const MediaKindDocument MediaKind = "document"
 const MediaKindImage MediaKind = "image"
@@ -158,21 +262,29 @@ const MediaSourceProvider MediaSourceKind = "provider"
 const MediaSourceRemote MediaSourceKind = "remote"
 const PromptContext PromptPurpose = "context"
 const PromptInstructions PromptPurpose = "instructions"
-func DecodeRecord(scope id.HistoryID, v format.Record, limits codec.Limits) (Record, error)
+const ResponseContentOutput ResponseContentKind = "output"
+const ResponseContentReasoning ResponseContentKind = "reasoning"
+const ResponseContentRefusal ResponseContentKind = "refusal"
+const ResponseTerminalCancelled ResponseTerminalClass = "cancelled"
+const ResponseTerminalError ResponseTerminalClass = "error"
+const ResponseTerminalLimit ResponseTerminalClass = "limit"
+const ResponseTerminalNormal ResponseTerminalClass = "normal"
+const ResponseTerminalOther ResponseTerminalClass = "other"
+const ResponseTerminalRefusal ResponseTerminalClass = "refusal"
+const RunEndedCaptureFailed RunEndedReason = "capture-failed"
+const RunEndedCompleted RunEndedReason = "completed"
+const RunEndedError RunEndedReason = "error"
+const RunEndedInterrupted RunEndedReason = "interrupted"
+const RunEndedLimit RunEndedReason = "limit"
 func Load(ctx context.Context, h *history.History, id id.HistoryID, policy Policy) (*Session, error)
 func New(h *history.History, id id.HistoryID, policy Policy) (*Session, error)
-func NewCreatedRecord(v Created, limits codec.Limits) (Record, error)
-func NewEffectiveInputRecord(v EffectiveInput, limits codec.Limits) (Record, error)
-func NewInstructionsRecord(v Instructions, limits codec.Limits) (Record, error)
-func NewModelBindingRecord(v ModelBinding, limits codec.Limits) (Record, error)
-func NewRunInterruptedRecord(v RunInterrupted, limits codec.Limits) (Record, error)
-func NewRunStartedRecord(v RunStarted, limits codec.Limits) (Record, error)
-func NewToolCatalogRecord(v ToolCatalog, limits codec.Limits) (Record, error)
-func NewUserInputRecord(v UserInput, limits codec.Limits) (Record, error)
 type Actor string
-type AddUserInputRequest struct{RunID RunID; Parts []ContentPart}
 type AttributedInput struct{Parts []ContentPart; Actor Actor; Purpose PromptPurpose; Source ContentSource}
 type AttributedInputView struct{}
+type CaptureFailureEvidence struct{RequestID ModelRequestID; Evidence *ObservedEvidence; Usage *InvocationUsage}
+type CaptureFailureEvidenceView struct{}
+type ConstructionRecipe struct{Algorithm string; Version int64; Parameters []byte; Check []byte}
+type ConstructionRecipeView struct{}
 type ContentPart struct{Text *string; Media *Media}
 type ContentPartView struct{}
 type ContentSource struct{Description string; WorkspaceFile *WorkspaceFileSource}
@@ -180,35 +292,61 @@ type ContentSourceView struct{}
 type Created struct{HistoryID id.HistoryID}
 type EffectiveInput struct{RunID RunID; Inputs []InputItem}
 type EffectiveInputView struct{}
-type InputItem struct{UserInput *UserInputID; Inline *AttributedInput}
+type InputItem struct{UserInputID *UserInputID; Inline *AttributedInput}
 type InputItemView struct{}
 type InstructionBlock struct{Parts []ContentPart; Source ContentSource}
 type InstructionBlockView struct{}
 type Instructions struct{HistoryID id.HistoryID; Blocks []InstructionBlock}
 type InstructionsView struct{}
+type InvocationFailure struct{RequestID ModelRequestID; Class InvocationFailureClass; Explanation *string; Evidence *ObservedEvidence; Usage *InvocationUsage}
+type InvocationFailureClass string
+type InvocationFailureView struct{}
+type InvocationUsage struct{Input *int64; Output *int64; CacheRead *int64; CacheWrite *int64; Reasoning *int64; Raw *OpaqueProviderData}
+type InvocationUsageView struct{}
 type Media struct{Kind MediaKind; Source MediaSourceKind; InlineData []byte; RemoteURI string; ProviderName string; ProviderScope string; ProviderReferenceID string; MIMEType string; FormatHint string; Filename string; Title string}
 type MediaKind string
 type MediaSourceKind string
 type MediaView struct{}
 type ModelBinding struct{HistoryID id.HistoryID; Route string; API string; Model string; Settings []byte}
 type ModelBindingView struct{}
+type ModelRequest struct{RunID RunID; Source SourceHead; Recipe ConstructionRecipe; RetryOf *ModelRequestID}
+type ModelRequestID struct{}
+type ModelRequestView struct{}
+type ModelResponse struct{RequestID ModelRequestID; Terminal ResponseTerminalClass; ProviderStopReason *string; Items []ResponseItem; Evidence *ObservedEvidence; Usage *InvocationUsage; Private *OpaqueProviderData}
+type ModelResponseView struct{}
+type ObservedEvidence struct{Detail *string; Correlation *string}
+type ObservedEvidenceView struct{}
+type OpaqueProviderData struct{Producer string; Format string; Version int64; Data []byte}
+type OpaqueProviderDataView struct{}
 type Policy struct{CommitLimits codec.Limits; PayloadLimits codec.Limits; MaxRecordsPerCommit int; SoftMaxRetainedRecords int; SoftMaxPayloadBytes uint64; SoftMaxDecodedWork uint64; MaxRetainedRecords int; MaxPayloadBytes uint64; MaxDecodedWork uint64}
 type PromptPurpose string
-type Record struct{}
 type RecordView struct{}
-type RunID struct{HistoryID id.HistoryID; Ordinal uint64}
-type RunInterrupted struct{ID RunID}
+type RequestedCall struct{Name string; Arguments []byte}
+type RequestedCallDataView struct{}
+type RequestedCallID struct{}
+type RequestedCallView struct{}
+type ResponseContent struct{Kind ResponseContentKind; Parts []ContentPart}
+type ResponseContentKind string
+type ResponseContentView struct{}
+type ResponseItem struct{Content *ResponseContent; Call *RequestedCall}
+type ResponseItemView struct{}
+type ResponseTerminalClass string
+type RunEnded struct{RunID RunID; Reason RunEndedReason; Explanation *string; Capture *CaptureFailureEvidence}
+type RunEndedReason string
+type RunEndedView struct{}
+type RunID struct{}
 type RunStarted struct{ID RunID}
 type RunView struct{}
 type Session struct{}
 type SessionCommit struct{}
 type Snapshot struct{}
+type SourceHead struct{Sequence int64; CID contentid.CID}
 type ToolCatalog struct{HistoryID id.HistoryID; Tools []ToolDefinition}
 type ToolCatalogView struct{}
 type ToolDefinition struct{Name string; Description string; ArgumentSchema []byte}
 type ToolDefinitionView struct{}
-type UserInput struct{ID UserInputID; Parts []ContentPart}
-type UserInputID struct{RunID RunID; Ordinal uint64}
+type UserInput struct{RunID RunID; Parts []ContentPart}
+type UserInputID struct{}
 type UserInputView struct{}
 type WorkspaceFileSource struct{Path string}
 type WorkspaceFileSourceView struct{}
@@ -218,7 +356,6 @@ var ErrBatch error
 var ErrConflict error
 var ErrIdentity error
 var ErrInvalidPolicy error
-var ErrOrdinalExhausted error
 var ErrReloadRequired error
 var ErrRetryExpired error
 var ErrTransition error

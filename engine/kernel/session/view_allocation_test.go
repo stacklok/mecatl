@@ -41,7 +41,7 @@ func allocationViewFixture(t *testing.T, fieldBytes, siblingBytes, count int) ma
 			Kind: session.MediaKindDocument, MIMEType: "application/octet-stream", FormatHint: "raw", Filename: "notes.bin", Title: strings.Repeat("m", siblingBytes),
 			Source: session.MediaSourceInline, InlineData: bytes.Repeat([]byte{0xa5}, size)}}
 	}
-	input, err := b.AddUserInput(session.AddUserInputRequest{RunID: run, Parts: parts})
+	input, err := b.AddUserInput(session.UserInput{RunID: run, Parts: parts})
 	mustBatch(t, err)
 	source := session.ContentSource{Description: "prepared reference", WorkspaceFile: &session.WorkspaceFileSource{Path: "docs/design.md"}}
 	blocks := make([]session.InstructionBlock, count)
@@ -56,25 +56,16 @@ func allocationViewFixture(t *testing.T, fieldBytes, siblingBytes, count int) ma
 		tools[i] = session.ToolDefinition{Name: "tool" + strconv.Itoa(i), Description: strings.Repeat("d", siblingBytes), ArgumentSchema: []byte(`"` + strings.Repeat("s", size-2) + `"`)}
 		items[i] = session.InputItem{Inline: &session.AttributedInput{Actor: "extension/example", Purpose: session.PromptContext, Parts: parts, Source: source}}
 	}
-	items[0] = session.InputItem{UserInput: &input}
+	items[0] = session.InputItem{UserInputID: &input}
 	mustBatch(t, b.ReplaceInstructions(session.Instructions{HistoryID: scope, Blocks: blocks}))
 	mustBatch(t, b.ReplaceToolCatalog(session.ToolCatalog{HistoryID: scope, Tools: tools}))
 	mustBatch(t, b.ReplaceModelBinding(session.ModelBinding{HistoryID: scope, Route: strings.Repeat("r", siblingBytes), API: "dialect/v1", Model: "alias", Settings: []byte(`"` + strings.Repeat("v", fieldBytes-2) + `"`)}))
 	mustBatch(t, b.AddEffectiveInput(session.EffectiveInput{RunID: run, Inputs: items}))
 	submitBatch(t, s, b)
 
-	// Exercise the same proof against both accepted-record construction paths and
-	// real history reconstruction, without synthetic or bypassed aggregate state.
-	applied := boundSession(t, h, p)
-	page, err := h.Read(context.Background(), scope, history.ReadRequest{Through: s.Snapshot().Head(), MaxCommits: 1})
-	mustBatch(t, err)
-	if len(page.Commits) != 1 {
-		t.Fatal("missing fixture commit")
-	}
-	mustBatch(t, applied.Apply(page.Commits[0]))
 	loaded, err := session.Load(context.Background(), h, scope, p)
 	mustBatch(t, err)
-	return map[string]*session.Session{"Submit": s, "Apply": applied, "Load": loaded}
+	return map[string]*session.Session{"Submit": s, "Load": loaded}
 }
 
 func TestViewNavigationAllocations(t *testing.T) {
@@ -117,7 +108,7 @@ func TestViewNavigationAllocations(t *testing.T) {
 						}
 					}
 					follow := func() {
-						id, present := effective.InputAt(0).UserInput()
+						id, present := effective.InputAt(0).UserInputID()
 						input, ok = snapshot.UserInputByID(id)
 						ok = ok && present
 						part = input.PartAt(input.PartCount() - 1)
@@ -160,7 +151,7 @@ func TestViewNavigationAllocations(t *testing.T) {
 						}
 						runtime.KeepAlive(copied)
 					}
-					if !ok || input.ID().Ordinal != 1 || count != 6*axis.count || text != "extension/example" {
+					if !ok || input.ID().RunID() != snapshot.ActiveRun() || count != 6*axis.count || text != "extension/example" {
 						t.Fatal("navigation did not reach expected independent fields/counts")
 					}
 					runtime.KeepAlive(snapshot)
@@ -195,7 +186,7 @@ func TestViewByteExportsCopyOnlyRequestedField(t *testing.T) {
 			for seam, s := range allocationViewFixture(t, axis.field, axis.sibling, 2) {
 				t.Run(seam, func(t *testing.T) {
 					v := s.Snapshot()
-					input, _ := v.UserInputByID(session.UserInputID{RunID: v.ActiveRun(), Ordinal: 1})
+					input := lookupInput(t, v, v.ActiveRun(), 1)
 					media, _ := input.PartAt(0).Media()
 					catalog, _ := v.ToolCatalog()
 					binding, _ := v.ModelBinding()
@@ -259,7 +250,7 @@ func TestViewPinnedReferenceChildrenAcrossReplacement(t *testing.T) {
 	s := allocationViewFixture(t, 32, 32, 2)["Submit"]
 	old := s.Snapshot()
 	effective, _ := old.RecordAt(6).EffectiveInput()
-	ref, _ := effective.InputAt(0).UserInput()
+	ref, _ := effective.InputAt(0).UserInputID()
 	input, _ := old.UserInputByID(ref)
 	part := input.PartAt(0)
 	media, _ := part.Media()
@@ -282,7 +273,7 @@ func TestViewPinnedReferenceChildrenAcrossReplacement(t *testing.T) {
 	close(start)
 	for range 32 {
 		b := beginBatch(t, s)
-		_, err := b.AddUserInput(session.AddUserInputRequest{RunID: old.ActiveRun(), Parts: byteParts([]byte("later"))})
+		_, err := b.AddUserInput(session.UserInput{RunID: old.ActiveRun(), Parts: byteParts([]byte("later"))})
 		mustBatch(t, err)
 		mustBatch(t, b.ReplaceInstructions(session.Instructions{HistoryID: old.HistoryID()}))
 		mustBatch(t, b.ReplaceToolCatalog(session.ToolCatalog{HistoryID: old.HistoryID()}))

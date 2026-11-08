@@ -5,22 +5,63 @@ import (
 
 	"github.com/stacklok/mecatl/engine/kernel/codec"
 	"github.com/stacklok/mecatl/engine/kernel/history"
+	historyid "github.com/stacklok/mecatl/engine/kernel/history/id"
 	sessionformat "github.com/stacklok/mecatl/engine/kernel/session/format"
 )
 
-// lifecycleState is the complete scalar transition state. Copies are disposable
-// candidates; metadata preflight and decoded application use the same reducer.
+// lifecycleState contains only copyable active-run admission scalars. Historical
+// facts remain in immutable records when an ending or successor changes these.
 type lifecycleState struct {
-	created   bool
-	activeRun RunID
-	runs      uint64
-	inputs    uint64 // Inputs in the active (or most recently interrupted) run.
+	created                       bool
+	activeRun                     RunID
+	runs, inputs, requests        uint64
+	binding                       bool
+	frontier, accounted, captured uint64 // Admitted contributions, last outcome coverage, pending request coverage.
+	pending                       ModelRequestID
+	calls                         uint64
 }
 
-// reduce validates one locally valid typed fact before changing the candidate.
-// Failed additions leave all scalars unchanged and consume no ordinal.
-func (s *lifecycleState) reduce(r Record) error {
-	if r.scope != s.activeRun.HistoryID && s.activeRun != (RunID{}) {
+// admissionContext pins the accepted source and head independently of the ordered
+// candidate. Pinning the source makes construction reproducible and requires
+// accepted prerequisites; same-batch facts cannot manufacture them. The candidate
+// tracks prospective order. Callers copy this context before admitting an addition,
+// so a rejected fact consumes neither state nor IDs.
+//
+// frontier is the admitted contribution coverage; a request captures the accepted
+// frontier, and its outcome accounts that captured value. For example, input
+// advances frontier, a request captures it, an outcome accounts it, then later
+// input advances frontier again: the older outcome cannot justify a completed end.
+// This coverage is structural lifecycle bookkeeping, not evidence that a model
+// understood input, that work was fulfilled, or that usage was billed. An empty
+// authored submission advances frontier; an empty effective contribution does not.
+// Input gating is a chosen admission policy: pending outcomes or unresolved calls
+// prevent new input. Queues and steering live above this boundary. The pinned source
+// rule is also an accepted-prerequisite policy: same-batch facts cannot provide it.
+// Those choices differ from structural integrity, which requires valid scoped
+// identity, membership, and fact pairing. Policy separately controls capacity.
+// Uncertain endings intentionally retain pending and unresolved coverage; ending
+// local ownership does not assert that external processing or spend has ceased.
+// Ordinary writes must fit soft limits and reserve each actual minimal emergency
+// ending at the resulting candidate under both the hard Session policy and the
+// History policy; replay uses only hard retained limits.
+type admissionContext struct {
+	head      history.CommitRef
+	source    lifecycleState
+	candidate lifecycleState
+}
+
+func newAdmission(v Snapshot) admissionContext {
+	return admissionContext{head: v.head, source: v.lifecycle, candidate: v.lifecycle}
+}
+
+// admit validates a complete locally valid fact in explicit history scope against
+// the pinned source and ordered candidate. On success it mutates only the
+// receiver's candidate; on error it leaves the entire context unchanged, including
+// its pinned accepted source and head. It establishes neither persistence, storage
+// acceptance, nor publication. Outcomes account only their captured frontier.
+func (a *admissionContext) admit(scope historyid.HistoryID, r *materializedRecord) error {
+	s := &a.candidate
+	if scope != s.activeRun.historyID && s.activeRun != (RunID{}) {
 		return ErrIdentity
 	}
 	switch r.value.Kind {
@@ -30,85 +71,178 @@ func (s *lifecycleState) reduce(r Record) error {
 		}
 		s.created = true
 	case sessionformat.KindRunStarted:
-		return s.startRun(r)
+		return s.startRun(scope, r.started)
 	case sessionformat.KindUserInput:
-		if !s.created || s.activeRun == (RunID{}) || r.userInput.RunID != s.activeRun || s.inputs == math.MaxUint64 || r.userInput.Ordinal != s.inputs+1 {
+		return s.admitUserInput(UserInputID{runID: RunID{historyID: scope, ordinal: r.input.RunID}, ordinal: r.input.ID})
+	case sessionformat.KindInstructions, sessionformat.KindToolCatalog, sessionformat.KindModelBinding:
+		if !s.created {
 			return ErrTransition
 		}
-		s.inputs++
-	case sessionformat.KindInstructions, sessionformat.KindToolCatalog, sessionformat.KindModelBinding:
-		if !s.created || s.activeRun == (RunID{}) {
-			return ErrTransition
+		if r.value.Kind == sessionformat.KindModelBinding {
+			s.binding = true
 		}
 	case sessionformat.KindEffectiveInput:
-		return s.validateEffectiveInput(r)
-	case sessionformat.KindRunInterrupted:
-		if !s.created || s.activeRun == (RunID{}) || r.runInterrupted.ID != s.activeRun {
-			return ErrTransition
+		return s.admitEffectiveInput(r.effective)
+	case sessionformat.KindModelRequest:
+		return a.admitRequest(scope, r.request)
+	case sessionformat.KindModelResponse:
+		var calls uint64
+		for _, item := range r.response.Items {
+			if item.Call != nil {
+				calls++
+			}
 		}
-		s.activeRun = RunID{}
+		return a.admitOutcome(requestID(scope, r.response.RunID, r.response.RequestID), calls)
+	case sessionformat.KindInvocationFailure:
+		return a.admitOutcome(requestID(scope, r.failure.RunID, r.failure.RequestID), 0)
+	case sessionformat.KindRunEnded:
+		return a.endRun(scope, r.ended)
 	default:
 		return ErrUnsupportedRecord
 	}
 	return nil
 }
 
-// startRun advances only a valid next run, leaving failed candidates unchanged.
-func (s *lifecycleState) startRun(r Record) error {
-	if !s.created || s.activeRun != (RunID{}) || s.runs == math.MaxUint64 || r.runStarted.ID != s.runs+1 {
+// startRun resets only active-run counters after proving the next run identity.
+func (s *lifecycleState) startRun(scope historyid.HistoryID, v sessionformat.RunStarted) error {
+	if !s.created || s.activeRun != (RunID{}) || s.runs == math.MaxUint64 || v.ID != s.runs+1 {
 		return ErrTransition
 	}
 	s.runs++
-	s.inputs = 0
-	s.activeRun = RunID{HistoryID: r.scope, Ordinal: r.runStarted.ID}
+	s.activeRun = RunID{historyID: scope, ordinal: v.ID}
+	s.inputs, s.requests, s.frontier, s.accounted, s.captured, s.calls = 0, 0, 0, 0, 0, 0
+	s.pending = ModelRequestID{}
 	return nil
 }
 
-// validateEffectiveInput checks every source without changing lifecycle state.
-// Inputs are admitted contiguously within each run, so the current ordinal count
-// proves earlier membership, including successful earlier same-batch additions.
-func (s *lifecycleState) validateEffectiveInput(r Record) error {
-	if !s.created || s.activeRun == (RunID{}) || r.effectiveInput.RunID != s.activeRun.Ordinal {
+// admitUserInput advances authored identity and coverage together, even for empty
+// submissions. All eligibility and overflow checks precede scalar changes.
+func (s *lifecycleState) admitUserInput(id UserInputID) error {
+	if !s.inputEligible() || id.runID != s.activeRun || s.inputs == math.MaxUint64 || id.ordinal != s.inputs+1 {
 		return ErrTransition
 	}
-	for _, in := range r.effectiveInput.Inputs {
-		if in.UserInput != nil && (*in.UserInput == 0 || *in.UserInput > s.inputs) {
+	if s.frontier == math.MaxUint64 {
+		return codec.ErrLimitExceeded
+	}
+	s.inputs++
+	s.frontier++
+	return nil
+}
+
+// admitEffectiveInput checks earlier input membership before advancing coverage.
+// Empty contributions are retained without changing the frontier.
+func (s *lifecycleState) admitEffectiveInput(v sessionformat.EffectiveInput) error {
+	if !s.inputEligible() || v.RunID != s.activeRun.ordinal {
+		return ErrTransition
+	}
+	for _, in := range v.Inputs {
+		if in.UserInputID != nil && (*in.UserInputID == 0 || *in.UserInputID > s.inputs) {
 			return ErrTransition
 		}
 	}
+	if len(v.Inputs) != 0 {
+		if s.frontier == math.MaxUint64 {
+			return codec.ErrLimitExceeded
+		}
+		s.frontier++
+	}
 	return nil
 }
 
-// preflight rechecks owned payloads and reduces them without scanning accepted
-// prefixes. Ordered scalar admission includes earlier same-batch submissions.
-func (s *Session) preflight(records []Record, ref history.CommitRef, payloadBytes uint64) error {
-	candidate := s.state.view.lifecycle
+// admitRequest pins eligibility and coverage to the accepted source, independently
+// of prospective context replacements. Failure consumes no request ordinal.
+func (a *admissionContext) admitRequest(scope historyid.HistoryID, v sessionformat.ModelRequest) error {
+	s := &a.candidate
+	src := a.source
+	id := requestID(scope, v.RunID, v.ID)
+	if !s.inputEligible() || src.activeRun != s.activeRun || !src.binding || src.pending != (ModelRequestID{}) || src.calls != 0 || s.frontier != src.frontier || id.runID != s.activeRun || s.requests == math.MaxUint64 || v.ID != s.requests+1 {
+		return ErrTransition
+	}
+	if v.Source.Sequence != a.head.Sequence || v.Source.CID != a.head.CID {
+		return ErrIdentity
+	}
+	if v.RetryOf != nil && (*v.RetryOf == 0 || *v.RetryOf > src.requests) {
+		return ErrTransition
+	}
+	s.requests++
+	s.pending = id
+	s.captured = src.frontier
+	return nil
+}
+
+// admitOutcome resolves only the still-pending request from an earlier accepted
+// commit. Duplicate or same-batch outcomes cannot change coverage or obligations.
+func (a *admissionContext) admitOutcome(id ModelRequestID, calls uint64) error {
+	s := &a.candidate
+	if !s.created || s.activeRun == (RunID{}) || id.runID != s.activeRun || id != s.pending || id != a.source.pending {
+		return ErrTransition
+	}
+	s.pending = ModelRequestID{}
+	s.accounted = s.captured
+	s.calls = calls
+	return nil
+}
+
+// endRun checks clean coverage and capture membership before ending ownership.
+// Explicit uncertain endings preserve all pending and unresolved scalars.
+func (a *admissionContext) endRun(scope historyid.HistoryID, v sessionformat.RunEnded) error {
+	s := &a.candidate
+	if !s.created || s.activeRun == (RunID{}) || (RunID{historyID: scope, ordinal: v.RunID}) != s.activeRun {
+		return ErrTransition
+	}
+	if v.Reason == sessionformat.RunEndedCompleted && (s.pending != (ModelRequestID{}) || s.calls != 0 || s.accounted != s.frontier) {
+		return ErrTransition
+	}
+	if v.Capture != nil {
+		id := requestID(scope, v.RunID, v.Capture.RequestID)
+		if id != s.pending || id != a.source.pending {
+			return ErrTransition
+		}
+	}
+	s.activeRun = RunID{}
+	return nil
+}
+
+func (s lifecycleState) inputEligible() bool {
+	return s.created && s.activeRun != (RunID{}) && s.pending == (ModelRequestID{}) && s.calls == 0
+}
+
+// preflight revalidates owner-validated backing under current limits and supplies
+// enclosing scope to the same pinned-source admission used by additions and replay.
+func (s *Session) preflight(records []*materializedRecord, ref history.CommitRef, payloadBytes uint64) error {
+	a := newAdmission(s.state.view)
 	for _, r := range records {
 		if err := r.checkPayload(s.policy.PayloadLimits); err != nil {
 			return err
 		}
-		if err := candidate.reduce(r); err != nil {
+		if err := a.admit(s.state.view.historyID, r); err != nil {
 			return err
 		}
 	}
-	return s.reserveInterruption(ref, candidate.activeRun, s.state.records+len(records), s.state.payloadBytes+payloadBytes)
+	return s.reserveEnding(ref, a.candidate, s.state.records+len(records), s.state.payloadBytes+payloadBytes)
 }
 
-// reserveInterruption uses the actual preparation path, including next-envelope
-// widths and admission. Closing becomes idle, so reservation cannot recurse.
-func (s *Session) reserveInterruption(ref history.CommitRef, active RunID, records int, payloadBytes uint64) error {
-	if active == (RunID{}) {
+// reserveEnding prepares every actual minimal emergency ending after the ordinary
+// candidate has passed soft limits. Each ending must fit the resulting state under
+// the hard Session capacity policy and the History encoding policy, covering the
+// largest supported encoded shape in each dimension despite unequal label lengths.
+// Terminal candidates cannot recurse.
+func (s *Session) reserveEnding(ref history.CommitRef, state lifecycleState, records int, payloadBytes uint64) error {
+	if state.activeRun == (RunID{}) {
 		return nil
 	}
-	next := Session{policy: s.policy, state: sessionState{
-		view:    Snapshot{historyID: s.state.view.historyID, head: ref, lifecycle: lifecycleState{created: true, activeRun: active}},
-		records: records, payloadBytes: payloadBytes,
+	next := Session{history: s.history, policy: s.policy, state: sessionState{
+		view: Snapshot{historyID: s.state.view.historyID, head: ref, lifecycle: state}, records: records, payloadBytes: payloadBytes,
 	}}
-	_, err := next.prepareInterruption()
-	return err
+	for _, reason := range []RunEndedReason{RunEndedError, RunEndedLimit, RunEndedInterrupted, RunEndedCaptureFailed} {
+		if _, err := next.prepareEnding(reason); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
-// nextOrdinal avoids wrapping a provisional identifier before constructor checks.
+// nextOrdinal rejects overflow before consuming a provisional identifier.
 func nextOrdinal(n uint64) (uint64, error) {
 	if n == math.MaxUint64 {
 		return 0, codec.ErrLimitExceeded

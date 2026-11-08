@@ -25,6 +25,10 @@ func detachedSessionState(state sessionState) sessionState {
 		owned.catalog = r.catalog.Clone()
 		owned.binding = r.binding.Clone()
 		owned.effective = r.effective.Clone()
+		owned.request = r.request.Clone()
+		owned.response = r.response.Clone()
+		owned.failure = r.failure.Clone()
+		owned.ended = r.ended.Clone()
 		if v.instructions == r {
 			v.instructions = &owned
 		}
@@ -58,12 +62,12 @@ func populatedAtomicitySession(t *testing.T) *Session {
 			t.Fatal(err)
 		}
 		for _, content := range []string{"first", "second"} {
-			if _, err := b.AddUserInput(AddUserInputRequest{RunID: run, Parts: internalByteParts([]byte(content))}); err != nil {
+			if _, err := b.AddUserInput(UserInput{RunID: run, Parts: internalByteParts([]byte(content))}); err != nil {
 				t.Fatal(err)
 			}
 		}
 		if n == 0 {
-			if err := b.Interrupt(); err != nil {
+			if err := b.EndRun(RunEndedInterrupted); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -83,17 +87,17 @@ func TestSessionPopulatedApplyRejectionPreservesPrivateState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := b.AddUserInput(AddUserInputRequest{RunID: old.ActiveRun(), Parts: internalByteParts([]byte("third"))}); err != nil {
+	if _, err := b.AddUserInput(UserInput{RunID: old.ActiveRun(), Parts: internalByteParts([]byte("third"))}); err != nil {
 		t.Fatal(err)
 	}
-	if err := b.Interrupt(); err != nil {
+	if err := b.EndRun(RunEndedInterrupted); err != nil {
 		t.Fatal(err)
 	}
 	run, err := b.StartRun()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := b.AddUserInput(AddUserInputRequest{RunID: run, Parts: internalByteParts([]byte("successor"))}); err != nil {
+	if _, err := b.AddUserInput(UserInput{RunID: run, Parts: internalByteParts([]byte("successor"))}); err != nil {
 		t.Fatal(err)
 	}
 	records := slices.Clone(b.records)
@@ -105,17 +109,17 @@ func TestSessionPopulatedApplyRejectionPreservesPrivateState(t *testing.T) {
 		t.Fatal(err)
 	}
 	bad := good.commit.Clone()
-	wrongCloseout, err := NewRunInterruptedRecord(RunInterrupted{ID: old.ActiveRun()}, s.policy.PayloadLimits)
+	wrongCloseout, err := newRunEndedRecord(s.Snapshot().HistoryID(), RunEnded{RunID: old.ActiveRun(), Reason: RunEndedInterrupted}, s.policy.PayloadLimits)
 	if err != nil {
 		t.Fatal(err)
 	}
-	bad.Records = append(bad.Records, wrongCloseout.Format())
+	bad.Records = append(bad.Records, wrongCloseout.format())
 	wire, err := codec.Encode(bad, s.policy.CommitLimits)
 	if err != nil {
 		t.Fatal(err)
 	}
 	accepted := history.Commit{Ref: history.CommitRef{Sequence: bad.Sequence, CID: contentid.Sum(wire)}, Commit: bad}
-	if err := s.Apply(accepted); !errors.Is(err, ErrTransition) {
+	if err := s.apply(accepted); !errors.Is(err, ErrTransition) {
 		t.Fatalf("invalid final Apply: %v", err)
 	}
 	if !reflect.DeepEqual(before, detachedSessionState(s.state)) {
@@ -129,7 +133,7 @@ func TestSessionPopulatedApplyRejectionPreservesPrivateState(t *testing.T) {
 	if !internalUserInputsMatch(old, oldRun.ID(), 2) || oldRun.RecordCount() != 3 || string(internalInputBytes(oldInput)) != "first" || !oldRecord.Format().Equal(before.view.records[2].value) {
 		t.Fatal("rejection changed independent child handles")
 	}
-	if err := s.Apply(history.Commit{Ref: good.ref, Commit: good.commit}); err != nil {
+	if err := s.apply(history.Commit{Ref: good.ref, Commit: good.commit}); err != nil {
 		t.Fatal(err)
 	}
 }

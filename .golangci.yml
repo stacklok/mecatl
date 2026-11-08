@@ -167,6 +167,7 @@ linters:
           allow:
             - $gostd
             - github.com/stacklok/mecatl/engine/kernel/codec$
+            - github.com/stacklok/mecatl/engine/kernel/contentid$
             - github.com/jcalabro/atmos/cbor$
           deny:
             - pkg: os

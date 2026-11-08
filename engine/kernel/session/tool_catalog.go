@@ -62,11 +62,15 @@ func toolCatalogFromFormat(scope historyid.HistoryID, v sessionformat.ToolCatalo
 	return out
 }
 
-// NewToolCatalogRecord encodes an owned scoped replacement under explicit limits.
-// Failure returns zero; construction proves no active-run admission.
-func NewToolCatalogRecord(v ToolCatalog, limits codec.Limits) (Record, error) {
+// newToolCatalogRecord encodes an owned scoped replacement under explicit limits.
+// Failure returns nil; target history is checked before scope omission.
+// Construction proves no lifecycle admission.
+func newToolCatalogRecord(scope historyid.HistoryID, v ToolCatalog, limits codec.Limits) (*materializedRecord, error) {
 	if err := (Created{HistoryID: v.HistoryID}).Validate(); err != nil {
-		return Record{}, codec.ErrInvalidData
+		return nil, codec.ErrInvalidData
+	}
+	if scope != v.HistoryID {
+		return nil, ErrIdentity
 	}
 	b := newValueBudget(limits)
 	b.collection(len(v.Tools))
@@ -78,13 +82,13 @@ func NewToolCatalogRecord(v ToolCatalog, limits codec.Limits) (Record, error) {
 		}
 	}
 	if b.err != nil {
-		return Record{}, b.err
+		return nil, b.err
 	}
 	payload, err := codec.Encode(v.toFormat(), limits)
 	if err != nil {
-		return Record{}, err
+		return nil, err
 	}
-	return Record{scope: v.HistoryID, value: format.Record{Kind: sessionformat.KindToolCatalog, KindVersion: sessionformat.Version, Payload: payload}}, nil
+	return decodeMaterialized(format.Record{Kind: sessionformat.KindToolCatalog, KindVersion: sessionformat.Version, Payload: payload}, limits)
 }
 
 // ToolCatalogView retains immutable accepted backing storage, including its

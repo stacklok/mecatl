@@ -16,13 +16,13 @@ type Snapshot struct {
 	historyID    historyid.HistoryID
 	head         history.CommitRef
 	lifecycle    lifecycleState
-	records      []*acceptedRecord
+	records      []*materializedRecord
 	runs         []runEntry
 	inputs       []int
 	commits      []commitEntry
-	instructions *acceptedRecord
-	catalog      *acceptedRecord
-	binding      *acceptedRecord
+	instructions *materializedRecord
+	catalog      *materializedRecord
+	binding      *materializedRecord
 }
 
 // HistoryID returns the scope, including before creation.
@@ -86,23 +86,23 @@ func (v Snapshot) RunAt(i int) RunView {
 // snapshot. Invalid, foreign or absent identities return zero, false. An accepted
 // empty submission is present, including after its run is interrupted.
 func (v Snapshot) UserInputByID(id UserInputID) (UserInputView, bool) {
-	if id.RunID.HistoryID != v.historyID || id.RunID.Ordinal == 0 || id.RunID.Ordinal > uint64(len(v.runs)) || id.Ordinal == 0 {
+	if id.runID.historyID != v.historyID || id.runID.ordinal == 0 || id.runID.ordinal > uint64(len(v.runs)) || id.ordinal == 0 {
 		return UserInputView{}, false
 	}
-	i := int(id.RunID.Ordinal - 1) //nolint:gosec // Positive ordinal is bounded by len(v.runs) above.
+	i := int(id.runID.ordinal - 1) //nolint:gosec // Positive ordinal is bounded by len(v.runs) above.
 	r := v.runs[i]
-	if r.id != id.RunID {
+	if r.id != id.runID {
 		return UserInputView{}, false
 	}
 	end := len(v.inputs)
 	if i+1 < len(v.runs) {
 		end = v.runs[i+1].inputStart
 	}
-	if id.Ordinal > uint64(end-r.inputStart) { //nolint:gosec // Accepted run locators are monotonic and within pinned input bounds.
+	if id.ordinal > uint64(end-r.inputStart) { //nolint:gosec // Accepted run locators are monotonic and within pinned input bounds.
 		return UserInputView{}, false
 	}
-	record := v.records[v.inputs[r.inputStart+int(id.Ordinal-1)]] //nolint:gosec // Positive ordinal is bounded by the int-sized run span above.
-	if record.input.RunID != id.RunID.Ordinal || record.input.ID != id.Ordinal {
+	record := v.records[v.inputs[r.inputStart+int(id.ordinal-1)]] //nolint:gosec // Positive ordinal is bounded by the int-sized run span above.
+	if record.input.RunID != id.runID.ordinal || record.input.ID != id.ordinal {
 		return UserInputView{}, false
 	}
 	return UserInputView{scope: v.historyID, value: &record.input}, true

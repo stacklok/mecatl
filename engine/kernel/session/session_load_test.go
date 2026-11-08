@@ -84,7 +84,7 @@ func TestLoadLifecycleAndOwnership(t *testing.T) {
 				}
 			}
 			v := loaded.Snapshot()
-			clear(inputBytes(lookupInput(t, v, input.RunID, input.Ordinal)))
+			clear(inputBytes(lookupInput(t, v, input.RunID(), 1)))
 			raw := v.RecordAt(2).Format()
 			clear(raw.Payload)
 			if !reflect.DeepEqual(loaded.Snapshot(), want) || !reflect.DeepEqual(s.Snapshot(), want) {
@@ -100,11 +100,11 @@ func TestLoadLifecycleAndOwnership(t *testing.T) {
 		}
 		next := beginBatch(t, s)
 		if stage == "active" {
-			mustBatch(t, next.Interrupt())
+			mustBatch(t, next.EndRun(session.RunEndedInterrupted))
 		} else {
 			nextRun := batchRun(t, next)
 			second := batchInput(t, next, nextRun, []byte("second"))
-			if second.Ordinal != 1 || nextRun.Ordinal != 2 {
+			if second != allocatedInput(t, nextRun, 1) || nextRun != allocatedRun(t, testHistoryID(t), 2) {
 				t.Fatal("reload numbering")
 			}
 		}
@@ -112,7 +112,7 @@ func TestLoadLifecycleAndOwnership(t *testing.T) {
 	}
 	// Loading restores owner legality, not just visible facts.
 	b = beginBatch(t, s)
-	if _, err := b.AddUserInput(session.AddUserInputRequest{RunID: input.RunID}); !errors.Is(err, session.ErrTransition) {
+	if _, err := b.AddUserInput(session.UserInput{RunID: input.RunID()}); !errors.Is(err, session.ErrTransition) {
 		t.Fatal("reload forgot closed owner")
 	}
 	mustBatch(t, b.Discard())
@@ -165,7 +165,7 @@ func TestLoadAfterAcceptedBeforeLocalApply(t *testing.T) {
 	loaded, err := session.Load(context.Background(), readOnly, testHistoryID(t), sessionPolicy())
 	mustBatch(t, err)
 	v := loaded.Snapshot()
-	if v.Head() != backend.attempts[0].commit.Ref || !v.Created() || v.ActiveRun() != run || v.RunCount() != 1 || !userInputsMatch(v, run, 1) || lookupInput(t, v, input.RunID, input.Ordinal).ID() != input || string(inputBytes(lookupInput(t, v, input.RunID, input.Ordinal))) != "accepted" || !reflect.DeepEqual(s.Snapshot(), before) || len(backend.attempts) != 1 {
+	if v.Head() != backend.attempts[0].commit.Ref || !v.Created() || v.ActiveRun() != run || v.RunCount() != 1 || !userInputsMatch(v, run, 1) || lookupInput(t, v, input.RunID(), 1).ID() != input || string(inputBytes(lookupInput(t, v, input.RunID(), 1))) != "accepted" || !reflect.DeepEqual(s.Snapshot(), before) || len(backend.attempts) != 1 {
 		t.Fatal("crash recovery lost facts or changed abandoned object")
 	}
 	if _, err := s.BeginCommit(); !errors.Is(err, session.ErrBatch) {

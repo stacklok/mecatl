@@ -131,8 +131,8 @@ fabricate a spec.**
 
 ## Step 4 — Inventory standards sources
 
-The Standards axis needs to know what *conventions* this repo
-documents. Collect filenames (the Standards subagent will read
+The Standards axis checks documented rules and **package coherence** with
+neighboring code. Collect standards filenames (the Standards subagent will read
 them):
 
 - `CLAUDE.md`, `AGENTS.md`, `CONTRIBUTING.md`
@@ -149,9 +149,35 @@ type-checker, compiler, or project tooling configs (for example
 `.editorconfig`, ESLint/Biome/Prettier/TypeScript, `.golangci.yml`, pyproject
 Ruff/Black/mypy, rustfmt/clippy). Re-flagging tool-enforced rules wastes tokens.
 
-If no standards docs are found, note "Standards axis: no project
-standards docs found — axis returned an empty report" in output;
-don't skip the axis silently.
+### Package coherence
+
+For each changed public contract or persistence DTO family, compare representative
+neighboring types, including unchanged code, for:
+
+- naming and identity semantics (scope, opacity, ID versus ordinal);
+- categorical representations (string versus numeric enums, closed versus open
+  vocabularies, and discoverable constant grouping);
+- type/field documentation depth and explicit provisional design assumptions;
+- ownership, aliasing, optionality, and zero-value conventions;
+- file boundaries for record-owned versus shared types.
+
+Report unexplained differences with both code locations and the concrete caller
+confusion or maintenance cost. Distinguish an observed convention from a documented
+rule; assess local rationale before recommending uniformity. Classify design polish
+as advisory unless a stronger impact justifies more. Complete the pass by reporting
+which families and neighboring examples were compared, even when no findings result.
+
+For split reviews, the coordinator records each slice's changed package/family
+inventory and Standards receipt in `.scratch/panel-review/coherence.md`. Before
+the final panel summary, supply that artifact and all slice diff paths to one
+cross-slice Standards coherence pass, requesting explicit comparisons between
+slices. It may reuse the Standards reviewer; it is not another axis. A skipped
+or failed coherence pass must be reported as a coverage gap, not a clean
+Standards result.
+
+If no standards docs are found, report that absence and still perform the package
+coherence pass wherever comparable code exists. If neither source is available,
+report the Standards coverage gap explicitly.
 
 ## Step 5 — Inventory the available domain panel
 
@@ -307,13 +333,19 @@ in final output.
   > Tooling-enforced configs to SKIP (tooling already runs on
   > every commit; do not re-flag what they cover): <list>
   >
-  > Read the standards docs, then the diff. Report — per file /
-  > hunk where relevant — every place the diff violates a
-  > documented standard. Cite the standard (file + the rule).
-  > Classify **every** finding explicitly as `blocker`, `important`, or
+  > Standards skill/checklist path: <resolved path to this skill's SKILL.md>
+  > Read the standards docs, then the diff. Report documented-rule violations,
+  > citing the rule and affected code. Also read the Package coherence checklist
+  > in Step 4 at the supplied skill path and apply it to every
+  > changed public contract/DTO family, inspecting unchanged neighbors as needed.
+  > Cross-slice inputs, when applicable: <coordinator's coherence.md and all slice diff paths>
+  > Cite both sides of each coherence mismatch and its concrete impact; distinguish
+  > inferred conventions from written rules and evaluate justified exceptions.
+  > Include a brief coverage receipt naming the families/examples compared and any
+  > gaps. Classify **every** finding explicitly as `blocker`, `important`, or
   > `advisory`: blocker = must fix before merge; important = concrete
-  > non-blocking fix; advisory = judgement/polish. Under 400 words. Default to
-  > silence when uncertain.
+  > non-blocking fix; advisory = judgement/polish. Keep findings under 400 words,
+  > with the coverage receipt separate. Default to silence when uncertain.
 
 ### Test-adequacy subagent
 
@@ -380,7 +412,9 @@ information you want to preserve. Cross-axis merging is the
 failure mode Matt's design exists to prevent.
 
 For the **Spec**, **Standards**, and **Test adequacy** axes, present each
-subagent's explicitly classified findings verbatim or lightly cleaned. Don't
+subagent's explicitly classified findings verbatim or lightly cleaned. Preserve
+the Standards coverage receipt and any cross-slice coherence gaps alongside its
+findings. Don't
 rerank or infer a classification from prose. An unclassified finding is a
 reviewer failure to retry, not a countable finding.
 
@@ -473,7 +507,7 @@ Don't loop on synthesis. The panel ran once; the report stands.
 |---|---|
 | No fixed point provided | Ask before proceeding; don't auto-detect. |
 | No spec source found | Skip Spec axis; note in output. |
-| No standards docs found | Standards subagent returns empty; note in output. |
+| No standards docs found | Report the absence; apply Step 4's package coherence check using comparable code. |
 | No executable behavior or tests in scope | Mark Test adequacy not applicable; do not count a reviewer failure. |
 | No domain agents installed | Run Spec + Standards + Test adequacy; mark Domain unavailable, not failed. |
 | `git diff` returns nothing | Ask for explicit scope (files / PR / branch). |

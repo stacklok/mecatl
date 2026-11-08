@@ -146,7 +146,8 @@ var coreImportRules = []coreImportRule{
 	{
 		pkg: modulePrefix + "engine/kernel/session/format",
 		allowedCore: map[string]bool{
-			modulePrefix + "engine/kernel/codec": true,
+			modulePrefix + "engine/kernel/codec":     true,
+			modulePrefix + "engine/kernel/contentid": true,
 		},
 		allowedExternal: map[string]bool{
 			"github.com/jcalabro/atmos/cbor": true,

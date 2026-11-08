@@ -8,14 +8,15 @@ import (
 	"testing"
 
 	"github.com/stacklok/mecatl/engine/kernel/codec"
+	historyid "github.com/stacklok/mecatl/engine/kernel/history/id"
 	"github.com/stacklok/mecatl/engine/kernel/session"
 	sessionformat "github.com/stacklok/mecatl/engine/kernel/session/format"
 )
 
 func TestUserInput(t *testing.T) {
-	id := session.UserInputID{RunID: session.RunID{HistoryID: testHistoryID(t), Ordinal: 1}, Ordinal: 1}
+	id := allocatedInput(t, allocatedRun(t, testHistoryID(t), 1), 1)
 	for _, content := range [][]byte{nil, {}, {0xff, 0, 0x9f}, []byte(`{ "not": json }`), []byte(" e\u0301\r\n")} {
-		v := session.UserInput{ID: id, Parts: byteParts(bytes.Clone(content))}
+		v := session.UserInput{RunID: id.RunID(), Parts: byteParts(bytes.Clone(content))}
 		if err := v.Validate(); err != nil {
 			t.Fatal(err)
 		}
@@ -23,13 +24,16 @@ func TestUserInput(t *testing.T) {
 		if !reflect.DeepEqual(cloned, v) {
 			t.Fatal("clone changed storage shape or bytes")
 		}
-		r, err := session.NewUserInputRecord(v, testLimits())
-		if err != nil {
-			t.Fatal(err)
+		s, b := allocationBatch(t, id.RunID())
+		gotID, err := b.AddUserInput(v)
+		if err != nil || gotID != id {
+			t.Fatalf("author input: %v, %v", gotID, err)
 		}
+		submitBatch(t, s, b)
+		r := s.Snapshot().RecordAt(2)
 		wire := r.Format().Payload
 		decoded, err := codec.Decode[sessionformat.UserInput](wire, testLimits())
-		if err != nil || decoded.ID != id.Ordinal || !bytes.Equal(dtoInputBytes(decoded), content) {
+		if err != nil || decoded.ID != 1 || !bytes.Equal(dtoInputBytes(decoded), content) {
 			t.Fatalf("round trip: %v", err)
 		}
 		if len(v.Parts) > 0 {
@@ -37,44 +41,63 @@ func TestUserInput(t *testing.T) {
 		}
 		clear(wire)
 		got, err := codec.Decode[sessionformat.UserInput](r.Format().Payload, testLimits())
-		if err != nil || !got.Equal(sessionformat.UserInput{RunID: 1, ID: 1, Parts: formatByteParts(content)}) || !cloned.Equal(session.UserInput{ID: id, Parts: byteParts(content)}) {
+		if err != nil || !got.Equal(sessionformat.UserInput{RunID: 1, ID: 1, Parts: formatByteParts(content)}) || !cloned.Equal(session.UserInput{RunID: id.RunID(), Parts: byteParts(content)}) {
 			t.Fatalf("borrowed storage retained: %v", err)
 		}
 	}
-	if !(session.UserInput{ID: id}).Equal(session.UserInput{ID: id, Parts: []session.ContentPart{}}) {
+	if !(session.UserInput{RunID: id.RunID()}).Equal(session.UserInput{RunID: id.RunID(), Parts: []session.ContentPart{}}) {
 		t.Fatal("nil and empty differ")
 	}
-	if (session.UserInput{ID: id}).Equal(session.UserInput{ID: id, Parts: []session.ContentPart{{Text: new("")}}}) {
+	if (session.UserInput{RunID: id.RunID()}).Equal(session.UserInput{RunID: id.RunID(), Parts: []session.ContentPart{{Text: new("")}}}) {
 		t.Fatal("empty text part lost")
 	}
 	if (session.UserInput{}).Validate() == nil {
 		t.Fatal("zero input validated")
 	}
-	if r, err := session.NewUserInputRecord(session.UserInput{}, testLimits()); !errors.Is(err, codec.ErrInvalidData) || !reflect.DeepEqual(r, session.Record{}) {
+	for _, run := range []session.RunID{allocatedRun(t, id.RunID().HistoryID(), 2), allocatedRun(t, historyid.NewHistoryID(), 1), {}} {
+		v := session.UserInput{RunID: run, Parts: []session.ContentPart{{Text: new("exact")}}}
+		clone := v.Clone()
+		if !v.Equal(clone) || (session.UserInput{RunID: id.RunID(), Parts: clone.Parts}).Equal(v) {
+			t.Fatal("cloning/equality discarded authoring run scope")
+		}
+		*v.Parts[0].Text = "changed"
+		if *clone.Parts[0].Text != "exact" {
+			t.Fatal("clone borrowed text with unaccepted or zero run scope")
+		}
+	}
+	_, b := allocationBatch(t, id.RunID())
+	defer b.Discard()
+	if got, err := b.AddUserInput(session.UserInput{}); !errors.Is(err, session.ErrTransition) || got != (session.UserInputID{}) {
 		t.Fatalf("zero input: %v", err)
 	}
-	invalid := session.UserInput{ID: id, Parts: []session.ContentPart{{Text: new(string([]byte{0xff}))}}}
+	invalid := session.UserInput{RunID: id.RunID(), Parts: []session.ContentPart{{Text: new(string([]byte{0xff}))}}}
 	if invalid.Validate() == nil {
 		t.Fatal("non-UTF-8 text validated")
 	}
-	if _, err := session.NewUserInputRecord(invalid, testLimits()); !errors.Is(err, codec.ErrInvalidData) {
+	if _, err := b.AddUserInput(invalid); !errors.Is(err, codec.ErrInvalidData) {
 		t.Fatalf("invalid text: %v", err)
 	}
 }
 
 func TestUserInputLimitsAndTransactionalRead(t *testing.T) {
-	v := session.UserInput{ID: session.UserInputID{RunID: session.RunID{HistoryID: testHistoryID(t), Ordinal: 1}, Ordinal: 1}, Parts: byteParts([]byte{1, 2})}
-	r, err := session.NewUserInputRecord(v, testLimits())
-	if err != nil {
-		t.Fatal(err)
+	v := session.UserInput{RunID: allocatedRun(t, testHistoryID(t), 1), Parts: byteParts([]byte{1, 2})}
+	wire, err := codec.Encode(sessionformat.UserInput{RunID: 1, ID: 1, Parts: formatByteParts([]byte{1, 2})}, testLimits())
+	mustBatch(t, err)
+	p := sessionPolicy()
+	p.PayloadLimits.MaxByteStringBytes = 1
+	s := newSession(t, p)
+	b := beginBatch(t, s)
+	defer b.Discard()
+	mustBatch(t, b.Create())
+	if run := batchRun(t, b); run != v.RunID {
+		t.Fatal("fixture run")
 	}
-	wire := r.Format().Payload
 	limited := testLimits()
 	limited.MaxByteStringBytes = 1
 	if err := v.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	if r, err := session.NewUserInputRecord(v, limited); !errors.Is(err, codec.ErrLimitExceeded) || !reflect.DeepEqual(r, session.Record{}) {
+	if id, err := b.AddUserInput(v); !errors.Is(err, codec.ErrLimitExceeded) || id != (session.UserInputID{}) {
 		t.Fatalf("limit: %v", err)
 	}
 	for _, test := range []struct {

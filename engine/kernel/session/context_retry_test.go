@@ -26,13 +26,13 @@ func TestContextFrozenRetryAndConcurrentPinnedReads(t *testing.T) {
 	b := beginBatch(t, s)
 	mustBatch(t, b.Create())
 	run := batchRun(t, b)
-	input, err := b.AddUserInput(session.AddUserInputRequest{RunID: run, Parts: []session.ContentPart{{Text: new("/skill example\n")}}})
+	input, err := b.AddUserInput(session.UserInput{RunID: run, Parts: []session.ContentPart{{Text: new("/skill example\n")}}})
 	mustBatch(t, err)
 	instructions := session.Instructions{HistoryID: scope, Blocks: []session.InstructionBlock{{Parts: []session.ContentPart{{Text: new("root")}}, Source: session.ContentSource{Description: "adopted", WorkspaceFile: &session.WorkspaceFileSource{Path: "AGENTS.md"}}}}}
 	catalog := session.ToolCatalog{HistoryID: scope, Tools: []session.ToolDefinition{{Name: "tool", ArgumentSchema: []byte("true")}}}
 	binding := session.ModelBinding{HistoryID: scope, Route: "r", API: "a", Model: "m", Settings: []byte(" { } ")}
 	effective := session.EffectiveInput{RunID: run, Inputs: []session.InputItem{
-		{UserInput: &input},
+		{UserInputID: &input},
 		{Inline: &session.AttributedInput{Actor: "extension/example", Purpose: session.PromptContext, Parts: richContent(), Source: session.ContentSource{Description: "prepared reference", WorkspaceFile: &session.WorkspaceFileSource{Path: "docs/design.md"}}}},
 	}}
 	expected := effective.Clone()
@@ -46,7 +46,7 @@ func TestContextFrozenRetryAndConcurrentPinnedReads(t *testing.T) {
 	instructions.Blocks[0].Source.WorkspaceFile.Path = "mutated"
 	clear(catalog.Tools[0].ArgumentSchema)
 	clear(binding.Settings)
-	*effective.Inputs[0].UserInput = session.UserInputID{}
+	*effective.Inputs[0].UserInputID = session.UserInputID{}
 	effective.Inputs[1].Inline.Actor = "changed"
 	effective.Inputs[1].Inline.Parts[1].Media.InlineData[0] = 0
 	*effective.Inputs[1].Inline.Parts[0].Text = "changed"
@@ -120,7 +120,7 @@ func TestContextSoftAdmissionAndActualInterruptionReserve(t *testing.T) {
 		mustBatch(t, b.ReplaceInstructions(session.Instructions{HistoryID: s.Snapshot().HistoryID()}))
 		if mixedCloseout {
 			// A mixed context+interruption batch is ordinary admission, not cleanup.
-			mustBatch(t, b.Interrupt())
+			mustBatch(t, b.EndRun(session.RunEndedInterrupted))
 			if _, err := s.SubmitCommit(context.Background(), b); !errors.Is(err, codec.ErrLimitExceeded) {
 				t.Fatalf("mixed soft admission: %v", err)
 			}
@@ -131,7 +131,7 @@ func TestContextSoftAdmissionAndActualInterruptionReserve(t *testing.T) {
 			submitBatch(t, s, b)
 			// The selected context write leaves exactly the actual closeout record room.
 			b = beginBatch(t, s)
-			mustBatch(t, b.Interrupt())
+			mustBatch(t, b.EndRun(session.RunEndedInterrupted))
 			submitBatch(t, s, b)
 			if s.Snapshot().RecordCount() != 4 || s.Snapshot().ActiveRun() != (session.RunID{}) {
 				t.Fatal("reserved actual interruption did not fit")

@@ -2,6 +2,7 @@ package session
 
 import (
 	"iter"
+	"slices"
 
 	"github.com/stacklok/mecatl/engine/kernel/codec"
 	"github.com/stacklok/mecatl/engine/kernel/history/format"
@@ -9,19 +10,19 @@ import (
 	sessionformat "github.com/stacklok/mecatl/engine/kernel/session/format"
 )
 
-// UserInput is one authored submission owned by an active run. Zero ID is invalid.
+// UserInput authors one submission in an active run. Zero RunID is invalid.
 // Empty Parts contributes no content; nil and empty are equivalent. Assignment
-// shares storage; Clone detaches it.
+// shares storage; Clone detaches it. AddUserInput allocates submission identity.
 type UserInput struct {
-	// ID is the required run-scoped submission identity.
-	ID UserInputID
+	// RunID must identify the active run at this position in the batch.
+	RunID RunID
 	// Parts is the ordered authored content; assignment borrows nested storage.
 	Parts []ContentPart
 }
 
-// Validate checks full identity and content, not active-run admission.
+// Validate checks full run scope and content, not active-run admission.
 func (v UserInput) Validate() error {
-	if err := v.ID.Validate(); err != nil {
+	if err := v.RunID.Validate(); err != nil {
 		return err
 	}
 	return validateParts(v.Parts)
@@ -29,34 +30,52 @@ func (v UserInput) Validate() error {
 
 // Clone returns independently owned parts.
 func (v UserInput) Clone() UserInput {
-	v.Parts = partsFromFormat(v.toFormat().Clone().Parts)
+	if v.Parts != nil {
+		parts := make([]ContentPart, len(v.Parts))
+		for i := range v.Parts {
+			parts[i] = v.Parts[i].Clone()
+		}
+		v.Parts = parts
+	}
 	return v
 }
 
-// Equal compares identity and ordered parts; nil and empty slices are equal.
+// Equal compares run identity and ordered parts; nil and empty slices are equal.
 func (v UserInput) Equal(other UserInput) bool {
-	return v.ID == other.ID && v.toFormat().Equal(other.toFormat())
-}
-func (v UserInput) toFormat() sessionformat.UserInput {
-	return sessionformat.UserInput{RunID: v.ID.RunID.Ordinal, ID: v.ID.Ordinal, Parts: partsToFormat(v.Parts)}
+	return v.RunID == other.RunID && slices.EqualFunc(v.Parts, other.Parts, ContentPart.Equal)
 }
 
-// NewUserInputRecord encodes an owned submission under explicit limits. Failure
-// returns zero; construction neither allocates identity nor establishes acceptance.
-func NewUserInputRecord(v UserInput, limits codec.Limits) (Record, error) {
-	if err := v.ID.Validate(); err != nil {
-		return Record{}, codec.ErrInvalidData
+// toFormat receives the allocated local identity after full scope validation.
+func (v UserInput) toFormat(id UserInputID) sessionformat.UserInput {
+	return sessionformat.UserInput{RunID: v.RunID.ordinal, ID: id.ordinal, Parts: partsToFormat(v.Parts)}
+}
+
+// newUserInputRecord encodes an owned submission under explicit limits. Failure
+// returns nil; target history and allocated identity are checked before scope
+// omission. Construction neither allocates identity nor establishes acceptance.
+func newUserInputRecord(scope historyid.HistoryID, v UserInput, id UserInputID, limits codec.Limits) (*materializedRecord, error) {
+	if err := v.RunID.Validate(); err != nil {
+		return nil, codec.ErrInvalidData
+	}
+	if err := id.Validate(); err != nil || id.runID != v.RunID {
+		return nil, codec.ErrInvalidData
 	}
 	b := newValueBudget(limits)
 	checkPartsSize(v.Parts, &b)
 	if b.err != nil {
-		return Record{}, b.err
+		return nil, b.err
 	}
-	payload, err := codec.Encode(v.toFormat(), limits)
+	if err := v.Validate(); err != nil {
+		return nil, codec.ErrInvalidData
+	}
+	if scope != v.RunID.historyID {
+		return nil, ErrIdentity
+	}
+	payload, err := codec.Encode(v.toFormat(id), limits)
 	if err != nil {
-		return Record{}, err
+		return nil, err
 	}
-	return Record{scope: v.ID.RunID.HistoryID, userInput: v.ID, value: format.Record{Kind: sessionformat.KindUserInput, KindVersion: sessionformat.Version, Payload: payload}}, nil
+	return decodeMaterialized(format.Record{Kind: sessionformat.KindUserInput, KindVersion: sessionformat.Version, Payload: payload}, limits)
 }
 
 // UserInputView retains immutable accepted backing storage, including its record.
@@ -71,7 +90,7 @@ func (v UserInputView) ID() UserInputID {
 	if v.value == nil {
 		return UserInputID{}
 	}
-	return UserInputID{RunID: RunID{HistoryID: v.scope, Ordinal: v.value.RunID}, Ordinal: v.value.ID}
+	return UserInputID{runID: RunID{historyID: v.scope, ordinal: v.value.RunID}, ordinal: v.value.ID}
 }
 
 // PartCount returns the number of ordered parts, or zero for zero.

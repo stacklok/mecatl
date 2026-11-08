@@ -45,7 +45,7 @@ func ExampleSession() {
 		fmt.Println(err)
 		return
 	}
-	input, err := b.AddUserInput(session.AddUserInputRequest{RunID: run, Parts: []session.ContentPart{{Text: new("first")}}})
+	input, err := b.AddUserInput(session.UserInput{RunID: run, Parts: []session.ContentPart{{Text: new("first")}}})
 	if err != nil {
 		fmt.Println(err)
 		return
@@ -59,7 +59,7 @@ func ExampleSession() {
 		return
 	}
 	if err := b.AddEffectiveInput(session.EffectiveInput{RunID: run, Inputs: []session.InputItem{
-		{UserInput: &input},
+		{UserInputID: &input},
 		{Inline: &session.AttributedInput{
 			Actor:   "harness",
 			Purpose: session.PromptContext,
@@ -70,7 +70,7 @@ func ExampleSession() {
 		fmt.Println(err)
 		return
 	}
-	fmt.Printf("provisional input=%d run=%d; created=%t\n", input.Ordinal, run.Ordinal, s.Snapshot().Created())
+	fmt.Printf("provisional owner matches=%t; created=%t\n", input.RunID() == run, s.Snapshot().Created())
 	if _, err := s.SubmitCommit(ctx, b); err != nil {
 		// Unknown acceptance freezes the batch. Explicitly retry that same handle
 		// with a fresh context, or abandon this object and Load; never replace it.
@@ -78,7 +78,7 @@ func ExampleSession() {
 		return
 	}
 	old := s.Snapshot()
-	fmt.Printf("accepted head=%d active=%d\n", old.Head().Sequence, old.ActiveRun().Ordinal)
+	fmt.Printf("accepted head=%d active matches=%t\n", old.Head().Sequence, old.ActiveRun() == run)
 	loaded, err := session.Load(ctx, h, id, policy)
 	if err != nil {
 		fmt.Println(err)
@@ -96,7 +96,7 @@ func ExampleSession() {
 		fmt.Println("missing accepted input")
 		return
 	}
-	fmt.Printf("loaded active=%d inputs=%d\n", loadedView.ActiveRun().Ordinal, inputs)
+	fmt.Printf("loaded active matches=%t inputs=%d\n", loadedView.ActiveRun() == run, inputs)
 	instructions, _ := loaded.Snapshot().Instructions()
 	file, _ := instructions.BlockAt(0).Source().WorkspaceFile()
 	fmt.Printf("instruction source=%s\n", file.Path())
@@ -112,7 +112,7 @@ func ExampleSession() {
 		return
 	}
 	defer closeout.Discard()
-	if err := closeout.Interrupt(); err != nil {
+	if err := closeout.EndRun(session.RunEndedInterrupted); err != nil {
 		fmt.Println(err)
 		return
 	}
@@ -133,7 +133,7 @@ func ExampleSession() {
 		fmt.Println(err)
 		return
 	}
-	second, err := next.AddUserInput(session.AddUserInputRequest{RunID: successor, Parts: []session.ContentPart{{Text: new("second")}}})
+	second, err := next.AddUserInput(session.UserInput{RunID: successor, Parts: []session.ContentPart{{Text: new("second")}}})
 	if err != nil {
 		fmt.Println(err)
 		return
@@ -142,31 +142,31 @@ func ExampleSession() {
 		fmt.Println(err)
 		return
 	}
-	fmt.Printf("successor input=%d run=%d\n", second.Ordinal, successor.Ordinal)
+	fmt.Printf("successor owner matches=%t; distinct run=%t\n", second.RunID() == successor, successor != run)
 	loaded, err = session.Load(ctx, h, id, policy)
 	if err != nil {
 		fmt.Println(err)
 		return
 	}
 	v = loaded.Snapshot()
-	fmt.Printf("loaded %s head=%d runs=%d active=%d\n", v.HistoryID(), v.Head().Sequence, v.RunCount(), v.ActiveRun().Ordinal)
+	fmt.Printf("loaded %s head=%d runs=%d active matches=%t\n", v.HistoryID(), v.Head().Sequence, v.RunCount(), v.ActiveRun() == successor)
 	accepted, ok := v.UserInputByID(second)
 	if !ok {
 		fmt.Println("missing successor input")
 		return
 	}
 	text, _ = accepted.PartAt(0).Text()
-	fmt.Printf("run %d owns input %d: %s\n", accepted.ID().RunID.Ordinal, accepted.ID().Ordinal, text)
-	fmt.Printf("old snapshot head=%d active=%d\n", old.Head().Sequence, old.ActiveRun().Ordinal)
+	fmt.Printf("successor owns input=%t: %s\n", accepted.ID().RunID() == successor, text)
+	fmt.Printf("old snapshot head=%d active matches=%t\n", old.Head().Sequence, old.ActiveRun() == run)
 	// Output:
-	// provisional input=1 run=1; created=false
-	// accepted head=1 active=1
-	// loaded active=1 inputs=1
+	// provisional owner matches=true; created=false
+	// accepted head=1 active matches=true
+	// loaded active matches=true inputs=1
 	// instruction source=AGENTS.md
 	// prepared purpose=context; original="first"
 	// interrupted head=2 idle=true
-	// successor input=1 run=2
-	// loaded HST1111111111111111111111 head=3 runs=2 active=2
-	// run 2 owns input 1: second
-	// old snapshot head=1 active=1
+	// successor owner matches=true; distinct run=true
+	// loaded HST1111111111111111111111 head=3 runs=2 active matches=true
+	// successor owns input=true: second
+	// old snapshot head=1 active matches=true
 }

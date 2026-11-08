@@ -73,8 +73,8 @@ func TestSessionCommitAcceptedLocalApplyFailure(t *testing.T) {
 	if _, err := s.SubmitCommit(context.Background(), b); !errors.Is(err, ErrBatch) {
 		t.Fatal("accepted-but-unapplied batch resubmitted")
 	}
-	if err := s.Apply(history.Commit{}); !errors.Is(err, ErrReloadRequired) {
-		t.Fatal("Apply bypassed reload barrier")
+	if err := s.writeBarrier(); !errors.Is(err, ErrReloadRequired) {
+		t.Fatal("write barrier ignored reload")
 	}
 	recovered, err := Load(context.Background(), h, id, policy)
 	if err != nil || recovered.Snapshot().Head() != ref || !recovered.Snapshot().Created() {
