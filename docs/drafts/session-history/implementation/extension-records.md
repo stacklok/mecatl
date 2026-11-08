@@ -33,7 +33,9 @@ Proposed and accepted facts should retain distinct handles while using the same
 private materialized representation. Materialization establishes local validity,
 not accepted membership or legal lifecycle ordering. A snapshot publishes accepted
 handles only after verified application. Validation-derived caches belong in
-admission sidecars rather than fields on the canonical materialized fact.
+admission sidecars rather than fields on the canonical materialized fact. See
+[Snapshots, ownership, and cloning](ownership.md) for the related stable-view and
+publication design.
 
 ## A registry supplies interpretation, not lifecycle authority
 
