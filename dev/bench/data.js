@@ -367702,6 +367702,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1793996561257,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "8c1276a7da77eca4ce31f3e7c44023464aeb0994",
+          "message": "feat(kernel): retain passive model interactions and run endings (#2746)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-11-07T18:19:10-08:00",
+          "tree_id": "a9d6b7b2164ea703fd4b67d7bab0f27cf67c330b",
+          "url": "https://github.com/stacklok/mecatl/commit/8c1276a7da77eca4ce31f3e7c44023464aeb0994"
+        },
+        "date": 1794105042317,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -531107,6 +531141,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1794105039102,
+  "lastUpdate": 1794105043215,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
