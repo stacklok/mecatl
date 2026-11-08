@@ -407924,6 +407924,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1794105046279,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "8d178d575bf360d5cf9dce3f3774545d813d219c",
+          "message": "refactor(kernel): validate destination scope at public batch boundary (#2748)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-11-08T02:52:54Z",
+          "tree_id": "9a2d18223d5eab8079289389d11cbd51b1b002d5",
+          "url": "https://github.com/stacklok/mecatl/commit/8d178d575bf360d5cf9dce3f3774545d813d219c"
+        },
+        "date": 1794107125181,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 16116,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12877,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 794,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -531652,6 +531691,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1794107122118,
+  "lastUpdate": 1794107126122,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
