@@ -368060,6 +368060,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1794105042317,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "8d178d575bf360d5cf9dce3f3774545d813d219c",
+          "message": "refactor(kernel): validate destination scope at public batch boundary (#2748)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-11-08T02:52:54Z",
+          "tree_id": "9a2d18223d5eab8079289389d11cbd51b1b002d5",
+          "url": "https://github.com/stacklok/mecatl/commit/8d178d575bf360d5cf9dce3f3774545d813d219c"
+        },
+        "date": 1794107121024,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -531618,6 +531652,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1794107117913,
+  "lastUpdate": 1794107122118,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
