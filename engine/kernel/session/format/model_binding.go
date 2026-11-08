@@ -12,7 +12,7 @@ import (
 // it. Zero is invalid. History identity is omitted here and restored from the
 // enclosing envelope at the domain conversion boundary.
 //
-//cborgen:validate Validate
+//dtogen:validate Validate
 type ModelBinding struct {
 	// Route is a required nonempty exact UTF-8 logical provider/route name interpreted
 	// relative to the preparing harness's configuration, not a global provider

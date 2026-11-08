@@ -1,3 +1,5 @@
+//go:generate go -C ../../.. run ./internal/dtogen/cmd/dtogen -dir engine/kernel/session -emit view -views views.json -out zz_views_generated.go
+
 // Package session interprets accepted history as lifecycle and retained context
 // for the isolated kernel. It validates and submits ordered batches through a
 // bound History; it does not execute work or resolve retained references.
@@ -44,8 +46,11 @@
 // safe, and a required recipe on a zero parent returns a zero child. Item-call
 // data is identity-free; Calls and CallAt expose scoped call ordinals, not item
 // positions. CallCount and CallAt derive call order by scanning the response;
-// Calls traverses it once. Byte getters return independent field-only copies;
-// RecordView.Format explicitly copies encoded history records for transport.
+// Calls traverses it once. Recipe, requested-call, provider-data and media byte
+// getters return borrowed views.Bytes; Copy explicitly detaches only that leaf.
+// Response Items and content Parts return views.SliceView with on-demand element
+// adapters; Len, At and All preserve canonical order without materializing []View.
+// Other retained-context byte getters and RecordView.Format return detached copies.
 //
 // View sequences are immutable, ordered and repeatable, and retain their captured
 // views' backing storage and bounds without copying it. Retention is not a payload

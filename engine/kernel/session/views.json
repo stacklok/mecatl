@@ -1,0 +1,84 @@
+[
+  {"view":"OpaqueProviderDataView","backing":"value","fields":[
+    {"field":"Producer","method":"Producer"},
+    {"field":"Format","method":"Format"},
+    {"field":"Version","method":"Version"},
+    {"field":"Data","method":"Data"}
+  ]},
+  {"view":"InvocationUsageView","backing":"value","fields":[
+    {"field":"Input","method":"Input"},
+    {"field":"Output","method":"Output"},
+    {"field":"CacheRead","method":"CacheRead"},
+    {"field":"CacheWrite","method":"CacheWrite"},
+    {"field":"Reasoning","method":"Reasoning"},
+    {"field":"Raw","method":"Raw"}
+  ]},
+  {"view":"ObservedEvidenceView","backing":"value","fields":[
+    {"field":"Detail","method":"Detail"},
+    {"field":"Correlation","method":"Correlation"}
+  ]},
+  {"view":"MediaView","backing":"value","fields":[
+    {"field":"Kind","method":"Kind"},
+    {"field":"MIMEType","method":"MIMEType"},
+    {"field":"FormatHint","method":"FormatHint"},
+    {"field":"Filename","method":"Filename"},
+    {"field":"Title","method":"Title"},
+    {"field":"Source","method":"Source"},
+    {"field":"InlineData","method":"InlineData","override":"func() (views.Bytes, bool)"},
+    {"field":"RemoteURI","method":"RemoteURI","override":"func() (string, bool)"},
+    {"field":"ProviderName","method":"ProviderName","override":"func() (string, bool)"},
+    {"field":"ProviderScope","method":"ProviderScope","override":"func() (string, bool)"},
+    {"field":"ProviderReferenceID","method":"ProviderReferenceID","override":"func() (string, bool)"}
+  ]},
+  {"view":"ContentPartView","backing":"value","fields":[
+    {"field":"Text","method":"Text"},
+    {"field":"Media","method":"Media"}
+  ]},
+  {"view":"ConstructionRecipeView","backing":"value","fields":[
+    {"field":"Algorithm","method":"Algorithm"},
+    {"field":"Version","method":"Version"},
+    {"field":"Parameters","method":"Parameters"},
+    {"field":"Check","method":"Check"}
+  ]},
+  {"view":"SourceHeadView","backing":"value","fields":[
+    {"field":"Sequence","method":"Sequence"},
+    {"field":"CID","method":"CID","override":"func() contentid.CID"}
+  ]},
+  {"view":"ModelRequestView","backing":"value","fields":[
+    {"field":"RunID","exclude":true},
+    {"field":"ID","method":"ID","override":"func() ModelRequestID"},
+    {"field":"Source","method":"Source"},
+    {"field":"Recipe","method":"Recipe"},
+    {"field":"RetryOf","method":"RetryOf","override":"func() (ModelRequestID, bool)"}
+  ]},
+  {"view":"ModelResponseView","backing":"value","fields":[
+    {"field":"RunID","exclude":true},
+    {"field":"RequestID","method":"RequestID","override":"func() ModelRequestID"},
+    {"field":"Terminal","method":"Terminal"},
+    {"field":"ProviderStopReason","method":"ProviderStopReason"},
+    {"field":"Items","method":"Items"},
+    {"field":"Evidence","method":"Evidence"},
+    {"field":"Usage","method":"Usage"},
+    {"field":"Private","method":"Private"}
+  ],"context":[
+    {"method":"CallCount","signature":"func() int"},
+    {"method":"CallAt","signature":"func(int) RequestedCallView"},
+    {"method":"Calls","signature":"func() iter.Seq[RequestedCallView]"}
+  ]},
+  {"view":"RequestedCallDataView","backing":"value","fields":[
+    {"field":"Name","method":"Name"},
+    {"field":"Arguments","method":"Arguments"}
+  ]},
+  {"view":"RequestedCallView","backing":"value","fields":[
+    {"field":"Name","method":"Name"},
+    {"field":"Arguments","method":"Arguments"}
+  ],"context":[{"method":"ID","signature":"func() RequestedCallID"}]},
+  {"view":"ResponseItemView","backing":"value","fields":[
+    {"field":"Content","method":"Content"},
+    {"field":"Call","method":"Call"}
+  ]},
+  {"view":"ResponseContentView","backing":"value","fields":[
+    {"field":"Kind","method":"Kind"},
+    {"field":"Parts","method":"Parts"}
+  ]}
+]

@@ -1,4 +1,4 @@
-package cborgen
+package dtogen
 
 import (
 	"context"
@@ -23,7 +23,7 @@ func assertHelperNamespace(t *testing.T, cfg LoadConfig, wantAliases bool) strin
 	if err != nil {
 		t.Fatal(err)
 	}
-	impl := "cborgen"
+	impl := "dtogen"
 	numeric := regexp.MustCompile(`^(clone|equal|check|append|read)[0-9]+$`)
 	methods, implementations, aliases := 0, 0, 0
 	for _, decl := range file.Decls {
@@ -92,7 +92,7 @@ type Record struct {
 }
 type Other struct { V limits `+"`cbor:\"v\"`"+`; T values.Text `+"`cbor:\"t\"`"+` }
 // These former package helper names no longer pollute the owner's namespace.
-var cborgenClone0, cborgenCheck0, cborgenValue0 bool
+var dtogenClone0, dtogenCheck0, dtogenValue0 bool
 `)
 	writeFixture(t, filepath.Join(filepath.Dir(cfg.Dir), "values/value.go"), "package values\ntype Text string\n")
 	registerFixtureOwner(t, cfg, "values", "Text")

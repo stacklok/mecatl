@@ -13,7 +13,7 @@ import (
 // Assignment shares pointers, record and payload storage; Clone detaches them.
 // Construction, cloning, and equality do not validate the format contract.
 //
-//cborgen:validate validateCBOR
+//dtogen:validate validateCBOR
 type Commit struct {
 	// FormatVersion is the commit/record envelope version, currently 1.
 	FormatVersion int64 `cbor:"v"`

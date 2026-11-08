@@ -1,4 +1,4 @@
-//go:generate go -C ../../.. run ./internal/cborgen/cmd/cborgen -dir engine/kernel/contentid -types CID -out zz_cbor_generated.go
+//go:generate go -C ../../.. run ./internal/dtogen/cmd/dtogen -dir engine/kernel/contentid -types CID -emit cbor,clone,equal -out zz_cbor_generated.go
 
 // Package contentid provides optional exact-byte identity using the fixed
 // CIDv1/DAG-CBOR/SHA-256 profile. CID is an owner-generated CBOR value whose

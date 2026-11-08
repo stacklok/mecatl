@@ -1,4 +1,4 @@
-//go:generate go -C ../../../.. run ./internal/cborgen/cmd/cborgen -dir engine/kernel/history/id -types HistoryID -out zz_cbor_generated.go
+//go:generate go -C ../../../.. run ./internal/dtogen/cmd/dtogen -dir engine/kernel/history/id -types HistoryID -emit cbor,clone,equal -out zz_cbor_generated.go
 
 // Package id defines history identity values independently of history formats
 // and storage. Content-addressed commit identifiers are a separate contract.
@@ -15,9 +15,9 @@ import (
 // Its zero value is unset, not valid. HistoryIDs are comparable map keys.
 // CBOR is the underlying resource ID text, with no additional wrapping.
 //
-//cborgen:validate validateCBOR
+//dtogen:validate validateCBOR
 type HistoryID struct {
-	value resourceid.ID `cbor:",value"` //nolint:revive // cborgen's explicit transparent representation, not a standard CBOR tag option.
+	value resourceid.ID `cbor:",value"` //nolint:revive // dtogen's explicit transparent representation, not a standard CBOR tag option.
 }
 
 // validateCBOR checks only the history-specific kind after the generated child

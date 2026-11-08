@@ -20,7 +20,7 @@ func mediaMatches(v session.MediaView, want session.Media) bool {
 	scope, scopeOK := v.ProviderScope()
 	ref, refOK := v.ProviderReferenceID()
 	return v.Kind() == want.Kind && v.MIMEType() == want.MIMEType && v.FormatHint() == want.FormatHint && v.Filename() == want.Filename && v.Title() == want.Title && v.Source() == want.Source &&
-		inline == (want.Source == session.MediaSourceInline) && bytes.Equal(data, want.InlineData) &&
+		inline == (want.Source == session.MediaSourceInline) && bytes.Equal(data.Copy(), want.InlineData) &&
 		remote == (want.Source == session.MediaSourceRemote) && uri == want.RemoteURI &&
 		bound == (want.Source == session.MediaSourceProvider) && scopeOK == bound && refOK == bound && provider == want.ProviderName && scope == want.ProviderScope && ref == want.ProviderReferenceID
 }
@@ -129,5 +129,5 @@ func mutateMediaBytes(t *testing.T, part session.ContentPartView) {
 	if !ok {
 		t.Fatal("missing inline media")
 	}
-	clear(data)
+	clear(data.Copy())
 }

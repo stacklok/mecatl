@@ -26,24 +26,36 @@ and reconstruction.
 
 Each layer's `format` package owns its mutable persistence DTOs, generated codecs,
 and payload-local validation. The aggregate owns cross-record legality; valid
-encoding alone proves neither lifecycle legality nor storage acceptance. Public
-session values remain separate from persistence DTOs so verified history context
-can supply scope omitted from payloads.
+encoding alone proves neither lifecycle legality nor storage acceptance. Commands
+and references needing enclosing-scope translation remain separate from DTOs;
+identity-free payloads share canonical format declarations through public aliases.
+
+[`views`](views/doc.go) supplies read-only borrowed Bytes and SliceView containers.
+Follow its [runtime guidance](views/AGENTS.md) when changing these containers.
+Session views pin immutable accepted backing; wrapping and navigation do not copy
+or freeze it. Response Items and content Parts adapt elements on demand without
+an intermediate slice. Recipe, call, provider-data and media byte getters borrow
+leaves; callers explicitly use Copy for independently owned bytes. Scope-bearing
+identities and derived call enumeration remain session-owned adapters.
 
 [`codec`](codec/doc.go) provides bounded canonical encoding and decoding;
 [`contentid`](contentid/cid.go) identifies exact encoded bytes. Resource policy is
 explicit and separate from schema validity. The owning Go declarations document
 limits, ownership, retry, and concurrency contracts.
 
-## Persistence codec tooling
+## DTO generation
 
-See the [generator guide](../../internal/cborgen/README.md) for supported schemas
+See the [generator guide](../../internal/dtogen/README.md) for supported schemas
 and code generation, and the [codec package contract](codec/doc.go) for resource
-accounting and buffer lifetimes. From the repository root:
+accounting and buffer lifetimes. Each destination owns one handwritten generation
+declaration and artifact. Session's [view mapping](session/views.json) classifies
+every projected backing field as generated, explicitly overridden, or excluded.
+Layouts and scope/tag-selected semantics remain handwritten; generated mechanical
+accessors use only noncapturing adapters. From the repository root:
 
 ```sh
-task generate:codecs
-task generate:codecs:check
+task generate:data
+task generate:data:check
 ```
 
 ## Focused checks

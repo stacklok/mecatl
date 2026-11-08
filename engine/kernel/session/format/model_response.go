@@ -5,32 +5,40 @@ import (
 	"unicode/utf8"
 )
 
+// ResponseContentKind selects one canonical content meaning. Empty and unknown
+// values are rejected.
+type ResponseContentKind string
+
 // ResponseContent.Kind values form a closed vocabulary; empty and unknown kinds
 // are rejected.
 const (
 	// ResponseContentOutput encodes ordinary model output.
-	ResponseContentOutput = "output"
+	ResponseContentOutput ResponseContentKind = "output"
 	// ResponseContentReasoning encodes readable model reasoning.
-	ResponseContentReasoning = "reasoning"
+	ResponseContentReasoning ResponseContentKind = "reasoning"
 	// ResponseContentRefusal encodes a model refusal.
-	ResponseContentRefusal = "refusal"
+	ResponseContentRefusal ResponseContentKind = "refusal"
 )
+
+// ResponseTerminalClass is the closed normalized terminal provider class. Empty
+// and unknown values are rejected, unlike the provider-owned stop reason.
+type ResponseTerminalClass string
 
 // Normalized ModelResponse.Terminal classes form a closed vocabulary. Empty and
 // unknown classes are rejected; ProviderStopReason remains provider-owned.
 const (
 	// ResponseTerminalNormal encodes a normal terminal response.
-	ResponseTerminalNormal = "normal"
+	ResponseTerminalNormal ResponseTerminalClass = "normal"
 	// ResponseTerminalLimit encodes a provider limit terminal response.
-	ResponseTerminalLimit = "limit"
+	ResponseTerminalLimit ResponseTerminalClass = "limit"
 	// ResponseTerminalRefusal encodes a provider refusal terminal response.
-	ResponseTerminalRefusal = "refusal"
+	ResponseTerminalRefusal ResponseTerminalClass = "refusal"
 	// ResponseTerminalError encodes a provider error terminal response.
-	ResponseTerminalError = "error"
+	ResponseTerminalError ResponseTerminalClass = "error"
 	// ResponseTerminalCancelled encodes a provider cancellation terminal response.
-	ResponseTerminalCancelled = "cancelled"
+	ResponseTerminalCancelled ResponseTerminalClass = "cancelled"
 	// ResponseTerminalOther encodes another terminal response.
-	ResponseTerminalOther = "other"
+	ResponseTerminalOther ResponseTerminalClass = "other"
 )
 
 // RequestedCall retains one complete requested-call occurrence in response order.
@@ -38,7 +46,7 @@ const (
 // empty JSON are valid. Arguments may be nil or empty, which are equivalent empty
 // bytes. Assignment shares Arguments; Clone detaches them.
 //
-//cborgen:validate Validate
+//dtogen:validate Validate
 type RequestedCall struct {
 	// Name is UTF-8 adapter output. It may be empty or unknown to the session.
 	Name string `cbor:"n"`
@@ -60,17 +68,30 @@ func (v RequestedCall) Validate() error {
 // empty, which are equivalent explicitly empty content. Assignment shares parts;
 // Clone detaches them.
 //
-//cborgen:validate Validate
+//dtogen:validate validateLocal
 type ResponseContent struct {
 	// Kind is required and must be a ResponseContent closed-vocabulary value.
-	Kind string `cbor:"k"`
+	Kind ResponseContentKind `cbor:"k"`
 	// Parts are ordered content parts for Kind. Nil and empty are equivalent empty
 	// content; codec traversal validates each part.
 	Parts []ContentPart `cbor:"p"`
 }
 
-// Validate checks the closed content kind; codec traversal validates parts.
+// Validate checks the closed content kind and every ordered part.
 func (v ResponseContent) Validate() error {
+	if err := v.validateLocal(); err != nil {
+		return err
+	}
+	for _, part := range v.Parts {
+		if err := part.Validate(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateLocal checks kind after bounded codec traversal validates Parts.
+func (v ResponseContent) validateLocal() error {
 	switch v.Kind {
 	case ResponseContentOutput, ResponseContentReasoning, ResponseContentRefusal:
 		return nil
@@ -82,7 +103,7 @@ func (v ResponseContent) Validate() error {
 // ResponseItem preserves one ordered response occurrence. Exactly one branch is
 // required; assignment shares its selected child and Clone detaches it.
 //
-//cborgen:validate Validate
+//dtogen:validate validateLocal
 type ResponseItem struct {
 	// Content is the optional content branch. It is mutually exclusive with Call;
 	// codec traversal validates it when present.
@@ -92,8 +113,19 @@ type ResponseItem struct {
 	Call *RequestedCall `cbor:"a,omitempty"`
 }
 
-// Validate checks branch exclusivity only; codec traversal validates the child.
+// Validate checks branch exclusivity and the selected branch.
 func (v ResponseItem) Validate() error {
+	if err := v.validateLocal(); err != nil {
+		return err
+	}
+	if v.Content != nil {
+		return v.Content.Validate()
+	}
+	return v.Call.Validate()
+}
+
+// validateLocal checks the union after bounded codec traversal validates children.
+func (v ResponseItem) validateLocal() error {
 	if (v.Content == nil) == (v.Call == nil) {
 		return errors.New("response item requires exactly one branch")
 	}
@@ -104,7 +136,7 @@ func (v ResponseItem) Validate() error {
 // response-wide envelope, not per-item provider identity. Assignment shares nested
 // storage; Clone detaches it.
 //
-//cborgen:validate Validate
+//dtogen:validate Validate
 type ModelResponse struct {
 	// RunID is the required positive numeric run component within the history
 	// supplied by the enclosing envelope.
@@ -114,7 +146,7 @@ type ModelResponse struct {
 	RequestID uint64 `cbor:"q"`
 	// Terminal is a required normalized ResponseTerminal class; empty and unknown
 	// classes are rejected independently of the original provider stop reason.
-	Terminal string `cbor:"t"`
+	Terminal ResponseTerminalClass `cbor:"t"`
 	// ProviderStopReason retains the provider's original stop/finish reason, not
 	// reasoning content or a reasoning summary. The vocabulary is provider-owned
 	// and open; any UTF-8 string is allowed. Nil omits key p; non-nil empty is retained.

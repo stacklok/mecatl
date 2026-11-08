@@ -46,12 +46,12 @@ func TestProviderStopReasonOpenVocabularyAndWireKey(t *testing.T) {
 }
 
 func TestInteractionClosedVocabularies(t *testing.T) {
-	for _, kind := range []string{format.ResponseContentOutput, format.ResponseContentReasoning, format.ResponseContentRefusal} {
+	for _, kind := range []format.ResponseContentKind{format.ResponseContentOutput, format.ResponseContentReasoning, format.ResponseContentRefusal} {
 		if err := (format.ResponseContent{Kind: kind}).Validate(); err != nil {
 			t.Fatal(err)
 		}
 	}
-	for _, terminal := range []string{format.ResponseTerminalNormal, format.ResponseTerminalLimit, format.ResponseTerminalRefusal, format.ResponseTerminalError, format.ResponseTerminalCancelled, format.ResponseTerminalOther} {
+	for _, terminal := range []format.ResponseTerminalClass{format.ResponseTerminalNormal, format.ResponseTerminalLimit, format.ResponseTerminalRefusal, format.ResponseTerminalError, format.ResponseTerminalCancelled, format.ResponseTerminalOther} {
 		if err := (format.ModelResponse{RunID: 1, RequestID: 1, Terminal: terminal}).Validate(); err != nil {
 			t.Fatal(err)
 		}
@@ -62,7 +62,7 @@ func TestInteractionClosedVocabularies(t *testing.T) {
 		}
 	}
 	for _, unknown := range []string{"", "unknown"} {
-		for _, v := range []codec.Marshaler{format.ResponseContent{Kind: unknown}, format.ModelResponse{RunID: 1, RequestID: 1, Terminal: unknown}, format.InvocationFailure{RunID: 1, RequestID: 1, Class: unknown}} {
+		for _, v := range []codec.Marshaler{format.ResponseContent{Kind: format.ResponseContentKind(unknown)}, format.ModelResponse{RunID: 1, RequestID: 1, Terminal: format.ResponseTerminalClass(unknown)}, format.InvocationFailure{RunID: 1, RequestID: 1, Class: unknown}} {
 			if wire, err := codec.Encode(v, limits()); !errors.Is(err, codec.ErrInvalidData) || wire != nil {
 				t.Fatalf("unknown category encoded: %v", err)
 			}

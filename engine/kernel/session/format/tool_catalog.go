@@ -10,7 +10,7 @@ import (
 // implementation. ArgumentSchema is exact nonempty JSON, including boolean schemas,
 // without schema interpretation. Assignment shares schema bytes; Clone detaches them.
 //
-//cborgen:validate Validate
+//dtogen:validate Validate
 type ToolDefinition struct {
 	// Name is the required nonempty exact UTF-8 advertised tool name, not an
 	// implementation identity. The enclosing ToolCatalog checks name uniqueness.
@@ -39,7 +39,7 @@ func (v ToolDefinition) Validate() error {
 // Tools and schema bytes; Clone detaches them. History identity is omitted here
 // and restored from the enclosing envelope at the domain conversion boundary.
 //
-//cborgen:validate Validate
+//dtogen:validate Validate
 type ToolCatalog struct {
 	// Tools preserves advertised order. Names must be unique within this replacement
 	// (checked locally); codec traversal validates each definition. Nil and empty

@@ -4,7 +4,7 @@ import "errors"
 
 // RunStarted names a new run. Input-free runs are valid. Zero is invalid.
 //
-//cborgen:validate Validate
+//dtogen:validate Validate
 type RunStarted struct {
 	// ID is the required one-based run ordinal within the enclosing history.
 	// Conversion restores the history identity from the envelope. Local validation

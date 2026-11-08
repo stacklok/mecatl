@@ -358,7 +358,8 @@ func TestViewIteratorTraversalAllocations(t *testing.T) {
 						{"owned-bytes", func() {
 							for part := range v.user.Parts() {
 								media, _ := part.Media()
-								iteratorBytesSink, _ = media.InlineData()
+								data, _ := media.InlineData()
+								iteratorBytesSink = data.Copy()
 							}
 						}, axis.count, axis.count * axis.payload},
 						{"collect", func() { iteratorPartsSink = slices.Collect(v.user.Parts()) }, 1, axis.count * viewBytes},

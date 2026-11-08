@@ -24,7 +24,7 @@ func inputBytes(v session.UserInputView) []byte {
 	}
 	media, _ := v.PartAt(0).Media()
 	data, _ := media.InlineData()
-	return data
+	return data.Copy()
 }
 func dtoInputBytes(v sessionformat.UserInput) []byte {
 	if len(v.Parts) == 0 {

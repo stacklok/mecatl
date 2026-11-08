@@ -10,7 +10,7 @@ import (
 // interpretation, replay, or display. Assignment shares payload storage.
 // Construction, cloning, and equality do not validate the format contract.
 //
-//cborgen:validate validateCBOR
+//dtogen:validate validateCBOR
 type Record struct {
 	// Kind identifies the payload's record kind.
 	Kind string `cbor:"k"`

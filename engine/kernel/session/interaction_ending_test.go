@@ -340,16 +340,16 @@ func TestInteractionCaptureEvidenceMembershipAndPreservation(t *testing.T) {
 			usage, usagePresent := captureView.Usage()
 			raw, rawPresent := usage.Raw()
 			input, inputPresent := usage.Input()
-			if !usagePresent || !rawPresent || !inputPresent || input != 0 || raw.Data()[0] != 0xff {
+			if !usagePresent || !rawPresent || !inputPresent || input != 0 || raw.Data().Copy()[0] != 0xff {
 				t.Fatal("capture evidence lost/aliased")
 			}
-			data := raw.Data()
+			data := raw.Data().Copy()
 			data[0] = 1
 			again, _ := v.Capture()
 			againUsage, _ := again.Usage()
 			againInput, _ := againUsage.Input()
 			againRaw, _ := againUsage.Raw()
-			if againInput != 0 || againRaw.Data()[0] != 0xff || s.state.view.lifecycle.pending != pending {
+			if againInput != 0 || againRaw.Data().Copy()[0] != 0xff || s.state.view.lifecycle.pending != pending {
 				t.Fatal("capture export mutated fact or resolved request")
 			}
 			loaded, err := Load(context.Background(), s.history, pending.runID.historyID, s.policy)

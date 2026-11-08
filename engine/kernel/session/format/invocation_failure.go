@@ -22,7 +22,7 @@ const (
 // constructing a provider response or asserting no remote processing. Assignment
 // shares nested storage; Clone detaches it.
 //
-//cborgen:validate Validate
+//dtogen:validate Validate
 type InvocationFailure struct {
 	// RunID is the required positive numeric run component within the history
 	// supplied by the enclosing envelope.

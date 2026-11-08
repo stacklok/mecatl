@@ -80,12 +80,12 @@ func TestCaptureFailureEvidenceViewScopePresenceAndOwnership(t *testing.T) {
 		t.Fatal("absent cache read")
 	}
 	raw, ok := usage.Raw()
-	if !ok || raw.Producer() != "producer" || raw.Format() != "format" || raw.Version() != 2 || !bytes.Equal(raw.Data(), []byte{0xff, 0}) {
+	if !ok || raw.Producer() != "producer" || raw.Format() != "format" || raw.Version() != 2 || !bytes.Equal(raw.Data().Copy(), []byte{0xff, 0}) {
 		t.Fatal("raw usage")
 	}
-	exported := raw.Data()
+	exported := raw.Data().Copy()
 	exported[0] = 0
-	if !bytes.Equal(raw.Data(), []byte{0xff, 0}) {
+	if !bytes.Equal(raw.Data().Copy(), []byte{0xff, 0}) {
 		t.Fatal("raw byte export aliases")
 	}
 

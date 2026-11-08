@@ -75,7 +75,7 @@ func (v CaptureFailureEvidence) Equal(other CaptureFailureEvidence) bool {
 	return v.RequestID == other.RequestID && v.toFormat().Equal(other.toFormat())
 }
 func (v CaptureFailureEvidence) toFormat() sessionformat.CaptureFailureEvidence {
-	return sessionformat.CaptureFailureEvidence{RequestID: v.RequestID.requestOrdinal, Evidence: evidenceToFormat(v.Evidence), Usage: usageToFormat(v.Usage)}
+	return sessionformat.CaptureFailureEvidence{RequestID: v.RequestID.requestOrdinal, Evidence: v.Evidence, Usage: v.Usage}
 }
 
 // RunEnded is the unified explicit terminal fact. It neither fabricates an outcome
@@ -210,7 +210,7 @@ func (v CaptureFailureEvidenceView) Usage() (InvocationUsageView, bool) {
 
 // RunEndedView is an immutable terminal fact. Zero has zero run, empty reason and
 // no optional evidence. Scalar and pinned structured-child reads are O(1); byte
-// leaves returned by those children detach only their own storage.
+// views borrow retained backing and Copy detaches only their selected leaf.
 type RunEndedView struct {
 	scope historyid.HistoryID
 	value *sessionformat.RunEnded

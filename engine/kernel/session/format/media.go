@@ -6,36 +6,42 @@ import (
 	"unicode/utf8"
 )
 
+// MediaKind is a closed content category, not a provider capability.
+type MediaKind string
+
 // Closed media kinds classify content, not provider capabilities.
 const (
 	// MediaKindImage selects image media.
-	MediaKindImage = "image"
+	MediaKindImage MediaKind = "image"
 	// MediaKindAudio selects audio media.
-	MediaKindAudio = "audio"
+	MediaKindAudio MediaKind = "audio"
 	// MediaKindDocument selects document media, permitting Filename and Title.
-	MediaKindDocument = "document"
+	MediaKindDocument MediaKind = "document"
 )
+
+// MediaSourceKind selects a closed storage variant, not an access capability.
+type MediaSourceKind string
 
 // Closed media sources select the retained storage binding, not access rights.
 const (
 	// MediaSourceInline selects InlineData, including empty bytes, with a required MIME type.
-	MediaSourceInline = "inline"
+	MediaSourceInline MediaSourceKind = "inline"
 	// MediaSourceRemote selects an absolute URI without dereferencing it.
-	MediaSourceRemote = "remote"
+	MediaSourceRemote MediaSourceKind = "remote"
 	// MediaSourceProvider selects a complete provider name, scope and reference binding.
-	MediaSourceProvider = "provider"
+	MediaSourceProvider MediaSourceKind = "provider"
 )
 
 // Media retains exact UTF-8 metadata and a tagged source. Assignment shares
 // InlineData; Clone detaches it. An inline tag preserves presence with empty bytes.
 // References grant no access or dereference authority.
 //
-//cborgen:validate Validate
+//dtogen:validate Validate
 type Media struct {
 	// Kind is required: MediaKindImage, MediaKindAudio or MediaKindDocument.
-	Kind string `cbor:"k"`
+	Kind MediaKind `cbor:"k"`
 	// Source selects the required storage variant and its exclusive fields.
-	Source string `cbor:"s"`
+	Source MediaSourceKind `cbor:"s"`
 
 	// InlineData retains inline bytes only; Source, not nilness, records presence.
 	InlineData []byte `cbor:"d"`

@@ -11,7 +11,7 @@ import (
 // model request. History scope belongs to the enclosing history envelope; zero
 // Sequence or CID is invalid. It is a reference, not record framing or a record ID.
 //
-//cborgen:validate Validate
+//dtogen:validate Validate
 type SourceHead struct {
 	// Sequence is the required positive accepted-commit sequence within the
 	// enclosing history. Local validation does not prove ancestry or acceptance.
@@ -34,7 +34,7 @@ func (v SourceHead) Validate() error {
 // bytes; Check is required and nonempty. Assignment shares byte slices; Clone
 // detaches them.
 //
-//cborgen:validate Validate
+//dtogen:validate Validate
 type ConstructionRecipe struct {
 	// Algorithm is the required nonempty UTF-8 name of the construction algorithm.
 	// This payload does not resolve or execute the named algorithm.
@@ -62,7 +62,7 @@ func (v ConstructionRecipe) Validate() error {
 // request ordinal in the same enclosing run; membership and ordering are aggregate
 // concerns. Assignment shares nested byte slices; Clone detaches them.
 //
-//cborgen:validate Validate
+//dtogen:validate Validate
 type ModelRequest struct {
 	// RunID is the required positive numeric run component within the history
 	// supplied by the enclosing envelope.

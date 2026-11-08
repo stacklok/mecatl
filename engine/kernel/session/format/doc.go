@@ -1,11 +1,13 @@
-//go:generate go -C ../../../.. run ./internal/cborgen/cmd/cborgen -dir engine/kernel/session/format -types Created,UserInput,RunStarted,EffectiveInput,Instructions,ToolCatalog,ModelBinding,SourceHead,ConstructionRecipe,ModelRequest,OpaqueProviderData,InvocationUsage,ObservedEvidence,RequestedCall,ResponseContent,ResponseItem,ModelResponse,InvocationFailure,CaptureFailureEvidence,RunEnded -out zz_cbor_generated.go
+//go:generate go -C ../../../.. run ./internal/dtogen/cmd/dtogen -dir engine/kernel/session/format -types Created,UserInput,RunStarted,EffectiveInput,Instructions,ToolCatalog,ModelBinding,SourceHead,ConstructionRecipe,ModelRequest,OpaqueProviderData,InvocationUsage,ObservedEvidence,RequestedCall,ResponseContent,ResponseItem,ModelResponse,InvocationFailure,CaptureFailureEvidence,RunEnded -emit cbor,clone,equal -out zz_cbor_generated.go
 
 // Package format owns the isolated session's mutable persistence DTOs and
 // payload-local validation. Generated CBOR operations enforce canonical encoding
 // and explicit codec limits. Keep borrowed values stable during operations.
-// The package has no aggregate, I/O, or default resource policy. Validate methods
-// check local invariants only; generated traversal bounds and validates children
-// before their parents. Direct Validate calls do not impose operational bounds.
+// The package has no aggregate, I/O, or default resource policy. Shared composite
+// payload Validate methods recursively check children, without operational bounds.
+// Other DTO Validate methods check immediate invariants only. Generated traversal
+// bounds and validates children before invoking each parent's immediate codec hook;
+// it does not invoke recursive public validators.
 //
 // Assignment shares mutable storage. Generated Clone detaches it; Equal compares
 // exact values, treating nil and empty slices alike but preserving pointer presence.

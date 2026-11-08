@@ -1,4 +1,4 @@
-package cborgen
+package dtogen
 
 import (
 	"context"

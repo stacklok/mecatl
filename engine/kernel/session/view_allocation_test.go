@@ -196,7 +196,7 @@ func TestViewByteExportsCopyOnlyRequestedField(t *testing.T) {
 					instructions, _ := v.Instructions()
 					instructionMedia, _ := instructions.BlockAt(0).PartAt(0).Media()
 					data := func(m session.MediaView) func() []byte {
-						return func() []byte { b, _ := m.InlineData(); return b }
+						return func() []byte { b, _ := m.InlineData(); return b.Copy() }
 					}
 					for _, field := range []struct {
 						name   string
@@ -262,11 +262,11 @@ func TestViewPinnedReferenceChildrenAcrossReplacement(t *testing.T) {
 			for range 1000 {
 				resolved, ok := old.UserInputByID(ref)
 				data, present := media.InlineData()
-				if !ok || !present || resolved != input || input.PartAt(0) != part || media.Title() != "mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm" || len(data) != 32 || data[0] != 0xa5 || old.RecordCount() != 7 {
+				if !ok || !present || resolved != input || input.PartAt(0) != part || media.Title() != "mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm" || data.Len() != 32 || data.At(0) != 0xa5 || old.RecordCount() != 7 {
 					t.Error("pinned reference child changed")
 					return
 				}
-				data[0] = 0 // Concurrent exports must not alias each other either.
+				data.Copy()[0] = 0 // Concurrent exports must not alias each other either.
 			}
 		})
 	}

@@ -1,4 +1,4 @@
-package cborgen
+package dtogen
 
 import (
 	"bytes"
@@ -12,7 +12,7 @@ import (
 	"strings"
 )
 
-const generatorCommand = "./internal/cborgen/cmd/cborgen"
+const generatorCommand = "./internal/dtogen/cmd/dtogen"
 
 // GenerateRepository derives targets solely from source-local go:generate lines.
 // Check compares both inventory and bytes without writing. Generation does not
@@ -35,30 +35,26 @@ func GenerateRepository(ctx context.Context, root string, check bool) error {
 			return err
 		}
 	}
-	for _, target := range targets {
+	artifacts, err := renderTargets(ctx, targets)
+	if err != nil {
+		return err
+	}
+	for _, artifact := range artifacts {
 		if !check {
-			if err := Generate(ctx, target); err != nil {
+			if err := writeArtifact(artifact.path, artifact.data); err != nil {
 				return err
 			}
 			continue
 		}
-		loaded, err := Load(ctx, target)
-		if err != nil {
-			return err
-		}
-		want, err := render(loaded)
-		if err != nil {
-			return err
-		}
-		got, err := readOutput(loaded.Output)
+		got, err := readOutput(artifact.path)
 		if err != nil {
 			return err
 		}
 		if got == nil {
-			return fmt.Errorf("missing codec output: %s", loaded.Output)
+			return fmt.Errorf("missing data output: %s", artifact.path)
 		}
-		if !bytes.Equal(got, want) {
-			return fmt.Errorf("stale codec output: %s", loaded.Output)
+		if !bytes.Equal(got, artifact.data) {
+			return fmt.Errorf("stale data output: %s", artifact.path)
 		}
 	}
 	return nil
@@ -75,6 +71,9 @@ func discoverTargets(root string) ([]LoadConfig, error) {
 			return err
 		}
 		for i, line := range strings.Split(string(data), "\n") {
+			if strings.HasPrefix(line, "//go:generate ") && strings.Contains(line, "./internal/cborgen/cmd/cborgen") {
+				return fmt.Errorf("%s:%d: obsolete cborgen declaration; use dtogen with explicit -emit", path, i+1)
+			}
 			if !strings.HasPrefix(line, "//go:generate ") || !strings.Contains(line, generatorCommand) {
 				continue
 			}
@@ -84,7 +83,7 @@ func discoverTargets(root string) ([]LoadConfig, error) {
 			}
 			for _, previous := range targets {
 				if previous.Dir == target.Dir {
-					return fmt.Errorf("require one codec output per package: %s", target.Dir)
+					return fmt.Errorf("require one data output per package: %s", target.Dir)
 				}
 			}
 			targets = append(targets, target)
@@ -94,32 +93,39 @@ func discoverTargets(root string) ([]LoadConfig, error) {
 	return targets, err
 }
 
-// directiveTarget accepts the literal cborgen invocation used across modules:
-// go -C <repository-relative-to-source> run ./internal/cborgen/cmd/cborgen
-// -dir <source-relative-to-repository> -types A,B -out generated.go.
+// directiveTarget accepts the literal dtogen invocation used across modules:
+// go -C <repository-relative-to-source> run ./internal/dtogen/cmd/dtogen
+// -dir <source-relative-to-repository> -types A,B -emit cbor,clone,equal -out generated.go.
 // This is not a general go:generate interpreter: quoting, variables and aliases
 // are intentionally unsupported, so discovery and direct invocation agree.
 func directiveTarget(root, source string, words []string) (LoadConfig, error) {
 	var target LoadConfig
 	if strings.ContainsAny(strings.Join(words, ""), "\"$\\") {
-		return target, fmt.Errorf("codec directives require literal unquoted arguments")
+		return target, fmt.Errorf("data directives require literal unquoted arguments")
 	}
 	if len(words) < 5 || words[0] != "go" || words[1] != "-C" || words[3] != "run" || words[4] != generatorCommand || filepath.Clean(filepath.Join(source, words[2])) != root {
 		return target, fmt.Errorf("expected go -C <repository> run %s -dir <declaring-package> -types A,B -out generated.go", generatorCommand)
 	}
-	flags := flag.NewFlagSet("cborgen directive", flag.ContinueOnError)
+	flags := flag.NewFlagSet("dtogen directive", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	flags.StringVar(&target.Dir, "dir", "", "")
 	flags.StringVar(&target.Output, "out", "", "")
+	flags.StringVar(&target.Emit, "emit", "", "")
+	flags.StringVar(&target.Views, "views", "", "")
 	roots := flags.String("types", "", "")
 	if err := flags.Parse(words[5:]); err != nil {
 		return target, err
 	}
-	if flags.NArg() != 0 || !filepath.IsLocal(target.Dir) || filepath.Join(root, target.Dir) != source || *roots == "" || !validOutputName(target.Output) {
+	if flags.NArg() != 0 || !filepath.IsLocal(target.Dir) || filepath.Join(root, target.Dir) != source || (*roots == "" && target.Views == "") || !validOutputName(target.Output) {
 		return target, fmt.Errorf("require declaring-package -dir, root -types and package-local non-test Go -out filename")
 	}
+	if _, err := parseEmit(target.Emit); err != nil {
+		return target, err
+	}
 	target.Dir = source
-	target.Types = strings.Split(*roots, ",")
+	if *roots != "" {
+		target.Types = strings.Split(*roots, ",")
+	}
 	return target, nil
 }
 
@@ -151,7 +157,7 @@ func checkInventory(root string, expected map[string]bool) error {
 		if err != nil {
 			return err
 		}
-		prefix := make([]byte, len(GeneratedMarker)+1)
+		prefix := make([]byte, len(legacyGeneratedMarker)+1)
 		n, readErr := io.ReadFull(file, prefix)
 		closeErr := file.Close()
 		if readErr != nil && readErr != io.EOF && readErr != io.ErrUnexpectedEOF {
@@ -160,8 +166,9 @@ func checkInventory(root string, expected map[string]bool) error {
 		if closeErr != nil {
 			return closeErr
 		}
-		if (string(prefix[:n]) == GeneratedMarker+"\n" || string(prefix[:n]) == GeneratedMarker) && !expected[path] {
-			return fmt.Errorf("extra codec output (removed or unlisted target): %s", path)
+		marker := strings.SplitN(string(prefix[:n]), "\n", 2)[0]
+		if (marker == GeneratedMarker || marker == legacyGeneratedMarker) && !expected[path] {
+			return fmt.Errorf("extra data output (removed or unlisted target): %s", path)
 		}
 		return nil
 	})

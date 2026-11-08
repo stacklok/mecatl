@@ -33,9 +33,9 @@ func TestModelResponseViewEmptyAndFailureOutputs(t *testing.T) {
 	if got, ok := ending.Capture(); ok || !reflect.DeepEqual(got, CaptureFailureEvidenceView{}) {
 		t.Fatal("zero capture")
 	}
-	response.Items()(func(ResponseItemView) bool { t.Fatal("zero Items yielded"); return true })
+	response.Items().All()(func(_ int, _ ResponseItemView) bool { t.Fatal("zero Items yielded"); return true })
 	response.Calls()(func(RequestedCallView) bool { t.Fatal("zero Calls yielded"); return true })
-	if response.Terminal() != "" || content.Kind() != "" || content.PartCount() != 0 || call.ID() != (RequestedCallID{}) || call.Name() != "" || call.Arguments() != nil || failure.Class() != "" {
+	if response.Terminal() != "" || content.Kind() != "" || content.Parts().Len() != 0 || call.ID() != (RequestedCallID{}) || call.Name() != "" || call.Arguments().Copy() != nil || failure.Class() != "" {
 		t.Fatal("zero scalars")
 	}
 	if got, ok := response.ProviderStopReason(); ok || got != "" {
@@ -59,10 +59,11 @@ func TestModelResponseViewEmptyAndFailureOutputs(t *testing.T) {
 	if got, ok := item.Call(); ok || !reflect.DeepEqual(got, RequestedCallDataView{}) {
 		t.Fatal("zero call branch")
 	}
-	if slices.Collect(content.Parts()) != nil {
+	if content.Parts().Len() != 0 {
 		t.Fatal("zero parts")
 	}
-	for _, access := range []func(){func() { response.ItemAt(-1) }, func() { response.ItemAt(0) }, func() { response.CallAt(-1) }, func() { response.CallAt(0) }, func() { content.PartAt(-1) }, func() { content.PartAt(0) }} {
+	content.Parts().All()(func(int, ContentPartView) bool { t.Fatal("zero Parts yielded"); return true })
+	for _, access := range []func(){func() { response.Items().At(-1) }, func() { response.Items().At(0) }, func() { response.CallAt(-1) }, func() { response.CallAt(0) }, func() { content.Parts().At(-1) }, func() { content.Parts().At(0) }} {
 		func() {
 			defer func() {
 				if recover() == nil {
@@ -189,25 +190,25 @@ func TestModelResponseViewRepresentationOwnershipAndShortCircuit(t *testing.T) {
 		}
 	}
 	raw, ok := usageView.Raw()
-	if !ok || raw.Producer() != "p" || raw.Format() != "usage" || raw.Version() != 1 || !bytes.Equal(raw.Data(), []byte{0xff, 0}) {
+	if !ok || raw.Producer() != "p" || raw.Format() != "usage" || raw.Version() != 1 || !bytes.Equal(raw.Data().Copy(), []byte{0xff, 0}) {
 		t.Fatal("usage raw changed")
 	}
 	private, _ := view.Private()
-	if private.Producer() != "p" || private.Format() != "unknown" || private.Version() != 19 || !bytes.Equal(private.Data(), expected.Private.Data) {
+	if private.Producer() != "p" || private.Format() != "unknown" || private.Version() != 19 || !bytes.Equal(private.Data().Copy(), expected.Private.Data) {
 		t.Fatal("private changed")
 	}
-	data := raw.Data()
+	data := raw.Data().Copy()
 	clear(data)
-	data = private.Data()
+	data = private.Data().Copy()
 	clear(data)
 	dto := record.Format()
 	clear(dto.Payload)
-	callValue, _ := view.ItemAt(3).Call()
-	clear(callValue.Arguments())
-	clear(view.CallAt(1).Arguments())
+	callValue, _ := view.Items().At(3).Call()
+	clear(callValue.Arguments().Copy())
+	clear(view.CallAt(1).Arguments().Copy())
 	again, _ := view.Usage()
 	raw, _ = again.Raw()
-	if !bytes.Equal(raw.Data(), expected.Usage.Raw.Data) {
+	if !bytes.Equal(raw.Data().Copy(), expected.Usage.Raw.Data) {
 		t.Fatal("usage byte export aliases")
 	}
 	evidence, _ = view.Evidence()
@@ -215,45 +216,45 @@ func TestModelResponseViewRepresentationOwnershipAndShortCircuit(t *testing.T) {
 		t.Fatal("evidence view changed")
 	}
 	private, _ = view.Private()
-	if !bytes.Equal(private.Data(), expected.Private.Data) {
+	if !bytes.Equal(private.Data().Copy(), expected.Private.Data) {
 		t.Fatal("private byte export aliases")
 	}
-	if !bytes.Equal(view.CallAt(1).Arguments(), expected.Items[3].Call.Arguments) {
+	if !bytes.Equal(view.CallAt(1).Arguments().Copy(), expected.Items[3].Call.Arguments) {
 		t.Fatal("argument export aliases")
 	}
-	c, _ := view.ItemAt(0).Content()
-	if text, ok := c.PartAt(0).Text(); !ok || text != "" {
+	c, _ := view.Items().At(0).Content()
+	if text, ok := c.Parts().At(0).Text(); !ok || text != "" {
 		t.Fatal("empty text normalized")
 	}
-	if text, ok := c.PartAt(1).Text(); !ok || text != "  exact\n" {
+	if text, ok := c.Parts().At(1).Text(); !ok || text != "  exact\n" {
 		t.Fatal("text normalized")
 	}
-	media, _ := c.PartAt(2).Media()
-	data, _ = media.InlineData()
-	clear(data)
-	data, _ = media.InlineData()
-	if !bytes.Equal(data, []byte{0xff, 0}) {
+	media, _ := c.Parts().At(2).Media()
+	mediaData, _ := media.InlineData()
+	clear(mediaData.Copy())
+	mediaData, _ = media.InlineData()
+	if !bytes.Equal(mediaData.Copy(), []byte{0xff, 0}) {
 		t.Fatal("media export aliases")
 	}
-	if got, ok := view.ItemAt(0).Call(); ok || !reflect.DeepEqual(got, RequestedCallDataView{}) {
+	if got, ok := view.Items().At(0).Call(); ok || !reflect.DeepEqual(got, RequestedCallDataView{}) {
 		t.Fatal("content returned call")
 	}
-	if got, ok := view.ItemAt(1).Content(); ok || got != (ResponseContentView{}) {
+	if got, ok := view.Items().At(1).Content(); ok || got != (ResponseContentView{}) {
 		t.Fatal("call returned content")
 	}
 	for i, want := range []ResponseContentKind{ResponseContentReasoning, ResponseContentRefusal} {
-		empty, _ := view.ItemAt(2 + i*2).Content()
-		if empty.Kind() != want || empty.PartCount() != 0 {
+		empty, _ := view.Items().At(2 + i*2).Content()
+		if empty.Kind() != want || empty.Parts().Len() != 0 {
 			t.Fatal("empty content conflated")
 		}
 	}
-	if got, ok := view.ItemAt(1).Call(); !ok || len(got.Arguments()) != 0 {
+	if got, ok := view.Items().At(1).Call(); !ok || len(got.Arguments().Copy()) != 0 {
 		t.Fatal("empty call arguments")
 	}
 	// Invoke the sequence directly: a range-break-only check could conceal a
 	// producer incorrectly invoking yield again after false.
 	visits := 0
-	view.Items()(func(ResponseItemView) bool { visits++; return false })
+	view.Items().All()(func(_ int, _ ResponseItemView) bool { visits++; return false })
 	if visits != 1 {
 		t.Fatal("Items ignored false")
 	}
@@ -269,14 +270,21 @@ func TestModelResponseViewRepresentationOwnershipAndShortCircuit(t *testing.T) {
 		t.Fatal("Calls ignored false")
 	}
 	visits = 0
-	c.Parts()(func(ContentPartView) bool { visits++; return false })
+	c.Parts().All()(func(_ int, _ ContentPartView) bool { visits++; return false })
 	if visits != 1 {
 		t.Fatal("Parts ignored false")
 	}
-	if len(slices.Collect(view.Items())) != 5 || len(slices.Collect(view.Calls())) != 2 || len(slices.Collect(c.Parts())) != 3 {
+	itemVisits, partVisits := 0, 0
+	for range view.Items().All() {
+		itemVisits++
+	}
+	for range c.Parts().All() {
+		partVisits++
+	}
+	if itemVisits != 5 || len(slices.Collect(view.Calls())) != 2 || partVisits != 3 {
 		t.Fatal("short circuit poisoned later traversal")
 	}
-	for _, access := range []func(){func() { view.ItemAt(-1) }, func() { view.ItemAt(5) }, func() { view.CallAt(-1) }, func() { view.CallAt(2) }, func() { c.PartAt(-1) }, func() { c.PartAt(3) }} {
+	for _, access := range []func(){func() { view.Items().At(-1) }, func() { view.Items().At(5) }, func() { view.CallAt(-1) }, func() { view.CallAt(2) }, func() { c.Parts().At(-1) }, func() { c.Parts().At(3) }} {
 		func() {
 			defer func() {
 				if recover() == nil {

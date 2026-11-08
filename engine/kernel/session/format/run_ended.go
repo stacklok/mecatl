@@ -29,7 +29,7 @@ const MaxRunEndedReasonBytes = 32
 // whose complete response could not be captured. It has no response body or private
 // envelope. Assignment shares nested storage; Clone detaches it.
 //
-//cborgen:validate Validate
+//dtogen:validate Validate
 type CaptureFailureEvidence struct {
 	// RequestID is the required positive numeric request component within the
 	// enclosing RunEnded's run. Its history envelope supplies history scope.
@@ -55,7 +55,7 @@ func (v CaptureFailureEvidence) Validate() error {
 // response, cancellation, or external effect. Evidence is permitted only for a
 // capture-failed ending. Assignment shares nested storage; Clone detaches it.
 //
-//cborgen:validate Validate
+//dtogen:validate Validate
 type RunEnded struct {
 	// RunID is the required positive numeric run component within the history
 	// supplied by the enclosing envelope. The aggregate checks active ownership.

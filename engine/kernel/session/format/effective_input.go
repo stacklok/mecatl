@@ -17,7 +17,7 @@ const (
 // is a positive ordinal in the enclosing EffectiveInput's run. Assignment shares
 // pointers and children; Clone detaches them.
 //
-//cborgen:validate Validate
+//dtogen:validate Validate
 type InputItem struct {
 	// UserInputID optionally references a whole submission by its required positive
 	// ordinal. The enclosing EffectiveInput supplies run scope, and its history
@@ -45,7 +45,7 @@ func (v InputItem) Validate() error {
 // and provenance. Actor is not a provider role, authentication or trust claim.
 // Assignment shares Parts and Source storage; Clone detaches them.
 //
-//cborgen:validate Validate
+//dtogen:validate Validate
 type AttributedInput struct {
 	// Parts preserves exact contribution order, including duplicates. Nil and empty
 	// are equivalent valid empty contributions; codec traversal validates children.
@@ -75,7 +75,7 @@ func (v AttributedInput) Validate() error {
 // request or replacement. Nil and empty Inputs are equal; duplicates are retained.
 // Assignment shares nested storage; Clone detaches it.
 //
-//cborgen:validate Validate
+//dtogen:validate Validate
 type EffectiveInput struct {
 	// RunID is the required one-based owning run ordinal within the enclosing
 	// history. Conversion restores history scope from the envelope. Validate checks

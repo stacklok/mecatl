@@ -1,4 +1,4 @@
-package cborgen
+package dtogen
 
 import (
 	"fmt"
@@ -32,6 +32,8 @@ const (
 	shapeMap
 	shapeStruct
 	shapeOwner
+	shapeScalar // non-CBOR comparable scalar
+	shapeArray  // non-CBOR array with recursively owned elements
 )
 
 // shape owns one concrete helper type and its supported underlying vocabulary.
@@ -46,6 +48,7 @@ type shape struct {
 	fields         []field
 	wire           bool
 	validator      string
+	overrides      capabilities // only explicitly declared handwritten Clone/Equal
 	representation string
 }
 
@@ -67,9 +70,11 @@ func buildSchema(loaded *Loaded) (*schema, error) {
 		}
 		s.roots = append(s.roots, n)
 	}
-	for _, root := range s.roots {
-		if err := s.persist(root); err != nil {
-			return nil, fmt.Errorf("%s: %w", loaded.Package.Fset.Position(root.typ.(*types.Named).Obj().Pos()), err)
+	if loaded.Emit.cbor {
+		for _, root := range s.roots {
+			if err := s.persist(root); err != nil {
+				return nil, fmt.Errorf("%s: %w", loaded.Package.Fset.Position(root.typ.(*types.Named).Obj().Pos()), err)
+			}
 		}
 	}
 	return s, nil
@@ -108,8 +113,23 @@ func (s *schema) visit(t types.Type, active map[types.Type]bool) (*shape, error)
 			if owner == nil || !slices.Contains(owner.Names, obj.Name()) {
 				return nil, fmt.Errorf("%s: imported type requires an owner go:generate declaration selecting its family", t)
 			}
+			available, err := parseEmit(owner.Config.Emit)
+			if err != nil {
+				return nil, err
+			}
+			for _, method := range []string{methodClone, methodEqual} {
+				if s.loaded.Emit.method(method) && !available.method(method) {
+					return nil, fmt.Errorf("%s: imported owner does not emit %s", t, method)
+				}
+			}
 			n.kind = shapeOwner
 			return n, nil
+		}
+		if owner := s.loaded.Owners[s.loaded.Package.PkgPath]; owner != nil {
+			n.overrides = owner.Overrides[obj.Name()]
+		}
+		if err := validateOverrides(named, n.overrides); err != nil {
+			return nil, err
 		}
 		n.validator = s.loaded.Validators[obj.Name()]
 		if n.validator != "" {
@@ -144,15 +164,13 @@ func (s *schema) visit(t types.Type, active map[types.Type]bool) (*shape, error)
 		case types.Uint8, types.Uint16, types.Uint32, types.Uint64:
 			n.kind = shapeUint
 			n.bits = map[types.BasicKind]int{types.Uint8: 8, types.Uint16: 16, types.Uint32: 32, types.Uint64: 64}[u.Kind()]
+		case types.Int, types.Uint, types.Uintptr, types.Float32, types.Float64, types.Complex64, types.Complex128:
+			n.kind = shapeScalar
 		default:
-			err = fmt.Errorf("unsupported scalar %s (use fixed-width integers, bool or string)", t)
+			err = fmt.Errorf("unsupported scalar %s", t)
 		}
 	case *types.Pointer:
 		n.kind = shapePointer
-		if _, ok := types.Unalias(u.Elem()).Underlying().(*types.Pointer); ok {
-			err = fmt.Errorf("double-pointer chains unsupported")
-			break
-		}
 		n.elem, err = child(u.Elem())
 	case *types.Slice:
 		n.kind = shapeSlice
@@ -164,14 +182,13 @@ func (s *schema) visit(t types.Type, active map[types.Type]bool) (*shape, error)
 		n.kind = shapeBytesArray
 		n.length = u.Len()
 		if !isByte(u.Elem()) {
-			err = fmt.Errorf("only fixed byte arrays supported")
-			break
+			n.kind = shapeArray
 		}
 		n.elem, err = child(u.Elem())
 	case *types.Map:
 		n.kind = shapeMap
-		if b, ok := types.Unalias(u.Key()).Underlying().(*types.Basic); !ok || b.Kind() != types.String {
-			err = fmt.Errorf("map keys must have string underlying type")
+		if _, ok := types.Unalias(u.Key()).Underlying().(*types.Basic); !ok {
+			err = fmt.Errorf("map keys must have scalar underlying type")
 			break
 		}
 		n.key, err = child(u.Key())
@@ -182,10 +199,6 @@ func (s *schema) visit(t types.Type, active map[types.Type]bool) (*shape, error)
 		n.kind = shapeStruct
 		for i := 0; i < u.NumFields(); i++ {
 			f := u.Field(i)
-			if f.Embedded() {
-				err = fmt.Errorf("field %s: embedding unsupported", f.Name())
-				break
-			}
 			if f.Name() == "_" || (!f.Exported() && f.Pkg() != s.loaded.Package.Types) {
 				err = fmt.Errorf("field %s: inaccessible field", f.Name())
 				break
@@ -245,16 +258,58 @@ func (s *schema) persist(n *shape) error {
 		return nil
 	}
 	n.wire = true
+	if err := validatePersistentShape(n); err != nil {
+		return err
+	}
 	if (n.kind == shapeBytes || n.kind == shapeBytesArray) && s.hasValidator(n.elem) {
 		return fmt.Errorf("%s: packed named-byte element has a declared validator; use ordinary bytes or unpacked values", n.typ)
 	}
 	if n.kind == shapeOwner {
-		named := n.typ.(*types.Named)
-		if !s.loaded.Owners[named.Obj().Pkg().Path()].Wire[named.Obj().Name()] {
-			return fmt.Errorf("%s: imported type is excluded-only in its owner; select it as a persisted root", n.typ)
-		}
-		return nil
+		return s.persistOwner(n)
 	}
+	if err := validateMarshalContracts(n); err != nil {
+		return err
+	}
+	if n.kind == shapeStruct {
+		return s.persistStruct(n)
+	}
+	return s.persistChildren(n)
+}
+
+func validatePersistentShape(n *shape) error {
+	switch n.kind {
+	case shapeScalar:
+		return fmt.Errorf("%s: unsupported scalar for CBOR (use fixed-width integers, bool or string)", n.typ)
+	case shapeArray:
+		return fmt.Errorf("%s: only fixed byte arrays supported by CBOR", n.typ)
+	case shapePointer:
+		if n.elem.kind == shapePointer {
+			return fmt.Errorf("%s: double-pointer chains unsupported by CBOR", n.typ)
+		}
+	case shapeMap:
+		if b, ok := n.key.typ.Underlying().(*types.Basic); !ok || b.Kind() != types.String {
+			return fmt.Errorf("%s: CBOR map keys must have string underlying type", n.typ)
+		}
+	case shapeStruct:
+		u := n.typ.Underlying().(*types.Struct)
+		for i := 0; i < u.NumFields(); i++ {
+			if u.Field(i).Embedded() {
+				return fmt.Errorf("%s: embedding unsupported by CBOR", n.typ)
+			}
+		}
+	}
+	return nil
+}
+
+func (s *schema) persistOwner(n *shape) error {
+	named := n.typ.(*types.Named)
+	if !s.loaded.Owners[named.Obj().Pkg().Path()].Wire[named.Obj().Name()] {
+		return fmt.Errorf("%s: imported type is excluded-only in its owner; select it as a persisted root", n.typ)
+	}
+	return nil
+}
+
+func validateMarshalContracts(n *shape) error {
 	for _, t := range []types.Type{n.typ, types.NewPointer(n.typ)} {
 		ms := types.NewMethodSet(t)
 		for i := 0; i < ms.Len(); i++ {
@@ -264,9 +319,10 @@ func (s *schema) persist(n *shape) error {
 			}
 		}
 	}
-	if n.kind == shapeStruct {
-		return s.persistStruct(n)
-	}
+	return nil
+}
+
+func (s *schema) persistChildren(n *shape) error {
 	if n.elem != nil {
 		if err := s.persist(n.elem); err != nil {
 			return err

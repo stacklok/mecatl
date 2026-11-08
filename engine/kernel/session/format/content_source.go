@@ -10,7 +10,7 @@ import (
 // label. It does not certify trust or exact copying. Assignment shares the file
 // pointer; Clone detaches it. Zero is invalid.
 //
-//cborgen:validate Validate
+//dtogen:validate Validate
 type ContentSource struct {
 	// Description is a required nonempty exact UTF-8 explanation of provenance,
 	// checked locally by Validate; it is not a trust or exact-copy assertion.
@@ -32,7 +32,7 @@ func (v ContentSource) Validate() error {
 // WorkspaceFileSource is a slash-separated file label relative to its originating
 // workspace, not a global locator or permission to read. Loading never resolves it.
 //
-//cborgen:validate Validate
+//dtogen:validate Validate
 type WorkspaceFileSource struct {
 	// Path is a required slash-separated file label relative to the originating
 	// workspace, with no empty or dot components. Validate checks path syntax only,

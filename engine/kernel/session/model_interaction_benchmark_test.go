@@ -3,13 +3,24 @@ package session_test
 import (
 	"bytes"
 	"fmt"
+	"iter"
 	"testing"
 
 	"github.com/stacklok/mecatl/engine/kernel/contentid"
 	"github.com/stacklok/mecatl/engine/kernel/session"
+	"github.com/stacklok/mecatl/engine/kernel/views"
 )
 
 var interactionTraversalSink interactionTraversal
+var interactionItemsSink iter.Seq2[int, session.ResponseItemView]
+var interactionItemSink session.ResponseItemView
+
+//go:noinline
+func consumeInteractionItems(seq iter.Seq2[int, session.ResponseItemView]) {
+	for _, item := range seq {
+		interactionItemSink = item
+	}
+}
 
 // The same public authoring and storage replay fixture serves correctness tests
 // and benchmarks. Count, requested byte length, and unrelated siblings vary alone.
@@ -74,14 +85,31 @@ type interactionTraversal struct {
 	bytes                                                     int
 }
 
+// copyInteractionBytes keeps deliberate owned exports observable across the
+// benchmark boundary, including small leaves the compiler could otherwise stack-copy.
+//
+//go:noinline
+func copyInteractionBytes(v views.Bytes) []byte {
+	return v.Copy()
+}
+
+// inspectInteractionBytes always visits the borrowed leaf; only explicit exports copy.
+func inspectInteractionBytes(v views.Bytes, expected byte, exports bool) int {
+	if v.Len() == 0 || v.At(0) != expected || v.At(v.Len()-1) != expected {
+		panic("byte leaf")
+	}
+	if exports {
+		return len(copyInteractionBytes(v))
+	}
+	return 0
+}
+
 func inspectInteractionProvider(v session.OpaqueProviderDataView, format string, exports bool, visits *interactionTraversal) {
 	if v.Producer() != "producer" || v.Format() != format || v.Version() != 19 {
 		panic("provider metadata")
 	}
 	visits.providers++
-	if exports {
-		visits.bytes += len(v.Data())
-	}
+	visits.bytes += inspectInteractionBytes(v.Data(), 0xa5, exports)
 }
 
 func inspectInteractionUsage(v session.InvocationUsageView, present, exports bool, visits *interactionTraversal) {
@@ -121,14 +149,14 @@ func inspectInteractionEvidence(v session.ObservedEvidenceView, present bool, vi
 
 // Concrete indexed record navigation and compiler-visible Items/Parts/Calls
 // iteration measure the direct path, not opaque iter.Seq escape overhead. Both
-// modes inspect every scalar and presence bit; only byte leaves are conditional.
+// modes inspect every scalar, presence bit and borrowed byte leaf; only Copy is conditional.
 func traverseCompleteInteraction(snap session.Snapshot, exports bool) interactionTraversal {
 	var visits interactionTraversal
 	for i := 0; i < snap.RecordCount(); i++ {
 		record := snap.RecordAt(i)
 		if v, ok := record.ModelRequest(); ok {
 			visits.requests++
-			if v.ID().RunID().HistoryID() != snap.HistoryID() || v.Source().Sequence == 0 || v.Source().CID == (contentid.CID{}) {
+			if v.ID().RunID().HistoryID() != snap.HistoryID() || v.Source().Sequence() == 0 || v.Source().CID() == (contentid.CID{}) {
 				panic("request scope/source")
 			}
 			if retry, ok := v.RetryOf(); ok {
@@ -143,9 +171,8 @@ func traverseCompleteInteraction(snap session.Snapshot, exports bool) interactio
 				panic("recipe metadata")
 			}
 			visits.recipes++
-			if exports {
-				visits.bytes += len(recipe.Parameters()) + len(recipe.Check())
-			}
+			visits.bytes += inspectInteractionBytes(recipe.Parameters(), 0xa5, exports)
+			visits.bytes += inspectInteractionBytes(recipe.Check(), 0x5a, exports)
 		}
 		if v, ok := record.InvocationFailure(); ok {
 			visits.failures++
@@ -163,7 +190,7 @@ func traverseCompleteInteraction(snap session.Snapshot, exports bool) interactio
 			visits.responses++
 			request, _ := snap.RecordAt(5).ModelRequest()
 			text, present := v.ProviderStopReason()
-			if v.RequestID() != request.ID() || v.Terminal() != session.ResponseTerminalOther || !present || text != "stop" || v.ItemCount() != 3*v.CallCount() {
+			if v.RequestID() != request.ID() || v.Terminal() != session.ResponseTerminalOther || !present || text != "stop" || v.Items().Len() != 3*v.CallCount() {
 				panic("response scalars")
 			}
 			u, up := v.Usage()
@@ -175,7 +202,7 @@ func traverseCompleteInteraction(snap session.Snapshot, exports bool) interactio
 				panic("private presence")
 			}
 			inspectInteractionProvider(private, "private", exports, &visits)
-			for item := range v.Items() {
+			for _, item := range v.Items().All() {
 				visits.items++
 				content, contentOK := item.Content()
 				call, callOK := item.Call()
@@ -184,10 +211,10 @@ func traverseCompleteInteraction(snap session.Snapshot, exports bool) interactio
 				}
 				if contentOK {
 					visits.contents++
-					if (content.Kind() != session.ResponseContentReasoning && content.Kind() != session.ResponseContentOutput) || content.PartCount() == 0 {
+					if (content.Kind() != session.ResponseContentReasoning && content.Kind() != session.ResponseContentOutput) || content.Parts().Len() == 0 {
 						panic("content scalars")
 					}
-					for part := range content.Parts() {
+					for _, part := range content.Parts().All() {
 						visits.parts++
 						text, textOK := part.Text()
 						media, mediaOK := part.Media()
@@ -214,13 +241,11 @@ func traverseCompleteInteraction(snap session.Snapshot, exports bool) interactio
 							if media.Kind() != session.MediaKindDocument || media.MIMEType() != "image/example" || media.Source() != session.MediaSourceInline || media.FormatHint() != "raw" || media.Filename() != "image.bin" || media.Title() != "title" {
 								panic("media metadata")
 							}
-							if exports {
-								data, ok := media.InlineData()
-								if !ok {
-									panic("inline presence")
-								}
-								visits.bytes += len(data)
+							data, ok := media.InlineData()
+							if !ok {
+								panic("inline presence")
 							}
+							visits.bytes += inspectInteractionBytes(data, 0xa5, exports)
 						}
 					}
 				} else {
@@ -228,9 +253,7 @@ func traverseCompleteInteraction(snap session.Snapshot, exports bool) interactio
 					if call.Name() != "call" {
 						panic("identity-free name")
 					}
-					if exports {
-						visits.bytes += len(call.Arguments())
-					}
+					visits.bytes += inspectInteractionBytes(call.Arguments(), 0xa5, exports)
 				}
 			}
 			var previous session.RequestedCallID
@@ -240,9 +263,7 @@ func traverseCompleteInteraction(snap session.Snapshot, exports bool) interactio
 				}
 				previous = call.ID()
 				visits.calls++
-				if exports {
-					visits.bytes += len(call.Arguments())
-				}
+				visits.bytes += inspectInteractionBytes(call.Arguments(), 0xa5, exports)
 			}
 		}
 		if v, ok := record.RunEnded(); ok {
@@ -274,6 +295,23 @@ func BenchmarkModelInteractionCompleteTraversal(b *testing.B) {
 	for _, axis := range []struct{ count, field, sibling int }{{1, 32, 32}, {8, 32, 32}, {32, 32, 32}, {1, 16384, 32}, {1, 32, 16384}} {
 		b.Run(fmt.Sprintf("count=%d/field=%d/sibling=%d", axis.count, axis.field, axis.sibling), func(b *testing.B) {
 			for seam, s := range completeInteractionFixture(b, axis.count, axis.field, axis.sibling) {
+				response, _ := s.Snapshot().RecordAt(6).ModelResponse()
+				stored := response.Items().All()
+				for _, mode := range []string{"escaping-create", "opaque-consume", "escaping-reuse"} {
+					b.Run(seam+"/"+mode, func(b *testing.B) {
+						b.ReportAllocs()
+						for b.Loop() {
+							switch mode {
+							case "escaping-create":
+								interactionItemsSink = response.Items().All()
+							case "opaque-consume":
+								consumeInteractionItems(response.Items().All())
+							case "escaping-reuse":
+								consumeInteractionItems(stored)
+							}
+						}
+					})
+				}
 				for _, exports := range []bool{false, true} {
 					b.Run(fmt.Sprintf("%s/direct/exports=%t", seam, exports), func(b *testing.B) {
 						snap := s.Snapshot()

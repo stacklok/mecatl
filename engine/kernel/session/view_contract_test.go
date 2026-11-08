@@ -40,7 +40,7 @@ func TestRecursiveViewsZero(t *testing.T) {
 	if media.Kind() != "" || media.MIMEType() != "" || media.FormatHint() != "" || media.Filename() != "" || media.Title() != "" || media.Source() != "" {
 		t.Fatal("zero media metadata")
 	}
-	if data, ok := media.InlineData(); ok || data != nil {
+	if data, ok := media.InlineData(); ok || data.Copy() != nil {
 		t.Fatal("zero inline data")
 	}
 	for name, get := range map[string]func() (string, bool){"RemoteURI": media.RemoteURI, "ProviderName": media.ProviderName, "ProviderScope": media.ProviderScope, "ProviderReferenceID": media.ProviderReferenceID} {
@@ -142,11 +142,11 @@ func TestRecursiveViewsPresenceBytesAndBounds(t *testing.T) {
 	if text, ok := user.PartAt(1).Text(); ok || text != "" {
 		t.Fatal("media exposed text")
 	}
-	if data, ok := mediaAt(t, user.PartAt(5)).InlineData(); !ok || len(data) != 0 {
+	if data, ok := mediaAt(t, user.PartAt(5)).InlineData(); !ok || len(data.Copy()) != 0 {
 		t.Fatal("empty inline bytes lost presence")
 	}
 	remote := mediaAt(t, user.PartAt(2))
-	if data, ok := remote.InlineData(); ok || data != nil {
+	if data, ok := remote.InlineData(); ok || data.Copy() != nil {
 		t.Fatal("remote exposed inline bytes")
 	}
 	if provider, ok := remote.ProviderName(); ok || provider != "" {
@@ -159,8 +159,9 @@ func TestRecursiveViewsPresenceBytesAndBounds(t *testing.T) {
 	media := mediaAt(t, user.PartAt(1))
 	data, _ := media.InlineData()
 	other, _ := media.InlineData()
-	data[0] = 0
-	if other[0] != 0xff {
+	copied, otherCopy := data.Copy(), other.Copy()
+	copied[0] = 0
+	if otherCopy[0] != 0xff || other.At(0) != 0xff {
 		t.Fatal("byte exports share storage")
 	}
 	mutateMediaBytes(t, user.PartAt(1))

@@ -11,6 +11,8 @@
     method func (*InvocationFailure).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
     method func (*InvocationUsage).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
     method func (*Media).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
+    method func (*MediaKind).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
+    method func (*MediaSourceKind).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
     method func (*ModelBinding).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
     method func (*ModelRequest).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
     method func (*ModelResponse).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
@@ -18,7 +20,9 @@
     method func (*OpaqueProviderData).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
     method func (*RequestedCall).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
     method func (*ResponseContent).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
+    method func (*ResponseContentKind).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
     method func (*ResponseItem).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
+    method func (*ResponseTerminalClass).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
     method func (*RunEnded).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
     method func (*RunStarted).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
     method func (*SourceHead).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
@@ -88,6 +92,14 @@
     method func (Media).Clone() Media
     method func (Media).Equal(other Media) bool
     method func (Media).Validate() error
+    method func (MediaKind).AppendCBOR(dst []byte) []byte
+    method func (MediaKind).CheckCBOR(b *codec.Budget, depth int, fieldMax int) error
+    method func (MediaKind).Clone() MediaKind
+    method func (MediaKind).Equal(other MediaKind) bool
+    method func (MediaSourceKind).AppendCBOR(dst []byte) []byte
+    method func (MediaSourceKind).CheckCBOR(b *codec.Budget, depth int, fieldMax int) error
+    method func (MediaSourceKind).Clone() MediaSourceKind
+    method func (MediaSourceKind).Equal(other MediaSourceKind) bool
     method func (ModelBinding).AppendCBOR(dst []byte) []byte
     method func (ModelBinding).CheckCBOR(b *codec.Budget, depth int, fieldMax int) error
     method func (ModelBinding).Clone() ModelBinding
@@ -123,11 +135,19 @@
     method func (ResponseContent).Clone() ResponseContent
     method func (ResponseContent).Equal(other ResponseContent) bool
     method func (ResponseContent).Validate() error
+    method func (ResponseContentKind).AppendCBOR(dst []byte) []byte
+    method func (ResponseContentKind).CheckCBOR(b *codec.Budget, depth int, fieldMax int) error
+    method func (ResponseContentKind).Clone() ResponseContentKind
+    method func (ResponseContentKind).Equal(other ResponseContentKind) bool
     method func (ResponseItem).AppendCBOR(dst []byte) []byte
     method func (ResponseItem).CheckCBOR(b *codec.Budget, depth int, fieldMax int) error
     method func (ResponseItem).Clone() ResponseItem
     method func (ResponseItem).Equal(other ResponseItem) bool
     method func (ResponseItem).Validate() error
+    method func (ResponseTerminalClass).AppendCBOR(dst []byte) []byte
+    method func (ResponseTerminalClass).CheckCBOR(b *codec.Budget, depth int, fieldMax int) error
+    method func (ResponseTerminalClass).Clone() ResponseTerminalClass
+    method func (ResponseTerminalClass).Equal(other ResponseTerminalClass) bool
     method func (RunEnded).AppendCBOR(dst []byte) []byte
     method func (RunEnded).CheckCBOR(b *codec.Budget, depth int, fieldMax int) error
     method func (RunEnded).Clone() RunEnded
@@ -179,23 +199,23 @@ const KindRunStarted untyped string = "session.run_started"
 const KindToolCatalog untyped string = "session.tool_catalog"
 const KindUserInput untyped string = "session.user_input"
 const MaxRunEndedReasonBytes untyped int = 32
-const MediaKindAudio untyped string = "audio"
-const MediaKindDocument untyped string = "document"
-const MediaKindImage untyped string = "image"
-const MediaSourceInline untyped string = "inline"
-const MediaSourceProvider untyped string = "provider"
-const MediaSourceRemote untyped string = "remote"
+const MediaKindAudio MediaKind = "audio"
+const MediaKindDocument MediaKind = "document"
+const MediaKindImage MediaKind = "image"
+const MediaSourceInline MediaSourceKind = "inline"
+const MediaSourceProvider MediaSourceKind = "provider"
+const MediaSourceRemote MediaSourceKind = "remote"
 const PromptContext untyped string = "context"
 const PromptInstructions untyped string = "instructions"
-const ResponseContentOutput untyped string = "output"
-const ResponseContentReasoning untyped string = "reasoning"
-const ResponseContentRefusal untyped string = "refusal"
-const ResponseTerminalCancelled untyped string = "cancelled"
-const ResponseTerminalError untyped string = "error"
-const ResponseTerminalLimit untyped string = "limit"
-const ResponseTerminalNormal untyped string = "normal"
-const ResponseTerminalOther untyped string = "other"
-const ResponseTerminalRefusal untyped string = "refusal"
+const ResponseContentOutput ResponseContentKind = "output"
+const ResponseContentReasoning ResponseContentKind = "reasoning"
+const ResponseContentRefusal ResponseContentKind = "refusal"
+const ResponseTerminalCancelled ResponseTerminalClass = "cancelled"
+const ResponseTerminalError ResponseTerminalClass = "error"
+const ResponseTerminalLimit ResponseTerminalClass = "limit"
+const ResponseTerminalNormal ResponseTerminalClass = "normal"
+const ResponseTerminalOther ResponseTerminalClass = "other"
+const ResponseTerminalRefusal ResponseTerminalClass = "refusal"
 const RunEndedCaptureFailed untyped string = "capture-failed"
 const RunEndedCompleted untyped string = "completed"
 const RunEndedError untyped string = "error"
@@ -214,15 +234,19 @@ type InstructionBlock struct{Parts []ContentPart "cbor:\"c\""; Source ContentSou
 type Instructions struct{Blocks []InstructionBlock "cbor:\"b\""}
 type InvocationFailure struct{RunID uint64 "cbor:\"r\""; RequestID uint64 "cbor:\"q\""; Class string "cbor:\"c\""; Explanation *string "cbor:\"e,omitempty\""; Evidence *ObservedEvidence "cbor:\"v,omitempty\""; Usage *InvocationUsage "cbor:\"u,omitempty\""}
 type InvocationUsage struct{Input *int64 "cbor:\"i,omitempty\""; Output *int64 "cbor:\"o,omitempty\""; CacheRead *int64 "cbor:\"r,omitempty\""; CacheWrite *int64 "cbor:\"w,omitempty\""; Reasoning *int64 "cbor:\"n,omitempty\""; Raw *OpaqueProviderData "cbor:\"x,omitempty\""}
-type Media struct{Kind string "cbor:\"k\""; Source string "cbor:\"s\""; InlineData []byte "cbor:\"d\""; RemoteURI string "cbor:\"u\""; ProviderName string "cbor:\"p\""; ProviderScope string "cbor:\"o\""; ProviderReferenceID string "cbor:\"r\""; MIMEType string "cbor:\"m\""; FormatHint string "cbor:\"f\""; Filename string "cbor:\"n\""; Title string "cbor:\"t\""}
+type Media struct{Kind MediaKind "cbor:\"k\""; Source MediaSourceKind "cbor:\"s\""; InlineData []byte "cbor:\"d\""; RemoteURI string "cbor:\"u\""; ProviderName string "cbor:\"p\""; ProviderScope string "cbor:\"o\""; ProviderReferenceID string "cbor:\"r\""; MIMEType string "cbor:\"m\""; FormatHint string "cbor:\"f\""; Filename string "cbor:\"n\""; Title string "cbor:\"t\""}
+type MediaKind string
+type MediaSourceKind string
 type ModelBinding struct{Route string "cbor:\"r\""; API string "cbor:\"a\""; Model string "cbor:\"m\""; Settings []byte "cbor:\"s\""}
 type ModelRequest struct{RunID uint64 "cbor:\"r\""; ID uint64 "cbor:\"o\""; Source SourceHead "cbor:\"s\""; Recipe ConstructionRecipe "cbor:\"c\""; RetryOf *uint64 "cbor:\"x,omitempty\""}
-type ModelResponse struct{RunID uint64 "cbor:\"r\""; RequestID uint64 "cbor:\"q\""; Terminal string "cbor:\"t\""; ProviderStopReason *string "cbor:\"p,omitempty\""; Items []ResponseItem "cbor:\"i\""; Evidence *ObservedEvidence "cbor:\"e,omitempty\""; Usage *InvocationUsage "cbor:\"u,omitempty\""; Private *OpaqueProviderData "cbor:\"x,omitempty\""}
+type ModelResponse struct{RunID uint64 "cbor:\"r\""; RequestID uint64 "cbor:\"q\""; Terminal ResponseTerminalClass "cbor:\"t\""; ProviderStopReason *string "cbor:\"p,omitempty\""; Items []ResponseItem "cbor:\"i\""; Evidence *ObservedEvidence "cbor:\"e,omitempty\""; Usage *InvocationUsage "cbor:\"u,omitempty\""; Private *OpaqueProviderData "cbor:\"x,omitempty\""}
 type ObservedEvidence struct{Detail *string "cbor:\"d,omitempty\""; Correlation *string "cbor:\"c,omitempty\""}
 type OpaqueProviderData struct{Producer string "cbor:\"p\""; Format string "cbor:\"f\""; Version int64 "cbor:\"v\""; Data []byte "cbor:\"d\""}
 type RequestedCall struct{Name string "cbor:\"n\""; Arguments []byte "cbor:\"a\""}
-type ResponseContent struct{Kind string "cbor:\"k\""; Parts []ContentPart "cbor:\"p\""}
+type ResponseContent struct{Kind ResponseContentKind "cbor:\"k\""; Parts []ContentPart "cbor:\"p\""}
+type ResponseContentKind string
 type ResponseItem struct{Content *ResponseContent "cbor:\"c,omitempty\""; Call *RequestedCall "cbor:\"a,omitempty\""}
+type ResponseTerminalClass string
 type RunEnded struct{RunID uint64 "cbor:\"r\""; Reason string "cbor:\"e\""; Explanation *string "cbor:\"x,omitempty\""; Capture *CaptureFailureEvidence "cbor:\"c,omitempty\""}
 type RunStarted struct{ID uint64 "cbor:\"r\""}
 type SourceHead struct{Sequence int64 "cbor:\"s\""; CID contentid.CID "cbor:\"c\""}

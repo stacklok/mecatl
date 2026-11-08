@@ -75,7 +75,7 @@ func (v InvocationFailure) Equal(other InvocationFailure) bool {
 	return v.RequestID == other.RequestID && v.toFormat().Equal(other.toFormat())
 }
 func (v InvocationFailure) toFormat() sessionformat.InvocationFailure {
-	return sessionformat.InvocationFailure{RunID: v.RequestID.runID.ordinal, RequestID: v.RequestID.requestOrdinal, Class: string(v.Class), Explanation: v.Explanation, Evidence: evidenceToFormat(v.Evidence), Usage: usageToFormat(v.Usage)}
+	return sessionformat.InvocationFailure{RunID: v.RequestID.runID.ordinal, RequestID: v.RequestID.requestOrdinal, Class: string(v.Class), Explanation: v.Explanation, Evidence: v.Evidence, Usage: v.Usage}
 }
 func (v InvocationFailure) checkSize(b *valueBudget) {
 	b.text(string(v.Class))
@@ -106,7 +106,8 @@ func newInvocationFailureRecord(v InvocationFailure, limits codec.Limits) (*mate
 }
 
 // InvocationFailureView is an immutable observed outcome. Zero has zero request
-// and empty class. Structured-child access is O(1); byte leaves detach.
+// and empty class. Structured-child access is O(1); nested byte views borrow
+// retained backing, and Copy detaches only their selected leaf.
 type InvocationFailureView struct {
 	scope historyid.HistoryID
 	value *sessionformat.InvocationFailure

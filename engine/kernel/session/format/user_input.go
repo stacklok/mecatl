@@ -5,7 +5,7 @@ import "errors"
 // UserInput is one authored submission. Zero ordinals are invalid. Assignment
 // shares Parts and children; Clone detaches them. Nil and empty Parts are equal.
 //
-//cborgen:validate Validate
+//dtogen:validate Validate
 type UserInput struct {
 	// RunID is the required one-based owning run ordinal within the enclosing
 	// history. Conversion restores history scope from the envelope; the aggregate

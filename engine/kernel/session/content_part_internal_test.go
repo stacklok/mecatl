@@ -98,7 +98,7 @@ func TestContentTextBudgetBeforeConversion(t *testing.T) {
 			if !errors.Is(err, codec.ErrLimitExceeded) || record != nil {
 				t.Fatalf("bounded failure: %#v, %v", record, err)
 			}
-			// Bypassing preflight still rejects, but only after allocating DTOs.
+			// Bypassing preflight still rejects in bounded codec traversal.
 			if n := testing.AllocsPerRun(10, func() {
 				_, err = codec.Encode(input.toFormat(), bounded)
 			}); n == 0 || !errors.Is(err, codec.ErrLimitExceeded) {

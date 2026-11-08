@@ -1,7 +1,6 @@
 package session
 
 import (
-	"bytes"
 	"iter"
 
 	"github.com/stacklok/mecatl/engine/kernel/codec"
@@ -12,7 +11,7 @@ import (
 
 // ResponseContentKind selects one canonical content meaning. Empty and unknown
 // values are rejected.
-type ResponseContentKind string
+type ResponseContentKind = sessionformat.ResponseContentKind
 
 const (
 	// ResponseContentOutput retains ordinary model output.
@@ -25,7 +24,7 @@ const (
 
 // ResponseTerminalClass is the closed normalized terminal provider class. Empty
 // and unknown values are rejected, unlike the provider-owned stop reason.
-type ResponseTerminalClass string
+type ResponseTerminalClass = sessionformat.ResponseTerminalClass
 
 const (
 	// ResponseTerminalNormal identifies a normal terminal response.
@@ -42,101 +41,17 @@ const (
 	ResponseTerminalOther ResponseTerminalClass = sessionformat.ResponseTerminalOther
 )
 
-// RequestedCall is one complete requested call. Name and Arguments are retained
-// exactly: empty/unknown names and invalid/empty JSON are valid. Clone detaches bytes.
-type RequestedCall struct {
-	Name      string
-	Arguments []byte
-}
+// RequestedCall retains an exact call name and opaque arguments, not necessarily
+// JSON. Assignment borrows arguments; Clone detaches them.
+type RequestedCall = sessionformat.RequestedCall
 
-// Validate checks UTF-8 call-name syntax only.
-func (v RequestedCall) Validate() error { return v.toFormat().Validate() }
+// ResponseContent retains ordered output, reasoning, or refusal parts, including
+// empty content. Assignment borrows parts; Clone detaches them.
+type ResponseContent = sessionformat.ResponseContent
 
-// Clone detaches exact argument bytes.
-func (v RequestedCall) Clone() RequestedCall { v.Arguments = bytes.Clone(v.Arguments); return v }
-
-// Equal compares the exact call name and arguments.
-func (v RequestedCall) Equal(other RequestedCall) bool { return v.toFormat().Equal(other.toFormat()) }
-func (v RequestedCall) toFormat() sessionformat.RequestedCall {
-	return sessionformat.RequestedCall{Name: v.Name, Arguments: v.Arguments}
-}
-
-// ResponseContent is an explicitly present output, reasoning, or refusal item.
-// Parts preserve order and may be empty. Assignment borrows parts; Clone detaches them.
-type ResponseContent struct {
-	Kind  ResponseContentKind
-	Parts []ContentPart
-}
-
-// Validate checks content kind and all ordered parts.
-func (v ResponseContent) Validate() error {
-	if err := v.toFormat().Validate(); err != nil {
-		return err
-	}
-	return validateParts(v.Parts)
-}
-
-// Clone detaches ordered content parts.
-func (v ResponseContent) Clone() ResponseContent {
-	return responseContentFromFormat(v.toFormat().Clone())
-}
-
-// Equal compares content kind and ordered parts.
-func (v ResponseContent) Equal(other ResponseContent) bool {
-	return v.toFormat().Equal(other.toFormat())
-}
-func (v ResponseContent) toFormat() sessionformat.ResponseContent {
-	return sessionformat.ResponseContent{Kind: string(v.Kind), Parts: partsToFormat(v.Parts)}
-}
-func responseContentFromFormat(v sessionformat.ResponseContent) ResponseContent {
-	return ResponseContent{Kind: ResponseContentKind(v.Kind), Parts: partsFromFormat(v.Parts)}
-}
-
-// ResponseItem preserves response order and has exactly one content or call branch.
-type ResponseItem struct {
-	Content *ResponseContent
-	Call    *RequestedCall
-}
-
-// Validate checks branch exclusivity and the selected branch.
-func (v ResponseItem) Validate() error {
-	if err := v.toFormat().Validate(); err != nil {
-		return err
-	}
-	if v.Content != nil {
-		return v.Content.Validate()
-	}
-	return v.Call.Validate()
-}
-
-// Clone detaches the selected branch.
-func (v ResponseItem) Clone() ResponseItem {
-	out := v
-	if v.Content != nil {
-		x := v.Content.Clone()
-		out.Content = &x
-	}
-	if v.Call != nil {
-		x := v.Call.Clone()
-		out.Call = &x
-	}
-	return out
-}
-
-// Equal compares branch presence and exact branch values.
-func (v ResponseItem) Equal(other ResponseItem) bool { return v.toFormat().Equal(other.toFormat()) }
-func (v ResponseItem) toFormat() sessionformat.ResponseItem {
-	out := sessionformat.ResponseItem{}
-	if v.Content != nil {
-		x := v.Content.toFormat()
-		out.Content = &x
-	}
-	if v.Call != nil {
-		x := v.Call.toFormat()
-		out.Call = &x
-	}
-	return out
-}
+// ResponseItem preserves response order with exactly one content or call branch.
+// Assignment borrows its child; Clone detaches it.
+type ResponseItem = sessionformat.ResponseItem
 
 // ModelResponse is one atomic terminal response for RequestID. Items may be empty;
 // Private is one response-wide provider envelope. Assignment borrows nested storage;
@@ -216,18 +131,7 @@ func (v ModelResponse) Equal(other ModelResponse) bool {
 	return v.RequestID == other.RequestID && v.toFormat().Equal(other.toFormat())
 }
 func (v ModelResponse) toFormat() sessionformat.ModelResponse {
-	out := sessionformat.ModelResponse{RunID: v.RequestID.runID.ordinal, RequestID: v.RequestID.requestOrdinal, Terminal: string(v.Terminal), ProviderStopReason: v.ProviderStopReason, Items: responseItemsToFormat(v.Items), Evidence: evidenceToFormat(v.Evidence), Usage: usageToFormat(v.Usage), Private: opaqueToFormat(v.Private)}
-	return out
-}
-func responseItemsToFormat(v []ResponseItem) []sessionformat.ResponseItem {
-	if v == nil {
-		return nil
-	}
-	out := make([]sessionformat.ResponseItem, len(v))
-	for i := range v {
-		out[i] = v[i].toFormat()
-	}
-	return out
+	return sessionformat.ModelResponse{RunID: v.RequestID.runID.ordinal, RequestID: v.RequestID.requestOrdinal, Terminal: v.Terminal, ProviderStopReason: v.ProviderStopReason, Items: v.Items, Evidence: v.Evidence, Usage: v.Usage, Private: v.Private}
 }
 func (v ModelResponse) checkSize(b *valueBudget) {
 	b.text(string(v.Terminal))
@@ -257,7 +161,7 @@ func (v ModelResponse) checkSize(b *valueBudget) {
 }
 
 // newModelResponseRecord owns a complete response, never a truncated subset.
-// Sizing precedes item/part conversion and allocation. Failure returns nil.
+// Sizing precedes bounded encoding and materialization. Failure returns nil.
 func newModelResponseRecord(v ModelResponse, limits codec.Limits) (*materializedRecord, error) {
 	if err := v.RequestID.Validate(); err != nil {
 		return nil, codec.ErrInvalidData
@@ -274,9 +178,10 @@ func newModelResponseRecord(v ModelResponse, limits codec.Limits) (*materialized
 	return decodeMaterialized(format.Record{Kind: sessionformat.KindModelResponse, KindVersion: sessionformat.Version, Payload: payload}, limits)
 }
 
-// ModelResponseView is an immutable complete response. Zero has no identity or
-// items. Item navigation and structured-child access are O(1); call lookup scans
-// response order, and byte leaves detach.
+// ModelResponseView retains immutable complete-response backing for its lifetime.
+// Zero has no identity or items. Item navigation and structured-child access are
+// O(1); call lookup scans response order. Byte leaves borrow backing; Copy
+// explicitly detaches only the selected bytes.
 type ModelResponseView struct {
 	scope historyid.HistoryID
 	value *sessionformat.ModelResponse
@@ -290,76 +195,11 @@ func (v ModelResponseView) RequestID() ModelRequestID {
 	return requestID(v.scope, v.value.RunID, v.value.RequestID)
 }
 
-// Terminal returns the normalized provider terminal class, or empty for zero.
-func (v ModelResponseView) Terminal() ResponseTerminalClass {
-	if v.value == nil {
-		return ""
-	}
-	return ResponseTerminalClass(v.value.Terminal)
-}
-
-// ProviderStopReason returns the original provider-owned stop/finish reason, not
-// reasoning content. It preserves absence versus explicitly empty.
-func (v ModelResponseView) ProviderStopReason() (string, bool) {
-	if v.value == nil || v.value.ProviderStopReason == nil {
-		return "", false
-	}
-	return *v.value.ProviderStopReason, true
-}
-
-// Evidence returns a pinned immutable view, preserving optional presence.
-func (v ModelResponseView) Evidence() (ObservedEvidenceView, bool) {
-	if v.value == nil || v.value.Evidence == nil {
-		return ObservedEvidenceView{}, false
-	}
-	return ObservedEvidenceView{value: v.value.Evidence}, true
-}
-
-// Usage returns a pinned immutable view of reported counters and raw usage-only evidence.
-func (v ModelResponseView) Usage() (InvocationUsageView, bool) {
-	if v.value == nil || v.value.Usage == nil {
-		return InvocationUsageView{}, false
-	}
-	return InvocationUsageView{value: v.value.Usage}, true
-}
-
-// Private returns a pinned immutable view of response-wide private evidence.
-func (v ModelResponseView) Private() (OpaqueProviderDataView, bool) {
-	if v.value == nil || v.value.Private == nil {
-		return OpaqueProviderDataView{}, false
-	}
-	return OpaqueProviderDataView{value: v.value.Private}, true
-}
-
-// ItemCount returns the ordered canonical item count, or zero for zero.
-func (v ModelResponseView) ItemCount() int {
-	if v.value == nil {
-		return 0
-	}
-	return len(v.value.Items)
-}
-
-// ItemAt returns a pinned item; it panics outside [0, ItemCount()).
-func (v ModelResponseView) ItemAt(i int) ResponseItemView {
-	return ResponseItemView{value: &v.value.Items[i]}
-}
-
-// Items yields pinned canonical items in response order, including empty content.
-func (v ModelResponseView) Items() iter.Seq[ResponseItemView] {
-	return func(yield func(ResponseItemView) bool) {
-		for i := 0; i < v.ItemCount(); i++ {
-			if !yield(v.ItemAt(i)) {
-				return
-			}
-		}
-	}
-}
-
 // CallCount derives the number of complete calls, independent of content items.
 // It scans the response; no redundant call identities are stored in DTOs.
 func (v ModelResponseView) CallCount() int {
 	n := 0
-	for i := 0; i < v.ItemCount(); i++ {
+	for i := 0; i < v.Items().Len(); i++ {
 		if v.value.Items[i].Call != nil {
 			n++
 		}
@@ -372,7 +212,7 @@ func (v ModelResponseView) CallCount() int {
 func (v ModelResponseView) CallAt(i int) RequestedCallView {
 	if i >= 0 {
 		n := 0
-		for j := 0; j < v.ItemCount(); j++ {
+		for j := 0; j < v.Items().Len(); j++ {
 			if c := v.value.Items[j].Call; c != nil {
 				if n == i {
 					return RequestedCallView{id: RequestedCallID{requestID: v.RequestID(), ordinal: uint64(n) + 1}, value: c}
@@ -388,7 +228,7 @@ func (v ModelResponseView) CallAt(i int) RequestedCallView {
 func (v ModelResponseView) Calls() iter.Seq[RequestedCallView] {
 	return func(yield func(RequestedCallView) bool) {
 		var ordinal uint64
-		for i := 0; i < v.ItemCount(); i++ {
+		for i := 0; i < v.Items().Len(); i++ {
 			if c := v.value.Items[i].Call; c != nil {
 				ordinal++
 				if !yield(RequestedCallView{id: RequestedCallID{requestID: v.RequestID(), ordinal: ordinal}, value: c}) {
@@ -399,90 +239,27 @@ func (v ModelResponseView) Calls() iter.Seq[RequestedCallView] {
 	}
 }
 
-// RequestedCallDataView is immutable identity-free requested-call data. Zero
-// returns an empty name and nil arguments. Name is O(1); Arguments detaches only
-// its byte leaf. Occurrence identity is deliberately available only through
-// ModelResponseView.Calls and CallAt.
+// RequestedCallDataView retains immutable identity-free call backing for its
+// lifetime. Zero returns an empty name and zero Bytes. Reads are O(1); Arguments
+// borrows its leaf and Copy explicitly detaches it. Occurrence identity is
+// deliberately available only through ModelResponseView.Calls and CallAt.
 type RequestedCallDataView struct {
 	value *sessionformat.RequestedCall
-}
-
-// Name returns the exact UTF-8 name, including empty and unknown names.
-func (v RequestedCallDataView) Name() string {
-	if v.value == nil {
-		return ""
-	}
-	return v.value.Name
-}
-
-// Arguments returns detached exact argument bytes, including invalid JSON.
-func (v RequestedCallDataView) Arguments() []byte {
-	if v.value == nil {
-		return nil
-	}
-	return bytes.Clone(v.value.Arguments)
 }
 
 // ResponseItemView is a pinned union handle. Zero has neither branch. Branch
 // navigation is O(1); Items and Calls traverse their ordered DTOs linearly.
 type ResponseItemView struct{ value *sessionformat.ResponseItem }
 
-// Content returns a pinned content branch only when present.
-func (v ResponseItemView) Content() (ResponseContentView, bool) {
-	if v.value == nil || v.value.Content == nil {
-		return ResponseContentView{}, false
-	}
-	return ResponseContentView{value: v.value.Content}, true
-}
-
-// Call returns identity-free pinned call data only when the call branch is present.
-// Scoped occurrence identities are exposed by ModelResponseView.Calls and CallAt,
-// whose ordinals count calls rather than items.
-func (v ResponseItemView) Call() (RequestedCallDataView, bool) {
-	if v.value == nil || v.value.Call == nil {
-		return RequestedCallDataView{}, false
-	}
-	return RequestedCallDataView{value: v.value.Call}, true
-}
-
-// ResponseContentView is immutable content with ordered parts. Zero is empty.
+// ResponseContentView retains immutable content and ordered parts for its lifetime.
+// Zero is empty; Parts borrows backing and adapts elements on demand in O(1).
 type ResponseContentView struct {
 	value *sessionformat.ResponseContent
 }
 
-// Kind returns the content meaning, or empty for zero.
-func (v ResponseContentView) Kind() ResponseContentKind {
-	if v.value == nil {
-		return ""
-	}
-	return ResponseContentKind(v.value.Kind)
-}
-
-// PartCount returns the ordered part count, or zero for zero.
-func (v ResponseContentView) PartCount() int {
-	if v.value == nil {
-		return 0
-	}
-	return len(v.value.Parts)
-}
-
-// PartAt returns a pinned part; it panics outside [0, PartCount()).
-func (v ResponseContentView) PartAt(i int) ContentPartView {
-	return ContentPartView{value: &v.value.Parts[i]}
-}
-
-// Parts yields pinned parts in canonical order.
-func (v ResponseContentView) Parts() iter.Seq[ContentPartView] {
-	return func(yield func(ContentPartView) bool) {
-		for i := 0; i < v.PartCount(); i++ {
-			if !yield(v.PartAt(i)) {
-				return
-			}
-		}
-	}
-}
-
-// RequestedCallView is an immutable complete-call occurrence. Zero has zero ID.
+// RequestedCallView retains immutable complete-call backing for its lifetime.
+// Zero has zero ID, empty name and zero Bytes. Reads are O(1); Arguments borrows
+// its leaf and Copy explicitly detaches it.
 type RequestedCallView struct {
 	id    RequestedCallID
 	value *sessionformat.RequestedCall
@@ -490,19 +267,3 @@ type RequestedCallView struct {
 
 // ID returns the scoped call identity, derived from accepted call order.
 func (v RequestedCallView) ID() RequestedCallID { return v.id }
-
-// Name returns exact UTF-8 name data, including empty/unknown names.
-func (v RequestedCallView) Name() string {
-	if v.value == nil {
-		return ""
-	}
-	return v.value.Name
-}
-
-// Arguments returns detached exact argument bytes, including invalid JSON.
-func (v RequestedCallView) Arguments() []byte {
-	if v.value == nil {
-		return nil
-	}
-	return bytes.Clone(v.value.Arguments)
-}

@@ -1,4 +1,4 @@
-package cborgen
+package dtogen
 
 import (
 	"context"
@@ -61,8 +61,8 @@ func TestSchemaRejections(t *testing.T) {
 		{"shadowed primitive", "type string uint64;type Record struct{}", "shadows predeclared string"},
 		{"shadowed machine word", "type uint uint8;type Record struct { V string `cbor:\"v\"` }", "shadows predeclared uint"},
 		{"shadowed builtin", "func len(any) int {panic(\"must never run\")};type Record struct{}", "shadows predeclared len"},
-		{"private implementation collision", "type Record struct{};var cborgen int", "collides with generated cborgen"},
-		{"private alias collision", "type v []byte;type Record struct { V v `cbor:\"v\"` };var cborgenValue1 int", "collides with generated cborgenValue1"},
+		{"private implementation collision", "type Record struct{};var dtogen int", "collides with generated dtogen"},
+		{"private alias collision", "type v []byte;type Record struct { V v `cbor:\"v\"` };var dtogenValue1 int", "collides with generated dtogenValue1"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			cfg := moduleFixture(t, tt.source)
@@ -82,7 +82,7 @@ func TestSchemaRejections(t *testing.T) {
 }
 
 func TestGenerateOutputFailurePreservesArtifact(t *testing.T) {
-	cfg := moduleFixture(t, "type Record struct{}")
+	cfg := executableFixture(t, "type Record struct{}")
 	path := filepath.Join(cfg.Dir, cfg.Output)
 	prior := GeneratedMarker + "\nbroken old output"
 	writeFixture(t, path, prior)
@@ -131,7 +131,7 @@ func TestGenerateOutputFailurePreservesArtifact(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, entry := range entries {
-		if strings.HasPrefix(entry.Name(), ".cborgen-") {
+		if strings.HasPrefix(entry.Name(), ".dtogen-") {
 			t.Fatalf("temporary artifact leaked: %s", entry.Name())
 		}
 	}
@@ -197,8 +197,8 @@ func registerFixtureOwner(t *testing.T, cfg LoadConfig, pkg string, names ...str
 		t.Fatal(err)
 	}
 	packageName := strings.Fields(string(data))[1]
-	writeFixture(t, filepath.Join(dir, "registry.go"), "//go:generate go -C "+back+" run "+generatorCommand+" -dir "+rel+" -types "+strings.Join(names, ",")+" -out zz_cbor_generated.go\npackage "+packageName+"\n")
-	owner := LoadConfig{Dir: dir, Types: names, Output: "zz_cbor_generated.go"}
+	writeFixture(t, filepath.Join(dir, "registry.go"), "//go:generate go -C "+back+" run "+generatorCommand+" -dir "+rel+" -types "+strings.Join(names, ",")+" -emit cbor,clone,equal -out zz_cbor_generated.go\npackage "+packageName+"\n")
+	owner := LoadConfig{Dir: dir, Types: names, Output: "zz_cbor_generated.go", Emit: "cbor,clone,equal"}
 	if err := Generate(context.Background(), owner); err != nil {
 		t.Fatal(err)
 	}

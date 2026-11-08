@@ -87,10 +87,10 @@ func TestInvocationEvidenceViewsOwnEveryMutableField(t *testing.T) {
 					}
 				}
 				raw, ok := u.Raw()
-				if !ok || raw.Producer() != "p" || raw.Format() != "unknown-usage" || raw.Version() != 19 || !bytes.Equal(raw.Data(), wantUsage.Raw.Data) {
+				if !ok || raw.Producer() != "p" || raw.Format() != "unknown-usage" || raw.Version() != 19 || !bytes.Equal(raw.Data().Copy(), wantUsage.Raw.Data) {
 					t.Fatal("raw evidence changed")
 				}
-				data := raw.Data()
+				data := raw.Data().Copy()
 				clear(data)
 			}
 			verify()
@@ -129,7 +129,7 @@ func TestInvocationEvidenceViewsAbsentAndZero(t *testing.T) {
 	if value, ok := usage.Raw(); ok || value != (OpaqueProviderDataView{}) {
 		t.Fatal("zero raw")
 	}
-	if raw.Producer() != "" || raw.Format() != "" || raw.Version() != 0 || raw.Data() != nil {
+	if raw.Producer() != "" || raw.Format() != "" || raw.Version() != 0 || raw.Data().Copy() != nil {
 		t.Fatal("zero provider data")
 	}
 	s := interactionFixture(t, "pending")

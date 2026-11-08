@@ -1,4 +1,4 @@
-package cborgen
+package dtogen
 
 import (
 	"os"
@@ -11,8 +11,8 @@ import (
 func buildCLI(t *testing.T) string {
 	t.Helper()
 	isolateGoEnvironment(t)
-	binary := filepath.Join(t.TempDir(), "cborgen")
-	build := exec.Command("go", "build", "-o", binary, "./cmd/cborgen")
+	binary := filepath.Join(t.TempDir(), "dtogen")
+	build := exec.Command("go", "build", "-o", binary, "./cmd/dtogen")
 	build.Env = os.Environ()
 	if out, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("build CLI: %s %v", out, err)
@@ -23,7 +23,7 @@ func buildCLI(t *testing.T) string {
 func TestCLIGenericAliasChainReason(t *testing.T) {
 	binary := buildCLI(t)
 	cfg := executableFixture(t, "type Generic[T any] = []T;type Plain = Generic[bool];type Record struct { V Plain `cbor:\"v\"` }")
-	cmd := exec.Command(binary, "-dir", cfg.Dir, "-types", "Record", "-out", cfg.Output)
+	cmd := exec.Command(binary, "-emit", "cbor,clone,equal", "-dir", cfg.Dir, "-types", "Record", "-out", cfg.Output)
 	cmd.Dir = t.TempDir()
 	cmd.Env = os.Environ()
 	out, err := cmd.CombinedOutput()
@@ -32,13 +32,36 @@ func TestCLIGenericAliasChainReason(t *testing.T) {
 	}
 }
 
+func TestCLINonCBORSelection(t *testing.T) {
+	binary := buildCLI(t)
+	cfg := moduleFixture(t, "type Record struct { private []byte }")
+	for _, selection := range []string{"", "unknown", "clone,equal"} {
+		args := []string{"-dir", cfg.Dir, "-types", "Record", "-out", cfg.Output}
+		if selection != "" {
+			args = append(args, "-emit", selection)
+		}
+		cmd := exec.Command(binary, args...)
+		cmd.Dir = t.TempDir()
+		cmd.Env = os.Environ()
+		out, err := cmd.CombinedOutput()
+		if selection == "clone,equal" {
+			if err != nil {
+				t.Fatalf("non-CBOR CLI: %s %v", out, err)
+			}
+		} else if err == nil || !strings.Contains(string(out), "-emit requires explicit") {
+			t.Fatalf("invalid selection %q: %s %v", selection, out, err)
+		}
+	}
+	runOwner(t, cfg, "")
+}
+
 func TestCLIRegenerationAndProtection(t *testing.T) {
 	binary := buildCLI(t)
 	cfg := executableFixture(t, callers)
 	path := filepath.Join(cfg.Dir, cfg.Output)
 	run := func(want string) {
 		t.Helper()
-		cmd := exec.Command(binary, "-dir", cfg.Dir, "-types", "Record", "-out", cfg.Output)
+		cmd := exec.Command(binary, "-emit", "cbor,clone,equal", "-dir", cfg.Dir, "-types", "Record", "-out", cfg.Output)
 		cmd.Dir = t.TempDir()
 		cmd.Env = os.Environ()
 		out, err := cmd.CombinedOutput()

@@ -1,8 +1,6 @@
 package session
 
 import (
-	"bytes"
-
 	"github.com/stacklok/mecatl/engine/kernel/codec"
 	"github.com/stacklok/mecatl/engine/kernel/contentid"
 	"github.com/stacklok/mecatl/engine/kernel/history/format"
@@ -10,54 +8,13 @@ import (
 	sessionformat "github.com/stacklok/mecatl/engine/kernel/session/format"
 )
 
-// SourceHead identifies the exact accepted commit before a request. It is a
-// history-local reference, not a proposed commit or membership proof. Zero is invalid.
-type SourceHead struct {
-	// Sequence is the positive accepted commit sequence.
-	Sequence int64
-	// CID is the exact accepted commit content identity.
-	CID contentid.CID
-}
+// SourceHead identifies an exact accepted history commit, not membership proof.
+// Zero is invalid; enclosing history validation establishes its scope.
+type SourceHead = sessionformat.SourceHead
 
-// Validate checks reference shape without history lookup.
-func (v SourceHead) Validate() error { return v.toFormat().Validate() }
-
-// Clone returns v, which owns its fixed-size CID storage.
-func (v SourceHead) Clone() SourceHead { return v }
-
-// Equal reports exact source-head identity.
-func (v SourceHead) Equal(other SourceHead) bool { return v == other }
-func (v SourceHead) toFormat() sessionformat.SourceHead {
-	return sessionformat.SourceHead{Sequence: v.Sequence, CID: v.CID}
-}
-
-// ConstructionRecipe commits to a construction algorithm. Parameters may be empty;
-// Check is required exact algorithm-owned bytes. Assignment borrows byte slices;
-// Clone detaches them. Zero is invalid.
-type ConstructionRecipe struct {
-	Algorithm  string
-	Version    int64
-	Parameters []byte
-	Check      []byte
-}
-
-// Validate checks local structure only; it neither selects nor executes an algorithm.
-func (v ConstructionRecipe) Validate() error { return v.toFormat().Validate() }
-
-// Clone detaches exact parameter and check bytes.
-func (v ConstructionRecipe) Clone() ConstructionRecipe {
-	v.Parameters = bytes.Clone(v.Parameters)
-	v.Check = bytes.Clone(v.Check)
-	return v
-}
-
-// Equal compares exact identifiers and bytes; nil and empty byte slices are equal.
-func (v ConstructionRecipe) Equal(other ConstructionRecipe) bool {
-	return v.toFormat().Equal(other.toFormat())
-}
-func (v ConstructionRecipe) toFormat() sessionformat.ConstructionRecipe {
-	return sessionformat.ConstructionRecipe{Algorithm: v.Algorithm, Version: v.Version, Parameters: v.Parameters, Check: v.Check}
-}
+// ConstructionRecipe commits to a construction algorithm without executing it.
+// Assignment borrows its byte slices; Clone detaches them. Zero is invalid.
+type ConstructionRecipe = sessionformat.ConstructionRecipe
 
 // ModelRequest authors one invocation commitment in RunID. Source asserts the exact
 // accepted construction head, never an earlier same-batch fact. RetryOf is optional
@@ -113,7 +70,7 @@ func (v ModelRequest) Equal(other ModelRequest) bool {
 // toFormat omits history scope only after Validate has checked retry scope and
 // the constructor has checked the allocated identity against RunID.
 func (v ModelRequest) toFormat(id ModelRequestID) sessionformat.ModelRequest {
-	out := sessionformat.ModelRequest{RunID: v.RunID.ordinal, ID: id.requestOrdinal, Source: v.Source.toFormat(), Recipe: v.Recipe.toFormat()}
+	out := sessionformat.ModelRequest{RunID: v.RunID.ordinal, ID: id.requestOrdinal, Source: v.Source, Recipe: v.Recipe}
 	if v.RetryOf != nil {
 		out.RetryOf = new(v.RetryOf.requestOrdinal)
 	}
@@ -152,48 +109,30 @@ func requestID(scope historyid.HistoryID, run, ordinal uint64) ModelRequestID {
 	return ModelRequestID{runID: RunID{historyID: scope, ordinal: run}, requestOrdinal: ordinal}
 }
 
-// ConstructionRecipeView is an immutable construction recipe. Zero returns empty
-// scalars and nil byte leaves. Scalar reads are O(1); Parameters and Check each
-// detach only their own bytes.
+// ConstructionRecipeView retains immutable construction backing for its lifetime.
+// Zero returns empty scalars and zero Bytes. Reads are O(1); Parameters and Check
+// borrow their leaves, while Copy explicitly detaches only the selected bytes.
 type ConstructionRecipeView struct {
 	value *sessionformat.ConstructionRecipe
 }
 
-// Algorithm returns the construction algorithm identifier, or empty for zero.
-func (v ConstructionRecipeView) Algorithm() string {
-	if v.value == nil {
-		return ""
-	}
-	return v.value.Algorithm
+// SourceHeadView retains an immutable accepted-history reference. Zero has zero
+// sequence and CID. Reads are O(1); the backing remains retained for its lifetime.
+type SourceHeadView struct {
+	value *sessionformat.SourceHead
 }
 
-// Version returns the construction algorithm revision, or zero for zero.
-func (v ConstructionRecipeView) Version() int64 {
+// CID returns the content identity, or zero for a zero view.
+func (v SourceHeadView) CID() contentid.CID {
 	if v.value == nil {
-		return 0
+		return contentid.CID{}
 	}
-	return v.value.Version
+	return v.value.CID
 }
 
-// Parameters returns detached algorithm-owned parameter bytes. Nil and empty remain
-// equivalent.
-func (v ConstructionRecipeView) Parameters() []byte {
-	if v.value == nil {
-		return nil
-	}
-	return bytes.Clone(v.value.Parameters)
-}
-
-// Check returns detached required algorithm-owned check bytes.
-func (v ConstructionRecipeView) Check() []byte {
-	if v.value == nil {
-		return nil
-	}
-	return bytes.Clone(v.value.Check)
-}
-
-// ModelRequestView is an immutable accepted commitment. Zero has zero identity;
-// byte-bearing exports detach storage, while scalar access is constant-time.
+// ModelRequestView retains immutable accepted backing for its lifetime. Zero has
+// zero identity and zero child views. Navigation is O(1); byte leaves borrow
+// backing and Copy explicitly detaches only the selected leaf.
 type ModelRequestView struct {
 	scope historyid.HistoryID
 	value *sessionformat.ModelRequest
@@ -205,23 +144,6 @@ func (v ModelRequestView) ID() ModelRequestID {
 		return ModelRequestID{}
 	}
 	return requestID(v.scope, v.value.RunID, v.value.ID)
-}
-
-// Source returns the exact pinned accepted source, or zero for zero.
-func (v ModelRequestView) Source() SourceHead {
-	if v.value == nil {
-		return SourceHead{}
-	}
-	return SourceHead{Sequence: v.value.Source.Sequence, CID: v.value.Source.CID}
-}
-
-// Recipe returns a pinned immutable construction recipe. It returns a zero child
-// view for a zero request.
-func (v ModelRequestView) Recipe() ConstructionRecipeView {
-	if v.value == nil {
-		return ConstructionRecipeView{}
-	}
-	return ConstructionRecipeView{value: &v.value.Recipe}
 }
 
 // RetryOf returns optional same-run correlation, never a mutable pointer.

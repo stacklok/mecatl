@@ -47,7 +47,7 @@ func (v UserInput) Equal(other UserInput) bool {
 
 // toFormat receives the allocated local identity after full scope validation.
 func (v UserInput) toFormat(id UserInputID) sessionformat.UserInput {
-	return sessionformat.UserInput{RunID: v.RunID.ordinal, ID: id.ordinal, Parts: partsToFormat(v.Parts)}
+	return sessionformat.UserInput{RunID: v.RunID.ordinal, ID: id.ordinal, Parts: v.Parts}
 }
 
 // newUserInputRecord encodes an owned submission under explicit limits. Failure

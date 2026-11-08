@@ -47,10 +47,10 @@ func (v InstructionBlock) Equal(other InstructionBlock) bool {
 	return v.toFormat().Equal(other.toFormat())
 }
 func (v InstructionBlock) toFormat() sessionformat.InstructionBlock {
-	return sessionformat.InstructionBlock{Parts: partsToFormat(v.Parts), Source: v.Source.toFormat()}
+	return sessionformat.InstructionBlock{Parts: v.Parts, Source: v.Source.toFormat()}
 }
 func instructionBlockFromFormat(v sessionformat.InstructionBlock) InstructionBlock {
-	return InstructionBlock{Parts: partsFromFormat(v.Parts), Source: contentSourceFromFormat(v.Source)}
+	return InstructionBlock{Parts: v.Parts, Source: contentSourceFromFormat(v.Source)}
 }
 
 // Validate checks full history scope and all blocks, not active-run admission.

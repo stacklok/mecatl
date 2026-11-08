@@ -55,10 +55,10 @@ func (v AttributedInput) Equal(other AttributedInput) bool {
 	return v.toFormat().Equal(other.toFormat())
 }
 func (v AttributedInput) toFormat() sessionformat.AttributedInput {
-	return sessionformat.AttributedInput{Parts: partsToFormat(v.Parts), Actor: string(v.Actor), Purpose: string(v.Purpose), Source: v.Source.toFormat()}
+	return sessionformat.AttributedInput{Parts: v.Parts, Actor: string(v.Actor), Purpose: string(v.Purpose), Source: v.Source.toFormat()}
 }
 func attributedInputFromFormat(v sessionformat.AttributedInput) AttributedInput {
-	return AttributedInput{Parts: partsFromFormat(v.Parts), Actor: Actor(v.Actor), Purpose: PromptPurpose(v.Purpose), Source: contentSourceFromFormat(v.Source)}
+	return AttributedInput{Parts: v.Parts, Actor: Actor(v.Actor), Purpose: PromptPurpose(v.Purpose), Source: contentSourceFromFormat(v.Source)}
 }
 
 // AttributedInputView retains immutable backing storage. Capture and navigation
