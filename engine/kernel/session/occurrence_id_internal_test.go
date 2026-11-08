@@ -115,7 +115,7 @@ func TestEffectiveInputExtremeReferenceAllPaths(t *testing.T) {
 					} else {
 						records := append([]*materializedRecord(nil), b.records...)
 						interactionCheck(t, b.Discard())
-						r := interactionRecord(t)(newEffectiveInputRecord(s.Snapshot().HistoryID(), v, s.policy.PayloadLimits))
+						r := interactionRecord(t)(newEffectiveInputRecord(v, s.policy.PayloadLimits))
 						r, err = decodeMaterialized(r.format(), s.policy.PayloadLimits)
 						interactionCheck(t, err)
 						c := interactionCommit(t, s, append(records, r))

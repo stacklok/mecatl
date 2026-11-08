@@ -3,7 +3,6 @@ package session
 import (
 	"github.com/stacklok/mecatl/engine/kernel/codec"
 	"github.com/stacklok/mecatl/engine/kernel/history/format"
-	historyid "github.com/stacklok/mecatl/engine/kernel/history/id"
 	sessionformat "github.com/stacklok/mecatl/engine/kernel/session/format"
 )
 
@@ -24,14 +23,10 @@ func (v RunStarted) Clone() RunStarted { return v }
 func (v RunStarted) Equal(other RunStarted) bool { return v == other }
 
 // newRunStartedRecord encodes an owned v1 run-start record using explicit limits.
-// Failure returns nil. Target history is checked before scope omission;
-// construction neither accepts nor allocates a run.
-func newRunStartedRecord(scope historyid.HistoryID, v RunStarted, limits codec.Limits) (*materializedRecord, error) {
+// Failure returns nil; construction neither accepts nor allocates a run.
+func newRunStartedRecord(v RunStarted, limits codec.Limits) (*materializedRecord, error) {
 	if err := v.Validate(); err != nil {
 		return nil, codec.ErrInvalidData
-	}
-	if scope != v.ID.historyID {
-		return nil, ErrIdentity
 	}
 	fact := sessionformat.RunStarted{ID: v.ID.ordinal}
 	payload, err := codec.Encode(fact, limits)

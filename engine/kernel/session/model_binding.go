@@ -31,7 +31,7 @@ type ModelBinding struct {
 
 // Validate checks scope, binding strings and JSON syntax without resource limits.
 func (v ModelBinding) Validate() error {
-	if err := (Created{HistoryID: v.HistoryID}).Validate(); err != nil {
+	if err := validateHistoryID(v.HistoryID); err != nil {
 		return err
 	}
 	return v.toFormat().Validate()
@@ -48,15 +48,11 @@ func (v ModelBinding) toFormat() sessionformat.ModelBinding {
 	return sessionformat.ModelBinding{Route: v.Route, API: v.API, Model: v.Model, Settings: v.Settings}
 }
 
-// newModelBindingRecord encodes an owned scoped replacement under explicit limits.
-// Failure returns nil; target history is checked before scope omission.
-// Construction proves no lifecycle admission.
-func newModelBindingRecord(scope historyid.HistoryID, v ModelBinding, limits codec.Limits) (*materializedRecord, error) {
-	if err := (Created{HistoryID: v.HistoryID}).Validate(); err != nil {
+// newModelBindingRecord encodes an owned replacement under explicit limits.
+// Failure returns nil. Construction proves no lifecycle admission.
+func newModelBindingRecord(v ModelBinding, limits codec.Limits) (*materializedRecord, error) {
+	if err := validateHistoryID(v.HistoryID); err != nil {
 		return nil, codec.ErrInvalidData
-	}
-	if scope != v.HistoryID {
-		return nil, ErrIdentity
 	}
 	b := newValueBudget(limits)
 	b.text(v.Route)

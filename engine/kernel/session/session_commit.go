@@ -37,6 +37,12 @@ var ErrAcceptedApply = errors.New("session commit accepted but local application
 // Additions own encoded bytes and complete decoded facts, not caller slices.
 // Provisional IDs are not accepted until SubmitCommit succeeds. Additions eagerly
 // enforce payload limits and lifecycle legality, but promise no aggregate admission.
+// Typed additions validate caller-supplied top-level identities and destination
+// history before bounded payload/nested-reference validation and scope omission.
+// AddUserInput and AddModelRequest instead require the exact active run first,
+// returning ErrTransition on mismatch. Other additions return codec.ErrInvalidData
+// for invalid top-level identities and ErrIdentity for valid foreign histories,
+// even when their payload is malformed or oversized.
 // Complete submission checks commit/cumulative limits and closeout room. Zero is unusable.
 type SessionCommit struct { //nolint:revive // Explicit name distinguishes a provisional session batch from history.Commit.
 	owner     *Session
@@ -116,7 +122,7 @@ func (b *SessionCommit) Create() error {
 	if err := b.check(true); err != nil {
 		return err
 	}
-	return b.add(newCreatedRecord(b.owner.state.view.historyID, Created{HistoryID: b.owner.state.view.historyID}, b.owner.policy.PayloadLimits))
+	return b.add(newCreatedRecord(Created{HistoryID: b.owner.state.view.historyID}, b.owner.policy.PayloadLimits))
 }
 
 // AddUserInput allocates a provisional identity in the explicitly named active
@@ -134,7 +140,7 @@ func (b *SessionCommit) AddUserInput(request UserInput) (UserInputID, error) {
 		return UserInputID{}, err
 	}
 	id := UserInputID{runID: request.RunID, ordinal: ordinal}
-	if err := b.add(newUserInputRecord(s.state.view.historyID, request, id, s.policy.PayloadLimits)); err != nil {
+	if err := b.add(newUserInputRecord(request, id, s.policy.PayloadLimits)); err != nil {
 		return UserInputID{}, err
 	}
 	return id, nil
@@ -146,7 +152,13 @@ func (b *SessionCommit) AddEffectiveInput(v EffectiveInput) error {
 	if err := b.check(true); err != nil {
 		return err
 	}
-	return b.add(newEffectiveInputRecord(b.owner.state.view.historyID, v, b.owner.policy.PayloadLimits))
+	if err := v.RunID.Validate(); err != nil {
+		return codec.ErrInvalidData
+	}
+	if v.RunID.historyID != b.owner.state.view.historyID {
+		return ErrIdentity
+	}
+	return b.add(newEffectiveInputRecord(v, b.owner.policy.PayloadLimits))
 }
 
 // ReplaceInstructions adds a complete history-scoped replacement after creation,
@@ -155,7 +167,13 @@ func (b *SessionCommit) ReplaceInstructions(v Instructions) error {
 	if err := b.check(true); err != nil {
 		return err
 	}
-	return b.add(newInstructionsRecord(b.owner.state.view.historyID, v, b.owner.policy.PayloadLimits))
+	if err := validateHistoryID(v.HistoryID); err != nil {
+		return codec.ErrInvalidData
+	}
+	if v.HistoryID != b.owner.state.view.historyID {
+		return ErrIdentity
+	}
+	return b.add(newInstructionsRecord(v, b.owner.policy.PayloadLimits))
 }
 
 // ReplaceToolCatalog adds a complete history-scoped advertised catalog replacement.
@@ -164,7 +182,13 @@ func (b *SessionCommit) ReplaceToolCatalog(v ToolCatalog) error {
 	if err := b.check(true); err != nil {
 		return err
 	}
-	return b.add(newToolCatalogRecord(b.owner.state.view.historyID, v, b.owner.policy.PayloadLimits))
+	if err := validateHistoryID(v.HistoryID); err != nil {
+		return codec.ErrInvalidData
+	}
+	if v.HistoryID != b.owner.state.view.historyID {
+		return ErrIdentity
+	}
+	return b.add(newToolCatalogRecord(v, b.owner.policy.PayloadLimits))
 }
 
 // ReplaceModelBinding adds complete history-scoped preparation choices after
@@ -173,7 +197,13 @@ func (b *SessionCommit) ReplaceModelBinding(v ModelBinding) error {
 	if err := b.check(true); err != nil {
 		return err
 	}
-	return b.add(newModelBindingRecord(b.owner.state.view.historyID, v, b.owner.policy.PayloadLimits))
+	if err := validateHistoryID(v.HistoryID); err != nil {
+		return codec.ErrInvalidData
+	}
+	if v.HistoryID != b.owner.state.view.historyID {
+		return ErrIdentity
+	}
+	return b.add(newModelBindingRecord(v, b.owner.policy.PayloadLimits))
 }
 
 // StartRun allocates a provisional history-scoped run identity. Input-free runs
@@ -188,7 +218,7 @@ func (b *SessionCommit) StartRun() (RunID, error) {
 		return RunID{}, err
 	}
 	id := RunID{historyID: s.state.view.historyID, ordinal: ordinal}
-	if err := b.add(newRunStartedRecord(s.state.view.historyID, RunStarted{ID: id}, s.policy.PayloadLimits)); err != nil {
+	if err := b.add(newRunStartedRecord(RunStarted{ID: id}, s.policy.PayloadLimits)); err != nil {
 		return RunID{}, err
 	}
 	return id, nil
@@ -200,7 +230,13 @@ func (b *SessionCommit) AddRunEnded(v RunEnded) error {
 	if err := b.check(true); err != nil {
 		return err
 	}
-	return b.add(newRunEndedRecord(b.owner.state.view.historyID, v, b.owner.policy.PayloadLimits))
+	if err := v.RunID.Validate(); err != nil {
+		return codec.ErrInvalidData
+	}
+	if v.RunID.historyID != b.owner.state.view.historyID {
+		return ErrIdentity
+	}
+	return b.add(newRunEndedRecord(v, b.owner.policy.PayloadLimits))
 }
 
 // EndRun adds a minimal ending for the provisional active run. It is the fixed
@@ -229,7 +265,7 @@ func (b *SessionCommit) AddModelRequest(v ModelRequest) (ModelRequestID, error) 
 		return ModelRequestID{}, err
 	}
 	id := ModelRequestID{runID: v.RunID, requestOrdinal: ordinal}
-	if err := b.add(newModelRequestRecord(b.owner.state.view.historyID, v, id, b.owner.policy.PayloadLimits)); err != nil {
+	if err := b.add(newModelRequestRecord(v, id, b.owner.policy.PayloadLimits)); err != nil {
 		return ModelRequestID{}, err
 	}
 	return id, nil
@@ -240,7 +276,13 @@ func (b *SessionCommit) AddModelResponse(v ModelResponse) error {
 	if err := b.check(true); err != nil {
 		return err
 	}
-	return b.add(newModelResponseRecord(b.owner.state.view.historyID, v, b.owner.policy.PayloadLimits))
+	if err := v.RequestID.Validate(); err != nil {
+		return codec.ErrInvalidData
+	}
+	if v.RequestID.runID.historyID != b.owner.state.view.historyID {
+		return ErrIdentity
+	}
+	return b.add(newModelResponseRecord(v, b.owner.policy.PayloadLimits))
 }
 
 // AddInvocationFailure records an observed failure, not a fabricated response.
@@ -248,7 +290,13 @@ func (b *SessionCommit) AddInvocationFailure(v InvocationFailure) error {
 	if err := b.check(true); err != nil {
 		return err
 	}
-	return b.add(newInvocationFailureRecord(b.owner.state.view.historyID, v, b.owner.policy.PayloadLimits))
+	if err := v.RequestID.Validate(); err != nil {
+		return codec.ErrInvalidData
+	}
+	if v.RequestID.runID.historyID != b.owner.state.view.historyID {
+		return ErrIdentity
+	}
+	return b.add(newInvocationFailureRecord(v, b.owner.policy.PayloadLimits))
 }
 
 // Discard releases an unsubmitted batch without consuming IDs. Frozen uncertain

@@ -14,12 +14,12 @@ import (
 func TestSessionMetadataAndDecodedLegalityAgree(t *testing.T) {
 	fixture, limits := internalFixture(t)
 	id := fixture.Snapshot().HistoryID()
-	created, e := newCreatedRecord(id, Created{HistoryID: id}, limits)
+	created, e := newCreatedRecord(Created{HistoryID: id}, limits)
 	if e != nil {
 		t.Fatal(e)
 	}
 	start := func(n uint64) *materializedRecord {
-		r, e := newRunStartedRecord(id, RunStarted{ID: RunID{historyID: id, ordinal: n}}, limits)
+		r, e := newRunStartedRecord(RunStarted{ID: RunID{historyID: id, ordinal: n}}, limits)
 		if e != nil {
 			t.Fatal(e)
 		}
@@ -33,7 +33,7 @@ func TestSessionMetadataAndDecodedLegalityAgree(t *testing.T) {
 		return r
 	}
 	closeout := func(n uint64) *materializedRecord {
-		r, e := newRunEndedRecord(id, RunEnded{RunID: RunID{historyID: id, ordinal: n}, Reason: RunEndedInterrupted}, limits)
+		r, e := newRunEndedRecord(RunEnded{RunID: RunID{historyID: id, ordinal: n}, Reason: RunEndedInterrupted}, limits)
 		if e != nil {
 			t.Fatal(e)
 		}
@@ -122,7 +122,7 @@ func TestSessionMetadataPreservesOrderedFailure(t *testing.T) {
 	s, limits := internalFixture(t)
 	id := s.Snapshot().HistoryID()
 	s.policy.PayloadLimits.MaxByteStringBytes = 1
-	start, err := newRunStartedRecord(id, RunStarted{ID: RunID{historyID: id, ordinal: 1}}, limits)
+	start, err := newRunStartedRecord(RunStarted{ID: RunID{historyID: id, ordinal: 1}}, limits)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -192,7 +192,7 @@ func TestSessionMetadataAndDecodedPayloadLimitsAgree(t *testing.T) {
 func TestPrivatePreparationAdmissionAndBarriers(t *testing.T) {
 	s, limits := internalFixture(t)
 	id := s.Snapshot().HistoryID()
-	created, err := newCreatedRecord(id, Created{HistoryID: id}, limits)
+	created, err := newCreatedRecord(Created{HistoryID: id}, limits)
 	if err != nil {
 		t.Fatal(err)
 	}

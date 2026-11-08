@@ -25,7 +25,7 @@ func (v identifiedInput) authoring() UserInput              { return UserInput{R
 func (v identifiedInput) toFormat() sessionformat.UserInput { return v.authoring().toFormat(v.ID) }
 func (v identifiedInput) Clone() identifiedInput            { v.Parts = v.authoring().Clone().Parts; return v }
 func makeInputRecord(v identifiedInput, limits codec.Limits) (*materializedRecord, error) {
-	return newUserInputRecord(v.ID.runID.historyID, v.authoring(), v.ID, limits)
+	return newUserInputRecord(v.authoring(), v.ID, limits)
 }
 
 // identifiedRequest keeps a requested fixture ordinal separate from authoring.
@@ -42,5 +42,5 @@ func (v identifiedRequest) authoring() ModelRequest {
 }
 func (v identifiedRequest) toFormat() sessionformat.ModelRequest { return v.authoring().toFormat(v.ID) }
 func makeRequestRecord(v identifiedRequest, limits codec.Limits) (*materializedRecord, error) {
-	return newModelRequestRecord(v.ID.runID.historyID, v.authoring(), v.ID, limits)
+	return newModelRequestRecord(v.authoring(), v.ID, limits)
 }

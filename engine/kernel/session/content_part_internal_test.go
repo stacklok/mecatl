@@ -19,11 +19,11 @@ func TestContentTextRecordOwnership(t *testing.T) {
 			callerText := text
 			parts := []ContentPart{{Text: &callerText}}
 			source := ContentSource{Description: "retained"}
-			created, err := newCreatedRecord(scope, Created{HistoryID: scope}, limits)
+			created, err := newCreatedRecord(Created{HistoryID: scope}, limits)
 			if err != nil {
 				t.Fatal(err)
 			}
-			started, err := newRunStartedRecord(scope, RunStarted{ID: run}, limits)
+			started, err := newRunStartedRecord(RunStarted{ID: run}, limits)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -31,11 +31,11 @@ func TestContentTextRecordOwnership(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			instructions, err := newInstructionsRecord(scope, Instructions{HistoryID: scope, Blocks: []InstructionBlock{{Parts: parts, Source: source}}}, limits)
+			instructions, err := newInstructionsRecord(Instructions{HistoryID: scope, Blocks: []InstructionBlock{{Parts: parts, Source: source}}}, limits)
 			if err != nil {
 				t.Fatal(err)
 			}
-			effective, err := newEffectiveInputRecord(scope, EffectiveInput{RunID: run, Inputs: []InputItem{{Inline: &AttributedInput{Actor: "harness", Purpose: PromptContext, Parts: parts, Source: source}}}}, limits)
+			effective, err := newEffectiveInputRecord(EffectiveInput{RunID: run, Inputs: []InputItem{{Inline: &AttributedInput{Actor: "harness", Purpose: PromptContext, Parts: parts, Source: source}}}}, limits)
 			if err != nil {
 				t.Fatal(err)
 			}

@@ -21,7 +21,7 @@ type ToolCatalog struct {
 
 // Validate checks full scope, tool validity and unique names without limits.
 func (v ToolCatalog) Validate() error {
-	if err := (Created{HistoryID: v.HistoryID}).Validate(); err != nil {
+	if err := validateHistoryID(v.HistoryID); err != nil {
 		return err
 	}
 	for _, tool := range v.Tools {
@@ -62,15 +62,11 @@ func toolCatalogFromFormat(scope historyid.HistoryID, v sessionformat.ToolCatalo
 	return out
 }
 
-// newToolCatalogRecord encodes an owned scoped replacement under explicit limits.
-// Failure returns nil; target history is checked before scope omission.
-// Construction proves no lifecycle admission.
-func newToolCatalogRecord(scope historyid.HistoryID, v ToolCatalog, limits codec.Limits) (*materializedRecord, error) {
-	if err := (Created{HistoryID: v.HistoryID}).Validate(); err != nil {
+// newToolCatalogRecord encodes an owned replacement under explicit limits.
+// Failure returns nil. Construction proves no lifecycle admission.
+func newToolCatalogRecord(v ToolCatalog, limits codec.Limits) (*materializedRecord, error) {
+	if err := validateHistoryID(v.HistoryID); err != nil {
 		return nil, codec.ErrInvalidData
-	}
-	if scope != v.HistoryID {
-		return nil, ErrIdentity
 	}
 	b := newValueBudget(limits)
 	b.collection(len(v.Tools))

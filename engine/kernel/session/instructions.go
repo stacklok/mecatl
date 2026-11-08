@@ -55,7 +55,7 @@ func instructionBlockFromFormat(v sessionformat.InstructionBlock) InstructionBlo
 
 // Validate checks full history scope and all blocks, not active-run admission.
 func (v Instructions) Validate() error {
-	if err := (Created{HistoryID: v.HistoryID}).Validate(); err != nil {
+	if err := validateHistoryID(v.HistoryID); err != nil {
 		return err
 	}
 	for _, block := range v.Blocks {
@@ -96,14 +96,11 @@ func instructionsFromFormat(scope historyid.HistoryID, v sessionformat.Instructi
 	return out
 }
 
-// newInstructionsRecord checks target history before encoding an owned replacement
-// under explicit limits. Failure returns nil and admits nothing.
-func newInstructionsRecord(scope historyid.HistoryID, v Instructions, limits codec.Limits) (*materializedRecord, error) {
-	if err := (Created{HistoryID: v.HistoryID}).Validate(); err != nil {
+// newInstructionsRecord encodes an owned replacement under explicit limits.
+// Failure returns nil and admits nothing.
+func newInstructionsRecord(v Instructions, limits codec.Limits) (*materializedRecord, error) {
+	if err := validateHistoryID(v.HistoryID); err != nil {
 		return nil, codec.ErrInvalidData
-	}
-	if scope != v.HistoryID {
-		return nil, ErrIdentity
 	}
 	b := newValueBudget(limits)
 	b.collection(len(v.Blocks))

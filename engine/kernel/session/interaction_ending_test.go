@@ -25,9 +25,9 @@ func TestInteractionEveryMinimalEndingReservation(t *testing.T) {
 					t.Run(fmt.Sprintf("%s/%s/%s/short=%t", stage, reason, dimension, short), func(t *testing.T) {
 						s := interactionFixture(t, stage)
 						run := s.Snapshot().ActiveRun()
-						contextRecord := interactionRecord(t)(newInstructionsRecord(s.Snapshot().HistoryID(), Instructions{HistoryID: run.historyID}, s.policy.PayloadLimits))
-						ending := interactionRecord(t)(newRunEndedRecord(s.Snapshot().HistoryID(), RunEnded{RunID: run, Reason: reason}, s.policy.PayloadLimits))
-						largest := interactionRecord(t)(newRunEndedRecord(s.Snapshot().HistoryID(), RunEnded{RunID: run, Reason: RunEndedCaptureFailed}, s.policy.PayloadLimits))
+						contextRecord := interactionRecord(t)(newInstructionsRecord(Instructions{HistoryID: run.historyID}, s.policy.PayloadLimits))
+						ending := interactionRecord(t)(newRunEndedRecord(RunEnded{RunID: run, Reason: reason}, s.policy.PayloadLimits))
+						largest := interactionRecord(t)(newRunEndedRecord(RunEnded{RunID: run, Reason: RunEndedCaptureFailed}, s.policy.PayloadLimits))
 						p := s.policy
 						switch dimension {
 						case "records":
@@ -92,9 +92,9 @@ func TestInteractionEveryMinimalEndingReservation(t *testing.T) {
 	for _, ordinal := range []uint64{1, 23, 24, 255, 256, math.MaxUint64} {
 		s, _ := internalFixture(t)
 		run := RunID{historyID: s.Snapshot().HistoryID(), ordinal: ordinal}
-		largest := interactionRecord(t)(newRunEndedRecord(s.Snapshot().HistoryID(), RunEnded{RunID: run, Reason: RunEndedCaptureFailed}, s.policy.PayloadLimits))
+		largest := interactionRecord(t)(newRunEndedRecord(RunEnded{RunID: run, Reason: RunEndedCaptureFailed}, s.policy.PayloadLimits))
 		for _, reason := range reasons {
-			r := interactionRecord(t)(newRunEndedRecord(s.Snapshot().HistoryID(), RunEnded{RunID: run, Reason: reason}, s.policy.PayloadLimits))
+			r := interactionRecord(t)(newRunEndedRecord(RunEnded{RunID: run, Reason: reason}, s.policy.PayloadLimits))
 			if len(r.value.Payload) > len(largest.value.Payload) {
 				t.Fatalf("%s exceeds reserved minimal shape", reason)
 			}
@@ -111,7 +111,7 @@ func TestInteractionMinimalEndingExactHardBounds(t *testing.T) {
 			for _, short := range []bool{false, true} {
 				t.Run(fmt.Sprintf("%s/%s/short=%t", reason, dimension, short), func(t *testing.T) {
 					s := interactionFixture(t, "bound")
-					r := interactionRecord(t)(newRunEndedRecord(s.Snapshot().HistoryID(), RunEnded{RunID: s.Snapshot().ActiveRun(), Reason: reason}, s.policy.PayloadLimits))
+					r := interactionRecord(t)(newRunEndedRecord(RunEnded{RunID: s.Snapshot().ActiveRun(), Reason: reason}, s.policy.PayloadLimits))
 					switch dimension {
 					case "records":
 						s.policy.SoftMaxRetainedRecords = s.state.records
@@ -254,10 +254,10 @@ func TestInteractionHistoryPolicyReservesExactNextEndingWithoutIO(t *testing.T) 
 		t.Run(fmt.Sprint(short), func(t *testing.T) {
 			s, backend := closeoutWidthPrefix(t)
 			run := RunID{historyID: s.Snapshot().HistoryID(), ordinal: uint64(s.Snapshot().RunCount()) + 1}
-			start := interactionRecord(t)(newRunStartedRecord(s.Snapshot().HistoryID(), RunStarted{ID: run}, s.policy.PayloadLimits))
+			start := interactionRecord(t)(newRunStartedRecord(RunStarted{ID: run}, s.policy.PayloadLimits))
 			candidate, err := s.prepare([]*materializedRecord{start})
 			interactionCheck(t, err)
-			ending := interactionRecord(t)(newRunEndedRecord(s.Snapshot().HistoryID(), RunEnded{RunID: run, Reason: RunEndedCaptureFailed}, s.policy.PayloadLimits))
+			ending := interactionRecord(t)(newRunEndedRecord(RunEnded{RunID: run, Reason: RunEndedCaptureFailed}, s.policy.PayloadLimits))
 			next := format.Commit{FormatVersion: 1, Sequence: 24, Parent: new(candidate.ref.CID), Records: []format.Record{ending.format()}}
 			budget, err := codec.NewBudget(s.policy.CommitLimits)
 			interactionCheck(t, err)
@@ -308,7 +308,7 @@ func TestInteractionCaptureEvidenceMembershipAndPreservation(t *testing.T) {
 				capture.RequestID.requestOrdinal++
 			}
 			ending := RunEnded{RunID: pending.runID, Reason: RunEndedCaptureFailed, Capture: &capture}
-			r := interactionRecord(t)(newRunEndedRecord(s.Snapshot().HistoryID(), ending, s.policy.PayloadLimits))
+			r := interactionRecord(t)(newRunEndedRecord(ending, s.policy.PayloadLimits))
 			c := interactionCommit(t, s, []*materializedRecord{r})
 			before := detachedSessionState(s.state)
 			b, err := s.BeginCommit()

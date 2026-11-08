@@ -1,8 +1,6 @@
 package session
 
 import (
-	"errors"
-
 	"github.com/stacklok/mecatl/engine/kernel/codec"
 	"github.com/stacklok/mecatl/engine/kernel/history/format"
 	historyid "github.com/stacklok/mecatl/engine/kernel/history/id"
@@ -20,10 +18,7 @@ type Created struct {
 
 // Validate checks the history identity, not creation ordering or uniqueness.
 func (v Created) Validate() error {
-	if _, err := historyid.ParseHistoryID(v.HistoryID.String()); err != nil {
-		return errors.New("invalid session history ID")
-	}
-	return nil
+	return validateHistoryID(v.HistoryID)
 }
 
 // Clone returns v, which contains no mutable storage.
@@ -33,14 +28,10 @@ func (v Created) Clone() Created { return v }
 func (v Created) Equal(other Created) bool { return v == other }
 
 // newCreatedRecord encodes an owned v1 creation record using explicit payload
-// limits. Target history is checked before scope omission. Failure returns nil;
-// construction does not establish first/unique creation.
-func newCreatedRecord(scope historyid.HistoryID, v Created, limits codec.Limits) (*materializedRecord, error) {
+// limits. Failure returns nil; construction does not establish first/unique creation.
+func newCreatedRecord(v Created, limits codec.Limits) (*materializedRecord, error) {
 	if err := v.Validate(); err != nil {
 		return nil, codec.ErrInvalidData
-	}
-	if scope != v.HistoryID {
-		return nil, ErrIdentity
 	}
 	payload, err := codec.Encode(sessionformat.Created{}, limits)
 	if err != nil {

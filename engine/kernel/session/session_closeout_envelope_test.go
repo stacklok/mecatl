@@ -74,7 +74,7 @@ func TestSessionFutureCloseoutEnvelopeSequenceWidth(t *testing.T) {
 				prefix, backend := closeoutWidthPrefix(t)
 				id := prefix.Snapshot().HistoryID()
 				run := RunID{historyID: id, ordinal: uint64(prefix.Snapshot().RunCount()) + 1}
-				start, err := newRunStartedRecord(id, RunStarted{ID: run}, prefix.policy.PayloadLimits)
+				start, err := newRunStartedRecord(RunStarted{ID: run}, prefix.policy.PayloadLimits)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -82,7 +82,7 @@ func TestSessionFutureCloseoutEnvelopeSequenceWidth(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				interruption, err := newRunEndedRecord(id, RunEnded{RunID: run, Reason: RunEndedCaptureFailed}, prefix.policy.PayloadLimits)
+				interruption, err := newRunEndedRecord(RunEnded{RunID: run, Reason: RunEndedCaptureFailed}, prefix.policy.PayloadLimits)
 				if err != nil {
 					t.Fatal(err)
 				}

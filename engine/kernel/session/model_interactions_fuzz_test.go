@@ -25,11 +25,11 @@ func FuzzModelInteractionConstructors(f *testing.F) {
 		case 0:
 			r, err = makeRequestRecord(identifiedRequest{ID: id, Source: SourceHead{Sequence: version, CID: contentid.Sum([]byte("source"))}, Recipe: ConstructionRecipe{Algorithm: name, Version: version, Parameters: data, Check: data}, RetryOf: &id}, limits)
 		case 1:
-			r, err = newModelResponseRecord(fixture.Snapshot().HistoryID(), ModelResponse{RequestID: id, Terminal: ResponseTerminalOther, ProviderStopReason: &name, Items: []ResponseItem{{Content: &ResponseContent{Kind: ResponseContentOutput, Parts: []ContentPart{{Text: &name}}}}, {Call: &RequestedCall{Name: name, Arguments: data}}}, Evidence: evidence, Usage: usage, Private: &OpaqueProviderData{Producer: name, Format: "unknown", Version: version, Data: data}}, limits)
+			r, err = newModelResponseRecord(ModelResponse{RequestID: id, Terminal: ResponseTerminalOther, ProviderStopReason: &name, Items: []ResponseItem{{Content: &ResponseContent{Kind: ResponseContentOutput, Parts: []ContentPart{{Text: &name}}}}, {Call: &RequestedCall{Name: name, Arguments: data}}}, Evidence: evidence, Usage: usage, Private: &OpaqueProviderData{Producer: name, Format: "unknown", Version: version, Data: data}}, limits)
 		case 2:
-			r, err = newInvocationFailureRecord(fixture.Snapshot().HistoryID(), InvocationFailure{RequestID: id, Class: InvocationFailureOther, Explanation: &name, Evidence: evidence, Usage: usage}, limits)
+			r, err = newInvocationFailureRecord(InvocationFailure{RequestID: id, Class: InvocationFailureOther, Explanation: &name, Evidence: evidence, Usage: usage}, limits)
 		case 3:
-			r, err = newRunEndedRecord(fixture.Snapshot().HistoryID(), RunEnded{RunID: id.runID, Reason: RunEndedCaptureFailed, Explanation: &name, Capture: &CaptureFailureEvidence{RequestID: id, Evidence: evidence, Usage: usage}}, limits)
+			r, err = newRunEndedRecord(RunEnded{RunID: id.runID, Reason: RunEndedCaptureFailed, Explanation: &name, Capture: &CaptureFailureEvidence{RequestID: id, Evidence: evidence, Usage: usage}}, limits)
 		}
 		if err != nil {
 			if r != nil {

@@ -109,7 +109,7 @@ func TestSessionPopulatedApplyRejectionPreservesPrivateState(t *testing.T) {
 		t.Fatal(err)
 	}
 	bad := good.commit.Clone()
-	wrongCloseout, err := newRunEndedRecord(s.Snapshot().HistoryID(), RunEnded{RunID: old.ActiveRun(), Reason: RunEndedInterrupted}, s.policy.PayloadLimits)
+	wrongCloseout, err := newRunEndedRecord(RunEnded{RunID: old.ActiveRun(), Reason: RunEndedInterrupted}, s.policy.PayloadLimits)
 	if err != nil {
 		t.Fatal(err)
 	}
