@@ -25,8 +25,7 @@ type LoadConfig struct {
 	Dir    string
 	Types  []string
 	Output string
-	Emit   string // explicit comma-separated cbor,clone,equal,view capabilities
-	Views  string // package-local JSON projection map; required exactly when view is selected
+	Emit   string // explicit comma-separated cbor,clone,equal, or view-only capability
 }
 
 // Loaded contains type information from a synthetic public-entry-point overlay.
@@ -92,7 +91,11 @@ func Load(ctx context.Context, config LoadConfig) (*Loaded, error) {
 	if !slices.Contains(pkg.CompiledGoFiles, out) {
 		return nil, fmt.Errorf("output %s is not an active package Go file", out)
 	}
-	loaded, err := selectedRoots(pkg, out, names)
+	rootNames := names
+	if emit.view {
+		rootNames = nil // selected views are handles, never value-operation roots
+	}
+	loaded, err := selectedRoots(pkg, out, rootNames)
 	if err != nil {
 		return nil, err
 	}
@@ -127,7 +130,7 @@ func prepareLoad(config LoadConfig) (capabilities, string, string, []string, err
 	names := slices.Clone(config.Types)
 	slices.Sort(names)
 	names = slices.Compact(names)
-	if len(names) == 0 && !emit.view {
+	if len(names) == 0 {
 		return capabilities{}, "", "", nil, fmt.Errorf("select at least one root type")
 	}
 	for _, name := range names {
@@ -156,16 +159,21 @@ func (loaded *Loaded) loadPrerequisites() error {
 			dependencyError = fmt.Errorf("%s: declared owner at %s is not the imported source package; use the owner's module/build context", dependency.PkgPath, owner.Config.Dir)
 			return
 		}
-		child, err := selectedRoots(dependency, output, owner.Config.Types)
+		childEmit, err := parseEmit(owner.Config.Emit)
 		if err != nil {
 			dependencyError = err
 			return
 		}
-		child.Emit, err = parseEmit(owner.Config.Emit)
+		names := owner.Config.Types
+		if childEmit.view {
+			names = nil
+		}
+		child, err := selectedRoots(dependency, output, names)
 		if err != nil {
 			dependencyError = err
 			return
 		}
+		child.Emit = childEmit
 		child.Owners = owners
 		child.Validators = owner.Validators
 		s, err := buildSchema(child)

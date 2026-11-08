@@ -17,16 +17,6 @@ func checkContentPartSize(v ContentPart, b *valueBudget) {
 	}
 }
 
-// validateParts checks ordered content without imposing operational policy.
-func validateParts(v []ContentPart) error {
-	for _, p := range v {
-		if err := p.Validate(); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 // ContentPartView retains immutable backing storage. Capture and navigation cost
 // O(1); zero has neither union branch present.
 type ContentPartView struct{ value *sessionformat.ContentPart }

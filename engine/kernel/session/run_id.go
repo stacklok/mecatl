@@ -19,6 +19,22 @@ type RunID struct {
 // HistoryID returns the enclosing history identity, or zero for zero.
 func (v RunID) HistoryID() historyid.HistoryID { return v.historyID }
 
+// HistoryRelative returns this run's nonzero component within its enclosing
+// history, or zero for a zero RunID. The component alone does not prove the
+// run belongs to any history or was allocated there.
+func (v RunID) HistoryRelative() uint64 { return v.ordinal }
+
+// NewRunID reconstructs a structurally valid run identity from its enclosing
+// history and nonzero local component. It does not allocate a run, establish
+// history membership, or imply an allocation order.
+func NewRunID(historyID historyid.HistoryID, component uint64) (RunID, error) {
+	id := RunID{historyID: historyID, ordinal: component}
+	if err := id.Validate(); err != nil {
+		return RunID{}, err
+	}
+	return id, nil
+}
+
 // validateOrdinal checks the local occurrence ordinal.
 func (v RunID) validateOrdinal() error {
 	if v.ordinal == 0 {

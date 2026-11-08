@@ -16,7 +16,7 @@ func TestSnapshotZeroKindsAndIndexBounds(t *testing.T) {
 	var run session.RunView
 	var input session.UserInputView
 	var record session.RecordView
-	if run.ID() != (session.RunID{}) || run.RecordCount() != 0 || input.ID() != (session.UserInputID{}) || input.PartCount() != 0 || record.Kind() != "" || record.KindVersion() != 0 {
+	if run.ID() != (session.RunID{}) || run.RecordCount() != 0 || input.ID() != (session.UserInputID{}) || input.Parts().Len() != 0 || record.Kind() != "" || record.KindVersion() != 0 {
 		t.Fatal("zero child handle")
 	}
 	h := newSessionHistory(t)
@@ -32,7 +32,7 @@ func TestSnapshotZeroKindsAndIndexBounds(t *testing.T) {
 		if c != (i == 0) || st != (i == 1 || i == 4) || u != (i == 2) || in != (i == 3) {
 			t.Fatal("wrong-kind access indistinguishable")
 		}
-		if c && created.HistoryID != v.HistoryID() {
+		if c && created.HistoryID() != v.HistoryID() {
 			t.Fatal("created scope")
 		}
 		if st {
@@ -40,7 +40,7 @@ func TestSnapshotZeroKindsAndIndexBounds(t *testing.T) {
 			if i == 4 {
 				position = 1
 			}
-			if started.ID != v.RunAt(position).ID() {
+			if started.ID() != v.RunAt(position).ID() {
 				t.Fatal("start scope")
 			}
 		}

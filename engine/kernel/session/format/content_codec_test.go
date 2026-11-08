@@ -124,8 +124,9 @@ func TestInputItemWire(t *testing.T) {
 	}
 }
 
-func TestScopedFormatValidatorsAreLocal(t *testing.T) {
-	// Scoped DTO roots still leave child validity and bounds to generated traversal.
+func TestCanonicalFormatValidatorsCheckChildren(t *testing.T) {
+	// Public canonical values validate children; codec hooks remain immediate and
+	// run only after bounded child traversal.
 	for _, err := range []error{
 		(format.UserInput{RunID: 1, ID: 1, Parts: []format.ContentPart{{}}}).Validate(),
 		(format.ContentSource{Description: "d", WorkspaceFile: &format.WorkspaceFileSource{}}).Validate(),
@@ -134,8 +135,8 @@ func TestScopedFormatValidatorsAreLocal(t *testing.T) {
 		(format.EffectiveInput{RunID: 1, Inputs: []format.InputItem{{UserInputID: new(uint64(math.MaxUint64))}, {}}}).Validate(),
 		(format.ToolCatalog{Tools: []format.ToolDefinition{{Name: "a"}}}).Validate(),
 	} {
-		if err != nil {
-			t.Fatalf("recursive validator: %v", err)
+		if err == nil {
+			t.Fatal("canonical validator accepted an invalid child")
 		}
 	}
 }

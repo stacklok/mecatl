@@ -122,7 +122,11 @@ func ownerOverlay(ctx context.Context, target LoadConfig, excluded map[string][]
 		return "", nil, nil, err
 	}
 	out := filepath.Join(target.Dir, target.Output)
-	declaration, err := sourceOwner(pkg.CompiledGoFiles, out, target.Types, emit)
+	roots := target.Types
+	if emit.view {
+		roots = nil // do not walk private handle/context state as DTO value roots
+	}
+	declaration, err := sourceOwner(pkg.CompiledGoFiles, out, roots, emit)
 	if err != nil {
 		return "", nil, nil, err
 	}

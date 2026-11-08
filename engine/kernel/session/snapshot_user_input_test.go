@@ -73,7 +73,7 @@ func TestSnapshotUserInputByID(t *testing.T) {
 			t.Fatalf("accepted lookup %v = %#v, %t", id, got, ok)
 		}
 	}
-	if got, ok := pinned.UserInputByID(first); !ok || got.ID() != first || got.PartCount() != 0 {
+	if got, ok := pinned.UserInputByID(first); !ok || got.ID() != first || got.Parts().Len() != 0 {
 		t.Fatal("empty submission is not present")
 	}
 }

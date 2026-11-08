@@ -18,7 +18,7 @@ type SourceHead struct {
 	Sequence int64 `cbor:"s"`
 	// CID is the required content identity of Sequence. Local validation checks only
 	// that it is nonzero; enclosing history reconstruction checks the reference.
-	CID contentid.CID `cbor:"c"`
+	CID contentid.CID `cbor:"c" view:"manual"`
 }
 
 // Validate checks the local commit reference shape, not history membership.
@@ -61,15 +61,18 @@ func (v ConstructionRecipe) Validate() error {
 // ModelRequest is one invocation commitment. RetryOf, when present, is an earlier
 // request ordinal in the same enclosing run; membership and ordering are aggregate
 // concerns. Assignment shares nested byte slices; Clone detaches them.
+// Session authoring supplies destination scope separately and requires RunID and
+// ID zero. RetryOf is interpreted within that destination run without origin
+// provenance. Validate requires the fully populated persisted shape.
 //
-//dtogen:validate Validate
+//dtogen:validate validateLocal
 type ModelRequest struct {
 	// RunID is the required positive numeric run component within the history
 	// supplied by the enclosing envelope.
-	RunID uint64 `cbor:"r"`
+	RunID uint64 `cbor:"r" view:"-"`
 	// ID is the required positive numeric request component within RunID. The
 	// enclosing history envelope supplies history scope. Admission checks allocation.
-	ID uint64 `cbor:"o"`
+	ID uint64 `cbor:"o" view:"manual"`
 	// Source is the required accepted head used for request construction. Local
 	// traversal validates its shape; aggregate reconstruction verifies membership.
 	Source SourceHead `cbor:"s"`
@@ -78,11 +81,22 @@ type ModelRequest struct {
 	Recipe ConstructionRecipe `cbor:"c"`
 	// RetryOf optionally references a positive numeric request component in RunID.
 	// Nil is absent; zero is invalid. The aggregate checks earlier membership.
-	RetryOf *uint64 `cbor:"x,omitempty"`
+	RetryOf *uint64 `cbor:"x,omitempty" view:"manual"`
 }
 
-// Validate checks local ordinals and optional retry shape, not source membership.
+// Validate checks persisted identity, recipe, source and retry shape, not membership.
 func (v ModelRequest) Validate() error {
+	if err := v.validateLocal(); err != nil {
+		return err
+	}
+	if err := v.Source.Validate(); err != nil {
+		return err
+	}
+	return v.Recipe.Validate()
+}
+
+// validateLocal checks ordinals after bounded codec traversal validates children.
+func (v ModelRequest) validateLocal() error {
 	if v.RunID == 0 || v.ID == 0 {
 		return errors.New("model request requires positive run and request ordinals")
 	}

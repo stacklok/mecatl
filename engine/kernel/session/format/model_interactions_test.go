@@ -56,13 +56,13 @@ func TestInteractionClosedVocabularies(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	for _, class := range []string{format.InvocationFailureTransport, format.InvocationFailureTimeout, format.InvocationFailureLocal, format.InvocationFailureOther} {
+	for _, class := range []format.InvocationFailureClass{format.InvocationFailureTransport, format.InvocationFailureTimeout, format.InvocationFailureLocal, format.InvocationFailureOther} {
 		if err := (format.InvocationFailure{RunID: 1, RequestID: 1, Class: class}).Validate(); err != nil {
 			t.Fatal(err)
 		}
 	}
 	for _, unknown := range []string{"", "unknown"} {
-		for _, v := range []codec.Marshaler{format.ResponseContent{Kind: format.ResponseContentKind(unknown)}, format.ModelResponse{RunID: 1, RequestID: 1, Terminal: format.ResponseTerminalClass(unknown)}, format.InvocationFailure{RunID: 1, RequestID: 1, Class: unknown}} {
+		for _, v := range []codec.Marshaler{format.ResponseContent{Kind: format.ResponseContentKind(unknown)}, format.ModelResponse{RunID: 1, RequestID: 1, Terminal: format.ResponseTerminalClass(unknown)}, format.InvocationFailure{RunID: 1, RequestID: 1, Class: format.InvocationFailureClass(unknown)}} {
 			if wire, err := codec.Encode(v, limits()); !errors.Is(err, codec.ErrInvalidData) || wire != nil {
 				t.Fatalf("unknown category encoded: %v", err)
 			}

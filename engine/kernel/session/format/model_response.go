@@ -134,16 +134,17 @@ func (v ResponseItem) validateLocal() error {
 
 // ModelResponse is an atomic terminal provider response. Private is one
 // response-wide envelope, not per-item provider identity. Assignment shares nested
-// storage; Clone detaches it.
+// storage; Clone detaches it. Session authoring supplies the destination request
+// separately and requires RunID and RequestID zero. Validate checks persisted IDs.
 //
-//dtogen:validate Validate
+//dtogen:validate validateLocal
 type ModelResponse struct {
 	// RunID is the required positive numeric run component within the history
 	// supplied by the enclosing envelope.
-	RunID uint64 `cbor:"r"`
+	RunID uint64 `cbor:"r" view:"-"`
 	// RequestID is the required positive numeric request component within RunID.
 	// Payload validation checks positivity, not accepted request membership.
-	RequestID uint64 `cbor:"q"`
+	RequestID uint64 `cbor:"q" view:"manual"`
 	// Terminal is a required normalized ResponseTerminal class; empty and unknown
 	// classes are rejected independently of the original provider stop reason.
 	Terminal ResponseTerminalClass `cbor:"t"`
@@ -165,8 +166,35 @@ type ModelResponse struct {
 	Private *OpaqueProviderData `cbor:"x,omitempty"`
 }
 
-// Validate checks local identity, terminal class and optional UTF-8 reason.
+// Validate checks persisted identity, terminal shape and all retained children.
+// It does not establish acceptance or disclosure safety.
 func (v ModelResponse) Validate() error {
+	if err := v.validateLocal(); err != nil {
+		return err
+	}
+	for _, item := range v.Items {
+		if err := item.Validate(); err != nil {
+			return err
+		}
+	}
+	if v.Evidence != nil {
+		if err := v.Evidence.Validate(); err != nil {
+			return err
+		}
+	}
+	if v.Usage != nil {
+		if err := v.Usage.Validate(); err != nil {
+			return err
+		}
+	}
+	if v.Private != nil {
+		return v.Private.Validate()
+	}
+	return nil
+}
+
+// validateLocal checks immediate fields after bounded traversal validates children.
+func (v ModelResponse) validateLocal() error {
 	if v.RunID == 0 || v.RequestID == 0 {
 		return errors.New("response requires positive run and request ordinals")
 	}

@@ -38,11 +38,11 @@ func (v RecordView) Format() format.Record {
 }
 
 // Created returns the scoped creation fact only for the creation kind.
-func (v RecordView) Created() (Created, bool) {
+func (v RecordView) Created() (CreatedView, bool) {
 	if v.Kind() != sessionformat.KindCreated {
-		return Created{}, false
+		return CreatedView{}, false
 	}
-	return Created{HistoryID: v.scope}, true
+	return CreatedView{scope: v.scope, value: &v.record.created}, true
 }
 
 // UserInput returns an immutable user-submission handle only for that kind.
@@ -54,11 +54,11 @@ func (v RecordView) UserInput() (UserInputView, bool) {
 }
 
 // RunStarted returns the scoped start fact only for the start kind.
-func (v RecordView) RunStarted() (RunStarted, bool) {
+func (v RecordView) RunStarted() (RunStartedView, bool) {
 	if v.Kind() != sessionformat.KindRunStarted {
-		return RunStarted{}, false
+		return RunStartedView{}, false
 	}
-	return RunStarted{ID: RunID{historyID: v.scope, ordinal: v.record.started.ID}}, true
+	return RunStartedView{scope: v.scope, value: &v.record.started}, true
 }
 
 // RunEnded returns an immutable ending handle only for the ending kind.

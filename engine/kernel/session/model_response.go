@@ -53,87 +53,12 @@ type ResponseContent = sessionformat.ResponseContent
 // Assignment borrows its child; Clone detaches it.
 type ResponseItem = sessionformat.ResponseItem
 
-// ModelResponse is one atomic terminal response for RequestID. Items may be empty;
-// Private is one response-wide provider envelope. Assignment borrows nested storage;
-// Clone detaches it. ProviderStopReason nil is absent and distinct from explicit empty.
-type ModelResponse struct {
-	RequestID ModelRequestID
-	Terminal  ResponseTerminalClass
-	// ProviderStopReason retains the provider's original stop/finish reason, not
-	// reasoning content or a reasoning summary. Any UTF-8 value is allowed; nil
-	// is absent and differs from an explicitly empty string.
-	ProviderStopReason *string
-	Items              []ResponseItem
-	Evidence           *ObservedEvidence
-	Usage              *InvocationUsage
-	Private            *OpaqueProviderData
-}
+// ModelResponse is the canonical atomic terminal response. AddModelResponse takes
+// the full destination request separately and requires RunID and RequestID zero.
+// Assignment shares nested storage; Clone detaches it. Optional presence is retained.
+type ModelResponse = sessionformat.ModelResponse
 
-// Validate checks local response structure without acceptance lookup.
-func (v ModelResponse) Validate() error {
-	if err := v.RequestID.Validate(); err != nil {
-		return err
-	}
-	if err := v.toFormat().Validate(); err != nil {
-		return err
-	}
-	for _, item := range v.Items {
-		if err := item.Validate(); err != nil {
-			return err
-		}
-	}
-	if v.Evidence != nil {
-		if err := v.Evidence.Validate(); err != nil {
-			return err
-		}
-	}
-	if v.Usage != nil {
-		if err := v.Usage.Validate(); err != nil {
-			return err
-		}
-	}
-	if v.Private != nil {
-		return v.Private.Validate()
-	}
-	return nil
-}
-
-// Clone detaches every mutable response field.
-func (v ModelResponse) Clone() ModelResponse {
-	out := v
-	if v.ProviderStopReason != nil {
-		s := *v.ProviderStopReason
-		out.ProviderStopReason = &s
-	}
-	if v.Items != nil {
-		out.Items = make([]ResponseItem, len(v.Items))
-		for i := range v.Items {
-			out.Items[i] = v.Items[i].Clone()
-		}
-	}
-	if v.Evidence != nil {
-		x := v.Evidence.Clone()
-		out.Evidence = &x
-	}
-	if v.Usage != nil {
-		x := v.Usage.Clone()
-		out.Usage = &x
-	}
-	if v.Private != nil {
-		x := v.Private.Clone()
-		out.Private = &x
-	}
-	return out
-}
-
-// Equal compares the full scoped request identity and retained response values.
-func (v ModelResponse) Equal(other ModelResponse) bool {
-	return v.RequestID == other.RequestID && v.toFormat().Equal(other.toFormat())
-}
-func (v ModelResponse) toFormat() sessionformat.ModelResponse {
-	return sessionformat.ModelResponse{RunID: v.RequestID.runID.ordinal, RequestID: v.RequestID.requestOrdinal, Terminal: v.Terminal, ProviderStopReason: v.ProviderStopReason, Items: v.Items, Evidence: v.Evidence, Usage: v.Usage, Private: v.Private}
-}
-func (v ModelResponse) checkSize(b *valueBudget) {
+func checkModelResponseSize(v ModelResponse, b *valueBudget) {
 	b.text(string(v.Terminal))
 	checkEvidenceSize(v.Evidence, b)
 	checkUsageSize(v.Usage, b)
@@ -162,16 +87,14 @@ func (v ModelResponse) checkSize(b *valueBudget) {
 
 // newModelResponseRecord owns a complete response, never a truncated subset.
 // Sizing precedes bounded encoding and materialization. Failure returns nil.
-func newModelResponseRecord(v ModelResponse, limits codec.Limits) (*materializedRecord, error) {
-	if err := v.RequestID.Validate(); err != nil {
-		return nil, codec.ErrInvalidData
-	}
+func newModelResponseRecord(v ModelResponse, request ModelRequestID, limits codec.Limits) (*materializedRecord, error) {
 	b := newValueBudget(limits)
-	v.checkSize(&b)
+	checkModelResponseSize(v, &b)
 	if b.err != nil {
 		return nil, b.err
 	}
-	payload, err := codec.Encode(v.toFormat(), limits)
+	v.RunID, v.RequestID = request.runID.ordinal, request.requestOrdinal
+	payload, err := codec.Encode(v, limits)
 	if err != nil {
 		return nil, err
 	}

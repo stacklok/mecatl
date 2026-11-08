@@ -3,10 +3,10 @@
 // Package format owns the isolated session's mutable persistence DTOs and
 // payload-local validation. Generated CBOR operations enforce canonical encoding
 // and explicit codec limits. Keep borrowed values stable during operations.
-// The package has no aggregate, I/O, or default resource policy. Shared composite
-// payload Validate methods recursively check children, without operational bounds.
-// Other DTO Validate methods check immediate invariants only. Generated traversal
-// bounds and validates children before invoking each parent's immediate codec hook;
+// The package has no aggregate, I/O, or default resource policy. Public composite
+// Validate methods recursively check children, without operational bounds. Scalar
+// validators check immediate invariants. Generated traversal bounds and validates
+// children before invoking each parent's immediate codec hook;
 // it does not invoke recursive public validators.
 //
 // Assignment shares mutable storage. Generated Clone detaches it; Equal compares

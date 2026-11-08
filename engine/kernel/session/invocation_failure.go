@@ -9,7 +9,7 @@ import (
 
 // InvocationFailureClass is a closed classification of locally observed invocation
 // or delivery failure. Empty and unknown values are rejected.
-type InvocationFailureClass string
+type InvocationFailureClass = sessionformat.InvocationFailureClass
 
 const (
 	// InvocationFailureTransport identifies an observed transport failure.
@@ -22,62 +22,12 @@ const (
 	InvocationFailureOther InvocationFailureClass = sessionformat.InvocationFailureOther
 )
 
-// InvocationFailure records an observed failure for RequestID without fabricating a
-// response or asserting no remote processing or charge. Assignment borrows nested
-// storage; Clone detaches it. Explanation nil is absent and distinct from empty.
-type InvocationFailure struct {
-	RequestID   ModelRequestID
-	Class       InvocationFailureClass
-	Explanation *string
-	Evidence    *ObservedEvidence
-	Usage       *InvocationUsage
-}
+// InvocationFailure is canonical observed failure evidence, not a fabricated
+// response. AddInvocationFailure supplies the destination request separately;
+// incoming RunID and RequestID must be zero. Clone detaches mutable storage.
+type InvocationFailure = sessionformat.InvocationFailure
 
-// Validate checks local values without proving acceptance or remote effects.
-func (v InvocationFailure) Validate() error {
-	if err := v.RequestID.Validate(); err != nil {
-		return err
-	}
-	if err := v.toFormat().Validate(); err != nil {
-		return err
-	}
-	if v.Evidence != nil {
-		if err := v.Evidence.Validate(); err != nil {
-			return err
-		}
-	}
-	if v.Usage != nil {
-		return v.Usage.Validate()
-	}
-	return nil
-}
-
-// Clone detaches all mutable nested storage.
-func (v InvocationFailure) Clone() InvocationFailure {
-	out := v
-	if v.Explanation != nil {
-		s := *v.Explanation
-		out.Explanation = &s
-	}
-	if v.Evidence != nil {
-		x := v.Evidence.Clone()
-		out.Evidence = &x
-	}
-	if v.Usage != nil {
-		x := v.Usage.Clone()
-		out.Usage = &x
-	}
-	return out
-}
-
-// Equal compares exact scoped identity, optional fields, and retained evidence.
-func (v InvocationFailure) Equal(other InvocationFailure) bool {
-	return v.RequestID == other.RequestID && v.toFormat().Equal(other.toFormat())
-}
-func (v InvocationFailure) toFormat() sessionformat.InvocationFailure {
-	return sessionformat.InvocationFailure{RunID: v.RequestID.runID.ordinal, RequestID: v.RequestID.requestOrdinal, Class: string(v.Class), Explanation: v.Explanation, Evidence: v.Evidence, Usage: v.Usage}
-}
-func (v InvocationFailure) checkSize(b *valueBudget) {
+func checkInvocationFailureSize(v InvocationFailure, b *valueBudget) {
 	b.text(string(v.Class))
 	checkEvidenceSize(v.Evidence, b)
 	checkUsageSize(v.Usage, b)
@@ -88,17 +38,15 @@ func (v InvocationFailure) checkSize(b *valueBudget) {
 }
 
 // newInvocationFailureRecord owns one observed terminal invocation failure.
-// Sizing precedes conversion. Failure returns nil and never resolves a request by itself.
-func newInvocationFailureRecord(v InvocationFailure, limits codec.Limits) (*materializedRecord, error) {
-	if err := v.RequestID.Validate(); err != nil {
-		return nil, codec.ErrInvalidData
-	}
+// Sizing precedes bounded encoding. Failure returns nil; admission resolves membership.
+func newInvocationFailureRecord(v InvocationFailure, request ModelRequestID, limits codec.Limits) (*materializedRecord, error) {
 	b := newValueBudget(limits)
-	v.checkSize(&b)
+	checkInvocationFailureSize(v, &b)
 	if b.err != nil {
 		return nil, b.err
 	}
-	payload, err := codec.Encode(v.toFormat(), limits)
+	v.RunID, v.RequestID = request.runID.ordinal, request.requestOrdinal
+	payload, err := codec.Encode(v, limits)
 	if err != nil {
 		return nil, err
 	}
@@ -119,36 +67,4 @@ func (v InvocationFailureView) RequestID() ModelRequestID {
 		return ModelRequestID{}
 	}
 	return requestID(v.scope, v.value.RunID, v.value.RequestID)
-}
-
-// Class returns the observed failure classification, or empty for zero.
-func (v InvocationFailureView) Class() InvocationFailureClass {
-	if v.value == nil {
-		return ""
-	}
-	return InvocationFailureClass(v.value.Class)
-}
-
-// Explanation preserves absent versus explicitly empty safe detail.
-func (v InvocationFailureView) Explanation() (string, bool) {
-	if v.value == nil || v.value.Explanation == nil {
-		return "", false
-	}
-	return *v.value.Explanation, true
-}
-
-// Evidence returns a pinned immutable view of observed detail and correlation.
-func (v InvocationFailureView) Evidence() (ObservedEvidenceView, bool) {
-	if v.value == nil || v.value.Evidence == nil {
-		return ObservedEvidenceView{}, false
-	}
-	return ObservedEvidenceView{value: v.value.Evidence}, true
-}
-
-// Usage returns a pinned immutable view of reported counters and raw usage-only evidence.
-func (v InvocationFailureView) Usage() (InvocationUsageView, bool) {
-	if v.value == nil || v.value.Usage == nil {
-		return InvocationUsageView{}, false
-	}
-	return InvocationUsageView{value: v.value.Usage}, true
 }

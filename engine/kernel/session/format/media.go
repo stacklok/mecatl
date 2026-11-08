@@ -44,18 +44,18 @@ type Media struct {
 	Source MediaSourceKind `cbor:"s"`
 
 	// InlineData retains inline bytes only; Source, not nilness, records presence.
-	InlineData []byte `cbor:"d"`
+	InlineData []byte `cbor:"d" view:"manual"`
 
 	// RemoteURI is a required absolute locator for remote media, empty otherwise.
-	RemoteURI string `cbor:"u"`
+	RemoteURI string `cbor:"u" view:"manual"`
 
 	// ProviderName is the required logical provider for provider media, empty otherwise.
-	ProviderName string `cbor:"p"`
+	ProviderName string `cbor:"p" view:"manual"`
 	// ProviderScope is the required provider storage namespace, empty otherwise.
 	// It is not the session's history or run scope.
-	ProviderScope string `cbor:"o"`
+	ProviderScope string `cbor:"o" view:"manual"`
 	// ProviderReferenceID is required within the provider scope, empty otherwise.
-	ProviderReferenceID string `cbor:"r"`
+	ProviderReferenceID string `cbor:"r" view:"manual"`
 
 	// MIMEType is required for inline media, optional for remote/provider media.
 	MIMEType string `cbor:"m"`

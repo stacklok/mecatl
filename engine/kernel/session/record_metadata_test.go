@@ -46,17 +46,20 @@ func internalApply(t testing.TB, s *Session, records ...*materializedRecord) pre
 func TestRecordMaterializationAgreementAndOwnership(t *testing.T) {
 	s, limits := internalFixture(t)
 	id := s.Snapshot().HistoryID()
-	run := RunStarted{ID: RunID{historyID: id, ordinal: 24}}
-	input := identifiedInput{ID: UserInputID{runID: run.ID, ordinal: 24}, Parts: internalByteParts([]byte{0xff, 0, 'x'})}
+	run := RunStarted{ID: 24}
+	runID := RunID{historyID: id, ordinal: run.ID}
+	input := identifiedInput{ID: UserInputID{runID: runID, ordinal: 24}, UserInput: UserInput{Parts: internalByteParts([]byte{0xff, 0, 'x'})}}
+	wantInput := input.Clone()
+	wantInput.RunID, wantInput.ID = run.ID, input.ID.ordinal
 	constructors := []struct {
 		name string
 		make func() (*materializedRecord, error)
 	}{
-		{"created", func() (*materializedRecord, error) { return newCreatedRecord(Created{HistoryID: id}, limits) }},
+		{"created", func() (*materializedRecord, error) { return newCreatedRecord(Created{}, limits) }},
 		{"input", func() (*materializedRecord, error) { return makeInputRecord(input, limits) }},
 		{"start", func() (*materializedRecord, error) { return newRunStartedRecord(run, limits) }},
 		{"interruption", func() (*materializedRecord, error) {
-			return newRunEndedRecord(RunEnded{RunID: run.ID, Reason: RunEndedInterrupted}, limits)
+			return newRunEndedRecord(RunEnded{Reason: RunEndedInterrupted}, runID, limits)
 		}},
 	}
 	for _, tc := range constructors {
@@ -67,15 +70,15 @@ func TestRecordMaterializationAgreementAndOwnership(t *testing.T) {
 			}
 			switch tc.name {
 			case "input":
-				if !r.input.Equal(input.toFormat()) {
+				if !r.input.Equal(wantInput) {
 					t.Fatal("input materialization")
 				}
 			case "start":
-				if r.started.ID != run.ID.ordinal {
+				if r.started.ID != run.ID {
 					t.Fatal("start materialization")
 				}
 			case "interruption":
-				if r.ended.RunID != run.ID.ordinal || r.ended.Reason != string(RunEndedInterrupted) {
+				if r.ended.RunID != run.ID || r.ended.Reason != RunEndedInterrupted {
 					t.Fatal("interruption materialization")
 				}
 			}
@@ -91,7 +94,7 @@ func TestRecordMaterializationAgreementAndOwnership(t *testing.T) {
 			if !r.format().Equal(want) || !decoded.format().Equal(want) {
 				t.Fatal("caller mutation changed bytes")
 			}
-			input = content
+			input.UserInput = content
 			if err := r.checkPayload(limits); err != nil {
 				t.Fatal(err)
 			}
@@ -103,14 +106,16 @@ func TestRequestAndEndingMaterializationOwnsCompleteValues(t *testing.T) {
 	run := RunID{historyID: s.Snapshot().HistoryID(), ordinal: 1}
 	id := requestID(run.historyID, run.ordinal, 2)
 	retry := requestID(run.historyID, run.ordinal, 1)
-	request := identifiedRequest{ID: id, Source: SourceHead{Sequence: 1, CID: contentid.Sum([]byte("source"))}, Recipe: ConstructionRecipe{Algorithm: "retained", Version: 1, Parameters: []byte{0xff}, Check: []byte{1}}, RetryOf: &retry}
-	ending := RunEnded{RunID: run, Reason: RunEndedCaptureFailed, Explanation: new("retained detail"), Capture: &CaptureFailureEvidence{RequestID: id, Evidence: &ObservedEvidence{Correlation: new("retained correlation")}, Usage: &InvocationUsage{Input: new(int64(0)), Raw: &OpaqueProviderData{Producer: "p", Format: "usage", Version: 1, Data: []byte{0xff}}}}}
-	wantRequest, wantEnding := request.toFormat().Clone(), ending.toFormat().Clone()
+	request := identifiedRequest{ID: id, ModelRequest: ModelRequest{Source: SourceHead{Sequence: 1, CID: contentid.Sum([]byte("source"))}, Recipe: ConstructionRecipe{Algorithm: "retained", Version: 1, Parameters: []byte{0xff}, Check: []byte{1}}, RetryOf: new(retry.RunRelative())}}
+	ending := RunEnded{Reason: RunEndedCaptureFailed, Explanation: new("retained detail"), Capture: &CaptureFailureEvidence{RequestID: id.RunRelative(), Evidence: &ObservedEvidence{Correlation: new("retained correlation")}, Usage: &InvocationUsage{Input: new(int64(0)), Raw: &OpaqueProviderData{Producer: "p", Format: "usage", Version: 1, Data: []byte{0xff}}}}}
+	wantRequest, wantEnding := request.Clone(), ending.Clone()
+	wantRequest.RunID, wantRequest.ID = run.ordinal, id.requestOrdinal
+	wantEnding.RunID = run.ordinal
 	r := interactionRecord(t)(makeRequestRecord(request, limits))
-	e := interactionRecord(t)(newRunEndedRecord(ending, limits))
+	e := interactionRecord(t)(newRunEndedRecord(ending, run, limits))
 	request.Recipe.Parameters[0] = 0
 	request.Recipe.Check[0] = 0
-	retry = id
+	*request.RetryOf = id.RunRelative()
 	*ending.Explanation = "changed"
 	*ending.Capture.Evidence.Correlation = "changed"
 	*ending.Capture.Usage.Input = 99
@@ -138,24 +143,24 @@ func TestMaterializedPreflightBoundedDecodeDoesNotPublish(t *testing.T) {
 	s, limits := internalFixture(t)
 	id := s.Snapshot().HistoryID()
 	run := RunID{historyID: id, ordinal: 1}
-	created, err := newCreatedRecord(Created{HistoryID: id}, limits)
+	created, err := newCreatedRecord(Created{}, limits)
 	if err != nil {
 		t.Fatal(err)
 	}
-	start, err := newRunStartedRecord(RunStarted{ID: run}, limits)
+	start, err := newRunStartedRecord(RunStarted{ID: run.HistoryRelative()}, limits)
 	if err != nil {
 		t.Fatal(err)
 	}
-	first, err := makeInputRecord(identifiedInput{ID: UserInputID{runID: run, ordinal: 1}, Parts: internalByteParts(make([]byte, 512))}, limits)
+	first, err := makeInputRecord(identifiedInput{ID: UserInputID{runID: run, ordinal: 1}, UserInput: UserInput{Parts: internalByteParts(make([]byte, 512))}}, limits)
 	if err != nil {
 		t.Fatal(err)
 	}
 	p := internalApply(t, s, created, start, first)
-	second, err := makeInputRecord(identifiedInput{ID: UserInputID{runID: run, ordinal: 2}, Parts: internalByteParts(make([]byte, 512))}, limits)
+	second, err := makeInputRecord(identifiedInput{ID: UserInputID{runID: run, ordinal: 2}, UserInput: UserInput{Parts: internalByteParts(make([]byte, 512))}}, limits)
 	if err != nil {
 		t.Fatal(err)
 	}
-	closeout, err := newRunEndedRecord(RunEnded{RunID: run, Reason: RunEndedInterrupted}, limits)
+	closeout, err := newRunEndedRecord(RunEnded{Reason: RunEndedInterrupted}, run, limits)
 	if err != nil {
 		t.Fatal(err)
 	}

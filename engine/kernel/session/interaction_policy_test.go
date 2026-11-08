@@ -20,11 +20,13 @@ func TestInteractionResponsePayloadPolicyBoundaries(t *testing.T) {
 				t.Run(fmt.Sprintf("%s/short=%t/%s", name, short, path), func(t *testing.T) {
 					s := interactionFixture(t, "pending")
 					id := s.state.view.lifecycle.pending
-					response := ModelResponse{RequestID: id, Terminal: ResponseTerminalOther, ProviderStopReason: new(string(make([]byte, 120))), Evidence: &ObservedEvidence{Detail: new(""), Correlation: new("")}, Usage: &InvocationUsage{Input: new(int64(0)), Output: new(int64(0)), CacheRead: new(int64(0)), CacheWrite: new(int64(0)), Reasoning: new(int64(0)), Raw: &OpaqueProviderData{Producer: "p", Format: "u", Version: 1, Data: make([]byte, 128)}}, Private: &OpaqueProviderData{Producer: "p", Format: "private", Version: 1, Data: make([]byte, 128)}, Items: []ResponseItem{{Content: &ResponseContent{Kind: ResponseContentOutput, Parts: []ContentPart{{Text: new("")}, {Media: &Media{Kind: MediaKindImage, MIMEType: "image/x", Source: MediaSourceInline, InlineData: make([]byte, 128)}}}}}}}
+					response := ModelResponse{Terminal: ResponseTerminalOther, ProviderStopReason: new(string(make([]byte, 120))), Evidence: &ObservedEvidence{Detail: new(""), Correlation: new("")}, Usage: &InvocationUsage{Input: new(int64(0)), Output: new(int64(0)), CacheRead: new(int64(0)), CacheWrite: new(int64(0)), Reasoning: new(int64(0)), Raw: &OpaqueProviderData{Producer: "p", Format: "u", Version: 1, Data: make([]byte, 128)}}, Private: &OpaqueProviderData{Producer: "p", Format: "private", Version: 1, Data: make([]byte, 128)}, Items: []ResponseItem{{Content: &ResponseContent{Kind: ResponseContentOutput, Parts: []ContentPart{{Text: new("")}, {Media: &Media{Kind: MediaKindImage, MIMEType: "image/x", Source: MediaSourceInline, InlineData: make([]byte, 128)}}}}}}}
 					for range 8 {
 						response.Items = append(response.Items, ResponseItem{Call: &RequestedCall{Arguments: []byte{0xff}}})
 					}
-					r := interactionRecord(t)(newModelResponseRecord(response, s.policy.PayloadLimits))
+					stored := response
+					stored.RunID, stored.RequestID = id.runID.ordinal, id.requestOrdinal
+					r := interactionRecord(t)(newModelResponseRecord(response, id, s.policy.PayloadLimits))
 					c := interactionCommit(t, s, []*materializedRecord{r})
 					limits := s.policy.PayloadLimits
 					lo, hi := 1, int(reflect.ValueOf(limits).Field(field).Int())
@@ -32,7 +34,7 @@ func TestInteractionResponsePayloadPolicyBoundaries(t *testing.T) {
 						mid := lo + (hi-lo)/2
 						l := limits
 						reflect.ValueOf(&l).Elem().Field(field).SetInt(int64(mid))
-						if _, err := codec.Encode(response.toFormat(), l); err == nil {
+						if _, err := codec.Encode(stored, l); err == nil {
 							hi = mid
 						} else {
 							lo = mid + 1
@@ -52,7 +54,7 @@ func TestInteractionResponsePayloadPolicyBoundaries(t *testing.T) {
 					case "submit":
 						b, e := s.BeginCommit()
 						interactionCheck(t, e)
-						err = b.AddModelResponse(response)
+						err = b.AddModelResponse(id, response)
 						if err == nil {
 							_, err = s.SubmitCommit(context.Background(), b)
 						} else {
@@ -91,7 +93,7 @@ func TestInteractionOutcomePolicyBoundaries(t *testing.T) {
 					// count policy rejects the candidate, not its prefix.
 					interactionSubmit(t, s, func(b *SessionCommit) { interactionCheck(t, b.Create()) })
 					interactionSubmit(t, s, func(b *SessionCommit) {
-						interactionCheck(t, b.ReplaceModelBinding(ModelBinding{HistoryID: s.Snapshot().HistoryID(), Route: "r", API: "a", Model: "m", Settings: []byte("{}")}))
+						interactionCheck(t, b.ReplaceModelBinding(s.Snapshot().HistoryID(), ModelBinding{Route: "r", API: "a", Model: "m", Settings: []byte("{}")}))
 					})
 					interactionSubmit(t, s, func(b *SessionCommit) { _, err := b.StartRun(); interactionCheck(t, err) })
 					request := interactionRequest(s, 1)
@@ -100,8 +102,8 @@ func TestInteractionOutcomePolicyBoundaries(t *testing.T) {
 					})
 					id := s.state.view.lifecycle.pending
 					records := []*materializedRecord{
-						interactionRecord(t)(newModelResponseRecord(ModelResponse{RequestID: id, Terminal: ResponseTerminalNormal, Private: &OpaqueProviderData{Producer: "p", Format: "f", Version: 1, Data: []byte{0xff}}}, s.policy.PayloadLimits)),
-						interactionRecord(t)(newRunEndedRecord(RunEnded{RunID: id.runID, Reason: RunEndedCompleted}, s.policy.PayloadLimits)),
+						interactionRecord(t)(newModelResponseRecord(ModelResponse{Terminal: ResponseTerminalNormal, Private: &OpaqueProviderData{Producer: "p", Format: "f", Version: 1, Data: []byte{0xff}}}, id, s.policy.PayloadLimits)),
+						interactionRecord(t)(newRunEndedRecord(RunEnded{Reason: RunEndedCompleted}, id.runID, s.policy.PayloadLimits)),
 					}
 					c := interactionCommit(t, s, records)
 					p := s.policy
@@ -176,7 +178,7 @@ func TestInteractionMinimalEndingEnvelopeWidths(t *testing.T) {
 			s := interactionFixture(t, "pending")
 			for s.Snapshot().Head().Sequence < next-1 {
 				interactionSubmit(t, s, func(b *SessionCommit) {
-					interactionCheck(t, b.ReplaceInstructions(Instructions{HistoryID: s.Snapshot().HistoryID()}))
+					interactionCheck(t, b.ReplaceInstructions(s.Snapshot().HistoryID(), Instructions{}))
 				})
 			}
 			for _, reason := range []RunEndedReason{RunEndedError, RunEndedLimit, RunEndedInterrupted, RunEndedCaptureFailed} {

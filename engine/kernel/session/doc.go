@@ -1,4 +1,4 @@
-//go:generate go -C ../../.. run ./internal/dtogen/cmd/dtogen -dir engine/kernel/session -emit view -views views.json -out zz_views_generated.go
+//go:generate go -C ../../.. run ./internal/dtogen/cmd/dtogen -dir engine/kernel/session -emit view -types OpaqueProviderDataView,InvocationUsageView,ObservedEvidenceView,MediaView,ContentPartView,ConstructionRecipeView,SourceHeadView,ModelRequestView,ModelResponseView,RequestedCallDataView,RequestedCallView,ResponseItemView,ResponseContentView,CreatedView,RunStartedView,UserInputView,EffectiveInputView,InputItemView,AttributedInputView,InstructionsView,InstructionBlockView,ToolCatalogView,ToolDefinitionView,ModelBindingView,ContentSourceView,WorkspaceFileSourceView,InvocationFailureView,RunEndedView,CaptureFailureEvidenceView -out zz_views_generated.go
 
 // Package session interprets accepted history as lifecycle and retained context
 // for the isolated kernel. It validates and submits ordered batches through a
@@ -22,9 +22,13 @@
 // captured, and accounted contributions, not understanding, fulfillment or billing.
 // The kernel does not construct requests, invoke models/tools or aggregate usage.
 //
-// Public values carry history scope. Persistence DTOs in session/format omit
-// context supplied by verified history ancestry. Payload-local validation and
-// aggregate lifecycle legality are separate responsibilities.
+// Payload names alias canonical mutable DTOs in session/format. Commit additions
+// take scoped destination identities separately and require synthesized context
+// and allocation fields zero. Relative nested references resolve within that
+// destination run without extraction-origin proof. Views reconstruct full scoped
+// identities from verified history ancestry. ID constructors reconstruct values,
+// not allocated occurrences or membership. Payload-local validation and aggregate
+// lifecycle legality remain separate responsibilities.
 //
 // SessionCommit collects provisional facts for [Session.SubmitCommit], allocating
 // scoped identities for authored user inputs and model requests. Each addition
@@ -46,11 +50,13 @@
 // safe, and a required recipe on a zero parent returns a zero child. Item-call
 // data is identity-free; Calls and CallAt expose scoped call ordinals, not item
 // positions. CallCount and CallAt derive call order by scanning the response;
-// Calls traverses it once. Recipe, requested-call, provider-data and media byte
-// getters return borrowed views.Bytes; Copy explicitly detaches only that leaf.
-// Response Items and content Parts return views.SliceView with on-demand element
-// adapters; Len, At and All preserve canonical order without materializing []View.
-// Other retained-context byte getters and RecordView.Format return detached copies.
+// Calls traverses it once. All payload byte getters return borrowed views.Bytes;
+// Copy explicitly detaches only that leaf. Context-free collections, including
+// user/inline/instruction Parts, instruction Blocks, catalog Tools and response
+// Items, return views.SliceView with on-demand noncapturing element adapters.
+// Len, At and All preserve canonical order without materializing []View. Scoped
+// effective Inputs and response Calls retain handwritten navigation to reconstruct
+// full identities. RecordView.Format remains a detached transport export.
 //
 // View sequences are immutable, ordered and repeatable, and retain their captured
 // views' backing storage and bounds without copying it. Retention is not a payload

@@ -12,10 +12,10 @@ import (
 )
 
 func TestRunEndedReasonVocabulary(t *testing.T) {
-	reasons := []string{format.RunEndedCompleted, format.RunEndedError, format.RunEndedLimit, format.RunEndedInterrupted, format.RunEndedCaptureFailed}
+	reasons := []format.RunEndedReason{format.RunEndedCompleted, format.RunEndedError, format.RunEndedLimit, format.RunEndedInterrupted, format.RunEndedCaptureFailed}
 	for _, reason := range reasons {
-		t.Run(reason, func(t *testing.T) {
-			if !utf8.ValidString(reason) || len(reason) > format.MaxRunEndedReasonBytes || format.MaxRunEndedReasonBytes != 32 {
+		t.Run(string(reason), func(t *testing.T) {
+			if !utf8.ValidString(string(reason)) || len(reason) > format.MaxRunEndedReasonBytes || format.MaxRunEndedReasonBytes != 32 {
 				t.Fatal("supported reason violates the 32-byte UTF-8 bound")
 			}
 			v := format.RunEnded{RunID: 1, Reason: reason}
@@ -30,7 +30,7 @@ func TestRunEndedReasonVocabulary(t *testing.T) {
 		})
 	}
 	for _, reason := range []string{"", "cancelled", "unknown", strings.Repeat("x", 32), strings.Repeat("x", 33), strings.Repeat("é", 17), string([]byte{0xff})} {
-		v := format.RunEnded{RunID: 1, Reason: reason}
+		v := format.RunEnded{RunID: 1, Reason: format.RunEndedReason(reason)}
 		if v.Validate() == nil {
 			t.Fatalf("invalid reason validated: %q", reason)
 		}

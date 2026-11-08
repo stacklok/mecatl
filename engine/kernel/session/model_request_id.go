@@ -3,8 +3,9 @@ package session
 import "errors"
 
 // ModelRequestID identifies one engine-visible invocation within a run. It is
-// comparable and has no mutable storage. Zero is invalid. Obtain IDs from
-// session allocation or inspection, not numeric construction.
+// comparable and has no mutable storage. Zero is invalid. Allocation and inspection
+// return scoped identities; [NewModelRequestID] reconstructs an identity value
+// without allocating or establishing membership.
 type ModelRequestID struct {
 	// runID is the owning run, including history scope.
 	runID RunID
@@ -15,6 +16,22 @@ type ModelRequestID struct {
 
 // RunID returns the enclosing run identity, or zero for zero.
 func (v ModelRequestID) RunID() RunID { return v.runID }
+
+// RunRelative returns this request's nonzero component within its enclosing
+// run, or zero for a zero ModelRequestID. The component alone does not prove
+// the request belongs to any run or was allocated there.
+func (v ModelRequestID) RunRelative() uint64 { return v.requestOrdinal }
+
+// NewModelRequestID reconstructs a structurally valid request identity from
+// its enclosing run and nonzero local component. It does not allocate a
+// request, establish run membership, or imply an allocation order.
+func NewModelRequestID(runID RunID, component uint64) (ModelRequestID, error) {
+	id := ModelRequestID{runID: runID, requestOrdinal: component}
+	if err := id.Validate(); err != nil {
+		return ModelRequestID{}, err
+	}
+	return id, nil
+}
 
 // Validate checks local identity validity, not accepted allocation or membership.
 func (v ModelRequestID) Validate() error {
@@ -42,6 +59,22 @@ type RequestedCallID struct {
 
 // RequestID returns the enclosing request identity, or zero for zero.
 func (v RequestedCallID) RequestID() ModelRequestID { return v.requestID }
+
+// RequestRelative returns this call's nonzero component within its enclosing
+// request, or zero for a zero RequestedCallID. The component alone does not
+// prove the call belongs to any response or was accepted there.
+func (v RequestedCallID) RequestRelative() uint64 { return v.ordinal }
+
+// NewRequestedCallID reconstructs a structurally valid call identity from its
+// enclosing request and nonzero local component. It does not allocate a call,
+// establish response membership, or imply an allocation order.
+func NewRequestedCallID(requestID ModelRequestID, component uint64) (RequestedCallID, error) {
+	id := RequestedCallID{requestID: requestID, ordinal: component}
+	if err := id.Validate(); err != nil {
+		return RequestedCallID{}, err
+	}
+	return id, nil
+}
 
 // Validate checks local identity validity, not response membership or call order.
 func (v RequestedCallID) Validate() error {

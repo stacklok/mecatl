@@ -1,6 +1,8 @@
 package views_test
 
 import (
+	"fmt"
+	"iter"
 	"reflect"
 	"testing"
 
@@ -35,6 +37,12 @@ func TestSliceViewZero(t *testing.T) {
 	if len(got) != 0 {
 		t.Errorf("All() = %v, want empty", got)
 	}
+	defer func() {
+		if recover() == nil {
+			t.Error("zero At(0) did not panic")
+		}
+	}()
+	view.At(0)
 }
 
 func TestSliceViewAtOutOfBounds(t *testing.T) {
@@ -117,6 +125,12 @@ func TestBytesZeroAndOutOfBounds(t *testing.T) {
 			views.BorrowBytes([]byte{1}).At(index)
 		})
 	}
+	defer func() {
+		if recover() == nil {
+			t.Error("zero At(0) did not panic")
+		}
+	}()
+	view.At(0)
 }
 
 func TestBytesAllStopsEarlyAndIsRepeatable(t *testing.T) {
@@ -181,6 +195,49 @@ func TestBytesCopyPreservesNilAndEmpty(t *testing.T) {
 
 var benchmarkItemView testItemView
 var benchmarkItemSum int
+var benchmarkBytesIterator iter.Seq2[int, byte]
+var benchmarkByteSum int
+var benchmarkBytesCopy []byte
+
+//go:noinline
+func consumeBytes(seq iter.Seq2[int, byte]) {
+	for _, value := range seq {
+		benchmarkByteSum += int(value)
+	}
+}
+
+func BenchmarkBytesAll(b *testing.B) {
+	view := views.BorrowBytes([]byte{3, 5, 8})
+	// Store before timing so reuse includes opaque consumption, not creation.
+	benchmarkBytesIterator = view.All()
+	for _, mode := range []string{"escaping-create", "opaque-consume", "escaping-reuse"} {
+		b.Run(mode, func(b *testing.B) {
+			b.ReportAllocs()
+			for b.Loop() {
+				switch mode {
+				case "escaping-create":
+					benchmarkBytesIterator = view.All()
+				case "opaque-consume":
+					consumeBytes(view.All())
+				case "escaping-reuse":
+					consumeBytes(benchmarkBytesIterator)
+				}
+			}
+		})
+	}
+}
+
+func BenchmarkBytesCopy(b *testing.B) {
+	for _, size := range []int{0, 32, 16384} {
+		b.Run(fmt.Sprintf("size=%d", size), func(b *testing.B) {
+			view := views.BorrowBytes(make([]byte, size))
+			b.ReportAllocs()
+			for b.Loop() {
+				benchmarkBytesCopy = view.Copy()
+			}
+		})
+	}
+}
 
 func BenchmarkSliceViewAtByValueAdapter(b *testing.B) {
 	view := views.BorrowSliceView([]testItem{{value: 3}}, adaptTestItem)

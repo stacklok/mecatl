@@ -55,6 +55,35 @@ func TestResponseItemValidationLayers(t *testing.T) {
 	}
 }
 
+func TestCanonicalPayloadValidationLayers(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		local  func() error
+		public func() error
+	}{
+		{"input", (UserInput{RunID: 1, ID: 1, Parts: []ContentPart{{}}}).validateLocal, (UserInput{RunID: 1, ID: 1, Parts: []ContentPart{{}}}).Validate},
+		{"source", (ContentSource{Description: "source", WorkspaceFile: &WorkspaceFileSource{}}).validateLocal, (ContentSource{Description: "source", WorkspaceFile: &WorkspaceFileSource{}}).Validate},
+		{"item", (InputItem{Inline: &AttributedInput{}}).validateLocal, (InputItem{Inline: &AttributedInput{}}).Validate},
+		{"attributed", (AttributedInput{Actor: "open/future", Purpose: PromptContext}).validateLocal, (AttributedInput{Actor: "open/future", Purpose: PromptContext}).Validate},
+		{"effective", (EffectiveInput{RunID: 1, Inputs: []InputItem{{}}}).validateLocal, (EffectiveInput{RunID: 1, Inputs: []InputItem{{}}}).Validate},
+		{"catalog", (ToolCatalog{Tools: []ToolDefinition{{Name: "name"}}}).validateLocal, (ToolCatalog{Tools: []ToolDefinition{{Name: "name"}}}).Validate},
+		{"request", (ModelRequest{RunID: 1, ID: 1}).validateLocal, (ModelRequest{RunID: 1, ID: 1}).Validate},
+		{"response", (ModelResponse{RunID: 1, RequestID: 1, Terminal: ResponseTerminalNormal, Usage: &InvocationUsage{Input: new(int64(-1))}}).validateLocal, (ModelResponse{RunID: 1, RequestID: 1, Terminal: ResponseTerminalNormal, Usage: &InvocationUsage{Input: new(int64(-1))}}).Validate},
+		{"failure", (InvocationFailure{RunID: 1, RequestID: 1, Class: InvocationFailureOther, Evidence: &ObservedEvidence{Detail: new("\xff")}}).validateLocal, (InvocationFailure{RunID: 1, RequestID: 1, Class: InvocationFailureOther, Evidence: &ObservedEvidence{Detail: new("\xff")}}).Validate},
+		{"capture", (CaptureFailureEvidence{RequestID: 1, Usage: &InvocationUsage{Raw: &OpaqueProviderData{}}}).validateLocal, (CaptureFailureEvidence{RequestID: 1, Usage: &InvocationUsage{Raw: &OpaqueProviderData{}}}).Validate},
+		{"ending", (RunEnded{RunID: 1, Reason: RunEndedCaptureFailed, Capture: &CaptureFailureEvidence{}}).validateLocal, (RunEnded{RunID: 1, Reason: RunEndedCaptureFailed, Capture: &CaptureFailureEvidence{}}).Validate},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.local() != nil || tc.public() == nil {
+				t.Fatal("immediate codec hook must accept local fields; public validation must reject invalid children")
+			}
+		})
+	}
+	if (InstructionBlock{}).Validate() == nil || (Instructions{Blocks: []InstructionBlock{{}}}).Validate() == nil {
+		t.Fatal("instruction validation omitted provenance")
+	}
+}
+
 func TestSharedPayloadCodecBoundsPrecedeParentValidation(t *testing.T) {
 	l := codec.Limits{MaxBytes: 1 << 20, MaxStringBytes: 128, MaxByteStringBytes: 4, MaxArrayElements: 32, MaxMapPairs: 32, MaxDepth: 32, MaxNodes: 1024, MaxCollectionElements: 1024}
 	// Each parent is malformed, but an earlier child byte limit must win on both

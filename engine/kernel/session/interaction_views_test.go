@@ -31,7 +31,11 @@ func addInteractionRequest(t testing.TB, s *session.Session, run session.RunID, 
 	t.Helper()
 	head := s.Snapshot().Head()
 	b := beginBatch(t, s)
-	id, err := b.AddModelRequest(session.ModelRequest{RunID: run, Source: session.SourceHead{Sequence: head.Sequence, CID: head.CID}, Recipe: session.ConstructionRecipe{Algorithm: "future/algorithm", Version: 17, Parameters: parameters, Check: []byte{0xff, 0, 1}}, RetryOf: retry})
+	var relativeRetry *uint64
+	if retry != nil {
+		relativeRetry = new(retry.RunRelative())
+	}
+	id, err := b.AddModelRequest(run, session.ModelRequest{Source: session.SourceHead{Sequence: head.Sequence, CID: head.CID}, Recipe: session.ConstructionRecipe{Algorithm: "future/algorithm", Version: 17, Parameters: parameters, Check: []byte{0xff, 0, 1}}, RetryOf: relativeRetry})
 	mustBatch(t, err)
 	submitBatch(t, s, b)
 	return id
@@ -45,17 +49,17 @@ func TestModelInteractionUnknownAcceptanceFreezesExactProposal(t *testing.T) {
 			b := beginBatch(t, s)
 			mustBatch(t, b.Create())
 			run := batchRun(t, b)
-			mustBatch(t, b.ReplaceModelBinding(session.ModelBinding{HistoryID: run.HistoryID(), Route: "r", API: "a", Model: "m", Settings: []byte("{}")}))
+			mustBatch(t, b.ReplaceModelBinding(run.HistoryID(), session.ModelBinding{Route: "r", API: "a", Model: "m", Settings: []byte("{}")}))
 			submitBatch(t, s, b)
 			head := s.Snapshot().Head()
 			b = beginBatch(t, s)
-			add := session.ModelRequest{RunID: run, Source: session.SourceHead{Sequence: head.Sequence, CID: head.CID}, Recipe: session.ConstructionRecipe{Algorithm: "a", Version: 1, Parameters: []byte("original"), Check: []byte{1}}}
+			add := session.ModelRequest{Source: session.SourceHead{Sequence: head.Sequence, CID: head.CID}, Recipe: session.ConstructionRecipe{Algorithm: "a", Version: 1, Parameters: []byte("original"), Check: []byte{1}}}
 			stale := add
 			stale.Source.Sequence++
-			if id, err := b.AddModelRequest(stale); id != (session.ModelRequestID{}) || !errors.Is(err, session.ErrIdentity) {
+			if id, err := b.AddModelRequest(run, stale); id != (session.ModelRequestID{}) || !errors.Is(err, session.ErrIdentity) {
 				t.Fatalf("stale request: %v", err)
 			}
-			id, err := b.AddModelRequest(add)
+			id, err := b.AddModelRequest(run, add)
 			mustBatch(t, err)
 			if id != allocatedRequest(t, run, 1) {
 				t.Fatal("failed addition consumed identity")
@@ -63,7 +67,7 @@ func TestModelInteractionUnknownAcceptanceFreezesExactProposal(t *testing.T) {
 			if outcome {
 				submitBatch(t, s, b)
 				b = beginBatch(t, s)
-				mustBatch(t, b.AddModelResponse(session.ModelResponse{RequestID: id, Terminal: session.ResponseTerminalNormal}))
+				mustBatch(t, b.AddModelResponse(id, session.ModelResponse{Terminal: session.ResponseTerminalNormal}))
 			}
 			before := s.Snapshot()
 			backend.accept = accepted
@@ -77,7 +81,7 @@ func TestModelInteractionUnknownAcceptanceFreezesExactProposal(t *testing.T) {
 			if err := b.EndRun(session.RunEndedCaptureFailed); !errors.Is(err, session.ErrBatch) {
 				t.Fatal("alternate ending after uncertainty")
 			}
-			if err := b.AddInvocationFailure(session.InvocationFailure{RequestID: id, Class: session.InvocationFailureTimeout}); !errors.Is(err, session.ErrBatch) {
+			if err := b.AddInvocationFailure(id, session.InvocationFailure{Class: session.InvocationFailureTimeout}); !errors.Is(err, session.ErrBatch) {
 				t.Fatal("alternate outcome after uncertainty")
 			}
 			if _, err := s.BeginCommit(); !errors.Is(err, session.ErrBatch) {
@@ -106,7 +110,8 @@ func TestCompleteInteractionTraversal(t *testing.T) {
 				t.Run(seam, func(t *testing.T) {
 					snap := s.Snapshot()
 					want := interactionTraversal{requests: 3, retries: 1, failures: 1, responses: 1, endings: 2, captures: 1,
-						items: 3 * axis.count, contents: 2 * axis.count, parts: 3 * axis.count, itemCalls: axis.count, calls: axis.count,
+						items: 3 * axis.count, contents: 2 * axis.count, parts: 5 * axis.count, itemCalls: axis.count, calls: axis.count,
+						inlineMedia: axis.count, remoteMedia: axis.count, providerMedia: axis.count,
 						usages: 3, counters: 15, evidence: 3, providers: 4, recipes: 3}
 					for _, exports := range []bool{false, true} {
 						want.bytes = 0
@@ -316,7 +321,7 @@ func TestInteractionNestedHandlesPinnedAcrossAppends(t *testing.T) {
 								t.Error("retained collection adapter changed")
 							}
 						}
-						if parts.Len() != 2 || items.Len() != 6 || parts.At(1) != content.Parts().At(1) {
+						if parts.Len() != 4 || items.Len() != 6 || parts.At(1) != content.Parts().At(1) {
 							t.Error("retained collection bounds changed")
 						}
 						var visits interactionTraversal
@@ -356,7 +361,7 @@ func TestInteractionNestedAggregatePresence(t *testing.T) {
 				b := beginBatch(t, s)
 				mustBatch(t, b.Create())
 				run := batchRun(t, b)
-				mustBatch(t, b.ReplaceModelBinding(session.ModelBinding{HistoryID: run.HistoryID(), Route: "r", API: "a", Model: "m", Settings: []byte("{}")}))
+				mustBatch(t, b.ReplaceModelBinding(run.HistoryID(), session.ModelBinding{Route: "r", API: "a", Model: "m", Settings: []byte("{}")}))
 				submitBatch(t, s, b)
 				id := addInteractionRequest(t, s, run, nil, nil)
 				var usage *session.InvocationUsage
@@ -371,11 +376,11 @@ func TestInteractionNestedAggregatePresence(t *testing.T) {
 				b = beginBatch(t, s)
 				switch kind {
 				case "failure":
-					mustBatch(t, b.AddInvocationFailure(session.InvocationFailure{RequestID: id, Class: session.InvocationFailureLocal, Usage: usage, Evidence: evidence}))
+					mustBatch(t, b.AddInvocationFailure(id, session.InvocationFailure{Class: session.InvocationFailureLocal, Usage: usage, Evidence: evidence}))
 				case "response":
-					mustBatch(t, b.AddModelResponse(session.ModelResponse{RequestID: id, Terminal: session.ResponseTerminalNormal, Usage: usage, Evidence: evidence}))
+					mustBatch(t, b.AddModelResponse(id, session.ModelResponse{Terminal: session.ResponseTerminalNormal, Usage: usage, Evidence: evidence}))
 				case "capture":
-					mustBatch(t, b.AddRunEnded(session.RunEnded{RunID: run, Reason: session.RunEndedCaptureFailed, Capture: &session.CaptureFailureEvidence{RequestID: id, Usage: usage, Evidence: evidence}}))
+					mustBatch(t, b.AddRunEnded(run, session.RunEnded{Reason: session.RunEndedCaptureFailed, Capture: &session.CaptureFailureEvidence{RequestID: id.RunRelative(), Usage: usage, Evidence: evidence}}))
 				}
 				submitBatch(t, s, b)
 				loaded, err := session.Load(t.Context(), h, s.Snapshot().HistoryID(), p)
@@ -457,21 +462,21 @@ func TestInteractionEmptyOpaqueProviderDataPresenceAcrossSubmitAndLoad(t *testin
 				b := beginBatch(t, s)
 				mustBatch(t, b.Create())
 				run := batchRun(t, b)
-				mustBatch(t, b.ReplaceModelBinding(session.ModelBinding{HistoryID: run.HistoryID(), Route: "r", API: "a", Model: "m", Settings: []byte("{}")}))
+				mustBatch(t, b.ReplaceModelBinding(run.HistoryID(), session.ModelBinding{Route: "r", API: "a", Model: "m", Settings: []byte("{}")}))
 				submitBatch(t, s, b)
 				id := addInteractionRequest(t, s, run, nil, nil)
 				raw := &session.OpaqueProviderData{Producer: "producer", Format: "format", Version: 3, Data: input}
 				b = beginBatch(t, s)
 				switch kind {
 				case "failure":
-					mustBatch(t, b.AddInvocationFailure(session.InvocationFailure{RequestID: id, Class: session.InvocationFailureLocal, Usage: &session.InvocationUsage{Raw: raw}}))
+					mustBatch(t, b.AddInvocationFailure(id, session.InvocationFailure{Class: session.InvocationFailureLocal, Usage: &session.InvocationUsage{Raw: raw}}))
 				case "response":
-					mustBatch(t, b.AddModelResponse(session.ModelResponse{RequestID: id, Terminal: session.ResponseTerminalNormal, Usage: &session.InvocationUsage{Raw: raw}, Private: &session.OpaqueProviderData{Producer: "private", Format: "envelope", Version: 4, Data: input}, Items: []session.ResponseItem{
+					mustBatch(t, b.AddModelResponse(id, session.ModelResponse{Terminal: session.ResponseTerminalNormal, Usage: &session.InvocationUsage{Raw: raw}, Private: &session.OpaqueProviderData{Producer: "private", Format: "envelope", Version: 4, Data: input}, Items: []session.ResponseItem{
 						{Call: &session.RequestedCall{Arguments: input}},
 						{Content: &session.ResponseContent{Kind: session.ResponseContentOutput, Parts: []session.ContentPart{{Media: &session.Media{Kind: session.MediaKindImage, MIMEType: "image/example", Source: session.MediaSourceInline, InlineData: input}}}}},
 					}}))
 				case "capture":
-					mustBatch(t, b.AddRunEnded(session.RunEnded{RunID: run, Reason: session.RunEndedCaptureFailed, Capture: &session.CaptureFailureEvidence{RequestID: id, Usage: &session.InvocationUsage{Raw: raw}}}))
+					mustBatch(t, b.AddRunEnded(run, session.RunEnded{Reason: session.RunEndedCaptureFailed, Capture: &session.CaptureFailureEvidence{RequestID: id.RunRelative(), Usage: &session.InvocationUsage{Raw: raw}}}))
 				}
 				submitBatch(t, s, b)
 				loaded, err := session.Load(t.Context(), h, s.Snapshot().HistoryID(), p)
@@ -564,13 +569,13 @@ func TestModelInteractionAcceptedViewsAndReplay(t *testing.T) {
 	b := beginBatch(t, s)
 	mustBatch(t, b.Create())
 	// All reusable context is legal in create/idle batches, not just active runs.
-	mustBatch(t, b.ReplaceInstructions(session.Instructions{HistoryID: scope}))
-	mustBatch(t, b.ReplaceToolCatalog(session.ToolCatalog{HistoryID: scope}))
-	mustBatch(t, b.ReplaceModelBinding(session.ModelBinding{HistoryID: scope, Route: "route", API: "api", Model: "model", Settings: []byte("{}")}))
+	mustBatch(t, b.ReplaceInstructions(scope, session.Instructions{}))
+	mustBatch(t, b.ReplaceToolCatalog(scope, session.ToolCatalog{}))
+	mustBatch(t, b.ReplaceModelBinding(scope, session.ModelBinding{Route: "route", API: "api", Model: "model", Settings: []byte("{}")}))
 	submitBatch(t, s, b)
 	b = beginBatch(t, s)
 	run := batchRun(t, b)
-	_, err := b.AddUserInput(session.UserInput{RunID: run})
+	_, err := b.AddUserInput(run, session.UserInput{})
 	mustBatch(t, err)
 	submitBatch(t, s, b)
 	params := []byte{0, 0xff}
@@ -585,8 +590,8 @@ func TestModelInteractionAcceptedViewsAndReplay(t *testing.T) {
 	clear(rv.Recipe().Parameters().Copy())
 	clear(rv.Recipe().Check().Copy())
 	b = beginBatch(t, s)
-	failure := session.InvocationFailure{RequestID: first, Class: session.InvocationFailureTransport, Explanation: new(""), Evidence: &session.ObservedEvidence{Correlation: new("safe observed correlation")}, Usage: &session.InvocationUsage{Input: new(int64(0)), Raw: &session.OpaqueProviderData{Producer: "adapter", Format: "usage", Version: 8, Data: []byte{0, 0xff}}}}
-	mustBatch(t, b.AddInvocationFailure(failure))
+	failure := session.InvocationFailure{Class: session.InvocationFailureTransport, Explanation: new(""), Evidence: &session.ObservedEvidence{Correlation: new("safe observed correlation")}, Usage: &session.InvocationUsage{Input: new(int64(0)), Raw: &session.OpaqueProviderData{Producer: "adapter", Format: "usage", Version: 8, Data: []byte{0, 0xff}}}}
+	mustBatch(t, b.AddInvocationFailure(first, failure))
 	*failure.Usage.Input = 9
 	clear(failure.Usage.Raw.Data)
 	submitBatch(t, s, b)
@@ -617,7 +622,7 @@ func TestModelInteractionAcceptedViewsAndReplay(t *testing.T) {
 	if got, ok := retry.RetryOf(); !ok || got != first || string(retry.Recipe().Parameters().Copy()) != "changed recipe" {
 		t.Fatal("retry correlation/recipe")
 	}
-	response := session.ModelResponse{RequestID: second, Terminal: session.ResponseTerminalError, ProviderStopReason: new("unknown/provider/reason"),
+	response := session.ModelResponse{Terminal: session.ResponseTerminalError, ProviderStopReason: new("unknown/provider/reason"),
 		Items: []session.ResponseItem{
 			{Content: &session.ResponseContent{Kind: session.ResponseContentReasoning, Parts: []session.ContentPart{{Text: new("")}, {Media: &session.Media{Kind: session.MediaKindImage, MIMEType: "image/example", Source: session.MediaSourceInline, InlineData: []byte{0xff, 0}}}}}},
 			{Call: &session.RequestedCall{Name: "", Arguments: []byte("not JSON")}},
@@ -627,7 +632,7 @@ func TestModelInteractionAcceptedViewsAndReplay(t *testing.T) {
 		}, Usage: &session.InvocationUsage{Output: new(int64(0))}, Private: &session.OpaqueProviderData{Producer: "future/provider", Format: "relations", Version: 7, Data: []byte{0, 0xff}},
 	}
 	b = beginBatch(t, s)
-	mustBatch(t, b.AddModelResponse(response))
+	mustBatch(t, b.AddModelResponse(second, response))
 	response.Items[1].Call.Arguments[0] = 'X'
 	clear(response.Private.Data)
 	submitBatch(t, s, b)
@@ -680,7 +685,7 @@ func TestModelInteractionAcceptedViewsAndReplay(t *testing.T) {
 	oldCalls := view.Calls()
 	oldParts := content.Parts()
 	b = beginBatch(t, s)
-	if _, err := b.AddUserInput(session.UserInput{RunID: run}); !errors.Is(err, session.ErrTransition) {
+	if _, err := b.AddUserInput(run, session.UserInput{}); !errors.Is(err, session.ErrTransition) {
 		t.Fatal("unresolved calls admitted input")
 	}
 	if err := b.EndRun(session.RunEndedCompleted); !errors.Is(err, session.ErrTransition) {
@@ -694,7 +699,7 @@ func TestModelInteractionAcceptedViewsAndReplay(t *testing.T) {
 	}
 	// Idle context is a chronological part of the preceding span, not run ownership.
 	b = beginBatch(t, s)
-	mustBatch(t, b.ReplaceInstructions(session.Instructions{HistoryID: scope}))
+	mustBatch(t, b.ReplaceInstructions(scope, session.Instructions{}))
 	submitBatch(t, s, b)
 	var wg sync.WaitGroup
 	wg.Go(func() {
@@ -712,7 +717,7 @@ func TestModelInteractionAcceptedViewsAndReplay(t *testing.T) {
 		t.Fatal("successor did not reset request counter")
 	}
 	b = beginBatch(t, s)
-	mustBatch(t, b.AddModelResponse(session.ModelResponse{RequestID: third, Terminal: session.ResponseTerminalNormal, Private: &session.OpaqueProviderData{Producer: "p", Format: "f", Version: 1}}))
+	mustBatch(t, b.AddModelResponse(third, session.ModelResponse{Terminal: session.ResponseTerminalNormal, Private: &session.OpaqueProviderData{Producer: "p", Format: "f", Version: 1}}))
 	mustBatch(t, b.EndRun(session.RunEndedCompleted))
 	submitBatch(t, s, b)
 	wg.Wait()

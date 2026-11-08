@@ -48,7 +48,7 @@ func batchRun(t testing.TB, b *SessionCommit) RunID {
 }
 func batchInput(t testing.TB, b *SessionCommit, run RunID, content []byte) UserInputID {
 	t.Helper()
-	id, err := b.AddUserInput(UserInput{RunID: run, Parts: internalByteParts(content)})
+	id, err := b.AddUserInput(run, UserInput{Parts: internalByteParts(content)})
 	mustBatch(t, err)
 	return id
 }

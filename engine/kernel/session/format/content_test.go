@@ -18,8 +18,8 @@ func TestContentVocabulary(t *testing.T) {
 		{string(format.MediaSourceInline), "inline"},
 		{string(format.MediaSourceRemote), "remote"},
 		{string(format.MediaSourceProvider), "provider"},
-		{format.PromptInstructions, "instructions"},
-		{format.PromptContext, "context"},
+		{string(format.PromptInstructions), "instructions"},
+		{string(format.PromptContext), "context"},
 	} {
 		if pair[0] != pair[1] {
 			t.Errorf("persisted vocabulary = %q, want %q", pair[0], pair[1])

@@ -12,6 +12,26 @@ type InstructionBlock struct {
 	Source ContentSource `cbor:"s"`
 }
 
+// Validate checks all instruction content and required provenance.
+func (v InstructionBlock) Validate() error {
+	for _, part := range v.Parts {
+		if err := part.Validate(); err != nil {
+			return err
+		}
+	}
+	return v.Source.Validate()
+}
+
+// Validate checks all ordered blocks without imposing operational limits.
+func (v Instructions) Validate() error {
+	for _, block := range v.Blocks {
+		if err := block.Validate(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // Instructions is a complete session-scoped ordered root-instruction replacement.
 // Nil and empty Blocks are equivalent explicit empty replacements; a single empty
 // block is distinct and still needs provenance. Assignment shares Blocks and

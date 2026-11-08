@@ -36,14 +36,18 @@ func TestAllocatedAuthoringScopeBeforePersistenceConversion(t *testing.T) {
 	foreign, err := historyid.ParseHistoryID("HST2222222222222222222222")
 	mustBatch(t, err)
 	for _, owner := range []RunID{{}, {historyID: run.historyID, ordinal: 2}, {historyID: foreign, ordinal: 1}} {
+		want := error(nil)
+		if owner.Validate() != nil {
+			want = codec.ErrInvalidData
+		}
 		inputID := UserInputID{runID: owner, ordinal: 1}
-		if r, err := newUserInputRecord(UserInput{RunID: run}, inputID, limits); !errors.Is(err, codec.ErrInvalidData) || r != nil {
-			t.Fatalf("input identity lost scope before conversion: %v", err)
+		if r, err := newUserInputRecord(UserInput{}, inputID, limits); !errors.Is(err, want) || (r == nil) != (want != nil) {
+			t.Fatalf("input allocation identity: %v; want %v", err, want)
 		}
 		requestID := ModelRequestID{runID: owner, requestOrdinal: 1}
-		v := ModelRequest{RunID: run, Source: SourceHead{Sequence: 1, CID: contentid.Sum([]byte("source"))}, Recipe: ConstructionRecipe{Algorithm: "a", Version: 1, Check: []byte{1}}}
-		if r, err := newModelRequestRecord(v, requestID, limits); !errors.Is(err, codec.ErrInvalidData) || r != nil {
-			t.Fatalf("request identity lost scope before conversion: %v", err)
+		v := ModelRequest{Source: SourceHead{Sequence: 1, CID: contentid.Sum([]byte("source"))}, Recipe: ConstructionRecipe{Algorithm: "a", Version: 1, Check: []byte{1}}}
+		if r, err := newModelRequestRecord(v, requestID, limits); !errors.Is(err, want) || (r == nil) != (want != nil) {
+			t.Fatalf("request allocation identity: %v; want %v", err, want)
 		}
 	}
 }
@@ -76,10 +80,10 @@ func TestIdleContextReplacementHistoryScope(t *testing.T) {
 				interactionCheck(t, b.EndRun(RunEndedInterrupted))
 			}
 			for _, replace := range []func(historyid.HistoryID) error{
-				func(scope historyid.HistoryID) error { return b.ReplaceInstructions(Instructions{HistoryID: scope}) },
-				func(scope historyid.HistoryID) error { return b.ReplaceToolCatalog(ToolCatalog{HistoryID: scope}) },
+				func(scope historyid.HistoryID) error { return b.ReplaceInstructions(scope, Instructions{}) },
+				func(scope historyid.HistoryID) error { return b.ReplaceToolCatalog(scope, ToolCatalog{}) },
 				func(scope historyid.HistoryID) error {
-					return b.ReplaceModelBinding(ModelBinding{HistoryID: scope, Route: "r", API: "a", Model: "m", Settings: []byte("{}")})
+					return b.ReplaceModelBinding(scope, ModelBinding{Route: "r", API: "a", Model: "m", Settings: []byte("{}")})
 				},
 			} {
 				count, admission := len(b.records), b.admission
@@ -107,7 +111,7 @@ func TestIdleContextReplacementHistoryScope(t *testing.T) {
 	}
 }
 
-func TestNestedAuthoringScopeBeforeConversion(t *testing.T) {
+func TestRelativeReferencesUseDestinationRun(t *testing.T) {
 	foreign, err := historyid.ParseHistoryID("HST2222222222222222222222")
 	interactionCheck(t, err)
 	for _, kind := range []string{"effective", "retry", "capture"} {
@@ -118,13 +122,13 @@ func TestNestedAuthoringScopeBeforeConversion(t *testing.T) {
 				run := s.Snapshot().ActiveRun()
 				if kind == "effective" {
 					interactionSubmit(t, s, func(b *SessionCommit) {
-						_, err := b.AddUserInput(UserInput{RunID: run})
+						_, err := b.AddUserInput(run, UserInput{})
 						interactionCheck(t, err)
 					})
 				}
 				other := run
 				if mismatch == "history" {
-					other.historyID = foreign // Equal local ordinals must not hide scope.
+					other.historyID = foreign // Only the extracted component is retained.
 				} else {
 					other.ordinal++
 				}
@@ -134,27 +138,21 @@ func TestNestedAuthoringScopeBeforeConversion(t *testing.T) {
 					switch kind {
 					case "effective":
 						id := UserInputID{runID: referenceRun, ordinal: 1}
-						return b.AddEffectiveInput(EffectiveInput{RunID: run, Inputs: []InputItem{{UserInputID: &id}}})
+						return b.AddEffectiveInput(run, EffectiveInput{Inputs: []InputItem{{UserInputID: new(id.RunRelative())}}})
 					case "retry":
-						v := interactionRequest(s, 2).authoring()
-						v.RetryOf = new(requestID(referenceRun.historyID, referenceRun.ordinal, 1))
-						id, err := b.AddModelRequest(v)
+						v := interactionRequest(s, 2).ModelRequest
+						v.RetryOf = new(requestID(referenceRun.historyID, referenceRun.ordinal, 1).RunRelative())
+						id, err := b.AddModelRequest(run, v)
 						if err != nil && id != (ModelRequestID{}) {
 							t.Fatal("failed retry returned an identity")
 						}
 						return err
 					default:
-						return b.AddRunEnded(RunEnded{RunID: run, Reason: RunEndedCaptureFailed, Capture: &CaptureFailureEvidence{RequestID: requestID(referenceRun.historyID, referenceRun.ordinal, 1)}})
+						return b.AddRunEnded(run, RunEnded{Reason: RunEndedCaptureFailed, Capture: &CaptureFailureEvidence{RequestID: requestID(referenceRun.historyID, referenceRun.ordinal, 1).RunRelative()}})
 					}
 				}
-				before, admission := detachedSessionState(s.state), b.admission
-				if err := add(other); !errors.Is(err, codec.ErrInvalidData) {
-					t.Fatalf("nested scope mismatch: %v", err)
-				}
-				if len(b.records) != 0 || b.admission != admission || !reflect.DeepEqual(before, detachedSessionState(s.state)) {
-					t.Fatal("failed nested reference changed batch or accepted state")
-				}
-				interactionCheck(t, add(run))
+				before := detachedSessionState(s.state)
+				interactionCheck(t, add(other))
 				_, err = s.SubmitCommit(context.Background(), b)
 				interactionCheck(t, err)
 				if s.Snapshot().RecordCount() != before.records+1 {
@@ -177,11 +175,11 @@ func TestForeignOutcomeAndEndingHistoryScope(t *testing.T) {
 			add := func(id ModelRequestID) error {
 				switch kind {
 				case "response":
-					return b.AddModelResponse(ModelResponse{RequestID: id, Terminal: ResponseTerminalNormal})
+					return b.AddModelResponse(id, ModelResponse{Terminal: ResponseTerminalNormal})
 				case "failure":
-					return b.AddInvocationFailure(InvocationFailure{RequestID: id, Class: InvocationFailureTransport})
+					return b.AddInvocationFailure(id, InvocationFailure{Class: InvocationFailureTransport})
 				default:
-					return b.AddRunEnded(RunEnded{RunID: id.runID, Reason: RunEndedInterrupted})
+					return b.AddRunEnded(id.runID, RunEnded{Reason: RunEndedInterrupted})
 				}
 			}
 			before, admission := detachedSessionState(s.state), b.admission
@@ -232,9 +230,9 @@ func TestPublicRunAuthoringScope(t *testing.T) {
 			add := func(owner RunID) error {
 				switch kind {
 				case "effective":
-					return b.AddEffectiveInput(EffectiveInput{RunID: owner})
+					return b.AddEffectiveInput(owner, EffectiveInput{})
 				case "input":
-					id, err := b.AddUserInput(UserInput{RunID: owner})
+					id, err := b.AddUserInput(owner, UserInput{})
 					if err != nil && id != (UserInputID{}) {
 						t.Fatal("failed input returned identity")
 					}
@@ -243,9 +241,8 @@ func TestPublicRunAuthoringScope(t *testing.T) {
 					}
 					return err
 				default:
-					v := interactionRequest(s, 1).authoring()
-					v.RunID = owner
-					id, err := b.AddModelRequest(v)
+					v := interactionRequest(s, 1).ModelRequest
+					id, err := b.AddModelRequest(owner, v)
 					if err != nil && id != (ModelRequestID{}) {
 						t.Fatal("failed request returned identity")
 					}
@@ -288,25 +285,25 @@ func TestPublicOwnerCheckPrecedesOversizedPayload(t *testing.T) {
 	interactionCheck(t, err)
 	for name, add := range map[string]func(*SessionCommit, historyid.HistoryID) error{
 		"instructions": func(b *SessionCommit, scope historyid.HistoryID) error {
-			return b.ReplaceInstructions(Instructions{HistoryID: scope})
+			return b.ReplaceInstructions(scope, Instructions{})
 		},
 		"catalog": func(b *SessionCommit, scope historyid.HistoryID) error {
-			return b.ReplaceToolCatalog(ToolCatalog{HistoryID: scope})
+			return b.ReplaceToolCatalog(scope, ToolCatalog{})
 		},
 		"binding": func(b *SessionCommit, scope historyid.HistoryID) error {
-			return b.ReplaceModelBinding(ModelBinding{HistoryID: scope, Route: "r", API: "a", Model: "m", Settings: []byte("{}")})
+			return b.ReplaceModelBinding(scope, ModelBinding{Route: "r", API: "a", Model: "m", Settings: []byte("{}")})
 		},
 		"effective": func(b *SessionCommit, scope historyid.HistoryID) error {
-			return b.AddEffectiveInput(EffectiveInput{RunID: RunID{historyID: scope, ordinal: 1}})
+			return b.AddEffectiveInput(RunID{historyID: scope, ordinal: 1}, EffectiveInput{})
 		},
 		"response": func(b *SessionCommit, scope historyid.HistoryID) error {
-			return b.AddModelResponse(ModelResponse{RequestID: requestID(scope, 1, 1), Terminal: ResponseTerminalError})
+			return b.AddModelResponse(requestID(scope, 1, 1), ModelResponse{Terminal: ResponseTerminalError})
 		},
 		"failure": func(b *SessionCommit, scope historyid.HistoryID) error {
-			return b.AddInvocationFailure(InvocationFailure{RequestID: requestID(scope, 1, 1), Class: InvocationFailureLocal})
+			return b.AddInvocationFailure(requestID(scope, 1, 1), InvocationFailure{Class: InvocationFailureLocal})
 		},
 		"ending": func(b *SessionCommit, scope historyid.HistoryID) error {
-			return b.AddRunEnded(RunEnded{RunID: RunID{historyID: scope, ordinal: 1}, Reason: RunEndedInterrupted})
+			return b.AddRunEnded(RunID{historyID: scope, ordinal: 1}, RunEnded{Reason: RunEndedInterrupted})
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -318,7 +315,7 @@ func TestPublicOwnerCheckPrecedesOversizedPayload(t *testing.T) {
 			control, err := s.BeginCommit()
 			interactionCheck(t, err)
 			if name == "effective" {
-				_, err := control.AddUserInput(UserInput{RunID: s.Snapshot().ActiveRun()})
+				_, err := control.AddUserInput(s.Snapshot().ActiveRun(), UserInput{})
 				interactionCheck(t, err)
 			}
 			interactionCheck(t, add(control, s.Snapshot().HistoryID()))
@@ -349,25 +346,25 @@ func TestPublicOwnerCheckPrecedesPayloadValidation(t *testing.T) {
 	interactionCheck(t, err)
 	for name, add := range map[string]func(*SessionCommit, historyid.HistoryID) error{
 		"instructions": func(b *SessionCommit, scope historyid.HistoryID) error {
-			return b.ReplaceInstructions(Instructions{HistoryID: scope, Blocks: []InstructionBlock{{}}})
+			return b.ReplaceInstructions(scope, Instructions{Blocks: []InstructionBlock{{}}})
 		},
 		"catalog": func(b *SessionCommit, scope historyid.HistoryID) error {
-			return b.ReplaceToolCatalog(ToolCatalog{HistoryID: scope, Tools: []ToolDefinition{{}}})
+			return b.ReplaceToolCatalog(scope, ToolCatalog{Tools: []ToolDefinition{{}}})
 		},
 		"binding": func(b *SessionCommit, scope historyid.HistoryID) error {
-			return b.ReplaceModelBinding(ModelBinding{HistoryID: scope})
+			return b.ReplaceModelBinding(scope, ModelBinding{})
 		},
 		"effective": func(b *SessionCommit, scope historyid.HistoryID) error {
-			return b.AddEffectiveInput(EffectiveInput{RunID: RunID{historyID: scope, ordinal: 1}, Inputs: []InputItem{{}}})
+			return b.AddEffectiveInput(RunID{historyID: scope, ordinal: 1}, EffectiveInput{Inputs: []InputItem{{}}})
 		},
 		"response": func(b *SessionCommit, scope historyid.HistoryID) error {
-			return b.AddModelResponse(ModelResponse{RequestID: requestID(scope, 1, 1)})
+			return b.AddModelResponse(requestID(scope, 1, 1), ModelResponse{})
 		},
 		"failure": func(b *SessionCommit, scope historyid.HistoryID) error {
-			return b.AddInvocationFailure(InvocationFailure{RequestID: requestID(scope, 1, 1)})
+			return b.AddInvocationFailure(requestID(scope, 1, 1), InvocationFailure{})
 		},
 		"ending": func(b *SessionCommit, scope historyid.HistoryID) error {
-			return b.AddRunEnded(RunEnded{RunID: RunID{historyID: scope, ordinal: 1}})
+			return b.AddRunEnded(RunID{historyID: scope, ordinal: 1}, RunEnded{})
 		},
 	} {
 		t.Run(name, func(t *testing.T) {

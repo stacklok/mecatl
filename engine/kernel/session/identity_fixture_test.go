@@ -48,7 +48,7 @@ func allocatedInput(t testing.TB, run session.RunID, count uint64) session.UserI
 	var id session.UserInputID
 	for range count {
 		var err error
-		id, err = b.AddUserInput(session.UserInput{RunID: run})
+		id, err = b.AddUserInput(run, session.UserInput{})
 		mustBatch(t, err)
 	}
 	return id
@@ -57,18 +57,18 @@ func allocatedInput(t testing.TB, run session.RunID, count uint64) session.UserI
 func allocatedRequest(t testing.TB, run session.RunID, count uint64) session.ModelRequestID {
 	t.Helper()
 	s, b := allocationBatch(t, run)
-	mustBatch(t, b.ReplaceModelBinding(session.ModelBinding{HistoryID: run.HistoryID(), Route: "r", API: "a", Model: "m", Settings: []byte("{}")}))
+	mustBatch(t, b.ReplaceModelBinding(run.HistoryID(), session.ModelBinding{Route: "r", API: "a", Model: "m", Settings: []byte("{}")}))
 	submitBatch(t, s, b)
 	var id session.ModelRequestID
 	for range count {
 		b = beginBatch(t, s)
 		head := s.Snapshot().Head()
 		var err error
-		id, err = b.AddModelRequest(session.ModelRequest{RunID: run, Source: session.SourceHead{Sequence: head.Sequence, CID: head.CID}, Recipe: session.ConstructionRecipe{Algorithm: "fixture", Version: 1, Check: []byte{1}}})
+		id, err = b.AddModelRequest(run, session.ModelRequest{Source: session.SourceHead{Sequence: head.Sequence, CID: head.CID}, Recipe: session.ConstructionRecipe{Algorithm: "fixture", Version: 1, Check: []byte{1}}})
 		mustBatch(t, err)
 		submitBatch(t, s, b)
 		b = beginBatch(t, s)
-		mustBatch(t, b.AddModelResponse(session.ModelResponse{RequestID: id, Terminal: session.ResponseTerminalNormal}))
+		mustBatch(t, b.AddModelResponse(id, session.ModelResponse{Terminal: session.ResponseTerminalNormal}))
 		submitBatch(t, s, b)
 	}
 	return id

@@ -16,7 +16,7 @@ import (
 
 func TestContextActualReserveAndSoftBounds(t *testing.T) {
 	scope := testHistoryID(t)
-	instructions := session.Instructions{HistoryID: scope, Blocks: []session.InstructionBlock{{Parts: []session.ContentPart{{Text: new("retained context payload")}}, Source: session.ContentSource{Description: "caller prepared"}}}}
+	instructions := session.Instructions{Blocks: []session.InstructionBlock{{Parts: []session.ContentPart{{Text: new("retained context payload")}}, Source: session.ContentSource{Description: "caller prepared"}}}}
 	contextRecord := encodeFixture(t, sessionformat.KindInstructions, sessionformat.Instructions{Blocks: []sessionformat.InstructionBlock{{Parts: []sessionformat.ContentPart{{Text: new("retained context payload")}}, Source: sessionformat.ContentSource{Description: "caller prepared"}}}})
 	initial := []fixtureRecord{createdRecord(t), startRecord(t, 1), contextRecord}
 	largestEnding := encodeFixture(t, sessionformat.KindRunEnded, sessionformat.RunEnded{RunID: 1, Reason: sessionformat.RunEndedCaptureFailed})
@@ -45,7 +45,7 @@ func TestContextActualReserveAndSoftBounds(t *testing.T) {
 				b := beginBatch(t, s)
 				mustBatch(t, b.Create())
 				batchRun(t, b)
-				mustBatch(t, b.ReplaceInstructions(instructions))
+				mustBatch(t, b.ReplaceInstructions(scope, instructions))
 				if mode == "one-short" {
 					if ref, err := s.SubmitCommit(context.Background(), b); ref != (history.CommitRef{}) || !errors.Is(err, codec.ErrLimitExceeded) || errors.Is(err, session.ErrAcceptanceUnknown) || len(backend.attempts) != 0 || s.Snapshot().Created() {
 						t.Fatalf("actual context reserve one short: %v, %v", ref, err)
@@ -57,7 +57,7 @@ func TestContextActualReserveAndSoftBounds(t *testing.T) {
 				if mode != "exact" {
 					before := captureRejectedSnapshot(s.Snapshot())
 					b = beginBatch(t, s)
-					mustBatch(t, b.ReplaceInstructions(instructions))
+					mustBatch(t, b.ReplaceInstructions(scope, instructions))
 					if mode == "soft-mixed" {
 						mustBatch(t, b.EndRun(session.RunEndedInterrupted))
 					}

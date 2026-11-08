@@ -27,22 +27,19 @@ type Record struct {
  Maybe *Child
  Children []Child
 }
-type Child struct { Data []byte; Hidden struct { private []byte } }
+type Child struct { Data []byte; Hidden struct { private []byte } `+"`view:\"-\"`"+` }
 var _ = Record{}.Clone().Equal(Record{})
 `)
 	writeFixture(t, filepath.Join(cfg.Dir, "owner.go"), `package owner
 import "example.invalid/payloads/data"
 type RecordView struct { value *data.Record; scope string }
 type ChildView struct { value *data.Child }
+type ExtraView struct { value *data.Record; scope string }
 func(v RecordView) Scope()string{return v.scope}
 var _ = RecordView{}.Title()
 var _ = RecordView{}.Children().At
 `)
-	mapping := `[
- {"view":"RecordView","backing":"value","fields":[{"field":"Title","method":"Title"},{"field":"Child","method":"Child"},{"field":"Maybe","method":"Maybe"},{"field":"Children","method":"Children"}],"context":[{"method":"Scope","signature":"func() string"}]},
- {"view":"ChildView","backing":"value","fields":[{"field":"Data","method":"Data"},{"field":"Hidden","exclude":true}]}]`
-	writeFixture(t, filepath.Join(cfg.Dir, cfg.Views), mapping)
-	writeFixture(t, filepath.Join(cfg.Dir, "registry.go"), "//go:generate go -C ../.. run "+generatorCommand+" -dir engine/owner -emit view -views views.json -out "+cfg.Output+"\npackage owner\n")
+	writeFixture(t, filepath.Join(cfg.Dir, "registry.go"), "//go:generate go -C ../.. run "+generatorCommand+" -dir engine/owner -emit view -types RecordView,ChildView -out "+cfg.Output+"\npackage owner\n")
 	outputs := []string{filepath.Join(root, "payloads/data/zz_data_generated.go"), filepath.Join(cfg.Dir, cfg.Output)}
 	ctx := context.Background()
 	for _, prior := range []string{"", GeneratedMarker + "\nnot valid Go", GeneratedMarker + "\npackage data\nvar broken MissingType"} {
@@ -85,18 +82,38 @@ func TestExternal(t *testing.T){x:=data.Record{Title:"external",Child:data.Child
 		t.Fatalf("stale shape compiled: %v\n%s", err, output)
 	}
 	before := repositoryState(t, root)
-	if err := Generate(ctx, cfg); err == nil || !strings.Contains(err.Error(), "uncovered backing field") {
-		t.Fatal("new field accepted", err)
+	if err := GenerateRepository(ctx, root, true); err == nil || !strings.Contains(err.Error(), "stale data output") {
+		t.Fatal("new field was not stale", err)
 	}
 	if !reflect.DeepEqual(before, repositoryState(t, root)) {
-		t.Fatal("invalid closure changed artifacts")
+		t.Fatal("check changed artifacts")
+	}
+	if err := Generate(ctx, cfg); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(readFixture(t, outputs[1]), "func (v RecordView) Added() bool") {
+		t.Fatal("new supported field lacks default getter")
+	}
+	addedTest := filepath.Join(cfg.Dir, "added_test.go")
+	writeFixture(t, addedTest, `package owner
+ import("testing";"example.invalid/payloads/data")
+ func TestNewFieldDefault(t *testing.T){v:=RecordView{value:&data.Record{Added:true}};if !v.Added()||(RecordView{}).Added(){t.Fatal("default getter value/zero")}}
+ `)
+	runOwner(t, cfg, "")
+	if err := os.Remove(addedTest); err != nil {
+		t.Fatal(err)
 	}
 	writeFixture(t, source, oldSource)
-	// Every stale check must be nonmutating, including mapping and owner docs.
+	if err := Generate(ctx, cfg); err != nil {
+		t.Fatal(err)
+	}
+	// Every stale check must be nonmutating, including policy, layout and owner docs.
 	for _, change := range []struct{ name, path, from, to string }{
 		{"field docs", source, "Title is optional provider spelling", "Title is revised provider spelling"},
 		{"type docs", source, "Provisional: retain provider vocabulary", "Provisional: revisit provider vocabulary"},
-		{"map", filepath.Join(cfg.Dir, cfg.Views), `"method":"Child"`, `"method":"RequiredChild"`},
+		{"policy", source, "Maybe *Child", "Maybe *Child `view:\"-\"`"},
+		{"layout", filepath.Join(cfg.Dir, "owner.go"), "scope string", "scope string; extra uint64"},
+		{"selection", filepath.Join(cfg.Dir, "registry.go"), "RecordView,ChildView", "RecordView,ChildView,ExtraView"},
 	} {
 		t.Run(change.name, func(t *testing.T) {
 			old := readFixture(t, change.path)
@@ -108,8 +125,8 @@ func TestExternal(t *testing.T){x:=data.Record{Title:"external",Child:data.Child
 			if !reflect.DeepEqual(before, repositoryState(t, root)) {
 				t.Fatal("check wrote files")
 			}
-			// Map changes may require handwritten caller updates; docs-only regenerate.
-			if change.name != "map" {
+			// Direct generation retains its explicit selection; repository selection is source-owned.
+			if change.name != "selection" {
 				if err := Generate(ctx, cfg); err != nil {
 					t.Fatal(err)
 				}
@@ -135,39 +152,52 @@ func TestExternal(t *testing.T){x:=data.Record{Title:"external",Child:data.Child
 	}
 	writeFixture(t, registry, declaration)
 	// A failure in the rendered selected closure preserves BOTH earlier owners.
-	writeFixture(t, source, strings.Replace(oldSource, "Title string", "Title string; Added bool", 1))
+	writeFixture(t, source, strings.Replace(oldSource, "Title string", "Title map[string]string", 1))
 	before = repositoryState(t, root)
 	if err := GenerateRepository(ctx, root, false); err == nil {
 		t.Fatal("invalid view closure accepted")
 	}
 	if !reflect.DeepEqual(before, repositoryState(t, root)) {
-		t.Fatal("partial install after view mapping failure")
+		t.Fatal("partial install after view policy failure")
 	}
 }
 
 func TestCLIViewOnly(t *testing.T) {
 	binary := buildCLI(t)
 	cfg := viewFixture(t, "view")
-	cmd := exec.Command(binary, "-dir", cfg.Dir, "-emit", "view", "-views", cfg.Views, "-out", cfg.Output)
+	cmd := exec.Command(binary, "-dir", cfg.Dir, "-emit", "view", "-types", strings.Join(cfg.Types, ","), "-out", cfg.Output)
 	cmd.Dir = t.TempDir()
 	cmd.Env = loadEnvironment()
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("view-only CLI: %s %v", out, err)
+	}
+	for _, args := range [][]string{
+		{"-dir", cfg.Dir, "-emit", "view", "-out", cfg.Output},
+		{"-dir", cfg.Dir, "-emit", "view", "-types", "RecordView,ChildView", "-views", "views.json", "-out", cfg.Output},
+	} {
+		before := repositoryState(t, filepath.Dir(cfg.Dir))
+		cmd := exec.Command(binary, args...)
+		cmd.Env = loadEnvironment()
+		if out, err := cmd.CombinedOutput(); err == nil {
+			t.Fatalf("obsolete/missing selection accepted: %s", out)
+		}
+		if !reflect.DeepEqual(before, repositoryState(t, filepath.Dir(cfg.Dir))) {
+			t.Fatal("invalid CLI wrote files")
+		}
 	}
 	runOwner(t, cfg, "")
 }
 
 func TestViewConfigurationErrors(t *testing.T) {
 	for _, tc := range []struct {
-		emit, views string
-		types       []string
+		emit  string
+		types []string
 	}{
-		{"view", "", nil}, {"clone", "views.json", []string{"Record"}}, {"view", "../views.json", nil}, {"view", "views.json", []string{"Record"}},
+		{"view", nil}, {"view,clone", []string{"RecordView"}}, {"cbor,view", []string{"RecordView"}}, {"view,equal", []string{"RecordView"}}, {"view", []string{"Missing"}}, {"view", []string{"Record"}},
 	} {
-		t.Run(tc.emit+tc.views, func(t *testing.T) {
+		t.Run(tc.emit+strings.Join(tc.types, ","), func(t *testing.T) {
 			cfg := viewFixture(t, "view")
 			cfg.Emit = tc.emit
-			cfg.Views = tc.views
 			cfg.Types = tc.types
 			before := repositoryState(t, filepath.Dir(cfg.Dir))
 			if err := Generate(context.Background(), cfg); err == nil {

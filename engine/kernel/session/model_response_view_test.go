@@ -92,7 +92,7 @@ func TestModelResponseViewRepresentationOwnershipAndShortCircuit(t *testing.T) {
 	s := interactionFixture(t, "pending")
 	id := s.state.view.lifecycle.pending
 	usage := &InvocationUsage{Input: new(int64(0)), Output: new(int64(1)), CacheRead: new(int64(2)), CacheWrite: new(int64(3)), Reasoning: new(int64(4)), Raw: &OpaqueProviderData{Producer: "p", Format: "usage", Version: 1, Data: []byte{0xff, 0}}}
-	response := ModelResponse{RequestID: id, Terminal: ResponseTerminalOther, ProviderStopReason: new(""), Evidence: &ObservedEvidence{Detail: new(""), Correlation: new("opaque")}, Usage: usage, Private: &OpaqueProviderData{Producer: "p", Format: "unknown", Version: 19, Data: []byte{0xff, 0, 1}}, Items: []ResponseItem{
+	response := ModelResponse{Terminal: ResponseTerminalOther, ProviderStopReason: new(""), Evidence: &ObservedEvidence{Detail: new(""), Correlation: new("opaque")}, Usage: usage, Private: &OpaqueProviderData{Producer: "p", Format: "unknown", Version: 19, Data: []byte{0xff, 0, 1}}, Items: []ResponseItem{
 		{Content: &ResponseContent{Kind: ResponseContentOutput, Parts: []ContentPart{{Text: new("")}, {Text: new("  exact\n")}, {Media: &Media{Kind: MediaKindImage, MIMEType: "image/unknown", Source: MediaSourceInline, InlineData: []byte{0xff, 0}}}}}},
 		{Call: &RequestedCall{Name: "", Arguments: []byte{}}},
 		{Content: &ResponseContent{Kind: ResponseContentReasoning}},
@@ -100,7 +100,7 @@ func TestModelResponseViewRepresentationOwnershipAndShortCircuit(t *testing.T) {
 		{Content: &ResponseContent{Kind: ResponseContentRefusal, Parts: []ContentPart{}}},
 	}}
 	expected := response.Clone()
-	r := interactionRecord(t)(newModelResponseRecord(response, s.policy.PayloadLimits))
+	r := interactionRecord(t)(newModelResponseRecord(response, id, s.policy.PayloadLimits))
 	// Mutation controls: each operation changes its own representation, but must
 	// not change the constructor's captured bytes or any accepted view.
 	*response.ProviderStopReason = "changed"

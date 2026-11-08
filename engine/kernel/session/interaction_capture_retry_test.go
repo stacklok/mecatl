@@ -21,7 +21,7 @@ func TestModelInteractionUncertainMinimalEndingRetriesExactReason(t *testing.T) 
 				b := beginBatch(t, s)
 				mustBatch(t, b.Create())
 				run := batchRun(t, b)
-				mustBatch(t, b.ReplaceModelBinding(session.ModelBinding{HistoryID: run.HistoryID(), Route: "r", API: "a", Model: "m", Settings: []byte("{}")}))
+				mustBatch(t, b.ReplaceModelBinding(run.HistoryID(), session.ModelBinding{Route: "r", API: "a", Model: "m", Settings: []byte("{}")}))
 				submitBatch(t, s, b)
 				if reason != session.RunEndedCompleted {
 					addInteractionRequest(t, s, run, nil, nil)
@@ -69,11 +69,11 @@ func TestModelInteractionUncertainDetailedCaptureCannotBecomeMinimal(t *testing.
 			b := beginBatch(t, s)
 			mustBatch(t, b.Create())
 			run := batchRun(t, b)
-			mustBatch(t, b.ReplaceModelBinding(session.ModelBinding{HistoryID: run.HistoryID(), Route: "r", API: "a", Model: "m", Settings: []byte("{}")}))
+			mustBatch(t, b.ReplaceModelBinding(run.HistoryID(), session.ModelBinding{Route: "r", API: "a", Model: "m", Settings: []byte("{}")}))
 			submitBatch(t, s, b)
 			id := addInteractionRequest(t, s, run, nil, nil)
 			b = beginBatch(t, s)
-			mustBatch(t, b.AddRunEnded(session.RunEnded{RunID: run, Reason: session.RunEndedCaptureFailed, Explanation: new("local capture rejected"), Capture: &session.CaptureFailureEvidence{RequestID: id, Usage: &session.InvocationUsage{Output: new(int64(0))}}}))
+			mustBatch(t, b.AddRunEnded(run, session.RunEnded{Reason: session.RunEndedCaptureFailed, Explanation: new("local capture rejected"), Capture: &session.CaptureFailureEvidence{RequestID: id.RunRelative(), Usage: &session.InvocationUsage{Output: new(int64(0))}}}))
 			before := s.Snapshot()
 			backend.accept = accepted
 			backend.fail = codec.ErrLimitExceeded

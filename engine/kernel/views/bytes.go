@@ -1,6 +1,9 @@
 package views
 
-import "iter"
+import (
+	"iter"
+	"slices"
+)
 
 // Bytes is a read-only view over caller-owned bytes. It retains its backing
 // without copying. The zero value is empty and represents nil backing. Bytes
@@ -12,43 +15,36 @@ type Bytes struct {
 
 // BorrowBytes returns a view that borrows values without copying. Callers must
 // own values and keep it stable for the returned view's lifetime. It does not
-// freeze data or synchronize access. Copy returns owned bytes when needed.
+// freeze data or synchronize access. BorrowBytes takes O(1) time and space.
+// Copy returns owned bytes when needed.
 func BorrowBytes(values []byte) Bytes {
 	return Bytes{values: values}
 }
 
 // Len returns the number of retained bytes. It is zero for a zero view and for
-// non-nil empty backing.
+// non-nil empty backing. Len takes O(1) time and space.
 func (v Bytes) Len() int {
 	return len(v.values)
 }
 
 // At returns the byte at index. It panics when index is out of bounds,
-// including for a zero view.
+// including for a zero view. At takes O(1) time and space.
 func (v Bytes) At(index int) byte {
 	return v.values[index]
 }
 
 // All returns a repeatable iterator over retained bytes in index order. It
 // stops immediately when yield returns false. The iterator borrows the backing,
-// which callers must keep stable for its lifetime.
+// which callers must keep stable for its lifetime. Creating the iterator takes
+// O(1) time and space; visiting n bytes takes O(n) time and O(1) auxiliary space,
+// excluding the consumer's work.
 func (v Bytes) All() iter.Seq2[int, byte] {
-	return func(yield func(int, byte) bool) {
-		for index, value := range v.values {
-			if !yield(index, value) {
-				return
-			}
-		}
-	}
+	return slices.All(v.values)
 }
 
 // Copy returns an owned copy of the retained bytes. It preserves nil backing
-// and returns a non-nil empty slice for non-nil empty backing.
+// and returns a non-nil empty slice for non-nil empty backing. Copy takes O(n)
+// time and space for n bytes; its result is independent of the view's lifetime.
 func (v Bytes) Copy() []byte {
-	if v.values == nil {
-		return nil
-	}
-	copied := make([]byte, len(v.values))
-	copy(copied, v.values)
-	return copied
+	return slices.Clone(v.values)
 }

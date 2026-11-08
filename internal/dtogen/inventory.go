@@ -111,12 +111,11 @@ func directiveTarget(root, source string, words []string) (LoadConfig, error) {
 	flags.StringVar(&target.Dir, "dir", "", "")
 	flags.StringVar(&target.Output, "out", "", "")
 	flags.StringVar(&target.Emit, "emit", "", "")
-	flags.StringVar(&target.Views, "views", "", "")
 	roots := flags.String("types", "", "")
 	if err := flags.Parse(words[5:]); err != nil {
 		return target, err
 	}
-	if flags.NArg() != 0 || !filepath.IsLocal(target.Dir) || filepath.Join(root, target.Dir) != source || (*roots == "" && target.Views == "") || !validOutputName(target.Output) {
+	if flags.NArg() != 0 || !filepath.IsLocal(target.Dir) || filepath.Join(root, target.Dir) != source || *roots == "" || !validOutputName(target.Output) {
 		return target, fmt.Errorf("require declaring-package -dir, root -types and package-local non-test Go -out filename")
 	}
 	if _, err := parseEmit(target.Emit); err != nil {

@@ -7,35 +7,31 @@ import (
 	sessionformat "github.com/stacklok/mecatl/engine/kernel/session/format"
 )
 
-// Created is the public session creation fact. The session's identity is its
-// history identity; no separate session resource is allocated. Zero is invalid.
-// This value has no mutable storage and proves no history membership.
-type Created struct {
-	// HistoryID is the enclosing history identity, omitted from the creation
-	// persistence payload.
-	HistoryID historyid.HistoryID
-}
+// Created is the canonical empty creation payload. History identity belongs to
+// the enclosing envelope, not the payload; CreatedView exposes it on inspection.
+type Created = sessionformat.Created
 
-// Validate checks the history identity, not creation ordering or uniqueness.
-func (v Created) Validate() error {
-	return validateHistoryID(v.HistoryID)
-}
-
-// Clone returns v, which contains no mutable storage.
-func (v Created) Clone() Created { return v }
-
-// Equal reports whether the creation facts have the same history identity.
-func (v Created) Equal(other Created) bool { return v == other }
-
-// newCreatedRecord encodes an owned v1 creation record using explicit payload
-// limits. Failure returns nil; construction does not establish first/unique creation.
+// newCreatedRecord encodes an owned creation record under explicit limits.
+// Failure returns nil; construction does not establish first/unique creation.
 func newCreatedRecord(v Created, limits codec.Limits) (*materializedRecord, error) {
-	if err := v.Validate(); err != nil {
-		return nil, codec.ErrInvalidData
-	}
-	payload, err := codec.Encode(sessionformat.Created{}, limits)
+	payload, err := codec.Encode(v, limits)
 	if err != nil {
 		return nil, err
 	}
 	return decodeMaterialized(format.Record{Kind: sessionformat.KindCreated, KindVersion: sessionformat.Version, Payload: payload}, limits)
+}
+
+// CreatedView retains immutable creation backing and its enclosing history.
+// Zero has zero identity; capture and inspection cost O(1).
+type CreatedView struct {
+	scope historyid.HistoryID
+	value *sessionformat.Created
+}
+
+// HistoryID returns the enclosing history, or zero for a zero view.
+func (v CreatedView) HistoryID() historyid.HistoryID {
+	if v.value == nil {
+		return historyid.HistoryID{}
+	}
+	return v.scope
 }

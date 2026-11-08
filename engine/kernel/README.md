@@ -26,9 +26,13 @@ and reconstruction.
 
 Each layer's `format` package owns its mutable persistence DTOs, generated codecs,
 and payload-local validation. The aggregate owns cross-record legality; valid
-encoding alone proves neither lifecycle legality nor storage acceptance. Commands
-and references needing enclosing-scope translation remain separate from DTOs;
-identity-free payloads share canonical format declarations through public aliases.
+encoding alone proves neither lifecycle legality nor storage acceptance. Session
+payload names alias canonical format declarations. Commit methods take full
+scope separately and reject nonzero synthesized context/allocation fields before
+materializing a local DTO copy. Nested numeric references resolve within the
+explicit destination run; extracting a component preserves no origin proof.
+Occurrence IDs support validated parent/component reconstruction, which neither
+allocates an occurrence nor establishes membership or authority.
 
 [`views`](views/doc.go) supplies read-only borrowed Bytes and SliceView containers.
 Follow its [runtime guidance](views/AGENTS.md) when changing these containers.
@@ -48,8 +52,9 @@ limits, ownership, retry, and concurrency contracts.
 See the [generator guide](../../internal/dtogen/README.md) for supported schemas
 and code generation, and the [codec package contract](codec/doc.go) for resource
 accounting and buffer lifetimes. Each destination owns one handwritten generation
-declaration and artifact. Session's [view mapping](session/views.json) classifies
-every projected backing field as generated, explicitly overridden, or excluded.
+declaration and artifact. Session's [view declaration](session/doc.go) selects
+local DTO-backed handles. Untagged DTO fields get safe same-named getters;
+`view:"manual"` requires a handwritten getter and `view:"-"` omits the field.
 Layouts and scope/tag-selected semantics remain handwritten; generated mechanical
 accessors use only noncapturing adapters. From the repository root:
 

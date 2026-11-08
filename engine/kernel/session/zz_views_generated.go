@@ -8,85 +8,190 @@ import (
 	dtogenViews "github.com/stacklok/mecatl/engine/kernel/views"
 )
 
-// Projection map and source documentation fingerprint: 0c72492ad25e8ea1fcf4e82f1f105a07316bd36092a6318b3350b42c619f63e4.
-// Backing contract for OpaqueProviderDataView.
+// Selected view layouts, source policy and documentation fingerprint: ed1bb06a94662df4dc3ea3c6645dc233f57ca1d7c73e21e5bd4d793392f97b4a.
+// Backing contract for AttributedInputView.
 //
 // Source contract (DTO semantics, not a mutable accessor):
-// OpaqueProviderData retains producer-owned bytes without interpreting their schema.
-// Producer, Format, and Version identify the producer's format revision; they do not
-// make the bytes executable, safe to disclose, or replayable. Data may be nil or
-// empty; both encode as equivalent empty bytes. Assignment shares Data; Clone
-// detaches it.
-//
-// Design status: retaining these metadata fields is normative, but their exact
-// cross-adapter naming and versioning semantics are provisional pending adapter
-// usage. Future consumers must reassess the metadata contract rather than treating
-// it as settled precedent. This does not permit reinterpretation of stored bytes or
-// bypass compatibility review.
-// dtogenViewOpaqueProviderDataView borrows stable backing; it neither freezes nor synchronizes access.
-func dtogenViewOpaqueProviderDataView(value *dtogenType0.OpaqueProviderData) OpaqueProviderDataView {
-	return OpaqueProviderDataView{value: value}
+// AttributedInput retains content, a nonempty UTF-8 logical-origin label, purpose
+// and provenance. Actor is not a provider role, authentication or trust claim.
+// Assignment shares Parts and Source storage; Clone detaches them.
+// dtogenViewAttributedInputView borrows stable backing; it neither freezes nor synchronizes access.
+func dtogenViewAttributedInputView(value *dtogenType0.AttributedInput) AttributedInputView {
+	return AttributedInputView{value: value}
 }
 
 var _ = (*struct {
-	Producer string "cbor:\"p\""
-	Format   string "cbor:\"f\""
-	Version  int64  "cbor:\"v\""
-	Data     []byte "cbor:\"d\""
-})((*dtogenType0.OpaqueProviderData)(nil))
+	Parts   []dtogenType0.ContentPart "cbor:\"c\""
+	Actor   dtogenType0.Actor         "cbor:\"a\""
+	Purpose dtogenType0.PromptPurpose "cbor:\"p\""
+	Source  dtogenType0.ContentSource "cbor:\"s\""
+})((*dtogenType0.AttributedInput)(nil))
 
-// Producer reads Producer in O(1) without copying sibling payloads.
+// Parts reads Parts in O(1) without copying sibling payloads.
 // A zero view returns zero.
-// The receiver retains stable backing for its lifetime.
+// The collection borrows stable backing and adapts elements lazily; derived views retain it.
 // Access neither freezes nor synchronizes backing.
 //
 // Source contract (DTO semantics, not a mutable accessor):
-// OpaqueProviderData retains producer-owned bytes without interpreting their schema.
-// Producer, Format, and Version identify the producer's format revision; they do not
-// make the bytes executable, safe to disclose, or replayable. Data may be nil or
-// empty; both encode as equivalent empty bytes. Assignment shares Data; Clone
-// detaches it.
+// AttributedInput retains content, a nonempty UTF-8 logical-origin label, purpose
+// and provenance. Actor is not a provider role, authentication or trust claim.
+// Assignment shares Parts and Source storage; Clone detaches them.
 //
-// Design status: retaining these metadata fields is normative, but their exact
-// cross-adapter naming and versioning semantics are provisional pending adapter
-// usage. Future consumers must reassess the metadata contract rather than treating
-// it as settled precedent. This does not permit reinterpretation of stored bytes or
-// bypass compatibility review.
-//
-// Producer is the required nonempty UTF-8 producer identifier selected by the
-// producer that owns Data. It is not a kernel identity or authority.
-func (v OpaqueProviderDataView) Producer() string {
+// Parts preserves exact contribution order, including duplicates. Nil and empty
+// are equivalent valid empty contributions; codec traversal validates children.
+func (v AttributedInputView) Parts() dtogenViews.SliceView[dtogenType0.ContentPart, ContentPartView] {
 	if v.value == nil {
-		return *new(string)
+		return dtogenViews.SliceView[dtogenType0.ContentPart, ContentPartView]{}
 	}
-	return v.value.Producer
+	return dtogenViews.BorrowSliceView(v.value.Parts, dtogenViewContentPartView)
 }
 
-// Format reads Format in O(1) without copying sibling payloads.
+// Actor reads Actor in O(1) without copying sibling payloads.
 // A zero view returns zero.
 // The receiver retains stable backing for its lifetime.
 // Access neither freezes nor synchronizes backing.
 //
 // Source contract (DTO semantics, not a mutable accessor):
-// OpaqueProviderData retains producer-owned bytes without interpreting their schema.
-// Producer, Format, and Version identify the producer's format revision; they do not
-// make the bytes executable, safe to disclose, or replayable. Data may be nil or
-// empty; both encode as equivalent empty bytes. Assignment shares Data; Clone
-// detaches it.
+// AttributedInput retains content, a nonempty UTF-8 logical-origin label, purpose
+// and provenance. Actor is not a provider role, authentication or trust claim.
+// Assignment shares Parts and Source storage; Clone detaches them.
 //
-// Design status: retaining these metadata fields is normative, but their exact
-// cross-adapter naming and versioning semantics are provisional pending adapter
-// usage. Future consumers must reassess the metadata contract rather than treating
-// it as settled precedent. This does not permit reinterpretation of stored bytes or
-// bypass compatibility review.
+// Actor is a required nonempty exact UTF-8 logical-origin label. It is open,
+// not an enum, provider role, authenticated identity or trust claim.
+func (v AttributedInputView) Actor() dtogenType0.Actor {
+	if v.value == nil {
+		return *new(dtogenType0.Actor)
+	}
+	return v.value.Actor
+}
+
+// Purpose reads Purpose in O(1) without copying sibling payloads.
+// A zero view returns zero.
+// The receiver retains stable backing for its lifetime.
+// Access neither freezes nor synchronizes backing.
 //
-// Format is the required nonempty UTF-8 name of the producer-owned Data schema.
-// The kernel does not validate or interpret that schema.
-func (v OpaqueProviderDataView) Format() string {
+// Source contract (DTO semantics, not a mutable accessor):
+// AttributedInput retains content, a nonempty UTF-8 logical-origin label, purpose
+// and provenance. Actor is not a provider role, authentication or trust claim.
+// Assignment shares Parts and Source storage; Clone detaches them.
+//
+// Purpose is required: PromptInstructions or PromptContext, independent of Actor.
+func (v AttributedInputView) Purpose() dtogenType0.PromptPurpose {
+	if v.value == nil {
+		return *new(dtogenType0.PromptPurpose)
+	}
+	return v.value.Purpose
+}
+
+// Source reads Source in O(1) without copying sibling payloads.
+// A zero view returns zero.
+// The returned child borrows backing, which must remain stable for every derived view's lifetime.
+// Access neither freezes nor synchronizes backing.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// AttributedInput retains content, a nonempty UTF-8 logical-origin label, purpose
+// and provenance. Actor is not a provider role, authentication or trust claim.
+// Assignment shares Parts and Source storage; Clone detaches them.
+//
+// Source is required provenance, even for empty Parts. Codec traversal validates
+// it separately; public Validate also checks all children.
+func (v AttributedInputView) Source() ContentSourceView {
+	if v.value == nil {
+		return ContentSourceView{}
+	}
+	return dtogenViewContentSourceView(&v.value.Source)
+}
+
+// Backing contract for CaptureFailureEvidenceView.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// CaptureFailureEvidence is ending-owned evidence for an accepted pending request
+// whose complete response could not be captured. It has no response body or private
+// envelope. Assignment shares nested storage; Clone detaches it. RequestID is
+// interpreted within the explicit destination run without origin provenance.
+var _ = (*struct {
+	RequestID uint64                        "cbor:\"q\" view:\"manual\""
+	Evidence  *dtogenType0.ObservedEvidence "cbor:\"e,omitempty\""
+	Usage     *dtogenType0.InvocationUsage  "cbor:\"u,omitempty\""
+})((*dtogenType0.CaptureFailureEvidence)(nil))
+
+// Evidence reads Evidence in O(1) without copying sibling payloads.
+// A zero view or nil field returns zero, false; present zero/empty values return true.
+// The returned child borrows backing, which must remain stable for every derived view's lifetime.
+// Access neither freezes nor synchronizes backing.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// CaptureFailureEvidence is ending-owned evidence for an accepted pending request
+// whose complete response could not be captured. It has no response body or private
+// envelope. Assignment shares nested storage; Clone detaches it. RequestID is
+// interpreted within the explicit destination run without origin provenance.
+//
+// Evidence is optional diagnostic observation for the uncaptured response. Nil
+// omits it; codec traversal validates only its local UTF-8 shape.
+func (v CaptureFailureEvidenceView) Evidence() (ObservedEvidenceView, bool) {
+	if v.value == nil || v.value.Evidence == nil {
+		return ObservedEvidenceView{}, false
+	}
+	return dtogenViewObservedEvidenceView(v.value.Evidence), true
+}
+
+// Usage reads Usage in O(1) without copying sibling payloads.
+// A zero view or nil field returns zero, false; present zero/empty values return true.
+// The returned child borrows backing, which must remain stable for every derived view's lifetime.
+// Access neither freezes nor synchronizes backing.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// CaptureFailureEvidence is ending-owned evidence for an accepted pending request
+// whose complete response could not be captured. It has no response body or private
+// envelope. Assignment shares nested storage; Clone detaches it. RequestID is
+// interpreted within the explicit destination run without origin provenance.
+//
+// Usage is optional provider-reported usage for the uncaptured response. Nil
+// omits it; codec traversal validates local counters and opaque metadata.
+func (v CaptureFailureEvidenceView) Usage() (InvocationUsageView, bool) {
+	if v.value == nil || v.value.Usage == nil {
+		return InvocationUsageView{}, false
+	}
+	return dtogenViewInvocationUsageView(v.value.Usage), true
+}
+
+// Backing contract for ConstructionRecipeView.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// ConstructionRecipe commits to a request-construction algorithm without
+// interpreting it. Parameters may be nil or empty, which are equivalent empty
+// bytes; Check is required and nonempty. Assignment shares byte slices; Clone
+// detaches them.
+// dtogenViewConstructionRecipeView borrows stable backing; it neither freezes nor synchronizes access.
+func dtogenViewConstructionRecipeView(value *dtogenType0.ConstructionRecipe) ConstructionRecipeView {
+	return ConstructionRecipeView{value: value}
+}
+
+var _ = (*struct {
+	Algorithm  string "cbor:\"a\""
+	Version    int64  "cbor:\"v\""
+	Parameters []byte "cbor:\"p\""
+	Check      []byte "cbor:\"c\""
+})((*dtogenType0.ConstructionRecipe)(nil))
+
+// Algorithm reads Algorithm in O(1) without copying sibling payloads.
+// A zero view returns zero.
+// The receiver retains stable backing for its lifetime.
+// Access neither freezes nor synchronizes backing.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// ConstructionRecipe commits to a request-construction algorithm without
+// interpreting it. Parameters may be nil or empty, which are equivalent empty
+// bytes; Check is required and nonempty. Assignment shares byte slices; Clone
+// detaches them.
+//
+// Algorithm is the required nonempty UTF-8 name of the construction algorithm.
+// This payload does not resolve or execute the named algorithm.
+func (v ConstructionRecipeView) Algorithm() string {
 	if v.value == nil {
 		return *new(string)
 	}
-	return v.value.Format
+	return v.value.Algorithm
 }
 
 // Version reads Version in O(1) without copying sibling payloads.
@@ -95,52 +200,401 @@ func (v OpaqueProviderDataView) Format() string {
 // Access neither freezes nor synchronizes backing.
 //
 // Source contract (DTO semantics, not a mutable accessor):
-// OpaqueProviderData retains producer-owned bytes without interpreting their schema.
-// Producer, Format, and Version identify the producer's format revision; they do not
-// make the bytes executable, safe to disclose, or replayable. Data may be nil or
-// empty; both encode as equivalent empty bytes. Assignment shares Data; Clone
-// detaches it.
+// ConstructionRecipe commits to a request-construction algorithm without
+// interpreting it. Parameters may be nil or empty, which are equivalent empty
+// bytes; Check is required and nonempty. Assignment shares byte slices; Clone
+// detaches them.
 //
-// Design status: retaining these metadata fields is normative, but their exact
-// cross-adapter naming and versioning semantics are provisional pending adapter
-// usage. Future consumers must reassess the metadata contract rather than treating
-// it as settled precedent. This does not permit reinterpretation of stored bytes or
-// bypass compatibility review.
-//
-// Version is the required positive producer-defined revision of Format. It is
-// not the enclosing session payload schema version.
-func (v OpaqueProviderDataView) Version() int64 {
+// Version is the required positive algorithm-defined revision, not the session
+// payload schema version.
+func (v ConstructionRecipeView) Version() int64 {
 	if v.value == nil {
 		return *new(int64)
 	}
 	return v.value.Version
 }
 
-// Data reads Data in O(1) without copying sibling payloads.
+// Parameters reads Parameters in O(1) without copying sibling payloads.
 // A zero view returns zero.
 // The returned bytes borrow stable backing for their lifetime; only Copy detaches bytes.
 // Access neither freezes nor synchronizes backing.
 //
 // Source contract (DTO semantics, not a mutable accessor):
-// OpaqueProviderData retains producer-owned bytes without interpreting their schema.
-// Producer, Format, and Version identify the producer's format revision; they do not
-// make the bytes executable, safe to disclose, or replayable. Data may be nil or
-// empty; both encode as equivalent empty bytes. Assignment shares Data; Clone
-// detaches it.
+// ConstructionRecipe commits to a request-construction algorithm without
+// interpreting it. Parameters may be nil or empty, which are equivalent empty
+// bytes; Check is required and nonempty. Assignment shares byte slices; Clone
+// detaches them.
 //
-// Design status: retaining these metadata fields is normative, but their exact
-// cross-adapter naming and versioning semantics are provisional pending adapter
-// usage. Future consumers must reassess the metadata contract rather than treating
-// it as settled precedent. This does not permit reinterpretation of stored bytes or
-// bypass compatibility review.
-//
-// Data is retained opaque producer-owned payload bytes. Nil and empty are
-// equivalent empty bytes; validation does not inspect their schema or content.
-func (v OpaqueProviderDataView) Data() dtogenViews.Bytes {
+// Parameters are optional opaque algorithm input bytes. Nil and empty are
+// equivalent; this payload does not interpret their schema.
+func (v ConstructionRecipeView) Parameters() dtogenViews.Bytes {
 	if v.value == nil {
 		return dtogenViews.Bytes{}
 	}
-	return dtogenViews.BorrowBytes(v.value.Data)
+	return dtogenViews.BorrowBytes(v.value.Parameters)
+}
+
+// Check reads Check in O(1) without copying sibling payloads.
+// A zero view returns zero.
+// The returned bytes borrow stable backing for their lifetime; only Copy detaches bytes.
+// Access neither freezes nor synchronizes backing.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// ConstructionRecipe commits to a request-construction algorithm without
+// interpreting it. Parameters may be nil or empty, which are equivalent empty
+// bytes; Check is required and nonempty. Assignment shares byte slices; Clone
+// detaches them.
+//
+// Check is required nonempty opaque bytes committed by Algorithm and Version.
+// Local validation requires presence but does not interpret or verify it.
+func (v ConstructionRecipeView) Check() dtogenViews.Bytes {
+	if v.value == nil {
+		return dtogenViews.Bytes{}
+	}
+	return dtogenViews.BorrowBytes(v.value.Check)
+}
+
+// Backing contract for ContentPartView.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// ContentPart requires exactly one text or media branch. A non-nil Text preserves
+// empty text; zero is invalid. Assignment shares pointers; Clone detaches them.
+// dtogenViewContentPartView borrows stable backing; it neither freezes nor synchronizes access.
+func dtogenViewContentPartView(value *dtogenType0.ContentPart) ContentPartView {
+	return ContentPartView{value: value}
+}
+
+var _ = (*struct {
+	Text  *string            "cbor:\"t,omitempty\""
+	Media *dtogenType0.Media "cbor:\"m,omitempty\""
+})((*dtogenType0.ContentPart)(nil))
+
+// Text reads Text in O(1) without copying sibling payloads.
+// A zero view or nil field returns zero, false; present zero/empty values return true.
+// The receiver retains stable backing for its lifetime.
+// Access neither freezes nor synchronizes backing.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// ContentPart requires exactly one text or media branch. A non-nil Text preserves
+// empty text; zero is invalid. Assignment shares pointers; Clone detaches them.
+//
+// Text is exact UTF-8 text, including explicitly empty text.
+func (v ContentPartView) Text() (string, bool) {
+	if v.value == nil || v.value.Text == nil {
+		return *new(string), false
+	}
+	return *v.value.Text, true
+}
+
+// Media reads Media in O(1) without copying sibling payloads.
+// A zero view or nil field returns zero, false; present zero/empty values return true.
+// The returned child borrows backing, which must remain stable for every derived view's lifetime.
+// Access neither freezes nor synchronizes backing.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// ContentPart requires exactly one text or media branch. A non-nil Text preserves
+// empty text; zero is invalid. Assignment shares pointers; Clone detaches them.
+//
+// Media is the media branch; codec traversal separately validates the child.
+func (v ContentPartView) Media() (MediaView, bool) {
+	if v.value == nil || v.value.Media == nil {
+		return MediaView{}, false
+	}
+	return dtogenViewMediaView(v.value.Media), true
+}
+
+// Backing contract for ContentSourceView.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// ContentSource retains a nonempty explanation and optional contributing file
+// label. It does not certify trust or exact copying. Assignment shares the file
+// pointer; Clone detaches it. Zero is invalid.
+// dtogenViewContentSourceView borrows stable backing; it neither freezes nor synchronizes access.
+func dtogenViewContentSourceView(value *dtogenType0.ContentSource) ContentSourceView {
+	return ContentSourceView{value: value}
+}
+
+var _ = (*struct {
+	Description   string                           "cbor:\"d\""
+	WorkspaceFile *dtogenType0.WorkspaceFileSource "cbor:\"w,omitempty\""
+})((*dtogenType0.ContentSource)(nil))
+
+// Description reads Description in O(1) without copying sibling payloads.
+// A zero view returns zero.
+// The receiver retains stable backing for its lifetime.
+// Access neither freezes nor synchronizes backing.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// ContentSource retains a nonempty explanation and optional contributing file
+// label. It does not certify trust or exact copying. Assignment shares the file
+// pointer; Clone detaches it. Zero is invalid.
+//
+// Description is a required nonempty exact UTF-8 explanation of provenance,
+// checked locally by Validate; it is not a trust or exact-copy assertion.
+func (v ContentSourceView) Description() string {
+	if v.value == nil {
+		return *new(string)
+	}
+	return v.value.Description
+}
+
+// WorkspaceFile reads WorkspaceFile in O(1) without copying sibling payloads.
+// A zero view or nil field returns zero, false; present zero/empty values return true.
+// The returned child borrows backing, which must remain stable for every derived view's lifetime.
+// Access neither freezes nor synchronizes backing.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// ContentSource retains a nonempty explanation and optional contributing file
+// label. It does not certify trust or exact copying. Assignment shares the file
+// pointer; Clone detaches it. Zero is invalid.
+//
+// WorkspaceFile optionally names a contributing file in its originating
+// workspace. Nil means no file label; codec traversal validates a present child.
+// It grants no file access and loading never resolves it.
+func (v ContentSourceView) WorkspaceFile() (WorkspaceFileSourceView, bool) {
+	if v.value == nil || v.value.WorkspaceFile == nil {
+		return WorkspaceFileSourceView{}, false
+	}
+	return dtogenViewWorkspaceFileSourceView(v.value.WorkspaceFile), true
+}
+
+// Backing contract for CreatedView.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// Created is the empty creation payload. Its zero value is locally valid; the
+// history identity is carried only by the root history envelope.
+var _ = (*struct{})((*dtogenType0.Created)(nil))
+
+// Backing contract for EffectiveInputView.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// EffectiveInput is one ordered incremental contribution owned by a run, not a
+// request or replacement. Nil and empty Inputs are equal; duplicates are retained.
+// Assignment shares nested storage; Clone detaches it. Session authoring supplies
+// the destination separately and requires RunID zero; persisted validation does not.
+var _ = (*struct {
+	RunID  uint64                  "cbor:\"r\" view:\"manual\""
+	Inputs []dtogenType0.InputItem "cbor:\"i\" view:\"manual\""
+})((*dtogenType0.EffectiveInput)(nil))
+
+// Backing contract for InputItemView.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// InputItem selects a whole user submission or inline attributed content. UserInputID
+// is a positive ordinal in the enclosing EffectiveInput's run. Assignment shares
+// pointers and children; Clone detaches them. The component is interpreted in the
+// explicit destination run when authored, without proof of its extraction origin.
+var _ = (*struct {
+	UserInputID *uint64                      "cbor:\"u,omitempty\" view:\"manual\""
+	Inline      *dtogenType0.AttributedInput "cbor:\"i,omitempty\""
+})((*dtogenType0.InputItem)(nil))
+
+// Inline reads Inline in O(1) without copying sibling payloads.
+// A zero view or nil field returns zero, false; present zero/empty values return true.
+// The returned child borrows backing, which must remain stable for every derived view's lifetime.
+// Access neither freezes nor synchronizes backing.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// InputItem selects a whole user submission or inline attributed content. UserInputID
+// is a positive ordinal in the enclosing EffectiveInput's run. Assignment shares
+// pointers and children; Clone detaches them. The component is interpreted in the
+// explicit destination run when authored, without proof of its extraction origin.
+//
+// Inline optionally retains attributed content, including an empty contribution.
+// UserInputID must be nil. Codec traversal validates a present child; neither
+// branch may be absent together, and both may not be present together.
+func (v InputItemView) Inline() (AttributedInputView, bool) {
+	if v.value == nil || v.value.Inline == nil {
+		return AttributedInputView{}, false
+	}
+	return dtogenViewAttributedInputView(v.value.Inline), true
+}
+
+// Backing contract for InstructionBlockView.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// InstructionBlock retains one ordered instruction contribution and its declared
+// origin. Its purpose is instructions by construction, not inferred from a file.
+// Assignment shares nested storage; Clone detaches it.
+// dtogenViewInstructionBlockView borrows stable backing; it neither freezes nor synchronizes access.
+func dtogenViewInstructionBlockView(value *dtogenType0.InstructionBlock) InstructionBlockView {
+	return InstructionBlockView{value: value}
+}
+
+var _ = (*struct {
+	Parts  []dtogenType0.ContentPart "cbor:\"c\""
+	Source dtogenType0.ContentSource "cbor:\"s\""
+})((*dtogenType0.InstructionBlock)(nil))
+
+// Parts reads Parts in O(1) without copying sibling payloads.
+// A zero view returns zero.
+// The collection borrows stable backing and adapts elements lazily; derived views retain it.
+// Access neither freezes nor synchronizes backing.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// InstructionBlock retains one ordered instruction contribution and its declared
+// origin. Its purpose is instructions by construction, not inferred from a file.
+// Assignment shares nested storage; Clone detaches it.
+//
+// Parts preserves exact instruction order, including duplicates. Nil and empty
+// are equivalent valid empty contributions; codec traversal validates children.
+func (v InstructionBlockView) Parts() dtogenViews.SliceView[dtogenType0.ContentPart, ContentPartView] {
+	if v.value == nil {
+		return dtogenViews.SliceView[dtogenType0.ContentPart, ContentPartView]{}
+	}
+	return dtogenViews.BorrowSliceView(v.value.Parts, dtogenViewContentPartView)
+}
+
+// Source reads Source in O(1) without copying sibling payloads.
+// A zero view returns zero.
+// The returned child borrows backing, which must remain stable for every derived view's lifetime.
+// Access neither freezes nor synchronizes backing.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// InstructionBlock retains one ordered instruction contribution and its declared
+// origin. Its purpose is instructions by construction, not inferred from a file.
+// Assignment shares nested storage; Clone detaches it.
+//
+// Source is required provenance even for an empty block; it does not confer
+// authority. Codec traversal validates the source and its children.
+func (v InstructionBlockView) Source() ContentSourceView {
+	if v.value == nil {
+		return ContentSourceView{}
+	}
+	return dtogenViewContentSourceView(&v.value.Source)
+}
+
+// Backing contract for InstructionsView.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// Instructions is a complete session-scoped ordered root-instruction replacement.
+// Nil and empty Blocks are equivalent explicit empty replacements; a single empty
+// block is distinct and still needs provenance. Assignment shares Blocks and
+// children; Clone detaches them. History scope comes from the enclosing envelope.
+var _ = (*struct {
+	Blocks []dtogenType0.InstructionBlock "cbor:\"b\""
+})((*dtogenType0.Instructions)(nil))
+
+// Blocks reads Blocks in O(1) without copying sibling payloads.
+// A zero view returns zero.
+// The collection borrows stable backing and adapts elements lazily; derived views retain it.
+// Access neither freezes nor synchronizes backing.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// Instructions is a complete session-scoped ordered root-instruction replacement.
+// Nil and empty Blocks are equivalent explicit empty replacements; a single empty
+// block is distinct and still needs provenance. Assignment shares Blocks and
+// children; Clone detaches them. History scope comes from the enclosing envelope.
+//
+// Blocks preserves instruction contribution order and boundaries, including
+// duplicates and empty blocks. Nil and empty explicitly clear root instructions.
+// Codec traversal validates children; history identity is omitted here and
+// restored from the enclosing envelope at the domain conversion boundary.
+func (v InstructionsView) Blocks() dtogenViews.SliceView[dtogenType0.InstructionBlock, InstructionBlockView] {
+	if v.value == nil {
+		return dtogenViews.SliceView[dtogenType0.InstructionBlock, InstructionBlockView]{}
+	}
+	return dtogenViews.BorrowSliceView(v.value.Blocks, dtogenViewInstructionBlockView)
+}
+
+// Backing contract for InvocationFailureView.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// InvocationFailure records an observed invocation or delivery failure without
+// constructing a provider response or asserting no remote processing. Assignment
+// shares nested storage; Clone detaches it. Session authoring supplies the full
+// destination request separately and requires RunID and RequestID zero. Validate
+// requires the fully populated persisted shape.
+var _ = (*struct {
+	RunID       uint64                             "cbor:\"r\" view:\"-\""
+	RequestID   uint64                             "cbor:\"q\" view:\"manual\""
+	Class       dtogenType0.InvocationFailureClass "cbor:\"c\""
+	Explanation *string                            "cbor:\"e,omitempty\""
+	Evidence    *dtogenType0.ObservedEvidence      "cbor:\"v,omitempty\""
+	Usage       *dtogenType0.InvocationUsage       "cbor:\"u,omitempty\""
+})((*dtogenType0.InvocationFailure)(nil))
+
+// Class reads Class in O(1) without copying sibling payloads.
+// A zero view returns zero.
+// The receiver retains stable backing for its lifetime.
+// Access neither freezes nor synchronizes backing.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// InvocationFailure records an observed invocation or delivery failure without
+// constructing a provider response or asserting no remote processing. Assignment
+// shares nested storage; Clone detaches it. Session authoring supplies the full
+// destination request separately and requires RunID and RequestID zero. Validate
+// requires the fully populated persisted shape.
+//
+// Class is required and must be an InvocationFailure closed-vocabulary value.
+func (v InvocationFailureView) Class() dtogenType0.InvocationFailureClass {
+	if v.value == nil {
+		return *new(dtogenType0.InvocationFailureClass)
+	}
+	return v.value.Class
+}
+
+// Explanation reads Explanation in O(1) without copying sibling payloads.
+// A zero view or nil field returns zero, false; present zero/empty values return true.
+// The receiver retains stable backing for its lifetime.
+// Access neither freezes nor synchronizes backing.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// InvocationFailure records an observed invocation or delivery failure without
+// constructing a provider response or asserting no remote processing. Assignment
+// shares nested storage; Clone detaches it. Session authoring supplies the full
+// destination request separately and requires RunID and RequestID zero. Validate
+// requires the fully populated persisted shape.
+//
+// Explanation is optional UTF-8 owner-provided human-readable failure detail.
+// Nil omits it; non-nil empty is retained. It is distinct from Evidence.Detail.
+func (v InvocationFailureView) Explanation() (string, bool) {
+	if v.value == nil || v.value.Explanation == nil {
+		return *new(string), false
+	}
+	return *v.value.Explanation, true
+}
+
+// Evidence reads Evidence in O(1) without copying sibling payloads.
+// A zero view or nil field returns zero, false; present zero/empty values return true.
+// The returned child borrows backing, which must remain stable for every derived view's lifetime.
+// Access neither freezes nor synchronizes backing.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// InvocationFailure records an observed invocation or delivery failure without
+// constructing a provider response or asserting no remote processing. Assignment
+// shares nested storage; Clone detaches it. Session authoring supplies the full
+// destination request separately and requires RunID and RequestID zero. Validate
+// requires the fully populated persisted shape.
+//
+// Evidence is optional diagnostic observation. Nil omits it; codec traversal
+// validates its local UTF-8 shape, not disclosure safety or remote effects.
+func (v InvocationFailureView) Evidence() (ObservedEvidenceView, bool) {
+	if v.value == nil || v.value.Evidence == nil {
+		return ObservedEvidenceView{}, false
+	}
+	return dtogenViewObservedEvidenceView(v.value.Evidence), true
+}
+
+// Usage reads Usage in O(1) without copying sibling payloads.
+// A zero view or nil field returns zero, false; present zero/empty values return true.
+// The returned child borrows backing, which must remain stable for every derived view's lifetime.
+// Access neither freezes nor synchronizes backing.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// InvocationFailure records an observed invocation or delivery failure without
+// constructing a provider response or asserting no remote processing. Assignment
+// shares nested storage; Clone detaches it. Session authoring supplies the full
+// destination request separately and requires RunID and RequestID zero. Validate
+// requires the fully populated persisted shape.
+//
+// Usage is optional provider-reported usage. Nil omits it; codec traversal
+// validates local counters and optional opaque metadata.
+func (v InvocationFailureView) Usage() (InvocationUsageView, bool) {
+	if v.value == nil || v.value.Usage == nil {
+		return InvocationUsageView{}, false
+	}
+	return dtogenViewInvocationUsageView(v.value.Usage), true
 }
 
 // Backing contract for InvocationUsageView.
@@ -286,6 +740,437 @@ func (v InvocationUsageView) Raw() (OpaqueProviderDataView, bool) {
 	return dtogenViewOpaqueProviderDataView(v.value.Raw), true
 }
 
+// Backing contract for MediaView.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// Media retains exact UTF-8 metadata and a tagged source. Assignment shares
+// InlineData; Clone detaches it. An inline tag preserves presence with empty bytes.
+// References grant no access or dereference authority.
+// dtogenViewMediaView borrows stable backing; it neither freezes nor synchronizes access.
+func dtogenViewMediaView(value *dtogenType0.Media) MediaView { return MediaView{value: value} }
+
+var _ = (*struct {
+	Kind                dtogenType0.MediaKind       "cbor:\"k\""
+	Source              dtogenType0.MediaSourceKind "cbor:\"s\""
+	InlineData          []byte                      "cbor:\"d\" view:\"manual\""
+	RemoteURI           string                      "cbor:\"u\" view:\"manual\""
+	ProviderName        string                      "cbor:\"p\" view:\"manual\""
+	ProviderScope       string                      "cbor:\"o\" view:\"manual\""
+	ProviderReferenceID string                      "cbor:\"r\" view:\"manual\""
+	MIMEType            string                      "cbor:\"m\""
+	FormatHint          string                      "cbor:\"f\""
+	Filename            string                      "cbor:\"n\""
+	Title               string                      "cbor:\"t\""
+})((*dtogenType0.Media)(nil))
+
+// Kind reads Kind in O(1) without copying sibling payloads.
+// A zero view returns zero.
+// The receiver retains stable backing for its lifetime.
+// Access neither freezes nor synchronizes backing.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// Media retains exact UTF-8 metadata and a tagged source. Assignment shares
+// InlineData; Clone detaches it. An inline tag preserves presence with empty bytes.
+// References grant no access or dereference authority.
+//
+// Kind is required: MediaKindImage, MediaKindAudio or MediaKindDocument.
+func (v MediaView) Kind() dtogenType0.MediaKind {
+	if v.value == nil {
+		return *new(dtogenType0.MediaKind)
+	}
+	return v.value.Kind
+}
+
+// Source reads Source in O(1) without copying sibling payloads.
+// A zero view returns zero.
+// The receiver retains stable backing for its lifetime.
+// Access neither freezes nor synchronizes backing.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// Media retains exact UTF-8 metadata and a tagged source. Assignment shares
+// InlineData; Clone detaches it. An inline tag preserves presence with empty bytes.
+// References grant no access or dereference authority.
+//
+// Source selects the required storage variant and its exclusive fields.
+func (v MediaView) Source() dtogenType0.MediaSourceKind {
+	if v.value == nil {
+		return *new(dtogenType0.MediaSourceKind)
+	}
+	return v.value.Source
+}
+
+// MIMEType reads MIMEType in O(1) without copying sibling payloads.
+// A zero view returns zero.
+// The receiver retains stable backing for its lifetime.
+// Access neither freezes nor synchronizes backing.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// Media retains exact UTF-8 metadata and a tagged source. Assignment shares
+// InlineData; Clone detaches it. An inline tag preserves presence with empty bytes.
+// References grant no access or dereference authority.
+//
+// MIMEType is required for inline media, optional for remote/provider media.
+func (v MediaView) MIMEType() string {
+	if v.value == nil {
+		return *new(string)
+	}
+	return v.value.MIMEType
+}
+
+// FormatHint reads FormatHint in O(1) without copying sibling payloads.
+// A zero view returns zero.
+// The receiver retains stable backing for its lifetime.
+// Access neither freezes nor synchronizes backing.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// Media retains exact UTF-8 metadata and a tagged source. Assignment shares
+// InlineData; Clone detaches it. An inline tag preserves presence with empty bytes.
+// References grant no access or dereference authority.
+//
+// FormatHint is an optional exact format hint for any source.
+func (v MediaView) FormatHint() string {
+	if v.value == nil {
+		return *new(string)
+	}
+	return v.value.FormatHint
+}
+
+// Filename reads Filename in O(1) without copying sibling payloads.
+// A zero view returns zero.
+// The receiver retains stable backing for its lifetime.
+// Access neither freezes nor synchronizes backing.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// Media retains exact UTF-8 metadata and a tagged source. Assignment shares
+// InlineData; Clone detaches it. An inline tag preserves presence with empty bytes.
+// References grant no access or dereference authority.
+//
+// Filename is an optional document-only filename label.
+func (v MediaView) Filename() string {
+	if v.value == nil {
+		return *new(string)
+	}
+	return v.value.Filename
+}
+
+// Title reads Title in O(1) without copying sibling payloads.
+// A zero view returns zero.
+// The receiver retains stable backing for its lifetime.
+// Access neither freezes nor synchronizes backing.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// Media retains exact UTF-8 metadata and a tagged source. Assignment shares
+// InlineData; Clone detaches it. An inline tag preserves presence with empty bytes.
+// References grant no access or dereference authority.
+//
+// Title is an optional document-only title.
+func (v MediaView) Title() string {
+	if v.value == nil {
+		return *new(string)
+	}
+	return v.value.Title
+}
+
+// Backing contract for ModelBindingView.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// ModelBinding retains declared logical preparation choices, not observed upstream
+// identity or compatibility. Settings is exact explicit JSON supplied by the caller,
+// never resolved defaults or credentials. Assignment shares Settings; Clone detaches
+// it. Zero is invalid. History identity is omitted here and restored from the
+// enclosing envelope at the domain conversion boundary.
+var _ = (*struct {
+	Route    string "cbor:\"r\""
+	API      string "cbor:\"a\""
+	Model    string "cbor:\"m\""
+	Settings []byte "cbor:\"s\""
+})((*dtogenType0.ModelBinding)(nil))
+
+// Route reads Route in O(1) without copying sibling payloads.
+// A zero view returns zero.
+// The receiver retains stable backing for its lifetime.
+// Access neither freezes nor synchronizes backing.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// ModelBinding retains declared logical preparation choices, not observed upstream
+// identity or compatibility. Settings is exact explicit JSON supplied by the caller,
+// never resolved defaults or credentials. Assignment shares Settings; Clone detaches
+// it. Zero is invalid. History identity is omitted here and restored from the
+// enclosing envelope at the domain conversion boundary.
+//
+// Route is a required nonempty exact UTF-8 logical provider/route name interpreted
+// relative to the preparing harness's configuration, not a global provider
+// identity or an observed upstream endpoint. Loading does not resolve it.
+func (v ModelBindingView) Route() string {
+	if v.value == nil {
+		return *new(string)
+	}
+	return v.value.Route
+}
+
+// API reads API in O(1) without copying sibling payloads.
+// A zero view returns zero.
+// The receiver retains stable backing for its lifetime.
+// Access neither freezes nor synchronizes backing.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// ModelBinding retains declared logical preparation choices, not observed upstream
+// identity or compatibility. Settings is exact explicit JSON supplied by the caller,
+// never resolved defaults or credentials. Assignment shares Settings; Clone detaches
+// it. Zero is invalid. History identity is omitted here and restored from the
+// enclosing envelope at the domain conversion boundary.
+//
+// API is the required nonempty exact UTF-8 declared API name, not a compatibility
+// assertion. Validate checks syntax only, without provider interpretation.
+func (v ModelBindingView) API() string {
+	if v.value == nil {
+		return *new(string)
+	}
+	return v.value.API
+}
+
+// Model reads Model in O(1) without copying sibling payloads.
+// A zero view returns zero.
+// The receiver retains stable backing for its lifetime.
+// Access neither freezes nor synchronizes backing.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// ModelBinding retains declared logical preparation choices, not observed upstream
+// identity or compatibility. Settings is exact explicit JSON supplied by the caller,
+// never resolved defaults or credentials. Assignment shares Settings; Clone detaches
+// it. Zero is invalid. History identity is omitted here and restored from the
+// enclosing envelope at the domain conversion boundary.
+//
+// Model is the required nonempty exact UTF-8 declared model name, not an observed
+// upstream model identity. Loading does not resolve or verify it.
+func (v ModelBindingView) Model() string {
+	if v.value == nil {
+		return *new(string)
+	}
+	return v.value.Model
+}
+
+// Settings reads Settings in O(1) without copying sibling payloads.
+// A zero view returns zero.
+// The returned bytes borrow stable backing for their lifetime; only Copy detaches bytes.
+// Access neither freezes nor synchronizes backing.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// ModelBinding retains declared logical preparation choices, not observed upstream
+// identity or compatibility. Settings is exact explicit JSON supplied by the caller,
+// never resolved defaults or credentials. Assignment shares Settings; Clone detaches
+// it. Zero is invalid. History identity is omitted here and restored from the
+// enclosing envelope at the domain conversion boundary.
+//
+// Settings is required explicit valid JSON, preserved byte-for-byte, not resolved
+// defaults or credentials. Validate checks JSON syntax, not provider policy.
+func (v ModelBindingView) Settings() dtogenViews.Bytes {
+	if v.value == nil {
+		return dtogenViews.Bytes{}
+	}
+	return dtogenViews.BorrowBytes(v.value.Settings)
+}
+
+// Backing contract for ModelRequestView.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// ModelRequest is one invocation commitment. RetryOf, when present, is an earlier
+// request ordinal in the same enclosing run; membership and ordering are aggregate
+// concerns. Assignment shares nested byte slices; Clone detaches them.
+// Session authoring supplies destination scope separately and requires RunID and
+// ID zero. RetryOf is interpreted within that destination run without origin
+// provenance. Validate requires the fully populated persisted shape.
+var _ = (*struct {
+	RunID   uint64                         "cbor:\"r\" view:\"-\""
+	ID      uint64                         "cbor:\"o\" view:\"manual\""
+	Source  dtogenType0.SourceHead         "cbor:\"s\""
+	Recipe  dtogenType0.ConstructionRecipe "cbor:\"c\""
+	RetryOf *uint64                        "cbor:\"x,omitempty\" view:\"manual\""
+})((*dtogenType0.ModelRequest)(nil))
+
+// Source reads Source in O(1) without copying sibling payloads.
+// A zero view returns zero.
+// The returned child borrows backing, which must remain stable for every derived view's lifetime.
+// Access neither freezes nor synchronizes backing.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// ModelRequest is one invocation commitment. RetryOf, when present, is an earlier
+// request ordinal in the same enclosing run; membership and ordering are aggregate
+// concerns. Assignment shares nested byte slices; Clone detaches them.
+// Session authoring supplies destination scope separately and requires RunID and
+// ID zero. RetryOf is interpreted within that destination run without origin
+// provenance. Validate requires the fully populated persisted shape.
+//
+// Source is the required accepted head used for request construction. Local
+// traversal validates its shape; aggregate reconstruction verifies membership.
+func (v ModelRequestView) Source() SourceHeadView {
+	if v.value == nil {
+		return SourceHeadView{}
+	}
+	return dtogenViewSourceHeadView(&v.value.Source)
+}
+
+// Recipe reads Recipe in O(1) without copying sibling payloads.
+// A zero view returns zero.
+// The returned child borrows backing, which must remain stable for every derived view's lifetime.
+// Access neither freezes nor synchronizes backing.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// ModelRequest is one invocation commitment. RetryOf, when present, is an earlier
+// request ordinal in the same enclosing run; membership and ordering are aggregate
+// concerns. Assignment shares nested byte slices; Clone detaches them.
+// Session authoring supplies destination scope separately and requires RunID and
+// ID zero. RetryOf is interpreted within that destination run without origin
+// provenance. Validate requires the fully populated persisted shape.
+//
+// Recipe is the required opaque construction commitment. Local traversal checks
+// its syntax, not that it reproduces a request or authorizes invocation.
+func (v ModelRequestView) Recipe() ConstructionRecipeView {
+	if v.value == nil {
+		return ConstructionRecipeView{}
+	}
+	return dtogenViewConstructionRecipeView(&v.value.Recipe)
+}
+
+// Backing contract for ModelResponseView.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// ModelResponse is an atomic terminal provider response. Private is one
+// response-wide envelope, not per-item provider identity. Assignment shares nested
+// storage; Clone detaches it. Session authoring supplies the destination request
+// separately and requires RunID and RequestID zero. Validate checks persisted IDs.
+var _ = (*struct {
+	RunID              uint64                            "cbor:\"r\" view:\"-\""
+	RequestID          uint64                            "cbor:\"q\" view:\"manual\""
+	Terminal           dtogenType0.ResponseTerminalClass "cbor:\"t\""
+	ProviderStopReason *string                           "cbor:\"p,omitempty\""
+	Items              []dtogenType0.ResponseItem        "cbor:\"i\""
+	Evidence           *dtogenType0.ObservedEvidence     "cbor:\"e,omitempty\""
+	Usage              *dtogenType0.InvocationUsage      "cbor:\"u,omitempty\""
+	Private            *dtogenType0.OpaqueProviderData   "cbor:\"x,omitempty\""
+})((*dtogenType0.ModelResponse)(nil))
+
+// Terminal reads Terminal in O(1) without copying sibling payloads.
+// A zero view returns zero.
+// The receiver retains stable backing for its lifetime.
+// Access neither freezes nor synchronizes backing.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// ModelResponse is an atomic terminal provider response. Private is one
+// response-wide envelope, not per-item provider identity. Assignment shares nested
+// storage; Clone detaches it. Session authoring supplies the destination request
+// separately and requires RunID and RequestID zero. Validate checks persisted IDs.
+//
+// Terminal is a required normalized ResponseTerminal class; empty and unknown
+// classes are rejected independently of the original provider stop reason.
+func (v ModelResponseView) Terminal() dtogenType0.ResponseTerminalClass {
+	if v.value == nil {
+		return *new(dtogenType0.ResponseTerminalClass)
+	}
+	return v.value.Terminal
+}
+
+// ProviderStopReason reads ProviderStopReason in O(1) without copying sibling payloads.
+// A zero view or nil field returns zero, false; present zero/empty values return true.
+// The receiver retains stable backing for its lifetime.
+// Access neither freezes nor synchronizes backing.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// ModelResponse is an atomic terminal provider response. Private is one
+// response-wide envelope, not per-item provider identity. Assignment shares nested
+// storage; Clone detaches it. Session authoring supplies the destination request
+// separately and requires RunID and RequestID zero. Validate checks persisted IDs.
+//
+// ProviderStopReason retains the provider's original stop/finish reason, not
+// reasoning content or a reasoning summary. The vocabulary is provider-owned
+// and open; any UTF-8 string is allowed. Nil omits key p; non-nil empty is retained.
+func (v ModelResponseView) ProviderStopReason() (string, bool) {
+	if v.value == nil || v.value.ProviderStopReason == nil {
+		return *new(string), false
+	}
+	return *v.value.ProviderStopReason, true
+}
+
+// Items reads Items in O(1) without copying sibling payloads.
+// A zero view returns zero.
+// The collection borrows stable backing and adapts elements lazily; derived views retain it.
+// Access neither freezes nor synchronizes backing.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// ModelResponse is an atomic terminal provider response. Private is one
+// response-wide envelope, not per-item provider identity. Assignment shares nested
+// storage; Clone detaches it. Session authoring supplies the destination request
+// separately and requires RunID and RequestID zero. Validate checks persisted IDs.
+//
+// Items preserve complete response order, including content/call interleaving.
+// Nil and empty are equivalent empty responses; codec traversal validates items.
+func (v ModelResponseView) Items() dtogenViews.SliceView[dtogenType0.ResponseItem, ResponseItemView] {
+	if v.value == nil {
+		return dtogenViews.SliceView[dtogenType0.ResponseItem, ResponseItemView]{}
+	}
+	return dtogenViews.BorrowSliceView(v.value.Items, dtogenViewResponseItemView)
+}
+
+// Evidence reads Evidence in O(1) without copying sibling payloads.
+// A zero view or nil field returns zero, false; present zero/empty values return true.
+// The returned child borrows backing, which must remain stable for every derived view's lifetime.
+// Access neither freezes nor synchronizes backing.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// ModelResponse is an atomic terminal provider response. Private is one
+// response-wide envelope, not per-item provider identity. Assignment shares nested
+// storage; Clone detaches it. Session authoring supplies the destination request
+// separately and requires RunID and RequestID zero. Validate checks persisted IDs.
+//
+// Evidence is optional diagnostic observation. Nil omits it; traversal validates
+// only its local UTF-8 contract, not disclosure safety or remote effects.
+func (v ModelResponseView) Evidence() (ObservedEvidenceView, bool) {
+	if v.value == nil || v.value.Evidence == nil {
+		return ObservedEvidenceView{}, false
+	}
+	return dtogenViewObservedEvidenceView(v.value.Evidence), true
+}
+
+// Usage reads Usage in O(1) without copying sibling payloads.
+// A zero view or nil field returns zero, false; present zero/empty values return true.
+// The returned child borrows backing, which must remain stable for every derived view's lifetime.
+// Access neither freezes nor synchronizes backing.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// ModelResponse is an atomic terminal provider response. Private is one
+// response-wide envelope, not per-item provider identity. Assignment shares nested
+// storage; Clone detaches it. Session authoring supplies the destination request
+// separately and requires RunID and RequestID zero. Validate checks persisted IDs.
+//
+// Usage is optional provider-reported usage. Nil omits it; traversal validates
+// its local counters and optional opaque metadata.
+func (v ModelResponseView) Usage() (InvocationUsageView, bool) {
+	if v.value == nil || v.value.Usage == nil {
+		return InvocationUsageView{}, false
+	}
+	return dtogenViewInvocationUsageView(v.value.Usage), true
+}
+
+// Private reads Private in O(1) without copying sibling payloads.
+// A zero view or nil field returns zero, false; present zero/empty values return true.
+// The returned child borrows backing, which must remain stable for every derived view's lifetime.
+// Access neither freezes nor synchronizes backing.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// ModelResponse is an atomic terminal provider response. Private is one
+// response-wide envelope, not per-item provider identity. Assignment shares nested
+// storage; Clone detaches it. Session authoring supplies the destination request
+// separately and requires RunID and RequestID zero. Validate checks persisted IDs.
+//
+// Private is optional response-wide opaque provider data, not per-item identity.
+// Nil omits it; traversal validates metadata but does not interpret its bytes.
+func (v ModelResponseView) Private() (OpaqueProviderDataView, bool) {
+	if v.value == nil || v.value.Private == nil {
+		return OpaqueProviderDataView{}, false
+	}
+	return dtogenViewOpaqueProviderDataView(v.value.Private), true
+}
+
 // Backing contract for ObservedEvidenceView.
 //
 // Source contract (DTO semantics, not a mutable accessor):
@@ -385,223 +1270,84 @@ func (v ObservedEvidenceView) Correlation() (string, bool) {
 	return *v.value.Correlation, true
 }
 
-// Backing contract for MediaView.
+// Backing contract for OpaqueProviderDataView.
 //
 // Source contract (DTO semantics, not a mutable accessor):
-// Media retains exact UTF-8 metadata and a tagged source. Assignment shares
-// InlineData; Clone detaches it. An inline tag preserves presence with empty bytes.
-// References grant no access or dereference authority.
-// dtogenViewMediaView borrows stable backing; it neither freezes nor synchronizes access.
-func dtogenViewMediaView(value *dtogenType0.Media) MediaView { return MediaView{value: value} }
-
-var _ = (*struct {
-	Kind                dtogenType0.MediaKind       "cbor:\"k\""
-	Source              dtogenType0.MediaSourceKind "cbor:\"s\""
-	InlineData          []byte                      "cbor:\"d\""
-	RemoteURI           string                      "cbor:\"u\""
-	ProviderName        string                      "cbor:\"p\""
-	ProviderScope       string                      "cbor:\"o\""
-	ProviderReferenceID string                      "cbor:\"r\""
-	MIMEType            string                      "cbor:\"m\""
-	FormatHint          string                      "cbor:\"f\""
-	Filename            string                      "cbor:\"n\""
-	Title               string                      "cbor:\"t\""
-})((*dtogenType0.Media)(nil))
-
-// Kind reads Kind in O(1) without copying sibling payloads.
-// A zero view returns zero.
-// The receiver retains stable backing for its lifetime.
-// Access neither freezes nor synchronizes backing.
+// OpaqueProviderData retains producer-owned bytes without interpreting their schema.
+// Producer, Format, and Version identify the producer's format revision; they do not
+// make the bytes executable, safe to disclose, or replayable. Data may be nil or
+// empty; both encode as equivalent empty bytes. Assignment shares Data; Clone
+// detaches it.
 //
-// Source contract (DTO semantics, not a mutable accessor):
-// Media retains exact UTF-8 metadata and a tagged source. Assignment shares
-// InlineData; Clone detaches it. An inline tag preserves presence with empty bytes.
-// References grant no access or dereference authority.
-//
-// Kind is required: MediaKindImage, MediaKindAudio or MediaKindDocument.
-func (v MediaView) Kind() dtogenType0.MediaKind {
-	if v.value == nil {
-		return *new(dtogenType0.MediaKind)
-	}
-	return v.value.Kind
-}
-
-// MIMEType reads MIMEType in O(1) without copying sibling payloads.
-// A zero view returns zero.
-// The receiver retains stable backing for its lifetime.
-// Access neither freezes nor synchronizes backing.
-//
-// Source contract (DTO semantics, not a mutable accessor):
-// Media retains exact UTF-8 metadata and a tagged source. Assignment shares
-// InlineData; Clone detaches it. An inline tag preserves presence with empty bytes.
-// References grant no access or dereference authority.
-//
-// MIMEType is required for inline media, optional for remote/provider media.
-func (v MediaView) MIMEType() string {
-	if v.value == nil {
-		return *new(string)
-	}
-	return v.value.MIMEType
-}
-
-// FormatHint reads FormatHint in O(1) without copying sibling payloads.
-// A zero view returns zero.
-// The receiver retains stable backing for its lifetime.
-// Access neither freezes nor synchronizes backing.
-//
-// Source contract (DTO semantics, not a mutable accessor):
-// Media retains exact UTF-8 metadata and a tagged source. Assignment shares
-// InlineData; Clone detaches it. An inline tag preserves presence with empty bytes.
-// References grant no access or dereference authority.
-//
-// FormatHint is an optional exact format hint for any source.
-func (v MediaView) FormatHint() string {
-	if v.value == nil {
-		return *new(string)
-	}
-	return v.value.FormatHint
-}
-
-// Filename reads Filename in O(1) without copying sibling payloads.
-// A zero view returns zero.
-// The receiver retains stable backing for its lifetime.
-// Access neither freezes nor synchronizes backing.
-//
-// Source contract (DTO semantics, not a mutable accessor):
-// Media retains exact UTF-8 metadata and a tagged source. Assignment shares
-// InlineData; Clone detaches it. An inline tag preserves presence with empty bytes.
-// References grant no access or dereference authority.
-//
-// Filename is an optional document-only filename label.
-func (v MediaView) Filename() string {
-	if v.value == nil {
-		return *new(string)
-	}
-	return v.value.Filename
-}
-
-// Title reads Title in O(1) without copying sibling payloads.
-// A zero view returns zero.
-// The receiver retains stable backing for its lifetime.
-// Access neither freezes nor synchronizes backing.
-//
-// Source contract (DTO semantics, not a mutable accessor):
-// Media retains exact UTF-8 metadata and a tagged source. Assignment shares
-// InlineData; Clone detaches it. An inline tag preserves presence with empty bytes.
-// References grant no access or dereference authority.
-//
-// Title is an optional document-only title.
-func (v MediaView) Title() string {
-	if v.value == nil {
-		return *new(string)
-	}
-	return v.value.Title
-}
-
-// Source reads Source in O(1) without copying sibling payloads.
-// A zero view returns zero.
-// The receiver retains stable backing for its lifetime.
-// Access neither freezes nor synchronizes backing.
-//
-// Source contract (DTO semantics, not a mutable accessor):
-// Media retains exact UTF-8 metadata and a tagged source. Assignment shares
-// InlineData; Clone detaches it. An inline tag preserves presence with empty bytes.
-// References grant no access or dereference authority.
-//
-// Source selects the required storage variant and its exclusive fields.
-func (v MediaView) Source() dtogenType0.MediaSourceKind {
-	if v.value == nil {
-		return *new(dtogenType0.MediaSourceKind)
-	}
-	return v.value.Source
-}
-
-// Backing contract for ContentPartView.
-//
-// Source contract (DTO semantics, not a mutable accessor):
-// ContentPart requires exactly one text or media branch. A non-nil Text preserves
-// empty text; zero is invalid. Assignment shares pointers; Clone detaches them.
-// dtogenViewContentPartView borrows stable backing; it neither freezes nor synchronizes access.
-func dtogenViewContentPartView(value *dtogenType0.ContentPart) ContentPartView {
-	return ContentPartView{value: value}
+// Design status: retaining these metadata fields is normative, but their exact
+// cross-adapter naming and versioning semantics are provisional pending adapter
+// usage. Future consumers must reassess the metadata contract rather than treating
+// it as settled precedent. This does not permit reinterpretation of stored bytes or
+// bypass compatibility review.
+// dtogenViewOpaqueProviderDataView borrows stable backing; it neither freezes nor synchronizes access.
+func dtogenViewOpaqueProviderDataView(value *dtogenType0.OpaqueProviderData) OpaqueProviderDataView {
+	return OpaqueProviderDataView{value: value}
 }
 
 var _ = (*struct {
-	Text  *string            "cbor:\"t,omitempty\""
-	Media *dtogenType0.Media "cbor:\"m,omitempty\""
-})((*dtogenType0.ContentPart)(nil))
+	Producer string "cbor:\"p\""
+	Format   string "cbor:\"f\""
+	Version  int64  "cbor:\"v\""
+	Data     []byte "cbor:\"d\""
+})((*dtogenType0.OpaqueProviderData)(nil))
 
-// Text reads Text in O(1) without copying sibling payloads.
-// A zero view or nil field returns zero, false; present zero/empty values return true.
-// The receiver retains stable backing for its lifetime.
-// Access neither freezes nor synchronizes backing.
-//
-// Source contract (DTO semantics, not a mutable accessor):
-// ContentPart requires exactly one text or media branch. A non-nil Text preserves
-// empty text; zero is invalid. Assignment shares pointers; Clone detaches them.
-//
-// Text is exact UTF-8 text, including explicitly empty text.
-func (v ContentPartView) Text() (string, bool) {
-	if v.value == nil || v.value.Text == nil {
-		return *new(string), false
-	}
-	return *v.value.Text, true
-}
-
-// Media reads Media in O(1) without copying sibling payloads.
-// A zero view or nil field returns zero, false; present zero/empty values return true.
-// The returned child borrows backing, which must remain stable for every derived view's lifetime.
-// Access neither freezes nor synchronizes backing.
-//
-// Source contract (DTO semantics, not a mutable accessor):
-// ContentPart requires exactly one text or media branch. A non-nil Text preserves
-// empty text; zero is invalid. Assignment shares pointers; Clone detaches them.
-//
-// Media is the media branch; codec traversal separately validates the child.
-func (v ContentPartView) Media() (MediaView, bool) {
-	if v.value == nil || v.value.Media == nil {
-		return MediaView{}, false
-	}
-	return dtogenViewMediaView(v.value.Media), true
-}
-
-// Backing contract for ConstructionRecipeView.
-//
-// Source contract (DTO semantics, not a mutable accessor):
-// ConstructionRecipe commits to a request-construction algorithm without
-// interpreting it. Parameters may be nil or empty, which are equivalent empty
-// bytes; Check is required and nonempty. Assignment shares byte slices; Clone
-// detaches them.
-// dtogenViewConstructionRecipeView borrows stable backing; it neither freezes nor synchronizes access.
-func dtogenViewConstructionRecipeView(value *dtogenType0.ConstructionRecipe) ConstructionRecipeView {
-	return ConstructionRecipeView{value: value}
-}
-
-var _ = (*struct {
-	Algorithm  string "cbor:\"a\""
-	Version    int64  "cbor:\"v\""
-	Parameters []byte "cbor:\"p\""
-	Check      []byte "cbor:\"c\""
-})((*dtogenType0.ConstructionRecipe)(nil))
-
-// Algorithm reads Algorithm in O(1) without copying sibling payloads.
+// Producer reads Producer in O(1) without copying sibling payloads.
 // A zero view returns zero.
 // The receiver retains stable backing for its lifetime.
 // Access neither freezes nor synchronizes backing.
 //
 // Source contract (DTO semantics, not a mutable accessor):
-// ConstructionRecipe commits to a request-construction algorithm without
-// interpreting it. Parameters may be nil or empty, which are equivalent empty
-// bytes; Check is required and nonempty. Assignment shares byte slices; Clone
-// detaches them.
+// OpaqueProviderData retains producer-owned bytes without interpreting their schema.
+// Producer, Format, and Version identify the producer's format revision; they do not
+// make the bytes executable, safe to disclose, or replayable. Data may be nil or
+// empty; both encode as equivalent empty bytes. Assignment shares Data; Clone
+// detaches it.
 //
-// Algorithm is the required nonempty UTF-8 name of the construction algorithm.
-// This payload does not resolve or execute the named algorithm.
-func (v ConstructionRecipeView) Algorithm() string {
+// Design status: retaining these metadata fields is normative, but their exact
+// cross-adapter naming and versioning semantics are provisional pending adapter
+// usage. Future consumers must reassess the metadata contract rather than treating
+// it as settled precedent. This does not permit reinterpretation of stored bytes or
+// bypass compatibility review.
+//
+// Producer is the required nonempty UTF-8 producer identifier selected by the
+// producer that owns Data. It is not a kernel identity or authority.
+func (v OpaqueProviderDataView) Producer() string {
 	if v.value == nil {
 		return *new(string)
 	}
-	return v.value.Algorithm
+	return v.value.Producer
+}
+
+// Format reads Format in O(1) without copying sibling payloads.
+// A zero view returns zero.
+// The receiver retains stable backing for its lifetime.
+// Access neither freezes nor synchronizes backing.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// OpaqueProviderData retains producer-owned bytes without interpreting their schema.
+// Producer, Format, and Version identify the producer's format revision; they do not
+// make the bytes executable, safe to disclose, or replayable. Data may be nil or
+// empty; both encode as equivalent empty bytes. Assignment shares Data; Clone
+// detaches it.
+//
+// Design status: retaining these metadata fields is normative, but their exact
+// cross-adapter naming and versioning semantics are provisional pending adapter
+// usage. Future consumers must reassess the metadata contract rather than treating
+// it as settled precedent. This does not permit reinterpretation of stored bytes or
+// bypass compatibility review.
+//
+// Format is the required nonempty UTF-8 name of the producer-owned Data schema.
+// The kernel does not validate or interpret that schema.
+func (v OpaqueProviderDataView) Format() string {
+	if v.value == nil {
+		return *new(string)
+	}
+	return v.value.Format
 }
 
 // Version reads Version in O(1) without copying sibling payloads.
@@ -610,277 +1356,52 @@ func (v ConstructionRecipeView) Algorithm() string {
 // Access neither freezes nor synchronizes backing.
 //
 // Source contract (DTO semantics, not a mutable accessor):
-// ConstructionRecipe commits to a request-construction algorithm without
-// interpreting it. Parameters may be nil or empty, which are equivalent empty
-// bytes; Check is required and nonempty. Assignment shares byte slices; Clone
-// detaches them.
+// OpaqueProviderData retains producer-owned bytes without interpreting their schema.
+// Producer, Format, and Version identify the producer's format revision; they do not
+// make the bytes executable, safe to disclose, or replayable. Data may be nil or
+// empty; both encode as equivalent empty bytes. Assignment shares Data; Clone
+// detaches it.
 //
-// Version is the required positive algorithm-defined revision, not the session
-// payload schema version.
-func (v ConstructionRecipeView) Version() int64 {
+// Design status: retaining these metadata fields is normative, but their exact
+// cross-adapter naming and versioning semantics are provisional pending adapter
+// usage. Future consumers must reassess the metadata contract rather than treating
+// it as settled precedent. This does not permit reinterpretation of stored bytes or
+// bypass compatibility review.
+//
+// Version is the required positive producer-defined revision of Format. It is
+// not the enclosing session payload schema version.
+func (v OpaqueProviderDataView) Version() int64 {
 	if v.value == nil {
 		return *new(int64)
 	}
 	return v.value.Version
 }
 
-// Parameters reads Parameters in O(1) without copying sibling payloads.
+// Data reads Data in O(1) without copying sibling payloads.
 // A zero view returns zero.
 // The returned bytes borrow stable backing for their lifetime; only Copy detaches bytes.
 // Access neither freezes nor synchronizes backing.
 //
 // Source contract (DTO semantics, not a mutable accessor):
-// ConstructionRecipe commits to a request-construction algorithm without
-// interpreting it. Parameters may be nil or empty, which are equivalent empty
-// bytes; Check is required and nonempty. Assignment shares byte slices; Clone
-// detaches them.
+// OpaqueProviderData retains producer-owned bytes without interpreting their schema.
+// Producer, Format, and Version identify the producer's format revision; they do not
+// make the bytes executable, safe to disclose, or replayable. Data may be nil or
+// empty; both encode as equivalent empty bytes. Assignment shares Data; Clone
+// detaches it.
 //
-// Parameters are optional opaque algorithm input bytes. Nil and empty are
-// equivalent; this payload does not interpret their schema.
-func (v ConstructionRecipeView) Parameters() dtogenViews.Bytes {
+// Design status: retaining these metadata fields is normative, but their exact
+// cross-adapter naming and versioning semantics are provisional pending adapter
+// usage. Future consumers must reassess the metadata contract rather than treating
+// it as settled precedent. This does not permit reinterpretation of stored bytes or
+// bypass compatibility review.
+//
+// Data is retained opaque producer-owned payload bytes. Nil and empty are
+// equivalent empty bytes; validation does not inspect their schema or content.
+func (v OpaqueProviderDataView) Data() dtogenViews.Bytes {
 	if v.value == nil {
 		return dtogenViews.Bytes{}
 	}
-	return dtogenViews.BorrowBytes(v.value.Parameters)
-}
-
-// Check reads Check in O(1) without copying sibling payloads.
-// A zero view returns zero.
-// The returned bytes borrow stable backing for their lifetime; only Copy detaches bytes.
-// Access neither freezes nor synchronizes backing.
-//
-// Source contract (DTO semantics, not a mutable accessor):
-// ConstructionRecipe commits to a request-construction algorithm without
-// interpreting it. Parameters may be nil or empty, which are equivalent empty
-// bytes; Check is required and nonempty. Assignment shares byte slices; Clone
-// detaches them.
-//
-// Check is required nonempty opaque bytes committed by Algorithm and Version.
-// Local validation requires presence but does not interpret or verify it.
-func (v ConstructionRecipeView) Check() dtogenViews.Bytes {
-	if v.value == nil {
-		return dtogenViews.Bytes{}
-	}
-	return dtogenViews.BorrowBytes(v.value.Check)
-}
-
-// Backing contract for SourceHeadView.
-//
-// Source contract (DTO semantics, not a mutable accessor):
-// SourceHead identifies the exact accepted history commit immediately preceding a
-// model request. History scope belongs to the enclosing history envelope; zero
-// Sequence or CID is invalid. It is a reference, not record framing or a record ID.
-// dtogenViewSourceHeadView borrows stable backing; it neither freezes nor synchronizes access.
-func dtogenViewSourceHeadView(value *dtogenType0.SourceHead) SourceHeadView {
-	return SourceHeadView{value: value}
-}
-
-var _ = (*struct {
-	Sequence int64           "cbor:\"s\""
-	CID      dtogenType2.CID "cbor:\"c\""
-})((*dtogenType0.SourceHead)(nil))
-
-// Sequence reads Sequence in O(1) without copying sibling payloads.
-// A zero view returns zero.
-// The receiver retains stable backing for its lifetime.
-// Access neither freezes nor synchronizes backing.
-//
-// Source contract (DTO semantics, not a mutable accessor):
-// SourceHead identifies the exact accepted history commit immediately preceding a
-// model request. History scope belongs to the enclosing history envelope; zero
-// Sequence or CID is invalid. It is a reference, not record framing or a record ID.
-//
-// Sequence is the required positive accepted-commit sequence within the
-// enclosing history. Local validation does not prove ancestry or acceptance.
-func (v SourceHeadView) Sequence() int64 {
-	if v.value == nil {
-		return *new(int64)
-	}
-	return v.value.Sequence
-}
-
-// Backing contract for ModelRequestView.
-//
-// Source contract (DTO semantics, not a mutable accessor):
-// ModelRequest is one invocation commitment. RetryOf, when present, is an earlier
-// request ordinal in the same enclosing run; membership and ordering are aggregate
-// concerns. Assignment shares nested byte slices; Clone detaches them.
-var _ = (*struct {
-	RunID   uint64                         "cbor:\"r\""
-	ID      uint64                         "cbor:\"o\""
-	Source  dtogenType0.SourceHead         "cbor:\"s\""
-	Recipe  dtogenType0.ConstructionRecipe "cbor:\"c\""
-	RetryOf *uint64                        "cbor:\"x,omitempty\""
-})((*dtogenType0.ModelRequest)(nil))
-
-// Source reads Source in O(1) without copying sibling payloads.
-// A zero view returns zero.
-// The returned child borrows backing, which must remain stable for every derived view's lifetime.
-// Access neither freezes nor synchronizes backing.
-//
-// Source contract (DTO semantics, not a mutable accessor):
-// ModelRequest is one invocation commitment. RetryOf, when present, is an earlier
-// request ordinal in the same enclosing run; membership and ordering are aggregate
-// concerns. Assignment shares nested byte slices; Clone detaches them.
-//
-// Source is the required accepted head used for request construction. Local
-// traversal validates its shape; aggregate reconstruction verifies membership.
-func (v ModelRequestView) Source() SourceHeadView {
-	if v.value == nil {
-		return SourceHeadView{}
-	}
-	return dtogenViewSourceHeadView(&v.value.Source)
-}
-
-// Recipe reads Recipe in O(1) without copying sibling payloads.
-// A zero view returns zero.
-// The returned child borrows backing, which must remain stable for every derived view's lifetime.
-// Access neither freezes nor synchronizes backing.
-//
-// Source contract (DTO semantics, not a mutable accessor):
-// ModelRequest is one invocation commitment. RetryOf, when present, is an earlier
-// request ordinal in the same enclosing run; membership and ordering are aggregate
-// concerns. Assignment shares nested byte slices; Clone detaches them.
-//
-// Recipe is the required opaque construction commitment. Local traversal checks
-// its syntax, not that it reproduces a request or authorizes invocation.
-func (v ModelRequestView) Recipe() ConstructionRecipeView {
-	if v.value == nil {
-		return ConstructionRecipeView{}
-	}
-	return dtogenViewConstructionRecipeView(&v.value.Recipe)
-}
-
-// Backing contract for ModelResponseView.
-//
-// Source contract (DTO semantics, not a mutable accessor):
-// ModelResponse is an atomic terminal provider response. Private is one
-// response-wide envelope, not per-item provider identity. Assignment shares nested
-// storage; Clone detaches it.
-var _ = (*struct {
-	RunID              uint64                            "cbor:\"r\""
-	RequestID          uint64                            "cbor:\"q\""
-	Terminal           dtogenType0.ResponseTerminalClass "cbor:\"t\""
-	ProviderStopReason *string                           "cbor:\"p,omitempty\""
-	Items              []dtogenType0.ResponseItem        "cbor:\"i\""
-	Evidence           *dtogenType0.ObservedEvidence     "cbor:\"e,omitempty\""
-	Usage              *dtogenType0.InvocationUsage      "cbor:\"u,omitempty\""
-	Private            *dtogenType0.OpaqueProviderData   "cbor:\"x,omitempty\""
-})((*dtogenType0.ModelResponse)(nil))
-
-// Terminal reads Terminal in O(1) without copying sibling payloads.
-// A zero view returns zero.
-// The receiver retains stable backing for its lifetime.
-// Access neither freezes nor synchronizes backing.
-//
-// Source contract (DTO semantics, not a mutable accessor):
-// ModelResponse is an atomic terminal provider response. Private is one
-// response-wide envelope, not per-item provider identity. Assignment shares nested
-// storage; Clone detaches it.
-//
-// Terminal is a required normalized ResponseTerminal class; empty and unknown
-// classes are rejected independently of the original provider stop reason.
-func (v ModelResponseView) Terminal() dtogenType0.ResponseTerminalClass {
-	if v.value == nil {
-		return *new(dtogenType0.ResponseTerminalClass)
-	}
-	return v.value.Terminal
-}
-
-// ProviderStopReason reads ProviderStopReason in O(1) without copying sibling payloads.
-// A zero view or nil field returns zero, false; present zero/empty values return true.
-// The receiver retains stable backing for its lifetime.
-// Access neither freezes nor synchronizes backing.
-//
-// Source contract (DTO semantics, not a mutable accessor):
-// ModelResponse is an atomic terminal provider response. Private is one
-// response-wide envelope, not per-item provider identity. Assignment shares nested
-// storage; Clone detaches it.
-//
-// ProviderStopReason retains the provider's original stop/finish reason, not
-// reasoning content or a reasoning summary. The vocabulary is provider-owned
-// and open; any UTF-8 string is allowed. Nil omits key p; non-nil empty is retained.
-func (v ModelResponseView) ProviderStopReason() (string, bool) {
-	if v.value == nil || v.value.ProviderStopReason == nil {
-		return *new(string), false
-	}
-	return *v.value.ProviderStopReason, true
-}
-
-// Items reads Items in O(1) without copying sibling payloads.
-// A zero view returns zero.
-// The collection borrows stable backing and adapts elements lazily; derived views retain it.
-// Access neither freezes nor synchronizes backing.
-//
-// Source contract (DTO semantics, not a mutable accessor):
-// ModelResponse is an atomic terminal provider response. Private is one
-// response-wide envelope, not per-item provider identity. Assignment shares nested
-// storage; Clone detaches it.
-//
-// Items preserve complete response order, including content/call interleaving.
-// Nil and empty are equivalent empty responses; codec traversal validates items.
-func (v ModelResponseView) Items() dtogenViews.SliceView[dtogenType0.ResponseItem, ResponseItemView] {
-	if v.value == nil {
-		return dtogenViews.SliceView[dtogenType0.ResponseItem, ResponseItemView]{}
-	}
-	return dtogenViews.BorrowSliceView(v.value.Items, dtogenViewResponseItemView)
-}
-
-// Evidence reads Evidence in O(1) without copying sibling payloads.
-// A zero view or nil field returns zero, false; present zero/empty values return true.
-// The returned child borrows backing, which must remain stable for every derived view's lifetime.
-// Access neither freezes nor synchronizes backing.
-//
-// Source contract (DTO semantics, not a mutable accessor):
-// ModelResponse is an atomic terminal provider response. Private is one
-// response-wide envelope, not per-item provider identity. Assignment shares nested
-// storage; Clone detaches it.
-//
-// Evidence is optional diagnostic observation. Nil omits it; traversal validates
-// only its local UTF-8 contract, not disclosure safety or remote effects.
-func (v ModelResponseView) Evidence() (ObservedEvidenceView, bool) {
-	if v.value == nil || v.value.Evidence == nil {
-		return ObservedEvidenceView{}, false
-	}
-	return dtogenViewObservedEvidenceView(v.value.Evidence), true
-}
-
-// Usage reads Usage in O(1) without copying sibling payloads.
-// A zero view or nil field returns zero, false; present zero/empty values return true.
-// The returned child borrows backing, which must remain stable for every derived view's lifetime.
-// Access neither freezes nor synchronizes backing.
-//
-// Source contract (DTO semantics, not a mutable accessor):
-// ModelResponse is an atomic terminal provider response. Private is one
-// response-wide envelope, not per-item provider identity. Assignment shares nested
-// storage; Clone detaches it.
-//
-// Usage is optional provider-reported usage. Nil omits it; traversal validates
-// its local counters and optional opaque metadata.
-func (v ModelResponseView) Usage() (InvocationUsageView, bool) {
-	if v.value == nil || v.value.Usage == nil {
-		return InvocationUsageView{}, false
-	}
-	return dtogenViewInvocationUsageView(v.value.Usage), true
-}
-
-// Private reads Private in O(1) without copying sibling payloads.
-// A zero view or nil field returns zero, false; present zero/empty values return true.
-// The returned child borrows backing, which must remain stable for every derived view's lifetime.
-// Access neither freezes nor synchronizes backing.
-//
-// Source contract (DTO semantics, not a mutable accessor):
-// ModelResponse is an atomic terminal provider response. Private is one
-// response-wide envelope, not per-item provider identity. Assignment shares nested
-// storage; Clone detaches it.
-//
-// Private is optional response-wide opaque provider data, not per-item identity.
-// Nil omits it; traversal validates metadata but does not interpret its bytes.
-func (v ModelResponseView) Private() (OpaqueProviderDataView, bool) {
-	if v.value == nil || v.value.Private == nil {
-		return OpaqueProviderDataView{}, false
-	}
-	return dtogenViewOpaqueProviderDataView(v.value.Private), true
+	return dtogenViews.BorrowBytes(v.value.Data)
 }
 
 // Backing contract for RequestedCallDataView.
@@ -990,57 +1511,6 @@ func (v RequestedCallView) Arguments() dtogenViews.Bytes {
 	return dtogenViews.BorrowBytes(v.value.Arguments)
 }
 
-// Backing contract for ResponseItemView.
-//
-// Source contract (DTO semantics, not a mutable accessor):
-// ResponseItem preserves one ordered response occurrence. Exactly one branch is
-// required; assignment shares its selected child and Clone detaches it.
-// dtogenViewResponseItemView borrows stable backing; it neither freezes nor synchronizes access.
-func dtogenViewResponseItemView(value *dtogenType0.ResponseItem) ResponseItemView {
-	return ResponseItemView{value: value}
-}
-
-var _ = (*struct {
-	Content *dtogenType0.ResponseContent "cbor:\"c,omitempty\""
-	Call    *dtogenType0.RequestedCall   "cbor:\"a,omitempty\""
-})((*dtogenType0.ResponseItem)(nil))
-
-// Content reads Content in O(1) without copying sibling payloads.
-// A zero view or nil field returns zero, false; present zero/empty values return true.
-// The returned child borrows backing, which must remain stable for every derived view's lifetime.
-// Access neither freezes nor synchronizes backing.
-//
-// Source contract (DTO semantics, not a mutable accessor):
-// ResponseItem preserves one ordered response occurrence. Exactly one branch is
-// required; assignment shares its selected child and Clone detaches it.
-//
-// Content is the optional content branch. It is mutually exclusive with Call;
-// codec traversal validates it when present.
-func (v ResponseItemView) Content() (ResponseContentView, bool) {
-	if v.value == nil || v.value.Content == nil {
-		return ResponseContentView{}, false
-	}
-	return dtogenViewResponseContentView(v.value.Content), true
-}
-
-// Call reads Call in O(1) without copying sibling payloads.
-// A zero view or nil field returns zero, false; present zero/empty values return true.
-// The returned child borrows backing, which must remain stable for every derived view's lifetime.
-// Access neither freezes nor synchronizes backing.
-//
-// Source contract (DTO semantics, not a mutable accessor):
-// ResponseItem preserves one ordered response occurrence. Exactly one branch is
-// required; assignment shares its selected child and Clone detaches it.
-//
-// Call is the optional requested-call branch. It is mutually exclusive with
-// Content; codec traversal validates it when present.
-func (v ResponseItemView) Call() (RequestedCallDataView, bool) {
-	if v.value == nil || v.value.Call == nil {
-		return RequestedCallDataView{}, false
-	}
-	return dtogenViewRequestedCallDataView(v.value.Call), true
-}
-
 // Backing contract for ResponseContentView.
 //
 // Source contract (DTO semantics, not a mutable accessor):
@@ -1095,4 +1565,329 @@ func (v ResponseContentView) Parts() dtogenViews.SliceView[dtogenType0.ContentPa
 		return dtogenViews.SliceView[dtogenType0.ContentPart, ContentPartView]{}
 	}
 	return dtogenViews.BorrowSliceView(v.value.Parts, dtogenViewContentPartView)
+}
+
+// Backing contract for ResponseItemView.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// ResponseItem preserves one ordered response occurrence. Exactly one branch is
+// required; assignment shares its selected child and Clone detaches it.
+// dtogenViewResponseItemView borrows stable backing; it neither freezes nor synchronizes access.
+func dtogenViewResponseItemView(value *dtogenType0.ResponseItem) ResponseItemView {
+	return ResponseItemView{value: value}
+}
+
+var _ = (*struct {
+	Content *dtogenType0.ResponseContent "cbor:\"c,omitempty\""
+	Call    *dtogenType0.RequestedCall   "cbor:\"a,omitempty\""
+})((*dtogenType0.ResponseItem)(nil))
+
+// Content reads Content in O(1) without copying sibling payloads.
+// A zero view or nil field returns zero, false; present zero/empty values return true.
+// The returned child borrows backing, which must remain stable for every derived view's lifetime.
+// Access neither freezes nor synchronizes backing.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// ResponseItem preserves one ordered response occurrence. Exactly one branch is
+// required; assignment shares its selected child and Clone detaches it.
+//
+// Content is the optional content branch. It is mutually exclusive with Call;
+// codec traversal validates it when present.
+func (v ResponseItemView) Content() (ResponseContentView, bool) {
+	if v.value == nil || v.value.Content == nil {
+		return ResponseContentView{}, false
+	}
+	return dtogenViewResponseContentView(v.value.Content), true
+}
+
+// Call reads Call in O(1) without copying sibling payloads.
+// A zero view or nil field returns zero, false; present zero/empty values return true.
+// The returned child borrows backing, which must remain stable for every derived view's lifetime.
+// Access neither freezes nor synchronizes backing.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// ResponseItem preserves one ordered response occurrence. Exactly one branch is
+// required; assignment shares its selected child and Clone detaches it.
+//
+// Call is the optional requested-call branch. It is mutually exclusive with
+// Content; codec traversal validates it when present.
+func (v ResponseItemView) Call() (RequestedCallDataView, bool) {
+	if v.value == nil || v.value.Call == nil {
+		return RequestedCallDataView{}, false
+	}
+	return dtogenViewRequestedCallDataView(v.value.Call), true
+}
+
+// Backing contract for RunEndedView.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// RunEnded terminally records the owner's ending reason without fabricating any
+// response, cancellation, or external effect. Evidence is permitted only for a
+// capture-failed ending. Assignment shares nested storage; Clone detaches it.
+// Session authoring supplies destination scope separately and requires RunID zero;
+// Validate requires the fully populated persisted shape.
+var _ = (*struct {
+	RunID       uint64                              "cbor:\"r\" view:\"manual\""
+	Reason      dtogenType0.RunEndedReason          "cbor:\"e\""
+	Explanation *string                             "cbor:\"x,omitempty\""
+	Capture     *dtogenType0.CaptureFailureEvidence "cbor:\"c,omitempty\" view:\"manual\""
+})((*dtogenType0.RunEnded)(nil))
+
+// Reason reads Reason in O(1) without copying sibling payloads.
+// A zero view returns zero.
+// The receiver retains stable backing for its lifetime.
+// Access neither freezes nor synchronizes backing.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// RunEnded terminally records the owner's ending reason without fabricating any
+// response, cancellation, or external effect. Evidence is permitted only for a
+// capture-failed ending. Assignment shares nested storage; Clone detaches it.
+// Session authoring supplies destination scope separately and requires RunID zero;
+// Validate requires the fully populated persisted shape.
+//
+// Reason is required and uses the closed RunEnded vocabulary; empty and
+// unknown labels are rejected. Labels must be valid UTF-8, at most
+// MaxRunEndedReasonBytes bytes. Earlier experimental numeric codes reject.
+// The taxonomy is provisional: revisit the combined interruption category
+// only if usage establishes a useful cancellation/interruption distinction.
+func (v RunEndedView) Reason() dtogenType0.RunEndedReason {
+	if v.value == nil {
+		return *new(dtogenType0.RunEndedReason)
+	}
+	return v.value.Reason
+}
+
+// Explanation reads Explanation in O(1) without copying sibling payloads.
+// A zero view or nil field returns zero, false; present zero/empty values return true.
+// The receiver retains stable backing for its lifetime.
+// Access neither freezes nor synchronizes backing.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// RunEnded terminally records the owner's ending reason without fabricating any
+// response, cancellation, or external effect. Evidence is permitted only for a
+// capture-failed ending. Assignment shares nested storage; Clone detaches it.
+// Session authoring supplies destination scope separately and requires RunID zero;
+// Validate requires the fully populated persisted shape.
+//
+// Explanation is optional UTF-8 owner-provided human-readable ending detail.
+// Nil omits it; non-nil empty is retained. Validation is not disclosure sanitization.
+func (v RunEndedView) Explanation() (string, bool) {
+	if v.value == nil || v.value.Explanation == nil {
+		return *new(string), false
+	}
+	return *v.value.Explanation, true
+}
+
+// Backing contract for RunStartedView.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// RunStarted names a new run. Input-free runs are valid. Zero is invalid.
+var _ = (*struct {
+	ID uint64 "cbor:\"r\" view:\"manual\""
+})((*dtogenType0.RunStarted)(nil))
+
+// Backing contract for SourceHeadView.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// SourceHead identifies the exact accepted history commit immediately preceding a
+// model request. History scope belongs to the enclosing history envelope; zero
+// Sequence or CID is invalid. It is a reference, not record framing or a record ID.
+// dtogenViewSourceHeadView borrows stable backing; it neither freezes nor synchronizes access.
+func dtogenViewSourceHeadView(value *dtogenType0.SourceHead) SourceHeadView {
+	return SourceHeadView{value: value}
+}
+
+var _ = (*struct {
+	Sequence int64           "cbor:\"s\""
+	CID      dtogenType2.CID "cbor:\"c\" view:\"manual\""
+})((*dtogenType0.SourceHead)(nil))
+
+// Sequence reads Sequence in O(1) without copying sibling payloads.
+// A zero view returns zero.
+// The receiver retains stable backing for its lifetime.
+// Access neither freezes nor synchronizes backing.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// SourceHead identifies the exact accepted history commit immediately preceding a
+// model request. History scope belongs to the enclosing history envelope; zero
+// Sequence or CID is invalid. It is a reference, not record framing or a record ID.
+//
+// Sequence is the required positive accepted-commit sequence within the
+// enclosing history. Local validation does not prove ancestry or acceptance.
+func (v SourceHeadView) Sequence() int64 {
+	if v.value == nil {
+		return *new(int64)
+	}
+	return v.value.Sequence
+}
+
+// Backing contract for ToolCatalogView.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// ToolCatalog is a complete session-scoped ordered advertised catalog replacement.
+// Nil and empty Tools are equivalent explicit empty replacements. Assignment shares
+// Tools and schema bytes; Clone detaches them. History identity is omitted here
+// and restored from the enclosing envelope at the domain conversion boundary.
+var _ = (*struct {
+	Tools []dtogenType0.ToolDefinition "cbor:\"t\""
+})((*dtogenType0.ToolCatalog)(nil))
+
+// Tools reads Tools in O(1) without copying sibling payloads.
+// A zero view returns zero.
+// The collection borrows stable backing and adapts elements lazily; derived views retain it.
+// Access neither freezes nor synchronizes backing.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// ToolCatalog is a complete session-scoped ordered advertised catalog replacement.
+// Nil and empty Tools are equivalent explicit empty replacements. Assignment shares
+// Tools and schema bytes; Clone detaches them. History identity is omitted here
+// and restored from the enclosing envelope at the domain conversion boundary.
+//
+// Tools preserves advertised order. Names must be unique within this replacement
+// (checked locally); codec traversal validates each definition. Nil and empty
+// explicitly replace the catalog with no tools, without granting execution rights.
+func (v ToolCatalogView) Tools() dtogenViews.SliceView[dtogenType0.ToolDefinition, ToolDefinitionView] {
+	if v.value == nil {
+		return dtogenViews.SliceView[dtogenType0.ToolDefinition, ToolDefinitionView]{}
+	}
+	return dtogenViews.BorrowSliceView(v.value.Tools, dtogenViewToolDefinitionView)
+}
+
+// Backing contract for ToolDefinitionView.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// ToolDefinition retains one advertised tool in a ToolCatalog, not an executable
+// implementation. ArgumentSchema is exact nonempty JSON, including boolean schemas,
+// without schema interpretation. Assignment shares schema bytes; Clone detaches them.
+// dtogenViewToolDefinitionView borrows stable backing; it neither freezes nor synchronizes access.
+func dtogenViewToolDefinitionView(value *dtogenType0.ToolDefinition) ToolDefinitionView {
+	return ToolDefinitionView{value: value}
+}
+
+var _ = (*struct {
+	Name           string "cbor:\"n\""
+	Description    string "cbor:\"d\""
+	ArgumentSchema []byte "cbor:\"s\""
+})((*dtogenType0.ToolDefinition)(nil))
+
+// Name reads Name in O(1) without copying sibling payloads.
+// A zero view returns zero.
+// The receiver retains stable backing for its lifetime.
+// Access neither freezes nor synchronizes backing.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// ToolDefinition retains one advertised tool in a ToolCatalog, not an executable
+// implementation. ArgumentSchema is exact nonempty JSON, including boolean schemas,
+// without schema interpretation. Assignment shares schema bytes; Clone detaches them.
+//
+// Name is the required nonempty exact UTF-8 advertised tool name, not an
+// implementation identity. The enclosing ToolCatalog checks name uniqueness.
+func (v ToolDefinitionView) Name() string {
+	if v.value == nil {
+		return *new(string)
+	}
+	return v.value.Name
+}
+
+// Description reads Description in O(1) without copying sibling payloads.
+// A zero view returns zero.
+// The receiver retains stable backing for its lifetime.
+// Access neither freezes nor synchronizes backing.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// ToolDefinition retains one advertised tool in a ToolCatalog, not an executable
+// implementation. ArgumentSchema is exact nonempty JSON, including boolean schemas,
+// without schema interpretation. Assignment shares schema bytes; Clone detaches them.
+//
+// Description is exact UTF-8 model-facing descriptive text; empty is valid.
+func (v ToolDefinitionView) Description() string {
+	if v.value == nil {
+		return *new(string)
+	}
+	return v.value.Description
+}
+
+// ArgumentSchema reads ArgumentSchema in O(1) without copying sibling payloads.
+// A zero view returns zero.
+// The returned bytes borrow stable backing for their lifetime; only Copy detaches bytes.
+// Access neither freezes nor synchronizes backing.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// ToolDefinition retains one advertised tool in a ToolCatalog, not an executable
+// implementation. ArgumentSchema is exact nonempty JSON, including boolean schemas,
+// without schema interpretation. Assignment shares schema bytes; Clone detaches them.
+//
+// ArgumentSchema is required explicit valid JSON, including boolean schemas.
+// Bytes are preserved exactly; Validate checks JSON syntax, not schema semantics.
+func (v ToolDefinitionView) ArgumentSchema() dtogenViews.Bytes {
+	if v.value == nil {
+		return dtogenViews.Bytes{}
+	}
+	return dtogenViews.BorrowBytes(v.value.ArgumentSchema)
+}
+
+// Backing contract for UserInputView.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// UserInput is one authored submission. Zero ordinals are invalid. Assignment
+// shares Parts and children; Clone detaches them. Nil and empty Parts are equal.
+// For session authoring, supply destination scope separately and leave RunID and
+// ID zero; Validate requires the fully populated persisted shape.
+var _ = (*struct {
+	RunID uint64                    "cbor:\"r\" view:\"-\""
+	ID    uint64                    "cbor:\"i\" view:\"manual\""
+	Parts []dtogenType0.ContentPart "cbor:\"p\""
+})((*dtogenType0.UserInput)(nil))
+
+// Parts reads Parts in O(1) without copying sibling payloads.
+// A zero view returns zero.
+// The collection borrows stable backing and adapts elements lazily; derived views retain it.
+// Access neither freezes nor synchronizes backing.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// UserInput is one authored submission. Zero ordinals are invalid. Assignment
+// shares Parts and children; Clone detaches them. Nil and empty Parts are equal.
+// For session authoring, supply destination scope separately and leave RunID and
+// ID zero; Validate requires the fully populated persisted shape.
+//
+// Parts preserves exact submission order, including duplicates. Nil and empty
+// are equivalent valid empty submissions; codec traversal validates children.
+func (v UserInputView) Parts() dtogenViews.SliceView[dtogenType0.ContentPart, ContentPartView] {
+	if v.value == nil {
+		return dtogenViews.SliceView[dtogenType0.ContentPart, ContentPartView]{}
+	}
+	return dtogenViews.BorrowSliceView(v.value.Parts, dtogenViewContentPartView)
+}
+
+// Backing contract for WorkspaceFileSourceView.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// WorkspaceFileSource is a slash-separated file label relative to its originating
+// workspace, not a global locator or permission to read. Loading never resolves it.
+// dtogenViewWorkspaceFileSourceView borrows stable backing; it neither freezes nor synchronizes access.
+func dtogenViewWorkspaceFileSourceView(value *dtogenType0.WorkspaceFileSource) WorkspaceFileSourceView {
+	return WorkspaceFileSourceView{value: value}
+}
+
+var _ = (*struct {
+	Path string "cbor:\"p\""
+})((*dtogenType0.WorkspaceFileSource)(nil))
+
+// Path reads Path in O(1) without copying sibling payloads.
+// A zero view returns zero.
+// The receiver retains stable backing for its lifetime.
+// Access neither freezes nor synchronizes backing.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// WorkspaceFileSource is a slash-separated file label relative to its originating
+// workspace, not a global locator or permission to read. Loading never resolves it.
+//
+// Path is a required slash-separated file label relative to the originating
+// workspace, with no empty or dot components. Validate checks path syntax only,
+// not existence, workspace identity or permission; no file is read on load.
+func (v WorkspaceFileSourceView) Path() string {
+	if v.value == nil {
+		return *new(string)
+	}
+	return v.value.Path
 }

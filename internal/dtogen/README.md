@@ -12,10 +12,10 @@ follow its [implementation guidance](AGENTS.md).
 
 Each owner package declares one literal `go:generate` command. Its `-types`
 list selects locally defined, nongeneric named roots. `-emit` explicitly selects
-any nonempty combination of `cbor`, `clone`, `equal`, and `view`; order does not matter.
-`-types` selects value/codec roots; `-views` selects projections independently and
-is required exactly when `view` is selected. View-only destinations omit `-types`.
-Only selected methods are emitted. CBOR methods cover persisted local named types;
+any nonempty combination of `cbor`, `clone`, and `equal`, or the standalone `view`
+capability. For value/codec declarations, `-types` selects DTO roots; for view-only
+declarations, it selects local handwritten view handles. Only selected methods
+are emitted. CBOR methods cover persisted local named types;
 Clone/Equal cover the complete local named closure, including excluded state.
 Imported named types require their own owner declaration with the capabilities
 needed by the consumer. The generator follows that declared owner closure and
@@ -75,22 +75,45 @@ never traverses directory symlinks.
 
 ## DTO-backed views
 
-A destination owns one declaration and artifact, independently of the DTO source
-owner. A view-only destination does not generate value operations on its backing:
+A destination owns one view-only declaration and artifact, independently of the
+DTO source owner. Select local view types explicitly; the generator does not scan
+names ending in `View` or generate value operations on their backing:
 
 ```go
-//go:generate go -C ../../.. run ./internal/dtogen/cmd/dtogen -dir engine/kernel/session -emit view -views views.json -out zz_views_generated.go
+//go:generate go -C ../../.. run ./internal/dtogen/cmd/dtogen -dir engine/kernel/session -emit view -types MediaView,ContentPartView -out zz_views_generated.go
 ```
 
-The session package uses this declaration with its complete `views.json` mapping.
-Keep the view layouts handwritten, with private, nonembedded fields:
+Keep layouts handwritten, with private, nonembedded fields. Each selected view
+must have a private `value *DTO` field pointing to a named struct. Additional
+private fields retain enclosing context; the typed graph resolves the DTO owner,
+import aliases and source documentation without a second naming language.
+
+The DTO owns one default field policy, independent of CBOR, Clone and Equal:
+
+| DTO field tag | Default view behavior |
+| --- | --- |
+| Untagged | Generate a safe same-named getter |
+| `view:"-"` | Omit the field |
+| `view:"manual"` | Require a directly declared same-named handwritten value-receiver getter on every selected view of this DTO |
+
+Unknown, malformed, duplicate and contradictory tags fail generation. There are
+no renaming expressions, named projections or declarative signatures. Go owns
+manual method signatures; getters take no arguments and return at least one
+value. Pointer receivers and promoted methods do not satisfy manual policy.
+A handwritten method colliding with an untagged field fails rather than silently
+replacing its generated getter. Extra derived/navigation methods need no separate
+classification. Handwritten documentation stays authoritative for manual methods;
+review and test their ownership, zero, presence and lifetime contracts.
 
 ```go
-import (
-    "github.com/stacklok/mecatl/engine/kernel/session/format"
-    "github.com/stacklok/mecatl/engine/kernel/views"
-)
+// In the DTO owner:
+type Media struct {
+    MIMEType string
+    Source MediaSourceKind
+    InlineData []byte `view:"manual"`
+}
 
+// In the consuming view package:
 type MediaView struct { value *format.Media }
 
 // InlineData reports tag-selected presence, including present-empty inline data.
@@ -103,50 +126,6 @@ func (v MediaView) InlineData() (views.Bytes, bool) {
 }
 ```
 
-`-views` names a package-local JSON file containing an array of projections. The
-`backing` field names the private pointer in the local `view` layout; its Go type
-selects the backing DTO (including its normal Go import/alias resolution). Each
-backing field must appear exactly once. Choose one of these entries:
-
-```json
-[
-  {
-    "view": "MediaView",
-    "backing": "value",
-    "fields": [
-      {"field": "MIMEType", "method": "MIMEType"},
-      {"field": "Source", "exclude": true},
-      {"field": "InlineData", "method": "InlineData", "override": "func() (views.Bytes, bool)"}
-    ]
-  }
-]
-```
-
-This abbreviated mapping illustrates syntax; a real Media projection must also
-classify every other field. Ordinary emitted fields ignore CBOR tags. An override
-names a handwritten method with an **exact Go func type**, evaluated in the view
-type declaration's file scope. Its value receiver, parameters, results and
-variadic status must match; a different semantic return shape is allowed.
-For example, a tag-selected URI override uses `"override":"func() (string, bool)"`.
-Missing, stale, duplicate or unknown targets and unmarked method collisions fail.
-Handwritten override documentation wins; the generator never emits its body/docs.
-Signature validation proves the declared target and type, not the body's behavior;
-review and test handwritten immutability, zero, presence and lifetime contracts.
-
-Declare context-owned methods that have no single field projection separately:
-
-```json
-"context": [{"method":"RequestID", "signature":"func() ModelRequestID"}]
-```
-
-All handwritten view methods must be classified as overrides or context methods.
-Additional private layout fields retain enclosing scope. Such a view can have
-mechanical accessors, but the generator will not construct it as a child or a
-collection element: handwritten navigation must carry that context. For example,
-exclude an `Inputs` field and retain its scoped iterator as a context method, or
-explicitly adapt that field through a handwritten override. No generated adapter
-captures scope or materializes an intermediate slice.
-
 Mechanical methods return the following concrete types:
 
 | Backing field | Accessor result |
@@ -154,9 +133,9 @@ Mechanical methods return the following concrete types:
 | Boolean, numeric, string (including named scalar) | Same scalar type |
 | Pointer to scalar | `(T, bool)` |
 | `[]byte` | `views.Bytes` |
-| Required by-value struct | Local mapped child view |
-| Pointer to mapped struct | `(ChildView, bool)` |
-| Slice of mapped by-value structs | `views.SliceView[DTO, ChildView]` |
+| Required by-value struct | Selected context-free child view |
+| Pointer to selected struct | `(ChildView, bool)` |
+| Slice of selected by-value structs | `views.SliceView[DTO, ChildView]` |
 
 Pointers to bytes/slices additionally return a presence bool. Each zero view is
 safe, with zero/false for missing optional values; present zero/empty values stay
@@ -164,24 +143,34 @@ present. Required child navigation takes the address of retained backing. Byte
 and collection navigation is O(1), borrows stable backing, and does not clone
 siblings. Byte `Copy` alone detaches. A context-free layout gets a private
 `dtogenView<Type>` constructor that also serves as the noncapturing slice adapter.
-Multiple context-free projections of the same child DTO are ambiguous and fail.
-Unsupported shapes must be explicitly overridden or excluded, never exported as
-mutable values. In particular, an immutable identity struct can use an explicit
-scalar-returning override rather than exposing its storage.
+Two selected context-free views of one DTO are ambiguous and fail, even if no
+parent currently needs that adapter.
 
+Context-bearing views may share the same DTO policy but are never automatically
+constructed. Required, optional and collection navigation into a child requiring
+context must be manual or omitted. No adapter propagates or captures scope or
+materializes an intermediate `[]View`. For example, `RequestedCallDataView` is the
+context-free adapter while `RequestedCallView` carries scoped identity and keeps
+its derived `ID` method handwritten. Unsupported untagged fields fail rather than
+exporting mutable values; use manual policy for opaque immutable identity values
+such as `SourceHead.CID`.
+
+Ordinary new supported DTO fields acquire default getters on regeneration. This
+replaces the old exhaustive per-field mapping decision gate: review source tags,
+generated/API diffs and deterministic freshness, not a parallel field inventory.
 Generated comments retain source type/field contracts, including provisional
 notes, explicitly labelled as DTO semantics rather than accessor mutability.
 Accessor comments add zero/presence, retained-backing, lifetime, copy and complexity
-contracts. A fingerprint includes the mapping, backing shapes and source docs,
-including excluded/overridden fields. A structural pointer-conversion assertion
-also detects stale backing shapes at compile time where all types/fields are
-accessible. Source/mapping/docs changes still require deterministic regeneration
-and check even when an assertion is unavailable or a conversion ignores tags.
+contracts. A fingerprint includes selected layouts, backing shapes, exception tags
+and source docs, including omitted/manual fields. A structural pointer-conversion
+assertion also detects stale backing shapes at compile time where nameable.
+Source/policy/selection/docs changes still require regeneration and check even
+when an assertion is unavailable or a conversion ignores tags.
 
 Absent or broken marked artifacts bootstrap in one invocation: typed load-only
 view signatures join the value/codec signatures, then the complete selected owner
 closure is rendered and strictly typechecked before any installation. This uses
-`GOWORK=off` and never executes owner initialization, overrides, or other code.
+`GOWORK=off` and never executes owner initialization, manual getters or other code.
 
 ## Supported Go types
 

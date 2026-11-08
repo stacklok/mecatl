@@ -2,6 +2,7 @@ package dtogen
 
 import (
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -9,6 +10,11 @@ import (
 // mappingTags parses Go struct-tag syntax without silently accepting duplicate
 // codec metadata. Unrelated tags are allowed but do not participate in mapping.
 func mappingTags(raw string) (map[string]string, error) {
+	return selectedTags(raw, "cbor", "cborlimit")
+}
+
+// selectedTags validates tag syntax and duplicate metadata for the selected policy.
+func selectedTags(raw string, keys ...string) (map[string]string, error) {
 	tags := map[string]string{}
 	for raw != "" {
 		raw = strings.TrimLeft(raw, " ")
@@ -47,7 +53,7 @@ func mappingTags(raw string) (map[string]string, error) {
 		if len(raw) > 0 && raw[0] != ' ' {
 			return nil, fmt.Errorf("struct tags require spaces")
 		}
-		if key == "cbor" || key == "cborlimit" {
+		if slices.Contains(keys, key) {
 			if _, ok := tags[key]; ok {
 				return nil, fmt.Errorf("duplicate %s tag", key)
 			}

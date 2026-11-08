@@ -30,16 +30,23 @@ func completeInteractionFixture(t testing.TB, count, field, sibling int) map[str
 	b := beginBatch(t, s)
 	mustBatch(t, b.Create())
 	run := batchRun(t, b)
-	mustBatch(t, b.ReplaceModelBinding(session.ModelBinding{HistoryID: run.HistoryID(), Route: "r", API: "a", Model: "m", Settings: []byte("{}")}))
+	mustBatch(t, b.ReplaceModelBinding(run.HistoryID(), session.ModelBinding{Route: "r", API: "a", Model: "m", Settings: []byte("{}")}))
 	submitBatch(t, s, b)
 	parameters := bytes.Repeat([]byte{0xa5}, field)
 	check := bytes.Repeat([]byte{0x5a}, sibling)
+	// Capture actual accepted heads independently of authored DTOs and views.
+	sources := make(map[session.ModelRequestID]session.SourceHead)
 	request := func(retry *session.ModelRequestID) session.ModelRequestID {
 		head := s.Snapshot().Head()
 		b := beginBatch(t, s)
-		id, err := b.AddModelRequest(session.ModelRequest{RunID: run, Source: session.SourceHead{Sequence: head.Sequence, CID: head.CID}, RetryOf: retry,
+		var relativeRetry *uint64
+		if retry != nil {
+			relativeRetry = new(retry.RunRelative())
+		}
+		id, err := b.AddModelRequest(run, session.ModelRequest{Source: session.SourceHead{Sequence: head.Sequence, CID: head.CID}, RetryOf: relativeRetry,
 			Recipe: session.ConstructionRecipe{Algorithm: "algorithm", Version: 17, Parameters: parameters, Check: check}})
 		mustBatch(t, err)
+		sources[id] = session.SourceHead{Sequence: head.Sequence, CID: head.CID}
 		submitBatch(t, s, b)
 		return id
 	}
@@ -48,21 +55,25 @@ func completeInteractionFixture(t testing.TB, count, field, sibling int) map[str
 	evidence := &session.ObservedEvidence{Detail: new(string(check)), Correlation: new("correlation")}
 	first := request(nil)
 	b = beginBatch(t, s)
-	mustBatch(t, b.AddInvocationFailure(session.InvocationFailure{RequestID: first, Class: session.InvocationFailureTransport, Explanation: new("failure"), Usage: usage, Evidence: evidence}))
+	mustBatch(t, b.AddInvocationFailure(first, session.InvocationFailure{Class: session.InvocationFailureTransport, Explanation: new("failure"), Usage: usage, Evidence: evidence}))
 	submitBatch(t, s, b)
 	second := request(&first)
-	response := session.ModelResponse{RequestID: second, Terminal: session.ResponseTerminalOther, ProviderStopReason: new("stop"), Usage: usage, Evidence: evidence,
+	response := session.ModelResponse{Terminal: session.ResponseTerminalOther, ProviderStopReason: new("stop"), Usage: usage, Evidence: evidence,
 		Private: &session.OpaqueProviderData{Producer: "producer", Format: "private", Version: 19, Data: parameters}}
 	for range count {
 		response.Items = append(response.Items,
 			session.ResponseItem{Content: &session.ResponseContent{Kind: session.ResponseContentReasoning, Parts: []session.ContentPart{
 				{Text: new("text")}, {Media: &session.Media{Kind: session.MediaKindDocument, MIMEType: "image/example", Source: session.MediaSourceInline,
-					FormatHint: "raw", Filename: "image.bin", Title: "title", InlineData: parameters}}}}},
+					FormatHint: "raw", Filename: "image.bin", Title: "title", InlineData: parameters}},
+				{Media: &session.Media{Kind: session.MediaKindDocument, MIMEType: "image/example", Source: session.MediaSourceRemote,
+					FormatHint: "raw", Filename: "image.bin", Title: "title", RemoteURI: "https://example.test/media"}},
+				{Media: &session.Media{Kind: session.MediaKindDocument, MIMEType: "image/example", Source: session.MediaSourceProvider,
+					FormatHint: "raw", Filename: "image.bin", Title: "title", ProviderName: "media-provider", ProviderScope: "media-scope", ProviderReferenceID: "media-reference"}}}}},
 			session.ResponseItem{Call: &session.RequestedCall{Name: "call", Arguments: parameters}},
 			session.ResponseItem{Content: &session.ResponseContent{Kind: session.ResponseContentOutput, Parts: []session.ContentPart{{Text: new("output")}}}})
 	}
 	b = beginBatch(t, s)
-	mustBatch(t, b.AddModelResponse(response))
+	mustBatch(t, b.AddModelResponse(second, response))
 	mustBatch(t, b.EndRun(session.RunEndedInterrupted))
 	submitBatch(t, s, b)
 	b = beginBatch(t, s)
@@ -70,17 +81,35 @@ func completeInteractionFixture(t testing.TB, count, field, sibling int) map[str
 	submitBatch(t, s, b)
 	pending := request(nil)
 	b = beginBatch(t, s)
-	mustBatch(t, b.AddRunEnded(session.RunEnded{RunID: run, Reason: session.RunEndedCaptureFailed, Explanation: new("capture"),
-		Capture: &session.CaptureFailureEvidence{RequestID: pending, Usage: usage, Evidence: evidence}}))
+	mustBatch(t, b.AddRunEnded(run, session.RunEnded{Reason: session.RunEndedCaptureFailed, Explanation: new("capture"),
+		Capture: &session.CaptureFailureEvidence{RequestID: pending.RunRelative(), Usage: usage, Evidence: evidence}}))
 	submitBatch(t, s, b)
 	loaded, err := session.Load(t.Context(), h, s.Snapshot().HistoryID(), p)
 	mustBatch(t, err)
-	return map[string]*session.Session{"Submit": s, "Load": loaded}
+	sessions := map[string]*session.Session{"Submit": s, "Load": loaded}
+	for seam, inspected := range sessions {
+		seen := 0
+		snap := inspected.Snapshot()
+		for i := 0; i < snap.RecordCount(); i++ {
+			if request, ok := snap.RecordAt(i).ModelRequest(); ok {
+				want, found := sources[request.ID()]
+				if !found || request.Source().Sequence() != want.Sequence || request.Source().CID() != want.CID {
+					t.Fatalf("%s request %v source = (%d, %v), want %+v", seam, request.ID(), request.Source().Sequence(), request.Source().CID(), want)
+				}
+				seen++
+			}
+		}
+		if seen != len(sources) || seen != 3 {
+			t.Fatalf("%s inspected %d request sources, want 3", seam, seen)
+		}
+	}
+	return sessions
 }
 
 type interactionTraversal struct {
 	requests, retries, failures, responses, endings, captures int
 	items, contents, parts, itemCalls, calls                  int
+	inlineMedia, remoteMedia, providerMedia                   int
 	usages, counters, evidence, providers, recipes            int
 	bytes                                                     int
 }
@@ -95,8 +124,13 @@ func copyInteractionBytes(v views.Bytes) []byte {
 
 // inspectInteractionBytes always visits the borrowed leaf; only explicit exports copy.
 func inspectInteractionBytes(v views.Bytes, expected byte, exports bool) int {
-	if v.Len() == 0 || v.At(0) != expected || v.At(v.Len()-1) != expected {
-		panic("byte leaf")
+	if v.Len() == 0 {
+		panic("empty byte leaf")
+	}
+	for i, value := range v.All() {
+		if value != expected || v.At(i) != value {
+			panic("byte leaf")
+		}
 	}
 	if exports {
 		return len(copyInteractionBytes(v))
@@ -235,17 +269,30 @@ func traverseCompleteInteraction(snap session.Snapshot, exports bool) interactio
 							name, nameOK := media.ProviderName()
 							scope, scopeOK := media.ProviderScope()
 							ref, refOK := media.ProviderReferenceID()
-							if uriOK || nameOK || scopeOK || refOK || uri != "" || name != "" || scope != "" || ref != "" {
-								panic("wrong media source")
-							}
-							if media.Kind() != session.MediaKindDocument || media.MIMEType() != "image/example" || media.Source() != session.MediaSourceInline || media.FormatHint() != "raw" || media.Filename() != "image.bin" || media.Title() != "title" {
+							if media.Kind() != session.MediaKindDocument || media.MIMEType() != "image/example" || media.FormatHint() != "raw" || media.Filename() != "image.bin" || media.Title() != "title" {
 								panic("media metadata")
 							}
-							data, ok := media.InlineData()
-							if !ok {
-								panic("inline presence")
+							data, inline := media.InlineData()
+							switch media.Source() {
+							case session.MediaSourceInline:
+								if !inline || uriOK || nameOK || scopeOK || refOK || uri != "" || name != "" || scope != "" || ref != "" {
+									panic("inline media source")
+								}
+								visits.inlineMedia++
+								visits.bytes += inspectInteractionBytes(data, 0xa5, exports)
+							case session.MediaSourceRemote:
+								if inline || data.Len() != 0 || !uriOK || uri != "https://example.test/media" || nameOK || scopeOK || refOK || name != "" || scope != "" || ref != "" {
+									panic("remote media source")
+								}
+								visits.remoteMedia++
+							case session.MediaSourceProvider:
+								if inline || data.Len() != 0 || uriOK || uri != "" || !nameOK || !scopeOK || !refOK || name != "media-provider" || scope != "media-scope" || ref != "media-reference" {
+									panic("provider media source")
+								}
+								visits.providerMedia++
+							default:
+								panic("unknown media source")
 							}
-							visits.bytes += inspectInteractionBytes(data, 0xa5, exports)
 						}
 					}
 				} else {

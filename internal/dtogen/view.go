@@ -3,16 +3,14 @@ package dtogen
 import (
 	"bytes"
 	"crypto/sha256"
-	"encoding/json"
 	"fmt"
 	"go/ast"
 	"go/format"
 	"go/parser"
 	"go/token"
 	"go/types"
-	"io"
-	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"golang.org/x/tools/go/packages"
@@ -20,69 +18,20 @@ import (
 
 const viewsImportPath = "github.com/stacklok/mecatl/engine/kernel/views"
 
-// viewProjection classifies every DTO field. Backing names a handwritten private
-// pointer field; its type selects the DTO without a second import/name language.
-// Context methods are checked but never generated or used as collection adapters.
-type viewProjection struct {
-	View    string       `json:"view"`
-	Backing string       `json:"backing"`
-	Fields  []viewField  `json:"fields"`
-	Context []viewMethod `json:"context,omitempty"`
-}
-type viewField struct {
-	Field    string `json:"field"`
-	Method   string `json:"method,omitempty"`
-	Exclude  bool   `json:"exclude,omitempty"`
-	Override string `json:"override,omitempty"` // exact Go func type, including semantic presence
-}
-type viewMethod struct {
-	Method    string `json:"method"`
-	Signature string `json:"signature"`
-}
-
 func validateViewConfig(c LoadConfig, emit capabilities) error {
-	if emit.view != (c.Views != "") {
-		return fmt.Errorf("view capability requires -views projection map (and vice versa)")
+	if len(c.Types) == 0 {
+		return fmt.Errorf("select at least one local -types root")
 	}
-	if c.Views != "" && (filepath.Base(c.Views) != c.Views || !strings.HasSuffix(c.Views, ".json")) {
-		return fmt.Errorf("-views must be a package-local JSON filename")
-	}
-	if (emit.cbor || emit.clone || emit.equal) && len(c.Types) == 0 {
-		return fmt.Errorf("value/codec capabilities require local -types roots")
-	}
-	if len(c.Types) > 0 && !emit.cbor && !emit.clone && !emit.equal {
-		return fmt.Errorf("view-only destinations select backing through -views, not -types")
+	if emit.view && (emit.cbor || emit.clone || emit.equal) {
+		return fmt.Errorf("view declarations require view-only -emit view; select value capabilities independently")
 	}
 	return nil
 }
 
-func readViewMap(c LoadConfig) ([]viewProjection, []byte, error) {
-	if filepath.Base(c.Views) != c.Views || !strings.HasSuffix(c.Views, ".json") {
-		return nil, nil, fmt.Errorf("-views must be a package-local JSON filename")
-	}
-	data, err := os.ReadFile(filepath.Join(c.Dir, c.Views))
-	if err != nil {
-		return nil, nil, err
-	}
-	var projections []viewProjection
-	dec := json.NewDecoder(bytes.NewReader(data))
-	dec.DisallowUnknownFields()
-	if err = dec.Decode(&projections); err != nil {
-		return nil, nil, fmt.Errorf("view map: %w", err)
-	}
-	if err = dec.Decode(new(any)); err != io.EOF {
-		return nil, nil, fmt.Errorf("view map must contain one JSON array")
-	}
-	if len(projections) == 0 {
-		return nil, nil, fmt.Errorf("view map must select at least one projection")
-	}
-	return projections, data, nil
-}
-
-// typedView ties one local immutable handle to its concrete DTO backing. Extra
-// layout fields imply enclosing context and prohibit automatic child construction.
+// typedView ties a selected local handle to its private value pointer. Extra
+// layout fields retain context and prohibit automatic child construction.
 type typedView struct {
-	projection    viewProjection
+	name          string
 	named         *types.Named
 	dto           *types.Pointer
 	fields        *types.Struct
@@ -91,19 +40,14 @@ type typedView struct {
 
 func (e *emitter) viewType(t types.Type) string { return e.typeName(&shape{typ: t}) }
 
-// emitViews validates declarative projections and renders concrete borrowed
-// accessors; it never evaluates handwritten method bodies.
+// emitViews infers source-declared field policy without executing owner code.
 func (e *emitter) emitViews(c LoadConfig) error {
-	projections, data, err := readViewMap(c)
-	if err != nil {
-		return err
-	}
 	pkg := e.s.loaded.Package
-	views, err := typedViews(projections, pkg)
+	views, err := typedViews(c.Types, pkg)
 	if err != nil {
 		return err
 	}
-	e.writeViewFingerprint(data, views, pkg)
+	e.writeViewFingerprint(views, pkg)
 	for _, view := range views {
 		if err := e.emitView(view, views, pkg); err != nil {
 			return err
@@ -112,61 +56,61 @@ func (e *emitter) emitViews(c LoadConfig) error {
 	return nil
 }
 
-func typedViews(projections []viewProjection, pkg *packages.Package) ([]typedView, error) {
-	views := make([]typedView, 0, len(projections))
-	seen := map[string]bool{}
-	for _, projection := range projections {
-		if !validViewName(projection.View) || !validViewName(projection.Backing) || token.IsExported(projection.Backing) || seen[projection.View] {
-			return nil, fmt.Errorf("invalid or duplicate view/backing %s.%s", projection.View, projection.Backing)
-		}
-		seen[projection.View] = true
-		obj, ok := pkg.Types.Scope().Lookup(projection.View).(*types.TypeName)
+func typedViews(names []string, pkg *packages.Package) ([]typedView, error) {
+	names = slices.Clone(names)
+	slices.Sort(names)
+	names = slices.Compact(names)
+	views := make([]typedView, 0, len(names))
+	for _, name := range names {
+		obj, ok := pkg.Types.Scope().Lookup(name).(*types.TypeName)
 		if !ok || obj.IsAlias() {
-			return nil, fmt.Errorf("view %s must be a handwritten local defined struct", projection.View)
+			return nil, fmt.Errorf("view %s must be a handwritten local defined struct", name)
 		}
 		named, ok := obj.Type().(*types.Named)
 		if !ok || named.TypeParams().Len() != 0 {
-			return nil, fmt.Errorf("view %s must be nongeneric", projection.View)
+			return nil, fmt.Errorf("view %s must be nongeneric", name)
 		}
 		layout, ok := named.Underlying().(*types.Struct)
 		if !ok {
-			return nil, fmt.Errorf("view %s must be a struct", projection.View)
+			return nil, fmt.Errorf("view %s must be a struct", name)
 		}
-		backing, err := viewBacking(layout, projection)
-		if err != nil {
-			return nil, err
+		var backing types.Type
+		for i := 0; i < layout.NumFields(); i++ {
+			field := layout.Field(i)
+			if field.Exported() || field.Embedded() || field.Name() == "_" {
+				return nil, fmt.Errorf("view %s layout must retain backing/context in private nonembedded fields", name)
+			}
+			if field.Name() == "value" {
+				backing = field.Type()
+			}
 		}
 		ptr, ok := backing.(*types.Pointer)
 		if !ok {
-			return nil, fmt.Errorf("view %s backing %s must be a DTO pointer", projection.View, projection.Backing)
+			return nil, fmt.Errorf("view %s requires private value *DTO backing", name)
 		}
-		fields, ok := ptr.Elem().Underlying().(*types.Struct)
+		dto, ok := types.Unalias(ptr.Elem()).(*types.Named)
+		if !ok || dto.TypeArgs().Len() != 0 {
+			return nil, fmt.Errorf("view %s backing must point to a named nongeneric DTO", name)
+		}
+		fields, ok := dto.Underlying().(*types.Struct)
 		if !ok {
-			return nil, fmt.Errorf("view %s backing must point to a struct", projection.View)
+			return nil, fmt.Errorf("view %s backing must point to a struct", name)
 		}
-		views = append(views, typedView{projection, named, ptr, fields, layout.NumFields() == 1})
+		view := typedView{name, named, ptr, fields, layout.NumFields() == 1}
+		for _, prior := range views {
+			if view.constructible && prior.constructible && types.Identical(view.dto.Elem(), prior.dto.Elem()) {
+				return nil, fmt.Errorf("ambiguous context-free views %s and %s for %s", prior.name, name, dto)
+			}
+		}
+		views = append(views, view)
 	}
 	return views, nil
 }
 
-func viewBacking(layout *types.Struct, projection viewProjection) (types.Type, error) {
-	var backing types.Type
-	for i := 0; i < layout.NumFields(); i++ {
-		field := layout.Field(i)
-		if field.Exported() || field.Embedded() {
-			return nil, fmt.Errorf("view %s layout must retain backing/context in private nonembedded fields", projection.View)
-		}
-		if field.Name() == projection.Backing {
-			backing = field.Type()
-		}
-	}
-	return backing, nil
-}
-
-func (e *emitter) writeViewFingerprint(data []byte, views []typedView, pkg *packages.Package) {
+func (e *emitter) writeViewFingerprint(views []typedView, pkg *packages.Package) {
 	hash := sha256.New()
-	_, _ = hash.Write(data)
 	for _, view := range views {
+		_, _ = fmt.Fprintf(hash, "\n%q %q", view.name, types.TypeString(view.named.Underlying(), func(p *types.Package) string { return p.Path() }))
 		_, _ = fmt.Fprintf(hash, "\n%q", types.TypeString(view.dto, func(p *types.Package) string { return p.Path() }))
 		_, _ = fmt.Fprintf(hash, "\n%q", types.TypeString(view.fields, func(p *types.Package) string { return p.Path() }))
 		_, _ = fmt.Fprintf(hash, "\n%q", sourceDoc(pkg, view.dto.Elem(), ""))
@@ -174,106 +118,49 @@ func (e *emitter) writeViewFingerprint(data []byte, views []typedView, pkg *pack
 			_, _ = fmt.Fprintf(hash, "\n%q", sourceDoc(pkg, view.dto.Elem(), view.fields.Field(i).Name()))
 		}
 	}
-	e.line("// Projection map and source documentation fingerprint: %x.", hash.Sum(nil))
+	e.line("// Selected view layouts, source policy and documentation fingerprint: %x.", hash.Sum(nil))
 }
 
 func (e *emitter) emitView(v typedView, views []typedView, pkg *packages.Package) error {
-	projection := v.projection
-	// Type docs live alongside the adapter when layouts stay handwritten.
-	e.viewDoc("Backing contract for "+projection.View+".", sourceDoc(pkg, v.dto.Elem(), ""))
+	e.viewDoc("Backing contract for "+v.name+".", sourceDoc(pkg, v.dto.Elem(), ""))
 	if v.constructible {
-		name := "dtogenView" + projection.View
+		name := "dtogenView" + v.name
 		if err := e.reserveViewName(name); err != nil {
 			return err
 		}
 		e.line("// %s borrows stable backing; it neither freezes nor synchronizes access.", name)
-		e.line("func %s(value %s) %s { return %s{%s:value} }", name, e.viewType(v.dto), projection.View, projection.View, projection.Backing)
+		e.line("func %s(value %s) %s { return %s{value:value} }", name, e.viewType(v.dto), v.name, v.name)
 	}
-	// A pointer conversion catches additions, removals and field type changes at
-	// compile time, even before the deterministic source freshness check is run.
+	// Catch stale field shapes before the deterministic freshness check, where nameable.
 	if viewShapeNameable(v.fields, pkg.Types) {
 		e.line("var _ = (*%s)((%s)(nil))", e.viewType(v.fields), e.viewType(v.dto))
 	}
-	methods, err := e.emitViewFields(v, views, pkg)
-	if err != nil {
-		return err
-	}
-	if err := e.checkViewContext(v, methods); err != nil {
-		return err
-	}
-	for i := 0; i < v.named.NumMethods(); i++ {
-		method := v.named.Method(i)
-		if !methods[method.Name()] && !e.generatedPosition(method.Pos()) {
-			return fmt.Errorf("%s.%s: unclassified handwritten method; declare a context method or override", projection.View, method.Name())
-		}
-	}
-	return nil
-}
-
-func (e *emitter) emitViewFields(v typedView, views []typedView, pkg *packages.Package) (map[string]bool, error) {
-	covered := map[string]bool{}
-	methods := map[string]bool{}
-	for _, f := range v.projection.Fields {
-		if !validViewName(f.Field) || covered[f.Field] {
-			return nil, fmt.Errorf("%s: invalid or duplicate field %s", v.projection.View, f.Field)
-		}
-		covered[f.Field] = true
-		field := viewFieldByName(v.fields, f.Field)
-		if field == nil {
-			return nil, fmt.Errorf("%s: unknown field %s", v.projection.View, f.Field)
-		}
-		if f.Exclude {
-			if f.Method != "" || f.Override != "" {
-				return nil, fmt.Errorf("%s.%s: excluded field cannot have a method", v.projection.View, f.Field)
-			}
-			continue
-		}
-		if !validViewName(f.Method) || methods[f.Method] {
-			return nil, fmt.Errorf("%s: invalid or duplicate method %s", v.projection.View, f.Method)
-		}
-		methods[f.Method] = true
-		if f.Override != "" {
-			if err := e.checkViewMethod(v, f.Method, f.Override); err != nil {
-				return nil, err
-			}
-			// Handwritten documentation is authoritative; it is never copied over.
-			continue
-		}
-		if !field.Exported() && field.Pkg() != pkg.Types {
-			return nil, fmt.Errorf("%s.%s: inaccessible DTO field", v.projection.View, f.Field)
-		}
-		if err := e.noViewMethod(v, f.Method); err != nil {
-			return nil, err
-		}
-		if err := e.emitViewField(v, f, field, views); err != nil {
-			return nil, err
-		}
-	}
 	for i := 0; i < v.fields.NumFields(); i++ {
-		if !covered[v.fields.Field(i).Name()] {
-			return nil, fmt.Errorf("%s: uncovered backing field %s", v.projection.View, v.fields.Field(i).Name())
+		field := v.fields.Field(i)
+		tags, err := selectedTags(v.fields.Tag(i), "view")
+		if err != nil {
+			return fmt.Errorf("%s.%s: %w", v.name, field.Name(), err)
 		}
-	}
-	return methods, nil
-}
-
-func viewFieldByName(fields *types.Struct, name string) *types.Var {
-	for i := 0; i < fields.NumFields(); i++ {
-		if fields.Field(i).Name() == name {
-			return fields.Field(i)
-		}
-	}
-	return nil
-}
-
-func (e *emitter) checkViewContext(v typedView, methods map[string]bool) error {
-	for _, method := range v.projection.Context {
-		if !validViewName(method.Method) || methods[method.Method] {
-			return fmt.Errorf("%s: invalid or duplicate context method %s", v.projection.View, method.Method)
-		}
-		methods[method.Method] = true
-		if err := e.checkViewMethod(v, method.Method, method.Signature); err != nil {
-			return err
+		policy, present := tags["view"]
+		switch {
+		case !present:
+			if !field.Exported() && field.Pkg() != pkg.Types {
+				return fmt.Errorf("%s.%s: inaccessible DTO field", v.name, field.Name())
+			}
+			if err := e.noViewMethod(v, field.Name()); err != nil {
+				return err
+			}
+			if err := e.emitViewField(v, field, views); err != nil {
+				return err
+			}
+		case policy == "-":
+			continue
+		case policy == "manual":
+			if err := e.checkViewMethod(v, field.Name()); err != nil {
+				return err
+			}
+		default:
+			return fmt.Errorf("%s.%s: unknown view tag %q; use - or manual", v.name, field.Name(), policy)
 		}
 	}
 	return nil
@@ -352,10 +239,6 @@ func viewShapeNameable(t types.Type, local *types.Package) bool {
 	}
 }
 
-func validViewName(s string) bool {
-	return token.IsIdentifier(s) && s != "_" && !token.Lookup(s).IsKeyword()
-}
-
 func (e *emitter) reserveViewName(name string) error {
 	if obj := e.s.loaded.Package.Types.Scope().Lookup(name); obj != nil && !e.generatedPosition(obj.Pos()) {
 		return fmt.Errorf("handwritten declaration collides with generated %s", name)
@@ -369,42 +252,37 @@ func (e *emitter) generatedPosition(pos token.Pos) bool {
 func (e *emitter) noViewMethod(v typedView, name string) error {
 	obj, _, _ := types.LookupFieldOrMethod(v.named, true, e.s.loaded.Package.Types, name)
 	if obj != nil && !e.generatedPosition(obj.Pos()) {
-		return fmt.Errorf("%s.%s: handwritten method/field collision; declare an explicit override", v.projection.View, name)
+		return fmt.Errorf("%s.%s: handwritten method/field collision; tag the DTO field view:\"manual\"", v.name, name)
 	}
 	return nil
 }
 
-// checkViewMethod requires an explicitly declared, exact value-receiver method.
-// Evaluating a func type in the view declaration's source scope resolves ordinary
-// Go import aliases without adding an executable configuration language.
-func (e *emitter) checkViewMethod(v typedView, name, signature string) error {
-	pkg := e.s.loaded.Package
-	obj, _, _ := types.LookupFieldOrMethod(v.named, false, pkg.Types, name)
-	fn, ok := obj.(*types.Func)
-	if !ok || e.generatedPosition(fn.Pos()) {
-		return fmt.Errorf("%s.%s: missing/stale handwritten override or context method", v.projection.View, name)
+// checkViewMethod requires a directly declared handwritten value-receiver getter.
+// Go owns its semantic signature; final closure typechecking validates its callers.
+func (e *emitter) checkViewMethod(v typedView, name string) error {
+	for i := 0; i < v.named.NumMethods(); i++ {
+		fn := v.named.Method(i)
+		if fn.Name() != name || e.generatedPosition(fn.Pos()) {
+			continue
+		}
+		sig := fn.Type().(*types.Signature)
+		if !types.Identical(sig.Recv().Type(), v.named) || sig.Params().Len() != 0 || sig.Results().Len() == 0 || sig.Variadic() {
+			return fmt.Errorf("%s.%s: manual getter must have a value receiver, no parameters and at least one result", v.name, name)
+		}
+		return nil
 	}
-	actual := fn.Type().(*types.Signature)
-	expected, err := types.Eval(pkg.Fset, pkg.Types, v.named.Obj().Pos(), signature)
-	if err != nil {
-		return fmt.Errorf("%s.%s: invalid declared signature: %w", v.projection.View, name, err)
-	}
-	sig, ok := expected.Type.(*types.Signature)
-	if !ok || !expected.IsType() || !types.Identical(actual.Recv().Type(), v.named) || !types.Identical(actual, sig) {
-		return fmt.Errorf("%s.%s: override must have exact declared signature %s and a value receiver", v.projection.View, name, signature)
-	}
-	return nil
+	return fmt.Errorf("%s.%s: missing directly declared handwritten manual getter", v.name, name)
 }
 
-func (e *emitter) emitViewField(v typedView, f viewField, field *types.Var, all []typedView) error {
-	p := v.projection
+func (e *emitter) emitViewField(v typedView, field *types.Var, all []typedView) error {
+	name := field.Name()
 	t := field.Type()
 	optional := false
 	if ptr, ok := types.Unalias(t).(*types.Pointer); ok {
 		optional = true
 		t = ptr.Elem()
 	}
-	expr := "v." + p.Backing + "." + f.Field
+	expr := "v.value." + name
 	value := expr
 	if optional {
 		value = "*" + expr
@@ -413,18 +291,18 @@ func (e *emitter) emitViewField(v typedView, f viewField, field *types.Var, all 
 	switch u := t.Underlying().(type) {
 	case *types.Basic:
 		if u.Kind() == types.UnsafePointer || u.Kind() == types.Invalid {
-			return fmt.Errorf("%s.%s: unsupported scalar", p.View, f.Field)
+			return fmt.Errorf("%s.%s: unsupported scalar", v.name, name)
 		}
 		result = e.viewType(t)
 		zero = "*new(" + result + ")"
 		body = value
 		ownership = "The receiver retains stable backing for its lifetime."
 	case *types.Struct:
-		child, err := projectionFor(t, all)
+		child, err := childViewFor(t, all)
 		if err != nil {
-			return fmt.Errorf("%s.%s: %w", p.View, f.Field, err)
+			return fmt.Errorf("%s.%s: %w", v.name, name, err)
 		}
-		result = child.projection.View
+		result = child.name
 		zero = result + "{}"
 		address := "&" + expr
 		if optional {
@@ -444,23 +322,23 @@ func (e *emitter) emitViewField(v typedView, f viewField, field *types.Var, all 
 			body = runtime + ".BorrowBytes(" + value + ")"
 			ownership = "The returned bytes borrow stable backing for their lifetime; only Copy detaches bytes."
 		} else {
-			child, err := projectionFor(u.Elem(), all)
+			child, err := childViewFor(u.Elem(), all)
 			if err != nil {
-				return fmt.Errorf("%s.%s: %w", p.View, f.Field, err)
+				return fmt.Errorf("%s.%s: %w", v.name, name, err)
 			}
-			result = runtime + ".SliceView[" + e.viewType(u.Elem()) + ", " + child.projection.View + "]"
+			result = runtime + ".SliceView[" + e.viewType(u.Elem()) + ", " + child.name + "]"
 			zero = result + "{}"
-			body = runtime + ".BorrowSliceView(" + value + ", dtogenView" + child.projection.View + ")"
+			body = runtime + ".BorrowSliceView(" + value + ", dtogenView" + child.name + ")"
 			ownership = "The collection borrows stable backing and adapts elements lazily; derived views retain it."
 		}
 	default:
-		return fmt.Errorf("%s.%s: unsupported view shape %s; explicitly override or exclude it", p.View, f.Field, t)
+		return fmt.Errorf("%s.%s: unsupported view shape %s; use view:\"manual\" or view:\"-\"", v.name, name, t)
 	}
-	guard := "v." + p.Backing + " == nil"
+	guard := "v.value == nil"
 	if optional {
 		guard += " || " + expr + " == nil"
 	}
-	docs := f.Method + " reads " + f.Field + " in O(1) without copying sibling payloads."
+	docs := name + " reads " + name + " in O(1) without copying sibling payloads."
 	if optional {
 		docs += "\nA zero view or nil field returns zero, false; present zero/empty values return true."
 	} else {
@@ -468,32 +346,25 @@ func (e *emitter) emitViewField(v typedView, f viewField, field *types.Var, all 
 	}
 	docs += "\n" + ownership + "\nAccess neither freezes nor synchronizes backing."
 	source := sourceDoc(e.s.loaded.Package, v.dto.Elem(), "")
-	if fieldDoc := sourceDoc(e.s.loaded.Package, v.dto.Elem(), f.Field); fieldDoc != "" {
+	if fieldDoc := sourceDoc(e.s.loaded.Package, v.dto.Elem(), name); fieldDoc != "" {
 		source += "\n\n" + fieldDoc
 	}
 	e.viewDoc(docs, source)
 	if optional {
-		e.line("func (v %s) %s() (%s, bool) {if %s {return %s,false};return %s,true}", p.View, f.Method, result, guard, zero, body)
+		e.line("func (v %s) %s() (%s, bool) {if %s {return %s,false};return %s,true}", v.name, name, result, guard, zero, body)
 	} else {
-		e.line("func (v %s) %s() %s {if %s {return %s};return %s}", p.View, f.Method, result, guard, zero, body)
+		e.line("func (v %s) %s() %s {if %s {return %s};return %s}", v.name, name, result, guard, zero, body)
 	}
 	return nil
 }
-func projectionFor(t types.Type, all []typedView) (typedView, error) {
-	var found *typedView
-	for i := range all {
-		v := &all[i]
-		if types.Identical(t, v.dto.Elem()) && v.constructible {
-			if found != nil {
-				return typedView{}, fmt.Errorf("ambiguous child projections for %s", t)
-			}
-			found = v
+func childViewFor(t types.Type, all []typedView) (typedView, error) {
+	// typedViews has already rejected multiple context-free handles for one DTO.
+	for _, v := range all {
+		if v.constructible && types.Identical(t, v.dto.Elem()) {
+			return v, nil
 		}
 	}
-	if found == nil {
-		return typedView{}, fmt.Errorf("no context-free child projection for %s", t)
-	}
-	return *found, nil
+	return typedView{}, fmt.Errorf("no context-free child view for %s", t)
 }
 
 func (e *emitter) viewDoc(contract, source string) {

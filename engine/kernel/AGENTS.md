@@ -26,11 +26,10 @@ patterns here as they emerge; keep unrelated legacy cleanup out of scope.
 - Put persistence DTOs, versioned schemas, generated codecs and payload-local
   validation in the owning layer's `format` subpackage, as in `history/format`
   and `session/format`. Keep these packages independent of aggregates and their
-  operational policy. Canonical payload values needing no occurrence-scope
-  translation may be shared with public aliases (SourceHead still carries a CID).
-  Keep commands and references needing enclosing-scope translation separate from
-  DTOs; validate that context at the conversion boundary rather than silently
-  dropping conflicting values.
+  operational policy. Session payload names alias canonical format declarations;
+  commit methods take full destination identities separately, reject nonzero
+  synthesized context/allocation fields, and populate only a bounded local copy.
+  Nested numeric references resolve within that destination, without origin proof.
 - Organize implementation files by owning type: `commit.go`, `record.go`, etc.
   Keep the declaration, methods, and type-specific helpers together, including
   validation, cloning, equality, and encoding/decoding. Avoid capability-wide
@@ -62,9 +61,11 @@ patterns here as they emerge; keep unrelated legacy cleanup out of scope.
 ## Contract and implementation discipline
 
 - Public occurrence IDs are distinct, scoped identities for equality and
-  correlation. Keep numeric allocation and successor arithmetic internal rather
-  than exposing ordering as an identity contract. Use consistent identity naming
-  across public values and persistence DTOs; document omitted enclosing scope.
+  correlation. Expose validated parent/component decomposition and reconstruction
+  as identity values, not allocation, membership, or authority. Keep numeric
+  allocation and successor arithmetic internal, without an ordering contract.
+  Use consistent identity naming across public values and persistence DTOs;
+  document omitted enclosing scope.
 - Use string constants for categorical fields, grouped by the field/type they
   describe. Document and validate closed vocabularies; preserve provider-owned
   open values without inventing a closed enum. Bound labels used in resource
@@ -82,6 +83,11 @@ patterns here as they emerge; keep unrelated legacy cleanup out of scope.
   retained backing, lifetime and navigation complexity. Test complete scalar
   traversal and leaf-only copying through Submit and storage-backed Load with
   nonempty siblings; allocation-free traversal that skips subtrees is not evidence.
+- Select DTO-backed views explicitly in the view-only generation declaration.
+  Untagged fields get safe same-named getters; `view:"-"` omits a field and
+  `view:"manual"` requires a handwritten getter. Keep scope-bearing navigation
+  handwritten for required, optional, and collection children; automatic child
+  adapters are context-free. Regenerate through `task generate:data`.
 - Keep data-contract validation distinct from operational resource policy.
   Validate lengths and counts before the allocations or conversions they govern;
   use overflow-safe arithmetic. Do not rely on mutable dependency-global limits.

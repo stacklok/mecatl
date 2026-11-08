@@ -19,7 +19,7 @@ func TestInteractionOversizeCaptureFallback(t *testing.T) {
 				s := interactionFixture(t, "pending")
 				pending := s.state.view.lifecycle.pending
 				before := detachedSessionState(s.state)
-				response := ModelResponse{RequestID: pending, Terminal: ResponseTerminalNormal, Usage: &InvocationUsage{Output: new(int64(0))}}
+				response := ModelResponse{Terminal: ResponseTerminalNormal, Usage: &InvocationUsage{Output: new(int64(0))}}
 				if oversized == "content" {
 					response.Items = []ResponseItem{{Content: &ResponseContent{Kind: ResponseContentOutput, Parts: []ContentPart{{Text: new(strings.Repeat("x", s.policy.PayloadLimits.MaxStringBytes+1))}}}}}
 				} else {
@@ -27,21 +27,21 @@ func TestInteractionOversizeCaptureFallback(t *testing.T) {
 				}
 				b, err := s.BeginCommit()
 				interactionCheck(t, err)
-				if err = b.AddModelResponse(response); !errors.Is(err, codec.ErrLimitExceeded) || len(b.records) != 0 {
+				if err = b.AddModelResponse(pending, response); !errors.Is(err, codec.ErrLimitExceeded) || len(b.records) != 0 {
 					t.Fatalf("whole capture rejection: %v", err)
 				}
 				interactionCheck(t, b.Discard())
 				if !reflect.DeepEqual(before, detachedSessionState(s.state)) {
 					t.Fatal("capture rejection resolved request")
 				}
-				ending := RunEnded{RunID: pending.runID, Reason: RunEndedCaptureFailed, Explanation: new("capture exceeded local bounds"), Capture: &CaptureFailureEvidence{RequestID: pending, Evidence: &ObservedEvidence{Correlation: new("observed")}, Usage: response.Usage}}
+				ending := RunEnded{Reason: RunEndedCaptureFailed, Explanation: new("capture exceeded local bounds"), Capture: &CaptureFailureEvidence{RequestID: pending.RunRelative(), Evidence: &ObservedEvidence{Correlation: new("observed")}, Usage: response.Usage}}
 				if !detailedFits {
-					minimal := interactionRecord(t)(newRunEndedRecord(RunEnded{RunID: pending.runID, Reason: RunEndedCaptureFailed}, s.policy.PayloadLimits))
+					minimal := interactionRecord(t)(newRunEndedRecord(RunEnded{Reason: RunEndedCaptureFailed}, pending.runID, s.policy.PayloadLimits))
 					s.policy.SoftMaxPayloadBytes = s.state.payloadBytes + uint64(len(minimal.value.Payload))
 				}
 				b, err = s.BeginCommit()
 				interactionCheck(t, err)
-				interactionCheck(t, b.AddRunEnded(ending))
+				interactionCheck(t, b.AddRunEnded(pending.runID, ending))
 				_, err = s.SubmitCommit(context.Background(), b)
 				if detailedFits {
 					interactionCheck(t, err)
@@ -95,11 +95,11 @@ func TestInteractionManyCallsDoNotEnlargeMinimalEnding(t *testing.T) {
 	for _, count := range []int{0, 1, 15, 16} {
 		s := interactionFixture(t, "pending")
 		pending := s.state.view.lifecycle.pending
-		response := ModelResponse{RequestID: pending, Terminal: ResponseTerminalError}
+		response := ModelResponse{Terminal: ResponseTerminalError}
 		for range count {
 			response.Items = append(response.Items, ResponseItem{Call: &RequestedCall{Arguments: []byte{0xff}}})
 		}
-		interactionSubmit(t, s, func(b *SessionCommit) { interactionCheck(t, b.AddModelResponse(response)) })
+		interactionSubmit(t, s, func(b *SessionCommit) { interactionCheck(t, b.AddModelResponse(pending, response)) })
 		prepared, err := s.prepareEnding(RunEndedInterrupted)
 		interactionCheck(t, err)
 		got := prepared.commit.Records[0].Payload

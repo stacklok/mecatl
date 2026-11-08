@@ -19,23 +19,23 @@ func TestContentTextRecordOwnership(t *testing.T) {
 			callerText := text
 			parts := []ContentPart{{Text: &callerText}}
 			source := ContentSource{Description: "retained"}
-			created, err := newCreatedRecord(Created{HistoryID: scope}, limits)
+			created, err := newCreatedRecord(Created{}, limits)
 			if err != nil {
 				t.Fatal(err)
 			}
-			started, err := newRunStartedRecord(RunStarted{ID: run}, limits)
+			started, err := newRunStartedRecord(RunStarted{ID: run.ordinal}, limits)
 			if err != nil {
 				t.Fatal(err)
 			}
-			authored, err := makeInputRecord(identifiedInput{ID: input, Parts: parts}, limits)
+			authored, err := newUserInputRecord(UserInput{Parts: parts}, input, limits)
 			if err != nil {
 				t.Fatal(err)
 			}
-			instructions, err := newInstructionsRecord(Instructions{HistoryID: scope, Blocks: []InstructionBlock{{Parts: parts, Source: source}}}, limits)
+			instructions, err := newInstructionsRecord(Instructions{Blocks: []InstructionBlock{{Parts: parts, Source: source}}}, limits)
 			if err != nil {
 				t.Fatal(err)
 			}
-			effective, err := newEffectiveInputRecord(EffectiveInput{RunID: run, Inputs: []InputItem{{Inline: &AttributedInput{Actor: "harness", Purpose: PromptContext, Parts: parts, Source: source}}}}, limits)
+			effective, err := newEffectiveInputRecord(EffectiveInput{Inputs: []InputItem{{Inline: &AttributedInput{Actor: "harness", Purpose: PromptContext, Parts: parts, Source: source}}}}, run, limits)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -49,7 +49,7 @@ func TestContentTextRecordOwnership(t *testing.T) {
 			instructionView, _ := view.Instructions()
 			effectiveView, _ := view.RecordAt(4).EffectiveInput()
 			inline, _ := effectiveView.InputAt(0).Inline()
-			for _, part := range []ContentPartView{inputView.PartAt(0), instructionView.BlockAt(0).PartAt(0), inline.PartAt(0)} {
+			for _, part := range []ContentPartView{inputView.Parts().At(0), instructionView.Blocks().At(0).Parts().At(0), inline.Parts().At(0)} {
 				if got, ok := part.Text(); !ok || got != text {
 					t.Fatalf("record/admission text = %q, %t; want %q", got, ok, text)
 				}
@@ -63,7 +63,7 @@ func TestContentTextRecordOwnership(t *testing.T) {
 			if *clone.Inputs[0].Inline.Parts[0].Text != text {
 				t.Fatal("replay export clone shared text pointer")
 			}
-			if got, _ := inline.PartAt(0).Text(); got != text {
+			if got, _ := inline.Parts().At(0).Text(); got != text {
 				t.Fatal("replay export changed pinned text")
 			}
 		})
@@ -73,11 +73,11 @@ func TestContentTextRecordOwnership(t *testing.T) {
 func TestContentTextBudgetBeforeConversion(t *testing.T) {
 	s, limits := internalFixture(t)
 	id := UserInputID{runID: RunID{historyID: s.Snapshot().HistoryID(), ordinal: 1}, ordinal: 1}
-	input := identifiedInput{ID: id, Parts: make([]ContentPart, 8)}
+	input := UserInput{ID: id.ordinal, Parts: make([]ContentPart, 8)}
 	for i := range input.Parts {
 		input.Parts[i].Text = new("")
 	}
-	if _, err := makeInputRecord(input, limits); err != nil {
+	if _, err := newUserInputRecord(input, id, limits); err != nil {
 		t.Fatalf("positive control: %v", err)
 	}
 	for _, axis := range []string{"nodes", "bytes"} {
@@ -91,7 +91,7 @@ func TestContentTextBudgetBeforeConversion(t *testing.T) {
 			var record *materializedRecord
 			var err error
 			if n := testing.AllocsPerRun(10, func() {
-				record, err = makeInputRecord(input, bounded)
+				record, err = newUserInputRecord(input, id, bounded)
 			}); n != 0 {
 				t.Fatalf("text-pointer rejection allocated %g times", n)
 			}
@@ -100,7 +100,7 @@ func TestContentTextBudgetBeforeConversion(t *testing.T) {
 			}
 			// Bypassing preflight still rejects in bounded codec traversal.
 			if n := testing.AllocsPerRun(10, func() {
-				_, err = codec.Encode(input.toFormat(), bounded)
+				_, err = codec.Encode(input, bounded)
 			}); n == 0 || !errors.Is(err, codec.ErrLimitExceeded) {
 				t.Fatalf("late-rejection control: %g allocations, %v", n, err)
 			}
@@ -125,20 +125,20 @@ func TestContentBranchAdmissionIsAtomic(t *testing.T) {
 	for _, part := range []ContentPart{{}, {Text: new(""), Media: &Media{Kind: MediaKindImage, Source: MediaSourceRemote, RemoteURI: "urn:a"}}} {
 		parts := []ContentPart{part}
 		count := len(b.records)
-		if id, err := b.AddUserInput(UserInput{RunID: run, Parts: parts}); !errors.Is(err, codec.ErrInvalidData) || id != (UserInputID{}) {
+		if id, err := b.AddUserInput(run, UserInput{Parts: parts}); !errors.Is(err, codec.ErrInvalidData) || id != (UserInputID{}) {
 			t.Fatalf("invalid user content: %v, %v", id, err)
 		}
-		if err := b.ReplaceInstructions(Instructions{HistoryID: run.historyID, Blocks: []InstructionBlock{{Parts: parts, Source: ContentSource{Description: "source"}}}}); !errors.Is(err, codec.ErrInvalidData) {
+		if err := b.ReplaceInstructions(run.historyID, Instructions{Blocks: []InstructionBlock{{Parts: parts, Source: ContentSource{Description: "source"}}}}); !errors.Is(err, codec.ErrInvalidData) {
 			t.Fatalf("invalid instructions: %v", err)
 		}
-		if err := b.AddEffectiveInput(EffectiveInput{RunID: run, Inputs: []InputItem{{Inline: &AttributedInput{Actor: "harness", Purpose: PromptContext, Parts: parts, Source: ContentSource{Description: "source"}}}}}); !errors.Is(err, codec.ErrInvalidData) {
+		if err := b.AddEffectiveInput(run, EffectiveInput{Inputs: []InputItem{{Inline: &AttributedInput{Actor: "harness", Purpose: PromptContext, Parts: parts, Source: ContentSource{Description: "source"}}}}}); !errors.Is(err, codec.ErrInvalidData) {
 			t.Fatalf("invalid effective input: %v", err)
 		}
 		if len(b.records) != count || !reflect.DeepEqual(before, s.Snapshot()) {
 			t.Fatal("invalid branches changed staged records or accepted state")
 		}
 	}
-	id, err := b.AddUserInput(UserInput{RunID: run, Parts: []ContentPart{{Text: new("")}}})
+	id, err := b.AddUserInput(run, UserInput{Parts: []ContentPart{{Text: new("")}}})
 	if err != nil || id.ordinal != 1 {
 		t.Fatalf("rejection consumed input ordinal: %v, %v", id, err)
 	}

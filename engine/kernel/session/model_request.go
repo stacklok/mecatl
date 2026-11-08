@@ -16,89 +16,31 @@ type SourceHead = sessionformat.SourceHead
 // Assignment borrows its byte slices; Clone detaches them. Zero is invalid.
 type ConstructionRecipe = sessionformat.ConstructionRecipe
 
-// ModelRequest authors one invocation commitment in RunID. Source asserts the exact
-// accepted construction head, never an earlier same-batch fact. RetryOf is optional
-// same-run correlation only. Assignment shares nested bytes and pointer storage;
-// Clone detaches them. Zero RunID is invalid; AddModelRequest allocates identity.
-type ModelRequest struct {
-	// RunID must identify the active run; AddModelRequest allocates its request ID.
-	RunID RunID
-	// Source is the exact accepted head used for request construction.
-	Source SourceHead
-	// Recipe describes construction; assignment borrows its nested bytes.
-	Recipe ConstructionRecipe
-	// RetryOf optionally names an earlier accepted request in RunID. It is
-	// correlation only; assignment borrows the pointer and each add gets a new ID.
-	RetryOf *ModelRequestID
-}
+// ModelRequest is the canonical invocation commitment. AddModelRequest supplies
+// the destination and allocates identity; incoming RunID and ID must be zero.
+// RetryOf is a destination-run-relative component without origin provenance.
+// Assignment shares nested storage; Clone detaches it.
+type ModelRequest = sessionformat.ModelRequest
 
-// Validate checks local values and full retry scope, not accepted membership/order.
-func (v ModelRequest) Validate() error {
-	if err := v.RunID.Validate(); err != nil {
-		return err
-	}
-	if err := v.Source.Validate(); err != nil {
-		return err
-	}
-	if err := v.Recipe.Validate(); err != nil {
-		return err
-	}
-	if v.RetryOf != nil && v.RetryOf.runID != v.RunID {
-		return codec.ErrInvalidData
-	}
-	if v.RetryOf != nil {
-		return v.RetryOf.Validate()
-	}
-	return nil
-}
-
-// Clone returns independently owned recipe bytes and retry storage.
-func (v ModelRequest) Clone() ModelRequest {
-	v.Recipe = v.Recipe.Clone()
-	if v.RetryOf != nil {
-		id := *v.RetryOf
-		v.RetryOf = &id
-	}
-	return v
-}
-
-// Equal compares full run scope, source, recipe and retry presence.
-func (v ModelRequest) Equal(other ModelRequest) bool {
-	return v.RunID == other.RunID && v.Source == other.Source && v.Recipe.Equal(other.Recipe) && ((v.RetryOf == nil && other.RetryOf == nil) || (v.RetryOf != nil && other.RetryOf != nil && *v.RetryOf == *other.RetryOf))
-}
-
-// toFormat omits history scope only after Validate has checked retry scope and
-// the constructor has checked the allocated identity against RunID.
-func (v ModelRequest) toFormat(id ModelRequestID) sessionformat.ModelRequest {
-	out := sessionformat.ModelRequest{RunID: v.RunID.ordinal, ID: id.requestOrdinal, Source: v.Source, Recipe: v.Recipe}
-	if v.RetryOf != nil {
-		out.RetryOf = new(v.RetryOf.requestOrdinal)
-	}
-	return out
-}
-
-func (v ModelRequest) checkSize(b *valueBudget) {
+func checkModelRequestSize(v ModelRequest, b *valueBudget) {
 	b.text(v.Recipe.Algorithm)
 	b.bytes(len(v.Recipe.Parameters))
 	b.bytes(len(v.Recipe.Check))
 }
 
-// newModelRequestRecord owns one invocation commitment. It sizes before DTO
-// conversion and checks full reference scope before omission.
-// Failure returns nil; accepted source membership is checked by the aggregate.
+// newModelRequestRecord sizes before filling the local copy and encoding.
+// Destination and zero authoring fields have been checked by the caller.
 func newModelRequestRecord(v ModelRequest, id ModelRequestID, limits codec.Limits) (*materializedRecord, error) {
-	if err := id.Validate(); err != nil || id.runID != v.RunID {
+	if err := id.Validate(); err != nil {
 		return nil, codec.ErrInvalidData
 	}
 	b := newValueBudget(limits)
-	v.checkSize(&b)
+	checkModelRequestSize(v, &b)
 	if b.err != nil {
 		return nil, b.err
 	}
-	if err := v.Validate(); err != nil {
-		return nil, codec.ErrInvalidData
-	}
-	payload, err := codec.Encode(v.toFormat(id), limits)
+	v.RunID, v.ID = id.runID.ordinal, id.requestOrdinal
+	payload, err := codec.Encode(v, limits)
 	if err != nil {
 		return nil, err
 	}
