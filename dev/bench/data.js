@@ -408321,6 +408321,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1794107125181,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "e726fdbb7453258b5effe96bf7fba4bda50c3b61",
+          "message": "feat(kernel): generate immutable payload views with layered dtogen (#2749)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-11-09T15:26:59Z",
+          "tree_id": "8d8a23cb57f22d14a8d1516d3ebe4315d30375fd",
+          "url": "https://github.com/stacklok/mecatl/commit/e726fdbb7453258b5effe96bf7fba4bda50c3b61"
+        },
+        "date": 1794238734832,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 16118,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12877,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 794,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -532163,6 +532202,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1794238731621,
+  "lastUpdate": 1794238735762,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
