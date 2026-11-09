@@ -62,6 +62,77 @@ func (r *Reader) typedHeader(want byte) (uint64, error) {
 	return n, nil
 }
 
+// Kind identifies a native value supported by Reader.PeekKind. It is a closed
+// dispatch vocabulary, not a schema or an interpretation of DTO pointer absence.
+type Kind string
+
+const (
+	// NullKind identifies explicit CBOR null.
+	NullKind Kind = "null"
+	// BoolKind identifies a canonical boolean.
+	BoolKind Kind = "bool"
+	// IntKind identifies a negative integer; Int checks its int64 range.
+	IntKind Kind = "int"
+	// UintKind identifies a nonnegative integer.
+	UintKind Kind = "uint"
+	// StringKind identifies a UTF-8 text string.
+	StringKind Kind = "string"
+	// ArrayKind identifies a definite array.
+	ArrayKind Kind = "array"
+	// MapKind identifies a definite map.
+	MapKind Kind = "map"
+)
+
+// PeekKind inspects the next minimal header without consuming input or budget.
+// It rejects byte strings, tags, floats, indefinite forms and unsupported simple
+// values. Typed reads still perform range, content, depth and resource checks.
+// Nil and zero readers return ErrInvalidLimits; malformed input returns ErrInvalidData.
+func (r *Reader) PeekKind() (Kind, error) {
+	if r == nil || r.budget.limits.MaxBytes == 0 {
+		return "", ErrInvalidLimits
+	}
+	major, _, _, err := cbor.ReadHeader(r.data, r.pos)
+	if err != nil {
+		return "", ErrInvalidData
+	}
+	switch major {
+	case 0:
+		return UintKind, nil
+	case 1:
+		return IntKind, nil
+	case 3:
+		return StringKind, nil
+	case 4:
+		return ArrayKind, nil
+	case 5:
+		return MapKind, nil
+	case 7:
+		switch r.data[r.pos] {
+		case 0xf4, 0xf5:
+			return BoolKind, nil
+		case 0xf6:
+			return NullKind, nil
+		}
+	}
+	return "", ErrInvalidData
+}
+
+// Null reads exactly canonical explicit null and accounts one scalar at depth.
+// It does not change ordinary DTO pointer-presence rules.
+func (r *Reader) Null(depth int) error {
+	if r == nil {
+		return ErrInvalidLimits
+	}
+	if err := r.budget.CheckScalar(depth); err != nil {
+		return err
+	}
+	if r.pos == len(r.data) || r.data[r.pos] != 0xf6 {
+		return ErrInvalidData
+	}
+	r.pos++
+	return nil
+}
+
 // Bool reads exactly canonical false/true and accounts one scalar at depth.
 func (r *Reader) Bool(depth int) (bool, error) {
 	if r == nil {

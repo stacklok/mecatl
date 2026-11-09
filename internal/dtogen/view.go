@@ -271,6 +271,7 @@ func (e *emitter) checkViewMethod(v typedView, name string) error {
 	return fmt.Errorf("%s.%s: missing directly declared handwritten manual getter", v.name, name)
 }
 
+//nolint:gocyclo // Keep the exhaustive supported view shapes and their ownership adapters together.
 func (e *emitter) emitViewField(v typedView, field *types.Var, all []typedView) error {
 	name := field.Name()
 	t := field.Type()
@@ -285,51 +286,73 @@ func (e *emitter) emitViewField(v typedView, field *types.Var, all []typedView) 
 		value = "*" + expr
 	}
 	var result, body, zero, ownership string
-	switch u := t.Underlying().(type) {
-	case *types.Basic:
-		if u.Kind() == types.UnsafePointer || u.Kind() == types.Invalid {
-			return fmt.Errorf("%s.%s: unsupported scalar", v.name, name)
-		}
-		result = e.viewType(t)
-		zero = "*new(" + result + ")"
-		body = value
-		ownership = "The receiver retains stable backing for its lifetime."
-	case *types.Struct:
-		child, err := childViewFor(t, all)
-		if err != nil {
+	if primitive := primitiveName(t); primitive != "" {
+		if err := verifyPrimitive(t, e.s.loaded.Package); err != nil {
 			return fmt.Errorf("%s.%s: %w", v.name, name, err)
 		}
-		result = child.name
+		owner := e.viewType(types.Unalias(t))
+		prefix := owner[:strings.LastIndex(owner, ".")+1]
+		result, body = prefix+"View", prefix+"Borrow("+value+")"
+		if primitive == "Map" {
+			result, body = prefix+"MapView", prefix+"BorrowMap("+value+")"
+		}
 		zero = result + "{}"
-		address := "&" + expr
-		if optional {
-			address = expr
-		}
-		body = "dtogenView" + result + "(" + address + ")"
-		ownership = "The returned child borrows backing, which must remain stable for every derived view's lifetime."
-	case *types.Slice:
-		runtime := e.imports[viewsImportPath]
-		if runtime == "" {
-			runtime = "dtogenViews"
-			e.imports[viewsImportPath] = runtime
-		}
-		if types.Identical(u.Elem(), types.Typ[types.Byte]) {
-			result = runtime + ".Bytes"
-			zero = result + "{}"
-			body = runtime + ".BorrowBytes(" + value + ")"
-			ownership = "The returned bytes borrow stable backing for their lifetime; only Copy detaches bytes."
-		} else {
-			child, err := childViewFor(u.Elem(), all)
+		ownership = "The returned view borrows stable structured-value backing for every derived view's lifetime."
+	} else {
+		switch u := t.Underlying().(type) {
+		case *types.Basic:
+			if u.Kind() == types.UnsafePointer || u.Kind() == types.Invalid {
+				return fmt.Errorf("%s.%s: unsupported scalar", v.name, name)
+			}
+			result = e.viewType(t)
+			zero = "*new(" + result + ")"
+			body = value
+			ownership = "The receiver retains stable backing for its lifetime."
+		case *types.Struct:
+			child, err := childViewFor(t, all)
 			if err != nil {
 				return fmt.Errorf("%s.%s: %w", v.name, name, err)
 			}
-			result = runtime + ".SliceView[" + e.viewType(u.Elem()) + ", " + child.name + "]"
+			result = child.name
 			zero = result + "{}"
-			body = runtime + ".BorrowSliceView(" + value + ", dtogenView" + child.name + ")"
-			ownership = "The collection borrows stable backing and adapts elements lazily; derived views retain it."
+			address := "&" + expr
+			if optional {
+				address = expr
+			}
+			body = "dtogenView" + result + "(" + address + ")"
+			ownership = "The returned child borrows backing, which must remain stable for every derived view's lifetime."
+		case *types.Slice:
+			runtime := e.imports[viewsImportPath]
+			if runtime == "" {
+				runtime = "dtogenViews"
+				e.imports[viewsImportPath] = runtime
+			}
+			if types.Identical(u.Elem(), types.Typ[types.Byte]) {
+				result = runtime + ".Bytes"
+				zero = result + "{}"
+				body = runtime + ".BorrowBytes(" + value + ")"
+				ownership = "The returned bytes borrow stable backing for their lifetime; only Copy detaches bytes."
+			} else {
+				child, err := childViewFor(u.Elem(), all)
+				if err != nil {
+					return fmt.Errorf("%s.%s: %w", v.name, name, err)
+				}
+				result = runtime + ".SliceView[" + e.viewType(u.Elem()) + ", " + child.name + "]"
+				zero = result + "{}"
+				body = runtime + ".BorrowSliceView(" + value + ", dtogenView" + child.name + ")"
+				ownership = "The collection borrows stable backing and adapts elements lazily; derived views retain it."
+			}
+		case *types.Map:
+			var err error
+			result, body, err = e.mapView(u, value, all)
+			if err != nil {
+				return fmt.Errorf("%s.%s: %w", v.name, name, err)
+			}
+			zero = result + "{}"
+			ownership = "The map borrows stable backing and adapts present entries lazily in unspecified order; derived views retain it."
+		default:
+			return fmt.Errorf("%s.%s: unsupported view shape %s; use view:\"manual\" or view:\"-\"", v.name, name, t)
 		}
-	default:
-		return fmt.Errorf("%s.%s: unsupported view shape %s; use view:\"manual\" or view:\"-\"", v.name, name, t)
 	}
 	guard := "v.value == nil"
 	if optional {
@@ -354,6 +377,36 @@ func (e *emitter) emitViewField(v typedView, field *types.Var, all []typedView) 
 	}
 	return nil
 }
+
+// mapView never takes an address of a copied map entry. DTO adapters receive
+// existing pointers, and only context-free selected children can be constructed.
+func (e *emitter) mapView(m *types.Map, value string, all []typedView) (string, string, error) {
+	key, ok := m.Key().Underlying().(*types.Basic)
+	if !ok || key.Kind() != types.String {
+		return "", "", fmt.Errorf("view maps require string-underlying keys")
+	}
+	t := m.Elem()
+	elem := e.viewType(t)
+	result, adapter := "", ""
+	if scalar, ok := t.Underlying().(*types.Basic); ok && scalar.Kind() != types.UnsafePointer && scalar.Kind() != types.Invalid {
+		result, adapter = elem, "func(x "+elem+") "+elem+" {return x}"
+	} else if ptr, ok := types.Unalias(t).(*types.Pointer); ok {
+		child, err := childViewFor(ptr.Elem(), all)
+		if err != nil {
+			return "", "", err
+		}
+		result, adapter = child.name, "dtogenView"+child.name
+	} else {
+		return "", "", fmt.Errorf("unsupported map element %s; use scalar values or pointers to selected context-free DTOs, or view:\"manual\"", t)
+	}
+	runtime := e.imports[viewsImportPath]
+	if runtime == "" {
+		runtime = "dtogenViews"
+		e.imports[viewsImportPath] = runtime
+	}
+	return runtime + ".MapView[" + e.viewType(m.Key()) + ", " + elem + ", " + result + "]", runtime + ".BorrowMapView(" + value + ", " + adapter + ")", nil
+}
+
 func childViewFor(t types.Type, all []typedView) (typedView, error) {
 	// typedViews has already rejected multiple context-free handles for one DTO.
 	for _, v := range all {

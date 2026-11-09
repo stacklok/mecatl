@@ -16,8 +16,17 @@
     method func (*Reader).FixedBytes(depth int, fieldMax int, length int) ([]byte, error)
     method func (*Reader).Int(depth int) (int64, error)
     method func (*Reader).Map(depth int, fieldMax int) (int, error)
+    method func (*Reader).Null(depth int) error
+    method func (*Reader).PeekKind() (Kind, error)
     method func (*Reader).String(depth int, fieldMax int) (string, error)
     method func (*Reader).Uint(depth int) (uint64, error)
+const ArrayKind Kind = "array"
+const BoolKind Kind = "bool"
+const IntKind Kind = "int"
+const MapKind Kind = "map"
+const NullKind Kind = "null"
+const StringKind Kind = "string"
+const UintKind Kind = "uint"
 func AppendCIDLink(dst []byte, value [36]byte) []byte
 func AppendString(dst []byte, value string) []byte
 func Check[T Marshaler](value T, limits Limits) error
@@ -26,6 +35,7 @@ func Encode[T Marshaler](value T, limits Limits) ([]byte, error)
 func NewBudget(limits Limits) (Budget, error)
 func NewReader(data []byte, limits Limits) (Reader, error)
 type Budget struct{}
+type Kind string
 type Limits struct{MaxBytes int; MaxStringBytes int; MaxByteStringBytes int; MaxArrayElements int; MaxMapPairs int; MaxDepth int; MaxNodes int; MaxCollectionElements int}
 type Marshaler interface{AppendCBOR(dst []byte) []byte; CheckCBOR(b *Budget, depth int, fieldMax int) error}
 type Reader struct{}

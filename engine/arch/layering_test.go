@@ -137,6 +137,17 @@ var coreImportRules = []coreImportRule{
 		desc:            "kernel views may import only the standard library, never identity, codecs, storage, sessions, or host code",
 	},
 	{
+		pkg: modulePrefix + "engine/kernel/value",
+		allowedCore: map[string]bool{
+			modulePrefix + "engine/kernel/codec": true,
+			modulePrefix + "engine/kernel/views": true,
+		},
+		allowedExternal: map[string]bool{
+			"github.com/jcalabro/atmos/cbor": true,
+		},
+		desc: "structured values may import only codec, borrowed views, Atmos CBOR primitives and stdlib, never identities, aggregates or host code",
+	},
+	{
 		pkg: modulePrefix + "engine/kernel/session",
 		allowedCore: map[string]bool{
 			modulePrefix + "engine/kernel/history":        true,

@@ -106,6 +106,16 @@ func (s *schema) visit(t types.Type, active map[types.Type]bool) (*shape, error)
 	n := &shape{typ: t, id: len(s.nodes)}
 	s.nodes = append(s.nodes, n)
 	s.byType[t] = n
+	if primitiveName(t) != "" {
+		if err := verifyPrimitive(t, s.loaded.Package); err != nil {
+			return nil, err
+		}
+		if t.(*types.Named).Obj().Pkg() == s.loaded.Package.Types {
+			return nil, fmt.Errorf("%s: primitive owner methods are handwritten", t)
+		}
+		n.kind = shapeOwner
+		return n, nil
+	}
 	if named, ok := t.(*types.Named); ok {
 		obj := named.Obj()
 		if obj.Pkg() != nil && obj.Pkg() != s.loaded.Package.Types {
@@ -302,6 +312,9 @@ func validatePersistentShape(n *shape) error {
 }
 
 func (s *schema) persistOwner(n *shape) error {
+	if primitiveName(n.typ) != "" {
+		return nil // Exact primitive signatures and source were checked by visit.
+	}
 	named := n.typ.(*types.Named)
 	if !s.loaded.Owners[named.Obj().Pkg().Path()].Wire[named.Obj().Name()] {
 		return fmt.Errorf("%s: imported type is excluded-only in its owner; select it as a persisted root", n.typ)

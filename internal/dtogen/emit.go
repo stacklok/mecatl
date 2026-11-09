@@ -225,10 +225,16 @@ func (e *emitter) root(n *shape) {
 	}
 	if e.s.loaded.Emit.clone && !n.overrides.clone {
 		e.line("// Clone detaches mutable state, including excluded fields, without validation; nil collections remain nil.")
+		if containsPrimitive(n.typ, map[types.Type]bool{}) {
+			e.line("// It propagates value.ErrDepthExceeded panics when traversing structured values beyond their fixed local depth of 128.")
+		}
 		e.line("func (v %s) Clone() %s {return (%s{}).clone%d(v)}", t, t, implementationType, id)
 	}
 	if e.s.loaded.Emit.equal && !n.overrides.equal {
 		e.line("// Equal compares all state without validation; nil and empty collections are equal, absent and present pointers differ.")
+		if containsPrimitive(n.typ, map[types.Type]bool{}) {
+			e.line("// It propagates value.ErrDepthExceeded panics on traversed structured values beyond local depth 128; shallow mismatches may return first.")
+		}
 		e.line("func (v %s) Equal(other %s) bool {return (%s{}).equal%d(v,other)}", t, t, implementationType, id)
 	}
 }
