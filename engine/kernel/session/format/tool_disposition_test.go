@@ -1,0 +1,187 @@
+package format_test
+
+import (
+	"errors"
+	"math"
+	"reflect"
+	"testing"
+
+	"github.com/stacklok/mecatl/engine/kernel/codec"
+	"github.com/stacklok/mecatl/engine/kernel/session/format"
+)
+
+func TestToolDispositionBranches(t *testing.T) {
+	var branches []format.ToolDisposition
+	for _, status := range []format.ToolReturnStatus{format.ToolReturnSuccess, format.ToolReturnError} {
+		branches = append(branches, format.ToolDisposition{Returned: &format.ToolReturned{Status: status, Output: richToolOutput()}})
+	}
+	for _, reason := range []format.ToolNotInvokedReason{format.ToolNotInvokedPolicyRejected, format.ToolNotInvokedPreparationFailed, format.ToolNotInvokedCancelled, format.ToolNotInvokedOther} {
+		branches = append(branches, format.ToolDisposition{NotInvoked: &format.ToolNotInvoked{Reason: reason}})
+	}
+	for _, reason := range []format.ToolIndeterminateReason{format.ToolIndeterminateTransport, format.ToolIndeterminateTimeout, format.ToolIndeterminateExecutorLost, format.ToolIndeterminateCancelled, format.ToolIndeterminateOther} {
+		for _, capture := range []format.ToolCaptureState{format.ToolCaptureTruncated, format.ToolCaptureOmitted} {
+			output := format.ToolOutput{Capture: capture}
+			if capture == format.ToolCaptureTruncated {
+				output = richToolOutput()
+				output.Capture = capture
+			}
+			branches = append(branches, format.ToolDisposition{Indeterminate: &format.ToolIndeterminate{Reason: reason, Output: output}})
+		}
+	}
+	for i, v := range branches {
+		v.RunID = 1
+		v.RequestID = 2
+		v.CallID = 3
+		v.Evidence = &format.ToolEvidence{Detail: ptr(""), Metadata: &format.OpaqueToolData{Producer: "p", Format: "f", Version: 1, Data: []byte{0xff}}}
+		if err := v.Validate(); err != nil {
+			t.Fatalf("branch %d: %v", i, err)
+		}
+		before := v.Clone()
+		wire, err := codec.Encode(v, toolLimits())
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, err := codec.Decode[format.ToolDisposition](wire, toolLimits())
+		if err != nil {
+			t.Fatalf("branch %d roundtrip: %v", i, err)
+		}
+		if got.RunID != v.RunID || got.RequestID != v.RequestID || got.CallID != v.CallID {
+			t.Fatalf("branch %d IDs: got (%d, %d, %d), want (%d, %d, %d)", i, got.RunID, got.RequestID, got.CallID, v.RunID, v.RequestID, v.CallID)
+		}
+		switch {
+		case v.Returned != nil:
+			if got.Returned == nil || got.NotInvoked != nil || got.Indeterminate != nil || got.Returned.Status != v.Returned.Status {
+				t.Fatalf("branch %d returned branch changed", i)
+			}
+		case v.NotInvoked != nil:
+			if got.Returned != nil || got.NotInvoked == nil || got.Indeterminate != nil || got.NotInvoked.Reason != v.NotInvoked.Reason {
+				t.Fatalf("branch %d not-invoked branch changed", i)
+			}
+		case v.Indeterminate != nil:
+			if got.Returned != nil || got.NotInvoked != nil || got.Indeterminate == nil || got.Indeterminate.Reason != v.Indeterminate.Reason {
+				t.Fatalf("branch %d indeterminate branch changed", i)
+			}
+		}
+		if !got.Equal(v) {
+			t.Fatalf("branch %d roundtrip value changed", i)
+		}
+		*v.Evidence.Detail = "changed"
+		v.Evidence.Metadata.Data[0] = 0
+		if v.Returned != nil {
+			*v.Returned.Output.Parts[0].Content.Text = "changed"
+		}
+		if v.NotInvoked != nil {
+			v.NotInvoked.Reason = "changed"
+		}
+		if v.Indeterminate != nil {
+			v.Indeterminate.Output.Capture = "changed"
+			if len(v.Indeterminate.Output.Parts) != 0 {
+				*v.Indeterminate.Output.Parts[0].Content.Text = "changed"
+				v.Indeterminate.Output.Parts[1].Content.Media.InlineData[0] = 0
+				(*v.Indeterminate.Output.Parts[4].JSON)[0] = 'x'
+				v.Indeterminate.Output.Parts[4].Metadata.Data[0] = 0
+			}
+		}
+		clear(wire)
+		if !got.Equal(before) {
+			t.Fatalf("branch %d aliases", i)
+		}
+	}
+}
+
+func TestToolDispositionEqualDistinguishesIdentityAndMeaning(t *testing.T) {
+	returned := format.ToolDisposition{RunID: 1, RequestID: 2, CallID: 3, Returned: &format.ToolReturned{Status: format.ToolReturnSuccess, Output: richToolOutput()}}
+	notInvoked := format.ToolDisposition{RunID: 1, RequestID: 2, CallID: 3, NotInvoked: &format.ToolNotInvoked{Reason: format.ToolNotInvokedOther}}
+	indeterminateOutput := richToolOutput()
+	indeterminateOutput.Capture = format.ToolCaptureTruncated
+	indeterminate := format.ToolDisposition{RunID: 1, RequestID: 2, CallID: 3, Indeterminate: &format.ToolIndeterminate{Reason: format.ToolIndeterminateOther, Output: indeterminateOutput}}
+	cases := []struct {
+		name string
+		base format.ToolDisposition
+		edit func(*format.ToolDisposition)
+	}{
+		{"run ID", returned, func(v *format.ToolDisposition) { v.RunID++ }},
+		{"request ID", returned, func(v *format.ToolDisposition) { v.RequestID++ }},
+		{"call ID", returned, func(v *format.ToolDisposition) { v.CallID++ }},
+		{"returned status", returned, func(v *format.ToolDisposition) { v.Returned.Status = format.ToolReturnError }},
+		{"not-invoked reason", notInvoked, func(v *format.ToolDisposition) { v.NotInvoked.Reason = format.ToolNotInvokedCancelled }},
+		{"indeterminate reason", indeterminate, func(v *format.ToolDisposition) { v.Indeterminate.Reason = format.ToolIndeterminateTimeout }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			other := tc.base.Clone()
+			tc.edit(&other)
+			if tc.base.Equal(other) || other.Equal(tc.base) {
+				t.Fatal("Equal ignored a persisted identity or disposition meaning")
+			}
+		})
+	}
+}
+
+func TestToolDispositionMalformed(t *testing.T) {
+	returned := &format.ToolReturned{Status: format.ToolReturnSuccess, Output: format.ToolOutput{Capture: format.ToolCaptureComplete}}
+	notInvoked := &format.ToolNotInvoked{Reason: format.ToolNotInvokedOther}
+	indeterminate := &format.ToolIndeterminate{Reason: format.ToolIndeterminateOther, Output: format.ToolOutput{Capture: format.ToolCaptureOmitted}}
+	badUnion := format.ToolOutput{Capture: format.ToolCaptureTruncated, Parts: []format.ToolOutputPart{{Content: &format.ContentPart{Text: ptr("")}, JSON: ptr([]byte("true"))}}}
+	badMetadata := format.ToolOutput{Capture: format.ToolCaptureTruncated, Parts: []format.ToolOutputPart{{JSON: ptr([]byte("true")), Metadata: &format.OpaqueToolData{}}}}
+	badPartCount := format.ToolOutput{Capture: format.ToolCaptureTruncated, Parts: []format.ToolOutputPart{{JSON: ptr([]byte("true"))}}, OriginalPartCount: ptr(uint64(0))}
+	badByteCount := format.ToolOutput{Capture: format.ToolCaptureTruncated, Parts: []format.ToolOutputPart{{JSON: ptr([]byte("true"))}}, OriginalBytes: ptr(uint64(0))}
+	cases := []format.ToolDisposition{
+		{}, {Returned: returned, NotInvoked: notInvoked}, {Returned: returned, Indeterminate: indeterminate}, {NotInvoked: notInvoked, Indeterminate: indeterminate}, {Returned: returned, NotInvoked: notInvoked, Indeterminate: indeterminate},
+		{Returned: &format.ToolReturned{Status: format.ToolReturnSuccess}},
+		{Returned: returned, Evidence: &format.ToolEvidence{Detail: ptr("\xff")}},
+		{Indeterminate: &format.ToolIndeterminate{Reason: format.ToolIndeterminateOther, Output: badUnion}},
+		{Indeterminate: &format.ToolIndeterminate{Reason: format.ToolIndeterminateOther, Output: badMetadata}},
+		{Indeterminate: &format.ToolIndeterminate{Reason: format.ToolIndeterminateOther, Output: badPartCount}},
+		{Indeterminate: &format.ToolIndeterminate{Reason: format.ToolIndeterminateOther, Output: badByteCount}},
+	}
+	for _, unknown := range []string{"", "unknown"} {
+		cases = append(cases,
+			format.ToolDisposition{Returned: &format.ToolReturned{Status: format.ToolReturnStatus(unknown), Output: returned.Output}},
+			format.ToolDisposition{NotInvoked: &format.ToolNotInvoked{Reason: format.ToolNotInvokedReason(unknown)}},
+			format.ToolDisposition{Indeterminate: &format.ToolIndeterminate{Reason: format.ToolIndeterminateReason(unknown), Output: indeterminate.Output}},
+		)
+	}
+	for _, capture := range []format.ToolCaptureState{"", format.ToolCaptureComplete, "unknown"} {
+		cases = append(cases, format.ToolDisposition{Indeterminate: &format.ToolIndeterminate{Reason: format.ToolIndeterminateOther, Output: format.ToolOutput{Capture: capture}}})
+	}
+	for i := range 3 {
+		v := format.ToolDisposition{RunID: 1, RequestID: 2, CallID: 3, Returned: returned}
+		switch i {
+		case 0:
+			v.RunID = 0
+		case 1:
+			v.RequestID = 0
+		case 2:
+			v.CallID = 0
+		}
+		cases = append(cases, v)
+	}
+	for i, v := range cases {
+		// Only the final three cases intentionally retain a zero ID.
+		if i < len(cases)-3 {
+			v.RunID = 1
+			v.RequestID = 2
+			v.CallID = 3
+		}
+		if v.Validate() == nil {
+			t.Fatalf("case %d directly validated", i)
+		}
+		if out, err := codec.Encode(v, toolLimits()); !errors.Is(err, codec.ErrInvalidData) || out != nil {
+			t.Fatalf("case %d encode: %v", i, err)
+		}
+		wire := v.AppendCBOR(nil)
+		if got, err := codec.Decode[format.ToolDisposition](wire, toolLimits()); !errors.Is(err, codec.ErrInvalidData) || !reflect.DeepEqual(got, format.ToolDisposition{}) {
+			t.Fatalf("case %d decode: %v", i, err)
+		}
+		receiver := format.ToolDisposition{RunID: 1, RequestID: 2, CallID: 3, Returned: ptr(returned.Clone())}
+		before := receiver.Clone()
+		r, err := codec.NewReader(wire, toolLimits())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := receiver.ReadCBOR(&r, 0, math.MaxInt); !errors.Is(err, codec.ErrInvalidData) || !receiver.Equal(before) {
+			t.Fatalf("case %d receiver changed: %v", i, err)
+		}
+	}
+}
