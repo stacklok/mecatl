@@ -109,7 +109,7 @@ func Object(v Map) Value { return Value{kind: MapKind, object: v} }
 // Work is linear in visited data plus per-map key sorting; storage is output,
 // temporary key/string buffers and a depth-bounded stack, not a cloned value tree.
 // No operational codec admission limits are applied.
-func (v Value) MarshalJSON() ([]byte, error) { return marshalJSON(v) }
+func (v Value) MarshalJSON() ([]byte, error) { return marshalJSON(Borrow(v)) }
 
 // Admit validates v under limits before cloning mutable descendants. It publishes
 // only an immutable view; failure returns a zero View. Inputs must remain stable

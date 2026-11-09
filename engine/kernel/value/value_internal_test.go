@@ -10,7 +10,8 @@ import (
 
 func TestMarshalJSONInvalidRepresentation(t *testing.T) {
 	for _, v := range []Value{{kind: Kind(255)}, {kind: IntegerKind, flag: true, number: math.MaxUint64}} {
-		for _, input := range []interface{ MarshalJSON() ([]byte, error) }{v, Borrow(v)} {
+		m := Map{"a": Null(), "z": Array([]Value{v})}
+		for _, input := range []interface{ MarshalJSON() ([]byte, error) }{v, Borrow(v), m, BorrowMap(m), Object(m), Borrow(Object(m))} {
 			if out, err := input.MarshalJSON(); out != nil || !errors.Is(err, codec.ErrInvalidData) {
 				t.Fatalf("invalid representation published %q: %v", out, err)
 			}

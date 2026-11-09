@@ -18,7 +18,7 @@ type Map map[string]Value
 
 // MarshalJSON encodes m as a native JSON object; nil and empty both encode as {}.
 // It uses Value.MarshalJSON's traversal, cost, failure and stable-backing contract.
-func (m Map) MarshalJSON() ([]byte, error) { return marshalJSON(Object(m)) }
+func (m Map) MarshalJSON() ([]byte, error) { return BorrowMap(m).MarshalJSON() }
 
 // Admit validates m before detaching all mutable descendants and publishing an
 // immutable MapView. Failure returns a zero view. Inputs must remain stable across

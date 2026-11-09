@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
-	"math"
 	"slices"
 	"strconv"
 	"strings"
@@ -216,10 +215,11 @@ func (p *jsonParser) close(want json.Delim) error {
 	return nil
 }
 
-// marshalJSON publishes output only after a successful traversal. One local depth
-// counter bounds all descendants (including cycles), without operational budgets,
-// subtree validation passes, mutable exports, or intermediate JSON subtrees.
-func marshalJSON(v Value) ([]byte, error) {
+// marshalJSON traverses views so authoring and admitted values share encoding
+// without coupling the encoder to mutable storage. It publishes output only after
+// success. One local depth counter bounds all descendants (including cycles),
+// without operational budgets, subtree validation passes or intermediate JSON.
+func marshalJSON(v View) ([]byte, error) {
 	out, err := appendJSON(nil, v, 0)
 	if err != nil {
 		return nil, err
@@ -227,55 +227,59 @@ func marshalJSON(v Value) ([]byte, error) {
 	return out, nil
 }
 
-func appendJSON(dst []byte, v Value, depth int) ([]byte, error) {
+func appendJSON(dst []byte, v View, depth int) ([]byte, error) {
 	if depth > maxLocalDepth {
 		return nil, ErrDepthExceeded
 	}
-	switch v.kind {
+	switch v.Kind() {
 	case NullKind:
 		return append(dst, "null"...), nil
 	case BoolKind:
-		return strconv.AppendBool(dst, v.flag), nil
+		flag, _ := v.Bool()
+		return strconv.AppendBool(dst, flag), nil
 	case StringKind:
-		return appendJSONString(dst, v.text)
+		text, _ := v.String()
+		return appendJSONString(dst, text)
 	case IntegerKind:
-		if v.flag {
-			if v.number > math.MaxInt64 {
-				return nil, codec.ErrInvalidData
-			}
-			return strconv.AppendInt(dst, -1-int64(v.number), 10), nil // #nosec G115 -- checked above.
+		if n, ok := v.Uint64(); ok {
+			return strconv.AppendUint(dst, n, 10), nil
 		}
-		return strconv.AppendUint(dst, v.number, 10), nil
+		if n, ok := v.Int64(); ok {
+			return strconv.AppendInt(dst, n, 10), nil
+		}
+		return nil, codec.ErrInvalidData
 	case ArrayKind:
-		if depth == maxLocalDepth && len(v.array) != 0 {
+		array, _ := v.Array()
+		if depth == maxLocalDepth && array.Len() != 0 {
 			return nil, ErrDepthExceeded
 		}
 		dst = append(dst, '[')
-		for i, child := range v.array {
+		for i := range array.Len() {
 			if i != 0 {
 				dst = append(dst, ',')
 			}
 			var err error
-			dst, err = appendJSON(dst, child, depth+1)
+			dst, err = appendJSON(dst, array.At(i), depth+1)
 			if err != nil {
 				return nil, err
 			}
 		}
 		return append(dst, ']'), nil
 	case MapKind:
-		return appendJSONObject(dst, v.object, depth)
+		object, _ := v.Object()
+		return appendJSONObject(dst, object, depth)
 	default:
 		return nil, codec.ErrInvalidData
 	}
 }
 
 // appendJSONObject shares its caller's local depth; the map adds no wrapper node.
-func appendJSONObject(dst []byte, m Map, depth int) ([]byte, error) {
-	if depth == maxLocalDepth && len(m) != 0 {
+func appendJSONObject(dst []byte, m MapView, depth int) ([]byte, error) {
+	if depth == maxLocalDepth && m.Len() != 0 {
 		return nil, ErrDepthExceeded
 	}
-	keys := make([]string, 0, len(m))
-	for key := range m {
+	keys := make([]string, 0, m.Len())
+	for key := range m.All() {
 		keys = append(keys, key)
 	}
 	slices.Sort(keys)
@@ -290,7 +294,8 @@ func appendJSONObject(dst []byte, m Map, depth int) ([]byte, error) {
 			return nil, err
 		}
 		dst = append(dst, ':')
-		dst, err = appendJSON(dst, m[key], depth+1)
+		child, _ := m.Get(key)
+		dst, err = appendJSON(dst, child, depth+1)
 		if err != nil {
 			return nil, err
 		}
