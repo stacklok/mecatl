@@ -74,14 +74,14 @@ invocation also discovers and generates declared prerequisite owners. Missing,
 stale, or syntactically broken marked outputs can therefore be regenerated when
 handwritten code already calls generated methods.
 
-Generation renders and typechecks the complete selected owner closure before
-installing any output. Each replacement is atomic. It refuses unmarked, symlink,
-or nonregular output files. The old `cborgen` marker is accepted only for the seven
-pre-rename `zz_cbor_generated.go` artifacts in the engine module; check mode still
-rejects their obsolete bytes. New owners must not use that legacy marker. A
-filesystem failure during installation may leave earlier files replaced; rerunning
-repairs the closure. Concurrent editing or generation of one artifact is unsupported.
-The generator does not provide filesystem confinement or crash-durability guarantees.
+Generation renders and typechecks all selected packages before installing any
+output. Validation, rendering, and typechecking failures leave existing output
+bytes unchanged. Output files must be marked regular files, not symlinks. Each
+replacement is atomic, but installation across files is not transactional: a
+filesystem failure can leave earlier files replaced. Rerun generation after
+resolving the failure. Concurrent editing or generation of one artifact is
+unsupported. The generator provides neither filesystem confinement nor
+crash-durability guarantees.
 
 Check mode derives targets from the same directives, compares expected bytes,
 and checks the inventory, including untracked Go files. Missing and stale
@@ -103,8 +103,7 @@ does not scan names ending in `View` or generate value operations on their backi
 
 Keep layouts handwritten, with private, nonembedded fields. Each selected view
 must have a private `value *DTO` field pointing to a named struct. Additional
-private fields retain enclosing context; the typed graph resolves the DTO owner,
-import aliases and source documentation without a second naming language.
+private fields retain enclosing context.
 
 The DTO owns one default field policy, independent of CBOR, Clone and Equal:
 
@@ -114,28 +113,26 @@ The DTO owns one default field policy, independent of CBOR, Clone and Equal:
 | `view:"-"` | Omit the field |
 | `view:"manual"` | Require a directly declared same-named handwritten value-receiver getter on every selected view of this DTO |
 
-Unknown, malformed, duplicate and contradictory tags fail generation. There are
-no renaming expressions, named projections or declarative signatures. Go owns
-manual method signatures; getters take no arguments and return at least one
-value. Pointer receivers and promoted methods do not satisfy manual policy.
-A handwritten method colliding with an untagged field fails rather than silently
-replacing its generated getter. Extra derived/navigation methods need no separate
-classification. Handwritten documentation stays authoritative for manual methods;
-review and test their ownership, zero, presence and lifetime contracts.
+Unknown, malformed, duplicate and contradictory tags fail generation. Handwritten
+getters take no arguments and return at least one value. Pointer receivers and
+promoted methods do not satisfy manual policy. A handwritten method colliding
+with an untagged field fails rather than silently replacing its generated getter.
+Extra derived/navigation methods need no separate classification. Handwritten
+documentation stays authoritative for manual methods; review and test their
+ownership, zero, presence and lifetime contracts.
 
 ```go
 // In the DTO owner:
-type Media struct {
-    MIMEType string
-    Source MediaSourceKind
-    InlineData []byte
+type Entry struct {
+    Label string
+    Data []byte
 }
 
 // In the consuming view package:
-// MediaView retains immutable media backing.
+// EntryView retains immutable entry backing.
 //
 //dtogen:include
-type MediaView struct { value *format.Media }
+type EntryView struct { value *format.Entry }
 ```
 
 Mechanical methods return the following concrete types:
@@ -149,44 +146,23 @@ Mechanical methods return the following concrete types:
 | Pointer to selected struct | `(ChildView, bool)` |
 | Slice of selected by-value structs | `views.SliceView[DTO, ChildView]` |
 
-Pointers to bytes/slices additionally return a presence bool. Each zero view is
-safe, with zero/false for missing optional values; present zero/empty values stay
-present. Required child navigation takes the address of retained backing. Byte
-and collection navigation is O(1), borrows stable backing, and does not clone
-siblings. Byte `Copy` alone detaches. A context-free layout gets a private
-`dtogenView<Type>` constructor that also serves as the noncapturing slice adapter.
-Two selected context-free views of one DTO are ambiguous and fail, even if no
-parent currently needs that adapter.
+Pointers to bytes/slices additionally return a presence bool. Zero views are safe;
+optional fields preserve present zero/empty values. Byte and collection navigation
+is O(1) and borrows backing without cloning siblings. Byte `Copy` alone detaches;
+see the [views contract](../../engine/kernel/views/doc.go) for borrowing and
+lifetime requirements.
 
-Context-bearing views may share the same DTO policy but are never automatically
-constructed. Required, optional and collection navigation into a child requiring
-context must be manual or omitted. Handwritten collection adapters can capture
-required scope, as `EffectiveInputView.Inputs` captures its enclosing `RunID` in a
-`views.SliceView` adapter. Captured context stays retained and stable with the
-backing; an escaping closure can allocate without copying payloads. Generated
-adapters remain context-free and never materialize an intermediate `[]View`.
-For example, `RequestedCallDataView` is the
-context-free adapter while `RequestedCallView` carries scoped identity and keeps
-its derived `ID` method handwritten. Unsupported untagged fields fail rather than
-exporting mutable values; use manual policy for opaque immutable identity values
-such as `SourceHead.CID`.
+A view containing only `value *DTO` is context-free and can be constructed by
+generated child getters. Selecting two context-free views for one DTO is
+ambiguous and fails generation. Navigation into a child with additional context
+must be handwritten or omitted. Handwritten collection adapters may capture
+required context, which must remain stable along with the backing. Unsupported
+untagged fields fail generation; use manual policy for opaque immutable values
+that can safely be returned directly.
 
-Ordinary new supported DTO fields acquire default getters on regeneration. This
-replaces the old exhaustive per-field mapping decision gate: review source tags,
-generated/API diffs and deterministic freshness, not a parallel field inventory.
-Generated comments retain source type/field contracts, including provisional
-notes, explicitly labelled as DTO semantics rather than accessor mutability.
-Accessor comments add zero/presence, retained-backing, lifetime, copy and complexity
-contracts. A fingerprint includes selected layouts, backing shapes, exception tags
-and source docs, including omitted/manual fields. A structural pointer-conversion
-assertion also detects stale backing shapes at compile time where nameable.
-Source/policy/selection/docs changes still require regeneration and check even
-when an assertion is unavailable or a conversion ignores tags.
-
-Absent or broken marked artifacts bootstrap in one invocation: typed load-only
-view signatures join the value/codec signatures, then the complete selected owner
-closure is rendered and strictly typechecked before any installation. This uses
-`GOWORK=off` and never executes owner initialization, manual getters or other code.
+Regenerate and check after changing selected types, backing layouts, field tags,
+or source documentation. Generated accessor comments include the DTO's type and
+field documentation.
 
 ## Supported Go types
 
@@ -411,7 +387,7 @@ Load errors report handwritten Go diagnostics. Schema errors identify the owner,
 type, and field, including missing mapping tags, unsupported shapes, invalid
 literal caps, missing owner declarations, malformed validators, and generated
 name collisions. Fix the declaration and regenerate; do not edit a marked
-output by hand. Generation errors preserve prior output bytes.
+output by hand.
 
 From the repository root:
 

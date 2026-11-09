@@ -11,40 +11,20 @@ supplies atomic conditional storage. The [history adapters](../adapter/history/R
 provide a memory backend and reusable conformance checks.
 
 [`session`](session/doc.go) interprets accepted history as lifecycle state and
-retained context. It preserves rich authored input separately from prepared content
-and its provenance. Instructions, advertised tool catalogs, and model bindings are
-independent session-scoped replacements. Model requests commit to an accepted
-source and construction recipe. Atomic responses retain ordered output, requested
-calls, and private provider data; responses and observed invocation failures can
-carry reported usage and safe correlation evidence. Explicit run endings preserve
-unresolved work. The session validates ordered batches
-before submission and updates accepted state only after storage acceptance. Immutable
-snapshots pin state and context selections; loading reconstructs them without
-resolving source files or media references, invoking models, or executing tools.
-The [session example](session/example_test.go) shows submission, snapshot access,
+retained context. It validates ordered batches before submission and publishes
+state only after storage acceptance. Immutable snapshots pin accepted state;
+loading reconstructs it without resolving references or executing work. The
+[session example](session/example_test.go) shows submission, snapshot access,
 and reconstruction.
 
-Each layer's `format` package owns its mutable persistence DTOs, generated codecs,
-and payload-local validation. The aggregate owns cross-record legality; valid
-encoding alone proves neither lifecycle legality nor storage acceptance. Session
-payload names alias canonical format declarations. Commit methods take full
-scope separately and reject nonzero synthesized context/allocation fields before
-materializing a local DTO copy. Nested numeric references resolve within the
-explicit destination run; extracting a component preserves no origin proof.
-Occurrence IDs support validated parent/component reconstruction, which neither
-allocates an occurrence nor establishes membership or authority.
+Each layer's `format` package owns mutable persistence DTOs, generated codecs,
+and payload-local validation. Aggregates own cross-record legality; valid encoding
+alone proves neither lifecycle legality nor storage acceptance.
 
-[`views`](views/doc.go) supplies read-only borrowed Bytes and SliceView containers.
-Follow its [runtime guidance](views/AGENTS.md) when changing these containers.
-Session views pin immutable accepted backing; wrapping and navigation do not copy
-or freeze it. Response Items and content Parts adapt elements on demand without
-an intermediate slice. Recipe, call, provider-data and media byte getters borrow
-leaves; callers explicitly use Copy for independently owned bytes. Scope-bearing
-identities and derived call enumeration remain session-owned adapters.
-`EffectiveInputView.Inputs` uses a handwritten SliceView adapter that retains only
-the enclosing RunID alongside the item backing. Immediate traversal and escaping
-collection or iterator handles have distinct allocation costs; neither copies
-payload storage.
+[`views`](views/doc.go) supplies read-only borrowed containers for inspecting
+immutable backing owned by the caller. Borrowing neither freezes data nor
+synchronizes access; the owner must keep backing stable for derived views.
+Before changing these containers, read the [views implementation guidance](views/AGENTS.md).
 
 [`codec`](codec/doc.go) provides bounded canonical encoding and decoding;
 [`contentid`](contentid/cid.go) identifies exact encoded bytes. Resource policy is
@@ -53,17 +33,9 @@ limits, ownership, retry, and concurrency contracts.
 
 ## DTO generation
 
-See the [generator guide](../../internal/dtogen/README.md) for supported schemas
-and code generation, and the [codec package contract](codec/doc.go) for resource
-accounting and buffer lifetimes. Each destination owns one handwritten generation
-declaration and artifact. Kernel owners omit `-types` and mark each selected root
-with `//dtogen:include` on its type declaration; value operations still follow the
-local type closure automatically. Session's [view declaration](session/doc.go)
-selects its marked local DTO-backed handles. Packages without include markers can
-instead list roots with `-types`. Untagged DTO fields get safe same-named getters;
-`view:"manual"` requires a handwritten getter and `view:"-"` omits the field.
-Layouts and scope/tag-selected semantics remain handwritten; generated mechanical
-accessors use only noncapturing adapters. From the repository root:
+`dtogen` generates codecs, whole-value operations, and view accessors. See the
+[generator guide](../../internal/dtogen/README.md) for declarations, supported
+schemas, and field policies. Regenerate and check from the repository root:
 
 ```sh
 task generate:data
