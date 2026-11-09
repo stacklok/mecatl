@@ -71,7 +71,7 @@ func newSession(t testing.TB, p Policy) *Session {
 }
 func createdRecord(t testing.TB) *materializedRecord {
 	t.Helper()
-	r, err := newCreatedRecord(Created{HistoryID: testHistoryID(t)}, testLimits())
+	r, err := newCreatedRecord(Created{}, testLimits())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -83,7 +83,7 @@ func inputRecord(t testing.TB, ordinal uint64) *materializedRecord {
 }
 func runInputRecord(t testing.TB, run, ordinal uint64) *materializedRecord {
 	t.Helper()
-	r, err := makeInputRecord(identifiedInput{ID: allocatedInput(t, allocatedRun(t, testHistoryID(t), run), ordinal), Parts: internalByteParts([]byte{0xff, 0, 'x'})}, testLimits())
+	r, err := makeInputRecord(identifiedInput{ID: allocatedInput(t, allocatedRun(t, testHistoryID(t), run), ordinal), UserInput: UserInput{Parts: internalByteParts([]byte{0xff, 0, 'x'})}}, testLimits())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,7 +91,7 @@ func runInputRecord(t testing.TB, run, ordinal uint64) *materializedRecord {
 }
 func startRecord(t testing.TB, ordinal uint64) *materializedRecord {
 	t.Helper()
-	r, err := newRunStartedRecord(RunStarted{ID: allocatedRun(t, testHistoryID(t), ordinal)}, testLimits())
+	r, err := newRunStartedRecord(RunStarted{ID: allocatedRun(t, testHistoryID(t), ordinal).HistoryRelative()}, testLimits())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,7 +99,7 @@ func startRecord(t testing.TB, ordinal uint64) *materializedRecord {
 }
 func closeoutRecord(t testing.TB, ordinal uint64) *materializedRecord {
 	t.Helper()
-	r, err := newRunEndedRecord(RunEnded{RunID: allocatedRun(t, testHistoryID(t), ordinal), Reason: RunEndedInterrupted}, testLimits())
+	r, err := newRunEndedRecord(RunEnded{Reason: RunEndedInterrupted}, allocatedRun(t, testHistoryID(t), ordinal), testLimits())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -171,7 +171,7 @@ func captureRejectedSnapshot(v Snapshot) rejectedSnapshotFacts {
 			if input, ok := run.RecordAt(j).UserInput(); ok {
 				located, _ := v.UserInputByID(input.ID())
 				f.inputs = append(f.inputs, located.ID())
-				f.partCounts = append(f.partCounts, located.PartCount())
+				f.partCounts = append(f.partCounts, located.Parts().Len())
 			}
 		}
 		facts.runs = append(facts.runs, f)
@@ -446,7 +446,7 @@ func TestSessionRun24CloseoutCapacity(t *testing.T) {
 		all = append(all, startRecord(t, n), runInputRecord(t, n, 1), closeoutRecord(t, n))
 	}
 	// The final active prefix must reserve the largest supported minimal ending.
-	lastEnding, err := newRunEndedRecord(RunEnded{RunID: allocatedRun(t, testHistoryID(t), 24), Reason: RunEndedCaptureFailed}, testLimits())
+	lastEnding, err := newRunEndedRecord(RunEnded{Reason: RunEndedCaptureFailed}, allocatedRun(t, testHistoryID(t), 24), testLimits())
 	mustBatch(t, err)
 	all[len(all)-1] = lastEnding
 	var exactBytes uint64

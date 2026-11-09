@@ -1,4 +1,4 @@
-package cborgen
+package dtogen
 
 import (
 	"context"
@@ -36,7 +36,7 @@ func copiedRepository(t *testing.T) string {
 		copyFile(path)
 	}
 	copyTaskfiles(t, source, root)
-	for _, dir := range []string{"internal/cborgen", "engine/id", "engine/kernel/codec", "engine/kernel/contentid", "engine/kernel/history/id", "engine/kernel/history/format"} {
+	for _, dir := range []string{"internal/dtogen", "engine/id", "engine/kernel/codec", "engine/kernel/contentid", "engine/kernel/history/id", "engine/kernel/history/format"} {
 		err := filepath.WalkDir(filepath.Join(source, dir), func(path string, entry fs.DirEntry, err error) error {
 			if err != nil {
 				return err
@@ -158,7 +158,7 @@ func repositoryState(t *testing.T, root string) map[string]fileState {
 }
 
 func TestRepositoryDirectiveValidation(t *testing.T) {
-	const invocation = "//go:generate go -C .. run ./internal/cborgen/cmd/cborgen "
+	const invocation = "//go:generate go -C .. run ./internal/dtogen/cmd/dtogen -emit cbor,clone,equal "
 	for _, tc := range []struct{ name, directive, reason string }{
 		{"variable", invocation + "-dir owner -types Record -out $GOFILE.go", "literal unquoted"},
 		{"quoted roots", invocation + "-dir owner -types \"Record\" -out generated.go", "literal unquoted"},
@@ -169,8 +169,8 @@ func TestRepositoryDirectiveValidation(t *testing.T) {
 		{"escaping output", invocation + "-dir owner -types Record -out ../generated.go", "package-local"},
 		{"empty output", invocation + "-dir owner -types Record", "package-local"},
 		{"wrong working directory", strings.Replace(invocation, "-C ..", "-C .", 1), "expected go -C"},
-		{"duplicate output", strings.Repeat(invocation+"-dir owner -types Record -out generated.go\n", 2), "one codec output per package"},
-		{"multiple outputs", invocation + "-dir owner -types Record -out generated.go\n" + invocation + "-dir owner -types Other -out other.go\n", "one codec output per package"},
+		{"duplicate output", strings.Repeat(invocation+"-dir owner -types Record -out generated.go\n", 2), "one data output per package"},
+		{"multiple outputs", invocation + "-dir owner -types Record -out generated.go\n" + invocation + "-dir owner -types Other -out other.go\n", "one data output per package"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			root := t.TempDir()
@@ -201,6 +201,14 @@ func TestTaskGenerationAndFreshness(t *testing.T) {
 	initialInventory, err := os.ReadFile(inventory)
 	if err != nil {
 		t.Fatal(err)
+	}
+	catalog := filepath.Join(owner, "catalog.go")
+	initialCatalog, err := os.ReadFile(catalog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Count(string(initialCatalog), "//dtogen:include\n") != 1 {
+		t.Fatal("expected one Catalog root marker")
 	}
 	// Wrappers exercise all public generated APIs in the regeneration overlay.
 	writeFixture(t, filepath.Join(owner, "wrapper.go"), `package fixture
@@ -233,7 +241,7 @@ func roundtrip(v Sample, l codec.Limits) (Sample,error) {
 			t.Fatalf("%s modified copied repository", target)
 		}
 	}
-	run(t, "generate:codecs", "", false)
+	run(t, "generate:data", "", false)
 	first, err := os.ReadFile(output)
 	if err != nil {
 		t.Fatal(err)
@@ -243,6 +251,7 @@ func roundtrip(v Sample, l codec.Limits) (Sample,error) {
 	if err != nil || string(first) != string(second) {
 		t.Fatal("task regeneration is not deterministic", err)
 	}
+	run(t, "generate:data:check", "", true)
 	run(t, "generate:codecs:check", "", true)
 
 	// Bootstrap the complete shipped owner graph, not just a synthetic family or
@@ -268,9 +277,9 @@ func roundtrip(v Sample, l codec.Limits) (Sample,error) {
 				t.Fatal(err)
 			}
 		}
-		want := "missing codec output"
+		want := "missing data output"
 		if corrupt {
-			want = "stale codec output"
+			want = "stale data output"
 		}
 		run(t, "generate:codecs:check", want, true)
 		run(t, "generate:codecs", "", false)
@@ -283,13 +292,14 @@ func roundtrip(v Sample, l codec.Limits) (Sample,error) {
 	}
 
 	for _, tc := range []struct{ name, content string }{
+		{"legacy", legacyGeneratedMarker + "\nnot Go syntax"},
 		{"modified", string(first) + "\n// drift\n"},
 		{"broken", GeneratedMarker + "\nnot Go syntax"},
 		{"stale", GeneratedMarker + "\npackage fixture\nvar Old Undefined\n"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			writeFixture(t, output, tc.content)
-			run(t, "generate:codecs:check", "stale codec output", true)
+			run(t, "generate:codecs:check", "stale data output", true)
 			run(t, "generate:codecs", "", false)
 			got, err := os.ReadFile(output)
 			if err != nil || string(got) != string(first) {
@@ -300,12 +310,12 @@ func roundtrip(v Sample, l codec.Limits) (Sample,error) {
 	if err := os.Remove(output); err != nil {
 		t.Fatal(err)
 	}
-	run(t, "generate:codecs:check", "missing codec output", true)
+	run(t, "generate:codecs:check", "missing data output", true)
 	run(t, "generate:codecs", "", false)
 
 	for _, path := range []string{filepath.Join(owner, "extra.go"), filepath.Join(root, "engine/removed/obsolete.go")} {
 		writeFixture(t, path, GeneratedMarker+"\npackage obsolete\n")
-		run(t, "generate:codecs:check", "extra codec output", true)
+		run(t, "generate:codecs:check", "extra data output", true)
 		if strings.Contains(path, "removed") {
 			// Orphan enforcement belongs to check, never local generation.
 			run(t, "generate:codecs", "", false)
@@ -315,10 +325,11 @@ func roundtrip(v Sample, l codec.Limits) (Sample,error) {
 		}
 	}
 	// Removing a root changes bytes; removing the whole target changes inventory.
-	writeFixture(t, inventory, strings.Replace(string(initialInventory), "Catalog,Sample", "Sample", 1))
-	run(t, "generate:codecs:check", "stale codec output", true)
+	writeFixture(t, catalog, strings.Replace(string(initialCatalog), "//dtogen:include\n", "", 1))
+	run(t, "generate:codecs:check", "stale data output", true)
+	writeFixture(t, catalog, string(initialCatalog))
 	writeFixture(t, inventory, "package fixture\n")
-	run(t, "generate:codecs:check", "extra codec output", true)
+	run(t, "generate:codecs:check", "extra data output", true)
 	writeFixture(t, inventory, string(initialInventory))
 
 	bad := filepath.Join(owner, "bad.go")
@@ -327,8 +338,7 @@ func roundtrip(v Sample, l codec.Limits) (Sample,error) {
 	if err := os.Remove(bad); err != nil {
 		t.Fatal(err)
 	}
-	writeFixture(t, bad, "package fixture\ntype Unsupported struct { V int `cbor:\"v\"` }\n")
-	writeFixture(t, inventory, strings.Replace(string(initialInventory), "Catalog,Sample", "Catalog,Sample,Unsupported", 1))
+	writeFixture(t, bad, "package fixture\n//dtogen:include\ntype Unsupported struct { V int `cbor:\"v\"` }\n")
 	run(t, "generate:codecs", "fixed-width", true)
 	if err := os.Remove(bad); err != nil {
 		t.Fatal(err)
@@ -354,7 +364,7 @@ func roundtrip(v Sample, l codec.Limits) (Sample,error) {
 		t.Fatal(err)
 	}
 	writeFixture(t, taskfile, strings.Replace(string(originalTaskfile),
-		"GOWORK=off go run ./internal/cborgen/cmd/cborgen -repo .\n",
+		"GOWORK=off go run ./internal/dtogen/cmd/dtogen -repo .\n",
 		"cd engine && go generate ./kernel/codec/internal/fixture\n", 1))
 	if err := os.Remove(output); err != nil {
 		t.Fatal(err)

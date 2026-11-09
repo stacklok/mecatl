@@ -10,7 +10,7 @@ import (
 // implementation. ArgumentSchema is exact nonempty JSON, including boolean schemas,
 // without schema interpretation. Assignment shares schema bytes; Clone detaches them.
 //
-//cborgen:validate Validate
+//dtogen:validate Validate
 type ToolDefinition struct {
 	// Name is the required nonempty exact UTF-8 advertised tool name, not an
 	// implementation identity. The enclosing ToolCatalog checks name uniqueness.
@@ -39,7 +39,8 @@ func (v ToolDefinition) Validate() error {
 // Tools and schema bytes; Clone detaches them. History identity is omitted here
 // and restored from the enclosing envelope at the domain conversion boundary.
 //
-//cborgen:validate Validate
+//dtogen:validate validateLocal
+//dtogen:include
 type ToolCatalog struct {
 	// Tools preserves advertised order. Names must be unique within this replacement
 	// (checked locally); codec traversal validates each definition. Nil and empty
@@ -47,9 +48,19 @@ type ToolCatalog struct {
 	Tools []ToolDefinition `cbor:"t"`
 }
 
-// Validate checks name uniqueness only, not child validity. Codec traversal bounds
-// all children before allocating the duplicate-name set.
+// Validate checks definitions and name uniqueness without operational limits.
 func (v ToolCatalog) Validate() error {
+	for _, tool := range v.Tools {
+		if err := tool.Validate(); err != nil {
+			return err
+		}
+	}
+	return v.validateLocal()
+}
+
+// validateLocal checks name uniqueness after bounded child traversal, before
+// allocating the duplicate-name set.
+func (v ToolCatalog) validateLocal() error {
 	seen := make(map[string]struct{}, len(v.Tools))
 	for _, tool := range v.Tools {
 		if _, ok := seen[tool.Name]; ok {

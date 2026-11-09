@@ -4,12 +4,13 @@ import "errors"
 
 // RunStarted names a new run. Input-free runs are valid. Zero is invalid.
 //
-//cborgen:validate Validate
+//dtogen:validate Validate
+//dtogen:include
 type RunStarted struct {
 	// ID is the required one-based run ordinal within the enclosing history.
 	// Conversion restores the history identity from the envelope. Local validation
 	// checks positivity; the aggregate checks contiguous allocation and admission.
-	ID uint64 `cbor:"r"`
+	ID uint64 `cbor:"r" view:"manual"`
 }
 
 // Validate checks the local ordinal without mutation or resource policy.

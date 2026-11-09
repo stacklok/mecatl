@@ -14,15 +14,14 @@ func sourceMatches(v session.ContentSourceView, want session.ContentSource) bool
 }
 
 func mediaMatches(v session.MediaView, want session.Media) bool {
-	data, inline := v.InlineData()
-	uri, remote := v.RemoteURI()
-	provider, bound := v.ProviderName()
-	scope, scopeOK := v.ProviderScope()
-	ref, refOK := v.ProviderReferenceID()
+	data := v.InlineData()
+	uri := v.RemoteURI()
+	provider := v.ProviderName()
+	scope := v.ProviderScope()
+	ref := v.ProviderReferenceID()
 	return v.Kind() == want.Kind && v.MIMEType() == want.MIMEType && v.FormatHint() == want.FormatHint && v.Filename() == want.Filename && v.Title() == want.Title && v.Source() == want.Source &&
-		inline == (want.Source == session.MediaSourceInline) && bytes.Equal(data, want.InlineData) &&
-		remote == (want.Source == session.MediaSourceRemote) && uri == want.RemoteURI &&
-		bound == (want.Source == session.MediaSourceProvider) && scopeOK == bound && refOK == bound && provider == want.ProviderName && scope == want.ProviderScope && ref == want.ProviderReferenceID
+		bytes.Equal(data.Copy(), want.InlineData) && uri == want.RemoteURI &&
+		provider == want.ProviderName && scope == want.ProviderScope && ref == want.ProviderReferenceID
 }
 
 func partMatches(v session.ContentPartView, want session.ContentPart) bool {
@@ -32,11 +31,11 @@ func partMatches(v session.ContentPartView, want session.ContentPart) bool {
 }
 
 func userInputMatches(v session.UserInputView, want session.UserInput) bool {
-	if v.ID().RunID() != want.RunID || v.PartCount() != len(want.Parts) {
+	if v.Parts().Len() != len(want.Parts) {
 		return false
 	}
 	for i, part := range want.Parts {
-		if !partMatches(v.PartAt(i), part) {
+		if !partMatches(v.Parts().At(i), part) {
 			return false
 		}
 	}
@@ -44,11 +43,11 @@ func userInputMatches(v session.UserInputView, want session.UserInput) bool {
 }
 
 func attributedMatches(v session.AttributedInputView, want session.AttributedInput) bool {
-	if v.Actor() != want.Actor || v.Purpose() != want.Purpose || !sourceMatches(v.Source(), want.Source) || v.PartCount() != len(want.Parts) {
+	if v.Actor() != want.Actor || v.Purpose() != want.Purpose || !sourceMatches(v.Source(), want.Source) || v.Parts().Len() != len(want.Parts) {
 		return false
 	}
 	for i, part := range want.Parts {
-		if !partMatches(v.PartAt(i), part) {
+		if !partMatches(v.Parts().At(i), part) {
 			return false
 		}
 	}
@@ -56,14 +55,14 @@ func attributedMatches(v session.AttributedInputView, want session.AttributedInp
 }
 
 func effectiveMatches(v session.EffectiveInputView, want session.EffectiveInput) bool {
-	if v.RunID() != want.RunID || v.InputCount() != len(want.Inputs) {
+	if v.Inputs().Len() != len(want.Inputs) {
 		return false
 	}
 	for i, item := range want.Inputs {
-		got := v.InputAt(i)
+		got := v.Inputs().At(i)
 		id, refOK := got.UserInputID()
 		inline, inlineOK := got.Inline()
-		if refOK != (item.UserInputID != nil) || inlineOK != (item.Inline != nil) || (refOK && id != *item.UserInputID) || (inlineOK && !attributedMatches(inline, *item.Inline)) {
+		if refOK != (item.UserInputID != nil) || inlineOK != (item.Inline != nil) || (refOK && (id.RunRelative() != *item.UserInputID || id.RunID() != v.RunID())) || (inlineOK && !attributedMatches(inline, *item.Inline)) {
 			return false
 		}
 	}
@@ -71,16 +70,16 @@ func effectiveMatches(v session.EffectiveInputView, want session.EffectiveInput)
 }
 
 func instructionsMatch(v session.InstructionsView, want session.Instructions) bool {
-	if v.HistoryID() != want.HistoryID || v.BlockCount() != len(want.Blocks) {
+	if v.Blocks().Len() != len(want.Blocks) {
 		return false
 	}
 	for i, block := range want.Blocks {
-		got := v.BlockAt(i)
-		if !sourceMatches(got.Source(), block.Source) || got.PartCount() != len(block.Parts) {
+		got := v.Blocks().At(i)
+		if !sourceMatches(got.Source(), block.Source) || got.Parts().Len() != len(block.Parts) {
 			return false
 		}
 		for j, part := range block.Parts {
-			if !partMatches(got.PartAt(j), part) {
+			if !partMatches(got.Parts().At(j), part) {
 				return false
 			}
 		}
@@ -89,12 +88,12 @@ func instructionsMatch(v session.InstructionsView, want session.Instructions) bo
 }
 
 func catalogMatches(v session.ToolCatalogView, want session.ToolCatalog) bool {
-	if v.HistoryID() != want.HistoryID || v.ToolCount() != len(want.Tools) {
+	if v.Tools().Len() != len(want.Tools) {
 		return false
 	}
 	for i, tool := range want.Tools {
-		got := v.ToolAt(i)
-		if got.Name() != tool.Name || got.Description() != tool.Description || !bytes.Equal(got.ArgumentSchema(), tool.ArgumentSchema) {
+		got := v.Tools().At(i)
+		if got.Name() != tool.Name || got.Description() != tool.Description || !bytes.Equal(got.ArgumentSchema().Copy(), tool.ArgumentSchema) {
 			return false
 		}
 	}
@@ -102,12 +101,12 @@ func catalogMatches(v session.ToolCatalogView, want session.ToolCatalog) bool {
 }
 
 func bindingMatches(v session.ModelBindingView, want session.ModelBinding) bool {
-	return v.HistoryID() == want.HistoryID && v.Route() == want.Route && v.API() == want.API && v.Model() == want.Model && bytes.Equal(v.Settings(), want.Settings)
+	return v.Route() == want.Route && v.API() == want.API && v.Model() == want.Model && bytes.Equal(v.Settings().Copy(), want.Settings)
 }
 
 func inlineAt(t *testing.T, v session.EffectiveInputView, i int) session.AttributedInputView {
 	t.Helper()
-	in, ok := v.InputAt(i).Inline()
+	in, ok := v.Inputs().At(i).Inline()
 	if !ok {
 		t.Fatal("missing inline branch")
 	}
@@ -125,9 +124,6 @@ func mediaAt(t *testing.T, part session.ContentPartView) session.MediaView {
 
 func mutateMediaBytes(t *testing.T, part session.ContentPartView) {
 	t.Helper()
-	data, ok := mediaAt(t, part).InlineData()
-	if !ok {
-		t.Fatal("missing inline media")
-	}
-	clear(data)
+	data := mediaAt(t, part).InlineData()
+	clear(data.Copy())
 }

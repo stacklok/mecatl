@@ -1,4 +1,4 @@
-//go:generate go -C ../.. run ./internal/cborgen/cmd/cborgen -dir engine/id -types ID -out zz_cbor_generated.go
+//go:generate go -C ../.. run ./internal/dtogen/cmd/dtogen -dir engine/id -emit cbor,clone,equal -out zz_cbor_generated.go
 
 // Package id provides typed, fixed-length Mecatl resource identifiers.
 // IDs contain a three-character kind prefix and 22 independent, uniformly random
@@ -30,9 +30,10 @@ const History Kind = "HST"
 // ID is a validated resource identifier. Its zero value is unset, not valid.
 // IDs are comparable and may be used as map keys. CBOR is the validated ID text.
 //
-//cborgen:validate validateCBOR
+//dtogen:validate validateCBOR
+//dtogen:include
 type ID struct {
-	value string `cbor:",value" cborlimit:"bytes=25"` //nolint:revive // cborgen's explicit transparent representation, not a standard CBOR tag option.
+	value string `cbor:",value" cborlimit:"bytes=25"` //nolint:revive // dtogen's explicit transparent representation, not a standard CBOR tag option.
 }
 
 // validateCBOR uses the parser as the authority for persisted ID validity.

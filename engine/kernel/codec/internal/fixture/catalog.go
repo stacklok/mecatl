@@ -3,6 +3,8 @@ package fixture
 import "github.com/stacklok/mecatl/engine/kernel/codec/internal/fixture/value"
 
 // Catalog exercises nested containers, imported DTOs, pointers and excluded state.
+//
+//dtogen:include
 type Catalog struct {
 	Entries  map[value.Key][]*value.Detail `cbor:"entries" cborlimit:"items=4096"`
 	Payload  value.Blob                    `cbor:"payload" cborlimit:"bytes=262144"`

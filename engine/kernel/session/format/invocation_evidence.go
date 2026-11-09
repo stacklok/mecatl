@@ -17,7 +17,8 @@ import (
 // it as settled precedent. This does not permit reinterpretation of stored bytes or
 // bypass compatibility review.
 //
-//cborgen:validate Validate
+//dtogen:validate Validate
+//dtogen:include
 type OpaqueProviderData struct {
 	// Producer is the required nonempty UTF-8 producer identifier selected by the
 	// producer that owns Data. It is not a kernel identity or authority.
@@ -48,7 +49,8 @@ func (v OpaqueProviderData) Validate() error {
 // Nil counters are absent and distinct from reported zero. Assignment shares
 // pointers and Raw's bytes; Clone detaches them.
 //
-//cborgen:validate Validate
+//dtogen:validate validateLocal
+//dtogen:include
 type InvocationUsage struct {
 	// Input is an optional nonnegative provider-reported inclusive input count.
 	Input *int64 `cbor:"i,omitempty"`
@@ -65,9 +67,20 @@ type InvocationUsage struct {
 	Raw *OpaqueProviderData `cbor:"x,omitempty"`
 }
 
-// Validate checks nonnegative reported counters, not accounting equations or
-// whether a provider actually charged for an invocation.
+// Validate checks nonnegative reported counters and raw metadata, not accounting
+// equations or whether a provider actually charged for an invocation.
 func (v InvocationUsage) Validate() error {
+	if err := v.validateLocal(); err != nil {
+		return err
+	}
+	if v.Raw != nil {
+		return v.Raw.Validate()
+	}
+	return nil
+}
+
+// validateLocal checks counters after bounded codec traversal validates Raw.
+func (v InvocationUsage) validateLocal() error {
 	for _, n := range []*int64{v.Input, v.Output, v.CacheRead, v.CacheWrite, v.Reasoning} {
 		if n != nil && *n < 0 {
 			return errors.New("usage count must be nonnegative")
@@ -95,7 +108,8 @@ func (v InvocationUsage) Validate() error {
 // than treating their semantics as settled precedent. This does not permit silently
 // reinterpreting persisted values or bypassing compatibility review.
 //
-//cborgen:validate Validate
+//dtogen:validate Validate
+//dtogen:include
 type ObservedEvidence struct {
 	// Detail is optional UTF-8 diagnostic context observed by the caller or adapter.
 	// It is not the owner's Explanation or a provider stop/finish reason.

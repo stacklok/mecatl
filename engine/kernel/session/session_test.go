@@ -201,7 +201,7 @@ func captureRejectedSnapshot(v session.Snapshot) rejectedSnapshotFacts {
 			if input, ok := r.UserInput(); ok {
 				located, _ := v.UserInputByID(input.ID())
 				f.inputs = append(f.inputs, located.ID())
-				f.partCounts = append(f.partCounts, located.PartCount())
+				f.partCounts = append(f.partCounts, located.Parts().Len())
 			}
 		}
 		facts.runs = append(facts.runs, f)

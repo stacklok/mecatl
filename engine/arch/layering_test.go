@@ -131,6 +131,12 @@ var coreImportRules = []coreImportRule{
 		desc: "kernel history may import only history identity, format values, codec runtime, content identity and stdlib, never the legacy aggregate",
 	},
 	{
+		pkg:             modulePrefix + "engine/kernel/views",
+		allowedCore:     map[string]bool{},
+		allowedExternal: map[string]bool{},
+		desc:            "kernel views may import only the standard library, never identity, codecs, storage, sessions, or host code",
+	},
+	{
 		pkg: modulePrefix + "engine/kernel/session",
 		allowedCore: map[string]bool{
 			modulePrefix + "engine/kernel/history":        true,
@@ -139,9 +145,10 @@ var coreImportRules = []coreImportRule{
 			modulePrefix + "engine/kernel/history/format": true,
 			modulePrefix + "engine/kernel/codec":          true,
 			modulePrefix + "engine/kernel/session/format": true,
+			modulePrefix + "engine/kernel/views":          true,
 		},
 		allowedExternal: map[string]bool{},
-		desc:            "kernel session may import only history contracts, session format, content identity, the codec runtime and stdlib, never legacy session or execution code",
+		desc:            "kernel session may import only history contracts, session format, views, content identity, the codec runtime and stdlib, never legacy session or execution code",
 	},
 	{
 		pkg: modulePrefix + "engine/kernel/session/format",

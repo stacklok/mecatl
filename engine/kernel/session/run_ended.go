@@ -12,7 +12,7 @@ import (
 // The taxonomy is provisional: revisit the combined interruption category only
 // if usage establishes a useful distinction between cancellation and interruption.
 // No reason proves remote cancellation or absence of processing or spend.
-type RunEndedReason string
+type RunEndedReason = sessionformat.RunEndedReason
 
 const (
 	// RunEndedCompleted records clean completed termination.
@@ -28,119 +28,17 @@ const (
 	RunEndedCaptureFailed RunEndedReason = sessionformat.RunEndedCaptureFailed
 )
 
-// CaptureFailureEvidence retains bounded same-invocation evidence for an accepted
-// pending request whose complete response could not be captured. It has no response
-// content or private envelope. Assignment borrows nested storage; Clone detaches it.
-type CaptureFailureEvidence struct {
-	RequestID ModelRequestID
-	Evidence  *ObservedEvidence
-	Usage     *InvocationUsage
-}
+// CaptureFailureEvidence retains evidence for an accepted pending request whose
+// response could not be captured. RequestID is destination-run-relative, without
+// origin provenance. Assignment shares nested storage; Clone detaches it.
+type CaptureFailureEvidence = sessionformat.CaptureFailureEvidence
 
-// Validate checks local evidence shape and nested values without acceptance lookup.
-func (v CaptureFailureEvidence) Validate() error {
-	if err := v.RequestID.Validate(); err != nil {
-		return err
-	}
-	if err := v.toFormat().Validate(); err != nil {
-		return err
-	}
-	if v.Evidence != nil {
-		if err := v.Evidence.Validate(); err != nil {
-			return err
-		}
-	}
-	if v.Usage != nil {
-		return v.Usage.Validate()
-	}
-	return nil
-}
+// RunEnded is the canonical explicit terminal fact. AddRunEnded supplies the
+// destination separately and requires RunID zero. Capture is allowed only for
+// CaptureFailed. Assignment shares nested storage; Clone detaches it.
+type RunEnded = sessionformat.RunEnded
 
-// Clone detaches all mutable nested storage.
-func (v CaptureFailureEvidence) Clone() CaptureFailureEvidence {
-	out := v
-	if v.Evidence != nil {
-		x := v.Evidence.Clone()
-		out.Evidence = &x
-	}
-	if v.Usage != nil {
-		x := v.Usage.Clone()
-		out.Usage = &x
-	}
-	return out
-}
-
-// Equal compares the complete scoped request reference and retained evidence.
-func (v CaptureFailureEvidence) Equal(other CaptureFailureEvidence) bool {
-	return v.RequestID == other.RequestID && v.toFormat().Equal(other.toFormat())
-}
-func (v CaptureFailureEvidence) toFormat() sessionformat.CaptureFailureEvidence {
-	return sessionformat.CaptureFailureEvidence{RequestID: v.RequestID.requestOrdinal, Evidence: evidenceToFormat(v.Evidence), Usage: usageToFormat(v.Usage)}
-}
-
-// RunEnded is the unified explicit terminal fact. It neither fabricates an outcome
-// nor promises cancellation. Capture is allowed only for CaptureFailed and must have
-// the same full run scope. Assignment borrows nested storage; Clone detaches it.
-type RunEnded struct {
-	RunID  RunID
-	Reason RunEndedReason
-	// Explanation is optional safe human-readable ending detail. Callers must apply
-	// their own disclosure rules; validation checks UTF-8 and structure only and is
-	// not a sanitizer.
-	Explanation *string
-	Capture     *CaptureFailureEvidence
-}
-
-// Validate checks local ending values and full capture-request scope.
-func (v RunEnded) Validate() error {
-	if err := v.RunID.Validate(); err != nil {
-		return err
-	}
-	if v.Capture != nil && v.Capture.RequestID.runID != v.RunID {
-		return codec.ErrInvalidData
-	}
-	if err := v.toFormat().Validate(); err != nil {
-		return err
-	}
-	if v.Capture != nil {
-		return v.Capture.Validate()
-	}
-	return nil
-}
-
-// Clone detaches the optional explanation and capture evidence.
-func (v RunEnded) Clone() RunEnded {
-	out := v
-	if v.Explanation != nil {
-		s := *v.Explanation
-		out.Explanation = &s
-	}
-	if v.Capture != nil {
-		x := v.Capture.Clone()
-		out.Capture = &x
-	}
-	return out
-}
-
-// Equal compares complete ending values, including the full scoped capture request.
-func (v RunEnded) Equal(other RunEnded) bool {
-	if v.RunID != other.RunID || v.Reason != other.Reason || (v.Explanation == nil) != (other.Explanation == nil) || (v.Capture == nil) != (other.Capture == nil) {
-		return false
-	}
-	if v.Explanation != nil && *v.Explanation != *other.Explanation {
-		return false
-	}
-	return v.Capture == nil || v.Capture.Equal(*other.Capture)
-}
-func (v RunEnded) toFormat() sessionformat.RunEnded {
-	out := sessionformat.RunEnded{RunID: v.RunID.ordinal, Reason: string(v.Reason), Explanation: v.Explanation}
-	if v.Capture != nil {
-		x := v.Capture.toFormat()
-		out.Capture = &x
-	}
-	return out
-}
-func (v RunEnded) checkSize(b *valueBudget) {
+func checkRunEndedSize(v RunEnded, b *valueBudget) {
 	b.text(string(v.Reason))
 	if v.Explanation != nil {
 		b.pointer()
@@ -153,18 +51,16 @@ func (v RunEnded) checkSize(b *valueBudget) {
 	}
 }
 
-// newRunEndedRecord encodes a unified ending after sizing all retained evidence.
-// Full capture scope is checked before omission. Failure returns nil.
-func newRunEndedRecord(v RunEnded, limits codec.Limits) (*materializedRecord, error) {
+// newRunEndedRecord sizes retained evidence before filling the local DTO copy.
+// Destination and zero authoring fields have been checked by the caller.
+func newRunEndedRecord(v RunEnded, run RunID, limits codec.Limits) (*materializedRecord, error) {
 	b := newValueBudget(limits)
-	v.checkSize(&b)
+	checkRunEndedSize(v, &b)
 	if b.err != nil {
 		return nil, b.err
 	}
-	if err := v.Validate(); err != nil {
-		return nil, codec.ErrInvalidData
-	}
-	payload, err := codec.Encode(v.toFormat(), limits)
+	v.RunID = run.ordinal
+	payload, err := codec.Encode(v, limits)
 	if err != nil {
 		return nil, err
 	}
@@ -179,6 +75,8 @@ func (r *materializedRecord) minimalEnding() bool {
 // CaptureFailureEvidenceView is immutable bounded evidence for a failed capture.
 // RequestID reconstructs the full history and run scope retained by its enclosing
 // ending. Zero has a zero request and no optional children; child access is O(1).
+//
+//dtogen:include
 type CaptureFailureEvidenceView struct {
 	runID RunID
 	value *sessionformat.CaptureFailureEvidence
@@ -192,25 +90,11 @@ func (v CaptureFailureEvidenceView) RequestID() ModelRequestID {
 	return requestID(v.runID.historyID, v.runID.ordinal, v.value.RequestID)
 }
 
-// Evidence returns pinned observed evidence when it was retained.
-func (v CaptureFailureEvidenceView) Evidence() (ObservedEvidenceView, bool) {
-	if v.value == nil || v.value.Evidence == nil {
-		return ObservedEvidenceView{}, false
-	}
-	return ObservedEvidenceView{value: v.value.Evidence}, true
-}
-
-// Usage returns pinned reported usage when it was retained.
-func (v CaptureFailureEvidenceView) Usage() (InvocationUsageView, bool) {
-	if v.value == nil || v.value.Usage == nil {
-		return InvocationUsageView{}, false
-	}
-	return InvocationUsageView{value: v.value.Usage}, true
-}
-
 // RunEndedView is an immutable terminal fact. Zero has zero run, empty reason and
 // no optional evidence. Scalar and pinned structured-child reads are O(1); byte
-// leaves returned by those children detach only their own storage.
+// views borrow retained backing and Copy detaches only their selected leaf.
+//
+//dtogen:include
 type RunEndedView struct {
 	scope historyid.HistoryID
 	value *sessionformat.RunEnded
@@ -222,22 +106,6 @@ func (v RunEndedView) RunID() RunID {
 		return RunID{}
 	}
 	return RunID{historyID: v.scope, ordinal: v.value.RunID}
-}
-
-// Reason returns the owner-selected terminal category, or empty for zero.
-func (v RunEndedView) Reason() RunEndedReason {
-	if v.value == nil {
-		return ""
-	}
-	return RunEndedReason(v.value.Reason)
-}
-
-// Explanation preserves absence versus explicitly empty safe detail.
-func (v RunEndedView) Explanation() (string, bool) {
-	if v.value == nil || v.value.Explanation == nil {
-		return "", false
-	}
-	return *v.value.Explanation, true
 }
 
 // Capture returns a pinned capture-failure evidence view when present. It does not

@@ -28,7 +28,7 @@ func TestSessionCommitOrdinalExhaustion(t *testing.T) {
 			}
 			before := b.admission.candidate
 			if input {
-				if id, err := b.AddUserInput(UserInput{RunID: run}); id != (UserInputID{}) || !errors.Is(err, codec.ErrLimitExceeded) {
+				if id, err := b.AddUserInput(run, UserInput{}); id != (UserInputID{}) || !errors.Is(err, codec.ErrLimitExceeded) {
 					t.Fatalf("input overflow: %v, %v", id, err)
 				}
 			} else {
@@ -53,11 +53,11 @@ func TestSessionSequenceExhaustion(t *testing.T) {
 			s, limits := internalFixture(t)
 			id := s.Snapshot().HistoryID()
 			run := RunID{historyID: id, ordinal: 1}
-			created, err := newCreatedRecord(Created{HistoryID: id}, limits)
+			created, err := newCreatedRecord(Created{}, limits)
 			if err != nil {
 				t.Fatal(err)
 			}
-			start, err := newRunStartedRecord(RunStarted{ID: run}, limits)
+			start, err := newRunStartedRecord(RunStarted{ID: run.HistoryRelative()}, limits)
 			if err != nil {
 				t.Fatal(err)
 			}

@@ -1,4 +1,4 @@
-package cborgen
+package dtogen
 
 import (
 	"context"
@@ -44,13 +44,13 @@ func moduleFixture(t *testing.T, source string) LoadConfig {
 	writeFixture(t, filepath.Join(module, "kernel/codec/limits.go"), "package codec\ntype Limits struct { MaxBytes int }\ntype Budget struct{}\ntype Reader struct{}\n")
 	dir := filepath.Join(module, "owner")
 	writeFixture(t, filepath.Join(dir, "owner.go"), "package owner\n"+source)
-	return LoadConfig{Dir: dir, Types: []string{"Record"}, Output: "zz_cbor_generated.go"}
+	return LoadConfig{Dir: dir, Types: []string{"Record"}, Output: "zz_cbor_generated.go", Emit: "cbor,clone,equal"}
 }
 
 const callers = `
 import "github.com/stacklok/mecatl/engine/kernel/codec"
 type Record struct { Value string ` + "`cbor:\"value\"`" + ` }
-func init() { panic("cborgen executed an owner initialization trap") }
+func init() { panic("dtogen executed an owner initialization trap") }
 func handwritten(v Record, b *codec.Budget, r *codec.Reader) (Record, error) {
  if err := v.CheckCBOR(b, 0, 100); err != nil { return Record{}, err }
  _ = v.Clone().AppendCBOR(nil)

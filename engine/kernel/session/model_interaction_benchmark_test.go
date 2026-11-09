@@ -3,13 +3,24 @@ package session_test
 import (
 	"bytes"
 	"fmt"
+	"iter"
 	"testing"
 
 	"github.com/stacklok/mecatl/engine/kernel/contentid"
 	"github.com/stacklok/mecatl/engine/kernel/session"
+	"github.com/stacklok/mecatl/engine/kernel/views"
 )
 
 var interactionTraversalSink interactionTraversal
+var interactionItemsSink iter.Seq2[int, session.ResponseItemView]
+var interactionItemSink session.ResponseItemView
+
+//go:noinline
+func consumeInteractionItems(seq iter.Seq2[int, session.ResponseItemView]) {
+	for _, item := range seq {
+		interactionItemSink = item
+	}
+}
 
 // The same public authoring and storage replay fixture serves correctness tests
 // and benchmarks. Count, requested byte length, and unrelated siblings vary alone.
@@ -19,16 +30,23 @@ func completeInteractionFixture(t testing.TB, count, field, sibling int) map[str
 	b := beginBatch(t, s)
 	mustBatch(t, b.Create())
 	run := batchRun(t, b)
-	mustBatch(t, b.ReplaceModelBinding(session.ModelBinding{HistoryID: run.HistoryID(), Route: "r", API: "a", Model: "m", Settings: []byte("{}")}))
+	mustBatch(t, b.ReplaceModelBinding(run.HistoryID(), session.ModelBinding{Route: "r", API: "a", Model: "m", Settings: []byte("{}")}))
 	submitBatch(t, s, b)
 	parameters := bytes.Repeat([]byte{0xa5}, field)
 	check := bytes.Repeat([]byte{0x5a}, sibling)
+	// Capture actual accepted heads independently of authored DTOs and views.
+	sources := make(map[session.ModelRequestID]session.SourceHead)
 	request := func(retry *session.ModelRequestID) session.ModelRequestID {
 		head := s.Snapshot().Head()
 		b := beginBatch(t, s)
-		id, err := b.AddModelRequest(session.ModelRequest{RunID: run, Source: session.SourceHead{Sequence: head.Sequence, CID: head.CID}, RetryOf: retry,
+		var relativeRetry *uint64
+		if retry != nil {
+			relativeRetry = new(retry.RunRelative())
+		}
+		id, err := b.AddModelRequest(run, session.ModelRequest{Source: session.SourceHead{Sequence: head.Sequence, CID: head.CID}, RetryOf: relativeRetry,
 			Recipe: session.ConstructionRecipe{Algorithm: "algorithm", Version: 17, Parameters: parameters, Check: check}})
 		mustBatch(t, err)
+		sources[id] = session.SourceHead{Sequence: head.Sequence, CID: head.CID}
 		submitBatch(t, s, b)
 		return id
 	}
@@ -37,21 +55,25 @@ func completeInteractionFixture(t testing.TB, count, field, sibling int) map[str
 	evidence := &session.ObservedEvidence{Detail: new(string(check)), Correlation: new("correlation")}
 	first := request(nil)
 	b = beginBatch(t, s)
-	mustBatch(t, b.AddInvocationFailure(session.InvocationFailure{RequestID: first, Class: session.InvocationFailureTransport, Explanation: new("failure"), Usage: usage, Evidence: evidence}))
+	mustBatch(t, b.AddInvocationFailure(first, session.InvocationFailure{Class: session.InvocationFailureTransport, Explanation: new("failure"), Usage: usage, Evidence: evidence}))
 	submitBatch(t, s, b)
 	second := request(&first)
-	response := session.ModelResponse{RequestID: second, Terminal: session.ResponseTerminalOther, ProviderStopReason: new("stop"), Usage: usage, Evidence: evidence,
+	response := session.ModelResponse{Terminal: session.ResponseTerminalOther, ProviderStopReason: new("stop"), Usage: usage, Evidence: evidence,
 		Private: &session.OpaqueProviderData{Producer: "producer", Format: "private", Version: 19, Data: parameters}}
 	for range count {
 		response.Items = append(response.Items,
 			session.ResponseItem{Content: &session.ResponseContent{Kind: session.ResponseContentReasoning, Parts: []session.ContentPart{
 				{Text: new("text")}, {Media: &session.Media{Kind: session.MediaKindDocument, MIMEType: "image/example", Source: session.MediaSourceInline,
-					FormatHint: "raw", Filename: "image.bin", Title: "title", InlineData: parameters}}}}},
+					FormatHint: "raw", Filename: "image.bin", Title: "title", InlineData: parameters}},
+				{Media: &session.Media{Kind: session.MediaKindDocument, MIMEType: "image/example", Source: session.MediaSourceRemote,
+					FormatHint: "raw", Filename: "image.bin", Title: "title", RemoteURI: "https://example.test/media"}},
+				{Media: &session.Media{Kind: session.MediaKindDocument, MIMEType: "image/example", Source: session.MediaSourceProvider,
+					FormatHint: "raw", Filename: "image.bin", Title: "title", ProviderName: "media-provider", ProviderScope: "media-scope", ProviderReferenceID: "media-reference"}}}}},
 			session.ResponseItem{Call: &session.RequestedCall{Name: "call", Arguments: parameters}},
 			session.ResponseItem{Content: &session.ResponseContent{Kind: session.ResponseContentOutput, Parts: []session.ContentPart{{Text: new("output")}}}})
 	}
 	b = beginBatch(t, s)
-	mustBatch(t, b.AddModelResponse(response))
+	mustBatch(t, b.AddModelResponse(second, response))
 	mustBatch(t, b.EndRun(session.RunEndedInterrupted))
 	submitBatch(t, s, b)
 	b = beginBatch(t, s)
@@ -59,19 +81,61 @@ func completeInteractionFixture(t testing.TB, count, field, sibling int) map[str
 	submitBatch(t, s, b)
 	pending := request(nil)
 	b = beginBatch(t, s)
-	mustBatch(t, b.AddRunEnded(session.RunEnded{RunID: run, Reason: session.RunEndedCaptureFailed, Explanation: new("capture"),
-		Capture: &session.CaptureFailureEvidence{RequestID: pending, Usage: usage, Evidence: evidence}}))
+	mustBatch(t, b.AddRunEnded(run, session.RunEnded{Reason: session.RunEndedCaptureFailed, Explanation: new("capture"),
+		Capture: &session.CaptureFailureEvidence{RequestID: pending.RunRelative(), Usage: usage, Evidence: evidence}}))
 	submitBatch(t, s, b)
 	loaded, err := session.Load(t.Context(), h, s.Snapshot().HistoryID(), p)
 	mustBatch(t, err)
-	return map[string]*session.Session{"Submit": s, "Load": loaded}
+	sessions := map[string]*session.Session{"Submit": s, "Load": loaded}
+	for seam, inspected := range sessions {
+		seen := 0
+		snap := inspected.Snapshot()
+		for i := 0; i < snap.RecordCount(); i++ {
+			if request, ok := snap.RecordAt(i).ModelRequest(); ok {
+				want, found := sources[request.ID()]
+				if !found || request.Source().Sequence() != want.Sequence || request.Source().CID() != want.CID {
+					t.Fatalf("%s request %v source = (%d, %v), want %+v", seam, request.ID(), request.Source().Sequence(), request.Source().CID(), want)
+				}
+				seen++
+			}
+		}
+		if seen != len(sources) || seen != 3 {
+			t.Fatalf("%s inspected %d request sources, want 3", seam, seen)
+		}
+	}
+	return sessions
 }
 
 type interactionTraversal struct {
 	requests, retries, failures, responses, endings, captures int
 	items, contents, parts, itemCalls, calls                  int
+	inlineMedia, remoteMedia, providerMedia                   int
 	usages, counters, evidence, providers, recipes            int
 	bytes                                                     int
+}
+
+// copyInteractionBytes keeps deliberate owned exports observable across the
+// benchmark boundary, including small leaves the compiler could otherwise stack-copy.
+//
+//go:noinline
+func copyInteractionBytes(v views.Bytes) []byte {
+	return v.Copy()
+}
+
+// inspectInteractionBytes always visits the borrowed leaf; only explicit exports copy.
+func inspectInteractionBytes(v views.Bytes, expected byte, exports bool) int {
+	if v.Len() == 0 {
+		panic("empty byte leaf")
+	}
+	for i, value := range v.All() {
+		if value != expected || v.At(i) != value {
+			panic("byte leaf")
+		}
+	}
+	if exports {
+		return len(copyInteractionBytes(v))
+	}
+	return 0
 }
 
 func inspectInteractionProvider(v session.OpaqueProviderDataView, format string, exports bool, visits *interactionTraversal) {
@@ -79,9 +143,7 @@ func inspectInteractionProvider(v session.OpaqueProviderDataView, format string,
 		panic("provider metadata")
 	}
 	visits.providers++
-	if exports {
-		visits.bytes += len(v.Data())
-	}
+	visits.bytes += inspectInteractionBytes(v.Data(), 0xa5, exports)
 }
 
 func inspectInteractionUsage(v session.InvocationUsageView, present, exports bool, visits *interactionTraversal) {
@@ -121,14 +183,14 @@ func inspectInteractionEvidence(v session.ObservedEvidenceView, present bool, vi
 
 // Concrete indexed record navigation and compiler-visible Items/Parts/Calls
 // iteration measure the direct path, not opaque iter.Seq escape overhead. Both
-// modes inspect every scalar and presence bit; only byte leaves are conditional.
+// modes inspect every scalar, presence bit and borrowed byte leaf; only Copy is conditional.
 func traverseCompleteInteraction(snap session.Snapshot, exports bool) interactionTraversal {
 	var visits interactionTraversal
 	for i := 0; i < snap.RecordCount(); i++ {
 		record := snap.RecordAt(i)
 		if v, ok := record.ModelRequest(); ok {
 			visits.requests++
-			if v.ID().RunID().HistoryID() != snap.HistoryID() || v.Source().Sequence == 0 || v.Source().CID == (contentid.CID{}) {
+			if v.ID().RunID().HistoryID() != snap.HistoryID() || v.Source().Sequence() == 0 || v.Source().CID() == (contentid.CID{}) {
 				panic("request scope/source")
 			}
 			if retry, ok := v.RetryOf(); ok {
@@ -143,9 +205,8 @@ func traverseCompleteInteraction(snap session.Snapshot, exports bool) interactio
 				panic("recipe metadata")
 			}
 			visits.recipes++
-			if exports {
-				visits.bytes += len(recipe.Parameters()) + len(recipe.Check())
-			}
+			visits.bytes += inspectInteractionBytes(recipe.Parameters(), 0xa5, exports)
+			visits.bytes += inspectInteractionBytes(recipe.Check(), 0x5a, exports)
 		}
 		if v, ok := record.InvocationFailure(); ok {
 			visits.failures++
@@ -163,7 +224,7 @@ func traverseCompleteInteraction(snap session.Snapshot, exports bool) interactio
 			visits.responses++
 			request, _ := snap.RecordAt(5).ModelRequest()
 			text, present := v.ProviderStopReason()
-			if v.RequestID() != request.ID() || v.Terminal() != session.ResponseTerminalOther || !present || text != "stop" || v.ItemCount() != 3*v.CallCount() {
+			if v.RequestID() != request.ID() || v.Terminal() != session.ResponseTerminalOther || !present || text != "stop" || v.Items().Len() != 3*v.CallCount() {
 				panic("response scalars")
 			}
 			u, up := v.Usage()
@@ -175,7 +236,7 @@ func traverseCompleteInteraction(snap session.Snapshot, exports bool) interactio
 				panic("private presence")
 			}
 			inspectInteractionProvider(private, "private", exports, &visits)
-			for item := range v.Items() {
+			for _, item := range v.Items().All() {
 				visits.items++
 				content, contentOK := item.Content()
 				call, callOK := item.Call()
@@ -184,10 +245,10 @@ func traverseCompleteInteraction(snap session.Snapshot, exports bool) interactio
 				}
 				if contentOK {
 					visits.contents++
-					if (content.Kind() != session.ResponseContentReasoning && content.Kind() != session.ResponseContentOutput) || content.PartCount() == 0 {
+					if (content.Kind() != session.ResponseContentReasoning && content.Kind() != session.ResponseContentOutput) || content.Parts().Len() == 0 {
 						panic("content scalars")
 					}
-					for part := range content.Parts() {
+					for _, part := range content.Parts().All() {
 						visits.parts++
 						text, textOK := part.Text()
 						media, mediaOK := part.Media()
@@ -204,22 +265,33 @@ func traverseCompleteInteraction(snap session.Snapshot, exports bool) interactio
 							}
 						}
 						if mediaOK {
-							uri, uriOK := media.RemoteURI()
-							name, nameOK := media.ProviderName()
-							scope, scopeOK := media.ProviderScope()
-							ref, refOK := media.ProviderReferenceID()
-							if uriOK || nameOK || scopeOK || refOK || uri != "" || name != "" || scope != "" || ref != "" {
-								panic("wrong media source")
-							}
-							if media.Kind() != session.MediaKindDocument || media.MIMEType() != "image/example" || media.Source() != session.MediaSourceInline || media.FormatHint() != "raw" || media.Filename() != "image.bin" || media.Title() != "title" {
+							uri := media.RemoteURI()
+							name := media.ProviderName()
+							scope := media.ProviderScope()
+							ref := media.ProviderReferenceID()
+							if media.Kind() != session.MediaKindDocument || media.MIMEType() != "image/example" || media.FormatHint() != "raw" || media.Filename() != "image.bin" || media.Title() != "title" {
 								panic("media metadata")
 							}
-							if exports {
-								data, ok := media.InlineData()
-								if !ok {
-									panic("inline presence")
+							data := media.InlineData()
+							switch media.Source() {
+							case session.MediaSourceInline:
+								if uri != "" || name != "" || scope != "" || ref != "" {
+									panic("inline media source")
 								}
-								visits.bytes += len(data)
+								visits.inlineMedia++
+								visits.bytes += inspectInteractionBytes(data, 0xa5, exports)
+							case session.MediaSourceRemote:
+								if data.Len() != 0 || uri != "https://example.test/media" || name != "" || scope != "" || ref != "" {
+									panic("remote media source")
+								}
+								visits.remoteMedia++
+							case session.MediaSourceProvider:
+								if data.Len() != 0 || uri != "" || name != "media-provider" || scope != "media-scope" || ref != "media-reference" {
+									panic("provider media source")
+								}
+								visits.providerMedia++
+							default:
+								panic("unknown media source")
 							}
 						}
 					}
@@ -228,9 +300,7 @@ func traverseCompleteInteraction(snap session.Snapshot, exports bool) interactio
 					if call.Name() != "call" {
 						panic("identity-free name")
 					}
-					if exports {
-						visits.bytes += len(call.Arguments())
-					}
+					visits.bytes += inspectInteractionBytes(call.Arguments(), 0xa5, exports)
 				}
 			}
 			var previous session.RequestedCallID
@@ -240,9 +310,7 @@ func traverseCompleteInteraction(snap session.Snapshot, exports bool) interactio
 				}
 				previous = call.ID()
 				visits.calls++
-				if exports {
-					visits.bytes += len(call.Arguments())
-				}
+				visits.bytes += inspectInteractionBytes(call.Arguments(), 0xa5, exports)
 			}
 		}
 		if v, ok := record.RunEnded(); ok {
@@ -274,6 +342,23 @@ func BenchmarkModelInteractionCompleteTraversal(b *testing.B) {
 	for _, axis := range []struct{ count, field, sibling int }{{1, 32, 32}, {8, 32, 32}, {32, 32, 32}, {1, 16384, 32}, {1, 32, 16384}} {
 		b.Run(fmt.Sprintf("count=%d/field=%d/sibling=%d", axis.count, axis.field, axis.sibling), func(b *testing.B) {
 			for seam, s := range completeInteractionFixture(b, axis.count, axis.field, axis.sibling) {
+				response, _ := s.Snapshot().RecordAt(6).ModelResponse()
+				stored := response.Items().All()
+				for _, mode := range []string{"escaping-create", "opaque-consume", "escaping-reuse"} {
+					b.Run(seam+"/"+mode, func(b *testing.B) {
+						b.ReportAllocs()
+						for b.Loop() {
+							switch mode {
+							case "escaping-create":
+								interactionItemsSink = response.Items().All()
+							case "opaque-consume":
+								consumeInteractionItems(response.Items().All())
+							case "escaping-reuse":
+								consumeInteractionItems(stored)
+							}
+						}
+					})
+				}
 				for _, exports := range []bool{false, true} {
 					b.Run(fmt.Sprintf("%s/direct/exports=%t", seam, exports), func(b *testing.B) {
 						snap := s.Snapshot()

@@ -14,26 +14,26 @@ import (
 func TestSessionMetadataAndDecodedLegalityAgree(t *testing.T) {
 	fixture, limits := internalFixture(t)
 	id := fixture.Snapshot().HistoryID()
-	created, e := newCreatedRecord(Created{HistoryID: id}, limits)
+	created, e := newCreatedRecord(Created{}, limits)
 	if e != nil {
 		t.Fatal(e)
 	}
 	start := func(n uint64) *materializedRecord {
-		r, e := newRunStartedRecord(RunStarted{ID: RunID{historyID: id, ordinal: n}}, limits)
+		r, e := newRunStartedRecord(RunStarted{ID: RunID{historyID: id, ordinal: n}.HistoryRelative()}, limits)
 		if e != nil {
 			t.Fatal(e)
 		}
 		return r
 	}
 	input := func(run, n uint64) *materializedRecord {
-		r, e := makeInputRecord(identifiedInput{ID: UserInputID{runID: RunID{historyID: id, ordinal: run}, ordinal: n}, Parts: internalByteParts([]byte{0xff, 0, 'x'})}, limits)
+		r, e := makeInputRecord(identifiedInput{ID: UserInputID{runID: RunID{historyID: id, ordinal: run}, ordinal: n}, UserInput: UserInput{Parts: internalByteParts([]byte{0xff, 0, 'x'})}}, limits)
 		if e != nil {
 			t.Fatal(e)
 		}
 		return r
 	}
 	closeout := func(n uint64) *materializedRecord {
-		r, e := newRunEndedRecord(RunEnded{RunID: RunID{historyID: id, ordinal: n}, Reason: RunEndedInterrupted}, limits)
+		r, e := newRunEndedRecord(RunEnded{Reason: RunEndedInterrupted}, RunID{historyID: id, ordinal: n}, limits)
 		if e != nil {
 			t.Fatal(e)
 		}
@@ -122,11 +122,11 @@ func TestSessionMetadataPreservesOrderedFailure(t *testing.T) {
 	s, limits := internalFixture(t)
 	id := s.Snapshot().HistoryID()
 	s.policy.PayloadLimits.MaxByteStringBytes = 1
-	start, err := newRunStartedRecord(RunStarted{ID: RunID{historyID: id, ordinal: 1}}, limits)
+	start, err := newRunStartedRecord(RunStarted{ID: RunID{historyID: id, ordinal: 1}.HistoryRelative()}, limits)
 	if err != nil {
 		t.Fatal(err)
 	}
-	input, err := makeInputRecord(identifiedInput{ID: UserInputID{runID: RunID{historyID: id, ordinal: 1}, ordinal: 1}, Parts: internalByteParts([]byte("too long"))}, limits)
+	input, err := makeInputRecord(identifiedInput{ID: UserInputID{runID: RunID{historyID: id, ordinal: 1}, ordinal: 1}, UserInput: UserInput{Parts: internalByteParts([]byte("too long"))}}, limits)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -157,7 +157,7 @@ func TestSessionMetadataAndDecodedPayloadLimitsAgree(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := b.AddUserInput(UserInput{RunID: run, Parts: internalByteParts([]byte{0xff, 0, 'x'})}); err != nil {
+	if _, err := b.AddUserInput(run, UserInput{Parts: internalByteParts([]byte{0xff, 0, 'x'})}); err != nil {
 		t.Fatal(err)
 	}
 	batch := append([]*materializedRecord{}, b.records...)
@@ -191,8 +191,7 @@ func TestSessionMetadataAndDecodedPayloadLimitsAgree(t *testing.T) {
 
 func TestPrivatePreparationAdmissionAndBarriers(t *testing.T) {
 	s, limits := internalFixture(t)
-	id := s.Snapshot().HistoryID()
-	created, err := newCreatedRecord(Created{HistoryID: id}, limits)
+	created, err := newCreatedRecord(Created{}, limits)
 	if err != nil {
 		t.Fatal(err)
 	}

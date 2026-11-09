@@ -125,7 +125,7 @@ func (s *Session) prepareEnding(reason RunEndedReason) (prepared, error) {
 	if s.state.view.lifecycle.activeRun == (RunID{}) {
 		return prepared{}, nil
 	}
-	r, err := newRunEndedRecord(RunEnded{RunID: s.state.view.lifecycle.activeRun, Reason: reason}, s.policy.PayloadLimits)
+	r, err := newRunEndedRecord(RunEnded{Reason: reason}, s.state.view.lifecycle.activeRun, s.policy.PayloadLimits)
 	if err != nil {
 		return prepared{}, err
 	}
@@ -133,7 +133,8 @@ func (s *Session) prepareEnding(reason RunEndedReason) (prepared, error) {
 }
 
 // prepare uses owner-validated immutable backing, also while submission holds
-// its own batch's write slot. It supplies enclosing scope, not erased provenance.
+// its own batch's write slot. It supplies enclosing history scope; payload references
+// are destination-run-relative and carry no origin provenance.
 func (s *Session) prepare(records []*materializedRecord) (prepared, error) {
 	if err := s.policy.Validate(); err != nil {
 		return prepared{}, err

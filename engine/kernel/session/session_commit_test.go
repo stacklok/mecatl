@@ -73,7 +73,7 @@ func mustBatch(t testing.TB, err error) {
 }
 func batchInput(t testing.TB, b *session.SessionCommit, run session.RunID, content []byte) session.UserInputID {
 	t.Helper()
-	id, err := b.AddUserInput(session.UserInput{RunID: run, Parts: byteParts(content)})
+	id, err := b.AddUserInput(run, session.UserInput{Parts: byteParts(content)})
 	mustBatch(t, err)
 	return id
 }
@@ -142,7 +142,7 @@ func TestSessionCommitHappyPathOwnershipAndNumbering(t *testing.T) {
 	reuse := beginBatch(t, s)
 	mustBatch(t, reuse.EndRun(session.RunEndedInterrupted))
 	third := batchRun(t, reuse)
-	if _, err := reuse.AddUserInput(session.UserInput{RunID: run}); !errors.Is(err, session.ErrTransition) {
+	if _, err := reuse.AddUserInput(run, session.UserInput{}); !errors.Is(err, session.ErrTransition) {
 		t.Fatal("closed owner accepted")
 	}
 	if id := batchInput(t, reuse, third, nil); id != allocatedInput(t, third, 1) {
@@ -215,7 +215,7 @@ func TestSessionCommitHandlesDiscardAndFailedAdditions(t *testing.T) {
 		if err := b.Discard(); !errors.Is(err, session.ErrBatch) {
 			t.Fatal("zero discard")
 		}
-		if _, err := b.AddUserInput(session.UserInput{}); !errors.Is(err, session.ErrBatch) {
+		if _, err := b.AddUserInput(session.RunID{}, session.UserInput{}); !errors.Is(err, session.ErrBatch) {
 			t.Fatal("zero add")
 		}
 	}
@@ -224,7 +224,7 @@ func TestSessionCommitHandlesDiscardAndFailedAdditions(t *testing.T) {
 	if err := copyHandle.Discard(); !errors.Is(err, session.ErrBatch) {
 		t.Fatal("copied discard")
 	}
-	if _, err := copyHandle.AddUserInput(session.UserInput{}); !errors.Is(err, session.ErrBatch) {
+	if _, err := copyHandle.AddUserInput(session.RunID{}, session.UserInput{}); !errors.Is(err, session.ErrBatch) {
 		t.Fatal("copied add")
 	}
 	if _, err := s.SubmitCommit(context.Background(), &copyHandle); !errors.Is(err, session.ErrBatch) {
@@ -239,7 +239,7 @@ func TestSessionCommitHandlesDiscardAndFailedAdditions(t *testing.T) {
 	if _, err := b.StartRun(); !errors.Is(err, session.ErrTransition) {
 		t.Fatal("uncreated start")
 	}
-	if _, err := b.AddUserInput(session.UserInput{}); !errors.Is(err, session.ErrTransition) {
+	if _, err := b.AddUserInput(session.RunID{}, session.UserInput{}); !errors.Is(err, session.ErrTransition) {
 		t.Fatal("input without owner")
 	}
 	mustBatch(t, b.Create())
@@ -253,11 +253,11 @@ func TestSessionCommitHandlesDiscardAndFailedAdditions(t *testing.T) {
 	foreign, err := historyid.ParseHistoryID("HST2222222222222222222222")
 	mustBatch(t, err)
 	for _, owner := range []session.RunID{{}, allocatedRun(t, foreign, 1), allocatedRun(t, testHistoryID(t), 2)} {
-		if id, err := b.AddUserInput(session.UserInput{RunID: owner}); id != (session.UserInputID{}) || !errors.Is(err, session.ErrTransition) {
+		if id, err := b.AddUserInput(owner, session.UserInput{}); id != (session.UserInputID{}) || !errors.Is(err, session.ErrTransition) {
 			t.Fatal("invalid owner")
 		}
 	}
-	if id, err := b.AddUserInput(session.UserInput{RunID: run, Parts: byteParts(make([]byte, testLimits().MaxByteStringBytes+1))}); id != (session.UserInputID{}) || !errors.Is(err, codec.ErrLimitExceeded) {
+	if id, err := b.AddUserInput(run, session.UserInput{Parts: byteParts(make([]byte, testLimits().MaxByteStringBytes+1))}); id != (session.UserInputID{}) || !errors.Is(err, codec.ErrLimitExceeded) {
 		t.Fatalf("oversize: %v", err)
 	}
 	input := batchInput(t, b, run, []byte("discarded"))
@@ -280,7 +280,7 @@ func TestSessionCommitHandlesDiscardAndFailedAdditions(t *testing.T) {
 	if _, err := s.SubmitCommit(context.Background(), fresh); !errors.Is(err, session.ErrBatch) {
 		t.Fatal("completed submit")
 	}
-	if _, err := fresh.AddUserInput(session.UserInput{}); !errors.Is(err, session.ErrBatch) {
+	if _, err := fresh.AddUserInput(session.RunID{}, session.UserInput{}); !errors.Is(err, session.ErrBatch) {
 		t.Fatal("completed add")
 	}
 }
@@ -355,7 +355,7 @@ func TestSessionCommitUncertainIdenticalExplicitRetry(t *testing.T) {
 			if err := b.Discard(); !errors.Is(err, session.ErrBatch) {
 				t.Fatal("uncertain discard")
 			}
-			if _, err := b.AddUserInput(session.UserInput{}); !errors.Is(err, session.ErrBatch) {
+			if _, err := b.AddUserInput(session.RunID{}, session.UserInput{}); !errors.Is(err, session.ErrBatch) {
 				t.Fatal("frozen add")
 			}
 			if err := b.EndRun(session.RunEndedInterrupted); !errors.Is(err, session.ErrBatch) {
@@ -450,7 +450,7 @@ func TestSessionCommitPayloadLimitRejectsBeforeAllocation(t *testing.T) {
 			}
 			before := s.Snapshot()
 			attempts := len(backend.attempts)
-			if id, err := b.AddUserInput(session.UserInput{RunID: run, Parts: byteParts(content)}); id != (session.UserInputID{}) || !errors.Is(err, codec.ErrLimitExceeded) {
+			if id, err := b.AddUserInput(run, session.UserInput{Parts: byteParts(content)}); id != (session.UserInputID{}) || !errors.Is(err, codec.ErrLimitExceeded) {
 				t.Fatalf("payload-local rejection: %v, %v", id, err)
 			}
 			if !reflect.DeepEqual(before, s.Snapshot()) || len(backend.attempts) != attempts {

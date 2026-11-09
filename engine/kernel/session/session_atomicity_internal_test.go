@@ -62,7 +62,7 @@ func populatedAtomicitySession(t *testing.T) *Session {
 			t.Fatal(err)
 		}
 		for _, content := range []string{"first", "second"} {
-			if _, err := b.AddUserInput(UserInput{RunID: run, Parts: internalByteParts([]byte(content))}); err != nil {
+			if _, err := b.AddUserInput(run, UserInput{Parts: internalByteParts([]byte(content))}); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -87,7 +87,7 @@ func TestSessionPopulatedApplyRejectionPreservesPrivateState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := b.AddUserInput(UserInput{RunID: old.ActiveRun(), Parts: internalByteParts([]byte("third"))}); err != nil {
+	if _, err := b.AddUserInput(old.ActiveRun(), UserInput{Parts: internalByteParts([]byte("third"))}); err != nil {
 		t.Fatal(err)
 	}
 	if err := b.EndRun(RunEndedInterrupted); err != nil {
@@ -97,7 +97,7 @@ func TestSessionPopulatedApplyRejectionPreservesPrivateState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := b.AddUserInput(UserInput{RunID: run, Parts: internalByteParts([]byte("successor"))}); err != nil {
+	if _, err := b.AddUserInput(run, UserInput{Parts: internalByteParts([]byte("successor"))}); err != nil {
 		t.Fatal(err)
 	}
 	records := slices.Clone(b.records)
@@ -109,7 +109,7 @@ func TestSessionPopulatedApplyRejectionPreservesPrivateState(t *testing.T) {
 		t.Fatal(err)
 	}
 	bad := good.commit.Clone()
-	wrongCloseout, err := newRunEndedRecord(RunEnded{RunID: old.ActiveRun(), Reason: RunEndedInterrupted}, s.policy.PayloadLimits)
+	wrongCloseout, err := newRunEndedRecord(RunEnded{Reason: RunEndedInterrupted}, old.ActiveRun(), s.policy.PayloadLimits)
 	if err != nil {
 		t.Fatal(err)
 	}

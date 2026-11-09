@@ -53,7 +53,7 @@ func TestInteractionSuccessorScopeAndFutureReferences(t *testing.T) {
 					})
 					if fact == "retry" {
 						interactionSubmit(t, s, func(b *SessionCommit) {
-							interactionCheck(t, b.AddInvocationFailure(InvocationFailure{RequestID: first.ID, Class: InvocationFailureTransport}))
+							interactionCheck(t, b.AddInvocationFailure(first.ID, InvocationFailure{Class: InvocationFailureTransport}))
 						})
 					}
 					id := first.ID
@@ -76,7 +76,7 @@ func TestInteractionSuccessorScopeAndFutureReferences(t *testing.T) {
 						interactionCheck(t, err)
 						dto = historyformat.Record{Kind: sessionformat.KindModelResponse, KindVersion: 1, Payload: wire}
 						add = func(b *SessionCommit) error {
-							return b.AddModelResponse(ModelResponse{RequestID: id, Terminal: ResponseTerminalNormal})
+							return b.AddModelResponse(id, ModelResponse{Terminal: ResponseTerminalNormal})
 						}
 					case "failure":
 						v := sessionformat.InvocationFailure{RunID: id.runID.ordinal, RequestID: id.requestOrdinal, Class: sessionformat.InvocationFailureTransport}
@@ -84,7 +84,7 @@ func TestInteractionSuccessorScopeAndFutureReferences(t *testing.T) {
 						interactionCheck(t, err)
 						dto = historyformat.Record{Kind: sessionformat.KindInvocationFailure, KindVersion: 1, Payload: wire}
 						add = func(b *SessionCommit) error {
-							return b.AddInvocationFailure(InvocationFailure{RequestID: id, Class: InvocationFailureTransport})
+							return b.AddInvocationFailure(id, InvocationFailure{Class: InvocationFailureTransport})
 						}
 					case "capture":
 						v := sessionformat.RunEnded{RunID: id.runID.ordinal, Reason: sessionformat.RunEndedCaptureFailed, Capture: &sessionformat.CaptureFailureEvidence{RequestID: id.requestOrdinal}}
@@ -92,13 +92,14 @@ func TestInteractionSuccessorScopeAndFutureReferences(t *testing.T) {
 						interactionCheck(t, err)
 						dto = historyformat.Record{Kind: sessionformat.KindRunEnded, KindVersion: 1, Payload: wire}
 						add = func(b *SessionCommit) error {
-							return b.AddRunEnded(RunEnded{RunID: id.runID, Reason: RunEndedCaptureFailed, Capture: &CaptureFailureEvidence{RequestID: id}})
+							return b.AddRunEnded(id.runID, RunEnded{Reason: RunEndedCaptureFailed, Capture: &CaptureFailureEvidence{RequestID: id.RunRelative()}})
 						}
 					case "retry":
 						next := interactionRequest(s, 2)
 						next.ID.runID = run
-						next.RetryOf = &id
-						v := next.toFormat()
+						next.RetryOf = new(id.RunRelative())
+						v := next.ModelRequest
+						v.RunID, v.ID = run.ordinal, next.ID.requestOrdinal
 						if reference == "old run" || reference == "future run" {
 							v.RunID = id.runID.ordinal
 						}
@@ -106,7 +107,7 @@ func TestInteractionSuccessorScopeAndFutureReferences(t *testing.T) {
 						interactionCheck(t, err)
 						dto = historyformat.Record{Kind: sessionformat.KindModelRequest, KindVersion: 1, Payload: wire}
 						add = func(b *SessionCommit) error {
-							_, err := b.AddModelRequest(ModelRequest{RunID: run, Source: next.Source, Recipe: next.Recipe, RetryOf: &id})
+							_, err := b.AddModelRequest(run, ModelRequest{Source: next.Source, Recipe: next.Recipe, RetryOf: new(id.RunRelative())})
 							return err
 						}
 					}
@@ -141,12 +142,15 @@ func TestInteractionSuccessorScopeAndFutureReferences(t *testing.T) {
 							}
 						}
 					}
-					if reference == "current" {
+					// Builder retry references discard origin; forged DTOs here also
+					// change the destination run and must still reject that mismatch.
+					success := reference == "current" || (path == "builder" && fact == "retry" && (reference == "old run" || reference == "future run"))
+					if success {
 						interactionCheck(t, err)
 					} else if err == nil {
-						t.Fatal("foreign/future reference admitted")
+						t.Fatal("invalid destination/future reference admitted")
 					}
-					if (reference != "current" || path != "apply") && !reflect.DeepEqual(before, detachedSessionState(s.state)) {
+					if (!success || path != "apply") && !reflect.DeepEqual(before, detachedSessionState(s.state)) {
 						t.Fatal("rejection changed accepted state")
 					}
 					if old.RecordCount() != 5 {
@@ -156,17 +160,17 @@ func TestInteractionSuccessorScopeAndFutureReferences(t *testing.T) {
 			}
 		}
 	}
-	// A foreign history cannot be represented by an unscoped DTO; reject it at
-	// the public conversion boundary instead of silently omitting its scope.
+	// Copying a foreign component is destination-relative; an explicit foreign
+	// outcome destination still rejects before lifecycle admission.
 	s := interactionFixture(t, "responded")
 	id := interactionRequest(s, 1).ID
 	id.runID.historyID = historyid.NewHistoryID()
 	b, err := s.BeginCommit()
 	interactionCheck(t, err)
-	if _, err = b.AddModelRequest(ModelRequest{RunID: s.Snapshot().ActiveRun(), Source: interactionRequest(s, 2).Source, Recipe: interactionRequest(s, 2).Recipe, RetryOf: &id}); !errors.Is(err, codec.ErrInvalidData) {
-		t.Fatalf("foreign retry: %v", err)
+	if _, err = b.AddModelRequest(s.Snapshot().ActiveRun(), ModelRequest{Source: interactionRequest(s, 2).Source, Recipe: interactionRequest(s, 2).Recipe, RetryOf: new(id.RunRelative())}); err != nil {
+		t.Fatalf("relative retry: %v", err)
 	}
-	if err = b.AddModelResponse(ModelResponse{RequestID: id, Terminal: ResponseTerminalNormal}); !errors.Is(err, ErrIdentity) {
+	if err = b.AddModelResponse(id, ModelResponse{Terminal: ResponseTerminalNormal}); !errors.Is(err, ErrIdentity) {
 		t.Fatalf("foreign outcome: %v", err)
 	}
 	interactionCheck(t, b.Discard())

@@ -3,6 +3,8 @@ package fixture
 import "github.com/stacklok/mecatl/engine/kernel/codec/internal/fixture/value"
 
 // Sample exercises fixed-width values, byte arrays and optional scalar presence.
+//
+//dtogen:include
 type Sample struct {
 	I8       int8           `cbor:"i8"`
 	I16      int16          `cbor:"i16"`

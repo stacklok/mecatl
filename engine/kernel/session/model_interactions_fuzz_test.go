@@ -23,13 +23,13 @@ func FuzzModelInteractionConstructors(f *testing.F) {
 		var err error
 		switch kind % 4 {
 		case 0:
-			r, err = makeRequestRecord(identifiedRequest{ID: id, Source: SourceHead{Sequence: version, CID: contentid.Sum([]byte("source"))}, Recipe: ConstructionRecipe{Algorithm: name, Version: version, Parameters: data, Check: data}, RetryOf: &id}, limits)
+			r, err = makeRequestRecord(identifiedRequest{ID: id, ModelRequest: ModelRequest{Source: SourceHead{Sequence: version, CID: contentid.Sum([]byte("source"))}, Recipe: ConstructionRecipe{Algorithm: name, Version: version, Parameters: data, Check: data}, RetryOf: new(id.RunRelative())}}, limits)
 		case 1:
-			r, err = newModelResponseRecord(ModelResponse{RequestID: id, Terminal: ResponseTerminalOther, ProviderStopReason: &name, Items: []ResponseItem{{Content: &ResponseContent{Kind: ResponseContentOutput, Parts: []ContentPart{{Text: &name}}}}, {Call: &RequestedCall{Name: name, Arguments: data}}}, Evidence: evidence, Usage: usage, Private: &OpaqueProviderData{Producer: name, Format: "unknown", Version: version, Data: data}}, limits)
+			r, err = newModelResponseRecord(ModelResponse{Terminal: ResponseTerminalOther, ProviderStopReason: &name, Items: []ResponseItem{{Content: &ResponseContent{Kind: ResponseContentOutput, Parts: []ContentPart{{Text: &name}}}}, {Call: &RequestedCall{Name: name, Arguments: data}}}, Evidence: evidence, Usage: usage, Private: &OpaqueProviderData{Producer: name, Format: "unknown", Version: version, Data: data}}, id, limits)
 		case 2:
-			r, err = newInvocationFailureRecord(InvocationFailure{RequestID: id, Class: InvocationFailureOther, Explanation: &name, Evidence: evidence, Usage: usage}, limits)
+			r, err = newInvocationFailureRecord(InvocationFailure{Class: InvocationFailureOther, Explanation: &name, Evidence: evidence, Usage: usage}, id, limits)
 		case 3:
-			r, err = newRunEndedRecord(RunEnded{RunID: id.runID, Reason: RunEndedCaptureFailed, Explanation: &name, Capture: &CaptureFailureEvidence{RequestID: id, Evidence: evidence, Usage: usage}}, limits)
+			r, err = newRunEndedRecord(RunEnded{Reason: RunEndedCaptureFailed, Explanation: &name, Capture: &CaptureFailureEvidence{RequestID: id.RunRelative(), Evidence: evidence, Usage: usage}}, id.runID, limits)
 		}
 		if err != nil {
 			if r != nil {

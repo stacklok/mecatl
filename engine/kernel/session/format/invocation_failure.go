@@ -5,33 +5,40 @@ import (
 	"unicode/utf8"
 )
 
+// InvocationFailureClass is a closed classification of observed invocation failure.
+// Empty and unknown values are rejected.
+type InvocationFailureClass string
+
 // InvocationFailure.Class values form a closed vocabulary; empty and unknown
 // classes are rejected.
 const (
 	// InvocationFailureTransport encodes an observed transport failure.
-	InvocationFailureTransport = "transport"
+	InvocationFailureTransport InvocationFailureClass = "transport"
 	// InvocationFailureTimeout encodes an observed timeout.
-	InvocationFailureTimeout = "timeout"
+	InvocationFailureTimeout InvocationFailureClass = "timeout"
 	// InvocationFailureLocal encodes an observed local failure.
-	InvocationFailureLocal = "local"
+	InvocationFailureLocal InvocationFailureClass = "local"
 	// InvocationFailureOther encodes another observed failure.
-	InvocationFailureOther = "other"
+	InvocationFailureOther InvocationFailureClass = "other"
 )
 
 // InvocationFailure records an observed invocation or delivery failure without
 // constructing a provider response or asserting no remote processing. Assignment
-// shares nested storage; Clone detaches it.
+// shares nested storage; Clone detaches it. Session authoring supplies the full
+// destination request separately and requires RunID and RequestID zero. Validate
+// requires the fully populated persisted shape.
 //
-//cborgen:validate Validate
+//dtogen:validate validateLocal
+//dtogen:include
 type InvocationFailure struct {
 	// RunID is the required positive numeric run component within the history
 	// supplied by the enclosing envelope.
-	RunID uint64 `cbor:"r"`
+	RunID uint64 `cbor:"r" view:"-"`
 	// RequestID is the required positive numeric request component within RunID.
 	// Payload validation checks positivity, not accepted request membership.
-	RequestID uint64 `cbor:"q"`
+	RequestID uint64 `cbor:"q" view:"manual"`
 	// Class is required and must be an InvocationFailure closed-vocabulary value.
-	Class string `cbor:"c"`
+	Class InvocationFailureClass `cbor:"c"`
 	// Explanation is optional UTF-8 owner-provided human-readable failure detail.
 	// Nil omits it; non-nil empty is retained. It is distinct from Evidence.Detail.
 	Explanation *string `cbor:"e,omitempty"`
@@ -43,9 +50,25 @@ type InvocationFailure struct {
 	Usage *InvocationUsage `cbor:"u,omitempty"`
 }
 
-// Validate checks local identity, the closed observed class, and UTF-8 explanation
-// syntax; it does not establish disclosure safety.
+// Validate checks persisted identity, closed class and all retained evidence.
+// It does not establish acceptance, disclosure safety or remote effects.
 func (v InvocationFailure) Validate() error {
+	if err := v.validateLocal(); err != nil {
+		return err
+	}
+	if v.Evidence != nil {
+		if err := v.Evidence.Validate(); err != nil {
+			return err
+		}
+	}
+	if v.Usage != nil {
+		return v.Usage.Validate()
+	}
+	return nil
+}
+
+// validateLocal checks immediate fields after bounded traversal validates children.
+func (v InvocationFailure) validateLocal() error {
 	if v.RunID == 0 || v.RequestID == 0 {
 		return errors.New("invocation failure requires positive run and request ordinals")
 	}

@@ -110,6 +110,15 @@ state; model responses, tool calls/results, and private continuation; usage,
 limits/counters, and context occupancy. Keep these in the cutover inventory without
 adding them all to the current session records.
 
+## Hosting-replica breadcrumbs to consider
+
+Consider retaining session-history breadcrumbs identifying which pod or host is
+hosting the session, including changes during handoff or recovery. This may fit
+with leader election or session assignment across replicas; the record shape and
+owning layer remain open. Distinguish historical hosting evidence from the
+backend-authoritative ownership/fencing mechanism: a breadcrumb alone must not
+grant execution authority.
+
 ## How to use this assessment
 
 Revisit the relevant rows when each lifecycle, request-reconstruction, host,

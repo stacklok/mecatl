@@ -18,7 +18,7 @@ production entry points unchanged unless Joe explicitly approves integration.
 ## Code organization and documentation
 
 These conventions apply to `engine/kernel/` and kernel-specific changes in its
-supporting adapters and tools, including `cborgen`. Apply them to new and changed
+supporting adapters and tools, including `dtogen`. Apply them to new and changed
 contracts and compare neighboring kernel types for coherence. Record established
 patterns here as they emerge; keep unrelated legacy cleanup out of scope.
 
@@ -26,9 +26,8 @@ patterns here as they emerge; keep unrelated legacy cleanup out of scope.
 - Put persistence DTOs, versioned schemas, generated codecs and payload-local
   validation in the owning layer's `format` subpackage, as in `history/format`
   and `session/format`. Keep these packages independent of aggregates and their
-  operational policy. Public domain values are separate from DTOs so persistence
-  can omit information supplied by its enclosing context; validate that context
-  at the conversion boundary rather than silently dropping conflicting values.
+  operational policy. Check identity scope at the aggregate boundary rather than
+  silently discarding conflicting authoring context.
 - Organize implementation files by owning type: `commit.go`, `record.go`, etc.
   Keep the declaration, methods, and type-specific helpers together, including
   validation, cloning, equality, and encoding/decoding. Avoid capability-wide
@@ -60,9 +59,10 @@ patterns here as they emerge; keep unrelated legacy cleanup out of scope.
 ## Contract and implementation discipline
 
 - Public occurrence IDs are distinct, scoped identities for equality and
-  correlation. Keep numeric allocation and successor arithmetic internal rather
-  than exposing ordering as an identity contract. Use consistent identity naming
-  across public values and persistence DTOs; document omitted enclosing scope.
+  correlation. Reconstruction proves neither allocation, membership, nor
+  authority. Keep numeric allocation and successor arithmetic internal, without
+  an ordering contract. Use consistent identity naming across public values and
+  persistence DTOs; document omitted enclosing scope.
 - Use string constants for categorical fields, grouped by the field/type they
   describe. Document and validate closed vocabularies; preserve provider-owned
   open values without inventing a closed enum. Bound labels used in resource
@@ -71,12 +71,18 @@ patterns here as they emerge; keep unrelated legacy cleanup out of scope.
   explicit where relevant. Prefer concrete type methods over speculative shared
   marker, cloning, or freezing interfaces.
 - Use concrete immutable DTO-backed views for nested inspection. Scalar/presence
-  reads must not clone sibling payloads; byte getters detach only their own field.
-  Make zero views safe, return `(View, bool)` for optional children and
-  `(value, bool)` for optional scalars, and preserve present-empty values. Document
-  retained backing, lifetime and navigation complexity. Test complete scalar
-  traversal and leaf-only copying through Submit and storage-backed Load with
-  nonempty siblings; allocation-free traversal that skips subtrees is not evidence.
+  reads must not clone sibling payloads; byte reads borrow through `views.Bytes`
+  and explicit `Copy` detaches only the selected leaf. Use `views.SliceView` for
+  collections without intermediate `[]View` materialization. Preserve enclosing
+  identity scope when adapting children. Make zero views safe, return
+  `(View, bool)` for optional children and `(value, bool)` for optional scalars,
+  and preserve present-empty values. Document retained backing, lifetime, and
+  navigation complexity. Test complete traversal and leaf-only copying through
+  Submit and storage-backed Load with nonempty siblings; measure captured-adapter
+  construction separately from traversal.
+- Before changing generation declarations, DTO view tags, or generated accessors,
+  read the [generator guide](../../internal/dtogen/README.md) for selection, field
+  policy, and regeneration requirements.
 - Keep data-contract validation distinct from operational resource policy.
   Validate lengths and counts before the allocations or conversions they govern;
   use overflow-safe arithmetic. Do not rely on mutable dependency-global limits.

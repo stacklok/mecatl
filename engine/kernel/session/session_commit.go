@@ -7,6 +7,7 @@ import (
 
 	"github.com/stacklok/mecatl/engine/kernel/codec"
 	"github.com/stacklok/mecatl/engine/kernel/history"
+	historyid "github.com/stacklok/mecatl/engine/kernel/history/id"
 )
 
 // ErrBatch identifies an invalid, closed, frozen or already occupied batch slot.
@@ -37,8 +38,9 @@ var ErrAcceptedApply = errors.New("session commit accepted but local application
 // Additions own encoded bytes and complete decoded facts, not caller slices.
 // Provisional IDs are not accepted until SubmitCommit succeeds. Additions eagerly
 // enforce payload limits and lifecycle legality, but promise no aggregate admission.
-// Typed additions validate caller-supplied top-level identities and destination
-// history before bounded payload/nested-reference validation and scope omission.
+// Typed additions validate the live handle, then explicit destination scope, then
+// zero-only synthesized DTO fields before inspecting or sizing payloads. Only a
+// bounded local DTO copy receives persisted identity; caller backing is not mutated.
 // AddUserInput and AddModelRequest instead require the exact active run first,
 // returning ErrTransition on mismatch. Other additions return codec.ErrInvalidData
 // for invalid top-level identities and ErrIdentity for valid foreign histories,
@@ -95,7 +97,8 @@ func (b *SessionCommit) check(add bool) error {
 }
 
 // add retains owner-validated backing and validates its local transition. Typed
-// callers check target history before conversion erases scope. Aggregate policy
+// callers check explicit destination and synthesized fields before materialization.
+// Aggregate policy
 // is checked only on submission; this trusted in-process builder is not a sandbox.
 func (b *SessionCommit) add(r *materializedRecord, err error) error {
 	if err != nil {
@@ -122,55 +125,64 @@ func (b *SessionCommit) Create() error {
 	if err := b.check(true); err != nil {
 		return err
 	}
-	return b.add(newCreatedRecord(Created{HistoryID: b.owner.state.view.historyID}, b.owner.policy.PayloadLimits))
+	return b.add(newCreatedRecord(Created{}, b.owner.policy.PayloadLimits))
 }
 
 // AddUserInput allocates a provisional identity in the explicitly named active
-// run. It owns encoded content before returning; failure consumes no ID or slot.
-func (b *SessionCommit) AddUserInput(request UserInput) (UserInputID, error) {
+// run. Incoming RunID and ID must be zero, even if matching the destination.
+// It owns encoded content before returning; failure consumes no ID or slot.
+func (b *SessionCommit) AddUserInput(run RunID, request UserInput) (UserInputID, error) {
 	if err := b.check(true); err != nil {
 		return UserInputID{}, err
 	}
-	if request.RunID == (RunID{}) || request.RunID != b.admission.candidate.activeRun {
+	if run == (RunID{}) || run != b.admission.candidate.activeRun {
 		return UserInputID{}, ErrTransition
+	}
+	if request.RunID != 0 || request.ID != 0 {
+		return UserInputID{}, codec.ErrInvalidData
 	}
 	s := b.owner
 	ordinal, err := nextOrdinal(b.admission.candidate.inputs)
 	if err != nil {
 		return UserInputID{}, err
 	}
-	id := UserInputID{runID: request.RunID, ordinal: ordinal}
+	id := UserInputID{runID: run, ordinal: ordinal}
 	if err := b.add(newUserInputRecord(request, id, s.policy.PayloadLimits)); err != nil {
 		return UserInputID{}, err
 	}
 	return id, nil
 }
 
-// AddEffectiveInput adds an ordered incremental contribution in the active run.
-// References include earlier same-batch inputs; failure changes no additions.
-func (b *SessionCommit) AddEffectiveInput(v EffectiveInput) error {
+// AddEffectiveInput adds an ordered incremental contribution in the named run.
+// Incoming RunID must be zero. Relative references resolve within run, including
+// earlier same-batch inputs, without proving the extracted component's origin.
+// Failure changes no additions.
+func (b *SessionCommit) AddEffectiveInput(run RunID, v EffectiveInput) error {
 	if err := b.check(true); err != nil {
 		return err
 	}
-	if err := v.RunID.Validate(); err != nil {
+	if err := run.Validate(); err != nil {
 		return codec.ErrInvalidData
 	}
-	if v.RunID.historyID != b.owner.state.view.historyID {
+	if run.historyID != b.owner.state.view.historyID {
 		return ErrIdentity
 	}
-	return b.add(newEffectiveInputRecord(v, b.owner.policy.PayloadLimits))
+	if v.RunID != 0 {
+		return codec.ErrInvalidData
+	}
+	return b.add(newEffectiveInputRecord(v, run, b.owner.policy.PayloadLimits))
 }
 
 // ReplaceInstructions adds a complete history-scoped replacement after creation,
 // including while idle. Applicability survives runs; failure changes nothing.
-func (b *SessionCommit) ReplaceInstructions(v Instructions) error {
+func (b *SessionCommit) ReplaceInstructions(scope historyid.HistoryID, v Instructions) error {
 	if err := b.check(true); err != nil {
 		return err
 	}
-	if err := validateHistoryID(v.HistoryID); err != nil {
+	if err := validateHistoryID(scope); err != nil {
 		return codec.ErrInvalidData
 	}
-	if v.HistoryID != b.owner.state.view.historyID {
+	if scope != b.owner.state.view.historyID {
 		return ErrIdentity
 	}
 	return b.add(newInstructionsRecord(v, b.owner.policy.PayloadLimits))
@@ -178,14 +190,14 @@ func (b *SessionCommit) ReplaceInstructions(v Instructions) error {
 
 // ReplaceToolCatalog adds a complete history-scoped advertised catalog replacement.
 // Creation is required, not an active run; failure preserves earlier additions.
-func (b *SessionCommit) ReplaceToolCatalog(v ToolCatalog) error {
+func (b *SessionCommit) ReplaceToolCatalog(scope historyid.HistoryID, v ToolCatalog) error {
 	if err := b.check(true); err != nil {
 		return err
 	}
-	if err := validateHistoryID(v.HistoryID); err != nil {
+	if err := validateHistoryID(scope); err != nil {
 		return codec.ErrInvalidData
 	}
-	if v.HistoryID != b.owner.state.view.historyID {
+	if scope != b.owner.state.view.historyID {
 		return ErrIdentity
 	}
 	return b.add(newToolCatalogRecord(v, b.owner.policy.PayloadLimits))
@@ -193,14 +205,14 @@ func (b *SessionCommit) ReplaceToolCatalog(v ToolCatalog) error {
 
 // ReplaceModelBinding adds complete history-scoped preparation choices after
 // creation, including while idle. It performs no resolution; failure changes nothing.
-func (b *SessionCommit) ReplaceModelBinding(v ModelBinding) error {
+func (b *SessionCommit) ReplaceModelBinding(scope historyid.HistoryID, v ModelBinding) error {
 	if err := b.check(true); err != nil {
 		return err
 	}
-	if err := validateHistoryID(v.HistoryID); err != nil {
+	if err := validateHistoryID(scope); err != nil {
 		return codec.ErrInvalidData
 	}
-	if v.HistoryID != b.owner.state.view.historyID {
+	if scope != b.owner.state.view.historyID {
 		return ErrIdentity
 	}
 	return b.add(newModelBindingRecord(v, b.owner.policy.PayloadLimits))
@@ -218,7 +230,7 @@ func (b *SessionCommit) StartRun() (RunID, error) {
 		return RunID{}, err
 	}
 	id := RunID{historyID: s.state.view.historyID, ordinal: ordinal}
-	if err := b.add(newRunStartedRecord(RunStarted{ID: id}, s.policy.PayloadLimits)); err != nil {
+	if err := b.add(newRunStartedRecord(RunStarted{ID: id.ordinal}, s.policy.PayloadLimits)); err != nil {
 		return RunID{}, err
 	}
 	return id, nil
@@ -226,17 +238,21 @@ func (b *SessionCommit) StartRun() (RunID, error) {
 
 // AddRunEnded records explicit terminal ownership. Completed requires accounted
 // inputs and no pending outcome or calls; other reasons preserve unresolved facts.
-func (b *SessionCommit) AddRunEnded(v RunEnded) error {
+// Incoming RunID must be zero; capture references are relative to run.
+func (b *SessionCommit) AddRunEnded(run RunID, v RunEnded) error {
 	if err := b.check(true); err != nil {
 		return err
 	}
-	if err := v.RunID.Validate(); err != nil {
+	if err := run.Validate(); err != nil {
 		return codec.ErrInvalidData
 	}
-	if v.RunID.historyID != b.owner.state.view.historyID {
+	if run.historyID != b.owner.state.view.historyID {
 		return ErrIdentity
 	}
-	return b.add(newRunEndedRecord(v, b.owner.policy.PayloadLimits))
+	if v.RunID != 0 {
+		return codec.ErrInvalidData
+	}
+	return b.add(newRunEndedRecord(v, run, b.owner.policy.PayloadLimits))
 }
 
 // EndRun adds a minimal ending for the provisional active run. It is the fixed
@@ -248,23 +264,28 @@ func (b *SessionCommit) EndRun(reason RunEndedReason) error {
 	if b.admission.candidate.activeRun == (RunID{}) {
 		return ErrTransition
 	}
-	return b.AddRunEnded(RunEnded{RunID: b.admission.candidate.activeRun, Reason: reason})
+	return b.AddRunEnded(b.admission.candidate.activeRun, RunEnded{Reason: reason})
 }
 
 // AddModelRequest allocates a provisional same-run invocation identity.
 // Failure consumes no identity. Prerequisites come from the pinned accepted source.
-func (b *SessionCommit) AddModelRequest(v ModelRequest) (ModelRequestID, error) {
+// Incoming RunID and ID must be zero. RetryOf resolves within run without origin
+// provenance; only earlier accepted requests are eligible.
+func (b *SessionCommit) AddModelRequest(run RunID, v ModelRequest) (ModelRequestID, error) {
 	if err := b.check(true); err != nil {
 		return ModelRequestID{}, err
 	}
-	if v.RunID == (RunID{}) || v.RunID != b.admission.candidate.activeRun {
+	if run == (RunID{}) || run != b.admission.candidate.activeRun {
 		return ModelRequestID{}, ErrTransition
+	}
+	if v.RunID != 0 || v.ID != 0 {
+		return ModelRequestID{}, codec.ErrInvalidData
 	}
 	ordinal, err := nextOrdinal(b.admission.candidate.requests)
 	if err != nil {
 		return ModelRequestID{}, err
 	}
-	id := ModelRequestID{runID: v.RunID, requestOrdinal: ordinal}
+	id := ModelRequestID{runID: run, requestOrdinal: ordinal}
 	if err := b.add(newModelRequestRecord(v, id, b.owner.policy.PayloadLimits)); err != nil {
 		return ModelRequestID{}, err
 	}
@@ -272,31 +293,39 @@ func (b *SessionCommit) AddModelRequest(v ModelRequest) (ModelRequestID, error) 
 }
 
 // AddModelResponse records one complete response for an earlier accepted request.
-func (b *SessionCommit) AddModelResponse(v ModelResponse) error {
+// Incoming RunID and RequestID must be zero, even if matching request.
+func (b *SessionCommit) AddModelResponse(request ModelRequestID, v ModelResponse) error {
 	if err := b.check(true); err != nil {
 		return err
 	}
-	if err := v.RequestID.Validate(); err != nil {
+	if err := request.Validate(); err != nil {
 		return codec.ErrInvalidData
 	}
-	if v.RequestID.runID.historyID != b.owner.state.view.historyID {
+	if request.runID.historyID != b.owner.state.view.historyID {
 		return ErrIdentity
 	}
-	return b.add(newModelResponseRecord(v, b.owner.policy.PayloadLimits))
+	if v.RunID != 0 || v.RequestID != 0 {
+		return codec.ErrInvalidData
+	}
+	return b.add(newModelResponseRecord(v, request, b.owner.policy.PayloadLimits))
 }
 
 // AddInvocationFailure records an observed failure, not a fabricated response.
-func (b *SessionCommit) AddInvocationFailure(v InvocationFailure) error {
+// Incoming RunID and RequestID must be zero, even if matching request.
+func (b *SessionCommit) AddInvocationFailure(request ModelRequestID, v InvocationFailure) error {
 	if err := b.check(true); err != nil {
 		return err
 	}
-	if err := v.RequestID.Validate(); err != nil {
+	if err := request.Validate(); err != nil {
 		return codec.ErrInvalidData
 	}
-	if v.RequestID.runID.historyID != b.owner.state.view.historyID {
+	if request.runID.historyID != b.owner.state.view.historyID {
 		return ErrIdentity
 	}
-	return b.add(newInvocationFailureRecord(v, b.owner.policy.PayloadLimits))
+	if v.RunID != 0 || v.RequestID != 0 {
+		return codec.ErrInvalidData
+	}
+	return b.add(newInvocationFailureRecord(v, request, b.owner.policy.PayloadLimits))
 }
 
 // Discard releases an unsubmitted batch without consuming IDs. Frozen uncertain

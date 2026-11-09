@@ -45,21 +45,23 @@ func ExampleSession() {
 		fmt.Println(err)
 		return
 	}
-	input, err := b.AddUserInput(session.UserInput{RunID: run, Parts: []session.ContentPart{{Text: new("first")}}})
+	input, err := b.AddUserInput(run, session.UserInput{Parts: []session.ContentPart{{Text: new("first")}}})
 	if err != nil {
 		fmt.Println(err)
 		return
 	}
 	// Preparation supplies retained values; the kernel never opens this source file.
-	if err := b.ReplaceInstructions(session.Instructions{HistoryID: id, Blocks: []session.InstructionBlock{{
+	if err := b.ReplaceInstructions(id, session.Instructions{Blocks: []session.InstructionBlock{{
 		Parts:  []session.ContentPart{{Text: new("Use the project's vocabulary.")}},
 		Source: session.ContentSource{Description: "adopted workspace instructions", WorkspaceFile: &session.WorkspaceFileSource{Path: "AGENTS.md"}},
 	}}}); err != nil {
 		fmt.Println(err)
 		return
 	}
-	if err := b.AddEffectiveInput(session.EffectiveInput{RunID: run, Inputs: []session.InputItem{
-		{UserInputID: &input},
+	// References deliberately retain only the destination-run component, not an
+	// origin-provenance proof. The destination run must contain an eligible input.
+	if err := b.AddEffectiveInput(run, session.EffectiveInput{Inputs: []session.InputItem{
+		{UserInputID: new(input.RunRelative())},
 		{Inline: &session.AttributedInput{
 			Actor:   "harness",
 			Purpose: session.PromptContext,
@@ -98,11 +100,11 @@ func ExampleSession() {
 	}
 	fmt.Printf("loaded active matches=%t inputs=%d\n", loadedView.ActiveRun() == run, inputs)
 	instructions, _ := loaded.Snapshot().Instructions()
-	file, _ := instructions.BlockAt(0).Source().WorkspaceFile()
+	file, _ := instructions.Blocks().At(0).Source().WorkspaceFile()
 	fmt.Printf("instruction source=%s\n", file.Path())
 	effective, _ := loaded.Snapshot().RecordAt(4).EffectiveInput()
-	inline, _ := effective.InputAt(1).Inline()
-	text, _ := original.PartAt(0).Text()
+	inline, _ := effective.Inputs().At(1).Inline()
+	text, _ := original.Parts().At(0).Text()
 	fmt.Printf("prepared purpose=%s; original=%q\n", inline.Purpose(), text)
 
 	// Closing a run is explicit, never a side effect of loading it.
@@ -133,7 +135,7 @@ func ExampleSession() {
 		fmt.Println(err)
 		return
 	}
-	second, err := next.AddUserInput(session.UserInput{RunID: successor, Parts: []session.ContentPart{{Text: new("second")}}})
+	second, err := next.AddUserInput(successor, session.UserInput{Parts: []session.ContentPart{{Text: new("second")}}})
 	if err != nil {
 		fmt.Println(err)
 		return
@@ -155,7 +157,7 @@ func ExampleSession() {
 		fmt.Println("missing successor input")
 		return
 	}
-	text, _ = accepted.PartAt(0).Text()
+	text, _ = accepted.Parts().At(0).Text()
 	fmt.Printf("successor owns input=%t: %s\n", accepted.ID().RunID() == successor, text)
 	fmt.Printf("old snapshot head=%d active matches=%t\n", old.Head().Sequence, old.ActiveRun() == run)
 	// Output:

@@ -4,7 +4,8 @@ import "errors"
 
 // UserInputID identifies a user-input occurrence within one run, not its content.
 // It is comparable, contains no mutable storage, and has an invalid zero value.
-// Obtain IDs from session allocation or inspection, not numeric construction.
+// Allocation and inspection return scoped identities; [NewUserInputID] can
+// reconstruct an identity value without allocating or establishing membership.
 type UserInputID struct {
 	// runID is the owning run, including its history scope.
 	runID RunID
@@ -14,6 +15,22 @@ type UserInputID struct {
 
 // RunID returns the enclosing run identity, or zero for zero.
 func (v UserInputID) RunID() RunID { return v.runID }
+
+// RunRelative returns this input's nonzero component within its enclosing run,
+// or zero for a zero UserInputID. The component alone does not prove the input
+// belongs to any run or was allocated there.
+func (v UserInputID) RunRelative() uint64 { return v.ordinal }
+
+// NewUserInputID reconstructs a structurally valid input identity from its
+// enclosing run and nonzero local component. It does not allocate an input,
+// establish run membership, or imply an allocation order.
+func NewUserInputID(runID RunID, component uint64) (UserInputID, error) {
+	id := UserInputID{runID: runID, ordinal: component}
+	if err := id.Validate(); err != nil {
+		return UserInputID{}, err
+	}
+	return id, nil
+}
 
 // validateOrdinal checks the local occurrence ordinal.
 func (v UserInputID) validateOrdinal() error {

@@ -1,35 +1,58 @@
-# Persistence codec generator
+# DTO operation generator
 
-`cborgen` generates compositional, typed CBOR operations and whole-value
-`Clone` and `Equal` methods from Go declarations. This contributor reference
+`dtogen` generates compositional, typed CBOR operations and whole-value
+`Clone` and `Equal` methods, and concrete DTO-backed view accessors from Go
+declarations. This contributor reference
 owns the supported declarations, tags, registry, and generation workflow. The
 [runtime package](../../engine/kernel/codec/doc.go) owns operational accounting,
-input ownership, and low-level CBOR primitives.
+input ownership, and low-level CBOR primitives. When changing the generator,
+follow its [implementation guidance](AGENTS.md).
 
 ## Declare an owner
 
-Each owner package declares one literal `go:generate` command. Its `-types`
-list selects locally defined, nongeneric named roots. Generation emits all five
-methods for each local named type reached through persistence and `Clone`/`Equal`
-for local types reached only through excluded state. An imported named type must
-be selected by its own owner declaration. The generator follows that declared
-owner closure and writes prerequisite artifacts before the requesting package.
+Each owner package declares one literal `go:generate` command and marks its local,
+nongeneric named roots with `//dtogen:include` directly on their type declarations.
+`-emit` explicitly selects any nonempty combination of `cbor`, `clone`, and `equal`,
+or the standalone `view` capability. Value/codec declarations select DTO roots;
+view-only declarations select local handwritten view handles. Only selected methods
+are emitted. CBOR methods cover persisted local named types;
+Clone/Equal cover the complete local named closure, including excluded state.
+Imported named types require their own owner declaration with the capabilities
+needed by the consumer. The generator follows that declared owner closure and
+writes prerequisite artifacts before the requesting package.
 It never treats compatible handwritten methods as an opt-in declaration.
 
 ```go
-//go:generate go -C ../../../../.. run ./internal/cborgen/cmd/cborgen -dir engine/kernel/codec/internal/fixture -types Catalog,Sample,Link,Links -out zz_cbor_generated.go
+//go:generate go -C ../../../../.. run ./internal/dtogen/cmd/dtogen -dir engine/kernel/codec/internal/fixture -emit cbor,clone,equal -out zz_cbor_generated.go
+
+// Catalog exercises nested containers and imported DTOs.
+//
+//dtogen:include
+type Catalog struct {
+    // ...
+}
 ```
 
 For another package, adjust `-C` to reach the repository root, `-dir` to its
-repository-relative directory, `-types` to its comma-separated local roots, and
-`-out` to a package-local, non-test `.go` filename. Root order and repetitions
-do not affect the output. A package has one generated output file, which
-contains its selected local closure.
+repository-relative directory, and `-out` to a package-local, non-test `.go`
+filename. Mark roots only: value operations follow the local named closure
+automatically. A package has one generated output file containing its selected
+local closure.
 
-Commands use exactly this form:
+Markers are read only from active compiled handwritten files, excluding tests,
+generated output and build-excluded files. Put each marker in the type's doc
+comment (inside a grouped declaration, on the individual type). Duplicate,
+malformed, misplaced or ambiguous markers fail generation; aliases cannot be
+roots. Roots are sorted for deterministic output.
+
+Packages without include markers can instead select roots with a nonempty
+comma-separated `-types` list. Its order and repetitions do not affect output.
+Combining `-types` with include markers is an error; explicit `-types=` is invalid.
+
+Commands use this form, with `-types <roots>` only for explicit-list selection:
 
 ```text
-go -C <repository> run ./internal/cborgen/cmd/cborgen -dir <package> -types <roots> -out <filename>
+go -C <repository> run ./internal/dtogen/cmd/dtogen -dir <package> -emit cbor,clone,equal -out <filename>
 ```
 
 Arguments must be literal and unquoted. Variable expansion, `-command` aliases,
@@ -39,9 +62,11 @@ freshness check read the same source registry.
 Run the owning tasks from the repository root:
 
 ```sh
-task generate:codecs        # also called by task generate
-task generate:codecs:check  # nonmutating inventory and byte check used by CI
+task generate:data        # also called by task generate
+task generate:data:check  # nonmutating inventory and byte check used by CI
 ```
+
+`generate:codecs` and `generate:codecs:check` remain forwarding compatibility tasks.
 
 The loader uses the declaring package's module with `GOWORK=off`. It reads
 source declarations without executing package initialization. A direct
@@ -49,10 +74,14 @@ invocation also discovers and generates declared prerequisite owners. Missing,
 stale, or syntactically broken marked outputs can therefore be regenerated when
 handwritten code already calls generated methods.
 
-Generation formats the complete artifact before atomically replacing it. It
-refuses unmarked, symlink, or nonregular output files. Concurrent editing or
-generation of one artifact is unsupported. The generator does not provide
-filesystem confinement or crash-durability guarantees.
+Generation renders and typechecks all selected packages before installing any
+output. Validation, rendering, and typechecking failures leave existing output
+bytes unchanged. Output files must be marked regular files, not symlinks. Each
+replacement is atomic, but installation across files is not transactional: a
+filesystem failure can leave earlier files replaced. Rerun generation after
+resolving the failure. Concurrent editing or generation of one artifact is
+unsupported. The generator provides neither filesystem confinement nor
+crash-durability guarantees.
 
 Check mode derives targets from the same directives, compares expected bytes,
 and checks the inventory, including untracked Go files. Missing and stale
@@ -61,7 +90,90 @@ check. Remove obsolete artifacts explicitly when retiring a declaration.
 Source discovery skips `.git`, `.scratch`, `node_modules`, and `vendor`, and
 never traverses directory symlinks.
 
+## DTO-backed views
+
+A destination owns one view-only declaration and artifact, independently of the
+DTO source owner. Mark each selected local view type with `//dtogen:include`;
+packages without markers can instead list handles with `-types`. The generator
+does not scan names ending in `View` or generate value operations on their backing:
+
+```go
+//go:generate go -C ../../.. run ./internal/dtogen/cmd/dtogen -dir engine/kernel/session -emit view -out zz_views_generated.go
+```
+
+Keep layouts handwritten, with private, nonembedded fields. Each selected view
+must have a private `value *DTO` field pointing to a named struct. Additional
+private fields retain enclosing context.
+
+The DTO owns one default field policy, independent of CBOR, Clone and Equal:
+
+| DTO field tag | Default view behavior |
+| --- | --- |
+| Untagged | Generate a safe same-named getter |
+| `view:"-"` | Omit the field |
+| `view:"manual"` | Require a directly declared same-named handwritten value-receiver getter on every selected view of this DTO |
+
+Unknown, malformed, duplicate and contradictory tags fail generation. Handwritten
+getters take no arguments and return at least one value. Pointer receivers and
+promoted methods do not satisfy manual policy. A handwritten method colliding
+with an untagged field fails rather than silently replacing its generated getter.
+Extra derived/navigation methods need no separate classification. Handwritten
+documentation stays authoritative for manual methods; review and test their
+ownership, zero, presence and lifetime contracts.
+
+```go
+// In the DTO owner:
+type Entry struct {
+    Label string
+    Data []byte
+}
+
+// In the consuming view package:
+// EntryView retains immutable entry backing.
+//
+//dtogen:include
+type EntryView struct { value *format.Entry }
+```
+
+Mechanical methods return the following concrete types:
+
+| Backing field | Accessor result |
+| --- | --- |
+| Boolean, numeric, string (including named scalar) | Same scalar type |
+| Pointer to scalar | `(T, bool)` |
+| `[]byte` | `views.Bytes` |
+| Required by-value struct | Selected context-free child view |
+| Pointer to selected struct | `(ChildView, bool)` |
+| Slice of selected by-value structs | `views.SliceView[DTO, ChildView]` |
+
+Pointers to bytes/slices additionally return a presence bool. Zero views are safe;
+optional fields preserve present zero/empty values. Byte and collection navigation
+is O(1) and borrows backing without cloning siblings. Byte `Copy` alone detaches;
+see the [views contract](../../engine/kernel/views/doc.go) for borrowing and
+lifetime requirements.
+
+A view containing only `value *DTO` is context-free and can be constructed by
+generated child getters. Selecting two context-free views for one DTO is
+ambiguous and fails generation. Navigation into a child with additional context
+must be handwritten or omitted. Handwritten collection adapters may capture
+required context, which must remain stable along with the backing. Unsupported
+untagged fields fail generation; use manual policy for opaque immutable values
+that can safely be returned directly.
+
+Regenerate and check after changing selected types, backing layouts, field tags,
+or source documentation. Generated accessor comments include the DTO's type and
+field documentation.
+
 ## Supported Go types
+
+The table and tag rules below describe the `cbor` capability. Without `cbor`,
+Clone/Equal accept untagged declarations and ignore serialization tags, caps, and
+custom marshal methods. They additionally support machine-sized integers, floats,
+complex numbers, nonbyte arrays, scalar map keys, pointer chains, and embedding.
+Both value operations still reject interfaces, functions, channels, generic and
+recursive graphs, defined pointer roots, blank fields, and non-scalar map keys.
+Local private fields participate; imported private state stays behind an explicit
+owner's generated methods. No operation infers ownership from method names alone.
 
 | Go type | Persisted representation |
 | --- | --- |
@@ -83,10 +195,10 @@ are supported, except that packed named bytes cannot declare a validator.
 Generation rejects machine-sized integers (`int`, `uint`, `uintptr`), floats,
 interfaces, functions, channels, nonbyte fixed arrays, nonstring map keys,
 double pointers, embedding, generic types, defined pointer types, and recursive
-type graphs. These restrictions also apply to excluded fields because `Clone`
-and `Equal` visit the complete value. A persisted private field is supported
-only in the package that owns and generates its type. An inaccessible imported
-field is rejected.
+type graphs on persisted edges. Clone/Equal still visit every excluded field;
+excluded subtrees need no CBOR mapping and may use the additional non-CBOR shapes.
+A persisted private field is supported only in the package that owns and
+generates its type. An inaccessible imported field is rejected.
 
 Custom CBOR, text, and binary serialization contracts are rejected rather than
 called. This includes byte and streaming `MarshalCBOR`/`UnmarshalCBOR`, byte
@@ -159,7 +271,7 @@ A named type can declare one local value-receiver validator immediately above
 its type declaration:
 
 ```go
-//cborgen:validate validateCBOR
+//dtogen:validate validateCBOR
 type ResourceID struct {
 	value string `cbor:",value" cborlimit:"bytes=25"`
 }
@@ -176,9 +288,41 @@ non-recursive. It must not perform CBOR traversal or operational resource
 policy. Generation rejects unknown, duplicate, malformed, or ambiguous
 directives.
 
+## Whole-type overrides
+
+Attach one directive per handwritten operation to its defined type:
+
+```go
+import (
+    "bytes"
+    "slices"
+)
+
+//dtogen:override Clone
+//dtogen:override Equal
+type Payload struct { Data []byte }
+
+func (v Payload) Clone() Payload { return Payload{Data: slices.Clone(v.Data)} }
+func (v Payload) Equal(other Payload) bool { return bytes.Equal(v.Data, other.Data) }
+```
+
+The implementations must be directly declared value-receiver methods with exactly
+`func (T) Clone() T` and `func (T) Equal(T) bool` signatures. Each override requires
+its corresponding `-emit` capability and a target in the selected local type
+closure. Duplicate, misplaced, stale, missing, and malformed overrides fail before
+installation; undeclared method collisions still fail. CBOR overrides are not
+supported. Overrides do not relax the typed graph or bounded CBOR shape policies.
+
+No default public method or traversal body is generated for an overridden
+operation. Generated parents dispatch through the handwritten method, including
+local and imported by-value, pointer, and slice children across owner packages.
+The author remains responsible for the implementation's ownership and equality
+semantics. Handwritten methods are retained during load-only bootstrap, including
+when generated outputs are absent or broken.
+
 ## Generated API
 
-For every persisted local named type `T`, the output adds:
+With `-emit cbor,clone,equal`, every persisted local named type `T` receives:
 
 ```go
 func (v T) CheckCBOR(b *codec.Budget, depth, fieldMax int) error
@@ -243,12 +387,12 @@ Load errors report handwritten Go diagnostics. Schema errors identify the owner,
 type, and field, including missing mapping tags, unsupported shapes, invalid
 literal caps, missing owner declarations, malformed validators, and generated
 name collisions. Fix the declaration and regenerate; do not edit a marked
-output by hand. Generation errors preserve prior output bytes.
+output by hand.
 
 From the repository root:
 
 ```sh
-GOWORK=off go test ./internal/cborgen/...
-task generate:codecs:check
+GOWORK=off go test ./internal/dtogen/...
+task generate:data:check
 cd engine && GOWORK=off go test -race ./kernel/codec/...
 ```

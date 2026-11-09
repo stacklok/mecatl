@@ -14,7 +14,7 @@ import (
 	sessionformat "github.com/stacklok/mecatl/engine/kernel/session/format"
 )
 
-func TestEffectiveInputScopeConversion(t *testing.T) {
+func TestEffectiveInputRelativeReferences(t *testing.T) {
 	run := allocatedRun(t, testHistoryID(t), 1)
 	foreign, err := historyid.ParseHistoryID("HST2222222222222222222222")
 	mustBatch(t, err)
@@ -22,22 +22,26 @@ func TestEffectiveInputScopeConversion(t *testing.T) {
 		allocatedInput(t, allocatedRun(t, foreign, 1), 1),
 		allocatedInput(t, allocatedRun(t, run.HistoryID(), 2), 1), {},
 	} {
-		v := session.EffectiveInput{RunID: run, Inputs: []session.InputItem{{UserInputID: &id}}}
-		if v.Validate() == nil {
-			t.Fatal("conflicting full scope validated")
+		v := session.EffectiveInput{Inputs: []session.InputItem{{UserInputID: new(id.RunRelative())}}}
+		stored := v
+		stored.RunID = run.HistoryRelative()
+		if (stored.Validate() == nil) != (id.RunRelative() != 0) {
+			t.Fatal("relative reference validation")
 		}
 		clone := v.Clone()
-		if !clone.Equal(v) {
-			t.Fatal("clone silently discarded scope")
-		}
-		other := v.Clone()
-		*other.Inputs[0].UserInputID = allocatedInput(t, run, 1)
-		if v.Equal(other) {
-			t.Fatal("equality discarded reference scope")
+		*clone.Inputs[0].UserInputID++
+		if clone.Equal(v) || *v.Inputs[0].UserInputID != id.RunRelative() {
+			t.Fatal("relative reference clone aliases or equality lost component")
 		}
 		_, b := allocationBatch(t, run)
-		if err := b.AddEffectiveInput(v); !errors.Is(err, codec.ErrInvalidData) {
-			t.Fatalf("conversion discarded scope: %v", err)
+		batchInput(t, b, run, nil)
+		err := b.AddEffectiveInput(run, v)
+		if id.RunRelative() == 0 {
+			if !errors.Is(err, codec.ErrInvalidData) {
+				t.Fatalf("zero reference: %v", err)
+			}
+		} else {
+			mustBatch(t, err)
 		}
 		mustBatch(t, b.Discard())
 	}
@@ -66,7 +70,7 @@ func TestEffectiveInputExternalRunAdmission(t *testing.T) {
 				}
 				submitBatch(t, s, b)
 			}
-			v := session.EffectiveInput{RunID: run, Inputs: []session.InputItem{{Inline: &session.AttributedInput{Actor: "arbitrary origin", Purpose: session.PromptContext, Source: session.ContentSource{Description: "explicit empty contribution"}}}}}
+			v := session.EffectiveInput{Inputs: []session.InputItem{{Inline: &session.AttributedInput{Actor: "arbitrary origin", Purpose: session.PromptContext, Source: session.ContentSource{Description: "explicit empty contribution"}}}}}
 			r := encodeFixture(t, sessionformat.KindEffectiveInput, sessionformat.EffectiveInput{RunID: 1, Inputs: []sessionformat.InputItem{{Inline: &sessionformat.AttributedInput{Actor: "arbitrary origin", Purpose: "context", Source: sessionformat.ContentSource{Description: "explicit empty contribution"}}}}})
 			c := proposedCommit(t, s, r)
 			before := captureRejectedSnapshot(s.Snapshot())

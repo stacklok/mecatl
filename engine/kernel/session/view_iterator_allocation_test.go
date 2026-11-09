@@ -9,20 +9,24 @@ import (
 	"testing"
 
 	"github.com/stacklok/mecatl/engine/kernel/session"
+	sessionformat "github.com/stacklok/mecatl/engine/kernel/session/format"
+	"github.com/stacklok/mecatl/engine/kernel/views"
 )
 
 var (
-	iteratorPartSink   session.ContentPartView
-	iteratorItemSink   session.InputItemView
-	iteratorBlockSink  session.InstructionBlockView
-	iteratorToolSink   session.ToolDefinitionView
-	iteratorRecordSink session.RecordView
-	iteratorRunSink    session.RunView
-	iteratorCountSink  int
-	iteratorHeapSink   *session.ContentPartView
-	iteratorBytesSink  []byte
-	iteratorPartsSink  []session.ContentPartView
-	iteratorSeqSink    iter.Seq[session.ContentPartView]
+	iteratorPartSink     session.ContentPartView
+	iteratorItemSink     session.InputItemView
+	iteratorBlockSink    session.InstructionBlockView
+	iteratorToolSink     session.ToolDefinitionView
+	iteratorRecordSink   session.RecordView
+	iteratorRunSink      session.RunView
+	iteratorCountSink    int
+	iteratorHeapSink     *session.ContentPartView
+	iteratorBytesSink    []byte
+	iteratorPartsSink    []session.ContentPartView
+	iteratorSeqSink      iter.Seq2[int, session.ContentPartView]
+	iteratorInputsSink   views.SliceView[sessionformat.InputItem, session.InputItemView]
+	iteratorInputSeqSink iter.Seq2[int, session.InputItemView]
 )
 
 type iteratorTraversal struct {
@@ -33,20 +37,22 @@ type iteratorTraversal struct {
 // Keep concrete public calls in these consumers: factoring iteration into a
 // generic/opaque helper would measure a different allocation/escape contract.
 func iteratorTraversals(v iteratorViews) []iteratorTraversal {
+	// Scope capture is measured separately from traversal of retained backing.
+	inputs := v.effective.Inputs()
 	return []iteratorTraversal{
 		{"user/direct", func() {
 			n := 0
-			for p := range v.user.Parts() {
+			for _, p := range v.user.Parts().All() {
 				iteratorPartSink = p
 				n++
 			}
 			iteratorCountSink = n
 		}},
 		{"user/reused", func() {
-			seq := v.user.Parts()
+			seq := v.user.Parts().All()
 			n := 0
 			for range 2 {
-				for p := range seq {
+				for _, p := range seq {
 					iteratorPartSink = p
 					n++
 				}
@@ -55,17 +61,17 @@ func iteratorTraversals(v iteratorViews) []iteratorTraversal {
 		}},
 		{"inline/direct", func() {
 			n := 0
-			for p := range v.inline.Parts() {
+			for _, p := range v.inline.Parts().All() {
 				iteratorPartSink = p
 				n++
 			}
 			iteratorCountSink = n
 		}},
 		{"inline/reused", func() {
-			seq := v.inline.Parts()
+			seq := v.inline.Parts().All()
 			n := 0
 			for range 2 {
-				for p := range seq {
+				for _, p := range seq {
 					iteratorPartSink = p
 					n++
 				}
@@ -74,17 +80,17 @@ func iteratorTraversals(v iteratorViews) []iteratorTraversal {
 		}},
 		{"block/direct", func() {
 			n := 0
-			for p := range v.block.Parts() {
+			for _, p := range v.block.Parts().All() {
 				iteratorPartSink = p
 				n++
 			}
 			iteratorCountSink = n
 		}},
 		{"block/reused", func() {
-			seq := v.block.Parts()
+			seq := v.block.Parts().All()
 			n := 0
 			for range 2 {
-				for p := range seq {
+				for _, p := range seq {
 					iteratorPartSink = p
 					n++
 				}
@@ -93,17 +99,17 @@ func iteratorTraversals(v iteratorViews) []iteratorTraversal {
 		}},
 		{"instructions/direct", func() {
 			n := 0
-			for b := range v.instructions.Blocks() {
+			for _, b := range v.instructions.Blocks().All() {
 				iteratorBlockSink = b
 				n++
 			}
 			iteratorCountSink = n
 		}},
 		{"instructions/reused", func() {
-			seq := v.instructions.Blocks()
+			seq := v.instructions.Blocks().All()
 			n := 0
 			for range 2 {
-				for b := range seq {
+				for _, b := range seq {
 					iteratorBlockSink = b
 					n++
 				}
@@ -112,17 +118,17 @@ func iteratorTraversals(v iteratorViews) []iteratorTraversal {
 		}},
 		{"effective/direct", func() {
 			n := 0
-			for item := range v.effective.Inputs() {
+			for _, item := range inputs.All() {
 				iteratorItemSink = item
 				n++
 			}
 			iteratorCountSink = n
 		}},
 		{"effective/reused", func() {
-			seq := v.effective.Inputs()
+			seq := inputs.All()
 			n := 0
 			for range 2 {
-				for item := range seq {
+				for _, item := range seq {
 					iteratorItemSink = item
 					n++
 				}
@@ -131,17 +137,17 @@ func iteratorTraversals(v iteratorViews) []iteratorTraversal {
 		}},
 		{"catalog/direct", func() {
 			n := 0
-			for tool := range v.catalog.Tools() {
+			for _, tool := range v.catalog.Tools().All() {
 				iteratorToolSink = tool
 				n++
 			}
 			iteratorCountSink = n
 		}},
 		{"catalog/reused", func() {
-			seq := v.catalog.Tools()
+			seq := v.catalog.Tools().All()
 			n := 0
 			for range 2 {
-				for tool := range seq {
+				for _, tool := range seq {
 					iteratorToolSink = tool
 					n++
 				}
@@ -207,8 +213,8 @@ func iteratorTraversals(v iteratorViews) []iteratorTraversal {
 		}},
 		{"nested/instructions", func() {
 			n := 0
-			for block := range v.instructions.Blocks() {
-				for part := range block.Parts() {
+			for _, block := range v.instructions.Blocks().All() {
+				for _, part := range block.Parts().All() {
 					iteratorPartSink = part
 					n++
 				}
@@ -217,9 +223,9 @@ func iteratorTraversals(v iteratorViews) []iteratorTraversal {
 		}},
 		{"nested/effective", func() {
 			n := 0
-			for item := range v.effective.Inputs() {
+			for _, item := range inputs.All() {
 				inline, _ := item.Inline()
-				for part := range inline.Parts() {
+				for _, part := range inline.Parts().All() {
 					iteratorPartSink = part
 					n++
 				}
@@ -230,13 +236,13 @@ func iteratorTraversals(v iteratorViews) []iteratorTraversal {
 			n := 0
 			for record := range v.snapshot.Records() {
 				if user, ok := record.UserInput(); ok {
-					for part := range user.Parts() {
+					for _, part := range user.Parts().All() {
 						iteratorPartSink = part
 						n++
 					}
 				}
 				if catalog, ok := record.ToolCatalog(); ok {
-					for tool := range catalog.Tools() {
+					for _, tool := range catalog.Tools().All() {
 						iteratorToolSink = tool
 						n++
 					}
@@ -350,18 +356,19 @@ func TestViewIteratorTraversalAllocations(t *testing.T) {
 						bytes  int
 					}{
 						{"per-element", func() {
-							for part := range v.user.Parts() {
+							for _, part := range v.user.Parts().All() {
 								iteratorHeapSink = new(session.ContentPartView)
 								*iteratorHeapSink = part
 							}
 						}, axis.count, axis.count * viewBytes},
 						{"owned-bytes", func() {
-							for part := range v.user.Parts() {
+							for _, part := range v.user.Parts().All() {
 								media, _ := part.Media()
-								iteratorBytesSink, _ = media.InlineData()
+								data := media.InlineData()
+								iteratorBytesSink = data.Copy()
 							}
 						}, axis.count, axis.count * axis.payload},
-						{"collect", func() { iteratorPartsSink = slices.Collect(v.user.Parts()) }, 1, axis.count * viewBytes},
+						{"collect", func() { iteratorPartsSink = slices.Collect(iteratorValues(v.user.Parts().All())) }, 1, axis.count * viewBytes},
 					}
 					for _, control := range controls {
 						t.Run("control/"+control.name, func(t *testing.T) {
@@ -383,9 +390,9 @@ func TestViewIteratorTraversalAllocations(t *testing.T) {
 // consumers that cost accumulates per block; it is not copying content storage.
 //
 //go:noinline
-func consumeIteratorParts(seq iter.Seq[session.ContentPartView]) {
+func consumeIteratorParts(seq iter.Seq2[int, session.ContentPartView]) {
 	n := 0
-	for part := range seq {
+	for _, part := range seq {
 		iteratorPartSink = part
 		n++
 	}
@@ -399,14 +406,14 @@ func BenchmarkViewIteratorTraversals(b *testing.B) {
 				b.Run(seam, func(b *testing.B) {
 					v := iteratorViewSet(b, s)
 					checks := iteratorTraversals(v)
-					stored := v.user.Parts() // Escaping setup is outside consumption timing.
-					checks = append(checks, iteratorTraversal{"opaque", func() { consumeIteratorParts(v.user.Parts()) }},
-						iteratorTraversal{"escaping-create", func() { iteratorSeqSink = v.user.Parts() }},
+					stored := v.user.Parts().All() // Escaping setup is outside consumption timing.
+					checks = append(checks, iteratorTraversal{"opaque", func() { consumeIteratorParts(v.user.Parts().All()) }},
+						iteratorTraversal{"escaping-create", func() { iteratorSeqSink = v.user.Parts().All() }},
 						iteratorTraversal{"stored-consume", func() { consumeIteratorParts(stored) }},
-						iteratorTraversal{"stored-create-consume", func() { iteratorSeqSink = v.user.Parts(); consumeIteratorParts(iteratorSeqSink) }},
+						iteratorTraversal{"stored-create-consume", func() { iteratorSeqSink = v.user.Parts().All(); consumeIteratorParts(iteratorSeqSink) }},
 						iteratorTraversal{"nested-opaque", func() {
-							for block := range v.instructions.Blocks() {
-								consumeIteratorParts(block.Parts())
+							for _, block := range v.instructions.Blocks().All() {
+								consumeIteratorParts(block.Parts().All())
 							}
 						}})
 					for _, check := range checks {

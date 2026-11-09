@@ -1252,19 +1252,29 @@ tasks:
       - GOWORK=off go run ./internal/timezonegen/cmd/timezonegen --output cmd/mecatui/internal/timezones/zones.json
 
   generate:codecs:
-    desc: Regenerate isolated kernel persistence codec fixtures
+    desc: Compatibility alias for generate:data
     cmds:
-      - GOWORK=off go run ./internal/cborgen/cmd/cborgen -repo .
+      - task: generate:data
 
   generate:codecs:check:
-    desc: Check codec inventory and bytes without modifying generated files
+    desc: Compatibility alias for generate:data:check
     cmds:
-      - GOWORK=off go run ./internal/cborgen/cmd/cborgen -repo . -check
+      - task: generate:data:check
+
+  generate:data:
+    desc: Regenerate isolated kernel DTO operations
+    cmds:
+      - GOWORK=off go run ./internal/dtogen/cmd/dtogen -repo .
+
+  generate:data:check:
+    desc: Check DTO artifact inventory and bytes without modifying generated files
+    cmds:
+      - GOWORK=off go run ./internal/dtogen/cmd/dtogen -repo . -check
 
   generate:
-    desc: Regenerate contracts, codec fixtures and configuration reference
+    desc: Regenerate contracts, DTO operations and configuration reference
     cmds:
-      - task: generate:codecs
+      - task: generate:data
       # Regenerates the gRPC contracts — the harness API (contracts/proto/
       # mecatl/v1) AND the store-driver protocol (contracts/proto/mecatl/
       # driver/v1) — into contracts/gen (never hand-edit the output). The buf

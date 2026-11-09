@@ -11,39 +11,35 @@ supplies atomic conditional storage. The [history adapters](../adapter/history/R
 provide a memory backend and reusable conformance checks.
 
 [`session`](session/doc.go) interprets accepted history as lifecycle state and
-retained context. It preserves rich authored input separately from prepared content
-and its provenance. Instructions, advertised tool catalogs, and model bindings are
-independent session-scoped replacements. Model requests commit to an accepted
-source and construction recipe. Atomic responses retain ordered output, requested
-calls, and private provider data; responses and observed invocation failures can
-carry reported usage and safe correlation evidence. Explicit run endings preserve
-unresolved work. The session validates ordered batches
-before submission and updates accepted state only after storage acceptance. Immutable
-snapshots pin state and context selections; loading reconstructs them without
-resolving source files or media references, invoking models, or executing tools.
-The [session example](session/example_test.go) shows submission, snapshot access,
+retained context. It validates ordered batches before submission and publishes
+state only after storage acceptance. Immutable snapshots pin accepted state;
+loading reconstructs it without resolving references or executing work. The
+[session example](session/example_test.go) shows submission, snapshot access,
 and reconstruction.
 
-Each layer's `format` package owns its mutable persistence DTOs, generated codecs,
-and payload-local validation. The aggregate owns cross-record legality; valid
-encoding alone proves neither lifecycle legality nor storage acceptance. Public
-session values remain separate from persistence DTOs so verified history context
-can supply scope omitted from payloads.
+Each layer's `format` package owns mutable persistence DTOs, generated codecs,
+and payload-local validation. Aggregates own cross-record legality; valid encoding
+alone proves neither lifecycle legality nor storage acceptance.
+
+[`views`](views/doc.go) supplies read-only borrowed containers for inspecting
+immutable backing owned by the caller. Borrowing neither freezes data nor
+synchronizes access; the owner must keep backing stable for derived views.
+Before changing these containers, read the [views implementation guidance](views/AGENTS.md).
 
 [`codec`](codec/doc.go) provides bounded canonical encoding and decoding;
 [`contentid`](contentid/cid.go) identifies exact encoded bytes. Resource policy is
 explicit and separate from schema validity. The owning Go declarations document
 limits, ownership, retry, and concurrency contracts.
 
-## Persistence codec tooling
+## DTO generation
 
-See the [generator guide](../../internal/cborgen/README.md) for supported schemas
-and code generation, and the [codec package contract](codec/doc.go) for resource
-accounting and buffer lifetimes. From the repository root:
+`dtogen` generates codecs, whole-value operations, and view accessors. See the
+[generator guide](../../internal/dtogen/README.md) for declarations, supported
+schemas, and field policies. Regenerate and check from the repository root:
 
 ```sh
-task generate:codecs
-task generate:codecs:check
+task generate:data
+task generate:data:check
 ```
 
 ## Focused checks

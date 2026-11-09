@@ -1,4 +1,4 @@
-package cborgen
+package dtogen
 
 import (
 	"context"
@@ -15,7 +15,7 @@ func TestOwnerCompositionAndBootstrap(t *testing.T) {
 	cfg := executableFixture(t, `
 import "github.com/stacklok/mecatl/engine/values"
 var Passes int
-//cborgen:validate local
+//dtogen:validate local
 // Record composes named owners without expanding private storage.
 type Record struct {
  List values.List `+"`cbor:\"l\" cborlimit:\"items=2\"`"+`
@@ -40,12 +40,12 @@ import "github.com/stacklok/mecatl/engine/kernel/codec"
 var _ codec.Marshaler=Wrapped{}
 var _ codec.Unmarshaler=(*Wrapped)(nil)
 var Passes int
-//cborgen:validate local
+//dtogen:validate local
 // Text validates once per represented value.
 type Text string
 func(v Text) local()error {Passes++;if v=="bad" {return errors.New("private payload must not escape")};return nil}
 type Inner struct {value Text `+"`cbor:\",value\" cborlimit:\"bytes=5\"`"+`}
-//cborgen:validate local
+//dtogen:validate local
 // Wrapped applies an owner cap and local validation.
 type Wrapped struct {value Inner `+"`cbor:\",value\" cborlimit:\"bytes=4\"`"+`}
 func(Wrapped)local()error{Passes++;return nil}
@@ -54,13 +54,13 @@ func Wrap(s string)Wrapped{return Wrapped{value:Inner{value:Text(s)}}}
 type InnerBound struct {value Inner `+"`cbor:\",value\" cborlimit:\"bytes=8\"`"+`}
 func WrapInner(s string)InnerBound{return InnerBound{value:Inner{value:Text(s)}}}
 type Bytes []byte
-//cborgen:validate local
+//dtogen:validate local
 // Key retains validation even when used as a map key.
 type Key string
 func(v Key)local()error{Passes++;if v=="" {return errors.New("empty key")};return nil}
 type List []Wrapped
 type NamedMap map[Key]Bytes
-//cborgen:validate local
+//dtogen:validate local
 // State is excluded-only mutable storage.
 type State struct {private map[string][]byte}
 func(State)local()error{panic("excluded state validator executed")}
@@ -74,7 +74,7 @@ func(v State)Byte()byte{return v.private["x"][0]}
 		if err != nil {
 			t.Fatal(err)
 		}
-		writeFixture(t, filepath.Join(owner.dir, "registry.go"), "//go:generate go -C ../.. run "+generatorCommand+" -dir "+rel+" -types "+owner.names+" -out zz_cbor_generated.go\npackage "+owner.pkg+"\n")
+		writeFixture(t, filepath.Join(owner.dir, "registry.go"), "//go:generate go -C ../.. run "+generatorCommand+" -dir "+rel+" -types "+owner.names+" -emit cbor,clone,equal -out zz_cbor_generated.go\npackage "+owner.pkg+"\n")
 		writeFixture(t, filepath.Join(owner.dir, "trap.go"), "package "+owner.pkg+"\nfunc init(){panic(\"owner init must never execute during generation\")}\n")
 	}
 	ctx := context.Background()
@@ -119,7 +119,7 @@ func(v State)Byte()byte{return v.private["x"][0]}
 	}
 	writeFixture(t, childSource, strings.Replace(string(original), `bytes=4`, `bytes=3`, 1))
 	before := repositoryState(t, root)
-	if err := GenerateRepository(ctx, root, true); err == nil || !strings.Contains(err.Error(), "stale codec output") {
+	if err := GenerateRepository(ctx, root, true); err == nil || !strings.Contains(err.Error(), "stale data output") {
 		t.Fatal("changed owner schema accepted", err)
 	}
 	if !reflect.DeepEqual(before, repositoryState(t, root)) {
@@ -231,16 +231,16 @@ func TestComposed(t *testing.T){
 
 func TestOwnerDeclarationRejections(t *testing.T) {
 	for _, tt := range []struct{ name, source, reason string }{
-		{"annotation ambiguous", "//cborgen:validate valid\ntype (Record string; Other string)", "ambiguous or misplaced"},
-		{"annotation alias", "type Base string\n//cborgen:validate valid\ntype Alias = Base;type Record struct{V Alias `cbor:\"v\"`}", "not an alias"},
+		{"annotation ambiguous", "//dtogen:validate valid\ntype (Record string; Other string)", "ambiguous or misplaced"},
+		{"annotation alias", "type Base string\n//dtogen:validate valid\ntype Alias = Base;type Record struct{V Alias `cbor:\"v\"`}", "not an alias"},
 		{"defined pointer chain", "type Alias = *string;type Record Alias", "defined pointer"},
 		{"defined pointer", "type Record *string", "defined pointer"},
-		{"annotation unknown", "//cborgen:encode encode\ntype Record string", "unknown cborgen"},
-		{"annotation duplicate", "//cborgen:validate valid\n//cborgen:validate valid\ntype Record string;func(Record)valid()error{return nil}", "duplicate"},
-		{"annotation missing method", "//cborgen:validate valid\ntype Record string", "local value receiver"},
-		{"annotation pointer method", "//cborgen:validate valid\ntype Record string;func(*Record)valid()error{return nil}", "value receiver"},
-		{"annotation wrong signature", "//cborgen:validate valid\ntype Record string;func(Record)valid(int)error{return nil}", "signature"},
-		{"packed byte validator", "//cborgen:validate valid\ntype Byte uint8;func(Byte)valid()error{return nil};type Record []Byte", "packed named-byte"},
+		{"annotation unknown", "//dtogen:encode encode\ntype Record string", "unknown dtogen"},
+		{"annotation duplicate", "//dtogen:validate valid\n//dtogen:validate valid\ntype Record string;func(Record)valid()error{return nil}", "duplicate"},
+		{"annotation missing method", "//dtogen:validate valid\ntype Record string", "local value receiver"},
+		{"annotation pointer method", "//dtogen:validate valid\ntype Record string;func(*Record)valid()error{return nil}", "value receiver"},
+		{"annotation wrong signature", "//dtogen:validate valid\ntype Record string;func(Record)valid(int)error{return nil}", "signature"},
+		{"packed byte validator", "//dtogen:validate valid\ntype Byte uint8;func(Byte)valid()error{return nil};type Record []Byte", "packed named-byte"},
 		{"transparent mixed", "type Record struct{V string `cbor:\",value\"`;W string `cbor:\"w\"`}", "exactly one persisted"},
 		{"transparent scalar cap", "type Record struct{V uint64 `cbor:\",value\" cborlimit:\"bytes=4\"`}", "option or shape"},
 		{"named reference removed", "type Record struct{V string `cbor:\"v\" cborlimit:\"bytes=@cap\"`}", "positive decimal"},
@@ -288,7 +288,7 @@ func TestOwnerBootstrapDoesNotInventMethods(t *testing.T) {
 func TestImportedPackedValidatorRejected(t *testing.T) {
 	cfg := executableFixture(t, `import "github.com/stacklok/mecatl/engine/values";type Record struct{V []values.Byte `+"`cbor:\"v\"`"+`}`)
 	writeFixture(t, filepath.Join(filepath.Dir(cfg.Dir), "values/value.go"), `package values
-//cborgen:validate valid
+//dtogen:validate valid
 type Byte uint8
 func(Byte)valid()error{return nil}
 `)
@@ -308,7 +308,7 @@ func TestImportedOwnerMustMatchLoadedSource(t *testing.T) {
 		writeFixture(t, filepath.Join(root, dir, "values/value.go"), "package values\ntype Value string\n")
 	}
 	writeFixture(t, filepath.Join(root, "upstream/kernel/codec/codec.go"), "package codec\ntype Budget struct{}\ntype Reader struct{}\n")
-	writeFixture(t, filepath.Join(root, "registered/values/registry.go"), "//go:generate go -C ../.. run "+generatorCommand+" -dir registered/values -types Value -out zz_cbor_generated.go\npackage values\n")
+	writeFixture(t, filepath.Join(root, "registered/values/registry.go"), "//go:generate go -C ../.. run "+generatorCommand+" -dir registered/values -types Value -emit cbor,clone,equal -out zz_cbor_generated.go\npackage values\n")
 	if _, err := Load(context.Background(), cfg); err == nil || !strings.Contains(err.Error(), "not the imported source package") {
 		t.Fatal("unrelated owner source granted provenance", err)
 	}

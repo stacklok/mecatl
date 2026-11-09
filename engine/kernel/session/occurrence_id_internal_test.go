@@ -60,7 +60,7 @@ func TestSnapshotUserInputByIDMalformedComponents(t *testing.T) {
 		var err error
 		run, err = b.StartRun()
 		interactionCheck(t, err)
-		_, err = b.AddUserInput(UserInput{RunID: run})
+		_, err = b.AddUserInput(run, UserInput{})
 		interactionCheck(t, err)
 	})
 	for _, n := range []uint64{0, 1<<32 + 1, 1<<32 + 2, 1<<63 + 1, math.MaxUint64} {
@@ -90,7 +90,7 @@ func TestEffectiveInputExtremeReferenceAllPaths(t *testing.T) {
 					run := s.Snapshot().ActiveRun()
 					b, err := s.BeginCommit()
 					interactionCheck(t, err)
-					first, err := b.AddUserInput(UserInput{RunID: run})
+					first, err := b.AddUserInput(run, UserInput{})
 					interactionCheck(t, err)
 					if accepted {
 						_, err = s.SubmitCommit(context.Background(), b)
@@ -99,15 +99,15 @@ func TestEffectiveInputExtremeReferenceAllPaths(t *testing.T) {
 						interactionCheck(t, err)
 					}
 					missing := UserInputID{runID: run, ordinal: math.MaxUint64}
-					refs := []InputItem{{UserInputID: &first}, {UserInputID: &missing}}
+					refs := []InputItem{{UserInputID: new(first.RunRelative())}, {UserInputID: new(missing.RunRelative())}}
 					if reverse {
 						refs[0], refs[1] = refs[1], refs[0]
 					}
-					v := EffectiveInput{RunID: run, Inputs: refs}
+					v := EffectiveInput{Inputs: refs}
 					before := detachedSessionState(s.state)
 					if path == "builder" {
 						prior, count := b.admission, len(b.records)
-						err = b.AddEffectiveInput(v)
+						err = b.AddEffectiveInput(run, v)
 						if b.admission != prior || len(b.records) != count {
 							t.Fatal("extreme reference addition changed batch")
 						}
@@ -115,7 +115,7 @@ func TestEffectiveInputExtremeReferenceAllPaths(t *testing.T) {
 					} else {
 						records := append([]*materializedRecord(nil), b.records...)
 						interactionCheck(t, b.Discard())
-						r := interactionRecord(t)(newEffectiveInputRecord(v, s.policy.PayloadLimits))
+						r := interactionRecord(t)(newEffectiveInputRecord(v, run, s.policy.PayloadLimits))
 						r, err = decodeMaterialized(r.format(), s.policy.PayloadLimits)
 						interactionCheck(t, err)
 						c := interactionCommit(t, s, append(records, r))

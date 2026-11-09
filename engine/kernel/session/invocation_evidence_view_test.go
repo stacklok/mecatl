@@ -17,9 +17,9 @@ func TestInvocationEvidenceViewsOwnEveryMutableField(t *testing.T) {
 			b, err := s.BeginCommit()
 			interactionCheck(t, err)
 			if kind == "failure" {
-				interactionCheck(t, b.AddInvocationFailure(InvocationFailure{RequestID: id, Class: InvocationFailureLocal, Explanation: &explanation, Evidence: evidence, Usage: usage}))
+				interactionCheck(t, b.AddInvocationFailure(id, InvocationFailure{Class: InvocationFailureLocal, Explanation: &explanation, Evidence: evidence, Usage: usage}))
 			} else {
-				interactionCheck(t, b.AddRunEnded(RunEnded{RunID: id.runID, Reason: RunEndedCaptureFailed, Explanation: &explanation, Capture: &CaptureFailureEvidence{RequestID: id, Evidence: evidence, Usage: usage}}))
+				interactionCheck(t, b.AddRunEnded(id.runID, RunEnded{Reason: RunEndedCaptureFailed, Explanation: &explanation, Capture: &CaptureFailureEvidence{RequestID: id.RunRelative(), Evidence: evidence, Usage: usage}}))
 			}
 			explanation = "changed"
 			*evidence.Detail = "changed"
@@ -87,10 +87,10 @@ func TestInvocationEvidenceViewsOwnEveryMutableField(t *testing.T) {
 					}
 				}
 				raw, ok := u.Raw()
-				if !ok || raw.Producer() != "p" || raw.Format() != "unknown-usage" || raw.Version() != 19 || !bytes.Equal(raw.Data(), wantUsage.Raw.Data) {
+				if !ok || raw.Producer() != "p" || raw.Format() != "unknown-usage" || raw.Version() != 19 || !bytes.Equal(raw.Data().Copy(), wantUsage.Raw.Data) {
 					t.Fatal("raw evidence changed")
 				}
-				data := raw.Data()
+				data := raw.Data().Copy()
 				clear(data)
 			}
 			verify()
@@ -129,12 +129,12 @@ func TestInvocationEvidenceViewsAbsentAndZero(t *testing.T) {
 	if value, ok := usage.Raw(); ok || value != (OpaqueProviderDataView{}) {
 		t.Fatal("zero raw")
 	}
-	if raw.Producer() != "" || raw.Format() != "" || raw.Version() != 0 || raw.Data() != nil {
+	if raw.Producer() != "" || raw.Format() != "" || raw.Version() != 0 || raw.Data().Copy() != nil {
 		t.Fatal("zero provider data")
 	}
 	s := interactionFixture(t, "pending")
 	interactionSubmit(t, s, func(b *SessionCommit) {
-		interactionCheck(t, b.AddInvocationFailure(InvocationFailure{RequestID: s.state.view.lifecycle.pending, Class: InvocationFailureLocal}))
+		interactionCheck(t, b.AddInvocationFailure(s.state.view.lifecycle.pending, InvocationFailure{Class: InvocationFailureLocal}))
 	})
 	view, ok := s.Snapshot().RecordAt(s.Snapshot().RecordCount() - 1).InvocationFailure()
 	if !ok {

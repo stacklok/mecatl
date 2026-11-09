@@ -38,16 +38,16 @@ func recordFixtures(t testing.TB) []struct {
 		make func(codec.Limits) (*materializedRecord, error)
 	}{
 		{"session.created", []byte("\xa0"), func(l codec.Limits) (*materializedRecord, error) {
-			return newCreatedRecord(Created{HistoryID: h}, l)
+			return newCreatedRecord(Created{}, l)
 		}},
 		{"session.user_input", []byte("\xa3\x61i\x01\x61p\x81\xa1\x61t\x61x\x61r\x01"), func(l codec.Limits) (*materializedRecord, error) {
-			return makeInputRecord(identifiedInput{ID: allocatedInput(t, allocatedRun(t, h, 1), 1), Parts: []ContentPart{{Text: new("x")}}}, l)
+			return makeInputRecord(identifiedInput{ID: allocatedInput(t, allocatedRun(t, h, 1), 1), UserInput: UserInput{Parts: []ContentPart{{Text: new("x")}}}}, l)
 		}},
 		{"session.run_started", []byte("\xa1\x61r\x02"), func(l codec.Limits) (*materializedRecord, error) {
-			return newRunStartedRecord(RunStarted{ID: allocatedRun(t, h, 2)}, l)
+			return newRunStartedRecord(RunStarted{ID: allocatedRun(t, h, 2).HistoryRelative()}, l)
 		}},
 		{"session.run_ended", []byte("\xa2\x61e\x6binterrupted\x61r\x02"), func(l codec.Limits) (*materializedRecord, error) {
-			return newRunEndedRecord(RunEnded{RunID: allocatedRun(t, h, 2), Reason: RunEndedInterrupted}, l)
+			return newRunEndedRecord(RunEnded{Reason: RunEndedInterrupted}, allocatedRun(t, h, 2), l)
 		}},
 	}
 }

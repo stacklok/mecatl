@@ -63,7 +63,7 @@ func TestOwnedCoreLifecycleSnapshotsAndReplay(t *testing.T) {
 		t.Fatal("new scope")
 	}
 	b := ownedCoreBatch(t, s)
-	if _, err := b.AddUserInput(session.UserInput{}); !errors.Is(err, session.ErrTransition) {
+	if _, err := b.AddUserInput(session.RunID{}, session.UserInput{}); !errors.Is(err, session.ErrTransition) {
 		t.Fatal(err)
 	}
 	if err := b.Create(); err != nil {
@@ -74,7 +74,7 @@ func TestOwnedCoreLifecycleSnapshotsAndReplay(t *testing.T) {
 		t.Fatal(err)
 	}
 	content := []byte{0xff, 0, 'x'}
-	input, err := b.AddUserInput(session.UserInput{RunID: run, Parts: byteParts(content)})
+	input, err := b.AddUserInput(run, session.UserInput{Parts: byteParts(content)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -134,7 +134,7 @@ func TestOwnedCoreLifecycleSnapshotsAndReplay(t *testing.T) {
 	}
 	for n := 0; n < 128; n++ {
 		b := ownedCoreBatch(t, s)
-		if _, err := b.AddUserInput(session.UserInput{RunID: run, Parts: byteParts([]byte{byte(n)})}); err != nil {
+		if _, err := b.AddUserInput(run, session.UserInput{Parts: byteParts([]byte{byte(n)})}); err != nil {
 			t.Fatal(err)
 		}
 		ownedCoreSubmit(t, s, b)
@@ -147,10 +147,10 @@ func TestOwnedCoreLifecycleSnapshotsAndReplay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := b.AddUserInput(session.UserInput{RunID: run}); !errors.Is(err, session.ErrTransition) {
+	if _, err := b.AddUserInput(run, session.UserInput{}); !errors.Is(err, session.ErrTransition) {
 		t.Fatal(err)
 	}
-	nextInput, err := b.AddUserInput(session.UserInput{RunID: next})
+	nextInput, err := b.AddUserInput(next, session.UserInput{})
 	if err != nil || nextInput.RunID() != next {
 		t.Fatalf("new run numbering: %v", err)
 	}
@@ -254,7 +254,7 @@ func TestOwnedCoreReserveRejectionAndScopedContracts(t *testing.T) {
 	}
 	inputID := allocatedInput(t, allocatedRun(t, id, 2), 1)
 	authored, b := allocationBatch(t, inputID.RunID())
-	gotID, err := b.AddUserInput(session.UserInput{RunID: inputID.RunID(), Parts: byteParts([]byte{0xff})})
+	gotID, err := b.AddUserInput(inputID.RunID(), session.UserInput{Parts: byteParts([]byte{0xff})})
 	if err != nil || gotID != inputID {
 		t.Fatalf("scoped authoring: %v, %v", gotID, err)
 	}

@@ -10,11 +10,11 @@ import (
 )
 
 func TestRunEnded(t *testing.T) {
-	v := RunEnded{RunID: allocatedRun(t, testHistoryID(t), 1), Reason: RunEndedInterrupted}
+	v := RunEnded{RunID: 1, Reason: RunEndedInterrupted}
 	if err := v.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	r, err := newRunEndedRecord(v, testLimits())
+	r, err := newRunEndedRecord(v, allocatedRun(t, testHistoryID(t), 1), testLimits())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -25,7 +25,7 @@ func TestRunEnded(t *testing.T) {
 	if (RunEnded{}).Validate() == nil {
 		t.Fatal("zero interruption validated")
 	}
-	r, err = newRunEndedRecord(RunEnded{}, testLimits())
+	r, err = newRunEndedRecord(RunEnded{}, RunID{}, testLimits())
 	if !errors.Is(err, codec.ErrInvalidData) || r != nil {
 		t.Fatalf("zero interruption record: %v", err)
 	}
@@ -37,11 +37,10 @@ func TestCaptureFailureEvidenceViewScopePresenceAndOwnership(t *testing.T) {
 	input, output := int64(0), int64(1)
 	data := []byte{0xff, 0}
 	interactionSubmit(t, s, func(b *SessionCommit) {
-		interactionCheck(t, b.AddRunEnded(RunEnded{
-			RunID:  pending.runID,
+		interactionCheck(t, b.AddRunEnded(pending.runID, RunEnded{
 			Reason: RunEndedCaptureFailed,
 			Capture: &CaptureFailureEvidence{
-				RequestID: pending,
+				RequestID: pending.RunRelative(),
 				Evidence:  &ObservedEvidence{Detail: new(""), Correlation: new("correlation")},
 				Usage:     &InvocationUsage{Input: &input, Output: &output, Raw: &OpaqueProviderData{Producer: "producer", Format: "format", Version: 2, Data: data}},
 			},
@@ -80,12 +79,12 @@ func TestCaptureFailureEvidenceViewScopePresenceAndOwnership(t *testing.T) {
 		t.Fatal("absent cache read")
 	}
 	raw, ok := usage.Raw()
-	if !ok || raw.Producer() != "producer" || raw.Format() != "format" || raw.Version() != 2 || !bytes.Equal(raw.Data(), []byte{0xff, 0}) {
+	if !ok || raw.Producer() != "producer" || raw.Format() != "format" || raw.Version() != 2 || !bytes.Equal(raw.Data().Copy(), []byte{0xff, 0}) {
 		t.Fatal("raw usage")
 	}
-	exported := raw.Data()
+	exported := raw.Data().Copy()
 	exported[0] = 0
-	if !bytes.Equal(raw.Data(), []byte{0xff, 0}) {
+	if !bytes.Equal(raw.Data().Copy(), []byte{0xff, 0}) {
 		t.Fatal("raw byte export aliases")
 	}
 

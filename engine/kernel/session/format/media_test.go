@@ -29,7 +29,7 @@ func TestStandaloneMediaMatrix(t *testing.T) {
 	for _, kind := range []string{"image", "audio", "document"} {
 		for _, source := range []string{"inline", "remote", "provider"} {
 			t.Run(kind+"/"+source, func(t *testing.T) {
-				v := format.Media{Kind: kind, Source: source, FormatHint: " exact\n"}
+				v := format.Media{Kind: format.MediaKind(kind), Source: format.MediaSourceKind(source), FormatHint: " exact\n"}
 				switch source {
 				case "inline":
 					v.MIMEType = "application/custom"

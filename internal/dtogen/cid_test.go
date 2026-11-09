@@ -1,4 +1,4 @@
-package cborgen
+package dtogen
 
 import (
 	"context"
@@ -36,7 +36,7 @@ func TestCIDSchemaRejections(t *testing.T) {
 func TestCIDIdentityAndCompiledOwner(t *testing.T) {
 	cfg := executableFixture(t, `
 import "github.com/stacklok/mecatl/engine/kernel/contentid"
-//cborgen:validate valid
+//dtogen:validate valid
 // Link owns an explicit fixed-profile representation.
 type Link struct { binary [36]byte `+"`cbor:\",cid\"`"+`; cache []byte `+"`cbor:\"-\"`"+` }
 func (v Link) valid() error {_,err:=contentid.ParseBinary(v.binary[:]);return err}

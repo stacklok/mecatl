@@ -112,7 +112,7 @@ func TestLoadLifecycleAndOwnership(t *testing.T) {
 	}
 	// Loading restores owner legality, not just visible facts.
 	b = beginBatch(t, s)
-	if _, err := b.AddUserInput(session.UserInput{RunID: input.RunID()}); !errors.Is(err, session.ErrTransition) {
+	if _, err := b.AddUserInput(input.RunID(), session.UserInput{}); !errors.Is(err, session.ErrTransition) {
 		t.Fatal("reload forgot closed owner")
 	}
 	mustBatch(t, b.Discard())

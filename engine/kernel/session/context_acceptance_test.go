@@ -31,19 +31,19 @@ func TestContextIndependentReplacementsAndFixtureFreeLoad(t *testing.T) {
 		mustBatch(t, err)
 		prepared[i] = string(data)
 	}
-	instructions := session.Instructions{HistoryID: scope, Blocks: []session.InstructionBlock{{Parts: []session.ContentPart{{Text: new(prepared[1])}}, Source: session.ContentSource{Description: "caller adopted root", WorkspaceFile: &session.WorkspaceFileSource{Path: paths[1]}}}}}
-	catalog := session.ToolCatalog{HistoryID: scope, Tools: []session.ToolDefinition{{Name: "second", ArgumentSchema: []byte(" {\"z\":1.00, \"a\":true} ")}, {Name: "first", ArgumentSchema: []byte("false")}}}
-	binding := session.ModelBinding{HistoryID: scope, Route: "route", API: "dialect/v1", Model: "alias", Settings: []byte(prepared[2])}
+	instructions := session.Instructions{Blocks: []session.InstructionBlock{{Parts: []session.ContentPart{{Text: new(prepared[1])}}, Source: session.ContentSource{Description: "caller adopted root", WorkspaceFile: &session.WorkspaceFileSource{Path: paths[1]}}}}}
+	catalog := session.ToolCatalog{Tools: []session.ToolDefinition{{Name: "second", ArgumentSchema: []byte(" {\"z\":1.00, \"a\":true} ")}, {Name: "first", ArgumentSchema: []byte("false")}}}
+	binding := session.ModelBinding{Route: "route", API: "dialect/v1", Model: "alias", Settings: []byte(prepared[2])}
 	b := beginBatch(t, s)
 	mustBatch(t, b.Create())
 	run := batchRun(t, b)
-	input, err := b.AddUserInput(session.UserInput{RunID: run, Parts: richContent()})
+	input, err := b.AddUserInput(run, session.UserInput{Parts: richContent()})
 	mustBatch(t, err)
-	effective := session.EffectiveInput{RunID: run, Inputs: []session.InputItem{{UserInputID: &input}, {Inline: &session.AttributedInput{Actor: "skill/example", Purpose: session.PromptInstructions, Parts: []session.ContentPart{{Text: new(prepared[0])}}, Source: session.ContentSource{Description: "caller expanded skill", WorkspaceFile: &session.WorkspaceFileSource{Path: paths[0]}}}}}}
-	mustBatch(t, b.ReplaceInstructions(instructions))
-	mustBatch(t, b.ReplaceToolCatalog(catalog))
-	mustBatch(t, b.ReplaceModelBinding(binding))
-	mustBatch(t, b.AddEffectiveInput(effective))
+	effective := session.EffectiveInput{Inputs: []session.InputItem{{UserInputID: new(input.RunRelative())}, {Inline: &session.AttributedInput{Actor: "skill/example", Purpose: session.PromptInstructions, Parts: []session.ContentPart{{Text: new(prepared[0])}}, Source: session.ContentSource{Description: "caller expanded skill", WorkspaceFile: &session.WorkspaceFileSource{Path: paths[0]}}}}}}
+	mustBatch(t, b.ReplaceInstructions(scope, instructions))
+	mustBatch(t, b.ReplaceToolCatalog(scope, catalog))
+	mustBatch(t, b.ReplaceModelBinding(scope, binding))
+	mustBatch(t, b.AddEffectiveInput(run, effective))
 	submitBatch(t, s, b)
 	snapshots := []session.Snapshot{s.Snapshot()}
 	wantI := []session.Instructions{instructions.Clone()}
@@ -61,22 +61,22 @@ func TestContextIndependentReplacementsAndFixtureFreeLoad(t *testing.T) {
 		b = beginBatch(t, s)
 		switch component {
 		case 0:
-			mustBatch(t, b.ReplaceInstructions(instructions))
-			instructions = session.Instructions{HistoryID: scope}
-			mustBatch(t, b.ReplaceInstructions(instructions))
+			mustBatch(t, b.ReplaceInstructions(scope, instructions))
+			instructions = session.Instructions{}
+			mustBatch(t, b.ReplaceInstructions(scope, instructions))
 			// Two increments preserve their separate boundaries, including
 			// one inline item with empty parts versus zero items.
-			emptyPrompt := session.EffectiveInput{RunID: run, Inputs: []session.InputItem{{Inline: &session.AttributedInput{Actor: "harness", Purpose: session.PromptContext, Source: session.ContentSource{Description: "explicit empty context"}}}}}
-			mustBatch(t, b.AddEffectiveInput(emptyPrompt))
-			mustBatch(t, b.AddEffectiveInput(session.EffectiveInput{RunID: run}))
+			emptyPrompt := session.EffectiveInput{Inputs: []session.InputItem{{Inline: &session.AttributedInput{Actor: "harness", Purpose: session.PromptContext, Source: session.ContentSource{Description: "explicit empty context"}}}}}
+			mustBatch(t, b.AddEffectiveInput(run, emptyPrompt))
+			mustBatch(t, b.AddEffectiveInput(run, session.EffectiveInput{}))
 		case 1:
-			mustBatch(t, b.ReplaceToolCatalog(catalog))
-			catalog = session.ToolCatalog{HistoryID: scope}
-			mustBatch(t, b.ReplaceToolCatalog(catalog))
+			mustBatch(t, b.ReplaceToolCatalog(scope, catalog))
+			catalog = session.ToolCatalog{}
+			mustBatch(t, b.ReplaceToolCatalog(scope, catalog))
 		case 2:
-			mustBatch(t, b.ReplaceModelBinding(binding))
+			mustBatch(t, b.ReplaceModelBinding(scope, binding))
 			binding.Settings = []byte("{}")
-			mustBatch(t, b.ReplaceModelBinding(binding))
+			mustBatch(t, b.ReplaceModelBinding(scope, binding))
 		}
 		submitBatch(t, s, b)
 		next := s.Snapshot()
@@ -100,7 +100,7 @@ func TestContextIndependentReplacementsAndFixtureFreeLoad(t *testing.T) {
 	}
 	oneEmpty, ok := snapshots[1].RecordAt(9).EffectiveInput()
 	noPrompts, okEmpty := snapshots[1].RecordAt(10).EffectiveInput()
-	if !ok || !okEmpty || oneEmpty.InputCount() != 1 || inlineAt(t, oneEmpty, 0).PartCount() != 0 || noPrompts.InputCount() != 0 || oneEmpty.RunID() != run || noPrompts.RunID() != run {
+	if !ok || !okEmpty || oneEmpty.Inputs().Len() != 1 || inlineAt(t, oneEmpty, 0).Parts().Len() != 0 || noPrompts.Inputs().Len() != 0 || oneEmpty.RunID() != run || noPrompts.RunID() != run {
 		t.Fatal("same-commit effective revisions collapsed")
 	}
 
@@ -108,13 +108,13 @@ func TestContextIndependentReplacementsAndFixtureFreeLoad(t *testing.T) {
 	// In particular, exports from the newest snapshot cannot corrupt old handles.
 	for _, snapshot := range snapshots {
 		tv, _ := snapshot.ToolCatalog()
-		if tv.ToolCount() != 0 {
-			clear(tv.ToolAt(0).ArgumentSchema())
+		if tv.Tools().Len() != 0 {
+			clear(tv.Tools().At(0).ArgumentSchema().Copy())
 		}
 		mv, _ := snapshot.ModelBinding()
-		clear(mv.Settings())
+		clear(mv.Settings().Copy())
 		uv, _ := snapshot.RecordAt(2).UserInput()
-		mutateMediaBytes(t, uv.PartAt(1))
+		mutateMediaBytes(t, uv.Parts().At(1))
 		clear(snapshot.RecordAt(6).Format().Payload)
 	}
 	for i, snapshot := range snapshots {
@@ -123,7 +123,7 @@ func TestContextIndependentReplacementsAndFixtureFreeLoad(t *testing.T) {
 		mv, _ := snapshot.ModelBinding()
 		uv, _ := snapshot.RecordAt(2).UserInput()
 		ev, _ := snapshot.RecordAt(6).EffectiveInput()
-		if !instructionsMatch(iv, wantI[i]) || !catalogMatches(tv, wantT[i]) || !bindingMatches(mv, wantM[i]) || !userInputMatches(uv, session.UserInput{RunID: uv.ID().RunID(), Parts: richContent()}) || !effectiveMatches(ev, effective) {
+		if !instructionsMatch(iv, wantI[i]) || !catalogMatches(tv, wantT[i]) || !bindingMatches(mv, wantM[i]) || !userInputMatches(uv, session.UserInput{Parts: richContent()}) || !effectiveMatches(ev, effective) {
 			t.Fatalf("snapshot %d changed after export mutation", i)
 		}
 	}
@@ -163,10 +163,10 @@ func TestContextIndependentReplacementDoesNotMergeStaleHead(t *testing.T) {
 	mustBatch(t, err)
 	before := captureRejectedSnapshot(other.Snapshot())
 	winner := beginBatch(t, s)
-	instructions := session.Instructions{HistoryID: scope, Blocks: []session.InstructionBlock{{Source: session.ContentSource{Description: "winning replacement"}}}}
-	mustBatch(t, winner.ReplaceInstructions(instructions))
+	instructions := session.Instructions{Blocks: []session.InstructionBlock{{Source: session.ContentSource{Description: "winning replacement"}}}}
+	mustBatch(t, winner.ReplaceInstructions(scope, instructions))
 	loser := beginBatch(t, other)
-	mustBatch(t, loser.ReplaceToolCatalog(session.ToolCatalog{HistoryID: scope}))
+	mustBatch(t, loser.ReplaceToolCatalog(scope, session.ToolCatalog{}))
 	head := submitBatch(t, s, winner)
 	if ref, err := other.SubmitCommit(context.Background(), loser); ref != (history.CommitRef{}) || !errors.Is(err, session.ErrConflict) || errors.Is(err, session.ErrAcceptanceUnknown) {
 		t.Fatalf("stale independent replacement: %v, %v", ref, err)

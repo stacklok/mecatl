@@ -14,7 +14,7 @@ func TestRecursiveViewsZero(t *testing.T) {
 	var instructions session.InstructionsView
 	var catalog session.ToolCatalogView
 	var binding session.ModelBindingView
-	if user.ID() != (session.UserInputID{}) || user.PartCount() != 0 || effective.RunID() != (session.RunID{}) || effective.InputCount() != 0 || instructions.BlockCount() != 0 || catalog.ToolCount() != 0 || !bindingMatches(binding, session.ModelBinding{}) {
+	if user.ID() != (session.UserInputID{}) || user.Parts().Len() != 0 || effective.RunID() != (session.RunID{}) || effective.Inputs().Len() != 0 || instructions.Blocks().Len() != 0 || catalog.Tools().Len() != 0 || !bindingMatches(binding, session.ModelBinding{}) {
 		t.Fatal("zero root view")
 	}
 	var item session.InputItemView
@@ -26,7 +26,7 @@ func TestRecursiveViewsZero(t *testing.T) {
 	}
 	var inline session.AttributedInputView
 	var block session.InstructionBlockView
-	if inline.Actor() != "" || inline.Purpose() != "" || inline.PartCount() != 0 || inline.Source() != (session.ContentSourceView{}) || block.PartCount() != 0 || block.Source() != (session.ContentSourceView{}) {
+	if inline.Actor() != "" || inline.Purpose() != "" || inline.Parts().Len() != 0 || inline.Source() != (session.ContentSourceView{}) || block.Parts().Len() != 0 || block.Source() != (session.ContentSourceView{}) {
 		t.Fatal("zero required children")
 	}
 	var part session.ContentPartView
@@ -40,11 +40,11 @@ func TestRecursiveViewsZero(t *testing.T) {
 	if media.Kind() != "" || media.MIMEType() != "" || media.FormatHint() != "" || media.Filename() != "" || media.Title() != "" || media.Source() != "" {
 		t.Fatal("zero media metadata")
 	}
-	if data, ok := media.InlineData(); ok || data != nil {
+	if data := media.InlineData(); data.Copy() != nil {
 		t.Fatal("zero inline data")
 	}
-	for name, get := range map[string]func() (string, bool){"RemoteURI": media.RemoteURI, "ProviderName": media.ProviderName, "ProviderScope": media.ProviderScope, "ProviderReferenceID": media.ProviderReferenceID} {
-		if value, ok := get(); ok || value != "" {
+	for name, get := range map[string]func() string{"RemoteURI": media.RemoteURI, "ProviderName": media.ProviderName, "ProviderScope": media.ProviderScope, "ProviderReferenceID": media.ProviderReferenceID} {
+		if value := get(); value != "" {
 			t.Errorf("zero media %s", name)
 		}
 	}
@@ -59,7 +59,7 @@ func TestRecursiveViewsZero(t *testing.T) {
 		t.Fatal("zero workspace path")
 	}
 	var tool session.ToolDefinitionView
-	if tool.Name() != "" || tool.Description() != "" || tool.ArgumentSchema() != nil {
+	if tool.Name() != "" || tool.Description() != "" || tool.ArgumentSchema().Copy() != nil {
 		t.Fatal("zero tool")
 	}
 }
@@ -74,16 +74,16 @@ func TestRecursiveViewsPresenceBytesAndBounds(t *testing.T) {
 	b := beginBatch(t, s)
 	mustBatch(t, b.Create())
 	run := batchRun(t, b)
-	id, err := b.AddUserInput(session.UserInput{RunID: run, Parts: richContent()})
+	id, err := b.AddUserInput(run, session.UserInput{Parts: richContent()})
 	mustBatch(t, err)
-	mustBatch(t, b.ReplaceInstructions(session.Instructions{HistoryID: scope, Blocks: []session.InstructionBlock{
+	mustBatch(t, b.ReplaceInstructions(scope, session.Instructions{Blocks: []session.InstructionBlock{
 		{Parts: []session.ContentPart{{Text: new("")}}, Source: session.ContentSource{Description: "empty text"}},
 		{Source: session.ContentSource{Description: "empty block"}},
 	}}))
-	mustBatch(t, b.ReplaceToolCatalog(session.ToolCatalog{HistoryID: scope, Tools: []session.ToolDefinition{{Name: "tool", ArgumentSchema: []byte(" false ")}}}))
-	mustBatch(t, b.ReplaceModelBinding(session.ModelBinding{HistoryID: scope, Route: "route", API: "api", Model: "model", Settings: []byte(" {\"n\":1.00} ")}))
-	mustBatch(t, b.AddEffectiveInput(session.EffectiveInput{RunID: run, Inputs: []session.InputItem{
-		{UserInputID: &id},
+	mustBatch(t, b.ReplaceToolCatalog(scope, session.ToolCatalog{Tools: []session.ToolDefinition{{Name: "tool", ArgumentSchema: []byte(" false ")}}}))
+	mustBatch(t, b.ReplaceModelBinding(scope, session.ModelBinding{Route: "route", API: "api", Model: "model", Settings: []byte(" {\"n\":1.00} ")}))
+	mustBatch(t, b.AddEffectiveInput(run, session.EffectiveInput{Inputs: []session.InputItem{
+		{UserInputID: new(id.RunRelative())},
 		{Inline: &session.AttributedInput{Actor: " actor/尾\n ", Purpose: session.PromptContext, Source: session.ContentSource{Description: "present empty"}}},
 		{Inline: &session.AttributedInput{Actor: "harness", Purpose: session.PromptInstructions, Parts: richContent(), Source: session.ContentSource{Description: "rich"}}},
 	}}))
@@ -94,27 +94,27 @@ func TestRecursiveViewsPresenceBytesAndBounds(t *testing.T) {
 	catalog, _ := v.ToolCatalog()
 	binding, _ := v.ModelBinding()
 	effective, _ := v.RecordAt(6).EffectiveInput()
-	if ref, ok := effective.InputAt(0).UserInputID(); !ok || ref != id {
+	if ref, ok := effective.Inputs().At(0).UserInputID(); !ok || ref != id {
 		t.Fatal("reference lost scope")
 	}
-	if inline, ok := effective.InputAt(0).Inline(); ok || inline != (session.AttributedInputView{}) {
+	if inline, ok := effective.Inputs().At(0).Inline(); ok || inline != (session.AttributedInputView{}) {
 		t.Fatal("reference exposed inline")
 	}
 	empty := inlineAt(t, effective, 1)
-	if ref, ok := effective.InputAt(1).UserInputID(); ok || ref != (session.UserInputID{}) {
+	if ref, ok := effective.Inputs().At(1).UserInputID(); ok || ref != (session.UserInputID{}) {
 		t.Fatal("inline exposed reference")
 	}
-	if empty.PartCount() != 0 || empty.Actor() != " actor/尾\n " || empty.Purpose() != session.PromptContext || empty.Source().Description() != "present empty" {
+	if empty.Parts().Len() != 0 || empty.Actor() != " actor/尾\n " || empty.Purpose() != session.PromptContext || empty.Source().Description() != "present empty" {
 		t.Fatal("present empty inline changed")
 	}
 	if file, ok := empty.Source().WorkspaceFile(); ok || file != (session.WorkspaceFileSourceView{}) {
 		t.Fatal("absent file branch")
 	}
-	textPart := instructions.BlockAt(0).PartAt(0)
+	textPart := instructions.Blocks().At(0).Parts().At(0)
 	if text, ok := textPart.Text(); !ok || text != "" {
 		t.Fatal("empty text lost presence")
 	}
-	for _, part := range []session.ContentPartView{textPart, user.PartAt(0)} {
+	for _, part := range []session.ContentPartView{textPart, user.Parts().At(0)} {
 		want, present := part.Text()
 		var text string
 		var ok bool
@@ -139,34 +139,35 @@ func TestRecursiveViewsPresenceBytesAndBounds(t *testing.T) {
 	if media, ok := textPart.Media(); ok || media != (session.MediaView{}) {
 		t.Fatal("text exposed media")
 	}
-	if text, ok := user.PartAt(1).Text(); ok || text != "" {
+	if text, ok := user.Parts().At(1).Text(); ok || text != "" {
 		t.Fatal("media exposed text")
 	}
-	if data, ok := mediaAt(t, user.PartAt(5)).InlineData(); !ok || len(data) != 0 {
+	if media := mediaAt(t, user.Parts().At(5)); media.Source() != session.MediaSourceInline || len(media.InlineData().Copy()) != 0 {
 		t.Fatal("empty inline bytes lost presence")
 	}
-	remote := mediaAt(t, user.PartAt(2))
-	if data, ok := remote.InlineData(); ok || data != nil {
+	remote := mediaAt(t, user.Parts().At(2))
+	if remote.Source() != session.MediaSourceRemote || remote.InlineData().Len() != 0 {
 		t.Fatal("remote exposed inline bytes")
 	}
-	if provider, ok := remote.ProviderName(); ok || provider != "" {
+	if provider := remote.ProviderName(); provider != "" {
 		t.Fatal("remote exposed provider")
 	}
-	provider := mediaAt(t, user.PartAt(3))
-	if uri, ok := provider.RemoteURI(); ok || uri != "" {
+	provider := mediaAt(t, user.Parts().At(3))
+	if provider.Source() != session.MediaSourceProvider || provider.RemoteURI() != "" {
 		t.Fatal("provider exposed URI")
 	}
-	media := mediaAt(t, user.PartAt(1))
-	data, _ := media.InlineData()
-	other, _ := media.InlineData()
-	data[0] = 0
-	if other[0] != 0xff {
+	media := mediaAt(t, user.Parts().At(1))
+	data := media.InlineData()
+	other := media.InlineData()
+	copied, otherCopy := data.Copy(), other.Copy()
+	copied[0] = 0
+	if otherCopy[0] != 0xff || other.At(0) != 0xff {
 		t.Fatal("byte exports share storage")
 	}
-	mutateMediaBytes(t, user.PartAt(1))
-	clear(catalog.ToolAt(0).ArgumentSchema())
-	clear(binding.Settings())
-	if !mediaMatches(media, session.Media{Kind: session.MediaKindDocument, MIMEType: "application/octet-stream", FormatHint: "raw", Filename: "notes.bin", Title: "Notes", Source: session.MediaSourceInline, InlineData: []byte{0xff, 0, 'x'}}) || string(catalog.ToolAt(0).ArgumentSchema()) != " false " || string(binding.Settings()) != " {\"n\":1.00} " {
+	mutateMediaBytes(t, user.Parts().At(1))
+	clear(catalog.Tools().At(0).ArgumentSchema().Copy())
+	clear(binding.Settings().Copy())
+	if !mediaMatches(media, session.Media{Kind: session.MediaKindDocument, MIMEType: "application/octet-stream", FormatHint: "raw", Filename: "notes.bin", Title: "Notes", Source: session.MediaSourceInline, InlineData: []byte{0xff, 0, 'x'}}) || string(catalog.Tools().At(0).ArgumentSchema().Copy()) != " false " || string(binding.Settings().Copy()) != " {\"n\":1.00} " {
 		t.Fatal("byte getter exposed accepted storage")
 	}
 
@@ -176,20 +177,20 @@ func TestRecursiveViewsPresenceBytesAndBounds(t *testing.T) {
 		count int
 		at    func(int)
 	}{
-		{"zero user", 0, func(i int) { (session.UserInputView{}).PartAt(i) }},
-		{"zero effective", 0, func(i int) { (session.EffectiveInputView{}).InputAt(i) }},
-		{"zero instructions", 0, func(i int) { (session.InstructionsView{}).BlockAt(i) }},
-		{"zero catalog", 0, func(i int) { (session.ToolCatalogView{}).ToolAt(i) }},
-		{"zero inline", 0, func(i int) { (session.AttributedInputView{}).PartAt(i) }},
-		{"zero block", 0, func(i int) { (session.InstructionBlockView{}).PartAt(i) }},
-		{"user", user.PartCount(), func(i int) { user.PartAt(i) }},
-		{"effective", effective.InputCount(), func(i int) { effective.InputAt(i) }},
-		{"instructions", instructions.BlockCount(), func(i int) { instructions.BlockAt(i) }},
-		{"catalog", catalog.ToolCount(), func(i int) { catalog.ToolAt(i) }},
-		{"inline", rich.PartCount(), func(i int) { rich.PartAt(i) }},
-		{"block", instructions.BlockAt(0).PartCount(), func(i int) { instructions.BlockAt(0).PartAt(i) }},
-		{"empty inline", 0, func(i int) { empty.PartAt(i) }},
-		{"empty block", 0, func(i int) { instructions.BlockAt(1).PartAt(i) }},
+		{"zero user", 0, func(i int) { (session.UserInputView{}).Parts().At(i) }},
+		{"zero effective", 0, func(i int) { (session.EffectiveInputView{}).Inputs().At(i) }},
+		{"zero instructions", 0, func(i int) { (session.InstructionsView{}).Blocks().At(i) }},
+		{"zero catalog", 0, func(i int) { (session.ToolCatalogView{}).Tools().At(i) }},
+		{"zero inline", 0, func(i int) { (session.AttributedInputView{}).Parts().At(i) }},
+		{"zero block", 0, func(i int) { (session.InstructionBlockView{}).Parts().At(i) }},
+		{"user", user.Parts().Len(), func(i int) { user.Parts().At(i) }},
+		{"effective", effective.Inputs().Len(), func(i int) { effective.Inputs().At(i) }},
+		{"instructions", instructions.Blocks().Len(), func(i int) { instructions.Blocks().At(i) }},
+		{"catalog", catalog.Tools().Len(), func(i int) { catalog.Tools().At(i) }},
+		{"inline", rich.Parts().Len(), func(i int) { rich.Parts().At(i) }},
+		{"block", instructions.Blocks().At(0).Parts().Len(), func(i int) { instructions.Blocks().At(0).Parts().At(i) }},
+		{"empty inline", 0, func(i int) { empty.Parts().At(i) }},
+		{"empty block", 0, func(i int) { instructions.Blocks().At(1).Parts().At(i) }},
 	} {
 		t.Run(collection.name, func(t *testing.T) {
 			for _, index := range []int{-1, collection.count, collection.count + 1} {
