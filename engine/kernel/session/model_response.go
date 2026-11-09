@@ -105,6 +105,8 @@ func newModelResponseRecord(v ModelResponse, request ModelRequestID, limits code
 // Zero has no identity or items. Item navigation and structured-child access are
 // O(1); call lookup scans response order. Byte leaves borrow backing; Copy
 // explicitly detaches only the selected bytes.
+//
+//dtogen:include
 type ModelResponseView struct {
 	scope historyid.HistoryID
 	value *sessionformat.ModelResponse
@@ -166,16 +168,22 @@ func (v ModelResponseView) Calls() iter.Seq[RequestedCallView] {
 // lifetime. Zero returns an empty name and zero Bytes. Reads are O(1); Arguments
 // borrows its leaf and Copy explicitly detaches it. Occurrence identity is
 // deliberately available only through ModelResponseView.Calls and CallAt.
+//
+//dtogen:include
 type RequestedCallDataView struct {
 	value *sessionformat.RequestedCall
 }
 
 // ResponseItemView is a pinned union handle. Zero has neither branch. Branch
 // navigation is O(1); Items and Calls traverse their ordered DTOs linearly.
+//
+//dtogen:include
 type ResponseItemView struct{ value *sessionformat.ResponseItem }
 
 // ResponseContentView retains immutable content and ordered parts for its lifetime.
 // Zero is empty; Parts borrows backing and adapts elements on demand in O(1).
+//
+//dtogen:include
 type ResponseContentView struct {
 	value *sessionformat.ResponseContent
 }
@@ -183,6 +191,8 @@ type ResponseContentView struct {
 // RequestedCallView retains immutable complete-call backing for its lifetime.
 // Zero has zero ID, empty name and zero Bytes. Reads are O(1); Arguments borrows
 // its leaf and Copy explicitly detaches it.
+//
+//dtogen:include
 type RequestedCallView struct {
 	id    RequestedCallID
 	value *sessionformat.RequestedCall

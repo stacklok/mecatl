@@ -23,7 +23,7 @@ const codecImportPath = "github.com/stacklok/mecatl/engine/kernel/codec"
 // LoadConfig selects one declaring package and its package-local output file.
 type LoadConfig struct {
 	Dir    string
-	Types  []string
+	Types  []string // explicit roots; omit to select source-local dtogen:include markers
 	Output string
 	Emit   string // explicit comma-separated cbor,clone,equal, or view-only capability
 }
@@ -45,7 +45,7 @@ type Loaded struct {
 // Declared owner artifacts are replaced by load-only signatures; handwritten
 // diagnostics remain fatal. Imported families are validated from their sources.
 func Load(ctx context.Context, config LoadConfig) (*Loaded, error) {
-	emit, dir, out, names, err := prepareLoad(config)
+	emit, dir, out, err := prepareLoad(config)
 	if err != nil {
 		return nil, err
 	}
@@ -91,7 +91,7 @@ func Load(ctx context.Context, config LoadConfig) (*Loaded, error) {
 	if !slices.Contains(pkg.CompiledGoFiles, out) {
 		return nil, fmt.Errorf("output %s is not an active package Go file", out)
 	}
-	rootNames := names
+	rootNames := owners[pkg.PkgPath].Config.Types
 	if emit.view {
 		rootNames = nil // selected views are handles, never value-operation roots
 	}
@@ -108,37 +108,26 @@ func Load(ctx context.Context, config LoadConfig) (*Loaded, error) {
 	return loaded, nil
 }
 
-func prepareLoad(config LoadConfig) (capabilities, string, string, []string, error) {
+func prepareLoad(config LoadConfig) (capabilities, string, string, error) {
 	emit, err := parseEmit(config.Emit)
 	if err != nil {
-		return capabilities{}, "", "", nil, err
+		return capabilities{}, "", "", err
 	}
-	if err := validateViewConfig(config, emit); err != nil {
-		return capabilities{}, "", "", nil, err
+	if err := validateViewConfig(emit); err != nil {
+		return capabilities{}, "", "", err
 	}
 	dir, err := filepath.Abs(config.Dir)
 	if err != nil {
-		return capabilities{}, "", "", nil, err
+		return capabilities{}, "", "", err
 	}
 	if !validOutputName(config.Output) {
-		return capabilities{}, "", "", nil, fmt.Errorf("output must be a package-local non-test Go filename")
+		return capabilities{}, "", "", fmt.Errorf("output must be a package-local non-test Go filename")
 	}
 	out := filepath.Join(dir, config.Output)
 	if _, err := readOutput(out); err != nil {
-		return capabilities{}, "", "", nil, err
+		return capabilities{}, "", "", err
 	}
-	names := slices.Clone(config.Types)
-	slices.Sort(names)
-	names = slices.Compact(names)
-	if len(names) == 0 {
-		return capabilities{}, "", "", nil, fmt.Errorf("select at least one root type")
-	}
-	for _, name := range names {
-		if !token.IsIdentifier(name) || name == "_" {
-			return capabilities{}, "", "", nil, fmt.Errorf("root %q must name a local type", name)
-		}
-	}
-	return emit, dir, out, names, nil
+	return emit, dir, out, nil
 }
 
 // loadPrerequisites validates imported owners against their loaded source and

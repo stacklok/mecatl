@@ -9,4 +9,6 @@ type ToolDefinition = sessionformat.ToolDefinition
 // ToolDefinitionView retains immutable backing storage, including schema bytes.
 // Capture and navigation cost O(1); zero has empty fields. ArgumentSchema borrows
 // retained backing; Copy detaches only the selected schema.
+//
+//dtogen:include
 type ToolDefinitionView struct{ value *sessionformat.ToolDefinition }

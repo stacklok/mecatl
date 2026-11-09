@@ -9,6 +9,8 @@ type InputItem = sessionformat.InputItem
 
 // InputItemView retains immutable backing storage and its enclosing run scope.
 // Capture and navigation cost O(1); neither branch is present on zero.
+//
+//dtogen:include
 type InputItemView struct {
 	run   RunID
 	value *sessionformat.InputItem

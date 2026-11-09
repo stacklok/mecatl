@@ -75,6 +75,8 @@ func (r *materializedRecord) minimalEnding() bool {
 // CaptureFailureEvidenceView is immutable bounded evidence for a failed capture.
 // RequestID reconstructs the full history and run scope retained by its enclosing
 // ending. Zero has a zero request and no optional children; child access is O(1).
+//
+//dtogen:include
 type CaptureFailureEvidenceView struct {
 	runID RunID
 	value *sessionformat.CaptureFailureEvidence
@@ -91,6 +93,8 @@ func (v CaptureFailureEvidenceView) RequestID() ModelRequestID {
 // RunEndedView is an immutable terminal fact. Zero has zero run, empty reason and
 // no optional evidence. Scalar and pinned structured-child reads are O(1); byte
 // views borrow retained backing and Copy detaches only their selected leaf.
+//
+//dtogen:include
 type RunEndedView struct {
 	scope historyid.HistoryID
 	value *sessionformat.RunEnded

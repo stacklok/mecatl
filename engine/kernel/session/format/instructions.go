@@ -36,6 +36,8 @@ func (v Instructions) Validate() error {
 // Nil and empty Blocks are equivalent explicit empty replacements; a single empty
 // block is distinct and still needs provenance. Assignment shares Blocks and
 // children; Clone detaches them. History scope comes from the enclosing envelope.
+//
+//dtogen:include
 type Instructions struct {
 	// Blocks preserves instruction contribution order and boundaries, including
 	// duplicates and empty blocks. Nil and empty explicitly clear root instructions.

@@ -30,9 +30,7 @@
     method func (ContentSourceView).Description() string
     method func (ContentSourceView).WorkspaceFile() (WorkspaceFileSourceView, bool)
     method func (CreatedView).HistoryID() id.HistoryID
-    method func (EffectiveInputView).InputAt(i int) InputItemView
-    method func (EffectiveInputView).InputCount() int
-    method func (EffectiveInputView).Inputs() iter.Seq[InputItemView]
+    method func (EffectiveInputView).Inputs() views.SliceView[format.InputItem, InputItemView]
     method func (EffectiveInputView).RunID() RunID
     method func (InputItemView).Inline() (AttributedInputView, bool)
     method func (InputItemView).UserInputID() (UserInputID, bool)
@@ -53,13 +51,13 @@
     method func (InvocationUsageView).Reasoning() (int64, bool)
     method func (MediaView).Filename() string
     method func (MediaView).FormatHint() string
-    method func (MediaView).InlineData() (views.Bytes, bool)
+    method func (MediaView).InlineData() views.Bytes
     method func (MediaView).Kind() format.MediaKind
     method func (MediaView).MIMEType() string
-    method func (MediaView).ProviderName() (string, bool)
-    method func (MediaView).ProviderReferenceID() (string, bool)
-    method func (MediaView).ProviderScope() (string, bool)
-    method func (MediaView).RemoteURI() (string, bool)
+    method func (MediaView).ProviderName() string
+    method func (MediaView).ProviderReferenceID() string
+    method func (MediaView).ProviderScope() string
+    method func (MediaView).RemoteURI() string
     method func (MediaView).Source() format.MediaSourceKind
     method func (MediaView).Title() string
     method func (ModelBindingView).API() string

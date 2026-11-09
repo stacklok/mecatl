@@ -95,7 +95,7 @@ func discoverTargets(root string) ([]LoadConfig, error) {
 
 // directiveTarget accepts the literal dtogen invocation used across modules:
 // go -C <repository-relative-to-source> run ./internal/dtogen/cmd/dtogen
-// -dir <source-relative-to-repository> -types A,B -emit cbor,clone,equal -out generated.go.
+// -dir <source-relative-to-repository> [-types A,B] -emit cbor,clone,equal -out generated.go.
 // This is not a general go:generate interpreter: quoting, variables and aliases
 // are intentionally unsupported, so discovery and direct invocation agree.
 func directiveTarget(root, source string, words []string) (LoadConfig, error) {
@@ -115,8 +115,17 @@ func directiveTarget(root, source string, words []string) (LoadConfig, error) {
 	if err := flags.Parse(words[5:]); err != nil {
 		return target, err
 	}
-	if flags.NArg() != 0 || !filepath.IsLocal(target.Dir) || filepath.Join(root, target.Dir) != source || *roots == "" || !validOutputName(target.Output) {
-		return target, fmt.Errorf("require declaring-package -dir, root -types and package-local non-test Go -out filename")
+	if flags.NArg() != 0 || !filepath.IsLocal(target.Dir) || filepath.Join(root, target.Dir) != source || !validOutputName(target.Output) {
+		return target, fmt.Errorf("require declaring-package -dir and package-local non-test Go -out filename")
+	}
+	var emptyTypes bool
+	flags.Visit(func(f *flag.Flag) {
+		if f.Name == "types" && *roots == "" {
+			emptyTypes = true
+		}
+	})
+	if emptyTypes {
+		return target, fmt.Errorf("explicit -types must not be empty; omit it to select dtogen:include markers")
 	}
 	if _, err := parseEmit(target.Emit); err != nil {
 		return target, err

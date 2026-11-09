@@ -29,6 +29,7 @@ const (
 // requires the fully populated persisted shape.
 //
 //dtogen:validate validateLocal
+//dtogen:include
 type InvocationFailure struct {
 	// RunID is the required positive numeric run component within the history
 	// supplied by the enclosing envelope.

@@ -54,12 +54,16 @@ func requestID(scope historyid.HistoryID, run, ordinal uint64) ModelRequestID {
 // ConstructionRecipeView retains immutable construction backing for its lifetime.
 // Zero returns empty scalars and zero Bytes. Reads are O(1); Parameters and Check
 // borrow their leaves, while Copy explicitly detaches only the selected bytes.
+//
+//dtogen:include
 type ConstructionRecipeView struct {
 	value *sessionformat.ConstructionRecipe
 }
 
 // SourceHeadView retains an immutable accepted-history reference. Zero has zero
 // sequence and CID. Reads are O(1); the backing remains retained for its lifetime.
+//
+//dtogen:include
 type SourceHeadView struct {
 	value *sessionformat.SourceHead
 }
@@ -75,6 +79,8 @@ func (v SourceHeadView) CID() contentid.CID {
 // ModelRequestView retains immutable accepted backing for its lifetime. Zero has
 // zero identity and zero child views. Navigation is O(1); byte leaves borrow
 // backing and Copy explicitly detaches only the selected leaf.
+//
+//dtogen:include
 type ModelRequestView struct {
 	scope historyid.HistoryID
 	value *sessionformat.ModelRequest

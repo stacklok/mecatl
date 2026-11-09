@@ -9,8 +9,9 @@ boundary. The command subtree inherits this guidance.
 - Never execute owner code. Load each module with `GOWORK=off` and load-only overlays.
 - Render and typecheck the selected closure before installing any artifact. Preserve
   deterministic output, explicit owner provenance, and marked regular-file protection.
-- View-only declarations select local handles via `-types`; infer private
-  `value *DTO` backing and read default field policy from DTO `view` tags.
+- View-only declarations select local handles via `//dtogen:include` on each type
+  (or `-types` in packages without markers); infer private `value *DTO` backing
+  and read default field policy from DTO `view` tags.
   Context-bearing children require handwritten navigation, never an automatic
   adapter with missing scope. Source/layout/tag/docs changes require regeneration.
 - Regenerate through `task generate:data`; check with `task generate:data:check`.

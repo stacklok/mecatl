@@ -109,6 +109,7 @@ func (v AttributedInput) validateLocal() error {
 // the destination separately and requires RunID zero; persisted validation does not.
 //
 //dtogen:validate validateLocal
+//dtogen:include
 type EffectiveInput struct {
 	// RunID is the required one-based owning run ordinal within the enclosing
 	// history. Conversion restores history scope from the envelope. Validate checks

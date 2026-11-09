@@ -8,7 +8,7 @@ import (
 	dtogenViews "github.com/stacklok/mecatl/engine/kernel/views"
 )
 
-// Selected view layouts, source policy and documentation fingerprint: ed1bb06a94662df4dc3ea3c6645dc233f57ca1d7c73e21e5bd4d793392f97b4a.
+// Selected view layouts, source policy and documentation fingerprint: 5f1667a24f3a7f51bed283aa7e3624f04390909201de10c75c3ac563c9a8dbc1.
 // Backing contract for AttributedInputView.
 //
 // Source contract (DTO semantics, not a mutable accessor):
@@ -752,11 +752,11 @@ func dtogenViewMediaView(value *dtogenType0.Media) MediaView { return MediaView{
 var _ = (*struct {
 	Kind                dtogenType0.MediaKind       "cbor:\"k\""
 	Source              dtogenType0.MediaSourceKind "cbor:\"s\""
-	InlineData          []byte                      "cbor:\"d\" view:\"manual\""
-	RemoteURI           string                      "cbor:\"u\" view:\"manual\""
-	ProviderName        string                      "cbor:\"p\" view:\"manual\""
-	ProviderScope       string                      "cbor:\"o\" view:\"manual\""
-	ProviderReferenceID string                      "cbor:\"r\" view:\"manual\""
+	InlineData          []byte                      "cbor:\"d\""
+	RemoteURI           string                      "cbor:\"u\""
+	ProviderName        string                      "cbor:\"p\""
+	ProviderScope       string                      "cbor:\"o\""
+	ProviderReferenceID string                      "cbor:\"r\""
 	MIMEType            string                      "cbor:\"m\""
 	FormatHint          string                      "cbor:\"f\""
 	Filename            string                      "cbor:\"n\""
@@ -797,6 +797,97 @@ func (v MediaView) Source() dtogenType0.MediaSourceKind {
 		return *new(dtogenType0.MediaSourceKind)
 	}
 	return v.value.Source
+}
+
+// InlineData reads InlineData in O(1) without copying sibling payloads.
+// A zero view returns zero.
+// The returned bytes borrow stable backing for their lifetime; only Copy detaches bytes.
+// Access neither freezes nor synchronizes backing.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// Media retains exact UTF-8 metadata and a tagged source. Assignment shares
+// InlineData; Clone detaches it. An inline tag preserves presence with empty bytes.
+// References grant no access or dereference authority.
+//
+// InlineData retains inline bytes only; Source, not nilness, records presence.
+func (v MediaView) InlineData() dtogenViews.Bytes {
+	if v.value == nil {
+		return dtogenViews.Bytes{}
+	}
+	return dtogenViews.BorrowBytes(v.value.InlineData)
+}
+
+// RemoteURI reads RemoteURI in O(1) without copying sibling payloads.
+// A zero view returns zero.
+// The receiver retains stable backing for its lifetime.
+// Access neither freezes nor synchronizes backing.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// Media retains exact UTF-8 metadata and a tagged source. Assignment shares
+// InlineData; Clone detaches it. An inline tag preserves presence with empty bytes.
+// References grant no access or dereference authority.
+//
+// RemoteURI is a required absolute locator for remote media, empty otherwise.
+func (v MediaView) RemoteURI() string {
+	if v.value == nil {
+		return *new(string)
+	}
+	return v.value.RemoteURI
+}
+
+// ProviderName reads ProviderName in O(1) without copying sibling payloads.
+// A zero view returns zero.
+// The receiver retains stable backing for its lifetime.
+// Access neither freezes nor synchronizes backing.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// Media retains exact UTF-8 metadata and a tagged source. Assignment shares
+// InlineData; Clone detaches it. An inline tag preserves presence with empty bytes.
+// References grant no access or dereference authority.
+//
+// ProviderName is the required logical provider for provider media, empty otherwise.
+func (v MediaView) ProviderName() string {
+	if v.value == nil {
+		return *new(string)
+	}
+	return v.value.ProviderName
+}
+
+// ProviderScope reads ProviderScope in O(1) without copying sibling payloads.
+// A zero view returns zero.
+// The receiver retains stable backing for its lifetime.
+// Access neither freezes nor synchronizes backing.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// Media retains exact UTF-8 metadata and a tagged source. Assignment shares
+// InlineData; Clone detaches it. An inline tag preserves presence with empty bytes.
+// References grant no access or dereference authority.
+//
+// ProviderScope is the required provider storage namespace, empty otherwise.
+// It is not the session's history or run scope.
+func (v MediaView) ProviderScope() string {
+	if v.value == nil {
+		return *new(string)
+	}
+	return v.value.ProviderScope
+}
+
+// ProviderReferenceID reads ProviderReferenceID in O(1) without copying sibling payloads.
+// A zero view returns zero.
+// The receiver retains stable backing for its lifetime.
+// Access neither freezes nor synchronizes backing.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// Media retains exact UTF-8 metadata and a tagged source. Assignment shares
+// InlineData; Clone detaches it. An inline tag preserves presence with empty bytes.
+// References grant no access or dereference authority.
+//
+// ProviderReferenceID is required within the provider scope, empty otherwise.
+func (v MediaView) ProviderReferenceID() string {
+	if v.value == nil {
+		return *new(string)
+	}
+	return v.value.ProviderReferenceID
 }
 
 // MIMEType reads MIMEType in O(1) without copying sibling payloads.

@@ -94,11 +94,12 @@ func ownerOverlays(ctx context.Context, targets []LoadConfig, excluded map[strin
 	for path, data := range excluded {
 		overlay[path] = data
 	}
-	for _, target := range targets {
+	for i, target := range targets {
 		pkgPath, declaration, stub, err := ownerOverlay(ctx, target, excluded)
 		if err != nil {
 			return nil, nil, err
 		}
+		targets[i] = declaration.Config
 		owners[pkgPath] = declaration
 		overlay[filepath.Join(target.Dir, target.Output)] = stub
 	}
@@ -118,18 +119,15 @@ func ownerOverlay(ctx context.Context, target LoadConfig, excluded map[string][]
 	if err != nil {
 		return "", nil, nil, err
 	}
-	if err := validateViewConfig(target, emit); err != nil {
+	if err := validateViewConfig(emit); err != nil {
 		return "", nil, nil, err
 	}
 	out := filepath.Join(target.Dir, target.Output)
-	roots := target.Types
-	if emit.view {
-		roots = nil // do not walk private handle/context state as DTO value roots
-	}
-	declaration, err := sourceOwner(pkg.CompiledGoFiles, out, roots, emit)
+	declaration, err := sourceOwner(pkg.CompiledGoFiles, out, target.Types, emit)
 	if err != nil {
 		return "", nil, nil, err
 	}
+	target.Types = declaration.Config.Types
 	if err := checkDeclarations(pkg.CompiledGoFiles, out, target.Types, emit, declaration.Overrides); err != nil {
 		return "", nil, nil, err
 	}
@@ -137,9 +135,6 @@ func ownerOverlay(ctx context.Context, target LoadConfig, excluded map[string][]
 		return "", nil, nil, err
 	}
 	declaration.Config = target
-	declaration.Config.Types = slices.Clone(target.Types)
-	slices.Sort(declaration.Config.Types)
-	declaration.Config.Types = slices.Compact(declaration.Config.Types)
 	return pkg.PkgPath, declaration, ownerStub(pkg.Name, declaration, emit), nil
 }
 
@@ -206,10 +201,12 @@ func bootstrapViewOverlays(ctx context.Context, targets []LoadConfig, overlay ma
 	return nil
 }
 
-// sourceOwner computes a syntactic local type closure for bootstrapping. Typed
-// schema validation remains authoritative for supported shapes and wire reachability.
+// sourceOwner resolves sorted roots from explicit selection or active source markers
+// and computes their syntactic local closure for bootstrapping. Typed schema
+// validation remains authoritative for supported shapes and wire reachability.
 func sourceOwner(files []string, out string, roots []string, emit capabilities) (*ownerDeclaration, error) {
 	specs := map[string]*ast.TypeSpec{}
+	includes := map[string]bool{}
 	validators := map[string]string{}
 	overrides := map[string]capabilities{}
 	fset := token.NewFileSet()
@@ -221,14 +218,22 @@ func sourceOwner(files []string, out string, roots []string, emit capabilities) 
 		if err != nil {
 			return nil, err
 		}
-		if err := ownerDeclarations(file, fset, specs, validators, overrides); err != nil {
+		// Generated declarations remain typechecked and can belong to a selected
+		// handwritten root's closure, but dtogen directives are source directives.
+		if err := ownerDeclarations(file, fset, specs, includes, validators, overrides, !ast.IsGenerated(file)); err != nil {
 			return nil, err
 		}
 	}
+	roots, err := ownerRootNames(roots, includes)
+	if err != nil {
+		return nil, err
+	}
 	c := &ownerClosure{specs: specs, selected: map[string]bool{}, wireNames: map[string]bool{}, visited: map[string]uint8{}}
-	for _, root := range roots {
-		if err := c.visit(root, emit.cbor); err != nil {
-			return nil, err
+	if !emit.view { // view roots are handles, not private DTO/context value closures
+		for _, root := range roots {
+			if err := c.visit(root, emit.cbor); err != nil {
+				return nil, err
+			}
 		}
 	}
 	for name, methods := range overrides {
@@ -241,7 +246,7 @@ func sourceOwner(files []string, out string, roots []string, emit capabilities) 
 			}
 		}
 	}
-	d := &ownerDeclaration{Validators: validators, Overrides: overrides, Wire: c.wireNames}
+	d := &ownerDeclaration{Config: LoadConfig{Types: roots}, Validators: validators, Overrides: overrides, Wire: c.wireNames}
 	for name := range c.selected {
 		d.Names = append(d.Names, name)
 	}
@@ -249,8 +254,32 @@ func sourceOwner(files []string, out string, roots []string, emit capabilities) 
 	return d, nil
 }
 
-// ownerDeclarations binds directives only to unambiguous named declarations.
-func ownerDeclarations(file *ast.File, fset *token.FileSet, specs map[string]*ast.TypeSpec, validators map[string]string, overrides map[string]capabilities) error {
+// ownerRootNames validates the mutually exclusive selection sources and returns
+// sorted, unique root names without retaining the caller's slice.
+func ownerRootNames(roots []string, includes map[string]bool) ([]string, error) {
+	if len(includes) != 0 && len(roots) != 0 {
+		return nil, fmt.Errorf("dtogen include markers cannot be combined with explicit -types")
+	}
+	roots = slices.Clone(roots)
+	for name := range includes {
+		roots = append(roots, name)
+	}
+	slices.Sort(roots)
+	roots = slices.Compact(roots)
+	if len(roots) == 0 {
+		return nil, fmt.Errorf("select at least one root type with dtogen:include or -types")
+	}
+	for _, name := range roots {
+		if !token.IsIdentifier(name) || name == "_" {
+			return nil, fmt.Errorf("root %q must name a local type", name)
+		}
+	}
+	return roots, nil
+}
+
+// ownerDeclarations records local declarations and, for handwritten source,
+// binds directives only to unambiguous named declarations.
+func ownerDeclarations(file *ast.File, fset *token.FileSet, specs map[string]*ast.TypeSpec, includes map[string]bool, validators map[string]string, overrides map[string]capabilities, directives bool) error {
 	bound := map[token.Pos]bool{}
 	for _, decl := range file.Decls {
 		g, ok := decl.(*ast.GenDecl)
@@ -263,14 +292,20 @@ func ownerDeclarations(file *ast.File, fset *token.FileSet, specs map[string]*as
 				continue
 			}
 			specs[spec.Name.Name] = spec
+			if !directives {
+				continue
+			}
 			groups := []*ast.CommentGroup{spec.Doc}
 			if len(g.Specs) == 1 {
 				groups = append(groups, g.Doc)
 			}
-			if err := typeDirectives(spec, groups, fset, validators, overrides, bound); err != nil {
+			if err := typeDirectives(spec, groups, fset, includes, validators, overrides, bound); err != nil {
 				return err
 			}
 		}
+	}
+	if !directives {
+		return nil
 	}
 	for _, group := range file.Comments {
 		for _, c := range group.List {
@@ -285,7 +320,7 @@ func ownerDeclarations(file *ast.File, fset *token.FileSet, specs map[string]*as
 	return nil
 }
 
-func typeDirectives(spec *ast.TypeSpec, groups []*ast.CommentGroup, fset *token.FileSet, validators map[string]string, overrides map[string]capabilities, bound map[token.Pos]bool) error {
+func typeDirectives(spec *ast.TypeSpec, groups []*ast.CommentGroup, fset *token.FileSet, includes map[string]bool, validators map[string]string, overrides map[string]capabilities, bound map[token.Pos]bool) error {
 	for _, group := range groups {
 		if group == nil {
 			continue
@@ -299,6 +334,13 @@ func typeDirectives(spec *ast.TypeSpec, groups []*ast.CommentGroup, fset *token.
 			}
 			bound[c.Pos()] = true
 			words := strings.Fields(strings.TrimPrefix(c.Text, "//dtogen:"))
+			if len(words) == 1 && words[0] == "include" {
+				if includes[spec.Name.Name] {
+					return fmt.Errorf("%s: duplicate dtogen include marker", fset.Position(c.Pos()))
+				}
+				includes[spec.Name.Name] = true
+				continue
+			}
 			if len(words) == 2 && words[0] == "override" {
 				methods := overrides[spec.Name.Name]
 				switch words[1] {

@@ -14,6 +14,7 @@ import (
 // Construction, cloning, and equality do not validate the format contract.
 //
 //dtogen:validate validateCBOR
+//dtogen:include
 type Commit struct {
 	// FormatVersion is the commit/record envelope version, currently 1.
 	FormatVersion int64 `cbor:"v"`

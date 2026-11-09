@@ -13,6 +13,7 @@ import (
 // enclosing envelope at the domain conversion boundary.
 //
 //dtogen:validate Validate
+//dtogen:include
 type ModelBinding struct {
 	// Route is a required nonempty exact UTF-8 logical provider/route name interpreted
 	// relative to the preparing harness's configuration, not a global provider

@@ -10,11 +10,11 @@ follow its [implementation guidance](AGENTS.md).
 
 ## Declare an owner
 
-Each owner package declares one literal `go:generate` command. Its `-types`
-list selects locally defined, nongeneric named roots. `-emit` explicitly selects
-any nonempty combination of `cbor`, `clone`, and `equal`, or the standalone `view`
-capability. For value/codec declarations, `-types` selects DTO roots; for view-only
-declarations, it selects local handwritten view handles. Only selected methods
+Each owner package declares one literal `go:generate` command and marks its local,
+nongeneric named roots with `//dtogen:include` directly on their type declarations.
+`-emit` explicitly selects any nonempty combination of `cbor`, `clone`, and `equal`,
+or the standalone `view` capability. Value/codec declarations select DTO roots;
+view-only declarations select local handwritten view handles. Only selected methods
 are emitted. CBOR methods cover persisted local named types;
 Clone/Equal cover the complete local named closure, including excluded state.
 Imported named types require their own owner declaration with the capabilities
@@ -23,19 +23,36 @@ writes prerequisite artifacts before the requesting package.
 It never treats compatible handwritten methods as an opt-in declaration.
 
 ```go
-//go:generate go -C ../../../../.. run ./internal/dtogen/cmd/dtogen -dir engine/kernel/codec/internal/fixture -types Catalog,Sample,Link,Links -emit cbor,clone,equal -out zz_cbor_generated.go
+//go:generate go -C ../../../../.. run ./internal/dtogen/cmd/dtogen -dir engine/kernel/codec/internal/fixture -emit cbor,clone,equal -out zz_cbor_generated.go
+
+// Catalog exercises nested containers and imported DTOs.
+//
+//dtogen:include
+type Catalog struct {
+    // ...
+}
 ```
 
 For another package, adjust `-C` to reach the repository root, `-dir` to its
-repository-relative directory, `-types` to its comma-separated local roots, and
-`-out` to a package-local, non-test `.go` filename. Root order and repetitions
-do not affect the output. A package has one generated output file, which
-contains its selected local closure.
+repository-relative directory, and `-out` to a package-local, non-test `.go`
+filename. Mark roots only: value operations follow the local named closure
+automatically. A package has one generated output file containing its selected
+local closure.
 
-Commands use exactly this form:
+Markers are read only from active compiled handwritten files, excluding tests,
+generated output and build-excluded files. Put each marker in the type's doc
+comment (inside a grouped declaration, on the individual type). Duplicate,
+malformed, misplaced or ambiguous markers fail generation; aliases cannot be
+roots. Roots are sorted for deterministic output.
+
+Packages without include markers can instead select roots with a nonempty
+comma-separated `-types` list. Its order and repetitions do not affect output.
+Combining `-types` with include markers is an error; explicit `-types=` is invalid.
+
+Commands use this form, with `-types <roots>` only for explicit-list selection:
 
 ```text
-go -C <repository> run ./internal/dtogen/cmd/dtogen -dir <package> -types <roots> -emit cbor,clone,equal -out <filename>
+go -C <repository> run ./internal/dtogen/cmd/dtogen -dir <package> -emit cbor,clone,equal -out <filename>
 ```
 
 Arguments must be literal and unquoted. Variable expansion, `-command` aliases,
@@ -76,11 +93,12 @@ never traverses directory symlinks.
 ## DTO-backed views
 
 A destination owns one view-only declaration and artifact, independently of the
-DTO source owner. Select local view types explicitly; the generator does not scan
-names ending in `View` or generate value operations on their backing:
+DTO source owner. Mark each selected local view type with `//dtogen:include`;
+packages without markers can instead list handles with `-types`. The generator
+does not scan names ending in `View` or generate value operations on their backing:
 
 ```go
-//go:generate go -C ../../.. run ./internal/dtogen/cmd/dtogen -dir engine/kernel/session -emit view -types MediaView,ContentPartView -out zz_views_generated.go
+//go:generate go -C ../../.. run ./internal/dtogen/cmd/dtogen -dir engine/kernel/session -emit view -out zz_views_generated.go
 ```
 
 Keep layouts handwritten, with private, nonembedded fields. Each selected view
@@ -110,20 +128,14 @@ review and test their ownership, zero, presence and lifetime contracts.
 type Media struct {
     MIMEType string
     Source MediaSourceKind
-    InlineData []byte `view:"manual"`
+    InlineData []byte
 }
 
 // In the consuming view package:
+// MediaView retains immutable media backing.
+//
+//dtogen:include
 type MediaView struct { value *format.Media }
-
-// InlineData reports tag-selected presence, including present-empty inline data.
-// The returned bytes borrow stable backing; Copy explicitly detaches them.
-func (v MediaView) InlineData() (views.Bytes, bool) {
-    if v.value == nil || v.value.Source != format.MediaSourceInline {
-        return views.Bytes{}, false
-    }
-    return views.BorrowBytes(v.value.InlineData), true
-}
 ```
 
 Mechanical methods return the following concrete types:
@@ -148,8 +160,12 @@ parent currently needs that adapter.
 
 Context-bearing views may share the same DTO policy but are never automatically
 constructed. Required, optional and collection navigation into a child requiring
-context must be manual or omitted. No adapter propagates or captures scope or
-materializes an intermediate `[]View`. For example, `RequestedCallDataView` is the
+context must be manual or omitted. Handwritten collection adapters can capture
+required scope, as `EffectiveInputView.Inputs` captures its enclosing `RunID` in a
+`views.SliceView` adapter. Captured context stays retained and stable with the
+backing; an escaping closure can allocate without copying payloads. Generated
+adapters remain context-free and never materialize an intermediate `[]View`.
+For example, `RequestedCallDataView` is the
 context-free adapter while `RequestedCallView` carries scoped identity and keeps
 its derived `ID` method handwritten. Unsupported untagged fields fail rather than
 exporting mutable values; use manual policy for opaque immutable identity values

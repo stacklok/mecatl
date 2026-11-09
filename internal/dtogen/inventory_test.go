@@ -202,6 +202,14 @@ func TestTaskGenerationAndFreshness(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	catalog := filepath.Join(owner, "catalog.go")
+	initialCatalog, err := os.ReadFile(catalog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Count(string(initialCatalog), "//dtogen:include\n") != 1 {
+		t.Fatal("expected one Catalog root marker")
+	}
 	// Wrappers exercise all public generated APIs in the regeneration overlay.
 	writeFixture(t, filepath.Join(owner, "wrapper.go"), `package fixture
 import "github.com/stacklok/mecatl/engine/kernel/codec"
@@ -317,8 +325,9 @@ func roundtrip(v Sample, l codec.Limits) (Sample,error) {
 		}
 	}
 	// Removing a root changes bytes; removing the whole target changes inventory.
-	writeFixture(t, inventory, strings.Replace(string(initialInventory), "Catalog,Sample", "Sample", 1))
+	writeFixture(t, catalog, strings.Replace(string(initialCatalog), "//dtogen:include\n", "", 1))
 	run(t, "generate:codecs:check", "stale data output", true)
+	writeFixture(t, catalog, string(initialCatalog))
 	writeFixture(t, inventory, "package fixture\n")
 	run(t, "generate:codecs:check", "extra data output", true)
 	writeFixture(t, inventory, string(initialInventory))
@@ -329,8 +338,7 @@ func roundtrip(v Sample, l codec.Limits) (Sample,error) {
 	if err := os.Remove(bad); err != nil {
 		t.Fatal(err)
 	}
-	writeFixture(t, bad, "package fixture\ntype Unsupported struct { V int `cbor:\"v\"` }\n")
-	writeFixture(t, inventory, strings.Replace(string(initialInventory), "Catalog,Sample", "Catalog,Sample,Unsupported", 1))
+	writeFixture(t, bad, "package fixture\n//dtogen:include\ntype Unsupported struct { V int `cbor:\"v\"` }\n")
 	run(t, "generate:codecs", "fixed-width", true)
 	if err := os.Remove(bad); err != nil {
 		t.Fatal(err)

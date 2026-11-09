@@ -1,4 +1,4 @@
-//go:generate go -C ../../../.. run ./internal/dtogen/cmd/dtogen -dir engine/kernel/session/format -types Created,UserInput,RunStarted,EffectiveInput,Instructions,ToolCatalog,ModelBinding,SourceHead,ConstructionRecipe,ModelRequest,OpaqueProviderData,InvocationUsage,ObservedEvidence,RequestedCall,ResponseContent,ResponseItem,ModelResponse,InvocationFailure,CaptureFailureEvidence,RunEnded -emit cbor,clone,equal -out zz_cbor_generated.go
+//go:generate go -C ../../../.. run ./internal/dtogen/cmd/dtogen -dir engine/kernel/session/format -emit cbor,clone,equal -out zz_cbor_generated.go
 
 // Package format owns the isolated session's mutable persistence DTOs and
 // payload-local validation. Generated CBOR operations enforce canonical encoding

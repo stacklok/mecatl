@@ -95,13 +95,12 @@ func inspectPayloadParts(got views.SliceView[sessionformat.ContentPart, session.
 			continue
 		}
 		m := want[i].Media
-		data, inline := media.InlineData()
-		uri, remote := media.RemoteURI()
-		provider, bound := media.ProviderName()
-		scope, scoped := media.ProviderScope()
-		ref, referenced := media.ProviderReferenceID()
+		data := media.InlineData()
+		uri := media.RemoteURI()
+		provider := media.ProviderName()
+		scope := media.ProviderScope()
+		ref := media.ProviderReferenceID()
 		if media.Kind() != m.Kind || media.MIMEType() != m.MIMEType || media.FormatHint() != m.FormatHint || media.Filename() != m.Filename || media.Title() != m.Title || media.Source() != m.Source ||
-			inline != (m.Source == session.MediaSourceInline) || remote != (m.Source == session.MediaSourceRemote) || bound != (m.Source == session.MediaSourceProvider) || scoped != bound || referenced != bound ||
 			uri != m.RemoteURI || provider != m.ProviderName || scope != m.ProviderScope || ref != m.ProviderReferenceID {
 			panic("media metadata/presence")
 		}
@@ -112,7 +111,9 @@ func inspectPayloadParts(got views.SliceView[sessionformat.ContentPart, session.
 
 // traverseCompletePayloadViews visits every scalar, presence bit, full identity,
 // collection element and borrowed byte in the expanded context payload families.
-func traverseCompletePayloadViews(snap session.Snapshot, want payloadViewWant) int {
+// The scoped collection is captured before measurement; its construction is
+// measured separately from context-free navigation and complete leaf traversal.
+func traverseCompletePayloadViews(snap session.Snapshot, inputs views.SliceView[sessionformat.InputItem, session.InputItemView], want payloadViewWant) int {
 	created, createdOK := snap.RecordAt(0).Created()
 	started, startedOK := snap.RecordAt(1).RunStarted()
 	input, inputOK := snap.RecordAt(2).UserInput()
@@ -125,7 +126,7 @@ func traverseCompletePayloadViews(snap session.Snapshot, want payloadViewWant) i
 		panic("root scope/presence")
 	}
 	leafBytes := inspectPayloadParts(input.Parts(), want.parts)
-	if instructions.Blocks().Len() != len(want.instructions.Blocks) || catalog.Tools().Len() != len(want.catalog.Tools) || effective.InputCount() != len(want.effective.Inputs) {
+	if instructions.Blocks().Len() != len(want.instructions.Blocks) || catalog.Tools().Len() != len(want.catalog.Tools) || inputs.Len() != len(want.effective.Inputs) {
 		panic("collection count")
 	}
 	for i, block := range instructions.Blocks().All() {
@@ -147,11 +148,14 @@ func traverseCompletePayloadViews(snap session.Snapshot, want payloadViewWant) i
 	}
 	leafBytes += inspectPayloadBytes(binding.Settings(), want.binding.Settings)
 	i := 0
-	for item := range effective.Inputs() {
+	for index, item := range inputs.All() {
+		if index != i {
+			panic("scoped iteration index")
+		}
 		w := want.effective.Inputs[i]
 		ref, referenceOK := item.UserInputID()
 		inline, inlineOK := item.Inline()
-		if item != effective.InputAt(i) || referenceOK != (w.UserInputID != nil) || inlineOK != (w.Inline != nil) {
+		if item != inputs.At(i) || referenceOK != (w.UserInputID != nil) || inlineOK != (w.Inline != nil) {
 			panic("input presence/backing")
 		}
 		if referenceOK && ref != want.input {
@@ -188,7 +192,9 @@ func TestCompletePayloadViewTraversal(t *testing.T) {
 			for seam, s := range sessions {
 				t.Run(seam, func(t *testing.T) {
 					snap := s.Snapshot()
-					traverse := func() { payloadViewBytesSink = traverseCompletePayloadViews(snap, want) }
+					effective, _ := snap.RecordAt(6).EffectiveInput()
+					inputs := effective.Inputs()
+					traverse := func() { payloadViewBytesSink = traverseCompletePayloadViews(snap, inputs, want) }
 					traverse()
 					if payloadViewBytesSink != wantBytes {
 						t.Fatalf("visited %d bytes, want %d", payloadViewBytesSink, wantBytes)

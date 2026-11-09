@@ -39,6 +39,8 @@ func newInstructionsRecord(v Instructions, limits codec.Limits) (*materializedRe
 
 // InstructionsView retains immutable accepted backing storage, including its
 // record. Capture and navigation cost O(1); zero has no history or blocks.
+//
+//dtogen:include
 type InstructionsView struct {
 	scope historyid.HistoryID
 	value *sessionformat.Instructions
@@ -49,6 +51,8 @@ func (v InstructionsView) HistoryID() historyid.HistoryID { return v.scope }
 
 // InstructionBlockView retains immutable backing storage. Capture and navigation
 // cost O(1); zero has no parts and a zero source.
+//
+//dtogen:include
 type InstructionBlockView struct {
 	value *sessionformat.InstructionBlock
 }

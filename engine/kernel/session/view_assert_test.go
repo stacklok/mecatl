@@ -14,15 +14,14 @@ func sourceMatches(v session.ContentSourceView, want session.ContentSource) bool
 }
 
 func mediaMatches(v session.MediaView, want session.Media) bool {
-	data, inline := v.InlineData()
-	uri, remote := v.RemoteURI()
-	provider, bound := v.ProviderName()
-	scope, scopeOK := v.ProviderScope()
-	ref, refOK := v.ProviderReferenceID()
+	data := v.InlineData()
+	uri := v.RemoteURI()
+	provider := v.ProviderName()
+	scope := v.ProviderScope()
+	ref := v.ProviderReferenceID()
 	return v.Kind() == want.Kind && v.MIMEType() == want.MIMEType && v.FormatHint() == want.FormatHint && v.Filename() == want.Filename && v.Title() == want.Title && v.Source() == want.Source &&
-		inline == (want.Source == session.MediaSourceInline) && bytes.Equal(data.Copy(), want.InlineData) &&
-		remote == (want.Source == session.MediaSourceRemote) && uri == want.RemoteURI &&
-		bound == (want.Source == session.MediaSourceProvider) && scopeOK == bound && refOK == bound && provider == want.ProviderName && scope == want.ProviderScope && ref == want.ProviderReferenceID
+		bytes.Equal(data.Copy(), want.InlineData) && uri == want.RemoteURI &&
+		provider == want.ProviderName && scope == want.ProviderScope && ref == want.ProviderReferenceID
 }
 
 func partMatches(v session.ContentPartView, want session.ContentPart) bool {
@@ -56,11 +55,11 @@ func attributedMatches(v session.AttributedInputView, want session.AttributedInp
 }
 
 func effectiveMatches(v session.EffectiveInputView, want session.EffectiveInput) bool {
-	if v.InputCount() != len(want.Inputs) {
+	if v.Inputs().Len() != len(want.Inputs) {
 		return false
 	}
 	for i, item := range want.Inputs {
-		got := v.InputAt(i)
+		got := v.Inputs().At(i)
 		id, refOK := got.UserInputID()
 		inline, inlineOK := got.Inline()
 		if refOK != (item.UserInputID != nil) || inlineOK != (item.Inline != nil) || (refOK && (id.RunRelative() != *item.UserInputID || id.RunID() != v.RunID())) || (inlineOK && !attributedMatches(inline, *item.Inline)) {
@@ -107,7 +106,7 @@ func bindingMatches(v session.ModelBindingView, want session.ModelBinding) bool 
 
 func inlineAt(t *testing.T, v session.EffectiveInputView, i int) session.AttributedInputView {
 	t.Helper()
-	in, ok := v.InputAt(i).Inline()
+	in, ok := v.Inputs().At(i).Inline()
 	if !ok {
 		t.Fatal("missing inline branch")
 	}
@@ -125,9 +124,6 @@ func mediaAt(t *testing.T, part session.ContentPartView) session.MediaView {
 
 func mutateMediaBytes(t *testing.T, part session.ContentPartView) {
 	t.Helper()
-	data, ok := mediaAt(t, part).InlineData()
-	if !ok {
-		t.Fatal("missing inline media")
-	}
+	data := mediaAt(t, part).InlineData()
 	clear(data.Copy())
 }

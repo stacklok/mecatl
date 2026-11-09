@@ -6,7 +6,8 @@ import "iter"
 // backing slice and adapts each element on demand without constructing a []V.
 // The zero value is an empty view. SliceView neither freezes nor synchronizes
 // access to its backing; the backing must remain valid and stable for the
-// lifetime of every derived view.
+// lifetime of every derived view. It also retains any context captured by its
+// adapter; that context must remain stable for the same lifetime.
 //
 // T is retained only as backing for the adapter. The adapter must not expose a
 // mutable element or otherwise let callers mutate retained data.
@@ -18,8 +19,10 @@ type SliceView[T any, V any] struct {
 // BorrowSliceView returns a view that borrows values and adapts each element on
 // demand. It retains values without copying, so callers must own values and
 // keep its elements stable for the lifetime of the returned view and values
-// obtained from it. adapt must be non-nil and noncapturing, must not mutate its
-// input, and must return a safe immutable view, which may retain the element.
+// obtained from it. adapt must be non-nil, must not mutate its input or captured
+// context, and must return a safe immutable view, which may retain the element
+// and context. Captured context is retained and must remain stable for that same
+// lifetime. An escaping adapter closure may allocate.
 // BorrowSliceView does not freeze data or synchronize access. Construction takes
 // O(1) time and space without invoking adapt.
 func BorrowSliceView[T any, V any](values []T, adapt func(*T) V) SliceView[T, V] {

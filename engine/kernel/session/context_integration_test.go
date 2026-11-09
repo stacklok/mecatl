@@ -124,14 +124,14 @@ func TestContextValuesIntegrationAndPinnedViews(t *testing.T) {
 		if !ok {
 			t.Fatal("missing effective input")
 		}
-		if increment.InputCount() != 5 {
+		if increment.Inputs().Len() != 5 {
 			t.Fatal("lost attributed item boundaries")
 		}
 		skill, contextInput := inlineAt(t, increment, 1), inlineAt(t, increment, 4)
 		if skill.Actor() != "skill/example" || contextInput.Actor() != " \textension/尾 e\u0301\r\n " {
 			t.Fatalf("actors changed: %q, %q", skill.Actor(), contextInput.Actor())
 		}
-		ref, present := increment.InputAt(0).UserInputID()
+		ref, present := increment.Inputs().At(0).UserInputID()
 		resolved, found := snapshot.UserInputByID(ref)
 		if !present || !found || resolved.ID() != input.ID() {
 			t.Fatal("reference did not resolve in pinned snapshot")
@@ -180,7 +180,7 @@ func TestContextValuesIntegrationAndPinnedViews(t *testing.T) {
 	assertExactContent(applied.Snapshot())
 	clear(tv.Tools().At(0).ArgumentSchema().Copy())
 	clear(mv.Settings().Copy())
-	ref, ok := ev.InputAt(0).UserInputID()
+	ref, ok := ev.Inputs().At(0).UserInputID()
 	if !ok || ref != authoredID {
 		t.Fatal("missing authored identity")
 	}
@@ -223,7 +223,7 @@ func TestContextValuesIntegrationAndPinnedViews(t *testing.T) {
 		t.Fatal("wrong-kind effective")
 	}
 	empty, ok := next.RecordAt(9).EffectiveInput()
-	if !ok || empty.InputCount() != 0 || empty.RunID() != run {
+	if !ok || empty.Inputs().Len() != 0 || empty.RunID() != run {
 		t.Fatal("empty increment lost")
 	}
 	loaded, err := session.Load(context.Background(), h, scope, p)
@@ -531,7 +531,7 @@ func TestNewRecordExactVersionsAndZeroViews(t *testing.T) {
 	if v, ok := r.ModelBinding(); ok || v.HistoryID() != (historyid.HistoryID{}) || v.Route() != "" || v.API() != "" || v.Model() != "" || v.Settings().Copy() != nil {
 		t.Fatal("zero binding")
 	}
-	if v, ok := r.EffectiveInput(); ok || v.RunID() != (session.RunID{}) || v.InputCount() != 0 {
+	if v, ok := r.EffectiveInput(); ok || v.RunID() != (session.RunID{}) || v.Inputs().Len() != 0 {
 		t.Fatal("zero effective")
 	}
 }

@@ -230,9 +230,9 @@ func TestModelResponseViewRepresentationOwnershipAndShortCircuit(t *testing.T) {
 		t.Fatal("text normalized")
 	}
 	media, _ := c.Parts().At(2).Media()
-	mediaData, _ := media.InlineData()
+	mediaData := media.InlineData()
 	clear(mediaData.Copy())
-	mediaData, _ = media.InlineData()
+	mediaData = media.InlineData()
 	if !bytes.Equal(mediaData.Copy(), []byte{0xff, 0}) {
 		t.Fatal("media export aliases")
 	}

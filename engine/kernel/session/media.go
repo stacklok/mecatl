@@ -2,7 +2,6 @@ package session
 
 import (
 	sessionformat "github.com/stacklok/mecatl/engine/kernel/session/format"
-	"github.com/stacklok/mecatl/engine/kernel/views"
 )
 
 // MediaKind is a closed content category, not a provider capability.
@@ -35,48 +34,9 @@ type Media = sessionformat.Media
 
 // MediaView retains immutable backing storage, including inline bytes. Capture
 // and metadata navigation cost O(1). Zero has empty metadata and no source branch.
+//
+//dtogen:include
 type MediaView struct{ value *sessionformat.Media }
-
-// InlineData returns borrowed bytes only for inline media, including present-empty
-// bytes. The view retains stable backing; Copy detaches only this byte leaf.
-func (v MediaView) InlineData() (views.Bytes, bool) {
-	if v.value == nil || v.value.Source != MediaSourceInline {
-		return views.Bytes{}, false
-	}
-	return views.BorrowBytes(v.value.InlineData), true
-}
-
-// RemoteURI returns the retained URI only for remote media; no access is granted.
-func (v MediaView) RemoteURI() (string, bool) {
-	if v.Source() != MediaSourceRemote {
-		return "", false
-	}
-	return v.value.RemoteURI, true
-}
-
-// ProviderName returns the logical provider only for provider-backed media.
-func (v MediaView) ProviderName() (string, bool) {
-	if v.Source() != MediaSourceProvider {
-		return "", false
-	}
-	return v.value.ProviderName, true
-}
-
-// ProviderScope returns the logical storage scope only for provider-backed media.
-func (v MediaView) ProviderScope() (string, bool) {
-	if v.Source() != MediaSourceProvider {
-		return "", false
-	}
-	return v.value.ProviderScope, true
-}
-
-// ProviderReferenceID returns the retained reference only for provider-backed media.
-func (v MediaView) ProviderReferenceID() (string, bool) {
-	if v.Source() != MediaSourceProvider {
-		return "", false
-	}
-	return v.value.ProviderReferenceID, true
-}
 
 func checkMediaSize(v Media, b *valueBudget) {
 	b.text(string(v.Kind))

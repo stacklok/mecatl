@@ -48,7 +48,7 @@ func TestContentTextRecordOwnership(t *testing.T) {
 			inputView, _ := view.UserInputByID(input)
 			instructionView, _ := view.Instructions()
 			effectiveView, _ := view.RecordAt(4).EffectiveInput()
-			inline, _ := effectiveView.InputAt(0).Inline()
+			inline, _ := effectiveView.Inputs().At(0).Inline()
 			for _, part := range []ContentPartView{inputView.Parts().At(0), instructionView.Blocks().At(0).Parts().At(0), inline.Parts().At(0)} {
 				if got, ok := part.Text(); !ok || got != text {
 					t.Fatalf("record/admission text = %q, %t; want %q", got, ok, text)

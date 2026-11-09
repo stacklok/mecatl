@@ -56,6 +56,8 @@ func newInvocationFailureRecord(v InvocationFailure, request ModelRequestID, lim
 // InvocationFailureView is an immutable observed outcome. Zero has zero request
 // and empty class. Structured-child access is O(1); nested byte views borrow
 // retained backing, and Copy detaches only their selected leaf.
+//
+//dtogen:include
 type InvocationFailureView struct {
 	scope historyid.HistoryID
 	value *sessionformat.InvocationFailure

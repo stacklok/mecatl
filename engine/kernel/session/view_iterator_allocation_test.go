@@ -9,20 +9,24 @@ import (
 	"testing"
 
 	"github.com/stacklok/mecatl/engine/kernel/session"
+	sessionformat "github.com/stacklok/mecatl/engine/kernel/session/format"
+	"github.com/stacklok/mecatl/engine/kernel/views"
 )
 
 var (
-	iteratorPartSink   session.ContentPartView
-	iteratorItemSink   session.InputItemView
-	iteratorBlockSink  session.InstructionBlockView
-	iteratorToolSink   session.ToolDefinitionView
-	iteratorRecordSink session.RecordView
-	iteratorRunSink    session.RunView
-	iteratorCountSink  int
-	iteratorHeapSink   *session.ContentPartView
-	iteratorBytesSink  []byte
-	iteratorPartsSink  []session.ContentPartView
-	iteratorSeqSink    iter.Seq2[int, session.ContentPartView]
+	iteratorPartSink     session.ContentPartView
+	iteratorItemSink     session.InputItemView
+	iteratorBlockSink    session.InstructionBlockView
+	iteratorToolSink     session.ToolDefinitionView
+	iteratorRecordSink   session.RecordView
+	iteratorRunSink      session.RunView
+	iteratorCountSink    int
+	iteratorHeapSink     *session.ContentPartView
+	iteratorBytesSink    []byte
+	iteratorPartsSink    []session.ContentPartView
+	iteratorSeqSink      iter.Seq2[int, session.ContentPartView]
+	iteratorInputsSink   views.SliceView[sessionformat.InputItem, session.InputItemView]
+	iteratorInputSeqSink iter.Seq2[int, session.InputItemView]
 )
 
 type iteratorTraversal struct {
@@ -33,6 +37,8 @@ type iteratorTraversal struct {
 // Keep concrete public calls in these consumers: factoring iteration into a
 // generic/opaque helper would measure a different allocation/escape contract.
 func iteratorTraversals(v iteratorViews) []iteratorTraversal {
+	// Scope capture is measured separately from traversal of retained backing.
+	inputs := v.effective.Inputs()
 	return []iteratorTraversal{
 		{"user/direct", func() {
 			n := 0
@@ -112,17 +118,17 @@ func iteratorTraversals(v iteratorViews) []iteratorTraversal {
 		}},
 		{"effective/direct", func() {
 			n := 0
-			for item := range v.effective.Inputs() {
+			for _, item := range inputs.All() {
 				iteratorItemSink = item
 				n++
 			}
 			iteratorCountSink = n
 		}},
 		{"effective/reused", func() {
-			seq := v.effective.Inputs()
+			seq := inputs.All()
 			n := 0
 			for range 2 {
-				for item := range seq {
+				for _, item := range seq {
 					iteratorItemSink = item
 					n++
 				}
@@ -217,7 +223,7 @@ func iteratorTraversals(v iteratorViews) []iteratorTraversal {
 		}},
 		{"nested/effective", func() {
 			n := 0
-			for item := range v.effective.Inputs() {
+			for _, item := range inputs.All() {
 				inline, _ := item.Inline()
 				for _, part := range inline.Parts().All() {
 					iteratorPartSink = part
@@ -358,7 +364,7 @@ func TestViewIteratorTraversalAllocations(t *testing.T) {
 						{"owned-bytes", func() {
 							for _, part := range v.user.Parts().All() {
 								media, _ := part.Media()
-								data, _ := media.InlineData()
+								data := media.InlineData()
 								iteratorBytesSink = data.Copy()
 							}
 						}, axis.count, axis.count * axis.payload},

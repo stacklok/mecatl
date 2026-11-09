@@ -40,6 +40,7 @@ func (v ToolDefinition) Validate() error {
 // and restored from the enclosing envelope at the domain conversion boundary.
 //
 //dtogen:validate validateLocal
+//dtogen:include
 type ToolCatalog struct {
 	// Tools preserves advertised order. Names must be unique within this replacement
 	// (checked locally); codec traversal validates each definition. Nil and empty

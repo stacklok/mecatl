@@ -1,4 +1,4 @@
-//go:generate go -C ../../../.. run ./internal/dtogen/cmd/dtogen -dir engine/kernel/history/id -types HistoryID -emit cbor,clone,equal -out zz_cbor_generated.go
+//go:generate go -C ../../../.. run ./internal/dtogen/cmd/dtogen -dir engine/kernel/history/id -emit cbor,clone,equal -out zz_cbor_generated.go
 
 // Package id defines history identity values independently of history formats
 // and storage. Content-addressed commit identifiers are a separate contract.
@@ -16,6 +16,7 @@ import (
 // CBOR is the underlying resource ID text, with no additional wrapping.
 //
 //dtogen:validate validateCBOR
+//dtogen:include
 type HistoryID struct {
 	value resourceid.ID `cbor:",value"` //nolint:revive // dtogen's explicit transparent representation, not a standard CBOR tag option.
 }

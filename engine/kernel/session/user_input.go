@@ -33,6 +33,8 @@ func newUserInputRecord(v UserInput, id UserInputID, limits codec.Limits) (*mate
 
 // UserInputView retains immutable accepted backing storage, including its record.
 // Copying or navigating a handle costs O(1). Zero has zero ID and no parts.
+//
+//dtogen:include
 type UserInputView struct {
 	scope historyid.HistoryID
 	value *sessionformat.UserInput

@@ -1,4 +1,4 @@
-//go:generate go -C ../../.. run ./internal/dtogen/cmd/dtogen -dir engine/kernel/session -emit view -types OpaqueProviderDataView,InvocationUsageView,ObservedEvidenceView,MediaView,ContentPartView,ConstructionRecipeView,SourceHeadView,ModelRequestView,ModelResponseView,RequestedCallDataView,RequestedCallView,ResponseItemView,ResponseContentView,CreatedView,RunStartedView,UserInputView,EffectiveInputView,InputItemView,AttributedInputView,InstructionsView,InstructionBlockView,ToolCatalogView,ToolDefinitionView,ModelBindingView,ContentSourceView,WorkspaceFileSourceView,InvocationFailureView,RunEndedView,CaptureFailureEvidenceView -out zz_views_generated.go
+//go:generate go -C ../../.. run ./internal/dtogen/cmd/dtogen -dir engine/kernel/session -emit view -out zz_views_generated.go
 
 // Package session interprets accepted history as lifecycle and retained context
 // for the isolated kernel. It validates and submits ordered batches through a

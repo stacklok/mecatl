@@ -18,10 +18,7 @@ import (
 
 const viewsImportPath = "github.com/stacklok/mecatl/engine/kernel/views"
 
-func validateViewConfig(c LoadConfig, emit capabilities) error {
-	if len(c.Types) == 0 {
-		return fmt.Errorf("select at least one local -types root")
-	}
+func validateViewConfig(emit capabilities) error {
 	if emit.view && (emit.cbor || emit.clone || emit.equal) {
 		return fmt.Errorf("view declarations require view-only -emit view; select value capabilities independently")
 	}

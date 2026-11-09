@@ -12,6 +12,7 @@ import (
 // Sequence or CID is invalid. It is a reference, not record framing or a record ID.
 //
 //dtogen:validate Validate
+//dtogen:include
 type SourceHead struct {
 	// Sequence is the required positive accepted-commit sequence within the
 	// enclosing history. Local validation does not prove ancestry or acceptance.
@@ -35,6 +36,7 @@ func (v SourceHead) Validate() error {
 // detaches them.
 //
 //dtogen:validate Validate
+//dtogen:include
 type ConstructionRecipe struct {
 	// Algorithm is the required nonempty UTF-8 name of the construction algorithm.
 	// This payload does not resolve or execute the named algorithm.
@@ -66,6 +68,7 @@ func (v ConstructionRecipe) Validate() error {
 // provenance. Validate requires the fully populated persisted shape.
 //
 //dtogen:validate validateLocal
+//dtogen:include
 type ModelRequest struct {
 	// RunID is the required positive numeric run component within the history
 	// supplied by the enclosing envelope.

@@ -10,6 +10,8 @@ type OpaqueProviderData = sessionformat.OpaqueProviderData
 // OpaqueProviderDataView retains immutable provider-owned metadata backing for its
 // lifetime. Zero returns empty scalars and zero Bytes. Reads are O(1); Data borrows
 // its leaf and Data().Copy() explicitly detaches only those bytes.
+//
+//dtogen:include
 type OpaqueProviderDataView struct {
 	value *sessionformat.OpaqueProviderData
 }
@@ -22,6 +24,8 @@ type InvocationUsage = sessionformat.InvocationUsage
 // InvocationUsageView is immutable reported invocation usage. Zero and absent
 // counters return zero, false; Raw returns a zero view, false when absent. All reads
 // are O(1), and Raw shares no mutable access with callers.
+//
+//dtogen:include
 type InvocationUsageView struct {
 	value *sessionformat.InvocationUsage
 }
@@ -35,6 +39,8 @@ type ObservedEvidence = sessionformat.ObservedEvidence
 // ObservedEvidenceView is immutable invocation evidence. Zero and absent fields
 // return an empty string, false, preserving explicitly present empty strings. Reads
 // are O(1) and expose no mutable storage.
+//
+//dtogen:include
 type ObservedEvidenceView struct {
 	value *sessionformat.ObservedEvidence
 }

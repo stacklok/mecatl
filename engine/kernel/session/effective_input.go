@@ -1,12 +1,11 @@
 package session
 
 import (
-	"iter"
-
 	"github.com/stacklok/mecatl/engine/kernel/codec"
 	"github.com/stacklok/mecatl/engine/kernel/history/format"
 	historyid "github.com/stacklok/mecatl/engine/kernel/history/id"
 	sessionformat "github.com/stacklok/mecatl/engine/kernel/session/format"
+	"github.com/stacklok/mecatl/engine/kernel/views"
 )
 
 // EffectiveInput is the canonical ordered incremental contribution, not a request
@@ -38,6 +37,8 @@ func newEffectiveInputRecord(v EffectiveInput, run RunID, limits codec.Limits) (
 
 // EffectiveInputView retains immutable accepted backing storage, including its
 // record. Capture and navigation cost O(1); zero has no run or items.
+//
+//dtogen:include
 type EffectiveInputView struct {
 	scope historyid.HistoryID
 	value *sessionformat.EffectiveInput
@@ -51,27 +52,16 @@ func (v EffectiveInputView) RunID() RunID {
 	return RunID{historyID: v.scope, ordinal: v.value.RunID}
 }
 
-// InputCount returns the number of ordered items, or zero for zero.
-func (v EffectiveInputView) InputCount() int {
+// Inputs returns ordered immutable items, preserving duplicates; zero is empty.
+// The collection and derived items retain accepted backing. Its adapter captures
+// only the enclosing run identity; escaping the collection may allocate a closure.
+// Construction and indexed navigation take O(1) time without copying payloads.
+func (v EffectiveInputView) Inputs() views.SliceView[sessionformat.InputItem, InputItemView] {
 	if v.value == nil {
-		return 0
+		return views.SliceView[sessionformat.InputItem, InputItemView]{}
 	}
-	return len(v.value.Inputs)
-}
-
-// Inputs returns a repeatable sequence of immutable items in contribution order.
-// Zero yields nothing. The sequence stays pinned to this view's accepted storage.
-func (v EffectiveInputView) Inputs() iter.Seq[InputItemView] {
-	return func(yield func(InputItemView) bool) {
-		for i := 0; i < v.InputCount(); i++ {
-			if !yield(v.InputAt(i)) {
-				return
-			}
-		}
-	}
-}
-
-// InputAt returns an immutable item. It panics outside [0, InputCount()).
-func (v EffectiveInputView) InputAt(i int) InputItemView {
-	return InputItemView{run: v.RunID(), value: &v.value.Inputs[i]}
+	run := v.RunID()
+	return views.BorrowSliceView(v.value.Inputs, func(item *sessionformat.InputItem) InputItemView {
+		return InputItemView{run: run, value: item}
+	})
 }

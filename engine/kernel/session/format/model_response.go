@@ -47,6 +47,7 @@ const (
 // bytes. Assignment shares Arguments; Clone detaches them.
 //
 //dtogen:validate Validate
+//dtogen:include
 type RequestedCall struct {
 	// Name is UTF-8 adapter output. It may be empty or unknown to the session.
 	Name string `cbor:"n"`
@@ -69,6 +70,7 @@ func (v RequestedCall) Validate() error {
 // Clone detaches them.
 //
 //dtogen:validate validateLocal
+//dtogen:include
 type ResponseContent struct {
 	// Kind is required and must be a ResponseContent closed-vocabulary value.
 	Kind ResponseContentKind `cbor:"k"`
@@ -104,6 +106,7 @@ func (v ResponseContent) validateLocal() error {
 // required; assignment shares its selected child and Clone detaches it.
 //
 //dtogen:validate validateLocal
+//dtogen:include
 type ResponseItem struct {
 	// Content is the optional content branch. It is mutually exclusive with Call;
 	// codec traversal validates it when present.
@@ -138,6 +141,7 @@ func (v ResponseItem) validateLocal() error {
 // separately and requires RunID and RequestID zero. Validate checks persisted IDs.
 //
 //dtogen:validate validateLocal
+//dtogen:include
 type ModelResponse struct {
 	// RunID is the required positive numeric run component within the history
 	// supplied by the enclosing envelope.

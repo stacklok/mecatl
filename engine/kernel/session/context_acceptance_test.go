@@ -100,7 +100,7 @@ func TestContextIndependentReplacementsAndFixtureFreeLoad(t *testing.T) {
 	}
 	oneEmpty, ok := snapshots[1].RecordAt(9).EffectiveInput()
 	noPrompts, okEmpty := snapshots[1].RecordAt(10).EffectiveInput()
-	if !ok || !okEmpty || oneEmpty.InputCount() != 1 || inlineAt(t, oneEmpty, 0).Parts().Len() != 0 || noPrompts.InputCount() != 0 || oneEmpty.RunID() != run || noPrompts.RunID() != run {
+	if !ok || !okEmpty || oneEmpty.Inputs().Len() != 1 || inlineAt(t, oneEmpty, 0).Parts().Len() != 0 || noPrompts.Inputs().Len() != 0 || oneEmpty.RunID() != run || noPrompts.RunID() != run {
 		t.Fatal("same-commit effective revisions collapsed")
 	}
 

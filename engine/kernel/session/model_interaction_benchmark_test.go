@@ -265,28 +265,28 @@ func traverseCompleteInteraction(snap session.Snapshot, exports bool) interactio
 							}
 						}
 						if mediaOK {
-							uri, uriOK := media.RemoteURI()
-							name, nameOK := media.ProviderName()
-							scope, scopeOK := media.ProviderScope()
-							ref, refOK := media.ProviderReferenceID()
+							uri := media.RemoteURI()
+							name := media.ProviderName()
+							scope := media.ProviderScope()
+							ref := media.ProviderReferenceID()
 							if media.Kind() != session.MediaKindDocument || media.MIMEType() != "image/example" || media.FormatHint() != "raw" || media.Filename() != "image.bin" || media.Title() != "title" {
 								panic("media metadata")
 							}
-							data, inline := media.InlineData()
+							data := media.InlineData()
 							switch media.Source() {
 							case session.MediaSourceInline:
-								if !inline || uriOK || nameOK || scopeOK || refOK || uri != "" || name != "" || scope != "" || ref != "" {
+								if uri != "" || name != "" || scope != "" || ref != "" {
 									panic("inline media source")
 								}
 								visits.inlineMedia++
 								visits.bytes += inspectInteractionBytes(data, 0xa5, exports)
 							case session.MediaSourceRemote:
-								if inline || data.Len() != 0 || !uriOK || uri != "https://example.test/media" || nameOK || scopeOK || refOK || name != "" || scope != "" || ref != "" {
+								if data.Len() != 0 || uri != "https://example.test/media" || name != "" || scope != "" || ref != "" {
 									panic("remote media source")
 								}
 								visits.remoteMedia++
 							case session.MediaSourceProvider:
-								if inline || data.Len() != 0 || uriOK || uri != "" || !nameOK || !scopeOK || !refOK || name != "media-provider" || scope != "media-scope" || ref != "media-reference" {
+								if data.Len() != 0 || uri != "" || name != "media-provider" || scope != "media-scope" || ref != "media-reference" {
 									panic("provider media source")
 								}
 								visits.providerMedia++

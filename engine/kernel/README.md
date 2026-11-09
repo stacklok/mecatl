@@ -41,6 +41,10 @@ or freeze it. Response Items and content Parts adapt elements on demand without
 an intermediate slice. Recipe, call, provider-data and media byte getters borrow
 leaves; callers explicitly use Copy for independently owned bytes. Scope-bearing
 identities and derived call enumeration remain session-owned adapters.
+`EffectiveInputView.Inputs` uses a handwritten SliceView adapter that retains only
+the enclosing RunID alongside the item backing. Immediate traversal and escaping
+collection or iterator handles have distinct allocation costs; neither copies
+payload storage.
 
 [`codec`](codec/doc.go) provides bounded canonical encoding and decoding;
 [`contentid`](contentid/cid.go) identifies exact encoded bytes. Resource policy is
@@ -52,8 +56,11 @@ limits, ownership, retry, and concurrency contracts.
 See the [generator guide](../../internal/dtogen/README.md) for supported schemas
 and code generation, and the [codec package contract](codec/doc.go) for resource
 accounting and buffer lifetimes. Each destination owns one handwritten generation
-declaration and artifact. Session's [view declaration](session/doc.go) selects
-local DTO-backed handles. Untagged DTO fields get safe same-named getters;
+declaration and artifact. Kernel owners omit `-types` and mark each selected root
+with `//dtogen:include` on its type declaration; value operations still follow the
+local type closure automatically. Session's [view declaration](session/doc.go)
+selects its marked local DTO-backed handles. Packages without include markers can
+instead list roots with `-types`. Untagged DTO fields get safe same-named getters;
 `view:"manual"` requires a handwritten getter and `view:"-"` omits the field.
 Layouts and scope/tag-selected semantics remain handwritten; generated mechanical
 accessors use only noncapturing adapters. From the repository root:

@@ -42,6 +42,6 @@ func internalInputBytes(v UserInputView) []byte {
 		return nil
 	}
 	media, _ := v.Parts().At(0).Media()
-	data, _ := media.InlineData()
+	data := media.InlineData()
 	return data.Copy()
 }

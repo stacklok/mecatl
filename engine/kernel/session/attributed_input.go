@@ -23,6 +23,8 @@ type AttributedInput = sessionformat.AttributedInput
 
 // AttributedInputView retains immutable backing storage. Capture and navigation
 // cost O(1); zero has no parts, empty labels and a zero source.
+//
+//dtogen:include
 type AttributedInputView struct {
 	value *sessionformat.AttributedInput
 }

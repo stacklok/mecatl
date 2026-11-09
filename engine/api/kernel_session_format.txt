@@ -258,7 +258,7 @@ type Instructions struct{Blocks []InstructionBlock "cbor:\"b\""}
 type InvocationFailure struct{RunID uint64 "cbor:\"r\" view:\"-\""; RequestID uint64 "cbor:\"q\" view:\"manual\""; Class InvocationFailureClass "cbor:\"c\""; Explanation *string "cbor:\"e,omitempty\""; Evidence *ObservedEvidence "cbor:\"v,omitempty\""; Usage *InvocationUsage "cbor:\"u,omitempty\""}
 type InvocationFailureClass string
 type InvocationUsage struct{Input *int64 "cbor:\"i,omitempty\""; Output *int64 "cbor:\"o,omitempty\""; CacheRead *int64 "cbor:\"r,omitempty\""; CacheWrite *int64 "cbor:\"w,omitempty\""; Reasoning *int64 "cbor:\"n,omitempty\""; Raw *OpaqueProviderData "cbor:\"x,omitempty\""}
-type Media struct{Kind MediaKind "cbor:\"k\""; Source MediaSourceKind "cbor:\"s\""; InlineData []byte "cbor:\"d\" view:\"manual\""; RemoteURI string "cbor:\"u\" view:\"manual\""; ProviderName string "cbor:\"p\" view:\"manual\""; ProviderScope string "cbor:\"o\" view:\"manual\""; ProviderReferenceID string "cbor:\"r\" view:\"manual\""; MIMEType string "cbor:\"m\""; FormatHint string "cbor:\"f\""; Filename string "cbor:\"n\""; Title string "cbor:\"t\""}
+type Media struct{Kind MediaKind "cbor:\"k\""; Source MediaSourceKind "cbor:\"s\""; InlineData []byte "cbor:\"d\""; RemoteURI string "cbor:\"u\""; ProviderName string "cbor:\"p\""; ProviderScope string "cbor:\"o\""; ProviderReferenceID string "cbor:\"r\""; MIMEType string "cbor:\"m\""; FormatHint string "cbor:\"f\""; Filename string "cbor:\"n\""; Title string "cbor:\"t\""}
 type MediaKind string
 type MediaSourceKind string
 type ModelBinding struct{Route string "cbor:\"r\""; API string "cbor:\"a\""; Model string "cbor:\"m\""; Settings []byte "cbor:\"s\""}

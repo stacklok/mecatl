@@ -18,6 +18,7 @@ import (
 // bypass compatibility review.
 //
 //dtogen:validate Validate
+//dtogen:include
 type OpaqueProviderData struct {
 	// Producer is the required nonempty UTF-8 producer identifier selected by the
 	// producer that owns Data. It is not a kernel identity or authority.
@@ -49,6 +50,7 @@ func (v OpaqueProviderData) Validate() error {
 // pointers and Raw's bytes; Clone detaches them.
 //
 //dtogen:validate validateLocal
+//dtogen:include
 type InvocationUsage struct {
 	// Input is an optional nonnegative provider-reported inclusive input count.
 	Input *int64 `cbor:"i,omitempty"`
@@ -107,6 +109,7 @@ func (v InvocationUsage) validateLocal() error {
 // reinterpreting persisted values or bypassing compatibility review.
 //
 //dtogen:validate Validate
+//dtogen:include
 type ObservedEvidence struct {
 	// Detail is optional UTF-8 diagnostic context observed by the caller or adapter.
 	// It is not the owner's Explanation or a provider stop/finish reason.

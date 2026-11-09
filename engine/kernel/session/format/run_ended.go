@@ -35,6 +35,7 @@ const MaxRunEndedReasonBytes = 32
 // interpreted within the explicit destination run without origin provenance.
 //
 //dtogen:validate validateLocal
+//dtogen:include
 type CaptureFailureEvidence struct {
 	// RequestID is the required positive numeric request component within the
 	// enclosing RunEnded's run. Its history envelope supplies history scope.
@@ -79,6 +80,7 @@ func (v CaptureFailureEvidence) validateLocal() error {
 // Validate requires the fully populated persisted shape.
 //
 //dtogen:validate validateLocal
+//dtogen:include
 type RunEnded struct {
 	// RunID is the required positive numeric run component within the history
 	// supplied by the enclosing envelope. The aggregate checks active ownership.

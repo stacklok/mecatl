@@ -11,6 +11,7 @@ import (
 // Construction, cloning, and equality do not validate the format contract.
 //
 //dtogen:validate validateCBOR
+//dtogen:include
 type Record struct {
 	// Kind identifies the payload's record kind.
 	Kind string `cbor:"k"`

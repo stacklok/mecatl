@@ -8,6 +8,7 @@ import "errors"
 // ID zero; Validate requires the fully populated persisted shape.
 //
 //dtogen:validate validateLocal
+//dtogen:include
 type UserInput struct {
 	// RunID is the required one-based owning run ordinal within the enclosing
 	// history. Conversion restores history scope from the envelope; the aggregate

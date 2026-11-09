@@ -155,8 +155,8 @@ func iteratorViewSet(t testing.TB, s *session.Session) iteratorViews {
 		if instructions, ok := record.Instructions(); ok && instructions.Blocks().Len() > 0 {
 			v.block = instructions.Blocks().At(0)
 		}
-		if effective, ok := record.EffectiveInput(); ok && effective.InputCount() > 0 {
-			v.inline, _ = effective.InputAt(0).Inline()
+		if effective, ok := record.EffectiveInput(); ok && effective.Inputs().Len() > 0 {
+			v.inline, _ = effective.Inputs().At(0).Inline()
 		}
 	}
 	return v
@@ -242,7 +242,7 @@ func iteratorContracts(t testing.TB, v iteratorViews) []func() {
 		sequenceContract(t, iteratorValues(v.inline.Parts().All()), v.inline.Parts().Len(), v.inline.Parts().At),
 		sequenceContract(t, iteratorValues(v.block.Parts().All()), v.block.Parts().Len(), v.block.Parts().At),
 		sequenceContract(t, iteratorValues(v.instructions.Blocks().All()), v.instructions.Blocks().Len(), v.instructions.Blocks().At),
-		sequenceContract(t, v.effective.Inputs(), v.effective.InputCount(), v.effective.InputAt),
+		sequenceContract(t, iteratorValues(v.effective.Inputs().All()), v.effective.Inputs().Len(), v.effective.Inputs().At),
 		sequenceContract(t, iteratorValues(v.catalog.Tools().All()), v.catalog.Tools().Len(), v.catalog.Tools().At),
 		sequenceContract(t, v.run.Records(), v.run.RecordCount(), v.run.RecordAt),
 		sequenceContract(t, v.snapshot.Records(), v.snapshot.RecordCount(), v.snapshot.RecordAt),

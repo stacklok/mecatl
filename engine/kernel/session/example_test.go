@@ -103,7 +103,7 @@ func ExampleSession() {
 	file, _ := instructions.Blocks().At(0).Source().WorkspaceFile()
 	fmt.Printf("instruction source=%s\n", file.Path())
 	effective, _ := loaded.Snapshot().RecordAt(4).EffectiveInput()
-	inline, _ := effective.InputAt(1).Inline()
+	inline, _ := effective.Inputs().At(1).Inline()
 	text, _ := original.Parts().At(0).Text()
 	fmt.Printf("prepared purpose=%s; original=%q\n", inline.Purpose(), text)
 

@@ -230,7 +230,7 @@ func TestInteractionByteExportsCopyOnlyRequestedField(t *testing.T) {
 						{"failure-raw", failureRaw.Data().Copy, 4, axis.field}, {"response-raw", responseRaw.Data().Copy, 6, axis.field},
 						{"capture-raw", captureRaw.Data().Copy, 10, axis.field}, {"private", private.Data().Copy, 6, axis.field},
 						{"item-call", itemCall.Arguments().Copy, 6, axis.field}, {"call", response.CallAt(0).Arguments().Copy, 6, axis.field},
-						{"media", func() []byte { data, _ := media.InlineData(); return data.Copy() }, 6, axis.field},
+						{"media", func() []byte { return media.InlineData().Copy() }, 6, axis.field},
 					} {
 						t.Run(field.name, func(t *testing.T) {
 							var copied []byte
@@ -294,7 +294,7 @@ func TestInteractionNestedHandlesPinnedAcrossAppends(t *testing.T) {
 			content, _ := items.At(0).Content()
 			parts := content.Parts()
 			media, _ := parts.At(1).Media()
-			inlineData, _ := media.InlineData()
+			inlineData := media.InlineData()
 			leaves := []views.Bytes{recipe.Parameters(), recipe.Check(), raw.Data(), private.Data(), itemCall.Arguments(), inlineData}
 			call := response.CallAt(0)
 			ending, _ := old.RecordAt(10).RunEnded()
@@ -499,8 +499,8 @@ func TestInteractionEmptyOpaqueProviderDataPresenceAcrossSubmitAndLoad(t *testin
 							call, callOK := response.Items().At(0).Call()
 							content, contentOK := response.Items().At(1).Content()
 							media, mediaOK := content.Parts().At(0).Media()
-							inline, inlineOK := media.InlineData()
-							if !callOK || !contentOK || !mediaOK || !inlineOK || inline.Len() != 0 || inline.Copy() == nil || call.Arguments().Len() != 0 || call.Arguments().Copy() == nil {
+							inline := media.InlineData()
+							if !callOK || !contentOK || !mediaOK || media.Source() != session.MediaSourceInline || inline.Len() != 0 || inline.Copy() == nil || call.Arguments().Len() != 0 || call.Arguments().Copy() == nil {
 								t.Fatal("present-empty generated collections/byte leaves collapsed")
 							}
 							inline.All()(func(int, byte) bool { t.Fatal("empty inline bytes yielded"); return true })

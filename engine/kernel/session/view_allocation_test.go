@@ -13,6 +13,8 @@ import (
 	"github.com/stacklok/mecatl/engine/kernel/codec"
 	"github.com/stacklok/mecatl/engine/kernel/history"
 	"github.com/stacklok/mecatl/engine/kernel/session"
+	sessionformat "github.com/stacklok/mecatl/engine/kernel/session/format"
+	"github.com/stacklok/mecatl/engine/kernel/views"
 )
 
 // Each axis grows independently: a large requested field must copy, but large
@@ -107,8 +109,10 @@ func TestViewNavigationAllocations(t *testing.T) {
 							t.Fatal("record and selection handles disagree")
 						}
 					}
+					// Retain scope capture outside the zero-allocation navigation checks.
+					var inputs views.SliceView[sessionformat.InputItem, session.InputItemView]
 					follow := func() {
-						id, present := effective.InputAt(0).UserInputID()
+						id, present := inputs.At(0).UserInputID()
 						input, ok = snapshot.UserInputByID(id)
 						ok = ok && present
 						part = input.Parts().At(input.Parts().Len() - 1)
@@ -116,20 +120,21 @@ func TestViewNavigationAllocations(t *testing.T) {
 						text = media.Title()
 					}
 					nested := func() {
-						inline, ok = effective.InputAt(effective.InputCount() - 1).Inline()
+						inline, ok = inputs.At(inputs.Len() - 1).Inline()
 						part = inline.Parts().At(inline.Parts().Len() - 1)
 						media, _ = part.Media()
 						file, _ = inline.Source().WorkspaceFile()
 						block := instructions.Blocks().At(instructions.Blocks().Len() - 1)
 						instructionMedia, instructionMediaOK := block.Parts().At(block.Parts().Len() - 1).Media()
 						definition = catalog.Tools().At(catalog.Tools().Len() - 1)
-						count = effective.InputCount() + inline.Parts().Len() + input.Parts().Len() + instructions.Blocks().Len() + block.Parts().Len() + catalog.Tools().Len()
+						count = inputs.Len() + inline.Parts().Len() + input.Parts().Len() + instructions.Blocks().Len() + block.Parts().Len() + catalog.Tools().Len()
 						text = string(inline.Actor())
 						if !instructionMediaOK || instructionMedia.Filename() != "notes.bin" || media.Kind() != session.MediaKindDocument || inline.Purpose() != session.PromptContext || inline.Source().Description() != "prepared reference" || file.Path() != "docs/design.md" || block.Source().Description() != "prepared reference" || media.MIMEType() != "application/octet-stream" || media.FormatHint() != "raw" || media.Filename() != "notes.bin" || media.Source() != session.MediaSourceInline || definition.Name() == "" || definition.Description() == "" || binding.Route() == "" || binding.API() != "dialect/v1" || binding.Model() != "alias" {
 							t.Fatal("lost nested metadata")
 						}
 					}
 					capture()
+					inputs = effective.Inputs()
 					follow()
 					for _, check := range []struct {
 						name      string
@@ -191,12 +196,12 @@ func TestViewByteExportsCopyOnlyRequestedField(t *testing.T) {
 					catalog, _ := v.ToolCatalog()
 					binding, _ := v.ModelBinding()
 					effective, _ := v.RecordAt(6).EffectiveInput()
-					inline, _ := effective.InputAt(1).Inline()
+					inline, _ := effective.Inputs().At(1).Inline()
 					inlineMedia, _ := inline.Parts().At(0).Media()
 					instructions, _ := v.Instructions()
 					instructionMedia, _ := instructions.Blocks().At(0).Parts().At(0).Media()
 					data := func(m session.MediaView) func() []byte {
-						return func() []byte { b, _ := m.InlineData(); return b.Copy() }
+						return func() []byte { return m.InlineData().Copy() }
 					}
 					for _, field := range []struct {
 						name   string
@@ -250,7 +255,7 @@ func TestViewPinnedReferenceChildrenAcrossReplacement(t *testing.T) {
 	s := allocationViewFixture(t, 32, 32, 2)["Submit"]
 	old := s.Snapshot()
 	effective, _ := old.RecordAt(6).EffectiveInput()
-	ref, _ := effective.InputAt(0).UserInputID()
+	ref, _ := effective.Inputs().At(0).UserInputID()
 	input, _ := old.UserInputByID(ref)
 	part := input.Parts().At(0)
 	media, _ := part.Media()
@@ -261,8 +266,8 @@ func TestViewPinnedReferenceChildrenAcrossReplacement(t *testing.T) {
 			<-start
 			for range 1000 {
 				resolved, ok := old.UserInputByID(ref)
-				data, present := media.InlineData()
-				if !ok || !present || resolved != input || input.Parts().At(0) != part || media.Title() != "mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm" || data.Len() != 32 || data.At(0) != 0xa5 || old.RecordCount() != 7 {
+				data := media.InlineData()
+				if !ok || resolved != input || input.Parts().At(0) != part || media.Source() != session.MediaSourceInline || media.Title() != "mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm" || data.Len() != 32 || data.At(0) != 0xa5 || old.RecordCount() != 7 {
 					t.Error("pinned reference child changed")
 					return
 				}

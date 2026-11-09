@@ -22,6 +22,7 @@ var cidEncoding = base32.NewEncoding("abcdefghijklmnopqrstuvwxyz234567").WithPad
 // Its CBOR representation is a DAG-CBOR tag-42 link, not text.
 //
 //dtogen:validate validateCBOR
+//dtogen:include
 type CID struct {
 	binary [36]byte `cbor:",cid"` //nolint:revive // dtogen's fixed CID-link representation, not a standard CBOR tag option.
 }

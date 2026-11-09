@@ -94,6 +94,40 @@ func TestSliceViewBorrowsBacking(t *testing.T) {
 	}
 }
 
+func TestSliceViewCapturedContext(t *testing.T) {
+	values := []testItem{{value: 3}, {value: 3}, {value: 8}}
+	withContext := func(offset int) views.SliceView[testItem, testItemView] {
+		return views.BorrowSliceView(values, func(item *testItem) testItemView {
+			return testItemView{value: offset + item.value}
+		})
+	}
+	first, second := withContext(10), withContext(20)
+	seq := first.All()
+	for range 2 {
+		count := 0
+		for index, item := range seq {
+			if index != count || item != first.At(index) || item.Value() != values[index].value+10 || second.At(index).Value() != values[index].value+20 {
+				t.Fatal("captured contexts or collection order changed")
+			}
+			count++
+		}
+		if count != len(values) {
+			t.Fatal("captured iterator lost elements")
+		}
+	}
+	calls := 0
+	seq(func(index int, item testItemView) bool {
+		calls++
+		if calls != 1 || index != 0 || item.Value() != 13 {
+			t.Error("captured iterator continued after false")
+		}
+		return false
+	})
+	if calls != 1 {
+		t.Fatal("captured iterator did not yield")
+	}
+}
+
 func TestBorrowSliceViewRejectsNilAdapter(t *testing.T) {
 	defer func() {
 		if recover() == nil {

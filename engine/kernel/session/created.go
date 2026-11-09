@@ -23,6 +23,8 @@ func newCreatedRecord(v Created, limits codec.Limits) (*materializedRecord, erro
 
 // CreatedView retains immutable creation backing and its enclosing history.
 // Zero has zero identity; capture and inspection cost O(1).
+//
+//dtogen:include
 type CreatedView struct {
 	scope historyid.HistoryID
 	value *sessionformat.Created

@@ -350,7 +350,7 @@ func TestCanonicalRelativeReferences(t *testing.T) {
 		if !ok {
 			t.Fatal("missing effective input")
 		}
-		ref, ok := effective.InputAt(0).UserInputID()
+		ref, ok := effective.Inputs().At(0).UserInputID()
 		if !ok || ref != input || ref == foreignInput {
 			t.Fatal("relative input did not reconstruct destination scope")
 		}

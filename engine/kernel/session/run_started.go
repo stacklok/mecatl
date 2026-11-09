@@ -23,6 +23,8 @@ func newRunStartedRecord(v RunStarted, limits codec.Limits) (*materializedRecord
 
 // RunStartedView retains immutable run-start backing and its enclosing history.
 // Zero has zero identity; capture and inspection cost O(1).
+//
+//dtogen:include
 type RunStartedView struct {
 	scope historyid.HistoryID
 	value *sessionformat.RunStarted

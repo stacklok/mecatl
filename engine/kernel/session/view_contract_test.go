@@ -14,7 +14,7 @@ func TestRecursiveViewsZero(t *testing.T) {
 	var instructions session.InstructionsView
 	var catalog session.ToolCatalogView
 	var binding session.ModelBindingView
-	if user.ID() != (session.UserInputID{}) || user.Parts().Len() != 0 || effective.RunID() != (session.RunID{}) || effective.InputCount() != 0 || instructions.Blocks().Len() != 0 || catalog.Tools().Len() != 0 || !bindingMatches(binding, session.ModelBinding{}) {
+	if user.ID() != (session.UserInputID{}) || user.Parts().Len() != 0 || effective.RunID() != (session.RunID{}) || effective.Inputs().Len() != 0 || instructions.Blocks().Len() != 0 || catalog.Tools().Len() != 0 || !bindingMatches(binding, session.ModelBinding{}) {
 		t.Fatal("zero root view")
 	}
 	var item session.InputItemView
@@ -40,11 +40,11 @@ func TestRecursiveViewsZero(t *testing.T) {
 	if media.Kind() != "" || media.MIMEType() != "" || media.FormatHint() != "" || media.Filename() != "" || media.Title() != "" || media.Source() != "" {
 		t.Fatal("zero media metadata")
 	}
-	if data, ok := media.InlineData(); ok || data.Copy() != nil {
+	if data := media.InlineData(); data.Copy() != nil {
 		t.Fatal("zero inline data")
 	}
-	for name, get := range map[string]func() (string, bool){"RemoteURI": media.RemoteURI, "ProviderName": media.ProviderName, "ProviderScope": media.ProviderScope, "ProviderReferenceID": media.ProviderReferenceID} {
-		if value, ok := get(); ok || value != "" {
+	for name, get := range map[string]func() string{"RemoteURI": media.RemoteURI, "ProviderName": media.ProviderName, "ProviderScope": media.ProviderScope, "ProviderReferenceID": media.ProviderReferenceID} {
+		if value := get(); value != "" {
 			t.Errorf("zero media %s", name)
 		}
 	}
@@ -94,14 +94,14 @@ func TestRecursiveViewsPresenceBytesAndBounds(t *testing.T) {
 	catalog, _ := v.ToolCatalog()
 	binding, _ := v.ModelBinding()
 	effective, _ := v.RecordAt(6).EffectiveInput()
-	if ref, ok := effective.InputAt(0).UserInputID(); !ok || ref != id {
+	if ref, ok := effective.Inputs().At(0).UserInputID(); !ok || ref != id {
 		t.Fatal("reference lost scope")
 	}
-	if inline, ok := effective.InputAt(0).Inline(); ok || inline != (session.AttributedInputView{}) {
+	if inline, ok := effective.Inputs().At(0).Inline(); ok || inline != (session.AttributedInputView{}) {
 		t.Fatal("reference exposed inline")
 	}
 	empty := inlineAt(t, effective, 1)
-	if ref, ok := effective.InputAt(1).UserInputID(); ok || ref != (session.UserInputID{}) {
+	if ref, ok := effective.Inputs().At(1).UserInputID(); ok || ref != (session.UserInputID{}) {
 		t.Fatal("inline exposed reference")
 	}
 	if empty.Parts().Len() != 0 || empty.Actor() != " actor/尾\n " || empty.Purpose() != session.PromptContext || empty.Source().Description() != "present empty" {
@@ -142,23 +142,23 @@ func TestRecursiveViewsPresenceBytesAndBounds(t *testing.T) {
 	if text, ok := user.Parts().At(1).Text(); ok || text != "" {
 		t.Fatal("media exposed text")
 	}
-	if data, ok := mediaAt(t, user.Parts().At(5)).InlineData(); !ok || len(data.Copy()) != 0 {
+	if media := mediaAt(t, user.Parts().At(5)); media.Source() != session.MediaSourceInline || len(media.InlineData().Copy()) != 0 {
 		t.Fatal("empty inline bytes lost presence")
 	}
 	remote := mediaAt(t, user.Parts().At(2))
-	if data, ok := remote.InlineData(); ok || data.Copy() != nil {
+	if remote.Source() != session.MediaSourceRemote || remote.InlineData().Len() != 0 {
 		t.Fatal("remote exposed inline bytes")
 	}
-	if provider, ok := remote.ProviderName(); ok || provider != "" {
+	if provider := remote.ProviderName(); provider != "" {
 		t.Fatal("remote exposed provider")
 	}
 	provider := mediaAt(t, user.Parts().At(3))
-	if uri, ok := provider.RemoteURI(); ok || uri != "" {
+	if provider.Source() != session.MediaSourceProvider || provider.RemoteURI() != "" {
 		t.Fatal("provider exposed URI")
 	}
 	media := mediaAt(t, user.Parts().At(1))
-	data, _ := media.InlineData()
-	other, _ := media.InlineData()
+	data := media.InlineData()
+	other := media.InlineData()
 	copied, otherCopy := data.Copy(), other.Copy()
 	copied[0] = 0
 	if otherCopy[0] != 0xff || other.At(0) != 0xff {
@@ -178,13 +178,13 @@ func TestRecursiveViewsPresenceBytesAndBounds(t *testing.T) {
 		at    func(int)
 	}{
 		{"zero user", 0, func(i int) { (session.UserInputView{}).Parts().At(i) }},
-		{"zero effective", 0, func(i int) { (session.EffectiveInputView{}).InputAt(i) }},
+		{"zero effective", 0, func(i int) { (session.EffectiveInputView{}).Inputs().At(i) }},
 		{"zero instructions", 0, func(i int) { (session.InstructionsView{}).Blocks().At(i) }},
 		{"zero catalog", 0, func(i int) { (session.ToolCatalogView{}).Tools().At(i) }},
 		{"zero inline", 0, func(i int) { (session.AttributedInputView{}).Parts().At(i) }},
 		{"zero block", 0, func(i int) { (session.InstructionBlockView{}).Parts().At(i) }},
 		{"user", user.Parts().Len(), func(i int) { user.Parts().At(i) }},
-		{"effective", effective.InputCount(), func(i int) { effective.InputAt(i) }},
+		{"effective", effective.Inputs().Len(), func(i int) { effective.Inputs().At(i) }},
 		{"instructions", instructions.Blocks().Len(), func(i int) { instructions.Blocks().At(i) }},
 		{"catalog", catalog.Tools().Len(), func(i int) { catalog.Tools().At(i) }},
 		{"inline", rich.Parts().Len(), func(i int) { rich.Parts().At(i) }},

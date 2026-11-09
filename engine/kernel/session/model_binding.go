@@ -33,6 +33,8 @@ func newModelBindingRecord(v ModelBinding, limits codec.Limits) (*materializedRe
 // ModelBindingView retains immutable accepted backing storage, including its
 // record. Capture and navigation cost O(1); zero has empty fields. Settings
 // borrows retained backing; Copy detaches only those exact JSON bytes.
+//
+//dtogen:include
 type ModelBindingView struct {
 	scope historyid.HistoryID
 	value *sessionformat.ModelBinding

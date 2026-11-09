@@ -19,6 +19,8 @@ func checkContentPartSize(v ContentPart, b *valueBudget) {
 
 // ContentPartView retains immutable backing storage. Capture and navigation cost
 // O(1); zero has neither union branch present.
+//
+//dtogen:include
 type ContentPartView struct{ value *sessionformat.ContentPart }
 
 // checkPartsSize bounds collections and nested data before validation or encoding.

@@ -20,10 +20,14 @@ func checkContentSourceSize(v ContentSource, b *valueBudget) {
 
 // ContentSourceView retains immutable backing storage. Capture and navigation
 // cost O(1); zero has an empty description and no workspace-file label.
+//
+//dtogen:include
 type ContentSourceView struct{ value *sessionformat.ContentSource }
 
 // WorkspaceFileSourceView retains an immutable file label's backing storage.
 // Copying it costs O(1); zero has an empty path.
+//
+//dtogen:include
 type WorkspaceFileSourceView struct {
 	value *sessionformat.WorkspaceFileSource
 }
