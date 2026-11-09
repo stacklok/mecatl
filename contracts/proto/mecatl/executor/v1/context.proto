@@ -1,0 +1,34 @@
+// SPDX-FileCopyrightText: Copyright 2026 Stacklok, Inc.
+// SPDX-License-Identifier: LicenseRef-Stacklok-Proprietary
+
+syntax = "proto3";
+
+package mecatl.executor.v1;
+
+option go_package = "github.com/stacklok/mecatl/contracts/gen/go/mecatl/executor/v1;executorv1";
+
+// Wire-identical copies of the mecatl.execution.v1 messages, so this package
+// imports no other mecatl package (#2716).
+
+message EnvironmentRef {
+  string id = 1;
+  string revision = 2;
+}
+
+message Owner {
+  string issuer = 1;
+  string subject = 2;
+}
+
+// The trusted service authorizes each call with it; executors ignore it.
+message RequestContext {
+  EnvironmentRef environment = 1;
+  Owner owner = 2;
+  string binding_id = 3;
+  uint64 epoch = 4;
+  reserved 5;
+  reserved "grant";
+  string run_id = 6;
+  string claim_id = 7;
+  uint64 grant_generation = 8;
+}

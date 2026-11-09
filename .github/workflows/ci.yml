@@ -360,6 +360,13 @@ jobs:
           task generate
           git diff --exit-code -- contracts/gen sdk/typescript/src/gen cmd/mecatui/internal/timezones/zones.json
 
+      - name: Lint the executor protocol and check it for breaking changes
+        env:
+          BASE_REF: ${{ github.base_ref || 'main' }}
+        run: |
+          git fetch --no-tags --depth=1 origin "+refs/heads/${BASE_REF}:refs/remotes/origin/${BASE_REF}"
+          task lint:proto BUF_AGAINST_REF="refs/remotes/origin/${BASE_REF}"
+
       - name: Run offline SDK e2e against same-checkout mecated
         run: task sdk:e2e
 

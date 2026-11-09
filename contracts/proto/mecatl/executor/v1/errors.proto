@@ -1,0 +1,25 @@
+// SPDX-FileCopyrightText: Copyright 2026 Stacklok, Inc.
+// SPDX-License-Identifier: LicenseRef-Stacklok-Proprietary
+
+syntax = "proto3";
+
+package mecatl.executor.v1;
+
+option go_package = "github.com/stacklok/mecatl/contracts/gen/go/mecatl/executor/v1;executorv1";
+
+// ErrorDetail rides in gRPC status details.
+message ErrorDetail {
+  ErrorReason reason = 1;
+}
+
+enum ErrorReason {
+  ERROR_REASON_UNSPECIFIED = 0;
+  ERROR_REASON_NOT_FOUND = 1; // NOT_FOUND
+  ERROR_REASON_ALREADY_EXISTS = 2; // ALREADY_EXISTS
+  ERROR_REASON_VERSION_MISMATCH = 3; // FAILED_PRECONDITION
+  ERROR_REASON_DIRECTORY_NOT_EMPTY = 4; // FAILED_PRECONDITION
+  ERROR_REASON_PATH_ESCAPE = 5; // PERMISSION_DENIED
+  ERROR_REASON_UNSUPPORTED = 6; // UNIMPLEMENTED
+  ERROR_REASON_LIMIT_EXCEEDED = 7; // RESOURCE_EXHAUSTED
+  ERROR_REASON_NO_SHELL = 8; // FAILED_PRECONDITION
+}
