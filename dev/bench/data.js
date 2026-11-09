@@ -368418,6 +368418,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1794107121024,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "e726fdbb7453258b5effe96bf7fba4bda50c3b61",
+          "message": "feat(kernel): generate immutable payload views with layered dtogen (#2749)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-11-09T15:26:59Z",
+          "tree_id": "8d8a23cb57f22d14a8d1516d3ebe4315d30375fd",
+          "url": "https://github.com/stacklok/mecatl/commit/e726fdbb7453258b5effe96bf7fba4bda50c3b61"
+        },
+        "date": 1794238730718,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -532129,6 +532163,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1794238727502,
+  "lastUpdate": 1794238731621,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
