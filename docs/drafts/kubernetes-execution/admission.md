@@ -150,6 +150,9 @@ is optional and an empty list means the template's full set, existing clients ke
 ## Open questions
 
 - **Caller policy.** Whether the trusted service's per-caller policy restricts capabilities, in addition to templates.
+  Deferred until file-only sessions are admitted; until then the template's declared capabilities are the only limit.
+  A per-caller list added later treats an absent list as unrestricted, so existing policies keep working. Per-user
+  capability policy belongs with the [agent identity](../agent-identity/README.md) work.
 - **Capability transitions.** Whether a running session can ever gain or lose a capability, and how.
 
 [template-policy]: ../../../user-docs/features/security-and-execution/execution-environments.md#template-policy

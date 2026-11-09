@@ -38,9 +38,9 @@ the agent loop's sight.
 ## Executor server in local environments
 
 Local execution in this design is `microvm-local` running the executor server described in the
-[executor protocol](executor-protocol.md), in place of today's guest agent. The executor server is built from the guest
-agent's workspace and exec services, so the VM runs essentially the same code it runs today, now shared with
-Kubernetes.
+[executor protocol](executor-protocol.md), in place of today's guest agent. The guest keeps its own workspace and exec
+services behind the shared server's adapters, so the VM runs essentially the same code it runs today, now reached
+through the same interface as Kubernetes.
 
 What stays specific to the VM:
 

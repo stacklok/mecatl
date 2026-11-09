@@ -101,8 +101,19 @@ plugin enforces them.
 
 The network policy is not enough on its own. Shell programs run in the executor Pod and share its network namespace, so
 they can reach the server on `localhost`. The server must therefore authenticate its caller and accept only the trusted
-service. Mutual TLS, with a client certificate that only the trusted service holds, is the expected mechanism; how
-certificates are issued and rotated is an open question.
+service, using mutual TLS.
+
+Each executor gets its own server certificate, and no certificate authority is involved. Before creating the executor
+Pod, the trusted service generates a key pair and a self-signed certificate naming the environment, stores them in a
+Secret mounted into the Pod, and records the certificate's fingerprint on the environment. Once the Pod exists, it
+also records the Pod UID. The trusted service connects only to the Pod with that UID and accepts only that
+fingerprint, so a reused Pod IP or an earlier incarnation of the executor is never trusted. A container restart keeps
+the Pod and its certificate; a replacement Pod gets a new certificate, which also serves as rotation.
+
+The trusted service presents a client certificate issued by the platform PKI that already issues its server
+certificate. Each executor receives that CA bundle and the trusted service's expected URI through a mounted volume
+that updates in place, so a CA rotation reaches running executors. The trusted service needs permission to create and
+delete Secrets in its namespace, but holds no signing key.
 
 ## What is reused
 
@@ -110,14 +121,21 @@ The executor's file and command logic already exists in two places. `internal/ex
 supports every file operation listed above. The microVM guest agent's workspace and exec services
 (`environment/microvm/workspace` and `environment/microvm/guestexec`) add streaming command output, cancellation, and
 replacement through a temporary file and rename, but lack rename, list, remove, and copy, and cap files at 512 KiB.
-The [implementation companion](implementation.md#the-microvm-guest-agent) compares them. The gRPC services are built
-from these implementations; the microVM guest agent's own framing and handshake are not used.
+The [implementation companion](implementation.md#the-microvm-guest-agent) compares them.
+
+The gRPC server and client are thin adapters over the engine's file and command interfaces, so each placement plugs in
+its own implementation: the Kubernetes executor uses `internal/executionexecutor` and `osfs`, and the microVM guest
+keeps its workspace and exec services. `fsconformance` and a command conformance suite hold both to the same
+semantics. The generated code and the adapters move into two standalone modules, one for the generated code and one
+under `internal/`, so that both the root module and `environment/microvm` can import them. The microVM guest agent's
+own framing and handshake are not used.
 
 ## Rollout
 
 The server replaces Pod exec rather than running alongside it: the native Kubernetes execution path is not deployed in
 staging, so there are no users to migrate. The Pod exec transport, the per-operation lease, the one-operation limit,
-and the provider's `pods/exec` permission are removed in the same change that introduces the server.
+and the provider's `pods/exec` permission are removed in the same change that introduces the server. That change also
+includes mutual TLS, so the executor is never reachable without authentication, encryption, and a pinned certificate.
 
 ## Local execution
 
@@ -126,8 +144,6 @@ between. The [local execution](local-execution.md) chapter describes it.
 
 ## Open questions
 
-- **Certificates.** Who issues the trusted service's client certificate and the executor's server certificate, how the
-  executor receives its key, and how both are rotated.
 - **Process separation.** The server and shell programs run in the same container as the same user, so a shell program
   can read the server's key or replace the server process. Running the server in a separate container, or as a separate
   user, would narrow that. The [threat model](threat-model.md) chapter tracks whether it is required.
