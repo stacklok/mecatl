@@ -82,7 +82,7 @@ func sumBytesView(v views.Bytes) uint64 {
 
 func sumStructuredView(v value.View) uint64 {
 	envelopeValueSink = v
-	sum := uint64(len(v.Kind()))
+	sum := uint64(len(v.Kind().String()))
 	switch v.Kind() {
 	case value.BoolKind:
 		if x, _ := v.Bool(); x {

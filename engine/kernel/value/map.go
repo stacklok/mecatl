@@ -16,6 +16,10 @@ import (
 // Assigning/copying a Map shares storage. Operations require stable inputs.
 type Map map[string]Value
 
+// MarshalJSON encodes m as a native JSON object; nil and empty both encode as {}.
+// It uses Value.MarshalJSON's traversal, cost, failure and stable-backing contract.
+func (m Map) MarshalJSON() ([]byte, error) { return marshalJSON(Object(m)) }
+
 // Admit validates m before detaching all mutable descendants and publishing an
 // immutable MapView. Failure returns a zero view. Inputs must remain stable across
 // validation and cloning. Repeated shared subtrees count and detach per occurrence.
@@ -37,7 +41,7 @@ func (m Map) CheckCBOR(b *codec.Budget, depth, fieldMax int) error {
 }
 
 func (m Map) check(b *codec.Budget, depth, fieldMax, local int) error {
-	if local > maxDepth || (local == maxDepth && len(m) != 0) {
+	if local > maxLocalDepth || (local == maxLocalDepth && len(m) != 0) {
 		return ErrDepthExceeded
 	}
 	if err := b.CheckMap(len(m), depth, fieldMax); err != nil {
@@ -100,14 +104,14 @@ func (m *Map) ReadCBOR(r *codec.Reader, depth, fieldMax int) error {
 }
 
 func readMap(r *codec.Reader, depth, fieldMax, local int) (Map, error) {
-	if local > maxDepth {
+	if local > maxLocalDepth {
 		return nil, ErrDepthExceeded
 	}
 	n, err := r.Map(depth, fieldMax)
 	if err != nil {
 		return nil, err
 	}
-	if local == maxDepth && n != 0 {
+	if local == maxLocalDepth && n != 0 {
 		return nil, ErrDepthExceeded
 	}
 	out := make(Map, n)
@@ -136,7 +140,7 @@ func readMap(r *codec.Reader, depth, fieldMax, local int) (Map, error) {
 func (m Map) Clone() Map { return m.clone(0) }
 
 func (m Map) clone(local int) Map {
-	if local > maxDepth || (local == maxDepth && len(m) != 0) {
+	if local > maxLocalDepth || (local == maxLocalDepth && len(m) != 0) {
 		panic(ErrDepthExceeded)
 	}
 	if m == nil {
@@ -156,7 +160,7 @@ func (m Map) clone(local int) Map {
 func (m Map) Equal(other Map) bool { return m.equal(other, 0) }
 
 func (m Map) equal(other Map, local int) bool {
-	if local > maxDepth {
+	if local > maxLocalDepth {
 		panic(ErrDepthExceeded)
 	}
 	if len(m) != len(other) {

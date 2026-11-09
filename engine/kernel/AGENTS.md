@@ -63,10 +63,11 @@ patterns here as they emerge; keep unrelated legacy cleanup out of scope.
   authority. Keep numeric allocation and successor arithmetic internal, without
   an ordering contract. Use consistent identity naming across public values and
   persistence DTOs; document omitted enclosing scope.
-- Use string constants for categorical fields, grouped by the field/type they
-  describe. Document and validate closed vocabularies; preserve provider-owned
-  open values without inventing a closed enum. Bound labels used in resource
-  reservations and cover the largest supported encoded shape.
+- Persisted categorical labels use string constants, grouped by the field/type they
+  describe. In-memory discriminators may use integer-backed closed enums regardless
+  of public Go visibility. Document and validate closed vocabularies; preserve
+  provider-owned open values without inventing a closed enum. Bound labels used in
+  resource reservations and cover the largest supported encoded shape.
 - Make mutable-storage ownership, aliasing, zero values, and failure outputs
   explicit where relevant. Prefer concrete type methods over speculative shared
   marker, cloning, or freezing interfaces.

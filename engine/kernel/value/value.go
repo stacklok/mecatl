@@ -3,6 +3,7 @@ package value
 import (
 	"errors"
 	"math"
+	"strconv"
 
 	"github.com/jcalabro/atmos/cbor"
 
@@ -13,27 +14,52 @@ import (
 // 128. Fallible operations return it; Clone and Equal panic with it.
 var ErrDepthExceeded = errors.New("structured value depth exceeds 128")
 
-const maxDepth = 128
+const maxLocalDepth = 128
 
-// Kind is the closed vocabulary of structured values. InvalidKind is not null.
-type Kind string
+// Kind is the closed in-memory vocabulary of structured values. Its numeric values
+// are not a persistence or wire contract; CBOR encoding is selected by each case.
+// InvalidKind is not null.
+type Kind uint8
 
 const (
 	// InvalidKind identifies an uninitialized Value or View.
-	InvalidKind Kind = ""
+	InvalidKind Kind = iota
 	// NullKind identifies explicit null.
-	NullKind Kind = "null"
+	NullKind
 	// BoolKind identifies a boolean.
-	BoolKind Kind = "bool"
+	BoolKind
 	// StringKind identifies UTF-8 text.
-	StringKind Kind = "string"
+	StringKind
 	// IntegerKind identifies an exact integer in [-2^63, 2^64-1].
-	IntegerKind Kind = "integer"
+	IntegerKind
 	// ArrayKind identifies an ordered array, including empty.
-	ArrayKind Kind = "array"
+	ArrayKind
 	// MapKind identifies a string-keyed map, including empty.
-	MapKind Kind = "map"
+	MapKind
 )
+
+// String returns a readable kind name. Unknown values include their numeric value
+// for safe diagnostics and are not accepted as structured values.
+func (k Kind) String() string {
+	switch k {
+	case InvalidKind:
+		return "invalid"
+	case NullKind:
+		return "null"
+	case BoolKind:
+		return "bool"
+	case StringKind:
+		return "string"
+	case IntegerKind:
+		return "integer"
+	case ArrayKind:
+		return "array"
+	case MapKind:
+		return "map"
+	default:
+		return "Kind(" + strconv.FormatUint(uint64(k), 10) + ")"
+	}
+}
 
 // Value is a mutable-authoring handle with private native-value representation.
 // Zero is invalid at admission, but clones and compares ordinarily. Constructors
@@ -77,6 +103,14 @@ func Array(v []Value) Value { return Value{kind: ArrayKind, array: v} }
 // Keep v stable during operations and for the lifetime of borrowed views.
 func Object(v Map) Value { return Value{kind: MapKind, object: v} }
 
+// MarshalJSON encodes native JSON, sorting map keys lexically and using standard
+// library string escaping. Zero, invalid UTF-8 and traversal beyond local depth
+// 128 (including cycles) return an error and nil bytes. Keep all backing stable.
+// Work is linear in visited data plus per-map key sorting; storage is output,
+// temporary key/string buffers and a depth-bounded stack, not a cloned value tree.
+// No operational codec admission limits are applied.
+func (v Value) MarshalJSON() ([]byte, error) { return marshalJSON(v) }
+
 // Admit validates v under limits before cloning mutable descendants. It publishes
 // only an immutable view; failure returns a zero View. Inputs must remain stable
 // across both passes. Shared subtrees are detached per occurrence, not preserved.
@@ -101,7 +135,7 @@ func (v Value) CheckCBOR(b *codec.Budget, depth, fieldMax int) error {
 // check tracks local value depth separately from the shared wire depth. Container
 // declarations and local child depth are checked before any child traversal.
 func (v Value) check(b *codec.Budget, depth, fieldMax, local int) error {
-	if local > maxDepth {
+	if local > maxLocalDepth {
 		return ErrDepthExceeded
 	}
 	switch v.kind {
@@ -110,7 +144,7 @@ func (v Value) check(b *codec.Budget, depth, fieldMax, local int) error {
 	case StringKind:
 		return b.CheckString(v.text, depth, fieldMax)
 	case ArrayKind:
-		if local == maxDepth && len(v.array) != 0 {
+		if local == maxLocalDepth && len(v.array) != 0 {
 			return ErrDepthExceeded
 		}
 		if err := b.CheckArray(len(v.array), depth, fieldMax); err != nil {
@@ -181,7 +215,7 @@ func (v *Value) ReadCBOR(r *codec.Reader, depth, fieldMax int) error {
 // read composes only checked Reader primitives; declared counts and local depth
 // are admitted before collection allocation. It never publishes partial storage.
 func read(r *codec.Reader, depth, fieldMax, local int) (Value, error) {
-	if local > maxDepth {
+	if local > maxLocalDepth {
 		return Value{}, ErrDepthExceeded
 	}
 	kind, err := r.PeekKind()
@@ -215,7 +249,7 @@ func read(r *codec.Reader, depth, fieldMax, local int) (Value, error) {
 		if err != nil {
 			return Value{}, err
 		}
-		if local == maxDepth && n != 0 {
+		if local == maxLocalDepth && n != 0 {
 			return Value{}, ErrDepthExceeded
 		}
 		children := make([]Value, n)
@@ -246,12 +280,12 @@ func read(r *codec.Reader, depth, fieldMax, local int) (Value, error) {
 func (v Value) Clone() Value { return v.clone(0) }
 
 func (v Value) clone(local int) Value {
-	if local > maxDepth {
+	if local > maxLocalDepth {
 		panic(ErrDepthExceeded)
 	}
 	switch v.kind {
 	case ArrayKind:
-		if local == maxDepth && len(v.array) != 0 {
+		if local == maxLocalDepth && len(v.array) != 0 {
 			panic(ErrDepthExceeded)
 		}
 		if v.array != nil {
@@ -275,7 +309,7 @@ func (v Value) clone(local int) Value {
 func (v Value) Equal(other Value) bool { return v.equal(other, 0) }
 
 func (v Value) equal(other Value, local int) bool {
-	if local > maxDepth {
+	if local > maxLocalDepth {
 		panic(ErrDepthExceeded)
 	}
 	if v.kind != other.kind {

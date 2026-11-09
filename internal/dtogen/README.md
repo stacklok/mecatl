@@ -203,9 +203,32 @@ owner's generated methods. No operation infers ownership from method names alone
 The [structured-value package](../../engine/kernel/value/doc.go) supports explicit
 null, booleans, UTF-8 text, exact integers in `[-2^63, 2^64-1]`, arrays, and
 string-keyed maps. DTO fields accept ordinary mutable authoring values; admission
-checks bounds before detaching storage. `value.ParseJSONObject` converts a
-complete JSON object to mutable `value.Map` storage, rejecting duplicate decoded
-keys, invalid Unicode, and decimal/exponent number tokens.
+checks bounds before detaching storage. `value.ParseJSON` converts one complete
+supported JSON root into mutable `value.Value` storage. It follows `encoding/json`
+Unicode replacement behavior, rejects duplicate decoded object keys, and rejects
+decimal/exponent number tokens. `value.ParseJSONObject` is its object-root wrapper
+and returns `value.Map`.
+
+```go
+payload, err := value.ParseJSON([]byte(`[null,9007199254740993]`), limits)
+object, err := value.ParseJSONObject([]byte(`{"enabled":true}`), limits)
+```
+
+`Value`, `Map`, `View`, and `MapView` marshal native JSON through the same
+local-depth-128 bounded traversal. An admitted view can be passed directly to
+`json.Marshal` without exporting its backing:
+
+```go
+import "encoding/json"
+
+view, err := payload.Admit(limits)
+payloadJSON, err := json.Marshal(view)
+mapView, err := object.Admit(limits)
+objectJSON, err := json.Marshal(mapView)
+```
+
+JSON is an interchange representation. `codec.Encode` continues to produce the
+canonical CBOR bytes used for persisted value identity.
 
 A local defined type may use any supported underlying type. An alias uses its
 underlying owner's generated methods and cannot be a registry root. Imported

@@ -1,32 +1,37 @@
     method func (*Map).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
     method func (*Value).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
+    method func (Kind).String() string
     method func (Map).Admit(limits codec.Limits) (MapView, error)
     method func (Map).AppendCBOR(dst []byte) []byte
     method func (Map).CheckCBOR(b *codec.Budget, depth int, fieldMax int) error
     method func (Map).Clone() Map
     method func (Map).Equal(other Map) bool
+    method func (Map).MarshalJSON() ([]byte, error)
     method func (MapView).All() iter.Seq2[string, View]
     method func (MapView).Get(key string) (View, bool)
     method func (MapView).Len() int
+    method func (MapView).MarshalJSON() ([]byte, error)
     method func (Value).Admit(limits codec.Limits) (View, error)
     method func (Value).AppendCBOR(dst []byte) []byte
     method func (Value).CheckCBOR(b *codec.Budget, depth int, fieldMax int) error
     method func (Value).Clone() Value
     method func (Value).Equal(other Value) bool
+    method func (Value).MarshalJSON() ([]byte, error)
     method func (View).Array() (views.SliceView[Value, View], bool)
     method func (View).Bool() (bool, bool)
     method func (View).Int64() (int64, bool)
     method func (View).Kind() Kind
+    method func (View).MarshalJSON() ([]byte, error)
     method func (View).Object() (MapView, bool)
     method func (View).String() (string, bool)
     method func (View).Uint64() (uint64, bool)
-const ArrayKind Kind = "array"
-const BoolKind Kind = "bool"
-const IntegerKind Kind = "integer"
-const InvalidKind Kind = ""
-const MapKind Kind = "map"
-const NullKind Kind = "null"
-const StringKind Kind = "string"
+const ArrayKind Kind = 5
+const BoolKind Kind = 2
+const IntegerKind Kind = 4
+const InvalidKind Kind = 0
+const MapKind Kind = 6
+const NullKind Kind = 1
+const StringKind Kind = 3
 func Array(v []Value) Value
 func Bool(v bool) Value
 func Borrow(v Value) View
@@ -34,10 +39,11 @@ func BorrowMap(m Map) MapView
 func Int64(v int64) Value
 func Null() Value
 func Object(v Map) Value
+func ParseJSON(data []byte, limits codec.Limits) (Value, error)
 func ParseJSONObject(data []byte, limits codec.Limits) (Map, error)
 func String(v string) Value
 func Uint64(v uint64) Value
-type Kind string
+type Kind uint8
 type Map map[string]Value
 type MapView struct{}
 type Value struct{}

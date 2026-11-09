@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
+	"math"
+	"slices"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -11,47 +13,58 @@ import (
 	"github.com/stacklok/mecatl/engine/kernel/codec"
 )
 
-// ParseJSONObject converts one complete JSON object to mutable authoring storage,
-// suitable for direct DTO assignment. It accepts only integer-form numbers in
-// [-2^63, 2^64-1], unique decoded object keys, and valid Unicode string syntax.
-// Decimal/exponent numbers, nonobject roots and trailing data are rejected.
-// Failure returns a nil Map; success owns all storage independently of data.
-// Keep data stable throughout the operation. Use Map.Admit for immutable access.
+// ParseJSONObject is ParseJSON restricted to object roots. It returns a nil Map
+// on any failure; success owns mutable storage independently of data.
+func ParseJSONObject(data []byte, limits codec.Limits) (Map, error) {
+	v, err := ParseJSON(data, limits)
+	if err != nil {
+		return nil, err
+	}
+	if v.kind != MapKind {
+		return nil, codec.ErrInvalidData
+	}
+	return v.object, nil
+}
+
+// ParseJSON converts one complete JSON value to independently owned mutable
+// authoring storage. It accepts every native root kind, integer-form numbers in
+// [-2^63, 2^64-1] (normalizing -0 to zero), and unique decoded object keys.
+// Like encoding/json, it replaces malformed UTF-8 and unpaired UTF-16 surrogates
+// with U+FFFD; replacement collisions in keys are duplicates. Decimal/exponent
+// numbers and trailing data are rejected. Failure returns a zero Value.
+// Keep data stable throughout the operation; use Value.Admit for immutable access.
 //
 // Limits are validated and the complete input byte cap checked before parsing.
 // Decoder token/string temporaries are bounded by that input; retained values
 // additionally obey incremental codec accounting and the fixed local depth 128.
 // The conservative nine-byte-per-node size estimate is not heap accounting:
 // Go representations have additional constant-factor overhead.
-func ParseJSONObject(data []byte, limits codec.Limits) (Map, error) {
+func ParseJSON(data []byte, limits codec.Limits) (Value, error) {
 	if _, err := codec.NewBudget(limits); err != nil {
-		return nil, err
+		return Value{}, err
 	}
 	if len(data) > limits.MaxBytes {
-		return nil, codec.ErrLimitExceeded
-	}
-	if err := checkJSONUnicode(data); err != nil {
-		return nil, err
+		return Value{}, codec.ErrLimitExceeded
 	}
 	p := jsonParser{decoder: json.NewDecoder(bytes.NewReader(data)), limits: limits}
 	p.decoder.UseNumber()
 	if err := p.reserve(1); err != nil {
-		return nil, err
+		return Value{}, err
 	}
 	v, err := p.read(0)
 	if err != nil {
-		return nil, err
+		return Value{}, err
 	}
 	if _, err := p.decoder.Token(); err != io.EOF {
 		if err == nil {
 			err = codec.ErrInvalidData
 		}
-		return nil, err
+		return Value{}, err
 	}
-	if err := codec.Check(v.object, limits); err != nil {
-		return nil, err
+	if err := codec.Check(v, limits); err != nil {
+		return Value{}, err
 	}
-	return v.object, nil
+	return v, nil
 }
 
 // jsonParser reserves children incrementally because JSON has no declared counts.
@@ -86,7 +99,7 @@ func (p *jsonParser) text(s string) error {
 // item checks child depth and reserves an array element or map pair before any
 // child traversal or retained insertion. Subtraction/division avoid overflow.
 func (p *jsonParser) item(depth, count, maximum, nodes int) error {
-	if depth == maxDepth {
+	if depth == maxLocalDepth {
 		return ErrDepthExceeded
 	}
 	if depth >= p.limits.MaxDepth || count >= maximum || p.elements >= p.limits.MaxCollectionElements {
@@ -103,9 +116,6 @@ func (p *jsonParser) read(depth int) (Value, error) {
 	token, err := p.decoder.Token()
 	if err != nil {
 		return Value{}, err
-	}
-	if depth == 0 && token != json.Delim('{') {
-		return Value{}, codec.ErrInvalidData
 	}
 	switch x := token.(type) {
 	case nil:
@@ -206,59 +216,97 @@ func (p *jsonParser) close(want json.Delim) error {
 	return nil
 }
 
-// checkJSONUnicode examines original string syntax before encoding/json can
-// replace invalid UTF-8 or unpaired UTF-16 surrogates. Other JSON syntax remains
-// the decoder's responsibility. Escaped backslashes/quotes are skipped together.
-func checkJSONUnicode(data []byte) error {
-	if !utf8.Valid(data) {
-		return codec.ErrInvalidData
+// marshalJSON publishes output only after a successful traversal. One local depth
+// counter bounds all descendants (including cycles), without operational budgets,
+// subtree validation passes, mutable exports, or intermediate JSON subtrees.
+func marshalJSON(v Value) ([]byte, error) {
+	out, err := appendJSON(nil, v, 0)
+	if err != nil {
+		return nil, err
 	}
-	inString := false
-	for i := 0; i < len(data); i++ {
-		switch data[i] {
-		case '"':
-			inString = !inString
-		case '\\':
-			if !inString {
-				continue
-			}
-			i++
-			if i >= len(data) {
-				return codec.ErrInvalidData
-			}
-			if data[i] != 'u' {
-				continue
-			}
-			n, err := jsonHex(data[i+1:])
-			if err != nil {
-				return err
-			}
-			i += 4
-			if n >= 0xdc00 && n <= 0xdfff {
-				return codec.ErrInvalidData
-			}
-			if n >= 0xd800 && n <= 0xdbff {
-				if len(data)-i < 7 || data[i+1] != '\\' || data[i+2] != 'u' {
-					return codec.ErrInvalidData
-				}
-				low, err := jsonHex(data[i+3:])
-				if err != nil || low < 0xdc00 || low > 0xdfff {
-					return codec.ErrInvalidData
-				}
-				i += 6
-			}
-		}
-	}
-	return nil
+	return out, nil
 }
 
-func jsonHex(data []byte) (uint64, error) {
-	if len(data) < 4 {
-		return 0, codec.ErrInvalidData
+func appendJSON(dst []byte, v Value, depth int) ([]byte, error) {
+	if depth > maxLocalDepth {
+		return nil, ErrDepthExceeded
 	}
-	n, err := strconv.ParseUint(string(data[:4]), 16, 16)
+	switch v.kind {
+	case NullKind:
+		return append(dst, "null"...), nil
+	case BoolKind:
+		return strconv.AppendBool(dst, v.flag), nil
+	case StringKind:
+		return appendJSONString(dst, v.text)
+	case IntegerKind:
+		if v.flag {
+			if v.number > math.MaxInt64 {
+				return nil, codec.ErrInvalidData
+			}
+			return strconv.AppendInt(dst, -1-int64(v.number), 10), nil // #nosec G115 -- checked above.
+		}
+		return strconv.AppendUint(dst, v.number, 10), nil
+	case ArrayKind:
+		if depth == maxLocalDepth && len(v.array) != 0 {
+			return nil, ErrDepthExceeded
+		}
+		dst = append(dst, '[')
+		for i, child := range v.array {
+			if i != 0 {
+				dst = append(dst, ',')
+			}
+			var err error
+			dst, err = appendJSON(dst, child, depth+1)
+			if err != nil {
+				return nil, err
+			}
+		}
+		return append(dst, ']'), nil
+	case MapKind:
+		return appendJSONObject(dst, v.object, depth)
+	default:
+		return nil, codec.ErrInvalidData
+	}
+}
+
+// appendJSONObject shares its caller's local depth; the map adds no wrapper node.
+func appendJSONObject(dst []byte, m Map, depth int) ([]byte, error) {
+	if depth == maxLocalDepth && len(m) != 0 {
+		return nil, ErrDepthExceeded
+	}
+	keys := make([]string, 0, len(m))
+	for key := range m {
+		keys = append(keys, key)
+	}
+	slices.Sort(keys)
+	dst = append(dst, '{')
+	for i, key := range keys {
+		if i != 0 {
+			dst = append(dst, ',')
+		}
+		var err error
+		dst, err = appendJSONString(dst, key)
+		if err != nil {
+			return nil, err
+		}
+		dst = append(dst, ':')
+		dst, err = appendJSON(dst, m[key], depth+1)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return append(dst, '}'), nil
+}
+
+// appendJSONString uses the standard library's escaping, but rejects invalid
+// native UTF-8 rather than silently replacing authoring data during encoding.
+func appendJSONString(dst []byte, s string) ([]byte, error) {
+	if !utf8.ValidString(s) {
+		return nil, codec.ErrInvalidData
+	}
+	encoded, err := json.Marshal(s)
 	if err != nil {
-		return 0, codec.ErrInvalidData
+		return nil, err
 	}
-	return n, nil
+	return append(dst, encoded...), nil
 }

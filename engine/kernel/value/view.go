@@ -20,6 +20,11 @@ type View struct{ value Value }
 // establish that ownership boundary instead of borrowing mutable author inputs.
 func Borrow(v Value) View { return View{value: v} }
 
+// MarshalJSON encodes the retained native value without exporting or cloning its
+// backing. Zero is invalid. Value.MarshalJSON's traversal, cost, failure and
+// stable-backing contract applies for the entire operation.
+func (v View) MarshalJSON() ([]byte, error) { return marshalJSON(v.value) }
+
 // Kind returns the value's kind; zero returns InvalidKind.
 func (v View) Kind() Kind { return v.value.kind }
 

@@ -1,6 +1,7 @@
 package value_test
 
 import (
+	"encoding/json"
 	"fmt"
 
 	"github.com/stacklok/mecatl/engine/kernel/codec"
@@ -43,4 +44,27 @@ func ExampleMap_Admit() {
 	extra, present := object.Get("extra")
 	fmt.Println(path, limit, present && extra.Kind() == value.NullKind)
 	// Output: README.md 50 true
+}
+
+func ExampleParseJSON() {
+	policy := codec.Limits{
+		MaxBytes: 1 << 20, MaxStringBytes: 1 << 16, MaxByteStringBytes: 1 << 16,
+		MaxArrayElements: 1000, MaxMapPairs: 1000, MaxDepth: 256,
+		MaxNodes: 10000, MaxCollectionElements: 5000,
+	}
+	// Any supported root is accepted, and integers never pass through float64.
+	author, err := value.ParseJSON([]byte(`[9007199254740993,{"enabled":true}]`), policy)
+	if err != nil {
+		panic(err)
+	}
+	accepted, err := author.Admit(policy)
+	if err != nil {
+		panic(err)
+	}
+	encoded, err := json.Marshal(struct{ Payload value.View }{accepted})
+	if err != nil {
+		panic(err)
+	}
+	fmt.Println(string(encoded))
+	// Output: {"Payload":[9007199254740993,{"enabled":true}]}
 }

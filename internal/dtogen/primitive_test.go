@@ -121,6 +121,11 @@ func TestPrimitiveOwnerInvalidSignaturesNoWrite(t *testing.T) {
 			}
 			if test.name == "CheckCBOR" || test.name == "AppendCBOR" {
 				modified = strings.Replace(modified, "codec.Check(v, limits)", "codec.Check(Map{}, limits)", 1)
+				// Keep ParseJSON's complete-value check compilable too, so owner
+				// validation, not the package loader, rejects the mutated signature.
+				jsonPath := filepath.Join(filepath.Dir(path), "json.go")
+				jsonSource := readFixture(t, jsonPath)
+				writeFixture(t, jsonPath, strings.Replace(jsonSource, "codec.Check(v, limits)", "codec.Check(Map{}, limits)", 1))
 			}
 			writeFixture(t, path, modified)
 			before := repositoryState(t, filepath.Dir(cfg.Dir))

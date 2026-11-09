@@ -3,6 +3,7 @@ package valuefixture_test
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"math"
 	"testing"
 
@@ -85,6 +86,8 @@ func TestEnvelopeHistoryPersistenceOwnership(t *testing.T) {
 	}
 	assertStructuredView(t, accepted, value.Borrow(want.Value))
 	assertMapView(t, acceptedMap, value.BorrowMap(want.Map))
+	assertJSONValue(t, accepted, want.Value)
+	assertJSONMap(t, acceptedMap, want.Map)
 
 	id := history.NewHistoryID()
 	proposal := format.Commit{FormatVersion: 1, HistoryID: &id, Sequence: 1,
@@ -117,6 +120,8 @@ func TestEnvelopeHistoryPersistenceOwnership(t *testing.T) {
 	}
 	pinned := fixtureview.Borrow(&decoded)
 	assertEnvelopeView(t, pinned, want)
+	assertJSONValue(t, pinned.Value(), want.Value)
+	assertJSONMap(t, pinned.Map(), want.Map)
 	child, ok := pinned.Children().Get("one")
 	if !ok {
 		t.Fatal("missing child")
@@ -251,6 +256,30 @@ func assertBytesView(t *testing.T, got views.Bytes, want []byte) {
 	}
 	if seen != len(want) {
 		t.Fatal("byte traversal skipped elements")
+	}
+}
+
+func assertJSONValue(t *testing.T, got json.Marshaler, want value.Value) {
+	t.Helper()
+	encoded, err := json.Marshal(got)
+	if err != nil {
+		t.Fatalf("marshal value: %v", err)
+	}
+	parsed, err := value.ParseJSON(encoded, limits())
+	if err != nil || !parsed.Equal(want) {
+		t.Fatalf("value JSON differs from owner: %s: %v", encoded, err)
+	}
+}
+
+func assertJSONMap(t *testing.T, got json.Marshaler, want value.Map) {
+	t.Helper()
+	encoded, err := json.Marshal(got)
+	if err != nil {
+		t.Fatalf("marshal map: %v", err)
+	}
+	parsed, err := value.ParseJSONObject(encoded, limits())
+	if err != nil || !parsed.Equal(want) {
+		t.Fatalf("map JSON differs from owner: %s: %v", encoded, err)
 	}
 }
 
