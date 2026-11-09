@@ -31,6 +31,6 @@
     "fast-check": "4.10.2",
     "tsx": "4.23.13",
     "typescript": "6.0.3",
-    "vitest": "4.1.11"
+    "vitest": "5.1.0"
   }
 }
