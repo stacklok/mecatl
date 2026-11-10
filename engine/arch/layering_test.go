@@ -157,9 +157,10 @@ var coreImportRules = []coreImportRule{
 			modulePrefix + "engine/kernel/codec":          true,
 			modulePrefix + "engine/kernel/session/format": true,
 			modulePrefix + "engine/kernel/views":          true,
+			modulePrefix + "engine/kernel/value":          true,
 		},
 		allowedExternal: map[string]bool{},
-		desc:            "kernel session may import only history contracts, session format, views, content identity, the codec runtime and stdlib, never legacy session or execution code",
+		desc:            "kernel session may import only history contracts, session format, structured values, views, content identity, the codec runtime and stdlib, never legacy session or execution code",
 	},
 	{
 		pkg: modulePrefix + "engine/kernel/session/format",

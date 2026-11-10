@@ -236,9 +236,11 @@ func (b *SessionCommit) StartRun() (RunID, error) {
 	return id, nil
 }
 
-// AddRunEnded records explicit terminal ownership. Completed requires accounted
-// inputs and no pending outcome or calls; other reasons preserve unresolved facts.
-// Incoming RunID must be zero; capture references are relative to run.
+// AddRunEnded records explicit terminal ownership. Ordinary endings require every
+// tool call individually settled; Completed also requires accounted inputs and no
+// pending model outcome. BulkToolCloseout is allowed only for Limit/CaptureFailed
+// and derives settlement without individual records or resolving a pending model.
+// Incoming RunID must be zero; model capture references are relative to run.
 func (b *SessionCommit) AddRunEnded(run RunID, v RunEnded) error {
 	if err := b.check(true); err != nil {
 		return err
@@ -255,8 +257,9 @@ func (b *SessionCommit) AddRunEnded(run RunID, v RunEnded) error {
 	return b.add(newRunEndedRecord(v, run, b.owner.policy.PayloadLimits))
 }
 
-// EndRun adds a minimal ending for the provisional active run. It is the fixed
-// shape used for terminal escape; callers needing evidence use AddRunEnded.
+// EndRun adds an ordinary ending for the provisional active run and requires all
+// tool calls individually settled. Exceptional closeout must explicitly set
+// BulkToolCloseout through AddRunEnded; EndRun never bypasses soft limits.
 func (b *SessionCommit) EndRun(reason RunEndedReason) error {
 	if err := b.check(true); err != nil {
 		return err
@@ -326,6 +329,46 @@ func (b *SessionCommit) AddInvocationFailure(request ModelRequestID, v Invocatio
 		return codec.ErrInvalidData
 	}
 	return b.add(newInvocationFailureRecord(v, request, b.owner.policy.PayloadLimits))
+}
+
+// AddToolInvocation retains effective committed intent for the named call.
+// Incoming RunID, RequestID and CallID must be zero, even if matching call.
+// Live handle, full destination scope and zero fields precede payload sizing.
+// Failure leaves all earlier additions unchanged and grants no execution authority.
+func (b *SessionCommit) AddToolInvocation(call RequestedCallID, v ToolInvocation) error {
+	if err := b.check(true); err != nil {
+		return err
+	}
+	if err := call.Validate(); err != nil {
+		return codec.ErrInvalidData
+	}
+	if call.requestID.runID.historyID != b.owner.state.view.historyID {
+		return ErrIdentity
+	}
+	if v.RunID != 0 || v.RequestID != 0 || v.CallID != 0 {
+		return codec.ErrInvalidData
+	}
+	return b.add(newToolInvocationRecord(v, call, b.owner.policy.PayloadLimits))
+}
+
+// AddToolDisposition retains one explicit outcome for the named requested call.
+// Incoming RunID, RequestID and CallID must be zero, even if matching call.
+// Live handle, full destination scope and zero fields precede payload sizing.
+// Failure retains no partial output and leaves all earlier additions unchanged.
+func (b *SessionCommit) AddToolDisposition(call RequestedCallID, v ToolDisposition) error {
+	if err := b.check(true); err != nil {
+		return err
+	}
+	if err := call.Validate(); err != nil {
+		return codec.ErrInvalidData
+	}
+	if call.requestID.runID.historyID != b.owner.state.view.historyID {
+		return ErrIdentity
+	}
+	if v.RunID != 0 || v.RequestID != 0 || v.CallID != 0 {
+		return codec.ErrInvalidData
+	}
+	return b.add(newToolDispositionRecord(v, call, b.owner.policy.PayloadLimits))
 }
 
 // Discard releases an unsubmitted batch without consuming IDs. Frozen uncertain

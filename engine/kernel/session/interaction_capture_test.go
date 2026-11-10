@@ -92,15 +92,29 @@ func TestInteractionOversizeCaptureFallback(t *testing.T) {
 
 func TestInteractionManyCallsDoNotEnlargeMinimalEnding(t *testing.T) {
 	var payload []byte
-	for _, count := range []int{0, 1, 15, 16} {
-		s := interactionFixture(t, "pending")
-		pending := s.state.view.lifecycle.pending
+	for _, count := range []int{0, 1, 15, 16, 1024} {
+		s, limits := internalFixture(t)
+		limits.MaxBytes, limits.MaxByteStringBytes = 1<<20, 1<<20
+		limits.MaxArrayElements, limits.MaxCollectionElements, limits.MaxNodes = 1024, 16384, 16384
+		s.policy.PayloadLimits, s.policy.CommitLimits = limits, limits
+		s.history = internalTestHistory(t, limits)
+		interactionSubmit(t, s, func(b *SessionCommit) {
+			interactionCheck(t, b.Create())
+			_, err := b.StartRun()
+			interactionCheck(t, err)
+			interactionCheck(t, b.ReplaceModelBinding(s.Snapshot().HistoryID(), ModelBinding{Route: "r", API: "a", Model: "m", Settings: []byte("{}")}))
+		})
+		pending := interactionRequest(s, 1).ID
+		interactionSubmit(t, s, func(b *SessionCommit) {
+			_, err := b.AddModelRequest(pending.runID, interactionRequest(s, 1).ModelRequest)
+			interactionCheck(t, err)
+		})
 		response := ModelResponse{Terminal: ResponseTerminalError}
 		for range count {
 			response.Items = append(response.Items, ResponseItem{Call: &RequestedCall{Arguments: []byte{0xff}}})
 		}
 		interactionSubmit(t, s, func(b *SessionCommit) { interactionCheck(t, b.AddModelResponse(pending, response)) })
-		prepared, err := s.prepareEnding(RunEndedInterrupted)
+		prepared, err := s.prepareEnding(RunEndedLimit)
 		interactionCheck(t, err)
 		got := prepared.commit.Records[0].Payload
 		if payload == nil {
@@ -108,7 +122,9 @@ func TestInteractionManyCallsDoNotEnlargeMinimalEnding(t *testing.T) {
 		} else if !bytes.Equal(payload, got) {
 			t.Fatal("ending encodes call obligations")
 		}
-		interactionSubmit(t, s, func(b *SessionCommit) { interactionCheck(t, b.EndRun(RunEndedInterrupted)) })
+		interactionSubmit(t, s, func(b *SessionCommit) {
+			interactionCheck(t, b.AddRunEnded(s.Snapshot().ActiveRun(), RunEnded{Reason: RunEndedLimit, BulkToolCloseout: true}))
+		})
 		if s.state.view.lifecycle.calls != uint64(count) {
 			t.Fatal("ending erased calls")
 		}

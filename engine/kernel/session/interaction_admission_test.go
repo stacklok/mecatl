@@ -332,13 +332,18 @@ func TestInteractionAdmissionAllPaths(t *testing.T) {
 		{"effective while calls unresolved", "calls", func(s *Session) []*materializedRecord { return []*materializedRecord{effective(s, false)} }, ErrTransition},
 		{"request while calls unresolved", "calls", func(s *Session) []*materializedRecord { return []*materializedRecord{request(s)} }, ErrTransition},
 		{"clean end while calls unresolved", "calls", func(s *Session) []*materializedRecord { return []*materializedRecord{end(s, RunEndedCompleted)} }, ErrTransition},
-		{"uncertain end preserves calls", "calls", func(s *Session) []*materializedRecord { return []*materializedRecord{end(s, RunEndedInterrupted)} }, nil},
+		{"ordinary interruption rejects unresolved calls", "calls", func(s *Session) []*materializedRecord { return []*materializedRecord{end(s, RunEndedInterrupted)} }, ErrTransition},
 		{"late response", "ended", func(s *Session) []*materializedRecord { return []*materializedRecord{response(s)} }, ErrTransition},
 		{"duplicate ending", "ended", func(s *Session) []*materializedRecord { return []*materializedRecord{end(s, RunEndedError)} }, ErrTransition},
 		{"new input after outcome not covered", "responded", func(s *Session) []*materializedRecord {
 			return []*materializedRecord{input(s), end(s, RunEndedCompleted)}
 		}, ErrTransition},
 		{"new input may remain uncertain", "responded", func(s *Session) []*materializedRecord { return []*materializedRecord{input(s), end(s, RunEndedError)} }, nil},
+	}
+	for _, reason := range []RunEndedReason{RunEndedCompleted, RunEndedError, RunEndedLimit, RunEndedInterrupted, RunEndedCaptureFailed} {
+		cases = append(cases, testCase{"ordinary unresolved " + string(reason), "calls", func(s *Session) []*materializedRecord {
+			return []*materializedRecord{end(s, reason)}
+		}, ErrTransition})
 	}
 	for _, field := range []string{"sequence", "CID", "retry", "ordinal"} {
 		cases = append(cases, testCase{"invalid " + field, "active", func(s *Session) []*materializedRecord {
@@ -447,7 +452,7 @@ func TestInteractionOverflowAndMaterializationAgreement(t *testing.T) {
 		interactionCheck(t, err)
 		a, b := newAdmission(s.state.view), newAdmission(s.state.view)
 		x, y := a.admit(s.Snapshot().HistoryID(), r), b.admit(s.Snapshot().HistoryID(), imported)
-		if !errors.Is(x, y) || a.candidate != b.candidate {
+		if !errors.Is(x, y) || !reflect.DeepEqual(a.candidate, b.candidate) {
 			t.Fatalf("constructed and decoded gates disagree for %s: %v/%v", r.value.Kind, x, y)
 		}
 		if !supportedRecord(r.value.Kind, sessionformat.Version) {

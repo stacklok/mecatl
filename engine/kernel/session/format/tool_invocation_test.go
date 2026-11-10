@@ -21,7 +21,7 @@ func toolLimits() codec.Limits {
 }
 
 func richToolInvocation() format.ToolInvocation {
-	return format.ToolInvocation{RunID: 1, RequestID: 2, CallID: 3, Name: " effective tool ", Arguments: value.Map{"items": value.Array([]value.Value{value.Null(), value.Bool(true), value.Int64(math.MinInt64), value.Uint64(math.MaxUint64)}), "nested": value.Object(value.Map{"text": value.String("original")})}, Prerequisites: []uint64{5, 4}}
+	return format.ToolInvocation{RunID: 1, RequestID: 2, CallID: 3, Name: " effective tool ", Arguments: value.Map{"items": value.Array([]value.Value{value.Null(), value.Bool(true), value.Int64(math.MinInt64), value.Uint64(math.MaxUint64)}), "nested": value.Object(value.Map{"text": value.String("original")})}, Prerequisites: []uint64{2, 1}}
 }
 
 func TestToolInvocationRoundtrip(t *testing.T) {
@@ -256,7 +256,8 @@ func TestToolInvocationMalformed(t *testing.T) {
 		"utf8":              func(v *format.ToolInvocation) { v.Name = "\xff" },
 		"zero prerequisite": func(v *format.ToolInvocation) { v.Prerequisites = []uint64{0} },
 		"self":              func(v *format.ToolInvocation) { v.Prerequisites = []uint64{v.CallID} },
-		"duplicate":         func(v *format.ToolInvocation) { v.Prerequisites = []uint64{4, 4} },
+		"duplicate":         func(v *format.ToolInvocation) { v.Prerequisites = []uint64{1, 1} },
+		"forward":           func(v *format.ToolInvocation) { v.Prerequisites = []uint64{v.CallID + 1} },
 	} {
 		t.Run(name, func(t *testing.T) {
 			v := richToolInvocation()
@@ -315,6 +316,7 @@ func TestToolInvocationSchemaCaps(t *testing.T) {
 						v.Arguments[strconv.Itoa(i)] = value.Null()
 					}
 				case "prerequisites":
+					v.CallID = 8192
 					v.Prerequisites = make([]uint64, 4096+over)
 					for i := range v.Prerequisites {
 						v.Prerequisites[i] = uint64(i + 10)

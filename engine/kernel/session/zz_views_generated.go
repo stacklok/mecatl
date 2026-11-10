@@ -5,10 +5,11 @@ package session
 import (
 	dtogenType2 "github.com/stacklok/mecatl/engine/kernel/contentid"
 	dtogenType0 "github.com/stacklok/mecatl/engine/kernel/session/format"
+	dtogenType3 "github.com/stacklok/mecatl/engine/kernel/value"
 	dtogenViews "github.com/stacklok/mecatl/engine/kernel/views"
 )
 
-// Selected view layouts, source policy and documentation fingerprint: 5f1667a24f3a7f51bed283aa7e3624f04390909201de10c75c3ac563c9a8dbc1.
+// Selected view layouts, source policy and documentation fingerprint: 14e0515d1c9821140b1af0f408784bfa2a2b5a3ae64ae4d0cac79057e35062b8.
 // Backing contract for AttributedInputView.
 //
 // Source contract (DTO semantics, not a mutable accessor):
@@ -1718,10 +1719,11 @@ func (v ResponseItemView) Call() (RequestedCallDataView, bool) {
 // Session authoring supplies destination scope separately and requires RunID zero;
 // Validate requires the fully populated persisted shape.
 var _ = (*struct {
-	RunID       uint64                              "cbor:\"r\" view:\"manual\""
-	Reason      dtogenType0.RunEndedReason          "cbor:\"e\""
-	Explanation *string                             "cbor:\"x,omitempty\""
-	Capture     *dtogenType0.CaptureFailureEvidence "cbor:\"c,omitempty\" view:\"manual\""
+	RunID            uint64                              "cbor:\"r\" view:\"manual\""
+	Reason           dtogenType0.RunEndedReason          "cbor:\"e\""
+	BulkToolCloseout bool                                "cbor:\"b\""
+	Explanation      *string                             "cbor:\"x,omitempty\""
+	Capture          *dtogenType0.CaptureFailureEvidence "cbor:\"c,omitempty\" view:\"manual\""
 })((*dtogenType0.RunEnded)(nil))
 
 // Reason reads Reason in O(1) without copying sibling payloads.
@@ -1746,6 +1748,29 @@ func (v RunEndedView) Reason() dtogenType0.RunEndedReason {
 		return *new(dtogenType0.RunEndedReason)
 	}
 	return v.value.Reason
+}
+
+// BulkToolCloseout reads BulkToolCloseout in O(1) without copying sibling payloads.
+// A zero view returns zero.
+// The receiver retains stable backing for its lifetime.
+// Access neither freezes nor synchronizes backing.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// RunEnded terminally records the owner's ending reason without fabricating any
+// response, cancellation, or external effect. Evidence is permitted only for a
+// capture-failed ending. Assignment shares nested storage; Clone detaches it.
+// Session authoring supplies destination scope separately and requires RunID zero;
+// Validate requires the fully populated persisted shape.
+//
+// BulkToolCloseout is required, including false. True explicitly closes outstanding
+// tool calls and is valid only for limit or capture-failed endings. It does not
+// fabricate model outcomes or prove stopped external effects. False is ordinary
+// termination; aggregate admission checks that every tool call is settled.
+func (v RunEndedView) BulkToolCloseout() bool {
+	if v.value == nil {
+		return *new(bool)
+	}
+	return v.value.BulkToolCloseout
 }
 
 // Explanation reads Explanation in O(1) without copying sibling payloads.
@@ -1915,6 +1940,660 @@ func (v ToolDefinitionView) ArgumentSchema() dtogenViews.Bytes {
 		return dtogenViews.Bytes{}
 	}
 	return dtogenViews.BorrowBytes(v.value.ArgumentSchema)
+}
+
+// Backing contract for ToolDispositionView.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// ToolDisposition retains exactly one outcome fact for a requested call, not an
+// execution mechanism. Assignment shares nested storage; Clone detaches it.
+// Zero is invalid; history scope is omitted. Reload grants no execution authority.
+//
+// Aggregate obligations (not implemented by this DTO): Returned requires accepted
+// commitment and settled prerequisites; Indeterminate requires accepted commitment
+// even if prerequisites are unsettled; NotInvoked may precede or follow commitment.
+// At most one invocation and disposition fact per call, and no late facts after
+// ending, must be enforced by the aggregate, not this validator.
+var _ = (*struct {
+	RunID         uint64                         "cbor:\"r\" view:\"-\""
+	RequestID     uint64                         "cbor:\"q\" view:\"-\""
+	CallID        uint64                         "cbor:\"c\" view:\"manual\""
+	Returned      *dtogenType0.ToolReturned      "cbor:\"t,omitempty\""
+	NotInvoked    *dtogenType0.ToolNotInvoked    "cbor:\"n,omitempty\""
+	Indeterminate *dtogenType0.ToolIndeterminate "cbor:\"i,omitempty\""
+	Diagnostic    *string                        "cbor:\"d,omitempty\" cborlimit:\"bytes=16384\""
+})((*dtogenType0.ToolDisposition)(nil))
+
+// Returned reads Returned in O(1) without copying sibling payloads.
+// A zero view or nil field returns zero, false; present zero/empty values return true.
+// The returned child borrows backing, which must remain stable for every derived view's lifetime.
+// Access neither freezes nor synchronizes backing.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// ToolDisposition retains exactly one outcome fact for a requested call, not an
+// execution mechanism. Assignment shares nested storage; Clone detaches it.
+// Zero is invalid; history scope is omitted. Reload grants no execution authority.
+//
+// Aggregate obligations (not implemented by this DTO): Returned requires accepted
+// commitment and settled prerequisites; Indeterminate requires accepted commitment
+// even if prerequisites are unsettled; NotInvoked may precede or follow commitment.
+// At most one invocation and disposition fact per call, and no late facts after
+// ending, must be enforced by the aggregate, not this validator.
+//
+// Returned optionally retains observed terminal return, exclusive with other branches.
+func (v ToolDispositionView) Returned() (ToolReturnedView, bool) {
+	if v.value == nil || v.value.Returned == nil {
+		return ToolReturnedView{}, false
+	}
+	return dtogenViewToolReturnedView(v.value.Returned), true
+}
+
+// NotInvoked reads NotInvoked in O(1) without copying sibling payloads.
+// A zero view or nil field returns zero, false; present zero/empty values return true.
+// The returned child borrows backing, which must remain stable for every derived view's lifetime.
+// Access neither freezes nor synchronizes backing.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// ToolDisposition retains exactly one outcome fact for a requested call, not an
+// execution mechanism. Assignment shares nested storage; Clone detaches it.
+// Zero is invalid; history scope is omitted. Reload grants no execution authority.
+//
+// Aggregate obligations (not implemented by this DTO): Returned requires accepted
+// commitment and settled prerequisites; Indeterminate requires accepted commitment
+// even if prerequisites are unsettled; NotInvoked may precede or follow commitment.
+// At most one invocation and disposition fact per call, and no late facts after
+// ending, must be enforced by the aggregate, not this validator.
+//
+// NotInvoked optionally retains known non-invocation, exclusive with other branches.
+func (v ToolDispositionView) NotInvoked() (ToolNotInvokedView, bool) {
+	if v.value == nil || v.value.NotInvoked == nil {
+		return ToolNotInvokedView{}, false
+	}
+	return dtogenViewToolNotInvokedView(v.value.NotInvoked), true
+}
+
+// Indeterminate reads Indeterminate in O(1) without copying sibling payloads.
+// A zero view or nil field returns zero, false; present zero/empty values return true.
+// The returned child borrows backing, which must remain stable for every derived view's lifetime.
+// Access neither freezes nor synchronizes backing.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// ToolDisposition retains exactly one outcome fact for a requested call, not an
+// execution mechanism. Assignment shares nested storage; Clone detaches it.
+// Zero is invalid; history scope is omitted. Reload grants no execution authority.
+//
+// Aggregate obligations (not implemented by this DTO): Returned requires accepted
+// commitment and settled prerequisites; Indeterminate requires accepted commitment
+// even if prerequisites are unsettled; NotInvoked may precede or follow commitment.
+// At most one invocation and disposition fact per call, and no late facts after
+// ending, must be enforced by the aggregate, not this validator.
+//
+// Indeterminate optionally retains uncertain outcome, exclusive with other branches.
+func (v ToolDispositionView) Indeterminate() (ToolIndeterminateView, bool) {
+	if v.value == nil || v.value.Indeterminate == nil {
+		return ToolIndeterminateView{}, false
+	}
+	return dtogenViewToolIndeterminateView(v.value.Indeterminate), true
+}
+
+// Diagnostic reads Diagnostic in O(1) without copying sibling payloads.
+// A zero view or nil field returns zero, false; present zero/empty values return true.
+// The receiver retains stable backing for its lifetime.
+// Access neither freezes nor synchronizes backing.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// ToolDisposition retains exactly one outcome fact for a requested call, not an
+// execution mechanism. Assignment shares nested storage; Clone detaches it.
+// Zero is invalid; history scope is omitted. Reload grants no execution authority.
+//
+// Aggregate obligations (not implemented by this DTO): Returned requires accepted
+// commitment and settled prerequisites; Indeterminate requires accepted commitment
+// even if prerequisites are unsettled; NotInvoked may precede or follow commitment.
+// At most one invocation and disposition fact per call, and no late facts after
+// ending, must be enforced by the aggregate, not this validator.
+//
+// Diagnostic is optional human-readable context, at most 16384 UTF-8 bytes.
+// For example: "required argument 'path' is missing" or "executor disconnected
+// before a terminal result was observed; execution may have occurred".
+// Nil is absent; present-empty survives. It supplements the reason, not tool
+// output or lifecycle facts; returned tool errors belong in Output. Producers
+// must scrub and approve it for retention before capture. Retention grants no
+// model disclosure permission. Structured supporting observations remain deferred
+// to typed ancillary records rather than an extension bag.
+func (v ToolDispositionView) Diagnostic() (string, bool) {
+	if v.value == nil || v.value.Diagnostic == nil {
+		return *new(string), false
+	}
+	return *v.value.Diagnostic, true
+}
+
+// Backing contract for ToolEmbeddedResourceView.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// ToolEmbeddedResource retains a reference and exactly one inline body. Empty
+// text/blob preserves presence; zero is invalid. Assignment shares nested storage;
+// Clone detaches it. Reference metadata grants no dereference authority.
+// dtogenViewToolEmbeddedResourceView borrows stable backing; it neither freezes nor synchronizes access.
+func dtogenViewToolEmbeddedResourceView(value *dtogenType0.ToolEmbeddedResource) ToolEmbeddedResourceView {
+	return ToolEmbeddedResourceView{value: value}
+}
+
+var _ = (*struct {
+	Resource dtogenType0.ToolResource "cbor:\"r\""
+	Text     *string                  "cbor:\"t,omitempty\" cborlimit:\"bytes=4194304\""
+	Blob     *[]byte                  "cbor:\"b,omitempty\" cborlimit:\"bytes=4194304\""
+})((*dtogenType0.ToolEmbeddedResource)(nil))
+
+// Resource reads Resource in O(1) without copying sibling payloads.
+// A zero view returns zero.
+// The returned child borrows backing, which must remain stable for every derived view's lifetime.
+// Access neither freezes nor synchronizes backing.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// ToolEmbeddedResource retains a reference and exactly one inline body. Empty
+// text/blob preserves presence; zero is invalid. Assignment shares nested storage;
+// Clone detaches it. Reference metadata grants no dereference authority.
+//
+// Resource is required reference metadata, independent of retained body size.
+func (v ToolEmbeddedResourceView) Resource() ToolResourceView {
+	if v.value == nil {
+		return ToolResourceView{}
+	}
+	return dtogenViewToolResourceView(&v.value.Resource)
+}
+
+// Text reads Text in O(1) without copying sibling payloads.
+// A zero view or nil field returns zero, false; present zero/empty values return true.
+// The receiver retains stable backing for its lifetime.
+// Access neither freezes nor synchronizes backing.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// ToolEmbeddedResource retains a reference and exactly one inline body. Empty
+// text/blob preserves presence; zero is invalid. Assignment shares nested storage;
+// Clone detaches it. Reference metadata grants no dereference authority.
+//
+// Text optionally retains exact UTF-8 text, at most 4194304 bytes, exclusive with Blob.
+func (v ToolEmbeddedResourceView) Text() (string, bool) {
+	if v.value == nil || v.value.Text == nil {
+		return *new(string), false
+	}
+	return *v.value.Text, true
+}
+
+// Blob reads Blob in O(1) without copying sibling payloads.
+// A zero view or nil field returns zero, false; present zero/empty values return true.
+// The returned bytes borrow stable backing for their lifetime; only Copy detaches bytes.
+// Access neither freezes nor synchronizes backing.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// ToolEmbeddedResource retains a reference and exactly one inline body. Empty
+// text/blob preserves presence; zero is invalid. Assignment shares nested storage;
+// Clone detaches it. Reference metadata grants no dereference authority.
+//
+// Blob optionally retains opaque bytes, at most 4194304, exclusive with Text.
+// A nonnil pointer to nil or empty bytes is a present empty body.
+func (v ToolEmbeddedResourceView) Blob() (dtogenViews.Bytes, bool) {
+	if v.value == nil || v.value.Blob == nil {
+		return dtogenViews.Bytes{}, false
+	}
+	return dtogenViews.BorrowBytes(*v.value.Blob), true
+}
+
+// Backing contract for ToolIndeterminateView.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// ToolIndeterminate retains uncertainty, not a retry or started record. It cannot
+// assert complete terminal output without an observed terminal outcome. Zero is
+// invalid. Assignment shares output storage; Clone detaches it.
+// dtogenViewToolIndeterminateView borrows stable backing; it neither freezes nor synchronizes access.
+func dtogenViewToolIndeterminateView(value *dtogenType0.ToolIndeterminate) ToolIndeterminateView {
+	return ToolIndeterminateView{value: value}
+}
+
+var _ = (*struct {
+	Reason dtogenType0.ToolIndeterminateReason "cbor:\"r\" cborlimit:\"bytes=32\""
+	Output dtogenType0.ToolOutput              "cbor:\"o\""
+})((*dtogenType0.ToolIndeterminate)(nil))
+
+// Reason reads Reason in O(1) without copying sibling payloads.
+// A zero view returns zero.
+// The receiver retains stable backing for its lifetime.
+// Access neither freezes nor synchronizes backing.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// ToolIndeterminate retains uncertainty, not a retry or started record. It cannot
+// assert complete terminal output without an observed terminal outcome. Zero is
+// invalid. Assignment shares output storage; Clone detaches it.
+//
+// Reason is required closed-vocabulary uncertainty meaning, at most 32 bytes.
+func (v ToolIndeterminateView) Reason() dtogenType0.ToolIndeterminateReason {
+	if v.value == nil {
+		return *new(dtogenType0.ToolIndeterminateReason)
+	}
+	return v.value.Reason
+}
+
+// Output reads Output in O(1) without copying sibling payloads.
+// A zero view returns zero.
+// The returned child borrows backing, which must remain stable for every derived view's lifetime.
+// Access neither freezes nor synchronizes backing.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// ToolIndeterminate retains uncertainty, not a retry or started record. It cannot
+// assert complete terminal output without an observed terminal outcome. Zero is
+// invalid. Assignment shares output storage; Clone detaches it.
+//
+// Output is required truncated or omitted capture, possibly empty.
+func (v ToolIndeterminateView) Output() ToolOutputView {
+	if v.value == nil {
+		return ToolOutputView{}
+	}
+	return dtogenViewToolOutputView(&v.value.Output)
+}
+
+// Backing contract for ToolInvocationView.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// ToolInvocation retains effective authorized intent, which may differ from the
+// requested call. Commitment is a higher-layer assertion that the same intent is
+// prepared and authorized for execution; supporting preparation/authorization
+// observations have no persisted representation here. Reload grants no permission
+// or lease and proves no dispatch. Typed ancillary records may later retain those
+// observations or execution provenance when producers establish their semantics
+// and placement. Assignment shares mutable storage; Clone detaches it. Zero is invalid.
+// History scope is omitted. The authoring contract supplies a full RequestedCallID
+// separately with all three destination fields zero; Validate instead checks
+// persisted positive components, not aggregate admission.
+var _ = (*struct {
+	RunID         uint64          "cbor:\"r\" view:\"-\""
+	RequestID     uint64          "cbor:\"q\" view:\"-\""
+	CallID        uint64          "cbor:\"c\" view:\"manual\""
+	Name          string          "cbor:\"n\" cborlimit:\"bytes=4096\""
+	Arguments     dtogenType3.Map "cbor:\"a\" cborlimit:\"items=4096\""
+	Prerequisites []uint64        "cbor:\"p\" cborlimit:\"items=4096\" view:\"manual\""
+})((*dtogenType0.ToolInvocation)(nil))
+
+// Name reads Name in O(1) without copying sibling payloads.
+// A zero view returns zero.
+// The receiver retains stable backing for its lifetime.
+// Access neither freezes nor synchronizes backing.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// ToolInvocation retains effective authorized intent, which may differ from the
+// requested call. Commitment is a higher-layer assertion that the same intent is
+// prepared and authorized for execution; supporting preparation/authorization
+// observations have no persisted representation here. Reload grants no permission
+// or lease and proves no dispatch. Typed ancillary records may later retain those
+// observations or execution provenance when producers establish their semantics
+// and placement. Assignment shares mutable storage; Clone detaches it. Zero is invalid.
+// History scope is omitted. The authoring contract supplies a full RequestedCallID
+// separately with all three destination fields zero; Validate instead checks
+// persisted positive components, not aggregate admission.
+//
+// Name is exact nonempty UTF-8 effective tool intent, at most 4096 bytes.
+func (v ToolInvocationView) Name() string {
+	if v.value == nil {
+		return *new(string)
+	}
+	return v.value.Name
+}
+
+// Arguments reads Arguments in O(1) without copying sibling payloads.
+// A zero view returns zero.
+// The returned view borrows stable structured-value backing for every derived view's lifetime.
+// Access neither freezes nor synchronizes backing.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// ToolInvocation retains effective authorized intent, which may differ from the
+// requested call. Commitment is a higher-layer assertion that the same intent is
+// prepared and authorized for execution; supporting preparation/authorization
+// observations have no persisted representation here. Reload grants no permission
+// or lease and proves no dispatch. Typed ancillary records may later retain those
+// observations or execution provenance when producers establish their semantics
+// and placement. Assignment shares mutable storage; Clone detaches it. Zero is invalid.
+// History scope is omitted. The authoring contract supplies a full RequestedCallID
+// separately with all three destination fields zero; Validate instead checks
+// persisted positive components, not aggregate admission.
+//
+// Arguments is the required effective parameter object, with at most 4096
+// immediate entries. Nil and empty both mean an empty object. Keys and nested
+// values obey value.Map's UTF-8, initialized-value and local-depth contracts;
+// enclosing codec limits bound descendant sizes and total retained work.
+// Assignment shares backing; Clone detaches all mutable descendants. Original
+// model-request bytes remain separate from these effective semantic arguments.
+func (v ToolInvocationView) Arguments() dtogenType3.MapView {
+	if v.value == nil {
+		return dtogenType3.MapView{}
+	}
+	return dtogenType3.BorrowMap(v.value.Arguments)
+}
+
+// Backing contract for ToolNotInvokedView.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// ToolNotInvoked retains a known non-invocation, before or after commitment.
+// Zero is invalid; producer detail belongs in ToolDisposition.Diagnostic.
+// dtogenViewToolNotInvokedView borrows stable backing; it neither freezes nor synchronizes access.
+func dtogenViewToolNotInvokedView(value *dtogenType0.ToolNotInvoked) ToolNotInvokedView {
+	return ToolNotInvokedView{value: value}
+}
+
+var _ = (*struct {
+	Reason dtogenType0.ToolNotInvokedReason "cbor:\"r\" cborlimit:\"bytes=32\""
+})((*dtogenType0.ToolNotInvoked)(nil))
+
+// Reason reads Reason in O(1) without copying sibling payloads.
+// A zero view returns zero.
+// The receiver retains stable backing for its lifetime.
+// Access neither freezes nor synchronizes backing.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// ToolNotInvoked retains a known non-invocation, before or after commitment.
+// Zero is invalid; producer detail belongs in ToolDisposition.Diagnostic.
+//
+// Reason is required closed-vocabulary non-invocation meaning, at most 32 bytes.
+func (v ToolNotInvokedView) Reason() dtogenType0.ToolNotInvokedReason {
+	if v.value == nil {
+		return *new(dtogenType0.ToolNotInvokedReason)
+	}
+	return v.value.Reason
+}
+
+// Backing contract for ToolOutputPartView.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// ToolOutputPart is one canonical ordered output occurrence with exactly one
+// branch. JSON may coexist with ordinary content as distinct parts, not duplicate
+// structured-result/text fallbacks. Assignment shares storage; Clone detaches it.
+// Zero is invalid. Retention itself grants no disclosure or execution permission.
+// dtogenViewToolOutputPartView borrows stable backing; it neither freezes nor synchronizes access.
+func dtogenViewToolOutputPartView(value *dtogenType0.ToolOutputPart) ToolOutputPartView {
+	return ToolOutputPartView{value: value}
+}
+
+var _ = (*struct {
+	Content      *dtogenType0.ContentPart          "cbor:\"c,omitempty\""
+	JSON         *[]byte                           "cbor:\"j,omitempty\" cborlimit:\"bytes=4194304\""
+	ResourceLink *dtogenType0.ToolResource         "cbor:\"l,omitempty\""
+	Resource     *dtogenType0.ToolEmbeddedResource "cbor:\"r,omitempty\""
+})((*dtogenType0.ToolOutputPart)(nil))
+
+// Content reads Content in O(1) without copying sibling payloads.
+// A zero view or nil field returns zero, false; present zero/empty values return true.
+// The returned child borrows backing, which must remain stable for every derived view's lifetime.
+// Access neither freezes nor synchronizes backing.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// ToolOutputPart is one canonical ordered output occurrence with exactly one
+// branch. JSON may coexist with ordinary content as distinct parts, not duplicate
+// structured-result/text fallbacks. Assignment shares storage; Clone detaches it.
+// Zero is invalid. Retention itself grants no disclosure or execution permission.
+//
+// Content optionally retains existing text/media leaves, under shared codec and
+// enclosing payload/commit budgets rather than new leaf schema bounds.
+func (v ToolOutputPartView) Content() (ContentPartView, bool) {
+	if v.value == nil || v.value.Content == nil {
+		return ContentPartView{}, false
+	}
+	return dtogenViewContentPartView(v.value.Content), true
+}
+
+// JSON reads JSON in O(1) without copying sibling payloads.
+// A zero view or nil field returns zero, false; present zero/empty values return true.
+// The returned bytes borrow stable backing for their lifetime; only Copy detaches bytes.
+// Access neither freezes nor synchronizes backing.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// ToolOutputPart is one canonical ordered output occurrence with exactly one
+// branch. JSON may coexist with ordinary content as distinct parts, not duplicate
+// structured-result/text fallbacks. Assignment shares storage; Clone detaches it.
+// Zero is invalid. Retention itself grants no disclosure or execution permission.
+//
+// JSON optionally retains exact valid UTF-8 JSON syntax, at most 4194304 bytes.
+// It is not normalized, reencoded or schema-interpreted; present empty is invalid.
+func (v ToolOutputPartView) JSON() (dtogenViews.Bytes, bool) {
+	if v.value == nil || v.value.JSON == nil {
+		return dtogenViews.Bytes{}, false
+	}
+	return dtogenViews.BorrowBytes(*v.value.JSON), true
+}
+
+// ResourceLink reads ResourceLink in O(1) without copying sibling payloads.
+// A zero view or nil field returns zero, false; present zero/empty values return true.
+// The returned child borrows backing, which must remain stable for every derived view's lifetime.
+// Access neither freezes nor synchronizes backing.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// ToolOutputPart is one canonical ordered output occurrence with exactly one
+// branch. JSON may coexist with ordinary content as distinct parts, not duplicate
+// structured-result/text fallbacks. Assignment shares storage; Clone detaches it.
+// Zero is invalid. Retention itself grants no disclosure or execution permission.
+//
+// ResourceLink optionally retains reference metadata without fetching its body.
+func (v ToolOutputPartView) ResourceLink() (ToolResourceView, bool) {
+	if v.value == nil || v.value.ResourceLink == nil {
+		return ToolResourceView{}, false
+	}
+	return dtogenViewToolResourceView(v.value.ResourceLink), true
+}
+
+// Resource reads Resource in O(1) without copying sibling payloads.
+// A zero view or nil field returns zero, false; present zero/empty values return true.
+// The returned child borrows backing, which must remain stable for every derived view's lifetime.
+// Access neither freezes nor synchronizes backing.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// ToolOutputPart is one canonical ordered output occurrence with exactly one
+// branch. JSON may coexist with ordinary content as distinct parts, not duplicate
+// structured-result/text fallbacks. Assignment shares storage; Clone detaches it.
+// Zero is invalid. Retention itself grants no disclosure or execution permission.
+//
+// Resource optionally retains reference metadata and one inline body.
+func (v ToolOutputPartView) Resource() (ToolEmbeddedResourceView, bool) {
+	if v.value == nil || v.value.Resource == nil {
+		return ToolEmbeddedResourceView{}, false
+	}
+	return dtogenViewToolEmbeddedResourceView(v.value.Resource), true
+}
+
+// Backing contract for ToolOutputView.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// ToolOutput retains ordered canonical whole parts. Assignment shares mutable
+// storage; Clone detaches it. Zero is invalid. Schema caps do not replace shared
+// codec or enclosing session per-payload/commit policy. Interrupted part capture
+// needs an explicit future representation; size/count accounting and producer
+// observations likewise need typed ancillary records, not extension fields.
+// dtogenViewToolOutputView borrows stable backing; it neither freezes nor synchronizes access.
+func dtogenViewToolOutputView(value *dtogenType0.ToolOutput) ToolOutputView {
+	return ToolOutputView{value: value}
+}
+
+var _ = (*struct {
+	Capture dtogenType0.ToolCaptureState "cbor:\"c\" cborlimit:\"bytes=32\""
+	Parts   []dtogenType0.ToolOutputPart "cbor:\"p\" cborlimit:\"items=4096\""
+})((*dtogenType0.ToolOutput)(nil))
+
+// Capture reads Capture in O(1) without copying sibling payloads.
+// A zero view returns zero.
+// The receiver retains stable backing for its lifetime.
+// Access neither freezes nor synchronizes backing.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// ToolOutput retains ordered canonical whole parts. Assignment shares mutable
+// storage; Clone detaches it. Zero is invalid. Schema caps do not replace shared
+// codec or enclosing session per-payload/commit policy. Interrupted part capture
+// needs an explicit future representation; size/count accounting and producer
+// observations likewise need typed ancillary records, not extension fields.
+//
+// Capture is required, closed-vocabulary and at most 32 UTF-8 bytes.
+func (v ToolOutputView) Capture() dtogenType0.ToolCaptureState {
+	if v.value == nil {
+		return *new(dtogenType0.ToolCaptureState)
+	}
+	return v.value.Capture
+}
+
+// Parts reads Parts in O(1) without copying sibling payloads.
+// A zero view returns zero.
+// The collection borrows stable backing and adapts elements lazily; derived views retain it.
+// Access neither freezes nor synchronizes backing.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// ToolOutput retains ordered canonical whole parts. Assignment shares mutable
+// storage; Clone detaches it. Zero is invalid. Schema caps do not replace shared
+// codec or enclosing session per-payload/commit policy. Interrupted part capture
+// needs an explicit future representation; size/count accounting and producer
+// observations likewise need typed ancillary records, not extension fields.
+//
+// Parts retains canonical order, boundaries and duplicates, at most 4096 whole
+// parts. Nil and empty are equivalent; omitted capture requires empty parts.
+// Truncated capture may retain zero or a non-prefix subset in canonical order.
+func (v ToolOutputView) Parts() dtogenViews.SliceView[dtogenType0.ToolOutputPart, ToolOutputPartView] {
+	if v.value == nil {
+		return dtogenViews.SliceView[dtogenType0.ToolOutputPart, ToolOutputPartView]{}
+	}
+	return dtogenViews.BorrowSliceView(v.value.Parts, dtogenViewToolOutputPartView)
+}
+
+// Backing contract for ToolResourceView.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// ToolResource describes a reference, granting no fetch, dereference or authority.
+// Optional labels are independent, nil when absent and preserved when present-empty.
+// Assignment shares pointers; Clone detaches them. Zero is invalid.
+// dtogenViewToolResourceView borrows stable backing; it neither freezes nor synchronizes access.
+func dtogenViewToolResourceView(value *dtogenType0.ToolResource) ToolResourceView {
+	return ToolResourceView{value: value}
+}
+
+var _ = (*struct {
+	URI      string  "cbor:\"u\" cborlimit:\"bytes=16384\""
+	Name     *string "cbor:\"n,omitempty\" cborlimit:\"bytes=1024\""
+	Title    *string "cbor:\"t,omitempty\" cborlimit:\"bytes=1024\""
+	MIMEType *string "cbor:\"m,omitempty\" cborlimit:\"bytes=1024\""
+})((*dtogenType0.ToolResource)(nil))
+
+// URI reads URI in O(1) without copying sibling payloads.
+// A zero view returns zero.
+// The receiver retains stable backing for its lifetime.
+// Access neither freezes nor synchronizes backing.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// ToolResource describes a reference, granting no fetch, dereference or authority.
+// Optional labels are independent, nil when absent and preserved when present-empty.
+// Assignment shares pointers; Clone detaches them. Zero is invalid.
+//
+// URI is a required exact absolute UTF-8 URI, at most 16384 bytes.
+func (v ToolResourceView) URI() string {
+	if v.value == nil {
+		return *new(string)
+	}
+	return v.value.URI
+}
+
+// Name reads Name in O(1) without copying sibling payloads.
+// A zero view or nil field returns zero, false; present zero/empty values return true.
+// The receiver retains stable backing for its lifetime.
+// Access neither freezes nor synchronizes backing.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// ToolResource describes a reference, granting no fetch, dereference or authority.
+// Optional labels are independent, nil when absent and preserved when present-empty.
+// Assignment shares pointers; Clone detaches them. Zero is invalid.
+//
+// Name is an optional UTF-8 name, at most 1024 bytes.
+func (v ToolResourceView) Name() (string, bool) {
+	if v.value == nil || v.value.Name == nil {
+		return *new(string), false
+	}
+	return *v.value.Name, true
+}
+
+// Title reads Title in O(1) without copying sibling payloads.
+// A zero view or nil field returns zero, false; present zero/empty values return true.
+// The receiver retains stable backing for its lifetime.
+// Access neither freezes nor synchronizes backing.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// ToolResource describes a reference, granting no fetch, dereference or authority.
+// Optional labels are independent, nil when absent and preserved when present-empty.
+// Assignment shares pointers; Clone detaches them. Zero is invalid.
+//
+// Title is an optional UTF-8 title, at most 1024 bytes.
+func (v ToolResourceView) Title() (string, bool) {
+	if v.value == nil || v.value.Title == nil {
+		return *new(string), false
+	}
+	return *v.value.Title, true
+}
+
+// MIMEType reads MIMEType in O(1) without copying sibling payloads.
+// A zero view or nil field returns zero, false; present zero/empty values return true.
+// The receiver retains stable backing for its lifetime.
+// Access neither freezes nor synchronizes backing.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// ToolResource describes a reference, granting no fetch, dereference or authority.
+// Optional labels are independent, nil when absent and preserved when present-empty.
+// Assignment shares pointers; Clone detaches them. Zero is invalid.
+//
+// MIMEType is an optional UTF-8 producer label, at most 1024 bytes;
+// validation does not interpret MIME syntax.
+func (v ToolResourceView) MIMEType() (string, bool) {
+	if v.value == nil || v.value.MIMEType == nil {
+		return *new(string), false
+	}
+	return *v.value.MIMEType, true
+}
+
+// Backing contract for ToolReturnedView.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// ToolReturned retains observed terminal output. Zero is invalid. Assignment
+// shares output storage; Clone detaches it.
+// dtogenViewToolReturnedView borrows stable backing; it neither freezes nor synchronizes access.
+func dtogenViewToolReturnedView(value *dtogenType0.ToolReturned) ToolReturnedView {
+	return ToolReturnedView{value: value}
+}
+
+var _ = (*struct {
+	Status dtogenType0.ToolReturnStatus "cbor:\"s\" cborlimit:\"bytes=32\""
+	Output dtogenType0.ToolOutput       "cbor:\"o\""
+})((*dtogenType0.ToolReturned)(nil))
+
+// Status reads Status in O(1) without copying sibling payloads.
+// A zero view returns zero.
+// The receiver retains stable backing for its lifetime.
+// Access neither freezes nor synchronizes backing.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// ToolReturned retains observed terminal output. Zero is invalid. Assignment
+// shares output storage; Clone detaches it.
+//
+// Status is required tool-level success/error, at most 32 UTF-8 bytes.
+func (v ToolReturnedView) Status() dtogenType0.ToolReturnStatus {
+	if v.value == nil {
+		return *new(dtogenType0.ToolReturnStatus)
+	}
+	return v.value.Status
+}
+
+// Output reads Output in O(1) without copying sibling payloads.
+// A zero view returns zero.
+// The returned child borrows backing, which must remain stable for every derived view's lifetime.
+// Access neither freezes nor synchronizes backing.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// ToolReturned retains observed terminal output. Zero is invalid. Assignment
+// shares output storage; Clone detaches it.
+//
+// Output is required capture, including explicit complete empty output.
+func (v ToolReturnedView) Output() ToolOutputView {
+	if v.value == nil {
+		return ToolOutputView{}
+	}
+	return dtogenViewToolOutputView(&v.value.Output)
 }
 
 // Backing contract for UserInputView.

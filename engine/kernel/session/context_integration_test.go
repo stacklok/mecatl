@@ -514,7 +514,7 @@ func TestNewRecordExactVersionsAndZeroViews(t *testing.T) {
 		loaded, err := loadFixtureCommit(t, h, s, proposedCommit(t, s, r), sessionPolicy())
 		mustBatch(t, err)
 		got := loaded.Snapshot().RecordAt(2).Format()
-		if got.KindVersion != 1 || !got.Equal(r.Format()) {
+		if got.KindVersion != sessionformat.Version || !got.Equal(r.Format()) {
 			t.Fatal("record roundtrip/version")
 		}
 		dto := r.Format()

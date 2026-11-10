@@ -21,7 +21,9 @@ const (
 	// RunEndedInterrupted encodes explicit cancellation or execution interruption.
 	// It does not prove remote cancellation or absence of processing or spend.
 	RunEndedInterrupted RunEndedReason = "interrupted"
-	// RunEndedCaptureFailed encodes inability to capture a complete response.
+	// RunEndedCaptureFailed encodes inability to retain an admissible model response
+	// or tool outcome, including a single oversized result. Truncation or omission
+	// alone is not capture failure, and a tool-level error is a normal return.
 	RunEndedCaptureFailed RunEndedReason = "capture-failed"
 )
 
@@ -91,6 +93,11 @@ type RunEnded struct {
 	// The taxonomy is provisional: revisit the combined interruption category
 	// only if usage establishes a useful cancellation/interruption distinction.
 	Reason RunEndedReason `cbor:"e"`
+	// BulkToolCloseout is required, including false. True explicitly closes outstanding
+	// tool calls and is valid only for limit or capture-failed endings. It does not
+	// fabricate model outcomes or prove stopped external effects. False is ordinary
+	// termination; aggregate admission checks that every tool call is settled.
+	BulkToolCloseout bool `cbor:"b"`
 	// Explanation is optional UTF-8 owner-provided human-readable ending detail.
 	// Nil omits it; non-nil empty is retained. Validation is not disclosure sanitization.
 	Explanation *string `cbor:"x,omitempty"`
@@ -123,6 +130,9 @@ func (v RunEnded) validateLocal() error {
 	case RunEndedCompleted, RunEndedError, RunEndedLimit, RunEndedInterrupted, RunEndedCaptureFailed:
 	default:
 		return errors.New("unknown run ending reason")
+	}
+	if v.BulkToolCloseout && v.Reason != RunEndedLimit && v.Reason != RunEndedCaptureFailed {
+		return errors.New("bulk tool closeout requires a limit or capture-failed ending")
 	}
 	if v.Explanation != nil && !utf8.ValidString(*v.Explanation) {
 		return errors.New("ending explanation must be UTF-8")

@@ -85,6 +85,22 @@ func (v RecordView) ModelResponse() (ModelResponseView, bool) {
 	return ModelResponseView{scope: v.scope, value: &v.record.response}, true
 }
 
+// ToolInvocation returns an immutable scoped intent handle only for that kind.
+func (v RecordView) ToolInvocation() (ToolInvocationView, bool) {
+	if v.Kind() != sessionformat.KindToolInvocation {
+		return ToolInvocationView{}, false
+	}
+	return ToolInvocationView{scope: v.scope, value: &v.record.toolInvocation}, true
+}
+
+// ToolDisposition returns an immutable scoped outcome handle only for that kind.
+func (v RecordView) ToolDisposition() (ToolDispositionView, bool) {
+	if v.Kind() != sessionformat.KindToolDisposition {
+		return ToolDispositionView{}, false
+	}
+	return ToolDispositionView{scope: v.scope, value: &v.record.toolDisposition}, true
+}
+
 // InvocationFailure returns an immutable observed-failure handle for that kind.
 func (v RecordView) InvocationFailure() (InvocationFailureView, bool) {
 	if v.record == nil || v.record.value.Kind != sessionformat.KindInvocationFailure {

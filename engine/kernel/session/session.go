@@ -113,8 +113,9 @@ func Load(ctx context.Context, h *history.History, id historyid.HistoryID, polic
 // A zero Session returns the zero handle.
 func (s *Session) Snapshot() Snapshot { return s.state.view }
 
-// prepareEnding prepares an actual minimal terminal envelope without I/O. Idle
-// returns zero. The same path reserves every noncompleted reason.
+// prepareEnding prepares an actual minimal exceptional terminal envelope without
+// I/O. Idle returns zero. Reservation uses both supported bulk-closeout reasons;
+// capacity does not guarantee backend availability.
 func (s *Session) prepareEnding(reason RunEndedReason) (prepared, error) {
 	if err := s.writeBarrier(); err != nil {
 		return prepared{}, err
@@ -125,7 +126,7 @@ func (s *Session) prepareEnding(reason RunEndedReason) (prepared, error) {
 	if s.state.view.lifecycle.activeRun == (RunID{}) {
 		return prepared{}, nil
 	}
-	r, err := newRunEndedRecord(RunEnded{Reason: reason}, s.state.view.lifecycle.activeRun, s.policy.PayloadLimits)
+	r, err := newRunEndedRecord(RunEnded{Reason: reason, BulkToolCloseout: true}, s.state.view.lifecycle.activeRun, s.policy.PayloadLimits)
 	if err != nil {
 		return prepared{}, err
 	}

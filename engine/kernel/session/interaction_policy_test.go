@@ -181,7 +181,7 @@ func TestInteractionMinimalEndingEnvelopeWidths(t *testing.T) {
 					interactionCheck(t, b.ReplaceInstructions(s.Snapshot().HistoryID(), Instructions{}))
 				})
 			}
-			for _, reason := range []RunEndedReason{RunEndedError, RunEndedLimit, RunEndedInterrupted, RunEndedCaptureFailed} {
+			for _, reason := range []RunEndedReason{RunEndedLimit, RunEndedCaptureFailed} {
 				ending, err := s.prepareEnding(reason)
 				interactionCheck(t, err)
 				if ending.commit.Sequence != next {

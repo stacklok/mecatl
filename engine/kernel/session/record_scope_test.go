@@ -410,7 +410,7 @@ func TestSessionLocalOrdinalsBindToVerifiedChain(t *testing.T) {
 	if other.Snapshot().ActiveRun() != (RunID{}) {
 		t.Fatal("scoped closeout")
 	}
-	if !c.Commit.Records[0].Equal(format.Record{Kind: "session.created", KindVersion: 1, Payload: []byte{0xa0}}) {
+	if !c.Commit.Records[0].Equal(format.Record{Kind: "session.created", KindVersion: 2, Payload: []byte{0xa0}}) {
 		t.Fatal("creation repeats scope")
 	}
 }

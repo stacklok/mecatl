@@ -293,6 +293,8 @@ const KindModelResponse untyped string = "session.model_response"
 const KindRunEnded untyped string = "session.run_ended"
 const KindRunStarted untyped string = "session.run_started"
 const KindToolCatalog untyped string = "session.tool_catalog"
+const KindToolDisposition untyped string = "session.tool_disposition"
+const KindToolInvocation untyped string = "session.tool_invocation"
 const KindUserInput untyped string = "session.user_input"
 const MaxRunEndedReasonBytes untyped int = 32
 const MediaKindAudio MediaKind = "audio"
@@ -331,7 +333,7 @@ const ToolNotInvokedPolicyRejected ToolNotInvokedReason = "policy-rejected"
 const ToolNotInvokedPreparationFailed ToolNotInvokedReason = "preparation-failed"
 const ToolReturnError ToolReturnStatus = "error"
 const ToolReturnSuccess ToolReturnStatus = "success"
-const Version int64 = 1
+const Version int64 = 2
 type Actor string
 type AttributedInput struct{Parts []ContentPart "cbor:\"c\""; Actor Actor "cbor:\"a\""; Purpose PromptPurpose "cbor:\"p\""; Source ContentSource "cbor:\"s\""}
 type CaptureFailureEvidence struct{RequestID uint64 "cbor:\"q\" view:\"manual\""; Evidence *ObservedEvidence "cbor:\"e,omitempty\""; Usage *InvocationUsage "cbor:\"u,omitempty\""}
@@ -360,7 +362,7 @@ type ResponseContent struct{Kind ResponseContentKind "cbor:\"k\""; Parts []Conte
 type ResponseContentKind string
 type ResponseItem struct{Content *ResponseContent "cbor:\"c,omitempty\""; Call *RequestedCall "cbor:\"a,omitempty\""}
 type ResponseTerminalClass string
-type RunEnded struct{RunID uint64 "cbor:\"r\" view:\"manual\""; Reason RunEndedReason "cbor:\"e\""; Explanation *string "cbor:\"x,omitempty\""; Capture *CaptureFailureEvidence "cbor:\"c,omitempty\" view:\"manual\""}
+type RunEnded struct{RunID uint64 "cbor:\"r\" view:\"manual\""; Reason RunEndedReason "cbor:\"e\""; BulkToolCloseout bool "cbor:\"b\""; Explanation *string "cbor:\"x,omitempty\""; Capture *CaptureFailureEvidence "cbor:\"c,omitempty\" view:\"manual\""}
 type RunEndedReason string
 type RunStarted struct{ID uint64 "cbor:\"r\" view:\"manual\""}
 type SourceHead struct{Sequence int64 "cbor:\"s\""; CID contentid.CID "cbor:\"c\" view:\"manual\""}

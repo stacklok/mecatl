@@ -20,7 +20,7 @@ func TestInstructionsWire(t *testing.T) {
 	// The public field rename retains version 1's "c" key and ordered parts.
 	want := []byte("\xa1\x61b\x81\xa2\x61c\x82\xa1\x61t\x61a\xa1\x61t\x61b\x61s\xa1\x61d\x61d")
 	wire, err := codec.Encode(v, limits())
-	if err != nil || format.Version != 1 || !bytes.Equal(wire, want) {
+	if err != nil || format.Version != 2 || !bytes.Equal(wire, want) {
 		t.Fatalf("instruction schema: %x, version %d, %v", wire, format.Version, err)
 	}
 	got, err := codec.Decode[format.Instructions](want, limits())

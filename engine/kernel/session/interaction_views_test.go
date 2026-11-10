@@ -691,10 +691,10 @@ func TestModelInteractionAcceptedViewsAndReplay(t *testing.T) {
 	if err := b.EndRun(session.RunEndedCompleted); !errors.Is(err, session.ErrTransition) {
 		t.Fatal("unresolved calls completed")
 	}
-	mustBatch(t, b.EndRun(session.RunEndedInterrupted))
+	mustBatch(t, b.AddRunEnded(run, session.RunEnded{Reason: session.RunEndedLimit, BulkToolCloseout: true}))
 	submitBatch(t, s, b)
 	end, ok := s.Snapshot().RecordAt(10).RunEnded()
-	if !ok || end.RunID() != run || end.Reason() != session.RunEndedInterrupted {
+	if !ok || end.RunID() != run || end.Reason() != session.RunEndedLimit || !end.BulkToolCloseout() {
 		t.Fatal("unified ending")
 	}
 	// Idle context is a chronological part of the preceding span, not run ownership.

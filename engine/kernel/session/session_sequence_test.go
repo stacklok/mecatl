@@ -69,7 +69,7 @@ func TestSessionSequenceExhaustion(t *testing.T) {
 			s.state.view.head.Sequence = math.MaxInt64 - 1
 			before := s.Snapshot()
 			if active {
-				p, err := s.prepareEnding(RunEndedInterrupted)
+				p, err := s.prepareEnding(RunEndedLimit)
 				if err != nil || p.ref.Sequence != math.MaxInt64 {
 					t.Fatalf("last interruption: %v", err)
 				}

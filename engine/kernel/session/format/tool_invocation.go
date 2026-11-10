@@ -40,10 +40,10 @@ type ToolInvocation struct {
 	// model-request bytes remain separate from these effective semantic arguments.
 	Arguments value.Map `cbor:"a" cborlimit:"items=4096"`
 	// Prerequisites is an ordered list of at most 4096 positive response-relative
-	// call components, excluding self and duplicates. Equality and canonical bytes
-	// preserve list order; dependency eligibility depends only on membership.
-	// Nil and empty are equivalent. Membership, cycles and accepted authorization
-	// are aggregate obligations, not local validation.
+	// call components strictly earlier than CallID. Equality and canonical bytes
+	// preserve list order; duplicates are invalid. Nil and empty are equivalent.
+	// The aggregate establishes response membership and accepted settlement;
+	// relative components alone prove neither membership nor authority.
 	Prerequisites []uint64 `cbor:"p" cborlimit:"items=4096" view:"manual"`
 }
 
@@ -75,7 +75,7 @@ func (v ToolInvocation) validateLocal() error {
 	}
 	seen := make(map[uint64]struct{}, len(v.Prerequisites))
 	for _, call := range v.Prerequisites {
-		if call == 0 || call == v.CallID {
+		if call == 0 || call >= v.CallID {
 			return errors.New("invalid tool prerequisite")
 		}
 		if _, ok := seen[call]; ok {

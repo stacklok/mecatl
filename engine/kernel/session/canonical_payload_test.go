@@ -227,7 +227,7 @@ func TestCanonicalInteractionBytesAndOwnership(t *testing.T) {
 	*response.Usage.Output = 99
 	clear(response.Usage.Raw.Data)
 	clear(response.Private.Data)
-	canonicalOK(t, b.EndRun(session.RunEndedInterrupted))
+	canonicalOK(t, b.AddRunEnded(run, session.RunEnded{Reason: session.RunEndedLimit, BulkToolCloseout: true}))
 	canonicalSubmit(t, s, b)
 
 	loaded, err := session.Load(context.Background(), h, run.HistoryID(), p)

@@ -223,7 +223,7 @@ func TestModelInteractionIdentityWireComponents(t *testing.T) {
 		{"response", format.ModelResponse{RunID: 24, RequestID: 256, Terminal: format.ResponseTerminalNormal}, []byte("\xa4\x61i\x80\x61q\x19\x01\x00\x61r\x18\x18\x61t\x66normal")},
 		{"failure", format.InvocationFailure{RunID: 24, RequestID: 256, Class: format.InvocationFailureOther}, []byte("\xa3\x61c\x65other\x61q\x19\x01\x00\x61r\x18\x18")},
 		{"capture", capture, []byte("\xa1\x61q\x19\x01\x00")},
-		{"ending", format.RunEnded{RunID: 24, Reason: format.RunEndedCaptureFailed, Capture: &capture}, []byte("\xa3\x61c\xa1\x61q\x19\x01\x00\x61e\x6ecapture-failed\x61r\x18\x18")},
+		{"ending", format.RunEnded{RunID: 24, Reason: format.RunEndedCaptureFailed, Capture: &capture}, []byte("\xa4\x61b\xf4\x61c\xa1\x61q\x19\x01\x00\x61e\x6ecapture-failed\x61r\x18\x18")},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got, err := codec.Encode(tc.value, limits())

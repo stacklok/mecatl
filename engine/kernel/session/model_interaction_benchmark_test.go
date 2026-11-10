@@ -74,7 +74,7 @@ func completeInteractionFixture(t testing.TB, count, field, sibling int) map[str
 	}
 	b = beginBatch(t, s)
 	mustBatch(t, b.AddModelResponse(second, response))
-	mustBatch(t, b.EndRun(session.RunEndedInterrupted))
+	mustBatch(t, b.AddRunEnded(run, session.RunEnded{Reason: session.RunEndedLimit, BulkToolCloseout: true}))
 	submitBatch(t, s, b)
 	b = beginBatch(t, s)
 	run = batchRun(t, b)
@@ -330,7 +330,7 @@ func traverseCompleteInteraction(snap session.Snapshot, exports bool) interactio
 				e, ep := capture.Evidence()
 				inspectInteractionUsage(u, up, exports, &visits)
 				inspectInteractionEvidence(e, ep, &visits)
-			} else if v.Reason() != session.RunEndedInterrupted || textOK {
+			} else if v.Reason() != session.RunEndedLimit || !v.BulkToolCloseout() || textOK {
 				panic("minimal ending")
 			}
 		}

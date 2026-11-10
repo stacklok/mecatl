@@ -50,7 +50,7 @@ func TestSnapshotZeroKindsAndIndexBounds(t *testing.T) {
 		if in && interrupted.RunID() != v.RunAt(0).ID() {
 			t.Fatal("interruption scope")
 		}
-		version := int64(1)
+		version := int64(2)
 		if r.KindVersion() != version {
 			t.Fatal("version")
 		}

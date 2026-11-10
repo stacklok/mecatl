@@ -48,7 +48,7 @@ func TestRunEndedRejectsExperimentalNumericReasons(t *testing.T) {
 	// The earlier experimental vocabulary used unsigned CBOR codes 1..6.
 	// No numeric reason, including a formerly valid code, is converted to text.
 	for reason := byte(0); reason <= 6; reason++ {
-		wire := []byte{0xa2, 0x61, 'e', reason, 0x61, 'r', 1}
+		wire := []byte{0xa3, 0x61, 'b', 0xf4, 0x61, 'e', reason, 0x61, 'r', 1}
 		got, err := codec.Decode[format.RunEnded](wire, limits())
 		if !errors.Is(err, codec.ErrInvalidData) || got != (format.RunEnded{}) {
 			t.Fatalf("numeric reason %d decode: %v", reason, err)
@@ -62,6 +62,48 @@ func TestRunEndedRejectsExperimentalNumericReasons(t *testing.T) {
 		if err := receiver.ReadCBOR(&reader, 0, math.MaxInt); !errors.Is(err, codec.ErrInvalidData) || receiver != before {
 			t.Fatalf("numeric reason %d changed receiver: %v", reason, err)
 		}
+	}
+}
+
+func TestRunEndedBulkToolCloseout(t *testing.T) {
+	for _, reason := range []format.RunEndedReason{format.RunEndedCompleted, format.RunEndedError, format.RunEndedInterrupted, format.RunEndedLimit, format.RunEndedCaptureFailed} {
+		for _, bulk := range []bool{false, true} {
+			v := format.RunEnded{RunID: 1, Reason: reason, BulkToolCloseout: bulk}
+			valid := !bulk || reason == format.RunEndedLimit || reason == format.RunEndedCaptureFailed
+			wire, err := codec.Encode(v, limits())
+			if valid {
+				if err != nil || v.Validate() != nil {
+					t.Fatalf("reason=%s bulk=%t: %v", reason, bulk, err)
+				}
+				got, err := codec.Decode[format.RunEnded](wire, limits())
+				if err != nil || !got.Equal(v) || !v.Clone().Equal(v) {
+					t.Fatalf("bulk roundtrip: %v", err)
+				}
+			} else {
+				if wire != nil || !errors.Is(err, codec.ErrInvalidData) || v.Validate() == nil {
+					t.Fatalf("invalid bulk reason=%s: %v", reason, err)
+				}
+				got, err := codec.Decode[format.RunEnded](v.AppendCBOR(nil), limits())
+				if !errors.Is(err, codec.ErrInvalidData) || got != (format.RunEnded{}) {
+					t.Fatalf("invalid bulk decode: %v", err)
+				}
+			}
+		}
+	}
+	// A missing required false is not silently interpreted as ordinary termination.
+	wire := []byte("\xa2\x61e\x65limit\x61r\x01")
+	got, err := codec.Decode[format.RunEnded](wire, limits())
+	if !errors.Is(err, codec.ErrInvalidData) || got != (format.RunEnded{}) {
+		t.Fatalf("accepted missing bulk flag: %v", err)
+	}
+	receiver := format.RunEnded{RunID: 7, Reason: format.RunEndedLimit, BulkToolCloseout: true}
+	before := receiver
+	reader, err := codec.NewReader(wire, limits())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := receiver.ReadCBOR(&reader, 0, math.MaxInt); !errors.Is(err, codec.ErrInvalidData) || receiver != before {
+		t.Fatalf("missing bulk flag changed receiver: %v", err)
 	}
 }
 
