@@ -409115,6 +409115,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1794269821727,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "328978+blkt@users.noreply.github.com",
+            "name": "Michelangelo Mori",
+            "username": "blkt"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "78b35cb8aaf2b042dc55d830b01dd72ed5b3306f",
+          "message": "ci: test with CGO_ENABLED=0 to match release builds (#2757)",
+          "timestamp": "2026-11-10T06:02:22-05:00",
+          "tree_id": "c6923c5f6d2b11193ebedd1a76ea41f7865171dd",
+          "url": "https://github.com/stacklok/mecatl/commit/78b35cb8aaf2b042dc55d830b01dd72ed5b3306f"
+        },
+        "date": 1794309333471,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 16152,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12910.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 794,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -533185,6 +533224,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1794309330242,
+  "lastUpdate": 1794309334207,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
