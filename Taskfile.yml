@@ -1076,13 +1076,14 @@ tasks:
     vars:
       CGO_ALLOWED: >-
         github.com/1password/onepassword-sdk-go/internal
+        github.com/google/certificate-transparency-go/x509
         github.com/prometheus/client_golang/prometheus
     cmds:
       - for: {var: GO_MODULES}
         cmd: |
           set -o pipefail
-          for goos in linux darwin; do
-            (cd {{.ITEM | shellQuote}} && CGO_ENABLED=1 GOOS=$goos GOWORK=off go list -deps -test -f '{{"{{"}}if .CgoFiles{{"}}"}}{{"{{"}}.ImportPath{{"}}"}}{{"{{"}}end{{"}}"}}' ./...)
+          for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64; do
+            (cd {{.ITEM | shellQuote}} && CGO_ENABLED=1 GOOS=${target%/*} GOARCH=${target#*/} GOWORK=off go list -deps -test -f '{{"{{"}}if .CgoFiles{{"}}"}}{{"{{"}}.ImportPath{{"}}"}}{{"{{"}}end{{"}}"}}' ./...)
           done | sort -u | while read -r pkg; do
             case " runtime/cgo net os/user plugin {{.CGO_ALLOWED}} " in
               *" $pkg "*) ;;
