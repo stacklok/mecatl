@@ -93,11 +93,12 @@ type RunEnded struct {
 	// The taxonomy is provisional: revisit the combined interruption category
 	// only if usage establishes a useful cancellation/interruption distinction.
 	Reason RunEndedReason `cbor:"e"`
-	// BulkToolCloseout is required, including false. True explicitly closes outstanding
+	// BulkToolCloseout is optional and defaults to false when omitted. False is
+	// omitted on encoding and means ordinary termination; aggregate admission
+	// checks that every tool call is settled. True explicitly closes outstanding
 	// tool calls and is valid only for limit or capture-failed endings. It does not
-	// fabricate model outcomes or prove stopped external effects. False is ordinary
-	// termination; aggregate admission checks that every tool call is settled.
-	BulkToolCloseout bool `cbor:"b"`
+	// fabricate model outcomes or prove stopped external effects.
+	BulkToolCloseout bool `cbor:"b,omitempty"`
 	// Explanation is optional UTF-8 owner-provided human-readable ending detail.
 	// Nil omits it; non-nil empty is retained. Validation is not disclosure sanitization.
 	Explanation *string `cbor:"x,omitempty"`

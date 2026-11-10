@@ -30,11 +30,11 @@ func (v ToolSettlement) Category() ToolSettlementCategory { return v.category }
 // ExplicitDisposition returns the retained raw disposition when it supplied the
 // settlement. It is absent for bulk-derived settlement and zero.
 func (v ToolSettlement) ExplicitDisposition() (ToolDispositionView, bool) {
-	return v.disposition, v.disposition.value != nil
+	return v.disposition, v.disposition.CallID() != (RequestedCallID{})
 }
 
 // BulkEnding returns the retained bulk ending when it supplied the settlement.
 // It is absent for explicit settlement (even in a bulk-ended run) and zero.
 func (v ToolSettlement) BulkEnding() (RunEndedView, bool) {
-	return v.bulk, v.bulk.value != nil
+	return v.bulk, v.bulk.RunID() != (RunID{})
 }

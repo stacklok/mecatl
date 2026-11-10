@@ -446,7 +446,7 @@ func TestSessionRun24CloseoutCapacity(t *testing.T) {
 		all = append(all, startRecord(t, n), runInputRecord(t, n, 1), closeoutRecord(t, n))
 	}
 	// The final active prefix must reserve the largest supported minimal ending.
-	lastEnding, err := newRunEndedRecord(RunEnded{Reason: RunEndedCaptureFailed}, allocatedRun(t, testHistoryID(t), 24), testLimits())
+	lastEnding, err := newRunEndedRecord(RunEnded{Reason: RunEndedCaptureFailed, BulkToolCloseout: true}, allocatedRun(t, testHistoryID(t), 24), testLimits())
 	mustBatch(t, err)
 	all[len(all)-1] = lastEnding
 	var exactBytes uint64
@@ -503,7 +503,7 @@ func TestSessionRun24CloseoutCapacity(t *testing.T) {
 	}
 	wantClose := proposedCommit(t, exact, all[72])
 	b = beginBatch(t, exact)
-	mustBatch(t, b.EndRun(RunEndedCaptureFailed))
+	mustBatch(t, b.AddRunEnded(run, RunEnded{Reason: RunEndedCaptureFailed, BulkToolCloseout: true}))
 	if ref := submitBatch(t, exact, b); ref != wantClose.Ref || len(backend.attempts) != attempts+2 {
 		t.Fatal("exact-fit boundary writer did not append canonical interruption")
 	}

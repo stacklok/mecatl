@@ -46,7 +46,7 @@ func recordFixtures(t testing.TB) []struct {
 		{"session.run_started", []byte("\xa1\x61r\x02"), func(l codec.Limits) (*materializedRecord, error) {
 			return newRunStartedRecord(RunStarted{ID: allocatedRun(t, h, 2).HistoryRelative()}, l)
 		}},
-		{"session.run_ended", []byte("\xa3\x61b\xf4\x61e\x6binterrupted\x61r\x02"), func(l codec.Limits) (*materializedRecord, error) {
+		{"session.run_ended", []byte("\xa2\x61e\x6binterrupted\x61r\x02"), func(l codec.Limits) (*materializedRecord, error) {
 			return newRunEndedRecord(RunEnded{Reason: RunEndedInterrupted}, allocatedRun(t, h, 2), l)
 		}},
 	}

@@ -9,7 +9,7 @@ import (
 	dtogenViews "github.com/stacklok/mecatl/engine/kernel/views"
 )
 
-// Selected view layouts, source policy and documentation fingerprint: 14e0515d1c9821140b1af0f408784bfa2a2b5a3ae64ae4d0cac79057e35062b8.
+// Selected view layouts, source policy and documentation fingerprint: 1ab71e3b63f78e25479cae0e5870d60a8dd1df2e18d143eca0a6ec43c64deeaf.
 // Backing contract for AttributedInputView.
 //
 // Source contract (DTO semantics, not a mutable accessor):
@@ -1721,7 +1721,7 @@ func (v ResponseItemView) Call() (RequestedCallDataView, bool) {
 var _ = (*struct {
 	RunID            uint64                              "cbor:\"r\" view:\"manual\""
 	Reason           dtogenType0.RunEndedReason          "cbor:\"e\""
-	BulkToolCloseout bool                                "cbor:\"b\""
+	BulkToolCloseout bool                                "cbor:\"b,omitempty\""
 	Explanation      *string                             "cbor:\"x,omitempty\""
 	Capture          *dtogenType0.CaptureFailureEvidence "cbor:\"c,omitempty\" view:\"manual\""
 })((*dtogenType0.RunEnded)(nil))
@@ -1762,10 +1762,11 @@ func (v RunEndedView) Reason() dtogenType0.RunEndedReason {
 // Session authoring supplies destination scope separately and requires RunID zero;
 // Validate requires the fully populated persisted shape.
 //
-// BulkToolCloseout is required, including false. True explicitly closes outstanding
+// BulkToolCloseout is optional and defaults to false when omitted. False is
+// omitted on encoding and means ordinary termination; aggregate admission
+// checks that every tool call is settled. True explicitly closes outstanding
 // tool calls and is valid only for limit or capture-failed endings. It does not
-// fabricate model outcomes or prove stopped external effects. False is ordinary
-// termination; aggregate admission checks that every tool call is settled.
+// fabricate model outcomes or prove stopped external effects.
 func (v RunEndedView) BulkToolCloseout() bool {
 	if v.value == nil {
 		return *new(bool)

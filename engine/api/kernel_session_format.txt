@@ -362,7 +362,7 @@ type ResponseContent struct{Kind ResponseContentKind "cbor:\"k\""; Parts []Conte
 type ResponseContentKind string
 type ResponseItem struct{Content *ResponseContent "cbor:\"c,omitempty\""; Call *RequestedCall "cbor:\"a,omitempty\""}
 type ResponseTerminalClass string
-type RunEnded struct{RunID uint64 "cbor:\"r\" view:\"manual\""; Reason RunEndedReason "cbor:\"e\""; BulkToolCloseout bool "cbor:\"b\""; Explanation *string "cbor:\"x,omitempty\""; Capture *CaptureFailureEvidence "cbor:\"c,omitempty\" view:\"manual\""}
+type RunEnded struct{RunID uint64 "cbor:\"r\" view:\"manual\""; Reason RunEndedReason "cbor:\"e\""; BulkToolCloseout bool "cbor:\"b,omitempty\""; Explanation *string "cbor:\"x,omitempty\""; Capture *CaptureFailureEvidence "cbor:\"c,omitempty\" view:\"manual\""}
 type RunEndedReason string
 type RunStarted struct{ID uint64 "cbor:\"r\" view:\"manual\""}
 type SourceHead struct{Sequence int64 "cbor:\"s\""; CID contentid.CID "cbor:\"c\" view:\"manual\""}

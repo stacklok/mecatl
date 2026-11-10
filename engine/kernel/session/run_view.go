@@ -41,7 +41,7 @@ func (v RunView) Records() iter.Seq[RecordView] {
 // under the admitted session limits. Repeated traversal reuses these locators;
 // another ToolCalls invocation rebuilds them. There is no hidden cache.
 func (v RunView) ToolCalls() ToolCallsView {
-	result := ToolCallsView{run: v.id}
+	var result ToolCallsView
 	for record := range v.Records() {
 		switch record.Kind() {
 		case sessionformat.KindModelResponse:
@@ -51,18 +51,16 @@ func (v RunView) ToolCalls() ToolCallsView {
 					result.byID = make(map[RequestedCallID]int)
 				}
 				result.byID[call.ID()] = len(result.calls)
-				result.calls = append(result.calls, toolCallLocator{
-					request: call.id.requestID.requestOrdinal, call: call.id.ordinal, requested: call.value,
-				})
+				result.calls = append(result.calls, toolCallLocator{requested: call})
 			}
 		case sessionformat.KindToolInvocation:
 			invocation, _ := record.ToolInvocation()
 			i := result.byID[invocation.CallID()]
-			result.calls[i].invocation = invocation.value
+			result.calls[i].invocation = invocation
 		case sessionformat.KindToolDisposition:
 			disposition, _ := record.ToolDisposition()
 			i := result.byID[disposition.CallID()]
-			result.calls[i].disposition = disposition.value
+			result.calls[i].disposition = disposition
 		case sessionformat.KindRunEnded:
 			ending, _ := record.RunEnded()
 			if ending.BulkToolCloseout() {

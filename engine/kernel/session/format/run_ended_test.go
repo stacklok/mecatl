@@ -1,6 +1,7 @@
 package format_test
 
 import (
+	"bytes"
 	"errors"
 	"math"
 	"strings"
@@ -90,20 +91,30 @@ func TestRunEndedBulkToolCloseout(t *testing.T) {
 			}
 		}
 	}
-	// A missing required false is not silently interpreted as ordinary termination.
+	want := format.RunEnded{RunID: 1, Reason: format.RunEndedLimit}
 	wire := []byte("\xa2\x61e\x65limit\x61r\x01")
-	got, err := codec.Decode[format.RunEnded](wire, limits())
-	if !errors.Is(err, codec.ErrInvalidData) || got != (format.RunEnded{}) {
-		t.Fatalf("accepted missing bulk flag: %v", err)
+	encoded, err := codec.Encode(want, limits())
+	if err != nil || !bytes.Equal(encoded, wire) {
+		t.Fatalf("ordinary ending must omit false bulk flag: %x, %v", encoded, err)
 	}
-	receiver := format.RunEnded{RunID: 7, Reason: format.RunEndedLimit, BulkToolCloseout: true}
-	before := receiver
-	reader, err := codec.NewReader(wire, limits())
-	if err != nil {
-		t.Fatal(err)
+	for _, data := range [][]byte{wire, []byte("\xa3\x61b\xf4\x61e\x65limit\x61r\x01")} {
+		got, err := codec.Decode[format.RunEnded](data, limits())
+		if err != nil || got != want {
+			t.Fatalf("ordinary ending decode: %+v, %v", got, err)
+		}
+		receiver := format.RunEnded{RunID: 7, Reason: format.RunEndedLimit, BulkToolCloseout: true}
+		reader, err := codec.NewReader(data, limits())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := receiver.ReadCBOR(&reader, 0, math.MaxInt); err != nil || receiver != want {
+			t.Fatalf("ordinary ending must reset reused receiver: %+v, %v", receiver, err)
+		}
 	}
-	if err := receiver.ReadCBOR(&reader, 0, math.MaxInt); !errors.Is(err, codec.ErrInvalidData) || receiver != before {
-		t.Fatalf("missing bulk flag changed receiver: %v", err)
+	bulk := format.RunEnded{RunID: 1, Reason: format.RunEndedLimit, BulkToolCloseout: true}
+	encoded, err = codec.Encode(bulk, limits())
+	if err != nil || !bytes.Equal(encoded, []byte("\xa3\x61b\xf5\x61e\x65limit\x61r\x01")) {
+		t.Fatalf("bulk ending must retain true flag: %x, %v", encoded, err)
 	}
 }
 

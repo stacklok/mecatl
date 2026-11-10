@@ -40,6 +40,9 @@ func (s lifecycleState) toolCall(id RequestedCallID) (activeToolCall, bool) {
 
 // replaceToolCall publishes fresh candidate-owned storage after all checks pass.
 func (s *lifecycleState) replaceToolCall(id RequestedCallID, call activeToolCall) {
+	// Cloning preserves source/candidate isolation, but updating n calls in a
+	// response copies O(n²) entries overall. Revisit if large tool batches make
+	// this copying a performance problem.
 	calls := slices.Clone(s.tools.calls)
 	calls[id.ordinal-1] = call
 	s.tools = &activeToolResponse{request: s.tools.request, calls: calls}

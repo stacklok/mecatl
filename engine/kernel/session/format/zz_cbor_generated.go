@@ -6478,7 +6478,10 @@ func (h dtogen) check72(v RunEnded, b *dtogenCodec.Budget, d, cap int) (err erro
 			err = dtogenCodec.ErrInvalidData
 		}
 	}()
-	count := 3
+	count := 2
+	if v.BulkToolCloseout {
+		count++
+	}
 	if v.Capture != nil {
 		count++
 	}
@@ -6488,11 +6491,13 @@ func (h dtogen) check72(v RunEnded, b *dtogenCodec.Budget, d, cap int) (err erro
 	if err := b.CheckMap(count, d, cap); err != nil {
 		return err
 	}
-	if err := b.CheckString("b", d+1, int(^uint(0)>>1)); err != nil {
-		return dtogenFmt.Errorf("BulkToolCloseout: %w", err)
-	}
-	if err := h.check74(v.BulkToolCloseout, b, d+1, int(^uint(0)>>1)); err != nil {
-		return dtogenFmt.Errorf("BulkToolCloseout: %w", err)
+	if v.BulkToolCloseout {
+		if err := b.CheckString("b", d+1, int(^uint(0)>>1)); err != nil {
+			return dtogenFmt.Errorf("BulkToolCloseout: %w", err)
+		}
+		if err := h.check74(v.BulkToolCloseout, b, d+1, int(^uint(0)>>1)); err != nil {
+			return dtogenFmt.Errorf("BulkToolCloseout: %w", err)
+		}
 	}
 	if v.Capture != nil {
 		if err := b.CheckString("c", d+1, int(^uint(0)>>1)); err != nil {
@@ -6525,7 +6530,10 @@ func (h dtogen) check72(v RunEnded, b *dtogenCodec.Budget, d, cap int) (err erro
 	return nil
 }
 func (h dtogen) append72(out []byte, v RunEnded) []byte {
-	count := 3
+	count := 2
+	if v.BulkToolCloseout {
+		count++
+	}
 	if v.Capture != nil {
 		count++
 	}
@@ -6533,8 +6541,10 @@ func (h dtogen) append72(out []byte, v RunEnded) []byte {
 		count++
 	}
 	out = dtogenCBOR.AppendMapHeader(out, uint64(count))
-	out = dtogenCBOR.AppendText(out, "b")
-	out = h.append74(out, v.BulkToolCloseout)
+	if v.BulkToolCloseout {
+		out = dtogenCBOR.AppendText(out, "b")
+		out = h.append74(out, v.BulkToolCloseout)
+	}
 	if v.Capture != nil {
 		out = dtogenCBOR.AppendText(out, "c")
 		out = h.append76(out, v.Capture)
@@ -6605,9 +6615,6 @@ func (h dtogen) read72(r *dtogenCodec.Reader, d, cap int) (v RunEnded, err error
 		default:
 			return v, dtogenCodec.ErrInvalidData
 		}
-	}
-	if !seen[0] {
-		return v, dtogenCodec.ErrInvalidData
 	}
 	if !seen[2] {
 		return v, dtogenCodec.ErrInvalidData

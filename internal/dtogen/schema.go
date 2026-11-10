@@ -414,8 +414,8 @@ func mappedField(n *shape, f *field, parts []string, seen map[string]bool) error
 	}
 	f.wireName = parts[0]
 	f.optional = len(parts) == 2
-	if f.optional && f.value.kind != shapePointer {
-		return fmt.Errorf("%s.%s: omitempty requires pointer", n.typ, f.name)
+	if f.optional && f.value.kind != shapePointer && f.value.kind != shapeBool {
+		return fmt.Errorf("%s.%s: omitempty requires pointer or bool", n.typ, f.name)
 	}
 	if seen[f.wireName] {
 		return fmt.Errorf("%s.%s: duplicate wire name", n.typ, f.name)

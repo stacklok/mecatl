@@ -267,7 +267,7 @@ implicit. Names are exact, case-sensitive, and unique within an ordinary struct.
 | Form | Meaning |
 | --- | --- |
 | `cbor:"name"` | Required field, including zero and empty values |
-| `cbor:"name,omitempty"` | Pointer field only; nil means absent, and nonnil zero means present |
+| `cbor:"name,omitempty"` | Pointer field: nil means absent and nonnil zero means present; or Boolean (including a named Boolean): false means absent and true means present. Missing Boolean fields decode as false. |
 | `cbor:"-"` | Excluded from persistence; it remains part of `Clone` and `Equal` |
 | `cbor:",value"` | Transparent representation field |
 | `cbor:",cid"` | Fixed DAG-CBOR CID-link representation field |
