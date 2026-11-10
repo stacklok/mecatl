@@ -20,7 +20,10 @@ Clone/Equal cover the complete local named closure, including excluded state.
 Imported named types require their own owner declaration with the capabilities
 needed by the consumer. The generator follows that declared owner closure and
 writes prerequisite artifacts before the requesting package.
-It never treats compatible handwritten methods as an opt-in declaration.
+`kernel/value.Value` and `kernel/value.Map` are explicit handwritten primitive
+owners: the generator verifies their exact package/type identities, source
+provenance, and operation signatures without traversing their private recursive
+representation. Other handwritten methods do not opt a type into generation.
 
 ```go
 //go:generate go -C ../../../../.. run ./internal/dtogen/cmd/dtogen -dir engine/kernel/codec/internal/fixture -emit cbor,clone,equal -out zz_cbor_generated.go
@@ -145,6 +148,15 @@ Mechanical methods return the following concrete types:
 | Required by-value struct | Selected context-free child view |
 | Pointer to selected struct | `(ChildView, bool)` |
 | Slice of selected by-value structs | `views.SliceView[DTO, ChildView]` |
+| String-keyed map of safe scalars | `views.MapView[Key, Scalar, Scalar]` |
+| String-keyed map of pointers to selected context-free DTOs | `views.MapView[Key, *DTO, ChildView]` |
+| `value.Value` / `value.Map` | `value.View` / `value.MapView` |
+
+Map getters retain the original map and adapt present entries lazily, in
+unspecified order. Missing lookups never invoke the adapter. Pointer-valued DTO
+maps borrow existing pointees; by-value DTO entries requiring wrappers and
+context-bearing children require handwritten navigation. Required nil pointer
+entries remain invalid for CBOR.
 
 Pointers to bytes/slices additionally return a presence bool. Zero views are safe;
 optional fields preserve present zero/empty values. Byte and collection navigation
@@ -186,6 +198,37 @@ owner's generated methods. No operation infers ownership from method names alone
 | Structs | Maps with explicitly tagged text keys |
 | Maps with string-underlying keys | Text-key maps with supported values |
 | Pointers | Indirection to a supported nonpointer value |
+| `value.Value`, `value.Map` | Native structured values, delegated to the exact primitive owner |
+
+The [structured-value package](../../engine/kernel/value/doc.go) supports explicit
+null, booleans, UTF-8 text, exact integers in `[-2^63, 2^64-1]`, arrays, and
+string-keyed maps. DTO fields accept ordinary mutable authoring values; admission
+checks bounds before detaching storage. `value.ParseJSON` converts one complete
+supported JSON root into mutable `value.Value` storage. It follows `encoding/json`
+Unicode replacement behavior, rejects duplicate decoded object keys, and rejects
+decimal/exponent number tokens. `value.ParseJSONObject` is its object-root wrapper
+and returns `value.Map`.
+
+```go
+payload, err := value.ParseJSON([]byte(`[null,9007199254740993]`), limits)
+object, err := value.ParseJSONObject([]byte(`{"enabled":true}`), limits)
+```
+
+`Value`, `Map`, `View`, and `MapView` marshal native JSON through the same
+local-depth-128 bounded traversal. An admitted view can be passed directly to
+`json.Marshal` without exporting its backing:
+
+```go
+import "encoding/json"
+
+view, err := payload.Admit(limits)
+payloadJSON, err := json.Marshal(view)
+mapView, err := object.Admit(limits)
+objectJSON, err := json.Marshal(mapView)
+```
+
+JSON is an interchange representation. `codec.Encode` continues to produce the
+canonical CBOR bytes used for persisted value identity.
 
 A local defined type may use any supported underlying type. An alias uses its
 underlying owner's generated methods and cannot be a registry root. Imported
@@ -240,8 +283,9 @@ runtime accounts the framing and returns raw bytes; the type owner validates the
 CID profile. `,cid` is not a general tag facility.
 
 Required nil pointers, including nil pointer elements in slices or maps, are
-invalid. Optional nil pointers are omitted. Explicit CBOR null is invalid.
-Required nil slices and maps encode as empty collections; decoding initializes
+invalid. Optional nil pointers are omitted. Explicit CBOR null is valid only
+within the structured-value primitive; it does not represent an ordinary DTO
+pointer. Required nil slices and maps encode as empty collections; decoding initializes
 empty collections. Excluded subtrees need no mapping tags, but their storage
 still participates in `Clone` and `Equal`. A budget tag in an excluded subtree
 is rejected.
@@ -367,14 +411,20 @@ required. Global limits are validated once per whole-value operation.
 Canonical encoding uses definite lengths, shortest headers, and text keys sorted
 by UTF-8 byte length and then lexical bytes. Decoding rejects duplicates,
 unordered keys, unknown and missing fields, malformed or nonminimal input,
-invalid UTF-8, integer overflow, null, trailing data, floats, indefinite forms,
-and unsupported simple values. Opaque bytes remain uninterpreted.
+invalid UTF-8, integer overflow, trailing data, floats, indefinite forms,
+and unsupported simple values. Null is accepted only by structured-value
+primitives. Opaque bytes remain uninterpreted.
 
 `Clone` detaches mutable storage, including excluded fields, preserving nil and
 empty collections. `Equal` includes excluded state, compares map membership and
 ordered slices, treats nil and empty collections as equal, and distinguishes
 absent pointers from present zero values. Neither operation validates values or
-uses resource limits.
+uses operational resource limits. Structured-value owners have a fixed local
+depth ceiling of 128, with their root at zero, independently of enclosing wire
+depth. Their `Clone` and `Equal` panic with `value.ErrDepthExceeded` if traversal
+crosses that ceiling; generated parents propagate the panic. Equality can return
+on a shallow mismatch without inspecting deeper branches. Fallible validation,
+admission, JSON conversion, and decoding return errors instead.
 
 `contentid.CID` is an owner-generated `,cid` type. Use `contentid.Sum(encoded)`
 for an exact-byte identity. To check bytes against an expected identity, decode

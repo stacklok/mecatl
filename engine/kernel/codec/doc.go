@@ -3,8 +3,10 @@
 // presence, integer ranges, and semantic validation; this runtime owns wire-format
 // checks and resource accounting, not identity or storage policy.
 //
-// The supported CBOR subset excludes null, floats, indefinite forms, and nonminimal
-// headers. Map keys use canonical text ordering (byte length, then lexical order).
+// The supported CBOR subset excludes floats, indefinite forms, and nonminimal
+// headers. Explicit null is available to native primitive owners; ordinary DTO
+// pointer fields remain required non-null values when present. Map keys use
+// canonical text ordering (byte length, then lexical order).
 // The fixed DAG-CBOR CID link is the only supported tag; identity owners validate
 // its CID profile.
 //

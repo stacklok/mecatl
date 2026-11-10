@@ -247,7 +247,7 @@ func TestViewInvalidPolicyNoReplacement(t *testing.T) {
 		{"manual formerly generated", `cbor:"t"`, `cbor:"t" view:"manual"`, "missing directly declared"},
 		{"unsafe pointer", "type Record struct {", "import \"unsafe\"\ntype Record struct { Dangerous unsafe.Pointer", "unsupported scalar"},
 		{"collision", `view:"manual"`, `json:"inline"`, "collision"},
-		{"unsupported", `Hidden map[string]string ` + "`cbor:\"-\" view:\"-\"`", "Hidden map[string]string", "unsupported view shape"},
+		{"unsupported", `Hidden map[string]string ` + "`cbor:\"-\" view:\"-\"`", "Hidden map[string]Child", "unsupported map element"},
 		{"context required", "type ChildView struct { value *Child }", "type ChildView struct { value *Child; scope string }", "no context-free"},
 		{"context optional", "Child Child", "Child string", "no context-free"},
 		{"import collision", "type ChildView struct", "type dtogenViews struct{};type ChildView struct", "collides"},

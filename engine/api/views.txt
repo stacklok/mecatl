@@ -2,10 +2,15 @@
     method func (Bytes).At(index int) byte
     method func (Bytes).Copy() []byte
     method func (Bytes).Len() int
+    method func (MapView[K, T, V]).All() iter.Seq2[K, V]
+    method func (MapView[K, T, V]).Get(key K) (V, bool)
+    method func (MapView[K, T, V]).Len() int
     method func (SliceView[T, V]).All() iter.Seq2[int, V]
     method func (SliceView[T, V]).At(index int) V
     method func (SliceView[T, V]).Len() int
 func BorrowBytes(values []byte) Bytes
+func BorrowMapView[K ~string, T, V any](values map[K]T, adapt func(T) V) MapView[K, T, V]
 func BorrowSliceView[T, V any](values []T, adapt func(*T) V) SliceView[T, V]
 type Bytes struct{}
+type MapView[K ~string, T any, V any] struct{}
 type SliceView[T any, V any] struct{}

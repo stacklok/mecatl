@@ -175,7 +175,7 @@ func bootstrapViewOverlays(ctx context.Context, targets []LoadConfig, overlay ma
 			continue
 		}
 		pkgs, err := packages.Load(&packages.Config{Context: ctx, Dir: target.Dir, Env: loadEnvironment(),
-			Mode:    packages.NeedName | packages.NeedFiles | packages.NeedCompiledGoFiles | packages.NeedTypes | packages.NeedTypesInfo | packages.NeedSyntax | packages.NeedImports | packages.NeedDeps,
+			Mode:    packages.NeedName | packages.NeedFiles | packages.NeedCompiledGoFiles | packages.NeedTypes | packages.NeedTypesInfo | packages.NeedSyntax | packages.NeedImports | packages.NeedDeps | packages.NeedModule,
 			Overlay: overlay}, ".")
 		if err != nil || len(pkgs) != 1 {
 			return fmt.Errorf("load view bootstrap %s: %v", target.Dir, err)
