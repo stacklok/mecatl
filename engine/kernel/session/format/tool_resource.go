@@ -21,11 +21,6 @@ type ToolResource struct {
 	// MIMEType is an optional UTF-8 producer label, at most 1024 bytes;
 	// validation does not interpret MIME syntax.
 	MIMEType *string `cbor:"m,omitempty" cborlimit:"bytes=1024"`
-	// Description is optional UTF-8 descriptive text, at most 16384 bytes.
-	Description *string `cbor:"d,omitempty" cborlimit:"bytes=16384"`
-	// ByteSize is optional producer-reported original resource size; present zero
-	// differs from unknown. It has no relation to retained inline bytes and causes no fetch.
-	ByteSize *uint64 `cbor:"b,omitempty"`
 }
 
 // Validate checks bounded UTF-8 metadata and absolute URI syntax, without I/O.
@@ -40,9 +35,6 @@ func (v ToolResource) validateLocal() error {
 		if s != nil && (len(*s) > 1024 || !utf8.ValidString(*s)) {
 			return errors.New("tool resource requires bounded UTF-8 labels")
 		}
-	}
-	if v.Description != nil && (len(*v.Description) > 16384 || !utf8.ValidString(*v.Description)) {
-		return errors.New("tool resource requires bounded UTF-8 description")
 	}
 	u, err := url.Parse(v.URI)
 	if err != nil || !u.IsAbs() {

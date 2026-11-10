@@ -35,7 +35,6 @@
     method func (*ToolDefinition).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
     method func (*ToolDisposition).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
     method func (*ToolEmbeddedResource).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
-    method func (*ToolEvidence).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
     method func (*ToolIndeterminate).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
     method func (*ToolIndeterminateReason).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
     method func (*ToolInvocation).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
@@ -223,11 +222,6 @@
     method func (ToolEmbeddedResource).Clone() ToolEmbeddedResource
     method func (ToolEmbeddedResource).Equal(other ToolEmbeddedResource) bool
     method func (ToolEmbeddedResource).Validate() error
-    method func (ToolEvidence).AppendCBOR(dst []byte) []byte
-    method func (ToolEvidence).CheckCBOR(b *codec.Budget, depth int, fieldMax int) error
-    method func (ToolEvidence).Clone() ToolEvidence
-    method func (ToolEvidence).Equal(other ToolEvidence) bool
-    method func (ToolEvidence).Validate() error
     method func (ToolIndeterminate).AppendCBOR(dst []byte) []byte
     method func (ToolIndeterminate).CheckCBOR(b *codec.Budget, depth int, fieldMax int) error
     method func (ToolIndeterminate).Clone() ToolIndeterminate
@@ -373,9 +367,8 @@ type SourceHead struct{Sequence int64 "cbor:\"s\""; CID contentid.CID "cbor:\"c\
 type ToolCaptureState string
 type ToolCatalog struct{Tools []ToolDefinition "cbor:\"t\""}
 type ToolDefinition struct{Name string "cbor:\"n\""; Description string "cbor:\"d\""; ArgumentSchema []byte "cbor:\"s\""}
-type ToolDisposition struct{RunID uint64 "cbor:\"r\" view:\"-\""; RequestID uint64 "cbor:\"q\" view:\"-\""; CallID uint64 "cbor:\"c\" view:\"manual\""; Returned *ToolReturned "cbor:\"t,omitempty\""; NotInvoked *ToolNotInvoked "cbor:\"n,omitempty\""; Indeterminate *ToolIndeterminate "cbor:\"i,omitempty\""; Evidence *ToolEvidence "cbor:\"e,omitempty\""}
+type ToolDisposition struct{RunID uint64 "cbor:\"r\" view:\"-\""; RequestID uint64 "cbor:\"q\" view:\"-\""; CallID uint64 "cbor:\"c\" view:\"manual\""; Returned *ToolReturned "cbor:\"t,omitempty\""; NotInvoked *ToolNotInvoked "cbor:\"n,omitempty\""; Indeterminate *ToolIndeterminate "cbor:\"i,omitempty\""; Diagnostic *string "cbor:\"d,omitempty\" cborlimit:\"bytes=16384\""}
 type ToolEmbeddedResource struct{Resource ToolResource "cbor:\"r\""; Text *string "cbor:\"t,omitempty\" cborlimit:\"bytes=4194304\""; Blob *[]byte "cbor:\"b,omitempty\" cborlimit:\"bytes=4194304\""}
-type ToolEvidence struct{Detail *string "cbor:\"d,omitempty\" cborlimit:\"bytes=16384\""}
 type ToolIndeterminate struct{Reason ToolIndeterminateReason "cbor:\"r\" cborlimit:\"bytes=32\""; Output ToolOutput "cbor:\"o\""}
 type ToolIndeterminateReason string
 type ToolInvocation struct{RunID uint64 "cbor:\"r\" view:\"-\""; RequestID uint64 "cbor:\"q\" view:\"-\""; CallID uint64 "cbor:\"c\" view:\"manual\""; Name string "cbor:\"n\" cborlimit:\"bytes=4096\""; Arguments value.Map "cbor:\"a\" cborlimit:\"items=4096\""; Prerequisites []uint64 "cbor:\"p\" cborlimit:\"items=4096\" view:\"manual\""}
@@ -383,7 +376,7 @@ type ToolNotInvoked struct{Reason ToolNotInvokedReason "cbor:\"r\" cborlimit:\"b
 type ToolNotInvokedReason string
 type ToolOutput struct{Capture ToolCaptureState "cbor:\"c\" cborlimit:\"bytes=32\""; Parts []ToolOutputPart "cbor:\"p\" cborlimit:\"items=4096\""}
 type ToolOutputPart struct{Content *ContentPart "cbor:\"c,omitempty\""; JSON *[]byte "cbor:\"j,omitempty\" cborlimit:\"bytes=4194304\""; ResourceLink *ToolResource "cbor:\"l,omitempty\""; Resource *ToolEmbeddedResource "cbor:\"r,omitempty\""}
-type ToolResource struct{URI string "cbor:\"u\" cborlimit:\"bytes=16384\""; Name *string "cbor:\"n,omitempty\" cborlimit:\"bytes=1024\""; Title *string "cbor:\"t,omitempty\" cborlimit:\"bytes=1024\""; MIMEType *string "cbor:\"m,omitempty\" cborlimit:\"bytes=1024\""; Description *string "cbor:\"d,omitempty\" cborlimit:\"bytes=16384\""; ByteSize *uint64 "cbor:\"b,omitempty\""}
+type ToolResource struct{URI string "cbor:\"u\" cborlimit:\"bytes=16384\""; Name *string "cbor:\"n,omitempty\" cborlimit:\"bytes=1024\""; Title *string "cbor:\"t,omitempty\" cborlimit:\"bytes=1024\""; MIMEType *string "cbor:\"m,omitempty\" cborlimit:\"bytes=1024\""}
 type ToolReturnStatus string
 type ToolReturned struct{Status ToolReturnStatus "cbor:\"s\" cborlimit:\"bytes=32\""; Output ToolOutput "cbor:\"o\""}
 type UserInput struct{RunID uint64 "cbor:\"r\" view:\"-\""; ID uint64 "cbor:\"i\" view:\"manual\""; Parts []ContentPart "cbor:\"p\""}

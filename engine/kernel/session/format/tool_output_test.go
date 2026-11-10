@@ -19,7 +19,7 @@ func richToolOutput() format.ToolOutput {
 		{Content: &format.ContentPart{Media: &format.Media{Kind: format.MediaKindAudio, Source: format.MediaSourceRemote, RemoteURI: "https://example.invalid/audio"}}},
 		{Content: &format.ContentPart{Media: &format.Media{Kind: format.MediaKindDocument, Source: format.MediaSourceProvider, ProviderName: "p", ProviderScope: "s", ProviderReferenceID: "r"}}},
 		{JSON: ptr([]byte(" { \"z\":1e+02, \"z\":null } \n"))},
-		{ResourceLink: &format.ToolResource{URI: "urn:link", Description: ptr("excluded metadata"), ByteSize: ptr(uint64(math.MaxUint64))}},
+		{ResourceLink: &format.ToolResource{URI: "urn:link", Name: ptr("link"), Title: ptr("Resource title"), MIMEType: ptr("application/octet-stream")}},
 		{Resource: &format.ToolEmbeddedResource{Resource: format.ToolResource{URI: "urn:text"}, Text: ptr("body")}},
 		{Resource: &format.ToolEmbeddedResource{Resource: format.ToolResource{URI: "urn:blob"}, Blob: ptr([]byte{0xff, 0})}},
 		{Resource: &format.ToolEmbeddedResource{Resource: format.ToolResource{URI: "urn:empty-text"}, Text: ptr("")}},

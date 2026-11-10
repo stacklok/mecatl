@@ -4,6 +4,7 @@ import (
 	"errors"
 	"math"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/stacklok/mecatl/engine/kernel/codec"
@@ -32,7 +33,7 @@ func TestToolDispositionBranches(t *testing.T) {
 		v.RunID = 1
 		v.RequestID = 2
 		v.CallID = 3
-		v.Evidence = &format.ToolEvidence{Detail: ptr("")}
+		v.Diagnostic = ptr("")
 		if err := v.Validate(); err != nil {
 			t.Fatalf("branch %d: %v", i, err)
 		}
@@ -65,7 +66,7 @@ func TestToolDispositionBranches(t *testing.T) {
 		if !got.Equal(v) {
 			t.Fatalf("branch %d roundtrip value changed", i)
 		}
-		*v.Evidence.Detail = "changed"
+		*v.Diagnostic = "changed"
 		if v.Returned != nil {
 			*v.Returned.Output.Parts[0].Content.Text = "changed"
 		}
@@ -124,7 +125,7 @@ func TestToolDispositionMalformed(t *testing.T) {
 	cases := []format.ToolDisposition{
 		{}, {Returned: returned, NotInvoked: notInvoked}, {Returned: returned, Indeterminate: indeterminate}, {NotInvoked: notInvoked, Indeterminate: indeterminate}, {Returned: returned, NotInvoked: notInvoked, Indeterminate: indeterminate},
 		{Returned: &format.ToolReturned{Status: format.ToolReturnSuccess}},
-		{Returned: returned, Evidence: &format.ToolEvidence{Detail: ptr("\xff")}},
+		{Returned: returned, Diagnostic: ptr("\xff")},
 		{Indeterminate: &format.ToolIndeterminate{Reason: format.ToolIndeterminateOther, Output: badUnion}},
 	}
 	for _, unknown := range []string{"", "unknown"} {
@@ -175,5 +176,67 @@ func TestToolDispositionMalformed(t *testing.T) {
 		if err := receiver.ReadCBOR(&r, 0, math.MaxInt); !errors.Is(err, codec.ErrInvalidData) || !receiver.Equal(before) {
 			t.Fatalf("case %d receiver changed: %v", i, err)
 		}
+	}
+}
+
+func TestToolDispositionDiagnostic(t *testing.T) {
+	base := format.ToolDisposition{RunID: 1, RequestID: 2, CallID: 3, NotInvoked: &format.ToolNotInvoked{Reason: format.ToolNotInvokedPreparationFailed}}
+	presentEmpty := base.Clone()
+	presentEmpty.Diagnostic = ptr("")
+	if base.Equal(presentEmpty) {
+		t.Fatal("lost present-empty diagnostic")
+	}
+	for _, tc := range []struct {
+		name string
+		text *string
+		kind error
+	}{
+		{"absent", nil, nil},
+		{"empty", ptr(""), nil},
+		{"explanation", ptr("required argument 'path' is missing"), nil},
+		{"exact cap", ptr(strings.Repeat("d", 16384)), nil},
+		{"over cap", ptr(strings.Repeat("d", 16385)), codec.ErrLimitExceeded},
+		{"invalid UTF-8", ptr("\xff"), codec.ErrInvalidData},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			v := base.Clone()
+			v.Diagnostic = tc.text
+			out, err := codec.Encode(v, toolLimits())
+			if tc.kind == nil {
+				if err != nil || v.Validate() != nil {
+					t.Fatalf("valid diagnostic: %v", err)
+				}
+				before := v.Clone()
+				got, err := codec.Decode[format.ToolDisposition](out, toolLimits())
+				if err != nil || !got.Equal(v) {
+					t.Fatalf("roundtrip: %v", err)
+				}
+				if v.Diagnostic != nil {
+					*v.Diagnostic = "changed"
+				}
+				clear(out)
+				if !got.Equal(before) {
+					t.Fatal("diagnostic aliases input or encoded storage")
+				}
+				return
+			}
+			if v.Validate() == nil || !errors.Is(err, tc.kind) || out != nil {
+				t.Fatalf("invalid diagnostic encode: %v", err)
+			}
+			wire := v.AppendCBOR(nil)
+			if got, err := codec.Decode[format.ToolDisposition](wire, toolLimits()); !errors.Is(err, tc.kind) || !reflect.DeepEqual(got, format.ToolDisposition{}) {
+				t.Fatalf("decode: %v", err)
+			}
+			receiver := base.Clone()
+			receiver.Diagnostic = ptr("retained")
+			before := receiver.Clone()
+			r, err := codec.NewReader(wire, toolLimits())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := receiver.ReadCBOR(&r, 0, math.MaxInt); !errors.Is(err, tc.kind) || !receiver.Equal(before) {
+				t.Fatalf("receiver changed: %v", err)
+			}
+		})
 	}
 }

@@ -11,7 +11,7 @@ import (
 )
 
 func TestToolResource(t *testing.T) {
-	v := format.ToolResource{URI: "custom:opaque#fragment", Name: ptr(""), Title: ptr("title"), MIMEType: ptr("custom/type"), Description: ptr("description"), ByteSize: ptr(uint64(0))}
+	v := format.ToolResource{URI: "custom:opaque#fragment", Name: ptr(""), Title: ptr("title"), MIMEType: ptr("custom/type")}
 	before := v.Clone()
 	wire, err := codec.Encode(v, toolLimits())
 	if err != nil {
@@ -24,14 +24,12 @@ func TestToolResource(t *testing.T) {
 	*v.Name = "changed"
 	*v.Title = "changed"
 	*v.MIMEType = "changed"
-	*v.Description = "changed"
-	*v.ByteSize = 9
 	clear(wire)
 	if !got.Equal(before) {
 		t.Fatal("resource aliases")
 	}
-	if (format.ToolResource{URI: "urn:x"}).Equal(format.ToolResource{URI: "urn:x", ByteSize: ptr(uint64(0))}) {
-		t.Fatal("lost size presence")
+	if (format.ToolResource{URI: "urn:x"}).Equal(format.ToolResource{URI: "urn:x", Name: ptr("")}) {
+		t.Fatal("lost label presence")
 	}
 	for _, uri := range []string{"urn:x", "file:///not/fetched", "https://example.invalid/a?q=b", "custom:opaque"} {
 		if err := (format.ToolResource{URI: uri}).Validate(); err != nil {
@@ -53,7 +51,7 @@ func TestToolResource(t *testing.T) {
 }
 
 func TestToolResourceMetadataCaps(t *testing.T) {
-	for _, field := range []string{"uri", "name", "title", "mime", "description"} {
+	for _, field := range []string{"uri", "name", "title", "mime"} {
 		t.Run(field, func(t *testing.T) {
 			for _, over := range []int{0, 1} {
 				v := format.ToolResource{URI: "urn:x"}
@@ -66,8 +64,6 @@ func TestToolResourceMetadataCaps(t *testing.T) {
 					v.Title = ptr(strings.Repeat("x", 1024+over))
 				case "mime":
 					v.MIMEType = ptr(strings.Repeat("x", 1024+over))
-				case "description":
-					v.Description = ptr(strings.Repeat("x", 16384+over))
 				}
 				out, err := codec.Encode(v, toolLimits())
 				if over == 0 {
@@ -88,7 +84,7 @@ func TestToolResourceMetadataCaps(t *testing.T) {
 			}
 		})
 	}
-	for _, v := range []format.ToolResource{{URI: "urn:x", Name: ptr("\xff")}, {URI: "urn:x", Title: ptr("\xff")}, {URI: "urn:x", MIMEType: ptr("\xff")}, {URI: "urn:x", Description: ptr("\xff")}} {
+	for _, v := range []format.ToolResource{{URI: "urn:x", Name: ptr("\xff")}, {URI: "urn:x", Title: ptr("\xff")}, {URI: "urn:x", MIMEType: ptr("\xff")}} {
 		if v.Validate() == nil {
 			t.Fatal("accepted invalid UTF-8 label")
 		}

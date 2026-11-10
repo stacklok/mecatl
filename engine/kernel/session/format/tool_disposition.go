@@ -60,7 +60,7 @@ const (
 )
 
 // ToolNotInvoked retains a known non-invocation, before or after commitment.
-// Zero is invalid; producer detail belongs in ToolDisposition.Evidence.
+// Zero is invalid; producer detail belongs in ToolDisposition.Diagnostic.
 //
 //dtogen:validate validateLocal
 type ToolNotInvoked struct {
@@ -156,8 +156,15 @@ type ToolDisposition struct {
 	NotInvoked *ToolNotInvoked `cbor:"n,omitempty"`
 	// Indeterminate optionally retains uncertain outcome, exclusive with other branches.
 	Indeterminate *ToolIndeterminate `cbor:"i,omitempty"`
-	// Evidence optionally retains small producer diagnostic detail, not model content.
-	Evidence *ToolEvidence `cbor:"e,omitempty"`
+	// Diagnostic is optional human-readable context, at most 16384 UTF-8 bytes.
+	// For example: "required argument 'path' is missing" or "executor disconnected
+	// before a terminal result was observed; execution may have occurred".
+	// Nil is absent; present-empty survives. It supplements the reason, not tool
+	// output or lifecycle facts; returned tool errors belong in Output. Producers
+	// must scrub and approve it for retention before capture. Retention grants no
+	// model disclosure permission. Structured supporting observations remain deferred
+	// to typed ancillary records rather than an extension bag.
+	Diagnostic *string `cbor:"d,omitempty" cborlimit:"bytes=16384"`
 }
 
 // Validate checks persisted identity, branch exclusivity and all children, not
@@ -181,14 +188,14 @@ func (v ToolDisposition) Validate() error {
 			return err
 		}
 	}
-	if v.Evidence != nil {
-		return v.Evidence.Validate()
-	}
 	return nil
 }
 
-// validateLocal checks immediate persisted IDs and branch presence only.
+// validateLocal checks immediate persisted IDs, branch presence and diagnostic syntax.
 func (v ToolDisposition) validateLocal() error {
+	if v.Diagnostic != nil && (len(*v.Diagnostic) > 16384 || !utf8.ValidString(*v.Diagnostic)) {
+		return errors.New("tool diagnostic requires bounded UTF-8")
+	}
 	if v.RunID == 0 || v.RequestID == 0 || v.CallID == 0 {
 		return errors.New("tool disposition requires positive run, request and call components")
 	}
@@ -204,33 +211,6 @@ func (v ToolDisposition) validateLocal() error {
 	}
 	if n != 1 {
 		return errors.New("tool disposition requires exactly one branch")
-	}
-	return nil
-}
-
-// ToolEvidence retains a human-readable disposition diagnostic, never model
-// content or disclosure permission. Producers must arrange safe release and
-// scrubbing before capture; UTF-8 validation is not sanitization. Nil Detail is
-// absent; present-empty Detail survives. Assignment shares mutable storage; Clone
-// detaches it. Zero is valid.
-//
-// Future structured producer observations need typed ancillary records once their
-// semantics and placement are established; this contract has no extension bag.
-//
-//dtogen:validate validateLocal
-type ToolEvidence struct {
-	// Detail is optional exact UTF-8 human-readable diagnostic context, at most
-	// 16384 bytes.
-	Detail *string `cbor:"d,omitempty" cborlimit:"bytes=16384"`
-}
-
-// Validate checks the bounded diagnostic, not disclosure safety.
-func (v ToolEvidence) Validate() error { return v.validateLocal() }
-
-// validateLocal checks the immediate bounded diagnostic only.
-func (v ToolEvidence) validateLocal() error {
-	if v.Detail != nil && (len(*v.Detail) > 16384 || !utf8.ValidString(*v.Detail)) {
-		return errors.New("tool detail requires bounded UTF-8")
 	}
 	return nil
 }
