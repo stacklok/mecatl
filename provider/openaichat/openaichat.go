@@ -11,7 +11,7 @@
 // resends the full message slice. Display-only reasoning (a provider's streamed
 // reasoning_content "thinking") IS surfaced as ChunkReasoning — both for client
 // display and so llmresilience's idle watchdog observes progress during a
-// thinking phase — but there is NO reasoning-REPLAY blob (ChunkReasoningItem) and
+// thinking phase — but there is NO reasoning-REPLAY blob (ChunkReplay) and
 // no phase marker: Chat Completions does not carry reasoning across turns, so
 // those replay facilities are simply unused here (a deliberate simplification,
 // not a gap).

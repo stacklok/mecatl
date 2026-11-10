@@ -46,13 +46,8 @@ type streamState struct {
 	// top-level error correlate with the response it terminated.
 	responseID string
 
-	// reasoning accumulates the turn's (id, encrypted_content) reasoning items in
-	// arrival order, packed into ONE ChunkReasoningItem at the terminal event.
-	// A turn may emit several — each blob is bound to its own item id and must be
-	// replayed under that id, which one chunk per item cannot express (the port
-	// carries a single id, and the loop folds the chunks into one Message field).
-	// See reasoning.go. This is the adapter's only payload buffering; it is
-	// bounded by the turn's reasoning output and released with the stream.
+	// reasoning and phase are buffered into one complete opaque replay envelope
+	// at successful completion. Readable summaries stay on ChunkReasoning.
 	reasoning []reasoningItem
 
 	// callsSeen counts the function_call items emitted so far this turn. It stamps
@@ -60,6 +55,12 @@ type streamState struct {
 	// back BETWEEN the right two tool calls instead of hoisting every reasoning
 	// item to the front of the turn.
 	callsSeen int
+
+	// phase is the last nonempty assistant-message phase, buffered turn-locally
+	// for opaque replay at successful completion. Separately, ChunkPhase carries
+	// public display metadata into Message.ProviderPhase, not a streaming event.
+	// This buffering is not a prompt or efficiency cache.
+	phase string
 }
 
 // errTruncatedStream is surfaced when the Responses stream ends cleanly (no error
@@ -97,22 +98,14 @@ var errTruncatedStream = fmt.Errorf("openai: responses stream ended without a te
 //   - response.output_item.done (reasoning)     -> BUFFERED (encrypted_content + item id)
 //   - response.output_item.done (message)       -> ChunkPhase (opaque phase marker, REPLAYED)
 //   - response.output_item.done (function_call) -> ChunkToolCall
-//   - response.completed                    -> ChunkReasoningItem (packed)? then ChunkUsage, ChunkDone(end_turn)
+//   - response.completed                    -> ChunkReplay (packed)? then ChunkUsage, ChunkDone(end_turn)
 //   - response.incomplete                   -> ChunkUsage then ChunkDone(error)
 //   - response.failed / error               -> non-nil error (safe category/status display)
 //
-// The reasoning summary deltas (ChunkReasoning) and the reasoning replay blob
-// (ChunkReasoningItem) are deliberately distinct: the summary is human-readable
-// prose for display, whereas the replay blob is OpenAI's opaque encrypted_content
-// token that must be sent back verbatim (request.go) for stateless multi-turn
-// reasoning continuity. They MUST NOT be conflated.
-//
-// Reasoning replay items are BUFFERED across the turn and packed into a single
-// ChunkReasoningItem at response.completed, because each blob only verifies
-// under its own reasoning-item id and the port carries one id per chunk. See
-// streamState.reasoning and reasoning.go. A turn that ends WITHOUT
-// response.completed (incomplete/failed/error/truncation) drops them, which
-// costs nothing: the engine discards the whole assistant message on those paths.
+// Reasoning summaries stay display-only. Exact reasoning IDs/ciphertext and the
+// last non-empty phase are buffered in one ChunkReplay at response.completed.
+// Failed, incomplete, and truncated streams emit no replay envelope. Visible
+// text retains the existing flattened delta order, not richer item fidelity.
 //
 // Visible output text is projected through the provider-neutral one-string seam:
 // every non-empty delta is emitted in serial SSE arrival order and provider item,
@@ -179,7 +172,8 @@ func translate(event responses.ResponseStreamEventUnion, st *streamState) ([]por
 			if item.Phase == "" {
 				return nil, nil
 			}
-			return []port.Chunk{{Kind: port.ChunkPhase, Text: string(item.Phase)}}, nil
+			st.phase = string(item.Phase)
+			return []port.Chunk{{Kind: port.ChunkPhase, Text: st.phase}}, nil
 		case "function_call":
 			// The assembled function_call carries call_id, name, and the final
 			// arguments JSON string. item.ID is the provider's opaque item-level
@@ -188,9 +182,9 @@ func translate(event responses.ResponseStreamEventUnion, st *streamState) ([]por
 			// stateless turns so the provider can de-duplicate items (prevents the
 			// "Duplicate item found with id fc_N" error on store:false multi-turn
 			// sessions with Azure GPT-5.x).
-			call := session.ToolCall{
-				ID:     session.ToolCallID(item.CallID),
-				ItemID: item.ID,
+			call := port.LLMToolCall{
+				ID:     session.ProviderCallID(item.CallID),
+				ItemID: session.ProviderItemID(item.ID),
 				Name:   item.Name,
 				Args:   json.RawMessage(item.Arguments.OfString),
 			}
@@ -271,13 +265,8 @@ func translateCompleted(event responses.ResponseStreamEventUnion, st *streamStat
 			chunks = append(chunks, port.Chunk{Kind: port.ChunkProviderRoute, Text: label})
 		}
 	}
-	// The turn's buffered reasoning items, packed into one replay blob. It
-	// rides out here — the only point at which the full ordered list is known.
-	// ReasoningItemID stays EMPTY: with several ids in play the port's single
-	// id cannot name them, and each id now travels inside the envelope beside
-	// the blob it belongs to (provider/anthropic does the same).
-	if packed := packReasoningItems(st.reasoning); packed != "" {
-		chunks = append(chunks, port.Chunk{Kind: port.ChunkReasoningItem, Text: packed})
+	if replay := packReplay(responsesReplay{Reasoning: st.reasoning, Phase: st.phase}); replay != nil {
+		chunks = append(chunks, port.Chunk{Kind: port.ChunkReplay, Replay: replay, ReplayIsOutput: len(st.reasoning) > 0})
 	}
 	return append(chunks,
 		port.Chunk{Kind: port.ChunkUsage, Usage: &usage},

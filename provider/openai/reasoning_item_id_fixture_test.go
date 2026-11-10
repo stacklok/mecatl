@@ -15,19 +15,10 @@ import (
 // SSE→port.Chunk boundary intact and is NOT confused with the assistant message
 // item's id ("msg_abc") that the text deltas ride on.
 //
-// The fixture models the mixed-item stream the bug lives in: a reasoning item
-// rs_123 emits summary deltas and an assembled output_item.done carrying the
-// encrypted replay blob, THEN a message item msg_abc emits the visible text.
-// Under the PRE-FIX conversion the reasoning arm emitted the ChunkReasoningItem
-// with NO id (it dropped item.ID), so the loop could not stamp
-// Message.ReasoningItemID, replay serialised id:"" and strict gateways 400'd
-// on turn 2+ (see HANDOVER-reasoning-item-id-replay.md). This test fails on that
-// old behavior and passes now.
-//
-// The id now rides INSIDE the packed reasoning envelope (reasoning.go) rather
-// than on port.Chunk.ReasoningItemID, because a turn may carry several items and
-// each blob only verifies under its own id. The pairing asserted here is the
-// same one; only where it is written down moved.
+// The fixture mixes a reasoning item rs_123 with a message item msg_abc.
+// ChunkReplay keeps each ciphertext bound to its own reasoning item ID inside
+// the opaque envelope; readable text chunks carry no private replay. Strict
+// gateways require that same item ID when the ciphertext is replayed.
 func TestReasoningItemIDMixedItemBoundary(t *testing.T) {
 	chunks := decodeFixture(t, "reasoning_item_id_mixed.sse")
 
@@ -36,14 +27,14 @@ func TestReasoningItemIDMixedItemBoundary(t *testing.T) {
 	// pre-fix code item.ID was dropped entirely, so this assertion discriminates.
 	var reasoningItemChunk *port.Chunk
 	for i := range chunks {
-		if chunks[i].Kind == port.ChunkReasoningItem {
+		if chunks[i].Kind == port.ChunkReplay {
 			reasoningItemChunk = &chunks[i]
 		}
 	}
 	if reasoningItemChunk == nil {
 		t.Fatalf("no ChunkReasoningItem in stream; chunks=%+v", chunks)
 	}
-	items := unpackReasoningItems(reasoningItemChunk.Text)
+	items := replayReasoning(reasoningItemChunk.Replay)
 	if len(items) != 1 {
 		t.Fatalf("unpacked %d reasoning items, want 1; packed=%q", len(items), reasoningItemChunk.Text)
 	}
@@ -57,14 +48,13 @@ func TestReasoningItemIDMixedItemBoundary(t *testing.T) {
 
 	// (b) The assistant TEXT chunks must NOT carry the reasoning item id — the
 	// reasoning id belongs only to the reasoning item, not the message item.
-	// (ChunkText has no ReasoningItemID carrier at all, so any non-empty value
-	// here — including "rs_123" or "msg_abc" — is a boundary leak.)
+	// ChunkText carries no replay payload, including reasoning-item identity.
 	for i, c := range chunks {
 		if c.Kind != port.ChunkText {
 			continue
 		}
-		if c.ReasoningItemID != "" {
-			t.Errorf("text chunk %d leaks ReasoningItemID = %q; text deltas must carry no reasoning item id", i, c.ReasoningItemID)
+		if c.Replay != nil {
+			t.Errorf("text chunk %d leaks private replay", i)
 		}
 	}
 
@@ -89,43 +79,23 @@ func TestReasoningItemIDMixedItemBoundary(t *testing.T) {
 	}
 }
 
-// aggregateAssistantMessage mirrors the chunk→session.Message aggregation the
-// engine loop performs (engine/agent/loop.go: ReasoningItemID is
-// last-non-empty-wins alongside the additive Reasoning blob). It lives here as
-// the provider package's view of what the loop will build from this stream, so
-// the regression is pinned at the adapter boundary without importing engine/agent
-// (which the provider module deliberately does not depend on).
-func aggregateAssistantMessage(chunks []port.Chunk) session.Message {
-	var text, reasoning, reasoningItemID string
-	var calls []session.ToolCall
-	stop := session.StopNone
-	var usage session.Usage
+// aggregateAssistantMessage folds only the provider DTO seam. Canonical domain
+// acceptance belongs to engine tests, not the Responses adapter.
+func aggregateAssistantMessage(chunks []port.Chunk) port.LLMMessage {
+	msg := port.LLMMessage{Role: session.RoleAssistant}
 	for _, c := range chunks {
 		switch c.Kind {
 		case port.ChunkText:
-			text += c.Text
-		case port.ChunkReasoning:
-			// display-only summary; not the replay blob
-		case port.ChunkReasoningItem:
-			reasoning += c.Text
-			if c.ReasoningItemID != "" {
-				reasoningItemID = c.ReasoningItemID
-			}
+			msg.Text += c.Text
+		case port.ChunkPhase:
+			msg.ProviderPhase = c.Text
+		case port.ChunkReplay:
+			msg.Replay = c.Replay
 		case port.ChunkToolCall:
 			if c.ToolCall != nil {
-				calls = append(calls, *c.ToolCall)
+				msg.ToolCalls = append(msg.ToolCalls, *c.ToolCall)
 			}
-		case port.ChunkUsage:
-			if c.Usage != nil {
-				usage = usage.Add(*c.Usage)
-			}
-		case port.ChunkDone:
-			stop = c.Stop
 		}
 	}
-	msg := session.NewAssistantMessage(text, reasoning, calls)
-	msg.ReasoningItemID = reasoningItemID
-	_ = stop
-	_ = usage
 	return msg
 }

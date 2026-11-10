@@ -13,7 +13,6 @@ import (
 	"github.com/openai/openai-go/v3/responses"
 
 	"github.com/stacklok/mecatl/engine/port"
-	"github.com/stacklok/mecatl/engine/session"
 )
 
 // TestMultipleReasoningItemsReplayUnderTheirOwnIDs is the cold reproducer for
@@ -85,14 +84,14 @@ func describeItems(items []responses.ResponseInputItemUnionParam) []string {
 // be dropped in any of them — a silently swallowed reasoning item is the failure
 // mode the whole envelope exists to prevent.
 func TestReasoningInterleavingPlacement(t *testing.T) {
-	calls := []session.ToolCall{
+	calls := []port.LLMToolCall{
 		{ID: "c0", ItemID: "fc_0", Name: "Read", Args: json.RawMessage(`{}`)},
 		{ID: "c1", ItemID: "fc_1", Name: "Read", Args: json.RawMessage(`{}`)},
 	}
 	tests := []struct {
 		name  string
 		items []reasoningItem
-		calls []session.ToolCall
+		calls []port.LLMToolCall
 		want  []string
 	}{
 		{
@@ -130,7 +129,7 @@ func TestReasoningInterleavingPlacement(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			msg := session.NewAssistantMessage("", packReasoningItems(tc.items), tc.calls)
+			msg := assistantMessage("", packReasoningItems(tc.items), tc.calls)
 			if got := describeItems(assistantItems(msg)); !reflect.DeepEqual(got, tc.want) {
 				t.Errorf("wire items =\n  %s\nwant\n  %s",
 					strings.Join(got, "\n  "), strings.Join(tc.want, "\n  "))
@@ -167,8 +166,7 @@ func TestOnlyCurrentCompleteReasoningEnvelopeReplays(t *testing.T) {
 				t.Errorf("unpacked = %+v, want %+v", got, tc.want)
 			}
 			// A stale pre-envelope id must never reactivate rejected bytes.
-			msg := session.NewAssistantMessage("", tc.reasoning, nil)
-			msg.ReasoningItemID = "rs_stale"
+			msg := assistantMessage("", tc.reasoning, nil)
 			var replayed []reasoningItem
 			for _, it := range assistantItems(msg) {
 				if it.OfReasoning != nil {
@@ -190,7 +188,7 @@ func TestPartialReasoningEnvelopeIsRejected(t *testing.T) {
 		{ID: "", Blob: "ORPHAN_BLOB"},
 		{ID: "rs_empty", Blob: ""},
 	})
-	msg := session.NewAssistantMessage("", packed, nil)
+	msg := assistantMessage("", packed, nil)
 
 	for _, it := range assistantItems(msg) {
 		if it.OfReasoning != nil {
@@ -275,15 +273,15 @@ func TestRecoveryRemovesEveryPackedReasoningItem(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	assistant := session.NewAssistantMessage("visible", packReasoningItems([]reasoningItem{
+	assistant := assistantMessage("visible", packReasoningItems([]reasoningItem{
 		{ID: "rs_1", Blob: "AAA"}, {ID: "rs_2", Blob: "BBB"}, {ID: "rs_3", Blob: "CCC"},
-	}), []session.ToolCall{{ID: "call_1", ItemID: "fc_keep", Name: "Read", Args: json.RawMessage(`{}`)}})
-	assistant.ProviderPhase = "commentary"
+	}), []port.LLMToolCall{{ID: "call_1", ItemID: "fc_keep", Name: "Read", Args: json.RawMessage(`{}`)}})
+	setReplayPhase(&assistant, "commentary")
 
 	p := New(WithAPIKey("test-key"), WithBaseURL(srv.URL+"/v1"))
 	seq, err := p.Stream(context.Background(), port.LLMRequest{
 		Model:    "gpt-5.6-terra",
-		Messages: []session.Message{session.NewUserMessage("go"), assistant},
+		Messages: []port.LLMMessage{userMessage("go"), assistant},
 	})
 	if err != nil {
 		t.Fatalf("Stream: %v", err)
@@ -334,7 +332,7 @@ func TestReasoningItemsDroppedOnNonTerminalStream(t *testing.T) {
 		t.Fatal("expected the failed-response fixture to surface an error")
 	}
 	for _, c := range chunks {
-		if c.Kind == port.ChunkReasoningItem {
+		if c.Kind == port.ChunkReplay {
 			t.Errorf("failed stream emitted a reasoning replay blob %q; it should be dropped", c.Text)
 		}
 	}

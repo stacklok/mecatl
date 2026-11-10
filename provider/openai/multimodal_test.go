@@ -35,8 +35,8 @@ func TestBuildInputImagePartInlineDataURL(t *testing.T) {
 	data := []byte{0x89, 0x50, 0x4e, 0x47}
 	req := port.LLMRequest{
 		Model: "gpt-5.2",
-		Messages: []session.Message{
-			session.NewUserMessageWithParts("what is this", []session.Content{
+		Messages: []port.LLMMessage{
+			userMessageWithParts("what is this", []session.Content{
 				{Kind: session.MediaImage, MIMEType: "image/png", Data: data},
 			}),
 		},
@@ -73,8 +73,8 @@ func TestBuildInputImagePartInlineDataURL(t *testing.T) {
 func TestBuildInputImagePartPassthroughURL(t *testing.T) {
 	req := port.LLMRequest{
 		Model: "m",
-		Messages: []session.Message{
-			session.NewUserMessageWithParts("", []session.Content{
+		Messages: []port.LLMMessage{
+			userMessageWithParts("", []session.Content{
 				{Kind: session.MediaImage, MIMEType: "image/jpeg", URL: "https://example.com/x.jpg"},
 			}),
 		},
@@ -94,8 +94,8 @@ func TestBuildInputImagePartPassthroughURL(t *testing.T) {
 func TestBuildInputAudioPartHonestError(t *testing.T) {
 	req := port.LLMRequest{
 		Model: "m",
-		Messages: []session.Message{
-			session.NewUserMessageWithParts("listen", []session.Content{
+		Messages: []port.LLMMessage{
+			userMessageWithParts("listen", []session.Content{
 				{Kind: session.MediaAudio, MIMEType: "audio/wav", Data: []byte{1, 2}},
 			}),
 		},
@@ -119,11 +119,11 @@ func TestBuildParamsBytestablePrefixWithMedia(t *testing.T) {
 		Tools:  []tool.ToolSpec{{Name: "read_file", Description: "Read a file.", Schema: schema}},
 	}
 	textReq := base
-	textReq.Messages = []session.Message{session.NewUserMessage("describe the diagram")}
+	textReq.Messages = []port.LLMMessage{userMessage("describe the diagram")}
 
 	mediaReq := base
-	mediaReq.Messages = []session.Message{
-		session.NewUserMessageWithParts("describe the diagram", []session.Content{
+	mediaReq.Messages = []port.LLMMessage{
+		userMessageWithParts("describe the diagram", []session.Content{
 			{Kind: session.MediaImage, MIMEType: "image/png", Data: []byte{0x89, 0x50, 0x4e, 0x47}},
 		}),
 	}

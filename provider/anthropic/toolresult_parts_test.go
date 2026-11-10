@@ -12,11 +12,11 @@ import (
 // toolResultMessages drives a one-tool-message request through buildParams
 // (the method form, so the per-session caps thread in) and decodes the
 // marshalled messages into a generic slice for shape assertions.
-func toolResultMessages(t *testing.T, p *Provider, tr session.ToolResult) []map[string]any {
+func toolResultMessages(t *testing.T, p *Provider, tr port.LLMToolResult) []map[string]any {
 	t.Helper()
 	params, err := p.buildParams(port.LLMRequest{
 		Model:    "claude-sonnet-4-6",
-		Messages: []session.Message{session.NewToolMessage(tr)},
+		Messages: []port.LLMMessage{toolMessage(tr)},
 	})
 	if err != nil {
 		t.Fatalf("buildParams: %v", err)
@@ -39,7 +39,7 @@ func toolResultMessages(t *testing.T, p *Provider, tr session.ToolResult) []map[
 func TestToolResultStringOnlyUnchanged(t *testing.T) {
 	p := New(WithAPIKey("sk-test"), WithMaxTokens(16000),
 		WithProviderCapabilities(port.ProviderCapabilities{Image: true}))
-	msgs := toolResultMessages(t, p, session.NewToolResult("toolu_1", "42"))
+	msgs := toolResultMessages(t, p, toolResult("toolu_1", "42"))
 	if len(msgs) != 1 {
 		t.Fatalf("messages = %d, want 1: %v", len(msgs), msgs)
 	}
@@ -83,7 +83,7 @@ func TestToolResultStringOnlyUnchanged(t *testing.T) {
 // block — NOT the legacy single-string form.
 func TestToolResultWithPartsMapsToMultimodal(t *testing.T) {
 	imgData := []byte{0x89, 0x50, 0x4e, 0x47}
-	tr := session.NewToolResultWithParts("toolu_1", "fallback", []session.Content{
+	tr := toolResultWithParts("toolu_1", "fallback", []session.Content{
 		session.NewTextBlock("screenshot follows"),
 		{BlockKind: session.BlockImage, Kind: session.MediaImage, MIMEType: "image/png", Data: imgData},
 	})
@@ -131,7 +131,7 @@ func TestToolResultWithPartsMapsToMultimodal(t *testing.T) {
 // per-session intersection (not the static adapter caps) gates it.
 func TestToolResultWithPartsDropsImageWhenNoImageCap(t *testing.T) {
 	imgData := []byte{0x89, 0x50, 0x4e, 0x47}
-	tr := session.NewToolResultWithParts("toolu_1", "fallback", []session.Content{
+	tr := toolResultWithParts("toolu_1", "fallback", []session.Content{
 		session.NewTextBlock("screenshot follows"),
 		{BlockKind: session.BlockImage, Kind: session.MediaImage, MIMEType: "image/png", Data: imgData},
 	})
@@ -153,7 +153,7 @@ func TestToolResultWithPartsDropsImageWhenNoImageCap(t *testing.T) {
 // to the legacy single-string tool_result(Content) — byte-identical to no-Parts.
 func TestToolResultWithPartsAllDroppedFallsBackToString(t *testing.T) {
 	imgData := []byte{0x89, 0x50, 0x4e, 0x47}
-	tr := session.NewToolResultWithParts("toolu_1", "the image only", []session.Content{
+	tr := toolResultWithParts("toolu_1", "the image only", []session.Content{
 		{BlockKind: session.BlockImage, Kind: session.MediaImage, MIMEType: "image/png", Data: imgData},
 	})
 	p := New(WithAPIKey("sk-test"), WithMaxTokens(16000),
@@ -172,7 +172,7 @@ func TestToolResultWithPartsAllDroppedFallsBackToString(t *testing.T) {
 
 // messagesJSON drives an arbitrary message list through buildParams and returns
 // both the decoded messages and the raw marshaled bytes (for empty-text scans).
-func messagesJSON(t *testing.T, p *Provider, msgs []session.Message) ([]map[string]any, []byte) {
+func messagesJSON(t *testing.T, p *Provider, msgs []port.LLMMessage) ([]map[string]any, []byte) {
 	t.Helper()
 	params, err := p.buildParams(port.LLMRequest{Model: "claude-sonnet-4-6", Messages: msgs})
 	if err != nil {
@@ -213,12 +213,12 @@ func firstContentBlock(t *testing.T, msg map[string]any) map[string]any {
 // upstream, the adapter falls back to the single-string path, and the empty
 // Content becomes the deterministic placeholder — no "text":"" on the wire.
 func TestToolResultEmptyContentPoisonHealsToPlaceholder(t *testing.T) {
-	tr := session.NewToolResultWithParts("toolu_1", "", []session.Content{
+	tr := toolResultWithParts("toolu_1", "", []session.Content{
 		session.NewTextBlock(""),
 	})
 	p := New(WithAPIKey("sk-test"), WithMaxTokens(16000),
 		WithProviderCapabilities(port.ProviderCapabilities{Image: true}))
-	msgs, raw := messagesJSON(t, p, []session.Message{session.NewToolMessage(tr)})
+	msgs, raw := messagesJSON(t, p, []port.LLMMessage{toolMessage(tr)})
 	blk := firstContentBlock(t, msgs[0])
 	if blk["type"] != "tool_result" {
 		t.Fatalf("block type = %v, want tool_result", blk["type"])
@@ -248,7 +248,7 @@ func TestToolResultEmptyContentPoisonHealsToPlaceholder(t *testing.T) {
 func TestDegenerateEmptySystemTurnGetsPlaceholder(t *testing.T) {
 	p := New(WithAPIKey("sk-test"), WithMaxTokens(16000),
 		WithProviderCapabilities(port.ProviderCapabilities{}))
-	msgs, raw := messagesJSON(t, p, []session.Message{{Role: session.RoleSystem, Text: ""}})
+	msgs, raw := messagesJSON(t, p, []port.LLMMessage{{Role: session.RoleSystem, Text: ""}})
 	blk := firstContentBlock(t, msgs[0])
 	if blk["type"] != "text" || blk["text"] != emptyMessagePlaceholder {
 		t.Errorf("empty system turn block = %v, want text %q", blk, emptyMessagePlaceholder)
@@ -264,7 +264,7 @@ func TestDegenerateEmptySystemTurnGetsPlaceholder(t *testing.T) {
 func TestDegenerateEmptyUserTurnGetsPlaceholder(t *testing.T) {
 	p := New(WithAPIKey("sk-test"), WithMaxTokens(16000),
 		WithProviderCapabilities(port.ProviderCapabilities{}))
-	msgs, raw := messagesJSON(t, p, []session.Message{session.NewUserMessage("")})
+	msgs, raw := messagesJSON(t, p, []port.LLMMessage{userMessage("")})
 	blk := firstContentBlock(t, msgs[0])
 	if blk["type"] != "text" || blk["text"] != emptyMessagePlaceholder {
 		t.Errorf("empty user turn block = %v, want text %q", blk, emptyMessagePlaceholder)
@@ -280,7 +280,7 @@ func TestDegenerateEmptyUserTurnGetsPlaceholder(t *testing.T) {
 func TestDegenerateEmptyAssistantTurnGetsPlaceholder(t *testing.T) {
 	p := New(WithAPIKey("sk-test"), WithMaxTokens(16000),
 		WithProviderCapabilities(port.ProviderCapabilities{}))
-	msgs, raw := messagesJSON(t, p, []session.Message{session.NewAssistantMessage("", "", nil)})
+	msgs, raw := messagesJSON(t, p, []port.LLMMessage{assistantMessage("", nil, nil)})
 	blk := firstContentBlock(t, msgs[0])
 	if blk["type"] != "text" || blk["text"] != emptyMessagePlaceholder {
 		t.Errorf("empty assistant turn block = %v, want text %q", blk, emptyMessagePlaceholder)

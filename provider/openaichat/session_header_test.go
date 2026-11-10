@@ -21,7 +21,7 @@ const completedChatSSE = `data: {"id":"chatcmpl-1","object":"chat.completion.chu
 
 func drainSessionHeaderStream(ctx context.Context, t *testing.T, p *Provider, model string) {
 	t.Helper()
-	seq, err := p.Stream(ctx, port.LLMRequest{Model: model, Messages: []session.Message{session.NewUserMessage("hi")}})
+	seq, err := p.Stream(ctx, port.LLMRequest{Model: model, Messages: []port.LLMMessage{{Role: session.RoleUser, Text: "hi"}}})
 	if err != nil {
 		t.Fatalf("Stream: %v", err)
 	}
