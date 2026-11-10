@@ -1,12 +1,9 @@
 package mcpbroker
 
 import (
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
-	"os"
-	"path/filepath"
 
 	"github.com/stacklok/mecatl/internal/inprocesshttp"
 )
@@ -29,6 +26,17 @@ type AS2 struct {
 	handler http.Handler
 }
 
+// newAS2 is AS-2 at issuer for resource, its token endpoint served by the
+// embedded authorization server's handler.
+func newAS2(issuer, resource string, handler http.Handler) (*AS2, error) {
+	tokenEndpoint := issuer + "/oauth/token"
+	token, err := url.Parse(tokenEndpoint)
+	if err != nil {
+		return nil, fmt.Errorf("mcpbroker: AS-2 token endpoint: %w", err)
+	}
+	return &AS2{Issuer: issuer, TokenEndpoint: tokenEndpoint, Resource: resource, token: token, handler: handler}, nil
+}
+
 // InProcessClient returns a client that serves requests for AS-2's token
 // endpoint straight from the embedded authorization server, without a network
 // listener, and refuses every other URL. A request whose context ends before
@@ -45,31 +53,4 @@ func (a *AS2) admitInProcess(u *url.URL) error {
 		return fmt.Errorf("mcpbroker: AS-2 in-process client refuses %s://%s%s: not the token endpoint", u.Scheme, u.Host, u.Path)
 	}
 	return nil
-}
-
-// hasKeys reports whether raw is a JSON JWK Set with at least one key.
-func hasKeys(raw []byte) bool {
-	var set struct {
-		Keys []json.RawMessage `json:"keys"`
-	}
-	return json.Unmarshal(raw, &set) == nil && len(set.Keys) > 0
-}
-
-// writeKeySet writes the key set raw to a new file in a new private temporary
-// directory, as ToolHive reads a delegate client's keys only from a file, and
-// returns its path and a function that removes the directory. ToolHive reads
-// the file once, at construction. hasKeys and writeKeySet are copies of
-// as1server's (delegate.go); fix both together.
-func writeKeySet(raw []byte) (string, func(), error) {
-	dir, err := os.MkdirTemp("", "as2-broker-client-")
-	if err != nil {
-		return "", nil, fmt.Errorf("mcpbroker: broker client key set directory: %w", err)
-	}
-	remove := func() { _ = os.RemoveAll(dir) }
-	file := filepath.Join(dir, "jwks.json")
-	if err := os.WriteFile(file, raw, 0o600); err != nil {
-		remove()
-		return "", nil, fmt.Errorf("mcpbroker: write broker client key set: %w", err)
-	}
-	return file, remove, nil
 }

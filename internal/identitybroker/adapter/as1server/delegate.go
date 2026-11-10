@@ -1,15 +1,14 @@
 package as1server
 
 import (
-	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
 	"slices"
 	"time"
 
 	"github.com/stacklok/toolhive/pkg/authserver"
 	"github.com/stacklok/toolhive/pkg/oauthproto"
+
+	"github.com/stacklok/mecatl/internal/jwksfile"
 )
 
 // DelegateClient is a pre-provisioned confidential client of the
@@ -71,7 +70,7 @@ func (d DelegateClient) validate(publicClients map[string]bool) error {
 		return fmt.Errorf("%w: delegate client ID is required", ErrInvalidConfig)
 	case publicClients[d.ID]:
 		return fmt.Errorf("%w: delegate client ID %q is also a public client's", ErrInvalidConfig, d.ID)
-	case !hasKeys(d.KeySet):
+	case !jwksfile.HasKeys(d.KeySet):
 		return fmt.Errorf("%w: delegate client %q needs a JWK Set with at least one key", ErrInvalidConfig, d.ID)
 	case len(d.AllowedSourceClients) == 0:
 		return fmt.Errorf("%w: delegate client %q needs at least one allowed source client", ErrInvalidConfig, d.ID)
@@ -84,31 +83,4 @@ func (d DelegateClient) validate(publicClients map[string]bool) error {
 		}
 	}
 	return nil
-}
-
-// hasKeys reports whether raw is a JSON JWK Set with at least one key.
-func hasKeys(raw []byte) bool {
-	var set struct {
-		Keys []json.RawMessage `json:"keys"`
-	}
-	return json.Unmarshal(raw, &set) == nil && len(set.Keys) > 0
-}
-
-// writeKeySet writes the key set raw to a new file in a new private temporary
-// directory, as ToolHive reads a delegate client's keys only from a file, and
-// returns its path and a function that removes the directory. ToolHive reads
-// the file once, at construction. hasKeys and writeKeySet are copied in the
-// MCP broker adapter (internal/adapter/mcpbroker/as2.go); fix both together.
-func writeKeySet(raw []byte) (string, func(), error) {
-	dir, err := os.MkdirTemp("", "as1-delegate-")
-	if err != nil {
-		return "", nil, fmt.Errorf("as1server: delegate key set directory: %w", err)
-	}
-	remove := func() { _ = os.RemoveAll(dir) }
-	file := filepath.Join(dir, "jwks.json")
-	if err := os.WriteFile(file, raw, 0o600); err != nil {
-		remove()
-		return "", nil, fmt.Errorf("as1server: write delegate key set: %w", err)
-	}
-	return file, remove, nil
 }

@@ -16,6 +16,7 @@ import (
 
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/internal/adapter/mcpsecretfile"
+	"github.com/stacklok/mecatl/internal/jwksfile"
 )
 
 const (
@@ -91,6 +92,34 @@ func as2DelegateClient(client ToolHiveBrokerClient, jwksFile, resource string) a
 		Audiences:               []string{resource},
 		TokenExchange:           &authserver.DelegateClientTokenExchange{SelfIssuedSubjectTokens: authserver.SelfIssuedSubjectTokensRestricted},
 	}
+}
+
+// as2Resource is the vMCP resource when the embedded authorization server at
+// issuer is set up as AS-2. ToolHive refuses an accepted ID-JAG audience,
+// AS-2's issuer, that is also a resource audience.
+func as2Resource(issuer string) string {
+	return issuer + "/mcp"
+}
+
+// as2RunConfig writes the broker client's key set to a file and returns AS-2's
+// additions to the embedded authorization server's RunConfig, with a function
+// that removes the file once ToolHive has read it, at construction. trust is
+// nil in production.
+func as2RunConfig(client ToolHiveBrokerClient, issuer, resource string, trust *as2Trust) (*authserver.InboundGrantsRunConfig, []tokenexchange.TrustedIssuer, func(), error) {
+	jwksFile, remove, err := jwksfile.Write("as2-broker-client-", client.KeySet)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	// Leaving JWTBearer unset keeps ToolHive's JWT-bearer grant, and so
+	// ID-JAG redemption, disabled.
+	grants := &authserver.InboundGrantsRunConfig{TokenExchange: &authserver.TokenExchangeInboundGrantRunConfig{
+		DelegateClients: []authserver.DelegateClientRunConfig{as2DelegateClient(client, jwksFile, resource)},
+	}}
+	var trusted []tokenexchange.TrustedIssuer
+	if trust != nil {
+		trusted, grants.JWTBearer = trust.runConfig(issuer, resource)
+	}
+	return grants, trusted, remove, nil
 }
 
 // as2Trust is an ID-JAG issuer AS-2 trusts for the listed subjects only, with

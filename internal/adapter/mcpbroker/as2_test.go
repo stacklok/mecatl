@@ -13,6 +13,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"path/filepath"
 	"reflect"
 	"slices"
 	"strings"
@@ -24,6 +25,7 @@ import (
 	jwt "github.com/golang-jwt/jwt/v5"
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/ory/fosite"
+	"github.com/stacklok/toolhive/pkg/authserver/storage"
 	"github.com/stacklok/toolhive/pkg/oauthproto"
 
 	"github.com/stacklok/mecatl/engine/session"
@@ -307,6 +309,80 @@ func TestAS2RemovesTheKeySetFileWhenConstructionFails(t *testing.T) {
 			}
 			if !spy.closed.Load() {
 				t.Error("the configured auth storage was not closed after a failed construction")
+			}
+		})
+	}
+}
+
+var errRegisterForTest = errors.New("register client refused for test")
+
+// localStoreSpy wraps an auth store construction creates itself, recording its
+// Close and optionally refusing RegisterClient.
+type localStoreSpy struct {
+	storage.Storage
+	refuseRegister bool
+	closed         atomic.Bool
+}
+
+func (s *localStoreSpy) RegisterClient(ctx context.Context, client fosite.Client) error {
+	if s.refuseRegister {
+		return errRegisterForTest
+	}
+	return s.Storage.RegisterClient(ctx, client)
+}
+
+func (s *localStoreSpy) Close() error {
+	s.closed.Store(true)
+	return s.Storage.Close()
+}
+
+func TestToolHiveClosesALocallyCreatedAuthStoreOnEarlyFailure(t *testing.T) {
+	t.Setenv("MECATL_TEST_CLIENT_SECRET", "construction-only-secret")
+	valid := newAS2BrokerClient(t).config
+	for name, test := range map[string]struct {
+		tmpdirNotADirectory bool
+		refuseRegister      bool
+		want                string
+	}{
+		"key set file write fails": {tmpdirNotADirectory: true, want: "mcpbroker: create embedded auth server: jwksfile:"},
+		"register client fails":    {refuseRegister: true, want: errRegisterForTest.Error()},
+	} {
+		t.Run(name, func(t *testing.T) {
+			tmp := t.TempDir()
+			if test.tmpdirNotADirectory {
+				tmp = filepath.Join(tmp, "file")
+				if err := os.WriteFile(tmp, nil, 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			t.Setenv("TMPDIR", tmp)
+			var stores []*localStoreSpy
+			process, err := newToolHiveProcess(t.Context(), ToolHiveConfig{
+				CallbackURL: as2TestCallbackURL, Profiles: []ToolHiveProfile{staticProtectedProfile("private")}, BrokerClient: valid,
+			}, toolHiveProcessOptions{localAuthStoreForTest: func(store storage.Storage) storage.Storage {
+				spy := &localStoreSpy{Storage: store, refuseRegister: test.refuseRegister}
+				stores = append(stores, spy)
+				return spy
+			}})
+			if err == nil {
+				_ = process.Close()
+				t.Fatal("NewToolHiveProcess succeeded, want a construction failure")
+			}
+			if !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("NewToolHiveProcess = %v, want %q", err, test.want)
+			}
+			for i, store := range stores {
+				if !store.closed.Load() {
+					t.Errorf("locally created auth store %d was not closed after a failed construction", i)
+				}
+			}
+			if !test.tmpdirNotADirectory {
+				if len(stores) != 1 {
+					t.Fatalf("created %d local auth stores, want 1", len(stores))
+				}
+				if left, err := os.ReadDir(tmp); err != nil || len(left) != 0 {
+					t.Errorf("TMPDIR after a failed construction = %v, %v; want empty", left, err)
+				}
 			}
 		})
 	}

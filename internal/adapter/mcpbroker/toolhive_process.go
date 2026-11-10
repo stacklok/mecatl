@@ -35,6 +35,7 @@ import (
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 	mcpadapter "github.com/stacklok/mecatl/internal/adapter/mcp"
+	"github.com/stacklok/mecatl/internal/jwksfile"
 )
 
 const (
@@ -110,6 +111,9 @@ type toolHiveProcessOptions struct {
 	// as2TrustForTest makes AS-2 trust an ID-JAG issuer, which production
 	// startup never does yet.
 	as2TrustForTest *as2Trust
+	// localAuthStoreForTest wraps an auth store construction creates itself,
+	// so tests can observe its Close.
+	localAuthStoreForTest func(storage.Storage) storage.Storage
 }
 
 // NewToolHiveProcess discovers anonymous upstreams, constructs one ordered
@@ -124,7 +128,7 @@ func newToolHiveProcess(ctx context.Context, config ToolHiveConfig, options tool
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if client := config.BrokerClient; client != nil && (client.ID == "" || !hasKeys(client.KeySet)) {
+	if client := config.BrokerClient; client != nil && (client.ID == "" || !jwksfile.HasKeys(client.KeySet)) {
 		return nil, fmt.Errorf("%w: broker client needs an ID and a JWK Set with at least one key", ErrInvalidCatalogue)
 	}
 	diag := config.Diagnostics
@@ -155,9 +159,7 @@ func newToolHiveProcess(ctx context.Context, config ToolHiveConfig, options tool
 	as2 := config.BrokerClient != nil && len(construction.upstreams) != 0
 	resource := issuer
 	if as2 {
-		// ToolHive refuses an accepted ID-JAG audience, AS-2's issuer, that is
-		// also a resource audience.
-		resource = issuer + "/mcp"
+		resource = as2Resource(issuer)
 	}
 	protectedTarget, err := newToolHiveProtectedTarget(issuer, resource, config.CallbackURL, len(construction.upstreams) != 0)
 	if err != nil {
@@ -227,21 +229,18 @@ func newToolHiveProcess(ctx context.Context, config ToolHiveConfig, options tool
 	var incoming func(http.Handler) http.Handler
 	var authInfo http.Handler
 	if len(construction.upstreams) != 0 {
-		// A restart between a user starting an OAuth authorization and
-		// completing it in their browser must not lose the pending-state
-		// record. Composition supplies a Redis-backed store whenever the
-		// operator already configured Redis for the session store
-		// (ToolHiveConfig.AuthStorage); otherwise this falls back to the
-		// in-memory default, which does not survive a process restart.
-		authStore := config.AuthStorage
-		if authStore == nil && config.AuthRedisClient != nil {
-			authStore = storage.NewRedisStorageWithClient(config.AuthRedisClient, toolHiveAuthStoragePrefix)
-		}
-		if authStore == nil {
-			authStore = storage.NewMemoryStorage()
-		}
 		if protectedTarget == nil {
 			return rollback(fmt.Errorf("%w: protected ToolHive target is required", ErrInvalidCatalogue))
+		}
+		runConfig := &authserver.RunConfig{
+			SchemaVersion: "v1", Issuer: issuer, AllowedAudiences: []string{resource}, Upstreams: construction.upstreams,
+		}
+		removeKeySet := func() {}
+		if as2 {
+			runConfig.InboundGrants, runConfig.TrustedIssuers, removeKeySet, err = as2RunConfig(*config.BrokerClient, issuer, resource, options.as2TrustForTest)
+			if err != nil {
+				return rollback(fmt.Errorf("mcpbroker: create embedded auth server: %w", err))
+			}
 		}
 		client, err := registration.New(registration.Config{
 			ID:                      protectedTarget.clientID,
@@ -254,29 +253,36 @@ func newToolHiveProcess(ctx context.Context, config ToolHiveConfig, options tool
 			Audience:                []string{resource},
 		})
 		if err != nil {
+			removeKeySet()
 			return rollback(fmt.Errorf("mcpbroker: construct embedded authorization client: %w", err))
 		}
+		// A restart between a user starting an OAuth authorization and
+		// completing it in their browser must not lose the pending-state
+		// record. Composition supplies a Redis-backed store whenever the
+		// operator already configured Redis for the session store
+		// (ToolHiveConfig.AuthStorage); otherwise this falls back to the
+		// in-memory default, which does not survive a process restart.
+		// A store created here is this function's to close until ToolHive's
+		// constructor takes it, closing it itself on failure; a caller-supplied
+		// AuthStorage stays the caller's.
+		authStore, closeLocalStore := config.AuthStorage, func() {}
+		if authStore == nil {
+			if config.AuthRedisClient != nil {
+				// Closing it closes AuthRedisClient, which composition also
+				// closes on failure; go-redis Close is idempotent.
+				authStore = storage.NewRedisStorageWithClient(config.AuthRedisClient, toolHiveAuthStoragePrefix)
+			} else {
+				authStore = storage.NewMemoryStorage()
+			}
+			if options.localAuthStoreForTest != nil {
+				authStore = options.localAuthStoreForTest(authStore)
+			}
+			closeLocalStore = func() { _ = authStore.Close() }
+		}
 		if err := authStore.RegisterClient(processCtx, client); err != nil {
+			closeLocalStore()
+			removeKeySet()
 			return rollback(fmt.Errorf("mcpbroker: register embedded authorization client: %w", err))
-		}
-		runConfig := &authserver.RunConfig{
-			SchemaVersion: "v1", Issuer: issuer, AllowedAudiences: []string{resource}, Upstreams: construction.upstreams,
-		}
-		removeKeySet := func() {}
-		if as2 {
-			jwksFile, remove, err := writeKeySet(config.BrokerClient.KeySet)
-			if err != nil {
-				return rollback(err)
-			}
-			removeKeySet = remove
-			// Leaving JWTBearer unset keeps ToolHive's JWT-bearer grant, and so
-			// ID-JAG redemption, disabled.
-			runConfig.InboundGrants = &authserver.InboundGrantsRunConfig{TokenExchange: &authserver.TokenExchangeInboundGrantRunConfig{
-				DelegateClients: []authserver.DelegateClientRunConfig{as2DelegateClient(*config.BrokerClient, jwksFile, resource)},
-			}}
-			if trust := options.as2TrustForTest; trust != nil {
-				runConfig.TrustedIssuers, runConfig.InboundGrants.JWTBearer = trust.runConfig(issuer, resource)
-			}
 		}
 		auth, err = runner.NewEmbeddedAuthServerWithStorage(processCtx, runConfig, authStore)
 		removeKeySet()
@@ -341,12 +347,9 @@ func newToolHiveProcess(ctx context.Context, config ToolHiveConfig, options tool
 		process.Handlers.JWKS = embedded
 		process.Handlers.ProtectedResource = authInfo
 		if as2 {
-			tokenEndpoint := issuer + "/oauth/token"
-			token, err := url.Parse(tokenEndpoint)
-			if err != nil {
-				return rollback(fmt.Errorf("mcpbroker: AS-2 token endpoint: %w", err))
+			if process.AS2, err = newAS2(issuer, resource, embedded); err != nil {
+				return rollback(err)
 			}
-			process.AS2 = &AS2{Issuer: issuer, TokenEndpoint: tokenEndpoint, Resource: resource, token: token, handler: embedded}
 		}
 	}
 	if config.CallbackURL != "" {
