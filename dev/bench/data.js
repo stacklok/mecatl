@@ -411894,6 +411894,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1794344369328,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "56c38b5e53455caff18be4807d2d0b7445bbc82d",
+          "message": "feat(kernel): retain and settle passive tool calls (#2755)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-11-10T21:17:38Z",
+          "tree_id": "724b3c2ded8b34f21bb20626d3cf3df642d44f01",
+          "url": "https://github.com/stacklok/mecatl/commit/56c38b5e53455caff18be4807d2d0b7445bbc82d"
+        },
+        "date": 1794346223320,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 16132,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12894,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 794,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -536762,6 +536801,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1794346219182,
+  "lastUpdate": 1794346224215,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
