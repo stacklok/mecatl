@@ -205,6 +205,8 @@ func TestMecatuiExitHandoff_Scenario2_ExitMatrix(t *testing.T) {
 	m := ui.New(ui.Deps{Connect: staticConnectController{target: "remote.example:443"}, ConnectOpen: true, Theme: theme.New("aztec", theme.AztecPalette()), Ctx: t.Context(), NoAltScreen: true})
 	model, _ := m.Update(m.Init()())
 	m = model.(ui.Model)
+	model, _ = m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = model.(ui.Model)
 	for range 2 {
 		model, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 		m = model.(ui.Model)

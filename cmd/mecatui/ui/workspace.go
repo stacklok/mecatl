@@ -66,7 +66,7 @@ type workspaceRow struct {
 func (m Model) openWorkspace() (tea.Model, tea.Cmd) {
 	if (m.phase != phaseIdle && m.phase != phaseRunning) || m.modal != nil ||
 		m.team.view != teamNone || m.agentsInv.view != agentsInvNone ||
-		m.sessionDetailsOpen || m.executionPicker.open || m.connect.open {
+		m.sessionDetailsOpen || m.executionPicker.open {
 		return m, nil
 	}
 	ti := textinput.New()
