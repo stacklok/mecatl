@@ -198,12 +198,12 @@ export const renameSessionResponseSchema = z.object({
 
 export const transcriptToolCallSchema = z.object({
   args: z.string(),
-  id: z.string(),
+  id: z.string().min(1),
   name: z.string(),
 });
 
 export const transcriptToolResultSchema = z.object({
-  callId: z.string(),
+  callId: z.string().min(1),
   content: z.string(),
   isError: z.boolean(),
 });
@@ -281,6 +281,7 @@ export const deliveryNoteSchema = z.object({
 });
 
 export const transcriptMessageSchema = z.object({
+  providerPhase: z.string().optional(),
   delivery: deliveryNoteSchema.optional(),
   images: z.array(transcriptImageSchema),
   role: z.string(),

@@ -222,10 +222,14 @@ func TestMCPAuthorizationGRPCContinuationDeliversResult(t *testing.T) {
 		t.Fatal(err)
 	}
 	var toolResult, terminal bool
+	var followupID string
 	for _, response := range stream.responses {
 		ev := response.GetEvent()
+		if ev.GetToolCall() != nil && ev.GetToolCall().GetName() == "protected" {
+			followupID = ev.GetToolCall().GetId()
+		}
 		switch {
-		case ev.GetType() == "tool.result" && ev.GetToolResult().GetCallId() == "followup-call":
+		case ev.GetType() == "tool.result" && followupID != "" && followupID != "followup-call" && ev.GetToolResult().GetCallId() == followupID:
 			toolResult = true
 		case ev.GetType() == "result":
 			terminal = true
@@ -273,12 +277,16 @@ func TestMCPAuthorizationGRPCStaleApprovalRefusesThenAcceptsCorrectRetry(t *test
 		t.Fatal(err)
 	}
 	var refused, toolResult bool
+	var followupID string
 	for _, response := range stream.responses {
 		ev := response.GetEvent()
+		if ev.GetToolCall() != nil && ev.GetToolCall().GetName() == "protected" {
+			followupID = ev.GetToolCall().GetId()
+		}
 		if ev.GetType() == "control.refused" {
 			refused = ev.GetControlRefused().GetAskId() == stream.pendingAsk.GetAskId() && ev.GetControlRefused().GetCategory() == "stale_run_control"
 		}
-		if ev.GetType() == "tool.result" && ev.GetToolResult().GetCallId() == "followup-stale" {
+		if ev.GetType() == "tool.result" && followupID != "" && followupID != "followup-stale" && ev.GetToolResult().GetCallId() == followupID {
 			toolResult = true
 		}
 	}

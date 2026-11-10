@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"reflect"
 	"sync"
 	"testing"
 	"time"
@@ -183,7 +184,7 @@ func (s *blockingRecoverySessionStore) Load(ctx context.Context, _ session.Sessi
 	return nil, ctx.Err()
 }
 
-func TestAttemptRecoveryConfiguredTimeoutBoundsBlockingStoreAndPersistsRetry(t *testing.T) {
+func TestAttemptRecoveryConfiguredTimeoutBoundsPreflightWithoutClaim(t *testing.T) {
 	t.Parallel()
 	clock := &attemptWorkerClock{now: time.Unix(125, 0)}
 	repository := memattempt.New(clock)
@@ -213,8 +214,12 @@ func TestAttemptRecoveryConfiguredTimeoutBoundsBlockingStoreAndPersistsRetry(t *
 	if getErr != nil || !found {
 		t.Fatalf("persisted retry found=%v err=%v", found, getErr)
 	}
-	if persisted.State != learning.AttemptRunning || persisted.State.Terminal() || persisted.FailureCode != learning.FailureNone || persisted.ClaimExpiresAt.IsZero() {
-		t.Fatalf("deadline did not persist transient retry/backoff: %+v", persisted)
+	if !reflect.DeepEqual(persisted, record) || !errors.Is(err, errAttemptSetupTransient) {
+		t.Fatalf("unproven readiness changed attempt: before=%+v after=%+v err=%v", record, persisted, err)
+	}
+	page, err := repository.DiscoverWork(context.Background(), learning.AttemptWorkList{Limit: 1})
+	if err != nil || len(page.Work) != 1 || page.Work[0].Record.Version != record.Version {
+		t.Fatalf("preflight timeout lost discoverable retry: %+v %v", page, err)
 	}
 }
 

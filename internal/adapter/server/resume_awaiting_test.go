@@ -187,7 +187,7 @@ func TestApproveAfterRestartResumesAwaiting(t *testing.T) {
 	var stop session.StopReason
 	var writeResults int
 	for ev := range run.Events() {
-		if ev.Type == session.EvToolResult && ev.ToolResult != nil && ev.ToolResult.CallID == "w1" {
+		if ev.Type == session.EvToolResult && ev.ToolResult != nil && ev.ToolResult.CallID == pending.Call {
 			writeResults++
 		}
 		if ev.Type == session.EvResult && ev.Result != nil {

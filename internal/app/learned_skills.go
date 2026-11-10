@@ -200,6 +200,9 @@ func buildProcedureProcessor(cfg Config, assets catalogAssets) func(context.Cont
 		return nil
 	}
 	return func(ctx context.Context, record learning.ProposalRecord, mode learning.Mode) error {
+		if !proposalSourcesEligible(ctx, cfg.learningSourceStore, record) {
+			return learning.ErrInvalidEvidence
+		}
 		partition := learning.SkillPartition{Principal: record.Partition.Principal, Project: record.Partition.Project}
 		// The partition publication lock is acquired UNCONDITIONALLY, before ANY
 		// partition-mutating call below (not only around Pipeline.Process, and

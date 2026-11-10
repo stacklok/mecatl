@@ -33,7 +33,7 @@ func (p *runawayProvider) Stream(ctx context.Context, _ port.LLMRequest) (iter.S
 		if ctx.Err() != nil {
 			return
 		}
-		tc := session.NewToolCall("loop", "Loop", []byte(`{}`))
+		tc := port.LLMToolCall{ID: "loop", Name: "Loop", Args: []byte(`{}`)}
 		if !yield(port.Chunk{Kind: port.ChunkToolCall, ToolCall: &tc}, nil) {
 			return
 		}

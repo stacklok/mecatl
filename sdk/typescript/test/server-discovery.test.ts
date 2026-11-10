@@ -412,7 +412,7 @@ describe("SDK server discovery", () => {
       },
       {
         expected: IncompatibleServerError,
-        failure: async () => ({ ...validCompatibility, apiMajor: 2 }),
+        failure: async () => ({ ...validCompatibility, apiMajor: 3 }),
       },
       {
         expected: IncompatibleServerError,
@@ -573,7 +573,7 @@ describe("SDK server discovery", () => {
     const mismatch = new DiscoveryTransport();
     mismatch.compatibility.push(
       async () => validCompatibility,
-      async () => ({ ...validCompatibility, apiMajor: 2 }),
+      async () => ({ ...validCompatibility, apiMajor: 3 }),
     );
     await expect(connect({ transport: mismatch }).server.compatibility()).rejects.toBeInstanceOf(
       IncompatibleServerError,
@@ -623,7 +623,7 @@ describe("SDK server discovery", () => {
         return httpRetryAttempts <= 2
           ? Response.json({}, { status: 404 })
           : Response.json({
-              api_major: 1,
+              api_major: 2,
               capabilities: completeCapabilities,
               features: [ServerFeature.ServerInfo],
             });
@@ -789,7 +789,7 @@ describe("SDK server discovery", () => {
         const url = new URL(String(input));
         if (url.pathname === "/v1/compatibility") {
           return Response.json({
-            api_major: 1,
+            api_major: 2,
             capabilities: completeCapabilities,
             deployment: "eu-west / blue",
             features: ["server_info", "future_feature"],
@@ -840,7 +840,7 @@ describe("SDK server discovery", () => {
       fetch: async () => {
         httpCompatibilityCalls += 1;
         return Response.json({
-          api_major: 1,
+          api_major: 2,
           capabilities: completeCapabilities,
           features: httpCompatibilityCalls === 1 ? [ServerFeature.ServerInfo] : [],
         });
@@ -855,7 +855,7 @@ describe("SDK server discovery", () => {
         const url = new URL(String(input));
         if (url.pathname === "/v1/compatibility") {
           return Response.json({
-            api_major: 1,
+            api_major: 2,
             capabilities: completeCapabilities,
             features: ["future_feature"],
           });
@@ -873,7 +873,7 @@ describe("SDK server discovery", () => {
         const url = new URL(String(input));
         return url.pathname === "/v1/compatibility"
           ? Response.json({
-              api_major: 1,
+              api_major: 2,
               capabilities: completeCapabilities,
               features: [ServerFeature.ServerInfo],
             })
@@ -1020,7 +1020,7 @@ describe("SDK server discovery", () => {
   it("raw compatibility floor does not depend on the server namespace projection", () => {
     const rawSource = readFileSync(`${packageRoot}/src/raw.ts`, "utf8");
     expect(rawSource).not.toMatch(/from "\.\/server\.js"/u);
-    expect(rawSource).toContain("export const SUPPORTED_API_MAJOR = 1;");
+    expect(rawSource).toContain("export const SUPPORTED_API_MAJOR = 2;");
   });
 
   it("well-formed Unicode rejects a trailing unpaired high surrogate", () => {

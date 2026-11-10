@@ -79,11 +79,11 @@ func TestCompactionSlotE2ESummaryModel(t *testing.T) {
 	conv := &session.Conversation{Messages: []session.Message{
 		session.NewSystemMessage("system"),
 		session.NewUserMessage("the original task"),
-		session.NewAssistantMessage(big, "", nil),
+		session.NewAssistantMessage(big, nil),
 		session.NewUserMessage("follow-up one"),
-		session.NewAssistantMessage(big, "", nil),
+		session.NewAssistantMessage(big, nil),
 		session.NewUserMessage("follow-up two"),
-		session.NewAssistantMessage("recent answer", "", nil),
+		session.NewAssistantMessage("recent answer", nil),
 	}}
 
 	if _, _, _, err := cc.Compact(context.Background(), conv); err != nil {

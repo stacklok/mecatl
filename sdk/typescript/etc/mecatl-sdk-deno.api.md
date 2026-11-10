@@ -55,10 +55,6 @@ export interface ArchivedConversationMessage {
     // (undocumented)
     readonly providerPhase: string;
     // (undocumented)
-    readonly reasoning: string;
-    // (undocumented)
-    readonly reasoningItemId: string;
-    // (undocumented)
     readonly role: string;
     // (undocumented)
     readonly text: string;
@@ -1680,6 +1676,8 @@ export interface SessionTranscriptMessage {
     // (undocumented)
     readonly parts: readonly EventContent[];
     // (undocumented)
+    readonly providerPhase: string;
+    // (undocumented)
     readonly role: string;
     // (undocumented)
     readonly text: string;
@@ -1821,7 +1819,7 @@ export interface SubagentEventPayload {
 }
 
 // @public
-export const SUPPORTED_API_MAJOR = 1;
+export const SUPPORTED_API_MAJOR = 2;
 
 // @public
 export interface Team {
@@ -2014,7 +2012,6 @@ export interface TitleAttemptEventPayload {
 export interface ToolCallEventPayload {
     // (undocumented)
     readonly args: string;
-    // (undocumented)
     readonly id: string;
     // (undocumented)
     readonly name: string;

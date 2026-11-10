@@ -51,7 +51,7 @@ export function sampleCapabilities(): ServerCapabilitiesResponse {
 
 export function sampleCompatibility(): ServerCompatibility {
   return {
-    apiMajor: 1,
+    apiMajor: 2,
     capabilities: sampleCapabilities(),
     deployment: "test",
     features: new Set(["server_info"]),
@@ -60,7 +60,7 @@ export function sampleCompatibility(): ServerCompatibility {
 
 export function sampleSnapshot(connection: ConnectionStatus = "online"): RuntimeResponse {
   return {
-    apiMajor: 1,
+    apiMajor: 2,
     capabilities: sampleCapabilities(),
     connection,
     deployment: "test",

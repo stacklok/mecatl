@@ -185,7 +185,7 @@ func TestTranscriptProjectionHasIndependentMessageSlice(t *testing.T) {
 	messages := []session.Message{
 		session.NewUserMessage("retain this prompt"),
 		{Role: session.RoleUser, Text: session.NoProgressNudgeText, UserPromptProvenance: session.UserPromptProvenanceHarness},
-		session.NewAssistantMessage("retain this answer", "", nil),
+		session.NewAssistantMessage("retain this answer", nil),
 	}
 	if err := sess.SeedHistory(messages); err != nil {
 		t.Fatalf("SeedHistory: %v", err)
@@ -209,7 +209,7 @@ func TestTranscriptOmitsOnlyProvenHarnessControlContinuations(t *testing.T) {
 	ctx := context.Background()
 	base := memstore.New()
 	sess := session.New("harness-control", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/workspace", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1, 0))
-	call := session.NewToolCall("read-1", "Read", nil)
+	call := session.NewToolCall(session.NewToolCallID(), "Read", nil)
 	const canonicalBackgroundCompletion = "[harness note: 1 background subagent(s) finished: subagent-job-123 (end_turn). Collect each result with SubagentStatus before relying on it.]"
 	messages := []session.Message{
 		{Role: session.RoleUser, Text: "operator prompt", UserPromptProvenance: session.UserPromptProvenancePrincipal},
@@ -486,7 +486,8 @@ func TestSessionContinuityUX_TranscriptHTTPProjection(t *testing.T) {
 	base := memstore.New()
 	sess := session.New("http-transcript", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/workspace", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1, 0))
 	if err := sess.SeedHistory([]session.Message{{
-		Role: session.RoleAssistant, Text: "visible", Reasoning: "private", ProviderPhase: "commentary", ReasoningItemID: "private-id",
+		Role: session.RoleAssistant, Text: "visible", ProviderPhase: "commentary",
+		Replay: &session.MessageReplay{Provider: &session.ProviderReplay{Format: "private", Version: 1, Data: []byte("private private-id")}},
 	}}); err != nil {
 		t.Fatalf("SeedHistory: %v", err)
 	}
@@ -513,8 +514,12 @@ func TestSessionContinuityUX_TranscriptHTTPProjection(t *testing.T) {
 		t.Fatalf("transcript response = %+v", &body)
 	}
 	message := body.GetMessages()[0]
-	if message.GetReasoning() != "" || message.GetProviderPhase() != "" || message.GetReasoningItemId() != "" {
-		t.Fatalf("HTTP transcript leaked provider-private replay state: %+v", message)
+	if message.GetProviderPhase() != "commentary" {
+		t.Fatalf("HTTP transcript lost presentation phase: %+v", message)
+	}
+	encoded, err := json.Marshal(&body)
+	if err != nil || strings.Contains(string(encoded), "private") || strings.Contains(string(encoded), "replay") {
+		t.Fatal("HTTP transcript exposed private replay")
 	}
 }
 
@@ -522,7 +527,7 @@ func TestSessionContinuityUX_Scenario3_CompactedAndReasoningTranscript(t *testin
 	ctx := context.Background()
 	base := memstore.New()
 	sess := session.New("compacted", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/workspace", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1, 0))
-	assistant := session.Message{Role: session.RoleAssistant, Text: "current tail", Reasoning: "provider-secret", ProviderPhase: "final_answer", ReasoningItemID: "rs-secret"}
+	assistant := session.Message{Role: session.RoleAssistant, Text: "current tail", ProviderPhase: "final_answer", Replay: &session.MessageReplay{Provider: &session.ProviderReplay{Format: "private", Version: 1, Data: []byte("provider-secret rs-secret")}}}
 	want := []session.Message{session.NewUserMessage("Summary of earlier conversation"), assistant}
 	if err := sess.SeedHistory(want); err != nil {
 		t.Fatalf("SeedHistory: %v", err)
@@ -540,8 +545,16 @@ func TestSessionContinuityUX_Scenario3_CompactedAndReasoningTranscript(t *testin
 		t.Fatalf("messages = %+v, want current summary/tail", resp.GetMessages())
 	}
 	got := resp.GetMessages()[1]
-	if got.GetReasoning() != "" || got.GetProviderPhase() != "" || got.GetReasoningItemId() != "" {
-		t.Fatalf("provider-private replay leaked: reasoning=%q phase=%q item=%q", got.GetReasoning(), got.GetProviderPhase(), got.GetReasoningItemId())
+	if got.GetProviderPhase() != "final_answer" {
+		t.Fatalf("presentation phase = %q, want final_answer", got.GetProviderPhase())
+	}
+	encoded, err := json.Marshal(resp)
+	if err != nil || strings.Contains(string(encoded), "secret") || strings.Contains(string(encoded), "replay") {
+		t.Fatal("gRPC transcript exposed private replay")
+	}
+	persisted, err := base.Load(ctx, sess.ID)
+	if err != nil || string(persisted.Conversation.Messages[1].Replay.Provider.Data) != "provider-secret rs-secret" {
+		t.Fatal("transcript projection mutated private replay")
 	}
 }
 

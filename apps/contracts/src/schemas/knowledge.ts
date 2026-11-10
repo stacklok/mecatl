@@ -150,6 +150,7 @@ export const learningProposalSchema = z.object({
  * redacted excerpt and is plain text.
  */
 export const learningEvidenceSchema = z.object({
+  attachmentUnavailable: z.boolean(),
   availability: z.string(),
   available: z.boolean(),
   digest: z.string(),
@@ -157,8 +158,9 @@ export const learningEvidenceSchema = z.object({
   locator: z.string(),
   ordinal: z.number().int(),
   preview: z.string(),
+  protocol: z.string(),
   sessionId: z.string(),
-  toolCallId: z.string(),
+  toolCallId: z.string().min(1).optional(),
 });
 
 /** One proposal re-read by id, with each evidence source's current availability. */

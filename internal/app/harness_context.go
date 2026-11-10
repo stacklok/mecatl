@@ -978,6 +978,27 @@ func initializeHarnessCommandResolver(ctx context.Context, policy harnessKindPol
 	return r, nil
 }
 
+// Resume authorizes lazy rebinding after an explicit load. It does not bind or
+// revive a retired generation; the next borrow builds a fresh one.
+func (r *harnessCommandResolver) Resume(ctx context.Context, id session.SessionID, principal *session.Principal, profile string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.closed {
+		return fmt.Errorf("harness command resolver is closed")
+	}
+	if entry := r.entries[id]; entry != nil && (!sameHarnessPrincipal(entry.principal, principal) || entry.profile != profile) {
+		return fmt.Errorf("harness command binding identity mismatch")
+	}
+	if pending := r.creating[id]; pending != nil && (!sameHarnessPrincipal(pending.principal, principal) || pending.profile != profile) {
+		return fmt.Errorf("harness command binding identity mismatch")
+	}
+	delete(r.retired, id)
+	return nil
+}
+
 func (r *harnessCommandResolver) Activate(ctx context.Context, id session.SessionID, principal *session.Principal, profile string) error {
 	return r.ActivateWithExecutionWorkspace(ctx, id, principal, profile, nil)
 }

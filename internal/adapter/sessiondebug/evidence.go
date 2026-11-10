@@ -138,11 +138,11 @@ func (t *inspectTool) delegationView(ctx context.Context, s *session.Session, gr
 	return out
 }
 
-func parentResults(s *session.Session) map[string]bool {
-	out := map[string]bool{}
+func parentResults(s *session.Session) map[session.ToolCallID]bool {
+	out := map[session.ToolCallID]bool{}
 	for _, m := range s.Conversation.Messages {
 		if m.ToolResult != nil {
-			out[string(m.ToolResult.CallID)] = m.ToolResult.IsError
+			out[m.ToolResult.CallID] = m.ToolResult.IsError
 		}
 	}
 	return out
@@ -162,7 +162,7 @@ func childFields(id string, incarnation session.IncarnationID, nodes map[string]
 	}
 	return n, true
 }
-func conclusion(call string, results map[string]bool) (string, *bool) {
+func conclusion(call session.ToolCallID, results map[session.ToolCallID]bool) (string, *bool) {
 	failed, ok := results[call]
 	if !ok {
 		return "absent", nil
@@ -175,15 +175,15 @@ func conclusion(call string, results map[string]bool) (string, *bool) {
 }
 
 //nolint:gocyclo // Each delegation family keeps its fail-closed typed-edge checks local.
-func projectDelegationEvent(ev session.Event, nodes map[string]lineageNode, results map[string]bool, root *session.Session) []delegationRow {
+func projectDelegationEvent(ev session.Event, nodes map[string]lineageNode, results map[session.ToolCallID]bool, root *session.Session) []delegationRow {
 	if p := ev.Subagent; p != nil {
 		n, proven := childFields(p.ChildID, p.ChildIncarnation, nodes, root)
 		validEvent := ev.Type == session.EvSubagentStart || ev.Type == session.EvSubagentTool || ev.Type == session.EvSubagentEnd
-		if !proven || !validEvent || n.Kind != session.SessionKindSubagent || n.Edge != "subagent" || string(n.Relationship.CallID) != p.ParentCallID {
+		if !proven || !validEvent || n.Kind != session.SessionKindSubagent || n.Edge != "subagent" || n.Relationship.CallID != p.ParentCallID {
 			return nil
 		}
 		c, e := conclusion(p.ParentCallID, results)
-		r := delegationRow{Type: "subagent", Event: ev.Type, CallID: safeLine(p.ParentCallID), ScopeHandle: n.Handle, Retention: n.State, Conclusion: c, ParentResultError: e, Stop: p.Stop, Cause: safeLine(p.Cause)}
+		r := delegationRow{Type: "subagent", Event: ev.Type, CallID: safeLine(string(p.ParentCallID)), ScopeHandle: n.Handle, Retention: n.State, Conclusion: c, ParentResultError: e, Stop: p.Stop, Cause: safeLine(p.Cause)}
 		if ev.Type == session.EvSubagentStart {
 			b := p.Background
 			r.Background = &b
@@ -197,11 +197,11 @@ func projectDelegationEvent(ev session.Event, nodes map[string]lineageNode, resu
 	}
 	if p := ev.Parallel; p != nil {
 		n, proven := childFields(p.ChildID, p.ChildIncarnation, nodes, root)
-		if !proven || ev.Type != session.EvParallelBranch || n.Kind != session.SessionKindParallelBranch || n.Edge != "parallel" || string(n.Relationship.CallID) != p.ParentCallID || n.Relationship.BranchIndex == nil || *n.Relationship.BranchIndex != p.BranchIndex {
+		if !proven || ev.Type != session.EvParallelBranch || n.Kind != session.SessionKindParallelBranch || n.Edge != "parallel" || n.Relationship.CallID != p.ParentCallID || n.Relationship.BranchIndex == nil || *n.Relationship.BranchIndex != p.BranchIndex {
 			return nil
 		}
 		c, e := conclusion(p.ParentCallID, results)
-		r := delegationRow{Type: "parallel", Event: ev.Type, CallID: safeLine(p.ParentCallID), ScopeHandle: n.Handle, Retention: n.State, Conclusion: c, ParentResultError: e, Join: safeLine(p.Join), Stop: p.Stop}
+		r := delegationRow{Type: "parallel", Event: ev.Type, CallID: safeLine(string(p.ParentCallID)), ScopeHandle: n.Handle, Retention: n.State, Conclusion: c, ParentResultError: e, Join: safeLine(p.Join), Stop: p.Stop}
 		if p.Kind == session.ParallelBranchStart {
 			r.ActualModel, r.RoutedCategory, r.RoutedModel = safeRoutingLine(p.Model), safeRoutingLine(p.RoutedCategory), safeRoutingLine(p.RoutedModel)
 			r.RoutingReason, r.RoutingDecision = safeRoutingReason(p.RoutingReason), projectRoutingDecision(p.RoutingDecision)
@@ -229,7 +229,7 @@ func projectDelegationEvent(ev session.Event, nodes map[string]lineageNode, resu
 					continue
 				}
 				rows = append(rows, delegationRow{
-					Type: delegationTeam, Event: ev.Type, CallID: safeLine(p.ParentCallID), ScopeHandle: n.Handle,
+					Type: delegationTeam, Event: ev.Type, CallID: safeLine(string(p.ParentCallID)), ScopeHandle: n.Handle,
 					Retention: n.State, Conclusion: c, ParentResultError: e, Member: safeLine(m.Name), Role: safeLine(m.Role),
 					ActualModel: safeRoutingLine(m.Model), RoutedCategory: safeRoutingLine(m.RoutedCategory),
 					RoutedModel: safeRoutingLine(m.RoutedModel), RoutingReason: safeRoutingReason(m.RoutingReason),
@@ -243,7 +243,7 @@ func projectDelegationEvent(ev session.Event, nodes map[string]lineageNode, resu
 			!validTeamMemberNode(n, root, p.ParentCallID, p.TeamID, p.Member) {
 			return nil
 		}
-		base := delegationRow{Type: delegationTeam, Event: ev.Type, CallID: safeLine(p.ParentCallID), ScopeHandle: n.Handle, Retention: n.State, Conclusion: c, ParentResultError: e, Member: safeLine(p.Member), Stop: p.Stop, Cause: safeLine(p.Cause)}
+		base := delegationRow{Type: delegationTeam, Event: ev.Type, CallID: safeLine(string(p.ParentCallID)), ScopeHandle: n.Handle, Retention: n.State, Conclusion: c, ParentResultError: e, Member: safeLine(p.Member), Stop: p.Stop, Cause: safeLine(p.Cause)}
 		for _, task := range p.Tasks {
 			base.Tasks = append(base.Tasks, teamTaskEvidence{safeLine(task.ID), safeLine(task.Description), safeLine(task.State), safeLine(task.Assignee), safeLines(task.Deps)})
 		}
@@ -255,19 +255,19 @@ func projectDelegationEvent(ev session.Event, nodes map[string]lineageNode, resu
 	return nil
 }
 
-func validTeamMemberNode(n lineageNode, root *session.Session, callID, teamID, member string) bool {
+func validTeamMemberNode(n lineageNode, root *session.Session, callID session.ToolCallID, teamID, member string) bool {
 	return n.Kind == session.SessionKindTeamMember && n.Edge == delegationTeam &&
 		n.Relationship.ParentSessionID == root.ID && n.Relationship.ParentIncarnation == root.Incarnation() &&
-		string(n.Relationship.CallID) == callID && n.Relationship.TeamID == teamID && n.Relationship.MemberName == member
+		n.Relationship.CallID == callID && n.Relationship.TeamID == teamID && n.Relationship.MemberName == member
 }
 
-func parentToolCallExists(root *session.Session, callID, toolName string) bool {
+func parentToolCallExists(root *session.Session, callID session.ToolCallID, toolName string) bool {
 	if root == nil || callID == "" {
 		return false
 	}
 	for _, message := range root.Conversation.Messages {
 		for _, call := range message.ToolCalls {
-			if string(call.ID) == callID && call.Name == toolName {
+			if call.ID == callID && call.Name == toolName {
 				return true
 			}
 		}

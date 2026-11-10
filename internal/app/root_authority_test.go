@@ -233,6 +233,6 @@ type rootAuthorityTestTool struct {
 
 func (t rootAuthorityTestTool) Spec() tool.ToolSpec { return tool.ToolSpec{Name: t.name} }
 func (t rootAuthorityTestTool) ReadOnly() bool      { return t.readOnly }
-func (rootAuthorityTestTool) Execute(context.Context, session.ToolCall, tool.Environment) (session.ToolResult, error) {
-	return session.ToolResult{}, nil
+func (rootAuthorityTestTool) Execute(_ context.Context, call session.ToolCall, _ tool.Environment) (session.ToolResult, error) {
+	return session.NewToolResult(call.ID, ""), nil
 }

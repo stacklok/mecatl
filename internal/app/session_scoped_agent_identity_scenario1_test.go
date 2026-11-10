@@ -275,7 +275,7 @@ func TestSessionScopedAgentIdentity_Scenario1_OrdinaryMainSessionBehavior(t *tes
 	writeScopedAgentDefFile(t, agentsDir, "writer", []string{"Read", "Write"}, "You are a writer.")
 
 	llm := mockllm.New(
-		mockllm.ToolCallTurn(session.NewToolCall("w1", "Write", json.RawMessage(`{"path":"note.txt","content":"hi"}`))),
+		mockllm.LLMToolCallTurn(port.LLMToolCall{ID: "w1", Name: "Write", Args: json.RawMessage(`{"path":"note.txt","content":"hi"}`)}),
 		mockllm.TextTurn("done"),
 	)
 	built, err := buildIsolated(t, ctx, Config{
@@ -297,10 +297,16 @@ func TestSessionScopedAgentIdentity_Scenario1_OrdinaryMainSessionBehavior(t *tes
 		t.Fatalf("StartRun: %v", err)
 	}
 	var askID string
+	var askCall session.ToolCallID
+	var canonical session.ToolCallID
 	for ev := range run.Events() {
+		if ev.Type == session.EvToolCall && ev.ToolCall != nil {
+			canonical = ev.ToolCall.ID
+		}
 		if ev.Type == session.EvPermissionAsk && ev.Ask != nil {
 			askID = ev.Ask.AskID
-			if ev.Ask.Tool != "Write" || string(ev.Ask.Call) != "w1" {
+			askCall = ev.Ask.Call
+			if ev.Ask.Tool != "Write" {
 				t.Errorf("unexpected permission ask: %+v", ev.Ask)
 			}
 			if _, err := built.Service.ApproveRun(ctx, sess.ID, askID, session.VerdictAllowOnce, ""); err != nil {
@@ -309,6 +315,9 @@ func TestSessionScopedAgentIdentity_Scenario1_OrdinaryMainSessionBehavior(t *tes
 		}
 	}
 	built.Service.FinishRun(sess.ID, run)
+	if canonical == "" || askCall != canonical {
+		t.Fatalf("Write ask call = %q, want canonical ID %q for provider call w1", askCall, canonical)
+	}
 	if askID == "" {
 		t.Fatal("an agent-bound session's Write call must raise an ordinary permission ask — never child-shaped headless auto-deny")
 	}

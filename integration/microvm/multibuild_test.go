@@ -372,7 +372,7 @@ func TestMicroVMTwoBuildsSeparatePlacementsSurvivePeerClose(t *testing.T) {
 				placement := fixture.placement(t, firstClient, one)
 				mbWriteFile(t, filepath.Join(placement.WorktreePath, "AGENTS.md"), "FRESH-A-INSTRUCTION", 0o644)
 				mbWriteFile(t, filepath.Join(placement.WorktreePath, ".mecatl/commands/which.md"), "FRESH-A-COMMAND", 0o644)
-				assertRunEvents(t, harnessRun(t, first, ctx, one.ID, "/which"), "read-a", "     1\tHOST-A\n")
+				assertRunEvents(t, harnessRun(t, first, ctx, one.ID, "/which"), "Read", "     1\tHOST-A\n")
 				if len(*firstRequests) != 3 {
 					t.Fatalf("A requests = %d, want initial plus post-reader tool and completion", len(*firstRequests))
 				}
@@ -389,7 +389,7 @@ func TestMicroVMTwoBuildsSeparatePlacementsSurvivePeerClose(t *testing.T) {
 					mockllm.ToolCallTurn(session.ToolCall{ID: "read-reopened-a", Name: "Read", Args: []byte(`{"path":"tracked.txt"}`)}),
 					mockllm.TextTurn("a-reopened"))
 				t.Cleanup(reopened.Close)
-				assertRunEvents(t, harnessRun(t, reopened, ctx, one.ID, "/which"), "read-reopened-a", "     1\tHOST-A\n")
+				assertRunEvents(t, harnessRun(t, reopened, ctx, one.ID, "/which"), "Read", "     1\tHOST-A\n")
 				resumed, err := reopened.Service.GetSession(ctx, one.ID)
 				if err != nil {
 					t.Fatal(err)
@@ -408,7 +408,7 @@ func TestMicroVMTwoBuildsSeparatePlacementsSurvivePeerClose(t *testing.T) {
 
 			first.Service.CloseSession(one.ID)
 			first.Close()
-			assertRunEvents(t, harnessRun(t, second, ctx, two.ID, "use the execution tool"), "shell-b", "HOST-B\n[exit code: 0]")
+			assertRunEvents(t, harnessRun(t, second, ctx, two.ID, "use the execution tool"), "Shell", "HOST-B\n[exit code: 0]")
 			if len(*secondRequests) < 2 {
 				t.Fatal("surviving Build made no post-close model request")
 			}
@@ -474,7 +474,7 @@ func TestMicroVMCrossBuildScheduleClosePreservesOrigin(t *testing.T) {
 
 	// FireNow is synchronous through the elected leader: its deferred CloseSession has
 	// run before this uses B's already-acquired original Service binding.
-	assertRunEvents(t, harnessRun(t, originBuild, ctx, origin.ID, "read from the original environment"), "origin-read", "     1\tORIGIN-FILE\n")
+	assertRunEvents(t, harnessRun(t, originBuild, ctx, origin.ID, "read from the original environment"), "Read", "     1\tORIGIN-FILE\n")
 	if len(*originRequests) != 2 {
 		t.Fatalf("origin model requests = %d, want tool request and completion", len(*originRequests))
 	}
@@ -508,8 +508,19 @@ func TestMicroVMCrossBuildScheduleClosePreservesOrigin(t *testing.T) {
 	}
 }
 
-func assertRunEvents(t *testing.T, events []session.Event, callID session.ToolCallID, want string) {
+func assertRunEvents(t *testing.T, events []session.Event, toolName string, want string) {
 	t.Helper()
+	var callID session.ToolCallID
+	calls := 0
+	for _, event := range events {
+		if event.ToolCall != nil && event.ToolCall.Name == toolName {
+			callID = event.ToolCall.ID
+			calls++
+		}
+	}
+	if calls != 1 || callID == "" {
+		t.Fatalf("tool %s accepted call count = %d, want exactly one", toolName, calls)
+	}
 	var result *session.ResultPayload
 	matches := 0
 	for _, event := range events {

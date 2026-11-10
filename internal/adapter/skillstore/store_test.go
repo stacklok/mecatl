@@ -3,6 +3,7 @@ package skillstore_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -50,6 +51,91 @@ func TestLazyStartupAndReopen(t *testing.T) {
 	got, found, err := reopened.Get(context.Background(), partition(), "agent-a", draft.ID, draft.Version)
 	if err != nil || !found || got.Bundle != draft.Bundle || got.Revision != draft.Revision {
 		t.Fatalf("reopen=%#v found=%v err=%v", got, found, err)
+	}
+}
+
+func TestRetiredEvidenceReopenPreservesActiveHistoryAndRollback(t *testing.T) {
+	for _, protocol := range []string{"", "reflection-evidence/v1", "unknown"} {
+		for _, validated := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/validated=%t", protocol, validated), func(t *testing.T) {
+				ctx, p := t.Context(), partition()
+				root := t.TempDir()
+				store, err := skillstore.New(root)
+				if err != nil {
+					t.Fatal(err)
+				}
+				stage := func(body string, verdict learning.EvaluationVerdict) learning.SkillVersion {
+					t.Helper()
+					prov := provenance(body)
+					prov.ValidationDisposition = learning.ValidationAccept
+					value, stageErr := store.CreateDraft(ctx, p, "agent-a", bundle("retained", body), prov)
+					if stageErr == nil {
+						value, stageErr = store.RecordEvaluation(ctx, p, "agent-a", value.ID, value.Version, value.Revision, learning.SkillEvaluation{Verdict: verdict, FixtureIDs: []string{"fixture"}})
+					}
+					if stageErr == nil {
+						value, stageErr = store.Stage(ctx, p, "agent-a", value.ID, value.Version, value.Revision)
+					}
+					if stageErr != nil {
+						t.Fatal(stageErr)
+					}
+					return value
+				}
+				first := stage("Previously active.", learning.EvaluationPass)
+				first, err = store.Activate(ctx, p, "agent-a", first.ID, first.Version, first.Revision)
+				if err != nil {
+					t.Fatal(err)
+				}
+				active := stage("Still active.", learning.EvaluationPass)
+				active, err = store.Activate(ctx, p, "agent-a", active.ID, active.Version, active.Revision)
+				if err != nil {
+					t.Fatal(err)
+				}
+				verdict := learning.EvaluationPass
+				if validated {
+					verdict = learning.EvaluationAbstain
+				}
+				candidate := stage("Never active.", verdict)
+				path := filepath.Join(root, "manifest.json")
+				raw, err := os.ReadFile(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				old := strings.ReplaceAll(string(raw), string(learning.ReflectionEvidenceV2), protocol)
+				if protocol == "" {
+					old = strings.ReplaceAll(string(raw), `"protocol": "reflection-evidence/v2",`, "")
+				}
+				if old == string(raw) {
+					t.Fatal("fixture did not contain current evidence")
+				}
+				if err = os.WriteFile(path, []byte(old), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				reopened, err := skillstore.New(root)
+				if err != nil {
+					t.Fatal(err)
+				}
+				page, err := reopened.List(ctx, p, learning.SkillList{State: learning.SkillActive})
+				if err != nil || len(page.Versions) != 1 || page.Versions[0].Version != active.Version || page.Versions[0].Provenance.EvidenceRefs[0].Protocol != learning.EvidenceProtocol(protocol) {
+					t.Fatalf("old active skill lost: %+v err=%v", page, err)
+				}
+				if validated {
+					_, err = reopened.ActivateValidated(ctx, p, "agent-a", candidate.ID, candidate.Version, candidate.Revision)
+				} else {
+					_, err = reopened.Activate(ctx, p, "agent-a", candidate.ID, candidate.Version, candidate.Revision)
+				}
+				if !errors.Is(err, learning.ErrSkillTransition) {
+					t.Fatalf("old candidate activation=%v", err)
+				}
+				after, err := os.ReadFile(path)
+				if err != nil || string(after) != old {
+					t.Fatalf("failed activation mutated durable history: %v", err)
+				}
+				rolled, err := reopened.Rollback(ctx, p, "agent-a", active.ID, active.Revision, first.Version)
+				if err != nil || rolled.State != learning.SkillActive || rolled.Version != first.Version {
+					t.Fatalf("old previously active rollback=%+v err=%v", rolled, err)
+				}
+			})
+		}
 	}
 }
 
@@ -342,7 +428,7 @@ func partition() learning.SkillPartition {
 func provenance(id string) learning.SkillProvenance {
 	return learning.SkillProvenance{
 		ProposalIDs:  []learning.ProposalID{learning.ProposalID("proposal-" + id)},
-		EvidenceRefs: []learning.EvidenceRef{{SessionID: session.SessionID("session-" + id), Locator: learning.EvidenceMessage, Digest: strings.Repeat("a", 64)}},
+		EvidenceRefs: []learning.EvidenceRef{{Protocol: learning.ReflectionEvidenceV2, SessionID: session.SessionID("session-" + id), Locator: learning.EvidenceMessage, Digest: strings.Repeat("a", 64)}},
 	}
 }
 

@@ -263,7 +263,10 @@ func TestScopedWorktreeSelectorsFailClosed(t *testing.T) {
 	if err := awaiting.BeginTurn(); err != nil {
 		t.Fatal(err)
 	}
-	if err := awaiting.PauseForApproval(session.PendingAsk{AskID: "keep-ask"}); err != nil {
+	if err := awaiting.RecordAssistant(session.NewAssistantMessage("", []session.ToolCall{session.NewToolCall("keep-call", "Write", nil)})); err != nil {
+		t.Fatal(err)
+	}
+	if err := awaiting.PauseForApproval(session.PendingAsk{AskID: "keep-ask", Tool: "Write", Call: "keep-call"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.Save(context.Background(), awaiting); err != nil {

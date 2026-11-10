@@ -52,6 +52,10 @@ For installation and API entry points, see the [TypeScript SDK README](./README.
 
 ## Unreleased
 
+- **Breaking:** require Harness API major 2 on the existing discovery/routes. Invocation references are opaque canonical engine IDs; do not match by provider IDs, tool names, or arguments. Upgrade clients and server together; there is no major-1 alias mode. Package versioning is independent of the wire major.
+- Remove archive `reasoning` and `reasoningItemId`; retain `providerPhase`, readable text/media, and streamed reasoning summaries. Expose standalone `historical` records in activity, archives, and transcripts without inferred tool attachments or control authority. Keep durable cursors unchanged.
+- Learning evidence exposes `protocol` and `attachmentUnavailable` independently of citation `available`. An absent `toolCallId` decodes as the protobuf empty string and must not be attached to a tool row.
+
 - **Breaking (alpha):** use canonical title metadata, typed approval verdicts, typed event usage and retry disposition, exact-run controls, and compatibility-info capabilities; remove storage migration and deprecated watch aliases.
 
 ## [0.3.0](https://www.npmjs.com/package/%40stacklok-oss%2Fmecatl-sdk/v/0.3.0)

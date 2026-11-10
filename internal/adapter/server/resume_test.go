@@ -299,7 +299,7 @@ func TestLoadSessionRecoversCancelledViaInterrupt(t *testing.T) {
 		t.Fatalf("BeginTurn: %v", err)
 	}
 	calls := []session.ToolCall{session.NewToolCall("c1", "Read", nil)}
-	if err := sess.RecordAssistant(session.NewAssistantMessage("", "", calls)); err != nil {
+	if err := sess.RecordAssistant(session.NewAssistantMessage("", calls)); err != nil {
 		t.Fatalf("RecordAssistant: %v", err)
 	}
 	if err := sess.Cancel(); err != nil {
@@ -523,9 +523,20 @@ func TestStartRunContentRecoversFailedSessionAfterToolWork(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetSession final: %v", err)
 	}
+	var retainedCall session.ToolCallID
+	for _, m := range reloaded.Conversation.Messages {
+		for _, c := range m.ToolCalls {
+			if c.Name == "Read" {
+				retainedCall = c.ID
+			}
+		}
+	}
+	if retainedCall == "" || retainedCall == "c1" {
+		t.Fatal("accepted Read has no canonical identity")
+	}
 	var foundToolResult bool
 	for _, m := range final.Conversation.Messages {
-		if m.Role == session.RoleTool && m.ToolResult != nil && m.ToolResult.CallID == "c1" && !m.ToolResult.IsError {
+		if m.Role == session.RoleTool && m.ToolResult != nil && m.ToolResult.CallID == retainedCall && !m.ToolResult.IsError {
 			foundToolResult = true
 		}
 	}
@@ -571,7 +582,7 @@ func TestRecoverAdversarialMidDispatchFailure(t *testing.T) {
 		t.Fatalf("BeginTurn: %v", err)
 	}
 	calls := []session.ToolCall{session.NewToolCall("c1", "Read", nil)}
-	if err := sess.RecordAssistant(session.NewAssistantMessage("", "", calls)); err != nil {
+	if err := sess.RecordAssistant(session.NewAssistantMessage("", calls)); err != nil {
 		t.Fatalf("RecordAssistant: %v", err)
 	}
 	if err := sess.Fail(); err != nil {
@@ -622,12 +633,18 @@ func TestRecoverAdversarialMidDispatchFailure(t *testing.T) {
 		t.Fatalf("no LLMRequest observed for the post-recovery run")
 	}
 	req := reqs[len(reqs)-1]
-	if err := session.ValidateToolPairing(req.Messages); err != nil {
+	if err := validateLLMToolPairing(req.Messages); err != nil {
 		t.Fatalf("observed replayed request fails tool pairing: %v", err)
 	}
 	var replayed bool
+	var replayCall session.ProviderCallID
 	for _, m := range req.Messages {
-		if m.Role == session.RoleTool && m.ToolResult != nil && m.ToolResult.CallID == "c1" && m.ToolResult.IsError {
+		for _, call := range m.ToolCalls {
+			if call.Name == "Read" {
+				replayCall = call.ID
+			}
+		}
+		if m.Role == session.RoleTool && m.ToolResult != nil && replayCall != "" && m.ToolResult.CallID == replayCall && m.ToolResult.IsError {
 			replayed = true
 			if m.ToolResult.Content != wantCloseOut {
 				t.Fatalf("replayed synthetic close-out = %q, want %q", m.ToolResult.Content, wantCloseOut)
@@ -798,7 +815,7 @@ func TestRecoverMidStreamFailureReplayIsPaired(t *testing.T) {
 		t.Fatalf("observed %d LLMRequests, want 3 (two in run-1, one in run-2)", len(reqs))
 	}
 	req := reqs[len(reqs)-1]
-	if err := session.ValidateToolPairing(req.Messages); err != nil {
+	if err := validateLLMToolPairing(req.Messages); err != nil {
 		t.Fatalf("observed replayed request fails tool pairing: %v", err)
 	}
 	var sawC1Result bool

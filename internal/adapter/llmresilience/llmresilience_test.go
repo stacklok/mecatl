@@ -54,8 +54,10 @@ func TestEncryptedReasoningFallbackFailureIsNotReplayedByOuterResilience(t *test
 		// operator classifier that would otherwise retry every error.
 		Classifier: func(error) bool { return true },
 	})
-	assistant := session.NewAssistantMessage("", `{"v":1,"items":[{"i":"rs_bad","e":"opaque-blob"}]}`, nil)
-	req := port.LLMRequest{Model: "gpt-test", Messages: []session.Message{assistant}}
+	assistant := port.LLMMessage{Role: session.RoleAssistant, Replay: &session.ProviderReplay{
+		Format: "openai.responses", Version: 1, Data: []byte(`{"reasoning":[{"i":"rs_bad","e":"opaque-blob"}]}`),
+	}}
+	req := port.LLMRequest{Model: "gpt-test", Messages: []port.LLMMessage{assistant}}
 
 	seq, err := wrapped.Stream(context.Background(), req)
 	if seq != nil || err == nil {
@@ -1989,7 +1991,7 @@ func TestAdvancesVisiblePredicate(t *testing.T) {
 		{port.Chunk{Kind: port.ChunkText, Text: "answer"}, true},
 		{port.Chunk{Kind: port.ChunkText, Text: " \n\t"}, false},
 		{port.Chunk{Kind: port.ChunkReasoning}, false},
-		{port.Chunk{Kind: port.ChunkReasoningItem}, false},
+		{port.Chunk{Kind: port.ChunkReplay}, false},
 		{port.Chunk{Kind: port.ChunkToolCall}, false},
 		{port.Chunk{Kind: port.ChunkUsage}, false},
 		{port.Chunk{Kind: port.ChunkDone}, false},
@@ -2005,12 +2007,12 @@ func TestAdvancesVisiblePredicate(t *testing.T) {
 
 // TestPreCommitReasoningOnlyErrorIsRetried verifies that a mid-reasoning error
 // (before any committing chunk) is retried: attempt 1 yields ChunkReasoning
-// then ChunkReasoningItem then a retryable net error; attempt 2 succeeds.
+// then ChunkReplay then a retryable net error; attempt 2 succeeds.
 func TestPreCommitReasoningOnlyErrorIsRetried(t *testing.T) {
 	conn := &net.OpError{Op: "dial", Err: errors.New("refused")}
 	reasoningChunks := []port.Chunk{
 		{Kind: port.ChunkReasoning, Text: "thinking..."},
-		{Kind: port.ChunkReasoningItem, Text: "blob"},
+		{Kind: port.ChunkReplay, Replay: &session.ProviderReplay{Format: "test", Version: 1, Data: []byte(`"blob"`)}, ReplayIsOutput: true},
 	}
 	f := &fakeProvider{steps: []step{
 		{chunks: reasoningChunks, midErr: conn},
@@ -2072,7 +2074,7 @@ func TestMixedPreCommitThenCommittingThenErrorNotRetried(t *testing.T) {
 		{
 			chunks: []port.Chunk{
 				{Kind: port.ChunkReasoning, Text: "r"},
-				{Kind: port.ChunkReasoningItem, Text: "b"},
+				{Kind: port.ChunkReplay, Replay: &session.ProviderReplay{Format: "test", Version: 1, Data: []byte(`"b"`)}},
 				{Kind: port.ChunkText, Text: "partial"},
 			},
 			midErr: boom,
@@ -2089,9 +2091,9 @@ func TestMixedPreCommitThenCommittingThenErrorNotRetried(t *testing.T) {
 	if !errors.Is(derr, boom) {
 		t.Fatalf("drain error = %v, want boom", derr)
 	}
-	// 3 chunks before the error: ChunkReasoning, ChunkReasoningItem, ChunkText.
-	if len(got) != 3 {
-		t.Fatalf("got %d chunks, want 3", len(got))
+	// Display reasoning and text escape; private replay from the failed attempt does not.
+	if len(got) != 2 || got[0].Kind != port.ChunkReasoning || got[1].Kind != port.ChunkText {
+		t.Fatalf("got %+v, want reasoning and partial text only", got)
 	}
 	if f.Calls() != 1 {
 		t.Fatalf("inner called %d times, want 1 (no retry after committing chunk)", f.Calls())
@@ -2104,7 +2106,7 @@ func TestPreCommitChunksReplayedBeforeCommittingChunk(t *testing.T) {
 	f := &fakeProvider{steps: []step{{
 		chunks: []port.Chunk{
 			{Kind: port.ChunkReasoning, Text: "r1"},
-			{Kind: port.ChunkReasoningItem, Text: "b1"},
+			{Kind: port.ChunkReplay, Replay: &session.ProviderReplay{Format: "test", Version: 1, Data: []byte(`"b1"`)}},
 			{Kind: port.ChunkText, Text: "t1"},
 			{Kind: port.ChunkDone, Stop: session.StopEndTurn},
 		},
@@ -2125,11 +2127,11 @@ func TestPreCommitChunksReplayedBeforeCommittingChunk(t *testing.T) {
 	if got[0].Kind != port.ChunkReasoning || got[0].Text != "r1" {
 		t.Errorf("got[0] = %+v, want ChunkReasoning r1", got[0])
 	}
-	if got[1].Kind != port.ChunkReasoningItem || got[1].Text != "b1" {
-		t.Errorf("got[1] = %+v, want ChunkReasoningItem b1", got[1])
+	if got[1].Kind != port.ChunkText || got[1].Text != "t1" {
+		t.Errorf("got[1] = %+v, want ChunkText t1", got[1])
 	}
-	if got[2].Kind != port.ChunkText || got[2].Text != "t1" {
-		t.Errorf("got[2] = %+v, want ChunkText t1", got[2])
+	if got[2].Kind != port.ChunkReplay || got[2].Replay == nil || string(got[2].Replay.Data) != `"b1"` {
+		t.Errorf("got[2] = %+v, want successful ChunkReplay b1", got[2])
 	}
 	if got[3].Kind != port.ChunkDone {
 		t.Errorf("got[3] = %+v, want ChunkDone", got[3])
@@ -2210,7 +2212,7 @@ func TestPerAttemptTimeoutDuringPreCommitIsRetriedNotTruncated(t *testing.T) {
 func TestPreCommitOnlyStreamCleanClose(t *testing.T) {
 	reasoningChunks := []port.Chunk{
 		{Kind: port.ChunkReasoning, Text: "r"},
-		{Kind: port.ChunkReasoningItem, Text: "b"},
+		{Kind: port.ChunkReplay, Replay: &session.ProviderReplay{Format: "test", Version: 1, Data: []byte(`"b"`)}},
 	}
 	f := &fakeProvider{steps: []step{
 		{chunks: reasoningChunks}, // yields 2 non-committing chunks then ends cleanly
@@ -2232,8 +2234,8 @@ func TestPreCommitOnlyStreamCleanClose(t *testing.T) {
 	if got[0].Kind != port.ChunkReasoning || got[0].Text != "r" {
 		t.Errorf("got[0] = %+v, want ChunkReasoning r", got[0])
 	}
-	if got[1].Kind != port.ChunkReasoningItem || got[1].Text != "b" {
-		t.Errorf("got[1] = %+v, want ChunkReasoningItem b", got[1])
+	if got[1].Kind != port.ChunkReplay || got[1].Replay == nil || string(got[1].Replay.Data) != `"b"` {
+		t.Errorf("got[1] = %+v, want ChunkReplay b", got[1])
 	}
 	if f.Calls() != 1 {
 		t.Fatalf("inner called %d times, want 1 (no retry on a clean pre-commit-only close)", f.Calls())

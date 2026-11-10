@@ -15,7 +15,11 @@ First, ports stay provider-neutral. `port.LLMRequest` carries exactly four field
 (system prompt, messages, tool specs, and an opaque model string), and
 `llm_neutral_test.go` fails if a field is added. Provider-specific options, such as a
 thinking budget or a base URL, belong on the adapter's constructor because the loop
-must never branch on provider.
+must never branch on provider. Messages are `[]LLMMessage`, with separate
+`LLMToolCall`/`LLMToolResult` DTOs carrying provider pairing tokens. Domain
+`ToolCall`/`ToolResult` use canonical engine identities. `ProjectMessages` resolves
+occurrence bindings and copies opaque replay at the boundary; `ChunkReplay` carries
+adapter-owned private state independently of display-only reasoning chunks.
 
 Second, adding a method to a published interface breaks every implementer. New
 behavior arrives as a separate optional interface that the consumer discovers by type
@@ -52,8 +56,8 @@ Some contracts matter beyond their signatures:
   session-typed adapter sits outside it. `PermissionStore` holds learned rules.
 - `SessionStore.Load` may rebuild a session by folding an event log;
   `engine/adapter/eventsource.Fold` is the reference. A fold restores the structure but
-  not the opaque provider replay fields, so it replays byte-for-byte only for
-  providers that do not use them.
+  not missing active provider replay from ordinary execution events. Exact replay
+  requires the Session-owned private snapshot state; public history is insufficient.
 - The loop emits events but never calls `EventLog` or `SessionLease`: the server
   relay persists events, and the server run-entry path holds the lease. The schedule
   tools reach `ScheduleStore` only through the server's `ScheduleManager`.

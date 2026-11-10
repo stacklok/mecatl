@@ -36,7 +36,7 @@ func TestEvidenceProjectionIsBoundedFencedAndInjectionSafe(t *testing.T) {
 		t.Fatal(err)
 	}
 	call := session.ToolCall{ID: "call-1", Name: "Read", Args: []byte(`{"path":"RAW_PRIVATE_TOOL_ARGUMENTS"}`)}
-	if err := source.RecordAssistant(session.NewAssistantMessage("checking", "RAW_PRIVATE_REASONING", []session.ToolCall{call})); err != nil {
+	if err := source.RecordAssistant(assistantWithReplay("checking", "RAW_PRIVATE_REASONING", []session.ToolCall{call})); err != nil {
 		t.Fatal(err)
 	}
 	if err := source.RecordToolResults([]session.ToolResult{session.NewToolResult(call.ID, "token: ghp_abcdefghijklmnopqrstuvwxyz123456")}); err != nil {
@@ -45,7 +45,7 @@ func TestEvidenceProjectionIsBoundedFencedAndInjectionSafe(t *testing.T) {
 	if err := source.BeginTurn(); err != nil {
 		t.Fatal(err)
 	}
-	if err := source.RecordAssistant(session.NewAssistantMessage(oversized, "RAW_PRIVATE_REASONING", nil)); err != nil {
+	if err := source.RecordAssistant(assistantWithReplay(oversized, "RAW_PRIVATE_REASONING", nil)); err != nil {
 		t.Fatal(err)
 	}
 	usage := session.Usage{InputTokens: 4, OutputTokens: 2}
@@ -77,7 +77,7 @@ func TestEvidenceProjectionIsBoundedFencedAndInjectionSafe(t *testing.T) {
 		}
 	}
 
-	trajectory := learning.NewTrajectory(source.ID, "/workspace", session.StopEndTurn, usage, source.Conversation.Messages)
+	trajectory := learning.NewSessionTrajectory(source, "/workspace", session.StopEndTurn, usage)
 	trajectory.RunID = runID
 	trajectory.Kind = source.Kind
 	trajectory.Counters = source.Counters

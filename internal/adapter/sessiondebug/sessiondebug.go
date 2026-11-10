@@ -154,7 +154,7 @@ func (t *inspectTool) Execute(ctx context.Context, call session.ToolCall, _ tool
 	case "transcript":
 		value = transcriptView(target, args.Offset, args.Limit)
 	case "activity":
-		value = t.activityView(ctx, target.ID, args.Offset, args.Limit)
+		value = t.activityView(ctx, target, args.Offset, args.Limit)
 	case "performance":
 		value = t.performanceView(ctx, target.ID)
 	case "network":
@@ -525,34 +525,45 @@ type activityEvidence struct {
 }
 
 type activityRow struct {
-	Index        int                `json:"index"`
-	Type         session.EventType  `json:"type"`
-	Seq          int64              `json:"seq"`
-	Turn         int                `json:"turn"`
-	Text         string             `json:"text,omitempty"`
-	TextRepaired bool               `json:"text_repaired,omitempty"`
-	Tool         string             `json:"tool,omitempty"`
-	ToolRepaired bool               `json:"tool_repaired,omitempty"`
-	ToolError    *bool              `json:"tool_error,omitempty"`
-	Stop         session.StopReason `json:"stop,omitempty"`
-	Usage        *session.Usage     `json:"usage,omitempty"`
-	Duration     int64              `json:"duration_ms,omitempty"`
-	TTFT         int64              `json:"ttft_ms,omitempty"`
+	Parts         []transcriptPart   `json:"parts,omitempty"`
+	PartsOmitted  int                `json:"parts_omitted,omitempty"`
+	TextTruncated bool               `json:"text_truncated,omitempty"`
+	Index         int                `json:"index"`
+	Type          session.EventType  `json:"type"`
+	Seq           int64              `json:"seq"`
+	Turn          int                `json:"turn"`
+	Text          string             `json:"text,omitempty"`
+	TextRepaired  bool               `json:"text_repaired,omitempty"`
+	Tool          string             `json:"tool,omitempty"`
+	ToolRepaired  bool               `json:"tool_repaired,omitempty"`
+	ToolError     *bool              `json:"tool_error,omitempty"`
+	Stop          session.StopReason `json:"stop,omitempty"`
+	Usage         *session.Usage     `json:"usage,omitempty"`
+	Duration      int64              `json:"duration_ms,omitempty"`
+	TTFT          int64              `json:"ttft_ms,omitempty"`
 }
 
-func (t *inspectTool) activityView(ctx context.Context, target session.SessionID, offset, requested int) activityEvidence {
+func (t *inspectTool) activityView(ctx context.Context, target *session.Session, offset, requested int) activityEvidence {
 	limit := boundedLimit(requested, maxActivityRows)
 	out := activityEvidence{View: "activity", Available: t.log != nil, Authoritative: false, Complete: false, Offset: offset, Limit: limit, Rows: []activityRow{}}
 	if t.log == nil {
 		out.Error = errLogNotConfigured
 		return out
 	}
-	seen := 0
-	for ev, err := range t.log.Read(ctx, target) {
+	seen, scanned := 0, 0
+	for ev, err := range t.log.Read(ctx, target.ID) {
+		if err == nil {
+			err = ctx.Err()
+		}
 		if err != nil {
-			out.Error = safeLine(err.Error())
+			out.Error = errLogReadFailed
 			return out
 		}
+		if scanned == maxPerformanceScan {
+			out.Error = "event scan bound reached"
+			return out
+		}
+		scanned++
 		if highVolume(ev.Type) {
 			continue
 		}
@@ -643,8 +654,11 @@ func (t *inspectTool) performanceView(ctx context.Context, target session.Sessio
 	}
 	out.ScanComplete = true
 	for ev, err := range t.log.Read(ctx, target) {
+		if err == nil {
+			err = ctx.Err()
+		}
 		if err != nil {
-			out.Error = safeLine(err.Error())
+			out.Error = errLogReadFailed
 			out.ScanComplete = false
 			return out
 		}

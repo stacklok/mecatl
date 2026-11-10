@@ -44,7 +44,7 @@ function lifecycleTransport(events: string[] = []): Transport {
   const transport = createRouterTransport((router) => {
     router.service(HarnessService, {
       createSession: () => ({ sessionId: "session-1" }),
-      getCompatibilityInfo: () => ({ apiMajor: 1, capabilities: {}, features: [watchFeature] }),
+      getCompatibilityInfo: () => ({ apiMajor: 2, capabilities: {}, features: [watchFeature] }),
       getSession: (request) => ({ session: { sessionId: request.sessionId } }),
       converse: async function* (requests) {
         const input = requests[Symbol.asyncIterator]();
@@ -113,7 +113,7 @@ function spawnHarness(testRoot: string, options: SpawnHarnessOptions = {}) {
           void writeFile(
             readyFile,
             JSON.stringify({
-              api_major: 1,
+              api_major: 2,
               features: ["mcp_servers_on_create"],
               pid: options.pid ?? 4242,
               schema: "mecated-ready/1",

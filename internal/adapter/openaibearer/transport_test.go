@@ -224,7 +224,7 @@ func TestBearerTokenFileResponsesAPIDoesNotRetryAuthenticationFailure(t *testing
 		t.Fatal(err)
 	}
 	provider := openai.New(openai.WithBaseURL(srv.URL+"/v1"), openai.WithHTTPClient(client), openai.WithMaxRetries(0))
-	seq, err := provider.Stream(context.Background(), port.LLMRequest{Model: "model", Messages: []session.Message{session.NewUserMessage("hi")}})
+	seq, err := provider.Stream(context.Background(), port.LLMRequest{Model: "model", Messages: []port.LLMMessage{{Role: session.RoleUser, Text: "hi"}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -269,7 +269,7 @@ func TestBearerTokenFileResponsesAPI(t *testing.T) {
 		t.Fatal(err)
 	}
 	provider := openai.New(openai.WithBaseURL(srv.URL+"/v1"), openai.WithHTTPClient(client), openai.WithMaxRetries(0))
-	seq, err := provider.Stream(context.Background(), port.LLMRequest{Model: "model", Messages: []session.Message{session.NewUserMessage("hi")}})
+	seq, err := provider.Stream(context.Background(), port.LLMRequest{Model: "model", Messages: []port.LLMMessage{{Role: session.RoleUser, Text: "hi"}}})
 	if err != nil {
 		t.Fatal(err)
 	}

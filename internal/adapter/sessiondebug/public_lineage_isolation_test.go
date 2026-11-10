@@ -113,7 +113,7 @@ func recordCompletedToolCall(t *testing.T, root *session.Session, callID, toolNa
 	if err := root.BeginTurn(); err != nil {
 		t.Fatal(err)
 	}
-	if err := root.RecordAssistant(session.NewAssistantMessage("", "", []session.ToolCall{session.NewToolCall(session.ToolCallID(callID), toolName, nil)})); err != nil {
+	if err := root.RecordAssistant(session.NewAssistantMessage("", []session.ToolCall{session.NewToolCall(session.ToolCallID(callID), toolName, nil)})); err != nil {
 		t.Fatal(err)
 	}
 	if err := root.RecordToolResults([]session.ToolResult{session.NewToolResult(session.ToolCallID(callID), "done")}); err != nil {
@@ -335,7 +335,7 @@ func TestRoutingWireAndDebugger(t *testing.T) {
 	if err := root.BeginTurn(); err != nil {
 		t.Fatal(err)
 	}
-	if err := root.RecordAssistant(session.NewAssistantMessage("", "", []session.ToolCall{
+	if err := root.RecordAssistant(session.NewAssistantMessage("", []session.ToolCall{
 		session.NewToolCall("team-call", "Team", nil),
 		session.NewToolCall("team-other", "Team", nil),
 	})); err != nil {
@@ -554,17 +554,23 @@ func TestTwoRealTeamCallsCannotSubstituteCorrelation(t *testing.T) {
 	root := session.New("two-teams", session.ModeDefault, ref, session.Limits{}, time.Unix(20, 0))
 	root.Owner = &session.Principal{Issuer: "issuer", Subject: "owner", GrantType: session.GrantTypeUser}
 
-	var starts = map[string]session.Event{}
+	var starts = map[session.ToolCallID]session.Event{}
+	var callA, callB session.ToolCallID
 	var memberA session.Event
 	for ev := range parent.Run(t.Context(), root, env, agent.RunRequest{Text: "run A then B"}).Events() {
 		if ev.Type == session.EvTeamStart && ev.Team != nil {
+			if callA == "" {
+				callA = ev.Team.ParentCallID
+			} else {
+				callB = ev.Team.ParentCallID
+			}
 			starts[ev.Team.ParentCallID] = ev
 		}
-		if ev.Type == session.EvTeamMember && ev.Team != nil && ev.Team.ParentCallID == "team-a" && memberA.Team == nil {
+		if ev.Type == session.EvTeamMember && ev.Team != nil && ev.Team.ParentCallID == callA && memberA.Team == nil {
 			memberA = ev
 		}
 	}
-	if starts["team-a"].Team == nil || starts["team-b"].Team == nil || memberA.Team == nil {
+	if callA == "" || callB == "" || callA == callB || starts[callA].Team == nil || starts[callB].Team == nil || memberA.Team == nil {
 		t.Fatalf("real Team events missing: starts=%v memberA=%+v", starts, memberA.Team)
 	}
 	if err := store.Save(t.Context(), root); err != nil {
@@ -572,10 +578,10 @@ func TestTwoRealTeamCallsCannotSubstituteCorrelation(t *testing.T) {
 	}
 
 	genuine := memstore.NewEventLog()
-	if err := genuine.Append(t.Context(), root.ID, starts["team-a"]); err != nil {
+	if err := genuine.Append(t.Context(), root.ID, starts[callA]); err != nil {
 		t.Fatal(err)
 	}
-	if err := genuine.Append(t.Context(), root.ID, starts["team-b"]); err != nil {
+	if err := genuine.Append(t.Context(), root.ID, starts[callB]); err != nil {
 		t.Fatal(err)
 	}
 	rows := evidence(t, inspect(t, sessiondebug.New(root.ID, store, genuine), `{"view":"delegation"}`))["rows"].([]any)
@@ -583,12 +589,12 @@ func TestTwoRealTeamCallsCannotSubstituteCorrelation(t *testing.T) {
 		t.Fatalf("genuine Team calls did not both correlate: %#v", rows)
 	}
 
-	substitutedStart := starts["team-a"]
-	substitutedStart.Team = cloneTeamPayloadForTest(starts["team-a"].Team)
-	substitutedStart.Team.ParentCallID = "team-b"
+	substitutedStart := starts[callA]
+	substitutedStart.Team = cloneTeamPayloadForTest(starts[callA].Team)
+	substitutedStart.Team.ParentCallID = callB
 	substitutedMember := memberA
 	substitutedMember.Team = cloneTeamPayloadForTest(memberA.Team)
-	substitutedMember.Team.ParentCallID = "team-b"
+	substitutedMember.Team.ParentCallID = callB
 	for name, ev := range map[string]session.Event{"roster": substitutedStart, "member": substitutedMember} {
 		t.Run(name, func(t *testing.T) {
 			log := memstore.NewEventLog()

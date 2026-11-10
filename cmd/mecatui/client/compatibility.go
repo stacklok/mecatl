@@ -16,7 +16,7 @@ import (
 type APIMajor int32
 
 // SupportedAPIMajor is intentionally client-owned, independent of the server.
-const SupportedAPIMajor APIMajor = 1
+const SupportedAPIMajor APIMajor = 2
 
 const compatibilityCheckTimeout = 10 * time.Second
 

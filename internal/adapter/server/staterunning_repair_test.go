@@ -64,7 +64,7 @@ func TestStartRunContentAbandonsStaleRunningSession(t *testing.T) {
 	if len(captured) == 0 {
 		t.Fatal("no request reached the provider")
 	}
-	if err := session.ValidateToolPairing(captured[0].Messages); err != nil {
+	if err := validateLLMToolPairing(captured[0].Messages); err != nil {
 		t.Fatalf("the request built for the repaired session carries unpaired tool_use (the real HTTP-400 bug): %v", err)
 	}
 

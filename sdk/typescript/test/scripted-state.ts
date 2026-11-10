@@ -41,7 +41,7 @@ export function routerFor(
   return createRouterTransport((router) => {
     router.service(HarnessService, {
       createSession: () => ({ placement: state.placement, sessionId: state.sessionId }),
-      getCompatibilityInfo: () => ({ apiMajor: 1, capabilities: {}, features: state.features }),
+      getCompatibilityInfo: () => ({ apiMajor: 2, capabilities: {}, features: state.features }),
       getSession: () => ({
         session: {
           mode: PermissionMode.DEFAULT,
@@ -85,7 +85,7 @@ export function fetchFor(
     const path = new URL(url).pathname;
     if (path === "/v1/compatibility") {
       return Response.json({
-        api_major: 1,
+        api_major: 2,
         capabilities: {},
         features: state.features,
         future_field: state.futureField,

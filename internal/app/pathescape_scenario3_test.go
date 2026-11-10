@@ -585,7 +585,11 @@ func TestPathEscapePosture_Scenario3_EditLedgerOutOfRoot(t *testing.T) {
 	}
 
 	// Cross-form edit: read canonical, edit via the `..` alias → succeeds.
-	res := results["e1"]
+	loaded, err := built.Service.GetSession(context.Background(), sess.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res := results[boundCallID(t, loaded, "e1")]
 	if res == nil {
 		t.Fatal("no tool result for the cross-form edit (e1)")
 	}
@@ -599,7 +603,7 @@ func TestPathEscapePosture_Scenario3_EditLedgerOutOfRoot(t *testing.T) {
 	// disk when e3 ran.
 
 	// Unread edit: rejected with the read-before-edit refusal.
-	res = results["e2"]
+	res = results[boundCallID(t, loaded, "e2")]
 	if res == nil {
 		t.Fatal("no tool result for the unread edit (e2)")
 	}
@@ -611,7 +615,7 @@ func TestPathEscapePosture_Scenario3_EditLedgerOutOfRoot(t *testing.T) {
 	}
 
 	// Changed-since-read edit: rejected with the changed-since refusal.
-	res = results["e3"]
+	res = results[boundCallID(t, loaded, "e3")]
 	if res == nil {
 		t.Fatal("no tool result for the changed-since-read edit (e3)")
 	}

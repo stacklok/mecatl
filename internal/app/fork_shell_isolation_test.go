@@ -48,7 +48,7 @@ func (p *shellWriteProvider) Stream(ctx context.Context, req port.LLMRequest) (i
 			{Kind: port.ChunkDone, Stop: session.StopEndTurn},
 		}
 	} else {
-		call := session.NewToolCall("bash1", "Shell", json.RawMessage(`{"command":`+strconvQuote(p.command)+`}`))
+		call := port.LLMToolCall{ID: "bash1", Name: "Shell", Args: json.RawMessage(`{"command":` + strconvQuote(p.command) + `}`)}
 		chunks = []port.Chunk{
 			{Kind: port.ChunkToolCall, ToolCall: &call},
 			{Kind: port.ChunkUsage, Usage: &session.Usage{}},

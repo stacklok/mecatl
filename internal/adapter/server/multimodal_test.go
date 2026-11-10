@@ -217,7 +217,7 @@ func TestGRPCConverseCarriesMediaPart(t *testing.T) {
 
 	var (
 		mu   sync.Mutex
-		seen []session.Message
+		seen []port.LLMMessage
 	)
 	observe := func(req port.LLMRequest) {
 		mu.Lock()

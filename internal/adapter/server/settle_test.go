@@ -33,7 +33,7 @@ func crashOrphanedSession(t *testing.T, id session.SessionID) *session.Session {
 		session.NewToolCall("call-a", "read_file", nil),
 		session.NewToolCall("call-b", "list_dir", nil),
 	}
-	if err := sess.RecordAssistant(session.NewAssistantMessage("", "", calls)); err != nil {
+	if err := sess.RecordAssistant(session.NewAssistantMessage("", calls)); err != nil {
 		t.Fatalf("RecordAssistant: %v", err)
 	}
 	if sess.State != session.StateRunning {

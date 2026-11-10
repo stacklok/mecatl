@@ -94,11 +94,7 @@ func (p *runProjector) project(ev session.Event) (any, bool) {
 	}
 }
 
-// projectUpdate maps a domain Event to the session/update variant value to send,
-// or (nil,false) when the event has no session/update projection this phase
-// (dropped, folded elsewhere, or handled out of band like permission.ask and the
-// terminal result). The returned value is one of the union variant types
-// (chunkUpdate / toolCallUpdate) ready to marshal as the notification's "update".
+// projectUpdate maps a domain Event to one ACP update.
 func projectUpdate(ev session.Event) (any, bool) {
 	switch ev.Type {
 	case session.EvMessageDelta:
@@ -297,7 +293,7 @@ func projectSubagent(ev session.Event) (any, bool) {
 		}
 		return toolCallUpdate{
 			SessionUpdate: updateToolCallUpdate,
-			ToolCallID:    p.ParentCallID,
+			ToolCallID:    string(p.ParentCallID),
 			Status:        toolStatusInProgress,
 			Content:       textToolContent(line),
 		}, true
@@ -319,7 +315,7 @@ func projectSubagent(ev session.Event) (any, bool) {
 		}
 		return toolCallUpdate{
 			SessionUpdate: updateToolCallUpdate,
-			ToolCallID:    p.ParentCallID,
+			ToolCallID:    string(p.ParentCallID),
 			Status:        status,
 			Content:       textToolContent(line),
 		}, true
@@ -346,7 +342,7 @@ func projectTeam(ev session.Event) (any, bool) {
 		}
 		return toolCallUpdate{
 			SessionUpdate: updateToolCallUpdate,
-			ToolCallID:    p.ParentCallID,
+			ToolCallID:    string(p.ParentCallID),
 			Status:        toolStatusInProgress,
 			Content:       textToolContent(line),
 		}, true
@@ -358,7 +354,7 @@ func projectTeam(ev session.Event) (any, bool) {
 		line := fmt.Sprintf("team finished: %d round(s), %s", p.Rounds, p.Stop)
 		return toolCallUpdate{
 			SessionUpdate: updateToolCallUpdate,
-			ToolCallID:    p.ParentCallID,
+			ToolCallID:    string(p.ParentCallID),
 			Status:        status,
 			Content:       textToolContent(line),
 		}, true
@@ -468,7 +464,7 @@ func permissionRequestFor(sessionID string, ask session.PendingAsk) requestPermi
 	return requestPermissionRequest{
 		SessionID: sessionID,
 		ToolCall: toolCallUpdate{
-			ToolCallID: ask.AskID,
+			ToolCallID: string(ask.Call),
 			Title:      ask.Tool,
 			Kind:       toolKindFor(ask.Tool),
 			Status:     toolStatusPending,

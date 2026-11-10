@@ -138,6 +138,12 @@ similar skills, name collisions, unsupported repositories, and altered or
 unavailable evidence remain inactive. Set `evaluated` when every automatic
 activation must have a positive evaluator result.
 
+Evidence-backed skill activation requires `reflection-evidence/v2` on every
+retained evidence reference. Candidates with older or missing protocols remain
+readable but cannot activate; generate a fresh candidate from an eligible
+session. Already-active skills remain available, and rollback can restore a
+previously active version.
+
 Automatic learning does not activate operator/manual skills already supplied
 through `--skills-dir`, and it does not make quarantined `SkillDraft` content
 live. The operator-controlled promotion and lifecycle gates remain
@@ -191,6 +197,10 @@ permissions or tools.
 - Remote stores must advertise the lifecycle operations required by the action;
   Mecatl does not silently replace a missing lifecycle operation with an
   unconditional legacy write.
+- Automatic learning accepts only current `reflection-evidence/v2` evidence. A
+  session restored from `/1`, or a current snapshot without a positive stored
+  eligibility value, remains ineligible across saves, restarts, and later runs.
+  Frozen older evidence, proposals, and attempts are unavailable.
 - Automatic learning is not semantic or embedding search. No vector database or
   external embedding service is required or supported by this path.
 - Manual `/dream` consolidation is a separate maintenance workflow; see

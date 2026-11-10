@@ -39,13 +39,13 @@ func TestBuildChildEngineWithRunnerHasShell(t *testing.T) {
 	eng := buildChildEngine(cfg, nil, shellThenEdit(), "", cfg.Model, runner)
 
 	events := drainEngine(t, eng)
-	if unknownToolResult(events, "b1") {
+	if unknownToolResult(events, "Shell") {
 		t.Error("Subagent child did NOT have Shell; the worktree-isolated explorer must get a shell")
 	}
-	if !sawDispatchedTool(events, "b1") {
+	if !sawDispatchedTool(events, "Shell") {
 		t.Error("Subagent child did not dispatch Shell; it must be present in the catalog")
 	}
-	if !unknownToolResult(events, "e1") {
+	if !unknownToolResult(events, "Edit") {
 		t.Error("Subagent child got Edit; a read-only explorer must NOT be able to edit the project")
 	}
 }
@@ -58,10 +58,10 @@ func TestBuildChildEngineNoRunnerHasNoShell(t *testing.T) {
 	eng := buildChildEngine(cfg, nil, shellThenEdit(), "", cfg.Model, nil)
 
 	events := drainEngine(t, eng)
-	if !unknownToolResult(events, "b1") {
+	if !unknownToolResult(events, "Shell") {
 		t.Error("Subagent child with a nil runner dispatched Shell; without a runner there must be no shell")
 	}
-	if !unknownToolResult(events, "e1") {
+	if !unknownToolResult(events, "Edit") {
 		t.Error("Subagent child got Edit; a read-only explorer must never have Edit")
 	}
 }
@@ -104,7 +104,7 @@ func TestBuildSubagentToolWiresForkerWhenShell(t *testing.T) {
 		t.Fatalf("Subagent result is an error: %q", res.Content)
 	}
 
-	pwd := strings.TrimSpace(rec.contentForCall("p1"))
+	pwd := strings.TrimSpace(rec.contentForToolCall("Shell", 0))
 	if pwd == "" {
 		t.Fatal("child Shell produced no pwd output")
 	}
@@ -145,13 +145,13 @@ func TestBuildAgentSubagentEnginesWithRunnerKeepsShellDropsEdit(t *testing.T) {
 		t.Fatal("inspector engine not built")
 	}
 	events := drainEngine(t, eng)
-	if unknownToolResult(events, "b1") {
+	if unknownToolResult(events, "Shell") {
 		t.Error("per-def Subagent engine scoping Shell did NOT get Shell; it must keep it for worktree-isolated inspection")
 	}
-	if !sawDispatchedTool(events, "b1") {
+	if !sawDispatchedTool(events, "Shell") {
 		t.Error("per-def Subagent engine did not dispatch Shell; a def listing Shell must yield it")
 	}
-	if !unknownToolResult(events, "e1") {
+	if !unknownToolResult(events, "Edit") {
 		t.Error("per-def Subagent engine got Edit; Edit/Write must be dropped for a read-only explorer")
 	}
 
@@ -162,7 +162,7 @@ func TestBuildAgentSubagentEnginesWithRunnerKeepsShellDropsEdit(t *testing.T) {
 		t.Fatal("inspector engine (no shell) not built")
 	}
 	eventsNoShell := drainEngine(t, engNoShell)
-	if !unknownToolResult(eventsNoShell, "b1") {
+	if !unknownToolResult(eventsNoShell, "Shell") {
 		t.Error("per-def Subagent engine kept Shell with a nil runner; without isolation there must be no shell")
 	}
 }
@@ -219,8 +219,12 @@ func TestSubagentRunsGitInWorktreeEndToEnd(t *testing.T) {
 	run := parentEng.Run(context.Background(), sess, parentEnv, agent.RunRequest{Text: "go"})
 
 	var sawSubagentResult bool
+	var callID session.ToolCallID
 	for ev := range run.Events() {
-		if ev.Type == session.EvToolResult && ev.ToolResult != nil && ev.ToolResult.CallID == "t1" {
+		if ev.ToolCall != nil && ev.ToolCall.Name == "Subagent" {
+			callID = ev.ToolCall.ID
+		}
+		if ev.Type == session.EvToolResult && ev.ToolResult != nil && ev.ToolResult.CallID == callID {
 			if ev.ToolResult.IsError {
 				t.Fatalf("Subagent tool result is an error: %q", ev.ToolResult.Content)
 			}
@@ -233,9 +237,9 @@ func TestSubagentRunsGitInWorktreeEndToEnd(t *testing.T) {
 
 	// The REAL git output (captured from the child's Shell tool results) must reflect the
 	// repo history — proving a Subagent tool ran git in its worktree.
-	gitLog := rec.contentForCall("g1")
-	gitShow := rec.contentForCall("g2")
-	dotgit := rec.contentForCall("g3")
+	gitLog := rec.contentForToolCall("Shell", 0)
+	gitShow := rec.contentForToolCall("Shell", 1)
+	dotgit := rec.contentForToolCall("Shell", 2)
 	combined := gitLog + "\n" + gitShow
 	for _, want := range []string{"add alpha", "add beta"} {
 		if !strings.Contains(combined, want) {
@@ -322,8 +326,12 @@ func TestBuildSubagentToolRealWiringForksChildShellWhenShell(t *testing.T) {
 
 	sess := session.New("parent", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: repo, Revision: "in-tree-v1"}, session.Limits{MaxTurns: 5}, time.Now())
 	run := parentEng.Run(context.Background(), sess, parentEnv, agent.RunRequest{Text: "go"})
+	var callID session.ToolCallID
 	for ev := range run.Events() {
-		if ev.Type == session.EvToolResult && ev.ToolResult != nil && ev.ToolResult.CallID == "t1" && ev.ToolResult.IsError {
+		if ev.ToolCall != nil && ev.ToolCall.Name == "Subagent" {
+			callID = ev.ToolCall.ID
+		}
+		if ev.Type == session.EvToolResult && ev.ToolResult != nil && ev.ToolResult.CallID == callID && ev.ToolResult.IsError {
 			t.Fatalf("Subagent tool result is an error: %q", ev.ToolResult.Content)
 		}
 	}
@@ -449,15 +457,19 @@ func TestSubagentSeesDirtyWorkspaceEndToEnd(t *testing.T) {
 
 	sess := session.New("parent", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: repo, Revision: "in-tree-v1"}, session.Limits{MaxTurns: 6}, time.Now())
 	run := parentEng.Run(context.Background(), sess, parentEnv, agent.RunRequest{Text: "go"})
+	var callID session.ToolCallID
 	for ev := range run.Events() {
-		if ev.Type == session.EvToolResult && ev.ToolResult != nil && ev.ToolResult.CallID == "t1" && ev.ToolResult.IsError {
+		if ev.ToolCall != nil && ev.ToolCall.Name == "Subagent" {
+			callID = ev.ToolCall.ID
+		}
+		if ev.Type == session.EvToolResult && ev.ToolResult != nil && ev.ToolResult.CallID == callID && ev.ToolResult.IsError {
 			t.Fatalf("Subagent tool result is an error: %q", ev.ToolResult.Content)
 		}
 	}
 
-	status := rec.contentForCall("s1")
-	diff := rec.contentForCall("d1")
-	scratch := rec.contentForCall("c1")
+	status := rec.contentForToolCall("Shell", 0)
+	diff := rec.contentForToolCall("Shell", 1)
+	scratch := rec.contentForToolCall("Shell", 2)
 
 	// git status must list BOTH the modified tracked file and the new untracked file.
 	if !strings.Contains(status, "tracked.txt") {
@@ -550,6 +562,7 @@ func osfsWSForTest(t *testing.T, dir string) tool.Workspace {
 type recordingToolLogger struct {
 	mu       sync.Mutex
 	byCallID map[session.ToolCallID]string
+	calls    []session.ToolCall
 }
 
 func (l *recordingToolLogger) ToolCall(_ session.SessionID, call session.ToolCall, result session.ToolResult, _, _ time.Duration) {
@@ -558,11 +571,20 @@ func (l *recordingToolLogger) ToolCall(_ session.SessionID, call session.ToolCal
 		l.byCallID = map[session.ToolCallID]string{}
 	}
 	l.byCallID[call.ID] = result.Content
+	l.calls = append(l.calls, call)
 	l.mu.Unlock()
 }
 
-func (l *recordingToolLogger) contentForCall(id session.ToolCallID) string {
+func (l *recordingToolLogger) contentForToolCall(name string, occurrence int) string {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	return l.byCallID[id]
+	for _, call := range l.calls {
+		if call.Name == name {
+			if occurrence == 0 {
+				return l.byCallID[call.ID]
+			}
+			occurrence--
+		}
+	}
+	return ""
 }

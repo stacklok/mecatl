@@ -138,12 +138,26 @@ func TestServiceUsesRealMTLSProviderStoreAndReleasesOnlyAfterDrain(t *testing.T)
 		t.Fatal(err)
 	}
 	backgroundRejected := false
+	var shellID, backgroundID session.ToolCallID
 	var streamedShellResult string
 	for event := range run.Events() {
-		if result := event.ToolResult; result != nil && result.CallID == "shell" {
+		if call := event.ToolCall; call != nil && call.Name == "Shell" {
+			var args struct {
+				Background bool `json:"background"`
+			}
+			if err := json.Unmarshal(call.Args, &args); err != nil {
+				t.Fatal(err)
+			}
+			if args.Background {
+				backgroundID = call.ID
+			} else {
+				shellID = call.ID
+			}
+		}
+		if result := event.ToolResult; result != nil && shellID != "" && result.CallID == shellID {
 			streamedShellResult = result.Content
 		}
-		if result := event.ToolResult; result != nil && result.CallID == "background" {
+		if result := event.ToolResult; result != nil && backgroundID != "" && result.CallID == backgroundID {
 			backgroundRejected = result.IsError && strings.Contains(result.Content, "not supported by this command runner")
 		}
 	}

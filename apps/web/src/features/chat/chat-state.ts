@@ -6,7 +6,7 @@ import type {
   SessionUsageResponse,
 } from "@mecatl-studio/contracts";
 import type { ApprovalRequest } from "./approval-panel";
-import type { AuthorizationHandoff } from "./authorization-review";
+import { type AuthorizationHandoff, recordAuthorizationEvent } from "./authorization-review";
 import type { ChatImage } from "./local-file-preview";
 import type { ToolActivity } from "./tool-activity";
 import { formatTurnStat } from "./turn-stats";
@@ -24,6 +24,7 @@ export interface ChatMessage {
   failure?: { detail: string; message: string; permanent: boolean };
   id: string;
   images?: ChatImage[];
+  providerPhase?: string;
   /** Zero-based index in an authoritative transcript, including non-rendered tool results. */
   recordedOrdinal?: number;
   reasoning?: string;
@@ -64,14 +65,9 @@ export function retractApproval(
   );
 }
 
-/** Same-run call correlation is solely for placement, never for verdict authority. */
+/** Canonical call correlation is solely for placement, never for verdict authority. */
 export function approvalMatchesToolCall(approval: ApprovalRequest, tool: ToolActivity): boolean {
-  return Boolean(
-    approval.callId &&
-      approval.callId === tool.id &&
-      approval.controlTarget?.runId &&
-      approval.controlTarget.runId === tool.runId,
-  );
+  return Boolean(approval.callId && approval.callId === tool.id);
 }
 
 /** Whether a pending ask is placed beside one of this message's tool rows. */
@@ -143,6 +139,7 @@ function stringValue(value: unknown): string {
 export function messagesFromTranscript(
   entries: Array<{
     delivery?: SessionTranscriptResponse["messages"][number]["delivery"];
+    providerPhase?: string;
     images?: ChatImage[];
     role: string;
     text: string;
@@ -180,6 +177,7 @@ export function messagesFromTranscript(
     messages.push({
       content: entry.text,
       delivery: entry.delivery,
+      ...(entry.providerPhase ? { providerPhase: entry.providerPhase } : {}),
       id: `transcript-${index}`,
       recordedOrdinal: index,
       images: entry.images?.length
@@ -195,6 +193,37 @@ export function messagesFromTranscript(
   return messages;
 }
 
+export function appendToolCall(
+  messages: ChatMessage[],
+  assistantId: string,
+  tool: ToolActivity,
+): ChatMessage[] {
+  if (messages.some((message) => message.tools?.some((current) => current.id === tool.id)))
+    return messages;
+  return updateOrAppendMessage(messages, assistantId, (message) => ({
+    ...message,
+    tools: [...(message.tools ?? []), tool],
+  }));
+}
+
+export function applyToolResult(
+  messages: ChatMessage[],
+  result: { callId: string; content: string; isError: boolean },
+): ChatMessage[] {
+  return messages.map((message) =>
+    message.tools?.some((tool) => tool.id === result.callId)
+      ? {
+          ...message,
+          tools: message.tools.map((tool) =>
+            tool.id === result.callId
+              ? { ...tool, isError: result.isError, output: result.content }
+              : tool,
+          ),
+        }
+      : message,
+  );
+}
+
 export function payloadText(payload: unknown): string {
   if (typeof payload !== "object" || payload === null || !("text" in payload)) {
     return "";
@@ -208,7 +237,12 @@ export function payloadImages(payload: unknown): ChatImage[] {
 
   return value.parts.flatMap((part, index) => {
     const record = payloadRecord(part);
-    if (record?.kind !== 1 || typeof record.mimeType !== "string") return [];
+    if (
+      record?.kind !== 1 ||
+      typeof record.mimeType !== "string" ||
+      !/^image\/[a-z0-9][a-z0-9!#$&^_.+-]*$/iu.test(record.mimeType)
+    )
+      return [];
     const encoded = payloadRecord(record.data);
     const data =
       encoded?.encoding === "base64" && typeof encoded.data === "string" ? encoded.data : undefined;
@@ -401,35 +435,33 @@ export function applyRunDelivery(
       })),
     };
   }
+  if (event.kind === "authorization.required" || event.kind === "authorization.resolved") {
+    return options.sessionId
+      ? {
+          ...next,
+          messages: recordAuthorizationEvent(
+            next.messages,
+            event,
+            options.sessionId,
+            next.activeAssistantId,
+          ),
+        }
+      : next;
+  }
   if (event.kind === "tool.call") {
     const tool = toolCall(event.payload);
     if (!tool) return next;
     return {
       ...next,
-      messages: updateOrAppendMessage(next.messages, next.activeAssistantId, (message) => ({
-        ...message,
-        tools: [...(message.tools ?? []), { ...tool, runId: event.runId || undefined }],
-      })),
+      messages: appendToolCall(next.messages, next.activeAssistantId, {
+        ...tool,
+        runId: event.runId || undefined,
+      }),
     };
   }
   if (event.kind === "tool.result") {
     const result = toolResult(event.payload);
-    if (!result) return next;
-    return {
-      ...next,
-      messages: next.messages.map((message) =>
-        message.id === next.activeAssistantId
-          ? {
-              ...message,
-              tools: message.tools?.map((tool) =>
-                tool.id === result.callId
-                  ? { ...tool, isError: result.isError, output: result.content }
-                  : tool,
-              ),
-            }
-          : message,
-      ),
-    };
+    return result ? { ...next, messages: applyToolResult(next.messages, result) } : next;
   }
   if (event.kind === "permission.ask") {
     const approval = permissionAsk(event.payload);

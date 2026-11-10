@@ -22,7 +22,7 @@ import (
 
 func stagedProposalFixture(t *testing.T, repo learning.ProposalRepository) (learning.ProposalPartition, learning.ProposalRecord) {
 	t.Helper()
-	trajectory := learning.NewTrajectory("source", "", session.StopEndTurn, session.Usage{}, []session.Message{session.NewUserMessage("Remember concise output")})
+	trajectory := currentTestTrajectory("source", "", session.StopEndTurn, session.Usage{}, []session.Message{session.NewUserMessage("Remember concise output")})
 	input := learning.NewInput(trajectory, nil, nil, nil)
 	ref, err := learning.MessageEvidenceRef(input, 0, "")
 	if err != nil {

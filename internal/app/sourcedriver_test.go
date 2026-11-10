@@ -312,10 +312,10 @@ func TestRemoteSkillSourceBuildRunDefaultAndNoFS(t *testing.T) {
 					results[ev.ToolResult.CallID] = *ev.ToolResult
 				}
 			}
-			if got := results["activate"]; got.IsError || !strings.Contains(got.Content, "references/checklist.md") {
+			if got := results[eventCallID(t, events, "Skill", 0)]; got.IsError || !strings.Contains(got.Content, "references/checklist.md") {
 				t.Fatalf("activation result = %+v", got)
 			}
-			if got := results["asset"]; got.IsError || !strings.Contains(got.Content, "correctness first") {
+			if got := results[eventCallID(t, events, skills.ToolName, 1)]; got.IsError || !strings.Contains(got.Content, "correctness first") {
 				t.Fatalf("asset result = %+v", got)
 			}
 

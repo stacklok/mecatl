@@ -18,7 +18,7 @@ import (
 
 func TestSemanticAttemptDiscardsTentativeFailedChunks(t *testing.T) {
 	retryable := apiErr(503)
-	call := session.ToolCall{ID: "call-1", Name: "Read"}
+	call := port.LLMToolCall{ID: "call-1", Name: "Read"}
 	tests := []struct {
 		name      string
 		tentative []port.Chunk
@@ -26,7 +26,7 @@ func TestSemanticAttemptDiscardsTentativeFailedChunks(t *testing.T) {
 		{name: "whitespace", tentative: []port.Chunk{{Kind: port.ChunkText, Text: " \n"}}},
 		{name: "metadata in wire order", tentative: []port.Chunk{
 			{Kind: port.ChunkReasoning, Text: "reasoning"},
-			{Kind: port.ChunkReasoningItem, Text: "replay"},
+			{Kind: port.ChunkReplay, Replay: &session.ProviderReplay{Format: "test", Version: 1, Data: []byte(`"replay"`)}, ReplayIsOutput: true},
 			{Kind: port.ChunkPhase, Text: "commentary"},
 			{Kind: port.ChunkUsage, Usage: &session.Usage{InputTokens: 7}},
 			{Kind: port.ChunkProviderRoute, Text: "route"},
@@ -55,7 +55,7 @@ func TestSemanticAttemptDiscardsTentativeFailedChunks(t *testing.T) {
 				if chunk.Kind == port.ChunkText && chunk.Text == "successful attempt" {
 					successfulText++
 				}
-				if chunk.Kind == port.ChunkReasoning || chunk.Kind == port.ChunkReasoningItem ||
+				if chunk.Kind == port.ChunkReasoning || chunk.Kind == port.ChunkReplay ||
 					chunk.Kind == port.ChunkPhase || chunk.Kind == port.ChunkProviderRoute || chunk.Kind == port.ChunkToolCall {
 					t.Fatalf("failed-attempt semantic chunk escaped: %+v", chunk)
 				}
@@ -131,12 +131,12 @@ func TestSemanticRetryExhaustionReturnsObservedUsage(t *testing.T) {
 }
 
 func TestSemanticAttemptFlushesEveryTentativeKindInExactOrder(t *testing.T) {
-	call := session.ToolCall{ID: "call-1", Name: "Read", Args: []byte(`{"path":"a"}`)}
+	call := port.LLMToolCall{ID: "call-1", Name: "Read", Args: []byte(`{"path":"a"}`)}
 	usage := session.Usage{InputTokens: 7, OutputTokens: 3, CacheReadTokens: 2}
 	chunks := []port.Chunk{
 		{Kind: port.ChunkText, Text: " \n"},
 		{Kind: port.ChunkReasoning, Text: "reasoning"},
-		{Kind: port.ChunkReasoningItem, Text: "replay-item"},
+		{Kind: port.ChunkReplay, Replay: &session.ProviderReplay{Format: "test", Version: 1, Data: []byte(`"replay-item"`)}},
 		{Kind: port.ChunkPhase, Text: "commentary"},
 		{Kind: port.ChunkProviderRoute, Text: "route-a"},
 		{Kind: port.ChunkUsage, Usage: &usage},
@@ -153,10 +153,8 @@ func TestSemanticAttemptFlushesEveryTentativeKindInExactOrder(t *testing.T) {
 	if err != nil {
 		t.Fatalf("drain: %v", err)
 	}
-	// Accounting already accepted during establishment precedes semantic chunks;
-	// the semantic subsequence still preserves its exact wire order.
-	want := append([]port.Chunk{{Kind: port.ChunkUsage, Usage: &usage}}, chunks[:5]...)
-	want = append(want, chunks[6:]...)
+	// Accounting precedes semantics; private replay waits until completion.
+	want := []port.Chunk{{Kind: port.ChunkUsage, Usage: &usage}, chunks[0], chunks[1], chunks[3], chunks[4], chunks[6], chunks[7], chunks[2], chunks[8]}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("chunks differ\n got: %#v\nwant: %#v", got, want)
 	}
@@ -193,7 +191,7 @@ func TestSemanticAttemptFirstVisibleTextHasNoTentativeBuffer(t *testing.T) {
 }
 
 func TestSemanticAttemptCleanCompletionFlushesTentativeTurn(t *testing.T) {
-	call := session.ToolCall{ID: "call-1", Name: "Read"}
+	call := port.LLMToolCall{ID: "call-1", Name: "Read"}
 	tests := []struct {
 		name   string
 		chunks []port.Chunk
@@ -365,7 +363,7 @@ func TestIdleWatchdogResetsOnTentativeRawActivity(t *testing.T) {
 	f := &fakeProvider{steps: []step{{
 		chunks: []port.Chunk{
 			{Kind: port.ChunkReasoning, Text: "r1"},
-			{Kind: port.ChunkReasoningItem, Text: "r2"},
+			{Kind: port.ChunkReplay, Replay: &session.ProviderReplay{Format: "test", Version: 1, Data: []byte(`"r2"`)}},
 			{Kind: port.ChunkPhase, Text: "commentary"},
 			{Kind: port.ChunkDone, Stop: session.StopEndTurn},
 		},
@@ -398,7 +396,7 @@ func (p *cancelAfterTentativeProvider) Stream(ctx context.Context, _ port.LLMReq
 		}, nil
 	}
 	return func(yield func(port.Chunk, error) bool) {
-		if !yield(port.Chunk{Kind: port.ChunkToolCall, ToolCall: &session.ToolCall{ID: "discard", Name: "Read"}}, nil) {
+		if !yield(port.Chunk{Kind: port.ChunkToolCall, ToolCall: &port.LLMToolCall{ID: "discard", Name: "Read"}}, nil) {
 			return
 		}
 		p.once.Do(func() { close(p.started) })
@@ -488,7 +486,7 @@ func TestPrecommitIdleStallRetriesWithoutEscapingFailedChunks(t *testing.T) {
 
 func TestRepeatedPrecommitIdleStallsExhaustRetryable(t *testing.T) {
 	f := &fakeProvider{steps: []step{{
-		chunks:           []port.Chunk{{Kind: port.ChunkToolCall, ToolCall: &session.ToolCall{ID: "discard", Name: "Read"}}},
+		chunks:           []port.Chunk{{Kind: port.ChunkToolCall, ToolCall: &port.LLMToolCall{ID: "discard", Name: "Read"}}},
 		stallAfterChunks: true,
 	}}}
 	cfg := tinyBackoffCfg(2)
