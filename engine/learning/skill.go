@@ -324,6 +324,30 @@ func ValidateSkillProvenance(p SkillProvenance) error {
 	return nil
 }
 
+// ValidateSkillActivationProvenance retires non-current reflection evidence at
+// activation, without making previously stored skills or history unreadable.
+// Evidence-free legacy model imports remain eligible for ordinary PASS activation.
+func ValidateSkillActivationProvenance(p SkillProvenance) error {
+	evidence := len(p.EvidenceRefs)
+	for _, ref := range p.EvidenceRefs {
+		if ref.Protocol != ReflectionEvidenceV2 {
+			return fmt.Errorf("%w: activation requires current evidence protocol", ErrSkillTransition)
+		}
+	}
+	for _, signal := range p.Signals {
+		evidence += len(signal.Evidence)
+		for _, ref := range signal.Evidence {
+			if ref.Protocol != ReflectionEvidenceV2 {
+				return fmt.Errorf("%w: activation requires current signal evidence protocol", ErrSkillTransition)
+			}
+		}
+	}
+	if evidence == 0 && p.Origin != SkillProvenanceLegacyModel {
+		return fmt.Errorf("%w: activation requires current evidence", ErrSkillTransition)
+	}
+	return nil
+}
+
 func validSkillEvidence(ref EvidenceRef) bool {
 	if ref.SessionID == "" || len(ref.SessionID) > 256 || ref.Ordinal < 0 || !validProposalDigest(ref.Digest) ||
 		len(ref.ToolCallID) > 256 || !utf8.ValidString(string(ref.SessionID)) || !utf8.ValidString(string(ref.ToolCallID)) ||

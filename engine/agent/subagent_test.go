@@ -129,9 +129,10 @@ func TestSubagentReturnsOnlyFinalString(t *testing.T) {
 
 	// The parent must NEVER see the child's intermediate signals. The child read
 	// "main.go" and its tool result content was "child read the file ...".
+	childCallID := eventSubagentCallID(t, evs, eventSubagentID(t, evs, 0), "Read")
 	for _, ev := range evs {
-		if ev.ToolCall != nil && ev.ToolCall.ID == "k1" {
-			t.Fatalf("parent observed the child's intermediate tool.call (id k1)")
+		if ev.ToolCall != nil && ev.ToolCall.ID == childCallID {
+			t.Fatalf("parent observed the child's intermediate tool.call (id %q)", childCallID)
 		}
 		if ev.ToolResult != nil && strings.Contains(ev.ToolResult.Content, "child read the file") {
 			t.Fatalf("parent observed the child's intermediate tool.result")
@@ -164,8 +165,8 @@ func TestSubagentReturnsOnlyFinalString(t *testing.T) {
 		if strings.Contains(msg.Text, childMsgText) {
 			t.Fatalf("child message text leaked into parent Conversation: %q", msg.Text)
 		}
-		if strings.Contains(msg.Reasoning, childMsgText) {
-			t.Fatalf("child reasoning leaked into parent Conversation: %q", msg.Reasoning)
+		if msg.Replay != nil && msg.Replay.Provider != nil && strings.Contains(string(msg.Replay.Provider.Data), childMsgText) {
+			t.Fatal("child replay leaked into parent Conversation")
 		}
 		for _, tc := range msg.ToolCalls {
 			if tc.Name == "Read" {
@@ -184,7 +185,7 @@ func TestSubagentReturnsOnlyFinalString(t *testing.T) {
 		switch ev.Type {
 		case session.EvSubagentStart:
 			starts++
-			if ev.Subagent == nil || ev.Subagent.ParentCallID != "p1" || ev.Subagent.ChildID == "" {
+			if ev.Subagent == nil || ev.Subagent.ParentCallID != boundCallID(t, sess, "p1") || ev.Subagent.ChildID == "" {
 				t.Fatalf("subagent.start malformed: %+v", ev.Subagent)
 			}
 		case session.EvSubagentTool:
@@ -194,7 +195,7 @@ func TestSubagentReturnsOnlyFinalString(t *testing.T) {
 			toolEvents = append(toolEvents, ev.Subagent)
 		case session.EvSubagentEnd:
 			ends++
-			if ev.Subagent == nil || ev.Subagent.ParentCallID != "p1" {
+			if ev.Subagent == nil || ev.Subagent.ParentCallID != boundCallID(t, sess, "p1") {
 				t.Fatalf("subagent.end malformed: %+v", ev.Subagent)
 			}
 			// End carries aggregate metadata only.
@@ -450,9 +451,9 @@ func TestSubagentConcurrentAttribution(t *testing.T) {
 	evs := drain(r)
 
 	// Expected tool name per parent call id.
-	wantTool := map[string]string{"pa": "Alpha", "pb": "Bravo"}
-	starts := map[string]int{}
-	ends := map[string]int{}
+	wantTool := map[session.ToolCallID]string{eventCallID(t, evs, "TaskA", 0): "Alpha", eventCallID(t, evs, "TaskB", 0): "Bravo"}
+	starts := map[session.ToolCallID]int{}
+	ends := map[session.ToolCallID]int{}
 	for _, ev := range evs {
 		if ev.Subagent == nil {
 			continue
@@ -475,7 +476,7 @@ func TestSubagentConcurrentAttribution(t *testing.T) {
 			ends[p]++
 		}
 	}
-	for _, p := range []string{"pa", "pb"} {
+	for p := range wantTool {
 		if starts[p] != 1 || ends[p] != 1 {
 			t.Fatalf("parent %q: starts=%d ends=%d, want 1/1", p, starts[p], ends[p])
 		}

@@ -61,8 +61,9 @@ func TestToolResultAvailability_Uniform(t *testing.T) {
 				}
 			}
 			for _, call := range tc.calls {
-				if len(available[call.ID]) != 1 || canonical[call.ID] != 1 {
-					t.Errorf("%s: availability=%d canonical=%d; events=%v", call.ID, len(available[call.ID]), canonical[call.ID], typesOf(events))
+				id := boundCallID(t, sess, session.ProviderCallID(call.ID))
+				if len(available[id]) != 1 || canonical[id] != 1 {
+					t.Errorf("%s: availability=%d canonical=%d; events=%v", id, len(available[id]), canonical[id], typesOf(events))
 				}
 			}
 			if len(available) != len(tc.calls) || len(canonical) != len(tc.calls) || sess.Counters.ToolCalls != len(tc.calls) {
@@ -99,9 +100,10 @@ func TestToolResultAvailability_Uniform(t *testing.T) {
 		resume := newEngine(agent.Deps{LLM: mockllm.New(mockllm.TextTurn("done")), Catalog: catalogWith(t, write), Policy: policy})
 		events := drain(resume.ResumeApproval(context.Background(), restored, agent.MemEnv("/ws"), askID, session.VerdictDeny))
 		for _, call := range calls {
+			id := boundCallID(t, restored, session.ProviderCallID(call.ID))
 			var available, canonical []session.ToolResult
 			for _, ev := range events {
-				if ev.ToolResult == nil || ev.ToolResult.CallID != call.ID {
+				if ev.ToolResult == nil || ev.ToolResult.CallID != id {
 					continue
 				}
 				switch ev.Type {

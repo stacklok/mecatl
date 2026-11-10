@@ -59,7 +59,7 @@ func TestIsGenuineUserTurnSkipsInjectedFragments(t *testing.T) {
 		injectedMemoryFragment(t),
 		session.NewUserMessage(session.CompactionSummaryMarker + " earlier turns…"),
 		session.NewUserMessage(session.Tier4SummaryMarker + "\n## Goal"),
-		session.NewAssistantMessage("not a user turn", "", nil),
+		session.NewAssistantMessage("not a user turn", nil),
 	} {
 		if isGenuineUserTurn(m) {
 			t.Fatalf("isGenuineUserTurn must skip non-genuine message: %q", m.Text)
@@ -74,11 +74,11 @@ func TestIsGenuineUserTurnSkipsInjectedFragments(t *testing.T) {
 // never pull the goal into the tail nor anchor on a fragment.
 func TestFirstUserAndFloorAnchorPastInjectedFragments(t *testing.T) {
 	msgs := []session.Message{
-		session.NewSystemMessage("system rules"),   // 0
-		injectedSoulFragment(t),                    // 1 (RoleUser, injected)
-		injectedMemoryFragment(t),                  // 2 (RoleUser, injected)
-		session.NewUserMessage("THE REAL GOAL"),    // 3 (genuine)
-		session.NewAssistantMessage("ok", "", nil), // 4
+		session.NewSystemMessage("system rules"), // 0
+		injectedSoulFragment(t),                  // 1 (RoleUser, injected)
+		injectedMemoryFragment(t),                // 2 (RoleUser, injected)
+		session.NewUserMessage("THE REAL GOAL"),  // 3 (genuine)
+		session.NewAssistantMessage("ok", nil),   // 4
 	}
 	got, ok := firstUser(msgs)
 	if !ok || got.Text != "THE REAL GOAL" {
@@ -107,7 +107,7 @@ func TestSnapCutToRecentUserTurn(t *testing.T) {
 			case 's':
 				out[i] = session.NewUserMessage(session.CompactionSummaryMarker + " synthesised")
 			case 'a':
-				out[i] = session.NewAssistantMessage("a", "", nil)
+				out[i] = session.NewAssistantMessage("a", nil)
 			case 't':
 				out[i] = session.NewToolMessage(session.NewToolResult("c", "body"))
 			default:

@@ -310,10 +310,10 @@ func TestContextualGuardrails_ConcurrentInboundReleaseOrdering(t *testing.T) {
 			results = append(results, *ev.ToolResult)
 		}
 	}
-	if want := []session.ToolCallID{"one", "two"}; !reflect.DeepEqual(asks, want) {
+	if want := []session.ToolCallID{boundCallID(t, sess, "one"), boundCallID(t, sess, "two")}; !reflect.DeepEqual(asks, want) {
 		t.Fatalf("ask order=%v want=%v", asks, want)
 	}
-	if len(results) != 2 || results[0].Content != "secret-one" || !results[1].IsError || strings.Contains(results[1].Content, "secret-two") {
+	if len(results) != 2 || results[0].Content != "secret-"+string(boundCallID(t, sess, "one")) || !results[1].IsError || strings.Contains(results[1].Content, "secret-"+string(boundCallID(t, sess, "two"))) {
 		t.Fatalf("results=%+v", results)
 	}
 	if err := session.ValidateToolPairing(sess.Conversation.Messages); err != nil {
@@ -338,7 +338,7 @@ func TestContextualGuardrails_ConcurrentInboundReleaseOrdering(t *testing.T) {
 			cancelledResults = append(cancelledResults, *ev.ToolResult)
 		}
 	}
-	if len(cancelledResults) != 2 || cancelledResults[0].Content != "secret-one" || !cancelledResults[1].IsError || strings.Contains(cancelledResults[1].Content, "secret-two") {
+	if len(cancelledResults) != 2 || cancelledResults[0].Content != "secret-"+string(boundCallID(t, cancelledSession, "one")) || !cancelledResults[1].IsError || strings.Contains(cancelledResults[1].Content, "secret-"+string(boundCallID(t, cancelledSession, "two"))) {
 		t.Fatalf("cancelled results=%+v", cancelledResults)
 	}
 	if err := session.ValidateToolPairing(cancelledSession.Conversation.Messages); err != nil {

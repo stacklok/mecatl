@@ -36,17 +36,11 @@ func (readTool) Execute(_ context.Context, in session.ToolCall, _ tool.Environme
 // two ways — Fold over the event log, and SessionStore.Load over the snapshot — and
 // asserts they are deep-equal on the MUST fields.
 //
-// CONTRACT BOUNDARY: this equivalence holds because mockllm exercises NO opaque replay
-// fields (Message.Reasoning / Message.ProviderPhase / ToolCall.ItemID are all empty),
-// which is exactly the provider class for which the fold is byte-identical-replay
-// faithful. A reasoning provider would diverge on those snapshot-only fields — the
-// documented limitation (see the package doc). The CORE proof here is the
-// Conversation deep-equal: buildRequest sends the Conversation verbatim, so two
-// deep-equal conversations replay byte-identically given a stable System/Tools/Model.
-// (We assert the conversation + counters + usage + state directly rather than a
-// captured LLMRequest because the engine-level request observer plumbing would add
-// significant harness weight for the same guarantee the conversation deep-equal already
-// gives on this provider class.)
+// CONTRACT BOUNDARY: the assertion compares structural history after removing
+// snapshot-private Message.Replay, including occurrence bindings. A pure fold
+// cannot reconstruct original provider tokens or opaque payloads from canonical
+// execution events. It can project replay-free history with fresh boundary pairing,
+// but that does not prove byte-identical replay to the original provider request.
 func TestFoldEqualsSnapshotLoad(t *testing.T) {
 	const sessID session.SessionID = "det-1"
 
@@ -109,13 +103,13 @@ func TestFoldEqualsSnapshotLoad(t *testing.T) {
 		t.Fatalf("fold: %v", err)
 	}
 
-	// MUST round-trip: the FULL Conversation (every field mockllm exercises), INCLUDING
-	// the user prompt — now event-carried via EvUserPrompt, so the fold reconstructs it
-	// (no user-strip carve-out). This is the provider class with no opaque replay fields
-	// (Reasoning/ProviderPhase/ItemID all empty), so a full deep-equal here is the
-	// byte-identical-replay proof: buildRequest sends the Conversation verbatim, so two
-	// deep-equal conversations replay byte-identically given a stable System/Tools/Model.
-	if !reflect.DeepEqual(folded.Conversation.Messages, snap.Conversation.Messages) {
+	// Structural history is event-carried; occurrence bindings and provider replay
+	// are snapshot-private. A fold must not fabricate either from canonical IDs.
+	structural := session.CloneMessages(snap.Conversation.Messages)
+	for i := range structural {
+		structural[i].Replay = nil
+	}
+	if !reflect.DeepEqual(folded.Conversation.Messages, structural) {
 		t.Fatalf("conversation mismatch:\n folded=%+v\n  snap=%+v", folded.Conversation.Messages, snap.Conversation.Messages)
 	}
 	// MUST round-trip: cumulative Usage (folded sums per-run EvResult; snap persists it).

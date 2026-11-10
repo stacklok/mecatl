@@ -1,0 +1,14 @@
+{
+  "id": "legacy-completed", "state": "completed", "mode": "default",
+  "limits": {}, "counters": {"Turns": 2}, "stop_reason": "end_turn",
+  "created_at": "2025-01-02T03:04:05Z",
+  "provider_id": "configured-provider-selector",
+  "messages": [
+    {"role":"user", "text":"Read both files"},
+    {"role":"assistant", "text":"First", "reasoning":"{\"v\":1,\"blocks\":[{\"t\":\"thinking\",\"x\":\"private thought\",\"s\":\"opaque signature\",\"d\":\"\"}]}", "tool_calls":[{"ID":"reused", "Name":"Read", "Args":{"path":"a"}, "item_id":"item-a"}]},
+    {"role":"tool", "tool_result":{"CallID":"reused", "Content":"first", "Parts":[{"BlockKind":"text", "Text":"first"}]}},
+    {"role":"assistant", "phase":"final_answer", "tool_calls":[{"ID":"reused", "Name":"Read", "Args":{"path":"b"}, "item_id":"item-b"}]},
+    {"role":"tool", "tool_result":{"CallID":"reused", "Content":"second"}}
+  ],
+  "environment_ref":{"Kind":"mem", "ID":"legacy-workspace", "Revision":"v1"}
+}

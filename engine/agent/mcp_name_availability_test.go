@@ -41,7 +41,7 @@ func TestGrantedMissingToolIsPermanentlyUnavailableWithoutDispatch(t *testing.T)
 		t.Fatalf("authority evaluator calls = %d, want 0 because no dispatch gate may run", got)
 	}
 	for _, event := range events {
-		if event.ToolResult != nil && event.ToolResult.CallID == "gone" {
+		if event.ToolResult != nil && event.ToolResult.CallID == eventCallID(t, events, name, 0) {
 			if !event.ToolResult.IsError || event.ToolResult.Content != want {
 				t.Fatalf("missing granted result = {error:%v content:%q}, want exact permanent unavailable error", event.ToolResult.IsError, event.ToolResult.Content)
 			}
@@ -62,7 +62,7 @@ func TestUngrantedMissingToolRetainsUnknownBehavior(t *testing.T) {
 	events := drain(eng.Run(context.Background(), authoritySession(t, "Read"), agent.MemEnv("/ws"), agent.RunRequest{Text: "call it"}))
 	want := `unknown tool "` + name + `"`
 	for _, event := range events {
-		if event.ToolResult != nil && event.ToolResult.CallID == "unknown" {
+		if event.ToolResult != nil && event.ToolResult.CallID == eventCallID(t, events, name, 0) {
 			if !event.ToolResult.IsError || event.ToolResult.Content != want {
 				t.Fatalf("ungranted missing result = {error:%v content:%q}, want %q", event.ToolResult.IsError, event.ToolResult.Content, want)
 			}
@@ -98,11 +98,11 @@ func TestResumedApprovalOfGrantedMissingToolIsPermanentlyUnavailable(t *testing.
 	})
 	evs := resumeEvents(e2.ResumeApproval(context.Background(), restored, agent.MemEnv("/ws"), askID, session.VerdictAllowOnce))
 
-	if nonError, total := resultsFor(evs, "g1"); nonError != 0 || total != 1 {
+	if nonError, total := resultsFor(evs, boundCallID(t, restored, "g1")); nonError != 0 || total != 1 {
 		t.Fatalf("results for g1: non-error=%d total=%d, want exactly one error result", nonError, total)
 	}
 	for _, ev := range evs {
-		if ev.Type == session.EvToolResult && ev.ToolResult != nil && ev.ToolResult.CallID == "g1" {
+		if ev.Type == session.EvToolResult && ev.ToolResult != nil && ev.ToolResult.CallID == boundCallID(t, restored, "g1") {
 			if ev.ToolResult.Content != want {
 				t.Fatalf("resumed result = %q, want %q", ev.ToolResult.Content, want)
 			}

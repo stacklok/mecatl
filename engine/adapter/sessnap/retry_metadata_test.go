@@ -83,9 +83,9 @@ func TestSnapshotRoundTripsPreparedFailedStepRetry(t *testing.T) {
 func TestSnapshotRejectsInvalidRetryVocabulary(t *testing.T) {
 	env := session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}
 	cases := []Snapshot{
-		{ID: "bad-disposition", State: session.StateFailed, StopReason: session.StopError, RetryDisposition: session.RetryDisposition(99), TokenUsage: map[session.UsageKind]session.TokenUsage{}, EnvironmentRef: env, CreatedAt: time.Now()},
-		{ID: "bad-progress", State: session.StateFailed, StopReason: session.StopError, StreamProgress: session.StreamProgress(99), TokenUsage: map[session.UsageKind]session.TokenUsage{}, EnvironmentRef: env, CreatedAt: time.Now()},
-		{ID: "bad-pending", State: session.StateIdle, RetryPending: true, RetryPendingDisposition: session.RetryDisposition(99), RetryPendingProgress: session.StreamProgressPrecommit, TokenUsage: map[session.UsageKind]session.TokenUsage{}, EnvironmentRef: env, CreatedAt: time.Now()},
+		{IdentitySchema: 2, ID: "bad-disposition", State: session.StateFailed, StopReason: session.StopError, RetryDisposition: session.RetryDisposition(99), TokenUsage: map[session.UsageKind]session.TokenUsage{}, EnvironmentRef: env, CreatedAt: time.Now()},
+		{IdentitySchema: 2, ID: "bad-progress", State: session.StateFailed, StopReason: session.StopError, StreamProgress: session.StreamProgress(99), TokenUsage: map[session.UsageKind]session.TokenUsage{}, EnvironmentRef: env, CreatedAt: time.Now()},
+		{IdentitySchema: 2, ID: "bad-pending", State: session.StateIdle, RetryPending: true, RetryPendingDisposition: session.RetryDisposition(99), RetryPendingProgress: session.StreamProgressPrecommit, TokenUsage: map[session.UsageKind]session.TokenUsage{}, EnvironmentRef: env, CreatedAt: time.Now()},
 	}
 	for _, snap := range cases {
 		if _, err := snap.Restore(); err == nil {

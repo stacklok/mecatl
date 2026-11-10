@@ -90,6 +90,9 @@ func (r *UserModelReviewer) Review(ctx context.Context, sessionID string) error 
 	if err != nil {
 		return fmt.Errorf("usermodel review: load session %q: %w", sessionID, err)
 	}
+	if !sess.LearningEligible() {
+		return nil
+	}
 	// The legacy caller's ambient ctx may carry no principal at all (e.g. a
 	// composition-level trigger outside any authenticated request), so stamp the
 	// AUTHORITATIVE owner off the loaded session record rather than trusting
@@ -105,6 +108,9 @@ func (r *UserModelReviewer) Review(ctx context.Context, sessionID string) error 
 // Unlike the legacy Review method it needs no SessionStore reload and therefore
 // observes exactly the history that completed.
 func (r *UserModelReviewer) Observe(ctx context.Context, tr learning.Trajectory) error {
+	if !tr.LearningEligible() {
+		return nil
+	}
 	return r.reviewMessages(ctx, string(tr.SessionID), tr.Workspace, tr.Messages)
 }
 

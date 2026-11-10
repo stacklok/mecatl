@@ -71,19 +71,11 @@ func TestParentDiscoversTeamIDFromResultAndInspects(t *testing.T) {
 	inspectTool := agent.NewInspectMemberTool(store)
 	parentCat := catalogWith(t, teamTool, inspectTool)
 
-	// The parent's Team call id is the published team id. The parent's turn-2
-	// InspectMember must pass THAT id; we script it to use the Team call id "p1"
-	// VERBATIM (which is exactly what extractTeamID will recover from the result, and
-	// what the test asserts below — so the script and the surfaced id agree).
-	// The published team id is namespaced under the parent session id (review
-	// finding 2, issue #368): session "s1" (newSession) + Team call id "p1" =>
-	// "s1-p1". The turn-2 InspectMember script uses that pre-computed value —
-	// exactly what extractTeamID will recover from the result.
-	parentLLM := mockllm.New(
+	// InspectMember learns the actual published team handle from the prior result.
+	parentLLM := newScriptedLLM(
 		mockllm.ToolCallTurn(session.NewToolCall("p1", "Team",
 			json.RawMessage(`{"goal":"fix it","members":[{"name":"lead","role":"lead"},{"name":"worker","role":"work"}]}`))),
-		mockllm.ToolCallTurn(session.NewToolCall("p2", "InspectMember",
-			json.RawMessage(`{"team_id":"s1-p1","member":"worker"}`))),
+		handleTurn(t, "p1", toolCall("p2", "InspectMember", `{"member":"worker"}`), "team_id"),
 		mockllm.TextTurn("parent done"),
 	)
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: parentCat})
@@ -102,8 +94,8 @@ func TestParentDiscoversTeamIDFromResultAndInspects(t *testing.T) {
 	gotID := extractTeamID(t, teamBody)
 	// The surfaced id must be the published id (parent-session-id + Team call
 	// id), byte-identical, so MemberSessionID reconstructs the saved id.
-	if gotID != "s1-p1" {
-		t.Fatalf("surfaced team id = %q, want the published team id %q (verbatim, per the MemberSessionID contract)", gotID, "s1-p1")
+	if want := string(sess.ID) + "-" + string(boundCallID(t, sess, "p1")); gotID != want {
+		t.Fatalf("surfaced team id = %q, want the accepted call's published team id %q", gotID, want)
 	}
 
 	// 2. The parent's InspectMember call (using the surfaced id) must succeed with a

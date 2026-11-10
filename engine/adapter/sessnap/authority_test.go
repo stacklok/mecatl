@@ -142,7 +142,7 @@ func TestSessionScopedAgentIdentity_RestoreRejectsAgentBoundSnapshotWithoutCeili
 				t.Fatalf("missing authority restored: %v, %v", restored, err)
 			}
 		}
-		snap := sessnap.Snapshot{ID: "agent", AgentDefinitionName: "escalator", EnvironmentRef: session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "v1"}}
+		snap := sessnap.Snapshot{IdentitySchema: 2, ID: "agent", AgentDefinitionName: "escalator", EnvironmentRef: session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "v1"}}
 		if restored, err := snap.Restore(); err == nil || restored != nil {
 			t.Fatalf("nil authority restored: %v, %v", restored, err)
 		}

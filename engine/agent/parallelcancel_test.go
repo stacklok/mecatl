@@ -125,7 +125,7 @@ func (p *cancelRoutingProvider) Stream(ctx context.Context, req port.LLMRequest)
 	} else {
 		call := toolCall("t1", route.toolName, `{}`)
 		chunks = []port.Chunk{
-			{Kind: port.ChunkToolCall, ToolCall: &call},
+			mockllm.ToolCallChunk(call),
 			{Kind: port.ChunkUsage, Usage: &session.Usage{}},
 			{Kind: port.ChunkDone, Stop: session.StopEndTurn},
 		}
@@ -231,7 +231,7 @@ func TestCancelParallelBranchJoinAll(t *testing.T) {
 	// The D16 child id rides branch_start AND branch_end ("parallel-<callID>-<i>").
 	for _, kind := range []session.ParallelEventKind{session.ParallelBranchStart, session.ParallelBranchEnd} {
 		for _, p := range branchPayloads(evs, kind) {
-			want := fmt.Sprintf("parallel-s1-p1-%d", p.BranchIndex)
+			want := fmt.Sprintf("parallel-s1-%s-%d", eventCallID(t, evs, "Parallel", 0), p.BranchIndex)
 			if p.ChildID != want {
 				t.Errorf("%s branch %d ChildID = %q, want %q", kind, p.BranchIndex, p.ChildID, want)
 			}
@@ -446,6 +446,7 @@ func TestCancelParallelBranchWhileQueued(t *testing.T) {
 	)
 	r := e.Run(context.Background(), newSession(t, session.Limits{}), agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
 
+	parentCall := make(chan session.ToolCallID, 1)
 	var cancelDone sync.WaitGroup
 	cancelDone.Add(1)
 	queuedTerminal := make(chan int, 2)
@@ -465,17 +466,21 @@ func TestCancelParallelBranchWhileQueued(t *testing.T) {
 			runningIdx = 1
 		}
 		queuedIdx = 1 - runningIdx
-		queuedOK = r.CancelChild(fmt.Sprintf("parallel-s1-p1-%d", queuedIdx))
+		callID := <-parentCall
+		queuedOK = r.CancelChild(fmt.Sprintf("parallel-s1-%s-%d", callID, queuedIdx))
 
 		// Keep the only slot occupied until the queued branch has taken its
 		// cancellation path. Releasing it first would make both cases in
 		// launchBranch's semaphore select ready and reintroduce a scheduler race.
 		for <-queuedTerminal != queuedIdx {
 		}
-		runningOK = r.CancelChild(fmt.Sprintf("parallel-s1-p1-%d", runningIdx))
+		runningOK = r.CancelChild(fmt.Sprintf("parallel-s1-%s-%d", callID, runningIdx))
 	}()
 
 	evs := drainObserving(t, r, func(ev session.Event) {
+		if ev.Type == session.EvToolCall && ev.ToolCall != nil && ev.ToolCall.Name == "Parallel" {
+			parentCall <- ev.ToolCall.ID
+		}
 		if ev.Type == session.EvParallelBranch && ev.Parallel != nil &&
 			ev.Parallel.Kind == session.ParallelBranchEnd {
 			queuedTerminal <- ev.Parallel.BranchIndex

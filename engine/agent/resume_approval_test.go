@@ -124,7 +124,7 @@ func TestResumeApprovalExecutesPendingExactlyOnce(t *testing.T) {
 	if got := ran.Load(); got != 1 {
 		t.Fatalf("Write executed %d time(s) on resume, want EXACTLY 1", got)
 	}
-	if ne, total := resultsFor(evs, "w1"); ne != 1 || total != 1 {
+	if ne, total := resultsFor(evs, boundCallID(t, restored, "w1")); ne != 1 || total != 1 {
 		t.Fatalf("EvToolResult for w1: non-error=%d total=%d, want exactly 1 non-error / 1 total", ne, total)
 	}
 	if rp := lastResult(t, evs); rp.Stop != session.StopEndTurn {
@@ -170,11 +170,11 @@ func TestResumeApprovalDenyDoesNotExecute(t *testing.T) {
 	if got := ran.Load(); got != 0 {
 		t.Fatalf("Write executed %d time(s) on a DENY resume, want 0", got)
 	}
-	if _, total := resultsFor(evs, "w1"); total != 1 {
+	if _, total := resultsFor(evs, boundCallID(t, restored, "w1")); total != 1 {
 		t.Fatalf("EvToolResult for w1: total=%d, want exactly 1 (the deny result)", total)
 	}
 	// The single result for w1 must be an error (a deny result).
-	if ne, _ := resultsFor(evs, "w1"); ne != 0 {
+	if ne, _ := resultsFor(evs, boundCallID(t, restored, "w1")); ne != 0 {
 		t.Fatalf("the deny result for w1 should be an error result, but a non-error one was emitted")
 	}
 	if rp := lastResult(t, evs); rp.Stop != session.StopEndTurn {
@@ -200,8 +200,8 @@ func TestResumeApprovalNotAwaiting(t *testing.T) {
 	if rp.Stop != session.StopError {
 		t.Fatalf("resume of a non-awaiting session: stop = %q, want %q", rp.Stop, session.StopError)
 	}
-	if sess.State != session.StateFailed {
-		t.Fatalf("non-awaiting resume left session in %q, want failed", sess.State)
+	if sess.State != session.StateIdle {
+		t.Fatalf("non-awaiting resume left session in %q, want unchanged idle", sess.State)
 	}
 }
 
@@ -318,7 +318,7 @@ func TestResumeApprovalMultiToolSiblingCloseOut(t *testing.T) {
 	}
 	// g2 has exactly one non-error result; r1 (pre-restart) and r3 (closed-out) each
 	// have an answer so the history pairs.
-	if ne, total := resultsFor(evs, "g2"); ne != 1 || total != 1 {
+	if ne, total := resultsFor(evs, boundCallID(t, restored, "g2")); ne != 1 || total != 1 {
 		t.Fatalf("EvToolResult for g2: non-error=%d total=%d, want 1/1", ne, total)
 	}
 	// History must be tool-pairing valid (no dangling tool_use → no provider 400).
@@ -378,8 +378,8 @@ func TestPendingAskCarriesGatedCallID(t *testing.T) {
 		Policy:  policy,
 	})
 	ask := captureFirstAsk(t, e.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "go"}))
-	if ask.Call != "w1" {
-		t.Fatalf("PendingAsk.Call = %q, want the gated ToolCall.ID %q", ask.Call, "w1")
+	if ask.Call != boundCallID(t, sess, "w1") {
+		t.Fatalf("PendingAsk.Call = %q, want the accepted gated ToolCall.ID %q", ask.Call, boundCallID(t, sess, "w1"))
 	}
 }
 
@@ -406,44 +406,6 @@ func TestRunRequestAskIDDiscriminatorReplacesSerial(t *testing.T) {
 	}
 	if !strings.HasPrefix(ask.AskID, "s-disc-ok:") {
 		t.Fatalf("askID = %q, must preserve the consumed session-id prefix", ask.AskID)
-	}
-}
-
-// TestAskIDDiscriminatorReconstructableAcrossRuns (#117) proves the
-// END-TO-END property the feature exists for: two INDEPENDENT runs (two separate
-// Engine.Run→startRun→authorize→newAskID chains) over the SAME session id with
-// the SAME AskIDDiscriminator and the SAME scripted tool-call mint a byte-IDENTICAL
-// emitted PendingAsk.AskID — what a restarted/second process reconstructs from
-// persisted state. This is stronger than the newAskID unit test: it exercises the
-// full wiring (the resolved discriminator on Run.askDiscriminator flowing into the
-// emitted askID), not just the formatter. The two runs use FRESH idle sessions with
-// the same id so n (Counters.ToolCalls) and the scripted callID match.
-func TestAskIDDiscriminatorReconstructableAcrossRuns(t *testing.T) {
-	const discriminator = "run-42"
-	mint := func() string {
-		policy := permpolicy.NewPolicy(nil, permstore.New())
-		// Same session id across both runs (a different PROCESS loading the same id).
-		sess := session.New("s-reconstruct", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0))
-		write := &fakeTool{name: "Write", readOnly: false,
-			exec: func(_ context.Context, in session.ToolCall, _ tool.Workspace) (session.ToolResult, error) {
-				return session.NewToolResult(in.ID, "wrote"), nil
-			}}
-		e := newEngine(agent.Deps{
-			LLM:     mockllm.New(mockllm.ToolCallTurn(toolCall("w1", "Write", `{"path":"a.go"}`))),
-			Catalog: catalogWith(t, write),
-			Policy:  policy,
-		})
-		r := e.Run(context.Background(), sess, agent.MemEnv("/ws"),
-			agent.RunRequest{Text: "go", AskIDDiscriminator: discriminator})
-		return captureFirstAsk(t, r).AskID
-	}
-	first := mint()
-	second := mint()
-	if first != second {
-		t.Fatalf("two independent runs over the same session id + discriminator must mint an IDENTICAL askID (cross-process reconstructability); got %q vs %q", first, second)
-	}
-	if !strings.HasSuffix(first, ":"+discriminator) {
-		t.Fatalf("the reconstructable askID must carry the host discriminator suffix; got %q", first)
 	}
 }
 

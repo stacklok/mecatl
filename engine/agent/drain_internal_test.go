@@ -279,7 +279,7 @@ func TestDrainAcceptedAbandonedChildApprovalBeforeParentResult(t *testing.T) {
 	e.emit(r, session.Event{Type: session.EvResult, Result: &session.ResultPayload{Stop: session.StopCancelled}})
 	first, second := <-r.events, <-r.events
 	if first.Type != session.EvApproval || first.RunID != r.runID || first.Approval == nil ||
-		first.Approval.AskID != ask.AskID || first.Approval.Call != "" || second.Type != session.EvResult ||
+		first.Approval.AskID != ask.AskID || first.Approval.Call != ask.Call || second.Type != session.EvResult ||
 		first.Seq >= second.Seq {
 		t.Fatalf("terminal order = %+v, %+v; want parent approval before result", first, second)
 	}

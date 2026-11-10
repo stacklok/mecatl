@@ -67,7 +67,7 @@ func TestLoopRepairsInvalidUTF8ToolResult(t *testing.T) {
 	// 1. The emitted EvToolResult is repaired.
 	var emitted *session.ToolResult
 	for i := range evs {
-		if evs[i].Type == session.EvToolResult && evs[i].ToolResult != nil && evs[i].ToolResult.CallID == "c1" {
+		if evs[i].Type == session.EvToolResult && evs[i].ToolResult != nil && evs[i].ToolResult.CallID == boundCallID(t, sess, "c1") {
 			emitted = evs[i].ToolResult
 			break
 		}
@@ -86,7 +86,7 @@ func TestLoopRepairsInvalidUTF8ToolResult(t *testing.T) {
 	var recorded *session.ToolResult
 	for i := range sess.Conversation.Messages {
 		m := &sess.Conversation.Messages[i]
-		if m.Role == session.RoleTool && m.ToolResult != nil && m.ToolResult.CallID == "c1" {
+		if m.Role == session.RoleTool && m.ToolResult != nil && m.ToolResult.CallID == boundCallID(t, sess, "c1") {
 			recorded = m.ToolResult
 			break
 		}

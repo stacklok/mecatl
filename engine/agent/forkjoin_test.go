@@ -550,7 +550,7 @@ func (firstBranchProvider) Stream(ctx context.Context, req port.LLMRequest) (ite
 			}), nil
 		}
 	}
-	call := toolCall("k", "Read", `{"path":"x"}`)
+	call := port.LLMToolCall{ID: "k", Name: "Read", Args: []byte(`{"path":"x"}`)}
 	return streamChunks(ctx, []port.Chunk{
 		{Kind: port.ChunkToolCall, ToolCall: &call},
 		{Kind: port.ChunkUsage, Usage: &session.Usage{}},

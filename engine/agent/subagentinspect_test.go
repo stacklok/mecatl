@@ -264,15 +264,11 @@ func TestParentDiscoversAgentIDFromResultAndInspects(t *testing.T) {
 	inspectTool := agent.NewInspectSubagentTool(store)
 	parentCat := catalogWith(t, subTool, inspectTool)
 
-	// The parent's Subagent call id is "p1", run under session "s1" (newSession),
-	// so the child id is "subagent-s1-p1" (review finding 2, issue #368: child
-	// ids are namespaced by the parent session id) — exactly what extractAgentID
-	// recovers and what the scripted turn-2 InspectSubagent uses.
-	parentLLM := mockllm.New(
+	// Turn 2 discovers the runtime child handle from the actual tool result.
+	parentLLM := newScriptedLLM(
 		mockllm.ToolCallTurn(session.NewToolCall("p1", "Subagent",
 			json.RawMessage(`{"prompt":"trace the code path"}`))),
-		mockllm.ToolCallTurn(session.NewToolCall("p2", "InspectSubagent",
-			json.RawMessage(`{"agent_id":"subagent-s1-p1"}`))),
+		handleTurn(t, "p1", toolCall("p2", "InspectSubagent", `{}`), "agent_id"),
 		mockllm.TextTurn("parent done"),
 	)
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: parentCat})
@@ -289,8 +285,8 @@ func TestParentDiscoversAgentIDFromResultAndInspects(t *testing.T) {
 		t.Fatalf("Subagent tool errored: %s", subBody)
 	}
 	gotID := extractAgentID(t, subBody)
-	if gotID != "subagent-s1-p1" {
-		t.Fatalf("surfaced agentId = %q, want the deterministic child id %q (verbatim)", gotID, "subagent-s1-p1")
+	if gotID != "subagent-"+string(sess.ID)+"-"+string(boundCallID(t, sess, "p1")) {
+		t.Fatalf("surfaced agentId = %q, want the child of the accepted canonical invocation", gotID)
 	}
 
 	// 2. The parent's InspectSubagent call (using the surfaced id) must succeed with the

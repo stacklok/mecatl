@@ -79,7 +79,7 @@ func TestPendingWorkspaceEnrollmentRejectsHistoryAndLifecycleMutation(t *testing
 		run  func(*Session) error
 	}{
 		{"RecordUserPromptWithParts", func(s *Session) error { return s.RecordUserPromptWithParts("prompt", nil, nil) }},
-		{"RecordAssistant", func(s *Session) error { return s.RecordAssistant(NewAssistantMessage("answer", "", nil)) }},
+		{"RecordAssistant", func(s *Session) error { return s.RecordAssistant(NewAssistantMessage("answer", nil)) }},
 		{"RecordToolResults", func(s *Session) error { return s.RecordToolResults([]ToolResult{NewToolResult("call", "result")}) }},
 		{"BeginTurn", func(s *Session) error { return s.BeginTurn() }},
 		{"SeedHistory", func(s *Session) error { return s.SeedHistory([]Message{NewUserMessage("seed")}) }},

@@ -76,10 +76,10 @@ type cancelBatchPolicy struct{}
 
 func (cancelBatchPolicy) Evaluate(_ context.Context, _ session.SessionID, _ session.PermissionMode, call session.ToolCall, _ tool.WorkspaceReader) port.PermissionResult {
 	effect := governance.Allow
-	switch call.ID {
-	case "denied":
+	switch string(call.Args) {
+	case `{"policy":"denied"}`:
 		effect = governance.Deny
-	case "ask":
+	case `{"policy":"ask"}`:
 		effect = governance.Ask
 	}
 	return port.PermissionResult{Decision: governance.PermissionDecision{Effect: effect, Reason: "test denial"}}
@@ -93,8 +93,8 @@ func TestReadBatchCancellationBeforeApprovalSkipsEvidenceAndPreservesCanonicalOr
 	catalog.MustRegister(revisionReadTool{executions: &executions})
 	calls := []session.ToolCall{
 		session.NewToolCall("prepared", "Inspect", json.RawMessage(`{}`)),
-		session.NewToolCall("denied", "Inspect", json.RawMessage(`{}`)),
-		session.NewToolCall("ask", "Inspect", json.RawMessage(`{}`)),
+		session.NewToolCall("denied", "Inspect", json.RawMessage(`{"policy":"denied"}`)),
+		session.NewToolCall("ask", "Inspect", json.RawMessage(`{"policy":"ask"}`)),
 	}
 	engine := NewEngine(Deps{
 		LLM: mockllm.New(mockllm.ToolCallTurn(calls...)), Catalog: catalog, Policy: cancelBatchPolicy{},
@@ -114,7 +114,7 @@ func TestReadBatchCancellationBeforeApprovalSkipsEvidenceAndPreservesCanonicalOr
 			canonical = append(canonical, ev.ToolResult.CallID)
 		}
 	}
-	if executions.Load() != 0 || closed != 0 || sess.State != session.StateCancelled || !reflect.DeepEqual(canonical, []session.ToolCallID{"prepared", "denied", "ask"}) {
+	if executions.Load() != 0 || closed != 0 || sess.State != session.StateCancelled || !reflect.DeepEqual(canonical, acceptedCallIDs(sess)) {
 		t.Fatalf("executions=%d closed=%d state=%s canonical=%v", executions.Load(), closed, sess.State, canonical)
 	}
 	if err := session.ValidateToolPairing(sess.Conversation.Messages); err != nil {
@@ -129,8 +129,8 @@ func TestReadBatchSuccessPublishesCanonicalResultsInCallOrder(t *testing.T) {
 	catalog.MustRegister(revisionReadTool{executions: &executions})
 	calls := []session.ToolCall{
 		session.NewToolCall("prepared", "Inspect", json.RawMessage(`{}`)),
-		session.NewToolCall("denied", "Inspect", json.RawMessage(`{}`)),
-		session.NewToolCall("ask", "Inspect", json.RawMessage(`{}`)),
+		session.NewToolCall("denied", "Inspect", json.RawMessage(`{"policy":"denied"}`)),
+		session.NewToolCall("ask", "Inspect", json.RawMessage(`{"policy":"ask"}`)),
 	}
 	engine := NewEngine(Deps{
 		LLM: mockllm.New(mockllm.ToolCallTurn(calls...), mockllm.TextTurn("done")), Catalog: catalog, Policy: cancelBatchPolicy{},
@@ -150,7 +150,7 @@ func TestReadBatchSuccessPublishesCanonicalResultsInCallOrder(t *testing.T) {
 			canonical = append(canonical, ev.ToolResult.CallID)
 		}
 	}
-	if executions.Load() != 2 || closed != 2 || !reflect.DeepEqual(canonical, []session.ToolCallID{"prepared", "denied", "ask"}) {
+	if executions.Load() != 2 || closed != 2 || !reflect.DeepEqual(canonical, acceptedCallIDs(sess)) {
 		t.Fatalf("executions=%d closed=%d canonical=%v", executions.Load(), closed, canonical)
 	}
 	if err := session.ValidateToolPairing(sess.Conversation.Messages); err != nil {
@@ -182,7 +182,7 @@ func TestReadBatchFinalReauthorizationObservesCancellation(t *testing.T) {
 			canonical = append(canonical, ev.ToolResult.CallID)
 		}
 	}
-	if executions.Load() != 0 || sess.State != session.StateCancelled || !reflect.DeepEqual(canonical, []session.ToolCallID{"first", "second"}) {
+	if executions.Load() != 0 || sess.State != session.StateCancelled || !reflect.DeepEqual(canonical, acceptedCallIDs(sess)) {
 		t.Fatalf("executions=%d state=%s canonical=%v", executions.Load(), sess.State, canonical)
 	}
 	if err := session.ValidateToolPairing(sess.Conversation.Messages); err != nil {
@@ -337,6 +337,7 @@ func TestActionReviewRejectsRootPrincipalRevisionChange(t *testing.T) {
 	})
 	close(reviewer.release)
 
+	call.ID = first.EffectiveCall.ID
 	var staleResult string
 	for event := range run.Events() {
 		if event.ToolResult != nil && event.ToolResult.CallID == call.ID {

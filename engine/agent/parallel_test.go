@@ -49,7 +49,7 @@ func (p *branchProvider) Stream(ctx context.Context, req port.LLMRequest) (iter.
 	} else {
 		call := toolCall("k", "Read", `{"path":"x"}`)
 		chunks = []port.Chunk{
-			{Kind: port.ChunkToolCall, ToolCall: &call},
+			mockllm.ToolCallChunk(call),
 			{Kind: port.ChunkUsage, Usage: &session.Usage{}},
 			{Kind: port.ChunkDone, Stop: session.StopEndTurn},
 		}

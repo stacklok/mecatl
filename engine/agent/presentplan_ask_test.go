@@ -9,6 +9,7 @@ import (
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/sessnap"
 	"github.com/stacklok/mecatl/engine/agent"
+	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 )
@@ -166,7 +167,7 @@ func TestPlanApprovalDenyPausesForIteration(t *testing.T) {
 	// A deny result must have been recorded for the PresentPlan call.
 	var sawDenyResult bool
 	for _, ev := range evs {
-		if ev.Type == session.EvToolResult && ev.ToolResult != nil && ev.ToolResult.CallID == "c1" &&
+		if ev.Type == session.EvToolResult && ev.ToolResult != nil && ev.ToolResult.CallID == eventCallID(t, evs, "PresentPlan", 0) &&
 			ev.ToolResult.IsError && strings.Contains(ev.ToolResult.Content, "plan not approved by operator") {
 			sawDenyResult = true
 		}
@@ -451,7 +452,7 @@ func TestPresentPlanAdvertisedOnlyInPlanMode(t *testing.T) {
 	// The vestigial Execute ran: a non-error tool result with the awaiting-approval text.
 	var sawVestige bool
 	for _, ev := range evs {
-		if ev.Type == session.EvToolResult && ev.ToolResult != nil && ev.ToolResult.CallID == "c1" &&
+		if ev.Type == session.EvToolResult && ev.ToolResult != nil && ev.ToolResult.CallID == eventCallID(t, evs, "PresentPlan", 0) &&
 			!ev.ToolResult.IsError && strings.Contains(ev.ToolResult.Content, "awaiting operator approval") {
 			sawVestige = true
 		}
@@ -526,7 +527,7 @@ func TestPresentPlanHeadlessNoAsk(t *testing.T) {
 	// The degrade surfaced a deny result for the PresentPlan call.
 	var sawDegrade bool
 	for _, ev := range evs {
-		if ev.Type == session.EvToolResult && ev.ToolResult != nil && ev.ToolResult.CallID == "c1" &&
+		if ev.Type == session.EvToolResult && ev.ToolResult != nil && ev.ToolResult.CallID == eventCallID(t, evs, "PresentPlan", 0) &&
 			ev.ToolResult.IsError && strings.Contains(ev.ToolResult.Content, "plan not approved") {
 			sawDegrade = true
 		}
@@ -552,10 +553,10 @@ func TestPresentPlanAmbiguousArgsAreRejectedBeforeApproval(t *testing.T) {
 		name        string
 		interactive bool
 		serial      bool
-		siblings    []session.ToolCall
+		siblings    []port.LLMToolCall
 	}{
 		{name: "alone", interactive: true},
-		{name: "in a read batch", interactive: true, siblings: []session.ToolCall{toolCall("c2", "PresentPlan", `{"plan":"canonical"}`)}},
+		{name: "in a read batch", interactive: true, siblings: []port.LLMToolCall{{ID: "c2", Name: "PresentPlan", Args: []byte(`{"plan":"canonical"}`)}}},
 		{name: "serial path", interactive: true, serial: true},
 		{name: "headless", interactive: false},
 	} {
@@ -566,8 +567,8 @@ func TestPresentPlanAmbiguousArgsAreRejectedBeforeApproval(t *testing.T) {
 		} {
 			t.Run(tc.name+"/"+args, func(t *testing.T) {
 				t.Parallel()
-				calls := append([]session.ToolCall{toolCall("c1", "PresentPlan", args)}, tc.siblings...)
-				llm := mockllm.New(mockllm.ToolCallTurn(calls...), mockllm.TextTurn("done"))
+				calls := append([]port.LLMToolCall{{ID: "c1", Name: "PresentPlan", Args: []byte(args)}}, tc.siblings...)
+				llm := mockllm.New(mockllm.LLMToolCallTurn(calls...), mockllm.TextTurn("done"))
 				cat := planCatalog(t)
 				if tc.serial {
 					// A PresentPlan that is not read-only flushes alone through
@@ -575,21 +576,42 @@ func TestPresentPlanAmbiguousArgsAreRejectedBeforeApproval(t *testing.T) {
 					cat = catalogWith(t, serialPresentPlan{agent.NewPresentPlanTool()})
 				}
 				e := newEngine(agent.Deps{LLM: llm, Catalog: cat, Interactive: tc.interactive})
-				r := e.Run(context.Background(), newPlanSession(t), agent.MemEnv("/ws"), agent.RunRequest{Text: "plan"})
-				var rejected bool
+				sess := newPlanSession(t)
+				r := e.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "plan"})
+				var asks []session.PendingAsk
 				for ev := range r.Events() {
 					if ev.Type == session.EvPermissionAsk && ev.Ask != nil {
-						if ev.Ask.Call == "c1" {
-							t.Errorf("ambiguous plan surfaced an approval: %s", ev.Ask.Args)
-						}
+						asks = append(asks, *ev.Ask)
 						r.Approve(ev.Ask.AskID, session.VerdictDeny)
 					}
-					if ev.ToolResult != nil && ev.ToolResult.CallID == "c1" && ev.ToolResult.IsError &&
-						strings.Contains(ev.ToolResult.Content, "ambiguous tool arguments") {
+				}
+				var canonical session.ToolCallID
+				for _, message := range sess.Conversation.Messages {
+					if message.Replay == nil {
+						continue
+					}
+					for _, binding := range message.Replay.Bindings {
+						if binding.PairingID == "c1" {
+							canonical = binding.CallID
+						}
+					}
+				}
+				if canonical == "" {
+					t.Fatal("missing canonical ID for ambiguous PresentPlan provider call")
+				}
+				for _, ask := range asks {
+					if ask.Call == canonical {
+						t.Errorf("ambiguous plan surfaced an approval: %s", ask.Args)
+					}
+				}
+				rejected := false
+				for _, message := range sess.Conversation.Messages {
+					if message.ToolResult != nil && message.ToolResult.CallID == canonical && message.ToolResult.IsError &&
+						strings.Contains(message.ToolResult.Content, "ambiguous tool arguments") {
 						rejected = true
 					}
 				}
-				if !rejected {
+				if canonical == "" || !rejected {
 					t.Fatal("the ambiguous PresentPlan call was not rejected with an ambiguous-arguments error")
 				}
 			})

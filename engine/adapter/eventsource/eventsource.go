@@ -19,25 +19,14 @@
 // provider-replayable (ValidateToolPairing passes). It derives cumulative Usage,
 // the lifecycle State/stop, the Counters, and a trailing pending ask.
 //
-// It is byte-identical-REPLAY-faithful, however, ONLY for providers that do not use
-// the opaque assistant-message replay fields — because those fields NEVER cross the
-// event stream:
-//
-//   - Message.Reasoning      (the provider reasoning REPLAY blob)
-//   - Message.ProviderPhase  (the OpenAI Responses phase marker)
-//   - Message.ReasoningItemID (the provider reasoning-item id)
-//   - ToolCall.ItemID        (the provider item id)
-//
-// reach the conversation ONLY via Session.RecordAssistant in the loop, never via an
-// emitted Event. (EvReasoningDelta carries a human-readable reasoning SUMMARY, which
-// the loop deliberately never places on Message.Reasoning — so a fold MUST NOT either.)
-// A reconstructed Session is therefore a faithful structural conversation, and a
-// byte-identical replay only for providers that leave those four fields empty (e.g.
-// mockllm, a plain chat model). For OpenAI/Anthropic reasoning models the snapshot
-// (which carries them) is the byte-identical path, which is why mecatl's own resume
-// uses the snapshot; the fold is for event-log-SoR hosts that accept (or themselves
-// carry, in a richer event schema) this contract boundary. This is a DOCUMENTED
-// CONTRACT LIMITATION (engine/COMPATIBILITY.md), not a bug.
+// Ordinary execution events do not carry Message.Replay or ProviderPhase, so a
+// pure fold cannot reconstruct original provider tokens, payloads, or phases.
+// It produces replay-free canonical history, which ProjectMessages can project
+// with synthesized pairing tokens; this is not byte-identical original replay.
+// EvReasoningDelta is a readable summary and must never become private replay.
+// Internal compaction archives retain private replay for archived history, but
+// they do not supply missing replay for the active post-compaction history.
+// Mecatl's own resume loads the coherent private snapshot.
 //
 // CREATION METADATA is supplied via SessionMeta: id, mode, limits, exact
 // EnvironmentRef, display-only placement metadata, profile, provider/model selector,
@@ -154,6 +143,9 @@ type SessionMeta struct {
 	// runtime reattachment, in which case it MUST be supplied here — there is
 	// no other path into Fold's reconstructed Session for it.
 	ExternalBinding session.ExternalBinding
+	// LearningEligible is trusted durable metadata, never inferred from a filtered
+	// event stream. Missing metadata conservatively excludes learning.
+	LearningEligible bool
 	// CreatedAt is the creation timestamp.
 	CreatedAt time.Time
 }
@@ -166,26 +158,34 @@ var (
 	// ErrReconstruct is returned when the folded events cannot be reconstructed into
 	// a valid Session (an unpairable conversation, an inconsistent terminal state).
 	ErrReconstruct = errors.New("eventsource: cannot reconstruct session")
-	// ErrPrivateStateRequired is returned when an otherwise well-formed external
+	// ErrPrivateStateRequired is returned when an otherwise well-formed current-format
 	// authorization lifecycle remains open. Safe events deliberately omit the
 	// private continuation state required to resume it.
 	ErrPrivateStateRequired = errors.New("eventsource: private state required")
 )
 
-// Fold reconstructs a *session.Session by folding the durable event stream back
-// into the aggregate, supplemented by the creation metadata in meta. It is the
-// reference implementation of an event-sourced port.SessionStore.Load.
+// Fold reconstructs a *session.Session from the complete durable event stream and
+// creation metadata. It is the reference implementation of an event-sourced
+// port.SessionStore.Load.
 //
 // The returned Session has its Conversation, Counters, cumulative Usage, lifecycle
 // State, recorded stop reason, and trailing pending ask reconstructed from the
-// stream. See the package doc for the replay-fidelity limitation (Reasoning /
-// ProviderPhase / ReasoningItemID / ItemID are not event-carried).
+// stream. This rebuilds canonical activity, not exact provider replay: ordinary
+// execution events carry neither the private replay envelope nor provider bindings.
 //
 // It returns ErrStream (wrapping the per-item error) if the iterator yields an
 // error, ErrReconstruct if the reconstructed history or authorization lifecycle is
-// inconsistent, and ErrPrivateStateRequired if a well-formed authorization lifecycle
-// remains open after the final event. It never panics.
+// inconsistent, and ErrPrivateStateRequired if a well-formed current-format
+// authorization lifecycle remains open after the final event. Only complete
+// current-format streams are supported; skipped old records cannot be recovered.
+// It never panics.
 func Fold(meta SessionMeta, events iter.Seq2[session.Event, error]) (*session.Session, error) {
+	if meta.Incarnation == "" {
+		meta.Incarnation = session.LegacyIncarnationID(meta.ID, meta.CreatedAt.UnixNano(), meta.Owner)
+	}
+	if !meta.Incarnation.Valid() {
+		return nil, fmt.Errorf("%w: missing stable source incarnation", ErrReconstruct)
+	}
 	f := &folder{}
 	for ev, err := range events {
 		if err != nil {
@@ -193,25 +193,70 @@ func Fold(meta SessionMeta, events iter.Seq2[session.Event, error]) (*session.Se
 		}
 		f.consume(ev)
 		if f.reconstructErr != nil {
-			return nil, fmt.Errorf("%w: %v", ErrReconstruct, f.reconstructErr)
+			return nil, fmt.Errorf("%w: %w", ErrReconstruct, f.reconstructErr)
 		}
 	}
 	if len(f.authorizations) != 0 {
 		return nil, ErrPrivateStateRequired
 	}
 	f.finalizeOpenTurn()
+	data := sessnap.RestoreData{
+		State: f.restoreState(), Stop: f.stop, Pending: f.pending, Counters: f.finalCounters(),
+		TokenUsage: foldedTokenUsage(meta.TokenUsage, f.usage),
+		Failure:    session.RetryMetadata{Disposition: f.disposition, Progress: f.progress},
+		LastError:  f.lastError,
+	}
+	if f.retryPending {
+		data.RetryPending = true
+		data.Retry = session.RetryMetadata{Disposition: f.retryDisposition, Progress: f.retryProgress}
+	}
+	s, err := restoreMetadata(meta)
+	if err != nil {
+		return nil, err
+	}
+	if data.Pending != nil {
+		// AWAITING: the live session at pause time holds the assistant message WITH its
+		// not-yet-answered tool call (RecordAssistant runs before dispatch; the ask
+		// pauses dispatch). That history legitimately ends on a dangling tool_use, which
+		// SeedHistory's pairing guard would reject — so we reconstruct it the way the
+		// loop did: seed the fully-paired prefix, then drive the trailing assistant turn
+		// through the running aggregate (BeginTurn → RecordAssistant) and PauseForApproval.
+		// RestoreState is NOT used here because its awaiting branch seeds no trailing turn.
+		return f.reconstructAwaiting(s, meta)
+	}
 
+	if err := s.SeedHistory(f.messages); err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrReconstruct, err)
+	}
+	// Drive the lifecycle (idle / terminal) and seed the cumulative usage + counters
+	// through the SAME state-driving logic sessnap.Restore uses (sessnap.RestoreState),
+	// so the terminal-transition vocabulary lives in exactly one place.
+	if err := sessnap.RestoreState(s, data); err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrReconstruct, err)
+	}
+	// Seed the session Title from the first genuine user prompt captured during the
+	// fold (set-once + clamped via SetTitle). This reuses the domain predicate + the
+	// same seam the loop uses (recordPrompt → SetTitle), so a Fold-reconstructed
+	// session carries the same label a snapshot round-trip would. For a compacted
+	// session the opener's EvUserPrompt was emitted before the compaction, so the
+	// title survives compaction here (better than the snapshot lazy fallback).
+	s.SetTitle(f.firstGenuineText)
+	return s, nil
+}
+
+func restoreMetadata(meta SessionMeta) (*session.Session, error) {
 	if !meta.EnvironmentRef.Valid() {
 		return nil, fmt.Errorf("%w: missing or invalid environment ref", ErrReconstruct)
 	}
 	s := session.New(meta.ID, meta.Mode, meta.EnvironmentRef, meta.Limits, meta.CreatedAt)
+	if !meta.LearningEligible {
+		s.ExcludeFromLearning()
+	}
 	if err := s.RestoreSessionMetadata(meta.Kind, meta.Relationship); err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrReconstruct, err)
 	}
-	// AgentDefinitionName restores BEFORE authority: BindAuthority (reached via
-	// restoreAuthority below) rejects a bind that claims this label without a
-	// Ceiling (ADR 0353) — it can only see the label if it is set first, exactly
-	// as the real create path already sequences it.
+	// AgentDefinitionName restores before authority: BindAuthority rejects a bind
+	// that claims this label without its required ceiling.
 	s.AgentDefinitionName = meta.AgentDefinitionName
 	s.AgentCreateIntent = meta.AgentCreateIntent
 	if err := restoreAuthority(s, meta.Authority); err != nil {
@@ -248,44 +293,6 @@ func Fold(meta SessionMeta, events iter.Seq2[session.Event, error]) (*session.Se
 	if meta.LatestContextOccupancy != nil {
 		s.RecordLatestContextOccupancy(*meta.LatestContextOccupancy)
 	}
-	if f.pending != nil {
-		// AWAITING: the live session at pause time holds the assistant message WITH its
-		// not-yet-answered tool call (RecordAssistant runs before dispatch; the ask
-		// pauses dispatch). That history legitimately ends on a dangling tool_use, which
-		// SeedHistory's pairing guard would reject — so we reconstruct it the way the
-		// loop did: seed the fully-paired prefix, then drive the trailing assistant turn
-		// through the running aggregate (BeginTurn → RecordAssistant) and PauseForApproval.
-		// RestoreState is NOT used here because its awaiting branch seeds no trailing turn.
-		return f.reconstructAwaiting(s, meta)
-	}
-
-	if err := s.SeedHistory(f.messages); err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrReconstruct, err)
-	}
-	// Drive the lifecycle (idle / terminal) and seed the cumulative usage + counters
-	// through the SAME state-driving logic sessnap.Restore uses (sessnap.RestoreState),
-	// so the terminal-transition vocabulary lives in exactly one place.
-	usage := foldedTokenUsage(meta.TokenUsage, f.usage)
-	data := sessnap.RestoreData{
-		State: f.restoreState(), Stop: f.stop, Counters: f.finalCounters(),
-		TokenUsage: usage,
-		Failure:    session.RetryMetadata{Disposition: f.disposition, Progress: f.progress},
-		LastError:  f.lastError,
-	}
-	if f.retryPending {
-		data.RetryPending = true
-		data.Retry = session.RetryMetadata{Disposition: f.retryDisposition, Progress: f.retryProgress}
-	}
-	if err := sessnap.RestoreState(s, data); err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrReconstruct, err)
-	}
-	// Seed the session Title from the first genuine user prompt captured during the
-	// fold (set-once + clamped via SetTitle). This reuses the domain predicate + the
-	// same seam the loop uses (recordPrompt → SetTitle), so a Fold-reconstructed
-	// session carries the same label a snapshot round-trip would. For a compacted
-	// session the opener's EvUserPrompt was emitted before the compaction, so the
-	// title survives compaction here (better than the snapshot lazy fallback).
-	s.SetTitle(f.firstGenuineText)
 	return s, nil
 }
 
@@ -343,12 +350,15 @@ func (f *folder) reconstructAwaiting(s *session.Session, meta SessionMeta) (*ses
 	s.Counters = f.finalCounters()
 	// RecordAssistant tolerates a dangling tool call (no pairing validation) — exactly
 	// the live history at pause time.
-	if err := s.RecordAssistant(session.NewAssistantMessage(f.curText, "", f.curCalls)); err != nil {
+	if err := s.RecordAssistant(session.NewAssistantMessage(f.curText, f.curCalls)); err != nil {
 		return nil, fmt.Errorf("%w: awaiting assistant: %w", ErrReconstruct, err)
 	}
 	s.RestoreTokenUsage(foldedTokenUsage(meta.TokenUsage, f.usage))
 	if err := s.PauseForApproval(*f.pending); err != nil {
 		return nil, fmt.Errorf("%w: awaiting pause: %w", ErrReconstruct, err)
+	}
+	if err := s.ValidateIdentityPersistence(); err != nil {
+		return nil, fmt.Errorf("%w: awaiting identity: %w", ErrReconstruct, err)
 	}
 	// Seed the session Title from the first genuine user prompt captured during the
 	// fold (same set-once seam as the non-awaiting path above).
@@ -672,10 +682,9 @@ func (f *folder) flushTurn() {
 	if !f.curOpen {
 		return
 	}
-	// Reasoning is deliberately empty: the reasoning REPLAY blob is not event-carried
-	// (see the package doc), and the EvReasoningDelta summary must never be placed on
-	// Message.Reasoning (loop.go forbids it).
-	f.messages = append(f.messages, session.NewAssistantMessage(f.curText, "", f.curCalls))
+	// Replay is absent: ordinary execution events carry no private payload or
+	// occurrence bindings. Readable reasoning summaries cannot reconstruct them.
+	f.messages = append(f.messages, session.NewAssistantMessage(f.curText, f.curCalls))
 	f.curOpen = false
 	f.curText = ""
 	f.curCalls = nil

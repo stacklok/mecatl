@@ -272,7 +272,7 @@ func TestReadImageContent(t *testing.T) {
 			if part.BlockKind != session.BlockImage || part.Kind != session.MediaImage || part.MIMEType != tt.mime || !bytes.Equal(part.Data, tt.data) {
 				t.Errorf("image part = %#v", part)
 			}
-			if got := port.RouteToolResultParts(res, port.ProviderCapabilities{}); got != nil {
+			if got := port.RouteToolResultParts(res.Parts, port.ProviderCapabilities{}); got != nil {
 				t.Errorf("text-only projection = %#v, want nil", got)
 			}
 			ver, ok, err := ledger.RecordedVersion(context.Background(), tool.LedgerKey(ws.Root(), "image.txt"))

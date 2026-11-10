@@ -252,7 +252,7 @@ func TestIsGenuineUserPrompt(t *testing.T) {
 	}{
 		{"genuine user text", NewUserMessage("fix the bug"), true},
 		{"empty user text is still genuine (no summary prefix)", NewUserMessage(""), true},
-		{"assistant role", NewAssistantMessage("hi", "", nil), false},
+		{"assistant role", NewAssistantMessage("hi", nil), false},
 		{"system role", NewSystemMessage("sys"), false},
 		{"tool role", NewToolMessage(NewToolResult("c1", "ok")), false},
 		{"compaction summary marker", NewUserMessage(CompactionSummaryMarker + " …"), false},
@@ -287,7 +287,7 @@ func TestSyntheticUserPromptReplay_Scenario1_GenuinePredicateRecognizesHarnessCo
 		{name: "extractive nudge", msg: NewUserMessage(extractive), want: false},
 		{name: "background completion", msg: NewUserMessage("[harness note: 1 background subagent(s) finished: subagent-1 (end_turn). Collect each result with SubagentStatus before relying on it.]"), want: false},
 		{name: "background pending", msg: NewUserMessage("[harness note: 1 background command(s) still running: shellcmd-1. Collect or wait for them with ShellStatus, cancel them, or finish — anything still running when you finish will be cancelled.]"), want: false},
-		{name: "assistant", msg: NewAssistantMessage("fix it", "", nil), want: false},
+		{name: "assistant", msg: NewAssistantMessage("fix it", nil), want: false},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

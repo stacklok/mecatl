@@ -157,7 +157,7 @@ func seedMemberSession(t *testing.T, id session.SessionID, userText, assistantTe
 	if err := s.BeginTurn(); err != nil {
 		t.Fatalf("BeginTurn: %v", err)
 	}
-	if err := s.RecordAssistant(session.NewAssistantMessage(assistantText, "", nil)); err != nil {
+	if err := s.RecordAssistant(session.NewAssistantMessage(assistantText, nil)); err != nil {
 		t.Fatalf("RecordAssistant: %v", err)
 	}
 	return s

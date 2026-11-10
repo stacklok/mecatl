@@ -35,7 +35,7 @@ func TestInertRootAssemblerDoesNotTrackScopesOrAddProtocol(t *testing.T) {
 			r := &Run{diag: e.deps.Diagnostics}
 			ws := memfs.NewWorkspace("/ws")
 			sess := session.New("inert", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0))
-			request := e.buildRequest(t.Context(), r, sess, testEnvironment(ws, nil))
+			request := mustBuildRequest(t, e, r, sess, testEnvironment(ws, nil))
 			if e.deps.Instructions != nil || r.instructionScopes != nil || len(r.fragments) != 0 || strings.Contains(request.System.VolatileSuffix, "nested scopes discovered") {
 				t.Fatalf("inert instructions enabled hierarchy: instructions=%v scopes=%v fragments=%v suffix=%q", e.deps.Instructions, r.instructionScopes, r.fragments, request.System.VolatileSuffix)
 			}
@@ -54,7 +54,7 @@ func TestInertRootAssemblerMatchesNilInstructionAllocations(t *testing.T) {
 		sess := session.New("inert-allocs", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0))
 		env := testEnvironment(ws, nil)
 		return testing.AllocsPerRun(100, func() {
-			_ = e.buildRequest(t.Context(), r, sess, env)
+			_ = mustBuildRequest(t, e, r, sess, env)
 		})
 	}
 
@@ -73,12 +73,12 @@ func TestHierarchyGlobalContributorRunsOnceWhenScopesExpand(t *testing.T) {
 	e := NewEngine(Deps{Catalog: benchInternalCatalog(), Instructions: instructions})
 	r := &Run{diag: e.deps.Diagnostics}
 	sess := session.New("global", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0))
-	_ = e.buildRequest(t.Context(), r, sess, testEnvironment(ws, nil))
+	_ = mustBuildRequest(t, e, r, sess, testEnvironment(ws, nil))
 	r.instructionScopes.mu.Lock()
 	r.instructionScopes.dirs = append(r.instructionScopes.dirs, "nested")
 	r.instructionScopes.dirty = true
 	r.instructionScopes.mu.Unlock()
-	request := e.buildRequest(t.Context(), r, sess, testEnvironment(ws, nil))
+	request := mustBuildRequest(t, e, r, sess, testEnvironment(ws, nil))
 	if calls != 1 || len(request.Messages) != 2 || !strings.Contains(request.Messages[0].Text, "local") || request.Messages[1].Text != "global guidance" {
 		t.Fatalf("global calls=%d messages=%v", calls, request.Messages)
 	}
@@ -94,7 +94,7 @@ func TestHierarchyEmptyGlobalContributorRunsOnceAcrossScopes(t *testing.T) {
 	e := NewEngine(Deps{Catalog: benchInternalCatalog(), Instructions: instructions})
 	r := &Run{diag: e.deps.Diagnostics}
 	sess := session.New("empty-global", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0))
-	_ = e.buildRequest(t.Context(), r, sess, testEnvironment(ws, nil))
+	_ = mustBuildRequest(t, e, r, sess, testEnvironment(ws, nil))
 	if r.instructionScopes == nil {
 		t.Fatal("empty root disabled nested discovery")
 	}
@@ -102,7 +102,7 @@ func TestHierarchyEmptyGlobalContributorRunsOnceAcrossScopes(t *testing.T) {
 	r.instructionScopes.dirs = append(r.instructionScopes.dirs, "nested")
 	r.instructionScopes.dirty = true
 	r.instructionScopes.mu.Unlock()
-	request := e.buildRequest(t.Context(), r, sess, testEnvironment(ws, nil))
+	request := mustBuildRequest(t, e, r, sess, testEnvironment(ws, nil))
 	if calls != 1 || len(request.Messages) != 1 || !strings.Contains(request.Messages[0].Text, "local") {
 		t.Fatalf("empty global calls=%d messages=%v", calls, request.Messages)
 	}
@@ -132,7 +132,7 @@ func TestInertRootInMultiKeepsGlobalContributor(t *testing.T) {
 	e := NewEngine(Deps{Catalog: benchInternalCatalog(), Instructions: instructions})
 	r := &Run{diag: e.deps.Diagnostics}
 	sess := session.New("multi", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0))
-	request := e.buildRequest(t.Context(), r, sess, testEnvironment(ws, nil))
+	request := mustBuildRequest(t, e, r, sess, testEnvironment(ws, nil))
 	if r.instructionScopes != nil || len(request.Messages) != 1 || request.Messages[0].Text != "global guidance" {
 		t.Fatalf("global contributor lost or inert hierarchy enabled: scopes=%v messages=%v", r.instructionScopes, request.Messages)
 	}

@@ -106,7 +106,7 @@ func runResumeAttempt(t *testing.T, task tool.Tool, childID session.SessionID, b
 	}
 	r := e.Run(ctx, newSession(t, session.Limits{}), agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
 	evs := drainObserving(t, r, nil)
-	res := resultByCallID(evs)[session.ToolCallID("rc")]
+	res := resultByCallID(evs)[eventCallID(t, evs, "Subagent", 0)]
 	if res == nil {
 		t.Fatalf("no Subagent result on the parent stream: %v", evs)
 	}
@@ -152,9 +152,9 @@ func TestCallerSeparation_Scenario3_SubagentResumeIsOwnerChecked(t *testing.T) {
 				t.Fatalf("RestoreLabels: %v", err)
 			}
 			r := seedParent.Run(context.Background(), seedSess, agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
-			drainObserving(t, r, nil)
+			events := drainObserving(t, r, nil)
 
-			childID := session.SessionID("subagent-owner-parent-p1")
+			childID := session.SessionID(eventSubagentID(t, events, 0))
 			before := snapshotResumeSession(t, store, childID)
 			if before.owner == nil || before.owner.Subject != "alice" {
 				t.Fatalf("seeded child owner = %+v, want alice", before.owner)
@@ -245,7 +245,7 @@ func TestCallerSeparation_SubagentResumeHidesForeignInFlightState(t *testing.T) 
 	if err := seed.BeginTurn(); err != nil {
 		t.Fatalf("BeginTurn: %v", err)
 	}
-	if err := seed.RecordAssistant(session.NewAssistantMessage("seed", "", nil)); err != nil {
+	if err := seed.RecordAssistant(session.NewAssistantMessage("seed", nil)); err != nil {
 		t.Fatalf("RecordAssistant: %v", err)
 	}
 	if err := seed.Complete(); err != nil {

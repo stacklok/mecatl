@@ -21,9 +21,17 @@ import (
 
 // userTextIn reports whether a user-role message with the given text appears in
 // the message slice.
-func userTextIn(msgs []session.Message, text string) bool {
+func userTextIn[T session.Message | port.LLMMessage](msgs []T, text string) bool {
 	for _, m := range msgs {
-		if m.Role == session.RoleUser && m.Text == text {
+		var role session.Role
+		var body string
+		switch message := any(m).(type) {
+		case session.Message:
+			role, body = message.Role, message.Text
+		case port.LLMMessage:
+			role, body = message.Role, message.Text
+		}
+		if role == session.RoleUser && body == text {
 			return true
 		}
 	}
@@ -311,8 +319,8 @@ func TestSteer_KeepsPromptPrefixByteStable(t *testing.T) {
 
 // TestSteer_EmptyInboxNoOp (AC1.5): a run with an empty inbox drives exactly as
 // before — no behavioural change when steer is unused. Mutation guard: with
-// steer enabled but never enqueued, the run is byte-identical to a steer-less
-// run (same turns, same recorded history, same terminal).
+// steer enabled but never enqueued, the run has identical provider-facing replay
+// and terminal behavior; independently accepted invocations have fresh engine IDs.
 func TestSteer_EmptyInboxNoOp(t *testing.T) {
 	turns := func() []mockllm.Turn {
 		return []mockllm.Turn{
@@ -349,10 +357,19 @@ func TestSteer_EmptyInboxNoOp(t *testing.T) {
 	if len(sessOn.Conversation.Messages) != len(sessOff.Conversation.Messages) {
 		t.Fatalf("empty-inbox history length %d differs from no-steer %d (the drain must be a no-op)", len(sessOn.Conversation.Messages), len(sessOff.Conversation.Messages))
 	}
-	for i := range sessOn.Conversation.Messages {
-		if !reflect.DeepEqual(sessOn.Conversation.Messages[i], sessOff.Conversation.Messages[i]) {
-			t.Fatalf("empty-inbox history message %d differs from no-steer run — the drain must be a strict no-op", i)
-		}
+	projectedOn, err := port.ProjectMessages(sessOn.Conversation.Messages)
+	if err != nil {
+		t.Fatal(err)
+	}
+	projectedOff, err := port.ProjectMessages(sessOff.Conversation.Messages)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(projectedOn, projectedOff) {
+		t.Fatal("empty-inbox provider-facing history differs from no-steer run — the drain must be a strict no-op")
+	}
+	if boundCallID(t, sessOn, "c1") == boundCallID(t, sessOff, "c1") {
+		t.Fatal("independent accepted invocations reused a canonical identity")
 	}
 	// The run must have taken exactly 2 turns (no phantom extra turn from the drain).
 	if got := rec.count(); got != 2 {
@@ -389,7 +406,7 @@ func TestSteer_SurvivesCompactionBoundary(t *testing.T) {
 	sess := newSession(t, session.Limits{})
 	seed := []session.Message{session.NewUserMessage("older goal")}
 	for i := 0; i < 20; i++ {
-		seed = append(seed, session.NewAssistantMessage(strings.Repeat("settled work ", 20), "", nil))
+		seed = append(seed, session.NewAssistantMessage(strings.Repeat("settled work ", 20), nil))
 	}
 	if err := sess.SeedHistory(seed); err != nil {
 		t.Fatalf("SeedHistory: %v", err)

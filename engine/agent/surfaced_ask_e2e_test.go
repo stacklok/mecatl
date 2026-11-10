@@ -47,8 +47,8 @@ func TestSurfacedChildApprovalRecordsParentVerdict(t *testing.T) {
 					ask = &copied
 				}
 			})
-			if ask == nil || ask.Call != "collision" {
-				t.Fatalf("surfaced ask = %+v, want child call collision", ask)
+			if ask == nil || ask.Call != eventSubagentCallID(t, events, eventSubagentID(t, events, 0), "Shell") || ask.Call == eventCallID(t, events, "Subagent", 0) {
+				t.Fatalf("surfaced ask = %+v, want the exact child invocation, distinct from the colliding provider-key parent call", ask)
 			}
 			approvals, results, approvalIndex, resultIndex := 0, 0, -1, -1
 			for i, ev := range events {
@@ -66,7 +66,7 @@ func TestSurfacedChildApprovalRecordsParentVerdict(t *testing.T) {
 				approvalIndex = i
 				if ev.RunID != run.RunID() || ev.Approval.Verdict != session.VerdictString(tc.verdict) ||
 					ev.Approval.Tool != ask.Tool || ev.Approval.Origin != ask.Origin ||
-					ev.Approval.AllowAlways != (tc.verdict == session.VerdictAllowAlways) || ev.Approval.Call != "" {
+					ev.Approval.AllowAlways != (tc.verdict == session.VerdictAllowAlways) || ev.Approval.Call != ask.Call {
 					t.Fatalf("parent approval = %+v, run = %q; ask = %+v", ev.Approval, ev.RunID, ask)
 				}
 				encoded, err := json.Marshal(ev.Approval)
@@ -153,7 +153,7 @@ func TestE2E_SurfacedChildAskCarriesChildGatedCallID(t *testing.T) {
 	r := e.Run(context.Background(), newSession(t, session.Limits{}), agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
 
 	var surfaced *session.PendingAsk
-	drainApproving(r, session.VerdictAllowOnce, func(ev session.Event) {
+	events := drainApproving(r, session.VerdictAllowOnce, func(ev session.Event) {
 		if ev.Type == session.EvPermissionAsk && ev.Ask != nil && surfaced == nil {
 			ask := *ev.Ask
 			surfaced = &ask
@@ -162,8 +162,9 @@ func TestE2E_SurfacedChildAskCarriesChildGatedCallID(t *testing.T) {
 	if surfaced == nil {
 		t.Fatal("no surfaced child ask was observed")
 	}
-	if surfaced.Call != "k1" {
-		t.Fatalf("surfaced child ask .Call = %q, want the child's gated ToolCall.ID %q", surfaced.Call, "k1")
+	childCallID := eventSubagentCallID(t, events, eventSubagentID(t, events, 0), "Shell")
+	if surfaced.Call != childCallID {
+		t.Fatalf("surfaced child ask .Call = %q, want the child's accepted ToolCall.ID %q", surfaced.Call, childCallID)
 	}
 }
 

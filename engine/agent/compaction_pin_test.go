@@ -74,7 +74,7 @@ func injectedPrefixTaskConversation(t *testing.T) *session.Conversation {
 	// Settled assistant/tool work after the goal.
 	for i := 0; i < 6; i++ {
 		id := session.ToolCallID("t" + string(rune('a'+i)))
-		conv.Append(session.NewAssistantMessage("", "", []session.ToolCall{
+		conv.Append(session.NewAssistantMessage("", []session.ToolCall{
 			session.NewToolCall(id, "Read", json.RawMessage(`{"path":"g.go"}`)),
 		}))
 		conv.Append(session.NewToolMessage(session.NewToolResult(id, strings.Repeat("X", 2000))))
@@ -83,7 +83,7 @@ func injectedPrefixTaskConversation(t *testing.T) *session.Conversation {
 	// (well past recentUserTurnsKept) so the back-snap anchors here, NOT on the goal.
 	for i := 0; i < 6; i++ {
 		conv.Append(session.NewUserMessage("follow-up chatter about progress"))
-		conv.Append(session.NewAssistantMessage("ack", "", nil))
+		conv.Append(session.NewAssistantMessage("ack", nil))
 	}
 	return conv
 }

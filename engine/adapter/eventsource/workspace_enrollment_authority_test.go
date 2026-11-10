@@ -11,8 +11,8 @@ import (
 
 func TestWorkspaceEnrollmentAuthority_Scenario2_EventSourceRestoresProvenanceBeforeAwaiting(t *testing.T) {
 	authority := session.Authority{CapabilitySet: governance.CapabilitySet{Tools: []string{"Read", "broker-old"}}, Provenance: "test"}
-	call := toolCall("c1", "Shell", `{"command":"ls"}`)
-	ask := session.PendingAsk{AskID: "s1:0:c1:r0", Tool: "Shell", Reason: "needs approval"}
+	call := toolCall("call_c1", "Shell", `{"command":"ls"}`)
+	ask := session.PendingAsk{AskID: "s1:0:c1:r0", Call: call.ID, Tool: "Shell", Reason: "needs approval"}
 	for _, tc := range []struct {
 		name    string
 		keys    []string

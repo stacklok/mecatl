@@ -34,9 +34,8 @@ const (
 	// EvMessageDelta carries streamed assistant text.
 	EvMessageDelta EventType = "message.delta"
 	// EvReasoningDelta carries streamed, human-readable reasoning summary text.
-	// It is display-only and distinct from the opaque Message.Reasoning replay
-	// item: it is emitted in addition to (never in place of) the reasoning
-	// accumulation that is replayed back to the provider as encrypted content.
+	// It is display-only and distinct from the opaque Message.Replay payload:
+	// it is emitted in addition to (never in place of) private provider replay.
 	EvReasoningDelta EventType = "reasoning.delta"
 	// EvToolCall is emitted when a tool is about to run.
 	EvToolCall EventType = "tool.call"
@@ -860,7 +859,7 @@ type RoutingDecision struct {
 type SubagentPayload struct {
 	// ParentCallID is the parent's Subagent tool-call id, used by clients to attribute
 	// this event to the originating Subagent card. Set on all three kinds.
-	ParentCallID string
+	ParentCallID ToolCallID
 	// ChildID is the child session id, distinguishing concurrent subagents. Set on
 	// all three kinds.
 	ChildID string
@@ -1005,7 +1004,7 @@ type ParallelPayload struct {
 	// ParentCallID is the parent's Parallel tool-call id; it is the GROUP key (one
 	// Parallel call = one group) and attributes every parallel.* event to the
 	// originating Parallel card. Set on all kinds.
-	ParentCallID string
+	ParentCallID ToolCallID
 	// Kind discriminates the per-branch lifecycle transition (branch_start /
 	// branch_tool / branch_end). Set on EvParallelBranch only; empty on the run-level
 	// start/end events.
@@ -1361,7 +1360,7 @@ type TeamMemberDisposition struct {
 type TeamPayload struct {
 	// ParentCallID is the parent's Team tool-call id, attributing every team.*
 	// event to the originating Team card. Set on all three kinds.
-	ParentCallID string
+	ParentCallID ToolCallID
 	// TeamID is the team id, distinguishing concurrent teams. Set on all kinds.
 	TeamID string
 	// Roster is the team's membership as the model formed it. Set on EvTeamStart

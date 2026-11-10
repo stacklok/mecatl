@@ -6,14 +6,22 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stacklok/mecatl/engine/learning"
 	"github.com/stacklok/mecatl/engine/session"
 )
 
+func currentTrajectory(id session.SessionID, workspace string, stop session.StopReason, usage session.Usage, messages []session.Message) learning.Trajectory {
+	sess := session.New(id, session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/fixture", Revision: "test"}, session.Limits{}, time.Unix(0, 0))
+	tr := learning.NewSessionTrajectory(sess, workspace, stop, usage)
+	tr.Messages = session.CloneMessages(messages)
+	return tr
+}
+
 func reflectionInput(messages ...session.Message) learning.Input {
 	return learning.NewInput(
-		learning.NewTrajectory("session-1", "/workspace", session.StopEndTurn, session.Usage{}, messages),
+		currentTrajectory("session-1", "/workspace", session.StopEndTurn, session.Usage{}, messages),
 		nil,
 		nil,
 		nil,
@@ -42,7 +50,7 @@ func TestEvidenceDigestResolutionAndProjectionRedaction(t *testing.T) {
 	call := session.NewToolCall("call-1", "Read", json.RawMessage(`{"token":"ghp_0123456789abcdefghijklmnop"}`))
 	input := reflectionInput(
 		session.NewUserMessageWithParts("remember that formatting uses gofmt", []session.Content{{Data: []byte("binary-secret")}}),
-		session.NewAssistantMessage("working", "opaque-reasoning-secret", []session.ToolCall{call}),
+		assistantWithReplay("working", "opaque-reasoning-secret", []session.ToolCall{call}),
 		session.NewToolMessage(session.NewToolResult("call-1", "The credential is ghp_0123456789abcdefghijklmnop and must not be projected")),
 	)
 	input = learning.NewInput(input.Trajectory, []session.Event{
@@ -133,13 +141,13 @@ func TestStructuralSignalsAreNarrow(t *testing.T) {
 	}
 	input := reflectionInput(
 		session.NewUserMessage("remember that Go files are formatted with gofmt"),
-		session.NewAssistantMessage("", "", calls),
+		session.NewAssistantMessage("", calls),
 		session.NewToolMessage(session.NewToolError("a1", "first failed")),
 		session.NewToolMessage(session.NewToolResult("a2", "ok")),
-		session.NewAssistantMessage("", "", []session.ToolCall{session.NewToolCall("b1", "Read", nil), session.NewToolCall("b2", "Edit", nil)}),
+		session.NewAssistantMessage("", []session.ToolCall{session.NewToolCall("b1", "Read", nil), session.NewToolCall("b2", "Edit", nil)}),
 		session.NewToolMessage(session.NewToolResult("b1", "ok")),
 		session.NewToolMessage(session.NewToolResult("b2", "ok")),
-		session.NewAssistantMessage("", "", []session.ToolCall{session.NewToolCall("c1", "Read", nil)}),
+		session.NewAssistantMessage("", []session.ToolCall{session.NewToolCall("c1", "Read", nil)}),
 		session.NewToolMessage(session.NewToolResult("c1", "ok")),
 		session.NewUserMessage("No, use the repository task instead."),
 		session.NewUserMessage("Actually, run the focused test first."),
@@ -172,13 +180,13 @@ func TestStructuralSignalsAreNarrow(t *testing.T) {
 
 func TestSubstantialSuccessRequiresCleanToolsAndFinalText(t *testing.T) {
 	input := reflectionInput(
-		session.NewAssistantMessage("", "", []session.ToolCall{
+		session.NewAssistantMessage("", []session.ToolCall{
 			session.NewToolCall("a", "Read", nil), session.NewToolCall("b", "Grep", nil), session.NewToolCall("c", "Glob", nil),
 		}),
 		session.NewToolMessage(session.NewToolResult("a", "ok")),
 		session.NewToolMessage(session.NewToolResult("b", "ok")),
 		session.NewToolMessage(session.NewToolResult("c", "ok")),
-		session.NewAssistantMessage("Verified the workflow.", "", nil),
+		session.NewAssistantMessage("Verified the workflow.", nil),
 	)
 	if got := learning.DetectSignals(input); len(got) != 1 || got[0].Kind != learning.SignalSubstantialSuccess || len(got[0].Evidence) != 4 {
 		t.Fatalf("substantial success = %#v", got)
@@ -262,7 +270,7 @@ func TestNewInputOwnsEventsAndExistingFacts(t *testing.T) {
 	call := session.NewToolCall("call-1", "Read", json.RawMessage(`{"path":"a"}`))
 	events := []session.Event{{Type: session.EvToolCall, Seq: 4, Text: "before", ToolCall: &call}}
 	existing := []learning.ExistingFact{{Kind: learning.CandidateProjectFact, Key: "project/language", Value: "Go", Description: "Primary language"}}
-	input := learning.NewInput(learning.NewTrajectory("s", "", session.StopEndTurn, session.Usage{}, nil), events, nil, existing)
+	input := learning.NewInput(currentTrajectory("s", "", session.StopEndTurn, session.Usage{}, nil), events, nil, existing)
 	events[0].Text = "after"
 	events[0].ToolCall.Name = "Write"
 	existing[0].Value = "Rust"

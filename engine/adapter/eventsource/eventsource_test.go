@@ -4,11 +4,13 @@ import (
 	"encoding/json"
 	"errors"
 	"iter"
+	"os"
 	"reflect"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/stacklok/mecatl/engine/adapter/eventcodec"
 	"github.com/stacklok/mecatl/engine/adapter/eventsource"
 	"github.com/stacklok/mecatl/engine/adapter/sessnap"
 	"github.com/stacklok/mecatl/engine/governance"
@@ -50,6 +52,65 @@ func TestFoldRestoresExecutionCapabilityFacts(t *testing.T) {
 	folded.ExecutionCapabilities.Files = false
 	if !m.ExecutionCapabilities.Files {
 		t.Fatal("fold aliased source metadata")
+	}
+}
+
+func TestFoldCurrentApprovalPreservesMetadataAcrossSnapshot(t *testing.T) {
+	m := meta()
+	m.Incarnation = session.LegacyIncarnationID(m.ID, m.CreatedAt.UnixNano(), m.Owner)
+	m.AgentDefinitionName = "reviewer"
+	m.Authority = &session.Authority{
+		CapabilitySet: governance.CapabilitySet{Tools: []string{"Read"}},
+		Provenance:    "agent-def:reviewer",
+		Ceiling:       &governance.CapabilitySet{Tools: []string{"Read"}},
+	}
+	m.WorkspaceEnrollmentBrokerKeys = []string{"broker-read"}
+	m.WorkspaceEnrollmentBrokerKeysPresent = true
+
+	call := session.NewToolCall("call-current", "Read", json.RawMessage(`{"path":"second.txt"}`))
+	events := []session.Event{
+		{Type: session.EvToolCall, ToolCall: &call},
+		{Type: session.EvPermissionAsk, Ask: &session.PendingAsk{AskID: "ask-current", Tool: "Read", Call: call.ID, Args: call.Args, Reason: "approve"}},
+	}
+
+	folded, err := eventsource.Fold(m, seq(events))
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertMetadata := func(s *session.Session) {
+		t.Helper()
+		if s.State != session.StateAwaiting {
+			t.Fatalf("current approval not awaiting: %v", s.State)
+		}
+		if _, ok := s.PendingAsk(); !ok {
+			t.Fatal("current approval not restored")
+		}
+		if s.AgentDefinitionName != m.AgentDefinitionName {
+			t.Fatalf("AgentDefinitionName = %q, want %q", s.AgentDefinitionName, m.AgentDefinitionName)
+		}
+		authority, bound := s.BoundAuthority()
+		if !bound || !reflect.DeepEqual(authority, *m.Authority) {
+			t.Fatalf("authority = %+v, bound = %v, want %+v", authority, bound, *m.Authority)
+		}
+		keys, present := s.WorkspaceEnrollmentBrokerKeys()
+		if !present || !reflect.DeepEqual(keys, m.WorkspaceEnrollmentBrokerKeys) {
+			t.Fatalf("broker keys = %q, present = %v", keys, present)
+		}
+	}
+	assertMetadata(folded)
+	wantHistory := session.CloneMessages(folded.Conversation.Messages)
+
+	raw, err := sessnap.Marshal(folded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	restored, err := sessnap.Unmarshal(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertMetadata(restored)
+	if !reflect.DeepEqual(restored.Conversation.Messages, wantHistory) {
+		t.Fatal("folded history changed at restart")
 	}
 }
 
@@ -177,13 +238,13 @@ func TestFoldParityForCompleteErrorStop(t *testing.T) {
 	if err := live.BeginTurn(); err != nil {
 		t.Fatal(err)
 	}
-	if err := live.RecordAssistant(session.NewAssistantMessage("prior complete", "", nil)); err != nil {
+	if err := live.RecordAssistant(session.NewAssistantMessage("prior complete", nil)); err != nil {
 		t.Fatal(err)
 	}
 	if err := live.BeginTurn(); err != nil {
 		t.Fatal(err)
 	}
-	if err := live.RecordAssistant(session.NewAssistantMessage("clean error terminal", "", nil)); err != nil {
+	if err := live.RecordAssistant(session.NewAssistantMessage("clean error terminal", nil)); err != nil {
 		t.Fatal(err)
 	}
 	if err := live.Stop(session.StopError); err != nil {
@@ -212,7 +273,7 @@ func TestFoldParityForIteratorError(t *testing.T) {
 	if err := live.BeginTurn(); err != nil {
 		t.Fatal(err)
 	}
-	if err := live.RecordAssistant(session.NewAssistantMessage("prior complete", "", nil)); err != nil {
+	if err := live.RecordAssistant(session.NewAssistantMessage("prior complete", nil)); err != nil {
 		t.Fatal(err)
 	}
 	if err := live.BeginTurn(); err != nil {
@@ -293,7 +354,7 @@ func TestFoldFailedStepRetrySnapshotParity(t *testing.T) {
 		if err := s.BeginTurn(); err != nil {
 			t.Fatal(err)
 		}
-		if err := s.RecordAssistant(session.NewAssistantMessage("prior completed turn", "", nil)); err != nil {
+		if err := s.RecordAssistant(session.NewAssistantMessage("prior completed turn", nil)); err != nil {
 			t.Fatal(err)
 		}
 		if err := s.BeginTurn(); err != nil {
@@ -403,7 +464,7 @@ func TestFoldStructuralConversation(t *testing.T) {
 		t.Fatalf("usage = %+v, want {15,5}", s.UsageFor(session.UsageKindMain))
 	}
 	// Reasoning is never event-carried — the contract limitation.
-	if msgs[0].Reasoning != "" || msgs[0].ProviderPhase != "" {
+	if msgs[0].Replay != nil || msgs[0].ProviderPhase != "" {
 		t.Fatalf("reconstructed assistant carries Reasoning/ProviderPhase it cannot have: %+v", msgs[0])
 	}
 }
@@ -447,8 +508,8 @@ func TestFoldMultiRunUsageIsCumulative(t *testing.T) {
 func TestFoldRecoversCompactionArchiveHead(t *testing.T) {
 	head := []session.Message{
 		session.NewUserMessage("original task"),
-		session.NewAssistantMessage("old turn 1", "", nil),
-		session.NewAssistantMessage("old turn 2", "", nil),
+		session.NewAssistantMessage("old turn 1", nil),
+		session.NewAssistantMessage("old turn 2", nil),
 	}
 	evs := []session.Event{
 		{Type: session.EvTurnStart, Turn: 0},
@@ -482,7 +543,7 @@ func TestFoldRecoversCompactionArchiveHead(t *testing.T) {
 // ask restored.
 func TestFoldUnansweredAskIsAwaiting(t *testing.T) {
 	call := toolCall("c1", "Shell", `{"command":"ls"}`)
-	ask := session.PendingAsk{AskID: "s1:0:c1:r0", Tool: "Shell", Reason: "needs approval"}
+	ask := session.PendingAsk{AskID: "s1:0:c1:r0", Tool: "Shell", Call: call.ID, Reason: "needs approval"}
 	evs := []session.Event{
 		{Type: session.EvTurnStart, Turn: 0},
 		{Type: session.EvMessageDelta, Turn: 0, Text: "running a command"},
@@ -848,5 +909,44 @@ func TestFoldMultiRunFailureMetadataIsLastRun(t *testing.T) {
 	want := session.RetryMetadata{Disposition: session.RetryDispositionRetryable, Progress: session.StreamProgressPrecommit}
 	if got := s.FailureMetadata(); got != want {
 		t.Fatalf("FailureMetadata = %+v, want %+v", got, want)
+	}
+}
+
+// The frozen provider-key fixture is now a sparse display source, not a source
+// from which invocation identity or a complete learning trajectory can be rebuilt.
+func TestLegacyEventFixtureSkipsInvocationRecords(t *testing.T) {
+	raw, err := os.ReadFile("testdata/legacy-events.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var records []json.RawMessage
+	if err := json.Unmarshal(raw, &records); err != nil {
+		t.Fatal(err)
+	}
+	var events []session.Event
+	var skipped int
+	for _, record := range records {
+		e, err := eventcodec.UnmarshalFormat(record, "eventlog-json/1")
+		if errors.Is(err, eventcodec.ErrSkipLegacyRecord) {
+			skipped++
+			continue
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		events = append(events, e)
+	}
+	if skipped != 9 || len(events) != 5 || events[0].Seq != 1 || events[3].Seq != 13 || events[4].Seq != 14 {
+		t.Fatalf("lost source positions: skipped=%d events=%+v", skipped, events)
+	}
+	if events[3].PlanContinuationFailure == nil || events[4].ModelRetry == nil {
+		t.Fatal("non-invocation payloads lost")
+	}
+	folded, err := eventsource.Fold(meta(), seq(events))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if folded.LearningEligible() {
+		t.Fatal("missing eligibility metadata laundered filtered legacy history")
 	}
 }
