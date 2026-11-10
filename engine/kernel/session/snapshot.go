@@ -3,6 +3,7 @@ package session
 import (
 	"iter"
 
+	"github.com/stacklok/mecatl/engine/kernel/codec"
 	"github.com/stacklok/mecatl/engine/kernel/contentid"
 	"github.com/stacklok/mecatl/engine/kernel/history"
 	historyid "github.com/stacklok/mecatl/engine/kernel/history/id"
@@ -53,6 +54,56 @@ func (v Snapshot) Records() iter.Seq[RecordView] {
 			}
 		}
 	}
+}
+
+// RecordsBetween returns every record in accepted commits (after, through], in
+// chronological order, including intermediate replacements and whole commits.
+// Zero after denotes pre-genesis; through must be a positive accepted reference.
+// Shape and sequence-order validation precede exact-reference membership checks:
+// malformed or reversed bounds return codec.ErrInvalidData; absent references
+// return ErrIdentity. All failures return a nil sequence, synchronously. Equal
+// accepted endpoints return a nonnil empty sequence, including on repeated reads.
+// Zero and uncreated snapshots have no accepted through endpoint.
+//
+// Setup costs O(1) time and space using the captured commit index. Traversal costs
+// O(records yielded), with no decoding, payload copying or backend I/O. The
+// repeatable, early-stoppable sequence and its borrowed, history-scoped views stay
+// pinned across later appends; they may retain backing beyond the selected range.
+// RecordView.Format explicitly detaches data; these views confer no append authority.
+func (v Snapshot) RecordsBetween(after, through history.CommitRef) (iter.Seq[RecordView], error) {
+	if after != (history.CommitRef{}) && after.Validate() != nil {
+		return nil, codec.ErrInvalidData
+	}
+	if through.Validate() != nil || after.Sequence > through.Sequence {
+		return nil, codec.ErrInvalidData
+	}
+	start := 0
+	if after != (history.CommitRef{}) {
+		if after.Sequence > int64(len(v.commits)) {
+			return nil, ErrIdentity
+		}
+		entry := v.commits[int(after.Sequence-1)] //nolint:gosec // Positive sequence is bounded by the captured int-sized length above.
+		if entry.ref != after {
+			return nil, ErrIdentity
+		}
+		start = entry.recordStart + entry.recordCount
+	}
+	if through.Sequence > int64(len(v.commits)) {
+		return nil, ErrIdentity
+	}
+	entry := v.commits[int(through.Sequence-1)] //nolint:gosec // Positive sequence is bounded by the captured int-sized length above.
+	if entry.ref != through {
+		return nil, ErrIdentity
+	}
+	records := v.records[start : entry.recordStart+entry.recordCount]
+	scope := v.historyID
+	return func(yield func(RecordView) bool) {
+		for _, record := range records {
+			if !yield(RecordView{scope: scope, record: record}) {
+				return
+			}
+		}
+	}, nil
 }
 
 // Runs returns a repeatable sequence of immutable runs in chronological order.

@@ -145,6 +145,7 @@
     method func (Snapshot).RecordAt(i int) RecordView
     method func (Snapshot).RecordCount() int
     method func (Snapshot).Records() iter.Seq[RecordView]
+    method func (Snapshot).RecordsBetween(after history.CommitRef, through history.CommitRef) (iter.Seq[RecordView], error)
     method func (Snapshot).RunAt(i int) RunView
     method func (Snapshot).RunCount() int
     method func (Snapshot).Runs() iter.Seq[RunView]
