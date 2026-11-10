@@ -17,20 +17,9 @@ import (
 	"github.com/stacklok/mecatl/engine/session"
 )
 
-// SnapshotFormat is the snapshot envelope format tag this client writes on
-// Save and accepts on Load: the payload is exactly sessnap.Marshal output
-// (one JSON line). The driver round-trips the tag verbatim; it changes ONLY
-// if the encoding itself is replaced (sessnap's own schema evolution is
-// additive and needs no bump). Load rejects any other tag with an
-// infrastructure error — never ErrNotFound.
-//
-// SIGNPOST — a future format bump MUST be read-set-accept / write-newest:
-// the readers (this client's Load, the server wrapper's Save decode) must
-// keep ACCEPTING every previously-shipped format tag while Save WRITES only
-// the newest. A bump that switches the write tag and rejects the old tag in
-// the same step bricks every session already stored under the old format —
-// the driver round-trips envelopes verbatim and cannot migrate them.
-const SnapshotFormat = "sessnap-json/1"
+// SnapshotFormat is the newest identity-aware snapshot envelope written by
+// clients and decoding wrappers. Readers accept /1 and /2, checking the local schema.
+const SnapshotFormat = sessnap.Format
 
 // MaxSnapshotBytes is the protocol's REQUIRED MINIMUM message capacity for a
 // snapshot envelope: 64 MiB. A session snapshot legitimately reaches multiple
@@ -177,10 +166,7 @@ func (st *SessionStore) Load(ctx context.Context, id session.SessionID) (*sessio
 		return nil, port.NewSessionLoadFailure(port.SessionLoadFailureStore, rpcErr(ctx, "load", err))
 	}
 	snap := resp.GetSnapshot()
-	if got := snap.GetFormat(); got != SnapshotFormat {
-		return nil, port.NewSessionLoadFailure(port.SessionLoadFailureSnapshot, fmt.Errorf("grpcdriver: load %q: unknown snapshot format %q (this client speaks %q)", id, got, SnapshotFormat))
-	}
-	sess, err := sessnap.Unmarshal(snap.GetPayload())
+	sess, err := sessnap.UnmarshalFormat(snap.GetPayload(), snap.GetFormat())
 	if err != nil {
 		return nil, port.NewSessionLoadFailure(port.SessionLoadFailureSnapshot, fmt.Errorf("grpcdriver: load %q: %w", id, err))
 	}

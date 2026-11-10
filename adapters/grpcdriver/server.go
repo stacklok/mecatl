@@ -77,8 +77,8 @@ func NewSessionStoreServer(st port.SessionStore) driverv1.SessionStoreServiceSer
 	return &sessionStoreServer{store: st}
 }
 
-// Save decodes the envelope (rejecting a non-SnapshotFormat payload, a
-// malformed payload, or a top-level session_id that disagrees with the id
+// Save decodes the /1 or /2 envelope (rejecting an unsupported format or local
+// schema, malformed payload, or a top-level session_id that disagrees with the id
 // inside the payload — all INVALID_ARGUMENT) and persists the restored
 // session in the wrapped store.
 func (s *sessionStoreServer) Save(ctx context.Context, req *driverv1.SaveRequest) (*driverv1.SaveResponse, error) {
@@ -89,13 +89,10 @@ func (s *sessionStoreServer) Save(ctx context.Context, req *driverv1.SaveRequest
 	if snap == nil {
 		return nil, status.Error(codes.InvalidArgument, "snapshot is required")
 	}
-	if got := snap.GetFormat(); got != SnapshotFormat {
-		return nil, status.Errorf(codes.InvalidArgument, "unknown snapshot format %q (this server speaks %q)", got, SnapshotFormat)
-	}
 	if len(snap.GetPayload()) == 0 {
 		return nil, status.Error(codes.InvalidArgument, "snapshot payload is empty")
 	}
-	sess, err := sessnap.Unmarshal(snap.GetPayload())
+	sess, err := sessnap.UnmarshalFormat(snap.GetPayload(), snap.GetFormat())
 	if err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "decode snapshot: %v", err)
 	}
@@ -122,10 +119,10 @@ func (s *sessionStoreServer) Create(ctx context.Context, req *driverv1.SaveReque
 	if !ok || !port.SupportsSessionCreate(s.store) {
 		return nil, status.Error(codes.Unimplemented, "the wrapped session store does not support atomic create")
 	}
-	if req.GetSessionId() == "" || req.GetSnapshot() == nil || req.GetSnapshot().GetFormat() != SnapshotFormat || len(req.GetSnapshot().GetPayload()) == 0 {
+	if req.GetSessionId() == "" || req.GetSnapshot() == nil || len(req.GetSnapshot().GetPayload()) == 0 {
 		return nil, status.Error(codes.InvalidArgument, "valid session_id and snapshot are required")
 	}
-	sess, err := sessnap.Unmarshal(req.GetSnapshot().GetPayload())
+	sess, err := sessnap.UnmarshalFormat(req.GetSnapshot().GetPayload(), req.GetSnapshot().GetFormat())
 	if err != nil || string(sess.ID) != req.GetSessionId() {
 		return nil, status.Error(codes.InvalidArgument, "snapshot does not match session_id")
 	}
