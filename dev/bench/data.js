@@ -371998,6 +371998,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1794346218099,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "radoslav@stacklok.com",
+            "name": "Radoslav Dimitrov",
+            "username": "rdimitrov"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "f27dbc28dc3dbd96febd25b752950524dc22d32d",
+          "message": "chore(deps): consolidate Renovate updates (#2758)\n\nCo-authored-by: renovate[bot] <29139614+renovate[bot]@users.noreply.github.com>\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-10T17:08:01-05:00",
+          "tree_id": "a177e729690db36293e079f35640555db94de1ff",
+          "url": "https://github.com/stacklok/mecatl/commit/f27dbc28dc3dbd96febd25b752950524dc22d32d"
+        },
+        "date": 1794349260818,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -537239,6 +537273,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1794349257603,
+  "lastUpdate": 1794349261615,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
