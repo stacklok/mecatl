@@ -23,7 +23,7 @@ func TestToolInvocationMaterializationAndView(t *testing.T) {
 	want.RunID, want.RequestID, want.CallID = 7, 9, 3
 	wire, err := codec.Encode(want, testLimits())
 	interactionCheck(t, err)
-	if r.value.Kind != sessionformat.KindToolInvocation || r.value.KindVersion != 2 || !bytes.Equal(wire, r.value.Payload) || !r.toolInvocation.Equal(want) {
+	if r.value.Kind != sessionformat.KindToolInvocation || r.value.KindVersion != 1 || !bytes.Equal(wire, r.value.Payload) || !r.toolInvocation.Equal(want) {
 		t.Fatal("materialized invocation differs from complete persisted DTO")
 	}
 	view, ok := (RecordView{scope: testHistoryID(t), record: r}).ToolInvocation()

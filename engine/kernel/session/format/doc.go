@@ -19,7 +19,7 @@
 package format
 
 // Version is the supported version of all session payload schemas.
-const Version int64 = 2
+const Version int64 = 1
 
 const (
 	// KindCreated identifies the empty session creation payload.

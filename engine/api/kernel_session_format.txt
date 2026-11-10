@@ -333,7 +333,7 @@ const ToolNotInvokedPolicyRejected ToolNotInvokedReason = "policy-rejected"
 const ToolNotInvokedPreparationFailed ToolNotInvokedReason = "preparation-failed"
 const ToolReturnError ToolReturnStatus = "error"
 const ToolReturnSuccess ToolReturnStatus = "success"
-const Version int64 = 2
+const Version int64 = 1
 type Actor string
 type AttributedInput struct{Parts []ContentPart "cbor:\"c\""; Actor Actor "cbor:\"a\""; Purpose PromptPurpose "cbor:\"p\""; Source ContentSource "cbor:\"s\""}
 type CaptureFailureEvidence struct{RequestID uint64 "cbor:\"q\" view:\"manual\""; Evidence *ObservedEvidence "cbor:\"e,omitempty\""; Usage *InvocationUsage "cbor:\"u,omitempty\""}

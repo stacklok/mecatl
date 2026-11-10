@@ -43,7 +43,7 @@ func TestToolDispositionMaterializationAndView(t *testing.T) {
 			want.RunID, want.RequestID, want.CallID = 7, 9, 3
 			wire, err := codec.Encode(want, testLimits())
 			interactionCheck(t, err)
-			if r.value.Kind != sessionformat.KindToolDisposition || r.value.KindVersion != 2 || !bytes.Equal(wire, r.value.Payload) || !r.toolDisposition.Equal(want) {
+			if r.value.Kind != sessionformat.KindToolDisposition || r.value.KindVersion != 1 || !bytes.Equal(wire, r.value.Payload) || !r.toolDisposition.Equal(want) {
 				t.Fatal("materialized disposition differs from persisted DTO")
 			}
 			record := RecordView{scope: testHistoryID(t), record: r}
