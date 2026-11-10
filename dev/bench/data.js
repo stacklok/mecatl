@@ -370208,6 +370208,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1794311737449,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "4377202+samuv@users.noreply.github.com",
+            "name": "Samuele V",
+            "username": "samuv"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "2d08ff9c85d0b956f2699dfeb64d7ed1d7512895",
+          "message": "chore(deps): upgrade the Slack bot example to Vitest 5.1.0 (#1290)\n\nSigned-off-by: Samuele Verzi <samu@stacklok.com>",
+          "timestamp": "2026-11-10T14:26:59+01:00",
+          "tree_id": "9eddb642faeefcd907a3f0dffb83de5a4b97702f",
+          "url": "https://github.com/stacklok/mecatl/commit/2d08ff9c85d0b956f2699dfeb64d7ed1d7512895"
+        },
+        "date": 1794317919762,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -534684,6 +534718,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1794317916156,
+  "lastUpdate": 1794317920648,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
