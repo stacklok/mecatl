@@ -166,11 +166,12 @@ var coreImportRules = []coreImportRule{
 		allowedCore: map[string]bool{
 			modulePrefix + "engine/kernel/codec":     true,
 			modulePrefix + "engine/kernel/contentid": true,
+			modulePrefix + "engine/kernel/value":     true,
 		},
 		allowedExternal: map[string]bool{
 			"github.com/jcalabro/atmos/cbor": true,
 		},
-		desc: "session format may import only the codec runtime, generated Atmos CBOR primitives and stdlib, never aggregates or identity owners",
+		desc: "session format may import only structured values, content identity, the codec runtime, generated Atmos CBOR primitives and stdlib, never aggregates or other identity owners",
 	},
 	{
 		pkg: modulePrefix + "engine/session",

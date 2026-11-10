@@ -11,6 +11,12 @@ import (
 // Nil fields are absent; present-empty strings survive. Assignment shares mutable
 // storage; Clone detaches it. Zero is valid.
 //
+// Design status: Detail and Correlation are provisional choices for producer
+// diagnostics, pending real preparation/authorization/executor usage. Revisit
+// their names and semantics with those integrations; current exact preservation,
+// presence, bounds, ownership and release obligations remain required. Redesign
+// must be explicit, never a silent reinterpretation of retained evidence.
+//
 //dtogen:validate validateLocal
 type ToolEvidence struct {
 	// Detail is optional exact UTF-8 diagnostic context, at most 16384 bytes.

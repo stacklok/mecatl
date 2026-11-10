@@ -7,6 +7,7 @@ import (
 	dtogenCBOR "github.com/jcalabro/atmos/cbor"
 	dtogenCodec "github.com/stacklok/mecatl/engine/kernel/codec"
 	dtogenType2 "github.com/stacklok/mecatl/engine/kernel/contentid"
+	dtogenType3 "github.com/stacklok/mecatl/engine/kernel/value"
 )
 
 // dtogen groups this output's stateless helpers; policy stays per call.
@@ -1825,9 +1826,11 @@ func (v *ToolInvocation) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) er
 }
 
 // Clone detaches mutable state, including excluded fields, without validation; nil collections remain nil.
+// It propagates value.ErrDepthExceeded panics when traversing structured values beyond their fixed local depth of 128.
 func (v ToolInvocation) Clone() ToolInvocation { return (dtogen{}).clone120(v) }
 
 // Equal compares all state without validation; nil and empty collections are equal, absent and present pointers differ.
+// It propagates value.ErrDepthExceeded panics on traversed structured values beyond local depth 128; shallow mismatches may return first.
 func (v ToolInvocation) Equal(other ToolInvocation) bool { return (dtogen{}).equal120(v, other) }
 
 // CheckCBOR checks one value using shared operation accounting; fieldMax caps only its immediate representation.
@@ -9616,7 +9619,7 @@ func (h dtogen) check120(v ToolInvocation, b *dtogenCodec.Budget, d, cap int) (e
 	if err := b.CheckString("a", d+1, int(^uint(0)>>1)); err != nil {
 		return dtogenFmt.Errorf("Arguments: %w", err)
 	}
-	if err := h.check121(v.Arguments, b, d+1, int(min(uint64(int(^uint(0)>>1)), uint64(4194304)))); err != nil {
+	if err := h.check121(v.Arguments, b, d+1, int(min(uint64(int(^uint(0)>>1)), uint64(4096)))); err != nil {
 		return dtogenFmt.Errorf("Arguments: %w", err)
 	}
 	if err := b.CheckString("c", d+1, int(^uint(0)>>1)); err != nil {
@@ -9738,7 +9741,7 @@ func (h dtogen) read120(r *dtogenCodec.Reader, d, cap int) (v ToolInvocation, er
 		switch key {
 		case "a":
 			seen[0] = true
-			v.Arguments, err = h.read121(r, d+1, int(min(uint64(int(^uint(0)>>1)), uint64(4194304))))
+			v.Arguments, err = h.read121(r, d+1, int(min(uint64(int(^uint(0)>>1)), uint64(4096))))
 			if err != nil {
 				return v, dtogenFmt.Errorf("Arguments: %w", err)
 			}
@@ -9815,48 +9818,22 @@ func (h dtogen) read120(r *dtogenCodec.Reader, d, cap int) (v ToolInvocation, er
 	return v, nil
 }
 
-// Helpers 121: []byte.
-func (h dtogen) clone121(v []byte) []byte {
-	if v == nil {
-		return nil
-	}
-	out := make([]byte, len(v))
-	for i := range v {
-		out[i] = h.clone18(v[i])
-	}
-	return out
+// Helpers 121: value.Map.
+func (h dtogen) clone121(v dtogenType3.Map) dtogenType3.Map {
+	return v.Clone()
 }
-func (h dtogen) equal121(v, w []byte) bool {
-	if len(v) != len(w) {
-		return false
-	}
-	for i := range v {
-		if !h.equal18(v[i], w[i]) {
-			return false
-		}
-	}
-	return true
+func (h dtogen) equal121(v, w dtogenType3.Map) bool {
+	return v.Equal(w)
 }
-func (h dtogen) check121(v []byte, b *dtogenCodec.Budget, d, cap int) (err error) {
-	return b.CheckBytes(len(v), d, cap)
+func (h dtogen) check121(v dtogenType3.Map, b *dtogenCodec.Budget, d, cap int) (err error) {
+	return v.CheckCBOR(b, d, cap)
 }
-func (h dtogen) append121(out []byte, v []byte) []byte {
-	out = dtogenCBOR.AppendBytesHeader(out, uint64(len(v)))
-	for _, x := range v {
-		out = append(out, byte(x))
-	}
-	return out
+func (h dtogen) append121(out []byte, v dtogenType3.Map) []byte {
+	return v.AppendCBOR(out)
 }
-func (h dtogen) read121(r *dtogenCodec.Reader, d, cap int) (v []byte, err error) {
-	x, err := r.Bytes(d, cap)
-	if err != nil {
-		return v, err
-	}
-	v = make([]byte, len(x))
-	for i := range x {
-		v[i] = byte(x[i])
-	}
-	return v, nil
+func (h dtogen) read121(r *dtogenCodec.Reader, d, cap int) (v dtogenType3.Map, err error) {
+	err = v.ReadCBOR(r, d, cap)
+	return v, err
 }
 
 // Helpers 122: []uint64.
