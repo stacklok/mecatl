@@ -54,7 +54,7 @@ from these contributor test targets.
 | Task | 3.54.0 | Repository build and test commands |
 | Node.js (SDK and docs) | 24.x | TypeScript SDK and documentation tooling |
 | Node.js (Studio) | 26.x | Studio, selected by [`apps/.node-version`](apps/.node-version) |
-| pnpm | 12.15.0 | TypeScript SDK and Studio dependencies |
+| pnpm | 12.18.0 | TypeScript SDK and Studio dependencies |
 | Bun | 1.4.4 | Node/Bun offline SDK wire tests (`task sdk:e2e`) |
 | Deno | 2.9.3 | Deno SDK checks (`task sdk:deno`); CI also tests current 2.x |
 | Buf | 1.75.0 | Protocol contract generation (`task generate`) |
@@ -68,7 +68,7 @@ With [mise](https://mise.jdx.dev/), you can select the SDK runtimes for one comm
 without changing your defaults:
 
 ```sh
-mise exec node@24 pnpm@12.15.0 bun@1.4.4 -- task sdk:e2e
+mise exec node@24 pnpm@12.18.0 bun@1.4.4 -- task sdk:e2e
 ```
 
 To make Bun your personal default, use `mise use --global bun@1.4.4`.
