@@ -412291,6 +412291,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1794346223320,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "radoslav@stacklok.com",
+            "name": "Radoslav Dimitrov",
+            "username": "rdimitrov"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "f27dbc28dc3dbd96febd25b752950524dc22d32d",
+          "message": "chore(deps): consolidate Renovate updates (#2758)\n\nCo-authored-by: renovate[bot] <29139614+renovate[bot]@users.noreply.github.com>\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-10T17:08:01-05:00",
+          "tree_id": "a177e729690db36293e079f35640555db94de1ff",
+          "url": "https://github.com/stacklok/mecatl/commit/f27dbc28dc3dbd96febd25b752950524dc22d32d"
+        },
+        "date": 1794349264848,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 13416.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12911,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 681,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -537273,6 +537312,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1794349261615,
+  "lastUpdate": 1794349265650,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
