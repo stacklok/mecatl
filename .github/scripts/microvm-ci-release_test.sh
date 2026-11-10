@@ -60,7 +60,7 @@ require "if: needs.changes.outputs.microvm_relevant == 'true'" "$ci"
 require 'run: task --concurrency 3 test:race' "$ci"
 require '    - environment/microvm' "$taskfile"
 require '    - integration/microvm' "$taskfile"
-require "cd {{.MODULE | shellQuote}} && GOWORK={{.TEST_GOWORK | shellQuote}} go test" "$taskfile"
+require "cd {{.MODULE | shellQuote}} && GOWORK={{.TEST_GOWORK | shellQuote}} {{if .RACE}}{{.RACE_CGO}} {{end}}go test" "$taskfile"
 require "TEST_GOWORK: '{{default \"off\" .TEST_GOWORK}}'" "$taskfile"
 
 # The dedicated real-hypervisor workflow is expensive, so it triggers only for
