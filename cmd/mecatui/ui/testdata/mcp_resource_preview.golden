@@ -3,20 +3,20 @@
 
 
 
-
-
-                             ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
-                             ┃                                       ┃
-                             ┃  resource preview                     ┃
-                             ┃                                       ┃
-                             ┃  the resource body                    ┃
-                             ┃  second line                          ┃
-                             ┃                                       ┃
-                             ┃  enter insert into prompt · esc back  ┃
-                             ┃                                       ┃
-                             ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
-
-
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃                                                                                                  ┃
+┃  resource preview                                                                                ┃
+┃  page-a                                                                                          ┃
+┃  fetch · https://example.com/a                                                                   ┃
+┃  ↑ 0 · ↓ 0 lines                                                                                 ┃
+┃                                                                                                  ┃
+┃  the resource body                                                                               ┃
+┃  second line                                                                                     ┃
+┃                                                                                                  ┃
+┃  enter insert into prompt · esc back                                                             ┃
+┃  ↑/↓ scroll · pgup/pgdn page · home/end top/end                                                  ┃
+┃                                                                                                  ┃
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
 
 
 

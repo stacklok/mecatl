@@ -39,9 +39,11 @@ func TestQuieterToolcallsResidualHintsRouteToTheirAvailableViews(t *testing.T) {
 		}
 	}
 
-	preview := stripANSIstr(renderResourcePreview(aztec(), mcpState{preview: longResult}, defaultHelpKeys()))
-	if !strings.Contains(preview, "+1 more line") {
-		t.Errorf("truncated resource preview = %q, want line count", preview)
+	st := mcpState{view: mcpResourcePrev, previewDisplay: longResult, previewLoaded: true, deps: surfaceDeps{theme: aztec(), keys: defaultKeys(), marks: defaultHelpKeys()}}
+	out, _ := st.Render(80, 16)
+	preview := stripANSIstr(out)
+	if !strings.Contains(preview, "lines") || !strings.Contains(preview, "insert into prompt") {
+		t.Errorf("bounded resource preview lacks scroll status or pinned action: %q", preview)
 	}
 	if strings.Contains(preview, "ctrl+t") || strings.Contains(preview, "expand") {
 		t.Errorf("resource preview advertises unavailable expansion: %q", preview)

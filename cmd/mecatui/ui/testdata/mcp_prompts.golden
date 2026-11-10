@@ -4,18 +4,18 @@
 
 
 
-                             ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
-                             ┃                                       ┃
-                             ┃  MCP prompts                          ┃
-                             ┃                                       ┃
-                             ┃  ╭─────────────────────────────────╮  ┃
-                             ┃  │  › code-review  review  (args)  │  ┃
-                             ┃  ╰─────────────────────────────────╯  ┃
-                             ┃    summarize  review                  ┃
-                             ┃                                       ┃
-                             ┃  ↑/↓ move · enter select · esc close  ┃
-                             ┃                                       ┃
-                             ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+                       ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+                       ┃                                                   ┃
+                       ┃  MCP prompts                                      ┃
+                       ┃                                                   ┃
+                       ┃                                                   ┃
+                       ┃  ▶ code-review  review  (args)                    ┃
+                       ┃    summarize  review                              ┃
+                       ┃                                                   ┃
+                       ┃  enter select · esc close                         ┃
+                       ┃  ↑/↓ move · pgup/pgdn page · home/end first/last  ┃
+                       ┃                                                   ┃
+                       ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
 
 
 

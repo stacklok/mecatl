@@ -24,7 +24,7 @@ bindings and dims features that the connected server does not provide.
 |`ctrl+t`|Open `/toolcalls` for the current session; approval requests use it for details.|
 |`f9`|Reveal conversation details: reasoning, turn stats, permanent error details, benign guardrail notices, and individual settled tool-call summaries. Use `ctrl+t` for tool arguments and results.|
 |`f10` or `/workspace`|Inspect [workspace status](./using-the-tui.md#inspect-a-workspace-snapshot).|
-|`shift+tab`|Cycle every permission mode: **default → plan → accept-edits → auto → yolo → default**. A mode above the server's ceiling keeps the current mode and your draft, and the footer says how to make it available. In an MCP prompt argument form, it instead moves to the previous required field.|
+|`shift+tab`|Cycle every permission mode: **default → plan → accept-edits → auto → yolo → default**. A mode above the server's ceiling keeps the current mode and your draft, and the footer says how to make it available. In an MCP prompt argument form, it instead moves to the previous field or action.|
 |`ctrl+g`|Select all prompt text.|
 |`ctrl+y`|Copy the active prompt or visible conversation selection.|
 |`f6` / `f7` / `f8`|Open Agents / Effort / MCP Prompts.|

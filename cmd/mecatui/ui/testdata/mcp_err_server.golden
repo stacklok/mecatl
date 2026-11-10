@@ -4,18 +4,18 @@
 
 
 
-
-  ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
-  ┃                                                                                             ┃
-  ┃  MCP prompts                                                                                ┃
-  ┃  ✗ server-side problem: list prompts: rpc error: code = Internal desc = downstream blew up  ┃
-  ┃                                                                                             ┃
-  ┃                                                                                             ┃
-  ┃  ↑/↓ move · enter select · esc close                                                        ┃
-  ┃                                                                                             ┃
-  ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
-
-
+              ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+              ┃                                                                      ┃
+              ┃  MCP prompts                                                         ┃
+              ┃  ✗ server-side problem: list prompts: rpc error: code = Internal de  ┃
+              ┃  sc = downstream blew up                                             ┃
+              ┃                                                                      ┃
+              ┃                                                                      ┃
+              ┃                                                                      ┃
+              ┃  esc close                                                           ┃
+              ┃                                                                      ┃
+              ┃                                                                      ┃
+              ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
 
 
 
