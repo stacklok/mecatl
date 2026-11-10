@@ -408718,6 +408718,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1794238734832,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "7e791b195fdc459f7a6f4edb69f5e30cd4cb82d9",
+          "message": "feat(kernel): encode and view bounded structured object trees (#2756)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-11-10T00:04:31Z",
+          "tree_id": "990f76e7fead05c13d9252ee4d6dd24274f79ab2",
+          "url": "https://github.com/stacklok/mecatl/commit/7e791b195fdc459f7a6f4edb69f5e30cd4cb82d9"
+        },
+        "date": 1794269821727,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 16135.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12895,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 794,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -532674,6 +532713,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1794269818528,
+  "lastUpdate": 1794269822385,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
