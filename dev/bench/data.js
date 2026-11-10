@@ -368776,6 +368776,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1794238730718,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "7e791b195fdc459f7a6f4edb69f5e30cd4cb82d9",
+          "message": "feat(kernel): encode and view bounded structured object trees (#2756)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-11-10T00:04:31Z",
+          "tree_id": "990f76e7fead05c13d9252ee4d6dd24274f79ab2",
+          "url": "https://github.com/stacklok/mecatl/commit/7e791b195fdc459f7a6f4edb69f5e30cd4cb82d9"
+        },
+        "date": 1794269817875,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -532640,6 +532674,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1794269814752,
+  "lastUpdate": 1794269818528,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
