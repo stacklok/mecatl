@@ -49,14 +49,13 @@ func runCmd(cmd tea.Cmd) tea.Msg {
 	return cmd()
 }
 
-// feedMCPInsertion runs the insertion marker/business command once, reduces that
-// explicitly expected message, and deliberately discards the follow-up widget blink.
-// Focus mutates synchronously; waiting for its timer adds no state relevant here.
+// feedMCPInsertion delivers one owned RPC receipt and discards the widget blink.
+// Focus mutates synchronously; waiting for its timer adds no relevant state.
 func feedMCPInsertion(t *testing.T, m Model, cmd tea.Cmd) Model {
 	t.Helper()
 	msg := runCmd(cmd)
 	switch msg.(type) {
-	case client.MCPPromptGotMsg, mcpInsertResourceMsg:
+	case mcpPickerResult:
 	default:
 		t.Fatalf("insertion command returned %T, want MCP prompt/resource insertion message", msg)
 	}
@@ -223,33 +222,41 @@ func TestMCPEscClosesSurface(t *testing.T) {
 	}
 }
 
-// TestMCPPromptGotClosesAndInserts asserts a MCPPromptGotMsg while the surface is
-// open: the surface's HandleMsg returns closed=true + handled=false (nothing to
-// mutate — it is closing), dispatchSurfaceMsg tears the surface down, and the
-// Model-side updateMCPMsg remnant loads the rendered prompt into the input.
+// TestMCPPromptGotClosesAndInserts exercises the owned result through root dispatch.
 func TestMCPPromptGotClosesAndInserts(t *testing.T) {
 	m := newMCPModel(t, aztec(), samplePromptMCP())
 	m = openOverlay(t, m, tea.KeyPressMsg{Code: tea.KeyF8})
-	st := mcpActive(m)
-	if st == nil {
-		t.Fatal("prompt surface should be open")
-	}
-	got := client.MCPPromptGotMsg{Name: "summarize", Messages: samplePromptMCP().promptMsg}
-	cmd, handled, closed := st.HandleMsg(got)
-	if !closed || handled {
-		t.Fatalf("HandleMsg(PromptGot) = handled=%v closed=%v, want handled=false closed=true", handled, closed)
-	}
-	if cmd != nil {
-		t.Error("PromptGot carries no surface cmd")
-	}
-	// Through the full dispatcher: the surface closes AND the Model remnant inserts.
-	mm, _ := m.Update(got)
-	m = mm.(Model)
+	m, _ = pickerKey(m, tea.KeyDown)
+	m, cmd := pickerKey(m, tea.KeyEnter)
+	m = feedMCPInsertion(t, m, cmd)
 	if m.modal != nil {
 		t.Fatalf("PromptGot should close the surface: modal=%v", m.modal)
 	}
 	if !strings.Contains(m.prompt.Value(), "Please review path X.") {
-		t.Fatalf("Model remnant did not load the prompt: %q", m.prompt.Value())
+		t.Fatalf("owned result did not load the prompt: %q", m.prompt.Value())
+	}
+}
+
+func TestMCPPromptGotFooterExpandsUntrustedNameTabs(t *testing.T) {
+	f := &browserMCP{fakeMCP: samplePromptMCP()}
+	f.prompts[1].Name = "summary\t\x1b[31m"
+	m := openOverlay(t, newMCPModel(t, aztec(), f), tea.KeyPressMsg{Code: tea.KeyF8})
+	m, _ = pickerKey(m, tea.KeyDown)
+	m, cmd := pickerKey(m, tea.KeyEnter)
+	m = feedMCPInsertion(t, m, cmd)
+
+	footer := stripANSIstr(m.renderFooter())
+	view := stripANSIstr(m.View().Content)
+	if strings.ContainsAny(footer, "\t\x1b") || !strings.Contains(footer, "loaded prompt summary    [31m") ||
+		strings.ContainsAny(view, "\t\x1b") || !strings.Contains(view, "loaded prompt summary    [31m") {
+		t.Fatalf("root footer did not safely expand the prompt name: %q", footer)
+	}
+	if strings.Contains(m.statusMsg, "\t") || strings.Contains(m.statusMsg, "\x1b[31m") ||
+		!strings.Contains(m.statusMsg, "loaded prompt summary    [31m") {
+		t.Fatalf("insertion status retained unsafe prompt name: %q", m.statusMsg)
+	}
+	if f.getPromptCalls != 1 || f.server != f.prompts[1].Server || f.name != f.prompts[1].Name {
+		t.Fatalf("raw prompt identity changed at the RPC boundary: server=%q name=%q", f.server, f.name)
 	}
 }
 
@@ -488,11 +495,9 @@ func TestMCPResourceInsertIntoInput(t *testing.T) {
 	if st == nil || st.view != mcpResourcePrev {
 		t.Fatalf("view = %v, want mcpResourcePrev", m.modal)
 	}
-	// enter in the preview: run the insertion marker once. Its Update follow-up is
-	// only the textarea widget's delayed blink; focus already changed synchronously.
-	mm, cmd = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	// Preview insertion and focus are synchronous; no marker needs delivery.
+	mm, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = mm.(Model)
-	m = feedMCPInsertion(t, m, cmd)
 	if m.modal != nil {
 		t.Fatalf("surface still open after insert: %v", m.modal)
 	}
@@ -501,48 +506,16 @@ func TestMCPResourceInsertIntoInput(t *testing.T) {
 	}
 }
 
-// TestMCPResourcePreviewCollapse checks that the resource-preview cap retains a
-// plain omitted-line count, without advertising tool-card expansion.
-func TestMCPResourcePreviewCollapse(t *testing.T) {
-	th := aztec()
-	hk := defaultHelpKeys()
-	// A body of maxToolResultLines+5 lines trips the cap.
-	var sb strings.Builder
-	for i := 0; i < maxToolResultLines+5; i++ {
-		sb.WriteString("line\n")
-	}
-	st := mcpState{view: mcpResourcePrev, preview: sb.String()}
-	got := stripANSIstr(renderResourcePreview(th, st, hk))
-	if !strings.Contains(got, "line") {
-		t.Fatalf("preview body missing: %q", got)
-	}
-	if !strings.Contains(got, "+5 more lines") || strings.Contains(got, hk.toolcalls) {
-		t.Errorf("preview should carry a plain +5 more lines marker: %q", got)
-	}
-	// The kept body must be capped: exactly maxToolResultLines body lines
-	// precede the marker (the title/footer chrome is not body). The toolArgs
-	// style pads each line, so count "line" occurrences (one per body line).
-	marker := "+5 more lines"
-	idx := strings.Index(got, marker)
-	if idx < 0 {
-		t.Fatalf("collapse marker missing: %q", got)
-	}
-	body := got[:idx]
-	// Subtract the title's "preview" (contains "view" not "line"), so the count
-	// is the body-line count.
-	if n := strings.Count(body, "line"); n != maxToolResultLines {
-		t.Errorf("preview body should keep exactly %d body lines, got %d: %q", maxToolResultLines, n, body)
-	}
-
-	// Under the cap there is no collapse marker.
-	var short strings.Builder
-	for i := 0; i < maxToolResultLines; i++ {
-		short.WriteString("line\n")
-	}
-	shortSt := mcpState{view: mcpResourcePrev, preview: short.String()}
-	shortGot := stripANSIstr(renderResourcePreview(th, shortSt, hk))
-	if strings.Contains(shortGot, "more lines") {
-		t.Errorf("preview under the cap should not carry a collapse marker: %q", shortGot)
+// Resource inspectors browse all already-loaded lines instead of truncating them.
+func TestMCPResourcePreviewBrowseBeyondFormerCutoff(t *testing.T) {
+	f := sampleResourceMCP()
+	f.contents = []client.MCPResourceContents{{Text: strings.Repeat("line\n", maxToolResultLines+5) + "last loaded line"}}
+	m := openOverlay(t, newMCPModel(t, aztec(), f), ctrlKey('r'))
+	m, cmd := pickerKey(m, tea.KeyEnter)
+	m = applyAll(m, runCmd(cmd), tea.KeyPressMsg{Code: tea.KeyEnd})
+	got := stripANSIstr(m.renderBody())
+	if !strings.Contains(got, "last loaded line") || !strings.Contains(got, "insert into prompt") {
+		t.Fatalf("full preview or pinned actions missing: %s", got)
 	}
 }
 
@@ -597,8 +570,8 @@ func TestMCPPromptArgsOwnsShiftTab(t *testing.T) {
 
 	mm, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyTab, Mod: tea.ModShift})
 	m = mm.(Model)
-	if cmd != nil {
-		t.Fatal("shift+tab in MCP prompt arguments should not issue SetMode")
+	if _, ok := runCmd(cmd).(mcpArgumentEditorMsg); !ok {
+		t.Fatal("shift+tab must return only an owned widget focus command")
 	}
 	if m.activeMode != "default" || m.pendingMode != "" {
 		t.Fatalf("active/pending mode = %q/%q, want default/empty", m.activeMode, m.pendingMode)
@@ -630,11 +603,10 @@ func TestMCPPromptSendIntoInput(t *testing.T) {
 }
 
 func TestFeedMCPInsertionRunsBusinessMessageWithoutBlink(t *testing.T) {
-	m := newMCPModel(t, aztec(), samplePromptMCP())
-	m.modal = &mcpState{view: mcpPrompts}
-	m = feedMCPInsertion(t, m, func() tea.Msg {
-		return client.MCPPromptGotMsg{Name: "review", Messages: samplePromptMCP().promptMsg}
-	})
+	m := openOverlay(t, newMCPModel(t, aztec(), samplePromptMCP()), tea.KeyPressMsg{Code: tea.KeyF8})
+	m, _ = pickerKey(m, tea.KeyDown)
+	m, cmd := pickerKey(m, tea.KeyEnter)
+	m = feedMCPInsertion(t, m, cmd)
 	if m.modal != nil || !strings.Contains(m.prompt.Value(), "Please review") {
 		t.Fatalf("business message was not reduced: modal=%v input=%q", m.modal, m.prompt.Value())
 	}
@@ -658,7 +630,9 @@ func TestMCPArgsSubmitCollectsValues(t *testing.T) {
 	if got := st.argFields[0].input.Value(); got != "main.go" {
 		t.Fatalf("arg value = %q, want main.go", got)
 	}
-	// Enter on the only (last) field submits; the result closes + inserts.
+	// Last-field Choose advances to Cancel; Tab reaches explicit Submit.
+	m, _ = pickerKey(m, tea.KeyEnter)
+	m, _ = pickerKey(m, tea.KeyTab)
 	mm, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = mm.(Model)
 	m = feedMCPInsertion(t, m, cmd)
@@ -680,11 +654,13 @@ func TestMCPArgsBlankRequiredKeepsFormOpen(t *testing.T) {
 	if st == nil || st.view != mcpPromptArgs {
 		t.Fatalf("view = %v, want mcpPromptArgs", m.modal)
 	}
-	// Submit immediately with the field left blank.
+	// Traverse the field and Cancel to Submit with the field left blank.
+	m, _ = pickerKey(m, tea.KeyTab)
+	m, _ = pickerKey(m, tea.KeyTab)
 	mm, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = mm.(Model)
-	if cmd != nil {
-		t.Fatalf("submit returned a cmd %v, want nil (no RPC)", runCmd(cmd))
+	if _, ok := runCmd(cmd).(mcpArgumentEditorMsg); !ok {
+		t.Fatal("validation should return only an owned field-focus command")
 	}
 	if fm.getPromptCalls != 0 {
 		t.Errorf("GetMCPPrompt called %d times, want 0", fm.getPromptCalls)

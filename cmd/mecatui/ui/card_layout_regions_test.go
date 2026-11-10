@@ -48,8 +48,14 @@ func TestMecatuiCardLayout_Scenario3_InventoryAndMCPFitWidth(t *testing.T) {
 			Diagnostics: []string{long},
 		}}, groups: []string{long}, groupsDone: true}
 		assertFits(t, "panel", renderMCPPanel(th, state, client.Capabilities{MCP: true}, hk, width))
-		assertFits(t, "resources", renderResourceList(th, mcpState{resources: []client.MCPResource{{Name: long, Server: long}}}, client.Capabilities{MCP: true}, hk, width))
-		assertFits(t, "prompts", renderPromptList(th, mcpState{prompts: []client.MCPPrompt{{Name: long, Server: long, Arguments: []client.MCPPromptArgument{{Required: true}}}}}, client.Capabilities{MCP: true}, hk, width))
+		picker := mcpState{view: mcpResources, deps: surfaceDeps{theme: th, keys: defaultKeys(), marks: hk, caps: client.Capabilities{MCP: true}}}
+		picker.setResources([]client.MCPResource{{Name: long, Server: long}})
+		out, _ := picker.Render(width, 30)
+		assertFits(t, "resources", out)
+		picker.view = mcpPrompts
+		picker.setPrompts([]client.MCPPrompt{{Name: long, Server: long, Arguments: []client.MCPPromptArgument{{Required: true}}}})
+		out, _ = picker.Render(width, 30)
+		assertFits(t, "prompts", out)
 	})
 
 	t.Run("models", func(t *testing.T) {

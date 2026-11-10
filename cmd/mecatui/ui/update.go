@@ -2595,6 +2595,10 @@ func (m Model) applyToolcallsSurfaceIntent(intent surfaceIntent) bool {
 // tells the caller to skip common dispatch post-processing after a root-owned
 // effect takes over; handled=false never carries meaningful work.
 func (m Model) applySurfaceIntent(intent surfaceIntent) (model tea.Model, cmd tea.Cmd, stopSurfaceDispatch bool) {
+	if intent, ok := intent.(promptInsertIntent); ok {
+		mm, cmd := m.insertIntoInput(intent.text, intent.label)
+		return mm, cmd, true
+	}
 	if intent, ok := intent.(connectSelectIntent); ok {
 		m.connectIntent = &intent.restart
 		m.closeModal()
