@@ -369134,6 +369134,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1794269817875,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "328978+blkt@users.noreply.github.com",
+            "name": "Michelangelo Mori",
+            "username": "blkt"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "78b35cb8aaf2b042dc55d830b01dd72ed5b3306f",
+          "message": "ci: test with CGO_ENABLED=0 to match release builds (#2757)",
+          "timestamp": "2026-11-10T06:02:22-05:00",
+          "tree_id": "c6923c5f6d2b11193ebedd1a76ea41f7865171dd",
+          "url": "https://github.com/stacklok/mecatl/commit/78b35cb8aaf2b042dc55d830b01dd72ed5b3306f"
+        },
+        "date": 1794309329494,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -533151,6 +533185,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1794309326056,
+  "lastUpdate": 1794309330242,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
