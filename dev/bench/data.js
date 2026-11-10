@@ -371282,6 +371282,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1794330868169,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "b48f64f1eb31dd9a4a23ca988a248404425c8c0e",
+          "message": "feat(mecatui): modernize /connect with a bounded surface (#2617)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-11-10T12:47:02-08:00",
+          "tree_id": "3d4b9f8a1c2194d5562834a76ad31a91c548125e",
+          "url": "https://github.com/stacklok/mecatl/commit/b48f64f1eb31dd9a4a23ca988a248404425c8c0e"
+        },
+        "date": 1794344364298,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -536217,6 +536251,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1794344360374,
+  "lastUpdate": 1794344365373,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
