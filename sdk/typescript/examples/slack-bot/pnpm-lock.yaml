@@ -257,18 +257,18 @@ packages:
     cpu: [x64]
     os: [win32]
 
-  '@bufbuild/protobuf@2.16.0':
-    resolution: {integrity: sha512-FWa0sPlqYGJgpTs6OxBRcL/AW4JT0OIO+W1ajerluoTVh8CV0B7XM1qsNCRgnkSCkRCgOICKHRQlY17jrsm0+Q==}
+  '@bufbuild/protobuf@2.17.0':
+    resolution: {integrity: sha512-hcPkSz6D7MiTU/5VBBhK+kxaYDoOdQ6yJRFJ3kS8Nydp+VZXfg1vrpABKPNod8bXMufsVCmiUJVIKFzCzta4uw==}
 
-  '@connectrpc/connect-node@2.2.0':
-    resolution: {integrity: sha512-E6uUO6e11WdynAuBjuN+0WpHjqxEM9BNDdfDIJHcn49Esg/WxSIbn2y1KFt9XL96IJi01qdBbvubcdpBz1X3Zw==}
+  '@connectrpc/connect-node@2.3.0':
+    resolution: {integrity: sha512-kcQgV4GqFIESsl0MOHInC9/wNYU4aJDvG1OfGR5Lq6/l0gqycSGqEk+fixXGcUtPLc8vJBgS4V1nTmWlh4o9gw==}
     engines: {node: '>=22'}
     peerDependencies:
       '@bufbuild/protobuf': ^2.7.0
-      '@connectrpc/connect': 2.2.0
+      '@connectrpc/connect': 2.3.0
 
-  '@connectrpc/connect@2.2.0':
-    resolution: {integrity: sha512-M63OQ1ZFcPUm85CuewJ9G9CMV8LjzGR9935xOnXNQGSazAbwMb3x2W7vXBYM1zqrP7XFD8uxp/dUAhirclgwnQ==}
+  '@connectrpc/connect@2.3.0':
+    resolution: {integrity: sha512-rjAn8L9KbAZrkwiB8m1qzDsLs74hkYmwwM2iSWuxTPVOTRm/EZw31smKbQqPU50AXqJC5eKKpEnA6Uf/swQOgQ==}
     peerDependencies:
       '@bufbuild/protobuf': ^2.7.0
 
@@ -1308,16 +1308,16 @@ snapshots:
   '@biomejs/cli-win32-x64@2.5.11':
     optional: true
 
-  '@bufbuild/protobuf@2.16.0': {}
+  '@bufbuild/protobuf@2.17.0': {}
 
-  '@connectrpc/connect-node@2.2.0(@bufbuild/protobuf@2.16.0)(@connectrpc/connect@2.2.0(@bufbuild/protobuf@2.16.0))':
+  '@connectrpc/connect-node@2.3.0(@bufbuild/protobuf@2.17.0)(@connectrpc/connect@2.3.0(@bufbuild/protobuf@2.17.0))':
     dependencies:
-      '@bufbuild/protobuf': 2.16.0
-      '@connectrpc/connect': 2.2.0(@bufbuild/protobuf@2.16.0)
+      '@bufbuild/protobuf': 2.17.0
+      '@connectrpc/connect': 2.3.0(@bufbuild/protobuf@2.17.0)
 
-  '@connectrpc/connect@2.2.0(@bufbuild/protobuf@2.16.0)':
+  '@connectrpc/connect@2.3.0(@bufbuild/protobuf@2.17.0)':
     dependencies:
-      '@bufbuild/protobuf': 2.16.0
+      '@bufbuild/protobuf': 2.17.0
 
   '@esbuild/aix-ppc64@0.28.2':
     optional: true
@@ -1506,9 +1506,9 @@ snapshots:
 
   '@stacklok-oss/mecatl-sdk@file:../..':
     dependencies:
-      '@bufbuild/protobuf': 2.16.0
-      '@connectrpc/connect': 2.2.0(@bufbuild/protobuf@2.16.0)
-      '@connectrpc/connect-node': 2.2.0(@bufbuild/protobuf@2.16.0)(@connectrpc/connect@2.2.0(@bufbuild/protobuf@2.16.0))
+      '@bufbuild/protobuf': 2.17.0
+      '@connectrpc/connect': 2.3.0(@bufbuild/protobuf@2.17.0)
+      '@connectrpc/connect-node': 2.3.0(@bufbuild/protobuf@2.17.0)(@connectrpc/connect@2.3.0(@bufbuild/protobuf@2.17.0))
       '@types/node': 24.19.2
       ajv: 8.20.0
 
