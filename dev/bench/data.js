@@ -410306,6 +410306,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1794311741761,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "4377202+samuv@users.noreply.github.com",
+            "name": "Samuele V",
+            "username": "samuv"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "2d08ff9c85d0b956f2699dfeb64d7ed1d7512895",
+          "message": "chore(deps): upgrade the Slack bot example to Vitest 5.1.0 (#1290)\n\nSigned-off-by: Samuele Verzi <samu@stacklok.com>",
+          "timestamp": "2026-11-10T14:26:59+01:00",
+          "tree_id": "9eddb642faeefcd907a3f0dffb83de5a4b97702f",
+          "url": "https://github.com/stacklok/mecatl/commit/2d08ff9c85d0b956f2699dfeb64d7ed1d7512895"
+        },
+        "date": 1794317924278,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 16137.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12896.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 794,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -534718,6 +534757,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1794317920648,
+  "lastUpdate": 1794317925030,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
