@@ -273,18 +273,23 @@ func TestDelegateCannotObtainAPIAccessTokens(t *testing.T) {
 	// delegate has no output audience (stacklok/toolhive#7026). ToolHive gives
 	// this refusal no reason code, so the test pins the status and error code;
 	// the free-text description, which names the audience, is only logged.
-	for name, audience := range map[string]string{"default audience": "", "AS-1's audience": testAudience} {
+	// An explicitly requested audience the client may not use is an RFC 8707
+	// invalid_target; omitting the audience is an invalid_request.
+	for name, tc := range map[string]struct{ audience, code string }{
+		"default audience": {"", "invalid_request"},
+		"AS-1's audience":  {testAudience, "invalid_target"},
+	} {
 		t.Run(name, func(t *testing.T) {
 			req := form(t)
 			req.Del("authorization_details")
 			req.Set("requested_token_type", tokenTypeAccessToken)
-			if audience != "" {
-				req.Set("audience", audience)
+			if tc.audience != "" {
+				req.Set("audience", tc.audience)
 			}
 			status, code, description := postTokenDescribed(t, f.server, req)
 			t.Logf("refusal description: %s", description)
-			if status != http.StatusBadRequest || code != "invalid_request" {
-				t.Fatalf("status %d error %q description %q, want 400 invalid_request", status, code, description)
+			if status != http.StatusBadRequest || code != tc.code {
+				t.Fatalf("status %d error %q description %q, want 400 %s", status, code, description, tc.code)
 			}
 		})
 	}
