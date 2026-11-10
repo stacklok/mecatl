@@ -369850,6 +369850,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1794310127994,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "radoslav@stacklok.com",
+            "name": "Radoslav Dimitrov",
+            "username": "rdimitrov"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "c0c39ea32d067d41a0065a6e0799d0fa23c47ef1",
+          "message": "fix: address open code scanning alerts (#2753)\n\nCo-authored-by: Claude <noreply@anthropic.com>",
+          "timestamp": "2026-11-10T06:43:04-05:00",
+          "tree_id": "5886f934a63022075b4e1897993d9e358bb37f8a",
+          "url": "https://github.com/stacklok/mecatl/commit/c0c39ea32d067d41a0065a6e0799d0fa23c47ef1"
+        },
+        "date": 1794311737449,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -534173,6 +534207,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1794311734150,
+  "lastUpdate": 1794311738632,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
