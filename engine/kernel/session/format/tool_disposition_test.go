@@ -32,7 +32,7 @@ func TestToolDispositionBranches(t *testing.T) {
 		v.RunID = 1
 		v.RequestID = 2
 		v.CallID = 3
-		v.Evidence = &format.ToolEvidence{Detail: ptr(""), Metadata: &format.OpaqueToolData{Producer: "p", Format: "f", Version: 1, Data: []byte{0xff}}}
+		v.Evidence = &format.ToolEvidence{Detail: ptr("")}
 		if err := v.Validate(); err != nil {
 			t.Fatalf("branch %d: %v", i, err)
 		}
@@ -66,7 +66,6 @@ func TestToolDispositionBranches(t *testing.T) {
 			t.Fatalf("branch %d roundtrip value changed", i)
 		}
 		*v.Evidence.Detail = "changed"
-		v.Evidence.Metadata.Data[0] = 0
 		if v.Returned != nil {
 			*v.Returned.Output.Parts[0].Content.Text = "changed"
 		}
@@ -79,7 +78,6 @@ func TestToolDispositionBranches(t *testing.T) {
 				*v.Indeterminate.Output.Parts[0].Content.Text = "changed"
 				v.Indeterminate.Output.Parts[1].Content.Media.InlineData[0] = 0
 				(*v.Indeterminate.Output.Parts[4].JSON)[0] = 'x'
-				v.Indeterminate.Output.Parts[4].Metadata.Data[0] = 0
 			}
 		}
 		clear(wire)
@@ -123,17 +121,11 @@ func TestToolDispositionMalformed(t *testing.T) {
 	notInvoked := &format.ToolNotInvoked{Reason: format.ToolNotInvokedOther}
 	indeterminate := &format.ToolIndeterminate{Reason: format.ToolIndeterminateOther, Output: format.ToolOutput{Capture: format.ToolCaptureOmitted}}
 	badUnion := format.ToolOutput{Capture: format.ToolCaptureTruncated, Parts: []format.ToolOutputPart{{Content: &format.ContentPart{Text: ptr("")}, JSON: ptr([]byte("true"))}}}
-	badMetadata := format.ToolOutput{Capture: format.ToolCaptureTruncated, Parts: []format.ToolOutputPart{{JSON: ptr([]byte("true")), Metadata: &format.OpaqueToolData{}}}}
-	badPartCount := format.ToolOutput{Capture: format.ToolCaptureTruncated, Parts: []format.ToolOutputPart{{JSON: ptr([]byte("true"))}}, OriginalPartCount: ptr(uint64(0))}
-	badByteCount := format.ToolOutput{Capture: format.ToolCaptureTruncated, Parts: []format.ToolOutputPart{{JSON: ptr([]byte("true"))}}, OriginalBytes: ptr(uint64(0))}
 	cases := []format.ToolDisposition{
 		{}, {Returned: returned, NotInvoked: notInvoked}, {Returned: returned, Indeterminate: indeterminate}, {NotInvoked: notInvoked, Indeterminate: indeterminate}, {Returned: returned, NotInvoked: notInvoked, Indeterminate: indeterminate},
 		{Returned: &format.ToolReturned{Status: format.ToolReturnSuccess}},
 		{Returned: returned, Evidence: &format.ToolEvidence{Detail: ptr("\xff")}},
 		{Indeterminate: &format.ToolIndeterminate{Reason: format.ToolIndeterminateOther, Output: badUnion}},
-		{Indeterminate: &format.ToolIndeterminate{Reason: format.ToolIndeterminateOther, Output: badMetadata}},
-		{Indeterminate: &format.ToolIndeterminate{Reason: format.ToolIndeterminateOther, Output: badPartCount}},
-		{Indeterminate: &format.ToolIndeterminate{Reason: format.ToolIndeterminateOther, Output: badByteCount}},
 	}
 	for _, unknown := range []string{"", "unknown"} {
 		cases = append(cases,

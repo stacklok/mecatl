@@ -20,7 +20,6 @@
     method func (*ModelResponse).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
     method func (*ObservedEvidence).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
     method func (*OpaqueProviderData).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
-    method func (*OpaqueToolData).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
     method func (*PromptPurpose).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
     method func (*RequestedCall).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
     method func (*ResponseContent).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
@@ -44,7 +43,6 @@
     method func (*ToolNotInvokedReason).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
     method func (*ToolOutput).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
     method func (*ToolOutputPart).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
-    method func (*ToolProvenance).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
     method func (*ToolResource).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
     method func (*ToolReturnStatus).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
     method func (*ToolReturned).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
@@ -155,11 +153,6 @@
     method func (OpaqueProviderData).Clone() OpaqueProviderData
     method func (OpaqueProviderData).Equal(other OpaqueProviderData) bool
     method func (OpaqueProviderData).Validate() error
-    method func (OpaqueToolData).AppendCBOR(dst []byte) []byte
-    method func (OpaqueToolData).CheckCBOR(b *codec.Budget, depth int, fieldMax int) error
-    method func (OpaqueToolData).Clone() OpaqueToolData
-    method func (OpaqueToolData).Equal(other OpaqueToolData) bool
-    method func (OpaqueToolData).Validate() error
     method func (PromptPurpose).AppendCBOR(dst []byte) []byte
     method func (PromptPurpose).CheckCBOR(b *codec.Budget, depth int, fieldMax int) error
     method func (PromptPurpose).Clone() PromptPurpose
@@ -268,11 +261,6 @@
     method func (ToolOutputPart).Clone() ToolOutputPart
     method func (ToolOutputPart).Equal(other ToolOutputPart) bool
     method func (ToolOutputPart).Validate() error
-    method func (ToolProvenance).AppendCBOR(dst []byte) []byte
-    method func (ToolProvenance).CheckCBOR(b *codec.Budget, depth int, fieldMax int) error
-    method func (ToolProvenance).Clone() ToolProvenance
-    method func (ToolProvenance).Equal(other ToolProvenance) bool
-    method func (ToolProvenance).Validate() error
     method func (ToolResource).AppendCBOR(dst []byte) []byte
     method func (ToolResource).CheckCBOR(b *codec.Budget, depth int, fieldMax int) error
     method func (ToolResource).Clone() ToolResource
@@ -338,9 +326,6 @@ const RunEndedLimit RunEndedReason = "limit"
 const ToolCaptureComplete ToolCaptureState = "complete"
 const ToolCaptureOmitted ToolCaptureState = "omitted"
 const ToolCaptureTruncated ToolCaptureState = "truncated"
-const ToolDispositionIndeterminate ToolDispositionKind = "indeterminate"
-const ToolDispositionNotInvoked ToolDispositionKind = "not-invoked"
-const ToolDispositionReturned ToolDispositionKind = "returned"
 const ToolIndeterminateCancelled ToolIndeterminateReason = "cancelled"
 const ToolIndeterminateExecutorLost ToolIndeterminateReason = "executor-lost"
 const ToolIndeterminateOther ToolIndeterminateReason = "other"
@@ -375,7 +360,6 @@ type ModelRequest struct{RunID uint64 "cbor:\"r\" view:\"-\""; ID uint64 "cbor:\
 type ModelResponse struct{RunID uint64 "cbor:\"r\" view:\"-\""; RequestID uint64 "cbor:\"q\" view:\"manual\""; Terminal ResponseTerminalClass "cbor:\"t\""; ProviderStopReason *string "cbor:\"p,omitempty\""; Items []ResponseItem "cbor:\"i\""; Evidence *ObservedEvidence "cbor:\"e,omitempty\""; Usage *InvocationUsage "cbor:\"u,omitempty\""; Private *OpaqueProviderData "cbor:\"x,omitempty\""}
 type ObservedEvidence struct{Detail *string "cbor:\"d,omitempty\""; Correlation *string "cbor:\"c,omitempty\""}
 type OpaqueProviderData struct{Producer string "cbor:\"p\""; Format string "cbor:\"f\""; Version int64 "cbor:\"v\""; Data []byte "cbor:\"d\""}
-type OpaqueToolData struct{Producer string "cbor:\"p\" cborlimit:\"bytes=1024\""; Format string "cbor:\"f\" cborlimit:\"bytes=1024\""; Version int64 "cbor:\"v\""; Data []byte "cbor:\"d\" cborlimit:\"bytes=65536\""}
 type PromptPurpose string
 type RequestedCall struct{Name string "cbor:\"n\""; Arguments []byte "cbor:\"a\""}
 type ResponseContent struct{Kind ResponseContentKind "cbor:\"k\""; Parts []ContentPart "cbor:\"p\""}
@@ -390,17 +374,15 @@ type ToolCaptureState string
 type ToolCatalog struct{Tools []ToolDefinition "cbor:\"t\""}
 type ToolDefinition struct{Name string "cbor:\"n\""; Description string "cbor:\"d\""; ArgumentSchema []byte "cbor:\"s\""}
 type ToolDisposition struct{RunID uint64 "cbor:\"r\" view:\"-\""; RequestID uint64 "cbor:\"q\" view:\"-\""; CallID uint64 "cbor:\"c\" view:\"manual\""; Returned *ToolReturned "cbor:\"t,omitempty\""; NotInvoked *ToolNotInvoked "cbor:\"n,omitempty\""; Indeterminate *ToolIndeterminate "cbor:\"i,omitempty\""; Evidence *ToolEvidence "cbor:\"e,omitempty\""}
-type ToolDispositionKind string
 type ToolEmbeddedResource struct{Resource ToolResource "cbor:\"r\""; Text *string "cbor:\"t,omitempty\" cborlimit:\"bytes=4194304\""; Blob *[]byte "cbor:\"b,omitempty\" cborlimit:\"bytes=4194304\""}
-type ToolEvidence struct{Detail *string "cbor:\"d,omitempty\" cborlimit:\"bytes=16384\""; Correlation *string "cbor:\"c,omitempty\" cborlimit:\"bytes=1024\""; Metadata *OpaqueToolData "cbor:\"m,omitempty\""}
+type ToolEvidence struct{Detail *string "cbor:\"d,omitempty\" cborlimit:\"bytes=16384\""}
 type ToolIndeterminate struct{Reason ToolIndeterminateReason "cbor:\"r\" cborlimit:\"bytes=32\""; Output ToolOutput "cbor:\"o\""}
 type ToolIndeterminateReason string
-type ToolInvocation struct{RunID uint64 "cbor:\"r\" view:\"-\""; RequestID uint64 "cbor:\"q\" view:\"-\""; CallID uint64 "cbor:\"c\" view:\"manual\""; Name string "cbor:\"n\" cborlimit:\"bytes=4096\""; Arguments value.Map "cbor:\"a\" cborlimit:\"items=4096\""; Prerequisites []uint64 "cbor:\"p\" cborlimit:\"items=4096\" view:\"manual\""; Preparation *ToolEvidence "cbor:\"e,omitempty\""; Authorization *ToolEvidence "cbor:\"u,omitempty\""; Provenance *ToolProvenance "cbor:\"v,omitempty\""}
+type ToolInvocation struct{RunID uint64 "cbor:\"r\" view:\"-\""; RequestID uint64 "cbor:\"q\" view:\"-\""; CallID uint64 "cbor:\"c\" view:\"manual\""; Name string "cbor:\"n\" cborlimit:\"bytes=4096\""; Arguments value.Map "cbor:\"a\" cborlimit:\"items=4096\""; Prerequisites []uint64 "cbor:\"p\" cborlimit:\"items=4096\" view:\"manual\""}
 type ToolNotInvoked struct{Reason ToolNotInvokedReason "cbor:\"r\" cborlimit:\"bytes=32\""}
 type ToolNotInvokedReason string
-type ToolOutput struct{Capture ToolCaptureState "cbor:\"c\" cborlimit:\"bytes=32\""; Parts []ToolOutputPart "cbor:\"p\" cborlimit:\"items=4096\""; OriginalPartCount *uint64 "cbor:\"n,omitempty\""; OriginalBytes *uint64 "cbor:\"b,omitempty\""}
-type ToolOutputPart struct{Content *ContentPart "cbor:\"c,omitempty\""; JSON *[]byte "cbor:\"j,omitempty\" cborlimit:\"bytes=4194304\""; ResourceLink *ToolResource "cbor:\"l,omitempty\""; Resource *ToolEmbeddedResource "cbor:\"r,omitempty\""; Metadata *OpaqueToolData "cbor:\"m,omitempty\""}
-type ToolProvenance struct{Implementation *string "cbor:\"i,omitempty\" cborlimit:\"bytes=1024\""; Version *string "cbor:\"v,omitempty\" cborlimit:\"bytes=1024\""; Runner *string "cbor:\"r,omitempty\" cborlimit:\"bytes=1024\""; Environment *string "cbor:\"e,omitempty\" cborlimit:\"bytes=1024\""; EnvironmentRevision *string "cbor:\"x,omitempty\" cborlimit:\"bytes=1024\""}
+type ToolOutput struct{Capture ToolCaptureState "cbor:\"c\" cborlimit:\"bytes=32\""; Parts []ToolOutputPart "cbor:\"p\" cborlimit:\"items=4096\""}
+type ToolOutputPart struct{Content *ContentPart "cbor:\"c,omitempty\""; JSON *[]byte "cbor:\"j,omitempty\" cborlimit:\"bytes=4194304\""; ResourceLink *ToolResource "cbor:\"l,omitempty\""; Resource *ToolEmbeddedResource "cbor:\"r,omitempty\""}
 type ToolResource struct{URI string "cbor:\"u\" cborlimit:\"bytes=16384\""; Name *string "cbor:\"n,omitempty\" cborlimit:\"bytes=1024\""; Title *string "cbor:\"t,omitempty\" cborlimit:\"bytes=1024\""; MIMEType *string "cbor:\"m,omitempty\" cborlimit:\"bytes=1024\""; Description *string "cbor:\"d,omitempty\" cborlimit:\"bytes=16384\""; ByteSize *uint64 "cbor:\"b,omitempty\""}
 type ToolReturnStatus string
 type ToolReturned struct{Status ToolReturnStatus "cbor:\"s\" cborlimit:\"bytes=32\""; Output ToolOutput "cbor:\"o\""}

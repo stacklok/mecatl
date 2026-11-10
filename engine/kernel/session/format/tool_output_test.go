@@ -12,24 +12,13 @@ import (
 	"github.com/stacklok/mecatl/engine/kernel/session/format"
 )
 
-func TestToolOutputKnownCounts(t *testing.T) {
-	v := format.ToolOutput{Capture: format.ToolCaptureComplete, Parts: []format.ToolOutputPart{{JSON: new([]byte(" true "))}}, OriginalPartCount: new(uint64(1)), OriginalBytes: new(uint64(6))}
-	if err := v.Validate(); err != nil {
-		t.Fatal(err)
-	}
-	*v.OriginalBytes = 5
-	if err := v.Validate(); err == nil {
-		t.Fatal("accepted wrong original body byte count")
-	}
-}
-
 func richToolOutput() format.ToolOutput {
 	return format.ToolOutput{Capture: format.ToolCaptureComplete, Parts: []format.ToolOutputPart{
 		{Content: &format.ContentPart{Text: ptr("é")}},
 		{Content: &format.ContentPart{Media: &format.Media{Kind: format.MediaKindImage, Source: format.MediaSourceInline, MIMEType: "image/x", InlineData: []byte{1, 2, 3}}}},
 		{Content: &format.ContentPart{Media: &format.Media{Kind: format.MediaKindAudio, Source: format.MediaSourceRemote, RemoteURI: "https://example.invalid/audio"}}},
 		{Content: &format.ContentPart{Media: &format.Media{Kind: format.MediaKindDocument, Source: format.MediaSourceProvider, ProviderName: "p", ProviderScope: "s", ProviderReferenceID: "r"}}},
-		{JSON: ptr([]byte(" { \"z\":1e+02, \"z\":null } \n")), Metadata: &format.OpaqueToolData{Producer: "p", Format: "f", Version: 1, Data: []byte{0xff}}},
+		{JSON: ptr([]byte(" { \"z\":1e+02, \"z\":null } \n"))},
 		{ResourceLink: &format.ToolResource{URI: "urn:link", Description: ptr("excluded metadata"), ByteSize: ptr(uint64(math.MaxUint64))}},
 		{Resource: &format.ToolEmbeddedResource{Resource: format.ToolResource{URI: "urn:text"}, Text: ptr("body")}},
 		{Resource: &format.ToolEmbeddedResource{Resource: format.ToolResource{URI: "urn:blob"}, Blob: ptr([]byte{0xff, 0})}},
@@ -40,8 +29,6 @@ func richToolOutput() format.ToolOutput {
 
 func TestToolOutputRoundtrip(t *testing.T) {
 	v := richToolOutput()
-	v.OriginalPartCount = ptr(uint64(len(v.Parts)))
-	v.OriginalBytes = ptr(uint64(2 + 3 + len(*v.Parts[4].JSON) + 4 + 2))
 	if err := v.Validate(); err != nil {
 		t.Fatal(err)
 	}
@@ -57,11 +44,9 @@ func TestToolOutputRoundtrip(t *testing.T) {
 	*v.Parts[0].Content.Text = "changed"
 	v.Parts[1].Content.Media.InlineData[0] = 9
 	(*v.Parts[4].JSON)[0] = 'x'
-	v.Parts[4].Metadata.Data[0] = 0
 	v.Parts[5].ResourceLink.URI = "urn:changed"
 	*v.Parts[6].Resource.Text = "changed"
 	(*v.Parts[7].Resource.Blob)[0] = 0
-	*v.OriginalBytes = 0
 	clear(wire)
 	if !got.Equal(before) {
 		t.Fatal("output alias or changed exact bytes")
@@ -73,21 +58,13 @@ func TestToolOutputRoundtrip(t *testing.T) {
 		t.Fatal("empty body presence lost")
 	}
 	for _, capture := range []format.ToolCaptureState{format.ToolCaptureComplete, format.ToolCaptureTruncated, format.ToolCaptureOmitted} {
-		v := format.ToolOutput{Capture: capture, OriginalPartCount: ptr(uint64(0)), OriginalBytes: ptr(uint64(0))}
+		v := format.ToolOutput{Capture: capture}
 		out, err := codec.Encode(v, toolLimits())
 		if err != nil || v.Validate() != nil {
 			t.Fatalf("empty %s: %v", capture, err)
 		}
 		if got, err := codec.Decode[format.ToolOutput](out, toolLimits()); err != nil || !got.Equal(v) {
 			t.Fatalf("empty roundtrip: %v", err)
-		}
-		if v.Equal(format.ToolOutput{Capture: capture}) {
-			t.Fatal("lost known-zero counts")
-		}
-	}
-	for _, capture := range []format.ToolCaptureState{format.ToolCaptureTruncated, format.ToolCaptureOmitted} {
-		if err := (format.ToolOutput{Capture: capture, OriginalPartCount: ptr(uint64(10)), OriginalBytes: ptr(uint64(100))}).Validate(); err != nil {
-			t.Fatal(err)
 		}
 	}
 }
@@ -119,11 +96,7 @@ func rejectToolOutput(t *testing.T, v format.ToolOutput, kind error) {
 func TestToolOutputMalformed(t *testing.T) {
 	for name, v := range map[string]format.ToolOutput{
 		"zero": {}, "unknown": {Capture: "future"},
-		"omitted parts":         {Capture: format.ToolCaptureOmitted, Parts: []format.ToolOutputPart{{JSON: ptr([]byte("true"))}}},
-		"complete wrong count":  {Capture: format.ToolCaptureComplete, OriginalPartCount: ptr(uint64(1))},
-		"complete wrong bytes":  {Capture: format.ToolCaptureComplete, OriginalBytes: ptr(uint64(1))},
-		"truncated short count": {Capture: format.ToolCaptureTruncated, Parts: []format.ToolOutputPart{{JSON: ptr([]byte("true"))}}, OriginalPartCount: ptr(uint64(0))},
-		"truncated short bytes": {Capture: format.ToolCaptureTruncated, Parts: []format.ToolOutputPart{{JSON: ptr([]byte("true"))}}, OriginalBytes: ptr(uint64(3))},
+		"omitted parts": {Capture: format.ToolCaptureOmitted, Parts: []format.ToolOutputPart{{JSON: ptr([]byte("true"))}}},
 	} {
 		t.Run(name, func(t *testing.T) { rejectToolOutput(t, v, codec.ErrInvalidData) })
 	}
@@ -138,7 +111,6 @@ func TestToolOutputMalformed(t *testing.T) {
 		"two embedded bodies":   {Resource: &format.ToolEmbeddedResource{Resource: format.ToolResource{URI: "urn:x"}, Text: ptr(""), Blob: ptr([]byte{})}},
 		"bad embedded text":     {Resource: &format.ToolEmbeddedResource{Resource: format.ToolResource{URI: "urn:x"}, Text: ptr("\xff")}},
 		"bad embedded metadata": {Resource: &format.ToolEmbeddedResource{Text: ptr("")}},
-		"bad metadata":          {JSON: ptr([]byte("true")), Metadata: &format.OpaqueToolData{}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			rejectToolOutput(t, format.ToolOutput{Capture: format.ToolCaptureComplete, Parts: []format.ToolOutputPart{part}}, codec.ErrInvalidData)
@@ -157,8 +129,6 @@ func TestToolOutputMalformed(t *testing.T) {
 	v := richToolOutput()
 	v.Capture = format.ToolCaptureTruncated
 	v.Parts = []format.ToolOutputPart{v.Parts[4], v.Parts[7]}
-	v.OriginalPartCount = ptr(uint64(10))
-	v.OriginalBytes = ptr(uint64(999))
 	if err := v.Validate(); err != nil {
 		t.Fatal(err)
 	}

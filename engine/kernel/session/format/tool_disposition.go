@@ -1,18 +1,8 @@
 package format
 
-import "errors"
-
-// ToolDispositionKind names the closed derived disposition branches; it is not
-// a redundant persisted tag. Inspection derives the kind from branch presence.
-type ToolDispositionKind string
-
-const (
-	// ToolDispositionReturned identifies an observed terminal tool return.
-	ToolDispositionReturned ToolDispositionKind = "returned"
-	// ToolDispositionNotInvoked identifies a known non-invocation.
-	ToolDispositionNotInvoked ToolDispositionKind = "not-invoked"
-	// ToolDispositionIndeterminate identifies an unobserved terminal outcome.
-	ToolDispositionIndeterminate ToolDispositionKind = "indeterminate"
+import (
+	"errors"
+	"unicode/utf8"
 )
 
 // ToolReturnStatus is the closed tool-result meaning, not execution mechanics or
@@ -214,6 +204,33 @@ func (v ToolDisposition) validateLocal() error {
 	}
 	if n != 1 {
 		return errors.New("tool disposition requires exactly one branch")
+	}
+	return nil
+}
+
+// ToolEvidence retains a human-readable disposition diagnostic, never model
+// content or disclosure permission. Producers must arrange safe release and
+// scrubbing before capture; UTF-8 validation is not sanitization. Nil Detail is
+// absent; present-empty Detail survives. Assignment shares mutable storage; Clone
+// detaches it. Zero is valid.
+//
+// Future structured producer observations need typed ancillary records once their
+// semantics and placement are established; this contract has no extension bag.
+//
+//dtogen:validate validateLocal
+type ToolEvidence struct {
+	// Detail is optional exact UTF-8 human-readable diagnostic context, at most
+	// 16384 bytes.
+	Detail *string `cbor:"d,omitempty" cborlimit:"bytes=16384"`
+}
+
+// Validate checks the bounded diagnostic, not disclosure safety.
+func (v ToolEvidence) Validate() error { return v.validateLocal() }
+
+// validateLocal checks the immediate bounded diagnostic only.
+func (v ToolEvidence) validateLocal() error {
+	if v.Detail != nil && (len(*v.Detail) > 16384 || !utf8.ValidString(*v.Detail)) {
+		return errors.New("tool detail requires bounded UTF-8")
 	}
 	return nil
 }

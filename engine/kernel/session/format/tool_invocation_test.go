@@ -21,7 +21,7 @@ func toolLimits() codec.Limits {
 }
 
 func richToolInvocation() format.ToolInvocation {
-	return format.ToolInvocation{RunID: 1, RequestID: 2, CallID: 3, Name: " effective tool ", Arguments: value.Map{"items": value.Array([]value.Value{value.Null(), value.Bool(true), value.Int64(math.MinInt64), value.Uint64(math.MaxUint64)}), "nested": value.Object(value.Map{"text": value.String("original")})}, Prerequisites: []uint64{5, 4}, Preparation: &format.ToolEvidence{Detail: ptr("prepared"), Correlation: ptr(""), Metadata: &format.OpaqueToolData{Producer: "p", Format: "f", Version: 1, Data: []byte{0xff}}}, Authorization: &format.ToolEvidence{Detail: ptr("authorized")}, Provenance: &format.ToolProvenance{Implementation: ptr(""), Version: ptr("v"), Runner: ptr("r"), Environment: ptr("e"), EnvironmentRevision: ptr("rev")}}
+	return format.ToolInvocation{RunID: 1, RequestID: 2, CallID: 3, Name: " effective tool ", Arguments: value.Map{"items": value.Array([]value.Value{value.Null(), value.Bool(true), value.Int64(math.MinInt64), value.Uint64(math.MaxUint64)}), "nested": value.Object(value.Map{"text": value.String("original")})}, Prerequisites: []uint64{5, 4}}
 }
 
 func TestToolInvocationRoundtrip(t *testing.T) {
@@ -37,10 +37,6 @@ func TestToolInvocationRoundtrip(t *testing.T) {
 	}
 	v.Arguments["items"] = value.Null()
 	v.Prerequisites[0] = 8
-	*v.Preparation.Detail = "changed"
-	v.Preparation.Metadata.Data[0] = 0
-	*v.Authorization.Detail = "changed"
-	*v.Provenance.Implementation = "changed"
 	clear(wire)
 	if !got.Equal(before) {
 		t.Fatal("clone/decode retained mutable aliases")
@@ -49,15 +45,6 @@ func TestToolInvocationRoundtrip(t *testing.T) {
 	v.Prerequisites[0], v.Prerequisites[1] = v.Prerequisites[1], v.Prerequisites[0]
 	if v.Equal(before) {
 		t.Fatal("prerequisite storage order lost")
-	}
-	if !(format.ToolProvenance{EnvironmentRevision: ptr("")}).Equal((format.ToolProvenance{EnvironmentRevision: ptr("")}).Clone()) {
-		t.Fatal("partial provenance clone")
-	}
-	if err := (format.ToolProvenance{EnvironmentRevision: ptr("")}).Validate(); err != nil {
-		t.Fatal(err)
-	}
-	if (format.ToolProvenance{}).Equal(format.ToolProvenance{Runner: ptr("")}) {
-		t.Fatal("lost label presence")
 	}
 	if !(format.ToolInvocation{Arguments: nil}).Equal(format.ToolInvocation{Arguments: value.Map{}, Prerequisites: []uint64{}}) {
 		t.Fatal("nil/empty differs")
@@ -270,9 +257,6 @@ func TestToolInvocationMalformed(t *testing.T) {
 		"zero prerequisite": func(v *format.ToolInvocation) { v.Prerequisites = []uint64{0} },
 		"self":              func(v *format.ToolInvocation) { v.Prerequisites = []uint64{v.CallID} },
 		"duplicate":         func(v *format.ToolInvocation) { v.Prerequisites = []uint64{4, 4} },
-		"preparation":       func(v *format.ToolInvocation) { v.Preparation.Detail = ptr("\xff") },
-		"authorization":     func(v *format.ToolInvocation) { v.Authorization.Correlation = ptr("\xff") },
-		"provenance":        func(v *format.ToolInvocation) { v.Provenance.Runner = ptr("\xff") },
 	} {
 		t.Run(name, func(t *testing.T) {
 			v := richToolInvocation()
@@ -318,7 +302,7 @@ func TestToolInvocationValidateRejectsOversizedPrerequisitesBeforeAllocation(t *
 }
 
 func TestToolInvocationSchemaCaps(t *testing.T) {
-	for _, field := range []string{"name", "arguments", "prerequisites", "provenance"} {
+	for _, field := range []string{"name", "arguments", "prerequisites"} {
 		t.Run(field, func(t *testing.T) {
 			for _, over := range []int{0, 1} {
 				v := richToolInvocation()
@@ -335,8 +319,6 @@ func TestToolInvocationSchemaCaps(t *testing.T) {
 					for i := range v.Prerequisites {
 						v.Prerequisites[i] = uint64(i + 10)
 					}
-				case "provenance":
-					v.Provenance.EnvironmentRevision = ptr(strings.Repeat("r", 1024+over))
 				}
 				l := toolLimits()
 				l.MaxMapPairs = 8192 // Keep operational policy above the argument field cap.
