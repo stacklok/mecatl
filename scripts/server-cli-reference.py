@@ -22,7 +22,7 @@ def render():
     # XDG roots point at ignored scratch, preventing operator-config discovery.
     scratch = ROOT / '.scratch/server-cli-reference'
     scratch.mkdir(parents=True, exist_ok=True)
-    env = {k: os.environ[k] for k in ('PATH', 'HOME', 'GOPATH', 'GOCACHE', 'GOMODCACHE', 'GOTOOLCHAIN') if k in os.environ}
+    env = {k: os.environ[k] for k in ('PATH', 'HOME', 'GOPATH', 'GOCACHE', 'GOMODCACHE', 'GOTOOLCHAIN', 'CGO_ENABLED') if k in os.environ}
     env.update(XDG_CONFIG_HOME=str(scratch / 'config'), XDG_STATE_HOME=str(scratch / 'state'), XDG_DATA_HOME=str(scratch / 'data'), XDG_CACHE_HOME=str(scratch / 'cache'), NO_COLOR='1')
     go = shutil.which('go')
     if not go:
