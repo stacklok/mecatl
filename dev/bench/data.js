@@ -372356,6 +372356,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1794349260818,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "c4ff786a7467eb2315de679ae78711d118775383",
+          "message": "feat(kernel): inspect records between accepted heads (#2762)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-11-10T15:35:55-08:00",
+          "tree_id": "8f7bb662fbcfaeac9db6c1073400f48810558089",
+          "url": "https://github.com/stacklok/mecatl/commit/c4ff786a7467eb2315de679ae78711d118775383"
+        },
+        "date": 1794354511249,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -537750,6 +537784,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1794354507203,
+  "lastUpdate": 1794354512212,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
