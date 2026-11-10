@@ -371640,6 +371640,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1794344364298,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "56c38b5e53455caff18be4807d2d0b7445bbc82d",
+          "message": "feat(kernel): retain and settle passive tool calls (#2755)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-11-10T21:17:38Z",
+          "tree_id": "724b3c2ded8b34f21bb20626d3cf3df642d44f01",
+          "url": "https://github.com/stacklok/mecatl/commit/56c38b5e53455caff18be4807d2d0b7445bbc82d"
+        },
+        "date": 1794346218099,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -536728,6 +536762,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1794346212415,
+  "lastUpdate": 1794346219182,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
