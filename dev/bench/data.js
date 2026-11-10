@@ -411497,6 +411497,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1794330873351,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "b48f64f1eb31dd9a4a23ca988a248404425c8c0e",
+          "message": "feat(mecatui): modernize /connect with a bounded surface (#2617)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-11-10T12:47:02-08:00",
+          "tree_id": "3d4b9f8a1c2194d5562834a76ad31a91c548125e",
+          "url": "https://github.com/stacklok/mecatl/commit/b48f64f1eb31dd9a4a23ca988a248404425c8c0e"
+        },
+        "date": 1794344369328,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 16156.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12917.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 795,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -536251,6 +536290,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1794344365373,
+  "lastUpdate": 1794344370386,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
