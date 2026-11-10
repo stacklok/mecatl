@@ -3,8 +3,8 @@ module github.com/stacklok/mecatl/integration/microvm
 go 1.27.3
 
 require (
-	github.com/stacklok/go-microvm v0.0.45
-	github.com/stacklok/mecatl v0.0.51
+	github.com/stacklok/go-microvm v0.0.41
+	github.com/stacklok/mecatl v0.0.50
 	github.com/stacklok/mecatl/engine v0.18.1
 	github.com/stacklok/mecatl/environment/microvm v0.0.0
 	go.uber.org/goleak v1.3.0
@@ -21,6 +21,7 @@ require (
 	github.com/adrg/xdg v0.5.3 // indirect
 	github.com/anthropics/anthropic-sdk-go/v2 v2.8.0 // indirect
 	github.com/antlr4-go/antlr/v4 v4.13.1 // indirect
+	github.com/apparentlymart/go-cidr v1.1.1 // indirect
 	github.com/asaskevich/govalidator v0.0.0-20230301143203-a9d515a09cc2 // indirect
 	github.com/aws/aws-sdk-go-v2 v1.47.5 // indirect
 	github.com/aws/aws-sdk-go-v2/config v1.33.13 // indirect
@@ -48,7 +49,7 @@ require (
 	github.com/coder/websocket v1.8.15 // indirect
 	github.com/containerd/errdefs v1.0.0 // indirect
 	github.com/containerd/errdefs/pkg v0.3.0 // indirect
-	github.com/containers/gvisor-tap-vsock v0.9.0 // indirect
+	github.com/containers/gvisor-tap-vsock v0.8.9 // indirect
 	github.com/coreos/go-oidc/v3 v3.21.0 // indirect
 	github.com/cristalhq/jwt/v4 v4.0.2 // indirect
 	github.com/cyberphone/json-canonicalization v0.0.0-20261011152517-32a48195b9b2 // indirect
@@ -134,7 +135,7 @@ require (
 	github.com/in-toto/attestation v1.2.0 // indirect
 	github.com/in-toto/in-toto-golang v0.11.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
-	github.com/inetaf/tcpproxy v0.0.0-20260515195445-c159a6051109 // indirect
+	github.com/inetaf/tcpproxy v0.0.0-20250222171855-c4b9df066048 // indirect
 	github.com/insomniacslk/dhcp v0.0.0-20240710054256-ddd8a41251c9 // indirect
 	github.com/invopop/jsonschema v0.14.0 // indirect
 	github.com/itchyny/gojq v0.12.20 // indirect
@@ -151,13 +152,10 @@ require (
 	github.com/lestrrat-go/jwx/v4 v4.6.0 // indirect
 	github.com/lestrrat-go/option/v2 v2.0.0 // indirect
 	github.com/lestrrat-go/option/v3 v3.0.0-alpha1 // indirect
-	github.com/linuxkit/virtsock v0.0.0-20220523201153-1a23e78aa7a2 // indirect
 	github.com/lufia/plan9stats v0.0.0-20260330125221-c963978e514e // indirect
 	github.com/mattn/go-isatty v0.0.24 // indirect
 	github.com/mattn/goveralls v0.0.12 // indirect
-	github.com/mdlayher/socket v0.6.0 // indirect
-	github.com/mdlayher/vsock v1.3.0 // indirect
-	github.com/miekg/dns v1.1.73 // indirect
+	github.com/miekg/dns v1.1.72 // indirect
 	github.com/moby/docker-image-spec v1.3.1 // indirect
 	github.com/moby/moby/api v1.56.1 // indirect
 	github.com/moby/moby/client v0.6.2 // indirect
@@ -309,7 +307,7 @@ require (
 	gopkg.in/inf.v0 v0.9.1 // indirect
 	gopkg.in/warnings.v0 v0.1.2 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
-	gvisor.dev/gvisor v0.0.0-20260413194555-9680d69bf798 // indirect
+	gvisor.dev/gvisor v0.0.0-20240916094835-a174eb65023f // indirect
 	k8s.io/api v0.37.2 // indirect
 	k8s.io/apiextensions-apiserver v0.37.2 // indirect
 	k8s.io/apimachinery v0.37.2 // indirect
