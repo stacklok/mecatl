@@ -24,17 +24,21 @@ const (
 	// RunEndedInterrupted records explicit cancellation or execution interruption.
 	// It does not assert remote cancellation or absence of processing or spend.
 	RunEndedInterrupted RunEndedReason = sessionformat.RunEndedInterrupted
-	// RunEndedCaptureFailed records inability to capture a complete response.
+	// RunEndedCaptureFailed records inability to retain an admissible model response
+	// or tool outcome, including a single oversized result. Truncation or omission
+	// alone is not capture failure, and a tool-level error is a normal return.
 	RunEndedCaptureFailed RunEndedReason = sessionformat.RunEndedCaptureFailed
 )
 
-// CaptureFailureEvidence retains evidence for an accepted pending request whose
+// CaptureFailureEvidence retains model evidence for an accepted pending request whose
 // response could not be captured. RequestID is destination-run-relative, without
 // origin provenance. Assignment shares nested storage; Clone detaches it.
 type CaptureFailureEvidence = sessionformat.CaptureFailureEvidence
 
 // RunEnded is the canonical explicit terminal fact. AddRunEnded supplies the
-// destination separately and requires RunID zero. Capture is allowed only for
+// destination separately and requires RunID zero. Ordinary endings require each
+// tool call individually settled. Only Limit/CaptureFailed allow explicit bulk
+// settlement. Capture is separate model-request evidence, allowed only for
 // CaptureFailed. Assignment shares nested storage; Clone detaches it.
 type RunEnded = sessionformat.RunEnded
 
@@ -67,9 +71,12 @@ func newRunEndedRecord(v RunEnded, run RunID, limits codec.Limits) (*materialize
 	return decodeMaterialized(format.Record{Kind: sessionformat.KindRunEnded, KindVersion: sessionformat.Version, Payload: payload}, limits)
 }
 
-// minimalEnding admits only an exact one-fact bounded-shape ending as cleanup.
+// minimalEnding recognizes the exact minimal exceptional shape. Preparation
+// separately requires a lone record before allowing it to bypass soft limits.
 func (r *materializedRecord) minimalEnding() bool {
-	return r != nil && r.value.Kind == sessionformat.KindRunEnded && r.ended.Explanation == nil && r.ended.Capture == nil
+	return r != nil && r.value.Kind == sessionformat.KindRunEnded && r.ended.BulkToolCloseout &&
+		(r.ended.Reason == RunEndedLimit || r.ended.Reason == RunEndedCaptureFailed) &&
+		r.ended.Explanation == nil && r.ended.Capture == nil
 }
 
 // CaptureFailureEvidenceView is immutable bounded evidence for a failed capture.

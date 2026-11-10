@@ -235,7 +235,7 @@ func TestLoadRejectsInvalidHistories(t *testing.T) {
 				case "kind":
 					record.Kind = "session.future"
 				case "version":
-					record.KindVersion = 2
+					record.KindVersion++
 				case "payload":
 					record.Payload = []byte{0xff}
 				case "transition":

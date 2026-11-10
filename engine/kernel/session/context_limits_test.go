@@ -19,7 +19,7 @@ func TestContextActualReserveAndSoftBounds(t *testing.T) {
 	instructions := session.Instructions{Blocks: []session.InstructionBlock{{Parts: []session.ContentPart{{Text: new("retained context payload")}}, Source: session.ContentSource{Description: "caller prepared"}}}}
 	contextRecord := encodeFixture(t, sessionformat.KindInstructions, sessionformat.Instructions{Blocks: []sessionformat.InstructionBlock{{Parts: []sessionformat.ContentPart{{Text: new("retained context payload")}}, Source: sessionformat.ContentSource{Description: "caller prepared"}}}})
 	initial := []fixtureRecord{createdRecord(t), startRecord(t, 1), contextRecord}
-	largestEnding := encodeFixture(t, sessionformat.KindRunEnded, sessionformat.RunEnded{RunID: 1, Reason: sessionformat.RunEndedCaptureFailed})
+	largestEnding := encodeFixture(t, sessionformat.KindRunEnded, sessionformat.RunEnded{RunID: 1, Reason: sessionformat.RunEndedCaptureFailed, BulkToolCloseout: true})
 	closed := append(append([]fixtureRecord{}, initial...), largestEnding)
 	for _, dimension := range []string{"records", "bytes", "work"} {
 		for _, mode := range []string{"exact", "one-short", "soft-ordinary", "soft-mixed"} {
@@ -59,17 +59,17 @@ func TestContextActualReserveAndSoftBounds(t *testing.T) {
 					b = beginBatch(t, s)
 					mustBatch(t, b.ReplaceInstructions(scope, instructions))
 					if mode == "soft-mixed" {
-						mustBatch(t, b.EndRun(session.RunEndedInterrupted))
+						mustBatch(t, b.AddRunEnded(s.Snapshot().ActiveRun(), session.RunEnded{Reason: session.RunEndedCaptureFailed, BulkToolCloseout: true}))
 					}
 					if ref, err := s.SubmitCommit(context.Background(), b); ref != (history.CommitRef{}) || !errors.Is(err, codec.ErrLimitExceeded) || errors.Is(err, session.ErrAcceptanceUnknown) || len(backend.attempts) != 1 || !reflect.DeepEqual(before, captureRejectedSnapshot(s.Snapshot())) {
 						t.Fatalf("context soft rejection: %v, %v", ref, err)
 					}
 				}
 				b = beginBatch(t, s)
-				mustBatch(t, b.EndRun(session.RunEndedInterrupted))
+				mustBatch(t, b.AddRunEnded(s.Snapshot().ActiveRun(), session.RunEnded{Reason: session.RunEndedCaptureFailed, BulkToolCloseout: true}))
 				submitBatch(t, s, b)
 				if s.Snapshot().ActiveRun() != (session.RunID{}) || len(backend.attempts) != 2 {
-					t.Fatal("actual reserved interruption did not fit")
+					t.Fatal("actual reserved bulk ending did not fit")
 				}
 			})
 		}

@@ -25,18 +25,20 @@ var ErrUnsupportedRecord = errors.New("unsupported session record kind or versio
 // Keep variants by value for now; evaluate alternative layouts with measurements
 // later, without changing public contracts or persistence.
 type materializedRecord struct {
-	value        format.Record
-	created      sessionformat.Created
-	input        sessionformat.UserInput
-	started      sessionformat.RunStarted
-	ended        sessionformat.RunEnded
-	request      sessionformat.ModelRequest
-	response     sessionformat.ModelResponse
-	failure      sessionformat.InvocationFailure
-	instructions sessionformat.Instructions
-	catalog      sessionformat.ToolCatalog
-	binding      sessionformat.ModelBinding
-	effective    sessionformat.EffectiveInput
+	value           format.Record
+	created         sessionformat.Created
+	input           sessionformat.UserInput
+	started         sessionformat.RunStarted
+	ended           sessionformat.RunEnded
+	request         sessionformat.ModelRequest
+	response        sessionformat.ModelResponse
+	failure         sessionformat.InvocationFailure
+	instructions    sessionformat.Instructions
+	catalog         sessionformat.ToolCatalog
+	binding         sessionformat.ModelBinding
+	toolInvocation  sessionformat.ToolInvocation
+	toolDisposition sessionformat.ToolDisposition
+	effective       sessionformat.EffectiveInput
 }
 
 // decodeMaterialized detaches encoded caller storage and decodes the selected
@@ -76,6 +78,10 @@ func decodeMaterialized(v format.Record, limits codec.Limits) (*materializedReco
 		r.request, err = codec.Decode[sessionformat.ModelRequest](v.Payload, limits)
 	case sessionformat.KindModelResponse:
 		r.response, err = codec.Decode[sessionformat.ModelResponse](v.Payload, limits)
+	case sessionformat.KindToolInvocation:
+		r.toolInvocation, err = codec.Decode[sessionformat.ToolInvocation](v.Payload, limits)
+	case sessionformat.KindToolDisposition:
+		r.toolDisposition, err = codec.Decode[sessionformat.ToolDisposition](v.Payload, limits)
 	case sessionformat.KindInvocationFailure:
 		r.failure, err = codec.Decode[sessionformat.InvocationFailure](v.Payload, limits)
 	default:
@@ -107,7 +113,7 @@ func supportedRecord(kind string, version int64) bool {
 	switch kind {
 	case sessionformat.KindCreated, sessionformat.KindUserInput, sessionformat.KindRunStarted,
 		sessionformat.KindRunEnded, sessionformat.KindModelRequest, sessionformat.KindModelResponse, sessionformat.KindInvocationFailure, sessionformat.KindEffectiveInput, sessionformat.KindInstructions,
-		sessionformat.KindToolCatalog, sessionformat.KindModelBinding:
+		sessionformat.KindToolCatalog, sessionformat.KindModelBinding, sessionformat.KindToolInvocation, sessionformat.KindToolDisposition:
 		return true
 	default:
 		return false

@@ -531,7 +531,7 @@ func TestSessionCommitLateAcceptanceCancellation(t *testing.T) {
 func TestSessionCommitFailedByteAdmissionIsAtomic(t *testing.T) {
 	p := sessionPolicy()
 	empty := encodeFixture(t, sessionformat.KindUserInput, sessionformat.UserInput{RunID: 1, ID: 1})
-	largestEnding := encodeFixture(t, sessionformat.KindRunEnded, sessionformat.RunEnded{RunID: 1, Reason: sessionformat.RunEndedCaptureFailed})
+	largestEnding := encodeFixture(t, sessionformat.KindRunEnded, sessionformat.RunEnded{RunID: 1, Reason: sessionformat.RunEndedCaptureFailed, BulkToolCloseout: true})
 	p.MaxPayloadBytes = uint64(len(createdRecord(t).Format().Payload) + len(startRecord(t, 1).Format().Payload) + 2*len(empty.Format().Payload) + len(largestEnding.Format().Payload))
 	p.SoftMaxPayloadBytes = p.MaxPayloadBytes
 	backend := &batchBackend{Backend: mem.New()}

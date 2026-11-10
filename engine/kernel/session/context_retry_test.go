@@ -105,7 +105,7 @@ func TestContextFrozenRetryAndConcurrentPinnedReads(t *testing.T) {
 	wg.Wait()
 }
 
-func TestContextSoftAdmissionAndActualInterruptionReserve(t *testing.T) {
+func TestContextSoftAdmissionAndActualBulkReserve(t *testing.T) {
 	for _, mixedCloseout := range []bool{false, true} {
 		p := sessionPolicy()
 		p.SoftMaxRetainedRecords = 3
@@ -119,8 +119,8 @@ func TestContextSoftAdmissionAndActualInterruptionReserve(t *testing.T) {
 		b = beginBatch(t, s)
 		mustBatch(t, b.ReplaceInstructions(s.Snapshot().HistoryID(), session.Instructions{}))
 		if mixedCloseout {
-			// A mixed context+interruption batch is ordinary admission, not cleanup.
-			mustBatch(t, b.EndRun(session.RunEndedInterrupted))
+			// A mixed context+bulk ending is ordinary resource admission, not cleanup.
+			mustBatch(t, b.AddRunEnded(s.Snapshot().ActiveRun(), session.RunEnded{Reason: session.RunEndedCaptureFailed, BulkToolCloseout: true}))
 			if _, err := s.SubmitCommit(context.Background(), b); !errors.Is(err, codec.ErrLimitExceeded) {
 				t.Fatalf("mixed soft admission: %v", err)
 			}
@@ -131,10 +131,10 @@ func TestContextSoftAdmissionAndActualInterruptionReserve(t *testing.T) {
 			submitBatch(t, s, b)
 			// The selected context write leaves exactly the actual closeout record room.
 			b = beginBatch(t, s)
-			mustBatch(t, b.EndRun(session.RunEndedInterrupted))
+			mustBatch(t, b.AddRunEnded(s.Snapshot().ActiveRun(), session.RunEnded{Reason: session.RunEndedCaptureFailed, BulkToolCloseout: true}))
 			submitBatch(t, s, b)
 			if s.Snapshot().RecordCount() != 4 || s.Snapshot().ActiveRun() != (session.RunID{}) {
-				t.Fatal("reserved actual interruption did not fit")
+				t.Fatal("reserved actual bulk ending did not fit")
 			}
 		}
 	}

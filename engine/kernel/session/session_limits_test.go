@@ -12,6 +12,7 @@ import (
 	"github.com/stacklok/mecatl/engine/kernel/codec"
 	"github.com/stacklok/mecatl/engine/kernel/history"
 	"github.com/stacklok/mecatl/engine/kernel/session"
+	sessionformat "github.com/stacklok/mecatl/engine/kernel/session/format"
 )
 
 // limitPolicy sets one cumulative dimension from actual encoded facts. The other
@@ -42,7 +43,7 @@ func limitPolicy(t *testing.T, dimension string, softRecords, hardRecords []fixt
 
 func TestSessionSoftAdmissionAndCleanupBoundaries(t *testing.T) {
 	initial := []fixtureRecord{createdRecord(t), startRecord(t, 1), inputRecord(t, 1)}
-	closed := append(append([]fixtureRecord{}, initial...), closeoutRecord(t, 1))
+	closed := append(append([]fixtureRecord{}, initial...), encodeFixture(t, sessionformat.KindRunEnded, session.RunEnded{RunID: 1, Reason: session.RunEndedCaptureFailed, BulkToolCloseout: true}))
 	for _, dimension := range []string{"records", "bytes", "work"} {
 		for _, mixed := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/mixed=%t", dimension, mixed), func(t *testing.T) {
@@ -64,7 +65,7 @@ func TestSessionSoftAdmissionAndCleanupBoundaries(t *testing.T) {
 					t.Fatal("provisional ordinal")
 				}
 				if mixed {
-					mustBatch(t, b.EndRun(session.RunEndedInterrupted)) // Ending idle must not bypass soft.
+					mustBatch(t, b.AddRunEnded(s.Snapshot().ActiveRun(), session.RunEnded{Reason: session.RunEndedCaptureFailed, BulkToolCloseout: true})) // Ending idle must not bypass soft.
 				}
 				if ref, err := s.SubmitCommit(context.Background(), b); ref != (history.CommitRef{}) || !errors.Is(err, codec.ErrLimitExceeded) || errors.Is(err, session.ErrAcceptanceUnknown) {
 					t.Fatalf("ordinary soft rejection: %v, %v", ref, err)
@@ -73,7 +74,7 @@ func TestSessionSoftAdmissionAndCleanupBoundaries(t *testing.T) {
 					t.Fatal("soft rejection appended or mutated accepted views")
 				}
 				b = beginBatch(t, s)
-				mustBatch(t, b.EndRun(session.RunEndedInterrupted))
+				mustBatch(t, b.AddRunEnded(s.Snapshot().ActiveRun(), session.RunEnded{Reason: session.RunEndedCaptureFailed, BulkToolCloseout: true}))
 				submitBatch(t, s, b) // Above soft, within hard.
 				if s.Snapshot().ActiveRun() != (session.RunID{}) || s.Snapshot().RecordCount() != 4 || len(backend.attempts) != 2 {
 					t.Fatal("cleanup did not consume only its own reserved fact")
@@ -90,7 +91,7 @@ func TestSessionSoftAdmissionAndCleanupBoundaries(t *testing.T) {
 
 func TestSessionHardReplayWithoutFutureWriteCapacity(t *testing.T) {
 	initial := []fixtureRecord{createdRecord(t), startRecord(t, 1), inputRecord(t, 1)}
-	closed := append(append([]fixtureRecord{}, initial...), closeoutRecord(t, 1))
+	closed := append(append([]fixtureRecord{}, initial...), encodeFixture(t, sessionformat.KindRunEnded, session.RunEnded{RunID: 1, Reason: session.RunEndedCaptureFailed, BulkToolCloseout: true}))
 	for _, dimension := range []string{"records", "bytes", "work"} {
 		for _, headroom := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/headroom=%t", dimension, headroom), func(t *testing.T) {
@@ -121,7 +122,7 @@ func TestSessionHardReplayWithoutFutureWriteCapacity(t *testing.T) {
 					t.Fatalf("above-soft ordinary write: %v", err)
 				}
 				b = beginBatch(t, loaded)
-				mustBatch(t, b.EndRun(session.RunEndedInterrupted))
+				mustBatch(t, b.AddRunEnded(loaded.Snapshot().ActiveRun(), session.RunEnded{Reason: session.RunEndedCaptureFailed, BulkToolCloseout: true}))
 				ref, err := loaded.SubmitCommit(context.Background(), b)
 				if headroom {
 					mustBatch(t, err)
@@ -138,7 +139,7 @@ func TestSessionHardReplayWithoutFutureWriteCapacity(t *testing.T) {
 
 func TestSessionWriteReservesActualHardCloseout(t *testing.T) {
 	initial := []fixtureRecord{createdRecord(t), startRecord(t, 1), inputRecord(t, 1)}
-	closed := append(append([]fixtureRecord{}, initial...), closeoutRecord(t, 1))
+	closed := append(append([]fixtureRecord{}, initial...), encodeFixture(t, sessionformat.KindRunEnded, session.RunEnded{RunID: 1, Reason: session.RunEndedCaptureFailed, BulkToolCloseout: true}))
 	for _, dimension := range []string{"records", "bytes", "work"} {
 		t.Run(dimension, func(t *testing.T) {
 			p := limitPolicy(t, dimension, initial, closed)
@@ -215,7 +216,7 @@ func TestSessionAdmissionAndUncertaintyShareCauseNotOutcome(t *testing.T) {
 						t.Fatal("local rejection attempted storage")
 					}
 					b = beginBatch(t, s)
-					mustBatch(t, b.EndRun(session.RunEndedInterrupted))
+					mustBatch(t, b.AddRunEnded(s.Snapshot().ActiveRun(), session.RunEnded{Reason: session.RunEndedCaptureFailed, BulkToolCloseout: true}))
 					submitBatch(t, s, b)
 					if !userInputsMatch(s.Snapshot(), run, 0) {
 						t.Fatal("rejected input leaked into cleanup")

@@ -74,7 +74,7 @@ func TestInteractionSuccessorScopeAndFutureReferences(t *testing.T) {
 						v := sessionformat.ModelResponse{RunID: id.runID.ordinal, RequestID: id.requestOrdinal, Terminal: sessionformat.ResponseTerminalNormal}
 						wire, err := codec.Encode(v, s.policy.PayloadLimits)
 						interactionCheck(t, err)
-						dto = historyformat.Record{Kind: sessionformat.KindModelResponse, KindVersion: 1, Payload: wire}
+						dto = historyformat.Record{Kind: sessionformat.KindModelResponse, KindVersion: sessionformat.Version, Payload: wire}
 						add = func(b *SessionCommit) error {
 							return b.AddModelResponse(id, ModelResponse{Terminal: ResponseTerminalNormal})
 						}
@@ -82,7 +82,7 @@ func TestInteractionSuccessorScopeAndFutureReferences(t *testing.T) {
 						v := sessionformat.InvocationFailure{RunID: id.runID.ordinal, RequestID: id.requestOrdinal, Class: sessionformat.InvocationFailureTransport}
 						wire, err := codec.Encode(v, s.policy.PayloadLimits)
 						interactionCheck(t, err)
-						dto = historyformat.Record{Kind: sessionformat.KindInvocationFailure, KindVersion: 1, Payload: wire}
+						dto = historyformat.Record{Kind: sessionformat.KindInvocationFailure, KindVersion: sessionformat.Version, Payload: wire}
 						add = func(b *SessionCommit) error {
 							return b.AddInvocationFailure(id, InvocationFailure{Class: InvocationFailureTransport})
 						}
@@ -90,7 +90,7 @@ func TestInteractionSuccessorScopeAndFutureReferences(t *testing.T) {
 						v := sessionformat.RunEnded{RunID: id.runID.ordinal, Reason: sessionformat.RunEndedCaptureFailed, Capture: &sessionformat.CaptureFailureEvidence{RequestID: id.requestOrdinal}}
 						wire, err := codec.Encode(v, s.policy.PayloadLimits)
 						interactionCheck(t, err)
-						dto = historyformat.Record{Kind: sessionformat.KindRunEnded, KindVersion: 1, Payload: wire}
+						dto = historyformat.Record{Kind: sessionformat.KindRunEnded, KindVersion: sessionformat.Version, Payload: wire}
 						add = func(b *SessionCommit) error {
 							return b.AddRunEnded(id.runID, RunEnded{Reason: RunEndedCaptureFailed, Capture: &CaptureFailureEvidence{RequestID: id.RunRelative()}})
 						}
@@ -105,7 +105,7 @@ func TestInteractionSuccessorScopeAndFutureReferences(t *testing.T) {
 						}
 						wire, err := codec.Encode(v, s.policy.PayloadLimits)
 						interactionCheck(t, err)
-						dto = historyformat.Record{Kind: sessionformat.KindModelRequest, KindVersion: 1, Payload: wire}
+						dto = historyformat.Record{Kind: sessionformat.KindModelRequest, KindVersion: sessionformat.Version, Payload: wire}
 						add = func(b *SessionCommit) error {
 							_, err := b.AddModelRequest(run, ModelRequest{Source: next.Source, Recipe: next.Recipe, RetryOf: new(id.RunRelative())})
 							return err
@@ -183,7 +183,7 @@ func TestInteractionNumericEndingEncodingRejectedOnReplay(t *testing.T) {
 			before := detachedSessionState(s.state)
 			// Former experimental code 5 (interrupted) for run 1. History retains
 			// opaque payload bytes, but Session must not convert the numeric reason.
-			dto := historyformat.Record{Kind: sessionformat.KindRunEnded, KindVersion: 1, Payload: []byte("\xa2\x61e\x05\x61r\x01")}
+			dto := historyformat.Record{Kind: sessionformat.KindRunEnded, KindVersion: sessionformat.Version, Payload: []byte("\xa3\x61b\xf4\x61e\x05\x61r\x01")}
 			var err error
 			if path == "decode" {
 				var r *materializedRecord
@@ -220,7 +220,7 @@ func TestInteractionUnknownKindAndVersionFailClosed(t *testing.T) {
 		for _, path := range []string{"decode", "apply", "load"} {
 			t.Run(kind+"/"+path, func(t *testing.T) {
 				s := interactionFixture(t, "pending")
-				dto := historyformat.Record{Kind: kind, KindVersion: 2, Payload: []byte{0xa0}}
+				dto := historyformat.Record{Kind: kind, KindVersion: sessionformat.Version + 1, Payload: []byte{0xa0}}
 				if kind == "session.future" {
 					dto.KindVersion = 1
 				}

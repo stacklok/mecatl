@@ -9,8 +9,8 @@ import (
 	sessionformat "github.com/stacklok/mecatl/engine/kernel/session/format"
 )
 
-// lifecycleState contains only copyable active-run admission scalars. Historical
-// facts remain in immutable records when an ending or successor changes these.
+// lifecycleState contains active-run admission scalars and immutable tool state.
+// Historical facts remain in immutable records when an ending or successor changes these.
 type lifecycleState struct {
 	created                       bool
 	activeRun                     RunID
@@ -18,7 +18,8 @@ type lifecycleState struct {
 	binding                       bool
 	frontier, accounted, captured uint64 // Admitted contributions, last outcome coverage, pending request coverage.
 	pending                       ModelRequestID
-	calls                         uint64
+	calls                         uint64 // Calls without individual dispositions in tools; retained on bulk end.
+	tools                         *activeToolResponse
 }
 
 // admissionContext pins the accepted source and head independently of the ordered
@@ -39,8 +40,9 @@ type lifecycleState struct {
 // rule is also an accepted-prerequisite policy: same-batch facts cannot provide it.
 // Those choices differ from structural integrity, which requires valid scoped
 // identity, membership, and fact pairing. Policy separately controls capacity.
-// Uncertain endings intentionally retain pending and unresolved coverage; ending
-// local ownership does not assert that external processing or spend has ceased.
+// Noncompleted endings may retain pending model coverage; only explicit bulk
+// endings may leave calls without individual dispositions. Ending local ownership
+// does not assert that external processing or spend has ceased.
 // Ordinary writes must fit soft limits and reserve each actual minimal emergency
 // ending at the resulting candidate under both the hard Session policy and the
 // History policy; replay uses only hard retained limits.
@@ -93,6 +95,10 @@ func (a *admissionContext) admit(scope historyid.HistoryID, r *materializedRecor
 			}
 		}
 		return a.admitOutcome(requestID(scope, r.response.RunID, r.response.RequestID), calls)
+	case sessionformat.KindToolInvocation:
+		return a.admitToolInvocation(scope, &r.toolInvocation)
+	case sessionformat.KindToolDisposition:
+		return a.admitToolDisposition(scope, r.toolDisposition)
 	case sessionformat.KindInvocationFailure:
 		return a.admitOutcome(requestID(scope, r.failure.RunID, r.failure.RequestID), 0)
 	case sessionformat.KindRunEnded:
@@ -112,6 +118,7 @@ func (s *lifecycleState) startRun(scope historyid.HistoryID, v sessionformat.Run
 	s.activeRun = RunID{historyID: scope, ordinal: v.ID}
 	s.inputs, s.requests, s.frontier, s.accounted, s.captured, s.calls = 0, 0, 0, 0, 0, 0
 	s.pending = ModelRequestID{}
+	s.tools = nil
 	return nil
 }
 
@@ -180,17 +187,25 @@ func (a *admissionContext) admitOutcome(id ModelRequestID, calls uint64) error {
 	s.pending = ModelRequestID{}
 	s.accounted = s.captured
 	s.calls = calls
+	s.tools = nil
+	if calls != 0 {
+		s.tools = &activeToolResponse{request: id, calls: make([]activeToolCall, calls)}
+	}
 	return nil
 }
 
-// endRun checks clean coverage and capture membership before ending ownership.
-// Explicit uncertain endings preserve all pending and unresolved scalars.
+// endRun checks individual tool settlement, clean completion coverage and model
+// capture membership before ending ownership. Bulk closeout is represented only
+// by the terminal fact; it neither rewrites calls nor resolves a pending model.
 func (a *admissionContext) endRun(scope historyid.HistoryID, v sessionformat.RunEnded) error {
 	s := &a.candidate
 	if !s.created || s.activeRun == (RunID{}) || (RunID{historyID: scope, ordinal: v.RunID}) != s.activeRun {
 		return ErrTransition
 	}
-	if v.Reason == sessionformat.RunEndedCompleted && (s.pending != (ModelRequestID{}) || s.calls != 0 || s.accounted != s.frontier) {
+	if !v.BulkToolCloseout && s.calls != 0 {
+		return ErrTransition
+	}
+	if v.Reason == sessionformat.RunEndedCompleted && (s.pending != (ModelRequestID{}) || s.accounted != s.frontier) {
 		return ErrTransition
 	}
 	if v.Capture != nil {
@@ -234,7 +249,7 @@ func (s *Session) reserveEnding(ref history.CommitRef, state lifecycleState, rec
 	next := Session{history: s.history, policy: s.policy, state: sessionState{
 		view: Snapshot{historyID: s.state.view.historyID, head: ref, lifecycle: state}, records: records, payloadBytes: payloadBytes,
 	}}
-	for _, reason := range []RunEndedReason{RunEndedError, RunEndedLimit, RunEndedInterrupted, RunEndedCaptureFailed} {
+	for _, reason := range []RunEndedReason{RunEndedLimit, RunEndedCaptureFailed} {
 		if _, err := next.prepareEnding(reason); err != nil {
 			return err
 		}

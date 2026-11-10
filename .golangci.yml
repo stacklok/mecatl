@@ -180,6 +180,7 @@ linters:
             - github.com/stacklok/mecatl/engine/kernel/codec$
             - github.com/stacklok/mecatl/engine/kernel/session/format$
             - github.com/stacklok/mecatl/engine/kernel/views$
+            - github.com/stacklok/mecatl/engine/kernel/value$
           deny:
             - pkg: os
               desc: 'kernel session values must not access host state'
@@ -192,6 +193,7 @@ linters:
             - $gostd
             - github.com/stacklok/mecatl/engine/kernel/codec$
             - github.com/stacklok/mecatl/engine/kernel/contentid$
+            - github.com/stacklok/mecatl/engine/kernel/value$
             - github.com/jcalabro/atmos/cbor$
           deny:
             - pkg: os

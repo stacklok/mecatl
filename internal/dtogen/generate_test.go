@@ -35,7 +35,8 @@ func TestSchemaRejections(t *testing.T) {
 		{"duplicate budget tag", "type Record struct { V string `cbor:\"x\" cborlimit:\"bytes=1\" cborlimit:\"bytes=2\"` }", "duplicate cborlimit tag"},
 		{"malformed tag", "type Record struct { V string `cbor:x` }", "malformed struct tag"},
 		{"invalid UTF8 name", "type Record struct { V string `cbor:\"\\xff\"` }", "invalid wire name"},
-		{"optional scalar", "type Record struct { V string `cbor:\"v,omitempty\"` }", "requires pointer"},
+		{"optional string scalar", "type Record struct { V string `cbor:\"v,omitempty\"` }", "requires pointer"},
+		{"optional integer scalar", "type Record struct { V uint64 `cbor:\"v,omitempty\"` }", "requires pointer"},
 		{"wrong cap", "type Record struct { V string `cbor:\"v\" cborlimit:\"items=1\"` }", "option or shape"},
 		{"struct cap", "type Record struct { V struct{} `cbor:\"v\" cborlimit:\"items=1\"` }", "option or shape"},
 		{"excluded cap", "type Record struct { V string `cbor:\"-\" cborlimit:\"bytes=1\"` }", "budget on excluded"},
@@ -79,6 +80,28 @@ func TestSchemaRejections(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestOptionalBoolCBOR(t *testing.T) {
+	cfg := executableFixture(t, `
+	type Flag bool
+	type Record struct { Flag Flag `+"`cbor:\"f,omitempty\"`"+` }
+	`)
+	if err := Generate(context.Background(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	writeFixture(t, filepath.Join(cfg.Dir, "owner_test.go"), `package owner
+	import("bytes";"errors";"testing";"github.com/stacklok/mecatl/engine/kernel/codec")
+	func TestOptionalBool(t *testing.T) {
+	 l:=codec.Limits{MaxBytes:10000,MaxStringBytes:100,MaxByteStringBytes:100,MaxArrayElements:100,MaxMapPairs:100,MaxDepth:20,MaxNodes:1000,MaxCollectionElements:1000}
+	 falseBytes:=[]byte{0xa0};trueBytes:=[]byte{0xa1,0x61,0x66,0xf5};explicitFalse:=[]byte{0xa1,0x61,0x66,0xf4}
+	 for _,tc:=range []struct{v Record;want []byte}{{Record{},falseBytes},{Record{Flag:true},trueBytes}}{b,err:=codec.Encode(tc.v,l);if err!=nil||!bytes.Equal(b,tc.want){t.Fatalf("encode %v: %x %v",tc.v,b,err)}}
+	 for _,tc:=range []struct{data []byte;want Flag}{{falseBytes,false},{explicitFalse,false},{trueBytes,true}}{v,err:=codec.Decode[Record](tc.data,l);if err!=nil||v.Flag!=tc.want{t.Fatalf("decode %x: %v %v",tc.data,v,err)}}
+	 r,err:=codec.NewReader(falseBytes,l);if err!=nil{t.Fatal(err)};reused:=Record{Flag:true};if err:=reused.ReadCBOR(&r,0,100);err!=nil||reused.Flag{t.Fatalf("missing default: %v %v",reused,err)}
+	 for _,tc:=range []struct{data []byte;invalid bool}{{[]byte{0xa1,0x61,0x66},false},{[]byte{0xa1,0x61,0x66,0x00},true},{[]byte{0xa2,0x61,0x66,0xf4,0x61,0x66,0xf5},true}}{r,err:=codec.NewReader(tc.data,l);if err!=nil{t.Fatal(err)};reused:=Record{Flag:true};err=reused.ReadCBOR(&r,0,100);if err==nil||reused.Flag!=true{t.Fatalf("accepted or changed receiver: %x %v",tc.data,err)};if tc.invalid&&!errors.Is(err,codec.ErrInvalidData){t.Fatalf("not invalid data: %x %v",tc.data,err)}}
+	}
+	`)
+	runOwner(t, cfg, "")
 }
 
 func TestGenerateOutputFailurePreservesArtifact(t *testing.T) {

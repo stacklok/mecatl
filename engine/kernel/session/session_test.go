@@ -46,7 +46,7 @@ func encodeFixture(t testing.TB, kind string, v codec.Marshaler) fixtureRecord {
 	t.Helper()
 	wire, err := codec.Encode(v, testLimits())
 	mustBatch(t, err)
-	return fixtureRecord{format.Record{Kind: kind, KindVersion: 1, Payload: wire}}
+	return fixtureRecord{format.Record{Kind: kind, KindVersion: sessionformat.Version, Payload: wire}}
 }
 func createdRecord(t testing.TB) fixtureRecord {
 	t.Helper()

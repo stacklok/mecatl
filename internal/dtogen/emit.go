@@ -347,7 +347,7 @@ func (e *emitter) check(n *shape) {
 		e.line("if err:=b.CheckMap(count,d,cap);err!=nil{return err}")
 		for _, f := range fields {
 			if f.optional {
-				e.line("if v.%s!=nil {", f.name)
+				e.line("if %s {", optionalPresent(f, "v"))
 			}
 			e.line("if err:=b.CheckString(%q,d+1,int(^uint(0)>>1));err!=nil{return dtogenFmt.Errorf(%q,err)}", f.wireName, f.name+": %w")
 			e.line("if err:=h.check%d(v.%s,b,d+1,%s);err!=nil{return dtogenFmt.Errorf(%q,err)}", f.value.id, f.name, fieldCap(f), f.name+": %w")
@@ -369,9 +369,16 @@ func (e *emitter) count(fields []field, v string) {
 	e.line("count:=%d", required)
 	for _, f := range fields {
 		if f.optional {
-			e.line("if %s.%s!=nil{count++}", v, f.name)
+			e.line("if %s{count++}", optionalPresent(f, v))
 		}
 	}
+}
+
+func optionalPresent(f field, v string) string {
+	if f.value.kind == shapeBool {
+		return v + "." + f.name
+	}
+	return v + "." + f.name + "!=nil"
 }
 
 func (e *emitter) appendValue(n *shape) {
@@ -414,7 +421,7 @@ func (e *emitter) appendValue(n *shape) {
 		e.line("out=dtogenCBOR.AppendMapHeader(out,uint64(count))")
 		for _, f := range fields {
 			if f.optional {
-				e.line("if v.%s!=nil{", f.name)
+				e.line("if %s{", optionalPresent(f, "v"))
 			}
 			e.line("out=dtogenCBOR.AppendText(out,%q);out=h.append%d(out,v.%s)", f.wireName, f.value.id, f.name)
 			if f.optional {

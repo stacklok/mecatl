@@ -44,4 +44,8 @@ const (
 	KindModelResponse = "session.model_response"
 	// KindInvocationFailure identifies an observed invocation failure.
 	KindInvocationFailure = "session.invocation_failure"
+	// KindToolInvocation identifies effective committed tool intent.
+	KindToolInvocation = "session.tool_invocation"
+	// KindToolDisposition identifies an explicit requested-call outcome.
+	KindToolDisposition = "session.tool_disposition"
 )

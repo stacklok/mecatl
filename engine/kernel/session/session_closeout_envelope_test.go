@@ -82,7 +82,7 @@ func TestSessionFutureCloseoutEnvelopeSequenceWidth(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				interruption, err := newRunEndedRecord(RunEnded{Reason: RunEndedCaptureFailed}, run, prefix.policy.PayloadLimits)
+				interruption, err := newRunEndedRecord(RunEnded{Reason: RunEndedCaptureFailed, BulkToolCloseout: true}, run, prefix.policy.PayloadLimits)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -236,7 +236,7 @@ func TestSessionFutureCloseoutEnvelopeSequenceWidth(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				if err := b.EndRun(RunEndedCaptureFailed); err != nil {
+				if err := b.AddRunEnded(s.Snapshot().ActiveRun(), RunEnded{Reason: RunEndedCaptureFailed, BulkToolCloseout: true}); err != nil {
 					t.Fatal(err)
 				}
 				ref, err = s.SubmitCommit(context.Background(), b)

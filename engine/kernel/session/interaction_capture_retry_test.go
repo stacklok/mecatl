@@ -113,3 +113,65 @@ func TestModelInteractionUncertainDetailedCaptureCannotBecomeMinimal(t *testing.
 		})
 	}
 }
+
+func TestToolDispositionUncertainAcceptanceRetainsFrozenFacts(t *testing.T) {
+	for _, accepted := range []bool{false, true} {
+		t.Run(map[bool]string{false: "before acceptance", true: "lost acknowledgement"}[accepted], func(t *testing.T) {
+			backend := &batchBackend{Backend: mem.New()}
+			h := newLifecycleHistory(t, backend)
+			s := boundSession(t, h, sessionPolicy())
+			b := beginBatch(t, s)
+			mustBatch(t, b.Create())
+			run := batchRun(t, b)
+			mustBatch(t, b.ReplaceModelBinding(run.HistoryID(), session.ModelBinding{Route: "r", API: "a", Model: "m", Settings: []byte("{}")}))
+			submitBatch(t, s, b)
+			request := addInteractionRequest(t, s, run, nil, nil)
+			b = beginBatch(t, s)
+			mustBatch(t, b.AddModelResponse(request, session.ModelResponse{Terminal: session.ResponseTerminalNormal, Items: []session.ResponseItem{{Call: &session.RequestedCall{Name: "requested", Arguments: []byte(" { }")}}}}))
+			submitBatch(t, s, b)
+			response, ok := s.Snapshot().RecordAt(s.Snapshot().RecordCount() - 1).ModelResponse()
+			if !ok {
+				t.Fatal("missing response")
+			}
+			var call session.RequestedCallID
+			for candidate := range response.Calls() {
+				call = candidate.ID()
+			}
+			if call == (session.RequestedCallID{}) {
+				t.Fatal("missing requested call")
+			}
+			b = beginBatch(t, s)
+			mustBatch(t, b.AddToolInvocation(call, session.ToolInvocation{Name: "effective"}))
+			submitBatch(t, s, b)
+
+			diagnostic := "retained"
+			b = beginBatch(t, s)
+			mustBatch(t, b.AddToolDisposition(call, session.ToolDisposition{Diagnostic: &diagnostic, Returned: &session.ToolReturned{Status: session.ToolReturnError, Output: session.ToolOutput{Capture: session.ToolCaptureComplete}}}))
+			before, attempts := s.Snapshot(), len(backend.attempts)
+			backend.accept, backend.fail = accepted, codec.ErrLimitExceeded
+			if _, err := s.SubmitCommit(context.Background(), b); !errors.Is(err, session.ErrAcceptanceUnknown) || !reflect.DeepEqual(before, s.Snapshot()) || len(backend.attempts) != attempts+1 {
+				t.Fatalf("unknown tool disposition acceptance: %v", err)
+			}
+			attempt := backend.attempts[len(backend.attempts)-1]
+			diagnostic = "mutated"
+			if err := b.AddToolDisposition(call, session.ToolDisposition{NotInvoked: &session.ToolNotInvoked{Reason: session.ToolNotInvokedOther}}); !errors.Is(err, session.ErrBatch) {
+				t.Fatalf("frozen tool disposition replaced: %v", err)
+			}
+			if _, err := s.BeginCommit(); !errors.Is(err, session.ErrBatch) {
+				t.Fatalf("alternate tool proposal allowed: %v", err)
+			}
+			if ref := submitBatch(t, s, b); ref != attempt.commit.Ref || len(backend.attempts) != attempts+2 || !reflect.DeepEqual(attempt, backend.attempts[len(backend.attempts)-1]) {
+				t.Fatal("tool disposition retry changed bytes, identity or write count")
+			}
+			loaded, err := session.Load(context.Background(), h, run.HistoryID(), sessionPolicy())
+			mustBatch(t, err)
+			for _, inspected := range []session.Snapshot{s.Snapshot(), loaded.Snapshot()} {
+				disposition, present := inspected.RunAt(0).ToolCalls().At(0).Disposition()
+				got, diagnosticPresent := disposition.Diagnostic()
+				if !present || !diagnosticPresent || got != "retained" {
+					t.Fatal("frozen retry leaked caller mutation or lost disposition")
+				}
+			}
+		})
+	}
+}

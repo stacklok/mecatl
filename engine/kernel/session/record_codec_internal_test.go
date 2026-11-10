@@ -118,7 +118,7 @@ func TestRecordFailureCategories(t *testing.T) {
 					t.Fatalf("decode %s: %v", name, err)
 				}
 			}
-			for _, version := range []int64{3, 99} {
+			for _, version := range []int64{2, 3, 99} {
 				r, err := decodeMaterialized(format.Record{Kind: test.kind, KindVersion: version, Payload: test.wire}, testLimits())
 				if !errors.Is(err, ErrUnsupportedRecord) || r != nil {
 					t.Fatalf("future version: %v", err)
