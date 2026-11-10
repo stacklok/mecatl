@@ -407,14 +407,14 @@ func (st *Store) readInventoryScopePage(ctx context.Context, request port.Sessio
 		return nil, 0, false, port.ErrSessionMetadataCursorRestart
 	}
 	reader := bufio.NewReaderSize(f, 64*1024)
-	capacity := request.Limit
-	if capacity > scope.Count {
-		capacity = scope.Count
+	// Allocate inside the bound check rather than clamping a shared variable
+	// first, so the caller-supplied limit never reaches make unchecked.
+	var rows []port.SessionDiscoveryMeta
+	if capacity := min(request.Limit, scope.Count); capacity >= 0 && capacity <= maxInventoryPagePrealloc {
+		rows = make([]port.SessionDiscoveryMeta, 0, capacity)
+	} else {
+		rows = make([]port.SessionDiscoveryMeta, 0, maxInventoryPagePrealloc)
 	}
-	if capacity > maxInventoryPagePrealloc {
-		capacity = maxInventoryPagePrealloc
-	}
-	rows := make([]port.SessionDiscoveryMeta, 0, capacity)
 	nextPosition := position
 	for len(rows) <= request.Limit {
 		line, readErr := readInventoryLine(ctx, reader)
