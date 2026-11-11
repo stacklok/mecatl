@@ -6,13 +6,13 @@ import (
 	"strings"
 
 	"charm.land/glamour/v2/ansi"
-	"github.com/yuin/goldmark"
-	"github.com/yuin/goldmark/ast"
-	"github.com/yuin/goldmark/extension"
-	"github.com/yuin/goldmark/parser"
-	gmrenderer "github.com/yuin/goldmark/renderer"
-	"github.com/yuin/goldmark/text"
-	"github.com/yuin/goldmark/util"
+	"github.com/yuin/goldmark/v2"
+	"github.com/yuin/goldmark/v2/ast"
+	"github.com/yuin/goldmark/v2/extension"
+	"github.com/yuin/goldmark/v2/parser"
+	gmrenderer "github.com/yuin/goldmark/v2/renderer"
+	"github.com/yuin/goldmark/v2/text"
+	"github.com/yuin/goldmark/v2/util"
 )
 
 // streamMarkdown renders conversation assistant markdown, incrementally while a
