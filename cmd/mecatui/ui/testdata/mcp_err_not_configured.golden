@@ -4,18 +4,18 @@
 
 
 
-┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
-┃                                                                                                              ┃
-┃  MCP inventory                                                                                               ┃
-┃  ✗ MCP not configured: list sources: rpc error: code = FailedPrecondition desc = no MCP provider configured  ┃
-┃                                                                                                              ┃
-┃                                                                                                              ┃
-┃  ToolHive groups: unavailable                                                                                ┃
-┃                                                                                                              ┃
-┃  revision 0 · cached · r reload status · esc close                                                           ┃
-┃                                                                                                              ┃
-┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
-
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃                                                                                                  ┃
+┃  MCP inventory                                                                                   ┃
+┃  ✗ MCP not configured: list sources: rpc error: code = FailedPrecondition desc = no MCP          ┃
+┃  provider configured                                                                             ┃
+┃                                                                                                  ┃
+┃                                                                                                  ┃
+┃  ToolHive groups: unavailable                                                                    ┃
+┃                                                                                                  ┃
+┃  revision 0 · cached · r reload status · esc close                                               ┃
+┃                                                                                                  ┃
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
 
 
 

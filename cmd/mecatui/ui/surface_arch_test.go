@@ -28,6 +28,8 @@ var surfaceFileHomes = map[string]bool{
 	"soul.go":             true,
 	"skills.go":           true,
 	"mcp.go":              true,
+	"mcp_browser.go":      true,
+	"mcp_arguments.go":    true,
 	"sessions.go":         true,
 	"sessions_surface.go": true,
 	"models.go":           true,
@@ -45,7 +47,7 @@ var surfaceFileHomes = map[string]bool{
 
 // surfaceFileCount is the explicit homes the gate counts — another surface file
 // is an explicit decision here, not a silent drift.
-const surfaceFileCount = 17
+const surfaceFileCount = 19
 
 func TestModelHasNoConnectStateField(t *testing.T) {
 	st := reflect.TypeOf(Model{})

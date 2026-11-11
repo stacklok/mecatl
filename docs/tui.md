@@ -118,6 +118,32 @@ spacing, but reduce decoration before useful content in small terminals. Inline
 search pickers need several visible choices plus overflow indicators; a six-row
 window keeps multiple matches visible with both indicators present.
 
+### Mouse support
+
+Include mouse support when adding or modernizing a modal or surface. Apply this
+standard to the surface being changed; migrating unrelated surfaces is separate
+work. Keep every action keyboard-operable and respect `--no-mouse`.
+
+- A single left-click on an enabled list row selects and reveals that item
+  without activating it, including when it is already selected. Every visible
+  wrapped or multiline continuation maps to the same logical item. Wheel
+  browsing changes the window without changing selection.
+- Visible action buttons invoke the same action and validation as their keyboard
+  equivalents. Keep activation separate from row selection and retain explicit
+  confirmation for consequential actions. Keybinding hints are not buttons.
+- Publish hit regions only for the displayed frame, deriving them from rendered
+  controls and the parent's placement. Invalidate them on resize, undisplayed
+  preparation, and view replacement. Border, padding, overflow indicators, and
+  hidden or disabled controls are inert; compact and pending views expose only
+  actions that remain available. Modal clicks never reach underlying controls.
+
+Test pointer routing through `Model.View` and `Model.Update`, including scrolled
+and partially visible multiline rows, wrapped buttons, border/padding misses,
+no-mouse, resize-before-input, stale hits, pending actions, and compact
+restoration. Assert that selection does not activate and that button clicks share
+keyboard validation and duplicate-submission guards. See
+[`mcp_manual_geometry_test.go`](../cmd/mecatui/ui/mcp_manual_geometry_test.go).
+
 ### Read-only data inspectors
 
 Use a centered, bounded inspector for a captured data view. Keep the title,
