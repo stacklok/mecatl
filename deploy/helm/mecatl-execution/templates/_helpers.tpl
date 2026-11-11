@@ -11,6 +11,11 @@
 {{- end -}}
 {{- end -}}
 
+{{- define "mecatl-execution.executorTrustConfigMap" -}}
+{{- $prefix := include "mecatl-execution.fullname" . | trunc 48 | trimSuffix "-" -}}
+{{- printf "%s-executor-trust" $prefix -}}
+{{- end -}}
+
 {{/* Retained resources are adoptable only by their original Helm identity. */}}
 {{- define "mecatl-execution.retainedMetadata" -}}
 {{- $live := lookup .apiVersion .kind .root.Release.Namespace .name -}}

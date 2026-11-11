@@ -3,12 +3,22 @@
   "type": "object",
   "additionalProperties": false,
   "required": ["provider", "service", "templates", "networkPolicy", "resourceGovernance"],
-  "$defs": {"secretName": {"type":"string","maxLength":253,"pattern":"^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?)*$"}},
+  "$defs": {
+    "secretKey": {"type":"string","maxLength":253,"pattern":"^[A-Za-z0-9][A-Za-z0-9._-]*$"},
+    "secretName": {
+      "type":"string","maxLength":253,
+      "pattern":"^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?)*$"
+    }
+  },
   "properties": {
     "fullnameOverride": {"type":"string"},
     "provider": {
       "type":"object", "additionalProperties":false,
-      "required":["image","replicas","securitySecretName","securityManifest","maxConcurrentStreams","maxConcurrentRPCs","maxConcurrentRPCsPerClient","apiServerCIDRs","dnsCIDRs","resources"],
+      "required":[
+        "image","replicas","securitySecretName","securityManifest","executorClientTLS",
+        "maxConcurrentStreams","maxConcurrentRPCs","maxConcurrentRPCsPerClient",
+        "apiServerCIDRs","dnsCIDRs","resources"
+      ],
       "properties": {
         "image":{"type":"string","pattern":"^[^\\s@]+@sha256:[0-9a-fA-F]{64}$"},
         "imagePullPolicy":{"enum":["Always","IfNotPresent","Never"]},
@@ -17,6 +27,21 @@
         "securitySecretName":{"type":"string"},
         "securitySources":{"type":"array","minItems":1,"maxItems":8,"items":{"type":"object","additionalProperties":false,"required":["name","items"],"properties":{"name":{"$ref":"#/$defs/secretName"},"items":{"type":"array","minItems":1,"maxItems":32,"items":{"type":"object","additionalProperties":false,"required":["key","path"],"properties":{"key":{"type":"string","maxLength":253,"pattern":"^[A-Za-z0-9][A-Za-z0-9._-]*$"},"path":{"type":"string","maxLength":128,"pattern":"^[A-Za-z0-9][A-Za-z0-9._-]*$"}}}}}}},
         "securityManifest":{"type":"string","minLength":2},
+        "executorClientTLS":{
+          "type":"object","additionalProperties":false,
+          "required":["secretName","certificateKey","privateKeyKey","uri","caSecretName","caKey"],
+          "properties":{
+            "secretName":{"$ref":"#/$defs/secretName"},
+            "certificateKey":{"$ref":"#/$defs/secretKey"},
+            "privateKeyKey":{"$ref":"#/$defs/secretKey"},
+            "uri":{
+              "type":"string","maxLength":2048,
+              "pattern":"^[a-z][a-z0-9+.-]*://[^\\s/?#@]+(/[^\\s?#]*)?$"
+            },
+            "caSecretName":{"$ref":"#/$defs/secretName"},
+            "caKey":{"$ref":"#/$defs/secretKey"}
+          }
+        },
         "securityReloadInterval":{"type":"string","pattern":"^[1-9][0-9]*(ms|s|m)$"},
         "maxConcurrentStreams":{"type":"integer","minimum":1,"maximum":1024},
         "maxConcurrentRPCs":{"type":"integer","minimum":1,"maximum":4096},

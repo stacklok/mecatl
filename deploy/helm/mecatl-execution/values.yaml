@@ -12,6 +12,21 @@ provider:
   #   - name: provider-client-roots
   #     items: [{key: ca.crt, path: clients.pem}]
   securityManifest: ""
+  # Platform-issued client certificate the provider presents to executor Pods.
+  # Executors trust only the CA bundle and URI SAN configured here.
+  executorClientTLS:
+    # Secret holding the provider's client certificate and key.
+    secretName: ""
+    certificateKey: tls.crt
+    privateKeyKey: tls.key
+    # Exact URI SAN of that certificate, for example
+    # spiffe://example.org/mecatl-execution/provider.
+    uri: ""
+    # Secret holding the CA bundle executors verify the provider against, for
+    # example a trust-manager Bundle target. It must not be secretName: nodes
+    # can read every Secret their Pods reference.
+    caSecretName: ""
+    caKey: ca.crt
   securityReloadInterval: 2s
   maxConcurrentStreams: 64
   maxConcurrentRPCs: 128

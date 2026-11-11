@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-func TestChartRetainsCRDAndDoesNotGrantSecretAPI(t *testing.T) {
+func TestChartRetainsCRDAndScopesSecretAPI(t *testing.T) {
 	crd, err := os.ReadFile("crds/executionenvironment.yaml")
 	if err != nil {
 		t.Fatal(err)
@@ -18,8 +18,9 @@ func TestChartRetainsCRDAndDoesNotGrantSecretAPI(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(rbac), "secrets") {
-		t.Fatal("provider RBAC must have no Secret access")
+	secretRule := "- apiGroups: [\"\"]\n  resources: [\"secrets\"]\n  verbs: [\"create\", \"get\", \"delete\"]\n"
+	if strings.Count(string(rbac), "secrets") != 1 || !strings.Contains(string(rbac), secretRule) {
+		t.Fatal("provider Secret access must be exactly create, get, and delete")
 	}
 	for _, required := range []string{"kind: ClusterRole", `resources: ["runtimeclasses"]`, `resources: ["storageclasses"]`, "resourceNames:", `verbs: ["get"]`} {
 		if !strings.Contains(string(rbac), required) {

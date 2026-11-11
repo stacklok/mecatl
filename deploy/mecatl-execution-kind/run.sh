@@ -390,7 +390,7 @@ kube apply -f "$root/deploy/mecatl-execution-kind/fixture-tls.yaml"
 kube -n execution-qualification wait --for=condition=Ready \
   certificate/execution-provider-tls certificate/execution-client-tls \
   certificate/execution-intruder-tls certificate/execution-operations-tls \
-  certificate/execution-wrong-scope-tls --timeout=3m
+  certificate/execution-wrong-scope-tls certificate/execution-executor-client-tls --timeout=3m
 # Host-side test clients need the actual initially issued leaf identities; this
 # snapshot is not used as a Kubernetes workload Secret or a renewal mechanism.
 for name in provider:execution-security intruder:execution-intruder-tls mecak8s:execution-client-tls operations:execution-operations-tls wrong-scope:execution-wrong-scope-tls; do
@@ -400,6 +400,8 @@ for name in provider:execution-security intruder:execution-intruder-tls mecak8s:
 done
 kube -n execution-qualification create secret generic execution-trust \
   --from-file=clients.pem="$state/pki/ca.crt" --dry-run=client -o yaml | kube apply -f -
+kube -n execution-qualification create secret generic execution-executor-ca \
+  --from-file=ca.crt="$state/pki/ca.crt" --dry-run=client -o yaml | kube apply -f -
 # cert-manager's client Secret includes ca.crt from this same issuer. The OIDC
 # issuer is separately signed by the task-owned CA, so it remains trusted.
 

@@ -48,11 +48,18 @@ type Profiles struct {
 	capacityLimit          map[string]int
 	catalog                map[string]map[string]TemplateDisplay
 	executorServiceAccount string
+	executorTrust          ExecutorTrust
 }
 
 // WithExecutorServiceAccount sets the chart-owned identity for Pod construction and validation.
 func (p *Profiles) WithExecutorServiceAccount(name string) *Profiles {
 	p.executorServiceAccount = name
+	return p
+}
+
+// WithExecutorTrust sets the provider trust sources mounted into executor Pods.
+func (p *Profiles) WithExecutorTrust(trust ExecutorTrust) *Profiles {
+	p.executorTrust = trust
 	return p
 }
 
