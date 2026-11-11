@@ -154,7 +154,7 @@ func (s *mcpState) modalMaxOuterWidth() int {
 	}
 	for _, item := range items {
 		for _, line := range strings.Split(item.Text, "\n") {
-			width = max(width, 2+ansi.StringWidth(line))
+			width = max(width, 3+ansi.StringWidth(line))
 		}
 	}
 	for _, line := range strings.Split(connectDisplay(s.errMsg), "\n") {
@@ -185,7 +185,16 @@ func (s *mcpState) pickerCompact(width int) string {
 	return ansi.Cut(s.deps.theme.Style("muted").Render(connectDisplay(s.deps.marks.closeOnly+" "+label)), 0, width)
 }
 
-func (s *mcpState) pickerListBody(candidate *bounded.List, bodyRows, width int, title string, prefix []string) ([]string, []string) {
+func (s *mcpState) pickerHit(rect cellRect, control int) {
+	if s.deps.hits == nil || rect.x1 <= rect.x0 {
+		return
+	}
+	id := s.deps.hits.allocate()
+	s.hitControls[id] = control
+	s.regions = append(s.regions, ClickableRegion{rect: rect, hit: id})
+}
+
+func (s *mcpState) pickerListBody(candidate *bounded.List, bodyRows, width, bodyY int, title string, prefix []string) ([]string, []string) {
 	th := s.deps.theme
 	var body []string
 	view := candidate.ViewWithIndicators(bodyRows, candidate.RevealPending())
@@ -201,7 +210,13 @@ func (s *mcpState) pickerListBody(candidate *bounded.List, bodyRows, width int, 
 		body = append(body, ansi.Cut(th.Style("muted").Render(fmt.Sprintf("↑ %d more", view.Above)), 0, width))
 	}
 	for _, row := range view.Rows {
+		row.StatusCells[0] = "│"
+		if row.ItemLine == 0 {
+			row.StatusCells[0] = "┬"
+		}
 		p := presentListRow(row, th.Style("spinner"), th.Style("muted"))
+		y := bodyY + len(body)
+		s.pickerHit(cellRect{x0: 0, x1: min(width, ansi.StringWidth(p.Text)), y0: y, y1: y + 1}, row.ItemIndex)
 		body = append(body, p.Style.Render(p.Text))
 	}
 	if bodyRows > 1 && view.Below > 0 {
@@ -238,7 +253,7 @@ func (s *mcpState) renderPickerList(width, height int) string {
 		rows -= spacing
 	}
 	candidate := *list
-	candidate.SetGeometry(width, rows, 1, bounded.Wrap)
+	candidate.SetGeometry(width, rows, 2, bounded.Wrap)
 	if !candidate.Valid() {
 		return s.pickerCompact(width)
 	}
@@ -251,11 +266,11 @@ func (s *mcpState) renderPickerList(width, height int) string {
 	}
 	natural := 0
 	for _, item := range items {
-		natural += len(skillsTextLines(th.Style("muted"), item.Text, max(1, width-2)))
+		natural += len(skillsTextLines(th.Style("muted"), item.Text, max(1, width-3)))
 	}
 	bodyRows := min(rows, max(1, max(natural, len(body))))
 	if available {
-		listBody, updatedPrefix := s.pickerListBody(&candidate, bodyRows, width, title, prefix)
+		listBody, updatedPrefix := s.pickerListBody(&candidate, bodyRows, width, len(prefix)+spacing/2, title, prefix)
 		body = append(body, listBody...)
 		prefix = updatedPrefix
 	}
@@ -280,10 +295,25 @@ func (s *mcpState) renderResourcePreview(width, height int) string {
 	s.compact = true
 	th := s.deps.theme
 	prefix := skillsTextLines(th.Style("askTitle"), "resource preview", width)
-	identity := resourceLabel(s.previewResource) + "\n" + s.previewResource.Server + " · " + s.previewResource.URI
-	prefix = append(prefix, skillsTextLines(th.Style("muted"), connectDisplay(identity), width)...)
+	if width < 9 {
+		return s.pickerCompact(width)
+	}
+	for _, field := range []struct{ label, value string }{
+		{"Name:   ", resourceLabel(s.previewResource)},
+		{"Server: ", s.previewResource.Server},
+		{"URI:    ", s.previewResource.URI},
+	} {
+		for i, line := range skillsTextLines(th.Style("text"), connectDisplay(field.value), width-8) {
+			label := "        "
+			if i == 0 {
+				label = field.label
+			}
+			prefix = append(prefix, th.Style("text").Bold(true).Render(label)+line)
+		}
+	}
 	// Reserve a status line for physical-line overflow so scrolling never resizes the card.
-	prefix = append(prefix, "")
+	statusRow := len(prefix)
+	prefix = append(prefix, "", ansi.Cut(th.Style("muted").Render("── Content ──"), 0, width))
 	footer := s.pickerFooter(width, s.previewLoaded && !s.loading)
 	rows := height - len(prefix) - len(footer)
 	spacing := 0
@@ -304,7 +334,7 @@ func (s *mcpState) renderResourcePreview(width, height int) string {
 	rows = min(rows, max(1, len(s.previewRows)))
 	s.previewViewport.SetGeometry(width, rows, 0, bounded.Clip)
 	view := s.previewViewport.View(s.previewRows)
-	prefix[len(prefix)-1] = ansi.Cut(th.Style("muted").Render(fmt.Sprintf("↑ %d · ↓ %d lines", view.Above, view.Below)), 0, width)
+	prefix[statusRow] = ansi.Cut(th.Style("muted").Render(fmt.Sprintf("↑ %d · ↓ %d lines", view.Above, view.Below)), 0, width)
 	lines := prefix
 	if spacing > 0 {
 		lines = append(lines, "")

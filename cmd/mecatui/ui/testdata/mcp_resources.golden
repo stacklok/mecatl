@@ -9,8 +9,8 @@
                        ┃  MCP resources                                    ┃
                        ┃                                                   ┃
                        ┃                                                   ┃
-                       ┃  ▶ page-a  fetch                                  ┃
-                       ┃    page-b  fetch                                  ┃
+                       ┃  ▶┬ page-a  fetch                                 ┃
+                       ┃   ┬ page-b  fetch                                 ┃
                        ┃                                                   ┃
                        ┃  enter read · esc close                           ┃
                        ┃  ↑/↓ move · pgup/pgdn page · home/end first/last  ┃
