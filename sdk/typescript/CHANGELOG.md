@@ -4,6 +4,38 @@ Notable changes to `@stacklok-oss/mecatl-sdk` are recorded here.
 
 For installation and API entry points, see the [TypeScript SDK README](./README.md).
 
+## [0.6.0](https://www.npmjs.com/package/%40stacklok-oss%2Fmecatl-sdk/v/0.6.0)
+
+- feat(mecatui): add comfort transcript presentation (#2375) ([`e78d943`](https://github.com/stacklok/mecatl/commit/e78d9432e6be43bbb0d6373f6ed41d45daa4cc0f))
+- fix(sdk): end gRPC request sides when response trailers arrive (#2356) ([`548d185`](https://github.com/stacklok/mecatl/commit/548d185c78eeec2765e97eda8d689a42e918a69e))
+- Implement session-scoped Agent Definitions (#2003) ([`e17d839`](https://github.com/stacklok/mecatl/commit/e17d8394d365a94fb79258fa02a940625bfb99ff))
+- chore(deps): update slack bot base images (#2243) ([`a99282d`](https://github.com/stacklok/mecatl/commit/a99282db3d50897fd4ccbcdb77d667123246e9d0))
+- feat(permissions): one named permission-mode vocabulary and two admission gates (#1935) ([`fa79be7`](https://github.com/stacklok/mecatl/commit/fa79be7d498bb157347e578c61628573a8241d63))
+- fix(security): require Go 1.27.3 and patched vite in the TypeScript SDK (#2466) ([`4858699`](https://github.com/stacklok/mecatl/commit/4858699fbb563644afcaa0671c684ef3fdd71ec1))
+- chore(deps): update typescript sdk (#2244) ([`e7800d4`](https://github.com/stacklok/mecatl/commit/e7800d47ae8428414d8af432636e284ab0fef4db))
+- fix(sdk): follow the Playwright and @types/node pins from the SDK update (#2469) ([`df2b741`](https://github.com/stacklok/mecatl/commit/df2b7418be6cc515cd648b1ca697301036d15147))
+- ci: remove duplicate checks and build mecated once (#2468) ([`0036596`](https://github.com/stacklok/mecatl/commit/003659639249e41da87c8814971b37bb02c508cc))
+- feat(identitybroker): open and close broker sessions with Mecatl sessions (#2467) ([`9aaf5db`](https://github.com/stacklok/mecatl/commit/9aaf5db580fc89f1fc982ecd7eb4aeffe07e9307))
+- fix(deps): pick up the CVE-2026-111497 Brotli fix and clear the Studio and SDK audits (#2507) ([`13b6313`](https://github.com/stacklok/mecatl/commit/13b631377acb19b719fbf160ded2c4e7bb3d065b))
+- chore(deps): update dependency vitest to v5 (#2508) ([`50d4487`](https://github.com/stacklok/mecatl/commit/50d44876f32c566c31cf60d6b2b41a053ae5998b))
+- chore(deps): update javascript dependencies (#2499) ([`f952ff7`](https://github.com/stacklok/mecatl/commit/f952ff723ef045320b39bfba06acadf825c3c988))
+- chore(deps): update dependency typescript to v7 (#2506) ([`0e3280b`](https://github.com/stacklok/mecatl/commit/0e3280b8e4299496fcd6bae46c5b152f7b0f41ca))
+- chore(deps): update pnpm to v12 (#2510) ([`236d4ee`](https://github.com/stacklok/mecatl/commit/236d4ee795ed28a90be086f94555c2e2b3d30d63))
+- chore(deps): update node.js to ef42c77 (#2512) ([`73d5f97`](https://github.com/stacklok/mecatl/commit/73d5f97aa7dab15ce343777c32976642a71d34d9))
+- chore(deps): lock file maintenance (#2515) ([`e3592e2`](https://github.com/stacklok/mecatl/commit/e3592e20d3f22e540b54458ee8244ce8950ac8f6))
+- feat(authn): own sessions by the sign-in's sub_id identity (#2497) ([`5591b76`](https://github.com/stacklok/mecatl/commit/5591b763984c1982e805783dd789bd1bcd5c192e))
+- fix(placement): show short branch names for worktrees (#2504) ([`ac34f9e`](https://github.com/stacklok/mecatl/commit/ac34f9ed5aeea2c3fcd52df0795f31b804e046ae))
+- feat(server): open the identity broker session before any change (#2606) ([`aa2e94a`](https://github.com/stacklok/mecatl/commit/aa2e94a34816b5135de7327c0c07b20451ede664))
+- fix(sdk): override API Extractor's vulnerable minimatch dependency (#2633) ([`88b3fa6`](https://github.com/stacklok/mecatl/commit/88b3fa61b437515a5b9fefda55070f59142c9331))
+- test(sdk): stabilize steering and isolate wire-test environments (#2637) ([`2c64407`](https://github.com/stacklok/mecatl/commit/2c64407db3826296650b0aa9bba4472cfa4124d9))
+- chore(deps): lock file maintenance (#2645) ([`d1fac28`](https://github.com/stacklok/mecatl/commit/d1fac280a2e17a0ff7ad31f531b3fe9836732d09))
+- fix: address open code scanning alerts (#2684) ([`12907be`](https://github.com/stacklok/mecatl/commit/12907be2e97f3b3add4b6ff0ee81c8f7ed9e9def))
+- chore(deps): upgrade the Slack bot example to Vitest 5.1.0 (#1290) ([`2d08ff9`](https://github.com/stacklok/mecatl/commit/2d08ff9c85d0b956f2699dfeb64d7ed1d7512895))
+- chore(deps): lock file maintenance (#2752) ([`066a2d5`](https://github.com/stacklok/mecatl/commit/066a2d587c478fcc2cf4fa8156763d6ffc6589ea))
+- chore(deps): consolidate Renovate updates (#2758) ([`f27dbc2`](https://github.com/stacklok/mecatl/commit/f27dbc28dc3dbd96febd25b752950524dc22d32d))
+
+[Compare changes](https://github.com/stacklok/mecatl/compare/sdk/typescript/v0.5.0...sdk/typescript/v0.6.0)
+
 ## [0.5.0](https://www.npmjs.com/package/%40stacklok-oss%2Fmecatl-sdk/v/0.5.0)
 
 - docs: include user-docs in matlatl and use local documentation links (#1934) ([`b113292`](https://github.com/stacklok/mecatl/commit/b1132929dd9a3d881dbf059fb2b508bd1964b862))
