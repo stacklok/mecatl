@@ -585,11 +585,26 @@ tasks:
     cmds:
       - sh .github/scripts/module-metadata.sh
 
+  test:module-candidate:
+    desc: Check each module with current sibling sources and its own third-party dependency graph
+    vars:
+      MODULE: '{{.MODULE | default ""}}'
+    cmds:
+      - python3 .github/scripts/module-candidate.py{{if .MODULE}} --module {{.MODULE | shellQuote}}{{end}}
+
+  tidy:module-candidate:
+    desc: Repair candidate metadata while preserving declared sibling versions and original replacements
+    vars:
+      MODULE: '{{.MODULE | default ""}}'
+    cmds:
+      - python3 .github/scripts/module-candidate.py --fix{{if .MODULE}} --module {{.MODULE | shellQuote}}{{end}}
+
   test:workspace-infrastructure:
     desc: Run offline workspace and module-metadata task regression tests
     cmds:
       - python3 .github/scripts/module-metadata_test.py
       - PATH="$(go env GOROOT)/bin:$PATH" python3 .github/scripts/workspace-tests_test.py
+      - PATH="$(go env GOROOT)/bin:$PATH" python3 .github/scripts/module-candidate_test.py
 
   test:module-publication:
     desc: Check releaseable module pins against main and compile the published adapters tag through the public Go proxy without workspace replacements.
