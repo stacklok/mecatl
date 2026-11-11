@@ -6,6 +6,8 @@ Changes to the public adapter API follow [COMPATIBILITY.md](COMPATIBILITY.md).
 
 ### Added
 
+- `history/sqlite.Backend`, `New`, and `Close` provide a local SQLite-backed
+  implementation of kernel history storage.
 - `jsonlstore.OpenReader` and `Reader` provide explicitly read-only access to
   existing JSONL snapshots, metadata, lineage, and event cursors without source
   initialization, repair, or mutation. Metadata paging requires a prepared

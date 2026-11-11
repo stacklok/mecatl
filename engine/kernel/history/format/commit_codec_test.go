@@ -22,7 +22,8 @@ func testLimits() codec.Limits {
 		MaxMapPairs: 8, MaxDepth: 8, MaxNodes: 512, MaxCollectionElements: 128}
 }
 
-// wireFixtures are literal canonical bytes, independent of codec append helpers.
+// wireFixtures are literal DRISL-CBOR bytes, independent of codec append helpers.
+// They qualify the emitted profile's canonical map ordering and Tag 42 CID links.
 func wireFixtures(t testing.TB) (root, successor []byte) {
 	t.Helper()
 	records := "\x61r\x81\xa3\x61k\x61x\x61p\x42\xff\x00\x61v\x01"
@@ -35,6 +36,19 @@ func wireFixtures(t testing.TB) (root, successor []byte) {
 	successor = append(successor, records...)
 	successor = append(successor, "\x61s\x02\x61v\x01"...)
 	return root, successor
+}
+
+// maxIntegerWire is a literal DRISL-CBOR successor with every emitted int64 field
+// at its largest valid value. It remains independent of codec append helpers.
+func maxIntegerWire(t testing.TB) []byte {
+	t.Helper()
+	link, err := hex.DecodeString("0001711220e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wire := append([]byte("\xa4\x61p\xd8\x2a\x58\x25"), link...)
+	wire = append(wire, "\x61r\x81\xa3\x61k\x61x\x61p\x42\xff\x00\x61v\x1b\x7f\xff\xff\xff\xff\xff\xff\xff"...)
+	return append(wire, "\x61s\x1b\x7f\xff\xff\xff\xff\xff\xff\xff\x61v\x01"...)
 }
 
 // assertContentCID independently builds the fixed binary profile using stdlib SHA.
@@ -53,9 +67,12 @@ func successorOf(c format.Commit, parent contentid.CID, sequence int64) format.C
 	return c
 }
 
-func TestCodecGoldens(t *testing.T) {
+func TestDRISLProfileGoldens(t *testing.T) {
 	rootWire, successorWire := wireFixtures(t)
+	maxIntegersWire := maxIntegerWire(t)
 	root := validRoot(t)
+	maxIntegers := successorOf(root, contentid.Sum(nil), math.MaxInt64)
+	maxIntegers.Records[0].KindVersion = math.MaxInt64
 	for _, fixture := range []struct {
 		name   string
 		commit format.Commit
@@ -63,7 +80,8 @@ func TestCodecGoldens(t *testing.T) {
 		cid    string
 	}{
 		{"root", root, rootWire, "bafyreig2llelbbwy3sclxh3ytf4cy4bphqkzuvx6ljdqm5mzgfpd7uftza"},
-		{"successor", successorOf(root, contentid.Sum(nil), 2), successorWire, "bafyreihqvw7bignyhvicgqom67gvtau7w5zaezanb27aatcxpylpfkmjoq"},
+		{"successor-cid-link", successorOf(root, contentid.Sum(nil), 2), successorWire, "bafyreihqvw7bignyhvicgqom67gvtau7w5zaezanb27aatcxpylpfkmjoq"},
+		{"max-int64", maxIntegers, maxIntegersWire, "bafyreicbbkbxev3kt4e4z6v5aectwnqqqmrcgt6goiyqv4cxdkdgoye3ue"},
 	} {
 		t.Run(fixture.name, func(t *testing.T) {
 			data, err := codec.Encode(fixture.commit, testLimits())
