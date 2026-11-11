@@ -170,6 +170,10 @@ type mcpState struct {
 	pickerOp         string
 	pickerCancel     context.CancelFunc
 	intent           surfaceIntent
+
+	// view cache: controls and regions from the latest Render offer.
+	hitControls map[HitID]int
+	regions     []ClickableRegion
 }
 
 // mcpPickerResult wraps existing client messages without changing the wire API.
@@ -265,6 +269,8 @@ type argField struct {
 
 // Render returns the MCP surface body; the parent centers it.
 func (s *mcpState) Render(width, height int) (string, []ClickableRegion) {
+	s.hitControls = make(map[HitID]int)
+	s.regions = nil
 	wasCompact := s.compact
 	defer func() {
 		if s.view == mcpPromptArgs && s.compact && !wasCompact {
@@ -285,11 +291,13 @@ func (s *mcpState) Render(width, height int) (string, []ClickableRegion) {
 	case mcpPanel:
 		return renderMCPPanel(th, *s, caps, hk, width), nil
 	case mcpResources, mcpPrompts:
-		return s.renderPickerList(width, height), nil
+		body := s.renderPickerList(width, height)
+		return body, s.regions
 	case mcpResourcePrev:
 		return s.renderResourcePreview(width, height), nil
 	case mcpPromptArgs:
-		return s.renderPromptArgs(width, height), nil
+		body := s.renderPromptArgs(width, height)
+		return body, s.regions
 	default:
 		return "", nil
 	}
@@ -529,6 +537,25 @@ func (s *mcpState) handlePickerResult(receipt mcpPickerResult) {
 //nolint:gocyclo // multiple MCP message types share one reducer
 func (s *mcpState) HandleMsg(msg tea.Msg) (cmd tea.Cmd, handled bool, closed bool) {
 	switch msg := msg.(type) {
+	case surfaceHitMsg:
+		control, current := s.hitControls[msg.ID]
+		if !current || s.loading || s.compact || s.zeroOffer {
+			return nil, true, false
+		}
+		s.hitControls = nil
+		switch s.view {
+		case mcpResources:
+			s.resList.SetCursor(control)
+		case mcpPrompts:
+			s.prList.SetCursor(control)
+		case mcpPromptArgs:
+			if control == len(s.argFields) {
+				s.leavePromptArgs()
+			} else {
+				return s.submitPromptArgs(), true, false
+			}
+		}
+		return nil, true, false
 	case mcpArgumentEditorMsg:
 		if msg.owner != s || msg.form != s.argFormGeneration || msg.focus != s.argFocusGeneration || msg.field != s.argCursor {
 			return nil, true, false

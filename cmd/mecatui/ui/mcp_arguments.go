@@ -237,5 +237,18 @@ func (s *mcpState) renderPromptArgs(width, height int) string {
 	body := append([]string(nil), rows[offset:end]...)
 	body = append(body, make([]string, bodyHeight-len(body))...)
 	s.compact = false
+	if !s.loading {
+		offset := 0
+		for i, action := range actions {
+			start, end := offset+2, offset+ansi.StringWidth(action)
+			for cell := start; cell < end; {
+				y, x := cell/width, cell%width
+				next := min(end, (y+1)*width)
+				s.pickerHit(cellRect{x0: x, x1: x + next - cell, y0: len(prefix) + bodyHeight + y, y1: len(prefix) + bodyHeight + y + 1}, len(s.argFields)+i)
+				cell = next
+			}
+			offset = end + 2
+		}
+	}
 	return strings.Join(append(append(prefix, body...), footer...), "\n")
 }
