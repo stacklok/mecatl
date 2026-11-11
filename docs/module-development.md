@@ -79,8 +79,41 @@ Keep `go.work` and every module's `go.mod` and `go.sum` committed. Root
 `go.work.sum` is ignored: Go creates and updates its supplemental workspace
 checksums locally. Those changes do not belong in the PR.
 
-If imports or requirements changed, tidy the affected module and review the diff.
-For example:
+Before reconciling published dependencies, check a module's metadata against the
+current sibling source:
+
+```sh
+task test:module-candidate MODULE=provider/openai
+```
+
+Omit `MODULE` to check every member of `go.work` independently. The check uses
+temporary manifests with local sibling replacements and excludes unrelated
+workspace members from dependency resolution. It reports missing or stale
+requirements, dependency classifications, required third-party checksums, and
+Go/toolchain minimums. It also compiles packages and tests without executing them.
+Use the repository's required Go toolchain; this check disables automatic toolchain
+downloads and ignores ambient `GOWORK` and `GOFLAGS` values.
+
+The check leaves checkout metadata unchanged. To apply metadata repairs:
+
+```sh
+task tidy:module-candidate MODULE=provider/openai
+git diff -- provider/openai/go.mod provider/openai/go.sum
+```
+
+Repair preserves declared sibling versions and original replacements. A missing
+sibling requirement needs an explicitly chosen published version; repair refuses
+to save a synthetic version. All selected modules must compile before any repairs
+are applied. Files are replaced individually after checking for concurrent metadata
+edits; an interrupted repair can leave partial changes, so review the diff and rerun.
+
+Candidate checks prove dependency resolution with current sibling source, whose
+requirements still contribute to the selected dependency versions. They do not
+prove compatibility with published sibling versions or replace the standalone and
+publication checks below. Ordinary CI still uses its existing standalone gates.
+
+If imports or requirements changed, tidy the affected module against its declared
+published dependencies and review the diff. For example:
 
 ```sh
 task tidy:module MODULE=provider/openai
@@ -208,6 +241,8 @@ in the PR rather than treating a workspace pass as release readiness.
 | `task test:microvm-standalone`, `task test:microvm-integration-standalone` | Workspace-disabled verification with local replacements retained |
 | `task tidy:module MODULE=provider/openai` | Tidy only the selected module with `GOWORK=off`; no workspace synchronization |
 | `task tidy` | Root tidy, workspace synchronization, then nested module tidy; can edit requirements |
+| `task test:module-candidate MODULE=provider/openai` | Non-mutating per-module metadata and compile check with current sibling source; omit `MODULE` for all workspace members |
+| `task tidy:module-candidate MODULE=provider/openai` | Repair candidate metadata while preserving sibling versions and original replacements; review the diff |
 | `task test:module-metadata` | Non-mutating cleanliness check of committed Go metadata, excluding root `go.work.sum` |
 | `task test:module-publication` | Public resolution/main-ancestry proof for the persistence release policy |
 
