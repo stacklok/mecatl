@@ -76,7 +76,7 @@ func TestMCPBrowserRoutedNavigationWheelAndCompact(t *testing.T) {
 				t.Fatal("compact restoration reset wheel window")
 			}
 			m = applyAll(m, tea.KeyPressMsg{Code: tea.KeyDown})
-			if !strings.Contains(stripANSIstr(m.renderBody()), "▶┬ item-01") {
+			if !strings.Contains(stripANSIstr(m.renderBody()), "▶ item-01") {
 				t.Fatal("keyboard did not reveal selection")
 			}
 			m = applyAll(m, tea.KeyPressMsg{Code: 'f', Text: "f"})

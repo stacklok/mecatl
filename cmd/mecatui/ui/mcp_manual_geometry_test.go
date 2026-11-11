@@ -47,10 +47,23 @@ func TestMCPManualInventoryScrolledPartialAndHitIsolation(t *testing.T) {
 				}
 				first := m.hits.frame[0]
 				x, y := m.metrics.localToGlobal(first.rect.x0, first.rect.y0)
-				if ansi.Cut(plain[y], x, x+3) == "▶│ " {
+				markers := 0
+				for i, hit := range m.hits.frame {
+					hx, hy := m.metrics.localToGlobal(hit.rect.x0, hit.rect.y0)
+					if strings.Contains(ansi.Cut(plain[hy], hx+2, hx+4), "↳") {
+						markers++
+						if i != 0 {
+							t.Fatal("continuation marker repeated below the first visible item row")
+						}
+					}
+				}
+				if strings.Contains(ansi.Cut(plain[y], x, x+4), "↳") && markers != 1 {
+					t.Fatalf("partial viewport has %d continuation markers, want one", markers)
+				}
+				if ansi.Cut(plain[y], x, x+4) == "▶ ↳ " {
 					selectedPartial = true
 				}
-				if strings.Contains(plain[y], "continuation-01") && ansi.Cut(plain[y], x, x+3) == " │ " {
+				if strings.Contains(plain[y], "continuation-01") && ansi.Cut(plain[y], x, x+4) == "  ↳ " {
 					target, found = first, true
 					break
 				}
@@ -87,8 +100,8 @@ func TestMCPManualInventoryScrolledPartialAndHitIsolation(t *testing.T) {
 			cursorRows := 0
 			for _, hit := range m.hits.frame {
 				x, y := m.metrics.localToGlobal(hit.rect.x0, hit.rect.y0)
-				gutter := ansi.Cut(plain[y], x, x+3)
-				if !strings.ContainsAny(gutter, "┬│") {
+				gutter := ansi.Cut(plain[y], x, x+2)
+				if gutter != "  " && gutter != "▶ " {
 					t.Fatalf("hit on non-item row: %q", plain[y])
 				}
 				if strings.Contains(gutter, "▶") {
@@ -135,6 +148,62 @@ func TestMCPManualInventoryScrolledPartialAndHitIsolation(t *testing.T) {
 				_ = m.View()
 				if len(m.hits.frame) != 0 {
 					t.Fatal("loading/empty inventory has hits")
+				}
+			}
+		})
+	}
+}
+
+func TestMCPPickerHangingIndent(t *testing.T) {
+	for _, resources := range []bool{true, false} {
+		t.Run(fmt.Sprint(resources), func(t *testing.T) {
+			f := sampleResourceMCP()
+			f.resources = []client.MCPResource{{Server: "srv", URI: "first", Name: "First"}, {Server: "srv", URI: "next", Name: "Next"}}
+			f.prompts = []client.MCPPrompt{{Server: "srv", Name: "First"}, {Server: "srv", Name: "Next"}}
+			m := newMCPModel(t, aztec(), f)
+			open := tea.KeyPressMsg{Code: tea.KeyF8}
+			if resources {
+				open = ctrlKey('r')
+			}
+			m = openOverlay(t, m, open)
+			s := mcpActive(m)
+			body, _ := s.Render(80, 100)
+			if !strings.Contains(stripANSIstr(body), "▶ First  srv\n  Next  srv") {
+				t.Fatalf("single-line entries must have no grouping glyphs:\n%s", stripANSIstr(body))
+			}
+			f.resources[0].Name = "First\nsecond line\nthird line"
+			f.prompts[0].Name = f.resources[0].Name
+			s.setResources(f.resources)
+			s.setPrompts(f.prompts)
+			body, _ = s.Render(80, 100)
+			if !strings.Contains(stripANSIstr(body), "▶ First\n    second line\n    third line  srv\n  Next  srv") {
+				t.Fatalf("continuations must hang under the item:\n%s", stripANSIstr(body))
+			}
+			for _, name := range []string{strings.Repeat("abcdefgh", 4), strings.Repeat("界e\u0301", 12)} {
+				f.resources = []client.MCPResource{{Server: "srv", URI: "raw", Name: name}}
+				f.prompts = []client.MCPPrompt{{Server: "srv", Name: name}}
+				s.setResources(f.resources)
+				s.setPrompts(f.prompts)
+				for _, width := range []int{8, 12, 20} {
+					body, hits := s.Render(width, 100)
+					lines := strings.Split(stripANSIstr(body), "\n")
+					var text strings.Builder
+					for i, hit := range hits {
+						line := lines[hit.rect.y0]
+						indent := 4
+						if i == 0 {
+							indent = 2
+						} else if !strings.HasPrefix(line, "    ") {
+							t.Fatalf("wrapped continuation lacks indent at width %d: %q", width, line)
+						}
+						if ansi.StringWidth(line) > width {
+							t.Fatalf("indent overflows width %d: %q", width, line)
+						}
+						text.WriteString(ansi.Cut(line, indent, ansi.StringWidth(line)))
+					}
+					if text.String() != name+"  srv" {
+						t.Fatalf("wrapping lost label content at width %d: %q", width, text.String())
+					}
 				}
 			}
 		})
