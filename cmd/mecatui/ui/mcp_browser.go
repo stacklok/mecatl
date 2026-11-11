@@ -153,8 +153,12 @@ func (s *mcpState) modalMaxOuterWidth() int {
 		width = max(width, ansi.StringWidth(line))
 	}
 	for _, item := range items {
-		for _, line := range strings.Split(item.Text, "\n") {
-			width = max(width, 3+ansi.StringWidth(line))
+		for i, line := range strings.Split(item.Text, "\n") {
+			gutter := 2
+			if i > 0 {
+				gutter = 4
+			}
+			width = max(width, gutter+ansi.StringWidth(line))
 		}
 	}
 	for _, line := range strings.Split(connectDisplay(s.errMsg), "\n") {
@@ -209,10 +213,11 @@ func (s *mcpState) pickerListBody(candidate *bounded.List, bodyRows, width, body
 	} else if view.Above > 0 {
 		body = append(body, ansi.Cut(th.Style("muted").Render(fmt.Sprintf("↑ %d more", view.Above)), 0, width))
 	}
-	for _, row := range view.Rows {
-		row.StatusCells[0] = "│"
+	for i, row := range view.Rows {
 		if row.ItemLine == 0 {
-			row.StatusCells[0] = "┬"
+			row.GutterCells = 1
+		} else if i == 0 {
+			row.StatusCells[1] = "↳"
 		}
 		p := presentListRow(row, th.Style("spinner"), th.Style("muted"))
 		y := bodyY + len(body)
@@ -252,8 +257,16 @@ func (s *mcpState) renderPickerList(width, height int) string {
 		spacing = 2
 		rows -= spacing
 	}
+	// Reserve the continuation indent before wrapping; flat inventories keep the normal gutter.
+	gutterCells := 1
+	for _, item := range items {
+		if strings.Contains(item.Text, "\n") || ansi.StringWidth(item.Text) > width-2 {
+			gutterCells = 3
+			break
+		}
+	}
 	candidate := *list
-	candidate.SetGeometry(width, rows, 2, bounded.Wrap)
+	candidate.SetGeometry(width, rows, gutterCells, bounded.Wrap)
 	if !candidate.Valid() {
 		return s.pickerCompact(width)
 	}
@@ -266,7 +279,7 @@ func (s *mcpState) renderPickerList(width, height int) string {
 	}
 	natural := 0
 	for _, item := range items {
-		natural += len(skillsTextLines(th.Style("muted"), item.Text, max(1, width-3)))
+		natural += len(skillsTextLines(th.Style("muted"), item.Text, max(1, width-gutterCells-1)))
 	}
 	bodyRows := min(rows, max(1, max(natural, len(body))))
 	if available {
