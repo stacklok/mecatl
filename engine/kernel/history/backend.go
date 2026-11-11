@@ -2,11 +2,16 @@ package history
 
 import "context"
 
-// Backend stores bytes for independent linear histories. Implementations guarantee
-// atomic expected-head appends, durable acceptance according to their storage
-// contract, and coherent indexed observations. They do not decode commits or
-// classify retries. All errors return zero results; an error may leave acceptance
-// unknown. A known acceptance must not be masked by late cancellation.
+// Backend stores bytes for independent linear histories. Every ByteCommit passed to
+// Append contains one complete item in the DASL DRISL-CBOR profile:
+// https://dasl.ing/drisl.html. This is a caller guarantee supplied by History,
+// not a parser requirement: implementations may retain the exact opaque bytes
+// without validating their payload schema, ancestry, or content identity. Backend
+// implementations guarantee atomic expected-head appends, durable acceptance
+// according to their storage contract, and coherent indexed observations. They do
+// not decode commits or classify retries. All errors return zero results; an error
+// may leave acceptance unknown. A known acceptance must not be masked by late
+// cancellation.
 // Expected-head checks serialize appends; this contract does not yet provide
 // writer ownership acquisition or fencing.
 //
@@ -64,12 +69,16 @@ func (o Observation) validate(sequence int64) error {
 	return nil
 }
 
-// ByteCommit associates independently owned canonical bytes with their index.
+// ByteCommit associates an indexed identity with canonical bytes. Bytes contains
+// one complete DRISL-CBOR item; arbitrary byte-string contents within that item are
+// legal. The caller keeps input bytes stable until the call returns. On acceptance,
+// Backend retains byte-identical, independently owned bytes. A ByteCommit returned
+// by Read likewise owns byte-identical storage independent of Backend and callers.
 // History verifies the bytes against Ref; Backend treats their encoding as opaque.
 type ByteCommit struct {
 	// Ref is the indexed identity, not a claim trusted by the codec.
 	Ref CommitRef
-	// Bytes owns the complete canonical encoding; backends treat it as opaque.
+	// Bytes contains the complete canonical DRISL-CBOR item.
 	Bytes []byte
 }
 

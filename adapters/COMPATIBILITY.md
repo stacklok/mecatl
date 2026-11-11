@@ -8,9 +8,10 @@ owns protocol integration details.
 
 ## Public Go API
 
-All exported identifiers, fields, and methods in `jsonlstore`, `redisstore`, and
-`grpcdriver` are public API. This includes the retained write, schedule,
-content-source, and learning-driver APIs, not only snapshot and log readers.
+All exported identifiers, fields, and methods in `jsonlstore`, `redisstore`,
+`grpcdriver`, and `history/sqlite` are public API. This includes the retained
+write, schedule, content-source, learning-driver, and kernel-history APIs, not
+only snapshot and log readers.
 The private `github.com/stacklok/mecatl/internal/adaptersupport` module holds
 shared watcher and soul-validation implementation; its exports are not an
 application extension API.

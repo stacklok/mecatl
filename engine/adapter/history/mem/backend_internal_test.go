@@ -26,10 +26,11 @@ func (c *precheckedContext) Err() error {
 
 func TestCancellationAfterInitialBackendCheck(t *testing.T) {
 	id := history.NewHistoryID()
-	encoded := []byte{0xff, 0, 1} // Backend storage is schema-opaque.
+	encoded := []byte{0x42, 0xff, 0} // Complete schema-independent DRISL byte string.
 	cid := contentid.Sum(encoded)
 	root := history.ByteCommit{Ref: history.CommitRef{Sequence: 1, CID: cid}, Bytes: encoded}
-	// Backend bytes are opaque; only the successor's index metadata matters here.
+	// Backend retains complete DRISL items opaquely; only the successor's index
+	// metadata matters here.
 	second := history.ByteCommit{Ref: history.CommitRef{Sequence: 2, CID: cid}, Bytes: []byte{1}}
 	for _, operation := range []string{"Observe", "Append", "Read"} {
 		t.Run(operation, func(t *testing.T) {

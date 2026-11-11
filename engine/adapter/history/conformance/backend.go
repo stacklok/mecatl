@@ -12,7 +12,8 @@ import (
 )
 
 // backendContract checks the byte seam independently of History's protocol and
-// codecs. References come from valid DTO fixtures, but stored bytes are opaque.
+// codecs. References come from valid DTO fixtures; byte fixtures are complete
+// DRISL items with opaque schemas.
 func backendContract(t *testing.T, factory Factory) {
 	b := factory(t)
 	ctx := context.Background()
@@ -20,7 +21,9 @@ func backendContract(t *testing.T, factory Factory) {
 	_, root := encoded(t, id, history.CommitRef{}, "root")
 	_, second := encoded(t, id, root, "second")
 	_, competing := encoded(t, id, history.CommitRef{}, "competing")
-	input := []byte{0xff, 1, 2, 3} // Deliberately not a canonical commit.
+	// These complete DRISL byte strings deliberately do not use the history commit
+	// schema. Their contents are arbitrary, including 0xff.
+	input := []byte{0x43, 0xff, 1, 2}
 	original := bytes.Clone(input)
 	got, err := b.Observe(ctx, id, 1)
 	if err != nil || got != (history.Observation{}) {
@@ -31,7 +34,7 @@ func backendContract(t *testing.T, factory Factory) {
 		t.Fatalf("opaque append = %+v, %v", accepted, err)
 	}
 	input[0] ^= 0xff
-	accepted, err = b.Append(ctx, id, root, history.ByteCommit{Ref: second, Bytes: []byte{4, 5, 6}})
+	accepted, err = b.Append(ctx, id, root, history.ByteCommit{Ref: second, Bytes: []byte{0x42, 4, 5}})
 	if err != nil || accepted != (history.Observation{Head: second, Commit: second}) {
 		t.Fatalf("successor CAS = %+v, %v", accepted, err)
 	}
@@ -45,7 +48,7 @@ func backendContract(t *testing.T, factory Factory) {
 		}
 	}
 	for _, ref := range []history.CommitRef{root, competing} {
-		got, err := b.Append(ctx, id, history.CommitRef{}, history.ByteCommit{Ref: ref, Bytes: []byte{8}})
+		got, err := b.Append(ctx, id, history.CommitRef{}, history.ByteCommit{Ref: ref, Bytes: []byte{0x41, 8}})
 		if err != nil || got != (history.Observation{Head: second, Commit: root}) {
 			t.Fatalf("failed CAS evidence = %+v, %v", got, err)
 		}
@@ -150,9 +153,9 @@ func backendAppendSequences(t *testing.T, factory Factory) {
 				}
 				return history.CommitRef{Sequence: sequence, CID: cid}
 			}
-			// These bytes are intentionally not a canonical commit; CIDs need only
-			// be syntactically valid at this opaque storage boundary.
-			opaque := []byte{0xff, 1}
+			// These complete DRISL byte strings are not history commit schemas; the
+			// valid CIDs exercise only indexed metadata at this storage boundary.
+			opaque := []byte{0x41, 0xff}
 			if test.seed != 0 {
 				got, err := b.Append(ctx, id, history.CommitRef{}, history.ByteCommit{Ref: ref(1), Bytes: opaque})
 				if err != nil || got != (history.Observation{Head: ref(1), Commit: ref(1)}) {
@@ -194,7 +197,8 @@ func boundedByteReadAllocation(t *testing.T, factory Factory) {
 	b := factory(t)
 	id := history.NewHistoryID()
 	_, root := encoded(t, id, history.CommitRef{}, "large opaque bytes")
-	stored := bytes.Repeat([]byte{1}, largeInputBytes)
+	// 0x5a is a canonical 32-bit byte-string header for the 512 KiB body.
+	stored := append([]byte{0x5a, 0, 8, 0, 0}, bytes.Repeat([]byte{1}, largeInputBytes)...)
 	if got, err := b.Append(context.Background(), id, history.CommitRef{}, history.ByteCommit{Ref: root, Bytes: stored}); err != nil || got != (history.Observation{Head: root, Commit: root}) {
 		t.Fatalf("store opaque bytes = %+v, %v", got, err)
 	}
@@ -202,8 +206,8 @@ func boundedByteReadAllocation(t *testing.T, factory Factory) {
 		name               string
 		pageCap, commitCap int
 	}{
-		{"page-cap", 1, largeInputBytes},
-		{"commit-cap", largeInputBytes, 1},
+		{"page-cap", 1, len(stored)},
+		{"commit-cap", len(stored), 1},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			r := history.ByteReadRequest{ReadRequest: history.ReadRequest{Through: root, MaxCommits: 1}, MaxBytes: test.pageCap, MaxCommitBytes: test.commitCap}
@@ -224,7 +228,7 @@ func boundedByteReadAllocation(t *testing.T, factory Factory) {
 	prefixID := history.NewHistoryID()
 	_, small := encoded(t, prefixID, history.CommitRef{}, "small opaque bytes")
 	_, large := encoded(t, prefixID, small, "large opaque tail")
-	prefix := []byte{0xff, 2, 3, 4}
+	prefix := []byte{0x43, 0xff, 2, 3}
 	var expected history.CommitRef
 	for _, commit := range []history.ByteCommit{{Ref: small, Bytes: prefix}, {Ref: large, Bytes: stored}} {
 		if got, err := b.Append(context.Background(), prefixID, expected, commit); err != nil || got != (history.Observation{Head: commit.Ref, Commit: commit.Ref}) {
