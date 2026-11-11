@@ -372714,6 +372714,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1794354511249,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "280093410+toolhive-release-app[bot]@users.noreply.github.com",
+            "name": "toolhive-release-app[bot]",
+            "username": "toolhive-release-app[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "474333901ea6b0a346d2f9bc7cc9b1f19e942d45",
+          "message": "Release TypeScript SDK v0.6.0 (#2765)\n\nCo-authored-by: github-actions[bot] <github-actions[bot]@users.noreply.github.com>",
+          "timestamp": "2026-11-11T17:57:08+01:00",
+          "tree_id": "b91f3cc4d6035a140de6996f6832f505da5c7202",
+          "url": "https://github.com/stacklok/mecatl/commit/474333901ea6b0a346d2f9bc7cc9b1f19e942d45"
+        },
+        "date": 1794417031363,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -538261,6 +538295,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1794417027043,
+  "lastUpdate": 1794417032145,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
