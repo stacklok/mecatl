@@ -18,6 +18,10 @@ import (
 // context's error, so a client Timeout bounds the call; the abandoned handler
 // finishes into its own buffer. A handler panic is re-raised on the caller's
 // goroutine.
+//
+// It suits short request/response calls such as a token endpoint's: the
+// whole response is buffered and returned only after the handler finishes,
+// so it cannot carry a streamed response, such as an MCP gateway call's.
 func NewClient(handler http.Handler, admit func(*url.URL) error) *http.Client {
 	return &http.Client{
 		Transport:     transport{handler: handler, admit: admit},

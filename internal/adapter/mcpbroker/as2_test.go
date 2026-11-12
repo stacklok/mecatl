@@ -236,6 +236,8 @@ func TestAS2RegistersTheBrokerClientWithTheVMCPResource(t *testing.T) {
 		{http.MethodGet, "/v1/mcp/broker/.well-known/jwks.json", http.StatusNotFound},
 		{http.MethodGet, "/v1/mcp/broker/.well-known/openid-configuration", http.StatusNotFound},
 		{http.MethodGet, "/v1/mcp/broker/oauth/authorize", http.StatusNotFound},
+		{http.MethodPost, "/v1/mcp/broker/oauth/consent", http.StatusNotFound},
+		{http.MethodPost, "/v1/mcp/broker/oauth/callback", http.StatusNotFound},
 		{http.MethodGet, "/v1/mcp/broker/oauth/token", http.StatusMethodNotAllowed},
 		{http.MethodPost, "/v1/mcp/broker/oauth/token", http.StatusBadRequest},
 	} {
