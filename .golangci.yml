@@ -977,6 +977,24 @@ linters:
             - github.com/stacklok/mecatl/internal/identitybroker/adapter/as1server$
             - github.com/stacklok/mecatl/internal/identitybroker/adapter/authserverclient$
             - github.com/stacklok/mecatl/internal/testutil/identityharness$
+        # Executor service adapters stay movable (#2716): engine, contract, gRPC.
+        internal-executorrpc:
+          list-mode: strict
+          files:
+            - '**/internal/executorrpc/**.go'
+            - '!$test'
+          allow:
+            - $gostd
+            - github.com/stacklok/mecatl/engine
+            - github.com/stacklok/mecatl/contracts/gen/go/mecatl/executor/v1$
+            - github.com/stacklok/mecatl/internal/executorrpc
+            - google.golang.org/grpc
+            - google.golang.org/protobuf
+          deny:
+            - pkg: os
+              desc: 'executor service adapters receive host access through their Runner'
+            - pkg: syscall
+              desc: 'executor service adapters receive host access through their Runner'
         # Only the composition root wires the identity broker's adapters; the
         # rest of Mecatl reaches the broker through its authentication boundary.
         internal-identitybroker-adapter-importers:

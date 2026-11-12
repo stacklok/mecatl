@@ -1,4 +1,7 @@
 // Command mecatl-executor runs the fixed credential-free workload helper.
+//
+// Without arguments it serves one Pod exec request. "serve" runs the executor
+// gRPC server; "supervise-command" is that server's per-command helper.
 package main
 
 import (
@@ -18,11 +21,31 @@ import (
 	"github.com/stacklok/mecatl/internal/executionexecutor"
 )
 
-const workspaceRoot = "/workspace"
+const (
+	workspaceRoot  = "/workspace"
+	serveMode      = "serve"
+	superviseMode  = "supervise-command"
+	commandTimeout = 30 * time.Minute
+)
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == superviseMode {
+		status := os.NewFile(3, "status")
+		err := executionexecutor.SuperviseCommand(os.Stdin, status, os.Stdout, os.Stderr)
+		if err != nil {
+			os.Exit(1)
+		}
+		return
+	}
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
+	if len(os.Args) > 1 {
+		if err := serveCommand(ctx, os.Args[1:]); err != nil {
+			_, _ = fmt.Fprintln(os.Stderr, "mecatl-executor:", err)
+			os.Exit(1)
+		}
+		return
+	}
 	if err := run(ctx, os.Stdin, os.Stdout); err != nil {
 		_, _ = fmt.Fprintln(os.Stderr, "mecatl-executor: protocol output failed")
 		os.Exit(1)
@@ -48,7 +71,8 @@ func run(parent context.Context, in io.Reader, out io.Writer) error {
 			if err := executionenv.DecodeStrict(body, &q); err != nil {
 				opErr = err
 			} else {
-				x, err := executionexecutor.New(workspaceRoot, executionexecutor.Limits{CommandTimeout: 30 * time.Minute})
+				limits := executionexecutor.Limits{CommandTimeout: commandTimeout}
+				x, err := executionexecutor.New(workspaceRoot, limits)
 				if err != nil {
 					opErr = err
 				} else {
