@@ -40,6 +40,11 @@ func TestOfflineRecipeAuthoring(t *testing.T) {
 		{name: "baseline"},
 		{name: "quota", old: "maxEnvironments: 1000", replacement: "maxEnvironments: 1"},
 		{name: "display", old: "name: Reviewed toolchain", replacement: "name: Renamed toolchain"},
+		{
+			name: "capabilities", old: "maxCommandDuration: 5m",
+			replacement: "maxCommandDuration: 5m\n" +
+				"    capabilities: [foreground-command, filesystem]",
+		},
 		{name: "recipe", old: "maxCommandDuration: 5m", replacement: "maxCommandDuration: 4m", changed: true},
 		{name: "image", old: strings.Repeat("a", 64), replacement: strings.Repeat("b", 64), changed: true},
 	} {
@@ -103,6 +108,7 @@ func TestInvalidRecipeDoesNotPublish(t *testing.T) {
 		{"maxCommandDuration: 5m", "maxCommandDuration: invalid"},
 		{"@sha256:" + strings.Repeat("a", 64), ":latest"},
 		{"name: Reviewed toolchain", "unknownDisplay: invalid"},
+		{"maxCommandDuration: 5m", "maxCommandDuration: 5m\n    capabilities: [filesystem]"},
 	} {
 		dir := t.TempDir()
 		input, output := filepath.Join(dir, "recipe.yaml"), filepath.Join(dir, "templates.yaml")

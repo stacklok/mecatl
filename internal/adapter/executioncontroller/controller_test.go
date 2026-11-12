@@ -2,9 +2,6 @@ package executioncontroller
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -804,18 +801,17 @@ func TestRevokedTemplateStopsExecutorWithoutDeletingRetainedPVC(t *testing.T) {
 
 func testProfiles() *Profiles {
 	spec := ProfileSpec{Image: "example@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", StorageClass: "standard", StorageSize: "1Gi", CPURequest: "100m", MemoryRequest: "64Mi", CPULimit: "1", MemoryLimit: "1Gi", EphemeralStorageRequest: "64Mi", EphemeralStorageLimit: "1Gi", TmpSizeLimit: "256Mi", RuntimeClassName: "sandboxed", MaxFileBytes: 1024, MaxCommandBytes: 1024, MaxCommandDuration: time.Minute}
+	spec.Capabilities = []string{"filesystem", "foreground-command"}
 	profile, err := validateProfile("go", spec)
 	if err != nil {
 		panic(err)
 	}
-	canonical, err := json.Marshal(spec)
+	revision, err := CanonicalTemplateRevision(spec)
 	if err != nil {
 		panic(err)
 	}
-	sum := sha256.Sum256(append([]byte("mecatl/execution-template/v1\x00"), canonical...))
-	revision := "v1-" + hex.EncodeToString(sum[:])
 	profile.Spec = spec
-	profile.Digest = "sha256:" + hex.EncodeToString(sum[:])
+	profile.Digest = "sha256:" + strings.TrimPrefix(revision, "v1-")
 	return &Profiles{
 		byName:                 map[string]resolvedProfile{"go": profile},
 		defaultRevision:        map[string]string{"go": revision},

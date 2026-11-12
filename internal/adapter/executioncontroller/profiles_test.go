@@ -1,9 +1,6 @@
 package executioncontroller
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -36,12 +33,10 @@ func loadTemplateProfileFixture(path string) (*Profiles, error) {
 		if len(spec.NodeSelector) == 0 {
 			spec.NodeSelector = nil
 		}
-		canonical, err := json.Marshal(spec)
+		revision, err := CanonicalTemplateRevision(spec)
 		if err != nil {
 			return nil, err
 		}
-		sum := sha256.Sum256(append([]byte("mecatl/execution-template/v1\x00"), canonical...))
-		revision := "v1-" + hex.EncodeToString(sum[:])
 		file.Templates[id] = TemplateDefinition{Default: revision, MaxEnvironments: 100, Revisions: map[string]TemplateRevision{revision: {Execution: spec}}}
 	}
 	body, err = yaml.Marshal(file)

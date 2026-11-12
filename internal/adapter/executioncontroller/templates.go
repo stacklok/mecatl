@@ -94,6 +94,7 @@ func LoadTemplates(path string) (*Profiles, error) {
 				return nil, fmt.Errorf("execution template %q display: %w", id, err)
 			}
 			resolved.Spec, resolved.Digest = definition.Execution, "sha256:"+strings.TrimPrefix(want, "v1-")
+			resolved.Spec.Capabilities = canonicalCapabilities(definition.Execution.Capabilities)
 			p.revisions[id][revision] = resolved
 			p.eligibility[id][revision] = TemplatePolicy{Deprecated: definition.Deprecated, Revoked: definition.Revoked}
 			if !definition.Deprecated && !definition.Revoked {
@@ -124,8 +125,10 @@ func LoadTemplates(path string) (*Profiles, error) {
 
 // CanonicalTemplateRevision returns the v1 identity of the execution recipe.
 // Admission policy and display metadata are deliberately outside ProfileSpec.
+// Capability order and an absent capability list do not change the revision.
 // Call LoadTemplates to validate the complete definition before publishing it.
 func CanonicalTemplateRevision(spec ProfileSpec) (string, error) {
+	spec.Capabilities = canonicalCapabilities(spec.Capabilities)
 	canonical, err := json.Marshal(spec)
 	if err != nil {
 		return "", err
