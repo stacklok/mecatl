@@ -10,6 +10,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"strings"
 	"time"
 
 	"github.com/stacklok/mecatl/internal/identitybroker"
@@ -125,6 +127,38 @@ type identityBrokerAS2 struct {
 
 // errAS2IssuerIsAS1s refuses an AS-2 that would share AS-1's issuer.
 var errAS2IssuerIsAS1s = errors.New("the MCP gateway's authorization server (AS-2) would have the same issuer as AS-1")
+
+// sameIssuer reports whether two issuer URLs name the same server: scheme and
+// host compare case-insensitively, a default port equals none, and a trailing
+// slash is ignored. Unparseable URLs compare byte for byte.
+func sameIssuer(a, b string) bool {
+	if a == b {
+		return true
+	}
+	ua, errA := url.Parse(a)
+	ub, errB := url.Parse(b)
+	if errA != nil || errB != nil {
+		return false
+	}
+	return strings.EqualFold(ua.Scheme, ub.Scheme) &&
+		strings.EqualFold(ua.Hostname(), ub.Hostname()) &&
+		effectivePort(ua) == effectivePort(ub) &&
+		strings.TrimSuffix(ua.EscapedPath(), "/") == strings.TrimSuffix(ub.EscapedPath(), "/")
+}
+
+// effectivePort is u's port, or its scheme's default when it names none.
+func effectivePort(u *url.URL) string {
+	if port := u.Port(); port != "" {
+		return port
+	}
+	switch strings.ToLower(u.Scheme) {
+	case "https":
+		return "443"
+	case "http":
+		return "80"
+	}
+	return ""
+}
 
 // hostedAS1IDJAGMaxLifetime caps the broker refresh tokens the hosted AS-1
 // issues at session open, and so a broker session's hard expiry. Twelve hours

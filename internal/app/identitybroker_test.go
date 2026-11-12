@@ -457,6 +457,28 @@ func TestIdentityBrokerHostsAS1(t *testing.T) {
 	}
 }
 
+func TestSameIssuer(t *testing.T) {
+	const issuer = "https://broker.example/v1/mcp/broker"
+	for other, want := range map[string]bool{
+		issuer:                                 true,
+		"HTTPS://Broker.Example/v1/mcp/broker": true,
+		"https://broker.example:443/v1/mcp/broker":  true,
+		"https://broker.example/v1/mcp/broker/":     true,
+		"http://broker.example/v1/mcp/broker":       false,
+		"https://broker.example:8443/v1/mcp/broker": false,
+		"https://other.example/v1/mcp/broker":       false,
+		"https://broker.example/v1/mcp/BROKER":      false,
+		"https://broker.example/as1":                false,
+	} {
+		if got := sameIssuer(issuer, other); got != want {
+			t.Errorf("sameIssuer(%q, %q) = %v, want %v", issuer, other, got, want)
+		}
+		if got := sameIssuer(other, issuer); got != want {
+			t.Errorf("sameIssuer(%q, %q) = %v, want %v", other, issuer, got, want)
+		}
+	}
+}
+
 func TestIdentityBrokerAS1RequiresTheBroker(t *testing.T) {
 	built, err := buildIsolated(t, t.Context(), Config{Workspace: t.TempDir(), UseMock: true, NoSoul: true, IdentityBrokerHostedAS1: &IdentityBrokerAS1Config{Issuer: "https://mecatl.test/as1"}})
 	if err == nil {

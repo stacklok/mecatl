@@ -15,7 +15,6 @@
 package as1server
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -36,6 +35,7 @@ import (
 	"github.com/stacklok/toolhive/pkg/authserver/storage"
 	"github.com/stacklok/toolhive/pkg/oauthproto"
 
+	"github.com/stacklok/mecatl/internal/inprocesshttp"
 	"github.com/stacklok/mecatl/internal/jwksfile"
 )
 
@@ -352,14 +352,11 @@ func signInRoutes(issuer *url.URL, embedded http.Handler) ([]string, http.Handle
 // registration and device-flow endpoints. Any other response passes through.
 func withoutUnroutedEndpoints(next http.Handler, routed map[string]bool) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		recorded := &bufferedResponse{header: make(http.Header)}
+		recorded := inprocesshttp.NewRecorder()
 		next.ServeHTTP(recorded, r)
-		if recorded.status == 0 {
-			recorded.status = http.StatusOK
-		}
-		body := recorded.body.Bytes()
+		body := recorded.Body()
 		var doc map[string]json.RawMessage
-		if recorded.status == http.StatusOK && json.Unmarshal(body, &doc) == nil {
+		if recorded.Status() == http.StatusOK && json.Unmarshal(body, &doc) == nil {
 			for key, raw := range doc {
 				var endpoint string
 				if strings.HasSuffix(key, "_endpoint") && (json.Unmarshal(raw, &endpoint) != nil || !routed[endpoint]) {
@@ -370,31 +367,11 @@ func withoutUnroutedEndpoints(next http.Handler, routed map[string]bool) http.Ha
 				body = rewritten
 			}
 		}
-		maps.Copy(w.Header(), recorded.header)
+		maps.Copy(w.Header(), recorded.Header())
 		w.Header().Set("Content-Length", strconv.Itoa(len(body)))
-		w.WriteHeader(recorded.status)
+		w.WriteHeader(recorded.Status())
 		_, _ = w.Write(body)
 	})
-}
-
-// bufferedResponse collects a handler's response in memory.
-type bufferedResponse struct {
-	header http.Header
-	status int
-	body   bytes.Buffer
-}
-
-func (b *bufferedResponse) Header() http.Header { return b.header }
-
-func (b *bufferedResponse) WriteHeader(status int) {
-	if b.status == 0 {
-		b.status = status
-	}
-}
-
-func (b *bufferedResponse) Write(p []byte) (int, error) {
-	b.WriteHeader(http.StatusOK)
-	return b.body.Write(p)
 }
 
 // Issuer is AS-1's issuer URL, byte for byte as configured: the audience a

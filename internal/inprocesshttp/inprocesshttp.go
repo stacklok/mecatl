@@ -47,7 +47,7 @@ func (t transport) RoundTrip(req *http.Request) (*http.Response, error) {
 	// The handler runs in its own goroutine so the caller can stop waiting
 	// when ctx ends. Only that goroutine touches recorded until done closes,
 	// and it closes the body, which RoundTrip may leave to it.
-	recorded := &bufferedResponse{header: make(http.Header)}
+	recorded := NewRecorder()
 	done := make(chan struct{})
 	var panicked any
 	go func() {
@@ -72,38 +72,54 @@ func (t transport) RoundTrip(req *http.Request) (*http.Response, error) {
 		// synchronous handler would.
 		panic(panicked)
 	}
-	if recorded.status == 0 {
-		recorded.status = http.StatusOK
-	}
+	status, body := recorded.Status(), recorded.Body()
 	return &http.Response{
-		Status:        fmt.Sprintf("%d %s", recorded.status, http.StatusText(recorded.status)),
-		StatusCode:    recorded.status,
+		Status:        fmt.Sprintf("%d %s", status, http.StatusText(status)),
+		StatusCode:    status,
 		Proto:         "HTTP/1.1",
 		ProtoMajor:    1,
 		ProtoMinor:    1,
 		Header:        recorded.header,
-		Body:          io.NopCloser(bytes.NewReader(recorded.body.Bytes())),
-		ContentLength: int64(recorded.body.Len()),
+		Body:          io.NopCloser(bytes.NewReader(body)),
+		ContentLength: int64(len(body)),
 		Request:       req,
 	}, nil
 }
 
-// bufferedResponse collects a handler's response in memory.
-type bufferedResponse struct {
+// Recorder collects a handler's response in memory. The first status written
+// wins; a handler that writes none gets 200.
+type Recorder struct {
 	header http.Header
 	status int
 	body   bytes.Buffer
 }
 
-func (b *bufferedResponse) Header() http.Header { return b.header }
+// NewRecorder returns an empty Recorder.
+func NewRecorder() *Recorder { return &Recorder{header: make(http.Header)} }
 
-func (b *bufferedResponse) WriteHeader(status int) {
+// Header returns the recorded response headers.
+func (b *Recorder) Header() http.Header { return b.header }
+
+// WriteHeader records status unless one was already written.
+func (b *Recorder) WriteHeader(status int) {
 	if b.status == 0 {
 		b.status = status
 	}
 }
 
-func (b *bufferedResponse) Write(p []byte) (int, error) {
+// Write appends p to the recorded body.
+func (b *Recorder) Write(p []byte) (int, error) {
 	b.WriteHeader(http.StatusOK)
 	return b.body.Write(p)
 }
+
+// Status returns the recorded status, 200 if the handler wrote none.
+func (b *Recorder) Status() int {
+	if b.status == 0 {
+		return http.StatusOK
+	}
+	return b.status
+}
+
+// Body returns the recorded body.
+func (b *Recorder) Body() []byte { return b.body.Bytes() }

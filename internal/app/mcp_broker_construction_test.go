@@ -256,6 +256,8 @@ func TestBuildRefusesAS2WithAS1sIssuer(t *testing.T) {
 	for name, cfg := range map[string]Config{
 		"hosted AS-1":   {IdentityBrokerHostedAS1: hostedAS1Config(t, h, as2TestIssuer)},
 		"external AS-1": {IdentityBrokerAS1: unusedAS1(as2TestIssuer, nil)},
+		// The same server spelled differently is still AS-2's issuer.
+		"external AS-1, other spelling": {IdentityBrokerAS1: unusedAS1("HTTPS://Broker.Example:443/v1/mcp/broker/", nil)},
 	} {
 		t.Run(name, func(t *testing.T) {
 			cfg.Workspace, cfg.UseMock, cfg.NoSoul = t.TempDir(), true, true

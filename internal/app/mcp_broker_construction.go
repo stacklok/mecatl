@@ -104,7 +104,7 @@ func buildBundledMCPBroker(ctx context.Context, cfg Config, declaration mcpautho
 	}
 	var as2 *identityBrokerAS2
 	if process.AS2 != nil {
-		if process.AS2.Issuer == identity.as1Issuer {
+		if identity.as1Issuer != "" && sameIssuer(process.AS2.Issuer, identity.as1Issuer) {
 			_ = process.Close()
 			authStorageClose()
 			return mcpBrokerParts{}, fmt.Errorf("build bundled MCP broker: %w: %s", errAS2IssuerIsAS1s, identity.as1Issuer)
