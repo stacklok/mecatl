@@ -173,6 +173,13 @@ func TestBuildRecordsAS2(t *testing.T) {
 			if as2.HTTPClient == nil || as2.HTTPClient.Timeout != as2RequestTimeout {
 				t.Fatalf("AS-2 client = %+v, want one bounded by %v", as2.HTTPClient, as2RequestTimeout)
 			}
+			// The in-process client serves the token endpoint and nothing else.
+			for _, other := range []string{as2TestIssuer + "/.well-known/jwks.json", "https://other.example/v1/mcp/broker/oauth/token", as2.Resource} {
+				if resp, err := as2.HTTPClient.Get(other); err == nil {
+					_ = resp.Body.Close()
+					t.Errorf("in-process client served %s", other)
+				}
+			}
 			if built.identityBrokerClient == nil {
 				t.Fatal("startup recorded no broker client signer")
 			}

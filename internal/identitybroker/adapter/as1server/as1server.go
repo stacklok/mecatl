@@ -35,7 +35,7 @@ import (
 	"github.com/stacklok/toolhive/pkg/authserver/storage"
 	"github.com/stacklok/toolhive/pkg/oauthproto"
 
-	"github.com/stacklok/mecatl/internal/inprocesshttp"
+	"github.com/stacklok/mecatl/internal/identitybroker/adapter/inprocesshttp"
 	"github.com/stacklok/mecatl/internal/jwksfile"
 )
 

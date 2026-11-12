@@ -1,16 +1,11 @@
 package mcpbroker
 
-import (
-	"fmt"
-	"net/http"
-	"net/url"
-
-	"github.com/stacklok/mecatl/internal/inprocesshttp"
-)
+import "net/http"
 
 // AS2 is the embedded authorization server set up as the identity broker's
 // AS-2: the broker client is registered there and the vMCP's resource is its
-// endpoint, distinct from the issuer.
+// endpoint, distinct from the issuer. The identity broker calls AS-2; this
+// package only serves it.
 type AS2 struct {
 	// Issuer is AS-2's issuer: the client-assertion audience and an ID-JAG's
 	// aud.
@@ -21,36 +16,38 @@ type AS2 struct {
 	// the gateway tokens AS-2 issues.
 	Resource string
 
-	token *url.URL
-	// handler serves the token endpoint under toolHiveBasePath.
+	// handler serves AS-2's token endpoint and nothing else.
 	handler http.Handler
 }
 
-// newAS2 is AS-2 at issuer for resource, its token endpoint served by the
-// embedded authorization server's handler.
-func newAS2(issuer, resource string, handler http.Handler) (*AS2, error) {
-	tokenEndpoint := issuer + "/oauth/token"
-	token, err := url.Parse(tokenEndpoint)
-	if err != nil {
-		return nil, fmt.Errorf("mcpbroker: AS-2 token endpoint: %w", err)
-	}
-	return &AS2{Issuer: issuer, TokenEndpoint: tokenEndpoint, Resource: resource, token: token, handler: handler}, nil
+// as2TokenPath is the path of AS-2's token endpoint on the mux.
+const as2TokenPath = toolHiveBasePath + "/oauth/token"
+
+// newAS2 is AS-2 at issuer for resource, its token endpoint served by
+// embedded, the embedded authorization server's handler as mounted under
+// toolHiveBasePath.
+func newAS2(issuer, resource string, embedded http.Handler) *AS2 {
+	return &AS2{Issuer: issuer, TokenEndpoint: issuer + "/oauth/token", Resource: resource, handler: tokenEndpointOnly(embedded)}
 }
 
-// InProcessClient returns a client that serves requests for AS-2's token
-// endpoint straight from the embedded authorization server, without a network
-// listener, and refuses every other URL. A request whose context ends before
-// the handler finishes returns the context's error, so a client Timeout bounds
-// the call.
-func (a *AS2) InProcessClient() *http.Client {
-	return inprocesshttp.NewClient(a.handler, a.admitInProcess)
-}
+// Handler serves AS-2's token endpoint, for composition to reach AS-2 in
+// process while the identity broker shares this process. It answers only a
+// POST to the token endpoint's path: any other path is 404 and any other
+// method 405, so the embedded server's login and discovery routes are not
+// reachable through it.
+func (a *AS2) Handler() http.Handler { return a.handler }
 
-// admitInProcess accepts only the token endpoint.
-func (a *AS2) admitInProcess(u *url.URL) error {
-	token := a.token
-	if u.Scheme != token.Scheme || u.Host != token.Host || u.User != nil || u.Path != token.Path {
-		return fmt.Errorf("mcpbroker: AS-2 in-process client refuses %s://%s%s: not the token endpoint", u.Scheme, u.Host, u.Path)
-	}
-	return nil
+func tokenEndpointOnly(embedded http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != as2TokenPath {
+			http.NotFound(w, r)
+			return
+		}
+		if r.Method != http.MethodPost {
+			w.Header().Set("Allow", http.MethodPost)
+			http.Error(w, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)
+			return
+		}
+		embedded.ServeHTTP(w, r)
+	})
 }

@@ -31,6 +31,7 @@ import (
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/identitybroker"
+	"github.com/stacklok/mecatl/internal/identitybroker/adapter/inprocesshttp"
 	"github.com/stacklok/mecatl/internal/testutil/identityharness"
 	"github.com/stacklok/mecatl/internal/testutil/oauthbrowser"
 )
@@ -97,7 +98,7 @@ func (c as2BrokerClient) signAssertion(t *testing.T, key *ecdsa.PrivateKey, clai
 // status and decoded JSON body.
 func postAS2Token(t *testing.T, as2 *AS2, form url.Values) (int, map[string]any) {
 	t.Helper()
-	client := as2.InProcessClient()
+	client := inprocesshttp.NewClient(as2.Handler(), func(*url.URL) error { return nil })
 	client.Timeout = 5 * time.Second
 	resp, err := client.PostForm(as2.TokenEndpoint, form)
 	if err != nil {
@@ -222,12 +223,27 @@ func TestAS2RegistersTheBrokerClientWithTheVMCPResource(t *testing.T) {
 	if oidc, ok := registered.(fosite.OpenIDConnectClient); !ok || oidc.GetTokenEndpointAuthMethod() != oauthproto.TokenEndpointAuthMethodPrivateKeyJWT {
 		t.Errorf("broker client does not authenticate with private_key_jwt")
 	}
-	// The in-process client serves the token endpoint and nothing else.
-	client := as2.InProcessClient()
-	for _, other := range []string{as2TestIssuer + "/.well-known/jwks.json", "https://other.example/v1/mcp/broker/oauth/token", as2TestResource} {
-		if resp, err := client.Get(other); err == nil {
-			_ = resp.Body.Close()
-			t.Errorf("in-process client served %s", other)
+	// AS-2's handler serves a POST to the token endpoint and none of the
+	// embedded server's other routes, which the mux serves.
+	for _, request := range []struct {
+		method, path string
+		want         int
+	}{
+		{http.MethodGet, "/v1/mcp/broker/.well-known/jwks.json", http.StatusNotFound},
+		{http.MethodGet, "/v1/mcp/broker/.well-known/openid-configuration", http.StatusNotFound},
+		{http.MethodGet, "/v1/mcp/broker/oauth/authorize", http.StatusNotFound},
+		{http.MethodGet, "/v1/mcp/broker/oauth/token", http.StatusMethodNotAllowed},
+		{http.MethodPost, "/v1/mcp/broker/oauth/token", http.StatusBadRequest},
+	} {
+		recorder := httptest.NewRecorder()
+		as2.Handler().ServeHTTP(recorder, httptest.NewRequest(request.method, "https://broker.example"+request.path, nil))
+		if recorder.Code != request.want {
+			t.Errorf("AS-2 handler %s %s = %d, want %d", request.method, request.path, recorder.Code, request.want)
+		}
+		mounted := httptest.NewRecorder()
+		process.Handlers.JWKS.ServeHTTP(mounted, httptest.NewRequest(request.method, "https://broker.example"+request.path, nil))
+		if request.path != "/v1/mcp/broker/oauth/token" && mounted.Code == http.StatusNotFound {
+			t.Errorf("the embedded server does not serve %s, so the AS-2 handler's 404 proves nothing", request.path)
 		}
 	}
 }

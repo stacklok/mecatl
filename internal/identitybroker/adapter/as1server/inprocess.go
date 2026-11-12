@@ -7,7 +7,7 @@ import (
 	"path"
 	"strings"
 
-	"github.com/stacklok/mecatl/internal/inprocesshttp"
+	"github.com/stacklok/mecatl/internal/identitybroker/adapter/inprocesshttp"
 )
 
 // InProcessClient returns a client that serves requests for AS-1's issuer

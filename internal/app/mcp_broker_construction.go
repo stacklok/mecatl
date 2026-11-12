@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/url"
 
 	"github.com/redis/go-redis/v9"
 
@@ -13,6 +15,7 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/mcpbroker"
 	"github.com/stacklok/mecatl/internal/adapter/permconfig"
 	"github.com/stacklok/mecatl/internal/identitybroker"
+	"github.com/stacklok/mecatl/internal/identitybroker/adapter/inprocesshttp"
 	brokercontract "github.com/stacklok/mecatl/internal/mcpbroker"
 )
 
@@ -72,6 +75,24 @@ type mcpBrokerIdentity struct {
 	as1Issuer string
 }
 
+// as2InProcessClient reaches AS-2's token endpoint straight from the embedded
+// authorization server, without a network listener, and refuses every other
+// URL, each call bounded by as2RequestTimeout.
+func as2InProcessClient(as2 *mcpbroker.AS2) (*http.Client, error) {
+	token, err := url.Parse(as2.TokenEndpoint)
+	if err != nil {
+		return nil, fmt.Errorf("AS-2 token endpoint: %w", err)
+	}
+	client := inprocesshttp.NewClient(as2.Handler(), func(u *url.URL) error {
+		if u.Scheme != token.Scheme || u.Host != token.Host || u.User != nil || u.Path != token.Path {
+			return fmt.Errorf("AS-2 in-process client refuses %s://%s%s: not the token endpoint", u.Scheme, u.Host, u.Path)
+		}
+		return nil
+	})
+	client.Timeout = as2RequestTimeout
+	return client, nil
+}
+
 func (p mcpBrokerParts) close() {
 	if p.closer != nil {
 		_ = p.closer()
@@ -109,8 +130,12 @@ func buildBundledMCPBroker(ctx context.Context, cfg Config, declaration mcpautho
 			authStorageClose()
 			return mcpBrokerParts{}, fmt.Errorf("build bundled MCP broker: %w: %s", errAS2IssuerIsAS1s, identity.as1Issuer)
 		}
-		httpClient := process.AS2.InProcessClient()
-		httpClient.Timeout = as2RequestTimeout
+		httpClient, err := as2InProcessClient(process.AS2)
+		if err != nil {
+			_ = process.Close()
+			authStorageClose()
+			return mcpBrokerParts{}, fmt.Errorf("build bundled MCP broker: %w", err)
+		}
 		as2 = &identityBrokerAS2{Issuer: process.AS2.Issuer, TokenEndpoint: process.AS2.TokenEndpoint, Resource: process.AS2.Resource, HTTPClient: httpClient}
 	}
 	parts := mcpBrokerParts{

@@ -347,9 +347,7 @@ func newToolHiveProcess(ctx context.Context, config ToolHiveConfig, options tool
 		process.Handlers.JWKS = embedded
 		process.Handlers.ProtectedResource = authInfo
 		if as2 {
-			if process.AS2, err = newAS2(issuer, resource, embedded); err != nil {
-				return rollback(err)
-			}
+			process.AS2 = newAS2(issuer, resource, embedded)
 		}
 	}
 	if config.CallbackURL != "" {
