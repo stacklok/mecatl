@@ -89,7 +89,8 @@ environment.
 
 The start confirmation tells the caller what a broken stream means. If the stream fails before the server confirms the
 start, the command never ran. If it fails after the start but before a result, the outcome is unknown, and the caller
-does not retry the command.
+does not retry the command. A result whose outcome is known replaces Pod exec's `terminal_receipt` as proof that the
+command ended and left no process running.
 
 The current provider API returns a command's output in one response. The trusted service can buffer the stream to keep
 that API unchanged, and expose streaming to the agent loop later.
