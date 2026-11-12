@@ -52,7 +52,8 @@ from these contributor test targets.
 | --- | --- | --- |
 | Go | Current stable, at least 1.27 | Go builds and tests; CI selects `stable` |
 | Task | 3.54.0 | Repository build and test commands |
-| Node.js (SDK and docs) | 24.x | TypeScript SDK and documentation tooling |
+| Node.js (SDK) | 26.x | TypeScript SDK; CI also checks the Node 22 floor |
+| Node.js (docs) | 24.x | Documentation tooling |
 | Node.js (Studio) | 26.x | Studio, selected by [`apps/.node-version`](apps/.node-version) |
 | pnpm | 12.18.0 | TypeScript SDK and Studio dependencies |
 | Bun | 1.4.4 | Node/Bun offline SDK wire tests (`task sdk:e2e`) |
