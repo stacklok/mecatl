@@ -374146,6 +374146,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1794490237545,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "29541485+ChrisJBurns@users.noreply.github.com",
+            "name": "Chris Burns",
+            "username": "ChrisJBurns"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "c920cc4721dcf88c7dab680150267233aca06ab6",
+          "message": "feat(identitybroker): wire the embedded gateway's authorization server as AS-2 (#2744)",
+          "timestamp": "2026-11-12T22:31:37Z",
+          "tree_id": "6435f626fa4de12802d1629e37505804eefef6c8",
+          "url": "https://github.com/stacklok/mecatl/commit/c920cc4721dcf88c7dab680150267233aca06ab6"
+        },
+        "date": 1794523515826,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -540305,6 +540339,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1794523512561,
+  "lastUpdate": 1794523516890,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
