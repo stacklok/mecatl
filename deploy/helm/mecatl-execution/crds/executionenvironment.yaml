@@ -125,6 +125,13 @@ spec:
                 properties:
                   name: {type: string}
                   uid: {type: string}
+              serverCertificate:
+                type: object
+                required: [secretName, fingerprint]
+                properties:
+                  secretName: {type: string, minLength: 1, maxLength: 253}
+                  fingerprint: {type: string, pattern: "^[0-9a-f]{64}$"}
+                  podUID: {type: string, minLength: 1, maxLength: 128}
               activeRun:
                 type: object
                 required: [bindingID, runID, claimID, operationID, ownerHash, clientHash, epoch, grantGeneration, expiresAt]

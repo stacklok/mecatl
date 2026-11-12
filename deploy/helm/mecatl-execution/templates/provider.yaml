@@ -21,6 +21,33 @@ data:
   manifest.json: |
 {{ required "provider.securityManifest is required" .Values.provider.securityManifest | indent 4 }}
 ---
+{{- $executorClient := .Values.provider.executorClientTLS }}
+{{- $clientURI := required "provider.executorClientTLS.uri is required" $executorClient.uri }}
+{{- $clientSecret := required "provider.executorClientTLS.secretName is required"
+    $executorClient.secretName }}
+{{- $caSecret := required "provider.executorClientTLS.caSecretName is required"
+    $executorClient.caSecretName }}
+{{- $providerSecrets := list $clientSecret }}
+{{- with .Values.provider.securitySecretName }}
+{{- $providerSecrets = append $providerSecrets . }}
+{{- end }}
+{{- range .Values.provider.securitySources }}
+{{- $providerSecrets = append $providerSecrets .name }}
+{{- end }}
+{{- if has $caSecret $providerSecrets }}
+{{- fail (print "provider.executorClientTLS.caSecretName must not name a Secret "
+    "holding provider keys (executorClientTLS.secretName, securitySecretName, "
+    "or securitySources)") }}
+{{- end }}
+{{- $trustName := include "mecatl-execution.executorTrustConfigMap" . }}
+{{- $trustMetadata := dict "root" . "apiVersion" "v1" "kind" "ConfigMap" "name" $trustName }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  {{- include "mecatl-execution.retainedMetadata" $trustMetadata | nindent 2 }}
+data:
+  client-uri: {{ $clientURI | quote }}
+---
 {{- range $name := list (printf "%s-security-authority" (include "mecatl-execution.fullname" .)) }}
 apiVersion: v1
 kind: ConfigMap
@@ -95,6 +122,11 @@ spec:
         - --max-concurrent-rpcs={{ .Values.provider.maxConcurrentRPCs }}
         - --max-concurrent-rpcs-per-client={{ .Values.provider.maxConcurrentRPCsPerClient }}
         - --health-listen=:{{ .Values.provider.healthPort }}
+        - --executor-client-tls-directory=/etc/mecatl-execution/executor-client
+        - --executor-client-uri={{ $executorClient.uri }}
+        - --executor-ca-secret={{ $caSecret }}
+        - --executor-ca-key={{ $executorClient.caKey }}
+        - --executor-trust-configmap={{ include "mecatl-execution.executorTrustConfigMap" . }}
         ports:
         - {name: grpc, containerPort: 8443}
         - {name: health, containerPort: {{ .Values.provider.healthPort }}}
@@ -117,6 +149,7 @@ spec:
         volumeMounts:
         - {name: templates, mountPath: /etc/mecatl-execution/templates.yaml, subPath: templates.yaml, readOnly: true}
         - {name: security, mountPath: /etc/mecatl-execution/security, readOnly: true}
+        - {name: executor-client, mountPath: /etc/mecatl-execution/executor-client, readOnly: true}
         - {name: tmp, mountPath: /tmp}
       volumes:
       - name: templates
@@ -143,6 +176,14 @@ spec:
           - secret:
               name: {{ required "provider.securitySecretName is required" .Values.provider.securitySecretName }}
           {{- end }}
+      - name: executor-client
+        projected:
+          sources:
+          - secret:
+              name: {{ $clientSecret | quote }}
+              items:
+              - {key: {{ $executorClient.certificateKey | quote }}, path: tls.crt}
+              - {key: {{ $executorClient.privateKeyKey | quote }}, path: tls.key}
       - name: tmp
         emptyDir: {sizeLimit: 64Mi}
 ---

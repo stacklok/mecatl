@@ -16,8 +16,32 @@ func TestProviderStartupRejectsLegacyProfileConfiguration(t *testing.T) {
 	oldFlags, oldArgs := flag.CommandLine, os.Args
 	t.Cleanup(func() { flag.CommandLine, os.Args = oldFlags, oldArgs })
 	flag.CommandLine = flag.NewFlagSet("execution-provider-test", flag.ContinueOnError)
-	os.Args = []string{"execution-provider", "--namespace=ns", "--executor-service-account=executor", "--security-authority-configmap=authority", "--templates=" + path}
+	os.Args = []string{
+		"execution-provider",
+		"--namespace=ns",
+		"--executor-service-account=executor",
+		"--security-authority-configmap=authority",
+		"--templates=" + path,
+		"--executor-client-uri=spiffe://mecatl.test/provider",
+		"--executor-ca-secret=roots",
+		"--executor-trust-configmap=trust",
+	}
 	if err := run(); err == nil || !strings.Contains(err.Error(), "decode execution templates") {
 		t.Fatalf("legacy operator config was accepted or reached Kubernetes: %v", err)
+	}
+}
+
+func TestProviderStartupRequiresExecutorTrust(t *testing.T) {
+	oldFlags, oldArgs := flag.CommandLine, os.Args
+	t.Cleanup(func() { flag.CommandLine, os.Args = oldFlags, oldArgs })
+	flag.CommandLine = flag.NewFlagSet("execution-provider-test", flag.ContinueOnError)
+	os.Args = []string{
+		"execution-provider",
+		"--namespace=ns",
+		"--executor-service-account=executor",
+		"--security-authority-configmap=authority",
+	}
+	if err := run(); err == nil || !strings.Contains(err.Error(), "--executor-client-uri") {
+		t.Fatalf("provider started without executor trust: %v", err)
 	}
 }

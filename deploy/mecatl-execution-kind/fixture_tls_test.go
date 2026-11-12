@@ -310,7 +310,15 @@ func TestCertManagerFixtureIsIssuerOwnedAndHasExactIdentities(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, link := range []string{"helm_kube upgrade --install cert-manager", "--version=v1.17.2", "create secret tls execution-fixture-ca", "wait --for=condition=Ready", "fixture-security-values.yaml", "phase=automatic_certificate_renewal"} {
+	for _, link := range []string{
+		"helm_kube upgrade --install cert-manager",
+		"--version=v1.17.2",
+		"create secret tls execution-fixture-ca",
+		"create secret generic execution-executor-ca",
+		"wait --for=condition=Ready",
+		"fixture-security-values.yaml",
+		"phase=automatic_certificate_renewal",
+	} {
 		if !strings.Contains(string(script), link) {
 			t.Fatalf("Kind fixture does not wire issuance or renewal: %s", link)
 		}
@@ -319,7 +327,14 @@ func TestCertManagerFixtureIsIssuerOwnedAndHasExactIdentities(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, link := range []string{"name: execution-security", "name: execution-trust", "key: clients.pem"} {
+	for _, link := range []string{
+		"name: execution-security",
+		"name: execution-trust",
+		"key: clients.pem",
+		"secretName: execution-executor-client-tls",
+		"uri: spiffe://mecatl.test/provider/executor-client",
+		"caSecretName: execution-executor-ca",
+	} {
 		if !strings.Contains(string(values), link) {
 			t.Fatalf("Kind provider does not consume issued leaf and trust: %s", link)
 		}
@@ -329,11 +344,12 @@ func TestCertManagerFixtureIsIssuerOwnedAndHasExactIdentities(t *testing.T) {
 		t.Fatal(err)
 	}
 	certs := map[string]bool{
-		"execution-provider-tls":    false,
-		"execution-client-tls":      false,
-		"execution-intruder-tls":    false,
-		"execution-operations-tls":  false,
-		"execution-wrong-scope-tls": false,
+		"execution-provider-tls":        false,
+		"execution-client-tls":          false,
+		"execution-intruder-tls":        false,
+		"execution-operations-tls":      false,
+		"execution-wrong-scope-tls":     false,
+		"execution-executor-client-tls": false,
 	}
 	for _, doc := range strings.Split(string(data), "\n---\n") {
 		var resource struct {
@@ -376,10 +392,16 @@ func TestCertManagerFixtureIsIssuerOwnedAndHasExactIdentities(t *testing.T) {
 			}
 		} else {
 			client := strings.TrimSuffix(strings.TrimPrefix(resource.Metadata.Name, "execution-"), "-tls")
-			if client == "client" {
-				client = "mecak8s"
+			want := "spiffe://mecatl.test/client/" + client
+			switch client {
+			case "client":
+				want = "spiffe://mecatl.test/client/mecak8s"
+			case "executor-client":
+				want = "spiffe://mecatl.test/provider/executor-client"
 			}
-			if len(resource.Spec.URIs) != 1 || resource.Spec.URIs[0] != "spiffe://mecatl.test/client/"+client || !strings.Contains(strings.Join(resource.Spec.Usages, ","), "client auth") {
+			usages := strings.Join(resource.Spec.Usages, ",")
+			if len(resource.Spec.URIs) != 1 || resource.Spec.URIs[0] != want ||
+				!strings.Contains(usages, "client auth") {
 				t.Fatalf("client URI or EKU missing: %s", resource.Metadata.Name)
 			}
 		}

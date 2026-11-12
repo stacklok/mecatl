@@ -61,7 +61,8 @@ func TestProvisioningWorkerConvergesWithoutAnotherEvent(t *testing.T) {
 			if err != nil || conditionTrue(got, "Ready") || conditionTransition(got, "Ready") == "" {
 				t.Fatalf("failed provisioning did not retain Ready=false: env=%v err=%v", got, err)
 			}
-			if writes := statusUpdateCount(d.Actions()); writes != 1 {
+			wantWrites := map[string]int{"persistentvolumeclaims": 1, "pods": 2}[resource]
+			if writes := statusUpdateCount(d.Actions()); writes != wantWrites {
 				t.Fatalf("unchanged failure rewrote status: writes=%d", writes)
 			}
 			// No CR, runtime, or queue event: only the failed external prerequisite changes.
@@ -72,6 +73,11 @@ func TestProvisioningWorkerConvergesWithoutAnotherEvent(t *testing.T) {
 			})
 			if textNested(got.Object, "status", "pvc", "uid") != "pvc-stable" || textNested(got.Object, "status", "pod", "uid") != "pod-stable" || pvcCreates.Load() != 1 || podCreates.Load() != 1 {
 				t.Fatalf("duplicate or changed runtime identity: pvc=%d pod=%d status=%v", pvcCreates.Load(), podCreates.Load(), got.Object["status"])
+			}
+			secrets, _ := k.CoreV1().Secrets("ns").List(ctx, metav1.ListOptions{})
+			if len(secrets.Items) != 1 || readServerCertificatePin(got).PodUID != "pod-stable" {
+				t.Fatalf("retries reissued or orphaned executor certificates: %d",
+					len(secrets.Items))
 			}
 		})
 	}
@@ -97,10 +103,19 @@ func TestProvisioningPreservesCreateAndConditionErrors(t *testing.T) {
 			d := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), env)
 			k := kubefake.NewSimpleClientset()
 			createErr, statusErr := errors.New("create unavailable"), errors.New("status unavailable")
-			k.PrependReactor("create", resource, func(k8stesting.Action) (bool, runtime.Object, error) { return true, nil, createErr })
-			d.PrependReactor("update", "executionenvironments", func(k8stesting.Action) (bool, runtime.Object, error) { return true, nil, statusErr })
 			r := NewReconciler(d, k, "ns", testProfiles())
 			t.Cleanup(r.queue.ShutDown)
+			if _, err := r.ensureServerCertificate(t.Context(), env); err != nil {
+				t.Fatal(err)
+			}
+			failCreate := func(k8stesting.Action) (bool, runtime.Object, error) {
+				return true, nil, createErr
+			}
+			k.PrependReactor("create", resource, failCreate)
+			failStatus := func(k8stesting.Action) (bool, runtime.Object, error) {
+				return true, nil, statusErr
+			}
+			d.PrependReactor("update", "executionenvironments", failStatus)
 			if err := r.Reconcile(t.Context(), env.GetName()); !errors.Is(err, createErr) || !errors.Is(err, statusErr) {
 				t.Fatalf("lost provisioning/status error: %v", err)
 			}

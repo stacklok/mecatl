@@ -14,6 +14,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -598,8 +599,9 @@ func TestChartRetainedLifetime(t *testing.T) {
 			retained[u.GetKind()+"/"+u.GetName()] = obj
 		}
 	}
-	if len(retained) != 11 {
-		t.Fatalf("retained resources=%d, want eight ConfigMaps, two workload policies, and executor ServiceAccount", len(retained))
+	if len(retained) != 12 {
+		t.Fatalf("retained resources=%d, want nine ConfigMaps, two workload policies, "+
+			"and executor ServiceAccount", len(retained))
 	}
 	authority := "ConfigMap/test-mecatl-execution-security-authority"
 	capacity := "ConfigMap/mecatl-exec-alloc-4cd0e21a9a0795a14ec9aa5f0e7d1abf"
@@ -931,6 +933,143 @@ func TestChartSecuritySources(t *testing.T) {
 	}
 }
 
+func TestChartExecutorClientCertificateAndTrust(t *testing.T) {
+	objects, err := renderLifetime(t, nil,
+		"--set", "provider.executorClientTLS.certificateKey=client.crt",
+		"--set", "provider.executorClientTLS.privateKeyKey=client.key",
+		"--set", "provider.executorClientTLS.caSecretName=platform-roots",
+		"--set", "provider.executorClientTLS.caKey=roots.pem")
+	if err != nil {
+		t.Fatal(err)
+	}
+	trust := objects["ConfigMap/test-mecatl-execution-executor-trust"]
+	wantTrust := map[string]any{"client-uri": "spiffe://mecatl.test/provider/executor-client"}
+	annotations := (&unstructured.Unstructured{Object: trust}).GetAnnotations()
+	if trust == nil || !reflect.DeepEqual(trust["data"], wantTrust) ||
+		annotations["helm.sh/resource-policy"] != "keep" {
+		t.Fatalf("executor trust ConfigMap: %v", trust)
+	}
+	deployment := objects["Deployment/test-mecatl-execution"]
+	spec, _, _ := unstructured.NestedMap(deployment, "spec", "template", "spec")
+	container := spec["containers"].([]any)[0].(map[string]any)
+	args := toStrings(container["args"].([]any))
+	for _, want := range []string{
+		"--executor-client-tls-directory=/etc/mecatl-execution/executor-client",
+		"--executor-client-uri=spiffe://mecatl.test/provider/executor-client",
+		"--executor-ca-secret=platform-roots",
+		"--executor-ca-key=roots.pem",
+		"--executor-trust-configmap=test-mecatl-execution-executor-trust",
+	} {
+		if !slices.Contains(args, want) {
+			t.Fatalf("provider args missing %q: %v", want, args)
+		}
+	}
+	mount := namedEntry(container["volumeMounts"].([]any), "executor-client")
+	if mount == nil || mount["mountPath"] != "/etc/mecatl-execution/executor-client" ||
+		mount["readOnly"] != true || mount["subPath"] != nil {
+		t.Fatalf("client certificate mount: %v", mount)
+	}
+	volume := namedEntry(spec["volumes"].([]any), "executor-client")
+	wantSources := []any{map[string]any{"secret": map[string]any{
+		"name": "synthetic-executor-client",
+		"items": []any{
+			map[string]any{"key": "client.crt", "path": "tls.crt"},
+			map[string]any{"key": "client.key", "path": "tls.key"},
+		},
+	}}}
+	if volume == nil ||
+		!reflect.DeepEqual(volume["projected"].(map[string]any)["sources"], wantSources) {
+		t.Fatalf("client certificate projection: %v", volume)
+	}
+}
+
+func TestChartConfinesProviderSecretWrites(t *testing.T) {
+	objects, err := renderLifetime(t, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const name = "ns-test-mecatl-execution-provider-secrets"
+	policy := objects["ValidatingAdmissionPolicy/"+name]
+	rules, _, _ := unstructured.NestedSlice(policy, "spec", "matchConstraints", "resourceRules")
+	wantRules := []any{map[string]any{
+		"apiGroups":   []any{""},
+		"apiVersions": []any{"v1"},
+		"operations":  []any{"CREATE", "DELETE"},
+		"resources":   []any{"secrets"},
+	}}
+	if !reflect.DeepEqual(rules, wantRules) {
+		t.Fatalf("policy rules: %v", rules)
+	}
+	conditions, _, _ := unstructured.NestedSlice(policy, "spec", "matchConditions")
+	wantUser := "request.userInfo.username == " +
+		"'system:serviceaccount:ns:test-mecatl-execution'"
+	if len(conditions) != 1 || conditions[0].(map[string]any)["expression"] != wantUser {
+		t.Fatalf("policy does not match only the provider: %v", conditions)
+	}
+	binding := objects["ValidatingAdmissionPolicyBinding/"+name]
+	actions, _, _ := unstructured.NestedStringSlice(binding, "spec", "validationActions")
+	namespace, _, _ := unstructured.NestedString(binding,
+		"spec", "matchResources", "namespaceSelector", "matchLabels", "kubernetes.io/metadata.name")
+	policyName, _, _ := unstructured.NestedString(binding, "spec", "policyName")
+	if !slices.Equal(actions, []string{"Deny"}) || namespace != "ns" || policyName != name {
+		t.Fatalf("policy binding: %v", binding)
+	}
+}
+
+func TestChartRejectsInvalidExecutorClientTLS(t *testing.T) {
+	schemaErr := func(key, value string) string {
+		return fmt.Sprintf("at '/provider/executorClientTLS/%s': '%s' does not match pattern",
+			key, value)
+	}
+	userinfoURI := "spiffe://user@mecatl.test/provider"
+	sharedKeys := "must not name a Secret holding provider keys"
+	sources := []string{
+		"--set", "provider.securitySecretName=",
+		"--set-json", `provider.securitySources=[` +
+			`{"name":"server-tls","items":[{"key":"tls.crt","path":"tls.crt"},` +
+			`{"key":"tls.key","path":"tls.key"}]},` +
+			`{"name":"client-roots","items":[{"key":"ca.crt","path":"clients.pem"}]}]`,
+	}
+	for _, tc := range []struct {
+		name, key, value, wantErr string
+		extra                     []string
+	}{
+		{"missing URI", "uri", "", schemaErr("uri", ""), nil},
+		{"URI with userinfo", "uri", userinfoURI, schemaErr("uri", userinfoURI), nil},
+		{"missing client Secret", "secretName", "", schemaErr("secretName", ""), nil},
+		{"missing CA Secret", "caSecretName", "", schemaErr("caSecretName", ""), nil},
+		{"CA from the client Secret", "caSecretName", "synthetic-executor-client", sharedKeys, nil},
+		{"CA from the security Secret", "caSecretName", "synthetic", sharedKeys, nil},
+		{"CA from a security source", "caSecretName", "server-tls", sharedKeys, sources},
+		{"CA key path traversal", "caKey", "../ca.crt", schemaErr("caKey", "../ca.crt"), nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			set := "provider.executorClientTLS." + tc.key + "=" + tc.value
+			_, err := renderLifetime(t, nil, append([]string{"--set", set}, tc.extra...)...)
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("render error = %v, want %q", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+func namedEntry(entries []any, name string) map[string]any {
+	for _, e := range entries {
+		if entry := e.(map[string]any); entry["name"] == name {
+			return entry
+		}
+	}
+	return nil
+}
+
+func toStrings(values []any) []string {
+	out := make([]string, len(values))
+	for i, v := range values {
+		out[i], _ = v.(string)
+	}
+	return out
+}
+
 func renderLifetime(t *testing.T, objects map[string]map[string]any, extra ...string) (map[string]map[string]any, error) {
 	t.Helper()
 	values := filepath.Join(t.TempDir(), "templates.yaml")
@@ -954,13 +1093,19 @@ func renderLifetimeWithFile(t *testing.T, objects map[string]map[string]any, val
 		"apps/v1":                       {"Deployment"},
 		"policy/v1":                     {"PodDisruptionBudget"},
 		"rbac.authorization.k8s.io/v1":  {"Role", "RoleBinding", "ClusterRole", "ClusterRoleBinding"},
+		"admissionregistration.k8s.io/v1": {
+			"ValidatingAdmissionPolicy", "ValidatingAdmissionPolicyBinding",
+		},
 	} {
 		for _, kind := range kinds {
 			plural := strings.ToLower(kind) + "s"
-			if kind == "NetworkPolicy" {
-				plural = "networkpolicies"
+			if strings.HasSuffix(kind, "Policy") {
+				plural = strings.TrimSuffix(strings.ToLower(kind), "y") + "ies"
 			}
-			resources[gv] = append(resources[gv], map[string]any{"name": plural, "kind": kind, "namespaced": !strings.HasPrefix(kind, "Cluster")})
+			namespaced := !strings.HasPrefix(kind, "Cluster") &&
+				!strings.HasPrefix(kind, "ValidatingAdmission")
+			resources[gv] = append(resources[gv],
+				map[string]any{"name": plural, "kind": kind, "namespaced": namespaced})
 		}
 	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -978,7 +1123,10 @@ func renderLifetimeWithFile(t *testing.T, objects map[string]map[string]any, val
 			response = map[string]any{"kind": "APIVersions", "apiVersion": "v1", "versions": []string{"v1"}}
 		case "/apis":
 			groups := []any{}
-			for _, group := range []string{"execution.mecatl.dev", "networking.k8s.io", "apps", "policy", "rbac.authorization.k8s.io"} {
+			for _, group := range []string{
+				"execution.mecatl.dev", "networking.k8s.io", "apps", "policy",
+				"rbac.authorization.k8s.io", "admissionregistration.k8s.io",
+			} {
 				version := "v1"
 				if group == "execution.mecatl.dev" {
 					version = "v1alpha1"
@@ -1032,7 +1180,28 @@ func renderLifetimeWithFile(t *testing.T, objects map[string]map[string]any, val
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancel()
-	args := []string{"template", "test", ".", "--dry-run=server", "--disable-openapi-validation", "--kubeconfig", config, "--kube-context", "offline", "--namespace", "ns", "-f", values, "--set-string", "provider.image=example.invalid/provider@sha256:" + strings.Repeat("a", 64), "--set", "provider.securitySecretName=synthetic", "--set-literal", `provider.securityManifest={"version":1,"generation":1,"tls":{"certificateFile":"tls.crt","privateKeyFile":"tls.key","clientCAFile":"clients.pem"},"clients":[{"uri":"spiffe://mecatl.test/client/test","mayAttestOwner":true}]}`, "--set-json", `networkPolicy.workloadProfiles={"go":{"egress":[{"cidr":"10.2.0.0/16","ports":[{"port":8080}]}]}}`, "--set-json", `resourceGovernance={"enabled":true,"pods":"30","persistentVolumeClaims":"25","executionEnvironments":"25","requestsCPU":"5","requestsMemory":"8Gi","requestsStorage":"30Gi","requestsEphemeralStorage":"8Gi","limitsCPU":"25","limitsMemory":"30Gi","limitsEphemeralStorage":"30Gi"}`}
+	args := []string{
+		"template", "test", ".",
+		"--dry-run=server", "--disable-openapi-validation",
+		"--kubeconfig", config, "--kube-context", "offline", "--namespace", "ns",
+		"-f", values,
+		"--set-string", "provider.image=example.invalid/provider@sha256:" + strings.Repeat("a", 64),
+		"--set", "provider.securitySecretName=synthetic",
+		"--set", "provider.executorClientTLS.secretName=synthetic-executor-client",
+		"--set", "provider.executorClientTLS.uri=spiffe://mecatl.test/provider/executor-client",
+		"--set", "provider.executorClientTLS.caSecretName=synthetic-executor-ca",
+		"--set-literal", `provider.securityManifest={"version":1,"generation":1,` +
+			`"tls":{"certificateFile":"tls.crt","privateKeyFile":"tls.key",` +
+			`"clientCAFile":"clients.pem"},` +
+			`"clients":[{"uri":"spiffe://mecatl.test/client/test","mayAttestOwner":true}]}`,
+		"--set-json", `networkPolicy.workloadProfiles={"go":{"egress":` +
+			`[{"cidr":"10.2.0.0/16","ports":[{"port":8080}]}]}}`,
+		"--set-json", `resourceGovernance={"enabled":true,"pods":"30",` +
+			`"persistentVolumeClaims":"25","executionEnvironments":"25",` +
+			`"requestsCPU":"5","requestsMemory":"8Gi","requestsStorage":"30Gi",` +
+			`"requestsEphemeralStorage":"8Gi",` +
+			`"limitsCPU":"25","limitsMemory":"30Gi","limitsEphemeralStorage":"30Gi"}`,
+	}
 	cmd := exec.CommandContext(ctx, "helm", append(args, extra...)...)
 	cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + dir, "KUBECONFIG=" + config}
 	var stderr bytes.Buffer

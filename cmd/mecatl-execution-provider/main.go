@@ -37,6 +37,8 @@ func main() {
 }
 func run() error { //nolint:gocyclo // Startup validation and owned-resource shutdown stay in one composition root.
 	var addr, healthAddr, namespace, templatesPath, manifestPath, keyDirectory, authorityConfigMap, executorServiceAccount string
+	var executorClientDirectory, executorClientURI string
+	var executorCASecret, executorCAKey, executorTrustConfigMap string
 	var reloadInterval time.Duration
 	var maxConcurrentStreams, maxConcurrentRPCs, maxConcurrentRPCsPerClient int
 	flag.StringVar(&addr, "listen", ":8443", "gRPC listen address")
@@ -51,9 +53,24 @@ func run() error { //nolint:gocyclo // Startup validation and owned-resource shu
 	flag.IntVar(&maxConcurrentStreams, "max-concurrent-streams", 64, "maximum concurrent HTTP/2 streams per connection")
 	flag.IntVar(&maxConcurrentRPCs, "max-concurrent-rpcs", 128, "maximum active provider RPCs")
 	flag.IntVar(&maxConcurrentRPCsPerClient, "max-concurrent-rpcs-per-client", 32, "maximum active provider RPCs per authorized client")
+	flag.StringVar(&executorClientDirectory, "executor-client-tls-directory",
+		"/etc/mecatl-execution/executor-client",
+		"projected platform client certificate presented to executors")
+	flag.StringVar(&executorClientURI, "executor-client-uri", "",
+		"URI SAN of the client certificate presented to executors")
+	flag.StringVar(&executorCASecret, "executor-ca-secret", "",
+		"Secret holding the CA bundle executors use to verify the provider")
+	flag.StringVar(&executorCAKey, "executor-ca-key", "ca.crt",
+		"key of the executor CA bundle in --executor-ca-secret")
+	flag.StringVar(&executorTrustConfigMap, "executor-trust-configmap", "",
+		"chart-owned ConfigMap holding the provider URI executors accept")
 	flag.Parse()
 	if len(validation.IsDNS1123Label(executorServiceAccount)) != 0 || executorServiceAccount == "default" {
 		return errors.New("--executor-service-account must name the chart-created dedicated executor ServiceAccount, not default")
+	}
+	if executorClientURI == "" || executorCASecret == "" || executorTrustConfigMap == "" {
+		return errors.New("--executor-client-uri, --executor-ca-secret, " +
+			"and --executor-trust-configmap are required")
 	}
 	if namespace == "" || authorityConfigMap == "" || reloadInterval <= 0 || reloadInterval > time.Minute || maxConcurrentStreams < 1 || maxConcurrentStreams > 1024 || maxConcurrentRPCs < 1 || maxConcurrentRPCs > 4096 || maxConcurrentRPCsPerClient < 1 || maxConcurrentRPCsPerClient > maxConcurrentRPCs {
 		return errors.New("required identity, security reload interval, or RPC concurrency bounds are invalid")
@@ -62,7 +79,12 @@ func run() error { //nolint:gocyclo // Startup validation and owned-resource shu
 	if err != nil {
 		return err
 	}
-	templates.WithExecutorServiceAccount(executorServiceAccount)
+	templates.WithExecutorServiceAccount(executorServiceAccount).
+		WithExecutorTrust(executioncontroller.ExecutorTrust{
+			CASecret:        executorCASecret,
+			CAKey:           executorCAKey,
+			ClientConfigMap: executorTrustConfigMap,
+		})
 	cfg, err := rest.InClusterConfig()
 	if err != nil {
 		return fmt.Errorf("build in-cluster Kubernetes config: %w", err)
@@ -79,10 +101,21 @@ func run() error { //nolint:gocyclo // Startup validation and owned-resource shu
 	if err := security.Reload(context.Background()); err != nil {
 		return fmt.Errorf("load security material: %w", err)
 	}
+	dialer := executioncontroller.NewExecutorDialer(
+		kube, namespace, executorClientDirectory, executorClientURI)
+	if err := dialer.CheckClientCertificate(); err != nil {
+		return fmt.Errorf("load executor client certificate: %w", err)
+	}
+	diagnostics := slogdiag.New(os.Stderr, true, port.LevelInfo)
 	podexec := executioncontroller.NewPodExecutor(cfg, kube, namespace)
 	store := executioncontroller.NewStore(dyn, namespace, templates, podexec).WithKubeClient(kube).WithSecurityManager(security)
-	reconciler := executioncontroller.NewReconciler(dyn, kube, namespace, templates)
-	handler := executioncontroller.NewHandler(executioncontroller.HandlerConfig{Security: security, Ready: func() bool { return reconciler.Ready() && security.Ready() }, Diagnostics: slogdiag.New(os.Stderr, true, port.LevelInfo)}, store)
+	reconciler := executioncontroller.NewReconciler(dyn, kube, namespace, templates).
+		WithDiagnostics(diagnostics)
+	handler := executioncontroller.NewHandler(executioncontroller.HandlerConfig{
+		Security:    security,
+		Ready:       func() bool { return reconciler.Ready() && security.Ready() },
+		Diagnostics: diagnostics,
+	}, store)
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 	go security.Run(ctx, reloadInterval)

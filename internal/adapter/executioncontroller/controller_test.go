@@ -131,13 +131,13 @@ func TestExecutorAppliesAndValidatesProfileScheduling(t *testing.T) {
 	}
 	legacy := pod.DeepCopy()
 	legacy.Spec.Tolerations = append([]corev1.Toleration(nil), profile.Spec.Tolerations...)
-	if err := validatePod(env, profile, "workspace-test", profiles.executorServiceAccount, legacy); err != nil {
+	if err := validatePod(env, profile, testPodInputs(profiles, pod), legacy); err != nil {
 		t.Fatalf("pre-default Pod rejected: %v", err)
 	}
 	custom := pod.DeepCopy()
 	custom.Spec.Tolerations[2].TolerationSeconds = new(int64(600))
 	custom.Spec.Tolerations[3].TolerationSeconds = new(int64(600))
-	if err := validatePod(env, profile, "workspace-test", profiles.executorServiceAccount, custom); err != nil {
+	if err := validatePod(env, profile, testPodInputs(profiles, pod), custom); err != nil {
 		t.Fatalf("older Pod with cluster default duration rejected: %v", err)
 	}
 	if _, err := k.CoreV1().Pods("ns").Update(ctx, custom, metav1.UpdateOptions{}); err != nil {
@@ -150,7 +150,9 @@ func TestExecutorAppliesAndValidatesProfileScheduling(t *testing.T) {
 	withoutProfileTolerations.Spec.Tolerations = nil
 	withoutProfileDefaults := pod.DeepCopy()
 	withoutProfileDefaults.Spec.Tolerations = append([]corev1.Toleration(nil), custom.Spec.Tolerations[2:]...)
-	if err := validatePod(env, withoutProfileTolerations, "workspace-test", profiles.executorServiceAccount, withoutProfileDefaults); err != nil {
+	inputs := testPodInputs(profiles, pod)
+	err = validatePod(env, withoutProfileTolerations, inputs, withoutProfileDefaults)
+	if err != nil {
 		t.Fatalf("older Pod with no profile tolerations and cluster defaults rejected: %v", err)
 	}
 	for name, mutate := range map[string]func(*corev1.Pod){
@@ -166,7 +168,7 @@ func TestExecutorAppliesAndValidatesProfileScheduling(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			changed := pod.DeepCopy()
 			mutate(changed)
-			if err := validatePod(env, profile, "workspace-test", profiles.executorServiceAccount, changed); err == nil {
+			if err := validatePod(env, profile, testPodInputs(profiles, pod), changed); err == nil {
 				t.Fatal("unexpected scheduling mutation accepted")
 			}
 		})
@@ -252,13 +254,13 @@ func TestExecutorPullIdentity(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			changed := pod.DeepCopy()
 			mutate(changed)
-			if err := validatePod(env, profile, "workspace-test", profiles.executorServiceAccount, changed); err == nil {
+			if err := validatePod(env, profile, testPodInputs(profiles, pod), changed); err == nil {
 				t.Fatal("anomalous Pod adopted")
 			}
 		})
 	}
 	profile.Spec.ImagePullSecrets = nil
-	if err := validatePod(env, profile, "workspace-test", profiles.executorServiceAccount, pod); err == nil {
+	if err := validatePod(env, profile, testPodInputs(profiles, pod), pod); err == nil {
 		t.Fatal("omitted pull list accepted injected secrets")
 	}
 	pod.Spec.ServiceAccountName = "default"
@@ -814,7 +816,37 @@ func testProfiles() *Profiles {
 	revision := "v1-" + hex.EncodeToString(sum[:])
 	profile.Spec = spec
 	profile.Digest = "sha256:" + hex.EncodeToString(sum[:])
-	return &Profiles{byName: map[string]resolvedProfile{"go": profile}, defaultRevision: map[string]string{"go": revision}, revisions: map[string]map[string]resolvedProfile{"go": {revision: profile}}, eligibility: map[string]map[string]TemplatePolicy{"go": {revision: {}}}, capacityLimit: map[string]int{"go": 100}, executorServiceAccount: "test-mecatl-execution-executor"}
+	return &Profiles{
+		byName:                 map[string]resolvedProfile{"go": profile},
+		defaultRevision:        map[string]string{"go": revision},
+		revisions:              map[string]map[string]resolvedProfile{"go": {revision: profile}},
+		eligibility:            map[string]map[string]TemplatePolicy{"go": {revision: {}}},
+		capacityLimit:          map[string]int{"go": 100},
+		executorServiceAccount: "test-mecatl-execution-executor",
+		executorTrust:          testExecutorTrust(),
+	}
+}
+
+func testExecutorTrust() ExecutorTrust {
+	return ExecutorTrust{
+		CASecret:        "provider-executor-ca",
+		CAKey:           "ca.crt",
+		ClientConfigMap: "test-mecatl-execution-executor-trust",
+	}
+}
+
+func testPodInputs(profiles *Profiles, pod *corev1.Pod) executorPodInputs {
+	inputs := executorPodInputs{
+		pvc:            "workspace-test",
+		serviceAccount: profiles.executorServiceAccount,
+		trust:          profiles.executorTrust,
+	}
+	for _, volume := range pod.Spec.Volumes {
+		if volume.Name == serverTLSVolume && volume.Secret != nil {
+			inputs.tlsSecret = volume.Secret.SecretName
+		}
+	}
+	return inputs
 }
 func testEnvironment() *unstructured.Unstructured {
 	registry := testProfiles()
