@@ -55,7 +55,7 @@ it("session MCP connector inventory projects every typed protocol state", async 
           return {};
         },
         getCompatibilityInfo: () => ({
-          apiMajor: 1,
+          apiMajor: 2,
           capabilities: {},
           features: ["workspace_enrollment_test"],
         }),
@@ -208,7 +208,7 @@ it("workspace enrollment methods preserve correlation and state transitions", as
           };
         },
         getCompatibilityInfo: () => ({
-          apiMajor: 1,
+          apiMajor: 2,
           capabilities: {},
           features: ["workspace_enrollment_test"],
         }),
@@ -326,7 +326,7 @@ it("workspace enrollment methods preserve correlation and state transitions", as
         router.service(HarnessService, {
           connectWorkspaceServices: () => response,
           getCompatibilityInfo: () => ({
-            apiMajor: 1,
+            apiMajor: 2,
             capabilities: {},
             features: ["workspace_enrollment_test"],
           }),
@@ -349,7 +349,7 @@ it("workspace enrollment methods preserve correlation and state transitions", as
         router.service(HarnessService, {
           cancelWorkspaceEnrollment: () => response,
           getCompatibilityInfo: () => ({
-            apiMajor: 1,
+            apiMajor: 2,
             capabilities: {},
             features: ["workspace_enrollment_test"],
           }),
@@ -381,7 +381,7 @@ it("workspace enrollment methods preserve correlation and state transitions", as
       router.service(HarnessService, {
         connectWorkspaceServices: () => rejected,
         getCompatibilityInfo: () => ({
-          apiMajor: 1,
+          apiMajor: 2,
           capabilities: {},
           features: ["workspace_enrollment_test"],
         }),

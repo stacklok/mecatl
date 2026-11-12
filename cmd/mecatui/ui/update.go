@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"maps"
+	"reflect"
 	"slices"
 	"strings"
 	"time"
@@ -1130,7 +1131,7 @@ func (m Model) updateLifecycle(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 // mergeSessionCapabilities preserves the known server-wide capability snapshot when
 // a compatible response contains only the selected session's media capabilities.
 func mergeSessionCapabilities(current, incoming client.Capabilities) client.Capabilities {
-	if incoming == (client.Capabilities{}) {
+	if zeroCapabilities(incoming) {
 		return current
 	}
 	mediaOnly := incoming.SessionMediaPresent
@@ -1138,7 +1139,7 @@ func mergeSessionCapabilities(current, incoming client.Capabilities) client.Capa
 	incoming.SessionMediaPresent = false
 	incoming.Image = false
 	incoming.Audio = false
-	if mediaOnly && incoming == (client.Capabilities{}) {
+	if mediaOnly && zeroCapabilities(incoming) {
 		current.Image = image
 		current.Audio = audio
 		current.SessionMediaPresent = true
@@ -1148,6 +1149,15 @@ func mergeSessionCapabilities(current, incoming client.Capabilities) client.Capa
 	incoming.Audio = audio
 	incoming.SessionMediaPresent = mediaOnly
 	return incoming
+}
+
+// zeroCapabilities treats an empty execution list like the zero value.
+func zeroCapabilities(c client.Capabilities) bool {
+	if len(c.Execution) != 0 {
+		return false
+	}
+	c.Execution = nil
+	return reflect.DeepEqual(c, client.Capabilities{})
 }
 
 // onResolvedModelMsg handles the ResolvedModelMsg from a GetSession refetch

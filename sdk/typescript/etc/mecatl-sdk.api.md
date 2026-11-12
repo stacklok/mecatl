@@ -471,9 +471,7 @@ export interface EventUsage {
 
 // @public
 export interface ExecutionTemplateInfo {
-    // (undocumented)
-    readonly declaredBuiltInShell: boolean;
-    readonly declaredExecutionFiles: boolean;
+    readonly capabilities: readonly string[];
     // (undocumented)
     readonly description: string;
     // (undocumented)
@@ -1420,10 +1418,7 @@ export class SessionBusyError extends InvalidStateError {
 export interface SessionCapabilities {
     // (undocumented)
     readonly audio: boolean;
-    // (undocumented)
-    readonly builtInShell: boolean;
-    // (undocumented)
-    readonly executionFiles: boolean;
+    readonly execution: readonly string[];
     // (undocumented)
     readonly image: boolean;
 }
@@ -1756,7 +1751,7 @@ export interface SubagentEventPayload {
 }
 
 // @public
-export const SUPPORTED_API_MAJOR = 1;
+export const SUPPORTED_API_MAJOR = 2;
 
 // @public
 export interface Team {

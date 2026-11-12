@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -91,7 +92,10 @@ func TestSessionContinuityUX_Scenario4_InspectionPreservesActiveChat(t *testing.
 			mm, cmd, _ := m.chooseSession()
 			m = mm.(Model)
 			m = applyAll(m, cmd())
-			if m.sessionID != before.sessionID || m.sessionTitle != before.sessionTitle || m.resolvedSessionModel != before.resolvedSessionModel || m.caps != before.caps || m.liveArmed != before.liveArmed || len(m.conv.testBlocks()) != len(before.conv.testBlocks()) {
+			if m.sessionID != before.sessionID || m.sessionTitle != before.sessionTitle ||
+				m.resolvedSessionModel != before.resolvedSessionModel ||
+				!reflect.DeepEqual(m.caps, before.caps) || m.liveArmed != before.liveArmed ||
+				len(m.conv.testBlocks()) != len(before.conv.testBlocks()) {
 				t.Fatal("inspection changed active chat identity, subscription, capabilities, model, or conversation")
 			}
 			mm, _, _ = m.dispatchSurfaceKey(tea.KeyPressMsg{Code: tea.KeyEscape})

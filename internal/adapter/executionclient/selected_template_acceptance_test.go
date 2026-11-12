@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -128,7 +129,8 @@ func TestSelectedTemplateListThenDeprecationRejectsAtAllocationSeam(t *testing.T
 	svc := selectedTemplateService(t, provider, store, true)
 	ctx := session.WithPrincipal(t.Context(), &session.Principal{Issuer: "issuer", Subject: "alice", GrantType: session.GrantTypeUser})
 	items, _, err := svc.ListExecutionTemplates(ctx)
-	if err != nil || len(items) != 1 || !items[0].DeclaredExecutionFiles || !items[0].DeclaredBuiltInShell {
+	declared := executionenv.TemplateCapabilities()
+	if err != nil || len(items) != 1 || !slices.Equal(items[0].Capabilities, declared) {
 		t.Fatalf("catalog=%+v err=%v", items, err)
 	}
 	// Reload policy after discovery, preserving the same real allocation store.

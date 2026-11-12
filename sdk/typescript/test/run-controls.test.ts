@@ -51,7 +51,7 @@ function httpHarness(options: HttpHarnessOptions = {}): {
     requests.push({ body, path });
     if (path === "/v1/compatibility") {
       return Response.json({
-        api_major: 1,
+        api_major: 2,
         capabilities: {},
         features: options.features ?? [feature, "watch_session_events"],
       });
@@ -109,7 +109,7 @@ function grpcHarness(options: GrpcHarnessOptions = {}): {
       },
       getCompatibilityInfo: () => {
         calls.push("compatibility");
-        return { apiMajor: 1, capabilities: {}, features: [...(options.features ?? [feature])] };
+        return { apiMajor: 2, capabilities: {}, features: [...(options.features ?? [feature])] };
       },
       getSession: () => {
         calls.push("getSession");

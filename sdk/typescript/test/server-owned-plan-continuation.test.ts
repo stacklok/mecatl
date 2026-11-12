@@ -36,7 +36,7 @@ function grpcSession(features: string[]) {
   const client = connect({
     transport: createRouterTransport((router) => {
       router.service(HarnessService, {
-        getCompatibilityInfo: () => ({ apiMajor: 1, capabilities: {}, features }),
+        getCompatibilityInfo: () => ({ apiMajor: 2, capabilities: {}, features }),
         getSession: () => ({ session: { sessionId } }),
         converse: async function* (requests) {
           const first = await requests[Symbol.asyncIterator]().next();
@@ -88,7 +88,7 @@ describe("server-owned plan continuation run admission", () => {
       transport: createRouterTransport((router) => {
         router.service(HarnessService, {
           getCompatibilityInfo: () => ({
-            apiMajor: 1,
+            apiMajor: 2,
             capabilities: {},
             features: [ServerFeature.ExactPlanAskControl],
           }),
@@ -150,7 +150,7 @@ describe("server-owned plan continuation run admission", () => {
           const path = new URL(String(input)).pathname;
           if (path === "/v1/compatibility") {
             return Response.json({
-              api_major: 1,
+              api_major: 2,
               capabilities: {},
               features: [ServerFeature.ExactPlanAskControl],
             });
@@ -227,7 +227,7 @@ describe("known plan continuation failures", () => {
       transport: createRouterTransport((router) => {
         router.service(HarnessService, {
           getCompatibilityInfo: () => ({
-            apiMajor: 1,
+            apiMajor: 2,
             capabilities: {},
             features: [ServerFeature.WatchSessionEvents],
           }),
@@ -244,7 +244,7 @@ describe("known plan continuation failures", () => {
           const path = new URL(String(input)).pathname;
           if (path === "/v1/compatibility") {
             return Response.json({
-              api_major: 1,
+              api_major: 2,
               capabilities: {},
               features: [ServerFeature.WatchSessionEvents],
             });

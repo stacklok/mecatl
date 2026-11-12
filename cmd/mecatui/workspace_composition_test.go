@@ -132,7 +132,7 @@ func TestWorkspaceProductionComposition(t *testing.T) {
 				workspaceTestWrite(t, os.Getenv("XDG_CONFIG_HOME"), "mecatl/settings.yaml", "execution: {default_placement: "+app.PlacementHostLocal+"}\n")
 				argv = []string{"mecatui", "--mock", "--quiet", "--theme=aztec", "--trust-project", "--toolhive-llm=false", "--product-metrics=false", "--no-store", "--no-memory", "--no-user-model", "--no-soul", "--no-skills", "--no-commands", "--user-model-dir=" + storage.userModelDir, "--workspace=" + workspace}
 			} else {
-				argv[2] = startStartupCompatibilityServer(t, &startupCompatibilityServer{major: 1})
+				argv[2] = startStartupCompatibilityServer(t, &startupCompatibilityServer{major: 2})
 			}
 			ran, observedDeps := false, false
 			err := runWithOptions(argv, runOptions{uiDepsReady: func(deps ui.Deps) {

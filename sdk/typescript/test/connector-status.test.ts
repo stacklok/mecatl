@@ -13,7 +13,7 @@ it("broker connector inspection has gRPC and HTTP parity without direct MCP call
   const transport = createRouterTransport((router) => {
     router.service(HarnessService, {
       getCompatibilityInfo: () => ({
-        apiMajor: 1,
+        apiMajor: 2,
         capabilities: { mcpConnectorStatus: true },
         features: ["server_info"],
       }),
@@ -39,7 +39,7 @@ it("broker connector inspection has gRPC and HTTP parity without direct MCP call
         paths.push(path);
         if (path === "/v1/compatibility")
           return Response.json({
-            api_major: 1,
+            api_major: 2,
             capabilities: { mcp_connector_status: true },
             features: ["server_info"],
           });

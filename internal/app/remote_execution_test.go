@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -173,7 +174,7 @@ func TestRemoteExecutionWithoutShellPromptMatchesCatalog(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !created.GetSessionCapabilities().GetExecutionFiles() || created.GetSessionCapabilities().GetBuiltInShell() {
+	if !slices.Equal(created.GetSessionCapabilities().GetExecution(), []string{"filesystem"}) {
 		t.Fatalf("effective capabilities=%v", created.GetSessionCapabilities())
 	}
 	run, err := built.Service.StartRun(ctx, session.SessionID(created.GetSessionId()), "inspect files")

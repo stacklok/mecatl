@@ -49,7 +49,7 @@ describe("high-level session affinity", () => {
         },
         getCompatibilityInfo: (_request, context) => {
           expect(context.requestHeader.has(SESSION_ID_HEADER_NAME)).toBe(false);
-          return { apiMajor: 1, capabilities: {}, features: ["server_info"] };
+          return { apiMajor: 2, capabilities: {}, features: ["server_info"] };
         },
         getSession: (request, context) => {
           seen.push({
@@ -145,7 +145,7 @@ describe("high-level session affinity", () => {
           httpSeen.push({ affinity: headers.get(SESSION_ID_HEADER_NAME), operation });
         }
         if (operation === "compatibility") {
-          return Response.json({ api_major: 1, capabilities: {}, features: ["http_steer"] });
+          return Response.json({ api_major: 2, capabilities: {}, features: ["http_steer"] });
         }
         if (operation === "create") {
           const body = JSON.parse(await new Response(init?.body).text()) as {
@@ -237,7 +237,7 @@ describe("high-level session affinity", () => {
           seenHeaders.push(context.requestHeader.get(SESSION_ID_HEADER_NAME));
           return { sessionId: externalId };
         },
-        getCompatibilityInfo: () => ({ apiMajor: 1, capabilities: {}, features: ["server_info"] }),
+        getCompatibilityInfo: () => ({ apiMajor: 2, capabilities: {}, features: ["server_info"] }),
         getSession: (_request, context) => {
           seenHeaders.push(context.requestHeader.get(SESSION_ID_HEADER_NAME));
           return { session: { sessionId: externalId } };

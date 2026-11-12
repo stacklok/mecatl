@@ -240,7 +240,7 @@ func TestKindExecutionBorrowedSchedule(t *testing.T) {
 		t.Fatalf("published origin reference cannot attach after run: ready=%t code=%s", attached.Ready, remoteErrorCode(err))
 	}
 	probe := executionenv.ReferenceRequest{Environment: ref, Owner: owner, SourceBindingID: origin, BindingID: fmt.Sprintf("borrowed-probe-%d", id), OperationID: fmt.Sprintf("borrowed-probe-op-%d", id)}
-	if err := provider.ReserveSuccessor(ctx, probe); err != nil {
+	if _, err := provider.ReserveSuccessor(ctx, probe); err != nil {
 		t.Fatalf("native provider cannot reserve from completed origin: code=%s err=%v", remoteErrorCode(err), err)
 	}
 	if err := provider.AbortReference(ctx, probe); err != nil {

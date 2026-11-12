@@ -29,12 +29,15 @@ A session can instead select `execution.none` for research, coordination, or
 remote deployments that must not expose a local filesystem. When advertised by
 the server, `execution.template` pins an eligible operator-approved ID and
 revision; catalog listing does not reserve capacity and selection is rechecked
-on creation. Catalog rows expose `declaredExecutionFiles` and
-`declaredBuiltInShell` in the SDK and Studio (`declared_execution_files` and
-`declared_built_in_shell` on HTTP/gRPC). Studio and the TUI label these as
-**declared** affordances: they neither reserve capacity nor grant tools. The
-bound session reports effective filesystem and built-in Shell capabilities,
-which can be narrower because of host tooling or session authority.
+on creation. Each catalog row lists the template's declared `capabilities`:
+`filesystem` and `foreground-command` (built-in Shell). Studio and the TUI label
+these as **declared**: they neither reserve capacity nor grant tools. The bound
+session reports its effective capabilities in `session_capabilities.execution`,
+which can be narrower because of deployment flags such as `--no-shell`, host
+tooling, or session authority. Selecting a template uses its declared set
+narrowed by deployment configuration; the server rejects a non-empty
+`capabilities` list in the selection, because it can't yet narrow a template
+by request.
 
 If creation rejects a stale revision or unavailable capacity, Studio keeps the
 draft and exact selection. Use **Refresh templates** or choose another revision;
