@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -23,12 +24,23 @@ const descendantCleanupTimeout = 2 * time.Second
 
 var subreaperEnabled atomic.Bool
 
+var commandEnv = []string{
+	"HOME=/workspace", "PATH=/usr/local/go/bin:/usr/local/bin:/usr/bin:/bin",
+	"TMPDIR=/tmp", "GOTMPDIR=/tmp",
+}
+
+// killChild is replaced by tests that simulate a process surviving SIGKILL.
+var killChild = func(pid int) { _ = syscall.Kill(pid, syscall.SIGKILL) }
+
 type commandResult struct {
 	stdout    []byte
 	stderr    []byte
 	exitCode  int
 	truncated bool
 }
+
+// shellPath is a variable so tests can simulate a missing shell.
+var shellPath = "/bin/sh"
 
 // EnableCommandExecution makes this process a Linux child subreaper. It must be
 // called by the dedicated executor helper before it starts any other process.
@@ -47,15 +59,31 @@ func runIsolatedCommand(ctx context.Context, dir, command string, outputLimit in
 	var stdout, stderr boundedWriter
 	stdout.limit = outputLimit
 	stderr.limit = outputLimit
-	cmd := exec.Command("/bin/sh", "-c", command) // #nosec G204 -- the command is the authenticated tool payload.
+	code, proven, err := runShell(ctx, dir, command, &stdout, &stderr, nil)
+	result := commandResult{
+		stdout: stdout.Bytes(), stderr: stderr.Bytes(), exitCode: code,
+		truncated: stdout.truncated || stderr.truncated,
+	}
+	return result, proven, err
+}
+
+// runShell runs command in this dedicated subreaper process and kills every
+// process it started before returning. proven reports confirmed cleanup.
+func runShell(
+	ctx context.Context, dir, command string, stdout, stderr io.Writer, started func(),
+) (int, bool, error) {
+	cmd := exec.Command(shellPath, "-c", command) // #nosec G204 -- authenticated tool payload.
 	cmd.Dir = dir
-	cmd.Env = []string{"HOME=/workspace", "PATH=/usr/local/go/bin:/usr/local/bin:/usr/bin:/bin", "TMPDIR=/tmp", "GOTMPDIR=/tmp"}
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
+	cmd.Env = commandEnv
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.WaitDelay = 250 * time.Millisecond
 	if err := cmd.Start(); err != nil {
-		return commandResult{}, true, err
+		return 0, true, err
+	}
+	if started != nil {
+		started()
 	}
 
 	waited := make(chan error, 1)
@@ -77,17 +105,16 @@ func runIsolatedCommand(ctx context.Context, dir, command string, outputLimit in
 	defer cancel()
 	proven := reapAllChildren(cleanupCtx)
 
-	result := commandResult{stdout: stdout.Bytes(), stderr: stderr.Bytes(), exitCode: exitCode(waitErr), truncated: stdout.truncated || stderr.truncated}
 	if ctx.Err() != nil {
-		return result, proven, ctx.Err()
+		return exitCode(waitErr), proven, ctx.Err()
 	}
-	return result, proven, waitErr
+	return exitCode(waitErr), proven, waitErr
 }
 
 func reapAllChildren(ctx context.Context) bool {
 	for {
 		for _, pid := range directChildren() {
-			_ = syscall.Kill(pid, syscall.SIGKILL)
+			killChild(pid)
 		}
 		for {
 			var status syscall.WaitStatus
