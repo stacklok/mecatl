@@ -1321,6 +1321,20 @@ tasks:
       # from the permconfig schema (the CI freshness gate enforces this).
       - task: docs:configref
 
+  lint:proto:
+    desc: Run buf lint and, once the base ref has it, buf breaking on the executor protocol (BUF_AGAINST_REF, default main)
+    vars:
+      PROTO_PATH: contracts/proto/mecatl/executor
+      AGAINST_REF: '{{.BUF_AGAINST_REF | default "main"}}'
+    cmds:
+      - buf lint --path {{.PROTO_PATH}}
+      - cmd: |
+          if ! git cat-file -e "{{.AGAINST_REF}}:{{.PROTO_PATH}}" 2>/dev/null; then
+            echo "skip buf breaking: {{.PROTO_PATH}} is absent at {{.AGAINST_REF}}"
+            exit 0
+          fi
+          buf breaking --against ".git#ref={{.AGAINST_REF}}" --path {{.PROTO_PATH}}
+
   docs:configref:
     desc: Regenerate the committed config-init skeleton + rendered configuration reference from the permconfig schema
     cmds:

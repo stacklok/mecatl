@@ -1,0 +1,60 @@
+// SPDX-FileCopyrightText: Copyright 2026 Stacklok, Inc.
+// SPDX-License-Identifier: LicenseRef-Stacklok-Proprietary
+
+syntax = "proto3";
+
+package mecatl.executor.v1;
+
+import "google/protobuf/duration.proto";
+import "mecatl/executor/v1/context.proto";
+
+option go_package = "github.com/stacklok/mecatl/contracts/gen/go/mecatl/executor/v1;executorv1";
+
+// Call semantics: docs/drafts/kubernetes-execution/executor-protocol.md#commands.
+service CommandService {
+  rpc RunCommand(stream RunCommandRequest) returns (stream RunCommandResponse);
+}
+
+message RunCommandRequest {
+  // Read from the first message only.
+  RequestContext context = 1;
+  oneof action {
+    StartCommand start = 2;
+    CancelCommand cancel = 3;
+  }
+}
+
+message StartCommand {
+  string command = 1;
+  // Zero selects the server limit, which also caps it.
+  google.protobuf.Duration timeout = 2;
+}
+
+message CancelCommand {}
+
+message RunCommandResponse {
+  oneof event {
+    CommandStarted started = 1;
+    bytes stdout = 2;
+    bytes stderr = 3;
+    CommandResult result = 4;
+  }
+}
+
+message CommandStarted {}
+
+enum CommandState {
+  COMMAND_STATE_UNSPECIFIED = 0;
+  COMMAND_STATE_SUCCEEDED = 1;
+  COMMAND_STATE_FAILED = 2;
+  // Only OUTCOME_UNKNOWN may leave processes running.
+  COMMAND_STATE_CANCELLED = 3;
+  COMMAND_STATE_TIMED_OUT = 4;
+  COMMAND_STATE_OUTCOME_UNKNOWN = 5;
+}
+
+message CommandResult {
+  CommandState state = 1;
+  int32 exit_code = 2;
+  bool output_truncated = 3;
+}
