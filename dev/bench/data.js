@@ -373072,6 +373072,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1794417031363,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "4377202+samuv@users.noreply.github.com",
+            "name": "Samuele V",
+            "username": "samuv"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "b59ee2c70e34555b02b78061d0b35005d89dbe92",
+          "message": "chore(sdk): move SDK tooling to Node 26 LTS (#2767)\n\nSigned-off-by: Samuele Verzi <samu@stacklok.com>",
+          "timestamp": "2026-11-12T10:18:39+01:00",
+          "tree_id": "1f4b4e7c69a20f88e14e4055075136cba176ac28",
+          "url": "https://github.com/stacklok/mecatl/commit/b59ee2c70e34555b02b78061d0b35005d89dbe92"
+        },
+        "date": 1794475855671,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -538772,6 +538806,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1794475852401,
+  "lastUpdate": 1794475856579,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
