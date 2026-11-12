@@ -414276,6 +414276,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1794486444040,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "328978+blkt@users.noreply.github.com",
+            "name": "Michelangelo Mori",
+            "username": "blkt"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "020b3a3124813ac5ec8589a157c47fb7253e82c4",
+          "message": "feat(contracts): define the executor Files and Commands services (#2764)\n\nAdd the private `mecatl.executor.v1` package, generated into\n`contracts/gen/go/mecatl/executor/v1`. The generated code imports only\nprotobuf and gRPC, so #2716 can make it a standalone module with a move\nplus a `go.mod`.\n\n`FileService` has one RPC per `Workspace` and `WorkspaceNamespace`\noperation, plus `ResolveAuthorityPath`. Versions travel as a\n`FileVersion` message, so an absent version, which never matches, is\ndistinct from a valid empty token. `CreateFile` is create-only, and\nrename and copy refuse an existing destination. Whole files travel in\none message of up to 5 MiB, above gRPC's 4 MiB default, so both ends\nmust raise the message limit; #2770 decides whether to stream instead.\n\n`CommandService.RunCommand` is a bidirectional stream. The caller sends\na start and an optional in-band cancel. The server sends `started`,\n`stdout` and `stderr` chunks, and one `result`: succeeded, failed,\ncancelled, timed out, or outcome unknown. If the stream breaks before\n`started`, the command never ran; if it breaks after `started` but\nbefore a `result`, the outcome is unknown. A `result` whose outcome is\nknown replaces Pod exec's `terminal_receipt` as proof that the command\nended.\n\nEvery request carries a `RequestContext`, a wire-identical copy of the\n`execution/v1` message, which the trusted service uses to authorize the\ncall and executors ignore. Failures carry an `ErrorDetail` reason beside\nthe canonical status code.\n\nAdd `task lint:proto`, which runs `buf lint` and, once the base ref has\nthe package, `buf breaking` on `contracts/proto/mecatl/executor`, and\nrun it in CI. `ExecutionProviderService` and `engine/` are unchanged.\n\nCloses #2689",
+          "timestamp": "2026-11-12T14:18:01+01:00",
+          "tree_id": "a48593c5e3e9cbf07af7e12c2c4289e7d827b026",
+          "url": "https://github.com/stacklok/mecatl/commit/020b3a3124813ac5ec8589a157c47fb7253e82c4"
+        },
+        "date": 1794490243291,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 13422,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12916.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 681,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -539828,6 +539867,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1794490238511,
+  "lastUpdate": 1794490244094,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
