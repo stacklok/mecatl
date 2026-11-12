@@ -2768,6 +2768,9 @@ func (s *Service) createSessionRecord(ctx context.Context, mode session.Permissi
 	if selectionErr != nil {
 		return nil, selectionErr
 	}
+	if len(opts.execution.Capabilities) != 0 {
+		return nil, errExecutionCapabilityRequest
+	}
 	if opts.execution.Kind != "" {
 		if profile != ProfileDefault && profile != selectedProfile {
 			return nil, ErrInvalidArgument

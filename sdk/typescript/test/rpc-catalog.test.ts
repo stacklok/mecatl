@@ -29,7 +29,7 @@ class CatalogTransport implements Transport {
     const message = create(
       method.output,
       (method.name === "GetCompatibilityInfo"
-        ? { apiMajor: 1, capabilities: {}, features: ["server_info"] }
+        ? { apiMajor: 2, capabilities: {}, features: ["server_info"] }
         : {}) as MessageInitShape<O>,
     );
     return {

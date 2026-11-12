@@ -329,10 +329,17 @@ type placementMetadataJSON struct {
 // sessionCapabilitiesJSON mirrors per-session media inputs and effective
 // execution tool affordances; it structurally cannot leak a secret.
 type sessionCapabilitiesJSON struct {
-	Image          bool `json:"image"`
-	Audio          bool `json:"audio"`
-	ExecutionFiles bool `json:"execution_files"`
-	BuiltInShell   bool `json:"built_in_shell"`
+	Image     bool     `json:"image"`
+	Audio     bool     `json:"audio"`
+	Execution []string `json:"execution"`
+}
+
+func sessionCapabilitiesToJSON(
+	scaps port.ProviderCapabilities, sess *session.Session,
+) *sessionCapabilitiesJSON {
+	return &sessionCapabilitiesJSON{
+		Image: scaps.Image, Audio: scaps.Audio, Execution: executionSessionCapabilities(sess),
+	}
 }
 
 // resolvedModelJSON mirrors mecatlv1.ResolvedModel for the JSON surface. It carries
@@ -584,11 +591,10 @@ func (h *HTTPHandler) createSession(w http.ResponseWriter, r *http.Request) {
 	}
 	responseDone := creatediag.Begin(r.Context(), "http_response")
 	scaps := h.svc.sessionCapabilitiesFor(sess)
-	files, shell := executionSessionCapabilities(sess)
 	writeJSON(w, http.StatusCreated, createSessionResp{
 		SessionID:                   string(sess.ID),
 		ResolvedAgentDefinitionName: sess.AgentDefinitionName,
-		SessionCapabilities:         &sessionCapabilitiesJSON{Image: scaps.Image, Audio: scaps.Audio, ExecutionFiles: files, BuiltInShell: shell},
+		SessionCapabilities:         sessionCapabilitiesToJSON(scaps, sess),
 		ResolvedModel:               resolvedModelToJSON(h.svc.resolvedModelFor(sess)),
 		Placement:                   placementMetadataToJSON(sess.Placement),
 	})
@@ -716,7 +722,6 @@ func (h *HTTPHandler) writeSuccessor(ctx context.Context, w http.ResponseWriter,
 
 func (h *HTTPHandler) writeSession(_ context.Context, w http.ResponseWriter, status int, sess *session.Session) {
 	scaps := h.svc.sessionCapabilitiesFor(sess)
-	files, shell := executionSessionCapabilities(sess)
 	writeJSON(w, status, sessionResp{
 		SessionID:              string(sess.ID),
 		State:                  string(sess.State),
@@ -724,7 +729,7 @@ func (h *HTTPHandler) writeSession(_ context.Context, w http.ResponseWriter, sta
 		Placement:              placementMetadataToJSON(sess.Placement),
 		Turns:                  sess.Counters.Turns,
 		ToolCalls:              sess.Counters.ToolCalls,
-		SessionCapabilities:    &sessionCapabilitiesJSON{Image: scaps.Image, Audio: scaps.Audio, ExecutionFiles: files, BuiltInShell: shell},
+		SessionCapabilities:    sessionCapabilitiesToJSON(scaps, sess),
 		TitleMetadata:          sessionTitleToJSON(titlePayload(sess)),
 		TokenUsage:             tokenUsageToJSON(sess.TokenUsageSnapshot()),
 		ResolvedModel:          resolvedModelToJSON(h.svc.resolvedModelFor(sess)),

@@ -157,8 +157,7 @@ describe("Mecatl chat sessions", () => {
           description: "",
           displayToken: "token",
           extensions: {},
-          declaredExecutionFiles: true,
-          declaredBuiltInShell: true,
+          capabilities: ["filesystem", "foreground-command"],
         },
       ],
       inventoryRevision: "rev",
@@ -177,8 +176,7 @@ describe("Mecatl chat sessions", () => {
               sessionCapabilities: {
                 image: true,
                 audio: false,
-                executionFiles: true,
-                builtInShell: false,
+                execution: ["filesystem"],
               },
               tokenUsage: {},
             }),
@@ -190,7 +188,20 @@ describe("Mecatl chat sessions", () => {
           capabilities: { manualCompaction: false, modelSelection: false },
         }) as ServerCompatibility,
     );
-    expect(await service.executionTemplates?.()).toEqual(inventory);
+    expect(await service.executionTemplates?.()).toEqual({
+      items: [
+        {
+          template,
+          name: "Safe",
+          description: "",
+          displayToken: "token",
+          extensions: {},
+          declaredExecutionFiles: true,
+          declaredBuiltInShell: true,
+        },
+      ],
+      inventoryRevision: "rev",
+    });
     expect((await service.detail("s")).capabilities).toMatchObject({
       image: true,
       audio: false,
@@ -321,7 +332,7 @@ describe("Mecatl chat sessions", () => {
         providerId: "anthropic",
         reasoningEffort: "high",
       },
-      sessionCapabilities: { image: true },
+      sessionCapabilities: { image: true, execution: [] },
       sessionId: "session-1",
       kind: "main",
       relationship: {

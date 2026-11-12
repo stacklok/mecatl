@@ -51,7 +51,11 @@ func (p *publicTemplateProvider) ListExecutionTemplates(context.Context, *sessio
 	if p.items != nil {
 		return p.items, "revision", nil
 	}
-	return []server.ExecutionTemplateInfo{{ID: "safe", Revision: testRevision, DisplayToken: testRevision, Name: "Safe", DeclaredExecutionFiles: true, DeclaredBuiltInShell: false, Extensions: map[string]string{"team/key": "value"}}}, "revision", nil
+	return []server.ExecutionTemplateInfo{{
+		ID: "safe", Revision: testRevision, DisplayToken: testRevision, Name: "Safe",
+		Capabilities: []string{server.ExecutionCapabilityFilesystem},
+		Extensions:   map[string]string{"team/key": "value"},
+	}}, "revision", nil
 }
 func (*publicTemplateProvider) Reattach(ctx context.Context, req server.PlacementReattachRequest) (server.PlacementBinding, error) {
 	return testPlacementProvider{}.Reattach(ctx, req)
@@ -104,8 +108,10 @@ func TestExecutionSelectionHTTPAndGRPC(t *testing.T) {
 	if err != nil || len(catalog.GetItems()) != 1 || catalog.GetItems()[0].GetTemplate().GetId() != "safe" {
 		t.Fatalf("catalog=%+v err=%v", catalog, err)
 	}
-	if !catalog.Items[0].GetDeclaredExecutionFiles() || catalog.Items[0].GetDeclaredBuiltInShell() {
-		t.Fatalf("gRPC catalog lost declared affordances: %v", catalog.Items[0])
+	row := catalog.Items[0]
+	if !slices.Equal(row.GetCapabilities(), []string{"filesystem"}) ||
+		len(row.GetTemplate().GetCapabilities()) != 0 {
+		t.Fatalf("gRPC catalog capabilities = %v", catalog.Items[0])
 	}
 	if rows, _, err := svc.ListExecutionTemplates(templateOwner("bob")); err != nil || len(rows) != 0 {
 		t.Fatalf("denied catalog=%v err=%v", rows, err)
@@ -123,7 +129,7 @@ func TestExecutionSelectionHTTPAndGRPC(t *testing.T) {
 	if err != nil || !p.last.IsTemplate() || p.last.ID != "safe" || created.GetSessionId() == "" {
 		t.Fatalf("bind=%+v response=%+v err=%v", p.last, created, err)
 	}
-	if created.GetSessionCapabilities().GetExecutionFiles() || created.GetSessionCapabilities().GetBuiltInShell() {
+	if len(created.GetSessionCapabilities().GetExecution()) != 0 {
 		t.Fatal("declared catalog affordances widened the tool-less session's effective capabilities")
 	}
 	persisted, err := svc.GetSession(owner, session.SessionID(created.GetSessionId()))
@@ -160,7 +166,8 @@ func TestExecutionSelectionHTTPAndGRPC(t *testing.T) {
 	none := &mecatlv1.CreateSessionRequest{Execution: &mecatlv1.ExecutionSelection{None: &mecatlv1.ExecutionNone{}}}
 	before := p.binds.Load()
 	noFS, err := h.CreateSession(owner, none)
-	if err != nil || !p.last.IsNoFS() || p.binds.Load() != before+1 || noFS.GetSessionCapabilities().GetExecutionFiles() || noFS.GetSessionCapabilities().GetBuiltInShell() {
+	if err != nil || !p.last.IsNoFS() || p.binds.Load() != before+1 ||
+		len(noFS.GetSessionCapabilities().GetExecution()) != 0 {
 		t.Fatalf("no-fs=%+v selector=%+v err=%v", noFS, p.last, err)
 	}
 	req := httptest.NewRequest(http.MethodGet, "/v1/execution-templates", nil).WithContext(owner)
@@ -172,8 +179,9 @@ func TestExecutionSelectionHTTPAndGRPC(t *testing.T) {
 	if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &inventory) != nil || len(inventory.Items) != 1 {
 		t.Fatalf("http list=%d: %s", rec.Code, rec.Body.String())
 	}
-	if !bytes.Contains(inventory.Items[0], []byte(`"declared_execution_files":true`)) || !bytes.Contains(inventory.Items[0], []byte(`"declared_built_in_shell":false`)) {
-		t.Fatalf("catalog omitted declared affordances: %s", inventory.Items[0])
+	if !bytes.Contains(inventory.Items[0], []byte(`"capabilities":["filesystem"]`)) ||
+		bytes.Contains(inventory.Items[0], []byte(`declared_`)) {
+		t.Fatalf("catalog capabilities: %s", inventory.Items[0])
 	}
 }
 
@@ -203,11 +211,12 @@ func TestExecutionSessionFilesWithoutShell(t *testing.T) {
 		t.Fatal(err)
 	}
 	caps := created.GetSessionCapabilities()
-	if !caps.GetExecutionFiles() || caps.GetBuiltInShell() {
+	if !slices.Equal(caps.GetExecution(), []string{"filesystem"}) {
 		t.Fatalf("filesystem without shell=%+v", caps)
 	}
 	got, err := server.NewHarnessServer(svc).GetSession(t.Context(), &mecatlv1.GetSessionRequest{SessionId: created.GetSessionId()})
-	if err != nil || !got.GetSession().GetSessionCapabilities().GetExecutionFiles() || got.GetSession().GetSessionCapabilities().GetBuiltInShell() {
+	gotExecution := got.GetSession().GetSessionCapabilities().GetExecution()
+	if err != nil || !slices.Equal(gotExecution, []string{"filesystem"}) {
 		t.Fatalf("get caps=%+v err=%v", got, err)
 	}
 }
@@ -250,7 +259,7 @@ func TestNoneRunDoesNotBorrowSharedFileTools(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if created.GetSessionCapabilities().GetExecutionFiles() || created.GetSessionCapabilities().GetBuiltInShell() {
+	if len(created.GetSessionCapabilities().GetExecution()) != 0 {
 		t.Fatalf("none caps = %+v", created.GetSessionCapabilities())
 	}
 	run, err := svc.StartRun(t.Context(), session.SessionID(created.GetSessionId()), "try both")
@@ -307,7 +316,7 @@ func TestBoundExecutionCapabilitiesRespectPersistedAuthority(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if created.GetSessionCapabilities().GetExecutionFiles() || created.GetSessionCapabilities().GetBuiltInShell() {
+	if len(created.GetSessionCapabilities().GetExecution()) != 0 {
 		t.Fatalf("ungranted caps = %+v", created.GetSessionCapabilities())
 	}
 	svc.Close()
@@ -319,7 +328,7 @@ func TestBoundExecutionCapabilitiesRespectPersistedAuthority(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.GetSession().GetSessionCapabilities().GetExecutionFiles() || got.GetSession().GetSessionCapabilities().GetBuiltInShell() {
+	if len(got.GetSession().GetSessionCapabilities().GetExecution()) != 0 {
 		t.Fatalf("offline bounded caps = %+v", got)
 	}
 	if provider.reattachCalls.Load() != before {
@@ -344,9 +353,15 @@ func TestBoundExecutionCapabilitiesAcrossTransportsAndRestart(t *testing.T) {
 		}
 		return svc
 	}
+	want := func(files bool) []string {
+		if files {
+			return []string{"filesystem"}
+		}
+		return []string{}
+	}
 	check := func(label string, caps *mecatlv1.SessionCapabilities, files bool) {
 		t.Helper()
-		if caps.GetExecutionFiles() != files || caps.GetBuiltInShell() {
+		if !slices.Equal(caps.GetExecution(), want(files)) {
 			t.Fatalf("%s: capabilities=%+v, want files=%v shell=false", label, caps, files)
 		}
 	}
@@ -379,11 +394,11 @@ func TestBoundExecutionCapabilitiesAcrossTransportsAndRestart(t *testing.T) {
 		server.NewHTTPHandler(svc).ServeHTTP(rec, httptest.NewRequest(method, path, strings.NewReader(body)))
 		var detail struct {
 			SessionCapabilities struct {
-				ExecutionFiles bool `json:"execution_files"`
-				BuiltInShell   bool `json:"built_in_shell"`
+				Execution []string `json:"execution"`
 			} `json:"session_capabilities"`
 		}
-		if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &detail) != nil || detail.SessionCapabilities.ExecutionFiles != files || detail.SessionCapabilities.BuiltInShell {
+		if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &detail) != nil ||
+			!slices.Equal(detail.SessionCapabilities.Execution, want(files)) {
 			t.Fatalf("%s: HTTP status=%d body=%s", label, rec.Code, rec.Body.String())
 		}
 	}
@@ -417,13 +432,8 @@ func TestBoundExecutionCapabilitiesAcrossTransportsAndRestart(t *testing.T) {
 	check("none create", none.GetSessionCapabilities(), false)
 	createHTTP := httptest.NewRecorder()
 	server.NewHTTPHandler(svc).ServeHTTP(createHTTP, httptest.NewRequest(http.MethodPost, "/v1/sessions", strings.NewReader(`{"execution":{"none":{}}}`)))
-	var createdHTTP struct {
-		SessionCapabilities struct {
-			ExecutionFiles bool `json:"execution_files"`
-			BuiltInShell   bool `json:"built_in_shell"`
-		} `json:"session_capabilities"`
-	}
-	if createHTTP.Code != http.StatusCreated || json.Unmarshal(createHTTP.Body.Bytes(), &createdHTTP) != nil || createdHTTP.SessionCapabilities.ExecutionFiles || createdHTTP.SessionCapabilities.BuiltInShell {
+	if createHTTP.Code != http.StatusCreated ||
+		!strings.Contains(createHTTP.Body.String(), `"execution":[]`) {
 		t.Fatalf("HTTP none create=%d %s", createHTTP.Code, createHTTP.Body.String())
 	}
 	svc.Close()
@@ -494,5 +504,54 @@ func TestExecutionTemplateCatalogDisabled(t *testing.T) {
 	}
 	if _, err := server.NewHarnessServer(svc).ListExecutionTemplates(templateOwner("alice"), &mecatlv1.ListExecutionTemplatesRequest{}); status.Code(err) != codes.Unimplemented {
 		t.Fatalf("disabled list=%v", err)
+	}
+}
+
+func TestExecutionCapabilityRequestRefusedOnBothTransports(t *testing.T) {
+	p := &publicTemplateProvider{}
+	svc := templateTestService(t, p, func(*session.Principal, string, string) bool { return true })
+	owner := templateOwner("alice")
+	const refusal = "capability requests are not supported yet"
+	postTemplate := func(fields string) *httptest.ResponseRecorder {
+		body := `{"execution":{"template":{"id":"safe","revision":"` + testRevision + `",` +
+			fields + `}}}`
+		req := httptest.NewRequest(http.MethodPost, "/v1/sessions", strings.NewReader(body))
+		rec := httptest.NewRecorder()
+		server.NewHTTPHandler(svc).ServeHTTP(rec, req.WithContext(owner))
+		return rec
+	}
+	requests := [][]string{{"filesystem"}, {"filesystem", "foreground-command"}, {"gpu"}}
+	for _, requested := range requests {
+		selection := templateProto("safe", testRevision)
+		selection.Template.Capabilities = requested
+		create := &mecatlv1.CreateSessionRequest{Execution: selection}
+		_, err := server.NewHarnessServer(svc).CreateSession(owner, create)
+		message := status.Convert(err).Message()
+		if status.Code(err) != codes.InvalidArgument || !strings.Contains(message, refusal) {
+			t.Fatalf("gRPC %v: %v", requested, err)
+		}
+		raw, _ := json.Marshal(requested)
+		rec := postTemplate(`"capabilities":` + string(raw))
+		var problem struct {
+			Code string `json:"code"`
+		}
+		decoded := json.Unmarshal(rec.Body.Bytes(), &problem) == nil
+		if rec.Code != http.StatusBadRequest || !decoded || problem.Code != "invalid_argument" ||
+			!strings.Contains(rec.Body.String(), refusal) {
+			t.Fatalf("HTTP %v: %d %s", requested, rec.Code, rec.Body.String())
+		}
+	}
+	for _, value := range []string{`"filesystem"`, `null`, `[1]`} {
+		field := `"capabilities":` + value
+		if rec := postTemplate(field); rec.Code != http.StatusBadRequest {
+			t.Fatalf("malformed %s: %d", field, rec.Code)
+		}
+	}
+	if p.binds.Load() != 0 {
+		t.Fatalf("refused requests allocated %d placements", p.binds.Load())
+	}
+	rec := postTemplate(`"capabilities":[]`)
+	if rec.Code != http.StatusCreated || p.binds.Load() != 1 {
+		t.Fatalf("empty request: %d %s", rec.Code, rec.Body.String())
 	}
 }

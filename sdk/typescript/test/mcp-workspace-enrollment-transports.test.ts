@@ -68,7 +68,7 @@ class RecordingTransport implements Transport {
             };
           },
           getCompatibilityInfo: () => ({
-            apiMajor: 1,
+            apiMajor: 2,
             capabilities: {},
             features: ["workspace_enrollment_test"],
           }),
@@ -171,7 +171,7 @@ it("pre-aborted workspace enrollment requests never reach either transport", asy
               const path = new URL(String(input)).pathname;
               if (path === "/v1/compatibility")
                 return Response.json({
-                  api_major: 1,
+                  api_major: 2,
                   capabilities: {},
                   features: ["workspace_enrollment_test"],
                 });
@@ -269,7 +269,7 @@ it("workspace enrollment has equivalent grpc and http request semantics", async 
       const value = (() => {
         switch (path) {
           case "/v1/compatibility":
-            return { api_major: 1, capabilities: {}, features: ["workspace_enrollment_test"] };
+            return { api_major: 2, capabilities: {}, features: ["workspace_enrollment_test"] };
           case `/v1/sessions/${sessionId}`:
             return { session_id: sessionId };
           case `/v1/sessions/${sessionId}/mcp/connectors`:
@@ -387,7 +387,7 @@ it("workspace enrollment cancellation and failures stay typed", async () => {
                 return waitForAbort(context.signal);
               },
               getCompatibilityInfo: () => ({
-                apiMajor: 1,
+                apiMajor: 2,
                 capabilities: {},
                 features: ["workspace_enrollment_test"],
               }),
@@ -400,7 +400,7 @@ it("workspace enrollment cancellation and failures stay typed", async () => {
               const path = new URL(String(input)).pathname;
               if (path === "/v1/compatibility")
                 return Response.json({
-                  api_major: 1,
+                  api_major: 2,
                   capabilities: {},
                   features: ["workspace_enrollment_test"],
                 });
@@ -459,7 +459,7 @@ it("workspace enrollment cancellation and failures stay typed", async () => {
             throw statusError(code, status, requestId);
           },
           getCompatibilityInfo: () => ({
-            apiMajor: 1,
+            apiMajor: 2,
             capabilities: {},
             features: ["workspace_enrollment_test"],
           }),
@@ -506,7 +506,7 @@ it("workspace enrollment cancellation and failures stay typed", async () => {
         const path = new URL(String(input)).pathname;
         if (path === "/v1/compatibility")
           return Response.json({
-            api_major: 1,
+            api_major: 2,
             capabilities: {},
             features: ["workspace_enrollment_test"],
           });
@@ -541,7 +541,7 @@ it("workspace enrollment cancellation and failures stay typed", async () => {
       const path = new URL(String(input)).pathname;
       if (path === "/v1/compatibility")
         return Response.json({
-          api_major: 1,
+          api_major: 2,
           capabilities: {},
           features: ["workspace_enrollment_test"],
         });
@@ -572,7 +572,7 @@ it("workspace enrollment lost acknowledgements do not trigger follow-up work", a
           throw new ConnectError("connect acknowledgement lost", Code.Unavailable);
         },
         getCompatibilityInfo: () => ({
-          apiMajor: 1,
+          apiMajor: 2,
           capabilities: {},
           features: ["workspace_enrollment_test"],
         }),

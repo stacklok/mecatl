@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"net"
+	"reflect"
 	"testing"
 
 	"google.golang.org/grpc"
@@ -25,7 +26,9 @@ func (f *sessionMediaFixture) CreateSession(_ context.Context, _ *mecatlv1.Creat
 }
 
 func (*sessionMediaFixture) GetCompatibilityInfo(context.Context, *mecatlv1.GetCompatibilityInfoRequest) (*mecatlv1.GetCompatibilityInfoResponse, error) {
-	return &mecatlv1.GetCompatibilityInfoResponse{ApiMajor: 1, Capabilities: &mecatlv1.ServerCapabilities{Teams: true}}, nil
+	return &mecatlv1.GetCompatibilityInfoResponse{
+		ApiMajor: 2, Capabilities: &mecatlv1.ServerCapabilities{Teams: true},
+	}, nil
 }
 
 func (f *sessionMediaFixture) GetSession(_ context.Context, _ *mecatlv1.GetSessionRequest) (*mecatlv1.GetSessionResponse, error) {
@@ -131,7 +134,7 @@ func TestResolvedModelMediaOverlay(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			m := Model{sessionID: "session", caps: prior}
 			got, _, _ := m.onResolvedModelMsg(tc.msg)
-			if got.caps != tc.want {
+			if !reflect.DeepEqual(got.caps, tc.want) {
 				t.Fatalf("capabilities = %+v, want %+v", got.caps, tc.want)
 			}
 		})

@@ -9,7 +9,7 @@ package server
 // server/package semver comparison: mecatl is deployed from main as often as
 // from a tag, and a version string cannot tell a client whether a given RPC
 // exists.
-const APIMajor int32 = 1
+const APIMajor int32 = 2
 
 // A feature identifier is an OPEN STRING, not an enum value.
 //

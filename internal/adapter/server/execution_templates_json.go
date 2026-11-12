@@ -51,22 +51,37 @@ func executionFromJSON(raw json.RawMessage) (ExecutionSelection, error) {
 			}
 		case "template":
 			var fields map[string]json.RawMessage
-			if err := json.Unmarshal(data, &fields); err != nil || len(fields) != 2 {
+			if err := json.Unmarshal(data, &fields); err != nil {
 				break
 			}
 			idRaw, hasID := fields["id"]
 			revisionRaw, hasRevision := fields["revision"]
-			if !hasID || !hasRevision {
+			capabilitiesRaw, hasCapabilities := fields["capabilities"]
+			want := 2
+			if hasCapabilities {
+				want = 3
+			}
+			if !hasID || !hasRevision || len(fields) != want {
 				break
 			}
 			var id, revision string
+			var capabilities []string
 			if err := json.Unmarshal(idRaw, &id); err != nil {
 				break
 			}
 			if err := json.Unmarshal(revisionRaw, &revision); err != nil {
 				break
 			}
-			e := ExecutionSelection{Kind: PlacementSelectorTemplate, ID: id, Revision: revision}
+			if hasCapabilities {
+				err := json.Unmarshal(capabilitiesRaw, &capabilities)
+				if err != nil || capabilities == nil {
+					break
+				}
+			}
+			e := ExecutionSelection{
+				Kind: PlacementSelectorTemplate, ID: id, Revision: revision,
+				Capabilities: capabilities,
+			}
 			if _, _, err := e.placement(); err == nil {
 				return e, nil
 			}

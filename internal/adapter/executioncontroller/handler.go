@@ -336,7 +336,9 @@ func (h *Handler) ReserveSuccessor(ctx context.Context, q *executionv1.ReserveSu
 	if err = lifecycle.ReserveSuccessor(ctx, ref, c.id, ownerHash(owner), q.SourceBindingId, q.DestinationBindingId, q.OperationId); err != nil {
 		return nil, backendError(err)
 	}
-	return &executionv1.ReferenceReservationResponse{Environment: refToProto(ref)}, nil
+	return &executionv1.ReferenceReservationResponse{
+		Environment: refToProto(ref), AdmittedCapabilities: admittedCapabilities(),
+	}, nil
 }
 
 func (h *Handler) ListReferenceIntents(ctx context.Context, q *executionv1.ListReferenceIntentsRequest) (*executionv1.ListReferenceIntentsResponse, error) {
@@ -646,11 +648,22 @@ func operationFromProto(op executionv1.FileOperation) (executionenv.Operation, b
 	return v, ok
 }
 
+// admittedCapabilities is every environment's admitted set: requests are
+// refused, so each environment admits its template's set, and a successor
+// shares its source environment.
+func admittedCapabilities() []string { return executionenv.TemplateCapabilities() }
+
 func ensureResponse(a Allocation) *executionv1.EnsureEnvironmentResponse {
-	return &executionv1.EnsureEnvironmentResponse{Environment: refToProto(a.Environment), Epoch: a.Epoch, Ready: a.Ready, GrantGeneration: a.GrantGeneration}
+	return &executionv1.EnsureEnvironmentResponse{
+		Environment: refToProto(a.Environment), Epoch: a.Epoch, Ready: a.Ready,
+		GrantGeneration: a.GrantGeneration, AdmittedCapabilities: admittedCapabilities(),
+	}
 }
 func attachResponse(a Allocation) *executionv1.AttachEnvironmentResponse {
-	return &executionv1.AttachEnvironmentResponse{Environment: refToProto(a.Environment), Epoch: a.Epoch, Ready: a.Ready, GrantGeneration: a.GrantGeneration}
+	return &executionv1.AttachEnvironmentResponse{
+		Environment: refToProto(a.Environment), Epoch: a.Epoch, Ready: a.Ready,
+		GrantGeneration: a.GrantGeneration, AdmittedCapabilities: admittedCapabilities(),
+	}
 }
 func fileResponse(v executionenv.FileResponse) *executionv1.FileResponse {
 	r := &executionv1.FileResponse{Data: v.Data, Version: []byte(v.Version), Paths: validAll(v.Paths), AuthorityTarget: valid(v.AuthorityTarget), AuthorityWorkspace: valid(v.AuthorityWorkspace)}

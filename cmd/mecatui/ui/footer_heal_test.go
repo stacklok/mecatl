@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -472,7 +473,7 @@ func TestSessionCapabilitiesSnapshotUpdatesMediaWithoutLosingGlobals(t *testing.
 				SessionID:    "sess-test-0001",
 				Capabilities: tt.caps,
 			})
-			if m.caps != tt.want {
+			if !reflect.DeepEqual(m.caps, tt.want) {
 				t.Fatalf("capabilities = %+v, want %+v", m.caps, tt.want)
 			}
 		})

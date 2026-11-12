@@ -2126,18 +2126,12 @@ Operator-projected eligible revision; never a recipe or execution authority.
 export interface ExecutionTemplateInfo
 ```
 
-<Heading as="h4" id="api-executiontemplateinfo-declaredbuiltinshell-propertysignature"><code>ExecutionTemplateInfo.declaredBuiltInShell</code></Heading>
+<Heading as="h4" id="api-executiontemplateinfo-capabilities-propertysignature"><code>ExecutionTemplateInfo.capabilities</code></Heading>
+
+Declared, not the effective capabilities of a bound session.
 
 ```ts
-readonly declaredBuiltInShell: boolean;
-```
-
-<Heading as="h4" id="api-executiontemplateinfo-declaredexecutionfiles-propertysignature"><code>ExecutionTemplateInfo.declaredExecutionFiles</code></Heading>
-
-Declared affordances, not the effective capabilities of a bound session.
-
-```ts
-readonly declaredExecutionFiles: boolean;
+readonly capabilities: readonly string[];
 ```
 
 <Heading as="h4" id="api-executiontemplateinfo-description-propertysignature"><code>ExecutionTemplateInfo.description</code></Heading>
@@ -5043,16 +5037,12 @@ export interface SessionCapabilities
 readonly audio: boolean;
 ```
 
-<Heading as="h4" id="api-sessioncapabilities-builtinshell-propertysignature"><code>SessionCapabilities.builtInShell</code></Heading>
+<Heading as="h4" id="api-sessioncapabilities-execution-propertysignature"><code>SessionCapabilities.execution</code></Heading>
+
+Effective execution capabilities.
 
 ```ts
-readonly builtInShell: boolean;
-```
-
-<Heading as="h4" id="api-sessioncapabilities-executionfiles-propertysignature"><code>SessionCapabilities.executionFiles</code></Heading>
-
-```ts
-readonly executionFiles: boolean;
+readonly execution: readonly string[];
 ```
 
 <Heading as="h4" id="api-sessioncapabilities-image-propertysignature"><code>SessionCapabilities.image</code></Heading>
@@ -7564,7 +7554,7 @@ StreamProgress: {
 The API major implemented by this SDK.
 
 ```ts
-SUPPORTED_API_MAJOR = 1
+SUPPORTED_API_MAJOR = 2
 ```
 
 <Heading as="h3" id="api-workspaceenrollmentstatus-variable"><code>WorkspaceEnrollmentStatus</code></Heading>

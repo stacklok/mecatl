@@ -491,9 +491,24 @@ func (c *Client) ConfirmReferenceDelete(ctx context.Context, req executionenv.Re
 func (c *Client) CancelReferenceDelete(ctx context.Context, req executionenv.ReferenceRequest) error {
 	return c.referenceMutation(ctx, req, c.rpc.CancelReferenceDelete)
 }
-func (c *Client) ReserveSuccessor(ctx context.Context, req executionenv.ReferenceRequest) error {
-	_, err := c.rpc.ReserveSuccessor(ctx, &executionv1.ReserveSuccessorRequest{Environment: refToProto(req.Environment), Owner: ownerToProto(req.Owner), SourceBindingId: req.SourceBindingID, DestinationBindingId: req.BindingID, OperationId: req.OperationID})
-	return decodeError(ctx, err)
+
+// ReserveSuccessor reserves a successor reference and returns the admitted
+// set it inherits from the source environment.
+func (c *Client) ReserveSuccessor(
+	ctx context.Context, req executionenv.ReferenceRequest,
+) ([]string, error) {
+	v, err := c.rpc.ReserveSuccessor(ctx, &executionv1.ReserveSuccessorRequest{
+		Environment: refToProto(req.Environment), Owner: ownerToProto(req.Owner),
+		SourceBindingId: req.SourceBindingID, DestinationBindingId: req.BindingID,
+		OperationId: req.OperationID,
+	})
+	if err != nil {
+		return nil, decodeError(ctx, err)
+	}
+	if !executionenv.ValidAdmittedCapabilities(v.GetAdmittedCapabilities()) {
+		return nil, sanitizedProviderError()
+	}
+	return v.GetAdmittedCapabilities(), nil
 }
 
 func (c *Client) ListReferenceIntents(ctx context.Context, owner executionenv.Owner) ([]executionenv.ReferenceIntent, error) {
@@ -696,13 +711,25 @@ func ensureFromProto(v *executionv1.EnsureEnvironmentResponse) (executionenv.Ens
 	if v == nil {
 		return executionenv.EnsureEnvironmentResponse{}, sanitizedProviderError()
 	}
-	return executionenv.EnsureEnvironmentResponse{Environment: refFromProto(v.GetEnvironment()), Epoch: v.GetEpoch(), Ready: v.GetReady(), GrantGeneration: v.GetGrantGeneration()}, nil
+	if !executionenv.ValidAdmittedCapabilities(v.GetAdmittedCapabilities()) {
+		return executionenv.EnsureEnvironmentResponse{}, sanitizedProviderError()
+	}
+	return executionenv.EnsureEnvironmentResponse{
+		Environment: refFromProto(v.GetEnvironment()), Epoch: v.GetEpoch(), Ready: v.GetReady(),
+		GrantGeneration: v.GetGrantGeneration(), AdmittedCapabilities: v.GetAdmittedCapabilities(),
+	}, nil
 }
 func attachFromProto(v *executionv1.AttachEnvironmentResponse) (executionenv.AttachEnvironmentResponse, error) {
 	if v == nil {
 		return executionenv.AttachEnvironmentResponse{}, sanitizedProviderError()
 	}
-	return executionenv.AttachEnvironmentResponse{Environment: refFromProto(v.GetEnvironment()), Epoch: v.GetEpoch(), Ready: v.GetReady(), GrantGeneration: v.GetGrantGeneration()}, nil
+	if !executionenv.ValidAdmittedCapabilities(v.GetAdmittedCapabilities()) {
+		return executionenv.AttachEnvironmentResponse{}, sanitizedProviderError()
+	}
+	return executionenv.AttachEnvironmentResponse{
+		Environment: refFromProto(v.GetEnvironment()), Epoch: v.GetEpoch(), Ready: v.GetReady(),
+		GrantGeneration: v.GetGrantGeneration(), AdmittedCapabilities: v.GetAdmittedCapabilities(),
+	}, nil
 }
 func checkedTime(v interface {
 	CheckValid() error
@@ -888,7 +915,8 @@ func (p *Provider) ReserveSuccessor(ctx context.Context, req server.PlacementSuc
 		defer cancel()
 		_ = p.client.AbortReference(cleanupCtx, reservation)
 	}
-	if err := p.client.ReserveSuccessor(ctx, reservation); err != nil {
+	inherited, err := p.client.ReserveSuccessor(ctx, reservation)
+	if err != nil {
 		abort()
 		return server.PlacementBinding{}, mapPlacementError(err)
 	}
@@ -896,6 +924,10 @@ func (p *Provider) ReserveSuccessor(ctx context.Context, req server.PlacementSuc
 	if err != nil {
 		abort()
 		return server.PlacementBinding{}, mapPlacementError(err)
+	}
+	if !sameCapabilitySet(inherited, attached.AdmittedCapabilities) {
+		abort()
+		return server.PlacementBinding{}, server.ErrPlacementChanged
 	}
 	base, err := p.binding(owner, string(req.DestinationBindingID), attached)
 	if err != nil {
@@ -1066,7 +1098,12 @@ func (p *Provider) ListExecutionTemplates(ctx context.Context, principal *sessio
 	}
 	items := make([]server.ExecutionTemplateInfo, 0, len(response.GetItems()))
 	for _, item := range response.GetItems() {
-		items = append(items, server.ExecutionTemplateInfo{ID: item.GetTemplate().GetId(), Revision: item.GetTemplate().GetRevision(), Name: item.GetName(), Description: item.GetDescription(), DisplayToken: item.GetDisplayToken(), Extensions: item.GetExtensions(), DeclaredExecutionFiles: slices.Contains(item.GetCapabilities(), "filesystem"), DeclaredBuiltInShell: slices.Contains(item.GetCapabilities(), "foreground-command")})
+		items = append(items, server.ExecutionTemplateInfo{
+			ID: item.GetTemplate().GetId(), Revision: item.GetTemplate().GetRevision(),
+			Name: item.GetName(), Description: item.GetDescription(),
+			DisplayToken: item.GetDisplayToken(), Extensions: item.GetExtensions(),
+			Capabilities: slices.Clone(item.GetCapabilities()),
+		})
 	}
 	return items, response.GetInventoryRevision(), nil
 }
@@ -1205,16 +1242,35 @@ func (p *Provider) binding(owner executionenv.Owner, binding string, attached ex
 	if !attached.Ready || attached.Environment.ID == "" || attached.Environment.Revision == "" || attached.Epoch == 0 {
 		return server.PlacementBinding{}, server.ErrPlacementUnavailable
 	}
+	// The engine requires a workspace, so a set without filesystem is unusable.
+	if !slices.Contains(attached.AdmittedCapabilities, executionenv.CapabilityFilesystem) {
+		return server.PlacementBinding{}, server.ErrPlacementUnavailable
+	}
 	credentials := &runContext{client: p.client, context: executionenv.RequestContext{Environment: attached.Environment, Owner: owner, BindingID: binding, Epoch: attached.Epoch, GrantGeneration: attached.GrantGeneration}, expiresAt: time.Time{}}
 	ws := &workspace{credentials: credentials}
-	runner := &runner{credentials: credentials}
+	var commands tool.CommandRunner
+	if slices.Contains(attached.AdmittedCapabilities, executionenv.CapabilityForegroundCommand) {
+		commands = &runner{credentials: credentials}
+	}
 	sref := toSessionRef(attached.Environment)
-	env, err := tool.NewEnvironment(sref, ws, memledger.New(), runner)
+	env, err := tool.NewEnvironment(sref, ws, memledger.New(), commands)
 	if err != nil {
 		return server.PlacementBinding{}, server.ErrPlacementUnavailable
 	}
 	return server.PlacementBinding{Environment: env, Ref: sref, Metadata: server.PlacementMetadata{Kind: "kubernetes", Label: "Remote Kubernetes workspace", Revision: attached.Environment.Revision}}, nil
 }
+func sameCapabilitySet(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for _, name := range a {
+		if !slices.Contains(b, name) {
+			return false
+		}
+	}
+	return true
+}
+
 func (p *Provider) withSharedInitialReferenceTransaction(binding server.PlacementBinding, owner executionenv.Owner, bindingID, operationID string) server.PlacementBinding {
 	// Initial Bind reservations are deterministic and may be shared by another
 	// replica, so local pre-publication cleanup must retain them.

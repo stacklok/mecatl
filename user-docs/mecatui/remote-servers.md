@@ -14,7 +14,8 @@ provides the terminal interface. This separation is part of Mecatl's
 Before normal TUI startup, `mecatui` checks that the server implements the same
 API major before reading or creating a session. It repeats the check when you
 reconnect. This is a wire-contract check, not a software release-version
-comparison.
+comparison. If the majors differ, the error names whether to update `mecatui` or
+the server.
 
 ## Before you connect
 

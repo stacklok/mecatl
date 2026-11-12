@@ -129,14 +129,12 @@ func (h *HarnessServer) CreateSession(ctx context.Context, req *mecatlv1.CreateS
 	// read from the composition single source (Service.ResolvedModel) — NEVER from
 	// req.GetModelId(), which is empty for a default session and ambiguous for a
 	// passthrough id. Same single-source discipline as session_capabilities.
-	files, shell := executionSessionCapabilities(sess)
 	return &mecatlv1.CreateSessionResponse{
 		SessionId: string(sess.ID),
 		SessionCapabilities: &mecatlv1.SessionCapabilities{
-			Image:          scaps.Image,
-			Audio:          scaps.Audio,
-			ExecutionFiles: files,
-			BuiltInShell:   shell,
+			Image:     scaps.Image,
+			Audio:     scaps.Audio,
+			Execution: executionSessionCapabilities(sess),
 		},
 		ResolvedModel: resolvedModelToProto(h.svc.resolvedModelFor(sess)),
 		Placement:     placementMetadataToProto(sess.Placement),
@@ -177,10 +175,8 @@ func (h *HarnessServer) GetServerInfo(_ context.Context, req *mecatlv1.GetServer
 }
 
 func (h *HarnessServer) sessionSnapshot(ctx context.Context, sess *session.Session) *mecatlv1.Session {
-	files, shell := executionSessionCapabilities(sess)
 	proto := toProtoSession(sess, h.svc.resolvedModelFor(sess), h.svc.capabilitiesFor(ctx), h.svc.sessionCapabilitiesFor(sess))
-	proto.SessionCapabilities.ExecutionFiles = files
-	proto.SessionCapabilities.BuiltInShell = shell
+	proto.SessionCapabilities.Execution = executionSessionCapabilities(sess)
 	return proto
 }
 

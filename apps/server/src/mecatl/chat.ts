@@ -304,8 +304,8 @@ export function createMecatlChatService(
           description: item.description,
           displayToken: item.displayToken,
           extensions: { ...item.extensions },
-          declaredExecutionFiles: item.declaredExecutionFiles,
-          declaredBuiltInShell: item.declaredBuiltInShell,
+          declaredExecutionFiles: item.capabilities.includes("filesystem"),
+          declaredBuiltInShell: item.capabilities.includes("foreground-command"),
         })),
       };
     },
@@ -323,8 +323,9 @@ export function createMecatlChatService(
       return {
         capabilities: {
           audio: snapshot.sessionCapabilities?.audio === true,
-          builtInShell: snapshot.sessionCapabilities?.builtInShell === true,
-          executionFiles: snapshot.sessionCapabilities?.executionFiles === true,
+          builtInShell:
+            snapshot.sessionCapabilities?.execution.includes("foreground-command") === true,
+          executionFiles: snapshot.sessionCapabilities?.execution.includes("filesystem") === true,
           image: snapshot.sessionCapabilities?.image === true,
           manualCompaction: capabilities.manualCompaction,
           modelSelection: capabilities.modelSelection,

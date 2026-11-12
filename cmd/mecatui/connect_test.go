@@ -219,7 +219,9 @@ type anonymousConnectServer struct {
 }
 
 func (anonymousConnectServer) GetCompatibilityInfo(context.Context, *mecatlv1.GetCompatibilityInfoRequest) (*mecatlv1.GetCompatibilityInfoResponse, error) {
-	return &mecatlv1.GetCompatibilityInfoResponse{ApiMajor: 1, Capabilities: &mecatlv1.ServerCapabilities{}}, nil
+	return &mecatlv1.GetCompatibilityInfoResponse{
+		ApiMajor: 2, Capabilities: &mecatlv1.ServerCapabilities{},
+	}, nil
 }
 
 func (anonymousConnectServer) CreateSession(context.Context, *mecatlv1.CreateSessionRequest) (*mecatlv1.CreateSessionResponse, error) {
@@ -1009,7 +1011,7 @@ func TestRestartConnectRejectsUnknownAction(t *testing.T) {
 }
 
 func TestConnectRestartCompatibilityFailureReopensSafeRecovery(t *testing.T) {
-	compatibilityErr := startupCompatibilityCheck(t, 2)
+	compatibilityErr := startupCompatibilityCheck(t, 3)
 	invalidErr := startupCompatibilityCheck(t, 0)
 	for _, tc := range []struct {
 		name     string

@@ -3,6 +3,7 @@ package executioncontroller
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 
@@ -28,7 +29,9 @@ func TestAuthenticatedTemplateCatalogAndBinding(t *testing.T) {
 	denied := "spiffe://cluster/ns/denied"
 	h := NewHandler(HandlerConfig{Clients: map[string]ClientPolicy{allowed: {MayAttestOwner: true, ExecutionTemplates: []string{"go"}}, denied: {MayAttestOwner: true}}}, store)
 	list, err := h.ListExecutionTemplates(authenticatedContext(allowed), &executionv1.ListExecutionTemplatesRequest{})
-	if err != nil || len(list.Items) != 1 || list.Items[0].Template.Revision != revision || list.InventoryRevision == "" {
+	if err != nil || len(list.Items) != 1 || list.Items[0].Template.Revision != revision ||
+		list.InventoryRevision == "" ||
+		!slices.Equal(list.Items[0].Capabilities, executionenv.TemplateCapabilities()) {
 		t.Fatalf("authorized inventory: %+v, %v", list, err)
 	}
 	hidden, err := h.ListExecutionTemplates(authenticatedContext(denied), &executionv1.ListExecutionTemplatesRequest{})

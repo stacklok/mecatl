@@ -20,11 +20,24 @@ var errExecutionUnauthenticated = errors.New("verified execution template owner 
 // ErrExecutionTemplatesDisabled reports an unwired per-owner template policy or catalog.
 var ErrExecutionTemplatesDisabled = errors.New("execution templates disabled")
 
+// Public execution capability names.
+const (
+	ExecutionCapabilityFilesystem        = "filesystem"
+	ExecutionCapabilityForegroundCommand = "foreground-command"
+)
+
+// errExecutionCapabilityRequest refuses requests until they are implemented
+// (#2712); a silently ignored request would widen what the client asked for.
+var errExecutionCapabilityRequest = fmt.Errorf("%w: execution capability requests are not "+
+	"supported yet; omit execution.template.capabilities to use the template's capabilities",
+	ErrInvalidArgument)
+
 // ExecutionTemplateInfo is bounded inert display metadata, never an execution recipe.
 type ExecutionTemplateInfo struct {
 	ID, Revision, Name, Description, DisplayToken string
 	Extensions                                    map[string]string
-	DeclaredExecutionFiles, DeclaredBuiltInShell  bool
+	// Capabilities is the template's declared set, not a session's effective set.
+	Capabilities []string
 }
 
 // ExecutionTemplateCatalog is optional and must enumerate only operator-authorized
@@ -48,16 +61,38 @@ func stampExecutionCapabilities(sess *session.Session, engine *agent.Engine, env
 	sess.ExecutionCapabilities = facts
 }
 
-func executionSessionCapabilities(sess *session.Session) (bool, bool) {
+// executionSessionCapabilities is the effective list: admitted by the
+// environment, registered as tools, and allowed by bound authority.
+func executionSessionCapabilities(sess *session.Session) []string {
+	out := []string{}
 	if sess == nil || sess.ExecutionCapabilities == nil || sess.EnvironmentRef.Kind == session.EnvKindNoFS {
-		return false, false
+		return out
 	}
 	files, shell := sess.ExecutionCapabilities.Files, sess.ExecutionCapabilities.Shell
 	if authority, bound := sess.BoundAuthority(); bound {
 		files = files && authority.CapabilitySet.FileSystem && authority.CapabilitySet.AllowsTool("Read")
 		shell = shell && authority.CapabilitySet.AllowsTool(tool.ShellToolName)
 	}
-	return files, shell
+	if files {
+		out = append(out, ExecutionCapabilityFilesystem)
+	}
+	if shell {
+		out = append(out, ExecutionCapabilityForegroundCommand)
+	}
+	return out
+}
+
+func validCatalogCapabilities(names []string) bool {
+	if len(names) > 16 {
+		return false
+	}
+	for _, name := range names {
+		const allowed = "abcdefghijklmnopqrstuvwxyz0123456789-"
+		if name == "" || len(name) > 64 || strings.Trim(name, allowed) != "" {
+			return false
+		}
+	}
+	return true
 }
 
 // ListExecutionTemplates returns a filtered, bounded inventory for the verified owner.
@@ -90,6 +125,9 @@ func (s *Service) ListExecutionTemplates(ctx context.Context) ([]ExecutionTempla
 		if !SelectTemplate(item.ID, item.Revision).Valid() || len(item.Name) > 480 || utf8.RuneCountInString(item.Name) > 120 || len(item.Description) > 1024 || len(item.Extensions) > 128 || !utf8.ValidString(item.Name) || !utf8.ValidString(item.Description) || !SelectTemplate("display", item.DisplayToken).Valid() {
 			return nil, "", ErrInvalidPlacementBinding
 		}
+		if !validCatalogCapabilities(item.Capabilities) {
+			return nil, "", ErrInvalidPlacementBinding
+		}
 		for key, value := range item.Extensions {
 			if len(key) > 253 || len(value) > 256 || !utf8.ValidString(key) || !utf8.ValidString(value) {
 				return nil, "", ErrInvalidPlacementBinding
@@ -110,6 +148,8 @@ func (s *Service) ListExecutionTemplates(ctx context.Context) ([]ExecutionTempla
 type ExecutionSelection struct {
 	Kind         PlacementSelectorKind
 	ID, Revision string
+	// Capabilities is the template request; empty means the template's set.
+	Capabilities []string
 }
 
 func (e ExecutionSelection) placement() (PlacementSelector, SessionProfile, error) {

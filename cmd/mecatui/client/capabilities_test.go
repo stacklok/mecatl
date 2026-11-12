@@ -1,6 +1,7 @@
 package client
 
 import (
+	"reflect"
 	"testing"
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
@@ -115,7 +116,7 @@ func TestCapabilitiesFrom(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := capabilitiesFrom(tc.in); got != tc.want {
+			if got := capabilitiesFrom(tc.in); !reflect.DeepEqual(got, tc.want) {
 				t.Fatalf("capabilitiesFrom(%v) = %+v, want %+v", tc.in, got, tc.want)
 			}
 		})

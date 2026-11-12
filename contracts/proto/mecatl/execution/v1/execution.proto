@@ -81,6 +81,8 @@ message EnsureTemplateRequest {
   TemplateSelector template = 2;
   Owner owner = 3;
   string operation_id = 4;
+  // As mecatl.v1.ExecutionTemplate.capabilities.
+  repeated string capabilities = 5;
 }
 
 message EnsureEnvironmentResponse {
@@ -90,6 +92,8 @@ message EnsureEnvironmentResponse {
   reserved 4, 5;
   reserved "grant", "grant_expires_at";
   uint64 grant_generation = 6;
+  // Mandatory.
+  repeated string admitted_capabilities = 7;
 }
 message AttachEnvironmentRequest { RequestContext context = 1; string purpose = 2; }
 message AttachEnvironmentResponse {
@@ -99,6 +103,8 @@ message AttachEnvironmentResponse {
   reserved 4, 5;
   reserved "grant", "grant_expires_at";
   uint64 grant_generation = 6;
+  // Mandatory.
+  repeated string admitted_capabilities = 7;
 }
 message AcquireRunRequest {
   EnvironmentRef environment = 1;
@@ -153,7 +159,11 @@ message ReserveSuccessorRequest {
   string destination_binding_id = 4;
   string operation_id = 5;
 }
-message ReferenceReservationResponse { EnvironmentRef environment = 1; }
+message ReferenceReservationResponse {
+  EnvironmentRef environment = 1;
+  // Mandatory; the source environment's set.
+  repeated string admitted_capabilities = 2;
+}
 message ListReferenceIntentsRequest {
   Owner owner = 1;
   int32 limit = 2;

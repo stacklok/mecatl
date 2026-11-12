@@ -35,10 +35,15 @@ func (r *droppedCommitRPC) AbortReference(_ context.Context, req *executionv1.Re
 }
 func (r *droppedCommitRPC) ReserveSuccessor(_ context.Context, req *executionv1.ReserveSuccessorRequest, _ ...grpc.CallOption) (*executionv1.ReferenceReservationResponse, error) {
 	r.lastSuccessor = req
-	return &executionv1.ReferenceReservationResponse{}, nil
+	return &executionv1.ReferenceReservationResponse{
+		AdmittedCapabilities: executionenv.TemplateCapabilities(),
+	}, nil
 }
 func (*droppedCommitRPC) AttachEnvironment(_ context.Context, req *executionv1.AttachEnvironmentRequest, _ ...grpc.CallOption) (*executionv1.AttachEnvironmentResponse, error) {
-	return &executionv1.AttachEnvironmentResponse{Environment: req.GetContext().GetEnvironment(), Epoch: 1, Ready: true, GrantGeneration: 1}, nil
+	return &executionv1.AttachEnvironmentResponse{
+		Environment: req.GetContext().GetEnvironment(), Epoch: 1, Ready: true, GrantGeneration: 1,
+		AdmittedCapabilities: executionenv.TemplateCapabilities(),
+	}, nil
 }
 
 type droppedReservationRPC struct {

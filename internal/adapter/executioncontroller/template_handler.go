@@ -42,7 +42,12 @@ func (s *Store) CatalogTemplates() []*executionv1.TemplateCatalogItem {
 					extensions[namespace+"/"+key] = value
 				}
 			}
-			items = append(items, &executionv1.TemplateCatalogItem{Template: &executionv1.TemplateSelector{Id: id, Revision: revision}, Name: display.Name, Description: display.Description, DisplayToken: "v1-" + hex.EncodeToString(sum[:]), Extensions: extensions, Capabilities: []string{"filesystem", "foreground-command"}})
+			items = append(items, &executionv1.TemplateCatalogItem{
+				Template: &executionv1.TemplateSelector{Id: id, Revision: revision},
+				Name:     display.Name, Description: display.Description,
+				DisplayToken: "v1-" + hex.EncodeToString(sum[:]), Extensions: extensions,
+				Capabilities: executionenv.TemplateCapabilities(),
+			})
 		}
 	}
 	sort.Slice(items, func(i, j int) bool {
@@ -60,7 +65,11 @@ func (s *Store) ValidateTemplate(_ context.Context, id, revision string) (Profil
 	if !ok {
 		return Profile{}, &executionenv.Error{Code: executionenv.CodeNotFound, Message: "execution template not found"}
 	}
-	return Profile{Name: id, Digest: p.Digest, MaxFileBytes: p.Spec.MaxFileBytes, MaxCommandBytes: p.Spec.MaxCommandBytes, MaxCommandDuration: p.Spec.MaxCommandDuration, Capabilities: []string{"filesystem", "foreground-command"}}, nil
+	return Profile{
+		Name: id, Digest: p.Digest, MaxFileBytes: p.Spec.MaxFileBytes,
+		MaxCommandBytes: p.Spec.MaxCommandBytes, MaxCommandDuration: p.Spec.MaxCommandDuration,
+		Capabilities: executionenv.TemplateCapabilities(),
+	}, nil
 }
 
 // ListExecutionTemplates returns the caller's allowed selectable template catalog.
@@ -120,6 +129,9 @@ func (h *Handler) EnsureTemplate(ctx context.Context, q *executionv1.EnsureTempl
 	}
 	owner, valid := ownerFromProto(q.GetOwner())
 	if !valid || !validBinding(q.GetBindingId()) || !validOperationID(q.GetOperationId()) {
+		return nil, wireError(executionenv.CodeInvalidArgument, false)
+	}
+	if len(q.GetCapabilities()) != 0 {
 		return nil, wireError(executionenv.CodeInvalidArgument, false)
 	}
 	backend, ok := h.backend.(templateBackend)

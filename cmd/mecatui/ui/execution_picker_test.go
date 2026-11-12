@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 
@@ -18,12 +19,14 @@ type executionTestSession struct {
 	err  error
 }
 
+var bothExecution = []string{"filesystem", "foreground-command"}
+
 func (s *executionTestSession) CreateSessionWithExecution(_ context.Context, _ client.ModelSelection, _ string, choice client.ExecutionChoice) (string, client.Capabilities, client.ResolvedModel, error) {
 	s.seen = append(s.seen, choice)
 	if s.err != nil {
 		return "", client.Capabilities{}, client.ResolvedModel{}, s.err
 	}
-	return "new", client.Capabilities{ExecutionFiles: true, BuiltInShell: true}, client.ResolvedModel{}, nil
+	return "new", client.Capabilities{Execution: bothExecution}, client.ResolvedModel{}, nil
 }
 
 type executionTestLister struct {
@@ -38,7 +41,16 @@ func (s executionTestLister) ListExecutionTemplates(context.Context) (client.Exe
 func TestExecutionPickerNoFallbackAndCapabilities(t *testing.T) {
 	revision := "v1-" + strings.Repeat("a", 64)
 	session := &executionTestSession{fakeConv: &fakeConv{}}
-	m := newTestModelFromDeps(Deps{Session: session, ExecutionTemplates: executionTestLister{inventory: client.ExecutionTemplateInventory{Items: []client.ExecutionTemplate{{ID: "safe", Revision: revision, Name: "Safe", DeclaredExecutionFiles: true, DeclaredBuiltInShell: false}}}}, Ctx: context.Background(), Theme: theme.New("aztec", theme.AztecPalette())})
+	items := []client.ExecutionTemplate{
+		{ID: "safe", Revision: revision, Name: "Safe", Capabilities: []string{"filesystem"}},
+	}
+	m := newTestModelFromDeps(Deps{
+		Session: session,
+		ExecutionTemplates: executionTestLister{
+			inventory: client.ExecutionTemplateInventory{Items: items},
+		},
+		Ctx: context.Background(), Theme: theme.New("aztec", theme.AztecPalette()),
+	})
 	m.phase = phaseIdle
 	m.sessionID = "old"
 	m.caps.ExecutionTemplates = true
@@ -52,7 +64,7 @@ func TestExecutionPickerNoFallbackAndCapabilities(t *testing.T) {
 	if len(m.executionPicker.items) != 1 {
 		t.Fatal("catalog entry missing")
 	}
-	if !strings.Contains(m.renderExecutionPicker(), "declared files: true, built-in Shell: false") {
+	if !strings.Contains(m.renderExecutionPicker(), "declares filesystem") {
 		t.Fatal("picker omitted declared affordances")
 	}
 	m.executionPicker.cursor = 2
@@ -72,10 +84,11 @@ func TestExecutionPickerNoFallbackAndCapabilities(t *testing.T) {
 	m = mm.(Model)
 	mm, _ = m.Update(cmd())
 	m = mm.(Model)
-	if m.sessionID != "new" || !m.caps.ExecutionFiles || !m.caps.BuiltInShell {
+	if m.sessionID != "new" || !slices.Equal(m.caps.Execution, bothExecution) {
 		t.Fatal("creation did not bind true session capabilities")
 	}
-	if detail := renderSessionDetails(m.deps.Theme, m.sessionDetails(), helpKeys{}, 80, 25); !strings.Contains(detail, "Execution files: true") || !strings.Contains(detail, "Built-in Shell: true") {
+	detail := renderSessionDetails(m.deps.Theme, m.sessionDetails(), helpKeys{}, 80, 25)
+	if !strings.Contains(detail, "Execution: filesystem, foreground-command") {
 		t.Fatal("session details did not show bound execution capabilities")
 	}
 }

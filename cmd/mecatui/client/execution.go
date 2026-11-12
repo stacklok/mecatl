@@ -42,7 +42,7 @@ func (c *Client) CreateSessionWithExecution(ctx context.Context, mode mecatlv1.P
 type ExecutionTemplate struct {
 	ID, Revision, Name, Description, DisplayToken string
 	Extensions                                    map[string]string
-	DeclaredExecutionFiles, DeclaredBuiltInShell  bool
+	Capabilities                                  []string
 }
 
 // ExecutionTemplateInventory is a caller-filtered, bounded catalog snapshot.
@@ -78,7 +78,12 @@ func (c *Client) ListExecutionTemplates(ctx context.Context) (ExecutionTemplateI
 		for key, value := range item.GetExtensions() {
 			extensions[key] = value
 		}
-		out.Items = append(out.Items, ExecutionTemplate{ID: item.GetTemplate().GetId(), Revision: item.GetTemplate().GetRevision(), Name: item.GetName(), Description: item.GetDescription(), DisplayToken: item.GetDisplayToken(), Extensions: extensions, DeclaredExecutionFiles: item.GetDeclaredExecutionFiles(), DeclaredBuiltInShell: item.GetDeclaredBuiltInShell()})
+		out.Items = append(out.Items, ExecutionTemplate{
+			ID: item.GetTemplate().GetId(), Revision: item.GetTemplate().GetRevision(),
+			Name: item.GetName(), Description: item.GetDescription(),
+			DisplayToken: item.GetDisplayToken(), Extensions: extensions,
+			Capabilities: slices.Clone(item.GetCapabilities()),
+		})
 	}
 	return out, nil
 }

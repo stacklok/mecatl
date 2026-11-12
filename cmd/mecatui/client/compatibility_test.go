@@ -123,12 +123,24 @@ func TestCheckCompatibility(t *testing.T) {
 		}
 	})
 
+	newer, older := int32(SupportedAPIMajor+1), int32(SupportedAPIMajor-1)
 	for _, tc := range []struct {
 		name     string
 		response *mecatlv1.GetCompatibilityInfoResponse
 		want     string
 	}{
-		{name: "server newer", response: &mecatlv1.GetCompatibilityInfoResponse{ApiMajor: int32(SupportedAPIMajor) + 1}, want: "server API is newer than this mecatui (expected major 1, observed 2); update mecatui"},
+		{
+			name:     "server newer",
+			response: &mecatlv1.GetCompatibilityInfoResponse{ApiMajor: newer},
+			want: "server API is newer than this mecatui (expected major 2, observed 3); " +
+				"update mecatui",
+		},
+		{
+			name:     "server older",
+			response: &mecatlv1.GetCompatibilityInfoResponse{ApiMajor: older},
+			want: "server API is older than this mecatui (expected major 2, observed 1); " +
+				"update server",
+		},
 		{name: "zero is invalid", response: &mecatlv1.GetCompatibilityInfoResponse{}, want: "server returned invalid compatibility information"},
 		{name: "negative is invalid", response: &mecatlv1.GetCompatibilityInfoResponse{ApiMajor: -1}, want: "server returned invalid compatibility information"},
 	} {
@@ -217,6 +229,13 @@ func TestCompareAPIMajor(t *testing.T) {
 		t.Fatal("lower positive server major was accepted")
 	} else if message, _ := SafeCompatibilityError(err); message != "server API is older than this mecatui (expected major 2, observed 1); update server" {
 		t.Fatalf("lower major message = %q", message)
+	}
+	// A released major-1 mecatui refuses a major-2 server with an actionable message.
+	if err := compareAPIMajor(&mecatlv1.GetCompatibilityInfoResponse{ApiMajor: 2}, 1); err == nil {
+		t.Fatal("major-1 client accepted a major-2 server")
+	} else if message, _ := SafeCompatibilityError(err); message !=
+		"server API is newer than this mecatui (expected major 1, observed 2); update mecatui" {
+		t.Fatalf("higher major message = %q", message)
 	}
 	if err := compareAPIMajor(nil, SupportedAPIMajor); err == nil {
 		t.Fatal("nil descriptor was accepted")

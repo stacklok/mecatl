@@ -59,7 +59,7 @@ func (s *sessionCapabilitiesServer) GetCompatibilityInfo(context.Context, *mecat
 	if s.globalErr != nil {
 		return nil, s.globalErr
 	}
-	return &mecatlv1.GetCompatibilityInfoResponse{ApiMajor: 1, Capabilities: s.global}, nil
+	return &mecatlv1.GetCompatibilityInfoResponse{ApiMajor: 2, Capabilities: s.global}, nil
 }
 
 func (s *sessionCapabilitiesServer) GetSession(context.Context, *mecatlv1.GetSessionRequest) (*mecatlv1.GetSessionResponse, error) {

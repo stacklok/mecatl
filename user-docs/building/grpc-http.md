@@ -28,7 +28,9 @@ Authenticated clients can inspect the deployment before creating a session:
 
 - gRPC `GetCompatibilityInfo` and HTTP `GET /v1/compatibility` return the API
   major, enabled capabilities, build feature identifiers, and optional
-  deployment label.
+  deployment label. Current servers report API major 2. The TypeScript SDK and
+  `mecatui` refuse a server with a different major, so upgrade the server, SDK,
+  and `mecatui` together.
 - gRPC `GetServerInfo` and HTTP `GET /v1/info` return build identity and
   sanitized diagnostic display endpoints. They do not return configuration or
   connection instructions.

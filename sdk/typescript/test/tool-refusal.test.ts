@@ -88,7 +88,7 @@ async function spawnHarness(options: SpawnHarnessOptions = {}) {
         if (options.createSessionError !== undefined) throw options.createSessionError;
         return { sessionId: `session-${createAttempts}` };
       },
-      getCompatibilityInfo: () => ({ apiMajor: 1, capabilities: {}, features }),
+      getCompatibilityInfo: () => ({ apiMajor: 2, capabilities: {}, features }),
       listMcpSources: () => ({ sources: [] }),
     });
   });
@@ -111,7 +111,7 @@ async function spawnHarness(options: SpawnHarnessOptions = {}) {
         void writeFile(
           argumentValue(request.args, "--ready-file"),
           JSON.stringify({
-            api_major: 1,
+            api_major: 2,
             features,
             pid: 4242,
             schema: "mecated-ready/1",
@@ -142,7 +142,7 @@ describe("callback tool refusals", () => {
       transport: createRouterTransport((router) => {
         router.service(HarnessService, {
           getCompatibilityInfo: () => ({
-            apiMajor: 1,
+            apiMajor: 2,
             capabilities: {},
             features: [callbackFeature],
           }),
@@ -163,7 +163,7 @@ describe("callback tool refusals", () => {
     const transport = createRouterTransport((router) => {
       router.service(HarnessService, {
         getCompatibilityInfo: () => ({
-          apiMajor: 1,
+          apiMajor: 2,
           capabilities: {},
           features: [callbackFeature],
         }),

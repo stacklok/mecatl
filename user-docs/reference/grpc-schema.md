@@ -1037,6 +1037,7 @@ ExecutionSelection is an exclusive choice; absence means deployment default.
 |---|---|---|---|---|
 | `id` | `string` |  |  |  |
 | `revision` | `string` |  |  |  |
+| `capabilities` | `string` | repeated |  | &#34;filesystem&#34;, &#34;foreground-command&#34;. Empty means the template&#39;s set narrowed by deployment configuration (--no-shell, --redis-filesystem); non-empty is refused (#2712). |
 
 
 
@@ -1052,8 +1053,7 @@ ExecutionSelection is an exclusive choice; absence means deployment default.
 | `description` | `string` |  |  |  |
 | `display_token` | `string` |  |  |  |
 | `extensions` | `ExecutionTemplateInfo.ExtensionsEntry` | repeated |  |  |
-| `declared_execution_files` | `bool` |  |  | Declared provider affordances; effective session capabilities may be narrower. |
-| `declared_built_in_shell` | `bool` |  |  |  |
+| `capabilities` | `string` | repeated |  | Declared; sessions may be narrower. |
 
 
 
@@ -3112,7 +3112,7 @@ Session is a snapshot of server-side session state.
 
 SessionCapabilities is the per-session effective capability projection.
 Image/audio are the resolved model&#39;s media input support (catalog ∩ adapter);
-execution_files/built_in_shell report actual session environment, tool catalog
+execution reports actual session environment, tool catalog
 and authority instead. Unlike ServerCapabilities these bits may differ for
 two sessions on the same deployment. Reasoning is discovered via ListModels.
 
@@ -3120,8 +3120,7 @@ two sessions on the same deployment. Reasoning is discovered via ListModels.
 |---|---|---|---|---|
 | `image` | `bool` |  |  | image is true when the resolved provider+model can consume image prompt parts. |
 | `audio` | `bool` |  |  | audio is true when the resolved provider+model can consume audio prompt parts. |
-| `execution_files` | `bool` |  |  | execution_files and built_in_shell are effective session tool affordances, separate from the provider&#39;s image/audio input modalities. |
-| `built_in_shell` | `bool` |  |  |  |
+| `execution` | `string` | repeated |  | Effective: admitted ∩ registered tools ∩ bound authority. |
 
 
 

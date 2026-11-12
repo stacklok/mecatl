@@ -35,7 +35,9 @@ func (f *fakeModelsClient) ListModels(_ context.Context, in *mecatlv1.ListModels
 }
 
 func (f *fakeModelsClient) GetCompatibilityInfo(_ context.Context, _ *mecatlv1.GetCompatibilityInfoRequest, _ ...grpc.CallOption) (*mecatlv1.GetCompatibilityInfoResponse, error) {
-	return &mecatlv1.GetCompatibilityInfoResponse{ApiMajor: 1, Capabilities: f.caps, Features: f.features}, nil
+	return &mecatlv1.GetCompatibilityInfoResponse{
+		ApiMajor: 2, Capabilities: f.caps, Features: f.features,
+	}, nil
 }
 
 func (f *fakeModelsClient) CreateSession(_ context.Context, in *mecatlv1.CreateSessionRequest, _ ...grpc.CallOption) (*mecatlv1.CreateSessionResponse, error) {

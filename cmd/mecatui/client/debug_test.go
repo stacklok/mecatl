@@ -36,7 +36,7 @@ func (f *debugHarness) CreateSession(_ context.Context, req *mecatlv1.CreateSess
 }
 
 func (f *debugHarness) GetCompatibilityInfo(_ context.Context, _ *mecatlv1.GetCompatibilityInfoRequest, _ ...grpc.CallOption) (*mecatlv1.GetCompatibilityInfoResponse, error) {
-	return &mecatlv1.GetCompatibilityInfoResponse{ApiMajor: 1, Capabilities: f.caps}, nil
+	return &mecatlv1.GetCompatibilityInfoResponse{ApiMajor: 2, Capabilities: f.caps}, nil
 }
 
 func (f *debugHarness) ListSessions(_ context.Context, _ *mecatlv1.ListSessionsRequest, _ ...grpc.CallOption) (*mecatlv1.ListSessionsResponse, error) {

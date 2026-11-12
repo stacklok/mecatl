@@ -49,7 +49,7 @@ function queryHarness(options: QueryHarnessOptions = {}) {
         calls.push(`delete:${request.sessionId}`);
         return {};
       },
-      getCompatibilityInfo: () => ({ apiMajor: 1, capabilities: {}, features: ["server_info"] }),
+      getCompatibilityInfo: () => ({ apiMajor: 2, capabilities: {}, features: ["server_info"] }),
       getSession: (request) => ({ session: { sessionId: request.sessionId } }),
       converse: async function* (requests) {
         const input = requests[Symbol.asyncIterator]();
@@ -261,7 +261,7 @@ describe("query one-shot lifecycle", () => {
         },
         createSession: () => ({ sessionId: "query-plan-session" }),
         deleteSession: () => ({}),
-        getCompatibilityInfo: () => ({ apiMajor: 1, capabilities: {}, features: ["server_info"] }),
+        getCompatibilityInfo: () => ({ apiMajor: 2, capabilities: {}, features: ["server_info"] }),
         converse: async function* (requests) {
           runNumber += 1;
           const input = requests[Symbol.asyncIterator]();
@@ -394,7 +394,7 @@ describe("query one-shot lifecycle", () => {
     const transport = createRouterTransport((router) => {
       router.service(HarnessService, {
         createSession: () => ({ sessionId: "manual-session" }),
-        getCompatibilityInfo: () => ({ apiMajor: 1, capabilities: {}, features: ["server_info"] }),
+        getCompatibilityInfo: () => ({ apiMajor: 2, capabilities: {}, features: ["server_info"] }),
         converse: async function* (requests) {
           const input = requests[Symbol.asyncIterator]();
           await input.next();

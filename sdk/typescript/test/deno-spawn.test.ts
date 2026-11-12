@@ -69,7 +69,7 @@ function fixture(ready: unknown, options: FixtureOptions = {}) {
   vi.mocked(createNodeTransport).mockReturnValue(
     createRouterTransport((router) => {
       router.service(HarnessService, {
-        getCompatibilityInfo: () => ({ apiMajor: 1, capabilities: {}, features: ["server_info"] }),
+        getCompatibilityInfo: () => ({ apiMajor: 2, capabilities: {}, features: ["server_info"] }),
       });
     }),
   );
@@ -101,7 +101,7 @@ function fixture(ready: unknown, options: FixtureOptions = {}) {
 const validReady = {
   schema: "mecated-ready/1",
   pid: 42,
-  api_major: 1,
+  api_major: 2,
   features: [],
   transport: "tcp",
   grpc_address: "127.0.0.1:9000",

@@ -17,7 +17,10 @@ func executionFromProto(value *mecatlv1.ExecutionSelection) (ExecutionSelection,
 		return ExecutionSelection{Kind: PlacementSelectorNoFS}, nil
 	}
 	if value.Template != nil && value.None == nil && len(value.Template.ProtoReflect().GetUnknown()) == 0 {
-		e := ExecutionSelection{Kind: PlacementSelectorTemplate, ID: value.Template.GetId(), Revision: value.Template.GetRevision()}
+		e := ExecutionSelection{
+			Kind: PlacementSelectorTemplate, ID: value.Template.GetId(),
+			Revision: value.Template.GetRevision(), Capabilities: value.Template.GetCapabilities(),
+		}
 		if _, _, err := e.placement(); err == nil {
 			return e, nil
 		}

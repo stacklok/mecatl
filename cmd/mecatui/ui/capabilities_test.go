@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -64,12 +65,12 @@ func TestCreateSessionCmdCarriesCaps(t *testing.T) {
 	if ready.SessionID != "sess-test-0001" {
 		t.Fatalf("SessionID = %q, want sess-test-0001", ready.SessionID)
 	}
-	if ready.Capabilities != want {
+	if !reflect.DeepEqual(ready.Capabilities, want) {
 		t.Fatalf("Capabilities = %+v, want %+v", ready.Capabilities, want)
 	}
 
 	got := applyAll(m, tea.WindowSizeMsg{Width: 100, Height: 30}, ready)
-	if got.caps != want {
+	if !reflect.DeepEqual(got.caps, want) {
 		t.Fatalf("model caps = %+v, want %+v", got.caps, want)
 	}
 }
@@ -105,11 +106,11 @@ func TestSessionReadyDefaultCapsAllFalse(t *testing.T) {
 		Ctx:     context.Background(),
 	})
 	ready := m.createSessionCmd()().(client.SessionReadyMsg)
-	if (ready.Capabilities != client.Capabilities{}) {
+	if !reflect.DeepEqual(ready.Capabilities, client.Capabilities{}) {
 		t.Fatalf("default caps = %+v, want all-false zero value", ready.Capabilities)
 	}
 	got := applyAll(m, tea.WindowSizeMsg{Width: 100, Height: 30}, ready)
-	if (got.caps != client.Capabilities{}) {
+	if !reflect.DeepEqual(got.caps, client.Capabilities{}) {
 		t.Fatalf("model caps = %+v, want all-false zero value", got.caps)
 	}
 }

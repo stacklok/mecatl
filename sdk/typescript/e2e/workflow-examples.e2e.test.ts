@@ -116,7 +116,7 @@ async function withEnrollmentFixture<T>(
     let value: unknown;
     if (path === "/v1/compatibility") {
       value = {
-        api_major: 1,
+        api_major: 2,
         capabilities: { mcp_connector_status: true, workspace_enrollment: true },
         features: ["workspace_enrollment"],
       };
