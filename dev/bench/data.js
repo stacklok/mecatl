@@ -539166,9 +539166,123 @@ window.BENCHMARK_DATA = {
         },
         "date": 1794475851573,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "328978+blkt@users.noreply.github.com",
+            "name": "Michelangelo Mori",
+            "username": "blkt"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "3fcda3a1f7125fe9108cfde62b2bb0bb0ff5d83b",
+          "message": "feat(executioncontroller): pin per-executor server certificates (#2759)\n\nBefore creating an executor Pod, the provider generates an ECDSA key\npair and a self-signed certificate naming the environment, stores both\nin an immutable, environment-owned Secret named after the fingerprint,\nand records the fingerprint in `status.serverCertificate`. Once the Pod\nexists it records the Pod UID with the fingerprint. A container restart\nkeeps the pin; replacement, retirement, and retained deletion remove the\nSecret after the Pod is gone, and a replacement gets a new Secret and\npin. If the API server prunes the pin because the CRD is outdated, the\nprovider removes the Secret and reports that the CRD must be applied.\n\nExecutor Pods mount the Secret and a projected provider-trust volume\n(CA bundle and the provider's expected URI SAN, no `subPath`). The CA\nbundle must live in a Secret that holds no provider key, so executor\nnodes never reference one. The drift check now requires exactly these\nvolumes and mounts.\n\n`ExecutorDialer` is the dial-side helper for the authorizing proxy: it\nresolves only the Pod with the pinned UID, accepts only a single\ncertificate matching the pinned fingerprint, and presents the projected\nplatform client certificate.\n\nThe chart adds `provider.executorClientTLS` (required), the client\ncertificate projection, the executor trust ConfigMap, and Secret\n`create`, `get`, and `delete` for the provider. A\n`ValidatingAdmissionPolicy` confines the provider's Secret `create` and\n`delete` to executor certificate Secrets, which requires Kubernetes 1.30\nor later. Executor Pods created before this change fail the drift check\nuntil replaced.\n\nCloses #2703",
+          "timestamp": "2026-11-12T13:13:44+01:00",
+          "tree_id": "478405d5987aea8d136c890322038ed02337773a",
+          "url": "https://github.com/stacklok/mecatl/commit/3fcda3a1f7125fe9108cfde62b2bb0bb0ff5d83b"
+        },
+        "date": 1794486431740,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "background_subagents/allocs_per_op",
+            "value": 779,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "background_subagents/tokens_total",
+            "value": 0,
+            "unit": "tokens"
+          },
+          {
+            "name": "background_subagents/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          },
+          {
+            "name": "compaction_cycle/allocs_per_op",
+            "value": 3104,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "compaction_cycle/tokens_total",
+            "value": 40110,
+            "unit": "tokens"
+          },
+          {
+            "name": "compaction_cycle/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          },
+          {
+            "name": "single_session_long/allocs_per_op",
+            "value": 32200,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "single_session_long/tokens_total",
+            "value": 521040,
+            "unit": "tokens"
+          },
+          {
+            "name": "single_session_long/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          },
+          {
+            "name": "team_fanout/allocs_per_op",
+            "value": 2159,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "team_fanout/tokens_total",
+            "value": 12880,
+            "unit": "tokens"
+          },
+          {
+            "name": "team_fanout/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          },
+          {
+            "name": "tui_scrollback_view/tokens_total",
+            "value": 0,
+            "unit": "tokens"
+          },
+          {
+            "name": "tui_scrollback_view/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          },
+          {
+            "name": "tui_scrollback_view_steady/tokens_total",
+            "value": 0,
+            "unit": "tokens"
+          },
+          {
+            "name": "tui_scrollback_view_steady/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/tokens_total",
+            "value": 0,
+            "unit": "tokens"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          }
+        ]
       }
     ]
   },
-  "lastUpdate": 1794486427183,
+  "lastUpdate": 1794486432836,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
