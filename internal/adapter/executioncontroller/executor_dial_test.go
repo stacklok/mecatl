@@ -85,7 +85,10 @@ type executorServer struct {
 }
 
 // startExecutorServer stands in for #2699: it serves certPEM and admits only the provider URI.
-func startExecutorServer(t *testing.T, env string, pki platformPKI) executorServer {
+// Any chain certificates are sent after the executor certificate.
+func startExecutorServer(
+	t *testing.T, env string, pki platformPKI, chain ...[]byte,
+) executorServer {
 	t.Helper()
 	certPEM, keyPEM, fingerprint, err := generateExecutorCertificate(env, time.Now())
 	if err != nil {
@@ -95,6 +98,7 @@ func startExecutorServer(t *testing.T, env string, pki platformPKI) executorServ
 	if err != nil {
 		t.Fatal(err)
 	}
+	cert.Certificate = append(cert.Certificate, chain...)
 	cfg := &tls.Config{
 		MinVersion:   tls.VersionTLS13,
 		Certificates: []tls.Certificate{cert},
@@ -176,6 +180,35 @@ func TestExecutorDialAcceptsOnlyThePinnedPodAndCertificate(t *testing.T) {
 	stale := ExecutorPin{PodName: "executor-a", PodUID: "pod-a1", Fingerprint: rekeyedA.fingerprint}
 	if err = dialAndRead(t, dialer, stale, rekeyedA.port); !errors.Is(err, errExecutorPodReplaced) {
 		t.Fatalf("old Pod UID with a valid certificate accepted: %v", err)
+	}
+}
+
+func TestExecutorDialRefusesChainWhoseLeafMatchesThePin(t *testing.T) {
+	pki := newPlatformPKI(t, testProviderClientURI)
+	otherPEM, _, _, err := generateExecutorCertificate("exec-other", time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, _ := pem.Decode(otherPEM)
+	server := startExecutorServer(t, "exec-a", pki, other.Bytes)
+	kube := kubefake.NewSimpleClientset(executorPodAt("executor-a", "pod-a", "127.0.0.1"))
+	dialer := NewExecutorDialer(kube, "ns", pki.clientDir, testProviderClientURI)
+	pin := ExecutorPin{PodName: "executor-a", PodUID: "pod-a", Fingerprint: server.fingerprint}
+	err = dialAndRead(t, dialer, pin, server.port)
+	if !errors.Is(err, errExecutorCertificateMismatch) {
+		t.Fatalf("two-certificate chain with the pinned leaf accepted: %v", err)
+	}
+}
+
+func TestExecutorDialRefusesEmptyPin(t *testing.T) {
+	pki := newPlatformPKI(t, testProviderClientURI)
+	server := startExecutorServer(t, "exec-a", pki)
+	kube := kubefake.NewSimpleClientset(executorPodAt("executor-a", "pod-a", "127.0.0.1"))
+	dialer := NewExecutorDialer(kube, "ns", pki.clientDir, testProviderClientURI)
+	pin := ExecutorPin{PodName: "executor-a", PodUID: "pod-a"}
+	err := dialAndRead(t, dialer, pin, server.port)
+	if !errors.Is(err, errExecutorCertificateMismatch) {
+		t.Fatalf("empty pin accepted: %v", err)
 	}
 }
 
