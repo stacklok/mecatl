@@ -413482,6 +413482,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1794417037059,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "4377202+samuv@users.noreply.github.com",
+            "name": "Samuele V",
+            "username": "samuv"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "b59ee2c70e34555b02b78061d0b35005d89dbe92",
+          "message": "chore(sdk): move SDK tooling to Node 26 LTS (#2767)\n\nSigned-off-by: Samuele Verzi <samu@stacklok.com>",
+          "timestamp": "2026-11-12T10:18:39+01:00",
+          "tree_id": "1f4b4e7c69a20f88e14e4055075136cba176ac28",
+          "url": "https://github.com/stacklok/mecatl/commit/b59ee2c70e34555b02b78061d0b35005d89dbe92"
+        },
+        "date": 1794475859768,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 13409.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12902,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 680,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -538806,6 +538845,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1794475856579,
+  "lastUpdate": 1794475860589,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
