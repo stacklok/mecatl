@@ -425,7 +425,7 @@ The subject tokens the broker presents are bearer tokens: they prove whose autho
 2. The signature verifies.
 3. `iss` and `sub` are both `mecatl`.
 4. `aud` is the authorization server's issuer identifier as its only value, not its token-endpoint URL, as [draft-ietf-oauth-rfc7523bis](https://datatracker.ietf.org/doc/draft-ietf-oauth-rfc7523bis/) requires.
-5. `exp` has not passed, allowing the configured clock skew, and `exp - iat` is within the configured maximum, here 60 seconds.
+5. `exp` has not passed, allowing the clock skew, and is no further ahead of the server's clock than its maximum. The broker signs each assertion to expire 60 seconds after `iat`. ToolHive fixes its bound at 5 minutes plus a 60-second skew and does not cap `exp - iat`; since only the holder of the broker client key can sign an assertion, and check 6 makes each one single use, a tighter server bound would add little.
 6. `jti` has not been seen. The server keeps it until `exp` plus the clock skew, in storage shared by all its replicas.
 
 **Output.** An authenticated client `mecatl`.
@@ -995,8 +995,8 @@ On Okta, Google, and Keycloak both claims carry the same value. On Entra they di
 
 None of these values is selected. Each bounds a risk the operator should know:
 
-- **Lifetimes:** AS-1's maximum for grants that issue ID-JAGs, which bounds `RT-A42`'s hard expiry, and for grants that issue refresh tokens, which bounds a schedule's horizon; the ID-JAG lifetime, the `V` lifetime, which bounds how long a `V` taken from mecak8s stays usable, the maximum call duration, which bounds how long the vMCP accepts messages for a call after its `V` expires, and the maximum SVID, workload-credential, and client-assertion lifetimes.
-- **Clock skew**, and the margins derived from it: how long used ID-JAG and `V` `jti` values are kept past `exp` (a `V`'s, at least until the call it started ends).
+- **Lifetimes:** AS-1's maximum for grants that issue ID-JAGs, which bounds `RT-A42`'s hard expiry, and for grants that issue refresh tokens, which bounds a schedule's horizon; the ID-JAG lifetime, the `V` lifetime, which bounds how long a `V` taken from mecak8s stays usable, the maximum call duration, which bounds how long the vMCP accepts messages for a call after its `V` expires, and the maximum SVID and workload-credential lifetimes. The broker's client-assertion lifetime is at most 60 seconds, and ToolHive's bound on it is fixed (step (5), check 5).
+- **Clock skew**, and the margins derived from it: how long used ID-JAG and `V` `jti` values are kept past `exp` (a `V`'s, at least until the call it started ends). ToolHive fixes the skew it allows on a client assertion at 60 seconds.
 - **Upstream re-check:** the re-check interval, the maximum upstream refresh-token lifetime per IdP when the IdP sends no `refresh_expires_in`, and the lease timeout for a refresh in flight.
 - **Key refresh:** the rate limit on refreshing a key set after an unknown `kid`.
 - **Closed sessions:** how long the broker keeps closed-session records. Session IDs must be unguessable and never reused, so a record kept for less than forever relies on the ID space alone.

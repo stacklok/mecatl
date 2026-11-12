@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
@@ -203,6 +204,9 @@ type AccessTokenSpec struct {
 	// ForeignKey signs with a key that is not in AS-1's JWKS, under AS-1's
 	// kid.
 	ForeignKey bool
+	// Claims are added to the claims, replacing any of the same name, for a
+	// token such as an ID-JAG with resource and act.
+	Claims map[string]any
 }
 
 // MintAccessToken issues an AS-1 access token without a sign-in, for tests
@@ -260,6 +264,7 @@ func (a *AS1) signAccessToken(spec AccessTokenSpec) (string, error) {
 	default:
 		claims["sub_id"] = map[string]string{"format": "iss_sub", "iss": a.idp.Issuer(), "sub": spec.User}
 	}
+	maps.Copy(claims, spec.Claims)
 	token := jwt.NewWithClaims(jwt.SigningMethodES256, claims)
 	token.Header["kid"] = as1KeyID
 	switch {

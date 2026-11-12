@@ -34,6 +34,8 @@ import (
 	"github.com/stacklok/toolhive/pkg/authserver/server/registration"
 	"github.com/stacklok/toolhive/pkg/authserver/storage"
 	"github.com/stacklok/toolhive/pkg/oauthproto"
+
+	"github.com/stacklok/mecatl/internal/identitybroker/adapter/inprocesshttp"
 )
 
 // accessTokenType is the JOSE typ of AS-1 access tokens (RFC 9068).
@@ -159,10 +161,10 @@ func newServer(ctx context.Context, cfg Config, opts options) (*Server, error) {
 		Upstreams:        []authserver.UpstreamRunConfig{{Type: authserver.UpstreamProviderTypeOIDC, OIDCConfig: cfg.upstreamRunConfig()}},
 	}
 	if cfg.Delegate != nil {
-		jwksFile, removeKeySet, err := writeKeySet(cfg.Delegate.KeySet)
+		jwksFile, removeKeySet, err := writeKeySet("as1-delegate-", cfg.Delegate.KeySet)
 		if err != nil {
 			_ = store.Close()
-			return nil, err
+			return nil, fmt.Errorf("as1server: delegate key set: %w", err)
 		}
 		defer removeKeySet()
 		// Setting only TokenExchange leaves ToolHive's JWT-bearer inbound grant
@@ -349,14 +351,11 @@ func signInRoutes(issuer *url.URL, embedded http.Handler) ([]string, http.Handle
 // registration and device-flow endpoints. Any other response passes through.
 func withoutUnroutedEndpoints(next http.Handler, routed map[string]bool) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		recorded := &bufferedResponse{header: make(http.Header)}
+		recorded := inprocesshttp.NewRecorder()
 		next.ServeHTTP(recorded, r)
-		if recorded.status == 0 {
-			recorded.status = http.StatusOK
-		}
-		body := recorded.body.Bytes()
+		body := recorded.Body()
 		var doc map[string]json.RawMessage
-		if recorded.status == http.StatusOK && json.Unmarshal(body, &doc) == nil {
+		if recorded.Status() == http.StatusOK && json.Unmarshal(body, &doc) == nil {
 			for key, raw := range doc {
 				var endpoint string
 				if strings.HasSuffix(key, "_endpoint") && (json.Unmarshal(raw, &endpoint) != nil || !routed[endpoint]) {
@@ -367,9 +366,9 @@ func withoutUnroutedEndpoints(next http.Handler, routed map[string]bool) http.Ha
 				body = rewritten
 			}
 		}
-		maps.Copy(w.Header(), recorded.header)
+		maps.Copy(w.Header(), recorded.Header())
 		w.Header().Set("Content-Length", strconv.Itoa(len(body)))
-		w.WriteHeader(recorded.status)
+		w.WriteHeader(recorded.Status())
 		_, _ = w.Write(body)
 	})
 }

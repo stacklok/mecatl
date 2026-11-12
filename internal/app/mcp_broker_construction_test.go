@@ -2,7 +2,11 @@ package app
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/url"
 	"reflect"
@@ -18,6 +22,8 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/mcpauthority"
 	"github.com/stacklok/mecatl/internal/adapter/mcpbroker"
 	"github.com/stacklok/mecatl/internal/adapter/permconfig"
+	"github.com/stacklok/mecatl/internal/identitybroker"
+	"github.com/stacklok/mecatl/internal/testutil/identityharness"
 )
 
 func unusedBrokerCaller(context.Context, mcpbroker.SessionRef, string, session.ToolCall) (session.ToolResult, error) {
@@ -116,6 +122,165 @@ func TestBuildKeepsConfiguredMCPBrokerWithIdentityBroker(t *testing.T) {
 	}
 }
 
+// as2TestIssuer is AS-2's issuer for brokerTestCallbackURL.
+const as2TestIssuer = "https://broker.example/v1/mcp/broker"
+
+func protectedBrokerAuthority() *mcpauthority.Result {
+	return mcpauthority.NewBroker(mcpauthority.BrokerConfig{CallbackURL: brokerTestCallbackURL, Routes: []permconfig.MCPServerProfile{protectedToolHiveRoute("calendar")}})
+}
+
+// unusedAS1 points the identity broker's session open at an AS-1 startup
+// never calls, with clientKey as the broker client key.
+func unusedAS1(issuer string, clientKey *ecdsa.PrivateKey) *IdentityBrokerAS1 {
+	return &IdentityBrokerAS1{Issuer: issuer, TokenEndpoint: issuer + "/token", HTTPClient: &http.Client{}, ClientKey: clientKey}
+}
+
+func newBrokerClientKey(t *testing.T) *ecdsa.PrivateKey {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return key
+}
+
+// TestBuildRecordsAS2 sets AS-2 up with the identity broker on and a
+// protected route, for each AS-1 the broker may have: startup records AS-2's
+// issuer, token endpoint, resource, and an in-process client, and AS-2 knows
+// the key the broker signs its client assertions with.
+func TestBuildRecordsAS2(t *testing.T) {
+	h := identityharness.New(t, identityharness.Options{})
+	for name, cfg := range map[string]Config{
+		"external AS-1": {IdentityBrokerAS1: unusedAS1("https://as1.example", nil)},
+		"hosted AS-1":   {IdentityBrokerHostedAS1: hostedAS1Config(t, h, "https://as1.mecatl.test/as1")},
+		"no AS-1":       {},
+	} {
+		t.Run(name, func(t *testing.T) {
+			cfg.Workspace, cfg.UseMock, cfg.NoSoul = t.TempDir(), true, true
+			cfg.IdentityBroker, cfg.MCPAuthority = true, protectedBrokerAuthority()
+			built, err := buildIsolated(t, t.Context(), cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(built.Close)
+			as2 := built.identityBrokerAS2
+			if as2 == nil {
+				t.Fatal("startup recorded no AS-2")
+			}
+			if as2.Issuer != as2TestIssuer || as2.TokenEndpoint != as2TestIssuer+"/oauth/token" || as2.Resource != as2TestIssuer+"/mcp" {
+				t.Fatalf("AS-2 = issuer %q, token endpoint %q, resource %q", as2.Issuer, as2.TokenEndpoint, as2.Resource)
+			}
+			if as2.HTTPClient == nil || as2.HTTPClient.Timeout != as2RequestTimeout {
+				t.Fatalf("AS-2 client = %+v, want one bounded by %v", as2.HTTPClient, as2RequestTimeout)
+			}
+			// The in-process client serves the token endpoint and nothing else.
+			for _, other := range []string{as2TestIssuer + "/.well-known/jwks.json", "https://other.example/v1/mcp/broker/oauth/token", as2.Resource} {
+				if resp, err := as2.HTTPClient.Get(other); err == nil {
+					_ = resp.Body.Close()
+					t.Errorf("in-process client served %s", other)
+				}
+			}
+			if built.identityBrokerClient == nil {
+				t.Fatal("startup recorded no broker client signer")
+			}
+			// An exchange of a bogus token authenticates the broker client
+			// first, so its key decides between invalid_client and a refused
+			// grant.
+			exchange := func(signer *identitybroker.ClientAssertionSigner) (int, string) {
+				t.Helper()
+				assertion, err := signer.ClientAssertion(as2.Issuer, time.Now())
+				if err != nil {
+					t.Fatal(err)
+				}
+				resp, err := as2.HTTPClient.PostForm(as2.TokenEndpoint, url.Values{
+					"grant_type":            {"urn:ietf:params:oauth:grant-type:token-exchange"},
+					"subject_token":         {"not-a-token"},
+					"subject_token_type":    {"urn:ietf:params:oauth:token-type:access_token"},
+					"resource":              {as2.Resource},
+					"client_assertion_type": {"urn:ietf:params:oauth:client-assertion-type:jwt-bearer"},
+					"client_assertion":      {assertion.Value()},
+				})
+				if err != nil {
+					t.Fatalf("AS-2 token request: %v", err)
+				}
+				defer func() { _ = resp.Body.Close() }()
+				var body struct {
+					Error string `json:"error"`
+				}
+				_ = json.NewDecoder(resp.Body).Decode(&body)
+				return resp.StatusCode, body.Error
+			}
+			if status, code := exchange(built.identityBrokerClient); status == http.StatusUnauthorized || code == "invalid_client" || code == "" {
+				t.Fatalf("the broker client key does not authenticate at AS-2: %d %q", status, code)
+			}
+			other, err := identitybroker.NewClientAssertionSigner(newBrokerClientKey(t), 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if status, code := exchange(other); status != http.StatusUnauthorized || code != "invalid_client" {
+				t.Fatalf("another key at AS-2: %d %q, want 401 invalid_client", status, code)
+			}
+		})
+	}
+}
+
+// TestBuildMCPBrokerSetsNoAS2ForAnEmptyKeySet pins that an empty broker
+// client key set, like a nil one, sets up no AS-2.
+func TestBuildMCPBrokerSetsNoAS2ForAnEmptyKeySet(t *testing.T) {
+	parts, err := buildMCPBroker(t.Context(), Config{}, mcpauthority.BrokerConfig{CallbackURL: brokerTestCallbackURL, Routes: []permconfig.MCPServerProfile{protectedToolHiveRoute("calendar")}}, nil, mcpBrokerIdentity{clientKeySet: []byte{}})
+	if err != nil {
+		t.Fatalf("buildMCPBroker: %v", err)
+	}
+	t.Cleanup(parts.close)
+	if parts.as2 != nil {
+		t.Fatalf("an empty broker client key set set up AS-2 %+v", parts.as2)
+	}
+}
+
+func TestBuildRecordsNoAS2(t *testing.T) {
+	for name, cfg := range map[string]Config{
+		"identity broker off":   {MCPAuthority: protectedBrokerAuthority()},
+		"injected core":         {IdentityBroker: true, identityBrokerCore: newClosableCore(t), MCPAuthority: protectedBrokerAuthority()},
+		"no protected route":    {IdentityBroker: true, MCPAuthority: mcpauthority.NewBroker(mcpauthority.BrokerConfig{CallbackURL: brokerTestCallbackURL})},
+		"identity broker alone": {IdentityBroker: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			cfg.Workspace, cfg.UseMock, cfg.NoSoul = t.TempDir(), true, true
+			built, err := buildIsolated(t, t.Context(), cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(built.Close)
+			if built.identityBrokerAS2 != nil {
+				t.Fatalf("startup recorded AS-2 %+v", built.identityBrokerAS2)
+			}
+		})
+	}
+}
+
+func TestBuildRefusesAS2WithAS1sIssuer(t *testing.T) {
+	h := identityharness.New(t, identityharness.Options{})
+	for name, cfg := range map[string]Config{
+		"hosted AS-1":   {IdentityBrokerHostedAS1: hostedAS1Config(t, h, as2TestIssuer)},
+		"external AS-1": {IdentityBrokerAS1: unusedAS1(as2TestIssuer, nil)},
+		// The same server spelled differently is still AS-2's issuer.
+		"external AS-1, other spelling": {IdentityBrokerAS1: unusedAS1("HTTPS://Broker.Example:443/v1/mcp/broker/", nil)},
+	} {
+		t.Run(name, func(t *testing.T) {
+			cfg.Workspace, cfg.UseMock, cfg.NoSoul = t.TempDir(), true, true
+			cfg.IdentityBroker, cfg.MCPAuthority = true, protectedBrokerAuthority()
+			built, err := buildIsolated(t, t.Context(), cfg)
+			if err == nil {
+				built.Close()
+				t.Fatal("Build gave AS-2 AS-1's issuer")
+			}
+			if !errors.Is(err, errAS2IssuerIsAS1s) {
+				t.Fatalf("Build error = %v, want %v", err, errAS2IssuerIsAS1s)
+			}
+		})
+	}
+}
+
 // TestConfiguredMCPBrokerWithoutBrokerAuthorityBuildsNoBroker pins that
 // ConfiguredMCPBroker only chooses a path: without broker MCP authority, Build
 // constructs no broker at all.
@@ -149,7 +314,7 @@ func TestBuildMCPBrokerFailuresKeepTheirErrors(t *testing.T) {
 		{name: "bundled callback", declaration: mcpauthority.BrokerConfig{CallbackURL: brokerTestCallbackURL + "?x=1"}, want: "build bundled MCP broker: "},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			parts, err := buildMCPBroker(t.Context(), tc.cfg, tc.declaration, tc.occupied)
+			parts, err := buildMCPBroker(t.Context(), tc.cfg, tc.declaration, tc.occupied, mcpBrokerIdentity{})
 			if err == nil || !strings.HasPrefix(err.Error(), tc.want) {
 				parts.close()
 				t.Fatalf("buildMCPBroker error = %v, want prefix %q", err, tc.want)
@@ -181,7 +346,7 @@ func TestBuildMCPBrokerHandsOffPathSpecificParts(t *testing.T) {
 		{name: "configured with callback", cfg: configured, declaration: mcpauthority.BrokerConfig{CallbackURL: brokerTestCallbackURL}, web: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			parts, err := buildMCPBroker(t.Context(), tc.cfg, tc.declaration, nil)
+			parts, err := buildMCPBroker(t.Context(), tc.cfg, tc.declaration, nil, mcpBrokerIdentity{})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -211,7 +376,7 @@ func TestBundledMCPBrokerClosesUnusedAuthRedisClient(t *testing.T) {
 		t.Fatalf("miniredis: %v", err)
 	}
 	t.Cleanup(mr.Close)
-	parts, err := buildMCPBroker(t.Context(), Config{RedisURL: mr.Addr(), RedisAllowPlaintext: true}, mcpauthority.BrokerConfig{}, nil)
+	parts, err := buildMCPBroker(t.Context(), Config{RedisURL: mr.Addr(), RedisAllowPlaintext: true}, mcpauthority.BrokerConfig{}, nil, mcpBrokerIdentity{})
 	if err != nil {
 		t.Fatal(err)
 	}

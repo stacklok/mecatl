@@ -55,6 +55,9 @@ type Process struct {
 	// CallbackPath is the mount path of Handlers.Callback; empty when the
 	// process has no callback URL.
 	CallbackPath string
+	// AS2 is the embedded authorization server as the identity broker's AS-2;
+	// nil unless ToolHiveConfig.BrokerClient set it up.
+	AS2 *AS2
 
 	ctx                context.Context
 	cancel             context.CancelFunc
@@ -62,6 +65,7 @@ type Process struct {
 	closed             bool
 	construction       toolHiveConstruction
 	discovery          *authenticatedDiscovery
+	auth               *runner.EmbeddedAuthServer // nil without protected upstreams
 	protectedTarget    *oauthRoute
 	queryAuthenticated func(context.Context, oauth2.TokenSource, string) (AuthenticatedCapabilities, error)
 	resources          []ownedResource
@@ -103,6 +107,12 @@ type toolHiveProcessOptions struct {
 	runtimeOptions                []Option
 	brokerHTTPClient              *http.Client
 	allowLoopbackUpstreamsForTest bool
+	// as2TrustForTest makes AS-2 trust an ID-JAG issuer, which production
+	// startup never does yet.
+	as2TrustForTest *as2Trust
+	// localAuthStoreForTest wraps an auth store construction creates itself,
+	// so tests can observe its Close.
+	localAuthStoreForTest func(storage.Storage) storage.Storage
 }
 
 // NewToolHiveProcess discovers anonymous upstreams, constructs one ordered
@@ -116,6 +126,9 @@ func NewToolHiveProcess(ctx context.Context, config ToolHiveConfig, options ...O
 func newToolHiveProcess(ctx context.Context, config ToolHiveConfig, options toolHiveProcessOptions) (*Process, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
+	}
+	if client := config.BrokerClient; client != nil && (client.ID == "" || !hasKeys(client.KeySet)) {
+		return nil, fmt.Errorf("%w: broker client needs an ID and a JWK Set with at least one key", ErrInvalidCatalogue)
 	}
 	diag := config.Diagnostics
 	if diag == nil {
@@ -142,7 +155,12 @@ func newToolHiveProcess(ctx context.Context, config ToolHiveConfig, options tool
 	if err != nil {
 		return nil, err
 	}
-	protectedTarget, err := newToolHiveProtectedTarget(issuer, config.CallbackURL, len(construction.upstreams) != 0)
+	as2 := config.BrokerClient != nil && len(construction.upstreams) != 0
+	resource := issuer
+	if as2 {
+		resource = as2Resource(issuer)
+	}
+	protectedTarget, err := newToolHiveProtectedTarget(issuer, resource, config.CallbackURL, len(construction.upstreams) != 0)
 	if err != nil {
 		return nil, err
 	}
@@ -210,21 +228,18 @@ func newToolHiveProcess(ctx context.Context, config ToolHiveConfig, options tool
 	var incoming func(http.Handler) http.Handler
 	var authInfo http.Handler
 	if len(construction.upstreams) != 0 {
-		// A restart between a user starting an OAuth authorization and
-		// completing it in their browser must not lose the pending-state
-		// record. Composition supplies a Redis-backed store whenever the
-		// operator already configured Redis for the session store
-		// (ToolHiveConfig.AuthStorage); otherwise this falls back to the
-		// in-memory default, which does not survive a process restart.
-		authStore := config.AuthStorage
-		if authStore == nil && config.AuthRedisClient != nil {
-			authStore = storage.NewRedisStorageWithClient(config.AuthRedisClient, toolHiveAuthStoragePrefix)
-		}
-		if authStore == nil {
-			authStore = storage.NewMemoryStorage()
-		}
 		if protectedTarget == nil {
 			return rollback(fmt.Errorf("%w: protected ToolHive target is required", ErrInvalidCatalogue))
+		}
+		runConfig := &authserver.RunConfig{
+			SchemaVersion: "v1", Issuer: issuer, AllowedAudiences: []string{resource}, Upstreams: construction.upstreams,
+		}
+		removeKeySet := func() {}
+		if as2 {
+			runConfig.InboundGrants, runConfig.TrustedIssuers, removeKeySet, err = as2RunConfig(*config.BrokerClient, issuer, resource, options.as2TrustForTest)
+			if err != nil {
+				return rollback(fmt.Errorf("mcpbroker: create embedded auth server: %w", err))
+			}
 		}
 		client, err := registration.New(registration.Config{
 			ID:                      protectedTarget.clientID,
@@ -234,24 +249,50 @@ func newToolHiveProcess(ctx context.Context, config ToolHiveConfig, options tool
 			GrantTypes:              []string{oauthproto.GrantTypeAuthorizationCode, oauthproto.GrantTypeRefreshToken},
 			ResponseTypes:           []string{oauthproto.ResponseTypeCode},
 			Scopes:                  []string{"openid", "offline_access"},
-			Audience:                []string{issuer},
+			Audience:                []string{resource},
 		})
 		if err != nil {
+			removeKeySet()
 			return rollback(fmt.Errorf("mcpbroker: construct embedded authorization client: %w", err))
 		}
+		// A restart between a user starting an OAuth authorization and
+		// completing it in their browser must not lose the pending-state
+		// record. Composition supplies a Redis-backed store whenever the
+		// operator already configured Redis for the session store
+		// (ToolHiveConfig.AuthStorage); otherwise this falls back to the
+		// in-memory default, which does not survive a process restart.
+		// A store created here is this function's to close until ToolHive's
+		// constructor takes it, closing it itself on failure; a caller-supplied
+		// AuthStorage stays the caller's.
+		authStore, closeLocalStore := config.AuthStorage, func() {}
+		if authStore == nil {
+			if config.AuthRedisClient != nil {
+				// Closing it closes AuthRedisClient, which composition also
+				// closes on failure; go-redis Close is idempotent.
+				authStore = storage.NewRedisStorageWithClient(config.AuthRedisClient, toolHiveAuthStoragePrefix)
+			} else {
+				authStore = storage.NewMemoryStorage()
+			}
+			if options.localAuthStoreForTest != nil {
+				authStore = options.localAuthStoreForTest(authStore)
+			}
+			closeLocalStore = func() { _ = authStore.Close() }
+		}
 		if err := authStore.RegisterClient(processCtx, client); err != nil {
+			closeLocalStore()
+			removeKeySet()
 			return rollback(fmt.Errorf("mcpbroker: register embedded authorization client: %w", err))
 		}
-		auth, err = runner.NewEmbeddedAuthServerWithStorage(processCtx, &authserver.RunConfig{
-			SchemaVersion: "v1", Issuer: issuer, AllowedAudiences: []string{issuer}, Upstreams: construction.upstreams,
-		}, authStore)
+		auth, err = runner.NewEmbeddedAuthServerWithStorage(processCtx, runConfig, authStore)
+		removeKeySet()
 		if err != nil {
 			return rollback(fmt.Errorf("mcpbroker: create embedded auth server: %w", err))
 		}
 		process.resources = append(process.resources, ownedResource{name: "authserver", close: auth.Close})
+		process.auth = auth
 		reader := upstreamtoken.NewInProcessService(auth.IDPTokenStorage(), auth.UpstreamTokenRefresher())
 		incoming, _, authInfo, err = factory.NewIncomingAuthMiddleware(processCtx, &vmcpconfig.IncomingAuthConfig{
-			Type: "oidc", OIDC: &vmcpconfig.OIDCConfig{Issuer: issuer, Audience: issuer, Resource: issuer, JWKSURL: issuer + "/.well-known/jwks.json"},
+			Type: "oidc", OIDC: &vmcpconfig.OIDCConfig{Issuer: issuer, Audience: resource, Resource: resource, JWKSURL: issuer + "/.well-known/jwks.json"},
 		}, "mecatl-broker", nil, reader, auth.KeyProvider(), issuer)
 		if err != nil {
 			return rollback(fmt.Errorf("mcpbroker: create incoming auth: %w", err))
@@ -304,6 +345,9 @@ func newToolHiveProcess(ctx context.Context, config ToolHiveConfig, options tool
 		process.Handlers.Discovery = embedded
 		process.Handlers.JWKS = embedded
 		process.Handlers.ProtectedResource = authInfo
+		if as2 {
+			process.AS2 = newAS2(issuer, resource, embedded)
+		}
 	}
 	if config.CallbackURL != "" {
 		callbackHandlers, callbackPath, handlerErr := runtime.Handlers(config.CallbackURL)
@@ -423,7 +467,7 @@ func toolHiveAdvertisedToolName(backend, modelVisibleName string) (string, error
 	return backend + "." + toolName, nil
 }
 
-func newToolHiveProtectedTarget(issuer, callbackURL string, required bool) (*oauthRoute, error) {
+func newToolHiveProtectedTarget(issuer, resource, callbackURL string, required bool) (*oauthRoute, error) {
 	if !required {
 		return nil, nil
 	}
@@ -443,7 +487,7 @@ func newToolHiveProtectedTarget(issuer, callbackURL string, required bool) (*oau
 		clientSecret:          clientSecret,
 		scopes:                []string{"openid", "offline_access"},
 		requestRefresh:        true,
-		resource:              issuer,
+		resource:              resource,
 	}, nil
 }
 

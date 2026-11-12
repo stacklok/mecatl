@@ -1,10 +1,7 @@
 package as1server
 
 import (
-	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
 	"slices"
 	"time"
 
@@ -84,30 +81,4 @@ func (d DelegateClient) validate(publicClients map[string]bool) error {
 		}
 	}
 	return nil
-}
-
-// hasKeys reports whether raw is a JSON JWK Set with at least one key.
-func hasKeys(raw []byte) bool {
-	var set struct {
-		Keys []json.RawMessage `json:"keys"`
-	}
-	return json.Unmarshal(raw, &set) == nil && len(set.Keys) > 0
-}
-
-// writeKeySet writes the key set raw to a new file in a new private temporary
-// directory, as ToolHive reads a delegate client's keys only from a file, and
-// returns its path and a function that removes the directory. ToolHive reads
-// the file once, at construction.
-func writeKeySet(raw []byte) (string, func(), error) {
-	dir, err := os.MkdirTemp("", "as1-delegate-")
-	if err != nil {
-		return "", nil, fmt.Errorf("as1server: delegate key set directory: %w", err)
-	}
-	remove := func() { _ = os.RemoveAll(dir) }
-	file := filepath.Join(dir, "jwks.json")
-	if err := os.WriteFile(file, raw, 0o600); err != nil {
-		remove()
-		return "", nil, fmt.Errorf("as1server: write delegate key set: %w", err)
-	}
-	return file, remove, nil
 }
