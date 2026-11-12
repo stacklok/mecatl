@@ -696,7 +696,9 @@ func TestAS2RedeemsAHarnessIDJAG(t *testing.T) {
 	for name, assertion := range map[string]string{
 		"another audience": broker.assertion(t, "https://other.example/v1/mcp/broker"),
 		"expired":          broker.signAssertion(t, broker.key, claimsAt(as2.Issuer, now.Add(-3*time.Minute), now.Add(-2*time.Minute))),
-		"exp too far":      broker.signAssertion(t, broker.key, claimsAt(as2.Issuer, now, now.Add(6*time.Minute))),
+		// ToolHive's bound is 5 minutes ahead, plus a 60-second skew from
+		// toolhive#7088; 10 minutes is past it either way.
+		"exp too far":      broker.signAssertion(t, broker.key, claimsAt(as2.Issuer, now, now.Add(10*time.Minute))),
 		"reused jti":       reused,
 		"unregistered key": broker.signAssertion(t, other, claimsAt(as2.Issuer, now, now.Add(time.Minute))),
 	} {
