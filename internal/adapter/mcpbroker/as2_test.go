@@ -111,8 +111,12 @@ func postAS2Token(t *testing.T, as2 *AS2, form url.Values) (int, map[string]any)
 	return resp.StatusCode, body
 }
 
-// as2TestAct is the act claim of the ID-JAGs the tests mint.
-var as2TestAct = map[string]any{"sub": "spiffe://agents.mecatl.invalid/agent/reviewer"}
+// as2TestAct is the act claim of the ID-JAGs the tests mint, in the design's
+// shape (credentials-and-lifecycle.md, step (7)): the instance's ag_
+// identifier, and AS-1, which minted act, as its issuer.
+func as2TestAct(h *identityharness.Harness) map[string]any {
+	return map[string]any{"iss": h.AS1.Issuer(), "sub": "ag_7hq2x9"}
+}
 
 // mintAS2IDJAG is an ID-JAG for Alice from the harness's AS-1, for the broker
 // client at as2.
@@ -120,7 +124,7 @@ func mintAS2IDJAG(h *identityharness.Harness, as2 *AS2) string {
 	return h.AS1.MintAccessToken(identityharness.AccessTokenSpec{
 		User: identityharness.Alice, ClientID: identitybroker.BrokerClientID, Audience: as2.Issuer,
 		Type: idJAGType, Lifetime: 5 * time.Minute,
-		Claims: map[string]any{"resource": as2.Resource, "act": as2TestAct},
+		Claims: map[string]any{"resource": as2.Resource, "act": as2TestAct(h)},
 	})
 }
 
@@ -641,8 +645,8 @@ func TestAS2RedeemsAHarnessIDJAG(t *testing.T) {
 	if claims["client_id"] != identitybroker.BrokerClientID {
 		t.Errorf("gateway token client_id = %v, want %s", claims["client_id"], identitybroker.BrokerClientID)
 	}
-	if !reflect.DeepEqual(claims["act"], as2TestAct) {
-		t.Errorf("gateway token act = %v, want %v", claims["act"], as2TestAct)
+	if want := as2TestAct(h); !reflect.DeepEqual(claims["act"], want) {
+		t.Errorf("gateway token act = %v, want %v", claims["act"], want)
 	}
 	if sub, _ := claims.GetSubject(); sub != h.AS1.Issuer()+"#"+h.AS1.Subject(identityharness.Alice) {
 		t.Errorf("gateway token sub = %q, want issuer#sub", sub)
