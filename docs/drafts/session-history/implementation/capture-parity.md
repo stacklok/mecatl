@@ -64,7 +64,7 @@ Evidence: [snapshot fields](../../../../engine/adapter/sessnap/sessnap.go),
 [server actor stamping](../../../../internal/adapter/server/service.go),
 [kernel creation](../../../../engine/kernel/session/created.go),
 [kernel logical actors](../../../../engine/kernel/session/attributed_input.go), and
-[kernel interruption](../../../../engine/kernel/session/run_interrupted.go).
+[kernel interruption at the assessment revision](https://github.com/stacklok/mecatl/blob/b40c45289e8f7bbec8d1826f50896b8e735c2021/engine/kernel/session/run_interrupted.go).
 
 The legacy general `Event` has no occurrence timestamp. Its creation timestamp,
 specialized durations, and backend modification times are separate facts; do not
@@ -109,6 +109,15 @@ placement, and host configuration; permission mode, authority, and pending contr
 state; model responses, tool calls/results, and private continuation; usage,
 limits/counters, and context occupancy. Keep these in the cutover inventory without
 adding them all to the current session records.
+
+## Hosting-replica breadcrumbs to consider
+
+Consider retaining session-history breadcrumbs identifying which pod or host is
+hosting the session, including changes during handoff or recovery. This may fit
+with leader election or session assignment across replicas; the record shape and
+owning layer remain open. Distinguish historical hosting evidence from the
+backend-authoritative ownership/fencing mechanism: a breadcrumb alone must not
+grant execution authority.
 
 ## How to use this assessment
 

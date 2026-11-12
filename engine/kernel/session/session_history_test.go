@@ -35,7 +35,10 @@ var errReplayPrefix = errors.New("replay ended before pinned endpoint")
 
 func reconstructHistorySession(t testing.TB, read func(context.Context, history.HistoryID, history.ReadRequest) (history.Page, error), endpoint history.CommitRef) (*session.Session, error) {
 	t.Helper()
-	s := newSession(t, sessionPolicy())
+	// Materialize only the intended accepted prefix in isolated test storage;
+	// public Load always pins that storage's actual head.
+	backend := mem.New()
+	h := newLifecycleHistory(t, backend)
 	request := history.ReadRequest{Through: endpoint, MaxCommits: 1}
 	for {
 		page, err := read(context.Background(), testHistoryID(t), request)
@@ -46,16 +49,20 @@ func reconstructHistorySession(t testing.TB, read func(context.Context, history.
 			break
 		}
 		for _, c := range page.Commits {
-			if err := s.Apply(c); err != nil {
+			result, err := h.Append(context.Background(), testHistoryID(t), c.Commit)
+			if err != nil {
 				return nil, err
+			}
+			if result.Status != history.StatusAccepted {
+				t.Fatal("prefix fixture append rejected")
 			}
 		}
 		request.After = page.Next
 	}
-	if s.Snapshot().Head() != endpoint {
+	if request.After != endpoint {
 		return nil, errReplayPrefix
 	}
-	return s, nil
+	return session.Load(context.Background(), newLifecycleHistory(t, readOnlyHistoryBackend{Backend: backend, t: t}), testHistoryID(t), sessionPolicy())
 }
 func assertHistoryHead(t testing.TB, h *history.History, want history.CommitRef) {
 	t.Helper()
@@ -86,7 +93,7 @@ func TestSessionRealHistoryLifecycleAndReplay(t *testing.T) {
 	recovered, err = session.Load(context.Background(), h, testHistoryID(t), sessionPolicy())
 	mustBatch(t, err)
 	b = beginBatch(t, recovered)
-	mustBatch(t, b.Interrupt())
+	mustBatch(t, b.EndRun(session.RunEndedInterrupted))
 	submitBatch(t, recovered, b)
 	if got := recovered.Snapshot(); got.ActiveRun() != (session.RunID{}) || got.RunCount() != 1 {
 		t.Fatal("explicit closeout")
@@ -146,7 +153,7 @@ func TestSessionRealHistoryCompetingStarts(t *testing.T) {
 
 // Commit boundaries are persistence metadata, not semantic traversal boundaries.
 func TestSessionNavigationIndependentOfCommitGrouping(t *testing.T) {
-	facts := []session.Record{createdRecord(t), startRecord(t, 1), inputRecord(t, 1), inputRecord(t, 2), closeoutRecord(t, 1), startRecord(t, 2), closeoutRecord(t, 2), startRecord(t, 3), runInputRecord(t, 3, 1)}
+	facts := []fixtureRecord{createdRecord(t), startRecord(t, 1), inputRecord(t, 1), inputRecord(t, 2), closeoutRecord(t, 1), startRecord(t, 2), closeoutRecord(t, 2), startRecord(t, 3), runInputRecord(t, 3, 1)}
 	var snapshots []session.Snapshot
 	for _, groups := range [][]int{{9}, {1, 1, 1, 1, 1, 1, 1, 1, 1}, {2, 2, 3, 2}} {
 		h := newSessionHistory(t)
@@ -159,7 +166,8 @@ func TestSessionNavigationIndependentOfCommitGrouping(t *testing.T) {
 			if result.Status != history.StatusAccepted || result.Proposal != c.Ref {
 				t.Fatal("append")
 			}
-			mustBatch(t, s.Apply(c))
+			s, err = session.Load(context.Background(), h, testHistoryID(t), sessionPolicy())
+			mustBatch(t, err)
 			offset += n
 		}
 		v := s.Snapshot()
@@ -190,9 +198,9 @@ func TestSessionNavigationIndependentOfCommitGrouping(t *testing.T) {
 					t.Fatal("run chronology")
 				}
 				if input, ok := run.RecordAt(j).UserInput(); ok {
-					got := lookupInput(t, v, input.ID().RunID, input.ID().Ordinal)
-					wantInput := lookupInput(t, base, input.ID().RunID, input.ID().Ordinal)
-					if got.ID() != wantInput.ID() || got.PartCount() != wantInput.PartCount() || !reflect.DeepEqual(inputBytes(got), inputBytes(wantInput)) {
+					got, _ := v.UserInputByID(input.ID())
+					wantInput, _ := base.UserInputByID(input.ID())
+					if got.ID() != wantInput.ID() || got.Parts().Len() != wantInput.Parts().Len() || !reflect.DeepEqual(inputBytes(got), inputBytes(wantInput)) {
 						t.Fatal("input navigation")
 					}
 				}

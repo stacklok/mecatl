@@ -11,8 +11,8 @@ var ErrInvalidPolicy = errors.New("invalid session policy or uninitialized sessi
 
 // Policy is copied at construction and has no defaults. All fields must be
 // positive, and each soft bound must not exceed its hard counterpart. Soft bounds
-// govern ordinary submissions only; interruption-only cleanup and replay use hard
-// bounds. These operational limits do not change the persistence schema.
+// govern ordinary submissions only; a lone minimal exceptional bulk ending and
+// replay use hard bounds. These operational limits do not change the persistence schema.
 type Policy struct {
 	// CommitLimits bounds canonical commit encoding, including opaque payloads.
 	CommitLimits codec.Limits

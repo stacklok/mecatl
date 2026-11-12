@@ -54,11 +54,11 @@ func TestSnapshotConstantCaptureAndAmortizedAppendStorage(t *testing.T) {
 					t.Fatal(err)
 				}
 			case 1:
-				if _, err := b.AddUserInput(AddUserInputRequest{RunID: before.ActiveRun(), Parts: internalByteParts([]byte{0xff, 0, 'x'})}); err != nil {
+				if _, err := b.AddUserInput(before.ActiveRun(), UserInput{Parts: internalByteParts([]byte{0xff, 0, 'x'})}); err != nil {
 					t.Fatal(err)
 				}
 			case 2:
-				if err := b.Interrupt(); err != nil {
+				if err := b.EndRun(RunEndedInterrupted); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -120,7 +120,7 @@ func TestSnapshotChildBoundsAcrossSpareCapacityAndGrowth(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := b.AddUserInput(AddUserInputRequest{RunID: run, Parts: internalByteParts([]byte("first"))}); err != nil {
+	if _, err := b.AddUserInput(run, UserInput{Parts: internalByteParts([]byte("first"))}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.SubmitCommit(context.Background(), b); err != nil {
@@ -137,7 +137,7 @@ func TestSnapshotChildBoundsAcrossSpareCapacityAndGrowth(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := b.AddUserInput(AddUserInputRequest{RunID: run, Parts: internalByteParts([]byte("later"))}); err != nil {
+		if _, err := b.AddUserInput(run, UserInput{Parts: internalByteParts([]byte("later"))}); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := s.SubmitCommit(context.Background(), b); err != nil {
@@ -149,7 +149,7 @@ func TestSnapshotChildBoundsAcrossSpareCapacityAndGrowth(t *testing.T) {
 		} else {
 			sawGrowth = true
 		}
-		if old.RecordCount() != before || oldRun.RecordCount() != before-1 || !internalUserInputsMatch(old, run, uint64(before-2)) || oldInput.ID().Ordinal != 1 || string(internalInputBytes(oldInput)) != "first" {
+		if old.RecordCount() != before || oldRun.RecordCount() != before-1 || !internalUserInputsMatch(old, run, uint64(before-2)) || oldInput.ID().ordinal != 1 || string(internalInputBytes(oldInput)) != "first" {
 			t.Fatal("old snapshot/run/input changed")
 		}
 		input, ok := oldRecord.UserInput()

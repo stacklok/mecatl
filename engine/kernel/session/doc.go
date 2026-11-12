@@ -1,33 +1,26 @@
+//go:generate go -C ../../.. run ./internal/dtogen/cmd/dtogen -dir engine/kernel/session -emit view -out zz_views_generated.go
+
 // Package session interprets accepted history as lifecycle and retained context
 // for the isolated kernel. It validates and submits ordered batches through a
 // bound History; it does not execute work or resolve retained references.
 //
-// UserInput retains one authored submission as ordered parts. Effective inputs
-// append ordered whole-submission references or inline content with logical Actor,
-// Purpose and Source, never provider roles or trust claims. Empty and duplicate
-// contributions are retained without replacement, consumption or fallback.
-// Instructions, tool catalogs, and model
-// bindings are independent history-scoped replacements admitted during active runs;
-// their selected values persist across runs. Snapshots pin these selections.
+// Payloads are mutable DTOs defined in session/format. Payload-local validation
+// is separate from aggregate lifecycle legality. Accepted views reconstruct
+// scoped identities from verified history ancestry; identity reconstruction alone
+// proves neither allocation nor membership.
 //
-// Public values carry history scope. Persistence DTOs in session/format omit
-// context supplied by verified history ancestry. Payload-local validation and
-// aggregate lifecycle legality are separate responsibilities.
+// [SessionCommit] collects provisional facts for ordered, atomic acceptance through
+// [Session.SubmitCommit]. [Load] reconstructs accepted state from stored history.
+// See [SessionCommit] and [Policy] for admission and resource contracts.
 //
-// SessionCommit collects provisional facts for [Session.SubmitCommit]. Submission,
-// Apply, and Load share the decoded application path, publishing accepted state.
-// Session operations must be caller-serialized; captured snapshots and their
-// child handles support concurrent readers independently of the session owner.
-// Views retain immutable backing storage for their lifetime, potentially including
-// the enclosing accepted record. Capture and child navigation cost O(1), without
-// copying payloads. Byte getters return independent field-only copies; Record and
-// RecordView.Format explicitly copy encoded history records for transport.
-//
-// View sequences are immutable, ordered and repeatable, and retain their captured
-// views' backing storage and bounds without copying it. Retention is not a payload
-// copy. Direct traversal can avoid allocations, but opaque iterator consumption
-// may allocate per traversal, accumulating per block in nested consumers. Indexed
-// access remains available for strict allocation budgets; collecting sequences
-// and exporting owned byte fields allocate independently of traversal.
-// See [SessionCommit], [Policy], and [Snapshot] for admission and ownership contracts.
+// Session operations must be caller-serialized. Captured [Snapshot] values and
+// their child views support concurrent readers independently of the session owner.
+// Views retain immutable backing for their lifetime, potentially including the
+// enclosing accepted record. Snapshot capture and direct payload navigation take
+// O(1) time without copying payloads; derived lookups document their own costs.
+// Byte getters borrow through views.Bytes; Copy detaches only the selected leaf.
+// Scalar and presence reads never clone sibling payloads. Zero views are safe;
+// optional children and scalars report presence separately, preserving explicit
+// zero and empty values. Sequences are ordered, repeatable, and pinned to captured
+// backing and bounds. [RecordView.Format] exports a detached transport DTO.
 package session

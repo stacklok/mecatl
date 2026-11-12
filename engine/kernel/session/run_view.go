@@ -4,6 +4,7 @@ import (
 	"iter"
 
 	historyid "github.com/stacklok/mecatl/engine/kernel/history/id"
+	sessionformat "github.com/stacklok/mecatl/engine/kernel/session/format"
 )
 
 // RunView is an immutable run handle pinned to its originating snapshot bounds.
@@ -11,13 +12,14 @@ import (
 type RunView struct {
 	id      RunID
 	scope   historyid.HistoryID
-	records []*acceptedRecord
+	records []*materializedRecord
 }
 
 // ID returns the scoped run identity, or zero for a zero handle.
 func (v RunView) ID() RunID { return v.id }
 
-// RecordCount includes the start and any explicit interruption in this snapshot.
+// RecordCount includes the start, ending, and any following idle context in this
+// snapshot's chronological span, until the next run starts.
 func (v RunView) RecordCount() int { return len(v.records) }
 
 // Records returns a repeatable sequence of immutable records in chronological order.
@@ -30,6 +32,43 @@ func (v RunView) Records() iter.Seq[RecordView] {
 			}
 		}
 	}
+}
+
+// ToolCalls constructs a caller-retained join of all requested calls within the
+// pinned run bounds, in response order then requested-call order. Each call's raw
+// facts borrow immutable payloads; no payload is cloned. Construction takes
+// expected O(records + response items + calls) time and O(calls) locator storage
+// under the admitted session limits. Repeated traversal reuses these locators;
+// another ToolCalls invocation rebuilds them. There is no hidden cache.
+func (v RunView) ToolCalls() ToolCallsView {
+	var result ToolCallsView
+	for record := range v.Records() {
+		switch record.Kind() {
+		case sessionformat.KindModelResponse:
+			response, _ := record.ModelResponse()
+			for call := range response.Calls() {
+				if result.byID == nil {
+					result.byID = make(map[RequestedCallID]int)
+				}
+				result.byID[call.ID()] = len(result.calls)
+				result.calls = append(result.calls, toolCallLocator{requested: call})
+			}
+		case sessionformat.KindToolInvocation:
+			invocation, _ := record.ToolInvocation()
+			i := result.byID[invocation.CallID()]
+			result.calls[i].invocation = invocation
+		case sessionformat.KindToolDisposition:
+			disposition, _ := record.ToolDisposition()
+			i := result.byID[disposition.CallID()]
+			result.calls[i].disposition = disposition
+		case sessionformat.KindRunEnded:
+			ending, _ := record.RunEnded()
+			if ending.BulkToolCloseout() {
+				result.bulk = ending
+			}
+		}
+	}
+	return result
 }
 
 // RecordAt returns a fact in this run's chronological span, not an ownership

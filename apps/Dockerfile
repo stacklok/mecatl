@@ -12,7 +12,7 @@
 # one commit, and a change spanning all three needs no intermediate SDK release.
 #
 # Shape (multi-stage):
-#   1. build   — node:26-slim (Debian + shell + toolchain): pnpm 12.15.0 via
+#   1. build   — node:26-slim (Debian + shell + toolchain): pnpm 12.18.0 via
 #                corepack (the `packageManager` pin in package.json; Node 25+
 #                no longer bundles corepack, so it is installed first), a frozen
 #                lockfile installs for SDK and Studio, `pnpm build` (contracts
@@ -59,7 +59,7 @@
 # ---------------------------------------------------------------------------
 # Stage 1: build (Node 26 — matches apps/package.json `engines` and .node-version)
 # ---------------------------------------------------------------------------
-FROM --platform=$BUILDPLATFORM node:26-slim@sha256:36793bcbb160a6a16cede1e62b93f84e26b78a972a8a4c0b879c1c12f22761ec AS build
+FROM --platform=$BUILDPLATFORM node:26-slim@sha256:5adad64f9a1fca2d51972caa65983634c8a774eb300d72b20f7f2a0f60368072 AS build
 ARG STUDIO_BUILD_ID=""
 ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0 \
     CI=1
@@ -91,7 +91,7 @@ RUN pnpm install --prod --frozen-lockfile
 # ---------------------------------------------------------------------------
 # Multi-arch index digest of `latest` (linux/amd64 + linux/arm64); the digest is
 # what is pulled. Its Node major is checked against `engines` in CI, not here.
-FROM cgr.dev/chainguard/node:latest@sha256:88c4f6e6941bdd4fb9039d98ad05384e1bfe5693dd31ccc8eb2f0c8522bdb40e
+FROM cgr.dev/chainguard/node:latest@sha256:e7c6a8ed332250fdbc96c9a995af20adb0243bbff0c7dcaca74c7254dbef795b
 
 # A fresh root-owned directory: the base image's /app is world-writable, which
 # would let the non-root server replace its own code. WORKDIR creates the

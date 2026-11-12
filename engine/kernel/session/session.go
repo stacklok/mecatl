@@ -39,6 +39,14 @@ type sessionState struct {
 	payloadBytes uint64
 }
 
+// validateHistoryID checks the session's history identity grammar.
+func validateHistoryID(id historyid.HistoryID) error {
+	if _, err := historyid.ParseHistoryID(id.String()); err != nil {
+		return errors.New("invalid session history ID")
+	}
+	return nil
+}
+
 // New binds a History and scope with a copied explicit policy, without I/O.
 // Invalid policy returns nil, ErrInvalidPolicy; nil History or invalid scope
 // returns nil, ErrIdentity. Creation must be explicitly added to the first batch.
@@ -49,7 +57,7 @@ func New(h *history.History, id historyid.HistoryID, policy Policy) (*Session, e
 	if h == nil {
 		return nil, ErrIdentity
 	}
-	if err := (Created{HistoryID: id}).Validate(); err != nil {
+	if err := validateHistoryID(id); err != nil {
 		return nil, ErrIdentity
 	}
 	return &Session{history: h, policy: policy, state: sessionState{view: Snapshot{historyID: id}}}, nil
@@ -105,12 +113,10 @@ func Load(ctx context.Context, h *history.History, id historyid.HistoryID, polic
 // A zero Session returns the zero handle.
 func (s *Session) Snapshot() Snapshot { return s.state.view }
 
-// prepareInterruption prepares the actual one-record closeout of the active run,
-// without applying, persisting, cancelling work or starting a successor. Idle
-// (including uncreated) returns zero, nil: there is nothing to append.
-// Errors return zero. The same builder and admission path reserves closeout
-// capacity for every candidate that would leave a run active.
-func (s *Session) prepareInterruption() (prepared, error) {
+// prepareEnding prepares an actual minimal exceptional terminal envelope without
+// I/O. Idle returns zero. Reservation uses both supported bulk-closeout reasons;
+// capacity does not guarantee backend availability.
+func (s *Session) prepareEnding(reason RunEndedReason) (prepared, error) {
 	if err := s.writeBarrier(); err != nil {
 		return prepared{}, err
 	}
@@ -120,29 +126,28 @@ func (s *Session) prepareInterruption() (prepared, error) {
 	if s.state.view.lifecycle.activeRun == (RunID{}) {
 		return prepared{}, nil
 	}
-	r, err := NewRunInterruptedRecord(RunInterrupted{ID: s.state.view.lifecycle.activeRun}, s.policy.PayloadLimits)
+	r, err := newRunEndedRecord(RunEnded{Reason: reason, BulkToolCloseout: true}, s.state.view.lifecycle.activeRun, s.policy.PayloadLimits)
 	if err != nil {
 		return prepared{}, err
 	}
-	return s.prepare([]Record{r})
+	return s.prepare([]*materializedRecord{r})
 }
 
-// prepare is also used by submission while its own batch holds the write slot.
-func (s *Session) prepare(records []Record) (prepared, error) {
+// prepare uses owner-validated immutable backing, also while submission holds
+// its own batch's write slot. It supplies enclosing history scope; payload references
+// are destination-run-relative and carry no origin provenance.
+func (s *Session) prepare(records []*materializedRecord) (prepared, error) {
 	if err := s.policy.Validate(); err != nil {
 		return prepared{}, err
 	}
-	ordinary := len(records) != 1 || records[0].value.Kind != sessionformat.KindRunInterrupted
+	ordinary := len(records) != 1 || !records[0].minimalEnding()
 	if err := s.admit(len(records), 0, ordinary); err != nil {
 		return prepared{}, err
 	}
 	var total uint64
 	for _, r := range records {
-		if r.scope == (historyid.HistoryID{}) {
+		if r == nil {
 			return prepared{}, codec.ErrInvalidData
-		}
-		if r.scope != s.state.view.historyID {
-			return prepared{}, ErrIdentity
 		}
 		if uint64(len(r.value.Payload)) > s.policy.MaxPayloadBytes-total || len(r.value.Payload) > s.policy.PayloadLimits.MaxBytes {
 			return prepared{}, codec.ErrLimitExceeded
@@ -169,31 +174,22 @@ func (s *Session) prepare(records []Record) (prepared, error) {
 	if err != nil {
 		return prepared{}, err
 	}
+	if s.history != nil {
+		if _, err := s.history.Identify(v.historyID, c); err != nil {
+			return prepared{}, err
+		}
+	}
 	if err := s.preflight(records, ref, total); err != nil {
 		return prepared{}, err
 	}
 	return prepared{commit: c, ref: ref}, nil
 }
 
-// Apply atomically publishes a fully verified accepted commit and its head.
-// The caller must establish storage acceptance first; supplying a Commit is an
-// assertion, not an unforgeable receipt. Mutable DTOs are canonically re-encoded
-// and CID-verified. Any error preserves all prior state. Failure categories are
-// ErrInvalidPolicy, ErrIdentity, ErrTransition, ErrUnsupportedRecord, ErrBatch,
-// ErrReloadRequired, and codec's ErrInvalidData/ErrLimitExceeded. Errors never
-// include payloads or external errors.
-// Feed genesis-to-pinned-endpoint commits through this same method for replay;
-// the caller checks that the pinned endpoint was actually reached. Open batches
-// and reload-required sessions reject this low-level path. Hard bounds apply, but
-// soft write admission and reservation for hypothetical future writes do not.
-func (s *Session) Apply(accepted history.Commit) error {
-	if err := s.writeBarrier(); err != nil {
-		return err
-	}
-	return s.apply(accepted)
-}
-
-// apply is the common decoded publication path for submit and fresh replay.
+// apply is the common verified publication path for submit and fresh replay.
+// Callers establish storage acceptance and own batch-slot coordination. Canonical
+// ancestry, hard limits, payloads and transitions are rechecked without I/O; any
+// failure preserves prior state. Replay needs no soft admission or future ending
+// headroom. Publication occurs only after complete candidate validation.
 func (s *Session) apply(accepted history.Commit) error {
 	if err := s.policy.Validate(); err != nil {
 		return err
@@ -227,24 +223,23 @@ func (s *Session) evaluate(c format.Commit, expected *history.CommitRef) (sessio
 		return sessionState{}, history.CommitRef{}, err
 	}
 	candidate := s.state
-	lifecycle := candidate.view.lifecycle
-	staged := make([]*acceptedRecord, len(c.Records))
+	admission := newAdmission(candidate.view)
+	staged := make([]*materializedRecord, len(c.Records))
 	var runs []runEntry
 	var inputs []int
 	for i, r := range c.Records {
-		fact, err := decodeAccepted(r, s.policy.PayloadLimits)
+		fact, err := decodeMaterialized(r, s.policy.PayloadLimits)
 		if err != nil {
 			return sessionState{}, history.CommitRef{}, err
 		}
-		metadata := fact.metadata(candidate.view.historyID)
-		if err := lifecycle.reduce(metadata); err != nil {
+		if err := admission.admit(candidate.view.historyID, fact); err != nil {
 			return sessionState{}, history.CommitRef{}, err
 		}
 		staged[i] = fact
 		position := len(candidate.view.records) + i
 		switch r.Kind {
 		case sessionformat.KindRunStarted:
-			runs = append(runs, runEntry{id: lifecycle.activeRun, recordStart: position, inputStart: len(candidate.view.inputs) + len(inputs)})
+			runs = append(runs, runEntry{id: admission.candidate.activeRun, recordStart: position, inputStart: len(candidate.view.inputs) + len(inputs)})
 		case sessionformat.KindUserInput:
 			inputs = append(inputs, position)
 		case sessionformat.KindInstructions:
@@ -271,13 +266,13 @@ func (s *Session) evaluate(c format.Commit, expected *history.CommitRef) (sessio
 	v.records = append(v.records, staged...)
 	v.runs = append(v.runs, runs...)
 	v.inputs = append(v.inputs, inputs...)
-	v.lifecycle = lifecycle
+	v.lifecycle = admission.candidate
 	v.head = ref
 	return candidate, ref, nil
 }
 
 // verifyCommit checks ancestry and bounded canonical envelope identity before
-// either metadata analysis or decoded application allocates candidate storage.
+// decoding or allocating candidate storage.
 func (s *Session) verifyCommit(c format.Commit, expected *history.CommitRef) (history.CommitRef, error) {
 	if err := s.checkAncestry(c, expected); err != nil {
 		return history.CommitRef{}, err

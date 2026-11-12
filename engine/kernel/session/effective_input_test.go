@@ -11,32 +11,39 @@ import (
 	"github.com/stacklok/mecatl/engine/kernel/history"
 	historyid "github.com/stacklok/mecatl/engine/kernel/history/id"
 	"github.com/stacklok/mecatl/engine/kernel/session"
+	sessionformat "github.com/stacklok/mecatl/engine/kernel/session/format"
 )
 
-func TestEffectiveInputScopeConversion(t *testing.T) {
-	run := session.RunID{HistoryID: testHistoryID(t), Ordinal: 1}
+func TestEffectiveInputRelativeReferences(t *testing.T) {
+	run := allocatedRun(t, testHistoryID(t), 1)
 	foreign, err := historyid.ParseHistoryID("HST2222222222222222222222")
 	mustBatch(t, err)
 	for _, id := range []session.UserInputID{
-		{RunID: session.RunID{HistoryID: foreign, Ordinal: 1}, Ordinal: 1},
-		{RunID: session.RunID{HistoryID: run.HistoryID, Ordinal: 2}, Ordinal: 1}, {},
+		allocatedInput(t, allocatedRun(t, foreign, 1), 1),
+		allocatedInput(t, allocatedRun(t, run.HistoryID(), 2), 1), {},
 	} {
-		v := session.EffectiveInput{RunID: run, Inputs: []session.InputItem{{UserInput: &id}}}
-		if v.Validate() == nil {
-			t.Fatal("conflicting full scope validated")
+		v := session.EffectiveInput{Inputs: []session.InputItem{{UserInputID: new(id.RunRelative())}}}
+		stored := v
+		stored.RunID = run.HistoryRelative()
+		if (stored.Validate() == nil) != (id.RunRelative() != 0) {
+			t.Fatal("relative reference validation")
 		}
 		clone := v.Clone()
-		if !clone.Equal(v) {
-			t.Fatal("clone silently discarded scope")
+		*clone.Inputs[0].UserInputID++
+		if clone.Equal(v) || *v.Inputs[0].UserInputID != id.RunRelative() {
+			t.Fatal("relative reference clone aliases or equality lost component")
 		}
-		other := v.Clone()
-		other.Inputs[0].UserInput.RunID = run
-		if v.Equal(other) {
-			t.Fatal("equality discarded reference scope")
+		_, b := allocationBatch(t, run)
+		batchInput(t, b, run, nil)
+		err := b.AddEffectiveInput(run, v)
+		if id.RunRelative() == 0 {
+			if !errors.Is(err, codec.ErrInvalidData) {
+				t.Fatalf("zero reference: %v", err)
+			}
+		} else {
+			mustBatch(t, err)
 		}
-		if r, err := session.NewEffectiveInputRecord(v, testLimits()); !errors.Is(err, codec.ErrInvalidData) || !reflect.DeepEqual(r, session.Record{}) {
-			t.Fatalf("conversion discarded scope: %v", err)
-		}
+		mustBatch(t, b.Discard())
 	}
 }
 
@@ -46,7 +53,7 @@ func TestEffectiveInputExternalRunAdmission(t *testing.T) {
 			backend := &batchBackend{Backend: mem.New()}
 			h := newLifecycleHistory(t, backend)
 			s := boundSession(t, h, sessionPolicy())
-			run := session.RunID{HistoryID: s.Snapshot().HistoryID(), Ordinal: 1}
+			run := allocatedRun(t, s.Snapshot().HistoryID(), 1)
 			if state != "uncreated" {
 				b := beginBatch(t, s)
 				mustBatch(t, b.Create())
@@ -55,7 +62,7 @@ func TestEffectiveInputExternalRunAdmission(t *testing.T) {
 						t.Fatal("run identity")
 					}
 					if state == "interrupted" || state == "successor" {
-						mustBatch(t, b.Interrupt())
+						mustBatch(t, b.EndRun(session.RunEndedInterrupted))
 					}
 					if state == "successor" {
 						batchRun(t, b)
@@ -63,36 +70,33 @@ func TestEffectiveInputExternalRunAdmission(t *testing.T) {
 				}
 				submitBatch(t, s, b)
 			}
-			v := session.EffectiveInput{RunID: run, Inputs: []session.InputItem{{Inline: &session.AttributedInput{Actor: "arbitrary origin", Purpose: session.PromptContext, Source: session.ContentSource{Description: "explicit empty contribution"}}}}}
-			r, err := session.NewEffectiveInputRecord(v, testLimits())
-			mustBatch(t, err)
-			r, err = session.DecodeRecord(run.HistoryID, r.Format(), testLimits())
-			mustBatch(t, err)
+			v := session.EffectiveInput{Inputs: []session.InputItem{{Inline: &session.AttributedInput{Actor: "arbitrary origin", Purpose: session.PromptContext, Source: session.ContentSource{Description: "explicit empty contribution"}}}}}
+			r := encodeFixture(t, sessionformat.KindEffectiveInput, sessionformat.EffectiveInput{RunID: 1, Inputs: []sessionformat.InputItem{{Inline: &sessionformat.AttributedInput{Actor: "arbitrary origin", Purpose: "context", Source: sessionformat.ContentSource{Description: "explicit empty contribution"}}}}})
 			c := proposedCommit(t, s, r)
 			before := captureRejectedSnapshot(s.Snapshot())
 			attempts := len(backend.attempts)
-			err = s.Apply(c)
+			independent, err := loadFixtureCommit(t, h, s, c, sessionPolicy())
 			if state == "active" {
 				mustBatch(t, err)
-				got, ok := s.Snapshot().RecordAt(2).EffectiveInput()
+				got, ok := independent.Snapshot().RecordAt(2).EffectiveInput()
 				if !ok || !effectiveMatches(got, v) {
-					t.Fatal("inline-only Apply changed contribution")
+					t.Fatal("inline-only Load changed contribution")
 				}
-			} else if !errors.Is(err, session.ErrTransition) || !reflect.DeepEqual(before, captureRejectedSnapshot(s.Snapshot())) {
-				t.Fatalf("invalid run Apply published: %v", err)
+			} else if independent != nil || !errors.Is(err, session.ErrTransition) {
+				t.Fatalf("invalid run Load returned partial state: %v", err)
 			}
-			if len(backend.attempts) != attempts {
-				t.Fatal("Apply appended")
+			if len(backend.attempts) != attempts || !reflect.DeepEqual(before, captureRejectedSnapshot(s.Snapshot())) {
+				t.Fatal("independent Load changed source session or storage")
 			}
-			result, err := h.Append(context.Background(), run.HistoryID, c.Commit)
+			result, err := h.Append(context.Background(), run.HistoryID(), c.Commit)
 			mustBatch(t, err)
 			if result.Status != history.StatusAccepted {
 				t.Fatal("external append")
 			}
-			loaded, err := session.Load(context.Background(), h, run.HistoryID, sessionPolicy())
+			loaded, err := session.Load(context.Background(), h, run.HistoryID(), sessionPolicy())
 			if state == "active" {
 				mustBatch(t, err)
-				if !reflect.DeepEqual(s.Snapshot(), loaded.Snapshot()) {
+				if !reflect.DeepEqual(independent.Snapshot(), loaded.Snapshot()) {
 					t.Fatal("inline-only replay changed history")
 				}
 			} else if loaded != nil || !errors.Is(err, session.ErrTransition) {

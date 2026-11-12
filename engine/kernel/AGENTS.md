@@ -17,22 +17,26 @@ production entry points unchanged unless Joe explicitly approves integration.
 
 ## Code organization and documentation
 
-These conventions apply only to `engine/kernel/`.
+These conventions apply to `engine/kernel/` and kernel-specific changes in its
+supporting adapters and tools, including `dtogen`. Apply them to new and changed
+contracts and compare neighboring kernel types for coherence. Record established
+patterns here as they emerge; keep unrelated legacy cleanup out of scope.
 
 - Put the package overview in `doc.go`, not an arbitrary implementation file.
 - Put persistence DTOs, versioned schemas, generated codecs and payload-local
   validation in the owning layer's `format` subpackage, as in `history/format`
   and `session/format`. Keep these packages independent of aggregates and their
-  operational policy. Public domain values are separate from DTOs so persistence
-  can omit information supplied by its enclosing context; validate that context
-  at the conversion boundary rather than silently dropping conflicting values.
+  operational policy. Check identity scope at the aggregate boundary rather than
+  silently discarding conflicting authoring context.
 - Organize implementation files by owning type: `commit.go`, `record.go`, etc.
   Keep the declaration, methods, and type-specific helpers together, including
   validation, cloning, equality, and encoding/decoding. Avoid capability-wide
   files such as `dto.go` or `validate.go` that scatter each type's implementation.
-- Separate genuinely shared primitives or policy types when they have a clear
-  responsibility. Split a large file at a coherent ownership boundary, not one
-  file per method. Do not introduce generic frameworks just to share a few lines.
+- Keep a record DTO's exclusively owned sub-structs in the record's file, with
+  their methods and helpers. Put types shared across records in clearly named
+  files; generated codec references alone do not constitute sharing. Separate
+  genuinely shared primitives or policy types by responsibility, not one file per
+  method. Do not introduce generic frameworks just to share a few lines.
 - Organize tests by owning type too. Focused codec, malformed-input, or fuzz suites
   may be separate when that makes the cases easier to read.
 - Code and code comments are authoritative for implemented behavior. Kernel design
@@ -43,12 +47,43 @@ These conventions apply only to `engine/kernel/`.
   types and functions: responsibility, invariants, ownership, and ordering or
   failure semantics where relevant. Keep comments concise; explain contracts
   and non-obvious rationale rather than narrating the code.
+- Persistence DTOs document the long-term format. Document each type and field's
+  meaning, identity scope, required/optional status, zero/empty behavior, ordering,
+  and ownership where relevant. Distinguish payload-local validation from checks
+  supplied by the enclosing context or aggregate.
+- Mark speculative semantics beside the affected declaration: state the current
+  guarantees, which design assumptions need usage experience, and when to revisit
+  them. A provisional design note does not relax validation or permit silent
+  reinterpretation of stored data.
 
 ## Contract and implementation discipline
 
+- Public occurrence IDs are distinct, scoped identities for equality and
+  correlation. Reconstruction proves neither allocation, membership, nor
+  authority. Keep numeric allocation and successor arithmetic internal, without
+  an ordering contract. Use consistent identity naming across public values and
+  persistence DTOs; document omitted enclosing scope.
+- Persisted categorical labels use string constants, grouped by the field/type they
+  describe. In-memory discriminators may use integer-backed closed enums regardless
+  of public Go visibility. Document and validate closed vocabularies; preserve
+  provider-owned open values without inventing a closed enum. Bound labels used in
+  resource reservations and cover the largest supported encoded shape.
 - Make mutable-storage ownership, aliasing, zero values, and failure outputs
   explicit where relevant. Prefer concrete type methods over speculative shared
   marker, cloning, or freezing interfaces.
+- Use concrete immutable DTO-backed views for nested inspection. Scalar/presence
+  reads must not clone sibling payloads; byte reads borrow through `views.Bytes`
+  and explicit `Copy` detaches only the selected leaf. Use `views.SliceView` for
+  collections without intermediate `[]View` materialization. Preserve enclosing
+  identity scope when adapting children. Make zero views safe, return
+  `(View, bool)` for optional children and `(value, bool)` for optional scalars,
+  and preserve present-empty values. Document retained backing, lifetime, and
+  navigation complexity. Test complete traversal and leaf-only copying through
+  Submit and storage-backed Load with nonempty siblings; measure captured-adapter
+  construction separately from traversal.
+- Before changing generation declarations, DTO view tags, or generated accessors,
+  read the [generator guide](../../internal/dtogen/README.md) for selection, field
+  policy, and regeneration requirements.
 - Keep data-contract validation distinct from operational resource policy.
   Validate lengths and counts before the allocations or conversions they govern;
   use overflow-safe arithmetic. Do not rely on mutable dependency-global limits.

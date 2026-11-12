@@ -2,6 +2,7 @@ package codec
 
 import (
 	"math"
+	"strconv"
 	"unicode/utf8"
 
 	"github.com/jcalabro/atmos/cbor"
@@ -60,6 +61,105 @@ func (r *Reader) typedHeader(want byte) (uint64, error) {
 		return 0, ErrInvalidData
 	}
 	return n, nil
+}
+
+// Kind identifies a native value supported by Reader.PeekKind. It is a closed
+// in-memory dispatch vocabulary, not a schema, persistence contract, or an
+// interpretation of DTO pointer absence.
+type Kind uint8
+
+const (
+	// InvalidKind identifies an uninitialized or unsupported kind.
+	InvalidKind Kind = iota
+	// NullKind identifies explicit CBOR null.
+	NullKind
+	// BoolKind identifies a canonical boolean.
+	BoolKind
+	// IntKind identifies a negative integer; Int checks its int64 range.
+	IntKind
+	// UintKind identifies a nonnegative integer.
+	UintKind
+	// StringKind identifies a UTF-8 text string.
+	StringKind
+	// ArrayKind identifies a definite array.
+	ArrayKind
+	// MapKind identifies a definite map.
+	MapKind
+)
+
+// String returns a readable kind name. Unknown values include their numeric value
+// for safe diagnostics and are not returned by Reader.PeekKind.
+func (k Kind) String() string {
+	switch k {
+	case InvalidKind:
+		return "invalid"
+	case NullKind:
+		return "null"
+	case BoolKind:
+		return "bool"
+	case IntKind:
+		return "int"
+	case UintKind:
+		return "uint"
+	case StringKind:
+		return "string"
+	case ArrayKind:
+		return "array"
+	case MapKind:
+		return "map"
+	default:
+		return "Kind(" + strconv.FormatUint(uint64(k), 10) + ")"
+	}
+}
+
+// PeekKind inspects the next minimal header without consuming input or budget.
+// It rejects byte strings, tags, floats, indefinite forms and unsupported simple
+// values. Typed reads still perform range, content, depth and resource checks.
+// Nil and zero readers return ErrInvalidLimits; malformed input returns ErrInvalidData.
+func (r *Reader) PeekKind() (Kind, error) {
+	if r == nil || r.budget.limits.MaxBytes == 0 {
+		return InvalidKind, ErrInvalidLimits
+	}
+	major, _, _, err := cbor.ReadHeader(r.data, r.pos)
+	if err != nil {
+		return InvalidKind, ErrInvalidData
+	}
+	switch major {
+	case 0:
+		return UintKind, nil
+	case 1:
+		return IntKind, nil
+	case 3:
+		return StringKind, nil
+	case 4:
+		return ArrayKind, nil
+	case 5:
+		return MapKind, nil
+	case 7:
+		switch r.data[r.pos] {
+		case 0xf4, 0xf5:
+			return BoolKind, nil
+		case 0xf6:
+			return NullKind, nil
+		}
+	}
+	return InvalidKind, ErrInvalidData
+}
+
+// Null reads exactly canonical explicit null and accounts one scalar at depth.
+// It does not change ordinary DTO pointer-presence rules.
+func (r *Reader) Null(depth int) error {
+	if r == nil {
+		return ErrInvalidLimits
+	}
+	if err := r.budget.CheckScalar(depth); err != nil {
+		return err
+	}
+	if r.pos == len(r.data) || r.data[r.pos] != 0xf6 {
+		return ErrInvalidData
+	}
+	r.pos++
+	return nil
 }
 
 // Bool reads exactly canonical false/true and accounts one scalar at depth.

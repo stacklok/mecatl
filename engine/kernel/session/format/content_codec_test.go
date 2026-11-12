@@ -105,7 +105,7 @@ func TestJSONBoundedBeforeValidation(t *testing.T) {
 }
 
 func TestInputItemWire(t *testing.T) {
-	v := format.InputItem{UserInput: new(uint64(1))}
+	v := format.InputItem{UserInputID: new(uint64(1))}
 	wire, err := codec.Encode(v, limits())
 	if err != nil || !bytes.Equal(wire, []byte{0xa1, 0x61, 'u', 1}) {
 		t.Fatalf("reference schema: %x, %v", wire, err)
@@ -124,19 +124,19 @@ func TestInputItemWire(t *testing.T) {
 	}
 }
 
-func TestFormatValidatorsAreLocal(t *testing.T) {
-	// Generated traversal, not local validation, owns child validity and bounds.
+func TestCanonicalFormatValidatorsCheckChildren(t *testing.T) {
+	// Public canonical values validate children; codec hooks remain immediate and
+	// run only after bounded child traversal.
 	for _, err := range []error{
 		(format.UserInput{RunID: 1, ID: 1, Parts: []format.ContentPart{{}}}).Validate(),
-		(format.ContentPart{Media: &format.Media{}}).Validate(),
 		(format.ContentSource{Description: "d", WorkspaceFile: &format.WorkspaceFileSource{}}).Validate(),
 		(format.InputItem{Inline: &format.AttributedInput{}}).Validate(),
 		(format.AttributedInput{Actor: "a", Purpose: "context"}).Validate(),
-		(format.EffectiveInput{RunID: 1, Inputs: []format.InputItem{{UserInput: new(uint64(math.MaxUint64))}, {}}}).Validate(),
+		(format.EffectiveInput{RunID: 1, Inputs: []format.InputItem{{UserInputID: new(uint64(math.MaxUint64))}, {}}}).Validate(),
 		(format.ToolCatalog{Tools: []format.ToolDefinition{{Name: "a"}}}).Validate(),
 	} {
-		if err != nil {
-			t.Fatalf("recursive validator: %v", err)
+		if err == nil {
+			t.Fatal("canonical validator accepted an invalid child")
 		}
 	}
 }

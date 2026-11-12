@@ -45,21 +45,23 @@ func ExampleSession() {
 		fmt.Println(err)
 		return
 	}
-	input, err := b.AddUserInput(session.AddUserInputRequest{RunID: run, Parts: []session.ContentPart{{Text: new("first")}}})
+	input, err := b.AddUserInput(run, session.UserInput{Parts: []session.ContentPart{{Text: new("first")}}})
 	if err != nil {
 		fmt.Println(err)
 		return
 	}
 	// Preparation supplies retained values; the kernel never opens this source file.
-	if err := b.ReplaceInstructions(session.Instructions{HistoryID: id, Blocks: []session.InstructionBlock{{
+	if err := b.ReplaceInstructions(id, session.Instructions{Blocks: []session.InstructionBlock{{
 		Parts:  []session.ContentPart{{Text: new("Use the project's vocabulary.")}},
 		Source: session.ContentSource{Description: "adopted workspace instructions", WorkspaceFile: &session.WorkspaceFileSource{Path: "AGENTS.md"}},
 	}}}); err != nil {
 		fmt.Println(err)
 		return
 	}
-	if err := b.AddEffectiveInput(session.EffectiveInput{RunID: run, Inputs: []session.InputItem{
-		{UserInput: &input},
+	// References deliberately retain only the destination-run component, not an
+	// origin-provenance proof. The destination run must contain an eligible input.
+	if err := b.AddEffectiveInput(run, session.EffectiveInput{Inputs: []session.InputItem{
+		{UserInputID: new(input.RunRelative())},
 		{Inline: &session.AttributedInput{
 			Actor:   "harness",
 			Purpose: session.PromptContext,
@@ -70,7 +72,7 @@ func ExampleSession() {
 		fmt.Println(err)
 		return
 	}
-	fmt.Printf("provisional input=%d run=%d; created=%t\n", input.Ordinal, run.Ordinal, s.Snapshot().Created())
+	fmt.Printf("provisional owner matches=%t; created=%t\n", input.RunID() == run, s.Snapshot().Created())
 	if _, err := s.SubmitCommit(ctx, b); err != nil {
 		// Unknown acceptance freezes the batch. Explicitly retry that same handle
 		// with a fresh context, or abandon this object and Load; never replace it.
@@ -78,7 +80,7 @@ func ExampleSession() {
 		return
 	}
 	old := s.Snapshot()
-	fmt.Printf("accepted head=%d active=%d\n", old.Head().Sequence, old.ActiveRun().Ordinal)
+	fmt.Printf("accepted head=%d active matches=%t\n", old.Head().Sequence, old.ActiveRun() == run)
 	loaded, err := session.Load(ctx, h, id, policy)
 	if err != nil {
 		fmt.Println(err)
@@ -96,13 +98,13 @@ func ExampleSession() {
 		fmt.Println("missing accepted input")
 		return
 	}
-	fmt.Printf("loaded active=%d inputs=%d\n", loadedView.ActiveRun().Ordinal, inputs)
+	fmt.Printf("loaded active matches=%t inputs=%d\n", loadedView.ActiveRun() == run, inputs)
 	instructions, _ := loaded.Snapshot().Instructions()
-	file, _ := instructions.BlockAt(0).Source().WorkspaceFile()
+	file, _ := instructions.Blocks().At(0).Source().WorkspaceFile()
 	fmt.Printf("instruction source=%s\n", file.Path())
 	effective, _ := loaded.Snapshot().RecordAt(4).EffectiveInput()
-	inline, _ := effective.InputAt(1).Inline()
-	text, _ := original.PartAt(0).Text()
+	inline, _ := effective.Inputs().At(1).Inline()
+	text, _ := original.Parts().At(0).Text()
 	fmt.Printf("prepared purpose=%s; original=%q\n", inline.Purpose(), text)
 
 	// Closing a run is explicit, never a side effect of loading it.
@@ -112,7 +114,7 @@ func ExampleSession() {
 		return
 	}
 	defer closeout.Discard()
-	if err := closeout.Interrupt(); err != nil {
+	if err := closeout.EndRun(session.RunEndedInterrupted); err != nil {
 		fmt.Println(err)
 		return
 	}
@@ -133,7 +135,7 @@ func ExampleSession() {
 		fmt.Println(err)
 		return
 	}
-	second, err := next.AddUserInput(session.AddUserInputRequest{RunID: successor, Parts: []session.ContentPart{{Text: new("second")}}})
+	second, err := next.AddUserInput(successor, session.UserInput{Parts: []session.ContentPart{{Text: new("second")}}})
 	if err != nil {
 		fmt.Println(err)
 		return
@@ -142,31 +144,31 @@ func ExampleSession() {
 		fmt.Println(err)
 		return
 	}
-	fmt.Printf("successor input=%d run=%d\n", second.Ordinal, successor.Ordinal)
+	fmt.Printf("successor owner matches=%t; distinct run=%t\n", second.RunID() == successor, successor != run)
 	loaded, err = session.Load(ctx, h, id, policy)
 	if err != nil {
 		fmt.Println(err)
 		return
 	}
 	v = loaded.Snapshot()
-	fmt.Printf("loaded %s head=%d runs=%d active=%d\n", v.HistoryID(), v.Head().Sequence, v.RunCount(), v.ActiveRun().Ordinal)
+	fmt.Printf("loaded %s head=%d runs=%d active matches=%t\n", v.HistoryID(), v.Head().Sequence, v.RunCount(), v.ActiveRun() == successor)
 	accepted, ok := v.UserInputByID(second)
 	if !ok {
 		fmt.Println("missing successor input")
 		return
 	}
-	text, _ = accepted.PartAt(0).Text()
-	fmt.Printf("run %d owns input %d: %s\n", accepted.ID().RunID.Ordinal, accepted.ID().Ordinal, text)
-	fmt.Printf("old snapshot head=%d active=%d\n", old.Head().Sequence, old.ActiveRun().Ordinal)
+	text, _ = accepted.Parts().At(0).Text()
+	fmt.Printf("successor owns input=%t: %s\n", accepted.ID().RunID() == successor, text)
+	fmt.Printf("old snapshot head=%d active matches=%t\n", old.Head().Sequence, old.ActiveRun() == run)
 	// Output:
-	// provisional input=1 run=1; created=false
-	// accepted head=1 active=1
-	// loaded active=1 inputs=1
+	// provisional owner matches=true; created=false
+	// accepted head=1 active matches=true
+	// loaded active matches=true inputs=1
 	// instruction source=AGENTS.md
 	// prepared purpose=context; original="first"
 	// interrupted head=2 idle=true
-	// successor input=1 run=2
-	// loaded HST1111111111111111111111 head=3 runs=2 active=2
-	// run 2 owns input 1: second
-	// old snapshot head=1 active=1
+	// successor owner matches=true; distinct run=true
+	// loaded HST1111111111111111111111 head=3 runs=2 active matches=true
+	// successor owns input=true: second
+	// old snapshot head=1 active matches=true
 }

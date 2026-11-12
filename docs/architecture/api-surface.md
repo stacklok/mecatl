@@ -40,9 +40,10 @@ not conflict with the no-stdio MCP rule, which is about Mecatl spawning processe
 
 The public wire contracts live in `contracts/proto/mecatl/v1/` (`harness.proto`,
 `schedule.proto`, and `local_session_context.proto`, a privileged service registered only
-on local-client-trusted listeners). Two sibling trees serve operators rather than
-clients: `driver/v1` is the protocol remote stores implement, and `execution/v1` is the
-execution-provider protocol.
+on local-client-trusted listeners). Three sibling trees serve operators rather than
+clients: `driver/v1` is the protocol remote stores implement, `execution/v1` is the
+execution-provider protocol, and `executor/v1` is the file and command protocol that the
+execution provider and executors both implement.
 
 `task generate` runs `buf generate` twice: once into `contracts/gen/go` for the server
 and drivers, once into `sdk/typescript/src/gen` for the TypeScript SDK. CI regenerates

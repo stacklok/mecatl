@@ -76,3 +76,16 @@ spec:
   uris: [spiffe://mecatl.test/client/wrong-scope]
   usages: [digital signature, client auth]
   issuerRef: {name: execution-fixture-ca, kind: Issuer}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: execution-executor-client-tls
+  namespace: execution-qualification
+spec:
+  secretName: execution-executor-client-tls
+  duration: 1h
+  renewBefore: 50m
+  uris: [spiffe://mecatl.test/provider/executor-client]
+  usages: [digital signature, client auth]
+  issuerRef: {name: execution-fixture-ca, kind: Issuer}

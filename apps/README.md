@@ -13,7 +13,7 @@ product features, starting with chat. The published image is
 `ghcr.io/stacklok/mecatl/studio`.
 
 Mecatl Studio is a browser UI for a mecatl deployment, split in three packages that form
-one self-contained pnpm workspace (pnpm 12.15.0, Node 26, see `package.json`):
+one self-contained pnpm workspace (pnpm 12.18.0, Node 26, see `package.json`):
 
 | Package                                   | What it is                                                                                                                                                                                    |
 | ----------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -27,6 +27,7 @@ section.
 ## Boundary
 
 Studio is a consumer of Mecatl's public surface, not part of the Go build:
+
 - **Checked-out SDK.** `server/` uses the repository's `sdk/typescript` through a
   frozen `file:` dependency, so Studio, its SDK, and the daemon contract it targets
   are built from one commit, and a change spanning all three lands without an

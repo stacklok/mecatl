@@ -13,6 +13,7 @@ import (
 	"github.com/stacklok/mecatl/engine/kernel/history"
 	historyid "github.com/stacklok/mecatl/engine/kernel/history/id"
 	"github.com/stacklok/mecatl/engine/kernel/session"
+	sessionformat "github.com/stacklok/mecatl/engine/kernel/session/format"
 )
 
 // batchBackend records real byte proposals and fails once, before or after acceptance.
@@ -72,7 +73,7 @@ func mustBatch(t testing.TB, err error) {
 }
 func batchInput(t testing.TB, b *session.SessionCommit, run session.RunID, content []byte) session.UserInputID {
 	t.Helper()
-	id, err := b.AddUserInput(session.AddUserInputRequest{RunID: run, Parts: byteParts(content)})
+	id, err := b.AddUserInput(run, session.UserInput{Parts: byteParts(content)})
 	mustBatch(t, err)
 	return id
 }
@@ -104,7 +105,7 @@ func TestSessionCommitHappyPathOwnershipAndNumbering(t *testing.T) {
 	content := []byte{0xff, 0, 'x'}
 	input := batchInput(t, b, run, content)
 	clear(content)
-	if input.Ordinal != 1 || input.RunID != run || run.Ordinal != 1 || run.HistoryID != testHistoryID(t) {
+	if input != allocatedInput(t, run, 1) || run != allocatedRun(t, testHistoryID(t), 1) {
 		t.Fatal("provisional numbering/scope")
 	}
 	if s.Snapshot().Created() || s.Snapshot().RecordCount() != 0 {
@@ -117,9 +118,8 @@ func TestSessionCommitHappyPathOwnershipAndNumbering(t *testing.T) {
 	}
 	page, err := h.Read(context.Background(), testHistoryID(t), history.ReadRequest{Through: root, MaxCommits: 1})
 	mustBatch(t, err)
-	fact, err := session.DecodeRecord(testHistoryID(t), page.Commits[0].Commit.Records[2], testLimits())
-	mustBatch(t, err)
-	if !fact.Format().Equal(inputRecord(t, 1).Format()) {
+	fact := page.Commits[0].Commit.Records[2]
+	if !fact.Equal(inputRecord(t, 1).Format()) {
 		t.Fatal("stored input aliases caller")
 	}
 	clear(inputBytes(lookupInput(t, v, run, 1)))
@@ -129,10 +129,10 @@ func TestSessionCommitHappyPathOwnershipAndNumbering(t *testing.T) {
 	if _, err := s.BeginCommit(); !errors.Is(err, session.ErrBatch) {
 		t.Fatal("stale cleanup released slot")
 	}
-	mustBatch(t, next.Interrupt())
+	mustBatch(t, next.EndRun(session.RunEndedInterrupted))
 	secondRun := batchRun(t, next)
 	second := batchInput(t, next, secondRun, []byte("second"))
-	if second.Ordinal != 1 || secondRun.Ordinal != 2 {
+	if second != allocatedInput(t, secondRun, 1) || secondRun != allocatedRun(t, testHistoryID(t), 2) {
 		t.Fatal("run-relative numbering")
 	}
 	submitBatch(t, s, next)
@@ -140,12 +140,12 @@ func TestSessionCommitHappyPathOwnershipAndNumbering(t *testing.T) {
 		t.Fatal("old content or successor lost")
 	}
 	reuse := beginBatch(t, s)
-	mustBatch(t, reuse.Interrupt())
+	mustBatch(t, reuse.EndRun(session.RunEndedInterrupted))
 	third := batchRun(t, reuse)
-	if _, err := reuse.AddUserInput(session.AddUserInputRequest{RunID: run}); !errors.Is(err, session.ErrTransition) {
+	if _, err := reuse.AddUserInput(run, session.UserInput{}); !errors.Is(err, session.ErrTransition) {
 		t.Fatal("closed owner accepted")
 	}
-	if id := batchInput(t, reuse, third, nil); id.Ordinal != 1 {
+	if id := batchInput(t, reuse, third, nil); id != allocatedInput(t, third, 1) {
 		t.Fatal("failed owner consumed ID")
 	}
 	submitBatch(t, s, reuse)
@@ -158,13 +158,13 @@ func TestSessionCommitOrderedProvisionalInterruption(t *testing.T) {
 	mustBatch(t, b.Create())
 	first := batchRun(t, b)
 	batchInput(t, b, first, []byte("first"))
-	mustBatch(t, b.Interrupt())
-	if err := b.Interrupt(); !errors.Is(err, session.ErrTransition) {
+	mustBatch(t, b.EndRun(session.RunEndedInterrupted))
+	if err := b.EndRun(session.RunEndedInterrupted); !errors.Is(err, session.ErrTransition) {
 		t.Fatal("idle interruption added")
 	}
 	run := batchRun(t, b)
 	second := batchInput(t, b, run, []byte("second"))
-	if run.Ordinal != 2 || second.Ordinal != 1 {
+	if run != allocatedRun(t, testHistoryID(t), 2) || second != allocatedInput(t, run, 1) {
 		t.Fatal("same-batch numbering")
 	}
 	submitBatch(t, s, b)
@@ -196,7 +196,7 @@ func TestSessionCommitRecordAdmissionFailureIsAtomic(t *testing.T) {
 	}
 	submitBatch(t, s, b)
 	next := beginBatch(t, s)
-	if id := batchInput(t, next, run, nil); id.Ordinal != 1 {
+	if id := batchInput(t, next, run, nil); id != allocatedInput(t, run, 1) {
 		t.Fatal("rejected batch consumed input ordinal")
 	}
 	submitBatch(t, s, next)
@@ -215,7 +215,7 @@ func TestSessionCommitHandlesDiscardAndFailedAdditions(t *testing.T) {
 		if err := b.Discard(); !errors.Is(err, session.ErrBatch) {
 			t.Fatal("zero discard")
 		}
-		if _, err := b.AddUserInput(session.AddUserInputRequest{}); !errors.Is(err, session.ErrBatch) {
+		if _, err := b.AddUserInput(session.RunID{}, session.UserInput{}); !errors.Is(err, session.ErrBatch) {
 			t.Fatal("zero add")
 		}
 	}
@@ -224,7 +224,7 @@ func TestSessionCommitHandlesDiscardAndFailedAdditions(t *testing.T) {
 	if err := copyHandle.Discard(); !errors.Is(err, session.ErrBatch) {
 		t.Fatal("copied discard")
 	}
-	if _, err := copyHandle.AddUserInput(session.AddUserInputRequest{}); !errors.Is(err, session.ErrBatch) {
+	if _, err := copyHandle.AddUserInput(session.RunID{}, session.UserInput{}); !errors.Is(err, session.ErrBatch) {
 		t.Fatal("copied add")
 	}
 	if _, err := s.SubmitCommit(context.Background(), &copyHandle); !errors.Is(err, session.ErrBatch) {
@@ -236,13 +236,10 @@ func TestSessionCommitHandlesDiscardAndFailedAdditions(t *testing.T) {
 	if _, err := s.BeginCommit(); !errors.Is(err, session.ErrBatch) {
 		t.Fatal("two slots")
 	}
-	if err := s.Apply(history.Commit{}); !errors.Is(err, session.ErrBatch) {
-		t.Fatal("Apply bypassed slot")
-	}
 	if _, err := b.StartRun(); !errors.Is(err, session.ErrTransition) {
 		t.Fatal("uncreated start")
 	}
-	if _, err := b.AddUserInput(session.AddUserInputRequest{}); !errors.Is(err, session.ErrTransition) {
+	if _, err := b.AddUserInput(session.RunID{}, session.UserInput{}); !errors.Is(err, session.ErrTransition) {
 		t.Fatal("input without owner")
 	}
 	mustBatch(t, b.Create())
@@ -255,12 +252,12 @@ func TestSessionCommitHandlesDiscardAndFailedAdditions(t *testing.T) {
 	}
 	foreign, err := historyid.ParseHistoryID("HST2222222222222222222222")
 	mustBatch(t, err)
-	for _, owner := range []session.RunID{{}, {HistoryID: foreign, Ordinal: 1}, {HistoryID: testHistoryID(t), Ordinal: 2}} {
-		if id, err := b.AddUserInput(session.AddUserInputRequest{RunID: owner}); id != (session.UserInputID{}) || !errors.Is(err, session.ErrTransition) {
+	for _, owner := range []session.RunID{{}, allocatedRun(t, foreign, 1), allocatedRun(t, testHistoryID(t), 2)} {
+		if id, err := b.AddUserInput(owner, session.UserInput{}); id != (session.UserInputID{}) || !errors.Is(err, session.ErrTransition) {
 			t.Fatal("invalid owner")
 		}
 	}
-	if id, err := b.AddUserInput(session.AddUserInputRequest{RunID: run, Parts: byteParts(make([]byte, testLimits().MaxByteStringBytes+1))}); id != (session.UserInputID{}) || !errors.Is(err, codec.ErrLimitExceeded) {
+	if id, err := b.AddUserInput(run, session.UserInput{Parts: byteParts(make([]byte, testLimits().MaxByteStringBytes+1))}); id != (session.UserInputID{}) || !errors.Is(err, codec.ErrLimitExceeded) {
 		t.Fatalf("oversize: %v", err)
 	}
 	input := batchInput(t, b, run, []byte("discarded"))
@@ -283,7 +280,7 @@ func TestSessionCommitHandlesDiscardAndFailedAdditions(t *testing.T) {
 	if _, err := s.SubmitCommit(context.Background(), fresh); !errors.Is(err, session.ErrBatch) {
 		t.Fatal("completed submit")
 	}
-	if _, err := fresh.AddUserInput(session.AddUserInputRequest{}); !errors.Is(err, session.ErrBatch) {
+	if _, err := fresh.AddUserInput(session.RunID{}, session.UserInput{}); !errors.Is(err, session.ErrBatch) {
 		t.Fatal("completed add")
 	}
 }
@@ -323,7 +320,7 @@ func TestSessionCommitInvalidPreflightNoAppend(t *testing.T) {
 			}
 			mustBatch(t, next.Create())
 			if name == "reserve" {
-				if id := batchRun(t, next); id.Ordinal != 1 {
+				if id := batchRun(t, next); id != allocatedRun(t, testHistoryID(t), 1) {
 					t.Fatal("rejection consumed run")
 				}
 			}
@@ -358,14 +355,11 @@ func TestSessionCommitUncertainIdenticalExplicitRetry(t *testing.T) {
 			if err := b.Discard(); !errors.Is(err, session.ErrBatch) {
 				t.Fatal("uncertain discard")
 			}
-			if _, err := b.AddUserInput(session.AddUserInputRequest{}); !errors.Is(err, session.ErrBatch) {
+			if _, err := b.AddUserInput(session.RunID{}, session.UserInput{}); !errors.Is(err, session.ErrBatch) {
 				t.Fatal("frozen add")
 			}
-			if err := b.Interrupt(); !errors.Is(err, session.ErrBatch) {
+			if err := b.EndRun(session.RunEndedInterrupted); !errors.Is(err, session.ErrBatch) {
 				t.Fatal("frozen interruption")
-			}
-			if err := s.Apply(history.Commit{}); !errors.Is(err, session.ErrBatch) {
-				t.Fatal("uncertainty bypass")
 			}
 			ref = submitBatch(t, s, b)
 			if len(backend.attempts) != 2 || !reflect.DeepEqual(backend.attempts[0], backend.attempts[1]) || ref != backend.attempts[0].commit.Ref {
@@ -393,7 +387,7 @@ func TestSessionCommitUncertainSuccessorIdenticalExplicitRetry(t *testing.T) {
 			batchInput(t, first, firstRun, []byte("first"))
 			submitBatch(t, s, first)
 			closeout := beginBatch(t, s)
-			mustBatch(t, closeout.Interrupt())
+			mustBatch(t, closeout.EndRun(session.RunEndedInterrupted))
 			submitBatch(t, s, closeout)
 			parent := s.Snapshot()
 			if parent.Head().Sequence == 0 || parent.ActiveRun() != (session.RunID{}) || parent.RunCount() != 1 {
@@ -403,7 +397,7 @@ func TestSessionCommitUncertainSuccessorIdenticalExplicitRetry(t *testing.T) {
 			next := beginBatch(t, s)
 			run := batchRun(t, next)
 			input := batchInput(t, next, run, []byte("second"))
-			if input.Ordinal != 1 || run.Ordinal != 2 {
+			if input != allocatedInput(t, run, 1) || run != allocatedRun(t, testHistoryID(t), 2) {
 				t.Fatal("successor ordinals")
 			}
 			ref, err := s.SubmitCommit(context.Background(), next)
@@ -424,7 +418,7 @@ func TestSessionCommitUncertainSuccessorIdenticalExplicitRetry(t *testing.T) {
 				t.Fatal("successor retry bytes/parent")
 			}
 			got := s.Snapshot()
-			if got.Head() != original.commit.Ref || got.ActiveRun() != run || got.RunCount() != 2 || !userInputsMatch(got, run, 1) || lookupInput(t, got, input.RunID, input.Ordinal).ID() != input || string(inputBytes(lookupInput(t, got, input.RunID, input.Ordinal))) != "second" || parent.RunCount() != 1 {
+			if got.Head() != original.commit.Ref || got.ActiveRun() != run || got.RunCount() != 2 || !userInputsMatch(got, run, 1) || lookupInput(t, got, input.RunID(), 1).ID() != input || string(inputBytes(lookupInput(t, got, input.RunID(), 1))) != "second" || parent.RunCount() != 1 {
 				t.Fatal("successor exactly once or old snapshot")
 			}
 			if _, err := s.SubmitCommit(context.Background(), next); !errors.Is(err, session.ErrBatch) || len(backend.attempts) != 4 {
@@ -456,7 +450,7 @@ func TestSessionCommitPayloadLimitRejectsBeforeAllocation(t *testing.T) {
 			}
 			before := s.Snapshot()
 			attempts := len(backend.attempts)
-			if id, err := b.AddUserInput(session.AddUserInputRequest{RunID: run, Parts: byteParts(content)}); id != (session.UserInputID{}) || !errors.Is(err, codec.ErrLimitExceeded) {
+			if id, err := b.AddUserInput(run, session.UserInput{Parts: byteParts(content)}); id != (session.UserInputID{}) || !errors.Is(err, codec.ErrLimitExceeded) {
 				t.Fatalf("payload-local rejection: %v, %v", id, err)
 			}
 			if !reflect.DeepEqual(before, s.Snapshot()) || len(backend.attempts) != attempts {
@@ -465,16 +459,14 @@ func TestSessionCommitPayloadLimitRejectsBeforeAllocation(t *testing.T) {
 			if _, err := s.BeginCommit(); !errors.Is(err, session.ErrBatch) {
 				t.Fatal("early rejection released slot")
 			}
-			if id := batchInput(t, b, run, nil); id.Ordinal != 2 {
+			if id := batchInput(t, b, run, nil); id != allocatedInput(t, run, 2) {
 				t.Fatal("failed add consumed ID")
 			}
 			submitBatch(t, s, b)
 			view := s.Snapshot()
-			seedRecord, err := session.NewUserInputRecord(session.UserInput{ID: session.UserInputID{RunID: run, Ordinal: 1}, Parts: byteParts(seed)}, policy.PayloadLimits)
-			mustBatch(t, err)
-			emptyRecord, err := session.NewUserInputRecord(session.UserInput{ID: session.UserInputID{RunID: run, Ordinal: 2}}, policy.PayloadLimits)
-			mustBatch(t, err)
-			want := []session.Record{createdRecord(t), startRecord(t, 1), seedRecord, emptyRecord}
+			seedRecord := encodeFixture(t, sessionformat.KindUserInput, sessionformat.UserInput{RunID: 1, ID: 1, Parts: formatByteParts(seed)})
+			emptyRecord := encodeFixture(t, sessionformat.KindUserInput, sessionformat.UserInput{RunID: 1, ID: 2})
+			want := []fixtureRecord{createdRecord(t), startRecord(t, 1), seedRecord, emptyRecord}
 			if view.RecordCount() != len(want) || !userInputsMatch(view, run, 2) {
 				t.Fatal("failed addition lost earlier provisional facts")
 			}
@@ -485,11 +477,12 @@ func TestSessionCommitPayloadLimitRejectsBeforeAllocation(t *testing.T) {
 			}
 		})
 	}
+	control := sessionformat.UserInput{RunID: 1, ID: 2, Parts: formatByteParts(content)}
 	if n := testing.AllocsPerRun(10, func() {
-		_, err := session.NewUserInputRecord(session.UserInput{ID: session.UserInputID{RunID: session.RunID{HistoryID: testHistoryID(t), Ordinal: 1}, Ordinal: 2}, Parts: byteParts(content)}, testLimits())
+		_, err := codec.Encode(control, testLimits())
 		mustBatch(t, err)
 	}); n == 0 {
-		t.Fatal("constructor allocation control")
+		t.Fatal("encoding allocation control")
 	}
 }
 
@@ -537,9 +530,9 @@ func TestSessionCommitLateAcceptanceCancellation(t *testing.T) {
 
 func TestSessionCommitFailedByteAdmissionIsAtomic(t *testing.T) {
 	p := sessionPolicy()
-	empty, err := session.NewUserInputRecord(session.UserInput{ID: session.UserInputID{RunID: session.RunID{HistoryID: testHistoryID(t), Ordinal: 1}, Ordinal: 1}}, testLimits())
-	mustBatch(t, err)
-	p.MaxPayloadBytes = uint64(len(createdRecord(t).Format().Payload) + len(startRecord(t, 1).Format().Payload) + 2*len(empty.Format().Payload) + len(closeoutRecord(t, 1).Format().Payload))
+	empty := encodeFixture(t, sessionformat.KindUserInput, sessionformat.UserInput{RunID: 1, ID: 1})
+	largestEnding := encodeFixture(t, sessionformat.KindRunEnded, sessionformat.RunEnded{RunID: 1, Reason: sessionformat.RunEndedCaptureFailed, BulkToolCloseout: true})
+	p.MaxPayloadBytes = uint64(len(createdRecord(t).Format().Payload) + len(startRecord(t, 1).Format().Payload) + 2*len(empty.Format().Payload) + len(largestEnding.Format().Payload))
 	p.SoftMaxPayloadBytes = p.MaxPayloadBytes
 	backend := &batchBackend{Backend: mem.New()}
 	s := boundSession(t, newLifecycleHistory(t, backend), p)
@@ -547,7 +540,7 @@ func TestSessionCommitFailedByteAdmissionIsAtomic(t *testing.T) {
 	mustBatch(t, b.Create())
 	run := batchRun(t, b)
 	batchInput(t, b, run, nil)
-	if id := batchInput(t, b, run, make([]byte, 128)); id.Ordinal != 2 {
+	if id := batchInput(t, b, run, make([]byte, 128)); id != allocatedInput(t, run, 2) {
 		t.Fatal("aggregate capacity rejected a locally valid addition")
 	}
 	before := captureRejectedSnapshot(s.Snapshot())
@@ -563,7 +556,7 @@ func TestSessionCommitFailedByteAdmissionIsAtomic(t *testing.T) {
 		t.Fatal("rejection consumed run ID")
 	}
 	batchInput(t, b, run, nil)
-	if id := batchInput(t, b, run, nil); id.Ordinal != 2 {
+	if id := batchInput(t, b, run, nil); id != allocatedInput(t, run, 2) {
 		t.Fatal("rejection consumed input ID")
 	}
 	submitBatch(t, s, b)
@@ -600,9 +593,11 @@ func TestSessionCommitConflictExpiryAndNewerHead(t *testing.T) {
 					t.Fatal("missing lost ack")
 				}
 				root := backend.attempts[0].commit.Ref
-				page, err := h.Read(context.Background(), testHistoryID(t), history.ReadRequest{Through: root, MaxCommits: 1})
+				winner, err = session.Load(context.Background(), h, testHistoryID(t), sessionPolicy())
 				mustBatch(t, err)
-				mustBatch(t, winner.Apply(page.Commits[0]))
+				if winner.Snapshot().Head() != root {
+					t.Fatal("loaded winner endpoint")
+				}
 				w := beginBatch(t, winner)
 				batchInput(t, w, run, []byte("later"))
 				submitBatch(t, winner, w)
@@ -628,9 +623,6 @@ func TestSessionCommitConflictExpiryAndNewerHead(t *testing.T) {
 			}
 			if _, err := s.BeginCommit(); !errors.Is(err, session.ErrReloadRequired) {
 				t.Fatal("reload barrier")
-			}
-			if err := s.Apply(history.Commit{}); !errors.Is(err, session.ErrReloadRequired) {
-				t.Fatal("Apply reload barrier")
 			}
 			if _, err := s.SubmitCommit(context.Background(), b); !errors.Is(err, session.ErrBatch) {
 				t.Fatal("terminal retry")

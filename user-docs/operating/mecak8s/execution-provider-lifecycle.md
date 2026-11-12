@@ -17,7 +17,8 @@ Client authorization policy and TLS materials rotate independently. Publish a
 higher `provider.securityManifest` generation for changed client URI, owner, or
 template scope. A policy update is durable only after provider replicas agree on
 the new generation; a lagging replica fails closed. For provider/client
-certificates and CA bundles, use platform PKI and projected Secrets. Stage trust
+certificates, the provider's executor client certificate, and CA bundles, use
+platform PKI and projected Secrets. Stage trust
 overlap, renew identities, and withdraw old trust only after the new chain is
 accepted. Valid TLS renewals need no policy-generation increment; expiry or
 trust withdrawal aborts affected in-flight RPCs. Do not reuse a policy
@@ -38,6 +39,13 @@ source mode**. Keep both values files in your operator configuration store:
 
 Pass both files to every install or upgrade. Keep operator-owned Secrets and
 TLS trust overlap independently; the chart neither owns nor reads Secret contents.
+The provider creates and deletes only its per-executor certificate Secrets.
+
+Executor Pods created by a release without
+[executor certificates](native-execution.md#executor-certificates-and-provider-trust)
+lack the certificate and provider trust volumes. After upgrading, they report
+`ExecutorUnavailable`; [replace each executor](#replace-or-retire-an-executor)
+to give it a pinned certificate on its retained workspace.
 
 Finish and verify any external authority rotation before starting a chart
 upgrade. Do not rotate the authority ConfigMap while Helm is writing chart

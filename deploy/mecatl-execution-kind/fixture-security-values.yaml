@@ -8,3 +8,7 @@ provider:
     - name: execution-trust
       items:
         - {key: clients.pem, path: clients.pem}
+  executorClientTLS:
+    secretName: execution-executor-client-tls
+    uri: spiffe://mecatl.test/provider/executor-client
+    caSecretName: execution-executor-ca

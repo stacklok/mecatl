@@ -1,4 +1,7 @@
+    method func (*Actor).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
     method func (*AttributedInput).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
+    method func (*CaptureFailureEvidence).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
+    method func (*ConstructionRecipe).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
     method func (*ContentPart).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
     method func (*ContentSource).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
     method func (*Created).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
@@ -6,19 +9,63 @@
     method func (*InputItem).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
     method func (*InstructionBlock).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
     method func (*Instructions).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
+    method func (*InvocationFailure).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
+    method func (*InvocationFailureClass).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
+    method func (*InvocationUsage).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
     method func (*Media).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
+    method func (*MediaKind).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
+    method func (*MediaSourceKind).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
     method func (*ModelBinding).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
-    method func (*RunInterrupted).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
+    method func (*ModelRequest).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
+    method func (*ModelResponse).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
+    method func (*ObservedEvidence).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
+    method func (*OpaqueProviderData).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
+    method func (*PromptPurpose).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
+    method func (*RequestedCall).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
+    method func (*ResponseContent).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
+    method func (*ResponseContentKind).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
+    method func (*ResponseItem).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
+    method func (*ResponseTerminalClass).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
+    method func (*RunEnded).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
+    method func (*RunEndedReason).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
     method func (*RunStarted).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
+    method func (*SourceHead).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
+    method func (*ToolCaptureState).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
     method func (*ToolCatalog).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
     method func (*ToolDefinition).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
+    method func (*ToolDisposition).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
+    method func (*ToolEmbeddedResource).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
+    method func (*ToolIndeterminate).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
+    method func (*ToolIndeterminateReason).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
+    method func (*ToolInvocation).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
+    method func (*ToolNotInvoked).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
+    method func (*ToolNotInvokedReason).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
+    method func (*ToolOutput).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
+    method func (*ToolOutputPart).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
+    method func (*ToolResource).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
+    method func (*ToolReturnStatus).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
+    method func (*ToolReturned).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
     method func (*UserInput).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
     method func (*WorkspaceFileSource).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
+    method func (Actor).AppendCBOR(dst []byte) []byte
+    method func (Actor).CheckCBOR(b *codec.Budget, depth int, fieldMax int) error
+    method func (Actor).Clone() Actor
+    method func (Actor).Equal(other Actor) bool
     method func (AttributedInput).AppendCBOR(dst []byte) []byte
     method func (AttributedInput).CheckCBOR(b *codec.Budget, depth int, fieldMax int) error
     method func (AttributedInput).Clone() AttributedInput
     method func (AttributedInput).Equal(other AttributedInput) bool
     method func (AttributedInput).Validate() error
+    method func (CaptureFailureEvidence).AppendCBOR(dst []byte) []byte
+    method func (CaptureFailureEvidence).CheckCBOR(b *codec.Budget, depth int, fieldMax int) error
+    method func (CaptureFailureEvidence).Clone() CaptureFailureEvidence
+    method func (CaptureFailureEvidence).Equal(other CaptureFailureEvidence) bool
+    method func (CaptureFailureEvidence).Validate() error
+    method func (ConstructionRecipe).AppendCBOR(dst []byte) []byte
+    method func (ConstructionRecipe).CheckCBOR(b *codec.Budget, depth int, fieldMax int) error
+    method func (ConstructionRecipe).Clone() ConstructionRecipe
+    method func (ConstructionRecipe).Equal(other ConstructionRecipe) bool
+    method func (ConstructionRecipe).Validate() error
     method func (ContentPart).AppendCBOR(dst []byte) []byte
     method func (ContentPart).CheckCBOR(b *codec.Budget, depth int, fieldMax int) error
     method func (ContentPart).Clone() ContentPart
@@ -47,30 +94,114 @@
     method func (InstructionBlock).CheckCBOR(b *codec.Budget, depth int, fieldMax int) error
     method func (InstructionBlock).Clone() InstructionBlock
     method func (InstructionBlock).Equal(other InstructionBlock) bool
+    method func (InstructionBlock).Validate() error
     method func (Instructions).AppendCBOR(dst []byte) []byte
     method func (Instructions).CheckCBOR(b *codec.Budget, depth int, fieldMax int) error
     method func (Instructions).Clone() Instructions
     method func (Instructions).Equal(other Instructions) bool
+    method func (Instructions).Validate() error
+    method func (InvocationFailure).AppendCBOR(dst []byte) []byte
+    method func (InvocationFailure).CheckCBOR(b *codec.Budget, depth int, fieldMax int) error
+    method func (InvocationFailure).Clone() InvocationFailure
+    method func (InvocationFailure).Equal(other InvocationFailure) bool
+    method func (InvocationFailure).Validate() error
+    method func (InvocationFailureClass).AppendCBOR(dst []byte) []byte
+    method func (InvocationFailureClass).CheckCBOR(b *codec.Budget, depth int, fieldMax int) error
+    method func (InvocationFailureClass).Clone() InvocationFailureClass
+    method func (InvocationFailureClass).Equal(other InvocationFailureClass) bool
+    method func (InvocationUsage).AppendCBOR(dst []byte) []byte
+    method func (InvocationUsage).CheckCBOR(b *codec.Budget, depth int, fieldMax int) error
+    method func (InvocationUsage).Clone() InvocationUsage
+    method func (InvocationUsage).Equal(other InvocationUsage) bool
+    method func (InvocationUsage).Validate() error
     method func (Media).AppendCBOR(dst []byte) []byte
     method func (Media).CheckCBOR(b *codec.Budget, depth int, fieldMax int) error
     method func (Media).Clone() Media
     method func (Media).Equal(other Media) bool
     method func (Media).Validate() error
+    method func (MediaKind).AppendCBOR(dst []byte) []byte
+    method func (MediaKind).CheckCBOR(b *codec.Budget, depth int, fieldMax int) error
+    method func (MediaKind).Clone() MediaKind
+    method func (MediaKind).Equal(other MediaKind) bool
+    method func (MediaSourceKind).AppendCBOR(dst []byte) []byte
+    method func (MediaSourceKind).CheckCBOR(b *codec.Budget, depth int, fieldMax int) error
+    method func (MediaSourceKind).Clone() MediaSourceKind
+    method func (MediaSourceKind).Equal(other MediaSourceKind) bool
     method func (ModelBinding).AppendCBOR(dst []byte) []byte
     method func (ModelBinding).CheckCBOR(b *codec.Budget, depth int, fieldMax int) error
     method func (ModelBinding).Clone() ModelBinding
     method func (ModelBinding).Equal(other ModelBinding) bool
     method func (ModelBinding).Validate() error
-    method func (RunInterrupted).AppendCBOR(dst []byte) []byte
-    method func (RunInterrupted).CheckCBOR(b *codec.Budget, depth int, fieldMax int) error
-    method func (RunInterrupted).Clone() RunInterrupted
-    method func (RunInterrupted).Equal(other RunInterrupted) bool
-    method func (RunInterrupted).Validate() error
+    method func (ModelRequest).AppendCBOR(dst []byte) []byte
+    method func (ModelRequest).CheckCBOR(b *codec.Budget, depth int, fieldMax int) error
+    method func (ModelRequest).Clone() ModelRequest
+    method func (ModelRequest).Equal(other ModelRequest) bool
+    method func (ModelRequest).Validate() error
+    method func (ModelResponse).AppendCBOR(dst []byte) []byte
+    method func (ModelResponse).CheckCBOR(b *codec.Budget, depth int, fieldMax int) error
+    method func (ModelResponse).Clone() ModelResponse
+    method func (ModelResponse).Equal(other ModelResponse) bool
+    method func (ModelResponse).Validate() error
+    method func (ObservedEvidence).AppendCBOR(dst []byte) []byte
+    method func (ObservedEvidence).CheckCBOR(b *codec.Budget, depth int, fieldMax int) error
+    method func (ObservedEvidence).Clone() ObservedEvidence
+    method func (ObservedEvidence).Equal(other ObservedEvidence) bool
+    method func (ObservedEvidence).Validate() error
+    method func (OpaqueProviderData).AppendCBOR(dst []byte) []byte
+    method func (OpaqueProviderData).CheckCBOR(b *codec.Budget, depth int, fieldMax int) error
+    method func (OpaqueProviderData).Clone() OpaqueProviderData
+    method func (OpaqueProviderData).Equal(other OpaqueProviderData) bool
+    method func (OpaqueProviderData).Validate() error
+    method func (PromptPurpose).AppendCBOR(dst []byte) []byte
+    method func (PromptPurpose).CheckCBOR(b *codec.Budget, depth int, fieldMax int) error
+    method func (PromptPurpose).Clone() PromptPurpose
+    method func (PromptPurpose).Equal(other PromptPurpose) bool
+    method func (RequestedCall).AppendCBOR(dst []byte) []byte
+    method func (RequestedCall).CheckCBOR(b *codec.Budget, depth int, fieldMax int) error
+    method func (RequestedCall).Clone() RequestedCall
+    method func (RequestedCall).Equal(other RequestedCall) bool
+    method func (RequestedCall).Validate() error
+    method func (ResponseContent).AppendCBOR(dst []byte) []byte
+    method func (ResponseContent).CheckCBOR(b *codec.Budget, depth int, fieldMax int) error
+    method func (ResponseContent).Clone() ResponseContent
+    method func (ResponseContent).Equal(other ResponseContent) bool
+    method func (ResponseContent).Validate() error
+    method func (ResponseContentKind).AppendCBOR(dst []byte) []byte
+    method func (ResponseContentKind).CheckCBOR(b *codec.Budget, depth int, fieldMax int) error
+    method func (ResponseContentKind).Clone() ResponseContentKind
+    method func (ResponseContentKind).Equal(other ResponseContentKind) bool
+    method func (ResponseItem).AppendCBOR(dst []byte) []byte
+    method func (ResponseItem).CheckCBOR(b *codec.Budget, depth int, fieldMax int) error
+    method func (ResponseItem).Clone() ResponseItem
+    method func (ResponseItem).Equal(other ResponseItem) bool
+    method func (ResponseItem).Validate() error
+    method func (ResponseTerminalClass).AppendCBOR(dst []byte) []byte
+    method func (ResponseTerminalClass).CheckCBOR(b *codec.Budget, depth int, fieldMax int) error
+    method func (ResponseTerminalClass).Clone() ResponseTerminalClass
+    method func (ResponseTerminalClass).Equal(other ResponseTerminalClass) bool
+    method func (RunEnded).AppendCBOR(dst []byte) []byte
+    method func (RunEnded).CheckCBOR(b *codec.Budget, depth int, fieldMax int) error
+    method func (RunEnded).Clone() RunEnded
+    method func (RunEnded).Equal(other RunEnded) bool
+    method func (RunEnded).Validate() error
+    method func (RunEndedReason).AppendCBOR(dst []byte) []byte
+    method func (RunEndedReason).CheckCBOR(b *codec.Budget, depth int, fieldMax int) error
+    method func (RunEndedReason).Clone() RunEndedReason
+    method func (RunEndedReason).Equal(other RunEndedReason) bool
     method func (RunStarted).AppendCBOR(dst []byte) []byte
     method func (RunStarted).CheckCBOR(b *codec.Budget, depth int, fieldMax int) error
     method func (RunStarted).Clone() RunStarted
     method func (RunStarted).Equal(other RunStarted) bool
     method func (RunStarted).Validate() error
+    method func (SourceHead).AppendCBOR(dst []byte) []byte
+    method func (SourceHead).CheckCBOR(b *codec.Budget, depth int, fieldMax int) error
+    method func (SourceHead).Clone() SourceHead
+    method func (SourceHead).Equal(other SourceHead) bool
+    method func (SourceHead).Validate() error
+    method func (ToolCaptureState).AppendCBOR(dst []byte) []byte
+    method func (ToolCaptureState).CheckCBOR(b *codec.Budget, depth int, fieldMax int) error
+    method func (ToolCaptureState).Clone() ToolCaptureState
+    method func (ToolCaptureState).Equal(other ToolCaptureState) bool
     method func (ToolCatalog).AppendCBOR(dst []byte) []byte
     method func (ToolCatalog).CheckCBOR(b *codec.Budget, depth int, fieldMax int) error
     method func (ToolCatalog).Clone() ToolCatalog
@@ -81,6 +212,63 @@
     method func (ToolDefinition).Clone() ToolDefinition
     method func (ToolDefinition).Equal(other ToolDefinition) bool
     method func (ToolDefinition).Validate() error
+    method func (ToolDisposition).AppendCBOR(dst []byte) []byte
+    method func (ToolDisposition).CheckCBOR(b *codec.Budget, depth int, fieldMax int) error
+    method func (ToolDisposition).Clone() ToolDisposition
+    method func (ToolDisposition).Equal(other ToolDisposition) bool
+    method func (ToolDisposition).Validate() error
+    method func (ToolEmbeddedResource).AppendCBOR(dst []byte) []byte
+    method func (ToolEmbeddedResource).CheckCBOR(b *codec.Budget, depth int, fieldMax int) error
+    method func (ToolEmbeddedResource).Clone() ToolEmbeddedResource
+    method func (ToolEmbeddedResource).Equal(other ToolEmbeddedResource) bool
+    method func (ToolEmbeddedResource).Validate() error
+    method func (ToolIndeterminate).AppendCBOR(dst []byte) []byte
+    method func (ToolIndeterminate).CheckCBOR(b *codec.Budget, depth int, fieldMax int) error
+    method func (ToolIndeterminate).Clone() ToolIndeterminate
+    method func (ToolIndeterminate).Equal(other ToolIndeterminate) bool
+    method func (ToolIndeterminate).Validate() error
+    method func (ToolIndeterminateReason).AppendCBOR(dst []byte) []byte
+    method func (ToolIndeterminateReason).CheckCBOR(b *codec.Budget, depth int, fieldMax int) error
+    method func (ToolIndeterminateReason).Clone() ToolIndeterminateReason
+    method func (ToolIndeterminateReason).Equal(other ToolIndeterminateReason) bool
+    method func (ToolInvocation).AppendCBOR(dst []byte) []byte
+    method func (ToolInvocation).CheckCBOR(b *codec.Budget, depth int, fieldMax int) error
+    method func (ToolInvocation).Clone() ToolInvocation
+    method func (ToolInvocation).Equal(other ToolInvocation) bool
+    method func (ToolInvocation).Validate() error
+    method func (ToolNotInvoked).AppendCBOR(dst []byte) []byte
+    method func (ToolNotInvoked).CheckCBOR(b *codec.Budget, depth int, fieldMax int) error
+    method func (ToolNotInvoked).Clone() ToolNotInvoked
+    method func (ToolNotInvoked).Equal(other ToolNotInvoked) bool
+    method func (ToolNotInvoked).Validate() error
+    method func (ToolNotInvokedReason).AppendCBOR(dst []byte) []byte
+    method func (ToolNotInvokedReason).CheckCBOR(b *codec.Budget, depth int, fieldMax int) error
+    method func (ToolNotInvokedReason).Clone() ToolNotInvokedReason
+    method func (ToolNotInvokedReason).Equal(other ToolNotInvokedReason) bool
+    method func (ToolOutput).AppendCBOR(dst []byte) []byte
+    method func (ToolOutput).CheckCBOR(b *codec.Budget, depth int, fieldMax int) error
+    method func (ToolOutput).Clone() ToolOutput
+    method func (ToolOutput).Equal(other ToolOutput) bool
+    method func (ToolOutput).Validate() error
+    method func (ToolOutputPart).AppendCBOR(dst []byte) []byte
+    method func (ToolOutputPart).CheckCBOR(b *codec.Budget, depth int, fieldMax int) error
+    method func (ToolOutputPart).Clone() ToolOutputPart
+    method func (ToolOutputPart).Equal(other ToolOutputPart) bool
+    method func (ToolOutputPart).Validate() error
+    method func (ToolResource).AppendCBOR(dst []byte) []byte
+    method func (ToolResource).CheckCBOR(b *codec.Budget, depth int, fieldMax int) error
+    method func (ToolResource).Clone() ToolResource
+    method func (ToolResource).Equal(other ToolResource) bool
+    method func (ToolResource).Validate() error
+    method func (ToolReturnStatus).AppendCBOR(dst []byte) []byte
+    method func (ToolReturnStatus).CheckCBOR(b *codec.Budget, depth int, fieldMax int) error
+    method func (ToolReturnStatus).Clone() ToolReturnStatus
+    method func (ToolReturnStatus).Equal(other ToolReturnStatus) bool
+    method func (ToolReturned).AppendCBOR(dst []byte) []byte
+    method func (ToolReturned).CheckCBOR(b *codec.Budget, depth int, fieldMax int) error
+    method func (ToolReturned).Clone() ToolReturned
+    method func (ToolReturned).Equal(other ToolReturned) bool
+    method func (ToolReturned).Validate() error
     method func (UserInput).AppendCBOR(dst []byte) []byte
     method func (UserInput).CheckCBOR(b *codec.Budget, depth int, fieldMax int) error
     method func (UserInput).Clone() UserInput
@@ -91,36 +279,107 @@
     method func (WorkspaceFileSource).Clone() WorkspaceFileSource
     method func (WorkspaceFileSource).Equal(other WorkspaceFileSource) bool
     method func (WorkspaceFileSource).Validate() error
+const InvocationFailureLocal InvocationFailureClass = "local"
+const InvocationFailureOther InvocationFailureClass = "other"
+const InvocationFailureTimeout InvocationFailureClass = "timeout"
+const InvocationFailureTransport InvocationFailureClass = "transport"
 const KindCreated untyped string = "session.created"
 const KindEffectiveInput untyped string = "session.effective_input"
 const KindInstructions untyped string = "session.instructions"
+const KindInvocationFailure untyped string = "session.invocation_failure"
 const KindModelBinding untyped string = "session.model_binding"
-const KindRunInterrupted untyped string = "session.run_interrupted"
+const KindModelRequest untyped string = "session.model_request"
+const KindModelResponse untyped string = "session.model_response"
+const KindRunEnded untyped string = "session.run_ended"
 const KindRunStarted untyped string = "session.run_started"
 const KindToolCatalog untyped string = "session.tool_catalog"
+const KindToolDisposition untyped string = "session.tool_disposition"
+const KindToolInvocation untyped string = "session.tool_invocation"
 const KindUserInput untyped string = "session.user_input"
-const MediaKindAudio untyped string = "audio"
-const MediaKindDocument untyped string = "document"
-const MediaKindImage untyped string = "image"
-const MediaSourceInline untyped string = "inline"
-const MediaSourceProvider untyped string = "provider"
-const MediaSourceRemote untyped string = "remote"
-const PromptContext untyped string = "context"
-const PromptInstructions untyped string = "instructions"
+const MaxRunEndedReasonBytes untyped int = 32
+const MediaKindAudio MediaKind = "audio"
+const MediaKindDocument MediaKind = "document"
+const MediaKindImage MediaKind = "image"
+const MediaSourceInline MediaSourceKind = "inline"
+const MediaSourceProvider MediaSourceKind = "provider"
+const MediaSourceRemote MediaSourceKind = "remote"
+const PromptContext PromptPurpose = "context"
+const PromptInstructions PromptPurpose = "instructions"
+const ResponseContentOutput ResponseContentKind = "output"
+const ResponseContentReasoning ResponseContentKind = "reasoning"
+const ResponseContentRefusal ResponseContentKind = "refusal"
+const ResponseTerminalCancelled ResponseTerminalClass = "cancelled"
+const ResponseTerminalError ResponseTerminalClass = "error"
+const ResponseTerminalLimit ResponseTerminalClass = "limit"
+const ResponseTerminalNormal ResponseTerminalClass = "normal"
+const ResponseTerminalOther ResponseTerminalClass = "other"
+const ResponseTerminalRefusal ResponseTerminalClass = "refusal"
+const RunEndedCaptureFailed RunEndedReason = "capture-failed"
+const RunEndedCompleted RunEndedReason = "completed"
+const RunEndedError RunEndedReason = "error"
+const RunEndedInterrupted RunEndedReason = "interrupted"
+const RunEndedLimit RunEndedReason = "limit"
+const ToolCaptureComplete ToolCaptureState = "complete"
+const ToolCaptureOmitted ToolCaptureState = "omitted"
+const ToolCaptureTruncated ToolCaptureState = "truncated"
+const ToolIndeterminateCancelled ToolIndeterminateReason = "cancelled"
+const ToolIndeterminateExecutorLost ToolIndeterminateReason = "executor-lost"
+const ToolIndeterminateOther ToolIndeterminateReason = "other"
+const ToolIndeterminateTimeout ToolIndeterminateReason = "timeout"
+const ToolIndeterminateTransport ToolIndeterminateReason = "transport"
+const ToolNotInvokedCancelled ToolNotInvokedReason = "cancelled"
+const ToolNotInvokedOther ToolNotInvokedReason = "other"
+const ToolNotInvokedPolicyRejected ToolNotInvokedReason = "policy-rejected"
+const ToolNotInvokedPreparationFailed ToolNotInvokedReason = "preparation-failed"
+const ToolReturnError ToolReturnStatus = "error"
+const ToolReturnSuccess ToolReturnStatus = "success"
 const Version int64 = 1
-type AttributedInput struct{Parts []ContentPart "cbor:\"c\""; Actor string "cbor:\"a\""; Purpose string "cbor:\"p\""; Source ContentSource "cbor:\"s\""}
+type Actor string
+type AttributedInput struct{Parts []ContentPart "cbor:\"c\""; Actor Actor "cbor:\"a\""; Purpose PromptPurpose "cbor:\"p\""; Source ContentSource "cbor:\"s\""}
+type CaptureFailureEvidence struct{RequestID uint64 "cbor:\"q\" view:\"manual\""; Evidence *ObservedEvidence "cbor:\"e,omitempty\""; Usage *InvocationUsage "cbor:\"u,omitempty\""}
+type ConstructionRecipe struct{Algorithm string "cbor:\"a\""; Version int64 "cbor:\"v\""; Parameters []byte "cbor:\"p\""; Check []byte "cbor:\"c\""}
 type ContentPart struct{Text *string "cbor:\"t,omitempty\""; Media *Media "cbor:\"m,omitempty\""}
 type ContentSource struct{Description string "cbor:\"d\""; WorkspaceFile *WorkspaceFileSource "cbor:\"w,omitempty\""}
 type Created struct{}
-type EffectiveInput struct{RunID uint64 "cbor:\"r\""; Inputs []InputItem "cbor:\"i\""}
-type InputItem struct{UserInput *uint64 "cbor:\"u,omitempty\""; Inline *AttributedInput "cbor:\"i,omitempty\""}
+type EffectiveInput struct{RunID uint64 "cbor:\"r\" view:\"manual\""; Inputs []InputItem "cbor:\"i\" view:\"manual\""}
+type InputItem struct{UserInputID *uint64 "cbor:\"u,omitempty\" view:\"manual\""; Inline *AttributedInput "cbor:\"i,omitempty\""}
 type InstructionBlock struct{Parts []ContentPart "cbor:\"c\""; Source ContentSource "cbor:\"s\""}
 type Instructions struct{Blocks []InstructionBlock "cbor:\"b\""}
-type Media struct{Kind string "cbor:\"k\""; Source string "cbor:\"s\""; InlineData []byte "cbor:\"d\""; RemoteURI string "cbor:\"u\""; ProviderName string "cbor:\"p\""; ProviderScope string "cbor:\"o\""; ProviderReferenceID string "cbor:\"r\""; MIMEType string "cbor:\"m\""; FormatHint string "cbor:\"f\""; Filename string "cbor:\"n\""; Title string "cbor:\"t\""}
+type InvocationFailure struct{RunID uint64 "cbor:\"r\" view:\"-\""; RequestID uint64 "cbor:\"q\" view:\"manual\""; Class InvocationFailureClass "cbor:\"c\""; Explanation *string "cbor:\"e,omitempty\""; Evidence *ObservedEvidence "cbor:\"v,omitempty\""; Usage *InvocationUsage "cbor:\"u,omitempty\""}
+type InvocationFailureClass string
+type InvocationUsage struct{Input *int64 "cbor:\"i,omitempty\""; Output *int64 "cbor:\"o,omitempty\""; CacheRead *int64 "cbor:\"r,omitempty\""; CacheWrite *int64 "cbor:\"w,omitempty\""; Reasoning *int64 "cbor:\"n,omitempty\""; Raw *OpaqueProviderData "cbor:\"x,omitempty\""}
+type Media struct{Kind MediaKind "cbor:\"k\""; Source MediaSourceKind "cbor:\"s\""; InlineData []byte "cbor:\"d\""; RemoteURI string "cbor:\"u\""; ProviderName string "cbor:\"p\""; ProviderScope string "cbor:\"o\""; ProviderReferenceID string "cbor:\"r\""; MIMEType string "cbor:\"m\""; FormatHint string "cbor:\"f\""; Filename string "cbor:\"n\""; Title string "cbor:\"t\""}
+type MediaKind string
+type MediaSourceKind string
 type ModelBinding struct{Route string "cbor:\"r\""; API string "cbor:\"a\""; Model string "cbor:\"m\""; Settings []byte "cbor:\"s\""}
-type RunInterrupted struct{ID uint64 "cbor:\"r\""}
-type RunStarted struct{ID uint64 "cbor:\"r\""}
+type ModelRequest struct{RunID uint64 "cbor:\"r\" view:\"-\""; ID uint64 "cbor:\"o\" view:\"manual\""; Source SourceHead "cbor:\"s\""; Recipe ConstructionRecipe "cbor:\"c\""; RetryOf *uint64 "cbor:\"x,omitempty\" view:\"manual\""}
+type ModelResponse struct{RunID uint64 "cbor:\"r\" view:\"-\""; RequestID uint64 "cbor:\"q\" view:\"manual\""; Terminal ResponseTerminalClass "cbor:\"t\""; ProviderStopReason *string "cbor:\"p,omitempty\""; Items []ResponseItem "cbor:\"i\""; Evidence *ObservedEvidence "cbor:\"e,omitempty\""; Usage *InvocationUsage "cbor:\"u,omitempty\""; Private *OpaqueProviderData "cbor:\"x,omitempty\""}
+type ObservedEvidence struct{Detail *string "cbor:\"d,omitempty\""; Correlation *string "cbor:\"c,omitempty\""}
+type OpaqueProviderData struct{Producer string "cbor:\"p\""; Format string "cbor:\"f\""; Version int64 "cbor:\"v\""; Data []byte "cbor:\"d\""}
+type PromptPurpose string
+type RequestedCall struct{Name string "cbor:\"n\""; Arguments []byte "cbor:\"a\""}
+type ResponseContent struct{Kind ResponseContentKind "cbor:\"k\""; Parts []ContentPart "cbor:\"p\""}
+type ResponseContentKind string
+type ResponseItem struct{Content *ResponseContent "cbor:\"c,omitempty\""; Call *RequestedCall "cbor:\"a,omitempty\""}
+type ResponseTerminalClass string
+type RunEnded struct{RunID uint64 "cbor:\"r\" view:\"manual\""; Reason RunEndedReason "cbor:\"e\""; BulkToolCloseout bool "cbor:\"b,omitempty\""; Explanation *string "cbor:\"x,omitempty\""; Capture *CaptureFailureEvidence "cbor:\"c,omitempty\" view:\"manual\""}
+type RunEndedReason string
+type RunStarted struct{ID uint64 "cbor:\"r\" view:\"manual\""}
+type SourceHead struct{Sequence int64 "cbor:\"s\""; CID contentid.CID "cbor:\"c\" view:\"manual\""}
+type ToolCaptureState string
 type ToolCatalog struct{Tools []ToolDefinition "cbor:\"t\""}
 type ToolDefinition struct{Name string "cbor:\"n\""; Description string "cbor:\"d\""; ArgumentSchema []byte "cbor:\"s\""}
-type UserInput struct{RunID uint64 "cbor:\"r\""; ID uint64 "cbor:\"i\""; Parts []ContentPart "cbor:\"p\""}
+type ToolDisposition struct{RunID uint64 "cbor:\"r\" view:\"-\""; RequestID uint64 "cbor:\"q\" view:\"-\""; CallID uint64 "cbor:\"c\" view:\"manual\""; Returned *ToolReturned "cbor:\"t,omitempty\""; NotInvoked *ToolNotInvoked "cbor:\"n,omitempty\""; Indeterminate *ToolIndeterminate "cbor:\"i,omitempty\""; Diagnostic *string "cbor:\"d,omitempty\" cborlimit:\"bytes=16384\""}
+type ToolEmbeddedResource struct{Resource ToolResource "cbor:\"r\""; Text *string "cbor:\"t,omitempty\" cborlimit:\"bytes=4194304\""; Blob *[]byte "cbor:\"b,omitempty\" cborlimit:\"bytes=4194304\""}
+type ToolIndeterminate struct{Reason ToolIndeterminateReason "cbor:\"r\" cborlimit:\"bytes=32\""; Output ToolOutput "cbor:\"o\""}
+type ToolIndeterminateReason string
+type ToolInvocation struct{RunID uint64 "cbor:\"r\" view:\"-\""; RequestID uint64 "cbor:\"q\" view:\"-\""; CallID uint64 "cbor:\"c\" view:\"manual\""; Name string "cbor:\"n\" cborlimit:\"bytes=4096\""; Arguments value.Map "cbor:\"a\" cborlimit:\"items=4096\""; Prerequisites []uint64 "cbor:\"p\" cborlimit:\"items=4096\" view:\"manual\""}
+type ToolNotInvoked struct{Reason ToolNotInvokedReason "cbor:\"r\" cborlimit:\"bytes=32\""}
+type ToolNotInvokedReason string
+type ToolOutput struct{Capture ToolCaptureState "cbor:\"c\" cborlimit:\"bytes=32\""; Parts []ToolOutputPart "cbor:\"p\" cborlimit:\"items=4096\""}
+type ToolOutputPart struct{Content *ContentPart "cbor:\"c,omitempty\""; JSON *[]byte "cbor:\"j,omitempty\" cborlimit:\"bytes=4194304\""; ResourceLink *ToolResource "cbor:\"l,omitempty\""; Resource *ToolEmbeddedResource "cbor:\"r,omitempty\""}
+type ToolResource struct{URI string "cbor:\"u\" cborlimit:\"bytes=16384\""; Name *string "cbor:\"n,omitempty\" cborlimit:\"bytes=1024\""; Title *string "cbor:\"t,omitempty\" cborlimit:\"bytes=1024\""; MIMEType *string "cbor:\"m,omitempty\" cborlimit:\"bytes=1024\""}
+type ToolReturnStatus string
+type ToolReturned struct{Status ToolReturnStatus "cbor:\"s\" cborlimit:\"bytes=32\""; Output ToolOutput "cbor:\"o\""}
+type UserInput struct{RunID uint64 "cbor:\"r\" view:\"-\""; ID uint64 "cbor:\"i\" view:\"manual\""; Parts []ContentPart "cbor:\"p\""}
 type WorkspaceFileSource struct{Path string "cbor:\"p\""}

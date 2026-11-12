@@ -128,6 +128,9 @@ func (r *Reconciler) reconcileLifecycle(ctx context.Context, env *unstructured.U
 		if !apierrors.IsNotFound(getErr) {
 			return getErr
 		}
+		if err := r.deleteServerCertificate(ctx, env); err != nil {
+			return err
+		}
 		if kind == "RetireEnvironment" {
 			return r.finishRetirement(ctx, env, operationID)
 		}
@@ -157,6 +160,7 @@ func (r *Reconciler) finishRetirement(ctx context.Context, env *unstructured.Uns
 			return lifecycleConflict()
 		}
 		unstructured.RemoveNestedField(o.Object, "status", "lifecycleOperation")
+		unstructured.RemoveNestedField(o.Object, "status", serverCertificateField)
 		setConditionObject(o, "ExecutorTerminated", true, "TerminalPodProof", "terminal executor proof is durable")
 		setConditionObject(o, "Retired", true, "WorkspaceRetained", "executor retired; workspace PVC retained")
 		setConditionObject(o, "Ready", false, "Retained", "environment is retired with retained storage")
@@ -171,6 +175,7 @@ func (r *Reconciler) prepareReplacement(ctx context.Context, env *unstructured.U
 			return lifecycleConflict()
 		}
 		unstructured.RemoveNestedField(o.Object, "status", "pod")
+		unstructured.RemoveNestedField(o.Object, "status", serverCertificateField)
 		op["phase"] = "CreatingReplacement"
 		return unstructured.SetNestedMap(o.Object, op, "status", "lifecycleOperation")
 	})
@@ -234,6 +239,9 @@ func (r *Reconciler) reconcileRetainedDelete(ctx context.Context, env *unstructu
 		return err
 	}
 	if phase == "DeletingPVC" {
+		if err := r.deleteServerCertificate(ctx, env); err != nil {
+			return err
+		}
 		return r.setLifecyclePhase(ctx, env, text(op, "id"), "DeletingPVC", "ReleasingSlot")
 	}
 	res := r.dynamic.Resource(ExecutionEnvironmentGVR).Namespace(r.namespace)

@@ -1,0 +1,168 @@
+// SPDX-FileCopyrightText: Copyright 2026 Stacklok, Inc.
+// SPDX-License-Identifier: LicenseRef-Stacklok-Proprietary
+
+// Private executor protocol: docs/drafts/kubernetes-execution/executor-protocol.md.
+syntax = "proto3";
+
+package mecatl.executor.v1;
+
+import "google/protobuf/timestamp.proto";
+import "mecatl/executor/v1/context.proto";
+
+option go_package = "github.com/stacklok/mecatl/contracts/gen/go/mecatl/executor/v1;executorv1";
+
+// FileService serves Workspace and WorkspaceNamespace on workspace-relative paths.
+service FileService {
+  // Whole files travel in one message, up to executionenv.MaxFileBytes (5 MiB),
+  // above gRPC's 4 MiB default, so both ends must raise the message limit.
+  // File transfer will likely need review, for example chunked streaming.
+  rpc ReadFile(ReadFileRequest) returns (ReadFileResponse);
+  rpc StatFile(StatFileRequest) returns (StatFileResponse);
+  // Create-only.
+  rpc CreateFile(CreateFileRequest) returns (CreateFileResponse);
+  rpc ReplaceFile(ReplaceFileRequest) returns (ReplaceFileResponse);
+  rpc ReadDir(ReadDirRequest) returns (ReadDirResponse);
+  rpc RemoveFile(RemoveFileRequest) returns (RemoveFileResponse);
+  rpc RenameFile(RenameFileRequest) returns (RenameFileResponse);
+  rpc CopyFile(CopyFileRequest) returns (CopyFileResponse);
+  rpc Glob(GlobRequest) returns (GlobResponse);
+  rpc Grep(GrepRequest) returns (GrepResponse);
+  rpc ResolveAuthorityPath(ResolveAuthorityPathRequest) returns (ResolveAuthorityPathResponse);
+}
+
+// FileVersion is opaque and compared only for equality. An empty token is
+// valid; an absent version never matches.
+message FileVersion {
+  bytes token = 1;
+}
+
+message FileInfo {
+  string name = 1;
+  int64 size = 2;
+  // Go io/fs.FileMode bits.
+  uint32 mode = 3;
+  google.protobuf.Timestamp mod_time = 4;
+  bool is_dir = 5;
+}
+
+message ReadFileRequest {
+  RequestContext context = 1;
+  string path = 2;
+}
+
+message ReadFileResponse {
+  bytes data = 1;
+  FileVersion version = 2;
+}
+
+message StatFileRequest {
+  RequestContext context = 1;
+  string path = 2;
+}
+
+message StatFileResponse {
+  FileInfo info = 1;
+}
+
+message CreateFileRequest {
+  RequestContext context = 1;
+  string path = 2;
+  bytes data = 3;
+}
+
+message CreateFileResponse {
+  FileVersion version = 1;
+}
+
+message ReplaceFileRequest {
+  RequestContext context = 1;
+  string path = 2;
+  FileVersion expected_version = 3;
+  bytes data = 4;
+}
+
+message ReplaceFileResponse {
+  FileVersion version = 1;
+}
+
+// max_results 0 selects the server limit; larger results fail, never truncate.
+message ReadDirRequest {
+  RequestContext context = 1;
+  string path = 2;
+  uint32 max_results = 3;
+}
+
+message ReadDirResponse {
+  // Sorted by name.
+  repeated FileInfo entries = 1;
+}
+
+// Never recursive.
+message RemoveFileRequest {
+  RequestContext context = 1;
+  string path = 2;
+}
+
+message RemoveFileResponse {}
+
+// Refuses an existing destination.
+message RenameFileRequest {
+  RequestContext context = 1;
+  string source_path = 2;
+  string destination_path = 3;
+}
+
+message RenameFileResponse {}
+
+// Refuses an existing destination.
+message CopyFileRequest {
+  RequestContext context = 1;
+  string source_path = 2;
+  string destination_path = 3;
+}
+
+message CopyFileResponse {
+  FileVersion version = 1;
+}
+
+message GlobRequest {
+  RequestContext context = 1;
+  string pattern = 2;
+  uint32 max_results = 3;
+}
+
+message GlobResponse {
+  repeated string paths = 1;
+}
+
+message GrepRequest {
+  RequestContext context = 1;
+  // RE2.
+  string pattern = 2;
+  // Optional.
+  string path_glob = 3;
+  uint32 max_results = 4;
+}
+
+message GrepMatch {
+  string path = 1;
+  // 1-based.
+  int32 line = 2;
+  // Invalid UTF-8 becomes U+FFFD.
+  string text = 3;
+}
+
+message GrepResponse {
+  repeated GrepMatch matches = 1;
+}
+
+message ResolveAuthorityPathRequest {
+  RequestContext context = 1;
+  string path = 2;
+}
+
+// Absolute; target is inside workspace.
+message ResolveAuthorityPathResponse {
+  string target = 1;
+  string workspace = 2;
+}

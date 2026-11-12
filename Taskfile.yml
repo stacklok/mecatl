@@ -72,6 +72,12 @@ vars:
   # .goreleaser.yaml is loaded STRICTLY, so a config field newer than this pin
   # is a hard failure rather than a warning.
   GORELEASER_VERSION: v2.16.0
+  # -race needs cgo on Linux.
+  RACE_CGO: 'CGO_ENABLED={{if eq OS "linux"}}1{{else}}0{{end}}'
+
+# Release binaries build with CGO_ENABLED=0; test the same configuration.
+env:
+  CGO_ENABLED: '0'
 
 tasks:
   default:
@@ -371,7 +377,7 @@ tasks:
     cmds:
       # Go's default 10m per-package budget is too tight for cmd/mecatui/ui under
       # -race (about 400-600s on CI runners); the job-level timeout still bounds the run.
-      - cd {{.MODULE | shellQuote}} && GOWORK={{.TEST_GOWORK | shellQuote}} go test -mod=readonly -timeout=20m {{.RACE}} ./...
+      - cd {{.MODULE | shellQuote}} && GOWORK={{.TEST_GOWORK | shellQuote}} {{if .RACE}}{{.RACE_CGO}} {{end}}go test -mod=readonly -timeout=20m {{.RACE}} ./...
 
   test:_suite:
     internal: true
@@ -607,7 +613,7 @@ tasks:
       RACE: '{{default "" .RACE}}'
       TEST_GOWORK: '{{default "" .TEST_GOWORK}}'
     cmds:
-      - '{{if .TEST_GOWORK}}GOWORK={{.TEST_GOWORK | shellQuote}} {{end}}go test -mod=readonly {{if .TEST_GOWORK}}-timeout=20m {{end}}{{.RACE}} -tags=microvm_dev ./internal/adapter/microvmmanager ./cmd/mecated ./cmd/mecatui'
+      - '{{if .TEST_GOWORK}}GOWORK={{.TEST_GOWORK | shellQuote}} {{end}}{{if .RACE}}{{.RACE_CGO}} {{end}}go test -mod=readonly {{if .TEST_GOWORK}}-timeout=20m {{end}}{{.RACE}} -tags=microvm_dev ./internal/adapter/microvmmanager ./cmd/mecated ./cmd/mecatui'
 
   test:microvm-standalone:
     desc: Prove the opt-in microVM module builds and tests with GOWORK=off.
@@ -1043,26 +1049,47 @@ tasks:
     desc: Run tests with coverage and write coverage/coverage.{out,html} (root module + engine module)
     cmds:
       - mkdir -p coverage
-      - go test -race -coverprofile=coverage/coverage.out -covermode=atomic ./...
+      - '{{.RACE_CGO}} go test -race -coverprofile=coverage/coverage.out -covermode=atomic ./...'
       - go tool cover -func=coverage/coverage.out
       - go tool cover -html=coverage/coverage.out -o coverage/coverage.html
       - 'echo "HTML coverage report: coverage/coverage.html"'
       # engine/ is a separate module — cover it in its own pass (sibling profile).
-      - cd engine && go test -race -coverprofile=../coverage/engine.out -covermode=atomic ./...
+      - cd engine && {{.RACE_CGO}} go test -race -coverprofile=../coverage/engine.out -covermode=atomic ./...
       - go tool cover -func=coverage/engine.out
       - go tool cover -html=coverage/engine.out -o coverage/engine.html
       - 'echo "HTML engine coverage report: coverage/engine.html"'
-      - cd authn/oidc && go test -race -coverprofile=../../coverage/authn-oidc.out -covermode=atomic ./...
+      - cd authn/oidc && {{.RACE_CGO}} go test -race -coverprofile=../../coverage/authn-oidc.out -covermode=atomic ./...
       - go tool cover -func=coverage/authn-oidc.out
       - go tool cover -html=coverage/authn-oidc.out -o coverage/authn-oidc.html
-      - cd environment/microvm && go test -race -coverprofile=../../coverage/environment-microvm.out -covermode=atomic ./...
+      - cd environment/microvm && {{.RACE_CGO}} go test -race -coverprofile=../../coverage/environment-microvm.out -covermode=atomic ./...
       - go tool cover -func=coverage/environment-microvm.out
       - go tool cover -html=coverage/environment-microvm.out -o coverage/environment-microvm.html
       # provider/ submodules — sibling profiles per module.
-      - cd provider/ssefilter && go test -race -coverprofile=../../coverage/provider-ssefilter.out -covermode=atomic ./...
-      - cd provider/anthropic && go test -race -coverprofile=../../coverage/provider-anthropic.out -covermode=atomic ./...
-      - cd provider/openai && go test -race -coverprofile=../../coverage/provider-openai.out -covermode=atomic ./...
-      - cd provider/openaichat && go test -race -coverprofile=../../coverage/provider-openaichat.out -covermode=atomic ./...
+      - cd provider/ssefilter && {{.RACE_CGO}} go test -race -coverprofile=../../coverage/provider-ssefilter.out -covermode=atomic ./...
+      - cd provider/anthropic && {{.RACE_CGO}} go test -race -coverprofile=../../coverage/provider-anthropic.out -covermode=atomic ./...
+      - cd provider/openai && {{.RACE_CGO}} go test -race -coverprofile=../../coverage/provider-openai.out -covermode=atomic ./...
+      - cd provider/openaichat && {{.RACE_CGO}} go test -race -coverprofile=../../coverage/provider-openaichat.out -covermode=atomic ./...
+
+  lint:cgo:
+    desc: Fail when a dependency outside the allowlist compiles cgo files
+    silent: true
+    vars:
+      CGO_ALLOWED: >-
+        github.com/1password/onepassword-sdk-go/internal
+        github.com/google/certificate-transparency-go/x509
+        github.com/prometheus/client_golang/prometheus
+    cmds:
+      - for: {var: GO_MODULES}
+        cmd: |
+          set -o pipefail
+          for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64; do
+            (cd {{.ITEM | shellQuote}} && CGO_ENABLED=1 GOOS=${target%/*} GOARCH=${target#*/} GOWORK=off go list -deps -test -f '{{"{{"}}if .CgoFiles{{"}}"}}{{"{{"}}.ImportPath{{"}}"}}{{"{{"}}end{{"}}"}}' ./...)
+          done | sort -u | while read -r pkg; do
+            case " runtime/cgo net os/user plugin {{.CGO_ALLOWED}} " in
+              *" $pkg "*) ;;
+              *) echo "{{.ITEM}}: $pkg uses cgo; release builds set CGO_ENABLED=0" >&2; exit 1 ;;
+            esac
+          done
 
   tools:golangci-lint:
     desc: Install the CI-matching golangci-lint release into .tools/bin
@@ -1252,19 +1279,29 @@ tasks:
       - GOWORK=off go run ./internal/timezonegen/cmd/timezonegen --output cmd/mecatui/internal/timezones/zones.json
 
   generate:codecs:
-    desc: Regenerate isolated kernel persistence codec fixtures
+    desc: Compatibility alias for generate:data
     cmds:
-      - GOWORK=off go run ./internal/cborgen/cmd/cborgen -repo .
+      - task: generate:data
 
   generate:codecs:check:
-    desc: Check codec inventory and bytes without modifying generated files
+    desc: Compatibility alias for generate:data:check
     cmds:
-      - GOWORK=off go run ./internal/cborgen/cmd/cborgen -repo . -check
+      - task: generate:data:check
+
+  generate:data:
+    desc: Regenerate isolated kernel DTO operations
+    cmds:
+      - GOWORK=off go run ./internal/dtogen/cmd/dtogen -repo .
+
+  generate:data:check:
+    desc: Check DTO artifact inventory and bytes without modifying generated files
+    cmds:
+      - GOWORK=off go run ./internal/dtogen/cmd/dtogen -repo . -check
 
   generate:
-    desc: Regenerate contracts, codec fixtures and configuration reference
+    desc: Regenerate contracts, DTO operations and configuration reference
     cmds:
-      - task: generate:codecs
+      - task: generate:data
       # Regenerates the gRPC contracts — the harness API (contracts/proto/
       # mecatl/v1) AND the store-driver protocol (contracts/proto/mecatl/
       # driver/v1) — into contracts/gen (never hand-edit the output). The buf
@@ -1283,6 +1320,20 @@ tasks:
       # Regenerate the committed configuration-reference + settings.yaml skeleton
       # from the permconfig schema (the CI freshness gate enforces this).
       - task: docs:configref
+
+  lint:proto:
+    desc: Run buf lint and, once the base ref has it, buf breaking on the executor protocol (BUF_AGAINST_REF, default main)
+    vars:
+      PROTO_PATH: contracts/proto/mecatl/executor
+      AGAINST_REF: '{{.BUF_AGAINST_REF | default "main"}}'
+    cmds:
+      - buf lint --path {{.PROTO_PATH}}
+      - cmd: |
+          if ! git cat-file -e "{{.AGAINST_REF}}:{{.PROTO_PATH}}" 2>/dev/null; then
+            echo "skip buf breaking: {{.PROTO_PATH}} is absent at {{.AGAINST_REF}}"
+            exit 0
+          fi
+          buf breaking --against ".git#ref={{.AGAINST_REF}}" --path {{.PROTO_PATH}}
 
   docs:configref:
     desc: Regenerate the committed config-init skeleton + rendered configuration reference from the permconfig schema

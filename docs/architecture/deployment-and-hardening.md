@@ -111,7 +111,11 @@ The provider's ID-level default does not rewrite `mecak8s`'s explicitly pinned
 `execution.templateRevision` or an existing session's binding.
 
 Provider TLS and client authorization are separate controls. Platform PKI issues
-and projects the provider and client certificates and trust bundles. The provider
+and projects the provider and client certificates and trust bundles, including
+the client certificate the provider presents to executors. Executor server
+certificates are self-signed per Pod by the provider, which holds no signing key
+and dials only the Pod UID and certificate fingerprint pinned in the
+environment's status. The provider
 reloads valid projected TLS files independently of the client-policy manifest.
 The manifest generation changes only for authorization policy updates. A valid
 mTLS client still needs the manifest's exact client URI, template scope, owner

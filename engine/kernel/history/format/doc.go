@@ -1,4 +1,4 @@
-//go:generate go -C ../../../.. run ./internal/cborgen/cmd/cborgen -dir engine/kernel/history/format -types Commit,Record -out zz_cbor_generated.go
+//go:generate go -C ../../../.. run ./internal/dtogen/cmd/dtogen -dir engine/kernel/history/format -emit cbor,clone,equal -out zz_cbor_generated.go
 
 // Package format owns the isolated kernel's persistence representation. Commit
 // and Record are mutable persistence DTOs, separate from accepted-state

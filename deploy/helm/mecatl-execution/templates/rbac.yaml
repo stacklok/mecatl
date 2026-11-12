@@ -40,6 +40,11 @@ rules:
 - apiGroups: [""]
   resources: ["pods/exec"]
   verbs: ["create"]
+# Executor server certificates. Generated names cannot be scoped by RBAC, so
+# this is namespace-wide; provider-secret-policy.yaml confines create and delete.
+- apiGroups: [""]
+  resources: ["secrets"]
+  verbs: ["create", "get", "delete"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding

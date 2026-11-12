@@ -2,6 +2,7 @@ package executioncontroller
 
 import (
 	"os"
+	"strings"
 	"testing"
 
 	apiextensions "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions"
@@ -70,6 +71,22 @@ func TestExecutionEnvironmentSchemaAdmission(t *testing.T) {
 		{"old-status", func(o map[string]any) { o["status"].(map[string]any)["schemaVersion"] = int64(1) }, false},
 		{"unknown-status", func(o map[string]any) { o["status"].(map[string]any)["schemaVersion"] = int64(3) }, false},
 		{"malformed-status", func(o map[string]any) { o["status"].(map[string]any)["schemaVersion"] = "2" }, false},
+		{"server-certificate-pin", func(o map[string]any) {
+			o["status"].(map[string]any)["serverCertificate"] = serverCertificateStatus("pod-uid")
+		}, true},
+		{"server-certificate-before-pod", func(o map[string]any) {
+			o["status"].(map[string]any)["serverCertificate"] = serverCertificateStatus("")
+		}, true},
+		{"server-certificate-bad-fingerprint", func(o map[string]any) {
+			pin := serverCertificateStatus("pod-uid")
+			pin["fingerprint"] = "AB"
+			o["status"].(map[string]any)["serverCertificate"] = pin
+		}, false},
+		{"server-certificate-without-secret", func(o map[string]any) {
+			pin := serverCertificateStatus("pod-uid")
+			delete(pin, "secretName")
+			o["status"].(map[string]any)["serverCertificate"] = pin
+		}, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -102,12 +119,39 @@ func TestExecutionEnvironmentCRDPreservesControllerStatus(t *testing.T) {
 		"activeOperation":    map[string]any{"id": "file", "operation": "file.read", "startedAt": "2026-09-17T00:00:00Z", "claimID": "claim", "runID": "run", "epoch": int64(3), "holderID": "holder", "renewedAt": "2026-09-17T00:00:01Z", "expiresAt": "2026-09-17T00:01:00Z"},
 		"lifecycleOperation": map[string]any{"id": "life", "type": "ReplaceExecutor", "phase": "Quiescing", "expectedEpoch": int64(3), "expectedPodUID": "pod-uid", "expectedPVCUID": "pvc-uid", "createdAt": "2026-09-17T00:00:00Z"},
 		"terminationProof":   map[string]any{"operationID": "life", "podUID": "pod-uid", "pvcUID": "pvc-uid", "epoch": int64(3), "podPhase": "Failed", "observedAt": "2026-09-17T00:00:00Z"},
+		"serverCertificate":  serverCertificateStatus("pod-uid"),
 		"conditions":         []any{map[string]any{"type": "Ready", "status": "True", "reason": "Reconciled", "message": "ready", "observedGeneration": int64(9), "lastTransitionTime": "2026-09-17T00:00:00Z"}},
 	}}
 	pruning.Prune(obj, structural, true)
-	for _, path := range [][]string{{"status", "schemaVersion"}, {"status", "observedGeneration"}, {"status", "epoch"}, {"status", "grantGeneration"}, {"status", "references"}, {"status", "pvc"}, {"status", "pod"}, {"status", "activeRun", "grantGeneration"}, {"status", "renewReceipts"}, {"status", "activeOperation"}, {"status", "lifecycleOperation"}, {"status", "terminationProof"}, {"status", "conditions"}} {
+	for _, path := range [][]string{
+		{"status", "schemaVersion"},
+		{"status", "observedGeneration"},
+		{"status", "epoch"},
+		{"status", "grantGeneration"},
+		{"status", "references"},
+		{"status", "pvc"},
+		{"status", "pod"},
+		{"status", "activeRun", "grantGeneration"},
+		{"status", "renewReceipts"},
+		{"status", "activeOperation"},
+		{"status", "lifecycleOperation"},
+		{"status", "terminationProof"},
+		{"status", "serverCertificate", "podUID"},
+		{"status", "conditions"},
+	} {
 		if _, found, err := unstructured.NestedFieldNoCopy(obj, path...); err != nil || !found {
 			t.Fatalf("CRD pruning removed controller field %v (found=%t err=%v)", path, found, err)
 		}
 	}
+}
+
+func serverCertificateStatus(podUID string) map[string]any {
+	pin := map[string]any{
+		"secretName":  "executor-tls-test-0123456789abcdef",
+		"fingerprint": strings.Repeat("ab", 32),
+	}
+	if podUID != "" {
+		pin["podUID"] = podUID
+	}
+	return pin
 }

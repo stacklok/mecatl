@@ -34,3 +34,6 @@ design material, not documentation of shipped runtime or storage behavior. The
 - [Extensions and execution policy boundaries](components.md) applies these
   contracts to delegation, learning, and compaction while keeping authority and
   lifecycle enforcement in the kernel.
+- [Extension records and optional materialization](extension-records.md) captures
+  a future direction for opaque third-party facts, registered codecs, and typed
+  snapshot access without granting extension records lifecycle authority.

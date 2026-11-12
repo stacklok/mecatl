@@ -42,7 +42,7 @@ func iteratorFixture(t testing.TB, count, payloadBytes int) map[string]*session.
 	mustBatch(t, b.Create())
 	for i := 1; i < count; i++ {
 		batchRun(t, b)
-		mustBatch(t, b.Interrupt())
+		mustBatch(t, b.EndRun(session.RunEndedInterrupted))
 	}
 	run := batchRun(t, b)
 	parts := make([]session.ContentPart, count)
@@ -63,20 +63,20 @@ func iteratorFixture(t testing.TB, count, payloadBytes int) map[string]*session.
 		blocks[0].Parts = parts
 		items[0].Inline.Parts = parts
 	}
-	_, err := b.AddUserInput(session.AddUserInputRequest{RunID: run, Parts: parts})
+	_, err := b.AddUserInput(run, session.UserInput{Parts: parts})
 	mustBatch(t, err)
-	mustBatch(t, b.ReplaceInstructions(session.Instructions{HistoryID: scope, Blocks: blocks}))
-	mustBatch(t, b.ReplaceToolCatalog(session.ToolCatalog{HistoryID: scope, Tools: tools}))
-	mustBatch(t, b.AddEffectiveInput(session.EffectiveInput{RunID: run, Inputs: items}))
+	mustBatch(t, b.ReplaceInstructions(scope, session.Instructions{Blocks: blocks}))
+	mustBatch(t, b.ReplaceToolCatalog(scope, session.ToolCatalog{Tools: tools}))
+	mustBatch(t, b.AddEffectiveInput(run, session.EffectiveInput{Inputs: items}))
 	for i := 1; i < count; i++ {
-		mustBatch(t, b.AddEffectiveInput(session.EffectiveInput{RunID: run}))
+		mustBatch(t, b.AddEffectiveInput(run, session.EffectiveInput{}))
 	}
 	if count == 0 {
 		// Retain present empty children before clearing the selected root again.
 		source := session.ContentSource{Description: "empty"}
-		mustBatch(t, b.ReplaceInstructions(session.Instructions{HistoryID: scope, Blocks: []session.InstructionBlock{{Source: source}}}))
-		mustBatch(t, b.AddEffectiveInput(session.EffectiveInput{RunID: run, Inputs: []session.InputItem{{Inline: &session.AttributedInput{Actor: "empty", Purpose: session.PromptContext, Source: source}}}}))
-		mustBatch(t, b.ReplaceInstructions(session.Instructions{HistoryID: scope}))
+		mustBatch(t, b.ReplaceInstructions(scope, session.Instructions{Blocks: []session.InstructionBlock{{Source: source}}}))
+		mustBatch(t, b.AddEffectiveInput(run, session.EffectiveInput{Inputs: []session.InputItem{{Inline: &session.AttributedInput{Actor: "empty", Purpose: session.PromptContext, Source: source}}}}))
+		mustBatch(t, b.ReplaceInstructions(scope, session.Instructions{}))
 	}
 	submitBatch(t, s, b)
 	return iteratorSessions(t, h, s, p)
@@ -87,18 +87,9 @@ func iteratorFixture(t testing.TB, count, payloadBytes int) map[string]*session.
 func iteratorSessions(t testing.TB, h *history.History, s *session.Session, p session.Policy) map[string]*session.Session {
 	t.Helper()
 	scope := s.Snapshot().HistoryID()
-	applied := boundSession(t, h, p)
-	page, err := h.Read(context.Background(), scope, history.ReadRequest{Through: s.Snapshot().Head(), MaxCommits: 2})
-	mustBatch(t, err)
-	if len(page.Commits) == 0 || len(page.Commits) != int(s.Snapshot().Head().Sequence) {
-		t.Fatal("missing iterator fixture commits")
-	}
-	for _, commit := range page.Commits {
-		mustBatch(t, applied.Apply(commit))
-	}
 	loaded, err := session.Load(context.Background(), h, scope, p)
 	mustBatch(t, err)
-	return map[string]*session.Session{"Submit": s, "Apply": applied, "Load": loaded}
+	return map[string]*session.Session{"Submit": s, "Load": loaded}
 }
 
 // iteratorRecordFixture isolates record counts from run/context collection sizes.
@@ -112,7 +103,7 @@ func iteratorRecordFixture(t testing.TB, count int) map[string]iteratorViews {
 	if count > 1 {
 		run := batchRun(t, b)
 		for i := 2; i < count; i++ {
-			mustBatch(t, b.AddEffectiveInput(session.EffectiveInput{RunID: run}))
+			mustBatch(t, b.AddEffectiveInput(run, session.EffectiveInput{}))
 		}
 	}
 	submitBatch(t, s, b)
@@ -124,7 +115,7 @@ func iteratorRecordFixture(t testing.TB, count int) map[string]iteratorViews {
 	if count == 1 {
 		batchRun(t, b)
 	} else {
-		mustBatch(t, b.AddEffectiveInput(session.EffectiveInput{RunID: s.Snapshot().ActiveRun()}))
+		mustBatch(t, b.AddEffectiveInput(s.Snapshot().ActiveRun(), session.EffectiveInput{}))
 	}
 	submitBatch(t, s, b)
 	for seam, candidate := range iteratorSessions(t, h, s, p) {
@@ -161,11 +152,11 @@ func iteratorViewSet(t testing.TB, s *session.Session) iteratorViews {
 	v.effective, _ = v.run.RecordAt(4).EffectiveInput()
 	for i := 0; i < v.run.RecordCount(); i++ {
 		record := v.run.RecordAt(i)
-		if instructions, ok := record.Instructions(); ok && instructions.BlockCount() > 0 {
-			v.block = instructions.BlockAt(0)
+		if instructions, ok := record.Instructions(); ok && instructions.Blocks().Len() > 0 {
+			v.block = instructions.Blocks().At(0)
 		}
-		if effective, ok := record.EffectiveInput(); ok && effective.InputCount() > 0 {
-			v.inline, _ = effective.InputAt(0).Inline()
+		if effective, ok := record.EffectiveInput(); ok && effective.Inputs().Len() > 0 {
+			v.inline, _ = effective.Inputs().At(0).Inline()
 		}
 	}
 	return v
@@ -233,15 +224,26 @@ func sequenceContract[T any](t testing.TB, seq iter.Seq[T], count int, at func(i
 	}
 }
 
+// iteratorValues adapts indexed collection iteration for the shared sequence contract.
+func iteratorValues[T any](seq iter.Seq2[int, T]) iter.Seq[T] {
+	return func(yield func(T) bool) {
+		for _, value := range seq {
+			if !yield(value) {
+				return
+			}
+		}
+	}
+}
+
 func iteratorContracts(t testing.TB, v iteratorViews) []func() {
 	t.Helper()
 	return []func(){
-		sequenceContract(t, v.user.Parts(), v.user.PartCount(), v.user.PartAt),
-		sequenceContract(t, v.inline.Parts(), v.inline.PartCount(), v.inline.PartAt),
-		sequenceContract(t, v.block.Parts(), v.block.PartCount(), v.block.PartAt),
-		sequenceContract(t, v.instructions.Blocks(), v.instructions.BlockCount(), v.instructions.BlockAt),
-		sequenceContract(t, v.effective.Inputs(), v.effective.InputCount(), v.effective.InputAt),
-		sequenceContract(t, v.catalog.Tools(), v.catalog.ToolCount(), v.catalog.ToolAt),
+		sequenceContract(t, iteratorValues(v.user.Parts().All()), v.user.Parts().Len(), v.user.Parts().At),
+		sequenceContract(t, iteratorValues(v.inline.Parts().All()), v.inline.Parts().Len(), v.inline.Parts().At),
+		sequenceContract(t, iteratorValues(v.block.Parts().All()), v.block.Parts().Len(), v.block.Parts().At),
+		sequenceContract(t, iteratorValues(v.instructions.Blocks().All()), v.instructions.Blocks().Len(), v.instructions.Blocks().At),
+		sequenceContract(t, iteratorValues(v.effective.Inputs().All()), v.effective.Inputs().Len(), v.effective.Inputs().At),
+		sequenceContract(t, iteratorValues(v.catalog.Tools().All()), v.catalog.Tools().Len(), v.catalog.Tools().At),
 		sequenceContract(t, v.run.Records(), v.run.RecordCount(), v.run.RecordAt),
 		sequenceContract(t, v.snapshot.Records(), v.snapshot.RecordCount(), v.snapshot.RecordAt),
 		sequenceContract(t, v.snapshot.Runs(), v.snapshot.RunCount(), v.snapshot.RunAt),
@@ -281,7 +283,7 @@ func TestViewIteratorsContract(t *testing.T) {
 }
 
 func TestViewIteratorsPinnedConcurrentReaders(t *testing.T) {
-	for _, seam := range []string{"Submit", "Apply", "Load"} {
+	for _, seam := range []string{"Submit", "Load"} {
 		t.Run(seam, func(t *testing.T) {
 			s := iteratorFixture(t, 3, 32)[seam]
 			old := iteratorViewSet(t, s)
@@ -301,17 +303,17 @@ func TestViewIteratorsPinnedConcurrentReaders(t *testing.T) {
 			close(start)
 			for range 16 {
 				b := beginBatch(t, s)
-				_, err := b.AddUserInput(session.AddUserInputRequest{RunID: old.run.ID(), Parts: byteParts([]byte("later"))})
+				_, err := b.AddUserInput(old.run.ID(), session.UserInput{Parts: byteParts([]byte("later"))})
 				mustBatch(t, err)
-				mustBatch(t, b.ReplaceInstructions(session.Instructions{HistoryID: old.snapshot.HistoryID()}))
-				mustBatch(t, b.ReplaceToolCatalog(session.ToolCatalog{HistoryID: old.snapshot.HistoryID()}))
-				mustBatch(t, b.AddEffectiveInput(session.EffectiveInput{RunID: old.run.ID()}))
+				mustBatch(t, b.ReplaceInstructions(old.snapshot.HistoryID(), session.Instructions{}))
+				mustBatch(t, b.ReplaceToolCatalog(old.snapshot.HistoryID(), session.ToolCatalog{}))
+				mustBatch(t, b.AddEffectiveInput(old.run.ID(), session.EffectiveInput{}))
 				submitBatch(t, s, b)
 			}
 			b := beginBatch(t, s)
-			mustBatch(t, b.Interrupt())
+			mustBatch(t, b.EndRun(session.RunEndedInterrupted))
 			newRun := batchRun(t, b)
-			_, err := b.AddUserInput(session.AddUserInputRequest{RunID: newRun})
+			_, err := b.AddUserInput(newRun, session.UserInput{})
 			mustBatch(t, err)
 			submitBatch(t, s, b)
 			wg.Wait()
@@ -321,8 +323,8 @@ func TestViewIteratorsPinnedConcurrentReaders(t *testing.T) {
 			current := s.Snapshot()
 			instructions, _ := current.Instructions()
 			catalog, _ := current.ToolCatalog()
-			media, _ := old.user.PartAt(0).Media()
-			if current.RunCount() != old.snapshot.RunCount()+1 || current.RunAt(2).RecordCount() <= old.run.RecordCount() || instructions.BlockCount() != 0 || catalog.ToolCount() != 0 || media.Filename() != "part-0" || old.inline.Actor() != "actor-0" || old.catalog.ToolAt(0).Name() != "tool-0" || old.block.Source().Description() != "source-0" {
+			media, _ := old.user.Parts().At(0).Media()
+			if current.RunCount() != old.snapshot.RunCount()+1 || current.RunAt(2).RecordCount() <= old.run.RecordCount() || instructions.Blocks().Len() != 0 || catalog.Tools().Len() != 0 || media.Filename() != "part-0" || old.inline.Actor() != "actor-0" || old.catalog.Tools().At(0).Name() != "tool-0" || old.block.Source().Description() != "source-0" {
 				t.Fatal("replacement/append did not preserve captured content and bounds")
 			}
 		})

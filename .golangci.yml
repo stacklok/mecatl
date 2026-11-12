@@ -142,6 +142,29 @@ linters:
           deny:
             - pkg: os
               desc: 'content identity values must not access host state'
+        core-kernel-views:
+          list-mode: strict
+          files:
+            - '**/engine/kernel/views/**.go'
+            - '!$test'
+          allow:
+            - $gostd
+          deny:
+            - pkg: os
+              desc: 'kernel views must not access host state'
+        core-kernel-value:
+          list-mode: strict
+          files:
+            - '**/engine/kernel/value/**.go'
+            - '!$test'
+          allow:
+            - $gostd
+            - github.com/stacklok/mecatl/engine/kernel/codec$
+            - github.com/stacklok/mecatl/engine/kernel/views$
+            - github.com/jcalabro/atmos/cbor$
+          deny:
+            - pkg: os
+              desc: 'structured values must not access host state'
         core-kernel-session:
           list-mode: strict
           files:
@@ -156,6 +179,8 @@ linters:
             - github.com/stacklok/mecatl/engine/kernel/history/format$
             - github.com/stacklok/mecatl/engine/kernel/codec$
             - github.com/stacklok/mecatl/engine/kernel/session/format$
+            - github.com/stacklok/mecatl/engine/kernel/views$
+            - github.com/stacklok/mecatl/engine/kernel/value$
           deny:
             - pkg: os
               desc: 'kernel session values must not access host state'
@@ -167,6 +192,8 @@ linters:
           allow:
             - $gostd
             - github.com/stacklok/mecatl/engine/kernel/codec$
+            - github.com/stacklok/mecatl/engine/kernel/contentid$
+            - github.com/stacklok/mecatl/engine/kernel/value$
             - github.com/jcalabro/atmos/cbor$
           deny:
             - pkg: os

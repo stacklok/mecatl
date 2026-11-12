@@ -38,6 +38,8 @@ Before installation, prepare:
   continues to own their contents.
 - A `mecak8s` client mTLS Secret containing `ca.crt`, `tls.crt`, and `tls.key`,
   issued with the [required SAN, EKU, and trust configuration](#prepare-platform-managed-tls-and-client-policy).
+- A provider client certificate Secret for connections to executor Pods, in the
+  provider namespace, issued by the same platform PKI.
 - Provider-client pod and namespace selectors, API-server CIDRs, and DNS
   resolver CIDRs.
 
@@ -249,6 +251,10 @@ provider:
         "administratorFor": ["spiffe://cluster.example.com/ns/mecatl/sa/mecak8s"]
       }]
     }
+  executorClientTLS:
+    secretName: <PROVIDER_EXECUTOR_CLIENT_SECRET>
+    uri: spiffe://cluster.example.com/ns/<NAMESPACE>/sa/mecatl-execution
+    caSecretName: <EXECUTOR_CA_SECRET>
   clientIngressSelectors:
     - namespaceLabels: { kubernetes.io/metadata.name: <CLIENT_NAMESPACE> }
       podLabels: { app.kubernetes.io/name: mecak8s }
@@ -311,12 +317,73 @@ renewal. Arrange the following before installing:
 | Provider `clients.pem` | PEM CA bundle that trusts the issuing chains of the `mecak8s` and administrator client certificates. |
 | Each client's `tls.crt` and `tls.key` | A matching, currently valid certificate/key pair with client-auth EKU and **exactly one URI SAN** matching its `clients[].uri`. Include the client certificate chain. Use a separate identity for administration. |
 | Each client's `ca.crt` | PEM CA bundle that trusts the provider's serving chain; server DNS verification remains enabled. |
+| Provider executor client `tls.crt` and `tls.key` | A matching, currently valid certificate/key pair with client-auth EKU and exactly one URI SAN equal to `provider.executorClientTLS.uri`. The provider refuses to start without it. |
+| Executor CA bundle | PEM CA bundle that trusts the issuer of the provider executor client certificate. It must be in its own Secret, holding no private key. |
 
 Use a canonical URI with nonempty scheme and host, lowercase scheme and host,
 and no userinfo, query, fragment, or wildcard, for example
 `spiffe://cluster.example.com/ns/mecatl/sa/mecak8s`. The URI is an exact
 allowlist identity; a Kubernetes ServiceAccount name alone does not issue or
 authorize that certificate.
+
+### Executor certificates and provider trust
+
+The provider authenticates itself to executor Pods with the certificate in
+`provider.executorClientTLS`. The chart projects its `certificateKey` and
+`privateKeyKey` into the provider without `subPath`, so renewals take effect in
+place. Each executor Pod mounts the CA bundle from `caSecretName` under
+`caKey`, and the URI from the chart-owned `<FULLNAME>-executor-trust` ConfigMap
+(with the example values, `mecatl-execution-executor-trust`), through a
+projected volume that also updates in place.
+
+The CA Secret must hold no private key. A node can read every Secret its Pods
+reference, so executor Pods referencing a Secret with a key would expose that
+key to every node that runs an executor. The chart therefore refuses a
+`caSecretName` equal to `secretName`, `securitySecretName`, or any
+`securitySources` name. Publish the CA bundle in its own Secret, for example as
+a trust-manager `Bundle` target, rather than reusing the `ca.crt` key that
+cert-manager adds to a certificate's Secret.
+
+```yaml
+provider:
+  executorClientTLS:
+    secretName: provider-executor-client
+    certificateKey: tls.crt
+    privateKeyKey: tls.key
+    uri: spiffe://cluster.example.com/ns/mecatl-execution/sa/mecatl-execution
+    caSecretName: platform-roots
+    caKey: ca.crt
+```
+
+The provider does not hold a signing key. Before it starts an executor Pod, it
+generates a key pair and a self-signed certificate for that environment, stores
+both in an immutable Secret named `executor-tls-<ENVIRONMENT>-<FINGERPRINT>`,
+and records the certificate's SHA-256 fingerprint in the environment's
+`status.serverCertificate`. It adds the executor Pod's UID to that status once
+the Pod exists. A container restart keeps the Pod and its certificate; a
+replacement Pod gets a new Secret and fingerprint. The provider deletes the
+Secret after its Pod is gone during replacement, retirement, and retained
+deletion.
+
+The chart therefore grants the provider `create`, `get`, and `delete` on
+Secrets in its namespace, with no `list`, `watch`, `update`, or `patch`.
+Kubernetes RBAC cannot restrict `create` by name, and the generated names are
+not known in advance, so the grant is namespace-wide. The chart adds a
+`ValidatingAdmissionPolicy` that lets the provider create and delete only
+`kubernetes.io/tls` Secrets named `executor-tls-*` with the
+`execution.mecatl.dev/executor-tls: "true"` label. It requires Kubernetes 1.30
+or later, and installing the chart requires permission to create
+`ValidatingAdmissionPolicy` and `ValidatingAdmissionPolicyBinding` objects.
+Admission policies don't cover reads, so `get` stays namespace-wide: keep
+unrelated Secrets out of the provider namespace.
+
+Changing `caSecretName`, `caKey`, or `fullnameOverride` changes the executor Pod
+specification. Existing executor Pods then report `ExecutorUnavailable` until
+you [replace them](execution-provider-lifecycle.md#replace-or-retire-an-executor).
+Renewing the certificate or CA bundle under the same Secret and key needs no
+replacement.
+
+### Service and user identity
 
 This mTLS authenticates the **service** connecting to the execution provider.
 The user's identity is the OIDC `(issuer, subject)` verified by `mecak8s` and
@@ -536,7 +603,16 @@ space reclaimed through that lifecycle; raising the quota cannot enlarge it.
 Do not delete ledger entries or unrelated workspaces to clear a capacity error.
 
 For an mTLS failure, check certificate validity, client URI SAN, EKUs, serving
-DNS identity, and both trust bundles without printing credentials. A connection
+DNS identity, and both trust bundles without printing credentials. If provider
+startup reports `load executor client certificate`, check that the
+`provider.executorClientTLS` Secret is current, has client-auth EKU, and names
+exactly `provider.executorClientTLS.uri`. If an executor Pod reports a mismatched
+certificate or provider trust volume, replace the executor rather than editing
+the Pod or its Secret. If an environment's `Ready` condition reports that
+`status.serverCertificate` was pruned, the cluster still has an older
+ExecutionEnvironment CRD: apply the CRD from the installed release as in
+[Upgrade a compatible release](execution-provider-lifecycle.md#upgrade-a-compatible-release).
+A connection
 timeout also requires checking client ingress selectors and client-side egress.
 For denied run acquisition or renewal, check current client template scope and
 revision revocation; replaying an existing claim cannot bypass withdrawn policy.

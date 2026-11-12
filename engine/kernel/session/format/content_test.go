@@ -12,14 +12,14 @@ import (
 
 func TestContentVocabulary(t *testing.T) {
 	for _, pair := range [][2]string{
-		{format.MediaKindImage, "image"},
-		{format.MediaKindAudio, "audio"},
-		{format.MediaKindDocument, "document"},
-		{format.MediaSourceInline, "inline"},
-		{format.MediaSourceRemote, "remote"},
-		{format.MediaSourceProvider, "provider"},
-		{format.PromptInstructions, "instructions"},
-		{format.PromptContext, "context"},
+		{string(format.MediaKindImage), "image"},
+		{string(format.MediaKindAudio), "audio"},
+		{string(format.MediaKindDocument), "document"},
+		{string(format.MediaSourceInline), "inline"},
+		{string(format.MediaSourceRemote), "remote"},
+		{string(format.MediaSourceProvider), "provider"},
+		{string(format.PromptInstructions), "instructions"},
+		{string(format.PromptContext), "context"},
 	} {
 		if pair[0] != pair[1] {
 			t.Errorf("persisted vocabulary = %q, want %q", pair[0], pair[1])
@@ -81,6 +81,9 @@ func TestContentMalformed(t *testing.T) {
 		"invalid child":      {Media: &format.Media{}},
 	} {
 		t.Run(name, func(t *testing.T) {
+			if err := v.Validate(); err == nil {
+				t.Fatal("malformed part passed recursive validation")
+			}
 			if wire, err := codec.Encode(v, limits()); !errors.Is(err, codec.ErrInvalidData) || wire != nil {
 				t.Fatalf("encode: %v", err)
 			}

@@ -50,7 +50,7 @@ func TestSDKTypescriptRelease_Scenario7_NodeMatrixShape(t *testing.T) {
 	if matrixJob.Strategy.FailFast == nil || *matrixJob.Strategy.FailFast {
 		t.Fatal("sdk matrix job must declare fail-fast: false")
 	}
-	wantNodeVersions := []string{"22.x", "24.x"}
+	wantNodeVersions := []string{"22.x", "26.x"}
 	if !reflect.DeepEqual(matrixJob.Strategy.Matrix.NodeVersion, wantNodeVersions) {
 		t.Fatalf("sdk node-version matrix = %v, want literal pins %v", matrixJob.Strategy.Matrix.NodeVersion, wantNodeVersions)
 	}
@@ -82,7 +82,7 @@ func TestSDKTypescriptRelease_Scenario7_NodeMatrixShape(t *testing.T) {
 		t.Fatal("sdk-integration job must declare a positive timeout-minutes")
 	}
 	assertSDKScenario7ActionInput(t, integrationJob, "oven-sh/setup-bun@", "bun-version", "1.4.4")
-	assertSDKScenario7ActionInput(t, integrationJob, "actions/setup-node@", "node-version", "24.x")
+	assertSDKScenario7ActionInput(t, integrationJob, "actions/setup-node@", "node-version", "26.x")
 	for _, command := range []string{
 		"task generate",
 		"git diff --exit-code -- contracts/gen sdk/typescript/src/gen cmd/mecatui/internal/timezones/zones.json",

@@ -108,8 +108,6 @@ func (m Model) renderBody() string {
 		return (&m).renderModalSurface()
 	case m.executionPicker.open:
 		return m.renderExecutionPicker()
-	case m.connect.open:
-		return m.renderConnectOverlay(m.deps.Theme)
 	case m.phase == phaseIdle && m.conv.isEmpty() && !m.restartedThisRun:
 		return m.renderZeroState()
 	default:

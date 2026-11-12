@@ -24,15 +24,15 @@ func TestContextHardOnlyReplayDetachedOracle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	input, err := b.AddUserInput(AddUserInputRequest{RunID: run, Parts: []ContentPart{}})
+	input, err := b.AddUserInput(run, UserInput{Parts: []ContentPart{}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, err := range []error{
-		b.ReplaceInstructions(Instructions{HistoryID: scope, Blocks: []InstructionBlock{{Source: ContentSource{Description: "retained root"}}}}),
-		b.ReplaceToolCatalog(ToolCatalog{HistoryID: scope, Tools: []ToolDefinition{{Name: "tool", ArgumentSchema: []byte(" true ")}}}),
-		b.ReplaceModelBinding(ModelBinding{HistoryID: scope, Route: "r", API: "a", Model: "m", Settings: []byte(" { } ")}),
-		b.AddEffectiveInput(EffectiveInput{RunID: run, Inputs: []InputItem{{UserInput: &input}}}),
+		b.ReplaceInstructions(scope, Instructions{Blocks: []InstructionBlock{{Source: ContentSource{Description: "retained root"}}}}),
+		b.ReplaceToolCatalog(scope, ToolCatalog{Tools: []ToolDefinition{{Name: "tool", ArgumentSchema: []byte(" true ")}}}),
+		b.ReplaceModelBinding(scope, ModelBinding{Route: "r", API: "a", Model: "m", Settings: []byte(" { } ")}),
+		b.AddEffectiveInput(run, EffectiveInput{Inputs: []InputItem{{UserInputID: new(input.RunRelative())}}}),
 	} {
 		if err != nil {
 			t.Fatal(err)
@@ -67,7 +67,7 @@ func TestContextHardOnlyReplayDetachedOracle(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := b.Interrupt(); err != nil {
+			if err := b.EndRun(RunEndedInterrupted); err != nil {
 				t.Fatal(err)
 			}
 			if ref, err := loaded.SubmitCommit(context.Background(), b); ref != (history.CommitRef{}) || !errors.Is(err, codec.ErrLimitExceeded) || errors.Is(err, ErrAcceptanceUnknown) {

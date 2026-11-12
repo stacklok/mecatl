@@ -39,6 +39,8 @@ env:
   # Prefer the checksum-backed public proxy, but use the module's VCS origin if
   # its transport fails. `|` (unlike `,`) permits fallback on any proxy error.
   GOPROXY: https://proxy.golang.org|direct
+  # Match the release build; Taskfile re-enables cgo only for Linux -race.
+  CGO_ENABLED: "0"
 
 jobs:
   # Do not use workflow-level path filters: required checks must exist on every
@@ -199,7 +201,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        node-version: ['22.x', '24.x']
+        node-version: ['22.x', '26.x']
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -207,9 +209,9 @@ jobs:
 
       # Install the packageManager pin explicitly. Do not rely on corepack being
       # present or enabled on the runner.
-      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
         with:
-          version: 12.15.0
+          version: 12.18.0
           run_install: false
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
@@ -316,14 +318,14 @@ jobs:
           path: bin
       - run: chmod +x bin/mecated
 
-      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
         with:
-          version: 12.15.0
+          version: 12.18.0
           run_install: false
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: '24.x'
+          node-version: '26.x'
           cache: pnpm
           cache-dependency-path: sdk/typescript/pnpm-lock.yaml
 
@@ -354,9 +356,16 @@ jobs:
 
       - name: Verify generated contracts are fresh
         run: |
-          task generate:codecs:check
+          task generate:data:check
           task generate
           git diff --exit-code -- contracts/gen sdk/typescript/src/gen cmd/mecatui/internal/timezones/zones.json
+
+      - name: Lint the executor protocol and check it for breaking changes
+        env:
+          BASE_REF: ${{ github.base_ref || 'main' }}
+        run: |
+          git fetch --no-tags --depth=1 origin "+refs/heads/${BASE_REF}:refs/remotes/origin/${BASE_REF}"
+          task lint:proto BUF_AGAINST_REF="refs/remotes/origin/${BASE_REF}"
 
       - name: Run offline SDK e2e against same-checkout mecated
         run: task sdk:e2e
@@ -393,14 +402,14 @@ jobs:
           path: bin
       - run: chmod +x bin/mecated
 
-      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
         with:
-          version: 12.15.0
+          version: 12.18.0
           run_install: false
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: '24.x'
+          node-version: '26.x'
           cache: pnpm
           cache-dependency-path: sdk/typescript/pnpm-lock.yaml
 
@@ -428,7 +437,7 @@ jobs:
     # Official image includes browsers and OS libraries; avoid apt mirror setup.
     # Keep its version aligned with both @playwright/test pins (checked below).
     container:
-      image: mcr.microsoft.com/playwright:v1.64.1-noble@sha256:47b510dd9230bf0b9bfc9b20102241e577ea7a99334ab4c3ca19f19770e9b8ea
+      image: mcr.microsoft.com/playwright:v1.65.0-noble@sha256:6e3fb709361521eb27161606e6da6d2674e5e89fa16516cb37d6fdd91372273d
       options: --user 1001:1001 --init --ipc=host
     defaults:
       run:
@@ -464,14 +473,14 @@ jobs:
           path: bin
       - run: chmod +x bin/mecated
 
-      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
         with:
-          version: 12.15.0
+          version: 12.18.0
           run_install: false
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: '24.x'
+          node-version: '26.x'
           cache: pnpm
           cache-dependency-path: sdk/typescript/pnpm-lock.yaml
 
@@ -512,9 +521,9 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
         with:
-          version: 12.15.0
+          version: 12.18.0
           run_install: false
 
       # setup-node and setup-go include runner OS and architecture in their cache
@@ -577,14 +586,14 @@ jobs:
 
       # Install the packageManager pin explicitly. Do not rely on corepack being
       # present or enabled on the runner.
-      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
         with:
-          version: 12.15.0
+          version: 12.18.0
           run_install: false
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: '24'
+          node-version: '26'
           cache: pnpm
           cache-dependency-path: |
             sdk/typescript/pnpm-lock.yaml
@@ -717,7 +726,7 @@ jobs:
       # deliberately independent of the SDK's pnpm pin: the workspace is
       # self-contained). Do not rely on corepack being present or enabled on the
       # runner.
-      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
         with:
           package_json_file: apps/package.json
           run_install: false
@@ -862,7 +871,7 @@ jobs:
     if: needs.changes.outputs.docs_only != 'true' && (needs.changes.outputs.studio_relevant == 'true' || needs.changes.outputs.go_relevant == 'true')
     runs-on: ubuntu-24.04
     container:
-      image: mcr.microsoft.com/playwright:v1.64.1-noble@sha256:47b510dd9230bf0b9bfc9b20102241e577ea7a99334ab4c3ca19f19770e9b8ea
+      image: mcr.microsoft.com/playwright:v1.65.0-noble@sha256:6e3fb709361521eb27161606e6da6d2674e5e89fa16516cb37d6fdd91372273d
       options: --user 1001:1001 --init --ipc=host
     defaults:
       run:
@@ -892,7 +901,7 @@ jobs:
       # deliberately independent of the SDK's pnpm pin: the workspace is
       # self-contained). Do not rely on corepack being present or enabled on the
       # runner.
-      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
         with:
           package_json_file: apps/package.json
           run_install: false
@@ -1281,6 +1290,12 @@ jobs:
           go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12 \
             -ignore 'specifying action "\$/.*" in invalid format'
 
+      - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
+        with:
+          version: 3.54.0
+      - name: Reject new cgo dependencies
+        run: task lint:cgo
+
       # Reject a LIVE empty ${{ }} expression in a PARSED field of any workflow/action manifest
       # (issue #70). GitHub evaluates `${{ ... }}` inside parsed action.yml/workflow scalars, and
       # an EMPTY `${{ }}` is a hard parse error ("An expression was expected") that makes the
@@ -1310,7 +1325,7 @@ jobs:
       # GORELEASER_VERSION.
       - uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
         with:
-          version: "v2.19.0"
+          version: "v2.20.0"
           install-only: true
       - name: Validate the GoReleaser config
         # `goreleaser check` exits 2 for "valid, but uses DEPRECATED properties".
@@ -1441,7 +1456,7 @@ jobs:
           bash .github/actions/mecatequi-publish/publish_test.sh
           bash .github/actions/action-wrappers_test.sh
 
-      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+      - uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
 
       # The publisher-format release fixture signs once, then verifies the exact
       # bundles strict admission consumes and rejects statement tampering.
@@ -1822,9 +1837,9 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
         with:
-          version: 12.15.0
+          version: 12.18.0
           run_install: false
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0

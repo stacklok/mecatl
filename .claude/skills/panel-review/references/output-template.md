@@ -40,8 +40,18 @@ in SKILL.md Step 9; this fenced example stays here so SKILL.md remains concise.
   package-level singleton — the `docs/architecture.md` platform principles forbid
   global state. Was this discussed?
 
-(Or: "Standards axis: no project standards docs found — axis
-returned an empty report.")
+(If no standards docs exist, state that absence; report package-coherence
+findings separately from written-rule violations.)
+
+### Coverage receipt
+
+- **Compared:** <changed package/contract families and neighboring example paths>
+- **Cross-slice:** <comparisons between slices, or not applicable>
+- **Gaps:** <unreviewed families or unavailable sources, or none>
+
+Include this receipt even when there are no findings. If neither documented
+standards nor comparable code is available, report that coverage gap rather
+than a clean result.
 
 ---
 

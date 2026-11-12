@@ -131,6 +131,23 @@ var coreImportRules = []coreImportRule{
 		desc: "kernel history may import only history identity, format values, codec runtime, content identity and stdlib, never the legacy aggregate",
 	},
 	{
+		pkg:             modulePrefix + "engine/kernel/views",
+		allowedCore:     map[string]bool{},
+		allowedExternal: map[string]bool{},
+		desc:            "kernel views may import only the standard library, never identity, codecs, storage, sessions, or host code",
+	},
+	{
+		pkg: modulePrefix + "engine/kernel/value",
+		allowedCore: map[string]bool{
+			modulePrefix + "engine/kernel/codec": true,
+			modulePrefix + "engine/kernel/views": true,
+		},
+		allowedExternal: map[string]bool{
+			"github.com/jcalabro/atmos/cbor": true,
+		},
+		desc: "structured values may import only codec, borrowed views, Atmos CBOR primitives and stdlib, never identities, aggregates or host code",
+	},
+	{
 		pkg: modulePrefix + "engine/kernel/session",
 		allowedCore: map[string]bool{
 			modulePrefix + "engine/kernel/history":        true,
@@ -139,19 +156,23 @@ var coreImportRules = []coreImportRule{
 			modulePrefix + "engine/kernel/history/format": true,
 			modulePrefix + "engine/kernel/codec":          true,
 			modulePrefix + "engine/kernel/session/format": true,
+			modulePrefix + "engine/kernel/views":          true,
+			modulePrefix + "engine/kernel/value":          true,
 		},
 		allowedExternal: map[string]bool{},
-		desc:            "kernel session may import only history contracts, session format, content identity, the codec runtime and stdlib, never legacy session or execution code",
+		desc:            "kernel session may import only history contracts, session format, structured values, views, content identity, the codec runtime and stdlib, never legacy session or execution code",
 	},
 	{
 		pkg: modulePrefix + "engine/kernel/session/format",
 		allowedCore: map[string]bool{
-			modulePrefix + "engine/kernel/codec": true,
+			modulePrefix + "engine/kernel/codec":     true,
+			modulePrefix + "engine/kernel/contentid": true,
+			modulePrefix + "engine/kernel/value":     true,
 		},
 		allowedExternal: map[string]bool{
 			"github.com/jcalabro/atmos/cbor": true,
 		},
-		desc: "session format may import only the codec runtime, generated Atmos CBOR primitives and stdlib, never aggregates or identity owners",
+		desc: "session format may import only structured values, content identity, the codec runtime, generated Atmos CBOR primitives and stdlib, never aggregates or other identity owners",
 	},
 	{
 		pkg: modulePrefix + "engine/session",

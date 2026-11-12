@@ -21,9 +21,10 @@ var cidEncoding = base32.NewEncoding("abcdefghijklmnopqrstuvwxyz234567").WithPad
 // The DAG-CBOR profile label does not imply that the identified bytes are CBOR.
 // Its CBOR representation is a DAG-CBOR tag-42 link, not text.
 //
-//cborgen:validate validateCBOR
+//dtogen:validate validateCBOR
+//dtogen:include
 type CID struct {
-	binary [36]byte `cbor:",cid"` //nolint:revive // cborgen's fixed CID-link representation, not a standard CBOR tag option.
+	binary [36]byte `cbor:",cid"` //nolint:revive // dtogen's fixed CID-link representation, not a standard CBOR tag option.
 }
 
 // validateCBOR reuses the binary parser's fixed-profile authority.
