@@ -35,7 +35,6 @@ import (
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 	mcpadapter "github.com/stacklok/mecatl/internal/adapter/mcp"
-	"github.com/stacklok/mecatl/internal/jwksfile"
 )
 
 const (
@@ -128,7 +127,7 @@ func newToolHiveProcess(ctx context.Context, config ToolHiveConfig, options tool
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if client := config.BrokerClient; client != nil && (client.ID == "" || !jwksfile.HasKeys(client.KeySet)) {
+	if client := config.BrokerClient; client != nil && (client.ID == "" || !hasKeys(client.KeySet)) {
 		return nil, fmt.Errorf("%w: broker client needs an ID and a JWK Set with at least one key", ErrInvalidCatalogue)
 	}
 	diag := config.Diagnostics

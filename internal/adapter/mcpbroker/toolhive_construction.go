@@ -16,7 +16,6 @@ import (
 
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/internal/adapter/mcpsecretfile"
-	"github.com/stacklok/mecatl/internal/jwksfile"
 )
 
 const (
@@ -106,7 +105,7 @@ func as2Resource(issuer string) string {
 // that removes the file once ToolHive has read it, at construction. trust is
 // nil in production.
 func as2RunConfig(client ToolHiveBrokerClient, issuer, resource string, trust *as2Trust) (*authserver.InboundGrantsRunConfig, []tokenexchange.TrustedIssuer, func(), error) {
-	jwksFile, remove, err := jwksfile.Write("as2-broker-client-", client.KeySet)
+	jwksFile, remove, err := writeKeySet("as2-broker-client-", client.KeySet)
 	if err != nil {
 		return nil, nil, nil, err
 	}

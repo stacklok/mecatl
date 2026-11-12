@@ -36,7 +36,6 @@ import (
 	"github.com/stacklok/toolhive/pkg/oauthproto"
 
 	"github.com/stacklok/mecatl/internal/identitybroker/adapter/inprocesshttp"
-	"github.com/stacklok/mecatl/internal/jwksfile"
 )
 
 // accessTokenType is the JOSE typ of AS-1 access tokens (RFC 9068).
@@ -162,7 +161,7 @@ func newServer(ctx context.Context, cfg Config, opts options) (*Server, error) {
 		Upstreams:        []authserver.UpstreamRunConfig{{Type: authserver.UpstreamProviderTypeOIDC, OIDCConfig: cfg.upstreamRunConfig()}},
 	}
 	if cfg.Delegate != nil {
-		jwksFile, removeKeySet, err := jwksfile.Write("as1-delegate-", cfg.Delegate.KeySet)
+		jwksFile, removeKeySet, err := writeKeySet("as1-delegate-", cfg.Delegate.KeySet)
 		if err != nil {
 			_ = store.Close()
 			return nil, fmt.Errorf("as1server: delegate key set: %w", err)

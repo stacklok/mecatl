@@ -7,8 +7,6 @@ import (
 
 	"github.com/stacklok/toolhive/pkg/authserver"
 	"github.com/stacklok/toolhive/pkg/oauthproto"
-
-	"github.com/stacklok/mecatl/internal/jwksfile"
 )
 
 // DelegateClient is a pre-provisioned confidential client of the
@@ -70,7 +68,7 @@ func (d DelegateClient) validate(publicClients map[string]bool) error {
 		return fmt.Errorf("%w: delegate client ID is required", ErrInvalidConfig)
 	case publicClients[d.ID]:
 		return fmt.Errorf("%w: delegate client ID %q is also a public client's", ErrInvalidConfig, d.ID)
-	case !jwksfile.HasKeys(d.KeySet):
+	case !hasKeys(d.KeySet):
 		return fmt.Errorf("%w: delegate client %q needs a JWK Set with at least one key", ErrInvalidConfig, d.ID)
 	case len(d.AllowedSourceClients) == 0:
 		return fmt.Errorf("%w: delegate client %q needs at least one allowed source client", ErrInvalidConfig, d.ID)

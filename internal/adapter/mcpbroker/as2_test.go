@@ -360,7 +360,7 @@ func TestToolHiveClosesALocallyCreatedAuthStoreOnEarlyFailure(t *testing.T) {
 		refuseRegister      bool
 		want                string
 	}{
-		"key set file write fails": {tmpdirNotADirectory: true, want: "mcpbroker: create embedded auth server: jwksfile:"},
+		"key set file write fails": {tmpdirNotADirectory: true, want: "mcpbroker: create embedded auth server: key set directory:"},
 		"register client fails":    {refuseRegister: true, want: errRegisterForTest.Error()},
 	} {
 		t.Run(name, func(t *testing.T) {

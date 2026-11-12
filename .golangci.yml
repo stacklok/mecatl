@@ -936,16 +936,6 @@ linters:
             - github.com/stacklok/toolhive/pkg/authserver/storage$
             - github.com/stacklok/toolhive/pkg/oauthproto$
             - github.com/stacklok/mecatl/internal/identitybroker/adapter/inprocesshttp$
-            - github.com/stacklok/mecatl/internal/jwksfile$
-        # The JWK Set file helper shared by AS-1 and the MCP broker's AS-2
-        # depends only on the standard library.
-        internal-jwksfile:
-          list-mode: strict
-          files:
-            - '**/internal/jwksfile/**.go'
-            - '!$test'
-          allow:
-            - $gostd
         # The real-AS-1 test fixture shared by the broker, authserverclient,
         # app, and mecak8s tests. It reaches AS-1 only through as1server's
         # exported API and never ToolHive directly.
