@@ -373430,6 +373430,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1794475855671,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "328978+blkt@users.noreply.github.com",
+            "name": "Michelangelo Mori",
+            "username": "blkt"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "3fcda3a1f7125fe9108cfde62b2bb0bb0ff5d83b",
+          "message": "feat(executioncontroller): pin per-executor server certificates (#2759)\n\nBefore creating an executor Pod, the provider generates an ECDSA key\npair and a self-signed certificate naming the environment, stores both\nin an immutable, environment-owned Secret named after the fingerprint,\nand records the fingerprint in `status.serverCertificate`. Once the Pod\nexists it records the Pod UID with the fingerprint. A container restart\nkeeps the pin; replacement, retirement, and retained deletion remove the\nSecret after the Pod is gone, and a replacement gets a new Secret and\npin. If the API server prunes the pin because the CRD is outdated, the\nprovider removes the Secret and reports that the CRD must be applied.\n\nExecutor Pods mount the Secret and a projected provider-trust volume\n(CA bundle and the provider's expected URI SAN, no `subPath`). The CA\nbundle must live in a Secret that holds no provider key, so executor\nnodes never reference one. The drift check now requires exactly these\nvolumes and mounts.\n\n`ExecutorDialer` is the dial-side helper for the authorizing proxy: it\nresolves only the Pod with the pinned UID, accepts only a single\ncertificate matching the pinned fingerprint, and presents the projected\nplatform client certificate.\n\nThe chart adds `provider.executorClientTLS` (required), the client\ncertificate projection, the executor trust ConfigMap, and Secret\n`create`, `get`, and `delete` for the provider. A\n`ValidatingAdmissionPolicy` confines the provider's Secret `create` and\n`delete` to executor certificate Secrets, which requires Kubernetes 1.30\nor later. Executor Pods created before this change fail the drift check\nuntil replaced.\n\nCloses #2703",
+          "timestamp": "2026-11-12T13:13:44+01:00",
+          "tree_id": "478405d5987aea8d136c890322038ed02337773a",
+          "url": "https://github.com/stacklok/mecatl/commit/3fcda3a1f7125fe9108cfde62b2bb0bb0ff5d83b"
+        },
+        "date": 1794486437441,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -539283,6 +539317,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1794486432836,
+  "lastUpdate": 1794486438467,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
