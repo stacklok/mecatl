@@ -414673,6 +414673,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1794490243291,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "29541485+ChrisJBurns@users.noreply.github.com",
+            "name": "Chris Burns",
+            "username": "ChrisJBurns"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "c920cc4721dcf88c7dab680150267233aca06ab6",
+          "message": "feat(identitybroker): wire the embedded gateway's authorization server as AS-2 (#2744)",
+          "timestamp": "2026-11-12T22:31:37Z",
+          "tree_id": "6435f626fa4de12802d1629e37505804eefef6c8",
+          "url": "https://github.com/stacklok/mecatl/commit/c920cc4721dcf88c7dab680150267233aca06ab6"
+        },
+        "date": 1794523520401,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 13417,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12912,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 680,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -540339,6 +540378,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1794523516890,
+  "lastUpdate": 1794523521360,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
