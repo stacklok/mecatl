@@ -415070,6 +415070,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1794523520401,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "328978+blkt@users.noreply.github.com",
+            "name": "Michelangelo Mori",
+            "username": "blkt"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "1bb0f45661101b866113050a3993ca7a0dd0249a",
+          "message": "feat(executioncontroller): declare capabilities in execution templates (#2774)",
+          "timestamp": "2026-11-13T14:37:43+01:00",
+          "tree_id": "4447fa2168628b8abe6384cd0c0645fdc95093c1",
+          "url": "https://github.com/stacklok/mecatl/commit/1bb0f45661101b866113050a3993ca7a0dd0249a"
+        },
+        "date": 1794577774264,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 13399,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12894,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 680,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -540850,6 +540889,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1794577767755,
+  "lastUpdate": 1794577775216,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
