@@ -601,10 +601,10 @@ func TestAS2GatewayLoginUsesTheVMCPResource(t *testing.T) {
 	}
 }
 
-// TestAS2RedeemsAHarnessIDJAG configures AS-2 to trust the harness's AS-1
-// through the test-only seam and redeems ID-JAGs it signs, then checks the
-// broker client's assertions.
-func TestAS2RedeemsAHarnessIDJAG(t *testing.T) {
+// newTrustingAS2 is AS-2 configured to trust the harness's AS-1, for Alice
+// and Bob, through the test-only seam.
+func newTrustingAS2(t *testing.T) (*identityharness.Harness, as2BrokerClient, *Process) {
+	t.Helper()
 	t.Setenv("MECATL_TEST_CLIENT_SECRET", "construction-only-secret")
 	h := identityharness.New(t, identityharness.Options{})
 	broker := newAS2BrokerClient(t)
@@ -619,10 +619,18 @@ func TestAS2RedeemsAHarnessIDJAG(t *testing.T) {
 		t.Fatalf("newToolHiveProcess: %v", err)
 	}
 	t.Cleanup(func() { _ = process.Close() })
-	as2 := process.AS2
-	if as2 == nil {
+	if process.AS2 == nil {
 		t.Fatal("AS-2 is not set up")
 	}
+	return h, broker, process
+}
+
+// TestAS2RedeemsAHarnessIDJAG configures AS-2 to trust the harness's AS-1
+// through the test-only seam and redeems ID-JAGs it signs, then checks the
+// broker client's assertions.
+func TestAS2RedeemsAHarnessIDJAG(t *testing.T) {
+	h, broker, process := newTrustingAS2(t)
+	as2 := process.AS2
 	idJAG := func() string { return mintAS2IDJAG(h, as2) }
 	redeem := func(assertion, clientAssertion string) (int, map[string]any) {
 		return postAS2Token(t, as2, url.Values{
@@ -710,6 +718,107 @@ func TestAS2RedeemsAHarnessIDJAG(t *testing.T) {
 	} {
 		if status, body := redeem(idJAG(), assertion); status != http.StatusUnauthorized || body["error"] != "invalid_client" {
 			t.Errorf("%s: status %d, body %v; want 401 invalid_client", name, status, body)
+		}
+	}
+}
+
+// as2Redemption posts a JWT-bearer redemption of assertion to as2. A nil
+// resource leaves the resource parameter out; clientAuth adds the broker
+// client's assertion.
+func as2Redemption(t *testing.T, as2 *AS2, broker as2BrokerClient, assertion string, resource *string, clientAuth bool) (int, map[string]any) {
+	t.Helper()
+	form := url.Values{"grant_type": {oauthproto.GrantTypeJWTBearer}, "assertion": {assertion}}
+	if resource != nil {
+		form.Set("resource", *resource)
+	}
+	if clientAuth {
+		form.Set("client_assertion_type", clientAssertionTyp)
+		form.Set("client_assertion", broker.assertion(t, as2.Issuer))
+	}
+	return postAS2Token(t, as2, form)
+}
+
+// as1JWT signs a JWT for Alice from the harness's AS-1 per spec, with an
+// ID-JAG's resource and act claims unless spec sets its own.
+func as1JWT(h *identityharness.Harness, as2 *AS2, spec identityharness.AccessTokenSpec) string {
+	spec.User, spec.ClientID, spec.Lifetime = identityharness.Alice, identitybroker.BrokerClientID, 5*time.Minute
+	if spec.Claims == nil {
+		spec.Claims = map[string]any{"resource": as2.Resource, "act": as2TestAct(h)}
+	}
+	return h.AS1.MintAccessToken(spec)
+}
+
+// TestAS2RefusesRedemptionsOutsideItsConfiguration shows that AS-2 refuses
+// what its configuration leaves out, not only that it redeems what it allows:
+// a resource other than the vMCP's, an ID-JAG addressed to anything but AS-2's
+// issuer, and an AS-1 access token presented as an assertion. These are the
+// checks that keep an AS-1 access token from being redeemed once #2533 trusts
+// AS-1 in production, and that a ToolHive bump must not loosen.
+func TestAS2RefusesRedemptionsOutsideItsConfiguration(t *testing.T) {
+	h, broker, process := newTrustingAS2(t)
+	as2 := process.AS2
+	idJAG := func(audience string) string {
+		return as1JWT(h, as2, identityharness.AccessTokenSpec{Audience: audience, Type: idJAGType})
+	}
+	resource := func(value string) *string { return &value }
+
+	if status, body := as2Redemption(t, as2, broker, idJAG(as2.Issuer), resource(as2.Resource), true); status != http.StatusOK {
+		t.Fatalf("valid ID-JAG: status %d, body %v", status, body)
+	}
+	accessToken := as1JWT(h, as2, identityharness.AccessTokenSpec{Audience: as2.Issuer})
+	for _, test := range []struct {
+		name       string
+		assertion  string
+		resource   *string
+		clientAuth bool
+		wantError  string
+	}{
+		{"resource is AS-2's issuer", idJAG(as2.Issuer), resource(as2.Issuer), true, "invalid_target"},
+		{"resource is another server", idJAG(as2.Issuer), resource("https://other.example/mcp"), true, "invalid_target"},
+		{"resource left out", idJAG(as2.Issuer), nil, true, "invalid_request"},
+		{"ID-JAG for the vMCP resource", idJAG(as2.Resource), resource(as2.Resource), true, "invalid_grant"},
+		{"ID-JAG for the token endpoint", idJAG(as2.TokenEndpoint), resource(as2.Resource), true, "invalid_grant"},
+		{"AS-1 access token", accessToken, resource(as2.Resource), true, "invalid_grant"},
+		{"AS-1 access token without client authentication", accessToken, resource(as2.Resource), false, "invalid_grant"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			status, body := as2Redemption(t, as2, broker, test.assertion, test.resource, test.clientAuth)
+			if _, issued := body["access_token"]; issued || status != http.StatusBadRequest || body["error"] != test.wantError {
+				t.Fatalf("status %d, body %v; want 400 %s and no token", status, body, test.wantError)
+			}
+		})
+	}
+}
+
+// TestAS2RedeemsWhatTrackedShortcutsAllow records two redemptions AS-2
+// accepts today through the test-only trust that the design refuses, so the
+// tickets that close them flip these cases to refusals rather than finding the
+// behaviour by accident.
+func TestAS2RedeemsWhatTrackedShortcutsAllow(t *testing.T) {
+	h, broker, process := newTrustingAS2(t)
+	as2 := process.AS2
+	vmcp := as2.Resource
+
+	// ToolHive checks the request's resource, not the ID-JAG's resource claim
+	// (stacklok/toolhive#6892, stacklok/toolhive#6983; #2533). The broker
+	// client's audiences allow only the vMCP resource, so the request's
+	// resource still limits the token.
+	otherClaim := as1JWT(h, as2, identityharness.AccessTokenSpec{Audience: as2.Issuer, Type: idJAGType,
+		Claims: map[string]any{"resource": "https://other.example/mcp", "act": as2TestAct(h)}})
+	if status, body := as2Redemption(t, as2, broker, otherClaim, &vmcp, true); status != http.StatusOK {
+		t.Errorf("ID-JAG whose resource claim names another server: status %d, body %v; if ToolHive now refuses it, make this a refusal and update #2533", status, body)
+	}
+
+	// Trusting an issuer for the JWT-bearer grant also accepts plain RFC 7523
+	// assertions from it, without client authentication. #2533 trusts AS-1 for
+	// ID-JAGs only (acceptedAssertionTypes [id_jag], PR
+	// stacklok/toolhive#6678), which refuses these.
+	for name, spec := range map[string]identityharness.AccessTokenSpec{
+		"typ JWT":    {Audience: as2.Issuer, Type: "JWT"},
+		"typ absent": {Audience: as2.Issuer, OmitType: true},
+	} {
+		if status, body := as2Redemption(t, as2, broker, as1JWT(h, as2, spec), &vmcp, false); status != http.StatusOK {
+			t.Errorf("plain AS-1 assertion (%s) without client authentication: status %d, body %v; if ToolHive now refuses it, make this a refusal and update #2533", name, status, body)
 		}
 	}
 }
