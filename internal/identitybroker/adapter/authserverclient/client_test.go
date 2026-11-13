@@ -314,8 +314,8 @@ func TestClientAuthenticationRefusals(t *testing.T) {
 		// AS-1 also accepts its token endpoint as the audience (RFC 7523).
 		{name: "wrong audience", edit: func(_ *as1servertest.AS1, c *authserverclient.Config) { c.Issuer = "https://not-as1.example" }},
 		{name: "expired", edit: func(_ *as1servertest.AS1, c *authserverclient.Config) {
-			// Expired 2-3s ago (iat truncates to the second): AS-1 (fosite) allows no leeway on assertion expiry.
-			c.Now = func() time.Time { return time.Now().Add(-identitybroker.MaxClientAssertionLifetime - 2*time.Second) }
+			// Expired 2 minutes ago: AS-1 (ToolHive) allows 60 seconds of skew on assertion expiry.
+			c.Now = func() time.Time { return time.Now().Add(-identitybroker.MaxClientAssertionLifetime - 2*time.Minute) }
 		}},
 		{name: "over-long", signer: func(a *as1servertest.AS1) authserverclient.Assertions {
 			return overLongAssertions{key: a.Key, kid: a.Signer.JWKS().Keys[0].KeyID}

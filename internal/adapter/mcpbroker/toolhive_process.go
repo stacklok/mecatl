@@ -261,8 +261,10 @@ func newToolHiveProcess(ctx context.Context, config ToolHiveConfig, options tool
 		// operator already configured Redis for the session store
 		// (ToolHiveConfig.AuthStorage); otherwise this falls back to the
 		// in-memory default, which does not survive a process restart.
-		// A store created here is this function's to close until ToolHive's
-		// constructor takes it, closing it itself on failure; a caller-supplied
+		// ToolHive only borrows the store. Once its constructor is reached the
+		// process closes the store, caller-supplied or not: on that
+		// constructor's failure, or with the authorization server. Before
+		// then only a store created here is closed; a caller-supplied
 		// AuthStorage stays the caller's.
 		authStore, closeLocalStore := config.AuthStorage, func() {}
 		if authStore == nil {
@@ -286,9 +288,12 @@ func newToolHiveProcess(ctx context.Context, config ToolHiveConfig, options tool
 		auth, err = runner.NewEmbeddedAuthServerWithStorage(processCtx, runConfig, authStore)
 		removeKeySet()
 		if err != nil {
+			_ = authStore.Close()
 			return rollback(fmt.Errorf("mcpbroker: create embedded auth server: %w", err))
 		}
-		process.resources = append(process.resources, ownedResource{name: "authserver", close: auth.Close})
+		process.resources = append(process.resources, ownedResource{name: "authserver", close: func() error {
+			return errors.Join(auth.Close(), authStore.Close())
+		}})
 		process.auth = auth
 		reader := upstreamtoken.NewInProcessService(auth.IDPTokenStorage(), auth.UpstreamTokenRefresher())
 		incoming, _, authInfo, err = factory.NewIncomingAuthMiddleware(processCtx, &vmcpconfig.IncomingAuthConfig{

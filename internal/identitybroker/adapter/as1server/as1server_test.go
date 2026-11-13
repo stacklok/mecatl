@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -452,6 +453,50 @@ func TestUpstreamCATrustIsSeparateFromPrivateAddresses(t *testing.T) {
 		t.Fatalf("New with the CA file and a loopback upstream: %v", err)
 	}
 	_ = server.Close()
+}
+
+// runningStorages counts the memory storages whose cleanup loop is running.
+func runningStorages() int {
+	buf := make([]byte, 1<<20)
+	for {
+		n := runtime.Stack(buf, true)
+		if n < len(buf) {
+			return strings.Count(string(buf[:n]), "storage.(*MemoryStorage).cleanupLoop")
+		}
+		buf = make([]byte, 2*len(buf))
+	}
+}
+
+// TestStorageIsReleased: ToolHive borrows AS-1's storage, so AS-1 closes it
+// when ToolHive's constructor fails and, once, when AS-1 closes.
+func TestStorageIsReleased(t *testing.T) {
+	h := identityharness.New(t, identityharness.Options{})
+	before := runningStorages()
+	cfg := testConfig(t, h, "https://as1.mecatl.test"+testIssuerPath)
+	cfg.Upstream.CAFile = ""
+	if server, err := New(t.Context(), cfg); err == nil {
+		_ = server.Close()
+		t.Fatal("New trusted the harness IdP without its CA file")
+	}
+	if got := runningStorages(); got != before {
+		t.Fatalf("running storages after a failed New = %d, want %d", got, before)
+	}
+	cfg.Upstream.CAFile = h.WriteCACert(t, t.TempDir())
+	server, err := New(t.Context(), cfg)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if got := runningStorages(); got != before+1 {
+		t.Fatalf("running storages with AS-1 up = %d, want %d", got, before+1)
+	}
+	for range 2 {
+		if err := server.Close(); err != nil {
+			t.Fatalf("Close: %v", err)
+		}
+	}
+	if got := runningStorages(); got != before {
+		t.Fatalf("running storages after Close = %d, want %d", got, before)
+	}
 }
 
 func TestTokenForAnotherAudienceCarriesNoSubjectIdentifier(t *testing.T) {

@@ -16,6 +16,7 @@ import (
 	"github.com/stacklok/toolhive/pkg/authserver"
 	"github.com/stacklok/toolhive/pkg/authserver/runner"
 	"github.com/stacklok/toolhive/pkg/authserver/storage"
+	"github.com/stacklok/toolhive/pkg/oauthproto/dcrkey"
 
 	"github.com/stacklok/mecatl/internal/adapter/mcpbroker/credentialenvelope"
 )
@@ -55,7 +56,7 @@ func TestNamespaceBinding(t *testing.T) {
 		t.Fatalf("upstream ciphertext opened in a different namespace: %v", err)
 	}
 	creds := &storage.DCRCredentials{
-		Key:      storage.DCRKey{Issuer: "issuer", UpstreamID: "provider", RedirectURI: "https://broker/callback", ScopesHash: "scope"},
+		Key:      dcrkey.Key{Issuer: "issuer", UpstreamID: "provider", RedirectURI: "https://broker/callback", ScopesHash: "scope"},
 		ClientID: "client", ClientSecret: "namespace-secret", RegistrationAccessToken: "namespace-registration",
 		AuthorizationEndpoint: "https://issuer/authorize", TokenEndpoint: "https://issuer/token",
 	}
@@ -176,7 +177,7 @@ func TestEncryptedAuthStorage_DCRAndKeyOverlap(t *testing.T) {
 	if err := oldStore.StoreUpstreamTokens(ctx, "tsid", "provider", &storage.UpstreamTokens{ProviderID: "provider", AccessToken: "old-access"}); err != nil {
 		t.Fatal(err)
 	}
-	key := storage.DCRKey{Issuer: "issuer", UpstreamID: "provider", RedirectURI: "https://broker/callback", ScopesHash: "scope"}
+	key := dcrkey.Key{Issuer: "issuer", UpstreamID: "provider", RedirectURI: "https://broker/callback", ScopesHash: "scope"}
 	creds := &storage.DCRCredentials{Key: key, ProviderName: "provider", ClientID: "id", ClientSecret: "old-secret", RegistrationAccessToken: "registration", AuthorizationEndpoint: "https://issuer/auth", TokenEndpoint: "https://issuer/token"}
 	if _, err := oldStore.StoreDCRCredentialsIfAbsent(ctx, creds); err != nil {
 		t.Fatal(err)
@@ -228,7 +229,7 @@ func TestEncryptedAuthStorage_ExpiredAndDCRWinner(t *testing.T) {
 	if !errors.Is(err, storage.ErrExpired) || got == nil || got.AccessToken != "access" {
 		t.Fatalf("expired = %#v, %v", got, err)
 	}
-	key := storage.DCRKey{Issuer: "issuer", UpstreamID: "provider", RedirectURI: "https://broker/callback", ScopesHash: "scope"}
+	key := dcrkey.Key{Issuer: "issuer", UpstreamID: "provider", RedirectURI: "https://broker/callback", ScopesHash: "scope"}
 	first := &storage.DCRCredentials{Key: key, ProviderName: "provider", ClientID: "first", ClientSecret: "first-secret", AuthorizationEndpoint: "https://issuer/auth", TokenEndpoint: "https://issuer/token"}
 	second := *first
 	second.ClientID, second.ClientSecret = "second", "second-secret"
@@ -248,7 +249,7 @@ func TestEncryptedAuthStorage_DCRCanaryAndActiveRotation(t *testing.T) {
 	oldRing, _ := credentialenvelope.NewKeyRing("old", map[string][]byte{"old": oldKey})
 	inner := storage.NewMemoryStorage()
 	oldStore, _ := New(inner, oldRing, testNamespace)
-	key := storage.DCRKey{Issuer: "issuer", UpstreamID: "provider", RedirectURI: "https://broker/callback", ScopesHash: "scope"}
+	key := dcrkey.Key{Issuer: "issuer", UpstreamID: "provider", RedirectURI: "https://broker/callback", ScopesHash: "scope"}
 	creds := &storage.DCRCredentials{Key: key, ProviderName: "provider", ClientID: "id", ClientSecret: "client-secret-canary", RegistrationAccessToken: "registration-token-canary", AuthorizationEndpoint: "https://issuer/auth", TokenEndpoint: "https://issuer/token"}
 	if _, err := oldStore.StoreDCRCredentialsIfAbsent(ctx, creds); err != nil {
 		t.Fatal(err)
@@ -380,7 +381,7 @@ func newRealRefresherFixture(t *testing.T, response string) (*upstreamtoken.InPr
 	if err != nil {
 		t.Fatalf("embedded auth: %v", err)
 	}
-	t.Cleanup(func() { _ = auth.Close() })
+	t.Cleanup(func() { _ = auth.Close(); _ = encrypted.Close() })
 	expired := &storage.UpstreamTokens{ProviderID: "provider", AccessToken: "expired", RefreshToken: "old-refresh", ExpiresAt: time.Now().Add(-time.Minute), SessionExpiresAt: time.Now().Add(time.Hour)}
 	if err := encrypted.StoreUpstreamTokens(t.Context(), "tsid", "provider", expired); err != nil {
 		t.Fatal(err)
@@ -393,7 +394,7 @@ func TestEncryptedAuthStorage_FieldClassification(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	key := storage.DCRKey{Issuer: "https://issuer.example", RedirectURI: "https://broker.example/cb", ScopesHash: "scopes"}
+	key := dcrkey.Key{Issuer: "https://issuer.example", RedirectURI: "https://broker.example/cb", ScopesHash: "scopes"}
 	tokens := storage.UpstreamTokens{ProviderID: "provider"}
 	dcr := storage.DCRCredentials{Key: key}
 	for _, tc := range []struct {
@@ -526,7 +527,7 @@ func TestEncryptedAuthStorage_DCRUpdateReturnsAuthoritativeValue(t *testing.T) {
 				t.Fatal(err)
 			}
 			creds := storage.DCRCredentials{
-				Key:      storage.DCRKey{Issuer: "issuer", UpstreamID: "provider", RedirectURI: "https://broker/callback", ScopesHash: "scope"},
+				Key:      dcrkey.Key{Issuer: "issuer", UpstreamID: "provider", RedirectURI: "https://broker/callback", ScopesHash: "scope"},
 				ClientID: "client", ClientSecret: "initial-secret", RegistrationAccessToken: "initial-registration",
 				AuthorizationEndpoint: "https://issuer/authorize", TokenEndpoint: "https://issuer/token",
 			}
@@ -575,7 +576,7 @@ func TestEncryptedAuthStorage_RedisDCRUpdateTTLAndPresence(t *testing.T) {
 	ctx := t.Context()
 	now := time.Unix(time.Now().Unix(), 0)
 	creds := storage.DCRCredentials{
-		Key:      storage.DCRKey{Issuer: "issuer", UpstreamID: "provider", RedirectURI: "https://broker/callback", ScopesHash: "scope"},
+		Key:      dcrkey.Key{Issuer: "issuer", UpstreamID: "provider", RedirectURI: "https://broker/callback", ScopesHash: "scope"},
 		ClientID: "client", ClientSecret: "ttl-secret", RegistrationAccessToken: "ttl-registration",
 		AuthorizationEndpoint: "https://issuer/authorize", TokenEndpoint: "https://issuer/token",
 		ClientSecretExpiresAt: now.Add(time.Hour),
@@ -708,7 +709,7 @@ func TestEncryptedAuthStorage_NativeRoundTripAndDCRUpdate(t *testing.T) {
 			}
 
 			creds := storage.DCRCredentials{
-				Key:          storage.DCRKey{Issuer: "https://issuer.example", UpstreamID: "provider", RedirectURI: "https://broker.example/callback", ScopesHash: "scope"},
+				Key:          dcrkey.Key{Issuer: "https://issuer.example", UpstreamID: "provider", RedirectURI: "https://broker.example/callback", ScopesHash: "scope"},
 				ProviderName: "provider", ClientID: "registered-client", ClientSecret: "secret-plaintext",
 				RegistrationAccessToken: "registration-plaintext", TokenEndpointAuthMethod: "client_secret_basic",
 				RegistrationClientURI: "https://issuer.example/registration", AuthorizationEndpoint: "https://issuer.example/authorize",
@@ -885,7 +886,7 @@ func dcrCASFixture(t *testing.T, makeStorage func(*testing.T) storage.Storage) (
 	}
 	// Sub-second times: Redis persists seconds, so a matching expected must tolerate that.
 	creds := storage.DCRCredentials{
-		Key:      storage.DCRKey{Issuer: "issuer", UpstreamID: "provider", RedirectURI: "https://broker/callback", ScopesHash: "scope"},
+		Key:      dcrkey.Key{Issuer: "issuer", UpstreamID: "provider", RedirectURI: "https://broker/callback", ScopesHash: "scope"},
 		ClientID: "client", ClientSecret: "initial-secret", RegistrationAccessToken: "initial-registration",
 		AuthorizationEndpoint: "https://issuer/authorize", TokenEndpoint: "https://issuer/token",
 		CreatedAt: time.Now(), ClientSecretExpiresAt: time.Now().Add(time.Hour),
@@ -1009,7 +1010,7 @@ func TestEncryptedAuthStorage_DCRCASRejectsInterveningWriter(t *testing.T) {
 				t.Fatal(err)
 			}
 			creds := storage.DCRCredentials{
-				Key:      storage.DCRKey{Issuer: "issuer", UpstreamID: "provider", RedirectURI: "https://broker/callback", ScopesHash: "scope"},
+				Key:      dcrkey.Key{Issuer: "issuer", UpstreamID: "provider", RedirectURI: "https://broker/callback", ScopesHash: "scope"},
 				ClientID: "client", ClientSecret: "initial-secret", RegistrationAccessToken: "initial-registration",
 				AuthorizationEndpoint: "https://issuer/authorize", TokenEndpoint: "https://issuer/token",
 			}

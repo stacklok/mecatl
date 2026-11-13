@@ -87,7 +87,10 @@ func TestProtectedStorageFailureBeforeTransferClosesClient(t *testing.T) {
 	}
 }
 
-func TestProtectedStorageRunnerFailureClosesTransferredClientExactlyOnce(t *testing.T) {
+// TestProtectedStorageRunnerFailureLeavesTheClientToItsOwner: ToolHive borrows
+// storage even when its constructor fails, so the protected storage's own
+// Close is what closes the client, once.
+func TestProtectedStorageRunnerFailureLeavesTheClientToItsOwner(t *testing.T) {
 	var client *countingRedisClient
 	cfg := protectedStorageTestConfig(t, func(ProtectedRedisClientConfig) (redis.UniversalClient, error) {
 		client = &countingRedisClient{UniversalClient: newMiniRedis(t)}
@@ -110,19 +113,20 @@ func TestProtectedStorageRunnerFailureClosesTransferredClientExactlyOnce(t *test
 		t.Fatal("runner accepted a missing HMAC file")
 	}
 	if err == nil || !strings.Contains(err.Error(), "failed to load HMAC secrets") {
-		t.Fatalf("runner did not fail after accepting storage ownership: %v", err)
+		t.Fatalf("runner did not fail after receiving the storage: %v", err)
 	}
-	if client.closeCalls != 1 {
-		t.Fatalf("runner failure close calls = %d, want 1", client.closeCalls)
+	if client.closeCalls != 0 {
+		t.Fatalf("runner failure close calls = %d, want 0", client.closeCalls)
 	}
-	if err := protected.Health(t.Context()); err == nil {
-		t.Fatal("runner failure left the transferred client open")
+	if err := protected.Health(t.Context()); err != nil {
+		t.Fatalf("runner failure closed the borrowed client: %v", err)
 	}
 	if err := protected.Close(); err != nil {
 		t.Fatal(err)
 	}
+	_ = protected.Close()
 	if client.closeCalls != 1 {
-		t.Fatalf("parent cleanup closed the transferred client again: %d", client.closeCalls)
+		t.Fatalf("owner close calls = %d, want 1", client.closeCalls)
 	}
 }
 
@@ -220,6 +224,7 @@ func TestEncryptedAuthStorageIsNotUnwrappable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer func() { _ = decorated.Close() }()
 	defer func() { _ = auth.Close() }()
 	if dcr := auth.DCRStore(); dcr != decorated {
 		t.Fatalf("ToolHive DCR store = %T, want encrypted decorator", dcr)

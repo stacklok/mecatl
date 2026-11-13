@@ -51,7 +51,7 @@ type ToolHiveConfig struct {
 	// auth server with a Redis-backed storage.Storage sharing this managed
 	// Redis instance with mecatl's own session store, under
 	// toolHiveAuthStoragePrefix. The caller (composition) owns the client's
-	// lifecycle — EmbeddedAuthServer.Close calls storage.Close, which closes
+	// lifecycle — Process.Close closes the Redis-backed store, which closes
 	// the client it was given, so no separate cleanup is needed beyond that.
 	AuthRedisClient redis.UniversalClient
 	// Diagnostics receives per-backend authenticated-discovery outcomes during

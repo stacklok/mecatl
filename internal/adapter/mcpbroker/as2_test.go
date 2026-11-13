@@ -410,6 +410,29 @@ func TestToolHiveClosesALocallyCreatedAuthStoreOnEarlyFailure(t *testing.T) {
 	}
 }
 
+// TestToolHiveProcessCloseClosesTheAuthStore: ToolHive borrows the auth store,
+// so Process.Close closes it, once.
+func TestToolHiveProcessCloseClosesTheAuthStore(t *testing.T) {
+	t.Setenv("MECATL_TEST_CLIENT_SECRET", "construction-only-secret")
+	spy := &closeSpy{registerClientSpy: newRegisterClientSpy()}
+	process, err := NewToolHiveProcess(t.Context(), ToolHiveConfig{
+		CallbackURL: as2TestCallbackURL, Profiles: []ToolHiveProfile{staticProtectedProfile("private")}, AuthStorage: spy,
+	})
+	if err != nil {
+		t.Fatalf("NewToolHiveProcess: %v", err)
+	}
+	if spy.closed.Load() {
+		t.Fatal("the auth store was closed before the process")
+	}
+	// Closing the memory store a second time would panic.
+	for range 2 {
+		_ = process.Close()
+	}
+	if !spy.closed.Load() {
+		t.Fatal("Process.Close did not close the auth store")
+	}
+}
+
 // TestAS2GatewayLoginUsesTheVMCPResource logs a user in at the gateway with
 // AS-2 set up: the token carries the vMCP resource and the vMCP accepts it,
 // a token for the issuer is refused, and the broker client cannot exchange
@@ -685,6 +708,17 @@ func TestAS2RedeemsAHarnessIDJAG(t *testing.T) {
 		t.Fatalf("second redemption of one ID-JAG: status %d, body %v", status, body)
 	}
 
+	// Without a resource parameter, AS-2 uses the ID-JAG's resource claim
+	// (credentials-and-lifecycle.md, step (8)).
+	status, body = as2Redemption(t, as2, broker, idJAG(), nil, true)
+	if status != http.StatusOK {
+		t.Fatalf("ID-JAG redemption without a resource: status %d, body %v", status, body)
+	}
+	defaulted, _ := body["access_token"].(string)
+	if aud, _ := unverifiedClaims(t, defaulted).GetAudience(); !slices.Equal([]string(aud), []string{as2.Resource}) {
+		t.Errorf("gateway token aud without a resource = %v, want [%s]", aud, as2.Resource)
+	}
+
 	// AS-2 accepts the broker's assertions for its issuer or its token
 	// endpoint, and refuses every other one with 401 invalid_client. Accepting
 	// the token endpoint as aud is ToolHive v0.61.0 behaviour that the design's
@@ -710,8 +744,7 @@ func TestAS2RedeemsAHarnessIDJAG(t *testing.T) {
 	for name, assertion := range map[string]string{
 		"another audience": broker.assertion(t, "https://other.example/v1/mcp/broker"),
 		"expired":          broker.signAssertion(t, broker.key, claimsAt(as2.Issuer, now.Add(-3*time.Minute), now.Add(-2*time.Minute))),
-		// ToolHive's bound is 5 minutes ahead, plus a 60-second skew from
-		// toolhive#7088; 10 minutes is past it either way.
+		// ToolHive's bound is 5 minutes ahead plus a 60-second skew.
 		"exp too far":      broker.signAssertion(t, broker.key, claimsAt(as2.Issuer, now, now.Add(10*time.Minute))),
 		"reused jti":       reused,
 		"unregistered key": broker.signAssertion(t, other, claimsAt(as2.Issuer, now, now.Add(time.Minute))),
@@ -750,7 +783,8 @@ func as1JWT(h *identityharness.Harness, as2 *AS2, spec identityharness.AccessTok
 
 // TestAS2RefusesRedemptionsOutsideItsConfiguration shows that AS-2 refuses
 // what its configuration leaves out, not only that it redeems what it allows:
-// a resource other than the vMCP's, an ID-JAG addressed to anything but AS-2's
+// a resource, requested or taken from the ID-JAG's claim, other than the
+// vMCP's, an ID-JAG addressed to anything but AS-2's
 // issuer, and an AS-1 access token presented as an assertion. These are the
 // checks that keep an AS-1 access token from being redeemed once #2533 trusts
 // AS-1 in production, and that a ToolHive bump must not loosen.
@@ -766,6 +800,8 @@ func TestAS2RefusesRedemptionsOutsideItsConfiguration(t *testing.T) {
 		t.Fatalf("valid ID-JAG: status %d, body %v", status, body)
 	}
 	accessToken := as1JWT(h, as2, identityharness.AccessTokenSpec{Audience: as2.Issuer})
+	otherClaim := as1JWT(h, as2, identityharness.AccessTokenSpec{Audience: as2.Issuer, Type: idJAGType,
+		Claims: map[string]any{"resource": "https://other.example/mcp", "act": as2TestAct(h)}})
 	for _, test := range []struct {
 		name       string
 		assertion  string
@@ -775,7 +811,7 @@ func TestAS2RefusesRedemptionsOutsideItsConfiguration(t *testing.T) {
 	}{
 		{"resource is AS-2's issuer", idJAG(as2.Issuer), resource(as2.Issuer), true, "invalid_target"},
 		{"resource is another server", idJAG(as2.Issuer), resource("https://other.example/mcp"), true, "invalid_target"},
-		{"resource left out", idJAG(as2.Issuer), nil, true, "invalid_request"},
+		{"resource left out, claim names another server", otherClaim, nil, true, "invalid_target"},
 		{"ID-JAG for the vMCP resource", idJAG(as2.Resource), resource(as2.Resource), true, "invalid_grant"},
 		{"ID-JAG for the token endpoint", idJAG(as2.TokenEndpoint), resource(as2.Resource), true, "invalid_grant"},
 		{"AS-1 access token", accessToken, resource(as2.Resource), true, "invalid_grant"},
