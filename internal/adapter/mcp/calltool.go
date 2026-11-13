@@ -60,9 +60,9 @@ func (s *Server) callTool(ctx context.Context, tool string, args json.RawMessage
 	}
 
 	var res *mcpsdk.CallToolResult
-	callErr := s.withSession(ctx, func(sess *mcpsdk.ClientSession) error {
+	callErr := s.withToolCall(ctx, func(callCtx context.Context, sess *mcpsdk.ClientSession) error {
 		var err error
-		res, err = sess.CallTool(ctx, &mcpsdk.CallToolParams{
+		res, err = sess.CallTool(callCtx, &mcpsdk.CallToolParams{
 			Name:      tool,
 			Arguments: argsAny,
 		})

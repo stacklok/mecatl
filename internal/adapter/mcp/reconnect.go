@@ -6,8 +6,11 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/http"
+	"net/http/httptrace"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"unicode/utf8"
 
@@ -88,6 +91,57 @@ func isConnectionDrop(err error) bool {
 	return false
 }
 
+// errOutcomeUnknown marks a tools/call that lost its connection after its request
+// may have reached the server. The server may have run the tool, so the call is
+// never sent again automatically.
+var errOutcomeUnknown = errors.New("mcp: tool call outcome unknown")
+
+// dispatchKey is the context key for the *dispatchRecord of one tools/call attempt.
+type dispatchKey struct{}
+
+// dispatchRecord notes whether any HTTP request made for one tools/call attempt
+// may have reached the server.
+type dispatchRecord struct{ reached atomic.Bool }
+
+// dispatchRecordingTransport records, for requests whose context carries a
+// dispatchRecord, whether the server may have received them. It delegates to
+// the Server's HTTP client transport, read per request.
+type dispatchRecordingTransport struct{ client *http.Client }
+
+func (t dispatchRecordingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	base := t.client.Transport
+	if base == nil {
+		base = http.DefaultTransport
+	}
+	dispatch, ok := req.Context().Value(dispatchKey{}).(*dispatchRecord)
+	if !ok {
+		return base.RoundTrip(req)
+	}
+	var getConn, gotConn atomic.Bool
+	ctx := httptrace.WithClientTrace(req.Context(), &httptrace.ClientTrace{
+		GetConn: func(string) { getConn.Store(true) },
+		GotConn: func(httptrace.GotConnInfo) { gotConn.Store(true) },
+	})
+	resp, err := base.RoundTrip(req.WithContext(ctx))
+	switch {
+	case err != nil:
+		// Only a failure while net/http was still obtaining a connection proves
+		// that no request bytes were sent. A transport that reports no connection
+		// events at all could have sent them. When net/http retries a request
+		// on a fresh connection after a stale keep-alive one, gotConn stays set
+		// and a never-sent call reports unknown; that errs towards no resend on purpose.
+		if !getConn.Load() || gotConn.Load() {
+			dispatch.reached.Store(true)
+		}
+	case resp.StatusCode == http.StatusNotFound:
+		// An unknown MCP session is refused before processing. Any other status,
+		// including an OAuth 401 the SDK answers by re-sending, counts as reached.
+	default:
+		dispatch.reached.Store(true)
+	}
+	return resp, err
+}
+
 // isAmbiguousTransportFailure reports a request whose delivery cannot be known.
 // net/http emits this unexported error after an idle server connection closes while
 // a POST may already have been written. It must be normalized for the model but
@@ -102,7 +156,7 @@ func isAmbiguousTransportFailure(err error) bool {
 // An ambiguous delivery is never retried, whereas an unambiguous session drop
 // retains the existing reconnect-and-retry behavior.
 func unavailableMessage(err error, operation, server string) string {
-	if isAmbiguousTransportFailure(err) {
+	if isAmbiguousTransportFailure(err) || errors.Is(err, errOutcomeUnknown) {
 		return fmt.Sprintf("%s: MCP server %q unavailable; request outcome is unknown", operation, server)
 	}
 	if isConnectionDrop(err) || errors.Is(err, errReconnectFailed) {
@@ -204,7 +258,7 @@ func (s *Server) reconnect(ctx context.Context, stale *mcpsdk.ClientSession) (*m
 }
 
 // withSession is the single retry shape for every Server session-call site
-// (tool Execute, readResource, getPrompt). It runs fn against the live session;
+// (readResource, getPrompt, and tools/call via withToolCall). It runs fn against the live session;
 // on a connection-drop fault (and only that, not ctx cancellation or a genuine
 // call-level fault) it reconnects ONCE — passing the stale session so reconnect
 // can CAS-skip a redundant dial when a concurrent caller already reconnected —
@@ -223,7 +277,7 @@ func (s *Server) withSession(ctx context.Context, fn func(*mcpsdk.ClientSession)
 	if ctx.Err() != nil { // cancellation, not a drop
 		return err
 	}
-	if !isConnectionDrop(err) { // genuine call-level fault
+	if !isConnectionDrop(err) || errors.Is(err, errOutcomeUnknown) { // call-level fault or unsafe to resend
 		return err
 	}
 	sess, err = s.reconnect(ctx, sess) // stale=sess → CAS-skip if a peer already reconnected
@@ -231,6 +285,24 @@ func (s *Server) withSession(ctx context.Context, fn func(*mcpsdk.ClientSession)
 		return err
 	}
 	return fn(sess) // one retry, no further reconnect
+}
+
+// withToolCall runs a tools/call through withSession, which resends it after a
+// drop only when no request of the failed attempt may have reached the server.
+// Otherwise the tool may already have run, so the call fails with
+// errOutcomeUnknown. Its session is not reconnected here: if it is unusable, the
+// next call fails without sending and takes the reconnect path.
+func (s *Server) withToolCall(ctx context.Context, fn func(context.Context, *mcpsdk.ClientSession) error) error {
+	return s.withSession(ctx, func(sess *mcpsdk.ClientSession) error {
+		dispatch := &dispatchRecord{}
+		err := fn(context.WithValue(ctx, dispatchKey{}, dispatch), sess)
+		if err != nil && ctx.Err() == nil && isConnectionDrop(err) && dispatch.reached.Load() {
+			s.diag.Log(ctx, port.LevelWarn, "mcp tool call outcome unknown after connection drop",
+				"server", s.name, "err", clampErr(err))
+			return fmt.Errorf("%w: %w", errOutcomeUnknown, err)
+		}
+		return err
+	})
 }
 
 // clampErr renders err to a length-bounded string for a diagnostics arg, so a

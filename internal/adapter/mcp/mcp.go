@@ -1026,9 +1026,11 @@ func (s *Server) dial(ctx context.Context, initialInteractiveLogin bool) (*mcpsd
 	}
 	defer cancel()
 
+	sdkHTTPClient := *s.httpClient
+	sdkHTTPClient.Transport = dispatchRecordingTransport{client: s.httpClient}
 	transport := &mcpsdk.StreamableClientTransport{
 		Endpoint:   s.cfg.URL,
-		HTTPClient: s.httpClient,
+		HTTPClient: &sdkHTTPClient,
 		// The standalone SSE GET stream is ENABLED so the server can
 		// push notifications/* (tools|prompts|resources/list_changed). The SDK
 		// opens it after initialize and drains it on session.Close(), so a
