@@ -375220,6 +375220,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1794602084474,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "29541485+ChrisJBurns@users.noreply.github.com",
+            "name": "Chris Burns",
+            "username": "ChrisJBurns"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "93c282ee7adbc3a21cd585285eb48ae38a565ae4",
+          "message": "fix(mcp): never re-send a tool call that may have reached the server (#2780)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-11-13T21:18:55Z",
+          "tree_id": "9e10e3ad6a602035570b5d0e968cb1b1659c2e09",
+          "url": "https://github.com/stacklok/mecatl/commit/93c282ee7adbc3a21cd585285eb48ae38a565ae4"
+        },
+        "date": 1794605431527,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -541838,6 +541872,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1794605427978,
+  "lastUpdate": 1794605432375,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
