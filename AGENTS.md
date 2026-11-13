@@ -37,10 +37,11 @@ go run ./cmd/mecademo    # offline session smoke test
 ## Module layout
 
 The root is one Go module; `engine/` is its own. Root `go test ./...` does not cross
-the module boundary; `task test` does. [`engine/`](engine/AGENTS.md),
-[`internal/`](internal/AGENTS.md), and [`website/`](website/AGENTS.md) have their own
-`AGENTS.md`. When the code doesn't explain how parts fit together, read the chapter
-for that area from [`docs/READING.md`](docs/READING.md).
+the module boundary; `task test` does. [`apps/`](apps/AGENTS.md) (Mecatl Studio),
+[`engine/`](engine/AGENTS.md), [`internal/`](internal/AGENTS.md), and
+[`website/`](website/AGENTS.md) have their own `AGENTS.md`. When the code doesn't
+explain how parts fit together, read the chapter for that area from
+[`docs/READING.md`](docs/READING.md).
 
 ## Implementation boundaries
 
