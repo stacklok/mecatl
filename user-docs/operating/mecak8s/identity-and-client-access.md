@@ -362,6 +362,12 @@ Set `mcp.broker.callbackURL` to the final public HTTPS callback. Route the full
 `/v1/mcp/broker/` prefix to the `mecak8s` HTTP listener. Broker mode requires
 OIDC caller identity.
 
+The broker's OAuth routes are anonymous and have
+[global rate limits](/features/security-and-execution/mcp-oauth-and-credentials.md#toolhive-broker-oauth),
+with the token endpoint in its own budget, so configure a per-client rate limit
+for `/v1/mcp/broker/oauth/*` and `/v1/mcp/broker/.well-known/*` at your
+ingress.
+
 Declared protected tools appear as placeholders before enrollment. Successful
 enrollment discovers every protected backend and atomically replaces the
 placeholders with a frozen per-session catalog. Failure exposes no partial

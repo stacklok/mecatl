@@ -15,13 +15,13 @@ import (
 	"syscall"
 	"time"
 
-	"golang.org/x/time/rate"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/health"
 	healthpb "google.golang.org/grpc/health/grpc_health_v1"
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
+	"github.com/stacklok/mecatl/internal/adapter/authserverlimit"
 	"github.com/stacklok/mecatl/internal/adapter/server"
 	"github.com/stacklok/mecatl/internal/adapter/telemetry"
 	"github.com/stacklok/mecatl/internal/adapter/tlsreload"
@@ -157,8 +157,8 @@ func mountAS1(mux *http.ServeMux, as1 *app.IdentityBrokerAS1Server, profile serv
 			return fmt.Errorf("route %q conflicts with a mecak8s route; choose another --identity-broker-as1-issuer path", route)
 		}
 	}
-	signIn := limitAS1(as1.Handler, rate.NewLimiter(as1SignInRatePerSec, as1SignInBurst))
-	token := limitAS1(as1.Handler, rate.NewLimiter(as1TokenRatePerSec, as1TokenBurst))
+	signIn := authserverlimit.Limit(as1.Handler, authserverlimit.NewSignInLimiter())
+	token := authserverlimit.Limit(as1.Handler, authserverlimit.NewTokenLimiter())
 	for _, route := range as1.Routes {
 		if strings.HasSuffix(route, "/oauth/token") {
 			mux.Handle(route, token)
@@ -167,39 +167,6 @@ func mountAS1(mux *http.ServeMux, as1 *app.IdentityBrokerAS1Server, profile serv
 		}
 	}
 	return nil
-}
-
-// Bounds on AS-1's anonymous routes. /oauth/authorize stores a pending
-// authorization before anyone signs in, so request size and rate bound the
-// memory an unauthenticated caller can make AS-1 hold. mecak8s does not trust
-// forwarded headers, so behind an ingress every user has the same peer
-// address: the rates are global, with the browser sign-in routes and the
-// token endpoint in separate buckets so a flood of one cannot starve the
-// other.
-const (
-	as1MaxQueryBytes    = 8 << 10
-	as1MaxBodyBytes     = 64 << 10
-	as1SignInRatePerSec = 50
-	as1SignInBurst      = 200
-	as1TokenRatePerSec  = 50
-	as1TokenBurst       = 200
-)
-
-// limitAS1 refuses a request limiter has no room for with 429, refuses an
-// oversized query, and caps the request body.
-func limitAS1(next http.Handler, limiter *rate.Limiter) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !limiter.Allow() {
-			http.Error(w, "rate limit exceeded", http.StatusTooManyRequests)
-			return
-		}
-		if len(r.URL.RawQuery) > as1MaxQueryBytes {
-			http.Error(w, "query too long", http.StatusRequestURITooLong)
-			return
-		}
-		r.Body = http.MaxBytesReader(w, r.Body, as1MaxBodyBytes)
-		next.ServeHTTP(w, r)
-	})
 }
 
 func drainHTTPMux(svc *server.Service, wait func(time.Duration)) http.Handler {

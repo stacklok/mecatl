@@ -18,6 +18,7 @@ import (
 	mecatuiclient "github.com/stacklok/mecatl/cmd/mecatui/client"
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
 	"github.com/stacklok/mecatl/engine/port"
+	"github.com/stacklok/mecatl/internal/adapter/authserverlimit"
 	"github.com/stacklok/mecatl/internal/adapter/clientauth"
 	"github.com/stacklok/mecatl/internal/adapter/credentialstore"
 	"github.com/stacklok/mecatl/internal/adapter/mcpbroker"
@@ -208,13 +209,13 @@ func TestHostedAS1AnonymousSurfaceIsBounded(t *testing.T) {
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
-	if code := probe(t, srv.URL+"/as1/oauth/authorize?state="+strings.Repeat("s", as1MaxQueryBytes)); code != http.StatusRequestURITooLong {
+	if code := probe(t, srv.URL+"/as1/oauth/authorize?state="+strings.Repeat("s", authserverlimit.MaxQueryBytes)); code != http.StatusRequestURITooLong {
 		t.Errorf("authorize with an oversized query = %d, want 414", code)
 	}
 	if n := reached.Load(); n != 0 {
 		t.Fatalf("an oversized query reached AS-1 %d times", n)
 	}
-	resp, err := http.Post(srv.URL+"/as1/oauth/token", "application/x-www-form-urlencoded", strings.NewReader(strings.Repeat("a", as1MaxBodyBytes+1)))
+	resp, err := http.Post(srv.URL+"/as1/oauth/token", "application/x-www-form-urlencoded", strings.NewReader(strings.Repeat("a", authserverlimit.MaxBodyBytes+1)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -260,25 +261,61 @@ func TestHostedAS1RateLimitsAreGlobalPerSurface(t *testing.T) {
 
 	t.Run("sign-in flood", func(t *testing.T) {
 		base := serve(t)
-		if passed := exhaust(t, base+authorize, as1SignInBurst); passed < as1SignInBurst {
-			t.Fatalf("%d sign-in requests from one peer passed before a 429, want the global burst of %d", passed, as1SignInBurst)
+		if passed := exhaust(t, base+authorize, authserverlimit.SignInBurst); passed < authserverlimit.SignInBurst {
+			t.Fatalf("%d sign-in requests from one peer passed before a 429, want the global burst of %d", passed, authserverlimit.SignInBurst)
 		}
-		if passed := exhaust(t, base+callback, as1SignInBurst); passed > 5 {
+		if passed := exhaust(t, base+callback, authserverlimit.SignInBurst); passed > 5 {
 			t.Errorf("%d callback requests passed after authorize exhausted the sign-in bucket, want it shared", passed)
 		}
-		if passed := exhaust(t, base+token, as1TokenBurst); passed < as1TokenBurst {
-			t.Errorf("%d token requests passed while sign-in was exhausted, want the token burst of %d", passed, as1TokenBurst)
+		if passed := exhaust(t, base+token, authserverlimit.TokenBurst); passed < authserverlimit.TokenBurst {
+			t.Errorf("%d token requests passed while sign-in was exhausted, want the token burst of %d", passed, authserverlimit.TokenBurst)
 		}
 	})
 	t.Run("token flood", func(t *testing.T) {
 		base := serve(t)
-		if passed := exhaust(t, base+token, as1TokenBurst); passed < as1TokenBurst {
-			t.Fatalf("%d token requests from one peer passed before a 429, want the global burst of %d", passed, as1TokenBurst)
+		if passed := exhaust(t, base+token, authserverlimit.TokenBurst); passed < authserverlimit.TokenBurst {
+			t.Fatalf("%d token requests from one peer passed before a 429, want the global burst of %d", passed, authserverlimit.TokenBurst)
 		}
-		if passed := exhaust(t, base+authorize, as1SignInBurst); passed < as1SignInBurst {
-			t.Errorf("%d sign-in requests passed while the token endpoint was exhausted, want the sign-in burst of %d", passed, as1SignInBurst)
+		if passed := exhaust(t, base+authorize, authserverlimit.SignInBurst); passed < authserverlimit.SignInBurst {
+			t.Errorf("%d sign-in requests passed while the token endpoint was exhausted, want the sign-in burst of %d", passed, authserverlimit.SignInBurst)
 		}
 	})
+}
+
+// TestMountedEmbeddedAuthServerIsBounded pins that the MCP broker's embedded
+// authorization server's limits reach the routes mecak8s mounts: the token
+// and authorize routes refuse an oversized query. The mcpbroker tests cover
+// the limits themselves.
+func TestMountedEmbeddedAuthServerIsBounded(t *testing.T) {
+	built, err := buildIsolated(t, context.Background(), app.Config{
+		Workspace: t.TempDir(), UseMock: true, NoSoul: true, NoUserModel: true, Diagnostics: port.NopDiagnostics{},
+	})
+	if err != nil {
+		t.Fatalf("app.Build: %v", err)
+	}
+	defer built.Close()
+	auth := server.NewAuthenticator(server.SecurityConfig{AuthToken: "test-token"})
+	defer auth.Close()
+	process, err := mcpbroker.NewToolHiveProcess(t.Context(), mcpbroker.ToolHiveConfig{CallbackURL: "https://broker.example/oauth/callback", Profiles: []mcpbroker.ToolHiveProfile{{
+		Name: "calendar", URL: "https://calendar.example/mcp", Auth: "oauth", OAuth: &mcpbroker.ToolHiveOAuth{
+			AuthorizationEndpoint: "https://issuer.example/authorize", TokenEndpoint: "https://issuer.example/token", ClientID: "calendar-client",
+		},
+	}}})
+	if err != nil {
+		t.Fatalf("NewToolHiveProcess: %v", err)
+	}
+	defer func() { _ = process.Close() }()
+	mux, err := normalHTTPMux(built.Service, auth, server.ProtectedResourceProfile{}, "", true, builtServing{brokerHandlers: process.Handlers, brokerCallbackPath: process.CallbackPath})
+	if err != nil {
+		t.Fatalf("normalHTTPMux: %v", err)
+	}
+	for _, route := range []string{"/v1/mcp/broker/oauth/token", "/v1/mcp/broker/oauth/authorize"} {
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, httptest.NewRequest(http.MethodGet, route+"?state="+strings.Repeat("s", authserverlimit.MaxQueryBytes), nil))
+		if w.Code != http.StatusRequestURITooLong {
+			t.Errorf("%s with an oversized query = %d, want 414", route, w.Code)
+		}
+	}
 }
 
 // TestHostedAS1SignsTheTUIIn hosts AS-1 in mecak8s, with the harness IdP as

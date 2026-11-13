@@ -34,6 +34,7 @@ import (
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
+	"github.com/stacklok/mecatl/internal/adapter/authserverlimit"
 	mcpadapter "github.com/stacklok/mecatl/internal/adapter/mcp"
 )
 
@@ -339,14 +340,19 @@ func newToolHiveProcess(ctx context.Context, config ToolHiveConfig, options tool
 	}
 	if auth != nil {
 		embedded := http.StripPrefix(toolHiveBasePath, auth.Handler())
-		process.Handlers.Authorization = embedded
-		process.Handlers.Token = embedded
-		process.Handlers.UpstreamCallback = embedded
-		process.Handlers.Discovery = embedded
-		process.Handlers.JWKS = embedded
-		process.Handlers.ProtectedResource = authInfo
+		signInLimiter := authserverlimit.NewSignInLimiter()
+		signIn := authserverlimit.Limit(embedded, signInLimiter)
+		process.Handlers.Authorization = signIn
+		process.Handlers.Token = authserverlimit.Limit(embedded, authserverlimit.NewTokenLimiter())
+		process.Handlers.UpstreamCallback = signIn
+		process.Handlers.Discovery = signIn
+		process.Handlers.JWKS = signIn
+		process.Handlers.ProtectedResource = authserverlimit.Limit(authInfo, signInLimiter)
 		if as2 {
-			process.AS2 = newAS2(issuer, resource, embedded)
+			// The identity broker's in-process redemptions get the size caps
+			// but not the public token bucket, so anonymous traffic on the
+			// mounted route cannot refuse them.
+			process.AS2 = newAS2(issuer, resource, authserverlimit.Caps(embedded))
 		}
 	}
 	if config.CallbackURL != "" {

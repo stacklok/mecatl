@@ -12,6 +12,7 @@ import (
 
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
+	"github.com/stacklok/mecatl/internal/adapter/authserverlimit"
 	"github.com/stacklok/mecatl/internal/adapter/mcpauthority"
 	"github.com/stacklok/mecatl/internal/adapter/mcpbroker"
 	"github.com/stacklok/mecatl/internal/adapter/server"
@@ -319,6 +320,33 @@ func TestMecatedBrokerProtocolRoutesArePublicNotBearerWrapped(t *testing.T) {
 	}
 	if _, pattern := unprotected.Handler(httptest.NewRequest(http.MethodGet, "/callback", nil)); pattern != "/" {
 		t.Fatalf("nil broker handlers registered %q", pattern)
+	}
+}
+
+// TestMecatedMountedEmbeddedAuthServerIsBounded pins that the embedded
+// authorization server's limits reach the routes mecated mounts: the token
+// and authorize routes refuse an oversized query. The mcpbroker tests cover
+// the limits themselves.
+func TestMecatedMountedEmbeddedAuthServerIsBounded(t *testing.T) {
+	process, err := mcpbroker.NewToolHiveProcess(t.Context(), mcpbroker.ToolHiveConfig{CallbackURL: "https://broker.example/oauth/callback", Profiles: []mcpbroker.ToolHiveProfile{{
+		Name: "calendar", URL: "https://calendar.example/mcp", Auth: "oauth", OAuth: &mcpbroker.ToolHiveOAuth{
+			AuthorizationEndpoint: "https://issuer.example/authorize", TokenEndpoint: "https://issuer.example/token", ClientID: "calendar-client",
+		},
+	}}})
+	if err != nil {
+		t.Fatalf("NewToolHiveProcess: %v", err)
+	}
+	t.Cleanup(func() { _ = process.Close() })
+	mux := http.NewServeMux()
+	if err := mountBrokerHandlers(mux, "127.0.0.1:8081", false, process.Handlers, process.CallbackPath); err != nil {
+		t.Fatalf("mountBrokerHandlers: %v", err)
+	}
+	for _, route := range []string{"/v1/mcp/broker/oauth/token", "/v1/mcp/broker/oauth/authorize"} {
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, httptest.NewRequest(http.MethodGet, route+"?state="+strings.Repeat("s", authserverlimit.MaxQueryBytes), nil))
+		if w.Code != http.StatusRequestURITooLong {
+			t.Errorf("%s with an oversized query = %d, want 414", route, w.Code)
+		}
 	}
 }
 

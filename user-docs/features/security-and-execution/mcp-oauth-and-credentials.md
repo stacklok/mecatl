@@ -394,6 +394,16 @@ endpoints, and tokens. Providers return to ToolHive at
 Mecatl callback path. Route both paths to the same listener. See the
 [Kubernetes deployment guide](/operating/mecak8s.md) for Helm configuration.
 
+The broker's OAuth routes under `/v1/mcp/broker/` are anonymous, and the server
+cannot tell clients behind one ingress apart, so their rate limits are global
+to each server process: 50 requests per second, with bursts of 200, for the
+authorization, consent, callback, discovery, and key-set routes, and a
+separate budget of the same size for `/v1/mcp/broker/oauth/token`. Requests
+past a budget get `429`. Queries over 8 KiB get `414`, and Mecatl caps request
+bodies at 64 KiB. One client can still use up a budget for everyone, so
+configure a per-client rate limit for `/v1/mcp/broker/oauth/*` and
+`/v1/mcp/broker/.well-known/*` at your ingress or reverse proxy.
+
 Pending broker enrollment is process-local. After a Mecatl restart, start a new
 enrollment even if ToolHive retained its upstream tokens in Redis. Broker mode
 requires a single replica. The chart enforces `replicaCount: 1` and the
