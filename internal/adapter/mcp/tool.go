@@ -147,9 +147,9 @@ func (t *remoteTool) Execute(ctx context.Context, in session.ToolCall, _ tool.En
 	}
 
 	var res *mcpsdk.CallToolResult
-	callErr := t.server.withSession(ctx, func(sess *mcpsdk.ClientSession) error {
+	callErr := t.server.withToolCall(ctx, func(callCtx context.Context, sess *mcpsdk.ClientSession) error {
 		var err error
-		res, err = sess.CallTool(ctx, &mcpsdk.CallToolParams{
+		res, err = sess.CallTool(callCtx, &mcpsdk.CallToolParams{
 			Name:      t.remoteName,
 			Arguments: args,
 		})
