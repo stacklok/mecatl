@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/stacklok/toolhive/pkg/authserver/storage"
+	"github.com/stacklok/toolhive/pkg/oauthproto/dcrkey"
 
 	"github.com/stacklok/mecatl/internal/adapter/mcpbroker/credentialenvelope"
 )
@@ -167,7 +168,7 @@ func (*Storage) LoadPendingDeviceConfirmation(context.Context, string) (*storage
 }
 
 // GetDCRCredentials opens the sealed DCR credentials stored for the key.
-func (s *Storage) GetDCRCredentials(ctx context.Context, key storage.DCRKey) (*storage.DCRCredentials, error) {
+func (s *Storage) GetDCRCredentials(ctx context.Context, key dcrkey.Key) (*storage.DCRCredentials, error) {
 	raw, err := s.dcr.GetDCRCredentials(ctx, key)
 	if err != nil {
 		return nil, err
@@ -298,7 +299,7 @@ func (s *Storage) openTokens(sessionID, provider string, in *storage.UpstreamTok
 	return &out, nil
 }
 
-func (s *Storage) sealDCR(key storage.DCRKey, in *storage.DCRCredentials) (*storage.DCRCredentials, error) {
+func (s *Storage) sealDCR(key dcrkey.Key, in *storage.DCRCredentials) (*storage.DCRCredentials, error) {
 	if in == nil || in.Key != key {
 		return nil, credentialenvelope.ErrUnavailable
 	}
@@ -313,7 +314,7 @@ func (s *Storage) sealDCR(key storage.DCRKey, in *storage.DCRCredentials) (*stor
 	return &out, nil
 }
 
-func (s *Storage) openDCR(key storage.DCRKey, in *storage.DCRCredentials) (*storage.DCRCredentials, error) {
+func (s *Storage) openDCR(key dcrkey.Key, in *storage.DCRCredentials) (*storage.DCRCredentials, error) {
 	if in == nil || in.Key != key {
 		return nil, credentialenvelope.ErrUnavailable
 	}
@@ -342,14 +343,14 @@ func (s *Storage) openUpstreamField(sessionID, provider, field, value string) (s
 	return s.keys.Open(credentialenvelope.AAD(s.namespace, "upstream", sessionID, provider, field), value)
 }
 
-func (s *Storage) sealDCRField(key storage.DCRKey, field, value string) (string, error) {
+func (s *Storage) sealDCRField(key dcrkey.Key, field, value string) (string, error) {
 	if value == "" {
 		return "", nil
 	}
 	return s.keys.Seal(credentialenvelope.AAD(s.namespace, "dcr", key.Issuer, key.UpstreamID, key.RedirectURI, key.ScopesHash, field), value)
 }
 
-func (s *Storage) openDCRField(key storage.DCRKey, field, value string) (string, error) {
+func (s *Storage) openDCRField(key dcrkey.Key, field, value string) (string, error) {
 	if value == "" {
 		return "", nil
 	}

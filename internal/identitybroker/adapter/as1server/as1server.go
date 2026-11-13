@@ -107,7 +107,8 @@ type Server struct {
 	issuer   *url.URL
 	routes   []string
 	handler  http.Handler
-	auth     *runner.EmbeddedAuthServer
+	// release releases the authorization server, then its storage, once.
+	release func() error
 }
 
 // options are test-only construction settings.
@@ -180,14 +181,17 @@ func newServer(ctx context.Context, cfg Config, opts options) (*Server, error) {
 			KeyDir: filepath.Dir(cfg.SigningKeyFile), SigningKeyFile: filepath.Base(cfg.SigningKeyFile),
 		}
 	}
-	// On error the constructor closes store.
+	// ToolHive borrows store on success and failure; AS-1 closes it.
 	auth, err := runner.NewEmbeddedAuthServerWithStorage(ctx, runConfig, store,
 		runner.WithSubjectIdentifierAudiences([]string{cfg.Audience}),
 		runner.WithAccessTokenType(accessTokenType))
 	if err != nil {
+		_ = store.Close()
 		return nil, fmt.Errorf("as1server: create authorization server: %w", err)
 	}
-	s := &Server{issuerID: cfg.Issuer, issuer: issuer, auth: auth}
+	s := &Server{issuerID: cfg.Issuer, issuer: issuer, release: sync.OnceValue(func() error {
+		return errors.Join(auth.Close(), store.Close())
+	})}
 	s.routes, s.handler = signInRoutes(issuer, auth.Handler())
 	return s, nil
 }
@@ -388,4 +392,4 @@ func (s *Server) Routes() []string { return slices.Clone(s.routes) }
 func (s *Server) Handler() http.Handler { return s.handler }
 
 // Close releases the authorization server and its storage. It is idempotent.
-func (s *Server) Close() error { return s.auth.Close() }
+func (s *Server) Close() error { return s.release() }
