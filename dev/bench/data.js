@@ -374504,6 +374504,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1794523515826,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "328978+blkt@users.noreply.github.com",
+            "name": "Michelangelo Mori",
+            "username": "blkt"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "1bb0f45661101b866113050a3993ca7a0dd0249a",
+          "message": "feat(executioncontroller): declare capabilities in execution templates (#2774)",
+          "timestamp": "2026-11-13T14:37:43+01:00",
+          "tree_id": "4447fa2168628b8abe6384cd0c0645fdc95093c1",
+          "url": "https://github.com/stacklok/mecatl/commit/1bb0f45661101b866113050a3993ca7a0dd0249a"
+        },
+        "date": 1794577766684,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -540816,6 +540850,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1794577762030,
+  "lastUpdate": 1794577767755,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
