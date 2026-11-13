@@ -42,6 +42,9 @@ func templateFixture(t *testing.T, entries map[string]TemplateRevision, defaultR
 
 func fixtureRevision(t *testing.T, spec ProfileSpec) string {
 	t.Helper()
+	if spec.Capabilities == nil {
+		spec.Capabilities = []string{"filesystem", "foreground-command"}
+	}
 	canonical, err := json.Marshal(spec)
 	if err != nil {
 		t.Fatal(err)

@@ -144,6 +144,13 @@ recipes:
     maxCommandDuration: 5m
 ```
 
+An optional `capabilities` list declares the most access the template's
+environments provide: `filesystem` for the file tools and `foreground-command`
+for `Shell`. Omit it to declare both. Validation requires both, so it rejects an
+empty list, an unknown name, a duplicate, or a single capability. The revision
+covers the set rather than its spelling: listing the names in either order or
+omitting the field produces the same revision.
+
 Generate a new values file and validate it independently:
 
 ```sh

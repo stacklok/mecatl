@@ -25,7 +25,7 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/executioncontroller"
 )
 
-const goFixtureRevision = "v1-b43267b9000cbc1f423785585c4b9f5dbfc07d5ab8acf9426c68b38c23276cd7"
+const goFixtureRevision = "v1-3ec82c4f18bd7756f1247626978221e5543b03967d4a5cd3364386ce288aee8d"
 
 // Exercise Helm's actual lookup/render path, with a loopback API containing only
 // synthetic nonsecret objects. No ambient kubeconfig or cluster is consulted.
@@ -83,6 +83,7 @@ func TestChartPolicyIncreasePreservesRecipesAndLedgers(t *testing.T) {
 
 func TestChartTemplateRevisionLifetime(t *testing.T) {
 	spec := executioncontroller.ProfileSpec{Image: "example.invalid/workload@sha256:" + strings.Repeat("a", 64), StorageClass: "standard", StorageSize: "1Gi", CPURequest: "50m", MemoryRequest: "64Mi", CPULimit: "1", MemoryLimit: "512Mi", EphemeralStorageRequest: "64Mi", EphemeralStorageLimit: "1Gi", TmpSizeLimit: "256Mi", RuntimeClassName: "runc", MaxFileBytes: 1024, MaxCommandBytes: 1024, MaxCommandDuration: 5 * time.Minute}
+	spec.Capabilities = []string{"filesystem", "foreground-command"}
 	revisionOf := func(s executioncontroller.ProfileSpec) string {
 		t.Helper()
 		body, err := json.Marshal(s)
@@ -207,6 +208,7 @@ func TestChartTemplateRevisionLifetime(t *testing.T) {
 
 func TestChartPrunesUnusedRevisionWhileWorkspacesSurvive(t *testing.T) {
 	spec := executioncontroller.ProfileSpec{Image: "example.invalid/workload@sha256:" + strings.Repeat("a", 64), StorageClass: "standard", StorageSize: "1Gi", CPURequest: "50m", MemoryRequest: "64Mi", CPULimit: "1", MemoryLimit: "512Mi", EphemeralStorageRequest: "64Mi", EphemeralStorageLimit: "1Gi", TmpSizeLimit: "256Mi", RuntimeClassName: "runc", MaxFileBytes: 1024, MaxCommandBytes: 1024, MaxCommandDuration: 5 * time.Minute}
+	spec.Capabilities = []string{"filesystem", "foreground-command"}
 	revisions := map[string]any{}
 	var first, last, next string
 	for i := 1; i <= 33; i++ {
@@ -695,10 +697,10 @@ func TestChartRetainedLifetime(t *testing.T) {
 		}, want: "foreign or ambiguous"},
 		{name: "removed profile policy", args: []string{"--set-json", "networkPolicy.workloadProfiles={}"}, want: "configuration is incompatible"},
 		{name: "changed egress", args: []string{"--set", "networkPolicy.workloadProfiles.go.egress[0].cidr=10.3.0.0/16"}, want: "configuration is incompatible"},
-		{name: "changed profile", args: []string{"--set", "templates.go.revisions.v1-b43267b9000cbc1f423785585c4b9f5dbfc07d5ab8acf9426c68b38c23276cd7.execution.maxFileBytes=30"}, want: "retained execution template definition"},
-		{name: "changed profile scheduling", args: []string{"--set", "templates.go.revisions.v1-b43267b9000cbc1f423785585c4b9f5dbfc07d5ab8acf9426c68b38c23276cd7.execution.nodeSelector.pool=workers"}, want: "retained execution template definition"},
-		{name: "changed profile tolerations", args: []string{"--set", "templates.go.revisions.v1-b43267b9000cbc1f423785585c4b9f5dbfc07d5ab8acf9426c68b38c23276cd7.execution.tolerations[0].key=dedicated", "--set", "templates.go.revisions.v1-b43267b9000cbc1f423785585c4b9f5dbfc07d5ab8acf9426c68b38c23276cd7.execution.tolerations[0].operator=Exists"}, want: "retained execution template definition"},
-		{name: "changed profile pulls", args: []string{"--set-json", `templates.go.revisions.v1-b43267b9000cbc1f423785585c4b9f5dbfc07d5ab8acf9426c68b38c23276cd7.execution.imagePullSecrets=["registry"]`}, want: "retained execution template definition"},
+		{name: "changed profile", args: []string{"--set", "templates.go.revisions.v1-3ec82c4f18bd7756f1247626978221e5543b03967d4a5cd3364386ce288aee8d.execution.maxFileBytes=30"}, want: "retained execution template definition"},
+		{name: "changed profile scheduling", args: []string{"--set", "templates.go.revisions.v1-3ec82c4f18bd7756f1247626978221e5543b03967d4a5cd3364386ce288aee8d.execution.nodeSelector.pool=workers"}, want: "retained execution template definition"},
+		{name: "changed profile tolerations", args: []string{"--set", "templates.go.revisions.v1-3ec82c4f18bd7756f1247626978221e5543b03967d4a5cd3364386ce288aee8d.execution.tolerations[0].key=dedicated", "--set", "templates.go.revisions.v1-3ec82c4f18bd7756f1247626978221e5543b03967d4a5cd3364386ce288aee8d.execution.tolerations[0].operator=Exists"}, want: "retained execution template definition"},
+		{name: "changed profile pulls", args: []string{"--set-json", `templates.go.revisions.v1-3ec82c4f18bd7756f1247626978221e5543b03967d4a5cd3364386ce288aee8d.execution.imagePullSecrets=["registry"]`}, want: "retained execution template definition"},
 		{name: "changed fullname", args: []string{"--set", "fullnameOverride=other"}, want: "ServiceAccount other-executor with token automount disabled"},
 		{name: "missing profiles with orphan policies", mutate: func(m map[string]map[string]any) {
 			delete(m, "ExecutionEnvironment/exec-test")
@@ -734,7 +736,7 @@ func TestChartPullIdentity(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			var args []string
 			if tc.provider != "" {
-				args = []string{"--set-json", "provider.imagePullSecrets=" + tc.provider, "--set-json", "templates.go.revisions.v1-b43267b9000cbc1f423785585c4b9f5dbfc07d5ab8acf9426c68b38c23276cd7.execution.imagePullSecrets=" + tc.profile}
+				args = []string{"--set-json", "provider.imagePullSecrets=" + tc.provider, "--set-json", "templates.go.revisions.v1-3ec82c4f18bd7756f1247626978221e5543b03967d4a5cd3364386ce288aee8d.execution.imagePullSecrets=" + tc.profile}
 			}
 			objects, err := renderLifetime(t, nil, args...)
 			if err != nil {
@@ -817,23 +819,23 @@ func TestChartRejectsInvalidPullSecrets(t *testing.T) {
 		{"provider.imagePullSecrets", `[""]`}, {"provider.imagePullSecrets", `["reg","reg"]`},
 		{"provider.imagePullSecrets", `["REG"]`}, {"provider.imagePullSecrets", `["` + strings.Repeat("a", 64) + `"]`},
 		{"provider.imagePullSecrets", `["a","b","c","d","e","f","g","h","i"]`},
-		{"templates.go.revisions.v1-b43267b9000cbc1f423785585c4b9f5dbfc07d5ab8acf9426c68b38c23276cd7.execution.imagePullSecrets", `["ns/reg"]`}, {"templates.go.revisions.v1-b43267b9000cbc1f423785585c4b9f5dbfc07d5ab8acf9426c68b38c23276cd7.execution.imagePullSecrets", `["a","a"]`},
-		{"templates.go.revisions.v1-b43267b9000cbc1f423785585c4b9f5dbfc07d5ab8acf9426c68b38c23276cd7.execution.imagePullSecrets", `["a","b","c","d","e","f","g","h","i"]`},
-		{"templates.go.revisions.v1-b43267b9000cbc1f423785585c4b9f5dbfc07d5ab8acf9426c68b38c23276cd7.execution.imagePullSecret", `["reg"]`},
+		{"templates.go.revisions.v1-3ec82c4f18bd7756f1247626978221e5543b03967d4a5cd3364386ce288aee8d.execution.imagePullSecrets", `["ns/reg"]`}, {"templates.go.revisions.v1-3ec82c4f18bd7756f1247626978221e5543b03967d4a5cd3364386ce288aee8d.execution.imagePullSecrets", `["a","a"]`},
+		{"templates.go.revisions.v1-3ec82c4f18bd7756f1247626978221e5543b03967d4a5cd3364386ce288aee8d.execution.imagePullSecrets", `["a","b","c","d","e","f","g","h","i"]`},
+		{"templates.go.revisions.v1-3ec82c4f18bd7756f1247626978221e5543b03967d4a5cd3364386ce288aee8d.execution.imagePullSecret", `["reg"]`},
 	} {
 		if _, err := renderLifetime(t, nil, "--set-json", tc.key+"="+tc.value); err == nil {
 			t.Fatalf("invalid chart value accepted: %s=%s", tc.key, tc.value)
 		}
 	}
-	if _, err := renderLifetime(t, nil, "--set-json", `provider.imagePullSecrets=["a","b","c","d","e","f","g","h"]`, "--set-json", `templates.go.revisions.v1-b43267b9000cbc1f423785585c4b9f5dbfc07d5ab8acf9426c68b38c23276cd7.execution.imagePullSecrets=["a","b","c","d","e","f","g","h"]`); err != nil {
+	if _, err := renderLifetime(t, nil, "--set-json", `provider.imagePullSecrets=["a","b","c","d","e","f","g","h"]`, "--set-json", `templates.go.revisions.v1-3ec82c4f18bd7756f1247626978221e5543b03967d4a5cd3364386ce288aee8d.execution.imagePullSecrets=["a","b","c","d","e","f","g","h"]`); err != nil {
 		t.Fatal(err)
 	}
 }
 
 func TestChartSchedulingSchema(t *testing.T) {
 	objects, err := renderLifetime(t, nil,
-		"--set-json", `templates.go.revisions.v1-b43267b9000cbc1f423785585c4b9f5dbfc07d5ab8acf9426c68b38c23276cd7.execution.nodeSelector={"node.kubernetes.io/instance-type":"worker"}`,
-		"--set-json", `templates.go.revisions.v1-b43267b9000cbc1f423785585c4b9f5dbfc07d5ab8acf9426c68b38c23276cd7.execution.tolerations=[{"key":"dedicated","operator":"Equal","value":"build","effect":"NoSchedule"}]`)
+		"--set-json", `templates.go.revisions.v1-3ec82c4f18bd7756f1247626978221e5543b03967d4a5cd3364386ce288aee8d.execution.nodeSelector={"node.kubernetes.io/instance-type":"worker"}`,
+		"--set-json", `templates.go.revisions.v1-3ec82c4f18bd7756f1247626978221e5543b03967d4a5cd3364386ce288aee8d.execution.tolerations=[{"key":"dedicated","operator":"Equal","value":"build","effect":"NoSchedule"}]`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -848,18 +850,44 @@ func TestChartSchedulingSchema(t *testing.T) {
 		t.Fatalf("rendered profile scheduling: %v", profile)
 	}
 	for _, tc := range []struct{ key, value string }{
-		{"templates.go.revisions.v1-b43267b9000cbc1f423785585c4b9f5dbfc07d5ab8acf9426c68b38c23276cd7.execution.nodeSelector", `{}`},
-		{"templates.go.revisions.v1-b43267b9000cbc1f423785585c4b9f5dbfc07d5ab8acf9426c68b38c23276cd7.execution.tolerations", `[]`},
-		{"templates.go.revisions.v1-b43267b9000cbc1f423785585c4b9f5dbfc07d5ab8acf9426c68b38c23276cd7.execution.tolerations", `[{"key":"dedicated"}]`},
-		{"templates.go.revisions.v1-b43267b9000cbc1f423785585c4b9f5dbfc07d5ab8acf9426c68b38c23276cd7.execution.tolerations", `[{"key":"dedicated","operator":"Exists"},{"key":"dedicated","operator":"Exists"}]`},
-		{"templates.go.revisions.v1-b43267b9000cbc1f423785585c4b9f5dbfc07d5ab8acf9426c68b38c23276cd7.execution.nodeSelector", `{"bad/key/again":"worker"}`},
-		{"templates.go.revisions.v1-b43267b9000cbc1f423785585c4b9f5dbfc07d5ab8acf9426c68b38c23276cd7.execution.tolerations", `[{"operator":"Exists","value":"build"}]`},
-		{"templates.go.revisions.v1-b43267b9000cbc1f423785585c4b9f5dbfc07d5ab8acf9426c68b38c23276cd7.execution.tolerations", `[{"key":"dedicated","operator":"Exists","effect":"NoSchedule","tolerationSeconds":1}]`},
-		{"templates.go.revisions.v1-b43267b9000cbc1f423785585c4b9f5dbfc07d5ab8acf9426c68b38c23276cd7.execution.tolerations", `[{"key":"dedicated","operator":"Exists","effect":"NoExecute","tolerationSeconds":86401}]`},
-		{"templates.go.revisions.v1-b43267b9000cbc1f423785585c4b9f5dbfc07d5ab8acf9426c68b38c23276cd7.execution.tolerations", `[{"key":"dedicated","operator":"Exists","unknown":true}]`},
+		{"templates.go.revisions.v1-3ec82c4f18bd7756f1247626978221e5543b03967d4a5cd3364386ce288aee8d.execution.nodeSelector", `{}`},
+		{"templates.go.revisions.v1-3ec82c4f18bd7756f1247626978221e5543b03967d4a5cd3364386ce288aee8d.execution.tolerations", `[]`},
+		{"templates.go.revisions.v1-3ec82c4f18bd7756f1247626978221e5543b03967d4a5cd3364386ce288aee8d.execution.tolerations", `[{"key":"dedicated"}]`},
+		{"templates.go.revisions.v1-3ec82c4f18bd7756f1247626978221e5543b03967d4a5cd3364386ce288aee8d.execution.tolerations", `[{"key":"dedicated","operator":"Exists"},{"key":"dedicated","operator":"Exists"}]`},
+		{"templates.go.revisions.v1-3ec82c4f18bd7756f1247626978221e5543b03967d4a5cd3364386ce288aee8d.execution.nodeSelector", `{"bad/key/again":"worker"}`},
+		{"templates.go.revisions.v1-3ec82c4f18bd7756f1247626978221e5543b03967d4a5cd3364386ce288aee8d.execution.tolerations", `[{"operator":"Exists","value":"build"}]`},
+		{"templates.go.revisions.v1-3ec82c4f18bd7756f1247626978221e5543b03967d4a5cd3364386ce288aee8d.execution.tolerations", `[{"key":"dedicated","operator":"Exists","effect":"NoSchedule","tolerationSeconds":1}]`},
+		{"templates.go.revisions.v1-3ec82c4f18bd7756f1247626978221e5543b03967d4a5cd3364386ce288aee8d.execution.tolerations", `[{"key":"dedicated","operator":"Exists","effect":"NoExecute","tolerationSeconds":86401}]`},
+		{"templates.go.revisions.v1-3ec82c4f18bd7756f1247626978221e5543b03967d4a5cd3364386ce288aee8d.execution.tolerations", `[{"key":"dedicated","operator":"Exists","unknown":true}]`},
 	} {
 		if _, err := renderLifetime(t, nil, "--set-json", tc.key+"="+tc.value); err == nil {
 			t.Fatalf("invalid scheduling accepted: %s=%s", tc.key, tc.value)
+		}
+	}
+}
+
+func TestChartTemplateCapabilities(t *testing.T) {
+	key := "templates.go.revisions." + goFixtureRevision + ".execution.capabilities"
+	objects, err := renderLifetime(t, nil, "--set-json", key+`=["foreground-command","filesystem"]`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cm := objects["ConfigMap/test-mecatl-execution-templates"]
+	content, _, _ := unstructured.NestedString(cm, "data", "templates.yaml")
+	path := filepath.Join(t.TempDir(), "templates.yaml")
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// Order does not change the revision, so the published key stays valid.
+	if _, err := executioncontroller.LoadTemplates(path); err != nil {
+		t.Fatal(err)
+	}
+	invalid := []string{
+		`[]`, `["filesystem"]`, `["filesystem","shell"]`, `["filesystem","filesystem"]`,
+	}
+	for _, value := range invalid {
+		if _, err := renderLifetime(t, nil, "--set-json", key+"="+value); err == nil {
+			t.Fatalf("invalid capabilities accepted: %s", value)
 		}
 	}
 }

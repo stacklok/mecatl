@@ -2,9 +2,6 @@ package executionclient
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -407,12 +404,10 @@ func explicitIDProfilesWithPolicy(t *testing.T, deprecated bool) *executioncontr
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "templates.yaml")
 	spec := executioncontroller.ProfileSpec{Image: "example.test/executor@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", StorageClass: "standard", StorageSize: "1Gi", CPURequest: "100m", MemoryRequest: "128Mi", CPULimit: "1", MemoryLimit: "1Gi", EphemeralStorageRequest: "256Mi", EphemeralStorageLimit: "1Gi", TmpSizeLimit: "128Mi", RuntimeClassName: "gvisor", MaxFileBytes: 5242880, MaxCommandBytes: 1048576, MaxCommandDuration: time.Minute}
-	canonical, err := json.Marshal(spec)
+	revision, err := executioncontroller.CanonicalTemplateRevision(spec)
 	if err != nil {
 		t.Fatal(err)
 	}
-	sum := sha256.Sum256(append([]byte("mecatl/execution-template/v1\x00"), canonical...))
-	revision := "v1-" + hex.EncodeToString(sum[:])
 	defaultRevision := revision
 	if deprecated {
 		defaultRevision = ""

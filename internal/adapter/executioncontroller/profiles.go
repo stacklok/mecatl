@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"reflect"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -15,6 +16,12 @@ import (
 )
 
 const maxTolerationSeconds int64 = 86400
+
+// Capabilities a template revision can declare.
+const (
+	CapabilityFilesystem        = "filesystem"
+	CapabilityForegroundCommand = "foreground-command"
+)
 
 // ProfileSpec defines immutable image, storage, resource, and operation bounds.
 type ProfileSpec struct {
@@ -35,6 +42,8 @@ type ProfileSpec struct {
 	MaxFileBytes            int64               `yaml:"maxFileBytes"`
 	MaxCommandBytes         int64               `yaml:"maxCommandBytes"`
 	MaxCommandDuration      time.Duration       `yaml:"maxCommandDuration"`
+	// Capabilities is the maximum set; absent means every capability.
+	Capabilities []string `yaml:"capabilities,omitempty" json:"capabilities"`
 }
 
 // Profiles is a validated immutable profile registry.
@@ -104,7 +113,41 @@ func validateProfile(name string, s ProfileSpec) (resolvedProfile, error) {
 	if err := validateScheduling(name, s.NodeSelector, s.Tolerations); err != nil {
 		return resolvedProfile{}, err
 	}
+	if err := validateCapabilities(name, s.Capabilities); err != nil {
+		return resolvedProfile{}, err
+	}
 	return quantities, nil
+}
+
+// canonicalCapabilities makes the declared set order-independent and spells
+// out the default, so a revision pins its capabilities rather than a default.
+func canonicalCapabilities(declared []string) []string {
+	if declared == nil {
+		return []string{CapabilityFilesystem, CapabilityForegroundCommand}
+	}
+	return slices.Sorted(slices.Values(declared))
+}
+
+func validateCapabilities(name string, declared []string) error {
+	if declared == nil {
+		return nil
+	}
+	seen := make(map[string]bool, len(declared))
+	for _, capability := range declared {
+		if capability != CapabilityFilesystem && capability != CapabilityForegroundCommand {
+			return fmt.Errorf("profile %q has unknown capability %q", name, capability)
+		}
+		if seen[capability] {
+			return fmt.Errorf("profile %q has duplicate capability %q", name, capability)
+		}
+		seen[capability] = true
+	}
+	// File-only and command-only environments are not supported yet.
+	if len(seen) != 2 {
+		return fmt.Errorf("profile %q must declare both %q and %q",
+			name, CapabilityFilesystem, CapabilityForegroundCommand)
+	}
+	return nil
 }
 
 func validateScheduling(name string, nodeSelector map[string]string, tolerations []corev1.Toleration) error {

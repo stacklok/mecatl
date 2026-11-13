@@ -295,12 +295,10 @@ func TestKindExecutionProductionHelmLifetime(t *testing.T) {
 	if err := yaml.Unmarshal(canonicalInput, &spec); err != nil {
 		t.Fatal(err)
 	}
-	canonical, err := json.Marshal(spec)
+	newRevision, err := executioncontroller.CanonicalTemplateRevision(spec)
 	if err != nil {
 		t.Fatal(err)
 	}
-	sum := sha256.Sum256(append([]byte("mecatl/execution-template/v1\x00"), canonical...))
-	newRevision := "v1-" + hex.EncodeToString(sum[:])
 	if newRevision == oldRevision {
 		t.Fatal("new recipe did not change revision")
 	}

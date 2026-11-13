@@ -105,7 +105,8 @@ workspaces remain intact. The offline `deploy/execution-templates` generator and
 provider loader share `CanonicalTemplateRevision` as the v1 recipe hash source.
 It computes `v1-` followed by SHA-256 of `mecatl/execution-template/v1`, a NUL
 byte, and Go's `encoding/json` representation of the typed `ProfileSpec`, not
-the YAML text. Generation validates before creating a new values file;
+the YAML text. Its capability set is sorted first, and an absent set is encoded
+as both capabilities, so the revision pins the set. Generation validates before creating a new values file;
 validation of merged history uses the same loader without contacting Kubernetes.
 The provider's ID-level default does not rewrite `mecak8s`'s explicitly pinned
 `execution.templateRevision` or an existing session's binding.

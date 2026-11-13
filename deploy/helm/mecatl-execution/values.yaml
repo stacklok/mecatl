@@ -79,7 +79,8 @@ maintenance:
 
 # Each revision key must be v1- plus the lowercase SHA-256 of
 # "mecatl/execution-template/v1\0" followed by encoding/json of the
-# validated Go ProfileSpec. Keep historical execution definitions for retained
+# validated Go ProfileSpec, with capabilities sorted and an absent list encoded
+# as both. Keep historical execution definitions for retained
 # allocations; display and deprecation/revocation policy may change independently.
 # maxEnvironments is a positive ID-level quota outside the recipe hash. Lowering
 # it below current usage blocks new reservations without evicting allocations.
@@ -111,3 +112,6 @@ maintenance:
 #           maxFileBytes: 5242880
 #           maxCommandBytes: 1048576
 #           maxCommandDuration: 5m
+#           # Optional maximum capability set; absent means both. Both are
+#           # required until file-only templates are supported.
+#           capabilities: [filesystem, foreground-command]
