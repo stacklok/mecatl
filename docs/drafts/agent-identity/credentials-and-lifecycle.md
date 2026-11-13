@@ -488,6 +488,8 @@ Local permissions and hooks run before each call.
 }
 ```
 
+The request names the tool as the gateway routes it, exactly as the MCP client sends it in `params.name` (`github.pull_request_read`, where the embedded vMCP prefixes each backend's tools), and the server as the gateway's name for the backend that route resolves to (`github`). It also names the method: `tools/call`, or a list method such as `tools/list`, which names the server but no tool or argument hash. The request carries the agent's SVID and no separate acting-session field.
+
 **Checks, at the broker,** before any exchange or dispatch:
 
 1. The workload is authenticated ([step (2)](#2-workload-credential)).
@@ -632,7 +634,7 @@ grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer
 assertion=<J-reviewer>
 resource=https://gateway.example.com/mcp
 authorization_details=[{"type": "https://toolhive.dev/mcp_tool_call",
-  "server": "github", "tool": "pull_request_read",
+  "server": "github", "tool": "github.pull_request_read",
   "arguments_sha256": "<hash>", "operation_id": "op-pr42-001"}]
 client_assertion_type=urn:ietf:params:oauth:client-assertion-type:jwt-bearer
 client_assertion=<private_key_jwt for mecatl, aud=https://gateway.example.com>
@@ -655,7 +657,7 @@ client_assertion=<private_key_jwt for mecatl, aud=https://gateway.example.com>
 ```json
 {"access_token": "<V-reviewer>", "token_type": "Bearer", "expires_in": 30,
  "authorization_details": [{"type": "https://toolhive.dev/mcp_tool_call",
-   "server": "github", "tool": "pull_request_read",
+   "server": "github", "tool": "github.pull_request_read",
    "arguments_sha256": "<hash>", "operation_id": "op-pr42-001"}]}
 ```
 
@@ -670,7 +672,7 @@ client_assertion=<private_key_jwt for mecatl, aud=https://gateway.example.com>
   "client_id": "mecatl",
   "aud": "https://gateway.example.com/mcp",
   "authorization_details": [{"type": "https://toolhive.dev/mcp_tool_call",
-    "server": "github", "tool": "pull_request_read",
+    "server": "github", "tool": "github.pull_request_read",
     "arguments_sha256": "<hash>", "operation_id": "op-pr42-001"}],
   "iat": 1800000005,
   "exp": 1800000035,
@@ -704,7 +706,7 @@ The approval-continuation profile is a convention that AS-2 advertises in its me
 
 **Does not prove.** That the agent's ceiling allows the call: the broker checked that, and the binding only fixes which call `V` may make.
 
-**One `V` per call.** Neither the broker nor mecak8s caches `V`. The broker returns it to mecak8s's MCP client, which sends the one call it is bound to and then discards it. On a 401 `invalid_token` from the vMCP, before the call ran, the MCP client reports the rejection to the broker, which repeats steps (7) and (8) once within the same call. A retry after the call may have run needs a new authorization and is not automatic; see [pauses and restart](#pauses-and-restart).
+**One `V` per call.** Neither the broker nor mecak8s caches `V`. The broker returns it to mecak8s's MCP client, which sends the one call it is bound to and then discards it. On a 401 `invalid_token` from the vMCP, before the call ran, the MCP client reports the rejection to the broker, naming the rejected attempt. The broker allows one such retry per attempt it issued: it runs the step (6) checks again and repeats steps (7) and (8) once within the same call, with a new attempt ID. It refuses a rejection report for an attempt it did not issue or has already retried. Authorizing the same operation again without a rejection report, as after an `svid_expired` renewal or a pause, is a new authorization, not this retry. A retry after the call may have run needs a new authorization and is not automatic; see [pauses and restart](#pauses-and-restart).
 
 **Evidence.** AS-2 records the redemption or denial: ID-JAG `jti`, client `mecatl`, native user, actor, resource, and decision.
 
@@ -875,7 +877,7 @@ RFC 8693 §2.2.2 requires `invalid_request` for any subject or actor token that 
 | `upstream_revoked` | AS-1, broker | `PERMISSION_DENIED` | Stop the run; the client shows the user as signed out. At session open: 401, and the client signs in again. |
 | `schedule_ended` | Broker | `FAILED_PRECONDITION` | The schedule was deleted; its run does not start. |
 | `owner_action_required` | AS-1, broker | `FAILED_PRECONDITION` | New outcome `mcp_owner_action_required`, next to `mcp_authorization_pending`: the user must sign in again. At session open: 401, and the client signs in again. |
-| `revoked`, `parent_revoked` | AS-1 | The status of the reason the broker recorded | Not shown as such. The broker reports the reason it recorded when it revoked the grant, or that AS-1's upstream re-check reported. If the session holds a newer refresh token, the broker retries once with it. |
+| `revoked`, `parent_revoked` | AS-1 | The status of the reason the broker recorded | Not shown as such. The broker reports the reason it recorded when it revoked the grant, or that AS-1's upstream re-check reported. If the session holds a newer refresh token, the broker retries once with it. If it holds no newer token and recorded no reason, the broker treats the token as lost: it closes the session with `session_closed` and reports that. |
 | `not_issuable` | AS-1 | `INTERNAL` | Fail the call; a broker bug. |
 | `svid_expired` | AS-1, broker | `UNAUTHENTICATED` | Renew the SVID and retry once; not shown to the user. |
 | `denied` | AS-1, broker | `PERMISSION_DENIED` | Deny the call. |
