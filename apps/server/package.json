@@ -14,10 +14,10 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@hono/node-server": "2.1.6",
+    "@hono/node-server": "2.1.7",
     "@hono/zod-openapi": "1.6.3",
     "@stacklok-oss/mecatl-sdk": "file:../../sdk/typescript",
-    "hono": "4.13.17",
+    "hono": "4.13.18",
     "openid-client": "6.8.9",
     "zod": "4.6.7"
   },
