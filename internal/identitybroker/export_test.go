@@ -8,6 +8,10 @@ const ClockSkew = credentialClockSkew
 // SetClock replaces b's clock. Call it before b is used.
 func SetClock(b *Broker, now func() time.Time) { WithClock(now)(b) }
 
+// AS2Bound reports whether b's gateway AS-2 is bound, so a test can tell an
+// unbind has started.
+func AS2Bound(b *Broker) bool { return b.as2.Load() != nil }
+
 // HostLockRefs returns how many opens hold or wait for host's open lock, and
 // whether the lock has an entry at all.
 func HostLockRefs(b *Broker, host string) (int, bool) {
@@ -64,6 +68,15 @@ func SetVerifiedOwner(b *Broker, id string, owner Owner) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.byID[id].verifiedOwner = &owner
+}
+
+// CloseSessionWithReason closes session id with reason, which CloseSession
+// does not accept from Mecatl.
+func CloseSessionWithReason(b *Broker, id string, reason Reason) {
+	t := b.sessions
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.closeLocked(t.byID[id], reason)
 }
 
 // ConvertedTokens returns how many converted access tokens b remembers,
