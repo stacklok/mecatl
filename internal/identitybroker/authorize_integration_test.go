@@ -735,7 +735,6 @@ func TestRealVMCPAcceptsTheBrokersGatewayToken(t *testing.T) {
 	// hold, such as AS-1's, would send the vMCP to fetch AS-2's JWKS over the
 	// network.
 	claims := jwt.MapClaims(jwtPart(t, got.GatewayToken.Value(), 1))
-	claims["aud"] = []string{f.as2Issuer}
 	other := jwt.NewWithClaims(jwt.SigningMethodES256, claims)
 	kid, _ := jwtPart(t, got.GatewayToken.Value(), 0)["kid"].(string)
 	if kid == "" {
