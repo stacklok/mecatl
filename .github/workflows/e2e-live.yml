@@ -320,7 +320,7 @@ jobs:
       - uses: azure/setup-helm@2f5e7bc67f1f9972ab16657bb795f36d8f04de0e # v5.1.0
         timeout-minutes: 1
         with:
-          version: v4.3.1
+          version: v4.3.2
       - name: Install pinned Kind and ko
         timeout-minutes: 3
         run: |
