@@ -978,6 +978,19 @@ type Config struct {
 	// identityBrokerConfig replaces the real identity broker's interim
 	// configuration in tests.
 	identityBrokerConfig *identitybroker.Config
+	// IdentityBrokerGatewayServers gives the real identity broker a gateway
+	// routing these servers, whose AS-2 Build binds once the MCP broker has
+	// started. It is test-only: production leaves it nil, which configures no
+	// gateway, so gateway calls are refused as not configured (#2533).
+	// Without IdentityBrokerAS2Trust, AS-2 refuses the gateway's ID-JAGs
+	// anyway.
+	IdentityBrokerGatewayServers []string
+	// IdentityBrokerAS2Trust makes the bundled MCP broker's AS-2 trust an
+	// ID-JAG issuer, such as a test's AS-1 from mcpbrokertest.TrustAS1. It is
+	// test-only: production leaves it zero, and cannot build another, so
+	// AS-2 trusts no issuer.
+	// Shortcut: AS-2 trusts AS-1 only in tests, and sends no reason codes until stacklok/toolhive#7030, so every invalid_grant at AS-2 takes the reasonless retry; removed by #2533 (AS-2 trusts AS-1 in production, with reason codes).
+	IdentityBrokerAS2Trust as2Trust
 	// IdentityBrokerAS1 connects the real identity broker's session open to an
 	// AS-1, where it converts users' access tokens. No flag sets it; with a
 	// hosted AS-1, Build fills it for that AS-1. Only an offline harness test
@@ -1560,6 +1573,11 @@ type Built struct {
 	// identityBrokerClient signs the identity broker's client assertions at
 	// AS-1 and AS-2; nil without a real identity broker.
 	identityBrokerClient *identitybroker.ClientAssertionSigner
+	// identityBrokerCore and identityBrokerRecorder are the real identity
+	// broker's core and records, for tests; nil without a real identity
+	// broker.
+	identityBrokerCore     *identitybroker.Broker
+	identityBrokerRecorder *identitybroker.MemoryRecorder
 	// identityBrokerAS2 is the MCP gateway's authorization server as the
 	// identity broker's AS-2; nil when startup set none up. Close releases it
 	// with the MCP broker.
@@ -2297,7 +2315,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 
 	// The identity broker is released after the MCP broker, on startup failure
 	// and on shutdown.
-	identityBroker, identityBrokerAS1, identityBrokerClient, releaseIdentityBroker, err := buildIdentityBroker(ctx, cfg)
+	ib, err := buildIdentityBroker(ctx, cfg)
 	if err != nil {
 		childLiveness.Close()
 		mcpClose()
@@ -2308,7 +2326,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	}
 	defer func() {
 		if !profilesTransferred {
-			releaseIdentityBroker()
+			ib.release()
 		}
 	}()
 
@@ -2321,14 +2339,14 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 			}
 		}
 		var identity mcpBrokerIdentity
-		if identityBrokerClient != nil {
-			if identity.clientKeySet, err = json.Marshal(identityBrokerClient.JWKS()); err != nil {
+		if ib.client != nil {
+			if identity.clientKeySet, err = json.Marshal(ib.client.JWKS()); err != nil {
 				err = fmt.Errorf("encode the broker client key set: %w", err)
 			}
 		}
 		switch {
-		case identityBrokerAS1 != nil:
-			identity.as1Issuer = identityBrokerAS1.Issuer
+		case ib.hosted != nil:
+			identity.as1Issuer = ib.hosted.Issuer
 		case cfg.IdentityBrokerAS1 != nil:
 			identity.as1Issuer = cfg.IdentityBrokerAS1.Issuer
 		}
@@ -2344,7 +2362,24 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 			return nil, err
 		}
 	}
-	closeBroker := broker.close
+	// AS-2 is bound in process after the MCP broker starts (the #2560
+	// shortcut on identitybroker.Broker.BindGatewayAS2).
+	unbindAS2, err := ib.bindAS2(broker.as2)
+	if err != nil {
+		childLiveness.Close()
+		broker.close()
+		mcpClose()
+		agentClose()
+		storeClose()
+		commandConnClose()
+		return nil, err
+	}
+	// AS-2 is unbound, waiting for calls using it, before the MCP broker that
+	// serves it closes.
+	closeBroker := func() {
+		unbindAS2()
+		broker.close()
+	}
 	defer func() {
 		if !profilesTransferred {
 			childLiveness.Close()
@@ -2970,7 +3005,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	svcCfg.MCPBroker = broker.service
 	// The session code gets the same boundary Built.IdentityBroker exposes; nil
 	// when the flag is off.
-	svcCfg.IdentityBroker = identityBroker
+	svcCfg.IdentityBroker = ib.service
 	// Workspace enrollment (pre-prompt authenticate-then-discover) applies only
 	// to the bundled ToolHive Process path: a plain Compile-based Runtime has no
 	// live discovery primitive and never satisfies the enrollment boundary.
@@ -3065,7 +3100,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		}
 		childLiveness.Close()
 		closeBroker()
-		releaseIdentityBroker()
+		ib.release()
 		mcpClose()
 		closeProfiles()
 		agentClose()
@@ -3084,7 +3119,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		diag.Log(ctx, port.LevelWarn, "durable automatic reservation reconciliation unavailable")
 	})
 	attempts = startAttemptRecovery(ctx, cfg, reg, store, eventLog, assets.attemptRepository, assets.reflectionRepository, assets, placementProvider, placementScope)
-	return &Built{Service: svc, MCPBroker: broker.service, MCPBrokerHandlers: broker.handlers, MCPBrokerCallbackPath: broker.callbackPath, IdentityBroker: identityBroker, IdentityBrokerHostedAS1: identityBrokerAS1, identityBrokerClient: identityBrokerClient, identityBrokerAS2: broker.as2, GuardrailsAdvisory: guardrailConfigured && guardrailsDemoted(cfg), Close: closeAll}, nil
+	return &Built{Service: svc, MCPBroker: broker.service, MCPBrokerHandlers: broker.handlers, MCPBrokerCallbackPath: broker.callbackPath, IdentityBroker: ib.service, IdentityBrokerHostedAS1: ib.hosted, identityBrokerClient: ib.client, identityBrokerCore: ib.core, identityBrokerRecorder: ib.recorder, identityBrokerAS2: broker.as2, GuardrailsAdvisory: guardrailConfigured && guardrailsDemoted(cfg), Close: closeAll}, nil
 }
 
 // resolveAgentSeam resolves the agent-definition registry from cfg: the

@@ -9,6 +9,8 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -18,8 +20,10 @@ import (
 
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
+	"github.com/stacklok/mecatl/internal/adapter/mcpbroker/mcpbrokertest"
 	"github.com/stacklok/mecatl/internal/app"
 	"github.com/stacklok/mecatl/internal/identitybroker"
+	"github.com/stacklok/mecatl/internal/identitybroker/adapter/as1server/as1servertest"
 	"github.com/stacklok/mecatl/internal/testutil/identityharness"
 )
 
@@ -63,7 +67,7 @@ func TestIdentityBrokerAgainstOfflineHarness(t *testing.T) {
 		clientIDs: identityharness.DefaultClientID + ",studio",
 	}, &app.IdentityBrokerAS1{
 		Issuer: h.AS1.Issuer(), TokenEndpoint: h.AS1.TokenEndpoint(), HTTPClient: h.HTTPClient(), ClientKey: clientKey, Now: now, AssertionNow: now,
-	})
+	}, nil, nil)
 
 	alice, err := h.SignIn(t.Context(), identityharness.SignInRequest{User: identityharness.Alice})
 	if err != nil {
@@ -330,6 +334,250 @@ func TestIdentityBrokerAgainstOfflineHarness(t *testing.T) {
 	}
 }
 
+// gatewayCallbackURL is the MCP broker callback the gateway test configures;
+// AS-2's issuer, gatewayAS2Issuer, derives from it, and the vMCP's resource,
+// gatewayResource, from that.
+const (
+	gatewayCallbackURL = "https://broker.example/oauth/callback"
+	gatewayAS2Issuer   = "https://broker.example/v1/mcp/broker"
+	gatewayResource    = gatewayAS2Issuer + "/mcp"
+	gatewayVMCPPath    = "/v1/mcp/broker/mcp"
+	// gatewayClientSecretEnv names the protected route's client secret,
+	// which ToolHive reads at construction.
+	gatewayClientSecretEnv = "MECATL_TEST_CALENDAR_CLIENT_SECRET" // #nosec G101 -- environment variable name, not a credential.
+)
+
+// gatewaySettings declares the protected calendar route the gateway routes,
+// in broker mode, the way an operator configures mecak8s's MCP servers. The
+// upstream is never dialled: the vMCP holds no upstream token for it.
+const gatewaySettings = `mcp:
+  mode: broker
+  broker:
+    callback_url: ` + gatewayCallbackURL + `
+  servers:
+    - name: calendar
+      url: https://mcp.example/calendar
+      auth:
+        mode: oauth
+        oauth:
+          upstream:
+            mode: oauth2
+            oauth2:
+              authorization_endpoint: https://issuer.example/authorize
+              token_endpoint: https://issuer.example/token
+          client:
+            mode: preregistered
+            preregistered: {id: calendar-client, secret_env: ` + gatewayClientSecretEnv + `}
+          scopes: [openid]
+          network: {}
+          tools:
+            - name: echo
+              description: echo
+              input_schema: {type: object}
+`
+
+// TestIdentityBrokerGatewayCallAgainstOfflineHarness runs a per-call gateway
+// token through mecak8s's real startup and served HTTP mux, offline: Alice
+// signs in at the harness's AS-1 and creates a session over the API, whose
+// run registers the session's main agent; the identity broker authorizes a
+// tool call for that agent, getting an ID-JAG at AS-1 and a gateway token at
+// the real AS-2; the real embedded vMCP accepts the token on the served
+// endpoint; a second call gets another token; and once Alice deletes the
+// session, calls are refused with its closing reason.
+//
+// Stand-ins and what retires them:
+//
+//	stand-in                                       retired by
+//	harness AS-1 issuing per-call ID-JAGs, and     #2654, after stacklok/toolhive#6898
+//	  validating actor tokens through                (PR stacklok/toolhive#7130) and
+//	  IdentityBrokerAS1.UseCredentialVerifier        stacklok/toolhive#6899
+//	test-only AS-2 trust and gateway seam          #2533
+//	  (IdentityBrokerAS2Trust,
+//	  IdentityBrokerGatewayServers)
+//	no gateway stand-in: the vMCP is real, but     #2537
+//	  it finds no provider credential for the
+//	  caller, so initialize succeeds without
+//	  the backend
+//
+// It is not parallel: the protected route's client secret is read from an
+// environment variable.
+func TestIdentityBrokerGatewayCallAgainstOfflineHarness(t *testing.T) {
+	clientKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	signer, err := identitybroker.NewClientAssertionSigner(clientKey, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := identityharness.New(t, identityharness.Options{
+		BrokerKeys: []identityharness.BrokerKey{{KeyID: signer.JWKS().Keys[0].KeyID, Public: &clientKey.PublicKey}},
+	})
+	h.AS1.AddIDJAGTarget(gatewayAS2Issuer, gatewayResource)
+	t.Setenv(gatewayClientSecretEnv, "construction-only-secret")
+	settings := filepath.Join(t.TempDir(), "settings.yaml")
+	if err := os.WriteFile(settings, []byte(gatewaySettings), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	caFile := h.WriteCACert(t, t.TempDir())
+	api, built := serveIdentityBroker(t, identityBrokerAS1Tokens{
+		issuer: h.AS1.Issuer(), audience: h.AS1.Audience(), caFile: caFile, clientIDs: identityharness.DefaultClientID,
+	}, &app.IdentityBrokerAS1{
+		Issuer: h.AS1.Issuer(), TokenEndpoint: h.AS1.TokenEndpoint(), HTTPClient: h.HTTPClient(), ClientKey: clientKey,
+		UseCredentialVerifier: func(v identitybroker.CredentialVerifier) {
+			h.AS1.SetActorValidator(as1servertest.HarnessActorValidator(v))
+		},
+	}, []string{"--permission-config", settings}, func(cfg *app.Config) {
+		cfg.IdentityBrokerGatewayServers = []string{"calendar"}
+		cfg.IdentityBrokerAS2Trust = mcpbrokertest.TrustAS1(mcpbrokertest.AS1Trust{
+			Issuer: h.AS1.Issuer(), JWKSURL: h.AS1.JWKSURL(), CAFile: caFile,
+			Subjects: []string{h.AS1.Subject(identityharness.Alice)},
+		})
+	})
+
+	alice, err := h.SignIn(t.Context(), identityharness.SignInRequest{User: identityharness.Alice})
+	if err != nil {
+		t.Fatalf("Alice signs in: %v", err)
+	}
+	status, body := apiCall(t, http.MethodPost, api+"/v1/sessions", alice.AccessToken, "{}")
+	if status != http.StatusCreated && status != http.StatusOK {
+		t.Fatalf("Alice creates a session: status %d: %s", status, body)
+	}
+	var created struct {
+		ID string `json:"session_id"`
+	}
+	if err := json.Unmarshal([]byte(body), &created); err != nil || created.ID == "" {
+		t.Fatalf("create session response %s: %v", body, err)
+	}
+	// The run's entry registers the session's main agent.
+	if status, body := apiCall(t, http.MethodPost, api+"/v1/sessions/"+created.ID+"/prompt", alice.AccessToken, `{"text":"hello"}`); status != http.StatusOK {
+		t.Fatalf("Alice prompts her session: status %d: %s", status, body)
+	}
+	opened, ok, err := built.IdentityBroker.FindSession(t.Context(), identitybroker.FindSessionRequest{RootHostSessionID: created.ID})
+	if err != nil || !ok || !opened.HoldsRefreshToken {
+		t.Fatalf("Alice's broker session = %+v, %v, %v; want one holding a refresh token", opened, ok, err)
+	}
+	register := func() identitybroker.Registration {
+		t.Helper()
+		reg, err := built.IdentityBroker.RegisterAgent(t.Context(), identitybroker.RegisterAgentRequest{
+			SessionID: opened.ID, HostSessionID: created.ID, Owner: opened.Owner, Incarnation: opened.Incarnation,
+			Definition: identitybroker.DefinitionRef{Source: "system", Name: "main"},
+		})
+		if err != nil {
+			t.Fatalf("register the session's main agent: %v", err)
+		}
+		return reg
+	}
+	// Registering again returns the agent the run registered, with a credential.
+	agent := register()
+	if again := register(); again.Agent != agent.Agent {
+		t.Fatalf("registering the main agent again = %+v, want the run's agent %+v", again.Agent, agent.Agent)
+	}
+
+	call := func(operation string) (identitybroker.Authorization, error) {
+		return built.IdentityBroker.AuthorizeCall(t.Context(), identitybroker.AuthorizeCallRequest{
+			SessionID: opened.ID, Credential: agent.Credential, OperationID: operation, RunID: "R1", RunOwner: opened.Owner,
+			Method: identitybroker.MethodToolsCall, Server: "calendar", Tool: "echo", ArgumentsSHA256: strings.Repeat("ab", 32),
+		})
+	}
+	first, err := call("op-1")
+	if err != nil {
+		t.Fatalf("authorize the first call: %v", err)
+	}
+	issued := h.AS1.IDJAGsIssued()
+	if len(issued) != 1 || !strings.HasPrefix(issued[0].AgentID, "ag_") || issued[0].Audience != gatewayAS2Issuer ||
+		issued[0].Resource != gatewayResource || issued[0].Operation != "op-1" {
+		t.Fatalf("AS-1 issued ID-JAGs %+v, want one for op-1 for an ag_ agent addressed to AS-2 for the vMCP", issued)
+	}
+	// authorized checks a call's token expires no later than its ID-JAG and
+	// names an attempt.
+	authorized := func(name string, got identitybroker.Authorization, idjag identityharness.IDJAGIssuance) {
+		t.Helper()
+		if got.ExpiresAt.IsZero() || got.ExpiresAt.After(idjag.ExpiresAt) || got.AttemptID == "" {
+			t.Fatalf("the %s call expires at %v with attempt %q; want an expiry no later than its ID-JAG's %v, and an attempt",
+				name, got.ExpiresAt, got.AttemptID, idjag.ExpiresAt)
+		}
+	}
+	authorized("first", first, issued[0])
+	// The served endpoint authenticates: without a token it refuses.
+	if status := vmcpInitialize(t, api, ""); status != http.StatusUnauthorized {
+		t.Fatalf("served vMCP initialize without a token: status %d, want 401", status)
+	}
+	if status := vmcpInitialize(t, api, first.GatewayToken.Value()); status != http.StatusOK {
+		t.Fatalf("served vMCP initialize with the first gateway token: status %d, want 200", status)
+	}
+	second, err := call("op-2")
+	if err != nil {
+		t.Fatalf("authorize the second call: %v", err)
+	}
+	if second.GatewayToken.Value() == first.GatewayToken.Value() {
+		t.Fatal("the second call got the first call's gateway token")
+	}
+	issued = h.AS1.IDJAGsIssued()
+	if len(issued) != 2 || issued[1].Operation != "op-2" {
+		t.Fatalf("AS-1 issued ID-JAGs %+v, want one per call, the second for op-2", issued)
+	}
+	authorized("second", second, issued[1])
+	if second.AttemptID == first.AttemptID {
+		t.Fatal("the second call got the first call's attempt")
+	}
+	if status := vmcpInitialize(t, api, second.GatewayToken.Value()); status != http.StatusOK {
+		t.Fatalf("served vMCP initialize with the second gateway token: status %d, want 200", status)
+	}
+
+	if status, body := apiCall(t, http.MethodPost, api+"/v1/sessions/"+created.ID+"/delete", alice.AccessToken, ""); status >= 300 {
+		t.Fatalf("Alice deletes her session: status %d: %s", status, body)
+	}
+	closed := identitybroker.ReasonError(identitybroker.ReasonSessionClosed, "")
+	if _, err := call("op-3"); !errors.Is(err, closed) {
+		t.Fatalf("authorize after the session closed = %v, want %v", err, closed)
+	}
+	if n := len(h.AS1.IDJAGsIssued()); n != 2 {
+		t.Fatalf("AS-1 issued %d ID-JAGs, want none after the session closed", n)
+	}
+}
+
+// vmcpInitialize is the status of an MCP initialize at the vMCP mecak8s
+// serves under api, with token, when set, as its Bearer token; a 200 must
+// carry a JSON-RPC result. A session it opens is ended, so the vMCP lets its
+// backend go.
+func vmcpInitialize(t *testing.T, api, token string) int {
+	t.Helper()
+	send := func(method, body, sessionID string) (*http.Response, []byte) {
+		req, err := http.NewRequestWithContext(t.Context(), method, api+gatewayVMCPPath, strings.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if token != "" {
+			req.Header.Set("Authorization", "Bearer "+token)
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Accept", "application/json, text/event-stream")
+		if sessionID != "" {
+			req.Header.Set("Mcp-Session-Id", sessionID)
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("vMCP %s: %v", method, err)
+		}
+		defer resp.Body.Close()
+		raw, err := io.ReadAll(resp.Body)
+		if err != nil {
+			t.Fatalf("vMCP %s response: %v", method, err)
+		}
+		return resp, raw
+	}
+	const initialize = `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"mecak8s-test","version":"1.0"}}}`
+	resp, raw := send(http.MethodPost, initialize, "")
+	if id := resp.Header.Get("Mcp-Session-Id"); id != "" {
+		send(http.MethodDelete, "", id)
+	}
+	if resp.StatusCode == http.StatusOK && !identityharness.HasJSONRPCResult(raw) {
+		t.Fatal("served vMCP initialize answered 200 without a JSON-RPC result")
+	}
+	return resp.StatusCode
+}
+
 // identityBrokerAS1Tokens is the AS-1 whose access tokens mecak8s accepts:
 // its issuer and audience, a CA file trusted for its TLS certificate, and the
 // accepted client IDs, comma-separated.
@@ -340,12 +588,13 @@ type identityBrokerAS1Tokens struct {
 // serveIdentityBroker builds and serves mecak8s with the identity broker on,
 // accepting access tokens with sub_id owners from the AS-1 that tokens
 // describes, and its session open converting at as1. No flag sets AS-1's
-// endpoints yet (#2490), so the test points the broker at as1 directly. It
-// returns the HTTP API's base URL and the built application; both stop when
-// t ends.
-func serveIdentityBroker(t *testing.T, tokens identityBrokerAS1Tokens, as1 *app.IdentityBrokerAS1) (string, *app.Built) {
+// endpoints yet (#2490), so the test points the broker at as1 directly.
+// extraArgs are further flags, and edit, when set, changes the application
+// configuration before the build. It returns the HTTP API's base URL and the
+// built application; both stop when t ends.
+func serveIdentityBroker(t *testing.T, tokens identityBrokerAS1Tokens, as1 *app.IdentityBrokerAS1, extraArgs []string, edit func(*app.Config)) (string, *app.Built) {
 	t.Helper()
-	cfg, err := parseFlags([]string{
+	cfg, err := parseFlags(append([]string{
 		"--mock",
 		"--enable-identity-broker", "--no-shell", // the identity broker refuses to run beside a shell
 		"--permission-mode=yolo", "--guardrails=off", // unchecked allow-all is yolo
@@ -359,13 +608,16 @@ func serveIdentityBroker(t *testing.T, tokens identityBrokerAS1Tokens, as1 *app.
 		"--oidc-ca-cert-file", tokens.caFile,
 		"--oidc-owner-identity=sub_id",
 		"--oidc-accepted-client-ids", tokens.clientIDs,
-	})
+	}, extraArgs...))
 	if err != nil {
 		t.Fatalf("parseFlags: %v", err)
 	}
 	cfg.diagnostics = port.NopDiagnostics{}
 	appCfg := appConfig(cfg, port.NopDiagnostics{}, observability{})
 	appCfg.IdentityBrokerAS1 = as1
+	if edit != nil {
+		edit(&appCfg)
+	}
 	built, err := buildIsolated(t, context.Background(), appCfg)
 	if err != nil {
 		t.Fatalf("app.Build: %v", err)

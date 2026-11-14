@@ -36,7 +36,7 @@ func TestIdentityBrokerAgainstRealAS1(t *testing.T) {
 	}, &app.IdentityBrokerAS1{
 		Issuer: a.Issuer(), TokenEndpoint: a.Server.TokenEndpoint(), HTTPClient: a.HTTPClient(), ClientKey: a.Key,
 		Now: now,
-	})
+	}, nil, nil)
 
 	findBrokerSession := func(id string) (identitybroker.Session, bool) {
 		t.Helper()

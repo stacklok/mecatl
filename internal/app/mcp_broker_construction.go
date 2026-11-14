@@ -46,6 +46,10 @@ func (c ConfiguredMCPBroker) selectsConfiguredMCPBroker() bool {
 		len(c.MCPBrokerDiscovered) != 0 || len(c.MCPBrokerOptions) != 0
 }
 
+// as2Trust names the MCP broker adapter's AS-2 trust for
+// Config.IdentityBrokerAS2Trust, so only this file imports the adapter.
+type as2Trust = mcpbroker.AS2Trust
+
 // mcpBrokerParts is a constructed MCP broker seen only through its contract.
 // The zero value is no broker; close is then a no-op.
 type mcpBrokerParts struct {
@@ -118,6 +122,7 @@ func buildBundledMCPBroker(ctx context.Context, cfg Config, declaration mcpautho
 	if len(identity.clientKeySet) != 0 {
 		config.BrokerClient = &mcpbroker.ToolHiveBrokerClient{ID: identitybroker.BrokerClientID, KeySet: identity.clientKeySet}
 	}
+	config.AS2Trust = cfg.IdentityBrokerAS2Trust
 	process, err := mcpbroker.NewToolHiveProcess(ctx, config)
 	if err != nil {
 		authStorageClose()
