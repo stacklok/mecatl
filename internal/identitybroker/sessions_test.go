@@ -6,6 +6,7 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -94,20 +95,24 @@ func TestBrokerAgentIDIsRandomPerProcess(t *testing.T) {
 	}
 }
 
-func TestBrokerAuthorizeCallDeniesEveryCall(t *testing.T) {
+func TestBrokerAuthorizeCallWithoutAGrantIsNoGrant(t *testing.T) {
 	b := newBroker(t)
 	s := openSession(t, b)
-	got, err := b.AuthorizeCall(context.Background(), testWorkload, identitybroker.AuthorizeCallRequest{
-		SessionID:   s.ID,
-		Credential:  identitybroker.NewToken("credential"),
-		OperationID: "op-1",
-		Target:      "gateway",
-		Tool:        "pull_request_read",
-	})
-	if !errors.Is(err, identitybroker.ReasonError(identitybroker.ReasonDenied, "")) {
-		t.Fatalf("AuthorizeCall error = %v, want PERMISSION_DENIED denied", err)
+	got, err := b.AuthorizeCall(context.Background(), testWorkload, callRequest(s.ID, identitybroker.NewToken("credential")))
+	if !errors.Is(err, identitybroker.ReasonError(identitybroker.ReasonNoGrant, "")) {
+		t.Fatalf("AuthorizeCall error = %v, want FAILED_PRECONDITION no_grant", err)
 	}
 	if !got.GatewayToken.IsZero() {
-		t.Fatal("a denied AuthorizeCall returned a gateway token")
+		t.Fatal("a refused AuthorizeCall returned a gateway token")
+	}
+}
+
+// callRequest is a well-formed tools/call request in session id with
+// credential.
+func callRequest(id string, credential identitybroker.Token) identitybroker.AuthorizeCallRequest {
+	return identitybroker.AuthorizeCallRequest{
+		SessionID: id, Credential: credential, OperationID: "op-1", RunID: "R42", RunOwner: testOwner,
+		Method: identitybroker.MethodToolsCall, Server: "github", Tool: "github.pull_request_read",
+		ArgumentsSHA256: strings.Repeat("ab", 32),
 	}
 }

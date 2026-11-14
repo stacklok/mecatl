@@ -30,11 +30,11 @@ var knownErrorCodes = map[string]bool{
 // subject_token_invalid, subject_token_audience, subject_token_source_client,
 // subject_token_offline_access, and grant_invalid for the tokens a request
 // presents; subject_invalid,
-// owner_mismatch, session_owned, session_closed, and schedule_ended are the
-// broker's own, kept so a server sending one is not taken for a
+// owner_mismatch, session_owned, session_closed, schedule_ended, and no_grant
+// are the broker's own, kept so a server sending one is not taken for a
 // configuration fault.
 var knownReasons = map[string]bool{
-	"subject_invalid": true, "token_used": true, "owner_mismatch": true,
+	"subject_invalid": true, "token_used": true, "owner_mismatch": true, "no_grant": true,
 	"session_owned": true, "session_closed": true, "signed_out": true,
 	"upstream_revoked": true, "schedule_ended": true, "owner_action_required": true,
 	"revoked": true, "parent_revoked": true, "not_issuable": true,

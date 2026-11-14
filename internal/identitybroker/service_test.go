@@ -17,7 +17,7 @@ func TestTokenNeverFormatsItsValue(t *testing.T) {
 	}
 	req := AuthorizeCallRequest{SessionID: "A42", Credential: tok}
 	for _, verb := range []string{"%v", "%+v", "%#v", "%s", "%q", "%x", "%d"} {
-		for _, operand := range []any{tok, req, &req} {
+		for _, operand := range []any{tok, req, &req, Authorization{GatewayToken: tok}} {
 			if got := fmt.Sprintf(verb, operand); strings.Contains(got, secret) || strings.Contains(got, fmt.Sprintf("%x", secret)) {
 				t.Errorf("Sprintf(%s, %T) = %q leaks the credential", verb, operand, got)
 			}
@@ -61,6 +61,8 @@ func TestReasonsCarryTheDesignCodes(t *testing.T) {
 		ReasonSignedOut:           CodeFailedPrecondition,
 		ReasonUpstreamRevoked:     CodePermissionDenied,
 		ReasonOwnerActionRequired: CodeFailedPrecondition,
+		ReasonNoGrant:             CodeFailedPrecondition,
+		ReasonConsentRequired:     CodeFailedPrecondition,
 		Reason("unknown"):         CodeInternal,
 	}
 	for reason, code := range want {

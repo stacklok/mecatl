@@ -21,7 +21,9 @@
 // with at AS-1 and AS-2, with the broker client key, separate from the agent
 // issuer key; the token-endpoint client is an adapter. With WithAuthServer,
 // session open converts the user's access token at AS-1 through that adapter
-// into a refresh token the session holds. The package performs no
+// into a refresh token the session holds. With WithGateway, AuthorizeCall
+// runs the checks before a grant on each MCP gateway call and records its
+// decisions (Recorder); it authorizes no call yet. The package performs no
 // file, environment, or network access; source loading and transport belong
 // in adapters that call it.
 package identitybroker
@@ -57,6 +59,15 @@ type Broker struct {
 	// as1 converts access tokens at session open; nil when the broker only
 	// pairs sessions.
 	as1 AuthServer
+	// gateway is the gateway calls are authorized through; nil when none is
+	// configured, and every call is denied at the server check. There is at
+	// most one until #2538 (see WithGateway).
+	gateway *Gateway
+	// gateways counts WithGateway options, so New refuses a second.
+	gateways int
+	// recorder records AuthorizeCall's ID-JAGs and decisions; nil records
+	// nothing, and is set whenever gateway is.
+	recorder Recorder
 
 	sessions *sessionTable
 }
@@ -73,7 +84,8 @@ type Broker struct {
 // JWT-SVID permits. A raw *ecdsa.PrivateKey is copied; any other signer, such
 // as a KMS handle, is retained as supplied.
 //
-// Options add optional collaborators, such as WithAuthServer.
+// Options add optional collaborators, such as WithAuthServer, and are
+// validated after they are applied.
 func New(config Config, definitions []DefinitionRecord, signer crypto.Signer, opts ...Option) (*Broker, error) {
 	if err := config.validate(); err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrInvalidConfig, err)
@@ -99,6 +111,9 @@ func New(config Config, definitions []DefinitionRecord, signer crypto.Signer, op
 	}
 	for _, opt := range opts {
 		opt(b)
+	}
+	if err := b.configureGateway(); err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrInvalidConfig, err)
 	}
 	return b, nil
 }

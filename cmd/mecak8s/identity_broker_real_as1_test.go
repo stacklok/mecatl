@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -92,7 +93,8 @@ func TestIdentityBrokerAgainstRealAS1(t *testing.T) {
 		t.Errorf("register in the expired broker session = %v, want %v", err, closed)
 	}
 	if _, err := built.IdentityBroker.AuthorizeCall(t.Context(), identitybroker.AuthorizeCallRequest{
-		SessionID: expiring.ID, Credential: before.Credential, OperationID: "op-1", Target: "gateway", Tool: "search",
+		SessionID: expiring.ID, Credential: before.Credential, OperationID: "op-1", RunID: "R42", RunOwner: aliceCompany,
+		Method: identitybroker.MethodToolsCall, Server: "gateway", Tool: "search", ArgumentsSHA256: strings.Repeat("ab", 32),
 	}); !errors.Is(err, closed) {
 		t.Errorf("authorize in the expired broker session = %v, want %v", err, closed)
 	}

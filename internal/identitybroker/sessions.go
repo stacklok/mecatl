@@ -32,7 +32,10 @@ type sessionTable struct {
 	// for any session, with the token's exp; entries are dropped once exp
 	// plus convertedClockSkew has passed.
 	converted map[string]time.Time
-	now       func() time.Time
+	// attempts holds the attempts AuthorizeCall issued, per session, until
+	// the session closes.
+	attempts *attemptLedger
+	now      func() time.Time
 
 	hostMu    sync.Mutex
 	hostLocks map[string]*hostLock // root host session ID -> its open lock
@@ -64,7 +67,7 @@ type brokerSession struct {
 func newSessionTable() *sessionTable {
 	return &sessionTable{
 		open: map[string]string{}, byID: map[string]*brokerSession{}, agents: map[string]*agentRecord{},
-		converted: map[string]time.Time{}, hostLocks: map[string]*hostLock{}, now: time.Now,
+		converted: map[string]time.Time{}, attempts: newAttemptLedger(), hostLocks: map[string]*hostLock{}, now: time.Now,
 	}
 }
 
@@ -146,7 +149,7 @@ func (t *sessionTable) viewLocked(s *brokerSession) Session {
 }
 
 // closeLocked closes s with reason, unless it is already closed, and
-// discards its refresh token. The caller holds t.mu.
+// discards its refresh token and issued attempts. The caller holds t.mu.
 func (t *sessionTable) closeLocked(s *brokerSession, reason Reason) {
 	if s.closed != "" {
 		return
@@ -154,6 +157,7 @@ func (t *sessionTable) closeLocked(s *brokerSession, reason Reason) {
 	s.closed = reason
 	s.closedAt = t.now()
 	s.grant = nil
+	t.attempts.dropLocked(s.ID)
 	delete(t.open, s.HostSessionID)
 }
 
@@ -219,38 +223,38 @@ func (b *Broker) CloseSession(_ context.Context, workload Workload, req CloseSes
 	return nil
 }
 
-// AuthorizeCall implements Core. It applies the session checks, then denies
-// every call: no call is authorized until per-call grants exist.
-func (b *Broker) AuthorizeCall(_ context.Context, workload Workload, req AuthorizeCallRequest) (Authorization, error) {
-	if err := checkCall(workload, req); err != nil {
-		return Authorization{}, err
-	}
-	if _, err := b.usableSession(workload, req.SessionID); err != nil {
-		return Authorization{}, err
-	}
-	return Authorization{}, ReasonError(ReasonDenied, "call authorization is not available yet")
-}
-
-// usableSession returns the open session for id, or the error for a session
+// usableLocked returns the open session for id, or the error for a session
 // that does not exist or belongs to another workload (the same error, so the
-// two cannot be told apart), or is closed.
-func (b *Broker) usableSession(workload Workload, id string) (Session, error) {
-	t := b.sessions
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	return t.usableLocked(workload, id)
-}
-
-// usableLocked is usableSession for a caller holding t.mu.
+// two cannot be told apart), or is closed. The caller holds t.mu.
 func (t *sessionTable) usableLocked(workload Workload, id string) (Session, error) {
-	s, ok := t.byID[id]
-	switch {
-	case !ok || s.workload != workload:
-		return Session{}, unknownSession()
-	case t.expireLocked(s):
-		return Session{}, ReasonError(s.closed, "the broker session is closed")
+	s, err := t.callSessionLocked(workload, id)
+	if err != nil {
+		return Session{}, err
 	}
 	return s.Session, nil
+}
+
+// callSessionLocked returns workload's session id and nil while it is open.
+// It returns the session record with its closing reason as the error when
+// the session is closed, so the refusal can be recorded against it, and nil
+// with the unknown-session error when no session id exists for workload. The
+// caller holds t.mu.
+func (t *sessionTable) callSessionLocked(workload Workload, id string) (*brokerSession, error) {
+	s, ok := t.byID[id]
+	if !ok || s.workload != workload {
+		return nil, unknownSession()
+	}
+	return s, t.closedLocked(s)
+}
+
+// closedLocked returns s's closing reason as an error if s is closed, first
+// closing s if it has reached its hard expiry (see expireLocked). The caller
+// holds t.mu.
+func (t *sessionTable) closedLocked(s *brokerSession) error {
+	if t.expireLocked(s) {
+		return ReasonError(s.closed, "the broker session is closed")
+	}
+	return nil
 }
 
 // newSessionID returns a random broker session ID in the same lowercase

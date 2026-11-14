@@ -99,11 +99,15 @@ func registerRequest(s identitybroker.Session) identitybroker.RegisterAgentReque
 
 func authorizeRequest(sessionID string) identitybroker.AuthorizeCallRequest {
 	return identitybroker.AuthorizeCallRequest{
-		SessionID:   sessionID,
-		Credential:  identitybroker.NewToken("credential"),
-		OperationID: "op-1",
-		Target:      "gateway",
-		Tool:        "pull_request_read",
+		SessionID:       sessionID,
+		Credential:      identitybroker.NewToken("credential"),
+		OperationID:     "op-1",
+		RunID:           "R42",
+		RunOwner:        alice,
+		Method:          identitybroker.MethodToolsCall,
+		Server:          "github",
+		Tool:            "github.pull_request_read",
+		ArgumentsSHA256: strings.Repeat("ab", 32),
 	}
 }
 
