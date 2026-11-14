@@ -112,8 +112,20 @@ type Service interface {
 	//     VerifyCredential refuses it;
 	//   - a server no gateway routes: CodePermissionDenied, ReasonDenied.
 	//
-	// A call that passes every check is refused with CodePermissionDenied,
-	// ReasonDenied, until the broker obtains a gateway token for each call.
+	// Then the broker obtains a fresh gateway token for this call alone,
+	// failing as shown:
+	//   - the gateway's authorization server not bound, or an authorization
+	//     server or the broker's records unavailable: CodeUnavailable;
+	//   - a reported attempt that does not match the call:
+	//     CodePermissionDenied, ReasonDenied;
+	//   - the session closed during the call: its closing reason;
+	//   - AS-1's svid_expired, denied, signed_out, upstream_revoked, or
+	//     owner_action_required: that reason;
+	//   - a revoked grant, unless the session holds a newer one:
+	//     ReasonSessionClosed, closing the session;
+	//   - consent the gateway requires: CodeFailedPrecondition,
+	//     ReasonConsentRequired;
+	//   - any other failure: CodeInternal.
 	AuthorizeCall(ctx context.Context, req AuthorizeCallRequest) (Authorization, error)
 }
 
