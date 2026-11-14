@@ -69,12 +69,18 @@ func TestNewRefusesAnInvalidGateway(t *testing.T) {
 		t.Fatal(err)
 	}
 	config := identitybroker.Config{TrustDomain: "agents.example.com", Audience: "https://broker.example.com", CredentialLifetime: 5 * time.Minute}
-	collaborators := []identitybroker.Option{identitybroker.WithRecorder(identitybroker.NewMemoryRecorder())}
+	collaborators := []identitybroker.Option{
+		identitybroker.WithRecorder(identitybroker.NewMemoryRecorder()), identitybroker.WithIDJAGIssuer(&fakeIssuer{}),
+	}
+	as2 := identitybroker.GatewayAS2{Issuer: "https://as2.example.com", Resource: "https://vmcp.example.com/mcp", AuthServer: &fakeAS2{}}
 	for name, g := range map[string]identitybroker.Gateway{
-		"no servers":      {},
-		"an empty server": {Servers: []string{""}},
-		"a spaced server": {Servers: []string{"git hub"}},
-		"a repeat":        {Servers: []string{"github", "calendar", "github"}},
+		"no servers":             {},
+		"an empty server":        {Servers: []string{""}},
+		"a spaced server":        {Servers: []string{"git hub"}},
+		"a repeat":               {Servers: []string{"github", "calendar", "github"}},
+		"an AS-2 issuer only":    {Servers: []string{"github"}, AS2: identitybroker.GatewayAS2{Issuer: as2.Issuer}},
+		"an AS-2 without a port": {Servers: []string{"github"}, AS2: identitybroker.GatewayAS2{Issuer: as2.Issuer, Resource: as2.Resource}},
+		"a spaced AS-2 resource": {Servers: []string{"github"}, AS2: identitybroker.GatewayAS2{Issuer: as2.Issuer, Resource: "a b", AuthServer: as2.AuthServer}},
 	} {
 		_, err := identitybroker.New(config, nil, key, append(collaborators, identitybroker.WithGateway(g))...)
 		if !errors.Is(err, identitybroker.ErrInvalidConfig) {
@@ -83,8 +89,10 @@ func TestNewRefusesAnInvalidGateway(t *testing.T) {
 	}
 	gateway := identitybroker.WithGateway(identitybroker.Gateway{Servers: []string{"github"}})
 	for name, opts := range map[string][]identitybroker.Option{
-		"no recorder":    {gateway},
-		"a nil recorder": {identitybroker.WithRecorder(nil), gateway},
+		"no recorder":         {identitybroker.WithIDJAGIssuer(&fakeIssuer{}), gateway},
+		"no ID-JAG issuer":    {identitybroker.WithRecorder(identitybroker.NewMemoryRecorder()), gateway},
+		"no collaborators":    {gateway},
+		"a nil ID-JAG issuer": {identitybroker.WithRecorder(identitybroker.NewMemoryRecorder()), identitybroker.WithIDJAGIssuer(nil), gateway},
 	} {
 		_, err := identitybroker.New(config, nil, key, opts...)
 		if !errors.Is(err, identitybroker.ErrInvalidConfig) {
@@ -92,7 +100,7 @@ func TestNewRefusesAnInvalidGateway(t *testing.T) {
 		}
 	}
 	_, err = identitybroker.New(config, nil, key,
-		identitybroker.WithRecorder(identitybroker.NewMemoryRecorder()),
+		identitybroker.WithRecorder(identitybroker.NewMemoryRecorder()), identitybroker.WithIDJAGIssuer(&fakeIssuer{}),
 		gateway, identitybroker.WithGateway(identitybroker.Gateway{Servers: []string{"calendar"}}))
 	if !errors.Is(err, identitybroker.ErrInvalidConfig) {
 		t.Errorf("New with two gateways = %v, want ErrInvalidConfig", err)
@@ -105,39 +113,11 @@ func TestNewCopiesTheGatewayServers(t *testing.T) {
 	servers[0] = "calendar"
 	_, err := f.authorize(callRequest(f.s.ID, f.cred))
 	if err == nil {
-		t.Fatal("AuthorizeCall allowed a call before call authorization exists")
+		t.Fatal("AuthorizeCall allowed a call with AS-2 unbound")
 	}
 	var e *identitybroker.Error
 	if errors.As(err, &e) && strings.Contains(e.Detail, "no gateway routes") {
 		t.Fatalf("changing the caller's server list changed the broker's: %v", err)
-	}
-}
-
-// withGateway configures g with a recorder, which a gateway requires; later
-// options may replace it.
-func withGateway(g identitybroker.Gateway) identitybroker.Option {
-	opts := []identitybroker.Option{
-		identitybroker.WithRecorder(identitybroker.NewMemoryRecorder()),
-		identitybroker.WithGateway(g),
-	}
-	return func(b *identitybroker.Broker) {
-		for _, opt := range opts {
-			opt(b)
-		}
-	}
-}
-
-func TestAuthorizeCallPassingEveryCheckIsDeniedForNow(t *testing.T) {
-	rec := identitybroker.NewMemoryRecorder()
-	f := openGranted(t, withGateway(identitybroker.Gateway{Servers: []string{"github"}}), identitybroker.WithRecorder(rec))
-	got, err := f.authorize(callRequest(f.s.ID, f.cred))
-	wantError(t, err, identitybroker.CodePermissionDenied, identitybroker.ReasonDenied, f.cred)
-	wantDetail(t, err, "not available yet")
-	if !got.GatewayToken.IsZero() {
-		t.Fatal("a refused call returned a gateway token")
-	}
-	if d := rec.Decisions(); len(d) != 1 || d[0].Outcome != identitybroker.OutcomeDenied || d[0].AgentID == "" {
-		t.Fatalf("recorded %+v, want one denial with the verified agent", d)
 	}
 }
 
