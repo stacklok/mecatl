@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/redis/go-redis/v9"
 	"github.com/stacklok/toolhive/pkg/authserver"
@@ -15,6 +14,7 @@ import (
 	authtypes "github.com/stacklok/toolhive/pkg/vmcp/auth/types"
 
 	"github.com/stacklok/mecatl/engine/port"
+	"github.com/stacklok/mecatl/internal/adapter/mcpbroker/internal/as2trust"
 	"github.com/stacklok/mecatl/internal/adapter/mcpsecretfile"
 )
 
@@ -65,7 +65,20 @@ type ToolHiveConfig struct {
 	// endpoint instead of the issuer. Nil, or no protected upstream, leaves the
 	// embedded server as it is.
 	BrokerClient *ToolHiveBrokerClient
+	// AS2Trust, with AS-2 set up, makes AS-2 trust an ID-JAG issuer; see
+	// AS2Trust.
+	AS2Trust AS2Trust
 }
+
+// AS2Trust is an ID-JAG issuer AS-2 trusts for the listed subjects only.
+// Its zero value trusts none, as production's does until #2533. Only
+// packages under this adapter can build the value it holds (package
+// as2trust is internal), so only mcpbrokertest, which production code never
+// imports, makes one that trusts an issuer.
+type AS2Trust struct{ t *as2trust.Trust }
+
+// NewAS2Trust returns an AS2Trust trusting t.
+func NewAS2Trust(t as2trust.Trust) AS2Trust { return AS2Trust{t: &t} }
 
 // ToolHiveBrokerClient is the identity broker's client at AS-2.
 type ToolHiveBrokerClient struct {
@@ -103,8 +116,8 @@ func as2Resource(issuer string) string {
 // as2RunConfig writes the broker client's key set to a file and returns AS-2's
 // additions to the embedded authorization server's RunConfig, with a function
 // that removes the file once ToolHive has read it, at construction. trust is
-// nil in production.
-func as2RunConfig(client ToolHiveBrokerClient, issuer, resource string, trust *as2Trust) (*authserver.InboundGrantsRunConfig, []tokenexchange.TrustedIssuer, func(), error) {
+// zero in production.
+func as2RunConfig(client ToolHiveBrokerClient, issuer, resource string, trust AS2Trust) (*authserver.InboundGrantsRunConfig, []tokenexchange.TrustedIssuer, func(), error) {
 	jwksFile, remove, err := writeKeySet("as2-broker-client-", client.KeySet)
 	if err != nil {
 		return nil, nil, nil, err
@@ -115,37 +128,27 @@ func as2RunConfig(client ToolHiveBrokerClient, issuer, resource string, trust *a
 		DelegateClients: []authserver.DelegateClientRunConfig{as2DelegateClient(client, jwksFile, resource)},
 	}}
 	var trusted []tokenexchange.TrustedIssuer
-	if trust != nil {
-		trusted, grants.JWTBearer = trust.runConfig(issuer, resource)
+	if trust.t != nil {
+		trusted, grants.JWTBearer = as2TrustRunConfig(trust.t, issuer, resource)
 	}
 	return grants, trusted, remove, nil
-}
-
-// as2Trust is an ID-JAG issuer AS-2 trusts for the listed subjects only, with
-// its keys fetched from jwksURL over a private address, trusting caFile.
-// Production configures none until ToolHive can trust AS-1 for every subject
-// (stacklok/toolhive#6887); only tests set it, through toolHiveProcessOptions.
-type as2Trust struct {
-	issuer, jwksURL, caFile string
-	subjects                []string
-	maxAssertionAge         time.Duration
 }
 
 // as2TrustRef names the trusted issuer for its JWT-bearer policy.
 const as2TrustRef = "as1"
 
-// runConfig is ToolHive's configuration of t at AS-2: ID-JAGs for issuer that
-// may obtain only resource.
-func (t *as2Trust) runConfig(issuer, resource string) ([]tokenexchange.TrustedIssuer, *authserver.JWTBearerInboundGrantRunConfig) {
-	bindings := make([]tokenexchange.JWTBearerSubjectBinding, len(t.subjects))
-	for i, subject := range t.subjects {
+// as2TrustRunConfig is ToolHive's configuration of t at AS-2: ID-JAGs for
+// issuer that may obtain only resource.
+func as2TrustRunConfig(t *as2trust.Trust, issuer, resource string) ([]tokenexchange.TrustedIssuer, *authserver.JWTBearerInboundGrantRunConfig) {
+	bindings := make([]tokenexchange.JWTBearerSubjectBinding, len(t.Subjects))
+	for i, subject := range t.Subjects {
 		bindings[i] = tokenexchange.JWTBearerSubjectBinding{Subject: subject, AllowedResources: []string{resource}}
 	}
 	trusted := []tokenexchange.TrustedIssuer{{
-		Name: as2TrustRef, IssuerURL: t.issuer, JWKSURL: t.jwksURL, CAFilePath: t.caFile, AllowPrivateIPs: true,
+		Name: as2TrustRef, IssuerURL: t.Issuer, JWKSURL: t.JWKSURL, CAFilePath: t.CAFile, AllowPrivateIPs: true,
 	}}
 	return trusted, &authserver.JWTBearerInboundGrantRunConfig{IssuerPolicies: []authserver.JWTBearerIssuerPolicyRunConfig{{
-		IssuerRef: as2TrustRef, MaxAssertionAge: t.maxAssertionAge.String(),
+		IssuerRef: as2TrustRef, MaxAssertionAge: t.MaxAssertionAge.String(),
 		SubjectBindings: bindings, AcceptedAudiences: []string{issuer},
 	}}}
 }
