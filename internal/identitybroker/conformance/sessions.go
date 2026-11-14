@@ -118,6 +118,33 @@ func runSessions(t *testing.T, factory serviceFactory) {
 		wantError(t, "CloseSession of an unknown session", err, identitybroker.CodePermissionDenied, "")
 	})
 
+	t.Run("a session opened without a token has no grant", func(t *testing.T) {
+		svc := factory(t)
+		s := mustOpen(t, svc, openRequest("hostS42", alice))
+		got, err := svc.AuthorizeCall(ctx, authorizeRequest(s.ID))
+		wantError(t, "AuthorizeCall in a session without a grant", err, identitybroker.CodeFailedPrecondition, identitybroker.ReasonNoGrant)
+		if !got.GatewayToken.IsZero() {
+			t.Fatal("a refused AuthorizeCall returned a gateway token")
+		}
+		// A tools/list carries no tool and no arguments hash.
+		list := authorizeRequest(s.ID)
+		list.Method, list.Tool, list.ArgumentsSHA256 = identitybroker.MethodToolsList, "", ""
+		_, err = svc.AuthorizeCall(ctx, list)
+		wantError(t, "AuthorizeCall listing tools in a session without a grant", err, identitybroker.CodeFailedPrecondition, identitybroker.ReasonNoGrant)
+	})
+
+	t.Run("a rejection report for an attempt never issued is refused", func(t *testing.T) {
+		svc := factory(t)
+		s := mustOpen(t, svc, openRequest("hostS42", alice))
+		req := authorizeRequest(s.ID)
+		req.RejectedAttemptID = "att_unknown"
+		_, err := svc.AuthorizeCall(ctx, req)
+		wantError(t, "AuthorizeCall reporting an attempt never issued", err, identitybroker.CodePermissionDenied, identitybroker.ReasonDenied)
+		mustClose(t, svc, s.ID)
+		_, err = svc.AuthorizeCall(ctx, req)
+		wantError(t, "AuthorizeCall reporting an attempt in a closed session", err, identitybroker.CodeFailedPrecondition, identitybroker.ReasonSessionClosed)
+	})
+
 	t.Run("registration under another owner is refused", func(t *testing.T) {
 		svc := factory(t)
 		s := mustOpen(t, svc, openRequest("hostS42", alice))
@@ -259,8 +286,32 @@ func runInvalidRequests(t *testing.T, factory serviceFactory) {
 		"no session":    func(r *identitybroker.AuthorizeCallRequest) { r.SessionID = "" },
 		"no credential": func(r *identitybroker.AuthorizeCallRequest) { r.Credential = identitybroker.Token{} },
 		"no operation":  func(r *identitybroker.AuthorizeCallRequest) { r.OperationID = "" },
-		"no target":     func(r *identitybroker.AuthorizeCallRequest) { r.Target = "" },
+		"no server":     func(r *identitybroker.AuthorizeCallRequest) { r.Server = "" },
 		"no tool":       func(r *identitybroker.AuthorizeCallRequest) { r.Tool = "" },
+		"no arguments hash": func(r *identitybroker.AuthorizeCallRequest) {
+			r.ArgumentsSHA256 = ""
+		},
+		"a 63-character arguments hash": func(r *identitybroker.AuthorizeCallRequest) {
+			r.ArgumentsSHA256 = r.ArgumentsSHA256[:63]
+		},
+		"an uppercase arguments hash": func(r *identitybroker.AuthorizeCallRequest) {
+			r.ArgumentsSHA256 = strings.ToUpper(r.ArgumentsSHA256)
+		},
+		"a list naming a tool": func(r *identitybroker.AuthorizeCallRequest) {
+			r.Method, r.ArgumentsSHA256 = identitybroker.MethodToolsList, ""
+		},
+		"a list carrying an arguments hash": func(r *identitybroker.AuthorizeCallRequest) {
+			r.Method, r.Tool = identitybroker.MethodToolsList, ""
+		},
+		"no method":         func(r *identitybroker.AuthorizeCallRequest) { r.Method = "" },
+		"an unknown method": func(r *identitybroker.AuthorizeCallRequest) { r.Method = "resources/read" },
+		"no run":            func(r *identitybroker.AuthorizeCallRequest) { r.RunID = "" },
+		"no run owner":      func(r *identitybroker.AuthorizeCallRequest) { r.RunOwner = identitybroker.Owner{} },
+		"a bad run owner":   func(r *identitybroker.AuthorizeCallRequest) { r.RunOwner.Subject = "alice 204" },
+		"a bad delegation":  func(r *identitybroker.AuthorizeCallRequest) { r.DelegationID = "D 1" },
+		"a bad rejected attempt": func(r *identitybroker.AuthorizeCallRequest) {
+			r.RejectedAttemptID = "att\x00"
+		},
 	}
 	for name, mutate := range authorizes {
 		req := authorizeRequest(s.ID)

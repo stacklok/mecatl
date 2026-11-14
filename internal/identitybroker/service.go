@@ -99,6 +99,21 @@ type Service interface {
 	// AuthorizeCall decides whether the agent presenting the credential may
 	// make an MCP call, and returns the gateway token when it may. A denial is
 	// an error, so a caller that ignores the result cannot dispatch.
+	//
+	// The checks run in order, each failing as shown:
+	//   - an invalid request: CodeInvalidArgument;
+	//   - an unknown session: as for any call;
+	//   - a closed session: its closing reason;
+	//   - a rejection report for an attempt never issued, or already
+	//     reported: CodePermissionDenied, ReasonDenied;
+	//   - a session that holds no refresh token: CodeFailedPrecondition,
+	//     ReasonNoGrant;
+	//   - a credential that does not verify for the session: as
+	//     VerifyCredential refuses it;
+	//   - a server no gateway routes: CodePermissionDenied, ReasonDenied.
+	//
+	// A call that passes every check is refused with CodePermissionDenied,
+	// ReasonDenied, until the broker obtains a gateway token for each call.
 	AuthorizeCall(ctx context.Context, req AuthorizeCallRequest) (Authorization, error)
 }
 
@@ -316,6 +331,12 @@ type VerifiedAgent struct {
 	ExpiresAt time.Time
 }
 
+// The MCP methods AuthorizeCallRequest.Method names.
+const (
+	MethodToolsCall = "tools/call"
+	MethodToolsList = "tools/list"
+)
+
 // AuthorizeCallRequest asks whether an agent may make one MCP call.
 type AuthorizeCallRequest struct {
 	SessionID string
@@ -324,31 +345,89 @@ type AuthorizeCallRequest struct {
 	Credential Token
 	// OperationID identifies this call.
 	OperationID string
-	// Target is the gateway or backend the call is routed to.
-	Target string
-	Tool   string
-	// GatewayRejectedToken reports that the gateway rejected the token
-	// returned for this operation, so the broker obtains a fresh one. A caller
-	// sets it on at most one retry.
-	GatewayRejectedToken bool
+	// RunID is the run the call belongs to.
+	RunID string
+	// DelegationID is the delegation the run acts under; empty for a root
+	// run.
+	DelegationID string
+	// RunOwner is the owner the run acts for.
+	RunOwner Owner
+	// Method is MethodToolsCall or MethodToolsList.
+	Method string
+	// Server is the gateway backend the call is routed to, such as "github".
+	Server string
+	// Tool is the exact tool name the call sends as params.name, such as
+	// "github.pull_request_read". Set for tools/call only.
+	Tool string
+	// ArgumentsSHA256 is the SHA-256 of the call's arguments, 64 lowercase
+	// hex characters. Set for tools/call only.
+	ArgumentsSHA256 string
+	// RejectedAttemptID, when set, reports that the gateway rejected the token
+	// of that attempt, so the broker obtains a fresh one. A caller reports an
+	// attempt at most once, with the attempt's own call fields.
+	RejectedAttemptID string
 }
 
 // Validate reports whether r is well formed. The error is an *Error with
 // CodeInvalidArgument.
 func (r AuthorizeCallRequest) Validate() error {
-	if err := requireIDs("broker session", r.SessionID, "operation", r.OperationID, "target", r.Target, "tool", r.Tool); err != nil {
+	if err := requireIDs("broker session", r.SessionID, "operation", r.OperationID, "run", r.RunID, "server", r.Server); err != nil {
 		return err
 	}
 	if r.Credential.IsZero() {
 		return invalid("credential is required")
 	}
+	if err := r.RunOwner.validate(); err != nil {
+		return err
+	}
+	if r.DelegationID != "" && !isToken(r.DelegationID) {
+		return invalid("delegation ID must be printable text without spaces")
+	}
+	if r.RejectedAttemptID != "" && !isToken(r.RejectedAttemptID) {
+		return invalid("rejected attempt ID must be printable text without spaces")
+	}
+	switch r.Method {
+	case MethodToolsCall:
+		if !isToken(r.Tool) {
+			return invalid("a tools/call must name its tool in printable text without spaces")
+		}
+		if !isSHA256Hex(r.ArgumentsSHA256) {
+			return invalid("a tools/call must carry its arguments' SHA-256 as 64 lowercase hex characters")
+		}
+	case MethodToolsList:
+		if r.Tool != "" || r.ArgumentsSHA256 != "" {
+			return invalid("a tools/list carries no tool and no arguments hash")
+		}
+	default:
+		return invalid(fmt.Sprintf("method %q is not supported", r.Method))
+	}
 	return nil
+}
+
+// isSHA256Hex reports whether s is 64 lowercase hex characters.
+func isSHA256Hex(s string) bool {
+	if len(s) != 64 {
+		return false
+	}
+	for _, c := range []byte(s) {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 // Authorization is an allowed MCP call.
 type Authorization struct {
-	// GatewayToken is the token the call is dispatched with.
+	// GatewayToken is the token the call is dispatched with, obtained for
+	// this call alone.
 	GatewayToken Token
+	// ExpiresAt is when GatewayToken expires; never later than the ID-JAG it
+	// was redeemed from.
+	ExpiresAt time.Time
+	// AttemptID identifies this authorization, so a caller whose token the
+	// gateway rejects reports it in AuthorizeCallRequest.RejectedAttemptID.
+	AttemptID string
 }
 
 // requireIDs checks name/value pairs of identifiers.

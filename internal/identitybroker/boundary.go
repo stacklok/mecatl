@@ -43,6 +43,13 @@ func (w Workload) Validate() error {
 //     as for an unknown session ID (CodePermissionDenied, before any closing
 //     reason), and FindSession reports none open. Opening its host session is
 //     refused with CodePermissionDenied.
+//   - AuthorizeCall checks the workload, then the request, neither recorded;
+//     then the session, where an unknown session is not recorded and a
+//     closed one is; then a rejection report, the session's grant, the
+//     credential, and the server, in the order documented on Service; then it
+//     refuses the call, as no call is authorized yet. Every refusal after the
+//     session lookup is recorded with the configured Recorder, and is
+//     returned whether or not the record is accepted.
 type Core interface {
 	OpenSession(ctx context.Context, workload Workload, req OpenSessionRequest) (Session, error)
 	FindSession(ctx context.Context, workload Workload, req FindSessionRequest) (Session, bool, error)
