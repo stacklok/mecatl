@@ -326,8 +326,8 @@ func gatewayTokenExpiry(redeemedAt, idjagExp time.Time, v GatewayTokenResult) ti
 	if v.ExpiresIn > 0 {
 		exp = earliest(exp, redeemedAt.Add(v.ExpiresIn))
 	}
-	if ref, ok := readJWTRef(v.AccessToken); ok && !ref.exp.IsZero() {
-		exp = earliest(exp, ref.exp)
+	if tokenExp, ok := readJWTExp(v.AccessToken); ok {
+		exp = earliest(exp, tokenExp)
 	}
 	return exp
 }
@@ -426,10 +426,29 @@ func readJWTRef(token Token) (jwtRef, bool) {
 	typ, _ := parsed.Header["typ"].(string)
 	iss, _ := claims["iss"].(string)
 	out := jwtRef{typ: typ, ref: CredentialRef{Issuer: iss, ID: jti}}
-	if exp, err := claims.GetExpirationTime(); err == nil && exp != nil && exp.Unix() > 0 {
-		out.exp = exp.Time
+	if exp, ok := expClaim(claims); ok {
+		out.exp = exp
 	}
 	return out, true
+}
+
+// readJWTExp reads a compact JWT's exp without verifying it, whether or not
+// the JWT has a jti. It reports false when token is not a JWT or has no
+// numeric exp.
+func readJWTExp(token Token) (time.Time, bool) {
+	claims := jwt.MapClaims{}
+	if _, _, err := jwt.NewParser().ParseUnverified(token.Value(), claims); err != nil {
+		return time.Time{}, false
+	}
+	return expClaim(claims)
+}
+
+func expClaim(claims jwt.MapClaims) (time.Time, bool) {
+	exp, err := claims.GetExpirationTime()
+	if err != nil || exp == nil || exp.Unix() <= 0 {
+		return time.Time{}, false
+	}
+	return exp.Time, true
 }
 
 // readIDJAG reads an ID-JAG without verifying it, as AS-2 verifies it next.
