@@ -844,8 +844,9 @@ func TestAuthorizeCallSessionsOfOneUserGetTheirOwnTokensAtAS2(t *testing.T) {
 }
 
 // TestAuthorizeCallKeepsTokensSecretAtAS2 looks for every refresh token,
-// ID-JAG, and gateway token the servers issued wherever the broker reports
-// on a call (#2535 done-when 8, the core part).
+// ID-JAG, and gateway token the servers issued, and for every client
+// assertion the broker sent, wherever the broker reports on a call (#2535
+// done-when 8, the core part). No client assertion may carry a token.
 func TestAuthorizeCallKeepsTokensSecretAtAS2(t *testing.T) {
 	f := newHarnessFixture(t)
 	auth, err := f.authorize(callRequest(f.s.ID, f.cred))
@@ -878,35 +879,66 @@ func TestAuthorizeCallKeepsTokensSecretAtAS2(t *testing.T) {
 			assertions = append(assertions, r.ClientAssertion)
 		}
 	}
-	secrets = slices.Compact(slices.Sorted(slices.Values(slices.DeleteFunc(secrets, func(s string) bool { return s == "" }))))
+	distinct := func(in []string) []string {
+		return slices.Compact(slices.Sorted(slices.Values(slices.DeleteFunc(in, func(s string) bool { return s == "" }))))
+	}
+	secrets, assertions = distinct(secrets), distinct(assertions)
+	if len(assertions) == 0 {
+		t.Fatal("captured no client assertions")
+	}
 	// The credential, the session's refresh token, four ID-JAGs, and the
 	// gateway tokens of the first and last calls.
 	if len(secrets) != 1+1+4+2 {
 		t.Fatalf("captured %d distinct tokens, want 8", len(secrets))
 	}
 
+	formatErr := func(w io.Writer, err error) { fmt.Fprintf(w, "%v %+v\n", err, err) }
+	formatRec := func(w io.Writer, rec any) {
+		raw, err := json.Marshal(rec)
+		if err != nil {
+			t.Fatal(err)
+		}
+		fmt.Fprintf(w, "%+v %s\n", rec, raw)
+	}
 	var out strings.Builder
 	for _, err := range errs {
 		if err == nil {
 			t.Fatal("a refusal returned no error")
 		}
-		fmt.Fprintf(&out, "%v %+v\n", err, err)
+		formatErr(&out, err)
 	}
 	fmt.Fprintf(&out, "%v %+v %#v\n", auth, auth, auth)
 	for _, rec := range []any{f.rec.IDJAGs(), f.rec.Decisions()} {
-		raw, err := json.Marshal(rec)
-		if err != nil {
-			t.Fatal(err)
-		}
-		fmt.Fprintf(&out, "%+v %s\n", rec, raw)
-	}
-	for _, a := range assertions {
-		fmt.Fprintf(&out, "%s %v %v\n", a, jwtPart(t, a, 0), jwtPart(t, a, 1))
+		formatRec(&out, rec)
 	}
 	out.WriteString(strings.Join(os.Environ(), "\n"))
-	for _, s := range secrets {
-		if strings.Contains(out.String(), s) {
-			t.Fatal("an error, record, client assertion, the environment, or a formatted authorization carries a token")
+	leaks := func(text string, needles []string) bool {
+		for _, n := range needles {
+			if strings.Contains(text, n) {
+				return true
+			}
+		}
+		return false
+	}
+	both := append(slices.Clone(secrets), assertions...)
+	var planted strings.Builder
+	formatErr(&planted, fmt.Errorf("planted: %s", assertions[0]))
+	if !leaks(planted.String(), both) {
+		t.Fatal("the scan missed a client assertion planted in an error")
+	}
+	planted.Reset()
+	formatRec(&planted, []map[string]string{{"client_assertion": assertions[0]}})
+	if !leaks(planted.String(), both) {
+		t.Fatal("the scan missed a client assertion planted in a record")
+	}
+	if leaks(out.String(), both) {
+		t.Fatal("an error, record, the environment, or a formatted authorization carries a token or a client assertion")
+	}
+	// An assertion is signed over its header and payload, so look for a token
+	// in their decoded text.
+	for _, a := range assertions {
+		if leaks(fmt.Sprintf("%v %v", jwtPart(t, a, 0), jwtPart(t, a, 1)), secrets) {
+			t.Fatal("a client assertion carries a token")
 		}
 	}
 }

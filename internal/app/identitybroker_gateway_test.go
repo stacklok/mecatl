@@ -128,19 +128,26 @@ func wantBrokerError(t *testing.T, err error, code identitybroker.Code, reason i
 	}
 }
 
-// jwtClaims returns a compact JWS's claims.
-func jwtClaims(t *testing.T, token string) map[string]any {
+// jwtSegmentText returns the decoded header (i 0) or payload (i 1) of a
+// compact JWS as text.
+func jwtSegmentText(t *testing.T, token string, i int) string {
 	t.Helper()
 	parts := strings.Split(token, ".")
 	if len(parts) != 3 {
 		t.Fatalf("a token has %d parts, want a compact JWS", len(parts))
 	}
-	raw, err := base64.RawURLEncoding.DecodeString(parts[1])
+	raw, err := base64.RawURLEncoding.DecodeString(parts[i])
 	if err != nil {
 		t.Fatal(err)
 	}
+	return string(raw)
+}
+
+// jwtClaims returns a compact JWS's claims.
+func jwtClaims(t *testing.T, token string) map[string]any {
+	t.Helper()
 	var claims map[string]any
-	if err := json.Unmarshal(raw, &claims); err != nil {
+	if err := json.Unmarshal([]byte(jwtSegmentText(t, token, 1)), &claims); err != nil {
 		t.Fatal(err)
 	}
 	return claims
@@ -306,9 +313,10 @@ func TestBuildConfiguresNoGatewayInProduction(t *testing.T) {
 // TestIdentityBrokerTokensStayOutOfSessionsAndLogs authorizes a call and a
 // refused one, then runs a prompt, and looks for every token the call
 // involved in the session's transcript and events, the diagnostics, the
-// environment, the errors, and the broker's records (#2535 done-when 8). Model and
-// tool content cannot carry the tokens until #2536 wires calls through the
-// gateway.
+// environment, the errors, and the broker's records (#2535 done-when 8). The
+// same places must not carry the client assertions the broker sent to AS-1,
+// and no assertion may carry a token. Model and tool content cannot carry the
+// tokens until #2536 wires calls through the gateway.
 func TestIdentityBrokerTokensStayOutOfSessionsAndLogs(t *testing.T) {
 	diag := &recordingDiag{}
 	g := buildWithHarnessAS1(t, true, func(cfg *Config) {
@@ -365,11 +373,18 @@ func TestIdentityBrokerTokensStayOutOfSessionsAndLogs(t *testing.T) {
 	}
 
 	secrets := []string{auth.GatewayToken.Value(), cred.Value(), access}
+	var assertions []string
 	for _, r := range g.as1.Requests() {
 		secrets = append(secrets, r.IssuedToken, r.Assertion)
-		fmt.Fprintf(&out, "%s\n", r.ClientAssertion)
+		assertions = append(assertions, r.ClientAssertion)
 	}
-	secrets = slices.Compact(slices.Sorted(slices.Values(slices.DeleteFunc(secrets, func(s string) bool { return s == "" }))))
+	distinct := func(in []string) []string {
+		return slices.Compact(slices.Sorted(slices.Values(slices.DeleteFunc(in, func(s string) bool { return s == "" }))))
+	}
+	secrets, assertions = distinct(secrets), distinct(assertions)
+	if len(assertions) == 0 {
+		t.Fatal("captured no client assertions")
+	}
 	// The gateway token, the credential, the access token, the session's
 	// refresh token, and the first call's ID-JAG; the refusal was answered
 	// without reaching AS-1.
@@ -398,23 +413,34 @@ func TestIdentityBrokerTokensStayOutOfSessionsAndLogs(t *testing.T) {
 	}
 	fmt.Fprintf(&out, "%v %+v\n", msgs, attrs)
 	out.WriteString(strings.Join(os.Environ(), "\n"))
-	leaks := func(text string) bool {
-		for _, secret := range secrets {
-			if strings.Contains(text, secret) {
+	leaks := func(text string, needles []string) bool {
+		for _, n := range needles {
+			if strings.Contains(text, n) {
 				return true
 			}
 		}
 		return false
 	}
-	// Positive control: a captured token logged through a diagnostics sink,
-	// formatted as the scan formats diagnostics, is found.
-	control := &recordingDiag{}
-	control.Log(t.Context(), port.LevelWarn, "planted", "token", auth.GatewayToken.Value())
-	cMsgs, cAttrs := control.snapshot()
-	if !leaks(out.String() + fmt.Sprintf("%v %+v\n", cMsgs, cAttrs)) {
-		t.Fatal("the scan missed a gateway token planted in the diagnostics")
+	both := append(slices.Clone(secrets), assertions...)
+	// Positive control: a captured token and a captured client assertion
+	// logged through a diagnostics sink, formatted as the scan formats
+	// diagnostics, are each found.
+	for name, planted := range map[string]string{"gateway token": auth.GatewayToken.Value(), "client assertion": assertions[0]} {
+		control := &recordingDiag{}
+		control.Log(t.Context(), port.LevelWarn, "planted", "value", planted)
+		cMsgs, cAttrs := control.snapshot()
+		if !leaks(out.String()+fmt.Sprintf("%v %+v\n", cMsgs, cAttrs), both) {
+			t.Fatalf("the scan missed a %s planted in the diagnostics", name)
+		}
 	}
-	if leaks(out.String()) {
-		t.Fatal("a transcript, event, diagnostic, error, record, client assertion, the environment, or a formatted authorization carries a token")
+	if leaks(out.String(), both) {
+		t.Fatal("a transcript, event, diagnostic, error, record, the environment, or a formatted authorization carries a token or a client assertion")
+	}
+	// An assertion is signed over its header and payload, so look for a token
+	// in their decoded text.
+	for _, a := range assertions {
+		if leaks(jwtSegmentText(t, a, 0)+jwtSegmentText(t, a, 1), secrets) {
+			t.Fatal("a client assertion carries a token")
+		}
 	}
 }
