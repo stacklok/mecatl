@@ -434,8 +434,9 @@ type Authorization struct {
 	// GatewayToken is the token the call is dispatched with, obtained for
 	// this call alone.
 	GatewayToken Token
-	// ExpiresAt is when GatewayToken expires; never later than the ID-JAG it
-	// was redeemed from.
+	// ExpiresAt is the broker's use-before deadline for GatewayToken: the
+	// earliest of the ID-JAG's exp, AS-2's expires_in, and the token's own
+	// exp. The authorization server may keep the token valid longer.
 	ExpiresAt time.Time
 	// AttemptID identifies this authorization, so a caller whose token the
 	// gateway rejects reports it in AuthorizeCallRequest.RejectedAttemptID.
