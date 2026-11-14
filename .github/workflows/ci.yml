@@ -1325,7 +1325,7 @@ jobs:
       # GORELEASER_VERSION.
       - uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
         with:
-          version: "v2.20.0"
+          version: "v2.20.2"
           install-only: true
       - name: Validate the GoReleaser config
         # `goreleaser check` exits 2 for "valid, but uses DEPRECATED properties".
