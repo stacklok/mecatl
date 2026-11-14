@@ -1164,17 +1164,49 @@ func TestAuthorizeCallRejectedTokenRetry(t *testing.T) {
 		req.RejectedAttemptID = id
 		return req
 	}
-	// A report for another call consumes the attempt.
-	mismatchedCall, err := f.authorize(callRequest(f.s.ID, f.cred))
+	// A report for another call consumes the attempt. Every field an attempt
+	// is issued for is changed alone; a tools/list report also drops the
+	// tool and arguments hash its method does not allow.
+	main, err := f.b.RegisterAgent(context.Background(), testWorkload, mainAgent(f.s))
 	if err != nil {
-		t.Fatalf("AuthorizeCall: %v", err)
+		t.Fatalf("RegisterAgent main: %v", err)
 	}
-	mismatched := report(mismatchedCall.AttemptID)
-	mismatched.Tool = "github.issue_write"
-	_, err = f.authorize(mismatched)
-	wantError(t, err, identitybroker.CodePermissionDenied, identitybroker.ReasonDenied, f.cred)
-	_, err = f.authorize(report(mismatchedCall.AttemptID))
-	wantError(t, err, identitybroker.CodePermissionDenied, identitybroker.ReasonDenied, f.cred)
+	child, err := f.b.RegisterAgent(context.Background(), testWorkload, identitybroker.RegisterAgentRequest{
+		SessionID: f.s.ID, HostSessionID: "hostS-child", Owner: testOwner,
+		Incarnation: "inc_bbcdefghijklmnopqrstuvwxya", Definition: identitybroker.DefinitionRef{Name: "child"},
+		Parent: main.Agent,
+	})
+	if err != nil {
+		t.Fatalf("RegisterAgent child: %v", err)
+	}
+	for _, tc := range []struct {
+		name   string
+		change func(*identitybroker.AuthorizeCallRequest)
+	}{
+		{"operation ID", func(r *identitybroker.AuthorizeCallRequest) { r.OperationID = "op-2" }},
+		{"method", func(r *identitybroker.AuthorizeCallRequest) {
+			r.Method, r.Tool, r.ArgumentsSHA256 = identitybroker.MethodToolsList, "", ""
+		}},
+		{"server", func(r *identitybroker.AuthorizeCallRequest) { r.Server = "calendar" }},
+		{"tool", func(r *identitybroker.AuthorizeCallRequest) { r.Tool = "github.issue_write" }},
+		{"arguments hash", func(r *identitybroker.AuthorizeCallRequest) { r.ArgumentsSHA256 = strings.Repeat("cd", 32) }},
+		{"agent", func(r *identitybroker.AuthorizeCallRequest) { r.Credential = child.Credential }},
+	} {
+		t.Run("a different "+tc.name, func(t *testing.T) {
+			issued, err := f.authorize(callRequest(f.s.ID, f.cred))
+			if err != nil {
+				t.Fatalf("AuthorizeCall: %v", err)
+			}
+			exchanges, redemptions := len(f.issuer.requests()), len(f.as2.redeemed())
+			mismatched := report(issued.AttemptID)
+			tc.change(&mismatched)
+			_, err = f.authorize(mismatched)
+			wantError(t, err, identitybroker.CodePermissionDenied, identitybroker.ReasonDenied, f.cred, child.Credential)
+			_, err = f.authorize(report(issued.AttemptID))
+			wantError(t, err, identitybroker.CodePermissionDenied, identitybroker.ReasonDenied, f.cred, child.Credential)
+			f.wantCounts(t, exchanges, redemptions)
+		})
+	}
 
 	// A report with a credential that fails check 3 does not consume it.
 	forgedCall, err := f.authorize(callRequest(f.s.ID, f.cred))
