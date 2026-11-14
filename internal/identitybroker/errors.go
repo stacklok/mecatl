@@ -59,12 +59,18 @@ const (
 	ReasonUpstreamRevoked Reason = "upstream_revoked"
 	// ReasonOwnerActionRequired: the user must sign in again.
 	ReasonOwnerActionRequired Reason = "owner_action_required"
+	// ReasonNoGrant: the broker session holds no refresh token, so no call
+	// can be authorized in it; open the session with an access token.
+	ReasonNoGrant Reason = "no_grant"
+	// ReasonConsentRequired: the gateway's authorization server needs the
+	// user's consent before it issues a token for the call.
+	ReasonConsentRequired Reason = "consent_required"
 )
 
 // Code returns the code the design assigns to r.
 func (r Reason) Code() Code {
 	switch r {
-	case ReasonSessionClosed, ReasonSignedOut, ReasonOwnerActionRequired:
+	case ReasonSessionClosed, ReasonSignedOut, ReasonOwnerActionRequired, ReasonNoGrant, ReasonConsentRequired:
 		return CodeFailedPrecondition
 	case ReasonSessionOwned, ReasonDenied, ReasonOwnerMismatch, ReasonUpstreamRevoked:
 		return CodePermissionDenied

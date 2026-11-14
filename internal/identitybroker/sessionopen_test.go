@@ -559,9 +559,7 @@ func TestSessionHardExpiryClosesTheSession(t *testing.T) {
 			wantError(t, err, identitybroker.CodeFailedPrecondition, identitybroker.ReasonSessionClosed)
 		}},
 		{"AuthorizeCall", false, func(t *testing.T, f *openFixture, old identitybroker.Session, cred identitybroker.Token) {
-			_, err := f.b.AuthorizeCall(ctx, testWorkload, identitybroker.AuthorizeCallRequest{
-				SessionID: old.ID, Credential: cred, OperationID: "op-1", Target: "gateway", Tool: "search",
-			})
+			_, err := f.b.AuthorizeCall(ctx, testWorkload, callRequest(old.ID, cred))
 			wantError(t, err, identitybroker.CodeFailedPrecondition, identitybroker.ReasonSessionClosed, cred)
 		}},
 		{"VerifyCredential", false, func(t *testing.T, f *openFixture, old identitybroker.Session, cred identitybroker.Token) {
