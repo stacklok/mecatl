@@ -58,9 +58,10 @@ type AS1 struct {
 	secret   string
 	http     *http.Client
 
-	brokerKey    *ecdsa.PrivateKey
-	assertionMax time.Duration
-	grantMax     time.Duration
+	brokerKey     *ecdsa.PrivateKey
+	assertionMax  time.Duration
+	grantMax      time.Duration
+	idjagLifetime time.Duration
 
 	mu       sync.Mutex
 	clients  map[string]Client
@@ -74,6 +75,10 @@ type AS1 struct {
 	assertionJTIs map[string]time.Time        // used client assertion jti, kept until
 	grants        map[string]*as1Grant        // by refresh token
 	conversions   map[string]time.Time        // converted access token jti, kept until
+
+	validator    ActorValidator
+	idjagTargets map[idjagTarget]bool
+	idjags       []IDJAGIssuance
 }
 
 type as1Pending struct {
@@ -107,6 +112,7 @@ func newAS1(t testing.TB, opts Options, idp *IdP) *AS1 {
 		lifetime: opts.AccessTokenLifetime, idp: idp, secret: randomToken("as1-secret-"),
 		brokerKey: brokerKey, assertionMax: opts.ClientAssertionMaxLifetime,
 		grantMax:      opts.GrantMaxLifetime,
+		idjagLifetime: opts.IDJAGLifetime,
 		clients:       make(map[string]Client),
 		pending:       make(map[string]as1Pending),
 		codes:         make(map[string]as1Code),
@@ -117,6 +123,7 @@ func newAS1(t testing.TB, opts Options, idp *IdP) *AS1 {
 		assertionJTIs: make(map[string]time.Time),
 		grants:        make(map[string]*as1Grant),
 		conversions:   make(map[string]time.Time),
+		idjagTargets:  make(map[idjagTarget]bool),
 	}
 	for _, c := range opts.Clients {
 		as.clients[c.ID] = Client{ID: c.ID, RedirectURIs: slices.Clone(c.RedirectURIs)}
@@ -141,6 +148,9 @@ func (a *AS1) Issuer() string { return a.server.URL + as1IssuerPath }
 
 // AuthorizationEndpoint is where clients start sign-in.
 func (a *AS1) AuthorizationEndpoint() string { return a.Issuer() + "/authorize" }
+
+// JWKSURL is where AS-1 publishes the keys it signs tokens with.
+func (a *AS1) JWKSURL() string { return a.Issuer() + "/jwks" }
 
 // TokenEndpoint is AS-1's token endpoint.
 func (a *AS1) TokenEndpoint() string { return a.Issuer() + "/token" }
@@ -556,12 +566,17 @@ func (a *AS1) token(w http.ResponseWriter, r *http.Request) {
 }
 
 // brokerToken serves the authenticated broker, which may use only the
-// token-exchange grant for session open. Grant refresh tokens are stored
-// apart from client refresh tokens and the broker holds none of the latter,
-// so the refresh-token grant always fails with invalid_grant.
+// token-exchange grant: for an ID-JAG when it asks for one, and otherwise for
+// session open. Grant refresh tokens are stored apart from client refresh
+// tokens and the broker holds none of the latter, so the refresh-token grant
+// always fails with invalid_grant.
 func (a *AS1) brokerToken(w http.ResponseWriter, r *http.Request) {
 	switch r.PostForm.Get("grant_type") {
 	case grantTokenExchange:
+		if r.PostForm.Get("requested_token_type") == TokenTypeIDJAG {
+			a.issueIDJAG(w, r)
+			return
+		}
 		a.exchange(w, r)
 	case grantRefreshToken:
 		writeOAuthError(w, http.StatusBadRequest, "invalid_grant", "")

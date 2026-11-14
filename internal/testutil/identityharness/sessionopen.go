@@ -72,8 +72,9 @@ type Grant struct {
 	Output    string
 	ExpiresAt time.Time
 	// Active reports whether the refresh token is still usable. Otherwise
-	// Reason is what a later use (the ID-JAG exchange, not built yet) would
-	// get: revoked for a revoked grant, and no reason for an expired one.
+	// Reason is revoked for a revoked grant, which the ID-JAG exchange also
+	// answers, and empty for an expired one, which the exchange answers with
+	// grant_invalid.
 	Active bool
 	Reason string
 }

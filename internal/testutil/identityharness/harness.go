@@ -28,21 +28,29 @@
 //     access token gets subject_token_invalid, not the real AS-1's reasons.
 //     The grant's refresh token is refused at the refresh-token grant
 //     (sessionopen.go);
+//   - AS-1's per-call ID-JAG exchange, design step (7), until ToolHive's
+//     AS-1 issues ID-JAGs: a grant's refresh token with the agent's SVID as
+//     the actor token, for a configured AS-2 audience and vMCP resource. The
+//     actor checks are a test-supplied ActorValidator; the upstream re-check
+//     is not modelled, so tests inject its reasons as faults (idjag.go);
 //   - RFC 7009 revocation of grant refresh tokens, until
 //     stacklok/toolhive#6966 and stacklok/toolhive#6972 (revoke.go);
 //   - ScriptedBroker, a hand-driven caller holding the broker's credentials
 //     for exercising AS-1 directly (broker.go). Production code under test
 //     uses its own client, not ScriptedBroker;
-//   - one-shot IdP faults for sign-in (idp.go);
+//   - one-shot IdP faults for sign-in (idp.go), and FaultTransport, which
+//     fails, drops, loses, duplicates, or intercepts session-open, ID-JAG,
+//     and redemption requests on the caller's side of any authorization
+//     server (faulttransport.go);
+//   - a gateway stand-in, a minimal MCP server that needs a bearer token and
+//     can reject it or ask the user to connect a server (gateway.go);
 //   - a browser for tests hosting the real AS-1, which keeps cookies and
 //     approves ToolHive's consent page (browser.go).
 //
 // Keeping one live refresh token per session, checking the owner, and
 // refusing to reopen a closed session are the broker's job, so AS-1 does
-// none of them. Later work adds ID-JAG issuance (with the reasons revoked,
-// parent_revoked, and not_issuable on use), child grants, client
-// refresh-token revocation, and a gateway stand-in, each in its own files.
-// Until ID-JAG issuance exists, Grant reports what a later use would get.
+// none of them. Later work adds child grants (with parent_revoked and
+// not_issuable) and client refresh-token revocation, each in its own files.
 // AS-2 is deliberately absent: tests use the real embedded ToolHive
 // authorization server for it.
 //
@@ -130,6 +138,9 @@ type Options struct {
 	// ID-JAGs: the expiry when an exchange asks for none, and the cap on one
 	// it asks for. Zero selects DefaultGrantMaxLifetime.
 	GrantMaxLifetime time.Duration
+	// IDJAGLifetime is the lifetime of the ID-JAGs AS-1 issues, before the cap
+	// at the actor token's expiry. Zero selects DefaultIDJAGLifetime.
+	IDJAGLifetime time.Duration
 }
 
 // Harness is a running set of stand-ins. Create it with New.
@@ -163,6 +174,9 @@ func New(t testing.TB, opts Options) *Harness {
 	}
 	if opts.GrantMaxLifetime <= 0 {
 		opts.GrantMaxLifetime = DefaultGrantMaxLifetime
+	}
+	if opts.IDJAGLifetime <= 0 {
+		opts.IDJAGLifetime = DefaultIDJAGLifetime
 	}
 
 	idp := newIdP(t, opts)
@@ -301,7 +315,8 @@ type faults struct {
 	pending map[string][]Fault
 }
 
-// Fault is a failure the IdP returns once instead of its normal response.
+// Fault is a failure the IdP or a FaultTransport returns once instead of the
+// normal response.
 type Fault struct {
 	// Status is the HTTP status for a token endpoint fault. Zero selects 400.
 	Status int
