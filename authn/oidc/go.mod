@@ -5,7 +5,7 @@ go 1.27
 require (
 	github.com/lestrrat-go/jwx/v4 v4.6.0
 	github.com/stacklok/mecatl/engine v0.14.0
-	github.com/stacklok/toolhive-core v0.0.59
+	github.com/stacklok/toolhive-core v0.0.60
 )
 
 require (
@@ -24,5 +24,5 @@ require (
 	golang.org/x/net v0.62.0 // indirect
 	golang.org/x/oauth2 v0.38.0 // indirect
 	golang.org/x/sys v0.50.0 // indirect
-	golang.org/x/text v0.43.0 // indirect
+	golang.org/x/text v0.44.0 // indirect
 )
