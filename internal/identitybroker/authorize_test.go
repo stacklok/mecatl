@@ -462,6 +462,23 @@ func TestAuthorizeCallGatewayTokenExpiry(t *testing.T) {
 	}
 }
 
+func TestAuthorizeCallGatewayTokenExpiryWithoutJTI(t *testing.T) {
+	exp := fixedNow().Add(time.Minute)
+	token := jwtShaped(map[string]any{"alg": "ES256", "typ": "at+jwt"},
+		map[string]any{"iss": as2Issuer, "aud": as2Resource, "exp": exp.Unix()})
+	f := newPerCall(t)
+	f.as2.answer = func(int, identitybroker.Redemption) (identitybroker.GatewayTokenResult, error) {
+		return identitybroker.GatewayTokenResult{AccessToken: token}, nil
+	}
+	got, err := f.authorize(callRequest(f.s.ID, f.cred))
+	if err != nil {
+		t.Fatalf("AuthorizeCall: %v", err)
+	}
+	if !got.ExpiresAt.Equal(exp) {
+		t.Fatalf("ExpiresAt = %v, want the token's exp %v", got.ExpiresAt, exp)
+	}
+}
+
 func TestAuthorizeCallMapsAS2Refusals(t *testing.T) {
 	for _, tc := range []struct {
 		name        string
