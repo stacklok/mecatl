@@ -107,9 +107,6 @@ type toolHiveProcessOptions struct {
 	runtimeOptions                []Option
 	brokerHTTPClient              *http.Client
 	allowLoopbackUpstreamsForTest bool
-	// as2TrustForTest makes AS-2 trust an ID-JAG issuer, which production
-	// startup never does yet.
-	as2TrustForTest *as2Trust
 	// localAuthStoreForTest wraps an auth store construction creates itself,
 	// so tests can observe its Close.
 	localAuthStoreForTest func(storage.Storage) storage.Storage
@@ -236,7 +233,7 @@ func newToolHiveProcess(ctx context.Context, config ToolHiveConfig, options tool
 		}
 		removeKeySet := func() {}
 		if as2 {
-			runConfig.InboundGrants, runConfig.TrustedIssuers, removeKeySet, err = as2RunConfig(*config.BrokerClient, issuer, resource, options.as2TrustForTest)
+			runConfig.InboundGrants, runConfig.TrustedIssuers, removeKeySet, err = as2RunConfig(*config.BrokerClient, issuer, resource, config.AS2Trust)
 			if err != nil {
 				return rollback(fmt.Errorf("mcpbroker: create embedded auth server: %w", err))
 			}

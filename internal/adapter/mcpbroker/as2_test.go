@@ -30,6 +30,7 @@ import (
 
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
+	"github.com/stacklok/mecatl/internal/adapter/mcpbroker/internal/as2trust"
 	"github.com/stacklok/mecatl/internal/identitybroker"
 	"github.com/stacklok/mecatl/internal/identitybroker/adapter/inprocesshttp"
 	"github.com/stacklok/mecatl/internal/testutil/identityharness"
@@ -306,19 +307,19 @@ func TestAS2RemovesTheKeySetFileWhenConstructionFails(t *testing.T) {
 	valid := newAS2BrokerClient(t).config
 	for name, test := range map[string]struct {
 		client *ToolHiveBrokerClient
-		trust  *as2Trust
+		trust  AS2Trust
 	}{
 		"key set ToolHive rejects": {client: &ToolHiveBrokerClient{ID: valid.ID, KeySet: []byte(`{"keys":[{"kty":"none"}]}`)}},
-		"invalid ID-JAG trust":     {client: valid, trust: &as2Trust{}},
+		"invalid ID-JAG trust":     {client: valid, trust: NewAS2Trust(as2trust.Trust{})},
 	} {
 		t.Run(name, func(t *testing.T) {
 			tmp := t.TempDir()
 			t.Setenv("TMPDIR", tmp)
 			spy := &closeSpy{registerClientSpy: newRegisterClientSpy()}
-			process, err := newToolHiveProcess(t.Context(), ToolHiveConfig{
+			process, err := NewToolHiveProcess(t.Context(), ToolHiveConfig{
 				CallbackURL: as2TestCallbackURL, Profiles: []ToolHiveProfile{staticProtectedProfile("private")}, AuthStorage: spy,
-				BrokerClient: test.client,
-			}, toolHiveProcessOptions{as2TrustForTest: test.trust})
+				BrokerClient: test.client, AS2Trust: test.trust,
+			})
 			if err == nil {
 				_ = process.Close()
 				t.Fatal("NewToolHiveProcess succeeded, want a construction failure")
@@ -498,7 +499,7 @@ func TestAS2GatewayLoginUsesTheVMCPResource(t *testing.T) {
 		runtimeOptions: []Option{WithOAuthLoopbackForTest(t, roots)}, brokerHTTPClient: brokerClient,
 	})
 	if err != nil {
-		t.Fatalf("newToolHiveProcess: %v", err)
+		t.Fatalf("NewToolHiveProcess: %v", err)
 	}
 	t.Cleanup(func() { _ = process.Close() })
 	admitStaticForGenericAuthorizationTest(t, process)
@@ -625,21 +626,22 @@ func TestAS2GatewayLoginUsesTheVMCPResource(t *testing.T) {
 }
 
 // newTrustingAS2 is AS-2 configured to trust the harness's AS-1, for Alice
-// and Bob, through the test-only seam.
+// and Bob, through the test-only seam, ToolHiveConfig.AS2Trust.
 func newTrustingAS2(t *testing.T) (*identityharness.Harness, as2BrokerClient, *Process) {
 	t.Helper()
 	t.Setenv("MECATL_TEST_CLIENT_SECRET", "construction-only-secret")
 	h := identityharness.New(t, identityharness.Options{})
 	broker := newAS2BrokerClient(t)
-	process, err := newToolHiveProcess(t.Context(), ToolHiveConfig{
+	process, err := NewToolHiveProcess(t.Context(), ToolHiveConfig{
 		CallbackURL: as2TestCallbackURL, Profiles: []ToolHiveProfile{staticProtectedProfile("private")}, BrokerClient: broker.config,
-	}, toolHiveProcessOptions{as2TrustForTest: &as2Trust{
-		issuer: h.AS1.Issuer(), jwksURL: h.AS1.Issuer() + "/jwks", caFile: h.WriteCACert(t, t.TempDir()),
-		subjects:        []string{h.AS1.Subject(identityharness.Alice), h.AS1.Subject(identityharness.Bob)},
-		maxAssertionAge: 10 * time.Minute,
-	}})
+		AS2Trust: NewAS2Trust(as2trust.Trust{
+			Issuer: h.AS1.Issuer(), JWKSURL: h.AS1.JWKSURL(), CAFile: h.WriteCACert(t, t.TempDir()),
+			Subjects:        []string{h.AS1.Subject(identityharness.Alice), h.AS1.Subject(identityharness.Bob)},
+			MaxAssertionAge: 10 * time.Minute,
+		}),
+	})
 	if err != nil {
-		t.Fatalf("newToolHiveProcess: %v", err)
+		t.Fatalf("NewToolHiveProcess: %v", err)
 	}
 	t.Cleanup(func() { _ = process.Close() })
 	if process.AS2 == nil {

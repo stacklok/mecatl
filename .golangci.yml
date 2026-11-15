@@ -978,6 +978,19 @@ linters:
             - github.com/stacklok/mecatl/internal/identitybroker/adapter/as1server$
             - github.com/stacklok/mecatl/internal/identitybroker/adapter/authserverclient$
             - github.com/stacklok/mecatl/internal/testutil/identityharness$
+        # The identity harness stands in for the IdP, AS-1, AS-2, and the
+        # gateway; it never imports the code under test, so a broker bug
+        # cannot also bend the stand-in. Its external tests import the harness
+        # itself, the one Mecatl package allowed.
+        internal-testutil-identityharness:
+          list-mode: lax
+          files:
+            - '**/internal/testutil/identityharness/**.go'
+          allow:
+            - github.com/stacklok/mecatl/internal/testutil/identityharness$
+          deny:
+            - pkg: github.com/stacklok/mecatl/internal
+              desc: 'the harness is an independent stand-in; it never imports the code under test'
         # Only the composition root wires the identity broker's adapters; the
         # rest of Mecatl reaches the broker through its authentication boundary.
         internal-identitybroker-adapter-importers:
@@ -1000,6 +1013,17 @@ linters:
           deny:
             - pkg: github.com/stacklok/mecatl/internal/identitybroker/adapter/as1server/as1servertest
               desc: 'test fixture; production code never imports it'
+        # mcpbrokertest makes AS-2 trust AS-1 in tests; production code never
+        # imports it.
+        internal-adapter-mcpbrokertest-importers:
+          list-mode: lax
+          files:
+            - $all
+            - '!$test'
+            - '!**/internal/adapter/mcpbroker/mcpbrokertest/**.go'
+          deny:
+            - pkg: github.com/stacklok/mecatl/internal/adapter/mcpbroker/mcpbrokertest
+              desc: 'AS-2 trust test seam; production code never imports it (#2533 trusts AS-1 in production)'
         # Composition and the command roots use the MCP broker contract
         # (internal/mcpbroker); one file constructs the adapter.
         internal-adapter-mcpbroker-importers:
