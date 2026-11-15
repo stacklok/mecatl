@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Check each go.work member's candidate dependency closure, independently.
 
-Uses the installed Go toolchain, never executes compiled tests, and never writes
-checkout metadata unless --fix is explicit. This is not a publication check:
-only exact workspace module identities are replaced by current source trees.
+Uses the installed Go toolchain and runs each selected module's tests. Dependency
+metadata uses temporary files unless --fix is explicit. This is not a publication
+check: only exact workspace module identities are replaced by current source trees.
 """
 
 import argparse
@@ -144,10 +144,8 @@ def candidate(identity, directory, original, modules, snapshots, env, temporary)
     for entry in sorted(required_sums - sums(original_sum, modules)):
         differences.append("missing required sum: " + " ".join(entry))
 
-    # -run alone still runs init/TestMain. -exec=true compiles every package and
-    # test binary but substitutes a successful executable for the test binary.
     go(directory, env, "test", "-mod=readonly", "-modfile=" + str(modfile),
-       "-exec=true", "-run=^$", "./...")
+       "-count=1", "-timeout=20m", "./...")
     if missing_siblings:
         raise CheckError("\n".join(differences) + "\nCannot repair missing sibling require: "
                          + ", ".join(missing_siblings)
@@ -206,7 +204,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, help="checkout containing go.work (default: nearest ancestor)")
     parser.add_argument("--module", action="append", help="go.work module directory, e.g. . or engine; repeatable")
-    parser.add_argument("--fix", action="store_true", help="apply safe tidy metadata repairs after all selected modules compile")
+    parser.add_argument("--fix", action="store_true", help="apply safe tidy metadata repairs after all selected modules pass tests")
     args = parser.parse_args(argv)
     root = args.root
     if root is None:

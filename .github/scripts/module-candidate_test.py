@@ -111,14 +111,31 @@ class CandidateTests(unittest.TestCase):
             self.assertEqual(self.snapshot(), before)
         return result.stdout + result.stderr
 
-    def test_lagging_sibling_versions_spaces_poison_and_no_execution(self):
-        marker = self.base_dir / "executed"
-        self.write("panic_test.go", 'package fixture\nimport "testing"\n'
-                   'func TestNever(t *testing.T) { panic("test ran") }\n')
-        self.write("init.go", 'package fixture\nimport "os"\n'
-                   f'func init() {{ os.WriteFile({json.dumps(str(marker))}, []byte("ran"), 0600); panic("init ran") }}\n')
+    def test_lagging_sibling_versions_spaces_poison_and_execution(self):
+        initialized = self.base_dir / "initialized"
+        executed = self.base_dir / "executed"
+        self.write("execution_test.go", 'package fixture\nimport ("os"; "testing")\n'
+                   f'func init() {{ if err := os.WriteFile({json.dumps(str(initialized))}, []byte("ran"), 0600); err != nil {{ panic(err) }} }}\n'
+                   f'func TestExecutes(t *testing.T) {{ if err := os.WriteFile({json.dumps(str(executed))}, []byte("ran"), 0600); err != nil {{ t.Fatal(err) }}; if Value != 1 {{ t.Fatal("not using sibling source") }} }}\n')
         self.check()
-        self.assertFalse(marker.exists())
+        self.assertEqual(initialized.read_text(), "ran")
+        self.assertEqual(executed.read_text(), "ran")
+        initialized.unlink()
+        executed.unlink()
+        self.check()
+        self.assertEqual(initialized.read_text(), "ran")
+        self.assertEqual(executed.read_text(), "ran")
+
+    def test_failing_test_fails_check_and_prevents_repair(self):
+        self.third(indirect=True)
+        self.write("failure_test.go", 'package fixture\nimport "testing"\n'
+                   'func TestFailure(t *testing.T) { t.Fatal("candidate test failed") }\n')
+        output = self.check("--module", ".", succeeds=False)
+        self.assertIn("candidate test failed", output)
+        before = self.snapshot()
+        output = self.check("--module", ".", succeeds=False, fix=True)
+        self.assertIn("candidate test failed", output)
+        self.assertEqual(self.snapshot(), before)
 
     def test_poisoned_ambient_goflags_do_not_affect_check(self):
         self.env["GOFLAGS"] = "-modfile=poison.mod"
@@ -385,6 +402,15 @@ class CandidateTests(unittest.TestCase):
                                 cwd=self.root, env=self.env, capture_output=True,
                                 text=True, timeout=120)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.write("sibling space/failure_test.go", 'package sibling\nimport "testing"\n'
+                   'func TestFailure(t *testing.T) { t.Fatal("task candidate test failed") }\n')
+        before = self.snapshot()
+        result = subprocess.run([task, "test:module-candidate", *args],
+                                cwd=self.root, env=self.env, capture_output=True,
+                                text=True, timeout=120)
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("task candidate test failed", result.stdout + result.stderr)
+        self.assertEqual(self.snapshot(), before)
 
     def test_duplicate_module_identity_and_invalid_selector(self):
         self.assertIn("module", self.check("--module", "not-in-workspace", succeeds=False))

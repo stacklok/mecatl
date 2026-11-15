@@ -586,7 +586,7 @@ tasks:
       - sh .github/scripts/module-metadata.sh
 
   test:module-candidate:
-    desc: Check each module with current sibling sources and its own third-party dependency graph
+    desc: Test each module with current sibling sources and check its own dependency metadata
     vars:
       MODULE: '{{.MODULE | default ""}}'
     cmds:
