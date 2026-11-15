@@ -416658,6 +416658,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1794611965952,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "17c2d3f95fe2c18526fd2089d3f6c6dbeb85af46",
+          "message": "build: add isolated module candidate dependency checks (#2769)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-11-15T01:31:53Z",
+          "tree_id": "404d2a135d9911cafc6ee9d35b220316d09e98cc",
+          "url": "https://github.com/stacklok/mecatl/commit/17c2d3f95fe2c18526fd2089d3f6c6dbeb85af46"
+        },
+        "date": 1794707129218,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 13420,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12913.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 681,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -542894,6 +542933,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1794707125054,
+  "lastUpdate": 1794707129800,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
