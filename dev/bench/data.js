@@ -417055,6 +417055,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1794707129218,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "29541485+ChrisJBurns@users.noreply.github.com",
+            "name": "Chris Burns",
+            "username": "ChrisJBurns"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "67bd65151d7850fa11bd77f030f30429c89962b8",
+          "message": "test(identitybroker): add the per-call harness, fault transport, gateway stand-in, and AS-2 trust test seam (#2784)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-11-15T22:29:40Z",
+          "tree_id": "2421a3693143e55f14871e4c161888dabfd28892",
+          "url": "https://github.com/stacklok/mecatl/commit/67bd65151d7850fa11bd77f030f30429c89962b8"
+        },
+        "date": 1794782521290,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 13417,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12912,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 680,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -543405,6 +543444,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1794782517926,
+  "lastUpdate": 1794782521901,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
