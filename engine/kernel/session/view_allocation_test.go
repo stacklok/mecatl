@@ -61,7 +61,7 @@ func allocationViewFixture(t *testing.T, fieldBytes, siblingBytes, count int) ma
 	items[0] = session.InputItem{UserInputID: new(input.RunRelative())}
 	mustBatch(t, b.ReplaceInstructions(scope, session.Instructions{Blocks: blocks}))
 	mustBatch(t, b.ReplaceToolCatalog(scope, session.ToolCatalog{Tools: tools}))
-	mustBatch(t, b.ReplaceModelBinding(scope, session.ModelBinding{Route: strings.Repeat("r", siblingBytes), API: "dialect/v1", Model: "alias", Settings: []byte(`"` + strings.Repeat("v", fieldBytes-2) + `"`)}))
+	mustBatch(t, b.ReplaceModelBinding(scope, session.ModelBinding{Route: strings.Repeat("r", siblingBytes), API: "dialect/v1", Model: "alias", Settings: session.ModelSettings{ReasoningEffort: new(strings.Repeat("v", fieldBytes))}}))
 	mustBatch(t, b.AddEffectiveInput(run, session.EffectiveInput{Inputs: items}))
 	submitBatch(t, s, b)
 
@@ -194,7 +194,6 @@ func TestViewByteExportsCopyOnlyRequestedField(t *testing.T) {
 					input := lookupInput(t, v, v.ActiveRun(), 1)
 					media, _ := input.Parts().At(0).Media()
 					catalog, _ := v.ToolCatalog()
-					binding, _ := v.ModelBinding()
 					effective, _ := v.RecordAt(6).EffectiveInput()
 					inline, _ := effective.Inputs().At(1).Inline()
 					inlineMedia, _ := inline.Parts().At(0).Media()
@@ -209,7 +208,7 @@ func TestViewByteExportsCopyOnlyRequestedField(t *testing.T) {
 						parent int
 					}{
 						{"authored-media", data(media), 2}, {"inline-media", data(inlineMedia), 6}, {"instruction-media", data(instructionMedia), 3},
-						{"schema", catalog.Tools().At(0).ArgumentSchema().Copy, 4}, {"settings", binding.Settings().Copy, 5},
+						{"schema", catalog.Tools().At(0).ArgumentSchema().Copy, 4},
 					} {
 						t.Run(field.name, func(t *testing.T) {
 							var copied []byte
@@ -282,7 +281,7 @@ func TestViewPinnedReferenceChildrenAcrossReplacement(t *testing.T) {
 		mustBatch(t, err)
 		mustBatch(t, b.ReplaceInstructions(old.HistoryID(), session.Instructions{}))
 		mustBatch(t, b.ReplaceToolCatalog(old.HistoryID(), session.ToolCatalog{}))
-		mustBatch(t, b.ReplaceModelBinding(old.HistoryID(), session.ModelBinding{Route: "replacement", API: "a", Model: "m", Settings: []byte("true")}))
+		mustBatch(t, b.ReplaceModelBinding(old.HistoryID(), session.ModelBinding{Route: "replacement", API: "a", Model: "m"}))
 		mustBatch(t, b.AddEffectiveInput(old.ActiveRun(), session.EffectiveInput{}))
 		submitBatch(t, s, b)
 	}

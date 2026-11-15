@@ -24,7 +24,7 @@ func TestConstructionRecipeViewFieldsAndOwnership(t *testing.T) {
 	}
 
 	var zero ModelRequestView
-	if zero.Source().Sequence() != 0 || zero.Source().CID() != (SourceHead{}).CID {
+	if source, ok := zero.Source(); ok || source != (SourceHeadView{}) {
 		t.Fatal("zero source head")
 	}
 	zeroRecipe := zero.Recipe()

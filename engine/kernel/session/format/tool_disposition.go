@@ -49,6 +49,13 @@ func (v ToolReturned) validateLocal() error {
 type ToolNotInvokedReason string
 
 const (
+	// ToolNotInvokedUserDenied reports explicit user denial before invocation.
+	ToolNotInvokedUserDenied ToolNotInvokedReason = "user-denied"
+	// ToolNotInvokedUnavailable reports an unavailable requested tool.
+	ToolNotInvokedUnavailable ToolNotInvokedReason = "unavailable"
+	// ToolNotInvokedInfrastructureFailed reports infrastructure failure with known
+	// non-invocation. Possible execution must instead be Indeterminate.
+	ToolNotInvokedInfrastructureFailed ToolNotInvokedReason = "infrastructure-failed"
 	// ToolNotInvokedPolicyRejected reports policy rejection.
 	ToolNotInvokedPolicyRejected ToolNotInvokedReason = "policy-rejected"
 	// ToolNotInvokedPreparationFailed reports failed preparation.
@@ -74,7 +81,8 @@ func (v ToolNotInvoked) Validate() error { return v.validateLocal() }
 // validateLocal checks the immediate reason.
 func (v ToolNotInvoked) validateLocal() error {
 	switch v.Reason {
-	case ToolNotInvokedPolicyRejected, ToolNotInvokedPreparationFailed, ToolNotInvokedCancelled, ToolNotInvokedOther:
+	case ToolNotInvokedUserDenied, ToolNotInvokedUnavailable, ToolNotInvokedInfrastructureFailed,
+		ToolNotInvokedPolicyRejected, ToolNotInvokedPreparationFailed, ToolNotInvokedCancelled, ToolNotInvokedOther:
 		return nil
 	}
 	return errors.New("unknown tool non-invocation reason")

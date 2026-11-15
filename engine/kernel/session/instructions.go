@@ -7,7 +7,8 @@ import (
 	sessionformat "github.com/stacklok/mecatl/engine/kernel/session/format"
 )
 
-// InstructionBlock retains ordered instruction content and required provenance.
+// InstructionBlock retains ordered prepared content and required provenance.
+// Its Instructions or UserContextPrefix container determines its role, not authority.
 // Assignment shares nested storage; Clone detaches it.
 type InstructionBlock = sessionformat.InstructionBlock
 
@@ -37,7 +38,7 @@ func newInstructionsRecord(v Instructions, limits codec.Limits) (*materializedRe
 	return decodeMaterialized(format.Record{Kind: sessionformat.KindInstructions, KindVersion: sessionformat.Version, Payload: payload}, limits)
 }
 
-// InstructionsView retains immutable accepted backing storage, including its
+// InstructionsView retains immutable accepted or proposed backing storage, including its
 // record. Capture and navigation cost O(1); zero has no history or blocks.
 //
 //dtogen:include

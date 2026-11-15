@@ -14,16 +14,17 @@ import (
 // appends. Zero is unscoped and empty. Handles may retain extra backing capacity;
 // GC owns their lifetime. Indexed methods panic outside [0, count).
 type Snapshot struct {
-	historyID    historyid.HistoryID
-	head         history.CommitRef
-	lifecycle    lifecycleState
-	records      []*materializedRecord
-	runs         []runEntry
-	inputs       []int
-	commits      []commitEntry
-	instructions *materializedRecord
-	catalog      *materializedRecord
-	binding      *materializedRecord
+	historyID         historyid.HistoryID
+	head              history.CommitRef
+	lifecycle         lifecycleState
+	records           []*materializedRecord
+	runs              []runEntry
+	inputs            []int
+	commits           []commitEntry
+	userContextPrefix *materializedRecord
+	instructions      *materializedRecord
+	catalog           *materializedRecord
+	binding           *materializedRecord
 }
 
 // HistoryID returns the scope, including before creation.
@@ -157,6 +158,16 @@ func (v Snapshot) UserInputByID(id UserInputID) (UserInputView, bool) {
 		return UserInputView{}, false
 	}
 	return UserInputView{scope: v.historyID, value: &record.input}, true
+}
+
+// UserContextPrefix returns the latest accepted prefix replacement in O(1),
+// including explicit emptiness. No replacement returns zero, false. Run starts
+// and root-instruction replacements do not reset it.
+func (v Snapshot) UserContextPrefix() (UserContextPrefixView, bool) {
+	if v.userContextPrefix == nil {
+		return UserContextPrefixView{}, false
+	}
+	return UserContextPrefixView{scope: v.historyID, value: &v.userContextPrefix.userContextPrefix}, true
 }
 
 // Instructions returns the latest accepted replacement at this head, including

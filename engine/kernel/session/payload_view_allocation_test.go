@@ -45,7 +45,7 @@ func completePayloadViewFixture(t *testing.T, count, field, sibling int) (map[st
 	// Include present-empty children alongside the nonempty collection siblings.
 	want.instructions.Blocks = append(want.instructions.Blocks, session.InstructionBlock{Source: session.ContentSource{Description: "empty"}})
 	want.effective.Inputs = append(want.effective.Inputs, session.InputItem{Inline: &session.AttributedInput{Actor: "empty", Purpose: session.PromptInstructions, Source: session.ContentSource{Description: "empty"}}})
-	want.binding = session.ModelBinding{Route: strings.Repeat("r", sibling), API: "api", Model: "model", Settings: []byte(`"` + strings.Repeat("v", field-2) + `"`)}
+	want.binding = session.ModelBinding{Route: strings.Repeat("r", sibling), API: "api", Model: "model", Settings: session.ModelSettings{ReasoningEffort: new(strings.Repeat("v", field))}}
 	mustBatch(t, b.ReplaceInstructions(want.run.HistoryID(), want.instructions))
 	mustBatch(t, b.ReplaceToolCatalog(want.run.HistoryID(), want.catalog))
 	mustBatch(t, b.ReplaceModelBinding(want.run.HistoryID(), want.binding))
@@ -146,7 +146,11 @@ func traverseCompletePayloadViews(snap session.Snapshot, inputs views.SliceView[
 	if binding.Route() != want.binding.Route || binding.API() != want.binding.API || binding.Model() != want.binding.Model {
 		panic("binding")
 	}
-	leafBytes += inspectPayloadBytes(binding.Settings(), want.binding.Settings)
+	effort, present := binding.Settings().ReasoningEffort()
+	if !present || effort != *want.binding.Settings.ReasoningEffort {
+		panic("settings")
+	}
+	leafBytes += len(effort)
 	i := 0
 	for index, item := range inputs.All() {
 		if index != i {
@@ -203,8 +207,7 @@ func TestCompletePayloadViewTraversal(t *testing.T) {
 					// Retain selected exports while copying unrelated leaves; each copy
 					// must allocate for just that leaf, not its populated DTO siblings.
 					catalog, _ := snap.ToolCatalog()
-					binding, _ := snap.ModelBinding()
-					for _, leaf := range []views.Bytes{catalog.Tools().At(0).ArgumentSchema(), binding.Settings()} {
+					for _, leaf := range []views.Bytes{catalog.Tools().At(0).ArgumentSchema()} {
 						var copied []byte
 						export := func() { copied = copyInteractionBytes(leaf) }
 						if n := testing.AllocsPerRun(100, export); n != 1 {

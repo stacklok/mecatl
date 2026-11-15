@@ -173,6 +173,23 @@ func (b *SessionCommit) AddEffectiveInput(run RunID, v EffectiveInput) error {
 	return b.add(newEffectiveInputRecord(v, run, b.owner.policy.PayloadLimits))
 }
 
+// ReplaceUserContextPrefix adds a complete history-scoped prepared prefix
+// replacement after creation, including while idle. It survives run boundaries
+// independently of Instructions; empty Blocks explicitly clear it.
+// Failure changes nothing.
+func (b *SessionCommit) ReplaceUserContextPrefix(scope historyid.HistoryID, v UserContextPrefix) error {
+	if err := b.check(true); err != nil {
+		return err
+	}
+	if err := validateHistoryID(scope); err != nil {
+		return codec.ErrInvalidData
+	}
+	if scope != b.owner.state.view.historyID {
+		return ErrIdentity
+	}
+	return b.add(newUserContextPrefixRecord(v, b.owner.policy.PayloadLimits))
+}
+
 // ReplaceInstructions adds a complete history-scoped replacement after creation,
 // including while idle. Applicability survives runs; failure changes nothing.
 func (b *SessionCommit) ReplaceInstructions(scope historyid.HistoryID, v Instructions) error {
@@ -270,19 +287,29 @@ func (b *SessionCommit) EndRun(reason RunEndedReason) error {
 	return b.AddRunEnded(b.admission.candidate.activeRun, RunEnded{Reason: reason})
 }
 
-// AddModelRequest allocates a provisional same-run invocation identity.
-// Failure consumes no identity. Prerequisites come from the pinned accepted source.
-// Incoming RunID and ID must be zero. RetryOf resolves within run without origin
-// provenance; only earlier accepted requests are eligible.
-func (b *SessionCommit) AddModelRequest(run RunID, v ModelRequest) (ModelRequestID, error) {
+// AddModelRequest allocates a provisional same-run invocation commitment against
+// the exact live batch prefix captured by source. Any successful intervening add
+// invalidates the capture; failures consume neither identity nor freshness.
+// Zero, foreign or stale captures return ErrIdentity after the live-handle and
+// active-run checks. A copied CommitView remains usable; a copied batch does not.
+// Incoming RunID, ID and Source must be zero; the accepted anchor is synthesized.
+// RetryOf resolves within run; only earlier accepted same-run requests are eligible.
+// Recipe structure is checked, not that it correctly describes this source.
+func (b *SessionCommit) AddModelRequest(run RunID, source CommitView, v ModelRequest) (ModelRequestID, error) {
 	if err := b.check(true); err != nil {
 		return ModelRequestID{}, err
 	}
 	if run == (RunID{}) || run != b.admission.candidate.activeRun {
 		return ModelRequestID{}, ErrTransition
 	}
-	if v.RunID != 0 || v.ID != 0 {
+	if source.origin != b || len(source.proposed) != len(b.records) {
+		return ModelRequestID{}, ErrIdentity
+	}
+	if v.RunID != 0 || v.ID != 0 || v.Source != nil {
 		return ModelRequestID{}, codec.ErrInvalidData
+	}
+	if source.head != (history.CommitRef{}) {
+		v.Source = &SourceHead{Sequence: source.head.Sequence, CID: source.head.CID}
 	}
 	ordinal, err := nextOrdinal(b.admission.candidate.requests)
 	if err != nil {

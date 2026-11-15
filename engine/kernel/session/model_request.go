@@ -16,8 +16,9 @@ type SourceHead = sessionformat.SourceHead
 // Assignment borrows its byte slices; Clone detaches them. Zero is invalid.
 type ConstructionRecipe = sessionformat.ConstructionRecipe
 
-// ModelRequest is the canonical invocation commitment. AddModelRequest supplies
-// the destination and allocates identity; incoming RunID and ID must be zero.
+// ModelRequest is the canonical invocation commitment, not a sent request.
+// AddModelRequest supplies destination, identity and source anchor; incoming
+// RunID, ID and Source must be zero.
 // RetryOf is a destination-run-relative component without origin provenance.
 // Assignment shares nested storage; Clone detaches it.
 type ModelRequest = sessionformat.ModelRequest
@@ -76,8 +77,8 @@ func (v SourceHeadView) CID() contentid.CID {
 	return v.value.CID
 }
 
-// ModelRequestView retains immutable accepted backing for its lifetime. Zero has
-// zero identity and zero child views. Navigation is O(1); byte leaves borrow
+// ModelRequestView retains immutable accepted or proposed backing for its lifetime.
+// Zero has zero identity and no source. Navigation is O(1); byte leaves borrow
 // backing and Copy explicitly detaches only the selected leaf.
 //
 //dtogen:include

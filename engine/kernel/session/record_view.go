@@ -6,7 +6,9 @@ import (
 	sessionformat "github.com/stacklok/mecatl/engine/kernel/session/format"
 )
 
-// RecordView is an immutable accepted fact. Zero has no kind; all typed accesses
+// RecordView is an immutable accepted or proposed fact, not acceptance proof.
+// Its backing remains readable for the view's lifetime regardless of batch closure.
+// Zero has no kind; all typed accesses
 // return false. Wrong-kind access is distinct from a valid zero-field Created DTO.
 type RecordView struct {
 	scope  historyid.HistoryID
@@ -109,6 +111,14 @@ func (v RecordView) InvocationFailure() (InvocationFailureView, bool) {
 		return InvocationFailureView{}, false
 	}
 	return InvocationFailureView{scope: v.scope, value: &v.record.failure}, true
+}
+
+// UserContextPrefix returns a replacement handle only for the prefix kind.
+func (v RecordView) UserContextPrefix() (UserContextPrefixView, bool) {
+	if v.Kind() != sessionformat.KindUserContextPrefix {
+		return UserContextPrefixView{}, false
+	}
+	return UserContextPrefixView{scope: v.scope, value: &v.record.userContextPrefix}, true
 }
 
 // Instructions returns a replacement handle only for the instructions kind.

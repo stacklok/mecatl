@@ -27,7 +27,7 @@ func toolCallViewSession(t testing.TB) *Session {
 		interactionCheck(t, b.Create())
 		_, err := b.StartRun()
 		interactionCheck(t, err)
-		interactionCheck(t, b.ReplaceModelBinding(id, ModelBinding{Route: "r", API: "a", Model: "m", Settings: []byte("{}")}))
+		interactionCheck(t, b.ReplaceModelBinding(id, ModelBinding{Route: "r", API: "a", Model: "m"}))
 	})
 	return s
 }
@@ -36,10 +36,9 @@ func toolCallViewResponse(t testing.TB, s *Session, count, field, sibling int) [
 	t.Helper()
 	var request ModelRequestID
 	interactionSubmit(t, s, func(b *SessionCommit) {
-		head := s.Snapshot().Head()
 		var err error
-		request, err = b.AddModelRequest(s.Snapshot().ActiveRun(), ModelRequest{
-			Source: SourceHead{Sequence: head.Sequence, CID: head.CID}, Recipe: ConstructionRecipe{Algorithm: "a", Version: 1, Check: []byte{1}}})
+		request, err = b.AddModelRequest(s.Snapshot().ActiveRun(), captureCommit(t, b), ModelRequest{
+			Recipe: ConstructionRecipe{Algorithm: "a", Version: 1, Check: []byte{1}}})
 		interactionCheck(t, err)
 	})
 	response := ModelResponse{Terminal: ResponseTerminalNormal}

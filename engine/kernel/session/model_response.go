@@ -41,8 +41,10 @@ const (
 	ResponseTerminalOther ResponseTerminalClass = sessionformat.ResponseTerminalOther
 )
 
-// RequestedCall retains an exact call name and opaque arguments, not necessarily
-// JSON. Assignment borrows arguments; Clone detaches them.
+// RequestedCall retains an exact provider call ID, name and opaque arguments,
+// not necessarily JSON. Missing/duplicate provider IDs remain observations;
+// kernel occurrence IDs still govern membership and settlement.
+// Assignment borrows arguments; Clone detaches them.
 type RequestedCall = sessionformat.RequestedCall
 
 // ResponseContent retains ordered output, reasoning, or refusal parts, including
@@ -79,6 +81,7 @@ func checkModelResponseSize(v ModelResponse, b *valueBudget) {
 		}
 		if item.Call != nil {
 			b.pointer()
+			b.text(item.Call.ProviderCallID)
 			b.text(item.Call.Name)
 			b.bytes(len(item.Call.Arguments))
 		}
@@ -164,8 +167,9 @@ func (v ModelResponseView) Calls() iter.Seq[RequestedCallView] {
 	}
 }
 
-// RequestedCallDataView retains immutable identity-free call backing for its
-// lifetime. Zero returns an empty name and zero Bytes. Reads are O(1); Arguments
+// RequestedCallDataView retains immutable call data without a kernel occurrence
+// ID for its lifetime. Zero returns empty provider ID/name and zero Bytes.
+// Reads are O(1); Arguments
 // borrows its leaf and Copy explicitly detaches it. Occurrence identity is
 // deliberately available only through ModelResponseView.Calls and CallAt.
 //
@@ -189,7 +193,7 @@ type ResponseContentView struct {
 }
 
 // RequestedCallView retains immutable complete-call backing for its lifetime.
-// Zero has zero ID, empty name and zero Bytes. Reads are O(1); Arguments borrows
+// Zero has zero kernel ID, empty provider ID/name and zero Bytes. Reads are O(1); Arguments borrows
 // its leaf and Copy explicitly detaches it.
 //
 //dtogen:include

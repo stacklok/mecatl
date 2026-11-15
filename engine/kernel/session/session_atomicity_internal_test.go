@@ -21,6 +21,7 @@ func detachedSessionState(state sessionState) sessionState {
 		owned := *r
 		owned.value = r.value.Clone()
 		owned.input = r.input.Clone()
+		owned.userContextPrefix = r.userContextPrefix.Clone()
 		owned.instructions = r.instructions.Clone()
 		owned.catalog = r.catalog.Clone()
 		owned.binding = r.binding.Clone()
@@ -29,6 +30,9 @@ func detachedSessionState(state sessionState) sessionState {
 		owned.response = r.response.Clone()
 		owned.failure = r.failure.Clone()
 		owned.ended = r.ended.Clone()
+		if v.userContextPrefix == r {
+			v.userContextPrefix = &owned
+		}
 		if v.instructions == r {
 			v.instructions = &owned
 		}

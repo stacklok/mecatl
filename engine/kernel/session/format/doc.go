@@ -30,6 +30,8 @@ const (
 	KindEffectiveInput = "session.effective_input"
 	// KindInstructions identifies a session-scoped instruction replacement.
 	KindInstructions = "session.instructions"
+	// KindUserContextPrefix identifies a session-scoped user-context prefix replacement.
+	KindUserContextPrefix = "session.user_context_prefix"
 	// KindToolCatalog identifies a session-scoped advertised catalog replacement.
 	KindToolCatalog = "session.tool_catalog"
 	// KindModelBinding identifies a session-scoped declared model binding.

@@ -42,13 +42,18 @@ const (
 )
 
 // RequestedCall retains one complete requested-call occurrence in response order.
-// Name and Arguments are exact opaque adapter output: empty names and invalid or
-// empty JSON are valid. Arguments may be nil or empty, which are equivalent empty
+// ProviderCallID, Name and Arguments are exact opaque adapter output: missing or
+// duplicate provider IDs, empty names and invalid or empty JSON are valid retained
+// observations. Arguments may be nil or empty, which are equivalent empty
 // bytes. Assignment shares Arguments; Clone detaches them.
 //
 //dtogen:validate Validate
 //dtogen:include
 type RequestedCall struct {
+	// ProviderCallID is exact UTF-8 adapter output. Empty and response-local
+	// duplicate IDs are retained observations, not valid reconstruction guarantees.
+	// It is independent of the kernel requested-call occurrence identity.
+	ProviderCallID string `cbor:"i"`
 	// Name is UTF-8 adapter output. It may be empty or unknown to the session.
 	Name string `cbor:"n"`
 	// Arguments are opaque adapter output and are not required to be JSON. Nil and
@@ -56,10 +61,10 @@ type RequestedCall struct {
 	Arguments []byte `cbor:"a"`
 }
 
-// Validate checks only UTF-8 name syntax.
+// Validate checks UTF-8 identifiers only, not presence or uniqueness.
 func (v RequestedCall) Validate() error {
-	if !utf8.ValidString(v.Name) {
-		return errors.New("call name must be UTF-8")
+	if !utf8.ValidString(v.ProviderCallID) || !utf8.ValidString(v.Name) {
+		return errors.New("call identifiers must be UTF-8")
 	}
 	return nil
 }

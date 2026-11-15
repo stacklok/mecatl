@@ -58,6 +58,10 @@ func shortName(importPath string) string {
 	switch importPath {
 	case "github.com/stacklok/mecatl/engine/kernel/history/id":
 		return "history_id"
+	case "github.com/stacklok/mecatl/engine/kernel/modelrequest":
+		return "kernel_modelrequest"
+	case "github.com/stacklok/mecatl/engine/kernel/modelrequest/format":
+		return "kernel_modelrequest_format"
 	case "github.com/stacklok/mecatl/engine/kernel/session/format":
 		return "kernel_session_format"
 	case "github.com/stacklok/mecatl/engine/kernel/session":
@@ -68,13 +72,15 @@ func shortName(importPath string) string {
 
 func TestShortName(t *testing.T) {
 	for importPath, want := range map[string]string{
-		"github.com/stacklok/mecatl/engine/id":                    "id",
-		"github.com/stacklok/mecatl/engine/kernel/history":        "history",
-		"github.com/stacklok/mecatl/engine/kernel/history/id":     "history_id",
-		"github.com/stacklok/mecatl/engine/kernel/session":        "kernel_session",
-		"github.com/stacklok/mecatl/engine/kernel/history/format": "format",
-		"github.com/stacklok/mecatl/engine/kernel/session/format": "kernel_session_format",
-		"github.com/stacklok/mecatl/engine/session":               "session",
+		"github.com/stacklok/mecatl/engine/id":                         "id",
+		"github.com/stacklok/mecatl/engine/kernel/history":             "history",
+		"github.com/stacklok/mecatl/engine/kernel/history/id":          "history_id",
+		"github.com/stacklok/mecatl/engine/kernel/modelrequest":        "kernel_modelrequest",
+		"github.com/stacklok/mecatl/engine/kernel/modelrequest/format": "kernel_modelrequest_format",
+		"github.com/stacklok/mecatl/engine/kernel/session":             "kernel_session",
+		"github.com/stacklok/mecatl/engine/kernel/history/format":      "format",
+		"github.com/stacklok/mecatl/engine/kernel/session/format":      "kernel_session_format",
+		"github.com/stacklok/mecatl/engine/session":                    "session",
 	} {
 		if got := shortName(importPath); got != want {
 			t.Errorf("shortName(%q) = %q; want %q", importPath, got, want)

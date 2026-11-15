@@ -24,6 +24,13 @@ type ToolReturned = sessionformat.ToolReturned
 type ToolNotInvokedReason = sessionformat.ToolNotInvokedReason
 
 const (
+	// ToolNotInvokedUserDenied reports explicit user denial before invocation.
+	ToolNotInvokedUserDenied = sessionformat.ToolNotInvokedUserDenied
+	// ToolNotInvokedUnavailable reports an unavailable requested tool.
+	ToolNotInvokedUnavailable = sessionformat.ToolNotInvokedUnavailable
+	// ToolNotInvokedInfrastructureFailed reports infrastructure failure with known
+	// non-invocation; possible execution remains Indeterminate.
+	ToolNotInvokedInfrastructureFailed = sessionformat.ToolNotInvokedInfrastructureFailed
 	// ToolNotInvokedPolicyRejected reports policy rejection.
 	ToolNotInvokedPolicyRejected = sessionformat.ToolNotInvokedPolicyRejected
 	// ToolNotInvokedPreparationFailed reports failed preparation.

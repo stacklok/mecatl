@@ -45,7 +45,7 @@ func TestAllocatedAuthoringScopeBeforePersistenceConversion(t *testing.T) {
 			t.Fatalf("input allocation identity: %v; want %v", err, want)
 		}
 		requestID := ModelRequestID{runID: owner, requestOrdinal: 1}
-		v := ModelRequest{Source: SourceHead{Sequence: 1, CID: contentid.Sum([]byte("source"))}, Recipe: ConstructionRecipe{Algorithm: "a", Version: 1, Check: []byte{1}}}
+		v := ModelRequest{Source: &SourceHead{Sequence: 1, CID: contentid.Sum([]byte("source"))}, Recipe: ConstructionRecipe{Algorithm: "a", Version: 1, Check: []byte{1}}}
 		if r, err := newModelRequestRecord(v, requestID, limits); !errors.Is(err, want) || (r == nil) != (want != nil) {
 			t.Fatalf("request allocation identity: %v; want %v", err, want)
 		}
@@ -80,10 +80,11 @@ func TestIdleContextReplacementHistoryScope(t *testing.T) {
 				interactionCheck(t, b.EndRun(RunEndedInterrupted))
 			}
 			for _, replace := range []func(historyid.HistoryID) error{
+				func(scope historyid.HistoryID) error { return b.ReplaceUserContextPrefix(scope, UserContextPrefix{}) },
 				func(scope historyid.HistoryID) error { return b.ReplaceInstructions(scope, Instructions{}) },
 				func(scope historyid.HistoryID) error { return b.ReplaceToolCatalog(scope, ToolCatalog{}) },
 				func(scope historyid.HistoryID) error {
-					return b.ReplaceModelBinding(scope, ModelBinding{Route: "r", API: "a", Model: "m", Settings: []byte("{}")})
+					return b.ReplaceModelBinding(scope, ModelBinding{Route: "r", API: "a", Model: "m"})
 				},
 			} {
 				count, admission := len(b.records), b.admission
@@ -141,8 +142,9 @@ func TestRelativeReferencesUseDestinationRun(t *testing.T) {
 						return b.AddEffectiveInput(run, EffectiveInput{Inputs: []InputItem{{UserInputID: new(id.RunRelative())}}})
 					case "retry":
 						v := interactionRequest(s, 2).ModelRequest
+						v.Source = nil
 						v.RetryOf = new(requestID(referenceRun.historyID, referenceRun.ordinal, 1).RunRelative())
-						id, err := b.AddModelRequest(run, v)
+						id, err := b.AddModelRequest(run, captureCommit(t, b), v)
 						if err != nil && id != (ModelRequestID{}) {
 							t.Fatal("failed retry returned an identity")
 						}
@@ -242,7 +244,8 @@ func TestPublicRunAuthoringScope(t *testing.T) {
 					return err
 				default:
 					v := interactionRequest(s, 1).ModelRequest
-					id, err := b.AddModelRequest(owner, v)
+					v.Source = nil
+					id, err := b.AddModelRequest(owner, captureCommit(t, b), v)
 					if err != nil && id != (ModelRequestID{}) {
 						t.Fatal("failed request returned identity")
 					}
@@ -284,6 +287,9 @@ func TestPublicOwnerCheckPrecedesOversizedPayload(t *testing.T) {
 	foreign, err := historyid.ParseHistoryID("HST2222222222222222222222")
 	interactionCheck(t, err)
 	for name, add := range map[string]func(*SessionCommit, historyid.HistoryID) error{
+		"user context prefix": func(b *SessionCommit, scope historyid.HistoryID) error {
+			return b.ReplaceUserContextPrefix(scope, UserContextPrefix{})
+		},
 		"instructions": func(b *SessionCommit, scope historyid.HistoryID) error {
 			return b.ReplaceInstructions(scope, Instructions{})
 		},
@@ -291,7 +297,7 @@ func TestPublicOwnerCheckPrecedesOversizedPayload(t *testing.T) {
 			return b.ReplaceToolCatalog(scope, ToolCatalog{})
 		},
 		"binding": func(b *SessionCommit, scope historyid.HistoryID) error {
-			return b.ReplaceModelBinding(scope, ModelBinding{Route: "r", API: "a", Model: "m", Settings: []byte("{}")})
+			return b.ReplaceModelBinding(scope, ModelBinding{Route: "r", API: "a", Model: "m"})
 		},
 		"effective": func(b *SessionCommit, scope historyid.HistoryID) error {
 			return b.AddEffectiveInput(RunID{historyID: scope, ordinal: 1}, EffectiveInput{})
@@ -345,6 +351,9 @@ func TestPublicOwnerCheckPrecedesPayloadValidation(t *testing.T) {
 	foreign, err := historyid.ParseHistoryID("HST2222222222222222222222")
 	interactionCheck(t, err)
 	for name, add := range map[string]func(*SessionCommit, historyid.HistoryID) error{
+		"user context prefix": func(b *SessionCommit, scope historyid.HistoryID) error {
+			return b.ReplaceUserContextPrefix(scope, UserContextPrefix{Blocks: []InstructionBlock{{}}})
+		},
 		"instructions": func(b *SessionCommit, scope historyid.HistoryID) error {
 			return b.ReplaceInstructions(scope, Instructions{Blocks: []InstructionBlock{{}}})
 		},

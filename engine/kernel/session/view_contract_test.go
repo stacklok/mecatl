@@ -81,7 +81,7 @@ func TestRecursiveViewsPresenceBytesAndBounds(t *testing.T) {
 		{Source: session.ContentSource{Description: "empty block"}},
 	}}))
 	mustBatch(t, b.ReplaceToolCatalog(scope, session.ToolCatalog{Tools: []session.ToolDefinition{{Name: "tool", ArgumentSchema: []byte(" false ")}}}))
-	mustBatch(t, b.ReplaceModelBinding(scope, session.ModelBinding{Route: "route", API: "api", Model: "model", Settings: []byte(" {\"n\":1.00} ")}))
+	mustBatch(t, b.ReplaceModelBinding(scope, session.ModelBinding{Route: "route", API: "api", Model: "model", Settings: session.ModelSettings{ReasoningEffort: new(" exact ")}}))
 	mustBatch(t, b.AddEffectiveInput(run, session.EffectiveInput{Inputs: []session.InputItem{
 		{UserInputID: new(id.RunRelative())},
 		{Inline: &session.AttributedInput{Actor: " actor/尾\n ", Purpose: session.PromptContext, Source: session.ContentSource{Description: "present empty"}}},
@@ -166,8 +166,8 @@ func TestRecursiveViewsPresenceBytesAndBounds(t *testing.T) {
 	}
 	mutateMediaBytes(t, user.Parts().At(1))
 	clear(catalog.Tools().At(0).ArgumentSchema().Copy())
-	clear(binding.Settings().Copy())
-	if !mediaMatches(media, session.Media{Kind: session.MediaKindDocument, MIMEType: "application/octet-stream", FormatHint: "raw", Filename: "notes.bin", Title: "Notes", Source: session.MediaSourceInline, InlineData: []byte{0xff, 0, 'x'}}) || string(catalog.Tools().At(0).ArgumentSchema().Copy()) != " false " || string(binding.Settings().Copy()) != " {\"n\":1.00} " {
+	effort, effortOK := binding.Settings().ReasoningEffort()
+	if !mediaMatches(media, session.Media{Kind: session.MediaKindDocument, MIMEType: "application/octet-stream", FormatHint: "raw", Filename: "notes.bin", Title: "Notes", Source: session.MediaSourceInline, InlineData: []byte{0xff, 0, 'x'}}) || string(catalog.Tools().At(0).ArgumentSchema().Copy()) != " false " || !effortOK || effort != " exact " {
 		t.Fatal("byte getter exposed accepted storage")
 	}
 

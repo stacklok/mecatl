@@ -93,7 +93,7 @@ func TestInteractionOutcomePolicyBoundaries(t *testing.T) {
 					// count policy rejects the candidate, not its prefix.
 					interactionSubmit(t, s, func(b *SessionCommit) { interactionCheck(t, b.Create()) })
 					interactionSubmit(t, s, func(b *SessionCommit) {
-						interactionCheck(t, b.ReplaceModelBinding(s.Snapshot().HistoryID(), ModelBinding{Route: "r", API: "a", Model: "m", Settings: []byte("{}")}))
+						interactionCheck(t, b.ReplaceModelBinding(s.Snapshot().HistoryID(), ModelBinding{Route: "r", API: "a", Model: "m"}))
 					})
 					interactionSubmit(t, s, func(b *SessionCommit) { _, err := b.StartRun(); interactionCheck(t, err) })
 					request := interactionRequest(s, 1)

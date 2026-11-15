@@ -23,7 +23,7 @@ func FuzzModelInteractionConstructors(f *testing.F) {
 		var err error
 		switch kind % 4 {
 		case 0:
-			r, err = makeRequestRecord(identifiedRequest{ID: id, ModelRequest: ModelRequest{Source: SourceHead{Sequence: version, CID: contentid.Sum([]byte("source"))}, Recipe: ConstructionRecipe{Algorithm: name, Version: version, Parameters: data, Check: data}, RetryOf: new(id.RunRelative())}}, limits)
+			r, err = makeRequestRecord(identifiedRequest{ID: id, ModelRequest: ModelRequest{Source: &SourceHead{Sequence: version, CID: contentid.Sum([]byte("source"))}, Recipe: ConstructionRecipe{Algorithm: name, Version: version, Parameters: data, Check: data}, RetryOf: new(id.RunRelative())}}, limits)
 		case 1:
 			r, err = newModelResponseRecord(ModelResponse{Terminal: ResponseTerminalOther, ProviderStopReason: &name, Items: []ResponseItem{{Content: &ResponseContent{Kind: ResponseContentOutput, Parts: []ContentPart{{Text: &name}}}}, {Call: &RequestedCall{Name: name, Arguments: data}}}, Evidence: evidence, Usage: usage, Private: &OpaqueProviderData{Producer: name, Format: "unknown", Version: version, Data: data}}, id, limits)
 		case 2:

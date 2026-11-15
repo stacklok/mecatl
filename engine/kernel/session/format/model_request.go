@@ -7,9 +7,10 @@ import (
 	"github.com/stacklok/mecatl/engine/kernel/contentid"
 )
 
-// SourceHead identifies the exact accepted history commit immediately preceding a
-// model request. History scope belongs to the enclosing history envelope; zero
-// Sequence or CID is invalid. It is a reference, not record framing or a record ID.
+// SourceHead identifies the exact accepted history commit anchoring construction
+// of a model request. Earlier records in the request's own commit also contribute.
+// History scope belongs to the enclosing history envelope; zero Sequence or CID
+// is invalid. It is a reference, not record framing or a record ID.
 //
 //dtogen:validate Validate
 //dtogen:include
@@ -64,8 +65,8 @@ func (v ConstructionRecipe) Validate() error {
 // request ordinal in the same enclosing run; membership and ordering are aggregate
 // concerns. Assignment shares nested byte slices; Clone detaches them.
 // Session authoring supplies destination scope separately and requires RunID and
-// ID zero. RetryOf is interpreted within that destination run without origin
-// provenance. Validate requires the fully populated persisted shape.
+// ID zero and Source nil. RetryOf is interpreted within that destination run
+// without origin provenance. Validate requires the populated persisted shape.
 //
 //dtogen:validate validateLocal
 //dtogen:include
@@ -76,9 +77,11 @@ type ModelRequest struct {
 	// ID is the required positive numeric request component within RunID. The
 	// enclosing history envelope supplies history scope. Admission checks allocation.
 	ID uint64 `cbor:"o" view:"manual"`
-	// Source is the required accepted head used for request construction. Local
-	// traversal validates its shape; aggregate reconstruction verifies membership.
-	Source SourceHead `cbor:"s"`
+	// Source optionally anchors construction to the preceding accepted head. Nil
+	// means pre-genesis, valid only in the initial commit. Present anchors require
+	// positive Sequence and nonzero CID. All records earlier in this same commit
+	// also belong to the source; aggregate admission verifies the exact anchor.
+	Source *SourceHead `cbor:"s,omitempty"`
 	// Recipe is the required opaque construction commitment. Local traversal checks
 	// its syntax, not that it reproduces a request or authorizes invocation.
 	Recipe ConstructionRecipe `cbor:"c"`
@@ -92,8 +95,10 @@ func (v ModelRequest) Validate() error {
 	if err := v.validateLocal(); err != nil {
 		return err
 	}
-	if err := v.Source.Validate(); err != nil {
-		return err
+	if v.Source != nil {
+		if err := v.Source.Validate(); err != nil {
+			return err
+		}
 	}
 	return v.Recipe.Validate()
 }

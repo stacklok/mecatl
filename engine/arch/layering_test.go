@@ -148,6 +148,31 @@ var coreImportRules = []coreImportRule{
 		desc: "structured values may import only codec, borrowed views, Atmos CBOR primitives and stdlib, never identities, aggregates or host code",
 	},
 	{
+		pkg: modulePrefix + "engine/kernel/modelrequest",
+		allowedCore: map[string]bool{
+			modulePrefix + "engine/kernel/codec":               true,
+			modulePrefix + "engine/kernel/contentid":           true,
+			modulePrefix + "engine/kernel/history/id":          true,
+			modulePrefix + "engine/kernel/modelrequest/format": true,
+			modulePrefix + "engine/kernel/session":             true,
+			modulePrefix + "engine/kernel/session/format":      true,
+			modulePrefix + "engine/kernel/views":               true,
+		},
+		allowedExternal: map[string]bool{},
+		desc:            "logical model requests may import only their format, session inspection and format, history identity, codec, content identity, borrowed views and stdlib, never execution or host code",
+	},
+	{
+		pkg: modulePrefix + "engine/kernel/modelrequest/format",
+		allowedCore: map[string]bool{
+			modulePrefix + "engine/kernel/codec":          true,
+			modulePrefix + "engine/kernel/session/format": true,
+		},
+		allowedExternal: map[string]bool{
+			"github.com/jcalabro/atmos/cbor": true,
+		},
+		desc: "logical request format may import only identity-free session format primitives, codec, generated Atmos CBOR primitives and stdlib, never aggregates or identity owners",
+	},
+	{
 		pkg: modulePrefix + "engine/kernel/session",
 		allowedCore: map[string]bool{
 			modulePrefix + "engine/kernel/history":        true,

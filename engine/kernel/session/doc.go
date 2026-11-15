@@ -13,10 +13,10 @@
 // [Session.SubmitCommit]. [Load] reconstructs accepted state from stored history.
 // See [SessionCommit] and [Policy] for admission and resource contracts.
 //
-// Session operations must be caller-serialized. Captured [Snapshot] values and
-// their child views support concurrent readers independently of the session owner.
+// Session operations must be caller-serialized. Captured [Snapshot], [CommitView]
+// and child views support concurrent readers independently of the session owner.
 // Views retain immutable backing for their lifetime, potentially including the
-// enclosing accepted record. Snapshot capture and direct payload navigation take
+// enclosing record. Snapshot and commit-view capture and direct navigation take
 // O(1) time without copying payloads; derived lookups document their own costs.
 // Byte getters borrow through views.Bytes; Copy detaches only the selected leaf.
 // Scalar and presence reads never clone sibling payloads. Zero views are safe;

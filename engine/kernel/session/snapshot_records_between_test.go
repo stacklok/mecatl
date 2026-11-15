@@ -110,7 +110,7 @@ func TestSnapshotRecordsBetweenSubmitLoadAndBorrowing(t *testing.T) {
 	mustBatch(t, b.ReplaceInstructions(scope, instructions))
 	mustBatch(t, b.ReplaceInstructions(scope, session.Instructions{}))
 	mustBatch(t, b.ReplaceToolCatalog(scope, session.ToolCatalog{Tools: []session.ToolDefinition{{Name: "tool", ArgumentSchema: []byte("{}")}, {Name: "sibling", ArgumentSchema: []byte("true")}}}))
-	mustBatch(t, b.ReplaceModelBinding(scope, session.ModelBinding{Route: "route", API: "api", Model: "model", Settings: []byte("{}")}))
+	mustBatch(t, b.ReplaceModelBinding(scope, session.ModelBinding{Route: "route", API: "api", Model: "model"}))
 	mustBatch(t, b.EndRun(session.RunEndedInterrupted))
 	nextRun := batchRun(t, b)
 	nextInput := batchInput(t, b, nextRun, []byte("next"))
@@ -208,7 +208,9 @@ func TestSnapshotRecordsBetweenSubmitLoadAndBorrowing(t *testing.T) {
 							if !ok || v.HistoryID() != scope || v.Model() != "model" {
 								t.Fatal("binding scope")
 							}
-							clear(v.Settings().Copy())
+							if _, present := v.Settings().ReasoningEffort(); present {
+								t.Fatal("omitted settings gained effort")
+							}
 						case 7:
 							v, ok := record.RunEnded()
 							if !ok || v.RunID() != run {

@@ -580,6 +580,7 @@ func TestSessionCommitConflictExpiryAndNewerHead(t *testing.T) {
 			mustBatch(t, b.Create())
 			run := batchRun(t, b)
 			batchInput(t, b, run, []byte("ours"))
+			view := captureCommit(t, b)
 			winner := boundSession(t, h, sessionPolicy())
 			if name == "conflict" {
 				w := beginBatch(t, winner)
@@ -617,6 +618,16 @@ func TestSessionCommitConflictExpiryAndNewerHead(t *testing.T) {
 				if err != nil || ref != backend.attempts[0].commit.Ref || s.Snapshot().Head() != ref || !userInputsMatch(s.Snapshot(), run, 1) {
 					t.Fatalf("newer head: %v, %v", ref, err)
 				}
+			}
+			if view.RecordCount() != 3 || view.ActiveRun() != run {
+				t.Fatal("terminal submission changed captured bounds")
+			}
+			input, ok := view.RecordAt(2).UserInput()
+			if !ok || !bytes.Equal(inputBytes(input), []byte("ours")) {
+				t.Fatal("terminal submission changed captured input")
+			}
+			if _, err := b.View(); !errors.Is(err, session.ErrBatch) {
+				t.Fatal("terminal handle allowed capture")
 			}
 			if name != "accepted newer head" && !reflect.DeepEqual(before, s.Snapshot()) {
 				t.Fatal("nonacceptance published")

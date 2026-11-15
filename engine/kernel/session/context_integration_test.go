@@ -40,7 +40,7 @@ func TestContextValuesIntegrationAndPinnedViews(t *testing.T) {
 	source := session.ContentSource{Description: "adopted workspace instructions", WorkspaceFile: &session.WorkspaceFileSource{Path: "AGENTS.md"}}
 	instructions := session.Instructions{Blocks: []session.InstructionBlock{{Parts: []session.ContentPart{{Text: new("root\n")}}, Source: source}}}
 	catalog := session.ToolCatalog{Tools: []session.ToolDefinition{{Name: "read", Description: "read file", ArgumentSchema: []byte(" {\"type\": \"object\"} ")}, {Name: "noop", ArgumentSchema: []byte("true")}}}
-	binding := session.ModelBinding{Route: "route", API: "dialect/v1", Model: "alias", Settings: []byte(" {\"temperature\": 1.00} ")}
+	binding := session.ModelBinding{Route: "route", API: "dialect/v1", Model: "alias", Settings: session.ModelSettings{ReasoningEffort: new(" exact "), MaxOutputTokens: new(int64(42))}}
 	wantI, wantT, wantM := instructions.Clone(), catalog.Clone(), binding.Clone()
 	if instructions.Validate() != nil || catalog.Validate() != nil || binding.Validate() != nil {
 		t.Fatal("valid context values")
@@ -87,7 +87,7 @@ func TestContextValuesIntegrationAndPinnedViews(t *testing.T) {
 	*instructions.Blocks[0].Parts[0].Text = "changed"
 	clear(catalog.Tools[0].ArgumentSchema)
 	catalog.Tools[1].Name = "changed"
-	clear(binding.Settings)
+	*binding.Settings.ReasoningEffort = "changed"
 	*effective.Inputs[0].UserInputID = 0
 	effective.Inputs[1].Inline.Parts[1].Media.InlineData[0] = 0
 	effective.Inputs[1].Inline.Source.WorkspaceFile.Path = "changed"
@@ -179,7 +179,7 @@ func TestContextValuesIntegrationAndPinnedViews(t *testing.T) {
 	}
 	assertExactContent(applied.Snapshot())
 	clear(tv.Tools().At(0).ArgumentSchema().Copy())
-	clear(mv.Settings().Copy())
+	clear(old.RecordAt(6).MutableClone().Payload)
 	ref, ok := ev.Inputs().At(0).UserInputID()
 	if !ok || ref != authoredID {
 		t.Fatal("missing authored identity")
@@ -507,7 +507,7 @@ func TestNewRecordExactVersionsAndZeroViews(t *testing.T) {
 	for _, r := range []fixtureRecord{
 		encodeFixture(t, sessionformat.KindInstructions, sessionformat.Instructions{}),
 		encodeFixture(t, sessionformat.KindToolCatalog, sessionformat.ToolCatalog{}),
-		encodeFixture(t, sessionformat.KindModelBinding, sessionformat.ModelBinding{Route: "r", API: "a", Model: "m", Settings: []byte("{}")}),
+		encodeFixture(t, sessionformat.KindModelBinding, sessionformat.ModelBinding{Route: "r", API: "a", Model: "m"}),
 		effectiveReferenceRecord(t, 1),
 		encodeFixture(t, sessionformat.KindUserInput, sessionformat.UserInput{RunID: 1, ID: 1}),
 	} {
@@ -528,7 +528,7 @@ func TestNewRecordExactVersionsAndZeroViews(t *testing.T) {
 	if v, ok := r.ToolCatalog(); ok || v.HistoryID() != (historyid.HistoryID{}) || v.Tools().Len() != 0 {
 		t.Fatal("zero catalog")
 	}
-	if v, ok := r.ModelBinding(); ok || v.HistoryID() != (historyid.HistoryID{}) || v.Route() != "" || v.API() != "" || v.Model() != "" || v.Settings().Copy() != nil {
+	if v, ok := r.ModelBinding(); ok || v.HistoryID() != (historyid.HistoryID{}) || v.Route() != "" || v.API() != "" || v.Model() != "" || v.Settings() != (session.ModelSettingsView{}) {
 		t.Fatal("zero binding")
 	}
 	if v, ok := r.EffectiveInput(); ok || v.RunID() != (session.RunID{}) || v.Inputs().Len() != 0 {

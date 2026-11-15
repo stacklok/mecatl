@@ -25,10 +25,14 @@ func TestRichConstructorsBudgetBeforeConversion(t *testing.T) {
 	items := make([]InputItem, limits.MaxArrayElements+1)
 	settings := make([]byte, limits.MaxByteStringBytes+1)
 	oversizeText := string(make([]byte, limits.MaxStringBytes+1))
+	oversizeBinding := ModelBinding{Route: "r", API: "a", Model: "m", Settings: ModelSettings{ReasoningEffort: &oversizeText}}
 	nestedInput := identifiedInput{ID: input, UserInput: UserInput{Parts: []ContentPart{{Text: new(oversizeText)}}}}
 	nestedMedia := identifiedInput{ID: input, UserInput: UserInput{Parts: []ContentPart{{Media: &Media{Kind: MediaKind(oversizeText)}}}}}
 	nestedActor := EffectiveInput{Inputs: []InputItem{{Inline: &AttributedInput{Actor: Actor(oversizeText)}}}}
 	nestedInstructions := Instructions{Blocks: []InstructionBlock{{Parts: []ContentPart{{Text: new(oversizeText)}}}}}
+	oversizePrefix := UserContextPrefix{Blocks: blocks}
+	nestedPrefix := UserContextPrefix(nestedInstructions)
+	oversizeCallID := ModelResponse{Items: []ResponseItem{{Call: &RequestedCall{ProviderCallID: oversizeText}}}}
 	nestedCatalog := ToolCatalog{Tools: []ToolDefinition{{Name: "tool", ArgumentSchema: settings}}}
 	nestedEffective := EffectiveInput{Inputs: []InputItem{{Inline: &AttributedInput{Parts: parts}}}}
 	requestID := ModelRequestID{runID: input.runID, requestOrdinal: 1}
@@ -54,8 +58,11 @@ func TestRichConstructorsBudgetBeforeConversion(t *testing.T) {
 			return newEffectiveInputRecord(EffectiveInput{Inputs: items}, input.runID, limits)
 		},
 		func() (*materializedRecord, error) {
-			return newModelBindingRecord(ModelBinding{Route: "r", API: "a", Model: "m", Settings: settings}, limits)
+			return newModelBindingRecord(oversizeBinding, limits)
 		},
+		func() (*materializedRecord, error) { return newUserContextPrefixRecord(oversizePrefix, limits) },
+		func() (*materializedRecord, error) { return newUserContextPrefixRecord(nestedPrefix, limits) },
+		func() (*materializedRecord, error) { return newModelResponseRecord(oversizeCallID, requestID, limits) },
 		func() (*materializedRecord, error) { return makeInputRecord(nestedInput, limits) },
 		func() (*materializedRecord, error) { return makeInputRecord(nestedMedia, limits) },
 		func() (*materializedRecord, error) { return newInstructionsRecord(nestedInstructions, limits) },
@@ -95,7 +102,7 @@ func TestNewRecordMaterializationAndGeneratedLimitsAgree(t *testing.T) {
 	authored := identifiedInput{ID: input, UserInput: UserInput{Parts: content}}
 	instructions := Instructions{Blocks: []InstructionBlock{{Parts: content, Source: source}}}
 	catalog := ToolCatalog{Tools: []ToolDefinition{{Name: "read", ArgumentSchema: []byte(" true ")}}}
-	binding := ModelBinding{Route: "r", API: "a", Model: "m", Settings: []byte(" {\"x\":1.0} ")}
+	binding := ModelBinding{Route: "r", API: "a", Model: "m", Settings: ModelSettings{ReasoningEffort: new(" exact "), MaxOutputTokens: new(int64(42))}}
 	effective := EffectiveInput{Inputs: []InputItem{{UserInputID: new(input.ordinal)}, {Inline: &AttributedInput{Actor: "harness", Purpose: PromptContext, Parts: []ContentPart{{Text: new("supplement")}}, Source: source}}}}
 	manyInputs := EffectiveInput{Inputs: make([]InputItem, limits.MaxArrayElements)}
 	for i := range manyInputs.Inputs {
@@ -106,7 +113,7 @@ func TestNewRecordMaterializationAndGeneratedLimitsAgree(t *testing.T) {
 		emptyParts.Parts[i].Text = new("")
 	}
 	requestID := ModelRequestID{runID: input.runID, requestOrdinal: 1}
-	request := identifiedRequest{ID: requestID, ModelRequest: ModelRequest{Source: SourceHead{Sequence: 1, CID: contentid.Sum([]byte("source"))}, Recipe: ConstructionRecipe{Algorithm: "a", Version: 1, Parameters: []byte{0xff}, Check: []byte{0}}, RetryOf: new(requestID.RunRelative())}}
+	request := identifiedRequest{ID: requestID, ModelRequest: ModelRequest{Source: &SourceHead{Sequence: 1, CID: contentid.Sum([]byte("source"))}, Recipe: ConstructionRecipe{Algorithm: "a", Version: 1, Parameters: []byte{0xff}, Check: []byte{0}}, RetryOf: new(requestID.RunRelative())}}
 	usage := &InvocationUsage{Input: new(int64(0)), Output: new(int64(3)), Raw: &OpaqueProviderData{Producer: "p", Format: "usage", Version: 1, Data: []byte{0xff}}}
 	response := ModelResponse{Terminal: ResponseTerminalOther, ProviderStopReason: new(""), Items: []ResponseItem{{Content: &ResponseContent{Kind: ResponseContentOutput, Parts: content}}, {Call: &RequestedCall{Name: "", Arguments: []byte{0xff}}}}, Evidence: &ObservedEvidence{Correlation: new("")}, Usage: usage, Private: &OpaqueProviderData{Producer: "p", Format: "f", Version: 1, Data: []byte{0xff}}}
 	failure := InvocationFailure{Class: InvocationFailureTransport, Usage: usage, Evidence: response.Evidence, Explanation: new("")}
@@ -277,7 +284,7 @@ func TestContextApplyStagesSelectionsAndSourceBounds(t *testing.T) {
 		t.Fatal(err)
 	}
 	originalCatalog := ToolCatalog{Tools: []ToolDefinition{{Name: "original", ArgumentSchema: []byte("true")}}}
-	originalBinding := ModelBinding{Route: "original", API: "a", Model: "m", Settings: []byte(" true ")}
+	originalBinding := ModelBinding{Route: "original", API: "a", Model: "m", Settings: ModelSettings{ReasoningEffort: new("original")}}
 	if err := b.ReplaceToolCatalog(scope, originalCatalog); err != nil {
 		t.Fatal(err)
 	}
@@ -297,7 +304,7 @@ func TestContextApplyStagesSelectionsAndSourceBounds(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	binding, err := newModelBindingRecord(ModelBinding{Route: "r", API: "a", Model: "m", Settings: []byte("{}")}, limits)
+	binding, err := newModelBindingRecord(ModelBinding{Route: "r", API: "a", Model: "m"}, limits)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -325,7 +332,7 @@ func TestContextApplyStagesSelectionsAndSourceBounds(t *testing.T) {
 	if tv, ok := s.Snapshot().ToolCatalog(); !ok || tv.HistoryID() != scope || tv.Tools().Len() != 1 || tv.Tools().At(0).Name() != "original" || string(tv.Tools().At(0).ArgumentSchema().Copy()) != "true" {
 		t.Fatal("catalog partially published")
 	}
-	if mv, ok := s.Snapshot().ModelBinding(); !ok || mv.HistoryID() != scope || mv.Route() != "original" || mv.API() != "a" || mv.Model() != "m" || string(mv.Settings().Copy()) != " true " {
+	if mv, ok := s.Snapshot().ModelBinding(); !ok || mv.HistoryID() != scope || mv.Route() != "original" || mv.API() != "a" || mv.Model() != "m" || func() bool { effort, ok := mv.Settings().ReasoningEffort(); return !ok || effort != "original" }() {
 		t.Fatal("binding partially published")
 	}
 	user, err := makeInputRecord(identifiedInput{ID: input}, limits)
@@ -348,7 +355,7 @@ func TestContextApplyStagesSelectionsAndSourceBounds(t *testing.T) {
 					key := map[string]byte{sessionformat.KindInstructions: 'b', sessionformat.KindToolCatalog: 't', sessionformat.KindModelBinding: 's', sessionformat.KindEffectiveInput: 'i', sessionformat.KindUserInput: 'p'}[last.Kind]
 					last.Payload = []byte{0xa1, 0x61, key, 0x9b, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff}
 					if last.Kind == sessionformat.KindModelBinding {
-						last.Payload[3] = 0x5b // Declared byte length rather than array count.
+						last.Payload[3] = 0xbb // Declared settings map pair count.
 					}
 					wantErr = codec.ErrLimitExceeded
 				}

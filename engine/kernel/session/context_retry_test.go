@@ -30,7 +30,7 @@ func TestContextFrozenRetryAndConcurrentPinnedReads(t *testing.T) {
 	mustBatch(t, err)
 	instructions := session.Instructions{Blocks: []session.InstructionBlock{{Parts: []session.ContentPart{{Text: new("root")}}, Source: session.ContentSource{Description: "adopted", WorkspaceFile: &session.WorkspaceFileSource{Path: "AGENTS.md"}}}}}
 	catalog := session.ToolCatalog{Tools: []session.ToolDefinition{{Name: "tool", ArgumentSchema: []byte("true")}}}
-	binding := session.ModelBinding{Route: "r", API: "a", Model: "m", Settings: []byte(" { } ")}
+	binding := session.ModelBinding{Route: "r", API: "a", Model: "m", Settings: session.ModelSettings{ReasoningEffort: new("exact")}}
 	effective := session.EffectiveInput{Inputs: []session.InputItem{
 		{UserInputID: new(input.RunRelative())},
 		{Inline: &session.AttributedInput{Actor: "extension/example", Purpose: session.PromptContext, Parts: richContent(), Source: session.ContentSource{Description: "prepared reference", WorkspaceFile: &session.WorkspaceFileSource{Path: "docs/design.md"}}}},
@@ -45,7 +45,7 @@ func TestContextFrozenRetryAndConcurrentPinnedReads(t *testing.T) {
 	}
 	instructions.Blocks[0].Source.WorkspaceFile.Path = "mutated"
 	clear(catalog.Tools[0].ArgumentSchema)
-	clear(binding.Settings)
+	*binding.Settings.ReasoningEffort = "changed"
 	*effective.Inputs[0].UserInputID = 0
 	effective.Inputs[1].Inline.Actor = "changed"
 	effective.Inputs[1].Inline.Parts[1].Media.InlineData[0] = 0
@@ -69,7 +69,7 @@ func TestContextFrozenRetryAndConcurrentPinnedReads(t *testing.T) {
 	}
 	wantI := session.Instructions{Blocks: []session.InstructionBlock{{Parts: []session.ContentPart{{Text: new("root")}}, Source: session.ContentSource{Description: "adopted", WorkspaceFile: &session.WorkspaceFileSource{Path: "AGENTS.md"}}}}}
 	wantT := session.ToolCatalog{Tools: []session.ToolDefinition{{Name: "tool", ArgumentSchema: []byte("true")}}}
-	wantM := session.ModelBinding{Route: "r", API: "a", Model: "m", Settings: []byte(" { } ")}
+	wantM := session.ModelBinding{Route: "r", API: "a", Model: "m", Settings: session.ModelSettings{ReasoningEffort: new("exact")}}
 	wantE := expected
 	// Child handles captured independently retain their own immutable backing.
 	inline := inlineAt(t, ev, 1)

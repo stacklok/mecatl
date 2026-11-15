@@ -31,7 +31,7 @@ func newUserInputRecord(v UserInput, id UserInputID, limits codec.Limits) (*mate
 	return decodeMaterialized(format.Record{Kind: sessionformat.KindUserInput, KindVersion: sessionformat.Version, Payload: payload}, limits)
 }
 
-// UserInputView retains immutable accepted backing storage, including its record.
+// UserInputView retains immutable accepted or proposed backing storage, including its record.
 // Copying or navigating a handle costs O(1). Zero has zero ID and no parts.
 //
 //dtogen:include

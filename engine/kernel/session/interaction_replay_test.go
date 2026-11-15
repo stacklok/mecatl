@@ -107,7 +107,7 @@ func TestInteractionSuccessorScopeAndFutureReferences(t *testing.T) {
 						interactionCheck(t, err)
 						dto = historyformat.Record{Kind: sessionformat.KindModelRequest, KindVersion: sessionformat.Version, Payload: wire}
 						add = func(b *SessionCommit) error {
-							_, err := b.AddModelRequest(run, ModelRequest{Source: next.Source, Recipe: next.Recipe, RetryOf: new(id.RunRelative())})
+							_, err := b.AddModelRequest(run, captureCommit(t, b), ModelRequest{Recipe: next.Recipe, RetryOf: new(id.RunRelative())})
 							return err
 						}
 					}
@@ -167,7 +167,7 @@ func TestInteractionSuccessorScopeAndFutureReferences(t *testing.T) {
 	id.runID.historyID = historyid.NewHistoryID()
 	b, err := s.BeginCommit()
 	interactionCheck(t, err)
-	if _, err = b.AddModelRequest(s.Snapshot().ActiveRun(), ModelRequest{Source: interactionRequest(s, 2).Source, Recipe: interactionRequest(s, 2).Recipe, RetryOf: new(id.RunRelative())}); err != nil {
+	if _, err = b.AddModelRequest(s.Snapshot().ActiveRun(), captureCommit(t, b), ModelRequest{Recipe: interactionRequest(s, 2).Recipe, RetryOf: new(id.RunRelative())}); err != nil {
 		t.Fatalf("relative retry: %v", err)
 	}
 	if err = b.AddModelResponse(id, ModelResponse{Terminal: ResponseTerminalNormal}); !errors.Is(err, ErrIdentity) {

@@ -33,7 +33,7 @@ func TestContextIndependentReplacementsAndFixtureFreeLoad(t *testing.T) {
 	}
 	instructions := session.Instructions{Blocks: []session.InstructionBlock{{Parts: []session.ContentPart{{Text: new(prepared[1])}}, Source: session.ContentSource{Description: "caller adopted root", WorkspaceFile: &session.WorkspaceFileSource{Path: paths[1]}}}}}
 	catalog := session.ToolCatalog{Tools: []session.ToolDefinition{{Name: "second", ArgumentSchema: []byte(" {\"z\":1.00, \"a\":true} ")}, {Name: "first", ArgumentSchema: []byte("false")}}}
-	binding := session.ModelBinding{Route: "route", API: "dialect/v1", Model: "alias", Settings: []byte(prepared[2])}
+	binding := session.ModelBinding{Route: "route", API: "dialect/v1", Model: "alias", Settings: session.ModelSettings{ReasoningEffort: new(prepared[2])}}
 	b := beginBatch(t, s)
 	mustBatch(t, b.Create())
 	run := batchRun(t, b)
@@ -75,7 +75,7 @@ func TestContextIndependentReplacementsAndFixtureFreeLoad(t *testing.T) {
 			mustBatch(t, b.ReplaceToolCatalog(scope, catalog))
 		case 2:
 			mustBatch(t, b.ReplaceModelBinding(scope, binding))
-			binding.Settings = []byte("{}")
+			binding.Settings = session.ModelSettings{}
 			mustBatch(t, b.ReplaceModelBinding(scope, binding))
 		}
 		submitBatch(t, s, b)
@@ -111,8 +111,7 @@ func TestContextIndependentReplacementsAndFixtureFreeLoad(t *testing.T) {
 		if tv.Tools().Len() != 0 {
 			clear(tv.Tools().At(0).ArgumentSchema().Copy())
 		}
-		mv, _ := snapshot.ModelBinding()
-		clear(mv.Settings().Copy())
+		clear(snapshot.RecordAt(5).MutableClone().Payload)
 		uv, _ := snapshot.RecordAt(2).UserInput()
 		mutateMediaBytes(t, uv.Parts().At(1))
 		clear(snapshot.RecordAt(6).MutableClone().Payload)

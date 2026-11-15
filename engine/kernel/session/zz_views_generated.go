@@ -9,7 +9,7 @@ import (
 	dtogenViews "github.com/stacklok/mecatl/engine/kernel/views"
 )
 
-// Selected view layouts, source policy and documentation fingerprint: 1ab71e3b63f78e25479cae0e5870d60a8dd1df2e18d143eca0a6ec43c64deeaf.
+// Selected view layouts, source policy and documentation fingerprint: e3534a8e3bc8b249a29460c1ed755b9a25339a4c8ce1d2ca5a620115f9d0050b.
 // Backing contract for AttributedInputView.
 //
 // Source contract (DTO semantics, not a mutable accessor):
@@ -494,9 +494,10 @@ func (v InputItemView) Inline() (AttributedInputView, bool) {
 // Backing contract for InstructionBlockView.
 //
 // Source contract (DTO semantics, not a mutable accessor):
-// InstructionBlock retains one ordered instruction contribution and its declared
-// origin. Its purpose is instructions by construction, not inferred from a file.
-// Assignment shares nested storage; Clone detaches it.
+// InstructionBlock retains one ordered prepared contribution and its declared
+// origin. Its containing Instructions or UserContextPrefix determines its role;
+// a prefix block is not root/system authority. Content meaning is not inferred
+// from a file. Assignment shares nested storage; Clone detaches it.
 // dtogenViewInstructionBlockView borrows stable backing; it neither freezes nor synchronizes access.
 func dtogenViewInstructionBlockView(value *dtogenType0.InstructionBlock) InstructionBlockView {
 	return InstructionBlockView{value: value}
@@ -523,9 +524,10 @@ func (v InstructionBlockView) MutableClone() dtogenType0.InstructionBlock {
 // Access neither freezes nor synchronizes backing.
 //
 // Source contract (DTO semantics, not a mutable accessor):
-// InstructionBlock retains one ordered instruction contribution and its declared
-// origin. Its purpose is instructions by construction, not inferred from a file.
-// Assignment shares nested storage; Clone detaches it.
+// InstructionBlock retains one ordered prepared contribution and its declared
+// origin. Its containing Instructions or UserContextPrefix determines its role;
+// a prefix block is not root/system authority. Content meaning is not inferred
+// from a file. Assignment shares nested storage; Clone detaches it.
 //
 // Parts preserves exact instruction order, including duplicates. Nil and empty
 // are equivalent valid empty contributions; codec traversal validates children.
@@ -542,9 +544,10 @@ func (v InstructionBlockView) Parts() dtogenViews.SliceView[dtogenType0.ContentP
 // Access neither freezes nor synchronizes backing.
 //
 // Source contract (DTO semantics, not a mutable accessor):
-// InstructionBlock retains one ordered instruction contribution and its declared
-// origin. Its purpose is instructions by construction, not inferred from a file.
-// Assignment shares nested storage; Clone detaches it.
+// InstructionBlock retains one ordered prepared contribution and its declared
+// origin. Its containing Instructions or UserContextPrefix determines its role;
+// a prefix block is not root/system authority. Content meaning is not inferred
+// from a file. Assignment shares nested storage; Clone detaches it.
 //
 // Source is required provenance even for an empty block; it does not confer
 // authority. Codec traversal validates the source and its children.
@@ -1097,15 +1100,15 @@ func (v MediaView) Title() string {
 //
 // Source contract (DTO semantics, not a mutable accessor):
 // ModelBinding retains declared logical preparation choices, not observed upstream
-// identity or compatibility. Settings is exact explicit JSON supplied by the caller,
-// never resolved defaults or credentials. Assignment shares Settings; Clone detaches
-// it. Zero is invalid. History identity is omitted here and restored from the
-// enclosing envelope at the domain conversion boundary.
+// identity or compatibility. Settings retains explicit prepared typed controls,
+// never inherited defaults or credentials. Assignment shares Settings pointers;
+// Clone detaches them. Zero is invalid. History identity is omitted here and
+// restored from the enclosing envelope at the domain conversion boundary.
 var _ = (*struct {
-	Route    string "cbor:\"r\""
-	API      string "cbor:\"a\""
-	Model    string "cbor:\"m\""
-	Settings []byte "cbor:\"s\""
+	Route    string                    "cbor:\"r\""
+	API      string                    "cbor:\"a\""
+	Model    string                    "cbor:\"m\""
+	Settings dtogenType0.ModelSettings "cbor:\"s\""
 })((*dtogenType0.ModelBinding)(nil))
 
 // MutableClone returns a deeply detached mutable copy of the backing DTO payload.
@@ -1125,10 +1128,10 @@ func (v ModelBindingView) MutableClone() dtogenType0.ModelBinding {
 //
 // Source contract (DTO semantics, not a mutable accessor):
 // ModelBinding retains declared logical preparation choices, not observed upstream
-// identity or compatibility. Settings is exact explicit JSON supplied by the caller,
-// never resolved defaults or credentials. Assignment shares Settings; Clone detaches
-// it. Zero is invalid. History identity is omitted here and restored from the
-// enclosing envelope at the domain conversion boundary.
+// identity or compatibility. Settings retains explicit prepared typed controls,
+// never inherited defaults or credentials. Assignment shares Settings pointers;
+// Clone detaches them. Zero is invalid. History identity is omitted here and
+// restored from the enclosing envelope at the domain conversion boundary.
 //
 // Route is a required nonempty exact UTF-8 logical provider/route name interpreted
 // relative to the preparing harness's configuration, not a global provider
@@ -1147,10 +1150,10 @@ func (v ModelBindingView) Route() string {
 //
 // Source contract (DTO semantics, not a mutable accessor):
 // ModelBinding retains declared logical preparation choices, not observed upstream
-// identity or compatibility. Settings is exact explicit JSON supplied by the caller,
-// never resolved defaults or credentials. Assignment shares Settings; Clone detaches
-// it. Zero is invalid. History identity is omitted here and restored from the
-// enclosing envelope at the domain conversion boundary.
+// identity or compatibility. Settings retains explicit prepared typed controls,
+// never inherited defaults or credentials. Assignment shares Settings pointers;
+// Clone detaches them. Zero is invalid. History identity is omitted here and
+// restored from the enclosing envelope at the domain conversion boundary.
 //
 // API is the required nonempty exact UTF-8 declared API name, not a compatibility
 // assertion. Validate checks syntax only, without provider interpretation.
@@ -1168,10 +1171,10 @@ func (v ModelBindingView) API() string {
 //
 // Source contract (DTO semantics, not a mutable accessor):
 // ModelBinding retains declared logical preparation choices, not observed upstream
-// identity or compatibility. Settings is exact explicit JSON supplied by the caller,
-// never resolved defaults or credentials. Assignment shares Settings; Clone detaches
-// it. Zero is invalid. History identity is omitted here and restored from the
-// enclosing envelope at the domain conversion boundary.
+// identity or compatibility. Settings retains explicit prepared typed controls,
+// never inherited defaults or credentials. Assignment shares Settings pointers;
+// Clone detaches them. Zero is invalid. History identity is omitted here and
+// restored from the enclosing envelope at the domain conversion boundary.
 //
 // Model is the required nonempty exact UTF-8 declared model name, not an observed
 // upstream model identity. Loading does not resolve or verify it.
@@ -1184,23 +1187,23 @@ func (v ModelBindingView) Model() string {
 
 // Settings reads Settings in O(1) without copying sibling payloads.
 // A zero view returns zero.
-// The returned bytes borrow stable backing for their lifetime; only Copy detaches bytes.
+// The returned child borrows backing, which must remain stable for every derived view's lifetime.
 // Access neither freezes nor synchronizes backing.
 //
 // Source contract (DTO semantics, not a mutable accessor):
 // ModelBinding retains declared logical preparation choices, not observed upstream
-// identity or compatibility. Settings is exact explicit JSON supplied by the caller,
-// never resolved defaults or credentials. Assignment shares Settings; Clone detaches
-// it. Zero is invalid. History identity is omitted here and restored from the
-// enclosing envelope at the domain conversion boundary.
+// identity or compatibility. Settings retains explicit prepared typed controls,
+// never inherited defaults or credentials. Assignment shares Settings pointers;
+// Clone detaches them. Zero is invalid. History identity is omitted here and
+// restored from the enclosing envelope at the domain conversion boundary.
 //
-// Settings is required explicit valid JSON, preserved byte-for-byte, not resolved
-// defaults or credentials. Validate checks JSON syntax, not provider policy.
-func (v ModelBindingView) Settings() dtogenViews.Bytes {
+// Settings is required explicit prepared controls. Nil members intentionally
+// omit controls, not inherit defaults. Codec traversal validates children.
+func (v ModelBindingView) Settings() ModelSettingsView {
 	if v.value == nil {
-		return dtogenViews.Bytes{}
+		return ModelSettingsView{}
 	}
-	return dtogenViews.BorrowBytes(v.value.Settings)
+	return dtogenViewModelSettingsView(&v.value.Settings)
 }
 
 // Backing contract for ModelRequestView.
@@ -1210,12 +1213,12 @@ func (v ModelBindingView) Settings() dtogenViews.Bytes {
 // request ordinal in the same enclosing run; membership and ordering are aggregate
 // concerns. Assignment shares nested byte slices; Clone detaches them.
 // Session authoring supplies destination scope separately and requires RunID and
-// ID zero. RetryOf is interpreted within that destination run without origin
-// provenance. Validate requires the fully populated persisted shape.
+// ID zero and Source nil. RetryOf is interpreted within that destination run
+// without origin provenance. Validate requires the populated persisted shape.
 var _ = (*struct {
 	RunID   uint64                         "cbor:\"r\" view:\"-\""
 	ID      uint64                         "cbor:\"o\" view:\"manual\""
-	Source  dtogenType0.SourceHead         "cbor:\"s\""
+	Source  *dtogenType0.SourceHead        "cbor:\"s,omitempty\""
 	Recipe  dtogenType0.ConstructionRecipe "cbor:\"c\""
 	RetryOf *uint64                        "cbor:\"x,omitempty\" view:\"manual\""
 })((*dtogenType0.ModelRequest)(nil))
@@ -1231,7 +1234,7 @@ func (v ModelRequestView) MutableClone() dtogenType0.ModelRequest {
 }
 
 // Source reads Source in O(1) without copying sibling payloads.
-// A zero view returns zero.
+// A zero view or nil field returns zero, false; present zero/empty values return true.
 // The returned child borrows backing, which must remain stable for every derived view's lifetime.
 // Access neither freezes nor synchronizes backing.
 //
@@ -1240,16 +1243,18 @@ func (v ModelRequestView) MutableClone() dtogenType0.ModelRequest {
 // request ordinal in the same enclosing run; membership and ordering are aggregate
 // concerns. Assignment shares nested byte slices; Clone detaches them.
 // Session authoring supplies destination scope separately and requires RunID and
-// ID zero. RetryOf is interpreted within that destination run without origin
-// provenance. Validate requires the fully populated persisted shape.
+// ID zero and Source nil. RetryOf is interpreted within that destination run
+// without origin provenance. Validate requires the populated persisted shape.
 //
-// Source is the required accepted head used for request construction. Local
-// traversal validates its shape; aggregate reconstruction verifies membership.
-func (v ModelRequestView) Source() SourceHeadView {
-	if v.value == nil {
-		return SourceHeadView{}
+// Source optionally anchors construction to the preceding accepted head. Nil
+// means pre-genesis, valid only in the initial commit. Present anchors require
+// positive Sequence and nonzero CID. All records earlier in this same commit
+// also belong to the source; aggregate admission verifies the exact anchor.
+func (v ModelRequestView) Source() (SourceHeadView, bool) {
+	if v.value == nil || v.value.Source == nil {
+		return SourceHeadView{}, false
 	}
-	return dtogenViewSourceHeadView(&v.value.Source)
+	return dtogenViewSourceHeadView(v.value.Source), true
 }
 
 // Recipe reads Recipe in O(1) without copying sibling payloads.
@@ -1262,8 +1267,8 @@ func (v ModelRequestView) Source() SourceHeadView {
 // request ordinal in the same enclosing run; membership and ordering are aggregate
 // concerns. Assignment shares nested byte slices; Clone detaches them.
 // Session authoring supplies destination scope separately and requires RunID and
-// ID zero. RetryOf is interpreted within that destination run without origin
-// provenance. Validate requires the fully populated persisted shape.
+// ID zero and Source nil. RetryOf is interpreted within that destination run
+// without origin provenance. Validate requires the populated persisted shape.
 //
 // Recipe is the required opaque construction commitment. Local traversal checks
 // its syntax, not that it reproduces a request or authorizes invocation.
@@ -1421,6 +1426,85 @@ func (v ModelResponseView) Private() (OpaqueProviderDataView, bool) {
 		return OpaqueProviderDataView{}, false
 	}
 	return dtogenViewOpaqueProviderDataView(v.value.Private), true
+}
+
+// Backing contract for ModelSettingsView.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// ModelSettings retains explicit prepared model controls. Nil fields intentionally
+// omit upstream controls; they never inherit defaults. Assignment shares pointers;
+// Clone detaches them. Zero is valid and omits all controls. Preparation resolves
+// preferences; consumers must not normalize or clamp retained settings.
+//
+// Design status: these initial two controls are intentionally minimal. Revisit
+// additional controls and provider grouping at adapter integration; retained
+// omission and exact values remain guaranteed.
+// dtogenViewModelSettingsView borrows stable backing; it neither freezes nor synchronizes access.
+func dtogenViewModelSettingsView(value *dtogenType0.ModelSettings) ModelSettingsView {
+	return ModelSettingsView{value: value}
+}
+
+var _ = (*struct {
+	ReasoningEffort *string "cbor:\"r,omitempty\""
+	MaxOutputTokens *int64  "cbor:\"m,omitempty\""
+})((*dtogenType0.ModelSettings)(nil))
+
+// MutableClone returns a deeply detached mutable copy of the backing DTO payload.
+// It uses the DTO owner's declared Clone capability and preserves DTO identity fields, but omits enclosing view scope and identity.
+// A zero view returns a zero DTO. Work and allocation are proportional only to this payload, not enclosing or sibling state.
+func (v ModelSettingsView) MutableClone() dtogenType0.ModelSettings {
+	if v.value == nil {
+		return dtogenType0.ModelSettings{}
+	}
+	return v.value.Clone()
+}
+
+// ReasoningEffort reads ReasoningEffort in O(1) without copying sibling payloads.
+// A zero view or nil field returns zero, false; present zero/empty values return true.
+// The receiver retains stable backing for its lifetime.
+// Access neither freezes nor synchronizes backing.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// ModelSettings retains explicit prepared model controls. Nil fields intentionally
+// omit upstream controls; they never inherit defaults. Assignment shares pointers;
+// Clone detaches them. Zero is valid and omits all controls. Preparation resolves
+// preferences; consumers must not normalize or clamp retained settings.
+//
+// Design status: these initial two controls are intentionally minimal. Revisit
+// additional controls and provider grouping at adapter integration; retained
+// omission and exact values remain guaranteed.
+//
+// ReasoningEffort is an optional nonempty exact UTF-8 target-native label,
+// not a universal closed vocabulary. Nil intentionally omits the control.
+func (v ModelSettingsView) ReasoningEffort() (string, bool) {
+	if v.value == nil || v.value.ReasoningEffort == nil {
+		return *new(string), false
+	}
+	return *v.value.ReasoningEffort, true
+}
+
+// MaxOutputTokens reads MaxOutputTokens in O(1) without copying sibling payloads.
+// A zero view or nil field returns zero, false; present zero/empty values return true.
+// The receiver retains stable backing for its lifetime.
+// Access neither freezes nor synchronizes backing.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// ModelSettings retains explicit prepared model controls. Nil fields intentionally
+// omit upstream controls; they never inherit defaults. Assignment shares pointers;
+// Clone detaches them. Zero is valid and omits all controls. Preparation resolves
+// preferences; consumers must not normalize or clamp retained settings.
+//
+// Design status: these initial two controls are intentionally minimal. Revisit
+// additional controls and provider grouping at adapter integration; retained
+// omission and exact values remain guaranteed.
+//
+// MaxOutputTokens is an optional positive output-token limit. Nil intentionally
+// omits the control; zero and negative values are invalid when present.
+func (v ModelSettingsView) MaxOutputTokens() (int64, bool) {
+	if v.value == nil || v.value.MaxOutputTokens == nil {
+		return *new(int64), false
+	}
+	return *v.value.MaxOutputTokens, true
 }
 
 // Backing contract for ObservedEvidenceView.
@@ -1680,8 +1764,9 @@ func (v OpaqueProviderDataView) Data() dtogenViews.Bytes {
 //
 // Source contract (DTO semantics, not a mutable accessor):
 // RequestedCall retains one complete requested-call occurrence in response order.
-// Name and Arguments are exact opaque adapter output: empty names and invalid or
-// empty JSON are valid. Arguments may be nil or empty, which are equivalent empty
+// ProviderCallID, Name and Arguments are exact opaque adapter output: missing or
+// duplicate provider IDs, empty names and invalid or empty JSON are valid retained
+// observations. Arguments may be nil or empty, which are equivalent empty
 // bytes. Assignment shares Arguments; Clone detaches them.
 // dtogenViewRequestedCallDataView borrows stable backing; it neither freezes nor synchronizes access.
 func dtogenViewRequestedCallDataView(value *dtogenType0.RequestedCall) RequestedCallDataView {
@@ -1689,8 +1774,9 @@ func dtogenViewRequestedCallDataView(value *dtogenType0.RequestedCall) Requested
 }
 
 var _ = (*struct {
-	Name      string "cbor:\"n\""
-	Arguments []byte "cbor:\"a\""
+	ProviderCallID string "cbor:\"i\""
+	Name           string "cbor:\"n\""
+	Arguments      []byte "cbor:\"a\""
 })((*dtogenType0.RequestedCall)(nil))
 
 // MutableClone returns a deeply detached mutable copy of the backing DTO payload.
@@ -1703,6 +1789,28 @@ func (v RequestedCallDataView) MutableClone() dtogenType0.RequestedCall {
 	return v.value.Clone()
 }
 
+// ProviderCallID reads ProviderCallID in O(1) without copying sibling payloads.
+// A zero view returns zero.
+// The receiver retains stable backing for its lifetime.
+// Access neither freezes nor synchronizes backing.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// RequestedCall retains one complete requested-call occurrence in response order.
+// ProviderCallID, Name and Arguments are exact opaque adapter output: missing or
+// duplicate provider IDs, empty names and invalid or empty JSON are valid retained
+// observations. Arguments may be nil or empty, which are equivalent empty
+// bytes. Assignment shares Arguments; Clone detaches them.
+//
+// ProviderCallID is exact UTF-8 adapter output. Empty and response-local
+// duplicate IDs are retained observations, not valid reconstruction guarantees.
+// It is independent of the kernel requested-call occurrence identity.
+func (v RequestedCallDataView) ProviderCallID() string {
+	if v.value == nil {
+		return *new(string)
+	}
+	return v.value.ProviderCallID
+}
+
 // Name reads Name in O(1) without copying sibling payloads.
 // A zero view returns zero.
 // The receiver retains stable backing for its lifetime.
@@ -1710,8 +1818,9 @@ func (v RequestedCallDataView) MutableClone() dtogenType0.RequestedCall {
 //
 // Source contract (DTO semantics, not a mutable accessor):
 // RequestedCall retains one complete requested-call occurrence in response order.
-// Name and Arguments are exact opaque adapter output: empty names and invalid or
-// empty JSON are valid. Arguments may be nil or empty, which are equivalent empty
+// ProviderCallID, Name and Arguments are exact opaque adapter output: missing or
+// duplicate provider IDs, empty names and invalid or empty JSON are valid retained
+// observations. Arguments may be nil or empty, which are equivalent empty
 // bytes. Assignment shares Arguments; Clone detaches them.
 //
 // Name is UTF-8 adapter output. It may be empty or unknown to the session.
@@ -1729,8 +1838,9 @@ func (v RequestedCallDataView) Name() string {
 //
 // Source contract (DTO semantics, not a mutable accessor):
 // RequestedCall retains one complete requested-call occurrence in response order.
-// Name and Arguments are exact opaque adapter output: empty names and invalid or
-// empty JSON are valid. Arguments may be nil or empty, which are equivalent empty
+// ProviderCallID, Name and Arguments are exact opaque adapter output: missing or
+// duplicate provider IDs, empty names and invalid or empty JSON are valid retained
+// observations. Arguments may be nil or empty, which are equivalent empty
 // bytes. Assignment shares Arguments; Clone detaches them.
 //
 // Arguments are opaque adapter output and are not required to be JSON. Nil and
@@ -1746,12 +1856,14 @@ func (v RequestedCallDataView) Arguments() dtogenViews.Bytes {
 //
 // Source contract (DTO semantics, not a mutable accessor):
 // RequestedCall retains one complete requested-call occurrence in response order.
-// Name and Arguments are exact opaque adapter output: empty names and invalid or
-// empty JSON are valid. Arguments may be nil or empty, which are equivalent empty
+// ProviderCallID, Name and Arguments are exact opaque adapter output: missing or
+// duplicate provider IDs, empty names and invalid or empty JSON are valid retained
+// observations. Arguments may be nil or empty, which are equivalent empty
 // bytes. Assignment shares Arguments; Clone detaches them.
 var _ = (*struct {
-	Name      string "cbor:\"n\""
-	Arguments []byte "cbor:\"a\""
+	ProviderCallID string "cbor:\"i\""
+	Name           string "cbor:\"n\""
+	Arguments      []byte "cbor:\"a\""
 })((*dtogenType0.RequestedCall)(nil))
 
 // MutableClone returns a deeply detached mutable copy of the backing DTO payload.
@@ -1764,6 +1876,28 @@ func (v RequestedCallView) MutableClone() dtogenType0.RequestedCall {
 	return v.value.Clone()
 }
 
+// ProviderCallID reads ProviderCallID in O(1) without copying sibling payloads.
+// A zero view returns zero.
+// The receiver retains stable backing for its lifetime.
+// Access neither freezes nor synchronizes backing.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// RequestedCall retains one complete requested-call occurrence in response order.
+// ProviderCallID, Name and Arguments are exact opaque adapter output: missing or
+// duplicate provider IDs, empty names and invalid or empty JSON are valid retained
+// observations. Arguments may be nil or empty, which are equivalent empty
+// bytes. Assignment shares Arguments; Clone detaches them.
+//
+// ProviderCallID is exact UTF-8 adapter output. Empty and response-local
+// duplicate IDs are retained observations, not valid reconstruction guarantees.
+// It is independent of the kernel requested-call occurrence identity.
+func (v RequestedCallView) ProviderCallID() string {
+	if v.value == nil {
+		return *new(string)
+	}
+	return v.value.ProviderCallID
+}
+
 // Name reads Name in O(1) without copying sibling payloads.
 // A zero view returns zero.
 // The receiver retains stable backing for its lifetime.
@@ -1771,8 +1905,9 @@ func (v RequestedCallView) MutableClone() dtogenType0.RequestedCall {
 //
 // Source contract (DTO semantics, not a mutable accessor):
 // RequestedCall retains one complete requested-call occurrence in response order.
-// Name and Arguments are exact opaque adapter output: empty names and invalid or
-// empty JSON are valid. Arguments may be nil or empty, which are equivalent empty
+// ProviderCallID, Name and Arguments are exact opaque adapter output: missing or
+// duplicate provider IDs, empty names and invalid or empty JSON are valid retained
+// observations. Arguments may be nil or empty, which are equivalent empty
 // bytes. Assignment shares Arguments; Clone detaches them.
 //
 // Name is UTF-8 adapter output. It may be empty or unknown to the session.
@@ -1790,8 +1925,9 @@ func (v RequestedCallView) Name() string {
 //
 // Source contract (DTO semantics, not a mutable accessor):
 // RequestedCall retains one complete requested-call occurrence in response order.
-// Name and Arguments are exact opaque adapter output: empty names and invalid or
-// empty JSON are valid. Arguments may be nil or empty, which are equivalent empty
+// ProviderCallID, Name and Arguments are exact opaque adapter output: missing or
+// duplicate provider IDs, empty names and invalid or empty JSON are valid retained
+// observations. Arguments may be nil or empty, which are equivalent empty
 // bytes. Assignment shares Arguments; Clone detaches them.
 //
 // Arguments are opaque adapter output and are not required to be JSON. Nil and
@@ -2046,9 +2182,10 @@ func (v RunStartedView) MutableClone() dtogenType0.RunStarted {
 // Backing contract for SourceHeadView.
 //
 // Source contract (DTO semantics, not a mutable accessor):
-// SourceHead identifies the exact accepted history commit immediately preceding a
-// model request. History scope belongs to the enclosing history envelope; zero
-// Sequence or CID is invalid. It is a reference, not record framing or a record ID.
+// SourceHead identifies the exact accepted history commit anchoring construction
+// of a model request. Earlier records in the request's own commit also contribute.
+// History scope belongs to the enclosing history envelope; zero Sequence or CID
+// is invalid. It is a reference, not record framing or a record ID.
 // dtogenViewSourceHeadView borrows stable backing; it neither freezes nor synchronizes access.
 func dtogenViewSourceHeadView(value *dtogenType0.SourceHead) SourceHeadView {
 	return SourceHeadView{value: value}
@@ -2075,9 +2212,10 @@ func (v SourceHeadView) MutableClone() dtogenType0.SourceHead {
 // Access neither freezes nor synchronizes backing.
 //
 // Source contract (DTO semantics, not a mutable accessor):
-// SourceHead identifies the exact accepted history commit immediately preceding a
-// model request. History scope belongs to the enclosing history envelope; zero
-// Sequence or CID is invalid. It is a reference, not record framing or a record ID.
+// SourceHead identifies the exact accepted history commit anchoring construction
+// of a model request. Earlier records in the request's own commit also contribute.
+// History scope belongs to the enclosing history envelope; zero Sequence or CID
+// is invalid. It is a reference, not record framing or a record ID.
 //
 // Sequence is the required positive accepted-commit sequence within the
 // enclosing history. Local validation does not prove ancestry or acceptance.
@@ -2955,6 +3093,48 @@ func (v ToolReturnedView) Output() ToolOutputView {
 		return ToolOutputView{}
 	}
 	return dtogenViewToolOutputView(&v.value.Output)
+}
+
+// Backing contract for UserContextPrefixView.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// UserContextPrefix is a complete session-scoped ordered prepared user-context
+// prefix replacement, independent of root Instructions. Latest replacement wins
+// across runs; nil and empty Blocks explicitly clear it. Assignment shares Blocks
+// and children; Clone detaches them. History scope comes from the envelope.
+var _ = (*struct {
+	Blocks []dtogenType0.InstructionBlock "cbor:\"b\""
+})((*dtogenType0.UserContextPrefix)(nil))
+
+// MutableClone returns a deeply detached mutable copy of the backing DTO payload.
+// It uses the DTO owner's declared Clone capability and preserves DTO identity fields, but omits enclosing view scope and identity.
+// A zero view returns a zero DTO. Work and allocation are proportional only to this payload, not enclosing or sibling state.
+func (v UserContextPrefixView) MutableClone() dtogenType0.UserContextPrefix {
+	if v.value == nil {
+		return dtogenType0.UserContextPrefix{}
+	}
+	return v.value.Clone()
+}
+
+// Blocks reads Blocks in O(1) without copying sibling payloads.
+// A zero view returns zero.
+// The collection borrows stable backing and adapts elements lazily; derived views retain it.
+// Access neither freezes nor synchronizes backing.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// UserContextPrefix is a complete session-scoped ordered prepared user-context
+// prefix replacement, independent of root Instructions. Latest replacement wins
+// across runs; nil and empty Blocks explicitly clear it. Assignment shares Blocks
+// and children; Clone detaches them. History scope comes from the envelope.
+//
+// Blocks preserves prepared contribution order and boundaries, including
+// duplicates and empty blocks. Nil and empty explicitly clear the prefix.
+// Child provenance is required even for an empty block and grants no authority.
+func (v UserContextPrefixView) Blocks() dtogenViews.SliceView[dtogenType0.InstructionBlock, InstructionBlockView] {
+	if v.value == nil {
+		return dtogenViews.SliceView[dtogenType0.InstructionBlock, InstructionBlockView]{}
+	}
+	return dtogenViews.BorrowSliceView(v.value.Blocks, dtogenViewInstructionBlockView)
 }
 
 // Backing contract for UserInputView.

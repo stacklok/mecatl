@@ -242,6 +242,8 @@ func (s *Session) evaluate(c format.Commit, expected *history.CommitRef) (sessio
 			runs = append(runs, runEntry{id: admission.candidate.activeRun, recordStart: position, inputStart: len(candidate.view.inputs) + len(inputs)})
 		case sessionformat.KindUserInput:
 			inputs = append(inputs, position)
+		case sessionformat.KindUserContextPrefix:
+			candidate.view.userContextPrefix = fact
 		case sessionformat.KindInstructions:
 			candidate.view.instructions = fact
 		case sessionformat.KindToolCatalog:

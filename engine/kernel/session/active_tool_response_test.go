@@ -248,10 +248,6 @@ func TestToolAdmissionSettlementAdvancement(t *testing.T) {
 			for _, call := range calls {
 				interactionCheck(t, b.AddToolDisposition(call, toolOutcome("not invoked")))
 			}
-			request := interactionRequest(s, 2).ModelRequest
-			if _, err := b.AddModelRequest(run, request); !errors.Is(err, ErrTransition) {
-				t.Fatalf("candidate settlement manufactured source eligibility: %v", err)
-			}
 			switch input {
 			case "user":
 				_, err := b.AddUserInput(run, UserInput{})
@@ -259,19 +255,17 @@ func TestToolAdmissionSettlementAdvancement(t *testing.T) {
 			case "effective":
 				interactionCheck(t, b.AddEffectiveInput(run, EffectiveInput{Inputs: []InputItem{{Inline: &AttributedInput{Actor: "harness", Purpose: PromptContext, Source: ContentSource{Description: "next"}}}}}))
 			}
+			_, err = b.AddModelRequest(run, captureCommit(t, b), ModelRequest{Recipe: interactionRequest(s, 2).Recipe})
+			interactionCheck(t, err)
 			_, err = s.SubmitCommit(context.Background(), b)
 			interactionCheck(t, err)
-			interactionSubmit(t, s, func(b *SessionCommit) {
-				_, err := b.AddModelRequest(run, interactionRequest(s, 2).ModelRequest)
-				interactionCheck(t, err)
-			})
 			interactionReplay(t, s)
 		})
 	}
 }
 
 func TestToolAdmissionRejectedReplayAndPreflight(t *testing.T) {
-	for _, scenario := range []string{"response invocation", "response disposition", "invocation returned", "invocation indeterminate", "candidate prerequisite", "candidate prerequisite error", "duplicate invocation", "duplicate disposition", "invocation after disposition", "candidate next request", "absent call", "absent request", "wrong run", "old run"} {
+	for _, scenario := range []string{"response invocation", "response disposition", "invocation returned", "invocation indeterminate", "candidate prerequisite", "candidate prerequisite error", "duplicate invocation", "duplicate disposition", "invocation after disposition", "partial settlement next request", "absent call", "absent request", "wrong run", "old run"} {
 		for _, path := range []string{"builder", "preflight", "apply", "load"} {
 			t.Run(scenario+"/"+path, func(t *testing.T) {
 				s, calls := toolAdmissionFixture(t)
@@ -309,8 +303,8 @@ func TestToolAdmissionRejectedReplayAndPreflight(t *testing.T) {
 						returned = "error"
 					}
 					records = []*materializedRecord{disp(calls[0], "not invoked"), disp(calls[1], returned)}
-				case "candidate next request":
-					for _, call := range calls {
+				case "partial settlement next request":
+					for _, call := range calls[:len(calls)-1] {
 						records = append(records, disp(call, "not invoked"))
 					}
 					records = append(records, interactionRecord(t)(makeRequestRecord(interactionRequest(s, 2), s.policy.PayloadLimits)))
@@ -460,7 +454,7 @@ func TestToolAdmissionDestinationMembership(t *testing.T) {
 					if destination == "old response" {
 						var request ModelRequestID
 						interactionSubmit(t, s, func(b *SessionCommit) {
-							id, err := b.AddModelRequest(s.Snapshot().ActiveRun(), interactionRequest(s, 2).ModelRequest)
+							id, err := b.AddModelRequest(s.Snapshot().ActiveRun(), captureCommit(t, b), ModelRequest{Recipe: interactionRequest(s, 2).Recipe})
 							interactionCheck(t, err)
 							request = id
 						})

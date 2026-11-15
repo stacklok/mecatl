@@ -181,7 +181,7 @@ func TestInteractionFormatMalformedUnionsAndEvidence(t *testing.T) {
 }
 
 func TestModelRequestFormatAndLimits(t *testing.T) {
-	v := format.ModelRequest{RunID: 1, ID: 1, Source: format.SourceHead{Sequence: 1, CID: contentid.Sum([]byte("head"))}, Recipe: format.ConstructionRecipe{Algorithm: "algorithm", Version: 1, Parameters: []byte{}, Check: []byte("check")}}
+	v := format.ModelRequest{RunID: 1, ID: 1, Source: &format.SourceHead{Sequence: 1, CID: contentid.Sum([]byte("head"))}, Recipe: format.ConstructionRecipe{Algorithm: "algorithm", Version: 1, Parameters: []byte{}, Check: []byte("check")}}
 	wire, err := codec.Encode(v, limits())
 	if err != nil {
 		t.Fatal(err)
@@ -219,7 +219,7 @@ func TestModelInteractionIdentityWireComponents(t *testing.T) {
 		value codec.Marshaler
 		want  []byte
 	}{
-		{"request", format.ModelRequest{RunID: 24, ID: 256, Source: format.SourceHead{Sequence: 1, CID: cid}, Recipe: format.ConstructionRecipe{Algorithm: "a", Version: 1, Check: []byte{1}}, RetryOf: new(uint64(1))}, requestWire},
+		{"request", format.ModelRequest{RunID: 24, ID: 256, Source: &format.SourceHead{Sequence: 1, CID: cid}, Recipe: format.ConstructionRecipe{Algorithm: "a", Version: 1, Check: []byte{1}}, RetryOf: new(uint64(1))}, requestWire},
 		{"response", format.ModelResponse{RunID: 24, RequestID: 256, Terminal: format.ResponseTerminalNormal}, []byte("\xa4\x61i\x80\x61q\x19\x01\x00\x61r\x18\x18\x61t\x66normal")},
 		{"failure", format.InvocationFailure{RunID: 24, RequestID: 256, Class: format.InvocationFailureOther}, []byte("\xa3\x61c\x65other\x61q\x19\x01\x00\x61r\x18\x18")},
 		{"capture", capture, []byte("\xa1\x61q\x19\x01\x00")},

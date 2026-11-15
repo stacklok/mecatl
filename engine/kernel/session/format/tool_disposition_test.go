@@ -16,7 +16,7 @@ func TestToolDispositionBranches(t *testing.T) {
 	for _, status := range []format.ToolReturnStatus{format.ToolReturnSuccess, format.ToolReturnError} {
 		branches = append(branches, format.ToolDisposition{Returned: &format.ToolReturned{Status: status, Output: richToolOutput()}})
 	}
-	for _, reason := range []format.ToolNotInvokedReason{format.ToolNotInvokedPolicyRejected, format.ToolNotInvokedPreparationFailed, format.ToolNotInvokedCancelled, format.ToolNotInvokedOther} {
+	for _, reason := range []format.ToolNotInvokedReason{format.ToolNotInvokedUserDenied, format.ToolNotInvokedUnavailable, format.ToolNotInvokedInfrastructureFailed, format.ToolNotInvokedPolicyRejected, format.ToolNotInvokedPreparationFailed, format.ToolNotInvokedCancelled, format.ToolNotInvokedOther} {
 		branches = append(branches, format.ToolDisposition{NotInvoked: &format.ToolNotInvoked{Reason: reason}})
 	}
 	for _, reason := range []format.ToolIndeterminateReason{format.ToolIndeterminateTransport, format.ToolIndeterminateTimeout, format.ToolIndeterminateExecutorLost, format.ToolIndeterminateCancelled, format.ToolIndeterminateOther} {

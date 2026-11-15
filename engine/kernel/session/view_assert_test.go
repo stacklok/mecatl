@@ -101,7 +101,11 @@ func catalogMatches(v session.ToolCatalogView, want session.ToolCatalog) bool {
 }
 
 func bindingMatches(v session.ModelBindingView, want session.ModelBinding) bool {
-	return v.Route() == want.Route && v.API() == want.API && v.Model() == want.Model && bytes.Equal(v.Settings().Copy(), want.Settings)
+	effort, effortOK := v.Settings().ReasoningEffort()
+	tokens, tokensOK := v.Settings().MaxOutputTokens()
+	return v.Route() == want.Route && v.API() == want.API && v.Model() == want.Model &&
+		effortOK == (want.Settings.ReasoningEffort != nil) && (!effortOK || effort == *want.Settings.ReasoningEffort) &&
+		tokensOK == (want.Settings.MaxOutputTokens != nil) && (!tokensOK || tokens == *want.Settings.MaxOutputTokens)
 }
 
 func inlineAt(t *testing.T, v session.EffectiveInputView, i int) session.AttributedInputView {

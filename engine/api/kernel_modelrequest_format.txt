@@ -1,0 +1,81 @@
+    method func (*AssistantItem).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
+    method func (*AssistantMessage).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
+    method func (*ContentBlock).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
+    method func (*ConversationItem).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
+    method func (*ParametersV1).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
+    method func (*PrivateReplaySelector).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
+    method func (*RequestV1).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
+    method func (*ToolCall).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
+    method func (*ToolOutcome).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
+    method func (*ToolResult).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
+    method func (*UserMessage).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
+    method func (AssistantItem).AppendCBOR(dst []byte) []byte
+    method func (AssistantItem).CheckCBOR(b *codec.Budget, depth int, fieldMax int) error
+    method func (AssistantItem).Clone() AssistantItem
+    method func (AssistantItem).Equal(other AssistantItem) bool
+    method func (AssistantItem).Validate() error
+    method func (AssistantMessage).AppendCBOR(dst []byte) []byte
+    method func (AssistantMessage).CheckCBOR(b *codec.Budget, depth int, fieldMax int) error
+    method func (AssistantMessage).Clone() AssistantMessage
+    method func (AssistantMessage).Equal(other AssistantMessage) bool
+    method func (AssistantMessage).Validate() error
+    method func (ContentBlock).AppendCBOR(dst []byte) []byte
+    method func (ContentBlock).CheckCBOR(b *codec.Budget, depth int, fieldMax int) error
+    method func (ContentBlock).Clone() ContentBlock
+    method func (ContentBlock).Equal(other ContentBlock) bool
+    method func (ContentBlock).Validate() error
+    method func (ConversationItem).AppendCBOR(dst []byte) []byte
+    method func (ConversationItem).CheckCBOR(b *codec.Budget, depth int, fieldMax int) error
+    method func (ConversationItem).Clone() ConversationItem
+    method func (ConversationItem).Equal(other ConversationItem) bool
+    method func (ConversationItem).Validate() error
+    method func (ParametersV1).AppendCBOR(dst []byte) []byte
+    method func (ParametersV1).CheckCBOR(b *codec.Budget, depth int, fieldMax int) error
+    method func (ParametersV1).Clone() ParametersV1
+    method func (ParametersV1).Equal(other ParametersV1) bool
+    method func (ParametersV1).Validate() error
+    method func (PrivateReplaySelector).AppendCBOR(dst []byte) []byte
+    method func (PrivateReplaySelector).CheckCBOR(b *codec.Budget, depth int, fieldMax int) error
+    method func (PrivateReplaySelector).Clone() PrivateReplaySelector
+    method func (PrivateReplaySelector).Equal(other PrivateReplaySelector) bool
+    method func (PrivateReplaySelector).Validate() error
+    method func (RequestV1).AppendCBOR(dst []byte) []byte
+    method func (RequestV1).CheckCBOR(b *codec.Budget, depth int, fieldMax int) error
+    method func (RequestV1).Clone() RequestV1
+    method func (RequestV1).Equal(other RequestV1) bool
+    method func (RequestV1).Validate() error
+    method func (ToolCall).AppendCBOR(dst []byte) []byte
+    method func (ToolCall).CheckCBOR(b *codec.Budget, depth int, fieldMax int) error
+    method func (ToolCall).Clone() ToolCall
+    method func (ToolCall).Equal(other ToolCall) bool
+    method func (ToolCall).Validate() error
+    method func (ToolOutcome).AppendCBOR(dst []byte) []byte
+    method func (ToolOutcome).CheckCBOR(b *codec.Budget, depth int, fieldMax int) error
+    method func (ToolOutcome).Clone() ToolOutcome
+    method func (ToolOutcome).Equal(other ToolOutcome) bool
+    method func (ToolOutcome).Validate() error
+    method func (ToolResult).AppendCBOR(dst []byte) []byte
+    method func (ToolResult).CheckCBOR(b *codec.Budget, depth int, fieldMax int) error
+    method func (ToolResult).Clone() ToolResult
+    method func (ToolResult).Equal(other ToolResult) bool
+    method func (ToolResult).Validate() error
+    method func (UserMessage).AppendCBOR(dst []byte) []byte
+    method func (UserMessage).CheckCBOR(b *codec.Budget, depth int, fieldMax int) error
+    method func (UserMessage).Clone() UserMessage
+    method func (UserMessage).Equal(other UserMessage) bool
+    method func (UserMessage).Validate() error
+const ToolOutcomeIndeterminate ToolOutcome = "indeterminate"
+const ToolOutcomeNotInvoked ToolOutcome = "not-invoked"
+const ToolOutcomeReturnedError ToolOutcome = "returned-error"
+const ToolOutcomeReturnedSuccess ToolOutcome = "returned-success"
+type AssistantItem struct{Output *ContentBlock "cbor:\"o,omitempty\""; Refusal *ContentBlock "cbor:\"r,omitempty\""; Call *ToolCall "cbor:\"c,omitempty\""}
+type AssistantMessage struct{Items []AssistantItem "cbor:\"i\""; Private *format.OpaqueProviderData "cbor:\"p,omitempty\""}
+type ContentBlock struct{Parts []format.ContentPart "cbor:\"p\""}
+type ConversationItem struct{User *UserMessage "cbor:\"u,omitempty\""; Assistant *AssistantMessage "cbor:\"a,omitempty\""; ToolResult *ToolResult "cbor:\"t,omitempty\""}
+type ParametersV1 struct{PrivateReplay []PrivateReplaySelector "cbor:\"p\""}
+type PrivateReplaySelector struct{SourceAPI string "cbor:\"a\""; SourceModel string "cbor:\"m\""; Producer string "cbor:\"p\""; Format string "cbor:\"f\""; Version int64 "cbor:\"v\""}
+type RequestV1 struct{API string "cbor:\"a\""; Model string "cbor:\"m\""; Settings format.ModelSettings "cbor:\"s\""; RootInstructions []ContentBlock "cbor:\"r\""; UserContextPrefix []ContentBlock "cbor:\"p\""; Tools []format.ToolDefinition "cbor:\"t\""; Conversation []ConversationItem "cbor:\"c\""}
+type ToolCall struct{ProviderCallID string "cbor:\"i\""; Name string "cbor:\"n\""; Arguments []byte "cbor:\"a\""}
+type ToolOutcome string
+type ToolResult struct{ProviderCallID string "cbor:\"i\""; Outcome ToolOutcome "cbor:\"o\""; Parts []format.ContentPart "cbor:\"p\""}
+type UserMessage struct{Parts []format.ContentPart "cbor:\"p\""}

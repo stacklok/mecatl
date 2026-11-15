@@ -31,7 +31,7 @@ func TestContextHardOnlyReplayDetachedOracle(t *testing.T) {
 	for _, err := range []error{
 		b.ReplaceInstructions(scope, Instructions{Blocks: []InstructionBlock{{Source: ContentSource{Description: "retained root"}}}}),
 		b.ReplaceToolCatalog(scope, ToolCatalog{Tools: []ToolDefinition{{Name: "tool", ArgumentSchema: []byte(" true ")}}}),
-		b.ReplaceModelBinding(scope, ModelBinding{Route: "r", API: "a", Model: "m", Settings: []byte(" { } ")}),
+		b.ReplaceModelBinding(scope, ModelBinding{Route: "r", API: "a", Model: "m"}),
 		b.AddEffectiveInput(run, EffectiveInput{Inputs: []InputItem{{UserInputID: new(input.RunRelative())}}}),
 	} {
 		if err != nil {

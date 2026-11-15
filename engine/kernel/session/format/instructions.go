@@ -1,8 +1,9 @@
 package format
 
-// InstructionBlock retains one ordered instruction contribution and its declared
-// origin. Its purpose is instructions by construction, not inferred from a file.
-// Assignment shares nested storage; Clone detaches it.
+// InstructionBlock retains one ordered prepared contribution and its declared
+// origin. Its containing Instructions or UserContextPrefix determines its role;
+// a prefix block is not root/system authority. Content meaning is not inferred
+// from a file. Assignment shares nested storage; Clone detaches it.
 type InstructionBlock struct {
 	// Parts preserves exact instruction order, including duplicates. Nil and empty
 	// are equivalent valid empty contributions; codec traversal validates children.

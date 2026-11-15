@@ -165,6 +165,37 @@ linters:
           deny:
             - pkg: os
               desc: 'structured values must not access host state'
+        core-kernel-modelrequest:
+          list-mode: strict
+          files:
+            - '**/engine/kernel/modelrequest/**.go'
+            - '!**/engine/kernel/modelrequest/format/**.go'
+            - '!$test'
+          allow:
+            - $gostd
+            - github.com/stacklok/mecatl/engine/kernel/codec$
+            - github.com/stacklok/mecatl/engine/kernel/contentid$
+            - github.com/stacklok/mecatl/engine/kernel/history/id$
+            - github.com/stacklok/mecatl/engine/kernel/modelrequest/format$
+            - github.com/stacklok/mecatl/engine/kernel/session$
+            - github.com/stacklok/mecatl/engine/kernel/session/format$
+            - github.com/stacklok/mecatl/engine/kernel/views$
+          deny:
+            - pkg: os
+              desc: 'logical model requests must not access host state'
+        core-kernel-modelrequest-format:
+          list-mode: strict
+          files:
+            - '**/engine/kernel/modelrequest/format/**.go'
+            - '!$test'
+          allow:
+            - $gostd
+            - github.com/stacklok/mecatl/engine/kernel/codec$
+            - github.com/stacklok/mecatl/engine/kernel/session/format$
+            - github.com/jcalabro/atmos/cbor$
+          deny:
+            - pkg: os
+              desc: 'logical request formats must not access host state'
         core-kernel-session:
           list-mode: strict
           files:
