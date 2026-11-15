@@ -375936,6 +375936,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1794611961449,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "17c2d3f95fe2c18526fd2089d3f6c6dbeb85af46",
+          "message": "build: add isolated module candidate dependency checks (#2769)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-11-15T01:31:53Z",
+          "tree_id": "404d2a135d9911cafc6ee9d35b220316d09e98cc",
+          "url": "https://github.com/stacklok/mecatl/commit/17c2d3f95fe2c18526fd2089d3f6c6dbeb85af46"
+        },
+        "date": 1794707124393,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -542860,6 +542894,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1794707119884,
+  "lastUpdate": 1794707125054,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
