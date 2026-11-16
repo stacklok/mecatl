@@ -60,8 +60,12 @@ type DecisionRecord struct {
 	SessionID string
 	Workload  Workload
 	// Owner is the broker session's verified owner, or the owner mecak8s
-	// reported when the session has none.
+	// reported when the session has none; OwnerVerified says which.
 	Owner Owner
+	// OwnerVerified is true when Owner is the owner the broker verified at
+	// session open, and false when it is only what mecak8s reported
+	// (audit.md, "verified" or "reported:<component>").
+	OwnerVerified bool
 	// Agent and AgentID are zero when the credential did not verify.
 	Agent             AgentRef
 	AgentID           string

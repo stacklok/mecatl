@@ -464,7 +464,7 @@ func decisionRecord(now time.Time, workload Workload, s *brokerSession, req Auth
 		owner = *s.verifiedOwner
 	}
 	return DecisionRecord{
-		At: now, SessionID: s.ID, Workload: workload, Owner: owner,
+		At: now, SessionID: s.ID, Workload: workload, Owner: owner, OwnerVerified: s.verifiedOwner != nil,
 		RunID: req.RunID, DelegationID: req.DelegationID, RunOwner: req.RunOwner,
 		OperationID: req.OperationID, RejectedAttemptID: req.RejectedAttemptID,
 		Method: req.Method, Server: req.Server, Tool: req.Tool, ArgumentsSHA256: req.ArgumentsSHA256,

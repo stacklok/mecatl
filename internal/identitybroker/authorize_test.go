@@ -1091,8 +1091,8 @@ func TestAuthorizeCallRecordsTheVerifiedOwner(t *testing.T) {
 	if _, err := f.authorize(callRequest(f.s.ID, f.cred)); err != nil {
 		t.Fatalf("AuthorizeCall: %v", err)
 	}
-	if d := f.rec.Decisions(); len(d) != 1 || d[0].Owner != verified {
-		t.Fatalf("decisions = %+v, want one naming the verified owner %+v", d, verified)
+	if d := f.rec.Decisions(); len(d) != 1 || d[0].Owner != verified || !d[0].OwnerVerified {
+		t.Fatalf("decisions = %+v, want one naming the verified owner %+v, marked verified", d, verified)
 	}
 }
 

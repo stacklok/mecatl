@@ -134,6 +134,22 @@ func TestAuthorizeCallRefusesAnInvalidCredential(t *testing.T) {
 		}
 	})
 
+	t.Run("an expired credential for an unrouted server", func(t *testing.T) {
+		// Check 3 comes before check 6: the caller learns its credential
+		// expired, not that no gateway routes the server.
+		rec := identitybroker.NewMemoryRecorder()
+		f := openGranted(t, gateway, identitybroker.WithRecorder(rec))
+		*f.clock = f.clock.Add(6 * time.Minute)
+		req := callRequest(f.s.ID, f.cred)
+		req.Server = "calendar"
+		_, err := f.authorize(req)
+		wantError(t, err, identitybroker.CodeUnauthenticated, identitybroker.ReasonSVIDExpired, f.cred)
+		d := rec.Decisions()
+		if len(d) != 1 || !d[0].Agent.IsZero() {
+			t.Fatalf("decisions = %+v, want one refusal naming no agent", d)
+		}
+	})
+
 	t.Run("another broker's credential", func(t *testing.T) {
 		f := openGranted(t, gateway)
 		other := openGranted(t, gateway)
@@ -243,6 +259,11 @@ func TestAuthorizeCallRecordsRefusals(t *testing.T) {
 			d.RejectedAttemptID != r.RejectedAttemptID || d.Method != r.Method || d.Server != r.Server ||
 			d.Tool != r.Tool || d.ArgumentsSHA256 != r.ArgumentsSHA256 || d.AttemptID != "" {
 			t.Errorf("%s: recorded %+v, want the request's call fields", step.name, d)
+		}
+		// The session opened with a token has a verified owner; the
+		// tokenless one has only the owner mecak8s reported.
+		if wantVerified := session.ID == f.s.ID; d.OwnerVerified != wantVerified {
+			t.Errorf("%s: recorded OwnerVerified %v, want %v", step.name, d.OwnerVerified, wantVerified)
 		}
 		if gotAgent := !d.Agent.IsZero() && strings.HasPrefix(d.AgentID, "ag_"); gotAgent != step.agent {
 			t.Errorf("%s: recorded agent %+v %q, want it set: %v", step.name, d.Agent, d.AgentID, step.agent)
