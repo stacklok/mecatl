@@ -379158,6 +379158,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1794834785131,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "328978+blkt@users.noreply.github.com",
+            "name": "Michelangelo Mori",
+            "username": "blkt"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "d0583081446e3f4b886042c9e45ee8f04a767de5",
+          "message": "fix(server): keep the session's read ledger across remote runs (#2800)\n\nWith `SessionReadLedger` configured, `acquireExecution` rebinds the\nremote run environment to the session's durable ledger, so an `Edit`\ncan follow a `Read` from an earlier prompt on any replica. Evidence\nstays keyed by session, and files changed between runs are still\nrefused. Without it, remote runs keep the per-run ledger.\n\nCloses #2711",
+          "timestamp": "2026-11-16T14:21:32+01:00",
+          "tree_id": "df5da03e9091d7a3b6af82c401ea6f8969f77b70",
+          "url": "https://github.com/stacklok/mecatl/commit/d0583081446e3f4b886042c9e45ee8f04a767de5"
+        },
+        "date": 1794836037004,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -547459,6 +547493,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1794836033204,
+  "lastUpdate": 1794836037798,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
