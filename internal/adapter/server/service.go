@@ -3668,9 +3668,7 @@ func (s *Service) closeSessionLocal(id session.SessionID) {
 	delete(s.sessionEnvironmentCloses, id)
 	delete(s.sessionEnvironments, id)
 	delete(s.clientMCPSpecs, id)
-	if s.cfg.IdentityAgents != nil {
-		s.cfg.IdentityAgents.Drop(string(id))
-	}
+	s.cfg.IdentityAgents.Drop(string(id))
 	// Drop the once-per-id approval-replay marker: the
 	// OnCloseSession above Forgot this session's learned rules, so a LATER reload of
 	// the same id in this process MUST be allowed to replay them from the durable log
@@ -3836,9 +3834,7 @@ func (s *Service) Close() {
 	s.sessionEnvironmentCloses = make(map[session.SessionID]func() error)
 	s.sessionEnvironments = make(map[session.SessionID]tool.Environment)
 	s.clientMCPSpecs = make(map[session.SessionID][]mcp.ServerConfig)
-	if s.cfg.IdentityAgents != nil {
-		s.cfg.IdentityAgents.Close()
-	}
+	s.cfg.IdentityAgents.Close()
 	// Close all per-session event subscriptions so subscriber goroutines can exit
 	// cleanly. Close owns both shutdown and channel closure while holding subMu: a
 	// publisher holds subMu.RLock through its send, so no send can race close.
@@ -9145,9 +9141,7 @@ func (s *Service) onLeaseLost(ctx context.Context, id session.SessionID, expecte
 	delete(s.instructionSnapshots, id)
 	// Another process now runs this session's agent; run entry registers
 	// again if this process wins it back.
-	if s.cfg.IdentityAgents != nil {
-		s.cfg.IdentityAgents.Drop(string(id))
-	}
+	s.cfg.IdentityAgents.Drop(string(id))
 	s.cfg.MutationCapability.Invalidate(id)
 	leaseCancel = expected.cancel
 	lease = expected.lease

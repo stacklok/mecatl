@@ -3,6 +3,7 @@ package mcpbroker
 import (
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"strings"
 
 	"github.com/redis/go-redis/v9"
@@ -72,9 +73,12 @@ type ToolHiveConfig struct {
 	AS2Trust AS2Trust
 	// GatewayCalls, with AS-2 set up, sends tools/call on GatewayCalls.Servers'
 	// broker routes to the embedded vMCP as a gateway, authorized by the
-	// identity broker. Its HTTPClient is required. Nil keeps every route on
-	// the MCP broker's OAuth grant.
+	// identity broker. EmbeddedGatewayClient is then required. Nil keeps
+	// every route on the MCP broker's OAuth grant.
 	GatewayCalls *GatewayCalls
+	// EmbeddedGatewayClient builds the embedded gateway's HTTP client over
+	// the vMCP handler for endpoint.
+	EmbeddedGatewayClient func(vmcp http.Handler, endpoint string) (*http.Client, error)
 }
 
 // AS2Trust is an ID-JAG issuer AS-2 trusts for the listed subjects only.

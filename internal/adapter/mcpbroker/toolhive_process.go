@@ -58,6 +58,9 @@ type Process struct {
 	// AS2 is the embedded authorization server as the identity broker's AS-2;
 	// nil unless ToolHiveConfig.BrokerClient set it up.
 	AS2 *AS2
+	// GatewayEndpoint is the embedded gateway's endpoint; empty unless
+	// ToolHiveConfig.GatewayCalls installed it.
+	GatewayEndpoint string
 
 	ctx                context.Context
 	cancel             context.CancelFunc
@@ -333,18 +336,19 @@ func newToolHiveProcess(ctx context.Context, config ToolHiveConfig, options tool
 		return rollback(fmt.Errorf("mcpbroker: create vMCP handler: %w", err))
 	}
 	if as2 && config.GatewayCalls != nil {
-		if config.GatewayCalls.HTTPClient == nil {
+		if config.EmbeddedGatewayClient == nil {
 			return rollback(fmt.Errorf("%w: gateway calls need an HTTP client for the vMCP", ErrInvalidCatalogue))
 		}
 		endpoint := as2Resource(issuer)
-		client, err := config.GatewayCalls.HTTPClient(vmcpHandler, endpoint)
+		client, err := config.EmbeddedGatewayClient(vmcpHandler, endpoint)
 		if err != nil {
 			return rollback(fmt.Errorf("mcpbroker: create gateway client: %w", err))
 		}
-		runtime.setGateway(embeddedGateway{endpoint: endpoint, resource: resource, client: client}, *config.GatewayCalls)
+		runtime.setGateway(embeddedGateway{endpoint: endpoint, client: client}, *config.GatewayCalls)
 		if err := runtime.checkGateway(); err != nil {
 			return rollback(err)
 		}
+		process.GatewayEndpoint = endpoint
 	}
 	if incoming != nil {
 		// The vMCP endpoint is published only when the OIDC middleware exists to

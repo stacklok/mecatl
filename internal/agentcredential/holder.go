@@ -268,16 +268,23 @@ func (h *Holder) Held(key Key) (Credential, bool) {
 
 // Drop drops every credential held for root's session tree, and refuses to
 // store any registration or renewal for it already in flight. Callers that
-// guard their own state with a lock call it holding that lock.
+// guard their own state with a lock call it holding that lock. A nil Holder
+// holds nothing.
 func (h *Holder) Drop(root string) {
+	if h == nil {
+		return
+	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	delete(h.roots, root)
 }
 
 // Close drops every credential; later and in-flight stores are refused with
-// ErrDropped, and lookups return ErrNoCredential.
+// ErrDropped, and lookups return ErrNoCredential. A nil Holder holds nothing.
 func (h *Holder) Close() {
+	if h == nil {
+		return
+	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.closed = true

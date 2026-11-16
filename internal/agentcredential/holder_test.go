@@ -361,3 +361,9 @@ func TestHolderClosedRefusesStore(t *testing.T) {
 		t.Fatalf("Credential after Close = %v, want ErrNoCredential", err)
 	}
 }
+
+func TestNilHolderDropAndCloseAreNoOps(*testing.T) {
+	var h *agentcredential.Holder
+	h.Drop(key.RootSessionID)
+	h.Close()
+}

@@ -155,24 +155,21 @@ func buildBundledMCPBroker(ctx context.Context, cfg Config, declaration mcpautho
 		config.BrokerClient = &mcpbroker.ToolHiveBrokerClient{ID: identitybroker.BrokerClientID, KeySet: identity.clientKeySet}
 	}
 	config.AS2Trust = cfg.IdentityBrokerAS2Trust
-	var gatewayEndpoint string
 	if calls := identity.gatewayCalls; calls != nil && config.BrokerClient != nil {
 		// Shortcut: only servers the identity broker's gateway entry routes use the gateway path, and production configures none until AS-2 trusts AS-1, so production is unchanged; removed by #2533 (production gateway) and #2538 (operator gateway entries).
 		config.GatewayCalls = &mcpbroker.GatewayCalls{
 			Authorizer:  calls.service,
 			Credentials: calls.credentials,
 			Servers:     append([]string(nil), calls.servers...),
-			HTTPClient: func(vmcp http.Handler, endpoint string) (*http.Client, error) {
-				gatewayEndpoint = endpoint
-				return gatewayInProcessClient(vmcp, endpoint)
-			},
 		}
+		config.EmbeddedGatewayClient = gatewayInProcessClient
 	}
 	process, err := mcpbroker.NewToolHiveProcess(ctx, config)
 	if err != nil {
 		authStorageClose()
 		return mcpBrokerParts{}, fmt.Errorf("build bundled MCP broker: %w", err)
 	}
+	gatewayEndpoint := process.GatewayEndpoint
 	if gatewayEndpoint != "" && (process.AS2 == nil || process.AS2.Resource != gatewayEndpoint) {
 		// The identity broker's gateway tokens are issued for AS-2's resource,
 		// so the gateway the calls go to must be that resource.

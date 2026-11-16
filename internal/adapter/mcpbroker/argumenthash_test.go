@@ -2,6 +2,7 @@ package mcpbroker
 
 import (
 	"encoding/json"
+	"encoding/json/jsontext"
 	"errors"
 	"math"
 	"os"
@@ -56,10 +57,11 @@ func TestArgumentsSHA256Vectors(t *testing.T) {
 	}
 }
 
-// TestFormatES6AppendixB checks number formatting against every sample in
-// RFC 8785 Appendix B, including those argumentsSHA256 refuses because they
-// are integers beyond 2^53 or not finite.
-func TestFormatES6AppendixB(t *testing.T) {
+// TestCanonicalizeNumbersAppendixB checks the number formatting of
+// jsontext's Canonicalize, which canonicalArguments relies on, against every
+// sample in RFC 8785 Appendix B, including those argumentsSHA256 refuses
+// because they are integers beyond 2^53.
+func TestCanonicalizeNumbersAppendixB(t *testing.T) {
 	for _, c := range []struct{ ieee, want string }{
 		{"0000000000000000", "0"},
 		{"8000000000000000", "0"},
@@ -90,8 +92,9 @@ func TestFormatES6AppendixB(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got := formatES6(math.Float64frombits(bits)); got != c.want {
-			t.Errorf("formatES6(%s) = %s, want %s", c.ieee, got, c.want)
+		v := jsontext.Value("[" + strconv.FormatFloat(math.Float64frombits(bits), 'g', -1, 64) + "]")
+		if err := v.Canonicalize(); err != nil || string(v) != "["+c.want+"]" {
+			t.Errorf("Canonicalize(%s) = %s, %v; want [%s]", c.ieee, v, err, c.want)
 		}
 	}
 }

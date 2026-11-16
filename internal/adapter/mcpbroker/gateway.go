@@ -20,8 +20,6 @@ const defaultSendOnceLimit = 4096
 type Gateway interface {
 	// Endpoint is the gateway's MCP endpoint URL.
 	Endpoint() string
-	// Resource is the vMCP resource the gateway tokens are issued for.
-	Resource() string
 	// HTTPClient carries every request of a call.
 	HTTPClient() *http.Client
 	// Route returns the gateway backend and the tool name the gateway routes
@@ -32,12 +30,11 @@ type Gateway interface {
 // embeddedGateway is the bundled ToolHive process's vMCP, reached in process.
 // Shortcut: only the embedded gateway implements Gateway; removed by #2812 (external gateway implementation of the Gateway interface).
 type embeddedGateway struct {
-	endpoint, resource string
-	client             *http.Client
+	endpoint string
+	client   *http.Client
 }
 
 func (g embeddedGateway) Endpoint() string         { return g.endpoint }
-func (g embeddedGateway) Resource() string         { return g.resource }
 func (g embeddedGateway) HTTPClient() *http.Client { return g.client }
 
 // Route returns backend and the name the vMCP advertises the tool under.
@@ -66,9 +63,6 @@ type GatewayCalls struct {
 	Servers []string
 	// SendOnce records claimed calls; nil means NewMemorySendOnceRecord.
 	SendOnce SendOnceRecord
-	// HTTPClient builds the embedded gateway's client over the vMCP handler
-	// for endpoint. newToolHiveProcess requires it; WithGatewayCalls ignores it.
-	HTTPClient func(vmcp http.Handler, endpoint string) (*http.Client, error)
 }
 
 // WithGatewayCalls sends calls on calls.Servers' broker routes to g.

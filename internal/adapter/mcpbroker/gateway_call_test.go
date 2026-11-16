@@ -98,7 +98,6 @@ type testGateway struct {
 }
 
 func (g testGateway) Endpoint() string         { return g.endpoint }
-func (g testGateway) Resource() string         { return g.endpoint }
 func (g testGateway) HTTPClient() *http.Client { return g.client }
 func (testGateway) Route(backend, name string) (string, string, error) {
 	return embeddedGateway{}.Route(backend, name)
@@ -755,33 +754,32 @@ func TestToolHiveProcessInstallsTheEmbeddedGateway(t *testing.T) {
 	t.Setenv("MECATL_TEST_CLIENT_SECRET", "construction-only-secret")
 	t.Setenv("TMPDIR", t.TempDir())
 	calls := GatewayCalls{Authorizer: &fakeAuthorizer{}, Credentials: &fakeCredentials{}, Servers: []string{"private"}}
-	config := func(calls GatewayCalls) ToolHiveConfig {
-		return ToolHiveConfig{
-			CallbackURL: as2TestCallbackURL, Profiles: []ToolHiveProfile{staticProtectedProfile("private")},
-			BrokerClient: newAS2BrokerClient(t).config, GatewayCalls: &calls,
-		}
+	config := ToolHiveConfig{
+		CallbackURL: as2TestCallbackURL, Profiles: []ToolHiveProfile{staticProtectedProfile("private")},
+		BrokerClient: newAS2BrokerClient(t).config, GatewayCalls: &calls,
 	}
-	if _, err := NewToolHiveProcess(t.Context(), config(calls)); !errors.Is(err, ErrInvalidCatalogue) {
+	if _, err := NewToolHiveProcess(t.Context(), config); !errors.Is(err, ErrInvalidCatalogue) {
 		t.Fatalf("NewToolHiveProcess without a gateway HTTP client = %v, want ErrInvalidCatalogue", err)
 	}
 
 	client := &http.Client{}
 	var gotEndpoint string
-	calls.HTTPClient = func(vmcp http.Handler, endpoint string) (*http.Client, error) {
+	config.EmbeddedGatewayClient = func(vmcp http.Handler, endpoint string) (*http.Client, error) {
 		if vmcp == nil {
 			t.Error("no vMCP handler")
 		}
 		gotEndpoint = endpoint
 		return client, nil
 	}
-	process, err := NewToolHiveProcess(t.Context(), config(calls))
+	process, err := NewToolHiveProcess(t.Context(), config)
 	if err != nil {
 		t.Fatalf("NewToolHiveProcess: %v", err)
 	}
 	t.Cleanup(func() { _ = process.Close() })
 	gw, ok := process.Runtime.gateway.(embeddedGateway)
-	if !ok || gw.Endpoint() != as2Resource(as2TestIssuer) || gotEndpoint != gw.Endpoint() || gw.Resource() != process.AS2.Resource || gw.HTTPClient() != client {
-		t.Fatalf("gateway = %+v (endpoint passed %q), AS-2 resource %q", process.Runtime.gateway, gotEndpoint, process.AS2.Resource)
+	if !ok || gw.Endpoint() != as2Resource(as2TestIssuer) || gotEndpoint != gw.Endpoint() || process.GatewayEndpoint != gw.Endpoint() ||
+		gw.Endpoint() != process.AS2.Resource || gw.HTTPClient() != client {
+		t.Fatalf("gateway = %+v (endpoint passed %q, process endpoint %q), AS-2 resource %q", process.Runtime.gateway, gotEndpoint, process.GatewayEndpoint, process.AS2.Resource)
 	}
 	if server, routed, err := gw.Route("private", "mcp__private__echo"); server != "private" || routed != "private.echo" || err != nil {
 		t.Fatalf("Route = %q, %q, %v", server, routed, err)
