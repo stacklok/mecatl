@@ -125,6 +125,9 @@ func (g *gatewayCall) run(ctx context.Context) (session.ToolResult, string, erro
 		}
 		last, retried = g.send(ctx, auth), true
 	}
+	if last.Outcome == mcpadapter.GatewayAttemptCompleted {
+		g.complete(ctx)
+	}
 	// A tools/call refused as changed after authorization is a bug: the
 	// authorization covers exactly what is sent. It maps to internal, not sent.
 	var res session.ToolResult
@@ -200,6 +203,13 @@ func (g *gatewayCall) release(ctx context.Context) {
 	if g.claim {
 		_ = g.r.gatewayCalls.SendOnce.Release(context.WithoutCancel(ctx), g.scope.root, g.op, g.hash)
 		g.claim = false
+	}
+}
+
+// complete marks the claim completed, so the record may drop it to make room.
+func (g *gatewayCall) complete(ctx context.Context) {
+	if g.claim {
+		_ = g.r.gatewayCalls.SendOnce.Complete(context.WithoutCancel(ctx), g.scope.root, g.op, g.hash)
 	}
 }
 

@@ -799,6 +799,56 @@ func TestSendOnceIsBoundedPerRootSession(t *testing.T) {
 	}
 }
 
+func TestSendOnceDropsOnlyCompletedClaimsWhenFull(t *testing.T) {
+	record := NewMemorySendOnceRecord(2)
+	ctx := t.Context()
+	for _, op := range []string{"op_unknown", "op_1"} {
+		if err := record.Claim(ctx, "root", op, "h"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := record.Complete(ctx, "root", "op_1", "h"); err != nil {
+		t.Fatal(err)
+	}
+	if err := record.Claim(ctx, "root", "op_2", "h"); err != nil {
+		t.Fatalf("Claim with a completed claim held = %v, want it dropped", err)
+	}
+	if err := record.Claim(ctx, "root", "op_3", "h"); !errors.Is(err, errSendOnceFull) {
+		t.Fatalf("Claim with no completed claim held = %v, want errSendOnceFull", err)
+	}
+	if err := record.Complete(ctx, "root", "op_2", "h"); err != nil {
+		t.Fatal(err)
+	}
+	if err := record.Claim(ctx, "root", "op_3", "h"); err != nil {
+		t.Fatal(err)
+	}
+	if err := record.Claim(ctx, "root", "op_unknown", "h"); !errors.Is(err, ErrAlreadySent) {
+		t.Fatalf("Claim of the unknown call = %v, want it never dropped", err)
+	}
+
+	// Through the broker: a session sends more completed calls than its
+	// share, while calls with an unknown outcome stay held and refused.
+	f := newGatewayFixture(t, gatewayFixtureOptions{})
+	f.runtime.gatewayCalls.SendOnce = NewMemorySendOnceRecord(2)
+	for _, id := range []string{"call-1", "call-2", "call-3", "call-4"} {
+		res, err := f.execute(mainAgent(t), t, id, gatewayTestArgs)
+		wantResult(t, res, err, gatewayTestResult)
+	}
+	f.g.DropAfterRequest("github")
+	for _, id := range []string{"call-unknown-1", "call-unknown-2"} {
+		res, err := f.execute(mainAgent(t), t, id, gatewayTestArgs)
+		wantRow(t, res, err, outcomeUnknown)
+	}
+	sent := len(f.toolsCalls())
+	res, err := f.execute(mainAgent(t), t, "call-unknown-1", gatewayTestArgs)
+	wantRow(t, res, err, outcomeAlreadySent)
+	res, err = f.execute(mainAgent(t), t, "call-5", gatewayTestArgs)
+	wantRow(t, res, err, outcomeSendOnceFull)
+	if n := len(f.toolsCalls()); n != sent {
+		t.Fatalf("gateway saw %d more tools/call after the share filled with unknown outcomes", n-sent)
+	}
+}
+
 func TestGatewayClaimsKeptOnCloseAndForgottenOnDelete(t *testing.T) {
 	f := newGatewayFixture(t, gatewayFixtureOptions{})
 	f.g.DropAfterRequest("github")
