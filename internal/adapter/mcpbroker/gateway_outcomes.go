@@ -41,12 +41,13 @@ var (
 	outcomeTokenRejected       = gatewayOutcome{code: "token_rejected", text: "MCP gateway call not run: the gateway rejected the authorization twice (code token_rejected)."}
 	outcomeAlreadySent         = gatewayOutcome{code: "already_sent", text: "MCP gateway call refused: this call was already sent and its outcome is unknown; automatic replay refused (code already_sent)."}
 	outcomeSendOnceFull        = gatewayOutcome{code: "send_once_full", text: "MCP gateway call refused: too many gateway calls are held for this session; the call was not sent (code send_once_full)."}
-	outcomeUnknown             = gatewayOutcome{code: "outcome_unknown", text: "MCP gateway call outcome unknown: the call was sent and no complete answer arrived; it may have run and is not retried (code outcome_unknown)."}
+	outcomeUnknown             = gatewayOutcome{code: "outcome_unknown", text: "MCP gateway call outcome unknown: the call was sent but the gateway's answer does not show whether it ran; it may have run and is not retried automatically (code outcome_unknown)."}
 )
 
 // outcomeConnectionRequired is the tools/call answered with a URL
 // elicitation; link is the validated connect link, or empty.
-// Shortcut: a missing provider connection (URL elicitation) fails the call closed with its link, and requests the gateway sends during a call are declined; removed by #2537 (fail with a connect link) and #2592 (mcp_authorization_pending, passing requests to the user).
+// Shortcut: a missing provider connection (URL elicitation) fails the call closed with its link; removed by #2537 (fail with a connect link) and #2592 (mcp_authorization_pending).
+// Shortcut: requests the gateway sends during a call are declined; removed by #2821 (asking the user through multi round-trip requests).
 func outcomeConnectionRequired(server, link string) gatewayOutcome {
 	text := "MCP gateway call not run: connect your " + server + " account at the gateway, then retry"
 	if link != "" {

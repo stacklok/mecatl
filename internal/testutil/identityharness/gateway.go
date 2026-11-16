@@ -66,6 +66,7 @@ type Gateway struct {
 	elicit      map[string]bool   // servers whose calls elicit during the call
 	drop        map[string]bool   // servers whose calls drop the connection
 	pad         map[string]int    // bytes added to the result text of calls by server
+	fail        map[string]int    // JSON-RPC error code answering calls by server
 	sessions    map[string]bool
 	waiting     map[string]chan struct{} // by the ID of an open elicitation request
 	elicitCount int
@@ -106,6 +107,7 @@ func (*Harness) StartGateway(t testing.TB, opts GatewayOptions) *Gateway {
 		elicit:   make(map[string]bool),
 		drop:     make(map[string]bool),
 		pad:      make(map[string]int),
+		fail:     make(map[string]int),
 		sessions: make(map[string]bool),
 		waiting:  make(map[string]chan struct{}),
 	}
@@ -165,6 +167,13 @@ func (g *Gateway) PadResults(server string, n int) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	g.pad[server] = n
+}
+
+// FailCalls answers each tools/call on server with the JSON-RPC error code.
+func (g *Gateway) FailCalls(server string, code int) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.fail[server] = code
 }
 
 // ForgetSessions ends every open session, so the next request on one gets 404.
@@ -237,6 +246,7 @@ func (g *Gateway) answerRequest(w http.ResponseWriter, r *http.Request, call Gat
 	server := serverOf(call.Tool)
 	connectURL, missing := g.missing[server]
 	elicit, drop, pad := g.elicit[server], g.drop[server], g.pad[server]
+	failCode, fail := g.fail[server]
 	g.mu.Unlock()
 	reply := map[string]any{"jsonrpc": "2.0", "id": id}
 	switch {
@@ -264,6 +274,8 @@ func (g *Gateway) answerRequest(w http.ResponseWriter, r *http.Request, call Gat
 				"message": "Connect " + server,
 			}}},
 		}
+	case call.Method == toolsCall && fail:
+		reply["error"] = rpcError{Code: failCode, Message: "call failed"}
 	case call.Method == toolsCall && elicit:
 		g.elicitDuringCall(w, r, call, id)
 		return

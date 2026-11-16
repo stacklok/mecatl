@@ -89,11 +89,12 @@ const (
 	// GatewayAttemptRefused means the tools/call was answered with one of the
 	// answers that mean it never ran.
 	GatewayAttemptRefused GatewayAttemptOutcome = "refused"
-	// GatewayAttemptCompleted means the gateway sent a JSON-RPC response to the
-	// tools/call.
+	// GatewayAttemptCompleted means the gateway answered the tools/call with a
+	// result, or with a JSON-RPC error that means the request was not processed.
 	GatewayAttemptCompleted GatewayAttemptOutcome = "completed"
 	// GatewayAttemptUnknown means the tools/call was or may have been written, and
-	// no answer or another answer came back. It may have run.
+	// no answer, an HTTP error, or another JSON-RPC error came back. It may have
+	// run.
 	GatewayAttemptUnknown GatewayAttemptOutcome = "unknown"
 )
 
@@ -200,8 +201,8 @@ func SendGatewayCall(ctx context.Context, req GatewayCallRequest) GatewayAttempt
 
 // declineGatewayRequests declines every request the gateway sends except
 // ping, and counts them. Elicitations go on to the ElicitationHandler, which
-// declines them. This is the request-declining half of the URL elicitation
-// shortcut marked on mcpbroker's connection_required outcome (#2537, #2592).
+// declines them. The shortcut is marked on mcpbroker's connection_required
+// outcome (#2821).
 func declineGatewayRequests(declined *atomic.Int64) mcpsdk.Middleware {
 	return func(next mcpsdk.MethodHandler) mcpsdk.MethodHandler {
 		return func(ctx context.Context, method string, req mcpsdk.Request) (mcpsdk.Result, error) {
@@ -454,8 +455,10 @@ func (w *gatewayWire) classify(a GatewayAttempt, res *mcpsdk.CallToolResult, cal
 	case w.reply != nil && w.reply.err != nil && w.reply.err.Code == mcpsdk.CodeURLElicitationRequired:
 		a.Outcome, a.Rejection = GatewayAttemptRefused, GatewayRejectionURLElicitation
 		a.ConnectURL = connectLink(w.reply.err.Data)
-	case w.reply != nil && w.reply.err != nil:
+	case w.reply != nil && w.reply.err != nil && notProcessed(w.reply.err.Code):
 		a.Outcome, a.rpcErr = GatewayAttemptCompleted, w.reply.err
+	case w.reply != nil && w.reply.err != nil: // such as -32603: the tool may have run
+		a.Outcome = GatewayAttemptUnknown
 	case callErr == nil && res != nil:
 		// The SDK returns a result only from the call's own reply, so this
 		// holds even when the reply was too large to observe.
@@ -464,6 +467,14 @@ func (w *gatewayWire) classify(a GatewayAttempt, res *mcpsdk.CallToolResult, cal
 		a.Outcome = GatewayAttemptUnknown
 	}
 	return a
+}
+
+// notProcessed reports whether code is a JSON-RPC 2.0 error that rejects the
+// request itself (parse error, invalid request, method not found, or invalid
+// params), so the tool did not run.
+func notProcessed(code int64) bool {
+	return code == jsonrpc.CodeParseError || code == jsonrpc.CodeInvalidRequest ||
+		code == jsonrpc.CodeMethodNotFound || code == jsonrpc.CodeInvalidParams
 }
 
 // answerOf is the status of resp and, when it means the request never ran,

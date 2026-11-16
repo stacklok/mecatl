@@ -361,6 +361,27 @@ func TestSendGatewayCallLargeResultIsCompleted(t *testing.T) {
 	}
 }
 
+func TestSendGatewayCallJSONRPCErrorOutcome(t *testing.T) {
+	for code, want := range map[int]GatewayAttemptOutcome{
+		-32700: GatewayAttemptCompleted, // not processed
+		-32600: GatewayAttemptCompleted,
+		-32601: GatewayAttemptCompleted,
+		-32602: GatewayAttemptCompleted,
+		-32603: GatewayAttemptUnknown, // may have run
+		-32000: GatewayAttemptUnknown,
+	} {
+		f := newGatewayFixture(t)
+		f.g.FailCalls("github", code)
+		got := SendGatewayCall(t.Context(), f.request("att_1"))
+		if got.Outcome != want || got.Rejection != "" {
+			t.Fatalf("code %d: attempt = %s/%s, want %s", code, got.Outcome, got.Rejection, want)
+		}
+		if res := GatewayToolResult("call-1", "github", "mcp__github__pull_request_read", got); want == GatewayAttemptCompleted && !res.IsError {
+			t.Fatalf("code %d: result = %+v, want a tool error", code, res)
+		}
+	}
+}
+
 func TestSendGatewayCallNeverResends(t *testing.T) {
 	for name, tc := range map[string]struct {
 		setup   func(*gatewayFixture, *GatewayCallRequest)
